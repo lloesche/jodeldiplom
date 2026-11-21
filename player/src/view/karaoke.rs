@@ -16,11 +16,11 @@ use ratatui::Frame;
 use super::colors::*;
 use super::{keep_start, Pictures, Scene};
 use crate::core::karaoke::{self, Slider};
+use crate::core::lanes::{self, WordLines};
 use crate::core::layout::SWITCH;
 use crate::core::layout::{
     KaraokeLayout, KaraokeTabLayout, SliderLayout, KARAOKE_ENTER, KARAOKE_START,
 };
-use crate::core::mix::WordLines;
 use crate::core::singing::{notes_of, Hit, Level, LineNotes, Medal, Note, Singing, SongResult};
 use crate::core::text::{self, width};
 use crate::core::{Gpu, State};
@@ -726,7 +726,7 @@ pub fn draw_tab(
         None => ("Nothing playing".into(), String::new()),
     };
     // The key it is in, once found.
-    let key = crate::core::mix::rhythmed(state, crate::core::mix::Block::Now)
+    let key = crate::core::lanes::rhythmed(state, crate::core::lanes::Block::Now)
         .and_then(|r| r.analysis.key);
     if let Some(key) = key {
         if !artist.is_empty() {
@@ -902,11 +902,11 @@ pub const VOICE_TEXT: u16 = 2;
 
 /// The span the voice's lane on the tab shows and where it starts: at the
 /// zoom that leaves out no word of the song's lyrics, each where it is sung
-/// ([`crate::core::mix::lyrics_per_second`]), with each character `scale`
+/// ([`crate::core::lanes::lyrics_per_second`]), with each character `scale`
 /// cells wide, the playhead a third of the way in.
 pub fn voice_window(state: &State, width: u16, heard: f64, scale: u16) -> (f64, f64) {
-    use crate::core::mix::{fitted_words, lyrics_of_block, lyrics_per_second, Block};
-    let per = lyrics_of_block(state, Block::Now)
+    use crate::core::lanes::{fitted_words, lyrics_per_second, Block};
+    let per = lanes::lyrics(state, Block::Now)
         .and_then(|l| lyrics_per_second(&fitted_words(&l), WordLines::KARAOKE.rows))
         .unwrap_or(VOICE_PER);
     let span = f64::from(width.max(1)) / (per * f64::from(scale.max(1)));
@@ -918,9 +918,9 @@ pub const VOICE_LEAD: f64 = 1.0 / 3.0;
 
 /// The voice's lane of the song playing, its words on it as they are sung.
 fn draw_voice(frame: &mut Frame, scene: &Scene, area: Rect, pictures: &mut dyn Pictures) {
+    use crate::core::lanes::{rhythmed, Block};
     use crate::core::layout::Lane;
-    use crate::core::mix::{lyrics_of_block, rhythmed, Block};
-    use crate::view::mix::{lane_color, WavePlot};
+    use crate::view::lanes::{lane_color, WavePlot};
     let state = scene.state;
     let r = rhythmed(state, Block::Now);
     let waveform = r
@@ -976,7 +976,7 @@ fn draw_voice(frame: &mut Frame, scene: &Scene, area: Rect, pictures: &mut dyn P
             gain: Vec::new(),
             edit: None,
             rows: (0, area.height),
-            lyrics: lyrics_of_block(state, Block::Now),
+            lyrics: lanes::lyrics(state, Block::Now),
             text_scale: scale,
             lines,
             follow: Some(VOICE_LEAD),
@@ -1330,7 +1330,7 @@ pub fn karaoke_cells(buf: &mut Buffer, picture: &KaraokePicture) {
                             HALF_HIT
                         }
                     } else if ch < split {
-                        crate::view::mix::NOTE
+                        crate::view::lanes::NOTE
                     } else {
                         NOTE_AHEAD
                     };
@@ -1360,7 +1360,7 @@ const NOTE_GLYPHS: [&str; 5] = ["⎽", "⎼", "─", "⎻", "⎺"];
 
 /// The notes' colour: those sung ([`NOTE`]) and those to come.
 ///
-/// [`NOTE`]: crate::view::mix::NOTE
+/// [`NOTE`]: crate::view::lanes::NOTE
 pub const NOTE_AHEAD: Color = Color::Rgb(78, 120, 146);
 /// A note where the singer hit it: gold.
 pub const HIT: Color = Color::Rgb(255, 190, 60);
@@ -1638,7 +1638,7 @@ mod tests {
         let x = (0..20)
             .find(|&x| buf[(x, text_row + 1)].symbol() == "⎺")
             .unwrap();
-        assert_eq!(buf[(x, text_row + 1)].fg, crate::view::mix::NOTE);
+        assert_eq!(buf[(x, text_row + 1)].fg, crate::view::lanes::NOTE);
         assert_eq!(buf[(x + 6, text_row + 1)].fg, NOTE_AHEAD);
     }
 }

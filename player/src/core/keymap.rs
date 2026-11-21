@@ -156,7 +156,7 @@ pub enum Op {
     Previous,
     /// Stop playback.
     Stop,
-    /// Switch the list pane: browser, queue, mix.
+    /// Switch the list pane: browser, queue, transition, karaoke.
     ToggleSide,
     /// Open or close Now playing.
     NowPlaying,
@@ -240,28 +240,29 @@ pub enum Op {
     VolumeUp,
     /// The output device's volume a step down.
     VolumeDown,
-    /// Mix: the cursor a bar back.
-    MixBarBack,
-    /// Mix: the cursor a bar on.
-    MixBarForward,
-    /// Mix: the cursor a beat back.
-    MixBeatBack,
-    /// Mix: the cursor a beat on.
-    MixBeatForward,
-    /// Mix: select a bar more, back.
-    MixSelectBack,
-    /// Mix: select a bar more, on.
-    MixSelectForward,
-    /// Mix: fewer bars shown.
-    MixZoomIn,
-    /// Mix: more bars shown.
-    MixZoomOut,
-    /// Mix: the track selected to the widest zoom that leaves out no word\n    /// of its lyrics.
-    MixFitLyrics,
-    /// Mix: follow the playhead again.
-    MixFollow,
-    /// Mix: the lyrics on the vocals lane, on or off.
-    MixLyrics,
+    /// Transition: the cursor a bar back.
+    TransitionBarBack,
+    /// Transition: the cursor a bar on.
+    TransitionBarForward,
+    /// Transition: the cursor a beat back.
+    TransitionBeatBack,
+    /// Transition: the cursor a beat on.
+    TransitionBeatForward,
+    /// Transition: select a bar more, back.
+    TransitionSelectBack,
+    /// Transition: select a bar more, on.
+    TransitionSelectForward,
+    /// Transition: fewer bars shown.
+    TransitionZoomIn,
+    /// Transition: more bars shown.
+    TransitionZoomOut,
+    /// Transition: the track selected to the widest zoom that leaves out
+    /// no word of its lyrics.
+    TransitionFitLyrics,
+    /// Transition: follow the playhead again.
+    TransitionFollow,
+    /// Transition: the lyrics on the vocals lane, on or off.
+    TransitionLyrics,
     /// Grid: every bar starts a beat earlier.
     GridEarlier,
     /// Grid: every bar starts a beat later.
@@ -304,10 +305,10 @@ pub enum Op {
     EditFull,
     /// Editing: this bar cuts (or fades) to its gain.
     EditCut,
-    /// Mix: the playing track jumps to the start of the bar this many bars
-    /// from the one heard (0: its own start), at once.
+    /// Transition: the playing track jumps to the start of the bar this many
+    /// bars from the one heard (0: its own start), at once.
     JumpBar(i8),
-    /// Mix: the same when the bar heard ends.
+    /// Transition: the same when the bar heard ends.
     JumpBarAtEnd(i8),
     /// Karaoke: into Karaoke mode (fullscreen).
     KaraokeEnter,
@@ -348,7 +349,7 @@ impl Op {
             Op::Next => "Next track",
             Op::Previous => "Previous track",
             Op::Stop => "Stop",
-            Op::ToggleSide => "Browser / queue / mix / karaoke",
+            Op::ToggleSide => "Browser / queue / transition / karaoke",
             Op::NowPlaying => "Now playing",
             Op::Settings => "Settings",
             Op::Help => "Help",
@@ -389,17 +390,17 @@ impl Op {
             Op::AllStems => "Stems: all on (the file as it is)",
             Op::VolumeUp => "Device volume: up",
             Op::VolumeDown => "Device volume: down",
-            Op::MixBarBack => "Mix: a bar back",
-            Op::MixBarForward => "Mix: a bar on",
-            Op::MixBeatBack => "Mix: a beat back",
-            Op::MixBeatForward => "Mix: a beat on",
-            Op::MixSelectBack => "Mix: select back",
-            Op::MixSelectForward => "Mix: select on",
-            Op::MixZoomIn => "Mix: zoom in",
-            Op::MixZoomOut => "Mix: zoom out",
-            Op::MixFitLyrics => "Mix: zoom the track selected to fit its lyrics",
-            Op::MixFollow => "Mix: follow the playhead",
-            Op::MixLyrics => "Mix: lyrics on the vocals lane on/off",
+            Op::TransitionBarBack => "Transition: a bar back",
+            Op::TransitionBarForward => "Transition: a bar on",
+            Op::TransitionBeatBack => "Transition: a beat back",
+            Op::TransitionBeatForward => "Transition: a beat on",
+            Op::TransitionSelectBack => "Transition: select back",
+            Op::TransitionSelectForward => "Transition: select on",
+            Op::TransitionZoomIn => "Transition: zoom in",
+            Op::TransitionZoomOut => "Transition: zoom out",
+            Op::TransitionFitLyrics => "Transition: zoom the track selected to fit its lyrics",
+            Op::TransitionFollow => "Transition: follow the playhead",
+            Op::TransitionLyrics => "Transition: lyrics on the vocals lane on/off",
             Op::GridEarlier => "Grid: bars a beat earlier",
             Op::GridLater => "Grid: bars a beat later",
             Op::GridNudgeBack => "Grid: nudge 5 ms earlier",
@@ -421,8 +422,8 @@ impl Op {
             Op::EditOff => "Fades: off here",
             Op::EditFull => "Fades: full here",
             Op::EditCut => "Fades: cut / fade here",
-            Op::JumpBar(_) => "Mix: jump to a bar",
-            Op::JumpBarAtEnd(_) => "Mix: jump to a bar at the bar's end",
+            Op::JumpBar(_) => "Transition: jump to a bar",
+            Op::JumpBarAtEnd(_) => "Transition: jump to a bar at the bar's end",
             Op::KaraokeEnter => "Karaoke mode",
             Op::KaraokeEnterHere => "Karaoke mode where the song is",
             Op::KaraokeStart => "Karaoke: start the song",
@@ -478,12 +479,12 @@ impl Op {
                 | Op::Back
                 | Op::Palette
                 | Op::Open
-                | Op::MixBarBack
-                | Op::MixBarForward
-                | Op::MixBeatBack
-                | Op::MixBeatForward
-                | Op::MixSelectBack
-                | Op::MixSelectForward
+                | Op::TransitionBarBack
+                | Op::TransitionBarForward
+                | Op::TransitionBeatBack
+                | Op::TransitionBeatForward
+                | Op::TransitionSelectBack
+                | Op::TransitionSelectForward
                 | Op::EditBack
                 | Op::EditForward
                 | Op::EditRaise
@@ -527,10 +528,10 @@ pub enum Context {
     Help,
     /// Typing a search of the help after `/`.
     HelpSearch,
-    /// The Mix tab.
-    Mix,
-    /// Editing a transition's fades on the Mix tab.
-    MixEdit,
+    /// The Transition tab.
+    Transition,
+    /// Editing a transition's fades on the Transition tab.
+    Fades,
     /// The Karaoke tab.
     Karaoke,
     /// Karaoke mode.
@@ -552,8 +553,8 @@ impl Context {
             Context::FolderList => "Data folder list",
             Context::Help => "Help",
             Context::HelpSearch => "Searching the help (after /)",
-            Context::Mix => "Mix tab",
-            Context::MixEdit => "Mix tab, editing the fades (after e)",
+            Context::Transition => "Transition tab",
+            Context::Fades => "Transition tab, editing the fades (after e)",
             Context::Karaoke => "Karaoke tab",
             Context::KaraokeMode => "Karaoke mode (fullscreen)",
         }
@@ -663,14 +664,14 @@ pub const KEYMAP: &[Binding] = &[
         Context::Global,
         &[Key::ch('X')],
         Op::SkipMix,
-        "what N does: cut, or mix in (by the Mix tab's preset, or the one set in the settings)",
+        "what N does: cut, or mix in (by the Transition tab's preset, or the one set in the settings)",
     ),
     b(Context::Global, &[Key::ch('S')], Op::Stop, "stop"),
     b(
         Context::Global,
         &[Key::plain(K::Tab)],
         Op::ToggleSide,
-        "browser / queue / mix",
+        "browser / queue / transition / karaoke",
     ),
     b(
         Context::Global,
@@ -887,271 +888,271 @@ pub const KEYMAP: &[Binding] = &[
     ),
     b(Context::Palette, &[Key::ctrl('v')], Op::Paste, "paste"),
     b(Context::Palette, &[ESC], Op::Back, "close"),
-    // The Mix tab.
-    b(Context::Mix, &[UP], Op::Up, "the playing track"),
-    b(Context::Mix, &[DOWN], Op::Down, "the next track"),
-    b(Context::Mix, &[LEFT], Op::MixBarBack, "cursor a bar back"),
-    b(Context::Mix, &[RIGHT], Op::MixBarForward, "cursor a bar on"),
+    // The Transition tab.
+    b(Context::Transition, &[UP], Op::Up, "the playing track"),
+    b(Context::Transition, &[DOWN], Op::Down, "the next track"),
+    b(Context::Transition, &[LEFT], Op::TransitionBarBack, "cursor a bar back"),
+    b(Context::Transition, &[RIGHT], Op::TransitionBarForward, "cursor a bar on"),
     b(
-        Context::Mix,
+        Context::Transition,
         &[ALT_LEFT],
-        Op::MixBeatBack,
+        Op::TransitionBeatBack,
         "cursor a beat back",
     ),
     b(
-        Context::Mix,
+        Context::Transition,
         &[ALT_RIGHT],
-        Op::MixBeatForward,
+        Op::TransitionBeatForward,
         "cursor a beat on",
     ),
     b(
-        Context::Mix,
+        Context::Transition,
         &[Key::shift(K::Left)],
-        Op::MixSelectBack,
+        Op::TransitionSelectBack,
         "select bars back",
     ),
     b(
-        Context::Mix,
+        Context::Transition,
         &[Key::shift(K::Right)],
-        Op::MixSelectForward,
+        Op::TransitionSelectForward,
         "select bars on",
     ),
     b(
-        Context::Mix,
+        Context::Transition,
         &[Key::plain(K::PageUp)],
         Op::PageUp,
         "eight bars back",
     ),
     b(
-        Context::Mix,
+        Context::Transition,
         &[Key::plain(K::PageDown)],
         Op::PageDown,
         "eight bars on",
     ),
     b(
-        Context::Mix,
+        Context::Transition,
         &[Key::ch('+'), Key::ch('=')],
-        Op::MixZoomIn,
+        Op::TransitionZoomIn,
         "zoom in (fewer bars)",
     ),
     b(
-        Context::Mix,
+        Context::Transition,
         &[Key::ch('-')],
-        Op::MixZoomOut,
+        Op::TransitionZoomOut,
         "zoom out (more bars, then whole tracks)",
     ),
     b(
-        Context::Mix,
+        Context::Transition,
         &[Key::ch('z')],
-        Op::MixFitLyrics,
+        Op::TransitionFitLyrics,
         "zoom the track selected to fit its lyrics",
     ),
     b(
-        Context::Mix,
+        Context::Transition,
         &[Key::ch('.')],
-        Op::MixFollow,
+        Op::TransitionFollow,
         "follow the playhead again",
     ),
     b(
-        Context::Mix,
+        Context::Transition,
         &[Key::ch('L')],
-        Op::MixLyrics,
+        Op::TransitionLyrics,
         "the lyrics on the vocals lane on/off",
     ),
     // Bar jumps (help: two lines, [`help_sections`]): 5 the bar heard, 6 the
     // next, 4 the one before, when the bar heard ends; with shift (or the
     // symbol a US keyboard's shift makes of the digit, as terminals send it)
     // at once.
-    b(Context::Mix, &[Key::ch('1')], Op::JumpBarAtEnd(-4), ""),
-    b(Context::Mix, &[Key::ch('2')], Op::JumpBarAtEnd(-3), ""),
-    b(Context::Mix, &[Key::ch('3')], Op::JumpBarAtEnd(-2), ""),
-    b(Context::Mix, &[Key::ch('4')], Op::JumpBarAtEnd(-1), ""),
-    b(Context::Mix, &[Key::ch('5')], Op::JumpBarAtEnd(0), ""),
-    b(Context::Mix, &[Key::ch('6')], Op::JumpBarAtEnd(1), ""),
-    b(Context::Mix, &[Key::ch('7')], Op::JumpBarAtEnd(2), ""),
-    b(Context::Mix, &[Key::ch('8')], Op::JumpBarAtEnd(3), ""),
-    b(Context::Mix, &[Key::ch('9')], Op::JumpBarAtEnd(4), ""),
+    b(Context::Transition, &[Key::ch('1')], Op::JumpBarAtEnd(-4), ""),
+    b(Context::Transition, &[Key::ch('2')], Op::JumpBarAtEnd(-3), ""),
+    b(Context::Transition, &[Key::ch('3')], Op::JumpBarAtEnd(-2), ""),
+    b(Context::Transition, &[Key::ch('4')], Op::JumpBarAtEnd(-1), ""),
+    b(Context::Transition, &[Key::ch('5')], Op::JumpBarAtEnd(0), ""),
+    b(Context::Transition, &[Key::ch('6')], Op::JumpBarAtEnd(1), ""),
+    b(Context::Transition, &[Key::ch('7')], Op::JumpBarAtEnd(2), ""),
+    b(Context::Transition, &[Key::ch('8')], Op::JumpBarAtEnd(3), ""),
+    b(Context::Transition, &[Key::ch('9')], Op::JumpBarAtEnd(4), ""),
     b(
-        Context::Mix,
+        Context::Transition,
         &[Key::shifted('1'), Key::ch('!')],
         Op::JumpBar(-4),
         "",
     ),
     b(
-        Context::Mix,
+        Context::Transition,
         &[Key::shifted('2'), Key::ch('@')],
         Op::JumpBar(-3),
         "",
     ),
     b(
-        Context::Mix,
+        Context::Transition,
         &[Key::shifted('3'), Key::ch('#')],
         Op::JumpBar(-2),
         "",
     ),
     b(
-        Context::Mix,
+        Context::Transition,
         &[Key::shifted('4'), Key::ch('$')],
         Op::JumpBar(-1),
         "",
     ),
     b(
-        Context::Mix,
+        Context::Transition,
         &[Key::shifted('5'), Key::ch('%')],
         Op::JumpBar(0),
         "",
     ),
     b(
-        Context::Mix,
+        Context::Transition,
         &[Key::shifted('6'), Key::ch('^')],
         Op::JumpBar(1),
         "",
     ),
     b(
-        Context::Mix,
+        Context::Transition,
         &[Key::shifted('7'), Key::ch('&')],
         Op::JumpBar(2),
         "",
     ),
     b(
-        Context::Mix,
+        Context::Transition,
         &[Key::shifted('8'), Key::ch('*')],
         Op::JumpBar(3),
         "",
     ),
     b(
-        Context::Mix,
+        Context::Transition,
         &[Key::shifted('9'), Key::ch('(')],
         Op::JumpBar(4),
         "",
     ),
     b(
-        Context::Mix,
+        Context::Transition,
         &[ENTER],
         Op::Accept,
         "transition cue on this track: the selected bars, else 8 from the cursor",
     ),
     b(
-        Context::Mix,
+        Context::Transition,
         &[Key::ch('[')],
         Op::GridEarlier,
         "grid: bars start a beat earlier",
     ),
     b(
-        Context::Mix,
+        Context::Transition,
         &[Key::ch(']')],
         Op::GridLater,
         "grid: bars start a beat later",
     ),
     b(
-        Context::Mix,
+        Context::Transition,
         &[Key::ch('{')],
         Op::GridNudgeBack,
         "grid: every beat 5 ms earlier",
     ),
     b(
-        Context::Mix,
+        Context::Transition,
         &[Key::ch('}')],
         Op::GridNudgeForward,
         "grid: every beat 5 ms later",
     ),
     b(
-        Context::Mix,
+        Context::Transition,
         &[Key::ch('<')],
         Op::GridHalf,
         "grid: half tempo",
     ),
     b(
-        Context::Mix,
+        Context::Transition,
         &[Key::ch('>')],
         Op::GridDouble,
         "grid: double tempo",
     ),
     b(
-        Context::Mix,
+        Context::Transition,
         &[Key::ch('D')],
         Op::GridOne,
         "grid: a bar starts on the cursor's beat (bars of four)",
     ),
     b(
-        Context::Mix,
+        Context::Transition,
         &[Key::ch('U')],
         Op::GridReset,
         "grid: undo the fixes, back to the analysis",
     ),
     b(
-        Context::Mix,
+        Context::Transition,
         &[Key::ch('g')],
         Op::TransitionGo,
         "transition: arm it at the two cues, or call it off",
     ),
     b(
-        Context::Mix,
+        Context::Transition,
         &[Key::ch('p')],
         Op::TransitionPreset,
         "transition: next preset (fade, drums first, bass swap, vocals last)",
     ),
     b(
-        Context::Mix,
+        Context::Transition,
         &[Key::ch('m')],
         Op::TransitionTempo,
         "transition: varispeed / time-stretch",
     ),
     b(
-        Context::Mix,
+        Context::Transition,
         &[Key::ch('r')],
         Op::TransitionPairing,
         "transition: beats paired by the tempi, 1:1, 2:1 (the next at half tempo), 1:2 (at double)",
     ),
     b(
-        Context::Mix,
+        Context::Transition,
         &[Key::ch('e')],
         Op::TransitionEdit,
         "transition: edit the fades",
     ),
     b(
-        Context::Mix,
+        Context::Transition,
         &[ESC],
         Op::Back,
         "clear the selection, else call off a transition armed, else hide it",
     ),
     // Editing the fades.
-    b(Context::MixEdit, &[UP], Op::Up, "lane above"),
-    b(Context::MixEdit, &[DOWN], Op::Down, "lane below"),
-    b(Context::MixEdit, &[LEFT], Op::EditBack, "bar before"),
-    b(Context::MixEdit, &[RIGHT], Op::EditForward, "bar after"),
+    b(Context::Fades, &[UP], Op::Up, "lane above"),
+    b(Context::Fades, &[DOWN], Op::Down, "lane below"),
+    b(Context::Fades, &[LEFT], Op::EditBack, "bar before"),
+    b(Context::Fades, &[RIGHT], Op::EditForward, "bar after"),
     b(
-        Context::MixEdit,
+        Context::Fades,
         &[Key::ch('+'), Key::ch('=')],
         Op::EditRaise,
         "a quarter louder at this bar",
     ),
     b(
-        Context::MixEdit,
+        Context::Fades,
         &[Key::ch('-')],
         Op::EditLower,
         "a quarter quieter at this bar",
     ),
     b(
-        Context::MixEdit,
+        Context::Fades,
         &[Key::ch('0')],
         Op::EditOff,
         "off at this bar",
     ),
     b(
-        Context::MixEdit,
+        Context::Fades,
         &[Key::ch('1')],
         Op::EditFull,
         "full at this bar",
     ),
     b(
-        Context::MixEdit,
+        Context::Fades,
         &[Key::ch('c')],
         Op::EditCut,
         "this bar cuts to its gain, or fades to it",
     ),
     b(
-        Context::MixEdit,
+        Context::Fades,
         &[ESC, Key::ch('e')],
         Op::Back,
         "stop editing",
@@ -1372,10 +1373,10 @@ pub fn contexts(state: &State) -> Vec<Context> {
         Screen::Main => {
             if state.browser.filter.as_ref().is_some_and(|f| f.editing) {
                 vec![Context::Filter]
-            } else if state.side == Side::Mix && state.mix.draft.edit.is_some() {
-                vec![Context::MixEdit, Context::Global]
-            } else if state.side == Side::Mix {
-                vec![Context::Mix, Context::Global]
+            } else if state.side == Side::Transition && state.transition.draft.edit.is_some() {
+                vec![Context::Fades, Context::Global]
+            } else if state.side == Side::Transition {
+                vec![Context::Transition, Context::Global]
             } else if state.side == Side::Karaoke {
                 vec![Context::Karaoke, Context::Global]
             } else if state.side == Side::Queue {

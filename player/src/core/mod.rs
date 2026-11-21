@@ -19,8 +19,8 @@ pub mod action;
 pub mod grid;
 pub mod karaoke;
 pub mod keymap;
+pub mod lanes;
 pub mod layout;
-pub mod mix;
 pub mod mouse;
 pub mod preview;
 pub mod singing;
@@ -161,8 +161,8 @@ pub enum Side {
     /// The play queue.
     Queue,
     /// The track playing and the next one, their waveforms and bars
-    /// ([`mix`]); it takes the whole width.
-    Mix,
+    /// ([`transition::tab`]); it takes the whole width.
+    Transition,
     /// Karaoke set up: the voice's and the microphone's levels, and the
     /// way into Karaoke mode ([`karaoke`]); the whole width too.
     Karaoke,
@@ -170,11 +170,11 @@ pub enum Side {
 
 impl Side {
     /// The tabs, in the order `tab` goes through them.
-    pub const ALL: [Side; 4] = [Side::Browser, Side::Queue, Side::Mix, Side::Karaoke];
+    pub const ALL: [Side; 4] = [Side::Browser, Side::Queue, Side::Transition, Side::Karaoke];
 
     /// Whether it takes the whole width (no right column).
     pub fn wide(self) -> bool {
-        matches!(self, Side::Mix | Side::Karaoke)
+        matches!(self, Side::Transition | Side::Karaoke)
     }
 }
 
@@ -349,7 +349,7 @@ pub enum SettingsRow {
     StemSwitch,
     /// What the next-track key does: cut, or mix in.
     SkipMix,
-    /// The preset it mixes in by: the Mix tab's, or one of its own.
+    /// The preset it mixes in by: the Transition tab's, or one of its own.
     SkipPreset,
     /// Where the player's data is kept (chosen in a folder list; moved there).
     DataFolder,
@@ -616,12 +616,12 @@ pub struct State {
     /// The stems heard (this session only: the player starts with all of
     /// them, the file as it is).
     pub stems: StemMix,
-    /// The Mix tab.
-    pub mix: mix::MixState,
+    /// The Transition tab.
+    pub transition: transition::tab::TransitionTab,
     /// The Karaoke tab and mode.
     pub karaoke: karaoke::KaraokeState,
     /// Seconds into the playing track as heard when the last frame was
-    /// drawn (a frontend's smoothed position), so the Mix tab's keys and
+    /// drawn (a frontend's smoothed position), so the Transition tab's keys and
     /// clicks act on what was seen; `None`: the position reported.
     pub drawn_heard: Option<f64>,
     /// The clock ([`State::now_ms`]) when the last frame was drawn: what
@@ -694,7 +694,8 @@ impl State {
 
     /// A state with the browser in `dir`, the given settings and size.
     pub fn new(dir: PathBuf, config: Config, size: (u16, u16)) -> State {
-        let mix = mix::MixState::with(config.mix_preset, config.mix_tempo);
+        let transition =
+            transition::tab::TransitionTab::with(config.transition_preset, config.transition_tempo);
         State {
             size,
             info_width_held: 0,
@@ -737,7 +738,7 @@ impl State {
             rhythm_recipe: RhythmRecipe::default(),
             gpu: Gpu::Looking,
             stems: StemMix::ALL,
-            mix,
+            transition,
             karaoke: karaoke::KaraokeState::default(),
             drawn_heard: None,
             drawn_ms: None,

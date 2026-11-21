@@ -1,8 +1,8 @@
-//! Bar jumps on a real track, as the Mix tab's digits make them, in real
+//! Bar jumps on a real track, as the Transition tab's digits make them, in real
 //! time into a memory output (nothing goes to a device): to the bar heard,
 //! the one before, three ahead, one at the bar's end, a fast run of them
 //! (a stutter), and the same with the drums off (on its stems, the stems
-//! kept while the file played as the Mix tab keeps them, the first jump
+//! kept while the file played as the Transition tab keeps them, the first jump
 //! right after the drums went off). It says how long after each command the jump was
 //! heard and the longest run of digital silence in what was played: a gap
 //! (an underrun is padded with silence) would show there.
@@ -24,7 +24,7 @@ use jodel_playback::source::Source;
 use jodel_playback::stems::{Separator, Stem, StemMix};
 use jodel_playback::{Event, JumpAt, MemoryTarget, Player, PlayerOptions, Settings};
 use jodel_rhythm::{Analysis, Method};
-use jodeldiplom::core::mix::bar_jump;
+use jodeldiplom::core::transition::tab::bar_jump;
 use jodeldiplom::core::RhythmRecipe;
 use jodeldiplom::rhythm::analyze_file;
 

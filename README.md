@@ -34,7 +34,7 @@ What it does:
   separated.
 - **Beat-matched transitions**: crossfades from one track into the next
   with the beats paired, each stem on its own envelope, by varispeed or a
-  time-stretch, on the Mix tab or on the next-track key.
+  time-stretch, on the Transition tab or on the next-track key.
 - **Rhythm analysis**: beats, downbeats, tempo and key of every track
   (spectral flux and our own inference of the Beat This! network voting on
   one grid, a meter that listens for the backbeat), and beat grids that can
@@ -112,7 +112,7 @@ its `make.py` with FFmpeg) and two PCM FLAC files (`pcm`, made by its
 | `jodel-rhythm` | [rhythm](rhythm) | beat, downbeat, tempo, key and pitch analysis, and the stem separator on the CPU, in plain Rust |
 | `jodel-gpu` | [gpu](gpu) | the stem separator, the beat network and the speech recogniser on the GPU, through `wgpu` |
 | `jodel-lyrics` | [lyrics](lyrics) | lyrics for karaoke: LRC in and out, tokens for a speech model, forced alignment of words, the speech recogniser and its 4-bit packing |
-| `jodeldiplom` | [player](player) | the player: terminal and window frontends on one core, the browser, queue, Mix tab, karaoke, setup |
+| `jodeldiplom` | [player](player) | the player: terminal and window frontends on one core, the browser, queue, Transition tab, karaoke, setup |
 
 ## Licences
 

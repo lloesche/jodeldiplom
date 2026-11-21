@@ -509,7 +509,7 @@ fn draw_notes(target: &mut Target, op: &TextOp, clip: Rect) {
     let (top, bottom) = (op.px * NOTES_TOP, op.px * NOTES_BOTTOM - thick);
     // A note's top at `height`.
     let y_of = |height: f32| op.at.1 + bottom - (height + 1.0) / 2.0 * (bottom - top);
-    let sung = rgb(crate::view::mix::NOTE);
+    let sung = rgb(crate::view::lanes::NOTE);
     let ahead = rgb(NOTE_AHEAD);
     let hit = rgb(HIT);
     let half = rgb(HALF_HIT);

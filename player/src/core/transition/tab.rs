@@ -1,6 +1,7 @@
-//! The Mix tab: the track playing and the next one, their waveforms and
-//! bars over time, a cursor on the beats, a selection of bars, and the
-//! fixes to a beat grid ([`super::grid`]).
+//! The Transition tab: the track playing and the next one, their waveforms
+//! and bars over time, a cursor on the beats, a selection of bars, and the
+//! fixes to a beat grid ([`crate::core::grid`]). The lanes themselves, and
+//! which track each block shows, are [`crate::core::lanes`].
 //!
 //! Both blocks show the same span of time, so their tempi compare at a
 //! glance: [`ZOOMS`] bars of the playing track, or the whole of the longer
@@ -16,10 +17,12 @@ use std::sync::Arc;
 use jodel_playback::Command;
 use jodel_rhythm::Analysis;
 
-use super::grid::Grid;
-use super::keymap::Op;
-use super::transition::{self as tr, Draft, Edit, Status};
-use super::{Effect, Rhythm, Rhythmed, Screen, Side, State};
+use crate::core::grid::Grid;
+use crate::core::keymap::Op;
+use crate::core::lanes::{self, path, rhythmed, Block};
+use crate::core::transition::{self as tr, Draft, Edit, Status};
+use crate::core::update::say_info;
+use crate::core::{Effect, Rhythm, Rhythmed, Screen, Side, State};
 use jodel_playback::stems::STEMS;
 use jodel_playback::{TempoMode, TransitionPlan, TransitionState};
 
@@ -37,24 +40,6 @@ const FALLBACK_BAR: f64 = 2.0;
 /// The share of the span shown before the playhead while following, and
 /// before the cursor when it is brought into view.
 pub const LEAD: f64 = 1.0 / 3.0;
-
-/// A block of the tab.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
-pub enum Block {
-    /// The track playing.
-    #[default]
-    Now,
-    /// The next one in the queue.
-    Next,
-    /// The one before the playing track: shown only while it slides away
-    /// after a transition into the playing one ([`slide`]).
-    Prev,
-}
-
-impl Block {
-    /// The two the keys act on, top first.
-    pub const BOTH: [Block; 2] = [Block::Now, Block::Next];
-}
 
 /// How long the next track's block takes to slide up into the playing
 /// track's after a transition hands over, in milliseconds.
@@ -87,7 +72,7 @@ pub struct Cue {
 
 /// What one block is set to, for the track it was set for.
 #[derive(Clone, Debug, Default, PartialEq)]
-pub struct MixBlock {
+pub struct BlockState {
     /// The track (a block for another track starts afresh).
     pub path: Option<PathBuf>,
     /// The beat the cursor is on; `None` until it moves (at the playhead's
@@ -102,19 +87,19 @@ pub struct MixBlock {
     /// (`enter`).
     pub cue: Option<Cue>,
     /// Its own zoom (an index into [`ZOOMS`]), set by the wheel over it;
-    /// `None`: the tab's ([`MixState::zoom`]).
+    /// `None`: the tab's ([`TransitionTab::zoom`]).
     pub zoom: Option<usize>,
 }
 
-/// The Mix tab's state.
+/// The Transition tab's state.
 #[derive(Clone, Debug, PartialEq)]
-pub struct MixState {
+pub struct TransitionTab {
     /// The block the keys act on.
     pub focus: Block,
     /// The playing track's block.
-    pub now: MixBlock,
+    pub now: BlockState,
     /// The next track's block.
-    pub next: MixBlock,
+    pub next: BlockState,
     /// The index into [`ZOOMS`].
     pub zoom: usize,
     /// The last press on the lanes: the block, the beat and when
@@ -124,7 +109,7 @@ pub struct MixState {
     pub draft: Draft,
     /// The track before the playing one, as its block was when a
     /// transition handed over from it (its view held where it was).
-    pub prev: MixBlock,
+    pub prev: BlockState,
     /// When ([`frame_ms`]) a transition handed over: the next track's
     /// block slides up into the playing track's place from then.
     pub slide: Option<u64>,
@@ -132,36 +117,36 @@ pub struct MixState {
     pub pan: Option<Pan>,
 }
 
-impl Default for MixState {
-    fn default() -> MixState {
-        MixState {
+impl Default for TransitionTab {
+    fn default() -> TransitionTab {
+        TransitionTab {
             focus: Block::Now,
-            now: MixBlock::default(),
-            next: MixBlock::default(),
+            now: BlockState::default(),
+            next: BlockState::default(),
             zoom: DEFAULT_ZOOM,
             last_press: None,
             draft: Draft::default(),
-            prev: MixBlock::default(),
+            prev: BlockState::default(),
             slide: None,
             pan: None,
         }
     }
 }
 
-impl MixState {
-    /// A Mix tab whose transitions start from `preset` and `tempo` (as the
-    /// settings remember them).
-    pub fn with(preset: super::transition::Preset, tempo: TempoMode) -> MixState {
-        let mut mix = MixState::default();
-        mix.draft.preset = preset;
-        mix.draft.tempo = tempo;
-        mix
+impl TransitionTab {
+    /// A Transition tab whose transitions start from `preset` and `tempo` (as
+    /// the settings remember them).
+    pub fn with(preset: tr::Preset, tempo: TempoMode) -> TransitionTab {
+        let mut tab = TransitionTab::default();
+        tab.draft.preset = preset;
+        tab.draft.tempo = tempo;
+        tab
     }
 }
 
-impl MixState {
+impl TransitionTab {
     /// A block's state, as stored (see [`block`] for it as it applies).
-    pub fn get(&self, block: Block) -> &MixBlock {
+    pub fn get(&self, block: Block) -> &BlockState {
         match block {
             Block::Now => &self.now,
             Block::Next => &self.next,
@@ -169,28 +154,12 @@ impl MixState {
         }
     }
 
-    fn get_mut(&mut self, block: Block) -> &mut MixBlock {
+    fn get_mut(&mut self, block: Block) -> &mut BlockState {
         match block {
             Block::Now => &mut self.now,
             Block::Next => &mut self.next,
             Block::Prev => &mut self.prev,
         }
-    }
-}
-
-/// The track a block shows: the one playing, the one after it, or the one
-/// before it.
-pub fn path(state: &State, block: Block) -> Option<&PathBuf> {
-    state.queue.paths.get(index(state, block)?)
-}
-
-/// The queue index of the track a block shows (it may be past the queue).
-pub fn index(state: &State, block: Block) -> Option<usize> {
-    let index = state.playing.track.as_ref()?.index;
-    match block {
-        Block::Now => Some(index),
-        Block::Next => Some(index + 1),
-        Block::Prev => index.checked_sub(1),
     }
 }
 
@@ -202,7 +171,7 @@ pub fn frame_ms(state: &State) -> u64 {
 /// How far the slide after a hand-over has come, 0 to 1 (eased), while
 /// it is under way.
 pub fn slide(state: &State) -> Option<f64> {
-    let since = state.mix.slide?;
+    let since = state.transition.slide?;
     let p = frame_ms(state).saturating_sub(since) as f64 / SLIDE_MS as f64;
     (p < 1.0).then(|| 1.0 - (1.0 - p).powi(3))
 }
@@ -210,7 +179,7 @@ pub fn slide(state: &State) -> Option<f64> {
 /// The transition armed or under way from the playing track into the
 /// next, as sent.
 pub fn transition_into(state: &State) -> Option<&tr::Sent> {
-    let d = &state.mix.draft;
+    let d = &state.transition.draft;
     let sent = d.sent.as_ref()?;
     let playing = state.playing.track.as_ref()?.index;
     (matches!(d.status, Status::Armed | Status::Mixing(_)) && sent.plan.from == playing)
@@ -226,43 +195,35 @@ pub fn playhead(state: &State, which: Block, heard: f64) -> Option<f64> {
         Block::Now => Some(heard),
         Block::Next => {
             let sent = transition_into(state)?;
-            matches!(state.mix.draft.status, Status::Mixing(_)).then(|| sent.map.at(heard))
+            matches!(state.transition.draft.status, Status::Mixing(_)).then(|| sent.map.at(heard))
         }
         Block::Prev => None,
     }
 }
 
-/// The analysis and waveform of a block's track, once in.
-pub fn rhythmed(state: &State, block: Block) -> Option<&Arc<Rhythmed>> {
-    match state.rhythm.get(path(state, block)?)? {
-        Rhythm::Ready(r) => Some(r),
-        _ => None,
-    }
-}
-
 /// A block's state as it applies to the track it shows now: what was set
 /// for that track, else nothing yet.
-pub fn block(state: &State, which: Block) -> MixBlock {
-    let stored = state.mix.get(which);
+pub fn block(state: &State, which: Block) -> BlockState {
+    let stored = state.transition.get(which);
     let path = path(state, which);
     if stored.path.as_ref() == path {
         stored.clone()
     } else {
-        MixBlock {
+        BlockState {
             path: path.cloned(),
-            ..MixBlock::default()
+            ..BlockState::default()
         }
     }
 }
 
 /// A block's state to change, started afresh if it was for another track.
-fn block_mut(state: &mut State, which: Block) -> &mut MixBlock {
+fn block_mut(state: &mut State, which: Block) -> &mut BlockState {
     let path = path(state, which).cloned();
-    let stored = state.mix.get_mut(which);
+    let stored = state.transition.get_mut(which);
     if stored.path != path {
-        *stored = MixBlock {
+        *stored = BlockState {
             path,
-            ..MixBlock::default()
+            ..BlockState::default()
         };
     }
     stored
@@ -295,7 +256,7 @@ fn duration(state: &State, which: Block) -> f64 {
 pub fn zoom_of(state: &State, which: Block) -> usize {
     block(state, which)
         .zoom
-        .unwrap_or(state.mix.zoom)
+        .unwrap_or(state.transition.zoom)
         .min(ZOOMS.len() - 1)
 }
 
@@ -437,14 +398,14 @@ pub(crate) fn jump_bar(state: &mut State, offset: isize, at_end: bool, fx: &mut 
     let (Some(index), Some(_)) = (state.queue.current, state.playing.track.as_ref()) else {
         return;
     };
-    if state.mix.draft.status != Status::Draft {
-        return super::update::say_info(state, "No bar jumps while a transition is set up");
+    if state.transition.draft.status != Status::Draft {
+        return say_info(state, "No bar jumps while a transition is set up");
     }
     let Some(r) = rhythmed(state, Block::Now).cloned() else {
-        return super::update::say_info(state, "No bars yet: the track is being analysed");
+        return say_info(state, "No bars yet: the track is being analysed");
     };
     let Some((to, end)) = bar_jump(&r.analysis, state.heard(), offset) else {
-        return super::update::say_info(state, "No bar there");
+        return say_info(state, "No bar there");
     };
     let at = if at_end {
         jodel_playback::JumpAt::At(end)
@@ -501,7 +462,7 @@ fn put_cursor(state: &mut State, which: Block, beat: usize, select: bool, heard:
 
 /// Moves a block's cursor by bars or beats.
 fn step(state: &mut State, bars: isize, beats: isize, select: bool, heard: f64) {
-    let which = state.mix.focus;
+    let which = state.transition.focus;
     let Some(r) = rhythmed(state, which).cloned() else {
         return;
     };
@@ -525,7 +486,7 @@ fn step(state: &mut State, bars: isize, beats: isize, select: bool, heard: f64) 
 
 /// Zooms the tab by `by` levels ([`set_zoom`]).
 fn zoom(state: &mut State, by: isize, heard: f64) {
-    let z = (state.mix.zoom as isize + by).clamp(0, ZOOMS.len() as isize - 1) as usize;
+    let z = (state.transition.zoom as isize + by).clamp(0, ZOOMS.len() as isize - 1) as usize;
     set_zoom(state, z, heard);
 }
 
@@ -536,7 +497,7 @@ fn set_zoom(state: &mut State, z: usize, heard: f64) {
         .iter()
         .map(|&b| window(state, b, heard))
         .collect();
-    state.mix.zoom = z;
+    state.transition.zoom = z;
     for (i, which) in Block::BOTH.into_iter().enumerate() {
         block_mut(state, which).zoom = None;
         let span = span(state, which);
@@ -553,20 +514,23 @@ fn set_zoom(state: &mut State, z: usize, heard: f64) {
 /// zoom (the other keeps its own), and said. A view following the playhead
 /// goes on following it; one moved by hand keeps its middle.
 fn fit_lyrics(state: &mut State, heard: f64) {
-    let which = state.mix.focus;
+    let which = state.transition.focus;
     let Some(width) = lane_width(state) else {
         return;
     };
-    let lyrics = lyrics_of_block(state, which);
-    let words = lyrics.as_deref().map(fitted_words).unwrap_or_default();
+    let lyrics = lanes::lyrics(state, which);
+    let words = lyrics
+        .as_deref()
+        .map(lanes::fitted_words)
+        .unwrap_or_default();
     if words.is_empty() {
-        super::update::say_info(state, "No timed lyrics to fit the zoom to");
+        say_info(state, "No timed lyrics to fit the zoom to");
         return;
     }
-    let least = words_left_out(&words, LYRICS_MOST_PER, 1);
+    let least = lanes::words_left_out(&words, lanes::LYRICS_MOST_PER, 1);
     let fits = |z: usize| {
         let per = f64::from(width) / span_at(state, z).max(1e-3);
-        words_left_out(&words, per, 1) <= least
+        lanes::words_left_out(&words, per, 1) <= least
     };
     let fitting = (0..ZOOMS.len()).rev().find(|&z| fits(z));
     let z = fitting.unwrap_or(0);
@@ -592,198 +556,18 @@ fn fit_lyrics(state: &mut State, heard: f64) {
     } else {
         format!("Zoomed {track} in all the way ({shown}); some words still do not fit")
     };
-    super::update::say_info(state, said);
+    say_info(state, said);
 }
-/// The width of the Mix tab's lanes, in cells.
+/// The width of the Transition tab's lanes, in cells.
 fn lane_width(state: &State) -> Option<u16> {
-    let super::layout::Layout::Main(m) = super::layout::compute(state) else {
+    let crate::core::layout::Layout::Main(m) = crate::core::layout::compute(state) else {
         return None;
     };
-    let b = m.mix?.blocks.into_iter().next()?;
+    let b = m.transition?.blocks.into_iter().next()?;
     let width = b.lanes.first().map_or(b.overview.width, |l| l.2.width);
     (width > 0).then_some(width)
 }
 
-/// The lyrics of a block's track, once found.
-pub fn lyrics_of_block(state: &State, which: Block) -> Option<Arc<jodel_lyrics::Lyrics>> {
-    use super::karaoke::{lyrics_of, SongLyrics};
-    match index(state, which).and_then(|i| lyrics_of(state, i)) {
-        Some(SongLyrics::Found { shown, .. }) => Some(Arc::clone(shown)),
-        _ => None,
-    }
-}
-
-/// The timed words of `lyrics`, in order.
-pub fn timed_words(lyrics: &jodel_lyrics::Lyrics) -> Vec<&jodel_lyrics::Word> {
-    lyrics
-        .lines
-        .iter()
-        .flat_map(|l| &l.words)
-        .filter(|w| w.is_timed())
-        .collect()
-}
-
-/// The words of `lyrics` a zoom is fitted to: those timed where they were
-/// heard (or given their times by the source), not those the aligner did
-/// not hear and timed between their neighbours, often squeezed into a gap
-/// (an echo of backing words in a fifth of a second would set the zoom of
-/// the whole song). They are still drawn where there is room. All the
-/// timed words when none were heard.
-pub fn fitted_words(lyrics: &jodel_lyrics::Lyrics) -> Vec<&jodel_lyrics::Word> {
-    let timed = timed_words(lyrics);
-    let heard: Vec<&jodel_lyrics::Word> = timed
-        .iter()
-        .copied()
-        .filter(|w| w.confidence >= jodel_lyrics::CONFIDENT)
-        .collect();
-    if heard.is_empty() {
-        timed
-    } else {
-        heard
-    }
-}
-
-/// The most cells a second a lane's words are laid out at to fit them:
-/// faster, they would scroll by too fast to read.
-pub const LYRICS_MOST_PER: f64 = 40.0;
-/// The least (a lane over a song's quiet stretch shows no more than this).
-pub const LYRICS_LEAST_PER: f64 = 3.0;
-
-/// The lines a lane's words go on, and whether a word with no room is
-/// left out or goes on later.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct WordLines {
-    /// Lines of words: the first, then each under the one before.
-    pub rows: usize,
-    /// A word with no room anywhere near where it is sung still goes in,
-    /// after the one before (late), rather than being left out.
-    pub keep_all: bool,
-}
-
-impl WordLines {
-    /// One line; words with no room left out (the Mix lanes).
-    pub const ONE: WordLines = WordLines {
-        rows: 1,
-        keep_all: false,
-    };
-    /// One line; every word goes in, each where it is sung (at the zoom
-    /// that fits them all), but for words sung at the same moment, which
-    /// go on after the one before (the Karaoke tab's voice lane).
-    pub const KARAOKE: WordLines = WordLines {
-        rows: 1,
-        keep_all: true,
-    };
-}
-
-/// Lays `words` (timed, in order: the whole song's) out along a lane: each
-/// at `x_of(its start)` (the lane's units, cells or pixels, from a fixed
-/// origin), a character `cell` units wide at `per` units a second, as wide
-/// as it is sung (up to the next word's start, never cut below its
-/// characters), on the first of `lines.rows` lines where its place is free
-/// (a word crowding the one before on the first line goes under it, where
-/// it is sung). Where it is taken on every line, it goes after the word on
-/// the line that frees first (a character between them), or is left out
-/// once that is past where it ends (unless `lines.keep_all`).
-/// `place(k, at, wide, row)` is given each word laid out (its index, where
-/// it starts, its width in characters and its line) and says whether to go
-/// on. Returns how many were left out (or, with `keep_all`, went in late).
-/// The words are laid out from the song's start, so where one stands
-/// never depends on which others are in view.
-pub fn lay_out_words(
-    words: &[&jodel_lyrics::Word],
-    x_of: &dyn Fn(f64) -> f64,
-    per: f64,
-    cell: f64,
-    lines: WordLines,
-    place: &mut dyn FnMut(usize, f64, usize, usize) -> bool,
-) -> usize {
-    let rows = lines.rows.clamp(1, 4);
-    let chars_per_second = per / cell.max(1e-9);
-    let mut free = [f64::NEG_INFINITY; 4];
-    let mut left_out = 0;
-    for (k, w) in words.iter().enumerate() {
-        let (Some(start), Some(end)) = (w.start, w.end) else {
-            continue;
-        };
-        let letters = w.text.chars().count();
-        if letters == 0 {
-            continue;
-        }
-        let x = x_of(start);
-        // The first line free where it is sung, else the one that frees
-        // first.
-        let (row, at) = match (0..rows).find(|&r| free[r] <= x) {
-            Some(r) => (r, x),
-            None => {
-                let r = (0..rows)
-                    .min_by(|&a, &b| free[a].total_cmp(&free[b]))
-                    .unwrap_or(0);
-                (r, free[r])
-            }
-        };
-        if at > x_of(end) + cell {
-            left_out += 1;
-            if !lines.keep_all {
-                continue;
-            }
-        }
-        let next = words
-            .get(k + 1)
-            .and_then(|n| n.start)
-            .map_or(f64::INFINITY, x_of);
-        let room = ((next - at) / cell - 1.0).floor().clamp(0.0, 1e6) as usize;
-        let sung = ((end - start) * chars_per_second).floor().max(0.0) as usize;
-        let wide = sung.min(room).max(letters);
-        free[row] = at + (wide + 1) as f64 * cell;
-        if !place(k, at, wide, row) {
-            break;
-        }
-    }
-    left_out
-}
-
-/// How many of `words` a lane of `rows` lines leaves out at `per` cells a
-/// second.
-pub fn words_left_out(words: &[&jodel_lyrics::Word], per: f64, rows: usize) -> usize {
-    let lines = WordLines {
-        rows,
-        keep_all: false,
-    };
-    lay_out_words(
-        words,
-        &|t| (t * per).floor(),
-        per,
-        1.0,
-        lines,
-        &mut |_, _, _, _| true,
-    )
-}
-
-/// The fewest cells a second at which a lane of `rows` lines leaves out no
-/// more of `words` than it must (those it leaves out even at
-/// [`LYRICS_MOST_PER`]: words sung at the same moment), a little more for
-/// room; `None` without words.
-pub fn lyrics_per_second(words: &[&jodel_lyrics::Word], rows: usize) -> Option<f64> {
-    if words.is_empty() {
-        return None;
-    }
-    let least = words_left_out(words, LYRICS_MOST_PER, rows);
-    let fits = |per: f64| words_left_out(words, per, rows) <= least;
-    if fits(LYRICS_LEAST_PER) {
-        return Some(LYRICS_LEAST_PER);
-    }
-    let (mut lo, mut hi) = (LYRICS_LEAST_PER, LYRICS_MOST_PER);
-    while hi / lo > 1.01 {
-        let mid = (lo * hi).sqrt();
-        if fits(mid) {
-            hi = mid;
-        } else {
-            lo = mid;
-        }
-    }
-    let roomy = (hi * 1.1).min(LYRICS_MOST_PER);
-    Some(if fits(roomy) { roomy } else { hi })
-}
 /// Zooms one block (the wheel over it), keeping `at` (seconds into its
 /// track, under the pointer) where it is on screen; without `at`, its
 /// middle.
@@ -811,10 +595,10 @@ fn zoom_block(state: &mut State, which: Block, by: isize, at: Option<f64>, heard
 /// A grid fix on the focused block's track: the analysis in the state
 /// takes it at once, and the fixed grid is saved.
 fn fix(state: &mut State, fx: &mut Vec<Effect>, heard: f64, how: impl Fn(&Grid, usize) -> Grid) {
-    let which = state.mix.focus;
+    let which = state.transition.focus;
     let (Some(path), Some(r)) = (path(state, which).cloned(), rhythmed(state, which).cloned())
     else {
-        super::update::say_info(state, "No beats to fix here yet");
+        say_info(state, "No beats to fix here yet");
         return;
     };
     let Some(at) = cursor(state, which, heard) else {
@@ -855,13 +639,13 @@ fn nearest(beats: &[f64], time: f64) -> usize {
 
 /// Back to the grid the analysis found.
 fn reset(state: &mut State, fx: &mut Vec<Effect>) {
-    let which = state.mix.focus;
+    let which = state.transition.focus;
     let (Some(path), Some(r)) = (path(state, which).cloned(), rhythmed(state, which).cloned())
     else {
         return;
     };
     if !r.fixed() {
-        super::update::say_info(state, "The grid is as the analysis found it");
+        say_info(state, "The grid is as the analysis found it");
         return;
     }
     state.rhythm.insert(
@@ -881,22 +665,22 @@ fn reset(state: &mut State, fx: &mut Vec<Effect>) {
         .and_then(|c| same(Some(c.beat)).map(|beat| Cue { beat, ..c }));
     b.anchor = None;
     fx.push(Effect::ResetGrid(path));
-    super::update::say_info(state, "The grid is back as the analysis found it");
+    say_info(state, "The grid is back as the analysis found it");
 }
 
-/// Whether the Mix tab is what keys act on.
+/// Whether the Transition tab is what keys act on.
 pub fn active(state: &State) -> bool {
-    state.screen == Screen::Main && state.side == Side::Mix && state.palette.is_none()
+    state.screen == Screen::Main && state.side == Side::Transition && state.palette.is_none()
 }
 
-/// Carries out `op` on the Mix tab; `false` when it is not one of the
+/// Carries out `op` on the Transition tab; `false` when it is not one of the
 /// tab's (or the tab is not shown).
 pub(crate) fn apply(state: &mut State, op: Op, fx: &mut Vec<Effect>) -> bool {
     if !active(state) {
         return false;
     }
     let heard = state.heard();
-    if let Some(at) = state.mix.draft.edit.as_mut() {
+    if let Some(at) = state.transition.draft.edit.as_mut() {
         match op {
             Op::Up => {
                 at.lane = at.lane.saturating_sub(1);
@@ -907,38 +691,42 @@ pub(crate) fn apply(state: &mut State, op: Op, fx: &mut Vec<Effect>) -> bool {
                 return true;
             }
             Op::Back => {
-                state.mix.draft.edit = None;
+                state.transition.draft.edit = None;
                 return true;
             }
             _ => {}
         }
     }
     match op {
-        Op::Up => state.mix.focus = Block::Now,
-        Op::Down => state.mix.focus = Block::Next,
-        Op::MixBarBack => step(state, -1, 0, false, heard),
-        Op::MixBarForward => step(state, 1, 0, false, heard),
-        Op::MixBeatBack => step(state, 0, -1, false, heard),
-        Op::MixBeatForward => step(state, 0, 1, false, heard),
-        Op::MixSelectBack => step(state, -1, 0, true, heard),
-        Op::MixSelectForward => step(state, 1, 0, true, heard),
+        Op::Up => state.transition.focus = Block::Now,
+        Op::Down => state.transition.focus = Block::Next,
+        Op::TransitionBarBack => step(state, -1, 0, false, heard),
+        Op::TransitionBarForward => step(state, 1, 0, false, heard),
+        Op::TransitionBeatBack => step(state, 0, -1, false, heard),
+        Op::TransitionBeatForward => step(state, 0, 1, false, heard),
+        Op::TransitionSelectBack => step(state, -1, 0, true, heard),
+        Op::TransitionSelectForward => step(state, 1, 0, true, heard),
         Op::PageUp => step(state, -PAGE_BARS, 0, false, heard),
         Op::PageDown => step(state, PAGE_BARS, 0, false, heard),
-        Op::MixZoomIn => zoom(state, -1, heard),
-        Op::MixZoomOut => zoom(state, 1, heard),
-        Op::MixFitLyrics => fit_lyrics(state, heard),
-        Op::MixLyrics => {
-            state.config.mix_lyrics = !state.config.mix_lyrics;
+        Op::TransitionZoomIn => zoom(state, -1, heard),
+        Op::TransitionZoomOut => zoom(state, 1, heard),
+        Op::TransitionFitLyrics => fit_lyrics(state, heard),
+        Op::TransitionLyrics => {
+            state.config.transition_lyrics = !state.config.transition_lyrics;
             fx.push(Effect::SaveConfig);
-            let now = if state.config.mix_lyrics { "on" } else { "off" };
-            super::update::say_info(state, format!("Lyrics on the vocals lane: {now}"));
+            let now = if state.config.transition_lyrics {
+                "on"
+            } else {
+                "off"
+            };
+            say_info(state, format!("Lyrics on the vocals lane: {now}"));
         }
-        Op::MixFollow => {
+        Op::TransitionFollow => {
             let b = block_mut(state, Block::Now);
             b.start = None;
             b.cursor = None;
             b.anchor = None;
-            state.mix.focus = Block::Now;
+            state.transition.focus = Block::Now;
         }
         // Enter never moves playback: it sets the focused track's cue.
         Op::Accept => set_cue(state, fx, heard),
@@ -946,21 +734,21 @@ pub(crate) fn apply(state: &mut State, op: Op, fx: &mut Vec<Effect>) -> bool {
         // the selection, else calls off a transition armed, else clears the
         // focused track's cue.
         Op::Back => {
-            let which = state.mix.focus;
+            let which = state.transition.focus;
             let b = block_mut(state, which);
             if b.anchor.is_some() {
                 b.anchor = None;
             } else {
-                match state.mix.draft.status {
+                match state.transition.draft.status {
                     Status::Armed => call_off(state, fx),
                     Status::Mixing(_) => {
-                        super::update::say_info(state, "A transition is under way");
+                        say_info(state, "A transition is under way");
                     }
                     Status::Draft => {
                         let b = block_mut(state, which);
                         if b.cue.take().is_some() {
-                            state.mix.draft.edit = None;
-                            super::update::say_info(state, "Cue cleared");
+                            state.transition.draft.edit = None;
+                            say_info(state, "Cue cleared");
                         }
                     }
                 }
@@ -987,35 +775,35 @@ pub(crate) fn apply(state: &mut State, op: Op, fx: &mut Vec<Effect>) -> bool {
         | Op::EditOff
         | Op::EditFull
         | Op::EditCut
-            if matches!(state.mix.draft.status, Status::Mixing(_)) =>
+            if matches!(state.transition.draft.status, Status::Mixing(_)) =>
         {
-            super::update::say_info(state, "A transition is under way: it plays as it is");
+            say_info(state, "A transition is under way: it plays as it is");
         }
         Op::TransitionPreset => {
-            let d = &mut state.mix.draft;
+            let d = &mut state.transition.draft;
             d.preset = d.preset.next();
             d.lanes = None;
             let name = d.preset.name();
             // Remembered: the next run starts from it.
-            state.config.mix_preset = state.mix.draft.preset;
+            state.config.transition_preset = state.transition.draft.preset;
             fx.push(Effect::SaveConfig);
-            super::update::say_info(state, format!("Transition: {name}"));
+            say_info(state, format!("Transition: {name}"));
             rearm(state, fx, true);
         }
         Op::TransitionTempo => {
-            let d = &mut state.mix.draft;
+            let d = &mut state.transition.draft;
             d.tempo = match d.tempo {
                 TempoMode::Varispeed => TempoMode::Stretch,
                 TempoMode::Stretch => TempoMode::Varispeed,
             };
             let what = tempo_name(d.tempo);
-            state.config.mix_tempo = state.mix.draft.tempo;
+            state.config.transition_tempo = state.transition.draft.tempo;
             fx.push(Effect::SaveConfig);
-            super::update::say_info(state, format!("Transition: {what}"));
+            say_info(state, format!("Transition: {what}"));
             rearm(state, fx, false);
         }
         Op::TransitionPairing => {
-            let d = &mut state.mix.draft;
+            let d = &mut state.transition.draft;
             d.pairing = match d.pairing {
                 None => Some(tr::Pairing::One),
                 Some(tr::Pairing::One) => Some(tr::Pairing::Two),
@@ -1023,21 +811,21 @@ pub(crate) fn apply(state: &mut State, op: Op, fx: &mut Vec<Effect>) -> bool {
                 Some(tr::Pairing::Half) => None,
             };
             let label = pairing(state).label();
-            let what = match state.mix.draft.pairing {
+            let what = match state.transition.draft.pairing {
                 None => format!("{label} (by the tempi)"),
                 Some(_) => label.to_owned(),
             };
-            super::update::say_info(state, format!("Transition: beats paired {what}"));
+            say_info(state, format!("Transition: beats paired {what}"));
             repair(state, fx);
         }
         Op::TransitionEdit => {
             let cued = Block::BOTH.iter().any(|&b| block(state, b).cue.is_some());
-            if !cued && state.mix.draft.status == Status::Draft {
-                super::update::say_info(state, "Set a cue first: enter on the bars to mix over");
+            if !cued && state.transition.draft.status == Status::Draft {
+                say_info(state, "Set a cue first: enter on the bars to mix over");
                 return true;
             }
             let bars = draft_bars(state);
-            let d = &mut state.mix.draft;
+            let d = &mut state.transition.draft;
             if d.edit.take().is_none() {
                 d.lanes = Some(d.lanes(bars));
                 d.edit = Some(Edit::default());
@@ -1143,15 +931,15 @@ pub fn draft_window(state: &State) -> Option<(f64, f64, usize)> {
 /// ([`cue_here`]). Playback stays as it is; a transition armed takes the
 /// new cue.
 fn set_cue(state: &mut State, fx: &mut Vec<Effect>, heard: f64) {
-    let which = state.mix.focus;
+    let which = state.transition.focus;
     if which == Block::Prev {
         return;
     }
-    if matches!(state.mix.draft.status, Status::Mixing(_)) {
-        return super::update::say_info(state, "A transition is under way: it plays as it is");
+    if matches!(state.transition.draft.status, Status::Mixing(_)) {
+        return say_info(state, "A transition is under way: it plays as it is");
     }
     let Some(cue) = cue_here(state, which, heard) else {
-        return super::update::say_info(state, "No bars here yet");
+        return say_info(state, "No bars here yet");
     };
     let bar = rhythmed(state, which).map_or(0, |r| bar_of(&r.analysis, cue.beat));
     let b = block_mut(state, which);
@@ -1178,17 +966,17 @@ fn set_cue(state: &mut State, fx: &mut Vec<Effect>, heard: f64) {
             _ => "the next track",
         };
         format!("; set one in {there} too")
-    } else if state.mix.draft.status == Status::Draft {
+    } else if state.transition.draft.status == Status::Draft {
         "; g arms the transition".to_owned()
     } else {
         String::new()
     };
-    super::update::say_info(state, format!("Cue on {track}: {what}{then}"));
-    if state.mix.draft.status == Status::Armed {
+    say_info(state, format!("Cue on {track}: {what}{then}"));
+    if state.transition.draft.status == Status::Armed {
         // The transition armed moves to the new cue (if it can).
         match cued_plan(state) {
             Ok(sent) => send(state, fx, sent),
-            Err(why) => super::update::say_info(state, format!("The armed one stays: {why}")),
+            Err(why) => say_info(state, format!("The armed one stays: {why}")),
         }
     }
 }
@@ -1196,7 +984,7 @@ fn set_cue(state: &mut State, fx: &mut Vec<Effect>, heard: f64) {
 /// How the beats pair: for the transition sent while it is armed or
 /// mixing, else as `r` set it, else by the two tracks' tempi.
 pub fn pairing(state: &State) -> tr::Pairing {
-    let d = &state.mix.draft;
+    let d = &state.transition.draft;
     if let (Status::Armed | Status::Mixing(_), Some(sent)) = (&d.status, &d.sent) {
         return sent.pairing;
     }
@@ -1206,7 +994,7 @@ pub fn pairing(state: &State) -> tr::Pairing {
 /// How the beats are to pair: as `r` set it, else by the two tracks'
 /// tempi.
 fn chosen_pairing(state: &State) -> tr::Pairing {
-    if let Some(p) = state.mix.draft.pairing {
+    if let Some(p) = state.transition.draft.pairing {
         return p;
     }
     let (a, b) = meeting_tempi(state);
@@ -1230,7 +1018,7 @@ pub fn meeting_tempi(state: &State) -> (Option<f64>, Option<f64>) {
     let first_b = rhythmed(state, Block::Next)
         .and_then(|r| r.analysis.downbeats.first().map(|&d| r.analysis.beats[d]))
         .unwrap_or(0.0);
-    let cued = |b: &MixBlock| b.cue.map(|c| c.beat).or(b.anchor).or(b.cursor);
+    let cued = |b: &BlockState| b.cue.map(|c| c.beat).or(b.anchor).or(b.cursor);
     (
         near(Block::Now, cued(&now), heard),
         near(Block::Next, cued(&next), first_b),
@@ -1245,7 +1033,7 @@ fn first_bar_after(a: &Analysis, t: f64) -> Option<usize> {
 /// The bars of the transition shown: the plan sent while it is armed or
 /// mixing, else the window set up.
 pub fn draft_bars(state: &State) -> usize {
-    let d = &state.mix.draft;
+    let d = &state.transition.draft;
     match (&d.status, &d.sent) {
         (Status::Armed | Status::Mixing(_), Some(sent)) => sent.bars,
         _ => match draft_window(state) {
@@ -1259,7 +1047,7 @@ pub fn draft_bars(state: &State) -> usize {
 /// The transition shown and its bars: the plan sent while it is armed or
 /// mixing, else the one set up.
 pub fn shown_plan(state: &State) -> Option<(TransitionPlan, usize)> {
-    let d = &state.mix.draft;
+    let d = &state.transition.draft;
     match (&d.status, &d.sent) {
         (Status::Armed | Status::Mixing(_), Some(sent)) => Some((sent.plan.clone(), sent.bars)),
         _ => draft_plan(state, None).ok(),
@@ -1305,9 +1093,18 @@ pub fn draft_plan(state: &State, soon: Option<f64>) -> Result<(TransitionPlan, u
             .cursor
             .unwrap_or_else(|| b.downbeats.first().copied().unwrap_or(0)),
     };
-    let lanes = state.mix.draft.lanes(window.2);
+    let lanes = state.transition.draft.lanes(window.2);
     let per = pairing(state);
-    let plan = tr::plan(from, a, b, window, entry, lanes, state.mix.draft.tempo, per);
+    let plan = tr::plan(
+        from,
+        a,
+        b,
+        window,
+        entry,
+        lanes,
+        state.transition.draft.tempo,
+        per,
+    );
     Ok((plan, window.2))
 }
 
@@ -1331,25 +1128,25 @@ fn cued_plan(state: &State) -> Result<tr::Sent, String> {
     Ok(tr::Sent::new(
         plan,
         bars,
-        state.mix.draft.preset,
+        state.transition.draft.preset,
         pairing(state),
     ))
 }
 
 /// `g`: arms the transition at the two cues, or calls the armed one off.
 fn go(state: &mut State, fx: &mut Vec<Effect>) {
-    match state.mix.draft.status {
+    match state.transition.draft.status {
         // Calling it off does not cut a mix under way off (moving playback
         // does).
-        Status::Mixing(_) => super::update::say_info(state, "A transition is under way"),
+        Status::Mixing(_) => say_info(state, "A transition is under way"),
         Status::Armed => call_off(state, fx),
         Status::Draft => match cued_plan(state) {
             Ok(sent) => {
                 let at = sent.plan.start - state.heard();
                 send(state, fx, sent);
-                super::update::say_info(state, format!("Transition armed: it starts in {at:.0} s"));
+                say_info(state, format!("Transition armed: it starts in {at:.0} s"));
             }
-            Err(why) => super::update::say_info(state, format!("No transition: {why}")),
+            Err(why) => say_info(state, format!("No transition: {why}")),
         },
     }
 }
@@ -1357,9 +1154,9 @@ fn go(state: &mut State, fx: &mut Vec<Effect>) {
 /// Calls off the transition armed (its cues stay).
 fn call_off(state: &mut State, fx: &mut Vec<Effect>) {
     fx.push(Effect::Engine(Command::CancelTransition));
-    state.mix.draft.status = Status::Draft;
-    state.mix.draft.sent = None;
-    super::update::say_info(state, "Transition called off");
+    state.transition.draft.status = Status::Draft;
+    state.transition.draft.sent = None;
+    say_info(state, "Transition called off");
 }
 
 /// Sends `sent` to the engine, and keeps it.
@@ -1367,11 +1164,11 @@ fn send(state: &mut State, fx: &mut Vec<Effect>, sent: tr::Sent) {
     fx.push(Effect::Engine(Command::Transition(Box::new(
         sent.plan.clone(),
     ))));
-    if state.mix.draft.status == Status::Draft {
+    if state.transition.draft.status == Status::Draft {
         // Newly armed: the next track's view runs along with it.
         block_mut(state, Block::Next).start = None;
     }
-    state.mix.draft.sent = Some(sent);
+    state.transition.draft.sent = Some(sent);
 }
 
 /// Seconds after what is heard that a skip mixes in at the soonest, and
@@ -1382,7 +1179,7 @@ pub const GO_AFTER: f64 = 4.5;
 /// The fades (`lanes`) or the tempo mode changed while armed: the engine
 /// takes the plan it has with them (its window and entry stay).
 fn rearm(state: &mut State, fx: &mut Vec<Effect>, lanes: bool) {
-    let d = &state.mix.draft;
+    let d = &state.transition.draft;
     if d.status != Status::Armed {
         return;
     }
@@ -1401,7 +1198,7 @@ fn rearm(state: &mut State, fx: &mut Vec<Effect>, lanes: bool) {
 /// beats paired the new way, from the same window start and entry (the
 /// window made whole bars of the slower track).
 fn repair(state: &mut State, fx: &mut Vec<Effect>) {
-    let d = &state.mix.draft;
+    let d = &state.transition.draft;
     if let (Status::Armed, Some(sent)) = (&d.status, d.sent.clone()) {
         let per = chosen_pairing(state);
         resend(state, fx, sent, per);
@@ -1420,7 +1217,7 @@ fn resend(state: &mut State, fx: &mut Vec<Effect>, sent: tr::Sent, per: tr::Pair
     let Some(window) = tr::window(a, first, bars) else {
         return;
     };
-    let lanes = state.mix.draft.lanes(window.2);
+    let lanes = state.transition.draft.lanes(window.2);
     let plan = tr::plan(
         sent.plan.from,
         a,
@@ -1428,7 +1225,7 @@ fn resend(state: &mut State, fx: &mut Vec<Effect>, sent: tr::Sent, per: tr::Pair
         window,
         entry,
         lanes,
-        state.mix.draft.tempo,
+        state.transition.draft.tempo,
         per,
     );
     send(state, fx, tr::Sent::new(plan, window.2, sent.preset, per));
@@ -1437,7 +1234,7 @@ fn resend(state: &mut State, fx: &mut Vec<Effect>, sent: tr::Sent, per: tr::Pair
 /// An editing key on the lanes.
 fn edit(state: &mut State, op: Op, fx: &mut Vec<Effect>) {
     let bars = draft_bars(state);
-    let d = &mut state.mix.draft;
+    let d = &mut state.transition.draft;
     let Some(mut at) = d.edit else {
         return;
     };
@@ -1462,14 +1259,14 @@ fn edit(state: &mut State, op: Op, fx: &mut Vec<Effect>) {
 /// A new engine: nothing of a transition the old one had is left (it will
 /// say nothing more of it).
 pub fn engine_restarted(state: &mut State) {
-    let d = &mut state.mix.draft;
+    let d = &mut state.transition.draft;
     d.status = Status::Draft;
     d.sent = None;
 }
 
 /// The engine says how the transition goes.
 pub(crate) fn transition_event(state: &mut State, event: TransitionState) {
-    let d = &mut state.mix.draft;
+    let d = &mut state.transition.draft;
     match event {
         TransitionState::Armed => d.status = Status::Armed,
         // Only for one it has: a late word of one called off is not taken.
@@ -1484,14 +1281,14 @@ pub(crate) fn transition_event(state: &mut State, event: TransitionState) {
                 tempo: d.tempo,
                 ..Draft::default()
             };
-            super::update::say_info(state, "Transition done");
+            say_info(state, "Transition done");
         }
         TransitionState::Cancelled { reason } => {
             d.status = Status::Draft;
             d.sent = None;
             // Playback moved on by the user's own key or click: no news.
             if reason != "playback moved elsewhere" {
-                super::update::say_info(state, format!("Transition called off: {reason}"));
+                say_info(state, format!("Transition called off: {reason}"));
             }
         }
     }
@@ -1500,9 +1297,9 @@ pub(crate) fn transition_event(state: &mut State, event: TransitionState) {
 /// A point of a block's lanes was pressed (`extend`: dragged to, which
 /// selects): the cursor goes to the beat at or before `time`. Whether it
 /// was a double click (a second press on that beat within
-/// [`super::DOUBLE_CLICK_MS`]).
+/// [`crate::core::DOUBLE_CLICK_MS`]).
 pub(crate) fn point(state: &mut State, which: Block, time: f64, extend: bool) -> bool {
-    state.mix.focus = which;
+    state.transition.focus = which;
     let heard = state.heard();
     let Some(r) = rhythmed(state, which).cloned() else {
         return false;
@@ -1514,10 +1311,10 @@ pub(crate) fn point(state: &mut State, which: Block, time: f64, extend: bool) ->
     let beat = a.beat_at(time).unwrap_or(0);
     let now = state.now_ms;
     let double = !extend
-        && state.mix.last_press.is_some_and(|(b, at, ms)| {
-            b == which && at == beat && now.saturating_sub(ms) <= super::DOUBLE_CLICK_MS
+        && state.transition.last_press.is_some_and(|(b, at, ms)| {
+            b == which && at == beat && now.saturating_sub(ms) <= crate::core::DOUBLE_CLICK_MS
         });
-    state.mix.last_press = (!extend && !double).then_some((which, beat, now));
+    state.transition.last_press = (!extend && !double).then_some((which, beat, now));
     if extend {
         let b = block_mut(state, which);
         if b.anchor.is_none() {
@@ -1535,7 +1332,7 @@ pub(crate) fn seek(state: &mut State, fx: &mut Vec<Effect>, time: f64) {
     let Some(duration) = state.playing.duration() else {
         return jump(state, Block::Now, time);
     };
-    if super::karaoke::seek_refused(state) {
+    if crate::core::karaoke::seek_refused(state) {
         return jump(state, Block::Now, time);
     }
     let seconds = time.clamp(0.0, duration);
@@ -1570,9 +1367,9 @@ pub(crate) fn scroll(state: &mut State, which: Block, share: f64) {
 /// the playing track cut off); else, by the setting, mix into it from the
 /// first bar the engine can get ready for, or cut to it.
 pub(crate) fn skip(state: &mut State, fx: &mut Vec<Effect>) {
-    match state.mix.draft.status {
+    match state.transition.draft.status {
         Status::Mixing(_) if transition_into(state).is_some() => {
-            super::update::say_info(state, "Cut into the next track where it is");
+            say_info(state, "Cut into the next track where it is");
         }
         Status::Armed => {}
         _ => {
@@ -1580,8 +1377,8 @@ pub(crate) fn skip(state: &mut State, fx: &mut Vec<Effect>) {
                 match skip_plan(state, state.config.skip_preset) {
                     Ok(sent) => {
                         let at = sent.plan.start - state.heard();
-                        let name = super::update::skip_preset_name(state);
-                        super::update::say_info(
+                        let name = crate::core::update::skip_preset_name(state);
+                        say_info(
                             state,
                             format!(
                                 "Mixing into the next track in {at:.0} s ({name}); N again cuts"
@@ -1590,7 +1387,7 @@ pub(crate) fn skip(state: &mut State, fx: &mut Vec<Effect>) {
                         return send(state, fx, sent);
                     }
                     Err(why) => {
-                        super::update::say_info(state, format!("Cut to the next track: {why}"));
+                        say_info(state, format!("Cut to the next track: {why}"));
                     }
                 }
             }
@@ -1601,11 +1398,11 @@ pub(crate) fn skip(state: &mut State, fx: &mut Vec<Effect>) {
 
 /// The transition a skip starts: from the first bar at least [`GO_AFTER`]
 /// on, over the bars set up (or [`tr::DEFAULT_BARS`]), into the next
-/// track's cue (or first bar), faded by `preset` (`None`: the Mix tab's
+/// track's cue (or first bar), faded by `preset` (`None`: the Transition tab's
 /// preset as it is set, its fades as edited).
 fn skip_plan(state: &State, preset: Option<tr::Preset>) -> Result<tr::Sent, String> {
     let (mut plan, bars) = draft_plan(state, Some(GO_AFTER))?;
-    let d = &state.mix.draft;
+    let d = &state.transition.draft;
     let (lanes, preset) = match preset {
         Some(p) => (p.lanes(bars), p),
         None => (d.lanes(bars), d.preset),
@@ -1621,7 +1418,7 @@ fn skip_plan(state: &State, preset: Option<tr::Preset>) -> Result<tr::Sent, Stri
 /// as it is seen now (its view held), and the next track's block slides up
 /// into its place ([`slide`]).
 pub(crate) fn track_started(state: &mut State, index: usize) {
-    let carried = (self::index(state, Block::Next) == Some(index)).then(|| MixBlock {
+    let carried = (lanes::index(state, Block::Next) == Some(index)).then(|| BlockState {
         start: None,
         cursor: None,
         anchor: None,
@@ -1629,13 +1426,13 @@ pub(crate) fn track_started(state: &mut State, index: usize) {
         ..block(state, Block::Next)
     });
     let handing_over = transition_into(state).is_some_and(|s| s.plan.into == index)
-        && matches!(state.mix.draft.status, Status::Mixing(_));
+        && matches!(state.transition.draft.status, Status::Mixing(_));
     if handing_over {
         hand_over(state);
     }
     if let Some(now) = carried {
-        state.mix.now = now;
-        state.mix.next = MixBlock::default();
+        state.transition.now = now;
+        state.transition.next = BlockState::default();
     }
 }
 
@@ -1644,21 +1441,21 @@ pub(crate) fn track_started(state: &mut State, index: usize) {
 fn hand_over(state: &mut State) {
     let heard = state.heard();
     let (start, _) = window(state, Block::Now, heard);
-    state.mix.prev = MixBlock {
+    state.transition.prev = BlockState {
         start: Some(start),
         cursor: None,
         anchor: None,
         ..block(state, Block::Now)
     };
-    state.mix.slide = Some(frame_ms(state));
-    state.mix.focus = Block::Now;
-    state.mix.pan = None;
+    state.transition.slide = Some(frame_ms(state));
+    state.transition.focus = Block::Now;
+    state.transition.pan = None;
 }
 
 /// The clock: a slide that has ended is forgotten.
 pub(crate) fn tick(state: &mut State) {
-    if state.mix.slide.is_some() && slide(state).is_none() {
-        state.mix.slide = None;
+    if state.transition.slide.is_some() && slide(state).is_none() {
+        state.transition.slide = None;
     }
 }
 
@@ -1676,8 +1473,8 @@ pub(crate) fn pan_start(state: &mut State, which: Block, column: u16, width: u16
     } else {
         (end - start) / f64::from(width)
     };
-    state.mix.focus = which;
-    state.mix.pan = Some(Pan {
+    state.transition.focus = which;
+    state.transition.pan = Some(Pan {
         block: which,
         per_column,
         column,
@@ -1689,7 +1486,7 @@ pub(crate) fn pan_start(state: &mut State, which: Block, column: u16, width: u16
 /// moves with it (dragged right, the waveform goes right, to earlier
 /// times; on the whole track, the span shown follows the pointer).
 pub(crate) fn pan_to(state: &mut State, column: u16) {
-    let Some(pan) = state.mix.pan else {
+    let Some(pan) = state.transition.pan else {
         return;
     };
     let moved = f64::from(column) - f64::from(pan.column);
@@ -1699,7 +1496,7 @@ pub(crate) fn pan_to(state: &mut State, column: u16) {
 
 /// The drag of a view ends.
 pub(crate) fn pan_end(state: &mut State) {
-    state.mix.pan = None;
+    state.transition.pan = None;
 }
 
 /// The wheel without shift over a block: that block zooms in (`by` < 0)

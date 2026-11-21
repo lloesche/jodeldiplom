@@ -250,22 +250,23 @@ impl SongLyrics {
     }
 }
 
-/// The songs whose lyrics are wanted: while the tab or the mode shows,
-/// the one playing (or held), then the next two in the queue; while the
-/// Mix tab shows, its tracks' (their words go on the voice's lane), unless
-/// that is turned off (`mix_lyrics`).
+/// The songs whose lyrics are wanted: while the tab or the mode shows, the one
+/// playing (or held), then the next two in the queue; while the Transition tab
+/// shows, its tracks' (their words go on the voice's lane), unless that is
+/// turned off (`transition_lyrics`).
 pub fn lyrics_wanted(state: &State) -> Vec<PathBuf> {
-    if state.screen == Screen::Main && state.side == Side::Mix {
-        if !state.config.mix_lyrics {
+    if state.screen == Screen::Main && state.side == Side::Transition {
+        if !state.config.transition_lyrics {
             return Vec::new();
         }
         let mut paths: Vec<PathBuf> = Vec::new();
         for block in [
-            crate::core::mix::Block::Prev,
-            crate::core::mix::Block::Now,
-            crate::core::mix::Block::Next,
+            crate::core::lanes::Block::Prev,
+            crate::core::lanes::Block::Now,
+            crate::core::lanes::Block::Next,
         ] {
-            let path = crate::core::mix::index(state, block).and_then(|i| state.queue.paths.get(i));
+            let path =
+                crate::core::lanes::index(state, block).and_then(|i| state.queue.paths.get(i));
             if let Some(path) = path.filter(|p| !paths.contains(p)) {
                 paths.push(path.clone());
             }
@@ -731,10 +732,10 @@ pub(crate) fn enter(state: &mut State, fx: &mut Vec<Effect>, here: bool) {
     state.karaoke.controls_until = state.now_ms + CONTROLS_MS;
     state.karaoke.countdown = None;
     state.karaoke.resume_at = None;
-    if state.mix.draft.status == Status::Armed {
+    if state.transition.draft.status == Status::Armed {
         fx.push(Effect::Engine(Command::CancelTransition));
-        state.mix.draft.status = Status::Draft;
-        state.mix.draft.sent = None;
+        state.transition.draft.status = Status::Draft;
+        state.transition.draft.sent = None;
     }
     let song = state
         .playing

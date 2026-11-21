@@ -84,10 +84,10 @@ pub enum Target {
     ListArea,
     /// The title, artist or album of the playing track: where it goes.
     Link(Op),
-    /// A Mix block's lanes (or its ruler).
-    MixLane(crate::core::mix::Block),
-    /// A Mix block's whole-track row.
-    MixOverview(crate::core::mix::Block),
+    /// A Transition block's lanes (or its ruler).
+    TransitionLane(crate::core::lanes::Block),
+    /// A Transition block's whole-track row.
+    TransitionOverview(crate::core::lanes::Block),
     /// A Karaoke slider's row.
     KaraokeSlider(Slider),
     /// A level on the Karaoke tab.
@@ -165,20 +165,20 @@ pub fn regions(state: &State) -> Vec<(Rect, Target)> {
                 out.push((k.show_notes, Target::Button(Op::KaraokeNotes)));
                 out.push((k.keep, Target::Button(Op::KaraokeKeep)));
             }
-            if let (Some(mix), None) = (&m.mix, &state.palette) {
-                if let Some(fit) = mix.fit {
-                    out.push((fit, Target::Button(Op::MixFitLyrics)));
+            if let (Some(tab), None) = (&m.transition, &state.palette) {
+                if let Some(fit) = tab.fit {
+                    out.push((fit, Target::Button(Op::TransitionFitLyrics)));
                 }
                 // The block sliding away after a hand-over takes no clicks.
-                for b in mix
+                for b in tab
                     .blocks
                     .iter()
-                    .filter(|b| b.block != crate::core::mix::Block::Prev)
+                    .filter(|b| b.block != crate::core::lanes::Block::Prev)
                 {
-                    out.push((b.overview, Target::MixOverview(b.block)));
-                    out.push((b.ruler, Target::MixLane(b.block)));
+                    out.push((b.overview, Target::TransitionOverview(b.block)));
+                    out.push((b.ruler, Target::TransitionLane(b.block)));
                     for (_, _, lane) in &b.lanes {
-                        out.push((*lane, Target::MixLane(b.block)));
+                        out.push((*lane, Target::TransitionLane(b.block)));
                     }
                 }
             }
@@ -286,19 +286,24 @@ fn bar_fraction(state: &State, col: u16) -> Option<f64> {
     Some(f64::from(x) / f64::from(bar.width - 1))
 }
 
-/// The seconds into a Mix block's track at column `col`: of the span the
+/// The seconds into a Transition block's track at column `col`: of the span the
 /// lanes show, or of the whole track for its overview.
-fn mix_time(
+fn transition_time(
     state: &State,
-    block: crate::core::mix::Block,
+    block: crate::core::lanes::Block,
     col: u16,
     overview: bool,
 ) -> Option<f64> {
-    use crate::core::mix;
+    use crate::core::lanes;
+    use crate::core::transition::tab;
     let Layout::Main(m) = layout::compute(state) else {
         return None;
     };
-    let b = m.mix?.blocks.into_iter().find(|b| b.block == block)?;
+    let b = m
+        .transition?
+        .blocks
+        .into_iter()
+        .find(|b| b.block == block)?;
     // The lanes and the overview share their columns (the overview may be
     // out of view while a block slides).
     let area = b.lanes.first().map_or(b.overview, |l| l.2);
@@ -308,7 +313,7 @@ fn mix_time(
     let share =
         (f64::from(col.clamp(area.x, area.right() - 1) - area.x) + 0.5) / f64::from(area.width);
     let (start, end) = if overview {
-        let r = mix::rhythmed(state, block)?;
+        let r = lanes::rhythmed(state, block)?;
         let duration = r
             .waveform
             .as_ref()
@@ -316,17 +321,21 @@ fn mix_time(
             .max(r.analysis.duration);
         (0.0, duration)
     } else {
-        mix::window(state, block, state.heard())
+        tab::window(state, block, state.heard())
     };
     Some(start + share * (end - start))
 }
 
-/// The width of a Mix block's waveforms, in columns.
-fn mix_width(state: &State, block: crate::core::mix::Block) -> Option<u16> {
+/// The width of a Transition block's waveforms, in columns.
+fn transition_width(state: &State, block: crate::core::lanes::Block) -> Option<u16> {
     let Layout::Main(m) = layout::compute(state) else {
         return None;
     };
-    let b = m.mix?.blocks.into_iter().find(|b| b.block == block)?;
+    let b = m
+        .transition?
+        .blocks
+        .into_iter()
+        .find(|b| b.block == block)?;
     let width = b.lanes.first().map_or(b.overview.width, |l| l.2.width);
     (width > 0).then_some(width)
 }
@@ -370,11 +379,11 @@ pub fn action_at(state: &State, input: MouseInput, x: f64) -> Option<Action> {
             _ => None,
         };
     }
-    // So does a drag of a Mix block's view.
-    if state.mix.pan.is_some() {
+    // So does a drag of a Transition block's view.
+    if state.transition.pan.is_some() {
         return match input.kind {
-            Drag(Right) | Moved => Some(Action::MixPan(input.col)),
-            Up(Right) => Some(Action::MixPanEnd),
+            Drag(Right) | Moved => Some(Action::TransitionPan(input.col)),
+            Up(Right) => Some(Action::TransitionPanEnd),
             _ => None,
         };
     }
@@ -417,36 +426,39 @@ pub fn action_at(state: &State, input: MouseInput, x: f64) -> Option<Action> {
     }
     let target = hit(state, input.col, input.row)?;
     match (input.kind, target) {
-        (Down(Right), Target::MixLane(block) | Target::MixOverview(block)) => {
-            Some(Action::MixPanStart {
+        (Down(Right), Target::TransitionLane(block) | Target::TransitionOverview(block)) => {
+            Some(Action::TransitionPanStart {
                 block,
                 column: input.col,
-                width: mix_width(state, block)?,
-                overview: matches!(target, Target::MixOverview(_)),
+                width: transition_width(state, block)?,
+                overview: matches!(target, Target::TransitionOverview(_)),
             })
         }
-        (ScrollUp | ScrollDown, Target::MixLane(block) | Target::MixOverview(block)) => {
-            let overview = matches!(target, Target::MixOverview(_));
-            Some(Action::MixWheel {
+        (
+            ScrollUp | ScrollDown,
+            Target::TransitionLane(block) | Target::TransitionOverview(block),
+        ) => {
+            let overview = matches!(target, Target::TransitionOverview(_));
+            Some(Action::TransitionWheel {
                 block,
                 steps: if input.kind == ScrollUp { -1 } else { 1 },
                 // Over the whole track the wheel moves the view; over the
                 // lanes it zooms that block, around the pointer.
                 scroll: overview,
                 at: (!overview)
-                    .then(|| mix_time(state, block, input.col, false))
+                    .then(|| transition_time(state, block, input.col, false))
                     .flatten(),
             })
         }
-        (Down(Left), Target::MixLane(block)) => {
-            mix_time(state, block, input.col, false).map(|time| Action::MixPoint {
+        (Down(Left), Target::TransitionLane(block)) => {
+            transition_time(state, block, input.col, false).map(|time| Action::TransitionPoint {
                 block,
                 time,
                 extend: false,
             })
         }
-        (Drag(Left), Target::MixLane(block)) => {
-            mix_time(state, block, input.col, false).map(|time| Action::MixPoint {
+        (Drag(Left), Target::TransitionLane(block)) => {
+            transition_time(state, block, input.col, false).map(|time| Action::TransitionPoint {
                 block,
                 time,
                 extend: true,
@@ -463,8 +475,9 @@ pub fn action_at(state: &State, input: MouseInput, x: f64) -> Option<Action> {
                 -karaoke::STEP
             },
         }),
-        (Down(Left), Target::MixOverview(block)) => {
-            mix_time(state, block, input.col, true).map(|time| Action::MixJump { block, time })
+        (Down(Left), Target::TransitionOverview(block)) => {
+            transition_time(state, block, input.col, true)
+                .map(|time| Action::TransitionJump { block, time })
         }
         (ScrollUp | ScrollDown, _) => {
             let step = if input.kind == ScrollUp { -3 } else { 3 };

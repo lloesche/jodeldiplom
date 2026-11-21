@@ -3,7 +3,7 @@
 //! Separating stems is by far the most work the player does: a 6 s chunk
 //! is about half a second of a laptop GPU. A track's stems are separated
 //! once, when it is got ready (with its analysis), and kept in a file of
-//! this format; playing on stems, a jump, a transition or the Mix tab
+//! this format; playing on stems, a jump, a transition or the Transition tab
 //! read them back instead of separating again ([`StemStore`]).
 //!
 //! # The format

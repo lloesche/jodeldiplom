@@ -336,13 +336,13 @@ pub fn waveform(
     }
 }
 
-/// [`playing_state`] on the Mix tab: the playing track and the next one
+/// [`playing_state`] on the Transition tab: the playing track and the next one
 /// (100 BPM) analysed with stems and their waveforms.
 #[allow(dead_code)]
-pub fn mix_state(cols: u16, rows: u16) -> State {
+pub fn transition_state(cols: u16, rows: u16) -> State {
     use jodeldiplom::core::{Rhythm, Rhythmed, Side};
     let mut state = playing_state(cols, rows);
-    state.side = Side::Mix;
+    state.side = Side::Transition;
     state.gpu = jodeldiplom::core::Gpu::Present("Test GPU".into());
     state.config.stems = true;
     state.rhythm_recipe.stems = true;

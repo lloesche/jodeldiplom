@@ -8,9 +8,10 @@
 //! is drawn. The spectrum's axis labels are cells in both ([`plot`]).
 
 pub mod karaoke;
-pub mod mix;
+pub mod lanes;
 pub mod plot;
 pub mod setup;
+pub mod transition;
 
 pub use plot::{spectrum_cells, Plot};
 
@@ -99,20 +100,21 @@ pub trait Pictures {
     /// window darkens the cover behind them so they read on any cover.
     fn caption(&mut self, _cover: Rect, _caption: Rect) {}
     /// How many cells tall (and each character as many wide) the words on
-    /// a lane may be drawn ([`mix::WavePlot::text_scale`]): one in cells,
+    /// a lane may be drawn ([`lanes::WavePlot::text_scale`]): one in cells,
     /// more where the frontend draws text at any size.
     fn lane_text_scale(&self) -> u16 {
         1
     }
-    /// A lane of the Mix tab ([`mix::WavePlot`]): in braille cells unless
-    /// the frontend draws it in pixels.
-    fn wave(&mut self, frame: &mut Frame, plot: &mix::WavePlot) {
-        mix::wave_cells(frame.buffer_mut(), plot);
+    /// A lane's waveform ([`lanes::WavePlot`]), on the Transition tab or the
+    /// Karaoke tab's voice lane: in braille cells unless the frontend draws
+    /// it in pixels.
+    fn wave(&mut self, frame: &mut Frame, plot: &lanes::WavePlot) {
+        lanes::wave_cells(frame.buffer_mut(), plot);
     }
-    /// A Mix block's bar numbers ([`mix::RulerPlot`]): in cells unless the
-    /// frontend draws them where the bars are, to the pixel.
-    fn ruler(&mut self, frame: &mut Frame, plot: &mix::RulerPlot) {
-        mix::ruler_cells(frame.buffer_mut(), plot);
+    /// A Transition block's bar numbers ([`transition::RulerPlot`]): in cells
+    /// unless the frontend draws them where the bars are, to the pixel.
+    fn ruler(&mut self, frame: &mut Frame, plot: &transition::RulerPlot) {
+        transition::ruler_cells(frame.buffer_mut(), plot);
     }
     /// Karaoke mode's picture ([`karaoke::KaraokePicture`]): in cells
     /// unless the frontend paints it in pixels.
@@ -355,11 +357,11 @@ fn draw_main(frame: &mut Frame, scene: &Scene, m: &MainLayout, pictures: &mut dy
             None => format!("{} in the queue", state.queue.paths.len()),
         },
         // The zoom first: cut, the keys go.
-        Side::Mix => keep_start(
-            &mix::footer(state),
+        Side::Transition => keep_start(
+            &transition::footer(state),
             usize::from(
                 m.list.width.saturating_sub(4).saturating_sub(
-                    m.mix
+                    m.transition
                         .as_ref()
                         .and_then(|x| x.fit)
                         .map_or(0, |f| f.width + 1),
@@ -379,14 +381,14 @@ fn draw_main(frame: &mut Frame, scene: &Scene, m: &MainLayout, pictures: &mut dy
         match state.side {
             Side::Browser => draw_browser(frame, state, m.rows),
             Side::Queue => draw_queue(frame, state, m.rows),
-            Side::Mix => {
-                if let Some(layout) = &m.mix {
-                    mix::draw(frame, scene, layout, pictures);
+            Side::Transition => {
+                if let Some(layout) = &m.transition {
+                    transition::draw(frame, scene, layout, pictures);
                     if let Some(fit) = layout.fit {
                         frame.buffer_mut().set_string(
                             fit.x,
                             fit.y,
-                            crate::core::layout::MIX_FIT,
+                            crate::core::layout::FIT_LYRICS,
                             Style::new().fg(TEXT).bg(BORDER),
                         );
                     }
@@ -942,7 +944,10 @@ fn draw_settings(frame: &mut Frame, scene: &Scene, s: &SettingsLayout) {
             }
             .to_owned(),
             SettingsRow::SkipPreset => match state.config.skip_preset {
-                None => format!("the Mix tab's: {}", state.mix.draft.preset.name()),
+                None => format!(
+                    "the Transition tab's: {}",
+                    state.transition.draft.preset.name()
+                ),
                 Some(p) => format!("{} (its own)", p.name()),
             },
             SettingsRow::DataFolder => match (&state.data_move, &state.data_dir) {

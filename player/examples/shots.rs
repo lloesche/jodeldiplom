@@ -86,17 +86,18 @@ fn tui_shot(
     println!("{}", path.display());
 }
 
-/// The playing track's words timed over the Mix tab's span: a line sung
+/// The playing track's words timed over the Transition tab's span: a line sung
 /// from a quarter of the way in, its words a little apart.
 fn sung_words(state: &mut State) {
     use jodel_lyrics::{Lyrics, Source};
-    use jodeldiplom::core::mix::{self, Block};
+    use jodeldiplom::core::lanes::Block;
+    use jodeldiplom::core::transition::tab;
     let Some(index) = state.playing.track.as_ref().map(|t| t.index) else {
         return;
     };
     let path = state.queue.paths[index].clone();
     let text = "Mister rock and roll, take me home tonight";
-    let (start, end) = mix::window(state, Block::Now, state.playing.position);
+    let (start, end) = tab::window(state, Block::Now, state.playing.position);
     let mut timed = Lyrics::parse_text(text, Source::Lrclib);
     let words = &mut timed.lines[0].words;
     let n = words.len() as f64;
@@ -183,19 +184,19 @@ fn main() {
             ("help", help),
             ("filter", filter),
             ("palette", palette),
-            // The Mix tab, on generated tracks with stems and waveforms,
+            // The Transition tab, on generated tracks with stems and waveforms,
             // the playing one's words timed.
-            ("mix", {
-                let mut m = common::mix_state(state.size.0, state.size.1);
+            ("transition", {
+                let mut m = common::transition_state(state.size.0, state.size.1);
                 sung_words(&mut m);
                 m
             }),
-            ("mix-transition", {
+            ("transition-set-up", {
                 // A transition set up from the bar heard, drums first.
-                let mut m = common::mix_state(state.size.0, state.size.1);
+                let mut m = common::transition_state(state.size.0, state.size.1);
                 m.drawn_heard = Some(m.playing.position);
                 jodeldiplom::core::update(&mut m, Action::Op(Op::TransitionPreset));
-                jodeldiplom::core::update(&mut m, Action::Op(Op::MixZoomOut));
+                jodeldiplom::core::update(&mut m, Action::Op(Op::TransitionZoomOut));
                 m
             }),
             ("karaoke-tab", {

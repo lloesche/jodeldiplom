@@ -36,7 +36,7 @@ fn stems_sent(fx: &[Effect]) -> Option<StemMix> {
 /// at 20 %, and every song's lyrics found (their words not timed: there is
 /// no speech model), so each can be sung.
 fn tab() -> State {
-    let mut state = common::mix_state(120, 40);
+    let mut state = common::transition_state(120, 40);
     state.side = Side::Karaoke;
     state.config.karaoke_voice = 20;
     singable(&mut state);
@@ -546,7 +546,7 @@ fn lyrics_are_asked_for_on_the_tab_and_follow_the_song() {
     use jodel_lyrics::{Lyrics, Source};
     use jodeldiplom::lyrics::Answer;
     use jodeldiplom::view::karaoke::{lines_now, LineKind};
-    let mut state = common::mix_state(120, 40);
+    let mut state = common::transition_state(120, 40);
     state.side = Side::Browser;
     // Not asked for away from Karaoke.
     let fx = update(&mut state, Action::Tick(1));

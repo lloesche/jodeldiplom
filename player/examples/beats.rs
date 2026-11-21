@@ -14,7 +14,7 @@
 //! writes the (last) file as 16-bit WAV with a click on every beat, a
 //! higher one on downbeats, to check the beats by ear. It plays nothing.
 //! `--wave` prints, every 10 seconds, each lane's peak level (the mix and
-//! each stem), as the Mix tab draws them. `--presence` shows, every 10 seconds, how present the drum and bass
+//! each stem), as the Transition tab draws them. `--presence` shows, every 10 seconds, how present the drum and bass
 //! stems are and how much the drum stem's candidate has a say there.
 //!
 //! The cues listen to stems separated on the GPU when there is one, as in

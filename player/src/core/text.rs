@@ -279,7 +279,11 @@ pub fn toggle(state: &State) -> Vec<(String, Option<Side>, bool)> {
         ("│".into(), None, false),
         (queue, Some(Side::Queue), state.side == Side::Queue),
         ("│".into(), None, false),
-        (" Mix ".into(), Some(Side::Mix), state.side == Side::Mix),
+        (
+            " Transition ".into(),
+            Some(Side::Transition),
+            state.side == Side::Transition,
+        ),
         ("│".into(), None, false),
         (
             " Karaoke ".into(),

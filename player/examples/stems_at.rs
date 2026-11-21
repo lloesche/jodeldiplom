@@ -7,13 +7,14 @@
 //! cargo run --release -p jodeldiplom --example stems_at -- FILE [--from SECONDS] [--keep]
 //! ```
 //!
-//! It plays from `--from` (default 60 s), the output at the file's rate. The drums go on the first bar at least
-//! 2.5 s on (the track moves onto its stems first), and come back on the
-//! first bar at least a second after that bar was heard. With `--keep` it
-//! plays as the Mix tab does (the stems kept as the file plays, and a jump
-//! window), and the drums go 4 s in, on the first bar a second on. They come back on the
-//! first bar at least a second after that bar was heard. Where the drums
-//! went and came back is found in what was played less the file itself.
+//! It plays from `--from` (default 60 s), the output at the file's rate. The
+//! drums go on the first bar at least 2.5 s on (the track moves onto its stems
+//! first), and come back on the first bar at least a second after that bar was
+//! heard. With `--keep` it plays as the Transition tab does (the stems kept as
+//! the file plays, and a jump window), and the drums go 4 s in, on the first
+//! bar a second on. They come back on the first bar at least a second after
+//! that bar was heard. Where the drums went and came back is found in what was
+//! played less the file itself.
 
 use std::path::Path;
 use std::process::ExitCode;

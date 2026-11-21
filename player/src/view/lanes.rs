@@ -1,38 +1,30 @@
-//! The Mix tab: per block a header, the whole track in one row, the bar
-//! numbers and the lanes (the mix and each stem) over the span shown.
+//! The lanes a track is drawn in, shared by the Transition and Karaoke
+//! tabs and the window: the colours, a lane's waveform ([`WavePlot`]), and
+//! the lyrics' words along the voice's lane ([`lane_labels`]).
 //!
-//! The waveforms are [`WavePlot`]s, drawn by the [`Pictures`]: in cells as
-//! braille (two dot columns and four dot rows a cell, mirrored about the
-//! middle, here), in pixels by the window. Bars start where a lane's cell
-//! is shaded (a line in pixels), the selection is tinted, the playhead is
-//! the accent colour, and stretches where the beat is unclear are dimmer.
-//! The voice's lane carries the lyrics, once timed, along its bottom row:
-//! each word where it is sung, each letter in the cell where the aligner
-//! heard it, a line where a sound is held (`Mi───ster`, `go────`; a word
-//! without its letters' times spread by syllables), the word heard now in
-//! the accent colour ([`lane_labels`]), on the lane's middle row. `L` (the
-//! `mix_lyrics` setting) turns them off.
+//! The waveforms are drawn by the [`super::Pictures`]: in cells as braille
+//! (two dot columns and four dot rows a cell, mirrored about the middle,
+//! here), in pixels by the window. Bars start where a lane's cell is shaded
+//! (a line in pixels), the selection is tinted, the playhead is the accent
+//! colour, and stretches where the beat is unclear are dimmer. The voice's
+//! lane carries the lyrics, once timed, along its bottom row: each word
+//! where it is sung, each letter in the cell where the aligner heard it, a
+//! line where a sound is held (`Mi───ster`, `go────`; a word without its
+//! letters' times spread by syllables), the word heard now in the accent
+//! colour ([`lane_labels`]), on the lane's middle row.
 
 use std::sync::Arc;
 
 use jodel_rhythm::waveform::{self, Waveform};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Modifier, Style};
-use ratatui::text::{Line, Span};
-use ratatui::widgets::Paragraph;
-use ratatui::Frame;
+use ratatui::style::Color;
 
-use super::colors::{ACCENT, DIM, TEXT};
+use super::colors::{ACCENT, TEXT};
 use super::plot::{braille, braille_bit};
-use super::{Pictures, Scene};
-use crate::core::layout::{Lane, MixBlockLayout, MixLayout};
-use crate::core::mix::{self, Block};
-use crate::core::transition::Pairing;
-use crate::core::{text, Rhythm, State};
+use crate::core::lanes::{self, WordLines};
+use crate::core::layout::Lane;
 
-/// Text on a coloured label.
-const BG_TEXT: Color = Color::Rgb(20, 20, 24);
 /// A bar's first beat, behind the waveform.
 pub const BAR_BG: Color = Color::Rgb(40, 40, 52);
 /// The selection, behind the waveform.
@@ -74,19 +66,13 @@ pub fn faded(color: Color, gain: f32) -> Color {
 /// A stem turned off (not heard), whatever its colour.
 pub const OFF: Color = Color::Rgb(78, 78, 86);
 
-/// Whether a lane is a stem turned off.
-fn is_off(state: &State, lane: Lane) -> bool {
-    lane.stem()
-        .is_some_and(|i| !state.stems.contains(jodel_playback::stems::Stem::ALL[i]))
-}
-
 /// A lane's colour.
 pub fn lane_color(lane: Lane) -> Color {
     match lane {
         // The stems in the Okabe–Ito hues (orange, sky blue, bluish green,
         // reddish purple): told apart with every common colour-vision
-        // deficiency; the mix a neutral grey.
-        Lane::Mix => Color::Rgb(169, 171, 181),
+        // deficiency; the whole song a neutral grey.
+        Lane::Song => Color::Rgb(169, 171, 181),
         Lane::Drums => Color::Rgb(230, 159, 0),
         Lane::Bass => Color::Rgb(86, 180, 233),
         Lane::Other => Color::Rgb(0, 158, 115),
@@ -147,8 +133,8 @@ pub struct WavePlot {
     /// How many cells tall, and each character how many wide, the words
     /// are drawn (1: the cells' own; [`super::Pictures::lane_text_scale`]).
     pub text_scale: u16,
-    /// The lines the words go on ([`mix::WordLines`]).
-    pub lines: mix::WordLines,
+    /// The lines the words go on ([`WordLines`]).
+    pub lines: WordLines,
     /// The lane follows the playhead, which stays this share of the way in
     /// (its start `playhead − share × span`, not before the track's): a
     /// frontend may scroll it by itself between frames. Its marks (the
@@ -176,11 +162,9 @@ pub struct Label {
     pub text: String,
     /// It is heard now.
     pub heard: bool,
-    /// Its line (0: the first; [`mix::WordLines`]).
+    /// Its line (0: the first; [`WordLines`]).
     pub row: usize,
 }
-
-pub use crate::core::mix::timed_words;
 
 /// `word` over `wide` cells (at least its characters), each character in
 /// the cell its time (`letters`, seconds after the word's start) falls in
@@ -298,7 +282,7 @@ pub fn word_label(word: &str, slots: usize) -> String {
 
 /// The labels of `words` (timed, in order: the whole song's) along a lane,
 /// those reaching into `view` (`lo..hi`, in the lane's units), as
-/// [`mix::lay_out_words`] places them: each a character `cell` units wide
+/// [`lanes::lay_out_words`] places them: each a character `cell` units wide
 /// at `per` units a second, as wide as it is sung ([`timed_label`], else
 /// [`word_label`]), and whether it is heard at `playhead`.
 #[allow(clippy::too_many_arguments)]
@@ -307,7 +291,7 @@ pub fn lane_labels(
     x_of: &dyn Fn(f64) -> f64,
     per: f64,
     cell: f64,
-    lines: mix::WordLines,
+    lines: WordLines,
     playhead: Option<f64>,
     (lo, hi): (f64, f64),
 ) -> Vec<Label> {
@@ -318,7 +302,7 @@ pub fn lane_labels(
     // another line, is still in it: stop only once a whole line's width
     // past it.
     let stop = hi + (hi - lo).max(0.0);
-    mix::lay_out_words(words, x_of, per, cell, lines, &mut |k, at, wide, row| {
+    lanes::lay_out_words(words, x_of, per, cell, lines, &mut |k, at, wide, row| {
         if at >= stop {
             return false;
         }
@@ -511,7 +495,7 @@ pub fn wave_cells(buf: &mut Buffer, plot: &WavePlot) {
     if let Some(lyrics) = lyrics.filter(|_| middle >= skip && middle - skip < area.height) {
         let y0 = area.y + middle - skip;
         let per = f64::from(area.width) / (plot.end - plot.start).max(1e-9);
-        let words = timed_words(lyrics);
+        let words = lanes::timed_words(lyrics);
         // Whole cells from the track's start, so the words keep their
         // cells as the view scrolls.
         let x_of = |t: f64| (t * per).floor();
@@ -538,520 +522,10 @@ pub fn wave_cells(buf: &mut Buffer, plot: &WavePlot) {
     }
 }
 
-/// The seconds of the bars' first beats of `a` within `start..end`.
-fn downbeats_within(a: &jodel_rhythm::Analysis, start: f64, end: f64) -> Vec<f64> {
-    a.downbeats
-        .iter()
-        .filter_map(|&d| a.beats.get(d).copied())
-        .filter(|&t| t >= start && t < end)
-        .collect()
-}
-
-/// Where the beat is unclear in `a`, as stretches of seconds.
-fn unclear(a: &jodel_rhythm::Analysis) -> Vec<(f64, f64)> {
-    a.regions
-        .iter()
-        .filter(|r| r.confidence < jodel_rhythm::CLEAR)
-        .map(|r| (r.start, r.end))
-        .collect()
-}
-
-/// The header line of a block.
-fn header(state: &State, which: Block, focused: bool, heard: f64) -> Line<'static> {
-    let mark = if focused { "▸ " } else { "  " };
-    let name = match which {
-        Block::Now => "Now",
-        Block::Next => "Next",
-        Block::Prev => "Last",
-    };
-    let style = if focused {
-        Style::new().fg(ACCENT).add_modifier(Modifier::BOLD)
-    } else {
-        Style::new().fg(DIM)
-    };
-    let mut spans = vec![Span::styled(format!("{mark}{name:<5}"), style)];
-    let Some(path) = mix::path(state, which) else {
-        let what = match which {
-            Block::Now => "nothing playing",
-            Block::Next => "nothing after it in the queue",
-            Block::Prev => "",
-        };
-        spans.push(Span::styled(what, Style::new().fg(DIM)));
-        return Line::from(spans);
-    };
-    spans.push(Span::styled(
-        crate::core::shown_title(state, path),
-        Style::new().fg(TEXT),
-    ));
-    let status = if !state.config.bpm {
-        " · tempo is off (M)".to_owned()
-    } else {
-        match state.rhythm.get(path) {
-            None | Some(Rhythm::Pending) => " · analysing…".to_owned(),
-            Some(Rhythm::Failed) => " · could not be analysed".to_owned(),
-            Some(Rhythm::Ready(r)) => {
-                let a = &r.analysis;
-                let mut s = String::new();
-                if let Some(sum) = a.summary {
-                    s.push_str(&format!(" · {} BPM", text::bpm_text(sum.bpm)));
-                }
-                if let Some(key) = a.key {
-                    s.push_str(&format!(" · {}", text::key_text(&key)));
-                }
-                let bars = a.downbeats.len();
-                if let Some(c) = mix::cursor(state, which, heard) {
-                    s.push_str(&format!(" · bar {} / {bars}", mix::bar_of(a, c)));
-                }
-                if r.waveform.as_ref().is_some_and(|w| w.stems.is_none()) {
-                    s.push_str(" · no stems");
-                }
-                if r.fixed() {
-                    s.push_str(" · grid fixed by hand");
-                }
-                if which == Block::Now {
-                    s.push_str(&transition_text(state));
-                }
-                s
-            }
-        }
-    };
-    spans.push(Span::styled(status, Style::new().fg(DIM)));
-    Line::from(spans)
-}
-
-/// The transition set up, in a few words.
-fn transition_text(state: &State) -> String {
-    use crate::core::transition::Status;
-    let d = &state.mix.draft;
-    // The preset of the one sent (a skip sends its own), else the one set.
-    let preset = match (&d.status, &d.sent) {
-        (Status::Armed | Status::Mixing(_), Some(sent)) => sent.preset,
-        _ => d.preset,
-    };
-    let mut s = format!(
-        " · transition: {}, {}",
-        preset.name(),
-        mix::tempo_name(d.tempo)
-    );
-    let bars = mix::draft_bars(state);
-    if d.lanes.as_ref().is_some_and(|l| *l != d.preset.lanes(bars)) {
-        s.push_str(" (edited)");
-    }
-    let cued = |b: Block| mix::block(state, b).cue.is_some();
-    match &d.status {
-        Status::Draft if cued(Block::Now) && cued(Block::Next) => s.push_str(", g arms"),
-        Status::Draft => s.push_str(", enter sets the cues"),
-        Status::Armed => s.push_str(", armed"),
-        Status::Mixing(_) => s.push_str(", mixing"),
-    }
-    // The tempi of the beats that are paired, where they meet.
-    if let (Some(a), Some(b)) = mix::meeting_tempi(state) {
-        // The next track's tempo in the playing track's beats, by the
-        // pairing (2:1: its beat is two of these), and the glide to it.
-        let per = mix::pairing(state);
-        let to = b * per.ratio();
-        // Set by hand: what the transition set up (or armed) takes; one
-        // already mixing plays what it was sent with.
-        let set = d.pairing.is_some() && !matches!(d.status, Status::Mixing(_));
-        s.push_str(" · next ");
-        if per != Pairing::One || set {
-            s.push_str(per.label());
-            s.push_str(if set { " (set) " } else { " " });
-        }
-        s.push_str(&format!("{:+.1} %", 100.0 * (to / a - 1.0)));
-        if (to / a - 1.0).abs() >= 0.002 {
-            // The glide goes as far as the engine takes it; the next track
-            // makes up the rest after the window.
-            let most = jodel_playback::warp::GLIDE_MOST;
-            let reach = a * (to / a).clamp(1.0 / most, most);
-            s.push_str(&format!(" · tempo {a:.0} → {reach:.0} across the window"));
-            if (reach - to).abs() >= 0.5 {
-                s.push_str(&format!(", {to:.0} after it"));
-            }
-        }
-    }
-    s
-}
-
-/// What a block shows of the transition: its window on that track, each
-/// lane's gain curve over it, and the edited bar.
-struct Shown {
-    window: (f64, f64),
-    curves: Vec<(Lane, Vec<(f64, f32)>)>,
-    edit: Option<(Lane, f64)>,
-}
-
-/// The transition as block `which` shows it: the one armed or mixing, else
-/// the one set up at the two cues, else the fades of this track's side
-/// over its own cue (one cue alone).
-fn shown(state: &State, which: Block) -> Option<Shown> {
-    use crate::core::transition::Status;
-    use jodel_playback::stems::STEMS;
-    use jodel_playback::transition::Side;
-    let d = &state.mix.draft;
-    // The playing track's seconds of the window, its bars, the side, this
-    // track's time at the playing track's, and each stem's gains at a
-    // share of the window.
-    type Gains = Box<dyn Fn(f64) -> [f64; STEMS]>;
-    type Here = Box<dyn Fn(f64) -> f64>;
-    let (start, end, bars, side, here, gains): (f64, f64, usize, Side, Here, Gains) =
-        match mix::shown_plan(state) {
-            Some((plan, bars)) => {
-                // The side by the track (after the hand-over the track
-                // mixed in is the playing one, the one left slides away
-                // above it).
-                let index = mix::index(state, which)?;
-                let side = if index == plan.from {
-                    Side::From
-                } else if index == plan.into {
-                    Side::Into
-                } else {
-                    return None;
-                };
-                let map = plan.time_map();
-                let here: Here = match side {
-                    Side::From => Box::new(|t| t),
-                    Side::Into => Box::new(move |t| map.at(t)),
-                };
-                let (start, end) = (plan.start, plan.start + plan.length);
-                let gains: Gains = Box::new(move |share| plan.gains(side, share));
-                (start, end, bars, side, here, gains)
-            }
-            None if d.status == Status::Draft => {
-                let (start, end, _) = mix::cue_window(state, which)?;
-                let side = match which {
-                    Block::Now => Side::From,
-                    Block::Next => Side::Into,
-                    Block::Prev => return None,
-                };
-                let bars = mix::draft_bars(state);
-                let lanes = d.lanes(bars);
-                let base = if side == Side::From { 0 } else { STEMS };
-                let gains: Gains =
-                    Box::new(move |share| std::array::from_fn(|s| lanes[base + s].gain(share)));
-                (start, end, bars, side, Box::new(|t| t), gains)
-            }
-            None => return None,
-        };
-    let window = (here(start), here(end));
-    let steps = 96;
-    let curves = Lane::ALL
-        .iter()
-        .map(|&lane| {
-            let points = (0..=steps)
-                .map(|k| {
-                    let share = f64::from(k) / f64::from(steps);
-                    let t = start + (end - start) * share;
-                    let g = gains(share);
-                    let gain = match lane.stem() {
-                        Some(i) => g[i],
-                        None => g.iter().sum::<f64>() / g.len() as f64,
-                    };
-                    (here(t), gain as f32)
-                })
-                .collect();
-            (lane, points)
-        })
-        .collect();
-    let edit = d.edit.and_then(|e| {
-        let mine = match side {
-            Side::From => e.lane < STEMS,
-            Side::Into => e.lane >= STEMS,
-        };
-        let bars = bars.max(1);
-        let lane = Lane::ALL
-            .iter()
-            .copied()
-            .find(|l| l.stem() == Some(e.lane % STEMS))?;
-        mine.then(|| {
-            (
-                lane,
-                here(start + (end - start) * e.bar as f64 / bars as f64),
-            )
-        })
-    });
-    Some(Shown {
-        window,
-        curves,
-        edit,
-    })
-}
-
-/// The bar numbers over a block's lanes, over `start..end` seconds.
-#[derive(Clone, Debug, PartialEq)]
-pub struct RulerPlot {
-    /// Where it goes (one row).
-    pub area: Rect,
-    /// The seconds shown.
-    pub start: f64,
-    /// Up to.
-    pub end: f64,
-    /// Each bar's first beat in the span, and its number.
-    pub bars: Vec<(f64, usize)>,
-    /// The cursor's beat.
-    pub cursor: Option<f64>,
-    /// The next track's cue bar.
-    pub cue: Option<f64>,
-    /// It follows the playhead with the lanes under it
-    /// ([`WavePlot::follow`]); its bars are then the whole track's.
-    pub follow: Option<f64>,
-}
-
-impl RulerPlot {
-    /// Where `time` falls, in units of `width` across the span.
-    pub fn x_of(&self, time: f64, width: f64) -> f64 {
-        (time - self.start) / (self.end - self.start).max(1e-9) * width
-    }
-}
-
-/// The bar numbers in cells: at each bar's first beat where there is room
-/// (else a tick), the cursor as `▼`, the cue as `◆`.
-pub fn ruler_cells(buf: &mut Buffer, plot: &RulerPlot) {
-    let area = plot.area.intersection(buf.area);
-    if area.width == 0 || area.height == 0 {
-        return;
-    }
-    let w = f64::from(area.width);
-    let column = |t: f64| plot.x_of(t, w).floor();
-    let marks: Vec<f64> = [plot.cue, plot.cursor]
-        .into_iter()
-        .flatten()
-        .map(column)
-        .collect();
-    let mut free = 0.0;
-    for &(t, bar) in &plot.bars {
-        let mut x = column(t);
-        if x < 0.0 || x >= w {
-            continue;
-        }
-        if x < free {
-            buf[(area.x + x as u16, area.y)].set_symbol("╵").set_fg(DIM);
-            continue;
-        }
-        // A mark on the bar goes before its number.
-        if marks.contains(&x) {
-            x += 1.0;
-            if x >= w {
-                continue;
-            }
-        }
-        let label = bar.to_string();
-        buf.set_string(area.x + x as u16, area.y, &label, Style::new().fg(DIM));
-        free = x + label.len() as f64 + 1.0;
-    }
-    for (time, symbol, color) in [(plot.cue, "◆", CUE), (plot.cursor, "▼", ACCENT)] {
-        if let Some(x) = time.map(column).filter(|&x| x >= 0.0 && x < w) {
-            buf[(area.x + x as u16, area.y)]
-                .set_symbol(symbol)
-                .set_fg(color);
-        }
-    }
-}
-
-/// One block: its header, overview, ruler and lanes.
-fn draw_block(frame: &mut Frame, scene: &Scene, b: &MixBlockLayout, pictures: &mut dyn Pictures) {
-    let state = scene.state;
-    let heard = scene.heard;
-    let focused = state.mix.focus == b.block;
-    frame.render_widget(
-        Paragraph::new(header(state, b.block, focused, heard)),
-        b.header,
-    );
-    for (lane, label, _) in &b.lanes {
-        frame.render_widget(
-            Paragraph::new(Span::styled(
-                lane.label(),
-                Style::new().fg(if is_off(state, *lane) {
-                    DIM
-                } else {
-                    lane_color(*lane)
-                }),
-            )),
-            *label,
-        );
-    }
-    let Some(r) = mix::rhythmed(state, b.block) else {
-        return;
-    };
-    let Some(waveform) = r.waveform.clone() else {
-        return;
-    };
-    let a = &r.analysis;
-    let (start, end) = mix::window(state, b.block, heard);
-    let beat_time = |i: Option<usize>| i.and_then(|i| a.beats.get(i).copied());
-    let block = mix::block(state, b.block);
-    let cursor = focused
-        .then(|| beat_time(mix::cursor(state, b.block, heard)))
-        .flatten();
-    let cue = beat_time(block.cue.map(|c| c.beat));
-    let selection = mix::selection(state, b.block, heard);
-    let playhead = mix::playhead(state, b.block, heard);
-    let duration = waveform.duration().max(a.duration).max(1e-3);
-    let shown = shown(state, b.block);
-    let transition = shown.as_ref().map(|s| s.window);
-    pictures.wave(
-        frame,
-        &WavePlot {
-            area: b.overview,
-            waveform: Arc::clone(&waveform),
-            lane: Lane::Mix,
-            start: 0.0,
-            end: duration,
-            color: DIM,
-            downbeats: Vec::new(),
-            unclear: Vec::new(),
-            selection,
-            shown: (!mix::whole(state, b.block)).then_some((start, end)),
-            playhead,
-            cursor: None,
-            cue,
-            transition,
-            gain: Vec::new(),
-            edit: None,
-            rows: (0, 1),
-            lyrics: None,
-            text_scale: 1,
-            lines: mix::WordLines::ONE,
-            follow: None,
-            deep: false,
-            key: None,
-        },
-    );
-    let follows = b.block == Block::Now
-        && mix::block(state, b.block).start.is_none()
-        && mix::slide(state).is_none()
-        && b.top_cut == 0;
-    let bars = a
-        .downbeats
-        .iter()
-        .enumerate()
-        .filter_map(|(k, &d)| a.beats.get(d).map(|&t| (t, k + 1)))
-        .filter(|&(t, _)| follows || (t >= start && t < end))
-        .collect();
-    pictures.ruler(
-        frame,
-        &RulerPlot {
-            area: b.ruler,
-            start,
-            end,
-            bars,
-            cursor,
-            cue,
-            follow: follows.then_some(mix::LEAD),
-        },
-    );
-    let downbeats = downbeats_within(a, start, end);
-    let unclear = unclear(a);
-    // The playing track's block following the playhead (not while blocks
-    // slide): a frontend may scroll its ruler and lanes by itself, so they
-    // carry the whole track's bars.
-    let follow = (b.block == Block::Now
-        && mix::block(state, b.block).start.is_none()
-        && mix::slide(state).is_none()
-        && b.top_cut == 0)
-        .then_some(mix::LEAD);
-    let downbeats = if follow.is_some() {
-        downbeats_within(a, f64::NEG_INFINITY, f64::INFINITY)
-    } else {
-        downbeats
-    };
-    let lyrics = state
-        .config
-        .mix_lyrics
-        .then(|| mix::lyrics_of_block(state, b.block))
-        .flatten();
-    for (i, (lane, label, area)) in b.lanes.iter().enumerate() {
-        let skip = if i == 0 { b.top_cut } else { 0 };
-        let color = if is_off(state, *lane) {
-            OFF
-        } else {
-            lane_color(*lane)
-        };
-        let gain = shown
-            .as_ref()
-            .and_then(|s| s.curves.iter().find(|c| c.0 == *lane))
-            .map(|c| c.1.clone())
-            .unwrap_or_default();
-        let edit = shown
-            .as_ref()
-            .and_then(|s| s.edit)
-            .filter(|e| e.0 == *lane)
-            .map(|e| e.1);
-        if edit.is_some() {
-            frame.render_widget(
-                Paragraph::new(Span::styled(
-                    lane.label(),
-                    Style::new().fg(BG_TEXT).bg(lane_color(*lane)),
-                )),
-                *label,
-            );
-        }
-        pictures.wave(
-            frame,
-            &WavePlot {
-                area: *area,
-                waveform: Arc::clone(&waveform),
-                lane: *lane,
-                start,
-                end,
-                color,
-                downbeats: downbeats.clone(),
-                unclear: unclear.clone(),
-                selection,
-                shown: None,
-                playhead,
-                cursor,
-                cue,
-                transition,
-                gain,
-                edit,
-                rows: (skip, b.lane_rows.max(area.height)),
-                lyrics: if *lane == Lane::Vocals {
-                    lyrics.clone()
-                } else {
-                    None
-                },
-                text_scale: 1,
-                lines: mix::WordLines::ONE,
-                follow,
-                deep: false,
-                key: None,
-            },
-        );
-    }
-}
-
-/// The Mix tab.
-pub fn draw(frame: &mut Frame, scene: &Scene, m: &MixLayout, pictures: &mut dyn Pictures) {
-    for b in &m.blocks {
-        draw_block(frame, scene, b, pictures);
-    }
-}
-
-/// The Mix tab's footer: the focused track's zoom and the main keys.
-pub fn footer(state: &State) -> String {
-    // The focused track's zoom (its own, set by the wheel or `z`, else the
-    // tab's).
-    let zoom = match mix::ZOOMS[mix::zoom_of(state, state.mix.focus)] {
-        0 => "whole tracks".to_owned(),
-        1 => "1 bar".to_owned(),
-        bars => format!("{bars} bars"),
-    };
-    if let Some(e) = state.mix.draft.edit {
-        return format!(
-            "editing {} at bar {} · ↑↓ lane · ←→ bar · +/- 0 1 gain · c cut · esc done",
-            crate::core::transition::lane_name(e.lane),
-            e.bar
-        );
-    }
-    format!(
-        "{zoom} · ←→ bars · 1-9 jump · enter cue · p preset · r pairing · g go · e edit · ? keys"
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::view::colors::DIM;
 
     #[test]
     fn words_split_into_their_syllables() {
@@ -1081,7 +555,7 @@ mod tests {
                 stems: None,
                 melody: None,
             }),
-            lane: Lane::Mix,
+            lane: Lane::Song,
             start: 0.0,
             end: 100.0,
             color: DIM,
@@ -1098,7 +572,7 @@ mod tests {
             rows: (0, 1),
             lyrics: None,
             text_scale: 1,
-            lines: mix::WordLines::ONE,
+            lines: WordLines::ONE,
             follow: None,
             deep: false,
             key: None,
@@ -1148,13 +622,13 @@ mod tests {
             source: jodel_lyrics::Source::Unknown,
             timing: jodel_lyrics::Timing::default(),
         };
-        let all = mix::lyrics_per_second(&mix::timed_words(&lyrics), 1).unwrap();
-        let fitted = mix::lyrics_per_second(&mix::fitted_words(&lyrics), 1).unwrap();
+        let all = lanes::lyrics_per_second(&lanes::timed_words(&lyrics), 1).unwrap();
+        let fitted = lanes::lyrics_per_second(&lanes::fitted_words(&lyrics), 1).unwrap();
         assert!(
             all > 2.0 * fitted,
             "the echo zooms in: {all} against {fitted}"
         );
-        assert_eq!(mix::fitted_words(&lyrics).len(), 5);
+        assert_eq!(lanes::fitted_words(&lyrics).len(), 5);
     }
 
     #[test]
@@ -1190,7 +664,7 @@ mod tests {
             &|t| (t - start) * per,
             per,
             1.0,
-            mix::WordLines::ONE,
+            WordLines::ONE,
             heard,
             (0.0, cells),
         )
@@ -1199,7 +673,7 @@ mod tests {
     /// On two lines a word crowding the one before goes under it, where it
     /// is sung, and the next goes back on the first line; a word with no
     /// room on either goes after the one that frees first, kept (on the
-    /// Karaoke tab) or left out (one line, the Mix lanes).
+    /// Karaoke tab) or left out (one line, the Transition lanes).
     #[test]
     fn crowded_words_go_on_the_line_under() {
         // A tenth of a second a cell.
@@ -1217,7 +691,7 @@ mod tests {
             &x_of,
             10.0,
             1.0,
-            mix::WordLines {
+            WordLines {
                 rows: 2,
                 keep_all: true,
             },
@@ -1232,17 +706,12 @@ mod tests {
             placed,
             vec![(10.0, 0), (13.0, 1), (18.0, 0), (18.0, 1), (22.0, 0)]
         );
-        let one = lane_labels(
-            &all,
-            &x_of,
-            10.0,
-            1.0,
-            mix::WordLines::ONE,
-            None,
-            (0.0, 100.0),
-        );
+        let one = lane_labels(&all, &x_of, 10.0, 1.0, WordLines::ONE, None, (0.0, 100.0));
         assert!(one.len() < words.len(), "one line leaves some out");
-        assert_eq!(mix::words_left_out(&all, 10.0, 1), words.len() - one.len());
+        assert_eq!(
+            lanes::words_left_out(&all, 10.0, 1),
+            words.len() - one.len()
+        );
     }
     #[test]
     fn the_lane_labels_stand_where_their_words_are_sung() {
@@ -1278,7 +747,7 @@ mod tests {
             &|t| t * 80.0,
             80.0,
             8.0,
-            mix::WordLines::ONE,
+            WordLines::ONE,
             None,
             (0.0, 1e9),
         );
@@ -1303,7 +772,7 @@ mod tests {
                 &x_of,
                 10.0,
                 1.0,
-                mix::WordLines::ONE,
+                WordLines::ONE,
                 None,
                 (lo, lo + 30.0),
             )

@@ -1,9 +1,9 @@
-//! Transitions on the Mix tab: a preset or hand-made fades per stem, the
+//! Transitions on the Transition tab: a preset or hand-made fades per stem, the
 //! window on the playing track and where the next one comes in, made into
 //! the engine's [`TransitionPlan`].
 //!
 //! The window starts at the playing track's cue and the next track comes
-//! in at its own (see [`super::mix`]). The beats of the two are paired
+//! in at its own (see [`tab`]). The beats of the two are paired
 //! from there to the window's end, one to one or, where one track is at
 //! about half the other's tempo, two to one ([`Pairing`]), so the engine
 //! lays the next track's beats onto the playing track's; the tempo glides
@@ -18,6 +18,8 @@ use jodel_playback::stems::{Stem, STEMS};
 use jodel_playback::warp::TimeMap;
 use jodel_playback::{Envelope, Point, TempoMode, TransitionPlan};
 use jodel_rhythm::Analysis;
+
+pub mod tab;
 
 /// Bars a window lasts without a selection.
 pub const DEFAULT_BARS: usize = 8;
@@ -297,7 +299,7 @@ pub struct Edit {
     pub bar: usize,
 }
 
-/// The transition being set up on the Mix tab.
+/// The transition being set up on the Transition tab.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Draft {
     /// The preset the lanes start from.

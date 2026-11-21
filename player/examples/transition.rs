@@ -115,8 +115,8 @@ fn render(
         .copied()
         .find(|&d| a.beats[d] + 30.0 + bars as f64 * 2.5 < a.duration)
         .ok_or("the track is too short")?;
-    // The beats paired as the Mix tab pairs them by the tempi (whole bars
-    // of the slower track).
+    // The beats paired as the Transition tab pairs them by the tempi (whole
+    // bars of the slower track).
     let entry = b.downbeats.first().copied().unwrap_or(0);
     let span = transition::TEMPO_SPAN;
     let per = transition::pairing_for(

@@ -1,11 +1,11 @@
-//! Times the window's frames headless, as the window draws them while a
-//! track plays (a fixture through the null output, its spectrum moving,
-//! the Mix tab's playhead going on): per frame the widgets with their
-//! cells, the pictures, and the copy into the window's buffer (for the
-//! frames that changed a pixel: the window shows only those), what that
-//! would cost at 30 frames a second, and how many frames changed. "mix
-//! held" is the Mix tab with its view held (the cursor moved), the
-//! playhead going across it.
+//! Times the window's frames headless, as the window draws them while a track
+//! plays (a fixture through the null output, its spectrum moving, the
+//! Transition tab's playhead going on): per frame the widgets with their
+//! cells, the pictures, and the copy into the window's buffer (for the frames
+//! that changed a pixel: the window shows only those), what that would cost at
+//! 30 frames a second, and how many frames changed. "transition held" is the
+//! Transition tab with its view held (the cursor moved), the playhead going
+//! across it.
 //!
 //! ```text
 //! cargo run --release -p jodeldiplom --example frames -- [WIDTH HEIGHT SCALE] [FRAMES]
@@ -57,16 +57,16 @@ fn main() {
     println!(
         "{width} × {height} pixels at scale {scale}, {frames} frames per screen (ms per frame; a core's share at 30 fps, the rate while a track plays)"
     );
-    for screen in ["main", "nowplaying", "mix", "mix held"] {
+    for screen in ["main", "nowplaying", "transition", "transition held"] {
         let mut canvas = Canvas::new(80, 24, font_px(scale));
         let grid = canvas.fit(width as u32, height as u32);
         let mut buffer = vec![0u32; width * height];
-        let mut mix = common::mix_state(grid.0, grid.1);
-        if screen == "mix held" {
+        let mut tab = common::transition_state(grid.0, grid.1);
+        if screen == "transition held" {
             // The view stays where it is (its cursor moved); the playhead
             // goes across it.
-            mix.mix.now.path = Some(mix.queue.paths[1].clone());
-            mix.mix.now.start = Some(mix.playing.position - 5.0);
+            tab.transition.now.path = Some(tab.queue.paths[1].clone());
+            tab.transition.now.start = Some(tab.playing.position - 5.0);
         }
         let (mut widgets, mut pictures, mut copy) =
             (Duration::ZERO, Duration::ZERO, Duration::ZERO);
@@ -75,10 +75,10 @@ fn main() {
             app.pump();
             let spectrum = app.spectrum();
             let state: State = match screen {
-                "mix" | "mix held" => {
-                    mix.playing.position += 1.0 / 60.0;
-                    mix.drawn_heard = Some(mix.playing.position);
-                    mix.clone()
+                "transition" | "transition held" => {
+                    tab.playing.position += 1.0 / 60.0;
+                    tab.drawn_heard = Some(tab.playing.position);
+                    tab.clone()
                 }
                 _ => {
                     let mut s = app.state.clone();

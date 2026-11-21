@@ -526,14 +526,14 @@ fn engine_events_drive_the_now_playing_state() {
         engine(&update(&mut state, Action::SeekTo(0.5))),
         vec![Command::Seek(duration / 2.0)]
     );
-    // A click on the Mix tab's overview of the playing track seeks there
+    // A click on the Transition tab's overview of the playing track seeks there
     // too, and its view follows the playhead again; on the next track's,
     // only the view moves.
-    use jodeldiplom::core::mix::Block;
+    use jodeldiplom::core::lanes::Block;
     assert_eq!(
         engine(&update(
             &mut state,
-            Action::MixJump {
+            Action::TransitionJump {
                 block: Block::Now,
                 time: 12.5
             }
@@ -541,12 +541,14 @@ fn engine_events_drive_the_now_playing_state() {
         vec![Command::Seek(12.5)]
     );
     assert_eq!(state.playing.position, 12.5);
-    assert!(jodeldiplom::core::mix::block(&state, Block::Now)
-        .start
-        .is_none());
+    assert!(
+        jodeldiplom::core::transition::tab::block(&state, Block::Now)
+            .start
+            .is_none()
+    );
     assert!(engine(&update(
         &mut state,
-        Action::MixJump {
+        Action::TransitionJump {
             block: Block::Next,
             time: 30.0
         }
@@ -976,7 +978,7 @@ fn help_and_palette_come_from_the_keymap() {
     for binding in KEYMAP {
         if let Op::JumpBar(_) | Op::JumpBarAtEnd(_) = binding.op {
             // Eighteen keys in two lines.
-            let section = help.iter().find(|s| s.title == "Mix tab").unwrap();
+            let section = help.iter().find(|s| s.title == "Transition tab").unwrap();
             let line = if matches!(binding.op, Op::JumpBarAtEnd(_)) {
                 "1 … 9"
             } else {
@@ -1757,13 +1759,16 @@ fn step_row(state: &mut State, row: SettingsRow) -> Vec<Effect> {
 
 /// What the next-track key does is a row of the settings: cut or mix in,
 /// saved, `X` switching it too; and a row under it, which preset it mixes
-/// by: the Mix tab's (the default), or each preset, stepped either way.
+/// by: the Transition tab's (the default), or each preset, stepped either way.
 #[test]
 fn the_next_track_mix_is_a_setting() {
     use jodeldiplom::core::transition::Preset;
     let mut state = common::playing_state(120, 36);
     assert!(!state.config.skip_mix, "cut by default");
-    assert_eq!(state.config.skip_preset, None, "the Mix tab's by default");
+    assert_eq!(
+        state.config.skip_preset, None,
+        "the Transition tab's by default"
+    );
     let row = |r: SettingsRow| SettingsRow::ALL.iter().position(|x| *x == r).unwrap();
     let fx = update(
         &mut state,
@@ -1875,32 +1880,38 @@ fn the_data_folder_is_chosen_in_a_folder_list() {
     assert!(state.settings.folders.is_none());
 }
 
-/// The Mix tab's preset and tempo mode are remembered: a new run starts
+/// The Transition tab's preset and tempo mode are remembered: a new run starts
 /// from them, and changing either saves it.
 #[test]
-fn the_mix_preset_and_tempo_are_remembered() {
+fn the_transition_preset_and_tempo_are_remembered() {
     use jodel_playback::TempoMode;
     use jodeldiplom::core::transition::Preset;
     let config = Config {
-        mix_preset: Preset::BassSwap,
-        mix_tempo: TempoMode::Stretch,
+        transition_preset: Preset::BassSwap,
+        transition_tempo: TempoMode::Stretch,
         ..Config::default()
     };
     let state = State::new(std::env::temp_dir(), config, (120, 40));
-    assert_eq!(state.mix.draft.preset, Preset::BassSwap);
-    assert_eq!(state.mix.draft.tempo, TempoMode::Stretch);
-    let mut state = common::mix_state(120, 40);
+    assert_eq!(state.transition.draft.preset, Preset::BassSwap);
+    assert_eq!(state.transition.draft.tempo, TempoMode::Stretch);
+    let mut state = common::transition_state(120, 40);
     let fx = op(&mut state, Op::TransitionPreset);
-    assert_eq!(state.config.mix_preset, state.mix.draft.preset);
-    assert_ne!(state.config.mix_preset, Preset::default());
+    assert_eq!(
+        state.config.transition_preset,
+        state.transition.draft.preset
+    );
+    assert_ne!(state.config.transition_preset, Preset::default());
     assert!(fx.contains(&Effect::SaveConfig));
     let fx = op(&mut state, Op::TransitionTempo);
-    assert_eq!(state.config.mix_tempo, state.mix.draft.tempo);
+    assert_eq!(state.config.transition_tempo, state.transition.draft.tempo);
     assert!(fx.contains(&Effect::SaveConfig));
     let (back, _) = Config::parse(&state.config.to_text()).unwrap();
     assert_eq!(
-        (back.mix_preset, back.mix_tempo),
-        (state.config.mix_preset, state.config.mix_tempo)
+        (back.transition_preset, back.transition_tempo),
+        (
+            state.config.transition_preset,
+            state.config.transition_tempo
+        )
     );
 }
 
@@ -2151,25 +2162,24 @@ fn ctrl_v_pastes_into_the_filter_and_the_palette() {
 }
 
 /// The playing track's analysis as the state has it.
-fn mix_analysis(state: &State, block: jodeldiplom::core::mix::Block) -> jodel_rhythm::Analysis {
-    (*jodeldiplom::core::mix::rhythmed(state, block)
+fn block_analysis(state: &State, block: jodeldiplom::core::lanes::Block) -> jodel_rhythm::Analysis {
+    (*jodeldiplom::core::lanes::rhythmed(state, block)
         .unwrap()
         .analysis)
         .clone()
 }
 
-/// On the Mix tab the digits jump the playing track to the start of a bar
-/// around the one heard (5 its own, 6 the next, 4 the one before …) when
-/// the bar heard ends; with shift (or the symbol a US keyboard's shift
-/// makes, as a terminal sends it) at once. Past the bars found they go on
-/// at the bar's length; none before the track starts, or during a
-/// transition.
+/// On the Transition tab the digits jump the playing track to the start of a
+/// bar around the one heard (5 its own, 6 the next, 4 the one before …) when
+/// the bar heard ends; with shift (or the symbol a US keyboard's shift makes,
+/// as a terminal sends it) at once. Past the bars found they go on at the
+/// bar's length; none before the track starts, or during a transition.
 #[test]
-fn digits_on_the_mix_tab_jump_to_bars_around_the_one_heard() {
+fn digits_on_the_transition_tab_jump_to_bars_around_the_one_heard() {
     use jodel_playback::JumpAt;
-    use jodeldiplom::core::mix::Block;
-    let mut state = common::mix_state(120, 40);
-    let a = mix_analysis(&state, Block::Now);
+    use jodeldiplom::core::lanes::Block;
+    let mut state = common::transition_state(120, 40);
+    let a = block_analysis(&state, Block::Now);
     let starts: Vec<f64> = a.downbeats.iter().map(|&d| a.beats[d]).collect();
     let heard = (starts[10] + starts[11]) / 2.0;
     state.drawn_heard = Some(heard);
@@ -2219,24 +2229,24 @@ fn digits_on_the_mix_tab_jump_to_bars_around_the_one_heard() {
     assert!(engine(&fx).is_empty() || starts[0] - 4.0 * bar >= 0.0);
     // A transition set up: none, and a message.
     state.drawn_heard = Some(heard);
-    state.mix.draft.status = jodeldiplom::core::transition::Status::Armed;
+    state.transition.draft.status = jodeldiplom::core::transition::Status::Armed;
     let fx = op(&mut state, Op::JumpBar(0));
     assert!(engine(&fx).is_empty());
     assert!(state.message.is_some());
 }
 
 #[test]
-fn tab_cycles_through_browser_queue_mix_and_karaoke() {
-    let mut state = common::mix_state(120, 40);
+fn tab_cycles_through_browser_queue_transition_and_karaoke() {
+    let mut state = common::transition_state(120, 40);
     state.side = Side::Browser;
     op(&mut state, Op::ToggleSide);
     assert_eq!(state.side, Side::Queue);
     op(&mut state, Op::ToggleSide);
-    assert_eq!(state.side, Side::Mix);
-    // On the Mix tab, keys are its own; letters do not jump to names.
+    assert_eq!(state.side, Side::Transition);
+    // On the Transition tab, keys are its own; letters do not jump to names.
     assert_eq!(
         keymap::lookup(&state, key(KeyCode::Left)),
-        Some(Meaning::Op(Op::MixBarBack))
+        Some(Meaning::Op(Op::TransitionBarBack))
     );
     assert_eq!(
         keymap::lookup(&state, Key::ch('[')),
@@ -2254,24 +2264,25 @@ fn tab_cycles_through_browser_queue_mix_and_karaoke() {
 }
 
 #[test]
-fn the_mix_cursor_moves_by_bars_and_cues_one() {
-    use jodeldiplom::core::mix::{self, Block};
-    let mut state = common::mix_state(120, 40);
+fn the_transition_cursor_moves_by_bars_and_cues_one() {
+    use jodeldiplom::core::lanes::Block;
+    use jodeldiplom::core::transition::tab;
+    let mut state = common::transition_state(120, 40);
     let heard = state.playing.position;
-    let a = mix_analysis(&state, Block::Now);
+    let a = block_analysis(&state, Block::Now);
     // At first the cursor is on the bar under the playhead (83 s).
-    let start = mix::cursor(&state, Block::Now, heard).unwrap();
+    let start = tab::cursor(&state, Block::Now, heard).unwrap();
     assert!(a.downbeats.contains(&start));
-    let bar = mix::bar_of(&a, start);
+    let bar = tab::bar_of(&a, start);
     assert!(a.beats[start] <= heard && heard < a.beats[start] + 4.0 * 60.0 / 128.0 + 1e-9);
-    op(&mut state, Op::MixBarForward);
-    op(&mut state, Op::MixBarForward);
-    let c = mix::cursor(&state, Block::Now, heard).unwrap();
-    assert_eq!(mix::bar_of(&a, c), bar + 2);
-    op(&mut state, Op::MixBeatForward);
-    op(&mut state, Op::MixBarBack);
+    op(&mut state, Op::TransitionBarForward);
+    op(&mut state, Op::TransitionBarForward);
+    let c = tab::cursor(&state, Block::Now, heard).unwrap();
+    assert_eq!(tab::bar_of(&a, c), bar + 2);
+    op(&mut state, Op::TransitionBeatForward);
+    op(&mut state, Op::TransitionBarBack);
     assert_eq!(
-        mix::cursor(&state, Block::Now, heard).unwrap(),
+        tab::cursor(&state, Block::Now, heard).unwrap(),
         c,
         "back to its bar"
     );
@@ -2279,8 +2290,8 @@ fn the_mix_cursor_moves_by_bars_and_cues_one() {
     let fx = op(&mut state, Op::Accept);
     assert!(engine(&fx).is_empty(), "{fx:?}");
     assert_eq!(
-        mix::block(&state, Block::Now).cue,
-        Some(mix::Cue {
+        tab::block(&state, Block::Now).cue,
+        Some(tab::Cue {
             beat: c,
             bars: jodeldiplom::core::transition::DEFAULT_BARS,
             chosen: false
@@ -2288,21 +2299,21 @@ fn the_mix_cursor_moves_by_bars_and_cues_one() {
     );
     // Selecting takes whole bars, from where the cursor was.
     let heard = state.playing.position;
-    op(&mut state, Op::MixSelectForward);
-    op(&mut state, Op::MixSelectForward);
-    let (from, to) = mix::selection(&state, Block::Now, heard).unwrap();
+    op(&mut state, Op::TransitionSelectForward);
+    op(&mut state, Op::TransitionSelectForward);
+    let (from, to) = tab::selection(&state, Block::Now, heard).unwrap();
     let bar_len = 4.0 * 60.0 / 128.0;
     assert!((from - a.beats[c]).abs() < 1e-9);
     assert!((to - (a.beats[c] + 3.0 * bar_len)).abs() < 1e-6, "{to}");
     // Esc clears the selection, then the cue, and never leaves the tab
     // (tab does).
     op(&mut state, Op::Back);
-    assert!(mix::selection(&state, Block::Now, heard).is_none());
-    assert!(mix::block(&state, Block::Now).cue.is_some());
+    assert!(tab::selection(&state, Block::Now, heard).is_none());
+    assert!(tab::block(&state, Block::Now).cue.is_some());
     op(&mut state, Op::Back);
-    assert!(mix::block(&state, Block::Now).cue.is_none());
+    assert!(tab::block(&state, Block::Now).cue.is_none());
     op(&mut state, Op::Back);
-    assert_eq!(state.side, Side::Mix);
+    assert_eq!(state.side, Side::Transition);
     // An armed transition: esc calls it off.
     cue_both(&mut state);
     let fx = op(&mut state, Op::TransitionGo);
@@ -2317,10 +2328,10 @@ fn the_mix_cursor_moves_by_bars_and_cues_one() {
     let fx = op(&mut state, Op::Back);
     assert_eq!(engine(&fx), vec![Command::CancelTransition]);
     assert_eq!(
-        state.mix.draft.status,
+        state.transition.draft.status,
         jodeldiplom::core::transition::Status::Draft
     );
-    assert_eq!(state.side, Side::Mix);
+    assert_eq!(state.side, Side::Transition);
     // A late word that a window started, of one called off, is not taken.
     update(
         &mut state,
@@ -2329,28 +2340,29 @@ fn the_mix_cursor_moves_by_bars_and_cues_one() {
         )),
     );
     assert_eq!(
-        state.mix.draft.status,
+        state.transition.draft.status,
         jodeldiplom::core::transition::Status::Draft
     );
 }
 
 #[test]
 fn the_next_track_gets_a_cue_bar_and_zoom_is_shared() {
-    use jodeldiplom::core::mix::{self, Block};
-    let mut state = common::mix_state(120, 40);
+    use jodeldiplom::core::lanes::{self, Block};
+    use jodeldiplom::core::transition::tab;
+    let mut state = common::transition_state(120, 40);
     let heard = state.playing.position;
     op(&mut state, Op::Down);
-    assert_eq!(state.mix.focus, Block::Next);
-    let a = mix_analysis(&state, Block::Next);
+    assert_eq!(state.transition.focus, Block::Next);
+    let a = block_analysis(&state, Block::Next);
     // The next track starts at its first bar.
     assert_eq!(
-        mix::cursor(&state, Block::Next, heard),
+        tab::cursor(&state, Block::Next, heard),
         Some(a.downbeats[0])
     );
-    op(&mut state, Op::MixBarForward);
+    op(&mut state, Op::TransitionBarForward);
     assert!(op(&mut state, Op::Accept).is_empty());
     assert_eq!(
-        mix::block(&state, Block::Next)
+        tab::block(&state, Block::Next)
             .cue
             .map(|c| (c.beat, c.bars)),
         Some((a.downbeats[1], jodeldiplom::core::transition::DEFAULT_BARS))
@@ -2358,50 +2370,53 @@ fn the_next_track_gets_a_cue_bar_and_zoom_is_shared() {
     // 16 bars of the playing track (128 BPM) by default; zooming halves
     // and doubles it, out to whole tracks.
     let bar = 4.0 * 60.0 / 128.0;
-    assert!((mix::span(&state, mix::Block::Now) - 16.0 * bar).abs() < 1e-6);
-    op(&mut state, Op::MixZoomIn);
-    assert!((mix::span(&state, mix::Block::Now) - 8.0 * bar).abs() < 1e-6);
+    assert!((tab::span(&state, lanes::Block::Now) - 16.0 * bar).abs() < 1e-6);
+    op(&mut state, Op::TransitionZoomIn);
+    assert!((tab::span(&state, lanes::Block::Now) - 8.0 * bar).abs() < 1e-6);
     for _ in 0..6 {
-        op(&mut state, Op::MixZoomOut);
+        op(&mut state, Op::TransitionZoomOut);
     }
-    assert!(mix::whole(&state, mix::Block::Now));
-    assert_eq!(mix::window(&state, Block::Next, heard), (0.0, 252.0));
+    assert!(tab::whole(&state, lanes::Block::Now));
+    assert_eq!(tab::window(&state, Block::Next, heard), (0.0, 252.0));
     // A new next track starts afresh.
     state.queue.paths.swap(2, 3);
-    assert_eq!(mix::block(&state, Block::Next).cue, None);
+    assert_eq!(tab::block(&state, Block::Next).cue, None);
 }
 
 #[test]
 fn grid_fixes_change_the_bars_and_are_kept() {
-    use jodeldiplom::core::mix::{self, Block};
-    let mut state = common::mix_state(120, 40);
+    use jodeldiplom::core::lanes::{self, Block};
+    let mut state = common::transition_state(120, 40);
     let path = state.queue.paths[1].clone();
-    let before = mix_analysis(&state, Block::Now);
+    let before = block_analysis(&state, Block::Now);
     let fx = op(&mut state, Op::GridLater);
-    let after = mix_analysis(&state, Block::Now);
+    let after = block_analysis(&state, Block::Now);
     assert_eq!(after.downbeats[0], before.downbeats[0] + 1);
-    assert!(mix::rhythmed(&state, Block::Now).unwrap().fixed());
+    assert!(lanes::rhythmed(&state, Block::Now).unwrap().fixed());
     assert!(
         matches!(&fx[..], [Effect::SaveGrid(p, g)] if *p == path && g.downbeats == after.downbeats)
     );
     // The one at the cursor, a nudge, half and double tempo.
     op(&mut state, Op::GridOne);
-    let one = mix_analysis(&state, Block::Now);
+    let one = block_analysis(&state, Block::Now);
     assert!(one.downbeats.windows(2).all(|w| w[1] - w[0] == 4));
     op(&mut state, Op::GridNudgeForward);
-    let nudged = mix_analysis(&state, Block::Now);
+    let nudged = block_analysis(&state, Block::Now);
     assert!((nudged.beats[0] - one.beats[0] - 0.005).abs() < 1e-9);
     op(&mut state, Op::GridDouble);
-    let double = mix_analysis(&state, Block::Now);
+    let double = block_analysis(&state, Block::Now);
     assert!((double.summary.unwrap().bpm - 256.0).abs() < 1.0);
     op(&mut state, Op::GridHalf);
-    assert!((mix_analysis(&state, Block::Now).summary.unwrap().bpm - 128.0).abs() < 1.0);
+    assert!((block_analysis(&state, Block::Now).summary.unwrap().bpm - 128.0).abs() < 1.0);
     // Undo: the analysis as found, and the kept grid forgotten.
     let fx = op(&mut state, Op::GridReset);
     assert_eq!(fx, vec![Effect::ResetGrid(path)]);
-    assert!(!mix::rhythmed(&state, Block::Now).unwrap().fixed());
-    assert_eq!(mix_analysis(&state, Block::Now).downbeats, before.downbeats);
-    // Off the Mix tab the grid keys say where they belong.
+    assert!(!lanes::rhythmed(&state, Block::Now).unwrap().fixed());
+    assert_eq!(
+        block_analysis(&state, Block::Now).downbeats,
+        before.downbeats
+    );
+    // Off the Transition tab the grid keys say where they belong.
     state.side = Side::Browser;
     assert!(op(&mut state, Op::GridLater).is_empty());
     assert!(state.message.is_some());
@@ -2409,14 +2424,15 @@ fn grid_fixes_change_the_bars_and_are_kept() {
 
 #[test]
 fn a_click_on_a_lane_puts_the_cursor_and_a_double_click_cues_there() {
+    use jodeldiplom::core::lanes::Block;
     use jodeldiplom::core::layout::{self, Layout};
-    use jodeldiplom::core::mix::{self, Block};
     use jodeldiplom::core::mouse::{self, MouseButton, MouseInput, MouseKind};
-    let mut state = common::mix_state(120, 40);
+    use jodeldiplom::core::transition::tab;
+    let mut state = common::transition_state(120, 40);
     let Layout::Main(m) = layout::compute(&state) else {
         panic!("the main screen");
     };
-    let now = &m.mix.unwrap().blocks[0];
+    let now = &m.transition.unwrap().blocks[0];
     let lane = now.lanes[1].2;
     let press = MouseInput {
         kind: MouseKind::Down(MouseButton::Left),
@@ -2424,7 +2440,7 @@ fn a_click_on_a_lane_puts_the_cursor_and_a_double_click_cues_there() {
         row: lane.y,
     };
     let action = mouse::action(&state, press).unwrap();
-    let Action::MixPoint {
+    let Action::TransitionPoint {
         block,
         time,
         extend,
@@ -2433,41 +2449,42 @@ fn a_click_on_a_lane_puts_the_cursor_and_a_double_click_cues_there() {
         panic!("{action:?}");
     };
     assert_eq!((block, extend), (Block::Now, false));
-    let (start, end) = mix::window(&state, Block::Now, state.playing.position);
+    let (start, end) = tab::window(&state, Block::Now, state.playing.position);
     assert!(time > start && time < end);
     assert!(update(&mut state, action.clone()).is_empty());
-    let a = mix_analysis(&state, Block::Now);
-    let beat = mix::cursor(&state, Block::Now, state.playing.position).unwrap();
+    let a = block_analysis(&state, Block::Now);
+    let beat = tab::cursor(&state, Block::Now, state.playing.position).unwrap();
     assert!(a.beats[beat] <= time && time - a.beats[beat] < 60.0 / 128.0);
     // The same beat again soon after cues its bar, as enter does; playback
     // stays as it is.
     let fx = update(&mut state, action);
     assert!(engine(&fx).is_empty(), "{fx:?}");
-    let cue = mix::block(&state, Block::Now).cue.unwrap();
+    let cue = tab::block(&state, Block::Now).cue.unwrap();
     assert!(a.downbeats.contains(&cue.beat) && cue.beat <= beat);
     // The wheel over the lanes zooms that block (the tab's zoom stays).
-    let zoom = state.mix.zoom;
+    let zoom = state.transition.zoom;
     let wheel = MouseInput {
         kind: MouseKind::ScrollUp,
         ..press
     };
     let action = mouse::action(&state, wheel).unwrap();
     update(&mut state, action);
-    assert_eq!(mix::zoom_of(&state, Block::Now), zoom - 1);
-    assert_eq!(state.mix.zoom, zoom);
+    assert_eq!(tab::zoom_of(&state, Block::Now), zoom - 1);
+    assert_eq!(state.transition.zoom, zoom);
 }
 
 #[test]
 fn a_tempo_fix_keeps_the_cursor_where_it_was_in_time() {
-    use jodeldiplom::core::mix::{self, Block};
-    let mut state = common::mix_state(120, 40);
+    use jodeldiplom::core::lanes::Block;
+    use jodeldiplom::core::transition::tab;
+    let mut state = common::transition_state(120, 40);
     for _ in 0..10 {
-        op(&mut state, Op::MixBarForward);
+        op(&mut state, Op::TransitionBarForward);
     }
     let heard = state.heard();
     let at = |state: &State| {
-        let a = mix_analysis(state, Block::Now);
-        a.beats[mix::cursor(state, Block::Now, heard).unwrap()]
+        let a = block_analysis(state, Block::Now);
+        a.beats[tab::cursor(state, Block::Now, heard).unwrap()]
     };
     let before = at(&state);
     op(&mut state, Op::GridDouble);
@@ -2483,8 +2500,8 @@ fn a_tempo_fix_keeps_the_cursor_where_it_was_in_time() {
 }
 
 #[test]
-fn a_paste_on_the_mix_tab_goes_to_the_browser_filter() {
-    let mut state = common::mix_state(120, 40);
+fn a_paste_on_the_transition_tab_goes_to_the_browser_filter() {
+    let mut state = common::transition_state(120, 40);
     update(&mut state, Action::Paste("Coda".into()));
     assert_eq!(state.side, Side::Browser);
     assert!(state
@@ -2502,8 +2519,8 @@ fn a_paste_on_the_mix_tab_goes_to_the_browser_filter() {
 /// cursor following the playhead, at the first bar the engine can get
 /// ready for), the focus left where it was.
 fn cue_both(state: &mut State) {
-    use jodeldiplom::core::mix::Block;
-    let focus = state.mix.focus;
+    use jodeldiplom::core::lanes::Block;
+    let focus = state.transition.focus;
     op(state, Op::Up);
     op(state, Op::Accept);
     op(state, Op::Down);
@@ -2516,9 +2533,10 @@ fn cue_both(state: &mut State) {
 #[test]
 fn g_arms_a_transition_from_the_cue_into_the_cue() {
     use jodel_playback::{TempoMode, TransitionState};
-    use jodeldiplom::core::mix::{self, Block};
+    use jodeldiplom::core::lanes::Block;
+    use jodeldiplom::core::transition::tab;
     use jodeldiplom::core::transition::{Preset, Status};
-    let mut state = common::mix_state(120, 40);
+    let mut state = common::transition_state(120, 40);
     // Nothing armed without both cues, and the keys say so.
     assert!(engine(&op(&mut state, Op::TransitionGo)).is_empty());
     assert!(state
@@ -2527,34 +2545,34 @@ fn g_arms_a_transition_from_the_cue_into_the_cue() {
         .is_some_and(|m| m.text.contains("cue")));
     // The cursor's bar and the two after it cued on the playing track, two
     // bars ahead; the next track's two bars from its second.
-    op(&mut state, Op::MixBarForward);
-    op(&mut state, Op::MixBarForward);
-    op(&mut state, Op::MixSelectForward);
-    op(&mut state, Op::MixSelectForward);
+    op(&mut state, Op::TransitionBarForward);
+    op(&mut state, Op::TransitionBarForward);
+    op(&mut state, Op::TransitionSelectForward);
+    op(&mut state, Op::TransitionSelectForward);
     assert!(engine(&op(&mut state, Op::Accept)).is_empty());
     assert!(engine(&op(&mut state, Op::TransitionGo)).is_empty());
     op(&mut state, Op::Down);
-    op(&mut state, Op::MixBarForward);
-    op(&mut state, Op::MixSelectForward);
+    op(&mut state, Op::TransitionBarForward);
+    op(&mut state, Op::TransitionSelectForward);
     op(&mut state, Op::Accept);
     op(&mut state, Op::Up);
     // A preset only names itself in the header until it is armed.
     let fx = op(&mut state, Op::TransitionPreset);
     assert!(engine(&fx).is_empty());
-    assert_eq!(state.mix.draft.preset, Preset::DrumsFirst);
+    assert_eq!(state.transition.draft.preset, Preset::DrumsFirst);
     op(&mut state, Op::TransitionTempo);
-    assert_eq!(state.mix.draft.tempo, TempoMode::Stretch);
+    assert_eq!(state.transition.draft.tempo, TempoMode::Stretch);
     let fx = op(&mut state, Op::TransitionGo);
     let [Effect::Engine(Command::Transition(plan))] = &fx[..] else {
         panic!("{fx:?}");
     };
-    let a = mix_analysis(&state, Block::Now);
-    let b = mix_analysis(&state, Block::Next);
-    let (start, end, bars) = mix::draft_window(&state).unwrap();
+    let a = block_analysis(&state, Block::Now);
+    let b = block_analysis(&state, Block::Next);
+    let (start, end, bars) = tab::draft_window(&state).unwrap();
     assert_eq!(bars, 3, "the longer of the two selected cues");
     assert_eq!(
         Some(start),
-        mix::cue_window(&state, Block::Now).map(|w| w.0),
+        tab::cue_window(&state, Block::Now).map(|w| w.0),
         "at the cue"
     );
     assert_eq!((plan.from, plan.into), (1, 2));
@@ -2570,19 +2588,19 @@ fn g_arms_a_transition_from_the_cue_into_the_cue() {
         &mut state,
         Action::Engine(Event::Transition(TransitionState::Armed)),
     );
-    assert_eq!(state.mix.draft.status, Status::Armed);
+    assert_eq!(state.transition.draft.status, Status::Armed);
     update(
         &mut state,
         Action::Engine(Event::Transition(TransitionState::Started {
             output_frame: 7,
         })),
     );
-    assert_eq!(state.mix.draft.status, Status::Mixing(7));
+    assert_eq!(state.transition.draft.status, Status::Mixing(7));
     update(
         &mut state,
         Action::Engine(Event::Transition(TransitionState::Finished)),
     );
-    assert_eq!(state.mix.draft.status, Status::Draft);
+    assert_eq!(state.transition.draft.status, Status::Draft);
     // Armed again, g calls it off.
     op(&mut state, Op::TransitionGo);
     update(
@@ -2599,30 +2617,30 @@ fn g_arms_a_transition_from_the_cue_into_the_cue() {
 #[test]
 fn the_cues_decide_the_window_and_an_armed_one_follows_them() {
     use jodel_playback::TransitionState;
-    use jodeldiplom::core::mix;
-    let mut state = common::mix_state(120, 40);
-    op(&mut state, Op::MixBarForward);
-    op(&mut state, Op::MixBarForward);
-    op(&mut state, Op::MixSelectForward);
+    use jodeldiplom::core::transition::tab;
+    let mut state = common::transition_state(120, 40);
+    op(&mut state, Op::TransitionBarForward);
+    op(&mut state, Op::TransitionBarForward);
+    op(&mut state, Op::TransitionSelectForward);
     op(&mut state, Op::Accept);
     op(&mut state, Op::Down);
     op(&mut state, Op::Accept);
-    assert_eq!(mix::draft_window(&state).unwrap().2, 2, "selected: 2 bars");
+    assert_eq!(tab::draft_window(&state).unwrap().2, 2, "selected: 2 bars");
     // Twelve bars selected on the next track: the longer.
     for _ in 0..11 {
-        op(&mut state, Op::MixSelectForward);
+        op(&mut state, Op::TransitionSelectForward);
     }
     op(&mut state, Op::Accept);
-    assert_eq!(mix::draft_window(&state).unwrap().2, 12);
+    assert_eq!(tab::draft_window(&state).unwrap().2, 12);
     // Armed, a new cue on the playing track moves it there.
     op(&mut state, Op::TransitionGo);
     update(
         &mut state,
         Action::Engine(Event::Transition(TransitionState::Armed)),
     );
-    let armed = state.mix.draft.sent.clone().unwrap().plan;
+    let armed = state.transition.draft.sent.clone().unwrap().plan;
     op(&mut state, Op::Up);
-    op(&mut state, Op::MixBarForward);
+    op(&mut state, Op::TransitionBarForward);
     let fx = op(&mut state, Op::Accept);
     let [Command::Transition(moved)] = &engine(&fx)[..] else {
         panic!("{fx:?}");
@@ -2643,10 +2661,10 @@ fn the_cues_decide_the_window_and_an_armed_one_follows_them() {
 fn e_edits_the_fades_bar_by_bar() {
     use jodel_playback::TransitionState;
     use jodeldiplom::core::transition::{point_at, Preset};
-    let mut state = common::mix_state(120, 40);
+    let mut state = common::transition_state(120, 40);
     // Not without a cue to show the fades on.
     op(&mut state, Op::TransitionEdit);
-    assert!(state.mix.draft.edit.is_none());
+    assert!(state.transition.draft.edit.is_none());
     cue_both(&mut state);
     op(&mut state, Op::TransitionEdit);
     assert_eq!(
@@ -2665,7 +2683,7 @@ fn e_edits_the_fades_bar_by_bar() {
     op(&mut state, Op::EditForward);
     op(&mut state, Op::EditOff);
     op(&mut state, Op::EditCut);
-    let lanes = state.mix.draft.lanes.clone().unwrap();
+    let lanes = state.transition.draft.lanes.clone().unwrap();
     let p = point_at(&lanes, 5, 2, 8).unwrap();
     assert_eq!((p.gain, p.cut), (0.0, true));
     assert_ne!(lanes, Preset::Fade.lanes(8));
@@ -2673,7 +2691,7 @@ fn e_edits_the_fades_bar_by_bar() {
     op(&mut state, Op::EditRaise);
     op(&mut state, Op::EditRaise);
     assert_eq!(
-        point_at(state.mix.draft.lanes.as_ref().unwrap(), 5, 2, 8)
+        point_at(state.transition.draft.lanes.as_ref().unwrap(), 5, 2, 8)
             .unwrap()
             .gain,
         0.5
@@ -2697,11 +2715,11 @@ fn e_edits_the_fades_bar_by_bar() {
     assert_ne!(plan.lanes, armed.lanes);
     // Esc stops editing; the edits stay.
     op(&mut state, Op::Back);
-    assert!(state.mix.draft.edit.is_none());
-    assert!(state.mix.draft.lanes.is_some());
+    assert!(state.transition.draft.edit.is_none());
+    assert!(state.transition.draft.lanes.is_some());
     // A preset starts afresh.
     op(&mut state, Op::TransitionPreset);
-    assert!(state.mix.draft.lanes.is_none());
+    assert!(state.transition.draft.lanes.is_none());
 }
 
 /// The track plays on `seconds`.
@@ -2714,15 +2732,16 @@ fn later(state: &mut State, seconds: f64) {
 #[test]
 fn following_the_playhead_a_transition_starts_where_the_engine_can_get_ready() {
     use jodel_playback::TransitionState;
-    use jodeldiplom::core::mix::{self, Block, GO_AFTER};
-    let mut state = common::mix_state(120, 40);
+    use jodeldiplom::core::lanes::Block;
+    use jodeldiplom::core::transition::tab::{self, GO_AFTER};
+    let mut state = common::transition_state(120, 40);
     let heard = state.heard();
     // No cue, no window.
-    assert_eq!(mix::draft_window(&state), None);
+    assert_eq!(tab::draft_window(&state), None);
     cue_both(&mut state);
-    let (start, _, bars) = mix::draft_window(&state).unwrap();
+    let (start, _, bars) = tab::draft_window(&state).unwrap();
     assert_eq!(bars, 8);
-    let a = mix_analysis(&state, Block::Now);
+    let a = block_analysis(&state, Block::Now);
     let first = a
         .downbeats
         .iter()
@@ -2736,9 +2755,9 @@ fn following_the_playhead_a_transition_starts_where_the_engine_can_get_ready() {
         Action::Engine(Event::Transition(TransitionState::Armed)),
     );
     later(&mut state, 20.0);
-    let (shown, _) = mix::shown_plan(&state).unwrap();
+    let (shown, _) = tab::shown_plan(&state).unwrap();
     assert_eq!(shown.start, start);
-    assert_eq!(mix::draft_window(&state).unwrap().0, start);
+    assert_eq!(tab::draft_window(&state).unwrap().0, start);
     // While it mixes, g does not start another.
     update(
         &mut state,
@@ -2754,10 +2773,10 @@ fn following_the_playhead_a_transition_starts_where_the_engine_can_get_ready() {
             reason: "a seek".into(),
         })),
     );
-    assert!(state.mix.draft.sent.is_none());
+    assert!(state.transition.draft.sent.is_none());
     assert_eq!(
-        mix::shown_plan(&state).unwrap().0.start,
-        mix::draft_window(&state).unwrap().0
+        tab::shown_plan(&state).unwrap().0.start,
+        tab::draft_window(&state).unwrap().0
     );
 }
 
@@ -2785,31 +2804,33 @@ fn hand_over(state: &mut State, seconds: f64) {
 /// after it starts with the tab's zoom.
 #[test]
 fn the_next_track_keeps_its_zoom_when_it_starts_playing() {
-    use jodeldiplom::core::mix::{self, Block};
-    let mut state = common::mix_state(120, 60);
-    let tab = mix::zoom_of(&state, Block::Now);
+    use jodeldiplom::core::lanes::Block;
+    use jodeldiplom::core::transition::tab;
+    let mut state = common::transition_state(120, 60);
+    let tab = tab::zoom_of(&state, Block::Now);
     update(
         &mut state,
-        Action::MixWheel {
+        Action::TransitionWheel {
             block: Block::Next,
             steps: -1,
             scroll: false,
             at: None,
         },
     );
-    let own = mix::zoom_of(&state, Block::Next);
+    let own = tab::zoom_of(&state, Block::Next);
     assert_ne!(own, tab);
     hand_over(&mut state, 10.0);
     assert_eq!(state.playing.track.as_ref().unwrap().index, 2);
-    assert_eq!(mix::zoom_of(&state, Block::Now), own, "its zoom kept");
-    assert_eq!(mix::block(&state, Block::Now).start, None, "following");
-    assert_eq!(mix::zoom_of(&state, Block::Next), tab);
+    assert_eq!(tab::zoom_of(&state, Block::Now), own, "its zoom kept");
+    assert_eq!(tab::block(&state, Block::Now).start, None, "following");
+    assert_eq!(tab::zoom_of(&state, Block::Next), tab);
 }
 #[test]
 fn the_next_track_follows_its_playhead_in_and_slides_up_when_it_takes_over() {
     use jodel_playback::TransitionState;
-    use jodeldiplom::core::mix::{self, Block, SLIDE_MS};
-    let mut state = common::mix_state(120, 60);
+    use jodeldiplom::core::lanes::{self, Block};
+    use jodeldiplom::core::transition::tab::{self, SLIDE_MS};
+    let mut state = common::transition_state(120, 60);
     // The next track cued 16 bars in, the playing track where the engine
     // can get ready.
     op(&mut state, Op::Down);
@@ -2817,7 +2838,7 @@ fn the_next_track_follows_its_playhead_in_and_slides_up_when_it_takes_over() {
     op(&mut state, Op::PageDown);
     cue_both(&mut state);
     op(&mut state, Op::Up);
-    let b = mix_analysis(&state, Block::Next);
+    let b = block_analysis(&state, Block::Next);
     let fx = op(&mut state, Op::TransitionGo);
     let [Effect::Engine(Command::Transition(plan))] = &fx[..] else {
         panic!("{fx:?}");
@@ -2832,9 +2853,9 @@ fn the_next_track_follows_its_playhead_in_and_slides_up_when_it_takes_over() {
     // Armed, the next track's view runs along where it will be heard,
     // under the playing track's playhead; it has no playhead yet.
     let heard = state.heard();
-    let span = mix::span(&state, mix::Block::Now);
-    assert_eq!(mix::playhead(&state, Block::Next, heard), None);
-    let (start, _) = mix::window(&state, Block::Next, heard);
+    let span = tab::span(&state, lanes::Block::Now);
+    assert_eq!(tab::playhead(&state, Block::Next, heard), None);
+    let (start, _) = tab::window(&state, Block::Next, heard);
     assert!((start - (map.at(heard) - span / 3.0)).abs() < 1e-9);
     // Mixing, it has: where the map puts it.
     later(&mut state, plan.start - heard + 1.0);
@@ -2846,28 +2867,31 @@ fn the_next_track_follows_its_playhead_in_and_slides_up_when_it_takes_over() {
     );
     let heard = state.heard();
     assert_eq!(
-        mix::playhead(&state, Block::Next, heard),
+        tab::playhead(&state, Block::Next, heard),
         Some(map.at(heard))
     );
     // It takes over: the track left keeps its view and slides up out of
     // sight, the new one up into its place.
-    let (left_start, _) = mix::window(&state, Block::Now, heard);
+    let (left_start, _) = tab::window(&state, Block::Now, heard);
     state.drawn_ms = Some(10_000);
     let at = map.at(plan.start + plan.length);
     hand_over(&mut state, at);
     state.drawn_heard = Some(at);
-    assert_eq!(state.mix.slide, Some(10_000));
-    assert_eq!(mix::path(&state, Block::Prev), Some(&state.queue.paths[1]));
+    assert_eq!(state.transition.slide, Some(10_000));
+    assert_eq!(
+        lanes::path(&state, Block::Prev),
+        Some(&state.queue.paths[1])
+    );
     assert!(
-        mix::rhythmed(&state, Block::Prev).is_some(),
+        lanes::rhythmed(&state, Block::Prev).is_some(),
         "kept while it slides"
     );
-    assert_eq!(mix::window(&state, Block::Prev, at).0, left_start);
+    assert_eq!(tab::window(&state, Block::Prev, at).0, left_start);
     let blocks = |state: &State| -> Vec<(Block, u16, bool)> {
         let Layout::Main(m) = layout::compute(state) else {
             panic!()
         };
-        m.mix
+        m.transition
             .unwrap()
             .blocks
             .iter()
@@ -2880,30 +2904,30 @@ fn the_next_track_follows_its_playhead_in_and_slides_up_when_it_takes_over() {
     assert_eq!(mid[0].1, 0, "its header is above the view: {mid:?}");
     assert_eq!(mid[1].0, Block::Now);
     // The new playing track's fades are those it came in by.
-    let (shown, _) = mix::shown_plan(&state).unwrap();
+    let (shown, _) = tab::shown_plan(&state).unwrap();
     assert_eq!(shown, plan);
     // Over: the two blocks as always, and the slide is forgotten.
     state.drawn_ms = Some(10_000 + SLIDE_MS);
     let done: Vec<Block> = blocks(&state).iter().map(|b| b.0).collect();
     assert_eq!(done, vec![Block::Now, Block::Next]);
     update(&mut state, Action::Tick(10_000 + SLIDE_MS));
-    assert_eq!(state.mix.slide, None);
+    assert_eq!(state.transition.slide, None);
 }
 
-/// `N` mixes in by the Mix tab's preset, as it is set when `N` is pressed
-/// (`p` there chose drums first: so does `N`), unless the settings give it
-/// one of its own.
+/// `N` mixes in by the Transition tab's preset, as it is set when `N` is
+/// pressed (`p` there chose drums first: so does `N`), unless the settings
+/// give it one of its own.
 #[test]
-fn n_mixes_into_the_next_track_by_the_mix_tabs_preset() {
+fn n_mixes_into_the_next_track_by_the_transition_tabs_preset() {
     use jodel_playback::TransitionState;
-    use jodeldiplom::core::mix::GO_AFTER;
+    use jodeldiplom::core::transition::tab::GO_AFTER;
     use jodeldiplom::core::transition::Preset;
-    let mut state = common::mix_state(120, 40);
-    // The Mix tab's preset set to drums first (p, from fade).
-    state.side = Side::Mix;
-    assert_eq!(state.mix.draft.preset, Preset::Fade);
+    let mut state = common::transition_state(120, 40);
+    // The Transition tab's preset set to drums first (p, from fade).
+    state.side = Side::Transition;
+    assert_eq!(state.transition.draft.preset, Preset::Fade);
     op(&mut state, Op::TransitionPreset);
-    assert_eq!(state.mix.draft.preset, Preset::DrumsFirst);
+    assert_eq!(state.transition.draft.preset, Preset::DrumsFirst);
     state.side = Side::Queue;
     assert_eq!(
         keymap::lookup(&state, Key::ch('X')),
@@ -2914,7 +2938,8 @@ fn n_mixes_into_the_next_track_by_the_mix_tabs_preset() {
     let fx = op(&mut state, Op::SkipMix);
     assert!(fx.contains(&Effect::SaveConfig));
     assert!(state.config.skip_mix);
-    // Its own preset, set and unset again in the settings: the Mix tab's.
+    // Its own preset, set and unset again in the settings: the Transition
+    // tab's.
     state.config.skip_preset = Some(Preset::BassSwap);
     let fx = op(&mut state, Op::Next);
     let [Effect::Engine(Command::Transition(plan))] = &fx[..] else {
@@ -2922,8 +2947,8 @@ fn n_mixes_into_the_next_track_by_the_mix_tabs_preset() {
     };
     assert_eq!(plan.lanes, Preset::BassSwap.lanes(8));
     op(&mut state, Op::Next); // cut at once
-    let mut state = common::mix_state(120, 40);
-    state.side = Side::Mix;
+    let mut state = common::transition_state(120, 40);
+    state.side = Side::Transition;
     op(&mut state, Op::TransitionPreset);
     state.side = Side::Queue;
     state.config.skip_mix = true;
@@ -2939,7 +2964,7 @@ fn n_mixes_into_the_next_track_by_the_mix_tabs_preset() {
         Action::Engine(Event::Transition(TransitionState::Armed)),
     );
     assert_eq!(
-        state.mix.draft.sent.as_ref().unwrap().preset,
+        state.transition.draft.sent.as_ref().unwrap().preset,
         Preset::DrumsFirst
     );
     // Again while it waits: cut at once.
@@ -2957,24 +2982,25 @@ fn n_mixes_into_the_next_track_by_the_mix_tabs_preset() {
         .message
         .as_ref()
         .is_some_and(|m| m.text.contains("Cut into the next track")));
-    // The Mix tab still says drums first.
-    assert_eq!(state.mix.draft.preset, Preset::DrumsFirst);
+    // The Transition tab still says drums first.
+    assert_eq!(state.transition.draft.preset, Preset::DrumsFirst);
     op(&mut state, Op::SkipMix);
     assert!(!state.config.skip_mix, "back to cutting");
 }
 
 #[test]
-fn the_secondary_button_drags_a_mix_view() {
-    use jodeldiplom::core::mix::{self, Block};
+fn the_secondary_button_drags_a_transition_view() {
+    use jodeldiplom::core::lanes::{self, Block};
     use jodeldiplom::core::mouse::{action, MouseButton, MouseInput, MouseKind};
-    let mut state = common::mix_state(120, 40);
+    use jodeldiplom::core::transition::tab;
+    let mut state = common::transition_state(120, 40);
     let Layout::Main(m) = layout::compute(&state) else {
         panic!()
     };
-    let now = m.mix.unwrap().blocks[0].clone();
+    let now = m.transition.unwrap().blocks[0].clone();
     let lane = now.lanes[1].2;
     let heard = state.heard();
-    let (start, end) = mix::window(&state, Block::Now, heard);
+    let (start, end) = tab::window(&state, Block::Now, heard);
     let per = (end - start) / f64::from(lane.width);
     let at = |kind, col, row| MouseInput { kind, col, row };
     let press = |state: &mut State, input| {
@@ -2989,7 +3015,7 @@ fn the_secondary_button_drags_a_mix_view() {
         &mut state,
         at(MouseKind::Drag(MouseButton::Right), lane.x + 40, lane.y),
     );
-    let (moved, _) = mix::window(&state, Block::Now, heard);
+    let (moved, _) = tab::window(&state, Block::Now, heard);
     assert!(
         (moved - (start + 10.0 * per)).abs() < 1e-9,
         "dragged left: later"
@@ -3003,11 +3029,11 @@ fn the_secondary_button_drags_a_mix_view() {
         &mut state,
         at(MouseKind::Up(MouseButton::Right), lane.x + 45, 0),
     );
-    assert!(state.mix.pan.is_none());
-    let (kept, _) = mix::window(&state, Block::Now, heard);
+    assert!(state.transition.pan.is_none());
+    let (kept, _) = tab::window(&state, Block::Now, heard);
     assert!((kept - (start + 5.0 * per)).abs() < 1e-9);
     // On the whole track, the span shown goes with the pointer.
-    let duration = mix_analysis(&state, Block::Now).duration;
+    let duration = block_analysis(&state, Block::Now).duration;
     let o = now.overview;
     press(
         &mut state,
@@ -3017,8 +3043,8 @@ fn the_secondary_button_drags_a_mix_view() {
         &mut state,
         at(MouseKind::Drag(MouseButton::Right), o.x + 20, o.y),
     );
-    let (whole, _) = mix::window(&state, Block::Now, heard);
-    let rhythmed = mix::rhythmed(&state, Block::Now).unwrap();
+    let (whole, _) = tab::window(&state, Block::Now, heard);
+    let rhythmed = lanes::rhythmed(&state, Block::Now).unwrap();
     let length = rhythmed
         .waveform
         .as_ref()
@@ -3030,11 +3056,11 @@ fn the_secondary_button_drags_a_mix_view() {
 #[test]
 fn stems_switch_on_the_next_bar_the_engine_can_make() {
     use jodel_playback::{Stem, StemMix};
-    use jodeldiplom::core::mix::Block;
-    let mut state = common::mix_state(120, 40);
+    use jodeldiplom::core::lanes::Block;
+    let mut state = common::transition_state(120, 40);
     assert!(state.config.stems_on_bar, "on the next bar by default");
     let heard = state.heard();
-    let a = mix_analysis(&state, Block::Now);
+    let a = block_analysis(&state, Block::Now);
     let first_bar_after = |t: f64| {
         a.downbeats
             .iter()
@@ -3043,11 +3069,11 @@ fn stems_switch_on_the_next_bar_the_engine_can_make() {
             .find(|&(b, _)| b >= t)
             .unwrap()
     };
-    // The first stem off away from the Mix tab: the track moves onto its
+    // The first stem off away from the Transition tab: the track moves onto its
     // stems first, so a bar at least 2.5 s ahead (a nearer one rolls over
     // to the next).
     let drums_off = StemMix::ALL.toggle(Stem::Drums);
-    let mix_side = state.side;
+    let transition_side = state.side;
     state.side = Side::Browser;
     let fx = op(&mut state, Op::ToggleDrums);
     let (at, _) = first_bar_after(heard + 2.5);
@@ -3058,10 +3084,10 @@ fn stems_switch_on_the_next_bar_the_engine_can_make() {
             at
         }]
     );
-    // On the Mix tab its stems are kept as it plays: a second is enough.
+    // On the Transition tab its stems are kept as it plays: a second is enough.
     op(&mut state, Op::ToggleDrums);
-    state.side = mix_side;
-    assert_eq!(mix_side, Side::Mix);
+    state.side = transition_side;
+    assert_eq!(transition_side, Side::Transition);
     let fx = op(&mut state, Op::ToggleDrums);
     let (at, bar) = first_bar_after(heard + 1.0);
     assert_eq!(
@@ -3223,31 +3249,32 @@ fn the_device_volume_steps_reads_and_shows() {
 #[test]
 fn beats_pair_two_to_one_where_the_next_track_is_at_half_tempo() {
     use jodel_playback::TransitionState;
-    use jodeldiplom::core::mix::{self, Block};
+    use jodeldiplom::core::lanes::Block;
+    use jodeldiplom::core::transition::tab;
     use jodeldiplom::core::transition::{pairing_for, Pairing};
     assert_eq!(pairing_for(Some(128.0), Some(64.0)), Pairing::Two);
     assert_eq!(pairing_for(Some(128.0), Some(250.0)), Pairing::Half);
     assert_eq!(pairing_for(Some(128.0), Some(100.0)), Pairing::One);
     assert_eq!(pairing_for(None, Some(64.0)), Pairing::One);
-    let mut state = common::mix_state(120, 40);
+    let mut state = common::transition_state(120, 40);
     common::next_at(&mut state, 64.0);
-    assert_eq!(mix::pairing(&state), Pairing::Two);
-    let a = mix_analysis(&state, Block::Now);
-    let b = mix_analysis(&state, Block::Next);
+    assert_eq!(tab::pairing(&state), Pairing::Two);
+    let a = block_analysis(&state, Block::Now);
+    let b = block_analysis(&state, Block::Next);
     let bar = |beat: usize| a.downbeats.iter().position(|&d| d == beat).unwrap();
     // Two bars a step on the playing track.
-    op(&mut state, Op::MixBarForward);
-    let first = bar(state.mix.now.cursor.unwrap());
-    op(&mut state, Op::MixBarForward);
-    assert_eq!(bar(state.mix.now.cursor.unwrap()), first + 2);
+    op(&mut state, Op::TransitionBarForward);
+    let first = bar(state.transition.now.cursor.unwrap());
+    op(&mut state, Op::TransitionBarForward);
+    assert_eq!(bar(state.transition.now.cursor.unwrap()), first + 2);
     // A selection from there one step on cued: four bars, two of the
     // next's.
-    op(&mut state, Op::MixSelectForward);
+    op(&mut state, Op::TransitionSelectForward);
     op(&mut state, Op::Accept);
     op(&mut state, Op::Down);
     op(&mut state, Op::Accept);
     op(&mut state, Op::Up);
-    let (_, _, bars) = mix::draft_window(&state).unwrap();
+    let (_, _, bars) = tab::draft_window(&state).unwrap();
     assert_eq!(bars, 4);
     let fx = op(&mut state, Op::TransitionGo);
     let [Effect::Engine(Command::Transition(plan))] = &fx[..] else {
@@ -3276,38 +3303,39 @@ fn beats_pair_two_to_one_where_the_next_track_is_at_half_tempo() {
         Action::Engine(Event::Transition(TransitionState::Armed)),
     );
     let fx = op(&mut state, Op::TransitionPairing);
-    assert_eq!(state.mix.draft.pairing, Some(Pairing::One));
+    assert_eq!(state.transition.draft.pairing, Some(Pairing::One));
     let [Effect::Engine(Command::Transition(again))] = &fx[..] else {
         panic!("{fx:?}");
     };
     assert_eq!((again.start, again.entry), (plan.start, plan.entry));
     assert!((again.beats[1].0 - again.beats[0].0 - pa).abs() < 1e-9);
     assert!((again.beats[1].1 - again.beats[0].1 - pb).abs() < 1e-9);
-    assert_eq!(mix::pairing(&state), Pairing::One);
+    assert_eq!(tab::pairing(&state), Pairing::One);
     // Round again to automatic.
     op(&mut state, Op::TransitionPairing);
     op(&mut state, Op::TransitionPairing);
     op(&mut state, Op::TransitionPairing);
-    assert_eq!(state.mix.draft.pairing, None);
-    assert_eq!(mix::pairing(&state), Pairing::Two);
+    assert_eq!(state.transition.draft.pairing, None);
+    assert_eq!(tab::pairing(&state), Pairing::Two);
 }
 
 /// The next track at double tempo: its cursor moves two of its bars a
 /// step, and the plan pairs every other one of its beats.
 #[test]
 fn beats_pair_one_to_two_where_the_next_track_is_at_double_tempo() {
-    use jodeldiplom::core::mix::{self, Block};
+    use jodeldiplom::core::lanes::Block;
+    use jodeldiplom::core::transition::tab;
     use jodeldiplom::core::transition::Pairing;
-    let mut state = common::mix_state(120, 40);
+    let mut state = common::transition_state(120, 40);
     common::next_at(&mut state, 250.0);
-    assert_eq!(mix::pairing(&state), Pairing::Half);
-    let b = mix_analysis(&state, Block::Next);
+    assert_eq!(tab::pairing(&state), Pairing::Half);
+    let b = block_analysis(&state, Block::Next);
     let bar = |beat: usize| b.downbeats.iter().position(|&d| d == beat).unwrap();
     op(&mut state, Op::Down);
-    op(&mut state, Op::MixBarForward);
-    let first = bar(state.mix.next.cursor.unwrap());
-    op(&mut state, Op::MixBarForward);
-    assert_eq!(bar(state.mix.next.cursor.unwrap()), first + 2);
+    op(&mut state, Op::TransitionBarForward);
+    let first = bar(state.transition.next.cursor.unwrap());
+    op(&mut state, Op::TransitionBarForward);
+    assert_eq!(bar(state.transition.next.cursor.unwrap()), first + 2);
     cue_both(&mut state);
     op(&mut state, Op::Up);
     let fx = op(&mut state, Op::TransitionGo);
@@ -3425,10 +3453,10 @@ fn queue_tracks_are_removed_and_moved() {
 
 // The rules of how the controls meet a transition (INTERACTIONS.md).
 
-/// The Mix tab with a transition armed (and, with `mixing`, under way).
+/// The Transition tab with a transition armed (and, with `mixing`, under way).
 fn with_transition(mixing: bool) -> State {
     use jodel_playback::TransitionState;
-    let mut state = common::mix_state(120, 40);
+    let mut state = common::transition_state(120, 40);
     cue_both(&mut state);
     op(&mut state, Op::TransitionGo);
     update(
@@ -3455,7 +3483,10 @@ fn stem_toggles_never_touch_the_transition() {
         for on_bar in [true, false] {
             let mut state = with_transition(mixing);
             state.config.stems_on_bar = on_bar;
-            let before = (state.mix.draft.status.clone(), state.mix.draft.sent.clone());
+            let before = (
+                state.transition.draft.status.clone(),
+                state.transition.draft.sent.clone(),
+            );
             for toggle in [
                 Op::ToggleDrums,
                 Op::ToggleVocals,
@@ -3473,7 +3504,10 @@ fn stem_toggles_never_touch_the_transition() {
                     );
                 }
                 assert_eq!(
-                    (state.mix.draft.status.clone(), state.mix.draft.sent.clone()),
+                    (
+                        state.transition.draft.status.clone(),
+                        state.transition.draft.sent.clone()
+                    ),
                     before,
                     "{toggle:?} (mixing {mixing}, on a bar {on_bar})"
                 );
@@ -3487,7 +3521,7 @@ fn stem_toggles_never_touch_the_transition() {
 #[test]
 fn transition_keys_wait_while_mixing() {
     let mut state = with_transition(true);
-    let before = state.mix.draft.clone();
+    let before = state.transition.draft.clone();
     for key in [
         Op::TransitionGo,
         Op::Accept,
@@ -3499,7 +3533,7 @@ fn transition_keys_wait_while_mixing() {
     ] {
         let fx = op(&mut state, key);
         assert!(engine(&fx).is_empty(), "{key:?} sent {:?}", engine(&fx));
-        assert_eq!(state.mix.draft, before, "{key:?}");
+        assert_eq!(state.transition.draft, before, "{key:?}");
     }
     assert!(state
         .message
@@ -3507,7 +3541,7 @@ fn transition_keys_wait_while_mixing() {
         .is_some_and(|m| m.text.contains("under way")));
     // Armed, a preset is sent again (same window and entry).
     let mut state = with_transition(false);
-    let sent = state.mix.draft.sent.clone().unwrap();
+    let sent = state.transition.draft.sent.clone().unwrap();
     let fx = op(&mut state, Op::TransitionPreset);
     let [Command::Transition(plan)] = &engine(&fx)[..] else {
         panic!("{:?}", engine(&fx));
@@ -3542,9 +3576,9 @@ fn an_engine_restart_leaves_no_transition_behind() {
     use jodeldiplom::core::transition::Status;
     for mixing in [false, true] {
         let mut state = with_transition(mixing);
-        jodeldiplom::core::mix::engine_restarted(&mut state);
-        assert_eq!(state.mix.draft.status, Status::Draft);
-        assert!(state.mix.draft.sent.is_none());
+        jodeldiplom::core::transition::tab::engine_restarted(&mut state);
+        assert_eq!(state.transition.draft.status, Status::Draft);
+        assert!(state.transition.draft.sent.is_none());
         // A transition can be armed again, at the cues kept.
         let fx = op(&mut state, Op::TransitionGo);
         assert!(matches!(engine(&fx)[..], [Command::Transition(_)]));
@@ -3578,45 +3612,47 @@ fn a_remembered_folder_that_cannot_be_listed_gives_way_to_the_start_one() {
 
 #[test]
 fn the_wheel_zooms_the_block_under_the_pointer_around_it() {
-    use jodeldiplom::core::mix::{self, Block};
-    let mut state = common::mix_state(120, 40);
+    use jodeldiplom::core::lanes::Block;
+    use jodeldiplom::core::transition::tab;
+    let mut state = common::transition_state(120, 40);
     let heard = state.heard();
-    let (start, end) = mix::window(&state, Block::Now, heard);
-    let next_before = mix::window(&state, Block::Next, heard);
+    let (start, end) = tab::window(&state, Block::Now, heard);
+    let next_before = tab::window(&state, Block::Next, heard);
     // The pointer a quarter of the way across the playing track's lanes.
     let at = start + 0.25 * (end - start);
     update(
         &mut state,
-        Action::MixWheel {
+        Action::TransitionWheel {
             block: Block::Now,
             steps: -1,
             scroll: false,
             at: Some(at),
         },
     );
-    let (s2, e2) = mix::window(&state, Block::Now, heard);
+    let (s2, e2) = tab::window(&state, Block::Now, heard);
     // Half the span, the time under the pointer where it was.
     assert!(((e2 - s2) - 0.5 * (end - start)).abs() < 1e-6);
     assert!(((at - s2) / (e2 - s2) - 0.25).abs() < 1e-6);
     // The other block is as it was.
-    assert_eq!(mix::window(&state, Block::Next, heard), next_before);
+    assert_eq!(tab::window(&state, Block::Next, heard), next_before);
     // The keys zoom both again, from the tab's zoom.
-    update(&mut state, Action::Op(Op::MixZoomOut));
-    assert_eq!(mix::block(&state, Block::Now).zoom, None);
-    assert!((mix::span(&state, Block::Now) - mix::span(&state, Block::Next)).abs() < 1e-9);
+    update(&mut state, Action::Op(Op::TransitionZoomOut));
+    assert_eq!(tab::block(&state, Block::Now).zoom, None);
+    assert!((tab::span(&state, Block::Now) - tab::span(&state, Block::Next)).abs() < 1e-9);
 }
 
-/// `z` on the Mix tab picks, for the track selected only, the widest zoom
-/// whose lanes leave out no word of its lyrics; the next wider one would
-/// leave some out. The other track keeps its zoom. Without lyrics it says
-/// so and changes nothing.
+/// `z` on the Transition tab picks, for the track selected only, the widest
+/// zoom whose lanes leave out no word of its lyrics; the next wider one would
+/// leave some out. The other track keeps its zoom. Without lyrics it says so
+/// and changes nothing.
 #[test]
 fn z_zooms_the_selected_track_to_fit_its_lyrics() {
-    use jodeldiplom::core::mix::{self, Block, ZOOMS};
-    let mut state = common::mix_state(120, 40);
-    let span = |state: &State, b| mix::span(state, b);
+    use jodeldiplom::core::lanes::{self, Block};
+    use jodeldiplom::core::transition::tab::{self, ZOOMS};
+    let mut state = common::transition_state(120, 40);
+    let span = |state: &State, b| tab::span(state, b);
     let (now_before, next_before) = (span(&state, Block::Now), span(&state, Block::Next));
-    op(&mut state, Op::MixFitLyrics);
+    op(&mut state, Op::TransitionFitLyrics);
     assert_eq!(span(&state, Block::Now), now_before, "nothing to fit");
     assert!(state
         .message
@@ -3624,46 +3660,46 @@ fn z_zooms_the_selected_track_to_fit_its_lyrics() {
         .is_some_and(|m| m.text.contains("No timed lyrics")));
     common::sung_every(&mut state, 1.2);
     // The playing track, following the playhead: it still follows.
-    op(&mut state, Op::MixFitLyrics);
+    op(&mut state, Op::TransitionFitLyrics);
     assert_eq!(
-        mix::block(&state, Block::Now).start,
+        tab::block(&state, Block::Now).start,
         None,
         "still following"
     );
     let heard = state.heard();
-    let (start, end) = mix::window(&state, Block::Now, heard);
+    let (start, end) = tab::window(&state, Block::Now, heard);
     assert!(((heard - start) / (end - start) - 1.0 / 3.0).abs() < 1e-6);
-    op(&mut state, Op::MixZoomOut);
-    op(&mut state, Op::MixZoomIn);
+    op(&mut state, Op::TransitionZoomOut);
+    op(&mut state, Op::TransitionZoomIn);
     // The next track selected: it alone is zoomed.
     let now_before = span(&state, Block::Now);
     op(&mut state, Op::Down);
-    op(&mut state, Op::MixFitLyrics);
+    op(&mut state, Op::TransitionFitLyrics);
     assert_eq!(
         span(&state, Block::Now),
         now_before,
         "the playing track keeps its zoom"
     );
-    let z = mix::zoom_of(&state, Block::Next);
+    let z = tab::zoom_of(&state, Block::Next);
     let Layout::Main(m) = layout::compute(&state) else {
         panic!()
     };
-    let width = m.mix.unwrap().blocks[0].lanes[0].2.width;
-    let lyrics = mix::lyrics_of_block(&state, Block::Next).unwrap();
-    let words = mix::timed_words(&lyrics);
+    let width = m.transition.unwrap().blocks[0].lanes[0].2.width;
+    let lyrics = lanes::lyrics(&state, Block::Next).unwrap();
+    let words = lanes::timed_words(&lyrics);
     let left_at = |state: &State| {
         let per = f64::from(width) / span(state, Block::Next);
-        mix::words_left_out(&words, per, 1)
+        lanes::words_left_out(&words, per, 1)
     };
     assert_eq!(left_at(&state), 0, "at {} bars", ZOOMS[z]);
     assert!(z + 1 < ZOOMS.len());
     // The next wider zoom, as the tab's (the playing track has none of its
     // own, so it shows that span).
     let mut wider = state.clone();
-    wider.mix.zoom = z + 1;
+    wider.transition.zoom = z + 1;
     let wider_left = {
-        let per = f64::from(width) / mix::span(&wider, Block::Now);
-        mix::words_left_out(&words, per, 1)
+        let per = f64::from(width) / tab::span(&wider, Block::Now);
+        lanes::words_left_out(&words, per, 1)
     };
     assert!(wider_left > 0, "{} bars fit too", ZOOMS[z + 1]);
     assert_ne!(span(&state, Block::Next), next_before);

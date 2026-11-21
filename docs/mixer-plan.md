@@ -110,7 +110,7 @@ players would throw that away (four play heads to keep together).
   strip of its own; they stay together because they share the transport.
 - Stem levels move out of the engine onto **strip faders**: muting the
   vocals is instant (now it waits for the player's buffer to play out), and
-  the Mix tab's per-stem lanes become fader ramps on the clock.
+  the Transition tab's per-stem lanes become fader ramps on the clock.
 - **Main or stems**: the stems are made at the separator's rate in floating
   point, so their sum is close to the song but never bit for bit. With every
   stem at full the strip takes `main`; touching any stem crossfades `main`

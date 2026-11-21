@@ -8,10 +8,11 @@ use jodel_playback::{Command, Event, Headroom, PlayState, StemMix};
 use crate::browser::{self, EntryKind};
 use crate::core::karaoke;
 use crate::core::keymap::{self, Op};
+use crate::core::lanes;
 use crate::core::layout;
-use crate::core::mix;
 use crate::core::preview;
 use crate::core::text;
+use crate::core::transition::tab;
 use crate::core::transition::Preset;
 use crate::core::{
     Action, Click, DeviceChoice, DeviceVolume, Effect, Facts, Filter, FolderPick, FolderRow, Gpu,
@@ -68,7 +69,7 @@ pub fn list_len(state: &State) -> usize {
     match state.side {
         Side::Browser => browser_rows(state).len(),
         Side::Queue => state.queue.paths.len(),
-        Side::Mix | Side::Karaoke => 0,
+        Side::Transition | Side::Karaoke => 0,
     }
 }
 
@@ -77,7 +78,7 @@ pub fn list_cursor(state: &State) -> (usize, usize) {
     match state.side {
         Side::Browser => (state.browser.cursor, state.browser.scroll),
         Side::Queue => (state.queue.cursor, state.queue.scroll),
-        Side::Mix | Side::Karaoke => (0, 0),
+        Side::Transition | Side::Karaoke => (0, 0),
     }
 }
 
@@ -111,7 +112,7 @@ fn set_cursor(state: &mut State, cursor: usize) {
     match state.side {
         Side::Browser => state.browser.cursor = cursor,
         Side::Queue => state.queue.cursor = cursor,
-        Side::Mix | Side::Karaoke => {}
+        Side::Transition | Side::Karaoke => {}
     }
     fix_scroll(state);
 }
@@ -134,7 +135,7 @@ fn fix_scroll(state: &mut State) {
     match state.side {
         Side::Browser => state.browser.scroll = scroll,
         Side::Queue => state.queue.scroll = scroll,
-        Side::Mix | Side::Karaoke => {}
+        Side::Transition | Side::Karaoke => {}
     }
 }
 
@@ -180,7 +181,7 @@ pub fn visible_missing(state: &State) -> Vec<PathBuf> {
             .take(height)
             .cloned()
             .collect(),
-        Side::Mix | Side::Karaoke => Vec::new(),
+        Side::Transition | Side::Karaoke => Vec::new(),
     };
     paths
         .into_iter()
@@ -371,39 +372,39 @@ pub fn update(state: &mut State, action: Action) -> Vec<Effect> {
             }
         }
         Action::Paste(text) => paste(state, &text),
-        Action::MixPoint {
+        Action::TransitionPoint {
             block,
             time,
             extend,
         } => {
-            if mix::point(state, block, time, extend) {
+            if tab::point(state, block, time, extend) {
                 apply_op(state, Op::Accept, &mut fx);
             }
         }
-        Action::MixJump { block, time } => match block {
-            mix::Block::Now => mix::seek(state, &mut fx, time),
-            _ => mix::jump(state, block, time),
+        Action::TransitionJump { block, time } => match block {
+            lanes::Block::Now => tab::seek(state, &mut fx, time),
+            _ => tab::jump(state, block, time),
         },
-        Action::MixWheel {
+        Action::TransitionWheel {
             block,
             steps,
             scroll,
             at,
         } => {
             if scroll {
-                mix::scroll(state, block, f64::from(steps) / 10.0);
+                tab::scroll(state, block, f64::from(steps) / 10.0);
             } else {
-                mix::wheel_zoom(state, block, steps.signum() as isize, at);
+                tab::wheel_zoom(state, block, steps.signum() as isize, at);
             }
         }
-        Action::MixPanStart {
+        Action::TransitionPanStart {
             block,
             column,
             width,
             overview,
-        } => mix::pan_start(state, block, column, width, overview),
-        Action::MixPan(column) => mix::pan_to(state, column),
-        Action::MixPanEnd => mix::pan_end(state),
+        } => tab::pan_start(state, block, column, width, overview),
+        Action::TransitionPan(column) => tab::pan_to(state, column),
+        Action::TransitionPanEnd => tab::pan_end(state),
         Action::KaraokeSlide { slider, share } => {
             state.karaoke.dragging = Some(slider);
             karaoke::slide_to(state, slider, share, &mut fx);
@@ -533,7 +534,7 @@ pub fn update(state: &mut State, action: Action) -> Vec<Effect> {
         }
         Action::Tick(now) => {
             state.now_ms = now;
-            mix::tick(state);
+            tab::tick(state);
             karaoke::tick(state, &mut fx);
             preview::tick(state, &mut fx);
             if state.message.as_ref().is_some_and(|m| m.until_ms <= now) {
@@ -902,12 +903,12 @@ fn is_input(action: &Action) -> bool {
             | Action::QueueDragEnd
             | Action::Scroll(_)
             | Action::ShowSide(_)
-            | Action::MixPoint { .. }
-            | Action::MixJump { .. }
-            | Action::MixWheel { .. }
-            | Action::MixPanStart { .. }
-            | Action::MixPan(_)
-            | Action::MixPanEnd
+            | Action::TransitionPoint { .. }
+            | Action::TransitionJump { .. }
+            | Action::TransitionWheel { .. }
+            | Action::TransitionPanStart { .. }
+            | Action::TransitionPan(_)
+            | Action::TransitionPanEnd
             | Action::KaraokeSlide { .. }
             | Action::KaraokeSlideEnd
             | Action::KaraokeLevel(_)
@@ -955,14 +956,14 @@ fn type_ahead(state: &mut State, c: char) {
             .iter()
             .map(|path| Some(shown_title(state, path).to_lowercase()))
             .collect(),
-        Side::Mix | Side::Karaoke => Vec::new(),
+        Side::Transition | Side::Karaoke => Vec::new(),
     };
     if names.is_empty() {
         return;
     }
     let cursor = match state.side {
         Side::Browser => state.browser.cursor,
-        Side::Queue | Side::Mix | Side::Karaoke => state.queue.cursor,
+        Side::Queue | Side::Transition | Side::Karaoke => state.queue.cursor,
     }
     .min(names.len() - 1);
     // Cycling starts after the current row; a longer prefix may stay on it.
@@ -1158,7 +1159,7 @@ fn open(state: &mut State, fx: &mut Vec<Effect>) {
 /// the file).
 fn activate(state: &mut State, how: Placing, fx: &mut Vec<Effect>) {
     match state.side {
-        Side::Mix | Side::Karaoke => {}
+        Side::Transition | Side::Karaoke => {}
         Side::Queue => {
             if state.queue.cursor < state.queue.paths.len() {
                 fx.push(Effect::Engine(Command::Play(state.queue.cursor)));
@@ -1380,7 +1381,7 @@ fn settings_step(state: &mut State, step: i32, fx: &mut Vec<Effect>) {
             return;
         }
         SettingsRow::SkipPreset => {
-            // The Mix tab's, then each preset, either way round.
+            // The Transition tab's, then each preset, either way round.
             let choices: Vec<Option<Preset>> = std::iter::once(None)
                 .chain(Preset::ALL.into_iter().map(Some))
                 .collect();
@@ -1436,7 +1437,7 @@ fn rhythm_wanted(state: &State) -> Vec<PathBuf> {
     match state.queue.current {
         Some(current) if state.config.bpm => {
             // The track a transition just left, while its block slides away.
-            let from = match state.mix.slide {
+            let from = match state.transition.slide {
                 Some(_) => current.saturating_sub(1),
                 None => current,
             };
@@ -1542,7 +1543,7 @@ fn prepare(state: &mut State, fx: &mut Vec<Effect>) {
 
 /// `X` (or the setting's row): the next-track key cuts or mixes in, the
 /// other way from now; kept in the settings. Which preset it mixes by is a
-/// row of its own (the Mix tab's, or one set there).
+/// row of its own (the Transition tab's, or one set there).
 fn cycle_skip_mix(state: &mut State, fx: &mut Vec<Effect>) {
     state.config.skip_mix = !state.config.skip_mix;
     let what = if state.config.skip_mix {
@@ -1554,12 +1555,15 @@ fn cycle_skip_mix(state: &mut State, fx: &mut Vec<Effect>) {
     fx.push(Effect::SaveConfig);
 }
 
-/// The preset the next-track key mixes by, named: its own, or the Mix
+/// The preset the next-track key mixes by, named: its own, or the Transition
 /// tab's as set now.
 pub(crate) fn skip_preset_name(state: &State) -> String {
     match state.config.skip_preset {
         Some(p) => p.name().to_owned(),
-        None => format!("{} (the Mix tab's)", state.mix.draft.preset.name()),
+        None => format!(
+            "{} (the Transition tab's)",
+            state.transition.draft.preset.name()
+        ),
     }
 }
 
@@ -1608,9 +1612,10 @@ pub fn readiness(state: &State, path: &Path) -> Readiness {
 /// Seconds ahead of what is heard that a stem change can be made at the
 /// soonest on the stems: the output holds about half a second.
 const STEMS_SOON: f64 = 1.0;
-/// The same for the first stem off away from the Mix tab: the track moves
-/// onto its stems first, separated from where they meet. On the Mix tab
-/// the playing track's stems are kept as it plays, so [`STEMS_SOON`].
+/// The same for the first stem off away from the Transition tab: the track
+/// moves onto its stems first, separated from where they meet. On the
+/// Transition tab the playing track's stems are kept as it plays, so
+/// [`STEMS_SOON`].
 const STEMS_ROUTE_SOON: f64 = 2.5;
 
 /// Where a change from the stems heard to `stems` is to be heard, with
@@ -1621,8 +1626,8 @@ pub fn stems_bar(state: &State, stems: StemMix) -> Option<(f64, usize)> {
     if !state.config.stems_on_bar {
         return None;
     }
-    let a = &mix::rhythmed(state, mix::Block::Now)?.analysis;
-    let soon = if state.stems.is_full() && !stems.is_full() && state.side != Side::Mix {
+    let a = &lanes::rhythmed(state, lanes::Block::Now)?.analysis;
+    let soon = if state.stems.is_full() && !stems.is_full() && state.side != Side::Transition {
         STEMS_ROUTE_SOON
     } else {
         STEMS_SOON
@@ -1810,7 +1815,7 @@ fn page(state: &State) -> i32 {
 }
 
 fn apply_op(state: &mut State, op: Op, fx: &mut Vec<Effect>) {
-    if karaoke::apply(state, op, fx) || mix::apply(state, op, fx) {
+    if karaoke::apply(state, op, fx) || tab::apply(state, op, fx) {
         return;
     }
     match op {
@@ -1855,7 +1860,7 @@ fn apply_op(state: &mut State, op: Op, fx: &mut Vec<Effect>) {
                 fx.push(Effect::Engine(Command::Seek(target)));
             }
         }
-        Op::Next => mix::skip(state, fx),
+        Op::Next => tab::skip(state, fx),
         Op::SkipMix => cycle_skip_mix(state, fx),
         Op::Previous => fx.push(Effect::Engine(Command::Previous)),
         Op::Stop => fx.push(Effect::Engine(Command::Stop)),
@@ -1941,8 +1946,8 @@ fn apply_op(state: &mut State, op: Op, fx: &mut Vec<Effect>) {
             }
         }
         Op::AllStems => set_stems(state, StemMix::ALL, fx),
-        Op::JumpBar(offset) => mix::jump_bar(state, isize::from(offset), false, fx),
-        Op::JumpBarAtEnd(offset) => mix::jump_bar(state, isize::from(offset), true, fx),
+        Op::JumpBar(offset) => tab::jump_bar(state, isize::from(offset), false, fx),
+        Op::JumpBarAtEnd(offset) => tab::jump_bar(state, isize::from(offset), true, fx),
         Op::VolumeUp => fx.push(Effect::DeviceVolume(VolumeChange::Step(1))),
         Op::VolumeDown => fx.push(Effect::DeviceVolume(VolumeChange::Step(-1))),
         Op::ToggleBpm => {
@@ -2057,17 +2062,17 @@ fn apply_op(state: &mut State, op: Op, fx: &mut Vec<Effect>) {
                 fx.push(Effect::ReadClipboard);
             }
         }
-        Op::MixBarBack
-        | Op::MixBarForward
-        | Op::MixBeatBack
-        | Op::MixBeatForward
-        | Op::MixSelectBack
-        | Op::MixSelectForward
-        | Op::MixZoomIn
-        | Op::MixZoomOut
-        | Op::MixFitLyrics
-        | Op::MixFollow
-        | Op::MixLyrics
+        Op::TransitionBarBack
+        | Op::TransitionBarForward
+        | Op::TransitionBeatBack
+        | Op::TransitionBeatForward
+        | Op::TransitionSelectBack
+        | Op::TransitionSelectForward
+        | Op::TransitionZoomIn
+        | Op::TransitionZoomOut
+        | Op::TransitionFitLyrics
+        | Op::TransitionFollow
+        | Op::TransitionLyrics
         | Op::GridEarlier
         | Op::GridLater
         | Op::GridNudgeBack
@@ -2087,7 +2092,7 @@ fn apply_op(state: &mut State, op: Op, fx: &mut Vec<Effect>) {
         | Op::EditLower
         | Op::EditOff
         | Op::EditFull
-        | Op::EditCut => say(state, Level::Info, "That is for the Mix tab (tab)"),
+        | Op::EditCut => say(state, Level::Info, "That is for the Transition tab (tab)"),
         Op::KaraokeEnter | Op::KaraokeEnterHere => {
             // From anywhere (the palette): the tab first, then the mode.
             state.palette = None;
@@ -2147,7 +2152,7 @@ fn paste(state: &mut State, text: &str) {
     if state.screen != Screen::Main {
         return;
     }
-    // The filter is the browser's (the Mix tab has none to show).
+    // The filter is the browser's (the Transition tab has none to show).
     state.side = Side::Browser;
     let selected = selected_path(state);
     let filter = state.browser.filter.get_or_insert_with(Filter::default);
@@ -2223,7 +2228,7 @@ fn engine_event(state: &mut State, event: Event) {
         }
         Event::TrackStarted(start) => {
             let start = *start;
-            mix::track_started(state, start.index);
+            tab::track_started(state, start.index);
             let playing = &mut state.playing;
             // Where it starts: 0, or the position a switch of route (or a
             // seek) took it up at.
@@ -2281,7 +2286,7 @@ fn engine_event(state: &mut State, event: Event) {
             say(state, Level::Error, format!("{name}{error}{tail}"));
         }
         Event::Notice { message, .. } => say(state, Level::Info, message),
-        Event::Transition(t) => mix::transition_event(state, t),
+        Event::Transition(t) => tab::transition_event(state, t),
         Event::StemsStopped { reason, .. } => {
             // The engine plays the whole mix now: so do the buttons.
             state.stems = StemMix::ALL;

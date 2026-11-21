@@ -16,9 +16,9 @@
 //! stems = true                        # true: the cues listen to stems separated on the GPU
 //! stem_switch = "bar"                 # stems switch on the next bar ("bar") or at once ("instant")
 //! skip_mix = "cut"                    # the next track key: "cut", or "mix" into it
-//! skip_preset = "mix-tab"             # the preset it mixes by: the Mix tab's, or one of its own
-//! mix_preset = "fade"                 # the Mix tab's transition preset, as last chosen
-//! mix_tempo = "varispeed"             # how a transition's tempi meet: "varispeed" or "stretch"
+//! skip_preset = "transition-tab"      # the preset it mixes by: the Transition tab's, or one of its own
+//! transition_preset = "fade"          # the Transition tab's transition preset, as last chosen
+//! transition_tempo = "varispeed"      # how a transition's tempi meet: "varispeed" or "stretch"
 //!                                     # ("fade", "drums-first", "bass-swap", "vocals-last")
 //! karaoke_voice = 0                   # karaoke mode: the voice stem's level, 0 to 100 %
 //! karaoke_mic_device = "..."          # the microphone (an input id); absent: the system's default
@@ -29,7 +29,7 @@
 //! karaoke_level = "medium"            # karaoke: how strictly it is scored: "easy" (any key, the shape), "medium" (any key, the steps), "hard" (the song's key)
 //! karaoke_notes = true                # karaoke: the song's notes under the line being sung
 //! karaoke_keep = false                # karaoke: keep your singing of each song (recordings, beside this file), to tune the game
-//! mix_lyrics = true                   # the Mix tab: the lyrics on the vocals lane (L)
+//! transition_lyrics = true            # the Transition tab: the lyrics on the vocals lane (L)
 //! data_folder = "D:\\Music data"      # the folder the data folder is made in; absent: the system's place
 //! ```
 //!
@@ -76,15 +76,15 @@ pub struct Config {
     /// What the next track key does: cut to it (`false`), or mix into it,
     /// beat-matched, by [`Config::skip_preset`].
     pub skip_mix: bool,
-    /// The preset the next track key mixes by: `None`, the Mix tab's as it
-    /// is set then (its fades as edited too); else one of its own.
+    /// The preset the next track key mixes by: `None`, the Transition tab's as
+    /// it is set then (its fades as edited too); else one of its own.
     pub skip_preset: Option<Preset>,
-    /// The Mix tab's transition preset, as last chosen (`p`).
-    pub mix_preset: Preset,
+    /// The Transition tab's transition preset, as last chosen (`p`).
+    pub transition_preset: Preset,
     /// How a transition's tempi meet, as last chosen.
-    pub mix_tempo: jodel_playback::TempoMode,
-    /// The Mix tab shows the lyrics on the vocals lane (`L`).
-    pub mix_lyrics: bool,
+    pub transition_tempo: jodel_playback::TempoMode,
+    /// The Transition tab shows the lyrics on the vocals lane (`L`).
+    pub transition_lyrics: bool,
     /// A stem turned on or off is heard from the next bar's first beat
     /// (where the playing track's bars are known); else as soon as the
     /// output has played what it holds.
@@ -133,8 +133,8 @@ impl Default for Config {
             stems: true,
             skip_mix: false,
             skip_preset: None,
-            mix_preset: Preset::default(),
-            mix_tempo: jodel_playback::TempoMode::default(),
+            transition_preset: Preset::default(),
+            transition_tempo: jodel_playback::TempoMode::default(),
             stems_on_bar: true,
             karaoke_voice: 0,
             karaoke_mic_device: None,
@@ -145,7 +145,7 @@ impl Default for Config {
             karaoke_level: crate::core::singing::Level::Medium,
             karaoke_notes: true,
             karaoke_keep: false,
-            mix_lyrics: true,
+            transition_lyrics: true,
             data_folder: None,
         }
     }
@@ -272,33 +272,30 @@ impl Config {
                     config.skip_mix = match id.as_str() {
                         "cut" => false,
                         "mix" => true,
-                        // An older file named a preset here, shown as the
-                        // Mix tab's: it mixes, by the Mix tab's preset.
-                        id if Preset::from_id(id).is_some() => true,
                         _ => return Err(at("skip_mix takes \"cut\" or \"mix\"")),
                     };
                 }
                 "skip_preset" => {
                     let id = parse_string(value).unwrap_or_else(|| value.to_owned());
                     config.skip_preset = match id.as_str() {
-                        "mix-tab" => None,
+                        "transition-tab" => None,
                         id => Some(Preset::from_id(id).ok_or_else(|| {
-                            at("skip_preset takes \"mix-tab\", \"fade\", \"drums-first\", \"bass-swap\" or \"vocals-last\"")
+                            at("skip_preset takes \"transition-tab\", \"fade\", \"drums-first\", \"bass-swap\" or \"vocals-last\"")
                         })?),
                     };
                 }
-                "mix_preset" => {
+                "transition_preset" => {
                     let id = parse_string(value).unwrap_or_else(|| value.to_owned());
-                    config.mix_preset = Preset::from_id(&id).ok_or_else(|| {
-                        at("mix_preset takes \"fade\", \"drums-first\", \"bass-swap\" or \"vocals-last\"")
+                    config.transition_preset = Preset::from_id(&id).ok_or_else(|| {
+                        at("transition_preset takes \"fade\", \"drums-first\", \"bass-swap\" or \"vocals-last\"")
                     })?;
                 }
-                "mix_tempo" => {
+                "transition_tempo" => {
                     let id = parse_string(value).unwrap_or_else(|| value.to_owned());
-                    config.mix_tempo = match id.as_str() {
+                    config.transition_tempo = match id.as_str() {
                         "varispeed" => jodel_playback::TempoMode::Varispeed,
                         "stretch" => jodel_playback::TempoMode::Stretch,
-                        _ => return Err(at("mix_tempo takes \"varispeed\" or \"stretch\"")),
+                        _ => return Err(at("transition_tempo takes \"varispeed\" or \"stretch\"")),
                     };
                 }
                 "karaoke_voice" => {
@@ -323,11 +320,11 @@ impl Config {
                         _ => return Err(at("karaoke_online takes true or false")),
                     }
                 }
-                "mix_lyrics" => {
-                    config.mix_lyrics = match value {
+                "transition_lyrics" => {
+                    config.transition_lyrics = match value {
                         "true" => true,
                         "false" => false,
-                        _ => return Err(at("mix_lyrics takes true or false")),
+                        _ => return Err(at("transition_lyrics takes true or false")),
                     }
                 }
                 "karaoke_echo" => {
@@ -410,14 +407,18 @@ impl Config {
         let _ = writeln!(text, "stem_switch = {}", quote(switch));
         let skip = if self.skip_mix { "mix" } else { "cut" };
         let _ = writeln!(text, "skip_mix = {}", quote(skip));
-        let by = self.skip_preset.map_or("mix-tab", Preset::id);
+        let by = self.skip_preset.map_or("transition-tab", Preset::id);
         let _ = writeln!(text, "skip_preset = {}", quote(by));
-        let _ = writeln!(text, "mix_preset = {}", quote(self.mix_preset.id()));
-        let tempo = match self.mix_tempo {
+        let _ = writeln!(
+            text,
+            "transition_preset = {}",
+            quote(self.transition_preset.id())
+        );
+        let tempo = match self.transition_tempo {
             jodel_playback::TempoMode::Varispeed => "varispeed",
             jodel_playback::TempoMode::Stretch => "stretch",
         };
-        let _ = writeln!(text, "mix_tempo = {}", quote(tempo));
+        let _ = writeln!(text, "transition_tempo = {}", quote(tempo));
         let _ = writeln!(text, "karaoke_voice = {}", self.karaoke_voice);
         if let Some(id) = &self.karaoke_mic_device {
             let _ = writeln!(text, "karaoke_mic_device = {}", quote(id));
@@ -429,7 +430,7 @@ impl Config {
         let _ = writeln!(text, "karaoke_level = {}", quote(self.karaoke_level.name()));
         let _ = writeln!(text, "karaoke_notes = {}", self.karaoke_notes);
         let _ = writeln!(text, "karaoke_keep = {}", self.karaoke_keep);
-        let _ = writeln!(text, "mix_lyrics = {}", self.mix_lyrics);
+        let _ = writeln!(text, "transition_lyrics = {}", self.transition_lyrics);
         match &self.data_folder {
             Some(path) => {
                 let _ = writeln!(text, "data_folder = {}", quote(&path.display().to_string()));
@@ -541,8 +542,8 @@ mod tests {
             stems: false,
             skip_mix: true,
             skip_preset: Some(crate::core::transition::Preset::DrumsFirst),
-            mix_preset: crate::core::transition::Preset::BassSwap,
-            mix_tempo: jodel_playback::TempoMode::Stretch,
+            transition_preset: crate::core::transition::Preset::BassSwap,
+            transition_tempo: jodel_playback::TempoMode::Stretch,
             stems_on_bar: false,
             karaoke_voice: 30,
             karaoke_mic_device: Some("{0.0.1.00000000}.{mic}".into()),
@@ -553,7 +554,7 @@ mod tests {
             karaoke_level: crate::core::singing::Level::Hard,
             karaoke_notes: false,
             karaoke_keep: true,
-            mix_lyrics: false,
+            transition_lyrics: false,
             data_folder: Some(if cfg!(windows) {
                 r"D:\Music data".into()
             } else {
@@ -567,16 +568,15 @@ mod tests {
         assert_eq!(default, Config::default());
     }
 
-    /// An older file's preset for the next track key (its row said "as the
-    /// Mix tab's preset") mixes by the Mix tab's preset.
+    /// The next track key's setting is "cut" or "mix", nothing else.
     #[test]
-    fn an_older_next_track_preset_mixes_by_the_mix_tabs() {
-        let (config, warnings) = Config::parse("skip_mix = \"fade\"\n").unwrap();
+    fn skip_mix_takes_cut_or_mix() {
+        let (config, warnings) = Config::parse("skip_mix = \"mix\"\n").unwrap();
         assert!(warnings.is_empty(), "{warnings:?}");
         assert!(config.skip_mix);
-        assert_eq!(config.skip_preset, None);
         assert!(config.to_text().contains("skip_mix = \"mix\""));
         assert!(!Config::parse("skip_mix = \"cut\"\n").unwrap().0.skip_mix);
+        assert!(Config::parse("skip_mix = \"fade\"\n").is_err());
         assert!(Config::parse("skip_mix = \"sometimes\"\n").is_err());
         assert!(Config::parse("skip_preset = \"nope\"\n").is_err());
     }

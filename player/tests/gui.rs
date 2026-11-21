@@ -254,7 +254,7 @@ fn now_playing_is_the_cover_with_the_caption_over_it() {
 /// Frames drawn one after another (pictures kept where nothing under them
 /// changed, cells redrawn only where they did) end in the same pixels as
 /// the last frame drawn afresh: through covers that stay, change and go,
-/// a caption over one, a moving spectrum and the Mix tab.
+/// a caption over one, a moving spectrum and the Transition tab.
 #[test]
 fn frames_in_a_row_end_as_the_last_drawn_afresh() {
     let first = Art {
@@ -274,11 +274,11 @@ fn frames_in_a_row_end_as_the_last_drawn_afresh() {
     };
     let mut later = main.clone();
     later.playing.position += 7.0;
-    let mut mix = common::mix_state(main.size.0, main.size.1);
-    mix.drawn_heard = Some(mix.playing.position);
-    let mut mix_later = mix.clone();
-    mix_later.playing.position += 0.5;
-    mix_later.drawn_heard = Some(mix_later.playing.position);
+    let mut tab = common::transition_state(main.size.0, main.size.1);
+    tab.drawn_heard = Some(tab.playing.position);
+    let mut tab_later = tab.clone();
+    tab_later.playing.position += 0.5;
+    tab_later.drawn_heard = Some(tab_later.playing.position);
     let tones = [spectrum(96_000, 1_000.0), spectrum(96_000, 5_000.0)];
     let steps: Vec<(&str, State, Option<&Art>, usize)> = vec![
         ("main", main.clone(), Some(&first), 0),
@@ -300,9 +300,9 @@ fn frames_in_a_row_end_as_the_last_drawn_afresh() {
         ("now playing, no cover", screen(Screen::NowPlaying), None, 1),
         ("settings", screen(Screen::Settings), Some(&first), 0),
         ("main again", main.clone(), Some(&first), 1),
-        ("mix", mix, Some(&first), 0),
-        ("mix, later", mix_later, Some(&first), 1),
-        ("main after mix", main.clone(), Some(&first), 0),
+        ("transition", tab, Some(&first), 0),
+        ("transition, later", tab_later, Some(&first), 1),
+        ("main after transition", main.clone(), Some(&first), 0),
     ];
     for (name, state, art, tone) in &steps {
         draw(&mut canvas, state, &tones[*tone], *art);
@@ -319,20 +319,20 @@ fn frames_in_a_row_end_as_the_last_drawn_afresh() {
     }
 }
 
-/// The Mix tab's lanes stay in the pixmap from frame to frame, shifted as
-/// the view scrolls and painted again only where their marks changed: a
-/// run of frames (the view following the playhead by fractions of a pixel
-/// and by several, back after a seek, held with the playhead going across
-/// it, the cursor and a selection moving, a transition's curves shown, a
-/// zoom) gives at each frame the pixels of that frame drawn afresh, at
-/// scale 2; a frame where nothing moved changes no pixel.
+/// The Transition tab's lanes stay in the pixmap from frame to frame, shifted
+/// as the view scrolls and painted again only where their marks changed: a run
+/// of frames (the view following the playhead by fractions of a pixel and by
+/// several, back after a seek, held with the playhead going across it, the
+/// cursor and a selection moving, a transition's curves shown, a zoom) gives
+/// at each frame the pixels of that frame drawn afresh, at scale 2; a frame
+/// where nothing moved changes no pixel.
 #[test]
-fn mix_frames_in_a_row_are_as_drawn_afresh() {
+fn transition_frames_in_a_row_are_as_drawn_afresh() {
     let (width, height, scale) = (2400, 1500, 2.0);
     let mut canvas = Canvas::new(80, 24, font_px(scale));
     let grid = canvas.fit(width, height);
     let tone = spectrum(96_000, 1_000.0);
-    let steps = mix_steps(grid);
+    let steps = transition_steps(grid);
     for (name, state) in &steps {
         draw_heard(&mut canvas, state, &tone, None);
         let mut fresh = Canvas::new(80, 24, font_px(scale));
@@ -382,7 +382,7 @@ fn draw_heard(canvas: &mut Canvas, state: &State, tone: &SpectrumFrame, art: Opt
 /// The window's frames through the GPU, off screen: the pixels that
 /// changed go over frame by frame (as [`Canvas::take_changes`] says), and
 /// each frame read back is the canvas, with the background beyond it,
-/// through the Mix tab's steps, the browser with a cover and a moving
+/// through the Transition tab's steps, the browser with a cover and a moving
 /// spectrum, Now playing, a window resized, and a skipped take; into a
 /// frame that takes the bytes as they are and into one that encodes them
 /// as sRGB. Skipped (with a note) without a GPU.
@@ -426,8 +426,8 @@ fn gpu_frames(srgb: bool) {
     let mut now_playing = main.clone();
     now_playing.screen = Screen::NowPlaying;
     steps.push(("now playing".into(), now_playing, 0));
-    steps.extend(mix_steps(grid).into_iter().map(|(n, s)| (n, s, 0)));
-    steps.push(("main after mix".into(), main.clone(), 1));
+    steps.extend(transition_steps(grid).into_iter().map(|(n, s)| (n, s, 0)));
+    steps.push(("main after transition".into(), main.clone(), 1));
     for (i, (name, state, tone)) in steps.iter().enumerate() {
         if i == 5 {
             // The window a little wider: the grid stays, the margin grows.
@@ -477,7 +477,7 @@ fn layer_frames(srgb: bool) {
         return;
     };
     let (mut flat, mut layered, grid) = layer_canvases();
-    let mut state = common::mix_state(grid.0, grid.1);
+    let mut state = common::transition_state(grid.0, grid.1);
     state.side = jodeldiplom::core::Side::Karaoke;
     state.size = grid;
     common::sung_every(&mut state, 0.5);
@@ -506,14 +506,14 @@ fn layer_frames(srgb: bool) {
     }
 }
 
-/// The Mix tab's playing track following the playhead as the layer the
+/// The Transition tab's playing track following the playhead as the layer the
 /// window scrolls by itself (its bar numbers and lanes, the words on the
 /// voice's): each frame through the GPU is the frame the canvas paints with
 /// them in its pixmap (the playhead apart), across bars (the cursor going
 /// along), with a cue set and a transition's curves shown while it
 /// follows. Into both kinds of frame; skipped without a GPU.
 #[test]
-fn the_mix_lanes_scrolled_by_the_gpu_are_the_lanes_painted() {
+fn the_transition_lanes_scrolled_by_the_gpu_are_the_lanes_painted() {
     use jodeldiplom::core::keymap::Op;
     use jodeldiplom::core::{update, Action};
     for srgb in [false, true] {
@@ -521,7 +521,7 @@ fn the_mix_lanes_scrolled_by_the_gpu_are_the_lanes_painted() {
             return;
         };
         let (mut flat, mut layered, grid) = layer_canvases();
-        let mut state = common::mix_state(grid.0, grid.1);
+        let mut state = common::transition_state(grid.0, grid.1);
         state.size = grid;
         sung(&mut state);
         let mut step = |state: &mut State, time: f64, name: &str| {
@@ -624,14 +624,14 @@ fn same_through_layer(
         gpu.name
     );
 }
-/// The Mix tab for a run of frames: the view following the playhead by
+/// The Transition tab for a run of frames: the view following the playhead by
 /// fractions of a pixel and by several, back after a seek, held with the
 /// playhead going across it, the cursor and a selection moving, a
 /// transition's curves shown, a zoom.
-fn mix_steps(grid: (u16, u16)) -> Vec<(String, State)> {
+fn transition_steps(grid: (u16, u16)) -> Vec<(String, State)> {
     use jodeldiplom::core::keymap::Op;
     use jodeldiplom::core::{update, Action};
-    let mut state = common::mix_state(grid.0, grid.1);
+    let mut state = common::transition_state(grid.0, grid.1);
     sung(&mut state);
     let at = |state: &mut State, seconds: f64| {
         state.playing.position = seconds;
@@ -651,21 +651,21 @@ fn mix_steps(grid: (u16, u16)) -> Vec<(String, State)> {
     }
     at(&mut state, 12.0);
     steps.push(("back after a seek".into(), state.clone()));
-    op(&mut state, Op::MixBarForward);
+    op(&mut state, Op::TransitionBarForward);
     steps.push(("the cursor moved: the view held".into(), state.clone()));
     for i in 0..6 {
         at(&mut state, 12.0 + 0.11 * f64::from(i));
         steps.push((format!("held, the playhead on {i}"), state.clone()));
     }
-    op(&mut state, Op::MixSelectForward);
-    op(&mut state, Op::MixSelectForward);
+    op(&mut state, Op::TransitionSelectForward);
+    op(&mut state, Op::TransitionSelectForward);
     steps.push(("a selection".into(), state.clone()));
     op(&mut state, Op::TransitionPreset);
     steps.push(("a transition's curves".into(), state.clone()));
-    op(&mut state, Op::MixFollow);
+    op(&mut state, Op::TransitionFollow);
     at(&mut state, 12.9);
     steps.push(("following again".into(), state.clone()));
-    op(&mut state, Op::MixZoomOut);
+    op(&mut state, Op::TransitionZoomOut);
     steps.push(("zoomed out".into(), state.clone()));
     at(&mut state, 13.4);
     steps.push(("zoomed out, later".into(), state.clone()));
@@ -674,7 +674,7 @@ fn mix_steps(grid: (u16, u16)) -> Vec<(String, State)> {
 
 /// Words timed on the playing and the next track, every 0.45 s from 5 s to
 /// 60 s, every other one with its letters' times: on the voice's lane in
-/// every Mix frame, the one heard changing as the playhead goes.
+/// every Transition frame, the one heard changing as the playhead goes.
 fn sung(state: &mut State) {
     use jodel_lyrics::{Line, Lyrics, Source, Timing, Word};
     use jodeldiplom::core::karaoke::SongLyrics;
@@ -815,10 +815,10 @@ fn the_macos_icon_file_matches_the_drawing() {
 }
 
 #[test]
-fn the_mix_lanes_are_painted_in_pixels() {
+fn the_transition_lanes_are_painted_in_pixels() {
     let mut canvas = Canvas::new(80, 24, font_px(1.0));
     let grid = canvas.fit(1600, 1000);
-    let mut state = common::mix_state(grid.0, grid.1);
+    let mut state = common::transition_state(grid.0, grid.1);
     state.size = grid;
     let spectrum = spectrum(176_400, 1_000.0);
     draw(&mut canvas, &state, &spectrum, None);
@@ -826,13 +826,13 @@ fn the_mix_lanes_are_painted_in_pixels() {
     let Layout::Main(m) = layout::compute(&state) else {
         panic!("the main screen");
     };
-    let mix = m.mix.expect("the Mix tab");
-    assert_eq!(mix.blocks.len(), 2);
+    let tab = m.transition.expect("the Transition tab");
+    assert_eq!(tab.blocks.len(), 2);
     assert!(m.bottom.spectrum.is_none());
     // The vocals of the playing track come in at 60 s: before, nothing is
     // painted in their lane but its background; the drums lane is busy.
     let lane_pixels = |i: usize| {
-        let (_, _, area) = mix.blocks[0].lanes[i];
+        let (_, _, area) = tab.blocks[0].lanes[i];
         let (x, y, w, h) = pixel_rect(&canvas, area);
         let mut lit = 0;
         for yy in y..y + h {
@@ -855,24 +855,28 @@ fn the_mix_lanes_are_painted_in_pixels() {
 
 #[test]
 fn the_bar_numbers_start_at_their_bars_to_the_pixel() {
-    use jodeldiplom::core::mix::{self, Block};
+    use jodeldiplom::core::lanes::{self, Block};
+    use jodeldiplom::core::transition::tab;
     let mut canvas = Canvas::new(80, 24, font_px(1.0));
     let grid = canvas.fit(1600, 1000);
-    let mut state = common::mix_state(grid.0, grid.1);
+    let mut state = common::transition_state(grid.0, grid.1);
     state.size = grid;
     // A view that starts between cells.
-    state.mix.now.path = mix::path(&state, Block::Now).cloned();
-    state.mix.now.start = Some(10.123);
+    state.transition.now.path = lanes::path(&state, Block::Now).cloned();
+    state.transition.now.start = Some(10.123);
     let spectrum = spectrum(176_400, 1_000.0);
     draw(&mut canvas, &state, &spectrum, None);
     let image = canvas.image();
     let Layout::Main(m) = layout::compute(&state) else {
         panic!("the main screen");
     };
-    let ruler = m.mix.unwrap().blocks[0].ruler;
+    let ruler = m.transition.unwrap().blocks[0].ruler;
     let (x0, y0, w, h) = pixel_rect(&canvas, ruler);
-    let (start, end) = mix::window(&state, Block::Now, 0.0);
-    let a = mix::rhythmed(&state, Block::Now).unwrap().analysis.clone();
+    let (start, end) = tab::window(&state, Block::Now, 0.0);
+    let a = lanes::rhythmed(&state, Block::Now)
+        .unwrap()
+        .analysis
+        .clone();
     let cw = canvas.cell().0 as u32;
     let ink = |x: u32| (y0..y0 + h).any(|y| *image.get_pixel(x, y) != bg());
     let mut checked = 0;
@@ -898,7 +902,7 @@ fn after_a_track_change_the_next_block_is_blank_until_its_analysis_is_in() {
     use jodeldiplom::core::{update, Action};
     let mut canvas = Canvas::new(80, 24, font_px(1.0));
     let grid = canvas.fit(1600, 1000);
-    let mut state = common::mix_state(grid.0, grid.1);
+    let mut state = common::transition_state(grid.0, grid.1);
     state.size = grid;
     let spectrum = spectrum(176_400, 1_000.0);
     draw(&mut canvas, &state, &spectrum, None);
@@ -925,9 +929,9 @@ fn after_a_track_change_the_next_block_is_blank_until_its_analysis_is_in() {
     let Layout::Main(m) = layout::compute(&state) else {
         panic!("the main screen");
     };
-    let mix = m.mix.unwrap();
-    assert_eq!(mix.blocks.len(), 2);
-    for (_, _, area) in &mix.blocks[1].lanes {
+    let tab = m.transition.unwrap();
+    assert_eq!(tab.blocks.len(), 2);
+    for (_, _, area) in &tab.blocks[1].lanes {
         let (x, y, w, h) = pixel_rect(&canvas, *area);
         let lit = (y..y + h)
             .flat_map(|yy| (x..x + w).map(move |xx| (xx, yy)))

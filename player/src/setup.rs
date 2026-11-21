@@ -107,7 +107,7 @@ pub fn manifest() -> Vec<Need> {
             sha256: lyrics::MODEL_SHA256.to_owned(),
             title: "the word-timing model".to_owned(),
             credit: "wav2vec2 by Meta".to_owned(),
-            why: "It hears where each sung word falls, so karaoke and the Mix tab's lyrics \
+            why: "It hears where each sung word falls, so karaoke and the Transition tab's lyrics \
                   light up word by word."
                 .to_owned(),
             source: Source::Download {

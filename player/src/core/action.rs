@@ -162,32 +162,32 @@ pub enum Action {
     PaletteRun(usize),
     /// Scroll the help screen.
     HelpScroll(i32),
-    /// A point of a Mix block's lanes, `time` seconds into its track, was
-    /// pressed (`extend`: dragged to, selecting bars). A second press on
+    /// A point of a Transition block's lanes, `time` seconds into its track,
+    /// was pressed (`extend`: dragged to, selecting bars). A second press on
     /// the same beat soon after is a double click: the playing track plays
     /// from there, the next track's cue goes there.
-    MixPoint {
+    TransitionPoint {
         /// The block.
-        block: super::mix::Block,
+        block: super::lanes::Block,
         /// Seconds into its track.
         time: f64,
         /// Dragged to rather than pressed.
         extend: bool,
     },
-    /// A Mix block's overview was clicked: the playing track seeks there,
-    /// the next one's view goes there.
-    MixJump {
+    /// A Transition block's overview was clicked: the playing track seeks
+    /// there, the next one's view goes there.
+    TransitionJump {
         /// The block.
-        block: super::mix::Block,
+        block: super::lanes::Block,
         /// Seconds into its track.
         time: f64,
     },
-    /// The wheel over the Mix tab: zoom in (negative) or out; with
+    /// The wheel over the Transition tab: zoom in (negative) or out; with
     /// `scroll` (over the whole track), the block's view moves by that
     /// many tenths instead.
-    MixWheel {
+    TransitionWheel {
         /// The block under the pointer.
-        block: super::mix::Block,
+        block: super::lanes::Block,
         /// Steps, negative up.
         steps: i32,
         /// Shift held: scroll rather than zoom.
@@ -196,11 +196,11 @@ pub enum Action {
         /// zoom keeps it where it is.
         at: Option<f64>,
     },
-    /// The secondary button went down on a Mix block: a drag of its view
+    /// The secondary button went down on a Transition block: a drag of its view
     /// starts.
-    MixPanStart {
+    TransitionPanStart {
         /// The block.
-        block: super::mix::Block,
+        block: super::lanes::Block,
         /// The pointer's column.
         column: u16,
         /// The width of the block's waveforms in columns.
@@ -208,10 +208,11 @@ pub enum Action {
         /// Over the whole track (else the lanes).
         overview: bool,
     },
-    /// The pointer moved to this column while dragging a Mix block's view.
-    MixPan(u16),
-    /// The drag of a Mix block's view ended.
-    MixPanEnd,
+    /// The pointer moved to this column while dragging a Transition block's
+    /// view.
+    TransitionPan(u16),
+    /// The drag of a Transition block's view ended.
+    TransitionPanEnd,
     /// A Karaoke slider was pressed or dragged to a share of its range.
     KaraokeSlide {
         /// The slider.

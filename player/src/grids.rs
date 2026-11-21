@@ -1,12 +1,12 @@
 //! Beat grids fixed by hand, kept per track.
 //!
-//! The Mix tab's fixes ([`crate::core::grid`]) are the user's work, so they
-//! live with the settings (`grids` next to `config.toml`), not with the
-//! cached analyses, and outlast any new analysis: a track's grid is found
-//! by its path and size only. One small text file per track: the beats as
-//! tick deltas and the indices of the beats that start a bar, as in the
-//! rhythm cache. [`GridStore`] writes them on a thread of its own, one at
-//! a time and in order, so the last fix is the one kept.
+//! The Transition tab's fixes ([`crate::core::grid`]) are the user's work, so
+//! they live with the settings (`grids` next to `config.toml`), not with the
+//! cached analyses, and outlast any new analysis: a track's grid is found by
+//! its path and size only. One small text file per track: the beats as tick
+//! deltas and the indices of the beats that start a bar, as in the rhythm
+//! cache. [`GridStore`] writes them on a thread of its own, one at a time and
+//! in order, so the last fix is the one kept.
 
 use std::fmt::Write as _;
 use std::fs;

@@ -1,7 +1,7 @@
 //! A beat grid fixed by hand: the beats and the bars, and the fixes.
 //!
 //! The analysis finds the beats and where the bars start; where it is
-//! wrong, the Mix tab fixes it with these, each a pure function of the
+//! wrong, the Transition tab fixes it with these, each a pure function of the
 //! grid. The fixed grid replaces the analysis's, and
 //! [`Grid::apply`] gives the analysis with it (the tempo and summary
 //! worked out again).

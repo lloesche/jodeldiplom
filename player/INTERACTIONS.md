@@ -8,14 +8,14 @@ A transition goes through these states:
 
 | State | Meaning |
 |---|---|
-| set up | shown on the Mix tab, not sent |
+| set up | shown on the Transition tab, not sent |
 | armed | taken by the engine, waiting for its window |
 | preparing | about 4 s before the window: both tracks onto their stems, the next one decoding ahead |
 | mixing | the window is heard |
 | settling | the next track plays on alone, its tempo straightening |
 | done | |
 
-On the Mix tab, the first three show as `enter sets the cues` / `g arms`
+On the Transition tab, the first three show as `enter sets the cues` / `g arms`
 / `armed`, and the last two as `mixing`.
 
 ## Stems
@@ -39,8 +39,8 @@ On the Mix tab, the first three show as `enter sets the cues` / `g arms`
   over 20 ms.
   - the stems and switch tests
 - **S5.** A track got ready plays its kept stems: nothing is separated
-  while it plays (on stems, from a jump, in a transition or the Mix
-  tab). Only a track whose stems are not kept is separated live.
+  while it plays (on stems, from a jump, in a transition or the
+  Transition tab). Only a track whose stems are not kept is separated live.
   - `kept_stems_play_without_a_separation` (engine)
 - **S4.** After a transition, the next track's stems follow the settings,
   whatever they were during it.
@@ -48,7 +48,7 @@ On the Mix tab, the first three show as `enter sets the cues` / `g arms`
 
 ## Transition keys
 
-- **T0.** `enter` (and a double click) on the Mix tab never moves
+- **T0.** `enter` (and a double click) on the Transition tab never moves
   playback: it sets the transition's cue on the track focused, over the
   bars selected, else eight bars from the cursor's bar. The fades show on
   a track once it has a cue; `p` without one only names the preset in the
@@ -57,7 +57,7 @@ On the Mix tab, the first three show as `enter sets the cues` / `g arms`
   selected, if either was), counted in the playing track's bars.
   - `g_arms_a_transition_from_the_cue_into_the_cue`
   - `the_cues_decide_the_window_and_an_armed_one_follows_them`
-  - `the_mix_cursor_moves_by_bars_and_cues_one`
+  - `the_transition_cursor_moves_by_bars_and_cues_one`
   - `the_fade_curves_are_drawn_in_the_terminal_lanes` (view)
 - **T1.** `p`, `m`, `r` and the fades edited (`e`) change a transition
   set up or armed. Armed, it is sent again with the same window and
@@ -80,22 +80,22 @@ On the Mix tab, the first three show as `enter sets the cues` / `g arms`
   there and the next one plays on alone (it never starts over).
   - `a_paused_transition_goes_on_after_the_pause`
   - `next_while_a_transition_mixes_cuts_into_the_next_track_where_it_is`
-  - `n_mixes_into_the_next_track_by_the_mix_tabs_preset` (player)
+  - `n_mixes_into_the_next_track_by_the_transition_tabs_preset` (player)
   - the transition and queue tests
 - **T4.** Settings other than the stems never call a transition off.
   Armed, the transition takes them when it prepares. During it, they
   apply once it is over (a notice says so).
   - `other_settings_during_a_mix_wait_for_its_end`
 - **T5.** Whatever ends a transition (done, called off, the output device
-  switched, the engine restarted) leaves the Mix tab with no transition
+  switched, the engine restarted) leaves the Transition tab with no transition
   armed or mixing. A word from the engine about one that is gone is not
   taken.
   - `g_arms_a_transition_from_the_cue_into_the_cue`
-  - `the_mix_cursor_moves_by_bars_and_cues_one`
+  - `the_transition_cursor_moves_by_bars_and_cues_one`
   - `an_engine_restart_leaves_no_transition_behind` (player)
-- **T6.** `esc` never leaves the Mix tab: only `tab` and the tab buttons
+- **T6.** `esc` never leaves the Transition tab: only `tab` and the tab buttons
   do.
-  - `the_mix_cursor_moves_by_bars_and_cues_one`
+  - `the_transition_cursor_moves_by_bars_and_cues_one`
 
 ## Jumps
 
@@ -120,7 +120,7 @@ On the Mix tab, the first three show as `enter sets the cues` / `g arms`
   dot while work for it is still to come, and nothing once all of it is
   in the caches (its analysis and waveforms, its lyrics looked up and
   timed). What is in the cache is handed over at once when it is wanted
-  (the Mix tab's lanes, Karaoke's lines), never behind an analysis under
+  (the Transition tab's lanes, Karaoke's lines), never behind an analysis under
   way.
   - `the_cache_answers_while_an_analysis_is_under_way`
   - `queue_side` (the snapshot)
@@ -280,24 +280,24 @@ On the Mix tab, the first three show as `enter sets the cues` / `g arms`
     `a_held_note_is_not_a_howl` (output, `aec`)
   - `the_tab_says_when_feedback_is_held_down` (view)
   - `r_records_the_echo_canceller`
-- **K13.** The Mix tab asks for its tracks' lyrics; once timed, their words
-  go across the middle of the `vocals` lane, each where it is sung, each
-  letter where the aligner heard it (else spread over the syllables), a
-  line where a sound is held, the one heard in the accent colour. Where a
-  word stands never depends on which others are in view, so scrolling
-  never moves them. `L` turns them off (no lyrics asked for) and on, kept
-  in the settings.
+- **K13.** The Transition tab asks for its tracks' lyrics; once timed,
+  their words go across the middle of the `vocals` lane, each where it
+  is sung, each letter where the aligner heard it (else spread over the
+  syllables), a line where a sound is held, the one heard in the accent
+  colour. Where a word stands never depends on which others are in view,
+  so scrolling never moves them. `L` turns them off (no lyrics asked
+  for) and on, kept in the settings.
   - `the_words_go_on_the_voice_lane_where_they_are_sung`
-  - `crowded_words_keep_their_places_as_the_view_scrolls` (`view::mix`)
-  - `the_lane_labels_stand_where_their_words_are_sung` (`view::mix`)
-  - `heard_letters_stand_where_they_are_sung` (`view::mix`)
+  - `crowded_words_keep_their_places_as_the_view_scrolls` (`view::lanes`)
+  - `the_lane_labels_stand_where_their_words_are_sung` (`view::lanes`)
+  - `heard_letters_stand_where_they_are_sung` (`view::lanes`)
   - `the_path_finds_planted_word_times_exactly` (lyrics, the letters)
-- **K15.** `z` (or `z fit lyrics` in the Mix tab's bottom border) zooms the
-  track selected, and only it, to the widest zoom that leaves out no word of
-  its lyrics; without timed lyrics it says so and keeps the zoom. The Karaoke tab shows the
-  playing song's voice with its words where the other tabs have the
-  spectrum, each where it is sung, at the zoom that leaves none out (fixed
-  for the song).
+- **K15.** `z` (or `z fit lyrics` in the Transition tab's bottom border)
+  zooms the track selected, and only it, to the widest zoom that leaves
+  out no word of its lyrics; without timed lyrics it says so and keeps
+  the zoom. The Karaoke tab shows the playing song's voice with its
+  words where the other tabs have the spectrum, each where it is sung,
+  at the zoom that leaves none out (fixed for the song).
   - `z_zooms_the_selected_track_to_fit_its_lyrics`
   - `the_karaoke_tab_shows_the_voice_with_every_word`
 - **K14.** While the Karaoke tab shows with the microphone open, the window

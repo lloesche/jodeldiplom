@@ -59,10 +59,10 @@ without one).
 Options override the settings file for one run; settings changed in the
 player are saved to it (only what was changed there, not the options).
 The file holds `device`, `max_rate`, `resample`, `headroom`, `bpm`, `beat_voting`, `beat_methods = "flux, network"`
-`beat_method = "network"`, `stems`, `stem_switch = "bar"|"instant"`, `skip_mix = "cut"|"mix"`, `skip_preset = "mix-tab"|"fade"|"drums-first"|"bass-swap"|"vocals-last"`
-(what the next track key does), `mix_preset` and `mix_tempo =
-"varispeed"|"stretch"` (the Mix tab's transition preset and tempo mode,
-as last chosen), `mix_lyrics` (the lyrics on its vocals lane, `L`), and
+`beat_method = "network"`, `stems`, `stem_switch = "bar"|"instant"`, `skip_mix = "cut"|"mix"`, `skip_preset = "transition-tab"|"fade"|"drums-first"|"bass-swap"|"vocals-last"`
+(what the next track key does), `transition_preset` and `transition_tempo =
+"varispeed"|"stretch"` (the Transition tab's transition preset and tempo mode,
+as last chosen), `transition_lyrics` (the lyrics on its vocals lane, `L`), and
 the karaoke settings. A setting the player does not know is reported
 and skipped; the rest of the file still loads.
 For tests there are two options not in the usage: `--null` plays into a
@@ -125,8 +125,8 @@ the downloads, put the `models` folder beside the executable.
 
 ## Screen
 
-One list pane with a **Browser / Queue / Mix** toggle in its top border
-(click it or press `tab`, which goes round all three); the right column has the cover, the title, the status
+One list pane with a **Browser / Queue / Transition / Karaoke** toggle in
+its top border (click it or press `tab`, which goes round all four); the right column has the cover, the title, the status
 light and the signal path, for example
 `file 96 → DAC (exclusive), bit-perfect`.
 When the device takes no rate that carries the file bit-perfect, the
@@ -213,8 +213,8 @@ it is heard as soon as the output buffer has played, with a 10 ms fade.
 That is with the Stem switching setting at **instantly**. At **on the next
 bar** (the default) a stem goes on or off on the first beat of a bar of the
 playing track, to the frame: the first bar at least a second ahead (2.5 s
-for the first stem off away from the Mix tab, which moves the track onto
-its stems and separates them first; on the Mix tab they are separated as
+for the first stem off away from the Transition tab, which moves the track onto
+its stems and separates them first; on the Transition tab they are separated as
 it plays already; a bar nearer than that rolls over to the next one), and
 the message says which bar. The bar is held to when it is heard: looping a
 bar, the change comes at the loop's end. All on again plays the stems to that bar and then goes back to the
@@ -234,8 +234,8 @@ Under the status light is the tempo of the track playing:
 - `♩ – BPM` where the beat is unclear.
 
 After the tempo comes the key, as its name and its place on the Camelot
-wheel (`· E major (12B)`), the same on the Mix tab's header and the Karaoke
-tab. It is heard from the first ten minutes of the track
+wheel (`· E major (12B)`), the same on the Transition tab's header and
+the Karaoke tab. It is heard from the first ten minutes of the track
 ([`jodel_rhythm::key`](../rhythm#the-key-key)); a key in the file's tags
 (`INITIALKEY`, ID3's `TKEY`) is taken instead.
 
@@ -257,7 +257,7 @@ After those, the whole queue is got ready in the background, from the
 track playing to the end and then from the start: each track analysed
 (beats, bars, stems and waveforms, the stems' audio kept) and its lyrics
 looked up and, with the speech model there, timed word by word, all into
-the caches, so the Mix and Karaoke tabs have them at once when it comes
+the caches, so the Transition and Karaoke tabs have them at once when it comes
 up, and playing it on stems separates nothing. In the queue, left of
 each track's format, four icons are grey until the track has that thing
 and light up once it has, in the order the work finds them, so they
@@ -281,7 +281,7 @@ The settings (`,`) choose how beats are found, below the engine's rows:
 | Stems | on: the meter's cues listen to stems (bass, drums, other, vocals) separated on the GPU, and the drum stem's flux votes where the drums play; off: the cues listen to the mix. Without a GPU it shows `unavailable` |
 | Stem switching | on the next bar: `alt+1` to `alt+4` (and the stem buttons) are heard from a bar's first beat; instantly: within a second or so (above) |
 | Next track (N) | what `N` does: cut, the next track starting at once, or mix into it, beat-matched; `X` switches it too |
-| Its transition | the preset `N` mixes by: the Mix tab's as it is set (the default), or one of its own (fade, drums first, bass swap, vocals last) |
+| Its transition | the preset `N` mixes by: the Transition tab's as it is set (the default), or one of its own (fade, drums first, bass swap, vocals last) |
 | Data folder | where the models, analyses, stems and lyrics are kept: `enter` opens a folder list to move them into another folder (see Folders and setup); while they move, a bar |
 
 While voting, at least one method stays checked. Without voting the
@@ -344,7 +344,7 @@ plays and pauses. Any other key or click, and opening or leaving a folder,
 starts the next name afresh.
 Lowercase letters never run commands there; commands use capitals (`Q`,
 `N`, `P`, `S`, `F`, `T`, `B`, `R`, `M`, `G`, `X`, `J`, `K`) and the other keys.
-The Mix tab has no names to type, so its transition keys are lowercase.
+The Transition tab has no names to type, so its transition keys are lowercase.
 
 In the queue, `del` or `backspace` takes the selected track out (the one
 playing gives way to the next), and `K` / `J` (or `shift+↑` / `shift+↓`)
@@ -362,9 +362,9 @@ browser's folder and row (unless a folder or file is given). It is saved a
 couple of seconds after it changes and on quitting, as `session.m3u8`
 in the settings folder; the saved queues are in `queues` there.
 
-### The Mix tab
+### The Transition tab
 
-**Mix** takes the whole width above the transport bar, with no cover,
+**Transition** takes the whole width above the transport bar, with no cover,
 track text or spectrum. It shows the track playing (**Now**) and below it
 the next one in the queue (**Next**), each with:
 
@@ -377,7 +377,7 @@ the next one in the queue (**Next**), each with:
 - **a ruler:** the bar numbers (in the window, each starts at its bar's
   line, to the pixel, so they scroll with the waveforms), with the cursor
   as `▼` and the track's transition cue as `◆` in front of its number;
-- **the lanes:** `mix`, and with stems `drums`, `bass`, `other` and
+- **the lanes:** `song`, and with stems `drums`, `bass`, `other` and
   `vocals`, each in its colour, as tall as both tracks fit (one to four
   rows a lane). Bars start where a lane is shaded (a line in the
   window), the selection is tinted, the playhead is the accent colour,
@@ -389,21 +389,21 @@ the next one in the queue (**Next**), each with:
   were not heard spread by syllables), the word heard now in the accent
   colour; where words crowd (zoomed out) those with no room are left out,
   and the words are laid out from the song's start, so scrolling never
-  moves them. `L` turns them off and on (`mix_lyrics`); `z`, or the
+  moves them. `L` turns them off and on (`transition_lyrics`); `z`, or the
   `z fit lyrics` button at the right of the tab's bottom border, zooms the
   track selected (`↑` `↓`) to the widest zoom that leaves out none of its
   words; the other track keeps its zoom.
 
-The waveforms come from the beat analysis, so the Mix tab needs the tempo
+The waveforms come from the beat analysis, so the Transition tab needs the tempo
 on (`M`). The stem lanes need stems (a GPU and the Stems setting); without
-them there is the mix lane alone. The lanes measure the peak and RMS of
+them there is the song lane alone. The lanes measure the peak and RMS of
 each 10 ms, on a scale from −60 dBFS to full scale.
 
 While the playing track's view follows the playhead, the window (with the
 GPU showing it) paints its bar numbers and lanes once, in tiles, and
 scrolls them at every refresh of the display by itself; a mark that moves
 (the cursor going along, a cue, the fades) paints only the tiles it is in.
-On the developer's machine the Mix tab goes by at about 130 frames a
+On the developer's machine the Transition tab goes by at about 130 frames a
 second on 12 % of a core.
 
 Both tracks show the same span of time, so their tempi compare at a glance:
@@ -415,7 +415,7 @@ follow the next track too, with its playhead (once it is heard) right
 under the playing one's. When the next track takes over, its block slides
 up into the playing track's place, and the one after it comes in below.
 
-| Key | Mix tab |
+| Key | Transition tab |
 |---|---|
 | `↑` `↓` | the playing track / the next one |
 | `←` `→` | the cursor a bar back / on (`alt`: a beat) |
@@ -445,7 +445,7 @@ from the bar that would have come next, never with a gap: the engine
 keeps 24 s of the playing track either side of what is heard (gigabytes
 are not needed: some 20 MB at 44.1 kHz, 150 MB at 384 kHz). With a stem
 off the same, from the separated stems it keeps (some 70 MB more), mixed
-with the stems on now: while the Mix tab is shown the playing track is
+with the stems on now: while the Transition tab is shown the playing track is
 separated as it plays even with every stem on (a separation running on
 the GPU alongside), so the bars before a stem went off are there too.
 Striking `5`
@@ -533,23 +533,23 @@ Without stems every lane is the whole track, so every preset is a
 beat-matched fade.
 
 The next track key (`N`, `shift+→`, `▶▶`) can mix too: `X`, anywhere,
-switches what it does, **cut** (the default, as ever) or **mix**. Mixing,
-`N` arms a transition into the next track from the first bar at least
-4.5 s ahead, over eight bars, in the tempo mode `m` set, by the Mix tab's
-preset as it is set then (`p`, its fades as edited), or by a preset of its
-own chosen in the settings' row under it, Its transition; `N` again before
-it starts cuts at once, and `N` while it mixes cuts into the next track
-where it is heard (the playing track stops there, the next one plays on
-alone). Where it cannot (no analysis yet, no bars), it cuts
-and says why. Both are saved (`skip_mix`, `skip_preset` in the settings
-file) and are rows of the settings, Next track (N) and Its transition. The
-Mix tab's own preset (`p`) and tempo mode (`m`) are saved too, so the next
-run starts from them.
+switches what it does, **cut** (the default, as ever) or **mix**.
+Mixing, `N` arms a transition into the next track from the first bar at
+least 4.5 s ahead, over eight bars, in the tempo mode `m` set, by the
+Transition tab's preset as it is set then (`p`, its fades as edited), or
+by a preset of its own chosen in the settings' row under it, Its
+transition; `N` again before it starts cuts at once, and `N` while it
+mixes cuts into the next track where it is heard (the playing track
+stops there, the next one plays on alone). Where it cannot (no analysis
+yet, no bars), it cuts and says why. Both are saved (`skip_mix`,
+`skip_preset` in the settings file) and are rows of the settings, Next
+track (N) and Its transition. The Transition tab's own preset (`p`) and
+tempo mode (`m`) are saved too, so the next run starts from them.
 
 The grid fixes are kept per track, by its path and size, in `grids`
 in the settings folder, not with the cached analyses in the data folder, so a
 new analysis never throws them away. The tempo, the beat pulse and the
-Mix tab all use the fixed grid. The waveforms are cached with the
+Transition tab all use the fixed grid. The waveforms are cached with the
 analyses (a `.wave` file beside each).
 
 ### Karaoke
@@ -562,7 +562,7 @@ are as in the mode; other tabs play the stems as the settings have them.
 `esc` on the tab does nothing. The tab also shows what was found of the
 lyrics of the song and the next two, and the microphone with a meter of
 the singer. Under it, where the other tabs have the spectrum, is the
-playing song's voice (its stem, as on the Mix tab's `vocals` lane) with
+playing song's voice (its stem, as on the Transition tab's `vocals` lane) with
 its words on it as they are sung, the playhead a third of the way in, each
 word where it is sung. Its zoom is fixed for each song: the widest at which
 no word is left out, so every word can be read (a song sung fast goes by
@@ -820,8 +820,8 @@ is listed with `?` and the reason (AAC is not supported).
 
 | Module | |
 |---|---|
-| `core` | state, `Action`, `update(state, action) -> effects`, layout in cells with its collapse rules, keymap, mouse regions; the Mix tab (`core::mix`), the grid fixes (`core::grid`), the transitions' presets and plans (`core::transition`) and the Karaoke tab and mode (`core::karaoke`). Pure. |
-| `view` | the ratatui widgets for both frontends; the cover, the spectrum, the Mix tab's lanes (`view::mix`) and Karaoke mode's picture (`view::karaoke`) go through `view::Pictures`; the window paints that picture in `gui::karaoke` |
+| `core` | state, `Action`, `update(state, action) -> effects`, layout in cells with its collapse rules, keymap, mouse regions; the Transition tab (`core::transition::tab`, the lanes it shares with Karaoke in `core::lanes`), the grid fixes (`core::grid`), the transitions' presets and plans (`core::transition`) and the Karaoke tab and mode (`core::karaoke`). Pure. |
+| `view` | the ratatui widgets for both frontends; the cover, the spectrum, the Transition tab's lanes (`view::transition`, with `view::lanes`, which the Karaoke tab shares) and Karaoke mode's picture (`view::karaoke`) go through `view::Pictures`; the window paints that picture in `gui::karaoke` |
 | `app` | the running player: the engine on the Lead input of a mixer that holds the device (`jodel_output::mixer`), background workers, the spectrum (the mixer's monitor), cover; carries out the effects |
 | `preview` | the preview's players, guests on the mixer (one per file, two at most): only the latest file loaded, crossfades on the mixer's clock, the song ducked and back |
 | `browser` | folder listing, file details read lazily for the rows on screen (cached for the session), recursive search, folder walk |
@@ -832,7 +832,7 @@ is listed with `?` and the reason (AAC is not supported).
 | `cache` | the schemas of what is kept on disk between runs, and their versions |
 | `stems_cache` | the tracks' stems kept (`stems/`): their files' names, the store the engine reads them from, pruning to 30 GB |
 | `tui` | terminal input and drawing; covers with ratatui-image (Kitty, iTerm2, Sixel, else half blocks), the spectrum in braille dots |
-| `gui` | the window; `gui::raster::PixelBackend` draws the cells into pixels with the embedded font, `gui::Canvas` paints covers, the spectrum and the Mix lanes at their cell rects |
+| `gui` | the window; `gui::raster::PixelBackend` draws the cells into pixels with the embedded font, `gui::Canvas` paints covers, the spectrum and the Transition lanes at their cell rects |
 
 The window's font is Sarasa Fixed J (Iosevka's Latin with Source Han Sans
 for Japanese, Chinese and Korean, each of those exactly two cells wide),
@@ -857,7 +857,7 @@ pixmap holds the window buffer's own words (`0x00RRGGBB`), so a frame
 goes out as a plain copy. Only the cells that changed are rasterised,
 and a cover (with the caption over it) is painted again only when it is
 new, moved, or a cell under it was redrawn; the spectrum only when it
-moved. The Mix lanes stay in the pixmap too: their columns sit on a grid
+moved. The Transition lanes stay in the pixmap too: their columns sit on a grid
 of whole pixels from the track's start (the view's start snapped to
 it, within a pixel), so a view that scrolled is shifted by whole
 columns, and only the columns new to it or whose marks changed (the
@@ -878,18 +878,18 @@ each frame instead, which on macOS means a new buffer of the whole
 window every time. It draws 60
 times a second while something follows the pointer or slides (a drag,
 a block sliding, input), 30 times while a track plays (the spectrum,
-the clock, the Mix tab's lanes going by), not at all while paused once
+the clock, the Transition tab's lanes going by), not at all while paused once
 the spectrum stands still, and not while the window cannot be seen
 (minimised, on another desktop, covered). `cargo run --release -p
 jodeldiplom --example frames -- [WIDTH HEIGHT SCALE] [FRAMES]` times the
 frames headless, per screen: the widgets, the pictures, the copy, and
 how many frames changed (default 3024 × 1890 at scale 2, a 16-inch
 MacBook Pro's window maximised; on a desktop processor the browser
-takes about 2.7 ms a frame, the Mix tab 3.9 ms while its view follows
+takes about 2.7 ms a frame, the Transition tab 3.9 ms while its view follows
 the playhead and 2.2 ms while held; the copy is softbuffer's, the GPU
 path sends only the changed rects). The tests check that frames drawn
 one after another give the pixels each would have drawn afresh, on the
-Mix tab through scrolling, seeking, a held view, a selection, a
+Transition tab through scrolling, seeking, a held view, a selection, a
 transition's curves and a zoom, and, on a GPU, that the frames drawn
 through the window's path off screen and read back are the canvas
 pixel for pixel (into a plain and an sRGB frame, through a resize and a
@@ -917,7 +917,7 @@ version, in `src/cache.rs`:
 - analyses and waveforms (`rhythm/`);
 - the tracks' stems (`stems/`, beside `rhythm/`), written by the analysis
   so a track is separated once: everything that plays on stems (a stems
-  mix, a jump, a transition, Karaoke, the Mix tab's stems kept ready) and
+  mix, a jump, a transition, Karaoke, the Transition tab's stems kept ready) and
   the lyrics timing reads them back; only a track without them is
   separated live. About 26–28 MB a minute of music (16 bits with a scale
   per block, coded losslessly; `jodel_playback::stem_file`), kept under
@@ -1004,7 +1004,7 @@ file's four stems to DIR as WAV, to hear the separation.
 `--levels` prints what each cue of the meter said about each grouping.
 `--presence` shows every 10 seconds how present the drum and bass stems
 are and how much the drum stem's candidate has a say there; `--wave`
-prints every 10 seconds each lane's peak level, as the Mix tab draws it.
+prints every 10 seconds each lane's peak level, as the Transition tab draws it.
 `--clicks` writes the last file as WAV with a click on every beat,
 higher on the first beat of a bar, so the beats can be checked by ear.
 

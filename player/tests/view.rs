@@ -477,12 +477,12 @@ fn a_frame_of_another_size_than_the_state_is_drawn_blank() {
 }
 
 #[test]
-fn mix_tab() {
-    let state = common::mix_state(120, 40);
+fn transition_tab() {
+    let state = common::transition_state(120, 40);
     let text = draw(&state);
-    assert!(text.contains(" Mix "), "{text}");
+    assert!(text.contains(" Transition "), "{text}");
     assert!(text.contains("drums") && text.contains("vocals"), "{text}");
-    snapshot("mix", &text);
+    snapshot("transition", &text);
 }
 
 /// The Karaoke tab has the voice's lane where the other tabs have the
@@ -491,9 +491,9 @@ fn mix_tab() {
 /// view is on it.
 #[test]
 fn the_karaoke_tab_shows_the_voice_with_every_word() {
+    use jodeldiplom::core::lanes::{self, Block};
     use jodeldiplom::core::layout::{self, Layout};
-    use jodeldiplom::core::mix::{self, Block};
-    let mut state = common::mix_state(120, 40);
+    let mut state = common::transition_state(120, 40);
     state.side = Side::Karaoke;
     common::sung_every(&mut state, 0.5);
     let Layout::Main(m) = layout::compute(&state) else {
@@ -502,12 +502,12 @@ fn the_karaoke_tab_shows_the_voice_with_every_word() {
     let voice = m.karaoke.as_ref().unwrap().voice.expect("the voice's lane");
     assert!(m.bottom.spectrum.is_none(), "no spectrum on the tab");
     assert_eq!(voice.bottom(), m.bottom.elapsed.y, "over the progress bar");
-    let lyrics = mix::lyrics_of_block(&state, Block::Now).unwrap();
-    let words = mix::timed_words(&lyrics);
-    let per = mix::lyrics_per_second(&words, 1).unwrap();
-    assert_eq!(mix::words_left_out(&words, per, 1), 0);
+    let lyrics = lanes::lyrics(&state, Block::Now).unwrap();
+    let words = lanes::timed_words(&lyrics);
+    let per = lanes::lyrics_per_second(&words, 1).unwrap();
+    assert_eq!(lanes::words_left_out(&words, per, 1), 0);
     assert!(
-        mix::words_left_out(&words, per / 1.5, 1) > 0,
+        lanes::words_left_out(&words, per / 1.5, 1) > 0,
         "a wider view leaves some out"
     );
     let heard = 30.0;
@@ -536,16 +536,17 @@ fn the_karaoke_tab_shows_the_voice_with_every_word() {
     );
     snapshot("karaoke_tab", &text);
 }
-/// The Mix tab asks for its tracks' lyrics; once timed, the words go along
-/// the bottom of the voice's lane, each where it is sung, a long one
+/// The Transition tab asks for its tracks' lyrics; once timed, the words go
+/// along the bottom of the voice's lane, each where it is sung, a long one
 /// spread over its syllables.
 #[test]
 fn the_words_go_on_the_voice_lane_where_they_are_sung() {
     use jodel_lyrics::{Lyrics, Source};
-    use jodeldiplom::core::mix::{self, Block};
+    use jodeldiplom::core::lanes::Block;
+    use jodeldiplom::core::transition::tab;
     use jodeldiplom::core::Effect;
     use jodeldiplom::lyrics::Answer;
-    let mut state = common::mix_state(120, 40);
+    let mut state = common::transition_state(120, 40);
     state.karaoke.lyrics_wanted.clear();
     let fx = update(&mut state, Action::Tick(1));
     let index = state.playing.track.as_ref().unwrap().index;
@@ -556,7 +557,7 @@ fn the_words_go_on_the_voice_lane_where_they_are_sung() {
             .any(|e| matches!(e, Effect::WantLyrics(p) if p.contains(&path))),
         "{fx:?}"
     );
-    let (start, end) = mix::window(&state, Block::Now, 0.0);
+    let (start, end) = tab::window(&state, Block::Now, 0.0);
     let at = start + (end - start) * 0.25;
     let mut timed = Lyrics::parse_text("Mister sunshine", Source::Lrclib);
     let words = &mut timed.lines[0].words;
@@ -598,14 +599,14 @@ fn the_words_go_on_the_voice_lane_where_they_are_sung() {
     // `L`: off (kept in the settings), the lane without words, and no
     // lyrics asked for; again: on.
     use jodeldiplom::core::keymap::Op;
-    let fx = update(&mut state, Action::Op(Op::MixLyrics));
-    assert!(!state.config.mix_lyrics);
+    let fx = update(&mut state, Action::Op(Op::TransitionLyrics));
+    assert!(!state.config.transition_lyrics);
     assert!(fx.contains(&Effect::SaveConfig), "{fx:?}");
     assert!(!draw(&state).contains("Mis─"));
     assert!(jodeldiplom::core::karaoke::lyrics_wanted(&state).is_empty());
     // On again: asked for again (from the cache, at once in the app).
-    let fx = update(&mut state, Action::Op(Op::MixLyrics));
-    assert!(state.config.mix_lyrics);
+    let fx = update(&mut state, Action::Op(Op::TransitionLyrics));
+    assert!(state.config.transition_lyrics);
     assert!(
         fx.iter()
             .any(|e| matches!(e, Effect::WantLyrics(p) if p.contains(&asked))),
@@ -614,17 +615,17 @@ fn the_words_go_on_the_voice_lane_where_they_are_sung() {
 }
 
 #[test]
-fn mix_tab_in_a_short_window() {
+fn transition_tab_in_a_short_window() {
     // One row a lane, both tracks.
-    let state = common::mix_state(100, 26);
+    let state = common::transition_state(100, 26);
     let text = draw(&state);
     assert!(text.contains("Next"), "{text}");
-    snapshot("mix_short", &text);
+    snapshot("transition_short", &text);
 }
 
 #[test]
-fn mix_tab_with_a_transition_being_edited() {
-    let mut state = common::mix_state(120, 40);
+fn transition_tab_with_a_transition_being_edited() {
+    let mut state = common::transition_state(120, 40);
     for o in [
         Op::Accept,
         Op::Down,
@@ -641,14 +642,14 @@ fn mix_tab_with_a_transition_being_edited() {
         "{text}"
     );
     assert!(text.contains("editing now bass at bar 0"), "{text}");
-    snapshot("mix_transition", &text);
+    snapshot("transition_edit", &text);
 }
 
 #[test]
-fn the_mix_header_shows_the_pairing_and_the_glide() {
+fn the_transition_header_shows_the_pairing_and_the_glide() {
     // The next track at 66 BPM: its beat on two of the playing track's
     // (128 BPM), so the tempo glides from 128 to 132.
-    let mut state = common::mix_state(190, 40);
+    let mut state = common::transition_state(190, 40);
     common::next_at(&mut state, 66.0);
     update(&mut state, Action::Op(Op::TransitionPreset));
     let text = draw(&state);
@@ -665,11 +666,11 @@ fn the_mix_header_shows_the_pairing_and_the_glide() {
 }
 
 #[test]
-fn stems_turned_off_are_grey_on_the_mix_tab() {
+fn stems_turned_off_are_grey_on_the_transition_tab() {
     use jodel_playback::stems::Stem;
     use jodeldiplom::core::layout::Lane;
-    use view::mix::{dimmed, lane_color, OFF};
-    let mut state = common::mix_state(120, 40);
+    use view::lanes::{dimmed, lane_color, OFF};
+    let mut state = common::transition_state(120, 40);
     state.stems = state.stems.toggle(Stem::Drums);
     let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
     let spectrum = spectrum();
@@ -705,7 +706,7 @@ fn stems_turned_off_are_grey_on_the_mix_tab() {
 
 #[test]
 fn the_fade_curves_are_drawn_in_the_terminal_lanes() {
-    use view::mix::CURVE;
+    use view::lanes::CURVE;
     let curve_cells = |state: &State| {
         let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
         let spectrum = spectrum();
@@ -722,7 +723,7 @@ fn the_fade_curves_are_drawn_in_the_terminal_lanes() {
         let buf = terminal.backend().buffer();
         buf.content().iter().filter(|c| c.fg == CURVE).count()
     };
-    let mut state = common::mix_state(120, 40);
+    let mut state = common::transition_state(120, 40);
     assert_eq!(curve_cells(&state), 0, "no transition, no curve");
     // A preset alone only names itself in the header.
     update(&mut state, Action::Op(Op::TransitionPreset));

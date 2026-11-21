@@ -12,12 +12,12 @@ the code:
 
 | Work | When | Cost | Done once? |
 |---|---|---|---|
-| Stem separation | analysis, lyrics timing, and again on every stems start, seek, jump, the Mix tab's shadow run, the next track's prestart, both tracks of a transition | ~9 % of the GPU per track playing, in 0.5 s bursts the window waits behind | no: nothing kept |
-| Spectrum FFT | every frame, also where no spectrum is shown (Mix, Now Playing, Karaoke) | 0.5–8 ms a frame on the UI thread (131072 points at 384 kHz) | runs hidden |
+| Stem separation | analysis, lyrics timing, and again on every stems start, seek, jump, the Transition tab's shadow run, the next track's prestart, both tracks of a transition | ~9 % of the GPU per track playing, in 0.5 s bursts the window waits behind | no: nothing kept |
+| Spectrum FFT | every frame, also where no spectrum is shown (Transition, Now Playing, Karaoke) | 0.5–8 ms a frame on the UI thread (131072 points at 384 kHz) | runs hidden |
 | Engine output buffer trim | every 4096 output frames | a ~24 s buffer moved each time: GB/s at 384 kHz | no |
 | Stems kept for jumps | once a second | ~70 MB moved a second per stems run | no |
 | Frames | every engine event (10 a second) forces an extra, unpaced frame | uneven frame times | no |
-| Heard position | extrapolated from when an event was handled | the Mix lanes step back when one is late | no |
+| Heard position | extrapolated from when an event was handled | the Transition lanes step back when one is late | no |
 
 ## The plan
 
@@ -39,9 +39,9 @@ the code:
    moved (a seek, a jump, a new track).
 
 Kept as they are, cheap enough or needed live: the transition warp and
-its gains, the output resampler and dither,
-the Mix lanes' shift (pixels moved in memory; a lane texture as a ring
-would save its upload, later), the Mix tab's per-frame transition preview.
+its gains, the output resampler and dither, the Transition lanes' shift
+(pixels moved in memory; a lane texture as a ring would save its upload,
+later), the Transition tab's per-frame transition preview.
 
 ## Status
 
@@ -64,6 +64,6 @@ All five steps are in (each with its tests):
 5. The heard position holds rather than stepping back by less than
    0.25 s while the track plays.
 
-Not done yet, smaller: the Mix lanes' shift still uploads the whole lane
+Not done yet, smaller: the Transition lanes' shift still uploads the whole lane
 rect each frame (a lane texture used as a ring would upload only the new
-columns), and the Mix tab's transition preview is rebuilt each frame.
+columns), and the Transition tab's transition preview is rebuilt each frame.

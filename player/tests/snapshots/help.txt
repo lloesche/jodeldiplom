@@ -5,9 +5,9 @@
 │   →                     seek forward 5 s                                                                             │
 │   N / shift+→           next track                                                                                   │
 │   P / shift+←           previous track                                                                               │
-│   X                     what N does: cut, or mix in (by the Mix tab's preset, or the one set in the settings)        │
+│   X                     what N does: cut, or mix in (by the Transition tab's preset, or the one set in the settings) │
 │   S                     stop                                                                                         │
-│   tab                   browser / queue / mix                                                                        │
+│   tab                   browser / queue / transition / karaoke                                                       │
 │   F                     now playing, full screen                                                                     │
 │   T                     go to the playing track                                                                      │
 │   B                     go to its album folder                                                                       │

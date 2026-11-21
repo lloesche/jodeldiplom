@@ -15,8 +15,9 @@ use ratatui::{Frame, Terminal};
 use crate::art::{self, Art};
 use crate::core::layout::Lane;
 use crate::view::karaoke::KaraokePicture;
-use crate::view::mix::{RulerPlot, WavePlot};
+use crate::view::lanes::WavePlot;
 use crate::view::plot::{self, Plot};
+use crate::view::transition::RulerPlot;
 use crate::view::{self, colors, Pictures, Scene};
 use jodel_rhythm::waveform::Waveform;
 
@@ -40,9 +41,9 @@ enum Paint {
     Spectrum(Plot),
     /// Text over a cover: the cover's rect and the text's.
     Caption(Rect, Rect),
-    /// A lane of the Mix tab.
+    /// A lane of the Transition tab.
     Wave(Box<WavePlot>),
-    /// A Mix block's bar numbers.
+    /// A Transition block's bar numbers.
     Ruler(Box<RulerPlot>),
     /// Karaoke mode's picture.
     Karaoke(Box<KaraokePicture>),
@@ -137,7 +138,7 @@ type FittedCover = (u64, u32, u32, Arc<(RgbImage, u32, u32)>);
 pub struct DrawTimes {
     /// The widgets drawn and the changed cells rasterised.
     pub widgets: std::time::Duration,
-    /// The covers, spectrum and Mix lanes painted.
+    /// The covers, spectrum and Transition lanes painted.
     pub pictures: std::time::Duration,
 }
 
@@ -149,9 +150,9 @@ pub struct Canvas {
     painted: Vec<Rect>,
     /// The covers in the pixmap now: rect, art id, whether below a line.
     covers: Vec<(Rect, u64, bool)>,
-    /// The Mix lanes in the pixmap now.
+    /// The Transition lanes in the pixmap now.
     waves: Vec<KeptWave>,
-    /// The Mix blocks' bar numbers in the pixmap now.
+    /// The Transition blocks' bar numbers in the pixmap now.
     rulers: Vec<KeptRuler>,
     /// The spectrum in the pixmap now.
     spectrum: Option<Plot>,
@@ -193,7 +194,7 @@ pub const MOST_SLOTS: usize = 16;
 
 /// What follows the playhead together ([`WavePlot::follow`],
 /// [`RulerPlot::follow`]): the Karaoke tab's voice lane, or the playing
-/// track's block on the Mix tab (its bar numbers and lanes, stacked), on
+/// track's block on the Transition tab (its bar numbers and lanes, stacked), on
 /// one grid (column `n` is `n × px` seconds in). Painted in tiles of
 /// [`TILE`] columns, each once, for the window to scroll through by itself:
 /// a tile is painted again only when what is in it changes (the word heard,
@@ -670,9 +671,9 @@ impl Canvas {
             let text = usize::from(plot.text_scale.max(1));
             let cw = (self.cell().0 * text) as f64;
             let margin = (self.scale().round().max(1.0) as usize * text) as i64 + 1;
-            let timed = view::mix::timed_words(lyrics);
+            let timed = crate::core::lanes::timed_words(lyrics);
             let x_of = |t: f64| (t / cols.px).floor();
-            crate::core::mix::lay_out_words(
+            crate::core::lanes::lay_out_words(
                 &timed,
                 &x_of,
                 1.0 / cols.px,
@@ -1065,18 +1066,17 @@ impl Canvas {
         f64::from(self.font_px) / BASE_FONT_PX
     }
 
-    /// A Mix lane in pixels: the marks behind (the selection, the span the
-    /// lanes show, the cursor and the cue), the RMS filled and the peak
+    /// A Transition lane in pixels: the marks behind (the selection, the span
+    /// the lanes show, the cursor and the cue), the RMS filled and the peak
     /// outline over it, mirrored about the middle, the bars as lines, the
-    /// playhead over all; on the voice's lane the words across its middle,
-    /// a held sound a line. The lane's pixels stay from the last frame: a view
-    /// that scrolled is shifted by whole columns, and only the columns new
-    /// to it or whose marks changed are painted, with the words over them;
-    /// all of them where the lane is new, moved, or a cell under it was
-    /// redrawn. The words stand on the columns' grid, so a word kept moves
-    /// with the pixels; one that changed (the word heard now, one coming
-    /// in) is painted afresh with the columns under it. Returns the pixels
-    /// that changed, if any.
+    /// playhead over all; on the voice's lane the words across its middle, a
+    /// held sound a line. The lane's pixels stay from the last frame: a view
+    /// that scrolled is shifted by whole columns, and only the columns new to
+    /// it or whose marks changed are painted, with the words over them; all of
+    /// them where the lane is new, moved, or a cell under it was redrawn. The
+    /// words stand on the columns' grid, so a word kept moves with the pixels;
+    /// one that changed (the word heard now, one coming in) is painted afresh
+    /// with the columns under it. Returns the pixels that changed, if any.
     fn paint_wave(
         &mut self,
         plot: &WavePlot,
@@ -1161,12 +1161,12 @@ impl Canvas {
         let row = (middle >= above && middle - above + tch <= h).then(|| middle - above);
         let labels: Vec<WaveLabel> = match (plot.lyrics.as_deref(), row) {
             (Some(lyrics), Some(_)) => {
-                let words = view::mix::timed_words(lyrics);
+                let words = crate::core::lanes::timed_words(lyrics);
                 let x_of = |t: f64| (t / cols.px).floor();
                 // A word just past either edge too: its outline reaches in.
                 let reach = (step * text) as f64 + 1.0;
                 let view = (cols.n0 as f64 - reach, (cols.n0 + w as i64) as f64 + reach);
-                view::mix::lane_labels(
+                view::lanes::lane_labels(
                     &words,
                     &x_of,
                     1.0 / cols.px,
@@ -1269,25 +1269,25 @@ impl Canvas {
         };
         let bg = rgb(colors::BG);
         let mid = full as f64 / 2.0;
-        let curve = rgb(view::mix::CURVE);
+        let curve = rgb(view::lanes::CURVE);
         for &x in &dirty {
             let key = keys[x];
             let (t0, t1) = (cols.time(x as f64), cols.time(x as f64 + 1.0));
             let back = match key.back {
-                Back::Selected => rgb(view::mix::SELECT_BG),
-                Back::Shown => rgb(view::mix::SHOWN_BG),
-                Back::Outside => rgb(view::mix::OUTSIDE_BG),
-                Back::Transition => rgb(view::mix::TRANSITION_BG),
+                Back::Selected => rgb(view::lanes::SELECT_BG),
+                Back::Shown => rgb(view::lanes::SHOWN_BG),
+                Back::Outside => rgb(view::lanes::OUTSIDE_BG),
+                Back::Transition => rgb(view::lanes::TRANSITION_BG),
                 Back::None => bg,
             };
             let color = if key.unclear {
-                view::mix::dimmed(plot.color)
+                view::lanes::dimmed(plot.color)
             } else {
                 plot.color
             };
-            let color = view::mix::faded(color, f32::from_bits(key.gain));
+            let color = view::lanes::faded(color, f32::from_bits(key.gain));
             let color = if key.back == Back::Outside {
-                view::mix::faded(color, view::mix::OUTSIDE_GAIN)
+                view::lanes::faded(color, view::lanes::OUTSIDE_GAIN)
             } else {
                 color
             };
@@ -1296,7 +1296,7 @@ impl Canvas {
             let (body, edge) = if plot.deep {
                 (rgb(color), deep(rgb(color)))
             } else {
-                (rgb(view::mix::dimmed(color)), rgb(color))
+                (rgb(view::lanes::dimmed(color)), rgb(color))
             };
             let peak = f64::from(levels.peak_between(t0, t1)) * mid;
             let rms = f64::from(levels.rms_between(t0, t1)) * mid;
@@ -1324,7 +1324,7 @@ impl Canvas {
                 let frame = ((t0 + t1) / 2.0 * jodel_rhythm::waveform::FPS).floor();
                 if let Some((top, bottom)) = (frame >= 0.0).then(|| n.bar(frame as usize)).flatten()
                 {
-                    let bar = rgb(view::mix::NOTE);
+                    let bar = rgb(view::lanes::NOTE);
                     for yy in top.saturating_sub(line)..bottom + line {
                         let Some(y) = yy.checked_sub(above) else {
                             continue;
@@ -1348,9 +1348,9 @@ impl Canvas {
                 over(rgb(colors::TEXT), 0.22);
             }
             for (bit, c, share) in [
-                (MARK_CUE, view::mix::CUE, 0.9),
+                (MARK_CUE, view::lanes::CUE, 0.9),
                 (MARK_CURSOR, colors::ACCENT, 0.55),
-                (MARK_EDIT, view::mix::CURVE, 0.8),
+                (MARK_EDIT, view::lanes::CURVE, 0.8),
                 (MARK_PLAYHEAD, colors::ACCENT, 1.0),
             ] {
                 if key.marks & bit != 0 {
@@ -1441,7 +1441,7 @@ impl Canvas {
                 let chars: Vec<char> = l.text.chars().collect();
                 let mut runs: Vec<(usize, usize, bool)> = Vec::new();
                 for (i, &c) in chars.iter().enumerate() {
-                    let held = c == view::mix::HOLD;
+                    let held = c == view::lanes::HOLD;
                     match runs.last_mut() {
                         Some(r) if r.2 == held => r.1 = i + 1,
                         _ => runs.push((i, i + 1, held)),
@@ -1533,7 +1533,7 @@ impl Canvas {
         (changed, Some(kept))
     }
 
-    /// A Mix block's bar numbers in pixels: each starting at its bar's
+    /// A Transition block's bar numbers in pixels: each starting at its bar's
     /// line in the lanes below (to the pixel, so they move with the
     /// waveforms), a tick where there is no room for it, the cue and the
     /// cursor centred on theirs. On the lanes' grid of columns
@@ -1624,7 +1624,7 @@ impl Canvas {
             backend.text_at(x0 as f64 + x, y0, &label, dim, clip);
         }
         for (time, symbol, color) in [
-            (plot.cue, "◆", view::mix::CUE),
+            (plot.cue, "◆", view::lanes::CUE),
             (plot.cursor, "▼", colors::ACCENT),
         ] {
             if let Some(x) = time.map(column).filter(|&x| x >= 0.0 && x < w as f64) {
@@ -1982,7 +1982,7 @@ impl Columns {
     }
 }
 
-/// A Mix lane column's background.
+/// A Transition lane column's background.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 enum Back {
     #[default]
@@ -1999,8 +1999,8 @@ const MARK_CURSOR: u8 = 2;
 const MARK_EDIT: u8 = 4;
 const MARK_PLAYHEAD: u8 = 8;
 
-/// Everything a Mix lane's pixel column shows besides the waveform at its
-/// place on the grid: two columns with the same key at the same place are
+/// Everything a Transition lane's pixel column shows besides the waveform at
+/// its place on the grid: two columns with the same key at the same place are
 /// the same pixels.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 struct ColumnKey {
@@ -2034,7 +2034,7 @@ struct WaveShape {
     key: Option<jodel_rhythm::key::Key>,
 }
 
-/// A Mix lane as the pixmap holds it.
+/// A Transition lane as the pixmap holds it.
 struct KeptWave {
     shape: WaveShape,
     waveform: Arc<Waveform>,
@@ -2044,18 +2044,18 @@ struct KeptWave {
     labels: Vec<WaveLabel>,
 }
 
-/// A word drawn on a Mix lane: its first column on the grid (absolute,
+/// A word drawn on a Transition lane: its first column on the grid (absolute,
 /// [`Columns::n0`] on), its characters, whether in the accent colour.
 #[derive(Clone, Debug, PartialEq)]
 struct WaveLabel {
     col: i64,
     text: String,
     heard: bool,
-    /// Its line ([`crate::core::mix::WordLines`]).
+    /// Its line ([`crate::core::lanes::WordLines`]).
     row: usize,
 }
 
-/// A Mix block's bar numbers as the pixmap holds them.
+/// A Transition block's bar numbers as the pixmap holds them.
 #[derive(Clone, Debug, PartialEq)]
 struct KeptRuler {
     area: Rect,

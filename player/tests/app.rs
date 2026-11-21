@@ -204,11 +204,11 @@ fn a_file_argument_plays_at_once_and_settings_are_saved() {
     let (saved, _) = Config::load(&config_file).unwrap();
     assert_eq!(saved.max_rate, Some(176_400));
     assert_eq!(saved.headroom, Headroom::NONE);
-    // Every setting changed in the player is saved: the Mix tab's preset
+    // Every setting changed in the player is saved: the Transition tab's preset
     // and lyrics, the Karaoke tab's voice level.
-    app.dispatch(Action::ShowSide(jodeldiplom::core::Side::Mix));
+    app.dispatch(Action::ShowSide(jodeldiplom::core::Side::Transition));
     app.dispatch(Action::Op(Op::TransitionPreset));
-    app.dispatch(Action::Op(Op::MixLyrics));
+    app.dispatch(Action::Op(Op::TransitionLyrics));
     app.dispatch(Action::ShowSide(jodeldiplom::core::Side::Karaoke));
     app.dispatch(Action::Op(Op::SliderUp));
     // The microphone chosen (`i`).
@@ -219,9 +219,9 @@ fn a_file_argument_plays_at_once_and_settings_are_saved() {
         .karaoke_mic_device
         .is_some()));
     let (saved, _) = Config::load(&config_file).unwrap();
-    assert_eq!(saved.mix_preset, app.state.config.mix_preset);
-    assert_ne!(saved.mix_preset, Config::default().mix_preset);
-    assert!(!saved.mix_lyrics);
+    assert_eq!(saved.transition_preset, app.state.config.transition_preset);
+    assert_ne!(saved.transition_preset, Config::default().transition_preset);
+    assert!(!saved.transition_lyrics);
     assert_eq!(saved.karaoke_voice, 5);
     assert_eq!(saved.karaoke_mic_device.as_deref(), Some("a"));
     assert_eq!(saved.headroom, Headroom::NONE);

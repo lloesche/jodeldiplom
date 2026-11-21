@@ -371,7 +371,7 @@ pub struct App {
     /// When the last position event arrived, for [`App::heard`].
     position_at: Instant,
     /// What the engine was last told about keeping the stems
-    /// ([`Command::KeepStems`]): while the Mix tab is shown.
+    /// ([`Command::KeepStems`]): while the Transition tab is shown.
     kept_stems: Option<bool>,
     /// The track and position the last frame drew, and when
     /// ([`App::heard_for_frame`]).
@@ -766,7 +766,7 @@ impl App {
         let _ = player.jump_window(JUMP_WINDOW, JUMP_WINDOW);
         self.kept_stems = None;
         // Whatever the old engine had armed or mixing is gone with it.
-        core::mix::engine_restarted(&mut self.state);
+        core::transition::tab::engine_restarted(&mut self.state);
         let tx = self.tx.clone();
         let notify = self.notify.clone();
         let current = self.generation.clone();
@@ -846,14 +846,14 @@ impl App {
                 }
             }
         }
-        // On the Mix tab the playing track's stems are kept while its file
-        // plays, so a stem switched off has those from before it for a
+        // On the Transition tab the playing track's stems are kept while its
+        // file plays, so a stem switched off has those from before it for a
         // jump back (a separation runs meanwhile; elsewhere it does not).
-        let mix = self.state.side == core::Side::Mix;
-        if self.kept_stems != Some(mix) {
+        let transition = self.state.side == core::Side::Transition;
+        if self.kept_stems != Some(transition) {
             if let Some(engine) = &self.engine {
-                let _ = engine.player.keep_stems(mix);
-                self.kept_stems = Some(mix);
+                let _ = engine.player.keep_stems(transition);
+                self.kept_stems = Some(transition);
             }
         }
         if gone {
@@ -1210,17 +1210,17 @@ impl App {
     }
 
     /// [`App::heard`] for a frame about to be drawn, kept in the state so
-    /// that a click on the Mix tab lands where it was seen.
+    /// that a click on the Transition tab lands where it was seen.
     pub fn heard_for_frame(&mut self) -> f64 {
         let reported = self.heard();
         let mut heard = reported;
         let now = Instant::now();
-        // The position comes every 100 ms, a little early or late: drawn as
-        // it is, what scrolls by (the Mix lanes, the Karaoke tab's words)
-        // steps unevenly. While the track plays on, the frames keep a clock
-        // of their own, running with time from the last frame's position
-        // and going a share of the way to the one reported, never back; a
-        // seek or a jump (further off) is taken at once.
+        // The position comes every 100 ms, a little early or late: drawn as it
+        // is, what scrolls by (the Transition lanes, the Karaoke tab's words)
+        // steps unevenly. While the track plays on, the frames keep a clock of
+        // their own, running with time from the last frame's position and
+        // going a share of the way to the one reported, never back; a seek or
+        // a jump (further off) is taken at once.
         let track = self.state.playing.track.as_ref().map(|t| t.index);
         if self.state.playing.state == PlayState::Playing {
             if let Some((was, last, at)) = self.last_drawn {
@@ -1316,7 +1316,7 @@ impl App {
             // The Karaoke tab's meter moves with the voice, music or not.
             || (self.mic.is_some() && core::karaoke::on_tab(&self.state))
             || self.state.seek_drag.is_some()
-            || self.state.mix.slide.is_some()
+            || self.state.transition.slide.is_some()
             || self.state.karaoke.resume_at.is_some()
             || (self.state.playing.state != PlayState::Paused
                 && self.spectrum_moved
@@ -1345,14 +1345,14 @@ impl App {
     /// Whether what moves needs 60 frames a second to look smooth: what
     /// follows the pointer (a seek drag, a view being dragged), a block
     /// sliding, and words to be read as they go by (Karaoke mode; the
-    /// Karaoke tab's voice lane is [`App::layer_moves`]). The spectrum, the clock and the Mix
-    /// tab's lanes going by as a track plays (a few pixels a frame at 30)
-    /// do with 30.
+    /// Karaoke tab's voice lane is [`App::layer_moves`]). The spectrum, the
+    /// clock and the Transition tab's lanes going by as a track plays (a few
+    /// pixels a frame at 30) do with 30.
     pub fn smooth(&self) -> bool {
         let state = &self.state;
         state.seek_drag.is_some()
-            || state.mix.slide.is_some()
-            || state.mix.pan.is_some()
+            || state.transition.slide.is_some()
+            || state.transition.pan.is_some()
             || state.karaoke.dragging.is_some()
             // Karaoke mode: the lyrics fill and the count-in's numbers
             // shrink as they are sung.
@@ -1362,22 +1362,22 @@ impl App {
     }
 
     /// Whether a lane that follows the playhead goes by (a song playing:
-    /// the Karaoke tab's voice lane, the Mix tab's playing track): it
+    /// the Karaoke tab's voice lane, the Transition tab's playing track): it
     /// needs a frame every refresh too, but where the window scrolls it by
     /// itself ([`crate::gui::canvas::Canvas::layer_frame`]) only the lane
     /// moves in most of them.
     pub fn layer_moves(&self) -> bool {
         let state = &self.state;
         let playing = state.playing.state == PlayState::Playing;
-        // The Mix tab's playing track, its view following the playhead.
-        let mix = state.screen == core::Screen::Main
-            && state.side == core::Side::Mix
+        // The Transition tab's playing track, its view following the playhead.
+        let transition = state.screen == core::Screen::Main
+            && state.side == core::Side::Transition
             && state.palette.is_none()
-            && core::mix::block(state, core::mix::Block::Now)
+            && core::transition::tab::block(state, core::lanes::Block::Now)
                 .start
                 .is_none()
-            && state.mix.slide.is_none();
-        playing && (core::karaoke::on_tab(state) || mix)
+            && state.transition.slide.is_none();
+        playing && (core::karaoke::on_tab(state) || transition)
     }
 
     /// The spectrum of what is heard now: computed only where the screen
@@ -1632,9 +1632,9 @@ impl App {
                     stems,
                     skip_mix,
                     skip_preset,
-                    mix_preset,
-                    mix_tempo,
-                    mix_lyrics,
+                    transition_preset,
+                    transition_tempo,
+                    transition_lyrics,
                     stems_on_bar,
                     karaoke_voice,
                     karaoke_mic_device,

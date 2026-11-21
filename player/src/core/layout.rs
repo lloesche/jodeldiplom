@@ -86,9 +86,9 @@ pub struct MainLayout {
     pub info: Option<Rect>,
     /// The two-row track summary when there is no right column.
     pub mini: Option<Rect>,
-    /// The Mix tab, when it is the side shown (it then takes the whole
-    /// width, with no right column and no spectrum).
-    pub mix: Option<MixLayout>,
+    /// The Transition tab, when it is the side shown (it then takes the
+    /// whole width, with no right column and no spectrum).
+    pub transition: Option<TransitionLayout>,
     /// The Karaoke tab, when it is the side shown (the whole width too).
     pub karaoke: Option<KaraokeTabLayout>,
     /// The bottom bar.
@@ -163,11 +163,11 @@ pub struct KaraokeControls {
     pub hint: Rect,
 }
 
-/// A lane of a Mix block: the whole music or one stem.
+/// A lane of a block: the whole song or one stem.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Lane {
-    /// The mix.
-    Mix,
+    /// The whole song.
+    Song,
     /// The drum stem.
     Drums,
     /// The bass stem.
@@ -181,7 +181,7 @@ pub enum Lane {
 impl Lane {
     /// The lanes with stems, top first.
     pub const ALL: [Lane; 5] = [
-        Lane::Mix,
+        Lane::Song,
         Lane::Drums,
         Lane::Bass,
         Lane::Other,
@@ -191,7 +191,7 @@ impl Lane {
     /// Its label.
     pub fn label(self) -> &'static str {
         match self {
-            Lane::Mix => "mix",
+            Lane::Song => "song",
             Lane::Drums => "drums",
             Lane::Bass => "bass",
             Lane::Other => "other",
@@ -200,10 +200,10 @@ impl Lane {
     }
 
     /// Its place among a waveform's stems (bass, drums, other, vocals);
-    /// `None` for the mix.
+    /// `None` for the whole song.
     pub fn stem(self) -> Option<usize> {
         match self {
-            Lane::Mix => None,
+            Lane::Song => None,
             Lane::Bass => Some(0),
             Lane::Drums => Some(1),
             Lane::Other => Some(2),
@@ -212,18 +212,18 @@ impl Lane {
     }
 }
 
-/// Cells left of a Mix block's lanes for their labels.
-pub const MIX_LABELS: u16 = 7;
-/// The most rows a Mix lane takes.
-pub const MIX_LANE_ROWS: u16 = 4;
+/// Cells left of a block's lanes for their labels.
+pub const TRANSITION_LANE_LABELS: u16 = 7;
+/// The most rows a lane of the Transition tab takes.
+pub const TRANSITION_LANE_ROWS: u16 = 4;
 
-/// One block of the Mix tab: a header line, the whole track in one row,
-/// the bar numbers, and the lanes (all from [`MIX_LABELS`] in, so their
+/// One block of the Transition tab: a header line, the whole track in one row,
+/// the bar numbers, and the lanes (all from [`TRANSITION_LANE_LABELS`] in, so their
 /// columns are the same times).
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct MixBlockLayout {
+pub struct TransitionBlockLayout {
     /// The track it shows.
-    pub block: crate::core::mix::Block,
+    pub block: crate::core::lanes::Block,
     /// Title, tempo and bar.
     pub header: Rect,
     /// The whole track.
@@ -240,13 +240,13 @@ pub struct MixBlockLayout {
     pub top_cut: u16,
 }
 
-/// The Mix tab: the playing track's block, then the next one's when there
-/// is room.
+/// The Transition tab: the playing track's block, then the next one's when
+/// there is room.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct MixLayout {
+pub struct TransitionLayout {
     /// The blocks, top first.
-    pub blocks: Vec<MixBlockLayout>,
-    /// The button that zooms to fit the lyrics ([`MIX_FIT`]), in the
+    pub blocks: Vec<TransitionBlockLayout>,
+    /// The button that zooms to fit the lyrics ([`FIT_LYRICS`]), in the
     /// pane's bottom border.
     pub fit: Option<Rect>,
 }
@@ -539,10 +539,11 @@ fn bottom(state: &State, area: Rect, spectrum: u16) -> (Rect, Bottom) {
     )
 }
 
-/// The lanes a Mix block shows: every stem's where its track has them (or,
-/// before its analysis is in, where stems are asked for), else the mix's.
-fn mix_lanes(state: &State, block: crate::core::mix::Block) -> &'static [Lane] {
-    let stems = match crate::core::mix::rhythmed(state, block) {
+/// The lanes a Transition block shows: every stem's where its track has them
+/// (or, before its analysis is in, where stems are asked for), else the whole
+/// song's.
+fn block_lanes(state: &State, block: crate::core::lanes::Block) -> &'static [Lane] {
+    let stems = match crate::core::lanes::rhythmed(state, block) {
         Some(r) => r.waveform.as_ref().is_some_and(|w| w.stems.is_some()),
         None => state.rhythm_recipe.stems,
     };
@@ -553,16 +554,19 @@ fn mix_lanes(state: &State, block: crate::core::mix::Block) -> &'static [Lane] {
     }
 }
 
-/// The Mix tab's blocks in `inner`: each a header, an overview and a ruler
-/// row and its lanes, as many rows a lane (up to [`MIX_LANE_ROWS`]) as
-/// both blocks fit with; the next track's block only where it fits.
-fn mix(state: &State, inner: Rect, list: Rect) -> MixLayout {
-    use crate::core::mix::Block;
-    let lanes = [mix_lanes(state, Block::Now), mix_lanes(state, Block::Next)];
+/// The Transition tab's blocks in `inner`: each a header, an overview and a
+/// ruler row and its lanes, as many rows a lane (up to [`TRANSITION_LANE_ROWS`]) as both
+/// blocks fit with; the next track's block only where it fits.
+fn transition(state: &State, inner: Rect, list: Rect) -> TransitionLayout {
+    use crate::core::lanes::Block;
+    let lanes = [
+        block_lanes(state, Block::Now),
+        block_lanes(state, Block::Next),
+    ];
     let need = |which: usize, h: u16| 3 + lanes[which].len() as u16 * h;
     let rows = inner.height;
     // The tallest lanes (up to four rows) both blocks fit with.
-    let both = (1..=MIX_LANE_ROWS)
+    let both = (1..=TRANSITION_LANE_ROWS)
         .rev()
         .find(|&h| need(0, h) + 1 + need(1, h) <= rows);
     let plan: Vec<(usize, u16)> = match both {
@@ -578,14 +582,14 @@ fn mix(state: &State, inner: Rect, list: Rect) -> MixLayout {
     let mut y = top;
     // After a hand-over, the track left slides up out of view and the
     // playing one up into its place, the next one in under it.
-    if let (Some(done), Some(h)) = (crate::core::mix::slide(state), both) {
-        let prev = mix_lanes(state, Block::Prev);
+    if let (Some(done), Some(h)) = (crate::core::transition::tab::slide(state), both) {
+        let prev = block_lanes(state, Block::Prev);
         let pitch = 3 + prev.len() as i32 * i32::from(h) + 1;
         y -= (done * f64::from(pitch)).round() as i32;
         order.insert(0, (Block::Prev, prev, h));
     }
-    let x = inner.x + MIX_LABELS.min(inner.width);
-    let w = inner.width.saturating_sub(MIX_LABELS);
+    let x = inner.x + TRANSITION_LANE_LABELS.min(inner.width);
+    let w = inner.width.saturating_sub(TRANSITION_LANE_LABELS);
     let shown = |y: i32| y >= top && y < bottom;
     let row = |y: i32, x: u16, w: u16| {
         if shown(y) {
@@ -611,7 +615,7 @@ fn mix(state: &State, inner: Rect, list: Rect) -> MixLayout {
                 }
                 placed.push((
                     lane,
-                    row(y, inner.x, MIX_LABELS.min(inner.width)),
+                    row(y, inner.x, TRANSITION_LANE_LABELS.min(inner.width)),
                     Rect::new(x, from as u16, w, (to - from) as u16),
                 ));
             }
@@ -621,7 +625,7 @@ fn mix(state: &State, inner: Rect, list: Rect) -> MixLayout {
         if first >= bottom || y <= top {
             continue;
         }
-        blocks.push(MixBlockLayout {
+        blocks.push(TransitionBlockLayout {
             block,
             header,
             overview,
@@ -633,18 +637,19 @@ fn mix(state: &State, inner: Rect, list: Rect) -> MixLayout {
     }
     // The zoom that fits the lyrics, at the right of the pane's bottom
     // border.
-    let w = width(MIX_FIT) as u16;
+    let w = width(FIT_LYRICS) as u16;
     let fit = (list.width >= w + 24 && list.height >= 2)
         .then(|| Rect::new(list.right().saturating_sub(w + 2), list.bottom() - 1, w, 1));
-    MixLayout { blocks, fit }
+    TransitionLayout { blocks, fit }
 }
 
-/// The button that zooms the Mix tab to fit the lyrics.
-pub const MIX_FIT: &str = " z fit lyrics ";
+/// The button that zooms the Transition tab to fit the lyrics.
+pub const FIT_LYRICS: &str = " z fit lyrics ";
 
-/// The main screen with the Mix tab: the list pane's border over the whole
-/// width, no right column, no spectrum.
-fn main_mix(state: &State, area: Rect) -> MainLayout {
+/// The main screen with a wide tab (Transition or Karaoke): the list pane's
+/// border over the whole width, no right column, no spectrum (the Karaoke
+/// tab has its voice's lane there).
+fn main_wide(state: &State, area: Rect) -> MainLayout {
     // The Karaoke tab has the voice's lane where the spectrum goes.
     let karaoke = state.side == Side::Karaoke;
     let strip = if karaoke {
@@ -672,7 +677,7 @@ fn main_mix(state: &State, area: Rect) -> MainLayout {
         cover: None,
         info: None,
         mini: None,
-        mix: (state.side == Side::Mix).then(|| mix(state, inner, list)),
+        transition: (state.side == Side::Transition).then(|| transition(state, inner, list)),
         karaoke: karaoke.then(|| KaraokeTabLayout {
             voice,
             ..karaoke_tab(inner)
@@ -697,7 +702,7 @@ fn toggle_rects(state: &State, list: Rect) -> Vec<(Rect, Side)> {
 
 fn main(state: &State, area: Rect) -> MainLayout {
     if state.side.wide() {
-        return main_mix(state, area);
+        return main_wide(state, area);
     }
     let (top, bottom) = bottom(state, area, spectrum_rows(area.height));
     let rw = right_width_for(state, area.width);
@@ -784,7 +789,7 @@ fn main(state: &State, area: Rect) -> MainLayout {
         cover,
         info,
         mini,
-        mix: None,
+        transition: None,
         karaoke: None,
         bottom,
     }

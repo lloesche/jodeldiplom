@@ -128,7 +128,8 @@ WAV, AIFF, CAF and ALAC files to bit-perfect, exclusive device output, and MP3 (
   kept stems and reads them from its frame on (a second at a time, about
   150 times faster than they play): a track separated once (by the
   player's analysis) is never separated again, from any frame, in any run
-  (a seek, a jump, the Mix tab's stems kept ready, a transition's tracks).
+  (a seek, a jump, the Transition tab's stems kept ready, a transition's
+  tracks).
 - `stem_file`: a track's four stereo stems at 44.1 kHz in a file: blocks
   of 4096 frames, each channel as 16-bit values times a power of two of
   its own (2^-16 to 2^4, so quiet stretches keep their detail and loud
