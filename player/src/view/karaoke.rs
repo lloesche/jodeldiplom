@@ -823,12 +823,13 @@ pub fn draw_tab(
         ]),
         (Some(name), _) => {
             // −60 dB to 0 dB in twelve steps.
-            let db = 20.0 * f64::from(mic.peak.max(1e-6)).log10();
-            let lit = (((db + 60.0) / 60.0).clamp(0.0, 1.0) * 12.0).round() as usize;
+            let peak = state.mic.map_or(0.0, |m| m.singer());
+            let db = 20.0 * f64::from(peak.max(1e-6)).log10();
+            let [lit, unlit] = super::blocks((db + 60.0) / 60.0, 12, ACCENT);
             Line::from(vec![
                 Span::styled("Mic     ", Style::new().fg(TEXT)),
-                Span::styled("▮".repeat(lit), Style::new().fg(ACCENT)),
-                Span::styled("▯".repeat(12 - lit), Style::new().fg(TRACK)),
+                lit,
+                unlit,
                 Span::styled(format!("  {name}  (i: the next one)"), Style::new().fg(DIM)),
             ])
         }
@@ -1173,7 +1174,9 @@ fn slider(buf: &mut Buffer, state: &State, s: &SliderLayout, show_focus: bool) {
     buf.set_string(s.row.x, s.row.y, s.slider.label(), label_style);
     let n = usize::from(s.track.width);
     if n >= 2 {
-        let knob = (s.slider.share(state) * (n - 1) as f64).round() as usize;
+        let knob = usize::from(
+            crate::core::layout::Track::columns(s.track).cell(s.slider.share(state)) - s.track.x,
+        );
         let on = Style::new().fg(ACCENT);
         let off = Style::new().fg(TRACK);
         for i in 0..n {
@@ -1395,7 +1398,7 @@ pub fn line_color(kind: LineKind) -> Color {
 
 /// What the tab says of the echo canceller.
 fn echo_text(state: &State) -> String {
-    match (state.config.karaoke_echo, state.karaoke.mic.echo) {
+    match (state.config.karaoke_echo, state.mic.and_then(|m| m.echo())) {
         (false, _) => "off (karaoke_echo in the settings file)".to_owned(),
         (true, None) => "on, once music plays".to_owned(),
         (true, Some((_, false, _))) => format!("{} learning the room…", text::spinner(state)),
@@ -1584,9 +1587,17 @@ mod tests {
         let mut state = State::new("/m".into(), crate::config::Config::default(), (120, 40));
         state.config.karaoke_echo = true;
         assert_eq!(echo_text(&state), "on, once music plays");
-        state.karaoke.mic.echo = Some((0.0, false, None));
+        let mut mic = crate::core::mic::MicReading {
+            echo_on: true,
+            voice: Some(0.1),
+            ..Default::default()
+        };
+        state.mic = Some(mic);
         assert!(echo_text(&state).ends_with("learning the room…"));
-        state.karaoke.mic.echo = Some((42.0, true, Some(0.04)));
+        mic.removed_db = 42.0;
+        mic.learnt = true;
+        mic.delay = Some(0.04);
+        state.mic = Some(mic);
         assert_eq!(
             echo_text(&state),
             "the music's echo taken out, 42 dB (it comes 40 ms late)"

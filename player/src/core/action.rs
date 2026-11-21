@@ -231,6 +231,8 @@ pub enum Action {
         /// By how much, in percent.
         by: i32,
     },
+    /// The mouse on the Mix tab's desk.
+    Desk(crate::core::desk::DeskAction),
     /// The pointer moved to this row (Karaoke mode shows its controls for a
     /// while when it is near the bottom).
     PointerMoved {
@@ -443,6 +445,8 @@ pub enum Effect {
     NextMic,
     /// Karaoke: record what the echo canceller works with, for tuning it.
     RecordEcho,
+    /// Set a strip of the mixer as the Mix tab has it.
+    Desk(crate::core::desk::DeskChange),
     /// List the output devices (answered with [`Action::Devices`]).
     ListDevices,
     /// Play on this device from now on (`None`: the system default),

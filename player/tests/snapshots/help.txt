@@ -7,7 +7,7 @@
 │   P / shift+←           previous track                                                                               │
 │   X                     what N does: cut, or mix in (by the Transition tab's preset, or the one set in the settings) │
 │   S                     stop                                                                                         │
-│   tab                   browser / queue / transition / karaoke                                                       │
+│   tab                   browser / queue / transition / karaoke / mix                                                 │
 │   F                     now playing, full screen                                                                     │
 │   T                     go to the playing track                                                                      │
 │   B                     go to its album folder                                                                       │

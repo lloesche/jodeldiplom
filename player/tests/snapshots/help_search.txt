@@ -3,6 +3,8 @@
 │   alt+↑                 device volume a step up (macOS: the system's keys do not reach it while played)              │
 │   alt+↓                 device volume a step down                                                                    │
 │                                                                                                                      │
+│ Mix tab                                                                                                              │
+│   ↑                     the fader 1 dB up (the master: the device's own volume a step up)                            │
 │                                                                                                                      │
 │                                                                                                                      │
 │                                                                                                                      │
@@ -28,9 +30,7 @@
 │                                                                                                                      │
 │                                                                                                                      │
 │                                                                                                                      │
-│                                                                                                                      │
-│                                                                                                                      │
-│ / volume▏                                                                                                    2 shown │
+│ / volume▏                                                                                                    3 shown │
 ╰ ↑↓ scroll   / search   esc back ─────────────────────────────────────────────────────────────────────────────────────╯
      1:23 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━●───────────────────────────────────────────────────────────────── 4:05
   ◀◀   ▮▮   ▶▶   ■                                      playing                                    ≡ settings   ? help

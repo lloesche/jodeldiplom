@@ -202,7 +202,8 @@ On the Transition tab, the first three show as `enter sets the cues` / `g arms`
   words, there is none. Never two counts at once.
   - `a_long_break_counts_in_again_whole_or_not_at_all`
 - **K6.** The microphone is open while the Karaoke tab or the mode shows,
-  and closed elsewhere. It is listened to, to hear the singer, and never
+  or the Mix tab with its MIC strip selected, and closed elsewhere (the
+  Mix tab alone does not open it). It is listened to, to hear the singer, and never
   played: it has no level, and nothing of it reaches the speakers. To take
   the music's echo out of it, it sees what the device plays, buffer by
   buffer (a tap at the output's last step, set on every output opened:
@@ -210,6 +211,7 @@ On the Transition tab, the first three show as `enter sets the cues` / `g arms`
   input, kept in the settings.
   - `the_microphone_goes_into_each_output` (engine)
   - `the_microphone_is_open_while_karaoke_shows`
+  - `the_faders_are_set_on_the_mixer_and_again_on_a_new_one`
 - **K16.** The microphone never changes what plays: with it open, tapped,
   singing, its echo canceller on or off, the device gets exactly the bytes
   the engine wrote, in every format.
@@ -308,3 +310,37 @@ On the Transition tab, the first three show as `enter sets the cues` / `g arms`
   silent, with what to check (on macOS: the system's permission).
   - `a_microphone_giving_only_zeros_is_told_apart` (output)
   - `lyrics_found_come_again_with_their_words_timed_and_kept`
+
+## Mix
+
+- **M1.** Bit-perfect is the default: every start has each strip at 0 dB,
+  unmuted, nothing soloed, and nothing of the desk is kept between runs.
+  The desk adds no gain until a fader is moved; the master never adds any
+  (its VOLUME is the device's own control, after the samples).
+  - `every_control_sends_its_change`
+  - `a_ramp_lands_on_its_frame_and_unity_solo_is_bit_exact` (output)
+- **M2.** A new mixer (another device, an engine restarted) gets the
+  faders, mutes and solos as they were set this run.
+  - `the_faders_are_set_on_the_mixer_and_again_on_a_new_one`
+- **M3.** A fader, mute or solo never moves playback and never clicks: it
+  is a 20 ms ramp in the mixer; the preview's crossfades go on under it
+  (they are its players' own faders, times the strip's).
+  - `mute_and_solo_silence_strips_without_a_click` (output)
+- **M4.** A fader held follows the pointer anywhere until it is let go
+  of, to less than a cell in the window; within 0.4 rows of 0 dB it is at
+  exactly 0 dB (the detent), and a key step across 0 dB stops there; a
+  double click is 0 dB (a fader moved since its press is no first click
+  of one); the wheel is 1 dB a step.
+  - `a_fader_follows_the_pointer_by_eighths_of_a_cell`
+  - `a_press_on_the_track_brings_the_cap_and_a_double_click_is_unity`
+  - `the_wheel_moves_a_fader_by_a_db_and_the_buttons_toggle`
+  - `a_fader_flicked_and_taken_again_soon_is_no_double_click`
+  - `keys_step_through_the_scale_to_off_and_back_and_stop_at_unity`
+- **M5.** The meters are read once a drawn frame, by the app alone, and
+  only while the tab shows; a look long after the last takes no peaks (nor
+  the limiter); the window keeps drawing while it shows. A strip's meter
+  is on its fader's ruler, so its marks read both.
+  - `the_faders_are_set_on_the_mixer_and_again_on_a_new_one`
+  - `a_meter_rises_at_once_and_falls_at_its_rate`
+  - `strips_are_found_by_id_and_a_stale_look_takes_no_peaks`
+  - `the_mix_tab_is_painted_from_its_cells`

@@ -1008,6 +1008,12 @@ fn help_and_palette_come_from_the_keymap() {
         assert!(palette.iter().any(|e| e.op == op), "{op:?}");
     }
     assert!(palette.iter().all(|e| e.op != Op::Down));
+    // The Mix tab: its keys in the help, its commands in the palette.
+    assert!(help.iter().any(|s| s.title == "Mix tab"));
+    for op in [Op::DeskMute, Op::DeskSolo, Op::DeskEcho] {
+        assert!(palette.iter().any(|e| e.op == op), "{op:?}");
+    }
+    assert!(palette.iter().all(|e| e.op != Op::DeskNextStrip));
     // No key means two things in one context.
     for (i, a) in KEYMAP.iter().enumerate() {
         for b in &KEYMAP[i + 1..] {
@@ -2236,7 +2242,7 @@ fn digits_on_the_transition_tab_jump_to_bars_around_the_one_heard() {
 }
 
 #[test]
-fn tab_cycles_through_browser_queue_transition_and_karaoke() {
+fn tab_cycles_through_browser_queue_transition_karaoke_and_mix() {
     let mut state = common::transition_state(120, 40);
     state.side = Side::Browser;
     op(&mut state, Op::ToggleSide);
@@ -2259,6 +2265,8 @@ fn tab_cycles_through_browser_queue_transition_and_karaoke() {
     assert_eq!(keymap::lookup(&state, Key::ch('a')), None);
     op(&mut state, Op::ToggleSide);
     assert_eq!(state.side, Side::Karaoke);
+    op(&mut state, Op::ToggleSide);
+    assert_eq!(state.side, Side::Mix);
     op(&mut state, Op::ToggleSide);
     assert_eq!(state.side, Side::Browser);
 }

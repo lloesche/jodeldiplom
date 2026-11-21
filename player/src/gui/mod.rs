@@ -166,6 +166,9 @@ struct Gui {
     /// The pointer's column in cells, with the share of its cell (a
     /// Karaoke slider follows it to the pixel).
     x: f64,
+    /// The pointer's row in cells, with the share of its cell (a Mix tab
+    /// fader follows it to the pixel).
+    y: f64,
     /// The pointer's cell while it is in the window (links underline
     /// under it).
     pointer: Option<(u16, u16)>,
@@ -220,7 +223,7 @@ impl Gui {
             col: self.cell.0,
             row: self.cell.1,
         };
-        let mut action = mouse::action_at(&app.state, input, self.x);
+        let mut action = mouse::action_at(&app.state, input, self.x, self.y);
         if self.modifiers.shift_key() {
             action = action.map(mouse::shifted);
         }
@@ -711,14 +714,16 @@ impl ApplicationHandler<Wake> for Gui {
                         as u16,
                 );
                 let x = (position.x.max(0.0) / cw as f64).min(f64::from(cols));
-                let moved = x != self.x;
+                let y = (position.y.max(0.0) / ch as f64).min(f64::from(rows));
+                let moved = x != self.x || y != self.y;
                 self.x = x;
-                // A Karaoke slider held follows the pointer within a cell.
+                self.y = y;
+                // A Karaoke slider or a Mix tab fader held follows the
+                // pointer within a cell.
                 let sliding = self.held == Some(MouseButton::Left)
-                    && self
-                        .app
-                        .as_ref()
-                        .is_some_and(|app| app.state.karaoke.dragging.is_some());
+                    && self.app.as_ref().is_some_and(|app| {
+                        app.state.karaoke.dragging.is_some() || app.state.desk.dragging.is_some()
+                    });
                 if cell == self.cell && self.pointer.is_some() && moved && sliding {
                     self.mouse(MouseKind::Drag(MouseButton::Left));
                 } else if cell != self.cell || self.pointer.is_none() {
@@ -891,6 +896,7 @@ pub fn run(args: &Args) -> Result<(), String> {
         modifiers: ModifiersState::empty(),
         cell: (0, 0),
         x: 0.0,
+        y: 0.0,
         pointer: None,
         held: None,
         wheel: 0.0,

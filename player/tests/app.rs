@@ -212,7 +212,7 @@ fn a_file_argument_plays_at_once_and_settings_are_saved() {
     app.dispatch(Action::ShowSide(jodeldiplom::core::Side::Karaoke));
     app.dispatch(Action::Op(Op::SliderUp));
     // The microphone chosen (`i`).
-    app.dispatch(Action::Op(Op::KaraokeMicNext));
+    app.dispatch(Action::Op(Op::MicNext));
     assert!(common::wait_for(&mut app, WAIT, |a| a
         .state
         .config

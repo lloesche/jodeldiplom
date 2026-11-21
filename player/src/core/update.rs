@@ -6,6 +6,7 @@ use std::sync::Arc;
 use jodel_playback::{Command, Event, Headroom, PlayState, StemMix};
 
 use crate::browser::{self, EntryKind};
+use crate::core::desk;
 use crate::core::karaoke;
 use crate::core::keymap::{self, Op};
 use crate::core::lanes;
@@ -69,7 +70,7 @@ pub fn list_len(state: &State) -> usize {
     match state.side {
         Side::Browser => browser_rows(state).len(),
         Side::Queue => state.queue.paths.len(),
-        Side::Transition | Side::Karaoke => 0,
+        Side::Transition | Side::Karaoke | Side::Mix => 0,
     }
 }
 
@@ -78,7 +79,7 @@ pub fn list_cursor(state: &State) -> (usize, usize) {
     match state.side {
         Side::Browser => (state.browser.cursor, state.browser.scroll),
         Side::Queue => (state.queue.cursor, state.queue.scroll),
-        Side::Transition | Side::Karaoke => (0, 0),
+        Side::Transition | Side::Karaoke | Side::Mix => (0, 0),
     }
 }
 
@@ -112,7 +113,7 @@ fn set_cursor(state: &mut State, cursor: usize) {
     match state.side {
         Side::Browser => state.browser.cursor = cursor,
         Side::Queue => state.queue.cursor = cursor,
-        Side::Transition | Side::Karaoke => {}
+        Side::Transition | Side::Karaoke | Side::Mix => {}
     }
     fix_scroll(state);
 }
@@ -135,7 +136,7 @@ fn fix_scroll(state: &mut State) {
     match state.side {
         Side::Browser => state.browser.scroll = scroll,
         Side::Queue => state.queue.scroll = scroll,
-        Side::Transition | Side::Karaoke => {}
+        Side::Transition | Side::Karaoke | Side::Mix => {}
     }
 }
 
@@ -181,7 +182,7 @@ pub fn visible_missing(state: &State) -> Vec<PathBuf> {
             .take(height)
             .cloned()
             .collect(),
-        Side::Transition | Side::Karaoke => Vec::new(),
+        Side::Transition | Side::Karaoke | Side::Mix => Vec::new(),
     };
     paths
         .into_iter()
@@ -412,6 +413,7 @@ pub fn update(state: &mut State, action: Action) -> Vec<Effect> {
         Action::KaraokeSlideEnd => state.karaoke.dragging = None,
         Action::KaraokeLevel(level) => karaoke::set_level(state, level, &mut fx),
         Action::KaraokeStep { slider, by } => karaoke::step(state, slider, by, &mut fx),
+        Action::Desk(what) => desk::act(state, what, &mut fx),
         Action::PointerMoved { row } => karaoke::pointer_moved(state, row),
         Action::SelectRow(row) => {
             state.screen = Screen::Main;
@@ -721,6 +723,7 @@ pub fn update(state: &mut State, action: Action) -> Vec<Effect> {
     want_rhythm(state, &mut fx);
     karaoke::want_lyrics(state, &mut fx);
     karaoke::follow_stems(state, &mut fx);
+    desk::settle(state);
     prepare(state, &mut fx);
     state.info_width_held = state.info_width_held.max(text::info_width(state));
     if check_details {
@@ -913,6 +916,7 @@ fn is_input(action: &Action) -> bool {
             | Action::KaraokeSlideEnd
             | Action::KaraokeLevel(_)
             | Action::KaraokeStep { .. }
+            | Action::Desk(_)
             | Action::SeekTo(_)
             | Action::SeekDrag(_)
             | Action::OpenSettings(_)
@@ -956,14 +960,14 @@ fn type_ahead(state: &mut State, c: char) {
             .iter()
             .map(|path| Some(shown_title(state, path).to_lowercase()))
             .collect(),
-        Side::Transition | Side::Karaoke => Vec::new(),
+        Side::Transition | Side::Karaoke | Side::Mix => Vec::new(),
     };
     if names.is_empty() {
         return;
     }
     let cursor = match state.side {
         Side::Browser => state.browser.cursor,
-        Side::Queue | Side::Transition | Side::Karaoke => state.queue.cursor,
+        Side::Queue | Side::Transition | Side::Karaoke | Side::Mix => state.queue.cursor,
     }
     .min(names.len() - 1);
     // Cycling starts after the current row; a longer prefix may stay on it.
@@ -1159,7 +1163,7 @@ fn open(state: &mut State, fx: &mut Vec<Effect>) {
 /// the file).
 fn activate(state: &mut State, how: Placing, fx: &mut Vec<Effect>) {
     match state.side {
-        Side::Transition | Side::Karaoke => {}
+        Side::Transition | Side::Karaoke | Side::Mix => {}
         Side::Queue => {
             if state.queue.cursor < state.queue.paths.len() {
                 fx.push(Effect::Engine(Command::Play(state.queue.cursor)));
@@ -1815,7 +1819,7 @@ fn page(state: &State) -> i32 {
 }
 
 fn apply_op(state: &mut State, op: Op, fx: &mut Vec<Effect>) {
-    if karaoke::apply(state, op, fx) || tab::apply(state, op, fx) {
+    if karaoke::apply(state, op, fx) || tab::apply(state, op, fx) || desk::apply(state, op, fx) {
         return;
     }
     match op {
@@ -2100,8 +2104,8 @@ fn apply_op(state: &mut State, op: Op, fx: &mut Vec<Effect>) {
             state.screen = Screen::Main;
             karaoke::enter(state, fx, op == Op::KaraokeEnterHere);
         }
+        Op::MicNext => fx.push(Effect::NextMic),
         Op::KaraokeStart
-        | Op::KaraokeMicNext
         | Op::KaraokeRecordEcho
         | Op::KaraokeGame
         | Op::KaraokeLevel
@@ -2111,6 +2115,10 @@ fn apply_op(state: &mut State, op: Op, fx: &mut Vec<Effect>) {
         | Op::SliderUp
         | Op::SliderFineDown
         | Op::SliderFineUp => say(state, Level::Info, "That is for the Karaoke tab (tab)"),
+        Op::DeskEcho => desk::toggle_echo(state, fx),
+        Op::DeskPrevStrip | Op::DeskNextStrip | Op::DeskMute | Op::DeskSolo => {
+            desk::elsewhere(state)
+        }
         Op::ValueDown => settings_step(state, -1, fx),
         Op::ValueUp => settings_step(state, 1, fx),
     }

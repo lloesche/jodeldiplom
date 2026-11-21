@@ -156,7 +156,7 @@ pub enum Op {
     Previous,
     /// Stop playback.
     Stop,
-    /// Switch the list pane: browser, queue, transition, karaoke.
+    /// Switch the list pane: browser, queue, transition, karaoke, mix.
     ToggleSide,
     /// Open or close Now playing.
     NowPlaying,
@@ -325,8 +325,8 @@ pub enum Op {
     SliderFineDown,
     /// Karaoke: the slider a percent up.
     SliderFineUp,
-    /// Karaoke: the next microphone.
-    KaraokeMicNext,
+    /// The next microphone.
+    MicNext,
     /// Karaoke: record 30 s of what the echo canceller works with.
     KaraokeRecordEcho,
     /// Karaoke: the game (scoring) on or off.
@@ -337,6 +337,16 @@ pub enum Op {
     KaraokeNotes,
     /// Karaoke: each song's singing kept, or not.
     KaraokeKeep,
+    /// Mix: the strip to the left.
+    DeskPrevStrip,
+    /// Mix: the strip to the right.
+    DeskNextStrip,
+    /// Mix: the strip selected muted, or not.
+    DeskMute,
+    /// Mix: the strip selected soloed, or not.
+    DeskSolo,
+    /// The microphone's echo canceller on or off.
+    DeskEcho,
 }
 
 impl Op {
@@ -349,7 +359,7 @@ impl Op {
             Op::Next => "Next track",
             Op::Previous => "Previous track",
             Op::Stop => "Stop",
-            Op::ToggleSide => "Browser / queue / transition / karaoke",
+            Op::ToggleSide => "Browser / queue / transition / karaoke / mix",
             Op::NowPlaying => "Now playing",
             Op::Settings => "Settings",
             Op::Help => "Help",
@@ -431,12 +441,17 @@ impl Op {
             Op::SliderUp => "Slider up",
             Op::SliderFineDown => "Slider a percent down",
             Op::SliderFineUp => "Slider a percent up",
-            Op::KaraokeMicNext => "Karaoke: the next microphone",
+            Op::MicNext => "Microphone: the next one",
             Op::KaraokeRecordEcho => "Karaoke: record the echo canceller (30 s)",
             Op::KaraokeGame => "Karaoke: the game (scoring) on or off",
             Op::KaraokeLevel => "Karaoke: the next level (easy, medium, hard)",
             Op::KaraokeNotes => "Karaoke: show or hide the song's notes",
             Op::KaraokeKeep => "Karaoke: keep your singing of each song, or not",
+            Op::DeskPrevStrip => "Mix: the strip to the left",
+            Op::DeskNextStrip => "Mix: the strip to the right",
+            Op::DeskMute => "Mix: mute the strip selected",
+            Op::DeskSolo => "Mix: solo the strip selected",
+            Op::DeskEcho => "Microphone: the echo canceller on or off",
         }
     }
 
@@ -498,6 +513,8 @@ impl Op {
                 | Op::SliderUp
                 | Op::SliderFineDown
                 | Op::SliderFineUp
+                | Op::DeskPrevStrip
+                | Op::DeskNextStrip
         )
     }
 }
@@ -536,6 +553,8 @@ pub enum Context {
     Karaoke,
     /// Karaoke mode.
     KaraokeMode,
+    /// The Mix tab.
+    Desk,
 }
 
 impl Context {
@@ -557,6 +576,7 @@ impl Context {
             Context::Fades => "Transition tab, editing the fades (after e)",
             Context::Karaoke => "Karaoke tab",
             Context::KaraokeMode => "Karaoke mode (fullscreen)",
+            Context::Desk => "Mix tab",
         }
     }
 
@@ -671,7 +691,7 @@ pub const KEYMAP: &[Binding] = &[
         Context::Global,
         &[Key::plain(K::Tab)],
         Op::ToggleSide,
-        "browser / queue / transition / karaoke",
+        "browser / queue / transition / karaoke / mix",
     ),
     b(
         Context::Global,
@@ -1173,7 +1193,7 @@ pub const KEYMAP: &[Binding] = &[
     b(
         Context::Karaoke,
         &[Key::ch('i')],
-        Op::KaraokeMicNext,
+        Op::MicNext,
         "the next microphone (input device)",
     ),
     b(
@@ -1240,7 +1260,7 @@ pub const KEYMAP: &[Binding] = &[
     b(
         Context::KaraokeMode,
         &[Key::ch('i')],
-        Op::KaraokeMicNext,
+        Op::MicNext,
         "the next microphone",
     ),
     b(
@@ -1272,6 +1292,79 @@ pub const KEYMAP: &[Binding] = &[
         &[Key::shift(K::Right)],
         Op::SliderFineUp,
         "the slider 1 % up",
+    ),
+    // The Mix tab.
+    b(
+        Context::Desk,
+        &[LEFT],
+        Op::DeskPrevStrip,
+        "the strip to the left (player, preview, microphone, master)",
+    ),
+    b(
+        Context::Desk,
+        &[RIGHT],
+        Op::DeskNextStrip,
+        "the strip to the right",
+    ),
+    b(
+        Context::Desk,
+        &[UP],
+        Op::Up,
+        "the fader 1 dB up (the master: the device's own volume a step up)",
+    ),
+    b(
+        Context::Desk,
+        &[DOWN],
+        Op::Down,
+        "the fader 1 dB down (below −60 dB: off)",
+    ),
+    b(
+        Context::Desk,
+        &[Key::plain(K::PageUp)],
+        Op::PageUp,
+        "the fader 6 dB up",
+    ),
+    b(
+        Context::Desk,
+        &[Key::plain(K::PageDown)],
+        Op::PageDown,
+        "the fader 6 dB down",
+    ),
+    b(
+        Context::Desk,
+        &[Key::plain(K::Home)],
+        Op::Top,
+        "the fader to 0 dB: nothing added, bit-perfect again",
+    ),
+    b(
+        Context::Desk,
+        &[Key::plain(K::End)],
+        Op::Bottom,
+        "the fader off (−∞)",
+    ),
+    b(
+        Context::Desk,
+        &[Key::ch('m')],
+        Op::DeskMute,
+        "mute the strip, or not",
+    ),
+    b(
+        Context::Desk,
+        &[Key::ch('s')],
+        Op::DeskSolo,
+        "solo the strip, or not (while one is soloed, the others are silent)",
+    ),
+    b(
+        Context::Desk,
+        &[Key::ch('e')],
+        Op::DeskEcho,
+        "the microphone's echo canceller on or off",
+    ),
+    b(
+        Context::Desk,
+        &[Key::ch('i')],
+        Op::MicNext,
+        "the next microphone (input device)",
     ),
     // Now playing.
     b(Context::NowPlaying, &[ESC], Op::Back, "back"),
@@ -1379,6 +1472,8 @@ pub fn contexts(state: &State) -> Vec<Context> {
                 vec![Context::Transition, Context::Global]
             } else if state.side == Side::Karaoke {
                 vec![Context::Karaoke, Context::Global]
+            } else if state.side == Side::Mix {
+                vec![Context::Desk, Context::Global]
             } else if state.side == Side::Queue {
                 vec![Context::Queue, Context::List, Context::Global]
             } else {

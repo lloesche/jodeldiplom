@@ -18,7 +18,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use image::RgbImage;
-use jodel_output::mixer::{Fader, MicPort, MicView, Mixer, MixerOptions, Role, Strip};
+use jodel_output::mixer::{DeskView, Fader, MicPort, MicView, Mixer, MixerOptions, Role, Strip};
 use jodel_output::SimClock;
 use jodel_playback::{
     any_capabilities, Command, Cover, CoverOrigin, DeviceTarget, Event, NullTarget, OutputTarget,
@@ -329,13 +329,21 @@ struct Engine {
     player: Player,
     /// The engine's fader on the mixer.
     lead: Fader,
-    /// The preview's strip on the desk (the engine's input holds its own).
-    preview_strip: Strip,
+    /// The engine's strip on the desk and the preview's, the Mix tab's
+    /// faders ([`Engine::strip`]).
+    strips: [Strip; 2],
     /// The microphone's port as last told.
     mic: MicView,
     /// The mixer's monitor: what the device plays.
     tap: SpectrumTap,
     mixer: Mixer,
+}
+
+impl Engine {
+    /// The strip of `kind`.
+    fn strip(&self, kind: core::desk::StripKind) -> &Strip {
+        &self.strips[kind.index()]
+    }
 }
 
 /// The running player.
@@ -755,8 +763,8 @@ impl App {
         // ahead of what is heard.
         let tap = SpectrumTap::new(1 << 19);
         mixer.set_monitor(Some(Box::new(tap.clone())));
-        let player_strip = mixer.strip("Player");
-        let preview_strip = mixer.strip("Preview");
+        let player_strip = mixer.strip(core::desk::StripKind::Player.name());
+        let preview_strip = mixer.strip(core::desk::StripKind::Preview.name());
         let (lead_input, lead) = mixer.input(&player_strip, Role::Lead, 1.0);
         let options = PlayerOptions {
             settings: self.state.engine_settings(),
@@ -798,11 +806,16 @@ impl App {
             previews: None,
             player,
             lead,
-            preview_strip,
+            strips: [player_strip, preview_strip],
             mic: MicView::default(),
             tap,
             mixer,
         });
+        // A new mixer's strips start at 0 dB: the Mix tab's settings are
+        // made on them again.
+        for change in core::desk::changes(&self.state) {
+            self.desk_change(change);
+        }
         // A new mixer takes the microphone over.
         self.set_mic();
     }
@@ -976,9 +989,7 @@ impl App {
                 self.state.karaoke.mic = core::karaoke::MicShown {
                     name: Some(input.info().name.clone()),
                     error: None,
-                    peak: 0.0,
                     silent: false,
-                    echo: None,
                 };
                 input.set_echo_cancel(self.state.config.karaoke_echo);
                 self.mic = Some(input);
@@ -989,13 +1000,46 @@ impl App {
                 self.state.karaoke.mic = core::karaoke::MicShown {
                     name: None,
                     error: Some(why),
-                    peak: 0.0,
                     silent: false,
-                    echo: None,
                 };
             }
         }
     }
+    /// Sets a strip of the mixer as the Mix tab has it.
+    fn desk_change(&self, change: core::desk::DeskChange) {
+        use core::desk::DeskChange;
+        let Some(engine) = &self.engine else {
+            return;
+        };
+        match change {
+            DeskChange::Level(kind, gain) => engine.strip(kind).set_level(gain),
+            DeskChange::Mute(kind, on) => engine.strip(kind).set_mute(on),
+            DeskChange::Solo(kind, on) => engine.strip(kind).set_solo(on),
+        }
+    }
+
+    /// The mixer's desk as it stands (none without an engine), for tests
+    /// to see what the strips were set to. Looking changes nothing; the
+    /// player itself looks once a frame ([`App::heard_for_frame`]).
+    pub fn desk(&self) -> Option<DeskView> {
+        self.engine.as_ref().map(|e| e.mixer.desk())
+    }
+
+    /// The Mix tab's look for a frame: the desk and the meters since the
+    /// last look (the one place they are taken), each fader strip found by
+    /// its id.
+    fn look_at_desk(&mut self) {
+        use core::desk::StripKind;
+        let Some(engine) = &self.engine else {
+            self.state.desk.master = None;
+            return;
+        };
+        let ids = StripKind::ALL.map(|kind| engine.strip(kind).id());
+        let look = core::desk::Look::of(engine.mixer.desk(), engine.mixer.meters(), ids);
+        let now = self.now_ms();
+        core::desk::feed(&mut self.state, look, now);
+    }
+
     /// Gives the mixer the microphone (or none): its port on the desk.
     fn set_mic(&self) {
         if let Some(engine) = &self.engine {
@@ -1252,27 +1296,35 @@ impl App {
         self.last_drawn = Some((track, heard, now));
         // How late the music reaches the microphone, once the voice is in.
         let mut sing = None;
+        self.state.mic = None;
         if let Some(mic) = &self.mic {
-            // The singer as the cleaner gives them (the music's echo out)
-            // where an output is tapped; else as captured.
-            let cleaned = mic.voice_peak();
-            self.state.karaoke.mic.peak = cleaned.unwrap_or_else(|| mic.peak());
+            // Read once for the frame: the Karaoke tab and the Mix tab draw
+            // from it.
+            let status = mic.status();
+            let echo = mic.echo_status();
+            let reading = core::mic::MicReading {
+                rate: mic.rate(),
+                peak: mic.peak(),
+                voice: mic.voice_peak(),
+                echo_on: mic.echo_cancel(),
+                removed_db: echo.removed_db,
+                learnt: echo.learnt,
+                delay: echo.delay,
+                drift_ppm: status.adjust * 1e6,
+                fill_ms: status.buffered().as_secs_f64() * 1000.0,
+                xruns: status.underruns + status.overruns,
+            };
+            self.state.mic = Some(reading);
             self.state.karaoke.mic.silent = mic.only_silence(MIC_SILENT_AFTER);
-            let status = mic.echo_status();
-            self.state.karaoke.mic.echo = (mic.echo_cancel() && cleaned.is_some()).then_some((
-                status.removed_db,
-                status.learnt,
-                status.delay,
-            ));
             // The voice cleaned, block by block with where in the song it
             // was sung: for scoring the singing once that comes. Taken so
             // the cleaner's queue keeps the newest.
             self.sung.clear();
             mic.take_voice(&mut self.sung);
-            sing = Some(status.delay.map(f64::from));
+            sing = Some(reading.delay.map(f64::from));
             if crate::trace::on() && self.mic_noted.is_none_or(|t| t.elapsed() >= MIC_NOTE_EVERY) {
                 self.mic_noted = Some(Instant::now());
-                note_mic(mic, cleaned, &status);
+                note_mic(mic, reading.voice, &echo);
             }
         }
         self.sing(sing);
@@ -1284,6 +1336,9 @@ impl App {
                 Ok(path) => Action::Info(format!("Recorded: {}", path.display())),
                 Err(why) => Action::Failed(format!("The recording failed: {why}")),
             });
+        }
+        if core::desk::shown(&self.state) {
+            self.look_at_desk();
         }
         self.state.drawn_heard = Some(heard);
         self.state.drawn_ms = Some(self.now_ms());
@@ -1333,6 +1388,8 @@ impl App {
             || self.state.playing.state == PlayState::Playing
             // The Karaoke tab's meter moves with the voice, music or not.
             || (self.mic.is_some() && core::karaoke::on_tab(&self.state))
+            // The Mix tab's meters move (and fall) by themselves.
+            || core::desk::shown(&self.state)
             || self.state.seek_drag.is_some()
             || self.state.transition.slide.is_some()
             || self.state.karaoke.resume_at.is_some()
@@ -1347,12 +1404,13 @@ impl App {
     fn loading(&self) -> bool {
         let state = &self.state;
         let karaoke = core::karaoke::mic_wanted(state);
+        let lyrics = core::karaoke::shown(state);
         state.browser.loading
             || (state.screen == core::Screen::Main
                 && state.side == core::Side::Queue
                 && !state.working.is_empty())
             || (karaoke && self.mic_opening.is_some())
-            || (karaoke
+            || (lyrics
                 && state
                     .karaoke
                     .lyrics
@@ -1372,6 +1430,7 @@ impl App {
             || state.transition.slide.is_some()
             || state.transition.pan.is_some()
             || state.karaoke.dragging.is_some()
+            || state.desk.dragging.is_some()
             // Karaoke mode: the lyrics fill and the count-in's numbers
             // shrink as they are sung.
             || (core::karaoke::in_mode(state) && state.playing.state == PlayState::Playing)
@@ -1508,6 +1567,7 @@ impl App {
             }
             Effect::NextMic => self.next_mic(),
             Effect::RecordEcho => self.record_echo(),
+            Effect::Desk(change) => self.desk_change(change),
             Effect::Search { id, root, query } => {
                 if let Some(cancel) = self.search.take() {
                     cancel.store(true, Ordering::Relaxed);
@@ -1695,7 +1755,7 @@ impl App {
                 .get_or_insert_with(|| {
                     crate::preview::Previews::new(
                         engine.lead.clone(),
-                        engine.preview_strip.clone(),
+                        engine.strips[core::desk::StripKind::Preview.index()].clone(),
                         self.state.engine_settings(),
                     )
                 })

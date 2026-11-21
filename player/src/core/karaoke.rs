@@ -356,22 +356,18 @@ pub struct MicShown {
     pub name: Option<String>,
     /// Why it could not be opened.
     pub error: Option<String>,
-    /// The singer's recent peak, 0 to 1 (full scale): the voice the echo
-    /// canceller gives (the music's echo out of it), or as captured while
-    /// nothing plays.
-    pub peak: f32,
     /// Open for a while and nothing but exact zeros came in: muted, or
-    /// (macOS) the player is not allowed to use the microphone.
+    /// (macOS) the player is not allowed to use the microphone. (What it
+    /// hears is [`crate::core::State::mic`].)
     pub silent: bool,
-    /// The echo canceller, while it runs: the echo it removes in dB,
-    /// whether it has learnt the echo's way, and how late the echo comes
-    /// (seconds).
-    pub echo: Option<(f32, bool, Option<f32>)>,
 }
 
-/// Whether the microphone is wanted: while the tab or the mode shows.
+/// Whether the microphone is wanted: while the tab or the mode shows, and
+/// while the Mix tab has its strip selected.
 pub fn mic_wanted(state: &State) -> bool {
-    (state.screen == Screen::Main && state.side == Side::Karaoke) || in_mode(state)
+    (state.screen == Screen::Main && state.side == Side::Karaoke)
+        || in_mode(state)
+        || super::desk::listens(state)
 }
 
 /// The Karaoke tab's and mode's state.
@@ -531,7 +527,7 @@ pub(crate) fn apply(state: &mut State, op: Op, fx: &mut Vec<Effect>) -> bool {
     match op {
         Op::KaraokeEnter | Op::Open | Op::Accept => enter(state, fx, false),
         Op::KaraokeEnterHere => enter(state, fx, true),
-        Op::KaraokeMicNext => fx.push(Effect::NextMic),
+        Op::MicNext => fx.push(Effect::NextMic),
         Op::KaraokeRecordEcho => fx.push(Effect::RecordEcho),
         Op::KaraokeGame | Op::KaraokeLevel | Op::KaraokeNotes | Op::KaraokeKeep => {
             game_setting(state, op, fx)
@@ -655,7 +651,7 @@ fn apply_mode(state: &mut State, op: Op, fx: &mut Vec<Effect>) -> bool {
         Op::SliderUp => slide_by(state, state.karaoke.focus, STEP, fx),
         Op::SliderFineDown => slide_by(state, state.karaoke.focus, -FINE, fx),
         Op::SliderFineUp => slide_by(state, state.karaoke.focus, FINE, fx),
-        Op::KaraokeMicNext => fx.push(Effect::NextMic),
+        Op::MicNext => fx.push(Effect::NextMic),
         Op::KaraokeRecordEcho => fx.push(Effect::RecordEcho),
         Op::Quit | Op::VolumeUp | Op::VolumeDown => return false,
         _ => {}

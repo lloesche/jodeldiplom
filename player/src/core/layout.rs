@@ -24,6 +24,11 @@
 //! - the cover needs 4 rows; on a short screen it goes before the text,
 //! - below 40 × 12 only a "too small" note is shown.
 
+pub mod desk;
+mod track;
+
+pub use track::Track;
+
 use ratatui::layout::Rect;
 
 use crate::core::karaoke::{self, Slider};
@@ -91,6 +96,8 @@ pub struct MainLayout {
     pub transition: Option<TransitionLayout>,
     /// The Karaoke tab, when it is the side shown (the whole width too).
     pub karaoke: Option<KaraokeTabLayout>,
+    /// The Mix tab's desk, when it is the side shown (the whole width too).
+    pub desk: Option<desk::DeskLayout>,
     /// The bottom bar.
     pub bottom: Bottom,
 }
@@ -319,7 +326,7 @@ pub enum Layout {
     /// Too small to draw anything else.
     TooSmall(Rect),
     /// The main screen.
-    Main(MainLayout),
+    Main(Box<MainLayout>),
     /// Now playing.
     NowPlaying(NowLayout),
     /// Settings.
@@ -352,7 +359,7 @@ pub fn compute(state: &State) -> Layout {
         return Layout::TooSmall(area);
     }
     match state.screen {
-        Screen::Main => Layout::Main(main(state, area)),
+        Screen::Main => Layout::Main(Box::new(main(state, area))),
         Screen::NowPlaying => Layout::NowPlaying(now_playing(state, area)),
         Screen::Settings => Layout::Settings(settings(state, area)),
         Screen::Help => Layout::Help(help(state, area)),
@@ -646,7 +653,7 @@ fn transition(state: &State, inner: Rect, list: Rect) -> TransitionLayout {
 /// The button that zooms the Transition tab to fit the lyrics.
 pub const FIT_LYRICS: &str = " z fit lyrics ";
 
-/// The main screen with a wide tab (Transition or Karaoke): the list pane's
+/// The main screen with a wide tab (Transition, Karaoke or Mix): the list pane's
 /// border over the whole width, no right column, no spectrum (the Karaoke
 /// tab has its voice's lane there).
 fn main_wide(state: &State, area: Rect) -> MainLayout {
@@ -682,6 +689,7 @@ fn main_wide(state: &State, area: Rect) -> MainLayout {
             voice,
             ..karaoke_tab(inner)
         }),
+        desk: (state.side == Side::Mix).then(|| desk::compute(inner)),
         bottom,
     }
 }
@@ -791,6 +799,7 @@ fn main(state: &State, area: Rect) -> MainLayout {
         mini,
         transition: None,
         karaoke: None,
+        desk: None,
         bottom,
     }
 }
@@ -1145,7 +1154,7 @@ mod tests {
                 assert!(!a.rect.intersects(c.rect), "{a:?} {c:?}");
             }
         }
-        assert_eq!(m.toggle.len(), 4);
+        assert_eq!(m.toggle.len(), 5);
         assert_eq!(m.toggle[0].0.y, m.list.y);
     }
 

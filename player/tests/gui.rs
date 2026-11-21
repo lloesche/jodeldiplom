@@ -1079,3 +1079,46 @@ fn the_stage_draws_the_lane_over_the_pixmap() {
     // Nothing far above the lane.
     assert_eq!(at(w as f32 / 2.0, 2.0), 0);
 }
+
+#[test]
+fn the_mix_tab_is_painted_from_its_cells() {
+    use jodeldiplom::core::desk::{Channel, StripKind};
+    let mut canvas = Canvas::new(80, 24, font_px(1.0));
+    let grid = canvas.fit(1280, 800);
+    let mut state = common::desk_state(grid.0, grid.1);
+    state.size = grid;
+    state.desk.selected = Channel::Strip(StripKind::Player);
+    draw(&mut canvas, &state, &spectrum(176_400, 1_000.0), None);
+    let image = canvas.image();
+    let Layout::Main(m) = layout::compute(&state) else {
+        panic!("the main screen");
+    };
+    let desk = m.desk.expect("the desk");
+    assert_eq!(desk.channels.len(), 4);
+    // The player's meters at −12 / −9 dBFS: their bottom cells lit green,
+    // their top cells (above 0 dBFS on the fader's ruler) unlit.
+    let player = desk.channel(Channel::Strip(StripKind::Player)).unwrap();
+    let green = Rgb(rgb(colors::GREEN));
+    for bar in &player.meters {
+        let low = Rect::new(bar.x, bar.bottom() - 1, 1, 1);
+        let (x, y, w, h) = pixel_rect(&canvas, low);
+        let lit = (y..y + h)
+            .flat_map(|yy| (x..x + w).map(move |xx| (xx, yy)))
+            .filter(|&(xx, yy)| *image.get_pixel(xx, yy) == green)
+            .count();
+        assert!(lit as u32 > w * h / 2, "{bar:?}: {lit} of {}", w * h);
+        let top = Rect::new(bar.x, bar.y, 1, 1);
+        let (x, y, w, h) = pixel_rect(&canvas, top);
+        assert!(
+            (y..y + h).all(|yy| (x..x + w).all(|xx| *image.get_pixel(xx, yy) != green)),
+            "{bar:?}: lit at the top"
+        );
+    }
+    // The cap sits on the track at 0 dB, in the accent colour (the player
+    // is selected).
+    let track = player.track.unwrap();
+    let row = jodeldiplom::core::desk::mouse::cap_row(track, 0.75);
+    let (x, y, w, h) = pixel_rect(&canvas, Rect::new(track.x, row, 3, 1));
+    let accent = Rgb(rgb(colors::ACCENT));
+    assert!((y..y + h).any(|yy| (x..x + w).any(|xx| *image.get_pixel(xx, yy) == accent)));
+}

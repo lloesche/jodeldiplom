@@ -701,7 +701,7 @@ fn the_microphone_is_open_while_karaoke_shows() {
     let input = opened.lock().unwrap()[0].1.clone();
     assert!(input.echo_cancel(), "its echo canceller on (karaoke_echo)");
     // `i`: the next one, kept in the settings, opened at once.
-    app.dispatch(Action::Op(Op::KaraokeMicNext));
+    app.dispatch(Action::Op(Op::MicNext));
     assert!(open(&mut app));
     assert_eq!(app.state.config.karaoke_mic_device.as_deref(), Some("a"));
     assert_eq!(
@@ -761,7 +761,7 @@ fn the_speech_model_is_found_where_the_build_put_it() {
 /// What `input` does with the pointer at `x` cells, done.
 #[track_caller]
 fn point(state: &mut State, input: MouseInput, x: f64) {
-    let action = mouse::action_at(state, input, x).expect("an action");
+    let action = mouse::action_at(state, input, x, f64::from(input.row) + 0.5).expect("an action");
     update(state, action);
 }
 

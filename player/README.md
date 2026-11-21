@@ -125,8 +125,9 @@ the downloads, put the `models` folder beside the executable.
 
 ## Screen
 
-One list pane with a **Browser / Queue / Transition / Karaoke** toggle in
-its top border (click it or press `tab`, which goes round all four); the right column has the cover, the title, the status
+One list pane with a **Browser / Queue / Transition / Karaoke / Mix**
+toggle in its top border (click it or press `tab`, which goes round all
+five); the right column has the cover, the title, the status
 light and the signal path, for example
 `file 96 → DAC (exclusive), bit-perfect`.
 When the device takes no rate that carries the file bit-perfect, the
@@ -584,7 +585,8 @@ the processor), and kept with the track's waveforms. A note is the median
 of the frames around it the network is sure of, to the nearest semitone.
 
 The microphone (the system's default input, or the one `i` picks) is open
-while the tab or the mode shows, to hear the singer: it is never played.
+while the tab or the mode shows (and on the Mix tab while its strip is
+selected), to hear the singer: it is never played.
 Nothing of it reaches the speakers, so what plays is exactly what it
 would be without it, and nothing can feed back. It sees what the device
 plays (a tap at the output's last step that only reads), so the music's
@@ -816,12 +818,87 @@ without decoding audio: `FLAC 44.1`,
 and bit rate, `MP3 320k` (a VBR file's average), `VORBIS 160k`. An M4A file holding AAC
 is listed with `?` and the reason (AAC is not supported).
 
+### The Mix tab
+
+The Mix tab (`tab` to it, the last of the five) shows the mixer as a desk,
+the whole width: a channel strip for the player and one for the preview
+side by side, the microphone's strip, and the master at the right. The
+tall sections line up as on a desk.
+
+- **PLAYER** and **PREVIEW**: the name on a scribble strip (lit when
+  selected), what the strip carries (the format; the player's LEAD lamp,
+  lit while it is heard, and how full its ring is; the preview's two
+  players A and B with the gain of each in dB, so a crossfade can be
+  watched, `—` while there are none), a fader beside an L/R meter, the
+  level, and `[M]` mute and `[S]` solo (while a strip is soloed, the
+  others are silent). The fader is tapered as on a desk: +6 dB at the top,
+  0 dB at three quarters of the way up, −10, −20, −30, −40 and −60 dB
+  closer and closer below it, −∞ at the bottom. The meter beside it is on
+  the same ruler, so the fader's marks read it in dBFS; above 0 dBFS (only
+  with the fader above 0 dB) it is red: the overs. A level other than 0 dB
+  shows in orange: the strip adds gain, or takes it away. Every change is
+  a 20 ms ramp in the mixer, so nothing clicks.
+- **MIC**: listened to, never played: no fader (`LISTEN ONLY`), but its
+  meters as captured (IN) and with the singer isolated (VOICE), its port
+  (hearing what the device plays, waiting for an output, or why it cannot
+  hear), the echo canceller as an insert (`[ECHO]`, lit while on; a click
+  or `e` turns it on or off: `karaoke_echo`, saved), how much echo it removes,
+  how late the echo comes and whether it has learnt its way, and the
+  clock bridge's drift (ppm), fill and dropouts. The lamps PITCH and REC
+  are the game and the keeping of the singing (`karaoke_game`,
+  `karaoke_keep`): yellow while set, green while they hear (in Karaoke
+  mode). The microphone is open while this strip is selected (`←` `→`
+  to it, or a click), and closed again when another is; until then the
+  strip says it is closed. Without one it says so.
+- **MAIN**: the device, its backend (exclusive or shared) and format, the
+  BIT-PERFECT lamp (the last frames went to the device as an input wrote
+  them: nothing summed, limited or dithered; off while a preview mixes),
+  the LIMIT lamp (the limiter turned the gain down, held lit for a
+  second), the samples clipped and the desk's clock, a big L/R meter, and
+  VOLUME: the device's own volume (`—` where the player cannot set it).
+  The master never adds gain of its own.
+
+The meters are peak meters, the microphone's and the master's over −60
+to 0 dBFS: green below −18, yellow to −6, red above; they rise at once and fall 20 dB a second, a tick
+holds each peak for 1.5 s, and a lamp over each lights for 1.5 s when a
+peak reaches full scale. They move by themselves while the tab shows, so
+the window keeps drawing.
+
+Bit-perfect stays the default: the desk adds no gain until a fader is
+moved, and nothing of it is kept: every start is at 0 dB, unmuted, nothing
+soloed. A new mixer (another device, an engine restarted) gets the faders
+as they were set this run.
+
+With the mouse, a fader's cap follows the pointer up and down while held
+(the pointer may leave the track; in the window to the pixel, so it moves
+by less than a cell); a press elsewhere on the track brings the cap there;
+within 0.4 rows of 0 dB it is at exactly 0 dB, as in a desk's detent (a
+key step across 0 dB stops there too); a double click is 0 dB;
+the wheel over a strip moves its fader by 1 dB (over the master, the
+device's volume); a click selects a strip, and `[M]`, `[S]` and `[ECHO]`
+are buttons.
+
+| Key | Mix tab |
+|---|---|
+| `←` `→` | the strip to the left, to the right (player, preview, microphone, master) |
+| `↑` `↓` | the fader 1 dB up, down (below −60 dB: off; on the master, the device's own volume a step) |
+| `pgup` `pgdn` | the fader 6 dB up, down |
+| `home` | the fader to 0 dB: nothing added |
+| `end` | the fader off (−∞) |
+| `m` | mute the strip, or not |
+| `s` | solo the strip, or not |
+| `e` | the microphone's echo canceller on or off |
+| `i` | the next microphone |
+
+The capitals keep their commands here (`M` the beat pulse, `S` stop);
+`esc` does nothing on the tab.
+
 ## Code
 
 | Module | |
 |---|---|
-| `core` | state, `Action`, `update(state, action) -> effects`, layout in cells with its collapse rules, keymap, mouse regions; the Transition tab (`core::transition::tab`, the lanes it shares with Karaoke in `core::lanes`), the grid fixes (`core::grid`), the transitions' presets and plans (`core::transition`) and the Karaoke tab and mode (`core::karaoke`). Pure. |
-| `view` | the ratatui widgets for both frontends; the cover, the spectrum, the Transition tab's lanes (`view::transition`, with `view::lanes`, which the Karaoke tab shares) and Karaoke mode's picture (`view::karaoke`) go through `view::Pictures`; the window paints that picture in `gui::karaoke` |
+| `core` | state, `Action`, `update(state, action) -> effects`, layout in cells with its collapse rules, keymap, mouse regions; the Transition tab (`core::transition::tab`, the lanes it shares with Karaoke in `core::lanes`), the grid fixes (`core::grid`), the transitions' presets and plans (`core::transition`), the Karaoke tab and mode (`core::karaoke`) and the Mix tab's desk (`core::desk`: its settings, the fader's taper, the meters' ballistics, its mouse). Pure. |
+| `view` | the ratatui widgets for both frontends; the cover, the spectrum, the Transition tab's lanes (`view::transition`, with `view::lanes`, which the Karaoke tab shares) and Karaoke mode's picture (`view::karaoke`) go through `view::Pictures`; the window paints that picture in `gui::karaoke`. The Mix tab (`view::desk`) is cells only |
 | `app` | the running player: the engine on the Lead input of a mixer that holds the device (`jodel_output::mixer`), background workers, the spectrum (the mixer's monitor), cover; carries out the effects |
 | `preview` | the preview's players, guests on the mixer (one per file, two at most): only the latest file loaded, crossfades on the mixer's clock, the song ducked and back |
 | `browser` | folder listing, file details read lazily for the rows on screen (cached for the session), recursive search, folder walk |

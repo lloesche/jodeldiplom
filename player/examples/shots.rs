@@ -199,6 +199,16 @@ fn main() {
                 jodeldiplom::core::update(&mut m, Action::Op(Op::TransitionZoomOut));
                 m
             }),
+            ("mix", {
+                // The Mix tab: the player at 96 kHz, a preview crossfading
+                // over it (so the master sums: not bit-perfect), the
+                // microphone's strip selected and hearing.
+                let mut d = state.clone();
+                d.side = Side::Mix;
+                d.desk.selected = jodeldiplom::core::desk::Channel::Mic;
+                common::fill_desk(&mut d, 96_000);
+                d
+            }),
             ("karaoke-tab", {
                 let mut k = state.clone();
                 k.side = Side::Karaoke;

@@ -890,3 +890,41 @@ fn the_queue_is_got_ready_ahead_and_its_icons_light_up_in_turn() {
     );
     assert_eq!(colors(&state)[3], DIM);
 }
+
+#[test]
+fn the_mix_tab_is_a_desk() {
+    let state = common::desk_state(120, 36);
+    let text = draw(&state);
+    snapshot("mix", &text);
+    has(
+        &text,
+        &[
+            " Mix ",
+            "PLAYER",
+            "PREVIEW",
+            "MIC",
+            "MAIN · USB Audio DAC",
+            "96k 24b",
+            "LEAD",
+            "0.0 dB",
+            "[M]",
+            "[S]",
+            "LISTEN ONLY",
+            "[ECHO]",
+            "● −31 dB 42ms",
+            "fill 10ms xrun 0",
+            "IN VOICE",
+            "WASAPI exclusive",
+            "96 kHz · 24 bit · 2 ch",
+            "BIT-PERFECT",
+            "LIMIT",
+            "12:04.3",
+            "VOLUME —",
+        ],
+    );
+    // A smaller window: the same strips, shorter faders.
+    let state = common::desk_state(80, 24);
+    let text = draw(&state);
+    snapshot("mix_small", &text);
+    has(&text, &["PLAYER", "PREVIEW", "MIC", "MAIN", "0.0 dB"]);
+}

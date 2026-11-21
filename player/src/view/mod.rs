@@ -7,6 +7,7 @@
 //! window leaves their cells empty and paints pixels there after the frame
 //! is drawn. The spectrum's axis labels are cells in both ([`plot`]).
 
+pub mod desk;
 pub mod karaoke;
 pub mod lanes;
 pub mod plot;
@@ -369,6 +370,7 @@ fn draw_main(frame: &mut Frame, scene: &Scene, m: &MainLayout, pictures: &mut dy
             ),
         ),
         Side::Karaoke => "enter Karaoke mode · ↑ ↓ slider · ← → level".into(),
+        Side::Mix => desk::FOOTER.into(),
     };
     let block = bordered(Line::from(title)).title_bottom(Line::from(Span::styled(
         format!(" {footer} "),
@@ -397,6 +399,11 @@ fn draw_main(frame: &mut Frame, scene: &Scene, m: &MainLayout, pictures: &mut dy
             Side::Karaoke => {
                 if let Some(layout) = &m.karaoke {
                     karaoke::draw_tab(frame, scene, layout, pictures);
+                }
+            }
+            Side::Mix => {
+                if let Some(layout) = &m.desk {
+                    desk::draw(frame.buffer_mut(), state, layout);
                 }
             }
         }
@@ -1044,6 +1051,16 @@ fn draw_settings(frame: &mut Frame, scene: &Scene, s: &SettingsLayout) {
         Style::new().fg(BORDER),
     )));
     frame.render_widget(Paragraph::new(notes), s.notes);
+}
+
+/// A level as `n` blocks, `share` of them lit (▮) in `on`, the rest
+/// unlit (▯): the microphone's meter, a ring's fill, the device's volume.
+pub(crate) fn blocks(share: f64, n: usize, on: Color) -> [Span<'static>; 2] {
+    let lit = ((share.clamp(0.0, 1.0) * n as f64).round() as usize).min(n);
+    [
+        Span::styled("▮".repeat(lit), Style::new().fg(on)),
+        Span::styled("▯".repeat(n - lit), Style::new().fg(TRACK)),
+    ]
 }
 
 /// A bar of `width` cells, `share` of it filled.

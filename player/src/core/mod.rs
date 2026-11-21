@@ -16,11 +16,13 @@
 //! [`Action`]s and draw [`State`] with the same [`crate::view`] widgets.
 
 pub mod action;
+pub mod desk;
 pub mod grid;
 pub mod karaoke;
 pub mod keymap;
 pub mod lanes;
 pub mod layout;
+pub mod mic;
 pub mod mouse;
 pub mod preview;
 pub mod singing;
@@ -166,15 +168,24 @@ pub enum Side {
     /// Karaoke set up: the voice's and the microphone's levels, and the
     /// way into Karaoke mode ([`karaoke`]); the whole width too.
     Karaoke,
+    /// The mixer as a desk: the strips with their faders and meters, the
+    /// microphone's strip and the master ([`desk`]); the whole width too.
+    Mix,
 }
 
 impl Side {
     /// The tabs, in the order `tab` goes through them.
-    pub const ALL: [Side; 4] = [Side::Browser, Side::Queue, Side::Transition, Side::Karaoke];
+    pub const ALL: [Side; 5] = [
+        Side::Browser,
+        Side::Queue,
+        Side::Transition,
+        Side::Karaoke,
+        Side::Mix,
+    ];
 
     /// Whether it takes the whole width (no right column).
     pub fn wide(self) -> bool {
-        matches!(self, Side::Transition | Side::Karaoke)
+        matches!(self, Side::Transition | Side::Karaoke | Side::Mix)
     }
 }
 
@@ -620,6 +631,11 @@ pub struct State {
     pub transition: transition::tab::TransitionTab,
     /// The Karaoke tab and mode.
     pub karaoke: karaoke::KaraokeState,
+    /// The Mix tab: the desk's settings and what it shows.
+    pub desk: desk::DeskState,
+    /// The microphone as last read (once a drawn frame), while one is
+    /// open.
+    pub mic: Option<mic::MicReading>,
     /// Seconds into the playing track as heard when the last frame was
     /// drawn (a frontend's smoothed position), so the Transition tab's keys and
     /// clicks act on what was seen; `None`: the position reported.
@@ -740,6 +756,8 @@ impl State {
             stems: StemMix::ALL,
             transition,
             karaoke: karaoke::KaraokeState::default(),
+            desk: desk::DeskState::default(),
+            mic: None,
             drawn_heard: None,
             drawn_ms: None,
             device_volume: None,

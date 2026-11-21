@@ -1,11 +1,11 @@
-╭ Browser │ Queue (5) │ Transition │ Karaoke ───────────────────────╮╭─────────────────────────────────────────────────╮
+╭ Browser │ Queue (5) │ Transition │ Karaoke │ Mix ─────────────────╮╭─────────────────────────────────────────────────╮
 │: ne▏                                                              ││                                                 │
 │  Next track                                            N / shift+→││                                                 │
 │  Transition: lyrics on the vocals lane on/off                    L││                                                 │
 │  Transition: next preset                                         p││                                                 │
-│  Karaoke: the next microphone                                    i││                                                 │
+│  Microphone: the next one                                        i││                                                 │
 │  Karaoke: the next level (easy, medium, hard)                    d││                                                 │
-│                                                                   ││                                                 │
+│  Microphone: the echo canceller on or off                        e││                                                 │
 │                                                                   ││                        ♪                        │
 │                                                                   ││                                                 │
 │                                                                   ││                                                 │

@@ -468,3 +468,116 @@ pub fn wait_for(app: &mut App, timeout: Duration, mut done: impl FnMut(&App) -> 
     }
     done(app)
 }
+
+/// A linear peak for `db` dBFS.
+fn lin(db: f32) -> f32 {
+    10f32.powf(db / 20.0)
+}
+
+/// Fills the Mix tab's desk as a frame's look would (at the state's
+/// clock): the player at `rate` with its meters at −12 / −9 dBFS, a preview
+/// crossfading (A going out, B coming in), a microphone open and hearing
+/// with its echo canceller learnt, and the master summing (a preview
+/// mixes, so it is not bit-perfect).
+pub fn fill_desk(state: &mut State, rate: u32) {
+    use jodel_output::mixer::{
+        DeskView, InputView, MasterView, Meters, MicPort, MicView, Role, StripView, Timebase,
+    };
+    use jodeldiplom::core::desk::{self, Look};
+    use jodeldiplom::core::mic::MicReading;
+    let format = StreamFormat::new(rate, 2, SampleFormat::S24In32);
+    let input = |role, gain, queued| InputView {
+        role,
+        gain,
+        heard: gain > 0.0,
+        format: Some(format),
+        queued,
+        capacity: 65_536,
+    };
+    let view = DeskView {
+        master: MasterView {
+            device: "USB Audio DAC".into(),
+            stream: Some(StreamInfo {
+                format,
+                backend: "WASAPI",
+                exclusive: true,
+                device_buffer_frames: 960,
+                device_latency: Duration::ZERO,
+                ring_frames: 65_536,
+                realtime: true,
+                float_io: false,
+            }),
+            timebase: Timebase {
+                epoch: 1,
+                rate,
+                frame: u64::from(rate) * 724,
+                heard: u64::from(rate) * 7243 / 10,
+            },
+            passthrough: false,
+            clipped: 0,
+        },
+        strips: vec![
+            StripView {
+                id: 1,
+                name: "Player".into(),
+                level: 1.0,
+                mute: false,
+                solo: false,
+                inputs: vec![input(Role::Lead, 1.0, 40_000)],
+            },
+            StripView {
+                id: 2,
+                name: "Preview".into(),
+                level: 1.0,
+                mute: false,
+                solo: false,
+                inputs: vec![
+                    input(Role::Guest, 0.35, 20_000),
+                    input(Role::Guest, 0.65, 52_000),
+                ],
+            },
+        ],
+        mic: MicView {
+            port: MicPort::Hearing,
+            refused: 0,
+        },
+    };
+    let meters = Meters {
+        master: vec![lin(-10.0), lin(-7.5)],
+        strips: vec![
+            (1, vec![lin(-12.0), lin(-9.0)]),
+            (2, vec![lin(-20.0), lin(-17.0)]),
+        ],
+        limited: false,
+    };
+    let mic = MicReading {
+        rate: 48_000,
+        peak: lin(-20.0),
+        voice: Some(lin(-27.0)),
+        echo_on: true,
+        removed_db: 31.0,
+        learnt: true,
+        delay: Some(0.042),
+        drift_ppm: 18.0,
+        fill_ms: 10.0,
+        xruns: 0,
+    };
+    // Two frames: the first look after none takes no meters.
+    state.mic = Some(mic);
+    state.karaoke.mic.name = Some("Yeti Stereo Microphone".into());
+    let now = state.now_ms;
+    for at in [now.saturating_sub(16), now] {
+        desk::feed(state, Look::of(view.clone(), meters.clone(), [1, 2]), at);
+    }
+}
+
+/// [`playing_state`] on the Mix tab, its desk filled ([`fill_desk`]), the
+/// microphone's strip selected (so it listens).
+pub fn desk_state(cols: u16, rows: u16) -> State {
+    let mut state = playing_state(cols, rows);
+    state.side = jodeldiplom::core::Side::Mix;
+    state.desk.selected = jodeldiplom::core::desk::Channel::Mic;
+    state.now_ms = 10_000;
+    fill_desk(&mut state, 96_000);
+    state
+}
