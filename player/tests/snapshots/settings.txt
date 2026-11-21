@@ -1,0 +1,36 @@
+╭ Settings ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│                                                                                                                      │
+│   Output device         ‹ system default  ▾                                       ›                                  │
+│   Rate cap              ‹ none                                                    ›                                  │
+│   Resample when needed  ‹ on: when no rate carries the file bit-perfect           ›                                  │
+│   Headroom              ‹ none (lossy files -1.5 dB, for their overs)             ›                                  │
+│   Tempo and beats       ‹ on: tempo, beat pulse and beat analysis                 ›                                  │
+│   Beat voting           ‹ on: the checked methods vote                            ›                                  │
+│     Spectral flux       ‹ [x] onsets through two trackers                         ›                                  │
+│     Beat This! network  ‹ [x] a neural network, our own inference                 ›                                  │
+│   Stems                 ‹ unavailable: no GPU, the cues listen to the mix         ›                                  │
+│   Stem switching        ‹ on the next bar: stems go on and off on the beat        ›                                  │
+│   Next track (N)        ‹ cut: the next track starts at once                      ›                                  │
+│     Its transition      ‹ the Mix tab's: fade                                     ›                                  │
+│   Data folder           ‹ none  ▾                                                 ›                                  │
+│   ● System default  whatever the system's default output is                                                          │
+│   ○ Speakers (USB Audio DAC)  44.1 48 88.2 96 176.4 192 352.8 384 kHz · S32/S24in32 · 2 ch                           │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│ Saved to /home/me/.config/jodeldiplom/config.toml                                                                    │
+│ ↑↓ select   ←→ change   enter open   esc back                                                                        │
+│                                                                                                                      │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+     1:23 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━●───────────────────────────────────────────────────────────────── 4:05
+  ◀◀   ▮▮   ▶▶   ■                                      playing                                    ≡ settings   ? help

@@ -1,0 +1,11 @@
+[package]
+name = "jodel-lyrics"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+license = "MIT"
+description = "Lyrics for karaoke: LRC text in and out, tokens for a speech model, forced alignment of words, and the timing without a model"
+
+[dependencies]
+# Every file written: whole or not at all, made durable.
+durable = { path = "../durable" }

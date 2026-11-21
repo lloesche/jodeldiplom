@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- The window player's app bundle (make-app.sh fills in the version). -->
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>en</string>
+    <key>CFBundleDisplayName</key>
+    <string>Jodeldiplom</string>
+    <key>CFBundleExecutable</key>
+    <string>jodeldiplom-gui</string>
+    <key>CFBundleIconFile</key>
+    <string>jodeldiplom</string>
+    <key>CFBundleIdentifier</key>
+    <string>org.jodeldiplom.player</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleName</key>
+    <string>Jodeldiplom</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>@VERSION@</string>
+    <key>CFBundleVersion</key>
+    <string>@VERSION@</string>
+    <key>LSApplicationCategoryType</key>
+    <string>public.app-category.music</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>11.0</string>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+    <!-- Without it macOS never asks, and the microphone gives only silence. -->
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Karaoke mode mixes your microphone into the song as it plays.</string>
+</dict>
+</plist>

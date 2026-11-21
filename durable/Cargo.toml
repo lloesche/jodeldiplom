@@ -1,0 +1,9 @@
+[package]
+name = "durable"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+license = "MIT"
+description = "Files written whole or not at all, and made durable: every crate here writes through it"
+
+[dependencies]

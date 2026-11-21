@@ -1,0 +1,56 @@
+[package]
+name = "jodeldiplom"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.90"
+license = "MIT"
+description = "A file-browser music player for PCM and lossy files, in the terminal and in a window"
+default-run = "jodeldiplom"
+
+[dependencies]
+jodel-output = { path = "../output" }
+jodel-playback = { path = "../playback" }
+jodel-gpu = { path = "../gpu" }
+jodel-rhythm = { path = "../rhythm" }
+jodel-lyrics = { path = "../lyrics" }
+# Every file written: whole or not at all, made durable.
+durable = { path = "../durable" }
+ratatui = "0.30.2"
+ratatui-image = { version = "11.1.0", default-features = false, features = ["crossterm"] }
+image = { version = "0.25.10", default-features = false, features = ["jpeg", "png"] }
+ab_glyph = "0.2.32"
+softbuffer = "0.4.8"
+winit = "0.30.13"
+# The window's frames through the GPU (softbuffer where there is none);
+# the same wgpu as jodel-gpu.
+wgpu = { version = "30.0.2", default-features = false, features = ["std", "parking_lot", "dx12", "metal", "vulkan", "wgsl"] }
+pollster = "1.0.1"
+bytemuck = "1.25.2"
+unicode-width = "0.2.3"
+# Text from the clipboard, for ctrl+v (no image support).
+arboard = { version = "3.7.0", default-features = false }
+# Lyrics from LRCLIB (and, later, the speech model's download), over
+# rustls.
+ureq = { version = "3", default-features = false, features = ["rustls"] }
+
+[target.'cfg(windows)'.dependencies.windows]
+version = "0.62.2"
+features = ["Win32_System_Console", "Win32_Graphics_Dxgi", "Win32_Graphics_Gdi", "Win32_Storage_FileSystem", "Win32_System_SystemInformation"]
+
+# Setup's check of the disk's free space and the memory (statvfs, sysctl).
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+# The Dock icon when the window player runs outside its app bundle.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6.5"
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSData"] }
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSApplication", "NSImage", "NSResponder"] }
+
+[[bin]]
+name = "jodeldiplom"
+path = "src/bin/jodeldiplom.rs"
+
+[[bin]]
+name = "jodeldiplom-gui"
+path = "src/bin/jodeldiplom-gui.rs"

@@ -1,0 +1,19 @@
+[package]
+name = "jodel-gpu"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.87"
+license = "MIT"
+description = "The stem separator of jodel-rhythm on the GPU, through wgpu"
+
+[dependencies]
+jodel-rhythm = { path = "../rhythm" }
+jodel-lyrics = { path = "../lyrics" }
+pollster = "1.0.1"
+# Native backends only: no WebGPU or GLES.
+wgpu = { version = "30.0.2", default-features = false, features = ["std", "parking_lot", "dx12", "metal", "vulkan", "wgsl"] }
+
+[dev-dependencies]
+hound = "3.5"
+jodel-output = { path = "../output" }
+jodel-playback = { path = "../playback" }

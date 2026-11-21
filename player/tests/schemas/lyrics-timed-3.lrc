@@ -1,0 +1,7 @@
+jodeldiplom-cache lyrics-timed 3 by jodeldiplom x
+[re:jodel-lyrics]
+[source:lrclib]
+[aligner:ctc:test 2]
+[00:01.00]<00:01.00>One <00:01.40>line<00:02.00>
+[#:confidence 100 100]
+[#:letters 0,10,30 0,4,20,50]

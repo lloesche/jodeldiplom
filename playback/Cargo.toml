@@ -1,0 +1,17 @@
+[package]
+name = "jodel-playback"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+license = "MIT"
+description = "Playback engine: FLAC, WAV, AIFF, CAF, ALAC, MP3 and Vorbis files to bit-perfect device output, gapless"
+
+[dependencies]
+# Every file written: whole or not at all, made durable.
+durable = { path = "../durable" }
+jodel-output = { path = "../output" }
+jodel-rhythm = { path = "../rhythm" }
+symphonia = { version = "0.6", default-features = false, features = ["flac", "wav", "pcm", "aiff", "caf", "alac", "isomp4", "mp1", "mp2", "mp3", "ogg", "vorbis", "id3v1", "id3v2"] }
+
+[dev-dependencies]
+hound = "3.5"

@@ -1,0 +1,5 @@
+jodeldiplom-cache grid 1 by jodeldiplom x
+jodel-grid 1
+key k
+beats 2500 5000 5000 5000 5000
+downbeats 1

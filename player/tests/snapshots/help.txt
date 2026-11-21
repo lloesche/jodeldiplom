@@ -1,0 +1,36 @@
+╭ Keys ────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Anywhere                                                                                                             │
+│   space                 play / pause                                                                                 │
+│   ←                     seek back 5 s                                                                                │
+│   →                     seek forward 5 s                                                                             │
+│   N / shift+→           next track                                                                                   │
+│   P / shift+←           previous track                                                                               │
+│   X                     what N does: cut, or mix in (by the Mix tab's preset, or the one set in the settings)        │
+│   S                     stop                                                                                         │
+│   tab                   browser / queue / mix                                                                        │
+│   F                     now playing, full screen                                                                     │
+│   T                     go to the playing track                                                                      │
+│   B                     go to its album folder                                                                       │
+│   R                     go to its artist folder                                                                      │
+│   M                     tempo and beat pulse on / off                                                                │
+│   alt+1                 stems: drums on / off (any off: not bit-perfect)                                             │
+│   alt+2                 stems: bass on / off                                                                         │
+│   alt+3                 stems: vocals on / off                                                                       │
+│   alt+4                 stems: other on / off                                                                        │
+│   alt+0                 stems: all on, the file as it is                                                             │
+│   alt+↑                 device volume a step up (macOS: the system's keys do not reach it while played)              │
+│   alt+↓                 device volume a step down                                                                    │
+│   ,                     settings                                                                                     │
+│   /                     filter this folder                                                                           │
+│   :                     command palette                                                                              │
+│   ?                     this help                                                                                    │
+│   Q / ctrl+c            quit                                                                                         │
+│   ctrl+s                save the queue as a playlist (among the saved queues)                                        │
+│   ctrl+l                the saved queues, in the browser (enter queues one, alt+enter plays it instead)              │
+│                                                                                                                      │
+│ Browser and queue                                                                                                    │
+│   ↑                     up                                                                                           │
+│   ↓                     down                                                                                         │
+╰ ↑↓ scroll   / search   esc back ─────────────────────────────────────────────────────────────────────────────────────╯
+     1:23 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━●───────────────────────────────────────────────────────────────── 4:05
+  ◀◀   ▮▮   ▶▶   ■                                      playing                                    ≡ settings   ? help

@@ -1,0 +1,207 @@
+//! The engine through a mixer ([`jodel_output::mixer`]): on its Lead input,
+//! alone at gain 1, the device gets exactly the bytes it gets without one,
+//! on every route and through seeks, jumps, pauses and reopens; and
+//! [`Command::PlayAt`] starts a track a share of its length in. The device
+//! here plays what it is given at once, so the mixer mixes a period as
+//! soon as the engine has written one: its one path, as on a device.
+
+mod common;
+
+use std::path::PathBuf;
+use std::sync::mpsc::Receiver;
+use std::time::Duration;
+
+use common::*;
+use jodel_output::{Capabilities, SampleFormat, StreamFormat};
+use jodel_playback::{
+    Captures, Command, Event, JumpAt, PlayState, Player, PlayerOptions, Settings,
+};
+use SampleFormat::*;
+
+#[derive(Clone, Copy, Debug)]
+enum Via {
+    Direct,
+    Mixer,
+}
+
+fn options(resample: bool) -> PlayerOptions {
+    PlayerOptions {
+        settings: Settings {
+            max_rate: None,
+            resample,
+            ..Settings::default()
+        },
+        position_interval: Duration::from_millis(1),
+        ..PlayerOptions::default()
+    }
+}
+
+type Script<'a> = &'a dyn Fn(&Player, &Receiver<Event>, &Gate, &Captures);
+
+/// Runs `script` on a player on a gated device that takes `caps`, directly
+/// or on a mixer's Lead input, and returns what the device got.
+fn run(
+    via: Via,
+    caps: Capabilities,
+    options: PlayerOptions,
+    script: Script,
+) -> Vec<(StreamFormat, Vec<u8>)> {
+    let (target, captures, gate, mixer) = match via {
+        Via::Direct => {
+            let (target, captures, gate) = GatedTarget::new(caps);
+            (target, captures, gate, None)
+        }
+        Via::Mixer => {
+            let (target, captures, gate, mixer) = gated_mixer(caps);
+            (target, captures, gate, Some(mixer))
+        }
+    };
+    let (player, events) = Player::new(Box::new(target), options);
+    script(&player, &events, &gate, &captures);
+    drop(player);
+    drop(mixer);
+    captured(&captures)
+}
+
+/// The same bytes, stream for stream, with and without the mixer.
+fn same_through_the_mixer(caps: Capabilities, options: PlayerOptions, script: Script) {
+    let direct = run(Via::Direct, caps.clone(), options.clone(), script);
+    let mixed = run(Via::Mixer, caps, options, script);
+    assert!(!direct.is_empty() && direct.iter().all(|(_, b)| !b.is_empty()));
+    assert_eq!(direct.len(), mixed.len(), "streams");
+    for ((format, a), (format_mixed, b)) in direct.iter().zip(&mixed) {
+        assert_eq!(format, format_mixed);
+        assert!(
+            a == b,
+            "{format}: {} bytes directly, {} through the mixer",
+            a.len(),
+            b.len()
+        );
+    }
+}
+
+/// Plays `files` to the end of the queue.
+fn to_the_end(files: Vec<PathBuf>) -> impl Fn(&Player, &Receiver<Event>, &Gate, &Captures) {
+    move |player, events, gate, _| {
+        gate.allow_all();
+        player.load(files.clone()).unwrap();
+        player.play(0).unwrap();
+        until_queue_end(events);
+    }
+}
+
+#[test]
+fn flac_gapless_resampled_and_a_reopen_are_bit_exact() {
+    let exact = options(false);
+    let resampled = options(true);
+    let cases = [
+        (caps(&[44_100], &[S24In32Low]), vec![F44], &exact),
+        (caps(&[48_000], &[S16, S24Packed]), vec![F48], &exact),
+        (caps(&[44_100], &[S24In32Low]), vec![F44, F44], &exact),
+        (caps(&[48_000], &[S24In32Low]), vec![F44, F44], &resampled),
+        (
+            caps(&[44_100, 48_000], &[S24In32Low]),
+            vec![F44, F48],
+            &exact,
+        ),
+    ];
+    for (caps, files, options) in cases {
+        let files = files.into_iter().map(fixture).collect();
+        same_through_the_mixer(caps, options.clone(), &to_the_end(files));
+    }
+}
+
+#[test]
+fn plain_and_resampled_pcm_are_bit_exact() {
+    let dir = temp_dir("mixer-pcm");
+    let (w48, w44) = (dir.join("48.wav"), dir.join("44.wav"));
+    ramp_wav(&w48, 48_000, 30_000);
+    ramp_wav(&w44, 44_100, 30_000);
+    let plain = options(false);
+    same_through_the_mixer(
+        caps(&[48_000], &[S16, S24In32Low]),
+        plain,
+        &to_the_end(vec![w48]),
+    );
+    let resampled = options(true);
+    same_through_the_mixer(
+        caps(&[48_000], &[S24In32]),
+        resampled,
+        &to_the_end(vec![w44]),
+    );
+}
+
+#[test]
+fn seek_pause_and_jump_are_bit_exact() {
+    let dir = temp_dir("mixer-moves");
+    let wav = dir.join("ramp.wav");
+    ramp_wav(&wav, 44_100, 3 * 44_100);
+    // Each move is made once the device has every frame written (whole
+    // periods of the mixer: 441 frames at 44.1 kHz, and past the output's
+    // prefill, from which it plays): a seek drops what the device has not
+    // taken, and it is to take the same with or without the mixer.
+    let up_to = |gate: &Gate, captures: &Captures, frames: u64| {
+        gate.allow(frames);
+        gate.wait_written(frames);
+        wait_captured(captures, frames);
+    };
+    let script = |player: &Player, events: &Receiver<Event>, gate: &Gate, captures: &Captures| {
+        player.load(vec![wav.clone()]).unwrap();
+        gate.allow(45 * 441);
+        player.play(0).unwrap();
+        up_to(gate, captures, 45 * 441);
+        player.pause().unwrap();
+        collect_until(events, |e| matches!(e, Event::State(PlayState::Paused)));
+        player.resume().unwrap();
+        collect_until(events, |e| matches!(e, Event::State(PlayState::Playing)));
+        up_to(gate, captures, 90 * 441);
+        player.seek(2.0).unwrap();
+        collect_until(events, |e| matches!(e, Event::Seeked { .. }));
+        up_to(gate, captures, 136 * 441);
+        player.jump(0, 0.5, JumpAt::Now).unwrap();
+        gate.allow_all();
+        until_queue_end(events);
+    };
+    same_through_the_mixer(caps(&[44_100], &[S24In32Low]), options(false), &script);
+    // A FLAC file's seek, too.
+    let script = |player: &Player, events: &Receiver<Event>, gate: &Gate, captures: &Captures| {
+        player.load(vec![fixture(F44)]).unwrap();
+        gate.allow(11 * 441);
+        player.play(0).unwrap();
+        up_to(gate, captures, 11 * 441);
+        player.seek(3_000.0 / 44_100.0).unwrap();
+        collect_until(events, |e| matches!(e, Event::Seeked { .. }));
+        gate.allow_all();
+        until_queue_end(events);
+    };
+    same_through_the_mixer(caps(&[44_100], &[S24In32Low]), options(false), &script);
+}
+
+#[test]
+fn play_at_starts_a_share_of_the_length_in() {
+    let dir = temp_dir("mixer-play-at");
+    let wav = dir.join("ramp.wav");
+    let frames = 44_101u64;
+    let samples = ramp_wav(&wav, 44_100, frames as u32);
+    let (lead, captures, mixer) = mixer_lead(caps(&[44_100], &[S24In32Low]));
+    let (player, events) = Player::new(Box::new(lead), options(false));
+    player.load(vec![wav]).unwrap();
+    player
+        .send(Command::PlayAt {
+            index: 0,
+            share: 1.0 / 3.0,
+        })
+        .unwrap();
+    let seen = until_queue_end(&events);
+    drop(player);
+    drop(mixer);
+    let from = (frames as f64 / 3.0).round() as usize;
+    let start = seen.iter().find_map(|e| match e {
+        Event::TrackStarted(s) => Some(s.from_frame),
+        _ => None,
+    });
+    assert_eq!(start, Some(from as u64));
+    let streams = captured(&captures);
+    assert_eq!(streams.len(), 1);
+    assert!(streams[0].1 == device_bytes(&samples[2 * from..], S24In32Low));
+}

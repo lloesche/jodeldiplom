@@ -1,0 +1,11 @@
+__pycache__/
+*.py[cod]
+build/
+dist/
+*.flac
+!/tests/fixtures/formats/*.flac
+!/tests/fixtures/pcm/*.flac
+*.wav
+/target/
+
+/.claude/worktrees/

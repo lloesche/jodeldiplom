@@ -1,0 +1,2 @@
+jodeldiplom-cache scores 1 by jodeldiplom x
+medium	2300	23	31	/music/a song.flac

@@ -1,0 +1,20 @@
+# The player (terminal and window) is in player/, its playback engine in
+# playback/, the bit-perfect device output in output/, its beat and tempo
+# analysis and stem separation in rhythm/ (on the GPU in gpu/), its lyrics
+# for karaoke in lyrics/. Every file written goes through durable/ (whole or
+# not at all, made durable).
+# Resolver 3 picks dependency versions that build on each member's
+# rust-version.
+[workspace]
+members = ["durable", "gpu", "lyrics", "output", "playback", "player", "rhythm"]
+resolver = "3"
+
+# The beat analysis runs long loops over whole tracks; its tests would take
+# minutes unoptimized.
+[profile.dev.package.jodel-rhythm]
+opt-level = 3
+
+# The same for the echo canceller's tests (seconds of a reverberant room);
+# and the device thread it runs in is better quick in a debug build too.
+[profile.dev.package.jodel-output]
+opt-level = 3

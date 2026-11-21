@@ -1,0 +1,13 @@
+* text=auto eol=lf
+*.sh text eol=lf
+*.ico binary
+*.icns binary
+*.stats binary
+*.flac binary
+*.m4a binary
+*.caf binary
+*.mp3 binary
+*.mp2 binary
+*.ogg binary
+*.ttf binary
+*.bin binary

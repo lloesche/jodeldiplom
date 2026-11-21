@@ -1,0 +1,13 @@
+jodeldiplom-cache analysis 1 by jodeldiplom x
+jodel-rhythm x
+key /music/a.flac 1234 5678 v9 flux+stems
+duration 12.5000
+confidence 0.8750
+chosen flux/plp
+grouping 0.5000 2 0
+methods flux
+stems true
+beats 5000 5000 5000 5000 5000 5000 5000 5000 5000
+downbeats 0 4 8
+region 0.5000 4.5000 0.7500
+candidate 120.000 0.5000 flux/plp

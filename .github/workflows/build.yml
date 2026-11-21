@@ -1,0 +1,210 @@
+name: Build and test
+
+# Every push builds and tests the workspace and bundles the player on each
+# platform. A pushed tag starting with "v" (v0.0.1, v1.2.0-rc1) also
+# publishes a GitHub release with the bundles for all six platforms (the
+# jodeldiplom player in its terminal and window versions, the window one as
+# "Jodeldiplom.app" on macOS); a tag with a hyphen is marked as a
+# pre-release.
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  msrv:
+    name: Minimum Rust versions
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install the ALSA headers (jodel-output on Linux)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libasound2-dev pkg-config
+      # Each crate is tested with the rust-version its own Cargo.toml declares:
+      # durable, jodel-output, jodel-playback, jodel-rhythm and jodel-lyrics
+      # keep an older one than jodel-gpu and the player.
+      - name: Test each crate with its rust-version
+        run: |
+          set -euo pipefail
+          for manifest in durable/Cargo.toml output/Cargo.toml playback/Cargo.toml rhythm/Cargo.toml lyrics/Cargo.toml gpu/Cargo.toml player/Cargo.toml; do
+            package=$(sed -n 's/^name = "\(.*\)"$/\1/p' "$manifest" | head -n 1)
+            version=$(sed -n 's/^rust-version = "\(.*\)"$/\1/p' "$manifest")
+            rustup toolchain install "$version" --profile minimal
+            echo "::group::$package on Rust $version"
+            cargo "+$version" test -p "$package" --locked
+            echo "::endgroup::"
+          done
+
+  # The window player's fonts (Sarasa Fixed J, Noto Emoji, Atkinson
+  # Hyperlegible Next) are in the repository, in player/fonts.
+  build:
+    name: Build ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    env:
+      RUSTUP_TOOLCHAIN: '1.100.0'
+      BUILD_PLATFORM: ${{ matrix.platform }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x64
+            runner: ubuntu-24.04
+            platform: linux
+          - name: linux-arm64
+            runner: ubuntu-24.04-arm
+            platform: linux
+          - name: macos-x64
+            runner: macos-15-intel
+            platform: macos
+          - name: macos-arm64
+            runner: macos-15
+            platform: macos
+          - name: windows-x64
+            runner: ubuntu-24.04
+            platform: windows-x64
+          - name: windows-arm64
+            runner: ubuntu-24.04
+            platform: windows-arm64
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install Rust
+        run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --component rustfmt,clippy
+      # The player's Linux output (jodel-output) links ALSA, so its headers are
+      # needed before the workspace compiles.
+      - name: Install Linux build tools
+        if: matrix.platform == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends pkg-config libasound2-dev
+      - name: Check formatting and lints, and run the tests
+        if: matrix.platform == 'linux' || matrix.platform == 'macos'
+        run: |
+          cargo fmt --all --check
+          cargo clippy --workspace --all-targets --locked -- -D warnings
+          cargo test --workspace --locked
+      - name: Install Windows x64 cross compiler
+        if: matrix.platform == 'windows-x64'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc-mingw-w64-x86-64 binutils-mingw-w64-x86-64
+          rustup target add x86_64-pc-windows-gnu
+      - name: Install Windows ARM64 cross compiler
+        if: matrix.platform == 'windows-arm64'
+        run: |
+          asset=llvm-mingw-20260616-ucrt-ubuntu-22.04-x86_64.tar.xz
+          checksum=534b92e067b22a6b4441f48ae9240a3341b17825d04d577eab0cf85c44b4deda
+          cd "$RUNNER_TEMP"
+          curl -fsSL --retry 3 -o "$asset" "https://github.com/mstorsjo/llvm-mingw/releases/download/20260616/$asset"
+          printf '%s  %s\n' "$checksum" "$asset" | sha256sum --check
+          tar -xf "$asset"
+          printf '%s\n' "$RUNNER_TEMP/${asset%.tar.xz}/bin" >> "$GITHUB_PATH"
+          rustup target add aarch64-pc-windows-gnullvm
+      - name: Build and stage the bundle
+        run: bash scripts/bundle.sh "$RUNNER_TEMP/build" "$BUILD_PLATFORM"
+      - name: Run the staged player
+        if: matrix.platform == 'linux' || matrix.platform == 'macos'
+        run: |
+          set -euo pipefail
+          bundle=$RUNNER_TEMP/build/jodeldiplom-$BUILD_PLATFORM
+          "$bundle/bin/jodeldiplom" --help
+          "$bundle/bin/jodeldiplom" --list-devices
+          if [[ $BUILD_PLATFORM == macos ]]; then
+            # The window player is an app: signed (ad hoc), with its icon.
+            app="$bundle/Jodeldiplom.app"
+            test ! -e "$bundle/bin/jodeldiplom-gui"
+            plutil -lint "$app/Contents/Info.plist"
+            codesign --verify --strict "$app"
+            test -s "$app/Contents/Resources/jodeldiplom.icns"
+            gui="$app/Contents/MacOS/jodeldiplom-gui"
+          else
+            gui="$bundle/bin/jodeldiplom-gui"
+          fi
+          # Its fonts are built in.
+          "$gui" --help | grep -F "Sarasa Fixed J (built in), emoji: Noto Emoji (built in)"
+      - name: Package the bundle
+        env:
+          ARTIFACT: jodeldiplom-${{ matrix.name }}.tar.gz
+        run: tar -C "$RUNNER_TEMP/build/jodeldiplom-$BUILD_PLATFORM" -czf "$RUNNER_TEMP/$ARTIFACT" .
+      - uses: actions/upload-artifact@v6
+        with:
+          name: jodeldiplom-${{ matrix.name }}
+          path: ${{ runner.temp }}/jodeldiplom-${{ matrix.name }}.tar.gz
+          if-no-files-found: error
+
+  windows-smoke:
+    name: Run Windows ${{ matrix.arch }} bundle
+    needs: build
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: windows-2025
+          - arch: arm64
+            runner: windows-11-arm
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          name: jodeldiplom-windows-${{ matrix.arch }}
+          path: ${{ runner.temp }}/downloads
+      - name: Run the Windows executables
+        shell: pwsh
+        env:
+          ARTIFACT: jodeldiplom-windows-${{ matrix.arch }}.tar.gz
+        run: |
+          $bundle = New-Item -ItemType Directory -Path "$env:RUNNER_TEMP/bundle"
+          tar -xf "$env:RUNNER_TEMP/downloads/$env:ARTIFACT" -C $bundle.FullName
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          # Hosted runners may have no audio service, so only --help runs here.
+          & "$($bundle.FullName)/bin/jodeldiplom.exe" --help
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not (Test-Path "$($bundle.FullName)/bin/jodeldiplom-gui.exe")) { exit 1 }
+          # Its fonts are built in (about 16 MB of it).
+          if ((Get-Item "$($bundle.FullName)/bin/jodeldiplom-gui.exe").Length -lt 20MB) { exit 1 }
+          exit 0
+
+  release:
+    name: Publish the release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [msrv, build, windows-smoke]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: jodeldiplom-*
+          path: ${{ runner.temp }}/artifacts
+      - name: Package the bundles and publish them
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          artifacts=$RUNNER_TEMP/artifacts
+          staging=$RUNNER_TEMP/staging
+          release=$RUNNER_TEMP/release
+          mkdir -p "$staging" "$release"
+          # Each bundle unpacks into one folder named after the release and
+          # platform: a zip for Windows and macOS (where it holds the app),
+          # a gzipped tar for Linux.
+          for platform in linux-x64 linux-arm64 macos-x64 macos-arm64 windows-x64 windows-arm64; do
+            name=jodeldiplom-$TAG-$platform
+            mkdir "$staging/$name"
+            tar -xzf "$artifacts/jodeldiplom-$platform/jodeldiplom-$platform.tar.gz" -C "$staging/$name"
+            if [[ $platform == windows-* || $platform == macos-* ]]; then
+              (cd "$staging" && zip -qry "$release/$name.zip" "$name")
+            else
+              tar -C "$staging" -czf "$release/$name.tar.gz" "$name"
+            fi
+          done
+          (cd "$release" && sha256sum -- * > SHA256SUMS.txt)
+          prerelease=()
+          if [[ $TAG == *-* ]]; then prerelease=(--prerelease); fi
+          gh release create "$TAG" "$release"/* --repo "$GITHUB_REPOSITORY" \
+            --title "$TAG" --generate-notes --verify-tag "${prerelease[@]}"
