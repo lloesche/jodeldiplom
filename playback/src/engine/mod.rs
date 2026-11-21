@@ -650,6 +650,50 @@ fn discard_made(track: &mut Track, before: usize) {
     track.discard -= drop;
 }
 
+/// The output frame of `resampler`'s stream that a stems route ends on.
+/// The stems come at the separator's rate, so their end is only known to
+/// a frame of that rate; resampled to the output's, they end up to a few
+/// frames off the track's end (at 192 kHz up to two short or over, by the
+/// frame the stems start at). Where the track's stated length agrees with
+/// them within that rounding, the stream ends on its stated end, where the
+/// track's other routes end (a file a few frames shorter or longer than it
+/// says is padded or cut to it); past that, where its stems end. They end
+/// there too for a track read along a time map, one with no stated length,
+/// or a segment that starts past it (and a route at the separator's rate
+/// has no resampler: it ends where its stems do).
+fn stems_end(track: &Track, resampler: &Resampler) -> u64 {
+    let design = resampler.design();
+    let (from, to) = (design.from_rate(), design.to_rate());
+    let stems = crate::resample::output_frames(from, to, resampler.input_frames());
+    if track.warp.is_some() {
+        return stems;
+    }
+    let Some(left) = track
+        .info
+        .frames
+        .and_then(|total| total.checked_sub(track.seg_frame))
+    else {
+        return stems;
+    };
+    let heard = crate::resample::output_frames(track.info.rate.max(1), to, left);
+    // The stream counts the frames before the segment's start too (a
+    // switch's run-up, a jump's preroll), and those of them still to be
+    // dropped.
+    let Some(end) = (heard + resampler.output_frames() + track.discard).checked_sub(track.emitted)
+    else {
+        return stems;
+    };
+    // Where the stems end and where they start (a run taken up mid-way)
+    // are each within half a frame of the separator's: one of its frames
+    // at the output's rate. The two ends rounded to output frames add one.
+    let slack = u64::from(to.div_ceil(from)) + 1;
+    if end.abs_diff(stems) <= slack {
+        end
+    } else {
+        stems
+    }
+}
+
 /// Drops `value` on a thread of its own: a track's file closes there (on a
 /// network share that can take a while) and its buffers are freed, while
 /// the playback thread goes on writing.
@@ -2314,8 +2358,10 @@ impl Engine {
         };
         let before = track.out_buf.len();
         if track.stems_done {
-            if let Some(resampler) = track.resampler.as_mut().filter(|r| !r.is_finished()) {
-                resampler.finish(&mut track.out_buf);
+            if let Some(mut resampler) = track.resampler.take_if(|r| !r.is_finished()) {
+                let end = stems_end(track, &resampler);
+                resampler.finish_at(end, &mut track.out_buf);
+                track.resampler = Some(resampler);
                 discard_made(track, before);
                 self.after_output(track, before);
                 return Ok(Progress::Busy);

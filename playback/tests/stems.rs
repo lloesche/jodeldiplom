@@ -12,7 +12,8 @@ use common::*;
 use jodel_output::{SampleFormat, SimClock};
 use jodel_playback::stems::{Separator, Stem, StemMix};
 use jodel_playback::{
-    Event, MemoryTarget, PlayState, Player, PlayerOptions, Settings, Stage, TrackStart,
+    Event, FilterDesign, JumpAt, MemoryTarget, PlayState, Player, PlayerOptions, Settings, Stage,
+    TrackStart,
 };
 use SampleFormat::*;
 
@@ -327,61 +328,141 @@ fn failing_stems_fall_back_to_the_whole_mix() {
     assert!(got == file, "the file as it is");
 }
 
-/// Turning a stem off at a high output rate: the stems run up from a
-/// second before the frame written, more output frames than the switch
-/// keeps of a route that has not caught up, and nothing of them is there
-/// until the first chunk is separated. The switch waits for them (it once
-/// dropped output it did not have yet, and the engine stopped), then
-/// crossfades in, in the same output.
-#[test]
-fn stems_at_a_high_rate_are_waited_for() {
-    const HIGH: u32 = 192_000;
-    let dir = temp_dir("stems-high");
-    let path = dir.join("tones.wav");
-    let frames = 4 * HIGH as usize;
-    let file = tones(HIGH, frames);
-    write_wav(&path, HIGH, 2, &file);
-    let (target, captures, gate) = GatedTarget::new(caps(&[HIGH], &[S24In32Low]));
-    let options = PlayerOptions {
+/// A high output rate: the stems at the separator's rate resampled to it.
+const HIGH: u32 = 192_000;
+
+/// Lengths of a track at [`HIGH`] (4 s and a little less) whose stems from
+/// its start, resampled back, once came out two frames short and two over;
+/// from a whole second on as well.
+const AWKWARD: [usize; 2] = [4 * HIGH as usize - 512, 4 * HIGH as usize - 320];
+
+/// Options for stems at [`HIGH`] with the quarter separator: `stems` on.
+fn high_options(stems: StemMix) -> PlayerOptions {
+    PlayerOptions {
         settings: Settings {
-            stems: StemMix::ALL,
+            stems,
             ..Settings::default()
         },
         position_interval: Duration::from_millis(1),
         separator: Some(quarter),
         ..PlayerOptions::default()
-    };
-    let (player, events) = Player::new(Box::new(target), options);
-    player.load(vec![path]).unwrap();
-    gate.allow(2 * u64::from(HIGH));
-    player.play(0).unwrap();
-    gate.wait_written(2 * u64::from(HIGH));
-    collect_until(&events, |e| matches!(e, Event::TrackStarted(_)));
-    player
-        .set_settings(Settings {
-            stems: mix(&[Stem::Drums]),
-            ..Settings::default()
-        })
-        .unwrap();
-    let seen = trickle_until_started(&gate, &events);
-    let start = starts(&seen)[0];
-    assert_eq!(start.route.stage, Stage::Stems);
-    assert_eq!(start.output.format.rate, HIGH, "the same output");
-    let at = start.output_frame as usize;
-    gate.allow_all();
-    let rest = until_queue_end(&events);
-    assert!(!rest.iter().any(|e| matches!(e, Event::Error { .. })));
-    drop(player);
-    let streams = captured(&captures);
-    assert_eq!(streams.len(), 1);
-    let got = samples(&streams[0].1);
-    assert_eq!(got.len(), file.len());
-    assert!(got[..2 * at] == file[..2 * at], "the file up to {at}");
-    // A quarter of the tones after the crossfade (through 44.1 kHz and
-    // back: the tones are far below its band edge).
-    let fade = HIGH as usize / 50;
-    let near = worst(&got, &file, 0.25, at + fade, frames - HIGH as usize / 10);
-    assert!(near <= 4_096.0, "off by {near}");
+    }
+}
+
+/// Turning a stem off at a high output rate: the stems run up from a
+/// second before the frame written, more output frames than the switch
+/// keeps of a route that has not caught up, and nothing of them is there
+/// until the first chunk is separated. The switch waits for them (it once
+/// dropped output it did not have yet, and the engine stopped), then
+/// crossfades in, in the same output, and the track ends on its last
+/// frame (at awkward lengths too: the run-up counts in the stems' end).
+#[test]
+fn stems_at_a_high_rate_are_waited_for() {
+    let dir = temp_dir("stems-high");
+    for frames in [4 * HIGH as usize, AWKWARD[0], AWKWARD[1]] {
+        let path = dir.join(format!("tones-{frames}.wav"));
+        let file = tones(HIGH, frames);
+        write_wav(&path, HIGH, 2, &file);
+        let (target, captures, gate) = GatedTarget::new(caps(&[HIGH], &[S24In32Low]));
+        let (player, events) = Player::new(Box::new(target), high_options(StemMix::ALL));
+        player.load(vec![path]).unwrap();
+        gate.allow(2 * u64::from(HIGH));
+        player.play(0).unwrap();
+        gate.wait_written(2 * u64::from(HIGH));
+        collect_until(&events, |e| matches!(e, Event::TrackStarted(_)));
+        player
+            .set_settings(Settings {
+                stems: mix(&[Stem::Drums]),
+                ..Settings::default()
+            })
+            .unwrap();
+        let seen = trickle_until_started(&gate, &events);
+        let start = starts(&seen)[0];
+        assert_eq!(start.route.stage, Stage::Stems);
+        assert_eq!(start.output.format.rate, HIGH, "the same output");
+        let at = start.output_frame as usize;
+        gate.allow_all();
+        let rest = until_queue_end(&events);
+        assert!(!rest.iter().any(|e| matches!(e, Event::Error { .. })));
+        drop(player);
+        let streams = captured(&captures);
+        assert_eq!(streams.len(), 1);
+        let got = samples(&streams[0].1);
+        assert_eq!(got.len(), file.len(), "{frames} frames");
+        assert!(got[..2 * at] == file[..2 * at], "the file up to {at}");
+        // A quarter of the tones after the crossfade (through 44.1 kHz and
+        // back: the tones are far below its band edge).
+        let fade = HIGH as usize / 50;
+        let near = worst(&got, &file, 0.25, at + fade, frames - HIGH as usize / 10);
+        assert!(near <= 4_096.0, "off by {near}");
+    }
+}
+
+/// A track at a high rate on its stems ends on its own last frame: its
+/// stems at the separator's rate end within a frame of that rate of it,
+/// and resampled back they once ended a frame or two short of the file or
+/// past it, by its length (or the frame the stems started at).
+#[test]
+fn stems_at_a_high_rate_end_with_the_track() {
+    let dir = temp_dir("stems-high-end");
+    for frames in AWKWARD {
+        let path = dir.join(format!("tones-{frames}.wav"));
+        let file = tones(HIGH, frames);
+        write_wav(&path, HIGH, 2, &file);
+        let target = MemoryTarget::new(caps(&[HIGH], &[S24In32Low]), SimClock::Instant);
+        let captures = target.captures();
+        let (player, events) = Player::new(Box::new(target), high_options(mix(&[Stem::Drums])));
+        player.load(vec![path]).unwrap();
+        player.play(0).unwrap();
+        let seen = until_queue_end(&events);
+        let start = starts(&seen)[0];
+        assert_eq!(start.route.stage, Stage::Stems);
+        assert_eq!(start.output.format.rate, HIGH);
+        drop(player);
+        let got = samples(&captured(&captures)[0].1);
+        assert_eq!(got.len(), file.len(), "{frames} frames");
+        let fade = HIGH as usize / 50;
+        let near = worst(&got, &file, 0.25, fade, frames - HIGH as usize / 10);
+        assert!(near <= 4_096.0, "off by {near}");
+    }
+}
+
+/// A jump on a stems route at a high rate, at a time: the frames up to it,
+/// then the track from the target to its last frame, nothing more or
+/// less. The stream starts again a little before the target and drops
+/// what it makes for that; a target nearer the end than the resampler's
+/// filter reaches ends the stems before all of that is made.
+#[test]
+fn a_jump_at_a_high_rate_ends_with_the_track() {
+    let dir = temp_dir("stems-high-jump");
+    let reach = FilterDesign::new(RATE, HIGH).half_width() * HIGH as usize / RATE as usize;
+    for frames in AWKWARD {
+        let path = dir.join(format!("tones-{frames}.wav"));
+        write_wav(&path, HIGH, 2, &tones(HIGH, frames));
+        for to in [HIGH as usize, frames - reach / 2] {
+            let (target, captures, gate) = GatedTarget::new(caps(&[HIGH], &[S24In32Low]));
+            let (player, events) = Player::new(Box::new(target), high_options(mix(&[Stem::Drums])));
+            player.jump_window(4.0, 4.0).unwrap();
+            player.load(vec![path.clone()]).unwrap();
+            gate.allow(u64::from(HIGH));
+            player.play(0).unwrap();
+            gate.wait_written(u64::from(HIGH));
+            let mut seen = collect_until(&events, |e| matches!(e, Event::TrackStarted(_)));
+            let seconds = to as f64 / f64::from(HIGH);
+            player.jump(0, seconds, JumpAt::At(2.0)).unwrap();
+            gate.allow_all();
+            seen.extend(until_queue_end(&events));
+            drop(player);
+            assert!(
+                seen.iter().any(|e| matches!(e, Event::Jumped { .. })),
+                "{seen:#?}"
+            );
+            assert!(!seen.iter().any(|e| matches!(e, Event::Error { .. })));
+            let got = samples(&captured(&captures)[0].1);
+            let want = 2 * HIGH as usize + frames - to;
+            assert_eq!(got.len() / 2, want, "{frames} frames, to {to}");
+        }
+    }
 }
 
 /// Frames a stem takes to fade in or out when the mix changes (10 ms).

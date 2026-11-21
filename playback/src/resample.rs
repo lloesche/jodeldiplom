@@ -28,7 +28,11 @@
 //! silence ([`Resampler::finish`]), so a stream's output depends only on
 //! its own input: a track resampled from a seek point is the same as a
 //! fresh resample of the track from there, and gapless tracks add their
-//! exact lengths.
+//! exact lengths. A stream whose length is known better than its input
+//! tells it (a stem mix, whose input at the separator's rate ends only to
+//! a frame of that rate) ends at another output frame instead
+//! ([`Resampler::finish_at`]): the same frames up to where both have them,
+//! then silence filtered on, or none past it.
 
 use std::sync::{Arc, Mutex};
 
@@ -425,16 +429,23 @@ impl Resampler {
     /// After [`Resampler::finish`], or if `input` is not whole frames.
     pub fn process(&mut self, input: &[i32], out: &mut Vec<i32>) {
         self.push(input.iter().map(|&s| f64::from(s)), input.len());
-        self.run_quantized(out);
+        self.run_quantized(out, self.end());
     }
 
     /// Ends the stream: flushes the filter and appends the last 24-bit
     /// output frames, so that the stream's output has exactly
     /// [`output_frames`] frames.
     pub fn finish(&mut self, out: &mut Vec<i32>) {
-        self.pad();
-        self.run_quantized(out);
-        self.finished = true;
+        self.finish_at(self.end(), out);
+    }
+
+    /// [`Resampler::finish`] with the stream ending at output frame
+    /// `frames` (counted from its start) instead of where its input ends:
+    /// the input goes on as silence up to there, or the output stops short
+    /// of its end. Frames already made stay made.
+    pub fn finish_at(&mut self, frames: u64, out: &mut Vec<i32>) {
+        self.close(frames);
+        self.run_quantized(out, frames);
     }
 
     /// [`Resampler::process`] for samples that are not 24-bit integers
@@ -446,21 +457,21 @@ impl Resampler {
     /// After [`Resampler::finish`], or if `input` is not whole frames.
     pub fn process_float(&mut self, input: &[f64], out: &mut Vec<i32>) {
         self.push(input.iter().copied(), input.len());
-        self.run_quantized(out);
+        self.run_quantized(out, self.end());
     }
 
     /// [`Resampler::process`] without requantization: `f64` samples in
     /// and out (any scale; the filter is linear).
     pub fn process_f64(&mut self, input: &[f64], out: &mut Vec<f64>) {
         self.push(input.iter().copied(), input.len());
-        self.run(out);
+        self.run(out, self.end());
     }
 
     /// [`Resampler::finish`] without requantization.
     pub fn finish_f64(&mut self, out: &mut Vec<f64>) {
-        self.pad();
-        self.run(out);
-        self.finished = true;
+        let end = self.end();
+        self.close(end);
+        self.run(out, end);
     }
 
     fn push(&mut self, samples: impl Iterator<Item = f64>, len: usize) {
@@ -487,23 +498,33 @@ impl Resampler {
         self.fed += frames as u64;
     }
 
-    fn pad(&mut self) {
+    /// Ends the stream at output frame `end`: appends the silence its last
+    /// frames reach past the input (the filter's half, and the input
+    /// frames up to `end` the input does not have).
+    fn close(&mut self, end: u64) {
         assert!(!self.finished, "the stream was finished; reset first");
-        let half = self.design.half;
+        let (up, down) = (self.design.up as u128, self.design.down as u128);
+        let reach = (u128::from(end) * down).div_ceil(up) as u64;
+        let silence = self.design.half as u64 + reach.saturating_sub(self.fed);
         for channel in &mut self.history {
-            channel.resize(channel.len() + half, 0.0);
+            channel.resize(channel.len() + silence as usize, 0.0);
         }
-        self.padded = half as u64;
+        self.padded = silence;
+        self.finished = true;
     }
 
-    /// Makes every output frame whose input is there, up to the stream's
-    /// exact length, and appends them interleaved to `out`.
-    fn run(&mut self, out: &mut Vec<f64>) {
+    /// The stream's exact length in output frames, by its input so far.
+    fn end(&self) -> u64 {
+        rounded(self.fed, self.design.up as u32, self.design.down as u32)
+    }
+
+    /// Makes every output frame whose input is there, up to output frame
+    /// `limit`, and appends them interleaved to `out`.
+    fn run(&mut self, out: &mut Vec<f64>, limit: u64) {
         let design = &*self.design;
         let (up, down) = (design.up, design.down);
         let reach = (design.half + design.lead) as i64;
         let available = (self.fed + self.padded) as i64;
-        let limit = rounded(self.fed, up as u32, down as u32);
         let half = design.half as i64;
         while self.produced < limit && self.index + half < available {
             let start = (self.index - reach - self.base) as usize;
@@ -527,10 +548,10 @@ impl Resampler {
         }
     }
 
-    fn run_quantized(&mut self, out: &mut Vec<i32>) {
+    fn run_quantized(&mut self, out: &mut Vec<i32>, limit: u64) {
         let mut scratch = std::mem::take(&mut self.scratch);
         scratch.clear();
-        self.run(&mut scratch);
+        self.run(&mut scratch, limit);
         out.reserve(scratch.len());
         out.extend(scratch.iter().map(|&y| self.requantizer.quantize(y)));
         self.scratch = scratch;
@@ -600,5 +621,34 @@ mod tests {
         assert_eq!(a.len(), 2 * 1838);
         // A full-scale square wave overshoots (Gibbs) in the left channel.
         assert!(clipped > 0);
+    }
+
+    /// A stream ended at another frame than its input's end: the same
+    /// frames up to where both have them, then silence filtered on, or
+    /// none past it.
+    #[test]
+    fn a_stream_ends_at_the_frame_it_is_told() {
+        let input: Vec<i32> = (0..1000).flat_map(|k| [k * 1000, -k * 500]).collect();
+        for (from, to) in [(44_100, 192_000), (192_000, 44_100)] {
+            let run = |end: Option<u64>| {
+                let mut r = Resampler::new(from, to, 2);
+                let mut out = Vec::new();
+                r.process(&input, &mut out);
+                match end {
+                    Some(frames) => r.finish_at(frames, &mut out),
+                    None => r.finish(&mut out),
+                }
+                out
+            };
+            let whole = run(None);
+            let frames = output_frames(from, to, 1000);
+            assert_eq!(whole.len() as u64, 2 * frames);
+            assert_eq!(run(Some(frames)), whole);
+            let longer = run(Some(frames + 3));
+            assert_eq!(longer.len() as u64, 2 * (frames + 3));
+            assert_eq!(longer[..whole.len()], whole[..]);
+            let shorter = run(Some(frames - 3));
+            assert_eq!(shorter[..], whole[..2 * (frames - 3) as usize]);
+        }
     }
 }
