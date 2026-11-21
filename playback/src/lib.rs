@@ -66,8 +66,7 @@ pub mod transition;
 pub mod warp;
 
 pub use engine::{
-    Command, Event, JumpAt, Mic, PlayState, Player, PlayerOptions, Position, TrackStart,
-    OPEN_BUSY_WAIT,
+    Command, Event, JumpAt, PlayState, Player, PlayerOptions, Position, TrackStart, OPEN_BUSY_WAIT,
 };
 pub use error::Error;
 pub use rate::{

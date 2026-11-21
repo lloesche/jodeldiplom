@@ -18,7 +18,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use image::RgbImage;
-use jodel_output::mixer::{Fader, Mixer, MixerOptions, Role};
+use jodel_output::mixer::{Fader, MicPort, MicView, Mixer, MixerOptions, Role, Strip};
 use jodel_output::SimClock;
 use jodel_playback::{
     any_capabilities, Command, Cover, CoverOrigin, DeviceTarget, Event, NullTarget, OutputTarget,
@@ -329,6 +329,10 @@ struct Engine {
     player: Player,
     /// The engine's fader on the mixer.
     lead: Fader,
+    /// The preview's strip on the desk (the engine's input holds its own).
+    preview_strip: Strip,
+    /// The microphone's port as last told.
+    mic: MicView,
     /// The mixer's monitor: what the device plays.
     tap: SpectrumTap,
     mixer: Mixer,
@@ -751,7 +755,9 @@ impl App {
         // ahead of what is heard.
         let tap = SpectrumTap::new(1 << 19);
         mixer.set_monitor(Some(Box::new(tap.clone())));
-        let (lead_input, lead) = mixer.input(Role::Lead, 1.0);
+        let player_strip = mixer.strip("Player");
+        let preview_strip = mixer.strip("Preview");
+        let (lead_input, lead) = mixer.input(&player_strip, Role::Lead, 1.0);
         let options = PlayerOptions {
             settings: self.state.engine_settings(),
             position_interval: Duration::from_millis(100),
@@ -792,11 +798,13 @@ impl App {
             previews: None,
             player,
             lead,
+            preview_strip,
+            mic: MicView::default(),
             tap,
             mixer,
         });
-        // A new engine takes the microphone over.
-        self.send_mic();
+        // A new mixer takes the microphone over.
+        self.set_mic();
     }
 
     /// Applies an action and carries out its effects.
@@ -888,7 +896,7 @@ impl App {
             self.mic_opening = None;
             if self.mic.take().is_some() {
                 self.state.karaoke.mic = core::karaoke::MicShown::default();
-                self.send_mic();
+                self.set_mic();
             }
         }
         if let Some(mic) = &self.mic {
@@ -974,7 +982,7 @@ impl App {
                 };
                 input.set_echo_cancel(self.state.config.karaoke_echo);
                 self.mic = Some(input);
-                self.send_mic();
+                self.set_mic();
             }
             Err(why) => {
                 self.mic_failed = true;
@@ -988,11 +996,10 @@ impl App {
             }
         }
     }
-    /// Tells the engine about the microphone (or that there is none).
-    fn send_mic(&self) {
+    /// Gives the mixer the microphone (or none): its port on the desk.
+    fn set_mic(&self) {
         if let Some(engine) = &self.engine {
-            let mic = self.mic.clone().map(jodel_playback::Mic);
-            let _ = engine.player.send(Command::SetMic(mic));
+            engine.mixer.set_mic(self.mic.clone());
         }
     }
 
@@ -1019,7 +1026,7 @@ impl App {
         self.mic_failed = false;
         self.mic_opening = None;
         self.state.karaoke.mic = core::karaoke::MicShown::default();
-        self.send_mic();
+        self.set_mic();
         self.run(Effect::SaveConfig);
         self.mic_turn();
         self.state.message = Some(core::Message {
@@ -1061,12 +1068,23 @@ impl App {
             self.mic_opened(ask, result);
         }
         any |= self.pump_previews();
-        // Bit-perfect only while the mixer passes the song through.
-        if let Some(engine) = &self.engine {
+        // Bit-perfect only while the mixer passes the song through; a
+        // device that refused the microphone's tap is told, each time.
+        if let Some(engine) = &mut self.engine {
             let mixed = !engine.mixer.passthrough();
             if self.state.playing.mixed != mixed {
                 self.state.playing.mixed = mixed;
                 any = true;
+            }
+            let mic = engine.mixer.mic();
+            if mic != engine.mic {
+                engine.mic = mic.clone();
+                if let MicPort::CannotHear(why) = mic.port {
+                    any = true;
+                    self.dispatch(Action::Info(format!(
+                        "The microphone cannot hear this output (its echo stays in): {why}"
+                    )));
+                }
             }
         }
         // A move of the data folder, for the settings' row.
@@ -1675,7 +1693,11 @@ impl App {
         match (what, &mut engine.previews) {
             (Preview::Play { path }, previews) => previews
                 .get_or_insert_with(|| {
-                    crate::preview::Previews::new(engine.lead.clone(), self.state.engine_settings())
+                    crate::preview::Previews::new(
+                        engine.lead.clone(),
+                        engine.preview_strip.clone(),
+                        self.state.engine_settings(),
+                    )
                 })
                 .play(&engine.mixer, path),
             (Preview::Silent, Some(p)) => p.silent(),

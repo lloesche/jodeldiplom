@@ -1,11 +1,13 @@
-//! A mixer in front of a device: it owns the device, any number of writers
-//! play into its inputs, and their gains are curves on one clock.
+//! A mixer in front of a device: a desk. It owns the device, any number of
+//! writers play into its inputs on the user's strips, and their gains are
+//! curves on one clock.
 //!
 //! [`Mixer::open`] takes an [`OutputTarget`] (the device, or a test's
 //! memory) and runs one thread, `jodel-mixer`, which holds the device output.
-//! [`Mixer::input`] makes an input: an [`InputTarget`], where one player
-//! opens its outputs as on a device, and a [`Fader`], its gain, which any
-//! number of hands may hold. The input goes when its target and every
+//! [`Mixer::strip`] makes a [`Strip`], a channel of the desk;
+//! [`Mixer::input`] plugs an input into one: an [`InputTarget`], where one
+//! player opens its outputs as on a device, and a [`Fader`], its gain, which
+//! any number of hands may hold. The input goes when its target and every
 //! fader are dropped, or at once with [`Fader::close`]. Each output opened is a full [`Output`] in the
 //! device's format (pause, flush, retract, drain, its clock) with the ring
 //! the player writes; the mixer drains every running one a device period
@@ -14,14 +16,25 @@
 //! written on one that plays what it is given at once (a file, a test's
 //! memory).
 //!
+//! - **Two gains:** an input is heard at its [`Fader`]'s gain (the
+//!   controllers': a preview's crossfade, a transition) times its strip's
+//!   (the user's: [`Strip::set_level`], [`Strip::set_mute`],
+//!   [`Strip::set_solo`], solo in place). A strip's changes are heard over
+//!   [`STRIP_RAMP`], a linear ramp, so they never click. A strip starts at
+//!   0 dB and is kept nowhere.
 //! - **Bit for bit:** when one input is heard (it supplied frames, at a
 //!   gain other than 0), at gain exactly 1 with no ramp running, its
-//!   samples reach the device untouched ([`Mixer::passthrough`] says
+//!   samples reach the device untouched ([`MasterView::passthrough`] says
 //!   whether the last frames did). Otherwise the inputs are summed in
 //!   `f64` with their gains, limited only where the sum could and does go
 //!   over full scale (a look-ahead gain envelope), and requantized once
 //!   to the device's bits with TPDF dither ([`crate::Requantizer`]); clips
-//!   are counted ([`Mixer::clipped`]).
+//!   are counted ([`MasterView::clipped`]).
+//! - **Meters:** the mixer thread measures each strip after its gain (its
+//!   inputs summed) and what goes to the device, the peak of each channel
+//!   up to [`METER_CHANNELS`]; [`Mixer::meters`] takes them (the peaks
+//!   since the last look). [`Mixer::desk`] shows everything else, and
+//!   looking changes nothing ([`DeskView`]).
 //! - **The clock:** a [`Timebase`] per device opening (its epoch): the
 //!   rate and the frames mixed. A gain change is a [`Ramp`] that starts
 //!   [`Start::Now`], at a time of an epoch, or at the first audio of what
@@ -38,30 +51,43 @@
 //!   it. A [`Role::Guest`] never displaces one: it is offered exactly the
 //!   device's format while the device is open, so its player resamples;
 //!   only with nothing open does it open the device at its own.
-//! - **Taps:** a Lead output's [`Output::set_tap`] goes to the device, so a
-//!   microphone's echo canceller hears the whole mix; the stream frames it
-//!   is told are the Lead output's.
+//! - **The microphone's port:** [`Mixer::set_mic`] gives the desk a
+//!   microphone. The mixer taps the device for it while a Lead output is
+//!   open (again for each one, and each opening of the device), so its echo
+//!   canceller hears the whole mix as its sidechain, the stream frames told
+//!   in the Lead's own; the chain behind is the microphone's
+//!   ([`crate::input`]: the clock bridge, the echo canceller, the singer
+//!   isolated, the voice queued for its takers). The microphone has no
+//!   strip and is no input: nothing of it can reach the device. The
+//!   outputs on inputs run no taps of their own.
 //! - **Monitor:** a [`Monitor`] sees every frame as it goes to the device
 //!   (a spectrum of what is heard).
 
+mod desk;
 mod input;
+mod mic;
 mod mix;
 mod ramp;
 mod run;
+mod strip;
 
+pub use desk::{DeskView, InputView, MasterView, Meters, MicPort, MicView, StripView};
 pub use ramp::{Curve, Ramp, Start};
+pub use strip::{Strip, METER_CHANNELS, STRIP_RAMP};
 
+use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Sender};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
 use crate::caps::Capabilities;
 use crate::error::Error;
+use crate::input::Input;
 use crate::output::{Clock, OpenRequest, Output, OutputTarget, StreamInfo};
-use crate::tap::Tap;
 use input::ask;
+use strip::{Entry, Peaks, StripState};
 
 /// How a [`Mixer`] runs its device.
 #[derive(Clone, Debug)]
@@ -136,9 +162,16 @@ pub trait Monitor: Send {
 
 /// What the handles ask of the mixer thread.
 pub(crate) enum Msg {
+    Strip {
+        id: u64,
+        state: Arc<StripState>,
+    },
+    /// A strip's settings changed: the mixer reads them all again.
+    StripChanged,
+    StripGone(u64),
     Slot {
         id: u64,
-        role: Role,
+        strip: u64,
         gain: f64,
         state: Arc<SlotState>,
     },
@@ -167,35 +200,88 @@ pub(crate) enum Msg {
         out: Vec<u64>,
         over: Duration,
     },
-    Tap {
-        stream: u64,
-        tap: Option<Box<dyn Tap>>,
-        done: Sender<Result<(), Error>>,
-    },
+    Mic(Option<Input>),
     Monitor(Option<Box<dyn Monitor>>),
     /// An output started or paused: something to mix, or to settle.
     Wake,
     Quit,
 }
 
-/// What the mixer thread publishes.
+/// What the mixer thread publishes, and what the handles keep for a look
+/// at the desk. The clock is behind a lock taken every turn, for an
+/// instant; what the device runs at and the microphone's port behind
+/// locks of their own, taken when they change.
 #[derive(Default)]
 pub(crate) struct MixShared {
     timebase: Mutex<Timebase>,
+    /// What the device runs at (`None`: closed).
+    device: Mutex<Option<StreamInfo>>,
+    mic: Mutex<MicView>,
+    /// Since the start, over every opening of the device.
     clipped: AtomicU64,
     passthrough: AtomicBool,
-    /// The ids of inputs and outputs given out.
+    /// The limiter turned the gain down since the last look.
+    limited: AtomicBool,
+    /// What goes to the device.
+    peaks: Peaks,
+    /// The ids of strips, inputs and outputs given out.
     ids: AtomicU64,
+    /// The strips and their inputs, by id (the handles keep it).
+    strips: Mutex<BTreeMap<u64, Entry>>,
+}
+
+/// `m` locked, whether or not a thread panicked holding it.
+fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+impl MixShared {
+    pub(crate) fn timebase(&self) -> MutexGuard<'_, Timebase> {
+        lock(&self.timebase)
+    }
+
+    pub(crate) fn device(&self) -> MutexGuard<'_, Option<StreamInfo>> {
+        lock(&self.device)
+    }
+
+    pub(crate) fn mic(&self) -> MutexGuard<'_, MicView> {
+        lock(&self.mic)
+    }
+
+    pub(crate) fn strips(&self) -> MutexGuard<'_, BTreeMap<u64, Entry>> {
+        lock(&self.strips)
+    }
 }
 
 /// What the mixer thread publishes about an input.
-#[derive(Default)]
 pub(crate) struct SlotState {
-    /// Its gain at the last frame mixed (f64 bits).
-    gain: AtomicU64,
+    pub(crate) role: Role,
+    /// Its controllers' gain at the last frame mixed (f64 bits).
+    pub(crate) gain: AtomicU64,
     /// How many ramps the mixer had taken when it last had none running
     /// or waiting.
-    settled: AtomicU64,
+    pub(crate) settled: AtomicU64,
+    /// It was heard in the last chunk mixed.
+    pub(crate) heard: AtomicBool,
+    /// Its output's format (see [`desk::pack_format`]; 0: none), the frames
+    /// queued in its ring, and the ring's capacity.
+    pub(crate) format: AtomicU64,
+    pub(crate) queued: AtomicU64,
+    pub(crate) capacity: AtomicU64,
+}
+
+impl SlotState {
+    fn new(role: Role, gain: f64) -> SlotState {
+        SlotState {
+            role,
+            gain: AtomicU64::new(gain.to_bits()),
+            settled: AtomicU64::new(0),
+            heard: AtomicBool::new(false),
+            format: AtomicU64::new(0),
+            queued: AtomicU64::new(0),
+            capacity: AtomicU64::new(0),
+        }
+    }
 }
 
 /// The mixer: owns a device, mixes its inputs into it. Dropping it closes
@@ -227,15 +313,27 @@ impl Mixer {
         }
     }
 
-    /// A new input at `gain`: where one player opens its outputs, and its
-    /// fader.
-    pub fn input(&self, role: Role, gain: f64) -> (InputTarget, Fader) {
+    /// A new strip named `name`, after those made before.
+    pub fn strip(&self, name: &str) -> Strip {
         let id = self.shared.ids.fetch_add(1, Ordering::Relaxed);
-        let state = Arc::new(SlotState::default());
-        state.gain.store(gain.to_bits(), Ordering::Relaxed);
+        Strip::new(id, self.tx.clone(), self.shared.clone(), name)
+    }
+
+    /// A new input on `strip` (one of this mixer's) at `gain`: where one
+    /// player opens its outputs, and its fader.
+    pub fn input(&self, strip: &Strip, role: Role, gain: f64) -> (InputTarget, Fader) {
+        assert!(
+            Arc::ptr_eq(&strip.handle.shared, &self.shared),
+            "a strip of another mixer"
+        );
+        let id = self.shared.ids.fetch_add(1, Ordering::Relaxed);
+        let state = Arc::new(SlotState::new(role, gain));
+        if let Some(entry) = self.shared.strips().get_mut(&strip.handle.id) {
+            entry.inputs.insert(id, state.clone());
+        }
         let _ = self.tx.send(Msg::Slot {
             id,
-            role,
+            strip: strip.handle.id,
             gain,
             state: state.clone(),
         });
@@ -246,6 +344,7 @@ impl Mixer {
             ramps: AtomicU64::new(0),
             name: self.name.clone(),
             closed: AtomicBool::new(false),
+            strip: strip.clone(),
         });
         (InputTarget { slot: slot.clone() }, Fader { slot })
     }
@@ -266,24 +365,17 @@ impl Mixer {
         });
     }
 
-    /// The clock, as of the last frames mixed.
+    /// The clock, as of the last frames mixed: what a [`Ramp`] is timed
+    /// on (a cheaper look than [`Mixer::desk`], which has it too).
     pub fn timebase(&self) -> Timebase {
-        *self
-            .shared
-            .timebase
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
+        *self.shared.timebase()
     }
 
-    /// Samples that clipped when a mix was requantized, since the start.
-    pub fn clipped(&self) -> u64 {
-        self.shared.clipped.load(Ordering::Relaxed)
-    }
-
-    /// Whether the last frames went to the device as an input wrote them
-    /// (or were silence): nothing summed, limited or dithered.
-    pub fn passthrough(&self) -> bool {
-        self.shared.passthrough.load(Ordering::Relaxed)
+    /// The microphone listened to (`None`: none). The mixer taps the device
+    /// for it while a Lead output is open (see the module's docs); how it
+    /// stands is [`Mixer::mic`]. Nothing of it is ever played.
+    pub fn set_mic(&self, mic: Option<Input>) {
+        let _ = self.tx.send(Msg::Mic(mic));
     }
 
     /// Sets the [`Monitor`] that sees every frame (`None`: none).
@@ -311,12 +403,18 @@ struct SlotHandle {
     name: String,
     /// Forgotten already ([`Fader::close`]).
     closed: AtomicBool,
+    /// Its strip, kept while it lives.
+    strip: Strip,
 }
 
 impl SlotHandle {
     /// Has the mixer forget the input, once.
     fn forget(&self) {
         if !self.closed.swap(true, Ordering::AcqRel) {
+            let shared = &self.strip.handle.shared;
+            if let Some(entry) = shared.strips().get_mut(&self.strip.handle.id) {
+                entry.inputs.remove(&self.id);
+            }
             let _ = self.tx.send(Msg::Forget(self.id));
         }
     }
@@ -357,7 +455,8 @@ impl OutputTarget for InputTarget {
     }
 }
 
-/// An input's gain. Clones are the same fader.
+/// An input's gain, the controllers' (its strip's is the user's). Clones
+/// are the same fader.
 #[derive(Clone)]
 pub struct Fader {
     slot: Arc<SlotHandle>,

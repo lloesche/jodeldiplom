@@ -155,38 +155,6 @@ fn a_count_in_into_stems_has_them_ready_at_its_end() {
     assert!(worst <= 64.0, "{worst} steps off");
 }
 
-/// The microphone goes into every output opened (here two, at two
-/// rates), and an output that takes it says nothing.
-#[test]
-fn the_microphone_goes_into_each_output() {
-    let dir = temp_dir("karaoke-mic");
-    let a = dir.join("a.wav");
-    let b = dir.join("b.wav");
-    ramp_wav(&a, RATE, RATE / 2);
-    ramp_wav(&b, 48_000, 24_000);
-    let target = jodel_playback::MemoryTarget::new(
-        caps(&[RATE, 48_000], &[SampleFormat::S24In32Low]),
-        jodel_output::SimClock::Instant,
-    );
-    let captures = target.captures();
-    let (player, events) = Player::new(Box::new(target), options());
-    let (input, _feed) = jodel_output::input::Input::feed(48_000, 240);
-    player
-        .send(jodel_playback::Command::SetMic(Some(jodel_playback::Mic(
-            input.clone(),
-        ))))
-        .unwrap();
-    player.load(vec![a, b]).unwrap();
-    player.play(0).unwrap();
-    let seen = until_queue_end(&events);
-    drop(player);
-    assert_eq!(captured(&captures).len(), 2);
-    assert!(
-        !seen.iter().any(|e| matches!(e, Event::Notice { .. })),
-        "{seen:?}"
-    );
-}
-
 #[test]
 fn holding_stops_after_a_track_and_names_the_next() {
     let dir = temp_dir("karaoke-hold");

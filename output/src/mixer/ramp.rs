@@ -85,6 +85,44 @@ pub(crate) enum When {
     With(u64),
 }
 
+/// Where the waiting ramps of inputs start in the chunk of frames
+/// `first..end`, into `starts` as (input, frame): their own frame, the
+/// first audio of an output opened since, or with the ramp they follow.
+/// `waiting` gives each input with a ramp waiting, when it starts, and the
+/// ordinal of its output if that supplied audio in the chunk.
+pub(crate) fn resolve_starts(
+    first: u64,
+    end: u64,
+    waiting: impl Iterator<Item = (u64, When, Option<u64>)> + Clone,
+    starts: &mut Vec<(u64, u64)>,
+) {
+    starts.clear();
+    for (id, when, audio) in waiting.clone() {
+        let start = match when {
+            When::Now => Some(first),
+            When::Frame(f) if f < end => Some(f.max(first)),
+            When::FirstAudio { after } if audio.is_some_and(|o| o > after) => Some(first),
+            _ => None,
+        };
+        if let Some(at) = start {
+            starts.push((id, at));
+        }
+    }
+    let led = starts.len();
+    for (id, when, _) in waiting {
+        if let When::With(lead) = when {
+            if let Some(at) = start_of(&starts[..led], lead) {
+                starts.push((id, at));
+            }
+        }
+    }
+}
+
+/// The frame input `id`'s waiting ramp starts at, among `starts`.
+pub(crate) fn start_of(starts: &[(u64, u64)], id: u64) -> Option<u64> {
+    starts.iter().find(|(i, _)| *i == id).map(|&(_, at)| at)
+}
+
 /// A ramp waiting for its start.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Waiting {
@@ -199,6 +237,13 @@ impl Gain {
         }
         self.last = out.last().copied().unwrap_or(self.level);
         None
+    }
+
+    /// The device opened again, its frames from 0: a ramp under way ends
+    /// at once (its frames were the last epoch's); one waiting stays.
+    pub(crate) fn new_epoch(&mut self) {
+        self.finish();
+        self.last = self.level;
     }
 
     /// Nothing of the input is mixed: a ramp under way, or due now, ends
@@ -331,6 +376,37 @@ mod tests {
         g.set(ramp(When::Now, 0.25, 0, Curve::Linear));
         assert_eq!(g.last(), 0.25);
         assert!(!g.moving());
+    }
+
+    #[test]
+    fn a_new_epoch_ends_a_ramp_under_way_and_keeps_one_waiting() {
+        let mut g = Gain::new(1.0);
+        g.set(ramp(When::Now, 0.0, 960, Curve::Linear));
+        run(&mut g, 50_000, 480, Some(50_000));
+        g.set(ramp(When::FirstAudio { after: 1 }, 1.0, 10, Curve::Linear));
+        g.new_epoch();
+        assert_eq!(g.last(), 0.0);
+        // Frames from 0 again: no frame of the last epoch is asked for.
+        assert_eq!(run(&mut g, 0, 4, None), vec![0.0; 4]);
+        assert_eq!(g.next(), Some(When::FirstAudio { after: 1 }));
+    }
+
+    #[test]
+    fn waiting_ramps_start_on_their_frames() {
+        let waiting = [
+            (1, When::Now, None),
+            (2, When::Frame(130), None),
+            (3, When::Frame(900), None),
+            (4, When::FirstAudio { after: 1 }, Some(2)),
+            (5, When::FirstAudio { after: 2 }, Some(2)),
+            (6, When::With(2), None),
+            (7, When::With(3), None),
+        ];
+        let mut starts = Vec::new();
+        resolve_starts(100, 200, waiting.into_iter(), &mut starts);
+        assert_eq!(starts, [(1, 100), (2, 130), (4, 100), (6, 130)]);
+        assert_eq!(start_of(&starts, 6), Some(130));
+        assert_eq!(start_of(&starts, 3), None);
     }
 
     #[test]

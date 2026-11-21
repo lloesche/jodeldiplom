@@ -20,7 +20,7 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::Receiver;
 use std::time::Duration;
 
-use jodel_output::mixer::{Fader, Mixer, Ramp, Role, Start};
+use jodel_output::mixer::{Fader, Mixer, Ramp, Role, Start, Strip};
 use jodel_playback::stems::StemMix;
 use jodel_playback::{Command, Event, Player, PlayerOptions, Settings};
 
@@ -74,6 +74,8 @@ fn let_go(voices: Vec<Voice>) {
 pub struct Previews {
     /// The song's fader.
     lead: Fader,
+    /// The strip the players are on.
+    strip: Strip,
     settings: Settings,
     /// Oldest first.
     voices: Vec<Voice>,
@@ -84,11 +86,12 @@ pub struct Previews {
 }
 
 impl Previews {
-    /// Previews over the song on `lead`, played with `settings` (resampled
-    /// to the device as it runs, no stems).
-    pub fn new(lead: Fader, settings: Settings) -> Previews {
+    /// Previews over the song on `lead`, played on `strip` with `settings`
+    /// (resampled to the device as it runs, no stems).
+    pub fn new(lead: Fader, strip: Strip, settings: Settings) -> Previews {
         Previews {
             lead,
+            strip,
             settings: Settings {
                 resample: true,
                 stems: StemMix::ALL,
@@ -178,7 +181,7 @@ impl Previews {
         let Some(path) = self.waiting.take() else {
             return;
         };
-        let (target, fader) = mixer.input(Role::Guest, 0.0);
+        let (target, fader) = mixer.input(&self.strip, Role::Guest, 0.0);
         // Those not heard yet are silent, and going.
         let out: Vec<&Fader> = self
             .voices

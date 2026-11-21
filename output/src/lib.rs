@@ -56,9 +56,11 @@
 //!
 //! # Several players on one device
 //!
-//! [`mixer`] owns the device and mixes the outputs opened on its inputs:
-//! bit for bit when one is heard as written, else summed with gains that
-//! are ramps on the mixer's clock.
+//! [`mixer`] owns the device and mixes the outputs opened on its inputs,
+//! each on one of the user's strips: bit for bit when one is heard as
+//! written, else summed with gains that are ramps on the mixer's clock. It
+//! meters its strips and the device, and taps the device for the
+//! microphone ([`mixer::Mixer::set_mic`]).
 //!
 //! # Tests without a device
 //!

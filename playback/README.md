@@ -174,9 +174,11 @@ WAV, AIFF, CAF and ALAC files to bit-perfect, exclusive device output, and MP3 (
   simulated clock), `MemoryTarget` (records every stream, for tests), and the
   `OutputTarget` trait (`jodel_output`'s) for others. A mixer's input target
   (`jodel_output::mixer::InputTarget`) is one: several players on one
-  device, each on an input (`let (target, fader) = mixer.input(Role::Lead,
-  1.0); Player::new(Box::new(target), ..)`); alone at gain 1 the engine
-  reaches the device bit for bit through it.
+  device, each on an input of a strip (`let strip = mixer.strip("Player");
+  let (target, fader) = mixer.input(&strip, Role::Lead, 1.0);
+  Player::new(Box::new(target), ..)`); alone at gain 1 with its strip at
+  0 dB the engine reaches the device bit for bit through it. The
+  microphone is the mixer's (`Mixer::set_mic`), not the engine's.
 
 ## The player
 
@@ -197,12 +199,9 @@ after `lead` seconds of silence: its `TrackStarted` comes as the silence
 begins to be heard and its positions run negative through it, so a
 count-in drawn from them falls on what is heard) and `HoldAtEnd(bool)`
 (each track's end stops playback instead of running into the next:
-`Held { index }` names the one that would have come), `PlayAt { index,
-share }` (the track from `share` of its length, its start when the length
-is not known: a preview from a third in), and `SetMic(Option<Mic>)` (a
-microphone listened to, never played: lined up with what the output plays
-by a tap that only reads its buffers, `jodel_output::Output::set_tap`, set
-again on every output opened).
+`Held { index }` names the one that would have come), and `PlayAt {
+index, share }` (the track from `share` of its length, its start when the
+length is not known: a preview from a third in).
 
 Events (`Event`), track events in the order they are heard:
 

@@ -1,15 +1,17 @@
 //! A mixer input's streams: full [`Output`]s whose ring the mixer drains,
-//! and the map that keeps a microphone's tap on the device in the Lead
+//! and the map that keeps the microphone's tap on the device in the Lead
 //! stream's frames.
 
+use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Sender};
 use std::sync::Arc;
 
-use super::{Msg, Role};
+use super::Msg;
 use crate::error::Error;
 use crate::format::StreamFormat;
 use crate::output::{forward_output, Core, Driver};
+use crate::pack::unpack_sample;
 use crate::shared::Shared;
 use crate::tap::Tap;
 
@@ -22,6 +24,88 @@ pub(crate) struct Link {
     pub(crate) running: AtomicBool,
     /// The stream is paused (not just held back for a flush or a prefill).
     pub(crate) paused: AtomicBool,
+}
+
+/// An output open on an input, as the mixer thread drains it.
+pub(crate) struct Stream {
+    pub(crate) link: Arc<Link>,
+    /// Which output of its input it is (from 1).
+    pub(crate) ordinal: u64,
+    /// This chunk: taken from (it was running), and the frames it gave.
+    pub(crate) taken: bool,
+    pub(crate) got: u64,
+    bytes: Vec<u8>,
+    pub(crate) samples: Vec<i32>,
+    /// Its chunks on the device not all played yet: the device frame each
+    /// starts at and how many of its frames it has.
+    sent: VecDeque<(u64, u64)>,
+    /// The timeline epoch (restarts by flush) of what was taken last.
+    epoch: u64,
+}
+
+impl Stream {
+    pub(crate) fn new(link: Arc<Link>, ordinal: u64) -> Stream {
+        Stream {
+            link,
+            ordinal,
+            taken: false,
+            got: 0,
+            bytes: Vec::new(),
+            samples: Vec::new(),
+            sent: VecDeque::new(),
+            epoch: 0,
+        }
+    }
+
+    /// Takes the chunk of `n` frames in `format` that goes to the device
+    /// from device frame `first` into `samples` (silence for what it lacks,
+    /// or all of it when it is not running or a flush keeps the mixer out).
+    /// Returns, when it was rendered, its stream frame there and the frames
+    /// it gave.
+    pub(crate) fn take(
+        &mut self,
+        n: usize,
+        format: StreamFormat,
+        first: u64,
+    ) -> Option<(u64, u64)> {
+        self.taken = self.link.running.load(Ordering::SeqCst);
+        self.got = 0;
+        if !self.taken {
+            return None;
+        }
+        self.bytes.resize(n * format.frame_bytes(), 0);
+        let rendered = self.link.shared.render_input(&mut self.bytes);
+        if let Some((_, got, epoch)) = rendered {
+            if epoch != self.epoch {
+                self.sent.clear();
+                self.epoch = epoch;
+            }
+            if got > 0 {
+                self.sent.push_back((first, got));
+            }
+            self.got = got;
+        }
+        self.samples.resize(n * usize::from(format.channels), 0);
+        let sb = format.sample.bytes();
+        for (s, b) in self.samples.iter_mut().zip(self.bytes.chunks_exact(sb)) {
+            *s = unpack_sample(b, format.sample);
+        }
+        rendered.map(|(lead, got, _)| (lead, got))
+    }
+
+    /// The device has played up to device frame `played`: the output is
+    /// told what of it is still downstream.
+    pub(crate) fn played(&mut self, played: u64) {
+        while self.sent.front().is_some_and(|&(d, n)| d + n <= played) {
+            self.sent.pop_front();
+        }
+        let unplayed: u64 = self
+            .sent
+            .iter()
+            .map(|&(d, n)| n - played.saturating_sub(d).min(n))
+            .sum();
+        self.link.shared.set_downstream(self.epoch, unplayed);
+    }
 }
 
 /// Asks the mixer thread and waits for its answer (`Closed` when it is
@@ -74,32 +158,14 @@ impl Driver for InputDriver {
 }
 
 /// A stream of a mixer input, as the engine writing it sees it: an
-/// [`Output`] in the device's format. A Lead stream's tap goes to the
-/// device, so it sees the whole mix as the device plays it.
+/// [`Output`] in the device's format. It runs no taps: the device's tap is
+/// the microphone's port ([`super::Mixer::set_mic`]).
 pub(crate) struct InputOutput {
     pub(crate) core: Core,
-    pub(crate) link: Arc<Link>,
-    pub(crate) tx: Sender<Msg>,
-    pub(crate) role: Role,
 }
 
 impl crate::output::Output for InputOutput {
     forward_output!(core);
-
-    fn set_tap(&mut self, tap: Option<Box<dyn Tap>>) -> Result<(), Error> {
-        if self.role != Role::Lead {
-            return Err(Error::Unsupported(
-                "only the Lead input taps the device".into(),
-            ));
-        }
-        self.link.shared.check()?;
-        let id = self.link.id;
-        ask(&self.tx, |done| Msg::Tap {
-            stream: id,
-            tap,
-            done,
-        })?
-    }
 }
 
 /// How many chunks a [`FrameMap`] remembers (seconds of them).
@@ -147,9 +213,9 @@ impl FrameMap {
     }
 }
 
-/// A tap on the device that the Lead stream set: it sees what the device
-/// plays, with the stream frames told in the Lead's frames (as the tap
-/// would have on the Lead's own output).
+/// The microphone's tap on the device: it sees what the device plays, with
+/// the stream frames told in the Lead's frames (as the tap would have on
+/// the Lead's own output).
 pub(crate) struct MappedTap {
     inner: Box<dyn Tap>,
     map: Arc<FrameMap>,

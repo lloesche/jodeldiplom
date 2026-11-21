@@ -243,7 +243,7 @@ pub fn mixer_lead(caps: Capabilities) -> (InputTarget, Captures, Mixer) {
     let device = MemoryTarget::new(caps, SimClock::Instant);
     let captures = device.captures();
     let mixer = Mixer::open(Box::new(device), MixerOptions::default());
-    let (lead, _fader) = mixer.input(Role::Lead, 1.0);
+    let (lead, _fader) = mixer.input(&mixer.strip("Player"), Role::Lead, 1.0);
     (lead, captures, mixer)
 }
 

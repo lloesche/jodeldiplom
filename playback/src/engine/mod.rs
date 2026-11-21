@@ -219,24 +219,6 @@ pub enum Command {
     /// heard at once. Costs a stem separation while it is on; nothing
     /// without a separator or a jump window.
     KeepStems(bool),
-    /// The microphone listened to (`None`: none): never played, but lined
-    /// up with what the output plays ([`jodel_output::Output::set_tap`], a
-    /// tap that only reads the device's buffers), so its echo of the music
-    /// can be taken out; set again on every output opened. On an output
-    /// that runs no taps the music's echo stays in its voice (an
-    /// [`Event::Notice`] says so). What plays never changes.
-    SetMic(Option<Mic>),
-}
-
-/// A microphone for [`Command::SetMic`]: an open input. Two are equal when
-/// they capture the same device the same way.
-#[derive(Clone, Debug)]
-pub struct Mic(pub jodel_output::input::Input);
-
-impl PartialEq for Mic {
-    fn eq(&self, other: &Mic) -> bool {
-        self.0.info() == other.0.info()
-    }
 }
 
 /// Whether the player is playing.
@@ -1058,8 +1040,6 @@ struct Engine {
     lead: u64,
     /// [`Command::HoldAtEnd`].
     hold: bool,
-    /// [`Command::SetMic`].
-    mic: Option<jodel_output::input::Input>,
 }
 
 /// A change of the stems heard at a time of a track: before it the track
@@ -1116,7 +1096,6 @@ impl Engine {
             lead_in: 0.0,
             lead: 0,
             hold: false,
-            mic: None,
         }
     }
 
@@ -1210,10 +1189,6 @@ impl Engine {
                 self.jump_on(index, StartAt::Share(share), None);
             }
             Command::HoldAtEnd(hold) => self.hold = hold,
-            Command::SetMic(mic) => {
-                self.mic = mic.map(|m| m.0);
-                self.apply_mic();
-            }
             Command::Enqueue(paths) => {
                 self.queue.extend(paths);
                 self.emit_queue();
@@ -1688,30 +1663,7 @@ impl Engine {
             info,
             clock,
         });
-        self.apply_mic();
         Ok(())
-    }
-
-    /// Lines the microphone (or none) up with what the open output plays:
-    /// a tap that only reads its buffers.
-    fn apply_mic(&mut self) {
-        let Some(out) = &mut self.out else {
-            return;
-        };
-        let tap = self
-            .mic
-            .as_ref()
-            .map(|m| Box::new(m.tap()) as Box<dyn jodel_output::Tap>);
-        let wanted = tap.is_some();
-        if let Err(e) = out.output.set_tap(tap) {
-            if wanted {
-                let index = self.playing.as_ref().map(|t| t.index);
-                self.notice(
-                    index,
-                    format!("The microphone cannot hear this output (its echo stays in): {e}"),
-                );
-            }
-        }
     }
 
     fn close_output(&mut self) {

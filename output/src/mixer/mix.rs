@@ -25,6 +25,20 @@ pub(crate) enum Gains<'a> {
     Each(&'a [f64]),
 }
 
+impl Gains<'_> {
+    /// Adds `samples` (`channels` per frame) at these gains to `sums`.
+    pub(crate) fn accumulate(self, sums: &mut [f64], samples: &[i32], channels: usize) {
+        let ch = channels.max(1);
+        for (i, (s, &x)) in sums.iter_mut().zip(samples).enumerate() {
+            let g = match self {
+                Gains::Flat(g) => g,
+                Gains::Each(g) => g[i / ch],
+            };
+            *s += g * f64::from(x);
+        }
+    }
+}
+
 /// How frames went out.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Made {
@@ -51,6 +65,9 @@ pub(crate) struct Mix {
     release_step: f64,
     /// The limiter's gain after the last frame given out.
     gain: f64,
+    /// The limiter turned a frame given out down since the last
+    /// [`Mix::take_limited`].
+    limited: bool,
     /// Summed samples (interleaved) not given out yet: the held-back ones
     /// first, then those being summed.
     sums: Vec<f64>,
@@ -76,6 +93,7 @@ impl Mix {
             attack_step: 1.0 / ahead as f64,
             release_step: 1.0 / (RELEASE_SECONDS * rate),
             gain: 1.0,
+            limited: false,
             sums: Vec::new(),
             weight: Vec::new(),
             env: Vec::new(),
@@ -91,6 +109,12 @@ impl Mix {
     /// back, the limiter's gain at 1.
     pub(crate) fn at_rest(&self) -> bool {
         self.sums.is_empty() && self.gain == 1.0
+    }
+
+    /// Whether the limiter turned a frame given out down since the last
+    /// look; the next look starts.
+    pub(crate) fn take_limited(&mut self) -> bool {
+        std::mem::take(&mut self.limited)
     }
 
     /// Frames held back.
@@ -113,13 +137,7 @@ impl Mix {
         let start = self.sums.len() - samples.len();
         let frames = samples.len() / ch;
         let weight = self.weight.len() - frames;
-        for (i, (s, &x)) in self.sums[start..].iter_mut().zip(samples).enumerate() {
-            let g = match gain {
-                Gains::Flat(g) => g,
-                Gains::Each(g) => g[i / ch],
-            };
-            *s += g * f64::from(x);
-        }
+        gain.accumulate(&mut self.sums[start..], samples, ch);
         for (f, w) in self.weight[weight..].iter_mut().enumerate() {
             *w += match gain {
                 Gains::Flat(g) => g.abs(),
@@ -159,6 +177,7 @@ impl Mix {
         }
         for (f, frame) in self.sums.chunks_exact(ch).take(give).enumerate() {
             self.gain = self.env[f].min(self.gain + self.release_step);
+            self.limited |= self.gain < 1.0;
             for &s in frame {
                 out.push(self.requantizer.quantize_to(s * self.gain, self.bits));
             }
@@ -196,6 +215,7 @@ mod tests {
         m.add(&b, Gains::Each(&gains));
         m.end(true, &mut out);
         assert_eq!(out.len(), n);
+        assert!(!m.take_limited());
         let mut q = Requantizer::new();
         for (i, &y) in out.iter().enumerate() {
             let sum = 0.5 * f64::from(a[i]) + gains[i / 2] * f64::from(b[i]);
@@ -260,6 +280,7 @@ mod tests {
             &loud[..4]
         );
         assert_eq!(m.clipped(), 0);
+        assert!(m.take_limited() && !m.take_limited());
         assert!(!m.at_rest());
         // What comes after, quiet: the rest given out, the gain coming back.
         m.begin(2);

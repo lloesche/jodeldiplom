@@ -1,6 +1,6 @@
 # The mixer: where it goes from here
 
-A plan, not yet built. It starts from the mixer as it is (one device, any
+A plan; its first step is built ("Step 1, as built", below). It starts from the mixer as it is (one device, any
 number of players on it, gain ramps on one shared clock, bit-perfect
 passthrough when one player plays alone at full gain) and grows it into a
 desk: devices plugged in as ports, channel strips with filters, buses, a
@@ -189,6 +189,31 @@ an auto-DJ that owns two decks and makes the transitions, the UI.
 
 Every step keeps bit-perfect the default and proves it with the same
 bit-exact tests, run through the desk.
+
+### Step 1, as built
+
+- **Strips** (`Mixer::strip(name)`): the user's channels, each with a
+  level, mute and solo (in place), changed over a 20 ms linear ramp. An
+  input plugs into one (`Mixer::input(&strip, role, gain)`) and is heard at
+  its controllers' fader times its strip's gain; passthrough is decided on
+  that product. The app makes "Player" (the engine) and "Preview". Nothing
+  is kept between runs: a strip starts at 0 dB.
+- **Meters** (`Mixer::meters()`): the mixer thread takes each strip's
+  peak per channel after its gain (its inputs summed), the peak of what
+  goes to the device and whether the limiter acted, in atomics; a look
+  takes them since the last one (the Mix tab's).
+- **`Mixer::desk()`**: the whole desk as the caller sees it, looking
+  changes nothing: the device, the clock, passthrough, clips, the strips
+  with their inputs (fader gain, heard, format, ring fill), the
+  microphone's port.
+- **The microphone's port** (`Mixer::set_mic`): the desk taps its device
+  for the microphone on each Lead output. Its chain: the clock bridge, the
+  echo canceller with the speaker output as its sidechain, then the singer
+  isolated; its taps are the voice queue the pitch detector and Keep read.
+  It has no strip and no route, so it cannot reach an output. The engine no
+  longer knows of it.
+- **Bus and route types are deferred to step 4**: there is one bus and one
+  output now, so they would have nothing to choose.
 
 ## Risks
 

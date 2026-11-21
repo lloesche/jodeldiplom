@@ -60,8 +60,10 @@ in a requested format is an error.
 Several players on one device. `Mixer::open(target, MixerOptions)` takes
 an `OutputTarget` and runs one thread, `jodel-mixer` (MMCSS "Pro Audio" on
 Windows), which holds the device; the device opens with the first output
-opened on an input and closes with the last. `mixer.input(role, gain)`
-makes an input: an `InputTarget`, where one player opens its outputs as
+opened on an input and closes with the last. `mixer.strip(name)` makes a
+`Strip`, a channel of the desk (clones are the same strip; it lives while
+a clone or an input on it does). `mixer.input(&strip, role, gain)` plugs
+an input into it: an `InputTarget`, where one player opens its outputs as
 on a device (opening another closes the one before), and a `Fader`, its
 gain, which any number of hands may hold. Each output opened is a full
 `Output` in the device's format (its own ring, `pause`, `flush`,
@@ -77,16 +79,40 @@ its `StreamInfo` carries the device's backend, exclusive flag and latency.
   period once every running output holds one, or is draining; so the
   tests run the same path. With nothing running the thread sleeps until
   an output starts (or a handle asks something).
+- **Two gains:** an input is heard at its fader's gain (the controllers':
+  a preview's crossfade) times its strip's (the user's:
+  `Strip::set_level(gain)` linear, `set_mute(bool)`, `set_solo(bool)`,
+  solo in place: while any strip is soloed, the others are silent). A
+  strip's change is a 20 ms linear ramp (`STRIP_RAMP`), so it never clicks;
+  a strip starts at 0 dB and is kept nowhere.
 - **Bit for bit:** an input is heard when it supplied frames at a gain
-  other than 0. When one is heard at gain exactly 1 with no ramp running,
-  its samples go to the device untouched (a starved
+  other than 0. When one is heard at gain exactly 1 (fader times strip)
+  with no ramp running, its samples go to the device untouched (a starved
   or silent input changes nothing); `Mixer::passthrough()` says whether
   the last frames did. Otherwise the sum is in `f64`, then a look-ahead
   limiter (2 ms; it holds that much back while mixing) turns the gain down
   smoothly where the sum would go over full scale, only where the gains
   add up to more than 1 (a lone fade is never touched); then one
   requantization to the device's bits (16 or 24) with TPDF dither at its
-  LSB; clips are counted (`Mixer::clipped`).
+  LSB; clips are counted over every opening of the device
+  (`DeskView::master.clipped`).
+- **The desk:** `Mixer::desk()` gathers on the caller's thread what the
+  mixer thread publishes, and looking changes nothing: the master (the
+  device's name and `StreamInfo`, or none while closed; the `Timebase`,
+  passthrough, clips), the strips in the order made (id, name, level, mute,
+  solo, and each input's role, fader gain, whether it was heard, its
+  output's format, ring fill and capacity), and the microphone's port
+  (`MicView { port, refused }`). The per-input state, passthrough and clips
+  are atomics; the clock sits behind a lock the mixer takes every turn for
+  an instant, what the device runs at and the microphone's port behind
+  locks of their own, taken only when they change; the strips' list is the
+  handles' own.
+- **Meters:** `Mixer::meters()` takes the peaks since the last look: per
+  channel of what goes to the device, and of each strip's inputs summed
+  after its gain (by strip id), with whether the limiter acted. Peaks are
+  linear (1.0: full scale), up to 8 channels (`METER_CHANNELS`); the mixer
+  raises them with `fetch_max` in atomics and a look takes them with
+  `swap`, so it is for the one who shows them.
 - **The clock:** `Mixer::timebase()` gives `Timebase { epoch, rate,
   frame, heard }`: each opening of the device is an epoch with its own
   frames. `Fader::set(Ramp { start, to, over, curve })` changes the gain
@@ -116,10 +142,17 @@ its `StreamInfo` carries the device's backend, exclusive flag and latency.
   never displaces one: while the device is open it is offered exactly
   its format (fixed when first asked), so its player resamples; only with
   nothing open does it open the device at its own.
-- **Taps:** a Lead output's `set_tap` goes to the device, so a
-  microphone's echo canceller hears the whole mix; a frame map of the
-  Lead's chunks tells it the stream frames in the Lead's own count, as
-  before. A guest's says `Unsupported`.
+- **The microphone's port:** `Mixer::set_mic(Option<Input>)`. The mixer
+  taps the device for the microphone while a Lead output is open, again for
+  each one and each opening of the device, so its echo canceller hears the
+  whole mix as its sidechain; a frame map of the Lead's chunks tells it the
+  stream frames in the Lead's own count. A device that runs no taps is
+  told in `Mixer::mic()` (`MicPort::CannotHear(why)`, each time counted
+  in `refused`). A microphone replaced or taken away is let go of on a
+  thread of its own, never on the mixer's (its last handle stops capture
+  and waits for its cleaner). The microphone has no strip and is no input, so nothing of
+  it can reach the device. Outputs on inputs run no taps (`set_tap` says
+  `Unsupported`).
 - **Monitor:** `Mixer::set_monitor(Box<dyn Monitor>)` sees every frame as
   it goes to the device (`opened(info, clock)`, `mixed(samples, channels,
   first_frame)`, `closed()`), on the mixer's thread: the player's
@@ -147,7 +180,8 @@ it was sung.
   and every sample was exactly zero: a muted input, or on macOS a process
   without the microphone permission), `status` (`MicStatus`: fill and
   target, the clock correction, underruns, overruns, resyncs, blocks
-  dropped), `failure`, and `tap()`, the `MicTap` to pass to `set_tap`.
+  dropped), `failure`, and `tap()`, the `MicTap` to pass to `set_tap` (the
+  mixer does, `Mixer::set_mic`).
   Capture stops when the `Input` and its taps are dropped.
 - `MicTap`, in the device thread, resamples the voice to the output's rate
   (up to 352.8 kHz and beyond; cubic, varispeed) and lines it up with what
@@ -255,12 +289,20 @@ runs it in real time on a simulated device: an output's position is what
 the device has played (within a period), a ramp lands on its frame with
 everything before it bit for bit, a crossfade's two sides start on the
 frame the guest's first audio is, a starved guest at gain 1 leaves the
-Lead bit for bit, a flush drops what the device held, a Lead's tap is
-told the Lead's frames while a guest played first, the monitor sees two
-inputs summed, a fade out on an input with nothing to play settles, a
-seek keeps a fade under way and a pause ends it, and
-only the Lead opens the device again (a guest made while it is open is
-offered only its format, and closed when the Lead opens at another).
+Lead bit for bit, a flush drops what the device held, the microphone's
+port is told the Lead's frames while a guest played first, hears each
+opening of the device (at two rates) and never reaches it, the monitor
+sees two inputs summed, a fade out on an input with nothing to play
+settles, a seek keeps a fade under way and a pause ends it, and only the
+Lead opens the device again (a guest made while it is open is offered
+only its format, and closed when the Lead opens at another). Strips: one
+at 0 dB keeps its input bit for bit, a level change is a 20 ms linear
+ramp, mute and solo silence strips without a click, a strip's or a fader's
+ramp under way ends on its target when the device opens again, and the
+meters read each strip and the sum, then nothing once taken. Where frames
+must line up exactly, the tests run on a device that takes what it is
+given at once, with outputs started short of a period, so the mixer waits
+for all of them.
 `tests/mic.rs` runs the microphone path on it: a tap (a probe, a microphone
 tapped and singing, its canceller on or off, or none) never changes a byte,
 in every format; a `MicFeed` tone comes out of the cleaner as it came in,

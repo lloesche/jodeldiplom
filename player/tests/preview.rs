@@ -126,11 +126,11 @@ fn a_preview_crossfades_on_one_frame_over_the_song_running_on() {
     wav(&three, RATE, 3 * RATE, |_| 3_000_000);
 
     let (mixer, heard) = mixer();
-    let (target, lead) = mixer.input(Role::Lead, 1.0);
+    let (target, lead) = mixer.input(&mixer.strip("Player"), Role::Lead, 1.0);
     let (player, events) = Player::new(Box::new(target), PlayerOptions::default());
     player.load(vec![song.clone()]).unwrap();
     player.play(0).unwrap();
-    let mut previews = Previews::new(lead.clone(), Settings::default());
+    let mut previews = Previews::new(lead.clone(), mixer.strip("Preview"), Settings::default());
     wait("the song plays", &mixer, &mut previews, |_| {
         heard.len() > 4_800
     });
@@ -215,8 +215,8 @@ fn a_file_played_to_its_end_makes_room_and_another_rate_is_resampled() {
     wav(&one, 44_100, 3 * 44_100, |_| 1_000_000);
     wav(&other, 96_000, 3 * 96_000, |_| 3_000_000);
     let (mixer, heard) = mixer();
-    let (_target, lead) = mixer.input(Role::Lead, 1.0);
-    let mut previews = Previews::new(lead, Settings::default());
+    let (_target, lead) = mixer.input(&mixer.strip("Player"), Role::Lead, 1.0);
+    let mut previews = Previews::new(lead, mixer.strip("Preview"), Settings::default());
     // A file heard to its end (from a third in: 0.67 s): its player goes.
     previews.play(&mixer, short);
     wait("it is heard", &mixer, &mut previews, |_| {
@@ -284,11 +284,11 @@ fn every_move_is_a_crossfade_and_the_players_crossfaded_out_go() {
         })
         .collect();
     let (mixer, heard) = mixer();
-    let (target, lead) = mixer.input(Role::Lead, 1.0);
+    let (target, lead) = mixer.input(&mixer.strip("Player"), Role::Lead, 1.0);
     let (player, _events) = Player::new(Box::new(target), PlayerOptions::default());
     player.load(vec![song]).unwrap();
     player.play(0).unwrap();
-    let mut previews = Previews::new(lead, Settings::default());
+    let mut previews = Previews::new(lead, mixer.strip("Preview"), Settings::default());
     wait("the song plays", &mixer, &mut previews, |_| {
         heard.ends_near(4_800, level, 0)
     });
@@ -369,8 +369,8 @@ fn quick_moves_across_rates_with_nothing_playing_fail_nothing() {
         })
         .collect();
     let (mixer, heard) = mixer();
-    let (_target, lead) = mixer.input(Role::Lead, 1.0);
-    let mut previews = Previews::new(lead, Settings::default());
+    let (_target, lead) = mixer.input(&mixer.strip("Player"), Role::Lead, 1.0);
+    let mut previews = Previews::new(lead, mixer.strip("Preview"), Settings::default());
     // Moved on before anything has opened the device (a player opens a
     // WAV file's output within a millisecond or two: no pause between).
     for path in &files[..3] {
