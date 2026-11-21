@@ -413,6 +413,7 @@ pub fn update(state: &mut State, action: Action) -> Vec<Effect> {
         Action::KaraokeSlideEnd => state.karaoke.dragging = None,
         Action::KaraokeLevel(level) => karaoke::set_level(state, level, &mut fx),
         Action::KaraokeStep { slider, by } => karaoke::step(state, slider, by, &mut fx),
+        Action::Sync(event) => super::sync::event(state, event),
         Action::Desk(what) => desk::act(state, what, &mut fx),
         Action::PointerMoved { row } => karaoke::pointer_moved(state, row),
         Action::SelectRow(row) => {
@@ -723,6 +724,7 @@ pub fn update(state: &mut State, action: Action) -> Vec<Effect> {
     want_rhythm(state, &mut fx);
     karaoke::want_lyrics(state, &mut fx);
     karaoke::follow_stems(state, &mut fx);
+    super::sync::follow(state, &mut fx);
     desk::settle(state);
     prepare(state, &mut fx);
     state.info_width_held = state.info_width_held.max(text::info_width(state));
@@ -2104,6 +2106,15 @@ fn apply_op(state: &mut State, op: Op, fx: &mut Vec<Effect>) {
             state.screen = Screen::Main;
             karaoke::enter(state, fx, op == Op::KaraokeEnterHere);
         }
+        Op::KaraokeSync => {
+            // From anywhere (the palette): the tab first, then the sync.
+            state.palette = None;
+            state.side = Side::Karaoke;
+            state.screen = Screen::Main;
+            super::sync::begin(state, fx);
+        }
+        // Only while a sync shows.
+        Op::SyncKeep | Op::SyncAgain => {}
         Op::MicNext => fx.push(Effect::NextMic),
         Op::KaraokeStart
         | Op::KaraokeRecordEcho

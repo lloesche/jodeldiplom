@@ -12,6 +12,7 @@ pub mod karaoke;
 pub mod lanes;
 pub mod plot;
 pub mod setup;
+pub mod sync;
 pub mod transition;
 
 pub use plot::{spectrum_cells, Plot};
@@ -369,7 +370,8 @@ fn draw_main(frame: &mut Frame, scene: &Scene, m: &MainLayout, pictures: &mut dy
                 ),
             ),
         ),
-        Side::Karaoke => "enter Karaoke mode · ↑ ↓ slider · ← → level".into(),
+        Side::Karaoke if state.karaoke.sync.is_some() => sync::footer(state).into(),
+        Side::Karaoke => "enter Karaoke mode · ↑ ↓ row · ← → its value · s sync".into(),
         Side::Mix => desk::FOOTER.into(),
     };
     let block = bordered(Line::from(title)).title_bottom(Line::from(Span::styled(

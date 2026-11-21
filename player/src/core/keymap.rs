@@ -337,6 +337,12 @@ pub enum Op {
     KaraokeNotes,
     /// Karaoke: each song's singing kept, or not.
     KaraokeKeep,
+    /// Karaoke: sync, measuring how late the voice comes.
+    KaraokeSync,
+    /// Syncing: keep the delay measured.
+    SyncKeep,
+    /// Syncing: again.
+    SyncAgain,
     /// Mix: the strip to the left.
     DeskPrevStrip,
     /// Mix: the strip to the right.
@@ -447,6 +453,9 @@ impl Op {
             Op::KaraokeLevel => "Karaoke: the next level (easy, medium, hard)",
             Op::KaraokeNotes => "Karaoke: show or hide the song's notes",
             Op::KaraokeKeep => "Karaoke: keep your singing of each song, or not",
+            Op::KaraokeSync => "Karaoke: sync (measure how late your voice comes)",
+            Op::SyncKeep => "Sync: keep the delay measured",
+            Op::SyncAgain => "Sync: again",
             Op::DeskPrevStrip => "Mix: the strip to the left",
             Op::DeskNextStrip => "Mix: the strip to the right",
             Op::DeskMute => "Mix: mute the strip selected",
@@ -515,6 +524,8 @@ impl Op {
                 | Op::SliderFineUp
                 | Op::DeskPrevStrip
                 | Op::DeskNextStrip
+                | Op::SyncKeep
+                | Op::SyncAgain
         )
     }
 }
@@ -553,6 +564,8 @@ pub enum Context {
     Karaoke,
     /// Karaoke mode.
     KaraokeMode,
+    /// Syncing, on the Karaoke tab.
+    Sync,
     /// The Mix tab.
     Desk,
 }
@@ -576,6 +589,7 @@ impl Context {
             Context::Fades => "Transition tab, editing the fades (after e)",
             Context::Karaoke => "Karaoke tab",
             Context::KaraokeMode => "Karaoke mode (fullscreen)",
+            Context::Sync => "Syncing (s on the Karaoke tab)",
             Context::Desk => "Mix tab",
         }
     }
@@ -1220,30 +1234,47 @@ pub const KEYMAP: &[Binding] = &[
         Op::KaraokeNotes,
         "show or hide the song's notes under the line",
     ),
+    b(Context::Karaoke, &[UP], Op::Up, "the voice's row"),
+    b(Context::Karaoke, &[DOWN], Op::Down, "the delay's row"),
+    b(
+        Context::Karaoke,
+        &[Key::ch('s')],
+        Op::KaraokeSync,
+        "sync: clicks to answer with “ta” (or a clap), to measure how late your voice comes (a microphone open)",
+    ),
     b(
         Context::Karaoke,
         &[LEFT],
         Op::SliderDown,
-        "the slider 5 % down",
+        "the row's value a step down: the voice 5 %, the delay 10 ms (its nudge; ↑ ↓ pick the row)",
     ),
     b(
         Context::Karaoke,
         &[RIGHT],
         Op::SliderUp,
-        "the slider 5 % up",
+        "the row's value a step up",
     ),
     b(
         Context::Karaoke,
         &[Key::shift(K::Left)],
         Op::SliderFineDown,
-        "the slider 1 % down",
+        "the voice 1 % down",
     ),
     b(
         Context::Karaoke,
         &[Key::shift(K::Right)],
         Op::SliderFineUp,
-        "the slider 1 % up",
+        "the voice 1 % up",
     ),
+    // Syncing.
+    b(
+        Context::Sync,
+        &[ENTER],
+        Op::SyncKeep,
+        "keep the delay measured, for this output and microphone",
+    ),
+    b(Context::Sync, &[Key::ch('r')], Op::SyncAgain, "again"),
+    b(Context::Sync, &[ESC], Op::Back, "cancel"),
     // Karaoke mode.
     b(
         Context::KaraokeMode,
@@ -1470,6 +1501,8 @@ pub fn contexts(state: &State) -> Vec<Context> {
                 vec![Context::Fades, Context::Global]
             } else if state.side == Side::Transition {
                 vec![Context::Transition, Context::Global]
+            } else if state.side == Side::Karaoke && state.karaoke.sync.is_some() {
+                vec![Context::Sync, Context::Global]
             } else if state.side == Side::Karaoke {
                 vec![Context::Karaoke, Context::Global]
             } else if state.side == Side::Mix {

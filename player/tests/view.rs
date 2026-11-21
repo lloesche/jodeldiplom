@@ -536,6 +536,60 @@ fn the_karaoke_tab_shows_the_voice_with_every_word() {
     );
     snapshot("karaoke_tab", &text);
 }
+/// The Karaoke tab's Delay row (the delay in force) and sync row (where
+/// it comes from), and the sync's panel over the tab: what to do, the
+/// clicks as dots (played, answered), then the delay measured and its
+/// buttons.
+#[test]
+fn the_sync_panel_shows_the_clicks_and_the_delay_measured() {
+    use jodeldiplom::core::sync::{outcome, Session, CLICKS};
+    let mut state = common::transition_state(120, 40);
+    state.side = Side::Karaoke;
+    state.karaoke.mic.name = Some("Headset".into());
+    jodeldiplom::core::lag::set_pair(&mut state, "out", "headset");
+    let text = draw(&state);
+    has(
+        &text,
+        &["Delay", "150 ms", "Sync  (s)", " sync ", "default"],
+    );
+    // Three clicks played, the first and third answered.
+    let mut session = Session::new(("out".into(), "headset".into()));
+    session.played = 3;
+    session.answers[0] = Some(0.15);
+    session.answers[2] = Some(0.16);
+    state.karaoke.sync = Some(session);
+    let text = draw(&state);
+    has(
+        &text,
+        &[
+            "Sync: how late your voice comes",
+            "Say “ta” (or clap) with each click.",
+            "2 of 3 heard",
+            " cancel (esc) ",
+            "say “ta” with each click · esc cancel",
+        ],
+    );
+    assert!(!text.contains("keep"), "nothing to keep yet");
+    snapshot("karaoke_sync", &text);
+    // Every click answered: the delay measured.
+    let session = state.karaoke.sync.as_mut().unwrap();
+    session.played = CLICKS;
+    session.answers = vec![Some(0.152); CLICKS];
+    session.outcome = Some(outcome(&session.answers));
+    let text = draw(&state);
+    has(
+        &text,
+        &[
+            "8 of 8 heard",
+            "Your delay: 152 ms",
+            " keep (enter) ",
+            " again (r) ",
+            "enter keep · r again · esc cancel",
+        ],
+    );
+    snapshot("karaoke_sync_done", &text);
+}
+
 /// The Transition tab asks for its tracks' lyrics; once timed, the words go
 /// along the bottom of the voice's lane, each where it is sung, a long one
 /// spread over its syllables.

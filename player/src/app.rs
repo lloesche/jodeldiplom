@@ -398,6 +398,8 @@ pub struct App {
     kept: Option<crate::keep::Kept>,
     /// A recording of the echo canceller under way.
     echo_recording: Option<jodel_output::EchoRecording>,
+    /// The sync's clicks playing ([`crate::sync`]).
+    clicks: Option<crate::sync::Clicks>,
     /// Where the tracks' stems are kept, for the engine to play them from.
     stem_store: Option<Arc<dyn jodel_playback::StemStore>>,
     search: Option<Arc<AtomicBool>>,
@@ -501,11 +503,6 @@ fn cover_key(cover: &Cover) -> String {
         }
     }
 }
-
-/// How late the music reaches the singer and the microphone when the echo
-/// canceller has not found it (headphones, or the canceller off): the
-/// output's buffer and a little more, in seconds.
-const SUNG_LATE: f64 = 0.05;
 
 impl App {
     /// Starts the engine and the workers, and lists the start folder.
@@ -624,6 +621,7 @@ impl App {
             yin: None,
             kept: None,
             echo_recording: None,
+            clicks: None,
             stem_store: options
                 .rhythm_cache
                 .as_deref()
@@ -647,6 +645,8 @@ impl App {
             move_seen: None,
         };
         app.state.data_dir = options.data.as_ref().map(|d| d.0.clone());
+        // The delays kept, from beside the settings.
+        app.state.karaoke.lag.kept = crate::delays::load_beside(options.config_file.as_deref());
         // The best scores sung, from the data folder.
         if let Some(data) = &options.data {
             app.state.karaoke.bests = crate::scores::load(&data.scores());
@@ -727,6 +727,11 @@ impl App {
     }
 
     fn start_engine(&mut self, output: &Output) {
+        // A sync's clicks played on the mixer going: it ends, said so.
+        if self.clicks.take().is_some() {
+            let why = "the output changed while the clicks played".to_owned();
+            self.dispatch(Action::Sync(core::sync::SyncEvent::Failed(why)));
+        }
         self.engine = None;
         self.playing_on = None;
         let mut target: Box<dyn OutputTarget> = match output {
@@ -845,6 +850,7 @@ impl App {
         {
             self.position_at = Instant::now();
         }
+        self.note_pair();
         let started = Instant::now();
         let what =
             crate::trace::on().then(|| format!("{action:?}").chars().take(120).collect::<String>());
@@ -856,6 +862,15 @@ impl App {
         }
         self.note_session();
         self.mic_turn();
+        // The delays changed: kept beside the settings at once.
+        if std::mem::take(&mut self.state.karaoke.lag.changed) {
+            let lag = &self.state.karaoke.lag;
+            if let Some(why) =
+                crate::delays::save_beside(self.state.config_file.as_deref(), &lag.kept)
+            {
+                self.dispatch(Action::Failed(why));
+            }
+        }
         // A best score beaten: kept in the data folder at once.
         if std::mem::take(&mut self.state.karaoke.bests_changed) {
             if let Some(dir) = &self.state.data_dir {
@@ -1040,6 +1055,27 @@ impl App {
         core::desk::feed(&mut self.state, look, now);
     }
 
+    /// The output device and the microphone in use, for the delays kept
+    /// for them ([`crate::core::lag`]).
+    fn note_pair(&mut self) {
+        let output = match &self.output {
+            Output::Null(_) => "null".to_owned(),
+            Output::Device(query) => self
+                .playing_on
+                .clone()
+                .or_else(|| query.clone())
+                .unwrap_or_else(|| "default".to_owned()),
+        };
+        let mic = self.mic.as_ref().map_or("", |m| m.info().id.as_str());
+        core::lag::set_pair(&mut self.state, &output, mic);
+    }
+
+    /// The sync's clicks' clock, while they play (tests: what the output is
+    /// at).
+    pub fn sync_clock(&self) -> Option<jodel_output::Clock> {
+        self.clicks.as_ref().and_then(crate::sync::Clicks::clock)
+    }
+
     /// Gives the mixer the microphone (or none): its port on the desk.
     fn set_mic(&self) {
         if let Some(engine) = &self.engine {
@@ -1182,12 +1218,12 @@ impl App {
 
     /// The singer's pitch from the voice the cleaner gave this frame
     /// (`self.sung`), each frame of it at the time in the song it was sung
-    /// (the output frame playing as it was caught, less `delay`: how late
-    /// the music reaches the microphone, as the echo canceller found it,
-    /// else [`SUNG_LATE`]), held against the song's notes in Karaoke mode
-    /// ([`crate::core::singing`]). `delay` none: no microphone; the notes
-    /// made all the same, nothing heard.
-    fn sing(&mut self, delay: Option<Option<f64>>) {
+    /// (the output frame playing as it was caught, less how late the voice
+    /// comes: [`crate::core::lag`]), held against the song's notes in
+    /// Karaoke mode ([`crate::core::singing`]), and the delay estimated
+    /// from it. `heard` false: no microphone; the notes made all the same,
+    /// nothing heard.
+    fn sing(&mut self, heard: bool) {
         let state = &mut self.state;
         let song = crate::core::karaoke::song_index(state)
             .filter(|_| crate::core::karaoke::in_mode(state));
@@ -1214,7 +1250,11 @@ impl App {
             return;
         };
         let level = state.config.karaoke_level;
-        let singing = &mut state.karaoke.singing;
+        // A delay measured needs no estimate.
+        let estimating = crate::core::lag::measured(state).is_none();
+        let karaoke = &mut state.karaoke;
+        let (singing, estimate) = (&mut karaoke.singing, &mut karaoke.lag.estimate);
+        let (late, source) = (karaoke.lag.late, karaoke.lag.source);
         if let Some(melody) = &waveform.melody {
             singing.prepare(
                 &path,
@@ -1226,10 +1266,9 @@ impl App {
         }
         // Without a microphone the notes are still made (the lane shows
         // them), nothing heard.
-        let Some(delay) = delay else {
+        if !heard {
             return;
-        };
-        let late = delay.unwrap_or(SUNG_LATE);
+        }
         // A frame's pitch is that of the window before it: its middle.
         let centre = jodel_rhythm::yin::WINDOW / 2.0;
         // Kept as it is heard, where that is on.
@@ -1245,7 +1284,8 @@ impl App {
             if let Some(kept) = self.kept.as_mut() {
                 for block in &self.sung {
                     let at = seconds0 + (block.stream_frame as f64 - frame0 as f64) / out_rate;
-                    kept.push(&block.samples, block.rate, at, block.continues, late);
+                    let how = (late, source.key());
+                    kept.push(&block.samples, block.rate, at, block.continues, how);
                 }
             }
         }
@@ -1264,8 +1304,11 @@ impl App {
             for (i, &x) in block.samples.iter().enumerate() {
                 yin.push(&[x], |cents| {
                     let frame = block.stream_frame as f64 + i as f64 * factor;
-                    let t = seconds0 + (frame - frame0 as f64) / out_rate - late - centre;
-                    singing.hear(t, cents);
+                    let t = seconds0 + (frame - frame0 as f64) / out_rate - centre;
+                    singing.hear(t - late, cents);
+                    if estimating {
+                        estimate.hear(singing, t, cents);
+                    }
                 });
             }
         }
@@ -1294,9 +1337,9 @@ impl App {
             }
         }
         self.last_drawn = Some((track, heard, now));
-        // How late the music reaches the microphone, once the voice is in.
-        let mut sing = None;
+        self.note_pair();
         self.state.mic = None;
+        self.sung.clear();
         if let Some(mic) = &self.mic {
             // Read once for the frame: the Karaoke tab and the Mix tab draw
             // from it.
@@ -1319,15 +1362,24 @@ impl App {
             // The voice cleaned, block by block with where in the song it
             // was sung: for scoring the singing once that comes. Taken so
             // the cleaner's queue keeps the newest.
-            self.sung.clear();
             mic.take_voice(&mut self.sung);
-            sing = Some(reading.delay.map(f64::from));
             if crate::trace::on() && self.mic_noted.is_none_or(|t| t.elapsed() >= MIC_NOTE_EVERY) {
                 self.mic_noted = Some(Instant::now());
                 note_mic(mic, reading.voice, &echo);
             }
         }
-        self.sing(sing);
+        // A sync under way hears the voice; the singer's delay follows.
+        for action in crate::sync::frame(&mut self.clicks, &self.sung) {
+            self.dispatch(action);
+        }
+        let echo = self
+            .state
+            .mic
+            .and_then(|m| m.echo())
+            .map(|(_, learnt, delay)| (learnt, delay.map(f64::from)));
+        let now = self.now_ms() as f64 / 1000.0;
+        core::lag::follow(&mut self.state, echo, now);
+        self.sing(self.mic.is_some());
         self.save_kept(false);
         // A recording of the echo canceller done: where it is.
         if let Some(done) = self.echo_recording.as_mut().and_then(|r| r.done()) {
@@ -1393,6 +1445,8 @@ impl App {
             || self.state.seek_drag.is_some()
             || self.state.transition.slide.is_some()
             || self.state.karaoke.resume_at.is_some()
+            // The sync's dots light up with its clicks.
+            || self.clicks.is_some()
             || (self.state.playing.state != PlayState::Paused
                 && self.spectrum_moved
                 && !self.analyzer.is_quiet())
@@ -1567,6 +1621,15 @@ impl App {
             }
             Effect::NextMic => self.next_mic(),
             Effect::RecordEcho => self.record_echo(),
+            Effect::Sync(command) => {
+                let engine = self
+                    .engine
+                    .as_ref()
+                    .map(|e| (&e.mixer, e.strip(core::desk::StripKind::Player)));
+                if let Some(action) = crate::sync::command(command, engine, &mut self.clicks) {
+                    self.dispatch(action);
+                }
+            }
             Effect::Desk(change) => self.desk_change(change),
             Effect::Search { id, root, query } => {
                 if let Some(cancel) = self.search.take() {

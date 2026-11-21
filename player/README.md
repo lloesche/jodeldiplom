@@ -693,7 +693,9 @@ seven times over where its text has it once.
 |---|---|
 | `enter` / the button | Karaoke mode |
 | `shift+enter` / shift+click on the button | Karaoke mode where the song is: no rewind, no count-in |
-| `←` `→` | the slider 5 % down, up (`shift`: 1 %); a click, drag or the wheel on a slider too |
+| `↑` `↓` | the row the arrows move: the voice, the delay |
+| `←` `→` | its value down, up: the voice 5 % (`shift`: 1 %), the delay 10 ms (its nudge); a click, drag or the wheel on a slider too |
+| `s` / a click on sync | sync: measure how late your voice comes (a microphone open) |
 | `i` | the next microphone |
 | `r` | record 30 s of what the echo canceller works with (also in the mode) |
 | `g` / a click on Game | the game on or off: the singing scored, or just sung |
@@ -706,17 +708,46 @@ level from its start to its end, and only a song whose words were nearly
 all heard wins a medal or a best (one sought into, or sung from late on,
 does not).
 
+Your voice reaches the game a little after the music it is sung to (the
+output's buffers, your ears, the microphone's): the **delay**, one value
+for the scoring and for what Keep records. It is the first there is of:
+the delay **measured** by a sync for the output and microphone in use;
+the echo canceller's, once **steady** (within 10 ms of itself for 3 s;
+with a headset there is no echo, so never); the delay **estimated from
+your singing** (the last 20 s of it held against the song's notes every
+2 s, at each delay from 0 to 400 ms, averaged over about half a minute:
+where the most of each word scores, as the level scores it, once clearly
+better than 150 ms); or 150 ms. The tab's **Delay** row shows the value
+in force (0 to 600 ms) and its sync row where it comes from. Mid-song it
+moves at most 20 ms a second towards a new value, so the scoring never
+jumps; `←` `→` on the Delay row (or the pointer) nudge it, at once
+(−200 to +400 ms, kept per output and microphone). Another output or
+microphone starts the echo's wait and the estimate over.
+
+**Sync** (`s`, with a microphone open) stops the song and plays 8 clicks
+at 90 BPM after a second of silence: say "ta" (or clap) with each click.
+Each sound's start is timed in the very frames the voice is scored in, so
+this measures the whole way, output, ears and microphone. The dots light
+up as the clicks play, gold once answered; at the end, your delay (the
+median of the answers within 150 ms of the median, at least 5 of 8, else
+"again?"): keep (`enter`) keeps it for the output and microphone it was
+measured with (in `delays.txt` beside the settings, the nudge back to 0),
+again (`r`), cancel (`esc`), each a button too. The clicks play on the
+player's strip: with it muted, far down or another soloed on the Mix tab,
+there is no sync, and the tab says why.
+
 With **Keep** on, each song sung in the mode is saved when it ends (or
 the mode is left): a folder `recordings/sing-<seconds>` beside the
 settings file with the voice as the echo canceller cleaned it
 (`voice.wav`), where in the song each part was sung (`times.txt`), the
 lyrics with our word times and the song's melody as the game held the
-singing against them, and how late the microphone heard. The
-`sing_replay` example hears it again as the game does and tells how the
-pitch was detected (how much of the notes had a pitch, how steadily, the
-jumps), when the singing came in against the words, and what each level
-scored, word by word with `--words`: for tuning the game on real
-singing.
+singing against them, and the delay the game took (and where it came
+from). The `sing_replay` example hears it again as the game does and
+tells how the pitch was detected (how much of the notes had a pitch, how
+steadily, the jumps), when the singing came in against the words, and
+what each level scored, word by word with `--words`; with `--auto`, the
+delay the game estimates from the singing as the song goes, and the
+scoring at it: for tuning the game on real singing.
 
 The song's notes show (`p` hides them): from the voice's melody, each
 lead word on its own (backing words in parentheses none; a word without
@@ -743,9 +774,11 @@ a line, a dot where you are now (`↑` `↓` `●` in the terminal).
 
 As you sing, the microphone's pitch (YIN, 100 frames a second, at the
 time in the song it was sung: the output frame playing as it was caught,
-less how late the music reaches the microphone) is held against the
-notes, and with the game on (`g`) the words you hit count. A word counts
-when half its note time is hit: 100 points, times the multiplier, shown
+less the delay) is held against the notes, and with the game on (`g`)
+the words you hit count. A word counts when enough of its note time is
+hit, a share by the level (easy a tenth, medium a quarter, hard two
+fifths: a pitch is heard on only about half of a word sung well, its
+consonants and breaths having none): 100 points, times the multiplier, shown
 top right with the level (`d`). Words hit in a row are a streak: 5 make
 the multiplier ×2, 10 ×3, 20 ×4 (shown over the playhead with the
 streak); a word half hit keeps it, one missed ends it. **Easy** and

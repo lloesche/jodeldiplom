@@ -2,7 +2,9 @@
 //!
 //! The tab ([`Side::Karaoke`]) sets karaoke up: the voice stem's level, the
 //! microphone (listened to, to hear the singer, never played: what plays
-//! never changes for it), and the button into the mode. While the tab or
+//! never changes for it), the singer's delay (its nudge, and a sync that
+//! measures it: [`super::sync`], [`super::lag`]), and the button into the
+//! mode. While the tab or
 //! the mode shows, every stem plays with the voice at its level ([`mix`]),
 //! so what is heard, metered and recorded on the tab is what the mode
 //! plays; leaving the tab puts the stems back as the settings have them
@@ -51,44 +53,89 @@ pub const STEP: i32 = 5;
 /// The fine step.
 pub const FINE: i32 = 1;
 
-/// The tab's sliders: the voice stem's level is the only one (the
-/// microphone is never played, so it has none).
+/// The tab's sliders: the voice stem's level, and the singer's delay in
+/// force ([`crate::core::lag`]), which the arrows and the pointer nudge.
+/// The microphone is never played, so it has none.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum Slider {
-    /// The voice stem's level on the tab and in the mode.
+    /// The voice stem's level on the tab and in the mode, in percent.
     #[default]
     Voice,
+    /// The singer's delay in force, in ms, from 0 to [`DELAY_MOST`]: moved,
+    /// it moves the nudge (the tab only).
+    Delay,
 }
 
 impl Slider {
-    /// All of them, top to bottom.
-    pub const ALL: [Slider; 1] = [Slider::Voice];
+    /// The tab's, top to bottom.
+    pub const ALL: [Slider; 2] = [Slider::Voice, Slider::Delay];
+    /// The mode's.
+    pub const MODE: [Slider; 1] = [Slider::Voice];
 
     /// Its label.
     pub fn label(self) -> &'static str {
         match self {
             Slider::Voice => "Voice",
+            Slider::Delay => "Delay",
         }
     }
 
-    /// Its highest value, in percent.
-    pub fn most(self) -> u8 {
+    /// Its lowest value, in its unit.
+    pub fn least(self) -> i32 {
+        match self {
+            Slider::Voice => 0,
+            Slider::Delay => 0,
+        }
+    }
+
+    /// Its highest value.
+    pub fn most(self) -> i32 {
         match self {
             Slider::Voice => 100,
+            Slider::Delay => DELAY_MOST,
         }
     }
 
-    /// Its value in `state`, in percent.
-    pub fn value(self, state: &State) -> u8 {
+    /// Its step for `←`/`→` and the wheel (`fine`: with shift).
+    pub fn step(self, fine: bool) -> i32 {
+        match (self, fine) {
+            (Slider::Voice, false) => STEP,
+            (Slider::Voice, true) => FINE,
+            (Slider::Delay, _) => super::lag::NUDGE_STEP,
+        }
+    }
+
+    /// Its value in `state`.
+    pub fn value(self, state: &State) -> i32 {
         match self {
-            Slider::Voice => state.config.karaoke_voice,
+            Slider::Voice => i32::from(state.config.karaoke_voice),
+            Slider::Delay => delay_ms(state),
         }
     }
 
     /// Its value as a share of its range, 0 to 1.
     pub fn share(self, state: &State) -> f64 {
-        f64::from(self.value(state)) / f64::from(self.most())
+        f64::from(self.value(state) - self.least()) / f64::from(self.most() - self.least())
     }
+
+    /// Its value as shown, right-aligned: `   20 %`, ` 150 ms`.
+    pub fn text(self, state: &State) -> String {
+        match self {
+            Slider::Voice => format!("{:>5} %", self.value(state)),
+            Slider::Delay => format!("{:>4} ms", self.value(state)),
+        }
+    }
+}
+
+/// The most the Delay slider shows, in ms.
+pub const DELAY_MOST: i32 = 600;
+
+/// The singer's delay in force as the Delay slider has it, in ms: the
+/// base the scoring takes and the nudge on it (on the tab, where no song
+/// is sung, it is what the scoring takes at once).
+fn delay_ms(state: &State) -> i32 {
+    let base = (state.karaoke.lag.base * 1000.0).round() as i32;
+    base + super::lag::nudge_ms(state)
 }
 
 /// A count-in: the track, how long each number shows, and the second of
@@ -406,6 +453,11 @@ pub struct KaraokeState {
     pub last_heard: Option<(usize, f64, u64)>,
     /// The singing of the song in the mode, scored.
     pub singing: super::singing::Singing,
+    /// How late the singer's voice comes, as the scoring takes it, and what
+    /// is kept of it.
+    pub lag: super::lag::Lag,
+    /// The sync shown on the tab.
+    pub sync: Option<super::sync::Session>,
     /// How the last song was sung, shown until the next is started.
     pub result: Option<super::singing::SongResult>,
     /// The best scores sung, by song and level.
@@ -524,19 +576,23 @@ pub(crate) fn apply(state: &mut State, op: Op, fx: &mut Vec<Effect>) -> bool {
     if !on_tab(state) {
         return false;
     }
+    if super::sync::apply(state, op, fx) {
+        return true;
+    }
     match op {
         Op::KaraokeEnter | Op::Open | Op::Accept => enter(state, fx, false),
         Op::KaraokeEnterHere => enter(state, fx, true),
         Op::MicNext => fx.push(Effect::NextMic),
         Op::KaraokeRecordEcho => fx.push(Effect::RecordEcho),
+        Op::KaraokeSync => super::sync::begin(state, fx),
         Op::KaraokeGame | Op::KaraokeLevel | Op::KaraokeNotes | Op::KaraokeKeep => {
             game_setting(state, op, fx)
         }
-        Op::Up | Op::Down => state.karaoke.focus = Slider::Voice,
-        Op::SliderDown => slide_by(state, state.karaoke.focus, -STEP, fx),
-        Op::SliderUp => slide_by(state, state.karaoke.focus, STEP, fx),
-        Op::SliderFineDown => slide_by(state, state.karaoke.focus, -FINE, fx),
-        Op::SliderFineUp => slide_by(state, state.karaoke.focus, FINE, fx),
+        Op::Up => state.karaoke.focus = Slider::Voice,
+        Op::Down => state.karaoke.focus = Slider::Delay,
+        Op::SliderDown | Op::SliderUp | Op::SliderFineDown | Op::SliderFineUp => {
+            slide_key(state, op, fx)
+        }
         // Esc does nothing here: only tab and the tab buttons leave.
         Op::Back => {}
         _ => return false,
@@ -647,10 +703,9 @@ fn apply_mode(state: &mut State, op: Op, fx: &mut Vec<Effect>) -> bool {
             }
         }
         Op::Up | Op::Down => state.karaoke.focus = Slider::Voice,
-        Op::SliderDown => slide_by(state, state.karaoke.focus, -STEP, fx),
-        Op::SliderUp => slide_by(state, state.karaoke.focus, STEP, fx),
-        Op::SliderFineDown => slide_by(state, state.karaoke.focus, -FINE, fx),
-        Op::SliderFineUp => slide_by(state, state.karaoke.focus, FINE, fx),
+        Op::SliderDown | Op::SliderUp | Op::SliderFineDown | Op::SliderFineUp => {
+            slide_key(state, op, fx)
+        }
         Op::MicNext => fx.push(Effect::NextMic),
         Op::KaraokeRecordEcho => fx.push(Effect::RecordEcho),
         Op::Quit | Op::VolumeUp | Op::VolumeDown => return false,
@@ -709,6 +764,8 @@ pub(crate) fn enter(state: &mut State, fx: &mut Vec<Effect>, here: bool) {
         return;
     }
     state.screen = Screen::Karaoke;
+    // The voice is the mode's only slider.
+    state.karaoke.focus = Slider::Voice;
     state.karaoke.controls_until = state.now_ms + CONTROLS_MS;
     state.karaoke.countdown = None;
     state.karaoke.resume_at = None;
@@ -1002,36 +1059,56 @@ pub(crate) fn pointer_moved(state: &mut State, row: u16) {
     }
 }
 
-/// Moves `slider` by `delta` percent.
-fn slide_by(state: &mut State, slider: Slider, delta: i32, fx: &mut Vec<Effect>) {
-    let value = (i32::from(slider.value(state)) + delta).clamp(0, i32::from(slider.most()));
-    set(state, slider, value as u8, fx);
+/// The slider the arrow keys move, a step (`op`: down or up, coarse or
+/// fine) of its own.
+fn slide_key(state: &mut State, op: Op, fx: &mut Vec<Effect>) {
+    let slider = state.karaoke.focus;
+    let fine = matches!(op, Op::SliderFineDown | Op::SliderFineUp);
+    let sign = if matches!(op, Op::SliderDown | Op::SliderFineDown) {
+        -1
+    } else {
+        1
+    };
+    slide_by(state, slider, sign * slider.step(fine), fx);
 }
 
-/// Moves `slider` by `by` percent (the wheel over it); the arrow keys move
-/// it next.
+/// Moves `slider` by `delta` in its unit.
+fn slide_by(state: &mut State, slider: Slider, delta: i32, fx: &mut Vec<Effect>) {
+    let value = (slider.value(state) + delta).clamp(slider.least(), slider.most());
+    set(state, slider, value, fx);
+}
+
+/// Moves `slider` by `by` in its unit (the wheel over it); the arrow keys
+/// move it next.
 pub(crate) fn step(state: &mut State, slider: Slider, by: i32, fx: &mut Vec<Effect>) {
     state.karaoke.focus = slider;
     slide_by(state, slider, by, fx);
 }
 
 /// Puts `slider` at a share of its range (a click or drag on it), at the
-/// nearest whole percent.
+/// nearest of its fine steps.
 pub(crate) fn slide_to(state: &mut State, slider: Slider, share: f64, fx: &mut Vec<Effect>) {
     state.karaoke.focus = slider;
-    let value = (share.clamp(0.0, 1.0) * f64::from(slider.most())).round() as u8;
+    let fine = f64::from(slider.step(true));
+    let span = f64::from(slider.most() - slider.least());
+    let value = slider.least() + ((share.clamp(0.0, 1.0) * span / fine).round() * fine) as i32;
     set(state, slider, value, fx);
 }
 
-/// `slider` at `value` percent: kept in the settings, and the voice heard
-/// at it at once on the tab and in the mode ([`follow_stems`], after the
-/// action).
-fn set(state: &mut State, slider: Slider, value: u8, fx: &mut Vec<Effect>) {
+/// `slider` at `value`: the voice kept in the settings and heard at it at
+/// once on the tab and in the mode ([`follow_stems`], after the action);
+/// the delay through its nudge, kept with the delays
+/// ([`super::lag::set_nudge`]).
+fn set(state: &mut State, slider: Slider, value: i32, fx: &mut Vec<Effect>) {
     if slider.value(state) == value {
         return;
     }
     match slider {
-        Slider::Voice => state.config.karaoke_voice = value,
+        Slider::Voice => state.config.karaoke_voice = value.clamp(0, 100) as u8,
+        Slider::Delay => {
+            let base = (state.karaoke.lag.base * 1000.0).round() as i32;
+            return super::lag::set_nudge(state, value - base);
+        }
     }
     if in_mode(state) {
         state.karaoke.controls_until = state.now_ms + CONTROLS_MS;

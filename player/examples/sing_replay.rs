@@ -4,16 +4,21 @@
 //! scoring made of it, to tune them on real singing.
 //!
 //! ```text
-//! cargo run --release -p jodeldiplom --example sing_replay -- FOLDER [--late SECONDS] [--words]
+//! cargo run --release -p jodeldiplom --example sing_replay -- FOLDER [--late SECONDS] [--words] [--auto]
 //! ```
 //!
-//! `--late`: how late the microphone hears the music, instead of what the
-//! game took then. `--words`: each word, how it was sung and scored.
+//! `--late`: how late the voice comes, instead of what the game took then.
+//! `--words`: each word, how it was sung and scored. `--auto`: the delay
+//! estimated from the singing as the game does it
+//! ([`jodeldiplom::core::lag::estimate`]), every 10 s of the song at each
+//! level, and the scoring at what it settled on.
 
 use std::path::Path;
 use std::sync::Arc;
 
+use jodel_rhythm::waveform::Melody;
 use jodel_rhythm::yin::{Yin, WINDOW};
+use jodeldiplom::core::lag::estimate::{self, Estimator};
 use jodeldiplom::core::singing::{Hit, Level, Singing};
 use jodeldiplom::keep;
 
@@ -40,7 +45,7 @@ fn main() {
         .filter_map(|l| l.strip_prefix("late "))
         .filter_map(|l| l.split_whitespace().nth(1)?.parse::<f64>().ok())
         .next_back()
-        .unwrap_or(0.05);
+        .unwrap_or(jodeldiplom::core::lag::DEFAULT_LATE);
     let late = flag(&args, "--late").unwrap_or(kept_late);
     let song = about
         .lines()
@@ -146,18 +151,98 @@ fn main() {
     }
 
     // Scored at each level, and how far off the notes the pitch was.
-    println!("\nScoring as it is now:");
+    println!("\nScoring at {:.0} ms:", late * 1000.0);
+    score(
+        &frames,
+        &lyrics,
+        &melody,
+        args.iter().any(|a| a == "--words"),
+    );
+    if args.iter().any(|a| a == "--auto") {
+        auto(&pitch(&voice, rate, &marks, 0.0), &lyrics, &melody);
+    }
+}
+
+/// The delay estimated from `raw` (the frames as heard, no delay taken
+/// off) at each level as the song goes, then the scoring at each level's.
+fn auto(raw: &[Frame], lyrics: &Arc<jodel_lyrics::Lyrics>, melody: &Melody) {
+    println!("\nThe delay estimated from the singing, in ms (every 10 s of the song):");
+    let mut settled = Vec::new();
     for level in Level::ALL {
         let mut s = Singing::default();
-        s.prepare(Path::new("song"), &lyrics, &melody, 1, level);
-        for &(t, c) in &frames {
+        s.prepare(Path::new("song"), lyrics, melody, 1, level);
+        let mut e = Estimator::default();
+        let mut next = 10.0;
+        let mut said = Vec::new();
+        for &(t, c) in raw {
+            e.hear(&s, t, c);
+            if t >= next {
+                said.push(
+                    e.lag
+                        .map_or_else(|| "-".to_owned(), |l| format!("{:.0}", l * 1000.0)),
+                );
+                next += 10.0;
+            }
+        }
+        println!("  {:<6} {}", level.name(), said.join(" "));
+        // What a measure costs (the window the game holds, every 2 s).
+        let window = (estimate::WINDOW * 100.0) as usize;
+        let step = (estimate::EVERY * 100.0) as usize;
+        let mut took: Vec<f64> = (window..raw.len())
+            .step_by(step)
+            .map(|end| {
+                let started = std::time::Instant::now();
+                let _ = estimate::measure(&s, &raw[end - window..end]);
+                started.elapsed().as_secs_f64() * 1000.0
+            })
+            .collect();
+        println!(
+            "         a measure takes {:.2} ms (median), {:.2} ms at most",
+            quantile(&mut took.clone(), 0.5),
+            quantile(&mut took, 1.0)
+        );
+        // The whole song at once: how well it fits at each delay, 0 to
+        // 400 ms every 20, a share of the best.
+        if let Some(curve) = estimate::measure(&s, raw) {
+            let top = curve.iter().copied().fold(0.0, f64::max).max(1.0);
+            let shares: Vec<String> = curve
+                .iter()
+                .map(|h| format!("{:.0}", 100.0 * h / top))
+                .collect();
+            println!("         whole song, % of the best: {}", shares.join(" "));
+        }
+        settled.push((level, e.lag));
+    }
+    for (level, lag) in settled {
+        let Some(lag) = lag else {
+            continue;
+        };
+        let frames: Vec<Frame> = raw.iter().map(|&(t, c)| (t - lag, c)).collect();
+        println!(
+            "\nScoring at {}'s estimate, {:.0} ms:",
+            level.name(),
+            lag * 1000.0
+        );
+        score(&frames, lyrics, melody, false);
+    }
+}
+
+/// `frames` scored at each level: the words hit (and the share of a word
+/// each asks), how far off the notes the pitch was; with `words_too`, each
+/// word on medium.
+fn score(frames: &[Frame], lyrics: &Arc<jodel_lyrics::Lyrics>, melody: &Melody, words_too: bool) {
+    for level in Level::ALL {
+        let mut s = Singing::default();
+        s.prepare(Path::new("song"), lyrics, melody, 1, level);
+        for &(t, c) in frames {
             s.hear(t, c);
         }
         s.hear(f64::MAX / 4.0, None);
         let mut offs: Vec<f64> = s.heard.iter().filter_map(|h| h.off.map(f64::abs)).collect();
         println!(
-            "  {:<6} {:>3} of {} words, {} half: {:.0} % · off its note: median {:.0} cents, 75 % under {:.0}, 90 % under {:.0}",
+            "  {:<6} ({:>2.0} % of a word) {:>3} of {} words, {} half: {:.0} % · off its note: median {:.0} cents, 75 % under {:.0}, 90 % under {:.0}",
             level.name(),
+            level.share() * 100.0,
             s.hit_words,
             s.scored_words,
             s.half_words,
@@ -166,8 +251,8 @@ fn main() {
             quantile(&mut offs.clone(), 0.75),
             quantile(&mut offs, 0.9),
         );
-        if level == Level::Medium && args.iter().any(|a| a == "--words") {
-            words(&s, &lyrics);
+        if level == Level::Medium && words_too {
+            words(&s, lyrics);
         }
     }
 }

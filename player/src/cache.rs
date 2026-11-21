@@ -10,6 +10,7 @@
 //! | [`LYRICS_TIMED`] | its lyrics timed word by word (`lyrics/*.timed.lrc`) |
 //! | [`GRID`] | a beat grid fixed by hand (`grids/*.txt`) |
 //! | [`SCORES`] | the best scores sung, a song and a level each (`scores.txt`) |
+//! | [`DELAYS`] | the singer's delays, an output and a microphone each (`delays.txt`, beside the settings) |
 //!
 //! A text file starts with a header naming its schema and the version of
 //! it the file was written in, and the player that wrote it (for the
@@ -28,8 +29,8 @@
 //! - **The same version, the same files.** While a schema's version stays,
 //!   every player reads the files of it that any player wrote.
 //! - **The user's work is kept.** Grids fixed by hand and the best scores
-//!   sung are not a cache: a new version of [`GRID`] or [`SCORES`] still
-//!   reads every older one.
+//!   sung and the delays measured are not a cache: a new version of
+//!   [`GRID`], [`SCORES`] or [`DELAYS`] still reads every older one.
 //!
 //! What a file says may also depend on how it was made: an analysis on
 //! [`jodel_rhythm::VERSION`] (in the name of its file, so another one is
@@ -95,8 +96,14 @@ pub const SCORES: Schema = Schema {
     version: 1,
 };
 
+/// The singer's delays measured and nudged ([`crate::delays`]).
+pub const DELAYS: Schema = Schema {
+    name: "delays",
+    version: 1,
+};
+
 /// Every schema.
-pub const ALL: [Schema; 7] = [
+pub const ALL: [Schema; 8] = [
     ANALYSIS,
     WAVEFORM,
     LYRICS_TEXT,
@@ -104,6 +111,7 @@ pub const ALL: [Schema; 7] = [
     LYRICS_TIMED,
     GRID,
     SCORES,
+    DELAYS,
 ];
 
 /// The first word of a header.

@@ -10,8 +10,11 @@
 //! [`Level::Hard`] only octaves are let off. A frame within the level's
 //! [`Level::tolerance`] hits; on [`Level::Medium`] one a little further
 //! off, within [`Level::near`], half hits. A word whose note time is hit
-//! for at least half ([`WORD_HIT`]) scores [`WORD_POINTS`]; one that only
-//! gets there with its half hits, half of that. Words hit in a row are a
+//! for at least the level's share of it ([`Level::share`]: a tenth on
+//! easy, a quarter on medium, two fifths on hard; a pitch is heard on only
+//! about half of a word sung well, its consonants and breaths having none)
+//! scores [`WORD_POINTS`]; one that only gets there with its half hits,
+//! half of that. Words hit in a row are a
 //! streak, and the points a word scores are times the streak's
 //! [`multiplier`] (a half hit keeps the streak, a miss ends it).
 //!
@@ -26,6 +29,10 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use jodel_rhythm::waveform::Melody;
+
+mod judge;
+
+pub use judge::{Credit, SungKey, KEY_FRAMES};
 
 /// How strictly the singing is held to the song's notes.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -413,17 +420,6 @@ pub fn notes_of(line: &jodel_lyrics::Line, melody: &Melody) -> LineNotes {
     out
 }
 
-/// `d` (hundredths of a semitone) brought within half an octave of 0, a
-/// whole number of octaves taken off.
-fn fold(d: f64) -> f64 {
-    (d + 600.0).rem_euclid(1200.0) - 600.0
-}
-
-/// The frames of the singer's pitch the key they sing in is told from (the
-/// last 3 s of them on a note).
-pub const KEY_FRAMES: usize = 300;
-/// The share of a word's note time to hit for it to count.
-pub const WORD_HIT: f64 = 0.5;
 /// What a word hit scores.
 pub const WORD_POINTS: u32 = 100;
 /// How long after a word's end it is scored (the last frames of it come
@@ -501,10 +497,8 @@ pub struct Singing {
     pub level: Level,
     /// The singer's pitch frames so far, in time.
     pub heard: Vec<Heard>,
-    /// How far the singer sings from the song (octaves aside), frame by
-    /// frame of late, and its median.
-    keys: VecDeque<f64>,
-    key_off: Option<f64>,
+    /// How far the singer sings from the song (octaves aside).
+    sung_key: SungKey,
     /// Each word's frames on a note, those that hit and those that half
     /// hit.
     frames: HashMap<(usize, usize), (u32, u32, u32)>,
@@ -598,8 +592,7 @@ impl Singing {
     /// level): no frames, no score.
     pub fn restart(&mut self) {
         self.heard.clear();
-        self.keys.clear();
-        self.key_off = None;
+        self.sung_key.clear();
         self.frames.clear();
         self.recent.clear();
         self.glide = None;
@@ -626,6 +619,15 @@ impl Singing {
         (t < n.1).then_some((n.2, n.3))
     }
 
+    /// The note sung at `t` seconds into the song (none between the
+    /// notes): the word it is of (its line and its index there) and its
+    /// pitch, in hundredths of a MIDI note.
+    pub fn word_at(&self, t: f64) -> Option<((usize, usize), f64)> {
+        let (l, k) = self.note_at(t)?;
+        let n = &self.lines[l].notes[k];
+        Some(((l, n.word), n.cents))
+    }
+
     /// A frame of the singer: `cents` (none where nothing is sung) at `t`
     /// seconds into the song. A frame from before the last by more than a
     /// second (the song started again, sought back) starts the scoring
@@ -642,32 +644,14 @@ impl Singing {
             counts.0 += 1;
             if let Some(c) = cents {
                 let c = f64::from(c);
-                // How far the singer sings from the song, octaves aside,
-                // near what it has been.
-                let from = fold(c - n.cents);
-                let near = self.key_off.map_or(from, |k| k + fold(from - k));
-                self.keys.push_back(near);
-                if self.keys.len() > KEY_FRAMES {
-                    self.keys.pop_front();
+                self.sung_key.hear(c, n.cents);
+                let off = self.sung_key.off(self.level, c, n.cents);
+                let hit = self.level.judge(off);
+                match hit {
+                    Some(Hit::Full) => counts.1 += 1,
+                    Some(Hit::Half) => counts.2 += 1,
+                    None => {}
                 }
-                let mut sorted: Vec<f64> = self.keys.iter().copied().collect();
-                sorted.sort_by(f64::total_cmp);
-                self.key_off = Some(sorted[sorted.len() / 2]);
-                let shift = if self.level.any_key() {
-                    self.key_off.unwrap_or(0.0)
-                } else {
-                    0.0
-                };
-                let off = fold(c - shift - n.cents);
-                let hit = if off.abs() <= self.level.tolerance() {
-                    counts.1 += 1;
-                    Some(Hit::Full)
-                } else if self.level.near().is_some_and(|near| off.abs() <= near) {
-                    counts.2 += 1;
-                    Some(Hit::Half)
-                } else {
-                    None
-                };
                 self.recent.push_back(off);
                 if self.recent.len() > SMOOTH_FRAMES {
                     self.recent.pop_front();
@@ -717,17 +701,24 @@ impl Singing {
                 continue;
             }
             self.scored_words += 1;
-            let enough = WORD_HIT * f64::from(noted);
-            let (got, base) = if f64::from(hit) >= enough {
-                self.hit_words += 1;
-                self.streak += 1;
-                (Some(Hit::Full), WORD_POINTS)
-            } else if f64::from(hit + half) >= enough {
-                self.half_words += 1;
-                (Some(Hit::Half), WORD_POINTS / 2)
-            } else {
-                self.streak = 0;
-                (None, 0)
+            let credit = self
+                .level
+                .credit(f64::from(noted), f64::from(hit), f64::from(half));
+            let got = credit.hit();
+            let base = match got {
+                Some(Hit::Full) => {
+                    self.hit_words += 1;
+                    self.streak += 1;
+                    WORD_POINTS
+                }
+                Some(Hit::Half) => {
+                    self.half_words += 1;
+                    WORD_POINTS / 2
+                }
+                None => {
+                    self.streak = 0;
+                    0
+                }
             };
             self.best_streak = self.best_streak.max(self.streak);
             let points = base * self.multiplier();
@@ -1007,6 +998,26 @@ mod tests {
         });
         let h = s.heard.iter().find(|h| (h.t - 0.4).abs() < 0.001).unwrap();
         assert!((h.cents - 6020.0).abs() < 0.01, "{}", h.cents);
+    }
+
+    /// Each level asks its own share of a word's note time: 15 % hit is a
+    /// word on easy (a tenth), not on medium (a quarter); 30 % is one on
+    /// medium, not on hard (two fifths).
+    #[test]
+    fn each_level_asks_its_own_share_of_a_word() {
+        let (lyrics, m) = song();
+        let hit_words = |level, share: f64| {
+            let mut s = Singing::default();
+            s.prepare(Path::new("a"), &lyrics, &m, 1, level);
+            // In tune for the first `share` of each word, then nothing.
+            sing(&mut s, |t| (t.fract() < share - 1e-9).then(|| melody_at(t)));
+            s.hit_words
+        };
+        assert_eq!(hit_words(Level::Easy, 0.15), 4);
+        assert_eq!(hit_words(Level::Medium, 0.15), 0);
+        assert_eq!(hit_words(Level::Medium, 0.30), 4);
+        assert_eq!(hit_words(Level::Hard, 0.30), 0);
+        assert_eq!(hit_words(Level::Hard, 0.45), 4);
     }
 
     #[test]

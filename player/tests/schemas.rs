@@ -234,6 +234,37 @@ fn score_files_are_pinned_and_every_version_is_read() {
     }
 }
 
+#[test]
+fn delay_files_are_pinned_and_every_version_is_read() {
+    use jodeldiplom::core::lag::{Delay, Delays};
+    use jodeldiplom::delays::{from_text, to_text};
+    let mut kept = Delays::new();
+    kept.insert(
+        (
+            "{0.0.0.00000000}.{out}".into(),
+            "{0.0.1.00000000}.{mic}".into(),
+        ),
+        Delay {
+            measured_ms: Some(152),
+            nudge_ms: -20,
+        },
+    );
+    kept.insert(
+        ("Speakers".into(), "Built-in mic".into()),
+        Delay {
+            measured_ms: None,
+            nudge_ms: 30,
+        },
+    );
+    let kept_text = pinned(&cache::DELAYS, "txt", to_text(&kept).as_bytes());
+    assert_eq!(from_text(&String::from_utf8(kept_text).unwrap()), kept);
+    // The singer's record: every version's sample is still read.
+    for version in 1..=cache::DELAYS.version {
+        let text = std::fs::read_to_string(sample(&cache::DELAYS, version, "txt")).unwrap();
+        assert!(!from_text(&text).is_empty(), "version {version}");
+    }
+}
+
 /// Every version of every schema keeps its sample.
 #[test]
 fn every_version_keeps_its_sample() {

@@ -96,8 +96,14 @@ fn the_tab_plays_the_voice_at_its_level_and_esc_does_nothing_there() {
         Some(StemMix::ALL.with_level(Stem::Vocals, 25))
     );
     assert!(fx.contains(&Effect::SaveConfig));
-    // The voice is the only slider: down stays on it.
+    // Down: the delay's nudge, 10 ms a step (kept with the delays, not in
+    // the settings); up: the voice again.
     op(&mut state, Op::Down);
+    let fx = op(&mut state, Op::SliderFineDown);
+    assert_eq!(state.config.karaoke_voice, 25);
+    assert_eq!(jodeldiplom::core::lag::nudge_ms(&state), -10);
+    assert!(!fx.contains(&Effect::SaveConfig) && state.karaoke.lag.changed);
+    op(&mut state, Op::Up);
     let fx = op(&mut state, Op::SliderFineDown);
     assert_eq!(state.config.karaoke_voice, 24);
     assert_eq!(
@@ -772,7 +778,44 @@ fn a_slider_under_the_pointer_lands_on_whole_percents() {
         panic!()
     };
     let sliders = m.karaoke.expect("the tab's layout").sliders;
-    for s in sliders {
+    // The delay in force (150 ms, the default), from 0 to 600 ms in steps
+    // of 10, the wheel a step a notch: what moves is its nudge (−200 to
+    // +400 ms), so it reaches from 0 to 550 here.
+    let delay = sliders[1];
+    assert_eq!(delay.slider, Slider::Delay);
+    let at = |kind, col| MouseInput {
+        kind,
+        col,
+        row: delay.track.y,
+    };
+    let mut seen = std::collections::BTreeSet::new();
+    for px in 0..=delay.track.width * 8 {
+        let x = f64::from(delay.track.x) + f64::from(px) / 8.0;
+        point(
+            &mut state,
+            at(MouseKind::Down(MouseButton::Left), delay.track.x),
+            x,
+        );
+        seen.insert(delay.slider.value(&state));
+        update(&mut state, Action::KaraokeSlideEnd);
+    }
+    assert_eq!(seen.first(), Some(&0));
+    assert_eq!(seen.last(), Some(&550));
+    assert!(seen.iter().all(|v| v % 10 == 0), "{seen:?}");
+    let zero = f64::from(delay.track.x) + 0.5 + f64::from(delay.track.width - 1) / 4.0;
+    point(
+        &mut state,
+        at(MouseKind::Down(MouseButton::Left), delay.track.x),
+        zero,
+    );
+    update(&mut state, Action::KaraokeSlideEnd);
+    assert_eq!(delay.slider.value(&state), 150);
+    assert_eq!(jodeldiplom::core::lag::nudge_ms(&state), 0);
+    point(&mut state, at(MouseKind::ScrollUp, delay.track.x), 0.0);
+    assert_eq!(delay.slider.value(&state), 160);
+    assert_eq!(delay.slider.text(&state).trim(), "160 ms");
+    assert_eq!(jodeldiplom::core::lag::nudge_ms(&state), 10);
+    for s in sliders.into_iter().filter(|s| s.slider == Slider::Voice) {
         let most = s.slider.most();
         let input = |kind, col| MouseInput {
             kind,
@@ -802,7 +845,7 @@ fn a_slider_under_the_pointer_lands_on_whole_percents() {
             let action = mouse::action(&state, click).expect("a slide");
             update(&mut state, action);
             let share = f64::from(i) / f64::from(s.track.width - 1);
-            let nearest = (share * f64::from(most)).round() as u8;
+            let nearest = (share * f64::from(most)).round() as i32;
             assert_eq!(s.slider.value(&state), nearest, "{:?}", s.slider);
             update(&mut state, Action::KaraokeSlideEnd);
         }

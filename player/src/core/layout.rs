@@ -134,6 +134,14 @@ pub struct KaraokeTabLayout {
     pub show_notes: Rect,
     /// The singing kept or not: its row.
     pub keep: Rect,
+    /// The sync's row: its button (a click starts one), then the delay in
+    /// force.
+    pub sync: Rect,
+    /// The sync's panel over the tab, while one shows.
+    pub panel: Option<Rect>,
+    /// Its buttons (keep, again, cancel, as the sync stands), and what
+    /// each does.
+    pub panel_buttons: Vec<(Rect, Op)>,
     /// What karaoke will do, below.
     pub notes: Rect,
     /// The voice's lane with the words on it, under the pane (where the
@@ -687,7 +695,7 @@ fn main_wide(state: &State, area: Rect) -> MainLayout {
         transition: (state.side == Side::Transition).then(|| transition(state, inner, list)),
         karaoke: karaoke.then(|| KaraokeTabLayout {
             voice,
-            ..karaoke_tab(inner)
+            ..karaoke_tab(inner, state.karaoke.sync.as_ref())
         }),
         desk: (state.side == Side::Mix).then(|| desk::compute(inner)),
         bottom,
@@ -965,11 +973,16 @@ pub const KARAOKE_ENTER: &str = "▶  Enter Karaoke Mode";
 /// The START button's label.
 pub const KARAOKE_START: &str = "START";
 /// A slider's label column, in cells.
-const SLIDER_LABEL: u16 = 12;
+pub const SLIDER_LABEL: u16 = 12;
 /// How wide a switch on the Karaoke tab is (" on " or " off ").
 pub const SWITCH: u16 = 5;
-/// A slider's value column (`200 %`), in cells.
-const SLIDER_VALUE: u16 = 6;
+/// A slider's value column (`100 %`, `−200 ms`), in cells.
+const SLIDER_VALUE: u16 = 7;
+/// How wide the sync's button is (` sync `).
+pub const SYNC_BUTTON: u16 = 6;
+/// The sync's panel's height: over the button into the mode and every
+/// row of settings.
+const PANEL: u16 = 12;
 /// The longest a slider's track gets, in cells.
 const SLIDER_MOST: u16 = 40;
 
@@ -989,9 +1002,10 @@ fn slider_at(slider: Slider, x: u16, y: u16, width: u16) -> SliderLayout {
 }
 
 /// The Karaoke tab inside the list pane's border: the cover at the left,
-/// the title, the button into the mode and the sliders right of it, notes
-/// below.
-fn karaoke_tab(inner: Rect) -> KaraokeTabLayout {
+/// the title, the button into the mode, the sliders and the sync's row
+/// right of it, notes below; while a sync shows (`session`), its panel
+/// over the button and the rows.
+fn karaoke_tab(inner: Rect, session: Option<&crate::core::sync::Session>) -> KaraokeTabLayout {
     // The cover as tall as the pane allows, a third of its width at most.
     let side = Rect::new(
         inner.x + 1,
@@ -1014,8 +1028,25 @@ fn karaoke_tab(inner: Rect) -> KaraokeTabLayout {
     let sliders = Slider::ALL
         .iter()
         .enumerate()
-        .map(|(k, &s)| slider_at(s, x, row(7 + 2 * k as u16), room))
+        .map(|(k, &s)| slider_at(s, x, row(7 + k as u16), room))
         .collect();
+    let sync = Rect::new(x, row(9), (SLIDER_LABEL + SYNC_BUTTON).min(room), 1);
+    // Over the button into the mode and the rows below it.
+    let panel =
+        session.map(|_| Rect::new(x, row(3), room, PANEL.min(inner.height.saturating_sub(4))));
+    // The panel's buttons, side by side on its eighth row inside.
+    let mut panel_buttons = Vec::new();
+    if let (Some(p), Some(session)) = (panel, session) {
+        let mut at = p.x + 2;
+        for (label, op) in session.buttons() {
+            let w = width(label) as u16 + 2;
+            let r = Rect::new(at, p.y + 8, w, 1);
+            if r.right() < p.right() && r.y < p.bottom().saturating_sub(1) {
+                panel_buttons.push((r, op));
+            }
+            at += w + 2;
+        }
+    }
     // The game's settings, a row each: a switch, the levels, a switch.
     let game = Rect::new(x, row(11), (SLIDER_LABEL + SWITCH).min(room), 1);
     let mut at = x + SLIDER_LABEL;
@@ -1042,6 +1073,9 @@ fn karaoke_tab(inner: Rect) -> KaraokeTabLayout {
         levels,
         show_notes,
         keep,
+        sync,
+        panel,
+        panel_buttons,
         notes,
         voice: None,
     }
@@ -1072,14 +1106,14 @@ fn karaoke_mode(state: &State, area: Rect) -> KaraokeLayout {
             .width
             .saturating_sub(start.map_or(0, |s| s.width + 4))
             .saturating_sub(4);
-        let sliders = Slider::ALL
+        let sliders = Slider::MODE
             .iter()
             .enumerate()
             .map(|(k, &s)| slider_at(s, bar.x + 2, bar.y + 1 + k as u16, room))
             .collect();
         // The seek bar as on the other screens: the time, the bar, the
         // length.
-        let seek_y = bar.y + 1 + Slider::ALL.len() as u16;
+        let seek_y = bar.y + 1 + Slider::MODE.len() as u16;
         let time_w = 8u16;
         let elapsed = Rect::new(bar.x + 1, seek_y, time_w.min(room), 1);
         let total = Rect::new(

@@ -22,13 +22,17 @@ pub const TIMES: &str = "times.txt";
 pub const LYRICS: &str = "lyrics.lrc";
 /// The song's waveform and melody, as the analysis keeps them.
 pub const MELODY: &str = "song.wave";
-/// What was sung: the song, the level, how late the microphone heard.
+/// What was sung: the song, the level, how late the voice came as the
+/// game took it and where that came from (`late <sample> <seconds>
+/// <source>`, [`crate::core::lag::Source::key`]).
 pub const ABOUT: &str = "about.txt";
 
 /// The most seconds of voice kept for one song (an hour).
 const MOST_SECONDS: usize = 3600;
 /// A mark at least every this many samples' worth of seconds.
 const MARK_EVERY: f64 = 1.0;
+/// How far the delay moves before it is written down again, in seconds.
+const LATE_STEP: f64 = 0.0005;
 
 /// A song's singing as it is kept.
 pub struct Kept {
@@ -40,9 +44,9 @@ pub struct Kept {
     lyrics: Arc<jodel_lyrics::Lyrics>,
     waveform: Arc<jodel_rhythm::waveform::Waveform>,
     level: &'static str,
-    /// How late the microphone heard the music, as the game took it, each
-    /// time it changed: the sample, the seconds.
-    late: Vec<(usize, f64)>,
+    /// How late the voice came, as the game took it, each time it changed:
+    /// the sample, the seconds, where that came from.
+    late: Vec<(usize, f64, &'static str)>,
 }
 
 impl Kept {
@@ -67,8 +71,15 @@ impl Kept {
 
     /// A block of `samples` at `rate`, its first sung at `at` seconds into
     /// the song; `continues`: right after the block before. `late`: how
-    /// late the microphone hears the music now.
-    pub fn push(&mut self, samples: &[f32], rate: u32, at: f64, continues: bool, late: f64) {
+    /// late the voice comes now, in seconds, and where that comes from.
+    pub fn push(
+        &mut self,
+        samples: &[f32],
+        rate: u32,
+        at: f64,
+        continues: bool,
+        late: (f64, &'static str),
+    ) {
         if self.rate == 0 {
             self.rate = rate;
         }
@@ -83,12 +94,13 @@ impl Kept {
         if !continues || due {
             self.marks.push((n, at));
         }
+        // Mid-song it moves smoothly: a line each half millisecond moved.
         if self
             .late
             .last()
-            .is_none_or(|&(_, l)| (l - late).abs() > 1e-4)
+            .is_none_or(|&(_, l, s)| (l - late.0).abs() >= LATE_STEP || s != late.1)
         {
-            self.late.push((n, late));
+            self.late.push((n, late.0, late.1));
         }
         self.samples.extend(
             samples
@@ -126,8 +138,8 @@ impl Kept {
         let _ = writeln!(about, "song {}", self.song.display());
         let _ = writeln!(about, "level {}", self.level);
         let _ = writeln!(about, "rate {}", self.rate);
-        for (k, l) in &self.late {
-            let _ = writeln!(about, "late {k} {l:.4}");
+        for (k, l, source) in &self.late {
+            let _ = writeln!(about, "late {k} {l:.4} {source}");
         }
         durable::write_atomic(&folder.join(ABOUT), about.as_bytes())?;
         Ok(folder)
@@ -195,12 +207,12 @@ mod tests {
         ));
         let waveform = Arc::new(jodel_rhythm::waveform::Waveform::default());
         let mut kept = Kept::new("/a.flac".into(), lyrics, waveform, "easy");
-        kept.push(&[0.5; 100], 1000, 2.0, false, 0.05);
-        kept.push(&[-0.5; 100], 1000, 2.1, true, 0.05);
-        kept.push(&[0.25; 100], 1000, 5.0, false, 0.06);
+        kept.push(&[0.5; 100], 1000, 2.0, false, (0.15, "default"));
+        kept.push(&[-0.5; 100], 1000, 2.1, true, (0.15, "default"));
+        kept.push(&[0.25; 100], 1000, 5.0, false, (0.16, "singing"));
         // A mark where it starts, where it jumped; the later block runs on.
         assert_eq!(kept.marks, [(0, 2.0), (200, 5.0)]);
-        assert_eq!(kept.late, [(0, 0.05), (200, 0.06)]);
+        assert_eq!(kept.late, [(0, 0.15, "default"), (200, 0.16, "singing")]);
         let (back, rate) = read_wav(&wav(&kept.samples, kept.rate)).unwrap();
         assert_eq!((back.len(), rate), (300, 1000));
         assert!((back[0] - 0.5).abs() < 1e-3 && (back[150] + 0.5).abs() < 1e-3);

@@ -769,6 +769,7 @@ pub fn draw_tab(
         slider(frame.buffer_mut(), state, s, true);
     }
     game_settings(frame.buffer_mut(), state, layout);
+    super::sync::row(frame.buffer_mut(), state, layout);
     let gpu = match state.gpu {
         Gpu::Present(_) => "Here and in the mode the voice plays at its level, the rest as it is.",
         Gpu::Looking => "Still looking for a GPU for the stems.",
@@ -890,6 +891,9 @@ pub fn draw_tab(
     frame.render_widget(Paragraph::new(lines), layout.notes);
     if let Some(voice) = layout.voice {
         draw_voice(frame, scene, voice, pictures);
+    }
+    if let Some(panel) = layout.panel {
+        super::sync::panel(frame.buffer_mut(), state, panel, &layout.panel_buttons);
     }
 }
 
@@ -1188,8 +1192,12 @@ fn slider(buf: &mut Buffer, state: &State, s: &SliderLayout, show_focus: bool) {
             buf.set_string(s.track.x + i as u16, s.track.y, symbol, style);
         }
     }
-    let value = format!("{:>3} %", s.slider.value(state));
-    buf.set_string(s.value.x, s.value.y, value, Style::new().fg(TEXT));
+    buf.set_string(
+        s.value.x,
+        s.value.y,
+        s.slider.text(state),
+        Style::new().fg(TEXT),
+    );
     // The voice's level means nothing without stems.
     if s.slider == Slider::Voice && !matches!(state.gpu, Gpu::Present(_)) {
         buf.set_style(s.row, Style::new().fg(DIM));

@@ -17,6 +17,15 @@ pub fn khz_short(rate: u32) -> String {
     }
 }
 
+/// Milliseconds with their sign: `+30 ms`, `−20 ms`, `0 ms`.
+pub fn signed_ms(ms: i32) -> String {
+    match ms.signum() {
+        1 => format!("+{ms} ms"),
+        -1 => format!("−{} ms", ms.unsigned_abs()),
+        _ => "0 ms".to_owned(),
+    }
+}
+
 /// A time as `m:ss`, or `h:mm:ss` from an hour on.
 pub fn clock(seconds: f64) -> String {
     let total = seconds.max(0.0).floor() as u64;

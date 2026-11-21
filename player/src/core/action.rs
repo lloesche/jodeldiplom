@@ -228,9 +228,11 @@ pub enum Action {
     KaraokeStep {
         /// The slider.
         slider: super::karaoke::Slider,
-        /// By how much, in percent.
+        /// By how much, in its own unit (percent, ms).
         by: i32,
     },
+    /// What the app tells of the sync under way ([`crate::core::sync`]).
+    Sync(crate::core::sync::SyncEvent),
     /// The mouse on the Mix tab's desk.
     Desk(crate::core::desk::DeskAction),
     /// The pointer moved to this row (Karaoke mode shows its controls for a
@@ -445,6 +447,9 @@ pub enum Effect {
     NextMic,
     /// Karaoke: record what the echo canceller works with, for tuning it.
     RecordEcho,
+    /// Karaoke: play the sync's clicks and listen, or a press, or stop
+    /// ([`crate::core::sync`]).
+    Sync(crate::core::sync::SyncCommand),
     /// Set a strip of the mixer as the Mix tab has it.
     Desk(crate::core::desk::DeskChange),
     /// List the output devices (answered with [`Action::Devices`]).

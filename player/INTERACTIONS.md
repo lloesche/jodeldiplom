@@ -310,6 +310,42 @@ On the Transition tab, the first three show as `enter sets the cues` / `g arms`
   silent, with what to check (on macOS: the system's permission).
   - `a_microphone_giving_only_zeros_is_told_apart` (output)
   - `lyrics_found_come_again_with_their_words_timed_and_kept`
+- **K17.** How late the singer's voice comes is one value, for the scoring
+  and what Keep records: the delay measured by a sync for the output and
+  microphone in use, else the echo canceller's once steady (within 10 ms
+  of itself for 3 s; a delay that jumps is never taken), else the one
+  estimated from the singing, else 150 ms; the nudge (−200 to +400 ms in
+  steps of 10, kept per output and microphone) on any of them. The tab's
+  Delay row shows the value in force, its sync row where it comes from.
+  Mid-song it moves at most 20 ms a second; a nudge or a sync is taken at
+  once. Another output or microphone starts the estimate and the echo's
+  wait over. Each level has its own share of a word to hit (easy a tenth,
+  medium a quarter, hard two fifths).
+  - `the_delay_in_force_is_the_first_there_is_and_says_where_it_comes_from`
+  - `mid_song_the_delay_never_jumps_but_a_nudge_or_a_sync_does_at_once`
+  - `another_pair_starts_the_estimate_over`
+  - `singing_heard_120_ms_late_is_found_within_10_ms` (`core::lag::estimate`)
+  - `each_level_asks_its_own_share_of_a_word` (`core::singing`)
+- **K18.** `s` on the Karaoke tab (or the palette) syncs, with a
+  microphone open (else it says one is needed) and the player's strip
+  heard on the Mix tab: the song stops, 8 clicks at 90 BPM play after a
+  second of silence, on an output of their own (nothing else changes what
+  plays), and a "ta" with each is timed in the frames the voice is scored
+  in (the song's voice left before the microphone's tap moves to the
+  clicks left out). Five answers within 150 ms of their median make the
+  delay (their median), kept with `enter` for the output and microphone
+  the sync started with (`delays.txt` beside the settings), the nudge back
+  to 0; else "again?". `r` goes again, `esc` cancels (each a button too),
+  leaving the tab calls it off, the output changing ends it.
+  - `s_stops_the_song_and_plays_the_clicks_with_a_microphone_open`
+  - `no_sync_without_a_microphone_or_where_the_clicks_are_not_heard`
+  - `a_delay_measured_is_kept_for_its_output_and_microphone_the_nudge_back_to_0`
+  - `a_delay_is_kept_for_the_pair_it_was_measured_with`
+  - `too_few_answers_ask_for_another_go_and_leaving_the_tab_calls_it_off`
+  - `the_panels_buttons_take_clicks_and_nothing_else_does`
+  - `the_app_plays_the_clicks_and_hears_a_ta_after_each`
+  - `the_output_changing_mid_sync_ends_it`
+  - `the_songs_blocks_left_at_the_start_are_left_out` (`sync`)
 
 ## Mix
 

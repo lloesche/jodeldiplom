@@ -161,6 +161,9 @@ pub fn regions(state: &State) -> Vec<(Rect, Target)> {
                 out.push((mini, Target::Cover));
             }
             if let (Some(k), None) = (&m.karaoke, &state.palette) {
+                for &(rect, op) in &k.panel_buttons {
+                    out.push((rect, Target::Button(op)));
+                }
                 out.push((k.enter, Target::Button(Op::KaraokeEnter)));
                 for s in &k.sliders {
                     out.push((s.row, Target::KaraokeSlider(s.slider)));
@@ -171,6 +174,7 @@ pub fn regions(state: &State) -> Vec<(Rect, Target)> {
                 }
                 out.push((k.show_notes, Target::Button(Op::KaraokeNotes)));
                 out.push((k.keep, Target::Button(Op::KaraokeKeep)));
+                out.push((k.sync, Target::Button(Op::KaraokeSync)));
             }
             if let (Some(desk), None) = (&m.desk, &state.palette) {
                 crate::core::desk::mouse::regions(state, desk, &mut out);
@@ -415,6 +419,15 @@ pub fn action_at(state: &State, input: MouseInput, x: f64, y: f64) -> Option<Act
     if let Some(action) = crate::core::desk::mouse::held(state, input.kind, y) {
         return action;
     }
+    // While a sync shows, only its panel's buttons take a click.
+    if state.karaoke.sync.is_some() {
+        return match (input.kind, hit(state, input.col, input.row)) {
+            (Down(Left), Some(Target::Button(op @ (Op::SyncKeep | Op::SyncAgain | Op::Back)))) => {
+                Some(Action::Op(op))
+            }
+            _ => None,
+        };
+    }
     // Moving over Karaoke mode's bottom shows its controls.
     if input.kind == Moved && karaoke::in_mode(state) {
         return Some(Action::PointerMoved { row: input.row });
@@ -489,9 +502,9 @@ pub fn action_at(state: &State, input: MouseInput, x: f64, y: f64) -> Option<Act
         (ScrollUp | ScrollDown, Target::KaraokeSlider(slider)) => Some(Action::KaraokeStep {
             slider,
             by: if input.kind == ScrollUp {
-                karaoke::STEP
+                slider.step(false)
             } else {
-                -karaoke::STEP
+                -slider.step(false)
             },
         }),
         (Down(Left), Target::TransitionOverview(block)) => {

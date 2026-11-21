@@ -215,6 +215,34 @@ fn main() {
                 k.config.karaoke_voice = 20;
                 k
             }),
+            ("karaoke-sync", {
+                // A sync under way: five clicks played, four answered.
+                use jodeldiplom::core::sync::Session;
+                let mut k = state.clone();
+                k.side = Side::Karaoke;
+                k.karaoke.mic.name = Some("USB Headset".into());
+                let mut s = Session::new(("out".into(), "usb-headset".into()));
+                s.played = 5;
+                for (i, a) in s.answers.iter_mut().take(5).enumerate() {
+                    *a = (i != 2).then_some(0.15);
+                }
+                k.karaoke.sync = Some(s);
+                k
+            }),
+            ("karaoke-sync-done", {
+                // A sync measured: the delay and the keys.
+                use jodeldiplom::core::sync::{outcome, Session, CLICKS};
+                let mut k = state.clone();
+                k.side = Side::Karaoke;
+                k.karaoke.mic.name = Some("USB Headset".into());
+                let mut s = Session::new(("out".into(), "usb-headset".into()));
+                s.played = CLICKS;
+                s.answers = vec![Some(0.152); CLICKS];
+                s.answers[6] = None;
+                s.outcome = Some(outcome(&s.answers));
+                k.karaoke.sync = Some(s);
+                k
+            }),
             ("karaoke", {
                 // The mode, the song paused: START shows.
                 let mut k = state.clone();
