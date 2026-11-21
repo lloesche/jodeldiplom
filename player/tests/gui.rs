@@ -856,7 +856,7 @@ fn the_transition_lanes_are_painted_in_pixels() {
 #[test]
 fn the_bar_numbers_start_at_their_bars_to_the_pixel() {
     use jodeldiplom::core::lanes::{self, Block};
-    use jodeldiplom::core::transition::tab;
+    use jodeldiplom::core::transition::viewport;
     let mut canvas = Canvas::new(80, 24, font_px(1.0));
     let grid = canvas.fit(1600, 1000);
     let mut state = common::transition_state(grid.0, grid.1);
@@ -872,7 +872,7 @@ fn the_bar_numbers_start_at_their_bars_to_the_pixel() {
     };
     let ruler = m.transition.unwrap().blocks[0].ruler;
     let (x0, y0, w, h) = pixel_rect(&canvas, ruler);
-    let (start, end) = tab::window(&state, Block::Now, 0.0);
+    let (start, end) = viewport::window(&state, Block::Now, 0.0);
     let a = lanes::rhythmed(&state, Block::Now)
         .unwrap()
         .analysis

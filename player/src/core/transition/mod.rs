@@ -3,7 +3,7 @@
 //! the engine's [`TransitionPlan`].
 //!
 //! The window starts at the playing track's cue and the next track comes
-//! in at its own (see [`tab`]). The beats of the two are paired
+//! in at its own (see [`draft`]). The beats of the two are paired
 //! from there to the window's end, one to one or, where one track is at
 //! about half the other's tempo, two to one ([`Pairing`]), so the engine
 //! lays the next track's beats onto the playing track's; the tempo glides
@@ -19,7 +19,10 @@ use jodel_playback::warp::TimeMap;
 use jodel_playback::{Envelope, Point, TempoMode, TransitionPlan};
 use jodel_rhythm::Analysis;
 
+pub mod draft;
+pub mod jump;
 pub mod tab;
+pub mod viewport;
 
 /// Bars a window lasts without a selection.
 pub const DEFAULT_BARS: usize = 8;
@@ -121,6 +124,14 @@ impl Preset {
                 pairs[i - STEMS].1.clone()
             }
         })
+    }
+}
+
+/// The tempo mode's name (as [`Preset::name`] is a preset's).
+pub fn tempo_name(tempo: TempoMode) -> &'static str {
+    match tempo {
+        TempoMode::Varispeed => "varispeed",
+        TempoMode::Stretch => "time-stretch",
     }
 }
 
@@ -356,6 +367,14 @@ impl Draft {
         self.lanes
             .clone()
             .unwrap_or_else(|| self.preset.lanes(bars))
+    }
+
+    /// The transition in force: the one sent, while it is armed or mixing.
+    pub fn in_force(&self) -> Option<&Sent> {
+        match self.status {
+            Status::Armed | Status::Mixing(_) => self.sent.as_ref(),
+            Status::Draft => None,
+        }
     }
 }
 

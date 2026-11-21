@@ -766,7 +766,7 @@ impl App {
         let _ = player.jump_window(JUMP_WINDOW, JUMP_WINDOW);
         self.kept_stems = None;
         // Whatever the old engine had armed or mixing is gone with it.
-        core::transition::tab::engine_restarted(&mut self.state);
+        core::transition::draft::engine_restarted(&mut self.state);
         let tx = self.tx.clone();
         let notify = self.notify.clone();
         let current = self.generation.clone();

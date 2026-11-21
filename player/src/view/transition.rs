@@ -17,7 +17,7 @@ use super::lanes::{lane_color, WavePlot, CUE, OFF};
 use super::{Pictures, Scene};
 use crate::core::lanes::{self, Block, WordLines};
 use crate::core::layout::{Lane, TransitionBlockLayout, TransitionLayout};
-use crate::core::transition::{tab, Pairing};
+use crate::core::transition::{self, draft, tab, viewport, Pairing};
 use crate::core::{text, Rhythm, State};
 
 /// Text on a coloured label.
@@ -90,8 +90,8 @@ fn header(state: &State, which: Block, focused: bool, heard: f64) -> Line<'stati
                     s.push_str(&format!(" · {}", text::key_text(&key)));
                 }
                 let bars = a.downbeats.len();
-                if let Some(c) = tab::cursor(state, which, heard) {
-                    s.push_str(&format!(" · bar {} / {bars}", tab::bar_of(a, c)));
+                if let Some(c) = viewport::cursor(state, which, heard) {
+                    s.push_str(&format!(" · bar {} / {bars}", viewport::bar_of(a, c)));
                 }
                 if r.waveform.as_ref().is_some_and(|w| w.stems.is_none()) {
                     s.push_str(" · no stems");
@@ -115,16 +115,13 @@ fn transition_text(state: &State) -> String {
     use crate::core::transition::Status;
     let d = &state.transition.draft;
     // The preset of the one sent (a skip sends its own), else the one set.
-    let preset = match (&d.status, &d.sent) {
-        (Status::Armed | Status::Mixing(_), Some(sent)) => sent.preset,
-        _ => d.preset,
-    };
+    let preset = d.in_force().map_or(d.preset, |sent| sent.preset);
     let mut s = format!(
         " · transition: {}, {}",
         preset.name(),
-        tab::tempo_name(d.tempo)
+        transition::tempo_name(d.tempo)
     );
-    let bars = tab::draft_bars(state);
+    let bars = draft::draft_bars(state);
     if d.lanes.as_ref().is_some_and(|l| *l != d.preset.lanes(bars)) {
         s.push_str(" (edited)");
     }
@@ -136,10 +133,10 @@ fn transition_text(state: &State) -> String {
         Status::Mixing(_) => s.push_str(", mixing"),
     }
     // The tempi of the beats that are paired, where they meet.
-    if let (Some(a), Some(b)) = tab::meeting_tempi(state) {
+    if let (Some(a), Some(b)) = draft::meeting_tempi(state) {
         // The next track's tempo in the playing track's beats, by the
         // pairing (2:1: its beat is two of these), and the glide to it.
-        let per = tab::pairing(state);
+        let per = draft::pairing(state);
         let to = b * per.ratio();
         // Set by hand: what the transition set up (or armed) takes; one
         // already mixing plays what it was sent with.
@@ -186,7 +183,7 @@ fn shown(state: &State, which: Block) -> Option<Shown> {
     type Gains = Box<dyn Fn(f64) -> [f64; STEMS]>;
     type Here = Box<dyn Fn(f64) -> f64>;
     let (start, end, bars, side, here, gains): (f64, f64, usize, Side, Here, Gains) =
-        match tab::shown_plan(state) {
+        match draft::shown_plan(state) {
             Some((plan, bars)) => {
                 // The side by the track (after the hand-over the track
                 // mixed in is the playing one, the one left slides away
@@ -209,13 +206,13 @@ fn shown(state: &State, which: Block) -> Option<Shown> {
                 (start, end, bars, side, here, gains)
             }
             None if d.status == Status::Draft => {
-                let (start, end, _) = tab::cue_window(state, which)?;
+                let (start, end, _) = draft::cue_window(state, which)?;
                 let side = match which {
                     Block::Now => Side::From,
                     Block::Next => Side::Into,
                     Block::Prev => return None,
                 };
-                let bars = tab::draft_bars(state);
+                let bars = draft::draft_bars(state);
                 let lanes = d.lanes(bars);
                 let base = if side == Side::From { 0 } else { STEMS };
                 let gains: Gains =
@@ -373,15 +370,15 @@ fn draw_block(
         return;
     };
     let a = &r.analysis;
-    let (start, end) = tab::window(state, b.block, heard);
+    let (start, end) = viewport::window(state, b.block, heard);
     let beat_time = |i: Option<usize>| i.and_then(|i| a.beats.get(i).copied());
     let block = tab::block(state, b.block);
     let cursor = focused
-        .then(|| beat_time(tab::cursor(state, b.block, heard)))
+        .then(|| beat_time(viewport::cursor(state, b.block, heard)))
         .flatten();
     let cue = beat_time(block.cue.map(|c| c.beat));
-    let selection = tab::selection(state, b.block, heard);
-    let playhead = tab::playhead(state, b.block, heard);
+    let selection = viewport::selection(state, b.block, heard);
+    let playhead = viewport::playhead(state, b.block, heard);
     let duration = waveform.duration().max(a.duration).max(1e-3);
     let shown = shown(state, b.block);
     let transition = shown.as_ref().map(|s| s.window);
@@ -397,7 +394,7 @@ fn draw_block(
             downbeats: Vec::new(),
             unclear: Vec::new(),
             selection,
-            shown: (!tab::whole(state, b.block)).then_some((start, end)),
+            shown: (!viewport::whole(state, b.block)).then_some((start, end)),
             playhead,
             cursor: None,
             cue,
@@ -413,16 +410,20 @@ fn draw_block(
             key: None,
         },
     );
-    let follows = b.block == Block::Now
-        && tab::block(state, b.block).start.is_none()
-        && tab::slide(state).is_none()
-        && b.top_cut == 0;
+    // The playing track's block following the playhead (not while blocks
+    // slide): a frontend may scroll its ruler and lanes by itself, so they
+    // carry the whole track's bars.
+    let follow = (b.block == Block::Now
+        && block.start.is_none()
+        && viewport::slide(state).is_none()
+        && b.top_cut == 0)
+        .then_some(viewport::LEAD);
     let bars = a
         .downbeats
         .iter()
         .enumerate()
         .filter_map(|(k, &d)| a.beats.get(d).map(|&t| (t, k + 1)))
-        .filter(|&(t, _)| follows || (t >= start && t < end))
+        .filter(|&(t, _)| follow.is_some() || (t >= start && t < end))
         .collect();
     pictures.ruler(
         frame,
@@ -433,24 +434,15 @@ fn draw_block(
             bars,
             cursor,
             cue,
-            follow: follows.then_some(tab::LEAD),
+            follow,
         },
     );
-    let downbeats = downbeats_within(a, start, end);
-    let unclear = unclear(a);
-    // The playing track's block following the playhead (not while blocks
-    // slide): a frontend may scroll its ruler and lanes by itself, so they
-    // carry the whole track's bars.
-    let follow = (b.block == Block::Now
-        && tab::block(state, b.block).start.is_none()
-        && tab::slide(state).is_none()
-        && b.top_cut == 0)
-        .then_some(tab::LEAD);
     let downbeats = if follow.is_some() {
         downbeats_within(a, f64::NEG_INFINITY, f64::INFINITY)
     } else {
-        downbeats
+        downbeats_within(a, start, end)
     };
+    let unclear = unclear(a);
     let lyrics = state
         .config
         .transition_lyrics
@@ -528,7 +520,7 @@ pub fn draw(frame: &mut Frame, scene: &Scene, m: &TransitionLayout, pictures: &m
 pub fn footer(state: &State) -> String {
     // The focused track's zoom (its own, set by the wheel or `z`, else the
     // tab's).
-    let zoom = match tab::ZOOMS[tab::zoom_of(state, state.transition.focus)] {
+    let zoom = match viewport::ZOOMS[viewport::zoom_of(state, state.transition.focus)] {
         0 => "whole tracks".to_owned(),
         1 => "1 bar".to_owned(),
         bars => format!("{bars} bars"),

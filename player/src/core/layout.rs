@@ -582,7 +582,7 @@ fn transition(state: &State, inner: Rect, list: Rect) -> TransitionLayout {
     let mut y = top;
     // After a hand-over, the track left slides up out of view and the
     // playing one up into its place, the next one in under it.
-    if let (Some(done), Some(h)) = (crate::core::transition::tab::slide(state), both) {
+    if let (Some(done), Some(h)) = (crate::core::transition::viewport::slide(state), both) {
         let prev = block_lanes(state, Block::Prev);
         let pitch = 3 + prev.len() as i32 * i32::from(h) + 1;
         y -= (done * f64::from(pitch)).round() as i32;

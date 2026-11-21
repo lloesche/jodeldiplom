@@ -252,25 +252,9 @@ impl SongLyrics {
 
 /// The songs whose lyrics are wanted: while the tab or the mode shows, the one
 /// playing (or held), then the next two in the queue; while the Transition tab
-/// shows, its tracks' (their words go on the voice's lane), unless that is
-/// turned off (`transition_lyrics`).
+/// shows, its tracks' ([`crate::core::transition::tab::lyrics_wanted`]).
 pub fn lyrics_wanted(state: &State) -> Vec<PathBuf> {
-    if state.screen == Screen::Main && state.side == Side::Transition {
-        if !state.config.transition_lyrics {
-            return Vec::new();
-        }
-        let mut paths: Vec<PathBuf> = Vec::new();
-        for block in [
-            crate::core::lanes::Block::Prev,
-            crate::core::lanes::Block::Now,
-            crate::core::lanes::Block::Next,
-        ] {
-            let path =
-                crate::core::lanes::index(state, block).and_then(|i| state.queue.paths.get(i));
-            if let Some(path) = path.filter(|p| !paths.contains(p)) {
-                paths.push(path.clone());
-            }
-        }
+    if let Some(paths) = crate::core::transition::tab::lyrics_wanted(state) {
         return paths;
     }
     if !(on_tab(state) || in_mode(state)) {

@@ -543,7 +543,7 @@ fn the_karaoke_tab_shows_the_voice_with_every_word() {
 fn the_words_go_on_the_voice_lane_where_they_are_sung() {
     use jodel_lyrics::{Lyrics, Source};
     use jodeldiplom::core::lanes::Block;
-    use jodeldiplom::core::transition::tab;
+    use jodeldiplom::core::transition::viewport;
     use jodeldiplom::core::Effect;
     use jodeldiplom::lyrics::Answer;
     let mut state = common::transition_state(120, 40);
@@ -557,7 +557,7 @@ fn the_words_go_on_the_voice_lane_where_they_are_sung() {
             .any(|e| matches!(e, Effect::WantLyrics(p) if p.contains(&path))),
         "{fx:?}"
     );
-    let (start, end) = tab::window(&state, Block::Now, 0.0);
+    let (start, end) = viewport::window(&state, Block::Now, 0.0);
     let at = start + (end - start) * 0.25;
     let mut timed = Lyrics::parse_text("Mister sunshine", Source::Lrclib);
     let words = &mut timed.lines[0].words;

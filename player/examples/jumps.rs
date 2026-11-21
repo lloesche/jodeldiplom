@@ -24,7 +24,7 @@ use jodel_playback::source::Source;
 use jodel_playback::stems::{Separator, Stem, StemMix};
 use jodel_playback::{Event, JumpAt, MemoryTarget, Player, PlayerOptions, Settings};
 use jodel_rhythm::{Analysis, Method};
-use jodeldiplom::core::transition::tab::bar_jump;
+use jodeldiplom::core::transition::jump::bar_jump;
 use jodeldiplom::core::RhythmRecipe;
 use jodeldiplom::rhythm::analyze_file;
 

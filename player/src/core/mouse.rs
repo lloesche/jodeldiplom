@@ -295,7 +295,7 @@ fn transition_time(
     overview: bool,
 ) -> Option<f64> {
     use crate::core::lanes;
-    use crate::core::transition::tab;
+    use crate::core::transition::viewport;
     let Layout::Main(m) = layout::compute(state) else {
         return None;
     };
@@ -321,7 +321,7 @@ fn transition_time(
             .max(r.analysis.duration);
         (0.0, duration)
     } else {
-        tab::window(state, block, state.heard())
+        viewport::window(state, block, state.heard())
     };
     Some(start + share * (end - start))
 }

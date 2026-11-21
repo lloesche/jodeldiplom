@@ -91,13 +91,13 @@ fn tui_shot(
 fn sung_words(state: &mut State) {
     use jodel_lyrics::{Lyrics, Source};
     use jodeldiplom::core::lanes::Block;
-    use jodeldiplom::core::transition::tab;
+    use jodeldiplom::core::transition::viewport;
     let Some(index) = state.playing.track.as_ref().map(|t| t.index) else {
         return;
     };
     let path = state.queue.paths[index].clone();
     let text = "Mister rock and roll, take me home tonight";
-    let (start, end) = tab::window(state, Block::Now, state.playing.position);
+    let (start, end) = viewport::window(state, Block::Now, state.playing.position);
     let mut timed = Lyrics::parse_text(text, Source::Lrclib);
     let words = &mut timed.lines[0].words;
     let n = words.len() as f64;

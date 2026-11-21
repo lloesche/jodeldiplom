@@ -12,8 +12,8 @@ use crate::core::lanes;
 use crate::core::layout;
 use crate::core::preview;
 use crate::core::text;
-use crate::core::transition::tab;
 use crate::core::transition::Preset;
+use crate::core::transition::{draft, jump, tab, viewport};
 use crate::core::{
     Action, Click, DeviceChoice, DeviceVolume, Effect, Facts, Filter, FolderPick, FolderRow, Gpu,
     Heard, Job, Level, Message, NowTrack, Palette, Placing, Rhythm, RhythmRecipe, Screen, Search,
@@ -377,13 +377,13 @@ pub fn update(state: &mut State, action: Action) -> Vec<Effect> {
             time,
             extend,
         } => {
-            if tab::point(state, block, time, extend) {
+            if viewport::point(state, block, time, extend) {
                 apply_op(state, Op::Accept, &mut fx);
             }
         }
         Action::TransitionJump { block, time } => match block {
-            lanes::Block::Now => tab::seek(state, &mut fx, time),
-            _ => tab::jump(state, block, time),
+            lanes::Block::Now => viewport::seek(state, &mut fx, time),
+            _ => viewport::jump(state, block, time),
         },
         Action::TransitionWheel {
             block,
@@ -392,9 +392,9 @@ pub fn update(state: &mut State, action: Action) -> Vec<Effect> {
             at,
         } => {
             if scroll {
-                tab::scroll(state, block, f64::from(steps) / 10.0);
+                viewport::scroll(state, block, f64::from(steps) / 10.0);
             } else {
-                tab::wheel_zoom(state, block, steps.signum() as isize, at);
+                viewport::wheel_zoom(state, block, steps.signum() as isize, at);
             }
         }
         Action::TransitionPanStart {
@@ -402,9 +402,9 @@ pub fn update(state: &mut State, action: Action) -> Vec<Effect> {
             column,
             width,
             overview,
-        } => tab::pan_start(state, block, column, width, overview),
-        Action::TransitionPan(column) => tab::pan_to(state, column),
-        Action::TransitionPanEnd => tab::pan_end(state),
+        } => viewport::pan_start(state, block, column, width, overview),
+        Action::TransitionPan(column) => viewport::pan_to(state, column),
+        Action::TransitionPanEnd => viewport::pan_end(state),
         Action::KaraokeSlide { slider, share } => {
             state.karaoke.dragging = Some(slider);
             karaoke::slide_to(state, slider, share, &mut fx);
@@ -534,7 +534,7 @@ pub fn update(state: &mut State, action: Action) -> Vec<Effect> {
         }
         Action::Tick(now) => {
             state.now_ms = now;
-            tab::tick(state);
+            viewport::tick(state);
             karaoke::tick(state, &mut fx);
             preview::tick(state, &mut fx);
             if state.message.as_ref().is_some_and(|m| m.until_ms <= now) {
@@ -1860,7 +1860,7 @@ fn apply_op(state: &mut State, op: Op, fx: &mut Vec<Effect>) {
                 fx.push(Effect::Engine(Command::Seek(target)));
             }
         }
-        Op::Next => tab::skip(state, fx),
+        Op::Next => draft::skip(state, fx),
         Op::SkipMix => cycle_skip_mix(state, fx),
         Op::Previous => fx.push(Effect::Engine(Command::Previous)),
         Op::Stop => fx.push(Effect::Engine(Command::Stop)),
@@ -1946,8 +1946,8 @@ fn apply_op(state: &mut State, op: Op, fx: &mut Vec<Effect>) {
             }
         }
         Op::AllStems => set_stems(state, StemMix::ALL, fx),
-        Op::JumpBar(offset) => tab::jump_bar(state, isize::from(offset), false, fx),
-        Op::JumpBarAtEnd(offset) => tab::jump_bar(state, isize::from(offset), true, fx),
+        Op::JumpBar(offset) => jump::jump_bar(state, isize::from(offset), false, fx),
+        Op::JumpBarAtEnd(offset) => jump::jump_bar(state, isize::from(offset), true, fx),
         Op::VolumeUp => fx.push(Effect::DeviceVolume(VolumeChange::Step(1))),
         Op::VolumeDown => fx.push(Effect::DeviceVolume(VolumeChange::Step(-1))),
         Op::ToggleBpm => {
@@ -2228,7 +2228,7 @@ fn engine_event(state: &mut State, event: Event) {
         }
         Event::TrackStarted(start) => {
             let start = *start;
-            tab::track_started(state, start.index);
+            draft::track_started(state, start.index);
             let playing = &mut state.playing;
             // Where it starts: 0, or the position a switch of route (or a
             // seek) took it up at.
@@ -2286,7 +2286,7 @@ fn engine_event(state: &mut State, event: Event) {
             say(state, Level::Error, format!("{name}{error}{tail}"));
         }
         Event::Notice { message, .. } => say(state, Level::Info, message),
-        Event::Transition(t) => tab::transition_event(state, t),
+        Event::Transition(t) => draft::transition_event(state, t),
         Event::StemsStopped { reason, .. } => {
             // The engine plays the whole mix now: so do the buttons.
             state.stems = StemMix::ALL;

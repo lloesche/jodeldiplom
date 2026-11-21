@@ -18,7 +18,7 @@ pub enum Block {
     Next,
     /// The one before the playing track: shown only while it slides away
     /// after a transition into the playing one
-    /// ([`crate::core::transition::tab::slide`]).
+    /// ([`crate::core::transition::viewport::slide`]).
     Prev,
 }
 
