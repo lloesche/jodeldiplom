@@ -45,6 +45,7 @@ pub mod rhythm;
 pub mod scores;
 pub mod session;
 pub mod setup;
+pub mod single;
 pub mod spectrum;
 pub mod stems_cache;
 pub mod sync;
@@ -135,6 +136,15 @@ pub fn main(frontend: Frontend) -> ExitCode {
             }
         };
     }
+    // One player at a time: held until the player ends.
+    let _only = match dirs::settings_dir().map(|dir| single::take(&dir)) {
+        Some(single::Start::Running) => {
+            single::say_running(bin, frontend == Frontend::Window);
+            return ExitCode::FAILURE;
+        }
+        Some(single::Start::Alone(only)) => only,
+        None => None,
+    };
     let result = match frontend {
         Frontend::Terminal => tui::run(&args),
         Frontend::Window => gui::run(&args),

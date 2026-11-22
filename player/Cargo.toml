@@ -35,7 +35,7 @@ ureq = { version = "3", default-features = false, features = ["rustls"] }
 
 [target.'cfg(windows)'.dependencies.windows]
 version = "0.62.2"
-features = ["Win32_System_Console", "Win32_Graphics_Dxgi", "Win32_Graphics_Gdi", "Win32_Storage_FileSystem", "Win32_System_SystemInformation"]
+features = ["Win32_System_Console", "Win32_Graphics_Dxgi", "Win32_Graphics_Gdi", "Win32_Storage_FileSystem", "Win32_System_SystemInformation", "Win32_UI_WindowsAndMessaging"]
 
 # Setup's check of the disk's free space and the memory (statvfs, sysctl).
 [target.'cfg(unix)'.dependencies]
