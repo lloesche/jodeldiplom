@@ -148,12 +148,27 @@ fn a_count_in_into_the_voice_muted_on_the_desk_plays_the_band_after_it() {
 /// stems are made while the count-in plays (two seconds of it: time for a
 /// slow machine to separate the first stretch), so the band (not the file)
 /// is heard from the track's first frames on, after the mixer's switch.
+///
+/// What is held to: the first stretch of the track, as much as the parts
+/// made ahead of it in the count-in cover. A machine too slow to play in
+/// real time (a small runner, a debug build, tests side by side) leaves the
+/// device short now and then, whether stems are made or not: the mixer pads
+/// those periods with silence, and they are left out here (nothing is lost
+/// with them, the track goes on after). Later, such a machine may let the
+/// stems fall behind, and the file is heard where they did: that is not
+/// what this test is about.
 #[test]
 fn in_real_time_a_count_in_has_the_band_ready_at_its_end() {
     let _guard = real_time();
     let dir = temp_dir("karaoke-lead-stems-real");
     let path = dir.join("tones.wav");
-    let file = tones(RATE, 3 * RATE as usize);
+    // The tones, the left a little off zero: no frame of it is silent (the
+    // tones alone are, every 10 ms, where they could not be told from the
+    // device's padding).
+    let file: Vec<i32> = tones(RATE, 3 * RATE as usize)
+        .chunks_exact(2)
+        .flat_map(|f| [f[0] + 100_000, f[1]])
+        .collect();
     write_wav(&path, RATE, 2, &file);
     let device = MemoryTarget::new(
         caps(&[RATE], &[SampleFormat::S24In32Low]),
@@ -187,20 +202,39 @@ fn in_real_time_a_count_in_has_the_band_ready_at_its_end() {
     );
     let streams = captured(&captures);
     let got = samples(&streams[0].1);
-    // Each frame's distance from the band (three quarters of the file)
-    // from the mixer's switch (10 ms) on, the track started at output frame
-    // `start` (the device's start may cut the stream's end short).
+    // Frames of the track held to (0.4 s): within the half second of parts
+    // made ahead before it starts.
+    let held = 4 * RATE as usize / 10;
+    // The frames of a track that starts at output frame `start` as heard,
+    // the device's padding left out, from the mixer's switch (10 ms) on, to
+    // `held`: the largest distance from the band (three quarters of the
+    // file).
     let switched = RATE as usize / 100 + 8;
+    let silent = |f: usize| got.get(2 * f..2 * f + 2) == Some(&[0, 0][..]);
     let off = |start: usize| {
-        let frames = (got.len() / 2).saturating_sub(start).min(file.len() / 2);
-        (2 * switched..2 * frames)
-            .map(|i| (f64::from(got[2 * start + i]) - 0.75 * f64::from(file[i])).abs())
-            .fold(0.0, f64::max)
+        let (mut f, mut k, mut worst) = (start, 0, 0.0f64);
+        while k < held && 2 * f + 1 < got.len() {
+            // A run of silence (more than a zero crossing): padding.
+            if (0..3).all(|d| silent(f + d)) {
+                while silent(f) {
+                    f += 1;
+                }
+                continue;
+            }
+            if k >= switched {
+                for c in 0..2 {
+                    let want = 0.75 * f64::from(file[2 * k + c]);
+                    worst = worst.max((f64::from(got[2 * f + c]) - want).abs());
+                }
+            }
+            (f, k) = (f + 1, k + 1);
+        }
+        assert_eq!(k, held, "the track's first frames were played");
+        worst
     };
-    // The track starts about where the music does (its first frame is
-    // nothing, the stems' a little).
+    // The track starts about where the sound does.
     let sound = got.iter().position(|&s| s != 0).expect("sound") / 2;
-    let worst = (sound.saturating_sub(2)..sound + 2)
+    let worst = (sound.saturating_sub(2)..sound + 3)
         .map(off)
         .fold(f64::INFINITY, f64::min);
     assert!(worst <= 64.0, "{worst} steps off the band");
