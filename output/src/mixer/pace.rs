@@ -2,17 +2,19 @@
 //! one. On a device in real time an output short of one (lagging) is
 //! waited for while the device's ring ([`Output::queued`]: not what the
 //! device has taken into a buffer of its own) holds more than its low
-//! water: the frames the device takes at a time and [`SCHEDULING_MARGIN`].
-//! The thread sleeps on its [`Waker`] until the ring can next change (the
-//! time it takes down to the low water, at least one device pull), or
-//! until the output writes; past a backstop deadline (the wait's slack at
-//! its start and a period) it waits no more. Then the period is mixed
-//! with what the output has, silence for the rest, and the output is
-//! late: not waited for again until it holds a period, so one that stalls
-//! keeps no one on the low water. [`next_step`] is the decision, without
-//! the clock; [`Run::turn`] carries it out.
+//! water ([`low_water`]: what the device takes in one go, a second pull
+//! and [`SCHEDULING_MARGIN`]). The wait is on events, not on predicted
+//! times: the device signals each take from its ring
+//! ([`Output::set_pull_signal`]) and the output each write, and the thread
+//! looks again at once; a timer only backstops a device that stops taking
+//! frames (the wait's slack at its start and a period). Then the period is
+//! mixed with what the output has, silence for the rest, and the output
+//! is late: not waited for again until it holds a period, so one that
+//! stalls keeps no one on the low water. [`next_step`] is the decision,
+//! without the clock; [`Run::turn`] carries it out.
 //!
 //! [`Output::queued`]: crate::Output::queued
+//! [`Output::set_pull_signal`]: crate::Output::set_pull_signal
 
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
@@ -20,10 +22,20 @@ use std::time::{Duration, Instant};
 use super::input::Stream;
 use super::run::Run;
 
-/// On a device in real time, what is kept in its ring beyond the frames
-/// it takes at a time while the mix waits for a lagging input: the time
-/// the mixer thread may take to wake and mix a period.
+/// On a device in real time, what is kept in its ring beyond what the
+/// device takes in one go while the mix waits for a lagging input, at the
+/// least: the time the mixer thread may take to wake and mix a period (a
+/// device pull, when that is longer).
 pub(super) const SCHEDULING_MARGIN: Duration = Duration::from_millis(5);
+
+/// The frames a device's ring keeps at the least while the mix waits for a
+/// lagging input: the most the device has taken in one go (`burst`, at
+/// least two pulls of `pull`: one, and one more while the mixer wakes)
+/// and a margin (`margin`, at least a pull), never more than the ring.
+pub(super) fn low_water(pull: u64, burst: u64, margin: u64, ring: u64) -> u64 {
+    let pull = pull.max(1);
+    (burst.max(2 * pull) + margin.max(pull)).min(ring)
+}
 
 /// What the thread does after a turn.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -153,9 +165,20 @@ impl Run {
             let device = self.device.as_mut().expect("checked");
             let realtime = device.info.realtime;
             let slack = if realtime && lag {
-                let margin = device.format.duration_to_frames(SCHEDULING_MARGIN);
-                let low = (device.info.device_buffer_frames + margin).min(device.info.ring_frames);
-                device.output.queued().saturating_sub(low)
+                // What the device took since the last look of this wait:
+                // more than one pull at a time, the low water holds that.
+                let fill = device.output.queued();
+                if let Some(last) = device.last_fill {
+                    device.burst = device.burst.max(last.saturating_sub(fill));
+                }
+                device.last_fill = Some(fill);
+                let low = low_water(
+                    device.info.device_buffer_frames,
+                    device.burst,
+                    device.format.duration_to_frames(SCHEDULING_MARGIN),
+                    device.info.ring_frames,
+                );
+                fill.saturating_sub(low)
             } else {
                 0
             };
@@ -172,19 +195,20 @@ impl Run {
             };
             match next_step(look) {
                 Step::Wait(slack) => {
-                    let format = device.format;
-                    let slack = format.frames_to_duration(slack);
+                    let slack = device.format.frames_to_duration(slack);
                     let tick = self.options.period;
                     let deadline = *device.deadline.get_or_insert(now + slack + tick);
-                    // The ring changes only as the device pulls: at least
-                    // one pull, at most a period (word for the thread waits
-                    // no longer than that), never past the deadline.
-                    let pull = format.frames_to_duration(device.info.device_buffer_frames);
-                    let until = (now + slack.max(pull)).min(now + tick).min(deadline);
-                    return Turn::Wait(until);
+                    // Woken by the device's next take or the output's
+                    // write; the timer is the backstop (and word for the
+                    // thread waits no longer than a period).
+                    return Turn::Wait(deadline.min(now + tick));
                 }
                 Step::Mix { frames, give_up } => {
                     device.deadline = None;
+                    if device.last_fill.take().is_some() {
+                        // What it took at a time long ago counts for less.
+                        device.burst -= device.burst / 8;
+                    }
                     if give_up {
                         for s in self.slots.values_mut().filter_map(|s| s.stream.as_mut()) {
                             if lagging(s, period) {
@@ -284,6 +308,17 @@ mod tests {
             ..lagging
         };
         assert_eq!(next_step(none), mix(480, false));
+    }
+
+    #[test]
+    fn the_low_water_holds_two_pulls_and_a_margin_or_the_largest_take() {
+        // 10 ms pulls at 48 kHz, a 5 ms margin: two pulls and a pull.
+        assert_eq!(low_water(480, 0, 240, 9_600), 1_440);
+        // A device that took four periods at once keeps those.
+        assert_eq!(low_water(480, 1_920, 240, 9_600), 2_400);
+        // A large margin counts as it is; never more than the ring.
+        assert_eq!(low_water(480, 0, 960, 9_600), 1_920);
+        assert_eq!(low_water(480, 4_800, 240, 1_920), 1_920);
     }
 
     #[test]

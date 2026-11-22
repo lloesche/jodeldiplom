@@ -23,10 +23,12 @@
 //!   still loading). On a device in real time an output short of a period
 //!   is waited for while the device's ring ([`Output::queued`]: not what
 //!   the device has taken into a buffer of its own) holds more than its
-//!   low water, the frames the device takes at a time and a scheduling
-//!   margin, and no longer than a backstop deadline. The thread sleeps on
-//!   a high-resolution timer until the ring can next change, or until the
-//!   output writes. Then the period is mixed with what the output has,
+//!   low water (the most the device has taken in one go, at least two
+//!   pulls, and a margin), and no longer than a backstop deadline. The
+//!   wait is on events: the device signals each take from its ring
+//!   ([`Output::set_pull_signal`]) and the output each write, and the
+//!   thread looks again at once; a timer only backstops a device that
+//!   stops taking frames. Then the period is mixed with what the output has,
 //!   silence for the rest, and the output is late: not waited for again
 //!   until it holds a period, so one that stalls keeps no one on the low
 //!   water. A writer lagging by less than the ring holds beyond its low

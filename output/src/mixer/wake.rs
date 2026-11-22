@@ -1,9 +1,11 @@
-//! The mixer thread's sleep while it waits for a lagging input: until a
-//! deadline, to the timer's resolution (a high-resolution waitable timer
-//! on Windows, where the default wait rounds to the 15.6 ms system tick;
-//! the thread parker elsewhere), and cut short when an input writes while
-//! it is armed ([`Waker::wake_if_armed`], from any thread, without
-//! allocating).
+//! The mixer thread's sleep while it waits for a lagging input: cut short
+//! when the device takes frames from its ring ([`PullSignal`], on the
+//! device's real-time thread) or an input writes, while it is armed
+//! ([`Waker::wake_if_armed`]: from any thread, without allocating or
+//! locking: an event set on Windows, the thread parker's kernel wake
+//! elsewhere); otherwise until a backstop deadline, on a
+//! high-resolution waitable timer on Windows (where the default wait
+//! rounds to the 15.6 ms system tick) and the thread parker elsewhere.
 //!
 //! The handshake: the sleeper arms, then looks at the rings it waits on,
 //! and sleeps only if one still lags; a writer puts its frames in the
@@ -13,6 +15,8 @@
 
 use std::sync::atomic::{fence, AtomicBool, Ordering};
 use std::time::Instant;
+
+use crate::output::PullSignal;
 
 /// Wakes the mixer thread from [`Waker::sleep_until`].
 pub(crate) struct Waker {
@@ -67,6 +71,13 @@ impl Waker {
             self.os.wait_until(deadline);
         }
         self.woken.store(false, Ordering::Release);
+    }
+}
+
+/// The device took frames: a sleeper waiting on its ring looks again.
+impl PullSignal for Waker {
+    fn pulled(&self) {
+        self.wake_if_armed();
     }
 }
 

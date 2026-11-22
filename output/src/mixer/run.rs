@@ -45,6 +45,12 @@ pub(super) struct Device {
     /// anyway (a backstop, should the device stop taking frames and its
     /// ring never run down: [`super::pace`]).
     pub(super) deadline: Option<Instant>,
+    /// The most the device has taken from its ring between two looks while
+    /// a period waited (a device thread put off takes several periods at
+    /// once), decaying: what the low water must hold besides the margin.
+    pub(super) burst: u64,
+    /// What its ring held at the last look while a period waits.
+    pub(super) last_fill: Option<u64>,
 }
 
 pub(super) struct Run {
@@ -469,7 +475,9 @@ impl Run {
             .period(self.options.period)
             .buffer(self.options.buffer)
             .prefill(self.options.buffer / 2);
-        let output = self.target.open(&request)?;
+        let mut output = self.target.open(&request)?;
+        // Each take from its ring wakes a wait for a lagging input.
+        output.set_pull_signal(self.wake.clone());
         let info = output.info().clone();
         if let Some(m) = &mut self.monitor {
             m.opened(&info, output.clock());
@@ -531,6 +539,8 @@ impl Run {
             output,
             paused: false,
             deadline: None,
+            burst: 0,
+            last_fill: None,
         });
         Ok(())
     }

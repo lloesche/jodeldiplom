@@ -102,10 +102,13 @@ its `StreamInfo` carries the device's backend, exclusive flag and latency.
   every running output holds one. An output short of a period (lagging:
   not draining, not still to write its first frame) is waited for while
   the device's ring (`Output::queued`: what the device has not taken yet,
-  its own buffer and latency aside) holds more than one device pull and
-  a 5 ms margin, and no longer than a backstop deadline (the wait's slack
-  at its start and a period); the thread sleeps on a high-resolution
-  timer until the ring can next change, or until the output writes. Then
+  its own buffer and latency aside) holds more than its low water (the
+  most the device has taken in one go, at least two pulls, and a margin
+  of a pull or 5 ms), and no longer than a backstop deadline (the wait's
+  slack at its start and a period). The wait is on events: the device
+  signals each take from its ring (`Output::set_pull_signal`) and the
+  output each write, and the thread looks again at once; a timer (high
+  resolution) only backstops a device that stops taking frames. Then
   the period is mixed with what the output has, silence for the rest (its
   underrun), and the output is late: not waited for again until it holds
   a period, so one that stalls leaves the others the whole ring. So a

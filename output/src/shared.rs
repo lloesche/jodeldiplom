@@ -9,12 +9,12 @@
 
 use crate::error::Error;
 use crate::format::StreamFormat;
-use crate::output::Stats;
+use crate::output::{PullSignal, Stats};
 use crate::ring::Ring;
 use crate::tap::{Tap, TapSlot};
 use crate::timeline::Timeline;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Condvar, Mutex, MutexGuard};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock};
 use std::time::{Duration, Instant};
 
 pub(crate) struct Shared {
@@ -47,6 +47,8 @@ pub(crate) struct Shared {
     /// them: frames discarded count as copied). Only the consumer moves
     /// it, but for [`Self::discard_all`].
     rendered: AtomicU64,
+    /// Told of every take from the ring ([`crate::Output::set_pull_signal`]).
+    pull_signal: OnceLock<Arc<dyn PullSignal>>,
 }
 
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -76,7 +78,14 @@ impl Shared {
             space: Condvar::new(),
             tap: TapSlot::new(),
             rendered: AtomicU64::new(0),
+            pull_signal: OnceLock::new(),
         }
+    }
+
+    /// Tells `signal` of every take from the ring from now on (the first
+    /// one set stays).
+    pub(crate) fn set_pull_signal(&self, signal: Arc<dyn PullSignal>) {
+        let _ = self.pull_signal.set(signal);
     }
 
     // ---- consumer side (device thread) ----
@@ -152,6 +161,9 @@ impl Shared {
         self.in_render.store(false, Ordering::SeqCst);
         if got > 0 && self.writer_waiting.load(Ordering::SeqCst) {
             self.space.notify_all();
+        }
+        if let Some(signal) = self.pull_signal.get() {
+            signal.pulled();
         }
         Some((first, got, noted))
     }
@@ -232,6 +244,13 @@ impl Shared {
         let mut t = lock(&self.timeline);
         let base = t.stream_submitted_total();
         t.restart(base);
+    }
+
+    /// Frames are about to go into the ring: from before they can be seen
+    /// there, an empty ring is not what is expected (a mixer looking
+    /// between the two would take them for a drain's last).
+    pub(crate) fn writing(&self) {
+        self.expect_empty.store(false, Ordering::Release);
     }
 
     pub(crate) fn note_written(&self, frames: u64, clipped: u64, truncated: u64) {

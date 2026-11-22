@@ -243,6 +243,11 @@ pub trait Output: Send {
     /// (it is in [`Output::latency`]).
     fn queued(&self) -> u64;
 
+    /// Has the device tell `signal` each time it takes frames from the ring
+    /// (on its own thread, a real-time one: the signal must neither block
+    /// nor allocate). One signal per output: a later one is ignored.
+    fn set_pull_signal(&mut self, signal: Arc<dyn PullSignal>);
+
     /// Stops the device; queued frames stay queued.
     fn pause(&mut self) -> Result<(), Error>;
 
@@ -291,6 +296,15 @@ pub trait Output: Send {
     /// Stops and releases the device. Later calls return [`Error::Closed`]
     /// (except the read-only ones). Dropping the output closes it too.
     fn close(&mut self) -> Result<(), Error>;
+}
+
+/// What a device tells each time it takes frames from an output's ring
+/// ([`Output::set_pull_signal`]): a mixer waiting for a late input looks
+/// again at what the ring has left. Called on the device's thread, a
+/// real-time one: it must neither block nor allocate.
+pub trait PullSignal: Send + Sync {
+    /// The device took frames from the ring.
+    fn pulled(&self);
 }
 
 /// Something outputs are opened on: a device, a [`crate::mixer`]'s input,
@@ -455,6 +469,7 @@ impl Core {
         let sample = self.shared.format.sample;
         let frames = (samples.len() / ch) as u64;
         let mode = self.mode;
+        self.shared.writing();
         let report = self.shared.ring.push_with(frames, |a, b| {
             let split = a.len() / sample.bytes();
             let mut report = PackReport::default();
@@ -578,6 +593,10 @@ impl Output for Core {
 
     fn queued(&self) -> u64 {
         self.shared.ring.len()
+    }
+
+    fn set_pull_signal(&mut self, signal: Arc<dyn PullSignal>) {
+        self.shared.set_pull_signal(signal);
     }
 
     fn pause(&mut self) -> Result<(), Error> {
@@ -717,6 +736,9 @@ macro_rules! forward_output {
         }
         fn queued(&self) -> u64 {
             $crate::output::Output::queued(&self.$field)
+        }
+        fn set_pull_signal(&mut self, signal: std::sync::Arc<dyn $crate::output::PullSignal>) {
+            $crate::output::Output::set_pull_signal(&mut self.$field, signal)
         }
         fn pause(&mut self) -> Result<(), $crate::Error> {
             $crate::output::Output::pause(&mut self.$field)
