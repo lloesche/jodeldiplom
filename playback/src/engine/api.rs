@@ -19,6 +19,7 @@ use crate::target::OutputTarget;
 use crate::transition::{TransitionPlan, TransitionState};
 
 use super::jump::JumpAt;
+use super::lanes::MakeStems;
 use super::Engine;
 
 /// What a [`Player`] can be told to do.
@@ -148,6 +149,13 @@ pub enum Command {
     /// heard at once. Costs a stem separation while it is on; nothing
     /// without a separator or a jump window.
     KeepStems(bool),
+    /// When the stems of the tracks played are made as parts of the output
+    /// (on an output of lanes, [`jodel_output::lanes`]: main, then drums,
+    /// bass, vocals and other, and whether they are there): never (the
+    /// default), from the stems kept only, or separated where they are not
+    /// kept. The output is the same either way; a mixer may play the parts
+    /// in place of main.
+    MakeStems(MakeStems),
 }
 
 /// Whether the player is playing.
@@ -267,6 +275,15 @@ pub enum Event {
     /// its usual route from where they stopped, and every track does until
     /// the mix changes.
     StemsStopped {
+        /// The track.
+        index: usize,
+        /// Why.
+        reason: String,
+    },
+    /// The stems of a track as parts of the output ([`Command::MakeStems`])
+    /// failed: the track has none (its output is main alone) until they
+    /// are asked for again.
+    PartsStopped {
         /// The track.
         index: usize,
         /// Why.
@@ -469,6 +486,11 @@ impl Player {
     /// [`Command::KeepStems`].
     pub fn keep_stems(&self, keep: bool) -> Result<(), Error> {
         self.send(Command::KeepStems(keep))
+    }
+
+    /// [`Command::MakeStems`].
+    pub fn make_stems(&self, make: MakeStems) -> Result<(), Error> {
+        self.send(Command::MakeStems(make))
     }
 }
 

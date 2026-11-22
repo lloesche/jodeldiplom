@@ -201,7 +201,8 @@ count-in drawn from them falls on what is heard) and `HoldAtEnd(bool)`
 (each track's end stops playback instead of running into the next:
 `Held { index }` names the one that would have come), and `PlayAt {
 index, share }` (the track from `share` of its length, its start when the
-length is not known: a preview from a third in).
+length is not known: a preview from a third in), and `MakeStems(Never |
+Kept | Separate)` (the stems as parts of an output of lanes: below).
 
 Events (`Event`), track events in the order they are heard:
 
@@ -374,6 +375,57 @@ lengths are exact); otherwise the samples go to the output as read.
   buffer as it is made); arming one reads the track again from what is
   written. `player/examples/jumps.rs` plays jumps on a real file in real
   time and reports when each was heard and the longest digital silence.
+- **Stem lanes** (`MakeStems`, `engine/lanes/`): on a target that takes
+  lanes (`OutputTarget::lanes() >= 5`: a mixer's lane input) and with a
+  separator or a stem store, every output opens with five lanes
+  (`jodel_output::lanes`): main, then drums, bass, vocals and other
+  (`stems::LANES`), and a control word a frame. Main is what the track
+  plays, as it would be alone; the stems are written beside it on the same
+  frames, so a seek, a flush or a jump taken back acts on all of them.
+  `MakeStems::Never` (the default) writes none (`Parts::None`); `Kept`
+  takes them from the stem store only (asked in the run's thread; a track
+  not kept has none, quietly, and nothing is separated); `Separate` from
+  the store, else separated as the track plays. A stem run
+  (`StemRun::take`, the four stems unmixed, no limiter; their clips are not
+  reported yet) is resampled to the output's rate with the
+  track's own filter and gain, on 4 or 8 channels, requantized to 24 bits,
+  and laid out in the track's channels (a mono file's stems averaged, more
+  than two channels the stems on the front pair and nothing on the rest).
+  It starts on an output frame a run frame falls on exactly (the output
+  frame ↔ track time line of the segment; a run starts a whole number of
+  the separator's frames from the segment's track frame), so the stems add
+  up to main within a few 24-bit steps at any rate (a file at another rate
+  than 44.1 kHz goes through two filters, which ring apart for a couple of
+  milliseconds where the file cuts in and out). Each segment of the track
+  (`Track::begin_segment`, `continue_segment`) has an id and says how it
+  began (`SegStart`): a new one (a track, a seek) has its stems start from
+  silence on its first frame, as main's resampler starts there (from the
+  stems kept when their grid has that frame, else a new run from it); a
+  joined one (a jump, a route met at another gain) from the stems kept,
+  0.1 s before it, their first frames crossfaded from what would have
+  played next over the frames main's are (the length main used); a
+  continued one (a transition's timeline made straight) the same with no
+  crossfade. A route met at the same
+  format and gain goes on in the same segment. The stems are cut or padded
+  to the track's end. The control word keeps a promise (`lanes/control.rs`,
+  its changes logged, so frames given back take theirs back): after
+  `Present` the stems never stop at once, they say `Ending` for a mixer's
+  switch's length (`ending_frames`) while still valid, then `None`; the
+  buffer keeps those frames whatever starts again (but on a new track's
+  first frame, where main cuts: `jodel_output::lanes`). On a device the
+  stems are never waited for: before a write only what it needs is made
+  (a seam's length past it, nothing while absent), the rest after, a few
+  pieces at most, and a full ring is left alone. They say `Present` once
+  0.5 s of them is made ahead (and no sooner again after they ran out),
+  and at a track's end they run to its last frame (main decoded to its
+  end first, to know where that is) when the next track's (separated from
+  its start once the playing file is read, or its parts made to its end)
+  are ready, or nothing follows; else they end before it. A route switch
+  to another format ends them before main fades out, and they come back
+  only after the new route's rise. Offline the writing waits for them
+  (and for the next track's). A stems route, a transition's mix and a
+  failing separator (`PartsStopped`, for that track) have none. Without a lane target the output is as it always
+  was.
 - **A busy device**: opening an output that the device reports busy
   (`DeviceBusy`: in use by another application, hog mode held, `EBUSY`, as
   it can be right after one of our outputs closed) is tried again every
@@ -419,7 +471,31 @@ its command at an exact output frame. `tests/mixer.rs` plays the same
 routes through a mixer's Lead input, on its one mix path (FLAC, packed
 24-bit, gapless, a reopen at a format change, plain and
 resampled PCM, pause and resume, seeks and a jump), and gets the bytes it
-gets without one, and `PlayAt` starts at the frame a third in. `tests/switch.rs` switches routes mid-track: at one
+gets without one, and `PlayAt` starts at the frame a third in.
+`tests/lanes.rs` and `tests/lanes_control.rs` (the control word; helpers in
+`tests/common/lanes.rs`) run those cases (and `PlayAt`) through a mixer's lane
+input with the stems made (offline, so they are there on every frame,
+untouched): the device gets the same bytes. On a memory target that keeps
+the lane stream (`MemoryTarget::with_lanes`) the stems add up to main
+within 64 steps (4–6 measured) at 44.1, 48, 96 and 192 kHz, from a seek's
+very frame (from the stems kept) and across a jump's crossfade, also for a
+96 kHz file at 48 kHz, and a jump at every 397th frame over a piece of
+stems (so one lands where the parts made ahead end); every control word
+sequence keeps the promise (and a property test of the buffer and the
+control timeline together keeps what is promised there); a jump taking
+back frames that said the parts end (an output holding what is written,
+`HoldingTarget`) has them go on; stems kept longer than the track do not
+hold the next one up offline; it
+starts `None` and turns `Present` once the stems are separated, and is
+`Present` from the first frame from a store (offline); stems separated
+slower than played run out, end, and are there again, also after a jump
+back; the next track's stems follow gaplessly, and when they fail this
+track's end before its last frame; a failing separator leaves `None` and
+says so, a track not kept says nothing; a file of no stated length plays
+to its end offline; mono and six-channel files have the stems in their
+channels; the stems end on the track's last frame; and on the mixer a
+muted drums strip gives three quarters of the file, unmuted the file again
+bit for bit. `tests/switch.rs` switches routes mid-track: at one
 rate, a chain of four routes (one made while paused) is one stream equal
 to each route's own output from the frame it took over at; a crossfade is
 exact outside its window; at another format the old route fades out at

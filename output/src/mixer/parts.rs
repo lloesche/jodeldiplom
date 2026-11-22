@@ -13,9 +13,10 @@
 //! to 0 only once nothing is touched and every part's ramps have settled,
 //! so main returns bit for bit; from the frame the control word turns
 //! [`Parts::Ending`] it fades to 0 (the writer keeps the parts valid that
-//! long), and on a frame that says [`Parts::None`] it is 0 at once. A change
-//! of the control word, or the parts touched, lands on its very frame
-//! within the chunk.
+//! long), and on a frame that says [`Parts::None`] it is 0 at once (which a
+//! writer does straight after `Present` only on a new track's first frame,
+//! where main cuts anyway). A change of the control word, or the parts
+//! touched, lands on its very frame within the chunk.
 //!
 //! A frame the stream does not supply (it is not running, a flush keeps
 //! the mixer out, or it ran dry) has no word: nothing of the input is heard

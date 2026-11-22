@@ -180,6 +180,7 @@ fn main() -> ExitCode {
             }
             Event::Notice { message, .. } => println!("  note: {message}"),
             Event::StemsStopped { reason, .. } => println!("  stems stopped: {reason}"),
+            Event::PartsStopped { reason, .. } => println!("  stem parts stopped: {reason}"),
             Event::Transition(state) => println!("  transition: {state:?}"),
             Event::Jumped { seconds, .. } => println!("  jumped to {seconds:.2} s"),
             Event::Held { index } => {

@@ -4,6 +4,8 @@
 
 use std::time::{Duration, Instant};
 
+use jodel_output::lanes::lane_width;
+
 use crate::error::Error;
 use crate::rate::Stage;
 use crate::resample::Resampler;
@@ -77,9 +79,10 @@ impl Engine {
     /// (its stems separated) when the silence ends.
     pub(super) fn write_lead(&mut self) -> Result<(), Error> {
         let out = self.out.as_mut().ok_or(Error::Stopped)?;
-        let channels = usize::from(out.info.format.channels);
+        // An output of lanes gets silence on every lane, and no parts.
+        let width = lane_width(out.info.format.channels, out.output.lanes());
         let frames = self.lead.min(STEM_FRAMES as u64) as usize;
-        let silence = vec![0i32; frames * channels];
+        let silence = vec![0i32; frames * width];
         let took = out.output.write(&silence, Some(WRITE_WAIT))?;
         self.lead -= took as u64;
         if took == 0 {
@@ -97,6 +100,22 @@ impl Engine {
             }
         }
         Ok(())
+    }
+
+    /// Writes `track`'s output from `out_at` up to sample `limit` and
+    /// returns the frames the output took: as it is, or on an output of
+    /// lanes with its stem parts beside it ([`Engine::write_lanes`]).
+    pub(super) fn write_track(&mut self, track: &mut Track, limit: usize) -> Result<usize, Error> {
+        let out = self.out.as_mut().ok_or(Error::Stopped)?;
+        if out.output.lanes() > 1 {
+            return self.write_lanes(track, limit);
+        }
+        let channels = usize::from(out.info.format.channels);
+        let frames = out
+            .output
+            .write(&track.out_buf[track.out_at..limit], Some(WRITE_WAIT))?;
+        track.out_at += frames * channels;
+        Ok(frames)
     }
 
     /// `track` failed mid-way (`error`, one that costs only the track):
@@ -123,13 +142,8 @@ impl Engine {
                 .map_or(track.out_buf.len(), |l| l.min(track.out_buf.len()));
             let mut frames = 0;
             if track.out_at < limit {
-                let out = self.out.as_mut().ok_or(Error::Stopped)?;
-                let channels = usize::from(out.info.format.channels);
-                frames = out
-                    .output
-                    .write(&track.out_buf[track.out_at..limit], Some(WRITE_WAIT))?;
+                frames = self.write_track(track, limit)?;
                 self.stalled = (frames == 0).then(Instant::now);
-                track.out_at += frames * channels;
                 Self::restore_faded(track, false);
             }
             // The output is full: the window's stretch ahead is decoded (a
@@ -246,7 +260,7 @@ impl Engine {
                         None => StemRun::start(
                             track.info.path.clone(),
                             track.seg_frame,
-                            separator,
+                            Some(separator),
                             self.stem_store.clone(),
                         ),
                     }
@@ -288,7 +302,7 @@ impl Engine {
         let read_all = run.read_all();
         if let Some(warp) = track.warp.as_mut() {
             match pull {
-                Pull::Mixed => warp.read(&mut track.wide_buf),
+                Pull::Frames => warp.read(&mut track.wide_buf),
                 // What the reader holds comes out before the end.
                 Pull::End => {
                     warp.end();
@@ -312,7 +326,7 @@ impl Engine {
             }
         }
         match pull {
-            Pull::Mixed => {
+            Pull::Frames => {
                 match track.resampler.as_mut() {
                     Some(resampler) => resampler.process_float(&track.wide_buf, &mut track.out_buf),
                     None => {
@@ -328,13 +342,15 @@ impl Engine {
             Pull::Waiting => {}
             Pull::End => track.stems_done = true,
             Pull::Failed(why) => track.stems_error = Some(why),
+            Pull::Missing => track.stems_error = Some("no separator for the stems".into()),
         }
         // The next track's stems start once this file is read.
         let next = self.queue.get(track.index + 1);
         let stale = self.prestart.as_ref().is_none_or(|p| Some(&p.path) != next);
         if read_all && stale {
             let store = self.stem_store.clone();
-            self.prestart = next.map(|path| StemRun::start(path.clone(), 0, separator, store));
+            self.prestart =
+                next.map(|path| StemRun::start(path.clone(), 0, Some(separator), store));
         }
         Ok(Progress::Busy)
     }

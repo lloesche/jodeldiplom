@@ -15,7 +15,11 @@
 //!   say, in the player's order); this crate only knows them by number. They
 //!   are never passed through: they are always mixed.
 //! - **control**: one word a frame, a [`Parts`]: whether the parts are valid
-//!   on that frame.
+//!   on that frame. A writer ends them with [`Parts::Ending`] for
+//!   [`ending_frames`] before [`Parts::None`], with one exception: on the
+//!   first frame of a new track run into gaplessly (main itself cuts to
+//!   another signal there) the word may go from [`Parts::Present`] straight
+//!   to [`Parts::None`], and a mixer snaps to main on that cut.
 //!
 //! The ring holds lane streams in [`LANE_SAMPLE`] whatever the device's
 //! format: every format's values fit in it unchanged, so main reaches the

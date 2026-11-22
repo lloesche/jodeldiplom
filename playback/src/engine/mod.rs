@@ -47,7 +47,8 @@
 //! cues and fades), `produce` (making a track's output and writing it),
 //! `switch` (moving a track to a new route), `play` (opening, starting,
 //! seeking, stopping and running into the next track), `jump`, `queue`,
-//! `transition` and `warping`.
+//! `transition`, `warping`, and `lanes` (the stems as
+//! parts of an output of lanes).
 
 use std::collections::VecDeque;
 use std::path::PathBuf;
@@ -66,6 +67,7 @@ use crate::target::OutputTarget;
 
 mod api;
 mod jump;
+mod lanes;
 mod play;
 mod produce;
 mod queue;
@@ -76,6 +78,7 @@ mod warping;
 
 pub use api::{Command, Event, PlayState, Player, PlayerOptions, Position, TrackStart};
 pub use jump::JumpAt;
+pub use lanes::MakeStems;
 
 use track::{
     drop_later, preroll, Cue, CueEvent, Heard, OpenOutput, Progress, StartAt, Switch, Track,
@@ -181,6 +184,10 @@ struct Engine {
     lead: u64,
     /// [`Command::HoldAtEnd`].
     hold: bool,
+    /// The playing track's stems as parts of the output.
+    lanes: lanes::StemLanes,
+    /// Where the tracks' segments get their ids.
+    segments: track::Segments,
 }
 
 /// A change of the stems heard at a time of a track: before it the track
@@ -237,6 +244,12 @@ impl Engine {
             lead_in: 0.0,
             lead: 0,
             hold: false,
+            lanes: lanes::StemLanes::new(
+                options.separator,
+                options.stem_store.clone(),
+                options.offline,
+            ),
+            segments: track::Segments::default(),
         }
     }
 
@@ -410,6 +423,7 @@ impl Engine {
                     self.shadow = None;
                 }
             }
+            Command::MakeStems(make) => self.lanes.set_make(make),
         }
     }
 

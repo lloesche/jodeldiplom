@@ -21,7 +21,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use super::api::{Event, TrackStart};
-use super::track::{rescale, Cue, CueEvent, Heard, HeardWarp, Progress, Track};
+use super::track::{rescale, Cue, CueEvent, Heard, HeardWarp, Progress, SegStart, Track};
 use super::warping::Warping;
 use super::{Engine, SWITCH_TURN};
 use crate::error::Error;
@@ -441,8 +441,7 @@ impl Engine {
         let frame = (seconds * f64::from(b.info.rate)).round().max(0.0) as u64;
         // Output frames counted from the new start, so cues land as before.
         b.emitted = b.emitted.saturating_sub(from.saturating_sub(b.seg_out));
-        b.seg_out = from;
-        b.seg_frame = frame;
+        b.begin_segment(from, frame, SegStart::Continued);
         let heard = Heard {
             index: b.index,
             info: b.info.clone(),
@@ -576,11 +575,17 @@ impl Engine {
             .ok_or("the output cannot take the next track's stems")?;
         let b_origin = (map.at(a0) - B_MARGIN).max(0.0);
         let frame = (b_origin * f64::from(info.rate)).floor() as u64;
-        let mut b =
-            Track::new(plan.into, info.clone(), route, source).map_err(|e| e.to_string())?;
+        let mut b = Track::new(
+            plan.into,
+            info.clone(),
+            route,
+            source,
+            self.segments.clone(),
+        )
+        .map_err(|e| e.to_string())?;
         b.start_at(frame).map_err(|e| e.to_string())?;
         b.pending = true;
-        b.seg_out = 0;
+        b.begin_segment(0, b.seg_frame, SegStart::Cold);
         b.gains = Some(Transition::gains_b(&plan, &map, glide, on));
         b.separator = separator;
         b.warp = Some(Box::new(Warping::new(
@@ -845,7 +850,7 @@ impl Engine {
             t.b_next += skip;
         }
         b.pending = false;
-        b.seg_out = origin;
+        b.begin_segment(origin, b.seg_frame, SegStart::Continued);
         let warp = HeardWarp {
             map: Arc::clone(&t.map),
             origin,

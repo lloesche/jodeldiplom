@@ -6,13 +6,15 @@
 use std::collections::VecDeque;
 use std::time::Duration;
 
+use jodel_output::lanes::ending_frames;
+
 use crate::error::Error;
 use crate::rate::{Route, Stage};
 
 use super::api::Event;
 use super::track::{
     crossfade, drop_later, fade, frames_of, gcd, grid, preroll, rescale, Cue, CueEvent, Progress,
-    Splice, Switch, Track,
+    SegStart, Splice, Switch, Track,
 };
 use super::{Engine, SWITCH_PREFILL, SWITCH_TURN, WRITE_WAIT};
 
@@ -104,7 +106,7 @@ impl Engine {
         match open {
             Some((format, end)) if !switched && track.route.fits(&format) => {
                 // Nothing was written after the end the track waits at.
-                track.seg_out = end;
+                track.begin_segment(end, track.seg_frame, SegStart::Cold);
                 let cue = self.started(&track);
                 self.cues.push_back(cue);
                 self.next = None;
@@ -334,7 +336,15 @@ impl Engine {
             let j = frame.saturating_sub(start) / a_new * b_new;
             (frame, old.seg_out + n * step_out, j)
         };
-        let guard = if switch.fits { 0 } else { fade_old };
+        // At another format the old route fades out before it; on an
+        // output of lanes its stem parts end before that, a mixer's
+        // switch's length more.
+        let lanes = out.output.lanes() > 1;
+        let guard = match (switch.fits, lanes) {
+            (true, _) => 0,
+            (false, false) => fade_old,
+            (false, true) => fade_old + ending_frames(old.route.output_rate),
+        };
         let (frame, at, j) = meet(written + guard);
         if old.info.frames.is_some_and(|total| frame >= total) {
             return Ok(Splice::Cancel);
@@ -387,6 +397,8 @@ impl Engine {
         if !switch.fits {
             let from = keep - fade_old as usize * old_channels;
             fade(&mut old.out_buf[from..], old_channels, false);
+            // No parts over the fade.
+            old.parts_cut = Some(at - fade_old);
         }
         let index = old.index;
         self.cues.retain(|c| {
@@ -403,11 +415,12 @@ impl Engine {
         if switch.fits {
             crossfade(&tail, &mut new.out_buf[..tail.len()], channels);
         } else {
-            let rise = fade_new.min(ahead) as usize * channels;
-            fade(&mut new.out_buf[..rise], channels, true);
+            let rise = fade_new.min(ahead) as usize;
+            fade(&mut new.out_buf[..rise * channels], channels, true);
+            // No parts over the rise either.
+            new.parts_rise = rise as u64;
         }
         new.emitted -= j;
-        new.seg_frame = frame;
         new.pending = false;
         new.clip_base = new.clipped();
         new.clips = None;
@@ -424,12 +437,17 @@ impl Engine {
         }
         new.held = held;
         if switch.fits {
-            new.seg_out = at;
+            // The same segment, met on its line: the stem parts go on, or
+            // (at another gain) start again crossfaded as main is.
+            let joined = SegStart::Joined {
+                fade: cross as usize,
+            };
+            new.continue_segment(old.segment, at, frame, joined);
             let cue = self.started(new);
             self.cues.push_back(cue);
             self.release(new);
         } else {
-            new.seg_out = 0;
+            new.begin_segment(0, frame, SegStart::Cold);
             new.fallback = Some(old.route.clone());
         }
         switch.spliced = true;
@@ -491,7 +509,7 @@ impl Engine {
                     .as_ref()
                     .is_some_and(|o| track.route.fits(&o.info.format));
                 if fits {
-                    track.seg_out = end;
+                    track.begin_segment(end, track.seg_frame, SegStart::Cold);
                     let cue = self.started(&track);
                     self.cues.push_back(cue);
                     self.playing = Some(track);

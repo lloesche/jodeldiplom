@@ -4,6 +4,7 @@
 //! small helpers on frames and fades they share.
 
 use std::collections::VecDeque;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -20,6 +21,39 @@ use crate::warp::TimeMap;
 use super::api::TrackStart;
 use super::warping::Warping;
 use super::{PREROLL_RESAMPLE, PREROLL_STEMS};
+
+/// How a track's segment begins on the output (what its stem parts start
+/// like, [`super::lanes`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum SegStart {
+    /// From silence at its frame: a new track, a seek (main's resampler
+    /// starts there too).
+    Cold,
+    /// Out of what played before, main crossfaded from it over `fade`
+    /// frames: a jump, a route met at the same format.
+    Joined { fade: usize },
+    /// Out of what played before with no seam: a transition's timeline
+    /// made straight, its next track taking over.
+    Continued,
+}
+
+/// A segment of a track's output: output frame `seg_out` is track frame
+/// `seg_frame` (in [`Track`]), its id, and how it began.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) struct Segment {
+    pub(super) id: u64,
+    pub(super) begun: SegStart,
+}
+
+/// An engine's count of the segments its tracks began, for their ids.
+#[derive(Clone, Debug, Default)]
+pub(super) struct Segments(Arc<AtomicU64>);
+
+impl Segments {
+    fn next(&self) -> u64 {
+        self.0.fetch_add(1, Ordering::Relaxed)
+    }
+}
 
 /// Where in a track playback starts.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -115,7 +149,7 @@ pub(super) fn drop_later<T: Send + 'static>(value: T) {
 
 /// The weight of the new side `i` frames into a fade of `frames`: a raised
 /// cosine from 0 to 1 (the two sides sum to one).
-fn fade_weight(i: usize, frames: usize) -> f64 {
+pub(super) fn fade_weight(i: usize, frames: usize) -> f64 {
     0.5 - 0.5 * (std::f64::consts::PI * (i as f64 + 0.5) / frames as f64).cos()
 }
 
@@ -228,15 +262,24 @@ pub(super) struct Track {
     /// Output samples not yet written, from `out_at`.
     pub(super) out_buf: Vec<i32>,
     pub(super) out_at: usize,
-    /// The output frame of this segment's first frame.
+    /// The output frame of this segment's first frame, and the track frame
+    /// it is: set by [`Track::begin_segment`] and
+    /// [`Track::continue_segment`] only.
     pub(super) seg_out: u64,
-    /// The track frame where the segment starts.
     pub(super) seg_frame: u64,
     /// Output frames still to drop before the segment starts (on a stems
     /// route, output frames after a jump's preroll).
     pub(super) discard: u64,
     /// Output frames made in this segment (after the discard).
     pub(super) emitted: u64,
+    /// The segment's id and how it began, and where ids come from.
+    pub(super) segment: Segment,
+    segments: Segments,
+    /// On an output of lanes: the output frame from which the track has no
+    /// stem parts (its route fades out there for another format), and the
+    /// frames after `seg_out` before it may have any (its route fades in).
+    pub(super) parts_cut: Option<u64>,
+    pub(super) parts_rise: u64,
     /// The clip count last queued, and the output frame it was queued at.
     pub(super) clips: Option<(u64, u64)>,
     /// The error that ended the track early, reported once what was
@@ -312,6 +355,7 @@ impl Track {
         info: Arc<TrackInfo>,
         route: Route,
         mut source: Source,
+        segments: Segments,
     ) -> Result<Track, Error> {
         let resampler = route.resample.map(|r| {
             let mut resampler = Resampler::new(r.from, r.to, usize::from(route.channels));
@@ -340,6 +384,13 @@ impl Track {
             seg_frame: 0,
             discard: 0,
             emitted: 0,
+            segment: Segment {
+                id: segments.next(),
+                begun: SegStart::Cold,
+            },
+            segments,
+            parts_cut: None,
+            parts_rise: 0,
             clips: None,
             failure: None,
             stems: None,
@@ -373,6 +424,52 @@ impl Track {
             + self.mix_clips
     }
 
+    /// The track's output starts a new segment: output frame `seg_out` is
+    /// track frame `seg_frame`, begun as `begun`.
+    pub(super) fn begin_segment(&mut self, seg_out: u64, seg_frame: u64, begun: SegStart) {
+        let id = self.segments.next();
+        self.set_segment(seg_out, seg_frame, Segment { id, begun });
+    }
+
+    /// The track's output goes on in `old`'s segment (another route met on
+    /// its line) from output frame `seg_out`, track frame `seg_frame`.
+    pub(super) fn continue_segment(
+        &mut self,
+        old: Segment,
+        seg_out: u64,
+        seg_frame: u64,
+        begun: SegStart,
+    ) {
+        self.set_segment(seg_out, seg_frame, Segment { id: old.id, begun });
+    }
+
+    fn set_segment(&mut self, seg_out: u64, seg_frame: u64, segment: Segment) {
+        self.seg_out = seg_out;
+        self.seg_frame = seg_frame;
+        self.segment = segment;
+    }
+
+    /// Whether the track plays its plain route as the settings make it:
+    /// the file (resampled perhaps), not a stems route, nor read along a
+    /// transition's map or faded by it, nor decoded ahead for a switch.
+    pub(super) fn plain(&self) -> bool {
+        self.route.stage != Stage::Stems
+            && self.warp.is_none()
+            && self.gains.is_none()
+            && !self.pending
+    }
+
+    /// Whether everything of the track (or of what it was told to play) is
+    /// made: its output ends at `seg_out + emitted`.
+    pub(super) fn made_all(&self) -> bool {
+        let done = if self.route.stage == Stage::Stems {
+            self.stems_done
+        } else {
+            self.source_done
+        };
+        done && self.resampler.as_ref().is_none_or(Resampler::is_finished)
+    }
+
     /// Restarts the track at `frame`: the source moves there and the
     /// segment starts again.
     pub(super) fn restart_at(&mut self, frame: u64) -> Result<(), Error> {
@@ -396,7 +493,7 @@ impl Track {
         }
         self.out_buf.clear();
         self.out_at = 0;
-        self.seg_frame = frame;
+        self.begin_segment(self.seg_out, frame, SegStart::Cold);
         self.discard = 0;
         self.emitted = 0;
         self.clips = None;

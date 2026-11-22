@@ -113,6 +113,7 @@ pub struct MemoryTarget {
     caps: Capabilities,
     clock: SimClock,
     captures: Arc<Mutex<Vec<Capture>>>,
+    lanes: u16,
 }
 
 impl MemoryTarget {
@@ -122,6 +123,18 @@ impl MemoryTarget {
             caps,
             clock,
             captures: Arc::default(),
+            lanes: 1,
+        }
+    }
+
+    /// A memory target that also takes lane streams of up to `lanes` lanes
+    /// ([`jodel_output::lanes`]) and keeps them as written
+    /// ([`FileOutput::open_lanes`]): a capture's bytes are then the ring's,
+    /// [`jodel_output::lanes::LANE_SAMPLE`] at the lane width a frame.
+    pub fn with_lanes(caps: Capabilities, clock: SimClock, lanes: u16) -> MemoryTarget {
+        MemoryTarget {
+            lanes: lanes.max(1),
+            ..MemoryTarget::new(caps, clock)
         }
     }
 
@@ -152,9 +165,14 @@ impl OutputTarget for MemoryTarget {
         Ok(self.caps.clone())
     }
 
+    fn lanes(&mut self) -> u16 {
+        self.lanes
+    }
+
     fn open(&mut self, request: &OpenRequest) -> Result<Box<dyn Output>, Error> {
         let sink = MemorySink::default();
-        let output = FileOutput::open(sink.clone(), &self.caps, request, self.clock)?;
+        request.check_lanes(self.lanes)?;
+        let output = FileOutput::open_lanes(sink.clone(), &self.caps, request, self.clock)?;
         self.captures
             .lock()
             .unwrap_or_else(|e| e.into_inner())

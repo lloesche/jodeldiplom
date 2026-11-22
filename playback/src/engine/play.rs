@@ -13,7 +13,7 @@ use crate::rate::{choose_route_near, FileFacts, Route};
 use crate::source::Source;
 
 use super::api::{Event, PlayState, TrackStart};
-use super::track::{Cue, CueEvent, Heard, HeardWarp, OpenOutput, StartAt, Track};
+use super::track::{Cue, CueEvent, Heard, HeardWarp, OpenOutput, SegStart, StartAt, Track};
 use super::{Engine, OPEN_BUSY_STEP, OPEN_BUSY_WAIT};
 
 impl Engine {
@@ -75,7 +75,7 @@ impl Engine {
                 )?
             }
         };
-        Track::new(index, info, route, source)
+        Track::new(index, info, route, source, self.segments.clone())
     }
 
     /// Opens an output, trying again while the device is busy, for up to
@@ -94,12 +94,20 @@ impl Engine {
 
     fn open_output(&mut self, route: &Route) -> Result<(), Error> {
         self.close_output();
-        let mut output = self.open_target(&route.open_request())?;
+        let mut request = route.open_request();
+        // Main and the four stems, where the target takes them and there
+        // are stems to make.
+        let lanes = 1 + crate::stems::STEMS as u16;
+        if self.lanes.possible() && self.target.lanes() >= lanes {
+            request = request.lanes(lanes);
+        }
+        let mut output = self.open_target(&request)?;
         if self.paused {
             output.pause()?;
         }
         let info = output.info().clone();
         let clock = output.clock();
+        self.lanes.open(info.format);
         self.out = Some(OpenOutput {
             output,
             info,
@@ -112,6 +120,7 @@ impl Engine {
         if let Some(mut out) = self.out.take() {
             let _ = out.output.close();
         }
+        self.lanes.flushed(0);
     }
 
     pub(super) fn started(&self, track: &Track) -> Cue {
@@ -164,6 +173,7 @@ impl Engine {
         if fits {
             let out = self.out.as_mut().expect("checked");
             out.output.flush()?;
+            self.lanes.flushed(out.output.written());
         } else {
             self.open_output(&track.route)?;
         }
@@ -173,7 +183,7 @@ impl Engine {
         // starts to be as it begins.
         let rate = f64::from(out.info.format.rate);
         self.lead = (std::mem::take(&mut self.lead_in) * rate).round() as u64;
-        track.seg_out = written + self.lead;
+        track.begin_segment(written + self.lead, track.seg_frame, SegStart::Cold);
         let mut cue = self.started(&track);
         cue.at = written;
         self.cues.push_back(cue);
@@ -321,7 +331,8 @@ impl Engine {
             let written = out.output.written();
             let track = self.playing.as_mut().expect("checked");
             track.restart_at(frame)?;
-            track.seg_out = written;
+            track.begin_segment(written, track.seg_frame, SegStart::Cold);
+            self.lanes.flushed(written);
             Ok::<_, Error>((written, track.seg_frame))
         })();
         match result {
@@ -354,6 +365,7 @@ impl Engine {
         let was_active = self.out.is_some() || self.playing.is_some();
         self.prestart = None;
         self.shadow = None;
+        self.lanes.stop();
         self.clear_timeline();
         self.close_output();
         self.paused = false;
@@ -462,7 +474,7 @@ impl Engine {
                         .as_ref()
                         .is_some_and(|o| track.route.fits(&o.info.format));
                     if fits {
-                        track.seg_out = end;
+                        track.begin_segment(end, track.seg_frame, SegStart::Cold);
                         let cue = self.started(&track);
                         self.cues.push_back(cue);
                         self.playing = Some(track);

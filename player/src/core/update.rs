@@ -2315,6 +2315,11 @@ fn engine_event(state: &mut State, event: Event) {
                 format!("The stems stopped ({reason}); playing the whole mix"),
             );
         }
+        Event::PartsStopped { reason, .. } => say(
+            state,
+            Level::Error,
+            format!("The stems stopped ({reason}); playing the whole mix"),
+        ),
         Event::QueueEnded => say(state, Level::Info, "End of the queue"),
         Event::Held { index } => karaoke::held(state, index),
     }

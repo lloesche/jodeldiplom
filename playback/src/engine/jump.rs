@@ -33,7 +33,7 @@
 
 use std::time::{Duration, Instant};
 
-use super::track::{crossfade, frames_of, grid, rescale, Cue, CueEvent, Progress, Track};
+use super::track::{crossfade, frames_of, grid, rescale, Cue, CueEvent, Progress, SegStart, Track};
 use super::{Engine, PREROLL_RESAMPLE, WRITE_WAIT};
 use crate::error::Error;
 use crate::rate::Stage;
@@ -441,8 +441,7 @@ impl Engine {
         track.out_at = target * ch;
         // The segment starts at the target now (as a seek's would): the
         // buffer and the decoder go on as they are.
-        track.seg_frame = to;
-        track.seg_out = seg_out;
+        track.begin_segment(seg_out, to, SegStart::Joined { fade: n });
         track.emitted = (frames - anchor) as u64;
         jumped(&mut self.cues, track, written);
         self.after_jump();
@@ -546,8 +545,7 @@ impl Engine {
         track.discard = dropped;
         track.stems_done = false;
         // The segment starts at the target (as a seek's would).
-        track.seg_frame = to;
-        track.seg_out = seg_out;
+        track.begin_segment(seg_out, to, SegStart::Joined { fade });
         track.emitted = extra;
         // The target's first frames, from what is kept (no waiting).
         while track.unwritten() < fade.max(1)
@@ -809,8 +807,8 @@ impl Engine {
         let n = next.len().min(track.out_buf.len());
         crossfade(&next[..n], &mut track.out_buf[..n], ch);
         track.out_at = 0;
-        track.seg_frame = fill.to;
-        track.seg_out = written - late as u64;
+        let joined = SegStart::Joined { fade: n / ch };
+        track.begin_segment(written - late as u64, fill.to, joined);
         track.emitted = (late + track.out_buf.len() / ch) as u64;
         track.pending = false;
         track.held.clear();
@@ -874,7 +872,7 @@ impl Engine {
         let mut run = StemRun::start(
             track.info.path.clone(),
             frame,
-            separator,
+            Some(separator),
             self.stem_store.clone(),
         );
         run.set_keep(back, ahead);

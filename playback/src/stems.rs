@@ -26,6 +26,10 @@ use crate::resample::Resampler;
 use crate::source::{Source, SCALE_24 as FULL_SCALE};
 use crate::stem_file::{StemFile, StemStore};
 
+/// The stems in the order a player hands them on as parts of its output
+/// (lanes 1 to 4, after main): [`StemMix::ORDER`].
+pub const LANES: [Stem; STEMS] = StemMix::ORDER;
+
 /// Where a stem run gets its separator: called in the run's thread, so
 /// setting a GPU up never holds up playback. `None`: there is none.
 pub type SeparatorSource = fn() -> Option<&'static dyn Separator>;
@@ -224,18 +228,22 @@ enum Message {
     Stems(Separated),
     End,
     Failed(String),
+    /// The stems are not kept, and the run has no separator.
+    Missing,
 }
 
-/// What [`StemRun::mix`] gave.
+/// What [`StemRun::mix`] or [`StemRun::take`] gave.
 pub(crate) enum Pull {
-    /// Frames of the mix were added.
-    Mixed,
+    /// Frames were added.
+    Frames,
     /// Nothing is separated yet.
     Waiting,
     /// The track's stems have all been taken.
     End,
     /// The separation failed.
     Failed(String),
+    /// The track's stems are not kept, and the run separates none.
+    Missing,
 }
 
 /// One track separated from a frame on, in a thread of its own. Dropping it
@@ -263,6 +271,8 @@ pub(crate) struct StemRun {
     /// Every stem has come from the thread (or it failed: `failed`).
     received: bool,
     failed: Option<String>,
+    /// The stems are not kept and none are separated.
+    missing: bool,
     /// Frames kept behind `mixed`, and taken from the thread ahead of it.
     keep: (u64, u64),
     /// Each stem's gain now, in the order of [`Stem::ALL`]; `None` before
@@ -425,11 +435,13 @@ const RAMP: f64 = RATE as f64 / 100.0;
 
 impl StemRun {
     /// Starts the stems of `path` from track frame `start`: read from
-    /// `store` where it keeps them, else separated.
+    /// `store` where it keeps them, else separated by `separator` (none:
+    /// the run has no stems, [`Pull::Missing`]). The store is asked in the
+    /// run's thread.
     pub(crate) fn start(
         path: PathBuf,
         start: u64,
-        separator: SeparatorSource,
+        separator: Option<SeparatorSource>,
         store: Option<Arc<dyn StemStore>>,
     ) -> StemRun {
         let (tx, rx) = mpsc::sync_channel(AHEAD);
@@ -439,9 +451,15 @@ impl StemRun {
             let (path, read, cancel) = (path.clone(), read.clone(), cancel.clone());
             move || {
                 let kept = store.as_ref().and_then(|s| s.open(&path));
-                let done = match kept {
-                    Some(file) => read_kept(file, start, &tx, &read, &cancel),
-                    None => separate(&path, start, separator, &tx, &read, &cancel),
+                let done = match (kept, separator) {
+                    (Some(file), _) => read_kept(file, start, &tx, &read, &cancel),
+                    (None, Some(separator)) => {
+                        separate(&path, start, separator, &tx, &read, &cancel)
+                    }
+                    (None, None) => {
+                        let _ = tx.send(Message::Missing);
+                        return;
+                    }
                 };
                 let message = match done {
                     Ok(()) => Message::End,
@@ -471,6 +489,7 @@ impl StemRun {
             kept_from: 0,
             received: false,
             failed: None,
+            missing: false,
             keep: (0, 0),
             gains: None,
             mixed: 0,
@@ -522,6 +541,11 @@ impl StemRun {
     /// Whether the separation failed (what it kept still plays).
     pub(crate) fn failed(&self) -> bool {
         self.failed.is_some()
+    }
+
+    /// Whether the track's stems turned out not kept, with none separated.
+    pub(crate) fn missing(&self) -> bool {
+        self.missing
     }
 
     /// Whether frames `from..to` are kept.
@@ -595,6 +619,10 @@ impl StemRun {
                     self.received = true;
                     self.failed = Some(e);
                 }
+                Message::Missing => {
+                    self.received = true;
+                    self.missing = true;
+                }
             }
         }
     }
@@ -635,25 +663,11 @@ impl StemRun {
     ) -> Pull {
         // The limiter looks LOOKAHEAD frames past what is mixed: while more
         // stems are to come, those stay unmixed until they have.
-        self.fetch(self.mixed + LOOKAHEAD as u64, wait);
-        let end = self.kept_end();
-        if self.mixed >= end {
-            return match (&self.failed, self.received) {
-                (Some(e), _) => Pull::Failed(e.clone()),
-                (None, true) => Pull::End,
-                (None, false) => Pull::Waiting,
-            };
-        }
-        let mixable = if self.received {
-            end
-        } else {
-            end.saturating_sub(LOOKAHEAD as u64)
+        let (first, n) = match self.span(frames, LOOKAHEAD as u64, wait) {
+            Ok(span) => span,
+            Err(pull) => return pull,
         };
-        if self.mixed >= mixable {
-            return Pull::Waiting;
-        }
-        let first = (self.mixed - self.kept_from) as usize;
-        let n = frames.min((mixable - self.mixed) as usize);
+        let end = self.kept_end();
         let (before, after) = (mix.gains(), change.map(|(_, m)| m.gains()));
         let target_at = |frame: u64| match (gains, change, after) {
             (Some((g, origin)), _, _) => g(origin + frame as f64 / f64::from(RATE)),
@@ -711,7 +725,60 @@ impl StemRun {
         self.limiter.apply(&mut out[begin..], &ahead);
         self.mixed += n as u64;
         self.trim();
-        Pull::Mixed
+        Pull::Frames
+    }
+}
+
+impl StemRun {
+    /// The stretch handed on next, up to `frames`: its first frame's index
+    /// in what is kept and its length, waiting up to `wait` for the next
+    /// stems when none are left; or what to say instead (none yet, the end,
+    /// the failure). While more stems are to come, the `hold` frames after
+    /// what is kept stay unmixed until they have (what a look ahead needs).
+    fn span(&mut self, frames: usize, hold: u64, wait: Duration) -> Result<(usize, usize), Pull> {
+        self.fetch(self.mixed + hold, wait);
+        let end = self.kept_end();
+        if self.mixed >= end {
+            return Err(match (&self.failed, self.received) {
+                (Some(e), _) => Pull::Failed(e.clone()),
+                (None, true) if self.missing => Pull::Missing,
+                (None, true) => Pull::End,
+                (None, false) => Pull::Waiting,
+            });
+        }
+        let mixable = if self.received {
+            end
+        } else {
+            end.saturating_sub(hold)
+        };
+        if self.mixed >= mixable {
+            return Err(Pull::Waiting);
+        }
+        let first = (self.mixed - self.kept_from) as usize;
+        Ok((first, frames.min((mixable - self.mixed) as usize)))
+    }
+
+    /// Appends up to `frames` frames of the four stems as they are, not
+    /// mixed: each frame the stems in [`LANES`] order, each left then right
+    /// (eight samples, in 24-bit units), waiting up to `wait` for the next
+    /// stems when none are left. Nothing limits them: they add up to the
+    /// track.
+    pub(crate) fn take(&mut self, frames: usize, out: &mut Vec<f64>, wait: Duration) -> Pull {
+        let (first, n) = match self.span(frames, 0, wait) {
+            Ok(span) => span,
+            Err(pull) => return pull,
+        };
+        let slots = LANES.map(StemMix::slot);
+        out.reserve(2 * STEMS * n);
+        for i in first..first + n {
+            for &s in &slots {
+                let [l, r] = &self.kept[s];
+                out.extend([f64::from(l[i]) * FULL_SCALE, f64::from(r[i]) * FULL_SCALE]);
+            }
+        }
+        self.mixed += n as u64;
+        self.trim();
+        Pull::Frames
     }
 }
 

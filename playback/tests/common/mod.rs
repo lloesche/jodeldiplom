@@ -4,12 +4,15 @@
 
 #![allow(dead_code)]
 
+pub mod lanes;
+
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::Receiver;
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
-use jodel_output::mixer::{InputTarget, Mixer, MixerOptions, Role};
+use jodel_output::lanes::lane_width;
+use jodel_output::mixer::{Fader, InputTarget, Mixer, MixerOptions, Role, Strip};
 use jodel_output::{
     Capabilities, Clock, Error as OutputError, OpenRequest, Output, SampleFormat, SimClock, Stats,
     StreamFormat, StreamInfo,
@@ -247,6 +250,61 @@ pub fn mixer_lead(caps: Capabilities) -> (InputTarget, Captures, Mixer) {
     (lead, captures, mixer)
 }
 
+/// A [`GatedTarget`] on a lane input of a mixer on a [`MemoryTarget`]:
+/// main on the Player strip, the four stems on strips inside it (in lane
+/// order), the device's streams, the mixer and the part strips and faders.
+pub fn gated_mixer_lanes(caps: Capabilities) -> (GatedTarget, Captures, Arc<Gate>, MixerLanes) {
+    let device = MemoryTarget::new(caps, SimClock::Instant);
+    let captures = device.captures();
+    let mixer = Mixer::open(Box::new(device), MixerOptions::default());
+    let player = mixer.strip("Player");
+    let parts: Vec<Strip> = ["Drums", "Bass", "Vocals", "Other"]
+        .into_iter()
+        .map(|name| mixer.strip_in(&player, name))
+        .collect();
+    let refs: Vec<&Strip> = parts.iter().collect();
+    let (input, _fader, faders) = mixer.input_lanes(&player, &refs, Role::Lead, 1.0);
+    let (target, gate) = GatedTarget::around(Box::new(input));
+    (
+        target,
+        captures,
+        gate,
+        MixerLanes {
+            parts,
+            faders,
+            mixer,
+        },
+    )
+}
+
+/// What [`gated_mixer_lanes`] keeps: the part strips and faders, and the
+/// mixer (dropped after the player).
+pub struct MixerLanes {
+    pub parts: Vec<Strip>,
+    pub faders: Vec<Fader>,
+    pub mixer: Mixer,
+}
+
+/// The lanes of a lane stream's bytes ([`jodel_output::lanes::LANE_SAMPLE`],
+/// `channels` a lane, `lanes` lanes and the control word a frame): each
+/// lane's samples (interleaved, 24-bit), then the control words.
+pub fn lanes_of(bytes: &[u8], channels: usize, lanes: usize) -> (Vec<Vec<i32>>, Vec<i32>) {
+    let width = channels * lanes + 1;
+    let words: Vec<i32> = bytes
+        .chunks_exact(4)
+        .map(|b| i32::from_le_bytes([b[0], b[1], b[2], b[3]]) >> 8)
+        .collect();
+    let mut out = vec![Vec::new(); lanes];
+    let mut control = Vec::new();
+    for frame in words.chunks_exact(width) {
+        for (l, lane) in out.iter_mut().enumerate() {
+            lane.extend_from_slice(&frame[l * channels..(l + 1) * channels]);
+        }
+        control.push(frame[width - 1]);
+    }
+    (out, control)
+}
+
 /// The frames a memory target's streams have taken, together.
 pub fn captured_frames(captures: &Captures) -> u64 {
     captures
@@ -278,6 +336,10 @@ impl OutputTarget for GatedTarget {
         self.inner.capabilities()
     }
 
+    fn lanes(&mut self) -> u16 {
+        self.inner.lanes()
+    }
+
     fn open(&mut self, request: &OpenRequest) -> Result<Box<dyn Output>, OutputError> {
         Ok(Box::new(GatedOutput {
             inner: self.inner.open(request)?,
@@ -295,8 +357,11 @@ impl Output for GatedOutput {
     fn info(&self) -> &StreamInfo {
         self.inner.info()
     }
+    fn lanes(&self) -> u16 {
+        self.inner.lanes()
+    }
     fn write(&mut self, samples: &[i32], timeout: Option<Duration>) -> Result<usize, OutputError> {
-        let channels = usize::from(self.inner.format().channels);
+        let channels = lane_width(self.inner.format().channels, self.inner.lanes());
         let frames = (samples.len() / channels) as u64;
         let n = self.gate.take(frames, timeout) as usize;
         if n == 0 {
@@ -342,6 +407,201 @@ impl Output for GatedOutput {
         self.inner.clock()
     }
     fn close(&mut self) -> Result<(), OutputError> {
+        self.inner.close()
+    }
+}
+
+/// What a [`HoldingTarget`]'s outputs hold: up to `room` frames written
+/// and not yet played, played as far as the test lets them.
+#[derive(Default)]
+pub struct Hold {
+    state: Mutex<Held>,
+}
+
+#[derive(Default)]
+struct Held {
+    /// The samples held, a frame `width` of them.
+    samples: std::collections::VecDeque<i32>,
+    width: usize,
+    room: u64,
+    /// Frames let through to the device, and those it got.
+    let_through: u64,
+    played: u64,
+}
+
+impl Hold {
+    /// Lets `frames` more be played.
+    pub fn play(&self, frames: u64) {
+        let mut h = self.state.lock().unwrap();
+        h.let_through = h.let_through.saturating_add(frames);
+    }
+
+    /// Lets everything be played.
+    pub fn play_all(&self) {
+        self.play(u64::MAX);
+    }
+
+    /// The last sample of each frame held (a lane stream's control word).
+    pub fn held_words(&self) -> Vec<i32> {
+        let h = self.state.lock().unwrap();
+        let w = h.width.max(1);
+        let n = h.samples.len() / w;
+        (0..n).map(|f| h.samples[f * w + w - 1]).collect()
+    }
+}
+
+/// A target whose outputs hold what is written (up to a room's worth) until
+/// the test lets it be played ([`Hold::play`]): what they hold can be given
+/// back ([`Output::retract`]), all of it, and the test sees it.
+pub struct HoldingTarget {
+    inner: Box<dyn OutputTarget>,
+    pub hold: Arc<Hold>,
+    room: u64,
+}
+
+impl HoldingTarget {
+    /// `inner` held, `room` frames at most.
+    pub fn around(inner: Box<dyn OutputTarget>, room: u64) -> (HoldingTarget, Arc<Hold>) {
+        let hold = Arc::new(Hold::default());
+        let target = HoldingTarget {
+            inner,
+            hold: hold.clone(),
+            room,
+        };
+        (target, hold)
+    }
+}
+
+impl OutputTarget for HoldingTarget {
+    fn name(&self) -> String {
+        "held memory".into()
+    }
+
+    fn capabilities(&mut self) -> Result<Capabilities, OutputError> {
+        self.inner.capabilities()
+    }
+
+    fn lanes(&mut self) -> u16 {
+        self.inner.lanes()
+    }
+
+    fn open(&mut self, request: &OpenRequest) -> Result<Box<dyn Output>, OutputError> {
+        let inner = self.inner.open(request)?;
+        let width = lane_width(inner.format().channels, inner.lanes());
+        {
+            let mut h = self.hold.state.lock().unwrap();
+            // Less than the device's ring, so the writer never takes the
+            // output for full and keeps writing (which plays what is let).
+            let ring = inner.info().ring_frames;
+            *h = Held {
+                width,
+                room: self.room.min(ring.saturating_sub(1)),
+                let_through: h.let_through,
+                ..Held::default()
+            };
+        }
+        Ok(Box::new(HoldingOutput {
+            inner,
+            hold: self.hold.clone(),
+        }))
+    }
+}
+
+struct HoldingOutput {
+    inner: Box<dyn Output>,
+    hold: Arc<Hold>,
+}
+
+impl HoldingOutput {
+    /// Plays what the test lets through.
+    fn play(&mut self) -> Result<(), OutputError> {
+        let mut h = self.hold.state.lock().unwrap();
+        let w = h.width.max(1);
+        let n = (h.let_through - h.played.min(h.let_through)).min((h.samples.len() / w) as u64);
+        if n > 0 {
+            let out: Vec<i32> = h.samples.drain(..n as usize * w).collect();
+            h.played += n;
+            drop(h);
+            self.inner.write(&out, None)?;
+        }
+        Ok(())
+    }
+
+    fn held(&self) -> u64 {
+        let h = self.hold.state.lock().unwrap();
+        (h.samples.len() / h.width.max(1)) as u64
+    }
+}
+
+impl Output for HoldingOutput {
+    fn info(&self) -> &StreamInfo {
+        self.inner.info()
+    }
+    fn lanes(&self) -> u16 {
+        self.inner.lanes()
+    }
+    fn write(&mut self, samples: &[i32], _: Option<Duration>) -> Result<usize, OutputError> {
+        self.play()?;
+        let mut h = self.hold.state.lock().unwrap();
+        let w = h.width.max(1);
+        let held = (h.samples.len() / w) as u64;
+        let n = ((samples.len() / w) as u64).min(h.room.saturating_sub(held)) as usize;
+        h.samples.extend(&samples[..n * w]);
+        drop(h);
+        if n == 0 {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        Ok(n)
+    }
+    fn drain(&mut self, timeout: Option<Duration>) -> Result<bool, OutputError> {
+        self.play()?;
+        if self.held() > 0 {
+            std::thread::sleep(Duration::from_millis(1));
+            return Ok(false);
+        }
+        self.inner.drain(timeout)
+    }
+    fn position(&self) -> Result<u64, OutputError> {
+        self.inner.position()
+    }
+    fn written(&self) -> u64 {
+        self.inner.written() + self.held()
+    }
+    fn latency(&self) -> Duration {
+        self.inner.latency()
+    }
+    fn pause(&mut self) -> Result<(), OutputError> {
+        self.inner.pause()
+    }
+    fn resume(&mut self) -> Result<(), OutputError> {
+        self.inner.resume()
+    }
+    fn is_paused(&self) -> bool {
+        self.inner.is_paused()
+    }
+    fn flush(&mut self) -> Result<(), OutputError> {
+        let mut h = self.hold.state.lock().unwrap();
+        h.samples.clear();
+        drop(h);
+        self.inner.flush()
+    }
+    fn retract(&mut self, frames: u64) -> Result<u64, OutputError> {
+        self.play()?;
+        let mut h = self.hold.state.lock().unwrap();
+        let w = h.width.max(1);
+        let n = frames.min((h.samples.len() / w) as u64);
+        let keep = h.samples.len() - n as usize * w;
+        h.samples.truncate(keep);
+        Ok(n)
+    }
+    fn stats(&self) -> Stats {
+        self.inner.stats()
+    }
+    fn clock(&self) -> Clock {
+        self.inner.clock()
+    }
+    fn close(&mut self) -> Result<(), OutputError> {
+        self.play()?;
         self.inner.close()
     }
 }
