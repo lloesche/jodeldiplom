@@ -15,10 +15,10 @@
 mod common;
 
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use common::*;
-use jodel_output::mixer::{Curve, MicPort, MicView, Monitor, Ramp, Role, Start};
+use jodel_output::mixer::{Curve, MicPort, MicView, Monitor, Ramp, Role, Start, Timebase};
 use jodel_output::{Clock, Error, Output, OutputTarget, StreamFormat, StreamInfo, VoiceBlock};
 
 #[test]
@@ -47,7 +47,20 @@ fn an_inputs_position_is_what_the_device_has_played() {
     let period = u64::from(RATE / 100);
     let deadline = std::time::Instant::now() + Duration::from_secs(60);
     // The output's position read between two of the mixer's timebases (a
-    // thread put off between the reads cannot make them disagree).
+    // thread put off between the reads cannot make them disagree). The
+    // mixer tells each output what the device has played before it
+    // publishes the timebase of that turn, so the second is the next one
+    // published after the read: it is at least as new.
+    let next_timebase = |was: Timebase| {
+        let until = Instant::now() + Duration::from_millis(100);
+        loop {
+            let tb = mixer.timebase();
+            if tb != was || Instant::now() > until {
+                return tb;
+            }
+            std::thread::sleep(Duration::from_micros(200));
+        }
+    };
     let mut samples = Vec::new();
     while samples.len() < 100 || clock.position() < 3 * u64::from(RATE) / 2 {
         assert!(
@@ -57,7 +70,7 @@ fn an_inputs_position_is_what_the_device_has_played() {
         );
         let before = mixer.timebase();
         let position = clock.position();
-        let after = mixer.timebase();
+        let after = next_timebase(mixer.timebase());
         // What the mixer took but the device has not played is not heard.
         assert!(
             after.frame > position + period,

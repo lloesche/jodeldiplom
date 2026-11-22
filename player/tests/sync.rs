@@ -355,7 +355,10 @@ fn mid_song_the_delay_never_jumps_but_a_nudge_or_a_sync_does_at_once() {
 /// thread listens too: as soon as the clicks' clock ([`Singer::listen`])
 /// has played a click's frame, it puts its ta 150 ms after the moment that
 /// frame was played, on its own clock (from when it started), however late
-/// the clicks came.
+/// the clicks came. It sends 5 ms packets ([`PACKET`]) as a microphone of
+/// 20 ms periods ([`PERIOD`]): the bridge holds two periods, 40 ms, so a
+/// thread that wakes late now and then (a loaded runner) leaves it short
+/// of none, while a packet's samples are at most 5 ms old when sent.
 struct Singer {
     input: Input,
     /// The clicks' clock, once they play.
@@ -363,7 +366,8 @@ struct Singer {
     /// Each click as heard: when, on the singer's clock, the clock's
     /// position then, and the ta's start put for it.
     heard: Arc<Mutex<Vec<(f64, u64, f64)>>>,
-    /// The packets sent loud: the singer's time of each.
+    /// The loud stretches sent, packet by packet: the singer's times of the
+    /// first and the last loud sample of each.
     loud: Arc<Mutex<Vec<f64>>>,
     stop: Arc<AtomicBool>,
     thread: Option<std::thread::JoinHandle<()>>,
@@ -371,10 +375,14 @@ struct Singer {
 
 /// The ta's lag after its click.
 const TA: f64 = 0.15;
+/// The frames of a packet the singer sends (5 ms at 48 kHz).
+const PACKET: usize = 240;
+/// The capture period it says it has (20 ms).
+const PERIOD: u32 = 960;
 
 impl Singer {
     fn new() -> Singer {
-        let (input, mut feed) = Input::feed(48_000, 240);
+        let (input, mut feed) = Input::feed(48_000, PERIOD);
         input.set_echo_cancel(false);
         let clicks: Arc<Mutex<Option<Clock>>> = Arc::default();
         let heard: Arc<Mutex<Vec<(f64, u64, f64)>>> = Arc::default();
@@ -405,25 +413,28 @@ impl Singer {
                         }
                     }
                     let due = (now * 48_000.0) as usize;
-                    while sent + 240 <= due {
-                        let at = sent as f64 / 48_000.0;
-                        let loud = heard
-                            .lock()
-                            .unwrap()
-                            .iter()
-                            .any(|&(_, _, s)| at >= s && at < s + 0.12);
-                        if loud {
-                            sent_loud.lock().unwrap().push(at);
-                        }
-                        let packet: Vec<f32> = (0..240)
-                            .map(|_| {
+                    while sent + PACKET <= due {
+                        // Loud sample by sample: a ta starts where it is
+                        // put, not where a packet does.
+                        let tas: Vec<f64> = heard.lock().unwrap().iter().map(|h| h.2).collect();
+                        let mut loud_at = Vec::new();
+                        let packet: Vec<f32> = (sent..sent + PACKET)
+                            .map(|i| {
+                                let at = i as f64 / 48_000.0;
+                                let loud = tas.iter().any(|&s| at >= s && at < s + 0.12);
+                                if loud {
+                                    loud_at.push(at);
+                                }
                                 seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
                                 let n = f64::from(seed) / f64::from(u32::MAX) - 0.5;
                                 (n * if loud { 0.5 } else { 0.001 }) as f32
                             })
                             .collect();
+                        if let (Some(&a), Some(&b)) = (loud_at.first(), loud_at.last()) {
+                            sent_loud.lock().unwrap().extend([a, b]);
+                        }
                         feed.push(&packet);
-                        sent += 240;
+                        sent += PACKET;
                     }
                     feed.clean();
                     std::thread::sleep(Duration::from_millis(1));
@@ -455,7 +466,7 @@ impl Singer {
             .iter()
             .fold(Vec::new(), |mut runs: Vec<(f64, f64)>, &t| {
                 match runs.last_mut() {
-                    Some(r) if t - r.1 < 0.01 => r.1 = t,
+                    Some(r) if t - r.1 < 0.03 => r.1 = t,
                     _ => runs.push((t, t)),
                 }
                 runs

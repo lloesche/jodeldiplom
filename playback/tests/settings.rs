@@ -88,11 +88,16 @@ fn the_file_plays_at_its_own_rate() {
 /// one are the file's samples.
 #[test]
 fn a_route_switch_mid_track_keeps_the_position() {
-    let all = read_all(&fixture(F48));
+    // Three seconds: each switch is met after a while (frames are let
+    // through until it is, the more the busier the machine), and the
+    // thousand frames after each must still be the track's.
+    let dir = temp_dir("route-switch");
+    let path = dir.join("ramp.wav");
+    let all = ramp_wav(&path, 48_000, 3 * 48_000);
     let total = all.len() / 2;
     let (target, captures, gate) = GatedTarget::new(caps(&[44_100, 48_000, 96_000], &[S24In32Low]));
     let (player, events) = Player::new(Box::new(target), options());
-    player.load(vec![fixture(F48)]).unwrap();
+    player.load(vec![path.clone()]).unwrap();
     gate.allow(3_000);
     player.play(0).unwrap();
     gate.wait_written(3_000);

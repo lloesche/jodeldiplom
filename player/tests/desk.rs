@@ -416,7 +416,7 @@ fn a_stem_muted_on_its_frame_is_heard_and_unmuted_the_file_is_again() {
     // At the separator's rate, so neither main nor the stems are
     // resampled (a debug build keeps up in real time).
     const RATE: u32 = 44_100;
-    const SEEK: f64 = 2.0;
+    const SEEK: f64 = 1.0;
     let dir = common::temp_dir("desk-stems");
     let file = dir.join("chord.wav");
     common::write_wav(&file, RATE, 10.0);
@@ -468,14 +468,17 @@ fn a_stem_muted_on_its_frame_is_heard_and_unmuted_the_file_is_again() {
         false,
         off,
     )));
-    // Then a seek back to 2 s, and the drums muted a second after the
+    // Then a seek back to 1 s, and the drums muted a second after the
     // first position told from there: Position's output frame and the
-    // mixer's stream frame are the same count after a seek too.
+    // mixer's stream frame are the same count after a seek too. (From
+    // here, at least 2 s in: no position told before the seek is one of
+    // its first second.)
     assert!(common::wait_for(
         &mut app,
         Duration::from_secs(30),
         |a| heard(a) > off + u64::from(RATE) / 2
     ));
+    assert!(heard(&app) as f64 >= (SEEK + 1.0) * f64::from(RATE));
     app.run(Effect::Engine(jodel_playback::Command::Seek(SEEK)));
     // Two positions told from there (as the stem keys wait for: the first
     // can come before the mixer has mixed any of it again).
