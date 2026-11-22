@@ -111,6 +111,6 @@ pub use input::{
     default_input, find_input, input_devices, open_input, open_input_with, EchoRecording, Input,
     InputInfo, MicFeed, MicStatus, MicTap, Mono, VoiceBlock,
 };
-pub use output::{Clock, OpenRequest, Output, OutputTarget, PullSignal, Stats, StreamInfo};
+pub use output::{Clock, OpenRequest, Output, OutputTarget, Stats, StreamInfo};
 pub use pack::{PackError, PackMode, PackReport};
 pub use tap::{Tap, TAP_CHUNK};

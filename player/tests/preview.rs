@@ -18,8 +18,7 @@ use std::time::{Duration, Instant};
 
 use jodel_output::mixer::{Mixer, MixerOptions, Monitor, Role};
 use jodel_output::{
-    Capabilities, Clock, Error, OpenRequest, Output, OutputTarget, PullSignal, SimClock, Stats,
-    StreamInfo, Tap,
+    Capabilities, Clock, Error, OpenRequest, Output, OutputTarget, SimClock, Stats, StreamInfo, Tap,
 };
 use jodel_playback::{
     any_capabilities, Command, Event, NullTarget, Player, PlayerOptions, Settings,
@@ -152,12 +151,6 @@ impl Output for PacedOutput {
     }
     fn latency(&self) -> Duration {
         self.inner.latency()
-    }
-    fn queued(&self) -> u64 {
-        self.inner.queued()
-    }
-    fn set_pull_signal(&mut self, signal: Arc<dyn PullSignal>) {
-        self.inner.set_pull_signal(signal);
     }
     fn pause(&mut self) -> Result<(), Error> {
         self.inner.pause()

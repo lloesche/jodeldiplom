@@ -237,17 +237,6 @@ pub trait Output: Send {
     /// not yet played, as time.
     fn latency(&self) -> Duration;
 
-    /// Frames written that the device has not taken yet: what its ring
-    /// holds, so how long the device can go on without more. What it has
-    /// taken into a buffer of its own, or holds as latency, is not counted
-    /// (it is in [`Output::latency`]).
-    fn queued(&self) -> u64;
-
-    /// Has the device tell `signal` each time it takes frames from the ring
-    /// (on its own thread, a real-time one: the signal must neither block
-    /// nor allocate). One signal per output: a later one is ignored.
-    fn set_pull_signal(&mut self, signal: Arc<dyn PullSignal>);
-
     /// Stops the device; queued frames stay queued.
     fn pause(&mut self) -> Result<(), Error>;
 
@@ -296,15 +285,6 @@ pub trait Output: Send {
     /// Stops and releases the device. Later calls return [`Error::Closed`]
     /// (except the read-only ones). Dropping the output closes it too.
     fn close(&mut self) -> Result<(), Error>;
-}
-
-/// What a device tells each time it takes frames from an output's ring
-/// ([`Output::set_pull_signal`]): a mixer waiting for a late input looks
-/// again at what the ring has left. Called on the device's thread, a
-/// real-time one: it must neither block nor allocate.
-pub trait PullSignal: Send + Sync {
-    /// The device took frames from the ring.
-    fn pulled(&self);
 }
 
 /// Something outputs are opened on: a device, a [`crate::mixer`]'s input,
@@ -436,11 +416,6 @@ impl Core {
         self.prefill = frames.min(self.shared.ring.capacity());
     }
 
-    /// Sets the latency a simulated device says it adds.
-    pub(crate) fn set_device_latency(&mut self, latency: Duration) {
-        self.info.device_latency = latency;
-    }
-
     fn usable(&self) -> Result<(), Error> {
         if self.closed {
             return Err(Error::Closed);
@@ -469,6 +444,7 @@ impl Core {
         let sample = self.shared.format.sample;
         let frames = (samples.len() / ch) as u64;
         let mode = self.mode;
+        // Not taken for a drain's last by a consumer that sees the frames.
         self.shared.writing();
         let report = self.shared.ring.push_with(frames, |a, b| {
             let split = a.len() / sample.bytes();
@@ -589,14 +565,6 @@ impl Output for Core {
     fn latency(&self) -> Duration {
         let pending = self.shared.written().saturating_sub(self.shared.position());
         self.info.format.frames_to_duration(pending)
-    }
-
-    fn queued(&self) -> u64 {
-        self.shared.ring.len()
-    }
-
-    fn set_pull_signal(&mut self, signal: Arc<dyn PullSignal>) {
-        self.shared.set_pull_signal(signal);
     }
 
     fn pause(&mut self) -> Result<(), Error> {
@@ -733,12 +701,6 @@ macro_rules! forward_output {
         }
         fn latency(&self) -> std::time::Duration {
             $crate::output::Output::latency(&self.$field)
-        }
-        fn queued(&self) -> u64 {
-            $crate::output::Output::queued(&self.$field)
-        }
-        fn set_pull_signal(&mut self, signal: std::sync::Arc<dyn $crate::output::PullSignal>) {
-            $crate::output::Output::set_pull_signal(&mut self.$field, signal)
         }
         fn pause(&mut self) -> Result<(), $crate::Error> {
             $crate::output::Output::pause(&mut self.$field)

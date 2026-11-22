@@ -18,22 +18,13 @@
 //! a real device, as fast as the inputs are written on one that plays what
 //! it is given at once (a file, a test's memory).
 //!
-//! - **A lagging input** (`pace.rs`): a period is mixed once every running
-//!   output holds one (or is draining, or has not written yet: a player
-//!   still loading). On a device in real time an output short of a period
-//!   is waited for while the device's ring ([`Output::queued`]: not what
-//!   the device has taken into a buffer of its own) holds more than its
-//!   low water (the most the device has taken in one go, at least two
-//!   pulls, and a margin), and no longer than a backstop deadline. The
-//!   wait is on events: the device signals each take from its ring
-//!   ([`Output::set_pull_signal`]) and the output each write, and the
-//!   thread looks again at once; a timer only backstops a device that
-//!   stops taking frames. Then the period is mixed with what the output has,
-//!   silence for the rest, and the output is late: not waited for again
-//!   until it holds a period, so one that stalls keeps no one on the low
-//!   water. A writer lagging by less than the ring holds beyond its low
-//!   water loses nothing; a later one is silence until it is back, behind
-//!   what the ring holds by then.
+//! - **Why the mixer does not wait for a late input:** the input's own ring
+//!   (half a second, the player's) is the buffer that rides out hiccups,
+//!   so an input short of a period is far behind, and a short wait would
+//!   not save it; the device's headroom, its short ring, must stay full,
+//!   or every input glitches when the mixer thread wakes late. Waiting
+//!   while the device had frames to spare was tried, and underran on
+//!   macOS.
 //!
 //! - **Two gains:** an input is heard at its [`Fader`]'s gain (the
 //!   controllers': a preview's crossfade, a transition) times its strip's
@@ -118,13 +109,11 @@ mod fader;
 mod input;
 mod mic;
 mod mix;
-mod pace;
 mod parts;
 mod ramp;
 mod run;
 mod strip;
 mod strips;
-mod wake;
 
 pub use crate::lanes::SWITCH_FADE;
 pub use desk::{
@@ -350,11 +339,10 @@ impl Mixer {
         let (tx, rx) = mpsc::channel();
         let shared = Arc::new(MixShared::default());
         let name = target.name();
-        let (run_tx, run_shared) = (tx.clone(), shared.clone());
-        // Made on its thread: its waker is that thread's.
+        let run = run::Run::new(target, options, tx.clone(), shared.clone());
         let thread = std::thread::Builder::new()
             .name("jodel-mixer".into())
-            .spawn(move || run::Run::new(target, options, run_tx, run_shared).run(rx))
+            .spawn(move || run.run(rx))
             .expect("spawn the mixer thread");
         Mixer {
             tx,

@@ -19,16 +19,13 @@ pub const FORMAT: SampleFormat = SampleFormat::S32;
 
 /// A device that keeps what it played: every stream opened, with its
 /// clock. In real time, or (`instant`) taking what it is given at once; in
-/// [`FORMAT`], or `sample` when given; stereo, or `channels` when given;
-/// in real time with a buffer of its own of `buffered` frames when given
-/// ([`FileOutput::with_device_buffer`]: hardware's).
+/// [`FORMAT`], or `sample` when given; stereo, or `channels` when given.
 #[derive(Clone, Default)]
 pub struct Device {
     pub streams: Arc<Mutex<Vec<(MemorySink, Clock)>>>,
     pub instant: bool,
     pub sample: Option<SampleFormat>,
     pub channels: Option<u16>,
-    pub buffered: Option<u64>,
 }
 
 impl OutputTarget for Device {
@@ -51,10 +48,7 @@ impl OutputTarget for Device {
         } else {
             SimClock::Realtime
         };
-        let mut out = FileOutput::open(sink.clone(), &caps, request, clock)?;
-        if let Some(frames) = self.buffered {
-            out = out.with_device_buffer(frames);
-        }
+        let out = FileOutput::open(sink.clone(), &caps, request, clock)?;
         self.streams.lock().unwrap().push((sink, out.clock()));
         Ok(Box::new(out))
     }
