@@ -166,6 +166,106 @@ fn paused_the_window_has_nothing_to_redraw() {
     let _ = std::fs::remove_dir_all(&tree.root);
 }
 
+/// Paused, another queue row double-clicked plays at once: no more presses
+/// to hear it. The same after a pause in Karaoke mode and `esc`, and with
+/// `enter`. Both songs are of one format, so the output paused is kept
+/// for the next.
+#[test]
+fn a_song_picked_while_paused_plays() {
+    use jodeldiplom::core::karaoke;
+    use jodeldiplom::core::Side;
+    let _guard = common::real_time();
+    let dir = common::temp_dir("paused-pick");
+    for name in ["a", "b"] {
+        common::write_wav(&dir.join(format!("{name}.wav")), 44_100, 8.0);
+        std::fs::write(dir.join(format!("{name}.lrc")), "la la la\nla la\n").unwrap();
+    }
+    let mut options = AppOptions::new(dir.clone());
+    options.output = Output::Null(SimClock::Realtime);
+    options.size = (120, 36);
+    options.devices = Arc::new(|| Ok(Vec::new()));
+    options.mic = Arc::new(|_| Ok(jodel_output::input::Input::feed(48_000, 240).0));
+    options.mics = Arc::new(|| Ok(Vec::new()));
+    options.separator = || None;
+    let mut app = App::new(options);
+    assert!(common::wait_for(&mut app, WAIT, |a| !a
+        .state
+        .browser
+        .loading));
+    let row = app
+        .state
+        .browser
+        .entries
+        .iter()
+        .position(|e| e.path.ends_with("a.wav"))
+        .unwrap();
+    app.dispatch(Action::SelectRow(row));
+    press(&mut app, alt_enter());
+    assert!(common::wait_for(&mut app, WAIT, |a| a
+        .state
+        .queue
+        .paths
+        .len()
+        == 2));
+    // Heard: that song, playing, from past where it was.
+    let heard = |index: usize| {
+        move |a: &App| {
+            a.state.playing.state == PlayState::Playing
+                && a.state
+                    .playing
+                    .track
+                    .as_ref()
+                    .is_some_and(|t| t.index == index)
+                && a.state.playing.position > 0.3
+        }
+    };
+    let pause = |app: &mut App| {
+        app.dispatch(Action::Op(Op::PlayPause));
+        assert!(common::wait_for(app, WAIT, |a| a.state.playing.state == PlayState::Paused));
+    };
+    assert!(common::wait_for(&mut app, WAIT, heard(0)));
+    // Paused, the second row double-clicked in the queue.
+    pause(&mut app);
+    app.dispatch(Action::ShowSide(Side::Queue));
+    app.dispatch(Action::ClickRow(1));
+    app.dispatch(Action::ClickRow(1));
+    assert!(
+        common::wait_for(&mut app, WAIT, heard(1)),
+        "the double click"
+    );
+    // Paused again, the first row with enter.
+    pause(&mut app);
+    app.dispatch(Action::SelectRow(0));
+    press(&mut app, Key::plain(KeyCode::Enter));
+    assert!(common::wait_for(&mut app, WAIT, heard(0)), "enter");
+    // In Karaoke mode: the song started (after its count-in), paused,
+    // the mode left, and the second row double-clicked.
+    app.dispatch(Action::ShowSide(Side::Karaoke));
+    assert!(common::wait_for(&mut app, WAIT, |a| (0..2)
+        .all(|i| karaoke::not_singable(&a.state, i).is_none())));
+    app.dispatch(Action::Op(Op::KaraokeEnter));
+    assert_eq!(app.state.screen, Screen::Karaoke);
+    app.dispatch(Action::Op(Op::KaraokeStart));
+    assert!(app.state.karaoke.countdown.is_some());
+    assert!(
+        common::wait_for(&mut app, WAIT, |a| a.state.karaoke.countdown.is_none()
+            && heard(0)(a)),
+        "START"
+    );
+    pause(&mut app);
+    app.dispatch(Action::Op(Op::Back));
+    assert_eq!(app.state.screen, Screen::Main);
+    app.dispatch(Action::ShowSide(Side::Queue));
+    app.dispatch(Action::ClickRow(1));
+    app.dispatch(Action::ClickRow(1));
+    assert!(
+        common::wait_for(&mut app, WAIT, heard(1)),
+        "the double click after Karaoke mode"
+    );
+    app.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn a_file_argument_plays_at_once_and_settings_are_saved() {
     let _guard = common::real_time();

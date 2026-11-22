@@ -163,6 +163,13 @@ stem keys are their mutes.
   way.
   - `the_cache_answers_while_an_analysis_is_under_way`
   - `queue_side` (the snapshot)
+- **Q4.** A song picked while paused (a double click or `enter` on its
+  queue row) plays at once, heard with no more presses, as does the next
+  or previous track; only a seek stays paused. The same after a pause in
+  Karaoke mode and `esc` (in the mode itself a paused song goes on only at
+  START, after its count-in: K3).
+  - `a_song_picked_while_paused_plays`
+  - `another_track_played_while_paused_plays` (engine)
 
 ## Karaoke
 

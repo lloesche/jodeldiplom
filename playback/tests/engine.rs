@@ -268,6 +268,52 @@ fn pause_and_resume_do_not_change_the_bytes() {
     assert!(captured(&captures)[0].1 == device_bytes(&read_all(&fixture(F44)), S24In32Low));
 }
 
+/// Another track played while paused plays, as does the next one: the
+/// output, kept for it (the same format), is paused no more. A seek stays
+/// paused.
+#[test]
+fn another_track_played_while_paused_plays() {
+    let (target, captures, gate) = GatedTarget::new(caps(&[44_100], &[S24In32Low]));
+    let (player, events) = Player::new(Box::new(target), options());
+    player
+        .load(vec![fixture(F44), fixture(F44), fixture(F44)])
+        .unwrap();
+    let pause = || {
+        player.pause().unwrap();
+        collect_until(&events, |e| matches!(e, Event::State(PlayState::Paused)));
+    };
+    let started = |index: usize| {
+        collect_until(
+            &events,
+            |e| matches!(e, Event::TrackStarted(s) if s.index == index),
+        );
+    };
+    gate.allow(5_000);
+    player.play(0).unwrap();
+    gate.wait_written(5_000);
+    pause();
+    // A seek while paused writes nothing.
+    player.seek(0.05).unwrap();
+    gate.allow(10_000);
+    std::thread::sleep(Duration::from_millis(50));
+    assert_eq!(gate.written(), 5_000, "wrote after a seek while paused");
+    // Played while paused: heard (its start is told only once it is).
+    player.play(1).unwrap();
+    started(1);
+    gate.wait_written(10_000);
+    pause();
+    gate.allow_all();
+    player.next().unwrap();
+    started(2);
+    until_queue_end(&events);
+    drop(player);
+    // One stream (the output kept), the last track whole at its end.
+    let streams = captured(&captures);
+    assert_eq!(streams.len(), 1);
+    let whole = device_bytes(&read_all(&fixture(F44)), S24In32Low);
+    assert!(streams[0].1.ends_with(&whole), "the last track not heard");
+}
+
 /// Plain PCM plays untouched, and its seek is sample-accurate.
 #[test]
 fn plain_pcm_plays_untouched_and_seeks_exactly() {

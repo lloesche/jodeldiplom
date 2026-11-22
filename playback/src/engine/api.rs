@@ -27,7 +27,8 @@ use super::Engine;
 pub enum Command {
     /// Stops and replaces the queue (nothing plays until [`Command::Play`]).
     Load(Vec<PathBuf>),
-    /// Plays the queue from `index`.
+    /// Plays the queue from `index`, also when paused (as do the other
+    /// commands that start a track: only [`Command::Seek`] stays paused).
     Play(usize),
     /// Plays track `index` from its start after `lead` seconds of silence
     /// (a count-in). Its [`Event::TrackStarted`] comes as the silence

@@ -158,7 +158,8 @@ impl Engine {
     }
 
     /// Makes `track` the one being played now: reuses the output when it
-    /// fits (flushing what it holds), otherwise opens one.
+    /// fits (flushing what it holds; paused, it plays again unless the
+    /// player stays paused), otherwise opens one.
     fn install(&mut self, mut track: Track) -> Result<(), Error> {
         let fits = self
             .out
@@ -167,6 +168,9 @@ impl Engine {
         if fits {
             let out = self.out.as_mut().expect("checked");
             out.output.flush()?;
+            if !self.paused && out.output.is_paused() {
+                out.output.resume()?;
+            }
             self.lanes.flushed(out.output.written());
         } else {
             self.open_output(&track.route)?;
