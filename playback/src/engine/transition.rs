@@ -13,13 +13,17 @@
 //! own tempo, and once it is there its position runs straight again and
 //! it moves back onto its own route.
 //!
-//! Without a stem separator both tracks go through [`whole_mix`], which
-//! puts the whole music in one stem: their fades are then those of that
-//! stem's lanes.
+//! Without a stem separator (or once it failed: [`super::Engine`]'s
+//! `stems_failed`) both tracks go through [`whole_mix`], which puts the
+//! whole music in one stem: their fades are then those of that stem's
+//! lanes. Whether a track is whole is its own ([`Track::separator`]), so a
+//! track whose stems fail in the middle of a transition leaves the other
+//! one's as they are.
 //!
-//! The stems on in both tracks are the settings' times a mixer's
-//! ([`crate::Command::StemMask`], [`super::stem_mask`]), so a stem muted on a
-//! mixer's strip stays out of the mix the mixer hears as main here.
+//! Each stem of a track that is not whole is at its gain as a mixer plays
+//! it ([`crate::Command::StemMask`], [`super::stem_mask`]), so a stem muted
+//! on a mixer's strip stays out of the mix the mixer hears as main here. A
+//! whole track takes no mask: its one stem is all of it.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -31,7 +35,7 @@ use super::warping::Warping;
 use super::{Engine, SWITCH_TURN};
 use crate::error::Error;
 use crate::rate::{stems_at, FileFacts, Stage};
-use crate::stems::{whole_mix, Gains};
+use crate::stems::{whole_mix, Gains, STEMS};
 use crate::transition::{Side, TransitionPlan, TransitionState};
 use crate::warp::{Glide, TimeMap};
 
@@ -123,30 +127,31 @@ impl Transition {
         (self.plan.from, self.plan.into)
     }
 
-    /// A's gains: its lanes at its own time, times the stems on then.
-    fn gains_a(plan: &Arc<TransitionPlan>, mask: StemsMask) -> Gains {
+    /// A's gains: its lanes at its own time, times the stems on then (by
+    /// `mask`; a whole track has none).
+    fn gains_a(plan: &Arc<TransitionPlan>, mask: Option<StemsMask>) -> Gains {
         let plan = Arc::clone(plan);
         Arc::new(move |t| {
             let g = plan.gains(Side::From, plan.share(t));
-            let on = mask.for_a(t);
+            let on = mask.as_ref().map_or([1.0; STEMS], |m| m.for_a(t));
             std::array::from_fn(|s| g[s] * on[s])
         })
     }
 
     /// B's gains: its lanes at the playing track's time where B is at `t`
     /// (the output's time there, along the glide), times the stems on
-    /// then.
+    /// then (by `mask`; a whole track has none).
     fn gains_b(
         plan: &Arc<TransitionPlan>,
         map: &Arc<TimeMap>,
         glide: Glide,
-        mask: StemsMask,
+        mask: Option<StemsMask>,
     ) -> Gains {
         let (plan, map) = (Arc::clone(plan), Arc::clone(map));
         Arc::new(move |t| {
             let a = glide.at(map.inverse(t));
             let g = plan.gains(Side::Into, plan.share(a));
-            let on = mask.for_b(t, || a);
+            let on = mask.as_ref().map_or([1.0; STEMS], |m| m.for_b(t, || a));
             std::array::from_fn(|s| g[s] * on[s])
         })
     }
@@ -320,26 +325,26 @@ impl Engine {
     }
 
     /// Whether a transition is under way past being armed (its tracks
-    /// prepared, mixed or settling), so the stems switched on and off go
-    /// into its fades rather than calling it off.
+    /// prepared, mixed or settling), so new settings wait for its end
+    /// rather than call it off.
     pub(super) fn transition_running(&self) -> bool {
         self.transition
             .as_ref()
             .is_some_and(|t| t.phase != Phase::Armed)
     }
 
-    /// The stems heard changed during a transition: its fades take them,
-    /// on both tracks, at the time the change is heard at (or at once).
+    /// A mixer's stem gains changed during a transition
+    /// ([`crate::Command::StemMask`]): its fades take them, on both tracks,
+    /// at the time the change is heard at (or at once).
     pub(super) fn retune_transition(&mut self) {
         let mask = self.transition_mask();
         let Some(t) = self.transition.as_mut() else {
             return;
         };
         let (plan, map, glide) = (Arc::clone(&t.plan), Arc::clone(&t.map), t.glide);
-        let gains_a = Transition::gains_a(&plan, mask.clone());
-        let gains_b = Transition::gains_b(&plan, &map, glide, mask);
+        let on = |track: &Track| (!track.whole()).then(|| mask.clone());
         if let Some(b) = t.b.as_mut() {
-            b.gains = Some(Arc::clone(&gains_b));
+            b.gains = Some(Transition::gains_b(&plan, &map, glide, on(b)));
         }
         for track in [
             self.playing.as_mut(),
@@ -352,9 +357,9 @@ impl Engine {
                 continue;
             }
             if track.index == plan.from {
-                track.gains = Some(Arc::clone(&gains_a));
+                track.gains = Some(Transition::gains_a(&plan, on(track)));
             } else if track.index == plan.into {
-                track.gains = Some(Arc::clone(&gains_b));
+                track.gains = Some(Transition::gains_b(&plan, &map, glide, on(track)));
             }
         }
     }
@@ -414,8 +419,8 @@ impl Engine {
                 if now > plan.start + 0.05 {
                     self.drop_transition(Some("the window has already passed"));
                 } else if now >= plan.start - LEAD {
-                    // A route switch under way (new stems, new settings) is
-                    // the transition's to make now: it moves the track
+                    // A route switch under way (new settings) is the
+                    // transition's to make now: it moves the track
                     // itself (one already meeting its old route ends first).
                     if self.switch.as_ref().is_some_and(|s| s.spliced) {
                         return Ok(false);
@@ -475,22 +480,29 @@ impl Engine {
             .map(|o| o.info.format)
             .ok_or("nothing is playing")?;
         let caps = self.capabilities().map_err(|e| e.to_string())?;
-        let settings = self.route_settings();
-        let separator = self.separator.is_none().then_some(whole_mix as fn() -> _);
-        // The stems the user has on stay as they are (and a change of them
-        // to come, at its time).
-        let on = self.transition_mask();
+        let settings = self.settings;
+        let whole = self.separator.is_none() || self.stems_failed;
+        let separator = whole.then_some(whole_mix as fn() -> _);
+        // The stems as a mixer plays them (and a change of them to come, at
+        // its time), for a track that is not whole.
+        let mask = self.transition_mask();
+        let on = |whole: bool| (!whole).then(|| mask.clone());
         // A on its stems, faded by its lanes.
         let a = self.playing.as_ref().ok_or("nothing is playing")?;
         let a_facts = FileFacts::from(&*a.info);
-        // On its stems already, and not read along an earlier plan's glide:
-        // only its fades.
+        // A is on its stems already when a plan replaced one that had
+        // prepared (it stays where that one put it), or when the track a
+        // transition before left on its stems is still on them. Not read
+        // along a glide (this plan's or that earlier one's): only its fades.
         if a.route.stage == Stage::Stems && map_a.is_none() && a.warp.is_none() {
             let a = self.playing.as_mut().expect("checked");
-            a.gains = Some(Transition::gains_a(&plan, on.clone()));
+            a.gains = Some(Transition::gains_a(&plan, on(a.whole())));
         } else {
-            // Onto its stems, or (to be read along the glide) onto a fresh
-            // track on them.
+            // Onto its stems, or onto a fresh track on them: to be read
+            // along this plan's glide (a plan with a glide replacing one
+            // that had put A on its stems), or no longer along the map an
+            // earlier transition read it by (its next track, still on its
+            // stems and its map).
             let route = if a.route.stage == Stage::Stems {
                 a.route.clone()
             } else {
@@ -499,8 +511,8 @@ impl Engine {
             };
             self.begin_switch(route).map_err(|e| e.to_string())?;
             let switch = self.switch.as_mut().expect("just begun");
-            switch.track.gains = Some(Transition::gains_a(&plan, on.clone()));
             switch.track.separator = separator;
+            switch.track.gains = Some(Transition::gains_a(&plan, on(whole)));
             if let Some(map_a) = map_a {
                 // From its first frame, where the glide is still none (the
                 // switch meets the file a second on, on its grid).
@@ -527,8 +539,8 @@ impl Engine {
         b.start_at(frame).map_err(|e| e.to_string())?;
         b.pending = true;
         b.begin_segment(0, b.seg_frame, SegStart::Cold);
-        b.gains = Some(Transition::gains_b(&plan, &map, glide, on));
         b.separator = separator;
+        b.gains = Some(Transition::gains_b(&plan, &map, glide, on(whole)));
         b.warp = Some(Box::new(Warping::new(
             Arc::clone(&map),
             a0,

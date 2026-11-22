@@ -1,6 +1,6 @@
 //! Making a track's output and writing it: a plain route decoded (and
-//! resampled), a stems route mixed from its stem run, and a count-in's
-//! silence before a track.
+//! resampled), a transition's stems route mixed from its stem run, and a
+//! count-in's silence before a track.
 
 use std::time::{Duration, Instant};
 
@@ -13,21 +13,6 @@ use crate::stems::{Pull, StemRun};
 
 use super::track::{Cue, CueEvent, Progress, Track};
 use super::{Engine, STEM_FRAMES, WRITE_WAIT};
-
-/// Drops what `track` just made (from sample `before` on) while it has
-/// frames to discard (a stems route's preroll after a jump).
-fn discard_made(track: &mut Track, before: usize) {
-    if track.discard == 0 {
-        return;
-    }
-    let channels = usize::from(track.route.channels);
-    let made = ((track.out_buf.len() - before) / channels) as u64;
-    let drop = track.discard.min(made);
-    track
-        .out_buf
-        .drain(before..before + drop as usize * channels);
-    track.discard -= drop;
-}
 
 /// The output frame of `resampler`'s stream that a stems route ends on.
 /// The stems come at the separator's rate, so their end is only known to
@@ -56,10 +41,8 @@ fn stems_end(track: &Track, resampler: &Resampler) -> u64 {
     };
     let heard = crate::resample::output_frames(track.info.rate.max(1), to, left);
     // The stream counts the frames before the segment's start too (a
-    // switch's run-up, a jump's preroll), and those of them still to be
-    // dropped.
-    let Some(end) = (heard + resampler.output_frames() + track.discard).checked_sub(track.emitted)
-    else {
+    // switch's run-up).
+    let Some(end) = (heard + resampler.output_frames()).checked_sub(track.emitted) else {
         return stems;
     };
     // Where the stems end and where they start (a run taken up mid-way)
@@ -74,9 +57,10 @@ fn stems_end(track: &Track, resampler: &Resampler) -> u64 {
 }
 
 impl Engine {
-    /// Writes some of a count-in's silence ([`Engine::lead`]); while the
-    /// output is full, the track decodes ahead behind it, so it is ready
-    /// (its stems separated) when the silence ends.
+    /// Writes some of a count-in's silence ([`Engine::lead`]); meanwhile the
+    /// track's stem parts are made from its first frame, and while the
+    /// output is full the track decodes ahead behind it, so it is ready
+    /// when the silence ends.
     pub(super) fn write_lead(&mut self) -> Result<(), Error> {
         let out = self.out.as_mut().ok_or(Error::Stopped)?;
         // An output of lanes gets silence on every lane, and no parts.
@@ -85,6 +69,10 @@ impl Engine {
         let silence = vec![0i32; frames * width];
         let took = out.output.write(&silence, Some(WRITE_WAIT))?;
         self.lead -= took as u64;
+        if let Some(track) = self.playing.take() {
+            self.lanes_ahead(&track);
+            self.playing = Some(track);
+        }
         if took == 0 {
             self.stalled = Some(Instant::now());
             if let Some(mut track) = self.playing.take() {
@@ -146,8 +134,7 @@ impl Engine {
                 self.stalled = (frames == 0).then(Instant::now);
                 Self::restore_faded(track, false);
             }
-            // The output is full: the window's stretch ahead is decoded (a
-            // stems route takes what its stems have separated).
+            // The output is full: the window's stretch ahead is decoded.
             if frames == 0 && ahead > 0 && !track.ahead_done && track.unwritten() < ahead {
                 if let Progress::Complete = self.produce(track, Duration::ZERO)? {
                     track.ahead_done = true;
@@ -224,14 +211,11 @@ impl Engine {
         }
     }
 
-    /// One piece of a [`Stage::Stems`] route: the stems that are on, summed,
-    /// resampled or requantized into the output buffer (waiting up to
-    /// `wait` for the stems).
-    pub(super) fn step_stems(
-        &mut self,
-        track: &mut Track,
-        wait: Duration,
-    ) -> Result<Progress, Error> {
+    /// One piece of a [`Stage::Stems`] route: the stems summed at the
+    /// transition's fades (every one at one without them), resampled or
+    /// requantized into the output buffer (waiting up to `wait` for the
+    /// stems).
+    fn step_stems(&mut self, track: &mut Track, wait: Duration) -> Result<Progress, Error> {
         let Some(separator) = track.separator.or(self.separator) else {
             track.stems_error = Some("no separator".into());
             return Ok(Progress::Busy);
@@ -242,64 +226,23 @@ impl Engine {
                 let end = stems_end(track, &resampler);
                 resampler.finish_at(end, &mut track.out_buf);
                 track.resampler = Some(resampler);
-                discard_made(track, before);
                 self.after_output(track, before);
                 return Ok(Progress::Busy);
             }
             return Ok(Progress::Complete);
         }
-        let keep = self.stem_keep(track);
-        let run = match track.stems.take() {
-            Some(run) => run,
-            None => match self.prestart.take() {
-                Some(run) if run.path == track.info.path && run.start == track.seg_frame => run,
-                other => {
-                    self.prestart = other;
-                    match self.take_shadow(track) {
-                        Some(run) => run,
-                        None => StemRun::start(
-                            track.info.path.clone(),
-                            track.seg_frame,
-                            Some(separator),
-                            self.stem_store.clone(),
-                        ),
-                    }
-                }
-            },
-        };
-        let run = track.stems.insert(run);
-        run.set_keep(keep.0, keep.1);
+        let run = track.stems.get_or_insert_with(|| {
+            StemRun::start(
+                track.info.path.clone(),
+                track.seg_frame,
+                Some(separator),
+                self.stem_store.clone(),
+            )
+        });
         track.wide_buf.clear();
         let origin = run.start as f64 / f64::from(track.info.rate.max(1));
         let gains = track.gains.as_ref().map(|g| (g, origin));
-        // A change at a time of this track: the stems before it until its
-        // frame of the run, the track's time at the change's output frame
-        // as it is heard now (a track decoded ahead for a switch is heard
-        // on the playing one's timeline).
-        let (mix, change) = match self.stems_change {
-            Some(c) if c.index == track.index => {
-                let timeline =
-                    |t: &Track| (t.seg_frame, t.info.rate, t.seg_out, t.route.output_rate);
-                let (frame, rate, seg_out, out_rate) = match self.playing.as_ref() {
-                    Some(playing) if track.pending => timeline(playing),
-                    _ => (
-                        track.seg_frame,
-                        track.info.rate,
-                        track.seg_out,
-                        track.route.output_rate,
-                    ),
-                };
-                let seconds = frame as f64 / f64::from(rate.max(1))
-                    + (c.out as f64 - seg_out as f64) / f64::from(out_rate.max(1));
-                let at = ((seconds - origin) * f64::from(crate::stems::RATE))
-                    .round()
-                    .max(0.0) as u64;
-                (c.before, Some((at, self.settings.stems)))
-            }
-            _ => (self.settings.stems, None),
-        };
-        let pull = run.mix(STEM_FRAMES, mix, change, gains, &mut track.wide_buf, wait);
-        let read_all = run.read_all();
+        let pull = run.mix(STEM_FRAMES, gains, &mut track.wide_buf, wait);
         if let Some(warp) = track.warp.as_mut() {
             match pull {
                 Pull::Frames => warp.read(&mut track.wide_buf),
@@ -336,21 +279,12 @@ impl Engine {
                             .extend(track.wide_buf.iter().map(|&y| quantize.quantize(y)));
                     }
                 }
-                discard_made(track, before);
                 self.after_output(track, before);
             }
             Pull::Waiting => {}
             Pull::End => track.stems_done = true,
             Pull::Failed(why) => track.stems_error = Some(why),
             Pull::Missing => track.stems_error = Some("no separator for the stems".into()),
-        }
-        // The next track's stems start once this file is read.
-        let next = self.queue.get(track.index + 1);
-        let stale = self.prestart.as_ref().is_none_or(|p| Some(&p.path) != next);
-        if read_all && stale {
-            let store = self.stem_store.clone();
-            self.prestart =
-                next.map(|path| StemRun::start(path.clone(), 0, Some(separator), store));
         }
         Ok(Progress::Busy)
     }

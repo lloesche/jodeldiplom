@@ -12,7 +12,7 @@ the code:
 
 | Work | When | Cost | Done once? |
 |---|---|---|---|
-| Stem separation | analysis, lyrics timing, and again on every stems start, seek, jump, the Transition tab's shadow run, the next track's prestart, both tracks of a transition | ~9 % of the GPU per track playing, in 0.5 s bursts the window waits behind | no: nothing kept |
+| Stem separation | analysis, lyrics timing, and again for the parts made beside the file (from every seek, the next track's from its start), both tracks of a transition | ~9 % of the GPU per track playing, in 0.5 s bursts the window waits behind | no: nothing kept |
 | Spectrum FFT | every frame, also where no spectrum is shown (Transition, Now Playing, Karaoke) | 0.5–8 ms a frame on the UI thread (131072 points at 384 kHz) | runs hidden |
 | Engine output buffer trim | every 4096 output frames | a ~24 s buffer moved each time: GB/s at 384 kHz | no |
 | Stems kept for jumps | once a second | ~70 MB moved a second per stems run | no |

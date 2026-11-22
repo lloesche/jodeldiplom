@@ -5,6 +5,7 @@
 #![allow(dead_code)]
 
 pub mod lanes;
+pub mod transition;
 
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::Receiver;
@@ -17,7 +18,7 @@ use jodel_output::{
     Capabilities, Clock, Error as OutputError, OpenRequest, Output, SampleFormat, SimClock, Stats,
     StreamFormat, StreamInfo,
 };
-use jodel_playback::{Captures, Event, MemoryTarget, OutputTarget, Resampler, Source};
+use jodel_playback::{Captures, Event, MemoryTarget, OutputTarget, Resampler, Source, StemDesk};
 
 pub const TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -257,21 +258,15 @@ pub fn gated_mixer_lanes(caps: Capabilities) -> (GatedTarget, Captures, Arc<Gate
     let device = MemoryTarget::new(caps, SimClock::Instant);
     let captures = device.captures();
     let mixer = Mixer::open(Box::new(device), MixerOptions::default());
-    let player = mixer.strip("Player");
-    let parts: Vec<Strip> = ["Drums", "Bass", "Vocals", "Other"]
-        .into_iter()
-        .map(|name| mixer.strip_in(&player, name))
-        .collect();
-    let refs: Vec<&Strip> = parts.iter().collect();
-    let (input, _fader, faders) = mixer.input_lanes(&player, &refs, Role::Lead, 1.0);
+    let (desk, input) = StemDesk::new(&mixer, "Player", Role::Lead, 1.0);
     let (target, gate) = GatedTarget::around(Box::new(input));
     (
         target,
         captures,
         gate,
         MixerLanes {
-            parts,
-            faders,
+            parts: desk.stems,
+            faders: desk.lanes,
             mixer,
         },
     )

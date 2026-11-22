@@ -267,10 +267,7 @@ pub(super) struct Track {
     /// [`Track::continue_segment`] only.
     pub(super) seg_out: u64,
     pub(super) seg_frame: u64,
-    /// Output frames still to drop before the segment starts (on a stems
-    /// route, output frames after a jump's preroll).
-    pub(super) discard: u64,
-    /// Output frames made in this segment (after the discard).
+    /// Output frames made in this segment.
     pub(super) emitted: u64,
     /// The segment's id and how it began, and where ids come from.
     pub(super) segment: Segment,
@@ -290,12 +287,12 @@ pub(super) struct Track {
     /// The error that ended the track early, reported once what was
     /// decoded before it is written.
     pub(super) failure: Option<Error>,
-    /// On a [`Stage::Stems`] route: the separation, started when the track
-    /// is first stepped (or taken over from [`super::Engine::prestart`]).
+    /// On a [`Stage::Stems`] route (a transition's): the separation,
+    /// started when the track is first stepped.
     pub(super) stems: Option<StemRun>,
     /// Every stem has been taken.
     pub(super) stems_done: bool,
-    /// Why the separation stopped: the track goes back to its usual route.
+    /// Why the separation stopped: the track goes back to its own route.
     pub(super) stems_error: Option<String>,
     /// The requantization of a stem mix the device takes at its own rate.
     pub(super) requantizer: Requantizer,
@@ -311,12 +308,14 @@ pub(super) struct Track {
     /// The route it switched from, to go back to if its output does not
     /// open.
     pub(super) fallback: Option<Route>,
-    /// A transition's fades of its stems, in place of the settings' mix.
+    /// A transition's fades of its stems (on its stems without them: each
+    /// at one, the whole track).
     pub(super) gains: Option<Gains>,
     /// A transition's next track: its stems read along the time map.
     pub(super) warp: Option<Box<Warping>>,
-    /// The separator its stems use, in place of the player's (a
-    /// transition without one).
+    /// The separator its stems use, in place of the player's: a
+    /// transition's [`crate::stems::whole_mix`] (no separator, or the
+    /// stems failed), set only where a transition prepares its tracks.
     pub(super) separator: Option<SeparatorSource>,
     /// Samples clipped when a transition added the next track to this
     /// one's output (past the soft limit's bend, so none in practice).
@@ -393,7 +392,6 @@ impl Track {
             out_at: 0,
             seg_out: 0,
             seg_frame: 0,
-            discard: 0,
             emitted: 0,
             segment: Segment {
                 id: segments.next(),
@@ -475,6 +473,13 @@ impl Track {
         self.route.stage != Stage::Stems && self.warp.is_none() && self.gains.is_none()
     }
 
+    /// Whether a transition plays the track whole: its one stem all of it
+    /// ([`Track::separator`]), so a mixer's mask of the stems does not
+    /// apply to it.
+    pub(super) fn whole(&self) -> bool {
+        self.separator.is_some()
+    }
+
     /// Whether a transition mixes its stems: on a stems route, faded by the
     /// transition's lanes.
     pub(super) fn mixes_stems(&self) -> bool {
@@ -516,7 +521,6 @@ impl Track {
         self.out_buf.clear();
         self.out_at = 0;
         self.begin_segment(self.seg_out, frame, SegStart::Cold);
-        self.discard = 0;
         self.emitted = 0;
         self.clips = None;
         self.failure = None;

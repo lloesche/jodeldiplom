@@ -1,6 +1,6 @@
-//! Stem playback through the engine with the separator on the GPU: kicks
-//! over a held chord, played with the drums only and with the other stem
-//! only. Skipped without a GPU.
+//! The engine's stems with the separator on the GPU: kicks over a held
+//! chord played on an output of lanes, the drums' part and the other
+//! stem's beside the file. Skipped without a GPU.
 
 use std::f64::consts::PI;
 use std::path::{Path, PathBuf};
@@ -8,8 +8,8 @@ use std::time::{Duration, Instant};
 
 use jodel_gpu::GpuSeparator;
 use jodel_output::{Capabilities, SampleFormat, SimClock, StreamFormat};
-use jodel_playback::stems::{Separator, Stem, StemMix};
-use jodel_playback::{Event, MemoryTarget, Player, PlayerOptions, Settings, Stage};
+use jodel_playback::stems::{Separator, Stem, LANES, STEMS};
+use jodel_playback::{Event, MakeStems, MemoryTarget, Player, PlayerOptions};
 
 const RATE: u32 = 44_100;
 const SECONDS: usize = 8;
@@ -46,38 +46,48 @@ fn kicks_and_chord() -> PathBuf {
     path
 }
 
-/// The left channel of a played stream (`S24In32Low`), full scale ±1.
-fn played(path: &Path, stems: StemMix) -> Vec<f64> {
+/// The left channel of each stem's part as played beside the file, full
+/// scale ±1, in [`LANES`]' order.
+fn played(path: &Path) -> Vec<Vec<f64>> {
     let mut caps = Capabilities::new();
     caps.insert(StreamFormat::new(RATE, 2, SampleFormat::S24In32Low));
-    let target = MemoryTarget::new(caps, SimClock::Instant);
+    let target = MemoryTarget::with_lanes(caps, SimClock::Instant, 1 + STEMS as u16);
     let captures = target.captures();
     let options = PlayerOptions {
-        settings: Settings {
-            stems,
-            ..Settings::default()
-        },
         separator: Some(gpu),
+        // The parts waited for, however long the GPU takes.
+        offline: true,
         ..PlayerOptions::default()
     };
     let (player, events) = Player::new(Box::new(target), options);
+    player.make_stems(MakeStems::Separate).unwrap();
     player.load(vec![path.to_path_buf()]).unwrap();
     player.play(0).unwrap();
     loop {
         match events.recv_timeout(Duration::from_secs(60)).unwrap() {
-            Event::TrackStarted(s) => assert_eq!(s.route.stage, Stage::Stems),
             Event::Error { error, .. } => panic!("{error}"),
             Event::Notice { message, .. } => panic!("{message}"),
-            Event::StemsStopped { reason, .. } => panic!("the stems stopped: {reason}"),
+            Event::PartsStopped { reason, .. } => panic!("the stems stopped: {reason}"),
             Event::QueueEnded => break,
             _ => {}
         }
     }
     drop(player);
+    // Each frame: main and the four parts (stereo, 24 bits in the top of
+    // 32), then the control word.
     let bytes = captures.list().remove(0).sink.bytes();
-    bytes
-        .chunks_exact(8)
-        .map(|b| f64::from((i32::from_le_bytes([b[0], b[1], b[2], b[3]]) << 8) >> 8) / 8_388_608.0)
+    let words: Vec<i32> = bytes
+        .chunks_exact(4)
+        .map(|b| i32::from_le_bytes([b[0], b[1], b[2], b[3]]) >> 8)
+        .collect();
+    let width = 2 * (1 + STEMS) + 1;
+    (0..STEMS)
+        .map(|k| {
+            words
+                .chunks_exact(width)
+                .map(|f| f64::from(f[2 * (1 + k)]) / 8_388_608.0)
+                .collect()
+        })
         .collect()
 }
 
@@ -104,12 +114,13 @@ fn the_drums_keep_the_kicks_and_the_other_stem_the_chord() {
     }
     let path = kicks_and_chord();
     let started = Instant::now();
-    let drums = played(&path, StemMix::NONE.toggle(Stem::Drums));
+    let parts = played(&path);
     let took = started.elapsed();
-    let other = played(&path, StemMix::NONE.toggle(Stem::Other));
+    let part = |stem: Stem| &parts[LANES.iter().position(|&s| s == stem).unwrap()];
+    let (drums, other) = (part(Stem::Drums), part(Stem::Other));
     assert_eq!(drums.len(), SECONDS * RATE as usize);
     assert_eq!(other.len(), drums.len());
-    let (d, o) = (on_kicks_over_between(&drums), on_kicks_over_between(&other));
+    let (d, o) = (on_kicks_over_between(drums), on_kicks_over_between(other));
     eprintln!("drums {d:.1}, other {o:.1}; {SECONDS} s separated and played in {took:?}");
     assert!(d > 10.0 * o, "drums {d}, other {o}");
 }

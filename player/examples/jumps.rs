@@ -1,11 +1,12 @@
 //! Bar jumps on a real track, as the Transition tab's digits make them, in real
-//! time into a memory output (nothing goes to a device): to the bar heard,
-//! the one before, three ahead, one at the bar's end, a fast run of them
-//! (a stutter), and the same with the drums off (on its stems, the stems
-//! kept while the file played as the Transition tab keeps them, the first jump
-//! right after the drums went off). It says how long after each command the jump was
-//! heard and the longest run of digital silence in what was played: a gap
-//! (an underrun is padded with silence) would show there.
+//! time through a mixer (the player's strip a group, a strip for each stem
+//! inside it) into a memory output (nothing goes to a device): to the bar
+//! heard, the one before, three ahead, one at the bar's end, a fast run of
+//! them (a stutter), and the same with the drums' strip muted (the mixer
+//! playing the stems made beside the file, which follow each jump; the first
+//! jump right after the drums went off). It says how long after each command
+//! the jump was heard and the longest run of digital silence in what was
+//! played: a gap (an underrun is padded with silence) would show there.
 //!
 //! ```text
 //! cargo run --release -p jodeldiplom --example jumps -- FILE [--from SECONDS]
@@ -19,10 +20,11 @@ use std::sync::mpsc::Receiver;
 use std::time::{Duration, Instant};
 
 use jodel_gpu::GpuSeparator;
+use jodel_output::mixer::{Mixer, MixerOptions, Role};
 use jodel_output::{Capabilities, SampleFormat, SimClock, StreamFormat};
 use jodel_playback::source::Source;
-use jodel_playback::stems::{Separator, Stem, StemMix};
-use jodel_playback::{Event, JumpAt, MemoryTarget, Player, PlayerOptions, Settings};
+use jodel_playback::stems::{Separator, Stem};
+use jodel_playback::{Event, JumpAt, MakeStems, MemoryTarget, Player, PlayerOptions, StemDesk};
 use jodel_rhythm::{Analysis, Method};
 use jodeldiplom::core::transition::jump::bar_jump;
 use jodeldiplom::core::RhythmRecipe;
@@ -146,17 +148,24 @@ fn run(path: &Path, from: f64) -> Result<(), String> {
     );
     let mut caps = Capabilities::new();
     caps.insert(StreamFormat::new(rate, 2, SampleFormat::S24In32Low));
-    let target = MemoryTarget::new(caps, SimClock::Realtime);
-    let captures = target.captures();
+    let device = MemoryTarget::new(caps, SimClock::Realtime);
+    let captures = device.captures();
+    let mixer = Mixer::open(Box::new(device), MixerOptions::default());
+    let (desk, input) = StemDesk::new(&mixer, "Player", Role::Lead, 1.0);
     let options = PlayerOptions {
-        settings: Settings::default(),
         separator: Some(gpu as fn() -> _),
         position_interval: Duration::from_millis(5),
         ..PlayerOptions::default()
     };
-    let (player, events) = Player::new(Box::new(target), options);
+    let (player, events) = Player::new(Box::new(input), options);
     player.jump_window(24.0, 24.0).map_err(|e| e.to_string())?;
-    player.keep_stems(true).map_err(|e| e.to_string())?;
+    // The stems made beside the file throughout, as the Transition tab has
+    // them, so a strip muted is heard at once.
+    if GpuSeparator::shared().is_some() {
+        player
+            .make_stems(MakeStems::Separate)
+            .map_err(|e| e.to_string())?;
+    }
     player
         .load(vec![path.to_path_buf()])
         .map_err(|e| e.to_string())?;
@@ -183,15 +192,10 @@ fn run(path: &Path, from: f64) -> Result<(), String> {
         s.pump(Duration::from_millis(then));
     }
     if GpuSeparator::shared().is_some() {
-        println!("drums off (on its stems, from the stems kept):");
-        s.player
-            .set_settings(Settings {
-                stems: StemMix::ALL.toggle(Stem::Drums),
-                ..Settings::default()
-            })
-            .map_err(|e| e.to_string())?;
-        // The drums go off (a moment for the route to switch), then the bar
-        // heard again, which started before they did.
+        println!("drums off (their strip muted, the stems played on the desk):");
+        desk.stem(Stem::Drums).set_mute(true);
+        // The drums go off, then the bar heard again, which started before
+        // they did.
         s.pump(Duration::from_millis(600));
         for (offset, then) in [
             (0, 1500),
@@ -208,6 +212,7 @@ fn run(path: &Path, from: f64) -> Result<(), String> {
     s.player.stop().map_err(|e| e.to_string())?;
     s.pump(Duration::from_millis(300));
     drop(s);
+    drop(mixer);
     for capture in captures.list() {
         let bytes = capture.sink.bytes();
         let samples: Vec<i32> = bytes

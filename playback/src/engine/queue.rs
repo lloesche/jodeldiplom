@@ -87,9 +87,7 @@ impl Engine {
         if let Some(heard) = &mut self.heard {
             heard.index = keep(heard.index);
         }
-        if let Some(change) = &mut self.stems_change {
-            change.index = keep(change.index);
-        }
+        self.stem_gains.reindex(&keep);
         self.tail = self.tail.and_then(map);
         for cue in &mut self.cues {
             cue.event.reindex(map);

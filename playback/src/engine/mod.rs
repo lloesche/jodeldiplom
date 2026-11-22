@@ -59,10 +59,10 @@ use std::time::{Duration, Instant};
 use jodel_output::Capabilities;
 
 use crate::error::Error;
-use crate::rate::{choose_route_near, FileFacts, Route, Settings};
+use crate::rate::{choose_route, FileFacts, Route, Settings};
 use crate::source::TrackInfo;
 use crate::stem_file::StemStore;
-use crate::stems::{SeparatorSource, StemMix, StemRun};
+use crate::stems::SeparatorSource;
 use crate::target::OutputTarget;
 
 mod api;
@@ -103,8 +103,9 @@ const OPEN_BUSY_STEP: Duration = Duration::from_millis(100);
 const STEM_FRAMES: usize = 4096;
 
 /// How far before the frame heard a switch's new route starts decoding, so
-/// that it has settled by the time it is heard: a separation has context,
-/// a resampler's filter is full.
+/// that it has settled by the time it is heard: a separation (a
+/// transition's track onto its stems) has context, a resampler's filter is
+/// full.
 const PREROLL_STEMS: f64 = 1.0;
 
 const PREROLL_RESAMPLE: f64 = 0.1;
@@ -143,16 +144,17 @@ struct Engine {
     cues: VecDeque<Cue>,
     heard: Option<Heard>,
     last_report: Option<(Instant, u64)>,
-    /// Where stem playback gets its separator.
+    /// Where a transition's stems get their separator (the parts have
+    /// theirs in `lanes`).
     separator: Option<SeparatorSource>,
     /// Where tracks' stems are kept.
     stem_store: Option<Arc<dyn StemStore>>,
-    /// The stems failed: tracks play their usual routes until the mix
-    /// changes.
+    /// The stems of a transition's track failed: the transitions after it
+    /// take their tracks whole ([`crate::stems::whole_mix`]) until stems
+    /// may work again: the mix changes outside a transition
+    /// ([`Command::StemMask`]), playback stops (a new queue too), or the
+    /// parts of the output are separated again.
     stems_failed: bool,
-    /// The next track's separation, started once the playing track's file
-    /// has been read, so a gapless change finds its stems ready.
-    prestart: Option<StemRun>,
     /// The playing track's move to another route, under way.
     switch: Option<Switch>,
     /// [`PlayerOptions::switch_fade`].
@@ -166,20 +168,11 @@ struct Engine {
     stalled: Option<Instant>,
     /// A transition from the playing track into the next, under way.
     transition: Option<transition::Transition>,
-    /// A change of the stems heard at a time of the playing track
-    /// ([`Command::SetStemsAt`]), not yet reached.
-    stems_change: Option<StemsChange>,
     /// [`Command::StemMask`]: each stem's gain as a mixer plays them, and
     /// the changes of them to come at times of a track.
     stem_gains: stem_mask::StemGains,
     /// [`Command::JumpWindow`]: seconds kept behind, decoded ahead.
     jump_window: (f64, f64),
-    /// [`Command::KeepStems`].
-    keep_stems: bool,
-    /// The playing track's stems while it plays its file
-    /// ([`Command::KeepStems`]), following what it writes; a stems route
-    /// for it takes them over.
-    shadow: Option<StemRun>,
     /// A [`Command::Jump`] waiting for its time.
     pending_jump: Option<jump::PendingJump>,
     /// A reading of the playing track at a jump's target it does not hold.
@@ -196,23 +189,6 @@ struct Engine {
     lanes: lanes::StemLanes,
     /// Where the tracks' segments get their ids.
     segments: track::Segments,
-}
-
-/// A change of the stems heard at a time of a track: before it the track
-/// plays `before`, from it [`Settings::stems`]. It is held to the output
-/// frame that time was heard at when it was asked for, so a jump in
-/// between does not move it (a bar looped takes it at the loop's end).
-#[derive(Clone, Copy, Debug)]
-struct StemsChange {
-    /// The track.
-    index: usize,
-    /// The output frame it is heard at.
-    out: u64,
-    /// Seconds into the track (what a transition's fades go by: its
-    /// tracks are read along maps).
-    at: f64,
-    /// The stems heard before.
-    before: StemMix,
 }
 
 impl Engine {
@@ -236,28 +212,20 @@ impl Engine {
             separator: options.separator,
             stem_store: options.stem_store.clone(),
             stems_failed: false,
-            prestart: None,
             switch: None,
             switch_fade: options.switch_fade,
             offline: options.offline,
             reroute_later: false,
             stalled: None,
             transition: None,
-            stems_change: None,
             stem_gains: stem_mask::StemGains::default(),
             jump_window: (0.0, 0.0),
-            keep_stems: false,
-            shadow: None,
             pending_jump: None,
             jump_fill: None,
             lead_in: 0.0,
             lead: 0,
             hold: false,
-            lanes: lanes::StemLanes::new(
-                options.separator,
-                options.stem_store.clone(),
-                options.offline,
-            ),
+            lanes: lanes::StemLanes::new(options.separator, options.stem_store, options.offline),
             segments: track::Segments::default(),
         }
     }
@@ -268,27 +236,6 @@ impl Engine {
         let switching = self.playing.is_some() && self.switch.as_ref().is_some_and(|s| !s.spliced);
         let reading = self.playing.is_some() && self.jump_fill.is_some();
         switching || reading || (!self.paused && (self.playing.is_some() || self.finishing))
-    }
-
-    /// The settings routes are chosen with: the stems left out when there
-    /// is no separator or they failed.
-    fn route_settings(&self) -> Settings {
-        let mut settings = self.settings;
-        // All on again at a later time: the stems route plays on to then.
-        if let Some(change) = self.stems_change {
-            if settings.stems.is_full()
-                && self
-                    .playing
-                    .as_ref()
-                    .is_some_and(|t| t.index == change.index)
-            {
-                settings.stems = change.before;
-            }
-        }
-        if self.separator.is_none() || self.stems_failed {
-            settings.stems = StemMix::ALL;
-        }
-        settings
     }
 
     fn emit(&self, event: Event) {
@@ -410,28 +357,15 @@ impl Engine {
                 }
             }
             Command::Stop => self.stop(true),
-            Command::SetSettings(settings) => {
-                // Other stems at once: no change waits for its time.
-                if settings.stems != self.settings.stems {
-                    self.stems_change = None;
-                }
-                self.set_settings(settings);
-            }
+            Command::SetSettings(settings) => self.set_settings(settings),
             Command::Transition(plan) => self.arm_transition(*plan),
             // A mix under way is not cut off (moving playback does that).
             Command::CancelTransition if !self.transition_heard() => {
                 self.drop_transition(Some("called off"));
             }
             Command::CancelTransition => {}
-            Command::SetStemsAt { stems, at } => self.set_stems_at(stems, at),
             Command::Jump { index, to, at } => self.jump_within(index, to, at),
             Command::JumpWindow { back, ahead } => self.jump_window = (back, ahead),
-            Command::KeepStems(keep) => {
-                self.keep_stems = keep;
-                if !keep {
-                    self.shadow = None;
-                }
-            }
             Command::MakeStems(make) => self.lanes.set_make(make),
             Command::StemMask { gains, at } => self.set_stem_mask(gains, at),
         }
@@ -441,100 +375,23 @@ impl Engine {
         self.emit(Event::Notice { index, message });
     }
 
-    /// [`Command::SetStemsAt`]: the playing track's stems change at `at`;
-    /// a route the new stems need (the first stem off) is moved to now,
-    /// and one they no longer need (all on again) once `at` has been made.
-    fn set_stems_at(&mut self, stems: StemMix, at: f64) {
-        let Some(index) = self.playing.as_ref().map(|t| t.index) else {
-            return self.set_settings(Settings {
-                stems,
-                ..self.settings
-            });
-        };
-        // A change still to come keeps what was heard before it.
-        let before = match self.stems_change {
-            Some(change) if change.index == index => change.before,
-            _ => self.settings.stems,
-        };
-        // Where the track is heard at `at` as it plays now.
-        let out = self
-            .playing
-            .as_ref()
-            .map_or(0, |t| transition::output_frame_of(t, at));
-        self.stems_change = (stems != before).then_some(StemsChange {
-            index,
-            out,
-            at,
-            before,
-        });
-        self.set_settings(Settings {
-            stems,
-            ..self.settings
-        });
-    }
-
-    /// A stems change whose time has been made is over: with every stem
-    /// on again, the track goes back to its own route.
-    fn stems_change_turn(&mut self) {
-        let Some(change) = self.stems_change else {
-            return;
-        };
-        let (Some(track), Some(out)) = (&self.playing, &self.out) else {
-            return;
-        };
-        if track.index != change.index {
-            self.stems_change = None;
-            return;
-        }
-        if out.output.written() < change.out {
-            return;
-        }
-        self.stems_change = None;
-        if self.settings.stems.is_full() {
-            self.reroute();
-        }
-    }
-
     /// [`Command::SetSettings`]: the track being played moves to its new
     /// route without a break ([`Engine::reroute`]), or keeps the one it has
     /// when there is none or it does not open. It is never skipped and
     /// playback never stops for it.
     fn set_settings(&mut self, settings: Settings) {
-        // New settings never call a transition off. Under way, other stems
-        // go into its fades and the rest waits for its end (its tracks'
-        // routes are chosen again then); armed, it takes them when it
-        // prepares.
+        // New settings never call a transition off. Under way, they wait
+        // for its end (its tracks' routes are chosen again then); armed, it
+        // takes them when it prepares.
         if settings != self.settings && self.transition_running() {
-            let stems = settings.stems != self.settings.stems;
-            let others = Settings {
-                stems: self.settings.stems,
-                ..settings
-            } != self.settings;
-            if stems {
-                self.stems_failed = false;
-            }
             self.settings = settings;
-            if stems {
-                self.retune_transition();
-            }
-            if others {
-                let index = self.playing.as_ref().map(|t| t.index);
-                self.notice(
-                    index,
-                    "The new settings apply once the transition is over".into(),
-                );
-            }
+            let index = self.playing.as_ref().map(|t| t.index);
+            self.notice(
+                index,
+                "The new settings apply once the transition is over".into(),
+            );
             return;
         }
-        if settings.stems != self.settings.stems {
-            // Another mix tries the stems again.
-            self.stems_failed = false;
-        }
-        if settings.stems.is_full() {
-            self.prestart = None;
-        }
-        // A new mix of the same route needs nothing more: the stems that
-        // are on are summed as the output is filled.
         self.settings = settings;
         self.reroute();
     }
@@ -545,14 +402,7 @@ impl Engine {
         let caps = self
             .capabilities()
             .map_err(|e| format!("Could not ask {} what it takes: {e}", self.target.name()))?;
-        let open = self.out.as_ref().map(|o| o.info.format);
-        choose_route_near(
-            &FileFacts::from(info),
-            &caps,
-            &self.route_settings(),
-            open.as_ref(),
-        )
-        .map_err(|none| {
+        choose_route(&FileFacts::from(info), &caps, &self.settings).map_err(|none| {
             format!(
                 "No route for this track with these settings on {} ({none})",
                 self.target.name()
@@ -622,7 +472,6 @@ impl Engine {
         self.tail = None;
         self.cancel_switch();
         self.reroute_later = false;
-        self.stems_change = None;
         self.pending_jump = None;
         self.drop_jump_fill();
         self.lead = 0;
@@ -731,8 +580,6 @@ impl Engine {
         if self.jump_turn()? {
             return Ok(());
         }
-        self.stems_change_turn();
-        self.shadow_turn();
         if let Some(mut track) = self.playing.take() {
             let progress = match self.step(&mut track) {
                 Ok(progress) => progress,

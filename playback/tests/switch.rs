@@ -24,7 +24,6 @@ fn settings(max_rate: Option<u32>, headroom: Headroom) -> Settings {
         max_rate,
         resample: true,
         headroom,
-        ..Settings::default()
     }
 }
 

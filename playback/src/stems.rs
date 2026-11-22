@@ -1,18 +1,16 @@
-//! Playing stems: a track separated into drums, bass, vocals and other as
-//! it plays, and the sum of the stems that are on.
+//! A track's stems: drums, bass, vocals and other, separated as it plays
+//! or read from where they are kept.
 //!
-//! [`StemMix`] says which stems are on; with all of them on the file plays
-//! as it is (the usual route), with any off it plays on a
-//! [`Stage::Stems`](crate::Stage::Stems) route. A stem run separates one
-//! track in a thread of its own, ahead of the playhead: it decodes the file
-//! as it is stored, makes it stereo at the
+//! A stem run separates one track in a thread of its own, ahead of the
+//! playhead: it decodes the file as it is stored, makes it stereo at the
 //! separator's rate ([`StereoFeed`]), runs [`Splitter`] and hands the
-//! finished stems to the engine, which sums the ones that are on as it
-//! fills the output. A change of the mix is heard as soon as the output
-//! buffer has played out; nothing restarts.
+//! finished stems to the engine. The engine hands them on beside the file
+//! as parts of its output (in [`LANES`]' order, for a mixer to play on its
+//! strips), or (a transition, which mixes its two tracks itself) sums them
+//! faded by the transition's lanes on a [`Stage::Stems`](crate::Stage::Stems)
+//! route.
 
 use std::cell::{Cell, RefCell};
-use std::fmt;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, SyncSender, TryRecvError};
@@ -27,101 +25,17 @@ use crate::source::{Source, SCALE_24 as FULL_SCALE};
 use crate::stem_file::{StemFile, StemStore};
 
 /// The stems in the order a player hands them on as parts of its output
-/// (lanes 1 to 4, after main): [`StemMix::ORDER`].
-pub const LANES: [Stem; STEMS] = StemMix::ORDER;
+/// (lanes 1 to 4, after main), the order people name them in: drums, bass,
+/// vocals, other.
+pub const LANES: [Stem; STEMS] = [Stem::Drums, Stem::Bass, Stem::Vocals, Stem::Other];
 
 /// Where a stem run gets its separator: called in the run's thread, so
 /// setting a GPU up never holds up playback. `None`: there is none.
 pub type SeparatorSource = fn() -> Option<&'static dyn Separator>;
 
-/// Which stems are heard, and how loud: each stem's level in percent
-/// (0 off, 100 as it is in the file), in the order of [`Stem::ALL`].
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
-pub struct StemMix([u8; STEMS]);
-
-impl StemMix {
-    /// Every stem: the file as it is.
-    pub const ALL: StemMix = StemMix([100; STEMS]);
-
-    /// No stem: silence.
-    pub const NONE: StemMix = StemMix([0; STEMS]);
-
-    fn slot(stem: Stem) -> usize {
-        Stem::ALL.iter().position(|&s| s == stem).unwrap_or(0)
-    }
-
-    /// Whether `stem` is heard (at any level).
-    pub fn contains(self, stem: Stem) -> bool {
-        self.level(stem) > 0
-    }
-
-    /// The mix with `stem` switched over: off when it is heard at any
-    /// level, else on at its full level.
-    pub fn toggle(self, stem: Stem) -> StemMix {
-        let level = if self.contains(stem) { 0 } else { 100 };
-        self.with_level(stem, level)
-    }
-
-    /// `stem`'s level in percent.
-    pub fn level(self, stem: Stem) -> u8 {
-        self.0[StemMix::slot(stem)]
-    }
-
-    /// The mix with `stem` at `percent` (at most 100).
-    pub fn with_level(mut self, stem: Stem, percent: u8) -> StemMix {
-        self.0[StemMix::slot(stem)] = percent.min(100);
-        self
-    }
-
-    /// Each stem's gain (0 to 1), in the order of [`Stem::ALL`].
-    pub fn gains(self) -> [f64; STEMS] {
-        self.0.map(|level| f64::from(level) / 100.0)
-    }
-
-    /// Whether every stem is on at its full level: the file as it is.
-    pub fn is_full(self) -> bool {
-        self == StemMix::ALL
-    }
-
-    /// The stems in the order people name them: drums, bass, vocals,
-    /// other.
-    pub const ORDER: [Stem; STEMS] = [Stem::Drums, Stem::Bass, Stem::Vocals, Stem::Other];
-
-    /// The stems that are on, in [`StemMix::ORDER`].
-    pub fn stems(self) -> impl Iterator<Item = Stem> {
-        StemMix::ORDER
-            .into_iter()
-            .filter(move |&s| self.contains(s))
-    }
-
-    /// The stems that are on, for a reader: `drums, bass`, `no stems`,
-    /// `drums, vocals at 30 %`.
-    pub fn describe(self) -> String {
-        let on: Vec<String> = self
-            .stems()
-            .map(|s| match self.level(s) {
-                100 => s.id().to_owned(),
-                level => format!("{} at {level} %", s.id()),
-            })
-            .collect();
-        if on.is_empty() {
-            "no stems".into()
-        } else {
-            on.join(", ")
-        }
-    }
-}
-
-impl Default for StemMix {
-    fn default() -> Self {
-        StemMix::ALL
-    }
-}
-
-impl fmt::Debug for StemMix {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "StemMix({})", self.describe())
-    }
+/// `stem`'s place in [`Stem::ALL`], the order a run keeps the stems in.
+fn slot(stem: Stem) -> usize {
+    Stem::ALL.iter().position(|&s| s == stem).unwrap_or(0)
 }
 
 /// Decoded blocks as stereo at the separator's rate ([`RATE`]), handed on
@@ -210,6 +124,8 @@ const AHEAD: usize = 4;
 /// [`Stem::ALL`].
 struct Separated {
     stems: Vec<[Vec<f32>; 2]>,
+    /// Made by the separator (not read where they are kept).
+    separated: bool,
 }
 
 impl Separated {
@@ -220,6 +136,7 @@ impl Separated {
                 .iter()
                 .map(|[l, r]| [l.to_vec(), r.to_vec()])
                 .collect(),
+            separated: true,
         }
     }
 }
@@ -250,10 +167,9 @@ pub(crate) enum Pull {
 /// stops the thread (it is not waited for).
 ///
 /// The separated stems are kept for a while ([`StemRun::set_keep`]): some
-/// behind the frame mixed next, and as much as the thread has separated
-/// ahead of it, so the mix can go on from another frame of that stretch at
-/// once ([`StemRun::seek`]): a jump within the track, with the stems that
-/// are on now.
+/// behind the frame handed on next, and as much as the thread has separated
+/// ahead of it, so the run can go on from another frame of that stretch at
+/// once ([`StemRun::seek`]): the parts of a jump within the track.
 pub(crate) struct StemRun {
     /// The file.
     pub(crate) path: PathBuf,
@@ -273,6 +189,9 @@ pub(crate) struct StemRun {
     failed: Option<String>,
     /// The stems are not kept and none are separated.
     missing: bool,
+    /// The separator has handed stems on since [`StemRun::take_separated`]
+    /// was last asked.
+    separated: bool,
     /// Frames kept behind `mixed`, and taken from the thread ahead of it.
     keep: (u64, u64),
     /// Each stem's gain now, in the order of [`Stem::ALL`]; `None` before
@@ -391,7 +310,7 @@ impl Limiter {
 }
 
 /// Each stem's gain at a time of its track (seconds), in [`Stem::ALL`]
-/// order: a transition's fades, in place of a [`StemMix`].
+/// order: a transition's fades.
 pub(crate) type Gains = Arc<dyn Fn(f64) -> [f64; STEMS] + Send + Sync>;
 
 /// Frames over which a [`Gains`] is read once (1.5 ms; the gains ramp to
@@ -429,8 +348,8 @@ pub(crate) fn whole_mix() -> Option<&'static dyn Separator> {
     Some(&WHOLE)
 }
 
-/// Frames a stem takes to fade in or out when the mix changes (10 ms), so
-/// switching one does not click.
+/// Frames a stem's gain takes at most to reach a new one (10 ms), so a
+/// transition's fades never click.
 const RAMP: f64 = RATE as f64 / 100.0;
 
 impl StemRun {
@@ -490,6 +409,7 @@ impl StemRun {
             received: false,
             failed: None,
             missing: false,
+            separated: false,
             keep: (0, 0),
             gains: None,
             mixed: 0,
@@ -510,13 +430,6 @@ impl StemRun {
         self.keep = (back, ahead);
     }
 
-    /// The run frame of track frame `frame` (`rate`: the track's), if the
-    /// run starts at or before it.
-    pub(crate) fn frame_of(&self, frame: u64, rate: u32) -> Option<u64> {
-        let since = frame.checked_sub(self.start)?;
-        Some(crate::resample::output_frames(rate.max(1), RATE, since))
-    }
-
     /// The first run frame kept.
     pub(crate) fn kept_from(&self) -> u64 {
         self.kept_from
@@ -525,11 +438,6 @@ impl StemRun {
     /// The run frame after the last one kept.
     pub(crate) fn kept_end(&self) -> u64 {
         self.kept_from + self.kept[0][0].len() as u64
-    }
-
-    /// The run frame mixed next.
-    pub(crate) fn mixed(&self) -> u64 {
-        self.mixed
     }
 
     /// Every stem has come from the thread: nothing past
@@ -548,9 +456,10 @@ impl StemRun {
         self.missing
     }
 
-    /// Whether frames `from..to` are kept.
-    pub(crate) fn holds(&self, from: u64, to: u64) -> bool {
-        from >= self.kept_from && to <= self.kept_end() && from < to
+    /// Whether the separator has handed stems on (not read where they are
+    /// kept) since this was last asked: it works.
+    pub(crate) fn take_separated(&mut self) -> bool {
+        std::mem::take(&mut self.separated)
     }
 
     /// Mixes from run frame `frame` next, if it is kept or still to come
@@ -561,22 +470,6 @@ impl StemRun {
         }
         self.mixed = frame;
         self.limiter = Limiter::new();
-        true
-    }
-
-    /// Takes what the thread has separated without waiting, and moves the
-    /// stretch kept along to `frame` (a track playing its file that may go
-    /// onto these stems: what is kept follows what it plays). False when
-    /// the run cannot follow: `frame` is before what it keeps, or further
-    /// ahead of what it has than it takes ahead.
-    pub(crate) fn follow(&mut self, frame: u64) -> bool {
-        if frame < self.kept_from || frame > self.kept_end() + self.keep.1.max(u64::from(RATE)) {
-            return false;
-        }
-        self.mixed = frame;
-        self.limiter = Limiter::new();
-        self.fetch(0, Duration::ZERO);
-        self.trim();
         true
     }
 
@@ -609,6 +502,7 @@ impl StemRun {
             wait = Duration::ZERO;
             match message {
                 Message::Stems(s) => {
+                    self.separated |= s.separated;
                     for (kept, [l, r]) in self.kept.iter_mut().zip(s.stems) {
                         kept[0].extend_from_slice(&l);
                         kept[1].extend_from_slice(&r);
@@ -646,17 +540,14 @@ impl StemRun {
         }
     }
 
-    /// Adds up to `frames` frames of the stems in `mix` to `out`
-    /// (interleaved stereo, in 24-bit units), waiting up to `wait` for the
-    /// next stems when none are left. With `change` (a frame of the run and
-    /// a mix), the stems in that mix from that frame on. With `gains` (and
-    /// the seconds of the run's first frame in its track), each stem's gain
-    /// follows them instead.
+    /// Adds up to `frames` frames of the stems summed to `out` (interleaved
+    /// stereo, in 24-bit units), waiting up to `wait` for the next stems
+    /// when none are left: each stem at its gain in `gains` (with the
+    /// seconds of the run's first frame in its track), else every one at
+    /// one (the whole track).
     pub(crate) fn mix(
         &mut self,
         frames: usize,
-        mix: StemMix,
-        change: Option<(u64, StemMix)>,
         gains: Option<(&Gains, f64)>,
         out: &mut Vec<f64>,
         wait: Duration,
@@ -668,11 +559,9 @@ impl StemRun {
             Err(pull) => return pull,
         };
         let end = self.kept_end();
-        let (before, after) = (mix.gains(), change.map(|(_, m)| m.gains()));
-        let target_at = |frame: u64| match (gains, change, after) {
-            (Some((g, origin)), _, _) => g(origin + frame as f64 / f64::from(RATE)),
-            (None, Some((at, _)), Some(after)) if frame >= at => after,
-            _ => before,
+        let target_at = |frame: u64| match gains {
+            Some((g, origin)) => g(origin + frame as f64 / f64::from(RATE)),
+            None => [1.0; STEMS],
         };
         let mut target = target_at(self.mixed);
         let mixed = self.mixed;
@@ -681,11 +570,8 @@ impl StemRun {
         out.reserve(2 * n);
         for i in first..first + n {
             let k = (i - first) as u64;
-            // The gains are read every block, and on the frame a change
-            // falls on.
-            if k > 0
-                && (k % GAIN_BLOCK as u64 == 0 || change.is_some_and(|(at, _)| mixed + k == at))
-            {
+            // The gains are read every block.
+            if k > 0 && k % GAIN_BLOCK as u64 == 0 {
                 target = target_at(mixed + k);
             }
             let (mut l, mut r) = (0.0f64, 0.0f64);
@@ -768,7 +654,7 @@ impl StemRun {
             Ok(span) => span,
             Err(pull) => return pull,
         };
-        let slots = LANES.map(StemMix::slot);
+        let slots = LANES.map(slot);
         out.reserve(2 * STEMS * n);
         for i in first..first + n {
             for &s in &slots {
@@ -814,6 +700,7 @@ fn read_kept(
         at += n;
         let piece = Separated {
             stems: Vec::from(stems),
+            separated: false,
         };
         if tx.send(Message::Stems(piece)).is_err() {
             return Ok(());
@@ -941,32 +828,11 @@ mod tests {
     }
 
     #[test]
-    fn a_mix_toggles_and_describes_its_stems() {
-        let mix = StemMix::ALL.toggle(Stem::Vocals).toggle(Stem::Other);
-        assert!(!mix.is_full());
-        assert!(mix.contains(Stem::Drums) && mix.contains(Stem::Bass));
-        assert!(!mix.contains(Stem::Vocals));
-        assert_eq!(mix.describe(), "drums, bass");
-        assert_eq!(StemMix::NONE.describe(), "no stems");
-        assert!(mix.toggle(Stem::Vocals).toggle(Stem::Other).is_full());
-        assert_eq!(StemMix::default(), StemMix::ALL);
-    }
-
-    #[test]
-    fn a_stem_at_a_level_is_heard_but_not_full() {
-        let mix = StemMix::ALL.with_level(Stem::Vocals, 30);
-        assert!(mix.contains(Stem::Vocals) && !mix.is_full());
-        assert_eq!(mix.level(Stem::Vocals), 30);
-        assert_eq!(mix.describe(), "drums, bass, vocals at 30 %, other");
-        let vocals = Stem::ALL.iter().position(|&s| s == Stem::Vocals).unwrap();
-        assert_eq!(mix.gains()[vocals], 0.3);
-        // Toggled, a stem at a level goes off, and comes back whole.
-        assert!(!mix.toggle(Stem::Vocals).contains(Stem::Vocals));
-        assert!(mix.toggle(Stem::Vocals).toggle(Stem::Vocals).is_full());
-        assert_eq!(
-            StemMix::NONE.with_level(Stem::Bass, 250).level(Stem::Bass),
-            100
-        );
+    fn the_lanes_are_every_stem_once() {
+        let mut slots = LANES.map(slot);
+        slots.sort_unstable();
+        assert_eq!(slots, [0, 1, 2, 3]);
+        assert_eq!(Stem::ALL[slot(Stem::Vocals)], Stem::Vocals);
     }
 
     #[test]

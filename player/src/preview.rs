@@ -24,7 +24,6 @@ use std::sync::mpsc::Receiver;
 use std::time::Duration;
 
 use jodel_output::mixer::{Fader, Mixer, Ramp, Role, Start, Strip};
-use jodel_playback::stems::StemMix;
 use jodel_playback::{Command, Event, Player, PlayerOptions, Settings};
 
 use crate::core::preview::SHARE;
@@ -97,7 +96,6 @@ impl Previews {
             strip,
             settings: Settings {
                 resample: true,
-                stems: StemMix::ALL,
                 ..settings
             },
             voices: Vec::new(),

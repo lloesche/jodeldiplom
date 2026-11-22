@@ -171,7 +171,6 @@ impl Config {
             max_rate: self.max_rate,
             resample: self.resample,
             headroom: self.headroom,
-            stems: jodel_playback::StemMix::ALL,
         }
     }
 

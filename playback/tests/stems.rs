@@ -1,570 +1,272 @@
-//! Stem playback: a track separated as it plays and the stems that are on
-//! summed, a mix changed while it plays, back to the file as it is, seeks,
-//! track changes and a separator that fails. The separator here gives each
-//! stem a quarter of the mix, so the sum of all four is the mix.
+//! Stem levels on the desk: the engine hands each stem on beside the file
+//! as a part of a mixer's lane input ([`MakeStems`]), each on its strip
+//! inside the player's, and the mixer plays the stems at their strips'
+//! levels in place of the file while one is touched. A level is heard
+//! within the device's buffer; untouched, the file is heard bit for bit
+//! again; seeks, gapless changes, a failing separator and stems kept in a
+//! store; and the stems a transition sums kept under full scale. The
+//! separator here gives each stem a quarter of the mix, so all four add up
+//! to it.
 
 mod common;
 
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::sync::mpsc::Receiver;
+use std::sync::Arc;
 
+use common::lanes::{broken, device_samples, options, quarter, tone_file, CLOSE, RATE};
 use common::*;
-use jodel_output::{SampleFormat, SimClock};
-use jodel_playback::stems::{Separator, Stem, StemMix};
+use jodel_output::mixer::{Mixer, MixerOptions, Role, Strip};
+use jodel_output::{Capabilities, SampleFormat, SimClock};
+use jodel_playback::stems::{Stem, CEILING, LANES, STEMS};
 use jodel_playback::{
-    Event, FilterDesign, JumpAt, MemoryTarget, PlayState, Player, PlayerOptions, Settings, Stage,
-    TrackStart,
+    Captures, Envelope, Event, MakeStems, MemoryTarget, Player, PlayerOptions, Stage, StemDesk,
+    StemFile, StemStore, StemWriter, TempoMode, TransitionPlan, TransitionState,
 };
 use SampleFormat::*;
 
-const RATE: u32 = 44_100;
-/// Eight seconds: two of the separator's chunks and a bit.
-const FRAMES: usize = 8 * RATE as usize;
-
-/// Each stem a quarter of the mix.
-struct Quarter;
-
-impl Separator for Quarter {
-    fn name(&self) -> String {
-        "quarter".into()
-    }
-
-    fn masks(&self, frames: usize, stft: &[f32]) -> Result<Vec<f32>, String> {
-        let per_stem = stft.len();
-        assert_eq!(per_stem % frames, 0);
-        // Real parts a quarter, imaginary parts nothing.
-        Ok((0..4 * per_stem)
-            .map(|i| if i % 2 == 0 { 0.25 } else { 0.0 })
-            .collect())
-    }
+/// The part strip of `stem` among the desk's (in [`LANES`]' order).
+fn part(lanes: &MixerLanes, stem: Stem) -> &Strip {
+    &lanes.parts[LANES.iter().position(|&s| s == stem).expect("a lane")]
 }
 
-/// A separator that always fails.
-struct Broken;
-
-impl Separator for Broken {
-    fn name(&self) -> String {
-        "broken".into()
-    }
-
-    fn masks(&self, _: usize, _: &[f32]) -> Result<Vec<f32>, String> {
-        Err("out of memory".into())
-    }
-}
-
-static QUARTER: Quarter = Quarter;
-static BROKEN: Broken = Broken;
-
-fn quarter() -> Option<&'static dyn Separator> {
-    Some(&QUARTER)
-}
-
-fn broken() -> Option<&'static dyn Separator> {
-    Some(&BROKEN)
-}
-
-fn mix(stems: &[Stem]) -> StemMix {
-    stems.iter().fold(StemMix::NONE, |m, &s| m.toggle(s))
-}
-
-fn settings(stems: StemMix) -> Settings {
-    Settings {
-        resample: false,
-        stems,
-        ..Settings::default()
-    }
-}
-
-fn options(stems: StemMix, separator: jodel_playback::SeparatorSource) -> PlayerOptions {
-    PlayerOptions {
-        settings: settings(stems),
-        position_interval: Duration::from_millis(1),
-        separator: Some(separator),
-        ..PlayerOptions::default()
-    }
-}
-
-/// A 24-bit stereo WAV of two tones, `FRAMES` long.
-fn tone_file(dir: &Path, name: &str) -> (PathBuf, Vec<i32>) {
-    let path = dir.join(name);
-    let samples = tones(RATE, FRAMES);
-    write_wav(&path, RATE, 2, &samples);
-    (path, samples)
-}
-
-/// The 24-bit samples of a stream the device took as `S24In32Low`.
-fn samples(bytes: &[u8]) -> Vec<i32> {
-    bytes
-        .chunks_exact(4)
-        .map(|b| (i32::from_le_bytes([b[0], b[1], b[2], b[3]]) << 8) >> 8)
-        .collect()
-}
-
-fn starts(events: &[Event]) -> Vec<&TrackStart> {
-    events
-        .iter()
-        .filter_map(|e| match e {
-            Event::TrackStarted(s) => Some(&**s),
-            _ => None,
-        })
-        .collect()
-}
-
-/// The largest difference between `got` and `scale` times `want`, frame
-/// `from` (inclusive) to `to`. The first frame of a separation is left out:
-/// the chunk fades in from it.
-fn worst(got: &[i32], want: &[i32], scale: f64, from: usize, to: usize) -> f64 {
-    (2 * from..2 * to)
-        .map(|i| (f64::from(got[i]) - scale * f64::from(want[i])).abs())
+/// The largest step between `n` frames of `got` from its frame `at` and
+/// `scale` times as many of `want` from its frame `from` (stereo).
+fn off(got: &[i32], at: usize, want: &[i32], from: usize, n: usize, scale: f64) -> f64 {
+    (0..2 * n)
+        .map(|i| (f64::from(got[2 * at + i]) - scale * f64::from(want[2 * from + i])).abs())
         .fold(0.0, f64::max)
 }
 
-/// Within this many 24-bit steps: dither and the transforms' rounding.
-const CLOSE: f64 = 64.0;
+/// The tones of `frames` at [`RATE`] in `dir`, and their samples.
+fn tones_of(dir: &Path, name: &str, frames: usize) -> (PathBuf, Vec<i32>) {
+    let path = tone_file(dir, name, RATE, frames);
+    (path, tones(RATE, frames))
+}
 
-#[test]
-fn the_stems_that_are_on_are_summed_and_none_is_silence() {
-    let dir = temp_dir("stems-sum");
-    let (path, file) = tone_file(&dir, "tones.wav");
-    for (stems, scale) in [
-        (mix(&[Stem::Drums]), 0.25),
-        (mix(&[Stem::Drums, Stem::Bass, Stem::Other]), 0.75),
-        // A stem at a level: the voice at 40 % under the rest.
-        (StemMix::ALL.with_level(Stem::Vocals, 40), 0.85),
-        (StemMix::NONE, 0.0),
-    ] {
-        let target = MemoryTarget::new(caps(&[RATE], &[S24In32Low]), SimClock::Instant);
-        let captures = target.captures();
-        let (player, events) = Player::new(Box::new(target), options(stems, quarter));
-        player.load(vec![path.clone()]).unwrap();
-        player.play(0).unwrap();
-        let seen = until_queue_end(&events);
-        let start = starts(&seen)[0];
-        assert_eq!(start.route.stage, Stage::Stems, "{stems:?}");
-        assert!(!start.bit_perfect);
-        assert!(!seen
-            .iter()
-            .any(|e| matches!(e, Event::Error { .. } | Event::Notice { .. })));
-        drop(player);
-        let streams = captured(&captures);
-        assert_eq!(streams.len(), 1);
-        let got = samples(&streams[0].1);
-        assert_eq!(got.len(), file.len(), "{stems:?}: the whole track");
-        let off = worst(&got, &file, scale, 1, FRAMES);
-        assert!(off <= CLOSE, "{stems:?}: {off} steps off");
+/// The one stream the device played, as 24-bit samples.
+fn played(captures: &Captures) -> Vec<i32> {
+    let streams = captured(captures);
+    assert_eq!(streams.len(), 1, "one stream");
+    device_samples(&streams[0].1)
+}
+
+/// A desk whose device plays as far as a test lets it ([`held_desk`]).
+struct Held {
+    player: Player,
+    events: Receiver<Event>,
+    captures: Captures,
+    /// What the mixer's device takes, and what the engine has written.
+    device: Arc<Gate>,
+    engine: Arc<Gate>,
+    lanes: MixerLanes,
+}
+
+/// The engine on a mixer's lane input as the app has it (the player's
+/// strip a group, a strip for each stem inside it) with the quarter's
+/// stems made and waited for; the mixer's device gated, so the engine runs
+/// ahead of what is played by the mixer's input ring.
+fn held_desk(caps: Capabilities) -> Held {
+    let device = MemoryTarget::new(caps, SimClock::Instant);
+    let captures = device.captures();
+    let (device, gate) = GatedTarget::around(Box::new(device));
+    let mixer = Mixer::open(Box::new(device), MixerOptions::default());
+    let (desk, input) = StemDesk::new(&mixer, "Player", Role::Lead, 1.0);
+    let (input, engine) = GatedTarget::around(Box::new(input));
+    engine.allow_all();
+    let (player, events) = Player::new(Box::new(input), options(false, true, quarter));
+    player.make_stems(MakeStems::Separate).unwrap();
+    let lanes = MixerLanes {
+        parts: desk.stems,
+        faders: desk.lanes,
+        mixer,
+    };
+    Held {
+        player,
+        events,
+        captures,
+        device: gate,
+        engine,
+        lanes,
     }
 }
 
-/// A new mix of the same route is heard after what was already made, with
-/// no restart; all stems on again plays the file as it is from the frame
-/// heard.
-#[test]
-fn a_mix_changes_in_place_and_all_stems_play_the_file_again() {
-    let dir = temp_dir("stems-change");
-    let (path, file) = tone_file(&dir, "tones.wav");
-    let (target, captures, gate) = GatedTarget::new(caps(&[RATE], &[S24In32Low]));
-    let drums = mix(&[Stem::Drums]);
-    let (player, events) = Player::new(Box::new(target), options(drums, quarter));
-    player.load(vec![path]).unwrap();
-    gate.allow(RATE.into());
-    player.play(0).unwrap();
-    gate.wait_written(RATE.into());
-    let first = collect_until(&events, |e| matches!(e, Event::TrackStarted(_)));
-    assert_eq!(starts(&first)[0].route.stage, Stage::Stems);
-
-    // Drums and bass: half the mix, once what was made is written.
-    let changed = gate.written() as usize;
-    player
-        .set_settings(settings(mix(&[Stem::Drums, Stem::Bass])))
-        .unwrap();
-    // A pause and resume after it: once the engine answers, it has the mix.
-    player.pause().unwrap();
-    player.resume().unwrap();
-    collect_until(&events, |e| matches!(e, Event::State(PlayState::Playing)));
-    gate.allow(3 * u64::from(RATE));
-    gate.wait_written(3 * u64::from(RATE));
-
-    // Every stem: the file as it is, from the frame heard.
-    let whole = gate.written() as usize;
-    player.set_settings(settings(StemMix::ALL)).unwrap();
-    let seen = collect_until(&events, |e| matches!(e, Event::TrackStarted(_)));
-    let start = starts(&seen)[0];
-    assert_eq!(start.route.stage, Stage::Passthrough);
-    assert!(start.route.lossless);
-    // The file crossfades in at the frame written up to.
-    assert_eq!(start.output_frame as usize, whole);
-    assert_eq!(start.from_frame as usize, whole);
-    gate.allow_all();
-    let rest = until_queue_end(&events);
-    let all = [first, seen, rest].concat();
-    assert_eq!(starts(&all).len(), 2, "the mix change restarts nothing");
-    assert!(!all.iter().any(|e| matches!(e, Event::Error { .. })));
-    drop(player);
-    let streams = captured(&captures);
-    assert_eq!(streams.len(), 1, "the same output throughout");
-    let got = samples(&streams[0].1);
-    assert!(worst(&got, &file, 0.25, 1, changed) <= CLOSE);
-    let settled = changed + 2 * 4096;
-    assert!(worst(&got, &file, 0.5, settled, whole) <= CLOSE);
-    assert_eq!(got.len() / 2, FRAMES);
-    let faded = whole + FADE;
-    assert!(
-        got[2 * faded..] == file[2 * faded..],
-        "bit-perfect from {faded}"
-    );
+impl Held {
+    /// Lets the mixer's device play `frames` in all, and waits for the
+    /// engine to be a quarter of a second ahead of it, on the mixer's
+    /// input ring. Returns the frames played.
+    fn play_to(&self, frames: u64) -> usize {
+        self.device.allow(frames);
+        self.device.wait_written(frames);
+        let ahead = frames + u64::from(RATE) / 4;
+        assert!(
+            self.engine.written_within(ahead, TIMEOUT),
+            "the engine wrote {} frames, the device played {frames}",
+            self.engine.written()
+        );
+        self.device.written() as usize
+    }
 }
 
-/// The default crossfade of a switch, in frames.
-const FADE: usize = RATE as usize / 50;
-
-/// Turning a stem off moves the track from the file to the stems without
-/// a break, in the same output: the file exactly up to where they meet,
-/// then a crossfade into the stems.
+/// A stem's level changed on its strip is heard from the next frames the
+/// mixer mixes, a few milliseconds after what the device has played (the
+/// engine a quarter of a second ahead of it at least, on the mixer's input
+/// ring); every strip back as it was, the file again bit for bit.
 #[test]
-fn the_stems_crossfade_in_without_a_break() {
-    let dir = temp_dir("stems-enter");
-    let (path, file) = tone_file(&dir, "tones.wav");
-    let (target, captures, gate) = GatedTarget::new(caps(&[RATE], &[S24In32Low]));
-    let (player, events) = Player::new(Box::new(target), options(StemMix::ALL, quarter));
-    player.load(vec![path]).unwrap();
-    gate.allow(2 * u64::from(RATE));
-    player.play(0).unwrap();
-    gate.wait_written(2 * u64::from(RATE));
-    let first = collect_until(&events, |e| matches!(e, Event::TrackStarted(_)));
-    assert_eq!(starts(&first)[0].route.stage, Stage::Passthrough);
-    player.set_settings(settings(mix(&[Stem::Drums]))).unwrap();
-    let seen = trickle_until_started(&gate, &events);
-    let start = starts(&seen)[0];
-    assert_eq!(start.route.stage, Stage::Stems);
-    let at = start.output_frame as usize;
-    assert_eq!(start.from_frame as usize, at);
-    assert!(at >= 2 * RATE as usize);
-    gate.allow_all();
-    let rest = until_queue_end(&events);
-    assert!(!rest.iter().any(|e| matches!(e, Event::Error { .. })));
+fn a_stem_level_on_the_desk_is_heard_at_once_and_untouched_is_the_file_again() {
+    let dir = temp_dir("stems-desk");
+    let frames = 3 * RATE as usize;
+    let (path, file) = tones_of(&dir, "tones.wav", frames);
+    let desk = held_desk(caps(&[RATE], &[S24In32Low]));
+    part(&desk.lanes, Stem::Drums).set_mute(true);
+    desk.player.load(vec![path]).unwrap();
+    desk.player.play(0).unwrap();
+    let rate = u64::from(RATE);
+    // The voice down to 40 % a second in: drums off, bass and other, 40 %
+    // of the voice (0.6 of the file).
+    let lowered = desk.play_to(rate);
+    part(&desk.lanes, Stem::Vocals).set_level(0.4);
+    // Every strip as it was at two seconds.
+    let reset = desk.play_to(2 * rate);
+    part(&desk.lanes, Stem::Vocals).set_level(1.0);
+    part(&desk.lanes, Stem::Drums).set_mute(false);
+    desk.device.allow_all();
+    let seen = until_queue_end(&desk.events);
+    let Held {
+        player,
+        captures,
+        lanes,
+        ..
+    } = desk;
     drop(player);
-    let streams = captured(&captures);
-    assert_eq!(streams.len(), 1, "the same output throughout");
-    let got = samples(&streams[0].1);
+    drop(lanes);
+    assert!(!seen
+        .iter()
+        .any(|e| matches!(e, Event::Error { .. } | Event::PartsStopped { .. })));
+    let got = played(&captures);
     assert_eq!(got.len(), file.len());
-    assert!(got[..2 * at] == file[..2 * at], "the file up to {at}");
-    assert!(worst(&got, &file, 0.25, at + FADE, FRAMES) <= CLOSE);
+    // The mixer's period and the strip's ramp, and a little more: 50 ms.
+    let soon = RATE as usize / 20;
+    let drums_off = off(&got, 1_000, &file, 1_000, lowered - 1_000, 0.75);
+    assert!(drums_off <= CLOSE as f64, "{drums_off} steps off 0.75");
+    let at = lowered + soon;
+    let voice_down = off(&got, at, &file, at, reset - at, 0.6);
+    assert!(voice_down <= CLOSE as f64, "{voice_down} steps off 0.6");
+    // Main again once the ramps and the mixer's switch are over.
+    let back = 2 * (reset + soon + RATE as usize / 50);
+    assert!(got[back..] == file[back..], "the file again from {back}");
 }
 
+/// A seek with a stem muted: the stems start again from the seek's frame,
+/// heard there (at a high output rate too, the stems resampled to it as
+/// main is).
 #[test]
-fn a_seek_separates_from_the_new_position() {
+fn a_seek_with_a_stem_muted_plays_its_stems_from_there() {
     let dir = temp_dir("stems-seek");
-    let (path, file) = tone_file(&dir, "tones.wav");
-    let (target, captures, gate) = GatedTarget::new(caps(&[RATE], &[S24In32Low]));
-    let (player, events) = Player::new(Box::new(target), options(mix(&[Stem::Vocals]), quarter));
-    player.load(vec![path]).unwrap();
-    gate.allow(RATE.into());
-    player.play(0).unwrap();
-    gate.wait_written(RATE.into());
-    collect_until(&events, |e| matches!(e, Event::TrackStarted(_)));
-    let at = gate.written() as usize;
-    player.seek(5.0).unwrap();
-    collect_until(&events, |e| matches!(e, Event::Seeked { .. }));
-    gate.allow_all();
-    until_queue_end(&events);
-    drop(player);
-    let got = samples(&captured(&captures)[0].1);
-    let from = 5 * RATE as usize;
-    assert_eq!(got.len() / 2, at + FRAMES - from);
-    let after: Vec<i32> = got[2 * at..].to_vec();
-    assert!(worst(&after, &file[2 * from..], 0.25, 1, FRAMES - from) <= CLOSE);
+    let frames = 4 * RATE as usize;
+    let (path, file) = tones_of(&dir, "tones.wav", frames);
+    for out in [RATE, 192_000] {
+        let (target, captures, gate, lanes) = gated_mixer_lanes(caps(&[out], &[S24In32Low]));
+        let (player, events) = Player::new(Box::new(target), options(true, true, quarter));
+        player.make_stems(MakeStems::Separate).unwrap();
+        part(&lanes, Stem::Drums).set_mute(true);
+        player.load(vec![path.clone()]).unwrap();
+        gate.allow(u64::from(out));
+        player.play(0).unwrap();
+        gate.wait_written(u64::from(out));
+        player.seek(2.5).unwrap();
+        collect_until(&events, |e| matches!(e, Event::Seeked { .. }));
+        gate.allow_all();
+        until_queue_end(&events);
+        drop(player);
+        drop(lanes);
+        let got = played(&captures);
+        let from = 5 * RATE as usize / 2;
+        let (before, after) = if out == RATE {
+            (file[..2 * from].to_vec(), file[2 * from..].to_vec())
+        } else {
+            (
+                reference_resample(RATE, out, 2, &file),
+                reference_resample(RATE, out, 2, &file[2 * from..]),
+            )
+        };
+        // What was mixed before the seek, then the track from it.
+        let seam = got.len() / 2 - after.len() / 2;
+        let edge = out as usize / 40;
+        let early = off(&got, edge, &before, edge, seam - 2 * edge, 0.75);
+        let late = off(
+            &got,
+            seam + edge,
+            &after,
+            edge,
+            after.len() / 2 - 2 * edge,
+            0.75,
+        );
+        println!("{out} Hz: {early} steps off before the seek, {late} after");
+        assert!(early.max(late) <= CLOSE as f64, "{out}: {early}, {late}");
+    }
 }
 
+/// The next track follows gaplessly with its stems: one stem soloed, its
+/// quarter of each track throughout.
 #[test]
 fn the_next_track_plays_its_stems_gaplessly() {
     let dir = temp_dir("stems-next");
-    let (one, first) = tone_file(&dir, "one.wav");
-    let (two, second) = tone_file(&dir, "two.wav");
-    let target = MemoryTarget::new(caps(&[RATE], &[S24In32Low]), SimClock::Instant);
-    let captures = target.captures();
-    let (player, events) = Player::new(Box::new(target), options(mix(&[Stem::Other]), quarter));
+    let frames = 2 * RATE as usize;
+    let (one, first) = tones_of(&dir, "one.wav", frames);
+    let (two, second) = tones_of(&dir, "two.wav", frames);
+    let (target, captures, gate, lanes) = gated_mixer_lanes(caps(&[RATE], &[S24In32Low]));
+    let (player, events) = Player::new(Box::new(target), options(false, true, quarter));
+    player.make_stems(MakeStems::Separate).unwrap();
+    part(&lanes, Stem::Other).set_solo(true);
+    gate.allow_all();
     player.load(vec![one, two]).unwrap();
     player.play(0).unwrap();
     let seen = until_queue_end(&events);
-    let routes: Vec<Stage> = starts(&seen).iter().map(|s| s.route.stage).collect();
-    assert_eq!(routes, [Stage::Stems, Stage::Stems]);
     drop(player);
-    let streams = captured(&captures);
-    assert_eq!(streams.len(), 1, "one stream: gapless");
-    let got = samples(&streams[0].1);
-    assert_eq!(got.len(), first.len() + second.len());
+    drop(lanes);
+    let starts = seen
+        .iter()
+        .filter(|e| matches!(e, Event::TrackStarted(_)))
+        .count();
+    assert_eq!(starts, 2);
+    let got = played(&captures);
+    assert_eq!(got.len(), first.len() + second.len(), "gapless");
     let both = [first, second].concat();
-    assert!(worst(&got, &both, 0.25, 1, FRAMES) <= CLOSE);
-    assert!(worst(&got, &both, 0.25, FRAMES + 1, 2 * FRAMES) <= CLOSE);
+    let worst = off(&got, 1_000, &both, 1_000, 2 * frames - 1_000, 0.25);
+    assert!(worst <= CLOSE as f64, "{worst} steps off a quarter");
 }
 
+/// A separator that fails: the parts stop (and say why), and the mixer
+/// plays main, the file as it is, though a stem is muted.
 #[test]
-fn failing_stems_fall_back_to_the_whole_mix() {
+fn failing_stems_stop_the_parts_and_the_file_plays_as_it_is() {
     let dir = temp_dir("stems-broken");
-    let (path, file) = tone_file(&dir, "tones.wav");
-    let target = MemoryTarget::new(caps(&[RATE], &[S24In32Low]), SimClock::Instant);
-    let captures = target.captures();
-    let (player, events) = Player::new(Box::new(target), options(mix(&[Stem::Bass]), broken));
+    let (path, file) = tones_of(&dir, "tones.wav", 2 * RATE as usize);
+    let (target, captures, gate, lanes) = gated_mixer_lanes(caps(&[RATE], &[S24In32Low]));
+    let (player, events) = Player::new(Box::new(target), options(false, true, broken));
+    player.make_stems(MakeStems::Separate).unwrap();
+    part(&lanes, Stem::Bass).set_mute(true);
+    gate.allow_all();
     player.load(vec![path]).unwrap();
     player.play(0).unwrap();
     let seen = until_queue_end(&events);
-    let stages: Vec<Stage> = starts(&seen).iter().map(|s| s.route.stage).collect();
-    assert_eq!(stages.last(), Some(&Stage::Passthrough), "{seen:#?}");
+    drop(player);
+    drop(lanes);
     let stopped = seen.iter().find_map(|e| match e {
-        Event::StemsStopped { index: 0, reason } => Some(reason.clone()),
+        Event::PartsStopped { index: 0, reason } => Some(reason.clone()),
         _ => None,
     });
     assert_eq!(stopped.as_deref(), Some("out of memory"), "{seen:#?}");
     assert!(!seen.iter().any(|e| matches!(
         e,
-        Event::TrackEnded {
-            finished: false,
-            ..
-        }
+        Event::Error { .. }
+            | Event::TrackEnded {
+                finished: false,
+                ..
+            }
     )));
-    drop(player);
-    let streams = captured(&captures);
-    let got = samples(&streams.last().unwrap().1);
-    assert!(got == file, "the file as it is");
-}
-
-/// A high output rate: the stems at the separator's rate resampled to it.
-const HIGH: u32 = 192_000;
-
-/// Lengths of a track at [`HIGH`] (4 s and a little less) whose stems from
-/// its start, resampled back, once came out two frames short and two over;
-/// from a whole second on as well.
-const AWKWARD: [usize; 2] = [4 * HIGH as usize - 512, 4 * HIGH as usize - 320];
-
-/// Options for stems at [`HIGH`] with the quarter separator: `stems` on.
-fn high_options(stems: StemMix) -> PlayerOptions {
-    PlayerOptions {
-        settings: Settings {
-            stems,
-            ..Settings::default()
-        },
-        position_interval: Duration::from_millis(1),
-        separator: Some(quarter),
-        ..PlayerOptions::default()
-    }
-}
-
-/// Turning a stem off at a high output rate: the stems run up from a
-/// second before the frame written, more output frames than the switch
-/// keeps of a route that has not caught up, and nothing of them is there
-/// until the first chunk is separated. The switch waits for them (it once
-/// dropped output it did not have yet, and the engine stopped), then
-/// crossfades in, in the same output, and the track ends on its last
-/// frame (at awkward lengths too: the run-up counts in the stems' end).
-#[test]
-fn stems_at_a_high_rate_are_waited_for() {
-    let dir = temp_dir("stems-high");
-    for frames in [4 * HIGH as usize, AWKWARD[0], AWKWARD[1]] {
-        let path = dir.join(format!("tones-{frames}.wav"));
-        let file = tones(HIGH, frames);
-        write_wav(&path, HIGH, 2, &file);
-        let (target, captures, gate) = GatedTarget::new(caps(&[HIGH], &[S24In32Low]));
-        let (player, events) = Player::new(Box::new(target), high_options(StemMix::ALL));
-        player.load(vec![path]).unwrap();
-        gate.allow(2 * u64::from(HIGH));
-        player.play(0).unwrap();
-        gate.wait_written(2 * u64::from(HIGH));
-        collect_until(&events, |e| matches!(e, Event::TrackStarted(_)));
-        player
-            .set_settings(Settings {
-                stems: mix(&[Stem::Drums]),
-                ..Settings::default()
-            })
-            .unwrap();
-        let seen = trickle_until_started(&gate, &events);
-        let start = starts(&seen)[0];
-        assert_eq!(start.route.stage, Stage::Stems);
-        assert_eq!(start.output.format.rate, HIGH, "the same output");
-        let at = start.output_frame as usize;
-        gate.allow_all();
-        let rest = until_queue_end(&events);
-        assert!(!rest.iter().any(|e| matches!(e, Event::Error { .. })));
-        drop(player);
-        let streams = captured(&captures);
-        assert_eq!(streams.len(), 1);
-        let got = samples(&streams[0].1);
-        assert_eq!(got.len(), file.len(), "{frames} frames");
-        assert!(got[..2 * at] == file[..2 * at], "the file up to {at}");
-        // A quarter of the tones after the crossfade (through 44.1 kHz and
-        // back: the tones are far below its band edge).
-        let fade = HIGH as usize / 50;
-        let near = worst(&got, &file, 0.25, at + fade, frames - HIGH as usize / 10);
-        assert!(near <= 4_096.0, "off by {near}");
-    }
-}
-
-/// A track at a high rate on its stems ends on its own last frame: its
-/// stems at the separator's rate end within a frame of that rate of it,
-/// and resampled back they once ended a frame or two short of the file or
-/// past it, by its length (or the frame the stems started at).
-#[test]
-fn stems_at_a_high_rate_end_with_the_track() {
-    let dir = temp_dir("stems-high-end");
-    for frames in AWKWARD {
-        let path = dir.join(format!("tones-{frames}.wav"));
-        let file = tones(HIGH, frames);
-        write_wav(&path, HIGH, 2, &file);
-        let target = MemoryTarget::new(caps(&[HIGH], &[S24In32Low]), SimClock::Instant);
-        let captures = target.captures();
-        let (player, events) = Player::new(Box::new(target), high_options(mix(&[Stem::Drums])));
-        player.load(vec![path]).unwrap();
-        player.play(0).unwrap();
-        let seen = until_queue_end(&events);
-        let start = starts(&seen)[0];
-        assert_eq!(start.route.stage, Stage::Stems);
-        assert_eq!(start.output.format.rate, HIGH);
-        drop(player);
-        let got = samples(&captured(&captures)[0].1);
-        assert_eq!(got.len(), file.len(), "{frames} frames");
-        let fade = HIGH as usize / 50;
-        let near = worst(&got, &file, 0.25, fade, frames - HIGH as usize / 10);
-        assert!(near <= 4_096.0, "off by {near}");
-    }
-}
-
-/// A jump on a stems route at a high rate, at a time: the frames up to it,
-/// then the track from the target to its last frame, nothing more or
-/// less. The stream starts again a little before the target and drops
-/// what it makes for that; a target nearer the end than the resampler's
-/// filter reaches ends the stems before all of that is made.
-#[test]
-fn a_jump_at_a_high_rate_ends_with_the_track() {
-    let dir = temp_dir("stems-high-jump");
-    let reach = FilterDesign::new(RATE, HIGH).half_width() * HIGH as usize / RATE as usize;
-    for frames in AWKWARD {
-        let path = dir.join(format!("tones-{frames}.wav"));
-        write_wav(&path, HIGH, 2, &tones(HIGH, frames));
-        for to in [HIGH as usize, frames - reach / 2] {
-            let (target, captures, gate) = GatedTarget::new(caps(&[HIGH], &[S24In32Low]));
-            let (player, events) = Player::new(Box::new(target), high_options(mix(&[Stem::Drums])));
-            player.jump_window(4.0, 4.0).unwrap();
-            player.load(vec![path.clone()]).unwrap();
-            gate.allow(u64::from(HIGH));
-            player.play(0).unwrap();
-            gate.wait_written(u64::from(HIGH));
-            let mut seen = collect_until(&events, |e| matches!(e, Event::TrackStarted(_)));
-            let seconds = to as f64 / f64::from(HIGH);
-            player.jump(0, seconds, JumpAt::At(2.0)).unwrap();
-            gate.allow_all();
-            seen.extend(until_queue_end(&events));
-            drop(player);
-            assert!(
-                seen.iter().any(|e| matches!(e, Event::Jumped { .. })),
-                "{seen:#?}"
-            );
-            assert!(!seen.iter().any(|e| matches!(e, Event::Error { .. })));
-            let got = samples(&captured(&captures)[0].1);
-            let want = 2 * HIGH as usize + frames - to;
-            assert_eq!(got.len() / 2, want, "{frames} frames, to {to}");
-        }
-    }
-}
-
-/// Frames a stem takes to fade in or out when the mix changes (10 ms).
-const STEM_RAMP: usize = RATE as usize / 100;
-
-/// A change of the stems at a time of the track lands on that frame: the
-/// stems before it up to there, the new ones from there (after their
-/// 10 ms fade).
-#[test]
-fn a_mix_change_at_a_time_lands_on_its_frame() {
-    let dir = temp_dir("stems-at");
-    let (path, file) = tone_file(&dir, "tones.wav");
-    let (target, captures, gate) = GatedTarget::new(caps(&[RATE], &[S24In32Low]));
-    let (player, events) = Player::new(Box::new(target), options(mix(&[Stem::Drums]), quarter));
-    player.load(vec![path]).unwrap();
-    gate.allow(RATE.into());
-    player.play(0).unwrap();
-    gate.wait_written(RATE.into());
-    player
-        .set_stems_at(mix(&[Stem::Drums, Stem::Bass]), 4.0)
-        .unwrap();
-    gate.allow_all();
-    let seen = until_queue_end(&events);
-    assert_eq!(starts(&seen).len(), 1, "nothing restarts");
-    drop(player);
-    let got = samples(&captured(&captures)[0].1);
-    let at = 4 * RATE as usize;
-    assert!(
-        worst(&got, &file, 0.25, 1, at) <= CLOSE,
-        "drums up to the time"
-    );
-    assert!(
-        worst(&got, &file, 0.5, at + STEM_RAMP, FRAMES) <= CLOSE,
-        "drums and bass from it"
-    );
-}
-
-/// All stems on again at a time: the stems play on to it, all of them
-/// from it, and then the track goes back to the file as it is.
-#[test]
-fn all_stems_at_a_time_come_back_there_then_the_file_plays() {
-    let dir = temp_dir("stems-at-all");
-    let (path, file) = tone_file(&dir, "tones.wav");
-    let (target, captures, gate) = GatedTarget::new(caps(&[RATE], &[S24In32Low]));
-    let (player, events) = Player::new(Box::new(target), options(mix(&[Stem::Drums]), quarter));
-    player.load(vec![path]).unwrap();
-    gate.allow(RATE.into());
-    player.play(0).unwrap();
-    gate.wait_written(RATE.into());
-    let first = collect_until(&events, |e| matches!(e, Event::TrackStarted(_)));
-    assert_eq!(starts(&first)[0].route.stage, Stage::Stems);
-    player.set_stems_at(StemMix::ALL, 3.0).unwrap();
-    // Up to a little before the time, then a little at a time: the file's
-    // route meets the stems a little after what was written.
-    let near = 3 * u64::from(RATE) - u64::from(RATE) / 10;
-    gate.allow(near);
-    gate.wait_written(near);
-    let seen = trickle_until_started(&gate, &events);
-    gate.allow_all();
-    until_queue_end(&events);
-    let legs = starts(&seen);
-    let back = legs[0];
-    assert_eq!(back.route.stage, Stage::Passthrough);
-    let at = 3 * RATE as usize;
-    let met = back.output_frame as usize;
-    assert!(met >= at, "the file once the time is made ({met})");
-    drop(player);
-    let got = samples(&captured(&captures)[0].1);
-    assert!(worst(&got, &file, 0.25, 1, at) <= CLOSE);
-    assert!(worst(&got, &file, 1.0, at + STEM_RAMP, met) <= CLOSE);
-    assert!(got[2 * (met + FADE)..] == file[2 * (met + FADE)..]);
-}
-
-/// The first stem off at a time: the track moves onto its stems before it
-/// (all of them, so it sounds as the file), and the stem goes at the time.
-#[test]
-fn the_first_stem_off_at_a_time_goes_there() {
-    let dir = temp_dir("stems-at-first");
-    let (path, file) = tone_file(&dir, "tones.wav");
-    let (target, captures, gate) = GatedTarget::new(caps(&[RATE], &[S24In32Low]));
-    let (player, events) = Player::new(Box::new(target), options(StemMix::ALL, quarter));
-    player.load(vec![path]).unwrap();
-    gate.allow(RATE.into());
-    player.play(0).unwrap();
-    gate.wait_written(RATE.into());
-    let first = collect_until(&events, |e| matches!(e, Event::TrackStarted(_)));
-    assert_eq!(starts(&first)[0].route.stage, Stage::Passthrough);
-    let drums_off = StemMix::ALL.toggle(Stem::Drums);
-    player.set_stems_at(drums_off, 5.0).unwrap();
-    let seen = trickle_until_started(&gate, &events);
-    let onto = starts(&seen)[0];
-    assert_eq!(onto.route.stage, Stage::Stems);
-    let met = onto.output_frame as usize;
-    let at = 5 * RATE as usize;
-    assert!(met < at, "on the stems before the time ({met})");
-    gate.allow_all();
-    until_queue_end(&events);
-    drop(player);
-    let got = samples(&captured(&captures)[0].1);
-    assert!(got[..2 * met] == file[..2 * met]);
-    assert!(worst(&got, &file, 1.0, met + FADE, at) <= CLOSE);
-    assert!(worst(&got, &file, 0.75, at + STEM_RAMP, FRAMES) <= CLOSE);
+    assert!(played(&captures) == file, "the file as it is");
 }
 
 /// Stems kept for one file: its whole mix as the voice, nothing else.
@@ -573,128 +275,164 @@ struct Kept {
     stems: PathBuf,
 }
 
-impl jodel_playback::StemStore for Kept {
-    fn open(&self, path: &Path) -> Option<jodel_playback::StemFile> {
+impl StemStore for Kept {
+    fn open(&self, path: &Path) -> Option<StemFile> {
         (path == self.track)
-            .then(|| jodel_playback::StemFile::open(&self.stems).ok())
+            .then(|| StemFile::open(&self.stems).ok())
             .flatten()
     }
 }
 
-/// Stems that sum over full scale (three of them each the whole track, at
-/// half scale): what the device gets stays under the stems' ceiling, nothing
-/// clipped, and held near it (the limiter takes off what is over, not
-/// more).
-#[test]
-fn stems_summed_over_full_scale_are_kept_under_it() {
-    let dir = temp_dir("stems-over");
-    let (path, file) = tone_file(&dir, "tones.wav");
-    let kept = dir.join("tones.stems");
-    let mut w = jodel_playback::StemWriter::create(&kept, RATE, "test").unwrap();
+/// Stems of `file` kept for `track` in `dir`: `gain` times the file as each
+/// stem `stems` names, the others silent.
+fn kept(dir: &Path, track: &Path, file: &[i32], stems: &[Stem], gain: f32) -> Arc<dyn StemStore> {
+    let path = dir.join("kept.stems");
+    let mut w = StemWriter::create(&path, RATE, "test").unwrap();
     let full = f32::powi(2.0, 23);
-    let left: Vec<f32> = file.iter().step_by(2).map(|&s| s as f32 / full).collect();
-    let right: Vec<f32> = file
-        .iter()
-        .skip(1)
-        .step_by(2)
-        .map(|&s| s as f32 / full)
-        .collect();
-    let drums = Stem::ALL.iter().position(|&s| s == Stem::Drums).unwrap();
+    let side = |c: usize| -> Vec<f32> {
+        file.iter()
+            .skip(c)
+            .step_by(2)
+            .map(|&s| gain * s as f32 / full)
+            .collect()
+    };
+    let (left, right) = (side(0), side(1));
     let silent = vec![0.0f32; left.len()];
-    let parts: [[&[f32]; 2]; 4] = std::array::from_fn(|s| {
-        if s == drums {
-            [&silent[..], &silent[..]]
-        } else {
+    let parts: [[&[f32]; 2]; STEMS] = std::array::from_fn(|s| {
+        if stems.contains(&Stem::ALL[s]) {
             [&left[..], &right[..]]
+        } else {
+            [&silent[..], &silent[..]]
         }
     });
     w.push(parts).unwrap();
     w.finish().unwrap();
-    let store: std::sync::Arc<dyn jodel_playback::StemStore> = std::sync::Arc::new(Kept {
-        track: path.clone(),
-        stems: kept,
-    });
+    Arc::new(Kept {
+        track: track.to_path_buf(),
+        stems: path,
+    })
+}
+
+/// A track whose stems are kept plays them: nothing is separated (the
+/// separator here only fails), and the strips play them (the voice soloed:
+/// the file; muted: nothing).
+#[test]
+fn kept_stems_play_without_a_separation() {
+    let dir = temp_dir("stems-kept");
+    let frames = 2 * RATE as usize;
+    let (path, file) = tones_of(&dir, "tones.wav", frames);
+    let store = kept(&dir, &path, &file, &[Stem::Vocals], 1.0);
+    for (solo, scale) in [(true, 1.0), (false, 0.0)] {
+        let (target, captures, gate, lanes) = gated_mixer_lanes(caps(&[RATE], &[S24In32Low]));
+        let options = PlayerOptions {
+            stem_store: Some(store.clone()),
+            ..options(false, true, broken)
+        };
+        let (player, events) = Player::new(Box::new(target), options);
+        player.make_stems(MakeStems::Kept).unwrap();
+        let vocals = part(&lanes, Stem::Vocals);
+        if solo {
+            vocals.set_solo(true);
+        } else {
+            vocals.set_mute(true);
+        }
+        gate.allow_all();
+        player.load(vec![path.clone()]).unwrap();
+        player.play(0).unwrap();
+        let seen = until_queue_end(&events);
+        drop(player);
+        drop(lanes);
+        assert!(
+            !seen.iter().any(|e| matches!(
+                e,
+                Event::Error { .. } | Event::Notice { .. } | Event::PartsStopped { .. }
+            )),
+            "solo {solo}: nothing separated, nothing failed"
+        );
+        let got = played(&captures);
+        assert_eq!(got.len(), file.len());
+        // Within the 16 bits the stems are kept in, past the mixer's switch.
+        let worst = off(&got, 1_000, &file, 1_000, frames - 1_000, scale);
+        assert!(worst <= 600.0, "solo {solo}: {worst} steps off");
+    }
+}
+
+/// The stems a transition sums (its playing track on them before the
+/// window, at their full gains) where they add up to over full scale (three
+/// of them each the whole track, at half scale): what the device gets stays
+/// under the stems' ceiling, nothing clipped, and held near it.
+#[test]
+fn a_transitions_stems_summed_over_full_scale_are_kept_under_it() {
+    let dir = temp_dir("stems-over");
+    let frames = 8 * RATE as usize;
+    let (a_path, a) = tones_of(&dir, "a.wav", frames);
+    let b_path = dir.join("b.wav");
+    write_wav(&b_path, RATE, 2, &vec![0; 2 * frames]);
+    let store = kept(
+        &dir,
+        &a_path,
+        &a,
+        &[Stem::Bass, Stem::Vocals, Stem::Other],
+        1.0,
+    );
     let target = MemoryTarget::new(caps(&[RATE], &[S24In32Low]), SimClock::Instant);
     let captures = target.captures();
     let options = PlayerOptions {
         stem_store: Some(store),
-        ..options(StemMix::ALL.toggle(Stem::Drums), broken)
+        ..options(false, true, quarter)
     };
     let (player, events) = Player::new(Box::new(target), options);
-    player.load(vec![path]).unwrap();
+    player.load(vec![a_path, b_path]).unwrap();
     player.play(0).unwrap();
+    collect_until(&events, |e| matches!(e, Event::TrackStarted(_)));
+    let fade = |from, to| Envelope::fade(from, to, 0.0, 1.0);
+    player
+        .transition(TransitionPlan {
+            from: 0,
+            into: 1,
+            start: 5.0,
+            length: 2.0,
+            entry: 0.0,
+            beats: Vec::new(),
+            lanes: std::array::from_fn(|i| {
+                if i < STEMS {
+                    fade(1.0, 0.0)
+                } else {
+                    fade(0.0, 1.0)
+                }
+            }),
+            tempo: TempoMode::Varispeed,
+            settle: 0.0,
+            glide: false,
+        })
+        .unwrap();
     let seen = until_queue_end(&events);
-    assert_eq!(starts(&seen)[0].route.stage, Stage::Stems);
     drop(player);
-    let got = samples(&captured(&captures)[0].1);
-    assert_eq!(got.len(), file.len());
-    let ceiling = jodel_playback::stems::CEILING * f64::from(1 << 23);
-    let peak = got.iter().map(|&s| f64::from(s.abs())).fold(0.0, f64::max);
+    assert!(seen
+        .iter()
+        .any(|e| matches!(e, Event::Transition(TransitionState::Started { .. }))));
+    // On its stems from about a second before the window (offline, it
+    // holds there until it is).
+    let rate = RATE as usize;
+    let onto = seen
+        .iter()
+        .find_map(|e| match e {
+            Event::TrackStarted(s) if s.index == 0 && s.route.stage == Stage::Stems => {
+                Some(s.output_frame as usize)
+            }
+            _ => None,
+        })
+        .expect("A on its stems");
+    assert!(onto < 4 * rate + rate / 4, "on its stems at {onto}");
+    let got = played(&captures);
+    // After the switch's crossfade, to the window.
+    let stretch = &got[2 * (onto + rate / 25)..2 * (5 * rate - rate / 20)];
+    let ceiling = CEILING * f64::from(1 << 23);
+    let peak = stretch
+        .iter()
+        .map(|&s| f64::from(s.abs()))
+        .fold(0.0, f64::max);
     assert!(peak <= ceiling + 2.0, "{peak} over {ceiling}");
     assert!(peak > 0.95 * ceiling, "held at {peak}, under {ceiling}");
     assert!(!got.iter().any(|&s| s.abs() >= (1 << 23) - 1), "clipped");
-}
-
-/// A track whose stems are kept plays them: nothing is separated (the
-/// separator here only fails), the stems that are on are the ones heard,
-/// also from a seek.
-#[test]
-fn kept_stems_play_without_a_separation() {
-    let dir = temp_dir("stems-kept");
-    let (path, file) = tone_file(&dir, "tones.wav");
-    let kept = dir.join("tones.stems");
-    let mut w = jodel_playback::StemWriter::create(&kept, RATE, "test").unwrap();
-    let full = f32::powi(2.0, 23);
-    let left: Vec<f32> = file.iter().step_by(2).map(|&s| s as f32 / full).collect();
-    let right: Vec<f32> = file
-        .iter()
-        .skip(1)
-        .step_by(2)
-        .map(|&s| s as f32 / full)
-        .collect();
-    let silent = vec![0.0f32; left.len()];
-    let voice = Stem::ALL.iter().position(|&s| s == Stem::Vocals).unwrap();
-    let parts: [[&[f32]; 2]; 4] = std::array::from_fn(|s| {
-        if s == voice {
-            [&left[..], &right[..]]
-        } else {
-            [&silent[..], &silent[..]]
-        }
-    });
-    w.push(parts).unwrap();
-    w.finish().unwrap();
-    let store: std::sync::Arc<dyn jodel_playback::StemStore> = std::sync::Arc::new(Kept {
-        track: path.clone(),
-        stems: kept,
-    });
-    for (stems, scale) in [
-        (mix(&[Stem::Vocals]), 1.0),
-        (mix(&[Stem::Drums, Stem::Bass]), 0.0),
-    ] {
-        let target = MemoryTarget::new(caps(&[RATE], &[S24In32Low]), SimClock::Instant);
-        let captures = target.captures();
-        let options = PlayerOptions {
-            stem_store: Some(store.clone()),
-            ..options(stems, broken)
-        };
-        let (player, events) = Player::new(Box::new(target), options);
-        player.load(vec![path.clone()]).unwrap();
-        player.play(0).unwrap();
-        let seen = until_queue_end(&events);
-        assert_eq!(starts(&seen)[0].route.stage, Stage::Stems, "{stems:?}");
-        assert!(
-            !seen.iter().any(|e| matches!(
-                e,
-                Event::Error { .. } | Event::Notice { .. } | Event::StemsStopped { .. }
-            )),
-            "{stems:?}: nothing separated, nothing failed"
-        );
-        drop(player);
-        let streams = captured(&captures);
-        let got = samples(&streams[0].1);
-        assert_eq!(got.len(), file.len(), "{stems:?}: the whole track");
-        // Within the 16 bits the stems are kept in.
-        let off = worst(&got, &file, scale, 0, FRAMES);
-        assert!(off <= 600.0, "{stems:?}: {off} steps off");
-    }
 }

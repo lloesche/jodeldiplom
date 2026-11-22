@@ -20,10 +20,14 @@
 //!   thread. Seek, pause, gapless track changes at the same output format,
 //!   a clean reopen when the format changes, resampling when the route
 //!   asks for it, and events timed to the output clock.
-//! - [`stems`]: stem playback. With a [`StemMix`] that leaves a stem out,
-//!   a track plays on a [`Stage::Stems`] route: separated into drums, bass,
-//!   vocals and other in a thread of its own as it plays, and the stems
-//!   that are on summed (never bit-perfect).
+//! - [`stems`]: a track's stems, separated into drums, bass, vocals and
+//!   other in a thread of its own as it plays (or read where they are
+//!   kept, [`stem_file`]): handed on beside the file as parts of an output
+//!   of lanes ([`MakeStems`]), for a mixer to play on its strips; and
+//!   summed by a transition, which mixes its two tracks on [`Stage::Stems`]
+//!   routes (never bit-perfect).
+//! - [`desk`]: a player on a mixer's desk ([`StemDesk`]): its group strip,
+//!   a strip for each stem inside it, and the lane input it plays on.
 //! - [`SpectrumTap`]: a lock-free ring of the most recent frames a
 //!   mixer's device plays, tagged with their frame index, so a UI can
 //!   analyse what is heard now.
@@ -51,6 +55,7 @@
 
 #![warn(missing_docs)]
 
+pub mod desk;
 pub mod engine;
 mod error;
 mod headers;
@@ -65,21 +70,21 @@ pub mod target;
 pub mod transition;
 pub mod warp;
 
+pub use desk::StemDesk;
 pub use engine::{
     Command, Event, JumpAt, MakeStems, PlayState, Player, PlayerOptions, Position, TrackStart,
     OPEN_BUSY_WAIT,
 };
 pub use error::Error;
 pub use rate::{
-    choose_route, choose_route_near, FileFacts, Headroom, NoRoute, Resample, Route, Settings,
-    Stage, LOSSY_HEADROOM,
+    choose_route, FileFacts, Headroom, NoRoute, Resample, Route, Settings, Stage, LOSSY_HEADROOM,
 };
 pub use resample::{FilterDesign, Requantizer, Resampler};
 pub use source::{
     probe, probe_header, Codec, Container, Cover, CoverOrigin, Source, Tags, TrackInfo,
 };
 pub use stem_file::{StemFile, StemStore, StemWriter};
-pub use stems::{SeparatorSource, Stem, StemMix, StereoFeed};
+pub use stems::{SeparatorSource, Stem, StereoFeed};
 pub use tap::{SpectrumTap, TapCursor, TapFrame, TapMiss, TapWindow};
 pub use target::{
     any_capabilities, Capture, Captures, DeviceTarget, MemoryTarget, NullTarget, OutputTarget,

@@ -14,7 +14,7 @@ use crate::error::Error;
 use crate::rate::{Route, Settings};
 use crate::source::TrackInfo;
 use crate::stem_file::StemStore;
-use crate::stems::{SeparatorSource, StemMix};
+use crate::stems::SeparatorSource;
 use crate::target::OutputTarget;
 use crate::transition::{TransitionPlan, TransitionState};
 
@@ -97,26 +97,13 @@ pub enum Command {
     /// stay where they are; one heard is not replaced);
     /// [`Event::Transition`] says how it goes. Only moving playback
     /// elsewhere (play, seek, next, previous, stop, load, the next track
-    /// taken out of the queue) calls it off. New stems go into its fades,
-    /// at their time; other settings wait for its end.
+    /// taken out of the queue) calls it off. The stems as a mixer plays
+    /// them ([`Command::StemMask`]) go into its fades, at their time; new
+    /// settings wait for its end.
     Transition(Box<TransitionPlan>),
     /// Calls the transition off, if it is not heard yet (a mix under way
     /// plays to its end).
     CancelTransition,
-    /// The stems heard become `stems` from `at` seconds into the playing
-    /// track (a bar's first beat, say), to the frame, rather than as soon
-    /// as the output has played what it holds ([`Command::SetSettings`]).
-    /// Until then the track plays the stems it had. The time is held to
-    /// the output frame it is heard at as the track plays now: a jump in
-    /// between (a bar looped) does not move it. A time already made (or a
-    /// route that cannot be met by then) takes the change as soon as it
-    /// can.
-    SetStemsAt {
-        /// The stems heard from then on.
-        stems: StemMix,
-        /// Seconds into the playing track.
-        at: f64,
-    },
     /// The playing track (`index`) goes to `to` seconds, at once or when it
     /// reaches a time ([`JumpAt`]), without a gap: within the stretch it
     /// keeps ([`Command::JumpWindow`]) the output gives back what it has
@@ -134,21 +121,14 @@ pub enum Command {
     },
     /// How much of the playing track is kept behind what is heard and
     /// decoded ahead of it, in seconds, so that a [`Command::Jump`] within
-    /// is heard at once (zero: none, as it plays otherwise). A stems route
-    /// keeps its separated stems for as long, and mixes the target from
-    /// them with the stems that are on. None while a transition is set up.
+    /// is heard at once (zero: none, as it plays otherwise). None while a
+    /// transition is set up, nor for a track it left on its stems.
     JumpWindow {
         /// Seconds kept behind.
         back: f64,
         /// Seconds decoded ahead.
         ahead: f64,
     },
-    /// Whether the playing track is separated into its stems while it
-    /// plays its file too (all stems on), for its jump window: a stem
-    /// switched off then has the stems from before it, so a jump back is
-    /// heard at once. Costs a stem separation while it is on; nothing
-    /// without a separator or a jump window.
-    KeepStems(bool),
     /// When the stems of the tracks played are made as parts of the output
     /// (on an output of lanes, [`jodel_output::lanes`]: main, then drums,
     /// bass, vocals and other, and whether they are there): never (the
@@ -164,7 +144,9 @@ pub enum Command {
     /// beat), else at once. Outside a transition it changes nothing heard;
     /// with gains other than one, the next track's return to its own route
     /// after a transition waits until its stems are parts of the output
-    /// again, so a mixer can play them on from there.
+    /// again, so a mixer can play them on from there. Other gains given
+    /// outside a transition also have the next one try stems that failed
+    /// again ([`Event::StemsStopped`]).
     StemMask {
         /// Each stem's gain, drums, bass, vocals, other.
         gains: [f64; crate::stems::STEMS],
@@ -286,9 +268,13 @@ pub enum Event {
         /// A sentence for the user.
         message: String,
     },
-    /// The stems of a track stopped (the separator failed): it plays on
-    /// its usual route from where they stopped, and every track does until
-    /// the mix changes.
+    /// The stems a transition mixes stopped (the separator failed): the
+    /// track plays on its own route from where they stopped (the
+    /// transition fades it whole), and the transitions after take their
+    /// tracks whole, each one stem, until stems may work again: other gains
+    /// in [`Command::StemMask`] outside a transition, a stop (or a new
+    /// queue), or stems separated again as parts of the output
+    /// ([`Command::MakeStems`]).
     StemsStopped {
         /// The track.
         index: usize,
@@ -336,8 +322,10 @@ pub struct PlayerOptions {
     /// (otherwise the engine asks the target once, when it first needs
     /// them).
     pub capabilities: Option<Capabilities>,
-    /// Where stem playback gets its separator ([`crate::stems`]); `None`:
-    /// no stem playback, and [`Settings::stems`] is ignored.
+    /// Where the stems get their separator ([`crate::stems`]): the parts
+    /// of an output of lanes ([`Command::MakeStems`]) and a transition's
+    /// mix. `None`: only stems kept are parts, and a transition fades its
+    /// tracks whole.
     pub separator: Option<SeparatorSource>,
     /// Where tracks' stems are kept ([`crate::stem_file`]): a track found
     /// there plays its kept stems, and only one that is not is separated.
@@ -483,11 +471,6 @@ impl Player {
         self.send(Command::CancelTransition)
     }
 
-    /// [`Command::SetStemsAt`].
-    pub fn set_stems_at(&self, stems: StemMix, at: f64) -> Result<(), Error> {
-        self.send(Command::SetStemsAt { stems, at })
-    }
-
     /// [`Command::Jump`].
     pub fn jump(&self, index: usize, to: f64, at: JumpAt) -> Result<(), Error> {
         self.send(Command::Jump { index, to, at })
@@ -496,11 +479,6 @@ impl Player {
     /// [`Command::JumpWindow`].
     pub fn jump_window(&self, back: f64, ahead: f64) -> Result<(), Error> {
         self.send(Command::JumpWindow { back, ahead })
-    }
-
-    /// [`Command::KeepStems`].
-    pub fn keep_stems(&self, keep: bool) -> Result<(), Error> {
-        self.send(Command::KeepStems(keep))
     }
 
     /// [`Command::MakeStems`].

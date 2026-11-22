@@ -498,7 +498,7 @@ fn bottom(state: &State, area: Rect, spectrum: u16) -> (Rect, Bottom) {
     if matches!(state.gpu, Gpu::Present(_)) {
         let room = area.right().saturating_sub(right_w).saturating_sub(x);
         let fitting = [true, false].into_iter().map(|named| {
-            let stems: Vec<(String, Op)> = jodel_playback::StemMix::ORDER
+            let stems: Vec<(String, Op)> = jodel_playback::stems::LANES
                 .iter()
                 .map(|&stem| (text::stem_button(stem, named), Op::for_stem(stem)))
                 .collect();

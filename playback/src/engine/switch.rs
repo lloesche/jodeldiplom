@@ -1,7 +1,8 @@
 //! Moving the playing track to a new route without a break (new
-//! settings, a stems change): the new route reads ahead while the old one
-//! plays, and the two meet at an exact frame, crossfaded at the same
-//! output format or through a reopened output at another.
+//! settings, a transition's track onto its stems and back): the new route
+//! reads ahead while the old one plays, and the two meet at an exact frame,
+//! crossfaded at the same output format or through a reopened output at
+//! another.
 
 use std::collections::VecDeque;
 use std::time::Duration;
@@ -166,14 +167,7 @@ impl Engine {
     /// Drops the switch under way, if any (in the background: closing its
     /// file and freeing its buffers can take a while).
     pub(super) fn cancel_switch(&mut self) {
-        if let Some(mut switch) = self.switch.take() {
-            // The stems it took over are kept for the next one.
-            let file = self.playing.as_ref().is_some_and(|t| {
-                t.route.stage != Stage::Stems && t.info.path == switch.track.info.path
-            });
-            if file && self.shadow.is_none() {
-                self.shadow = switch.track.stems.take();
-            }
+        if let Some(switch) = self.switch.take() {
             drop_later(switch.track);
         }
     }
@@ -223,10 +217,9 @@ impl Engine {
             }
         }
         if let Some(reason) = switch.track.stems_error.take() {
-            // The stems did not start: the track plays on as it is, and
-            // every track does until the mix changes.
+            // The stems did not start: the track plays on as it is (a
+            // transition fades it whole), until the mix changes.
             self.stems_failed = true;
-            self.prestart = None;
             let index = switch.track.index;
             self.emit(Event::StemsStopped { index, reason });
             return Ok(true);
@@ -483,12 +476,8 @@ impl Engine {
         let Some(switch) = self.switch.take() else {
             return;
         };
-        // The old track, written to where the new one begins (its stems
-        // kept for the track on its file again).
-        if let Some(mut old) = self.playing.take() {
-            if old.index == switch.track.index && switch.track.route.stage != Stage::Stems {
-                self.shadow = old.stems.take();
-            }
+        // The old track, written to where the new one begins.
+        if let Some(old) = self.playing.take() {
             drop_later(old);
         }
         if switch.fits {
@@ -502,10 +491,11 @@ impl Engine {
         }
     }
 
-    /// The stems of `track` stopped (`why`): it goes on, on its usual
-    /// route, from the frame after what was written, with nothing flushed
-    /// (in the same output when it fits, else after this one plays out);
-    /// the stems rest until the mix changes.
+    /// The stems of `track` stopped (`why`; a transition's track on them):
+    /// it goes on, on its own route, from the frame after what was written,
+    /// with nothing flushed (in the same output when it fits, else after
+    /// this one plays out); a transition takes its tracks whole until the
+    /// mix changes.
     pub(super) fn stems_stopped(&mut self, track: Track, why: &str) {
         self.cancel_switch();
         let index = track.index;
@@ -517,8 +507,6 @@ impl Engine {
         let rate = f64::from(track.info.rate.max(1));
         drop(track);
         self.stems_failed = true;
-        self.prestart = None;
-        self.shadow = None;
         self.emit(Event::StemsStopped {
             index,
             reason: why.to_owned(),

@@ -38,7 +38,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use jodel_output::StreamInfo;
-use jodel_playback::{PlayState, Route, Settings, StemMix, TrackInfo};
+use jodel_playback::{PlayState, Route, Settings, TrackInfo};
 
 pub use action::{
     Action, Effect, Facts, Heard, Job, LyricsFacts, Placing, RhythmFacts, WalkPurpose,
@@ -837,12 +837,10 @@ impl State {
     }
 
     /// The settings the engine plays with: the config's, with the rate cap
-    /// in force ([`State::effective_max_rate`]), every stem as it is (the
-    /// stems are heard on the desk: [`stems`]).
+    /// in force ([`State::effective_max_rate`]).
     pub fn engine_settings(&self) -> Settings {
         Settings {
             max_rate: self.effective_max_rate(),
-            stems: StemMix::ALL,
             ..self.config.settings()
         }
     }

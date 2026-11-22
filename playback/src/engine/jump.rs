@@ -19,25 +19,17 @@
 //! ([`JumpFill`]) while the track plays on, and takes over once it is
 //! ready: later, never with a gap.
 //!
-//! A stems route mixes the stems heard as its buffer is made (they follow
-//! the stems switched on and off at once), so its buffer keeps only what
-//! the output may give back; its stem run keeps the separated stems for
-//! the window instead ([`crate::stems::StemRun::set_keep`]), and a jump
-//! mixes the target from them with the stems on now, its resampler started
-//! again a little before it. With [`crate::Command::KeepStems`] the track
-//! is separated while it plays its file too, and a stems route for it takes
-//! those stems over: a stem switched off finds the bars before it there.
-//!
 //! No window while a transition is set up (it mixes into the buffer as it
-//! is made).
+//! is made), nor for a track it left on its stems (until it is back on its
+//! own route, a jump there reads the target again). The stems as parts of
+//! the output follow a jump on their own ([`super::lanes`]).
 
 use std::time::{Duration, Instant};
 
-use super::track::{crossfade, frames_of, grid, rescale, Cue, CueEvent, Progress, SegStart, Track};
-use super::{Engine, PREROLL_RESAMPLE, WRITE_WAIT};
+use super::track::{crossfade, frames_of, grid, Cue, CueEvent, Progress, SegStart, Track};
+use super::{Engine, WRITE_WAIT};
 use crate::error::Error;
-use crate::rate::Stage;
-use crate::stems::{StemRun, RATE as STEM_RATE};
+use crate::stems::RATE as STEM_RATE;
 
 /// When a jump is heard ([`crate::Command::Jump`]).
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -103,21 +95,15 @@ const MIN_TRIM: usize = 4096;
 
 impl Engine {
     /// Whether `track` keeps a jump window: there is one, and the track is
-    /// not read along a time map or faded by a transition, nor is one set
-    /// up.
+    /// on its own route (not on a transition's stems, read along a time map
+    /// or faded by one), nor is a transition set up.
     pub(super) fn windowed(&self, track: &Track) -> bool {
         let (back, ahead) = self.jump_window;
-        (back > 0.0 || ahead > 0.0)
-            && track.warp.is_none()
-            && track.gains.is_none()
-            && self.transition.is_none()
+        (back > 0.0 || ahead > 0.0) && track.plain_route() && self.transition.is_none()
     }
 
     /// How many frames `track` keeps behind what it wrote, and decodes
-    /// ahead of it: none without a window ([`Engine::windowed`]). A stems
-    /// route keeps only what the output may give back: its stems keep the
-    /// rest ([`Engine::stem_keep`]), since the stems heard are mixed as
-    /// the buffer is made.
+    /// ahead of it: none without a window ([`Engine::windowed`]).
     pub(super) fn window_frames(&self, track: &Track) -> (usize, usize) {
         if !self.windowed(track) {
             return (0, 0);
@@ -127,15 +113,13 @@ impl Engine {
         let seconds = |s: f64| frames_of(Duration::from_secs_f64(s.max(0.0)), rate) as usize;
         // What the output may give back is kept too.
         let ring = self.out.as_ref().map_or(0, |o| o.info.ring_frames) as usize;
-        if track.route.stage == Stage::Stems {
-            return (ring, 0);
-        }
         (seconds(back) + ring, seconds(ahead))
     }
 
-    /// How many frames (at the separator's rate) a stem run for `track`
-    /// keeps behind the frame it mixes next, and takes ahead of it: the
-    /// jump window, and what the output holds besides (and a second).
+    /// How many frames (at the separator's rate) the run of `track`'s stem
+    /// parts keeps behind the frame it hands on next, and takes ahead of
+    /// it: the jump window, and what the output holds besides (and a
+    /// second).
     pub(super) fn stem_keep(&self, track: &Track) -> (u64, u64) {
         if !self.windowed(track) {
             return (0, 0);
@@ -204,14 +188,6 @@ impl Engine {
         let Some(track) = self.playing.as_ref() else {
             return false;
         };
-        if track.route.stage == Stage::Stems {
-            // In its stems, or in what they take ahead.
-            let ahead = self.stem_keep(track).1;
-            return track.stems.as_ref().is_some_and(|run| {
-                run.frame_of(to, track.info.rate)
-                    .is_some_and(|r| r >= run.kept_from() && r < run.mixed() + ahead)
-            });
-        }
         let (_, ahead) = self.window_frames(track);
         let z = stream_frame(track, to);
         z >= buffer_start(track) && z < track.emitted as i64 + ahead as i64
@@ -338,13 +314,6 @@ impl Engine {
     /// Decodes the playing track until it holds `to` and a seam after it
     /// (for at most [`REACH`]); whether it does.
     fn reach(&mut self, to: u64) -> Result<bool, Error> {
-        if self
-            .playing
-            .as_ref()
-            .is_some_and(|t| t.route.stage == Stage::Stems)
-        {
-            return Ok(self.reach_stems(to));
-        }
         let Some(mut track) = self.playing.take() else {
             return Ok(false);
         };
@@ -401,13 +370,6 @@ impl Engine {
     /// first frames crossfaded from what would have played next. False
     /// when the track does not hold the target.
     fn jump_to(&mut self, to: u64, extra: u64) -> Result<bool, Error> {
-        if self
-            .playing
-            .as_ref()
-            .is_some_and(|t| t.route.stage == Stage::Stems)
-        {
-            return self.jump_stems(to, extra);
-        }
         let Some(out) = &self.out else {
             return Ok(false);
         };
@@ -448,152 +410,12 @@ impl Engine {
         Ok(true)
     }
 
-    /// A jump of the playing track on a stems route, at the frame being
-    /// written, from the stems its run keeps: the run mixes from the target
-    /// (the stems that are on now), its resampler started again a little
-    /// before it, and the first frames are crossfaded from what would have
-    /// played next. False when the run does not hold the target.
-    fn jump_stems(&mut self, to: u64, extra: u64) -> Result<bool, Error> {
-        let Some(out) = &self.out else {
-            return Ok(false);
-        };
-        let written = out.output.written();
-        let Some(seg_out) = written.checked_sub(extra) else {
-            return Ok(false);
-        };
-        let Some(mut track) = self.playing.take() else {
-            return Ok(false);
-        };
-        let result = self.jump_stems_in(&mut track, to, extra, seg_out);
-        if let Ok(true) = result {
-            // Clip counts queued as the target was mixed come after the
-            // jump (they would hold its cue back).
-            let index = track.index;
-            self.cues.retain(|c| {
-                c.at < written
-                    || !matches!(c.event, CueEvent::Clipped { index: i, .. } if i == index)
-            });
-            track.clips = None;
-            jumped(&mut self.cues, &track, written);
-        }
-        self.playing = Some(track);
-        if let Ok(true) = result {
-            self.after_jump();
-        }
-        result
-    }
-
-    fn jump_stems_in(
-        &mut self,
-        track: &mut Track,
-        to: u64,
-        extra: u64,
-        seg_out: u64,
-    ) -> Result<bool, Error> {
-        let ch = usize::from(track.route.channels);
-        let rate = track.route.output_rate;
-        let fade = frames_of(self.switch_fade, rate) as usize;
-        let Some(run) = track.stems.as_ref() else {
-            return Ok(false);
-        };
-        let Some(r) = run.frame_of(to, track.info.rate) else {
-            return Ok(false);
-        };
-        // `extra` output frames after the target.
-        let r = r + rescale(extra, rate, STEM_RATE);
-        let seam = frames_of(self.switch_fade, STEM_RATE) + 1;
-        if !(run.holds(r, r + seam) || (run.received() && run.holds(r, run.kept_end()))) {
-            return Ok(false);
-        }
-        // The resampler starts again a whole number of its steps before the
-        // target (as far as the stems kept go back), and what it makes for
-        // them is dropped.
-        let (preroll, dropped) = match &track.resampler {
-            Some(_) => {
-                let (up, down) = crate::resample::reduce(STEM_RATE, rate);
-                let (up, down) = (u64::from(up), u64::from(down));
-                let most = frames_of(Duration::from_secs_f64(PREROLL_RESAMPLE), STEM_RATE);
-                let steps = most.min(r - run.kept_from()) / down;
-                (steps * down, steps * up)
-            }
-            None => (0, 0),
-        };
-        // What would have played next, a seam's worth.
-        let started = Instant::now();
-        while track.unwritten() < fade
-            && !track.stems_done
-            && track.stems_error.is_none()
-            && started.elapsed() < REACH
-        {
-            self.step_stems(track, WRITE_WAIT)?;
-        }
-        Self::restore_faded(track, true);
-        let here = track.out_at;
-        let next: Vec<i32> = track.out_buf[here..]
-            .iter()
-            .take(fade * ch)
-            .copied()
-            .collect();
-        let run = track.stems.as_mut().expect("checked");
-        if !run.seek(r - preroll) {
-            return Ok(false);
-        }
-        track.out_buf.truncate(here);
-        if let Some(resampler) = &mut track.resampler {
-            resampler.reset();
-        }
-        track.discard = dropped;
-        track.stems_done = false;
-        // The segment starts at the target (as a seek's would).
-        track.begin_segment(seg_out, to, SegStart::Joined { fade });
-        track.emitted = extra;
-        // The target's first frames, from what is kept (no waiting).
-        while track.unwritten() < fade.max(1)
-            && !track.stems_done
-            && track.stems_error.is_none()
-            && started.elapsed() < REACH
-        {
-            self.step_stems(track, WRITE_WAIT)?;
-        }
-        let n = (next.len() / ch).min(track.unwritten());
-        crossfade(&next[..n * ch], &mut track.out_buf[here..here + n * ch], ch);
-        track.emitted = extra + track.unwritten() as u64;
-        Ok(true)
-    }
-
     /// After a jump: a switch under way decoded for the old place, so it
     /// starts again.
     fn after_jump(&mut self) {
         if self.switch.is_some() {
             self.cancel_switch();
             self.reroute();
-        }
-    }
-
-    /// Decodes nothing, but takes what the playing track's stems have
-    /// separated until they hold `to` and a seam after it (for at most
-    /// [`REACH`]); whether they do.
-    fn reach_stems(&mut self, to: u64) -> bool {
-        let seam = frames_of(self.switch_fade, STEM_RATE) + 1;
-        let Some(track) = self.playing.as_mut() else {
-            return false;
-        };
-        let rate = track.info.rate;
-        let Some(run) = track.stems.as_mut() else {
-            return false;
-        };
-        let Some(r) = run.frame_of(to, rate) else {
-            return false;
-        };
-        let started = Instant::now();
-        loop {
-            if run.holds(r, r + seam) || (run.received() && run.holds(r, run.kept_end())) {
-                return true;
-            }
-            if r < run.kept_from() || run.received() || started.elapsed() > REACH {
-                return false;
-            }
-            run.fetch(r + seam, WRITE_WAIT);
         }
     }
 }
@@ -821,92 +643,7 @@ impl Engine {
         self.after_jump();
         Ok(())
     }
-}
 
-/// Whether the reading under way is for a jump heard at once.
-fn fill_at_once(engine: &Engine) -> bool {
-    engine.jump_fill.as_ref().is_some_and(|f| f.at.is_none())
-}
-
-impl Engine {
-    /// Keeps the playing track's stems while it plays its file
-    /// ([`crate::Command::KeepStems`]): a run separates it from what is
-    /// written and follows it (started again where it cannot), so that a
-    /// stems route for it starts with the stems from before ([`Engine::take_shadow`]).
-    pub(super) fn shadow_turn(&mut self) {
-        let Some(track) = self.playing.as_ref() else {
-            self.shadow = None;
-            return;
-        };
-        // A switch under way may take them (or give them back).
-        if self.switch.is_some() {
-            return;
-        }
-        let Some(separator) = self.separator.filter(|_| {
-            self.keep_stems
-                && !self.stems_failed
-                && track.route.stage != Stage::Stems
-                && self.windowed(track)
-        }) else {
-            self.shadow = None;
-            return;
-        };
-        if self.shadow.as_ref().is_some_and(StemRun::failed) {
-            // The separation failed: none until the mix changes (a stems
-            // route then tries, and says why).
-            self.shadow = None;
-            self.stems_failed = true;
-            return;
-        }
-        let frame = written_frame(track);
-        let (back, ahead) = self.stem_keep(track);
-        if let Some(run) = self.shadow.as_mut().filter(|r| r.path == track.info.path) {
-            run.set_keep(back, ahead);
-            if run
-                .frame_of(frame, track.info.rate)
-                .is_some_and(|r| run.follow(r))
-            {
-                return;
-            }
-        }
-        let mut run = StemRun::start(
-            track.info.path.clone(),
-            frame,
-            Some(separator),
-            self.stem_store.clone(),
-        );
-        run.set_keep(back, ahead);
-        self.shadow = Some(run);
-    }
-
-    /// The kept stems of `track`'s file for a stems route starting at its
-    /// segment's frame, if they hold it (moved there).
-    pub(super) fn take_shadow(&mut self, track: &Track) -> Option<StemRun> {
-        let run = self.shadow.as_ref()?;
-        if run.path != track.info.path
-            || track.gains.is_some()
-            || track.warp.is_some()
-            || track.separator.is_some()
-        {
-            return None;
-        }
-        let frame = run.frame_of(track.seg_frame, track.info.rate)?;
-        let mut run = self.shadow.take()?;
-        if run.seek(frame) {
-            return Some(run);
-        }
-        self.shadow = Some(run);
-        None
-    }
-}
-
-/// The track frame `track` has written up to.
-fn written_frame(track: &Track) -> u64 {
-    let stream = (track.emitted as i64 - track.unwritten() as i64).max(0) as u64;
-    track.seg_frame + rescale(stream, track.route.output_rate, track.route.input_rate)
-}
-
-impl Engine {
     /// The queue was reordered ([`super::queue`]): a jump waiting, and a
     /// reading for one, follow their track (gone, they go).
     pub(super) fn reindex_jumps(&mut self, map: &dyn Fn(usize) -> Option<usize>) {
@@ -923,4 +660,9 @@ impl Engine {
             }
         }
     }
+}
+
+/// Whether the reading under way is for a jump heard at once.
+fn fill_at_once(engine: &Engine) -> bool {
+    engine.jump_fill.as_ref().is_some_and(|f| f.at.is_none())
 }

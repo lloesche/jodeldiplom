@@ -75,9 +75,12 @@ stem keys are their mutes.
   - `a_stem_muted_on_a_bar_in_the_window_goes_off_there` (engine)
   - `the_next_tracks_return_waits_until_its_stems_are_switched_to` (engine)
   - `a_part_soloed_keeps_main_while_main_stands_for_the_parts` (output)
-- **S7.** After a transition, the next track's stems are as the strips
-  have them, whatever they were during it.
-  - `after_a_transition_the_next_tracks_stems_follow_the_settings` (engine)
+- **S7.** After a transition the next track goes back onto its own route,
+  and its stems are heard as the strips have them (on the desk, from its
+  parts), whatever they were during it: what a transition mixes with
+  them (`StemMask`) is the transition's alone.
+  - `after_a_transition_the_next_track_plays_its_own_route_again` (engine)
+  - `the_next_tracks_return_waits_until_its_stems_are_switched_to` (engine)
 
 ## Transition keys
 
@@ -208,8 +211,8 @@ stem keys are their mutes.
   - `space_never_plays_a_song_without_its_count_in`
 - **K4.** A change of the voice's level never moves playback and never
   touches a transition (as S1). In the mode it is heard at once.
-  - `the_mode_turns_the_voice_down_and_esc_brings_it_back`
-  - `a_stem_at_a_level_is_heard_but_not_full` (engine)
+  - `the_mode_plays_the_voice_at_its_level_and_esc_keeps_it_on_the_tab`
+  - `a_stem_level_on_the_desk_is_heard_at_once_and_untouched_is_the_file_again` (engine)
 - **K5.** The count-in is "3", "2", "1", a second each, and "1" ends as the
   song's first word is sung (its words timed; else at its start). Before
   it, from START, the song's title and artist show alone for 2 s and fade

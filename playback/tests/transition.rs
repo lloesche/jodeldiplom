@@ -6,201 +6,16 @@
 
 mod common;
 
-use std::path::{Path, PathBuf};
-use std::sync::mpsc::Receiver;
-use std::sync::{Mutex, MutexGuard};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
+use common::transition::*;
 use common::*;
 use jodel_output::SampleFormat;
-use jodel_playback::stems::{Separator, StemMix, STEMS};
+use jodel_playback::stems::STEMS;
 use jodel_playback::{
-    Envelope, Event, Player, PlayerOptions, Settings, Stage, TempoMode, TrackStart, TransitionPlan,
-    TransitionState,
+    Envelope, Event, Player, PlayerOptions, Stage, TempoMode, TransitionPlan, TransitionState,
 };
 use SampleFormat::*;
-
-const RATE: u32 = 44_100;
-const FULL: f64 = 8_388_608.0;
-
-/// Each stem a quarter of the mix.
-struct Quarter;
-
-impl Separator for Quarter {
-    fn name(&self) -> String {
-        "quarter".into()
-    }
-
-    fn masks(&self, _frames: usize, stft: &[f32]) -> Result<Vec<f32>, String> {
-        Ok((0..4 * stft.len())
-            .map(|i| if i % 2 == 0 { 0.25 } else { 0.0 })
-            .collect())
-    }
-}
-
-static QUARTER: Quarter = Quarter;
-
-/// One test at a time: each runs two tracks' stems at several times real
-/// time, and side by side (debug-built above all) they leave each other
-/// too little time, so the engine's real-time fallbacks set in (a next
-/// track that falls behind is left out of the mix, a route switch that
-/// does not catch up is not made).
-static SERIAL: Mutex<()> = Mutex::new(());
-
-fn serial() -> MutexGuard<'static, ()> {
-    SERIAL.lock().unwrap_or_else(|e| e.into_inner())
-}
-
-fn quarter() -> Option<&'static dyn Separator> {
-    Some(&QUARTER)
-}
-
-fn options() -> PlayerOptions {
-    PlayerOptions {
-        settings: Settings {
-            resample: false,
-            stems: StemMix::ALL,
-            ..Settings::default()
-        },
-        position_interval: Duration::from_millis(5),
-        separator: Some(quarter),
-        // The gated output runs faster than real time: what the window
-        // needs is waited for, however slow the machine.
-        offline: true,
-        ..PlayerOptions::default()
-    }
-}
-
-/// A stereo WAV of `seconds` from a sample function of time.
-fn wav(dir: &Path, name: &str, seconds: f64, f: impl Fn(f64, usize) -> f64) -> (PathBuf, Vec<i32>) {
-    let path = dir.join(name);
-    let frames = (seconds * f64::from(RATE)) as usize;
-    let samples: Vec<i32> = (0..frames)
-        .flat_map(|n| {
-            let t = n as f64 / f64::from(RATE);
-            [0, 1].map(|c| (f(t, c) * FULL).round() as i32)
-        })
-        .collect();
-    write_wav(&path, RATE, 2, &samples);
-    (path, samples)
-}
-
-/// Clicks every `period` seconds from `first`: short bursts at `hz`.
-fn clicks(period: f64, first: f64, hz: f64) -> impl Fn(f64, usize) -> f64 {
-    move |t, _| {
-        if t < first {
-            return 0.0;
-        }
-        let since = (t - first) % period;
-        if since > 0.004 {
-            return 0.0;
-        }
-        0.8 * (2.0 * std::f64::consts::PI * hz * since).sin() * (-since / 0.001).exp()
-    }
-}
-
-/// The 24-bit samples of a stream the device took as `S24In32Low`.
-fn samples(bytes: &[u8]) -> Vec<i32> {
-    bytes
-        .chunks_exact(4)
-        .map(|b| (i32::from_le_bytes([b[0], b[1], b[2], b[3]]) << 8) >> 8)
-        .collect()
-}
-
-fn starts(events: &[Event]) -> Vec<&TrackStart> {
-    events
-        .iter()
-        .filter_map(|e| match e {
-            Event::TrackStarted(s) => Some(&**s),
-            _ => None,
-        })
-        .collect()
-}
-
-fn transitions(events: &[Event]) -> Vec<&TransitionState> {
-    events
-        .iter()
-        .filter_map(|e| match e {
-            Event::Transition(s) => Some(s),
-            _ => None,
-        })
-        .collect()
-}
-
-/// Lets the output through a step at a time until the queue ends: the next
-/// step once the engine has written the last, after a pause with the gate
-/// shut.
-///
-/// The gated output reports what it took as played at once, so it never
-/// holds half its buffer, which is how the engine knows it has time to
-/// spare: a route switch (and the next track) get their turns only after a
-/// write the gate refused, which takes the engine's write wait (10 ms). The
-/// pause is well over that wait, also where timers tick about every 16 ms
-/// (Windows), so each step leaves the switch time to decode however long
-/// the engine took to write it, and the pace follows the build. At a fixed
-/// pace, a debug build of the oldest supported compiler spent nearly all
-/// its time writing the playing track's stems, hardly a write was refused,
-/// and the switch back to the file never caught up with the frame being
-/// written before the track ended.
-fn trickle_to_end(gate: &Gate, events: &Receiver<Event>) -> Vec<Event> {
-    trickle_until(gate, events, |e| matches!(e, Event::QueueEnded))
-}
-
-/// [`trickle_to_end`] until an event `done` says so (or the queue ends).
-fn trickle_until(
-    gate: &Gate,
-    events: &Receiver<Event>,
-    done: impl Fn(&Event) -> bool,
-) -> Vec<Event> {
-    const STEP: u64 = 8_192;
-    const PAUSE: Duration = Duration::from_millis(30);
-    let deadline = Instant::now() + TIMEOUT * 4;
-    let mut seen = Vec::new();
-    // Takes the events so far; whether the queue ended.
-    let ended = |seen: &mut Vec<Event>| {
-        for e in events.try_iter() {
-            let end = matches!(e, Event::QueueEnded) || done(&e);
-            seen.push(e);
-            if end {
-                return true;
-            }
-        }
-        assert!(Instant::now() < deadline, "the queue did not end");
-        false
-    };
-    loop {
-        let allowed = gate.written() + STEP;
-        gate.allow(allowed);
-        while !gate.written_within(allowed, Duration::from_millis(5)) {
-            if ended(&mut seen) {
-                return seen;
-            }
-        }
-        std::thread::sleep(PAUSE);
-        if ended(&mut seen) {
-            return seen;
-        }
-    }
-}
-
-/// Lanes: every stem of the playing track by `from`, the next by `into`.
-fn lanes(from: Envelope, into: Envelope) -> [Envelope; 2 * STEMS] {
-    std::array::from_fn(|i| {
-        if i < STEMS {
-            from.clone()
-        } else {
-            into.clone()
-        }
-    })
-}
-
-/// Beats every `pa` seconds of the playing track from `a`, paired with
-/// every `pb` of the next from `b`.
-fn beats(a: f64, pa: f64, b: f64, pb: f64, count: usize) -> Vec<(f64, f64)> {
-    (0..count)
-        .map(|i| (a + pa * i as f64, b + pb * i as f64))
-        .collect()
-}
 
 #[test]
 fn a_fade_at_one_tempo_mixes_the_two_and_hands_over() {
@@ -233,7 +48,7 @@ fn a_fade_at_one_tempo_mixes_the_two_and_hands_over() {
         glide: false,
     };
     player.transition(plan.clone()).unwrap();
-    let seen = trickle_to_end(&gate, &events);
+    let seen = step_to_end(&gate, &events);
     drop(player);
     let states = transitions(&seen);
     assert_eq!(states[0], &TransitionState::Armed, "{states:?}");
@@ -345,7 +160,7 @@ fn beats_meet(tempo: TempoMode, within: f64) {
         glide: false,
     };
     player.transition(plan).unwrap();
-    let seen = trickle_to_end(&gate, &events);
+    let seen = step_to_end(&gate, &events);
     drop(player);
     assert!(transitions(&seen).contains(&&TransitionState::Finished));
     let got = samples(&captured(&captures)[0].1);
@@ -387,48 +202,49 @@ fn beats_meet(tempo: TempoMode, within: f64) {
 #[test]
 fn gliding_the_tempo_meets_the_beats_and_ends_at_the_next_ones_own() {
     let _serial = serial();
-    glide_meets(TempoMode::Varispeed, 0.001, StemMix::ALL);
+    glide_meets(TempoMode::Varispeed, 0.001, ALL, false);
 }
 
 #[test]
 fn stretched_gliding_the_tempo_meets_the_beats_too() {
     let _serial = serial();
-    glide_meets(TempoMode::Stretch, 0.004, StemMix::ALL);
+    glide_meets(TempoMode::Stretch, 0.004, ALL, false);
 }
 
-/// The same with a stem off: the playing track is on its stems from the
-/// start, and moves onto a fresh stems track that glides.
+/// The same with two stems muted on a mixer's strips
+/// ([`jodel_playback::Command::StemMask`]): the clicks at half their level.
 #[test]
-fn gliding_from_a_track_on_its_stems_meets_the_beats_too() {
-    use jodel_playback::stems::Stem;
+fn gliding_with_stems_muted_on_a_mixer_meets_the_beats_too() {
     let _serial = serial();
-    glide_meets(
-        TempoMode::Varispeed,
-        0.001,
-        StemMix::NONE.toggle(Stem::Drums).toggle(Stem::Bass),
-    );
+    glide_meets(TempoMode::Varispeed, 0.001, drums_bass(), false);
+}
+
+/// The same with the plan replaced after A has moved onto its stems for one
+/// without a glide: A goes onto a fresh stems track read along the glide.
+#[test]
+fn a_glide_planned_once_on_its_stems_meets_the_beats_too() {
+    let _serial = serial();
+    glide_meets(TempoMode::Varispeed, 0.001, ALL, true);
 }
 
 /// A at 120 BPM, B at 126, the tempo gliding across a 4 s window: A alone
 /// through its first half, B alone through its second. Every click (A's,
 /// then B's) is where A's beat is heard along the glide, within `within`
 /// seconds; A's are closer together as it goes; after the window B is at
-/// its own tempo at once; and the position heard follows the glide. With
-/// `stems` on (half of them: the clicks at half their level).
-fn glide_meets(tempo: TempoMode, within: f64, stems: StemMix) {
-    let dir = temp_dir(&format!("transition-glide-{tempo:?}-{}", stems.is_full()));
+/// its own tempo at once; and the position heard follows the glide. Each
+/// stem at its gain in `mask`, as a mixer plays them; with `replan`, the
+/// plan comes once A is on its stems for a plan without the glide.
+fn glide_meets(tempo: TempoMode, within: f64, mask: [f64; STEMS], replan: bool) {
+    let dir = temp_dir(&format!(
+        "transition-glide-{tempo:?}-{}-{replan}",
+        mask == ALL
+    ));
     let b_period = 60.0 / 126.0;
     let (a_path, _) = wav(&dir, "a.wav", 14.0, clicks(0.5, 0.0, 3_000.0));
     let (b_path, _) = wav(&dir, "b.wav", 14.0, clicks(b_period, 0.0, 5_000.0));
     let (target, captures, gate) = GatedTarget::new(caps(&[RATE], &[S24In32Low]));
-    let options = PlayerOptions {
-        settings: Settings {
-            stems,
-            ..options().settings
-        },
-        ..options()
-    };
-    let (player, events) = Player::new(Box::new(target), options);
+    let (player, events) = Player::new(Box::new(target), options());
+    player.stem_mask(mask, None).unwrap();
     player.load(vec![a_path, b_path]).unwrap();
     gate.allow(2_048);
     player.play(0).unwrap();
@@ -448,6 +264,19 @@ fn glide_meets(tempo: TempoMode, within: f64, stems: StemMix) {
     };
     let glide = plan.glide_of(&plan.time_map());
     assert!((glide.end_speed() - 1.05).abs() < 1e-3, "{glide:?}");
+    if replan {
+        // First without the glide, until A is on its stems.
+        let flat = TransitionPlan {
+            glide: false,
+            ..plan.clone()
+        };
+        player.transition(flat).unwrap();
+        step_until(
+            &gate,
+            &events,
+            |e| matches!(e, Event::TrackStarted(s) if s.index == 0 && s.route.stage == Stage::Stems),
+        );
+    }
     player.transition(plan).unwrap();
     // The output held at 2.5 s for a while, as a device playing in real
     // time leaves A's move onto its stems (from 1 s on) the time it needs
@@ -455,7 +284,7 @@ fn glide_meets(tempo: TempoMode, within: f64, stems: StemMix) {
     gate.allow(5 * u64::from(RATE) / 2);
     gate.wait_written(5 * u64::from(RATE) / 2);
     std::thread::sleep(Duration::from_millis(1_500));
-    let seen = trickle_to_end(&gate, &events);
+    let seen = step_to_end(&gate, &events);
     assert!(
         !seen.iter().any(|e| matches!(e, Event::Notice { .. })),
         "{seen:?}"
@@ -566,13 +395,13 @@ fn a_glide_called_off_in_its_window_goes_on_without_a_jump() {
     gate.wait_written(5 * u64::from(RATE) / 2);
     std::thread::sleep(Duration::from_millis(1_500));
     // Into the window, then other settings call it off.
-    let mut seen = trickle_until(
+    let mut seen = step_until(
         &gate,
         &events,
         |e| matches!(e, Event::Position(p) if p.output_frame >= 7 * u64::from(RATE)),
     );
     player.remove(1).unwrap();
-    seen.extend(trickle_to_end(&gate, &events));
+    seen.extend(step_to_end(&gate, &events));
     drop(player);
     assert!(
         transitions(&seen)
@@ -711,7 +540,7 @@ fn without_a_separator_the_tracks_fade_whole() {
         glide: false,
     };
     player.transition(plan.clone()).unwrap();
-    let seen = trickle_to_end(&gate, &events);
+    let seen = step_to_end(&gate, &events);
     drop(player);
     assert!(transitions(&seen).contains(&&TransitionState::Finished));
     let got = samples(&captured(&captures)[0].1);
@@ -756,7 +585,7 @@ fn the_next_track_is_heard_where_the_map_puts_it() {
         glide: false,
     };
     player.transition(plan).unwrap();
-    let seen = trickle_to_end(&gate, &events);
+    let seen = step_to_end(&gate, &events);
     drop(player);
     let map = TimeMap::new(&pairs, 2.0);
     // While B glides back to its tempo (from 7 s to 9 s of A's time), the
@@ -814,13 +643,13 @@ fn next_while_a_transition_mixes_cuts_into_the_next_track_where_it_is() {
     };
     player.transition(plan).unwrap();
     // A second into the window, next.
-    trickle_until(
+    step_until(
         &gate,
         &events,
         |e| matches!(e, Event::Position(p) if p.index == 0 && p.seconds >= 6.0),
     );
     player.next().unwrap();
-    let seen = trickle_to_end(&gate, &events);
+    let seen = step_to_end(&gate, &events);
     drop(player);
     assert!(
         transitions(&seen).iter().any(
@@ -888,7 +717,7 @@ fn a_transition_called_off_while_it_prepares_leaves_the_track_as_it_was() {
         std::thread::sleep(Duration::from_millis(15));
     }
     player.cancel_transition().unwrap();
-    let seen = trickle_to_end(&gate, &events);
+    let seen = step_to_end(&gate, &events);
     drop(player);
     assert!(
         transitions(&seen)
@@ -915,468 +744,5 @@ fn a_transition_called_off_while_it_prepares_leaves_the_track_as_it_was() {
     assert!(
         tail.clone().all(|f| got[2 * f] == a[2 * f]),
         "A as it is at the end"
-    );
-}
-
-/// Some stems off through a transition, and another off after it: the next
-/// track takes the change (its stems no longer follow the transition's
-/// fades, which had the stems on then in them).
-#[test]
-fn after_a_transition_the_next_tracks_stems_follow_the_settings() {
-    use jodel_playback::stems::Stem;
-    let _serial = serial();
-    let dir = temp_dir("transition-stems");
-    let tone =
-        |hz: [f64; 2]| move |t: f64, c: usize| 0.4 * (2.0 * std::f64::consts::PI * hz[c] * t).sin();
-    let (a_path, _) = wav(&dir, "a.wav", 10.0, tone([1_000.0, 5_000.0]));
-    let (b_path, b) = wav(&dir, "b.wav", 10.0, tone([2_000.0, 3_000.0]));
-    let settings = |stems: StemMix| Settings {
-        stems,
-        ..options().settings
-    };
-    let two = StemMix::NONE.toggle(Stem::Drums).toggle(Stem::Bass);
-    let (target, captures, gate) = GatedTarget::new(caps(&[RATE], &[S24In32Low]));
-    let (player, events) = Player::new(
-        Box::new(target),
-        PlayerOptions {
-            settings: settings(two),
-            ..options()
-        },
-    );
-    player.load(vec![a_path, b_path]).unwrap();
-    gate.allow(2_048);
-    player.play(0).unwrap();
-    collect_until(&events, |e| matches!(e, Event::TrackStarted(_)));
-    // From 5 s of A, over 2 s, into B at 1 s: B's time is A's less 4 s.
-    let plan = TransitionPlan {
-        from: 0,
-        into: 1,
-        start: 5.0,
-        length: 2.0,
-        entry: 1.0,
-        beats: beats(5.0, 0.5, 1.0, 0.5, 5),
-        lanes: lanes(
-            Envelope::fade(1.0, 0.0, 0.0, 1.0),
-            Envelope::fade(0.0, 1.0, 0.0, 1.0),
-        ),
-        tempo: TempoMode::Varispeed,
-        settle: 1.0,
-        glide: false,
-    };
-    player.transition(plan).unwrap();
-    let mut seen = trickle_until(&gate, &events, |e| {
-        matches!(e, Event::Transition(TransitionState::Finished))
-    });
-    assert!(
-        transitions(&seen).contains(&&TransitionState::Finished),
-        "{:?}",
-        transitions(&seen)
-    );
-    // The drums alone from here.
-    player
-        .set_settings(settings(StemMix::NONE.toggle(Stem::Drums)))
-        .unwrap();
-    seen.extend(trickle_to_end(&gate, &events));
-    drop(player);
-    let streams = captured(&captures);
-    assert_eq!(streams.len(), 1, "one stream throughout");
-    let got = samples(&streams[0].1);
-    let rate = RATE as usize;
-    // A to 7 s, then B from 3 s to its end; its last second is a quarter
-    // of B (the drums alone), not a half (drums and bass).
-    let (end, offset) = (got.len() / 2, 4 * rate);
-    assert_eq!(end, 14 * rate);
-    let worst = ((end - rate)..(end - 10))
-        .flat_map(|f| (0..2).map(move |c| (f, c)))
-        .map(|(f, c)| (f64::from(got[2 * f + c]) - 0.25 * f64::from(b[2 * (f - offset) + c])).abs())
-        .fold(0.0, f64::max);
-    assert!(worst < 64.0, "B's end is {worst} steps off a quarter of B");
-}
-
-/// Drums and bass through a transition, the bass switched off in its
-/// window: the transition goes on (into its fades, not called off), and
-/// after it the next track plays the drums alone.
-#[test]
-fn stems_switched_during_a_transition_go_into_its_fades() {
-    use jodel_playback::stems::Stem;
-    let _serial = serial();
-    let dir = temp_dir("transition-stems-during");
-    let tone =
-        |hz: [f64; 2]| move |t: f64, c: usize| 0.4 * (2.0 * std::f64::consts::PI * hz[c] * t).sin();
-    let (a_path, _) = wav(&dir, "a.wav", 10.0, tone([1_000.0, 5_000.0]));
-    let (b_path, b) = wav(&dir, "b.wav", 10.0, tone([2_000.0, 3_000.0]));
-    let settings = |stems: StemMix| Settings {
-        stems,
-        ..options().settings
-    };
-    let two = StemMix::NONE.toggle(Stem::Drums).toggle(Stem::Bass);
-    let (target, captures, gate) = GatedTarget::new(caps(&[RATE], &[S24In32Low]));
-    let (player, events) = Player::new(
-        Box::new(target),
-        PlayerOptions {
-            settings: settings(two),
-            ..options()
-        },
-    );
-    player.load(vec![a_path, b_path]).unwrap();
-    gate.allow(2_048);
-    player.play(0).unwrap();
-    collect_until(&events, |e| matches!(e, Event::TrackStarted(_)));
-    let plan = TransitionPlan {
-        from: 0,
-        into: 1,
-        start: 5.0,
-        length: 2.0,
-        entry: 1.0,
-        beats: beats(5.0, 0.5, 1.0, 0.5, 5),
-        lanes: lanes(
-            Envelope::fade(1.0, 0.0, 0.0, 1.0),
-            Envelope::fade(0.0, 1.0, 0.0, 1.0),
-        ),
-        tempo: TempoMode::Varispeed,
-        settle: 1.0,
-        glide: false,
-    };
-    player.transition(plan).unwrap();
-    let mut seen = trickle_until(&gate, &events, |e| {
-        matches!(e, Event::Transition(TransitionState::Started { .. }))
-    });
-    player
-        .set_settings(settings(StemMix::NONE.toggle(Stem::Drums)))
-        .unwrap();
-    seen.extend(trickle_to_end(&gate, &events));
-    drop(player);
-    let states = transitions(&seen);
-    assert!(states.contains(&&TransitionState::Finished), "{states:?}");
-    assert!(
-        !states
-            .iter()
-            .any(|s| matches!(s, TransitionState::Cancelled { .. })),
-        "{states:?}"
-    );
-    let got = samples(&captured(&captures)[0].1);
-    let rate = RATE as usize;
-    let (end, offset) = (got.len() / 2, 4 * rate);
-    assert_eq!(end, 14 * rate);
-    let worst = ((end - rate)..(end - 10))
-        .flat_map(|f| (0..2).map(move |c| (f, c)))
-        .map(|(f, c)| (f64::from(got[2 * f + c]) - 0.25 * f64::from(b[2 * (f - offset) + c])).abs())
-        .fold(0.0, f64::max);
-    assert!(worst < 64.0, "B's end is {worst} steps off a quarter of B");
-}
-
-// The rules of how other controls meet a transition (player/INTERACTIONS.md).
-
-/// Two tone tracks (10 s), a player playing the first with `stems` on, and
-/// the second's samples.
-fn rules_setup(
-    name: &str,
-    stems: StemMix,
-) -> (
-    TempDir,
-    Vec<i32>,
-    Player,
-    Receiver<Event>,
-    jodel_playback::Captures,
-    std::sync::Arc<Gate>,
-) {
-    let dir = temp_dir(name);
-    let tone =
-        |hz: [f64; 2]| move |t: f64, c: usize| 0.4 * (2.0 * std::f64::consts::PI * hz[c] * t).sin();
-    let (a_path, _) = wav(&dir, "a.wav", 10.0, tone([1_000.0, 5_000.0]));
-    let (b_path, b) = wav(&dir, "b.wav", 10.0, tone([2_000.0, 3_000.0]));
-    let (target, captures, gate) = GatedTarget::new(caps(&[RATE], &[S24In32Low]));
-    let (player, events) = Player::new(
-        Box::new(target),
-        PlayerOptions {
-            settings: rules_settings(stems),
-            ..options()
-        },
-    );
-    player.load(vec![a_path, b_path]).unwrap();
-    gate.allow(2_048);
-    player.play(0).unwrap();
-    collect_until(&events, |e| matches!(e, Event::TrackStarted(_)));
-    (dir, b, player, events, captures, gate)
-}
-
-fn rules_settings(stems: StemMix) -> Settings {
-    Settings {
-        stems,
-        ..options().settings
-    }
-}
-
-fn drums_bass() -> StemMix {
-    use jodel_playback::stems::Stem;
-    StemMix::NONE.toggle(Stem::Drums).toggle(Stem::Bass)
-}
-
-fn drums_only() -> StemMix {
-    use jodel_playback::stems::Stem;
-    StemMix::NONE.toggle(Stem::Drums)
-}
-
-/// From 5 s of A over 2 s into B at 1 s (B's time is A's less 4 s), by
-/// `lanes`, settling over `settle`.
-fn rules_plan(lanes: [Envelope; 2 * STEMS], settle: f64) -> TransitionPlan {
-    TransitionPlan {
-        from: 0,
-        into: 1,
-        start: 5.0,
-        length: 2.0,
-        entry: 1.0,
-        beats: beats(5.0, 0.5, 1.0, 0.5, 5),
-        lanes,
-        tempo: TempoMode::Varispeed,
-        settle,
-        glide: false,
-    }
-}
-
-fn fade_lanes() -> [Envelope; 2 * STEMS] {
-    lanes(
-        Envelope::fade(1.0, 0.0, 0.0, 1.0),
-        Envelope::fade(0.0, 1.0, 0.0, 1.0),
-    )
-}
-
-/// The window started where it was planned (5 s), it finished, and
-/// nothing called it off.
-fn assert_ran_as_planned(seen: &[Event]) {
-    let states = transitions(seen);
-    assert!(
-        states.contains(&&TransitionState::Started {
-            output_frame: 5 * u64::from(RATE)
-        }),
-        "{states:?}"
-    );
-    assert!(states.contains(&&TransitionState::Finished), "{states:?}");
-    assert!(
-        !states
-            .iter()
-            .any(|s| matches!(s, TransitionState::Cancelled { .. })),
-        "{states:?}"
-    );
-}
-
-/// The worst difference, in 24-bit steps, between output frames `range`
-/// and `scale` times B where B's frame is the output's less `offset`.
-fn off_b(got: &[i32], b: &[i32], range: std::ops::Range<usize>, offset: usize, scale: f64) -> f64 {
-    range
-        .flat_map(|f| (0..2).map(move |c| (f, c)))
-        .map(|(f, c)| {
-            (f64::from(got[2 * f + c]) - scale * f64::from(b[2 * (f - offset) + c])).abs()
-        })
-        .fold(0.0, f64::max)
-}
-
-/// S1: stems switched while armed (and again while preparing) leave the
-/// transition where it was: its window starts on time, it runs, it ends.
-#[test]
-fn stems_switched_while_armed_leave_the_transition_where_it_was() {
-    let _serial = serial();
-    let (_dir, _b, player, events, _captures, gate) = rules_setup("rules-armed", StemMix::ALL);
-    player.transition(rules_plan(fade_lanes(), 1.0)).unwrap();
-    // Armed (the window is 5 s off): the first stem off, on a bar.
-    let mut seen = trickle_until(
-        &gate,
-        &events,
-        |e| matches!(e, Event::Position(p) if p.output_frame >= u64::from(RATE) / 2),
-    );
-    player.set_stems_at(drums_bass(), 1.5).unwrap();
-    // Preparing (within 4 s of it): another off, at once.
-    seen.extend(trickle_until(
-        &gate,
-        &events,
-        |e| matches!(e, Event::Position(p) if p.output_frame >= 7 * u64::from(RATE) / 2),
-    ));
-    player.set_settings(rules_settings(drums_only())).unwrap();
-    seen.extend(trickle_to_end(&gate, &events));
-    drop(player);
-    assert_ran_as_planned(&seen);
-}
-
-/// S1, S2: a stem switched on a bar inside the window changes there, on
-/// the next track too (here alone in the window), and nothing else does.
-#[test]
-fn stems_switched_at_a_bar_in_the_window_change_there() {
-    let _serial = serial();
-    let (_dir, b, player, events, captures, gate) = rules_setup("rules-at-bar", drums_bass());
-    // A out at once, B in at once.
-    let plan = rules_plan(
-        lanes(Envelope::cut(1.0, 0.0, 0.0), Envelope::cut(0.0, 1.0, 0.0)),
-        1.0,
-    );
-    player.transition(plan).unwrap();
-    let mut seen = trickle_until(&gate, &events, |e| {
-        matches!(e, Event::Transition(TransitionState::Started { .. }))
-    });
-    // The bass out at 6 s of the playing track: the middle of the window.
-    player.set_stems_at(drums_only(), 6.0).unwrap();
-    seen.extend(trickle_to_end(&gate, &events));
-    drop(player);
-    assert_ran_as_planned(&seen);
-    let got = samples(&captured(&captures)[0].1);
-    let (rate, offset) = (RATE as usize, 4 * RATE as usize);
-    // Drums and bass (half of B) up to 6 s, the drums (a quarter) after
-    // (past the stems' 10 ms fade).
-    let before = off_b(&got, &b, 5 * rate + rate / 20..6 * rate - 64, offset, 0.5);
-    let after = off_b(&got, &b, 6 * rate + rate / 40..7 * rate - 64, offset, 0.25);
-    assert!(before < 0.01 * FULL, "before the change {before}");
-    assert!(after < 0.01 * FULL, "after the change {after}");
-}
-
-/// S1, S4: stems switched while the next track settles after the window
-/// go into its fades; the transition ends as planned, and the next track
-/// plays them after.
-#[test]
-fn stems_switched_while_settling_go_into_the_next_tracks_fades() {
-    let _serial = serial();
-    let (_dir, b, player, events, captures, gate) = rules_setup("rules-settling", drums_bass());
-    player.transition(rules_plan(fade_lanes(), 2.0)).unwrap();
-    // The window is over at 7 s: the next track settles.
-    let mut seen = trickle_until(
-        &gate,
-        &events,
-        |e| matches!(e, Event::Position(p) if p.index == 1 && p.output_frame >= 15 * u64::from(RATE) / 2),
-    );
-    player.set_settings(rules_settings(drums_only())).unwrap();
-    seen.extend(trickle_to_end(&gate, &events));
-    drop(player);
-    assert_ran_as_planned(&seen);
-    let got = samples(&captured(&captures)[0].1);
-    let rate = RATE as usize;
-    let end = got.len() / 2;
-    assert_eq!(end, 14 * rate);
-    let tail = off_b(&got, &b, end - rate..end - 10, 4 * rate, 0.25);
-    assert!(tail < 64.0, "the next track's end is {tail} off its drums");
-}
-
-/// T2: calling off a mix under way does nothing: it plays to its end.
-#[test]
-fn calling_off_a_mix_under_way_does_nothing() {
-    let _serial = serial();
-    let (_dir, _b, player, events, _captures, gate) = rules_setup("rules-cancel-mix", StemMix::ALL);
-    player.transition(rules_plan(fade_lanes(), 1.0)).unwrap();
-    let mut seen = trickle_until(&gate, &events, |e| {
-        matches!(e, Event::Transition(TransitionState::Started { .. }))
-    });
-    player.cancel_transition().unwrap();
-    // A new plan neither replaces it.
-    player.transition(rules_plan(fade_lanes(), 1.0)).unwrap();
-    seen.extend(trickle_to_end(&gate, &events));
-    drop(player);
-    assert_ran_as_planned(&seen);
-}
-
-/// T3: pausing while preparing does not call it off: it runs on time
-/// after the pause.
-#[test]
-fn a_paused_transition_goes_on_after_the_pause() {
-    let _serial = serial();
-    let (_dir, _b, player, events, _captures, gate) = rules_setup("rules-pause", StemMix::ALL);
-    player.transition(rules_plan(fade_lanes(), 1.0)).unwrap();
-    let mut seen = trickle_until(
-        &gate,
-        &events,
-        |e| matches!(e, Event::Position(p) if p.output_frame >= 7 * u64::from(RATE) / 2),
-    );
-    player.pause().unwrap();
-    std::thread::sleep(Duration::from_millis(300));
-    player.resume().unwrap();
-    seen.extend(trickle_to_end(&gate, &events));
-    drop(player);
-    assert_ran_as_planned(&seen);
-}
-
-/// T4: other settings during the mix do not call it off; they wait for
-/// its end, and a notice says so.
-#[test]
-fn other_settings_during_a_mix_wait_for_its_end() {
-    let _serial = serial();
-    let (_dir, _b, player, events, _captures, gate) = rules_setup("rules-settings", StemMix::ALL);
-    player.transition(rules_plan(fade_lanes(), 1.0)).unwrap();
-    let mut seen = trickle_until(&gate, &events, |e| {
-        matches!(e, Event::Transition(TransitionState::Started { .. }))
-    });
-    player
-        .set_settings(Settings {
-            resample: true,
-            ..options().settings
-        })
-        .unwrap();
-    seen.extend(trickle_to_end(&gate, &events));
-    drop(player);
-    assert_ran_as_planned(&seen);
-    assert!(
-        seen.iter().any(|e| matches!(e, Event::Notice { message, .. } if message.contains("once the transition is over"))),
-        "no notice"
-    );
-}
-
-/// T1: another plan for the same window while it prepares (another preset,
-/// another tempo mode) keeps the window where it was.
-#[test]
-fn a_plan_changed_while_preparing_keeps_its_window() {
-    let _serial = serial();
-    let (_dir, _b, player, events, _captures, gate) = rules_setup("rules-replan", drums_bass());
-    player.transition(rules_plan(fade_lanes(), 1.0)).unwrap();
-    let mut seen = trickle_until(
-        &gate,
-        &events,
-        |e| matches!(e, Event::Position(p) if p.output_frame >= 7 * u64::from(RATE) / 2),
-    );
-    let mut again = rules_plan(
-        lanes(Envelope::cut(1.0, 0.0, 0.5), Envelope::cut(0.0, 1.0, 0.5)),
-        1.0,
-    );
-    again.tempo = TempoMode::Stretch;
-    player.transition(again).unwrap();
-    seen.extend(trickle_to_end(&gate, &events));
-    drop(player);
-    assert_ran_as_planned(&seen);
-}
-
-/// Q1: tracks moved around the transition's two: it follows them; its
-/// next track taken out: it is called off, and the playing track goes on.
-#[test]
-fn a_transition_follows_its_tracks_through_the_queue() {
-    let _serial = serial();
-    let (dir, _b, player, events, _captures, gate) = rules_setup("rules-queue", StemMix::ALL);
-    // A third track after the two, moved before the playing one: the
-    // transition's tracks are 1 and 2 then.
-    let (c_path, _) = wav(&dir, "c.wav", 1.0, |_, _| 0.0);
-    player.enqueue(vec![c_path]).unwrap();
-    player.transition(rules_plan(fade_lanes(), 1.0)).unwrap();
-    let mut seen = trickle_until(&gate, &events, |e| {
-        matches!(e, Event::Transition(TransitionState::Armed))
-    });
-    player.move_track(2, 0).unwrap();
-    seen.extend(trickle_until(&gate, &events, |e| {
-        matches!(e, Event::Transition(TransitionState::Finished))
-    }));
-    assert!(transitions(&seen).contains(&&TransitionState::Started {
-        output_frame: 5 * u64::from(RATE)
-    }));
-    assert!(seen
-        .iter()
-        .any(|e| matches!(e, Event::TrackStarted(s) if s.index == 2)));
-    drop(player);
-    // Again, its next track taken out.
-    let (_dir, _b, player, events, _captures, gate) = rules_setup("rules-queue-out", StemMix::ALL);
-    player.transition(rules_plan(fade_lanes(), 1.0)).unwrap();
-    let mut seen = trickle_until(&gate, &events, |e| {
-        matches!(e, Event::Transition(TransitionState::Armed))
-    });
-    player.remove(1).unwrap();
-    seen.extend(trickle_to_end(&gate, &events));
-    drop(player);
-    assert!(
-        transitions(&seen).iter().any(
-            |s| matches!(s, TransitionState::Cancelled { reason } if reason.contains("queue"))
-        ),
-        "{:?}",
-        transitions(&seen)
     );
 }

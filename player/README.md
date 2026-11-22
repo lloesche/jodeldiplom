@@ -1048,10 +1048,10 @@ version, in `src/cache.rs`:
 
 - analyses and waveforms (`rhythm/`);
 - the tracks' stems (`stems/`, beside `rhythm/`), written by the analysis
-  so a track is separated once: everything that plays on stems (a stems
-  mix, a jump, a transition, Karaoke, the Transition tab's stems kept ready) and
-  the lyrics timing reads them back; only a track without them is
-  separated live. About 26–28 MB a minute of music (16 bits with a scale
+  so a track is separated once: everything that plays stems (the stems
+  made beside the file for the desk, from any frame: a seek, a jump; a
+  transition; Karaoke) and the lyrics timing reads them back; only a
+  track without them is separated live. About 26–28 MB a minute of music (16 bits with a scale
   per block, coded losslessly; `jodel_playback::stem_file`), kept under
   30 GB, the least recently played going first;
 - lyrics as found, "none found" records and timed lyrics (`lyrics/`);
@@ -1158,10 +1158,12 @@ says how far its beats are from where they belong: before the window
 beats) and after it (INTO's, along the time map).
 
 `cargo run --release -p jodeldiplom --example stems_at -- FILE [--from SECONDS]`
-plays FILE from `--from` (default 60 s) into a memory output in real time
-(at the file's rate), takes the drums out on the
-first bar at least 2.5 s on and back on the first bar a second after that,
-and says how far from those bars the changes were heard (found in what was
+plays a stereo FILE from `--from` (default 60 s) through a desk (the
+player's strip with its stems' strips inside it) into a memory output in
+real time (at the file's rate), its stems made on the GPU beside it; 4 s
+in it mutes the drums' strip on the first bar at least 0.1 s on (the
+stem keys' way) and unmutes it on the first bar a second after that, and
+says how far from those bars the changes were heard (found in what was
 played less the file).
 
 `cargo run --release -p jodeldiplom --example voice_set -- LIST OUT` makes

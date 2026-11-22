@@ -9,7 +9,7 @@ use std::time::Instant;
 use jodel_output::{OpenRequest, Output, StreamFormat};
 
 use crate::error::Error;
-use crate::rate::{choose_route_near, FileFacts, Route};
+use crate::rate::{choose_route, FileFacts, Route};
 use crate::source::Source;
 
 use super::api::{Event, PlayState, TrackStart};
@@ -66,13 +66,7 @@ impl Engine {
             Some(route) => route,
             None => {
                 let caps = self.capabilities()?;
-                let open = self.out.as_ref().map(|o| o.info.format);
-                choose_route_near(
-                    &FileFacts::from(&*info),
-                    &caps,
-                    &self.route_settings(),
-                    open.as_ref(),
-                )?
+                choose_route(&FileFacts::from(&*info), &caps, &self.settings)?
             }
         };
         Track::new(index, info, route, source, self.segments.clone())
@@ -209,15 +203,6 @@ impl Engine {
     /// [`Engine::jump`] to `start` of the track, on `route` when one is
     /// given.
     pub(super) fn jump_on(&mut self, index: usize, start: StartAt, route: Option<Route>) {
-        // Stems separated ahead for another next track are not wanted.
-        let next = self.queue.get(index + 1);
-        if self
-            .prestart
-            .as_ref()
-            .is_some_and(|p| Some(&p.path) != next)
-        {
-            self.prestart = None;
-        }
         let previous = self.heard.as_ref().map(|h| h.index);
         self.clear_timeline();
         if let Some(previous) = previous {
@@ -363,9 +348,9 @@ impl Engine {
     /// Stops playback and closes the output.
     pub(super) fn stop(&mut self, announce: bool) {
         let was_active = self.out.is_some() || self.playing.is_some();
-        self.prestart = None;
-        self.shadow = None;
         self.lanes.stop();
+        // Stems that failed are tried again from here.
+        self.stems_failed = false;
         self.clear_timeline();
         self.close_output();
         self.paused = false;

@@ -1,30 +1,33 @@
-//! Takes the drums of a track out on one bar and back on another, as the
-//! player's stems do on bars, and says how far from those bars the changes
-//! were heard: the engine plays into a memory output in real time, nothing
-//! goes to a device.
+//! Takes the drums of a stereo track out on one bar and back on another, as
+//! the player's stem keys do: the drums' strip of a desk muted on the bar's
+//! frame of the player's output, and unmuted on a later one. It says how far
+//! from those bars the changes were heard: the engine plays through a mixer
+//! (the player's strip a group, a strip for each stem inside it) into a
+//! memory output in real time, nothing goes to a device.
 //!
 //! ```text
-//! cargo run --release -p jodeldiplom --example stems_at -- FILE [--from SECONDS] [--keep]
+//! cargo run --release -p jodeldiplom --example stems_at -- FILE [--from SECONDS]
 //! ```
 //!
-//! It plays from `--from` (default 60 s), the output at the file's rate. The
-//! drums go on the first bar at least 2.5 s on (the track moves onto its stems
-//! first), and come back on the first bar at least a second after that bar was
-//! heard. With `--keep` it plays as the Transition tab does (the stems kept as
-//! the file plays, and a jump window), and the drums go 4 s in, on the first
-//! bar a second on. They come back on the first bar at least a second after
-//! that bar was heard. Where the drums went and came back is found in what was
-//! played less the file itself.
+//! It plays from `--from` (default 60 s), the output at the file's rate, the
+//! stems made on the GPU beside it. Once the mixer has them, a second on,
+//! the drums go off on the first bar at least 0.1 s on, and come back on
+//! the first bar at least a second after that bar was heard. Where the drums went and
+//! came back is found in what was played less the file itself (which the
+//! mixer plays bit for bit while no strip is touched: that is where the file
+//! is found in it).
 
 use std::path::Path;
 use std::process::ExitCode;
 use std::time::Duration;
 
 use jodel_gpu::GpuSeparator;
+use jodel_output::lanes::Parts;
+use jodel_output::mixer::{Mixer, MixerOptions, Role};
 use jodel_output::{Capabilities, SampleFormat, SimClock, StreamFormat};
 use jodel_playback::source::Source;
-use jodel_playback::stems::{Separator, Stem, StemMix};
-use jodel_playback::{Event, MemoryTarget, Player, PlayerOptions, Settings};
+use jodel_playback::stems::{Separator, Stem};
+use jodel_playback::{Event, MakeStems, MemoryTarget, Player, PlayerOptions, Position, StemDesk};
 use jodel_rhythm::{Analysis, Method};
 use jodeldiplom::core::RhythmRecipe;
 use jodeldiplom::rhythm::analyze_file;
@@ -36,20 +39,18 @@ fn gpu() -> Option<&'static dyn Separator> {
 fn main() -> ExitCode {
     let mut file = None;
     let mut from = 60.0;
-    let mut keep = false;
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--from" => from = args.next().and_then(|s| s.parse().ok()).unwrap_or(60.0),
-            "--keep" => keep = true,
             _ => file = Some(arg),
         }
     }
     let Some(file) = file else {
-        eprintln!("usage: stems_at FILE [--from SECONDS] [--keep]");
+        eprintln!("usage: stems_at FILE [--from SECONDS]");
         return ExitCode::FAILURE;
     };
-    match run(Path::new(&file), from, keep) {
+    match run(Path::new(&file), from) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("{e}");
@@ -67,7 +68,15 @@ fn bar_after(a: &Analysis, t: f64) -> Option<(f64, usize)> {
         .find(|&(b, _)| b >= t)
 }
 
-fn run(path: &Path, from: f64, keep: bool) -> Result<(), String> {
+/// The output frame of `at` seconds into the track, from where position `p`
+/// was heard (the output at the track's rate).
+fn frame_of(p: &Position, at: f64, rate: u32) -> u64 {
+    (p.output_frame as f64 + (at - p.seconds) * f64::from(rate))
+        .round()
+        .max(0.0) as u64
+}
+
+fn run(path: &Path, from: f64) -> Result<(), String> {
     if GpuSeparator::shared().is_none() {
         return Err("stems need a GPU".into());
     }
@@ -81,6 +90,9 @@ fn run(path: &Path, from: f64, keep: bool) -> Result<(), String> {
         .info()
         .clone();
     let rate = info.rate;
+    if info.channels != 2 {
+        return Err("a stereo file, please".into());
+    }
     println!(
         "{:.1} BPM, {} bars, {} Hz",
         a.summary.map_or(0.0, |s| s.bpm),
@@ -89,23 +101,35 @@ fn run(path: &Path, from: f64, keep: bool) -> Result<(), String> {
     );
     let mut caps = Capabilities::new();
     caps.insert(StreamFormat::new(rate, 2, SampleFormat::S24In32Low));
-    let target = MemoryTarget::new(caps, SimClock::Realtime);
-    let captures = target.captures();
+    let device = MemoryTarget::new(caps, SimClock::Realtime);
+    let captures = device.captures();
+    let mixer = Mixer::open(Box::new(device), MixerOptions::default());
+    let (desk, input) = StemDesk::new(&mixer, "Player", Role::Lead, 1.0);
+    let (lead, drums) = (&desk.fader, desk.stem(Stem::Drums));
     let options = PlayerOptions {
-        settings: Settings::default(),
         separator: Some(gpu as fn() -> _),
         position_interval: Duration::from_millis(20),
         ..PlayerOptions::default()
     };
-    let (player, events) = Player::new(Box::new(target), options);
-    if keep {
-        player.jump_window(24.0, 24.0).map_err(|e| e.to_string())?;
-        player.keep_stems(true).map_err(|e| e.to_string())?;
-    }
-    // When the drums go: at once after the seek, or (stems kept) 4 s on,
-    // and how far ahead of what is heard.
-    let (wait, lead) = if keep { (4.0, 1.0) } else { (0.0, 2.5) };
+    let (player, events) = Player::new(Box::new(input), options);
+    player
+        .make_stems(MakeStems::Separate)
+        .map_err(|e| e.to_string())?;
+    // When the drums go (a second after the mixer has the stems), and how
+    // far ahead of what is heard: as the player's stem keys, a mixer's
+    // change.
+    let (wait, soon) = (1.0, 0.1);
     let mut seeked = None;
+    // When the mixer first had the stems after the seek, in seconds of the
+    // track.
+    let mut present: Option<f64> = None;
+    let stems_there = || {
+        mixer.desk().strips.iter().any(|s| {
+            s.inputs
+                .iter()
+                .any(|i| i.parts.as_ref().is_some_and(|p| p.state == Parts::Present))
+        })
+    };
     player
         .load(vec![path.to_path_buf()])
         .map_err(|e| e.to_string())?;
@@ -116,37 +140,36 @@ fn run(path: &Path, from: f64, keep: bool) -> Result<(), String> {
             .recv_timeout(Duration::from_secs(30))
             .map_err(|_| "the engine went quiet".to_owned())
     };
-    let mut plan: Vec<(StemMix, f64, usize)> = Vec::new();
-    let drums_off = StemMix::ALL.toggle(Stem::Drums);
-    // Where the file is in the output (from the positions heard), and the
+    // The bars the drums go and come back on (seconds, number), and the
     // last second heard.
-    let (offset, heard) = loop {
+    let mut plan: Vec<(f64, usize)> = Vec::new();
+    let heard = loop {
         match next()? {
             Event::Seeked { seconds, .. } => seeked = Some(seconds),
+            Event::Position(p) if plan.is_empty() && seeked.is_some() && present.is_none() => {
+                if stems_there() {
+                    present = Some(p.seconds);
+                }
+            }
             Event::Position(p)
-                if plan.is_empty() && seeked.is_some_and(|s| p.seconds >= s + wait) =>
+                if plan.is_empty() && present.is_some_and(|s| p.seconds >= s + wait) =>
             {
                 let seconds = p.seconds;
-                let (at, bar) = bar_after(&a, seconds + lead).ok_or("no bar left")?;
-                player
-                    .set_stems_at(drums_off, at)
-                    .map_err(|e| e.to_string())?;
+                let (at, bar) = bar_after(&a, seconds + soon).ok_or("no bar left")?;
+                drums.set_mute_at(true, lead.at_stream(frame_of(&p, at, rate)));
                 println!("drums off at bar {bar} ({at:.3} s), asked at {seconds:.2} s");
-                plan.push((drums_off, at, bar));
+                plan.push((at, bar));
             }
             Event::Position(p) if !plan.is_empty() => {
                 let heard = p.seconds;
-                let (_, first, _) = plan[0];
-                if plan.len() == 1 && heard >= first + 0.1 {
+                if plan.len() == 1 && heard >= plan[0].0 + 0.1 {
                     let (at, bar) = bar_after(&a, heard + 1.0).ok_or("no bar left")?;
-                    player
-                        .set_stems_at(StemMix::ALL, at)
-                        .map_err(|e| e.to_string())?;
+                    drums.set_mute_at(false, lead.at_stream(frame_of(&p, at, rate)));
                     println!("drums on at bar {bar} ({at:.3} s), asked at {heard:.2} s");
-                    plan.push((StemMix::ALL, at, bar));
+                    plan.push((at, bar));
                 }
-                if plan.len() == 2 && heard >= plan[1].1 + 3.0 {
-                    break (p.output_frame as i64 - p.frame as i64, heard);
+                if plan.len() == 2 && heard >= plan[1].0 + 3.0 {
+                    break heard;
                 }
             }
             Event::TrackStarted(s) => println!(
@@ -154,12 +177,13 @@ fn run(path: &Path, from: f64, keep: bool) -> Result<(), String> {
                 s.route.stage, s.output_frame, s.from_frame
             ),
             Event::Error { error, .. } => return Err(error.to_string()),
-            Event::StemsStopped { reason, .. } => return Err(reason),
+            Event::PartsStopped { reason, .. } => return Err(reason),
             Event::QueueEnded => return Err("the track ended".into()),
             _ => {}
         }
     };
     drop(player);
+    drop(mixer);
     // What was played and the file, frame by frame, over the stretch.
     let list = captures.list();
     let bytes = list.last().ok_or("nothing was played")?.sink.bytes();
@@ -169,7 +193,7 @@ fn run(path: &Path, from: f64, keep: bool) -> Result<(), String> {
         .iter()
         .map(|b| (i32::from_le_bytes(*b) << 8) >> 8)
         .collect();
-    let first = ((plan[0].1 - 2.0) * f64::from(rate)) as u64;
+    let first = ((plan[0].0 - 2.0) * f64::from(rate)) as u64;
     let last = ((heard - 0.2) * f64::from(rate)) as u64;
     let mut source = Source::open(path).map_err(|e| e.to_string())?;
     source.seek(first).map_err(|e| e.to_string())?;
@@ -180,6 +204,16 @@ fn run(path: &Path, from: f64, keep: bool) -> Result<(), String> {
             break;
         }
     }
+    // Where the file is in what was played: its frames from `first` on,
+    // played as they are (nothing was touched yet).
+    const PROBE: usize = 2 * 256;
+    let probe = file.get(..PROBE).ok_or("the file ends too soon")?;
+    let found = out
+        .windows(PROBE)
+        .step_by(2)
+        .position(|w| w == probe)
+        .ok_or("the file is not found in what was played")?;
+    let offset = found as i64 - first as i64;
     // The level of what was played less the file, every 5 ms.
     let step = (f64::from(rate) * 0.005) as u64;
     let level = |f0: u64| -> f64 {
@@ -206,7 +240,7 @@ fn run(path: &Path, from: f64, keep: bool) -> Result<(), String> {
         xs.sort_by(f64::total_cmp);
         xs.get(xs.len() / 2).copied().unwrap_or(0.0)
     };
-    let (off_at, on_at) = (plan[0].1, plan[1].1);
+    let (off_at, on_at) = (plan[0].0, plan[1].0);
     let mut quiet: Vec<f64> = levels
         .iter()
         .filter(|(t, _)| *t < off_at - 0.2 || *t > on_at + 0.5)

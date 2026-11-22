@@ -1,17 +1,21 @@
 //! What karaoke asks of the engine: a track started after a count-in of
 //! silence ([`Command::PlayIn`]), heard from its end with positions
-//! running negative through it, and holding at the end of each track
-//! ([`Command::HoldAtEnd`]).
+//! running negative through it, the voice muted on the desk after it, and
+//! holding at the end of each track ([`Command::HoldAtEnd`]).
 
 mod common;
 
 use std::path::PathBuf;
 use std::time::Duration;
 
+use common::lanes::quarter;
 use common::*;
-use jodel_output::SampleFormat;
-use jodel_playback::stems::{Separator, Stem, StemMix};
-use jodel_playback::{Event, PlayState, Player, PlayerOptions, Settings};
+use jodel_output::mixer::{Mixer, MixerOptions, Role};
+use jodel_output::{SampleFormat, SimClock};
+use jodel_playback::stems::Stem;
+use jodel_playback::{
+    Event, MakeStems, MemoryTarget, PlayState, Player, PlayerOptions, Settings, StemDesk,
+};
 
 const RATE: u32 = 44_100;
 
@@ -89,70 +93,117 @@ fn a_count_in_is_silence_then_the_track_heard_from_its_end() {
     assert_eq!(&got[2 * lead..], &files[0][..], "then the track as it is");
 }
 
-/// Each stem a quarter of the mix.
-struct Quarter;
-
-impl Separator for Quarter {
-    fn name(&self) -> String {
-        "quarter".into()
-    }
-
-    fn masks(&self, frames: usize, stft: &[f32]) -> Result<Vec<f32>, String> {
-        let per_stem = stft.len();
-        assert_eq!(per_stem % frames, 0);
-        Ok((0..4 * per_stem)
-            .map(|i| if i % 2 == 0 { 0.25 } else { 0.0 })
-            .collect())
-    }
-}
-
-static QUARTER: Quarter = Quarter;
-
-fn quarter() -> Option<&'static dyn Separator> {
-    Some(&QUARTER)
-}
-
-/// The karaoke mix (the voice off) after a count-in: the stems are
-/// separated while the silence plays, and follow it without a gap.
+/// The karaoke mix after a count-in, the voice muted on its strip of a
+/// mixer: the count-in's silence on every lane, then the rest of the band
+/// (three quarters of the file, from the stems made beside it) from the
+/// track's first frames, after the mixer's switch.
 #[test]
-fn a_count_in_into_stems_has_them_ready_at_its_end() {
+fn a_count_in_into_the_voice_muted_on_the_desk_plays_the_band_after_it() {
+    // It separates stems: not beside the test in real time.
+    let _guard = heavy();
     let dir = temp_dir("karaoke-lead-stems");
     let path = dir.join("tones.wav");
     let file = tones(RATE, 3 * RATE as usize);
     write_wav(&path, RATE, 2, &file);
-    let (target, captures, gate) = GatedTarget::new(caps(&[RATE], &[SampleFormat::S24In32Low]));
+    let (target, captures, gate, lanes) =
+        gated_mixer_lanes(caps(&[RATE], &[SampleFormat::S24In32Low]));
     let options = PlayerOptions {
         settings: Settings {
             resample: false,
-            stems: StemMix::ALL.with_level(Stem::Vocals, 0),
+            ..Settings::default()
+        },
+        separator: Some(quarter),
+        // The parts waited for: there from the track's first frame.
+        offline: true,
+        ..options()
+    };
+    let (player, events) = Player::new(Box::new(target), options);
+    player.make_stems(MakeStems::Separate).unwrap();
+    // The vocals' strip (drums, bass, vocals, other).
+    lanes.parts[2].set_mute(true);
+    player.load(vec![path]).unwrap();
+    gate.allow_all();
+    player.play_in(0, 1.0).unwrap();
+    let seen = until_queue_end(&events);
+    drop(player);
+    drop(lanes);
+    assert!(!seen
+        .iter()
+        .any(|e| matches!(e, Event::Error { .. } | Event::PartsStopped { .. })));
+    let streams = captured(&captures);
+    assert_eq!(streams.len(), 1);
+    let got = samples(&streams[0].1);
+    let lead = RATE as usize;
+    assert_eq!(got.len(), 2 * lead + file.len());
+    assert!(got[..2 * lead].iter().all(|&s| s == 0), "silence first");
+    // From the mixer's switch (10 ms) on.
+    let switched = RATE as usize / 100 + 8;
+    let worst = (2 * switched..file.len())
+        .map(|i| (f64::from(got[2 * lead + i]) - 0.75 * f64::from(file[i])).abs())
+        .fold(0.0, f64::max);
+    assert!(worst <= 64.0, "{worst} steps off");
+}
+
+/// The same on a device playing in real time: the voice's strip muted, the
+/// stems are made while the count-in plays (two seconds of it: time for a
+/// slow machine to separate the first stretch), so the band (not the file)
+/// is heard from the track's first frames on, after the mixer's switch.
+#[test]
+fn in_real_time_a_count_in_has_the_band_ready_at_its_end() {
+    let _guard = real_time();
+    let dir = temp_dir("karaoke-lead-stems-real");
+    let path = dir.join("tones.wav");
+    let file = tones(RATE, 3 * RATE as usize);
+    write_wav(&path, RATE, 2, &file);
+    let device = MemoryTarget::new(
+        caps(&[RATE], &[SampleFormat::S24In32Low]),
+        SimClock::Realtime,
+    );
+    let captures = device.captures();
+    let mixer = Mixer::open(Box::new(device), MixerOptions::default());
+    let (desk, input) = StemDesk::new(&mixer, "Player", Role::Lead, 1.0);
+    desk.stem(Stem::Vocals).set_mute(true);
+    let options = PlayerOptions {
+        settings: Settings {
+            resample: false,
             ..Settings::default()
         },
         separator: Some(quarter),
         ..options()
     };
-    let (player, events) = Player::new(Box::new(target), options);
+    let (player, events) = Player::new(Box::new(input), options);
+    player.make_stems(MakeStems::Separate).unwrap();
     player.load(vec![path]).unwrap();
-    // Half the silence taken, then the output full for a while: the
-    // track's stems are made behind it.
-    let lead = RATE as usize;
-    gate.allow(lead as u64 / 2);
-    player.play_in(0, 1.0).unwrap();
-    gate.wait_written(lead as u64 / 2);
-    std::thread::sleep(Duration::from_millis(300));
-    gate.allow_all();
+    player.play_in(0, 2.0).unwrap();
     let seen = until_queue_end(&events);
     drop(player);
-    assert!(!seen
-        .iter()
-        .any(|e| matches!(e, Event::Error { .. } | Event::StemsStopped { .. })));
+    drop(desk);
+    drop(mixer);
+    assert!(
+        !seen
+            .iter()
+            .any(|e| matches!(e, Event::Error { .. } | Event::PartsStopped { .. })),
+        "{seen:?}"
+    );
     let streams = captured(&captures);
     let got = samples(&streams[0].1);
-    assert_eq!(got.len(), 2 * lead + file.len());
-    assert!(got[..2 * lead].iter().all(|&s| s == 0));
-    let worst = (2..file.len())
-        .map(|i| (f64::from(got[2 * lead + i]) - 0.75 * f64::from(file[i])).abs())
-        .fold(0.0, f64::max);
-    assert!(worst <= 64.0, "{worst} steps off");
+    // Each frame's distance from the band (three quarters of the file)
+    // from the mixer's switch (10 ms) on, the track started at output frame
+    // `start` (the device's start may cut the stream's end short).
+    let switched = RATE as usize / 100 + 8;
+    let off = |start: usize| {
+        let frames = (got.len() / 2).saturating_sub(start).min(file.len() / 2);
+        (2 * switched..2 * frames)
+            .map(|i| (f64::from(got[2 * start + i]) - 0.75 * f64::from(file[i])).abs())
+            .fold(0.0, f64::max)
+    };
+    // The track starts about where the music does (its first frame is
+    // nothing, the stems' a little).
+    let sound = got.iter().position(|&s| s != 0).expect("sound") / 2;
+    let worst = (sound.saturating_sub(2)..sound + 2)
+        .map(off)
+        .fold(f64::INFINITY, f64::min);
+    assert!(worst <= 64.0, "{worst} steps off the band");
 }
 
 #[test]

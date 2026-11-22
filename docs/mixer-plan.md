@@ -215,6 +215,52 @@ bit-exact tests, run through the desk.
 - **Bus and route types are deferred to step 4**: there is one bus and one
   output now, so they would have nothing to choose.
 
+### Step 2, as built
+
+- **Groups and changes on a frame** (`Mixer::strip_in(parent, name)`): a
+  strip inside another; along a path the gain is every level times
+  not-muted, times the solo gate (soloing a strip keeps its path and its
+  children, and silences the rest). `Strip::set_level_at` and
+  `set_mute_at` land on a frame of a player's output (`Fader::at_stream`).
+  A group meters its subtree.
+- **Lane inputs** (`Mixer::input_lanes(main, parts, role, gain)`): one
+  stream of `main` and four parts (S24-in-32 whatever the device) and a
+  control word a frame (`None`, `Present`, `Ending`). Main goes to the
+  group, each part to its strip. While nothing is touched the mixer plays
+  main, bit for bit; with a part's strip touched it switches to the
+  parts' sum over a linear 10 ms crossfade on the control word's frames,
+  and back once untouched and the ramps are over. Flush, retract and
+  pause act on every lane at once: one transport.
+- **The engine writes the parts** (`playback/src/engine/lanes/`,
+  `Command::MakeStems(Never | Kept | Separate)`): the stems of the track
+  played, from the stem cache or separated, resampled to the output's
+  rate and laid on the frames main is heard on, so they add up to main
+  within a few 24-bit steps at any rate, through seeks, jumps, gapless
+  changes and route switches; on a device they are never waited for.
+- **The app plays on the desk** (`player/src/desk_wiring.rs`,
+  `core/stems.rs`): the PLAYER group with DRUMS, BASS, VOCALS and OTHER
+  inside it. The stem keys mute a stem's strip on the next bar's frame
+  (0.1 s ahead at the soonest); `alt+0` puts the strips back, and the file
+  is heard bit-perfect again. The stems are made while a strip is touched
+  or the Mix, Karaoke or Transition tab shows. The Karaoke voice is the
+  vocals lane's fader.
+- **The engine's own stem mix is gone** for levels: no stems in the
+  settings, no stems route for a track's levels, no stems kept beside the
+  file for jumps (the parts' run keeps them), no stem changes timed in the
+  engine. A level is heard within the device's buffer, not after the
+  engine's half second.
+- **Transitions still mix in the engine** until step 3: both tracks on
+  their stems, faded by the plan's lanes, with each stem at its gain as the
+  desk plays it (`Command::StemMask`, changes landing on their bars); the
+  desk hears that as main. The playing track keeps its parts until its move
+  onto its stems has met it, and the next track's move back onto its file
+  waits for its parts, so a mixer playing the stems hears no jump at
+  either end.
+- **Still to come (stage 5)**: the first touch heard fast (the parts made
+  behind the write head, the frames not yet played rewritten with them);
+  the cost of the parts' resampling at high rates and of the stems kept;
+  checks on real files at a USB DAC's rates.
+
 ## Risks
 
 - **Clock bridges** are the one hard piece (drift found without audible

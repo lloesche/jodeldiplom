@@ -50,7 +50,7 @@ WAV, AIFF, CAF and ALAC files to bit-perfect, exclusive device output, and MP3 (
   sample-accurate on every format.
 - `rate`: `choose_route(file, capabilities, settings)` is a pure function
   from the file, the device's exclusive capability matrix and the settings
-  (rate cap, resampling, headroom, stems) to a `Route` (stage, output
+  (rate cap, resampling, headroom) to a `Route` (stage, output
   rate, channels, format preference, resample step) or a `NoRoute` with a
   sentence saying why nothing fits.
 
@@ -102,34 +102,30 @@ WAV, AIFF, CAF and ALAC files to bit-perfect, exclusive device output, and MP3 (
   gives the same output); samples that clip (inter-sample overs) saturate
   and are counted. `set_gain` scales the input (the headroom).
   `process_f64` gives the unquantized output for analysis.
-- `stems`: stem playback. `Settings::stems` is a `StemMix`: each stem's
-  (drums, bass, vocals, other) level in percent, 0 off; with all four at
-  100 the file plays on its usual route, with any lower (or off) on a
-  `Stage::Stems` route: the file read as it is stored, made stereo at 44.1 kHz (`StereoFeed`), separated
-  by `jodel_rhythm::stems::Splitter` in a thread of its own, up to about 20 s
-  ahead, and the stems that are on summed (a 10 ms fade when one is
-  switched), kept under −0.2 dBFS by a limiter that looks 2 ms ahead in the
-  stems the run has (no delay; exactly no gain where nothing goes over, so
-  the file and its four stems still sound alike: stems summed again go
+- `stems`: a track's stems (drums, bass, vocals, other; `stems::LANES` is
+  the order a player hands them on in). A stem run reads the file as it is
+  stored, makes it stereo at 44.1 kHz (`StereoFeed`) and separates it by
+  `jodel_rhythm::stems::Splitter` in a thread of its own, up to about 20 s
+  ahead. The engine hands the stems on beside the file as parts of an
+  output of lanes (**Stem lanes**, below: a mixer plays them on its strips,
+  so a stem's level is a fader), and a transition sums them faded by its
+  lanes on a `Stage::Stems` route at the open output's format (never
+  bit-perfect), kept under −0.2 dBFS by a limiter that looks 2 ms ahead in
+  the stems the run has (no delay; exactly no gain where nothing goes over,
+  so the file and its four stems still sound alike: stems summed again go
   over full scale, the band without its singer up to 2.15 dB on 24 songs,
   which the requantization clipped), then resampled to the device or
-  requantized at 44.1 kHz; with
-  an output open, at its rate when the device takes it there
-  (`choose_route_near`), so stem mode keeps the output open. It
-  is never bit-perfect. `PlayerOptions::separator` gives the separator
+  requantized at 44.1 kHz. `PlayerOptions::separator` gives the separator
   (called in that thread, so a GPU set up there never holds up playback);
-  without one the mix is ignored. A new mix on the stem route is summed
-  from then on, with no restart; the next track's separation starts once
-  the playing file has been read, so track changes stay gapless; if the
-  separator fails, `Event::StemsStopped` says so and the track goes on on
-  its usual route from the frame after what was written, nothing flushed.
-  A dropped run stops before its next chunk. With
+  without one only kept stems are parts, and a transition fades its tracks
+  whole. If a transition's separator fails, `Event::StemsStopped` says so
+  and the track goes on on its own route from the frame after what was
+  written, nothing flushed. A dropped run stops before its next chunk. With
   `PlayerOptions::stem_store`, a run first asks the store for the track's
   kept stems and reads them from its frame on (a second at a time, about
   150 times faster than they play): a track separated once (by the
   player's analysis) is never separated again, from any frame, in any run
-  (a seek, a jump, the Transition tab's stems kept ready, a transition's
-  tracks).
+  (a seek, a jump, a transition's tracks).
 - `stem_file`: a track's four stereo stems at 44.1 kHz in a file: blocks
   of 4096 frames, each channel as 16-bit values times a power of two of
   its own (2^-16 to 2^4, so quiet stretches keep their detail and loud
@@ -190,10 +186,8 @@ player.play(0)?;
 
 Commands (`Command`, or the methods of the same names): `Load`, `Play(index)`,
 `Enqueue`, `Pause`, `Resume`, `Seek(seconds)`, `Next`, `Previous`, `Stop`,
-`SetSettings`, `Transition(plan)`, `CancelTransition`, `SetStemsAt { stems, at }`
-(the stems heard become `stems` from `at` seconds into the playing track,
-to the frame: below), `Jump { index, to, at: Now | At(seconds) }`,
-`JumpWindow { back, ahead }` and `KeepStems(bool)` (jumps within the
+`SetSettings`, `Transition(plan)`, `CancelTransition`, `Jump { index, to,
+at: Now | At(seconds) }` and `JumpWindow { back, ahead }` (jumps within the
 playing track: below), `PlayIn { index, lead }` (the track from its start
 after `lead` seconds of silence: its `TrackStarted` comes as the silence
 begins to be heard and its positions run negative through it, so a
@@ -240,22 +234,10 @@ lengths are exact); otherwise the samples go to the output as read.
   it is written into the same output with no gap; otherwise the output plays
   out, closes and reopens at the new format.
 - **Pause** pauses the output and stops writing; the bytes are unchanged.
-- **Stems at a time** (`SetStemsAt`): the stems that are on change on the
-  frame of the playing track at `at` (with the usual 10 ms fade), not as
-  soon as the output has played what it holds. Up to there the track
-  plays the stems it had. The first stem off moves the track onto its
-  stems at once (every stem on, so it sounds as the file) and takes the
-  stem off at `at`; all on again plays the stems to `at` and then moves
-  back to the file. The time is held to the output frame it is heard at
-  as the track plays when the change is asked for: a `Jump` in between
-  (a bar looped) does not move it, so it comes then, wherever the track
-  is. A time already made, or one the route cannot be met by, is taken
-  as soon as it can be. `SetSettings` with other stems, a seek or another
-  track drop a change still to come.
 - **Settings** (`SetSettings`): when the track being played takes another
   route with them, it moves to that route without a break. The new route
-  opens a little before the frame being written (1 s for stems, 0.1 s for
-  a resampler) and decodes ahead while the old one plays on, in
+  opens a little before the frame being written (1 s for a transition's
+  stems, 0.1 s for a resampler) and decodes ahead while the old one plays on, in
   the turns the output leaves: while it holds half its buffer or more, is
   paused, or took nothing of the last write. Once the new route has caught
   up, the two meet at the first frame after what is written where both
@@ -306,11 +288,11 @@ lengths are exact); otherwise the samples go to the output as read.
   position follows the map while its speed glides back to 1 (with
   `glide`, what is left of it). A little
   after that (`Finished`) it is straightened onto a plain segment and
-  moves back onto its own route, bit-perfect again where it was before
-  (with stems off, onto a fresh stems route: its stems follow the
-  settings again, no longer the transition's fades).
-  Without a separator the stems are the whole track (`stems::whole_mix`),
-  so every plan is a beat-matched fade of the whole tracks.
+  moves back onto its own route, bit-perfect again where it was before.
+  Without a separator (or once it failed, until stems may work again:
+  `StemsStopped`) the stems are the whole track (`stems::whole_mix`), so
+  every plan is a beat-matched fade of the whole tracks; whether a track
+  is whole is its own, and a whole track takes no `StemMask`.
 
   On a device, the engine never lets the output run dry for a
   transition:
@@ -327,9 +309,9 @@ lengths are exact); otherwise the samples go to the output as read.
     its stems;
   - each piece of the mix waits for the next track's frames.
 
-  Stems
-  switched at any time go into its fades, on both tracks, at the time
-  they are heard at (a bar, say: the next track makes its output only a
+  A mixer's
+  stem gains (`StemMask`) changed at any time go into its fades, on both
+  tracks, at the time they are heard at (a bar, say: the next track makes its output only a
   quarter of a second ahead, so a change asked for a second ahead falls
   on it there too); they never move it or call it off. Other settings
   wait for its end (a notice says so), and so does a new plan or
@@ -356,27 +338,15 @@ lengths are exact); otherwise the samples go to the output as read.
   and the segment starts at the target, as a seek's would, with the buffer
   going on as it is; `Jumped` comes as it is heard. A
   time already written is taken back first; one too late for that lands
-  as far after the target as it is late, so the beat goes on. A stems
-  route mixes the stems that are on as its buffer is made (so a stem
-  switched follows at once), and its buffer keeps only what the output
-  may give back: its stem run keeps the separated stems instead, `back`
-  seconds behind what it mixes (and the output's ring) and `ahead`
-  seconds taken from the separation ahead of it (some 1.4 MB a second).
-  A jump there mixes the target from them with the stems on now, the
-  resampler to the device's rate started again 0.1 s before it on its
-  exact grid (what it makes for that is dropped), so the output is what
-  the track plays as there, heard as soon as on the file. With
-  `KeepStems(true)` the playing track is separated while it plays its
-  file too (a separation running alongside, the stems following what is
-  written), and the stems route a stem switched off moves to takes those
-  stems over, so the bars before the switch are there for a jump back
-  (and a switch back to the file keeps them for the next time). A target
-  outside all that is read again from a little before it (as a switch's
-  new route is), while the track plays on, and takes over once it has a
-  seam's worth: later (about half a second on stems with a fast GPU),
-  never broken. No window while a transition is set up (it mixes into the
-  buffer as it is made); arming one reads the track again from what is
-  written. `player/examples/jumps.rs` plays jumps on a real file in real
+  as far after the target as it is late, so the beat goes on. The stem
+  parts follow a jump on their own (their run keeps the separated stems
+  for the window: **Stem lanes**). A target outside the window is read
+  again from a little before it (as a switch's new route is), while the
+  track plays on, and takes over once it has a seam's worth: later, never
+  broken. No window while a transition is set up (it mixes into the
+  buffer as it is made), nor for a track it left on its stems (a jump
+  there reads its target again); arming one reads the track again from
+  what is written. `player/examples/jumps.rs` plays jumps on a real file in real
   time and reports when each was heard and the longest digital silence.
 - **Stem lanes** (`MakeStems`, `engine/lanes/`): on a target that takes
   lanes (`OutputTarget::lanes() >= 5`: a mixer's lane input) and with a
@@ -418,7 +388,9 @@ lengths are exact); otherwise the samples go to the output as read.
   first frame, where main cuts: `jodel_output::lanes`). On a device the
   stems are never waited for: before a write only what it needs is made
   (a seam's length past it, nothing while absent), the rest after, a few
-  pieces at most, and a full ring is left alone. They say `Present` once
+  pieces at most, and a full ring is left alone; through a count-in
+  (`PlayIn`) they are made from the track's first frame, so they are
+  there as it starts. They say `Present` once
   0.5 s of them is made ahead (and no sooner again after they ran out),
   and at a track's end they run to its last frame (main decoded to its
   end first, to know where that is) when the next track's (separated from
@@ -426,7 +398,7 @@ lengths are exact); otherwise the samples go to the output as read.
   are ready, or nothing follows; else they end before it. A route switch
   to another format ends them before main fades out, and they come back
   only after the new route's rise. Offline the writing waits for them
-  (and for the next track's). A stems route, a transition's mix and a
+  (and for the next track's). A transition's stems route and mix and a
   failing separator (`PartsStopped`, for that track) have none, but for a
   transition's two ends, so a mixer playing the parts at other levels hears
   no jump: the playing track keeps its parts while the transition is armed
@@ -437,8 +409,7 @@ lengths are exact); otherwise the samples go to the output as read.
   its move back onto its file waits until they have been there for a
   mixer's switch and its end, so the mixer plays them across it (2 s of
   output at most, `PARTS_PATIENCE`, then it moves anyway). Inside the
-  transition the two tracks' stems are mixed with the settings' stems times
-  `StemMask`'s gains (`engine/stem_mask.rs`): its changes at times of a
+  transition the two tracks' stems are mixed at `StemMask`'s gains (`engine/stem_mask.rs`): its changes at times of a
   track are kept in order, each landing at its own (one at an earlier time
   is never moved by a later one), and one whose time has been written, or
   whose track is no longer played, is in force. So what is heard as main
