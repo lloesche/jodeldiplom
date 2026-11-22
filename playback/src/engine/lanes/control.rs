@@ -122,6 +122,18 @@ impl Timeline {
         }
     }
 
+    /// The frame from which the words before frame `from` have said the
+    /// parts are absent, when they do (from the stream's start: 0); `None`
+    /// while they are there or ending.
+    pub(super) fn quiet_since(&self, from: u64) -> Option<u64> {
+        match self.log.iter().rev().find(|(f, _)| *f < from) {
+            None => Some(0),
+            Some(&(f, Parts::None)) => Some(f),
+            Some(&(f, Parts::Ending)) if from >= f + self.e => Some(f + self.e),
+            _ => None,
+        }
+    }
+
     /// The frame up to which parts must stay valid past `from` (the frame
     /// written next): a switch's length while they are there, the rest of
     /// an end under way.
@@ -353,6 +365,20 @@ mod tests {
         // Given back to before the parts came: absent.
         t.given_back(0);
         assert_eq!(t.state(0), State::Absent);
+    }
+
+    #[test]
+    fn the_parts_are_absent_since_their_end_or_the_start() {
+        let mut t = Timeline::new(E);
+        write(&mut t, 0, 8, 8, supply(30, true));
+        assert_eq!(t.quiet_since(8), Some(0));
+        write(&mut t, 8, 8, 8, supply(60, true));
+        assert_eq!(t.quiet_since(16), None);
+        // They run out at 30: ending from 20, absent from 30.
+        write(&mut t, 16, 20, 20, supply(30, true));
+        assert_eq!((t.quiet_since(25), t.quiet_since(36)), (None, Some(30)));
+        write(&mut t, 36, 8, 8, supply(30, true));
+        assert_eq!(t.quiet_since(44), Some(30));
     }
 
     /// Any supply that honours the promise, written in any pieces, with

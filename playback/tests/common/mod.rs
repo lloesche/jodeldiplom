@@ -422,6 +422,9 @@ struct Held {
     /// Frames let through to the device, and those it got.
     let_through: u64,
     played: u64,
+    /// Frames a give-back leaves held (a device keeps the periods it is
+    /// playing).
+    keep: u64,
 }
 
 impl Hold {
@@ -431,9 +434,20 @@ impl Hold {
         h.let_through = h.let_through.saturating_add(frames);
     }
 
+    /// From now on a give-back leaves the first `frames` held (those
+    /// played next), as a mixer's input keeps the periods it plays.
+    pub fn keep_on_retract(&self, frames: u64) {
+        self.state.lock().unwrap().keep = frames;
+    }
+
     /// Lets everything be played.
     pub fn play_all(&self) {
         self.play(u64::MAX);
+    }
+
+    /// The frames played so far.
+    pub fn played(&self) -> u64 {
+        self.state.lock().unwrap().played
     }
 
     /// The last sample of each frame held (a lane stream's control word).
@@ -492,6 +506,7 @@ impl OutputTarget for HoldingTarget {
                 width,
                 room: self.room.min(ring.saturating_sub(1)),
                 let_through: h.let_through,
+                keep: h.keep,
                 ..Held::default()
             };
         }
@@ -584,7 +599,7 @@ impl Output for HoldingOutput {
         self.play()?;
         let mut h = self.hold.state.lock().unwrap();
         let w = h.width.max(1);
-        let n = frames.min((h.samples.len() / w) as u64);
+        let n = frames.min(((h.samples.len() / w) as u64).saturating_sub(h.keep));
         let keep = h.samples.len() - n as usize * w;
         h.samples.truncate(keep);
         Ok(n)

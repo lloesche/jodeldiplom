@@ -20,7 +20,9 @@
 //! them. At a track's end they run to its last frame when the next track's
 //! are ready to follow (or nothing follows), else they end before it. They
 //! end before a route fades out for another format, and are there again
-//! only after the new route's rise.
+//! only after the new route's rise. Parts that start while the output holds
+//! frames written without them start on the frame heard, and those frames
+//! are written again with them once they are made ([`catch_up`]).
 //!
 //! A new segment ([`SegStart::Cold`]: a new track, a seek) has its parts
 //! start from silence on the segment's first frame, as main's resampler
@@ -48,6 +50,7 @@
 //! needs none of it, as it opens with a run of its own ahead of the window.
 
 mod buffer;
+mod catch_up;
 mod control;
 mod stream;
 #[cfg(test)]
@@ -135,6 +138,9 @@ pub(super) struct Want<'a> {
     /// ([`Track::parts_hold`]): the parts there stay valid to this output
     /// frame, so they end only after it.
     pub(super) hold: Option<u64>,
+    /// The first output frame the track may write again once its parts are
+    /// made ([`Engine::rewrite_floor`]; `from` when none may be).
+    pub(super) floor: u64,
 }
 
 /// What [`StemLanes::before`] found.
@@ -439,10 +445,16 @@ impl StemLanes {
     /// Starts the parts on `line` from output frame `want.from`: from
     /// silence on its first frame for a new segment, else a resampler's
     /// run-up before it, into what is there (crossfaded as main is, for a
-    /// joined one); always on an output frame a run frame falls on.
+    /// joined one); always on an output frame a run frame falls on. When
+    /// the frames written up to there have none, from as far back as they
+    /// may be written again ([`Want::floor`]), so they are once the parts
+    /// are made ([`StemLanes::rewind_to`]).
     fn start(&mut self, line: Line, want: &Want, separator: Option<SeparatorSource>) {
         let track = want.track;
-        let from = want.from;
+        let from = self
+            .timeline
+            .quiet_since(want.from)
+            .map_or(want.from, |quiet| quiet.max(want.floor).min(want.from));
         let promised = self.timeline.promised(from);
         let cold = line.begun == SegStart::Cold && from <= line.seg_out;
         let fade = match line.begun {
@@ -631,6 +643,7 @@ struct Ask {
     keep: (u64, u64),
     able: bool,
     margin: u64,
+    floor: u64,
 }
 
 impl Ask {
@@ -648,6 +661,7 @@ impl Ask {
             rise: track.seg_out + track.parts_rise,
             cut: track.parts_cut,
             hold: track.parts_hold,
+            floor: self.floor,
         }
     }
 }
@@ -698,17 +712,28 @@ impl Engine {
         let held = ring as f64 / f64::from(rate.max(1)) + AHEAD + 1.0;
         let (back, ahead) = self.stem_keep(track);
         let keep = (back.max((held * f64::from(STEM_RATE)) as u64), ahead);
-        // A switch's length past main's longest crossfade: a track taking
-        // over without parts finds them there through its crossfade.
-        let margin = ending_frames(rate) + frames_of(self.switch_fade, rate);
+        // (Frames to come, a count-in's track's first, have none to write
+        // again before them.)
+        let floor = self
+            .rewrite_floor(track)
+            .filter(|&f| f < from)
+            .unwrap_or(from);
         Ask {
             from,
             frames,
             back: ring,
             keep,
             able: self.parts_able(track),
-            margin,
+            margin: self.lane_margin(rate),
+            floor,
         }
+    }
+
+    /// Frames of parts made past what is written at the least, at `rate`:
+    /// a mixer's switch's length past main's longest crossfade, so a track
+    /// taking over without parts finds them there through its crossfade.
+    fn lane_margin(&self, rate: u32) -> u64 {
+        ending_frames(rate) + frames_of(self.switch_fade, rate)
     }
 
     /// A count-in's silence is being written before `track`: its parts are
@@ -734,8 +759,11 @@ impl Engine {
     /// frames it took: each main as it is, then the parts the stem lanes
     /// have for it and its control word; offline, no further than the
     /// parts are made. A device's full ring is left alone (the parts are
-    /// made on meanwhile).
+    /// made on meanwhile). Parts made behind what is written have what the
+    /// output has not played given back first, and written again with them
+    /// ([`Engine::rewrite_lanes`]).
     pub(super) fn write_lanes(&mut self, track: &mut Track, limit: usize) -> Result<usize, Error> {
+        self.rewrite_lanes(track)?;
         let out = self.out.as_ref().ok_or(Error::Stopped)?;
         let channels = usize::from(out.info.format.channels);
         let ring = out.info.ring_frames;

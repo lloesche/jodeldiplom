@@ -6,8 +6,9 @@
 //! - The stem keys (`alt+1` to `alt+4`, the bottom bar's buttons, the
 //!   palette) mute a stem's strip, or unmute it: on the first beat of the
 //!   next bar at least [`DESK_SOON`] ahead ([`ENGINE_SOON`] while the
-//!   engine's own mix is heard, or while no stems are being made yet),
-//!   with Stem switching "on the next bar"; at once without bars, or with
+//!   engine's own mix is heard), with Stem switching "on the next bar"
+//!   (also with no stems made yet: the engine starts them on the frame
+//!   heard and writes again what it holds); at once without bars, or with
 //!   it "instantly". A key pressed again before that bar takes the change
 //!   back: what is meant is the desk's setting, set at once.
 //! - `alt+0` puts every stem's strip back as it starts (unmuted, 0 dB,
@@ -42,8 +43,7 @@ use super::{karaoke, Effect, Gpu, Screen, Side, State};
 pub const DESK_SOON: f64 = 0.1;
 
 /// The same while the engine's mix is what is heard (a transition armed or
-/// under way: it is made some half a second ahead), or while no stems are
-/// being made yet (they are there that much later).
+/// under way: it is made some half a second ahead).
 pub const ENGINE_SOON: f64 = 1.0;
 
 /// Seconds after a bar that a change on it still has the stems made: its
@@ -149,10 +149,15 @@ pub fn is_off(state: &State, stem: Stem) -> bool {
 }
 
 /// How far ahead of what is heard a stem's change can land now
-/// ([`DESK_SOON`], [`ENGINE_SOON`]).
+/// ([`DESK_SOON`], [`ENGINE_SOON`]). Stems not made yet need no more: the
+/// engine starts them on the frame heard and writes what it holds again
+/// with them (kept ones at once, separated ones once their first chunk
+/// is). It cannot while a jump's crossfade is held, a route switch is under
+/// way or a jump waits for its time: a first touch then lands up to about
+/// a second late.
 fn lead(state: &State) -> f64 {
     let engine_mixes = state.transition.draft.status != Status::Draft;
-    if engine_mixes || state.stems_sent.make == MakeStems::Never {
+    if engine_mixes {
         ENGINE_SOON
     } else {
         DESK_SOON

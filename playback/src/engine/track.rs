@@ -323,6 +323,11 @@ pub(super) struct Track {
     /// The samples a jump's crossfade replaced, from this frame of
     /// `out_buf`, put back once written ([`super::jump`]).
     pub(super) restore: Option<(usize, Vec<i32>)>,
+    /// The first output frame from which what `out_buf` holds before
+    /// `out_at` is what was written there (before it: the track before a
+    /// jump's target, and the samples the jump's crossfade replaced), so
+    /// the stem lanes may write it again ([`super::lanes`]).
+    pub(super) rewritable_from: u64,
     /// Decoding ahead found the end of the track.
     pub(super) ahead_done: bool,
 }
@@ -416,6 +421,7 @@ impl Track {
             clip_base: 0,
             fallback: None,
             restore: None,
+            rewritable_from: 0,
             ahead_done: false,
         })
     }
@@ -520,6 +526,7 @@ impl Track {
         }
         self.out_buf.clear();
         self.out_at = 0;
+        self.rewritable_from = 0;
         self.begin_segment(self.seg_out, frame, SegStart::Cold);
         self.emitted = 0;
         self.clips = None;

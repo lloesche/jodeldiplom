@@ -480,3 +480,41 @@ fn runs_faster_than_real_time() {
         );
     }
 }
+
+/// The stem lanes' resampling, as the engine runs it beside main: four
+/// stereo stems (8 channels of `f64`) from the separator's 44.1 kHz to the
+/// output's rate, in the engine's pieces of 4096 frames. Release builds
+/// only; the numbers are printed (`PERFORMANCE.md` has them), and each
+/// rate must keep at least twice ahead of real time (a generous bound for
+/// a loaded machine).
+#[test]
+fn lane_resampling_keeps_ahead_of_real_time() {
+    if cfg!(debug_assertions) {
+        println!("speed is measured in release builds only");
+        return;
+    }
+    let (from, channels, seconds) = (44_100u32, 8usize, 4.0);
+    let frames = (f64::from(from) * seconds) as usize;
+    let input: Vec<f64> = (0..frames * channels)
+        .map(|k| (k as f64 * 0.001).sin() * 4e6)
+        .collect();
+    for to in [48_000u32, 96_000, 192_000, 384_000] {
+        let mut r = Resampler::new(from, to, channels);
+        let mut out = Vec::with_capacity(frames * channels * (to / from + 1) as usize);
+        let start = Instant::now();
+        for piece in input.chunks(4096 * channels) {
+            r.process_float(piece, &mut out);
+        }
+        r.finish(&mut out);
+        let took = start.elapsed().as_secs_f64();
+        let made = (out.len() / channels) as f64;
+        let realtime = seconds / took;
+        println!(
+            "8 ch 44100 -> {to:>6}: {:>4} taps a phase, {:>6.2} M output frames/s, {realtime:>6.1}x real time ({:.1} % of a core)",
+            r.design().taps_per_phase(),
+            made / took / 1e6,
+            100.0 / realtime,
+        );
+        assert!(realtime >= 2.0, "{to} Hz: only {realtime:.1}x real time");
+    }
+}

@@ -3246,12 +3246,19 @@ fn stems_switch_on_the_next_bar_as_mutes_of_their_strips() {
     let fx = op(&mut state, Op::ToggleOther);
     assert_eq!(desk(&fx), [DeskChange::Mute(StripKind::Other, false)]);
     // No stems made before the key (away from the tabs, nothing touched):
-    // the bar a second ahead at least, so the stems are there for it.
+    // the same bar, 0.1 s ahead (the engine starts them on the frame heard
+    // and writes again what it holds with them).
     state.playing.anchor = Some((index, 1_000_000, heard));
     state.playing.speed = Some(rate);
     state.stems_sent.make = jodel_playback::MakeStems::Never;
+    let first = jodeldiplom::core::stems::bar(&state).unwrap();
+    assert_eq!((first.seconds, first.frame), (at, frame));
+    // A transition armed (the engine's mix, made half a second ahead): a
+    // second ahead at least.
+    state.transition.draft.status = jodeldiplom::core::transition::Status::Armed;
     let far = jodeldiplom::core::stems::bar(&state).unwrap();
     assert!(far.seconds >= heard + jodeldiplom::core::stems::ENGINE_SOON);
+    state.transition.draft.status = jodeldiplom::core::transition::Status::Draft;
     // A seek (or a jump, another track): no position to work the frame out
     // from until the next.
     update(

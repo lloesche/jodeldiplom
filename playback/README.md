@@ -390,7 +390,18 @@ lengths are exact); otherwise the samples go to the output as read.
   (a seam's length past it, nothing while absent), the rest after, a few
   pieces at most, and a full ring is left alone; through a count-in
   (`PlayIn`) they are made from the track's first frame, so they are
-  there as it starts. They say `Present` once
+  there as it starts. Stems asked for while the output holds frames
+  written without them (`MakeStems` from `Never`, the first touch of a
+  stem's strip) start on the frame heard; once they are made a little past
+  what is written, the output gives back what it has not played and the
+  same main is written again with them, the control word's changes given
+  back with the frames (`engine/lanes/catch_up.rs`; the track keeps what
+  the output may give back behind what it wrote for it, also without a
+  jump window, and a jump back within it is met from it; not while a
+  route switch, a transition or a jump is under way, nor over a jump's
+  crossfade). Kept stems are there in milliseconds, separated ones once
+  the first chunk is. Parts that ran out and are made again (a separator
+  that fell behind) are caught up the same way. They say `Present` once
   0.5 s of them is made ahead (and no sooner again after they ran out),
   and at a track's end they run to its last frame (main decoded to its
   end first, to know where that is) when the next track's (separated from

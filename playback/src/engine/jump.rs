@@ -103,16 +103,26 @@ impl Engine {
     }
 
     /// How many frames `track` keeps behind what it wrote, and decodes
-    /// ahead of it: none without a window ([`Engine::windowed`]).
+    /// ahead of it: none without a window ([`Engine::windowed`]), but what
+    /// the output may give back on a device's output of lanes, so the stem
+    /// lanes may write it again with their parts ([`super::lanes`]; not
+    /// while a transition is set up, which mixes into the buffer as it is
+    /// made, nor off the plain route). A jump back within that is met from
+    /// it, as within a window.
     pub(super) fn window_frames(&self, track: &Track) -> (usize, usize) {
+        let ring = self.out.as_ref().map_or(0, |o| o.info.ring_frames) as usize;
         if !self.windowed(track) {
-            return (0, 0);
+            let lanes = self.out.as_ref().is_some_and(|o| o.output.lanes() > 1)
+                && self.lanes.possible()
+                && !self.offline
+                && self.transition.is_none()
+                && track.plain_route();
+            return (if lanes { ring } else { 0 }, 0);
         }
         let (back, ahead) = self.jump_window;
         let rate = track.route.output_rate;
         let seconds = |s: f64| frames_of(Duration::from_secs_f64(s.max(0.0)), rate) as usize;
         // What the output may give back is kept too.
-        let ring = self.out.as_ref().map_or(0, |o| o.info.ring_frames) as usize;
         (seconds(back) + ring, seconds(ahead))
     }
 
@@ -133,7 +143,7 @@ impl Engine {
     }
 
     /// Drops what `track` wrote beyond the `back` frames it keeps (all of
-    /// it without a window).
+    /// it with none kept: [`Engine::window_frames`]).
     pub(super) fn trim_written(track: &mut Track, back: usize) {
         let ch = usize::from(track.route.channels);
         let done = track.out_at / ch;
@@ -401,6 +411,9 @@ impl Engine {
         track.restore = Some((target, track.out_buf[span.clone()].to_vec()));
         crossfade(&next[..n * ch], &mut track.out_buf[span], ch);
         track.out_at = target * ch;
+        // What is written from here on is the buffer as it stands, once
+        // the crossfade is put back.
+        track.rewritable_from = written + n as u64;
         // The segment starts at the target now (as a seek's would): the
         // buffer and the decoder go on as they are.
         track.begin_segment(seg_out, to, SegStart::Joined { fade: n });

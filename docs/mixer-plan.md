@@ -256,10 +256,28 @@ bit-exact tests, run through the desk.
   onto its stems has met it, and the next track's move back onto its file
   waits for its parts, so a mixer playing the stems hears no jump at
   either end.
-- **Still to come (stage 5)**: the first touch heard fast (the parts made
-  behind the write head, the frames not yet played rewritten with them);
-  the cost of the parts' resampling at high rates and of the stems kept;
-  checks on real files at a USB DAC's rates.
+- **The first touch heard fast** (`playback/src/engine/lanes/catch_up.rs`):
+  stems asked for while none are made start on the frame heard, not the
+  one written next; once they are made a little past the write head, the
+  output gives back what it has not played (as a jump does) and the same
+  main is written again from there with its parts, the control word's
+  changes given back with the frames (only frames whose words all said
+  the parts are absent; parts a separator made again after falling
+  behind are caught up so too). The playing track keeps what the output
+  may give back behind what it wrote for that, also without a jump window
+  (a jump back within it is met from it). What is guaranteed: every frame
+  the output still gives back once the parts are made is written again
+  with them. Kept stems are there in 11–17 ms, so from the cache a stem
+  muted 0.1 s ahead is heard on its frame on a quick machine (the app's
+  lead is 0.1 s now, a second only while a transition is armed or heard);
+  separated ones once the first chunk is (0.2–0.5 s on an RTX 5080), from
+  the frame given back then. Nothing is written again over a jump's
+  crossfade still held, nor while a route switch, a transition or a
+  waiting jump counts on the frames written: a touch then lands as before,
+  up to about a second late.
+  The parts' resampling (12 % of a core at 384 kHz) and the memory of the
+  stems kept are in `PERFORMANCE.md`.
+- **Still to come**: checks on real files at a USB DAC's rates.
 
 ## Risks
 

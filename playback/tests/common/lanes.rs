@@ -103,6 +103,7 @@ pub static BROKEN: Broken = Broken;
 pub static FAILS_ON_SILENCE: FailsOnSilence = FailsOnSilence;
 pub static RUN_OUT: Gated = Gated::new();
 pub static TAKEN_BACK: Gated = Gated::new();
+pub static FIRST_CHUNK: Gated = Gated::new();
 
 pub fn fails_on_silence() -> Option<&'static dyn Separator> {
     Some(&FAILS_ON_SILENCE)
@@ -114,6 +115,10 @@ pub fn run_out() -> Option<&'static dyn Separator> {
 
 pub fn taken_back() -> Option<&'static dyn Separator> {
     Some(&TAKEN_BACK)
+}
+
+pub fn first_chunk() -> Option<&'static dyn Separator> {
+    Some(&FIRST_CHUNK)
 }
 
 pub fn quarter() -> Option<&'static dyn Separator> {

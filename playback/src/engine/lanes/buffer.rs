@@ -42,6 +42,12 @@ impl Buffer {
         self.parts.is_empty()
     }
 
+    /// The output frame of the first one there (or of the next one made,
+    /// when none is).
+    pub(super) fn start(&self) -> u64 {
+        self.at
+    }
+
     /// The output frame after the last one there.
     pub(super) fn end(&self) -> u64 {
         self.at + (self.parts.len() / self.width.max(1)) as u64
