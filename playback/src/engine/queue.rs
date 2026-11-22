@@ -4,7 +4,9 @@
 //! be heard) is moved along with its track, so playback goes on as it
 //! was. The track being heard, removed, gives way to the one after it.
 
-use super::{CueEvent, Engine, Event};
+use super::api::Event;
+use super::track::CueEvent;
+use super::Engine;
 
 impl Engine {
     /// [`crate::Command::Remove`].

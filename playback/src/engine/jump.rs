@@ -33,10 +33,8 @@
 
 use std::time::{Duration, Instant};
 
-use super::{
-    crossfade, frames_of, grid, rescale, Cue, CueEvent, Engine, Progress, Track, PREROLL_RESAMPLE,
-    WRITE_WAIT,
-};
+use super::track::{crossfade, frames_of, grid, rescale, Cue, CueEvent, Progress, Track};
+use super::{Engine, PREROLL_RESAMPLE, WRITE_WAIT};
 use crate::error::Error;
 use crate::rate::Stage;
 use crate::stems::{StemRun, RATE as STEM_RATE};
