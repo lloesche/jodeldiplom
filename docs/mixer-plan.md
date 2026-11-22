@@ -201,7 +201,7 @@ bit-exact tests, run through the desk.
 - **Meters** (`Mixer::meters()`): the mixer thread takes each strip's
   peak per channel after its gain (its inputs summed), the peak of what
   goes to the device and whether the limiter acted, in atomics; a look
-  takes them since the last one (the Mix tab's).
+  takes them since the last one (the Mixer tab's).
 - **`Mixer::desk()`**: the whole desk as the caller sees it, looking
   changes nothing: the device, the clock, passthrough, clips, the strips
   with their inputs (fader gain, heard, format, ring fill), the
@@ -245,7 +245,7 @@ bit-exact tests, run through the desk.
   inside it. The stem keys mute a stem's strip on the next bar's frame
   (0.1 s ahead at the soonest); `alt+0` puts the strips back, and the file
   is heard bit-perfect again. The stems are made while a strip is touched
-  or the Mix, Karaoke or Transition tab shows. The Karaoke voice is the
+  or the Mixer, Karaoke or Transition tab shows. The Karaoke voice is the
   vocals lane's fader.
 - **The engine's own stem mix is gone** for levels: no stems in the
   settings, no stems route for a track's levels, no stems kept beside the

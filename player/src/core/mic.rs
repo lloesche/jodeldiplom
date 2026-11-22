@@ -1,6 +1,6 @@
 //! The microphone as the app reads it once a drawn frame
 //! ([`MicReading`], in [`crate::core::State::mic`]): the Karaoke tab's
-//! meter and echo line and the Mix tab's strip all draw from it.
+//! meter and echo line and the Mixer tab's strip all draw from it.
 
 /// The microphone as read for a frame.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]

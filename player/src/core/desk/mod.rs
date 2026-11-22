@@ -1,4 +1,4 @@
-//! The Mix tab ([`crate::core::Side::Mix`]): the mixer as a desk. A channel
+//! The Mixer tab ([`crate::core::Side::Mixer`]): the mixer as a desk. A channel
 //! strip for the player, a group with a strip for each of its stems inside
 //! it (drums, bass, vocals, other), and one for the preview, each with a
 //! fader, mute and solo; the microphone's strip, which is only listened to;
@@ -180,7 +180,7 @@ pub struct Readings {
     pub mic_voice: Meter,
 }
 
-/// The Mix tab's state.
+/// The Mixer tab's state.
 #[derive(Clone, Debug, Default)]
 pub struct DeskState {
     /// The strip the keys act on.
@@ -262,17 +262,17 @@ impl DeskState {
     }
 }
 
-/// Whether the Mix tab shows (a palette over it included).
+/// Whether the Mixer tab shows (a palette over it included).
 pub fn shown(state: &State) -> bool {
-    state.screen == Screen::Main && state.side == Side::Mix
+    state.screen == Screen::Main && state.side == Side::Mixer
 }
 
-/// Whether the Mix tab is what keys act on.
+/// Whether the Mixer tab is what keys act on.
 pub fn on_tab(state: &State) -> bool {
     shown(state) && state.palette.is_none()
 }
 
-/// Whether the Mix tab listens to the microphone: while it shows with the
+/// Whether the Mixer tab listens to the microphone: while it shows with the
 /// microphone's strip selected.
 pub fn listens(state: &State) -> bool {
     shown(state) && state.desk.selected == Channel::Mic
@@ -336,7 +336,7 @@ pub fn feed(state: &mut State, look: Look, now_ms: u64) {
     desk.looked_at = now_ms;
 }
 
-/// Carries out `op` on the Mix tab; `false` when it is not the tab's (or
+/// Carries out `op` on the Mixer tab; `false` when it is not the tab's (or
 /// the tab is not shown).
 pub(crate) fn apply(state: &mut State, op: Op, fx: &mut Vec<Effect>) -> bool {
     if !on_tab(state) {
@@ -527,7 +527,7 @@ pub(crate) fn act(state: &mut State, action: DeskAction, fx: &mut Vec<Effect>) {
 
 /// What a desk op does away from the tab (from the palette elsewhere).
 pub(crate) fn elsewhere(state: &mut State) {
-    say_info(state, "That is for the Mix tab (tab)");
+    say_info(state, "That is for the Mixer tab (tab)");
 }
 
 #[cfg(test)]
@@ -540,7 +540,7 @@ mod tests {
 
     fn tab() -> State {
         let mut s = State::new("/m".into(), Config::default(), (120, 36));
-        s.side = Side::Mix;
+        s.side = Side::Mixer;
         s
     }
 

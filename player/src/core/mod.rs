@@ -173,7 +173,7 @@ pub enum Side {
     Karaoke,
     /// The mixer as a desk: the strips with their faders and meters, the
     /// microphone's strip and the master ([`desk`]); the whole width too.
-    Mix,
+    Mixer,
 }
 
 impl Side {
@@ -183,12 +183,12 @@ impl Side {
         Side::Queue,
         Side::Transition,
         Side::Karaoke,
-        Side::Mix,
+        Side::Mixer,
     ];
 
     /// Whether it takes the whole width (no right column).
     pub fn wide(self) -> bool {
-        matches!(self, Side::Transition | Side::Karaoke | Side::Mix)
+        matches!(self, Side::Transition | Side::Karaoke | Side::Mixer)
     }
 }
 
@@ -659,7 +659,7 @@ pub struct State {
     pub transition: transition::tab::TransitionTab,
     /// The Karaoke tab and mode.
     pub karaoke: karaoke::KaraokeState,
-    /// The Mix tab: the desk's settings and what it shows.
+    /// The Mixer tab: the desk's settings and what it shows.
     pub desk: desk::DeskState,
     /// The microphone as last read (once a drawn frame), while one is
     /// open.

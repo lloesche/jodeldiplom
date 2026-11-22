@@ -325,7 +325,9 @@ fn a_file_argument_plays_at_once_and_settings_are_saved() {
     assert_eq!(saved.transition_preset, app.state.config.transition_preset);
     assert_ne!(saved.transition_preset, Config::default().transition_preset);
     assert!(!saved.transition_lyrics);
-    assert_eq!(saved.karaoke_voice, 5);
+    // The voice from off a step up: the taper's last mark, −45 dB, 10 % of
+    // its travel.
+    assert_eq!(saved.karaoke_voice, 10);
     assert_eq!(saved.karaoke_mic_device.as_deref(), Some("a"));
     assert_eq!(saved.headroom, Headroom::NONE);
     app.dispatch(Action::ShowSide(jodeldiplom::core::Side::Browser));

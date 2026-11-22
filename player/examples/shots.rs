@@ -199,12 +199,12 @@ fn main() {
                 jodeldiplom::core::update(&mut m, Action::Op(Op::TransitionZoomOut));
                 m
             }),
-            ("mix", {
-                // The Mix tab: the player at 96 kHz, a preview crossfading
+            ("mixer", {
+                // The Mixer tab: the player at 96 kHz, a preview crossfading
                 // over it (so the master sums: not bit-perfect), the
                 // microphone's strip selected and hearing.
                 let mut d = state.clone();
-                d.side = Side::Mix;
+                d.side = Side::Mixer;
                 d.desk.selected = jodeldiplom::core::desk::Channel::Mic;
                 common::fill_desk(&mut d, 96_000);
                 d
@@ -212,7 +212,7 @@ fn main() {
             ("karaoke-tab", {
                 let mut k = state.clone();
                 k.side = Side::Karaoke;
-                k.config.karaoke_voice = 20;
+                k.config.karaoke_voice = 44;
                 k
             }),
             ("karaoke-sync", {
@@ -291,9 +291,9 @@ fn main() {
         &app,
         (64, 22),
     );
-    // The Mix tab in an 80-column terminal, the default one's width.
-    if let Some((_, mix)) = screens.iter().find(|(name, _)| *name == "mix") {
-        tui_shot(&out, "mix-80", mix, &spectrum, &app, (80, 24));
+    // The Mixer tab in an 80-column terminal, the default one's width.
+    if let Some((_, mixer)) = screens.iter().find(|(name, _)| *name == "mixer") {
+        tui_shot(&out, "mixer-80", mixer, &spectrum, &app, (80, 24));
     }
     app.shutdown();
     let _ = std::fs::remove_dir_all(&tree.root);

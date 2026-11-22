@@ -1008,8 +1008,8 @@ fn help_and_palette_come_from_the_keymap() {
         assert!(palette.iter().any(|e| e.op == op), "{op:?}");
     }
     assert!(palette.iter().all(|e| e.op != Op::Down));
-    // The Mix tab: its keys in the help, its commands in the palette.
-    assert!(help.iter().any(|s| s.title == "Mix tab"));
+    // The Mixer tab: its keys in the help, its commands in the palette.
+    assert!(help.iter().any(|s| s.title == "Mixer tab"));
     for op in [Op::DeskMute, Op::DeskSolo, Op::DeskEcho] {
         assert!(palette.iter().any(|e| e.op == op), "{op:?}");
     }
@@ -2295,7 +2295,7 @@ fn digits_on_the_transition_tab_jump_to_bars_around_the_one_heard() {
 }
 
 #[test]
-fn tab_cycles_through_browser_queue_transition_karaoke_and_mix() {
+fn tab_cycles_through_browser_queue_transition_karaoke_and_mixer() {
     let mut state = common::transition_state(120, 40);
     state.side = Side::Browser;
     op(&mut state, Op::ToggleSide);
@@ -2319,7 +2319,7 @@ fn tab_cycles_through_browser_queue_transition_karaoke_and_mix() {
     op(&mut state, Op::ToggleSide);
     assert_eq!(state.side, Side::Karaoke);
     op(&mut state, Op::ToggleSide);
-    assert_eq!(state.side, Side::Mix);
+    assert_eq!(state.side, Side::Mixer);
     op(&mut state, Op::ToggleSide);
     assert_eq!(state.side, Side::Browser);
 }
@@ -3204,7 +3204,7 @@ fn stems_switch_on_the_next_bar_as_mutes_of_their_strips() {
         );
     }
     // A stem's change waiting for its bar: another change of the gains (a
-    // fader on the Mix tab) goes to the engine with that bar's time, not
+    // fader on the Mixer tab) goes to the engine with that bar's time, not
     // over it at once.
     op(&mut state, Op::ToggleDrums);
     state.desk.strips[StripKind::Bass.index()].db = -6.0;
@@ -3397,7 +3397,7 @@ fn a_first_touch_lands_on_a_bar_its_stems_will_meet() {
 }
 
 /// D7: the engine makes the stems while a stem's strip is touched or the
-/// Mix, Karaoke or Transition tab (or the mode) shows, from the stems kept
+/// Mixer, Karaoke or Transition tab (or the mode) shows, from the stems kept
 /// without a GPU; elsewhere none.
 #[test]
 fn the_stems_are_made_while_touched_or_a_tab_shows_them() {
@@ -3408,7 +3408,7 @@ fn the_stems_are_made_while_touched_or_a_tab_shows_them() {
     state.gpu = Gpu::Present("a GPU".into());
     state.side = Side::Browser;
     assert_eq!(make_wanted(&state), MakeStems::Never);
-    for side in [Side::Mix, Side::Karaoke, Side::Transition] {
+    for side in [Side::Mixer, Side::Karaoke, Side::Transition] {
         state.side = side;
         assert_eq!(make_wanted(&state), MakeStems::Separate, "{side:?}");
     }
@@ -3433,14 +3433,14 @@ fn the_stems_are_made_while_touched_or_a_tab_shows_them() {
             .collect()
     };
     state.gpu = Gpu::Present("a GPU".into());
-    let fx = update(&mut state, Action::ShowSide(Side::Mix));
+    let fx = update(&mut state, Action::ShowSide(Side::Mixer));
     assert_eq!(makes(&fx), [MakeStems::Separate]);
     let fx = update(&mut state, Action::ShowSide(Side::Transition));
     assert!(makes(&fx).is_empty());
     let fx = update(&mut state, Action::ShowSide(Side::Queue));
     assert_eq!(makes(&fx), [MakeStems::Never]);
     // A new engine is told what is due.
-    state.side = Side::Mix;
+    state.side = Side::Mixer;
     let mut fx = Vec::new();
     jodeldiplom::core::stems::engine_started(&mut state, &mut fx);
     assert_eq!(makes(&fx), [MakeStems::Separate]);

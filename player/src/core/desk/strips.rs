@@ -1,4 +1,4 @@
-//! The desk's strips as the Mix tab names them: the player's group with
+//! The desk's strips as the Mixer tab names them: the player's group with
 //! its four stems inside it, the preview's strip, the microphone's and the
 //! master.
 

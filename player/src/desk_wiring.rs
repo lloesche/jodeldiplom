@@ -7,7 +7,7 @@
 //! the device bit for bit.
 //!
 //! Where it plays ([`Output`]): a device, a null output or a memory one.
-//! The Mix tab's settings are made on the strips here ([`Engine::apply`]),
+//! The Mixer tab's settings are made on the strips here ([`Engine::apply`]),
 //! again on every new mixer, and the desk is looked at for it once a drawn
 //! frame ([`Engine::look`]).
 
@@ -120,7 +120,7 @@ pub(crate) struct Engine {
     /// Each stem's lane's fader ([`StripKind::PARTS`]'s order): the
     /// controllers' gain on top of its strip (the Karaoke tab's voice).
     lanes: Vec<Fader>,
-    /// The desk's strips ([`StripKind::index`]), the Mix tab's faders.
+    /// The desk's strips ([`StripKind::index`]), the Mixer tab's faders.
     strips: Vec<Strip>,
     /// The microphone's port as last told.
     pub(crate) mic: MicView,
@@ -185,7 +185,7 @@ impl Engine {
         &self.strips[kind.index()]
     }
 
-    /// Sets a strip of the mixer as the Mix tab has it, or a stem's lane.
+    /// Sets a strip of the mixer as the Mixer tab has it, or a stem's lane.
     pub(crate) fn apply(&self, change: DeskChange) {
         match change {
             DeskChange::Level(kind, gain) => self.strip(kind).set_level(gain),
@@ -218,7 +218,7 @@ impl Engine {
         }
     }
 
-    /// The Mix tab's look for a frame: the desk and the meters since the
+    /// The Mixer tab's look for a frame: the desk and the meters since the
     /// last look (the one place they are taken), each fader strip found by
     /// its id.
     pub(crate) fn look(&self) -> Look {

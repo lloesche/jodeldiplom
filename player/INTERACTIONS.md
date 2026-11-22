@@ -20,7 +20,7 @@ On the Transition tab, the first three show as `enter sets the cues` / `g arms`
 
 ## Stems
 
-The stems are strips of the desk inside the player's (the Mix tab); the
+The stems are strips of the desk inside the player's (the Mixer tab); the
 stem keys are their mutes.
 
 - **S1.** Stems can be switched at any time, in any state, and never call
@@ -59,7 +59,7 @@ stem keys are their mutes.
   touched, and the file again once none is and the ramps have settled.
   - `a_stem_muted_on_its_frame_is_heard_and_unmuted_the_file_is_again`
   - `main_through_a_lane_input_is_bit_exact_with_stems_made` (engine)
-- **S5.** The stems are made while a stem's strip is touched or the Mix,
+- **S5.** The stems are made while a stem's strip is touched or the Mixer,
   Karaoke or Transition tab (or the mode) shows: from the stems kept,
   else separated on the GPU; without one, only the kept ones. Otherwise
   none are made. A track got ready plays its kept stems: nothing is
@@ -220,8 +220,15 @@ stem keys are their mutes.
   - `the_controls_come_up_near_the_bottom_over_the_lines_with_a_seek_bar`
   - `space_never_plays_a_song_without_its_count_in`
 - **K4.** A change of the voice's level never moves playback and never
-  touches a transition (as S1). In the mode it is heard at once.
+  touches a transition (as S1). In the mode it is heard at once. The
+  Voice slider is a position along its travel (`karaoke_voice`, 0 to
+  100 %) read on the fader's taper (M4) from −∞ up to its 0 dB, the voice
+  at its own level, and shown in dB; `←` `→` and the wheel move it 1 dB
+  (from −∞ up to −45 dB, and at −45 dB or below down to −∞), with shift
+  1 % of its travel; a click or drag lands on a whole percent.
   - `the_mode_plays_the_voice_at_its_level_and_esc_keeps_it_on_the_tab`
+  - `the_voice_slider_is_the_taper_up_to_0_db_and_steps_a_db` (unit)
+  - `a_slider_under_the_pointer_lands_on_whole_percents`
   - `a_stem_level_on_the_desk_is_heard_at_once_and_untouched_is_the_file_again` (engine)
 - **K5.** The count-in is "3", "2", "1", a second each, and "1" ends as the
   song's first word is sung (its words timed; else at its start). Before
@@ -249,8 +256,8 @@ stem keys are their mutes.
   words, there is none. Never two counts at once.
   - `a_long_break_counts_in_again_whole_or_not_at_all`
 - **K6.** The microphone is open while the Karaoke tab or the mode shows,
-  or the Mix tab with its MIC strip selected, and closed elsewhere (the
-  Mix tab alone does not open it). It is listened to, to hear the singer, and never
+  or the Mixer tab with its MIC strip selected, and closed elsewhere (the
+  Mixer tab alone does not open it). It is listened to, to hear the singer, and never
   played: it has no level, and nothing of it reaches the speakers. To take
   the music's echo out of it, it sees what the device plays, buffer by
   buffer (a tap at the output's last step, set on every output opened:
@@ -375,7 +382,7 @@ stem keys are their mutes.
   - `each_level_asks_its_own_share_of_a_word` (`core::singing`)
 - **K18.** `s` on the Karaoke tab (or the palette) syncs, with a
   microphone open (else it says one is needed) and the player's strip
-  heard on the Mix tab (not muted or far down, nor another strip soloed:
+  heard on the Mixer tab (not muted or far down, nor another strip soloed:
   a stem's strip soloed silences the clicks too): the song stops, 8 clicks at 90 BPM play after a
   second of silence, on an output of their own (nothing else changes what
   plays), and a "ta" with each is timed in the frames the voice is scored
@@ -395,7 +402,7 @@ stem keys are their mutes.
   - `the_output_changing_mid_sync_ends_it`
   - `the_songs_blocks_left_at_the_start_are_left_out` (`sync`)
 
-## Mix
+## Mixer
 
 - **M1.** Bit-perfect is the default: every start has each strip at 0 dB,
   unmuted, nothing soloed, and nothing of the desk is kept between runs.
@@ -414,7 +421,12 @@ stem keys are their mutes.
   of, to less than a cell in the window; within 0.4 rows of 0 dB it is at
   exactly 0 dB (the detent), and a key step across 0 dB stops there; a
   double click is 0 dB (a fader moved since its press is no first click
-  of one); the wheel is 1 dB a step.
+  of one); the wheel is 1 dB a step. The taper is weighted to what is
+  heard: +6 dB at the top, 0 dB at 0.80 of the travel, −6 at 0.65, −12 at
+  0.50, −20 at 0.35, −30 at 0.20, −45 at 0.08, linear in dB between them
+  and linear in the gain below −45 dB down to −∞ at the bottom. The keys
+  step 1 dB (the page keys 6 dB), from −∞ up to −45 dB, and at −45 dB or
+  below down to −∞.
   - `a_fader_follows_the_pointer_by_eighths_of_a_cell`
   - `a_press_on_the_track_brings_the_cap_and_a_double_click_is_unity`
   - `the_wheel_moves_a_fader_by_a_db_and_the_buttons_toggle`
@@ -428,7 +440,7 @@ stem keys are their mutes.
   - `the_arrows_go_through_the_stems_only_while_the_player_has_them`
   - `a_stems_strip_takes_the_pointer_and_its_buttons`
   - `the_stems_sit_beside_the_player_under_their_bracket`
-  - `the_mix_tab_is_a_desk` (view)
+  - `the_mixer_tab_is_a_desk` (view)
 - **M5.** The meters are read once a drawn frame, by the app alone, and
   only while the tab shows; a look long after the last takes no peaks (nor
   the limiter); the window keeps drawing while it shows. A strip's meter
@@ -436,4 +448,4 @@ stem keys are their mutes.
   - `the_faders_are_set_on_the_mixer_and_again_on_a_new_one`
   - `a_meter_rises_at_once_and_falls_at_its_rate`
   - `strips_are_found_by_id_and_a_stale_look_takes_no_peaks`
-  - `the_mix_tab_is_painted_from_its_cells`
+  - `the_mixer_tab_is_painted_from_its_cells`

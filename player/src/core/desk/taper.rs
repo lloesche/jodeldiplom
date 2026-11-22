@@ -1,15 +1,19 @@
-//! The fader's taper: where on its travel a level sits, as on a desk's
-//! fader. +6 dB at the top, 0 dB at three quarters of the way up, the
-//! steps of 10 dB below it closer and closer, −∞ at the bottom. Drawing
-//! the cap, the strip's meters beside it and dragging it all go through
-//! [`position_of`] and [`db_at`], so one ruler serves them all.
+//! The fader's taper: where on its travel a level sits, weighted to what
+//! is heard. +6 dB at the top, 0 dB at four fifths of the way up, then
+//! −6, −12, −20 and −30 dB, each 0.15 of the travel below the one before,
+//! −45 dB near the bottom and −∞ at the bottom itself. Most of the travel is where
+//! a change is heard: below −30 dB a stem is masked by the rest and a
+//! whole mix is faint, so −30 dB to −∞ gets only the last fifth. Drawing
+//! the cap, the strip's meters beside it, dragging it and the Karaoke
+//! tab's Voice slider all go through [`position_of`] and [`db_at`], so
+//! one ruler serves them all.
 
 /// The top of the travel, in dB.
 pub const TOP_DB: f64 = 6.0;
 
 /// The lowest mark of the scale, in dB: below it the next step down is
 /// −∞.
-pub const LAST_MARK_DB: f64 = -60.0;
+pub const LAST_MARK_DB: f64 = -45.0;
 
 /// The scale's marks, top to bottom: (position, dB), the position from 0
 /// (the bottom) to 1 (the top). Between two marks the position is linear
@@ -17,16 +21,16 @@ pub const LAST_MARK_DB: f64 = -60.0;
 /// bottom.
 pub const MARKS: [(f64, f64); 7] = [
     (1.0, 6.0),
-    (0.75, 0.0),
-    (0.6, -10.0),
-    (0.45, -20.0),
-    (0.32, -30.0),
-    (0.2, -40.0),
-    (0.08, -60.0),
+    (0.8, 0.0),
+    (0.65, -6.0),
+    (0.5, -12.0),
+    (0.35, -20.0),
+    (0.2, -30.0),
+    (0.08, -45.0),
 ];
 
 /// Where 0 dB is on the travel.
-pub const UNITY: f64 = 0.75;
+pub const UNITY: f64 = 0.8;
 
 /// The level in dB at `position` (0: the bottom, −∞; 1: the top, +6 dB).
 pub fn db_at(position: f64) -> f64 {
@@ -154,6 +158,9 @@ mod tests {
         }
         assert_eq!(position_of(f64::NEG_INFINITY), 0.0);
         assert_eq!(position_of(20.0), 1.0);
+        // −30 dB to −∞ is the last fifth of the travel.
+        assert!((position_of(-30.0) - 0.2).abs() < 1e-9);
+        assert_eq!(LAST_MARK_DB, MARKS[MARKS.len() - 1].1);
     }
 
     #[test]
@@ -177,9 +184,11 @@ mod tests {
         assert_eq!(step(-0.3, 1.0), 0.0);
         assert_eq!(step(0.4, -1.0), 0.0);
         assert_eq!(step(-2.5, 6.0), 0.0);
-        assert_eq!(step(-59.5, -1.0), -60.0);
-        assert_eq!(step(-60.0, -1.0), f64::NEG_INFINITY);
-        assert_eq!(step(f64::NEG_INFINITY, 1.0), -60.0);
+        assert_eq!(step(-44.5, -1.0), -45.0);
+        assert_eq!(step(-45.0, -1.0), f64::NEG_INFINITY);
+        assert_eq!(step(-48.0, -1.0), f64::NEG_INFINITY);
+        assert_eq!(step(-40.0, -6.0), -45.0);
+        assert_eq!(step(f64::NEG_INFINITY, 1.0), -45.0);
         assert_eq!(step(f64::NEG_INFINITY, -6.0), f64::NEG_INFINITY);
         assert_eq!(step(-38.5, 6.0), -32.5);
     }

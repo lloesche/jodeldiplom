@@ -102,7 +102,7 @@ fn no_sync_without_a_microphone_or_where_the_clicks_are_not_heard() {
     // Shown, but not open in the app yet.
     state.karaoke.mic.name = Some("Headset".into());
     assert!(!key(&mut state, Key::ch('s')).contains(&Effect::Sync(SyncCommand::Start)));
-    // Open, but the player's strip muted on the Mix tab.
+    // Open, but the player's strip muted on the Mixer tab.
     let mut state = tab("headset");
     state.desk.strips[StripKind::Player.index()].mute = true;
     assert!(!key(&mut state, Key::ch('s')).contains(&Effect::Sync(SyncCommand::Start)));

@@ -4,7 +4,7 @@
 mod common;
 
 use jodel_playback::{Command, Event, PlayState};
-use jodeldiplom::core::desk::{DeskChange, StripKind};
+use jodeldiplom::core::desk::{taper, DeskChange, StripKind};
 use jodeldiplom::core::karaoke::{self, Slider};
 use jodeldiplom::core::keymap::Op;
 use jodeldiplom::core::layout::{self, Layout};
@@ -24,6 +24,12 @@ fn engine(fx: &[Effect]) -> Vec<&Command> {
         .collect()
 }
 
+/// The vocals' lane's gain with the Voice slider at `percent` of its
+/// travel: the fader's taper, 100 % at 0 dB.
+fn voice_gain(percent: u8) -> f64 {
+    taper::gain(karaoke::voice_db(percent))
+}
+
 /// The gain the vocals' lane was last given on the desk (the voice's
 /// level), if it was.
 fn voice_sent(fx: &[Effect]) -> Option<f64> {
@@ -34,7 +40,7 @@ fn voice_sent(fx: &[Effect]) -> Option<f64> {
 }
 
 /// The Karaoke tab shown, a track playing, a GPU for the stems, the voice
-/// at 20 %, and every song's lyrics found (their words not timed: there is
+/// at 20 % of its travel (−35 dB), and every song's lyrics found (their words not timed: there is
 /// no speech model), so each can be sung.
 fn tab() -> State {
     let mut state = common::transition_state(120, 40);
@@ -89,22 +95,25 @@ fn stopped(state: &mut State) {
 fn the_tab_plays_the_voice_at_its_level_and_esc_does_nothing_there() {
     let mut state = tab();
     // On the tab the voice plays at the slider's level, moved at once: the
-    // vocals' lane on the desk, the strips as they were.
+    // vocals' lane on the desk, the strips as they were. A step is a dB.
+    assert_eq!(Slider::Voice.text(&state).trim(), "−35 dB");
     let fx = op(&mut state, Op::SliderUp);
-    assert_eq!(state.config.karaoke_voice, 25);
-    assert_eq!(voice_sent(&fx), Some(0.25));
+    assert_eq!(state.config.karaoke_voice, 21);
+    assert_eq!(Slider::Voice.text(&state).trim(), "−34 dB");
+    assert_eq!(voice_sent(&fx), Some(voice_gain(21)));
     assert!(fx.contains(&Effect::SaveConfig));
     // Down: the delay's nudge, 10 ms a step (kept with the delays, not in
     // the settings); up: the voice again.
     op(&mut state, Op::Down);
     let fx = op(&mut state, Op::SliderFineDown);
-    assert_eq!(state.config.karaoke_voice, 25);
+    assert_eq!(state.config.karaoke_voice, 21);
     assert_eq!(jodeldiplom::core::lag::nudge_ms(&state), -10);
     assert!(!fx.contains(&Effect::SaveConfig) && state.karaoke.lag.changed);
+    // With shift, a percent of the travel.
     op(&mut state, Op::Up);
     let fx = op(&mut state, Op::SliderFineDown);
-    assert_eq!(state.config.karaoke_voice, 24);
-    assert_eq!(voice_sent(&fx), Some(0.24));
+    assert_eq!(state.config.karaoke_voice, 20);
+    assert_eq!(voice_sent(&fx), Some(voice_gain(20)));
     // Esc stays on the tab and does nothing.
     let fx = op(&mut state, Op::Back);
     assert!(fx.is_empty(), "{fx:?}");
@@ -119,7 +128,7 @@ fn the_tab_plays_the_voice_at_its_level_and_esc_does_nothing_there() {
     while state.side != Side::Karaoke {
         back = op(&mut state, Op::ToggleSide);
     }
-    assert_eq!(voice_sent(&back), Some(0.24));
+    assert_eq!(voice_sent(&back), Some(voice_gain(20)));
 }
 
 /// Without a GPU the voice still sets its lane: a song whose stems are
@@ -131,8 +140,8 @@ fn without_a_gpu_the_voice_turns_down_the_kept_stems() {
     let mut state = tab();
     state.gpu = jodeldiplom::core::Gpu::Absent;
     let fx = op(&mut state, Op::SliderUp);
-    assert_eq!(state.config.karaoke_voice, 25);
-    assert_eq!(voice_sent(&fx), Some(0.25), "{fx:?}");
+    assert_eq!(state.config.karaoke_voice, 21);
+    assert_eq!(voice_sent(&fx), Some(voice_gain(21)), "{fx:?}");
     assert_eq!(make_wanted(&state), MakeStems::Kept);
     state.gpu = jodeldiplom::core::Gpu::Present("a GPU".into());
     assert_eq!(make_wanted(&state), MakeStems::Separate);
@@ -144,7 +153,7 @@ fn the_mode_plays_the_voice_at_its_level_and_esc_keeps_it_on_the_tab() {
     let fx = op(&mut state, Op::KaraokeEnter);
     assert_eq!(state.screen, Screen::Karaoke);
     assert!(engine(&fx).contains(&&Command::HoldAtEnd(true)));
-    assert_eq!(voice_sent(&fx), Some(0.2));
+    assert_eq!(voice_sent(&fx), Some(voice_gain(20)));
     // The song playing stops and is held at its start for START: nothing
     // plays without a count-in.
     let playing = state.playing.track.as_ref().map(|t| t.index);
@@ -157,7 +166,7 @@ fn the_mode_plays_the_voice_at_its_level_and_esc_keeps_it_on_the_tab() {
     assert!(karaoke::waiting(&state), "START shows at once");
     // The voice's level is heard at once in the mode.
     let fx = op(&mut state, Op::SliderUp);
-    assert_eq!(voice_sent(&fx), Some(0.25));
+    assert_eq!(voice_sent(&fx), Some(voice_gain(21)));
     // Tab and the other screens are not reached from the mode.
     for o in [
         Op::ToggleSide,
@@ -478,7 +487,7 @@ fn shift_enter_goes_into_the_mode_where_the_song_is() {
     assert_eq!(state.karaoke.held, None);
     assert_eq!(state.karaoke.countdown, None);
     assert!(!karaoke::waiting(&state), "the song plays on: no START");
-    assert_eq!(voice_sent(&fx), Some(0.2));
+    assert_eq!(voice_sent(&fx), Some(voice_gain(20)));
     // Space pauses it as any song playing in the mode.
     let fx = op(&mut state, Op::PlayPause);
     assert_eq!(engine(&fx), [&Command::Pause]);
@@ -840,19 +849,21 @@ fn a_slider_under_the_pointer_lands_on_whole_percents() {
             assert_eq!(s.slider.value(&state), nearest, "{:?}", s.slider);
             update(&mut state, Action::KaraokeSlideEnd);
         }
-        // The wheel: whole steps of 5 %, from a level the pointer set. It
-        // starts no drag: the next notch steps again, and the pointer
-        // moving after it leaves the level where it is.
+        // The wheel: a dB a notch, from a level the pointer set (25 %:
+        // −30 dB). It starts no drag: the next notch steps again, and the
+        // pointer moving after it leaves the level where it is.
         point(&mut state, press, quarter);
         update(&mut state, Action::KaraokeSlideEnd);
+        assert_eq!(s.slider.text(&state).trim(), "−30 dB");
         let wheel = input(MouseKind::ScrollUp, s.track.x);
         point(&mut state, wheel, 0.0);
         point(&mut state, wheel, 0.0);
-        assert_eq!(s.slider.value(&state), most / 4 + 10, "{:?}", s.slider);
+        assert_eq!(s.slider.text(&state).trim(), "−28 dB");
+        let wheeled = s.slider.value(&state);
         assert_eq!(state.karaoke.dragging, None);
         let moved = input(MouseKind::Moved, s.track.x);
         assert!(mouse::action(&state, moved).is_none());
-        assert_eq!(s.slider.value(&state), most / 4 + 10, "{:?}", s.slider);
+        assert_eq!(s.slider.value(&state), wheeled, "{:?}", s.slider);
     }
 }
 

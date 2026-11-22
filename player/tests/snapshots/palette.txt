@@ -1,4 +1,4 @@
-╭ Browser │ Queue (5) │ Transition │ Karaoke │ Mix ─────────────────╮╭─────────────────────────────────────────────────╮
+╭ Browser │ Queue (5) │ Transition │ Karaoke │ Mixer ───────────────╮╭─────────────────────────────────────────────────╮
 │: ne▏                                                              ││                                                 │
 │  Next track                                            N / shift+→││                                                 │
 │  Transition: lyrics on the vocals lane on/off                    L││                                                 │

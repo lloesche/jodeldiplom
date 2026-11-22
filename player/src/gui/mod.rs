@@ -166,7 +166,7 @@ struct Gui {
     /// The pointer's column in cells, with the share of its cell (a
     /// Karaoke slider follows it to the pixel).
     x: f64,
-    /// The pointer's row in cells, with the share of its cell (a Mix tab
+    /// The pointer's row in cells, with the share of its cell (a Mixer tab
     /// fader follows it to the pixel).
     y: f64,
     /// The pointer's cell while it is in the window (links underline
@@ -718,7 +718,7 @@ impl ApplicationHandler<Wake> for Gui {
                 let moved = x != self.x || y != self.y;
                 self.x = x;
                 self.y = y;
-                // A Karaoke slider or a Mix tab fader held follows the
+                // A Karaoke slider or a Mixer tab fader held follows the
                 // pointer within a cell.
                 let sliding = self.held == Some(MouseButton::Left)
                     && self.app.as_ref().is_some_and(|app| {

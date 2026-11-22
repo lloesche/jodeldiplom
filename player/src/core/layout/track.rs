@@ -1,4 +1,4 @@
-//! A run of cells a knob moves along: a Karaoke slider's columns, a Mix
+//! A run of cells a knob moves along: a Karaoke slider's columns, a Mixer
 //! tab fader's rows. The middle of its first cell is share 0 and of its
 //! last cell share 1, where the knob is drawn for those shares, so the
 //! pointer and the knob meet whatever the run's length.

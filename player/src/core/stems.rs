@@ -16,7 +16,7 @@
 //!   not soloed), so the file is heard as it is again, bit-perfect.
 //! - The engine makes the playing track's stems ([`MakeStems`]) while a
 //!   stem's strip is touched (or a change of one waits for its bar) or the
-//!   Mix, Karaoke or Transition tab shows: from the stems kept, else
+//!   Mixer, Karaoke or Transition tab shows: from the stems kept, else
 //!   separated on the GPU (without one, only the kept ones). Otherwise it
 //!   makes none, so the GPU and the processor rest.
 //! - The Karaoke tab's voice is the vocals lane's gain, a controller's on
@@ -34,7 +34,7 @@ use jodel_output::lanes::Parts;
 use jodel_playback::stems::{Stem, STEMS};
 use jodel_playback::{Command, MakeStems};
 
-use super::desk::{DeskChange, StripKind};
+use super::desk::{taper, DeskChange, StripKind};
 use super::lanes::{self, Block};
 use super::transition::Status;
 use super::update::say_info;
@@ -95,12 +95,12 @@ pub struct Bar {
 }
 
 /// When the engine should make the playing track's stems: while a stem's
-/// strip is touched (or a change of one waits for its bar), or the Mix,
+/// strip is touched (or a change of one waits for its bar), or the Mixer,
 /// Karaoke or Transition tab (or the mode) shows; from the stems kept, else
 /// on the GPU (only kept ones without one, and while it is looked for).
 pub fn make_wanted(state: &State) -> MakeStems {
     let tab = state.screen == Screen::Main
-        && matches!(state.side, Side::Mix | Side::Karaoke | Side::Transition);
+        && matches!(state.side, Side::Mixer | Side::Karaoke | Side::Transition);
     // A change still to land on its bar (an unmute, say) needs the stems
     // until then: the desk plays them up to it.
     let pending = state.desk.stems_pending.is_some_and(|(index, at)| {
@@ -121,10 +121,11 @@ pub fn make_wanted(state: &State) -> MakeStems {
 }
 
 /// The stems' lanes' gains (drums, bass, vocals, other): the Karaoke tab's
-/// voice on the vocals while the tab or the mode shows, else all 1.
+/// voice on the vocals while the tab or the mode shows (its slider read on
+/// the fader's taper), else all 1.
 pub fn lanes_due(state: &State) -> [f64; STEMS] {
     let voice = if karaoke::shown(state) {
-        f64::from(state.config.karaoke_voice.min(100)) / 100.0
+        taper::gain(karaoke::voice_db(state.config.karaoke_voice))
     } else {
         1.0
     };
@@ -329,7 +330,7 @@ fn told(state: &mut State, bar: Option<Bar>, fx: &mut Vec<Effect>) {
 
 /// After any action: the mixer's lanes, the engine's transitions and when
 /// the engine makes stems follow the state when they changed (a fader or a
-/// mute on the Mix tab, the Karaoke tab shown or left, its voice moved, a
+/// mute on the Mixer tab, the Karaoke tab shown or left, its voice moved, a
 /// tab shown). A change of the gains while a stem key's waits for its bar
 /// goes with it, at that bar.
 pub(crate) fn follow(state: &mut State, fx: &mut Vec<Effect>) {

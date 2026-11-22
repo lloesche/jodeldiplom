@@ -125,7 +125,7 @@ the downloads, put the `models` folder beside the executable.
 
 ## Screen
 
-One list pane with a **Browser / Queue / Transition / Karaoke / Mix**
+One list pane with a **Browser / Queue / Transition / Karaoke / Mixer**
 toggle in its top border (click it or press `tab`, which goes round all
 five); the right column has the cover, the title, the status
 light and the signal path, for example
@@ -200,7 +200,7 @@ drums, `alt+2` bass, `alt+3` vocals, `alt+4` other, `alt+0` all on (in
 the macOS terminal with Option as Meta; also the palette's "Stems: …"
 commands, and, with a GPU, the `drums` `bass` `vocals` `other` buttons
 after the transport buttons, `D B V O` where the row is short; a stem
-that is off is crossed out). Each stem is a strip of the Mix tab inside
+that is off is crossed out). Each stem is a strip of the Mixer tab inside
 the player's (below), and these keys mute its strip or unmute it; `alt+0`
 puts every stem's strip back as it starts (unmuted, 0 dB, not soloed).
 With every stem's strip as it starts the file plays as it is,
@@ -209,7 +209,7 @@ place of the file (a 10 ms crossfade, the stems being the same music), so
 the path is no longer bit-perfect. A stem switched is heard within the
 device's buffer: the stems are made beside the file as it plays, from the
 stems kept (the queue keeps them as it gets tracks ready) or else
-separated on the GPU, while a stem's strip is touched or the Mix, Karaoke
+separated on the GPU, while a stem's strip is touched or the Mixer, Karaoke
 or Transition tab shows (elsewhere none are made, so the GPU and the
 processor rest). Without a GPU only the stems kept play. With the Stem
 switching setting at **on the next bar** (the default) a key's change
@@ -557,9 +557,13 @@ analyses (a `.wave` file beside each).
 
 ### Karaoke
 
-The Karaoke tab (`tab` to it) sets karaoke up: the voice's level (0 % by
+The Karaoke tab (`tab` to it) sets karaoke up: the voice's level (off by
 default) and the microphone, saved in the settings file (`karaoke_voice`,
-`karaoke_mic_device`). On the tab, as in the mode, the voice plays at its
+`karaoke_mic_device`). The Voice slider is on the faders' taper (the
+Mixer tab) from −∞ up to 0 dB, the voice at its own level, and shows its
+level in dB; the settings file keeps where it is along its travel, 0 to
+100 % (25 %: −30 dB, 50 %: −17 dB, 75 %: −8 dB).
+On the tab, as in the mode, the voice plays at its
 level (a gain on the vocals' lane on the desk, over the VOCALS strip,
 which stays as you set it; heard at once), so what you hear, the meter
 and a recording there are as in the mode; on other tabs that lane is at
@@ -590,7 +594,7 @@ the processor), and kept with the track's waveforms. A note is the median
 of the frames around it the network is sure of, to the nearest semitone.
 
 The microphone (the system's default input, or the one `i` picks) is open
-while the tab or the mode shows (and on the Mix tab while its strip is
+while the tab or the mode shows (and on the Mixer tab while its strip is
 selected), to hear the singer: it is never played.
 Nothing of it reaches the speakers, so what plays is exactly what it
 would be without it, and nothing can feed back. It sees what the device
@@ -635,7 +639,8 @@ other texts of the song are compared too, and the best that fits is the
 one timed and kept instead (`lyrics::fitting`, `jodel_lyrics::fit`). A text
 none of whose fellows fits is kept as it is: the recogniser also misses
 some texts that fit (German heard as English, heavily processed voices).
-The file's own texts (tags, `.lrc`) are not checked. The fit is kept with the
+The file's own texts (tags, `.lrc`) are heard the same way, for their fit
+and to pin their words (below), but never swapped. The fit is kept with the
 timed lyrics (a `[fit:78]` line, `[fit:64 swapped]` for a text swapped in) and the
 Karaoke tab says it: `fits the song (78 % heard)`, `its first text did not
 fit the song, this one does`, or `may not fit the song (only 31 % heard)`. The result is cached as Enhanced LRC, with where each letter was heard (a `[#:letters ...]` line other players pass over; a song timed before that is timed again once). A word fills in Karaoke mode letter by letter as each is sung, so a held vowel holds the fill. A line is sung from its
@@ -685,6 +690,23 @@ twice: the second time, the words before the first four heard surely in a
 row are pulled toward them, so a first line heard weakly stays near the
 lines after it instead of going to anything sung earlier.
 
+The parts say where a line is to half a minute; the recogniser also hears
+the voice in glimpses of 3 s every 1.5 s (`jodel_lyrics::glimpses`, about
+half a minute a song on the GPU; a glimpse where the voice is silent is
+not heard), which say it to a second or two, and where nothing with words
+is sung at all. The speech model hears letters in sounds without words: a
+chant's "yo" as "you", a choir's "oh", a synth left in the voice. In the
+second alignment each line's first word costs to start outside where the
+glimpses near it heard it start (those that heard its first words, less
+the middles of those that heard none of them), and a line costs for every
+second it would go on over a stretch where the glimpses heard no words.
+A line's first words heard too weakly to time are put just before its
+first word heard surely, at a sung pace, not stretched back toward the
+line before. On Kate Bush's "Running Up That Hill" (a "yeah, yeah, yo"
+before each verse line, a choir's pads between the verses) this took the
+lines within 1 s of LRCLIB's from 40 of 46 to 44, and the lines that ran
+on over the pads from 3 to 2.
+
 A text often writes a chorus or hook once that is sung more often; with
 nothing in the text for the second time, the words around it were
 stretched over it and the lines after it drifted. Where the recogniser
@@ -699,7 +721,7 @@ seven times over where its text has it once.
 | `enter` / the button | Karaoke mode |
 | `shift+enter` / shift+click on the button | Karaoke mode where the song is: no rewind, no count-in |
 | `↑` `↓` | the row the arrows move: the voice, the delay |
-| `←` `→` | its value down, up: the voice 5 % (`shift`: 1 %), the delay 10 ms (its nudge); a click, drag or the wheel on a slider too |
+| `←` `→` | its value down, up: the voice 1 dB (at −45 dB or below: off; from off: −45 dB; `shift`: 1 % of its travel), the delay 10 ms (its nudge); a click, drag or the wheel on a slider too |
 | `s` / a click on sync | sync: measure how late your voice comes (a microphone open) |
 | `i` | the next microphone |
 | `r` | record 30 s of what the echo canceller works with (also in the mode) |
@@ -738,7 +760,7 @@ median of the answers within 150 ms of the median, at least 5 of 8, else
 "again?"): keep (`enter`) keeps it for the output and microphone it was
 measured with (in `delays.txt` beside the settings, the nudge back to 0),
 again (`r`), cancel (`esc`), each a button too. The clicks play on the
-player's strip: with it muted, far down or another soloed on the Mix tab,
+player's strip: with it muted, far down or another soloed on the Mixer tab,
 there is no sync, and the tab says why.
 
 With **Keep** on, each song sung in the mode is saved when it ends (or
@@ -855,9 +877,9 @@ without decoding audio: `FLAC 44.1`,
 and bit rate, `MP3 320k` (a VBR file's average), `VORBIS 160k`. An M4A file holding AAC
 is listed with `?` and the reason (AAC is not supported).
 
-### The Mix tab
+### The Mixer tab
 
-The Mix tab (`tab` to it, the last of the five) shows the mixer as a desk,
+The Mixer tab (`tab` to it, the last of the five) shows the mixer as a desk,
 the whole width: a channel strip for the player, a narrower one for each
 of its stems beside it (DRUMS, BASS, VOCALS, OTHER), one for the preview,
 the microphone's strip, and the master at the right. The tall sections
@@ -873,9 +895,12 @@ keys go through the strips drawn.
   players A and B with the gain of each in dB, so a crossfade can be
   watched, `—` while there are none), a fader beside an L/R meter, the
   level, and `[M]` mute and `[S]` solo (while a strip is soloed, the
-  others are silent). The fader is tapered as on a desk: +6 dB at the top,
-  0 dB at three quarters of the way up, −10, −20, −30, −40 and −60 dB
-  closer and closer below it, −∞ at the bottom. The meter beside it is on
+  others are silent). The fader is tapered to what is heard: +6 dB at the
+  top, 0 dB at four fifths of the way up, then −6, −12, −20 and −30 dB,
+  each 0.15 of the travel below the one before, −45 dB near the bottom and
+  −∞ at the bottom, so most of the travel is where a change is heard
+  (below −30 dB a stem is masked by the rest and a whole mix is faint, so
+  −30 dB to −∞ gets only the last fifth). The meter beside it is on
   the same ruler, so the fader's marks read it in dBFS; above 0 dBFS (only
   with the fader above 0 dB) it is red: the overs. A level other than 0 dB
   shows in orange: the strip adds gain, or takes it away. Every change is
@@ -933,10 +958,10 @@ the wheel over a strip moves its fader by 1 dB (over the master, the
 device's volume); a click selects a strip, and `[M]`, `[S]` and `[ECHO]`
 are buttons.
 
-| Key | Mix tab |
+| Key | Mixer tab |
 |---|---|
 | `←` `→` | the strip to the left, to the right (player, its stems, preview, microphone, master) |
-| `↑` `↓` | the fader 1 dB up, down (below −60 dB: off; on the master, the device's own volume a step) |
+| `↑` `↓` | the fader 1 dB up, down (at −45 dB or below: off; from off: −45 dB; on the master, the device's own volume a step) |
 | `pgup` `pgdn` | the fader 6 dB up, down |
 | `home` | the fader to 0 dB: nothing added |
 | `end` | the fader off (−∞) |
@@ -952,10 +977,10 @@ The capitals keep their commands here (`M` the beat pulse, `S` stop);
 
 | Module | |
 |---|---|
-| `core` | state, `Action`, `update(state, action) -> effects`, layout in cells with its collapse rules, keymap, mouse regions; the Transition tab (`core::transition::tab`, the lanes it shares with Karaoke in `core::lanes`), the grid fixes (`core::grid`), the transitions' presets and plans (`core::transition`), the Karaoke tab and mode (`core::karaoke`), the Mix tab's desk (`core::desk`: its strips, settings, the fader's taper, the meters' ballistics, its mouse) and the stems on it (`core::stems`: the stem keys as strip mutes on a bar, when the engine makes stems, the Karaoke voice's lane, what transitions mix with). Pure. |
-| `view` | the ratatui widgets for both frontends; the cover, the spectrum, the Transition tab's lanes (`view::transition`, with `view::lanes`, which the Karaoke tab shares) and Karaoke mode's picture (`view::karaoke`) go through `view::Pictures`; the window paints that picture in `gui::karaoke`. The Mix tab (`view::desk`) is cells only |
+| `core` | state, `Action`, `update(state, action) -> effects`, layout in cells with its collapse rules, keymap, mouse regions; the Transition tab (`core::transition::tab`, the lanes it shares with Karaoke in `core::lanes`), the grid fixes (`core::grid`), the transitions' presets and plans (`core::transition`), the Karaoke tab and mode (`core::karaoke`), the Mixer tab's desk (`core::desk`: its strips, settings, the fader's taper, the meters' ballistics, its mouse) and the stems on it (`core::stems`: the stem keys as strip mutes on a bar, when the engine makes stems, the Karaoke voice's lane, what transitions mix with). Pure. |
+| `view` | the ratatui widgets for both frontends; the cover, the spectrum, the Transition tab's lanes (`view::transition`, with `view::lanes`, which the Karaoke tab shares) and Karaoke mode's picture (`view::karaoke`) go through `view::Pictures`; the window paints that picture in `gui::karaoke`. The Mixer tab (`view::desk`) is cells only |
 | `app` | the running player: the engine and its desk, background workers, the spectrum (the mixer's monitor), cover; carries out the effects |
-| `desk_wiring` | the desk the engine plays on: a mixer that holds the device (`jodel_output::mixer`), the player's strip with its stems' strips inside it, the preview's, the engine on a lane input of them; the Mix tab's settings made on it, its look for a frame |
+| `desk_wiring` | the desk the engine plays on: a mixer that holds the device (`jodel_output::mixer`), the player's strip with its stems' strips inside it, the preview's, the engine on a lane input of them; the Mixer tab's settings made on it, its look for a frame |
 | `preview` | the preview's players, guests on the mixer (one per file, two at most): only the latest file loaded, crossfades on the mixer's clock, the song ducked and back |
 | `browser` | folder listing, file details read lazily for the rows on screen (cached for the session), recursive search, folder walk |
 | `config`, `cli` | the settings file and the command line |

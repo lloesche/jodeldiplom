@@ -96,7 +96,7 @@ pub struct MainLayout {
     pub transition: Option<TransitionLayout>,
     /// The Karaoke tab, when it is the side shown (the whole width too).
     pub karaoke: Option<KaraokeTabLayout>,
-    /// The Mix tab's desk, when it is the side shown (the whole width too).
+    /// The Mixer tab's desk, when it is the side shown (the whole width too).
     pub desk: Option<desk::DeskLayout>,
     /// The bottom bar.
     pub bottom: Bottom,
@@ -661,7 +661,7 @@ fn transition(state: &State, inner: Rect, list: Rect) -> TransitionLayout {
 /// The button that zooms the Transition tab to fit the lyrics.
 pub const FIT_LYRICS: &str = " z fit lyrics ";
 
-/// The main screen with a wide tab (Transition, Karaoke or Mix): the list pane's
+/// The main screen with a wide tab (Transition, Karaoke or Mixer): the list pane's
 /// border over the whole width, no right column, no spectrum (the Karaoke
 /// tab has its voice's lane there).
 fn main_wide(state: &State, area: Rect) -> MainLayout {
@@ -697,7 +697,7 @@ fn main_wide(state: &State, area: Rect) -> MainLayout {
             voice,
             ..karaoke_tab(inner, state.karaoke.sync.as_ref())
         }),
-        desk: (state.side == Side::Mix).then(|| desk::compute(inner, state.desk.has_stems())),
+        desk: (state.side == Side::Mixer).then(|| desk::compute(inner, state.desk.has_stems())),
         bottom,
     }
 }

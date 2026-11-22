@@ -156,7 +156,7 @@ pub enum Op {
     Previous,
     /// Stop playback.
     Stop,
-    /// Switch the list pane: browser, queue, transition, karaoke, mix.
+    /// Switch the list pane: browser, queue, transition, karaoke, mixer.
     ToggleSide,
     /// Open or close Now playing.
     NowPlaying,
@@ -343,13 +343,13 @@ pub enum Op {
     SyncKeep,
     /// Syncing: again.
     SyncAgain,
-    /// Mix: the strip to the left.
+    /// Mixer: the strip to the left.
     DeskPrevStrip,
-    /// Mix: the strip to the right.
+    /// Mixer: the strip to the right.
     DeskNextStrip,
-    /// Mix: the strip selected muted, or not.
+    /// Mixer: the strip selected muted, or not.
     DeskMute,
-    /// Mix: the strip selected soloed, or not.
+    /// Mixer: the strip selected soloed, or not.
     DeskSolo,
     /// The microphone's echo canceller on or off.
     DeskEcho,
@@ -365,7 +365,7 @@ impl Op {
             Op::Next => "Next track",
             Op::Previous => "Previous track",
             Op::Stop => "Stop",
-            Op::ToggleSide => "Browser / queue / transition / karaoke / mix",
+            Op::ToggleSide => "Browser / queue / transition / karaoke / mixer",
             Op::NowPlaying => "Now playing",
             Op::Settings => "Settings",
             Op::Help => "Help",
@@ -456,10 +456,10 @@ impl Op {
             Op::KaraokeSync => "Karaoke: sync (measure how late your voice comes)",
             Op::SyncKeep => "Sync: keep the delay measured",
             Op::SyncAgain => "Sync: again",
-            Op::DeskPrevStrip => "Mix: the strip to the left",
-            Op::DeskNextStrip => "Mix: the strip to the right",
-            Op::DeskMute => "Mix: mute the strip selected",
-            Op::DeskSolo => "Mix: solo the strip selected",
+            Op::DeskPrevStrip => "Mixer: the strip to the left",
+            Op::DeskNextStrip => "Mixer: the strip to the right",
+            Op::DeskMute => "Mixer: mute the strip selected",
+            Op::DeskSolo => "Mixer: solo the strip selected",
             Op::DeskEcho => "Microphone: the echo canceller on or off",
         }
     }
@@ -566,7 +566,7 @@ pub enum Context {
     KaraokeMode,
     /// Syncing, on the Karaoke tab.
     Sync,
-    /// The Mix tab.
+    /// The Mixer tab.
     Desk,
 }
 
@@ -590,7 +590,7 @@ impl Context {
             Context::Karaoke => "Karaoke tab",
             Context::KaraokeMode => "Karaoke mode (fullscreen)",
             Context::Sync => "Syncing (s on the Karaoke tab)",
-            Context::Desk => "Mix tab",
+            Context::Desk => "Mixer tab",
         }
     }
 
@@ -705,7 +705,7 @@ pub const KEYMAP: &[Binding] = &[
         Context::Global,
         &[Key::plain(K::Tab)],
         Op::ToggleSide,
-        "browser / queue / transition / karaoke / mix",
+        "browser / queue / transition / karaoke / mixer",
     ),
     b(
         Context::Global,
@@ -1246,7 +1246,7 @@ pub const KEYMAP: &[Binding] = &[
         Context::Karaoke,
         &[LEFT],
         Op::SliderDown,
-        "the row's value a step down: the voice 5 %, the delay 10 ms (its nudge; ↑ ↓ pick the row)",
+        "the row's value a step down: the voice 1 dB (at −45 dB or below: off), the delay 10 ms (its nudge; ↑ ↓ pick the row)",
     ),
     b(
         Context::Karaoke,
@@ -1258,13 +1258,13 @@ pub const KEYMAP: &[Binding] = &[
         Context::Karaoke,
         &[Key::shift(K::Left)],
         Op::SliderFineDown,
-        "the voice 1 % down",
+        "the voice 1 % of its travel down",
     ),
     b(
         Context::Karaoke,
         &[Key::shift(K::Right)],
         Op::SliderFineUp,
-        "the voice 1 % up",
+        "the voice 1 % of its travel up",
     ),
     // Syncing.
     b(
@@ -1304,27 +1304,27 @@ pub const KEYMAP: &[Binding] = &[
         Context::KaraokeMode,
         &[LEFT],
         Op::SliderDown,
-        "the slider 5 % down",
+        "the voice 1 dB down (at −45 dB or below: off)",
     ),
     b(
         Context::KaraokeMode,
         &[RIGHT],
         Op::SliderUp,
-        "the slider 5 % up",
+        "the voice 1 dB up",
     ),
     b(
         Context::KaraokeMode,
         &[Key::shift(K::Left)],
         Op::SliderFineDown,
-        "the slider 1 % down",
+        "the voice 1 % of its travel down",
     ),
     b(
         Context::KaraokeMode,
         &[Key::shift(K::Right)],
         Op::SliderFineUp,
-        "the slider 1 % up",
+        "the voice 1 % of its travel up",
     ),
-    // The Mix tab.
+    // The Mixer tab.
     b(
         Context::Desk,
         &[LEFT],
@@ -1347,7 +1347,7 @@ pub const KEYMAP: &[Binding] = &[
         Context::Desk,
         &[DOWN],
         Op::Down,
-        "the fader 1 dB down (below −60 dB: off)",
+        "the fader 1 dB down (at −45 dB or below: off)",
     ),
     b(
         Context::Desk,
@@ -1505,7 +1505,7 @@ pub fn contexts(state: &State) -> Vec<Context> {
                 vec![Context::Sync, Context::Global]
             } else if state.side == Side::Karaoke {
                 vec![Context::Karaoke, Context::Global]
-            } else if state.side == Side::Mix {
+            } else if state.side == Side::Mixer {
                 vec![Context::Desk, Context::Global]
             } else if state.side == Side::Queue {
                 vec![Context::Queue, Context::List, Context::Global]

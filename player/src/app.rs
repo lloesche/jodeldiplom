@@ -756,7 +756,7 @@ impl App {
                 notify();
             }
         });
-        // A new mixer's strips start at 0 dB: the Mix tab's settings are
+        // A new mixer's strips start at 0 dB: the Mixer tab's settings are
         // made on them again, and the engine told of the stems.
         engine.set_up(&self.state);
         self.engine = Some(engine);
@@ -954,7 +954,7 @@ impl App {
             }
         }
     }
-    /// Sets a strip of the mixer as the Mix tab has it.
+    /// Sets a strip of the mixer as the Mixer tab has it.
     fn desk_change(&self, change: core::desk::DeskChange) {
         if let Some(engine) = &self.engine {
             engine.apply(change);
@@ -968,7 +968,7 @@ impl App {
         self.engine.as_ref().map(|e| e.mixer.desk())
     }
 
-    /// The Mix tab's look for a frame: the desk and the meters since the
+    /// The Mixer tab's look for a frame: the desk and the meters since the
     /// last look (the one place they are taken), each fader strip found by
     /// its id.
     fn look_at_desk(&mut self) {
@@ -1268,7 +1268,7 @@ impl App {
         self.state.mic = None;
         self.sung.clear();
         if let Some(mic) = &self.mic {
-            // Read once for the frame: the Karaoke tab and the Mix tab draw
+            // Read once for the frame: the Karaoke tab and the Mixer tab draw
             // from it.
             let status = mic.status();
             let echo = mic.echo_status();
@@ -1367,7 +1367,7 @@ impl App {
             || self.state.playing.state == PlayState::Playing
             // The Karaoke tab's meter moves with the voice, music or not.
             || (self.mic.is_some() && core::karaoke::on_tab(&self.state))
-            // The Mix tab's meters move (and fall) by themselves.
+            // The Mixer tab's meters move (and fall) by themselves.
             || core::desk::shown(&self.state)
             || self.state.seek_drag.is_some()
             || self.state.transition.slide.is_some()

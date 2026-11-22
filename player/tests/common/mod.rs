@@ -476,7 +476,7 @@ fn lin(db: f32) -> f32 {
     10f32.powf(db / 20.0)
 }
 
-/// Fills the Mix tab's desk as a frame's look would (at the state's
+/// Fills the Mixer tab's desk as a frame's look would (at the state's
 /// clock): the player at `rate` with its meters at −12 / −9 dBFS, its
 /// stems there and heard with the vocals muted, a preview crossfading (A
 /// going out, B coming in), a microphone open and hearing with its echo
@@ -619,11 +619,11 @@ pub fn fill_desk(state: &mut State, rate: u32) {
     }
 }
 
-/// [`playing_state`] on the Mix tab, its desk filled ([`fill_desk`]), the
+/// [`playing_state`] on the Mixer tab, its desk filled ([`fill_desk`]), the
 /// microphone's strip selected (so it listens).
 pub fn desk_state(cols: u16, rows: u16) -> State {
     let mut state = playing_state(cols, rows);
-    state.side = jodeldiplom::core::Side::Mix;
+    state.side = jodeldiplom::core::Side::Mixer;
     state.desk.selected = jodeldiplom::core::desk::Channel::Mic;
     state.now_ms = 10_000;
     fill_desk(&mut state, 96_000);

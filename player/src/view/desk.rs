@@ -1,4 +1,4 @@
-//! The Mix tab: the mixer drawn as a desk, in cells only (the window
+//! The Mixer tab: the mixer drawn as a desk, in cells only (the window
 //! rasterises the same cells). Each strip is a box: its name on a scribble
 //! strip, what it carries, a tall section with the fader beside its
 //! meters (one ruler for both), the level and its buttons. The player's

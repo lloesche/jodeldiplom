@@ -104,13 +104,13 @@ impl Session {
     }
 }
 
-/// How far down the Player's strip may be on the Mix tab for the clicks
+/// How far down the Player's strip may be on the Mixer tab for the clicks
 /// to be heard, in dB.
 pub const QUIET_DB: f64 = -30.0;
 
 /// Why the clicks would not be heard, if they would not: they play on the
 /// Player's strip (an input of its own, beside the song's), so a strip
-/// muted, turned well down, or another soloed on the Mix tab silences them.
+/// muted, turned well down, or another soloed on the Mixer tab silences them.
 /// A stem's strip soloed is another: solo in place along the path silences
 /// its group's own inputs (unless the player's strip is soloed too), and a
 /// stem muted or turned down does nothing to them.
@@ -120,11 +120,11 @@ fn unheard(state: &State) -> Option<&'static str> {
         .iter()
         .any(|&k| k != StripKind::Player && state.desk.setting(k).solo);
     if player.mute {
-        Some("the player's strip is muted on the Mix tab")
+        Some("the player's strip is muted on the Mixer tab")
     } else if other_solo && !player.solo {
-        Some("another strip is soloed on the Mix tab")
+        Some("another strip is soloed on the Mixer tab")
     } else if player.db < QUIET_DB {
-        Some("the player's fader is far down on the Mix tab")
+        Some("the player's fader is far down on the Mixer tab")
     } else {
         None
     }

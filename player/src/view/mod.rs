@@ -372,7 +372,7 @@ fn draw_main(frame: &mut Frame, scene: &Scene, m: &MainLayout, pictures: &mut dy
         ),
         Side::Karaoke if state.karaoke.sync.is_some() => sync::footer(state).into(),
         Side::Karaoke => "enter Karaoke mode · ↑ ↓ row · ← → its value · s sync".into(),
-        Side::Mix => desk::FOOTER.into(),
+        Side::Mixer => desk::FOOTER.into(),
     };
     let block = bordered(Line::from(title)).title_bottom(Line::from(Span::styled(
         format!(" {footer} "),
@@ -403,7 +403,7 @@ fn draw_main(frame: &mut Frame, scene: &Scene, m: &MainLayout, pictures: &mut dy
                     karaoke::draw_tab(frame, scene, layout, pictures);
                 }
             }
-            Side::Mix => {
+            Side::Mixer => {
                 if let Some(layout) = &m.desk {
                     desk::draw(frame.buffer_mut(), state, layout);
                 }

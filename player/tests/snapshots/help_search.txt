@@ -3,7 +3,7 @@
 │   alt+↑                 device volume a step up (macOS: the system's keys do not reach it while played)              │
 │   alt+↓                 device volume a step down                                                                    │
 │                                                                                                                      │
-│ Mix tab                                                                                                              │
+│ Mixer tab                                                                                                            │
 │   ↑                     the fader 1 dB up (the master: the device's own volume a step up)                            │
 │                                                                                                                      │
 │                                                                                                                      │

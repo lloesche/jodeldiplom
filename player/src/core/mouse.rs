@@ -92,11 +92,11 @@ pub enum Target {
     KaraokeSlider(Slider),
     /// A level on the Karaoke tab.
     KaraokeLevel(crate::core::singing::Level),
-    /// A fader's track on the Mix tab.
+    /// A fader's track on the Mixer tab.
     DeskFader(crate::core::desk::StripKind),
-    /// A button on the Mix tab.
+    /// A button on the Mixer tab.
     DeskButton(crate::core::desk::DeskButton),
-    /// A strip on the Mix tab (a click selects it, the wheel moves its
+    /// A strip on the Mixer tab (a click selects it, the wheel moves its
     /// fader).
     DeskChannel(crate::core::desk::Channel),
 }
@@ -382,7 +382,7 @@ pub fn action(state: &State, input: MouseInput) -> Option<Action> {
 /// cells from the left and top edges (the GUI knows them to the pixel).
 /// Only a Karaoke slider uses `x`: cell by cell, a 40-cell track moves
 /// 2.6 % a step (5.1 % for the microphone's 200 %); pixel by pixel, every
-/// whole percent is in reach. Only a Mix tab fader uses `y`, for the same
+/// whole percent is in reach. Only a Mixer tab fader uses `y`, for the same
 /// reason.
 pub fn action_at(state: &State, input: MouseInput, x: f64, y: f64) -> Option<Action> {
     use MouseButton::{Left, Right};
@@ -415,7 +415,7 @@ pub fn action_at(state: &State, input: MouseInput, x: f64, y: f64) -> Option<Act
             _ => None,
         };
     }
-    // And a Mix tab fader held.
+    // And a Mixer tab fader held.
     if let Some(action) = crate::core::desk::mouse::held(state, input.kind, y) {
         return action;
     }
@@ -501,11 +501,7 @@ pub fn action_at(state: &State, input: MouseInput, x: f64, y: f64) -> Option<Act
         }
         (ScrollUp | ScrollDown, Target::KaraokeSlider(slider)) => Some(Action::KaraokeStep {
             slider,
-            by: if input.kind == ScrollUp {
-                slider.step(false)
-            } else {
-                -slider.step(false)
-            },
+            by: if input.kind == ScrollUp { 1 } else { -1 },
         }),
         (Down(Left), Target::TransitionOverview(block)) => {
             transition_time(state, block, input.col, true)

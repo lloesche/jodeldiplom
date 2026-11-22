@@ -20,7 +20,7 @@
 //! transition_preset = "fade"          # the Transition tab's transition preset, as last chosen
 //! transition_tempo = "varispeed"      # how a transition's tempi meet: "varispeed" or "stretch"
 //!                                     # ("fade", "drums-first", "bass-swap", "vocals-last")
-//! karaoke_voice = 0                   # karaoke mode: the voice stem's level, 0 to 100 %
+//! karaoke_voice = 0                   # karaoke mode: the voice stem's slider, 0 to 100 % of its travel (100: 0 dB)
 //! karaoke_mic_device = "..."          # the microphone (an input id); absent: the system's default
 //! karaoke_online = true               # karaoke: look lyrics up on LRCLIB (false: tags and .lrc files only)
 //! karaoke_lead = 200                  # karaoke: the words light up this many ms before they are sung (0 to 1000)
@@ -89,7 +89,9 @@ pub struct Config {
     /// (where the playing track's bars are known); else as soon as the
     /// output has played what it holds.
     pub stems_on_bar: bool,
-    /// Karaoke mode: the voice stem's level, in percent (0 to 100).
+    /// Karaoke mode: the voice stem's level, as a position along its
+    /// slider in percent (0, −∞, to 100, 0 dB), read on the fader's taper
+    /// ([`crate::core::karaoke::voice_db`]).
     pub karaoke_voice: u8,
     /// The microphone, an input device id; `None`: the system's default.
     pub karaoke_mic_device: Option<String>,

@@ -1,4 +1,4 @@
-//! The Mix tab: its faders, buttons and keys, what they send to the
+//! The Mixer tab: its faders, buttons and keys, what they send to the
 //! mixer, and the settings made again on a new mixer.
 
 mod common;
@@ -205,7 +205,7 @@ fn the_wheel_moves_a_fader_by_a_db_and_the_buttons_toggle() {
 }
 
 #[test]
-fn the_keys_of_the_mix_tab_leave_the_global_capitals_alone() {
+fn the_keys_of_the_mixer_tab_leave_the_global_capitals_alone() {
     let state = tab();
     let op = |key| match lookup(&state, key) {
         Some(Meaning::Op(op)) => Some(op),
@@ -233,11 +233,11 @@ fn the_keys_of_the_mix_tab_leave_the_global_capitals_alone() {
     ] {
         assert_eq!(op(key), Some(want), "{key:?}");
     }
-    // Tab goes round all five, the Mix tab last.
+    // Tab goes round all five, the Mixer tab last.
     let mut s = tab();
     s.side = Side::Karaoke;
     update(&mut s, Action::Op(Op::ToggleSide));
-    assert_eq!(s.side, Side::Mix);
+    assert_eq!(s.side, Side::Mixer);
     update(&mut s, Action::Op(Op::ToggleSide));
     assert_eq!(s.side, Side::Browser);
 }
@@ -270,7 +270,7 @@ fn the_faders_are_set_on_the_mixer_and_again_on_a_new_one() {
     };
     // Every start at 0 dB: nothing added.
     assert_eq!(level(&app, StripKind::Player), (1.0, false, false));
-    app.dispatch(Action::ShowSide(Side::Mix));
+    app.dispatch(Action::ShowSide(Side::Mixer));
     // The tab keeps drawing; the microphone stays closed until its strip
     // is selected (K6), and closes when another one is.
     assert!(app.animating());
@@ -429,8 +429,8 @@ fn a_stem_muted_on_its_frame_is_heard_and_unmuted_the_file_is_again() {
     options.separator = quarter;
     options.autoplay = Some(file);
     let mut app = App::new(options);
-    // The Mix tab shows: the stems are made, on the "GPU" (the quarter).
-    app.dispatch(Action::ShowSide(Side::Mix));
+    // The Mixer tab shows: the stems are made, on the "GPU" (the quarter).
+    app.dispatch(Action::ShowSide(Side::Mixer));
     assert!(until(&mut app, |a| a.state.gpu != jodeldiplom::core::Gpu::Looking));
     app.dispatch(Action::Gpu(Some("the quarter".into())));
     let heard = |a: &App| a.state.playing.anchor.map_or(0, |(_, frame, _)| frame);

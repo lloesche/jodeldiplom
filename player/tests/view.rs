@@ -947,14 +947,14 @@ fn the_queue_is_got_ready_ahead_and_its_icons_light_up_in_turn() {
 }
 
 #[test]
-fn the_mix_tab_is_a_desk() {
+fn the_mixer_tab_is_a_desk() {
     let state = common::desk_state(120, 36);
     let text = draw(&state);
-    snapshot("mix", &text);
+    snapshot("mixer", &text);
     has(
         &text,
         &[
-            " Mix ",
+            " Mixer ",
             "PLAYER",
             "● STEMS heard",
             "DRUMS",
@@ -988,7 +988,7 @@ fn the_mix_tab_is_a_desk() {
     // the master's lamps whole.
     let state = common::desk_state(80, 24);
     let text = draw(&state);
-    snapshot("mix_small", &text);
+    snapshot("mixer_small", &text);
     has(
         &text,
         &[

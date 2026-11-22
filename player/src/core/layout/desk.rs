@@ -1,4 +1,4 @@
-//! The Mix tab's desk in cells: the strips side by side, the master at the
+//! The Mixer tab's desk in cells: the strips side by side, the master at the
 //! right, as on a desk; the player's stems, narrower, beside it under a
 //! bracket that says whether they or the file are heard.
 //!

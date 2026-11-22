@@ -1081,7 +1081,7 @@ fn the_stage_draws_the_lane_over_the_pixmap() {
 }
 
 #[test]
-fn the_mix_tab_is_painted_from_its_cells() {
+fn the_mixer_tab_is_painted_from_its_cells() {
     use jodeldiplom::core::desk::{Channel, StripKind};
     let mut canvas = Canvas::new(80, 24, font_px(1.0));
     let grid = canvas.fit(1280, 800);
@@ -1120,7 +1120,8 @@ fn the_mix_tab_is_painted_from_its_cells() {
     // The cap sits on the track at 0 dB, in the accent colour (the player
     // is selected).
     let track = player.track.unwrap();
-    let row = jodeldiplom::core::desk::mouse::cap_row(track, 0.75);
+    let unity = jodeldiplom::core::desk::taper::UNITY;
+    let row = jodeldiplom::core::desk::mouse::cap_row(track, unity);
     let (x, y, w, h) = pixel_rect(&canvas, Rect::new(track.x, row, 3, 1));
     let accent = Rgb(rgb(colors::ACCENT));
     assert!((y..y + h).any(|yy| (x..x + w).any(|xx| *image.get_pixel(xx, yy) == accent)));

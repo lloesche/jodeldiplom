@@ -132,9 +132,9 @@ mod tests {
             assert!((position_at(t, cap_y(t, p)) - p).abs() < 1e-12);
         }
         assert_eq!(cap_row(t, 1.0), 10);
-        assert_eq!(cap_row(t, taper::UNITY), 15);
+        assert_eq!(cap_row(t, taper::UNITY), 14);
         assert_eq!(cap_row(t, 0.0), 30);
-        // Unity's middle is row 15's: within 0.4 rows of it, exactly 0 dB.
+        // Unity's middle is row 14's: within 0.4 rows of it, exactly 0 dB.
         let unity = cap_y(t, taper::UNITY);
         for dy in [-0.39, -0.1, 0.0, 0.2, 0.39] {
             assert_eq!(taper::db_at(position_at(t, unity + dy)), 0.0, "{dy}");
