@@ -12,15 +12,12 @@
 
 mod common;
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use common::*;
 use jodel_output::mixer::{Curve, MicPort, MicView, Monitor, Ramp, Role, Start};
-use jodel_output::{
-    Clock, Error, Input, Output, OutputTarget, StreamFormat, StreamInfo, VoiceBlock,
-};
+use jodel_output::{Clock, Error, Output, OutputTarget, StreamFormat, StreamInfo, VoiceBlock};
 
 #[test]
 fn an_inputs_position_is_what_the_device_has_played() {
@@ -235,64 +232,6 @@ fn a_seek_keeps_a_fade_under_way_and_a_pause_ends_it() {
     out.pause().unwrap();
     wait_until("it settles", || fader.settled());
     assert_eq!(fader.gain(), 0.0);
-}
-
-/// A microphone fed in real time (a [`MicFeed`] on a thread of its own,
-/// its cleaner run there too) singing `tone`, until dropped.
-struct Singer {
-    input: Input,
-    stop: Arc<AtomicBool>,
-    thread: Option<std::thread::JoinHandle<()>>,
-}
-
-impl Singer {
-    fn new(tone: fn(usize) -> f32) -> Singer {
-        let (input, mut feed) = Input::feed(48_000, 240);
-        input.set_echo_cancel(false);
-        let stop = Arc::new(AtomicBool::new(false));
-        let stopped = stop.clone();
-        let thread = std::thread::spawn(move || {
-            let start = Instant::now();
-            let mut sent = 0;
-            while !stopped.load(Ordering::Relaxed) {
-                let t = start.elapsed();
-                feed.set_time(t);
-                let due = (t.as_secs_f64() * 48_000.0) as usize;
-                while sent + 240 <= due {
-                    let packet: Vec<f32> = (sent..sent + 240).map(tone).collect();
-                    feed.push(&packet);
-                    sent += 240;
-                }
-                feed.clean();
-                std::thread::sleep(Duration::from_millis(1));
-            }
-        });
-        Singer {
-            input,
-            stop,
-            thread: Some(thread),
-        }
-    }
-
-    /// The voice given since the last call.
-    fn voice(&self) -> Vec<VoiceBlock> {
-        let mut voice = Vec::new();
-        self.input.take_voice(&mut voice);
-        voice
-    }
-}
-
-impl Drop for Singer {
-    fn drop(&mut self) {
-        self.stop.store(true, Ordering::Relaxed);
-        if let Some(t) = self.thread.take() {
-            let _ = t.join();
-        }
-    }
-}
-
-fn loud(i: usize) -> f32 {
-    0.8 * (i as f32 * 0.13).sin()
 }
 
 #[test]

@@ -98,10 +98,30 @@ impl Envelope {
         self
     }
 
-    /// Times `other`, frame by frame (over the same frames).
+    /// One less `other`'s gains (`1 − g`, frame by frame; exactly 1 where
+    /// they are 0).
+    pub(crate) fn assign_complement(&mut self, other: &Envelope) -> &mut Envelope {
+        self.flat = other.flat.map(|g| 1.0 - g);
+        if other.flat.is_none() {
+            self.each.clear();
+            self.each.extend(other.each.iter().map(|g| 1.0 - g));
+        }
+        self
+    }
+
+    /// The gain of the last frame (`n` frames in the chunk).
+    pub(crate) fn last(&self, n: usize) -> f64 {
+        self.flat
+            .unwrap_or_else(|| self.each.get(n.wrapping_sub(1)).copied().unwrap_or(0.0))
+    }
+
+    /// Times `other`, frame by frame (over the same frames). Silence times
+    /// anything stays silence, for all of the chunk: a lane at 0 is not
+    /// heard, whatever ramp runs on it.
     pub(crate) fn times(&mut self, other: &Envelope) -> &mut Envelope {
         match (self.flat, other.flat) {
-            (_, Some(1.0)) => {}
+            (_, Some(1.0)) | (Some(0.0), _) => {}
+            (_, Some(0.0)) => self.flat = Some(0.0),
             (Some(a), Some(b)) => self.flat = Some(a * b),
             (Some(a), None) => {
                 self.each.clear();
@@ -144,5 +164,13 @@ mod tests {
         assert_eq!((b.flat(), &b.each[..]), (None, &[2.0, 0.5][..]));
         b.assign(&Envelope::new(0.0));
         assert_eq!(b.flat(), Some(0.0));
+        // Silence stays flat, whatever it is multiplied by.
+        b.times(&each(&[0.5, 0.25]));
+        assert_eq!(b.flat(), Some(0.0));
+        let mut c = each(&[0.5, 0.25]);
+        c.times(&Envelope::new(0.0));
+        assert_eq!(c.flat(), Some(0.0));
+        c.assign_complement(&each(&[0.25, 1.0]));
+        assert_eq!((c.flat(), c.last(2)), (None, 0.0));
     }
 }

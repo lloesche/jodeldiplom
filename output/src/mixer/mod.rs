@@ -39,10 +39,22 @@
 //!   mixed. Each setting has one change waiting at most: a new one takes
 //!   its place ([`Strip::pending_mute`] and [`Strip::pending_level`] show
 //!   it, so a caller can toggle against what is meant).
-//! - **Bit for bit:** when one input is heard (it supplied frames, at a
-//!   gain other than 0), at gain exactly 1 with no ramp running, its
-//!   samples reach the device untouched ([`MasterView::passthrough`] says
-//!   whether the last frames did). Otherwise the inputs are summed in
+//! - **Lane inputs:** [`Mixer::input_lanes`] makes an input whose outputs
+//!   may be lane streams ([`crate::lanes`]): main on one strip, each part
+//!   on its own, with the input's fader over all of them and a fader per
+//!   part. Lanes are the units heard. The input switches between main and
+//!   the parts over [`SWITCH_FADE`] (see `parts.rs`): to the parts when
+//!   they are touched and the control word says they are there, back to
+//!   main, bit for bit, once nothing is touched and every part's ramps
+//!   have settled; across a gap in the stream (a seek, a resume, an
+//!   underrun) it keeps what it knew and is back at its aim at once.
+//!   [`Fader::at_stream`] times a change on a stream frame of the input's
+//!   output.
+//! - **Bit for bit:** when one exact lane is heard (main, or a plain
+//!   input's; it supplied frames, at a gain other than 0), at gain exactly
+//!   1 with no ramp running, its samples reach the device untouched
+//!   ([`MasterView::passthrough`] says whether the last frames did); a
+//!   part never does. Otherwise the lanes are summed in
 //!   `f64` with their gains, limited only where the sum could and does go
 //!   over full scale (a look-ahead gain envelope), and requantized once
 //!   to the device's bits with TPDF dither ([`crate::Requantizer`]); clips
@@ -81,17 +93,24 @@
 //! - **Monitor:** a [`Monitor`] sees every frame as it goes to the device
 //!   (a spectrum of what is heard).
 
+mod chunk;
 mod desk;
 mod envelope;
+mod fader;
 mod input;
 mod mic;
 mod mix;
+mod parts;
 mod ramp;
 mod run;
 mod strip;
 mod strips;
 
-pub use desk::{DeskView, InputView, MasterView, Meters, MicPort, MicView, StripView};
+pub use crate::lanes::SWITCH_FADE;
+pub use desk::{
+    DeskView, InputView, LaneView, MasterView, Meters, MicPort, MicView, PartsView, StripView,
+};
+pub use fader::{Fader, InputTarget};
 pub use ramp::{Curve, Ramp, Start};
 pub use strip::{Strip, METER_CHANNELS, STRIP_RAMP};
 
@@ -106,7 +125,8 @@ use crate::caps::Capabilities;
 use crate::error::Error;
 use crate::input::Input;
 use crate::output::{Clock, OpenRequest, Output, OutputTarget, StreamInfo};
-use input::ask;
+use fader::SlotState;
+use ramp::GainId;
 use strip::{Change, Entry, Peaks, StripState};
 
 /// How a [`Mixer`] runs its device.
@@ -200,9 +220,10 @@ pub(crate) enum Msg {
         on: bool,
     },
     StripGone(u64),
+    /// An input on the strips `lanes` (main's first).
     Slot {
         id: u64,
-        strip: u64,
+        lanes: Vec<u64>,
         gain: f64,
         state: Arc<SlotState>,
     },
@@ -222,13 +243,13 @@ pub(crate) enum Msg {
         done: Sender<Result<(), Error>>,
     },
     Ramp {
-        slot: u64,
+        gain: GainId,
         ramp: Ramp,
     },
     Crossfade {
-        into: u64,
+        into: GainId,
         start: Start,
-        out: Vec<u64>,
+        out: Vec<GainId>,
         over: Duration,
     },
     Mic(Option<Input>),
@@ -255,6 +276,9 @@ pub(crate) struct MixShared {
     limited: AtomicBool,
     /// What goes to the device.
     peaks: Peaks,
+    /// The device's opening (its epoch), as [`Timebase::epoch`], for the
+    /// handles to read without the clock's lock.
+    pub(crate) epoch: AtomicU64,
     /// The ids of strips, inputs and outputs given out.
     ids: AtomicU64,
     /// The strips and their inputs, by id (the handles keep it).
@@ -281,37 +305,6 @@ impl MixShared {
 
     pub(crate) fn strips(&self) -> MutexGuard<'_, BTreeMap<u64, Entry>> {
         lock(&self.strips)
-    }
-}
-
-/// What the mixer thread publishes about an input.
-pub(crate) struct SlotState {
-    pub(crate) role: Role,
-    /// Its controllers' gain at the last frame mixed (f64 bits).
-    pub(crate) gain: AtomicU64,
-    /// How many ramps the mixer had taken when it last had none running
-    /// or waiting.
-    pub(crate) settled: AtomicU64,
-    /// It was heard in the last chunk mixed.
-    pub(crate) heard: AtomicBool,
-    /// Its output's format (see [`desk::pack_format`]; 0: none), the frames
-    /// queued in its ring, and the ring's capacity.
-    pub(crate) format: AtomicU64,
-    pub(crate) queued: AtomicU64,
-    pub(crate) capacity: AtomicU64,
-}
-
-impl SlotState {
-    fn new(role: Role, gain: f64) -> SlotState {
-        SlotState {
-            role,
-            gain: AtomicU64::new(gain.to_bits()),
-            settled: AtomicU64::new(0),
-            heard: AtomicBool::new(false),
-            format: AtomicU64::new(0),
-            queued: AtomicU64::new(0),
-            capacity: AtomicU64::new(0),
-        }
     }
 }
 
@@ -365,52 +358,6 @@ impl Mixer {
         Strip::new(id, self.tx.clone(), self.shared.clone(), name, parent)
     }
 
-    /// A new input on `strip` (one of this mixer's) at `gain`: where one
-    /// player opens its outputs, and its fader.
-    pub fn input(&self, strip: &Strip, role: Role, gain: f64) -> (InputTarget, Fader) {
-        assert!(
-            Arc::ptr_eq(&strip.handle.shared, &self.shared),
-            "a strip of another mixer"
-        );
-        let id = self.shared.ids.fetch_add(1, Ordering::Relaxed);
-        let state = Arc::new(SlotState::new(role, gain));
-        if let Some(entry) = self.shared.strips().get_mut(&strip.handle.id) {
-            entry.inputs.insert(id, state.clone());
-        }
-        let _ = self.tx.send(Msg::Slot {
-            id,
-            strip: strip.handle.id,
-            gain,
-            state: state.clone(),
-        });
-        let slot = Arc::new(SlotHandle {
-            id,
-            tx: self.tx.clone(),
-            state,
-            ramps: AtomicU64::new(0),
-            name: self.name.clone(),
-            closed: AtomicBool::new(false),
-            strip: strip.clone(),
-        });
-        (InputTarget { slot: slot.clone() }, Fader { slot })
-    }
-
-    /// An equal-power crossfade over `over`: `into` rises to 1 from `start`
-    /// (as [`Fader::set`] would), and every one of `out` falls to 0 from
-    /// the very frame it starts at. Should `into` get another ramp before
-    /// it starts, `out` keep their gains.
-    pub fn crossfade(&self, into: &Fader, start: Start, out: &[&Fader], over: Duration) {
-        for f in out.iter().chain([&into]) {
-            f.slot.ramps.fetch_add(1, Ordering::AcqRel);
-        }
-        let _ = self.tx.send(Msg::Crossfade {
-            into: into.slot.id,
-            start,
-            out: out.iter().map(|f| f.slot.id).collect(),
-            over,
-        });
-    }
-
     /// The clock, as of the last frames mixed: what a [`Ramp`] is timed
     /// on (a cheaper look than [`Mixer::desk`], which has it too).
     pub fn timebase(&self) -> Timebase {
@@ -436,107 +383,5 @@ impl Drop for Mixer {
         if let Some(thread) = self.thread.take() {
             let _ = thread.join();
         }
-    }
-}
-
-/// What an input's target and faders share.
-struct SlotHandle {
-    id: u64,
-    tx: Sender<Msg>,
-    state: Arc<SlotState>,
-    /// Ramps set on it.
-    ramps: AtomicU64,
-    name: String,
-    /// Forgotten already ([`Fader::close`]).
-    closed: AtomicBool,
-    /// Its strip, kept while it lives.
-    strip: Strip,
-}
-
-impl SlotHandle {
-    /// Has the mixer forget the input, once.
-    fn forget(&self) {
-        if !self.closed.swap(true, Ordering::AcqRel) {
-            let shared = &self.strip.handle.shared;
-            if let Some(entry) = shared.strips().get_mut(&self.strip.handle.id) {
-                entry.inputs.remove(&self.id);
-            }
-            let _ = self.tx.send(Msg::Forget(self.id));
-        }
-    }
-}
-
-impl Drop for SlotHandle {
-    fn drop(&mut self) {
-        self.forget();
-    }
-}
-
-/// Where one player opens its outputs on an input of a [`Mixer`] (one at a
-/// time: opening another closes the one before).
-pub struct InputTarget {
-    slot: Arc<SlotHandle>,
-}
-
-impl OutputTarget for InputTarget {
-    fn name(&self) -> String {
-        self.slot.name.clone()
-    }
-
-    /// What the input takes, fixed when first asked: a Lead the device's
-    /// capabilities; a guest exactly the device's format while it is open,
-    /// else the device's capabilities.
-    fn capabilities(&mut self) -> Result<Capabilities, Error> {
-        let slot = self.slot.id;
-        ask(&self.slot.tx, |done| Msg::Capabilities { slot, done })?
-    }
-
-    fn open(&mut self, request: &OpenRequest) -> Result<Box<dyn Output>, Error> {
-        let (slot, request) = (self.slot.id, request.clone());
-        ask(&self.slot.tx, |done| Msg::Open {
-            slot,
-            request,
-            done,
-        })?
-    }
-}
-
-/// An input's gain, the controllers' (its strip's is the user's). Clones
-/// are the same fader.
-#[derive(Clone)]
-pub struct Fader {
-    slot: Arc<SlotHandle>,
-}
-
-impl Fader {
-    /// Changes the gain (see [`Ramp`]), in place of a ramp still waiting
-    /// to start. Never blocks.
-    pub fn set(&self, ramp: Ramp) {
-        self.slot.ramps.fetch_add(1, Ordering::AcqRel);
-        let _ = self.slot.tx.send(Msg::Ramp {
-            slot: self.slot.id,
-            ramp,
-        });
-    }
-
-    /// The gain at the last frame mixed.
-    pub fn gain(&self) -> f64 {
-        f64::from_bits(self.slot.state.gain.load(Ordering::Acquire))
-    }
-
-    /// Whether the last ramp set has run to its end (one waiting for its
-    /// start has not).
-    pub fn settled(&self) -> bool {
-        self.slot.state.settled.load(Ordering::Acquire) == self.slot.ramps.load(Ordering::Acquire)
-    }
-
-    /// Shuts the input now, while its target may still be held (by a
-    /// player on its way out): its output closes ([`Error::Closed`]), and
-    /// so does the device when that was the last, and every later open or
-    /// question on its [`InputTarget`] fails with [`Error::Closed`], so it
-    /// can never take the device again. Ramps set after it do nothing; the
-    /// gain stays at its last value.
-    pub fn close(&self) {
-        self.slot.forget();
     }
 }

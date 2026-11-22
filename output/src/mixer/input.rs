@@ -29,6 +29,8 @@ pub(crate) struct Link {
 /// An output open on an input, as the mixer thread drains it.
 pub(crate) struct Stream {
     pub(crate) link: Arc<Link>,
+    /// The lanes of each frame (1: a plain stream; see [`crate::lanes`]).
+    pub(crate) lanes: u16,
     /// This chunk: taken from (it was running), and the frames it gave.
     pub(crate) taken: bool,
     pub(crate) got: u64,
@@ -42,9 +44,10 @@ pub(crate) struct Stream {
 }
 
 impl Stream {
-    pub(crate) fn new(link: Arc<Link>) -> Stream {
+    pub(crate) fn new(link: Arc<Link>, lanes: u16) -> Stream {
         Stream {
             link,
+            lanes,
             taken: false,
             got: 0,
             bytes: Vec::new(),
@@ -54,17 +57,13 @@ impl Stream {
         }
     }
 
-    /// Takes the chunk of `n` frames in `format` that goes to the device
-    /// from device frame `first` into `samples` (silence for what it lacks,
-    /// or all of it when it is not running or a flush keeps the mixer out).
-    /// Returns, when it was rendered, its stream frame there and the frames
-    /// it gave.
-    pub(crate) fn take(
-        &mut self,
-        n: usize,
-        format: StreamFormat,
-        first: u64,
-    ) -> Option<(u64, u64)> {
+    /// Takes the chunk of `n` frames that goes to the device from device
+    /// frame `first` into `samples`, in its ring's format (every lane of a
+    /// lane stream; silence for what it lacks, or all of it when it is not
+    /// running or a flush keeps the mixer out). Returns, when it was
+    /// rendered, its stream frame there and the frames it gave.
+    pub(crate) fn take(&mut self, n: usize, first: u64) -> Option<(u64, u64)> {
+        let format = self.link.shared.format;
         self.taken = self.link.running.load(Ordering::SeqCst);
         self.got = 0;
         if !self.taken {

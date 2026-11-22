@@ -50,7 +50,31 @@ in a requested format is an error.
   the old one back, so it is dropped on the caller's thread. An output keeps
   its tap until it closes; set it again after a reopen.
 - `OutputTarget`: something outputs are opened on (`name`, `capabilities`,
-  `open`): a device, a mixer's input, a test's memory.
+  `open`, and `lanes`, 1 unless it takes lane streams): a device, a
+  mixer's input, a test's memory.
+- **Lanes** (`jodel_output::lanes`): one stream carrying a player's outputs
+  side by side, so they share one ring, one write head and one timeline (a
+  seek, a flush, a retract act on all of them). `OpenRequest::lanes(n)`
+  asks for `n` (1, a plain stream, by default); `Output::lanes()` says what
+  an output took. A frame of `n > 1` lanes at `channels` channels is
+  `lane_width(channels, n)` = `channels × n + 1` samples:
+  `[main ch…][part 1 ch…]…[part n-1 ch…][control]`. Main is the player's
+  output as it would be alone (the file, bit for bit); the parts together
+  make it (stems; the crate knows them only by number) and are never passed
+  through; the control word is a `Parts` (`None` 0, `Present` 1, `Ending`
+  2): whether the parts are valid on that frame. The ring holds lane
+  streams in `LANE_SAMPLE` (S24-in-32) whatever the device's format, so main
+  reaches the device exactly as from a stream of its own; `Output::format`
+  stays the device's (what main is written for), and `Core` strides and
+  packs by the ring's format (`PackMode::Exact` checks main against the
+  device's format too: it may reach the device as written). Every target
+  checks the lanes it is asked for (`OpenRequest::check_lanes(offered)`):
+  a device takes one, and more is `InvalidArgument`, as from
+  `FileOutput::open`; `FileOutput::open_lanes` takes any and plays the
+  wide stream as written, so a test sees every lane. `SWITCH_FADE` (10 ms)
+  is how long a mixer switches between main and the parts, and
+  `ending_frames(rate)` how long after a frame that says `Ending` the
+  writer keeps the parts valid (rounded as the mixer rounds its ramps).
 - `Requantizer`: requantization to 24 bits (or 16, `quantize_to`) with
   TPDF dither (±1 LSB), saturating and counting clips; the mixer's, and
   the playback engine's resampler and lossy sources.
@@ -78,8 +102,15 @@ its `StreamInfo` carries the device's backend, exclusive flag and latency.
   output short of frames is silence for the rest of it (its underrun).
   One that plays only what it is given (a file, a test's memory) gets a
   period once every running output holds one, or is draining; so the
-  tests run the same path. With nothing running the thread sleeps until
-  an output starts (or a handle asks something).
+  tests run the same path. On it, a period no output gave a frame to is
+  not mixed: the outputs it was sized for stopped since (closed, paused or
+  flushed between the mixer's look at their rings and its take), and
+  mixing it would play a period of silence as if written. With nothing
+  running the thread sleeps until an output starts (or a handle asks
+  something). A device opening has nothing mixed on it yet, so a strip's
+  or a fader's ramp under way or due now ends there at once (a mute set
+  before the first audio is in force from its first frame); a fader's ramp
+  a crossfade's other side waits on keeps waiting.
 - **Two gains:** an input is heard at its fader's gain (the controllers':
   a preview's crossfade) times its strip's (the user's:
   `Strip::set_level(gain)` linear, `set_mute(bool)`, `set_solo(bool)`,
@@ -113,11 +144,48 @@ its `StreamInfo` carries the device's backend, exclusive flag and latency.
   writes what it sets at once; the mixer thread writes each setting again
   as it takes a change of it, so they end as the mixer has them (a start
   that never comes takes its change off again).
-- **Bit for bit:** an input is heard when it supplied frames at a gain
-  other than 0. When one is heard at gain exactly 1 (fader times strip)
-  with no ramp running, its samples go to the device untouched (a starved
-  or silent input changes nothing); `Mixer::passthrough()` says whether
-  the last frames did. Otherwise the sum is in `f64`, then a look-ahead
+- **Lane inputs:** `mixer.input_lanes(&main, &[&part, …], role, gain)`
+  gives the target, the input's fader (over every lane: a duck) and one
+  fader per part (the controllers' gain of that part); `mixer.input` is the
+  one-lane case. Every part's strip is a child of main's (D3: main's group
+  level and mute act on the parts as on main). The target offers
+  `lanes()` = 1 + the parts and opens 1 lane (main alone) or all of them; a
+  plain input refuses more than one.
+  Lanes are the units heard: main is heard at the input's fader ×
+  (1 − s) × its strip's path, part k at the input's fader × s × part k's
+  fader × its strip's path, where `s` is the switch between main and the
+  parts, linear over `SWITCH_FADE` (10 ms: main and the parts' sum are the
+  same signal, so equal power would bump). `s` goes to 1 when the parts are
+  touched (a part's fader target times its strip's own level and mute is
+  not 1, or its strip's solo gate is not main's) and the control word says
+  `Present`; it comes back to 0 only once nothing is touched and every
+  part's ramps (its fader's, its strip's, main's strip's) have settled by
+  the end of a period, which is how main returns bit for bit. From a frame
+  that says `Ending` it fades to 0 (the writer keeps the parts valid that
+  long); on one that says `None` it is 0 at once. The control word's
+  changes, and the parts touched (by a strip's change landing, a fader's
+  ramp starting), land on their very frame inside the period mixed. A
+  frame the stream does not supply (not running, kept out by a flush, run
+  dry) has no word: nothing of the input is heard there and the switch
+  keeps what it knew; on the first frame after such a gap (a seek, a
+  resume, a new output, an underrun, the very first) `s` is at its aim at
+  once, so a stem muted stays muted across a seek. While `s` is 0 and the
+  parts are present, each part's strip still meters its part (at what it
+  would be heard at switched in), and its group meters main alone.
+  `Fader::at_stream(stream_frame)` is the `Start` of that frame of its
+  input's output, as it plays now: the input's map (the same from any of
+  its faders) of where its last frames mixed went on the device, read
+  through a sequence lock; `Start::Now` until frames of the output are
+  mixed after it is opened or flushed.
+- **Bit for bit:** a lane is heard when it supplied frames at a gain other
+  than 0 (a lane at 0 for the whole period is not, whatever ramp runs
+  under it). When one exact lane is heard (main, or a plain input's) at
+  gain exactly 1 (faders, switch and strip path) with no ramp running, its
+  samples go to the device untouched (a starved or silent input changes
+  nothing); a part never does, so an S16 device gets parts mixed and
+  dithered while main, 16-bit content in its S24-in-32 lane, still passes
+  through exactly. `Mixer::passthrough()` says whether the last frames
+  did. Otherwise the sum is in `f64`, then a look-ahead
   limiter (2 ms; it holds that much back while mixing) turns the gain down
   smoothly where the sum would go over full scale, only where the gains
   add up to more than 1 (a lone fade is never touched); then one
@@ -129,16 +197,18 @@ its `StreamInfo` carries the device's backend, exclusive flag and latency.
   device's name and `StreamInfo`, or none while closed; the `Timebase`,
   passthrough, clips), the strips in the order made, a group before its
   children (id, name, parent, the level, mute and solo in force, and each
-  input's role, fader gain, whether it was heard, its
-  output's format, ring fill and capacity), and the microphone's port
+  input's role, fader gain, whether it was heard, its lanes as
+  `LaneView { strip, gain, heard }` (the gain each was heard at), the
+  switch of one with parts as `PartsView { state, share }`, its output's
+  format, ring fill and capacity), and the microphone's port
   (`MicView { port, refused }`). The per-input state, passthrough and clips
   are atomics; the clock sits behind a lock the mixer takes every turn for
   an instant, what the device runs at and the microphone's port behind
   locks of their own, taken only when they change; the strips' list is the
   handles' own.
 - **Meters:** `Mixer::meters()` takes the peaks since the last look: per
-  channel of what goes to the device, and of each strip's subtree (its
-  inputs and its children's) summed after their gains (by strip id), with
+  channel of what goes to the device, and of each strip's subtree (the
+  lanes on it and on its children) summed after their gains (by strip id), with
   whether the limiter acted. Peaks are
   linear (1.0: full scale), up to 8 channels (`METER_CHANNELS`); the mixer
   raises them with `fetch_max` in atomics and a look takes them with
@@ -352,7 +422,35 @@ subtree, and a change to where a strip is keeping its path flat;
 line up exactly, the tests run on
 a device that takes what it is given at once, with outputs started short
 of a period, so the mixer waits for all of them; `tests/common` holds the
-simulated device and the helpers both files use.
+simulated device (in any sample format), the microphone fed in real time
+and the helpers the files share. `tests/lanes.rs` writes a lane stream
+(main `x`, each of four parts `x/4`, a control word per test): untouched
+with the parts present, the device gets main bit for bit; a part's strip
+muted switches to the parts' sum from that frame (the switch and the
+part's ramp as computed), and unmuted, the switch holds until the part's
+ramp has settled and then main is bit for bit again; a part's strip at
+-6 dB is heard at it; the control word's `None` (main however touched),
+`Present` off a period (the switch from that very frame) and `Ending`
+(back to main over 10 ms, then bit for bit); the input's fader scales
+main and the parts; a part's fader below 1 switches, and back at 1 main
+returns; a flush, a retract and a pause act on every lane; the
+microphone is told the lane stream's frames; on a 16-bit device a soloed
+part is requantized and dithered at 16 bits while main passes through
+exactly; and `Fader::at_stream` gives the device frame of a stream frame
+4 800 frames behind, on which a group mute starts. The units in
+`mixer/parts.rs` run the switch over the control word's frames (and
+`Ending` then `Present` again), hold it until the parts have settled, and
+keep it across a gap in the stream, back at its aim at once; `lanes.rs`
+checks the frame layout and `ending_frames`. Also in `tests/lanes.rs`: a
+part touched from the first frame, across a pause, a flush and a new output
+(real time) and across an underrun in the middle of the switch, never lets
+a frame of main through; `Ending` then `Present` again switches back in;
+on a 16-bit device main is bit for bit again once a solo is released;
+mono and odd lane widths (1, 2 and 3 channels; 1 to 4 parts); the parts'
+strips meter the parts while main is heard; targets refuse lanes they do
+not take; a part's strip must be a child of main's; `at_stream` is `Now`
+after a flush until frames are mixed again; and a level and a fade set
+before the device opens are in force from its first frame.
 `tests/mic.rs` runs the microphone path on it: a tap (a probe, a microphone
 tapped and singing, its canceller on or off, or none) never changes a byte,
 in every format; a `MicFeed` tone comes out of the cleaner as it came in,

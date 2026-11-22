@@ -3,6 +3,7 @@
 use crate::caps::Capabilities;
 use crate::error::Error;
 use crate::format::{SampleFormat, StreamFormat};
+use crate::lanes::lane_format;
 use crate::pack::{pack, PackMode, PackReport};
 use crate::shared::Shared;
 use crate::tap::Tap;
@@ -35,6 +36,10 @@ pub struct OpenRequest {
     /// Defaults to [`PackMode::Saturate`] (clamped and counted in
     /// [`Stats`]).
     pub pack_mode: PackMode,
+    /// The lanes written side by side (see [`crate::lanes`]): 1, a plain
+    /// stream (the default), or what the target offers
+    /// ([`OutputTarget::lanes`]). `channels` are each lane's.
+    pub lanes: u16,
 }
 
 impl OpenRequest {
@@ -48,6 +53,7 @@ impl OpenRequest {
             buffer: Duration::from_millis(500),
             prefill: Duration::from_millis(100),
             pack_mode: PackMode::Saturate,
+            lanes: 1,
         }
     }
 
@@ -81,6 +87,26 @@ impl OpenRequest {
         self
     }
 
+    /// Sets the lanes (see [`OpenRequest::lanes`]).
+    pub fn lanes(mut self, lanes: u16) -> Self {
+        self.lanes = lanes;
+        self
+    }
+
+    /// Whether a target offering `offered` lanes ([`OutputTarget::lanes`])
+    /// can open this request: [`Error::InvalidArgument`] for more lanes than
+    /// it offers. Every target checks it as it opens.
+    pub fn check_lanes(&self, offered: u16) -> Result<(), Error> {
+        if self.lanes > offered.max(1) {
+            return Err(Error::InvalidArgument(format!(
+                "{} lanes asked of a target that takes {}",
+                self.lanes,
+                offered.max(1)
+            )));
+        }
+        Ok(())
+    }
+
     pub(crate) fn validate(&self) -> Result<(), Error> {
         if self.rate == 0 || self.channels == 0 {
             return Err(Error::InvalidArgument(
@@ -89,6 +115,11 @@ impl OpenRequest {
         }
         if self.formats.is_empty() {
             return Err(Error::InvalidArgument("no sample formats to try".into()));
+        }
+        if self.lanes == 0 {
+            return Err(Error::InvalidArgument(
+                "a stream has one lane or more".into(),
+            ));
         }
         Ok(())
     }
@@ -174,7 +205,15 @@ pub trait Output: Send {
         self.info().format
     }
 
-    /// Queues `samples` (whole frames). Blocks while the ring is full, up to
+    /// The lanes each frame written holds (see [`crate::lanes`]): 1 for a
+    /// plain stream, whose frames are [`Output::format`]'s channels.
+    fn lanes(&self) -> u16 {
+        1
+    }
+
+    /// Queues `samples` (whole frames: [`Output::format`]'s channels each,
+    /// or [`crate::lanes::lane_width`] of them for a stream of more than
+    /// one lane). Blocks while the ring is full, up to
     /// `timeout` (`None`: until everything is queued), and returns the
     /// frames queued. It returns early, with what fitted, while paused.
     ///
@@ -259,6 +298,12 @@ pub trait OutputTarget: Send {
 
     /// Opens an output for `request`.
     fn open(&mut self, request: &OpenRequest) -> Result<Box<dyn Output>, Error>;
+
+    /// The most lanes an output opened on it takes ([`OpenRequest::lanes`]):
+    /// 1 unless it says more.
+    fn lanes(&mut self) -> u16 {
+        1
+    }
 }
 
 /// A read-only, cloneable view of an output's clock and counters, for
@@ -266,6 +311,7 @@ pub trait OutputTarget: Send {
 #[derive(Clone)]
 pub struct Clock {
     shared: Arc<Shared>,
+    format: StreamFormat,
 }
 
 impl Clock {
@@ -279,9 +325,9 @@ impl Clock {
         self.shared.written()
     }
 
-    /// The stream format.
+    /// The stream format (as [`Output::format`]).
     pub fn format(&self) -> StreamFormat {
-        self.shared.format
+        self.format
     }
 
     /// Counters since open.
@@ -319,11 +365,15 @@ pub(crate) trait Driver: Send {
 }
 
 /// The handle logic shared by every output: packing, backpressure, start
-/// threshold, pause state, drain and close.
+/// threshold, pause state, drain and close. Frames are written and packed
+/// in the ring's format (`shared.format`): the device's, or a lane
+/// stream's ([`crate::lanes`]).
 pub(crate) struct Core {
     pub(crate) shared: Arc<Shared>,
     driver: Box<dyn Driver>,
     info: StreamInfo,
+    /// The lanes of each frame (1 unless the ring is a lane stream's).
+    lanes: u16,
     mode: PackMode,
     prefill: u64,
     running: bool,
@@ -344,10 +394,15 @@ impl Core {
             .duration_to_frames(request.prefill)
             .max(1)
             .min(shared.ring.capacity());
+        // The opener checked the lanes against what it offers
+        // ([`OpenRequest::check_lanes`]) and made the ring for them.
+        let lanes = request.lanes;
+        debug_assert_eq!(shared.format, lane_format(info.format, lanes));
         Core {
             shared,
             driver,
             info,
+            lanes,
             mode: request.pack_mode,
             prefill,
             running: false,
@@ -385,8 +440,8 @@ impl Core {
     }
 
     fn push(&mut self, samples: &[i32]) -> Result<(), Error> {
-        let ch = self.info.format.channels as usize;
-        let sample = self.info.format.sample;
+        let ch = usize::from(self.shared.format.channels);
+        let sample = self.shared.format.sample;
         let frames = (samples.len() / ch) as u64;
         let mode = self.mode;
         let report = self.shared.ring.push_with(frames, |a, b| {
@@ -407,9 +462,13 @@ impl Output for Core {
         &self.info
     }
 
+    fn lanes(&self) -> u16 {
+        self.lanes
+    }
+
     fn write(&mut self, samples: &[i32], timeout: Option<Duration>) -> Result<usize, Error> {
         self.usable()?;
-        let ch = self.info.format.channels as usize;
+        let ch = usize::from(self.shared.format.channels);
         if samples.len() % ch != 0 {
             return Err(Error::InvalidArgument(format!(
                 "{} samples is not a whole number of {ch}-channel frames",
@@ -417,8 +476,17 @@ impl Output for Core {
             )));
         }
         if self.mode == PackMode::Exact {
-            // Check everything first so a failing call queues nothing.
-            crate::pack::check(samples, self.info.format.sample)?;
+            // Check everything first so a failing call queues nothing: a
+            // lane stream's main against the device's format (it may reach
+            // the device as written), every sample against the ring's.
+            crate::pack::check(samples, self.shared.format.sample)?;
+            if self.lanes > 1 {
+                let main = usize::from(self.info.format.channels);
+                for (f, frame) in samples.chunks_exact(ch).enumerate() {
+                    crate::pack::check(&frame[..main], self.info.format.sample)
+                        .map_err(|e| e.at(f * ch))?;
+                }
+            }
         }
         let total = samples.len() / ch;
         let deadline = timeout.map(|t| Instant::now() + t);
@@ -568,6 +636,7 @@ impl Output for Core {
     fn clock(&self) -> Clock {
         Clock {
             shared: self.shared.clone(),
+            format: self.info.format,
         }
     }
 
@@ -608,6 +677,9 @@ macro_rules! forward_output {
     ($field:ident) => {
         fn info(&self) -> &$crate::output::StreamInfo {
             $crate::output::Output::info(&self.$field)
+        }
+        fn lanes(&self) -> u16 {
+            $crate::output::Output::lanes(&self.$field)
         }
         fn write(
             &mut self,

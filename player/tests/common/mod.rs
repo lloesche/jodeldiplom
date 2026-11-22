@@ -490,6 +490,8 @@ pub fn fill_desk(state: &mut State, rate: u32) {
         role,
         gain,
         heard: gain > 0.0,
+        lanes: Vec::new(),
+        parts: None,
         format: Some(format),
         queued,
         capacity: 65_536,

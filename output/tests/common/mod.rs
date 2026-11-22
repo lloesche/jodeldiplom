@@ -3,25 +3,29 @@
 
 #![allow(dead_code)]
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use jodel_output::mixer::{InputTarget, Mixer, MixerOptions};
 use jodel_output::pack::unpack;
 use jodel_output::{
-    Capabilities, Clock, Error, FileOutput, MemorySink, OpenRequest, Output, OutputTarget,
-    SampleFormat, SimClock, StreamFormat,
+    Capabilities, Clock, Error, FileOutput, Input, MemorySink, OpenRequest, Output, OutputTarget,
+    SampleFormat, SimClock, StreamFormat, VoiceBlock,
 };
 
 pub const RATE: u32 = 48_000;
 pub const FORMAT: SampleFormat = SampleFormat::S32;
 
 /// A device that keeps what it played: every stream opened, with its
-/// clock. In real time, or (`instant`) taking what it is given at once.
+/// clock. In real time, or (`instant`) taking what it is given at once; in
+/// [`FORMAT`], or `sample` when given; stereo, or `channels` when given.
 #[derive(Clone, Default)]
 pub struct Device {
     pub streams: Arc<Mutex<Vec<(MemorySink, Clock)>>>,
     pub instant: bool,
+    pub sample: Option<SampleFormat>,
+    pub channels: Option<u16>,
 }
 
 impl OutputTarget for Device {
@@ -32,7 +36,7 @@ impl OutputTarget for Device {
     fn capabilities(&mut self) -> Result<Capabilities, Error> {
         Ok([RATE, 96_000]
             .into_iter()
-            .map(|r| StreamFormat::new(r, 2, FORMAT))
+            .map(|r| StreamFormat::new(r, self.channels(), self.format()))
             .collect())
     }
 
@@ -51,12 +55,22 @@ impl OutputTarget for Device {
 }
 
 impl Device {
+    /// Its sample format.
+    pub fn format(&self) -> SampleFormat {
+        self.sample.unwrap_or(FORMAT)
+    }
+
+    /// Its channels.
+    pub fn channels(&self) -> u16 {
+        self.channels.unwrap_or(2)
+    }
+
     /// The left channel of stream `i`.
     pub fn left(&self, i: usize) -> Vec<i32> {
         let (sink, _) = self.streams.lock().unwrap()[i].clone();
-        unpack(&sink.bytes(), FORMAT)
+        unpack(&sink.bytes(), self.format())
             .into_iter()
-            .step_by(2)
+            .step_by(usize::from(self.channels()))
             .collect()
     }
 
@@ -137,6 +151,13 @@ pub fn wait_until(what: &str, done: impl Fn() -> bool) {
     }
 }
 
+/// Returns once the mixer has taken everything sent to it before (a
+/// question asked of it through `target` comes after them): what is
+/// written next is mixed after the changes set so far.
+pub fn taken(target: &mut InputTarget) {
+    target.capabilities().unwrap();
+}
+
 pub fn frames_of(n: u64) -> Duration {
     Duration::from_secs_f64(n as f64 / f64::from(RATE))
 }
@@ -189,4 +210,62 @@ pub fn plateaus(left: &[i32], levels: &[i32], outer: i32) -> (Vec<i32>, i32) {
         .max()
         .unwrap_or(0);
     (runs.iter().map(|r| r.0).collect(), step)
+}
+
+/// A microphone fed in real time (a [`MicFeed`] on a thread of its own,
+/// its cleaner run there too) singing `tone`, until dropped.
+pub struct Singer {
+    pub input: Input,
+    stop: Arc<AtomicBool>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+impl Singer {
+    pub fn new(tone: fn(usize) -> f32) -> Singer {
+        let (input, mut feed) = Input::feed(48_000, 240);
+        input.set_echo_cancel(false);
+        let stop = Arc::new(AtomicBool::new(false));
+        let stopped = stop.clone();
+        let thread = std::thread::spawn(move || {
+            let start = Instant::now();
+            let mut sent = 0;
+            while !stopped.load(Ordering::Relaxed) {
+                let t = start.elapsed();
+                feed.set_time(t);
+                let due = (t.as_secs_f64() * 48_000.0) as usize;
+                while sent + 240 <= due {
+                    let packet: Vec<f32> = (sent..sent + 240).map(tone).collect();
+                    feed.push(&packet);
+                    sent += 240;
+                }
+                feed.clean();
+                std::thread::sleep(Duration::from_millis(1));
+            }
+        });
+        Singer {
+            input,
+            stop,
+            thread: Some(thread),
+        }
+    }
+
+    /// The voice given since the last call.
+    pub fn voice(&self) -> Vec<VoiceBlock> {
+        let mut voice = Vec::new();
+        self.input.take_voice(&mut voice);
+        voice
+    }
+}
+
+impl Drop for Singer {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+        if let Some(t) = self.thread.take() {
+            let _ = t.join();
+        }
+    }
+}
+
+pub fn loud(i: usize) -> f32 {
+    0.8 * (i as f32 * 0.13).sin()
 }

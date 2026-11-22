@@ -5,8 +5,10 @@
 
 use std::sync::atomic::Ordering;
 
+use super::fader::SlotState;
 use super::{Mixer, Role, Timebase};
 use crate::format::{SampleFormat, StreamFormat};
+use crate::lanes::Parts;
 use crate::output::StreamInfo;
 
 /// The desk as it stands: the master (the device), the strips with their
@@ -59,23 +61,50 @@ pub struct StripView {
     pub inputs: Vec<InputView>,
 }
 
-/// An input of a strip.
+/// An input of a strip (listed on its main lane's strip).
 #[derive(Clone, Debug, PartialEq)]
 pub struct InputView {
     /// What it is to the device's format.
     pub role: Role,
-    /// Its controllers' gain (its [`super::Fader`]'s), at the last frame
+    /// Its controllers' gain (its own [`super::Fader`]'s), at the last frame
     /// mixed.
     pub gain: f64,
-    /// It was heard in the last frames mixed: it supplied frames at a gain
-    /// other than 0.
+    /// A lane of it was heard in the last frames mixed: it supplied frames
+    /// at a gain other than 0.
     pub heard: bool,
+    /// Its lanes: main, then its parts (one for a plain input).
+    pub lanes: Vec<LaneView>,
+    /// An input with parts: its switch between main and them.
+    pub parts: Option<PartsView>,
     /// The format of the output open on it (`None`: none).
     pub format: Option<StreamFormat>,
     /// Frames queued in that output's ring.
     pub queued: u64,
     /// The ring's capacity in frames.
     pub capacity: u64,
+}
+
+/// A lane of an input.
+#[derive(Clone, Debug, PartialEq)]
+pub struct LaneView {
+    /// The strip it is on ([`StripView::id`]).
+    pub strip: u64,
+    /// The gain it was heard at (all of its faders, the switch and its
+    /// strip's path), at the last frame mixed.
+    pub gain: f64,
+    /// It was heard in the last frames mixed.
+    pub heard: bool,
+}
+
+/// The switch of an input with parts between main and them
+/// ([`super::SWITCH_FADE`]).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PartsView {
+    /// The control word of the last frame mixed.
+    pub state: Parts,
+    /// The parts' share at the last frame mixed: 0, main alone; 1, the
+    /// parts alone.
+    pub share: f64,
 }
 
 /// The microphone's port: a microphone is only listened to. Its tap on the
@@ -147,6 +176,32 @@ pub(crate) fn unpack_format(word: u64) -> Option<StreamFormat> {
     Some(StreamFormat::new(word as u32, (word >> 32) as u16, sample))
 }
 
+/// An input as its state stands.
+fn input_view(i: &SlotState) -> InputView {
+    let bits = |a: &std::sync::atomic::AtomicU64| f64::from_bits(a.load(Ordering::Acquire));
+    InputView {
+        role: i.role,
+        gain: bits(&i.faders[0].gain),
+        heard: i.heard.load(Ordering::Relaxed),
+        lanes: i
+            .lanes
+            .iter()
+            .map(|l| LaneView {
+                strip: l.strip,
+                gain: bits(&l.gain),
+                heard: l.heard.load(Ordering::Relaxed),
+            })
+            .collect(),
+        parts: i.parts.as_ref().map(|p| PartsView {
+            state: Parts::from_word(i32::from(p.control.load(Ordering::Relaxed))),
+            share: bits(&p.share),
+        }),
+        format: unpack_format(i.format.load(Ordering::Relaxed)),
+        queued: i.queued.load(Ordering::Relaxed),
+        capacity: i.capacity.load(Ordering::Relaxed),
+    }
+}
+
 impl Mixer {
     /// The desk as it stands, gathered from what the mixer thread
     /// publishes. Looking changes nothing (the meters are
@@ -165,18 +220,7 @@ impl Mixer {
                     level: st.level(),
                     mute: st.mute(),
                     solo: st.solo(),
-                    inputs: entry
-                        .inputs
-                        .values()
-                        .map(|i| InputView {
-                            role: i.role,
-                            gain: f64::from_bits(i.gain.load(Ordering::Acquire)),
-                            heard: i.heard.load(Ordering::Relaxed),
-                            format: unpack_format(i.format.load(Ordering::Relaxed)),
-                            queued: i.queued.load(Ordering::Relaxed),
-                            capacity: i.capacity.load(Ordering::Relaxed),
-                        })
-                        .collect(),
+                    inputs: entry.inputs.values().map(|i| input_view(i)).collect(),
                 }
             })
             .collect();

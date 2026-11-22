@@ -13,14 +13,7 @@ mod common;
 
 use common::*;
 use jodel_output::mixer::{InputTarget, Mixer, Role, Start};
-use jodel_output::{Output, OutputTarget};
-
-/// Returns once the mixer has taken everything sent to it before (a
-/// question asked of it through `target` comes after them): what is
-/// written next is mixed after the changes set so far.
-fn taken(target: &mut InputTarget) {
-    target.capabilities().unwrap();
-}
+use jodel_output::Output;
 
 /// Writes each of `outs` its constant of `levels` up to frame `to` (from
 /// `written`; a few periods at most, so no ring fills), once the mixer has

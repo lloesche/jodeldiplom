@@ -5,6 +5,7 @@
 use crate::caps::Capabilities;
 use crate::error::Error;
 use crate::format::StreamFormat;
+use crate::lanes::lane_format;
 use crate::output::{delegate_output, Core, Driver, OpenRequest, StreamInfo};
 use crate::shared::Shared;
 use std::io::{self, Write};
@@ -191,7 +192,8 @@ impl Driver for SimDriver {
 /// writer, with a simulated clock.
 ///
 /// The bytes are raw interleaved PCM in the stream format's layout
-/// ([`Output::format`](crate::Output::format)), with no header.
+/// ([`Output::format`](crate::Output::format)), with no header; a lane
+/// stream's are its ring's ([`FileOutput::open_lanes`]).
 pub struct FileOutput {
     core: Core,
     device: Arc<SimDevice>,
@@ -212,7 +214,26 @@ impl FileOutput {
 
     /// Opens like a device that accepts exactly `accepts`: the first format
     /// in `request.formats` accepted at the request's rate and channels.
+    /// A plain stream, as a device takes: more than one lane is
+    /// [`Error::InvalidArgument`] (see [`FileOutput::open_lanes`]).
     pub fn open(
+        sink: impl Write + Send + 'static,
+        accepts: &Capabilities,
+        request: &OpenRequest,
+        clock: SimClock,
+    ) -> Result<FileOutput, Error> {
+        request.check_lanes(1)?;
+        Self::open_lanes(sink, accepts, request, clock)
+    }
+
+    /// Opens as [`FileOutput::open`] does, taking any number of lanes
+    /// ([`OpenRequest::lanes`]), for a test that captures what a writer of
+    /// lanes writes. Its device format ([`crate::Output::format`]) is the
+    /// one chosen, what main is written for; but what it plays to the sink
+    /// is the lane stream as written: the ring's bytes,
+    /// [`crate::lanes::LANE_SAMPLE`] at [`crate::lanes::lane_width`]
+    /// channels a frame. With one lane it is [`FileOutput::open`].
+    pub fn open_lanes(
         sink: impl Write + Send + 'static,
         accepts: &Capabilities,
         request: &OpenRequest,
@@ -254,7 +275,8 @@ impl FileOutput {
     ) -> FileOutput {
         let period = format.duration_to_frames(request.period).max(1);
         let ring_frames = request.ring_frames(&format, period);
-        let shared = Arc::new(Shared::new(format, ring_frames));
+        let ring = lane_format(format, request.lanes);
+        let shared = Arc::new(Shared::new(ring, ring_frames));
         let device = Arc::new(SimDevice {
             shared: shared.clone(),
             sink: Arc::new(Mutex::new(sink)),

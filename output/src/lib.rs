@@ -60,7 +60,9 @@
 //! each on one of the user's strips: bit for bit when one is heard as
 //! written, else summed with gains that are ramps on the mixer's clock. It
 //! meters its strips and the device, and taps the device for the
-//! microphone ([`mixer::Mixer::set_mic`]).
+//! microphone ([`mixer::Mixer::set_mic`]). A player's outputs can come in
+//! one stream as [`lanes`]: main (the file, passed through as written) and
+//! parts that make it, each on a strip of its own.
 //!
 //! # Tests without a device
 //!
@@ -87,6 +89,7 @@ mod file;
 mod format;
 pub mod input;
 pub mod isolate;
+pub mod lanes;
 pub mod mixer;
 mod output;
 pub mod pack;

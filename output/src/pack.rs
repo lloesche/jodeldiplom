@@ -116,6 +116,24 @@ impl fmt::Display for PackError {
 
 impl std::error::Error for PackError {}
 
+impl PackError {
+    /// The same error with its index `offset` further on (a check of part
+    /// of a call).
+    pub(crate) fn at(self, offset: usize) -> PackError {
+        match self {
+            PackError::OutOfRange { index, value } => PackError::OutOfRange {
+                index: index + offset,
+                value,
+            },
+            PackError::LowBitsLost { index, value } => PackError::LowBitsLost {
+                index: index + offset,
+                value,
+            },
+            other => other,
+        }
+    }
+}
+
 /// Whether `format` holds `value` unchanged (see the module docs).
 pub fn fits(value: i32, format: SampleFormat) -> bool {
     in_range(value) && (format != SampleFormat::S16 || value & 0xFF == 0)

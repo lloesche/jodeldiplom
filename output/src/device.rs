@@ -75,8 +75,10 @@ pub fn capabilities(id: &str) -> Result<Capabilities, Error> {
 
 /// Opens the device `id` exclusively at exactly `request.rate` and
 /// `request.channels`, in the first of `request.formats` it accepts. The
-/// device does not start until the prefill is written.
+/// device does not start until the prefill is written. A device takes plain
+/// streams only: more than one lane is [`Error::InvalidArgument`].
 pub fn open(id: &str, request: &OpenRequest) -> Result<DeviceOutput, Error> {
+    request.check_lanes(1)?;
     Ok(DeviceOutput {
         core: backend::open(id, request)?,
     })

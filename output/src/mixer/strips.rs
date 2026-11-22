@@ -37,9 +37,11 @@ impl Factor {
         }
     }
 
-    /// Ramps to `to` over [`STRIP_RAMP`], from the next frame filled.
-    fn aim(&mut self, to: f64) {
-        if to != self.target {
+    /// Ramps to `to` over [`STRIP_RAMP`], from the next frame filled;
+    /// returns whether that is a change.
+    fn aim(&mut self, to: f64) -> bool {
+        let changed = to != self.target;
+        if changed {
             self.target = to;
             self.gain.set(Waiting {
                 when: When::Now,
@@ -48,6 +50,7 @@ impl Factor {
                 curve: Curve::Linear,
             });
         }
+        changed
     }
 
     /// The gains of frames `first..first + n` at `rate`.
@@ -87,6 +90,10 @@ struct StripRun {
     /// whether any was).
     sum: Vec<f64>,
     metered: bool,
+    /// The earliest frame its targets changed at since the last chunk
+    /// ([`Strips::chunk_done`]; at or before the chunk's first: from its
+    /// start).
+    changed: Option<u64>,
 }
 
 impl StripRun {
@@ -98,11 +105,14 @@ impl StripRun {
         }
     }
 
-    /// Both gains ramp to what the settings give now.
-    fn aim(&mut self) {
+    /// Both gains ramp to what the settings give now, from frame `at` (0:
+    /// from the next chunk's first), which is noted when either changes.
+    fn aim(&mut self, at: u64) {
         let own = self.own_target();
-        self.heard.aim(own * self.gate);
-        self.vca.aim(own);
+        let heard = self.heard.aim(own * self.gate);
+        if self.vca.aim(own) || heard {
+            self.changed = Some(self.changed.map_or(at, |c| c.min(at)));
+        }
     }
 
     /// The level in force and the one waiting go to its handles, unless a
@@ -149,7 +159,7 @@ impl StripRun {
                 self.mute = self.next_mute.take().expect("due").1;
                 self.publish_mute();
             }
-            self.aim();
+            self.aim(f);
             at = f;
         }
         if cut {
@@ -181,6 +191,22 @@ fn gate(strips: &BTreeMap<u64, StripRun>, solo: bool, ancestors: &[u64], any_sol
     } else {
         0.0
     }
+}
+
+/// How a strip stands, as a lane input's switch between main and its parts
+/// looks at it ([`Strips::look`]).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) struct Look {
+    /// Its own gain's target: its level, or 0 while muted.
+    pub(super) own: f64,
+    /// Its solo gate.
+    pub(super) gate: f64,
+    /// The earliest frame either target changed at since the last chunk
+    /// (`None`: neither did; at or before the chunk's first: from its
+    /// start, as [`super::parts`] counts it).
+    pub(super) changed: Option<u64>,
+    /// A ramp of it is under way or waits.
+    pub(super) moving: bool,
 }
 
 /// The strips, as the mixer thread runs them, by id: a group's id is below
@@ -221,7 +247,7 @@ impl Strips {
             let to = gate(&self.0, s.solo, &s.ancestors, any_solo);
             let s = self.0.get_mut(&id).expect("listed");
             s.gate = to;
-            s.aim();
+            s.aim(0);
             next = self.after(Some(id));
         }
     }
@@ -256,6 +282,7 @@ impl Strips {
             busy: false,
             sum: Vec::new(),
             metered: false,
+            changed: None,
         };
         self.0.insert(id, strip);
     }
@@ -286,7 +313,7 @@ impl Strips {
             Change::Mute(_) => s.publish_mute(),
         }
         if now {
-            s.aim();
+            s.aim(0);
         }
     }
 
@@ -306,12 +333,14 @@ impl Strips {
         self.aim_gates();
     }
 
-    /// The device opened again: ramps under way end at once, and changes
-    /// waiting for a frame of the last epoch never come.
+    /// The device opened again: nothing has been mixed on it yet, so a
+    /// ramp under way or due now ends at once (a mute set before the first
+    /// audio is in force from its first frame), and changes waiting for a
+    /// frame of the last epoch never come.
     pub(super) fn new_epoch(&mut self) {
         for s in self.0.values_mut() {
-            s.heard.gain.new_epoch();
-            s.vca.gain.new_epoch();
+            s.heard.gain.settle();
+            s.vca.gain.settle();
             if matches!(s.next_level, Some((When::Frame(_), _))) {
                 s.next_level = None;
                 s.publish_level();
@@ -353,31 +382,55 @@ impl Strips {
         }
     }
 
+    /// How strip `id` stands for a lane's switch: see [`Look`].
+    pub(super) fn look(&self, id: u64) -> Look {
+        let s = self.0.get(&id).expect("a lane's strip lives");
+        Look {
+            own: s.own_target(),
+            gate: s.gate,
+            changed: s.changed,
+            moving: s.heard.gain.moving() || s.vca.gain.moving(),
+        }
+    }
+
+    /// The chunk is mixed: the changes noted for it are done with.
+    pub(super) fn chunk_done(&mut self) {
+        for s in self.0.values_mut() {
+            s.changed = None;
+        }
+    }
+
     /// Strip `id`'s gains along its path this chunk.
     pub(super) fn path(&self, id: u64) -> &Envelope {
         &self.0.get(&id).expect("an input's strip lives").path
     }
 
     /// Meters each strip: the heard inputs of its subtree (`inputs`: the
-    /// strip, samples `channels` per frame, the gains they are heard at)
-    /// summed, then the peak of each channel.
+    /// strip, samples `channels` per frame, the gains they are heard at,
+    /// and whether they count in the groups above it too) summed, then the
+    /// peak of each channel.
     pub(super) fn meter<'a>(
         &mut self,
         channels: usize,
-        inputs: impl Iterator<Item = (u64, &'a [i32], Gains<'a>)>,
+        inputs: impl Iterator<Item = (u64, &'a [i32], Gains<'a>, bool)>,
     ) {
         for s in self.0.values_mut() {
             s.metered = false;
         }
-        for (strip, samples, gain) in inputs {
-            self.each_up(strip, |s| {
+        for (strip, samples, gain, up) in inputs {
+            let add = |s: &mut StripRun| {
                 if !s.metered {
                     s.sum.clear();
                     s.sum.resize(samples.len(), 0.0);
                     s.metered = true;
                 }
                 gain.accumulate(&mut s.sum, samples, channels);
-            });
+            };
+            if up {
+                self.each_up(strip, add);
+            } else if let Some(s) = self.0.get_mut(&strip) {
+                add(s);
+            }
         }
         for s in self.0.values().filter(|s| s.metered) {
             let peaks = channel_peaks(&s.sum, channels, f64::abs);

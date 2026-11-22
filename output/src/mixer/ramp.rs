@@ -71,6 +71,20 @@ impl Ramp {
     }
 }
 
+/// One of the gains faders set: an input's own (`lane` 0, the fader of
+/// [`crate::mixer::Mixer::input`]), or one of its parts' (`lane` 1 on).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct GainId {
+    pub(crate) slot: u64,
+    pub(crate) lane: u16,
+}
+
+impl GainId {
+    pub(crate) fn new(slot: u64, lane: u16) -> GainId {
+        GainId { slot, lane }
+    }
+}
+
 /// When a waiting ramp starts, as the mixer keeps it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum When {
@@ -82,8 +96,8 @@ pub(crate) enum When {
     /// ids grow as they are opened): one opened on the input since, or for
     /// a strip's change, on an input of its subtree.
     FirstAudio { after: u64 },
-    /// The frame input `slot`'s waiting ramp starts at (a crossfade).
-    With(u64),
+    /// The frame that gain's waiting ramp starts at (a crossfade).
+    With(GainId),
 }
 
 impl When {
@@ -101,16 +115,16 @@ impl When {
     }
 }
 
-/// Where the waiting ramps of inputs start in the chunk of frames
-/// `first..end`, into `starts` as (input, frame): their own frame, the
+/// Where the waiting ramps of faders' gains start in the chunk of frames
+/// `first..end`, into `starts` as (gain, frame): their own frame, the
 /// first audio of an output opened since, or with the ramp they follow.
-/// `waiting` gives each input with a ramp waiting, when it starts, and the
-/// id of its output if that supplied audio in the chunk.
+/// `waiting` gives each gain with a ramp waiting, when it starts, and the
+/// id of its input's output if that supplied audio in the chunk.
 pub(crate) fn resolve_starts(
     first: u64,
     end: u64,
-    waiting: impl Iterator<Item = (u64, When, Option<u64>)> + Clone,
-    starts: &mut Vec<(u64, u64)>,
+    waiting: impl Iterator<Item = (GainId, When, Option<u64>)> + Clone,
+    starts: &mut Vec<(GainId, u64)>,
 ) {
     starts.clear();
     for (id, when, audio) in waiting.clone() {
@@ -128,8 +142,8 @@ pub(crate) fn resolve_starts(
     }
 }
 
-/// The frame input `id`'s waiting ramp starts at, among `starts`.
-pub(crate) fn start_of(starts: &[(u64, u64)], id: u64) -> Option<u64> {
+/// The frame gain `id`'s waiting ramp starts at, among `starts`.
+pub(crate) fn start_of(starts: &[(GainId, u64)], id: GainId) -> Option<u64> {
     starts.iter().find(|(i, _)| *i == id).map(|&(_, at)| at)
 }
 
@@ -215,6 +229,12 @@ impl Gain {
     /// The gain of the last frame filled.
     pub(crate) fn last(&self) -> f64 {
         self.last
+    }
+
+    /// The gain it is going to: the end of the ramp under way, or its
+    /// level (a ramp still waiting does not count).
+    pub(crate) fn target(&self) -> f64 {
+        self.running.map_or(self.level, |r| r.to)
     }
 
     /// Whether the gain is changing or a ramp waits.
@@ -361,7 +381,12 @@ mod tests {
             64,
             Curve::EqualPower,
         ));
-        down.set(ramp(When::With(1), 0.0, 64, Curve::EqualPower));
+        down.set(ramp(
+            When::With(GainId::new(1, 0)),
+            0.0,
+            64,
+            Curve::EqualPower,
+        ));
         assert_eq!(run(&mut up, 0, 5, None), vec![0.0; 5]);
         let a = run(&mut up, 5, 80, Some(5));
         let b = run(&mut down, 5, 80, Some(5));
@@ -403,20 +428,34 @@ mod tests {
 
     #[test]
     fn waiting_ramps_start_on_their_frames() {
+        let g = |slot: u64| GainId::new(slot, 0);
+        // (A part's gain, 2 of input 2, follows 2's own.)
         let waiting = [
-            (1, When::Now, None),
-            (2, When::Frame(130), None),
-            (3, When::Frame(900), None),
-            (4, When::FirstAudio { after: 1 }, Some(2)),
-            (5, When::FirstAudio { after: 2 }, Some(2)),
-            (6, When::With(2), None),
-            (7, When::With(3), None),
+            (g(1), When::Now, None),
+            (g(2), When::Frame(130), None),
+            (g(3), When::Frame(900), None),
+            (g(4), When::FirstAudio { after: 1 }, Some(2)),
+            (g(5), When::FirstAudio { after: 2 }, Some(2)),
+            (g(6), When::With(g(2)), None),
+            (g(7), When::With(g(3)), None),
+            (GainId::new(2, 2), When::With(g(2)), None),
         ];
         let mut starts = Vec::new();
         resolve_starts(100, 200, waiting.into_iter(), &mut starts);
-        assert_eq!(starts, [(1, 100), (2, 130), (4, 100), (6, 130)]);
-        assert_eq!(start_of(&starts, 6), Some(130));
-        assert_eq!(start_of(&starts, 3), None);
+        let got: Vec<(u64, u16, u64)> =
+            starts.iter().map(|(i, at)| (i.slot, i.lane, *at)).collect();
+        assert_eq!(
+            got,
+            [
+                (1, 0, 100),
+                (2, 0, 130),
+                (4, 0, 100),
+                (6, 0, 130),
+                (2, 2, 130)
+            ]
+        );
+        assert_eq!(start_of(&starts, g(6)), Some(130));
+        assert_eq!(start_of(&starts, g(3)), None);
     }
 
     #[test]
