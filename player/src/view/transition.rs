@@ -23,10 +23,10 @@ use crate::core::{text, Rhythm, State};
 /// Text on a coloured label.
 const BG_TEXT: Color = Color::Rgb(20, 20, 24);
 
-/// Whether a lane is a stem turned off.
+/// Whether a lane is a stem turned off (its strip on the desk muted).
 fn is_off(state: &State, lane: Lane) -> bool {
     lane.stem()
-        .is_some_and(|i| !state.stems.contains(jodel_playback::stems::Stem::ALL[i]))
+        .is_some_and(|i| crate::core::stems::is_off(state, jodel_playback::stems::Stem::ALL[i]))
 }
 
 /// The seconds of the bars' first beats of `a` within `start..end`.

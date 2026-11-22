@@ -3,7 +3,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use jodel_playback::{Command, Event, Headroom, PlayState, StemMix};
+use jodel_playback::{Command, Event, Headroom, PlayState};
 
 use crate::browser::{self, EntryKind};
 use crate::core::desk;
@@ -324,6 +324,11 @@ fn help_typing(state: &State) -> bool {
 /// A message for the status line, as information.
 pub(crate) fn say_info(state: &mut State, text: impl Into<String>) {
     say(state, Level::Info, text);
+}
+
+/// [`say`] at [`Level::Error`], for the other core modules.
+pub(crate) fn say_error(state: &mut State, text: impl Into<String>) {
+    say(state, Level::Error, text);
 }
 
 fn say(state: &mut State, level: Level, text: impl Into<String>) {
@@ -706,9 +711,6 @@ pub fn update(state: &mut State, action: Action) -> Vec<Effect> {
             }
         }
         Action::EngineGone(_) => {
-            // The new engine plays the file as it is: if the stems were
-            // what failed, they do not fail again at once.
-            state.stems = StemMix::ALL;
             say(
                 state,
                 Level::Error,
@@ -723,7 +725,7 @@ pub fn update(state: &mut State, action: Action) -> Vec<Effect> {
     }
     want_rhythm(state, &mut fx);
     karaoke::want_lyrics(state, &mut fx);
-    karaoke::follow_stems(state, &mut fx);
+    super::stems::follow(state, &mut fx);
     super::sync::follow(state, &mut fx);
     desk::settle(state);
     prepare(state, &mut fx);
@@ -1423,15 +1425,9 @@ fn settings_changed(state: &mut State, fx: &mut Vec<Effect>) {
     fx.push(Effect::SaveConfig);
 }
 
-/// [`send_settings`], for the other core modules.
-pub(crate) fn send_settings_now(state: &mut State, fx: &mut Vec<Effect>) {
-    send_settings(state, fx);
-}
-
 /// Sends the settings in force to the engine now.
 fn send_settings(state: &mut State, fx: &mut Vec<Effect>) {
     state.settings_due = None;
-    state.karaoke.stems_sent = karaoke::stems_due(state);
     fx.push(Effect::Engine(Command::SetSettings(
         state.engine_settings(),
     )));
@@ -1613,67 +1609,6 @@ pub fn readiness(state: &State, path: &Path) -> Readiness {
     } else {
         Readiness::Waiting
     }
-}
-
-/// Seconds ahead of what is heard that a stem change can be made at the
-/// soonest on the stems: the output holds about half a second.
-const STEMS_SOON: f64 = 1.0;
-/// The same for the first stem off away from the Transition tab: the track
-/// moves onto its stems first, separated from where they meet. On the
-/// Transition tab the playing track's stems are kept as it plays, so
-/// [`STEMS_SOON`].
-const STEMS_ROUTE_SOON: f64 = 2.5;
-
-/// Where a change from the stems heard to `stems` is to be heard, with
-/// the stems switched on bars: the first bar of the playing track the
-/// engine can still make it at ([`STEMS_SOON`], [`STEMS_ROUTE_SOON`]);
-/// `None` without bars there (then at once).
-pub fn stems_bar(state: &State, stems: StemMix) -> Option<(f64, usize)> {
-    if !state.config.stems_on_bar {
-        return None;
-    }
-    let a = &lanes::rhythmed(state, lanes::Block::Now)?.analysis;
-    let soon = if state.stems.is_full() && !stems.is_full() && state.side != Side::Transition {
-        STEMS_ROUTE_SOON
-    } else {
-        STEMS_SOON
-    };
-    let after = state.heard() + soon;
-    a.downbeats
-        .iter()
-        .enumerate()
-        .map(|(k, &d)| (a.beats[d], k + 1))
-        .find(|&(t, _)| t >= after)
-}
-
-/// The stems heard become `stems`: from the next bar the engine can make
-/// ([`stems_bar`]), else at once, as soon as the output buffer has played.
-/// The first stem off and all on again move the track to its other route
-/// where it is.
-fn set_stems(state: &mut State, stems: StemMix, fx: &mut Vec<Effect>) {
-    match state.gpu {
-        Gpu::Present(_) => {}
-        Gpu::Looking => return say(state, Level::Info, "Still looking for a GPU for the stems"),
-        Gpu::Absent => return say(state, Level::Info, "Stems need a GPU"),
-    }
-    if stems == state.stems {
-        return;
-    }
-    let bar = stems_bar(state, stems);
-    state.stems = stems;
-    let mut what = if stems.is_full() {
-        "Stems: all on, the file as it is".to_owned()
-    } else {
-        format!("Stems: {} (not bit-perfect)", stems.describe())
-    };
-    match bar {
-        Some((at, bar)) => {
-            what.push_str(&format!(", from bar {bar}"));
-            fx.push(Effect::Engine(Command::SetStemsAt { stems, at }));
-        }
-        None => send_settings(state, fx),
-    }
-    say(state, Level::Info, what);
 }
 
 /// The device's rates arrived: a rate cap it cannot satisfy is shown as
@@ -1947,11 +1882,10 @@ fn apply_op(state: &mut State, op: Op, fx: &mut Vec<Effect>) {
         }
         Op::ToggleDrums | Op::ToggleBass | Op::ToggleVocals | Op::ToggleOther => {
             if let Some(stem) = op.stem() {
-                let stems = state.stems.toggle(stem);
-                set_stems(state, stems, fx);
+                super::stems::toggle(state, stem, fx);
             }
         }
-        Op::AllStems => set_stems(state, StemMix::ALL, fx),
+        Op::AllStems => super::stems::reset(state, fx),
         Op::JumpBar(offset) => jump::jump_bar(state, isize::from(offset), false, fx),
         Op::JumpBarAtEnd(offset) => jump::jump_bar(state, isize::from(offset), true, fx),
         Op::VolumeUp => fx.push(Effect::DeviceVolume(VolumeChange::Step(1))),
@@ -2248,6 +2182,10 @@ fn engine_event(state: &mut State, event: Event) {
         Event::TrackStarted(start) => {
             let start = *start;
             draft::track_started(state, start.index);
+            // Another track has stems of its own (or none) to find out.
+            if state.desk.parts_failed != Some(start.index) {
+                state.desk.parts_failed = None;
+            }
             let playing = &mut state.playing;
             // Where it starts: 0, or the position a switch of route (or a
             // seek) took it up at.
@@ -2263,6 +2201,7 @@ fn engine_event(state: &mut State, event: Event) {
             });
             playing.position = at;
             playing.clipped = 0;
+            playing.forget_anchor();
         }
         Event::Position(position) => {
             if playing
@@ -2271,18 +2210,20 @@ fn engine_event(state: &mut State, event: Event) {
                 .is_some_and(|t| t.index == position.index)
             {
                 playing.position = position.seconds;
-                playing.anchor = Some((position.index, position.output_frame, position.seconds));
+                playing.anchor_at(position.index, position.output_frame, position.seconds);
             }
         }
         Event::Seeked { index, seconds } => {
             if playing.track.as_ref().is_some_and(|t| t.index == index) {
                 playing.position = seconds;
                 playing.clipped = 0;
+                playing.forget_anchor();
             }
         }
         Event::Jumped { index, seconds } => {
             if playing.track.as_ref().is_some_and(|t| t.index == index) {
                 playing.position = seconds;
+                playing.forget_anchor();
             }
         }
         Event::Clipped { index, samples, .. } => {
@@ -2306,20 +2247,10 @@ fn engine_event(state: &mut State, event: Event) {
         }
         Event::Notice { message, .. } => say(state, Level::Info, message),
         Event::Transition(t) => draft::transition_event(state, t),
-        Event::StemsStopped { reason, .. } => {
-            // The engine plays the whole mix now: so do the buttons.
-            state.stems = StemMix::ALL;
-            say(
-                state,
-                Level::Error,
-                format!("The stems stopped ({reason}); playing the whole mix"),
-            );
-        }
-        Event::PartsStopped { reason, .. } => say(
-            state,
-            Level::Error,
-            format!("The stems stopped ({reason}); playing the whole mix"),
-        ),
+        // A transition's stems (the engine's own mix) or the stems as
+        // parts of the output: either way the file plays on.
+        Event::StemsStopped { reason, .. } => super::stems::transition_stopped(state, &reason),
+        Event::PartsStopped { index, reason } => super::stems::stopped(state, index, &reason),
         Event::QueueEnded => say(state, Level::Info, "End of the queue"),
         Event::Held { index } => karaoke::held(state, index),
     }

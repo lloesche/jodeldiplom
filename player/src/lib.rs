@@ -31,6 +31,7 @@ pub mod cli;
 pub mod config;
 pub mod core;
 pub mod delays;
+pub mod desk_wiring;
 pub mod diag;
 pub mod dirs;
 pub mod grids;

@@ -71,6 +71,7 @@ mod lanes;
 mod play;
 mod produce;
 mod queue;
+mod stem_mask;
 mod switch;
 mod track;
 mod transition;
@@ -111,6 +112,10 @@ const PREROLL_RESAMPLE: f64 = 0.1;
 /// How much of a switch's new route is decoded before the old one fades
 /// out for an output at another format, so the new output starts at once.
 const SWITCH_PREFILL: Duration = Duration::from_millis(200);
+
+/// Seconds of output a switch back onto a track's own route after a
+/// transition waits for its stem parts at most ([`Switch::parts_wait`]).
+const PARTS_PATIENCE: f64 = 2.0;
 
 /// How long the new route has the thread after a write the output did not
 /// take (it is full, paused or held back).
@@ -164,6 +169,9 @@ struct Engine {
     /// A change of the stems heard at a time of the playing track
     /// ([`Command::SetStemsAt`]), not yet reached.
     stems_change: Option<StemsChange>,
+    /// [`Command::StemMask`]: each stem's gain as a mixer plays them, and
+    /// the changes of them to come at times of a track.
+    stem_gains: stem_mask::StemGains,
     /// [`Command::JumpWindow`]: seconds kept behind, decoded ahead.
     jump_window: (f64, f64),
     /// [`Command::KeepStems`].
@@ -236,6 +244,7 @@ impl Engine {
             stalled: None,
             transition: None,
             stems_change: None,
+            stem_gains: stem_mask::StemGains::default(),
             jump_window: (0.0, 0.0),
             keep_stems: false,
             shadow: None,
@@ -424,6 +433,7 @@ impl Engine {
                 }
             }
             Command::MakeStems(make) => self.lanes.set_make(make),
+            Command::StemMask { gains, at } => self.set_stem_mask(gains, at),
         }
     }
 

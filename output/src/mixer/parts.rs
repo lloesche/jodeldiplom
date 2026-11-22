@@ -136,7 +136,7 @@ pub(super) fn touch(lanes: &[LaneRun], strips: &Strips, starts: &[(GainId, u64)]
     };
     for lane in &lanes[1..] {
         let part = strips.look(lane.strip);
-        t.touched |= lane.gain.target() * part.own != 1.0 || part.gate != main.gate;
+        t.touched |= lane.gain.target() * part.own != 1.0 || part.gate != main.lead_gate;
         t.settled &= !lane.gain.moving() && !part.moving;
         let started = start_of(starts, lane.id);
         for at in [part.changed, started].into_iter().flatten() {

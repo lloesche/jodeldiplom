@@ -20,31 +20,64 @@ On the Transition tab, the first three show as `enter sets the cues` / `g arms`
 
 ## Stems
 
+The stems are strips of the desk inside the player's (the Mix tab); the
+stem keys are their mutes.
+
 - **S1.** Stems can be switched at any time, in any state, and never call
   a transition off. They never change when it starts or ends, its window,
   where the next track comes in, its pairing or its tempo. They change
-  only which stems are heard: while armed, the playing track's; while
-  preparing, mixing or settling, both tracks', in their fades.
-  - `stems_switched_during_a_transition_go_into_its_fades`
-  - `stems_switched_while_armed_leave_the_transition_where_it_was`
-  - `stems_switched_at_a_bar_in_the_window_change_there`
-  - `stems_switched_while_settling_go_into_the_next_tracks_fades`
+  only which stems are heard: outside a transition and while it is armed,
+  on the desk; while preparing, mixing or settling, in both tracks' fades
+  too (the engine mixes them with the strips' gains).
+  - `stems_switched_during_a_transition_go_into_its_fades` (engine)
+  - `stems_switched_while_armed_leave_the_transition_where_it_was` (engine)
+  - `stems_switched_at_a_bar_in_the_window_change_there` (engine)
+  - `stems_switched_while_settling_go_into_the_next_tracks_fades` (engine)
   - `stem_toggles_never_touch_the_transition` (player)
-- **S2.** A stem change is heard when it would be without a transition: on
-  the next bar the engine can make (or at once, per the setting), on the
-  playing track's bars.
-  - `stems_switched_at_a_bar_in_the_window_change_there`
+- **S2.** A stem key's change lands on the first beat of the next bar at
+  least 0.1 s ahead, to the frame of the player's output (or at once, per
+  the setting, or without bars or a position); pressed again before that
+  bar, the change is taken back there. `alt+0` puts every stem's strip
+  back as it starts, its mutes on the bar too. The bar is a second ahead
+  at least while a transition is armed or heard, or while no stems were
+  made before the key; its frame comes from the last two positions told
+  (none after a seek, a jump or another track until two more), so it is
+  the frame heard there.
+  - `stems_switch_on_the_next_bar_as_mutes_of_their_strips`
+  - `a_stem_muted_on_its_frame_is_heard_and_unmuted_the_file_is_again`
+  - `stems_switch_from_keys_and_buttons_with_a_gpu`
 - **S3.** Switching stems never moves playback: no jump, no restart, no
-  gap. A stem goes in and out over 10 ms, and a route change crossfades
-  over 20 ms.
-  - the stems and switch tests
-- **S5.** A track got ready plays its kept stems: nothing is separated
-  while it plays (on stems, from a jump, in a transition or the
-  Transition tab). Only a track whose stems are not kept is separated live.
+  gap. A strip's change is a 20 ms ramp, and the desk crosses between the
+  file and the stems over 10 ms (linearly: they are the same music).
+  - `a_stem_muted_on_its_frame_is_heard_and_unmuted_the_file_is_again`
+  - the mixer's lanes tests (output)
+- **S4.** With every stem's strip as it starts the desk plays the file,
+  bit for bit; the stems are heard in its place only while one is
+  touched, and the file again once none is and the ramps have settled.
+  - `a_stem_muted_on_its_frame_is_heard_and_unmuted_the_file_is_again`
+  - `main_through_a_lane_input_is_bit_exact_with_stems_made` (engine)
+- **S5.** The stems are made while a stem's strip is touched or the Mix,
+  Karaoke or Transition tab (or the mode) shows: from the stems kept,
+  else separated on the GPU; without one, only the kept ones. Otherwise
+  none are made. A track got ready plays its kept stems: nothing is
+  separated while it plays.
+  - `the_stems_are_made_while_touched_or_a_tab_shows_them`
   - `kept_stems_play_without_a_separation` (engine)
-- **S4.** After a transition, the next track's stems follow the settings,
-  whatever they were during it.
-  - `after_a_transition_the_next_tracks_stems_follow_the_settings`
+- **S6.** A transition with stems touched never jumps: the playing track
+  keeps its stems on the desk until it is on its stems in the engine (and
+  its crossfade there is over), and the next track goes back onto its
+  file only once its stems have been on the desk for the mixer's switch
+  (2 s of waiting at most). A stem changed on a bar inside the window
+  changes there; a stem soloed is heard alone throughout, the file never
+  silent while it stands for the stems.
+  - `a_transition_with_a_stem_muted_never_jumps` (engine)
+  - `a_transition_with_a_stem_soloed_never_goes_silent` (engine)
+  - `a_stem_muted_on_a_bar_in_the_window_goes_off_there` (engine)
+  - `the_next_tracks_return_waits_until_its_stems_are_switched_to` (engine)
+  - `a_part_soloed_keeps_main_while_main_stands_for_the_parts` (output)
+- **S7.** After a transition, the next track's stems are as the strips
+  have them, whatever they were during it.
+  - `after_a_transition_the_next_tracks_stems_follow_the_settings` (engine)
 
 ## Transition keys
 
@@ -128,14 +161,15 @@ On the Transition tab, the first three show as `enter sets the cues` / `g arms`
 ## Karaoke
 
 - **K1.** Karaoke mode exists only fullscreen (the whole terminal in a
-  terminal). On the Karaoke tab, as in the mode, every stem plays and the
-  voice at its slider's level, moved at once, so what is heard, metered and
+  terminal). On the Karaoke tab, as in the mode, the voice plays at its
+  slider's level (the vocals' lane on the desk, over the VOCALS strip,
+  which stays as set), moved at once, so what is heard, metered and
   recorded there is what the mode plays; leaving the tab, by any way, puts
-  the stems back as the settings have them, and coming back plays the voice
-  at its level again. Without a GPU the stems stay as they are. `esc` on the
-  tab does nothing.
+  the lane back at full, and coming back plays the voice at its level
+  again. Without a GPU only songs whose stems are kept have it turned
+  down. `esc` on the tab does nothing.
   - `the_tab_plays_the_voice_at_its_level_and_esc_does_nothing_there`
-  - `without_a_gpu_the_tab_leaves_the_stems_alone`
+  - `without_a_gpu_the_voice_turns_down_the_kept_stems`
 - **K1b.** A song is sung only once its lyrics are ready: found and their
   words timed (or found where they cannot be timed: no speech model, or
   the timing failed). Until then, and for a song with none (none found, an
@@ -328,7 +362,8 @@ On the Transition tab, the first three show as `enter sets the cues` / `g arms`
   - `each_level_asks_its_own_share_of_a_word` (`core::singing`)
 - **K18.** `s` on the Karaoke tab (or the palette) syncs, with a
   microphone open (else it says one is needed) and the player's strip
-  heard on the Mix tab: the song stops, 8 clicks at 90 BPM play after a
+  heard on the Mix tab (not muted or far down, nor another strip soloed:
+  a stem's strip soloed silences the clicks too): the song stops, 8 clicks at 90 BPM play after a
   second of silence, on an output of their own (nothing else changes what
   plays), and a "ta" with each is timed in the frames the voice is scored
   in (the song's voice left before the microphone's tap moves to the
@@ -372,6 +407,15 @@ On the Transition tab, the first three show as `enter sets the cues` / `g arms`
   - `the_wheel_moves_a_fader_by_a_db_and_the_buttons_toggle`
   - `a_fader_flicked_and_taken_again_soon_is_no_double_click`
   - `keys_step_through_the_scale_to_off_and_back_and_stop_at_unity`
+- **M6.** The player's stems have strips of their own beside it while its
+  input has lanes; the keys and the mouse act on them as on any strip (the
+  arrows through the strips drawn), and where the window is narrow the
+  strips narrow, then the microphone's strip goes first, then the
+  preview's, then the stems'; at 80 columns all but the microphone's.
+  - `the_arrows_go_through_the_stems_only_while_the_player_has_them`
+  - `a_stems_strip_takes_the_pointer_and_its_buttons`
+  - `the_stems_sit_beside_the_player_under_their_bracket`
+  - `the_mix_tab_is_a_desk` (view)
 - **M5.** The meters are read once a drawn frame, by the app alone, and
   only while the tab shows; a look long after the last takes no peaks (nor
   the limiter); the window keeps drawing while it shows. A strip's meter

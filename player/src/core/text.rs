@@ -98,10 +98,8 @@ pub fn signal_path(state: &State) -> Option<Vec<Seg>> {
         Stage::Passthrough => {}
         Stage::Stems => {
             out.push(arrow());
-            out.push(seg(
-                format!("stems {output} ({})", state.stems_in_force().describe()),
-                Tone::Warn,
-            ));
+            // Only a transition's tracks: mixed on their stems.
+            out.push(seg(format!("stems {output} (a transition)"), Tone::Warn));
         }
     }
     if let Some(step) = route.resample {

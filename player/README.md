@@ -195,37 +195,35 @@ so the level stays where the slider was when the player took the device
 (raising it above 0 also unmutes). On Windows and Linux the system's keys
 reach the device themselves, and these keys say so.
 
-With a GPU, the stems of the track playing can be switched on and off:
-`alt+1` drums, `alt+2` bass, `alt+3` vocals, `alt+4` other, `alt+0` all
-on (in the macOS terminal with Option as Meta; also the palette's
-"Stems: …" commands, and the `drums` `bass`
-`vocals` `other` buttons after the transport buttons, `D B V O` where the row is
-short; a stem that is off is crossed out). With all four on the file plays
-as it is, bit-perfect where it was. With any off, the track moves to a
-stem route without a break: it is separated on the GPU as it plays,
-a few seconds ahead, and the stems that are on are summed, so the path
-reads `file 44.1 → stems 44.1 (drums, bass) → DAC (exclusive), not
-bit-perfect` (the
-stems are 44.1 kHz stereo, resampled where the device does not take that
-rate, or to the rate the output is open at, so it stays open). Moving to
-the stem route and back crossfades over 20 ms, about half a second after
-the key (the stems are separated ahead first); switching stems while on
-it is heard as soon as the output buffer has played, with a 10 ms fade.
-That is with the Stem switching setting at **instantly**. At **on the next
-bar** (the default) a stem goes on or off on the first beat of a bar of the
-playing track, to the frame: the first bar at least a second ahead (2.5 s
-for the first stem off away from the Transition tab, which moves the track onto
-its stems and separates them first; on the Transition tab they are separated as
-it plays already; a bar nearer than that rolls over to the next one), and
-the message says which bar. The bar is held to when it is heard: looping a
-bar, the change comes at the loop's end. All on again plays the stems to that bar and then goes back to the
-file. Where the playing track's bars are not known (the tempo off, the
-analysis not in yet), the stems switch instantly.
-The stems that are on stay on for the next tracks and seeks, until all are
-on again; they are not saved, so the player always starts with the file
-as it is. If the GPU fails, the track goes on on its usual route from where the
-stems stopped, the buttons show every stem on again and a message says
-so.
+The stems of the track playing can be switched on and off: `alt+1`
+drums, `alt+2` bass, `alt+3` vocals, `alt+4` other, `alt+0` all on (in
+the macOS terminal with Option as Meta; also the palette's "Stems: …"
+commands, and, with a GPU, the `drums` `bass` `vocals` `other` buttons
+after the transport buttons, `D B V O` where the row is short; a stem
+that is off is crossed out). Each stem is a strip of the Mix tab inside
+the player's (below), and these keys mute its strip or unmute it; `alt+0`
+puts every stem's strip back as it starts (unmuted, 0 dB, not soloed).
+With every stem's strip as it starts the file plays as it is,
+bit-perfect where it was; with one touched the desk plays the stems in
+place of the file (a 10 ms crossfade, the stems being the same music), so
+the path is no longer bit-perfect. A stem switched is heard within the
+device's buffer: the stems are made beside the file as it plays, from the
+stems kept (the queue keeps them as it gets tracks ready) or else
+separated on the GPU, while a stem's strip is touched or the Mix, Karaoke
+or Transition tab shows (elsewhere none are made, so the GPU and the
+processor rest). Without a GPU only the stems kept play. With the Stem
+switching setting at **on the next bar** (the default) a key's change
+lands on the first beat of a bar of the playing track, to the frame: the
+first bar at least 0.1 s ahead (a second while a transition is armed or
+heard, or while no stems were being made yet, so they are there for it),
+and the message says which bar; pressed
+again before that bar, the change is taken back. The bar is held to when
+it is heard: looping a bar, the change comes at the loop's end. Where the
+playing track's bars are not known (the tempo off, the analysis not in
+yet), and at **instantly**, the change is at once. The strips stay as
+they are for the next tracks and seeks; nothing of the desk is kept, so
+the player always starts with the file as it is. If the stems fail, the
+track goes on as its file whatever the strips say, and a message says so.
 
 Under the status light is the tempo of the track playing:
 - `♩ 128 BPM` when it is steady;
@@ -280,7 +278,7 @@ The settings (`,`) choose how beats are found, below the engine's rows:
 | Spectral flux | onsets through two trackers; `[x]` / `[ ]` while voting, `(●)` / `( )` without |
 | Beat This! network | our own inference of a neural network that knows tempo levels, on the GPU where there is one (else on half the processors); the same marks |
 | Stems | on: the meter's cues listen to stems (bass, drums, other, vocals) separated on the GPU, and the drum stem's flux votes where the drums play; off: the cues listen to the mix. Without a GPU it shows `unavailable` |
-| Stem switching | on the next bar: `alt+1` to `alt+4` (and the stem buttons) are heard from a bar's first beat; instantly: within a second or so (above) |
+| Stem switching | on the next bar: `alt+1` to `alt+4` (and the stem buttons) are heard from a bar's first beat; instantly: as the key is pressed (above) |
 | Next track (N) | what `N` does: cut, the next track starting at once, or mix into it, beat-matched; `X` switches it too |
 | Its transition | the preset `N` mixes by: the Transition tab's as it is set (the default), or one of its own (fade, drums first, bass swap, vocals last) |
 | Data folder | where the models, analyses, stems and lyrics are kept: `enter` opens a folder list to move them into another folder (see Folders and setup); while they move, a bar |
@@ -445,10 +443,8 @@ A bar jump is heard some 30–60 ms after the key, crossfaded over 20 ms
 from the bar that would have come next, never with a gap: the engine
 keeps 24 s of the playing track either side of what is heard (gigabytes
 are not needed: some 20 MB at 44.1 kHz, 150 MB at 384 kHz). With a stem
-off the same, from the separated stems it keeps (some 70 MB more), mixed
-with the stems on now: while the Transition tab is shown the playing track is
-separated as it plays even with every stem on (a separation running on
-the GPU alongside), so the bars before a stem went off are there too.
+off the same: the stems are made beside the file, so a jump takes them
+along.
 Striking `5`
 again and again stutters the bar. In a terminal, `shift` with a digit
 counts when it sends the symbol a US keyboard's shift makes (`!` … `(`);
@@ -531,7 +527,12 @@ is armed, edits, `m` and a new cue go to the engine at once; `g` again
 for another go. Called off inside the window, the playing track goes on
 alone.
 Without stems every lane is the whole track, so every preset is a
-beat-matched fade.
+beat-matched fade. The engine mixes the two tracks on their stems itself,
+heard as the player's file on the desk, with the stems' strips as they
+are set (a stem muted stays out of both tracks, a fader's level goes
+into both fades); nothing jumps where the playing track goes onto its
+stems, nor where the next one goes back onto its file: that waits until
+its stems are on the desk again.
 
 The next track key (`N`, `shift+→`, `▶▶`) can mix too: `X`, anywhere,
 switches what it does, **cut** (the default, as ever) or **mix**.
@@ -557,9 +558,12 @@ analyses (a `.wave` file beside each).
 
 The Karaoke tab (`tab` to it) sets karaoke up: the voice's level (0 % by
 default) and the microphone, saved in the settings file (`karaoke_voice`,
-`karaoke_mic_device`). On the tab, as in the mode, every stem plays with
-the voice at its level, so what you hear, the meter and a recording there
-are as in the mode; other tabs play the stems as the settings have them.
+`karaoke_mic_device`). On the tab, as in the mode, the voice plays at its
+level (a gain on the vocals' lane on the desk, over the VOCALS strip,
+which stays as you set it; heard at once), so what you hear, the meter
+and a recording there are as in the mode; on other tabs that lane is at
+full again. Without a GPU only songs whose stems are kept have their
+voice turned down.
 `esc` on the tab does nothing. The tab also shows what was found of the
 lyrics of the song and the next two, and the microphone with a meter of
 the singer. Under it, where the other tabs have the spectrum, is the
@@ -804,8 +808,7 @@ is got ready a track at a time, so its songs come singable one by one.
 
 Karaoke mode fills the window (fullscreen) or the terminal: the song's
 cover blurred under a dark layer, its title and, once they are known, its
-lyrics. Every stem plays, the voice at its level (with a GPU for the
-stems). Going in stops the song and holds it at its start (with shift,
+lyrics. The voice plays at its level (as on the tab). Going in stops the song and holds it at its start (with shift,
 it goes on where it is). Each song waits for START (`enter`, `space`, or
 the button at the bottom right): "3", "2", "1" are counted a second each,
 numbers over the lines that shrink and fade, and "1" ends as the first
@@ -840,7 +843,7 @@ bottom quarter of the screen (gone at once above it, or 3 s after it
 stops), while one is held, and while a song waits. The seek bar does
 nothing while a song is held for START or counting in. `esc` is the only
 way out: back to
-the tab, fullscreen ends, the stems as before, playback where it is (a
+the tab, fullscreen ends, the voice still at its level, playback where it is (a
 count-in under way is called off).
 
 The browser lists folders and files ending in `.flac`, `.wav`, `.aif`,
@@ -854,9 +857,14 @@ is listed with `?` and the reason (AAC is not supported).
 ### The Mix tab
 
 The Mix tab (`tab` to it, the last of the five) shows the mixer as a desk,
-the whole width: a channel strip for the player and one for the preview
-side by side, the microphone's strip, and the master at the right. The
-tall sections line up as on a desk.
+the whole width: a channel strip for the player, a narrower one for each
+of its stems beside it (DRUMS, BASS, VOCALS, OTHER), one for the preview,
+the microphone's strip, and the master at the right. The tall sections
+line up as on a desk. Where the window is narrow the strips narrow (the
+stems' to seven columns, VOCALS as VOX; the preview's without a scale of
+its own), then the microphone's strip goes first, then the preview's,
+then the stems'; at 80 columns all but the microphone's show. The arrow
+keys go through the strips drawn.
 
 - **PLAYER** and **PREVIEW**: the name on a scribble strip (lit when
   selected), what the strip carries (the format; the player's LEAD lamp,
@@ -871,6 +879,19 @@ tall sections line up as on a desk.
   with the fader above 0 dB) it is red: the overs. A level other than 0 dB
   shows in orange: the strip adds gain, or takes it away. Every change is
   a 20 ms ramp in the mixer, so nothing clicks.
+- **DRUMS**, **BASS**, **VOCALS**, **OTHER**: the song's stems, strips
+  inside the player's (its fader and mute act on them as on the file; a
+  stem soloed silences the other stems, the preview and a sync's clicks,
+  and the file once the stems are heard in its place: while the file
+  stands for them, with none there yet or in a transition, it plays on;
+  soloing PLAYER keeps them all). Each shows `muted`, or the Karaoke
+  voice's gain on its lane, where that adds to its fader beside its meter
+  on the player's ruler and its `[M]` `[S]` (`M S` where it is narrow). A bracket over them says how the stems
+  stand: `● STEMS heard` (the desk plays them in place of the file: a
+  stem's strip is touched), `○ STEMS ready` (made, the file heard),
+  `separating…`, `loading…` (kept, being read) or `no stems`. With every
+  stem's strip as it starts the file is heard, bit-perfect; the stem keys
+  (above) are these strips' mutes.
 - **MIC**: listened to, never played: no fader (`LISTEN ONLY`), but its
   meters as captured (IN) and with the singer isolated (VOICE), its port
   (hearing what the device plays, waiting for an output, or why it cannot
@@ -913,7 +934,7 @@ are buttons.
 
 | Key | Mix tab |
 |---|---|
-| `←` `→` | the strip to the left, to the right (player, preview, microphone, master) |
+| `←` `→` | the strip to the left, to the right (player, its stems, preview, microphone, master) |
 | `↑` `↓` | the fader 1 dB up, down (below −60 dB: off; on the master, the device's own volume a step) |
 | `pgup` `pgdn` | the fader 6 dB up, down |
 | `home` | the fader to 0 dB: nothing added |
@@ -930,9 +951,10 @@ The capitals keep their commands here (`M` the beat pulse, `S` stop);
 
 | Module | |
 |---|---|
-| `core` | state, `Action`, `update(state, action) -> effects`, layout in cells with its collapse rules, keymap, mouse regions; the Transition tab (`core::transition::tab`, the lanes it shares with Karaoke in `core::lanes`), the grid fixes (`core::grid`), the transitions' presets and plans (`core::transition`), the Karaoke tab and mode (`core::karaoke`) and the Mix tab's desk (`core::desk`: its settings, the fader's taper, the meters' ballistics, its mouse). Pure. |
+| `core` | state, `Action`, `update(state, action) -> effects`, layout in cells with its collapse rules, keymap, mouse regions; the Transition tab (`core::transition::tab`, the lanes it shares with Karaoke in `core::lanes`), the grid fixes (`core::grid`), the transitions' presets and plans (`core::transition`), the Karaoke tab and mode (`core::karaoke`), the Mix tab's desk (`core::desk`: its strips, settings, the fader's taper, the meters' ballistics, its mouse) and the stems on it (`core::stems`: the stem keys as strip mutes on a bar, when the engine makes stems, the Karaoke voice's lane, what transitions mix with). Pure. |
 | `view` | the ratatui widgets for both frontends; the cover, the spectrum, the Transition tab's lanes (`view::transition`, with `view::lanes`, which the Karaoke tab shares) and Karaoke mode's picture (`view::karaoke`) go through `view::Pictures`; the window paints that picture in `gui::karaoke`. The Mix tab (`view::desk`) is cells only |
-| `app` | the running player: the engine on the Lead input of a mixer that holds the device (`jodel_output::mixer`), background workers, the spectrum (the mixer's monitor), cover; carries out the effects |
+| `app` | the running player: the engine and its desk, background workers, the spectrum (the mixer's monitor), cover; carries out the effects |
+| `desk_wiring` | the desk the engine plays on: a mixer that holds the device (`jodel_output::mixer`), the player's strip with its stems' strips inside it, the preview's, the engine on a lane input of them; the Mix tab's settings made on it, its look for a frame |
 | `preview` | the preview's players, guests on the mixer (one per file, two at most): only the latest file loaded, crossfades on the mixer's clock, the song ducked and back |
 | `browser` | folder listing, file details read lazily for the rows on screen (cached for the session), recursive search, folder walk |
 | `config`, `cli` | the settings file and the command line |

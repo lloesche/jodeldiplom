@@ -109,8 +109,11 @@ impl Session {
 pub const QUIET_DB: f64 = -30.0;
 
 /// Why the clicks would not be heard, if they would not: they play on the
-/// Player's strip, so a strip muted, turned well down, or another soloed
-/// on the Mix tab silences them.
+/// Player's strip (an input of its own, beside the song's), so a strip
+/// muted, turned well down, or another soloed on the Mix tab silences them.
+/// A stem's strip soloed is another: solo in place along the path silences
+/// its group's own inputs (unless the player's strip is soloed too), and a
+/// stem muted or turned down does nothing to them.
 fn unheard(state: &State) -> Option<&'static str> {
     let player = state.desk.setting(StripKind::Player);
     let other_solo = StripKind::ALL

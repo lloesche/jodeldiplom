@@ -16,7 +16,7 @@ use super::track::{
     crossfade, drop_later, fade, frames_of, gcd, grid, preroll, rescale, Cue, CueEvent, Progress,
     SegStart, Splice, Switch, Track,
 };
-use super::{Engine, SWITCH_PREFILL, SWITCH_TURN, WRITE_WAIT};
+use super::{Engine, PARTS_PATIENCE, SWITCH_PREFILL, SWITCH_TURN, WRITE_WAIT};
 
 impl Engine {
     /// Moves the track being played to the route the settings choose for
@@ -157,6 +157,8 @@ impl Engine {
             retried: false,
             done: false,
             spliced: false,
+            for_parts: false,
+            parts_wait: None,
         });
         Ok(())
     }
@@ -234,7 +236,9 @@ impl Engine {
             && !switch.done;
         self.switch = Some(switch);
         self.try_splice()?;
-        Ok(!waiting)
+        // Waiting for the old route's parts, the old route writes on.
+        let for_parts = self.switch.as_ref().is_some_and(|s| s.for_parts);
+        Ok(!waiting && !for_parts)
     }
 
     /// The switch's new route failed before it was heard (`why`): it
@@ -254,6 +258,8 @@ impl Engine {
                     retried: true,
                     done: false,
                     spliced: false,
+                    for_parts: false,
+                    parts_wait: None,
                     ..switch
                 });
                 return;
@@ -374,6 +380,17 @@ impl Engine {
         }
         let ahead = new.emitted - j;
         let cross = if switch.fits { fade_old.min(ahead) } else { 0 };
+        // Not for ever: a separator that cannot keep up gives way to the
+        // move (and the jump) after a while.
+        let wait = switch.fits && lanes && self.waits_for_parts(old, new, written);
+        let patience = (PARTS_PATIENCE * f64::from(old.route.output_rate)) as u64;
+        switch.for_parts = wait && {
+            let since = *switch.parts_wait.get_or_insert(written);
+            written < since + patience
+        };
+        if switch.for_parts {
+            return Ok(Splice::Wait);
+        }
         // The old route's output up to there (and through the crossfade).
         while old.seg_out + old.emitted < at + cross {
             if old.failure.is_some() || old.stems_error.is_some() {
@@ -443,6 +460,11 @@ impl Engine {
                 fade: cross as usize,
             };
             new.continue_segment(old.segment, at, frame, joined);
+            if !new.plain_route() {
+                // No parts of its own: the old route's end there once the
+                // crossfade has met it.
+                new.parts_hold = Some(at + cross + ending_frames(new_rate));
+            }
             let cue = self.started(new);
             self.cues.push_back(cue);
             self.release(new);

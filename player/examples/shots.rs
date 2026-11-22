@@ -291,6 +291,10 @@ fn main() {
         &app,
         (64, 22),
     );
+    // The Mix tab in an 80-column terminal, the default one's width.
+    if let Some((_, mix)) = screens.iter().find(|(name, _)| *name == "mix") {
+        tui_shot(&out, "mix-80", mix, &spectrum, &app, (80, 24));
+    }
     app.shutdown();
     let _ = std::fs::remove_dir_all(&tree.root);
 }

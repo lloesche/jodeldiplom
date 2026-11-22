@@ -125,10 +125,12 @@ its `StreamInfo` carries the device's backend, exclusive flag and latency.
   is; else 0). Soloing a child silences its siblings, its group's own
   inputs and every other strip, but it is still heard through its group's
   level and mute; soloing a group keeps all its children. Each strip
-  runs two ramps: `heard`, to its level × mute × gate, for its own inputs
+  runs three ramps: `heard`, to its level × mute × gate, for its own inputs
   (a strip at the top of the desk has only this one, as before groups),
-  and `vca`, to its level × mute, for its children's. So a mute and a
-  solo set together are one ramp, never two multiplied into a bump.
+  `vca`, to its level × mute, for its children's, and `lead`, as `heard`
+  but with the gate open also while a child's is, for the main of a lane
+  input on it (below). So a mute and a solo set together are one ramp,
+  never two multiplied into a bump.
 - **Scheduled changes:** `Strip::set_level_at(gain, start)` and
   `set_mute_at(on, start)` take a `Start` as a fader's ramp does
   (`Start::Now`; `Start::At { epoch, time }`, never once the device has
@@ -152,7 +154,11 @@ its `StreamInfo` carries the device's backend, exclusive flag and latency.
   `lanes()` = 1 + the parts and opens 1 lane (main alone) or all of them; a
   plain input refuses more than one.
   Lanes are the units heard: main is heard at the input's fader ×
-  (1 − s) × its strip's path, part k at the input's fader × s × part k's
+  (1 − s) × its strip's path through `lead` (a part soloed stands for main
+  while main is heard in the parts' place: no parts yet, or none at all;
+  once they are heard, each part's own gate applies, and a plain input on
+  main's strip, such as a sync's clicks, stays gated as ever), part k at
+  the input's fader × s × part k's
   fader × its strip's path, where `s` is the switch between main and the
   parts, linear over `SWITCH_FADE` (10 ms: main and the parts' sum are the
   same signal, so equal power would bump). `s` goes to 1 when the parts are
@@ -447,7 +453,9 @@ part touched from the first frame, across a pause, a flush and a new output
 a frame of main through; `Ending` then `Present` again switches back in;
 on a 16-bit device main is bit for bit again once a solo is released;
 mono and odd lane widths (1, 2 and 3 channels; 1 to 4 parts); the parts'
-strips meter the parts while main is heard; targets refuse lanes they do
+strips meter the parts while main is heard; a part soloed keeps main heard
+while the control word is `None` and is heard alone once it is `Present`;
+targets refuse lanes they do
 not take; a part's strip must be a child of main's; `at_stream` is `Now`
 after a flush until frames are mixed again; and a level and a fade set
 before the device opens are in force from its first frame.

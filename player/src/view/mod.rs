@@ -1267,7 +1267,7 @@ fn draw_bottom(frame: &mut Frame, scene: &Scene, b: &Bottom, pictures: &mut dyn 
         let off = button
             .op
             .stem()
-            .is_some_and(|stem| !state.stems_in_force().contains(stem));
+            .is_some_and(|stem| crate::core::stems::is_off(state, stem));
         let style = if off {
             Style::new()
                 .fg(DIM)

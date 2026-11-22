@@ -107,6 +107,19 @@ fn no_sync_without_a_microphone_or_where_the_clicks_are_not_heard() {
     state.desk.strips[StripKind::Player.index()].mute = true;
     assert!(!key(&mut state, Key::ch('s')).contains(&Effect::Sync(SyncCommand::Start)));
     assert!(state.message.as_ref().unwrap().text.contains("muted"));
+    // A stem soloed: it silences the player's own inputs, the clicks too.
+    let mut state = tab("headset");
+    state.desk.strips[StripKind::Vocals.index()].solo = true;
+    assert!(!key(&mut state, Key::ch('s')).contains(&Effect::Sync(SyncCommand::Start)));
+    assert!(state.message.as_ref().unwrap().text.contains("soloed"));
+    // A stem muted leaves them alone; the player soloed with it keeps them.
+    let mut state = tab("headset");
+    state.desk.strips[StripKind::Drums.index()].mute = true;
+    assert!(key(&mut state, Key::ch('s')).contains(&Effect::Sync(SyncCommand::Start)));
+    let mut state = tab("headset");
+    state.desk.strips[StripKind::Vocals.index()].solo = true;
+    state.desk.strips[StripKind::Player.index()].solo = true;
+    assert!(key(&mut state, Key::ch('s')).contains(&Effect::Sync(SyncCommand::Start)));
 }
 
 #[test]

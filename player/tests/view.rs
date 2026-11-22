@@ -722,10 +722,11 @@ fn the_transition_header_shows_the_pairing_and_the_glide() {
 #[test]
 fn stems_turned_off_are_grey_on_the_transition_tab() {
     use jodel_playback::stems::Stem;
+    use jodeldiplom::core::desk::StripKind;
     use jodeldiplom::core::layout::Lane;
     use view::lanes::{dimmed, lane_color, OFF};
     let mut state = common::transition_state(120, 40);
-    state.stems = state.stems.toggle(Stem::Drums);
+    state.desk.strips[StripKind::for_stem(Stem::Drums).index()].mute = true;
     let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
     let spectrum = spectrum();
     let scene = Scene {
@@ -955,6 +956,12 @@ fn the_mix_tab_is_a_desk() {
         &[
             " Mix ",
             "PLAYER",
+            "● STEMS heard",
+            "DRUMS",
+            "BASS",
+            "VOCALS",
+            "OTHER",
+            "muted",
             "PREVIEW",
             "MIC",
             "MAIN · USB Audio DAC",
@@ -976,9 +983,22 @@ fn the_mix_tab_is_a_desk() {
             "VOLUME —",
         ],
     );
-    // A smaller window: the same strips, shorter faders.
+    // An 80-column terminal: shorter faders, narrower stems (the vocals
+    // as VOX), the preview without its scale, the microphone gone first,
+    // the master's lamps whole.
     let state = common::desk_state(80, 24);
     let text = draw(&state);
     snapshot("mix_small", &text);
-    has(&text, &["PLAYER", "PREVIEW", "MIC", "MAIN", "0.0 dB"]);
+    has(
+        &text,
+        &[
+            "PLAYER",
+            "STEMS",
+            "VOX",
+            "PREVIEW",
+            "MAIN",
+            "○ BIT-PERFECT  ○ LIMIT",
+        ],
+    );
+    assert!(!text.contains("LISTEN ONLY"));
 }

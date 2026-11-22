@@ -1,11 +1,15 @@
-//! The strips as the mixer thread runs them. Each has two gains on the
+//! The strips as the mixer thread runs them. Each has three gains on the
 //! clock: `heard`, what its own inputs are heard at (its level, 0 while
 //! muted, times its solo gate: 1 while nothing is soloed, or it or a group
-//! it sits in is; else 0), and `vca`, what it puts on its children (its
-//! level, 0 while muted). Each is one ramp, so a mute and a solo set
-//! together never multiply into a bump. An input is heard at its strip's
-//! path: the strip's `heard` times the `vca` of every group above it; a
-//! strip at the top of the desk is heard at its `heard` alone. A change
+//! it sits in is; else 0), `vca`, what it puts on its children (its level,
+//! 0 while muted), and `lead`, what the main of a lane input on it is heard
+//! at: as `heard`, but with its gate open also while one of its children's
+//! is, since a part soloed stands for main while main is heard in the
+//! parts' place (once the parts are heard, each part's own gate applies).
+//! Each is one ramp, so a mute and a solo set together never multiply into
+//! a bump. An input is heard at its strip's path: the strip's `heard` (a
+//! lane input's main: its `lead`) times the `vca` of every group above it;
+//! a strip at the top of the desk is heard at its own alone. A change
 //! set for a frame waits for it and starts both ramps on that very frame,
 //! inside the chunk being filled. A strip meters its subtree: its inputs
 //! and its children's, summed after their gains.
@@ -71,6 +75,9 @@ struct StripRun {
     mute: bool,
     solo: bool,
     gate: f64,
+    /// The gate of a lane input's main on it: open while its own is, or
+    /// one of its children's.
+    lead_gate: f64,
     /// A change of the level, and one of the mute, waiting for its start.
     next_level: Option<(When, f64)>,
     next_mute: Option<(When, bool)>,
@@ -79,8 +86,11 @@ struct StripRun {
     mute_set: u64,
     heard: Factor,
     vca: Factor,
-    /// This chunk's gains along its path: what its inputs are heard at.
+    lead: Factor,
+    /// This chunk's gains along its path: what its inputs are heard at,
+    /// and a lane input's main.
     path: Envelope,
+    lead_path: Envelope,
     /// This chunk: the newest output that supplied audio on an input of
     /// its subtree.
     audio: Option<u64>,
@@ -110,7 +120,8 @@ impl StripRun {
     fn aim(&mut self, at: u64) {
         let own = self.own_target();
         let heard = self.heard.aim(own * self.gate);
-        if self.vca.aim(own) || heard {
+        let lead = self.lead.aim(own * self.lead_gate);
+        if self.vca.aim(own) || heard || lead {
             self.changed = Some(self.changed.map_or(at, |c| c.min(at)));
         }
     }
@@ -148,6 +159,7 @@ impl StripRun {
             if !cut {
                 self.heard.env.cut(n);
                 self.vca.env.cut(n);
+                self.lead.env.cut(n);
                 cut = true;
             }
             self.fill_part(first, at, f, rate);
@@ -166,16 +178,18 @@ impl StripRun {
             self.fill_part(first, at, end, rate);
             self.heard.env.join();
             self.vca.env.join();
+            self.lead.env.join();
         } else {
             self.heard.fill(first, n, rate);
             self.vca.fill(first, n, rate);
+            self.lead.fill(first, n, rate);
         }
     }
 
     /// Both gains for device frames `from..to` of the chunk from `first`.
     fn fill_part(&mut self, first: u64, from: u64, to: u64, rate: u32) {
         let (from, to) = ((from - first) as usize, (to - first) as usize);
-        for Factor { gain, env, .. } in [&mut self.heard, &mut self.vca] {
+        for Factor { gain, env, .. } in [&mut self.heard, &mut self.vca, &mut self.lead] {
             env.fill_part(gain, first, from, to, rate);
         }
     }
@@ -201,6 +215,8 @@ pub(super) struct Look {
     pub(super) own: f64,
     /// Its solo gate.
     pub(super) gate: f64,
+    /// The gate of a lane input's main on it.
+    pub(super) lead_gate: f64,
     /// The earliest frame either target changed at since the last chunk
     /// (`None`: neither did; at or before the chunk's first: from its
     /// start, as [`super::parts`] counts it).
@@ -247,8 +263,23 @@ impl Strips {
             let to = gate(&self.0, s.solo, &s.ancestors, any_solo);
             let s = self.0.get_mut(&id).expect("listed");
             s.gate = to;
-            s.aim(0);
+            s.lead_gate = to;
             next = self.after(Some(id));
+        }
+        // A child's gate open opens its group's for a lane input's main.
+        let open: Vec<u64> = self
+            .0
+            .values()
+            .filter(|s| s.gate > 0.0)
+            .filter_map(|s| s.ancestors.first().copied())
+            .collect();
+        for id in open {
+            if let Some(s) = self.0.get_mut(&id) {
+                s.lead_gate = 1.0;
+            }
+        }
+        for s in self.0.values_mut() {
+            s.aim(0);
         }
     }
 
@@ -271,13 +302,16 @@ impl Strips {
             mute: false,
             solo: false,
             gate,
+            lead_gate: gate,
             next_level: None,
             next_mute: None,
             level_set: 0,
             mute_set: 0,
             heard: Factor::new(gate),
             vca: Factor::new(1.0),
+            lead: Factor::new(gate),
             path: Envelope::new(gate),
+            lead_path: Envelope::new(gate),
             audio: None,
             busy: false,
             sum: Vec::new(),
@@ -341,6 +375,7 @@ impl Strips {
         for s in self.0.values_mut() {
             s.heard.gain.settle();
             s.vca.gain.settle();
+            s.lead.gain.settle();
             if matches!(s.next_level, Some((When::Frame(_), _))) {
                 s.next_level = None;
                 s.publish_level();
@@ -373,11 +408,16 @@ impl Strips {
         }
         let mut next = self.after(None);
         while let Some(id) = next {
-            let mut path = std::mem::take(&mut self.0.get_mut(&id).expect("listed").path);
+            let run = self.0.get_mut(&id).expect("listed");
+            let mut path = std::mem::take(&mut run.path);
+            let mut lead = std::mem::take(&mut run.lead_path);
             let s = &self.0[&id];
             let groups = s.ancestors.iter().filter_map(|a| self.0.get(a));
             groups.fold(path.assign(&s.heard.env), |p, g| p.times(&g.vca.env));
-            self.0.get_mut(&id).expect("listed").path = path;
+            let groups = s.ancestors.iter().filter_map(|a| self.0.get(a));
+            groups.fold(lead.assign(&s.lead.env), |p, g| p.times(&g.vca.env));
+            let run = self.0.get_mut(&id).expect("listed");
+            (run.path, run.lead_path) = (path, lead);
             next = self.after(Some(id));
         }
     }
@@ -388,8 +428,9 @@ impl Strips {
         Look {
             own: s.own_target(),
             gate: s.gate,
+            lead_gate: s.lead_gate,
             changed: s.changed,
-            moving: s.heard.gain.moving() || s.vca.gain.moving(),
+            moving: s.heard.gain.moving() || s.vca.gain.moving() || s.lead.gain.moving(),
         }
     }
 
@@ -403,6 +444,12 @@ impl Strips {
     /// Strip `id`'s gains along its path this chunk.
     pub(super) fn path(&self, id: u64) -> &Envelope {
         &self.0.get(&id).expect("an input's strip lives").path
+    }
+
+    /// The gains along strip `id`'s path of a lane input's main on it this
+    /// chunk (its `lead` for its own `heard`).
+    pub(super) fn lead_path(&self, id: u64) -> &Envelope {
+        &self.0.get(&id).expect("an input's strip lives").lead_path
     }
 
     /// Meters each strip: the heard inputs of its subtree (`inputs`: the
@@ -451,6 +498,7 @@ impl Strips {
         for s in self.0.values_mut().filter(|s| !s.busy) {
             s.heard.gain.settle();
             s.vca.gain.settle();
+            s.lead.gain.settle();
         }
     }
 }

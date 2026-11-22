@@ -773,7 +773,7 @@ pub fn draw_tab(
     let gpu = match state.gpu {
         Gpu::Present(_) => "Here and in the mode the voice plays at its level, the rest as it is.",
         Gpu::Looking => "Still looking for a GPU for the stems.",
-        Gpu::Absent => "No GPU for the stems: the voice cannot be turned down.",
+        Gpu::Absent => "No GPU: the voice is turned down only where its stems are kept.",
     };
     // What is known of the lyrics of the song and the next two.
     let mut lines: Vec<Line> = Vec::new();

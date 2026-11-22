@@ -3,8 +3,8 @@
 
 mod common;
 
-use jodel_playback::stems::Stem;
-use jodel_playback::{Command, Event, PlayState, StemMix};
+use jodel_playback::{Command, Event, PlayState};
+use jodeldiplom::core::desk::{DeskChange, StripKind};
 use jodeldiplom::core::karaoke::{self, Slider};
 use jodeldiplom::core::keymap::Op;
 use jodeldiplom::core::layout::{self, Layout};
@@ -24,10 +24,11 @@ fn engine(fx: &[Effect]) -> Vec<&Command> {
         .collect()
 }
 
-/// The stems the last settings sent have.
-fn stems_sent(fx: &[Effect]) -> Option<StemMix> {
-    engine(fx).into_iter().rev().find_map(|c| match c {
-        Command::SetSettings(s) => Some(s.stems),
+/// The gain the vocals' lane was last given on the desk (the voice's
+/// level), if it was.
+fn voice_sent(fx: &[Effect]) -> Option<f64> {
+    fx.iter().rev().find_map(|e| match e {
+        Effect::Desk(DeskChange::Lane(StripKind::Vocals, gain)) => Some(*gain),
         _ => None,
     })
 }
@@ -87,14 +88,11 @@ fn stopped(state: &mut State) {
 #[test]
 fn the_tab_plays_the_voice_at_its_level_and_esc_does_nothing_there() {
     let mut state = tab();
-    let before = state.stems;
-    // On the tab the voice plays at the slider's level, moved at once.
+    // On the tab the voice plays at the slider's level, moved at once: the
+    // vocals' lane on the desk, the strips as they were.
     let fx = op(&mut state, Op::SliderUp);
     assert_eq!(state.config.karaoke_voice, 25);
-    assert_eq!(
-        stems_sent(&fx),
-        Some(StemMix::ALL.with_level(Stem::Vocals, 25))
-    );
+    assert_eq!(voice_sent(&fx), Some(0.25));
     assert!(fx.contains(&Effect::SaveConfig));
     // Down: the delay's nudge, 10 ms a step (kept with the delays, not in
     // the settings); up: the voice again.
@@ -106,37 +104,38 @@ fn the_tab_plays_the_voice_at_its_level_and_esc_does_nothing_there() {
     op(&mut state, Op::Up);
     let fx = op(&mut state, Op::SliderFineDown);
     assert_eq!(state.config.karaoke_voice, 24);
-    assert_eq!(
-        stems_sent(&fx),
-        Some(StemMix::ALL.with_level(Stem::Vocals, 24))
-    );
+    assert_eq!(voice_sent(&fx), Some(0.24));
     // Esc stays on the tab and does nothing.
     let fx = op(&mut state, Op::Back);
     assert!(fx.is_empty(), "{fx:?}");
     assert_eq!((state.screen, state.side), (Screen::Main, Side::Karaoke));
-    assert_eq!(state.stems, before);
-    // Leaving the tab puts the stems back as the settings have them;
-    // coming back plays the voice at its level again.
+    assert!(!state.desk.stems_touched());
+    // Leaving the tab puts the lane back at 1; coming back plays the voice
+    // at its level again.
     let fx = op(&mut state, Op::ToggleSide);
     assert_ne!(state.side, Side::Karaoke);
-    assert_eq!(stems_sent(&fx), Some(before));
+    assert_eq!(voice_sent(&fx), Some(1.0));
     let mut back = Vec::new();
     while state.side != Side::Karaoke {
         back = op(&mut state, Op::ToggleSide);
     }
-    assert_eq!(
-        stems_sent(&back),
-        Some(StemMix::ALL.with_level(Stem::Vocals, 24))
-    );
+    assert_eq!(voice_sent(&back), Some(0.24));
 }
 
+/// Without a GPU the voice still sets its lane: a song whose stems are
+/// kept has them from the cache, and the engine is asked for those only.
 #[test]
-fn without_a_gpu_the_tab_leaves_the_stems_alone() {
+fn without_a_gpu_the_voice_turns_down_the_kept_stems() {
+    use jodel_playback::MakeStems;
+    use jodeldiplom::core::stems::make_wanted;
     let mut state = tab();
     state.gpu = jodeldiplom::core::Gpu::Absent;
     let fx = op(&mut state, Op::SliderUp);
     assert_eq!(state.config.karaoke_voice, 25);
-    assert_eq!(stems_sent(&fx), None, "{fx:?}");
+    assert_eq!(voice_sent(&fx), Some(0.25), "{fx:?}");
+    assert_eq!(make_wanted(&state), MakeStems::Kept);
+    state.gpu = jodeldiplom::core::Gpu::Present("a GPU".into());
+    assert_eq!(make_wanted(&state), MakeStems::Separate);
 }
 
 #[test]
@@ -145,10 +144,7 @@ fn the_mode_plays_the_voice_at_its_level_and_esc_keeps_it_on_the_tab() {
     let fx = op(&mut state, Op::KaraokeEnter);
     assert_eq!(state.screen, Screen::Karaoke);
     assert!(engine(&fx).contains(&&Command::HoldAtEnd(true)));
-    assert_eq!(
-        stems_sent(&fx),
-        Some(StemMix::ALL.with_level(Stem::Vocals, 20))
-    );
+    assert_eq!(voice_sent(&fx), Some(0.2));
     // The song playing stops and is held at its start for START: nothing
     // plays without a count-in.
     let playing = state.playing.track.as_ref().map(|t| t.index);
@@ -161,10 +157,7 @@ fn the_mode_plays_the_voice_at_its_level_and_esc_keeps_it_on_the_tab() {
     assert!(karaoke::waiting(&state), "START shows at once");
     // The voice's level is heard at once in the mode.
     let fx = op(&mut state, Op::SliderUp);
-    assert_eq!(
-        stems_sent(&fx),
-        Some(StemMix::ALL.with_level(Stem::Vocals, 25))
-    );
+    assert_eq!(voice_sent(&fx), Some(0.25));
     // Tab and the other screens are not reached from the mode.
     for o in [
         Op::ToggleSide,
@@ -181,11 +174,11 @@ fn the_mode_plays_the_voice_at_its_level_and_esc_keeps_it_on_the_tab() {
     let fx = op(&mut state, Op::Back);
     assert_eq!((state.screen, state.side), (Screen::Main, Side::Karaoke));
     assert!(engine(&fx).contains(&&Command::HoldAtEnd(false)));
-    assert_eq!(stems_sent(&fx), None, "{fx:?}");
+    assert_eq!(voice_sent(&fx), None, "{fx:?}");
     assert!(!engine(&fx).iter().any(|c| matches!(c, Command::Stop)));
     // Leaving the tab then puts them back.
     let fx = op(&mut state, Op::ToggleSide);
-    assert_eq!(stems_sent(&fx), Some(state.stems));
+    assert_eq!(voice_sent(&fx), Some(1.0));
 }
 
 #[test]
@@ -485,10 +478,7 @@ fn shift_enter_goes_into_the_mode_where_the_song_is() {
     assert_eq!(state.karaoke.held, None);
     assert_eq!(state.karaoke.countdown, None);
     assert!(!karaoke::waiting(&state), "the song plays on: no START");
-    assert_eq!(
-        stems_sent(&fx),
-        Some(StemMix::ALL.with_level(Stem::Vocals, 20))
-    );
+    assert_eq!(voice_sent(&fx), Some(0.2));
     // Space pauses it as any song playing in the mode.
     let fx = op(&mut state, Op::PlayPause);
     assert_eq!(engine(&fx), [&Command::Pause]);

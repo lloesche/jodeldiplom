@@ -156,6 +156,21 @@ pub enum Command {
     /// kept. The output is the same either way; a mixer may play the parts
     /// in place of main.
     MakeStems(MakeStems),
+    /// The stems as a mixer plays them, for what a transition mixes inside
+    /// the engine (its two tracks on their stems, faded by its lanes, are
+    /// heard as main, so a mixer's stem levels do not reach them there):
+    /// each stem's gain in [`crate::stems::LANES`]'s order (0 for one
+    /// muted), from `at` seconds into the playing track (a bar's first
+    /// beat), else at once. Outside a transition it changes nothing heard;
+    /// with gains other than one, the next track's return to its own route
+    /// after a transition waits until its stems are parts of the output
+    /// again, so a mixer can play them on from there.
+    StemMask {
+        /// Each stem's gain, drums, bass, vocals, other.
+        gains: [f64; crate::stems::STEMS],
+        /// Seconds into the playing track; `None`: at once.
+        at: Option<f64>,
+    },
 }
 
 /// Whether the player is playing.
@@ -491,6 +506,15 @@ impl Player {
     /// [`Command::MakeStems`].
     pub fn make_stems(&self, make: MakeStems) -> Result<(), Error> {
         self.send(Command::MakeStems(make))
+    }
+
+    /// [`Command::StemMask`].
+    pub fn stem_mask(
+        &self,
+        gains: [f64; crate::stems::STEMS],
+        at: Option<f64>,
+    ) -> Result<(), Error> {
+        self.send(Command::StemMask { gains, at })
     }
 }
 

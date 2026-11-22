@@ -5,10 +5,10 @@
 //! never changes for it), the singer's delay (its nudge, and a sync that
 //! measures it: [`super::sync`], [`super::lag`]), and the button into the
 //! mode. While the tab or
-//! the mode shows, every stem plays with the voice at its level ([`mix`]),
-//! so what is heard, metered and recorded on the tab is what the mode
-//! plays; leaving the tab puts the stems back as the settings have them
-//! ([`follow_stems`]). The mode ([`Screen::Karaoke`], fullscreen in the
+//! the mode shows, the voice plays at its level: the vocals lane's gain on
+//! the desk, on top of its strip ([`super::stems::lanes_due`]), so what is
+//! heard, metered and recorded on the tab is what the mode plays; leaving
+//! the tab puts the lane back at 1. The mode ([`Screen::Karaoke`], fullscreen in the
 //! window) is where karaoke happens:
 //!
 //! - entering it stops the song and holds it at its start (entering it
@@ -28,8 +28,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use jodel_lyrics::{Detail, Lyrics, Source};
-use jodel_playback::stems::Stem;
-use jodel_playback::{Command, PlayState, StemMix};
+use jodel_playback::{Command, PlayState};
 
 use crate::lyrics::Answer;
 
@@ -441,9 +440,6 @@ pub struct KaraokeState {
     pub resume_at: Option<u64>,
     /// The mode's controls show until then ([`State::now_ms`]).
     pub controls_until: u64,
-    /// The voice level the engine was last sent with the karaoke mix
-    /// ([`stems_due`] then): `None` when it was sent the settings' stems.
-    pub stems_sent: Option<u8>,
     /// Where the song playing has been heard from without a jump (the mode
     /// entered where it was, a seek, another song, a pause ended): a
     /// count-in shows only if it fits whole after it. The track, seconds.
@@ -480,28 +476,6 @@ pub fn in_mode(state: &State) -> bool {
 /// included): the voice then plays at its level.
 pub fn shown(state: &State) -> bool {
     (state.screen == Screen::Main && state.side == Side::Karaoke) || in_mode(state)
-}
-
-/// The stems the tab and the mode play: all of them, the voice at its
-/// level.
-pub fn mix(state: &State) -> StemMix {
-    StemMix::ALL.with_level(Stem::Vocals, state.config.karaoke_voice)
-}
-
-/// The voice level the engine should have the karaoke mix at now: while
-/// the tab or the mode shows and the stems can be separated (a GPU);
-/// `None` for the settings' stems.
-pub fn stems_due(state: &State) -> Option<u8> {
-    (shown(state) && matches!(state.gpu, Gpu::Present(_))).then_some(state.config.karaoke_voice)
-}
-
-/// After any action: the engine sent the stems in force when they are no
-/// longer what it has (the tab shown or left, by any way; the slider
-/// moved; the GPU found).
-pub(crate) fn follow_stems(state: &mut State, fx: &mut Vec<Effect>) {
-    if stems_due(state) != state.karaoke.stems_sent {
-        super::update::send_settings_now(state, fx);
-    }
 }
 
 /// Whether nothing plays in the mode, so START shows.
@@ -800,7 +774,10 @@ pub(crate) fn enter(state: &mut State, fx: &mut Vec<Effect>, here: bool) {
         Gpu::Looking => {
             super::update::say_info(state, "Still looking for a GPU: the voice stays in for now")
         }
-        Gpu::Absent => super::update::say_info(state, "No GPU for the stems: the voice stays in"),
+        Gpu::Absent => super::update::say_info(
+            state,
+            "No GPU for the stems: the voice is turned down only where its stems are kept",
+        ),
     }
 }
 
@@ -1096,7 +1073,8 @@ pub(crate) fn slide_to(state: &mut State, slider: Slider, share: f64, fx: &mut V
 }
 
 /// `slider` at `value`: the voice kept in the settings and heard at it at
-/// once on the tab and in the mode ([`follow_stems`], after the action);
+/// once on the tab and in the mode (the vocals lane, after the action:
+/// [`super::stems::follow`]);
 /// the delay through its nudge, kept with the delays
 /// ([`super::lag::set_nudge`]).
 fn set(state: &mut State, slider: Slider, value: i32, fx: &mut Vec<Effect>) {

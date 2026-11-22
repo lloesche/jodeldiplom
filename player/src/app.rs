@@ -2,9 +2,10 @@
 //! playback engine, the background workers, the spectrum and the cover.
 //!
 //! The engine plays on the Lead input of a mixer that owns the device
-//! ([`jodel_output::mixer`]): alone at gain 1 it reaches the device bit for
-//! bit. The preview's players ([`crate::preview`]) are guests on it, and
-//! the spectrum is the mixer's: what the device plays.
+//! ([`crate::desk_wiring`]): its main alone at gain 1 reaches the device
+//! bit for bit, its stems on strips of their own. The preview's players
+//! ([`crate::preview`]) are guests on it, and the spectrum is the mixer's:
+//! what the device plays.
 //!
 //! A frontend creates an [`App`], feeds it [`Action`]s from its input
 //! ([`App::dispatch`]), calls [`App::pump`] to take in what the engine and
@@ -18,17 +19,17 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use image::RgbImage;
-use jodel_output::mixer::{DeskView, Fader, MicPort, MicView, Mixer, MixerOptions, Role, Strip};
-use jodel_output::SimClock;
+use jodel_output::mixer::{DeskView, MicPort};
 use jodel_playback::{
-    any_capabilities, Command, Cover, CoverOrigin, DeviceTarget, Event, NullTarget, OutputTarget,
-    PlayState, Player, PlayerOptions, SpectrumTap,
+    Command, Cover, CoverOrigin, Event, PlayState, PlayerOptions, SeparatorSource, SpectrumTap,
 };
 
 use crate::art::{self, Art};
 use crate::browser::{self, DetailsWorker, Notify};
 use crate::config::Config;
 use crate::core::{self, Action, DeviceChoice, Effect, State};
+use crate::desk_wiring::Engine;
+pub use crate::desk_wiring::{MemoryOutput, Output};
 use crate::rhythm::RhythmWorker;
 use crate::session::Session;
 use crate::spectrum::{Analyzer, SpectrumFrame};
@@ -75,16 +76,6 @@ pub fn list_mics() -> Result<Vec<(String, String)>, String> {
     jodel_output::input::input_devices()
         .map(|list| list.into_iter().map(|d| (d.id, d.name)).collect())
         .map_err(|e| e.to_string())
-}
-
-/// Where the engine plays.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Output {
-    /// A device: `None` the system default, else an id or a name (as
-    /// [`jodel_output::find_device`] takes).
-    Device(Option<String>),
-    /// Nowhere: a null output that accepts every format, on this clock.
-    Null(SimClock),
 }
 
 /// How an [`App`] starts.
@@ -141,6 +132,8 @@ pub struct AppOptions {
     /// A move of the data folder under way ([`crate::mover`]), shown on the
     /// settings page.
     pub mover: Option<Arc<crate::mover::Mover>>,
+    /// Where the engine separates stems (the real one: the GPU's).
+    pub separator: SeparatorSource,
 }
 
 impl AppOptions {
@@ -170,6 +163,7 @@ impl AppOptions {
             mics: Arc::new(list_mics),
             data: None,
             mover: None,
+            separator: gpu_separator,
         }
     }
 }
@@ -184,7 +178,7 @@ impl AppOptions {
 /// device in hog mode.
 pub fn volume_device(output: &Output, playing_on: Option<&str>) -> Option<Option<String>> {
     match output {
-        Output::Null(_) => None,
+        Output::Null(_) | Output::Memory(_) => None,
         Output::Device(query) => Some(playing_on.map(str::to_owned).or_else(|| query.clone())),
     }
 }
@@ -322,30 +316,6 @@ pub fn capability_summary(caps: &jodel_output::Capabilities) -> String {
     )
 }
 
-/// The engine and what it plays on. The fields drop in order: the
-/// players before the mixer they play on.
-struct Engine {
-    previews: Option<crate::preview::Previews>,
-    player: Player,
-    /// The engine's fader on the mixer.
-    lead: Fader,
-    /// The engine's strip on the desk and the preview's, the Mix tab's
-    /// faders ([`Engine::strip`]).
-    strips: [Strip; 2],
-    /// The microphone's port as last told.
-    mic: MicView,
-    /// The mixer's monitor: what the device plays.
-    tap: SpectrumTap,
-    mixer: Mixer,
-}
-
-impl Engine {
-    /// The strip of `kind`.
-    fn strip(&self, kind: core::desk::StripKind) -> &Strip {
-        &self.strips[kind.index()]
-    }
-}
-
 /// The running player.
 pub struct App {
     /// What the UI shows.
@@ -382,9 +352,8 @@ pub struct App {
     grids: Option<crate::grids::GridStore>,
     /// When the last position event arrived, for [`App::heard`].
     position_at: Instant,
-    /// What the engine was last told about keeping the stems
-    /// ([`Command::KeepStems`]): while the Transition tab is shown.
-    kept_stems: Option<bool>,
+    /// Where the engine separates stems.
+    separator: SeparatorSource,
     /// The track and position the last frame drew, and when
     /// ([`App::heard_for_frame`]).
     last_drawn: Option<(Option<usize>, f64, Instant)>,
@@ -614,7 +583,7 @@ impl App {
             mic_rx,
             grids,
             position_at: Instant::now(),
-            kept_stems: None,
+            separator: options.separator,
             last_drawn: None,
             mic_noted: None,
             sung: Vec::new(),
@@ -734,21 +703,16 @@ impl App {
         }
         self.engine = None;
         self.playing_on = None;
-        let mut target: Box<dyn OutputTarget> = match output {
-            Output::Null(clock) => Box::new(NullTarget::new(any_capabilities(), *clock)),
-            Output::Device(query) => {
-                match DeviceTarget::find(query.as_deref().unwrap_or("default")) {
-                    Ok(target) => {
-                        self.playing_on = Some(target.device().id.clone());
-                        Box::new(target)
-                    }
-                    Err(error) => {
-                        self.dispatch(Action::Failed(format!(
-                            "No output device ({error}); choose one in the settings (,)"
-                        )));
-                        return;
-                    }
-                }
+        let mut target = match output.target() {
+            Ok((target, device)) => {
+                self.playing_on = device;
+                target
+            }
+            Err(error) => {
+                self.dispatch(Action::Failed(format!(
+                    "No output device ({error}); choose one in the settings (,)"
+                )));
+                return;
             }
         };
         // What the device takes, asked here once (the engine reuses it), so
@@ -757,33 +721,18 @@ impl App {
         let capabilities = target.capabilities().ok();
         self.dispatch(Action::DeviceRates(capabilities.as_ref().map(device_rates)));
         let generation = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
-        let mixer = Mixer::open(
-            target,
-            MixerOptions {
-                capabilities: capabilities.clone(),
-                ..MixerOptions::default()
-            },
-        );
-        // The fine bass block at 384 kHz, plus the device buffer that runs
-        // ahead of what is heard.
-        let tap = SpectrumTap::new(1 << 19);
-        mixer.set_monitor(Some(Box::new(tap.clone())));
-        let player_strip = mixer.strip(core::desk::StripKind::Player.name());
-        let preview_strip = mixer.strip(core::desk::StripKind::Preview.name());
-        let (lead_input, lead) = mixer.input(&player_strip, Role::Lead, 1.0);
         let options = PlayerOptions {
             settings: self.state.engine_settings(),
             position_interval: Duration::from_millis(100),
-            capabilities,
-            separator: Some(gpu_separator),
+            capabilities: capabilities.clone(),
+            separator: Some(self.separator),
             stem_store: self.stem_store.clone(),
             ..PlayerOptions::default()
         };
-        let (player, events) = Player::new(Box::new(lead_input), options);
+        let (engine, events) = Engine::start(target, capabilities, options);
         // The bars a jump can reach are kept ([`Op::JumpBar`]): four either
         // side of the one heard down to 48 BPM, and that one.
-        let _ = player.jump_window(JUMP_WINDOW, JUMP_WINDOW);
-        self.kept_stems = None;
+        let _ = engine.player.jump_window(JUMP_WINDOW, JUMP_WINDOW);
         // Whatever the old engine had armed or mixing is gone with it.
         core::transition::draft::engine_restarted(&mut self.state);
         let tx = self.tx.clone();
@@ -807,19 +756,14 @@ impl App {
                 notify();
             }
         });
-        self.engine = Some(Engine {
-            previews: None,
-            player,
-            lead,
-            strips: [player_strip, preview_strip],
-            mic: MicView::default(),
-            tap,
-            mixer,
-        });
         // A new mixer's strips start at 0 dB: the Mix tab's settings are
-        // made on them again.
-        for change in core::desk::changes(&self.state) {
-            self.desk_change(change);
+        // made on them again, and the engine told of the stems.
+        engine.set_up(&self.state);
+        self.engine = Some(engine);
+        let mut fx = Vec::new();
+        core::stems::engine_started(&mut self.state, &mut fx);
+        for effect in fx {
+            self.run(effect);
         }
         // A new mixer takes the microphone over.
         self.set_mic();
@@ -880,16 +824,6 @@ impl App {
                         "The best scores were not saved: {e}"
                     )));
                 }
-            }
-        }
-        // On the Transition tab the playing track's stems are kept while its
-        // file plays, so a stem switched off has those from before it for a
-        // jump back (a separation runs meanwhile; elsewhere it does not).
-        let transition = self.state.side == core::Side::Transition;
-        if self.kept_stems != Some(transition) {
-            if let Some(engine) = &self.engine {
-                let _ = engine.player.keep_stems(transition);
-                self.kept_stems = Some(transition);
             }
         }
         if gone {
@@ -1022,14 +956,8 @@ impl App {
     }
     /// Sets a strip of the mixer as the Mix tab has it.
     fn desk_change(&self, change: core::desk::DeskChange) {
-        use core::desk::DeskChange;
-        let Some(engine) = &self.engine else {
-            return;
-        };
-        match change {
-            DeskChange::Level(kind, gain) => engine.strip(kind).set_level(gain),
-            DeskChange::Mute(kind, on) => engine.strip(kind).set_mute(on),
-            DeskChange::Solo(kind, on) => engine.strip(kind).set_solo(on),
+        if let Some(engine) = &self.engine {
+            engine.apply(change);
         }
     }
 
@@ -1044,13 +972,11 @@ impl App {
     /// last look (the one place they are taken), each fader strip found by
     /// its id.
     fn look_at_desk(&mut self) {
-        use core::desk::StripKind;
         let Some(engine) = &self.engine else {
             self.state.desk.master = None;
             return;
         };
-        let ids = StripKind::ALL.map(|kind| engine.strip(kind).id());
-        let look = core::desk::Look::of(engine.mixer.desk(), engine.mixer.meters(), ids);
+        let look = engine.look();
         let now = self.now_ms();
         core::desk::feed(&mut self.state, look, now);
     }
@@ -1060,6 +986,7 @@ impl App {
     fn note_pair(&mut self) {
         let output = match &self.output {
             Output::Null(_) => "null".to_owned(),
+            Output::Memory(_) => "memory".to_owned(),
             Output::Device(query) => self
                 .playing_on
                 .clone()
@@ -1813,14 +1740,14 @@ impl App {
         let Some(engine) = &mut self.engine else {
             return;
         };
+        let (lead, strip) = (
+            engine.lead.clone(),
+            engine.strip(core::desk::StripKind::Preview).clone(),
+        );
         match (what, &mut engine.previews) {
             (Preview::Play { path }, previews) => previews
                 .get_or_insert_with(|| {
-                    crate::preview::Previews::new(
-                        engine.lead.clone(),
-                        engine.strips[core::desk::StripKind::Preview.index()].clone(),
-                        self.state.engine_settings(),
-                    )
+                    crate::preview::Previews::new(lead, strip, self.state.engine_settings())
                 })
                 .play(&engine.mixer, path),
             (Preview::Silent, Some(p)) => p.silent(),

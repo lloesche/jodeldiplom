@@ -31,7 +31,14 @@
 //! first frames crossfaded from what would have played next over the
 //! frames main's are; one continued from it ([`SegStart::Continued`]: a
 //! transition's timeline made straight) the same with no crossfade. A route
-//! that is not the plain file (a stems route, a transition's mix) has none.
+//! that is not the plain file (a stems route, a transition's mix) has none,
+//! but for two moments of a transition ([`Engine::parts_able`]): the playing
+//! track keeps its parts while it is armed and until it moves onto its
+//! stems, and they end only once that move's crossfade is over
+//! ([`Track::parts_hold`]); the next track, left on its stems when the
+//! transition is over, has them again there, and its move back onto its own
+//! route waits for them while a mixer plays the stems at other levels
+//! ([`crate::Command::StemMask`]).
 //!
 //! The parts' requantization is not limited and its clips are not reported
 //! (the desk will show them). Until the engine's own stem mixing goes, a
@@ -48,7 +55,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use jodel_output::lanes::{ending_frames, Parts};
+use jodel_output::lanes::{ending_frames, Parts, SWITCH_FADE};
 use jodel_output::StreamFormat;
 
 use crate::error::Error;
@@ -123,6 +130,10 @@ pub(super) struct Want<'a> {
     /// nor from this one on (its fade out for another format).
     pub(super) rise: u64,
     pub(super) cut: Option<u64>,
+    /// A track with no parts of its own taking over at the same format
+    /// ([`Track::parts_hold`]): the parts there stay valid to this output
+    /// frame, so they end only after it.
+    pub(super) hold: Option<u64>,
 }
 
 /// What [`StemLanes::before`] found.
@@ -245,10 +256,36 @@ impl StemLanes {
     }
 
     /// No more parts are made: what is there stays only as far as it is
-    /// promised ([`Timeline::promised`]), so they end from `from`.
-    fn end_at(&mut self, from: u64) {
+    /// promised ([`Timeline::promised`]), or while they are there as far as
+    /// `hold` (what they are held for), so they end from then.
+    fn end_at(&mut self, from: u64, hold: Option<u64>) {
         self.stream = None;
-        self.buffer.restart(from, self.timeline.promised(from), 0);
+        let promised = self.timeline.promised(from);
+        let keep = match hold {
+            Some(hold) if self.timeline.state(from) == State::Present => promised.max(hold),
+            _ => promised,
+        };
+        self.buffer.restart(from, keep, 0);
+    }
+
+    /// Whether the parts have been said to be there, and not ending, for
+    /// at least `frames` frames before `at` (the frame written next).
+    pub(super) fn present_for(&self, at: u64, frames: u64) -> bool {
+        self.timeline.state(at) == State::Present
+            && self
+                .timeline
+                .changed_at(at)
+                .is_some_and(|since| at >= since + frames)
+    }
+
+    /// Whether parts may come for `track`: they are asked for, can be made,
+    /// and none failed or went missing for it.
+    pub(super) fn coming_for(&self, track: &Track) -> bool {
+        let off = self
+            .off
+            .as_ref()
+            .is_some_and(|(i, p)| *i == track.index && *p == track.info.path);
+        self.make != MakeStems::Never && self.possible() && !off
     }
 
     /// The track has no parts any more: none until asked for again (with
@@ -256,7 +293,7 @@ impl StemLanes {
     fn give_up(&mut self, track: &Track, from: u64) {
         self.off = Some((track.index, track.info.path.clone()));
         self.run = None;
-        self.end_at(from);
+        self.end_at(from, None);
     }
 
     /// Where a run gets its stems: from the store, else the separator
@@ -295,7 +332,7 @@ impl StemLanes {
             .is_some_and(|(i, p)| *i == track.index && *p == track.info.path);
         let Some(separator) = self.separator().filter(|_| want.able && !off) else {
             if self.stream.is_some() {
-                self.end_at(from);
+                self.end_at(from, want.hold);
             }
             if self.make == MakeStems::Never {
                 self.run = None;
@@ -603,11 +640,45 @@ impl Ask {
             main_end: track.made_all().then_some(track.seg_out + track.emitted),
             rise: track.seg_out + track.parts_rise,
             cut: track.parts_cut,
+            hold: track.parts_hold,
         }
     }
 }
 
 impl Engine {
+    /// Whether `track` may have parts now: on its plain route while no
+    /// transition is heard (an armed or preparing one leaves the playing
+    /// track on its file until it moves onto its stems), or on the stems
+    /// route a transition that is over left it on, until it is back on its
+    /// own (so a mixer plays its stems across that move).
+    pub(super) fn parts_able(&self, track: &Track) -> bool {
+        if self.transition_heard() {
+            return false;
+        }
+        let left = self.transition.is_none() && track.mixes_stems() && !track.pending;
+        track.plain() || left
+    }
+
+    /// Whether the move of a track a transition left on its stems (`old`)
+    /// back onto its plain route (`new`) waits, with the frame `written`
+    /// next: while a mixer plays the stems at other levels than one
+    /// ([`crate::Command::StemMask`]), the old route is heard as main with
+    /// them, and the new one would be heard as the file, so the move waits
+    /// for the parts, which the mixer then plays across it: until they
+    /// have been there for a mixer's switch and its end (the switch done
+    /// before the move, as the playing track's parts at the transition's
+    /// start end after its move: [`Track::parts_hold`]). Not when none are
+    /// coming.
+    pub(super) fn waits_for_parts(&self, old: &Track, new: &Track, written: u64) -> bool {
+        let left = self.parts_able(old) && !old.plain();
+        let rate = old.route.output_rate;
+        let settled = ending_frames(rate) + frames_of(SWITCH_FADE, rate);
+        left && new.plain_route()
+            && !self.mask_is_unity()
+            && self.lanes.coming_for(old)
+            && !self.lanes.present_for(written, settled)
+    }
+
     /// Writes `track`'s output from `out_at` up to sample `limit` (at most
     /// [`LANE_CHUNK`] frames of it) on an output of lanes, and returns the
     /// frames it took: each main as it is, then the parts the stem lanes
@@ -634,8 +705,10 @@ impl Engine {
         let (back, ahead) = self.stem_keep(track);
         let next_able = self.route_settings().stems.is_full() && self.transition.is_none();
         let keep = (back.max((held * f64::from(STEM_RATE)) as u64), ahead);
-        let able = self.transition.is_none() && track.plain();
-        let margin = ending_frames(rate).max(frames_of(self.switch_fade, rate));
+        let able = self.parts_able(track);
+        // A switch's length past main's longest crossfade: a track taking
+        // over without parts finds them there through its crossfade.
+        let margin = ending_frames(rate) + frames_of(self.switch_fade, rate);
         let ask = Ask {
             from,
             frames,
@@ -658,6 +731,10 @@ impl Engine {
             return Ok(0);
         }
         let mut followed = self.lanes.before(&ask.want(track, next));
+        // What the parts were held for has been written past.
+        if track.parts_hold.is_some_and(|hold| from >= hold) {
+            track.parts_hold = None;
+        }
         if let Some(reason) = followed.failed.take() {
             let index = track.index;
             self.emit(Event::PartsStopped { index, reason });

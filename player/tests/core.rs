@@ -2023,12 +2023,16 @@ fn beat_methods_are_checkboxes_while_voting_and_a_radio_without() {
     assert!(state.rhythm_wanted.is_empty());
 }
 
-/// The stems: alt+1..4 switch one, alt+0 all on; each change reaches the
-/// engine at once; the buttons by the transport buttons show and switch
-/// them; without a GPU there are no buttons and the keys say why.
+/// The stems: alt+1..4 mute and unmute a stem's strip on the desk, alt+0
+/// puts them all back; without bars there they change at once, and the
+/// engine's transitions are told; the buttons by the transport buttons show
+/// and switch them (with a GPU: without one only kept stems play, and there
+/// are no buttons).
 #[test]
 fn stems_switch_from_keys_and_buttons_with_a_gpu() {
-    use jodel_playback::{Stem, StemMix};
+    use jodel_playback::stems::STEMS;
+    use jodel_playback::Stem;
+    use jodeldiplom::core::desk::{DeskChange, StripKind};
     let mut state = listed();
     state.gpu = Gpu::Absent;
     let alt = |c| Key {
@@ -2045,10 +2049,30 @@ fn stems_switch_from_keys_and_buttons_with_a_gpu() {
         keymap::lookup(&state, alt('0')),
         Some(Meaning::Op(Op::AllStems))
     );
+    let desk = |fx: &[Effect]| -> Vec<DeskChange> {
+        fx.iter()
+            .filter_map(|e| match e {
+                Effect::Desk(c) => Some(*c),
+                _ => None,
+            })
+            .collect()
+    };
+    // Without a GPU the drums' strip mutes all the same (kept stems play).
     let fx = op(&mut state, Op::ToggleDrums);
-    assert!(engine(&fx).is_empty());
-    assert_eq!(state.stems, StemMix::ALL);
-    assert!(state.message.as_ref().unwrap().text.contains("GPU"));
+    assert_eq!(desk(&fx), [DeskChange::Mute(StripKind::Drums, true)]);
+    assert_eq!(
+        engine(&fx),
+        [
+            Command::StemMask {
+                gains: [0.0, 1.0, 1.0, 1.0],
+                at: None
+            },
+            // A stem touched: the kept ones made.
+            Command::MakeStems(jodel_playback::MakeStems::Kept),
+        ]
+    );
+    assert!(state.message.as_ref().unwrap().text.contains("no GPU"));
+    op(&mut state, Op::ToggleDrums);
     let stem_buttons = |state: &State| {
         let Layout::Main(m) = layout::compute(state) else {
             panic!()
@@ -2063,15 +2087,23 @@ fn stems_switch_from_keys_and_buttons_with_a_gpu() {
     assert!(stem_buttons(&state).is_empty());
 
     state.gpu = Gpu::Present("a GPU".into());
-    // The vocals off: the engine hears at once, not after the settings
-    // pause.
+    // The vocals off: their strip muted at once, nothing sent to the engine
+    // but the transitions' mask (no settings, no route).
     let fx = op(&mut state, Op::ToggleVocals);
-    let want = StemMix::ALL.toggle(Stem::Vocals);
-    assert_eq!(state.stems, want);
-    match engine(&fx).as_slice() {
-        [Command::SetSettings(s)] => assert_eq!(s.stems, want),
-        other => panic!("{other:?}"),
-    }
+    assert!(state.desk.setting(StripKind::Vocals).mute);
+    assert_eq!(desk(&fx), [DeskChange::Mute(StripKind::Vocals, true)]);
+    let mut want = [1.0; STEMS];
+    want[2] = 0.0;
+    assert_eq!(
+        engine(&fx),
+        [
+            Command::StemMask {
+                gains: want,
+                at: None
+            },
+            Command::MakeStems(jodel_playback::MakeStems::Separate),
+        ]
+    );
     assert!(state
         .message
         .as_ref()
@@ -2095,7 +2127,7 @@ fn stems_switch_from_keys_and_buttons_with_a_gpu() {
     let action = jodeldiplom::core::mouse::action(&state, click).unwrap();
     assert!(matches!(action, Action::Op(Op::ToggleDrums)));
     update(&mut state, action);
-    assert!(!state.stems.contains(Stem::Drums));
+    assert!(jodeldiplom::core::stems::is_off(&state, Stem::Drums));
     // By name where there is room.
     update(&mut state, Action::Resize(140, 30));
     let named: Vec<String> = stem_buttons(&state)
@@ -2103,24 +2135,45 @@ fn stems_switch_from_keys_and_buttons_with_a_gpu() {
         .map(|b| b.label.trim().to_owned())
         .collect();
     assert_eq!(named, ["drums", "bass", "vocals", "other"]);
-    // All on: the file as it is.
+    // All on: every stem's strip as it starts (a fader moved too), the file
+    // as it is.
+    state.desk.strips[StripKind::Bass.index()].db = -6.0;
     let fx = op(&mut state, Op::AllStems);
-    assert_eq!(state.stems, StemMix::ALL);
-    assert!(matches!(engine(&fx).as_slice(), [Command::SetSettings(s)] if s.stems.is_full()));
+    assert!(!state.desk.stems_touched());
+    let changes = desk(&fx);
+    for c in [
+        DeskChange::Level(StripKind::Bass, 1.0),
+        DeskChange::Mute(StripKind::Drums, false),
+        DeskChange::Mute(StripKind::Vocals, false),
+    ] {
+        assert!(changes.contains(&c), "{changes:?}");
+    }
+    assert_eq!(
+        engine(&fx),
+        [
+            Command::StemMask {
+                gains: [1.0; STEMS],
+                at: None
+            },
+            // Nothing touched away from the tabs that show stems: none made.
+            Command::MakeStems(jodel_playback::MakeStems::Never),
+        ]
+    );
+    assert!(state.message.as_ref().unwrap().text.contains("all on"));
     // The palette lists the five.
     assert_eq!(keymap::palette_matches("stems").len(), 5);
 }
 
-/// A playback engine that failed is started again by the app; the state
-/// says so and plays the file as it is, so the stems do not fail again.
+/// A playback engine that failed is started again by the app, which makes
+/// the desk again as it was set (M2); the state says so.
 #[test]
-fn a_failed_engine_plays_the_whole_mix_again() {
-    use jodel_playback::{Stem, StemMix};
+fn a_failed_engine_is_started_again_and_the_desk_kept() {
+    use jodeldiplom::core::desk::StripKind;
     let mut state = listed();
-    state.stems = StemMix::ALL.toggle(Stem::Drums);
+    op(&mut state, Op::ToggleDrums);
     let fx = update(&mut state, Action::EngineGone(1));
     assert!(fx.is_empty(), "the app starts the engine");
-    assert_eq!(state.stems, StemMix::ALL);
+    assert!(state.desk.setting(StripKind::Drums).mute);
     assert!(state
         .message
         .as_ref()
@@ -2424,9 +2477,12 @@ fn grid_fixes_change_the_bars_and_are_kept() {
         block_analysis(&state, Block::Now).downbeats,
         before.downbeats
     );
-    // Off the Transition tab the grid keys say where they belong.
+    // Off the Transition tab the grid keys say where they belong (the
+    // engine told no stems are wanted there any more).
     state.side = Side::Browser;
-    assert!(op(&mut state, Op::GridLater).is_empty());
+    let fx = op(&mut state, Op::GridLater);
+    let stems = |e: &Effect| matches!(e, Effect::Engine(Command::MakeStems(_)));
+    assert!(fx.iter().all(stems), "{fx:?}");
     assert!(state.message.is_some());
 }
 
@@ -2949,7 +3005,15 @@ fn n_mixes_into_the_next_track_by_the_transition_tabs_preset() {
         Some(Meaning::Op(Op::SkipMix))
     );
     // By default the next track key cuts, as ever.
-    assert_eq!(engine(&op(&mut state, Op::Next)), vec![Command::Next]);
+    let next = engine(&op(&mut state, Op::Next));
+    // (Away from the Transition tab now: no stems made.)
+    assert_eq!(
+        next,
+        vec![
+            Command::Next,
+            Command::MakeStems(jodel_playback::MakeStems::Never)
+        ]
+    );
     let fx = op(&mut state, Op::SkipMix);
     assert!(fx.contains(&Effect::SaveConfig));
     assert!(state.config.skip_mix);
@@ -2968,7 +3032,8 @@ fn n_mixes_into_the_next_track_by_the_transition_tabs_preset() {
     state.side = Side::Queue;
     state.config.skip_mix = true;
     let fx = op(&mut state, Op::Next);
-    let [Effect::Engine(Command::Transition(plan))] = &fx[..] else {
+    // (With the engine told that no stems are wanted off the tabs.)
+    let [Effect::Engine(Command::Transition(plan)), ..] = &fx[..] else {
         panic!("{fx:?}");
     };
     assert_eq!(plan.lanes, Preset::DrumsFirst.lanes(8));
@@ -3068,76 +3133,214 @@ fn the_secondary_button_drags_a_transition_view() {
     assert!((whole - (kept + 10.0 * length / f64::from(o.width))).abs() < 1e-9);
 }
 
+/// A stem's mute lands on the first beat of the next bar at least 0.1 s
+/// ahead (D6): on that frame of the player's output, worked out from the
+/// last position told; the transitions' mask at that bar's time. A second
+/// press before the bar takes it back there; alt+0 is on the bar too; with
+/// the setting at once (or no position yet) it is at once.
 #[test]
-fn stems_switch_on_the_next_bar_the_engine_can_make() {
-    use jodel_playback::{Stem, StemMix};
+fn stems_switch_on_the_next_bar_as_mutes_of_their_strips() {
+    use jodeldiplom::core::desk::{DeskChange, StripKind};
     use jodeldiplom::core::lanes::Block;
+    use jodeldiplom::core::stems::DESK_SOON;
     let mut state = common::transition_state(120, 40);
     assert!(state.config.stems_on_bar, "on the next bar by default");
+    let index = state.playing.track.as_ref().unwrap().index;
+    let rate = f64::from(state.playing.track.as_ref().unwrap().output.format.rate);
     let heard = state.heard();
+    // The engine told it is heard there, at output frame 1 000 000, the
+    // output going through the track at its own rate.
+    state.playing.anchor = Some((index, 1_000_000, heard));
+    state.playing.speed = Some(rate);
     let a = block_analysis(&state, Block::Now);
-    let first_bar_after = |t: f64| {
-        a.downbeats
-            .iter()
-            .enumerate()
-            .map(|(k, &d)| (a.beats[d], k + 1))
-            .find(|&(b, _)| b >= t)
-            .unwrap()
+    let (at, bar) = a
+        .downbeats
+        .iter()
+        .enumerate()
+        .map(|(k, &d)| (a.beats[d], k + 1))
+        .find(|&(b, _)| b >= heard + DESK_SOON)
+        .unwrap();
+    let frame = (1_000_000.0 + (at - heard) * rate).round() as u64;
+    let desk = |fx: &[Effect]| -> Vec<DeskChange> {
+        fx.iter()
+            .filter_map(|e| match e {
+                Effect::Desk(c) => Some(*c),
+                _ => None,
+            })
+            .collect()
     };
-    // The first stem off away from the Transition tab: the track moves onto its
-    // stems first, so a bar at least 2.5 s ahead (a nearer one rolls over
-    // to the next).
-    let drums_off = StemMix::ALL.toggle(Stem::Drums);
-    let transition_side = state.side;
-    state.side = Side::Browser;
-    let fx = op(&mut state, Op::ToggleDrums);
-    let (at, _) = first_bar_after(heard + 2.5);
-    assert_eq!(
-        engine(&fx),
-        vec![Command::SetStemsAt {
-            stems: drums_off,
-            at
-        }]
-    );
-    // On the Transition tab its stems are kept as it plays: a second is enough.
-    op(&mut state, Op::ToggleDrums);
-    state.side = transition_side;
-    assert_eq!(transition_side, Side::Transition);
-    let fx = op(&mut state, Op::ToggleDrums);
-    let (at, bar) = first_bar_after(heard + 1.0);
-    assert_eq!(
-        engine(&fx),
-        vec![Command::SetStemsAt {
-            stems: drums_off,
-            at
-        }]
-    );
-    assert!(state
-        .message
-        .as_ref()
-        .unwrap()
-        .text
-        .contains(&format!("from bar {bar}")));
-    // Another on the stems: a second ahead is enough.
-    let fx = op(&mut state, Op::ToggleBass);
-    let (at, _) = first_bar_after(heard + 1.0);
-    assert_eq!(
-        engine(&fx),
-        vec![Command::SetStemsAt {
-            stems: drums_off.toggle(Stem::Bass),
-            at
-        }]
-    );
-    // Switched in the settings to at once: as before.
-    state.config.stems_on_bar = false;
-    let fx = op(&mut state, Op::AllStems);
-    match engine(&fx).as_slice() {
-        [Command::SetSettings(s)] => assert_eq!(s.stems, StemMix::ALL),
-        other => panic!("{other:?}"),
+    for side in [Side::Browser, Side::Transition] {
+        state.side = side;
+        let fx = op(&mut state, Op::ToggleDrums);
+        assert_eq!(
+            desk(&fx),
+            [DeskChange::MuteAt(StripKind::Drums, true, frame)]
+        );
+        assert_eq!(
+            engine(&fx),
+            [Command::StemMask {
+                gains: [0.0, 1.0, 1.0, 1.0],
+                at: Some(at)
+            }]
+        );
+        assert!(state
+            .message
+            .as_ref()
+            .unwrap()
+            .text
+            .contains(&format!("from bar {bar}")));
+        // Again before the bar: unmuted on that same frame, so nothing
+        // changes there.
+        let fx = op(&mut state, Op::ToggleDrums);
+        assert_eq!(
+            desk(&fx),
+            [DeskChange::MuteAt(StripKind::Drums, false, frame)]
+        );
+        assert!(!state.desk.stems_touched());
+        // Untouched, but the stems still made until that bar has played.
+        assert_ne!(
+            jodeldiplom::core::stems::make_wanted(&state),
+            jodel_playback::MakeStems::Never
+        );
     }
+    // A stem's change waiting for its bar: another change of the gains (a
+    // fader on the Mix tab) goes to the engine with that bar's time, not
+    // over it at once.
+    op(&mut state, Op::ToggleDrums);
+    state.desk.strips[StripKind::Bass.index()].db = -6.0;
+    let now = state.now_ms;
+    let fx = update(&mut state, Action::Tick(now));
+    let bass = jodeldiplom::core::desk::taper::gain(-6.0);
+    assert!(
+        engine(&fx).contains(&Command::StemMask {
+            gains: [0.0, bass, 1.0, 1.0],
+            at: Some(at)
+        }),
+        "{fx:?}"
+    );
+    state.desk.strips[StripKind::Bass.index()].db = 0.0;
+    update(&mut state, Action::Tick(now));
+    op(&mut state, Op::ToggleDrums);
+    // Two stems off, and alt+0 brings both back on the bar.
+    op(&mut state, Op::ToggleDrums);
+    op(&mut state, Op::ToggleBass);
+    let fx = op(&mut state, Op::AllStems);
+    assert_eq!(
+        desk(&fx),
+        [
+            DeskChange::MuteAt(StripKind::Drums, false, frame),
+            DeskChange::MuteAt(StripKind::Bass, false, frame),
+        ]
+    );
+    // Switched in the settings to at once: as the key is pressed.
+    state.config.stems_on_bar = false;
+    let fx = op(&mut state, Op::ToggleOther);
+    assert_eq!(desk(&fx), [DeskChange::Mute(StripKind::Other, true)]);
+    assert!(matches!(
+        engine(&fx).as_slice(),
+        [Command::StemMask { at: None, .. }]
+    ));
+    // No position told yet: at once too.
+    state.config.stems_on_bar = true;
+    state.playing.anchor = None;
+    let fx = op(&mut state, Op::ToggleOther);
+    assert_eq!(desk(&fx), [DeskChange::Mute(StripKind::Other, false)]);
+    // No stems made before the key (away from the tabs, nothing touched):
+    // the bar a second ahead at least, so the stems are there for it.
+    state.playing.anchor = Some((index, 1_000_000, heard));
+    state.playing.speed = Some(rate);
+    state.stems_sent.make = jodel_playback::MakeStems::Never;
+    let far = jodeldiplom::core::stems::bar(&state).unwrap();
+    assert!(far.seconds >= heard + jodeldiplom::core::stems::ENGINE_SOON);
+    // A seek (or a jump, another track): no position to work the frame out
+    // from until the next.
+    update(
+        &mut state,
+        Action::Engine(jodel_playback::Event::Seeked {
+            index,
+            seconds: heard,
+        }),
+    );
+    assert!(jodeldiplom::core::stems::bar(&state).is_none());
+    // One position from there is not enough (the mixer may not have mixed
+    // any of it yet); two are, and the output's speed through the track
+    // between them (2 % fast here, as a transition's next track still
+    // gliding) times the bar.
+    let position = |seconds: f64, output_frame: u64| {
+        Action::Engine(jodel_playback::Event::Position(jodel_playback::Position {
+            index,
+            seconds,
+            frame: (seconds * rate) as u64,
+            output_frame,
+        }))
+    };
+    update(&mut state, position(heard, 2_000_000));
+    assert!(jodeldiplom::core::stems::bar(&state).is_none());
+    let fast = 1.02 * rate;
+    let next = 2_000_000 + (0.1 * fast).round() as u64;
+    update(&mut state, position(heard + 0.1, next));
+    state.drawn_heard = Some(heard + 0.1);
+    let bar = jodeldiplom::core::stems::bar(&state).expect("a bar");
+    let want = next as f64 + (bar.seconds - (heard + 0.1)) * (next - 2_000_000) as f64 / 0.1;
+    assert!(
+        (bar.frame as f64 - want).abs() <= 1.0,
+        "{} {want}",
+        bar.frame
+    );
     // The setting is a row of the settings, saved.
+    state.config.stems_on_bar = false;
     let (back, _) = Config::parse(&state.config.to_text()).unwrap();
     assert!(!back.stems_on_bar);
+}
+
+/// D7: the engine makes the stems while a stem's strip is touched or the
+/// Mix, Karaoke or Transition tab (or the mode) shows, from the stems kept
+/// without a GPU; elsewhere none.
+#[test]
+fn the_stems_are_made_while_touched_or_a_tab_shows_them() {
+    use jodel_playback::MakeStems;
+    use jodeldiplom::core::desk::StripKind;
+    use jodeldiplom::core::stems::make_wanted;
+    let mut state = listed();
+    state.gpu = Gpu::Present("a GPU".into());
+    state.side = Side::Browser;
+    assert_eq!(make_wanted(&state), MakeStems::Never);
+    for side in [Side::Mix, Side::Karaoke, Side::Transition] {
+        state.side = side;
+        assert_eq!(make_wanted(&state), MakeStems::Separate, "{side:?}");
+    }
+    state.side = Side::Browser;
+    state.desk.strips[StripKind::Vocals.index()].db = -3.0;
+    assert_eq!(make_wanted(&state), MakeStems::Separate);
+    state.gpu = Gpu::Absent;
+    assert_eq!(make_wanted(&state), MakeStems::Kept);
+    state.desk.strips[StripKind::Vocals.index()].db = 0.0;
+    assert_eq!(make_wanted(&state), MakeStems::Never);
+    // The player's own strip touched is no reason.
+    state.desk.strips[StripKind::Player.index()].mute = true;
+    assert_eq!(make_wanted(&state), MakeStems::Never);
+    // As effects: told once, as tabs show and go.
+    let makes = |fx: &[Effect]| -> Vec<MakeStems> {
+        engine(fx)
+            .into_iter()
+            .filter_map(|c| match c {
+                Command::MakeStems(m) => Some(m),
+                _ => None,
+            })
+            .collect()
+    };
+    state.gpu = Gpu::Present("a GPU".into());
+    let fx = update(&mut state, Action::ShowSide(Side::Mix));
+    assert_eq!(makes(&fx), [MakeStems::Separate]);
+    let fx = update(&mut state, Action::ShowSide(Side::Transition));
+    assert!(makes(&fx).is_empty());
+    let fx = update(&mut state, Action::ShowSide(Side::Queue));
+    assert_eq!(makes(&fx), [MakeStems::Never]);
+    // A new engine is told what is due.
+    state.side = Side::Mix;
+    let mut fx = Vec::new();
+    jodeldiplom::core::stems::engine_started(&mut state, &mut fx);
+    assert_eq!(makes(&fx), [MakeStems::Separate]);
 }
 
 /// alt+↑ and alt+↓ step the device's own volume control (the app sets it
@@ -3511,10 +3714,7 @@ fn stem_toggles_never_touch_the_transition() {
                 let fx = op(&mut state, toggle);
                 for command in engine(&fx) {
                     assert!(
-                        matches!(
-                            command,
-                            Command::SetStemsAt { .. } | Command::SetSettings(_)
-                        ),
+                        matches!(command, Command::StemMask { .. }),
                         "{toggle:?} sent {command:?} (mixing {mixing}, on a bar {on_bar})"
                     );
                 }

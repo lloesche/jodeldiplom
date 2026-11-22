@@ -779,3 +779,29 @@ fn changes_set_before_the_device_opens_are_in_force_from_its_first_frame() {
     let left = d.finish(out);
     assert_eq!(off(&left, 0, 4_800, |_| f64::from(X) / 4.0), None);
 }
+
+#[test]
+fn a_part_soloed_keeps_main_while_main_stands_for_the_parts() {
+    let mut d = desk();
+    // The vocals soloed; no parts until 5 123, then they are there.
+    let on = 5_123usize;
+    let control = move |k: u64| {
+        if (k as usize) < on {
+            Parts::None
+        } else {
+            Parts::Present
+        }
+    };
+    d.parts[2].set_solo(true);
+    let mut out = d.open(&constant, &control);
+    d.play(&mut out, 1, 4_800, &constant, &control);
+    d.play(&mut out, 4_800, 14_400, &constant, &control);
+    let left = d.finish(out);
+    let x = f64::from(X);
+    // Main heard in the parts' place: the song, not silence.
+    assert_eq!(wrong(&left, 0, period(on), |_| X), None);
+    // Once the parts are there, the vocals alone (a quarter of main).
+    let up = |f: usize| x - rise(f - on) * 0.75 * x;
+    assert_eq!(off(&left, on, on + SWITCH, up), None);
+    assert_eq!(off(&left, on + SWITCH, 14_400, |_| x / 4.0), None);
+}

@@ -312,3 +312,233 @@ fn the_faders_are_set_on_the_mixer_and_again_on_a_new_one() {
     app.shutdown();
     let _ = std::fs::remove_dir_all(&tree.root);
 }
+
+#[test]
+fn a_stems_strip_takes_the_pointer_and_its_buttons() {
+    let mut state = tab();
+    assert!(state.desk.has_stems());
+    // The vocals' [M] (muted on that desk) unmutes them, at once.
+    let vocals = strip_layout(&state, Channel::Strip(StripKind::Vocals));
+    let mute = vocals
+        .buttons
+        .iter()
+        .find(|b| b.1 == DeskButton::Mute(StripKind::Vocals))
+        .unwrap()
+        .0;
+    let fx = point(
+        &mut state,
+        LEFT,
+        f64::from(mute.x) + f64::from(mute.width) / 2.0,
+        f64::from(mute.y) + 0.5,
+    );
+    assert_eq!(changes(&fx), [DeskChange::Mute(StripKind::Vocals, false)]);
+    assert_eq!(state.desk.selected, Channel::Strip(StripKind::Vocals));
+    // The drums' fader follows the pointer down; the wheel over the bass.
+    let track = strip_layout(&state, Channel::Strip(StripKind::Drums))
+        .track
+        .unwrap();
+    let x = f64::from(track.x) + 1.5;
+    let at = cap_y(track, taper::position_of(0.0));
+    point(&mut state, LEFT, x, at);
+    let fx = point(&mut state, DRAG, x, at + 3.0);
+    let drums = db(&state, StripKind::Drums);
+    assert!(drums < 0.0, "{drums}");
+    assert_eq!(
+        changes(&fx),
+        [DeskChange::Level(StripKind::Drums, taper::gain(drums))]
+    );
+    point(&mut state, UP, x, at + 3.0);
+    let bass = strip_layout(&state, Channel::Strip(StripKind::Bass)).name;
+    let fx = point(
+        &mut state,
+        MouseKind::ScrollUp,
+        f64::from(bass.x) + 1.5,
+        f64::from(bass.y) + 0.5,
+    );
+    assert_eq!(
+        changes(&fx),
+        [DeskChange::Level(StripKind::Bass, taper::gain(1.0))]
+    );
+    // The stems touched: the transitions are told the stems' gains.
+    assert!(fx.iter().any(|e| matches!(
+        e,
+        Effect::Engine(jodel_playback::Command::StemMask { at: None, .. })
+    )));
+}
+
+/// Each stem a quarter of the mix, so the four add up to it.
+struct Quarter;
+
+impl jodel_playback::stems::Separator for Quarter {
+    fn name(&self) -> String {
+        "quarter".into()
+    }
+
+    fn masks(&self, _frames: usize, stft: &[f32]) -> Result<Vec<f32>, String> {
+        Ok((0..4 * stft.len())
+            .map(|i| if i % 2 == 0 { 0.25 } else { 0.0 })
+            .collect())
+    }
+}
+
+static QUARTER: Quarter = Quarter;
+
+fn quarter() -> Option<&'static dyn jodel_playback::stems::Separator> {
+    Some(&QUARTER)
+}
+
+/// The samples `common::write_wav` writes, frame `i` at `rate`.
+fn chord(i: usize, rate: u32) -> i32 {
+    let t = i as f64 / f64::from(rate);
+    let x = [220.0, 277.18, 329.63, 3_000.0]
+        .iter()
+        .zip([0.20, 0.15, 0.12, 0.02])
+        .map(|(hz, a)| a * (std::f64::consts::TAU * hz * t).sin())
+        .sum::<f64>();
+    (x * 8_388_607.0 * 0.5) as i32
+}
+
+/// Through a real mixer: a stem's strip muted from a frame of the player's
+/// output switches the device to the other three stems on that frame
+/// (three quarters of the file here), and unmuted from another, the file
+/// again bit for bit; after a seek, a frame worked out from the position
+/// told lands where that position says.
+#[test]
+fn a_stem_muted_on_its_frame_is_heard_and_unmuted_the_file_is_again() {
+    use jodel_output::lanes::Parts;
+    use jodel_output::{Capabilities, SampleFormat, StreamFormat};
+    use jodeldiplom::app::MemoryOutput;
+    // At the separator's rate, so neither main nor the stems are
+    // resampled (a debug build keeps up in real time).
+    const RATE: u32 = 44_100;
+    const SEEK: f64 = 2.0;
+    let dir = common::temp_dir("desk-stems");
+    let file = dir.join("chord.wav");
+    common::write_wav(&file, RATE, 10.0);
+    let mut caps = Capabilities::new();
+    caps.insert(StreamFormat::new(RATE, 2, SampleFormat::S24In32Low));
+    let memory = MemoryOutput::new(caps, SimClock::Realtime);
+    let mut options = AppOptions::new(dir.clone());
+    options.output = Output::Memory(memory.clone());
+    options.devices = Arc::new(|| Ok(Vec::new()));
+    options.separator = quarter;
+    options.autoplay = Some(file);
+    let mut app = App::new(options);
+    // The Mix tab shows: the stems are made, on the "GPU" (the quarter).
+    app.dispatch(Action::ShowSide(Side::Mix));
+    assert!(until(&mut app, |a| a.state.gpu != jodeldiplom::core::Gpu::Looking));
+    app.dispatch(Action::Gpu(Some("the quarter".into())));
+    let heard = |a: &App| a.state.playing.anchor.map_or(0, |(_, frame, _)| frame);
+    // Once the stems are there: muted a second on, for a second and a half.
+    let present = |a: &App| {
+        a.desk().is_some_and(|d| {
+            d.strips[0]
+                .inputs
+                .iter()
+                .any(|i| i.parts.is_some_and(|p| p.state == Parts::Present))
+        })
+    };
+    assert!(common::wait_for(&mut app, Duration::from_secs(30), present));
+    let on = heard(&app) + u64::from(RATE);
+    let off = on + 3 * u64::from(RATE) / 2;
+    assert!(
+        off + u64::from(RATE) < 5 * u64::from(RATE),
+        "too late to set it"
+    );
+    app.run(Effect::Desk(DeskChange::MuteAt(StripKind::Drums, true, on)));
+    // A strip has one change of its mute waiting: the next once this one
+    // has landed.
+    assert!(common::wait_for(
+        &mut app,
+        Duration::from_secs(30),
+        |a| heard(a) > on
+    ));
+    app.run(Effect::Desk(DeskChange::MuteAt(
+        StripKind::Drums,
+        false,
+        off,
+    )));
+    // Then a seek back to 2 s, and the drums muted a second after the
+    // first position told from there: Position's output frame and the
+    // mixer's stream frame are the same count after a seek too.
+    assert!(common::wait_for(
+        &mut app,
+        Duration::from_secs(30),
+        |a| heard(a) > off + u64::from(RATE) / 2
+    ));
+    app.run(Effect::Engine(jodel_playback::Command::Seek(SEEK)));
+    // Two positions told from there (as the stem keys wait for: the first
+    // can come before the mixer has mixed any of it again).
+    let fresh = |a: &App| {
+        let p = &a.state.playing;
+        p.speed.is_some()
+            && p.anchor
+                .is_some_and(|(_, _, seconds)| (SEEK..SEEK + 1.0).contains(&seconds))
+    };
+    assert!(common::wait_for(&mut app, Duration::from_secs(30), fresh));
+    let (_, frame, seconds) = app.state.playing.anchor.unwrap();
+    let again = frame + u64::from(RATE);
+    app.run(Effect::Desk(DeskChange::MuteAt(
+        StripKind::Drums,
+        true,
+        again,
+    )));
+    // Where the song is heard when the mixer takes the mute: a second on
+    // (the positions come every 100 ms; the mixer runs a little ahead).
+    let muted = |a: &App| {
+        a.desk().is_some_and(|d| {
+            d.strips
+                .iter()
+                .any(|s| s.name == StripKind::Drums.name() && s.mute)
+        })
+    };
+    assert!(common::wait_for(&mut app, Duration::from_secs(30), muted));
+    let (_, _, heard_then) = app.state.playing.anchor.unwrap();
+    assert!(
+        (heard_then - (seconds + 1.0)).abs() < 0.25,
+        "muted with {heard_then} s heard, the frame of {} s",
+        seconds + 1.0
+    );
+    let ended = |a: &App| a.state.playing.state == jodel_playback::PlayState::Stopped;
+    assert!(common::wait_for(
+        &mut app,
+        Duration::from_secs(30),
+        |a| heard(a) > again && ended(a)
+    ));
+    app.shutdown();
+    let captures = memory.captures();
+    let streams = captures.last().expect("a device").list();
+    let bytes = streams[0].sink.bytes();
+    let got: Vec<i32> = bytes
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|b| (i32::from_le_bytes(*b) << 8) >> 8)
+        .collect();
+    let (on, off) = (on as usize, off as usize);
+    // The file as it is up to the frame, both channels.
+    for f in 0..on {
+        assert_eq!(got[2 * f], chord(f, RATE), "frame {f}, before");
+    }
+    // The switch on that very frame (its first step there).
+    let main_to = (on..off).find(|&f| got[2 * f] != chord(f, RATE));
+    assert!(
+        main_to.is_some_and(|f| f.abs_diff(on) <= 1),
+        "main to {main_to:?}, the frame {on}"
+    );
+    // Three quarters of it once the switch and the strip's ramp are over
+    // (within the stems' filters' few steps).
+    let worst = (on + 2_000..off)
+        .map(|f| (f64::from(got[2 * f]) - 0.75 * f64::from(chord(f, RATE))).abs())
+        .fold(0.0, f64::max);
+    assert!(worst < 2_000.0, "{worst} steps off three quarters");
+    // The file again, bit for bit, once the strip's ramp back (20 ms) has
+    // settled by the end of a period (10 ms) and the switch back (10 ms)
+    // has run, from the period after: 50 ms on.
+    let back = off + 5 * RATE as usize / 100;
+    let seek_from = off + RATE as usize / 2;
+    for f in back..seek_from {
+        assert_eq!(got[2 * f], chord(f, RATE), "frame {f}, after");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}

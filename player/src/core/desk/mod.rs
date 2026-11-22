@@ -1,8 +1,10 @@
 //! The Mix tab ([`crate::core::Side::Mix`]): the mixer as a desk. A channel
-//! strip for the player and one for the preview, each with a fader, mute
-//! and solo; the microphone's strip, which is only listened to; the master
-//! with the device. Every strip starts at 0 dB and nothing is kept between
-//! runs: the desk adds no gain until a fader is moved.
+//! strip for the player, a group with a strip for each of its stems inside
+//! it (drums, bass, vocals, other), and one for the preview, each with a
+//! fader, mute and solo; the microphone's strip, which is only listened to;
+//! the master with the device. Every strip starts at 0 dB and nothing is
+//! kept between runs: the desk adds no gain until a fader is moved, and
+//! with every stem's strip as it starts the player is heard as its file.
 //!
 //! The settings live here and go out as [`Effect::Desk`]; the app sets its
 //! strips by them, and again on every new mixer ([`changes`]). What the
@@ -10,84 +12,17 @@
 
 pub mod meter;
 pub mod mouse;
+pub mod strips;
 pub mod taper;
 
-use jodel_output::mixer::{DeskView, MasterView, Meters, MicView, StripView};
+use jodel_output::mixer::{DeskView, MasterView, Meters, MicView, PartsView, StripView};
 
 use crate::core::keymap::Op;
 use crate::core::update::say_info;
 use crate::core::{Effect, Screen, Side, State, VolumeChange, DOUBLE_CLICK_MS};
 
 pub use meter::{Meter, Pair};
-
-/// A channel strip with a fader.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum StripKind {
-    /// The song's player.
-    Player,
-    /// The preview's players.
-    Preview,
-}
-
-impl StripKind {
-    /// Both, left to right.
-    pub const ALL: [StripKind; 2] = [StripKind::Player, StripKind::Preview];
-
-    /// The name the app gives the strip on the mixer.
-    pub fn name(self) -> &'static str {
-        match self {
-            StripKind::Player => "Player",
-            StripKind::Preview => "Preview",
-        }
-    }
-
-    /// Where it is in arrays of both ([`StripKind::ALL`]'s order).
-    pub fn index(self) -> usize {
-        match self {
-            StripKind::Player => 0,
-            StripKind::Preview => 1,
-        }
-    }
-}
-
-/// A strip of the desk, as the arrow keys go through them.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum Channel {
-    /// A strip with a fader.
-    Strip(StripKind),
-    /// The microphone's strip: listened to, never played.
-    Mic,
-    /// The master: what goes to the device.
-    Main,
-}
-
-impl Channel {
-    /// Left to right.
-    pub const ALL: [Channel; 4] = [
-        Channel::Strip(StripKind::Player),
-        Channel::Strip(StripKind::Preview),
-        Channel::Mic,
-        Channel::Main,
-    ];
-}
-
-impl Default for Channel {
-    /// The player's strip, as the tab opens.
-    fn default() -> Self {
-        Channel::Strip(StripKind::Player)
-    }
-}
-
-/// A button on a strip.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum DeskButton {
-    /// Mute.
-    Mute(StripKind),
-    /// Solo.
-    Solo(StripKind),
-    /// The microphone's echo canceller on or off.
-    Echo,
-}
+pub use strips::{Channel, DeskButton, StripKind};
 
 /// What the user set on a strip.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -110,6 +45,22 @@ impl Default for StripSetting {
     }
 }
 
+impl StripSetting {
+    /// Whether it is touched: anything but as a strip starts.
+    pub fn touched(&self) -> bool {
+        *self != StripSetting::default()
+    }
+
+    /// Its gain: the fader's, 0 while muted.
+    pub fn gain(&self) -> f64 {
+        if self.mute {
+            0.0
+        } else {
+            taper::gain(self.db)
+        }
+    }
+}
+
 /// A change for the app to make on a strip ([`Effect::Desk`]).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum DeskChange {
@@ -117,8 +68,14 @@ pub enum DeskChange {
     Level(StripKind, f64),
     /// Muted or not.
     Mute(StripKind, bool),
+    /// Muted or not from a frame of the player's output (its stream frame,
+    /// [`jodel_output::mixer::Fader::at_stream`]): a bar's first beat.
+    MuteAt(StripKind, bool, u64),
     /// Soloed or not.
     Solo(StripKind, bool),
+    /// The controllers' gain of a stem's lane, not the user's strip: the
+    /// Karaoke tab's voice on the vocals.
+    Lane(StripKind, f64),
 }
 
 /// A fader held with the mouse.
@@ -175,7 +132,7 @@ pub struct Look {
     /// The microphone's port.
     pub mic: MicView,
     /// Each fader strip ([`StripKind::index`]), when the mixer has it.
-    pub strips: [Option<StripLook>; 2],
+    pub strips: [Option<StripLook>; StripKind::COUNT],
     /// The master's peaks, one per channel (linear).
     pub peaks: Vec<f32>,
     /// The limiter acted since the last look.
@@ -185,8 +142,8 @@ pub struct Look {
 impl Look {
     /// The look at `desk` and `meters`, each fader strip found by its
     /// mixer's id (`ids`, by [`StripKind::index`]).
-    pub fn of(desk: DeskView, meters: Meters, ids: [u64; 2]) -> Look {
-        let mut strips = [None, None];
+    pub fn of(desk: DeskView, meters: Meters, ids: [u64; StripKind::COUNT]) -> Look {
+        let mut strips: [Option<StripLook>; StripKind::COUNT] = Default::default();
         for (slot, id) in strips.iter_mut().zip(ids) {
             *slot = desk.strips.iter().find(|s| s.id == id).map(|s| StripLook {
                 view: s.clone(),
@@ -216,7 +173,7 @@ pub struct Readings {
     /// What goes to the device.
     pub master: Pair,
     /// Each fader strip's, after its gain ([`StripKind::index`]).
-    pub strips: [Pair; 2],
+    pub strips: [Pair; StripKind::COUNT],
     /// The microphone as captured.
     pub mic_in: Meter,
     /// The singer isolated.
@@ -229,8 +186,9 @@ pub struct DeskState {
     /// The strip the keys act on.
     pub selected: Channel,
     /// What the user set on each fader strip ([`StripKind::index`]): this
-    /// run only.
-    pub strips: [StripSetting; 2],
+    /// run only. A stem's mute is what is meant: one set on a bar is here
+    /// at once, and lands there.
+    pub strips: [StripSetting; StripKind::COUNT],
     /// The fader held with the mouse.
     pub dragging: Option<Drag>,
     /// The last press on a fader and when ([`State::now_ms`]), for a
@@ -242,7 +200,13 @@ pub struct DeskState {
     /// The microphone's port as last looked at.
     pub mic_port: MicView,
     /// Each fader strip as last looked at ([`StripKind::index`]).
-    pub views: [Option<StripView>; 2],
+    pub views: [Option<StripView>; StripKind::COUNT],
+    /// The track whose stems stopped ([`jodel_playback::Event::PartsStopped`]):
+    /// it has none.
+    pub parts_failed: Option<usize>,
+    /// A stem's change waiting for its bar (the track, seconds into it): the
+    /// stems are made until then, even if none is touched any more.
+    pub stems_pending: Option<(usize, f64)>,
     /// The meters.
     pub readings: Readings,
     /// When the limiter last acted.
@@ -265,6 +229,26 @@ impl DeskState {
     /// `strip`'s meters.
     pub fn meters(&self, strip: StripKind) -> &Pair {
         &self.readings.strips[strip.index()]
+    }
+
+    /// The switch of the player's input between its main and its stems, as
+    /// last looked at: `None` without an input of lanes.
+    pub fn parts(&self) -> Option<PartsView> {
+        self.view(StripKind::Player)?
+            .inputs
+            .iter()
+            .find_map(|i| i.parts)
+    }
+
+    /// Whether the player's stems have strips on the desk: its input has
+    /// lanes.
+    pub fn has_stems(&self) -> bool {
+        self.parts().is_some()
+    }
+
+    /// Whether any of the player's stems is touched.
+    pub fn stems_touched(&self) -> bool {
+        StripKind::PARTS.iter().any(|&k| self.setting(k).touched())
     }
 
     /// Whether the LIMIT lamp is lit at `now_ms`.
@@ -302,7 +286,8 @@ pub(crate) fn settle(state: &mut State) {
 }
 
 /// Every setting of the desk, for a new mixer: its strips start at 0 dB,
-/// and the user's settings are made on them again.
+/// and the user's settings are made on them again (a mute meant for a bar
+/// at once). The stems' lanes follow from [`crate::core::stems`].
 pub fn changes(state: &State) -> Vec<DeskChange> {
     StripKind::ALL
         .iter()
@@ -345,8 +330,7 @@ pub fn feed(state: &mut State, look: Look, now_ms: u64) {
     if fresh && look.limited {
         desk.limited_at = Some(now_ms);
     }
-    let [player, preview] = look.strips;
-    desk.views = [player.map(|s| s.view), preview.map(|s| s.view)];
+    desk.views = look.strips.map(|s| s.map(|s| s.view));
     desk.master = Some(look.master);
     desk.mic_port = look.mic;
     desk.looked_at = now_ms;
@@ -394,8 +378,24 @@ fn no_fader(state: &mut State) {
     );
 }
 
+/// The strips the arrow keys go through: those drawn (the stems' only
+/// while the player has them, none the narrowing left out).
+fn channels(state: &State) -> Vec<Channel> {
+    use crate::core::layout::{self, Layout};
+    if let Layout::Main(m) = layout::compute(state) {
+        if let Some(desk) = m.desk {
+            return desk.channels.iter().map(|c| c.channel).collect();
+        }
+    }
+    let stems = state.desk.has_stems();
+    Channel::ALL
+        .into_iter()
+        .filter(|c| stems || !c.is_part())
+        .collect()
+}
+
 fn select_by(state: &mut State, by: isize) {
-    let all = Channel::ALL;
+    let all = channels(state);
     let at = all
         .iter()
         .position(|&c| c == state.desk.selected)
@@ -535,6 +535,7 @@ mod tests {
     use super::*;
     use crate::config::Config;
     use crate::core::{update, Action};
+    use jodel_output::lanes::Parts;
     use jodel_output::mixer::Timebase;
 
     fn tab() -> State {
@@ -580,18 +581,88 @@ mod tests {
         let fx = update(&mut s, Action::Op(Op::Up));
         assert!(fx.contains(&Effect::DeviceVolume(VolumeChange::Step(1))));
         assert!(desk_fx(&fx).is_empty());
-        // Every setting again for a new mixer.
+        // Every setting again for a new mixer: each strip's, the stems'
+        // as they start.
+        let all = changes(&s);
         assert_eq!(
-            changes(&s),
+            all[..3],
             [
                 DeskChange::Level(StripKind::Player, taper::gain(-1.0)),
                 DeskChange::Mute(StripKind::Player, true),
                 DeskChange::Solo(StripKind::Player, false),
+            ]
+        );
+        assert_eq!(
+            all[15..18],
+            [
                 DeskChange::Level(StripKind::Preview, 1.0),
                 DeskChange::Mute(StripKind::Preview, false),
                 DeskChange::Solo(StripKind::Preview, true),
             ]
         );
+        for (k, kind) in StripKind::PARTS.into_iter().enumerate() {
+            assert_eq!(
+                all[3 + 3 * k..6 + 3 * k],
+                [
+                    DeskChange::Level(kind, 1.0),
+                    DeskChange::Mute(kind, false),
+                    DeskChange::Solo(kind, false),
+                ]
+            );
+        }
+        assert_eq!(all.len(), 18);
+    }
+
+    #[test]
+    fn the_arrows_go_through_the_stems_only_while_the_player_has_them() {
+        let mut s = tab();
+        let walk = |s: &mut State| {
+            let mut seen = vec![s.desk.selected];
+            for _ in 0..8 {
+                update(s, Action::Op(Op::DeskNextStrip));
+                seen.push(s.desk.selected);
+            }
+            seen.dedup();
+            seen
+        };
+        assert_eq!(
+            walk(&mut s),
+            [
+                Channel::Strip(StripKind::Player),
+                Channel::Strip(StripKind::Preview),
+                Channel::Mic,
+                Channel::Main,
+            ]
+        );
+        s.desk.selected = Channel::default();
+        feed(&mut s, look_with_stems(), 1_000);
+        assert_eq!(walk(&mut s), Channel::ALL);
+        // A stem's keys are its strip's: the mute at once on the tab.
+        s.desk.selected = Channel::Strip(StripKind::Bass);
+        let fx = update(&mut s, Action::Op(Op::DeskMute));
+        assert_eq!(desk_fx(&fx), [DeskChange::Mute(StripKind::Bass, true)]);
+        assert!(s.desk.stems_touched());
+    }
+
+    /// A look with the player's stems on the desk.
+    fn look_with_stems() -> Look {
+        use jodel_output::mixer::{InputView, Role};
+        let mut look = look(0.5, false);
+        let player = look.strips[0].as_mut().unwrap();
+        player.view.inputs.push(InputView {
+            role: Role::Lead,
+            gain: 1.0,
+            heard: true,
+            lanes: Vec::new(),
+            parts: Some(PartsView {
+                state: Parts::None,
+                share: 0.0,
+            }),
+            format: None,
+            queued: 0,
+            capacity: 0,
+        });
+        look
     }
 
     #[test]
@@ -664,14 +735,15 @@ mod tests {
             strips: vec![(7, vec![peak / 2.0]), (3, vec![peak])],
             limited,
         };
-        Look::of(desk, meters, [3, 7])
+        Look::of(desk, meters, [3, 10, 11, 12, 13, 7])
     }
 
     #[test]
     fn strips_are_found_by_id_and_a_stale_look_takes_no_peaks() {
         let l = look(0.5, true);
         assert_eq!(l.strips[0].as_ref().unwrap().view.id, 3);
-        assert_eq!(l.strips[1].as_ref().unwrap().peaks, [0.25]);
+        assert_eq!(l.strips[5].as_ref().unwrap().peaks, [0.25]);
+        assert!(l.strips[1].is_none(), "no drums on that desk");
         // The first look after none (or long after the last) finds peaks
         // from long ago: neither they nor the limiter count.
         let mut s = tab();

@@ -1,10 +1,13 @@
 //! The Mix tab: the mixer drawn as a desk, in cells only (the window
 //! rasterises the same cells). Each strip is a box: its name on a scribble
 //! strip, what it carries, a tall section with the fader beside its
-//! meters (one ruler for both), the level and its buttons. The
+//! meters (one ruler for both), the level and its buttons. The player's
+//! stems are narrower strips beside it, under a bracket that says whether
+//! the stems or the file are heard (or why there are none). The
 //! microphone's strip has meters and no fader; the master shows the
 //! device, its lamps and the device's own volume.
 
+use jodel_output::lanes::Parts;
 use jodel_output::mixer::{InputView, MicPort, Role};
 use jodel_output::StreamFormat;
 use ratatui::buffer::Buffer;
@@ -75,6 +78,9 @@ impl MeterScale {
 
 /// Draws the desk.
 pub fn draw(buf: &mut Buffer, state: &State, layout: &DeskLayout) {
+    if let Some(row) = layout.stems {
+        bracket(buf, state, row);
+    }
     for c in &layout.channels {
         let selected = state.desk.selected == c.channel;
         frame(buf, c.frame, selected);
@@ -130,7 +136,15 @@ fn scribble(buf: &mut Buffer, area: Rect, name: &str, selected: bool) {
     }
     .add_modifier(Modifier::BOLD);
     buf.set_style(area, style);
-    let name = text::shorten(name, usize::from(area.width.saturating_sub(2)));
+    // A cell of room either side where there is, the whole width on a
+    // narrow strip whose name fits it.
+    let w = usize::from(area.width);
+    let room = if width(name) + 2 > w && width(name) <= w {
+        w
+    } else {
+        w.saturating_sub(2)
+    };
+    let name = text::shorten(name, room);
     centred(buf, area, Line::styled(name, style));
 }
 
@@ -244,14 +258,17 @@ fn fader(buf: &mut Buffer, c: &ChannelLayout, db: f64, selected: bool) {
             continue;
         }
         used.push(y);
-        let label = taper::number(mark, 0, true);
-        let style = if mark == 0.0 {
-            Style::new().fg(TEXT).add_modifier(Modifier::BOLD)
-        } else {
-            Style::new().fg(DIM)
-        };
-        let w = width(&label) as u16;
-        buf.set_string(c.scale.right().saturating_sub(w), y, &label, style);
+        // A stem's strip has no scale of its own: the marks only.
+        if c.scale.width > 0 {
+            let label = taper::number(mark, 0, true);
+            let style = if mark == 0.0 {
+                Style::new().fg(TEXT).add_modifier(Modifier::BOLD)
+            } else {
+                Style::new().fg(DIM)
+            };
+            let w = width(&label) as u16;
+            buf.set_string(c.scale.right().saturating_sub(w), y, &label, style);
+        }
         buf.set_string(t.x + 1, y, "┼", Style::new().fg(BORDER));
     }
     let y = cap_row(t, taper::position_of(db));
@@ -261,8 +278,91 @@ fn fader(buf: &mut Buffer, c: &ChannelLayout, db: f64, selected: bool) {
     buf.set_string(t.x, y, "▐█▌", cap);
 }
 
+/// What the bracket over the stems says: lit while the stems are heard in
+/// place of the file, with the word for how they stand.
+fn stems_said(state: &State) -> (bool, &'static str) {
+    let Some(parts) = state.desk.parts() else {
+        return (false, "—");
+    };
+    if parts.state != Parts::None {
+        return if parts.share > 0.0 {
+            (true, "heard")
+        } else {
+            (false, "ready")
+        };
+    }
+    let track = state.playing.track.as_ref();
+    if track.is_some_and(|t| state.desk.parts_failed == Some(t.index)) {
+        return (false, "no stems");
+    }
+    match state.gpu {
+        _ if track.is_none() => (false, "—"),
+        crate::core::Gpu::Present(_) => (false, "separating…"),
+        _ => {
+            let kept = track
+                .and_then(|t| state.facts.get(&t.info.path))
+                .and_then(|f| f.stems)
+                .unwrap_or(false);
+            (false, if kept { "loading…" } else { "no stems" })
+        }
+    }
+}
+
+/// The bracket over the stems' strips: `╶── ● STEMS heard ──╴`.
+fn bracket(buf: &mut Buffer, state: &State, row: Rect) {
+    if row.width < 4 {
+        return;
+    }
+    let (lit, said) = stems_said(state);
+    let label = Line::from(vec![
+        Span::raw(" "),
+        lamp(lit, GREEN),
+        Span::styled(
+            " STEMS ",
+            Style::new().fg(TEXT).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            format!("{said} "),
+            Style::new().fg(if lit { GREEN } else { DIM }),
+        ),
+    ]);
+    let line = Style::new().fg(BORDER);
+    let w = row.width;
+    buf.set_string(row.x, row.y, "╶", line);
+    for x in row.x + 1..row.right().saturating_sub(1) {
+        buf.set_string(x, row.y, "─", line);
+    }
+    buf.set_string(row.right() - 1, row.y, "╴", line);
+    let lw = (label.width() as u16).min(w.saturating_sub(2));
+    let x = row.x + (w - lw) / 2;
+    buf.set_line(x, row.y, &label, lw);
+}
+
+/// What a stem's strip carries: whether its lane was heard, and at what
+/// gain (its fader, its lane's, the switch and the player's).
+/// What a stem's strip says under its name, only where it adds to its
+/// fader and buttons: muted, or the Karaoke voice's gain on its lane.
+fn part_lines(state: &State, kind: StripKind, iw: usize) -> Vec<Line<'static>> {
+    let setting = state.desk.setting(kind);
+    let lane = kind
+        .lane()
+        .map_or(1.0, |k| crate::core::stems::lanes_due(state)[k]);
+    if setting.mute {
+        vec![Line::from(Span::styled("muted", Style::new().fg(FAIL)))]
+    } else if lane < 1.0 {
+        let db = taper::number(taper::db_of_gain(lane), 0, false);
+        let said = if iw >= 9 { format!("voice {db}") } else { db };
+        vec![Line::from(Span::styled(said, Style::new().fg(WARN)))]
+    } else {
+        Vec::new()
+    }
+}
+
 /// What a fader strip carries, under its name.
 fn source_lines(state: &State, kind: StripKind, iw: usize) -> Vec<Line<'static>> {
+    if kind.is_part() {
+        return part_lines(state, kind, iw);
+    }
     let inputs: Vec<&InputView> = state
         .desk
         .view(kind)
@@ -283,7 +383,7 @@ fn source_lines(state: &State, kind: StripKind, iw: usize) -> Vec<Line<'static>>
             let [lit, unlit] = super::blocks(fill, iw.saturating_sub(5).max(1), SOURCE);
             lines.push(Line::from(vec![dim("ring "), lit, unlit]));
         }
-        StripKind::Preview => {
+        _ => {
             for (k, name) in ["A ", "B "].iter().enumerate() {
                 let line = match inputs.get(k) {
                     Some(i) => Line::from(vec![
@@ -310,11 +410,12 @@ fn fader_strip(
     kind: StripKind,
     selected: bool,
 ) {
-    let name = match kind {
-        StripKind::Player => "PLAYER",
-        StripKind::Preview => "PREVIEW",
+    let label = if width(kind.label()) <= usize::from(c.name.width) {
+        kind.label()
+    } else {
+        kind.short_label()
     };
-    scribble(buf, c.name, name, selected);
+    scribble(buf, c.name, label, selected);
     lines_in(
         buf,
         c.info,
@@ -333,7 +434,14 @@ fn fader_strip(
         Style::new().fg(WARN)
     }
     .add_modifier(Modifier::BOLD);
-    centred(buf, c.value, Line::styled(taper::label(setting.db), style));
+    // A narrow strip's level without its unit where that does not fit.
+    let label = taper::label(setting.db);
+    let label = if width(&label) <= usize::from(c.value.width) {
+        label
+    } else {
+        taper::number(setting.db, 1, false)
+    };
+    centred(buf, c.value, Line::styled(label, style));
     for &(rect, button) in &c.buttons {
         let (label, on, color) = match button {
             DeskButton::Mute(_) => ("M", setting.mute, FAIL),
@@ -354,7 +462,12 @@ fn button_cells(buf: &mut Buffer, rect: Rect, label: &str, on: bool, color: Colo
     } else {
         Style::new().fg(DIM).bg(BUTTON)
     };
-    let text = format!("[{label}]");
+    // `[M]`, or `M` alone on a narrow strip.
+    let text = if rect.width >= 3 {
+        format!("[{label}]")
+    } else {
+        label.to_owned()
+    };
     buf.set_stringn(rect.x, rect.y, &text, usize::from(rect.width), style);
 }
 

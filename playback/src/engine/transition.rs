@@ -16,17 +16,22 @@
 //! Without a stem separator both tracks go through [`whole_mix`], which
 //! puts the whole music in one stem: their fades are then those of that
 //! stem's lanes.
+//!
+//! The stems on in both tracks are the settings' times a mixer's
+//! ([`crate::Command::StemMask`], [`super::stem_mask`]), so a stem muted on a
+//! mixer's strip stays out of the mix the mixer hears as main here.
 
 use std::sync::Arc;
 use std::time::Duration;
 
 use super::api::{Event, TrackStart};
+use super::stem_mask::StemsMask;
 use super::track::{rescale, Cue, CueEvent, Heard, HeardWarp, Progress, SegStart, Track};
 use super::warping::Warping;
 use super::{Engine, SWITCH_TURN};
 use crate::error::Error;
 use crate::rate::{stems_at, FileFacts, Stage};
-use crate::stems::{whole_mix, Gains, StemMix, STEMS};
+use crate::stems::{whole_mix, Gains};
 use crate::transition::{Side, TransitionPlan, TransitionState};
 use crate::warp::{Glide, TimeMap};
 
@@ -112,43 +117,12 @@ pub(super) struct Transition {
     mixed_to: u64,
 }
 
-/// The stems a transition's tracks play: `before` until a time of one of
-/// them (a stem change on a bar), `after` from it; `after` throughout
-/// without one.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub(super) struct StemsMask {
-    before: [f64; STEMS],
-    after: [f64; STEMS],
-    /// The track whose time the change is at, and the time.
-    at: Option<(Side, f64)>,
-}
-
-impl StemsMask {
-    /// Each stem's gain as `stems` has it.
-    fn of(stems: StemMix) -> [f64; STEMS] {
-        stems.gains()
-    }
-
-    /// The stems on in A at its time `a`.
-    fn for_a(&self, a: f64) -> [f64; STEMS] {
-        match self.at {
-            Some((Side::From, at)) if a < at => self.before,
-            _ => self.after,
-        }
-    }
-
-    /// The stems on in B at its time `b`, which is A's time `a()` (along
-    /// the transition's maps).
-    fn for_b(&self, b: f64, a: impl FnOnce() -> f64) -> [f64; STEMS] {
-        match self.at {
-            Some((Side::Into, at)) if b < at => self.before,
-            Some((Side::From, at)) if a() < at => self.before,
-            _ => self.after,
-        }
-    }
-}
-
 impl Transition {
+    /// The playing track and the next one, by their indices in the queue.
+    pub(super) fn tracks(&self) -> (usize, usize) {
+        (self.plan.from, self.plan.into)
+    }
+
     /// A's gains: its lanes at its own time, times the stems on then.
     fn gains_a(plan: &Arc<TransitionPlan>, mask: StemsMask) -> Gains {
         let plan = Arc::clone(plan);
@@ -354,39 +328,6 @@ impl Engine {
             .is_some_and(|t| t.phase != Phase::Armed)
     }
 
-    /// The stems a transition's tracks play, as the settings have them (a
-    /// change still to come at a time of one of its tracks, from then).
-    fn transition_mask(&self) -> StemsMask {
-        // Without stems (none to be had) the whole track is one stem.
-        let stems = |m: StemMix| {
-            if self.separator.is_none() || self.stems_failed {
-                StemMix::ALL
-            } else {
-                m
-            }
-        };
-        let after = StemsMask::of(stems(self.settings.stems));
-        let mut mask = StemsMask {
-            before: after,
-            after,
-            at: None,
-        };
-        if let (Some(t), Some(c)) = (&self.transition, self.stems_change) {
-            let side = if c.index == t.plan.from {
-                Some(Side::From)
-            } else if c.index == t.plan.into {
-                Some(Side::Into)
-            } else {
-                None
-            };
-            if let Some(side) = side {
-                mask.before = StemsMask::of(stems(c.before));
-                mask.at = Some((side, c.at));
-            }
-        }
-        mask
-    }
-
     /// The stems heard changed during a transition: its fades take them,
     /// on both tracks, at the time the change is heard at (or at once).
     pub(super) fn retune_transition(&mut self) {
@@ -395,7 +336,7 @@ impl Engine {
             return;
         };
         let (plan, map, glide) = (Arc::clone(&t.plan), Arc::clone(&t.map), t.glide);
-        let gains_a = Transition::gains_a(&plan, mask);
+        let gains_a = Transition::gains_a(&plan, mask.clone());
         let gains_b = Transition::gains_b(&plan, &map, glide, mask);
         if let Some(b) = t.b.as_mut() {
             b.gains = Some(Arc::clone(&gains_b));
@@ -546,7 +487,7 @@ impl Engine {
         // only its fades.
         if a.route.stage == Stage::Stems && map_a.is_none() && a.warp.is_none() {
             let a = self.playing.as_mut().expect("checked");
-            a.gains = Some(Transition::gains_a(&plan, on));
+            a.gains = Some(Transition::gains_a(&plan, on.clone()));
         } else {
             // Onto its stems, or (to be read along the glide) onto a fresh
             // track on them.
@@ -558,7 +499,7 @@ impl Engine {
             };
             self.begin_switch(route).map_err(|e| e.to_string())?;
             let switch = self.switch.as_mut().expect("just begun");
-            switch.track.gains = Some(Transition::gains_a(&plan, on));
+            switch.track.gains = Some(Transition::gains_a(&plan, on.clone()));
             switch.track.separator = separator;
             if let Some(map_a) = map_a {
                 // From its first frame, where the glide is still none (the

@@ -201,8 +201,11 @@ count-in drawn from them falls on what is heard) and `HoldAtEnd(bool)`
 (each track's end stops playback instead of running into the next:
 `Held { index }` names the one that would have come), and `PlayAt {
 index, share }` (the track from `share` of its length, its start when the
-length is not known: a preview from a third in), and `MakeStems(Never |
-Kept | Separate)` (the stems as parts of an output of lanes: below).
+length is not known: a preview from a third in), `MakeStems(Never |
+Kept | Separate)` (the stems as parts of an output of lanes: below), and
+`StemMask { gains, at }` (each stem's gain as a mixer plays the parts,
+drums, bass, vocals, other, from `at` seconds into the playing track or
+at once: what a transition mixes its tracks' stems with, below).
 
 Events (`Event`), track events in the order they are heard:
 
@@ -424,8 +427,23 @@ lengths are exact); otherwise the samples go to the output as read.
   to another format ends them before main fades out, and they come back
   only after the new route's rise. Offline the writing waits for them
   (and for the next track's). A stems route, a transition's mix and a
-  failing separator (`PartsStopped`, for that track) have none. Without a lane target the output is as it always
-  was.
+  failing separator (`PartsStopped`, for that track) have none, but for a
+  transition's two ends, so a mixer playing the parts at other levels hears
+  no jump: the playing track keeps its parts while the transition is armed
+  and until its move onto its stems has met it, and they end only once
+  that move's crossfade is over (`Track::parts_hold`); the next track, left
+  on its stems when the transition is over, has parts again there, and
+  while `StemMask` has a gain other than one (now or in a change to come)
+  its move back onto its file waits until they have been there for a
+  mixer's switch and its end, so the mixer plays them across it (2 s of
+  output at most, `PARTS_PATIENCE`, then it moves anyway). Inside the
+  transition the two tracks' stems are mixed with the settings' stems times
+  `StemMask`'s gains (`engine/stem_mask.rs`): its changes at times of a
+  track are kept in order, each landing at its own (one at an earlier time
+  is never moved by a later one), and one whose time has been written, or
+  whose track is no longer played, is in force. So what is heard as main
+  there is what the mixer would play. Without a lane
+  target the output is as it always was.
 - **A busy device**: opening an output that the device reports busy
   (`DeviceBusy`: in use by another application, hog mode held, `EBUSY`, as
   it can be right after one of our outputs closed) is tried again every
@@ -495,7 +513,14 @@ says so, a track not kept says nothing; a file of no stated length plays
 to its end offline; mono and six-channel files have the stems in their
 channels; the stems end on the track's last frame; and on the mixer a
 muted drums strip gives three quarters of the file, unmuted the file again
-bit for bit. `tests/switch.rs` switches routes mid-track: at one
+bit for bit. `tests/lanes_transition.rs` plays a transition through the
+mixer with the drums muted there and masked in the engine: three quarters
+of what the transition plays on every frame, across the playing track's
+move onto its stems and the next one's back onto its file; with a stem
+soloed a quarter; with a stem muted on a bar inside the window, half from
+that bar; and on a memory target keeping the lane stream, the next track
+goes back onto its file only once its parts have been there for a
+mixer's switch and its end. `tests/switch.rs` switches routes mid-track: at one
 rate, a chain of four routes (one made while paused) is one stream equal
 to each route's own output from the frame it took over at; a crossfade is
 exact outside its window; at another format the old route fades out at

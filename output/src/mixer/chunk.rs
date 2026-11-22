@@ -167,7 +167,14 @@ impl Slot {
             }
             main.gains.times(&switch.rest);
         }
-        main.gains.times(strips.path(main.strip));
+        // A lane input's main is gated as its parts stand: a part soloed
+        // keeps it while it is heard in their place.
+        let path = if self.switch.is_some() {
+            strips.lead_path(main.strip)
+        } else {
+            strips.path(main.strip)
+        };
+        main.gains.times(path);
         main.heard = supplied && main.gains.flat() != Some(0.0);
         main.last = main.gains.last(n);
         self.heard = self.lanes.iter().any(|l| l.heard);

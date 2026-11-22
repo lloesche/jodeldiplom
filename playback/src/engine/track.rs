@@ -280,6 +280,11 @@ pub(super) struct Track {
     /// frames after `seg_out` before it may have any (its route fades in).
     pub(super) parts_cut: Option<u64>,
     pub(super) parts_rise: u64,
+    /// On an output of lanes, a track met at the same format that has no
+    /// parts of its own (a transition's track on its stems): the output
+    /// frame up to which the parts of the track it took over from stay
+    /// valid, so they end only once its crossfade has met it.
+    pub(super) parts_hold: Option<u64>,
     /// The clip count last queued, and the output frame it was queued at.
     pub(super) clips: Option<(u64, u64)>,
     /// The error that ended the track early, reported once what was
@@ -340,6 +345,12 @@ pub(super) struct Switch {
     /// The routes have met: the old track's output ends where the new
     /// one's begins.
     pub(super) spliced: bool,
+    /// The new route has caught up and waits for the old one's stem parts
+    /// ([`super::Engine::waits_for_parts`]): the old one plays on meanwhile.
+    pub(super) for_parts: bool,
+    /// The output frame written next when that wait began: it lasts
+    /// [`super::PARTS_PATIENCE`] at most.
+    pub(super) parts_wait: Option<u64>,
 }
 
 /// What a switch is waiting for.
@@ -391,6 +402,7 @@ impl Track {
             segments,
             parts_cut: None,
             parts_rise: 0,
+            parts_hold: None,
             clips: None,
             failure: None,
             stems: None,
@@ -453,10 +465,20 @@ impl Track {
     /// the file (resampled perhaps), not a stems route, nor read along a
     /// transition's map or faded by it, nor decoded ahead for a switch.
     pub(super) fn plain(&self) -> bool {
-        self.route.stage != Stage::Stems
-            && self.warp.is_none()
-            && self.gains.is_none()
-            && !self.pending
+        self.plain_route() && !self.pending
+    }
+
+    /// Whether its route is its plain one: the file (resampled perhaps),
+    /// not a stems route, nor read along a transition's map or faded by it
+    /// (decoded ahead for a switch or not).
+    pub(super) fn plain_route(&self) -> bool {
+        self.route.stage != Stage::Stems && self.warp.is_none() && self.gains.is_none()
+    }
+
+    /// Whether a transition mixes its stems: on a stems route, faded by the
+    /// transition's lanes.
+    pub(super) fn mixes_stems(&self) -> bool {
+        self.route.stage == Stage::Stems && self.gains.is_some()
     }
 
     /// Whether everything of the track (or of what it was told to play) is

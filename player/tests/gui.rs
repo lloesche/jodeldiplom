@@ -1094,7 +1094,10 @@ fn the_mix_tab_is_painted_from_its_cells() {
         panic!("the main screen");
     };
     let desk = m.desk.expect("the desk");
-    assert_eq!(desk.channels.len(), 4);
+    // The player, its four stems and the master (the narrowing leaves the
+    // preview and the microphone out at this size).
+    assert!(desk.channels.len() >= 6, "{:?}", desk.channels.len());
+    assert!(desk.channel(Channel::Strip(StripKind::Vocals)).is_some());
     // The player's meters at −12 / −9 dBFS: their bottom cells lit green,
     // their top cells (above 0 dBFS on the fader's ruler) unlit.
     let player = desk.channel(Channel::Strip(StripKind::Player)).unwrap();

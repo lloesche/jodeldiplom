@@ -27,6 +27,7 @@ pub mod mic;
 pub mod mouse;
 pub mod preview;
 pub mod singing;
+pub mod stems;
 pub mod sync;
 pub mod text;
 pub mod transition;
@@ -296,8 +297,13 @@ pub struct Playing {
     /// Seconds into the track, as heard.
     pub position: f64,
     /// The last position the engine told (track, output frame, seconds into
-    /// the track): where the output's frames are in the song.
+    /// the track): where the output's frames are in the song. None since a
+    /// track started, a seek or a jump, until the next.
     pub anchor: Option<(usize, u64, f64)>,
+    /// Output frames a second of the track took between the last two
+    /// positions told (a transition's next track goes at another speed for
+    /// a while); `None` before two.
+    pub speed: Option<f64>,
     /// Samples the resampler clipped, as heard, since the track (or the
     /// last seek) started.
     pub clipped: u64,
@@ -314,6 +320,7 @@ impl Default for Playing {
             state: PlayState::Stopped,
             position: 0.0,
             anchor: None,
+            speed: None,
             clipped: 0,
             mixed: false,
         }
@@ -321,6 +328,25 @@ impl Default for Playing {
 }
 
 impl Playing {
+    /// A position told: track `index` heard at output frame `frame`,
+    /// `seconds` into it.
+    pub fn anchor_at(&mut self, index: usize, frame: u64, seconds: f64) {
+        if let Some((i, f, s)) = self.anchor {
+            let dt = seconds - s;
+            if i == index && dt > 0.01 && frame > f {
+                self.speed = Some((frame - f) as f64 / dt);
+            }
+        }
+        self.anchor = Some((index, frame, seconds));
+    }
+
+    /// The positions told before say nothing of what follows (another
+    /// track, a seek, a jump).
+    pub fn forget_anchor(&mut self) {
+        self.anchor = None;
+        self.speed = None;
+    }
+
     /// The track's length in seconds, when known.
     pub fn duration(&self) -> Option<f64> {
         let track = self.track.as_ref()?;
@@ -626,9 +652,9 @@ pub struct State {
     pub prepares_lyrics: bool,
     /// The GPU for stems.
     pub gpu: Gpu,
-    /// The stems heard (this session only: the player starts with all of
-    /// them, the file as it is).
-    pub stems: StemMix,
+    /// What the engine and the mixer were last given of the stems
+    /// ([`stems::follow`]).
+    pub stems_sent: stems::StemsSent,
     /// The Transition tab.
     pub transition: transition::tab::TransitionTab,
     /// The Karaoke tab and mode.
@@ -755,7 +781,7 @@ impl State {
             prepares_lyrics: false,
             rhythm_recipe: RhythmRecipe::default(),
             gpu: Gpu::Looking,
-            stems: StemMix::ALL,
+            stems_sent: stems::StemsSent::default(),
             transition,
             karaoke: karaoke::KaraokeState::default(),
             desk: desk::DeskState::default(),
@@ -811,23 +837,13 @@ impl State {
     }
 
     /// The settings the engine plays with: the config's, with the rate cap
-    /// in force ([`State::effective_max_rate`]) and the stems heard (all of
-    /// them without a GPU).
+    /// in force ([`State::effective_max_rate`]), every stem as it is (the
+    /// stems are heard on the desk: [`stems`]).
     pub fn engine_settings(&self) -> Settings {
         Settings {
             max_rate: self.effective_max_rate(),
-            stems: self.stems_in_force(),
+            stems: StemMix::ALL,
             ..self.config.settings()
-        }
-    }
-
-    /// The stems heard: [`State::stems`] with a GPU (on the Karaoke tab and
-    /// in its mode, theirs: [`karaoke::mix`]), else all of them.
-    pub fn stems_in_force(&self) -> StemMix {
-        match self.gpu {
-            Gpu::Present(_) if karaoke::shown(self) => karaoke::mix(self),
-            Gpu::Present(_) => self.stems,
-            _ => StemMix::ALL,
         }
     }
 

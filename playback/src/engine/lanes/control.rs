@@ -103,6 +103,16 @@ impl Timeline {
         self.written
     }
 
+    /// The frame the word in force before frame `from` was written from
+    /// (`None`: none was logged).
+    pub(super) fn changed_at(&self, from: u64) -> Option<u64> {
+        self.log
+            .iter()
+            .rev()
+            .find(|(f, _)| *f < from)
+            .map(|&(f, _)| f)
+    }
+
     /// The word in force before frame `from`.
     pub(super) fn state(&self, from: u64) -> State {
         match self.log.iter().rev().find(|(f, _)| *f < from) {

@@ -379,6 +379,8 @@ pub fn transition_state(cols: u16, rows: u16) -> State {
     );
     // The tab's lyrics asked for already (as the first update would).
     state.karaoke.lyrics_wanted = jodeldiplom::core::karaoke::lyrics_wanted(&state);
+    // The engine told of the stems for the tab (as the first update would).
+    state.stems_sent.make = jodeldiplom::core::stems::make_wanted(&state);
     state
 }
 
@@ -475,15 +477,18 @@ fn lin(db: f32) -> f32 {
 }
 
 /// Fills the Mix tab's desk as a frame's look would (at the state's
-/// clock): the player at `rate` with its meters at −12 / −9 dBFS, a preview
-/// crossfading (A going out, B coming in), a microphone open and hearing
-/// with its echo canceller learnt, and the master summing (a preview
-/// mixes, so it is not bit-perfect).
+/// clock): the player at `rate` with its meters at −12 / −9 dBFS, its
+/// stems there and heard with the vocals muted, a preview crossfading (A
+/// going out, B coming in), a microphone open and hearing with its echo
+/// canceller learnt, and the master summing (a preview mixes and the stems
+/// play, so it is not bit-perfect).
 pub fn fill_desk(state: &mut State, rate: u32) {
+    use jodel_output::lanes::Parts;
     use jodel_output::mixer::{
-        DeskView, InputView, MasterView, Meters, MicPort, MicView, Role, StripView, Timebase,
+        DeskView, InputView, LaneView, MasterView, Meters, MicPort, MicView, PartsView, Role,
+        StripView, Timebase,
     };
-    use jodeldiplom::core::desk::{self, Look};
+    use jodeldiplom::core::desk::{self, Look, StripKind};
     use jodeldiplom::core::mic::MicReading;
     let format = StreamFormat::new(rate, 2, SampleFormat::S24In32);
     let input = |role, gain, queued| InputView {
@@ -496,6 +501,37 @@ pub fn fill_desk(state: &mut State, rate: u32) {
         queued,
         capacity: 65_536,
     };
+    // The player's lanes: main (switched out), then the stems, the vocals
+    // muted.
+    let lane = |strip, gain: f64| LaneView {
+        strip,
+        gain,
+        heard: gain > 0.0,
+    };
+    let lead = InputView {
+        lanes: vec![
+            lane(1, 0.0),
+            lane(3, 1.0),
+            lane(4, 1.0),
+            lane(5, 0.0),
+            lane(6, 1.0),
+        ],
+        parts: Some(PartsView {
+            state: Parts::Present,
+            share: 1.0,
+        }),
+        ..input(Role::Lead, 1.0, 40_000)
+    };
+    let stem = |id, name: &str, mute| StripView {
+        id,
+        name: name.into(),
+        parent: Some(1),
+        level: 1.0,
+        mute,
+        solo: false,
+        inputs: Vec::new(),
+    };
+    state.desk.strips[StripKind::Vocals.index()].mute = true;
     let view = DeskView {
         master: MasterView {
             device: "USB Audio DAC".into(),
@@ -526,8 +562,12 @@ pub fn fill_desk(state: &mut State, rate: u32) {
                 level: 1.0,
                 mute: false,
                 solo: false,
-                inputs: vec![input(Role::Lead, 1.0, 40_000)],
+                inputs: vec![lead],
             },
+            stem(3, "Drums", false),
+            stem(4, "Bass", false),
+            stem(5, "Vocals", true),
+            stem(6, "Other", false),
             StripView {
                 id: 2,
                 name: "Preview".into(),
@@ -550,6 +590,9 @@ pub fn fill_desk(state: &mut State, rate: u32) {
         master: vec![lin(-10.0), lin(-7.5)],
         strips: vec![
             (1, vec![lin(-12.0), lin(-9.0)]),
+            (3, vec![lin(-16.0), lin(-14.0)]),
+            (4, vec![lin(-19.0), lin(-21.0)]),
+            (6, vec![lin(-18.0), lin(-15.0)]),
             (2, vec![lin(-20.0), lin(-17.0)]),
         ],
         limited: false,
@@ -571,7 +614,8 @@ pub fn fill_desk(state: &mut State, rate: u32) {
     state.karaoke.mic.name = Some("Yeti Stereo Microphone".into());
     let now = state.now_ms;
     for at in [now.saturating_sub(16), now] {
-        desk::feed(state, Look::of(view.clone(), meters.clone(), [1, 2]), at);
+        let ids = [1, 3, 4, 5, 6, 2];
+        desk::feed(state, Look::of(view.clone(), meters.clone(), ids), at);
     }
 }
 
@@ -583,5 +627,9 @@ pub fn desk_state(cols: u16, rows: u16) -> State {
     state.desk.selected = jodeldiplom::core::desk::Channel::Mic;
     state.now_ms = 10_000;
     fill_desk(&mut state, 96_000);
+    // The engine told of the stems as the desk has them (as the first
+    // update would).
+    state.stems_sent.make = jodeldiplom::core::stems::make_wanted(&state);
+    state.stems_sent.mask = jodeldiplom::core::stems::mask(&state);
     state
 }
