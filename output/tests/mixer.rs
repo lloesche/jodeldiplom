@@ -4,9 +4,10 @@
 //! for bit, a flush drops what the device held, the microphone's port hears
 //! each opening of the device in the Lead's frames and never reaches it,
 //! the monitor sees the mix, and only the Lead opens the device again at
-//! another format; a closed input never does, and one withdrawn before its
-//! first audio leaves the crossfade's other side as it was, while one
-//! heard is left as it is. Strips: 0 dB is bit for bit,
+//! another format; a closed input never does, and one withdrawn before
+//! its first audio leaves the crossfade's other side as it was, while one
+//! heard is left as it is (inputs that lag: `mixer_late.rs`). Strips: 0 dB
+//! is bit for bit,
 //! a level change is a 20 ms linear ramp, mute and solo silence without a
 //! click, a ramp under way survives the device opening again, and the
 //! meters read each strip and the sum. Where frames must line up exactly,
@@ -86,9 +87,9 @@ fn an_inputs_position_is_what_the_device_has_played() {
     assert_eq!(out.position().unwrap(), written);
     assert_eq!(device.underruns(), 0);
     // The device frames heard are the output's and, where it had none when
-    // the mixer took a period (a writer put off: the mixer fills the
-    // device's buffer ahead, and does not wait), silence: each position is
-    // the output's frames among those heard, to a period.
+    // the mixer took a period (a writer put off for longer than the device
+    // could wait), silence: each position is the output's frames among
+    // those heard, to a period.
     let gaps = out.stats().underruns;
     let left = device.left(0);
     let ours = |heard: u64| {

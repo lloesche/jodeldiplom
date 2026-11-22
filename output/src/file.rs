@@ -10,7 +10,7 @@ use crate::output::{delegate_output, Core, Driver, OpenRequest, StreamInfo};
 use crate::shared::Shared;
 use std::io::{self, Write};
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
@@ -28,7 +28,9 @@ pub enum SimClock {
     /// pads with silence and counts an underrun, exactly as a device would.
     Manual,
     /// A thread plays one period (the request's `period`) every period of
-    /// wall-clock time, like a device.
+    /// wall-clock time, like a device; with a buffer of its own
+    /// ([`FileOutput::with_device_buffer`]) it keeps that much more taken
+    /// from the ring, as latency.
     Realtime,
     /// A thread plays what is written, no faster than wall-clock time (a
     /// period every period at most, from the first frame), but only what
@@ -86,6 +88,11 @@ struct SimDevice {
     sink: Sink,
     running: AtomicBool,
     stop: AtomicBool,
+    /// The frames of its own buffer: taken from the ring ahead of what it
+    /// plays, as hardware does.
+    hold: AtomicU64,
+    /// What that buffer holds now (it fills from what the ring has).
+    held: AtomicU64,
 }
 
 impl SimDevice {
@@ -113,8 +120,9 @@ impl SimDevice {
                 self.shared.fail(e.into());
                 break;
             }
-            // The simulated DAC has no latency: what was submitted is played.
-            self.shared.report_delay(0, Instant::now(), false);
+            // What was submitted is played, but for what the device holds.
+            let held = self.held.load(Ordering::Relaxed);
+            self.shared.report_delay(held, Instant::now(), false);
         }
         stream
     }
@@ -138,6 +146,18 @@ impl SimDriver {
                 next += period;
                 if device.running.load(Ordering::SeqCst) {
                     device.play(period_frames, false);
+                    // Its own buffer takes what the ring has, up to its
+                    // size (only this thread takes from the ring).
+                    let held = device.held.load(Ordering::Relaxed);
+                    let more = device
+                        .hold
+                        .load(Ordering::Relaxed)
+                        .saturating_sub(held)
+                        .min(device.shared.ring.len());
+                    if more > 0 {
+                        device.held.store(held + more, Ordering::Relaxed);
+                        device.play(more, true);
+                    }
                 } else {
                     next = Instant::now() + period;
                 }
@@ -201,6 +221,8 @@ impl Driver for SimDriver {
     fn flush(&mut self) -> Result<(), Error> {
         self.device.running.store(false, Ordering::SeqCst);
         self.device.shared.discard_all();
+        // Its own buffer goes too.
+        self.device.held.store(0, Ordering::Relaxed);
         Ok(())
     }
 
@@ -325,6 +347,8 @@ impl FileOutput {
             sink: Arc::new(Mutex::new(sink)),
             running: AtomicBool::new(false),
             stop: AtomicBool::new(false),
+            hold: AtomicU64::new(0),
+            held: AtomicU64::new(0),
         });
         let mut driver = SimDriver {
             clock,
@@ -356,6 +380,22 @@ impl FileOutput {
             device,
             clock,
         }
+    }
+
+    /// [`SimClock::Realtime`]: a device with a buffer of its own of
+    /// `frames`, as hardware has (ALSA keeps periods queued, WASAPI the
+    /// buffer playing and the one filled last): each period, besides the
+    /// one it plays, it takes from the ring what the ring has until that
+    /// buffer is full, and holds it until it is played
+    /// ([`StreamInfo::device_latency`]). So what is written
+    /// and not played ([`crate::Output::latency`]) is more than what is
+    /// left in the ring ([`crate::Output::queued`]). Set before the first
+    /// write.
+    pub fn with_device_buffer(mut self, frames: u64) -> FileOutput {
+        self.device.hold.store(frames, Ordering::Relaxed);
+        let latency = crate::Output::format(&self.core).frames_to_duration(frames);
+        self.core.set_device_latency(latency);
+        self
     }
 
     /// [`SimClock::Manual`] only: lets `frames` device frames of time pass.

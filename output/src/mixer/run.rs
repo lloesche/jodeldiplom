@@ -3,19 +3,21 @@
 
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
+use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, TryRecvError};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use super::chunk::Slot;
 use super::desk::pack_format;
 use super::input::{InputDriver, InputOutput, Link, Stream};
 use super::mic::Port;
 use super::mix::Mix;
+use super::pace::Turn;
 use super::parts::LaneRun;
 use super::ramp::{GainId, Waiting, When};
 use super::strip::channel_peaks;
 use super::strips::Strips;
+use super::wake::Waker;
 use super::{Curve, MixShared, MixerOptions, Monitor, Msg, Ramp, Role, Start, Timebase};
 use crate::backend::AudioPriority;
 use crate::caps::Capabilities;
@@ -37,13 +39,17 @@ pub(super) struct Device {
     pub(super) format: StreamFormat,
     pub(super) info: StreamInfo,
     /// Paused by the mixer (nothing to play).
-    paused: bool,
+    pub(super) paused: bool,
     pub(super) mix: Mix,
+    /// While the next period waits for a lagging input, when it is mixed
+    /// anyway (a backstop, should the device stop taking frames and its
+    /// ring never run down: [`super::pace`]).
+    pub(super) deadline: Option<Instant>,
 }
 
 pub(super) struct Run {
     target: Box<dyn OutputTarget>,
-    options: MixerOptions,
+    pub(super) options: MixerOptions,
     /// The device's capabilities, once asked.
     caps: Option<Capabilities>,
     tx: Sender<Msg>,
@@ -73,6 +79,8 @@ pub(super) struct Run {
     /// The id of the newest output opened (0: none): a strip's change for
     /// the first audio waits for one newer.
     newest_output: u64,
+    /// Wakes the thread when an input it waits for writes.
+    pub(super) wake: Arc<Waker>,
 }
 
 /// Whether the device's `format` is one `request` asks for.
@@ -109,20 +117,33 @@ impl Run {
             untouched: true,
             starts: Vec::new(),
             newest_output: 0,
+            wake: Arc::new(Waker::for_current_thread()),
         }
     }
 
     pub(super) fn run(mut self, rx: Receiver<Msg>) {
         let _priority = AudioPriority::enter();
-        let mut busy = false;
+        let mut next = Turn::Idle;
         loop {
             // Nothing running: nothing to do until word comes.
             let got = if self.running().next().is_none() {
                 rx.recv().map_err(|_| RecvTimeoutError::Disconnected)
-            } else if busy {
-                rx.recv_timeout(Duration::ZERO)
             } else {
-                rx.recv_timeout(INPUT_WAIT)
+                match next {
+                    Turn::Busy => rx.recv_timeout(Duration::ZERO),
+                    Turn::Idle => rx.recv_timeout(INPUT_WAIT),
+                    // On the high-resolution timer, cut short by the
+                    // lagging input's write (word that comes meanwhile
+                    // waits for the end of it: at most a period).
+                    Turn::Wait(until) => match rx.try_recv() {
+                        Ok(msg) => Ok(msg),
+                        Err(TryRecvError::Empty) => {
+                            self.wait(until);
+                            Err(RecvTimeoutError::Timeout)
+                        }
+                        Err(TryRecvError::Disconnected) => Err(RecvTimeoutError::Disconnected),
+                    },
+                }
             };
             let mut quit = false;
             match got {
@@ -141,7 +162,7 @@ impl Run {
             if quit {
                 break;
             }
-            busy = self.turn();
+            next = self.turn();
             self.report();
         }
         self.close_streams(Error::Closed);
@@ -333,11 +354,11 @@ impl Run {
         }
     }
 
-    fn streams(&self) -> impl Iterator<Item = &Stream> + '_ {
+    pub(super) fn streams(&self) -> impl Iterator<Item = &Stream> + '_ {
         self.slots.values().filter_map(|s| s.stream.as_ref())
     }
 
-    fn running(&self) -> impl Iterator<Item = &Stream> + '_ {
+    pub(super) fn running(&self) -> impl Iterator<Item = &Stream> + '_ {
         self.streams()
             .filter(|s| s.link.running.load(Ordering::SeqCst))
     }
@@ -427,6 +448,7 @@ impl Run {
         let driver = InputDriver {
             link: link.clone(),
             tx: self.tx.clone(),
+            wake: self.wake.clone(),
         };
         let shared_capacity = shared.ring.capacity();
         let core = Core::new(shared, Box::new(driver), info, request);
@@ -508,13 +530,14 @@ impl Run {
             info,
             output,
             paused: false,
+            deadline: None,
         });
         Ok(())
     }
 
     /// Gives out what the limiter holds back, into `self.out` (all of
     /// it written).
-    fn give_held(&mut self) {
+    pub(super) fn give_held(&mut self) {
         let Some(device) = &mut self.device else {
             return;
         };
@@ -624,10 +647,16 @@ impl Run {
     fn flush(&mut self, id: u64) -> Result<(), Error> {
         // Its frames restart: there is no stream frame to time a change on
         // until they are mixed again.
+        if let Some(device) = &mut self.device {
+            device.deadline = None;
+        }
         let flushed = self.slots.values_mut();
         let mut flushed = flushed.filter(|s| s.stream.as_ref().is_some_and(|st| st.link.id == id));
         if let Some(slot) = flushed.next() {
             slot.unmap();
+            if let Some(stream) = &mut slot.stream {
+                stream.late = false;
+            }
         }
         let others = self
             .slots
@@ -646,70 +675,13 @@ impl Run {
     }
 
     /// The device failed: so does every input's output.
-    fn device_failed(&mut self, error: Error) {
+    pub(super) fn device_failed(&mut self, error: Error) {
         self.close_streams(error);
         self.close_device(false);
     }
 
-    /// Writes what is mixed, or mixes the next period: when the device
-    /// plays in real time, as it takes frames (an output short of them is
-    /// silence for the rest); otherwise once every running output holds a
-    /// period, or is draining. With nothing running, the device pauses.
-    /// Returns whether there was work.
-    fn turn(&mut self) -> bool {
-        let playing = self.running().next().is_some();
-        let Some(device) = &mut self.device else {
-            return false;
-        };
-        if device.paused == playing {
-            let toggled = if playing {
-                device.output.resume()
-            } else {
-                device.output.pause()
-            };
-            device.paused = !playing;
-            if let Err(e) = toggled {
-                self.device_failed(e);
-                return false;
-            }
-        }
-        if !playing {
-            return false;
-        }
-        let realtime = device.info.realtime;
-        let held = device.mix.held();
-        let period = device.format.duration_to_frames(self.options.period).max(1);
-        if self.sent == self.out.len() {
-            let (mut full, mut lacking, mut most) = (true, false, 0);
-            for s in self.running() {
-                let queued = s.link.shared.ring.len();
-                most = most.max(queued);
-                if queued < period {
-                    full = false;
-                    lacking |= !s.link.shared.draining();
-                }
-            }
-            let n = if full || realtime {
-                period
-            } else if lacking {
-                return false;
-            } else if most > 0 {
-                most.min(period)
-            } else if held > 0 {
-                // Every output is drained: what the limiter holds back
-                // goes too.
-                self.give_held();
-                return self.write();
-            } else {
-                return false;
-            };
-            self.mix_chunk(n as usize);
-        }
-        self.write()
-    }
-
     /// Writes some of what is mixed (waiting up to a period for room).
-    fn write(&mut self) -> bool {
+    pub(super) fn write(&mut self) -> bool {
         let Some(device) = &mut self.device else {
             return false;
         };

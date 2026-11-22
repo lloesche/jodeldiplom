@@ -152,6 +152,9 @@ impl Output for PacedOutput {
     fn latency(&self) -> Duration {
         self.inner.latency()
     }
+    fn queued(&self) -> u64 {
+        self.inner.queued()
+    }
     fn pause(&mut self) -> Result<(), Error> {
         self.inner.pause()
     }

@@ -237,6 +237,12 @@ pub trait Output: Send {
     /// not yet played, as time.
     fn latency(&self) -> Duration;
 
+    /// Frames written that the device has not taken yet: what its ring
+    /// holds, so how long the device can go on without more. What it has
+    /// taken into a buffer of its own, or holds as latency, is not counted
+    /// (it is in [`Output::latency`]).
+    fn queued(&self) -> u64;
+
     /// Stops the device; queued frames stay queued.
     fn pause(&mut self) -> Result<(), Error>;
 
@@ -416,6 +422,11 @@ impl Core {
         self.prefill = frames.min(self.shared.ring.capacity());
     }
 
+    /// Sets the latency a simulated device says it adds.
+    pub(crate) fn set_device_latency(&mut self, latency: Duration) {
+        self.info.device_latency = latency;
+    }
+
     fn usable(&self) -> Result<(), Error> {
         if self.closed {
             return Err(Error::Closed);
@@ -565,6 +576,10 @@ impl Output for Core {
         self.info.format.frames_to_duration(pending)
     }
 
+    fn queued(&self) -> u64 {
+        self.shared.ring.len()
+    }
+
     fn pause(&mut self) -> Result<(), Error> {
         self.usable()?;
         if self.paused {
@@ -699,6 +714,9 @@ macro_rules! forward_output {
         }
         fn latency(&self) -> std::time::Duration {
             $crate::output::Output::latency(&self.$field)
+        }
+        fn queued(&self) -> u64 {
+            $crate::output::Output::queued(&self.$field)
         }
         fn pause(&mut self) -> Result<(), $crate::Error> {
             $crate::output::Output::pause(&mut self.$field)

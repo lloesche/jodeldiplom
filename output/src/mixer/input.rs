@@ -7,6 +7,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Sender};
 use std::sync::Arc;
 
+use super::wake::Waker;
 use super::Msg;
 use crate::error::Error;
 use crate::format::StreamFormat;
@@ -41,6 +42,10 @@ pub(crate) struct Stream {
     sent: VecDeque<(u64, u64)>,
     /// The timeline epoch (restarts by flush) of what was taken last.
     epoch: u64,
+    /// Lagging when a device in real time could wait for it no longer:
+    /// late, not waited for again until it holds a period
+    /// ([`super::pace`]).
+    pub(crate) late: bool,
 }
 
 impl Stream {
@@ -54,6 +59,7 @@ impl Stream {
             samples: Vec::new(),
             sent: VecDeque::new(),
             epoch: 0,
+            late: false,
         }
     }
 
@@ -116,6 +122,8 @@ pub(crate) fn ask<T>(tx: &Sender<Msg>, msg: impl FnOnce(Sender<T>) -> Msg) -> Re
 pub(crate) struct InputDriver {
     pub(crate) link: Arc<Link>,
     pub(crate) tx: Sender<Msg>,
+    /// Wakes the mixer thread while it waits for a lagging stream.
+    pub(crate) wake: Arc<Waker>,
 }
 
 impl Driver for InputDriver {
@@ -149,6 +157,12 @@ impl Driver for InputDriver {
         self.link.running.store(false, Ordering::SeqCst);
         // A mixer already gone has closed it.
         let _ = self.tx.send(Msg::Closed(self.link.id));
+        Ok(())
+    }
+
+    fn after_write(&mut self) -> Result<(), Error> {
+        // A mixer waiting for a lagging stream looks again at once.
+        self.wake.wake_if_armed();
         Ok(())
     }
 }

@@ -378,6 +378,9 @@ impl Output for GatedOutput {
     fn latency(&self) -> Duration {
         self.inner.latency()
     }
+    fn queued(&self) -> u64 {
+        self.inner.queued()
+    }
     fn pause(&mut self) -> Result<(), OutputError> {
         self.inner.pause()
     }
@@ -564,6 +567,10 @@ impl Output for HoldingOutput {
     }
     fn latency(&self) -> Duration {
         self.inner.latency()
+    }
+    fn queued(&self) -> u64 {
+        // What it holds is not taken yet either.
+        self.inner.queued() + self.held()
     }
     fn pause(&mut self) -> Result<(), OutputError> {
         self.inner.pause()

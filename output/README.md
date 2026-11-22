@@ -98,11 +98,21 @@ its `StreamInfo` carries the device's backend, exclusive flag and latency.
 - **One mix path**, a device period (10 ms) at a time, as fast as the
   device takes frames. A device that plays in real time
   (`StreamInfo::realtime`, set by each backend, and by `FileOutput` for
-  `SimClock::Realtime`) takes the next period as soon as it has room: an
-  output short of frames is silence for the rest of it (its underrun).
-  One that plays only what it is given (a file, a test's memory) gets a
-  period once every running output holds one, or is draining; so the
-  tests run the same path. On it, a period no output gave a frame to is
+  `SimClock::Realtime`) takes the next period as soon as it has room and
+  every running output holds one. An output short of a period (lagging:
+  not draining, not still to write its first frame) is waited for while
+  the device's ring (`Output::queued`: what the device has not taken yet,
+  its own buffer and latency aside) holds more than one device pull and
+  a 5 ms margin, and no longer than a backstop deadline (the wait's slack
+  at its start and a period); the thread sleeps on a high-resolution
+  timer until the ring can next change, or until the output writes. Then
+  the period is mixed with what the output has, silence for the rest (its
+  underrun), and the output is late: not waited for again until it holds
+  a period, so one that stalls leaves the others the whole ring. So a
+  writer lagging by less than the ring holds beyond its low water loses
+  nothing. One that plays only what it is given (a file, a test's memory,
+  `SimClock::Paced`) gets a period once every running output holds one, or
+  is draining; so the tests run the same path. On it, a period no output gave a frame to is
   not mixed: the outputs it was sized for stopped since (closed, paused or
   flushed between the mixer's look at their rings and its take), and
   mixing it would play a period of silence as if written. With nothing
@@ -405,7 +415,12 @@ only its format, and closed when the Lead opens at another). Strips: one
 at 0 dB keeps its input bit for bit, a level change is a 20 ms linear
 ramp, mute and solo silence strips without a click, a strip's or a fader's
 ramp under way ends on its target when the device opens again, and the
-meters read each strip and the sum, then nothing once taken. `tests/desk.rs`:
+meters read each strip and the sum, then nothing once taken.
+`tests/mixer_late.rs`: an output lagging by less than the ring holds
+loses nothing, a later one is silence until it is back and then waited
+for again, another plays on meanwhile, and on a device with a buffer of
+its own (`FileOutput::with_device_buffer`) the wait never runs the ring
+dry (counting that buffer, it would). `tests/desk.rs`:
 a group's level and mute act on its child's input and its own, ramped from
 the frame set; a child's solo leaves it alone, a group's solo keeps its
 children and its own input, and solo off brings all back; a mute and a
