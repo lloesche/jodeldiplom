@@ -61,8 +61,9 @@ Several players on one device. `Mixer::open(target, MixerOptions)` takes
 an `OutputTarget` and runs one thread, `jodel-mixer` (MMCSS "Pro Audio" on
 Windows), which holds the device; the device opens with the first output
 opened on an input and closes with the last. `mixer.strip(name)` makes a
-`Strip`, a channel of the desk (clones are the same strip; it lives while
-a clone or an input on it does). `mixer.input(&strip, role, gain)` plugs
+`Strip`, a channel of the desk, and `mixer.strip_in(&group, name)` one in
+a group, another strip (clones are the same strip; it lives while a clone,
+a child or an input on it does). `mixer.input(&strip, role, gain)` plugs
 an input into it: an `InputTarget`, where one player opens its outputs as
 on a device (opening another closes the one before), and a `Fader`, its
 gain, which any number of hands may hold. Each output opened is a full
@@ -85,6 +86,33 @@ its `StreamInfo` carries the device's backend, exclusive flag and latency.
   solo in place: while any strip is soloed, the others are silent). A
   strip's change is a 20 ms linear ramp (`STRIP_RAMP`), so it never clicks;
   a strip starts at 0 dB and is kept nowhere.
+- **Groups:** a group acts on its children as a VCA does, and may have
+  inputs of its own (`Strip::parent()` names a child's). An input is heard
+  at its fader times its strip's path: the product, over the strip and
+  every group above it, of the level (0 while muted), times the solo gate
+  (1 while nothing is soloed anywhere, or the strip or a group above it
+  is; else 0). Soloing a child silences its siblings, its group's own
+  inputs and every other strip, but it is still heard through its group's
+  level and mute; soloing a group keeps all its children. Each strip
+  runs two ramps: `heard`, to its level × mute × gate, for its own inputs
+  (a strip at the top of the desk has only this one, as before groups),
+  and `vca`, to its level × mute, for its children's. So a mute and a
+  solo set together are one ramp, never two multiplied into a bump.
+- **Scheduled changes:** `Strip::set_level_at(gain, start)` and
+  `set_mute_at(on, start)` take a `Start` as a fader's ramp does
+  (`Start::Now`; `Start::At { epoch, time }`, never once the device has
+  opened again; `Start::FirstAudio`, the first audio of an output opened
+  after it on an input of the strip or of its children). One for a time
+  starts its 20 ms ramp on that very desk frame, inside the period mixed;
+  a frame already gone is the next mixed. Each setting has at most one
+  change waiting, and a new one (now or later) takes its place.
+  `Strip::level()` and `mute()` are the settings in force: a change now
+  at once, a scheduled one once its frame is mixed. `pending_level()` and
+  `pending_mute()` are the changes waiting, so a caller toggles against
+  what is meant (the pending one, else the one in force). The handle
+  writes what it sets at once; the mixer thread writes each setting again
+  as it takes a change of it, so they end as the mixer has them (a start
+  that never comes takes its change off again).
 - **Bit for bit:** an input is heard when it supplied frames at a gain
   other than 0. When one is heard at gain exactly 1 (fader times strip)
   with no ramp running, its samples go to the device untouched (a starved
@@ -99,8 +127,9 @@ its `StreamInfo` carries the device's backend, exclusive flag and latency.
 - **The desk:** `Mixer::desk()` gathers on the caller's thread what the
   mixer thread publishes, and looking changes nothing: the master (the
   device's name and `StreamInfo`, or none while closed; the `Timebase`,
-  passthrough, clips), the strips in the order made (id, name, level, mute,
-  solo, and each input's role, fader gain, whether it was heard, its
+  passthrough, clips), the strips in the order made, a group before its
+  children (id, name, parent, the level, mute and solo in force, and each
+  input's role, fader gain, whether it was heard, its
   output's format, ring fill and capacity), and the microphone's port
   (`MicView { port, refused }`). The per-input state, passthrough and clips
   are atomics; the clock sits behind a lock the mixer takes every turn for
@@ -108,8 +137,9 @@ its `StreamInfo` carries the device's backend, exclusive flag and latency.
   locks of their own, taken only when they change; the strips' list is the
   handles' own.
 - **Meters:** `Mixer::meters()` takes the peaks since the last look: per
-  channel of what goes to the device, and of each strip's inputs summed
-  after its gain (by strip id), with whether the limiter acted. Peaks are
+  channel of what goes to the device, and of each strip's subtree (its
+  inputs and its children's) summed after their gains (by strip id), with
+  whether the limiter acted. Peaks are
   linear (1.0: full scale), up to 8 channels (`METER_CHANNELS`); the mixer
   raises them with `fetch_max` in atomics and a look takes them with
   `swap`, so it is for the one who shows them.
@@ -299,10 +329,30 @@ only its format, and closed when the Lead opens at another). Strips: one
 at 0 dB keeps its input bit for bit, a level change is a 20 ms linear
 ramp, mute and solo silence strips without a click, a strip's or a fader's
 ramp under way ends on its target when the device opens again, and the
-meters read each strip and the sum, then nothing once taken. Where frames
-must line up exactly, the tests run on a device that takes what it is
-given at once, with outputs started short of a period, so the mixer waits
-for all of them.
+meters read each strip and the sum, then nothing once taken. `tests/desk.rs`:
+a group's level and mute act on its child's input and its own, ramped from
+the frame set; a child's solo leaves it alone, a group's solo keeps its
+children and its own input, and solo off brings all back; a mute and a
+level set for desk frames off the periods start their ramps on those very
+frames (one set before them taking the place of another), the device
+getting the input bit for bit up to the period the change falls in and
+again after; a group mute for the first audio waits while an older
+child's output plays and starts on the first frame of one opened since on
+another child; a mute for a time of the device's last opening goes when it
+opens again, and one set for it then never comes; a lone input on a child
+of a group, all at 0 dB, reaches the device bit for bit, and again bit for
+bit once a group's ramp to -6 dB and back has played out; and a group
+meters its subtree. The units in `mixer/strips.rs` check the path rule
+with a group in a group, solos on a strip made late or gone, a solo
+released and a mute set together staying silent (and 5 ms apart, one
+straight rise and one straight fall), two scheduled changes multiplied
+within one period, the pending changes shown, the first audio over a
+subtree, and a change to where a strip is keeping its path flat;
+`mixer/envelope.rs` multiplies flat and per-frame gains. Where frames must
+line up exactly, the tests run on
+a device that takes what it is given at once, with outputs started short
+of a period, so the mixer waits for all of them; `tests/common` holds the
+simulated device and the helpers both files use.
 `tests/mic.rs` runs the microphone path on it: a tap (a probe, a microphone
 tapped and singing, its canceller on or off, or none) never changes a byte,
 in every format; a `MicFeed` tone comes out of the cleaner as it came in,

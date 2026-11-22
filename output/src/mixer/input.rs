@@ -29,8 +29,6 @@ pub(crate) struct Link {
 /// An output open on an input, as the mixer thread drains it.
 pub(crate) struct Stream {
     pub(crate) link: Arc<Link>,
-    /// Which output of its input it is (from 1).
-    pub(crate) ordinal: u64,
     /// This chunk: taken from (it was running), and the frames it gave.
     pub(crate) taken: bool,
     pub(crate) got: u64,
@@ -44,10 +42,9 @@ pub(crate) struct Stream {
 }
 
 impl Stream {
-    pub(crate) fn new(link: Arc<Link>, ordinal: u64) -> Stream {
+    pub(crate) fn new(link: Arc<Link>) -> Stream {
         Stream {
             link,
-            ordinal,
             taken: false,
             got: 0,
             bytes: Vec::new(),

@@ -78,18 +78,34 @@ pub(crate) enum When {
     Now,
     /// A frame of the device's current epoch.
     Frame(u64),
-    /// The first frame of an output opened after `after` had been opened
-    /// on the input.
+    /// The first frame of an output with an id above `after` (outputs'
+    /// ids grow as they are opened): one opened on the input since, or for
+    /// a strip's change, on an input of its subtree.
     FirstAudio { after: u64 },
     /// The frame input `slot`'s waiting ramp starts at (a crossfade).
     With(u64),
+}
+
+impl When {
+    /// The frame it comes at in the chunk of frames `first..end` (a frame
+    /// gone by: `first`), if it comes there; `audio` is the newest output
+    /// (as `FirstAudio` counts them) that supplied audio in the chunk. A
+    /// `With` is left to the ramp it follows.
+    pub(crate) fn due(self, first: u64, end: u64, audio: Option<u64>) -> Option<u64> {
+        match self {
+            When::Now => Some(first),
+            When::Frame(f) if f < end => Some(f.max(first)),
+            When::FirstAudio { after } if audio.is_some_and(|o| o > after) => Some(first),
+            _ => None,
+        }
+    }
 }
 
 /// Where the waiting ramps of inputs start in the chunk of frames
 /// `first..end`, into `starts` as (input, frame): their own frame, the
 /// first audio of an output opened since, or with the ramp they follow.
 /// `waiting` gives each input with a ramp waiting, when it starts, and the
-/// ordinal of its output if that supplied audio in the chunk.
+/// id of its output if that supplied audio in the chunk.
 pub(crate) fn resolve_starts(
     first: u64,
     end: u64,
@@ -98,13 +114,7 @@ pub(crate) fn resolve_starts(
 ) {
     starts.clear();
     for (id, when, audio) in waiting.clone() {
-        let start = match when {
-            When::Now => Some(first),
-            When::Frame(f) if f < end => Some(f.max(first)),
-            When::FirstAudio { after } if audio.is_some_and(|o| o > after) => Some(first),
-            _ => None,
-        };
-        if let Some(at) = start {
+        if let Some(at) = when.due(first, end, audio) {
             starts.push((id, at));
         }
     }

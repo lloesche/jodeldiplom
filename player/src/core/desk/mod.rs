@@ -642,6 +642,7 @@ mod tests {
         let strip = |id, name: &str| StripView {
             id,
             name: name.into(),
+            parent: None,
             level: 1.0,
             mute: false,
             solo: false,

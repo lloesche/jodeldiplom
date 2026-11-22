@@ -4,7 +4,8 @@
 //!
 //! [`Mixer::open`] takes an [`OutputTarget`] (the device, or a test's
 //! memory) and runs one thread, `jodel-mixer`, which holds the device output.
-//! [`Mixer::strip`] makes a [`Strip`], a channel of the desk;
+//! [`Mixer::strip`] makes a [`Strip`], a channel of the desk, and
+//! [`Mixer::strip_in`] one in a group (another strip);
 //! [`Mixer::input`] plugs an input into one: an [`InputTarget`], where one
 //! player opens its outputs as on a device, and a [`Fader`], its gain, which
 //! any number of hands may hold. The input goes when its target and every
@@ -18,10 +19,26 @@
 //!
 //! - **Two gains:** an input is heard at its [`Fader`]'s gain (the
 //!   controllers': a preview's crossfade, a transition) times its strip's
-//!   (the user's: [`Strip::set_level`], [`Strip::set_mute`],
+//!   path (the user's: [`Strip::set_level`], [`Strip::set_mute`],
 //!   [`Strip::set_solo`], solo in place). A strip's changes are heard over
 //!   [`STRIP_RAMP`], a linear ramp, so they never click. A strip starts at
 //!   0 dB and is kept nowhere.
+//! - **Groups:** a strip may sit in a group, which may have inputs of its
+//!   own. The path's gain is the product, over the strip and every group
+//!   above it, of the level (0 while muted), times the solo gate: 1 while
+//!   nothing is soloed anywhere, or the strip or a group above it is;
+//!   else 0. So soloing a child silences its siblings, its group's own
+//!   inputs and every other strip, and soloing a group keeps its children.
+//!   A strip's own inputs are heard through one ramp to its level, mute and
+//!   gate together (a strip at the top of the desk has only that one), its
+//!   children through a second one to its level and mute, so a mute and a
+//!   solo set together never multiply into a bump.
+//! - **Scheduled changes:** [`Strip::set_level_at`] and
+//!   [`Strip::set_mute_at`] take a [`Start`] as a fader's ramp does; one
+//!   for a time starts its ramp on that very desk frame, inside the period
+//!   mixed. Each setting has one change waiting at most: a new one takes
+//!   its place ([`Strip::pending_mute`] and [`Strip::pending_level`] show
+//!   it, so a caller can toggle against what is meant).
 //! - **Bit for bit:** when one input is heard (it supplied frames, at a
 //!   gain other than 0), at gain exactly 1 with no ramp running, its
 //!   samples reach the device untouched ([`MasterView::passthrough`] says
@@ -30,8 +47,9 @@
 //!   over full scale (a look-ahead gain envelope), and requantized once
 //!   to the device's bits with TPDF dither ([`crate::Requantizer`]); clips
 //!   are counted ([`MasterView::clipped`]).
-//! - **Meters:** the mixer thread measures each strip after its gain (its
-//!   inputs summed) and what goes to the device, the peak of each channel
+//! - **Meters:** the mixer thread measures each strip's subtree after its
+//!   gains (its inputs and its children's, summed) and what goes to the
+//!   device, the peak of each channel
 //!   up to [`METER_CHANNELS`]; [`Mixer::meters`] takes them (the peaks
 //!   since the last look). [`Mixer::desk`] shows everything else, and
 //!   looking changes nothing ([`DeskView`]).
@@ -64,12 +82,14 @@
 //!   (a spectrum of what is heard).
 
 mod desk;
+mod envelope;
 mod input;
 mod mic;
 mod mix;
 mod ramp;
 mod run;
 mod strip;
+mod strips;
 
 pub use desk::{DeskView, InputView, MasterView, Meters, MicPort, MicView, StripView};
 pub use ramp::{Curve, Ramp, Start};
@@ -87,7 +107,7 @@ use crate::error::Error;
 use crate::input::Input;
 use crate::output::{Clock, OpenRequest, Output, OutputTarget, StreamInfo};
 use input::ask;
-use strip::{Entry, Peaks, StripState};
+use strip::{Change, Entry, Peaks, StripState};
 
 /// How a [`Mixer`] runs its device.
 #[derive(Clone, Debug)]
@@ -166,8 +186,19 @@ pub(crate) enum Msg {
         id: u64,
         state: Arc<StripState>,
     },
-    /// A strip's settings changed: the mixer reads them all again.
-    StripChanged,
+    /// A change of a strip's level or mute, from `start`: the handles'
+    /// `set`th of that setting.
+    StripSet {
+        id: u64,
+        change: Change,
+        start: Start,
+        set: u64,
+    },
+    /// A strip soloed or not, now.
+    StripSolo {
+        id: u64,
+        on: bool,
+    },
     StripGone(u64),
     Slot {
         id: u64,
@@ -313,10 +344,25 @@ impl Mixer {
         }
     }
 
-    /// A new strip named `name`, after those made before.
+    /// A new strip named `name` at the top of the desk, after those made
+    /// before.
     pub fn strip(&self, name: &str) -> Strip {
         let id = self.shared.ids.fetch_add(1, Ordering::Relaxed);
-        Strip::new(id, self.tx.clone(), self.shared.clone(), name)
+        Strip::new(id, self.tx.clone(), self.shared.clone(), name, None)
+    }
+
+    /// A new strip named `name` in the group `parent` (one of this
+    /// mixer's), after those made before: its inputs are heard through
+    /// its own gain and then the group's, as through a VCA (see
+    /// [`Strip`]). The group keeps inputs of its own besides.
+    pub fn strip_in(&self, parent: &Strip, name: &str) -> Strip {
+        assert!(
+            Arc::ptr_eq(&parent.handle.shared, &self.shared),
+            "a strip of another mixer"
+        );
+        let id = self.shared.ids.fetch_add(1, Ordering::Relaxed);
+        let parent = Some(parent.clone());
+        Strip::new(id, self.tx.clone(), self.shared.clone(), name, parent)
     }
 
     /// A new input on `strip` (one of this mixer's) at `gain`: where one

@@ -15,7 +15,8 @@ use crate::output::StreamInfo;
 pub struct DeskView {
     /// What goes to the device.
     pub master: MasterView,
-    /// The strips, in the order they were made.
+    /// The strips, in the order they were made (a group before its
+    /// children).
     pub strips: Vec<StripView>,
     /// The microphone's port.
     pub mic: MicView,
@@ -46,7 +47,9 @@ pub struct StripView {
     pub id: u64,
     /// Its name.
     pub name: String,
-    /// The level set (linear).
+    /// The group it sits in, by id (`None`: at the top of the desk).
+    pub parent: Option<u64>,
+    /// The level in force (linear).
     pub level: f64,
     /// Muted.
     pub mute: bool,
@@ -108,8 +111,9 @@ pub struct MicView {
 pub struct Meters {
     /// What went to the device.
     pub master: Vec<f32>,
-    /// Each strip's inputs summed after its gain, by [`StripView::id`], in
-    /// the order the strips were made.
+    /// Each strip's subtree (its inputs and its children's) summed after
+    /// their gains, by [`StripView::id`], in the order the strips were
+    /// made.
     pub strips: Vec<(u64, Vec<f32>)>,
     /// The limiter turned the gain down.
     pub limited: bool,
@@ -157,6 +161,7 @@ impl Mixer {
                 StripView {
                     id,
                     name: st.name.clone(),
+                    parent: st.parent,
                     level: st.level(),
                     mute: st.mute(),
                     solo: st.solo(),

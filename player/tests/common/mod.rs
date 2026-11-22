@@ -520,6 +520,7 @@ pub fn fill_desk(state: &mut State, rate: u32) {
             StripView {
                 id: 1,
                 name: "Player".into(),
+                parent: None,
                 level: 1.0,
                 mute: false,
                 solo: false,
@@ -528,6 +529,7 @@ pub fn fill_desk(state: &mut State, rate: u32) {
             StripView {
                 id: 2,
                 name: "Preview".into(),
+                parent: None,
                 level: 1.0,
                 mute: false,
                 solo: false,

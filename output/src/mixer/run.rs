@@ -8,11 +8,13 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use super::desk::pack_format;
+use super::envelope::Envelope;
 use super::input::{InputDriver, InputOutput, Link, Stream};
 use super::mic::Port;
-use super::mix::{Gains, Made, Mix};
+use super::mix::{Made, Mix};
 use super::ramp::{resolve_starts, start_of, Gain, Waiting, When};
-use super::strip::{channel_peaks, Strips};
+use super::strip::channel_peaks;
+use super::strips::Strips;
 use super::{Curve, MixShared, MixerOptions, Monitor, Msg, Ramp, Role, SlotState, Start, Timebase};
 use crate::backend::AudioPriority;
 use crate::caps::Capabilities;
@@ -37,14 +39,13 @@ struct Slot {
     gain: Gain,
     /// Ramps taken.
     ramps: u64,
-    /// Outputs opened on it.
+    /// The id of the last output opened on it (0: none): a fade for the
+    /// first audio waits for one newer.
     opened: u64,
     /// What it was offered, once asked.
     caps: Option<Capabilities>,
-    /// This chunk's gains through its strip's (what it is heard at), or
-    /// the one for all of it.
-    gains: Vec<f64>,
-    flat: Option<f64>,
+    /// This chunk's gains through its strip's path: what it is heard at.
+    gains: Envelope,
     /// It was heard in the last chunk: it supplied frames at a gain other
     /// than 0.
     heard: bool,
@@ -52,14 +53,6 @@ struct Slot {
 }
 
 impl Slot {
-    /// The gains it is heard at this chunk.
-    fn heard_at(&self) -> Gains<'_> {
-        match self.flat {
-            Some(g) => Gains::Flat(g),
-            None => Gains::Each(&self.gains),
-        }
-    }
-
     /// Nothing of it will be heard for now: no output, or paused (one held
     /// back for a flush or a prefill comes back).
     fn idle(&self) -> bool {
@@ -132,6 +125,9 @@ pub(super) struct Run {
     /// The inputs whose waiting ramps start in this chunk, and at what
     /// frame.
     starts: Vec<(u64, u64)>,
+    /// The id of the newest output opened (0: none): a strip's change for
+    /// the first audio waits for one newer.
+    newest_output: u64,
 }
 
 /// Whether the device's `format` is one `request` asks for.
@@ -167,6 +163,7 @@ impl Run {
             sent: 0,
             untouched: true,
             starts: Vec::new(),
+            newest_output: 0,
         }
     }
 
@@ -210,7 +207,16 @@ impl Run {
     fn handle(&mut self, msg: Msg) -> bool {
         match msg {
             Msg::Strip { id, state } => self.strips.add(id, state),
-            Msg::StripChanged => self.strips.changed(),
+            Msg::StripSet {
+                id,
+                change,
+                start,
+                set,
+            } => {
+                let when = self.when(start, self.newest_output);
+                self.strips.set(id, change, when, set);
+            }
+            Msg::StripSolo { id, on } => self.strips.solo(id, on),
             Msg::StripGone(id) => self.strips.remove(id),
             Msg::Slot {
                 id,
@@ -228,8 +234,7 @@ impl Run {
                         ramps: 0,
                         opened: 0,
                         caps: None,
-                        gains: Vec::new(),
-                        flat: Some(gain),
+                        gains: Envelope::new(gain),
                         heard: false,
                         stream: None,
                     },
@@ -328,14 +333,12 @@ impl Run {
         }
     }
 
-    /// `ramp` for input `slot`, as it waits: `None` when it never comes (a
-    /// time of an epoch gone).
-    fn waiting(&self, slot: u64, ramp: Ramp) -> Option<Waiting> {
-        let when = match ramp.start {
+    /// `start` as it is waited for, `after` the output a first audio must
+    /// come after: `None` when it never comes (a time of an epoch gone).
+    fn when(&self, start: Start, after: u64) -> Option<When> {
+        Some(match start {
             Start::Now => When::Now,
-            Start::FirstAudio => When::FirstAudio {
-                after: self.slots.get(&slot).map_or(0, |s| s.opened),
-            },
+            Start::FirstAudio => When::FirstAudio { after },
             Start::At { epoch, time } => {
                 let rate = self.device.as_ref()?.format.rate;
                 if epoch != self.epoch {
@@ -343,9 +346,14 @@ impl Run {
                 }
                 When::Frame((time.as_secs_f64() * f64::from(rate)).round() as u64)
             }
-        };
+        })
+    }
+
+    /// `ramp` for input `slot`, as it waits: `None` when it never comes.
+    fn waiting(&self, slot: u64, ramp: Ramp) -> Option<Waiting> {
+        let opened = self.slots.get(&slot).map_or(0, |s| s.opened);
         Some(Waiting {
-            when,
+            when: self.when(ramp.start, opened)?,
             to: ramp.to,
             over: ramp.over,
             curve: ramp.curve,
@@ -438,6 +446,7 @@ impl Run {
         let chunk = format.duration_to_frames(self.options.period).max(1);
         let shared = Arc::new(Shared::new(format, request.ring_frames(&format, chunk)));
         let id = self.shared.ids.fetch_add(1, Ordering::Relaxed);
+        self.newest_output = id;
         let link = Arc::new(Link {
             id,
             shared: shared.clone(),
@@ -462,11 +471,11 @@ impl Run {
         let shared_capacity = shared.ring.capacity();
         let core = Core::new(shared, Box::new(driver), info, request);
         let slot = self.slots.get_mut(&slot_id).expect("checked");
-        slot.opened += 1;
+        slot.opened = id;
         let s = &slot.state;
         s.format.store(pack_format(Some(format)), Ordering::Relaxed);
         s.capacity.store(shared_capacity, Ordering::Relaxed);
-        slot.stream = Some(Stream::new(link, slot.opened));
+        slot.stream = Some(Stream::new(link));
         self.fit_mic();
         Ok(Box::new(InputOutput { core }))
     }
@@ -745,21 +754,25 @@ impl Run {
                 .stream
                 .as_ref()
                 .filter(|s| s.got > 0)
-                .map(|s| s.ordinal);
+                .map(|s| s.link.id);
             slot.gain.next().map(|when| (id, when, audio))
         });
         resolve_starts(first, end, waiting, &mut self.starts);
-        // The strips' gains; each input's through its strip's (what it is
-        // heard at), and who is heard.
-        self.strips.fill(first, n, format.rate);
+        // The strips' gains along their paths; each input's through its
+        // strip's (what it is heard at), and who is heard.
+        let audio = self.slots.values().filter_map(|s| {
+            let stream = s.stream.as_ref().filter(|st| st.got > 0)?;
+            Some((s.strip, stream.link.id))
+        });
+        self.strips.fill(first, n, format.rate, audio);
         let (mut heard, mut alone) = (0, None);
         for (&id, slot) in self.slots.iter_mut() {
             let start = start_of(&self.starts, id);
-            slot.gains.resize(n, 0.0);
-            let fader = slot.gain.fill(first, start, format.rate, &mut slot.gains);
-            slot.flat = self.strips.through(slot.strip, fader, &mut slot.gains);
+            let gains = &mut slot.gains;
+            gains.fill(&mut slot.gain, first, n, start, format.rate);
+            gains.times(self.strips.path(slot.strip));
             slot.heard = slot.stream.as_ref().is_some_and(|s| s.taken && s.got > 0)
-                && slot.flat != Some(0.0);
+                && gains.flat() != Some(0.0);
             if slot.heard {
                 heard += 1;
                 alone = Some(id);
@@ -768,13 +781,13 @@ impl Run {
         // Each strip's meter: its heard inputs summed at those gains.
         let inputs = self.slots.values().filter(|s| s.heard).filter_map(|s| {
             let stream = s.stream.as_ref()?;
-            Some((s.strip, &stream.samples[..], s.heard_at()))
+            Some((s.strip, &stream.samples[..], s.gains.as_gains()))
         });
         self.strips.meter(ch, inputs);
         // One heard at 1 (or none): as written; else summed.
         let untouched = match (heard, alone) {
             (0, _) => true,
-            (1, Some(id)) => self.slots[&id].flat == Some(1.0),
+            (1, Some(id)) => self.slots[&id].gains.flat() == Some(1.0),
             _ => false,
         };
         self.out.clear();
@@ -799,7 +812,7 @@ impl Run {
             device.mix.begin(n * ch);
             for slot in self.slots.values().filter(|s| s.heard) {
                 let stream = slot.stream.as_ref().expect("heard");
-                device.mix.add(&stream.samples, slot.heard_at());
+                device.mix.add(&stream.samples, slot.gains.as_gains());
             }
             device.mix.end(untouched, &mut self.out);
             Made::Mixed
