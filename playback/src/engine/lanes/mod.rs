@@ -6,14 +6,18 @@
 //! next, so a gapless change finds its stems ready) and makes the parts a
 //! little ahead of what is written: the run's stems resampled to the
 //! output's rate and laid out in the track's channels ([`stream`]), started
-//! on an output frame a run frame falls on exactly, so they add up to main.
+//! on an output frame a run frame falls on exactly, so they add nothing of
+//! their own: they add up to main as closely as the separator's stems add
+//! up to the song.
 //! What is made and not yet written waits in a [`buffer`], with what the
 //! output may still give back behind it.
 //!
 //! The control word ([`control`]) follows what is there. On a device the
 //! parts are never waited for: before a write only what it needs is made
 //! (a seam's length past it, nothing while they are absent), the rest after
-//! it, a few pieces at most. They are said to be there once [`AHEAD`] of
+//! it, a few pieces at most; while its ring is full they are made on, and
+//! once none are left to make the write waits for room, as on a plain
+//! output. They are said to be there once [`AHEAD`] of
 //! them is made ahead (and no sooner again once they ran out), and they end
 //! over a mixer's switch's length ([`ending_frames`]) while still valid, so
 //! a mixer hearing them fades back to main. Offline the writing waits for
@@ -362,15 +366,15 @@ impl StemLanes {
         let absent = !self.offline && self.timeline.state(from) == State::Absent;
         let target = if absent { 0 } else { need };
         match self.make_to(want, target) {
-            Some(Stopped::Failed(why)) => {
+            Err(Stopped::Failed(why)) => {
                 self.give_up(track, from);
                 return quiet(self, Some(why));
             }
-            Some(Stopped::Missing) => {
+            Err(Stopped::Missing) => {
                 self.give_up(track, from);
                 return quiet(self, None);
             }
-            None => {}
+            Ok(_) => {}
         }
         let following = self.follow_next(want, separator);
         let done = self.stream.as_ref().is_some_and(|s| s.done);
@@ -395,23 +399,23 @@ impl StemLanes {
     }
 
     /// After a write that took the output to frame `head`: on a device, the
-    /// parts made on toward [`AHEAD`]. Returns why the stems failed, when
-    /// they just did.
-    pub(super) fn after(&mut self, want: &Want, head: u64) -> Option<String> {
+    /// parts made on toward [`AHEAD`]. Returns whether any were made (more
+    /// may be made at once), or why the stems failed, when they just did.
+    pub(super) fn after(&mut self, want: &Want, head: u64) -> Result<bool, String> {
         if self.offline || self.stream.is_none() {
-            return None;
+            return Ok(false);
         }
         let ahead = (AHEAD * f64::from(self.rate)).round() as u64;
         match self.make_to(want, head + ahead) {
-            Some(Stopped::Failed(why)) => {
+            Err(Stopped::Failed(why)) => {
                 self.give_up(want.track, head);
-                Some(why)
+                Err(why)
             }
-            Some(Stopped::Missing) => {
+            Err(Stopped::Missing) => {
                 self.give_up(want.track, head);
-                None
+                Ok(false)
             }
-            None => None,
+            Ok(made) => Ok(made),
         }
     }
 
@@ -517,11 +521,11 @@ impl StemLanes {
 
     /// Makes parts until they reach output frame `target`, or the run has
     /// no more yet: on a device [`PIECES`] at most, offline after a
-    /// moment's wait for them. Returns why the run has none, when it has
-    /// none for the track.
-    fn make_to(&mut self, want: &Want, target: u64) -> Option<Stopped> {
+    /// moment's wait for them. Returns whether any were made, or why the
+    /// run has none, when it has none for the track.
+    fn make_to(&mut self, want: &Want, target: u64) -> Result<bool, Stopped> {
         let (Some(stream), Some(run)) = (self.stream.as_mut(), self.run.as_mut()) else {
-            return None;
+            return Ok(false);
         };
         run.set_keep(want.keep.0, want.keep.1);
         let buffer = &mut self.buffer;
@@ -530,17 +534,17 @@ impl StemLanes {
         } else {
             Duration::ZERO
         };
-        let mut pieces = 0;
+        let (mut pieces, mut made) = (0, false);
         while buffer.end() < target && (self.offline || pieces < PIECES) {
             pieces += 1;
             match stream.make(run, wait, &mut |frame, parts| buffer.push(frame, parts)) {
-                Made::Frames => wait = Duration::ZERO,
+                Made::Frames => (wait, made) = (Duration::ZERO, true),
                 Made::Waiting | Made::Done => break,
-                Made::Failed(why) => return Some(Stopped::Failed(why)),
-                Made::Missing => return Some(Stopped::Missing),
+                Made::Failed(why) => return Err(Stopped::Failed(why)),
+                Made::Missing => return Err(Stopped::Missing),
             }
         }
-        None
+        Ok(made)
     }
 
     /// The next track's run, started once this one's file is read (or its
@@ -747,7 +751,11 @@ impl Engine {
         let ask = self.lane_ask(track, from, 0);
         let next = next_of(&self.queue, track, self.hold, self.transition.is_none());
         let failed = self.lanes.before(&ask.want(track, next)).failed;
-        let failed = failed.or_else(|| self.lanes.after(&ask.want(track, Next::Nothing), from));
+        let failed = failed.or_else(|| {
+            self.lanes
+                .after(&ask.want(track, Next::Nothing), from)
+                .err()
+        });
         if let Some(reason) = failed {
             let index = track.index;
             self.emit(Event::PartsStopped { index, reason });
@@ -758,9 +766,11 @@ impl Engine {
     /// [`LANE_CHUNK`] frames of it) on an output of lanes, and returns the
     /// frames it took: each main as it is, then the parts the stem lanes
     /// have for it and its control word; offline, no further than the
-    /// parts are made. A device's full ring is left alone (the parts are
-    /// made on meanwhile). Parts made behind what is written have what the
-    /// output has not played given back first, and written again with them
+    /// parts are made. While a device's ring is full the parts are made on
+    /// first, and once there are none to make now the write waits for room
+    /// as on a plain output (else the thread would spin on the full ring).
+    /// Parts made behind what is written have what the output has not
+    /// played given back first, and written again with them
     /// ([`Engine::rewrite_lanes`]).
     pub(super) fn write_lanes(&mut self, track: &mut Track, limit: usize) -> Result<usize, Error> {
         self.rewrite_lanes(track)?;
@@ -780,11 +790,16 @@ impl Engine {
         let (able, margin) = (ask.able, ask.margin);
         let next = next_of(&self.queue, track, self.hold, self.transition.is_none());
         if full {
-            if let Some(reason) = self.lanes.after(&ask.want(track, Next::Nothing), from) {
-                let index = track.index;
-                self.emit(Event::PartsStopped { index, reason });
+            match self.lanes.after(&ask.want(track, Next::Nothing), from) {
+                // None to make now: the write below waits for room.
+                Ok(false) => {}
+                Ok(true) => return Ok(0),
+                Err(reason) => {
+                    let index = track.index;
+                    self.emit(Event::PartsStopped { index, reason });
+                    return Ok(0);
+                }
             }
-            return Ok(0);
         }
         let mut followed = self.lanes.before(&ask.want(track, next));
         // Parts separated outside a transition: the stems work again, for
@@ -822,7 +837,7 @@ impl Engine {
         let out = self.out.as_mut().ok_or(Error::Stopped)?;
         let took = out.output.write(wide, Some(WRITE_WAIT))?;
         self.lanes.commit(from, took);
-        if let Some(reason) = self
+        if let Err(reason) = self
             .lanes
             .after(&ask.want(track, Next::Nothing), from + took as u64)
         {

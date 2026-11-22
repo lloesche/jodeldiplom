@@ -3245,9 +3245,10 @@ fn stems_switch_on_the_next_bar_as_mutes_of_their_strips() {
     state.playing.anchor = None;
     let fx = op(&mut state, Op::ToggleOther);
     assert_eq!(desk(&fx), [DeskChange::Mute(StripKind::Other, false)]);
-    // No stems made before the key (away from the tabs, nothing touched):
-    // the same bar, 0.1 s ahead (the engine starts them on the frame heard
-    // and writes again what it holds with them).
+    // No stems made before the key (away from the tabs, nothing touched),
+    // but kept (the analysis has them): the same bar, 0.1 s ahead (the
+    // engine starts them on the frame heard and writes again what it holds
+    // with them).
     state.playing.anchor = Some((index, 1_000_000, heard));
     state.playing.speed = Some(rate);
     state.stems_sent.make = jodel_playback::MakeStems::Never;
@@ -3298,6 +3299,101 @@ fn stems_switch_on_the_next_bar_as_mutes_of_their_strips() {
     state.config.stems_on_bar = false;
     let (back, _) = Config::parse(&state.config.to_text()).unwrap();
     assert!(!back.stems_on_bar);
+}
+
+/// A first touch with no stems made lands on a bar the stems will meet:
+/// with the track's stems kept (the queue's facts, or its analysis) or
+/// there already, 0.1 s ahead; with stems the GPU must separate first, past
+/// its first chunk; with neither a GPU nor kept stems (or with the track's
+/// stems failed) they never come (the key says so), and nothing is waited
+/// for.
+#[test]
+fn a_first_touch_lands_on_a_bar_its_stems_will_meet() {
+    use jodel_playback::MakeStems;
+    use jodeldiplom::core::desk::{DeskChange, StripKind};
+    use jodeldiplom::core::lanes::Block;
+    use jodeldiplom::core::stems::{bar, DESK_SOON, SEPARATE_SOON};
+    use jodeldiplom::core::{Heard, Rhythmed};
+    let mut state = common::transition_state(120, 40);
+    state.side = Side::Browser;
+    let track = state.playing.track.clone().unwrap();
+    let rate = f64::from(track.output.format.rate);
+    // Heard a little before a bar: DESK_SOON lands on it, SEPARATE_SOON on
+    // the next.
+    let a = block_analysis(&state, Block::Now);
+    let bars: Vec<f64> = a.downbeats.iter().map(|&d| a.beats[d]).collect();
+    let k = bars.iter().position(|&b| b > 10.0).unwrap();
+    let heard = bars[k] - 0.3;
+    assert!(bars[k + 1] >= heard + SEPARATE_SOON && bars[k] < heard + SEPARATE_SOON);
+    state.drawn_heard = Some(heard);
+    state.playing.anchor = Some((track.index, 1_000_000, heard));
+    state.playing.speed = Some(rate);
+    // The playing track analysed without its stems kept, none made.
+    let path = track.info.path.clone();
+    let Some(Rhythm::Ready(r)) = state.rhythm.get(&path).cloned() else {
+        panic!("the playing track is analysed");
+    };
+    let mut unkept = (*r.analysis).clone();
+    unkept.stems = false;
+    let waveform = r.waveform.as_deref().cloned();
+    state.rhythm.insert(
+        path.clone(),
+        Rhythm::Ready(std::sync::Arc::new(Rhythmed::new(unkept, waveform))),
+    );
+    state.stems_sent.make = MakeStems::Never;
+    let soon = bar(&state).unwrap();
+    assert_eq!(
+        soon.seconds,
+        bars[k + 1],
+        "past the separator's first chunk"
+    );
+    let frame = (1_000_000.0 + (bars[k + 1] - heard) * rate).round() as u64;
+    assert_eq!(soon.frame, frame);
+    // The key itself mutes on that bar's frame.
+    let fx = op(&mut state, Op::ToggleDrums);
+    assert!(fx.contains(&Effect::Desk(DeskChange::MuteAt(
+        StripKind::Drums,
+        true,
+        frame
+    ))));
+    assert!(engine(&fx).contains(&Command::MakeStems(MakeStems::Separate)));
+    op(&mut state, Op::ToggleDrums);
+    // Separated, but not on the desk yet (the first chunk under way): still
+    // past it.
+    state.stems_sent.make = MakeStems::Separate;
+    assert_eq!(bar(&state).unwrap().seconds, bars[k + 1]);
+    // There on the desk: the next bar 0.1 s ahead.
+    common::fill_desk(&mut state, track.output.format.rate);
+    state.drawn_heard = Some(heard);
+    assert_eq!(bar(&state).unwrap().seconds, bars[k]);
+    assert!(bars[k] >= heard + DESK_SOON);
+    // None made again (the desk still shows its last): past the first chunk.
+    state.stems_sent.make = MakeStems::Never;
+    assert_eq!(bar(&state).unwrap().seconds, bars[k + 1]);
+    // Kept, as the work on the file told: 0.1 s ahead.
+    update(
+        &mut state,
+        Action::Heard {
+            path: path.clone(),
+            part: Heard::Stems,
+        },
+    );
+    // (The update told the engine to make them for the change still to
+    // come; none made yet.)
+    state.stems_sent.make = MakeStems::Never;
+    assert_eq!(bar(&state).unwrap().seconds, bars[k]);
+    // Not kept, and the stems of the track failed: none come.
+    state.facts.get_mut(&path).unwrap().stems = Some(false);
+    state.desk.parts_failed = Some(track.index);
+    assert_eq!(bar(&state).unwrap().seconds, bars[k]);
+    state.desk.parts_failed = None;
+    assert_eq!(bar(&state).unwrap().seconds, bars[k + 1]);
+    // Not kept and no GPU: they never come either, and the key says so.
+    state.gpu = Gpu::Absent;
+    assert_eq!(bar(&state).unwrap().seconds, bars[k]);
+    op(&mut state, Op::ToggleBass);
+    let said = &state.message.as_ref().unwrap().text;
+    assert!(said.contains("no GPU: kept stems only"), "{said}");
 }
 
 /// D7: the engine makes the stems while a stem's strip is touched or the

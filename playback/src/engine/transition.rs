@@ -2,7 +2,8 @@
 //!
 //! Armed, it waits until the playing track (A) is [`LEAD`] before the
 //! window. Then A moves onto a stems route at the open format (the
-//! seamless switch; with every gain at one its stems add up to the mix),
+//! seamless switch; with every gain at one its stems add up to the mix as
+//! closely as the separator's do),
 //! with its fades as its stems' gains, and the next track (B) opens on a
 //! stems route at the same format from a little before where the window
 //! meets it, its stems faded by its own lanes and read along the time map

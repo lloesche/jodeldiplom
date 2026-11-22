@@ -266,7 +266,8 @@ lengths are exact); otherwise the samples go to the output as read.
   heard; `Armed` says so, else `Cancelled` says why. About 4 s before the
   window the playing track moves onto stems at the open output format
   (the seamless switch above; with every gain at 1 the stems add up to
-  the track), and the next track opens on stems at the same format,
+  the track as closely as the separator's do, about −30 dB off it with a
+  real one), and the next track opens on stems at the same format,
   decoding ahead in the switch's turns. Through the window both are
   written: the next track's 44.1 kHz stem sum is read along the time map,
   by `VarResampler` (varispeed: the pitch moves with the speed) or by a
@@ -388,7 +389,9 @@ lengths are exact); otherwise the samples go to the output as read.
   first frame, where main cuts: `jodel_output::lanes`). On a device the
   stems are never waited for: before a write only what it needs is made
   (a seam's length past it, nothing while absent), the rest after, a few
-  pieces at most, and a full ring is left alone; through a count-in
+  pieces at most; while the ring is full they are made on, and once none
+  are left to make the write waits for room as on a plain output (the
+  thread does not spin on the full ring); through a count-in
   (`PlayIn`) they are made from the track's first frame, so they are
   there as it starts. Stems asked for while the output holds frames
   written without them (`MakeStems` from `Never`, the first touch of a
@@ -476,8 +479,8 @@ gets without one, and `PlayAt` starts at the frame a third in.
 `tests/common/lanes.rs`) run those cases (and `PlayAt`) through a mixer's lane
 input with the stems made (offline, so they are there on every frame,
 untouched): the device gets the same bytes. On a memory target that keeps
-the lane stream (`MemoryTarget::with_lanes`) the stems add up to main
-within 64 steps (4–6 measured) at 44.1, 48, 96 and 192 kHz, from a seek's
+the lane stream (`MemoryTarget::with_lanes`) the test separator's stems
+(a quarter of the mix each) add up to main within 64 steps (4–6 measured) at 44.1, 48, 96 and 192 kHz, from a seek's
 very frame (from the stems kept) and across a jump's crossfade, also for a
 96 kHz file at 48 kHz, and a jump at every 397th frame over a piece of
 stems (so one lands where the parts made ahead end); every control word

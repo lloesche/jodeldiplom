@@ -234,9 +234,12 @@ bit-exact tests, run through the desk.
 - **The engine writes the parts** (`playback/src/engine/lanes/`,
   `Command::MakeStems(Never | Kept | Separate)`): the stems of the track
   played, from the stem cache or separated, resampled to the output's
-  rate and laid on the frames main is heard on, so they add up to main
-  within a few 24-bit steps at any rate, through seeks, jumps, gapless
-  changes and route switches; on a device they are never waited for.
+  rate and laid on the frames main is heard on, adding nothing of their
+  own: stems that add up to the track add up to main within a few 24-bit
+  steps at any rate, through seeks, jumps, gapless changes and route
+  switches (a real separator's stems add up to the song only roughly,
+  about −30 dB off it, and are played as separated); on a device they are
+  never waited for.
 - **The app plays on the desk** (`player/src/desk_wiring.rs`,
   `core/stems.rs`): the PLAYER group with DRUMS, BASS, VOCALS and OTHER
   inside it. The stem keys mute a stem's strip on the next bar's frame
@@ -269,9 +272,10 @@ bit-exact tests, run through the desk.
   the output still gives back once the parts are made is written again
   with them. Kept stems are there in 11–17 ms, so from the cache a stem
   muted 0.1 s ahead is heard on its frame on a quick machine (the app's
-  lead is 0.1 s now, a second only while a transition is armed or heard);
+  lead is 0.1 s then, a second while a transition is armed or heard);
   separated ones once the first chunk is (0.2–0.5 s on an RTX 5080), from
-  the frame given back then. Nothing is written again over a jump's
+  the frame given back then, so while the stems are not there and none are
+  kept the app's lead is 0.75 s (`SEPARATE_SOON`), a bar the stems meet. Nothing is written again over a jump's
   crossfade still held, nor while a route switch, a transition or a
   waiting jump counts on the frames written: a touch then lands as before,
   up to about a second late.

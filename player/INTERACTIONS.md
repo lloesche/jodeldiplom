@@ -39,11 +39,14 @@ stem keys are their mutes.
   the setting, or without bars or a position); pressed again before that
   bar, the change is taken back there. `alt+0` puts every stem's strip
   back as it starts, its mutes on the bar too. The bar is a second ahead
-  at least while a transition is armed or heard, or while no stems were
-  made before the key; its frame comes from the last two positions told
-  (none after a seek, a jump or another track until two more), so it is
-  the frame heard there.
+  at least while a transition is armed or heard, and 0.75 s while the
+  playing track's stems are not there yet and must be separated on the GPU
+  first (none kept: past the separator's first chunk); kept stems, or ones
+  there already, need no more than 0.1 s. Its frame comes from the last
+  two positions told (none after a seek, a jump or another track until two
+  more), so it is the frame heard there.
   - `stems_switch_on_the_next_bar_as_mutes_of_their_strips`
+  - `a_first_touch_lands_on_a_bar_its_stems_will_meet`
   - `a_stem_muted_on_its_frame_is_heard_and_unmuted_the_file_is_again`
   - `stems_switch_from_keys_and_buttons_with_a_gpu`
 - **S3.** Switching stems never moves playback: no jump, no restart, no

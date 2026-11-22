@@ -10,7 +10,8 @@
 //! from there. A stream that starts at an output frame where a run frame
 //! falls exactly, resampled with the same filter as the track's own
 //! resampler, gives parts on the very instants of the output's frames: the
-//! parts add up to what the track plays, frame for frame.
+//! parts add up to what the track plays, frame for frame, as closely as the
+//! separator's stems add up to the song.
 
 use crate::engine::track::{SegStart, Track};
 use crate::resample::{output_frames, Requantizer, Resampler};

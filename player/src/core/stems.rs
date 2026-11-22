@@ -6,11 +6,12 @@
 //! - The stem keys (`alt+1` to `alt+4`, the bottom bar's buttons, the
 //!   palette) mute a stem's strip, or unmute it: on the first beat of the
 //!   next bar at least [`DESK_SOON`] ahead ([`ENGINE_SOON`] while the
-//!   engine's own mix is heard), with Stem switching "on the next bar"
-//!   (also with no stems made yet: the engine starts them on the frame
-//!   heard and writes again what it holds); at once without bars, or with
-//!   it "instantly". A key pressed again before that bar takes the change
-//!   back: what is meant is the desk's setting, set at once.
+//!   engine's own mix is heard, [`SEPARATE_SOON`] while the stems are still
+//!   to be separated), with Stem switching "on the next bar" (also with no
+//!   stems made yet: the engine starts them on the frame heard and writes
+//!   again what it holds); at once without bars, or with it "instantly". A
+//!   key pressed again before that bar takes the change back: what is meant
+//!   is the desk's setting, set at once.
 //! - `alt+0` puts every stem's strip back as it starts (unmuted, 0 dB,
 //!   not soloed), so the file is heard as it is again, bit-perfect.
 //! - The engine makes the playing track's stems ([`MakeStems`]) while a
@@ -29,6 +30,7 @@
 //! [`StemsSent`], and every change goes out from [`follow`] (after any
 //! action) or a stem key, once.
 
+use jodel_output::lanes::Parts;
 use jodel_playback::stems::{Stem, STEMS};
 use jodel_playback::{Command, MakeStems};
 
@@ -45,6 +47,14 @@ pub const DESK_SOON: f64 = 0.1;
 /// The same while the engine's mix is what is heard (a transition armed or
 /// under way: it is made some half a second ahead).
 pub const ENGINE_SOON: f64 = 1.0;
+
+/// The same while the playing track's stems are not there yet and must be
+/// separated on the GPU first (none kept): the separator takes some 0.4 to
+/// 0.5 s for its first chunk, and only then does the engine write again,
+/// with the stems, from the frame heard by then. A change on a frame heard
+/// before that would be heard late, so it lands on a bar past that first
+/// chunk and [`DESK_SOON`] besides, with room to spare.
+pub const SEPARATE_SOON: f64 = 0.75;
 
 /// Seconds after a bar that a change on it still has the stems made: its
 /// ramps there have long settled.
@@ -149,19 +159,46 @@ pub fn is_off(state: &State, stem: Stem) -> bool {
 }
 
 /// How far ahead of what is heard a stem's change can land now
-/// ([`DESK_SOON`], [`ENGINE_SOON`]). Stems not made yet need no more: the
-/// engine starts them on the frame heard and writes what it holds again
-/// with them (kept ones at once, separated ones once their first chunk
-/// is). It cannot while a jump's crossfade is held, a route switch is under
-/// way or a jump waits for its time: a first touch then lands up to about
-/// a second late.
-fn lead(state: &State) -> f64 {
+/// ([`DESK_SOON`], [`ENGINE_SOON`], [`SEPARATE_SOON`]), on the playing
+/// track of `analysis`. Stems not there yet start on the frame heard, and
+/// the engine writes what it holds again with them once they are made: kept
+/// ones at once (some 15 ms), so [`DESK_SOON`] is enough; separated ones
+/// once their first chunk is ([`separated_first`]). It cannot while a
+/// jump's crossfade is held, a route switch is under way or a jump waits
+/// for its time: a first touch then lands up to about a second late.
+fn lead(state: &State, analysis: &jodel_rhythm::Analysis) -> f64 {
     let engine_mixes = state.transition.draft.status != Status::Draft;
     if engine_mixes {
         ENGINE_SOON
+    } else if separated_first(state, analysis) {
+        SEPARATE_SOON
     } else {
         DESK_SOON
     }
+}
+
+/// Whether the playing track's stems (of `analysis`) must be separated
+/// before a change of them is heard: they are not there (none made, or the
+/// desk does not play them yet), none are kept (as the queue's facts or
+/// the analysis know), none failed, and the GPU separates them. Without
+/// one, stems not kept never come (a stem key says so).
+fn separated_first(state: &State, analysis: &jodel_rhythm::Analysis) -> bool {
+    let Some(track) = state.playing.track.as_ref() else {
+        return false;
+    };
+    let there = state.stems_sent.make != MakeStems::Never
+        && state
+            .desk
+            .parts()
+            .is_some_and(|p| p.state == Parts::Present);
+    let kept = analysis.stems
+        || state
+            .facts
+            .get(&track.info.path)
+            .is_some_and(|f| f.stems == Some(true));
+    let failed = state.desk.parts_failed == Some(track.index);
+    let gpu = matches!(state.gpu, Gpu::Present(_));
+    !there && !kept && !failed && gpu
 }
 
 /// The bar a stem's change lands on now: the first of the playing track far
@@ -183,7 +220,7 @@ pub fn bar(state: &State) -> Option<Bar> {
         return None;
     }
     let a = &lanes::rhythmed(state, Block::Now)?.analysis;
-    let after = state.heard() + lead(state);
+    let after = state.heard() + lead(state, a);
     let (at, number) = a
         .downbeats
         .iter()

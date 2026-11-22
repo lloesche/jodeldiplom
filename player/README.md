@@ -215,8 +215,9 @@ processor rest). Without a GPU only the stems kept play. With the Stem
 switching setting at **on the next bar** (the default) a key's change
 lands on the first beat of a bar of the playing track, to the frame: the
 first bar at least 0.1 s ahead (a second while a transition is armed or
-heard, or while no stems were being made yet, so they are there for it),
-and the message says which bar; pressed
+heard, 0.75 s while the stems are not there yet and the GPU must separate
+them first, none being kept, so they are there for it), and the message
+says which bar; pressed
 again before that bar, the change is taken back. The bar is held to when
 it is heard: looping a bar, the change comes at the loop's end. Where the
 playing track's bars are not known (the tempo off, the analysis not in

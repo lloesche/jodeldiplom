@@ -89,9 +89,11 @@ lane_resampling --nocapture`):
 Kept as it is: the cost follows the output's rate and the taps, and the
 taps follow the narrow band from 20 kHz to 22.05 kHz, not the
 attenuation (a filter of 120 dB instead would save under a third). The same
-filter as main's is what makes the parts add up to main within a few
-24-bit steps, so the mixer's switch between them is not heard; an eighth
-of a core at 384 kHz is not worth losing that.
+filter as main's is what keeps the resampling from adding anything: stems
+that add up to the track (the tests' separator) add up to main within a
+few 24-bit steps; an eighth of a core at 384 kHz is not worth losing that.
+A real separator's stems add up to the song only roughly (about −30 dB off
+it, measured on real songs), and the stems are played as separated.
 
 **Memory.** A stem run keeps its stems as 8 × f32 at 44.1 kHz,
 1.41 MB a second:
