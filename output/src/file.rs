@@ -30,6 +30,15 @@ pub enum SimClock {
     /// A thread plays one period (the request's `period`) every period of
     /// wall-clock time, like a device.
     Realtime,
+    /// A thread plays what is written, no faster than wall-clock time (a
+    /// period every period at most, from the first frame), but only what
+    /// is written: an empty ring waits for the writer, padded with nothing
+    /// and no underrun, and the time it waited is not made up in a burst.
+    /// It does not play in real time ([`StreamInfo::realtime`] is false: a
+    /// mixer on it waits for every input), yet its writers run at about a
+    /// device's pace: for tests whose frames must line up exactly while
+    /// players run as they do on a device.
+    Paced,
 }
 
 /// The sink of [`FileOutput::to_memory`]: the bytes the simulated device
@@ -139,6 +148,40 @@ impl SimDriver {
             }
         }));
     }
+
+    /// [`SimClock::Paced`]: up to a period of what is queued each period;
+    /// with nothing queued it looks again in a millisecond, and plays on
+    /// from then (no time owed).
+    fn spawn_paced(&mut self) {
+        let device = self.device.clone();
+        let period_frames = self.period;
+        let format = device.shared.format;
+        let period = format.frames_to_duration(period_frames);
+        self.thread = Some(std::thread::spawn(move || {
+            let mut next = Instant::now();
+            while !device.stop.load(Ordering::SeqCst) {
+                let played = if device.running.load(Ordering::SeqCst) {
+                    device.play(period_frames, true)
+                } else {
+                    0
+                };
+                let now = Instant::now();
+                if played == 0 {
+                    next = now;
+                    std::thread::sleep(Duration::from_millis(1));
+                    continue;
+                }
+                // Put off, it makes up a period at most.
+                next += format.frames_to_duration(played);
+                if let Some(behind) = now.checked_sub(period) {
+                    next = next.max(behind);
+                }
+                if next > now {
+                    std::thread::sleep(next - now);
+                }
+            }
+        }));
+    }
 }
 
 impl Driver for SimDriver {
@@ -176,7 +219,7 @@ impl Driver for SimDriver {
     }
 
     fn pulls(&self) -> bool {
-        self.clock == SimClock::Realtime
+        matches!(self.clock, SimClock::Realtime | SimClock::Paced)
     }
 
     fn after_write(&mut self) -> Result<(), Error> {
@@ -289,8 +332,10 @@ impl FileOutput {
             period,
             thread: None,
         };
-        if clock == SimClock::Realtime {
-            driver.spawn_realtime();
+        match clock {
+            SimClock::Realtime => driver.spawn_realtime(),
+            SimClock::Paced => driver.spawn_paced(),
+            SimClock::Instant | SimClock::Manual => {}
         }
         let info = StreamInfo {
             format,
@@ -303,7 +348,7 @@ impl FileOutput {
             float_io: false,
         };
         let mut core = Core::new(shared, Box::new(driver), info, request);
-        if clock == SimClock::Instant {
+        if matches!(clock, SimClock::Instant | SimClock::Paced) {
             core.set_prefill(1);
         }
         FileOutput {

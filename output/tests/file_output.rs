@@ -300,6 +300,39 @@ fn realtime_clock_paces_and_drains() {
     assert!(bytes[1600 * 8..].iter().all(|&b| b == 0));
 }
 
+/// The paced clock: what is written plays no faster than real time, a
+/// writer that stops for a while is waited for (no silence, no underrun)
+/// and its frames are not then played in a burst, and the device is not
+/// one in real time.
+#[test]
+fn paced_clock_plays_only_what_is_written_no_faster_than_real_time() {
+    let format = StreamFormat::new(8000, 2, SampleFormat::S24In32);
+    let (mut out, sink) = FileOutput::to_memory(format, SimClock::Paced);
+    assert!(!out.info().realtime);
+    let first = ramp(800, 2, 9); // 100 ms
+    let t = Instant::now();
+    out.write(&first, None).unwrap();
+    assert!(out.drain(Some(Duration::from_secs(5))).unwrap());
+    let took = t.elapsed();
+    assert!(took >= Duration::from_millis(80), "{took:?}");
+    // The writer away for 100 ms: nothing is played meanwhile.
+    std::thread::sleep(Duration::from_millis(100));
+    assert_eq!(out.position().unwrap(), 800);
+    assert_eq!(sink.len(), 800 * 8);
+    // Then on, at the pace of a device again.
+    let second = ramp(800, 2, 7);
+    let t = Instant::now();
+    out.write(&second, None).unwrap();
+    assert!(out.drain(Some(Duration::from_secs(5))).unwrap());
+    let took = t.elapsed();
+    assert!(took >= Duration::from_millis(70), "{took:?}");
+    assert_eq!(out.stats().underruns, 0);
+    out.close().unwrap();
+    let mut both = packed(&first, SampleFormat::S24In32);
+    both.extend(packed(&second, SampleFormat::S24In32));
+    assert!(sink.bytes() == both);
+}
+
 #[test]
 fn closed_outputs_refuse_further_use() {
     let mut out = NullOutput::new(

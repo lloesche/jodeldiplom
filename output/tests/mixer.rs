@@ -46,23 +46,18 @@ fn an_inputs_position_is_what_the_device_has_played() {
     wait_until("playing", || mixer.timebase().heard > 4_800);
     let period = u64::from(RATE / 100);
     let deadline = std::time::Instant::now() + Duration::from_secs(60);
-    let mut checked = 0;
-    while checked < 100 || clock.position() < 3 * u64::from(RATE) / 2 {
+    // The output's position read between two of the mixer's timebases (a
+    // thread put off between the reads cannot make them disagree).
+    let mut samples = Vec::new();
+    while samples.len() < 100 || clock.position() < 3 * u64::from(RATE) / 2 {
         assert!(
             std::time::Instant::now() < deadline,
-            "{checked} samples in a minute"
+            "{} samples in a minute",
+            samples.len()
         );
-        // The device's position read between two of the mixer's timebases:
-        // a thread put off between the reads cannot make them disagree.
         let before = mixer.timebase();
         let position = clock.position();
         let after = mixer.timebase();
-        assert!(
-            before.heard <= position + period && position <= after.heard + period,
-            "position {position}, heard {} then {}",
-            before.heard,
-            after.heard
-        );
         // What the mixer took but the device has not played is not heard.
         assert!(
             after.frame > position + period,
@@ -70,13 +65,33 @@ fn an_inputs_position_is_what_the_device_has_played() {
             after.frame
         );
         assert_eq!((after.epoch, after.rate), (1, RATE));
-        checked += 1;
+        samples.push((before.heard, position, after.heard));
         std::thread::sleep(Duration::from_millis(2));
     }
     stop.store(true, std::sync::atomic::Ordering::Relaxed);
     let (out, written) = writer.join().unwrap();
     assert_eq!(out.position().unwrap(), written);
     assert_eq!(device.underruns(), 0);
+    // The device frames heard are the output's and, where it had none when
+    // the mixer took a period (a writer put off: the mixer fills the
+    // device's buffer ahead, and does not wait), silence: each position is
+    // the output's frames among those heard, to a period.
+    let gaps = out.stats().underruns;
+    let left = device.left(0);
+    let ours = |heard: u64| {
+        left[..(heard as usize).min(left.len())]
+            .iter()
+            .filter(|&&v| v == 1_000)
+            .count() as u64
+    };
+    for (before, position, after) in samples {
+        let (from, to) = (ours(before), ours(after));
+        assert!(
+            from <= position + period && position <= to + period,
+            "position {position}: heard {before} then {after}, of them the output's {from} \
+             then {to} ({gaps} gaps)"
+        );
+    }
 }
 
 #[test]

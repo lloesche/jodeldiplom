@@ -403,7 +403,10 @@ fn chord(i: usize, rate: u32) -> i32 {
 /// output switches the device to the other three stems on that frame
 /// (three quarters of the file here), and unmuted from another, the file
 /// again bit for bit; after a seek, a frame worked out from the position
-/// told lands where that position says.
+/// told lands where that position says. The device plays at about a
+/// device's pace but only what the mixer gives it ([`SimClock::Paced`]),
+/// and the mixer waits for the player: one put off on a busy machine is
+/// late, never a gap of silence in what is checked bit for bit.
 #[test]
 fn a_stem_muted_on_its_frame_is_heard_and_unmuted_the_file_is_again() {
     let _guard = common::real_time();
@@ -419,7 +422,7 @@ fn a_stem_muted_on_its_frame_is_heard_and_unmuted_the_file_is_again() {
     common::write_wav(&file, RATE, 10.0);
     let mut caps = Capabilities::new();
     caps.insert(StreamFormat::new(RATE, 2, SampleFormat::S24In32Low));
-    let memory = MemoryOutput::new(caps, SimClock::Realtime);
+    let memory = MemoryOutput::new(caps, SimClock::Paced);
     let mut options = AppOptions::new(dir.clone());
     options.output = Output::Memory(memory.clone());
     options.devices = Arc::new(|| Ok(Vec::new()));
@@ -431,7 +434,8 @@ fn a_stem_muted_on_its_frame_is_heard_and_unmuted_the_file_is_again() {
     assert!(until(&mut app, |a| a.state.gpu != jodeldiplom::core::Gpu::Looking));
     app.dispatch(Action::Gpu(Some("the quarter".into())));
     let heard = |a: &App| a.state.playing.anchor.map_or(0, |(_, frame, _)| frame);
-    // Once the stems are there: muted a second on, for a second and a half.
+    // Once the stems are there: muted half a second on (the mixer is a
+    // few periods ahead of what is heard), for a second.
     let present = |a: &App| {
         a.desk().is_some_and(|d| {
             d.strips[0]
@@ -441,11 +445,15 @@ fn a_stem_muted_on_its_frame_is_heard_and_unmuted_the_file_is_again() {
         })
     };
     assert!(common::wait_for(&mut app, Duration::from_secs(30), present));
-    let on = heard(&app) + u64::from(RATE);
-    let off = on + 3 * u64::from(RATE) / 2;
+    let on = heard(&app) + u64::from(RATE) / 2;
+    let off = on + u64::from(RATE);
+    // All of it, to half a second past the unmute (where the seek comes),
+    // within the first chunk's stems (4.8 s of the file: its own share of
+    // the 6 s separated), however slow the separation of the next.
     assert!(
-        off + u64::from(RATE) < 5 * u64::from(RATE),
-        "too late to set it"
+        off + u64::from(RATE) / 2 < 9 * u64::from(RATE) / 2,
+        "too late to set it: the stems there at {} s",
+        heard(&app) as f64 / f64::from(RATE)
     );
     app.run(Effect::Desk(DeskChange::MuteAt(StripKind::Drums, true, on)));
     // A strip has one change of its mute waiting: the next once this one

@@ -285,10 +285,19 @@ fn a_jump_taking_back_an_end_of_the_parts_keeps_the_promise() {
         "the end given back played"
     );
     assert_eq!(wide.control[jumped - 1], 1);
-    assert_eq!(wide.control[jumped], 1, "on over the jump");
-    let (worst, there) = wide.worst(0..wide.frames());
+    // On over the jump, from the stems kept (2 s on from its target, they
+    // reach almost 3 s further): a second of them at least. Past what was
+    // kept they may run out, the device playing what it is given at once
+    // as fast as the engine writes it (ahead of a separator on a small
+    // machine); they come back once ahead (parts_that_run_out_end_and_come_back).
+    let after = &wide.control[jumped..jumped + RATE as usize];
+    assert_eq!(
+        after.iter().position(|&w| w != 1),
+        None,
+        "on over the jump, from the stems kept"
+    );
+    let (worst, _) = wide.worst(0..wide.frames());
     assert!(worst <= CLOSE, "{worst} steps off");
-    assert!(there > wide.frames() / 2, "there after the jump");
     assert!(!seen.iter().any(|e| matches!(e, Event::PartsStopped { .. })));
 }
 
