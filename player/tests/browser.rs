@@ -97,6 +97,7 @@ fn listing_puts_folders_first_and_hides_the_rest() {
 
 #[test]
 fn details_are_read_for_the_rows_on_screen() {
+    let _guard = common::real_time();
     let tree = common::music_tree("details");
     let mut app = start(tree.album.clone(), (100, 30));
     assert!(common::wait_for(&mut app, WAIT, |a| {
@@ -143,6 +144,7 @@ fn details_are_read_for_the_rows_on_screen() {
 
 #[test]
 fn filter_then_search_below_then_queue_a_folder() {
+    let _guard = common::real_time();
     let tree = common::music_tree("search");
     let mut app = start(tree.root.clone(), (100, 30));
     assert!(common::wait_for(&mut app, WAIT, |a| !a

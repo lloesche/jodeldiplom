@@ -247,6 +247,42 @@ fn a_mic_tap_gives_the_voice_where_it_was_sung() {
     assert!((meter - 0.5).abs() < 0.05, "meter {meter}");
 }
 
+/// Voice not taken for longer than it is kept: the blocks that do not fit
+/// are lost, and the first kept after them says it does not follow the
+/// one before (a reader must see the gap, even when the block lost
+/// started a run).
+#[test]
+fn after_voice_lost_to_a_full_queue_the_next_block_starts_anew() {
+    let rate = 48_000;
+    let format = StreamFormat::new(rate, 2, SampleFormat::S24In32);
+    let (input, mut feed) = Input::feed(rate, 240);
+    input.set_echo_cancel(false);
+    // 14 s, the voice taken only from 12 s on (the queue keeps about 11).
+    let frames = 14 * rate as usize;
+    let engine = vec![-1_000_000; 2 * frames];
+    let mut sent = 0usize;
+    let mut voice: Vec<VoiceBlock> = Vec::new();
+    play(format, &engine, |out, k| {
+        if k == 0 {
+            out.set_tap(Some(Box::new(input.tap()))).unwrap();
+        }
+        feed_period(&mut feed, k, &mut sent, |i| 0.1 * (i as f32 * 0.05).sin());
+        feed.clean();
+        if k >= 1_200 {
+            input.take_voice(&mut voice);
+        }
+    });
+    let status = input.status();
+    assert!(status.voice_dropped > 0);
+    let gap = voice
+        .windows(2)
+        .position(|w| w[1].stream_frame != w[0].stream_frame + 128)
+        .expect("a gap")
+        + 1;
+    assert!(!voice[gap].continues, "the block after the gap continues");
+    assert_eq!(voice[1..].iter().filter(|b| !b.continues).count(), 1);
+}
+
 #[test]
 fn a_running_device_takes_a_new_tap_without_a_lock() {
     let format = StreamFormat::new(48_000, 2, SampleFormat::S24In32);

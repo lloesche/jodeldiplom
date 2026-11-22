@@ -18,3 +18,9 @@ opt-level = 3
 # and the device thread it runs in is better quick in a debug build too.
 [profile.dev.package.jodel-output]
 opt-level = 3
+
+# The playback engine's tests decode, resample and separate whole tracks,
+# some of them on a device in real time: unoptimized, a loaded machine
+# could not keep up.
+[profile.dev.package.jodel-playback]
+opt-level = 3

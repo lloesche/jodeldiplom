@@ -9,9 +9,12 @@
 //! At most two players at a time. A player faded all the way out is let
 //! go of, and so is one whose file has ended or failed. A file asked for
 //! takes the place of one not heard yet (still loading: silent, it goes at
-//! once), and waits while there are two (the one heard and one fading
-//! out); only the latest file asked for waits. With nothing open on the
-//! device, a second player waits until the first has opened it, so that
+//! once, [`Fader::withdraw`]: the mixer says whether its fade in has
+//! begun after all, and then it is heard, and stays, so that what fell as
+//! it rose is never left down), and waits while there are two (the one
+//! heard and one fading out); only the latest file asked for waits. With
+//! nothing open on the device, a second player waits until the first has
+//! opened it, so that
 //! it is offered the device's format and resamples to it. A player let go
 //! of is shut out at the mixer at once ([`Fader::close`]), so with no
 //! player left the next file opens the device at its own format.
@@ -107,9 +110,12 @@ impl Previews {
     pub fn play(&mut self, mixer: &Mixer, path: PathBuf) {
         self.ended = false;
         self.waiting = Some(path);
-        for v in self.voices.iter().filter(|v| v.unheard()) {
-            v.fade_out();
-        }
+        // What the mixer last said is a period old: it decides.
+        let (gone, kept) = std::mem::take(&mut self.voices)
+            .into_iter()
+            .partition(|v| v.unheard() && v.fader.withdraw());
+        self.voices = kept;
+        let_go(gone);
         self.start(mixer);
     }
 
@@ -182,11 +188,11 @@ impl Previews {
             return;
         };
         let (target, fader) = mixer.input(&self.strip, Role::Guest, 0.0);
-        // Those not heard yet are silent, and going.
+        // Everything heard: those not heard yet were let go of when this
+        // file was asked for.
         let out: Vec<&Fader> = self
             .voices
             .iter()
-            .filter(|v| !v.unheard())
             .map(|v| &v.fader)
             .chain([&self.lead])
             .collect();

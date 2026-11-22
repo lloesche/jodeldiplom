@@ -9,9 +9,11 @@
 //! [`Mixer::input`] plugs an input into one: an [`InputTarget`], where one
 //! player opens its outputs as on a device, and a [`Fader`], its gain, which
 //! any number of hands may hold. The input goes when its target and every
-//! fader are dropped, or at once with [`Fader::close`]. Each output opened is a full [`Output`] in the
-//! device's format (pause, flush, retract, drain, its clock) with the ring
-//! the player writes; the mixer drains every running one a device period
+//! fader are dropped, or at once with [`Fader::close`] (or with
+//! [`Fader::withdraw`], only while nothing of it has been heard). Each
+//! output opened is a full [`Output`] in the device's format (pause,
+//! flush, retract, drain, its clock) with the ring the player writes; the
+//! mixer drains every running one a device period
 //! at a time, sums them and writes the device, as fast as the device takes
 //! frames: in real time on a real device, as fast as the inputs are
 //! written on one that plays what it is given at once (a file, a test's
@@ -228,6 +230,12 @@ pub(crate) enum Msg {
         state: Arc<SlotState>,
     },
     Forget(u64),
+    /// Forget the input of fader `gain` if it is silent with a ramp waiting
+    /// to start; says whether it was.
+    Withdraw {
+        gain: GainId,
+        done: Sender<bool>,
+    },
     Capabilities {
         slot: u64,
         done: Sender<Result<Capabilities, Error>>,

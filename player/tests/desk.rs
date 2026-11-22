@@ -256,6 +256,7 @@ fn until(app: &mut App, mut done: impl FnMut(&App) -> bool) -> bool {
 
 #[test]
 fn the_faders_are_set_on_the_mixer_and_again_on_a_new_one() {
+    let _guard = common::real_time();
     let tree = common::music_tree("desk");
     let mut options = AppOptions::new(tree.album.clone());
     options.output = Output::Null(SimClock::Realtime);
@@ -405,6 +406,7 @@ fn chord(i: usize, rate: u32) -> i32 {
 /// told lands where that position says.
 #[test]
 fn a_stem_muted_on_its_frame_is_heard_and_unmuted_the_file_is_again() {
+    let _guard = common::real_time();
     use jodel_output::lanes::Parts;
     use jodel_output::{Capabilities, SampleFormat, StreamFormat};
     use jodeldiplom::app::MemoryOutput;
@@ -520,11 +522,32 @@ fn a_stem_muted_on_its_frame_is_heard_and_unmuted_the_file_is_again() {
     for f in 0..on {
         assert_eq!(got[2 * f], chord(f, RATE), "frame {f}, before");
     }
-    // The switch on that very frame (its first step there).
-    let main_to = (on..off).find(|&f| got[2 * f] != chord(f, RATE));
+    // The switch on that very frame: from it, main falls to the parts
+    // over the switch as the drums' strip falls over its ramp, and what is
+    // heard is main less a quarter of it by the product of the two. (The
+    // first frame that differs from the file is no measure: the two start
+    // at 0 together, so where the chord is quiet the first steps round to
+    // it.) Started a frame off, it is hundreds of steps off.
+    let switch = jodel_output::mixer::SWITCH_FADE.as_secs_f64() * f64::from(RATE);
+    let ramp = jodel_output::mixer::STRIP_RAMP.as_secs_f64() * f64::from(RATE);
+    let model_off = |start: usize| {
+        (start..start + ramp as usize)
+            .map(|f| {
+                let k = (f - start) as f64;
+                let (s, g) = ((k / switch).min(1.0), (1.0 - k / ramp).max(0.0));
+                let want = f64::from(chord(f, RATE)) * (1.0 - s * (1.0 - g) / 4.0);
+                (f64::from(got[2 * f]) - want).abs()
+            })
+            .fold(0.0, f64::max)
+    };
+    let offs = [on - 1, on, on + 1].map(model_off);
     assert!(
-        main_to.is_some_and(|f| f.abs_diff(on) <= 1),
-        "main to {main_to:?}, the frame {on}"
+        offs[1] < 16.0,
+        "the switch from frame {on} is {} steps off (from a frame before and after: {} \
+         and {})",
+        offs[1],
+        offs[0],
+        offs[2]
     );
     // Three quarters of it once the switch and the strip's ramp are over
     // (within the stems' filters' few steps).

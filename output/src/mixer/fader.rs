@@ -238,13 +238,22 @@ struct SlotHandle {
 impl SlotHandle {
     /// Has the mixer forget the input, once.
     fn forget(&self) {
-        if !self.closed.swap(true, Ordering::AcqRel) {
-            let main = &self.strips[0].handle;
-            if let Some(entry) = main.shared.strips().get_mut(&main.id) {
-                entry.inputs.remove(&self.id);
-            }
+        if self.close() {
             let _ = self.tx.send(Msg::Forget(self.id));
         }
+    }
+
+    /// Marks the input closed and takes it off its strip; whether it was
+    /// open until now.
+    fn close(&self) -> bool {
+        if self.closed.swap(true, Ordering::AcqRel) {
+            return false;
+        }
+        let main = &self.strips[0].handle;
+        if let Some(entry) = main.shared.strips().get_mut(&main.id) {
+            entry.inputs.remove(&self.id);
+        }
+        true
     }
 }
 
@@ -367,5 +376,26 @@ impl Fader {
     /// gains stay at their last values.
     pub fn close(&self) {
         self.slot.forget();
+    }
+
+    /// Shuts the input as [`Fader::close`] does, but only while nothing of
+    /// it has been heard: silent, with a ramp waiting to start (a fade in
+    /// waiting for its first audio). That ramp never comes then, and those
+    /// set to start with it ([`Mixer::crossfade`]) keep their gains. Once
+    /// its ramp is under way, if only for a frame, nothing changes: it is
+    /// heard, and what fell as it rose is down. The mixer thread decides,
+    /// on the frame it is at, so this waits for its answer (a device
+    /// period, about); returns whether the input was shut (an input shut
+    /// already counts).
+    pub fn withdraw(&self) -> bool {
+        if self.slot.closed.load(Ordering::Acquire) {
+            return true;
+        }
+        let gain = self.id();
+        let shut = ask(&self.slot.tx, |done| Msg::Withdraw { gain, done }).unwrap_or(true);
+        if shut {
+            self.slot.close();
+        }
+        shut
     }
 }

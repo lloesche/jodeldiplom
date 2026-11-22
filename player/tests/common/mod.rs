@@ -633,3 +633,14 @@ pub fn desk_state(cols: u16, rows: u16) -> State {
     state.stems_sent.mask = jodeldiplom::core::stems::mask(&state);
     state
 }
+
+/// Held by a test that plays on a device in real time (a simulated clock
+/// that plays a period every period of wall-clock time) for as long as it
+/// runs: one such test of a binary at a time. Side by side on a small,
+/// loaded machine (a debug build, every test of a binary at once), their
+/// threads would starve each other of the periods they must keep.
+pub fn real_time() -> std::sync::RwLockWriteGuard<'static, ()> {
+    REAL_TIME.write().unwrap_or_else(|e| e.into_inner())
+}
+
+static REAL_TIME: std::sync::RwLock<()> = std::sync::RwLock::new(());

@@ -86,8 +86,9 @@ cross-builds for Windows: `windows-x64` with MinGW-w64 GCC and the Rust
 target `x86_64-pc-windows-gnu`, `windows-arm64` with LLVM-MinGW and
 `aarch64-pc-windows-gnullvm`. The CI workflow
 (`.github/workflows/build.yml`) checks formatting and lints, runs the tests
-and builds the bundles for Linux, macOS and Windows on x64 and ARM64; a tag
-starting with `v` publishes them as a release.
+(on Linux, macOS and Windows) and builds the bundles for Linux, macOS and
+Windows on x64 and ARM64; a tag starting with `v` publishes them as a
+release.
 
 ## Testing
 

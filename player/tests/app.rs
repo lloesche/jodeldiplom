@@ -53,6 +53,7 @@ fn path_text(app: &App) -> String {
 
 #[test]
 fn alt_enter_plays_the_folder_through_the_null_output() {
+    let _guard = common::real_time();
     let tree = common::music_tree("play");
     let mut app = App::new(options(&tree));
     assert!(common::wait_for(&mut app, WAIT, |a| !a
@@ -133,6 +134,7 @@ fn alt_enter_plays_the_folder_through_the_null_output() {
 /// moves.
 #[test]
 fn paused_the_window_has_nothing_to_redraw() {
+    let _guard = common::real_time();
     let tree = common::music_tree("pause");
     let mut app = App::new(options(&tree));
     assert!(common::wait_for(&mut app, WAIT, |a| !a
@@ -166,6 +168,7 @@ fn paused_the_window_has_nothing_to_redraw() {
 
 #[test]
 fn a_file_argument_plays_at_once_and_settings_are_saved() {
+    let _guard = common::real_time();
     let tree = common::music_tree("autoplay");
     let config_file = tree.root.join("settings").join("config.toml");
     std::fs::create_dir_all(config_file.parent().unwrap()).unwrap();
@@ -245,6 +248,7 @@ fn a_file_argument_plays_at_once_and_settings_are_saved() {
 /// queues, and alt+enter on one plays it in place of the queue.
 #[test]
 fn the_session_and_saved_queues_come_back() {
+    let _guard = common::real_time();
     let tree = common::music_tree("session");
     let keep = tree.album.parent().unwrap().join("kept");
     let session = keep.join("session.m3u8");
@@ -319,6 +323,7 @@ fn the_session_and_saved_queues_come_back() {
 /// another device or none while the player hogs its own.
 #[test]
 fn the_device_volume_moves_the_device_playing() {
+    let _guard = common::real_time();
     use jodeldiplom::app::volume_device;
     let default = Output::Device(None);
     let named = Output::Device(Some("USB DAC".into()));

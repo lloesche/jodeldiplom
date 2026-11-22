@@ -28,7 +28,7 @@ fn the_parts_are_there_once_separated() {
     player.make_stems(MakeStems::Separate).unwrap();
     player.load(vec![file]).unwrap();
     player.play(0).unwrap();
-    pace(&gate, &events, 2_048);
+    pace_once_present(&gate, &events, &captures, 2_048);
     drop(player);
     let wide = Wide::of(&captures);
     assert_eq!(wide.control[0], 0, "none before the first stems");
@@ -71,7 +71,7 @@ fn kept_stems_are_there_from_the_first_frame() {
     player.make_stems(MakeStems::Kept).unwrap();
     player.load(vec![file]).unwrap();
     player.play(0).unwrap();
-    pace(&gate, &events, 1_024);
+    pace_once_present(&gate, &events, &captures, 1_024);
     drop(player);
     let wide = Wide::of(&captures);
     wide.keeps_the_promise(&[]).unwrap();

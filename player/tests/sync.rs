@@ -351,35 +351,70 @@ fn mid_song_the_delay_never_jumps_but_a_nudge_or_a_sync_does_at_once() {
 }
 
 /// A microphone fed in real time on a thread of its own: quiet noise, and
-/// a "ta" (120 ms of loud noise) at each time it is given, in seconds of
-/// its own clock (from when it started).
+/// a "ta" (120 ms of loud noise) 150 ms after each click is played. That
+/// thread listens too: as soon as the clicks' clock ([`Singer::listen`])
+/// has played a click's frame, it puts its ta 150 ms after the moment that
+/// frame was played, on its own clock (from when it started), however late
+/// the clicks came.
 struct Singer {
     input: Input,
-    start: Instant,
-    ta: Arc<Mutex<Vec<f64>>>,
+    /// The clicks' clock, once they play.
+    clicks: Arc<Mutex<Option<Clock>>>,
+    /// Each click as heard: when, on the singer's clock, the clock's
+    /// position then, and the ta's start put for it.
+    heard: Arc<Mutex<Vec<(f64, u64, f64)>>>,
+    /// The packets sent loud: the singer's time of each.
+    loud: Arc<Mutex<Vec<f64>>>,
     stop: Arc<AtomicBool>,
     thread: Option<std::thread::JoinHandle<()>>,
 }
+
+/// The ta's lag after its click.
+const TA: f64 = 0.15;
 
 impl Singer {
     fn new() -> Singer {
         let (input, mut feed) = Input::feed(48_000, 240);
         input.set_echo_cancel(false);
-        let ta: Arc<Mutex<Vec<f64>>> = Arc::default();
+        let clicks: Arc<Mutex<Option<Clock>>> = Arc::default();
+        let heard: Arc<Mutex<Vec<(f64, u64, f64)>>> = Arc::default();
+        let loud: Arc<Mutex<Vec<f64>>> = Arc::default();
         let stop = Arc::new(AtomicBool::new(false));
         let start = Instant::now();
         let thread = {
-            let (ta, stop) = (ta.clone(), stop.clone());
+            let (clicks, heard, stop, sent_loud) =
+                (clicks.clone(), heard.clone(), stop.clone(), loud.clone());
             std::thread::spawn(move || {
                 let mut sent = 0usize;
                 let mut seed = 7u32;
                 while !stop.load(Ordering::Relaxed) {
                     let t = start.elapsed();
                     feed.set_time(t);
-                    let due = (t.as_secs_f64() * 48_000.0) as usize;
+                    let now = t.as_secs_f64();
+                    // Each click played since: when its frame was (the
+                    // position steps a device period at a time, the frames
+                    // past it played since).
+                    if let Some(clock) = clicks.lock().unwrap().as_ref() {
+                        let rate = clock.format().rate;
+                        let frames = sync::click_frames(rate);
+                        let position = clock.position();
+                        let mut heard = heard.lock().unwrap();
+                        while heard.len() < CLICKS && position >= frames[heard.len()] {
+                            let past = (position - frames[heard.len()]) as f64 / f64::from(rate);
+                            heard.push((now, position, now - past + TA));
+                        }
+                    }
+                    let due = (now * 48_000.0) as usize;
                     while sent + 240 <= due {
                         let at = sent as f64 / 48_000.0;
-                        let loud = ta.lock().unwrap().iter().any(|&s| at >= s && at < s + 0.12);
+                        let loud = heard
+                            .lock()
+                            .unwrap()
+                            .iter()
+                            .any(|&(_, _, s)| at >= s && at < s + 0.12);
+                        if loud {
+                            sent_loud.lock().unwrap().push(at);
+                        }
                         let packet: Vec<f32> = (0..240)
                             .map(|_| {
                                 seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
@@ -397,11 +432,40 @@ impl Singer {
         };
         Singer {
             input,
-            start,
-            ta,
+            clicks,
+            heard,
+            loud,
             stop,
             thread: Some(thread),
         }
+    }
+
+    /// Listens to the clicks on `clock`.
+    fn listen(&self, clock: &Clock) {
+        self.clicks
+            .lock()
+            .unwrap()
+            .get_or_insert_with(|| clock.clone());
+    }
+
+    /// What it heard and sang, for a failure's message.
+    fn told(&self) -> String {
+        let loud = self.loud.lock().unwrap().clone();
+        let runs = loud
+            .iter()
+            .fold(Vec::new(), |mut runs: Vec<(f64, f64)>, &t| {
+                match runs.last_mut() {
+                    Some(r) if t - r.1 < 0.01 => r.1 = t,
+                    _ => runs.push((t, t)),
+                }
+                runs
+            });
+        format!(
+            "each click heard (when, the position then, the ta put): {:?}; sung loud (from, \
+             to): {runs:?}; the microphone {:?}",
+            self.heard.lock().unwrap(),
+            self.input.status()
+        )
     }
 }
 
@@ -463,12 +527,13 @@ fn until_outcome(app: &mut App, mut each: impl FnMut(&Clock)) -> Outcome {
 }
 
 /// The clicks play on the null output, and a microphone that says "ta"
-/// 150 ms after each click is heard (the frame the output is at when it is
-/// heard, as the voice is scored) measures 150 ms, and the microphone's
+/// 150 ms after each click is played (the frame the output is at when it
+/// is heard, as the voice is scored) measures 150 ms, and the microphone's
 /// own bridge (its two capture periods, the voice's real lateness through
 /// it). After the sync, the microphone's tap is back on the song's output.
 #[test]
 fn the_app_plays_the_clicks_and_hears_a_ta_after_each() {
+    let _guard = common::real_time();
     let tree = common::music_tree("sync-app");
     let singer = Singer::new();
     let mut app = app_with(&tree, &singer);
@@ -490,34 +555,18 @@ fn the_app_plays_the_clicks_and_hears_a_ta_after_each() {
         .name
         .is_some()));
     app.dispatch(Action::Op(Op::KaraokeSync));
-    // The output's clock against the singer's: the earliest it is at a
-    // frame (its position steps a device period at a time), and each "ta"
-    // put 150 ms after its click's frame on the singer's clock.
-    let mut ahead = f64::NEG_INFINITY;
-    let mut said = 0;
-    let outcome = until_outcome(&mut app, |clock| {
-        let rate = f64::from(clock.format().rate);
-        let now = singer.start.elapsed().as_secs_f64();
-        ahead = ahead.max(clock.position() as f64 / rate - now);
-        let clicks = sync::click_frames(clock.format().rate);
-        while said < CLICKS && clock.position() as f64 / rate > clicks[said] as f64 / rate - 0.1 {
-            singer
-                .ta
-                .lock()
-                .unwrap()
-                .push(clicks[said] as f64 / rate - ahead + 0.15);
-            said += 1;
-        }
-    });
-    let Outcome::Measured(d) = outcome else {
-        panic!("{outcome:?}");
-    };
+    let outcome = until_outcome(&mut app, |clock| singer.listen(clock));
     let status = singer.input.status();
     let bridge = f64::from(status.target) / f64::from(status.rate);
-    assert!(
-        (d - (0.15 + bridge)).abs() <= 0.015,
-        "{d}, the bridge {bridge}"
+    let what = format!(
+        "{outcome:?}: the answers {:?}, the bridge {bridge}; {}",
+        app.state.karaoke.sync.as_ref().map(|s| &s.answers),
+        singer.told()
     );
+    let Outcome::Measured(d) = outcome else {
+        panic!("{what}");
+    };
+    assert!((d - (TA + bridge)).abs() <= 0.015, "{d}: {what}");
     // Kept; then the song again: its output is the only one on the
     // Player's strip, and the microphone's tap is on it.
     app.dispatch(Action::Op(Op::SyncKeep));
@@ -552,6 +601,7 @@ fn the_app_plays_the_clicks_and_hears_a_ta_after_each() {
 /// play: the sync ends, saying why, rather than listen on.
 #[test]
 fn the_output_changing_mid_sync_ends_it() {
+    let _guard = common::real_time();
     let tree = common::music_tree("sync-restart");
     let singer = Singer::new();
     let mut app = app_with(&tree, &singer);

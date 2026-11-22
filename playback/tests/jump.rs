@@ -343,6 +343,7 @@ fn without_a_window_a_jump_at_a_time_is_heard_at_that_frame() {
 /// whole ring; the stream has no gap.
 #[test]
 fn a_jump_now_in_real_time_is_heard_at_once() {
+    let _guard = real_time();
     let dir = temp_dir("realtime");
     let path = dir.join("ramp.wav");
     ramp_wav(&path, RATE, RATE * 3);
@@ -373,7 +374,19 @@ fn a_jump_now_in_real_time_is_heard_at_once() {
     let at = (1..got.len())
         .find(|&i| got[i] != value(i as u64))
         .expect("a jump");
-    assert_track_from(&got, at, u64::from(RATE) / 4, "after");
+    // From the target to the track's end; then only the silence the
+    // device plays until the player has closed it (on a busy machine,
+    // periods of it).
+    let from = u64::from(RATE) / 4;
+    let end = at + (u64::from(RATE * 3) - from) as usize;
+    assert!(
+        got.len() >= end,
+        "{} frames, the track ends at {end}",
+        got.len()
+    );
+    assert_track_from(&got[..end], at, from, "after");
+    let sound = got[end..].iter().position(|&v| v != 0);
+    assert_eq!(sound.map(|i| end + i), None, "sound after the end");
     // Within 150 ms of the frame heard when it was asked for (the ring is
     // 500 ms).
     let late = at as u64 - heard;
@@ -480,6 +493,7 @@ fn assert_quarter_from(got: &[i32], from: usize, to: usize, frame: u64, what: &s
 /// from the stems kept, which separates nothing again.
 #[test]
 fn on_a_stems_route_a_jump_mixes_its_target_from_the_stems_kept() {
+    let _guard = heavy();
     let rate = u64::from(RATE);
     // Played through: what one separation of the track takes.
     let (_dir, player, events, captures, gate) =
@@ -525,6 +539,7 @@ fn on_a_stems_route_a_jump_mixes_its_target_from_the_stems_kept() {
 /// took over the stems from before it, so the jump separates nothing again.
 #[test]
 fn stems_kept_while_the_file_plays_serve_a_jump_back_after_a_stem_goes_off() {
+    let _guard = heavy();
     let rate = u64::from(RATE);
     let (_dir, player, events, _captures, gate) =
         stems_setup("stems-file", 6, drums(), file, false);
@@ -579,6 +594,7 @@ quarter!(STRAIGHT, straight);
 /// target, the stems in step), apart from the dither.
 #[test]
 fn a_jump_on_a_resampled_stems_route_plays_its_target_as_it_is() {
+    let _guard = heavy();
     const DEVICE: u32 = 48_000;
     let dir = temp_dir("stems-resampled");
     let path = dir.join("ramp.wav");
@@ -640,6 +656,7 @@ quarter!(LOOPED, looped);
 /// was asked for, not when the track gets there again after the jump.
 #[test]
 fn a_stem_change_at_a_time_is_heard_then_though_a_jump_goes_back() {
+    let _guard = heavy();
     let rate = u64::from(RATE);
     let two = StemMix::NONE.toggle(Stem::Drums).toggle(Stem::Bass);
     let (_dir, player, events, captures, gate) = stems_setup("stems-looped", 6, two, looped, false);

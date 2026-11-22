@@ -313,6 +313,7 @@ fn a_parts_fader_below_1_counts_as_touched() {
 
 #[test]
 fn a_flush_on_a_lane_stream_drops_what_the_device_holds_of_it() {
+    let _guard = real_time();
     let mut d = desk_on(Device::default());
     let mut out = d.target.open(&lane_request(FORMAT)).unwrap();
     let (a, b) = (|_: u64| 444, |_: u64| 888);
@@ -332,6 +333,7 @@ fn a_flush_on_a_lane_stream_drops_what_the_device_holds_of_it() {
 
 #[test]
 fn a_retract_on_a_lane_stream_takes_back_every_lane() {
+    let _guard = real_time();
     let mut d = desk_on(Device::default());
     let mut out = d.target.open(&lane_request(FORMAT)).unwrap();
     let (a, b) = (|_: u64| 444, |_: u64| 888);
@@ -351,6 +353,7 @@ fn a_retract_on_a_lane_stream_takes_back_every_lane() {
 
 #[test]
 fn a_paused_lane_stream_goes_on_where_it_was() {
+    let _guard = real_time();
     let mut d = desk_on(Device::default());
     let mut out = d.target.open(&lane_request(FORMAT)).unwrap();
     let main = |k: u64| 4 * (k as i32 + 1);
@@ -369,6 +372,7 @@ fn a_paused_lane_stream_goes_on_where_it_was() {
 
 #[test]
 fn the_microphone_is_told_a_lane_streams_frames() {
+    let _guard = real_time();
     let mut d = desk_on(Device::default());
     let singer = Singer::new(loud);
     d.mixer.set_mic(Some(singer.input.clone()));
@@ -493,6 +497,7 @@ fn touched_from_the_first_frame_no_main_is_heard() {
 
 #[test]
 fn touched_across_a_pause_a_flush_and_a_new_output_no_main_is_heard() {
+    let _guard = real_time();
     let mut d = desk_on(Device::default());
     d.parts[0].set_mute(true);
     let mut out = d.target.open(&lane_request(FORMAT)).unwrap();
@@ -557,10 +562,12 @@ fn an_underrun_in_the_middle_of_the_switch_comes_back_switched() {
     g.write(&frames(0, 4_800, |_| 0), None).unwrap();
     wait_until("mixed", || d.mixer.timebase().frame == 9_600);
     let mut out = writer.join().unwrap();
-    // Back: switched at once, no crossfade from main.
-    g.write(&frames(0, 4_800, |_| 0), None).unwrap();
+    // Back: switched at once, no crossfade from main. The lane stream is
+    // written first: drained, it is not waited for, so a period of the
+    // guest's alone would be mixed with it dry.
     out.write(&lanes(4_900, 4_800, &constant, &present), None)
         .unwrap();
+    g.write(&frames(0, 4_800, |_| 0), None).unwrap();
     wait_until("mixed", || d.mixer.timebase().frame == 14_400);
     drop(g);
     let left = d.finish(out);

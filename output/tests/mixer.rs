@@ -4,7 +4,9 @@
 //! for bit, a flush drops what the device held, the microphone's port hears
 //! each opening of the device in the Lead's frames and never reaches it,
 //! the monitor sees the mix, and only the Lead opens the device again at
-//! another format; a closed input never does. Strips: 0 dB is bit for bit,
+//! another format; a closed input never does, and one withdrawn before its
+//! first audio leaves the crossfade's other side as it was, while one
+//! heard is left as it is. Strips: 0 dB is bit for bit,
 //! a level change is a 20 ms linear ramp, mute and solo silence without a
 //! click, a ramp under way survives the device opening again, and the
 //! meters read each strip and the sum. Where frames must line up exactly,
@@ -21,41 +23,65 @@ use jodel_output::{Clock, Error, Output, OutputTarget, StreamFormat, StreamInfo,
 
 #[test]
 fn an_inputs_position_is_what_the_device_has_played() {
+    let _guard = real_time();
     let (mixer, device) = mixer();
     let strip = mixer.strip("Player");
     let (mut lead, _fader) = mixer.input(&strip, Role::Lead, 1.0);
     let mut out = open(&mut lead, RATE);
     let clock = out.clock();
+    // The writer goes on until told to stop: the samples below are taken
+    // while it plays, however long a busy machine takes to give them.
+    let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let stopped = stop.clone();
     let writer = std::thread::spawn(move || {
-        out.write(&frames(0, 2 * u64::from(RATE), |_| 1_000), None)
-            .unwrap();
+        let chunk = u64::from(RATE) / 10;
+        let mut written = 0;
+        while !stopped.load(std::sync::atomic::Ordering::Relaxed) {
+            out.write(&frames(written, chunk, |_| 1_000), None).unwrap();
+            written += chunk;
+        }
         out.drain(None).unwrap();
-        out
+        (out, written)
     });
     wait_until("playing", || mixer.timebase().heard > 4_800);
     let period = u64::from(RATE / 100);
+    let deadline = std::time::Instant::now() + Duration::from_secs(60);
     let mut checked = 0;
-    while clock.position() < 3 * u64::from(RATE) / 2 {
-        let (position, tb) = (clock.position(), mixer.timebase());
+    while checked < 100 || clock.position() < 3 * u64::from(RATE) / 2 {
         assert!(
-            position.abs_diff(tb.heard) <= period,
-            "position {position}, heard {}",
-            tb.heard
+            std::time::Instant::now() < deadline,
+            "{checked} samples in a minute"
+        );
+        // The device's position read between two of the mixer's timebases:
+        // a thread put off between the reads cannot make them disagree.
+        let before = mixer.timebase();
+        let position = clock.position();
+        let after = mixer.timebase();
+        assert!(
+            before.heard <= position + period && position <= after.heard + period,
+            "position {position}, heard {} then {}",
+            before.heard,
+            after.heard
         );
         // What the mixer took but the device has not played is not heard.
-        assert!(tb.frame > position + period);
-        assert_eq!((tb.epoch, tb.rate), (1, RATE));
+        assert!(
+            after.frame > position + period,
+            "position {position}, mixed {}",
+            after.frame
+        );
+        assert_eq!((after.epoch, after.rate), (1, RATE));
         checked += 1;
-        std::thread::sleep(Duration::from_millis(7));
+        std::thread::sleep(Duration::from_millis(2));
     }
-    assert!(checked > 50);
-    let out = writer.join().unwrap();
-    assert_eq!(out.position().unwrap(), 2 * u64::from(RATE));
+    stop.store(true, std::sync::atomic::Ordering::Relaxed);
+    let (out, written) = writer.join().unwrap();
+    assert_eq!(out.position().unwrap(), written);
     assert_eq!(device.underruns(), 0);
 }
 
 #[test]
 fn a_ramp_lands_on_its_frame_and_unity_solo_is_bit_exact() {
+    let _guard = real_time();
     let (mixer, device) = mixer();
     let strip = mixer.strip("Player");
     let (mut lead, fader) = mixer.input(&strip, Role::Lead, 1.0);
@@ -97,6 +123,7 @@ fn a_ramp_lands_on_its_frame_and_unity_solo_is_bit_exact() {
 
 #[test]
 fn a_crossfade_starts_both_sides_on_the_first_frame_of_what_comes_in() {
+    let _guard = real_time();
     let (mixer, device) = mixer();
     let strip = mixer.strip("Player");
     let (mut lead, lead_fader) = mixer.input(&strip, Role::Lead, 1.0);
@@ -152,6 +179,7 @@ fn a_crossfade_starts_both_sides_on_the_first_frame_of_what_comes_in() {
 
 #[test]
 fn a_starved_input_leaves_the_one_heard_bit_for_bit() {
+    let _guard = real_time();
     let (mixer, device) = mixer();
     let strip = mixer.strip("Player");
     let (mut lead, _lead_fader) = mixer.input(&strip, Role::Lead, 1.0);
@@ -187,6 +215,7 @@ fn a_starved_input_leaves_the_one_heard_bit_for_bit() {
 
 #[test]
 fn a_flush_drops_what_the_device_holds_of_it() {
+    let _guard = real_time();
     let (mixer, device) = mixer();
     let strip = mixer.strip("Player");
     let (mut lead, _fader) = mixer.input(&strip, Role::Lead, 1.0);
@@ -212,6 +241,7 @@ fn a_flush_drops_what_the_device_holds_of_it() {
 
 #[test]
 fn a_seek_keeps_a_fade_under_way_and_a_pause_ends_it() {
+    let _guard = real_time();
     let (mixer, _device) = mixer();
     let strip = mixer.strip("Player");
     let (mut lead, fader) = mixer.input(&strip, Role::Lead, 1.0);
@@ -236,6 +266,7 @@ fn a_seek_keeps_a_fade_under_way_and_a_pause_ends_it() {
 
 #[test]
 fn the_microphone_hears_the_device_in_the_leads_frames() {
+    let _guard = real_time();
     let (mixer, _device) = mixer();
     let strip = mixer.strip("Player");
     let singer = Singer::new(loud);
@@ -279,6 +310,7 @@ fn the_microphone_hears_the_device_in_the_leads_frames() {
 /// rates), with no complaint.
 #[test]
 fn the_microphone_goes_into_each_opening_of_the_device() {
+    let _guard = real_time();
     let (mixer, device) = mixer();
     let strip = mixer.strip("Player");
     let singer = Singer::new(loud);
@@ -305,6 +337,7 @@ fn the_microphone_goes_into_each_opening_of_the_device() {
 /// gets the Lead's silence, bit for bit.
 #[test]
 fn the_microphone_never_reaches_the_device() {
+    let _guard = real_time();
     let (mixer, device) = mixer();
     let strip = mixer.strip("Player");
     let singer = Singer::new(loud);
@@ -391,6 +424,7 @@ fn the_monitor_sees_the_mix_of_two_inputs() {
 
 #[test]
 fn only_the_lead_opens_the_device_again() {
+    let _guard = real_time();
     let (mixer, _device) = mixer();
     let strip = mixer.strip("Player");
     // Nothing open: a guest is offered all, and opens the device.
@@ -419,6 +453,7 @@ fn only_the_lead_opens_the_device_again() {
 
 #[test]
 fn a_closed_input_never_takes_the_device_again() {
+    let _guard = real_time();
     let (mixer, _device) = mixer();
     let strip = mixer.strip("Player");
     let (mut g1, f1) = mixer.input(&strip, Role::Guest, 1.0);
@@ -444,7 +479,79 @@ fn a_closed_input_never_takes_the_device_again() {
 }
 
 #[test]
+fn a_crossfade_withdrawn_before_its_first_audio_leaves_the_other_side_as_it_was() {
+    let (mixer, device) = instant_mixer();
+    let strip = mixer.strip("Player");
+    let (mut lead, lead_fader) = mixer.input(&strip, Role::Lead, 1.0);
+    let (mut guest, guest_fader) = mixer.input(&strip, Role::Guest, 0.0);
+    let level = 1_000_000;
+    let mut out = open_started(&mut lead, RATE, level);
+    out.write(&frames(1, 4_799, |_| level), None).unwrap();
+    wait_until("the song plays", || mixer.timebase().frame == 4_800);
+    mixer.crossfade(
+        &guest_fader,
+        Start::FirstAudio,
+        &[&lead_fader],
+        frames_of(960),
+    );
+    // Silent, its fade in waiting: shut, and the song never falls.
+    assert!(guest_fader.withdraw());
+    assert!(matches!(guest.open(&request(RATE)), Err(Error::Closed)));
+    out.write(&frames(4_800, 4_800, |_| level), None).unwrap();
+    out.drain(None).unwrap();
+    assert!(lead_fader.settled() && lead_fader.gain() == 1.0);
+    drop(out);
+    drop(mixer);
+    assert_eq!(device.underruns(), 0);
+    let left = device.left(0);
+    assert_eq!(left.len(), 9_600);
+    assert_eq!(left.iter().position(|&v| v != level), None);
+}
+
+#[test]
+fn a_crossfade_under_way_is_not_withdrawn() {
+    let (mixer, device) = instant_mixer();
+    let strip = mixer.strip("Player");
+    let (mut lead, lead_fader) = mixer.input(&strip, Role::Lead, 1.0);
+    let (mut guest, guest_fader) = mixer.input(&strip, Role::Guest, 0.0);
+    let (a, b) = (1_000_000, 2_000_000);
+    let mut out = open_started(&mut lead, RATE, a);
+    out.write(&frames(1, 4_799, |_| a), None).unwrap();
+    wait_until("the song plays", || mixer.timebase().frame == 4_800);
+    let over = 960u64;
+    mixer.crossfade(
+        &guest_fader,
+        Start::FirstAudio,
+        &[&lead_fader],
+        frames_of(over),
+    );
+    // A period of the guest mixed: its fade in is under way, half in.
+    let mut g = open_started(&mut guest, RATE, b);
+    g.write(&frames(1, 479, |_| b), None).unwrap();
+    out.write(&frames(4_800, 4_800, |_| a), None).unwrap();
+    wait_until("the fade begins", || mixer.timebase().frame == 5_280);
+    assert!(!guest_fader.withdraw());
+    // Left as it is: the fade runs on to its end.
+    let (_out, _g) = play_both(out, g, Vec::new(), frames(480, 4_320, |_| b));
+    assert!(lead_fader.settled() && lead_fader.gain() == 0.0);
+    assert!(guest_fader.settled() && guest_fader.gain() == 1.0);
+    drop(mixer);
+    let left = device.left(0);
+    for k in 0..over as usize {
+        let x = std::f64::consts::FRAC_PI_2 * k as f64 / over as f64;
+        let want = f64::from(a) * x.cos() + f64::from(b) * x.sin();
+        let got = f64::from(left[4_800 + k]);
+        assert!((got - want).abs() < 1.5, "{k}: {got} for {want}");
+    }
+    assert_eq!(
+        left[4_800 + over as usize..].iter().position(|&v| v != b),
+        None
+    );
+}
+
+#[test]
 fn a_fade_out_on_an_input_with_nothing_to_play_settles() {
+    let _guard = real_time();
     let (mixer, _device) = mixer();
     let strip = mixer.strip("Player");
     let (mut target, fader) = mixer.input(&strip, Role::Guest, 1.0);
@@ -473,6 +580,7 @@ fn a_fade_out_on_an_input_with_nothing_to_play_settles() {
 
 #[test]
 fn a_strip_at_0_db_keeps_its_input_bit_for_bit() {
+    let _guard = real_time();
     let (mixer, device) = mixer();
     let player = mixer.strip("Player");
     let preview = mixer.strip("Preview");
@@ -505,6 +613,7 @@ fn a_strip_at_0_db_keeps_its_input_bit_for_bit() {
 
 #[test]
 fn a_strips_level_is_a_20_ms_linear_ramp() {
+    let _guard = real_time();
     let (mixer, device) = mixer();
     let strip = mixer.strip("Player");
     let (mut lead, _fader) = mixer.input(&strip, Role::Lead, 1.0);

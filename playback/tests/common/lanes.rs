@@ -309,6 +309,46 @@ pub fn pace(gate: &Gate, events: &Receiver<Event>, step: u64) -> Vec<Event> {
     }
 }
 
+/// Lets frames through in real time (after a first `step`) until a frame
+/// captured says the parts are there, as a device would while the
+/// separator or the store gives them in its own time; then as [`pace`]
+/// does, to the end. Returns the events.
+pub fn pace_once_present(
+    gate: &Gate,
+    events: &Receiver<Event>,
+    captures: &Captures,
+    step: u64,
+) -> Vec<Event> {
+    let deadline = Instant::now() + TIMEOUT;
+    let start = Instant::now();
+    let mut seen = Vec::new();
+    loop {
+        assert!(
+            Instant::now() < deadline,
+            "no parts in {} frames; seen: {seen:#?}",
+            gate.written()
+        );
+        let present = captures.list().first().is_some_and(|c| {
+            let channels = usize::from(c.format.channels);
+            let bytes = c.sink.bytes();
+            let frame = (channels * 5 + 1) * 4;
+            let whole = bytes.len() / frame * frame;
+            whole > 0 && lanes_of(&bytes[whole - frame..whole], channels, 5).1[0] == 1
+        });
+        if present {
+            seen.extend(pace(gate, events, step));
+            return seen;
+        }
+        let real = (start.elapsed().as_secs_f64() * f64::from(RATE)) as u64;
+        gate.allow(step + real);
+        if let Ok(event) = events.recv_timeout(Duration::from_millis(5)) {
+            let end = matches!(event, Event::QueueEnded);
+            seen.push(event);
+            assert!(!end, "the queue ended without the parts; seen: {seen:#?}");
+        }
+    }
+}
+
 /// [`pace`] until `frames` have gone through.
 pub fn pace_to(gate: &Gate, events: &Receiver<Event>, step: u64, frames: u64) -> Vec<Event> {
     let deadline = Instant::now() + TIMEOUT;

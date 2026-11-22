@@ -66,6 +66,9 @@ pub(super) struct Cleaner {
     isolated: Vec<f32>,
     /// The meter's peak.
     peak: f32,
+    /// The last block was lost to a full queue: the next one queued does
+    /// not follow the one before it.
+    dropped: bool,
 }
 
 impl Cleaner {
@@ -78,6 +81,7 @@ impl Cleaner {
             at_16k: Vec::with_capacity(BLOCK),
             isolated: Vec::with_capacity(2 * BLOCK),
             peak: 0.0,
+            dropped: false,
         }
     }
 
@@ -131,13 +135,17 @@ impl Cleaner {
         shared
             .echo_delay
             .store(f32_bits(status.delay.unwrap_or(-1.0)), Ordering::Relaxed);
-        // The voice kept.
+        // The voice kept. After a block lost, the next does not follow
+        // the one before it (which may have started a run: whoever reads
+        // the voice must see the gap).
         let mut voice = [0.0f32; VoiceBlock::LEN];
+        let continues = continues && !self.dropped;
         VoiceBlock::write(frame, packet.rate, continues, &out, &mut voice);
-        if shared.voice.free() >= VoiceBlock::LEN {
-            shared.voice.push(&voice);
-        } else {
+        self.dropped = shared.voice.free() < VoiceBlock::LEN;
+        if self.dropped {
             shared.voice_dropped.fetch_add(1, Ordering::Relaxed);
+        } else {
+            shared.voice.push(&voice);
         }
         if shared.recording.load(Ordering::Relaxed) {
             // The block as the canceller had it, whole or not at all.

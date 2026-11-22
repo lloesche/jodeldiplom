@@ -231,6 +231,12 @@ impl Gain {
         self.last
     }
 
+    /// Silent, and no ramp under way: nothing of it has been heard since
+    /// it was last at 0.
+    pub(crate) fn unheard(&self) -> bool {
+        self.running.is_none() && self.level == 0.0 && self.last == 0.0
+    }
+
     /// The gain it is going to: the end of the ramp under way, or its
     /// level (a ramp still waiting does not count).
     pub(crate) fn target(&self) -> f64 {

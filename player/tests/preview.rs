@@ -1,9 +1,14 @@
-//! The preview's players on a mixer in real time (a null device): each file
-//! fades in from its first frame on the very frame what was heard fades
-//! out, the song runs on under it, only the latest file asked for is
-//! loaded, a file that plays to its end makes room, files at another rate
-//! than the device's are resampled to it, and the song fades back in at
-//! the end.
+//! The preview's players on a mixer (a null device): each file fades in
+//! from its first frame on the very frame what was heard fades out, the
+//! song runs on under it, only the latest file asked for is loaded, a file
+//! that plays to its end makes room, files at another rate than the
+//! device's are resampled to it, and the song fades back in at the end.
+//!
+//! Where frames must line up exactly, the device takes what the mixer
+//! gives it no faster than real time but plays only what it is given
+//! ([`paced_mixer`]): the mixer waits for every input, so a player put off
+//! on a busy machine is late, never a gap. The others run on a device in
+//! real time ([`realtime_mixer`]).
 
 mod common;
 
@@ -12,7 +17,9 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use jodel_output::mixer::{Mixer, MixerOptions, Monitor, Role};
-use jodel_output::{Clock, SimClock, StreamInfo};
+use jodel_output::{
+    Capabilities, Clock, Error, OpenRequest, Output, OutputTarget, SimClock, Stats, StreamInfo, Tap,
+};
 use jodel_playback::{
     any_capabilities, Command, Event, NullTarget, Player, PlayerOptions, Settings,
 };
@@ -81,9 +88,117 @@ impl Heard {
     }
 }
 
-fn mixer() -> (Mixer, Heard) {
+/// A null device that plays only what it is given, taking it no faster
+/// than real time (after a first 100 ms): to the mixer it is a device that
+/// waits for its inputs, to the players one that runs about as a device
+/// does.
+struct Paced(NullTarget);
+
+impl OutputTarget for Paced {
+    fn name(&self) -> String {
+        "paced null output".into()
+    }
+
+    fn capabilities(&mut self) -> Result<Capabilities, Error> {
+        self.0.capabilities()
+    }
+
+    fn open(&mut self, request: &OpenRequest) -> Result<Box<dyn Output>, Error> {
+        Ok(Box::new(PacedOutput {
+            inner: self.0.open(request)?,
+            start: None,
+        }))
+    }
+}
+
+struct PacedOutput {
+    inner: Box<dyn Output>,
+    /// When the first frame was taken.
+    start: Option<Instant>,
+}
+
+impl Output for PacedOutput {
+    fn info(&self) -> &StreamInfo {
+        self.inner.info()
+    }
+    fn write(&mut self, samples: &[i32], timeout: Option<Duration>) -> Result<usize, Error> {
+        let format = self.inner.format();
+        let ch = usize::from(format.channels);
+        let frames = (samples.len() / ch) as u64;
+        let deadline = timeout.map(|t| Instant::now() + t);
+        let start = *self.start.get_or_insert_with(Instant::now);
+        loop {
+            let ahead = u64::from(format.rate) / 10;
+            let due = ahead + (start.elapsed().as_secs_f64() * f64::from(format.rate)) as u64;
+            let room = due.saturating_sub(self.inner.written()).min(frames);
+            if room > 0 {
+                return self.inner.write(&samples[..room as usize * ch], timeout);
+            }
+            if deadline.is_some_and(|d| Instant::now() >= d) {
+                return Ok(0);
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
+    fn drain(&mut self, timeout: Option<Duration>) -> Result<bool, Error> {
+        self.inner.drain(timeout)
+    }
+    fn position(&self) -> Result<u64, Error> {
+        self.inner.position()
+    }
+    fn written(&self) -> u64 {
+        self.inner.written()
+    }
+    fn latency(&self) -> Duration {
+        self.inner.latency()
+    }
+    fn pause(&mut self) -> Result<(), Error> {
+        self.inner.pause()
+    }
+    fn resume(&mut self) -> Result<(), Error> {
+        self.inner.resume()
+    }
+    fn is_paused(&self) -> bool {
+        self.inner.is_paused()
+    }
+    fn flush(&mut self) -> Result<(), Error> {
+        self.inner.flush()
+    }
+    fn set_tap(&mut self, tap: Option<Box<dyn Tap>>) -> Result<(), Error> {
+        self.inner.set_tap(tap)
+    }
+    fn stats(&self) -> Stats {
+        self.inner.stats()
+    }
+    fn clock(&self) -> Clock {
+        self.inner.clock()
+    }
+    fn close(&mut self) -> Result<(), Error> {
+        self.inner.close()
+    }
+}
+
+/// A mixer on a null device in real time: a period an input is short of is
+/// mixed without it, as on a device.
+fn realtime_mixer() -> (Mixer, Heard) {
+    mixer_on(Box::new(NullTarget::new(
+        any_capabilities(),
+        SimClock::Realtime,
+    )))
+}
+
+/// A mixer on a [`Paced`] device: every period is mixed once each running
+/// input holds it.
+fn paced_mixer() -> (Mixer, Heard) {
+    mixer_on(Box::new(Paced(NullTarget::new(
+        any_capabilities(),
+        SimClock::Instant,
+    ))))
+}
+
+fn mixer_on(device: Box<dyn OutputTarget>) -> (Mixer, Heard) {
     let mixer = Mixer::open(
-        Box::new(NullTarget::new(any_capabilities(), SimClock::Realtime)),
+        device,
         MixerOptions {
             buffer: Duration::from_millis(200),
             ..MixerOptions::default()
@@ -92,6 +207,17 @@ fn mixer() -> (Mixer, Heard) {
     let heard = Heard::default();
     mixer.set_monitor(Some(Box::new(heard.clone())));
     (mixer, heard)
+}
+
+/// The first frame of `h[range]` that is not `v`, and what is around it.
+fn first_not(h: &[i32], range: std::ops::Range<usize>, v: i32) -> Option<String> {
+    let at = range.clone().find(|&i| h[i] != v)?;
+    let around = &h[at.saturating_sub(3)..(at + 4).min(h.len())];
+    let zeros = h[range].iter().filter(|&&x| x == 0).count();
+    Some(format!(
+        "frame {at} is {} (around it {around:?}; {zeros} frames of silence)",
+        h[at]
+    ))
 }
 
 fn wait(
@@ -125,7 +251,7 @@ fn a_preview_crossfades_on_one_frame_over_the_song_running_on() {
     wav(&two, RATE, 3 * RATE, |_| 2_000_000);
     wav(&three, RATE, 3 * RATE, |_| 3_000_000);
 
-    let (mixer, heard) = mixer();
+    let (mixer, heard) = paced_mixer();
     let (target, lead) = mixer.input(&mixer.strip("Player"), Role::Lead, 1.0);
     let (player, events) = Player::new(Box::new(target), PlayerOptions::default());
     player.load(vec![song.clone()]).unwrap();
@@ -152,8 +278,19 @@ fn a_preview_crossfades_on_one_frame_over_the_song_running_on() {
         // where it started; the two fades must start there, to the frame.
         let last = h.len() - 1;
         let start = last - (h[last] - from) as usize;
-        assert!(start > asked);
-        assert!(h[asked..start - 1].iter().all(|&v| v == level));
+        // No sooner than asked for (on a device that waits for its inputs,
+        // as soon as the next period).
+        assert!(
+            start >= asked,
+            "the file from {start}, asked for at {asked}"
+        );
+        // The song as it is up to there (the fade's first frame is the
+        // song's, dithered: it may read as it is).
+        assert_eq!(
+            first_not(&h, asked..(start - 1).max(asked), level),
+            None,
+            "the song before the file's first frame {start} (asked for at {asked})"
+        );
         for k in 0..FADE {
             let x = std::f64::consts::FRAC_PI_2 * k as f64 / FADE as f64;
             let want = f64::from(level) * x.cos() + f64::from(from + k as i32) * x.sin();
@@ -204,6 +341,7 @@ fn a_preview_crossfades_on_one_frame_over_the_song_running_on() {
 
 #[test]
 fn a_file_played_to_its_end_makes_room_and_another_rate_is_resampled() {
+    let _guard = common::real_time();
     let dir = common::temp_dir("preview-end");
     let (short, one, other) = (
         dir.join("short.wav"),
@@ -214,7 +352,7 @@ fn a_file_played_to_its_end_makes_room_and_another_rate_is_resampled() {
     wav(&short, 44_100, 44_100, |_| 500_000);
     wav(&one, 44_100, 3 * 44_100, |_| 1_000_000);
     wav(&other, 96_000, 3 * 96_000, |_| 3_000_000);
-    let (mixer, heard) = mixer();
+    let (mixer, heard) = realtime_mixer();
     let (_target, lead) = mixer.input(&mixer.strip("Player"), Role::Lead, 1.0);
     let mut previews = Previews::new(lead, mixer.strip("Preview"), Settings::default());
     // A file heard to its end (from a third in: 0.67 s): its player goes.
@@ -257,13 +395,15 @@ fn a_file_played_to_its_end_makes_room_and_another_rate_is_resampled() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
-/// Whether `h[start..]` is `from` falling and `to` rising, equal-power,
-/// over a fade, from frame `start` on.
-fn crossfade_at(h: &[i32], start: usize, from: i32, to: i32) -> bool {
-    (0..FADE).all(|k| {
+/// Where `h[start..]` is not `from` falling and `to` rising, equal-power,
+/// over a fade, from frame `start` on: the first frame that is not, its
+/// value and the one wanted (`None`: all are).
+fn crossfade_off(h: &[i32], start: usize, from: i32, to: i32) -> Option<(usize, i32, f64)> {
+    (0..FADE).find_map(|k| {
         let x = std::f64::consts::FRAC_PI_2 * k as f64 / FADE as f64;
         let want = f64::from(from) * x.cos() + f64::from(to) * x.sin();
-        (f64::from(h[start + k]) - want).abs() < 1.5
+        let got = h.get(start + k).copied().unwrap_or(i32::MIN);
+        ((f64::from(got) - want).abs() >= 1.5).then_some((start + k, got, want))
     })
 }
 
@@ -283,7 +423,7 @@ fn every_move_is_a_crossfade_and_the_players_crossfaded_out_go() {
             path
         })
         .collect();
-    let (mixer, heard) = mixer();
+    let (mixer, heard) = paced_mixer();
     let (target, lead) = mixer.input(&mixer.strip("Player"), Role::Lead, 1.0);
     let (player, _events) = Player::new(Box::new(target), PlayerOptions::default());
     player.load(vec![song]).unwrap();
@@ -312,11 +452,20 @@ fn every_move_is_a_crossfade_and_the_players_crossfaded_out_go() {
             // As it was up to the frame the next file's first audio is;
             // from that frame the one falls as the other rises: no gap.
             let changed = asked + h[asked..].iter().position(|&x| x != from).unwrap();
+            let offs = [changed - 1, changed].map(|s| crossfade_off(&h, s, from, to));
             let start = [changed - 1, changed]
                 .into_iter()
-                .find(|&s| crossfade_at(&h, s, from, to));
-            assert!(start.is_some(), "no crossfade {from} → {to} at {changed}");
-            assert!(h[asked..start.unwrap()].iter().all(|&x| x == from));
+                .zip(offs)
+                .find_map(|(s, off)| off.is_none().then_some(s));
+            let around = &h[changed.saturating_sub(3)..(changed + 4).min(h.len())];
+            let zeros = h[asked..].iter().filter(|&&x| x == 0).count();
+            assert!(
+                start.is_some(),
+                "no crossfade {from} → {to} at {changed} (asked for at {asked}; around it \
+                 {around:?}; off (frame, value, wanted) from either frame {offs:?}; {zeros} \
+                 frames of silence since)"
+            );
+            assert_eq!(first_not(&h, asked..start.unwrap().max(asked), from), None);
             from = to;
         }
     }
@@ -340,7 +489,14 @@ fn every_move_is_a_crossfade_and_the_players_crossfaded_out_go() {
     {
         let h = heard.0.lock().unwrap();
         let low = h[burst..].iter().min().copied().unwrap();
-        assert!(low >= values[1] - 2, "a dip to {low}");
+        let at = burst + h[burst..].iter().position(|&x| x == low).unwrap();
+        let zeros = h[burst..].iter().filter(|&&x| x == 0).count();
+        let levels: Vec<i32> = (burst..h.len()).step_by(480).map(|i| h[i]).collect();
+        assert!(
+            low >= values[1] - 2,
+            "a dip to {low} at {at} (from {burst}; {zeros} frames of silence; every 480th \
+             frame from there: {levels:?})"
+        );
     }
     previews.end();
     wait("the players are gone", &mixer, &mut previews, |p| p.done());
@@ -352,6 +508,7 @@ fn every_move_is_a_crossfade_and_the_players_crossfaded_out_go() {
 
 #[test]
 fn quick_moves_across_rates_with_nothing_playing_fail_nothing() {
+    let _guard = common::real_time();
     let dir = common::temp_dir("preview-rates");
     let specs = [
         (44_100, 1_000_000),
@@ -368,7 +525,7 @@ fn quick_moves_across_rates_with_nothing_playing_fail_nothing() {
             path
         })
         .collect();
-    let (mixer, heard) = mixer();
+    let (mixer, heard) = realtime_mixer();
     let (_target, lead) = mixer.input(&mixer.strip("Player"), Role::Lead, 1.0);
     let mut previews = Previews::new(lead, mixer.strip("Preview"), Settings::default());
     // Moved on before anything has opened the device (a player opens a

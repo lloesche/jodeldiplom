@@ -159,6 +159,9 @@ fn seek_pause_and_jump_are_bit_exact() {
         collect_until(events, |e| matches!(e, Event::Seeked { .. }));
         up_to(gate, captures, 136 * 441);
         player.jump(0, 0.5, JumpAt::Now).unwrap();
+        // Taken before anything more is let through: the rest of the
+        // packet under way is not to go out on one run and not the other.
+        collect_until(events, |e| matches!(e, Event::Jumped { .. }));
         gate.allow_all();
         until_queue_end(events);
     };

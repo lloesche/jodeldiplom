@@ -63,8 +63,10 @@ done
 # The window player's build embeds the fonts from here (player/build.rs).
 export JODELDIPLOM_FONTS=$fonts
 
+# (An empty array expanded as "${a[@]}" is an unbound variable under set -u
+# in the bash macOS has, 3.2: it is expanded only when set.)
 cargo build --locked --release --manifest-path "$repo/Cargo.toml" -p jodeldiplom \
-    --target-dir "$work/rust" "${cargo_target[@]}"
+    --target-dir "$work/rust" ${cargo_target[@]+"${cargo_target[@]}"}
 
 rm -rf -- "$stage"
 mkdir -p -- "$stage/bin"

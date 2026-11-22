@@ -171,15 +171,15 @@ impl Run {
             } => {
                 self.slots.insert(id, Slot::new(id, state, &lanes, gain));
             }
-            Msg::Forget(id) => {
-                let lanes = self.slots.get(&id).map_or(0, |s| s.lanes.len());
-                for k in 0..lanes {
-                    self.wait_for(GainId::new(id, k as u16), None);
+            Msg::Forget(id) => self.forget(id),
+            Msg::Withdraw { gain, done } => {
+                let silent = self
+                    .lane(gain)
+                    .is_some_and(|l| l.gain.next().is_some() && l.gain.unheard());
+                if silent {
+                    self.forget(gain.slot);
                 }
-                if let Some(stream) = self.slots.remove(&id).and_then(|s| s.stream) {
-                    stream.link.shared.fail(Error::Closed);
-                    self.closed(stream.link.id);
-                }
+                let _ = done.send(silent);
             }
             Msg::Capabilities { slot, done } => {
                 let _ = done.send(self.capabilities(slot));
@@ -241,6 +241,19 @@ impl Run {
             Msg::Quit => return false,
         }
         true
+    }
+
+    /// Forgets input `id`: its waiting ramps never come (nor those to start
+    /// with them), its output is closed.
+    fn forget(&mut self, id: u64) {
+        let lanes = self.slots.get(&id).map_or(0, |s| s.lanes.len());
+        for k in 0..lanes {
+            self.wait_for(GainId::new(id, k as u16), None);
+        }
+        if let Some(stream) = self.slots.remove(&id).and_then(|s| s.stream) {
+            stream.link.shared.fail(Error::Closed);
+            self.closed(stream.link.id);
+        }
     }
 
     /// The microphone's tap on the device, for the newest Lead output (or
