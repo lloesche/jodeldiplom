@@ -54,6 +54,8 @@
 //! [`Input::feed`] makes an input fed by the caller instead of a device, on
 //! a simulated clock, its cleaner run by the caller ([`MicFeed::clean`]):
 //! with [`crate::FileOutput`] the whole path runs without hardware.
+//! [`Input::feed_in_real_time`] is one on the system's clock, for a caller
+//! feeding it as a device would, from a thread of its own.
 //!
 //! # Parts
 //!
@@ -293,7 +295,25 @@ impl Input {
     /// at `rate` with packets of `period_frames`, on the caller's clock
     /// ([`MicFeed::set_time`]). For tests and simulations.
     pub fn feed(rate: u32, period_frames: u32) -> (Input, MicFeed) {
-        let shared = MicShared::new(rate, period_frames, true);
+        Self::fed(
+            MicShared::new(rate, period_frames, true),
+            rate,
+            period_frames,
+        )
+    }
+
+    /// An input the caller feeds as [`Input::feed`] does, but on the
+    /// system's clock, as a device's ([`MicFeed::set_time`] is not needed):
+    /// for a caller pushing its packets in real time from a thread of its
+    /// own. The clock bridge then counts in the time since the last packet,
+    /// as it does for a device, however late that thread wakes; on a
+    /// simulated clock, set only when the thread wakes, it never sees any.
+    pub fn feed_in_real_time(rate: u32, period_frames: u32) -> (Input, MicFeed) {
+        let shared = MicShared::fed_in_real_time(rate, period_frames);
+        Self::fed(shared, rate, period_frames)
+    }
+
+    fn fed(shared: Arc<MicShared>, rate: u32, period_frames: u32) -> (Input, MicFeed) {
         let info = InputInfo {
             id: "feed".into(),
             name: "feed".into(),
@@ -482,7 +502,9 @@ impl MicFeed {
         samples.len() - lost as usize
     }
 
-    /// Sets the simulated clock that both the feed and the tap read.
+    /// Sets the simulated clock that both the feed and the tap read
+    /// (nothing reads it on [`Input::feed_in_real_time`]'s, whose clock is
+    /// the system's).
     pub fn set_time(&self, t: Duration) {
         self.producer
             .shared()

@@ -402,12 +402,15 @@ fn mid_song_the_delay_never_jumps_but_a_nudge_or_a_sync_does_at_once() {
     assert!((state.karaoke.lag.late - 0.14).abs() < 1e-9);
 }
 
-/// A microphone fed in real time on a thread of its own: quiet noise, and
-/// a "ta" (120 ms of loud noise) 150 ms after each click is played. That
-/// thread listens too: as soon as the clicks' clock ([`Singer::listen`])
-/// has played a click's frame, it puts its ta 150 ms after the moment that
-/// frame was played, on its own clock (from when it started), however late
-/// the clicks came. It sends 5 ms packets ([`PACKET`]) as a microphone of
+/// A microphone fed in real time on a thread of its own (on the system's
+/// clock, as a device: the bridge counts in the time since its last
+/// packet, however late the thread woke): quiet noise, and a "ta" (120 ms
+/// of loud noise) 150 ms after each click is played. That thread listens
+/// too: as soon as the clicks' clock ([`Singer::listen`]) has played a
+/// click's frame, it puts its ta 150 ms after the moment that frame was
+/// played, on its own clock (from when it started), however late the
+/// clicks came. That moment is the clock's, not when the thread saw it
+/// ([`Played`]). It sends 5 ms packets ([`PACKET`]) as a microphone of
 /// 20 ms periods ([`PERIOD`]): the bridge holds two periods, 40 ms, so a
 /// thread that wakes late now and then (a loaded runner) leaves it short
 /// of none, while a packet's samples are at most 5 ms old when sent.
@@ -431,10 +434,45 @@ const TA: f64 = 0.15;
 const PACKET: usize = 240;
 /// The capture period it says it has (20 ms).
 const PERIOD: u32 = 960;
+/// How long the singer remembers its looks at the clicks' clock.
+const LOOKS: f64 = 0.5;
+
+/// When the clicks' frames were played, from looks at their clock. The
+/// frames play at its rate from a start (a device period at a time), and
+/// each look bounds that start from above: the frames counted were played
+/// by then. A late look (the thread woke late, or the mixer told the
+/// position late: 5-15 ms on a loaded runner) only bounds it more loosely,
+/// so the tightest bound of the last [`LOOKS`] is the start, a stall of
+/// the device (which loses its time) forgotten after that.
+#[derive(Default)]
+struct Played {
+    looks: std::collections::VecDeque<(f64, f64)>,
+}
+
+impl Played {
+    /// A look at `now` (on the singer's clock) saw `position` at `rate`.
+    fn look(&mut self, now: f64, position: u64, rate: u32) {
+        if position == 0 {
+            return;
+        }
+        self.looks
+            .push_back((now, now - position as f64 / f64::from(rate)));
+        while self.looks.front().is_some_and(|&(t, _)| t < now - LOOKS) {
+            self.looks.pop_front();
+        }
+    }
+
+    /// When `frame` was played (its period started), on the singer's
+    /// clock: after a look that saw it played.
+    fn at(&self, frame: u64, rate: u32) -> f64 {
+        let start = self.looks.iter().map(|l| l.1).fold(f64::INFINITY, f64::min);
+        start + frame as f64 / f64::from(rate)
+    }
+}
 
 impl Singer {
     fn new() -> Singer {
-        let (input, mut feed) = Input::feed(48_000, PERIOD);
+        let (input, mut feed) = Input::feed_in_real_time(48_000, PERIOD);
         input.set_echo_cancel(false);
         let clicks: Arc<Mutex<Option<Clock>>> = Arc::default();
         let heard: Arc<Mutex<Vec<(f64, u64, f64)>>> = Arc::default();
@@ -447,21 +485,19 @@ impl Singer {
             std::thread::spawn(move || {
                 let mut sent = 0usize;
                 let mut seed = 7u32;
+                let mut played = Played::default();
                 while !stop.load(Ordering::Relaxed) {
-                    let t = start.elapsed();
-                    feed.set_time(t);
-                    let now = t.as_secs_f64();
-                    // Each click played since: when its frame was (the
-                    // position steps a device period at a time, the frames
-                    // past it played since).
+                    let now = start.elapsed().as_secs_f64();
+                    // Each click played since: when its frame was.
                     if let Some(clock) = clicks.lock().unwrap().as_ref() {
                         let rate = clock.format().rate;
                         let frames = sync::click_frames(rate);
                         let position = clock.position();
+                        played.look(now, position, rate);
                         let mut heard = heard.lock().unwrap();
                         while heard.len() < CLICKS && position >= frames[heard.len()] {
-                            let past = (position - frames[heard.len()]) as f64 / f64::from(rate);
-                            heard.push((now, position, now - past + TA));
+                            let at = played.at(frames[heard.len()], rate);
+                            heard.push((now, position, at + TA));
                         }
                     }
                     let due = (now * 48_000.0) as usize;

@@ -99,8 +99,11 @@ pub(crate) struct MicShared {
     pub(super) period: AtomicU32,
     pub(super) packet: AtomicU32,
     pub(super) epoch: Instant,
-    /// The clock is the caller's ([`MicFeed::set_time`]), not the system's.
+    /// Fed by the caller ([`MicFeed`]): no capture thread, and its cleaner
+    /// run by the caller.
     pub(super) simulated: bool,
+    /// The clock is the caller's ([`MicFeed::set_time`]), not the system's.
+    pub(super) caller_clock: bool,
     pub(super) sim_now: AtomicU64,
     /// When the last packet was queued, in ns from `epoch`, plus one (0:
     /// never).
@@ -155,6 +158,15 @@ pub(crate) struct MicShared {
 
 impl MicShared {
     pub(crate) fn new(rate: u32, period: u32, simulated: bool) -> Arc<MicShared> {
+        Self::build(rate, period, simulated, simulated)
+    }
+
+    /// Fed by the caller, on the system's clock.
+    pub(super) fn fed_in_real_time(rate: u32, period: u32) -> Arc<MicShared> {
+        Self::build(rate, period, true, false)
+    }
+
+    fn build(rate: u32, period: u32, simulated: bool, caller_clock: bool) -> Arc<MicShared> {
         // A second of voice: far more than the loop ever holds.
         let capacity = (rate as usize).max(4096);
         Arc::new(MicShared {
@@ -164,6 +176,7 @@ impl MicShared {
             packet: AtomicU32::new(0),
             epoch: Instant::now(),
             simulated,
+            caller_clock,
             sim_now: AtomicU64::new(0),
             pushed_at: AtomicU64::new(0),
             first_at: AtomicU64::new(0),
@@ -197,7 +210,7 @@ impl MicShared {
     }
 
     pub(super) fn now_ns(&self) -> u64 {
-        if self.simulated {
+        if self.caller_clock {
             self.sim_now.load(Ordering::Acquire)
         } else {
             self.epoch.elapsed().as_nanos() as u64
