@@ -615,10 +615,13 @@ fn a_guest_made_lead_takes_the_microphone_and_is_asked_again() {
     singer.voice();
     std::thread::sleep(Duration::from_millis(200));
     let told = singer.voice().iter().map(|v| v.stream_frame).max().unwrap();
-    let played = oa.position().unwrap();
+    let (played, guest) = (oa.position().unwrap(), ob.position().unwrap());
+    // In the new lead's frames (at most where it has played to, plus a
+    // period or two in flight), well behind the old lead's however slowly
+    // a runner goes: the guest started 24 000 frames after the old lead.
     assert!(
-        told < 24_000 && played > 30_000,
-        "{told} with the old lead at {played}"
+        told <= guest + 4_800 && told + 12_000 < played,
+        "{told} with the new lead at {guest} and the old at {played}"
     );
     assert_eq!(mixer.mic().port, MicPort::Hearing);
     let roles: Vec<Role> = mixer
