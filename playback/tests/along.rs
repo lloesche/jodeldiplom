@@ -18,9 +18,10 @@ use std::sync::mpsc::{Receiver, RecvTimeoutError};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use common::lanes::{caps_of, quarter, wide_target, Gated, Wide, CLOSE};
+use common::lanes::{caps_of, quarter, wide_target, wide_target_on, Gated, Wide, CLOSE};
 use common::transition::{beats, clicks, lanes, FULL};
 use common::*;
+use jodel_output::SimClock;
 use jodel_playback::stems::Separator;
 use jodel_playback::warp::TimeMap;
 use jodel_playback::{
@@ -81,7 +82,9 @@ struct Run {
     tempo: TempoMode,
     separator: Option<SeparatorSource>,
     make: MakeStems,
-    /// A device: the stems are not waited for.
+    /// A device: the stems are not waited for, and it plays no faster than
+    /// real time, holding what is written ahead of it (a route switch
+    /// decodes ahead while it holds enough, as on a device).
     device: bool,
     map: Arc<TimeMap>,
 }
@@ -138,7 +141,12 @@ impl Run {
         paths: Vec<PathBuf>,
         on: &mut dyn FnMut(&Player, &Event),
     ) -> (Wide, Vec<Event>) {
-        let (target, captures, gate) = wide_target(caps_of(&[self.out], self.channels));
+        let clock = if self.device {
+            SimClock::Paced
+        } else {
+            SimClock::Instant
+        };
+        let (target, captures, gate) = wide_target_on(caps_of(&[self.out], self.channels), clock);
         let (player, events) = Player::new(Box::new(target), self.options());
         player.make_stems(self.make).unwrap();
         gate.allow(4_096);
@@ -582,7 +590,9 @@ fn never() -> Option<&'static dyn Separator> {
 /// On a device, stems that are not separated in time give way to the whole
 /// mix: the head plays on along the map with no gap, its main the parts'
 /// sum wherever they are said to be there (from a moment after the move,
-/// a device's half second of them made ahead).
+/// a device's half second of them made ahead); and once the map runs
+/// straight it goes back onto its file, its switch decoding ahead while the
+/// device holds enough.
 #[test]
 fn on_a_device_stems_that_fall_behind_give_way_to_the_whole_mix() {
     let dir = temp_dir("along-device");

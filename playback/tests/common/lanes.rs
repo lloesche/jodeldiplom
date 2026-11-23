@@ -250,7 +250,18 @@ impl Wide {
 /// A lane target taking `caps` (a memory device keeping the lane stream),
 /// gated, and its captures.
 pub fn wide_target(caps: Capabilities) -> (GatedTarget, Captures, std::sync::Arc<Gate>) {
-    let device = MemoryTarget::with_lanes(caps, SimClock::Instant, 5);
+    wide_target_on(caps, SimClock::Instant)
+}
+
+/// [`wide_target`] on a device of `clock`: [`SimClock::Paced`] for one
+/// that plays what it holds no faster than real time, its ring filled
+/// ahead as a device's is (an instant one never holds anything: a player
+/// on a device takes it for one about to run dry).
+pub fn wide_target_on(
+    caps: Capabilities,
+    clock: SimClock,
+) -> (GatedTarget, Captures, std::sync::Arc<Gate>) {
+    let device = MemoryTarget::with_lanes(caps, clock, 5);
     let captures = device.captures();
     let (target, gate) = GatedTarget::around(Box::new(device));
     (target, captures, gate)
