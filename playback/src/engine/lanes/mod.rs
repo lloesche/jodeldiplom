@@ -233,11 +233,6 @@ impl StemLanes {
         lanes
     }
 
-    /// Whether the engine can make parts at all: a separator or a store.
-    pub(super) fn possible(&self) -> bool {
-        self.separator.is_some() || self.store.is_some()
-    }
-
     /// [`crate::Command::MakeStems`]: stems that failed are tried again,
     /// and the runs start again for the new choice (kept only: nothing
     /// separates any more).

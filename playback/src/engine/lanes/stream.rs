@@ -22,9 +22,9 @@
 use std::sync::Arc;
 
 use crate::engine::track::{AlongMap, SegStart, Track};
-use crate::engine::warping::Warping;
+use crate::engine::warping::{Reading, Warping};
 use crate::resample::{output_frames, Requantizer, Resampler};
-use crate::stems::{Pull, StemRun, RATE as STEM_RATE, STEMS};
+use crate::stems::{Pull, Stem, StemRun, LANES, RATE as STEM_RATE, STEMS};
 
 /// Frames of stems taken from a run at a time.
 const PIECE: usize = 4096;
@@ -87,7 +87,9 @@ impl Line {
             == (i128::from(other.seg_frame) - i128::from(self.seg_frame)) * i128::from(self.out);
         let map = match (&self.along, &other.along) {
             (None, None) => true,
-            (Some(a), Some(b)) => Arc::ptr_eq(&a.heard, &b.heard) && a.tempo == b.tempo,
+            (Some(a), Some(b)) => {
+                Arc::ptr_eq(&a.heard, &b.heard) && a.tempo == b.tempo && a.key == b.key
+            }
             _ => false,
         };
         self.segment == other.segment
@@ -269,6 +271,15 @@ struct Pass {
 /// The other instruments' lane ([`crate::stems::LANES`]' last).
 const OTHER: usize = STEMS - 1;
 
+/// The channels of the drums' lane (they keep their key) among those made
+/// from lane `from` on, `pairs` a lane: none when they are not made.
+fn drums(from: usize, pairs: usize) -> Vec<usize> {
+    let lane = LANES.iter().position(|&s| s == Stem::Drums);
+    lane.filter(|&l| l >= from).map_or(Vec::new(), |l| {
+        ((l - from) * pairs..(l - from + 1) * pairs).collect()
+    })
+}
+
 impl Stream {
     /// A stream on `line` whose first frame is heard at output frame
     /// `first`, for a track of `channels` channels.
@@ -333,8 +344,15 @@ impl Stream {
                 .zip(line.along.as_ref())
                 .zip(read_from)
                 .map(|(((a, _), along), read_from)| {
-                    let map = Arc::clone(&along.heard.map);
-                    Warping::new(map, a, read_from, along.tempo, channels)
+                    Warping::new(Reading {
+                        map: Arc::clone(&along.heard.map),
+                        a0: a,
+                        b_origin: read_from,
+                        tempo: along.tempo,
+                        channels,
+                        key: along.key,
+                        kept: drums(from, pairs),
+                    })
                 });
             Pass {
                 from,

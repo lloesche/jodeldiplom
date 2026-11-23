@@ -146,6 +146,27 @@ pub enum Command {
     /// kept. The output is the same either way; a mixer may play the parts
     /// in place of main.
     MakeStems(MakeStems),
+    /// Plays the head on air `semitones` higher (lower when negative),
+    /// its tempo kept: −6 to +6 ([`crate::KEY_RANGE`], clamped), 0 its own
+    /// key. Every stem but the drums is shifted (on an output of lanes the
+    /// head plays its stems, its main their sum, as along a time map);
+    /// without stems the whole mix is. Heard from the frame the output gives
+    /// back to, about as soon as a jump is, crossfaded; at 0 the head goes
+    /// back onto its own route and plays the file bit for bit. The key
+    /// stays for the tracks the queue runs into, and goes back to 0 when
+    /// another track is picked ([`Command::Play`], [`Command::PlayIn`],
+    /// [`Command::PlayAt`], [`Command::Next`], [`Command::Previous`]: the
+    /// track it is on picked again keeps it, and one asked with nothing
+    /// playing is for the track picked next). [`Event::Key`] says the key
+    /// asked for, [`Position::key`] the one heard. Refused (a notice says
+    /// why) while a transition is set up, for a track of more than two
+    /// channels, and off an output of lanes. While shifted, new settings
+    /// wait for the key's way back or the next track, and jumps are
+    /// refused (a notice says so).
+    Key {
+        /// Semitones up (down when negative).
+        semitones: i8,
+    },
     /// The engine's own: the playing track read along a time map from an
     /// output frame on (on an output of lanes, its stems read along it as
     /// its parts, its main their sum), back on its own route once the map
@@ -223,6 +244,8 @@ pub struct Position {
     /// transition's [`TransitionState::Started`] is on the playing head's
     /// frames.
     pub output_frame: u64,
+    /// The key heard there, in semitones ([`Command::Key`]).
+    pub key: i8,
 }
 
 /// What the player reports. Track, clip and queue-end events arrive when
@@ -307,6 +330,14 @@ pub enum Event {
         index: usize,
         /// Where it is now.
         seconds: f64,
+    },
+    /// The key the head on air plays in from now, in semitones, as asked
+    /// ([`Command::Key`]), reset by a track picked, or kept where a change
+    /// was refused; heard within about a tenth of a second
+    /// ([`Position::key`] says from which frame).
+    Key {
+        /// Semitones up (down when negative).
+        semitones: i8,
     },
     /// The last track of the queue played out.
     QueueEnded,

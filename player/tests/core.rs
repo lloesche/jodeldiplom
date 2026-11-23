@@ -3285,8 +3285,7 @@ fn stems_switch_on_the_next_bar_as_mutes_of_their_strips() {
     assert!(jodeldiplom::core::stems::bar(&state).is_none());
     // One position from there is not enough (the mixer may not have mixed
     // any of it yet); two are, and the output's speed through the track
-    // between them (2 % fast here, as a transition's next track still
-    // gliding) times the bar.
+    // between them (2 % fast here, a next track still gliding) times the bar.
     let position = |seconds: f64, output_frame: u64| {
         Action::Engine(jodel_playback::Event::Position(jodel_playback::Position {
             index,
@@ -3294,6 +3293,7 @@ fn stems_switch_on_the_next_bar_as_mutes_of_their_strips() {
             seconds,
             frame: (seconds * rate) as u64,
             output_frame,
+            key: 0,
         }))
     };
     update(&mut state, position(heard, 2_000_000));

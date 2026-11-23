@@ -286,6 +286,34 @@ impl Stretcher {
         c + (j - d) as f64 * self.speed
     }
 
+    /// The output sample (fractional) whose input position is `position`:
+    /// [`Stretcher::position_at`] the other way (it rises), so a reader of
+    /// the output can follow the input's time through it.
+    pub fn output_at(&self, position: f64) -> f64 {
+        let speed = self.speed.max(MIN_SPEED);
+        let Some(&(last_d, last_c)) = self.centres.back() else {
+            return position / speed;
+        };
+        if position >= last_c {
+            return last_d as f64 + (position - last_c) / speed;
+        }
+        let mut later = (last_d, last_c);
+        for &(d, c) in self.centres.iter().rev().skip(1) {
+            if position >= c {
+                let span = later.1 - c;
+                let step = if span > 0.0 {
+                    (position - c) / span
+                } else {
+                    0.0
+                };
+                return d as f64 + step * (later.0 - d) as f64;
+            }
+            later = (d, c);
+        }
+        let (d, c) = later;
+        d as f64 + (position - c) / speed
+    }
+
     /// The most input, in samples past [`Stretcher::input_position`], that
     /// a pull may need before it returns a sample: half a frame on each
     /// side of the frame centre, the centre up to half a frame of output

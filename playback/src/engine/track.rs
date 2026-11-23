@@ -74,6 +74,8 @@ pub(super) struct Heard {
     /// The track is read along a time map (a head's, a transition's
     /// tracks'): its position comes from that, not from a straight line.
     pub(super) warp: Option<Arc<HeardWarp>>,
+    /// The key it is heard in, in semitones ([`crate::Command::Key`]).
+    pub(super) key: i8,
 }
 
 /// How a track read along a time map is heard: its output frame `origin`
@@ -86,11 +88,13 @@ pub(super) struct HeardWarp {
     pub(super) out_rate: u32,
 }
 
-/// A map a head's stems are read along, and how ([`Along`]).
+/// A map a head's stems are read along, and how ([`Along`]): by `tempo`,
+/// `key` semitones apart (the drums kept in theirs).
 #[derive(Clone)]
 pub(super) struct AlongMap {
     pub(super) heard: Arc<HeardWarp>,
     pub(super) tempo: TempoMode,
+    pub(super) key: i8,
 }
 
 /// A head read along a time map ([`crate::Command::Along`]) on an output
@@ -107,12 +111,44 @@ pub(super) struct Along {
     /// It leaves the map as soon as it can, straight or not
     /// ([`super::Engine::leave_map`]).
     pub(super) leave: bool,
-    /// For a transition's next track (silent before its window): the
-    /// playing head's clock, and its frame from which this one is heard.
-    /// Its stems may be waited for until then is near.
-    pub(super) heard_from: Option<(Clock, u64)>,
+    /// For a transition's next track (silent before its window), or a
+    /// track installed in a key: when it is heard. Its stems may be waited
+    /// for until then is near.
+    pub(super) heard_from: Option<HeardFrom>,
     /// The parts' clips counted into the track's so far.
     pub(super) clips: u64,
+}
+
+/// When a head read along a map is heard, on the playing head's clock:
+/// that head's frame this one's frame 0 is linked to on the desk
+/// (`origin`: a transition's next track; none for the playing head itself,
+/// a track installed in a key behind a count-in), and its frame from which
+/// this one is heard (`at`).
+pub(super) struct HeardFrom {
+    pub(super) clock: Clock,
+    pub(super) origin: Option<u64>,
+    pub(super) at: u64,
+}
+
+impl HeardFrom {
+    /// The playing head's frames still to be heard before this one is.
+    pub(super) fn silent(&self) -> u64 {
+        self.at.saturating_sub(self.clock.position())
+    }
+
+    /// A linked head's first frame not played yet: the desk has played
+    /// past those before it, so they are not heard whatever they hold
+    /// (written now, they are late and dropped). None for a head on its own
+    /// clock, which plays all it is given.
+    pub(super) fn unplayed(&self) -> u64 {
+        self.origin
+            .map_or(0, |origin| self.clock.position().saturating_sub(origin))
+    }
+
+    /// Whether it is the playing head's own wait, and over: heard now.
+    pub(super) fn heard_now(&self) -> bool {
+        self.origin.is_none() && self.silent() == 0
+    }
 }
 
 /// Where a head read along a map stands with its way back onto its own
@@ -514,6 +550,11 @@ impl Track {
         self.along.is_none()
     }
 
+    /// The key it plays in, in semitones (0 off a map).
+    pub(super) fn key(&self) -> i8 {
+        self.along.as_ref().map_or(0, |a| a.map.key)
+    }
+
     /// Where its map puts the track, from `seg_out` on, when it is read
     /// along one ([`Along`]).
     pub(super) fn heard_warp(&self) -> Option<Arc<HeardWarp>> {
@@ -589,6 +630,7 @@ impl Track {
             seg_out: self.seg_out,
             seg_frame: self.seg_frame,
             warp: self.heard_warp(),
+            key: self.key(),
         }
     }
 

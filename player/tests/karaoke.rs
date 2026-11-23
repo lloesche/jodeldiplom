@@ -5,11 +5,11 @@ mod common;
 
 use jodel_playback::{Command, Event, PlayState};
 use jodeldiplom::core::desk::{taper, DeskChange, StripKind};
-use jodeldiplom::core::karaoke::{self, Slider};
 use jodeldiplom::core::keymap::Op;
 use jodeldiplom::core::layout::{self, Layout};
 use jodeldiplom::core::mouse::{self, MouseButton, MouseInput, MouseKind, Target};
-use jodeldiplom::core::{update, Action, Effect, Rhythm, Rhythmed, Screen, Side, State};
+use jodeldiplom::core::sliders::{self, Slider};
+use jodeldiplom::core::{karaoke, update, Action, Effect, Rhythm, Rhythmed, Screen, Side, State};
 
 fn op(state: &mut State, op: Op) -> Vec<Effect> {
     update(state, Action::Op(op))
@@ -27,7 +27,7 @@ fn engine(fx: &[Effect]) -> Vec<&Command> {
 /// The vocals' lane's gain with the Voice slider at `percent` of its
 /// travel: the fader's taper, 100 % at 0 dB.
 fn voice_gain(percent: u8) -> f64 {
-    taper::gain(karaoke::voice_db(percent))
+    taper::gain(sliders::voice_db(percent))
 }
 
 /// The gain the vocals' lane was last given on the desk (the voice's

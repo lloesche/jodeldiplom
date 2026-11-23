@@ -106,18 +106,16 @@ impl Engine {
     /// How many frames `track` keeps behind what it wrote, and decodes
     /// ahead of it: none without a window ([`Engine::windowed`]), but what
     /// the output may give back on a device's output of lanes, so the stem
-    /// lanes may write it again with their parts ([`super::lanes`]; not
-    /// while a transition is set up, which counts on the frames written,
-    /// nor off the plain route). A jump back within that is met from it, as
-    /// within a window.
+    /// lanes may write it again with their parts ([`super::lanes`]) and a
+    /// key change start again from what it gives back ([`super::key`]; not
+    /// while a transition is set up, which counts on the frames written).
+    /// A jump back within that is met from it, as within a window.
     pub(super) fn window_frames(&self, track: &Track) -> (usize, usize) {
         let ring = self.head.out.as_ref().map_or(0, |o| o.info.ring_frames) as usize;
         if !self.windowed(track) {
             let lanes = self.head.out.as_ref().is_some_and(|o| o.output.lanes() > 1)
-                && self.head.lanes.possible()
                 && !self.offline
-                && self.transition.is_none()
-                && track.plain_route();
+                && self.transition.is_none();
             return (if lanes { ring } else { 0 }, 0);
         }
         let (back, ahead) = self.jump_window;
@@ -214,7 +212,11 @@ impl Engine {
             return self.notice(Some(index), "No jumps while a transition is set up".into());
         }
         if track.along.is_some() {
-            let message = "No jumps while the track is read along a time map";
+            let message = if track.key() != 0 {
+                "No jumps while the key is shifted"
+            } else {
+                "No jumps while the track is read along a time map"
+            };
             return self.notice(Some(index), message.into());
         }
         let rate = track.info.rate;
@@ -359,7 +361,7 @@ impl Engine {
 
     /// Takes back up to `frames` of what the output has not played (as
     /// much as the track still holds); returns how many.
-    fn take_back(&mut self, frames: u64) -> Result<u64, Error> {
+    pub(super) fn take_back(&mut self, frames: u64) -> Result<u64, Error> {
         let (Some(out), Some(track)) = (self.head.out.as_mut(), self.head.playing.as_mut()) else {
             return Ok(0);
         };
@@ -448,6 +450,7 @@ fn jumped(cues: &mut std::collections::VecDeque<Cue>, track: &Track, written: u6
         seg_out: track.seg_out,
         seg_frame: track.seg_frame,
         warp: None,
+        key: track.key(),
     };
     let seconds = heard.seconds_at(written);
     let index = track.index;

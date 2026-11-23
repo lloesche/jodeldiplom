@@ -288,7 +288,7 @@ fn the_delay_in_force_is_the_first_there_is_and_says_where_it_comes_from() {
     );
     // The tab says it: the Delay row the value in force, the sync row
     // where it comes from.
-    use jodeldiplom::core::karaoke::Slider;
+    use jodeldiplom::core::sliders::Slider;
     assert_eq!(Slider::Delay.text(&state).trim(), "100 ms");
     assert_eq!(
         jodeldiplom::view::sync::source_text(&state),
@@ -332,7 +332,7 @@ fn mid_song_the_delay_never_jumps_but_a_nudge_or_a_sync_does_at_once() {
     }
     assert!((was - (DEFAULT_LATE + 2.0 * SLEW)).abs() < 1e-9, "{was}");
     // A nudge: at once.
-    state.karaoke.focus = jodeldiplom::core::karaoke::Slider::Delay;
+    state.karaoke.focus = jodeldiplom::core::sliders::Slider::Delay;
     state.screen = Screen::Main;
     op(&mut state, Op::SliderUp);
     state.screen = Screen::Karaoke;

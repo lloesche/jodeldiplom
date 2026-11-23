@@ -27,8 +27,6 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use jodel_output::Clock;
-
 use crate::error::Error;
 use crate::transition::TempoMode;
 use crate::warp::TimeMap;
@@ -36,7 +34,7 @@ use crate::warp::TimeMap;
 use super::api::Event;
 use super::lanes::next_of;
 use super::track::{
-    crossfade, frames_of, AlongMap, Back, Cue, CueEvent, HeardWarp, Progress, Track,
+    crossfade, frames_of, AlongMap, Back, Cue, CueEvent, HeardFrom, HeardWarp, Progress, Track,
 };
 use super::{Engine, WRITE_WAIT};
 
@@ -62,7 +60,7 @@ pub(super) struct PendingAlong {
     from: u64,
 }
 
-/// Why a track cannot be read along a map now, if it cannot.
+/// Why a track cannot be read along a map at all now, if it cannot.
 fn refusal(engine: &Engine, track: &Track) -> Option<String> {
     let Some(out) = engine.head.out.as_ref() else {
         return Some("no output is open".into());
@@ -76,8 +74,6 @@ fn refusal(engine: &Engine, track: &Track) -> Option<String> {
         Some("it is not on its own route".into())
     } else if out.output.lanes() <= 1 {
         Some("the output takes no stems beside it".into())
-    } else if engine.head.lead > 0 {
-        Some("its count-in is playing".into())
     } else if engine.head.switch.as_ref().is_some_and(|s| s.spliced) {
         Some("its move to another route is meeting it".into())
     } else {
@@ -128,9 +124,29 @@ impl Engine {
         }
     }
 
-    /// Why `track` cannot be read along a map now, if it cannot.
+    /// Why `track` cannot be read along a map from a frame now, if it
+    /// cannot: as [`Engine::map_refusal`], and not while a count-in plays.
     pub(super) fn along_refusal(&self, track: &Track) -> Option<String> {
+        if self.head.lead > 0 {
+            return Some("its count-in is playing".into());
+        }
+        self.map_refusal(track)
+    }
+
+    /// Why `track` cannot be read along a map at all now, if it cannot (a
+    /// track not heard yet behind a count-in can: from its first frame).
+    pub(super) fn map_refusal(&self, track: &Track) -> Option<String> {
         refusal(self, track)
+    }
+
+    /// A move onto a map waiting for its frame takes `key` there; whether
+    /// one is waiting.
+    pub(super) fn set_pending_key(&mut self, key: i8) -> bool {
+        let Some(pending) = self.head.along_at.as_mut() else {
+            return false;
+        };
+        pending.map.key = key;
+        true
     }
 
     /// The playing track is read along a map, as `heard` puts it, from
@@ -147,7 +163,7 @@ impl Engine {
         tempo: TempoMode,
     ) -> Result<(), String> {
         let track = self.head.playing.as_ref().ok_or("nothing is playing")?;
-        if let Some(why) = refusal(self, track) {
+        if let Some(why) = self.along_refusal(track) {
             return Err(why);
         }
         let index = track.index;
@@ -155,7 +171,11 @@ impl Engine {
         self.head.lanes.prepare_along(track, &heard, from);
         self.head.along_at = Some(PendingAlong {
             segment: track.segment.id,
-            map: AlongMap { heard, tempo },
+            map: AlongMap {
+                heard,
+                tempo,
+                key: self.key,
+            },
             from,
         });
         self.cancel_switch();
@@ -168,21 +188,20 @@ impl Engine {
         Ok(())
     }
 
-    /// A head that is not playing yet (a transition's next track, on a head
-    /// of its own) is read along a map from its first frame, output frame
-    /// 0, as `heard` puts it there, by `tempo`, silent until the clock of
-    /// `heard_from` (the playing head's) is at its frame (its stems may be
+    /// A track nothing of whose segment is written yet (a transition's next
+    /// track, on a head of its own, from its first frame; a track installed
+    /// in a key) is read along `map` from output frame `at`, its segment's
+    /// first, silent until `heard_from` says it is heard (its stems may be
     /// waited for until that is near): its stems' run starts now.
     pub(super) fn start_along(
         &mut self,
         track: &mut Track,
-        heard: HeardWarp,
-        tempo: TempoMode,
-        heard_from: (Clock, u64),
+        map: AlongMap,
+        at: u64,
+        heard_from: HeardFrom,
     ) {
-        let heard = Arc::new(heard);
-        self.head.lanes.prepare_along(track, &heard, 0);
-        track.go_along(AlongMap { heard, tempo }, 0, 0);
+        self.head.lanes.prepare_along(track, &map.heard, at);
+        track.go_along(map, at, 0);
         if let Some(along) = track.along.as_mut() {
             along.heard_from = Some(heard_from);
         }
@@ -208,9 +227,10 @@ impl Engine {
         Some(track.out_at + to)
     }
 
-    /// Moves `track` onto `map` from the frame written next, its route's
-    /// output made through a switch's fade first (to crossfade from).
-    fn begin_along(&mut self, track: &mut Track, map: AlongMap) -> Result<(), Error> {
+    /// Moves `track` onto `map` from the frame written next, joined to what
+    /// played: what it made from there (its route's, or along its map as it
+    /// was) made through a switch's fade first, to crossfade from.
+    pub(super) fn join_along(&mut self, track: &mut Track, map: AlongMap) -> Result<(), Error> {
         let out = self.head.out.as_ref().ok_or(Error::Stopped)?;
         let (at, rate) = (out.output.written(), out.info.format.rate);
         let fade = frames_of(self.switch_fade, rate) as usize;
@@ -220,18 +240,50 @@ impl Engine {
             }
         }
         track.go_along(map, at, fade);
-        // What its route queued past there is not heard; its position is
-        // the map's from there.
+        // What it queued past there is not heard; its position is the
+        // map's from there.
+        self.requeue_heard(track, at);
+        Ok(())
+    }
+
+    /// `track` is heard as it is now from output frame `at`: what was
+    /// queued for it from there (its clips, how it was heard) goes.
+    pub(super) fn requeue_heard(&mut self, track: &Track, at: u64) {
         let index = track.index;
-        self.cues.retain(|c| {
-            c.at < at || !matches!(&c.event, CueEvent::Clipped { index: i, .. } if *i == index)
-        });
+        let stale = |event: &CueEvent| match event {
+            CueEvent::Clipped { index: i, .. } => *i == index,
+            CueEvent::Heard(heard) => heard.index == index,
+            _ => false,
+        };
+        self.cues.retain(|c| c.at < at || !stale(&c.event));
         let at = at.max(self.cues.back().map_or(0, |c| c.at));
         self.cues.push_back(Cue {
             at,
             event: CueEvent::Heard(track.heard()),
         });
-        Ok(())
+    }
+
+    /// A transition's next track on a device, waiting for its parts, has
+    /// frames the desk plays past meanwhile: they are not heard (written
+    /// then, they are late and dropped), so silence stands for them from
+    /// `main_end` (where its main is made to) up to `unplayed`, made at
+    /// once and written as the playing track plays; its parts, or the whole
+    /// mix, start after them, with no stretch of late frames to get through
+    /// first. Returns where its main is made to now.
+    fn fill_unheard(&mut self, track: &mut Track, main_end: u64, unplayed: u64) -> u64 {
+        if unplayed <= main_end {
+            return main_end;
+        }
+        let ch = usize::from(track.route.channels).max(1);
+        let before = track.out_buf.len();
+        track
+            .out_buf
+            .resize(before + (unplayed - main_end) as usize * ch, 0);
+        if let Some(along) = track.along.as_mut() {
+            along.tail = None;
+        }
+        self.after_output(track, before);
+        unplayed
     }
 
     /// One piece of a head read along a map: its parts made a piece past
@@ -276,19 +328,33 @@ impl Engine {
         } else {
             end.saturating_sub(margin)
         };
+        // A head's own wait to be heard (a count-in) is over once it is.
+        if let Some(along) = track.along.as_mut() {
+            along.heard_from.take_if(|h| h.heard_now());
+        }
+        let heard_from = track.along.as_ref().and_then(|a| a.heard_from.as_ref());
+        let (pending, silent) = (
+            heard_from.is_some(),
+            heard_from.map_or(0, HeardFrom::silent),
+        );
+        let unplayed = heard_from.map_or(0, HeardFrom::unplayed);
+        let main_end = if !self.offline && to <= main_end && !done {
+            self.fill_unheard(track, main_end, unplayed)
+        } else {
+            main_end
+        };
         // On a device stems that are not separated in time would leave it
         // with nothing to play: the whole mix from here (unless a while of
         // its silence is still to be heard first: a transition's next
-        // track's frames late then are dropped on the desk, in time).
+        // track's frames late then are dropped on the desk, in time), from
+        // where its main is made to for a next track (the silence above).
         let short = to < main_end + fade.max(1);
-        let silent = track
-            .along
-            .as_ref()
-            .and_then(|a| a.heard_from.as_ref())
-            .map_or(0, |(clock, at)| at.saturating_sub(clock.position()));
         let soon = (silent as f64) < SOON * f64::from(rate);
         if !self.offline && short && soon && making.waiting && self.head.lanes.along_separating() {
-            self.head.lanes.along_whole(track, written);
+            let from = if pending { main_end } else { written };
+            // (What follows the track is the writes' business: `before`.)
+            let want = ask.want(track, super::lanes::Next::Nothing);
+            self.head.lanes.along_whole(&want, from);
             let reason = "the stems were not separated in time: the whole mix plays".into();
             self.emit(Event::PartsStopped { index, reason });
             return Ok(Progress::Busy);
@@ -341,7 +407,8 @@ impl Engine {
                 return Ok(());
             };
             let meeting = self.head.switch.as_ref().is_some_and(|s| s.spliced);
-            let result = if track.segment.id != pending.segment {
+            let dropped = track.segment.id != pending.segment;
+            let result = if dropped {
                 self.head.lanes.forget_ahead();
                 Ok(())
             } else if written < pending.from || meeting {
@@ -349,10 +416,15 @@ impl Engine {
                 Ok(())
             } else {
                 self.cancel_switch();
-                self.begin_along(&mut track, pending.map)
+                self.join_along(&mut track, pending.map)
             };
             self.head.playing = Some(track);
-            return result;
+            // The key it was to take goes on the head as it is.
+            return if dropped {
+                result.and_then(|()| self.key_now())
+            } else {
+                result
+            };
         }
         let switching = self.head.switch.is_some();
         let steady = self.head.lanes.along_offset().abs() < 1.0;
@@ -367,7 +439,9 @@ impl Engine {
         let heard = &along.map.heard;
         let a = heard.a0
             + written.saturating_sub(heard.origin) as f64 / f64::from(heard.out_rate.max(1));
-        let straight = along.leave || (a >= heard.map.settled_at() + STRAIGHT && steady);
+        // (In a key of its own it stays on the map.)
+        let settled = a >= heard.map.settled_at() + STRAIGHT && steady && along.map.key == 0;
+        let straight = along.leave || settled;
         if along.back != Back::Reading || !straight {
             return Ok(());
         }

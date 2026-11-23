@@ -75,6 +75,7 @@ fn position(index: usize, head: usize, seconds: f64, frame: u64, rate: f64) -> A
         seconds,
         frame: (seconds * rate) as u64,
         output_frame: frame,
+        key: 0,
     }))
 }
 

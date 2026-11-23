@@ -3,9 +3,10 @@
 
 use ratatui::layout::{Position, Rect};
 
-use crate::core::karaoke::{self, Slider};
+use crate::core::karaoke;
 use crate::core::keymap::Op;
 use crate::core::layout::{self, Bottom, Layout};
+use crate::core::sliders::Slider;
 use crate::core::text::{self, Tone};
 use crate::core::update::{device_window, folder_window, list_cursor, list_len, palette_window};
 use crate::core::{Action, Screen, SettingsRow, Side, State};

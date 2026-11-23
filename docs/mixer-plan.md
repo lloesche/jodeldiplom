@@ -415,12 +415,48 @@ bit-exact tests, run through the desk.
 - **Still to come**: checks on real files at a USB DAC's rates, through
   the device in real time.
 
+### The key shift, as built
+
+- **In the map's pass** (`Command::Key { semitones }`, −6 to +6;
+  `playback/src/engine/key.rs`, `engine/shift.rs`, `engine/warping.rs`):
+  the head on air reads its stems along a map, the identity on its own
+  route, n semitones apart. Every stem but the drums is stretched by
+  r = 2^(n/12) (a phase vocoder a channel, at 1/r of the map's speed when
+  the map is stretched to) and read r times faster through the map's
+  reader, at the stretched frame whose input time the map gives each
+  output frame: as long as before, every frequency ×r, on the drums'
+  instants. Main is their sum, as along any map; without stems (none, or
+  late on a device) the whole mix is shifted as "other". Back at 0 on the
+  identity map the head returns to its own route, bit for bit. 6 shifted
+  channels and 2 read along cost 6–9 % of a core at 44.1 kHz
+  (`PERFORMANCE.md`), before the parts' resampling.
+- **Heard at once**: the output gives back what it has not played (as a
+  jump; the head keeps the output's ring on a device's output of lanes),
+  and the head starts again there in the new key from its stems kept,
+  crossfaded as a move onto a map is: 50–60 ms after the command on a
+  paced device. A track nothing of which is written takes it from its
+  first frame (a count-in's silence first).
+- **The rules**: the key stays for the tracks the queue runs into and for
+  the track it is on picked again (Karaoke's START replays the song held
+  at its start), and one asked while nothing plays is for the track
+  picked next; another track picked puts it back at 0. While shifted, new
+  settings wait for the key's way back or the next track and jumps are
+  refused, each with a notice. No transition
+  while the key is shifted, and no key change while one is set up: the
+  next track would need the key on its own head, and the playing one its
+  glide stacked on it (a key carried to B at the hand-over only if the
+  app asks again, later). `Event::Key` says the key asked for,
+  `Position::key` the key heard, on its frame.
+- **The app**: `-`, `+` and `0` on the Karaoke tab (its Key slider) and
+  the Mixer tab (the PLAYER strip shows it); the song's notes and the
+  scoring move with the key heard, so singing in the new key scores.
+
 ### Later
 
-- **The key shift**, next: per head, in the same stretch and resample
-  pass as its map.
 - The karaoke replay and stem loops, as players of their own on the link
   and automation.
+- The key on both heads of a transition (harmonic mixing): B's map in its
+  own key, A's glide on top of its key.
 
 ## Risks
 

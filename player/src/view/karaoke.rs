@@ -15,13 +15,14 @@ use ratatui::Frame;
 
 use super::colors::*;
 use super::{keep_start, Pictures, Scene};
-use crate::core::karaoke::{self, Slider};
+use crate::core::karaoke;
 use crate::core::lanes::{self, WordLines};
 use crate::core::layout::SWITCH;
 use crate::core::layout::{
     KaraokeLayout, KaraokeTabLayout, SliderLayout, KARAOKE_ENTER, KARAOKE_START,
 };
 use crate::core::singing::{notes_of, Hit, Level, LineNotes, Medal, Note, Singing, SongResult};
+use crate::core::sliders::Slider;
 use crate::core::text::{self, width};
 use crate::core::{Gpu, State};
 

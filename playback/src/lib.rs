@@ -75,8 +75,8 @@ pub mod warp;
 
 pub use desk::StemDesk;
 pub use engine::{
-    Command, Event, Head, HeadFaders, JumpAt, MakeStems, PlayState, Player, PlayerOptions,
-    Position, TrackStart, OPEN_BUSY_WAIT,
+    ratio_of, Command, Event, Head, HeadFaders, JumpAt, MakeStems, PlayState, Player,
+    PlayerOptions, Position, TrackStart, KEY_RANGE, OPEN_BUSY_WAIT,
 };
 pub use error::Error;
 pub use rate::{

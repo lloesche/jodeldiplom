@@ -365,6 +365,39 @@ stem keys are their mutes.
   keeps drawing (the meter moves with the voice), whether a song plays or
   not.
   - `the_microphone_is_open_while_karaoke_shows`
+- **K19.** The key (`-` `+` `0` on the Karaoke tab, also its Key row, and
+  on the Mixer tab, shown on the PLAYER strip) plays the song up to 6
+  semitones higher or lower, its tempo kept: every stem but the drums
+  shifted, the whole mix without stems. It never moves playback (no
+  jump, no gap; positions and the lyrics' timing are unchanged) and is
+  heard within 0.1 s of the frame heard when it was asked for, without a
+  click; at 0 the file plays bit for bit again. The song's notes and the
+  scoring move with the key heard, and Keep records it. It stays for the
+  songs the queue runs into and for the song it is on started again
+  (START), one set while nothing plays is the next song's, and another
+  output or an engine restarted keeps it; another song picked is in its
+  own key. No transition while the key is shifted, and no key change
+  while one is set up; new settings wait for the song's own key or the
+  next song, and jumps are refused (each says why).
+  - `the_keys_change_the_key_on_the_karaoke_tab_and_show_it`
+  - `the_key_slider_is_a_row_of_the_tab`
+  - `the_mixer_tab_changes_the_key_and_its_player_strip_shows_it`
+  - `the_notes_and_the_scoring_follow_the_key_heard`
+  - `a_new_engine_is_told_the_key_after_the_queue`
+  - `the_voice_goes_to_wav_and_back_with_its_times` (`keep`)
+  - `in_another_key_the_notes_move_and_the_singing_is_held_to_them` (`core::singing`)
+  - `a_sine_two_up_comes_out_at_its_new_frequency_as_long_and_without_a_click` (engine)
+  - `the_drums_keep_their_key_and_the_other_stems_are_shifted` (engine)
+  - `back_at_0_the_file_plays_bit_for_bit` (engine)
+  - `the_key_carries_into_the_next_track_and_goes_at_a_track_picked` (engine)
+  - `two_keys_in_a_row_crossfade_as_one_does` (engine)
+  - `a_key_asked_while_nothing_plays_is_the_next_songs` (engine)
+  - `a_key_asked_during_a_count_in_is_heard_from_the_songs_first_frame` (engine)
+  - `a_seek_keeps_the_key` (engine)
+  - `a_head_on_a_time_map_takes_the_key_on_it` (engine)
+  - `on_a_device_stems_that_do_not_come_give_way_to_the_whole_mix_in_the_key` (engine)
+  - `on_a_device_a_key_change_is_heard_within_a_tenth_of_a_second` (engine)
+  - `no_transition_in_a_key_and_no_key_in_a_transition` (engine)
 - **K10.** A microphone giving only exact zeros for 1.5 s is shown as
   silent, with what to check (on macOS: the system's permission).
   - `a_microphone_giving_only_zeros_is_told_apart` (output)

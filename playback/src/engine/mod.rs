@@ -49,7 +49,8 @@
 //! seeking, stopping and running into the next track), `jump`, `queue`,
 //! `transition` (a transition compiled onto a desk), `heads` (a second
 //! output on the desk, for a transition's next track), `warping`, `along`
-//! (a head read along a time map), and `lanes` (the stems as parts of an
+//! (a head read along a time map), `key` and `shift` (the head on air in
+//! another key, on such a map), and `lanes` (the stems as parts of an
 //! output of lanes).
 
 use std::collections::VecDeque;
@@ -68,10 +69,12 @@ mod along;
 mod api;
 mod heads;
 mod jump;
+mod key;
 mod lanes;
 mod play;
 mod produce;
 mod queue;
+mod shift;
 mod switch;
 mod track;
 mod transition;
@@ -81,6 +84,7 @@ pub use api::{Command, Event, PlayState, Player, PlayerOptions, Position, TrackS
 pub use heads::{Head, HeadFaders};
 pub use jump::JumpAt;
 pub use lanes::MakeStems;
+pub use shift::{ratio_of, KEY_RANGE};
 
 use track::{drop_later, preroll, Cue, CueEvent, Heard, Progress, StartAt, Track};
 
@@ -155,6 +159,10 @@ struct Engine {
     hold: bool,
     /// Where the tracks' segments get their ids.
     segments: track::Segments,
+    /// [`Command::Key`]: the key asked for, and the file it is on (another
+    /// picked resets it; none: it is for the one picked next).
+    key: i8,
+    key_song: Option<PathBuf>,
 }
 
 impl Engine {
@@ -182,6 +190,8 @@ impl Engine {
             lead_in: 0.0,
             hold: false,
             segments: track::Segments::default(),
+            key: 0,
+            key_song: None,
         }
     }
 
@@ -237,17 +247,17 @@ impl Engine {
                 self.emit_queue();
             }
             Command::Play(index) => {
-                self.pick();
+                self.pick(index);
                 self.jump(index, 0.0);
             }
             Command::PlayIn { index, lead } => {
-                self.pick();
+                self.pick(index);
                 self.lead_in = if lead.is_finite() { lead.max(0.0) } else { 0.0 };
                 self.jump(index, 0.0);
                 self.lead_in = 0.0;
             }
             Command::PlayAt { index, share } => {
-                self.pick();
+                self.pick(index);
                 let share = if share.is_finite() {
                     share.clamp(0.0, 1.0)
                 } else {
@@ -297,13 +307,13 @@ impl Engine {
                     return;
                 }
                 if let Some(index) = self.current_index() {
-                    self.pick();
+                    self.pick(index + 1);
                     self.jump(index + 1, 0.0);
                 }
             }
             Command::Previous => {
                 if let Some(index) = self.current_index() {
-                    self.pick();
+                    self.pick(index.saturating_sub(1));
                     self.jump(index.saturating_sub(1), 0.0);
                 }
             }
@@ -318,15 +328,18 @@ impl Engine {
             Command::Jump { index, to, at } => self.jump_within(index, to, at),
             Command::JumpWindow { back, ahead } => self.jump_window = (back, ahead),
             Command::MakeStems(make) => self.every_lanes().for_each(|l| l.set_make(make)),
+            Command::Key { semitones } => self.set_key(semitones),
             Command::Along { map, from, tempo } => self.read_along(map, from, tempo),
         }
     }
 
-    /// A track is picked to play (not run into): playback plays, and the
-    /// device opens again at the track's own rate if it must.
-    fn pick(&mut self) {
+    /// Track `index` is picked to play (not run into): playback plays, the
+    /// device opens again at the track's own rate if it must, and the key
+    /// goes back to 0 unless it is for this track ([`Engine::key_picked`]).
+    fn pick(&mut self, index: usize) {
         self.paused = false;
         self.pinned = None;
+        self.key_picked(index);
     }
 
     /// [`Command::Resume`]: the outputs paused play on.
@@ -370,6 +383,11 @@ impl Engine {
         }
         if settings != self.settings {
             self.pinned = None;
+            // Shifted, the head keeps its map until it is back in its key.
+            if self.head_shifted() {
+                let index = self.head.playing.as_ref().map(|t| t.index);
+                self.notice(index, key::SETTINGS_WAIT.into());
+            }
         }
         self.settings = settings;
         self.reroute();
@@ -536,6 +554,7 @@ impl Engine {
             seconds: heard.seconds_at(output_frame),
             frame: heard.frame_at(output_frame),
             output_frame,
+            key: heard.key,
         };
         self.last_report = Some((Instant::now(), output_frame));
         self.emit(Event::Position(event));

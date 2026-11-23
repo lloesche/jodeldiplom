@@ -8,6 +8,8 @@
 //! ```
 //!
 //! `--late`: how late the voice comes, instead of what the game took then.
+//! Sung where the song played in another key (its `key` lines), the voice
+//! is moved back into the song's own by as many semitones.
 //! `--words`: each word, how it was sung and scored. `--auto`: the delay
 //! estimated from the singing as the game does it
 //! ([`jodeldiplom::core::lag::estimate`]), every 10 s of the song at each
@@ -59,8 +61,10 @@ fn main() {
         kept_late * 1000.0
     );
 
-    // The pitch, frame by frame, at the time in the song it was sung.
-    let frames = pitch(&voice, rate, &marks, late);
+    // The pitch, frame by frame, at the time in the song it was sung, in
+    // the song's own key.
+    let keys = keep::read_keys(&about);
+    let frames = pitch(&voice, rate, &marks, &keys, late);
     let lyrics = Arc::new(lyrics);
 
     // How much of the singing is heard as a pitch, and how steadily.
@@ -159,7 +163,7 @@ fn main() {
         args.iter().any(|a| a == "--words"),
     );
     if args.iter().any(|a| a == "--auto") {
-        auto(&pitch(&voice, rate, &marks, 0.0), &lyrics, &melody);
+        auto(&pitch(&voice, rate, &marks, &keys, 0.0), &lyrics, &melody);
     }
 }
 
@@ -297,8 +301,16 @@ fn words(s: &Singing, lyrics: &jodel_lyrics::Lyrics) {
     }
 }
 
-/// The voice's pitch frame by frame, each at the song's time it was sung.
-fn pitch(voice: &[f32], rate: u32, marks: &[(usize, f64)], late: f64) -> Vec<Frame> {
+/// The voice's pitch frame by frame, each at the song's time it was sung,
+/// moved back by the key the song was heard in then (`keys`: from each
+/// sample on, semitones).
+fn pitch(
+    voice: &[f32],
+    rate: u32,
+    marks: &[(usize, f64)],
+    keys: &[(usize, i8)],
+    late: f64,
+) -> Vec<Frame> {
     let mut out = Vec::new();
     let mut yin = Yin::new(rate);
     let mut m = 0;
@@ -313,9 +325,14 @@ fn pitch(voice: &[f32], rate: u32, marks: &[(usize, f64)], late: f64) -> Vec<Fra
             }
         }
         let (k, t0) = marks.get(m).copied().unwrap_or((0, 0.0));
+        let key = keys
+            .iter()
+            .rev()
+            .find(|&&(at, _)| at <= i)
+            .map_or(0, |&(_, s)| s);
         yin.push(&[x], |cents| {
             let t = t0 + (i - k) as f64 / f64::from(rate) - late - WINDOW / 2.0;
-            out.push((t, cents));
+            out.push((t, cents.map(|c| c - 100.0 * f32::from(key))));
         });
     }
     out

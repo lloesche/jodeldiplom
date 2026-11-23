@@ -31,9 +31,10 @@ pub use track::Track;
 
 use ratatui::layout::Rect;
 
-use crate::core::karaoke::{self, Slider};
+use crate::core::karaoke;
 use crate::core::keymap::Op;
 use crate::core::singing::Level;
+use crate::core::sliders::Slider;
 use crate::core::text::{self, width};
 use crate::core::{Gpu, Screen, Side, State};
 
@@ -1026,12 +1027,16 @@ fn karaoke_tab(inner: Rect, session: Option<&crate::core::sync::Session>) -> Kar
     let title = Rect::new(x, row(0), room, 2.min(inner.height));
     let enter_w = (width(KARAOKE_ENTER) as u16 + 4).min(room);
     let enter = Rect::new(x, row(3), enter_w, 3.min(inner.height.saturating_sub(4)));
-    let sliders = Slider::ALL
-        .iter()
-        .enumerate()
-        .map(|(k, &s)| slider_at(s, x, row(7 + k as u16), room))
-        .collect();
-    let sync = Rect::new(x, row(9), (SLIDER_LABEL + SYNC_BUTTON).min(room), 1);
+    // A row each from the seventh, the sync's row right after the delay's.
+    let (mut at, mut sync_row, mut sliders) = (7, 0, Vec::new());
+    for &s in &Slider::ALL {
+        sliders.push(slider_at(s, x, row(at), room));
+        at += 1;
+        if s == Slider::Delay {
+            (sync_row, at) = (at, at + 1);
+        }
+    }
+    let sync = Rect::new(x, row(sync_row), (SLIDER_LABEL + SYNC_BUTTON).min(room), 1);
     // Over the button into the mode and the rows below it.
     let panel =
         session.map(|_| Rect::new(x, row(3), room, PANEL.min(inner.height.saturating_sub(4))));

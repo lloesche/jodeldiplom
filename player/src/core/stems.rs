@@ -124,7 +124,7 @@ pub fn make_wanted(state: &State) -> MakeStems {
 /// the fader's taper), else all 1.
 pub fn lanes_due(state: &State) -> [f64; STEMS] {
     let voice = if karaoke::shown(state) {
-        taper::gain(karaoke::voice_db(state.config.karaoke_voice))
+        taper::gain(super::sliders::voice_db(state.config.karaoke_voice))
     } else {
         1.0
     };

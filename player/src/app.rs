@@ -1048,11 +1048,11 @@ impl App {
     fn restart_engine(&mut self) {
         let queue = self.state.queue.paths.clone();
         self.engine = None;
-        self.state.playing = core::Playing::default();
+        let first = core::key::for_new_engine(&mut self.state, queue);
         let output = self.output.clone();
         self.start_engine(&output);
-        if let (Some(engine), false) = (&self.engine, queue.is_empty()) {
-            let _ = engine.player.send(Command::Load(queue));
+        if let Some(engine) = &self.engine {
+            first.into_iter().for_each(|c| drop(engine.player.send(c)));
         }
     }
 
@@ -1209,7 +1209,7 @@ impl App {
             }
             if let Some(kept) = self.kept.as_mut() {
                 for &(block, at, continues) in &placed {
-                    let how = (late, source.key());
+                    let how = crate::keep::Sung::new(late, source.key(), singing.shift());
                     kept.push(&block.samples, block.rate, at, continues, how);
                 }
             }
@@ -1810,12 +1810,12 @@ impl App {
             let _ = engine.player.stop();
         }
         self.generation.fetch_add(1, Ordering::SeqCst);
-        self.state.playing = core::Playing::default();
+        let first = core::key::for_new_engine(&mut self.state, queue);
         self.start_engine(&output);
-        if queue.is_empty() || self.engine.is_none() {
+        if first.is_empty() || self.engine.is_none() {
             return;
         }
-        self.engine_command(Command::Load(queue));
+        first.into_iter().for_each(|c| self.engine_command(c));
         if let (Some(index), PlayState::Playing | PlayState::Paused) = (current, was) {
             self.engine_command(Command::Play(index));
             if position > 0.5 {

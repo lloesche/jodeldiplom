@@ -91,7 +91,7 @@ pub struct Config {
     pub stems_on_bar: bool,
     /// Karaoke mode: the voice stem's level, as a position along its
     /// slider in percent (0, −∞, to 100, 0 dB), read on the fader's taper
-    /// ([`crate::core::karaoke::voice_db`]).
+    /// ([`crate::core::sliders::voice_db`]).
     pub karaoke_voice: u8,
     /// The microphone, an input device id; `None`: the system's default.
     pub karaoke_mic_device: Option<String>,

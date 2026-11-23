@@ -10,7 +10,7 @@
 │ │                                     │   Voice       ●───────────────────────────────────────   −∞ dB               │
 │ │                                     │   Delay       ━━━━━━━━━━●─────────────────────────────  150 ms               │
 │ │                                     │   Sync  (s)    sync   default                                                │
-│ │                  ♪                  │                                                                              │
+│ │                  ♪                  │   Key         ━━━━━━━━━━━━━━━━━━━━●───────────────────       0               │
 │ │                                     │   Game  (g)    on    your singing scored, a medal and a best for each song   │
 │ │                                     │   Level (d)    easy   medium   hard   any key, its steps                     │
 │ │                                     │   Notes (p)    on    the song's notes run by in the mode, for you to sing on │

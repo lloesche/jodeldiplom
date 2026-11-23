@@ -727,8 +727,9 @@ seven times over where its text has it once.
 |---|---|
 | `enter` / the button | Karaoke mode |
 | `shift+enter` / shift+click on the button | Karaoke mode where the song is: no rewind, no count-in |
-| `↑` `↓` | the row the arrows move: the voice, the delay |
-| `←` `→` | its value down, up: the voice 1 dB (at −45 dB or below: off; from off: −45 dB; `shift`: 1 % of its travel), the delay 10 ms (its nudge); a click, drag or the wheel on a slider too |
+| `↑` `↓` | the row the arrows move: the voice, the delay, the key |
+| `←` `→` | its value down, up: the voice 1 dB (at −45 dB or below: off; from off: −45 dB; `shift`: 1 % of its travel), the delay 10 ms (its nudge), the key a semitone; a click, drag or the wheel on a slider too |
+| `-` `+` (or `=`) `0` | the key a semitone down, up, the song's own (also on the Mixer tab) |
 | `s` / a click on sync | sync: measure how late your voice comes (a microphone open) |
 | `i` | the next microphone |
 | `r` | record 30 s of what the echo canceller works with (also in the mode) |
@@ -736,6 +737,21 @@ seven times over where its text has it once.
 | `d` / a click on a level | the level: easy, medium, hard |
 | `p` / a click on Notes | the song's notes shown or hidden |
 | a click on Keep | your singing of each song kept, or not |
+
+The **key** (the tab's Key row, −6 to +6 semitones, `0` the song's own)
+plays the song higher or lower, its tempo kept, to sing it where it suits
+your voice: every stem but the drums is shifted (pitch-shifting drums
+smears their hits), the whole mix where there are no stems (no GPU and
+none kept). A change is heard within about a tenth of a second, without a
+click; back at 0 the file plays bit for bit again. The song's notes and
+the scoring move with the key heard, so singing in the new key scores as
+singing in the song's own did. The key stays for the songs the queue runs
+into, and for the song it is on started again (START in the mode); another
+song picked plays in its own key; a key set while nothing plays (a song
+held for START) is the next song's. Another output or the engine started
+again keeps it. No transition is armed while the key is shifted, and the
+key stays while one is; new settings wait for the song's own key or the
+next song, and bar jumps are refused meanwhile (each says so).
 
 The game is set on the tab only, not in the mode: a song is sung at one
 level from its start to its end, and only a song whose words were nearly
@@ -776,7 +792,9 @@ settings file with the voice as the echo canceller cleaned it
 (`voice.wav`), where in the song each part was sung (`times.txt`), the
 lyrics with our word times and the song's melody as the game held the
 singing against them, and the delay the game took (and where it came
-from). The `sing_replay` example hears it again as the game does and
+from), and the key the song was heard in where it was not its own
+(`about.txt`'s `key` lines). The `sing_replay` example hears it again as
+the game does (in the song's own key) and
 tells how the pitch was detected (how much of the notes had a pitch, how
 steadily, the jumps), when the singing came in against the words, and
 what each level scored, word by word with `--words`; with `--auto`, the
@@ -900,7 +918,8 @@ keys go through the strips drawn.
   selected), what the strip carries (the format; the player's LEAD row,
   lit while the track on air is heard, and while a transition mixes, or
   the track it left plays out what it holds, a NEXT row for the other
-  one, each with the gain the transition's fade puts on it now; how full
+  one, each with the gain the transition's fade puts on it now; the key
+  the song on air plays in, beside LEAD, while it is not its own; how full
   the ring is, and `↓` with the frames the next track dropped where it
   fell behind; the preview's two
   players A and B with the gain of each in dB, so a crossfade can be
@@ -980,6 +999,7 @@ are buttons.
 | `s` | solo the strip, or not |
 | `e` | the microphone's echo canceller on or off |
 | `i` | the next microphone |
+| `-` `+` (or `=`) `0` | the key a semitone down, up, the song's own (shown on the PLAYER strip) |
 
 The capitals keep their commands here (`M` the beat pulse, `S` stop);
 `esc` does nothing on the tab.
@@ -988,7 +1008,7 @@ The capitals keep their commands here (`M` the beat pulse, `S` stop);
 
 | Module | |
 |---|---|
-| `core` | state, `Action`, `update(state, action) -> effects`, layout in cells with its collapse rules, keymap, mouse regions; the Transition tab (`core::transition::tab`, the lanes it shares with Karaoke in `core::lanes`), the grid fixes (`core::grid`), the transitions' presets and plans (`core::transition`), the Karaoke tab and mode (`core::karaoke`), the Mixer tab's desk (`core::desk`: its strips, settings, the fader's taper, the meters' ballistics, its mouse) and the stems on it (`core::stems`: the stem keys as strip mutes on a bar of the head on air, when the engine makes stems, the Karaoke voice's lanes on both heads). Pure. |
+| `core` | state, `Action`, `update(state, action) -> effects`, layout in cells with its collapse rules, keymap, mouse regions; the Transition tab (`core::transition::tab`, the lanes it shares with Karaoke in `core::lanes`), the grid fixes (`core::grid`), the transitions' presets and plans (`core::transition`), the Karaoke tab and mode (`core::karaoke`, its sliders in `core::sliders`), the key the song plays in (`core::key`), the Mixer tab's desk (`core::desk`: its strips, settings, the fader's taper, the meters' ballistics, its mouse) and the stems on it (`core::stems`: the stem keys as strip mutes on a bar of the head on air, when the engine makes stems, the Karaoke voice's lanes on both heads). Pure. |
 | `view` | the ratatui widgets for both frontends; the cover, the spectrum, the Transition tab's lanes (`view::transition`, with `view::lanes`, which the Karaoke tab shares) and Karaoke mode's picture (`view::karaoke`) go through `view::Pictures`; the window paints that picture in `gui::karaoke`. The Mixer tab (`view::desk`) is cells only |
 | `app` | the running player: the engine and its desk, background workers, the spectrum (the mixer's monitor), cover; carries out the effects |
 | `desk_wiring` | the desk the engine plays on: a mixer that holds the device (`jodel_output::mixer`), the player's strip with its stems' strips inside it, the preview's, the engine on two lane inputs of them (its two heads: a transition's next track plays on the other); the Mixer tab's settings made on it, its look for a frame |

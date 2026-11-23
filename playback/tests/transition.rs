@@ -177,6 +177,52 @@ fn beats_meet(tempo: TempoMode, within: f64) {
     }
 }
 
+/// B's map at its head's first frame (a second before the window) falls
+/// before B's first frame (B comes in at its first click, 0.2 s in): B
+/// starts that much silence later, so stretched as at a changing speed
+/// its clicks land on A's beats from the first (once they were hundreds
+/// of ms late, crept back at the stretchers' steering).
+#[test]
+fn a_next_track_whose_map_starts_before_it_lands_on_the_beats_from_the_first() {
+    let _serial = serial();
+    for tempo in [TempoMode::Varispeed, TempoMode::Stretch] {
+        let dir = temp_dir(&format!("transition-early-{tempo:?}"));
+        // A at 120 BPM, B at 130 from 0.2 s in.
+        let b_period = 60.0 / 130.0;
+        let (a_path, _) = wav(&dir, "a.wav", 14.0, clicks(0.5, 0.0, 3_000.0));
+        let (b_path, _) = wav(&dir, "b.wav", 14.0, clicks(b_period, 0.2, 5_000.0));
+        let desk = Desk::new(caps(&[RATE], &[S24In32Low]), options());
+        desk.play(vec![a_path, b_path]);
+        let plan = TransitionPlan {
+            start: 4.0,
+            length: 4.0,
+            entry: 0.2,
+            beats: beats(4.0, 0.5, 0.2, b_period, 8),
+            lanes: lanes(Envelope::cut(1.0, 0.0, 0.0), Envelope::cut(0.0, 1.0, 0.0)),
+            tempo,
+            ..fade_plan(fades(), 2.0)
+        };
+        desk.player.transition(plan).unwrap();
+        let seen = step_to_end(&desk.gate, &desk.events);
+        let streams = desk.close();
+        assert!(transitions(&seen).contains(&&TransitionState::Finished));
+        let onsets = onsets(&samples(&streams[0].1));
+        let in_window: Vec<f64> = onsets
+            .iter()
+            .copied()
+            .filter(|&t| (3.9..7.9).contains(&t))
+            .collect();
+        assert_eq!(in_window.len(), 8, "{tempo:?}: {onsets:?}");
+        for (i, t) in in_window.iter().enumerate() {
+            let beat = 4.0 + 0.5 * i as f64;
+            assert!(
+                (t - beat).abs() < 0.002,
+                "{tempo:?}: click {i} at {t}, beat at {beat}: {in_window:?}"
+            );
+        }
+    }
+}
+
 #[test]
 fn gliding_the_tempo_meets_the_beats_and_ends_at_the_next_ones_own() {
     let _serial = serial();

@@ -2049,6 +2049,7 @@ fn apply_op(state: &mut State, op: Op, fx: &mut Vec<Effect>) {
         }
         // Only while a sync shows.
         Op::SyncKeep | Op::SyncAgain => {}
+        Op::KeyDown | Op::KeyUp | Op::KeyReset => super::key::step(state, op, fx),
         Op::MicNext => fx.push(Effect::NextMic),
         Op::KaraokeStart
         | Op::KaraokeRecordEcho
@@ -2202,19 +2203,8 @@ fn engine_event(state: &mut State, event: Event) {
             playing.forget_anchor();
         }
         Event::Position(position) => {
-            if playing
-                .track
-                .as_ref()
-                .is_some_and(|t| t.index == position.index)
-            {
-                playing.position = position.seconds;
-                let (head, frame) = (position.head, position.output_frame);
-                playing.anchor_at(super::Anchor {
-                    index: position.index,
-                    at: super::HeadFrame { head, frame },
-                    seconds: position.seconds,
-                });
-            }
+            playing.told(&position);
+            super::key::heard(state, position.key);
         }
         Event::Seeked { index, seconds } => {
             if playing.track.as_ref().is_some_and(|t| t.index == index) {
@@ -2254,5 +2244,6 @@ fn engine_event(state: &mut State, event: Event) {
         Event::PartsStopped { index, reason } => super::stems::stopped(state, index, &reason),
         Event::QueueEnded => say(state, Level::Info, "End of the queue"),
         Event::Held { index } => karaoke::held(state, index),
+        Event::Key { semitones } => super::key::told(state, semitones),
     }
 }

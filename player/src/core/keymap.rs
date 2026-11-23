@@ -353,6 +353,12 @@ pub enum Op {
     DeskSolo,
     /// The microphone's echo canceller on or off.
     DeskEcho,
+    /// The song a semitone lower, its tempo kept ([`crate::core::key`]).
+    KeyDown,
+    /// The song a semitone higher.
+    KeyUp,
+    /// The song in its own key again.
+    KeyReset,
 }
 
 impl Op {
@@ -461,6 +467,9 @@ impl Op {
             Op::DeskMute => "Mixer: mute the strip selected",
             Op::DeskSolo => "Mixer: solo the strip selected",
             Op::DeskEcho => "Microphone: the echo canceller on or off",
+            Op::KeyDown => "Key: a semitone down",
+            Op::KeyUp => "Key: a semitone up",
+            Op::KeyReset => "Key: the song's own",
         }
     }
 
@@ -1234,8 +1243,8 @@ pub const KEYMAP: &[Binding] = &[
         Op::KaraokeNotes,
         "show or hide the song's notes under the line",
     ),
-    b(Context::Karaoke, &[UP], Op::Up, "the voice's row"),
-    b(Context::Karaoke, &[DOWN], Op::Down, "the delay's row"),
+    b(Context::Karaoke, &[UP], Op::Up, "the row above (voice, delay, key)"),
+    b(Context::Karaoke, &[DOWN], Op::Down, "the row below"),
     b(
         Context::Karaoke,
         &[Key::ch('s')],
@@ -1246,7 +1255,7 @@ pub const KEYMAP: &[Binding] = &[
         Context::Karaoke,
         &[LEFT],
         Op::SliderDown,
-        "the row's value a step down: the voice 1 dB (at −45 dB or below: off), the delay 10 ms (its nudge; ↑ ↓ pick the row)",
+        "the row's value a step down: the voice 1 dB (at −45 dB or below: off), the delay 10 ms (its nudge), the key a semitone (↑ ↓ pick the row)",
     ),
     b(
         Context::Karaoke,
@@ -1266,6 +1275,9 @@ pub const KEYMAP: &[Binding] = &[
         Op::SliderFineUp,
         "the voice 1 % of its travel up",
     ),
+    b(Context::Karaoke, &[Key::ch('-')], Op::KeyDown, "the key a semitone down (the tempo kept; not the drums)"),
+    b(Context::Karaoke, &[Key::ch('+'), Key::ch('=')], Op::KeyUp, "the key a semitone up"),
+    b(Context::Karaoke, &[Key::ch('0')], Op::KeyReset, "the song's own key"),
     // Syncing.
     b(
         Context::Sync,
@@ -1397,6 +1409,9 @@ pub const KEYMAP: &[Binding] = &[
         Op::MicNext,
         "the next microphone (input device)",
     ),
+    b(Context::Desk, &[Key::ch('-')], Op::KeyDown, "the song a semitone down (on the PLAYER strip)"),
+    b(Context::Desk, &[Key::ch('+'), Key::ch('=')], Op::KeyUp, "the key a semitone up"),
+    b(Context::Desk, &[Key::ch('0')], Op::KeyReset, "the song's own key"),
     // Now playing.
     b(Context::NowPlaying, &[ESC], Op::Back, "back"),
     // Settings.

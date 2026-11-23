@@ -222,8 +222,10 @@ count-in drawn from them falls on what is heard) and `HoldAtEnd(bool)`
 (each track's end stops playback instead of running into the next:
 `Held { index }` names the one that would have come), and `PlayAt {
 index, share }` (the track from `share` of its length, its start when the
-length is not known: a preview from a third in), and `MakeStems(Never |
-Kept | Separate)` (the stems as parts of an output of lanes: below).
+length is not known: a preview from a third in), `MakeStems(Never |
+Kept | Separate)` (the stems as parts of an output of lanes: below), and
+`Key { semitones }` (the head on air in another key, its tempo kept:
+**Key shift**, below).
 `Player::on_desk(lead, guest, options)` starts the engine on two heads
 of a desk (`StemDesk::two_heads`), which transitions need: a player on
 one target (`Player::new`) plays everything else as before.
@@ -235,7 +237,7 @@ Events (`Event`), track events in the order they are heard:
 | `QueueChanged { queue, current }` | after `Load` and `Enqueue` |
 | `State(Playing \| Paused \| Stopped)` | play state changes |
 | `TrackStarted(TrackStart)` | a track starts to be heard: `info` (format, tags, cover), `route`, `output` (`StreamInfo`), `device`, `bit_perfect`, and `head`, the head it plays on (0 the first, 1 a desk's second: a transition's next track) |
-| `Position { index, head, seconds, frame, output_frame, generation }` | every `position_interval` while the output clock moves; `output_frame` counts that head's frames |
+| `Position { index, head, seconds, frame, output_frame, key }` | every `position_interval` while the output clock moves; `output_frame` counts that head's frames; `key` is the key heard there, in semitones |
 | `Seeked { index, seconds }` | a seek took effect |
 | `Clipped { index, samples, output_frame }` | the resampler or the source's requantization clipped (the count since the track or the seek started; at most four a second of output) |
 | `TrackEnded { index, finished }` | played to its end, or left |
@@ -244,6 +246,7 @@ Events (`Event`), track events in the order they are heard:
 | `PartsStopped { index, reason }` | the track's stems as parts of the output failed: it has none until they are asked for again |
 | `Transition(Armed \| Started { head, output_frame, origin } \| Finished \| Cancelled { reason })` | a transition was taken, its window began to be heard (at that output frame of that head; the next track's head's frame 0 is that head's `origin`), the next track is back at its own tempo, or it was called off and why |
 | `Jumped { index, seconds }` | a `Jump` is heard: the track plays on from there |
+| `Key { semitones }` | the key asked for is the one played from now (heard within about 0.1 s), a change was refused (the key stays: a notice says why), or a track picked put it back at 0 |
 | `QueueEnded` | the last track played out |
 
 Timing: track, clip, skipped-track and queue-end events are queued
@@ -377,6 +380,42 @@ lengths are exact); otherwise the samples go to the output as read.
   nothing reroutes the head (new settings wait), jumps are refused and no
   transition is set up. A mono file's stems are doubled; a track of more
   than two channels is refused.
+- **Key shift** (`Key { semitones }`, −6 to +6, `KEY_RANGE`;
+  `engine/key.rs`, `engine/shift.rs`): the head on air plays its stems
+  read along a map, as above, a key apart: on its own route along the
+  identity map (its position where it was), along its map if it has one.
+  Every stem but the drums is stretched by the pitch ratio r = 2^(n/12)
+  (a phase vocoder a channel at speed 1/r, the map's speed over r when it
+  is stretched to) and read r times faster through the map's reader, at
+  the stretched frame whose input time the map has for each output
+  frame: as long as before, every frequency ×r, on the same instants as
+  the drums read along the map alone (`engine/warping.rs` reads the
+  channels in groups, each its own way, and interleaves them back).
+  Without stems (no separator, or
+  they failed or come late on a device) the whole mix is shifted, as
+  "other". A change is heard at once: the output gives back what it has
+  not played of the segment (as a jump does; the head keeps the output's
+  ring behind what it wrote on a device's output of lanes), and the head
+  joins its map in the new key there from its stems kept, main
+  crossfaded over `switch_fade` from what was written, the parts as a
+  jump's are (a second change before anything more is written crossfades
+  from the first's start); on a device that is 50–60 ms after the
+  command. A track nothing of whose segment is written yet (installed,
+  run into, sought, a count-in before it) takes the key from its first
+  frame. Back at 0 on the identity map the head goes back
+  onto its own route as above and plays the file bit for bit. The key
+  stays for the tracks the queue runs into and for the track it is on
+  picked again (Karaoke's START), and goes back to 0 when another track
+  is picked (`Play`, `PlayIn`, `PlayAt`, `Next`, `Previous`); one asked
+  while nothing plays is for the track picked next. Positions
+  and lyrics' timing are unchanged: the tempo is. No key change while a
+  transition is set up, and no transition while the key is shifted
+  (`Cancelled("the key is shifted")`): the next track would need the key
+  on its own head and the playing one its glide on top of it, not yet;
+  back at 0, a transition waits for the head to be back on its own
+  route. New settings wait for the key to be 0 or for the next track
+  (a notice says so; a move to them under way waits too), and jumps are
+  refused (`No jumps while the key is shifted`).
 - **Jumps** (`Jump { index, to, at }`): the playing track goes to `to`
   seconds (a bar's start, say), at once or when it reaches `at`, never
   with a gap. With a window (`JumpWindow { back, ahead }`, seconds) the
@@ -552,11 +591,22 @@ straight (stretched too; resampled, to within the dither), the move onto
 the map crossfades once, mono files, no separator (the whole mix as
 "other"), new settings and a transition waiting or refused, a switch back
 that fails asked again, and on a real-time device stems that fall behind
-giving way to the whole mix. The transition tests (`tests/transition.rs`,
+giving way to the whole mix. `tests/key.rs` shifts a 440 Hz sine: two
+semitones up it comes out at 493.9 Hz (the strongest bin), as long as the
+file, with no click at the change; the drums keep their key and the
+other stems are shifted; without stems the whole mix is; back at 0 the
+file plays bit for bit; two keys in a row crossfade without a click (main
+and every part); the key carries into the next track and goes at a track
+picked; one asked while nothing plays is the next song's, one asked during
+a count-in is heard from the song's first frame; a seek keeps it; a head
+on a time map takes it on its map; on a paced device a change is heard
+within 0.1 s, and stems that never come give way to the whole mix in the
+key; and no transition in a key (nor a key in a transition). The transition tests (`tests/transition.rs`,
 `transition_rules.rs`, `transition_desk.rs`, `transition_stems.rs`;
 helpers in `tests/common/transition.rs`) run on a memory desk: the next
 track's beats on the playing one's (varispeed, stretched, gliding, a glide
-planned late or called off), the hand-over, a fade of whole tracks without
+planned late or called off; from the first beat where its map starts before
+its first frame), the hand-over, a fade of whole tracks without
 a separator, `Next` in the window without a click (also in real time),
 `Next` while prepared or settling, `Stop`, `Play` and `Previous` dropping
 the next track, the next track moved away fading out, a pause in the

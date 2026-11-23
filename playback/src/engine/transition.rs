@@ -36,7 +36,9 @@ use std::time::Duration;
 use jodel_output::mixer::{Automation, Fader, GainCurve, Role};
 
 use super::api::{Event, TrackStart};
-use super::track::{drop_later, frames_of, rescale, Cue, CueEvent, HeardWarp, Track};
+use super::track::{
+    drop_later, frames_of, rescale, AlongMap, Back, Cue, CueEvent, HeardFrom, HeardWarp, Track,
+};
 use super::Engine;
 use crate::error::Error;
 use crate::rate::Settings;
@@ -281,6 +283,8 @@ impl Engine {
             Some("the window is empty")
         } else if playing != Some(plan.from) {
             Some("that track is not the one playing")
+        } else if self.head_shifted() {
+            Some("the key is shifted")
         } else if self.along_under_way() {
             Some("a track is read along a time map")
         } else {
@@ -432,7 +436,7 @@ impl Engine {
         let p = match &t.phase {
             Phase::Settling { .. } => {
                 let next = t.plan.into + 1;
-                self.pick();
+                self.pick(next);
                 self.jump(next, 0.0);
                 return true;
             }
@@ -629,7 +633,11 @@ impl Engine {
             .map_err(|e| format!("the next track's output did not open: {e}"))?;
         // Its frame 0 at A's time there (at `origin`), along the map, heard
         // from the window on.
-        let clock = self.head.out.as_ref().expect("checked").clock.clone();
+        let heard_from = HeardFrom {
+            clock: self.head.out.as_ref().expect("checked").clock.clone(),
+            origin: Some(origin),
+            at: w0,
+        };
         let heard = HeardWarp {
             map,
             origin: 0,
@@ -638,7 +646,13 @@ impl Engine {
         };
         self.with_parked(|e| {
             let mut b = e.head.playing.take().expect("just opened");
-            e.start_along(&mut b, heard, plan.tempo, (clock, w0));
+            // B starts in its own key (a key on it is the app's to ask).
+            let map = AlongMap {
+                heard: Arc::new(heard),
+                tempo: plan.tempo,
+                key: 0,
+            };
+            e.start_along(&mut b, map, 0, heard_from);
             e.head.playing = Some(b);
         });
         let (fa, fb) = self.faders().expect("on a desk");
@@ -735,6 +749,13 @@ impl Engine {
             from_frame: heard.frame_at(end),
         };
         self.queue_cue(end, CueEvent::Started(Box::new(start), heard));
+        // Its way back onto its own route is asked for once it is written
+        // past where it starts (it may be written behind A's end): a switch
+        // met before then would take the place of that start.
+        let on_air = self.cues.back().map_or(end, |c| c.at);
+        if let Some(along) = b.along.as_mut() {
+            along.back = Back::Retry(on_air + 1);
+        }
         self.release(&mut b);
         self.head.playing = Some(b);
     }

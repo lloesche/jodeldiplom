@@ -19,6 +19,7 @@ pub mod action;
 pub mod desk;
 pub mod grid;
 pub mod karaoke;
+pub mod key;
 pub mod keymap;
 pub mod lag;
 pub mod lanes;
@@ -27,6 +28,7 @@ pub mod mic;
 pub mod mouse;
 pub mod preview;
 pub mod singing;
+pub mod sliders;
 pub mod stems;
 pub mod sync;
 pub mod text;
@@ -312,6 +314,9 @@ pub struct Playing {
     /// song, a fade): nothing reaches it as written now, bit-perfect route
     /// or not.
     pub mixed: bool,
+    /// The key the song plays in, in semitones from its own, as asked
+    /// (shown at once; the engine's word on it, [`super::key`]).
+    pub key: i8,
 }
 
 impl Default for Playing {
@@ -324,6 +329,7 @@ impl Default for Playing {
             speed: None,
             clipped: 0,
             mixed: false,
+            key: 0,
         }
     }
 }
@@ -354,6 +360,24 @@ pub struct Anchor {
 }
 
 impl Playing {
+    /// A position the engine told, of the track heard: where it is, and
+    /// the anchor there.
+    pub fn told(&mut self, position: &jodel_playback::Position) {
+        if self
+            .track
+            .as_ref()
+            .is_some_and(|t| t.index == position.index)
+        {
+            self.position = position.seconds;
+            let (head, frame) = (position.head, position.output_frame);
+            self.anchor_at(Anchor {
+                index: position.index,
+                at: HeadFrame { head, frame },
+                seconds: position.seconds,
+            });
+        }
+    }
+
     /// A position told: the output's speed through the track since the
     /// last (of the same track on the same head: none across a hand-over),
     /// and the anchor there.

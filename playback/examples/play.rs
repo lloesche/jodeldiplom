@@ -182,6 +182,7 @@ fn main() -> ExitCode {
             Event::PartsStopped { reason, .. } => println!("  stem parts stopped: {reason}"),
             Event::Transition(state) => println!("  transition: {state:?}"),
             Event::Jumped { seconds, .. } => println!("  jumped to {seconds:.2} s"),
+            Event::Key { semitones } => println!("  key: {semitones:+}"),
             Event::Held { index } => {
                 println!("holding before track {index}");
                 break;

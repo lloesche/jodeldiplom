@@ -24,8 +24,30 @@ pub const LYRICS: &str = "lyrics.lrc";
 pub const MELODY: &str = "song.wave";
 /// What was sung: the song, the level, how late the voice came as the
 /// game took it and where that came from (`late <sample> <seconds>
-/// <source>`, [`crate::core::lag::Source::key`]).
+/// <source>`, [`crate::core::lag::Source::key`]), and the key the song was
+/// heard in where it was not its own (`key <sample> <semitones>`, from that
+/// sample on; [`read_keys`]).
 pub const ABOUT: &str = "about.txt";
+
+/// How a block of the voice was heard: how late it came as the game took
+/// it, in seconds, where that came from, and the key the song was heard
+/// in, in semitones from its own.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Sung {
+    /// How late, in seconds.
+    pub late: f64,
+    /// Where that came from ([`crate::core::lag::Source::key`]).
+    pub source: &'static str,
+    /// The key, in semitones from the song's own.
+    pub key: i8,
+}
+
+impl Sung {
+    /// How a block was heard: `late`, from `source`, in `key`.
+    pub fn new(late: f64, source: &'static str, key: i8) -> Sung {
+        Sung { late, source, key }
+    }
+}
 
 /// The most seconds of voice kept for one song (an hour).
 const MOST_SECONDS: usize = 3600;
@@ -47,6 +69,9 @@ pub struct Kept {
     /// How late the voice came, as the game took it, each time it changed:
     /// the sample, the seconds, where that came from.
     late: Vec<(usize, f64, &'static str)>,
+    /// The key the song was heard in, each time it changed: the sample,
+    /// the semitones from its own.
+    keys: Vec<(usize, i8)>,
 }
 
 impl Kept {
@@ -66,20 +91,15 @@ impl Kept {
             waveform,
             level,
             late: Vec::new(),
+            keys: Vec::new(),
         }
     }
 
     /// A block of `samples` at `rate`, its first sung at `at` seconds into
-    /// the song; `continues`: right after the block before. `late`: how
-    /// late the voice comes now, in seconds, and where that comes from.
-    pub fn push(
-        &mut self,
-        samples: &[f32],
-        rate: u32,
-        at: f64,
-        continues: bool,
-        late: (f64, &'static str),
-    ) {
+    /// the song; `continues`: right after the block before; `how`: how it
+    /// is heard now.
+    pub fn push(&mut self, samples: &[f32], rate: u32, at: f64, continues: bool, how: Sung) {
+        let (late, key) = ((how.late, how.source), how.key);
         if self.rate == 0 {
             self.rate = rate;
         }
@@ -101,6 +121,9 @@ impl Kept {
             .is_none_or(|&(_, l, s)| (l - late.0).abs() >= LATE_STEP || s != late.1)
         {
             self.late.push((n, late.0, late.1));
+        }
+        if self.keys.last().map_or(key != 0, |&(_, k)| k != key) {
+            self.keys.push((n, key));
         }
         self.samples.extend(
             samples
@@ -140,6 +163,9 @@ impl Kept {
         let _ = writeln!(about, "rate {}", self.rate);
         for (k, l, source) in &self.late {
             let _ = writeln!(about, "late {k} {l:.4} {source}");
+        }
+        for (k, key) in &self.keys {
+            let _ = writeln!(about, "key {k} {key}");
         }
         durable::write_atomic(&folder.join(ABOUT), about.as_bytes())?;
         Ok(folder)
@@ -185,6 +211,18 @@ pub fn read_wav(bytes: &[u8]) -> Option<(Vec<f32>, u32)> {
     ))
 }
 
+/// The key a kept song was heard in ([`ABOUT`]'s `key` lines): from each
+/// sample on, the semitones from its own (none: its own all along).
+pub fn read_keys(about: &str) -> Vec<(usize, i8)> {
+    about
+        .lines()
+        .filter_map(|l| {
+            let mut it = l.strip_prefix("key ")?.split_whitespace();
+            Some((it.next()?.parse().ok()?, it.next()?.parse().ok()?))
+        })
+        .collect()
+}
+
 /// A kept song's marks ([`TIMES`]): sample, seconds.
 pub fn read_times(text: &str) -> Vec<(usize, f64)> {
     text.lines()
@@ -207,12 +245,25 @@ mod tests {
         ));
         let waveform = Arc::new(jodel_rhythm::waveform::Waveform::default());
         let mut kept = Kept::new("/a.flac".into(), lyrics, waveform, "easy");
-        kept.push(&[0.5; 100], 1000, 2.0, false, (0.15, "default"));
-        kept.push(&[-0.5; 100], 1000, 2.1, true, (0.15, "default"));
-        kept.push(&[0.25; 100], 1000, 5.0, false, (0.16, "singing"));
+        kept.push(&[0.5; 100], 1000, 2.0, false, Sung::new(0.15, "default", 0));
+        kept.push(&[-0.5; 100], 1000, 2.1, true, Sung::new(0.15, "default", 2));
+        kept.push(
+            &[0.25; 100],
+            1000,
+            5.0,
+            false,
+            Sung::new(0.16, "singing", 2),
+        );
         // A mark where it starts, where it jumped; the later block runs on.
         assert_eq!(kept.marks, [(0, 2.0), (200, 5.0)]);
         assert_eq!(kept.late, [(0, 0.15, "default"), (200, 0.16, "singing")]);
+        // The key from where it changed, back as it was written.
+        assert_eq!(kept.keys, [(100, 2)]);
+        let dir = std::env::temp_dir().join(format!("keep-keys-{}", std::process::id()));
+        let folder = kept.save(&dir).unwrap();
+        let about = std::fs::read_to_string(folder.join(ABOUT)).unwrap();
+        assert_eq!(read_keys(&about), [(100, 2)]);
+        let _ = std::fs::remove_dir_all(&dir);
         let (back, rate) = read_wav(&wav(&kept.samples, kept.rate)).unwrap();
         assert_eq!((back.len(), rate), (300, 1000));
         assert!((back[0] - 0.5).abs() < 1e-3 && (back[150] + 0.5).abs() < 1e-3);

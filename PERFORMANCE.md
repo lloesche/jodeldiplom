@@ -106,6 +106,18 @@ or resampled while a head follows a map. Without a separator only the
 other instruments' pair is read along it (the whole mix), a quarter of
 that.
 
+**The key shift** (`Command::Key`, in the same pass): the drums' pair
+read along the map as above, the other 6 channels stretched by the
+pitch ratio (a phase vocoder a channel at speed 1/r) and read r times
+faster through the map's reader, at 44.1 kHz (a measurement: `cargo test
+--release -p jodel-playback --lib six_channels -- --ignored
+--nocapture`): −6 semitones 18× real time (5.6 % of a core), +2 14×
+(7.0 %), +6 12× (8.6 %: the stretchers make r times as many frames as
+they take). The parts' resampling to the output's rate comes on top,
+unchanged, so a shifted head at 192 kHz is at most 8.6 % + 5.1 %, some
+14 % of a core (about 21 % at 384 kHz). Without a separator only the
+whole mix's pair is shifted, a third of the stretch.
+
 **A transition's two heads.** Through a mix two stem runs go at once,
 one a head. The next track's (B's) starts about 4 s before the window,
 from its first frame, and is read along its map as above; the playing
@@ -142,7 +154,11 @@ mixer's input (half a second of main, the four parts and the control
 word, 11 × 4 bytes a stereo frame): 1.1 MB at 48 kHz, 2.1 MB at 96 kHz,
 4.2 MB at 192 kHz, 8.4 MB at 384 kHz. Main kept for the frames written
 again (below) without a jump window: half a second more of the track's
-output, 1.5–1.9 MB at 384 kHz (a jump window keeps it already).
+output, 1.5–1.9 MB at 384 kHz (a jump window keeps it already). It is
+kept on every device's output of lanes, with stems or not and on a time
+map too, so a key change can start again from what the output gives back
+(`engine/jump.rs` `window_frames`): the same half second of main, at most
+1.9 MB at 384 kHz stereo (4 bytes a sample), 0.2 MB at 48 kHz.
 
 **The first touch.** Stems asked for while none are made start on the
 frame heard; once they are made a little past the write head, the output

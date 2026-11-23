@@ -5,9 +5,9 @@
 │  Transition: next preset                                         p││                                                 │
 │  Microphone: the next one                                        i││                                                 │
 │  Karaoke: the next level (easy, medium, hard)                    d││                                                 │
+│  Key: a semitone down                                            -││                                                 │
+│  Key: a semitone up                                          + / =││                        ♪                        │
 │  Microphone: the echo canceller on or off                        e││                                                 │
-│                                                                   ││                        ♪                        │
-│                                                                   ││                                                 │
 │                                                                   ││                                                 │
 │                                                                   ││                                                 │
 │                                                                   ││                                                 │

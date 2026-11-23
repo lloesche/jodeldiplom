@@ -131,10 +131,22 @@ impl StemLanes {
     }
 
     /// The head's stems are separated too slowly to be heard on time: it
-    /// takes the whole mix from output frame `from` (the parts made stay
-    /// as far as they are promised).
-    pub(in crate::engine) fn along_whole(&mut self, track: &Track, from: u64) {
-        self.give_up(track, from);
+    /// takes the whole mix from the frame written next (`want.from`; the
+    /// parts made stay as far as they are promised), or from output frame
+    /// `from` when that is later and none are promised (the parts start
+    /// there, none before it).
+    pub(in crate::engine) fn along_whole(&mut self, want: &Want, from: u64) {
+        self.give_up(want.track, want.from);
+        let promised = self.timeline.promised(want.from) > want.from;
+        let from = if promised {
+            want.from
+        } else {
+            from.max(want.from)
+        };
+        if from > want.from {
+            self.buffer.clear(from);
+        }
+        self.start_along(Line::of(want.track), &Want { from, ..*want }, Unkept::Whole);
     }
 
     /// Where the head's parts made end, and whether they are all its own

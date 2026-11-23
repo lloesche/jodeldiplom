@@ -174,6 +174,7 @@ impl Engine {
         self.cues.push_back(cue);
         self.release(&mut track);
         self.head.playing = Some(track);
+        self.track_installed();
         Ok(())
     }
 
@@ -460,6 +461,7 @@ impl Engine {
                         let cue = self.started(&track);
                         self.cues.push_back(cue);
                         self.head.playing = Some(track);
+                        self.track_installed();
                     } else {
                         self.next = Some(track);
                         self.finishing = true;

@@ -216,7 +216,7 @@ pub enum Action {
     /// A Karaoke slider was pressed or dragged to a share of its range.
     KaraokeSlide {
         /// The slider.
-        slider: super::karaoke::Slider,
+        slider: super::sliders::Slider,
         /// Where, 0 to 1.
         share: f64,
     },
@@ -227,8 +227,8 @@ pub enum Action {
     /// The wheel turned over a Karaoke slider (no drag starts).
     KaraokeStep {
         /// The slider.
-        slider: super::karaoke::Slider,
-        /// By how many of its steps ([`super::karaoke::Slider::stepped`]):
+        slider: super::sliders::Slider,
+        /// By how many of its steps ([`super::sliders::Slider::stepped`]):
         /// up while positive.
         by: i32,
     },

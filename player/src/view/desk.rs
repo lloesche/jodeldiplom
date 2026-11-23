@@ -378,7 +378,7 @@ fn source_lines(state: &State, kind: StripKind, iw: usize) -> Vec<Line<'static>>
     let mut lines = vec![Line::from(plain(format))];
     match kind {
         StripKind::Player => {
-            lines.push(head_line(lead, iw));
+            lines.push(head_line(lead, iw, state.playing.key));
             // The other head only while it has an output open: a
             // transition's next track, or the one handed over from playing
             // out what it holds.
@@ -388,7 +388,7 @@ fn source_lines(state: &State, kind: StripKind, iw: usize) -> Vec<Line<'static>>
                 .into_iter()
                 .find(|i| i.role != Role::Lead);
             if let Some(i) = other {
-                lines.push(head_line(Some(i), iw));
+                lines.push(head_line(Some(i), iw, 0));
             }
             let fill = lead.map_or(0.0, |i| i.queued as f64 / i.capacity.max(1) as f64);
             // The late frames a head following the other dropped.
@@ -421,15 +421,20 @@ fn source_lines(state: &State, kind: StripKind, iw: usize) -> Vec<Line<'static>>
 }
 
 /// A head of the player on its strip (read only): lit while heard, LEAD
-/// for the one on air (the desk's Lead), NEXT for the other; while a
-/// transition's automation is in force on it, the gain it puts on its
-/// main (in dB, without its decimal where that does not fit).
-fn head_line(input: Option<&InputView>, iw: usize) -> Line<'static> {
+/// for the one on air (the desk's Lead), NEXT for the other; the `key` it
+/// plays in, when not its own (`-` `+` `0` change it); while a
+/// transition's automation is in force on it, the gain it puts on its main
+/// (in dB, without its decimal where that does not fit).
+fn head_line(input: Option<&InputView>, iw: usize, key: i8) -> Line<'static> {
     let lead = input.is_none_or(|i| i.role == Role::Lead);
     let mut spans = vec![
         lamp(input.is_some_and(|i| i.heard), GREEN),
         plain(if lead { " LEAD" } else { " NEXT" }),
     ];
+    if key != 0 {
+        let said = format!(" {}", crate::core::key::text(key));
+        spans.push(Span::styled(said, Style::new().fg(ACCENT)));
+    }
     let automation = input.and_then(|i| i.automation.as_ref());
     if let Some(a) = automation.filter(|a| !a.settled) {
         let db = taper::db_of_gain(a.input * a.main);
