@@ -149,7 +149,25 @@ fn switches_at_one_rate_are_one_exact_stream() {
     let got = samples(&streams[0].1);
     let want = pieces(&legs, &all);
     assert_eq!(got.len(), want.len());
-    assert!(got == want, "the stream is the routes' outputs, end to end");
+    assert_same_stream(&got, &want, &legs);
+}
+
+/// `got` is `want`, or the first frame where it is not, with the frames
+/// each leg took over at.
+fn assert_same_stream(got: &[i32], want: &[i32], legs: &[&TrackStart]) {
+    let Some(at) = got.iter().zip(want).position(|(g, w)| g != w) else {
+        return;
+    };
+    let frame = (at / 2) as u64;
+    let took_over: Vec<u64> = legs.iter().map(|l| l.output_frame).collect();
+    let leg = took_over.iter().rposition(|&f| f <= frame);
+    let near = |s: &[i32]| s[at.saturating_sub(4)..(at + 6).min(s.len())].to_vec();
+    panic!(
+        "the stream is not the routes' outputs from frame {frame} (in leg {leg:?}; \
+         the legs took over at {took_over:?}): got {:?}, want {:?}",
+        near(got),
+        near(want)
+    );
 }
 
 /// What a stream at 48 kHz holds for `legs` of the 44.1 kHz track `all`:
