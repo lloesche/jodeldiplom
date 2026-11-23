@@ -55,6 +55,7 @@ pub mod anchors;
 pub mod asr;
 pub mod ctc;
 pub mod fit;
+pub mod glimpses;
 pub mod json;
 pub mod lines;
 pub mod lrc;
@@ -72,8 +73,11 @@ pub mod tokens;
 /// recogniser heard them, the opening pulled together
 /// ([`ctc::CtcSettings::window_penalty`], [`ctc::CtcSettings::opening_pull`]).
 /// 5: the repeats a recogniser heard and the text leaves out put in
-/// ([`repeats`]).
-pub const VERSION: u32 = 5;
+/// ([`repeats`]). 6: the recogniser's glimpses: a line's start where they
+/// heard it, no line spread over a stretch where they heard no words
+/// ([`glimpses`]); a line's first words heard weakly at a sung pace
+/// before the first heard surely ([`spread::interpolate`]).
+pub const VERSION: u32 = 6;
 
 /// The rate the aligners take the voice at, in Hz.
 pub const VOCALS_RATE: u32 = 16_000;

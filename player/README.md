@@ -704,8 +704,12 @@ A line's first words heard too weakly to time are put just before its
 first word heard surely, at a sung pace, not stretched back toward the
 line before. On Kate Bush's "Running Up That Hill" (a "yeah, yeah, yo"
 before each verse line, a choir's pads between the verses) this took the
-lines within 1 s of LRCLIB's from 40 of 46 to 44, and the lines that ran
-on over the pads from 3 to 2.
+lines within 1 s of LRCLIB's from 40 of 46 to 43, and the words no longer
+run on over the pads. On 153 songs (`--example lyrics_set`) the lines
+within 1 s went from 81.4 % to 82.6 % (English) and stayed at 81.3 %
+(German), the first lines over 3 s off stayed as they were, and the lines
+running on over 1 s past the next one's start went from 466 to 420
+(English).
 
 A text often writes a chorus or hook once that is sung more often; with
 nothing in the text for the second time, the words around it were

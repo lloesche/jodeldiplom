@@ -116,11 +116,13 @@ pub fn interpolate(lines: &mut [Line], confident: f32) {
                 (Some((l0, in_line)), Some((r0, _))) if r0 >= l0 => {
                     let room = r0 - l0;
                     // Between two times of the line, its words fill them;
-                    // up to the next line's, they go at a sung pace (a
-                    // line is mostly sung well before the next begins).
+                    // beside one (its first words before its first sure
+                    // one, its last after its last) they go at a sung pace,
+                    // a line being sung in one go; a whole line between
+                    // two others at the slowest.
                     let length = if in_line && right.is_some_and(|r| r.1) {
                         room
-                    } else if in_line {
+                    } else if in_line || right.is_some_and(|r| r.1) {
                         room.min(total * TYPICAL)
                     } else {
                         room.min(total * SLOWEST)
@@ -408,6 +410,31 @@ mod tests {
             &[(1.0, 1.5), (1.5, 2.5), (2.5, 3.5), (3.5, 4.0)],
         );
         assert_eq!(l.lines[0].words[1].confidence, 0.1);
+    }
+
+    #[test]
+    fn a_line_s_unsure_first_words_go_at_a_sung_pace_before_its_first_sure_one() {
+        // The line before ends at 2 s; "if I" heard weakly, "only" surely
+        // at 10 s: they are sung just before it, not stretched back.
+        let mut l = lines(&[("gone", None), ("if I only", None)]);
+        let set = |w: &mut Word, s: f64, e: f64, c: f32| {
+            w.start = Some(s);
+            w.end = Some(e);
+            w.confidence = c;
+        };
+        set(&mut l.lines[0].words[0], 1.5, 2.0, 0.9);
+        set(&mut l.lines[1].words[0], 3.0, 3.1, 0.1);
+        set(&mut l.lines[1].words[1], 3.1, 3.2, 0.1);
+        set(&mut l.lines[1].words[2], 10.0, 10.4, 0.9);
+        interpolate(&mut l.lines, CONFIDENT);
+        near(
+            &word_times(&l.lines[1]),
+            &[
+                (10.0 - 2.0 * TYPICAL, 10.0 - TYPICAL),
+                (10.0 - TYPICAL, 10.0),
+                (10.0, 10.4),
+            ],
+        );
     }
 
     #[test]

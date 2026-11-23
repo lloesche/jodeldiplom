@@ -1234,10 +1234,11 @@ impl Models {
 /// The word timing of the speech model: the voice separated on the GPU,
 /// wav2vec2 on the GPU or half the processor's threads (the rest left to
 /// playback), and the CTC alignment over the whole song (no times but
-/// ours). A text from LRCLIB is first checked against what the speech
-/// recogniser hears in the voice (on the GPU, where it and the recogniser
-/// are there), and swapped for one of LRCLIB's others when it does not
-/// fit ([`fitting`]).
+/// ours). Any text is first checked against what the speech recogniser
+/// hears in the voice (on the GPU, where it and the recogniser are there),
+/// one from LRCLIB swapped for one of LRCLIB's others when it does not fit
+/// ([`fitting`]); what it heard, in the transcript's parts and in glimpses
+/// ([`jodel_lyrics::glimpses`]), pins the words to where it was sung.
 pub struct SpeechTimer {
     models: Arc<Models>,
     model: Mutex<Option<Arc<dyn jodel_lyrics::ctc::Acoustic + Send + Sync>>>,
@@ -1286,10 +1287,12 @@ impl WordTimer for SpeechTimer {
         use jodel_lyrics::ctc::CtcAligner;
         let model = self.acoustic()?;
         let voice = track_voice(path)?;
-        // A text from LRCLIB checked against what is sung; what was heard
-        // also pins the words to where it was.
-        let (lyrics, fit, parts) = match self.recogniser() {
-            Some(asr) if lyrics.source == Source::Lrclib => match asr.transcribe(&voice) {
+        // Any text checked against what is sung (one from LRCLIB swapped
+        // for one of its others when it does not fit: `others` has none
+        // for the file's own); what was heard, in the transcript's parts
+        // and in glimpses, also pins the words to where it was.
+        let (lyrics, fit, parts, glimpses) = match self.recogniser() {
+            Some(asr) => match asr.transcribe(&voice) {
                 Ok(heard) => {
                     let (lyrics, fit) = fitting(lyrics, &heard.text, others);
                     // A text that fits, with the repeats it leaves out.
@@ -1299,13 +1302,14 @@ impl WordTimer for SpeechTimer {
                     } else {
                         lyrics
                     };
-                    (lyrics, fit, heard.parts)
+                    let glimpses = asr.glimpses(&voice).unwrap_or_default();
+                    (lyrics, fit, heard.parts, glimpses)
                 }
-                Err(_) => (lyrics.clone(), None, Vec::new()),
+                Err(_) => (lyrics.clone(), None, Vec::new(), Vec::new()),
             },
-            _ => (lyrics.clone(), None, Vec::new()),
+            None => (lyrics.clone(), None, Vec::new(), Vec::new()),
         };
-        let mut timed = CtcAligner::new(model).align_heard_in(&voice, &lyrics, &parts);
+        let mut timed = CtcAligner::new(model).align_heard_in(&voice, &lyrics, &parts, &glimpses);
         timed.timing.fit = fit;
         Ok(timed)
     }
@@ -1320,7 +1324,8 @@ impl WordTimer for SpeechTimer {
             return Err(TOO_LITTLE_HEARD.into());
         }
         let text = transcript_lyrics(&heard, asr_maker());
-        let timed = CtcAligner::new(model).align_heard_in(&voice, &text, &heard.parts);
+        let glimpses = asr.glimpses(&voice).unwrap_or_default();
+        let timed = CtcAligner::new(model).align_heard_in(&voice, &text, &heard.parts, &glimpses);
         // The lines made again where the words' timing says they break.
         Ok(relined(&timed))
     }

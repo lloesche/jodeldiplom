@@ -127,10 +127,12 @@ fn main() {
             }
         };
         let text = jodeldiplom::lyrics::transcript_lyrics(&heard, jodeldiplom::lyrics::asr_maker());
+        let glimpses = asr.glimpses(&voice).unwrap_or_default();
         let timed = jodel_lyrics::ctc::CtcAligner::new(Arc::clone(&speech)).align_heard_in(
             &voice,
             &text,
             &heard.parts,
+            &glimpses,
         );
         let mut words = Vec::new();
         let mut first = Vec::new();

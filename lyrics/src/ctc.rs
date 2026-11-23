@@ -9,7 +9,7 @@
 //! blank between two different tokens (the Viterbi algorithm). A token's
 //! frames are where the path is on it.
 //!
-//! Five additions:
+//! Seven additions:
 //!
 //! - **Pauses inside a word** ([`CtcSettings::inside_word`]): a frame of
 //!   blank between two letters of a word costs where the voice pauses
@@ -30,6 +30,14 @@
 //!   and the words before them aligned again with a cost on the time
 //!   between them, so a first line heard weakly stays near the lines after
 //!   it rather than going to anything sung earlier.
+//! - **Glimpsed line starts** ([`crate::glimpses::line_starts`]): in that
+//!   second alignment, a line's first word costs to start outside the
+//!   second or two where the recogniser's glimpses near it heard it
+//!   start, so a "yeah, yeah, yo" before a line cannot take its "you".
+//! - **Nothing heard** ([`CtcSettings::unheard`]): a line costs, from its
+//!   first letter to its last, over a stretch where the glimpses heard no
+//!   words, so its last words do not go on to a choir's "oh" or a synth
+//!   left in the voice.
 //!
 //! The work is linear in frames × tokens; a 4-minute song (about 12,000
 //! frames by 3,000 states) takes some tens of milliseconds and a byte of
@@ -138,9 +146,16 @@ pub struct Costs {
     pub charging: Vec<bool>,
     /// A frame on state `s` costs `always[s]`.
     pub always: Vec<f32>,
+    /// A frame on state `s` costs `spanned[s]` where [`Costs::unheard`]
+    /// says so.
+    pub spanned: Vec<f32>,
+    /// The frames where nothing with words was heard.
+    pub unheard: Vec<bool>,
     /// Entering state `s` outside the frames of `enter[s]` costs its
     /// penalty.
     pub enter: Vec<Option<(Range<usize>, f32)>>,
+    /// And outside those of `near[s]` its penalty too.
+    pub near: Vec<Option<(Range<usize>, f32)>>,
 }
 
 impl Costs {
@@ -151,15 +166,21 @@ impl Costs {
         } else {
             0.0
         };
-        charged + self.always.get(s).copied().unwrap_or(0.0)
+        let spanned = if self.unheard.get(f).copied().unwrap_or(false) {
+            self.spanned.get(s).copied().unwrap_or(0.0)
+        } else {
+            0.0
+        };
+        charged + spanned + self.always.get(s).copied().unwrap_or(0.0)
     }
 
     /// What entering state `s` at frame `f` costs.
     fn entry(&self, f: usize, s: usize) -> f32 {
-        match self.enter.get(s) {
+        let outside = |of: &[Option<(Range<usize>, f32)>]| match of.get(s) {
             Some(Some((frames, penalty))) if !frames.contains(&f) => *penalty,
             _ => 0.0,
-        }
+        };
+        outside(&self.enter) + outside(&self.near)
     }
 }
 
@@ -328,6 +349,16 @@ pub struct CtcSettings {
     /// before its first words is free, and without it a first line heard
     /// weakly may go to anything sung earlier.
     pub opening_pull: f32,
+    /// The cost of a second of a line (from its first letter to its last)
+    /// over a stretch where the recogniser's glimpses heard no words
+    /// ([`crate::glimpses::unheard`]), in log-probability; 0 for none. A
+    /// line is sung in one go: its last words do not go on to a choir's
+    /// "oh" or a synth left in the voice seconds after the singing.
+    pub unheard: f32,
+    /// The cost of a line's first word starting outside where the
+    /// recogniser's glimpses near it heard it start
+    /// ([`crate::glimpses::line_starts`]), in log-probability; 0 for none.
+    pub glimpse_penalty: f32,
     /// How many words in a row make an island.
     pub island_words: usize,
     /// The least mean probability of a word's letters, on the frames the
@@ -345,6 +376,8 @@ impl Default for CtcSettings {
             inside_word: INSIDE_WORD,
             window_penalty: WINDOW_PENALTY,
             opening_pull: OPENING_PULL,
+            unheard: UNHEARD,
+            glimpse_penalty: GLIMPSE_PENALTY,
             island_words: ISLAND_WORDS,
             island_heard: ISLAND_HEARD,
         }
@@ -363,6 +396,23 @@ pub const WINDOW_PENALTY: f32 = 30.0;
 /// it timed 6 lines right (first lines 7 to 25 s off, the rest of the
 /// song already right) and none wrong; at 2 a second the same.
 pub const OPENING_PULL: f32 = 1.0;
+
+/// [`CtcSettings::unheard`]'s default. On 153 songs (100 English, 53
+/// German; with the glimpse pins) the lines within 1 s of LRCLIB's: 2 a
+/// second 82.5 % and 81.3 % (of the songs whose LRCLIB times fit), 5 82.6 %
+/// and 81.3 %, 10 82.5 % and 81.2 %; none 82.0 % and 81.2 %. The lines
+/// ending over 1 s after the next line's time: 447 and 251 with none, 420
+/// and 256 at 5 (before the glimpses 466 and 253).
+pub const UNHEARD: f32 = 5.0;
+
+/// [`CtcSettings::glimpse_penalty`]'s default. On the same songs, beside
+/// the transcript's pins: 0 82.2 % and 81.3 %, 5 82.8 % and 81.2 %, 10
+/// 82.8 % and 81.2 %, 20 82.6 % and 81.3 %, 30 82.3 % and 81.0 % (before
+/// the glimpses 81.4 % and 81.3 %); 30 where the glimpses heard a line's
+/// first three words and less where fewer did, no better. Lower than the
+/// transcript's: a glimpse is heard with less around it, and German heard
+/// as English more often.
+pub const GLIMPSE_PENALTY: f32 = 20.0;
 
 /// [`CtcSettings::island_words`]'s default.
 pub const ISLAND_WORDS: usize = 4;
@@ -383,6 +433,9 @@ pub struct Hints {
     /// For each word of the lyrics (line after line), the seconds within
     /// which a recogniser heard it start, if it did ([`crate::anchors`]).
     pub windows: Vec<Option<(f64, f64)>>,
+    /// What a recogniser heard in short glimpses of the voice
+    /// ([`crate::glimpses`]); empty when it was not heard so.
+    pub glimpses: Vec<Part>,
 }
 
 /// [`CtcSettings::inside_word`]'s default. On 134 songs (English and
@@ -505,17 +558,47 @@ pub fn align_heard(
             let (Some(range), Some((a, b))) = (&w.tokens, window_of(w)) else {
                 continue;
             };
-            let from = (a / fs).floor().max(0.0) as usize;
-            let to = ((b / fs).ceil() as usize).min(frames) + 1;
-            costs.enter[2 * range.start + 1] = Some((from..to, settings.window_penalty));
+            costs.enter[2 * range.start + 1] =
+                Some((frames_within(a, b, fs, frames), settings.window_penalty));
         }
+    }
+    let lines = line_tokens(&tokens);
+    if settings.unheard > 0.0 && !hints.glimpses.is_empty() {
+        let cost = settings.unheard * fs as f32;
+        costs.spanned = spanned(lyrics, &lines, states, cost);
+        costs.unheard = crate::glimpses::unheard(&hints.glimpses, frames, fs);
     }
     let align = |anchors: &[Anchor], costs: &Costs| {
         force_align(emissions, ids, vocab.blank, &skips, anchors, costs)
     };
     let mut path = align(&anchors, &costs).or_else(|| align(&[], &costs))?;
-    // The opening, up to the first island, pulled together and aligned
-    // again: a second between its words costs.
+    // Aligned again: with each line's start where the glimpses heard it,
+    // near where this path put it, and the opening, up to the first island,
+    // pulled together (a second between its words costs).
+    let mut again = false;
+    if settings.glimpse_penalty > 0.0 && !hints.glimpses.is_empty() {
+        let spans = path.token_frames(ids.len());
+        let mut first = vec![None; lyrics.lines.len()];
+        for &(l, a, _) in &lines {
+            first[l] = spans[a].as_ref().map(|r| r.start as f64 * fs);
+        }
+        let starts = crate::glimpses::line_starts(lyrics, &hints.glimpses, &first);
+        costs.near = vec![None; states];
+        for w in tokens.words.iter().filter(|w| w.word == 0) {
+            let (Some(range), Some(start)) = (&w.tokens, starts[w.line]) else {
+                continue;
+            };
+            // Within the part the transcript has it in, if it has it (whose
+            // pin stays).
+            let (c, d) = window_of(w).unwrap_or((f64::NEG_INFINITY, f64::INFINITY));
+            let (a, b) = (start.from.max(c), start.to.min(d));
+            if a < b {
+                costs.near[2 * range.start + 1] =
+                    Some((frames_within(a, b, fs, frames), settings.glimpse_penalty));
+                again = true;
+            }
+        }
+    }
     if settings.opening_pull > 0.0 {
         if let Some((first, island)) =
             first_island(&path, emissions, &tokens, sep, &window_of, settings)
@@ -531,9 +614,12 @@ pub fn align_heard(
                     }
                 })
                 .collect();
-            if let Some(p) = align(&anchors, &costs).or_else(|| align(&[], &costs)) {
-                path = p;
-            }
+            again = true;
+        }
+    }
+    if again {
+        if let Some(p) = align(&anchors, &costs).or_else(|| align(&[], &costs)) {
+            path = p;
         }
     }
     let spans = path.token_frames(tokens.ids.len());
@@ -589,6 +675,49 @@ pub fn align_heard(
         .map(|(f, &s)| emissions.at(f, tokens.ids[s as usize / 2]).exp())
         .fold((0.0f32, 0usize), |(sum, n), p| (sum + p, n + 1));
     Some((out, sum / count.max(1) as f32))
+}
+
+/// Each line with spelt words: the line, its first token and its last.
+fn line_tokens(tokens: &Tokens) -> Vec<(usize, usize, usize)> {
+    let mut out: Vec<(usize, usize, usize)> = Vec::new();
+    for w in &tokens.words {
+        let Some(range) = &w.tokens else {
+            continue;
+        };
+        match out.last_mut() {
+            Some(last) if last.0 == w.line => last.2 = range.end - 1,
+            _ => out.push((w.line, range.start, range.end - 1)),
+        }
+    }
+    out
+}
+
+/// The frames from `a` to `b` seconds (a frame either side), of `frames`.
+fn frames_within(a: f64, b: f64, fs: f64, frames: usize) -> Range<usize> {
+    let from = (a / fs).floor().max(0.0) as usize;
+    let to = ((b / fs).ceil().max(0.0) as usize).min(frames) + 1;
+    from..to
+}
+
+/// Where nothing with words was heard, what a frame on each of `states`
+/// costs: `cost` on every state of a line (`lines`, [`line_tokens`]) from
+/// its first letter to its last, none on a line of nothing but "ooh"s,
+/// which is sung where no words are.
+fn spanned(lyrics: &Lyrics, lines: &[(usize, usize, usize)], states: usize, cost: f32) -> Vec<f32> {
+    let mut out = vec![0.0; states];
+    for &(l, a, b) in lines {
+        if lyrics.lines[l]
+            .words
+            .iter()
+            .all(|w| crate::glimpses::vocable(&w.text))
+        {
+            continue;
+        }
+        for c in &mut out[2 * a + 1..2 * b + 2] {
+            *c = cost;
+        }
+    }
+    out
 }
 
 /// Whether state `s` of `ids` is on a letter (not a blank, nor a word
@@ -772,19 +901,27 @@ impl<A: Acoustic> Aligner for CtcAligner<A> {
     }
 
     fn align(&self, vocals_16k: &[f32], lyrics: &Lyrics) -> Lyrics {
-        self.align_heard_in(vocals_16k, lyrics, &[])
+        self.align_heard_in(vocals_16k, lyrics, &[], &[])
     }
 }
 
 impl<A: Acoustic> CtcAligner<A> {
     /// [`Aligner::align`], with what a recogniser heard in the voice (its
-    /// transcript's `parts`, none when it was not heard) pinning the words
-    /// to where it heard them ([`crate::anchors`]).
-    pub fn align_heard_in(&self, vocals_16k: &[f32], lyrics: &Lyrics, parts: &[Part]) -> Lyrics {
+    /// transcript's `parts` and its `glimpses`, none when it was not heard)
+    /// pinning the words to where it heard them ([`crate::anchors`],
+    /// [`crate::glimpses`]).
+    pub fn align_heard_in(
+        &self,
+        vocals_16k: &[f32],
+        lyrics: &Lyrics,
+        parts: &[Part],
+        glimpses: &[Part],
+    ) -> Lyrics {
         let aligned = self.model.emissions(vocals_16k).and_then(|e| {
             let hints = Hints {
                 pauses: voice_pauses(vocals_16k, &e),
                 windows: crate::anchors::windows(lyrics, parts),
+                glimpses: glimpses.to_vec(),
             };
             align_heard(&e, lyrics, &self.model.vocab(), &self.settings, &hints)
         });
@@ -1087,6 +1224,83 @@ mod tests {
         };
         assert_eq!(start(&loose), 20.0 * FS);
         assert_eq!(start(&CtcSettings::default()), 370.0 * FS);
+    }
+
+    fn glimpse(start: f64, text: &str) -> Part {
+        Part {
+            start,
+            end: start + crate::glimpses::GLIMPSE,
+            text: text.to_owned(),
+        }
+    }
+
+    #[test]
+    fn a_line_starts_where_the_glimpses_heard_it_not_on_the_chant_before() {
+        // "it hurts" at 1 s; a chant's "yo" at 3 s heard surely as "you";
+        // the line "do you wanna" sung at 4.6 s, its first two words heard
+        // less surely.
+        let mut e = planted(500, &[], 0.9);
+        let mut f = plant_at(&mut e, "it", 50, 0.95, 0.04);
+        plant_at(&mut e, "hurts", f + 2, 0.95, 0.04);
+        plant_at(&mut e, "you", 150, 0.95, 0.04);
+        f = plant_at(&mut e, "do", 230, 0.5, 0.45);
+        f = plant_at(&mut e, "you", f + 2, 0.5, 0.45);
+        plant_at(&mut e, "wanna", f + 2, 0.95, 0.04);
+        let text = lyrics(&["it hurts", "do you wanna"], &[None, None]);
+        let start = |glimpses: Vec<Part>| {
+            let hints = Hints {
+                glimpses,
+                ..Hints::default()
+            };
+            align_emissions(&e, &text, &WAV2VEC2_960H, &CtcSettings::default(), &hints)
+                .unwrap()
+                .lines[1]
+                .words[0]
+                .start
+                .unwrap()
+        };
+        assert!(start(Vec::new()) < 3.0, "{}", start(Vec::new()));
+        let heard = vec![
+            glimpse(0.0, "It hurts."),
+            glimpse(1.5, "It hurts. Yeah, yeah."),
+            glimpse(3.0, "Yeah. Do you wanna?"),
+            glimpse(4.5, "Do you wanna?"),
+            glimpse(6.0, ""),
+        ];
+        assert_eq!(start(heard), 230.0 * FS);
+    }
+
+    #[test]
+    fn a_line_does_not_go_on_over_a_stretch_with_no_words_heard() {
+        // "come home" sung at 1 s; an "oh" at 6 s, where nothing with words
+        // was sung, sounds more like "home" than the real one.
+        let mut e = planted(500, &[], 0.9);
+        let f = plant_at(&mut e, "come", 50, 0.95, 0.04);
+        plant_at(&mut e, "home", f + 2, 0.5, 0.45);
+        plant_at(&mut e, "home", 300, 0.6, 0.35);
+        let text = lyrics(&["come home"], &[None]);
+        let end = |glimpses: Vec<Part>| {
+            let hints = Hints {
+                glimpses,
+                ..Hints::default()
+            };
+            align_emissions(&e, &text, &WAV2VEC2_960H, &CtcSettings::default(), &hints)
+                .unwrap()
+                .lines[0]
+                .words[1]
+                .end
+                .unwrap()
+        };
+        assert!(end(Vec::new()) > 6.0);
+        let heard = vec![
+            glimpse(0.0, "Come home."),
+            glimpse(1.5, ""),
+            glimpse(3.0, ""),
+            glimpse(4.5, ""),
+            glimpse(6.0, ""),
+            glimpse(7.5, "Go."),
+        ];
+        assert!(end(heard) < 2.0);
     }
 
     #[test]

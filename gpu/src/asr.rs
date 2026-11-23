@@ -383,6 +383,12 @@ impl GpuAsr {
         transcribe_parts(voice, &self.vocab, |part| self.tokens(part))
     }
 
+    /// What is sung in short glimpses of `voice` (16 kHz mono), each heard
+    /// on its own ([`jodel_lyrics::glimpses`]).
+    pub fn glimpses(&self, voice: &[f32]) -> Result<Vec<jodel_lyrics::asr::Part>, String> {
+        jodel_lyrics::glimpses::hear_glimpses(voice, |piece| Ok(self.transcribe(piece)?.text))
+    }
+
     /// Starts (afresh) or stops collecting calibration statistics: each
     /// matrix's input columns' sums of squares over what is heard.
     pub fn calibrate(&self, on: bool) -> Result<(), String> {
