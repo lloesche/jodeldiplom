@@ -3,7 +3,7 @@
 //! are, every output device with what it takes exclusively and its own
 //! volume control, the GPU side (every adapter, whether the stem
 //! separator sets up on it, how long a chunk takes), and the last
-//! analyses either player made (what was found, how long each part
+//! analyses the player made (what was found, how long each part
 //! took), the microphones (the one karaoke uses listened to for two
 //! seconds) and where the speech model is. Nothing is played.
 
@@ -11,11 +11,10 @@ use std::io::Write;
 use std::process::Command;
 
 use crate::cli::{self, Args};
-use crate::Frontend;
 
 /// Prints the report to standard output, section by section (the GPU
 /// check takes a few seconds).
-pub fn run(args: &Args, frontend: Frontend) -> Result<(), String> {
+pub fn run(args: &Args) -> Result<(), String> {
     let mut out = std::io::stdout().lock();
     let mut section = |title: &str, lines: Vec<String>| {
         let _ = writeln!(out, "{title}");
@@ -25,20 +24,18 @@ pub fn run(args: &Args, frontend: Frontend) -> Result<(), String> {
         let _ = writeln!(out);
         let _ = out.flush();
     };
-    section("Build", build(frontend));
+    section("Build", build());
     section("System", system());
     let settings = cli::settings(args)?;
     section("Settings", settings_lines(&settings));
     section("Caches", caches());
-    if frontend == Frontend::Window {
-        let (main, emoji) = crate::gui::fonts::built_in_fonts();
-        section(
-            "Window fonts",
-            vec![format!(
-                "Sarasa Fixed J built in: {main}, Noto Emoji built in: {emoji}"
-            )],
-        );
-    }
+    let (main, emoji) = crate::gui::fonts::built_in_fonts();
+    section(
+        "Window fonts",
+        vec![format!(
+            "Sarasa Fixed J built in: {main}, Noto Emoji built in: {emoji}"
+        )],
+    );
     section(&format!("Output ({})", jodel_output::BACKEND), output());
     section(
         &format!("Microphones ({})", jodel_output::input::INPUT_BACKEND),
@@ -73,7 +70,7 @@ pub fn run(args: &Args, frontend: Frontend) -> Result<(), String> {
         .unwrap_or_default();
     section(
         &format!(
-            "Last analyses (newest first, up to {}; from either player)",
+            "Last analyses (newest first, up to {})",
             crate::rhythm::RECENT_KEPT
         ),
         recent_lines(&recent, now),
@@ -112,11 +109,8 @@ fn ago(seconds: u64) -> String {
     }
 }
 
-fn build(frontend: Frontend) -> Vec<String> {
-    let bin = match frontend {
-        Frontend::Terminal => "jodeldiplom",
-        Frontend::Window => "jodeldiplom-gui",
-    };
+fn build() -> Vec<String> {
+    let bin = crate::BIN;
     vec![
         format!(
             "{bin} {}, {} build",

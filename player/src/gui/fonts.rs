@@ -2,15 +2,15 @@
 //!
 //! The main font is Sarasa Fixed J (Iosevka's Latin with Source Han Sans
 //! for Japanese, Chinese and Korean, each of those exactly two cells wide)
-//! when the window binary was built with it; else the embedded Cascadia
+//! when the binary was built with it; else the embedded Cascadia
 //! Mono ([`FONT`]). Characters the main font has no glyph for come from
 //! Noto Emoji (monochrome, drawn in the text colour) when built in, then
 //! from the system's fonts, as a terminal falls back to other fonts.
 //!
-//! The window binary embeds Sarasa Fixed and Noto Emoji when they are found
-//! at build time (see `build.rs`; they are in `fonts`) and
-//! hands them over with [`use_fonts`] before it starts; the terminal binary
-//! and the tests do not, so they keep Cascadia Mono.
+//! The binary embeds Sarasa Fixed and Noto Emoji when they are found at
+//! build time (see `build.rs`; they are in `fonts`) and hands them over
+//! with [`use_fonts`] before it starts; the tests do not, so they keep
+//! Cascadia Mono.
 //!
 //! Each system has a list of fonts known to cover what the others lack; a
 //! font is read only when a character first needs it, and kept for the
@@ -25,7 +25,7 @@ use ab_glyph::{Font, FontRef};
 
 use super::FONT;
 
-/// The fonts the window binary was built with.
+/// The fonts the binary was built with.
 #[derive(Clone, Copy, Default)]
 struct BuiltIn {
     main: Option<&'static [u8]>,
@@ -35,7 +35,7 @@ struct BuiltIn {
 
 static BUILT_IN: OnceLock<BuiltIn> = OnceLock::new();
 
-/// Hands the fonts the window binary embeds (Sarasa Fixed, Noto Emoji,
+/// Hands the fonts the binary embeds (Sarasa Fixed, Noto Emoji,
 /// Atkinson Hyperlegible Next for lyrics) to the window; call it before the
 /// window starts. Fonts that do not parse are left out.
 pub fn use_fonts(

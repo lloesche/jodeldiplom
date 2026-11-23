@@ -1,4 +1,4 @@
-//! Text both frontends draw and the mouse needs to locate: rates, times,
+//! Text the widgets draw and the mouse needs to locate: rates, times,
 //! the signal path, the status light and the list toggle.
 
 use jodel_playback::{PlayState, Stem};

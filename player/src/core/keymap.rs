@@ -1,7 +1,7 @@
 //! The one table of key bindings.
 //!
-//! Both frontends translate their key events into [`Key`] and ask
-//! [`lookup`] what it means in the current state. The help screen
+//! The window translates its key events into [`Key`] and asks [`lookup`]
+//! (or [`action`]) what it means in the current state. The help screen
 //! ([`help_sections`]) and the command palette ([`palette_entries`]) are
 //! generated from the same [`KEYMAP`] table, so they always match.
 
@@ -9,7 +9,7 @@ use crate::core::{Screen, Side, State, TYPE_AHEAD_MS};
 
 use jodel_playback::Stem;
 
-/// A key, as both frontends report it.
+/// A key, as the window reports it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum KeyCode {
     /// A character, already shifted (`A`, `?`).
@@ -1003,9 +1003,7 @@ pub const KEYMAP: &[Binding] = &[
         "the lyrics on the vocals lane on/off",
     ),
     // Bar jumps (help: two lines, [`help_sections`]): 5 the bar heard, 6 the
-    // next, 4 the one before, when the bar heard ends; with shift (or the
-    // symbol a US keyboard's shift makes of the digit, as terminals send it)
-    // at once.
+    // next, 4 the one before, when the bar heard ends; with shift at once.
     b(Context::Transition, &[Key::ch('1')], Op::JumpBarAtEnd(-4), ""),
     b(Context::Transition, &[Key::ch('2')], Op::JumpBarAtEnd(-3), ""),
     b(Context::Transition, &[Key::ch('3')], Op::JumpBarAtEnd(-2), ""),
@@ -1017,55 +1015,55 @@ pub const KEYMAP: &[Binding] = &[
     b(Context::Transition, &[Key::ch('9')], Op::JumpBarAtEnd(4), ""),
     b(
         Context::Transition,
-        &[Key::shifted('1'), Key::ch('!')],
+        &[Key::shifted('1')],
         Op::JumpBar(-4),
         "",
     ),
     b(
         Context::Transition,
-        &[Key::shifted('2'), Key::ch('@')],
+        &[Key::shifted('2')],
         Op::JumpBar(-3),
         "",
     ),
     b(
         Context::Transition,
-        &[Key::shifted('3'), Key::ch('#')],
+        &[Key::shifted('3')],
         Op::JumpBar(-2),
         "",
     ),
     b(
         Context::Transition,
-        &[Key::shifted('4'), Key::ch('$')],
+        &[Key::shifted('4')],
         Op::JumpBar(-1),
         "",
     ),
     b(
         Context::Transition,
-        &[Key::shifted('5'), Key::ch('%')],
+        &[Key::shifted('5')],
         Op::JumpBar(0),
         "",
     ),
     b(
         Context::Transition,
-        &[Key::shifted('6'), Key::ch('^')],
+        &[Key::shifted('6')],
         Op::JumpBar(1),
         "",
     ),
     b(
         Context::Transition,
-        &[Key::shifted('7'), Key::ch('&')],
+        &[Key::shifted('7')],
         Op::JumpBar(2),
         "",
     ),
     b(
         Context::Transition,
-        &[Key::shifted('8'), Key::ch('*')],
+        &[Key::shifted('8')],
         Op::JumpBar(3),
         "",
     ),
     b(
         Context::Transition,
-        &[Key::shifted('9'), Key::ch('(')],
+        &[Key::shifted('9')],
         Op::JumpBar(4),
         "",
     ),
@@ -1580,6 +1578,15 @@ fn types_ahead(state: &State, c: char) -> bool {
 fn typing_a_name(state: &State) -> bool {
     !state.browser.typed.is_empty()
         && state.now_ms.saturating_sub(state.browser.typed_at) <= TYPE_AHEAD_MS
+}
+
+/// What a key does in `state`, as an action.
+pub fn action(state: &State, key: Key) -> Option<crate::core::Action> {
+    use crate::core::Action;
+    match lookup(state, key)? {
+        Meaning::Op(op) => Some(Action::Op(op)),
+        Meaning::Type(c) => Some(Action::Type(c)),
+    }
 }
 
 /// What `key` does in `state`, if anything.

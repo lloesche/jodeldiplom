@@ -24,7 +24,7 @@ use jodeldiplom::app::{App, AppOptions, Output};
 use jodeldiplom::core::keymap::Op;
 use jodeldiplom::core::{Action, Screen, State};
 use jodeldiplom::gui::{font_px, Canvas};
-use jodeldiplom::view::{colors, Links, Scene};
+use jodeldiplom::view::Scene;
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -92,8 +92,7 @@ fn main() {
             let scene = Scene {
                 state: &state,
                 spectrum: &spectrum,
-                background: colors::BG,
-                links: Links::OnHover(None),
+                pointer: None,
                 heard: state.heard(),
             };
             canvas.draw(&scene, app.art());

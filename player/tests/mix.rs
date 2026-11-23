@@ -188,7 +188,7 @@ fn a_stem_key_during_a_mix_lands_on_its_bar_of_the_head_on_air() {
 #[test]
 fn the_player_strip_shows_both_heads_during_a_mix() {
     use jodel_output::mixer::{AutomationView, Role};
-    use jodeldiplom::view::{self, CellPictures, Links, Scene};
+    use jodeldiplom::view::{self, CellPictures, Scene};
     let mut state = common::desk_state(120, 36);
     let automation = |main: f64| AutomationView {
         input: 1.0,
@@ -214,8 +214,7 @@ fn the_player_strip_shows_both_heads_during_a_mix() {
         let scene = Scene {
             state,
             spectrum: &spectrum,
-            background: ratatui::style::Color::Reset,
-            links: Links::Underlined,
+            pointer: None,
             heard: 0.0,
         };
         terminal

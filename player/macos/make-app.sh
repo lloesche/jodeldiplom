@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Put the window player into a macOS app bundle:
+# Put the player into a macOS app bundle:
 #   OUT_DIR/Jodeldiplom.app/Contents/
 #     Info.plist                    (from Info.plist here, with VERSION)
-#     MacOS/jodeldiplom-gui          (BINARY)
+#     MacOS/jodeldiplom             (BINARY)
 #     Resources/jodeldiplom.icns     (the icon)
 #     Resources/LICENSE-*.txt       (the built-in fonts' licences, from FONTS_DIR)
 #     Resources/models/             (MODELS_DIR's files: the speech model and recogniser)
@@ -27,7 +27,7 @@ rm -rf -- "$app"
 mkdir -p -- "$app/Contents/MacOS" "$app/Contents/Resources"
 sed "s/@VERSION@/$version/g" "$here/Info.plist" > "$app/Contents/Info.plist"
 printf 'APPL????' > "$app/Contents/PkgInfo"
-install -m 755 -- "$binary" "$app/Contents/MacOS/jodeldiplom-gui"
+install -m 755 -- "$binary" "$app/Contents/MacOS/jodeldiplom"
 install -m 644 -- "$assets/jodeldiplom.icns" "$app/Contents/Resources/"
 for file in LICENSE-SarasaGothic.txt LICENSE-NotoEmoji.txt LICENSE-AtkinsonHyperlegibleNext.txt; do
     install -m 644 -- "$fonts/$file" "$app/Contents/Resources/"

@@ -1,4 +1,4 @@
-//! The running player, shared by both frontends: the [`State`], the
+//! The running player behind the window: the [`State`], the
 //! playback engine, the background workers, the spectrum and the cover.
 //!
 //! The engine plays on the Lead input of a mixer that owns the device
@@ -7,7 +7,7 @@
 //! ([`crate::preview`]) are guests on it, and the spectrum is the mixer's:
 //! what the device plays.
 //!
-//! A frontend creates an [`App`], feeds it [`Action`]s from its input
+//! The window creates an [`App`], feeds it [`Action`]s from its input
 //! ([`App::dispatch`]), calls [`App::pump`] to take in what the engine and
 //! the workers sent, and draws [`App::state`] with [`crate::view`].
 

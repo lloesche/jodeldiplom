@@ -1,12 +1,11 @@
 # Jodeldiplom
 
 A music player with a plain file browser instead of a library database, in
-the terminal and in a window, with the same layout, keys and mouse support
-in both:
-
-- `jodeldiplom`: in the terminal (crossterm + ratatui);
-- `jodeldiplom-gui`: in a window (winit, frames through wgpu or else
-  softbuffer); on macOS the app `Jodeldiplom.app`.
+a window: `jodeldiplom` (winit, ratatui widgets rasterised in pixels,
+frames through wgpu or else softbuffer); on macOS the app
+`Jodeldiplom.app`. Its command-line jobs (`--help`, `--diag`,
+`--list-devices`, `--clean-cache`, `--clean-diag`) print to the terminal
+it is started from.
 
 What it does:
 
@@ -55,9 +54,10 @@ The player's own documentation, keys and settings are in
 cargo build --release -p jodeldiplom
 ```
 
-builds both players into `target/release`: `jodeldiplom` and
-`jodeldiplom-gui` (`.exe` on Windows). `make` (or `make jodeldiplom`) does
-the same and, on macOS, puts the window player into the app
+builds the player into `target/release`: `jodeldiplom` (`.exe` on
+Windows, where a release build has no console window of its own and
+attaches to the one it is started from). `make` (or `make jodeldiplom`)
+does the same and, on macOS, puts the player into the app
 `Jodeldiplom.app` (signed ad hoc, through `player/macos/make-app.sh`);
 `make diag` runs the player's `--diag`, `make clean-cache` forgets its
 analyses, stems and lyrics.
@@ -67,22 +67,22 @@ analyses, stems and lyrics.
   `jodel-lyrics` build with 1.85). The CI builds with Rust 1.100.0.
 - **Windows**: the GNU toolchain (`x86_64-pc-windows-gnu`) with MSYS2's
   UCRT64 environment on `PATH` (`C:\msys64\ucrt64\bin`: the linker, and
-  `windres`, which builds the window player's icon into its executable;
+  `windres`, which builds the player's icon into its executable;
   without it the executable builds without its icon, and the window still
   sets it at run time).
 - **Linux**: the ALSA headers (`libasound2-dev` or `alsa-lib-devel`) and
   `pkg-config` to build, the ALSA library (`libasound.so.2`) to run.
 
-The window player's fonts (Sarasa Fixed J, Noto Emoji, Atkinson
-Hyperlegible Next) are built in from [player/fonts](player/fonts), or from
+The player's fonts (Sarasa Fixed J, Noto Emoji, Atkinson Hyperlegible
+Next) are built in from [player/fonts](player/fonts), or from
 the folder `JODELDIPLOM_FONTS` names. The speech models are not part of a
 build: the player gets them on its first start (its setup screen) and
 checks them against the checksums built into it.
 
 `bash scripts/bundle.sh BUILD_DIRECTORY [linux|macos|windows-x64|windows-arm64]`
 builds the bundle for one platform in `BUILD_DIRECTORY/jodeldiplom-PLATFORM`:
-`bin/` with both players (on macOS the terminal player, and the window
-player as `Jodeldiplom.app` beside `bin/`) and every licence. From Linux it
+`bin/jodeldiplom` (on macOS the app `Jodeldiplom.app` instead) and every
+licence. From Linux it
 cross-builds for Windows: `windows-x64` with MinGW-w64 GCC and the Rust
 target `x86_64-pc-windows-gnu`, `windows-arm64` with LLVM-MinGW and
 `aarch64-pc-windows-gnullvm`. The CI workflow
@@ -114,7 +114,7 @@ its `make.py` with FFmpeg) and two PCM FLAC files (`pcm`, made by its
 | `jodel-rhythm` | [rhythm](rhythm) | beat, downbeat, tempo, key and pitch analysis, and the stem separator on the CPU, in plain Rust |
 | `jodel-gpu` | [gpu](gpu) | the stem separator, the beat network and the speech recogniser on the GPU, through `wgpu` |
 | `jodel-lyrics` | [lyrics](lyrics) | lyrics for karaoke: LRC in and out, tokens for a speech model, forced alignment of words, the speech recogniser and its 4-bit packing |
-| `jodeldiplom` | [player](player) | the player: terminal and window frontends on one core, the browser, queue, Transition tab, karaoke, setup |
+| `jodeldiplom` | [player](player) | the player: the window on its UI core and widgets, the browser, queue, Transition tab, karaoke, setup |
 
 ## Licences
 
@@ -125,7 +125,7 @@ Built-in models and fonts keep their own licences, kept beside them:
 - the beat, stem, key and pitch networks' weights in
   [rhythm/models](rhythm/models): `LICENSE-beat-this`,
   `LICENSE-mini-bs-roformer`, `LICENSE-musical-key-cnn`, `LICENSE-fcpe`;
-- the window player's fonts in [player/fonts](player/fonts):
+- the player's fonts in [player/fonts](player/fonts):
   `LICENSE-SarasaGothic.txt`, `LICENSE-NotoEmoji.txt`,
   `LICENSE-AtkinsonHyperlegibleNext.txt`, and the fallback font Cascadia
   Mono's, [player/assets/CascadiaMono-OFL.txt](player/assets/CascadiaMono-OFL.txt).

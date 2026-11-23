@@ -5,7 +5,6 @@
 
 use std::sync::Arc;
 
-use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -13,7 +12,7 @@ use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 
 use super::colors::{ACCENT, DIM, TEXT};
-use super::lanes::{lane_color, WavePlot, CUE, OFF};
+use super::lanes::{lane_color, WavePlot, OFF};
 use super::{Pictures, Scene};
 use crate::core::lanes::{self, Block, WordLines};
 use crate::core::layout::{Lane, TransitionBlockLayout, TransitionLayout};
@@ -289,50 +288,6 @@ impl RulerPlot {
     /// Where `time` falls, in units of `width` across the span.
     pub fn x_of(&self, time: f64, width: f64) -> f64 {
         (time - self.start) / (self.end - self.start).max(1e-9) * width
-    }
-}
-
-/// The bar numbers in cells: at each bar's first beat where there is room
-/// (else a tick), the cursor as `▼`, the cue as `◆`.
-pub fn ruler_cells(buf: &mut Buffer, plot: &RulerPlot) {
-    let area = plot.area.intersection(buf.area);
-    if area.width == 0 || area.height == 0 {
-        return;
-    }
-    let w = f64::from(area.width);
-    let column = |t: f64| plot.x_of(t, w).floor();
-    let marks: Vec<f64> = [plot.cue, plot.cursor]
-        .into_iter()
-        .flatten()
-        .map(column)
-        .collect();
-    let mut free = 0.0;
-    for &(t, bar) in &plot.bars {
-        let mut x = column(t);
-        if x < 0.0 || x >= w {
-            continue;
-        }
-        if x < free {
-            buf[(area.x + x as u16, area.y)].set_symbol("╵").set_fg(DIM);
-            continue;
-        }
-        // A mark on the bar goes before its number.
-        if marks.contains(&x) {
-            x += 1.0;
-            if x >= w {
-                continue;
-            }
-        }
-        let label = bar.to_string();
-        buf.set_string(area.x + x as u16, area.y, &label, Style::new().fg(DIM));
-        free = x + label.len() as f64 + 1.0;
-    }
-    for (time, symbol, color) in [(plot.cue, "◆", CUE), (plot.cursor, "▼", ACCENT)] {
-        if let Some(x) = time.map(column).filter(|&x| x >= 0.0 && x < w) {
-            buf[(area.x + x as u16, area.y)]
-                .set_symbol(symbol)
-                .set_fg(color);
-        }
     }
 }
 

@@ -1,5 +1,6 @@
 //! Mouse input: the named rects of the layout and what a click, drag or
-//! wheel on each does. Both frontends report the pointer in cells.
+//! wheel on each does. The window reports the pointer in cells (and
+//! within its cell, [`action_at`]).
 
 use ratatui::layout::{Position, Rect};
 
@@ -369,7 +370,7 @@ fn slider_share(state: &State, slider: Slider, x: f64) -> Option<f64> {
 }
 
 /// What a mouse event does, if anything. The pointer is taken to be in
-/// the middle of its cell, as a terminal reports it.
+/// the middle of its cell.
 pub fn action(state: &State, input: MouseInput) -> Option<Action> {
     action_at(
         state,

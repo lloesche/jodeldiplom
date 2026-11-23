@@ -1,14 +1,14 @@
 # The player for the platform make runs on, from this folder:
 #
-#   make jodeldiplom   (or just make)   the terminal and the window player,
-#                                      on macOS the window one as the app
-#                                      "Jodeldiplom.app" (signed ad hoc). The
-#                                      speech models are not part of the
-#                                      build: the player gets and checks
-#                                      them itself on its first start (its
-#                                      setup screen), into its data folder
-#   make diag                          builds the terminal player and runs
-#                                      its --diag: what the player finds on
+#   make jodeldiplom   (or just make)   the player, jodeldiplom; on macOS
+#                                      as the app "Jodeldiplom.app" (signed
+#                                      ad hoc). The speech models are not
+#                                      part of the build: the player gets
+#                                      and checks them itself on its first
+#                                      start (its setup screen), into its
+#                                      data folder
+#   make diag                          builds the player and runs its
+#                                      --diag: what the player finds on
 #                                      this system, for a bug report
 #   make clean-cache                   forgets the beat analyses, the kept
 #                                      stems and the lyrics (the words
@@ -25,8 +25,12 @@
 #                                      models and the settings stay
 #
 # Everything lands in target/release (or $CARGO_TARGET_DIR/release). The
-# window player's fonts come from player/fonts. CARGO picks another cargo,
-# e.g. make CARGO="cargo +1.100.0".
+# player's fonts come from player/fonts. CARGO picks another cargo, e.g.
+# make CARGO="cargo +1.100.0".
+#
+# The jobs print to the terminal make runs in on every system: the
+# release player on Windows has no console of its own and attaches to
+# that one.
 
 CARGO ?= cargo
 TARGET_DIR := $(or $(CARGO_TARGET_DIR),target)
@@ -40,7 +44,7 @@ PLATFORM := $(shell uname -s)
 EXE :=
 endif
 
-PLAYER := $(CARGO) run --release --locked -q -p jodeldiplom --bin jodeldiplom --
+PLAYER := $(CARGO) run --release --locked -q -p jodeldiplom --
 
 .PHONY: all jodeldiplom diag clean-cache clean-diag clean
 
@@ -49,11 +53,11 @@ all: jodeldiplom
 jodeldiplom:
 	$(CARGO) build --release --locked -p jodeldiplom
 ifeq ($(PLATFORM),Darwin)
-	bash player/macos/make-app.sh "$(RELEASE)/jodeldiplom-gui" player/fonts \
+	bash player/macos/make-app.sh "$(RELEASE)/jodeldiplom" player/fonts \
 		"$$($(CARGO) pkgid -p jodeldiplom | sed 's/.*[#@]//')" "$(RELEASE)"
-	@echo "Built $(RELEASE)/jodeldiplom (terminal) and $(RELEASE)/Jodeldiplom.app (window)"
+	@echo "Built $(RELEASE)/Jodeldiplom.app (and $(RELEASE)/jodeldiplom)"
 else
-	@echo "Built $(RELEASE)/jodeldiplom$(EXE) (terminal) and $(RELEASE)/jodeldiplom-gui$(EXE) (window)"
+	@echo "Built $(RELEASE)/jodeldiplom$(EXE)"
 endif
 
 diag:

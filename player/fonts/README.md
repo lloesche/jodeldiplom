@@ -1,6 +1,6 @@
-# The window player's fonts
+# The player's fonts
 
-The window player (`jodeldiplom-gui`) builds these three fonts in
+The player (`jodeldiplom`) builds these three fonts in
 (`build.rs` embeds them; `JODELDIPLOM_FONTS` names another folder holding
 the same files):
 

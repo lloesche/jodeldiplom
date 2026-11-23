@@ -2,8 +2,7 @@
 //! be used, step by step, with a bar for the step under way and one for
 //! the whole; on a failure, what went wrong, what to do, and two buttons:
 //! Try again and Quit (there is no skipping: without its files the player
-//! is not what it should be). The same widgets in the terminal and the
-//! window.
+//! is not what it should be).
 
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
@@ -51,8 +50,8 @@ pub enum Choice {
 }
 
 /// What a key means on the setup screen: `Enter` or `r` try again (after a
-/// failure), `q` or `Esc` quit. `key` is the key's name as both frontends
-/// give it: one character, `"enter"` or `"esc"`.
+/// failure), `q` or `Esc` quit. `key` is the key's name as the window gives
+/// it: one character, `"enter"` or `"esc"`.
 pub fn choice(key: &str, failed: bool) -> Option<Choice> {
     match key {
         "enter" | "r" | "R" if failed => Some(Choice::Retry),
@@ -108,10 +107,10 @@ fn detail(status: &Status) -> String {
 }
 
 /// Draws the setup screen over the whole frame; where its buttons are.
-pub fn draw(frame: &mut Frame, status: &Status, background: Color) -> Buttons {
+pub fn draw(frame: &mut Frame, status: &Status) -> Buttons {
     let area = frame.area();
     frame.render_widget(Clear, area);
-    frame.render_widget(Block::new().style(Style::new().bg(background)), area);
+    frame.render_widget(Block::new().style(Style::new().bg(BG)), area);
     let width = area.width.saturating_sub(4).clamp(20, 84);
     let inner = width.saturating_sub(4);
     let text = |s: String| Line::from(Span::styled(s, Style::new().fg(TEXT)));
@@ -200,7 +199,7 @@ pub fn draw(frame: &mut Frame, status: &Status, background: Color) -> Buttons {
         .border_type(BorderType::Rounded)
         .border_style(Style::new().fg(BORDER))
         .title(Span::styled(" Jodeldiplom ", Style::new().fg(DIM)))
-        .style(Style::new().bg(background));
+        .style(Style::new().bg(BG));
     let body = block.inner(rect);
     let body = Rect::new(
         body.x + 1,

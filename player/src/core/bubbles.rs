@@ -1,6 +1,6 @@
 //! The note bubbles of Karaoke mode (a capsule under each note the words
 //! are sung on): how the singing fills them, and when one is full. Pure,
-//! from what [`Singing`] heard; the frontends sweep a bubble full to full
+//! from what [`Singing`] heard; the window sweeps a bubble full to full
 //! and burst it ([`crate::view::bubbles`]).
 //!
 //! A bubble fills where a frame of the singer's pitch hit its note (fully

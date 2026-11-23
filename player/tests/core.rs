@@ -2212,8 +2212,7 @@ fn block_analysis(state: &State, block: jodeldiplom::core::lanes::Block) -> jode
 
 /// On the Transition tab the digits jump the playing track to the start of a
 /// bar around the one heard (5 its own, 6 the next, 4 the one before …) when
-/// the bar heard ends; with shift (or the symbol a US keyboard's shift makes,
-/// as a terminal sends it) at once. Past the bars found they go on at the
+/// the bar heard ends; with shift at once. Past the bars found they go on at the
 /// bar's length; none before the track starts, or during a transition.
 #[test]
 fn digits_on_the_transition_tab_jump_to_bars_around_the_one_heard() {
@@ -2238,17 +2237,10 @@ fn digits_on_the_transition_tab_jump_to_bars_around_the_one_heard() {
             other => panic!("{key:?}: {other:?}"),
         }
     };
-    let shifted = [
-        ('5', '%', 10),
-        ('6', '^', 11),
-        ('4', '$', 9),
-        ('9', '(', 14),
-        ('1', '!', 6),
-    ];
-    for (c, symbol, bar) in shifted {
-        for key in [Key::shifted(c), Key::ch(symbol)] {
-            assert_eq!(jump(&mut state, key), (starts[bar], JumpAt::Now), "{key:?}");
-        }
+    let shifted = [('5', 10), ('6', 11), ('4', 9), ('9', 14), ('1', 6)];
+    for (c, bar) in shifted {
+        let key = Key::shifted(c);
+        assert_eq!(jump(&mut state, key), (starts[bar], JumpAt::Now), "{key:?}");
     }
     assert_eq!(
         jump(&mut state, Key::ch('5')),

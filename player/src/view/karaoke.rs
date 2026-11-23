@@ -3,8 +3,7 @@
 //! The tab is cells: the cover, the button into the mode, the sliders and
 //! a few notes. The mode is one picture over the whole screen
 //! ([`KaraokePicture`]: the lyrics, the count-in) that the window paints
-//! in pixels over the blurred cover and a terminal draws in cells
-//! ([`karaoke_cells`]); its controls are cells over it.
+//! in pixels over the blurred cover; its controls are cells over it.
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::{HorizontalAlignment, Rect};
@@ -718,7 +717,7 @@ pub fn draw_tab(
 ) {
     let state = scene.state;
     if layout.cover.width > 0 && layout.cover.height > 0 {
-        pictures.cover(frame, layout.cover, scene.background, false);
+        pictures.cover(frame, layout.cover, false);
     }
     // The song playing, or the one the mode starts with.
     let (title, mut artist) = match &state.playing.track {
@@ -903,9 +902,9 @@ pub fn draw_tab(
 /// Cells a second the voice's lane shows without lyrics to fit.
 const VOICE_PER: f64 = 6.0;
 
-/// How tall the words on the tab's voice lane are where the frontend draws
-/// text at any size (the window), in cells: large enough to read as they
-/// go by, small enough that a song sung fast does not make them race.
+/// How tall the words on the tab's voice lane are, in cells: large enough
+/// to read as they go by, small enough that a song sung fast does not make
+/// them race.
 pub const VOICE_TEXT: u16 = 2;
 
 /// The span the voice's lane on the tab shows and where it starts: at the
@@ -949,13 +948,9 @@ fn draw_voice(frame: &mut Frame, scene: &Scene, area: Rect, pictures: &mut dyn P
         return;
     };
     let heard = scene.heard;
-    // Larger words where they can be drawn larger (and the lane tall
-    // enough for both their lines).
+    // Larger words where the lane is tall enough for both their lines.
     let lines = WordLines::KARAOKE;
-    let scale = pictures
-        .lane_text_scale()
-        .min(area.height / lines.rows as u16)
-        .max(1);
+    let scale = VOICE_TEXT.min(area.height / lines.rows as u16).max(1);
     let (start, end) = voice_window(state, area.width, heard, scale);
     // The whole track's bars: the lane may be scrolled between frames.
     let a = &r.analysis;
@@ -1207,119 +1202,6 @@ fn slider(buf: &mut Buffer, state: &State, s: &SliderLayout, show_focus: bool) {
     }
 }
 
-/// The digits of a count-in, five rows of blocks each.
-const DIGITS: [[&str; 5]; 3] = [
-    ["  █  ", " ██  ", "  █  ", "  █  ", " ███ "],
-    [" ███ ", "    █", " ███ ", "█    ", "█████"],
-    ["████ ", "    █", " ███ ", "    █", "████ "],
-];
-
-/// The mode's picture in cells (a terminal): the lines centred, the line
-/// sung in bold with what is sung in the accent colour, and the count-in
-/// in block digits.
-pub fn karaoke_cells(buf: &mut Buffer, picture: &KaraokePicture) {
-    let area = picture.area;
-    // The lines are centred on the whole screen (the controls never move
-    // them), and drawn only above the controls' bar while it shows.
-    let bottom = picture.controls.map_or(area.bottom(), |c| c.y);
-    // The count-in at the top, in block digits, over the lines.
-    if let Some((n, _)) = picture.count {
-        if let Some(rows) = n.checked_sub(1).and_then(|i| DIGITS.get(i)) {
-            let y0 = area.y + 1;
-            for (k, row) in rows.iter().enumerate() {
-                let x = area.x + area.width.saturating_sub(5) / 2;
-                buf.set_string(
-                    x,
-                    y0 + k as u16,
-                    row,
-                    Style::new().fg(ACCENT).add_modifier(Modifier::BOLD),
-                );
-            }
-        }
-    }
-    // The count-in before the singing comes back after a break: its number
-    // in the top row, apart from the lines (it never moves with them).
-    if let Some(cue) = picture.cue {
-        buf.set_string(
-            area.x + area.width.saturating_sub(1) / 2,
-            area.y + 1,
-            cue.number.to_string(),
-            Style::new().fg(ACCENT).add_modifier(Modifier::BOLD),
-        );
-    }
-    // The score, top right: the points and the level.
-    if let Some(score) = picture.score {
-        let times = match score.multiplier() {
-            1 => String::new(),
-            m => format!("×{m}  "),
-        };
-        let text = format!(
-            "{}  {times}{}",
-            score.level.name(),
-            points_text(score.points)
-        );
-        let w = width(&text) as u16;
-        if w + 2 <= area.width {
-            buf.set_string(
-                area.x + area.width - w - 1,
-                area.y,
-                text,
-                Style::new().fg(HIT).add_modifier(Modifier::BOLD),
-            );
-        }
-    }
-    let n = picture.lines.len() as u16;
-    // Below the digits while they show.
-    let top = if picture.count.is_some() {
-        area.y + 7
-    } else if picture.cue.is_some() {
-        area.y + 2
-    } else {
-        area.y
-    };
-    let mut y = (area.y + area.bottom().saturating_sub(area.y + 2 * n) / 2).max(top);
-    for line in &picture.lines {
-        if y + 1 >= bottom {
-            break;
-        }
-        let max = usize::from(area.width.saturating_sub(4));
-        let text = keep_start(&line.text, max);
-        let x = area.x + area.width.saturating_sub(width(&text) as u16) / 2;
-        let (sung, rest) = match line.kind {
-            // Fading out (a song's title): dim for its second half.
-            _ if line.alpha < 0.5 => (Style::new().fg(DIM), Style::new().fg(DIM)),
-            LineKind::Current => (
-                Style::new().fg(ACCENT).add_modifier(Modifier::BOLD),
-                Style::new().fg(TEXT).add_modifier(Modifier::BOLD),
-            ),
-            LineKind::Next => (Style::new().fg(TEXT), Style::new().fg(TEXT)),
-            LineKind::Previous | LineKind::Info => (Style::new().fg(DIM), Style::new().fg(DIM)),
-            LineKind::Warning => (
-                Style::new().fg(WARN).add_modifier(Modifier::BOLD),
-                Style::new().fg(WARN).add_modifier(Modifier::BOLD),
-            ),
-            LineKind::Medal(m) => (
-                Style::new().fg(medal_color(m)).add_modifier(Modifier::BOLD),
-                Style::new().fg(medal_color(m)).add_modifier(Modifier::BOLD),
-            ),
-        };
-        let chars: Vec<char> = text.chars().collect();
-        let split =
-            ((line.fill.clamp(0.0, 1.0) * chars.len() as f64).round() as usize).min(chars.len());
-        let head: String = chars[..split].iter().collect();
-        let tail: String = chars[split..].iter().collect();
-        let line_widget = Line::from(vec![Span::styled(head, sung), Span::styled(tail, rest)]);
-        Paragraph::new(line_widget)
-            .alignment(HorizontalAlignment::Left)
-            .render(Rect::new(x, y, width(&text) as u16, 1), buf);
-        // The notes its words are sung on, in the row under it.
-        if y + 1 < bottom && line.alpha >= 0.5 && !line.notes.is_empty() {
-            super::bubbles::notes_row(buf, line, (x, y + 1), &chars, split);
-        }
-        y += 2;
-    }
-}
-
 /// The notes' colour: those sung ([`NOTE`]) and those to come.
 ///
 /// [`NOTE`]: crate::view::lanes::NOTE
@@ -1563,52 +1445,5 @@ mod tests {
         );
         state.config.karaoke_echo = false;
         assert!(echo_text(&state).starts_with("off"));
-    }
-
-    #[test]
-    fn the_terminal_draws_the_notes_under_their_letters() {
-        let mut current = line("high low", 0.5, LineKind::Current);
-        current.notes = vec![
-            Note {
-                from: 0.0,
-                to: 4.0,
-                height: 1.0,
-                start: 0.0,
-                end: 1.0,
-                cents: 6000.0,
-                word: 0,
-            },
-            Note {
-                from: 5.0,
-                to: 8.0,
-                height: -1.0,
-                start: 0.0,
-                end: 1.0,
-                cents: 6000.0,
-                word: 0,
-            },
-        ];
-        let picture = KaraokePicture {
-            area: Rect::new(0, 0, 20, 5),
-            lines: vec![current],
-            count: None,
-            cue: None,
-            controls: None,
-            start: None,
-            before: Vec::new(),
-            moved: 1.0,
-            score: None,
-        };
-        let mut buf = Buffer::empty(picture.area);
-        karaoke_cells(&mut buf, &picture);
-        let row = |y: u16| -> String { (0..20).map(|x| buf[(x, y)].symbol().to_owned()).collect() };
-        let text_row = (0..5).find(|&y| row(y).contains("high low")).unwrap();
-        assert_eq!(row(text_row + 1).trim(), "⎺⎺⎺⎺ ⎽⎽⎽");
-        // Sung (the first half) brighter than to come.
-        let x = (0..20)
-            .find(|&x| buf[(x, text_row + 1)].symbol() == "⎺")
-            .unwrap();
-        assert_eq!(buf[(x, text_row + 1)].fg, crate::view::lanes::NOTE);
-        assert_eq!(buf[(x + 6, text_row + 1)].fg, NOTE_AHEAD);
     }
 }

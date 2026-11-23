@@ -1,11 +1,10 @@
-//! The ratatui widgets that draw the [`State`]: the same code for the
-//! terminal and the window.
+//! The ratatui widgets that draw the [`State`] into cells, which the window
+//! rasterises.
 //!
-//! Pictures (the cover and the spectrum) go through [`Pictures`]: the
-//! terminal draws them into cells (an image protocol or half blocks for
-//! the cover, braille dots for the spectrum, [`spectrum_cells`]); the
-//! window leaves their cells empty and paints pixels there after the frame
-//! is drawn. The spectrum's axis labels are cells in both ([`plot`]).
+//! Pictures (the cover, the spectrum, the lanes' waveforms, the bar
+//! numbers, Karaoke mode's picture) go through [`Pictures`]: the window
+//! leaves their cells empty and paints pixels there after the frame is
+//! drawn. The spectrum's axis labels are cells ([`plot`]).
 
 pub mod bubbles;
 pub mod desk;
@@ -16,7 +15,7 @@ pub mod setup;
 pub mod sync;
 pub mod transition;
 
-pub use plot::{spectrum_cells, Plot};
+pub use plot::Plot;
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::{HorizontalAlignment, Rect};
@@ -84,57 +83,33 @@ pub struct Zone {
     pub color: Color,
 }
 
-/// Draws the pictures: the cover and the spectrum.
+/// Draws the pictures: the window paints them in pixels where the widgets
+/// left their cells empty; [`CellPictures`] leaves them empty.
 pub trait Pictures {
     /// The cover (or a placeholder) into `area`. With `below_line` the
     /// area's first row has a border line through its middle (the list
     /// pane's top): the cover starts under that line, half a cell down,
     /// at the left; otherwise it is centred.
-    fn cover(&mut self, frame: &mut Frame, area: Rect, background: Color, below_line: bool);
+    fn cover(&mut self, frame: &mut Frame, area: Rect, below_line: bool);
     /// The spectrum's curve and grid into `plot.area` (its labels are
     /// drawn as cells by the caller).
     fn spectrum(&mut self, frame: &mut Frame, plot: &Plot);
-    /// Whether text can go over the cover just drawn: the window can; a
-    /// terminal's graphics would be cut by the cells drawn over them.
+    /// Whether text can go over the cover just drawn (over a cover, not
+    /// over the placeholder).
     fn text_over_cover(&self) -> bool {
         false
     }
     /// The cells of `caption` are text over the cover in `cover`: the
     /// window darkens the cover behind them so they read on any cover.
     fn caption(&mut self, _cover: Rect, _caption: Rect) {}
-    /// How many cells tall (and each character as many wide) the words on
-    /// a lane may be drawn ([`lanes::WavePlot::text_scale`]): one in cells,
-    /// more where the frontend draws text at any size.
-    fn lane_text_scale(&self) -> u16 {
-        1
-    }
     /// A lane's waveform ([`lanes::WavePlot`]), on the Transition tab or the
-    /// Karaoke tab's voice lane: in braille cells unless the frontend draws
-    /// it in pixels.
-    fn wave(&mut self, frame: &mut Frame, plot: &lanes::WavePlot) {
-        lanes::wave_cells(frame.buffer_mut(), plot);
-    }
-    /// A Transition block's bar numbers ([`transition::RulerPlot`]): in cells
-    /// unless the frontend draws them where the bars are, to the pixel.
-    fn ruler(&mut self, frame: &mut Frame, plot: &transition::RulerPlot) {
-        transition::ruler_cells(frame.buffer_mut(), plot);
-    }
-    /// Karaoke mode's picture ([`karaoke::KaraokePicture`]): in cells
-    /// unless the frontend paints it in pixels.
-    fn karaoke(&mut self, frame: &mut Frame, picture: &karaoke::KaraokePicture) {
-        karaoke::karaoke_cells(frame.buffer_mut(), picture);
-    }
-}
-
-/// How the title, artist and album links look.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum Links {
-    /// Underlined, as the device (the terminal).
-    #[default]
-    Underlined,
-    /// Underlined while the pointer is over them (the window); the
-    /// pointer's cell, if it is in the window.
-    OnHover(Option<(u16, u16)>),
+    /// Karaoke tab's voice lane.
+    fn wave(&mut self, frame: &mut Frame, plot: &lanes::WavePlot);
+    /// A Transition block's bar numbers ([`transition::RulerPlot`]), where
+    /// the bars are, to the pixel.
+    fn ruler(&mut self, frame: &mut Frame, plot: &transition::RulerPlot);
+    /// Karaoke mode's picture ([`karaoke::KaraokePicture`]).
+    fn karaoke(&mut self, frame: &mut Frame, picture: &karaoke::KaraokePicture);
 }
 
 /// Everything a frame shows.
@@ -143,11 +118,9 @@ pub struct Scene<'a> {
     pub state: &'a State,
     /// The spectrum heard now.
     pub spectrum: &'a SpectrumFrame,
-    /// The background: [`colors::BG`] in the window, the terminal's own
-    /// (`Color::Reset`) in a terminal.
-    pub background: Color,
-    /// How the links look.
-    pub links: Links,
+    /// The pointer's cell, if it is in the window: the title, artist and
+    /// album links are underlined while it is over them.
+    pub pointer: Option<(u16, u16)>,
     /// Seconds into the playing track as heard now ([`crate::app::App::heard`]),
     /// for the beat pulse.
     pub heard: f64,
@@ -157,12 +130,9 @@ pub struct Scene<'a> {
 /// links now.
 fn underline_links(buf: &mut Buffer, scene: &Scene, lines: &[Vec<Seg>], area: Rect) {
     for (rect, _) in crate::core::mouse::link_rects(lines, area) {
-        let shown = match scene.links {
-            Links::Underlined => true,
-            Links::OnHover(pointer) => {
-                pointer.is_some_and(|(x, y)| rect.contains(ratatui::layout::Position::new(x, y)))
-            }
-        };
+        let shown = scene
+            .pointer
+            .is_some_and(|(x, y)| rect.contains(ratatui::layout::Position::new(x, y)));
         if shown {
             buf.set_style(rect, Style::new().add_modifier(Modifier::UNDERLINED));
         }
@@ -245,10 +215,10 @@ fn line_at(segs: &[Seg], scene: &Scene) -> Line<'static> {
 /// Draws the whole screen.
 pub fn draw(frame: &mut Frame, scene: &Scene, pictures: &mut dyn Pictures) {
     let area = frame.area();
-    let bg = Style::new().bg(scene.background).fg(TEXT);
+    let bg = Style::new().bg(BG).fg(TEXT);
     Block::new().style(bg).render(area, frame.buffer_mut());
     // The layout is in the state's size; a frame of another size (the
-    // terminal resized since the state last heard of it) stays blank until
+    // window resized since the state last heard of it) stays blank until
     // the state catches up, as nothing laid out for it would fit.
     if (area.width, area.height) != scene.state.size {
         return;
@@ -434,7 +404,7 @@ fn draw_main(frame: &mut Frame, scene: &Scene, m: &MainLayout, pictures: &mut dy
         }
     }
     if let Some(cover) = m.cover {
-        pictures.cover(frame, cover, scene.background, true);
+        pictures.cover(frame, cover, true);
     }
     if let Some(info) = m.info {
         let segs = text::info_lines(state, usize::from(info.width));
@@ -833,7 +803,7 @@ fn draw_now(frame: &mut Frame, scene: &Scene, n: &NowLayout, pictures: &mut dyn 
     let cover = if over { n.cover } else { n.cover_above };
     let caption = n.caption;
     if cover.width > 0 && cover.height > 0 {
-        pictures.cover(frame, cover, scene.background, false);
+        pictures.cover(frame, cover, false);
     }
     if caption.width == 0 || caption.height == 0 {
         return;
@@ -1308,18 +1278,39 @@ fn draw_bottom(frame: &mut Frame, scene: &Scene, b: &Bottom, pictures: &mut dyn 
     );
 }
 
-/// Cover and spectrum drawn into cells, for terminals without images and
-/// for tests: the cover as a dim placeholder, the spectrum with
-/// [`spectrum_cells`].
+/// The pictures' cells as the window leaves them, without painting them:
+/// for the tests and the text dumps of the widgets. The cover is the
+/// placeholder (as the window shows it without art); the other pictures'
+/// cells are blank.
 pub struct CellPictures;
 
+/// `area` blank, in the background colour, as the window leaves it under a
+/// picture it paints.
+pub fn blank(frame: &mut Frame, area: Rect) {
+    Block::new()
+        .style(Style::new().bg(BG))
+        .render(area, frame.buffer_mut());
+}
+
 impl Pictures for CellPictures {
-    fn cover(&mut self, frame: &mut Frame, area: Rect, _background: Color, _below_line: bool) {
+    fn cover(&mut self, frame: &mut Frame, area: Rect, _below_line: bool) {
         placeholder(frame, area);
     }
 
     fn spectrum(&mut self, frame: &mut Frame, plot: &Plot) {
-        spectrum_cells(frame.buffer_mut(), plot);
+        blank(frame, plot.area);
+    }
+
+    fn wave(&mut self, frame: &mut Frame, plot: &lanes::WavePlot) {
+        blank(frame, plot.area);
+    }
+
+    fn ruler(&mut self, frame: &mut Frame, plot: &transition::RulerPlot) {
+        blank(frame, plot.area);
+    }
+
+    fn karaoke(&mut self, frame: &mut Frame, picture: &karaoke::KaraokePicture) {
+        blank(frame, picture.area);
     }
 }
 

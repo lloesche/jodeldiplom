@@ -2,8 +2,7 @@
 //! (opened exclusively), the microphone and the settings file, so a
 //! player holds a lock on a file in the settings folder for as long as it
 //! runs (released by the system when it ends, however it ends), and a
-//! second one started meanwhile says so and goes. The terminal and the
-//! window player share the lock.
+//! second one started meanwhile says so and goes.
 //!
 //! The lock file holds nothing: it is only opened, never written.
 
@@ -49,14 +48,14 @@ pub fn take(dir: &Path) -> Start {
     }
 }
 
-/// Tells that a player is running already: on the terminal, and in a
-/// message box for the window player on Windows (started from Explorer it
-/// has no console to print to).
-pub fn say_running(bin: &str, window: bool) {
+/// Tells that a player is running already: on the console it was started
+/// from, if any, and on Windows in a message box too (started from
+/// Explorer it has no console to print to).
+pub fn say_running(bin: &str) {
     let text = "Jodeldiplom is already running.";
     eprintln!("{bin}: {text}");
     #[cfg(windows)]
-    if window {
+    {
         use windows::core::HSTRING;
         use windows::Win32::UI::WindowsAndMessaging::{MessageBoxW, MB_ICONINFORMATION, MB_OK};
         // SAFETY: plain strings and no owner window; the call only shows a
@@ -70,8 +69,6 @@ pub fn say_running(bin: &str, window: bool) {
             );
         }
     }
-    #[cfg(not(windows))]
-    let _ = window;
 }
 
 #[cfg(test)]

@@ -4,8 +4,7 @@ version = "0.1.0"
 edition = "2021"
 rust-version = "1.90"
 license = "MIT"
-description = "A file-browser music player for PCM and lossy files, in the terminal and in a window"
-default-run = "jodeldiplom"
+description = "A file-browser music player for PCM and lossy files, in a window"
 
 [dependencies]
 jodel-output = { path = "../output" }
@@ -15,8 +14,9 @@ jodel-rhythm = { path = "../rhythm" }
 jodel-lyrics = { path = "../lyrics" }
 # Every file written: whole or not at all, made durable.
 durable = { path = "../durable" }
-ratatui = "0.30.2"
-ratatui-image = { version = "11.1.0", default-features = false, features = ["crossterm"] }
+# The widgets and their cell buffer; the window rasterises the cells itself
+# (no terminal backend).
+ratatui = { version = "0.30.2", default-features = false, features = ["std", "layout-cache"] }
 image = { version = "0.25.10", default-features = false, features = ["jpeg", "png"] }
 ab_glyph = "0.2.32"
 softbuffer = "0.4.8"
@@ -46,11 +46,3 @@ libc = "0.2"
 objc2 = "0.6.5"
 objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSData"] }
 objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSApplication", "NSImage", "NSResponder"] }
-
-[[bin]]
-name = "jodeldiplom"
-path = "src/bin/jodeldiplom.rs"
-
-[[bin]]
-name = "jodeldiplom-gui"
-path = "src/bin/jodeldiplom-gui.rs"

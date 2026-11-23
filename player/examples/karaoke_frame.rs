@@ -1,6 +1,6 @@
 //! One frame of Karaoke mode for a song in the caches, as the window draws
-//! it (a PNG, on a plain backdrop) and as the terminal does (printed): its
-//! lines at `SECONDS`, with the notes of the line being sung from its
+//! it (a PNG, on a plain backdrop; the lines and how far each is sung
+//! printed): its lines at `SECONDS`, with the notes of the line being sung from its
 //! melody. Only the caches are read, never the song.
 //!
 //! ```text
@@ -19,10 +19,7 @@ use std::path::Path;
 
 use jodeldiplom::core::singing::{Level, Singing};
 use jodeldiplom::gui::karaoke::{paint, Backdrop, BigText, Layer, Target};
-use jodeldiplom::view::karaoke::{
-    karaoke_cells, sung_on, timed_lines, KaraokePicture, LineKind, Score,
-};
-use ratatui::buffer::Buffer;
+use jodeldiplom::view::karaoke::{sung_on, timed_lines, KaraokePicture, LineKind, Score};
 use ratatui::layout::Rect;
 
 fn main() {
@@ -192,16 +189,9 @@ fn main() {
         );
     }
     img.save(&args[4]).unwrap();
-    // The terminal.
-    let mut buf = Buffer::empty(picture.area);
-    karaoke_cells(&mut buf, &picture);
-    for y in 0..picture.area.height {
-        let row: String = (0..picture.area.width)
-            .map(|x| buf[(x, y)].symbol().to_owned())
-            .collect();
-        if !row.trim().is_empty() {
-            println!("|{}|", row.trim_end());
-        }
+    // The lines, and how far each is sung.
+    for line in &picture.lines {
+        println!("{:>4.0} %  {}", line.fill * 100.0, line.text);
     }
 }
 

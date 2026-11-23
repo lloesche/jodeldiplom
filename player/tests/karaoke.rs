@@ -838,8 +838,8 @@ fn a_slider_under_the_pointer_lands_on_whole_percents() {
         point(&mut state, drag, quarter);
         assert_eq!(s.slider.value(&state), most / 4, "{:?}", s.slider);
         update(&mut state, Action::KaraokeSlideEnd);
-        // A terminal knows only the cell: the nearest whole percent to
-        // the cell's middle.
+        // Known only to the cell (`mouse::action`): the nearest whole
+        // percent to the cell's middle.
         for i in 0..s.track.width {
             let click = input(MouseKind::Down(MouseButton::Left), s.track.x + i);
             let action = mouse::action(&state, click).expect("a slide");
@@ -983,8 +983,7 @@ fn the_sliders_and_buttons_take_clicks() {
 /// held for START.
 #[test]
 fn the_controls_come_up_near_the_bottom_over_the_lines_with_a_seek_bar() {
-    use jodeldiplom::view::karaoke::{karaoke_cells, picture};
-    use ratatui::buffer::Buffer;
+    use jodeldiplom::view::karaoke::{picture, KaraokePicture};
     let mut state = tab();
     op(&mut state, Op::KaraokeEnter);
     // A song playing (nothing waits for START), the controls gone.
@@ -1009,16 +1008,13 @@ fn the_controls_come_up_near_the_bottom_over_the_lines_with_a_seek_bar() {
             Vec::new()
         }
     };
-    let cells = |state: &State| -> (Buffer, Option<u16>) {
+    let pictured = |state: &State| -> (KaraokePicture, Option<u16>) {
         let Layout::Karaoke(k) = layout::compute(state) else {
             panic!("the mode")
         };
-        let p = picture(state, &k, 30.0);
-        let mut buf = Buffer::empty(p.area);
-        karaoke_cells(&mut buf, &p);
-        (buf, k.controls.map(|c| c.bar.y))
+        (picture(state, &k, 30.0), k.controls.map(|c| c.bar.y))
     };
-    let (hidden, none) = cells(&state);
+    let (hidden, none) = pictured(&state);
     assert_eq!(none, None);
     // Above the bottom quarter: nothing.
     point(&mut state, moved(rows / 2));
@@ -1026,17 +1022,11 @@ fn the_controls_come_up_near_the_bottom_over_the_lines_with_a_seek_bar() {
     // In it: the controls, over the bottom; the lines where they were.
     point(&mut state, moved(rows - 2));
     assert!(karaoke::controls_shown(&state));
-    let (shown, bar) = cells(&state);
-    let bar = bar.expect("the controls' bar");
-    for y in 0..bar {
-        for x in 0..state.size.0 {
-            assert_eq!(
-                hidden[(x, y)].symbol(),
-                shown[(x, y)].symbol(),
-                "({x}, {y})"
-            );
-        }
-    }
+    let (shown, bar) = pictured(&state);
+    bar.expect("the controls' bar");
+    // The same lines in the same picture: the window lays them out on the
+    // whole screen, the controls never move them.
+    assert_eq!((hidden.area, &hidden.lines), (shown.area, &shown.lines));
     // The seek bar under the slider: a click and release seeks there.
     let Layout::Karaoke(k) = layout::compute(&state) else {
         panic!()

@@ -104,8 +104,7 @@ pub enum Action {
     Op(Op),
     /// A character typed into the filter or the palette.
     Type(char),
-    /// Text pasted: from the terminal, or from the clipboard after
-    /// [`Effect::ReadClipboard`]. It goes into the palette or the filter,
+    /// Text pasted: from the clipboard after [`Effect::ReadClipboard`]. It goes into the palette or the filter,
     /// and opens the filter on the main screen.
     Paste(String),
 
@@ -243,7 +242,7 @@ pub enum Action {
         row: u16,
     },
 
-    /// The window or terminal size in cells.
+    /// The window size in cells.
     Resize(u16, u16),
     /// The clock: milliseconds since the start.
     Tick(u64),

@@ -16,7 +16,7 @@
 //! them.
 //!
 //! Otherwise [`Setup`] gets them, on a thread of its own, while the
-//! frontends show a screen that cannot be skipped ([`crate::view::setup`]):
+//! window shows a screen that cannot be skipped ([`crate::view::setup`]):
 //! each step said with what it does and why, a bar for the step and one for
 //! the whole. A failure (no network, a download not what it should be, too
 //! little disk space or memory) is said with what to do, and the player

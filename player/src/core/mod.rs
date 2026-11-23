@@ -1,4 +1,5 @@
-//! The UI core: everything both frontends share and nothing that draws.
+//! The UI core: everything the window shows and does, and nothing that
+//! draws.
 //!
 //! - [`State`]: what the player shows and knows.
 //! - [`Action`]: every input, from keys and the mouse (through [`keymap`]
@@ -9,11 +10,11 @@
 //!   sizes, and the rects the mouse can hit.
 //! - [`keymap`]: the one table of key bindings, from which the help screen
 //!   and the command palette are generated.
-//! - [`text`]: the strings both frontends draw and the mouse needs to
+//! - [`text`]: the strings the widgets draw and the mouse needs to
 //!   locate (the signal path, the list toggle, rows, chips).
 //!
-//! The terminal and the window frontends translate their input into
-//! [`Action`]s and draw [`State`] with the same [`crate::view`] widgets.
+//! The window translates its input into [`Action`]s and draws [`State`]
+//! with the [`crate::view`] widgets.
 
 pub mod action;
 pub mod bubbles;
@@ -625,7 +626,7 @@ pub struct Click {
 /// Everything the UI shows and knows.
 #[derive(Clone, Debug)]
 pub struct State {
-    /// The window or terminal size in cells: columns, rows.
+    /// The window size in cells: columns, rows.
     pub size: (u16, u16),
     /// The widest right-column text seen since the last resize, in cells.
     /// The column keeps this width, so it does not narrow and widen again

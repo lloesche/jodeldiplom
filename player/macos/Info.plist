@@ -8,7 +8,7 @@
     <key>CFBundleDisplayName</key>
     <string>Jodeldiplom</string>
     <key>CFBundleExecutable</key>
-    <string>jodeldiplom-gui</string>
+    <string>jodeldiplom</string>
     <key>CFBundleIconFile</key>
     <string>jodeldiplom</string>
     <key>CFBundleIdentifier</key>

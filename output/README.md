@@ -625,7 +625,7 @@ The device paths need a device:
   4. The microphone: `mic` lists the inputs; `mic -- default default 48000 30`,
      then the same with
      the input on the device the output plays on, if it has one (the hog-mode
-     case), at two rates in turn. The terminal needs microphone permission
+     case), at two rates in turn. The terminal it runs in needs microphone permission
      (System Settings → Privacy & Security → Microphone), or the voice is
      silence and the peak stays at −∞.
 - **Linux:** type-checked and unit-tested in WSL, which has no sound card.

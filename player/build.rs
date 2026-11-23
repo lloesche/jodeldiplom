@@ -1,14 +1,14 @@
-//! Two things for the window player, `jodeldiplom-gui`:
+//! Two things for the player, `jodeldiplom`:
 //!
 //! - Its fonts: Sarasa Fixed J, Noto Emoji and Atkinson Hyperlegible Next
-//!   (for lyrics), from `fonts` (in the
-//!   repository; or the folder `JODELDIPLOM_FONTS` names).
-//!   `$OUT_DIR/fonts.rs` embeds them with `include_bytes!`; the window
-//!   binary includes that file and hands the fonts to the library. Without
-//!   them the window uses the embedded Cascadia Mono.
+//!   (for lyrics), from `fonts` (in the repository; or the folder
+//!   `JODELDIPLOM_FONTS` names). `$OUT_DIR/fonts.rs` embeds them with
+//!   `include_bytes!`; the binary includes that file and hands the fonts
+//!   to the library. Without them the window uses the embedded Cascadia
+//!   Mono.
 //! - Its icon on Windows (GNU and GNU-LLVM targets): `windres` compiles
-//!   `assets/jodeldiplom-gui.rc` into an object linked into that executable
-//!   only. `WINDRES` names another resource compiler; without one the
+//!   `assets/jodeldiplom.rc` into an object linked into the executable.
+//!   `WINDRES` names another resource compiler; without one the
 //!   executable builds without its icon (the window still sets it at run
 //!   time).
 
@@ -62,16 +62,14 @@ fn absolute(path: &Path) -> String {
 }
 
 fn windows_icon() {
-    println!("cargo:rerun-if-changed=assets/jodeldiplom-gui.rc");
+    println!("cargo:rerun-if-changed=assets/jodeldiplom.rc");
     println!("cargo:rerun-if-changed=assets/jodeldiplom.ico");
     println!("cargo:rerun-if-env-changed=WINDRES");
     if env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows") {
         return;
     }
     if env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc") {
-        println!(
-            "cargo:warning=no icon in jodeldiplom-gui.exe: MSVC targets are not set up for it"
-        );
+        println!("cargo:warning=no icon in jodeldiplom.exe: MSVC targets are not set up for it");
         return;
     }
     let windres = env::var("WINDRES").unwrap_or_else(|_| {
@@ -87,10 +85,10 @@ fn windows_icon() {
         }
     });
     let manifest = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
-    let out = PathBuf::from(env::var("OUT_DIR").unwrap()).join("jodeldiplom-gui-icon.o");
+    let out = PathBuf::from(env::var("OUT_DIR").unwrap()).join("jodeldiplom-icon.o");
     let status = Command::new(&windres)
         .arg("--input")
-        .arg(manifest.join("assets/jodeldiplom-gui.rc"))
+        .arg(manifest.join("assets/jodeldiplom.rc"))
         .arg("--include-dir")
         .arg(manifest.join("assets"))
         .arg("--output-format=coff")
@@ -99,9 +97,9 @@ fn windows_icon() {
         .status();
     match status {
         Ok(s) if s.success() => {
-            println!("cargo:rustc-link-arg-bin=jodeldiplom-gui={}", out.display());
+            println!("cargo:rustc-link-arg-bin=jodeldiplom={}", out.display());
         }
-        Ok(s) => println!("cargo:warning=no icon in jodeldiplom-gui.exe: {windres} failed ({s})"),
-        Err(e) => println!("cargo:warning=no icon in jodeldiplom-gui.exe: {windres}: {e}"),
+        Ok(s) => println!("cargo:warning=no icon in jodeldiplom.exe: {windres} failed ({s})"),
+        Err(e) => println!("cargo:warning=no icon in jodeldiplom.exe: {windres}: {e}"),
     }
 }

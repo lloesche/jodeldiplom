@@ -99,7 +99,7 @@ stem keys are their mutes.
   - `g_arms_a_transition_from_the_cue_into_the_cue`
   - `the_cues_decide_the_window_and_an_armed_one_follows_them`
   - `the_transition_cursor_moves_by_bars_and_cues_one`
-  - `the_fade_curves_are_drawn_in_the_terminal_lanes` (view)
+  - `the_fade_curves_go_to_the_lanes_of_a_transition` (view)
 - **T1.** `p`, `m`, `r` and the fades edited (`e`) change a transition
   set up or armed. Armed, it is sent again with the same window and
   entry, and keeps them, also while preparing; a new cue moves it to the
@@ -178,10 +178,9 @@ stem keys are their mutes.
 
 ## Karaoke
 
-- **K1.** Karaoke mode exists only fullscreen (the whole terminal in a
-  terminal). On the Karaoke tab, as in the mode, the voice plays at its
-  slider's level (the vocals' lane on the desk, over the VOCALS strip,
-  which stays as set), moved at once, so what is heard, metered and
+- **K1.** Karaoke mode exists only fullscreen. On the Karaoke tab, as in
+  the mode, the voice plays at its slider's level (the vocals' lane on the
+  desk, over the VOCALS strip, which stays as set), moved at once, so what is heard, metered and
   recorded there is what the mode plays; leaving the tab, by any way, puts
   the lane back at full, and coming back plays the voice at its level
   again. Without a GPU only songs whose stems are kept have it turned

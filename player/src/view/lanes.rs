@@ -2,13 +2,11 @@
 //! tabs and the window: the colours, a lane's waveform ([`WavePlot`]), and
 //! the lyrics' words along the voice's lane ([`lane_labels`]).
 //!
-//! The waveforms are drawn by the [`super::Pictures`]: in cells as braille
-//! (two dot columns and four dot rows a cell, mirrored about the middle,
-//! here), in pixels by the window. Bars start where a lane's cell is shaded
-//! (a line in pixels), the selection is tinted, the playhead is the accent
-//! colour, and stretches where the beat is unclear are dimmer. The voice's
-//! lane carries the lyrics, once timed, along its bottom row: each word
-//! where it is sung, each letter in the cell where the aligner heard it, a
+//! The waveforms are painted by the window in pixels, through the
+//! [`super::Pictures`]. Bars start at a line, the selection is tinted, the
+//! playhead is the accent colour, and stretches where the beat is unclear
+//! are dimmer. The voice's lane carries the lyrics, once timed, along its
+//! bottom row: each word where it is sung, each letter in the cell where the aligner heard it, a
 //! line where a sound is held (`Mi───ster`, `go────`; a word without its
 //! letters' times spread by syllables), the word heard now in the accent
 //! colour ([`lane_labels`]), on the lane's middle row.
@@ -16,17 +14,12 @@
 use std::sync::Arc;
 
 use jodel_rhythm::waveform::{self, Waveform};
-use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Color;
 
-use super::colors::{ACCENT, TEXT};
-use super::plot::{braille, braille_bit};
 use crate::core::lanes::{self, WordLines};
 use crate::core::layout::Lane;
 
-/// A bar's first beat, behind the waveform.
-pub const BAR_BG: Color = Color::Rgb(40, 40, 52);
 /// The selection, behind the waveform.
 pub const SELECT_BG: Color = Color::Rgb(58, 58, 86);
 /// The span the lanes show, in the overview.
@@ -36,8 +29,6 @@ pub const SHOWN_BG: Color = Color::Rgb(46, 46, 58);
 pub const OUTSIDE_BG: Color = Color::Rgb(8, 8, 10);
 /// How bright the waveform is outside the span shown, in the overview.
 pub const OUTSIDE_GAIN: f32 = 0.35;
-/// The cursor's beat.
-pub const CURSOR_BG: Color = Color::Rgb(96, 90, 28);
 /// The next track's cue bar.
 pub const CUE: Color = Color::Rgb(60, 200, 140);
 /// A transition's window, behind the waveform.
@@ -131,7 +122,8 @@ pub struct WavePlot {
     /// lane only): shared, never copied, frame to frame.
     pub lyrics: Option<Arc<jodel_lyrics::Lyrics>>,
     /// How many cells tall, and each character how many wide, the words
-    /// are drawn (1: the cells' own; [`super::Pictures::lane_text_scale`]).
+    /// are drawn (1: the cells' own; [`super::karaoke::VOICE_TEXT`] on the
+    /// Karaoke tab's voice lane).
     pub text_scale: u16,
     /// The lines the words go on ([`WordLines`]).
     pub lines: WordLines,
@@ -363,169 +355,11 @@ impl WavePlot {
             Some(i) => self.waveform.stems.as_ref().map(|s| &s[i]),
         }
     }
-
-    /// Whether `time` is in a stretch where the beat is unclear.
-    pub fn is_unclear(&self, time: f64) -> bool {
-        self.unclear.iter().any(|&(a, b)| time >= a && time < b)
-    }
-
-    /// Whether `time` falls in `start..end` of the column it starts.
-    fn within(time: Option<f64>, start: f64, end: f64) -> bool {
-        time.is_some_and(|t| t >= start && t < end)
-    }
-}
-/// A lane in braille: for each half cell its peak, mirrored about the
-/// middle row, and the marks as cell backgrounds.
-pub fn wave_cells(buf: &mut Buffer, plot: &WavePlot) {
-    let area = plot.area.intersection(buf.area);
-    if area.width == 0 || area.height == 0 {
-        return;
-    }
-    let Some(levels) = plot.levels() else {
-        return;
-    };
-    // The whole lane's rows, of which `area` shows those from `skip`.
-    let (skip, full) = (plot.rows.0, plot.rows.1.max(area.height));
-    let dots_x = 2 * usize::from(area.width);
-    let dots_y = 4 * usize::from(full);
-    let half = dots_y as f64 / 2.0;
-    let mut bits = vec![0u8; usize::from(area.width) * usize::from(full)];
-    for dx in 0..dots_x {
-        let (t0, t1) = (
-            plot.time_at(dx as f64, dots_x as f64),
-            plot.time_at(dx as f64 + 1.0, dots_x as f64),
-        );
-        let v = f64::from(levels.peak_between(t0, t1));
-        if v <= 0.02 {
-            continue;
-        }
-        let reach = (v * half).round().max(1.0) as usize;
-        let mid = dots_y / 2;
-        for dy in mid.saturating_sub(reach)..(mid + reach).min(dots_y) {
-            let (cx, cy) = (dx / 2, dy / 4);
-            bits[cy * usize::from(area.width) + cx] |= braille_bit(dx % 2, dy % 4);
-        }
-    }
-    // A transition's fade as a line of dots, from the bottom (off) to the
-    // top (full), each dot column joined to the last; its cells take the
-    // curve's colour. In a lane of one row the brightness says it alone.
-    let mut curve = vec![0u8; bits.len()];
-    if !plot.gain.is_empty() && full >= 2 {
-        let mut last: Option<usize> = None;
-        for dx in 0..dots_x {
-            let t = plot.time_at(dx as f64 + 0.5, dots_x as f64);
-            if !plot.transition.is_some_and(|(a, b)| t >= a && t <= b) {
-                last = None;
-                continue;
-            }
-            let g = f64::from(plot.gain_at(t).clamp(0.0, 1.0));
-            let y = ((1.0 - g) * (dots_y - 1) as f64).round() as usize;
-            let (lo, hi) = last.map_or((y, y), |p| (p.min(y), p.max(y)));
-            for dy in lo..=hi {
-                curve[(dy / 4) * usize::from(area.width) + dx / 2] |= braille_bit(dx % 2, dy % 4);
-            }
-            last = Some(y);
-        }
-    }
-    for cx in 0..area.width {
-        let (t0, t1) = (
-            plot.time_at(f64::from(cx), f64::from(area.width)),
-            plot.time_at(f64::from(cx) + 1.0, f64::from(area.width)),
-        );
-        let bar = plot.downbeats.iter().any(|&d| d >= t0 && d < t1);
-        let selected = plot.selection.is_some_and(|(a, b)| t1 > a && t0 < b);
-        let shown = plot.shown.is_some_and(|(a, b)| t1 > a && t0 < b);
-        let outside = plot.shown.is_some() && !shown;
-        let mid = 0.5 * (t0 + t1);
-        let mut fg = if plot.is_unclear(mid) {
-            dimmed(plot.color)
-        } else {
-            plot.color
-        };
-        fg = faded(fg, plot.gain_at(mid));
-        if outside {
-            fg = faded(fg, OUTSIDE_GAIN);
-        }
-        let in_transition = plot.transition.is_some_and(|(a, b)| t1 > a && t0 < b);
-        let bg = if WavePlot::within(plot.edit, t0, t1) {
-            Some(CURVE)
-        } else if WavePlot::within(plot.cursor, t0, t1) {
-            Some(CURSOR_BG)
-        } else if WavePlot::within(plot.cue, t0, t1) {
-            Some(dimmed(CUE))
-        } else if selected {
-            Some(SELECT_BG)
-        } else if shown {
-            Some(SHOWN_BG)
-        } else if bar {
-            Some(BAR_BG)
-        } else if in_transition {
-            Some(TRANSITION_BG)
-        } else if outside {
-            Some(OUTSIDE_BG)
-        } else {
-            None
-        };
-        let head = WavePlot::within(plot.playhead, t0, t1);
-        if head {
-            fg = ACCENT;
-        }
-        for cy in 0..area.height {
-            let row = usize::from((cy + skip).min(full - 1));
-            let at = row * usize::from(area.width) + usize::from(cx);
-            let (b, line) = (bits[at] | curve[at], curve[at] != 0);
-            let cell = &mut buf[(area.x + cx, area.y + cy)];
-            if head && b == 0 {
-                cell.set_symbol("│");
-            } else {
-                let mut utf8 = [0u8; 4];
-                cell.set_symbol(braille(b).encode_utf8(&mut utf8));
-            }
-            cell.set_fg(if line && !head { CURVE } else { fg });
-            if let Some(bg) = bg {
-                cell.set_bg(bg);
-            }
-        }
-    }
-    // The words along the lane's middle row (the upper of two), and the
-    // lines under it, where they show.
-    let rows = plot.lines.rows.max(1) as u16;
-    let middle = ((full - 1) / 2).min(full.saturating_sub(rows));
-    let lyrics = plot.lyrics.as_deref();
-    if let Some(lyrics) = lyrics.filter(|_| middle >= skip && middle - skip < area.height) {
-        let y0 = area.y + middle - skip;
-        let per = f64::from(area.width) / (plot.end - plot.start).max(1e-9);
-        let words = lanes::timed_words(lyrics);
-        // Whole cells from the track's start, so the words keep their
-        // cells as the view scrolls.
-        let x_of = |t: f64| (t * per).floor();
-        let lo = (plot.start * per).floor();
-        let view = (lo, lo + f64::from(area.width));
-        let labels = lane_labels(&words, &x_of, per, 1.0, plot.lines, plot.playhead, view);
-        for label in labels {
-            let y = y0 + label.row as u16;
-            if y >= area.bottom() {
-                continue;
-            }
-            let fg = if label.heard { ACCENT } else { TEXT };
-            for (i, c) in label.text.chars().enumerate() {
-                let x = label.at - lo + i as f64;
-                if x < 0.0 || x >= f64::from(area.width) {
-                    continue;
-                }
-                let mut utf8 = [0u8; 4];
-                buf[(area.x + x as u16, y)]
-                    .set_symbol(c.encode_utf8(&mut utf8))
-                    .set_fg(fg);
-            }
-        }
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::view::colors::DIM;
 
     #[test]
     fn words_split_into_their_syllables() {
@@ -538,62 +372,6 @@ mod tests {
         assert_eq!(parts("beautiful,"), ["beau", "ti", "ful,"]);
         assert_eq!(parts("愛してる"), ["愛", "し", "て", "る"]);
         assert_eq!(parts("..."), ["..."]);
-    }
-
-    #[test]
-    fn the_overview_shades_the_track_outside_the_span_shown() {
-        // 100 s over 100 cells, the lanes showing 40 to 60 s.
-        let frames = (100.0 * waveform::FPS) as usize;
-        let lane = waveform::Lane {
-            peak: vec![200; frames],
-            rms: vec![150; frames],
-        };
-        let plot = WavePlot {
-            area: Rect::new(0, 0, 100, 1),
-            waveform: Arc::new(Waveform {
-                mix: lane,
-                stems: None,
-                melody: None,
-            }),
-            lane: Lane::Song,
-            start: 0.0,
-            end: 100.0,
-            color: DIM,
-            downbeats: Vec::new(),
-            unclear: Vec::new(),
-            selection: None,
-            shown: Some((40.0, 60.0)),
-            playhead: None,
-            cursor: None,
-            cue: None,
-            transition: None,
-            gain: Vec::new(),
-            edit: None,
-            rows: (0, 1),
-            lyrics: None,
-            text_scale: 1,
-            lines: WordLines::ONE,
-            follow: None,
-            deep: false,
-            key: None,
-        };
-        let mut buf = Buffer::empty(plot.area);
-        wave_cells(&mut buf, &plot);
-        let at = |x: u16| &buf[(x, 0)];
-        assert_eq!(at(50).bg, SHOWN_BG);
-        assert_eq!(at(50).fg, DIM);
-        for x in [5, 30, 70, 95] {
-            assert_eq!(at(x).bg, OUTSIDE_BG, "cell {x}");
-            assert_eq!(at(x).fg, faded(DIM, OUTSIDE_GAIN), "cell {x}");
-        }
-        // The whole track shown: nothing shaded.
-        let whole = WavePlot {
-            shown: None,
-            ..plot
-        };
-        let mut buf = Buffer::empty(whole.area);
-        wave_cells(&mut buf, &whole);
-        assert_ne!(buf[(5, 0)].bg, OUTSIDE_BG);
     }
 
     #[test]

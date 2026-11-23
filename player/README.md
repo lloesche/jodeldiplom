@@ -3,30 +3,29 @@
 A music player for PCM files (FLAC, WAV, AIFF, CAF, ALAC in
 M4A/MP4), and for AAC-LC (in M4A/MP4), MP3 (MP2, MP1) and Ogg Vorbis, on top of
 [`jodel-playback`](../playback) and [`jodel-output`](../output): bit-perfect,
-exclusive output, a plain file browser instead of a library database, and
-two frontends with the same layout, keys and mouse support:
-
-- `jodeldiplom`: in the terminal (crossterm + ratatui),
-- `jodeldiplom-gui`: in a window (winit, frames through wgpu or else
-  softbuffer; no console window in
-  a Windows release build; on macOS the app `Jodeldiplom.app`).
+exclusive output, a plain file browser instead of a library database, in
+a window: `jodeldiplom` (winit, ratatui widgets rasterised in pixels,
+frames through wgpu or else softbuffer; on macOS the app
+`Jodeldiplom.app`). A Windows release build opens no console window;
+started from a terminal, it attaches to that one, so `--help`, `--diag`,
+`--list-devices`, `--clean-cache`, `--clean-diag` and errors print there
+(a console prompt does not wait for a window program: pipe its output,
+`jodeldiplom --diag | more`, or run it through `make`, to have it wait).
 
 ## Running
 
 ```sh
 cargo run --release -p jodeldiplom -- [options] [path]
-cargo run --release -p jodeldiplom --bin jodeldiplom-gui -- [options] [path]
 ```
 
-To build both for the system you are on, run `make` (or `make
-jodeldiplom`) in the repository's root: the terminal player `jodeldiplom` and the
-window player `jodeldiplom-gui` in `target/release` (or
-`$CARGO_TARGET_DIR/release`), and on macOS the window player as the app
-`Jodeldiplom.app` there instead (signed ad hoc, through `macos/make-app.sh`).
+To build it for the system you are on, run `make` (or `make jodeldiplom`)
+in the repository's root: `jodeldiplom` in `target/release` (or
+`$CARGO_TARGET_DIR/release`), and on macOS the app `Jodeldiplom.app`
+there too (signed ad hoc, through `macos/make-app.sh`).
 The build is the whole player: the speech models are not part of it (the
 player gets them itself, see Setup below), so a build can be shared as it is.
 `make
-diag` builds the terminal player and runs its `--diag`. `make
+diag` builds the player and runs its `--diag`. `make
 clean-cache` forgets the beat analyses (an analysis and its waveform per
 track) and the lyrics (the words found and our timings of them), so each
 track is analysed, looked up and timed again when it is wanted. `make
@@ -35,8 +34,7 @@ clean-diag` forgets the record of the last analyses that `--diag` shows
 fixed by hand or the speech model. `make clean` does both and removes the
 build output; `make CARGO="cargo +1.100.0"` picks another cargo.
 
-The player needs Rust 1.90 or newer (ratatui 0.30 and ratatui-image with
-its pure-Rust Sixel encoder); `jodel-playback`, `jodel-output` and
+The player needs Rust 1.90 or newer (ratatui 0.30); `jodel-playback`, `jodel-output` and
 `jodel-rhythm` build with Rust 1.85.
 
 `path` is a folder to start the browser in, or a file to play at once
@@ -54,7 +52,7 @@ without one).
 | `--list-devices` | list the devices and what each takes exclusively |
 | `--clean-cache` | forget the beat analyses, the stems kept and the lyrics in the data folder (each made again when wanted); the models stay (`make clean-cache`) |
 | `--clean-diag` | forget the record of the last analyses `--diag` shows (`make clean-diag`) |
-| `--diag` | print what the player finds on this system, for a bug report: the build, the OS and processor, the settings in force, the cache folders, every output device with what it takes exclusively and its own volume control, and the GPU side (every adapter on every backend with the limits the separator needs, whether the separator sets up on the one it picks or the error, a 6 s chunk's time and how it splits between the kernels, the upload and the readback, and whether the beat analysis will listen to stems), then the last three beat analyses either player made (`recent-analyses.txt` in the analysis cache: when, the file's name without its folders, what the cues heard, the tempo found, and how long decoding, the stems, listening and deciding took; analyses taken from the cache are not counted). Plays nothing. The Windows window binary has no console: run it with `jodeldiplom` |
+| `--diag` | print what the player finds on this system, for a bug report: the build, the OS and processor, the settings in force, the cache folders, every output device with what it takes exclusively and its own volume control, and the GPU side (every adapter on every backend with the limits the separator needs, whether the separator sets up on the one it picks or the error, a 6 s chunk's time and how it splits between the kernels, the upload and the readback, and whether the beat analysis will listen to stems), then the last three beat analyses the player made (`recent-analyses.txt` in the analysis cache: when, the file's name without its folders, what the cues heard, the tempo found, and how long decoding, the stems, listening and deciding took; analyses taken from the cache are not counted). Plays nothing. The Windows window binary has no console: run it with `jodeldiplom` |
 
 Options override the settings file for one run; settings changed in the
 player are saved to it (only what was changed there, not the options).
@@ -110,8 +108,7 @@ time, a stamp of its length and date in `checked.txt` sparing later starts
 the hashing). With both there, it starts at once and never goes online for
 them.
 
-Otherwise a setup screen comes first, in the window and in the terminal
-alike, and cannot be skipped: each step says what it does and why
+Otherwise a setup screen comes first, and cannot be skipped: each step says what it does and why
 (downloading the word-timing model; downloading the recogniser's 1.9 GB
 checkpoint, its vocabulary and tokenizer; packing it at 4 bits with the
 calibration built in, then checking the packed file against its checksum:
@@ -149,14 +146,12 @@ The right column is as wide as its longest line needs, up to half the
 screen (the list gives up the room); where the path still does not fit it
 wraps before a `→` step or before `(exclusive), bit-perfect`, never inside
 a phrase. Long titles, artists and albums end in `…`. The title, artist
-and album are links (underlined in the terminal, under the pointer in the
-window): the title and the album show the track in its folder, the artist
+and album are links (underlined under the pointer): the title and the album show the track in its folder, the artist
 the folder above it with the album selected (`T`, `B`, `R`).
 At the bottom: the spectrum of what is heard (the mix the device plays,
 the preview and its fades too, at the DAC's clock), the progress bar (click or drag to seek) and the buttons.
-The spectrum is a dotted curve over a faint dotted grid, with the level
-in dB on the left and the frequency under it; the terminal draws it in
-braille dots, the window in pixels.
+The spectrum is a curve over a faint grid, painted in pixels, with the
+level in dB on the left and the frequency under it.
 Clicking the cover (or `f`) opens Now playing: the cover filling the
 screen with the title, artist, album and status light over its bottom
 left; `esc`, a click or `f` returns. Clicking the device name
@@ -196,8 +191,7 @@ so the level stays where the slider was when the player took the device
 reach the device themselves, and these keys say so.
 
 The stems of the track playing can be switched on and off: `alt+1`
-drums, `alt+2` bass, `alt+3` vocals, `alt+4` other, `alt+0` all on (in
-the macOS terminal with Option as Meta; also the palette's "Stems: …"
+drums, `alt+2` bass, `alt+3` vocals, `alt+4` other, `alt+0` all on (`option` on a Mac; also the palette's "Stems: …"
 commands, and, with a GPU, the `drums` `bass` `vocals` `other` buttons
 after the transport buttons, `D B V O` where the row is short; a stem
 that is off is crossed out). Each stem is a strip of the Mixer tab inside
@@ -309,8 +303,7 @@ type; `enter` then goes to the folder, file or drive typed (`D:`,
 subfolder for it. `ctrl+v` (`cmd+v` on a Mac) pastes the clipboard's
 text into the filter or the palette; on the list it opens the filter with
 it, so a copied path is one `enter` away. Line breaks and tabs in what is
-pasted become spaces. In a terminal that sends pastes whole, its own paste
-does the same. `tab` always switches between Browser and Queue. `N`/`P` next/previous (`X`: whether
+pasted become spaces. `tab` always switches between Browser and Queue. `N`/`P` next/previous (`X`: whether
 `N` cuts or mixes into the next track, below), `T`/`B`/`R`
 go to the playing track, its album or its artist folder, `Q` or `ctrl+c`
 quit.
@@ -332,8 +325,7 @@ sides on the frame of the new file's first sound, on the mixer's clock.
 The song's player, its queue and its place in it are not touched; `ctrl+enter` does what `enter` does (queues the file)
 and ends the preview, as any other key or click does first. The status
 line says `Preview: <title> from a third in · release Ctrl to go back`
-meanwhile. The window sees `ctrl` go down and up; a terminal does not
-report the key alone, so the terminal player has no preview.
+meanwhile.
 
 In the browser and the queue, typing jumps to names as in a file explorer:
 lowercase letters, digits and other name characters select the first name
@@ -447,9 +439,8 @@ are not needed: some 20 MB at 44.1 kHz, 150 MB at 384 kHz). With a stem
 off the same: the stems are made beside the file, so a jump takes them
 along.
 Striking `5`
-again and again stutters the bar. In a terminal, `shift` with a digit
-counts when it sends the symbol a US keyboard's shift makes (`!` … `(`);
-the window takes it on any layout. Not while a transition is set up.
+again and again stutters the bar. `shift` with a digit counts on any
+keyboard layout. Not while a transition is set up.
 
 `space` still plays and pauses, and `←` `→` move the cursor here instead
 of seeking (the progress bar still seeks). With the mouse, a click on a
@@ -504,8 +495,7 @@ and the header shows the pairing (`next 2:1 +3.1 %`) with the glide
 (`(set)`), round to by the tempi again.
 
 The window is tinted on both tracks, each lane is as bright as its gain,
-and a line over it draws the fade (in the terminal a line of white braille
-dots, on lanes of two rows or more). The header says the preset, the mode,
+and a line over it draws the fade. The header says the preset, the mode,
 `(edited)`, `enter sets the cues`, `g arms`, `armed` or `mixing`, and how far apart the tempi are
 (`next −7.2 %`).
 
@@ -832,9 +822,9 @@ its sung stretches apart from the breaks and instrumental parts (4 s or
 more without singing). All of it is drawn by the GPU each frame (shapes
 as signed distances in one shader, the text from an atlas), over the
 blurred cover; nothing of it is painted by the processor frame by frame.
-Without a GPU, and in the terminal, the notes show under the line being
-sung as before: each word's under its letters, your pitch along them as
-a line, a dot where you are now (`↑` `↓` `●` in the terminal).
+Without a GPU the notes show under the line being sung as before: each
+word's under its letters, your pitch along them as a line, a dot where
+you are now.
 
 As you sing, the microphone's pitch (YIN, 100 frames a second, at the
 time in the song it was sung: the output frame playing as it was caught,
@@ -882,9 +872,8 @@ heard on the note (gold, or the paler gold where close), and one filled
 85 % bursts too (even in a word that scores a half: it shows what you
 sang); on **hard** the same, only a bubble you truly fill bursts. A
 bubble only partly filled never bursts: it keeps its liquid at the level
-you sang. Each bubble bursts as it fills, in every frontend, by your
-singing's own time (the song's less the delay, so you see the whole
-sweep and burst; a paused song holds them); sought back before what
+you sang. Each bubble bursts as it fills, by your singing's own time
+(the song's less the delay, so you see the whole sweep and burst; a paused song holds them); sought back before what
 filled it, it shows again as it is. In the window the GPU draws the
 liquid and the bursts (a record a bubble, its surface, wobble, drops and
 bits worked out in its shaders), so they cost the processor nothing;
@@ -902,7 +891,7 @@ button into the mode (and START in it) is greyed out, with why beside it
 an instrumental), and does nothing but say so. A big folder just queued
 is got ready a track at a time, so its songs come singable one by one.
 
-Karaoke mode fills the window (fullscreen) or the terminal: the song's
+Karaoke mode fills the window (fullscreen): the song's
 cover blurred under a dark layer, its title and, once they are known, its
 lyrics. The voice plays at its level (as on the tab). Going in stops the song and holds it at its start (with shift,
 it goes on where it is). Each song waits for START (`enter`, `space`, or
@@ -919,8 +908,7 @@ The count follows what is heard, so it lands whatever the output's
 latency. It comes again whatever started the song (shift into the mode,
 `N`, a seek): before the first sung line as large, and after a break of
 8 s or more without singing, half as large in the same place at the top,
-apart from the lines and never moving with them (in a terminal, a digit
-in the top row). A lyric line that only marks a break (a note, an empty
+apart from the lines and never moving with them. A lyric line that only marks a break (a note, an empty
 timed line, `[Instrumental]`, `(Guitar solo)`, `*Interlude*` and the
 like) is kept as a break, several in a row as one, and written as `♪` in
 our timing file; it is not sung, and the mode shows one `♪` through each
@@ -1057,7 +1045,7 @@ The capitals keep their commands here (`M` the beat pulse, `S` stop);
 | Module | |
 |---|---|
 | `core` | state, `Action`, `update(state, action) -> effects`, layout in cells with its collapse rules, keymap, mouse regions; the Transition tab (`core::transition::tab`, the lanes it shares with Karaoke in `core::lanes`), the grid fixes (`core::grid`), the transitions' presets and plans (`core::transition`), the Karaoke tab and mode (`core::karaoke`, its sliders in `core::sliders`), the key the song plays in (`core::key`), the Mixer tab's desk (`core::desk`: its strips, settings, the fader's taper, the meters' ballistics, its mouse) and the stems on it (`core::stems`: the stem keys as strip mutes on a bar of the head on air, when the engine makes stems, the Karaoke voice's lanes on both heads). Pure. |
-| `view` | the ratatui widgets for both frontends; the cover, the spectrum, the Transition tab's lanes (`view::transition`, with `view::lanes`, which the Karaoke tab shares) and Karaoke mode's picture (`view::karaoke`) go through `view::Pictures`; the window paints that picture in `gui::karaoke`. The Mixer tab (`view::desk`) is cells only |
+| `view` | the ratatui widgets, drawing the state into cells; the cover, the spectrum, the Transition tab's lanes (`view::transition`, with `view::lanes`, which the Karaoke tab shares) and Karaoke mode's picture (`view::karaoke`) go through `view::Pictures`, which the window paints in pixels (Karaoke mode's picture in `gui::karaoke`). The Mixer tab (`view::desk`) is cells only |
 | `app` | the running player: the engine and its desk, background workers, the spectrum (the mixer's monitor), cover; carries out the effects |
 | `desk_wiring` | the desk the engine plays on: a mixer that holds the device (`jodel_output::mixer`), the player's strip with its stems' strips inside it, the preview's, the engine on two lane inputs of them (its two heads: a transition's next track plays on the other); the Mixer tab's settings made on it, its look for a frame |
 | `preview` | the preview's players, guests on the mixer (one per file, two at most): only the latest file loaded, crossfades on the mixer's clock, the song ducked and back |
@@ -1068,7 +1056,6 @@ The capitals keep their commands here (`M` the beat pulse, `S` stop);
 | `grids` | the beat grids fixed by hand, kept per track in the settings folder |
 | `cache` | the schemas of what is kept on disk between runs, and their versions |
 | `stems_cache` | the tracks' stems kept (`stems/`): their files' names, the store the engine reads them from, pruning to 30 GB |
-| `tui` | terminal input and drawing; covers with ratatui-image (Kitty, iTerm2, Sixel, else half blocks), the spectrum in braille dots |
 | `gui` | the window; `gui::raster::PixelBackend` draws the cells into pixels with the embedded font, `gui::Canvas` paints covers, the spectrum and the Transition lanes at their cell rects |
 
 The window's font is Sarasa Fixed J (Iosevka's Latin with Source Han Sans
@@ -1077,13 +1064,13 @@ with Noto Emoji for emoji (monochrome, in the text colour), and Atkinson
 Hyperlegible Next SemiBold for lyrics where they are drawn large (the
 Karaoke tab's voice lane, Karaoke mode: a font made to be read at a
 glance, proportional, set by its own spacing); all SIL Open Font License
-1.1. They are built into `jodeldiplom-gui` (about 16 MB), so
-it is one file; the terminal player does not carry them. They are in
+1.1. They are built into `jodeldiplom` (about 16 MB), so
+it is one file. They are in
 `fonts`, with their licences and where they come from
 ([fonts/README.md](fonts/README.md)); `build.rs` takes them from there (or
 from the folder `JODELDIPLOM_FONTS` names). Built
 without them, the window uses the embedded Cascadia Mono
-(`assets/CascadiaMono-OFL.txt`); `jodeldiplom-gui --help` says which.
+(`assets/CascadiaMono-OFL.txt`); `jodeldiplom --help` says which.
 Characters none of these fonts has come from the system's fonts (Yu
 Gothic, Microsoft YaHei, Malgun Gothic … on Windows, Hiragino and the
 like on macOS, Noto CJK or whatever fontconfig picks on Linux). The size
@@ -1134,7 +1121,7 @@ skipped frame).
 
 The icon (a dotted spectrum rolling off from one colour to another) is drawn by `src/icon.rs`: the window sets it at run time (on
 macOS the Dock icon), on Windows `build.rs` builds `assets/jodeldiplom.ico`
-into `jodeldiplom-gui.exe` with `windres` (the target's
+into `jodeldiplom.exe` with `windres` (the target's
 `*-w64-mingw32-windres` when cross compiling, or `WINDRES`), and the macOS
 app carries `assets/jodeldiplom.icns` (the square on Apple's icon grid,
 with a shadow). After changing the drawing, rewrite both files with
@@ -1213,9 +1200,10 @@ speech model, the GPU, and the last analyses.
 
 ## Testing
 
-`cargo test -p jodeldiplom` needs no device and no terminal: the core
+`cargo test -p jodeldiplom` needs no device and no window: the core
 (update, keymap, mouse, layout at several sizes), the screens drawn into a
-ratatui test buffer and compared with `tests/snapshots/` (rewrite them with
+ratatui test buffer (the pictures' cells blank, as the window leaves them
+for its pixels) and compared with `tests/snapshots/` (rewrite them with
 `UPDATE_SNAPSHOTS=1` after an intended change), the browser on a temporary
 folder tree, the whole app playing the PCM fixtures (`tests/fixtures/pcm`) into a null
 output, and the window's pixels drawn headless.
@@ -1226,8 +1214,8 @@ time, the file's size, how fast it reads back, and how far it is from
 separating the track again live.
 
 `cargo run --release -p jodeldiplom --example shots -- OUT_DIR` renders every
-screen to `gui-*.png` (the window's path) and `tui-*.txt` (the terminal's),
-with a fixture track playing into the null output.
+screen to `gui-*.png` (the window's path) and the text of its cells to
+`gui-*.txt`, with a fixture track playing into the null output.
 
 `cargo run --release -p jodeldiplom --example beats -- [--methods flux,network] [--beats] [--levels] [--presence] [--clicks OUT.wav] FILE...`
 analyses files as the player does (with the methods given, default both).

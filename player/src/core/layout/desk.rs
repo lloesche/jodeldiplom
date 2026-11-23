@@ -455,7 +455,7 @@ mod tests {
         };
         assert!(!names(96).contains(&Channel::Mic));
         assert!(names(96).contains(&Channel::Strip(StripKind::Preview)));
-        // An 80-column terminal (78 inside the pane): all but the
+        // An 80-column window (78 inside the pane): all but the
         // microphone, the master's lamps whole.
         let at80 = compute(Rect::new(1, 1, 78, 22), true, 1);
         let shown: Vec<Channel> = at80.channels.iter().map(|c| c.channel).collect();

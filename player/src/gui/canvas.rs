@@ -8,8 +8,7 @@ use std::sync::Arc;
 use crate::gui::raster::{pack, unpack, PixelBackend};
 use image::RgbImage;
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Style};
-use ratatui::widgets::{Block, Widget};
+use ratatui::style::Color;
 use ratatui::{Frame, Terminal};
 
 use crate::art::{self, Art};
@@ -67,16 +66,10 @@ struct PixelPictures {
     paints: Vec<Paint>,
 }
 
-fn blank(frame: &mut Frame, area: Rect, background: Color) {
-    Block::new()
-        .style(Style::new().bg(background))
-        .render(area, frame.buffer_mut());
-}
-
 impl Pictures for PixelPictures {
-    fn cover(&mut self, frame: &mut Frame, area: Rect, background: Color, below_line: bool) {
+    fn cover(&mut self, frame: &mut Frame, area: Rect, below_line: bool) {
         if self.has_art {
-            blank(frame, area, background);
+            view::blank(frame, area);
             self.paints.push(Paint::Cover(area, below_line));
         } else {
             view::placeholder(frame, area);
@@ -84,31 +77,27 @@ impl Pictures for PixelPictures {
     }
 
     fn spectrum(&mut self, frame: &mut Frame, plot: &Plot) {
-        blank(frame, plot.area, colors::BG);
+        view::blank(frame, plot.area);
         self.paints.push(Paint::Spectrum(plot.clone()));
     }
 
     fn wave(&mut self, frame: &mut Frame, plot: &WavePlot) {
-        blank(frame, plot.area, colors::BG);
+        view::blank(frame, plot.area);
         self.paints.push(Paint::Wave(Box::new(plot.clone())));
     }
 
     fn ruler(&mut self, frame: &mut Frame, plot: &RulerPlot) {
-        blank(frame, plot.area, colors::BG);
+        view::blank(frame, plot.area);
         self.paints.push(Paint::Ruler(Box::new(plot.clone())));
     }
 
     fn karaoke(&mut self, frame: &mut Frame, picture: &KaraokePicture) {
-        blank(frame, picture.area, colors::BG);
+        view::blank(frame, picture.area);
         self.paints.push(Paint::Karaoke(Box::new(picture.clone())));
     }
 
     fn text_over_cover(&self) -> bool {
         self.has_art
-    }
-
-    fn lane_text_scale(&self) -> u16 {
-        crate::view::karaoke::VOICE_TEXT
     }
 
     fn caption(&mut self, cover: Rect, caption: Rect) {
@@ -2159,4 +2148,67 @@ fn wave_keys(
         }
     }
     keys
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::lanes::WordLines;
+    use jodel_rhythm::waveform;
+
+    /// The overview shades the track outside the span the lanes show; with
+    /// the whole track shown, nothing.
+    #[test]
+    fn the_overview_shades_the_track_outside_the_span_shown() {
+        // 100 s over 100 columns, the lanes showing 40 to 60 s.
+        let frames = (100.0 * waveform::FPS) as usize;
+        let lane = waveform::Lane {
+            peak: vec![200; frames],
+            rms: vec![150; frames],
+        };
+        let plot = WavePlot {
+            area: Rect::new(0, 0, 100, 1),
+            waveform: Arc::new(Waveform {
+                mix: lane,
+                stems: None,
+                melody: None,
+            }),
+            lane: Lane::Song,
+            start: 0.0,
+            end: 100.0,
+            color: colors::DIM,
+            downbeats: Vec::new(),
+            unclear: Vec::new(),
+            selection: None,
+            shown: Some((40.0, 60.0)),
+            playhead: None,
+            cursor: None,
+            cue: None,
+            transition: None,
+            gain: Vec::new(),
+            edit: None,
+            rows: (0, 1),
+            lyrics: None,
+            text_scale: 1,
+            lines: WordLines::ONE,
+            follow: None,
+            deep: false,
+            key: None,
+        };
+        let keys = |plot: &WavePlot| {
+            let cols = Columns::new(plot.start, plot.end, 100);
+            wave_keys(plot, cols, 100, 4, 1, 0, 4, false)
+        };
+        let shaded = keys(&plot);
+        assert_eq!(shaded[50].back, Back::Shown);
+        for x in [5, 30, 70, 95] {
+            assert_eq!(shaded[x].back, Back::Outside, "column {x}");
+        }
+        // The whole track shown: nothing shaded.
+        let whole = WavePlot {
+            shown: None,
+            ..plot
+        };
+        assert_ne!(keys(&whole)[5].back, Back::Outside);
+    }
 }

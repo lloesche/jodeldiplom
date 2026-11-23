@@ -1,7 +1,7 @@
-//! The window frontend: winit for the window and input, the GPU (or,
-//! without one, softbuffer) to put the [`Canvas`] pixels on screen. The
-//! same widgets, layout, keymap and mouse regions as the terminal; the
-//! pointer is mapped to cells.
+//! The window: winit for the window and input, the GPU (or, without one,
+//! softbuffer) to put the [`Canvas`] pixels on screen. The widgets, the
+//! layout, the keymap and the mouse regions are in cells; the pointer is
+//! mapped to them.
 
 pub mod canvas;
 pub mod fonts;
@@ -34,12 +34,11 @@ use winit::window::{Fullscreen, Icon, Window, WindowId};
 
 use crate::app::{App, AppOptions};
 use crate::cli::Args;
-use crate::core::keymap::{Key, KeyCode};
+use crate::core::keymap::{self, Key, KeyCode};
 use crate::core::mouse::{self, MouseButton, MouseInput, MouseKind};
 use crate::core::preview::Ctrl;
 use crate::core::Action;
-use crate::tui::key_action;
-use crate::view::{colors, Links, Scene};
+use crate::view::Scene;
 
 pub use canvas::{font_px, Canvas, FONT};
 
@@ -279,9 +278,7 @@ impl Gui {
         };
         canvas.fit(size.width, size.height);
         let status = run.setup.status();
-        run.buttons = canvas.draw_widgets(|frame| {
-            crate::view::setup::draw(frame, &status, crate::view::colors::BG)
-        });
+        run.buttons = canvas.draw_widgets(|frame| crate::view::setup::draw(frame, &status));
         let changes = canvas.take_changes();
         self.presented = match screen {
             Screen::Gpu(gpu) => match gpu.show(canvas, &changes, size.width, size.height, None) {
@@ -404,8 +401,7 @@ impl Gui {
         let scene = Scene {
             state: &app.state,
             spectrum: &spectrum,
-            background: colors::BG,
-            links: Links::OnHover(self_pointer),
+            pointer: self_pointer,
             heard,
         };
         let drawing = std::time::Instant::now();
@@ -730,7 +726,11 @@ impl ApplicationHandler<Wake> for Gui {
                         k.shift |= shifted_digit;
                         k
                     })
-                    .and_then(|k| self.app.as_ref().and_then(|app| key_action(&app.state, k)));
+                    .and_then(|k| {
+                        self.app
+                            .as_ref()
+                            .and_then(|app| keymap::action(&app.state, k))
+                    });
                 self.act(action);
             }
             WindowEvent::CursorMoved { position, .. } => {

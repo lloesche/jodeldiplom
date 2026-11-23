@@ -268,11 +268,10 @@ pub struct TransitionLayout {
 }
 
 /// The Now playing screen: the cover filling the screen and a caption
-/// (title, artist · album, status light) at its bottom left. A frontend
-/// that can draw text over the cover (the window, with a cover) draws it
-/// in `cover` and the caption over it; one that cannot (a terminal's
-/// graphics, or a placeholder) draws it in `cover_above`, which leaves the
-/// caption's rows free. The caption is in the same place either way.
+/// (title, artist · album, status light) at its bottom left. With a cover
+/// the window draws it in `cover` and the caption over it; the placeholder
+/// (no cover) goes in `cover_above`, which leaves the caption's rows free.
+/// The caption is in the same place either way.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NowLayout {
     /// The whole screen (a click anywhere returns).

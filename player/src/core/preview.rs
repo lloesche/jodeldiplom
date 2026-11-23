@@ -8,8 +8,7 @@
 //! files play on players of their own ([`Effect::Preview`], the app's
 //! [`crate::preview`]).
 //!
-//! The window tells when the key goes down and up ([`Ctrl`]; a terminal
-//! does not tell the key alone, so the terminal player has no preview).
+//! The window tells when the key goes down and up ([`Ctrl`]).
 //! Ctrl held alone starts a preview after [`HOLD_MS`], so `ctrl+s`, `ctrl+l`,
 //! `ctrl+v` and `ctrl+c` do what they do without one; any key or click
 //! other than a move of the selection ends a preview first (`enter` then

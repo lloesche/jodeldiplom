@@ -1,7 +1,7 @@
 //! Renders the player's screens to files, with a fixture track playing
 //! through the null output (no device) and a generated cover:
-//! `gui-*.png` from the window's drawing path and `tui-*.txt` from the
-//! terminal's.
+//! `gui-*.png` from the window's drawing path, and for each a `gui-*.txt`
+//! with the text of its cells (the pictures' cells blank).
 //!
 //! ```text
 //! cargo run --release -p jodeldiplom --example shots -- OUT_DIR [--real-devices]
@@ -23,8 +23,7 @@ use jodeldiplom::core::keymap::Op;
 use jodeldiplom::core::{Action, DeviceChoice, Effect, Screen, Side, State};
 use jodeldiplom::gui::{font_px, Canvas};
 use jodeldiplom::spectrum::SpectrumFrame;
-use jodeldiplom::tui::{render_text, TermPictures};
-use jodeldiplom::view::{colors, Links, Scene};
+use jodeldiplom::view::Scene;
 
 fn fake_devices() -> Result<Vec<DeviceChoice>, String> {
     Ok(vec![
@@ -41,6 +40,7 @@ fn fake_devices() -> Result<Vec<DeviceChoice>, String> {
     ])
 }
 
+/// A window of 1280 × 800 at `scale`.
 fn gui_shot(
     out: &Path,
     name: &str,
@@ -52,23 +52,11 @@ fn gui_shot(
     let (w, h) = ((1280.0 * scale) as u32, (800.0 * scale) as u32);
     let mut canvas = Canvas::new(80, 24, font_px(scale));
     let grid = canvas.fit(w, h);
-    let mut state = state.clone();
-    state.size = grid;
-    let scene = Scene {
-        state: &state,
-        spectrum,
-        background: colors::BG,
-        links: Links::OnHover(None),
-        // As the terminal's: the position.
-        heard: state.playing.position,
-    };
-    canvas.draw(&scene, app.art());
-    let path = out.join(format!("gui-{name}.png"));
-    canvas.image().save(&path).expect("write the PNG");
-    println!("{} ({grid:?} cells)", path.display());
+    shot(out, name, state, spectrum, app, canvas, grid);
 }
 
-fn tui_shot(
+/// A window of exactly `size` cells, at a scale of 1.
+fn cells_shot(
     out: &Path,
     name: &str,
     state: &State,
@@ -76,14 +64,37 @@ fn tui_shot(
     app: &App,
     size: (u16, u16),
 ) {
+    let mut canvas = Canvas::new(size.0, size.1, font_px(1.0));
+    let (cw, ch) = canvas.cell();
+    let grid = canvas.fit(
+        (cw * usize::from(size.0)) as u32,
+        (ch * usize::from(size.1)) as u32,
+    );
+    shot(out, name, state, spectrum, app, canvas, grid);
+}
+
+fn shot(
+    out: &Path,
+    name: &str,
+    state: &State,
+    spectrum: &SpectrumFrame,
+    app: &App,
+    mut canvas: Canvas,
+    grid: (u16, u16),
+) {
     let mut state = state.clone();
-    state.size = size;
-    let mut pictures = TermPictures::halfblocks();
-    pictures.set_art(app.art());
-    let text = render_text(&state, spectrum, &mut pictures, size.0, size.1);
-    let path = out.join(format!("tui-{name}.txt"));
-    std::fs::write(&path, text).expect("write the text");
-    println!("{}", path.display());
+    state.size = grid;
+    let scene = Scene {
+        state: &state,
+        spectrum,
+        pointer: None,
+        heard: state.playing.position,
+    };
+    canvas.draw(&scene, app.art());
+    let path = out.join(format!("gui-{name}.png"));
+    canvas.image().save(&path).expect("write the PNG");
+    std::fs::write(out.join(format!("gui-{name}.txt")), canvas.text()).expect("write the text");
+    println!("{} ({grid:?} cells)", path.display());
 }
 
 /// The playing track's words timed over the Transition tab's span: a line sung
@@ -280,10 +291,9 @@ fn main() {
     };
     for (name, s) in &screens {
         gui_shot(&out, name, s, &spectrum, &app, 1.0);
-        tui_shot(&out, name, s, &spectrum, &app, (120, 36));
     }
     gui_shot(&out, "main-hidpi", &screens[0].1, &spectrum, &app, 2.0);
-    tui_shot(
+    cells_shot(
         &out,
         "main-narrow",
         &screens[0].1,
@@ -291,9 +301,9 @@ fn main() {
         &app,
         (64, 22),
     );
-    // The Mixer tab in an 80-column terminal, the default one's width.
+    // The Mixer tab in the narrowest usual window, 80 columns.
     if let Some((_, mixer)) = screens.iter().find(|(name, _)| *name == "mixer") {
-        tui_shot(&out, "mixer-80", mixer, &spectrum, &app, (80, 24));
+        cells_shot(&out, "mixer-80", mixer, &spectrum, &app, (80, 24));
     }
     app.shutdown();
     let _ = std::fs::remove_dir_all(&tree.root);

@@ -1,5 +1,4 @@
-//! The command line: `jodeldiplom [options] [path]`, the same for the
-//! terminal and the window binary.
+//! The command line: `jodeldiplom [options] [path]`.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -209,7 +208,7 @@ pub fn start(path: Option<&Path>) -> Result<(PathBuf, Option<PathBuf>), String> 
     }
 }
 
-/// The app options for a command line (the frontend fills in the size and
+/// The app options for a command line (the window fills in the size and
 /// the wake-up).
 pub fn app_options(args: &Args) -> Result<AppOptions, String> {
     let settings = settings(args)?;
@@ -441,8 +440,8 @@ mod tests {
         let home = std::env::temp_dir().join(format!("jodeldiplom-home-{}", std::process::id()));
         std::fs::create_dir_all(&home).unwrap();
         let cwd = PathBuf::from("/somewhere");
-        let bundled = Path::new("/Applications/Jodeldiplom.app/Contents/MacOS/jodeldiplom-gui");
-        let bare = Path::new("/usr/local/bin/jodeldiplom-gui");
+        let bundled = Path::new("/Applications/Jodeldiplom.app/Contents/MacOS/jodeldiplom");
+        let bare = Path::new("/usr/local/bin/jodeldiplom");
         // From a shell: the current folder.
         assert_eq!(default_folder(cwd.clone(), Some(bare), Some(&home)), cwd);
         // From the bundle: home without a Music folder, then Music.

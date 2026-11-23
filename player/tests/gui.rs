@@ -13,8 +13,7 @@ use jodeldiplom::core::{update, Screen, State};
 use jodeldiplom::gui::{self, font_px, Canvas};
 use jodeldiplom::icon::Style;
 use jodeldiplom::spectrum::{sine, tap_frames_for, Analyzer, SpectrumFrame};
-use jodeldiplom::tui::key_action;
-use jodeldiplom::view::{self, colors, Links, Plot, Scene};
+use jodeldiplom::view::{self, colors, Plot, Scene};
 use ratatui::layout::Rect;
 use ratatui::style::Color;
 use winit::keyboard::{Key as WinKey, ModifiersState, NamedKey};
@@ -52,8 +51,7 @@ fn draw(canvas: &mut Canvas, state: &State, spectrum: &SpectrumFrame, art: Optio
     let scene = Scene {
         state,
         spectrum,
-        background: colors::BG,
-        links: Links::OnHover(None),
+        pointer: None,
         heard: 0.0,
     };
     canvas.draw(&scene, art);
@@ -372,8 +370,7 @@ fn draw_heard(canvas: &mut Canvas, state: &State, tone: &SpectrumFrame, art: Opt
     let scene = Scene {
         state,
         spectrum: tone,
-        background: colors::BG,
-        links: Links::OnHover(None),
+        pointer: None,
         heard: state.heard(),
     };
     canvas.draw(&scene, art);
@@ -951,7 +948,7 @@ fn the_window_searches_the_help() {
     let mut state = sized(&mut canvas, 1280, 800);
     let press = |state: &mut State, key: WinKey| {
         let key = gui::key(&key, ModifiersState::empty()).unwrap();
-        if let Some(action) = key_action(state, key) {
+        if let Some(action) = jodeldiplom::core::keymap::action(state, key) {
             update(state, action);
         }
     };

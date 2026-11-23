@@ -6,9 +6,8 @@ name: Build and test
 # Every test binary runs, a failing one or not, so that a run shows every
 # failure. A pushed tag starting with "v" (v0.0.1, v1.2.0-rc1) also
 # publishes a GitHub release with the bundles for all six platforms (the
-# jodeldiplom player in its terminal and window versions, the window one as
-# "Jodeldiplom.app" on macOS); a tag with a hyphen is marked as a
-# pre-release.
+# jodeldiplom player, as "Jodeldiplom.app" on macOS); a tag with a hyphen
+# is marked as a pre-release.
 on:
   push:
   pull_request:
@@ -48,8 +47,8 @@ jobs:
             exit 1
           fi
 
-  # The window player's fonts (Sarasa Fixed J, Noto Emoji, Atkinson
-  # Hyperlegible Next) are in the repository, in player/fonts.
+  # The player's fonts (Sarasa Fixed J, Noto Emoji, Atkinson Hyperlegible
+  # Next) are in the repository, in player/fonts.
   build:
     name: Build ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
@@ -102,21 +101,23 @@ jobs:
         run: |
           set -euo pipefail
           bundle=$RUNNER_TEMP/build/jodeldiplom-$BUILD_PLATFORM
-          "$bundle/bin/jodeldiplom" --help
-          "$bundle/bin/jodeldiplom" --list-devices
           if [[ $BUILD_PLATFORM == macos ]]; then
-            # The window player is an app: signed (ad hoc), with its icon.
+            # The player is an app: signed (ad hoc), with its icon, and
+            # nothing beside it in bin.
             app="$bundle/Jodeldiplom.app"
-            test ! -e "$bundle/bin/jodeldiplom-gui"
+            test ! -e "$bundle/bin"
             plutil -lint "$app/Contents/Info.plist"
             codesign --verify --strict "$app"
             test -s "$app/Contents/Resources/jodeldiplom.icns"
-            gui="$app/Contents/MacOS/jodeldiplom-gui"
+            player="$app/Contents/MacOS/jodeldiplom"
           else
-            gui="$bundle/bin/jodeldiplom-gui"
+            # One binary in bin.
+            test "$(ls "$bundle/bin")" = jodeldiplom
+            player="$bundle/bin/jodeldiplom"
           fi
+          "$player" --list-devices
           # Its fonts are built in.
-          "$gui" --help | grep -F "Sarasa Fixed J (built in), emoji: Noto Emoji (built in)"
+          "$player" --help | grep -F "Sarasa Fixed J (built in), emoji: Noto Emoji (built in)"
       - name: Package the bundle
         env:
           ARTIFACT: jodeldiplom-${{ matrix.name }}.tar.gz
@@ -232,12 +233,19 @@ jobs:
           $bundle = New-Item -ItemType Directory -Path "$env:RUNNER_TEMP/bundle"
           tar -xf "$env:RUNNER_TEMP/downloads/$env:ARTIFACT" -C $bundle.FullName
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          # Hosted runners may have no audio service, so only --help runs here.
-          & "$($bundle.FullName)/bin/jodeldiplom.exe" --help
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          if (-not (Test-Path "$($bundle.FullName)/bin/jodeldiplom-gui.exe")) { exit 1 }
+          # One binary in bin.
+          $bin = Get-ChildItem "$($bundle.FullName)/bin"
+          if ($bin.Count -ne 1 -or $bin[0].Name -ne 'jodeldiplom.exe') { exit 1 }
+          $player = "$($bundle.FullName)/bin/jodeldiplom.exe"
           # Its fonts are built in (about 16 MB of it).
-          if ((Get-Item "$($bundle.FullName)/bin/jodeldiplom-gui.exe").Length -lt 20MB) { exit 1 }
+          if ((Get-Item $player).Length -lt 20MB) { exit 1 }
+          # A window program (no console of its own): its output piped,
+          # waited for. Hosted runners may have no audio service, so only
+          # --help runs here; its fonts are built in.
+          $help = & $player --help | Out-String
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Write-Output $help
+          if (-not $help.Contains('Sarasa Fixed J (built in), emoji: Noto Emoji (built in)')) { exit 1 }
           exit 0
 
   release:

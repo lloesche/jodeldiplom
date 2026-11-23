@@ -1,4 +1,4 @@
-//! The note bubbles of the line being sung as the frontends show them
+//! The note bubbles of the line being sung as the window shows them
 //! ([`crate::core::bubbles`]): each fills with liquid as it is sung, to a
 //! level (how much of it was hit, fully or half), poured in from its
 //! start; a bubble full sweeps its level up to full ([`SWEEP`], across its
@@ -6,9 +6,8 @@
 //! last stretch ([`pressure`]), then bursts, all of it at once, on its own
 //! ([`BURST`]: it overfills, bulging for [`SWELL`], tears, its liquid
 //! splashing out, and is gone). A bubble never full keeps its liquid at
-//! its level and never strains or bursts. One bubble as every frontend
-//! shows it: [`Liquid`] ([`Liquid::of`]); the notes' row in cells, where
-//! a bubble bursting or burst is blank.
+//! its level and never strains or bursts. One bubble as the window shows
+//! it: [`Liquid`] ([`Liquid::of`]).
 //!
 //! The time it goes by is the singing's own: the song's time as heard less
 //! how late the voice comes (the frames of a moment come that much after
@@ -16,12 +15,9 @@
 //! later; a paused song holds them. Nothing is kept between frames: a
 //! bubble no longer full (sought back) shows again as it is.
 
-use ratatui::buffer::Buffer;
-
-use super::karaoke::{LyricLine, HALF_HIT, HIT, NOTE_AHEAD, SINGER};
+use super::karaoke::LyricLine;
 use crate::core::bubbles::{self, Bubbles};
 use crate::core::singing::{Note, Singing};
-use crate::core::text::width;
 
 /// How long a bubble full takes to sweep to full, in seconds of the song.
 pub const SWEEP: f64 = 0.2;
@@ -207,66 +203,6 @@ pub fn fill(singing: &Singing, i: usize, clock: f64, l: &mut LyricLine) {
         }
     }
     l.hits = merged;
-}
-
-/// A note's mark in the terminal, lowest to highest: scan lines at five
-/// heights of a cell.
-const NOTE_GLYPHS: [&str; 5] = ["⎽", "⎼", "─", "⎻", "⎺"];
-
-/// `line`'s notes in a terminal, in the row at (`x`, `y`) of `buf` under
-/// its text (`chars`, the first `split` sung): under the letters sung on
-/// them (each character's cells), at five heights; those sung already
-/// brighter, filled gold as far as their liquid goes; those bursting or
-/// burst, blank; the singer now (`↑` `↓` `●`).
-pub fn notes_row(
-    buf: &mut Buffer,
-    line: &LyricLine,
-    (x, y): (u16, u16),
-    chars: &[char],
-    split: usize,
-) {
-    let mut cell_of = Vec::with_capacity(chars.len() + 1);
-    let mut at = 0u16;
-    for c in chars {
-        cell_of.push(at);
-        at += width(&c.to_string()) as u16;
-    }
-    cell_of.push(at);
-    let last = chars.len();
-    // The cells under characters `from` to `to`.
-    let cells = |from: f32, to: f32| {
-        let a = (from.floor().max(0.0) as usize).min(last);
-        let b = (to.ceil().max(0.0) as usize).clamp(a + 1, last.max(a + 1));
-        (cell_of[a], cell_of[b.min(last)].max(cell_of[a] + 1))
-    };
-    for (k, note) in line.notes.iter().enumerate() {
-        let level = (note.height * 2.0).round().clamp(-2.0, 2.0) as i32;
-        let glyph = NOTE_GLYPHS[(level + 2) as usize];
-        let (c0, c1) = cells(note.from, note.to);
-        if line.liquid.iter().any(|b| b.note == k && b.begun()) {
-            continue;
-        }
-        for c in c0..c1 {
-            let ch = cell_of.iter().rposition(|&k| k <= c).unwrap_or(0);
-            let mid = ch as f32 + 0.5;
-            let color = match line.hits.iter().find(|h| mid >= h.0 && mid < h.1) {
-                Some(&(_, _, true)) => HIT,
-                Some(_) => HALF_HIT,
-                None if ch < split => super::lanes::NOTE,
-                None => NOTE_AHEAD,
-            };
-            buf[(x + c, y)].set_symbol(glyph).set_fg(color);
-        }
-    }
-    if let Some((at, _, way)) = line.voice {
-        let ch = (at.floor().max(0.0) as usize).min(last.saturating_sub(1));
-        let glyph = match way {
-            1 => "↑",
-            -1 => "↓",
-            _ => "●",
-        };
-        buf[(x + cell_of[ch], y)].set_symbol(glyph).set_fg(SINGER);
-    }
 }
 
 #[cfg(test)]

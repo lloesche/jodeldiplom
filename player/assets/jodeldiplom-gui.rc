@@ -1,3 +1,0 @@
-// The window player's icon, as Explorer and the taskbar show the
-// executable (built into jodeldiplom-gui.exe by build.rs).
-1 ICON "jodeldiplom.ico"

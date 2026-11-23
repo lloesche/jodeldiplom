@@ -1,0 +1,3 @@
+// The player's icon, as Explorer and the taskbar show the executable
+// (built into jodeldiplom.exe by build.rs).
+1 ICON "jodeldiplom.ico"

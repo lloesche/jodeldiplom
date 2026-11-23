@@ -596,7 +596,7 @@ fn a_transition_plays_on_the_desk_and_a_mute_after_it_lands_on_the_new_heads_fra
 /// out), drawn on the Mixer tab.
 fn mixer_tab(app: &App) -> String {
     use jodeldiplom::core::desk::{self, Look, StripKind};
-    use jodeldiplom::view::{self, CellPictures, Links, Scene};
+    use jodeldiplom::view::{self, CellPictures, Scene};
     let view_now = app.desk().expect("a desk");
     let ids = StripKind::ALL.map(|kind| {
         view_now
@@ -618,8 +618,7 @@ fn mixer_tab(app: &App) -> String {
     let scene = Scene {
         state: &state,
         spectrum: &spectrum,
-        background: ratatui::style::Color::Reset,
-        links: Links::Underlined,
+        pointer: None,
         heard: 0.0,
     };
     terminal

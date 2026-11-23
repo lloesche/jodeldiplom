@@ -15,7 +15,7 @@ use jodeldiplom::core::mouse::{self, MouseButton, MouseInput, MouseKind};
 use jodeldiplom::core::singing::Level;
 use jodeldiplom::core::sliders::Slider;
 use jodeldiplom::core::{update, Action, Effect, Side, State};
-use jodeldiplom::view::{self, CellPictures, Links, Scene};
+use jodeldiplom::view::{self, CellPictures, Scene};
 
 fn op(state: &mut State, op: Op) -> Vec<Effect> {
     update(state, Action::Op(op))
@@ -47,8 +47,7 @@ fn draw(state: &State) -> String {
     let scene = Scene {
         state,
         spectrum: &spectrum,
-        background: ratatui::style::Color::Reset,
-        links: Links::Underlined,
+        pointer: None,
         heard: 0.0,
     };
     terminal
