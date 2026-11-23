@@ -21,9 +21,11 @@
 //! }
 //! ```
 
+use std::cell::Cell;
 use std::collections::HashMap;
 use std::num::NonZeroU64;
-use std::sync::{Mutex, OnceLock};
+use std::ops::{Deref, DerefMut};
+use std::sync::{Mutex, MutexGuard, OnceLock, PoisonError};
 
 mod asr;
 mod net;
@@ -639,7 +641,7 @@ struct Inner {
 /// The separator network on the GPU.
 pub struct GpuSeparator {
     name: String,
-    inner: Mutex<Inner>,
+    inner: Turned<Mutex<Inner>>,
 }
 
 /// `values` as little-endian bytes.
@@ -647,9 +649,76 @@ fn bytes(values: &[f32]) -> Vec<u8> {
     values.iter().flat_map(|v| v.to_le_bytes()).collect()
 }
 
+/// Whose turn it is to set up or tear down the GPU ([`setting_up`]).
+static SETUP: Mutex<()> = Mutex::new(());
+
+thread_local! {
+    /// The turns this thread holds (a setup inside another's turn takes
+    /// none of its own).
+    static TURNS: Cell<usize> = const { Cell::new(0) };
+}
+
+/// A turn at the GPU's setup: while one is held, no other thread of the
+/// process creates or drops a `wgpu` instance, adapter or device through
+/// this crate. Some drivers do not take two at once: Intel's on Windows,
+/// whose control library each instance and device starts and stops,
+/// corrupts the heap (an access violation under a debug heap) when two
+/// threads do it together. Every setup and teardown here takes its turn;
+/// code with a GPU setup of its own (a window's) takes one around it.
+/// A thread may take turns inside its own.
+pub struct Turn {
+    _held: Option<MutexGuard<'static, ()>>,
+}
+
+/// Takes a turn at the GPU's setup, waiting for the one under way.
+pub fn setting_up() -> Turn {
+    let held = (TURNS.get() == 0).then(|| SETUP.lock().unwrap_or_else(PoisonError::into_inner));
+    TURNS.set(TURNS.get() + 1);
+    Turn { _held: held }
+}
+
+impl Drop for Turn {
+    fn drop(&mut self) {
+        TURNS.set(TURNS.get() - 1);
+    }
+}
+
+/// Something that holds a device (a model's state on it, a window's
+/// surface), dropped in a turn ([`setting_up`]): the last of a device's
+/// handles to go tears it down.
+pub struct Turned<T>(Option<T>);
+
+impl<T> Turned<T> {
+    pub fn new(value: T) -> Turned<T> {
+        Turned(Some(value))
+    }
+}
+
+impl<T> Deref for Turned<T> {
+    type Target = T;
+    fn deref(&self) -> &T {
+        self.0.as_ref().expect("dropped only once")
+    }
+}
+
+impl<T> DerefMut for Turned<T> {
+    fn deref_mut(&mut self) -> &mut T {
+        self.0.as_mut().expect("dropped only once")
+    }
+}
+
+impl<T> Drop for Turned<T> {
+    fn drop(&mut self) {
+        let _turn = setting_up();
+        drop(self.0.take());
+    }
+}
+
 /// The best adapter: a high-performance one preferred, a software
-/// renderer refused.
+/// renderer refused. Only in a turn ([`setting_up`]), held until the
+/// adapter is dropped.
 fn adapter() -> Result<wgpu::Adapter, String> {
+    debug_assert!(TURNS.get() > 0, "the GPU set up outside a turn");
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
     let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
         power_preference: wgpu::PowerPreference::HighPerformance,
@@ -666,6 +735,7 @@ fn adapter() -> Result<wgpu::Adapter, String> {
 /// The name of the GPU the separator would use, without setting it up;
 /// `None` without a usable one.
 pub fn gpu_name() -> Option<String> {
+    let _turn = setting_up();
     std::panic::catch_unwind(|| adapter().ok().map(|a| a.get_info().name))
         .ok()
         .flatten()
@@ -679,6 +749,7 @@ pub fn gpu_name() -> Option<String> {
 /// multiplies by layer, the upload and the readback, whole chunks in a
 /// row). Sets up a separator of its own (not [`GpuSeparator::shared`]'s).
 pub fn report() -> Vec<String> {
+    let _turn = setting_up();
     let mut lines = Vec::new();
     let mb = |bytes: u64| format!("{} MB", bytes / (1024 * 1024));
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
@@ -825,6 +896,7 @@ impl GpuSeparator {
 
     /// Sets up the separator on the best GPU.
     pub fn new() -> Result<GpuSeparator, String> {
+        let _turn = setting_up();
         let adapter = adapter()?;
         let info = adapter.get_info();
         let limits = adapter.limits();
@@ -839,7 +911,7 @@ impl GpuSeparator {
             .map_err(|e| format!("{}: {e}", info.name))?;
         Ok(GpuSeparator {
             name: info.name,
-            inner: Mutex::new(inner),
+            inner: Turned::new(Mutex::new(inner)),
         })
     }
 }

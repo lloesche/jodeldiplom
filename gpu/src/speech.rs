@@ -13,7 +13,7 @@ use jodel_lyrics::speech::{
 };
 use jodel_lyrics::{Maker, VOCALS_RATE};
 
-use super::{adapter, bytes, guarded, spread, PARAM_SIZE, PARAM_STRIDE};
+use super::{adapter, bytes, guarded, setting_up, spread, Turned, PARAM_SIZE, PARAM_STRIDE};
 
 const CHANNELS: usize = 512;
 const DIM: usize = 768;
@@ -388,12 +388,13 @@ pub struct GpuSpeech {
     name: String,
     /// The first convolution's weights, for a voice's [`Levels`].
     conv0: Vec<f32>,
-    inner: Mutex<Inner>,
+    inner: Turned<Mutex<Inner>>,
 }
 
 impl GpuSpeech {
     /// The model on the best GPU, from the CPU's (its weights as they are).
     pub fn new(model: &Wav2Vec2) -> Result<GpuSpeech, String> {
+        let _turn = setting_up();
         let adapter = adapter()?;
         let info = adapter.get_info();
         let limits = adapter.limits();
@@ -415,7 +416,7 @@ impl GpuSpeech {
         Ok(GpuSpeech {
             name: info.name,
             conv0,
-            inner: Mutex::new(inner),
+            inner: Turned::new(Mutex::new(inner)),
         })
     }
 

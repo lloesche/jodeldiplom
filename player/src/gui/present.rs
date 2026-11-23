@@ -13,6 +13,7 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
+use jodel_gpu::Turned;
 use winit::window::Window;
 
 use super::canvas::{Canvas, Changes, LayerFrame, PixelRect, MOST_SLOTS};
@@ -558,9 +559,10 @@ fn srgb_to_linear(c: f32) -> f32 {
 
 /// The window's frames through the GPU.
 pub struct GpuWindow {
-    surface: wgpu::Surface<'static>,
+    // Both dropped in the GPU's turn.
+    surface: Turned<wgpu::Surface<'static>>,
     config: wgpu::SurfaceConfiguration,
-    painter: Painter,
+    painter: Turned<Painter>,
     /// What draws: the adapter's name and backend.
     pub name: String,
     /// The last frame's work is done on the GPU (set from wgpu's callback).
@@ -577,6 +579,9 @@ impl GpuWindow {
     /// Sets up the GPU for `window`; an error where there is no GPU that
     /// can show into it.
     pub fn new(window: Arc<Window>) -> Result<GpuWindow, String> {
+        // In the GPU's turn: the stems and the analyses set theirs up on
+        // other threads meanwhile ([`jodel_gpu::setting_up`]).
+        let _turn = jodel_gpu::setting_up();
         let size = window.inner_size();
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
         let surface = instance
@@ -645,9 +650,9 @@ impl GpuWindow {
         surface.configure(&device, &config);
         let info = adapter.get_info();
         Ok(GpuWindow {
-            surface,
+            surface: Turned::new(surface),
             config,
-            painter: Painter::new(device, queue, format),
+            painter: Turned::new(Painter::new(device, queue, format)),
             name: format!("{} ({:?})", info.name, info.backend),
             done: Arc::new(AtomicBool::new(true)),
             pending: false,
@@ -769,7 +774,7 @@ fn monitor_gpu(_: &Window) -> Option<(u32, u32)> {
 /// The window's frames drawn into a texture off screen and read back:
 /// for the tests, the same uploads and pass as the window's.
 pub struct Offscreen {
-    painter: Painter,
+    painter: Turned<Painter>,
     format: wgpu::TextureFormat,
     /// What draws: the adapter's name and backend.
     pub name: String,
@@ -780,6 +785,7 @@ impl Offscreen {
     /// that encode them as sRGB, as some windows do); an error where there
     /// is no GPU.
     pub fn new(srgb: bool) -> Result<Offscreen, String> {
+        let _turn = jodel_gpu::setting_up();
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
         let (adapter, device, queue) = device(&instance, &wgpu::RequestAdapterOptions::default())?;
         let info = adapter.get_info();
@@ -789,7 +795,7 @@ impl Offscreen {
             TEXTURE_FORMAT
         };
         Ok(Offscreen {
-            painter: Painter::new(device, queue, format),
+            painter: Turned::new(Painter::new(device, queue, format)),
             format,
             name: format!("{} ({:?})", info.name, info.backend),
         })

@@ -21,7 +21,7 @@ use jodel_lyrics::asr::{
 };
 use jodel_lyrics::VOCALS_RATE;
 
-use super::{adapter, guarded, spread, PARAM_SIZE, PARAM_STRIDE};
+use super::{adapter, guarded, setting_up, spread, Turned, PARAM_SIZE, PARAM_STRIDE};
 
 /// The longest part of a voice heard at once, in seconds.
 pub const MAX_SECONDS: usize = jodel_lyrics::asr::PART_SECONDS as usize;
@@ -325,7 +325,7 @@ struct Inner {
 pub struct GpuAsr {
     name: String,
     vocab: text::Vocab,
-    inner: Mutex<Inner>,
+    inner: Turned<Mutex<Inner>>,
 }
 
 /// The sizes a piece of at most [`MAX_SECONDS`] needs.
@@ -353,6 +353,7 @@ fn sizes() -> Sizes {
 impl GpuAsr {
     /// The packed model on the best GPU.
     pub fn new(model: &PackedModel) -> Result<GpuAsr, String> {
+        let _turn = setting_up();
         let adapter = adapter()?;
         let info = adapter.get_info();
         let limits = adapter.limits();
@@ -368,7 +369,7 @@ impl GpuAsr {
         Ok(GpuAsr {
             name: info.name,
             vocab: model.vocab.clone(),
-            inner: Mutex::new(inner),
+            inner: Turned::new(Mutex::new(inner)),
         })
     }
 

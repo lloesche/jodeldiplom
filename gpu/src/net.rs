@@ -20,7 +20,9 @@ use jodel_rhythm::net::mel::BANDS;
 use jodel_rhythm::net::weights::Weights;
 use jodel_rhythm::net::{built_in_weights, NetRunner, PIECE_FRAMES};
 
-use super::{adapter, bytes, guarded, rotary_table, spread, PARAM_SIZE, PARAM_STRIDE};
+use super::{
+    adapter, bytes, guarded, rotary_table, setting_up, spread, Turned, PARAM_SIZE, PARAM_STRIDE,
+};
 
 /// The front end's channels after the stem, and the transformer's width.
 const STEM: usize = 32;
@@ -592,7 +594,7 @@ struct Inner {
 /// The beat network on the GPU.
 pub struct GpuNetwork {
     name: String,
-    inner: Mutex<Inner>,
+    inner: Turned<Mutex<Inner>>,
 }
 
 impl GpuNetwork {
@@ -606,6 +608,7 @@ impl GpuNetwork {
 
     /// Sets the network up on the best GPU.
     pub fn new() -> Result<GpuNetwork, String> {
+        let _turn = setting_up();
         let adapter = adapter()?;
         let info = adapter.get_info();
         let limits = adapter.limits();
@@ -620,7 +623,7 @@ impl GpuNetwork {
             .map_err(|e| format!("{}: {e}", info.name))?;
         Ok(GpuNetwork {
             name: info.name,
-            inner: Mutex::new(inner),
+            inner: Turned::new(Mutex::new(inner)),
         })
     }
 }
