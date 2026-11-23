@@ -40,7 +40,7 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 use super::chunk::Slot;
-use super::input::{Link, Span, Stream};
+use super::input::{Given, Link, Span, Stream};
 use super::run::Run;
 use crate::error::Error;
 
@@ -56,15 +56,6 @@ pub(crate) struct Follow {
     /// The follower's own map before it was linked (epoch, offset), kept
     /// for an unlink before it gives a frame.
     own: Option<(u64, u64)>,
-}
-
-/// What a leader gave in a chunk: from the chunk's frame `at`, its stream
-/// frame `frame` and `got` more.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct Given {
-    at: usize,
-    frame: u64,
-    got: u64,
 }
 
 impl Link {
@@ -92,15 +83,6 @@ impl Stream {
                 .follow
                 .as_ref()
                 .is_some_and(|f| f.leader.paused.load(Ordering::SeqCst))
-    }
-
-    /// What it gave in the chunk taken last.
-    fn given(&self) -> Option<Given> {
-        (self.got > 0).then_some(Given {
-            at: self.at,
-            frame: self.frame,
-            got: self.got,
-        })
     }
 }
 

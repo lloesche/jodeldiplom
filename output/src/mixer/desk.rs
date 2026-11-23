@@ -5,6 +5,7 @@
 
 use std::sync::atomic::Ordering;
 
+use super::automation::{part_curve, AutomationView, INPUT, MAIN};
 use super::fader::SlotState;
 use super::{Mixer, Role, Timebase};
 use crate::format::{SampleFormat, StreamFormat};
@@ -82,6 +83,11 @@ pub struct InputView {
     pub queued: u64,
     /// The ring's capacity in frames.
     pub capacity: u64,
+    /// The late frames that output dropped following another
+    /// ([`super::Fader::dropped`]).
+    pub dropped: u64,
+    /// Its automation's gains (`None`: none set, [`super::Fader::automate`]).
+    pub automation: Option<AutomationView>,
 }
 
 /// A lane of an input.
@@ -179,8 +185,15 @@ pub(crate) fn unpack_format(word: u64) -> Option<StreamFormat> {
 /// An input as its state stands.
 fn input_view(i: &SlotState) -> InputView {
     let bits = |a: &std::sync::atomic::AtomicU64| f64::from_bits(a.load(Ordering::Acquire));
+    let auto = &i.automation;
+    let automation = auto.set.load(Ordering::Relaxed).then(|| AutomationView {
+        input: bits(&auto.gains[INPUT]),
+        main: bits(&auto.gains[MAIN]),
+        parts: auto.gains[part_curve(0)..].iter().map(bits).collect(),
+        settled: auto.settled.load(Ordering::Relaxed),
+    });
     InputView {
-        role: i.role,
+        role: i.role(),
         gain: bits(&i.faders[0].gain),
         heard: i.heard.load(Ordering::Relaxed),
         lanes: i
@@ -199,6 +212,8 @@ fn input_view(i: &SlotState) -> InputView {
         format: unpack_format(i.format.load(Ordering::Relaxed)),
         queued: i.queued.load(Ordering::Relaxed),
         capacity: i.capacity.load(Ordering::Relaxed),
+        dropped: i.dropped.load(Ordering::Relaxed),
+        automation,
     }
 }
 

@@ -7,6 +7,7 @@ use std::sync::mpsc::Sender;
 use std::sync::Arc;
 use std::time::Duration;
 
+use super::automation::{curves_of, Automation};
 use super::desk::unpack_format;
 use super::input::ask;
 use super::ramp::GainId;
@@ -42,9 +43,21 @@ pub(crate) struct PartsState {
     pub(crate) share: AtomicU64,
 }
 
+/// What the mixer thread publishes about an input's automation.
+#[derive(Default)]
+pub(crate) struct AutomationState {
+    /// A set is in force.
+    pub(crate) set: AtomicBool,
+    pub(crate) settled: AtomicBool,
+    /// Each curve's gain at the last frame mixed (f64 bits): the input's,
+    /// main's, then each part's.
+    pub(crate) gains: Box<[AtomicU64]>,
+}
+
 /// What the mixer thread publishes about an input.
 pub(crate) struct SlotState {
-    pub(crate) role: Role,
+    /// Its [`Role`] (see [`role_word`]).
+    role: AtomicU8,
     /// Its faders: its own, then one per part.
     pub(crate) faders: Box<[FaderState]>,
     /// Its lanes: main, then the parts.
@@ -59,8 +72,17 @@ pub(crate) struct SlotState {
     pub(crate) queued: AtomicU64,
     pub(crate) capacity: AtomicU64,
     pub(crate) dropped: AtomicU64,
+    pub(crate) automation: AutomationState,
     /// Where its output's frames went last on the device.
     pub(crate) mapped: Mapped,
+}
+
+/// A role as a word, for an atomic.
+fn role_word(role: Role) -> u8 {
+    match role {
+        Role::Lead => 0,
+        Role::Guest => 1,
+    }
 }
 
 /// The device epoch (0: none, not mapped) and the device frame less the
@@ -106,13 +128,26 @@ impl Mapped {
 }
 
 impl SlotState {
+    /// Its role, as the mixer thread set it last.
+    pub(crate) fn role(&self) -> Role {
+        match self.role.load(Ordering::Acquire) {
+            0 => Role::Lead,
+            _ => Role::Guest,
+        }
+    }
+
+    /// The mixer thread: its role is now `role`.
+    pub(crate) fn set_role(&self, role: Role) {
+        self.role.store(role_word(role), Ordering::Release);
+    }
+
     fn new(role: Role, gain: f64, strips: &[u64]) -> SlotState {
         let fader = |g: f64| FaderState {
             gain: AtomicU64::new(g.to_bits()),
             settled: AtomicU64::new(0),
         };
         SlotState {
-            role,
+            role: AtomicU8::new(role_word(role)),
             faders: (0..strips.len())
                 .map(|k| fader(if k == 0 { gain } else { 1.0 }))
                 .collect(),
@@ -130,6 +165,12 @@ impl SlotState {
             queued: AtomicU64::new(0),
             capacity: AtomicU64::new(0),
             dropped: AtomicU64::new(0),
+            automation: AutomationState {
+                gains: (0..curves_of(strips.len() - 1))
+                    .map(|_| AtomicU64::new(1f64.to_bits()))
+                    .collect(),
+                ..AutomationState::default()
+            },
             mapped: Mapped::default(),
         }
     }
@@ -277,9 +318,10 @@ impl OutputTarget for InputTarget {
         self.slot.name.clone()
     }
 
-    /// What the input takes, fixed when first asked: a Lead the device's
-    /// capabilities; a guest exactly the device's format while it is open,
-    /// else the device's capabilities.
+    /// What the input takes, fixed when first asked (until its role
+    /// changes, [`Fader::set_role`]): a Lead the device's capabilities; a
+    /// guest exactly the device's format while it is open, else the
+    /// device's capabilities.
     fn capabilities(&mut self) -> Result<Capabilities, Error> {
         let slot = self.slot.id;
         ask(&self.slot.tx, |done| Msg::Capabilities { slot, done })?
@@ -419,6 +461,61 @@ impl Fader {
             leader: None,
             done: None,
         });
+    }
+
+    /// Has the input heard through `automation` (its curves timed on the
+    /// stream frames of the output open on it now), in place of the set
+    /// in force, whole, from the next frames mixed: a curve's gain on a
+    /// frame there is what that frame is heard at, but for the first
+    /// [`super::CUT_FADE`] of frames, which go linearly from the gains
+    /// heard to the new set's (unless nothing of the output has been
+    /// heard yet). It ends with the output open on the input (with none
+    /// open, it is the next one's). See [`Automation`]; the desk shows it
+    /// ([`super::InputView`]). Never blocks.
+    ///
+    /// [`Error::InvalidArgument`] when it has a curve for a part the input
+    /// does not have; [`Error::Closed`] when the input is gone.
+    pub fn automate(&self, automation: Automation) -> Result<(), Error> {
+        let parts = self.slot.strips.len() - 1;
+        if automation.parts() > parts {
+            return Err(Error::InvalidArgument(format!(
+                "a curve for part {} of an input of {parts}",
+                automation.parts() - 1
+            )));
+        }
+        self.send_automation(Some(Box::new(automation)))
+    }
+
+    /// Ends the input's automation from the next frames mixed: every
+    /// curve's gain goes back to 1, smoothed as a replace is. Never blocks.
+    pub fn clear_automation(&self) {
+        let _ = self.send_automation(None);
+    }
+
+    fn send_automation(&self, automation: Option<Box<Automation>>) -> Result<(), Error> {
+        if self.slot.closed.load(Ordering::Acquire) {
+            return Err(Error::Closed);
+        }
+        let msg = Msg::Automate {
+            slot: self.slot.id,
+            automation,
+        };
+        self.slot.tx.send(msg).map_err(|_| Error::Closed)
+    }
+
+    /// Makes the input a [`Role::Lead`] or a [`Role::Guest`]: what it is
+    /// offered is asked again on its next open ([`InputTarget`]'s
+    /// capabilities), and the microphone's tap goes to the newest Lead
+    /// output (see [`Mixer::set_mic`]). The output open on it plays on as
+    /// it is: a guest made Lead is at the device's format, so nothing
+    /// opens again. Waits for the mixer thread (a device period, about).
+    ///
+    /// [`Error::InvalidArgument`] when a Lead with an output open would
+    /// leave no Lead output open; [`Error::Closed`] when the input is
+    /// gone.
+    pub fn set_role(&self, role: Role) -> Result<(), Error> {
+        let slot = self.slot.id;
+        ask(&self.slot.tx, |done| Msg::Role { slot, role, done })?
     }
 
     /// Shuts the input now, while its target may still be held (by a

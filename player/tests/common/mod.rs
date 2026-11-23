@@ -500,6 +500,8 @@ pub fn fill_desk(state: &mut State, rate: u32) {
         format: Some(format),
         queued,
         capacity: 65_536,
+        dropped: 0,
+        automation: None,
     };
     // The player's lanes: main (switched out), then the stems, the vocals
     // muted.

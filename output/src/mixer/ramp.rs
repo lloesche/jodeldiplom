@@ -1,18 +1,32 @@
 //! An input's gain on the mixer's clock: a level, changed by ramps that
 //! start when the mixer says ([`Start`], resolved to a frame as it mixes).
 
-use std::f64::consts::FRAC_PI_2;
 use std::time::Duration;
 
 /// How a [`Ramp`] goes from one gain to the other.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Curve {
-    /// Equal power: a rise follows a quarter sine, a fall a quarter cosine,
-    /// so two inputs crossfading with opposite ramps keep their summed
-    /// power.
+    /// Equal power ([`equal_power`]): the square of the gain moves in a
+    /// straight line, so two inputs crossfading with opposite ramps keep
+    /// their summed power, whatever gains they go between.
     EqualPower,
     /// A straight line.
     Linear,
+}
+
+/// The gain a share `t` of the way from gain `a` to gain `b` (both at
+/// least 0), power-linear: its square moves in a straight line from `a²`
+/// to `b²`. Exactly `a` at `t` ≤ 0 and `b` at `t` ≥ 1. Two complementary
+/// moves (`a` to `b` and `b` to `a` at the same `t`) keep their summed
+/// power: `a² + b²`.
+pub fn equal_power(a: f64, b: f64, t: f64) -> f64 {
+    if t <= 0.0 {
+        a
+    } else if t >= 1.0 {
+        b
+    } else {
+        (a * a * (1.0 - t) + b * b * t).sqrt()
+    }
 }
 
 /// When a [`Ramp`] starts.
@@ -193,8 +207,7 @@ impl Running {
         let (from, to) = (self.from, self.to);
         match self.curve {
             Curve::Linear => from + (to - from) * x,
-            Curve::EqualPower if to >= from => from + (to - from) * (x * FRAC_PI_2).sin(),
-            Curve::EqualPower => to + (from - to) * (x * FRAC_PI_2).cos(),
+            Curve::EqualPower => equal_power(from, to, x),
         }
     }
 }
@@ -421,6 +434,28 @@ mod tests {
             assert!((x * x + y * y - 1.0).abs() < 1e-12);
         }
         assert_eq!((a[64], b[64]), (1.0, 0.0));
+    }
+
+    #[test]
+    fn equal_power_is_exact_at_its_ends_and_keeps_complementary_power() {
+        for (a, b) in [(0.0, 1.0), (1.0, 0.0), (0.1, 0.7), (0.3, 0.3), (2.0, 0.25)] {
+            assert_eq!(equal_power(a, b, 0.0), a);
+            assert_eq!(equal_power(a, b, -1.0), a);
+            assert_eq!(equal_power(a, b, 1.0), b);
+            assert_eq!(equal_power(a, b, 7.0), b);
+            for k in 1..100 {
+                let t = f64::from(k) / 100.0;
+                let (x, y) = (equal_power(a, b, t), equal_power(b, a, t));
+                assert!(
+                    (x * x + y * y - (a * a + b * b)).abs() < 1e-12,
+                    "{a} {b} {t}"
+                );
+                // The square moves in a straight line.
+                assert!((x * x - (a * a + (b * b - a * a) * t)).abs() < 1e-12);
+            }
+        }
+        // A rise from silence: the square root of the share.
+        assert_eq!(equal_power(0.0, 1.0, 0.25), 0.5);
     }
 
     #[test]

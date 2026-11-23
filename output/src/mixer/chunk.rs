@@ -1,12 +1,14 @@
 //! Mixing a chunk: each input as the mixer thread runs it (its lanes, and
 //! the switch of one with parts), what each output gives (a follower's in
 //! lockstep with its leader's, see `follow.rs`) split into its lanes,
-//! every lane's gains, the meters, and then the device's frames: a lone
-//! exact lane at exactly 1 as written, else the heard lanes summed.
+//! every lane's gains (its automation's on top, see `automation.rs`), the
+//! meters, and then the device's frames: a lone exact lane at exactly 1 as
+//! written, else the heard lanes summed.
 
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
+use super::automation::AutomationRun;
 use super::input::{Span, Stream};
 use super::mic::Port;
 use super::mix::{Gains, Made};
@@ -14,18 +16,20 @@ use super::parts::{split, touch, LaneRun, Switch};
 use super::ramp::{resolve_starts, start_of, Audio, GainId};
 use super::run::Run;
 use super::strips::Strips;
-use super::{Role, SlotState};
+use super::SlotState;
 use crate::caps::Capabilities;
 use crate::lanes::Parts;
 
 /// An input as the mixer thread runs it.
 pub(super) struct Slot {
-    pub(super) role: Role,
+    /// What it publishes, and its role (the mixer thread sets it).
     pub(super) state: Arc<SlotState>,
     /// Its lanes, main first: one for a plain input.
     pub(super) lanes: Vec<LaneRun>,
     /// An input with parts: its switch between main and them.
     pub(super) switch: Option<Switch>,
+    /// Its automation.
+    pub(super) automation: AutomationRun,
     /// The id of the last output opened on it (0: none): a fade for the
     /// first audio waits for one newer.
     pub(super) opened: u64,
@@ -52,10 +56,10 @@ impl Slot {
             })
             .collect();
         Slot {
-            role: state.role,
             state,
             lanes: runs,
             switch: (lanes.len() > 1).then(Switch::new),
+            automation: AutomationRun::new(lanes.len() - 1),
             opened: 0,
             caps: None,
             heard: false,
@@ -72,14 +76,19 @@ impl Slot {
     }
 
     /// Its output is gone (if it had one), and so are its format on the
-    /// desk and the map of its frames.
+    /// desk, the map of its frames and the automation given for it (one
+    /// given with no output open waits for the next).
     pub(super) fn drop_stream(&mut self) -> Option<Stream> {
         self.unmap();
         self.state.format.store(0, Ordering::Relaxed);
         self.state.capacity.store(0, Ordering::Relaxed);
         self.state.queued.store(0, Ordering::Relaxed);
         self.state.dropped.store(0, Ordering::Relaxed);
-        self.stream.take()
+        let stream = self.stream.take();
+        if stream.is_some() {
+            self.automation.reset();
+        }
+        stream
     }
 
     /// Lane `k`'s samples this chunk.
@@ -156,14 +165,20 @@ impl Slot {
 
     /// Its lanes' gains for the `n` frames from `first` (`starts` the
     /// faders' ramps that start in them): each fader's, the switch's,
-    /// their strips' paths; and which lanes are heard.
+    /// their strips' paths, its automation's; and which lanes are heard.
     fn fill(&mut self, first: u64, n: usize, rate: u32, strips: &Strips, starts: &[(GainId, u64)]) {
-        for lane in &mut self.lanes {
+        let given = self.stream.as_ref().and_then(Stream::given);
+        self.automation.fill(first, n, rate, given);
+        let auto = &self.automation;
+        // Each fader times its lane's curve (main's fader the input's own,
+        // over every lane as the fader is).
+        for (k, lane) in self.lanes.iter_mut().enumerate() {
             let start = start_of(starts, lane.id);
             let LaneRun { gain, gains, .. } = lane;
             gains.fill(gain, first, n, start, rate);
+            gains.times(auto.lane(k));
         }
-        let supplied = self.stream.as_ref().is_some_and(|s| s.taken && s.got > 0);
+        let supplied = given.is_some();
         // A lane stream (or none: a gap in one) has words for its frames; a
         // plain stream on an input with parts has no parts at all.
         let lanes = self.stream.as_ref().is_none_or(|s| s.lanes > 1);
@@ -172,7 +187,7 @@ impl Slot {
         let touched = self
             .switch
             .is_some()
-            .then(|| touch(&self.lanes, strips, starts));
+            .then(|| touch(&self.lanes, strips, starts).merge(auto.touch()));
         let (main, parts) = self.lanes.split_at_mut(1);
         let main = &mut main[0];
         if let (Some(switch), Some(touched)) = (&mut self.switch, touched) {
@@ -192,6 +207,7 @@ impl Slot {
             }
             main.gains.times(&switch.rest);
         }
+        main.gains.times(auto.main());
         // A lane input's main is gated as its parts stand: a part soloed
         // keeps it while it is heard in their place.
         let path = if self.switch.is_some() {
@@ -227,6 +243,15 @@ impl Slot {
             parts.share.store(switch.last.to_bits(), Ordering::Relaxed);
         }
         s.heard.store(self.heard && !idle, Ordering::Relaxed);
+        let auto = &s.automation;
+        let view = self.automation.view();
+        auto.set.store(view.is_some(), Ordering::Relaxed);
+        if let Some((gains, settled)) = view {
+            for (a, g) in auto.gains.iter().zip(gains) {
+                a.store(g.to_bits(), Ordering::Relaxed);
+            }
+            auto.settled.store(settled, Ordering::Relaxed);
+        }
         if let Some(st) = &self.stream {
             s.queued.store(st.link.shared.ring.len(), Ordering::Relaxed);
             s.dropped.store(st.link.shared.dropped(), Ordering::Relaxed);

@@ -98,9 +98,9 @@ impl Envelope {
         if next.cut || next.at <= prev.at {
             return prev.gain;
         }
-        // Equal power: the squares move linearly.
+        // Equal power, as the desk's: the squares move linearly.
         let u = (at - prev.at) / (next.at - prev.at);
-        (prev.gain * prev.gain * (1.0 - u) + next.gain * next.gain * u).sqrt()
+        jodel_output::mixer::equal_power(prev.gain, next.gain, u)
     }
 }
 

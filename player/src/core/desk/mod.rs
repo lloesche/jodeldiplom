@@ -661,6 +661,8 @@ mod tests {
             format: None,
             queued: 0,
             capacity: 0,
+            dropped: 0,
+            automation: None,
         });
         look
     }

@@ -151,7 +151,9 @@ impl Ring {
             std::thread::yield_now();
         }
         let head = self.head.load(Ordering::Relaxed);
-        let tail = self.tail.load(Ordering::Acquire);
+        // In the one order of `retracting`'s store: a consumer that saw it
+        // unset after a fence of its own has its copies seen here.
+        let tail = self.tail.load(Ordering::SeqCst);
         let n = frames.min((head - tail).saturating_sub(keep));
         self.head.store(head - n, Ordering::Release);
         self.retracting.store(false, Ordering::SeqCst);
@@ -169,6 +171,7 @@ impl Ring {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::fence;
     use std::sync::Arc;
 
     fn push(ring: &Ring, bytes: &[u8]) {
@@ -283,7 +286,11 @@ mod tests {
             // A real consumer copies a period at a time, periods apart, so
             // within a retract it copies no more than the frames kept; this
             // one, as fast as it can go, waits each retract out instead (a
-            // drop is the ring's own to keep apart from one).
+            // drop is the ring's own to keep apart from one). The fence has
+            // its last copy seen by a retract it does not see begin (a store
+            // and a later load are otherwise reordered, and it would copy
+            // again past the tail the retract kept frames after).
+            fence(Ordering::SeqCst);
             if ring.retracting.load(Ordering::SeqCst) {
                 std::thread::yield_now();
                 continue;

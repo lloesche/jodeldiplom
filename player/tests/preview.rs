@@ -16,7 +16,7 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use jodel_output::mixer::{Mixer, MixerOptions, Monitor, Role};
+use jodel_output::mixer::{equal_power, Mixer, MixerOptions, Monitor, Role};
 use jodel_output::{
     Capabilities, Clock, Error, OpenRequest, Output, OutputTarget, SimClock, Stats, StreamInfo, Tap,
 };
@@ -292,8 +292,9 @@ fn a_preview_crossfades_on_one_frame_over_the_song_running_on() {
             "the song before the file's first frame {start} (asked for at {asked})"
         );
         for k in 0..FADE {
-            let x = std::f64::consts::FRAC_PI_2 * k as f64 / FADE as f64;
-            let want = f64::from(level) * x.cos() + f64::from(from + k as i32) * x.sin();
+            let t = k as f64 / FADE as f64;
+            let (fall, rise) = (equal_power(1.0, 0.0, t), equal_power(0.0, 1.0, t));
+            let want = f64::from(level) * fall + f64::from(from + k as i32) * rise;
             assert!(
                 (f64::from(h[start + k]) - want).abs() < 1.5,
                 "{k}: {} for {want}",
@@ -400,8 +401,9 @@ fn a_file_played_to_its_end_makes_room_and_another_rate_is_resampled() {
 /// value and the one wanted (`None`: all are).
 fn crossfade_off(h: &[i32], start: usize, from: i32, to: i32) -> Option<(usize, i32, f64)> {
     (0..FADE).find_map(|k| {
-        let x = std::f64::consts::FRAC_PI_2 * k as f64 / FADE as f64;
-        let want = f64::from(from) * x.cos() + f64::from(to) * x.sin();
+        let t = k as f64 / FADE as f64;
+        let (fall, rise) = (equal_power(1.0, 0.0, t), equal_power(0.0, 1.0, t));
+        let want = f64::from(from) * fall + f64::from(to) * rise;
         let got = h.get(start + k).copied().unwrap_or(i32::MIN);
         ((f64::from(got) - want).abs() >= 1.5).then_some((start + k, got, want))
     })

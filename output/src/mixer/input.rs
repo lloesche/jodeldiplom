@@ -50,6 +50,15 @@ pub(crate) struct Stream {
     epoch: u64,
 }
 
+/// What a stream gave in a chunk: from the chunk's frame `at`, its stream
+/// frame `frame` and `got` more.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct Given {
+    pub(super) at: usize,
+    pub(super) frame: u64,
+    pub(super) got: u64,
+}
+
 /// The frames of a chunk a stream fills: from the chunk's frame `from` to
 /// `to`; for a follower, with the stream frame due at `from`, its frames
 /// before that dropped (late), or its frames from a later one (early).
@@ -136,6 +145,15 @@ impl Stream {
             *s = unpack_sample(b, format.sample);
         }
         rendered.is_some()
+    }
+
+    /// What it gave in the chunk taken last (`None`: nothing).
+    pub(super) fn given(&self) -> Option<Given> {
+        (self.got > 0).then_some(Given {
+            at: self.at,
+            frame: self.frame,
+            got: self.got,
+        })
     }
 
     /// The frames of `span` it fills, its frame `span.due` due at

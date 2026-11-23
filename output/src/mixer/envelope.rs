@@ -28,9 +28,23 @@ impl Envelope {
     }
 
     /// The gain of frame `k`.
-    #[cfg(test)]
     pub(crate) fn at(&self, k: usize) -> f64 {
         self.flat.unwrap_or_else(|| self.each[k])
+    }
+
+    /// `at` for every frame, its buffer kept.
+    pub(crate) fn set_flat(&mut self, at: f64) {
+        self.flat = Some(at);
+    }
+
+    /// The gains of `n` frames, frame `k`'s `gain(k)` (in order): one for
+    /// all, when they come to one.
+    pub(crate) fn fill_with(&mut self, n: usize, mut gain: impl FnMut(usize) -> f64) {
+        self.each.resize(n, 0.0);
+        for (k, g) in self.each.iter_mut().enumerate() {
+            *g = gain(k);
+        }
+        self.join();
     }
 
     /// As the mix takes gains.

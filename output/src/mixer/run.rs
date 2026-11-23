@@ -207,6 +207,15 @@ impl Run {
                     self.wait_for(gain, Some(waiting));
                 }
             }
+            Msg::Automate { slot, automation } => {
+                // The set replaced is freed here, as messages are.
+                if let Some(slot) = self.slots.get_mut(&slot) {
+                    slot.automation.set(automation);
+                }
+            }
+            Msg::Role { slot, role, done } => {
+                let _ = done.send(self.set_role(slot, role));
+            }
             Msg::Crossfade {
                 into,
                 start,
@@ -269,7 +278,7 @@ impl Run {
         let lead = self
             .slots
             .values()
-            .filter(|s| s.role == Role::Lead)
+            .filter(|s| s.state.role() == Role::Lead)
             .filter_map(|s| s.stream.as_ref().map(|st| st.link.id))
             .max();
         let output = self.device.as_mut().map(|d| &mut d.output);
@@ -348,6 +357,28 @@ impl Run {
         self.streams().filter(|s| s.live())
     }
 
+    /// Input `id` is made a `role`: asked again what it takes, the
+    /// microphone fitted again; refused for a Lead with an output open
+    /// when no other Lead has one.
+    fn set_role(&mut self, id: u64, role: Role) -> Result<(), Error> {
+        let slot = self.slots.get(&id).ok_or(Error::Closed)?;
+        if slot.state.role() == role {
+            return Ok(());
+        }
+        let lead = |s: &Slot| s.state.role() == Role::Lead && s.stream.is_some();
+        let others = self.slots.iter().any(|(&k, s)| k != id && lead(s));
+        if lead(slot) && !others {
+            return Err(Error::InvalidArgument(
+                "the only Lead output open cannot be a guest".into(),
+            ));
+        }
+        let slot = self.slots.get_mut(&id).expect("checked");
+        slot.caps = None;
+        slot.state.set_role(role);
+        self.fit_mic();
+        Ok(())
+    }
+
     fn capabilities(&mut self, slot: u64) -> Result<Capabilities, Error> {
         let Some(s) = self.slots.get(&slot) else {
             return Err(Error::Closed);
@@ -355,7 +386,7 @@ impl Run {
         if let Some(caps) = &s.caps {
             return Ok(caps.clone());
         }
-        let caps = match (&self.device, s.role) {
+        let caps = match (&self.device, s.state.role()) {
             (Some(d), Role::Guest) => [d.format].into_iter().collect(),
             _ => match &self.caps {
                 Some(caps) => caps.clone(),
@@ -375,7 +406,7 @@ impl Run {
     fn open(&mut self, slot_id: u64, request: &OpenRequest) -> Result<Box<dyn Output>, Error> {
         request.validate()?;
         let slot = self.slots.get(&slot_id).ok_or(Error::Closed)?;
-        let (role, lanes) = (slot.role, slot.lanes.len() as u16);
+        let (role, lanes) = (slot.state.role(), slot.lanes.len() as u16);
         if request.lanes != 1 && request.lanes != lanes {
             return Err(Error::InvalidArgument(format!(
                 "an input of {lanes} lanes opens 1 or {lanes}, not {}",

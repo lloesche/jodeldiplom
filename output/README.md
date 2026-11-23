@@ -203,6 +203,20 @@ its `StreamInfo` carries the device's backend, exclusive flag and latency.
   requantization to the device's bits (16 or 24) with TPDF dither at its
   LSB; clips are counted over every opening of the device
   (`DeskView::master.clipped`).
+- **Automation:** `Fader::automate(Automation)` gives an input gain
+  curves (`GainCurve`: breakpoints `(stream frame, gain)`, equal-power
+  between them, a cut smoothed linearly over `CUT_FADE`, 10 ms) on the
+  stream frames of its output: its own over every lane, main's (heard on
+  main only), and one per part, on top of every fader and strip. They
+  move only as the stream does (a pad or a pause holds them). A set is
+  replaced whole, or cleared (`Fader::clear_automation`), each gain going
+  linearly from where it was heard over `CUT_FADE`; it ends with its
+  output (a set given with none open is the next one's). A part's curve
+  away from 1 has the input heard on its parts; main's curve never does,
+  and the input's own never keeps them. Once every curve is past its end
+  at exactly 1, the input is heard bit for bit again. The mixer thread
+  evaluates the curves without allocating; `InputView::automation` shows
+  their gains and `InputView::dropped` a follower's late frames.
 - **The desk:** `Mixer::desk()` gathers on the caller's thread what the
   mixer thread publishes, and looking changes nothing: the master (the
   device's name and `StreamInfo`, or none while closed; the `Timebase`,
@@ -232,8 +246,10 @@ its `StreamInfo` carries the device's backend, exclusive flag and latency.
   never, once the device has opened again), or `Start::FirstAudio` (the
   first frame of an output opened on the input after the ramp is set: a
   fade in from what is loaded next), over `over` (rounded to frames at the
-  device's rate), equal-power (`Curve::EqualPower`: a rise on a quarter
-  sine, a fall on a quarter cosine) or linear; `Ramp::set(g)` is at once.
+  device's rate), equal-power (`Curve::EqualPower`, `equal_power(a, b,
+  t)`: the square of the gain moves in a straight line, so opposite
+  ramps keep their summed power between any two gains) or linear;
+  `Ramp::set(g)` is at once.
   `Mixer::crossfade(into, start, out, over)` fades `out` down on the very
   frame `into` starts up. A ramp on an input with no output, or a paused
   one, ends at once (nothing of it is heard); one held back for a flush
@@ -252,7 +268,10 @@ its `StreamInfo` carries the device's backend, exclusive flag and latency.
   (`Error::Closed`) and the device plays out and opens again. A guest
   never displaces one: while the device is open it is offered exactly
   its format (fixed when first asked), so its player resamples; only with
-  nothing open does it open the device at its own.
+  nothing open does it open the device at its own. `Fader::set_role`
+  changes an input's role as it plays: it is asked again what it takes,
+  the microphone's tap goes to the newest Lead output, nothing opens
+  again; the only Lead with an output open cannot be made a guest.
 - **The microphone's port:** `Mixer::set_mic(Option<Input>)`. The mixer
   taps the device for the microphone while a Lead output is open, again for
   each one and each opening of the device, so its echo canceller hears the
@@ -464,6 +483,18 @@ targets refuse lanes they do
 not take; a part's strip must be a child of main's; `at_stream` is `Now`
 after a flush until frames are mixed again; and a level and a fade set
 before the device opens are in force from its first frame.
+`tests/automation.rs` checks curves frame by frame: on a plain input (and
+passthrough after a curve ends at 1), across a pause that parts stream
+frames from device frames, on a follower across its leader's underrun
+and pause, replaced and cleared mid-curve (smoothed, no step larger than
+the smoothing's); on a lane input the parts' curves with the parts there,
+main's without, a part curve through exactly 1 that keeps the switch,
+an input curve that does not hold it, and main back bit for bit; a set
+ending with its output and one given before an output opens; and roles
+(a guest made Lead takes the microphone's tap and is asked again, no new
+opening, the only Lead playing refused). `tests/automation_alloc.rs`
+counts what the mixer thread allocates and frees while every curve
+moves: nothing.
 `tests/mic.rs` runs the microphone path on it: a tap (a probe, a microphone
 tapped and singing, its canceller on or off, or none) never changes a byte,
 in every format; a `MicFeed` tone comes out of the cleaner as it came in,

@@ -18,7 +18,9 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use common::*;
-use jodel_output::mixer::{Curve, MicPort, MicView, Monitor, Ramp, Role, Start, Timebase};
+use jodel_output::mixer::{
+    equal_power, Curve, MicPort, MicView, Monitor, Ramp, Role, Start, Timebase,
+};
 use jodel_output::{Clock, Error, Output, OutputTarget, StreamFormat, StreamInfo, VoiceBlock};
 
 #[test]
@@ -180,13 +182,14 @@ fn a_crossfade_starts_both_sides_on_the_first_frame_of_what_comes_in() {
     drop(mixer);
     let left = device.left(0);
     // The song as written up to the guest's first frame; then, from that
-    // very frame, the song's cosine and the guest's sine; then the guest
-    // as written. (The first frame of the fade is the song's, dithered:
-    // it may read as written.)
+    // very frame, the song falling and the guest rising, equal-power; then
+    // the guest as written. (The first frame of the fade is the song's,
+    // dithered: it may read as written.)
     let fits = |start: usize| {
         (0..over as usize).all(|k| {
-            let x = std::f64::consts::FRAC_PI_2 * k as f64 / over as f64;
-            let want = f64::from(a) * x.cos() + f64::from(b) * x.sin();
+            let t = k as f64 / over as f64;
+            let (fall, rise) = (equal_power(1.0, 0.0, t), equal_power(0.0, 1.0, t));
+            let want = f64::from(a) * fall + f64::from(b) * rise;
             (f64::from(left[start + k]) - want).abs() < 1.5
         })
     };
@@ -566,8 +569,9 @@ fn a_crossfade_under_way_is_not_withdrawn() {
     drop(mixer);
     let left = device.left(0);
     for k in 0..over as usize {
-        let x = std::f64::consts::FRAC_PI_2 * k as f64 / over as f64;
-        let want = f64::from(a) * x.cos() + f64::from(b) * x.sin();
+        let t = k as f64 / over as f64;
+        let (fall, rise) = (equal_power(1.0, 0.0, t), equal_power(0.0, 1.0, t));
+        let want = f64::from(a) * fall + f64::from(b) * rise;
         let got = f64::from(left[4_800 + k]);
         assert!((got - want).abs() < 1.5, "{k}: {got} for {want}");
     }

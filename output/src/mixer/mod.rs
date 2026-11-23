@@ -68,6 +68,13 @@
 //!   underrun) it keeps what it knew and is back at its aim at once.
 //!   [`Fader::at_stream`] times a change on a stream frame of the input's
 //!   output.
+//! - **Automation:** [`Fader::automate`] gives an input gain curves on the
+//!   stream frames of its output ([`Automation`], [`GainCurve`]): its own,
+//!   main's and each part's, heard on top of every fader and strip, moving
+//!   only as its stream does (a pad or a pause holds them), and replaced
+//!   whole, smoothed from the gains heard. A part's curve away from 1 has
+//!   the input heard on its parts; once every curve has ended at exactly
+//!   1 the input is back on main, bit for bit (see `automation.rs`).
 //! - **Bit for bit:** when one exact lane is heard (main, or a plain
 //!   input's; it supplied frames, at a gain other than 0), at gain exactly
 //!   1 with no ramp running, its samples reach the device untouched
@@ -99,6 +106,8 @@
 //!   it. A [`Role::Guest`] never displaces one: it is offered exactly the
 //!   device's format while the device is open, so its player resamples;
 //!   only with nothing open does it open the device at its own.
+//!   [`Fader::set_role`] changes an input's role as it plays (the incoming
+//!   song of a transition taking the lead).
 //! - **The microphone's port:** [`Mixer::set_mic`] gives the desk a
 //!   microphone. The mixer taps the device for it while a Lead output is
 //!   open (again for each one, and each opening of the device), so its echo
@@ -111,6 +120,7 @@
 //! - **Monitor:** a [`Monitor`] sees every frame as it goes to the device
 //!   (a spectrum of what is heard).
 
+mod automation;
 mod chunk;
 mod desk;
 mod envelope;
@@ -126,11 +136,12 @@ mod strip;
 mod strips;
 
 pub use crate::lanes::SWITCH_FADE;
+pub use automation::{Automation, AutomationView, GainCurve, CUT_FADE};
 pub use desk::{
     DeskView, InputView, LaneView, MasterView, Meters, MicPort, MicView, PartsView, StripView,
 };
 pub use fader::{Fader, InputTarget};
-pub use ramp::{Curve, Ramp, Start};
+pub use ramp::{equal_power, Curve, Ramp, Start};
 pub use strip::{Strip, METER_CHANNELS, STRIP_RAMP};
 
 use std::collections::BTreeMap;
@@ -278,6 +289,17 @@ pub(crate) enum Msg {
     Ramp {
         gain: GainId,
         ramp: Ramp,
+    },
+    /// Input `slot` is heard through `automation` (`None`: none).
+    Automate {
+        slot: u64,
+        automation: Option<Box<automation::Automation>>,
+    },
+    /// Input `slot` is made a `role`; `done` hears whether it is.
+    Role {
+        slot: u64,
+        role: Role,
+        done: Sender<Result<(), Error>>,
     },
     Crossfade {
         into: GainId,

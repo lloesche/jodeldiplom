@@ -5,13 +5,17 @@
 //! The switch has a gain of its own, `s`, linear over [`SWITCH_FADE`]:
 //!
 //! - main is heard at the input's fader × (1 − s) × its strip's path;
-//! - part k at the input's fader × s × part k's fader × its strip's path.
+//! - part k at the input's fader × s × part k's fader × its strip's path;
+//! - each times the input's automation: its own curve, and main's or
+//!   part k's (`automation.rs`).
 //!
 //! `s` goes to 1 when the parts are touched (for some part, its fader's
-//! target times its strip's own gain is not 1, or its strip's solo gate is
-//! not main's) while the control word says [`Parts::Present`]. It goes back
-//! to 0 only once nothing is touched and every part's ramps have settled,
-//! so main returns bit for bit; from the frame the control word turns
+//! target times its strip's own gain is not 1, its strip's solo gate is
+//! not main's, or its automation's curve is not exactly 1, see
+//! `automation.rs`) while the control word says [`Parts::Present`]. It
+//! goes back to 0 only once nothing is touched and every part's ramps have
+//! settled (and their automation), so main returns bit for bit; from the
+//! frame the control word turns
 //! [`Parts::Ending`] it fades to 0 (the writer keeps the parts valid that
 //! long), and on a frame that says [`Parts::None`] it is 0 at once (which a
 //! writer does straight after `Present` only on a new track's first frame,
@@ -123,6 +127,29 @@ pub(super) struct Touch {
     /// Every part's ramps (its fader's, its strip's, main's strip's) have
     /// settled by the chunk's end.
     pub(super) settled: bool,
+}
+
+impl Touch {
+    /// Nothing touched, nothing changed, everything settled.
+    pub(super) const UNTOUCHED: Touch = Touch {
+        touched: false,
+        at: None,
+        settled: true,
+    };
+
+    /// This and `other` together: touched where either is, from the
+    /// earlier change, settled where both are.
+    pub(super) fn merge(self, other: Touch) -> Touch {
+        let at = match (self.at, other.at) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        };
+        Touch {
+            touched: self.touched || other.touched,
+            at,
+            settled: self.settled && other.settled,
+        }
+    }
 }
 
 /// How the parts of an input (`lanes`, main first) stand after this
