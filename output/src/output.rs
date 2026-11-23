@@ -175,6 +175,11 @@ pub struct Stats {
     pub clipped: u64,
     /// Samples whose low bits were dropped for 16-bit output.
     pub truncated: u64,
+    /// Late frames passed over to keep up: an output on a mixer's input
+    /// that follows another ([`crate::mixer::Fader::follow`]) drops what
+    /// it would give too late to land on its frames. They count as
+    /// played.
+    pub dropped: u64,
 }
 
 /// A device stream, or a test stand-in for one.

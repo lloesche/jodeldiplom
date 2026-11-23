@@ -36,6 +36,9 @@ pub(crate) struct Shared {
     device_underruns: AtomicU64,
     clipped: AtomicU64,
     truncated: AtomicU64,
+    /// Late frames a mixer's input dropped to keep up with the one it
+    /// follows ([`Self::skip_input`]).
+    dropped: AtomicU64,
     written: AtomicU64,
     failed: AtomicBool,
     failure: Mutex<Option<Error>>,
@@ -68,6 +71,7 @@ impl Shared {
             device_underruns: AtomicU64::new(0),
             clipped: AtomicU64::new(0),
             truncated: AtomicU64::new(0),
+            dropped: AtomicU64::new(0),
             written: AtomicU64::new(0),
             failed: AtomicBool::new(false),
             failure: Mutex::new(None),
@@ -104,10 +108,49 @@ impl Shared {
         })
     }
 
+    /// For a mixer's input that follows another: drops up to `frames` of
+    /// the oldest frames queued (late ones), counted as played at once in
+    /// no device frames, and as gone downstream (as the frames of
+    /// [`Self::render_input`]). Returns how many, and the timeline's epoch
+    /// they belong to; `None` while the handle keeps the consumer out.
+    pub(crate) fn skip_input(&self, frames: u64) -> Option<(u64, u64)> {
+        let (dropped, epoch) = self.inside(|| {
+            let n = self.ring.skip(frames);
+            self.rendered.fetch_add(n, Ordering::Relaxed);
+            self.dropped.fetch_add(n, Ordering::Relaxed);
+            let mut t = lock(&self.timeline);
+            t.skip(n);
+            t.add_downstream(n);
+            (n, t.epoch())
+        })?;
+        if dropped > 0 && self.writer_waiting.load(Ordering::SeqCst) {
+            self.space.notify_all();
+        }
+        Some((dropped, epoch))
+    }
+
+    /// The consumer: the stream frame it takes next (frames discarded and
+    /// dropped count as taken).
+    pub(crate) fn head(&self) -> u64 {
+        self.rendered.load(Ordering::Relaxed)
+    }
+
     /// Of what went downstream since the timeline's restart `epoch`, only
     /// `frames` are not played yet.
     pub(crate) fn set_downstream(&self, epoch: u64, frames: u64) {
         lock(&self.timeline).set_downstream(epoch, frames);
+    }
+
+    /// Runs `f` inside the ring as the consumer (`None`, without running
+    /// it, while the handle keeps the consumer out).
+    fn inside<R>(&self, f: impl FnOnce() -> R) -> Option<R> {
+        if self.suspend.load(Ordering::SeqCst) {
+            return None;
+        }
+        self.in_render.store(true, Ordering::SeqCst);
+        let r = (!self.suspend.load(Ordering::SeqCst)).then(f);
+        self.in_render.store(false, Ordering::SeqCst);
+        r
     }
 
     /// The render: `note` records it in the timeline. Returns the first
@@ -117,16 +160,22 @@ impl Shared {
         out: &mut [u8],
         note: impl FnOnce(&mut Timeline, u64, u64) -> R,
     ) -> Option<(u64, u64, R)> {
-        if self.suspend.load(Ordering::SeqCst) {
+        let Some(rendered) = self.inside(|| self.copy_out(out, note)) else {
             out.fill(0);
             return None;
+        };
+        if rendered.1 > 0 && self.writer_waiting.load(Ordering::SeqCst) {
+            self.space.notify_all();
         }
-        self.in_render.store(true, Ordering::SeqCst);
-        if self.suspend.load(Ordering::SeqCst) {
-            self.in_render.store(false, Ordering::SeqCst);
-            out.fill(0);
-            return None;
-        }
+        Some(rendered)
+    }
+
+    /// [`Self::render_with`] inside the ring.
+    fn copy_out<R>(
+        &self,
+        out: &mut [u8],
+        note: impl FnOnce(&mut Timeline, u64, u64) -> R,
+    ) -> (u64, u64, R) {
         let fb = self.format.frame_bytes();
         let want = (out.len() / fb) as u64;
         let got = self.ring.pop_into(out);
@@ -149,11 +198,7 @@ impl Shared {
             self.in_underrun.store(false, Ordering::Relaxed);
         }
         let noted = note(&mut lock(&self.timeline), got, missing);
-        self.in_render.store(false, Ordering::SeqCst);
-        if got > 0 && self.writer_waiting.load(Ordering::SeqCst) {
-            self.space.notify_all();
-        }
-        Some((first, got, noted))
+        (first, got, noted)
     }
 
     /// [`Self::render_or_skip`] for device buffers that must be filled
@@ -332,6 +377,11 @@ impl Shared {
         self.written.load(Ordering::Acquire)
     }
 
+    /// [`Stats::dropped`], cheaply.
+    pub(crate) fn dropped(&self) -> u64 {
+        self.dropped.load(Ordering::Relaxed)
+    }
+
     pub(crate) fn position(&self) -> u64 {
         lock(&self.timeline).position(Instant::now())
     }
@@ -343,6 +393,7 @@ impl Shared {
             device_underruns: self.device_underruns.load(Ordering::Relaxed),
             clipped: self.clipped.load(Ordering::Relaxed),
             truncated: self.truncated.load(Ordering::Relaxed),
+            dropped: self.dropped.load(Ordering::Relaxed),
         }
     }
 }

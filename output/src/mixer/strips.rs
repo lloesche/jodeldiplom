@@ -20,7 +20,7 @@ use std::sync::Arc;
 
 use super::envelope::Envelope;
 use super::mix::Gains;
-use super::ramp::{Gain, Waiting, When};
+use super::ramp::{Audio, Gain, Waiting, When};
 use super::strip::{channel_peaks, Change, StripState, STRIP_RAMP};
 use super::Curve;
 
@@ -91,9 +91,9 @@ struct StripRun {
     /// and a lane input's main.
     path: Envelope,
     lead_path: Envelope,
-    /// This chunk: the newest output that supplied audio on an input of
-    /// its subtree.
-    audio: Option<u64>,
+    /// This chunk: where the audio its level's and its mute's changes wait
+    /// for starts, of the outputs on inputs of its subtree.
+    arrived: (Option<u64>, Option<u64>),
     /// Inputs of its subtree may be heard.
     busy: bool,
     /// Its subtree's heard inputs summed this chunk, for the meter (and
@@ -147,12 +147,11 @@ impl StripRun {
     /// come in them are taken on their frames, both gains cut there.
     fn fill(&mut self, first: u64, n: usize, rate: u32) {
         let end = first + n as u64;
-        let audio = self.audio;
-        let due = |w: Option<When>, at: u64| w.and_then(|w| w.due(at, end, audio));
+        let (to_level, to_mute) = self.arrived;
         let (mut at, mut cut) = (first, false);
         loop {
-            let level = due(self.next_level.map(|c| c.0), at);
-            let mute = due(self.next_mute.map(|c| c.0), at);
+            let level = self.next_level.and_then(|c| c.0.due(at, end, to_level));
+            let mute = self.next_mute.and_then(|c| c.0.due(at, end, to_mute));
             let Some(f) = level.into_iter().chain(mute).min() else {
                 break;
             };
@@ -237,6 +236,24 @@ impl Strips {
         self.0.range(from..).next().map(|(&k, _)| k)
     }
 
+    /// Of `audio`, that of the inputs on strip `id` or a strip inside it.
+    fn audio_of<'a>(
+        &'a self,
+        id: u64,
+        audio: impl Iterator<Item = (u64, Audio)> + 'a,
+    ) -> impl Iterator<Item = Audio> + 'a {
+        let inside = move |strip: u64| {
+            strip == id
+                || self
+                    .0
+                    .get(&strip)
+                    .is_some_and(|s| s.ancestors.contains(&id))
+        };
+        audio
+            .filter(move |&(strip, _)| inside(strip))
+            .map(|(_, a)| a)
+    }
+
     /// `f` on strip `id` and on every group it sits in.
     fn each_up(&mut self, id: u64, mut f: impl FnMut(&mut StripRun)) {
         let Some(s) = self.0.get_mut(&id) else {
@@ -312,7 +329,7 @@ impl Strips {
             lead: Factor::new(gate),
             path: Envelope::new(gate),
             lead_path: Envelope::new(gate),
-            audio: None,
+            arrived: (None, None),
             busy: false,
             sum: Vec::new(),
             metered: false,
@@ -389,19 +406,25 @@ impl Strips {
 
     /// Their gains along their paths for frames `first..first + n` at
     /// `rate`. `audio` gives each output that supplied audio in them: the
-    /// strip of its input, and its id.
+    /// strip of its input, and its audio.
     pub(super) fn fill(
         &mut self,
         first: u64,
         n: usize,
         rate: u32,
-        audio: impl Iterator<Item = (u64, u64)>,
+        audio: impl Iterator<Item = (u64, Audio)> + Clone,
     ) {
-        for s in self.0.values_mut() {
-            s.audio = None;
-        }
-        for (strip, output) in audio {
-            self.each_up(strip, |s| s.audio = s.audio.max(Some(output)));
+        let mut next = self.after(None);
+        while let Some(id) = next {
+            let s = &self.0[&id];
+            let arrival =
+                |w: Option<When>| w.and_then(|w| w.arrival(self.audio_of(id, audio.clone())));
+            let arrived = (
+                arrival(s.next_level.map(|c| c.0)),
+                arrival(s.next_mute.map(|c| c.0)),
+            );
+            self.0.get_mut(&id).expect("listed").arrived = arrived;
+            next = self.after(Some(id));
         }
         for s in self.0.values_mut() {
             s.fill(first, n, rate);
@@ -659,11 +682,24 @@ mod tests {
             0,
         );
         // An older output, and a newer one on another strip: not yet.
-        d.fill(0, 10, RATE, [(2, 10), (3, 11)].into_iter());
+        let audio = |output, at| Audio { output, at };
+        d.fill(
+            0,
+            10,
+            RATE,
+            [(2, audio(10, 0)), (3, audio(11, 0))].into_iter(),
+        );
         assert!(d.0[&1].next_mute.is_some());
-        // A newer one on its child.
-        d.fill(10, 10, RATE, [(2, 12)].into_iter());
+        // Newer ones on its children: from the earliest of them.
+        d.fill(
+            10,
+            10,
+            RATE,
+            [(2, audio(13, 17)), (2, audio(12, 14))].into_iter(),
+        );
         assert!(d.0[&1].next_mute.is_none() && d.0[&1].mute);
+        assert_eq!(d.0[&1].heard.env.at(4), 1.0);
+        assert!(d.0[&1].heard.env.at(5) < 1.0);
     }
 
     #[test]

@@ -195,6 +195,12 @@ impl Run {
             Msg::Flush { stream, done } => {
                 let _ = done.send(self.flush(stream));
             }
+            Msg::Follow { slot, leader, done } => {
+                let followed = self.follow(slot, leader);
+                if let Some(done) = done {
+                    let _ = done.send(followed);
+                }
+            }
             Msg::Ramp { gain, ramp } => {
                 self.taken(&[gain]);
                 if let Some(waiting) = self.waiting(gain, ramp) {
@@ -333,13 +339,13 @@ impl Run {
         }
     }
 
-    fn streams(&self) -> impl Iterator<Item = &Stream> + '_ {
+    pub(super) fn streams(&self) -> impl Iterator<Item = &Stream> + '_ {
         self.slots.values().filter_map(|s| s.stream.as_ref())
     }
 
+    /// The outputs running, but for followers held by their leaders.
     fn running(&self) -> impl Iterator<Item = &Stream> + '_ {
-        self.streams()
-            .filter(|s| s.link.running.load(Ordering::SeqCst))
+        self.streams().filter(|s| s.live())
     }
 
     fn capabilities(&mut self, slot: u64) -> Result<Capabilities, Error> {
@@ -604,24 +610,27 @@ impl Run {
         self.fit_mic();
     }
 
-    /// Output `id` closed (or was let go of): the device closes with the
-    /// last one.
+    /// Output `id` closed (or was let go of): the outputs following it
+    /// follow no one, and the device closes with the last one.
     fn closed(&mut self, id: u64) {
         for slot in self.slots.values_mut() {
             if slot.stream.as_ref().is_some_and(|s| s.link.id == id) {
                 slot.drop_stream();
             }
         }
+        self.unlink(id);
         self.fit_mic();
         if self.streams().next().is_none() {
             self.close_device(false);
         }
     }
 
-    /// Output `id` was flushed (a seek): unless another input is heard,
-    /// the device drops what it holds too, as it would without a mixer.
-    /// What is mixed goes to it first, so its frames keep their places.
+    /// Output `id` was flushed (a seek): its link and those of the outputs
+    /// following it end; unless another input is heard, the device drops
+    /// what it holds too, as it would without a mixer. What is mixed goes
+    /// to it first, so its frames keep their places.
     fn flush(&mut self, id: u64) -> Result<(), Error> {
+        self.unlink(id);
         // Its frames restart: there is no stream frame to time a change on
         // until they are mixed again.
         let flushed = self.slots.values_mut();
@@ -654,8 +663,10 @@ impl Run {
     /// Writes what is mixed, or mixes the next period: when the device
     /// plays in real time, as it takes frames (an output short of them is
     /// silence for the rest); otherwise once every running output holds a
-    /// period, or is draining. With nothing running, the device pauses.
-    /// Returns whether there was work.
+    /// period, or is draining, and never a period past the origin of a
+    /// follower not running yet. With nothing running (a follower held by
+    /// its leader does not count), the device pauses. Returns whether there
+    /// was work.
     fn turn(&mut self) -> bool {
         let playing = self.running().next().is_some();
         let Some(device) = &mut self.device else {
@@ -703,7 +714,12 @@ impl Run {
             } else {
                 return false;
             };
-            self.mix_chunk(n as usize);
+            if !realtime && self.offline_room().is_some_and(|room| n > room) {
+                return false;
+            }
+            if !self.mix_chunk(n as usize) {
+                return false;
+            }
         }
         self.write()
     }

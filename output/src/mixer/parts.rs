@@ -88,10 +88,11 @@ impl LaneRun {
 /// Splits a lane stream's frames (`samples`, every lane of `channels`
 /// samples and the control word, a frame after another) into each lane's
 /// samples, and the control words of the `got` frames the stream supplied
-/// (the frames after them have none).
+/// from frame `at` (the frames around them have none).
 pub(super) fn split(
     samples: &[i32],
     channels: usize,
+    at: usize,
     got: usize,
     lanes: &mut [LaneRun],
     words: &mut Vec<i32>,
@@ -99,7 +100,7 @@ pub(super) fn split(
     let width = channels * lanes.len() + 1;
     let frames = samples.len() / width;
     words.clear();
-    let supplied = samples.chunks_exact(width).take(got);
+    let supplied = samples.chunks_exact(width).skip(at).take(got);
     words.extend(supplied.map(|f| f[width - 1]));
     for (k, lane) in lanes.iter_mut().enumerate() {
         lane.samples.clear();
@@ -153,8 +154,10 @@ pub(super) struct Switch {
     /// This chunk: the parts' share `s`, and main's, `1 − s`.
     pub(super) share: Envelope,
     pub(super) rest: Envelope,
-    /// This chunk's control words: one a frame the stream supplied.
+    /// This chunk's control words: one a frame the stream supplied, from
+    /// the chunk's frame `from`.
     pub(super) words: Vec<i32>,
+    pub(super) from: usize,
     /// The control word of the last frame supplied, whether the parts were
     /// touched there, and whether their ramps had settled by the last
     /// chunk's end.
@@ -175,6 +178,7 @@ impl Switch {
             share: Envelope::new(0.0),
             rest: Envelope::new(1.0),
             words: Vec::new(),
+            from: 0,
             control: Parts::None,
             touched: false,
             settled: true,
@@ -191,7 +195,11 @@ impl Switch {
         let end = first + n as u64;
         let flip = (touch.touched != self.touched)
             .then(|| (touch.at.unwrap_or(first).clamp(first, end - 1) - first) as usize);
-        let supplied = if lanes { self.words.len() } else { n };
+        let supplied = if lanes {
+            self.from..self.from + self.words.len()
+        } else {
+            0..n
+        };
         self.share.cut(n);
         // At the chunk's start, ramps settled by the last one's end count.
         if !self.absent {
@@ -200,7 +208,7 @@ impl Switch {
         let mut from = 0;
         for k in 0..n {
             let flips = flip == Some(k);
-            if k >= supplied {
+            if !supplied.contains(&k) {
                 // No word: nothing changes but what is noted.
                 self.absent = true;
                 if flips {
@@ -209,7 +217,7 @@ impl Switch {
                 continue;
             }
             let control = if lanes {
-                Parts::from_word(self.words[k])
+                Parts::from_word(self.words[k - self.from])
             } else {
                 Parts::None
             };
@@ -395,6 +403,18 @@ mod tests {
         // A plain stream on it: no parts, main.
         sw.fill(2_400, 10, RATE, false, touched(None));
         assert_eq!(sw.share.flat(), Some(0.0));
+    }
+
+    #[test]
+    fn words_from_inside_the_chunk_count_from_there() {
+        let mut sw = Switch::new();
+        // A follower's frames from frame 100 of the chunk: a gap before.
+        words(&mut sw, &[(0, Parts::Present)], 380);
+        sw.from = 100;
+        sw.fill(0, 480, RATE, true, touched(None));
+        let s = share(&sw, 480);
+        assert_eq!(s[..100], [0.0; 100]);
+        assert_eq!(s[100..], [1.0; 380]);
     }
 
     #[test]

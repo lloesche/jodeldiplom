@@ -7,6 +7,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Sender};
 use std::sync::Arc;
 
+use super::follow::Follow;
 use super::Msg;
 use crate::error::Error;
 use crate::format::StreamFormat;
@@ -31,16 +32,50 @@ pub(crate) struct Stream {
     pub(crate) link: Arc<Link>,
     /// The lanes of each frame (1: a plain stream; see [`crate::lanes`]).
     pub(crate) lanes: u16,
-    /// This chunk: taken from (it was running), and the frames it gave.
+    /// The output it follows, while it does ([`super::Fader::follow`]).
+    pub(crate) follow: Option<Follow>,
+    /// This chunk: taken from (it was running), the frames it gave, the
+    /// chunk's frame they start at, and its stream frame there.
     pub(crate) taken: bool,
     pub(crate) got: u64,
+    pub(crate) at: usize,
+    pub(crate) frame: u64,
     bytes: Vec<u8>,
     pub(crate) samples: Vec<i32>,
-    /// Its chunks on the device not all played yet: the device frame each
-    /// starts at and how many of its frames it has.
-    sent: VecDeque<(u64, u64)>,
+    /// Its chunks on the device not all played yet: the device frame its
+    /// frames start at, the stream frames dropped just before it (played
+    /// once the device is there), and how many of its frames follow.
+    sent: VecDeque<(u64, u64, u64)>,
     /// The timeline epoch (restarts by flush) of what was taken last.
     epoch: u64,
+}
+
+/// The frames of a chunk a stream fills: from the chunk's frame `from` to
+/// `to`; for a follower, with the stream frame due at `from`, its frames
+/// before that dropped (late), or its frames from a later one (early).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Span {
+    pub(crate) from: usize,
+    pub(crate) to: usize,
+    pub(crate) due: Option<u64>,
+}
+
+impl Span {
+    /// Frames `0..n`, whatever comes next.
+    pub(crate) fn whole(n: usize) -> Span {
+        Span {
+            from: 0,
+            to: n,
+            due: None,
+        }
+    }
+
+    /// None of the chunk.
+    pub(crate) const NONE: Span = Span {
+        from: 0,
+        to: 0,
+        due: None,
+    };
 }
 
 impl Stream {
@@ -48,8 +83,11 @@ impl Stream {
         Stream {
             link,
             lanes,
+            follow: None,
             taken: false,
             got: 0,
+            at: 0,
+            frame: 0,
             bytes: Vec::new(),
             samples: Vec::new(),
             sent: VecDeque::new(),
@@ -57,48 +95,98 @@ impl Stream {
         }
     }
 
-    /// Takes the chunk of `n` frames that goes to the device from device
-    /// frame `first` into `samples`, in its ring's format (every lane of a
-    /// lane stream; silence for what it lacks, or all of it when it is not
-    /// running or a flush keeps the mixer out). Returns, when it was
-    /// rendered, its stream frame there and the frames it gave.
-    pub(crate) fn take(&mut self, n: usize, first: u64) -> Option<(u64, u64)> {
+    /// Takes its frames of `span` in the chunk of `n` frames that goes to
+    /// the device from device frame `first` into `samples`, in its ring's
+    /// format (every lane of a lane stream; silence for the rest of the
+    /// chunk and what it lacks, or all of it when it is not running or a
+    /// flush keeps the mixer out). Returns whether it was rendered.
+    pub(crate) fn take(&mut self, n: usize, first: u64, span: Span) -> bool {
         let format = self.link.shared.format;
         self.taken = self.link.running.load(Ordering::SeqCst);
         self.got = 0;
         if !self.taken {
-            return None;
+            self.at = span.from;
+            return false;
         }
-        self.bytes.resize(n * format.frame_bytes(), 0);
-        let rendered = self.link.shared.render_input(&mut self.bytes);
-        if let Some((_, got, epoch)) = rendered {
-            if epoch != self.epoch {
-                self.sent.clear();
-                self.epoch = epoch;
-            }
-            if got > 0 {
-                self.sent.push_back((first, got));
-            }
+        let fb = format.frame_bytes();
+        self.bytes.resize(n * fb, 0);
+        let (from, to, dropped) = self.lock_to(span);
+        self.bytes[..from * fb].fill(0);
+        self.bytes[to * fb..].fill(0);
+        let rendered = if from < to {
+            self.link
+                .shared
+                .render_input(&mut self.bytes[from * fb..to * fb])
+        } else {
+            None
+        };
+        self.at = from;
+        if let Some((frame, got, epoch)) = rendered {
+            self.restarted(epoch);
+            self.frame = frame;
             self.got = got;
+        }
+        if dropped > 0 || self.got > 0 {
+            self.sent
+                .push_back((first + from as u64, dropped, self.got));
         }
         self.samples.resize(n * usize::from(format.channels), 0);
         let sb = format.sample.bytes();
         for (s, b) in self.samples.iter_mut().zip(self.bytes.chunks_exact(sb)) {
             *s = unpack_sample(b, format.sample);
         }
-        rendered.map(|(lead, got, _)| (lead, got))
+        rendered.is_some()
+    }
+
+    /// The frames of `span` it fills, its frame `span.due` due at
+    /// `span.from`: late, it drops its frames before that one (as many as
+    /// are queued) and gives none while still late; early, its frames
+    /// start where they are due. Returns those frames, and how many it
+    /// dropped.
+    fn lock_to(&mut self, span: Span) -> (usize, usize, u64) {
+        let Some(due) = span.due else {
+            return (span.from, span.to, 0);
+        };
+        let shared = &self.link.shared;
+        let mut head = shared.head();
+        let mut dropped = 0;
+        if head < due {
+            if let Some((n, epoch)) = shared.skip_input(due - head) {
+                self.restarted(epoch);
+                dropped = n;
+                head += n;
+            }
+        }
+        if head < due {
+            // Still late: what it has is not yet on its frames.
+            return (span.to, span.to, dropped);
+        }
+        let from = (span.from as u64 + (head - due)).min(span.to as u64);
+        (from as usize, span.to, dropped)
+    }
+
+    /// The output's timeline is at restart `epoch`: what was sent before
+    /// a restart is not its to count.
+    fn restarted(&mut self, epoch: u64) {
+        if epoch != self.epoch {
+            self.sent.clear();
+            self.epoch = epoch;
+        }
     }
 
     /// The device has played up to device frame `played`: the output is
     /// told what of it is still downstream.
     pub(crate) fn played(&mut self, played: u64) {
-        while self.sent.front().is_some_and(|&(d, n)| d + n <= played) {
+        while self.sent.front().is_some_and(|&(d, _, n)| d + n <= played) {
             self.sent.pop_front();
         }
         let unplayed: u64 = self
             .sent
             .iter()
-            .map(|&(d, n)| n - played.saturating_sub(d).min(n))
+            .map(|&(d, dropped, n)| {
+                let before = if played < d { dropped } else { 0 };
+                before + n - played.saturating_sub(d).min(n)
+            })
             .sum();
         self.link.shared.set_downstream(self.epoch, unplayed);
     }

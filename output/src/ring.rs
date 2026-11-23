@@ -6,7 +6,7 @@
 //! so the wrap point always falls on a frame boundary.
 
 use std::cell::UnsafeCell;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 pub(crate) struct Ring {
     buf: Box<[UnsafeCell<u8>]>,
@@ -14,8 +14,14 @@ pub(crate) struct Ring {
     capacity: u64,
     /// Frames ever pushed; only the producer stores it.
     head: AtomicU64,
-    /// Frames ever popped or cleared; only the consumer stores it.
+    /// Frames ever popped, dropped or cleared; only the consumer stores it.
     tail: AtomicU64,
+    /// Set while the consumer drops frames ([`Ring::skip`]), and while the
+    /// producer takes frames back ([`Ring::retract`]): each side sets its
+    /// own and then looks at the other's, so the two never overlap (a
+    /// drop may pass the frames a retract keeps queued).
+    skipping: AtomicBool,
+    retracting: AtomicBool,
 }
 
 // SAFETY: the producer only writes bytes in the free region and the consumer
@@ -36,6 +42,8 @@ impl Ring {
             capacity: capacity_frames as u64,
             head: AtomicU64::new(0),
             tail: AtomicU64::new(0),
+            skipping: AtomicBool::new(false),
+            retracting: AtomicBool::new(false),
         }
     }
 
@@ -113,16 +121,40 @@ impl Ring {
         frames
     }
 
+    /// Consumer only: drops up to `frames` of the oldest frames queued and
+    /// returns how many it dropped: none while the producer takes frames
+    /// back (the consumer never waits: a follower refused gives nothing in
+    /// that chunk, still late, and drops them in a later one).
+    pub(crate) fn skip(&self, frames: u64) -> u64 {
+        self.skipping.store(true, Ordering::SeqCst);
+        let mut n = 0;
+        if !self.retracting.load(Ordering::SeqCst) {
+            let tail = self.tail.load(Ordering::Relaxed);
+            let head = self.head.load(Ordering::Acquire);
+            n = (head - tail).min(frames);
+            self.tail.store(tail + n, Ordering::Release);
+        }
+        self.skipping.store(false, Ordering::SeqCst);
+        n
+    }
+
     /// Producer only: takes back up to `frames` of the frames pushed last,
     /// leaving at least `keep` queued, and returns how many it took back.
     /// The consumer may be copying from the oldest frames meanwhile: with
     /// `keep` at least the most it copies at a time, the frames taken back
-    /// (which the producer writes again) are never among them.
+    /// (which the producer writes again) are never among them. A drop of
+    /// the consumer's under way is waited for (it takes an instant).
     pub(crate) fn retract(&self, frames: u64, keep: u64) -> u64 {
+        self.retracting.store(true, Ordering::SeqCst);
+        while self.skipping.load(Ordering::SeqCst) {
+            std::hint::spin_loop();
+            std::thread::yield_now();
+        }
         let head = self.head.load(Ordering::Relaxed);
         let tail = self.tail.load(Ordering::Acquire);
         let n = frames.min((head - tail).saturating_sub(keep));
         self.head.store(head - n, Ordering::Release);
+        self.retracting.store(false, Ordering::SeqCst);
         n
     }
 
@@ -192,6 +224,86 @@ mod tests {
         push(&ring, &[9]);
         assert_eq!(ring.retract(5, 1), 0);
         assert_eq!(ring.len(), 1);
+    }
+
+    #[test]
+    fn skip_drops_the_oldest_frames_queued() {
+        let ring = Ring::new(8, 1);
+        push(&ring, &[1, 2, 3, 4, 5]);
+        assert_eq!(ring.skip(3), 3);
+        let mut out = [0; 8];
+        assert_eq!(ring.pop_into(&mut out), 2);
+        assert_eq!(out[..2], [4, 5]);
+        push(&ring, &[6]);
+        assert_eq!(ring.skip(10), 1);
+        assert_eq!(ring.len(), 0);
+    }
+
+    #[test]
+    fn drops_and_retracts_on_two_threads_keep_the_order() {
+        let ring = Arc::new(Ring::new(64, 4));
+        let total = 200_000u32;
+        let done = Arc::new(AtomicBool::new(false));
+        let producer = {
+            let (ring, done) = (ring.clone(), done.clone());
+            std::thread::spawn(move || {
+                let (mut next, mut k) = (0u32, 0u64);
+                while next < total {
+                    k += 1;
+                    if k % 7 == 0 {
+                        // The same frames are written again after.
+                        next -= ring.retract(5, 16) as u32;
+                    }
+                    let n = ring.free().min(u64::from(total - next)).min(11);
+                    if n == 0 {
+                        std::thread::yield_now();
+                        continue;
+                    }
+                    ring.push_with(n, |a, b| {
+                        for chunk in a.chunks_exact_mut(4).chain(b.chunks_exact_mut(4)) {
+                            chunk.copy_from_slice(&next.to_le_bytes());
+                            next += 1;
+                        }
+                    });
+                }
+                done.store(true, Ordering::SeqCst);
+            })
+        };
+        let (mut last, mut k, mut dropped) = (None, 0u64, 0);
+        let mut out = [0u8; 4 * 13];
+        loop {
+            k += 1;
+            // A head behind the tail would not even get here (the length
+            // is a subtraction that cannot go below 0).
+            assert!(ring.len() <= ring.capacity());
+            if k % 5 == 0 {
+                dropped += ring.skip(9);
+            }
+            let finished = done.load(Ordering::SeqCst);
+            // A real consumer copies a period at a time, periods apart, so
+            // within a retract it copies no more than the frames kept; this
+            // one, as fast as it can go, waits each retract out instead (a
+            // drop is the ring's own to keep apart from one).
+            if ring.retracting.load(Ordering::SeqCst) {
+                std::thread::yield_now();
+                continue;
+            }
+            let n = ring.pop_into(&mut out) as usize;
+            for chunk in out[..n * 4].chunks_exact(4) {
+                let v = u32::from_le_bytes(chunk.try_into().unwrap());
+                assert!(last.is_none_or(|l| v > l), "{v} after {last:?}");
+                last = Some(v);
+            }
+            if finished && ring.len() == 0 {
+                break;
+            }
+            if n == 0 {
+                std::thread::yield_now();
+            }
+        }
+        producer.join().unwrap();
+        assert!(dropped > 0);
+        assert!(last.is_none_or(|l| l < total));
     }
 
     #[test]

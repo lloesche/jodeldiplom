@@ -8,8 +8,9 @@
 //! the frames still queued). [`Timeline::position`] turns that into stream
 //! frames played: device frames played, minus the silence among them, plus
 //! the frames that were played or discarded before the device timeline last
-//! restarted, minus the frames still on their way through a device further
-//! down (a mixer's input: [`Timeline::set_downstream`]).
+//! restarted (or passed over: [`Timeline::skip`]), minus the frames still
+//! on their way through a device further down (a mixer's input:
+//! [`Timeline::set_downstream`]).
 
 use std::collections::VecDeque;
 use std::time::Instant;
@@ -24,7 +25,8 @@ struct Anchor {
 #[derive(Debug)]
 pub(crate) struct Timeline {
     rate: u32,
-    /// Stream frames played or discarded before this device timeline.
+    /// Stream frames played or discarded before this device timeline, and
+    /// those passed over.
     base: u64,
     /// Device frames handed to the device.
     submitted: u64,
@@ -78,6 +80,13 @@ impl Timeline {
             }
             self.submitted = end;
         }
+    }
+
+    /// `frames` stream frames are passed over, in no device frames: they
+    /// count as played at once (a mixer's input, whose device is the mixer,
+    /// holds them back as downstream until the device is there).
+    pub(crate) fn skip(&mut self, frames: u64) {
+        self.base += frames;
     }
 
     /// `device` device frames had reached the DAC at `at`. With
@@ -262,6 +271,20 @@ mod tests {
         t.report(5, t0, false);
         assert_eq!(t.position(t0), 105);
         assert_eq!(t.stream_submitted_total(), 120);
+    }
+
+    #[test]
+    fn frames_passed_over_count_as_played() {
+        let t0 = Instant::now();
+        let mut t = Timeline::new(1000);
+        t.submit(100, 0);
+        t.report(60, t0, false);
+        t.skip(40);
+        assert_eq!(t.position(t0), 100);
+        t.submit(50, 0);
+        t.report(150, t0, false);
+        assert_eq!(t.position(t0), 190);
+        assert_eq!(t.stream_submitted_total(), 190);
     }
 
     #[test]

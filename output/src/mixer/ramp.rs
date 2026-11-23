@@ -100,16 +100,36 @@ pub(crate) enum When {
     With(GainId),
 }
 
+/// Audio an output supplied in a chunk: the output's id (as
+/// [`When::FirstAudio`] counts them), and the frame its audio starts at
+/// (inside the chunk for a follower's).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Audio {
+    pub(crate) output: u64,
+    pub(crate) at: u64,
+}
+
 impl When {
+    /// Where the first audio it waits for starts, among `audio`: for a
+    /// `FirstAudio`, the earliest of the outputs newer than its own
+    /// (`None`: none of them, or it waits for no audio).
+    pub(crate) fn arrival(self, audio: impl IntoIterator<Item = Audio>) -> Option<u64> {
+        let When::FirstAudio { after } = self else {
+            return None;
+        };
+        let newer = audio.into_iter().filter(|a| a.output > after);
+        newer.map(|a| a.at).min()
+    }
+
     /// The frame it comes at in the chunk of frames `first..end` (a frame
-    /// gone by: `first`), if it comes there; `audio` is the newest output
-    /// (as `FirstAudio` counts them) that supplied audio in the chunk. A
+    /// gone by: `first`), if it comes there; `arrival` is where the audio a
+    /// `FirstAudio` waits for starts in the chunk ([`When::arrival`]). A
     /// `With` is left to the ramp it follows.
-    pub(crate) fn due(self, first: u64, end: u64, audio: Option<u64>) -> Option<u64> {
+    pub(crate) fn due(self, first: u64, end: u64, arrival: Option<u64>) -> Option<u64> {
         match self {
             When::Now => Some(first),
             When::Frame(f) if f < end => Some(f.max(first)),
-            When::FirstAudio { after } if audio.is_some_and(|o| o > after) => Some(first),
+            When::FirstAudio { .. } => arrival.map(|at| at.max(first)),
             _ => None,
         }
     }
@@ -119,16 +139,16 @@ impl When {
 /// `first..end`, into `starts` as (gain, frame): their own frame, the
 /// first audio of an output opened since, or with the ramp they follow.
 /// `waiting` gives each gain with a ramp waiting, when it starts, and the
-/// id of its input's output if that supplied audio in the chunk.
+/// audio of its input's output, if that supplied any in the chunk.
 pub(crate) fn resolve_starts(
     first: u64,
     end: u64,
-    waiting: impl Iterator<Item = (GainId, When, Option<u64>)> + Clone,
+    waiting: impl Iterator<Item = (GainId, When, Option<Audio>)> + Clone,
     starts: &mut Vec<(GainId, u64)>,
 ) {
     starts.clear();
     for (id, when, audio) in waiting.clone() {
-        if let Some(at) = when.due(first, end, audio) {
+        if let Some(at) = when.due(first, end, when.arrival(audio)) {
             starts.push((id, at));
         }
     }
@@ -432,6 +452,19 @@ mod tests {
         assert_eq!(g.next(), Some(When::FirstAudio { after: 1 }));
     }
 
+    fn audio(output: u64, at: u64) -> Audio {
+        Audio { output, at }
+    }
+
+    #[test]
+    fn the_first_audio_is_the_earliest_of_the_outputs_newer() {
+        let w = When::FirstAudio { after: 5 };
+        let heard = [audio(9, 300), audio(4, 100), audio(6, 200)];
+        assert_eq!(w.arrival(heard), Some(200));
+        assert_eq!(w.arrival([audio(5, 0)]), None);
+        assert_eq!(When::Now.arrival(heard), None);
+    }
+
     #[test]
     fn waiting_ramps_start_on_their_frames() {
         let g = |slot: u64| GainId::new(slot, 0);
@@ -440,8 +473,9 @@ mod tests {
             (g(1), When::Now, None),
             (g(2), When::Frame(130), None),
             (g(3), When::Frame(900), None),
-            (g(4), When::FirstAudio { after: 1 }, Some(2)),
-            (g(5), When::FirstAudio { after: 2 }, Some(2)),
+            // Audio from inside the chunk (a follower's): from its frame.
+            (g(4), When::FirstAudio { after: 1 }, Some(audio(2, 140))),
+            (g(5), When::FirstAudio { after: 2 }, Some(audio(2, 100))),
             (g(6), When::With(g(2)), None),
             (g(7), When::With(g(3)), None),
             (GainId::new(2, 2), When::With(g(2)), None),
@@ -455,7 +489,7 @@ mod tests {
             [
                 (1, 0, 100),
                 (2, 0, 130),
-                (4, 0, 100),
+                (4, 0, 140),
                 (6, 0, 130),
                 (2, 2, 130)
             ]

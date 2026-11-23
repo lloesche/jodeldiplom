@@ -53,10 +53,12 @@ pub(crate) struct SlotState {
     /// A lane of it was heard in the last chunk mixed.
     pub(crate) heard: AtomicBool,
     /// Its output's format (see [`super::desk::pack_format`]; 0: none),
-    /// the frames queued in its ring, and the ring's capacity.
+    /// the frames queued in its ring, the ring's capacity, and the late
+    /// frames it dropped following another.
     pub(crate) format: AtomicU64,
     pub(crate) queued: AtomicU64,
     pub(crate) capacity: AtomicU64,
+    pub(crate) dropped: AtomicU64,
     /// Where its output's frames went last on the device.
     pub(crate) mapped: Mapped,
 }
@@ -127,6 +129,7 @@ impl SlotState {
             format: AtomicU64::new(0),
             queued: AtomicU64::new(0),
             capacity: AtomicU64::new(0),
+            dropped: AtomicU64::new(0),
             mapped: Mapped::default(),
         }
     }
@@ -335,6 +338,14 @@ impl Fader {
         f64::from_bits(state.gain.load(Ordering::Acquire))
     }
 
+    /// The late frames the output open on its input dropped to keep up
+    /// with the one it follows ([`Fader::follow`]), since it was opened
+    /// (as its [`crate::Stats::dropped`]), as of the last frames mixed; 0
+    /// with none open.
+    pub fn dropped(&self) -> u64 {
+        self.slot.state.dropped.load(Ordering::Relaxed)
+    }
+
     /// Whether the last ramp set has run to its end (one waiting for its
     /// start has not).
     pub fn settled(&self) -> bool {
@@ -346,8 +357,11 @@ impl Fader {
     /// output plays now: a [`Start::At`] for a ramp, or a strip's change,
     /// to land on that very frame. It is the input's, whichever of its
     /// faders is asked: where its output's last frames mixed went on the
-    /// device. With nothing of the output mixed since it was opened or
-    /// flushed in this opening of the device, [`Start::Now`].
+    /// device; for an output that follows another ([`Fader::follow`]), its
+    /// leader's at `stream_frame + origin` from the moment it is linked,
+    /// mixed or not. With nothing of the output mixed since it was opened
+    /// or flushed in this opening of the device (nor of its leader's),
+    /// [`Start::Now`].
     pub fn at_stream(&self, stream_frame: u64) -> Start {
         let state = &self.slot.state;
         let rate = unpack_format(state.format.load(Ordering::Relaxed)).map_or(0, |f| f.rate);
@@ -366,6 +380,45 @@ impl Fader {
             }
             _ => Start::Now,
         }
+    }
+
+    /// Has the output open on this fader's input follow the one open on
+    /// `leader`'s input (a fader of another input of the same mixer): its
+    /// stream frame 0 lands on the leader's stream frame `origin`, and from
+    /// there it moves with the leader's stream, frame for frame (see the
+    /// module's docs). Set it once the output is open, before it is
+    /// written: what it gave before is not taken back. The link holds
+    /// until either output is flushed or closed (a new one opened on
+    /// either input closes the old), or [`Fader::unfollow`]; another link
+    /// takes its place. Waits for the mixer thread (a device period,
+    /// about); then [`Fader::at_stream`] is the leader's, `origin` on.
+    ///
+    /// [`Error::InvalidArgument`] when either input has no output open, an
+    /// input would follow itself, the leader follows another, or this
+    /// input leads one (no chains); [`Error::Closed`] when either input is
+    /// gone.
+    pub fn follow(&self, leader: &Fader, origin: u64) -> Result<(), Error> {
+        let same = Arc::ptr_eq(
+            &self.slot.strips[0].handle.shared,
+            &leader.slot.strips[0].handle.shared,
+        );
+        assert!(same, "a leader of another mixer");
+        let (slot, leader) = (self.slot.id, Some((leader.slot.id, origin)));
+        ask(&self.slot.tx, |done| Msg::Follow {
+            slot,
+            leader,
+            done: Some(done),
+        })?
+    }
+
+    /// The output on this fader's input follows no one any more: it plays
+    /// on from where it is, as any other. Never blocks.
+    pub fn unfollow(&self) {
+        let _ = self.slot.tx.send(Msg::Follow {
+            slot: self.slot.id,
+            leader: None,
+            done: None,
+        });
     }
 
     /// Shuts the input now, while its target may still be held (by a

@@ -48,6 +48,15 @@
 //!   mixed. Each setting has one change waiting at most: a new one takes
 //!   its place ([`Strip::pending_mute`] and [`Strip::pending_level`] show
 //!   it, so a caller can toggle against what is meant).
+//! - **Links:** [`Fader::follow`] has an input's output follow another
+//!   input's: its frame 0 lands on the leader's stream frame `origin`
+//!   (inside a period), and from there it moves with the leader's stream,
+//!   frame for frame, never with the device's. While the leader gives
+//!   nothing (paused, short of frames) the follower holds, and loses
+//!   nothing; a follower behind (short of frames itself) drops its late
+//!   frames to catch up ([`Fader::dropped`]), so the mixer never waits
+//!   for it. A flush or a close of either side ends the link (see
+//!   `follow.rs`).
 //! - **Lane inputs:** [`Mixer::input_lanes`] makes an input whose outputs
 //!   may be lane streams ([`crate::lanes`]): main on one strip, each part
 //!   on its own, with the input's fader over all of them and a fader per
@@ -106,6 +115,7 @@ mod chunk;
 mod desk;
 mod envelope;
 mod fader;
+mod follow;
 mod input;
 mod mic;
 mod mix;
@@ -256,6 +266,14 @@ pub(crate) enum Msg {
     Flush {
         stream: u64,
         done: Sender<Result<(), Error>>,
+    },
+    /// The output on input `slot` follows the one on input `leader.0` from
+    /// its frame `leader.1` (`None`: no one); `done` hears whether it
+    /// does.
+    Follow {
+        slot: u64,
+        leader: Option<(u64, u64)>,
+        done: Option<Sender<Result<(), Error>>>,
     },
     Ramp {
         gain: GainId,
