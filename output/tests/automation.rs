@@ -254,15 +254,18 @@ fn a_curve_holds_through_a_pause_while_the_device_plays_on() {
     let (sa, sb) = (mixer.strip("A"), mixer.strip("B"));
     let (mut a, fa) = mixer.input(&sa, Role::Lead, 1.0);
     let (mut b, _fb) = mixer.input(&sb, Role::Guest, 1.0);
+    let right = |n: u64| -> Vec<i32> { (0..n).flat_map(|_| [0, L]).collect() };
+    // Both running before either holds a period: an output not started
+    // yet is not waited for, and A would be mixed alone.
     let mut oa = open_started(&mut a, RATE, L);
     let mut ob = b.open(&request(RATE).prefill(Duration::ZERO)).unwrap();
+    ob.write(&right(1), None).unwrap();
     // Down from 1 to a fifth over A's frames 0..9 600.
     let down = curve(&[(0, 1.0), (9_600, 0.2)]);
     fa.automate(Automation::new().input(down.clone())).unwrap();
     taken(&mut a);
-    let right = |n: u64| -> Vec<i32> { (0..n).flat_map(|_| [0, L]).collect() };
     oa.write(&frames(1, 4_799, |_| L), None).unwrap();
-    ob.write(&right(4_800), None).unwrap();
+    ob.write(&right(4_799), None).unwrap();
     wait_until("mixed", || mixer.timebase().frame == 4_800);
     // A paused for 4 800 device frames, B playing on alone.
     oa.pause().unwrap();
