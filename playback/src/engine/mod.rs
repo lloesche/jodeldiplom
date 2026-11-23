@@ -47,7 +47,8 @@
 //! cues and fades), `produce` (making a track's output and writing it),
 //! `switch` (moving a track to a new route), `play` (opening, starting,
 //! seeking, stopping and running into the next track), `jump`, `queue`,
-//! `transition`, `warping`, and `lanes` (the stems as
+//! `transition`, `warping`, `along` (a head read along a time map), and
+//! `lanes` (the stems as
 //! parts of an output of lanes).
 
 use std::collections::VecDeque;
@@ -65,6 +66,7 @@ use crate::stem_file::StemStore;
 use crate::stems::SeparatorSource;
 use crate::target::OutputTarget;
 
+mod along;
 mod api;
 mod jump;
 mod lanes;
@@ -174,7 +176,7 @@ struct Engine {
     /// [`Command::JumpWindow`]: seconds kept behind, decoded ahead.
     jump_window: (f64, f64),
     /// A [`Command::Along`] waiting for its frame.
-    along_at: Option<lanes::PendingAlong>,
+    along_at: Option<along::PendingAlong>,
     /// A [`Command::Jump`] waiting for its time.
     pending_jump: Option<jump::PendingJump>,
     /// A reading of the playing track at a jump's target it does not hold.
@@ -420,14 +422,7 @@ impl Engine {
     /// line from its segment.
     fn heard_along(&self, track: &Track) -> Option<Heard> {
         if track.along.is_some() {
-            return Some(Heard {
-                index: track.index,
-                info: track.info.clone(),
-                route: track.route.clone(),
-                seg_out: track.seg_out,
-                seg_frame: track.seg_frame,
-                warp: track.heard_warp(),
-            });
+            return Some(track.heard());
         }
         self.heard
             .as_ref()

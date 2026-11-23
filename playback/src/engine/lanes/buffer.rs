@@ -22,6 +22,11 @@ pub(super) struct Buffer {
     at: u64,
     width: usize,
     blend: Option<Blend>,
+    /// The parts made since the last new start of them, as made (not
+    /// crossfaded from what was there), over its crossfade: what a head
+    /// read along a map sums into its main, which it crossfades itself.
+    fresh: Vec<i32>,
+    fresh_at: u64,
 }
 
 impl Buffer {
@@ -68,6 +73,7 @@ impl Buffer {
         self.parts.clear();
         self.at = at;
         self.blend = None;
+        self.fresh.clear();
     }
 
     /// Drops what is before output frame `before`.
@@ -83,6 +89,8 @@ impl Buffer {
     /// goes); parts made from `from` on replace it up to there, their first
     /// `fade` frames crossfaded from it.
     pub(super) fn restart(&mut self, from: u64, keep: u64, fade: usize) {
+        self.fresh.clear();
+        self.fresh_at = from;
         if keep <= self.at || self.parts.is_empty() {
             self.clear(from);
             return;
@@ -133,6 +141,9 @@ impl Buffer {
                 };
                 let at = (o - self.at) as usize * w;
                 let new = &samples[i as usize * w..(i as usize + 1) * w];
+                if k < 1.0 && o == self.fresh_at + (self.fresh.len() / w) as u64 {
+                    self.fresh.extend_from_slice(new);
+                }
                 for (j, &new) in new.iter().enumerate() {
                     let old = &mut self.parts[at + j];
                     *old = (f64::from(*old) * (1.0 - k) + f64::from(new) * k).round() as i32;
@@ -144,6 +155,19 @@ impl Buffer {
         }
         self.parts
             .extend(samples[over as usize * w..].iter().copied());
+    }
+
+    /// Appends frame `o`'s parts (there) to `out` as they were made,
+    /// before a new start of them crossfaded them from what was there.
+    pub(super) fn copy_fresh(&self, o: u64, out: &mut Vec<i32>) {
+        let w = self.width.max(1);
+        let fresh = (self.fresh.len() / w) as u64;
+        if o >= self.fresh_at && o < self.fresh_at + fresh {
+            let at = (o - self.fresh_at) as usize * w;
+            out.extend_from_slice(&self.fresh[at..at + w]);
+        } else {
+            self.copy(o, out);
+        }
     }
 
     /// Appends frame `o`'s parts (there) to `out`.

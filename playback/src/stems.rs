@@ -142,8 +142,19 @@ const AHEAD: usize = 4;
 /// [`Stem::ALL`].
 struct Separated {
     stems: Vec<[Vec<f32>; 2]>,
-    /// Made by the separator (not read where they are kept).
-    separated: bool,
+    /// Where they come from.
+    served: Served,
+}
+
+/// Where a run's stems come from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Served {
+    /// Read where they are kept.
+    Kept,
+    /// Made by the separator.
+    Separated,
+    /// The whole mix as the other instruments' stem ([`Unkept::Whole`]).
+    Whole,
 }
 
 impl Separated {
@@ -154,7 +165,7 @@ impl Separated {
                 .iter()
                 .map(|[l, r]| [l.to_vec(), r.to_vec()])
                 .collect(),
-            separated: true,
+            served: Served::Separated,
         }
     }
 }
@@ -193,9 +204,10 @@ pub(crate) struct StemRun {
     pub(crate) path: PathBuf,
     /// The track frame it starts at.
     pub(crate) start: u64,
-    /// Its stems are the whole mix ([`Unkept::Whole`]), not kept nor
-    /// separated (unless the store had them after all).
-    pub(crate) whole: bool,
+    /// Where the stems not kept come from, as asked.
+    unkept: Unkept,
+    /// Where its stems come from, once the first have.
+    served: Option<Served>,
     stems: Receiver<Message>,
     /// The whole file has been read (the rest is being separated).
     read: Arc<AtomicBool>,
@@ -422,7 +434,8 @@ impl StemRun {
         StemRun {
             path,
             start,
-            whole: matches!(unkept, Unkept::Whole),
+            unkept,
+            served: None,
             stems,
             read,
             cancel,
@@ -466,6 +479,27 @@ impl StemRun {
     /// [`StemRun::kept_end`] will.
     pub(crate) fn received(&self) -> bool {
         self.received
+    }
+
+    /// Where its stems come from: what it served, else (before its first)
+    /// where it was asked to get them when they are not kept.
+    fn source(&self) -> Option<Served> {
+        self.served.or(match self.unkept {
+            Unkept::Missing => None,
+            Unkept::Separate(_) => Some(Served::Separated),
+            Unkept::Whole => Some(Served::Whole),
+        })
+    }
+
+    /// Whether its stems are the whole mix as the other instruments' stem.
+    pub(crate) fn whole(&self) -> bool {
+        self.source() == Some(Served::Whole)
+    }
+
+    /// Whether its stems are separated as it goes (so they may fall
+    /// behind what is played).
+    pub(crate) fn separating(&self) -> bool {
+        self.source() == Some(Served::Separated)
     }
 
     /// Whether the separation failed (what it kept still plays).
@@ -524,7 +558,8 @@ impl StemRun {
             wait = Duration::ZERO;
             match message {
                 Message::Stems(s) => {
-                    self.separated |= s.separated;
+                    self.served = Some(s.served);
+                    self.separated |= s.served == Served::Separated;
                     for (kept, [l, r]) in self.kept.iter_mut().zip(s.stems) {
                         kept[0].extend_from_slice(&l);
                         kept[1].extend_from_slice(&r);
@@ -722,7 +757,7 @@ fn read_kept(
         at += n;
         let piece = Separated {
             stems: Vec::from(stems),
-            separated: false,
+            served: Served::Kept,
         };
         if tx.send(Message::Stems(piece)).is_err() {
             return Ok(());
@@ -730,6 +765,42 @@ fn read_kept(
     }
     read.store(true, Ordering::Relaxed);
     Ok(())
+}
+
+/// Decodes `path` from track frame `start` as stereo at the separator's
+/// rate ([`StereoFeed`]), handing each piece to `put`, until the file ends
+/// (then it is marked `read`) or `stopped` says so. Whether it ended.
+fn decode(
+    path: &std::path::Path,
+    start: u64,
+    read: &AtomicBool,
+    stopped: &dyn Fn() -> bool,
+    put: &mut dyn FnMut(Vec<f32>, Vec<f32>),
+) -> Result<bool, String> {
+    let mut source = Source::open(path).map_err(|e| e.to_string())?;
+    if start > 0 {
+        source.seek(start).map_err(|e| e.to_string())?;
+    }
+    let channels = usize::from(source.info().channels).max(1);
+    let mut feed = StereoFeed::new(source.info().rate);
+    let mut block = Vec::new();
+    loop {
+        block.clear();
+        if source
+            .read_unquantized(&mut block)
+            .map_err(|e| e.to_string())?
+            == 0
+        {
+            break;
+        }
+        feed.push(&block, channels, put);
+        if stopped() {
+            return Ok(false);
+        }
+    }
+    read.store(true, Ordering::Relaxed);
+    feed.finish(put);
+    Ok(!stopped())
 }
 
 /// The run's thread with no separator ([`Unkept::Whole`]): decodes the
@@ -742,12 +813,6 @@ fn whole(
     read: &AtomicBool,
     cancel: &AtomicBool,
 ) -> Result<(), String> {
-    let mut source = Source::open(path).map_err(|e| e.to_string())?;
-    if start > 0 {
-        source.seek(start).map_err(|e| e.to_string())?;
-    }
-    let channels = usize::from(source.info().channels).max(1);
-    let mut feed = StereoFeed::new(source.info().rate);
     let other = slot(Stem::Other);
     let gone = Cell::new(false);
     let stopped = || gone.get() || cancel.load(Ordering::Relaxed);
@@ -761,30 +826,13 @@ fn whole(
         stems[other] = [left, right];
         let piece = Separated {
             stems,
-            separated: false,
+            served: Served::Whole,
         };
         if tx.send(Message::Stems(piece)).is_err() {
             gone.set(true);
         }
     };
-    let mut block = Vec::new();
-    loop {
-        block.clear();
-        if source
-            .read_unquantized(&mut block)
-            .map_err(|e| e.to_string())?
-            == 0
-        {
-            break;
-        }
-        feed.push(&block, channels, &mut put);
-        if stopped() {
-            return Ok(());
-        }
-    }
-    read.store(true, Ordering::Relaxed);
-    feed.finish(&mut put);
-    Ok(())
+    decode(path, start, read, &stopped, &mut put).map(|_| ())
 }
 
 /// The run's thread: decodes, separates and sends the stems on until the
@@ -798,52 +846,28 @@ fn separate(
     cancel: &AtomicBool,
 ) -> Result<(), String> {
     let separator = separator().ok_or("no GPU for the stems")?;
-    let mut source = Source::open(path).map_err(|e| e.to_string())?;
-    if start > 0 {
-        source.seek(start).map_err(|e| e.to_string())?;
-    }
-    let channels = usize::from(source.info().channels).max(1);
-    let mut feed = StereoFeed::new(source.info().rate);
     let mut splitter = Splitter::new(separator);
     // The run was dropped (stop), or the separator failed.
     let gone = Cell::new(false);
-    let stopped = || gone.get() || cancel.load(Ordering::Relaxed);
     let failed = RefCell::new(None);
+    let stopped = || gone.get() || cancel.load(Ordering::Relaxed) || failed.borrow().is_some();
     let mut sink = |b: &StemBlock| {
         if !gone.get() && tx.send(Message::Stems(Separated::of(b))).is_err() {
             gone.set(true);
         }
     };
     let mut put = |left: Vec<f32>, right: Vec<f32>| {
-        if failed.borrow().is_none() && !stopped() {
+        if !stopped() {
             if let Err(e) = splitter.push(&left, &right, &mut sink) {
                 *failed.borrow_mut() = Some(e);
             }
         }
     };
-    let mut block = Vec::new();
-    loop {
-        block.clear();
-        if source
-            .read_unquantized(&mut block)
-            .map_err(|e| e.to_string())?
-            == 0
-        {
-            break;
-        }
-        feed.push(&block, channels, &mut put);
-        if failed.borrow().is_some() || stopped() {
-            break;
-        }
-    }
-    read.store(true, Ordering::Relaxed);
-    if failed.borrow().is_none() && !stopped() {
-        feed.finish(&mut put);
-    }
+    let ended = decode(path, start, read, &stopped, &mut put)?;
     if let Some(e) = failed.take() {
         return Err(e);
     }
-    if stopped() {
+    if !ended {
         return Ok(());
     }
     splitter.finish(&mut sink)

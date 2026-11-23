@@ -98,11 +98,13 @@ it, measured on real songs), and the stems are played as separated.
 **Reading the parts along a time map** (a head read along one, mixer
 step 3): the same 8 channels, read along the map at the separator's
 44.1 kHz before the resampling above, whatever the output's rate
-(`cargo test --release -p jodel-playback --lib eight_channels --
---nocapture`): varispeed 1.6 M frames a second, 37× real time (2.7 % of
-a core); stretched (a phase vocoder a channel) 1.0 M, 23× (4.3 %). Main
-is their sum, so nothing else is read or resampled while a head follows
-a map.
+(a measurement: `cargo test --release -p jodel-playback --lib
+eight_channels -- --ignored --nocapture`): varispeed 1.6 M frames a
+second, 37× real time (2.7 % of a core); stretched (a phase vocoder a
+channel) 1.0 M, 23× (4.3 %). Main is their sum, so nothing else is read
+or resampled while a head follows a map. Without a separator only the
+other instruments' pair is read along it (the whole mix), a quarter of
+that.
 
 **Memory.** A stem run keeps its stems as 8 × f32 at 44.1 kHz,
 1.41 MB a second:

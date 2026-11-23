@@ -26,8 +26,13 @@ type Script<'a> = &'a dyn Fn(&Player, &Receiver<Event>, &Gate, &Captures);
 
 /// What the device gets from `script` directly, and through a lane input
 /// with the quarter's stems made beside main: the same bytes. Offline, so
-/// the parts are there on every frame (waited for), untouched.
+/// the parts are there on every frame (waited for), untouched. With no
+/// separator none are asked for, and the lanes carry main alone.
 fn same_through_lanes(caps: Capabilities, options: PlayerOptions, script: Script) {
+    let (make, there) = match options.separator {
+        Some(_) => (MakeStems::Separate, Parts::Present),
+        None => (MakeStems::Never, Parts::None),
+    };
     let direct = {
         let (target, captures, gate) = GatedTarget::new(caps.clone());
         let (player, events) = Player::new(Box::new(target), options.clone());
@@ -38,13 +43,14 @@ fn same_through_lanes(caps: Capabilities, options: PlayerOptions, script: Script
     let laned = {
         let (target, captures, gate, lanes) = gated_mixer_lanes(caps);
         let (player, events) = Player::new(Box::new(target), options);
-        player.make_stems(MakeStems::Separate).unwrap();
+        player.make_stems(make).unwrap();
         script(&player, &events, &gate, &captures);
-        // The parts were there to the last frame mixed, and not heard.
+        // The parts were there to the last frame mixed (or none were), and
+        // not heard.
         let desk = lanes.mixer.desk();
         let input = &desk.strips[0].inputs[0];
         let parts = input.parts.as_ref().expect("an input of lanes");
-        assert_eq!((parts.state, parts.share), (Parts::Present, 0.0));
+        assert_eq!((parts.state, parts.share), (there, 0.0));
         drop(player);
         drop(lanes);
         captured(&captures)
@@ -119,6 +125,34 @@ fn main_through_a_lane_input_is_bit_exact_with_stems_made() {
         options(false, true, quarter),
         &play_at,
     );
+}
+
+/// With no separator nor stems kept a lane target still gets lanes (a
+/// head read along a map would fill them): main through a mixer's lane
+/// input bit for bit, and on the stream every control word 0.
+#[test]
+fn with_no_separator_the_lanes_carry_main_alone() {
+    let none = PlayerOptions {
+        separator: None,
+        ..options(false, true, quarter)
+    };
+    let files = || vec![fixture(F44), fixture(F44)];
+    same_through_lanes(
+        caps(&[44_100], &[S24In32Low]),
+        none.clone(),
+        &to_the_end(files()),
+    );
+    let (target, captures, gate) = wide_target(caps_of(&[44_100], 2));
+    let (player, events) = Player::new(Box::new(target), none);
+    gate.allow_all();
+    player.load(files()).unwrap();
+    player.play(0).unwrap();
+    until_queue_end(&events);
+    drop(player);
+    let wide = Wide::of(&captures);
+    assert_eq!(wide.frames(), 2 * FIXTURE_FRAMES);
+    assert!(wide.control.iter().all(|&c| c == 0));
+    assert!(wide.parts.iter().all(|p| p.iter().all(|&s| s == 0)));
 }
 
 #[test]

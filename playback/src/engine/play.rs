@@ -12,7 +12,7 @@ use crate::rate::{choose_route, FileFacts, Route};
 use crate::source::Source;
 
 use super::api::{Event, PlayState, TrackStart};
-use super::track::{Cue, CueEvent, Heard, OpenOutput, SegStart, StartAt, Track};
+use super::track::{Cue, CueEvent, OpenOutput, SegStart, StartAt, Track};
 use super::{Engine, OPEN_BUSY_STEP, OPEN_BUSY_WAIT};
 
 impl Engine {
@@ -133,18 +133,7 @@ impl Engine {
         };
         Cue {
             at: track.seg_out,
-            event: CueEvent::Started(
-                Box::new(start),
-                Heard {
-                    index: track.index,
-                    info: track.info.clone(),
-                    route: track.route.clone(),
-                    seg_out: track.seg_out,
-                    seg_frame: track.seg_frame,
-                    // A track read along a map is heard along it.
-                    warp: track.heard_warp(),
-                },
-            ),
+            event: CueEvent::Started(Box::new(start), track.heard()),
         }
     }
 

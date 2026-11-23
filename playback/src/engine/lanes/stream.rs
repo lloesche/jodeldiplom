@@ -231,7 +231,9 @@ pub(super) enum Made {
 /// averaged, a file of more than two channels has them on its front pair
 /// and nothing on the rest), read along its map when the line has one,
 /// scaled by the track's headroom as main is, resampled to the output's
-/// rate (requantized to 24 bits) and cut or padded to the track's end.
+/// rate (requantized to 24 bits) and cut or padded to the track's end. A
+/// run of the whole mix has only its other instruments' stem made, the
+/// rest exactly silent.
 pub(super) struct Stream {
     pub(super) line: Line,
     /// The output frame of the stream's first frame (before the output's
@@ -242,8 +244,11 @@ pub(super) struct Stream {
     /// The track's channels, and the stems' (one or two each).
     channels: usize,
     pairs: usize,
-    warping: Option<Warping>,
-    resampler: Option<Resampler>,
+    /// Read along the line's map: the track's seconds at the run's first
+    /// frame.
+    read_from: Option<f64>,
+    /// How the stems are made, once the run says what it serves.
+    pass: Option<Pass>,
     requantizer: Requantizer,
     taken: Vec<f64>,
     feed: Vec<f64>,
@@ -252,33 +257,30 @@ pub(super) struct Stream {
     pub(super) done: bool,
 }
 
+/// How a stream makes its stems: from which lane on (the other
+/// instruments' alone for a run of the whole mix), read along the map,
+/// resampled.
+struct Pass {
+    from: usize,
+    warping: Option<Warping>,
+    resampler: Option<Resampler>,
+}
+
+/// The other instruments' lane ([`crate::stems::LANES`]' last).
+const OTHER: usize = STEMS - 1;
+
 impl Stream {
     /// A stream on `line` whose first frame is heard at output frame
-    /// `first`, for a track of `channels` channels; read along the line's
-    /// map, from a run whose first frame is the track's seconds
-    /// `read_from`.
-    pub(super) fn new(line: Line, first: i64, channels: usize, read_from: f64) -> Stream {
-        let pairs = channels.clamp(1, 2);
-        let resampler = (line.out != STEM_RATE).then(|| {
-            let mut r = Resampler::new(STEM_RATE, line.out, STEMS * pairs);
-            r.set_gain(line.gain);
-            r
-        });
-        let warping = line
-            .along_at(first)
-            .zip(line.along.as_ref())
-            .map(|((a, _), along)| {
-                let map = Arc::clone(&along.heard.map);
-                Warping::new(map, a, read_from, along.tempo, STEMS * pairs)
-            });
+    /// `first`, for a track of `channels` channels.
+    pub(super) fn new(line: Line, first: i64, channels: usize) -> Stream {
         Stream {
             line,
             first,
             made: 0,
             channels,
-            pairs,
-            warping,
-            resampler,
+            pairs: channels.clamp(1, 2),
+            read_from: None,
+            pass: None,
             requantizer: Requantizer::new(),
             taken: Vec::new(),
             feed: Vec::new(),
@@ -288,11 +290,70 @@ impl Stream {
         }
     }
 
+    /// The same, read along the line's map from a run whose first frame is
+    /// the track's seconds `read_from`.
+    pub(super) fn along(line: Line, first: i64, channels: usize, read_from: f64) -> Stream {
+        Stream {
+            read_from: Some(read_from),
+            ..Stream::new(line, first, channels)
+        }
+    }
+
     /// Frames the stream has in all: to the track's end, when known.
     fn length(&self) -> Option<u64> {
         self.line
             .end
             .map(|end| (end as i64 - self.first).max(0) as u64)
+    }
+
+    /// The first lane made.
+    fn from(&self) -> usize {
+        self.pass.as_ref().map_or(0, |p| p.from)
+    }
+
+    /// Samples the stems are made in, a frame.
+    fn width(&self) -> usize {
+        (STEMS - self.from()) * self.pairs
+    }
+
+    /// How the stems are made, set up for what `run` serves.
+    fn pass(&mut self, run: &StemRun) -> &mut Pass {
+        let pairs = self.pairs;
+        let (line, first, read_from) = (&self.line, self.first, self.read_from);
+        self.pass.get_or_insert_with(|| {
+            let from = if run.whole() { OTHER } else { 0 };
+            let channels = (STEMS - from) * pairs;
+            let resampler = (line.out != STEM_RATE).then(|| {
+                let mut r = Resampler::new(STEM_RATE, line.out, channels);
+                r.set_gain(line.gain);
+                r
+            });
+            let warping = line
+                .along_at(first)
+                .zip(line.along.as_ref())
+                .zip(read_from)
+                .map(|(((a, _), along), read_from)| {
+                    let map = Arc::clone(&along.heard.map);
+                    Warping::new(map, a, read_from, along.tempo, channels)
+                });
+            Pass {
+                from,
+                warping,
+                resampler,
+            }
+        })
+    }
+
+    /// Samples its resampling or requantization clipped so far.
+    pub(super) fn clipped(&self) -> u64 {
+        let resampler = self.pass.as_ref().and_then(|p| p.resampler.as_ref());
+        self.requantizer.clipped() + resampler.map_or(0, Resampler::clipped)
+    }
+
+    /// How far (in frames at the stems' rate) what it reads is off its map.
+    pub(super) fn offset(&self) -> f64 {
+        let warping = self.pass.as_ref().and_then(|p| p.warping.as_ref());
+        warping.map_or(0.0, Warping::offset)
     }
 
     /// Makes the next frames from `run` (waiting up to `wait` for its
@@ -312,9 +373,10 @@ impl Stream {
         self.out.clear();
         match run.take(PIECE, &mut self.taken, wait) {
             Pull::Frames => {
+                let from = self.pass(run).from;
                 self.feed.clear();
                 for frame in self.taken.chunks_exact(2 * STEMS) {
-                    for stem in frame.chunks_exact(2) {
+                    for stem in frame[2 * from..].chunks_exact(2) {
                         if self.pairs == 1 {
                             self.feed.push(0.5 * (stem[0] + stem[1]));
                         } else {
@@ -322,28 +384,30 @@ impl Stream {
                         }
                     }
                 }
-                if let Some(w) = self.warping.as_mut() {
+                if let Some(w) = self.pass.as_mut().and_then(|p| p.warping.as_mut()) {
                     w.read(&mut self.feed);
                 }
                 self.put_feed();
             }
             Pull::End => {
                 // What the map's reader holds comes out before the end.
-                if let Some(w) = self.warping.as_mut() {
-                    self.feed.clear();
+                self.feed.clear();
+                self.pass(run);
+                if let Some(w) = self.pass.as_mut().and_then(|p| p.warping.as_mut()) {
                     w.end();
                     w.read(&mut self.feed);
-                    self.put_feed();
                 }
+                self.put_feed();
                 // The stems end with the track: the stream is cut or
                 // padded to its end.
-                let length = self.length();
-                match (self.resampler.as_mut(), length) {
+                let (length, width) = (self.length(), self.width());
+                let resampler = self.pass.as_mut().and_then(|p| p.resampler.as_mut());
+                match (resampler, length) {
                     (Some(r), Some(n)) => r.finish_at(n, &mut self.out),
                     (Some(r), None) => r.finish(&mut self.out),
                     (None, Some(n)) => {
                         let short = n.saturating_sub(self.made) as usize;
-                        self.out.resize(short * STEMS * self.pairs, 0);
+                        self.out.resize(short * width, 0);
                     }
                     (None, None) => {}
                 }
@@ -353,8 +417,7 @@ impl Stream {
             Pull::Failed(why) => return Made::Failed(why),
             Pull::Missing => return Made::Missing,
         }
-        let width = STEMS * self.pairs;
-        let mut frames = self.out.len() / width;
+        let mut frames = self.out.len() / self.width();
         if let Some(n) = self.length() {
             let left = n.saturating_sub(self.made) as usize;
             if frames >= left {
@@ -370,7 +433,7 @@ impl Stream {
 
     /// The stems in `feed` resampled (or requantized) onto `out`.
     fn put_feed(&mut self) {
-        match self.resampler.as_mut() {
+        match self.pass.as_mut().and_then(|p| p.resampler.as_mut()) {
             Some(r) => r.process_float(&self.feed, &mut self.out),
             None => {
                 let (q, gain) = (&mut self.requantizer, self.line.gain);
@@ -380,11 +443,12 @@ impl Stream {
         }
     }
 
-    /// Lays the first `frames` made out in the track's channels.
+    /// Lays the first `frames` made out in the track's channels, the lanes
+    /// not made silent.
     fn lay(&mut self, frames: usize) {
-        let width = STEMS * self.pairs;
+        let (width, from) = (self.width(), self.from());
         self.laid.clear();
-        if self.channels == self.pairs {
+        if self.channels == self.pairs && from == 0 {
             self.laid.extend_from_slice(&self.out[..frames * width]);
             return;
         }
@@ -395,10 +459,8 @@ impl Stream {
             .take(frames)
             .zip(self.laid.chunks_exact_mut(STEMS * self.channels))
         {
-            for (stem, part) in made
-                .chunks_exact(self.pairs)
-                .zip(to.chunks_exact_mut(self.channels))
-            {
+            let lanes = to[from * self.channels..].chunks_exact_mut(self.channels);
+            for (stem, part) in made.chunks_exact(self.pairs).zip(lanes) {
                 part[..self.pairs].copy_from_slice(stem);
             }
         }

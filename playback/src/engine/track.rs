@@ -98,16 +98,30 @@ pub(super) struct AlongMap {
 
 /// A head read along a time map ([`crate::Command::Along`]) on an output
 /// of lanes: its stems are read along the map as its parts, and its main
-/// is their sum ([`super::lanes`]), from output frame `seg_out` of its
+/// is their sum ([`super::along`]), from output frame `seg_out` of its
 /// segment.
 pub(super) struct Along {
     pub(super) map: AlongMap,
-    /// Main of the route it was on, from the segment's first frame on: the
-    /// sum is crossfaded in from it.
-    pub(super) tail: Vec<i32>,
-    /// Its move back onto its own route, once the map runs straight, has
-    /// been asked for.
-    pub(super) returning: bool,
+    /// Main of the route it was on, from the segment's first frame on,
+    /// until the sum is crossfaded in from it.
+    pub(super) tail: Option<Vec<i32>>,
+    /// Its way back onto its own route, once the map runs straight.
+    pub(super) back: Back,
+    /// The parts' clips counted into the track's so far.
+    pub(super) clips: u64,
+}
+
+/// Where a head read along a map stands with its way back onto its own
+/// route.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Back {
+    /// On the map: nothing may move it (a route switch waits for it).
+    Reading,
+    /// The switch back is asked for (under way while there is one).
+    Asked,
+    /// The switch back did not come about: asked again once output frame
+    /// this is written.
+    Retry(u64),
 }
 
 impl HeardWarp {
@@ -584,6 +598,47 @@ impl Track {
         self.clips = None;
         self.failure = None;
         Ok(())
+    }
+
+    /// The track goes on along `map` from output frame `at`, the frame
+    /// written next: what its route made from there is cut and kept as the
+    /// tail its parts' sum crossfades in from (a switch's `fade` long at
+    /// most), and a segment joined to what played begins there, at the
+    /// track frame the map puts there. Its route makes nothing more, and
+    /// its clips count afresh.
+    pub(super) fn go_along(&mut self, map: AlongMap, at: u64, fade: usize) {
+        let ch = usize::from(self.route.channels).max(1);
+        let tail: Vec<i32> = self.out_buf.drain(self.out_at..).collect();
+        let fade = (tail.len() / ch).min(fade);
+        let frame = (map.heard.seconds_at(at) * f64::from(self.info.rate)).round() as u64;
+        self.begin_segment(at, frame, SegStart::Joined { fade });
+        self.emitted = 0;
+        self.resampler = None;
+        self.source_done = false;
+        self.ahead_done = false;
+        self.restore = None;
+        self.rewritable_from = at;
+        (self.parts_cut, self.parts_rise) = (None, 0);
+        self.clip_base = self.clipped();
+        self.clips = None;
+        self.along = Some(Along {
+            map,
+            tail: Some(tail[..fade * ch].to_vec()),
+            back: Back::Reading,
+            clips: 0,
+        });
+    }
+
+    /// How the track is heard from its segment's start.
+    pub(super) fn heard(&self) -> Heard {
+        Heard {
+            index: self.index,
+            info: self.info.clone(),
+            route: self.route.clone(),
+            seg_out: self.seg_out,
+            seg_frame: self.seg_frame,
+            warp: self.heard_warp(),
+        }
     }
 
     /// Moves a track just opened to `frame` (nothing to do at 0).

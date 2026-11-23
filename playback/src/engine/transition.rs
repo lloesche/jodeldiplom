@@ -189,6 +189,8 @@ impl Engine {
         let playing = self.playing.as_ref().map(|t| t.index);
         let why = if playing != Some(plan.from) {
             Some("that track is not the one playing")
+        } else if self.along_under_way() {
+            Some("a track is read along a time map")
         } else if plan.into != plan.from + 1 || plan.into >= self.queue.len() {
             Some("there is no next track to go into")
         } else if plan.length.is_nan() || plan.length <= 0.0 {

@@ -25,9 +25,10 @@ impl Engine {
     /// waiting for the output to play out takes its new route at once (it
     /// is not heard yet).
     pub(super) fn reroute(&mut self) {
-        // A transition under way has its tracks where it needs them; its
-        // end routes them again.
-        if self.transition_running() {
+        // A transition under way has its tracks where it needs them, and a
+        // head read along a map (or waiting to be) its route: their ends
+        // route them again.
+        if self.transition_running() || self.along_holds_route() {
             return;
         }
         if self.switch.as_ref().is_some_and(|s| s.spliced) {

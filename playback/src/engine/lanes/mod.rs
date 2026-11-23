@@ -79,7 +79,6 @@ use crate::stems::{SeparatorSource, StemRun, Unkept, RATE as STEM_RATE, STEMS};
 use super::api::Event;
 use super::track::{frames_of, Progress, SegStart, Track};
 use super::{Engine, PREROLL_RESAMPLE, WRITE_WAIT};
-pub(super) use along::PendingAlong;
 use buffer::Buffer;
 use control::{Plan, State, Supply, Timeline};
 use stream::{run_start, Grid, Line, Made, Stream};
@@ -167,6 +166,14 @@ pub(super) struct Followed {
     failed: Option<String>,
 }
 
+/// What [`StemLanes::make_to`] did: whether it made parts, and whether it
+/// stopped for stems not there yet.
+#[derive(Clone, Copy, Debug, Default)]
+pub(super) struct Making {
+    pub(super) made: bool,
+    pub(super) waiting: bool,
+}
+
 /// Why a run has no more stems for its track.
 enum Stopped {
     Failed(String),
@@ -191,9 +198,11 @@ pub(super) struct StemLanes {
     separator: Option<SeparatorSource>,
     store: Option<Arc<dyn StemStore>>,
     offline: bool,
-    /// The run of the track the parts are made of, and of the next one.
+    /// The run of the track the parts are made of, of the next one, and
+    /// one started for a move onto a map ([`StemLanes::prepare_along`]).
     run: Option<StemRun>,
     prestart: Option<StemRun>,
+    ahead: Option<StemRun>,
     /// A track (by index and file) whose stems failed or are not kept: it
     /// has none until they are asked for again.
     off: Option<(usize, PathBuf)>,
@@ -219,6 +228,7 @@ impl StemLanes {
             offline,
             run: None,
             prestart: None,
+            ahead: None,
             off: None,
             stream: None,
             buffer: Buffer::new(STEMS * 2),
@@ -247,6 +257,7 @@ impl StemLanes {
         if make != self.make {
             self.run = None;
             self.prestart = None;
+            self.ahead = None;
             self.stream = None;
         }
         self.make = make;
@@ -275,6 +286,7 @@ impl StemLanes {
         self.flushed(0);
         self.run = None;
         self.prestart = None;
+        self.ahead = None;
         self.off = None;
     }
 
@@ -338,14 +350,21 @@ impl StemLanes {
     /// asked, as its main is their sum: separated when they are asked for
     /// and there is a separator, else (and once they failed) the whole mix.
     fn unkept_for(&self, want: &Want) -> Option<Unkept> {
-        let off = self.is_off(want.track);
-        if want.track.along.is_none() {
-            return self.unkept().filter(|_| want.able && !off);
+        if want.track.along.is_some() {
+            return Some(self.unkept_along(want.track));
         }
-        Some(match (self.make, self.separator) {
-            (MakeStems::Separate, Some(separator)) if !off => Unkept::Separate(separator),
+        let off = self.is_off(want.track);
+        self.unkept().filter(|_| want.able && !off)
+    }
+
+    /// Where a run for `track` read along a map gets the stems not kept.
+    fn unkept_along(&self, track: &Track) -> Unkept {
+        match (self.make, self.separator) {
+            (MakeStems::Separate, Some(separator)) if !self.is_off(track) => {
+                Unkept::Separate(separator)
+            }
             _ => Unkept::Whole,
-        })
+        }
     }
 
     /// Before a write: the runs started, kept or stopped as the stems are
@@ -386,7 +405,7 @@ impl StemLanes {
         let need = from + want.frames as u64 + want.margin;
         let absent = !self.offline && self.timeline.state(from) == State::Absent;
         let target = if absent { 0 } else { need };
-        match self.make_to(want, target) {
+        match self.make_to(want, target, self.budget()) {
             Err(Stopped::Failed(why)) => {
                 self.give_up(track, from);
                 return quiet(self, Some(why));
@@ -427,7 +446,7 @@ impl StemLanes {
             return Ok(false);
         }
         let ahead = (AHEAD * f64::from(self.rate)).round() as u64;
-        match self.make_to(want, head + ahead) {
+        match self.make_to(want, head + ahead, self.budget()) {
             Err(Stopped::Failed(why)) => {
                 self.give_up(want.track, head);
                 Err(why)
@@ -436,7 +455,7 @@ impl StemLanes {
                 self.give_up(want.track, head);
                 Ok(false)
             }
-            Ok(made) => Ok(made),
+            Ok(making) => Ok(making.made),
         }
     }
 
@@ -507,7 +526,7 @@ impl StemLanes {
         let path = &track.info.path;
         // The run kept, the next track's (from its start), or a new one.
         let usable = |run: &StemRun| -> Option<(i128, i128)> {
-            if &run.path != path || run.whole || run.failed() || run.missing() {
+            if &run.path != path || run.whole() || run.failed() || run.missing() {
                 return None;
             }
             let grid = Grid::of(&line, run.start)?;
@@ -522,14 +541,7 @@ impl StemLanes {
             let reach = i128::from(run.kept_end() + want.keep.1.max(u64::from(STEM_RATE)));
             (o <= here && r <= reach).then_some((o, r))
         };
-        let mut found = None;
-        for slot in [&mut self.run, &mut self.prestart] {
-            if let Some(at) = slot.as_ref().and_then(usable) {
-                found = slot.take().map(|run| (run, at));
-                break;
-            }
-        }
-        let (mut run, (o, r)) = found.unwrap_or_else(|| {
+        let (mut run, (o, r)) = self.take_run(usable).unwrap_or_else(|| {
             let start = run_start(&line, line.frame_at(x));
             let run = StemRun::start(path.clone(), start, unkept, self.store.clone());
             let grid = Grid::of(&line, start).expect("a run starts on the line's grid");
@@ -539,36 +551,63 @@ impl StemLanes {
         run.seek(r as u64);
         run.set_keep(want.keep.0, want.keep.1);
         let channels = usize::from(track.route.channels);
-        self.stream = Some(Stream::new(line, o as i64, channels, 0.0));
+        self.stream = Some(Stream::new(line, o as i64, channels));
         self.run = Some(run);
     }
 
+    /// The run whose stems `usable` takes (with what it found there): the
+    /// track's, the next one's or one started for a move onto a map, taken
+    /// out of its place.
+    fn take_run<T>(&mut self, usable: impl Fn(&StemRun) -> Option<T>) -> Option<(StemRun, T)> {
+        for slot in [&mut self.run, &mut self.prestart, &mut self.ahead] {
+            if let Some(found) = slot.as_ref().and_then(&usable) {
+                return slot.take().map(|run| (run, found));
+            }
+        }
+        None
+    }
+
+    /// How long a write waits for stems, and how many pieces it makes at
+    /// most: on a device none and [`PIECES`], offline a moment and all.
+    fn budget(&self) -> (Duration, usize) {
+        if self.offline {
+            (WRITE_WAIT, usize::MAX)
+        } else {
+            (Duration::ZERO, PIECES)
+        }
+    }
+
     /// Makes parts until they reach output frame `target`, or the run has
-    /// no more yet: on a device [`PIECES`] at most, offline after a
-    /// moment's wait for them. Returns whether any were made, or why the
-    /// run has none, when it has none for the track.
-    fn make_to(&mut self, want: &Want, target: u64) -> Result<bool, Stopped> {
+    /// no more yet: `pieces` at most, the first waiting up to `wait` for its
+    /// stems. Returns what it did, or why the run has none, when it has
+    /// none for the track.
+    fn make_to(
+        &mut self,
+        want: &Want,
+        target: u64,
+        (wait, pieces): (Duration, usize),
+    ) -> Result<Making, Stopped> {
+        let mut making = Making::default();
         let (Some(stream), Some(run)) = (self.stream.as_mut(), self.run.as_mut()) else {
-            return Ok(false);
+            return Ok(making);
         };
         run.set_keep(want.keep.0, want.keep.1);
         let buffer = &mut self.buffer;
-        let mut wait = if self.offline {
-            WRITE_WAIT
-        } else {
-            Duration::ZERO
-        };
-        let (mut pieces, mut made) = (0, false);
-        while buffer.end() < target && (self.offline || pieces < PIECES) {
-            pieces += 1;
+        let (mut wait, mut left) = (wait, pieces);
+        while buffer.end() < target && left > 0 {
+            left -= 1;
             match stream.make(run, wait, &mut |frame, parts| buffer.push(frame, parts)) {
-                Made::Frames => (wait, made) = (Duration::ZERO, true),
-                Made::Waiting | Made::Done => break,
+                Made::Frames => (wait, making.made) = (Duration::ZERO, true),
+                Made::Waiting => {
+                    making.waiting = true;
+                    break;
+                }
+                Made::Done => break,
                 Made::Failed(why) => return Err(Stopped::Failed(why)),
                 Made::Missing => return Err(Stopped::Missing),
             }
         }
-        Ok(made)
+        Ok(making)
     }
 
     /// The next track's run, started once this one's file is read (or its
@@ -665,7 +704,7 @@ impl StemLanes {
 /// What a write of lanes knows besides the track and the next one, to make
 /// its [`Want`].
 #[derive(Clone, Copy)]
-struct Ask {
+pub(super) struct Ask {
     from: u64,
     frames: usize,
     back: u64,
@@ -676,7 +715,7 @@ struct Ask {
 }
 
 impl Ask {
-    fn want<'a>(&self, track: &'a Track, next: Next<'a>) -> Want<'a> {
+    pub(super) fn want<'a>(&self, track: &'a Track, next: Next<'a>) -> Want<'a> {
         Want {
             track,
             from: self.from,
@@ -721,7 +760,7 @@ impl Engine {
     /// start end after its move: [`Track::parts_hold`]). Not when none are
     /// coming.
     pub(super) fn waits_for_parts(&self, old: &Track, new: &Track, written: u64) -> bool {
-        let left = self.parts_able(old) && !old.plain();
+        let left = self.parts_able(old) && !old.plain() && old.along.is_none();
         let rate = old.route.output_rate;
         let settled = ending_frames(rate) + frames_of(SWITCH_FADE, rate);
         left && new.plain_route()
@@ -732,7 +771,7 @@ impl Engine {
 
     /// What a write of `frames` of `track` from output frame `from` asks
     /// of the stem lanes.
-    fn lane_ask(&self, track: &Track, from: u64, frames: usize) -> Ask {
+    pub(super) fn lane_ask(&self, track: &Track, from: u64, frames: usize) -> Ask {
         let (rate, ring) = self
             .out
             .as_ref()
@@ -762,7 +801,7 @@ impl Engine {
     /// Frames of parts made past what is written at the least, at `rate`:
     /// a mixer's switch's length past main's longest crossfade, so a track
     /// taking over without parts finds them there through its crossfade.
-    fn lane_margin(&self, rate: u32) -> u64 {
+    pub(super) fn lane_margin(&self, rate: u32) -> u64 {
         ending_frames(rate) + frames_of(self.switch_fade, rate)
     }
 
@@ -878,7 +917,7 @@ impl Engine {
 /// The track `track` runs into in `queue`, for the parts at its end
 /// (`hold`: playback holds at the end; `able`: no transition, which plays
 /// it without parts).
-fn next_of<'a>(queue: &'a [PathBuf], track: &Track, hold: bool, able: bool) -> Next<'a> {
+pub(super) fn next_of<'a>(queue: &'a [PathBuf], track: &Track, hold: bool, able: bool) -> Next<'a> {
     match queue.get(track.index + 1) {
         _ if hold => Next::Nothing,
         None => Next::Nothing,
