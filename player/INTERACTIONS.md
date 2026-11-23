@@ -10,7 +10,7 @@ A transition goes through these states:
 |---|---|
 | set up | shown on the Transition tab, not sent |
 | armed | taken by the engine, waiting for its window |
-| preparing | about 4 s before the window: both tracks onto their stems, the next one decoding ahead |
+| preparing | about 4 s before the window: the next track opens on the player's second head, linked on the desk to the playing one, and decodes ahead |
 | mixing | the window is heard |
 | settling | the next track plays on alone, its tempo straightening |
 | done | |
@@ -26,10 +26,10 @@ stem keys are their mutes.
 - **S1.** Stems can be switched at any time, in any state, and never call
   a transition off. They never change when it starts or ends, its window,
   where the next track comes in, its pairing or its tempo. They change
-  only which stems are heard: outside a transition and while it is armed,
-  on the desk; while preparing, mixing or settling, in both tracks' fades
-  too (the engine mixes them with the strips' gains).
-  - `stems_switched_during_a_transition_go_into_its_fades` (engine)
+  only which stems are heard, on the desk, in every state: during a
+  transition both tracks play on the same strips (each on a head of its
+  own), so a stem's strip acts on both.
+  - `stems_muted_during_a_transition_are_heard_on_both_tracks` (engine)
   - `stems_switched_while_armed_leave_the_transition_where_it_was` (engine)
   - `stems_switched_at_a_bar_in_the_window_change_there` (engine)
   - `stems_switched_while_settling_go_into_the_next_tracks_fades` (engine)
@@ -38,17 +38,20 @@ stem keys are their mutes.
   least 0.1 s ahead, to the frame of the player's output (or at once, per
   the setting, or without bars or a position); pressed again before that
   bar, the change is taken back there. `alt+0` puts every stem's strip
-  back as it starts, its mutes on the bar too. The bar is a second ahead
-  at least while a transition is armed or heard, and 0.75 s while the
-  playing track's stems are not there yet and must be separated on the GPU
-  first (none kept: past the separator's first chunk); kept stems, or ones
-  there already, need no more than 0.1 s. Its frame comes from the last
-  two positions told (none after a seek, a jump or another track until two
-  more), so it is the frame heard there.
+  back as it starts, its mutes on the bar too. The bar is 0.75 s ahead at
+  least while the playing track's stems are not there yet and must be
+  separated on the GPU first (none kept: past the separator's first
+  chunk); kept stems, or ones there already, need no more than 0.1 s,
+  during a transition too. Its frame comes from the last two positions
+  told (none after a seek, a jump or another track until two more), so it
+  is the frame heard there, on the head on air: through a mix the playing
+  track's, after the hand-over the next track's.
   - `stems_switch_on_the_next_bar_as_mutes_of_their_strips`
   - `a_first_touch_lands_on_a_bar_its_stems_will_meet`
   - `a_stem_muted_on_its_frame_is_heard_and_unmuted_the_file_is_again`
   - `stems_switch_from_keys_and_buttons_with_a_gpu`
+  - `a_stem_key_during_a_mix_lands_on_its_bar_of_the_head_on_air`
+  - `in_real_time_a_stem_muted_on_its_bar_and_a_pause_keep_the_mix_in_place` (engine)
 - **S3.** Switching stems never moves playback: no jump, no restart, no
   gap. A strip's change is a 20 ms ramp, and the desk crosses between the
   file and the stems over 10 ms (linearly: they are the same music).
@@ -66,24 +69,23 @@ stem keys are their mutes.
   separated while it plays.
   - `the_stems_are_made_while_touched_or_a_tab_shows_them`
   - `kept_stems_play_without_a_separation` (engine)
-- **S6.** A transition with stems touched never jumps: the playing track
-  keeps its stems on the desk until it is on its stems in the engine (and
-  its crossfade there is over), and the next track goes back onto its
-  file only once its stems have been on the desk for the mixer's switch
-  (2 s of waiting at most). A stem changed on a bar inside the window
-  changes there; a stem soloed is heard alone throughout, the file never
-  silent while it stands for the stems.
+- **S6.** A transition with stems touched never jumps: each track's stems
+  are on the desk throughout (read along its map as its parts, its file
+  their sum), and the next track's move back onto its file after the mix
+  is not heard. A stem changed on a bar inside the window changes there;
+  a stem soloed is heard alone throughout, the file never silent while it
+  stands for the stems.
   - `a_transition_with_a_stem_muted_never_jumps` (engine)
   - `a_transition_with_a_stem_soloed_never_goes_silent` (engine)
   - `a_stem_muted_on_a_bar_in_the_window_goes_off_there` (engine)
-  - `the_next_tracks_return_waits_until_its_stems_are_switched_to` (engine)
+  - `the_next_tracks_return_to_its_file_is_not_heard` (engine)
   - `a_part_soloed_keeps_main_while_main_stands_for_the_parts` (output)
 - **S7.** After a transition the next track goes back onto its own route,
   and its stems are heard as the strips have them (on the desk, from its
-  parts), whatever they were during it: what a transition mixes with
-  them (`StemMask`) is the transition's alone.
+  parts), whatever they were during it: the transition's fades are its
+  own automation on the desk, gone at its end.
   - `after_a_transition_the_next_track_plays_its_own_route_again` (engine)
-  - `the_next_tracks_return_waits_until_its_stems_are_switched_to` (engine)
+  - `the_next_tracks_return_to_its_file_is_not_heard` (engine)
 
 ## Transition keys
 
@@ -113,11 +115,14 @@ stem keys are their mutes.
   - `calling_off_a_mix_under_way_does_nothing`
 - **T3.** Only moving playback calls a transition off: a seek, the next
   or previous track, playing another track, stopping, a new queue, or a
-  queue change that takes away its next track. Pausing does not; the
-  transition goes on after the pause. The next track key during the mix
-  cuts into the next track where it is heard: the playing track stops
-  there and the next one plays on alone (it never starts over).
+  queue change that takes away its next track. Pausing does not: it
+  pauses the playing track, the desk holds the next one with it, and the
+  transition goes on after the pause where it was. The next track key
+  during the mix cuts into the next track where it is heard: the playing
+  track fades out over 30 ms there and the next one plays on alone (it
+  never starts over).
   - `a_paused_transition_goes_on_after_the_pause`
+  - `a_mix_paused_in_its_window_goes_on_after_the_pause`
   - `next_while_a_transition_mixes_cuts_into_the_next_track_where_it_is`
   - `n_mixes_into_the_next_track_by_the_transition_tabs_preset` (player)
   - the transition and queue tests
@@ -449,3 +454,18 @@ stem keys are their mutes.
   - `a_meter_rises_at_once_and_falls_at_its_rate`
   - `strips_are_found_by_id_and_a_stale_look_takes_no_peaks`
   - `the_mixer_tab_is_painted_from_its_cells`
+- **M7.** A transition's next track plays on a second input of the player
+  (its second head), on the same strips: the player's fader, its stems'
+  strips, the Karaoke voice (both heads' vocals lanes) and the preview's
+  duck act on both. The PLAYER strip shows the head on air (LEAD) and,
+  while a mix runs or the head handed over from plays out, the other
+  (NEXT), each with the gain the transition's fade puts on it, and the
+  frames the next track dropped where it fell behind; they are read only.
+  At the hand-over the next track's head becomes the desk's Lead, and the
+  microphone's tap moves with it; the singing kept around it is timed on
+  the head it was sung to.
+  - `the_player_strip_shows_both_heads_during_a_mix`
+  - `the_voice_and_the_mixer_tab_follow_a_transition_on_the_desk`
+  - `a_preview_ducks_both_heads_of_the_song`
+  - `voice_blocks_are_timed_through_their_head_around_a_hand_over`
+  - `two_hand_overs_in_a_row_swap_the_heads_roles` (engine)

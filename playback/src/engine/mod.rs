@@ -318,9 +318,6 @@ impl Engine {
             Command::Jump { index, to, at } => self.jump_within(index, to, at),
             Command::JumpWindow { back, ahead } => self.jump_window = (back, ahead),
             Command::MakeStems(make) => self.every_lanes().for_each(|l| l.set_make(make)),
-            // The desk plays the stems at their levels, the next track's
-            // too, on its own head.
-            Command::StemMask { .. } => {}
             Command::Along { map, from, tempo } => self.read_along(map, from, tempo),
         }
     }

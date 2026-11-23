@@ -146,16 +146,6 @@ pub enum Command {
     /// kept. The output is the same either way; a mixer may play the parts
     /// in place of main.
     MakeStems(MakeStems),
-    /// Taken and ignored: the desk plays the stems at their levels, a
-    /// transition's two tracks too (each on a head of its own). Each
-    /// stem's gain in [`crate::stems::LANES`]'s order, from `at` seconds
-    /// into the playing track, else at once.
-    StemMask {
-        /// Each stem's gain, drums, bass, vocals, other.
-        gains: [f64; crate::stems::STEMS],
-        /// Seconds into the playing track; `None`: at once.
-        at: Option<f64>,
-    },
     /// The engine's own: the playing track read along a time map from an
     /// output frame on (on an output of lanes, its stems read along it as
     /// its parts, its main their sum), back on its own route once the map
@@ -298,15 +288,6 @@ pub enum Event {
         index: Option<usize>,
         /// A sentence for the user.
         message: String,
-    },
-    /// Not sent any more: a transition's stems that fail are its tracks'
-    /// parts that stop ([`Event::PartsStopped`]), and the desk fades a
-    /// track without parts by its lanes' mean.
-    StemsStopped {
-        /// The track.
-        index: usize,
-        /// Why.
-        reason: String,
     },
     /// The stems of a track as parts of the output ([`Command::MakeStems`])
     /// failed: the track has none (its output is main alone) until they

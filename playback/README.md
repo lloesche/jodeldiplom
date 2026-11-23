@@ -76,7 +76,7 @@ WAV, AIFF, CAF and ALAC files to bit-perfect, exclusive device output, and AAC, 
   sample-accurate on every format.
 - `rate`: `choose_route(file, capabilities, settings)` is a pure function
   from the file, the device's exclusive capability matrix and the settings
-  (rate cap, resampling, headroom) to a `Route` (stage, output
+  (rate cap, resampling, headroom) to a `Route` (output
   rate, channels, format preference, resample step) or a `NoRoute` with a
   sentence saying why nothing fits.
 
@@ -134,19 +134,13 @@ WAV, AIFF, CAF and ALAC files to bit-perfect, exclusive device output, and AAC, 
   `jodel_rhythm::stems::Splitter` in a thread of its own, up to about 20 s
   ahead. The engine hands the stems on beside the file as parts of an
   output of lanes (**Stem lanes**, below: a mixer plays them on its strips,
-  so a stem's level is a fader), and a transition sums them faded by its
-  lanes on a `Stage::Stems` route at the open output's format (never
-  bit-perfect), kept under −0.2 dBFS by a limiter that looks 2 ms ahead in
-  the stems the run has (no delay; exactly no gain where nothing goes over,
-  so the file and its four stems still sound alike: stems summed again go
-  over full scale, the band without its singer up to 2.15 dB on 24 songs,
-  which the requantization clipped), then resampled to the device or
-  requantized at 44.1 kHz. `PlayerOptions::separator` gives the separator
-  (called in that thread, so a GPU set up there never holds up playback);
-  without one only kept stems are parts, and a transition fades its tracks
-  whole. If a transition's separator fails, `Event::StemsStopped` says so
-  and the track goes on on its own route from the frame after what was
-  written, nothing flushed. A dropped run stops before its next chunk. With
+  so a stem's level is a fader); a head read along a time map (a
+  transition's tracks) has them read along it as its parts, its main
+  their sum. `PlayerOptions::separator` gives the separator (called in
+  that thread, so a GPU set up there never holds up playback); without
+  one only kept stems are parts, and a head read along a map has its
+  whole mix as its "other" part, so a transition fades its tracks whole.
+  A dropped run stops before its next chunk. With
   `PlayerOptions::stem_store`, a run first asks the store for the track's
   kept stems and reads them from its frame on (a second at a time, about
   150 times faster than they play): a track separated once (by the
@@ -169,7 +163,9 @@ WAV, AIFF, CAF and ALAC files to bit-perfect, exclusive device output, and AAC, 
   `Stem::ALL` order), the `TempoMode`, the `settle` time and `glide` (the
   tempo glides across the window rather than after it). An envelope's
   points are a gain at a time with a cut flag: between two points the
-  gain moves on an equal-power curve, and a cut steps at the point.
+  gain moves on an equal-power curve (the desk's own,
+  `jodel_output::mixer::equal_power`: the square of the gain moves in a
+  straight line), and a cut steps at the point.
   `TransitionPlan::time_map` is the map the engine reads the next track
   along (a frontend draws the next track's playhead by it).
 - `warp`: `TimeMap`, the next track's time at each moment of the playing
@@ -201,6 +197,11 @@ WAV, AIFF, CAF and ALAC files to bit-perfect, exclusive device output, and AAC, 
   Player::new(Box::new(target), ..)`); alone at gain 1 with its strip at
   0 dB the engine reaches the device bit for bit through it. The
   microphone is the mixer's (`Mixer::set_mic`), not the engine's.
+- `desk`: `StemDesk`, a player on a mixer's desk as the app has it: a
+  group strip, a strip inside it for each stem, and a lane input on them
+  (`StemDesk::new`, for `Player::new`), or two (`StemDesk::two_heads`, for
+  `Player::on_desk`: the engine's two heads, the user's stem levels acting
+  on both).
 
 ## The player
 
@@ -221,11 +222,11 @@ count-in drawn from them falls on what is heard) and `HoldAtEnd(bool)`
 (each track's end stops playback instead of running into the next:
 `Held { index }` names the one that would have come), and `PlayAt {
 index, share }` (the track from `share` of its length, its start when the
-length is not known: a preview from a third in), `MakeStems(Never |
-Kept | Separate)` (the stems as parts of an output of lanes: below), and
-`StemMask { gains, at }` (each stem's gain as a mixer plays the parts,
-drums, bass, vocals, other, from `at` seconds into the playing track or
-at once: what a transition mixes its tracks' stems with, below).
+length is not known: a preview from a third in), and `MakeStems(Never |
+Kept | Separate)` (the stems as parts of an output of lanes: below).
+`Player::on_desk(lead, guest, options)` starts the engine on two heads
+of a desk (`StemDesk::two_heads`), which transitions need: a player on
+one target (`Player::new`) plays everything else as before.
 
 Events (`Event`), track events in the order they are heard:
 
@@ -233,14 +234,15 @@ Events (`Event`), track events in the order they are heard:
 |---|---|
 | `QueueChanged { queue, current }` | after `Load` and `Enqueue` |
 | `State(Playing \| Paused \| Stopped)` | play state changes |
-| `TrackStarted(TrackStart)` | a track starts to be heard: `info` (format, tags, cover), `route`, `output` (`StreamInfo`), `device`, `bit_perfect` |
-| `Position { index, seconds, frame, output_frame, generation }` | every `position_interval` while the output clock moves |
+| `TrackStarted(TrackStart)` | a track starts to be heard: `info` (format, tags, cover), `route`, `output` (`StreamInfo`), `device`, `bit_perfect`, and `head`, the head it plays on (0 the first, 1 a desk's second: a transition's next track) |
+| `Position { index, head, seconds, frame, output_frame, generation }` | every `position_interval` while the output clock moves; `output_frame` counts that head's frames |
 | `Seeked { index, seconds }` | a seek took effect |
 | `Clipped { index, samples, output_frame }` | the resampler or the source's requantization clipped (the count since the track or the seek started; at most four a second of output) |
 | `TrackEnded { index, finished }` | played to its end, or left |
 | `Error { index, error, skipped }` | `skipped`: only that track is lost (unreadable, `NoRoute`) |
 | `Notice { index, message }` | new settings the track being heard keeps playing through (no route with them, or their output did not open) |
-| `Transition(Armed \| Started { output_frame } \| Finished \| Cancelled { reason })` | a transition was taken, its window began to be heard (at that output frame), the next track is back at its own tempo, or it was called off and why |
+| `PartsStopped { index, reason }` | the track's stems as parts of the output failed: it has none until they are asked for again |
+| `Transition(Armed \| Started { head, output_frame, origin } \| Finished \| Cancelled { reason })` | a transition was taken, its window began to be heard (at that output frame of that head; the next track's head's frame 0 is that head's `origin`), the next track is back at its own tempo, or it was called off and why |
 | `Jumped { index, seconds }` | a `Jump` is heard: the track plays on from there |
 | `QueueEnded` | the last track played out |
 
@@ -262,8 +264,8 @@ lengths are exact); otherwise the samples go to the output as read.
 - **Pause** pauses the output and stops writing; the bytes are unchanged.
 - **Settings** (`SetSettings`): when the track being played takes another
   route with them, it moves to that route without a break. The new route
-  opens a little before the frame being written (1 s for a transition's
-  stems, 0.1 s for a resampler) and decodes ahead while the old one plays on, in
+  opens a little before the frame being written (0.1 s for a resampler)
+  and decodes ahead while the old one plays on, in
   the turns the output leaves: while it holds half its buffer or more, is
   paused, or took nothing of the last write. Once the new route has caught
   up, the two meet at the first frame after what is written where both
@@ -285,71 +287,96 @@ lengths are exact); otherwise the samples go to the output as read.
   that never catches up (a machine too slow for both) leaves the track on
   its route to its end. The new settings apply to the tracks that start later;
   a later track that has no route is skipped as any file without one.
-- **Transitions** (`Transition(plan)`): the playing track crossfades into
-  the next over the plan's window, each stem on its own envelope, with
-  the next track's beats on the playing one's. The plan is taken only for
-  the track playing and the one after it, with a window ahead of what is
-  heard; `Armed` says so, else `Cancelled` says why. About 4 s before the
-  window the playing track moves onto stems at the open output format
-  (the seamless switch above; with every gain at 1 the stems add up to
-  the track as closely as the separator's do, about −30 dB off it with a
-  real one), and the next track opens on stems at the same format,
-  decoding ahead in the switch's turns. Through the window both are
-  written: the next track's 44.1 kHz stem sum is read along the time map,
-  by `VarResampler` (varispeed: the pitch moves with the speed) or by a
+- **Transitions** (`Transition(plan)`, `engine/transition.rs`): the
+  playing track (A) crossfades into the next (B) over the plan's window,
+  each stem on its own envelope, with B's beats on A's. The engine does
+  not mix them: the desk does, each on a head of the player's own
+  (`Player::on_desk`); on a plain target a plan is `Cancelled("needs a
+  desk")`. The plan is taken only for the track playing and the one after
+  it, with a window ahead of what is heard; `Armed` says so, else
+  `Cancelled` says why. About 4 s before the window B opens on the second
+  head at the open output's format (its route is chosen for that format
+  alone, so the device never opens again; more than two channels are
+  refused), linked on the desk to A's head (`Fader::follow`) with its
+  frame 0 on A's stream frame `origin`, a second before the window
+  (`NEXT_LEAD`), and read along the plan's time map from its first frame
+  (**Read along a map**, below): its stems along the map, by
+  `VarResampler` (varispeed: the pitch moves with the speed) or by a
   `Stretcher` per channel steered onto the map (time-stretch: the pitch
-  stays), its stems weighted by its envelopes, resampled to the output
-  rate and added to the playing track's. With `glide`, the tempo moves
-  from the playing track's to the next one's across the window: the
-  playing track moves onto a fresh stems track read along a `Glide`
-  (`TransitionPlan::glide_of`: its speed ends at the inverse of the next
-  track's locked speed over the window's last quarter), the next track's
-  map is laid onto the output's time through it, so its beats still fall
-  on the playing track's as they are heard, and the next track is at its
-  own tempo at the window's end (the playing track's position follows
-  the glide). Two loud masters added go over
-  full scale: the sum is kept as it is up to −1 dBFS and its peaks above
-  that bend smoothly toward full scale (a tanh knee), instead of being
-  clipped flat. At the window's end the next track takes the output on from
-  that frame, gaplessly, and `TrackStarted` comes at that frame; its
-  position follows the map while its speed glides back to 1 (with
-  `glide`, what is left of it). A little
-  after that (`Finished`) it is straightened onto a plain segment and
-  moves back onto its own route, bit-perfect again where it was before.
-  Without a separator (or once it failed, until stems may work again:
-  `StemsStopped`) the stems are the whole track (`stems::whole_mix`), so
-  every plan is a beat-matched fade of the whole tracks; whether a track
-  is whole is its own, and a whole track takes no `StemMask`.
+  stays), are its parts, its main their sum. It writes ahead on turns of
+  its own; the link moves it with A's stream frame for frame, so a pause
+  or an underrun of A holds it, and frames of it that are late are
+  dropped on the desk (counted), never A's. With `glide`, the tempo moves
+  from A's to B's across the window: A is read along a `Glide`
+  (`TransitionPlan::glide_of`: its speed ends at the inverse of B's
+  locked speed over the window's last quarter), B's map is laid onto the
+  output's time through it, so its beats still fall on A's as they are
+  heard, and B is at its own tempo at the window's end (A's position
+  follows the glide); a playing track that cannot glide (off its own
+  route, say) has the transition called off. The plan's eight lanes
+  become each head's automation on its own stream frames
+  (`Fader::automate`): each stem's envelope its part's curve, at A's time
+  heard on each frame (through the glide's inverse), and main's curve the
+  lanes' mean, for a head heard without parts; before the window A is
+  whole and B silent. Two loud masters overlapping are taken by the
+  desk's look-ahead limiter. A is written up to the window's end and no
+  further; there B's head is made the desk's Lead, A's output plays out
+  what it holds and closes, and the heads swap: `TrackEnded` of A and
+  `TrackStarted` of B come on one frame, and from there the positions
+  count B's head's frames (A's less `origin`). B's position follows the
+  map while its speed glides back to 1 (with `glide`, what is left of
+  it). A little after that it goes back onto its own route at the same
+  format, bit-perfect again where it was before, its automation goes, and
+  the transition is `Finished`. Without a separator (or once its stems
+  failed) each head's whole mix is its "other" part, so every plan is a
+  beat-matched fade of the whole tracks.
+
+  The device keeps the open format after a mix: the tracks after it are
+  routed at it (resampled where they must be), gaplessly, until playback
+  stops, the queue ends, a track is picked (`Play`, `PlayAt`, `Previous`,
+  `Next` outside a mix, `Load`) or the settings change; a track with no
+  route there (resampling off) opens at its own rate.
 
   On a device, the engine never lets the output run dry for a
-  transition:
-
-  - a piece of the window whose next-track frames are more than 150 ms
-    late goes without them;
-  - with `glide`, a playing track not on its stems by the window goes on
-    alone (`Cancelled`).
-
+  transition: B's stems not separated in time give way to its whole mix
+  (`PartsStopped` says so), and B's frames late are dropped on the desk.
   With `PlayerOptions::offline` (an output not played in real time: a
-  file being rendered, a test's), the engine waits instead:
+  file being rendered, a test's), it waits instead: the desk holds A at
+  `origin` until B has begun, and B's writing waits for its stems, so a
+  render is the same bytes every time.
 
-  - the playing track holds within a second of the window until it is on
-    its stems;
-  - each piece of the mix waits for the next track's frames.
-
-  A mixer's
-  stem gains (`StemMask`) changed at any time go into its fades, on both
-  tracks, at the time they are heard at (a bar, say: the next track makes its output only a
-  quarter of a second ahead, so a change asked for a second ahead falls
-  on it there too); they never move it or call it off. Other settings
-  wait for its end (a notice says so), and so does a new plan or
+  A mixer's stem levels act on both heads, on their frames (a bar, say:
+  the app mutes a stem's strip 0.1 s ahead, during a mix too); they never
+  move the transition or call it off. `Pause` pauses A, and the link
+  holds B. `Next` in the window fades A out over 30 ms from where the desk
+  mixes it next and puts B at its lanes' end values (`Cancelled`: cut to
+  the next track), and hands over once A is written to its fade's end;
+  `Next` while B settles plays the track after it. Other settings wait for
+  the end (a notice says so), and so does a new plan or
   `CancelTransition` once it is heard (one armed is replaced or called
   off). Only moving playback calls it off: a seek, another track, a new
-  queue, its next track taken out of the queue. Then up to the
-  window's end the playing track goes on alone, at its full level (the
-  next track is dropped), and after it the next track carries on from
-  where it is, on a plain timeline; a playing track called off while it
-  glides goes on from where the glide has it, at its own speed (a track
-  read along a map meets its new route where its map puts it).
+  queue, its next track taken out of the queue. Called off in the window
+  (B gone from the queue, or failed), B fades out over 30 ms and A comes
+  back whole; a seek, `Play`, `Previous`, `Stop` or `Load` drop B at once.
+  A playing track called off while it glides goes on from where the
+  glide has it, at its own speed (it meets its own route where its map
+  puts it). A seek while B settles is a plain seek of B.
+- **Read along a map** (`engine/along.rs`, the engine's own
+  `Command::Along`): on an output of lanes, a head's stems are read along
+  a time map at the separator's 44.1 kHz (8 channels, before the parts'
+  resampler) as its parts, and its main is their sum, so main and the
+  parts stay on the same frames for a mixer's switch and the control
+  word stays `Present`; without a separator (or once the stems failed)
+  the whole mix is read into "other" alone, the other parts exactly
+  silent. The move onto the map is a segment joined at its frame (the
+  head writes no further until then), main crossfaded once from its
+  route's. Once the map runs straight (and a stretch is steered back onto
+  it) the head goes back onto its own route at the same format, a switch
+  met where the map puts it, and plays the file bit for bit from there;
+  one that does not come about is asked again a second later. Meanwhile
+  nothing reroutes the head (new settings wait), jumps are refused and no
+  transition is set up. A mono file's stems are doubled; a track of more
+  than two channels is refused.
 - **Jumps** (`Jump { index, to, at }`): the playing track goes to `to`
   seconds (a bar's start, say), at once or when it reaches `at`, never
   with a gap. With a window (`JumpWindow { back, ahead }`, seconds) the
@@ -370,10 +397,10 @@ lengths are exact); otherwise the samples go to the output as read.
   for the window: **Stem lanes**). A target outside the window is read
   again from a little before it (as a switch's new route is), while the
   track plays on, and takes over once it has a seam's worth: later, never
-  broken. No window while a transition is set up (it mixes into the
-  buffer as it is made), nor for a track it left on its stems (a jump
-  there reads its target again); arming one reads the track again from
-  what is written. `player/examples/jumps.rs` plays jumps on a real file in real
+  broken. No window while a transition is set up (it cuts the playing
+  track's output at the window's end), nor for a track read along a map
+  (until it is back on its own route, a jump there reads its target
+  again); arming one reads the track again from what is written. `player/examples/jumps.rs` plays jumps on a real file in real
   time and reports when each was heard and the longest digital silence.
 - **Stem lanes** (`MakeStems`, `engine/lanes/`): on a target that takes
   lanes (`OutputTarget::lanes() >= 5`: a mixer's lane input) and with a
@@ -403,9 +430,9 @@ lengths are exact); otherwise the samples go to the output as read.
   stems kept when their grid has that frame, else a new run from it); a
   joined one (a jump, a route met at another gain) from the stems kept,
   0.1 s before it, their first frames crossfaded from what would have
-  played next over the frames main's are (the length main used); a
-  continued one (a transition's timeline made straight) the same with no
-  crossfade. A route met at the same
+  played next over the frames main's are (the length main used; a
+  transition's next track, read along its map from its first frame, over
+  none). A route met at the same
   format and gain goes on in the same segment. The stems are cut or padded
   to the track's end. The control word keeps a promise (`lanes/control.rs`,
   its changes logged, so frames given back take theirs back): after
@@ -438,22 +465,11 @@ lengths are exact); otherwise the samples go to the output as read.
   are ready, or nothing follows; else they end before it. A route switch
   to another format ends them before main fades out, and they come back
   only after the new route's rise. Offline the writing waits for them
-  (and for the next track's). A transition's stems route and mix and a
-  failing separator (`PartsStopped`, for that track) have none, but for a
-  transition's two ends, so a mixer playing the parts at other levels hears
-  no jump: the playing track keeps its parts while the transition is armed
-  and until its move onto its stems has met it, and they end only once
-  that move's crossfade is over (`Track::parts_hold`); the next track, left
-  on its stems when the transition is over, has parts again there, and
-  while `StemMask` has a gain other than one (now or in a change to come)
-  its move back onto its file waits until they have been there for a
-  mixer's switch and its end, so the mixer plays them across it (2 s of
-  output at most, `PARTS_PATIENCE`, then it moves anyway). Inside the
-  transition the two tracks' stems are mixed at `StemMask`'s gains (`engine/stem_mask.rs`): its changes at times of a
-  track are kept in order, each landing at its own (one at an earlier time
-  is never moved by a later one), and one whose time has been written, or
-  whose track is no longer played, is in force. So what is heard as main
-  there is what the mixer would play. Without a lane
+  (and for the next track's). A failing separator (`PartsStopped`, for
+  that track) leaves none. A head read along a map (**Read along a
+  map**) has parts throughout, its main their sum, and goes back onto its
+  file as any route switch does, so a mixer playing the parts at other
+  levels across a transition hears no jump at either end. Without a lane
   target the output is as it always was.
 - **A busy device**: opening an output that the device reports busy
   (`DeviceBusy`: in use by another application, hog mode held, `EBUSY`, as
@@ -524,14 +540,33 @@ says so, a track not kept says nothing; a file of no stated length plays
 to its end offline; mono and six-channel files have the stems in their
 channels; the stems end on the track's last frame; and on the mixer a
 muted drums strip gives three quarters of the file, unmuted the file again
-bit for bit. `tests/lanes_transition.rs` plays a transition through the
-mixer with the drums muted there and masked in the engine: three quarters
-of what the transition plays on every frame, across the playing track's
-move onto its stems and the next one's back onto its file; with a stem
-soloed a quarter; with a stem muted on a bar inside the window, half from
-that bar; and on a memory target keeping the lane stream, the next track
-goes back onto its file only once its parts have been there for a
-mixer's switch and its end. `tests/switch.rs` switches routes mid-track: at one
+bit for bit. `tests/lanes_transition.rs` plays a transition on a desk's
+two heads with the drums muted on their strip: three quarters of what
+the transition plays on every frame, on both tracks; with a stem soloed a
+quarter; with a stem muted on a bar inside the window, half from that
+bar; and nothing is heard of the next track's move back onto its file.
+`tests/along.rs` reads a head along a map: a click track's clicks land on
+the frames the map puts them on (varispeed, stretched, resampled to
+48 kHz), the head goes back onto its file bit for bit once the map runs
+straight (stretched too; resampled, to within the dither), the move onto
+the map crossfades once, mono files, no separator (the whole mix as
+"other"), new settings and a transition waiting or refused, a switch back
+that fails asked again, and on a real-time device stems that fall behind
+giving way to the whole mix. The transition tests (`tests/transition.rs`,
+`transition_rules.rs`, `transition_desk.rs`, `transition_stems.rs`;
+helpers in `tests/common/transition.rs`) run on a memory desk: the next
+track's beats on the playing one's (varispeed, stretched, gliding, a glide
+planned late or called off), the hand-over, a fade of whole tracks without
+a separator, `Next` in the window without a click (also in real time),
+`Next` while prepared or settling, `Stop`, `Play` and `Previous` dropping
+the next track, the next track moved away fading out, a pause in the
+window held by the link, the rate held after a mix (and given up where a
+track has no route at it), two hand-overs swapping the heads' roles with
+the microphone hearing throughout, a next track whose stems are late
+playing whole, stems muted on the desk at any point of a mix, the rules
+the player's `INTERACTIONS.md` names, a failing separator, and a
+transition at 192 kHz ending on the playing track's last frame; with no
+second head a transition is called off. `tests/switch.rs` switches routes mid-track: at one
 rate, a chain of four routes (one made while paused) is one stream equal
 to each route's own output from the frame it took over at; a crossfade is
 exact outside its window; at another format the old route fades out at

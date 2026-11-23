@@ -106,6 +106,23 @@ or resampled while a head follows a map. Without a separator only the
 other instruments' pair is read along it (the whole mix), a quarter of
 that.
 
+**A transition's two heads.** Through a mix two stem runs go at once,
+one a head. The next track's (B's) starts about 4 s before the window,
+from its first frame, and is read along its map as above; the playing
+track's (A's) goes on as its parts are made anyway, read along its glide
+only when the plan glides (else resampled as any parts, no warp). So a
+mix costs at most two reads along a map and two resamplings of 8
+channels: at 192 kHz about 2 × (2.7 % + 5.1 %), some 16 % of a core,
+and about 32 % at 384 kHz, for the window and B's settling after it.
+From kept stems neither head touches the GPU; otherwise both are
+separated at once, B's first chunk before its window (a 6 s chunk is
+about 0.12 s of the RTX 5080). On a device, B's stems not separated in
+time give way to its whole mix (a quarter of the read), and the desk
+drops B's frames that come late rather than wait; A is never held up.
+The desk's own share (two lane inputs, their automation curves
+evaluated per frame, the sum and the look-ahead limiter) is small beside
+the resampling, and its mixer thread allocates nothing for the curves.
+
 **Memory.** A stem run keeps its stems as 8 × f32 at 44.1 kHz,
 1.41 MB a second:
 

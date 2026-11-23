@@ -214,9 +214,9 @@ or Transition tab shows (elsewhere none are made, so the GPU and the
 processor rest). Without a GPU only the stems kept play. With the Stem
 switching setting at **on the next bar** (the default) a key's change
 lands on the first beat of a bar of the playing track, to the frame: the
-first bar at least 0.1 s ahead (a second while a transition is armed or
-heard, 0.75 s while the stems are not there yet and the GPU must separate
-them first, none being kept, so they are there for it), and the message
+first bar at least 0.1 s ahead (0.75 s while the stems are not there yet
+and the GPU must separate them first, none being kept, so they are there
+for it), during a transition too, and the message
 says which bar; pressed
 again before that bar, the change is taken back. The bar is held to when
 it is heard: looping a bar, the change comes at the loop's end. Where the
@@ -528,12 +528,15 @@ is armed, edits, `m` and a new cue go to the engine at once; `g` again
 for another go. Called off inside the window, the playing track goes on
 alone.
 Without stems every lane is the whole track, so every preset is a
-beat-matched fade. The engine mixes the two tracks on their stems itself,
-heard as the player's file on the desk, with the stems' strips as they
-are set (a stem muted stays out of both tracks, a fader's level goes
-into both fades); nothing jumps where the playing track goes onto its
-stems, nor where the next one goes back onto its file: that waits until
-its stems are on the desk again.
+beat-matched fade. The desk mixes the two tracks: the next one plays on
+an input of its own on the same strips, locked to the playing one's
+frames, and the fades are the desk's automation on each. The stems'
+strips act on both tracks as they are set (a stem muted stays out of
+both, a fader's level goes into both fades, a stem key lands on its bar
+during the mix too), and nothing jumps where the next track goes back
+onto its file after the mix. The device stays at the rate the mix played
+at for the tracks after it, gaplessly, until you pick a track or stop
+(or a track cannot play at that rate).
 
 The next track key (`N`, `shift+→`, `▶▶`) can mix too: `X`, anywhere,
 switches what it does, **cut** (the default, as ever) or **mix**.
@@ -894,8 +897,12 @@ then the stems'; at 80 columns all but the microphone's show. The arrow
 keys go through the strips drawn.
 
 - **PLAYER** and **PREVIEW**: the name on a scribble strip (lit when
-  selected), what the strip carries (the format; the player's LEAD lamp,
-  lit while it is heard, and how full its ring is; the preview's two
+  selected), what the strip carries (the format; the player's LEAD row,
+  lit while the track on air is heard, and while a transition mixes, or
+  the track it left plays out what it holds, a NEXT row for the other
+  one, each with the gain the transition's fade puts on it now; how full
+  the ring is, and `↓` with the frames the next track dropped where it
+  fell behind; the preview's two
   players A and B with the gain of each in dB, so a crossfade can be
   watched, `—` while there are none), a fader beside an L/R meter, the
   level, and `[M]` mute and `[S]` solo (while a strip is soloed, the
@@ -981,10 +988,10 @@ The capitals keep their commands here (`M` the beat pulse, `S` stop);
 
 | Module | |
 |---|---|
-| `core` | state, `Action`, `update(state, action) -> effects`, layout in cells with its collapse rules, keymap, mouse regions; the Transition tab (`core::transition::tab`, the lanes it shares with Karaoke in `core::lanes`), the grid fixes (`core::grid`), the transitions' presets and plans (`core::transition`), the Karaoke tab and mode (`core::karaoke`), the Mixer tab's desk (`core::desk`: its strips, settings, the fader's taper, the meters' ballistics, its mouse) and the stems on it (`core::stems`: the stem keys as strip mutes on a bar, when the engine makes stems, the Karaoke voice's lane, what transitions mix with). Pure. |
+| `core` | state, `Action`, `update(state, action) -> effects`, layout in cells with its collapse rules, keymap, mouse regions; the Transition tab (`core::transition::tab`, the lanes it shares with Karaoke in `core::lanes`), the grid fixes (`core::grid`), the transitions' presets and plans (`core::transition`), the Karaoke tab and mode (`core::karaoke`), the Mixer tab's desk (`core::desk`: its strips, settings, the fader's taper, the meters' ballistics, its mouse) and the stems on it (`core::stems`: the stem keys as strip mutes on a bar of the head on air, when the engine makes stems, the Karaoke voice's lanes on both heads). Pure. |
 | `view` | the ratatui widgets for both frontends; the cover, the spectrum, the Transition tab's lanes (`view::transition`, with `view::lanes`, which the Karaoke tab shares) and Karaoke mode's picture (`view::karaoke`) go through `view::Pictures`; the window paints that picture in `gui::karaoke`. The Mixer tab (`view::desk`) is cells only |
 | `app` | the running player: the engine and its desk, background workers, the spectrum (the mixer's monitor), cover; carries out the effects |
-| `desk_wiring` | the desk the engine plays on: a mixer that holds the device (`jodel_output::mixer`), the player's strip with its stems' strips inside it, the preview's, the engine on a lane input of them; the Mixer tab's settings made on it, its look for a frame |
+| `desk_wiring` | the desk the engine plays on: a mixer that holds the device (`jodel_output::mixer`), the player's strip with its stems' strips inside it, the preview's, the engine on two lane inputs of them (its two heads: a transition's next track plays on the other); the Mixer tab's settings made on it, its look for a frame |
 | `preview` | the preview's players, guests on the mixer (one per file, two at most): only the latest file loaded, crossfades on the mixer's clock, the song ducked and back |
 | `browser` | folder listing, file details read lazily for the rows on screen (cached for the session), recursive search, folder walk |
 | `config`, `cli` | the settings file and the command line |

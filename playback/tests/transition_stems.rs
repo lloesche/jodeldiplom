@@ -64,8 +64,7 @@ fn stopped_and_finished(seen: &[Event]) -> (Vec<usize>, bool) {
 /// hears it on main, faded by the mean of its lanes, and the transition
 /// finishes. The second goes into a silent track, whose stems fail as it is
 /// read along its map: it plays on the whole mix as one part, and that
-/// transition finishes too. Nothing says the stems a transition mixes
-/// stopped: there are none any more.
+/// transition finishes too.
 #[test]
 fn a_separator_that_fails_leaves_the_transitions_as_planned() {
     let _serial = serial();
@@ -104,13 +103,6 @@ fn a_separator_that_fails_leaves_the_transitions_as_planned() {
     let streams = desk.close();
     assert_eq!(stopped_and_finished(&second), (vec![2], true), "{second:?}");
     assert!(!second.iter().any(|e| matches!(e, Event::Error { .. })));
-    assert!(
-        !seen
-            .iter()
-            .chain(&second)
-            .any(|e| matches!(e, Event::StemsStopped { .. })),
-        "the stems a transition mixes are said to have stopped"
-    );
     // In the first window A is heard at its lanes' mean.
     let got = samples(&streams[0].1);
     let rate = RATE as usize;

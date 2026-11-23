@@ -2250,9 +2250,7 @@ fn engine_event(state: &mut State, event: Event) {
         }
         Event::Notice { message, .. } => say(state, Level::Info, message),
         Event::Transition(t) => draft::transition_event(state, t),
-        // A transition's stems (the engine's own mix) or the stems as
-        // parts of the output: either way the file plays on.
-        Event::StemsStopped { reason, .. } => super::stems::transition_stopped(state, &reason),
+        // The stems as parts of the output stopped: the file plays on.
         Event::PartsStopped { index, reason } => super::stems::stopped(state, index, &reason),
         Event::QueueEnded => say(state, Level::Info, "End of the queue"),
         Event::Held { index } => karaoke::held(state, index),

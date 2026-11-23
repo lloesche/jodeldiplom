@@ -337,17 +337,6 @@ pub(crate) fn stopped(state: &mut State, index: usize, reason: &str) {
     if !state.desk.parts_failed.contains(&index) {
         state.desk.parts_failed.push(index);
     }
-    say_failed(state, reason);
-}
-
-/// A transition's stems stopped ([`jodel_playback::Event::StemsStopped`],
-/// no longer sent: a head's parts that stop are told as any parts are):
-/// its tracks go on whole.
-pub(crate) fn transition_stopped(state: &mut State, reason: &str) {
-    say_failed(state, reason);
-}
-
-fn say_failed(state: &mut State, reason: &str) {
     super::update::say_error(
         state,
         format!("The stems stopped ({reason}); playing the whole mix"),

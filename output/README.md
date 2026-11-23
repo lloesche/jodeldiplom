@@ -203,6 +203,27 @@ its `StreamInfo` carries the device's backend, exclusive flag and latency.
   requantization to the device's bits (16 or 24) with TPDF dither at its
   LSB; clips are counted over every opening of the device
   (`DeskView::master.clipped`).
+- **Links:** `follower.follow(&leader, origin)` (faders of two inputs of
+  one mixer, each with an output open) has the follower's stream frame 0
+  land on the leader's stream frame `origin`, from inside a period, and
+  from there move with the leader's stream, never with the device's
+  frames (`mixer/follow.rs`): each period the follower fills exactly the
+  frames its leader gave, at the same offsets. A leader short of frames,
+  paused or flushed holds its follower, which loses nothing (a follower
+  of a leader that does not run does not keep the device running, and is
+  paused with it). A follower that is late drops its frames up to the
+  frame due, an absolute stream frame, counted (`Fader::dropped`,
+  `Stats::dropped`) and counted as played in its position; a leader's are
+  never dropped. The follower's `at_stream` is its leader's from `origin`
+  on, exact before it has been mixed, and a fade for its first audio
+  starts on `origin`. Offline (a device that plays what it is given at
+  once) no period takes the leader past `origin` before the follower has
+  begun, so a render is the same however the writers are scheduled. A
+  leader at its end (drained) lets its followers play on by themselves.
+  A flush or a close of either output, a new output on either input, or
+  `Fader::unfollow` ends the link; a leader follows no one and a follower
+  leads no one. A player's two heads use it for a transition (the next
+  track follows the playing one).
 - **Automation:** `Fader::automate(Automation)` gives an input gain
   curves (`GainCurve`: breakpoints `(stream frame, gain)`, equal-power
   between them, a cut smoothed linearly over `CUT_FADE`, 10 ms) on the
@@ -483,6 +504,18 @@ targets refuse lanes they do
 not take; a part's strip must be a child of main's; `at_stream` is `Now`
 after a flush until frames are mixed again; and a level and a fade set
 before the device opens are in force from its first frame.
+`tests/link.rs` checks links sample for sample: a follower's frame 0 on
+its leader's `origin` inside a period (a plain input and a lane input,
+its parts too), a fade for its first audio starting there, one linked
+after it gave frames starting where they are due; a leader short of
+frames or paused holding it, nothing lost, the device pausing with the
+leader; a leader at its end letting it play on; a late follower dropping
+its frames up to where it is due, counted and in its position; offline
+the same render however the writers run, and a follower paused after its
+origin holding nothing up; a retract that writes the same frames again
+keeping the link; a flush of either side or a new output on either input
+ending it; links one level deep and only between outputs open; and a
+follower's `at_stream` its leader's before it is mixed.
 `tests/automation.rs` checks curves frame by frame: on a plain input (and
 passthrough after a curve ends at 1), across a pause that parts stream
 frames from device frames, on a follower across its leader's underrun
