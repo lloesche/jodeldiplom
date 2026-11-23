@@ -11,6 +11,7 @@ pub mod notes;
 pub mod particles;
 pub mod pop;
 pub mod present;
+pub mod rainbow;
 pub mod raster;
 #[cfg(test)]
 mod shader_check;
@@ -18,6 +19,7 @@ pub mod shards;
 pub mod sparks;
 pub mod stage;
 pub mod stage_gpu;
+pub mod streak;
 
 use std::num::NonZeroU32;
 use std::sync::{Arc, Mutex};
@@ -193,6 +195,8 @@ struct Gui {
     presented: Option<(u32, u32)>,
     /// When the last frame with Karaoke mode's stage was drawn.
     last_stage: Option<Instant>,
+    /// The singing's streak as the picture shines with it.
+    shine: streak::PictureShine,
     /// The window is fullscreen for Karaoke mode.
     fullscreen: bool,
     last_draw: Instant,
@@ -435,13 +439,22 @@ impl Gui {
         let stage = match screen {
             Screen::Gpu(_) => {
                 let stage = canvas.stage_frame(&app.state, heard, dt);
-                // The picture's bubbles' liquid and bursts, over it on the GPU.
-                let clock = app.state.karaoke.lag.sung_clock(heard) as f32;
-                let over = canvas
-                    .picture_over()
-                    .map(|o| (&o.bubbles[..], &o.sprays[..]));
-                let (bubbles, sprays) = over.unwrap_or((&[], &[]));
-                stage_gpu::with_picture(stage, bubbles, sprays, clock)
+                // The picture's bubbles' liquid and bursts, and its streak's
+                // shine, over it on the GPU.
+                let clock = app.state.karaoke.lag.sung_clock(heard);
+                let over = canvas.picture_over();
+                let song = streak::Sung {
+                    singing: &app.state.karaoke.singing,
+                    game: app.state.config.karaoke_game,
+                };
+                let at = streak::Moment { now: heard, clock };
+                let (edge, ups) = self.shine.frame(over, song, at);
+                let ours = over.into_iter();
+                let bubbles = ours.clone().flat_map(|o| o.bubbles.iter().copied());
+                let bubbles: Vec<_> = bubbles.chain(edge).collect();
+                let sprays = ours.flat_map(|o| o.sprays.iter()).chain(ups);
+                let sprays: Vec<_> = sprays.copied().collect();
+                stage_gpu::with_picture(stage, &bubbles, &sprays, clock as f32)
             }
             Screen::Soft(_) => None,
         };
@@ -922,6 +935,7 @@ pub fn run(args: &Args) -> Result<(), String> {
         paced: false,
         presented: None,
         last_stage: None,
+        shine: streak::PictureShine::default(),
         fullscreen: false,
         last_draw: Instant::now() - FRAME,
         last_layer: Instant::now(),

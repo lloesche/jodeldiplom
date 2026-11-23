@@ -216,8 +216,8 @@ pub fn lit(px: f32) -> Skin {
 
 /// A word ending at `end` scored at (`x`, `y`) at `clock`, the stage's
 /// pills `px` high, the lane going across at `pps`: its sparks (scattered
-/// by its end); further as the multiplier goes `up`.
-pub fn scored((x, y): (f32, f32), px: f32, clock: f64, pps: f32, up: bool, end: f64) -> Spray {
+/// by its end).
+pub fn scored((x, y): (f32, f32), px: f32, clock: f64, pps: f32, end: f64) -> Spray {
     Spray {
         at: (x, y),
         half: (0.0, 0.0),
@@ -226,7 +226,7 @@ pub fn scored((x, y): (f32, f32), px: f32, clock: f64, pps: f32, up: bool, end: 
         size: px * 0.65,
         seed: (end * 1000.0) as u32,
         rgb: GOLD,
-        kind: if up { Kind::ScoredUp } else { Kind::Scored },
+        kind: Kind::Scored,
     }
 }
 

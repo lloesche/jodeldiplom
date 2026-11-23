@@ -141,7 +141,7 @@ fn fronts(instances: &[Instance]) -> usize {
 
 /// A stage's bursts of bubbles (not words scored).
 fn bubble_sprays(frame: &StageFrame) -> Vec<&Spray> {
-    let scored = |s: &&Spray| matches!(s.kind, Kind::Scored | Kind::ScoredUp);
+    let scored = |s: &&Spray| matches!(s.kind, Kind::Scored | Kind::StepUp);
     frame.sprays.iter().filter(|s| !scored(s)).collect()
 }
 
@@ -288,7 +288,7 @@ fn the_gpu_draws_the_bubbles_over_the_picture() {
         let mut sprays = over.sprays.clone();
         if name == "splash" {
             // And two words scored, the second as the multiplier goes up.
-            for (k, kind) in [(0, Kind::Scored), (1, Kind::ScoredUp)] {
+            for (k, kind) in [(0, Kind::Scored), (1, Kind::StepUp)] {
                 sprays.push(Spray {
                     at: (200.0 + 400.0 * k as f32, 330.0),
                     half: (0.0, 0.0),
@@ -333,7 +333,7 @@ fn the_gpu_draws_the_bubbles_over_the_picture() {
                 let (x, y) = (sp.at.0.floor() as usize, sp.at.1.floor() as usize);
                 let what = format!("{name}: {:?} {q} at {x},{y}", sp.look);
                 let count = match sp.look {
-                    Look::Sparkle => &mut sparkles,
+                    Look::Sparkle | Look::Note | Look::Bit => &mut sparkles,
                     Look::Shard => &mut bits,
                     Look::Drop => &mut drops,
                     Look::Sheen => continue,
@@ -743,7 +743,7 @@ fn a_seek_back_brings_no_ghost_bursts_on_the_stage() {
         assert_eq!(unique.len(), keys.len(), "twice in a frame at {t}");
         for s in &frame.sprays {
             let seen = match s.kind {
-                Kind::Scored | Kind::ScoredUp => &mut scored,
+                Kind::Scored | Kind::StepUp => &mut scored,
                 _ => &mut bubble,
             };
             if !seen.contains(&(s.start.to_bits(), s.seed)) {

@@ -39,14 +39,16 @@ fn main() {
             shown(gpu)
         );
     }
-    for bursting in [false, true] {
-        let (cpu, gpu) = stage(w, h, bursting);
+    for (bursting, shine, name) in [
+        (false, false, "none"),
+        (true, false, "20 bursting"),
+        (true, true, "20 bursting, top shine, a step up every 0.25 s"),
+    ] {
+        let (cpu, gpu) = stage(w, h, bursting, shine);
         let gpu = shown(gpu);
         println!(
-            "  stage,   {:<12} CPU {:.3} ms, {:.3} ms · shown offscreen (with read-back) {gpu}",
-            if bursting { "20 bursting" } else { "none" },
-            cpu.0,
-            cpu.1
+            "  stage,   {name:<12} CPU {:.3} ms, {:.3} ms · shown offscreen (with read-back) {gpu}",
+            cpu.0, cpu.1
         );
     }
 }
@@ -158,8 +160,9 @@ fn picture(w: usize, h: usize, bursting: bool) -> ((f64, f64), Option<(f64, f64)
 
 /// The stage of a line of 20 short words sung all through on easy (each
 /// counts at once: they burst together), or not sung; frames at 60 a
-/// second through the bursts.
-fn stage(w: usize, h: usize, bursting: bool) -> ((f64, f64), Option<(f64, f64)>) {
+/// second through the bursts. With the streak's `shine` at its top, a step
+/// up every 15 frames (the tally set as the scoring would).
+fn stage(w: usize, h: usize, bursting: bool, shine: bool) -> ((f64, f64), Option<(f64, f64)>) {
     let word = |k: usize| jodel_lyrics::Word {
         start: Some(1.0 + k as f64 * 0.04),
         end: Some(1.0 + (k + 1) as f64 * 0.04),
@@ -199,6 +202,17 @@ fn stage(w: usize, h: usize, bursting: bool) -> ((f64, f64), Option<(f64, f64)>)
                 .filter(|_| bursting);
             singing.hear(t, c);
             heard += 1;
+        }
+        if shine {
+            singing.tally.streak = 20;
+            if f % 15 == 0 {
+                singing.tally.last_scored = Some(jodeldiplom::core::singing::Scored {
+                    end: now,
+                    hit: Some(jodeldiplom::core::singing::Hit::Full),
+                    points: 40,
+                    streak: 20,
+                });
+            }
         }
         let song = Song::new(&singing, lyrics.lines.iter().collect(), Some(4.0));
         let picture = KaraokePicture {

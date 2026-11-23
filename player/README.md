@@ -845,7 +845,15 @@ fifths: a pitch is heard on only about half of a word sung well, its
 consonants and breaths having none): 100 points, times the multiplier, shown
 top right with the level (`d`). Words hit in a row are a streak: 5 make
 the multiplier ×2, 10 ×3, 20 ×4 (shown over the playhead with the
-streak); a word half hit keeps it, one missed ends it. **Easy** and
+streak); a word half hit keeps it, one missed ends it. While it is above
+×1 the streak shines: rainbow bands fan out from the playhead behind the
+pills, a soft shimmer at ×2, more of them, brighter and faster a step up,
+the whole lane glowing at ×4; a swirl turns round your arrow and the
+multiplier shows in rainbow. Each step up throws stars, notes and
+rainbow bits from the playhead that spin, arc down and fade; lose the
+streak and the bands collapse into the playhead in half a second, their
+colour draining. In the picture (no stage) the bar under the word you
+sing gets a rainbow edge, and a smaller burst a step up. **Easy** and
 **medium** follow the key you sing in (how far you sing from the song,
 octaves aside, over the last 3 s) and want you within 3 and 1.5
 semitones; on medium, within 3 is close, a paler gold, and a word that

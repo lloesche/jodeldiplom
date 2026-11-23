@@ -14,17 +14,21 @@
 //! numbers ([`shader`]). Where there is no GPU (the software window, the
 //! tests' pixmaps) the bursts are not drawn: a bubble burst is simply gone.
 
-use super::shards::{self, DROPS, FIRST_DROP, FIRST_SHARD, SHARDS};
+use super::rainbow;
+use super::shards::{self, DROPS, FIRST_DROP, FIRST_SHARD};
 use super::sparks::{mix, rand, TAU, WHITE};
 use crate::view::bubbles::BURST;
 
 /// The sparkles a bubble throws.
 pub const BUBBLE_SPARKS: u32 = 5;
 /// The quads of a burst: a bubble's sheen, its sparkles, the bits of its
-/// skin, then the drops of its liquid (a word scored: its sparks).
-pub const QUADS: u32 = 1 + BUBBLE_SPARKS + SHARDS + DROPS;
+/// skin, then the drops of its liquid; a word scored's sparks; a step up's
+/// pieces (all of them).
+pub const QUADS: u32 = 32;
 /// How long a word scored throws sparks for, at most, in seconds.
 pub const SCORED_LIFE: f32 = 1.1;
+/// How far a word scored's sparks fly.
+const SPREAD: f32 = 1.4;
 
 /// What a burst is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -34,8 +38,9 @@ pub enum Kind {
     Burst,
     /// A word scored: sparks out every way.
     Scored,
-    /// The multiplier going up: the same, further.
-    ScoredUp,
+    /// The streak a level up: stars, notes and rainbow bits shot out from
+    /// the playhead ([`super::rainbow::step_up`]).
+    StepUp,
 }
 
 impl Kind {
@@ -44,15 +49,7 @@ impl Kind {
         match self {
             Kind::Burst => 0,
             Kind::Scored => 1,
-            Kind::ScoredUp => 2,
-        }
-    }
-
-    /// How far a word scored's sparks fly.
-    fn spread(self) -> f32 {
-        match self {
-            Kind::ScoredUp => 2.5,
-            _ => 1.4,
+            Kind::StepUp => 2,
         }
     }
 }
@@ -119,15 +116,17 @@ impl Spray {
     /// How long it lasts, in seconds.
     pub fn life(&self) -> f32 {
         match self.kind {
-            Kind::Scored | Kind::ScoredUp => SCORED_LIFE,
+            Kind::Scored => SCORED_LIFE,
             Kind::Burst => BURST as f32,
+            Kind::StepUp => rainbow::STEP_LIFE,
         }
     }
 
-    /// Whether it shows at `time` (none before its start: sought back).
+    /// Whether it shows at `time` (none before its start: sought back), as
+    /// the GPU has the time (a float: a burst made at a moment shows then).
     pub fn alive(&self, time: f64) -> bool {
-        let age = time - f64::from(self.start);
-        (0.0..f64::from(self.life())).contains(&age)
+        let age = time as f32 - self.start;
+        (0.0..self.life()).contains(&age)
     }
 }
 
@@ -142,6 +141,10 @@ pub enum Look {
     Shard,
     /// A drop of its liquid: an ellipse along its way, over.
     Drop,
+    /// A note (a step up's): a head, its stem and a flag, over.
+    Note,
+    /// A rainbow bit (a step up's): a small bar, over.
+    Bit,
 }
 
 impl Look {
@@ -152,6 +155,8 @@ impl Look {
             Look::Sheen => 1,
             Look::Shard => 2,
             Look::Drop => 3,
+            Look::Note => 4,
+            Look::Bit => 5,
         }
     }
 }
@@ -187,11 +192,17 @@ pub fn sprite(s: &Spray, q: u32, time: f32) -> Option<Sprite> {
         (Kind::Burst, 0) => shards::sheen(s, age),
         (Kind::Burst, q) if q < FIRST_SHARD => sparkle(s, q, age),
         (Kind::Burst, q) if q < FIRST_DROP => shards::shard(s, q, age),
-        (Kind::Burst, q) => shards::drop(s, q, age),
-        (_, 0) => None,
-        (_, q) => spark(s, q, age),
+        (Kind::Burst, q) if q < FIRST_DROP + DROPS => shards::drop(s, q, age),
+        (Kind::Scored, q) if q > 0 && q < SCORED_SPARKS => spark(s, q, age),
+        (Kind::StepUp, q) => rainbow::step_up(s, q, age),
+        _ => None,
     }
 }
+
+/// The sparks of a word scored (and a quad none).
+const SCORED_SPARKS: u32 = 24;
+
+const _: () = assert!(FIRST_DROP + DROPS <= QUADS && SCORED_SPARKS <= QUADS);
 
 /// Sparkle `q` of bubble `s` `age` seconds into its burst: up and out
 /// off it, slowing, shrinking, twinkling and fading.
@@ -218,7 +229,7 @@ fn sparkle(s: &Spray, q: u32, age: f32) -> Option<Sprite> {
 /// shrinking, twinkling and fading, each in its own time.
 fn spark(s: &Spray, q: u32, age: f32) -> Option<Sprite> {
     let r = |j: u32| rand(s.seed, q, j);
-    let (x, y, size, spread) = (s.at.0, s.at.1, s.size, s.kind.spread());
+    let (x, y, size, spread) = (s.at.0, s.at.1, s.size, SPREAD);
     let t = age / (0.4 + 0.7 * r(4));
     if t >= 1.0 {
         return None;
@@ -242,31 +253,34 @@ fn spark(s: &Spray, q: u32, age: f32) -> Option<Sprite> {
     })
 }
 
-/// The particles' shader: [`SHADER`] given [`sprite`]'s numbers, and a
-/// bubble's sheen, bits and drops ([`shards::wgsl`]).
+/// The particles' shader: [`SHADER`] given [`sprite`]'s numbers, a
+/// bubble's sheen, bits and drops ([`shards::wgsl`]), and a step up's
+/// pieces ([`rainbow::particles_wgsl`]).
 pub fn shader() -> String {
     format!(
         "const QUADS: u32 = {QUADS}u;
 const BUBBLE_SPARKS: u32 = {BUBBLE_SPARKS}u;
+const DROPS: u32 = {DROPS}u;
+const SCORED_SPARKS: u32 = {SCORED_SPARKS}u;
 const SCORED_LIFE: f32 = {SCORED_LIFE:?};
 const K_BURST: u32 = {}u;
-const K_SCORED_UP: u32 = {}u;
-const SPREAD: f32 = {:?};
-const SPREAD_UP: f32 = {:?};
+const K_SCORED: u32 = {}u;
+const K_STEP_UP: u32 = {}u;
+const SPREAD: f32 = {SPREAD:?};
 const LOOK_SPARKLE: u32 = {}u;
 const LOOK_SHEEN: u32 = {}u;
 const LOOK_SHARD: u32 = {}u;
 const LOOK_DROP: u32 = {}u;
-{SHADER}{}",
+{SHADER}{}{}",
         Kind::Burst.code(),
-        Kind::ScoredUp.code(),
-        Kind::Scored.spread(),
-        Kind::ScoredUp.spread(),
+        Kind::Scored.code(),
+        Kind::StepUp.code(),
         Look::Sparkle.code(),
         Look::Sheen.code(),
         Look::Shard.code(),
         Look::Drop.code(),
-        shards::wgsl()
+        shards::wgsl(),
+        rainbow::particles_wgsl()
     )
 }
 
@@ -377,6 +391,8 @@ fn sprite_of(at: vec4<f32>, motion: vec4<f32>, color: vec4<f32>, q: u32, time: f
     var life = SCORED_LIFE;
     if k == K_BURST {
         life = BURST;
+    } else if k == K_STEP_UP {
+        life = STEP_LIFE;
     }
     if age < 0.0 || age >= life || q >= QUADS {
         return o;
@@ -392,16 +408,18 @@ fn sprite_of(at: vec4<f32>, motion: vec4<f32>, color: vec4<f32>, q: u32, time: f
         if q < FIRST_DROP {
             return shard(at, color.rgb, size, seed, q, age, drift);
         }
-        return drop(at, color.rgb, size, seed, q, age, drift);
-    }
-    if q == 0u {
+        if q < FIRST_DROP + DROPS {
+            return drop(at, color.rgb, size, seed, q, age, drift);
+        }
         return o;
     }
-    var spread = SPREAD;
-    if k == K_SCORED_UP {
-        spread = SPREAD_UP;
+    if k == K_STEP_UP {
+        return step_up(at, size, seed, q, age, drift);
     }
-    return spark(at, color.rgb, size, seed, q, age, drift, spread);
+    if k == K_SCORED && q > 0u && q < SCORED_SPARKS {
+        return spark(at, color.rgb, size, seed, q, age, drift, SPREAD);
+    }
+    return o;
 }
 
 @vertex
@@ -426,6 +444,8 @@ fn vs(@builtin(vertex_index) v: u32, i: In) -> Out {
         reach = vec2<f32>(half.x + half.y * 3.0 + 2.0);
     } else if sp.look == LOOK_DROP {
         reach = vec2<f32>(half.x + 2.0);
+    } else if sp.look == LOOK_NOTE || sp.look == LOOK_BIT {
+        reach = vec2<f32>(length(half) * 1.5 + 2.0);
     }
     let p = sp.at + corner * reach;
     o.pos = vec4<f32>(p.x / screen.size.x * 2.0 - 1.0, 1.0 - p.y / screen.size.y * 2.0, 0.0, 1.0);
@@ -460,6 +480,12 @@ fn fs(o: Out) -> @location(0) vec4<f32> {
     }
     if look == LOOK_SHEEN {
         return draw_sheen(o.p, o.shape.xy, half, o.look);
+    }
+    if look == LOOK_NOTE {
+        return draw_note(o.p, o.shape.xy, half, o.what.y, o.look);
+    }
+    if look == LOOK_BIT {
+        return draw_bit(o.p, o.shape.xy, half, o.what.y, o.look);
     }
     // A sparkle: a core and two crossed rays, turned.
     let s = sin(o.what.y);
@@ -700,9 +726,9 @@ mod tests {
         assert!(still.alive(10.5) && !still.alive(10.0 + 1.2) && !still.alive(9.9));
         let burst = bubble(Kind::Burst);
         assert!(burst.alive(10.45) && !burst.alive(10.5));
-        // Further when the multiplier goes up.
+        // A step up goes further, with all its quads.
         let up = Spray {
-            kind: Kind::ScoredUp,
+            kind: Kind::StepUp,
             ..still
         };
         let reach = |s: &Spray| {
@@ -712,5 +738,12 @@ mod tests {
                 .fold(0.0, f32::max)
         };
         assert!(reach(&up) > reach(&still));
+        assert_eq!(
+            (0..QUADS)
+                .filter(|&q| sprite(&up, q, 10.05).is_some())
+                .count(),
+            32
+        );
+        assert!(up.alive(11.0) && !up.alive(10.01 + rainbow::STEP_LIFE as f64));
     }
 }

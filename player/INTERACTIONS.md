@@ -520,6 +520,42 @@ stem keys are their mutes.
   - `the_stage_bursts_a_word_counted` (bubbles)
   - `a_bubble_partly_filled_never_pops` (bubbles)
   - `a_bubble_unpopped_by_a_seek_back_shows_again` (bubbles)
+- **K21.** With the game on and the streak's multiplier above ×1, the
+  streak shines at a level (×2 the first, ×4 the top; an intensity a
+  shine meter can drive later): in the window's stage, rainbow bands fan
+  out from the playhead behind the pills, their colours running round
+  (more bands, reaching further, brighter and turning faster a level up:
+  a soft shimmer at the first, the whole lane glowing at the top), coming
+  in over 0.25 s from how strong it showed; down a level (not lost), it
+  eases down the same way and shines on; a swirl turns round the singer's
+  arrow; the multiplier's number shows in rainbow. Nothing of it shows at
+  ×1. Each word scored throws a burst from the playhead for each level the
+  shine went up since the word before (several words scored in a frame:
+  one a step), once a word (sought back under a second, not again; begun
+  again, again): stars, notes and rainbow bits shot out, mostly up,
+  spinning, arcing down and fading, their colours running round. Lost, the
+  bands and the swirl collapse into the playhead over 0.5 s, their colour
+  draining. A seek snaps the shine to its level, with no rise or
+  collapse. In the picture (no stage) the bar under the word being sung
+  gets a rainbow edge while it shines, and a smaller burst from it a step
+  up. Each frame the processor gives only the time, the level (when it
+  changed and how strong it showed then) and a record a step up; the
+  shaders move it all, their maths held to the processor's on the GPU.
+  The software window draws none of it.
+  - `the_shine_follows_the_level`,
+    `a_drop_eases_down_and_a_level_mid_collapse_comes_in_smoothly`,
+    `a_step_up_for_each_level_however_many_words_a_frame`,
+    `a_step_up_once_across_a_seek_back_and_again_after_a_restart`
+    (`gui::streak`)
+  - `the_bands_grow_with_the_level`, `a_lost_streak_collapses_into_the_playhead`,
+    `a_drop_of_a_level_still_shines`,
+    `a_step_up_bursts_and_its_pieces_arc_and_fade`, `the_rainbow_goes_round`
+    (`gui::rainbow`)
+  - `the_stage_shader_s_shine_is_its_reference`,
+    `the_particles_shader_draws_what_sprite_says` (`gui::shader_check`)
+  - `the_bands_shine_by_the_level`, `a_step_up_bursts_once_a_step`,
+    `a_lost_streak_collapses_into_the_playhead`,
+    `the_picture_s_bar_gets_a_rainbow_edge` (streak)
 - **K18.** `s` on the Karaoke tab (or the palette) syncs, with a
   microphone open (else it says one is needed) and the player's strip
   heard on the Mixer tab (not muted or far down, nor another strip soloed:

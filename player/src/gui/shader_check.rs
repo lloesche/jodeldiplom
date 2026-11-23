@@ -1,14 +1,17 @@
 //! The shaders held to their processor's references, on the GPU: the
-//! particles' (every quad of a burst and of a word scored: where, how
-//! large, how turned, its colour and how much it shows, [`sprite`]) and
-//! the stage's liquid (its bulge and wobble, its overfilling, the front's
-//! waves and slosh, the shimmer, [`super::liquid`]), each worked out by
-//! the shader's own functions in a compute pass over the shader as the
-//! window composes it, at sample points, against the processor's. Skipped
-//! (with a note) without a GPU.
+//! particles' (every quad of a burst, of a word scored and of a step up:
+//! where, how large, how turned, its colour and how much it shows,
+//! [`sprite`]), the stage's liquid (its bulge and wobble, its overfilling,
+//! the front's waves and slosh, the shimmer, [`super::liquid`]) and a
+//! streak's shine (its rise and collapse, the bands, the swirl, the rim,
+//! the rainbow, [`super::rainbow`]), each worked out by the shader's own
+//! functions in a compute pass over the shader as the window composes it,
+//! at sample points, against the processor's. Skipped (with a note)
+//! without a GPU.
 
 use super::liquid;
 use super::particles::{self, sprite, Kind, Spray, QUADS};
+use super::rainbow::{self, Shine};
 use super::sparks::TAU;
 
 /// A device on the window's GPU, none without one.
@@ -142,7 +145,8 @@ fn the_particles_shader_draws_what_sprite_says() {
             Kind::Burst,
         ),
         spray((200.0, 330.0), (0.0, 0.0), 20.0, 4242, -150.0, Kind::Scored),
-        spray((600.0, 330.0), (0.0, 0.0), 20.0, 99, -150.0, Kind::ScoredUp),
+        spray((600.0, 330.0), (0.0, 0.0), 20.0, 99, -150.0, Kind::StepUp),
+        spray((220.0, 200.0), (0.0, 0.0), 47.0, 31_337, 0.0, Kind::StepUp),
     ];
     let ages = [
         -0.01, 0.0, 0.03, 0.079, 0.081, 0.12, 0.25, 0.4, 0.49, 0.6, 0.9, 1.2,
@@ -271,4 +275,113 @@ fn the_stage_shader_s_liquid_is_its_reference() {
             "{what}: amplitude"
         );
     }
+}
+
+/// A streak's shine at points across the lane, round the arrow and along
+/// a bar, at levels coming in, held, eased down a level and lost, through
+/// its rise and collapse: the shader's [`rainbow::shine_at`],
+/// [`rainbow::bands`], [`rainbow::swirl`], [`rainbow::rim`],
+/// [`rainbow::rim_at`], [`rainbow::lane_mask`], [`rainbow::text_tint`] and
+/// [`rainbow::hue`] as the processor's (all three of each colour).
+#[test]
+fn the_stage_shader_s_shine_is_its_reference() {
+    let Some(gpu) = gpu() else {
+        return;
+    };
+    let shines = [
+        (1.0, 0.0),
+        (2.0, 1.0),
+        (3.0, 2.0),
+        (3.0, 3.0),
+        (2.0, 3.0),
+        (1.0, 2.4),
+        (0.0, 1.0),
+        (0.0, 3.0),
+    ];
+    let mut samples = Vec::new();
+    for k in 0..480 {
+        let f = k as f32;
+        let (level, from) = shines[k % shines.len()];
+        let since = 5.0;
+        let time = since + (f * 0.37).fract() * 0.9 - 0.05;
+        let p = (
+            100.0 + (f * 0.61).fract() * 700.0,
+            60.0 + (f * 0.29).fract() * 200.0,
+        );
+        let d = (f * 0.43).fract() * 12.0 - 4.0;
+        let tint = [(f * 0.11).fract(), (f * 0.23).fract(), (f * 0.31).fract()];
+        samples.push([
+            [level, from, since, time],
+            [p.0, p.1, 300.0, 160.0],
+            [700.0, 90.0, 24.0, d],
+            [(f * 0.17).fract() * 3.0 - 1.0, tint[0], tint[1], tint[2]],
+        ]);
+    }
+    let ins: Vec<[f32; 4]> = samples.iter().flatten().copied().collect();
+    let body = "
+    let a = ins[i * 4u];
+    let b = ins[i * 4u + 1u];
+    let c = ins[i * 4u + 2u];
+    let h = ins[i * 4u + 3u];
+    let s = a.xyz;
+    let bar = vec2<f32>(c.z * 3.0, c.z * 0.2);
+    outs[i * 7u] = vec4<f32>(shine_at(s, a.w), lane_mask(b.xy, b.zw, c.xy), 0.0);
+    outs[i * 7u + 1u] = vec4<f32>(hue(h.x), 0.0);
+    outs[i * 7u + 2u] = vec4<f32>(bands(b.xy, b.zw, c.xy, s, a.w), 0.0);
+    outs[i * 7u + 3u] = vec4<f32>(swirl(b.xy, b.zw, c.z, s, a.w), 0.0);
+    outs[i * 7u + 4u] = vec4<f32>(rim(c.w, b.x, c.z * 0.2, s, a.w), 0.0);
+    outs[i * 7u + 5u] = vec4<f32>(rim_at(b.xy, b.zw, bar, s, a.w), 0.0);
+    outs[i * 7u + 6u] = vec4<f32>(text_tint(h.yzw, b.x, s, a.w), 0.0);";
+    let source = super::stage_gpu::shader();
+    let outs = run(&gpu, &source, body, &ins, (samples.len(), 7));
+    let close = |g: &[f32; 4], c: [f32; 3], what: &str| {
+        for i in 0..3 {
+            assert!(near(g[i], c[i], 2e-3, 2e-3), "{what}: {g:?} {c:?}");
+        }
+    };
+    let (mut lit, mut masked) = (0, 0);
+    for (k, [a, b, c, h]) in samples.iter().enumerate() {
+        let what = format!("sample {k}: {a:?} {b:?} {c:?}");
+        let s = Shine {
+            level: a[0],
+            from: a[1],
+            since: a[2],
+        };
+        let (t, p, o) = (a[3], (b[0], b[1]), (b[2], b[3]));
+        let g = &outs[k * 7..k * 7 + 7];
+        let (strength, collapse) = rainbow::shine_at(&s, t);
+        assert!(
+            near(g[0][0], strength, 1e-4, 0.0),
+            "{what}: strength {:?}",
+            g[0]
+        );
+        assert!(
+            near(g[0][1], collapse, 1e-4, 0.0),
+            "{what}: collapse {:?}",
+            g[0]
+        );
+        let mask = rainbow::lane_mask(p, o, (c[0], c[1]));
+        assert!(
+            near(g[0][2], mask, 1e-3, 0.0),
+            "{what}: lane mask {:?} {mask}",
+            g[0]
+        );
+        close(&g[1], rainbow::hue(h[0]), &format!("{what}: hue"));
+        let bands = rainbow::bands(p, o, (c[0], c[1]), &s, t);
+        close(&g[2], bands, &format!("{what}: bands"));
+        close(
+            &g[3],
+            rainbow::swirl(p, o, c[2], &s, t),
+            &format!("{what}: swirl"),
+        );
+        let rim = rainbow::rim(c[3], b[0], c[2] * 0.2, &s, t);
+        close(&g[4], rim, &format!("{what}: rim"));
+        let rim_at = rainbow::rim_at(p, o, (c[2] * 3.0, c[2] * 0.2), &s, t);
+        close(&g[5], rim_at, &format!("{what}: rim at"));
+        let tint = rainbow::text_tint([h[1], h[2], h[3]], b[0], &s, t);
+        close(&g[6], tint, &format!("{what}: text"));
+        lit += usize::from(bands.iter().sum::<f32>() > 0.01);
+        masked += usize::from(mask > 0.01 && mask < 0.99);
+    }
+    assert!(lit > 100 && masked > 10, "{lit} {masked}");
 }

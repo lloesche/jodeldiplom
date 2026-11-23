@@ -14,9 +14,10 @@
 use std::collections::HashMap;
 
 use super::karaoke::{BigText, COVER_PAD};
+use super::rainbow;
 use super::sparks::noise;
 use super::stage_gpu::{kind, AtlasUpload, Instance, Palette, Skin, StageFrame, Tint, ATLAS};
-use crate::core::singing::{multiplier, Hit};
+use crate::core::singing::Hit;
 use crate::core::State;
 use crate::view::karaoke::{KaraokePicture, LineKind, LyricLine};
 
@@ -170,8 +171,8 @@ pub struct Stage {
     seed: u32,
     /// Sparks owed to the next frame (a share of one).
     owed: f32,
-    /// The last word scored, by its end.
-    scored: Option<f64>,
+    /// The streak: its shine, the words scored ([`super::streak`]).
+    streak: super::streak::Streak,
     /// The multiplier shown, how much it shows, and how long since it
     /// went up.
     badge: (u32, f32, f32),
@@ -412,11 +413,11 @@ impl Stage {
 
     /// A run of text: `text` at `px` (drawn at `scale` of that) with its
     /// line's top-left at `at`; left of `split` (pixels across) in
-    /// `filled`, right of it in `rest`.
+    /// `filled`, right of it in `rest`. What it put into `out`, if any.
     #[allow(clippy::too_many_arguments)]
-    fn text(
+    fn text<'o>(
         &mut self,
-        out: &mut Vec<Instance>,
+        out: &'o mut Vec<Instance>,
         text: &str,
         px: f32,
         scale: f32,
@@ -424,13 +425,11 @@ impl Stage {
         split: f32,
         rest: [f32; 4],
         filled: [f32; 4],
-    ) {
+    ) -> Option<&'o mut Instance> {
         if text.trim().is_empty() {
-            return;
+            return None;
         }
-        let Some((u, v, w, h)) = self.atlas.place(&mut self.text, text, px) else {
-            return;
-        };
+        let (u, v, w, h) = self.atlas.place(&mut self.text, text, px)?;
         let pad = COVER_PAD as f32 * scale;
         let (x0, y0) = (at.0 - pad, at.1 - pad);
         out.push(Instance {
@@ -442,6 +441,7 @@ impl Stage {
             uv: [u as f32, v as f32, (u + w) as f32, (v + h) as f32],
             strain: [0.0; 4],
         });
+        out.last_mut()
     }
 
     /// How far down from the top of text made at `px` for the atlas
@@ -555,6 +555,11 @@ impl Stage {
             rgba(WHITE, 0.18),
             p * 0.25,
         ));
+        // The streak's rainbow bands from the playhead, behind the pills.
+        let step = self.streak.step(singing, game, (now, clock));
+        let lane_box = (lane_mid, (lane_half.1, lane_half.0));
+        let bands = rainbow::bands_of((lane.head, lane_mid.1), lane_box, &step.shine, clock);
+        out.extend(bands);
 
         // The words, line by line: a pill each, as high as its longest
         // note, as long as it is sung (or its text, where longer: the text
@@ -811,24 +816,13 @@ impl Stage {
         } else {
             self.owed = 0.0;
         }
-        // A word scored: a burst where it hit; more as the multiplier
-        // goes up.
-        // Once a word (not again sought back a little), any again started over.
-        let over = before.is_some_and(|b| now < b - 1.0) || singing.heard.is_empty();
-        self.scored = self.scored.filter(|_| !over);
-        let last = singing.tally.last_scored;
-        if let Some(scored) = last.filter(|s| self.scored.is_none_or(|e| s.end > e)) {
-            self.scored = Some(scored.end);
-            if game && scored.hit == Some(Hit::Full) {
-                let up = multiplier(scored.streak) > multiplier(scored.streak.saturating_sub(1));
-                let at = (lane.x(scored.end).max(x), self.arrow.y);
-                let from = if up { tip } else { at };
-                self.sprays
-                    .push(super::pop::scored(from, p, clock, lane.pps, up, scored.end));
-                if up {
-                    self.badge.2 = 0.0;
-                }
-            }
+        // A word scored (once): a burst where it hit; each level it took the
+        // streak up, a rainbow burst from the playhead, the multiplier popping.
+        let at = |end: f64| (lane.x(end).max(x), self.arrow.y);
+        self.sprays
+            .extend(step.sprays(at, tip, (p, clock, lane.pps)));
+        if step.ups > 0 {
+            self.badge.2 = 0.0;
         }
         for s in &mut self.sparks {
             s.age += song_dt;
@@ -880,9 +874,11 @@ impl Stage {
                 uv: [0.0; 4],
                 strain: [0.0; 4],
             });
+            let swirl = rainbow::swirl_of((lane.head, self.arrow.y), p * 0.9, &step.shine, clock);
+            out.extend(swirl);
         }
 
-        // The multiplier, over the playhead: popping as it goes up.
+        // The multiplier, over the playhead: popping (in rainbow) as it goes up.
         let m = if game { singing.multiplier() } else { 1 };
         let shown_target = if m > 1 { 1.0 } else { 0.0 };
         if m > 1 {
@@ -904,7 +900,7 @@ impl Stage {
                 rgba(GOLD, (0.25 + 0.1 * self.badge.0 as f32) * a * pop),
                 p * 1.4 * pop,
             ));
-            self.text(
+            let number = self.text(
                 &mut out,
                 &label,
                 px,
@@ -914,6 +910,9 @@ impl Stage {
                 rgba(GOLD_TOP, a),
                 rgba(GOLD_TOP, a),
             );
+            number
+                .into_iter()
+                .for_each(|t| rainbow::in_rainbow(t, &step.shine));
             if game && singing.tally.streak > 0 {
                 let small = (p * 0.36).round().max(9.0);
                 let streak = format!("{} in a row", singing.tally.streak);

@@ -52,14 +52,28 @@ pub mod kind {
     /// [`super::flags::FRONT`] (its fill jumped at `uv[2]`)
     /// ([`super::Instance::liquid`]).
     pub const LIQUID: f32 = 8.0;
+    /// A streak's rainbow bands fanning out from (`shape[0]`, `shape[1]`)
+    /// over a lane `shape[2]`, `shape[3]` half wide and high, within the
+    /// lane (`uv`: its centre and half size); `params[1..]` its shine
+    /// (level, from, since): light, added ([`crate::gui::rainbow::bands_of`]).
+    pub const BANDS: f32 = 9.0;
+    /// A streak's swirl round (`shape[0]`, `shape[1]`), `shape[2]` out; its
+    /// shine as [`BANDS`]' ([`crate::gui::rainbow::swirl_of`]).
+    pub const SWIRL: f32 = 10.0;
+    /// A streak's rainbow edge round a bar at `shape` (centre, half size);
+    /// its shine as [`BANDS`]' ([`crate::gui::rainbow::rim_of`]).
+    pub const RIM: f32 = 11.0;
 }
 
-/// The flags of a bubble or its liquid ([`Instance::strain`]`[3]`).
+/// The flags of a bubble or its liquid, or of text ([`Instance::strain`]`[3]`).
 pub mod flags {
     /// It is bursting: overfilling from `strain[1]`, gone once it tears.
     pub const POPPING: u32 = 1;
     /// Its liquid's front is a living surface (it is not full).
     pub const FRONT: u32 = 2;
+    /// Text in a streak's rainbow, its shine (level, from, since) in
+    /// `strain[0..3]` ([`crate::gui::rainbow::in_rainbow`]).
+    pub const RAINBOW: u32 = 4;
 }
 
 /// One shape, as the shader takes it: the quad it covers (`x0, y0, x1,
@@ -313,6 +327,9 @@ const K_DISC: u32 = {}u;
 const K_ARROW: u32 = {}u;
 const K_BUBBLE: u32 = {}u;
 const K_LIQUID: u32 = {}u;
+const K_BANDS: u32 = {}u;
+const K_SWIRL: u32 = {}u;
+const K_RIM: u32 = {}u;
 ",
         k(kind::PILL),
         k(kind::FILL),
@@ -322,13 +339,22 @@ const K_LIQUID: u32 = {}u;
         k(kind::ARROW),
         k(kind::BUBBLE),
         k(kind::LIQUID),
+        k(kind::BANDS),
+        k(kind::SWIRL),
+        k(kind::RIM),
     )
 }
 
-/// The stage's shader: [`SHADER`], its kinds ([`kind`]) and the liquid's
-/// maths ([`super::liquid::wgsl`]).
+/// The stage's shader: [`SHADER`], its kinds ([`kind`]), the liquid's
+/// maths ([`super::liquid::wgsl`]) and a streak's shine
+/// ([`super::rainbow::stage_wgsl`]).
 pub fn shader() -> String {
-    format!("{}{SHADER}{}", kinds_wgsl(), super::liquid::wgsl())
+    format!(
+        "{}{SHADER}{}{}",
+        kinds_wgsl(),
+        super::liquid::wgsl(),
+        super::rainbow::stage_wgsl()
+    )
 }
 
 const SHADER: &str = r"
@@ -495,6 +521,9 @@ fn fs(o: Out) -> @location(0) vec4<f32> {
     if k == K_PILL || k == K_FILL || k == K_BUBBLE || k == K_LIQUID {
         return pill(o, p, k);
     }
+    if k == K_BANDS || k == K_SWIRL || k == K_RIM {
+        return shine(o, p, k);
+    }
     if k == K_SEGMENT {
         let d = segment(p, o.shape.xy, o.shape.zw) - o.params.y;
         let cover = clamp(0.5 - d, 0.0, 1.0);
@@ -547,9 +576,28 @@ fn fs(o: Out) -> @location(0) vec4<f32> {
     let uv = texel / screen.atlas;
     let a = textureSampleLevel(atlas, soft, uv, 0.0).r;
     let filled = smoothstep(o.params.y - 0.75, o.params.y + 0.75, p.x);
-    let col = mix(o.color2.rgb, o.color.rgb, filled);
+    var col = mix(o.color2.rgb, o.color.rgb, filled);
+    if (u32(o.strain.w) & RAINBOW) != 0u {
+        // In a streak's rainbow, running along it.
+        col = text_tint(col, p.x, o.strain.xyz, screen.time);
+    }
     let alpha = mix(o.color2.a, o.color.a, filled) * a;
     return over_plus(col, alpha, vec3<f32>(0.0));
+}
+
+// A streak's shine: its bands (within the lane, softly), a swirl, a
+// rainbow edge; light, added.
+fn shine(o: Out, p: vec2<f32>, k: u32) -> vec4<f32> {
+    let s = o.params.yzw;
+    if k == K_BANDS {
+        let inside = lane_mask(p, o.uv.xy, o.uv.zw);
+        let l = bands(p, o.shape.xy, o.shape.zw, s, screen.time);
+        return vec4<f32>(out_rgb(l) * inside, 0.0);
+    }
+    if k == K_SWIRL {
+        return vec4<f32>(out_rgb(swirl(p, o.shape.xy, o.shape.z, s, screen.time)), 0.0);
+    }
+    return vec4<f32>(out_rgb(rim_at(p, o.shape.xy, o.shape.zw, s, screen.time)), 0.0);
 }
 ";
 

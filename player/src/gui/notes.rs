@@ -17,7 +17,7 @@ use super::particles::{Kind, Spray};
 use super::raster::{pack, unpack};
 use super::sparks::{noise, sparkle};
 use super::stage_gpu::{Instance, Palette, Pour, Tint};
-use crate::view::karaoke::{LyricLine, HALF_HIT, HIT, NOTE_AHEAD, SINGER};
+use crate::view::karaoke::{LineKind, LyricLine, HALF_HIT, HIT, NOTE_AHEAD, SINGER};
 
 /// The notes under a line and the singing on them, in pixels from the
 /// text's left.
@@ -92,6 +92,9 @@ pub struct Over {
     pub bubbles: Vec<Instance>,
     /// The bubbles bursting.
     pub sprays: Vec<Spray>,
+    /// The bar under the word being sung (its centre and half size), where
+    /// a streak's rainbow edge goes ([`super::streak::Streak::picture`]).
+    pub rim: Option<((f32, f32), (f32, f32))>,
 }
 
 impl Over {
@@ -164,6 +167,23 @@ impl Over {
             self.bubbles
                 .extend(Instance::liquid(c, half, thick * 0.2, &pour, &strain));
         }
+        // The bar under the word being sung (the last begun on the line
+        // being sung, not burst).
+        if line.kind != LineKind::Current {
+            return;
+        }
+        let sung = line.fill as f32 * line.text.chars().count() as f32;
+        let burst = |k: usize| line.liquid.iter().any(|b| b.note == k && b.begun());
+        let mut notes = line.notes.iter().enumerate();
+        let under = notes.rfind(|(k, n)| n.from <= sung && !burst(*k));
+        self.rim = under.map(|(_, n)| {
+            let (x0, x1) = span(px, (at.0 + x_of(n.from), at.0 + x_of(n.to)));
+            let (y, thick) = bar(px, at.1, n.height);
+            (
+                ((x0 + x1) / 2.0, y + thick / 2.0),
+                ((x1 - x0) / 2.0, thick / 2.0),
+            )
+        });
     }
 }
 
