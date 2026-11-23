@@ -11,6 +11,14 @@
 //! rotary positions, attention with an online softmax, the gated GELU and
 //! a transpose), and the masks come back.
 //!
+//! The GPU is chosen once a process ([`chosen`], `device.rs`): one `wgpu`
+//! instance, the adapters on every backend listed once, the best one kept
+//! (and the same card through DirectX 12, where the best is on another
+//! backend), and every model's device made on it. Listing the adapters
+//! starts every GPU's driver, an unused integrated one's too, so the
+//! choice does not list them again for each model; a failed choice (no
+//! GPU) is kept too. Setups and teardowns take turns ([`setting_up`]).
+//!
 //! ```no_run
 //! use jodel_gpu::GpuSeparator;
 //! use jodel_rhythm::stems;
@@ -21,17 +29,18 @@
 //! }
 //! ```
 
-use std::cell::Cell;
 use std::collections::HashMap;
 use std::num::NonZeroU64;
-use std::ops::{Deref, DerefMut};
-use std::sync::{Mutex, MutexGuard, OnceLock, PoisonError};
+use std::sync::{Mutex, OnceLock};
 
 mod asr;
+mod device;
 mod net;
 pub mod pace;
 mod speech;
 pub use asr::{GpuAsr, MAX_NEW, MAX_SECONDS};
+use device::adapter;
+pub use device::{card, chosen, gpu_name, setting_up, Chosen, Turn, Turned};
 pub use net::GpuNetwork;
 pub use speech::GpuSpeech;
 
@@ -649,98 +658,6 @@ fn bytes(values: &[f32]) -> Vec<u8> {
     values.iter().flat_map(|v| v.to_le_bytes()).collect()
 }
 
-/// Whose turn it is to set up or tear down the GPU ([`setting_up`]).
-static SETUP: Mutex<()> = Mutex::new(());
-
-thread_local! {
-    /// The turns this thread holds (a setup inside another's turn takes
-    /// none of its own).
-    static TURNS: Cell<usize> = const { Cell::new(0) };
-}
-
-/// A turn at the GPU's setup: while one is held, no other thread of the
-/// process creates or drops a `wgpu` instance, adapter or device through
-/// this crate. Some drivers do not take two at once: Intel's on Windows,
-/// whose control library each instance and device starts and stops,
-/// corrupts the heap (an access violation under a debug heap) when two
-/// threads do it together. Every setup and teardown here takes its turn;
-/// code with a GPU setup of its own (a window's) takes one around it.
-/// A thread may take turns inside its own.
-pub struct Turn {
-    _held: Option<MutexGuard<'static, ()>>,
-}
-
-/// Takes a turn at the GPU's setup, waiting for the one under way.
-pub fn setting_up() -> Turn {
-    let held = (TURNS.get() == 0).then(|| SETUP.lock().unwrap_or_else(PoisonError::into_inner));
-    TURNS.set(TURNS.get() + 1);
-    Turn { _held: held }
-}
-
-impl Drop for Turn {
-    fn drop(&mut self) {
-        TURNS.set(TURNS.get() - 1);
-    }
-}
-
-/// Something that holds a device (a model's state on it, a window's
-/// surface), dropped in a turn ([`setting_up`]): the last of a device's
-/// handles to go tears it down.
-pub struct Turned<T>(Option<T>);
-
-impl<T> Turned<T> {
-    pub fn new(value: T) -> Turned<T> {
-        Turned(Some(value))
-    }
-}
-
-impl<T> Deref for Turned<T> {
-    type Target = T;
-    fn deref(&self) -> &T {
-        self.0.as_ref().expect("dropped only once")
-    }
-}
-
-impl<T> DerefMut for Turned<T> {
-    fn deref_mut(&mut self) -> &mut T {
-        self.0.as_mut().expect("dropped only once")
-    }
-}
-
-impl<T> Drop for Turned<T> {
-    fn drop(&mut self) {
-        let _turn = setting_up();
-        drop(self.0.take());
-    }
-}
-
-/// The best adapter: a high-performance one preferred, a software
-/// renderer refused. Only in a turn ([`setting_up`]), held until the
-/// adapter is dropped.
-fn adapter() -> Result<wgpu::Adapter, String> {
-    debug_assert!(TURNS.get() > 0, "the GPU set up outside a turn");
-    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
-    let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-        power_preference: wgpu::PowerPreference::HighPerformance,
-        ..Default::default()
-    }))
-    .map_err(|e| format!("no GPU: {e}"))?;
-    let info = adapter.get_info();
-    if info.device_type == wgpu::DeviceType::Cpu {
-        return Err(format!("{} is a software renderer", info.name));
-    }
-    Ok(adapter)
-}
-
-/// The name of the GPU the separator would use, without setting it up;
-/// `None` without a usable one.
-pub fn gpu_name() -> Option<String> {
-    let _turn = setting_up();
-    std::panic::catch_unwind(|| adapter().ok().map(|a| a.get_info().name))
-        .ok()
-        .flatten()
-}
-
 /// What the GPU side finds on this machine, as lines for a diagnostic
 /// report: every adapter `wgpu` sees on every backend with the limits the
 /// separator needs, the one it would use (or why none), whether it sets
@@ -748,55 +665,10 @@ pub fn gpu_name() -> Option<String> {
 /// how that time splits ([`Profile`]: each kernel on its own, the matrix
 /// multiplies by layer, the upload and the readback, whole chunks in a
 /// row). Sets up a separator of its own (not [`GpuSeparator::shared`]'s).
+/// Lists the adapters again, on demand only.
 pub fn report() -> Vec<String> {
     let _turn = setting_up();
-    let mut lines = Vec::new();
-    let mb = |bytes: u64| format!("{} MB", bytes / (1024 * 1024));
-    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
-    let adapters = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        pollster::block_on(instance.enumerate_adapters(wgpu::Backends::all()))
-    }));
-    match adapters {
-        Err(_) => lines.push("adapters: listing them panicked".into()),
-        Ok(adapters) if adapters.is_empty() => {
-            lines.push("adapters: none on any backend (Vulkan, Metal, DirectX 12, OpenGL)".into())
-        }
-        Ok(adapters) => {
-            lines.push("adapters:".into());
-            for a in adapters {
-                let info = a.get_info();
-                let limits = a.limits();
-                lines.push(format!(
-                    "  [{:?}] {} ({:?}), vendor 0x{:04x} device 0x{:04x}, driver {:?} {:?}",
-                    info.backend,
-                    info.name,
-                    info.device_type,
-                    info.vendor,
-                    info.device,
-                    info.driver,
-                    info.driver_info
-                ));
-                lines.push(format!(
-                    "      max buffer {}, max storage binding {}, workgroup storage {} KB, {} invocations per workgroup",
-                    mb(limits.max_buffer_size),
-                    mb(limits.max_storage_buffer_binding_size),
-                    limits.max_compute_workgroup_storage_size / 1024,
-                    limits.max_compute_invocations_per_workgroup
-                ));
-            }
-        }
-    }
-    match std::panic::catch_unwind(adapter) {
-        Ok(Ok(a)) => {
-            let info = a.get_info();
-            lines.push(format!(
-                "the separator would use: {} ({:?})",
-                info.name, info.backend
-            ));
-        }
-        Ok(Err(e)) => lines.push(format!("the separator would use: none ({e})")),
-        Err(_) => lines.push("the separator would use: none (looking panicked)".into()),
-    }
+    let mut lines = device::report();
     let started = std::time::Instant::now();
     let separator = match std::panic::catch_unwind(GpuSeparator::new) {
         Ok(Ok(s)) => {

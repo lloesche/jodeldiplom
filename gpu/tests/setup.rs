@@ -30,25 +30,26 @@ fn the_gpu_is_probed_from_several_threads_at_once() {
     }
 }
 
-/// A probe waits for the setup under way (here, the turn the test holds)
-/// and goes on once it is over.
+/// A model's setup waits for the setup under way (here, the turn the test
+/// holds) and goes on once it is over. (A probe of the name waits only
+/// while the GPU is not yet chosen: `tests/choice.rs`.)
 #[test]
-fn a_probe_waits_for_the_setup_under_way() {
+fn a_setup_waits_for_the_setup_under_way() {
     let turn = jodel_gpu::setting_up();
     let (tx, rx) = mpsc::channel();
-    let probe = thread::spawn(move || {
-        let name = jodel_gpu::gpu_name();
+    let setup = thread::spawn(move || {
+        let network = jodel_gpu::GpuNetwork::new();
         tx.send(()).unwrap();
-        name
+        network.is_ok()
     });
     assert!(
         rx.recv_timeout(Duration::from_millis(300)).is_err(),
-        "the probe ran during another setup"
+        "the setup ran during another one"
     );
     drop(turn);
-    rx.recv_timeout(Duration::from_secs(60))
-        .expect("the probe never ran");
-    probe.join().unwrap();
+    rx.recv_timeout(Duration::from_secs(120))
+        .expect("the setup never ran");
+    setup.join().unwrap();
 }
 
 /// A setup inside a turn its own thread holds goes on (it takes none of

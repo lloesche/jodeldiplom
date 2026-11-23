@@ -138,20 +138,12 @@ struct Painter {
     stage: super::stage_gpu::StagePass,
 }
 
-/// A device on the adapter `options` pick (not a software renderer), with
-/// limits for a texture the size of any window.
-fn device(
-    instance: &wgpu::Instance,
-    options: &wgpu::RequestAdapterOptions,
-) -> Result<(wgpu::Adapter, wgpu::Device, wgpu::Queue), String> {
-    let adapter = pollster::block_on(instance.request_adapter(options))
-        .map_err(|e| format!("no GPU for the window: {e}"))?;
-    open(adapter)
-}
+/// An adapter and a device opened on it.
+type Opened = (wgpu::Adapter, wgpu::Device, wgpu::Queue);
 
 /// A device on `adapter` (not a software renderer), with limits for a
 /// texture the size of any window.
-fn open(adapter: wgpu::Adapter) -> Result<(wgpu::Adapter, wgpu::Device, wgpu::Queue), String> {
+fn open(adapter: wgpu::Adapter) -> Result<Opened, String> {
     let info = adapter.get_info();
     if info.device_type == wgpu::DeviceType::Cpu {
         return Err(format!("{}: a software renderer", info.name));
@@ -583,40 +575,14 @@ impl GpuWindow {
         // other threads meanwhile ([`jodel_gpu::setting_up`]).
         let _turn = jodel_gpu::setting_up();
         let size = window.inner_size();
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
-        let surface = instance
+        // The process's one instance and GPU ([`jodel_gpu::chosen`]): the
+        // adapters are listed again only where that GPU cannot draw here.
+        let chosen = jodel_gpu::chosen();
+        let surface = chosen
+            .instance
             .create_surface(window.clone())
             .map_err(|e| format!("no surface: {e}"))?;
-        // The GPU the window's monitor is on: a frame drawn on another one
-        // is copied over to it by the system, and on Windows that shows it
-        // a good part of a second late.
-        let shows = monitor_gpu(&window).and_then(|(vendor, device)| {
-            let mut adapters: Vec<wgpu::Adapter> =
-                pollster::block_on(instance.enumerate_adapters(wgpu::Backends::all()))
-                    .into_iter()
-                    .filter(|a| {
-                        let info = a.get_info();
-                        info.vendor == vendor
-                            && info.device == device
-                            && info.device_type != wgpu::DeviceType::Cpu
-                            && a.is_surface_supported(&surface)
-                    })
-                    .collect();
-            // DirectX 12 hands its frames to the compositor most directly.
-            adapters.sort_by_key(|a| a.get_info().backend != wgpu::Backend::Dx12);
-            adapters.into_iter().next()
-        });
-        let (adapter, device, queue) = match shows.map(open) {
-            Some(Ok(opened)) => opened,
-            _ => device(
-                &instance,
-                &wgpu::RequestAdapterOptions {
-                    power_preference: wgpu::PowerPreference::LowPower,
-                    compatible_surface: Some(&surface),
-                    ..Default::default()
-                },
-            )?,
-        };
+        let (adapter, device, queue) = window_device(chosen, &surface, monitor_gpu(&window))?;
         let caps = surface.get_capabilities(&adapter);
         // A format that takes the bytes as they are; else an sRGB one,
         // read through an sRGB view so they come out the same.
@@ -649,11 +615,13 @@ impl GpuWindow {
         };
         surface.configure(&device, &config);
         let info = adapter.get_info();
+        let name = format!("{} ({:?})", info.name, info.backend);
+        crate::trace::note(format_args!("window: on {name}"));
         Ok(GpuWindow {
             surface: Turned::new(surface),
             config,
             painter: Turned::new(Painter::new(device, queue, format)),
-            name: format!("{} ({:?})", info.name, info.backend),
+            name,
             done: Arc::new(AtomicBool::new(true)),
             pending: false,
             behind: false,
@@ -730,6 +698,81 @@ impl GpuWindow {
     }
 }
 
+/// A device for a window's `surface`, on the first of these that shows
+/// into it and opens: the process's GPU ([`jodel_gpu::chosen`]) through
+/// DirectX 12 (its sibling), which hands its frames to the compositor
+/// most directly; the chosen adapter itself; the adapters listed again
+/// for the GPU the window's monitor is on (DirectX 12 first); else the
+/// adapter the system offers for the surface. The first three only on the
+/// monitor's GPU (`monitor`: its vendor and device ids, [`jodel_gpu::card`]):
+/// a frame drawn on another one is copied over to it by the system, and
+/// on Windows that shows it a good part of a second late. Where the
+/// monitor's GPU is not known, the system's offer.
+fn window_device(
+    chosen: &jodel_gpu::Chosen,
+    surface: &wgpu::Surface<'_>,
+    monitor: Option<(u32, u32)>,
+) -> Result<Opened, String> {
+    let shows = |a: &wgpu::Adapter| {
+        let info = a.get_info();
+        info.device_type != wgpu::DeviceType::Cpu
+            && monitor.is_some_and(|ids| jodel_gpu::card(&info) == ids)
+            && a.is_surface_supported(surface)
+    };
+    // Why the GPU chosen for the process does not draw, for the trace.
+    let mut failed = None;
+    for kept in [chosen.sibling.as_ref(), chosen.adapter.as_ref().ok()]
+        .into_iter()
+        .flatten()
+    {
+        if shows(kept) {
+            match open(kept.clone()) {
+                Ok(opened) => return Ok(opened),
+                Err(e) => failed = Some(e),
+            }
+        }
+    }
+    let listed = monitor.and_then(|_| {
+        let mut adapters: Vec<wgpu::Adapter> =
+            pollster::block_on(chosen.instance.enumerate_adapters(wgpu::Backends::all()))
+                .into_iter()
+                .filter(|a| shows(a))
+                .collect();
+        adapters.sort_by_key(|a| a.get_info().backend != wgpu::Backend::Dx12);
+        adapters.into_iter().find_map(|a| open(a).ok())
+    });
+    let opened = match listed {
+        Some(opened) => opened,
+        None => {
+            let adapter = pollster::block_on(chosen.instance.request_adapter(
+                &wgpu::RequestAdapterOptions {
+                    power_preference: wgpu::PowerPreference::LowPower,
+                    compatible_surface: Some(surface),
+                    ..Default::default()
+                },
+            ))
+            .map_err(|e| format!("no GPU for the window: {e}"))?;
+            open(adapter)?
+        }
+    };
+    if crate::trace::on() {
+        let why = match (failed, &chosen.adapter) {
+            (Some(e), _) => e,
+            (None, Err(e)) => e.clone(),
+            (None, Ok(_)) if monitor.is_none() => "the monitor's GPU is not known".into(),
+            (None, Ok(a)) => format!(
+                "{} cannot show into it, or is not the monitor's",
+                a.get_info().name
+            ),
+        };
+        crate::trace::note(format_args!(
+            "window: not on the GPU chosen for the process ({why}): on {} instead",
+            opened.0.get_info().name
+        ));
+    }
+    Ok(opened)
+}
+
 /// The vendor and device ids of the GPU the monitor `window` is on (most
 /// of), where the system says.
 #[cfg(windows)]
@@ -765,7 +808,8 @@ fn monitor_gpu(window: &Window) -> Option<(u32, u32)> {
     None
 }
 
-/// Elsewhere the GPU is the one the system offers for a window.
+/// Elsewhere it is not known: the window takes the adapter the system
+/// offers for it ([`window_device`]).
 #[cfg(not(windows))]
 fn monitor_gpu(_: &Window) -> Option<(u32, u32)> {
     None
@@ -781,13 +825,12 @@ pub struct Offscreen {
 }
 
 impl Offscreen {
-    /// On any GPU, into frames that take the bytes as they are (`srgb`:
-    /// that encode them as sRGB, as some windows do); an error where there
-    /// is no GPU.
+    /// On the process's GPU ([`jodel_gpu::chosen`]), into frames that take
+    /// the bytes as they are (`srgb`: that encode them as sRGB, as some
+    /// windows do); an error where there is no GPU.
     pub fn new(srgb: bool) -> Result<Offscreen, String> {
         let _turn = jodel_gpu::setting_up();
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
-        let (adapter, device, queue) = device(&instance, &wgpu::RequestAdapterOptions::default())?;
+        let (adapter, device, queue) = open(jodel_gpu::chosen().adapter.clone()?)?;
         let info = adapter.get_info();
         let format = if srgb {
             wgpu::TextureFormat::Bgra8UnormSrgb
