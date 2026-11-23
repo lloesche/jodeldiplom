@@ -2183,9 +2183,7 @@ fn engine_event(state: &mut State, event: Event) {
             let start = *start;
             draft::track_started(state, start.index);
             // Another track has stems of its own (or none) to find out.
-            if state.desk.parts_failed != Some(start.index) {
-                state.desk.parts_failed = None;
-            }
+            state.desk.parts_failed.retain(|&i| i == start.index);
             let playing = &mut state.playing;
             // Where it starts: 0, or the position a switch of route (or a
             // seek) took it up at.
@@ -2210,7 +2208,12 @@ fn engine_event(state: &mut State, event: Event) {
                 .is_some_and(|t| t.index == position.index)
             {
                 playing.position = position.seconds;
-                playing.anchor_at(position.index, position.output_frame, position.seconds);
+                let (head, frame) = (position.head, position.output_frame);
+                playing.anchor_at(super::Anchor {
+                    index: position.index,
+                    at: super::HeadFrame { head, frame },
+                    seconds: position.seconds,
+                });
             }
         }
         Event::Seeked { index, seconds } => {

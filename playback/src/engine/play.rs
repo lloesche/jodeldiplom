@@ -61,10 +61,13 @@ impl Engine {
         let path = self.queue[index].clone();
         let source = Source::open(&path)?;
         let info = source.info().clone();
-        let route = match route {
+        let route = match route.or_else(|| self.held_route(&info)) {
             Some(route) => route,
             None => {
-                let caps = self.capabilities()?;
+                // No route at the format held (if one is): it is held no
+                // longer.
+                self.pinned = None;
+                let caps = self.target_caps()?;
                 choose_route(&FileFacts::from(&*info), &caps, &self.settings)?
             }
         };
@@ -76,7 +79,7 @@ impl Engine {
     fn open_target(&mut self, request: &OpenRequest) -> Result<Box<dyn Output>, Error> {
         let deadline = Instant::now() + OPEN_BUSY_WAIT;
         loop {
-            match self.target.open(request) {
+            match self.head.target.open(request) {
                 Err(jodel_output::Error::DeviceBusy) if Instant::now() < deadline => {
                     std::thread::sleep(OPEN_BUSY_STEP);
                 }
@@ -85,24 +88,26 @@ impl Engine {
         }
     }
 
-    fn open_output(&mut self, route: &Route) -> Result<(), Error> {
+    /// Opens an output at `route`'s format (with lanes where the target
+    /// takes them), paused when `paused`, in place of the one open.
+    pub(super) fn open_output(&mut self, route: &Route, paused: bool) -> Result<(), Error> {
         self.close_output();
         let mut request = route.open_request();
         // Main and the four stems, where the target takes them (with no
         // separator nor stems kept, a head read along a map has the whole
         // mix as a stem).
         let lanes = 1 + crate::stems::STEMS as u16;
-        if self.target.lanes() >= lanes {
+        if self.head.target.lanes() >= lanes {
             request = request.lanes(lanes);
         }
         let mut output = self.open_target(&request)?;
-        if self.paused {
+        if paused {
             output.pause()?;
         }
         let info = output.info().clone();
         let clock = output.clock();
-        self.lanes.open(info.format);
-        self.out = Some(OpenOutput {
+        self.head.lanes.open(info.format);
+        self.head.out = Some(OpenOutput {
             output,
             info,
             clock,
@@ -111,22 +116,23 @@ impl Engine {
     }
 
     pub(super) fn close_output(&mut self) {
-        if let Some(mut out) = self.out.take() {
+        if let Some(mut out) = self.head.out.take() {
             let _ = out.output.close();
         }
-        self.lanes.flushed(0);
+        self.head.lanes.flushed(0);
     }
 
     pub(super) fn started(&self, track: &Track) -> Cue {
-        let out = self.out.as_ref().expect("an output is open");
+        let out = self.head.out.as_ref().expect("an output is open");
         let format: StreamFormat = out.info.format;
         let bit_perfect = out.info.exclusive && track.route.lossless && track.route.fits(&format);
         let start = TrackStart {
             index: track.index,
+            head: self.head.id,
             info: track.info.clone(),
             route: track.route.clone(),
             output: out.info.clone(),
-            device: self.target.name(),
+            device: self.head.target.name(),
             bit_perfect,
             output_frame: track.seg_out,
             from_frame: track.seg_frame,
@@ -142,31 +148,32 @@ impl Engine {
     /// player stays paused), otherwise opens one.
     fn install(&mut self, mut track: Track) -> Result<(), Error> {
         let fits = self
+            .head
             .out
             .as_ref()
             .is_some_and(|o| track.route.fits(&o.info.format));
         if fits {
-            let out = self.out.as_mut().expect("checked");
+            let out = self.head.out.as_mut().expect("checked");
             out.output.flush()?;
             if !self.paused && out.output.is_paused() {
                 out.output.resume()?;
             }
-            self.lanes.flushed(out.output.written());
+            self.head.lanes.flushed(out.output.written());
         } else {
-            self.open_output(&track.route)?;
+            self.open_output(&track.route, self.paused)?;
         }
-        let out = self.out.as_ref().expect("an output is open");
+        let out = self.head.out.as_ref().expect("an output is open");
         let written = out.output.written();
         // A count-in's silence first: the track is heard after it, and
         // starts to be as it begins.
         let rate = f64::from(out.info.format.rate);
-        self.lead = (std::mem::take(&mut self.lead_in) * rate).round() as u64;
-        track.begin_segment(written + self.lead, track.seg_frame, SegStart::Cold);
+        self.head.lead = (std::mem::take(&mut self.lead_in) * rate).round() as u64;
+        track.begin_segment(written + self.head.lead, track.seg_frame, SegStart::Cold);
         let mut cue = self.started(&track);
         cue.at = written;
         self.cues.push_back(cue);
         self.release(&mut track);
-        self.playing = Some(track);
+        self.head.playing = Some(track);
         Ok(())
     }
 
@@ -236,8 +243,8 @@ impl Engine {
 
     pub(super) fn seek(&mut self, seconds: f64) {
         // A count-in under way ends: the track plays from where it went.
-        self.lead = 0;
-        self.pending_jump = None;
+        self.head.lead = 0;
+        self.head.pending_jump = None;
         self.drop_jump_fill();
         let Some(heard) = self.heard.clone() else {
             return;
@@ -246,6 +253,7 @@ impl Engine {
         // has the route the track is going to: the seek's flush hides the
         // change.
         let switching = self
+            .head
             .switch
             .take()
             .filter(|s| s.track.index == heard.index)
@@ -256,13 +264,14 @@ impl Engine {
                     .filter(|t| t.index == heard.index)
                     .map(|t| t.route.clone())
             });
-        // A transition is off; a track read along one starts afresh on its
-        // own route.
-        self.forget_transition(Some("a seek"));
+        // A transition is off (the output it handed over from closes); a
+        // track read along a map starts afresh on its own route.
+        self.abandon_transition("a seek");
         let transitioned = self
+            .head
             .playing
             .as_ref()
-            .is_some_and(|t| t.warp.is_some() || t.gains.is_some() || t.along.is_some());
+            .is_some_and(|t| t.along.is_some());
         if transitioned {
             self.jump_on(heard.index, StartAt::Seconds(seconds), None);
             if let Some(h) = &self.heard {
@@ -276,6 +285,7 @@ impl Engine {
         }
         let in_place = switching.is_none()
             && self
+                .head
                 .playing
                 .as_ref()
                 .is_some_and(|t| t.index == heard.index);
@@ -295,13 +305,13 @@ impl Engine {
         }
         let frame = (seconds.max(0.0) * f64::from(heard.info.rate)).round() as u64;
         let result = (|| {
-            let out = self.out.as_mut().ok_or(Error::Stopped)?;
+            let out = self.head.out.as_mut().ok_or(Error::Stopped)?;
             out.output.flush()?;
             let written = out.output.written();
-            let track = self.playing.as_mut().expect("checked");
+            let track = self.head.playing.as_mut().expect("checked");
             track.restart_at(frame)?;
             track.begin_segment(written, track.seg_frame, SegStart::Cold);
-            self.lanes.flushed(written);
+            self.head.lanes.flushed(written);
             Ok::<_, Error>((written, track.seg_frame))
         })();
         match result {
@@ -331,10 +341,10 @@ impl Engine {
 
     /// Stops playback and closes the output.
     pub(super) fn stop(&mut self, announce: bool) {
-        let was_active = self.out.is_some() || self.playing.is_some();
-        self.lanes.stop();
-        // Stems that failed are tried again from here.
-        self.stems_failed = false;
+        let was_active = self.head.out.is_some() || self.head.playing.is_some();
+        // The device opens again at a track's own rate from here.
+        self.pinned = None;
+        self.every_lanes().for_each(|l| l.stop());
         self.clear_timeline();
         self.close_output();
         self.paused = false;
@@ -381,7 +391,7 @@ impl Engine {
         self.fire_cues();
         let message = format!(
             "{} did not open for {}: {error}; keeping {} for this track",
-            self.target.name(),
+            self.head.target.name(),
             route.describe(),
             back.describe()
         );
@@ -397,7 +407,7 @@ impl Engine {
         };
         // A switch of this track has nothing left to switch.
         self.cancel_switch();
-        let end = self.out.as_ref().map_or(0, |o| o.output.written());
+        let end = self.head.out.as_ref().map_or(0, |o| o.output.written());
         // A cue mapped past the last output frame is never heard after the
         // end; it applies at the end at the latest.
         for cue in self.cues.iter_mut() {
@@ -428,6 +438,8 @@ impl Engine {
     pub(super) fn advance(&mut self, mut index: usize, end: u64) -> Result<(), Error> {
         loop {
             if index >= self.queue.len() {
+                // The device opens again at a track's own rate after.
+                self.pinned = None;
                 self.cues.push_back(Cue {
                     at: end,
                     event: CueEvent::QueueEnded,
@@ -439,6 +451,7 @@ impl Engine {
             match self.prepare(index, 0.0) {
                 Ok(mut track) => {
                     let fits = self
+                        .head
                         .out
                         .as_ref()
                         .is_some_and(|o| track.route.fits(&o.info.format));
@@ -446,7 +459,7 @@ impl Engine {
                         track.begin_segment(end, track.seg_frame, SegStart::Cold);
                         let cue = self.started(&track);
                         self.cues.push_back(cue);
-                        self.playing = Some(track);
+                        self.head.playing = Some(track);
                     } else {
                         self.next = Some(track);
                         self.finishing = true;

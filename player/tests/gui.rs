@@ -913,6 +913,7 @@ fn after_a_track_change_the_next_block_is_blank_until_its_analysis_is_in() {
         Action::Engine(jodel_playback::Event::TrackStarted(Box::new(
             jodel_playback::TrackStart {
                 index: 2,
+                head: 0,
                 info: track.info.clone(),
                 route: track.route.clone(),
                 output: track.output,

@@ -1,5 +1,5 @@
 //! Moving the playing track to a new route without a break (new
-//! settings, a transition's track onto its stems and back): the new route
+//! settings, a head back off its map): the new route
 //! reads ahead while the old one plays, and the two meet at an exact frame,
 //! crossfaded at the same output format or through a reopened output at
 //! another.
@@ -10,14 +10,13 @@ use std::time::Duration;
 use jodel_output::lanes::ending_frames;
 
 use crate::error::Error;
-use crate::rate::{Route, Stage};
+use crate::rate::Route;
 
-use super::api::Event;
 use super::track::{
     crossfade, drop_later, fade, frames_of, gcd, grid, preroll, rescale, Cue, CueEvent, Progress,
     SegStart, Splice, Switch, Track,
 };
-use super::{Engine, PARTS_PATIENCE, SWITCH_PREFILL, SWITCH_TURN, WRITE_WAIT};
+use super::{Engine, SWITCH_PREFILL, SWITCH_TURN, WRITE_WAIT};
 
 impl Engine {
     /// Moves the track being played to the route the settings choose for
@@ -25,28 +24,32 @@ impl Engine {
     /// waiting for the output to play out takes its new route at once (it
     /// is not heard yet).
     pub(super) fn reroute(&mut self) {
-        // A transition under way has its tracks where it needs them, and a
-        // head read along a map (or waiting to be) its route: their ends
-        // route them again.
-        if self.transition_running() || self.along_holds_route() {
+        // A head read along a map (or waiting to be: a transition's too)
+        // holds its route: its end routes it again. While a transition is
+        // prepared or mixed, its playing track is where the next one is
+        // linked to: only a way back off a map moves it.
+        let leaving = self
+            .head
+            .playing
+            .as_ref()
+            .is_some_and(|t| t.along.is_some());
+        if self.along_holds_route() || (self.transition_holds_route() && !leaving) {
             return;
         }
-        if self.switch.as_ref().is_some_and(|s| s.spliced) {
+        if self.head.switch.as_ref().is_some_and(|s| s.spliced) {
             // The old route ends at the frame the new one begins: once
             // the new one is playing, it is routed again.
-            self.reroute_later = true;
+            self.head.reroute_later = true;
             return;
         }
-        let Some(track) = &self.playing else {
+        let Some(track) = &self.head.playing else {
             return self.reroute_next();
         };
         let (index, info, current) = (track.index, track.info.clone(), track.route.clone());
-        // A track read along a map (a head's, a transition's), its stems
-        // faded by a transition or on its stand-in separator, is not on its
+        // A track read along a map (a head's, a transition's) is not on its
         // route as the settings make it once that is over, though the route
         // is the same: it moves to a fresh one.
-        let leftover =
-            self.transition.is_none() && (!track.plain_route() || track.separator.is_some());
+        let leftover = !track.plain_route();
         let keeping = |why: String| format!("{why}; keeping {} for this track", current.describe());
         let route = match self.route_for(&info) {
             Ok(route) => route,
@@ -59,7 +62,12 @@ impl Engine {
             self.cancel_switch();
             return;
         }
-        if self.switch.as_ref().is_some_and(|s| s.track.route == route) {
+        if self
+            .head
+            .switch
+            .as_ref()
+            .is_some_and(|s| s.track.route == route)
+        {
             return;
         }
         self.cancel_switch();
@@ -102,6 +110,7 @@ impl Engine {
         let switched = fallback.is_some();
         track.fallback = fallback;
         let open = self
+            .head
             .out
             .as_ref()
             .map(|o| (o.info.format, o.output.written()));
@@ -113,7 +122,7 @@ impl Engine {
                 self.cues.push_back(cue);
                 self.next = None;
                 self.finishing = false;
-                self.playing = Some(track);
+                self.head.playing = Some(track);
             }
             _ => self.next = Some(track),
         }
@@ -123,15 +132,15 @@ impl Engine {
     /// little before the frame being written ([`preroll`]), on the grid
     /// both routes meet exactly on, and decodes ahead from there.
     pub(super) fn begin_switch(&mut self, route: Route) -> Result<(), Error> {
-        let out = self.out.as_ref().ok_or(Error::Stopped)?;
+        let out = self.head.out.as_ref().ok_or(Error::Stopped)?;
         let written = out.output.written();
         let fits = route.fits(&out.info.format);
-        let old = self.playing.as_ref().ok_or(Error::Stopped)?;
+        let old = self.head.playing.as_ref().ok_or(Error::Stopped)?;
         let (a_old, _) = grid(&old.route);
         let (a_new, _) = grid(&route);
         let step = a_old / gcd(a_old, a_new) * a_new;
-        // A track read along a map (the playing one along a transition's
-        // glide) is where its map, as heard, puts it.
+        // A track read along a map (a head's, a transition's) is where its
+        // map, as heard, puts it.
         let along = self.heard_along(old).map(|h| h.frame_at(written));
         let at = along.unwrap_or_else(|| {
             old.seg_frame
@@ -152,15 +161,13 @@ impl Engine {
         let index = old.index;
         let mut track = self.prepare_at(index, start, Some(route))?;
         track.pending = true;
-        self.switch = Some(Switch {
+        self.head.switch = Some(Switch {
             track,
             grid: step,
             fits,
             retried: false,
             done: false,
             spliced: false,
-            for_parts: false,
-            parts_wait: None,
         });
         Ok(())
     }
@@ -168,7 +175,7 @@ impl Engine {
     /// Drops the switch under way, if any (in the background: closing its
     /// file and freeing its buffers can take a while).
     pub(super) fn cancel_switch(&mut self) {
-        if let Some(switch) = self.switch.take() {
+        if let Some(switch) = self.head.switch.take() {
             drop_later(switch.track);
         }
     }
@@ -180,17 +187,17 @@ impl Engine {
     /// meet, the new one takes over. Returns whether it took the turn
     /// (otherwise the old route writes or decodes).
     pub(super) fn work_switch(&mut self) -> Result<bool, Error> {
-        let Some(switch) = &self.switch else {
+        let Some(switch) = &self.head.switch else {
             return Ok(false);
         };
         if switch.spliced {
-            if self.playing.as_ref().map_or(0, Track::unwritten) > 0 {
+            if self.head.playing.as_ref().map_or(0, Track::unwritten) > 0 {
                 return Ok(false);
             }
             self.hand_over();
             return Ok(true);
         }
-        let Some(out) = &self.out else {
+        let Some(out) = &self.head.out else {
             return Ok(false);
         };
         let buffered = out.output.written().saturating_sub(out.clock.position());
@@ -198,12 +205,14 @@ impl Engine {
         let turn = self.paused
             || self.offline
             || (ring > 0 && buffered.saturating_mul(2) >= ring)
-            || self.stalled.is_some_and(|at| at.elapsed() < SWITCH_TURN);
+            || self
+                .head
+                .stalled
+                .is_some_and(|at| at.elapsed() < SWITCH_TURN);
         if !turn {
             return Ok(false);
         }
-        let mut switch = self.switch.take().expect("checked");
-        let before = switch.track.emitted;
+        let mut switch = self.head.switch.take().expect("checked");
         if !switch.done {
             match self.produce(&mut switch.track, Duration::ZERO) {
                 Ok(Progress::Busy) => {}
@@ -217,22 +226,9 @@ impl Engine {
                 Err(error) => return Err(error),
             }
         }
-        if let Some(reason) = switch.track.stems_error.take() {
-            // The stems did not start: the track plays on as it is (a
-            // transition fades it whole), until the mix changes.
-            self.stems_failed = true;
-            let index = switch.track.index;
-            self.emit(Event::StemsStopped { index, reason });
-            return Ok(true);
-        }
-        let waiting = switch.track.route.stage == Stage::Stems
-            && switch.track.emitted == before
-            && !switch.done;
-        self.switch = Some(switch);
+        self.head.switch = Some(switch);
         self.try_splice()?;
-        // Waiting for the old route's parts, the old route writes on.
-        let for_parts = self.switch.as_ref().is_some_and(|s| s.for_parts);
-        Ok(!waiting && !for_parts)
+        Ok(true)
     }
 
     /// The switch's new route failed before it was heard (`why`): it
@@ -247,19 +243,18 @@ impl Engine {
         if !switch.retried && start > first {
             if let Ok(mut track) = self.prepare_at(index, first, Some(route.clone())) {
                 track.pending = true;
-                self.switch = Some(Switch {
+                self.head.switch = Some(Switch {
                     track,
                     retried: true,
                     done: false,
                     spliced: false,
-                    for_parts: false,
-                    parts_wait: None,
                     ..switch
                 });
                 return;
             }
         }
         let current = self
+            .head
             .playing
             .as_ref()
             .map_or_else(String::new, |t| t.route.describe());
@@ -273,16 +268,16 @@ impl Engine {
     /// Meets the old route with the switch's new one if it has caught up
     /// ([`Engine::splice`]); drops the switch when the track ends first.
     pub(super) fn try_splice(&mut self) -> Result<(), Error> {
-        let Some(mut switch) = self.switch.take() else {
+        let Some(mut switch) = self.head.switch.take() else {
             return Ok(());
         };
-        let Some(mut old) = self.playing.take() else {
+        let Some(mut old) = self.head.playing.take() else {
             return Ok(());
         };
         let result = self.splice(&mut old, &mut switch);
-        self.playing = Some(old);
+        self.head.playing = Some(old);
         match result? {
-            Splice::Wait | Splice::Done => self.switch = Some(switch),
+            Splice::Wait | Splice::Done => self.head.switch = Some(switch),
             Splice::Cancel => {
                 // A new route that failed before where they would meet.
                 match switch.track.failure.take() {
@@ -307,7 +302,7 @@ impl Engine {
         /// Output frames a pending track keeps before what it may still
         /// meet the old route at, before it drops them.
         const KEEP: u64 = 65_536;
-        let Some(out) = &self.out else {
+        let Some(out) = &self.head.out else {
             return Ok(Splice::Wait);
         };
         let written = out.output.written();
@@ -318,8 +313,8 @@ impl Engine {
         let (a_new, b_new) = grid(&switch.track.route);
         let step_out = switch.grid / a_old * b_old;
         let start = switch.track.seg_frame;
-        // An old track read along a map (a head along its own, the playing
-        // one along a transition's glide, called off) has no grid with the
+        // An old track read along a map (a head along its own, or along a
+        // transition's map) has no grid with the
         // output: it meets the new one on the first frame of the new
         // route's grid its map reaches at or after output frame `from`, at
         // the output frame the map puts it on (to half a frame; the
@@ -330,11 +325,18 @@ impl Engine {
         let meet = |from: u64| {
             if let Some(h) = &along {
                 let warp = h.warp.as_ref().expect("heard along a map");
-                let frame = start + h.frame_at(from).saturating_sub(start).div_ceil(a_new) * a_new;
                 let rate = f64::from(old.info.rate.max(1));
-                let at = warp.output_frame_at(frame as f64 / rate);
+                let at = |frame: u64| warp.output_frame_at(frame as f64 / rate);
+                // The first grid frame the map puts at or after `from` (one
+                // a hair before it is the frame before it, played already).
+                let from = from.max(old.seg_out);
+                let mut frame =
+                    start + h.frame_at(from).saturating_sub(start).div_ceil(a_new) * a_new;
+                while at(frame) < from {
+                    frame += a_new;
+                }
                 let j = (frame - start) / a_new * b_new;
-                return (frame, at.max(from).max(old.seg_out), j);
+                return (frame, at(frame), j);
             }
             let n = from.saturating_sub(old.seg_out).div_ceil(step_out);
             let frame = old.seg_frame + n * switch.grid;
@@ -379,20 +381,9 @@ impl Engine {
         }
         let ahead = new.emitted - j;
         let cross = if switch.fits { fade_old.min(ahead) } else { 0 };
-        // Not for ever: a separator that cannot keep up gives way to the
-        // move (and the jump) after a while.
-        let wait = switch.fits && lanes && self.waits_for_parts(old, new, written);
-        let patience = (PARTS_PATIENCE * f64::from(old.route.output_rate)) as u64;
-        switch.for_parts = wait && {
-            let since = *switch.parts_wait.get_or_insert(written);
-            written < since + patience
-        };
-        if switch.for_parts {
-            return Ok(Splice::Wait);
-        }
         // The old route's output up to there (and through the crossfade).
         while old.seg_out + old.emitted < at + cross {
-            if old.failure.is_some() || old.stems_error.is_some() {
+            if old.failure.is_some() {
                 return Ok(Splice::Cancel);
             }
             match self.produce(old, WRITE_WAIT) {
@@ -459,11 +450,6 @@ impl Engine {
                 fade: cross as usize,
             };
             new.continue_segment(old.segment, at, frame, joined);
-            if !new.plain_route() {
-                // No parts of its own: the old route's end there once the
-                // crossfade has met it.
-                new.parts_hold = Some(at + cross + ending_frames(new_rate));
-            }
             let cue = self.started(new);
             self.cues.push_back(cue);
             self.release(new);
@@ -479,71 +465,21 @@ impl Engine {
     /// one plays on (or, at another format, waits for the output to play
     /// out and open again).
     fn hand_over(&mut self) {
-        let Some(switch) = self.switch.take() else {
+        let Some(switch) = self.head.switch.take() else {
             return;
         };
         // The old track, written to where the new one begins.
-        if let Some(old) = self.playing.take() {
+        if let Some(old) = self.head.playing.take() {
             drop_later(old);
         }
         if switch.fits {
-            self.playing = Some(switch.track);
+            self.head.playing = Some(switch.track);
         } else {
             self.next = Some(switch.track);
             self.finishing = true;
         }
-        if std::mem::take(&mut self.reroute_later) {
+        if std::mem::take(&mut self.head.reroute_later) {
             self.reroute();
-        }
-    }
-
-    /// The stems of `track` stopped (`why`; a transition's track on them):
-    /// it goes on, on its own route, from the frame after what was written,
-    /// with nothing flushed (in the same output when it fits, else after
-    /// this one plays out); a transition takes its tracks whole until the
-    /// mix changes.
-    pub(super) fn stems_stopped(&mut self, track: Track, why: &str) {
-        self.cancel_switch();
-        let index = track.index;
-        let channels = usize::from(track.route.channels);
-        let unwritten = (track.out_buf.len() - track.out_at) / channels;
-        let written = track.emitted.saturating_sub(unwritten as u64);
-        let frame =
-            track.seg_frame + rescale(written, track.route.output_rate, track.route.input_rate);
-        let rate = f64::from(track.info.rate.max(1));
-        drop(track);
-        self.stems_failed = true;
-        self.emit(Event::StemsStopped {
-            index,
-            reason: why.to_owned(),
-        });
-        let end = self.out.as_ref().map_or(0, |o| o.output.written());
-        match self.prepare(index, frame as f64 / rate) {
-            Ok(mut track) => {
-                let fits = self
-                    .out
-                    .as_ref()
-                    .is_some_and(|o| track.route.fits(&o.info.format));
-                if fits {
-                    track.begin_segment(end, track.seg_frame, SegStart::Cold);
-                    let cue = self.started(&track);
-                    self.cues.push_back(cue);
-                    self.playing = Some(track);
-                } else {
-                    self.next = Some(track);
-                    self.finishing = true;
-                }
-            }
-            Err(error) if error.is_skippable() => {
-                self.cues.push_back(Cue {
-                    at: end,
-                    event: CueEvent::Skipped { index, error },
-                });
-                if let Err(error) = self.advance(index + 1, end) {
-                    self.fail(None, error);
-                }
-            }
-            Err(error) => self.fail(Some(index), error),
         }
     }
 }

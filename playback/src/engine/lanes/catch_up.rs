@@ -57,14 +57,14 @@ impl Engine {
     /// jump under way (they count on the frames written), off the plain
     /// route, and with nothing to write again.
     pub(super) fn rewrite_floor(&self, track: &Track) -> Option<u64> {
-        let busy = self.switch.is_some()
+        let busy = self.head.switch.is_some()
             || self.transition.is_some()
-            || self.pending_jump.is_some()
-            || self.jump_fill.is_some();
+            || self.head.pending_jump.is_some()
+            || self.head.jump_fill.is_some();
         if self.offline || busy || !track.plain() {
             return None;
         }
-        let out = self.out.as_ref().filter(|o| o.output.lanes() > 1)?;
+        let out = self.head.out.as_ref().filter(|o| o.output.lanes() > 1)?;
         let ch = usize::from(track.route.channels);
         let written = out.output.written();
         let held = (track.out_at / ch) as u64;
@@ -81,15 +81,19 @@ impl Engine {
     /// them are made ([`StemLanes::rewind_to`]), the output gives back
     /// what it has not played from there, and `track` writes it again.
     pub(super) fn rewrite_lanes(&mut self, track: &mut Track) -> Result<(), Error> {
-        let (Some(floor), Some(out)) = (self.rewrite_floor(track), self.out.as_ref()) else {
+        let (Some(floor), Some(out)) = (self.rewrite_floor(track), self.head.out.as_ref()) else {
             return Ok(());
         };
         let from = out.output.written();
         let margin = self.lane_margin(out.info.format.rate);
-        let Some(to) = self.lanes.rewind_to(&Line::of(track), from, floor, margin) else {
+        let Some(to) = self
+            .head
+            .lanes
+            .rewind_to(&Line::of(track), from, floor, margin)
+        else {
             return Ok(());
         };
-        let out = self.out.as_mut().ok_or(Error::Stopped)?;
+        let out = self.head.out.as_mut().ok_or(Error::Stopped)?;
         let n = out.output.retract(from - to)?;
         track.out_at -= n as usize * usize::from(track.route.channels);
         Ok(())

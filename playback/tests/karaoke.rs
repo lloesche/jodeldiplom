@@ -176,7 +176,7 @@ fn in_real_time_a_count_in_has_the_band_ready_at_its_end() {
     );
     let captures = device.captures();
     let mixer = Mixer::open(Box::new(device), MixerOptions::default());
-    let (desk, input) = StemDesk::new(&mixer, "Player", Role::Lead, 1.0);
+    let (desk, head) = StemDesk::new(&mixer, "Player", Role::Lead, 1.0);
     desk.stem(Stem::Vocals).set_mute(true);
     let options = PlayerOptions {
         settings: Settings {
@@ -186,7 +186,7 @@ fn in_real_time_a_count_in_has_the_band_ready_at_its_end() {
         separator: Some(quarter),
         ..options()
     };
-    let (player, events) = Player::new(Box::new(input), options);
+    let (player, events) = Player::new(head.target, options);
     player.make_stems(MakeStems::Separate).unwrap();
     player.load(vec![path]).unwrap();
     player.play_in(0, 2.0).unwrap();

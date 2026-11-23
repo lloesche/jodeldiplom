@@ -18,7 +18,9 @@ use jodel_output::{
     Capabilities, Clock, Error as OutputError, OpenRequest, Output, SampleFormat, SimClock, Stats,
     StreamFormat, StreamInfo,
 };
-use jodel_playback::{Captures, Event, MemoryTarget, OutputTarget, Resampler, Source, StemDesk};
+use jodel_playback::{
+    Captures, Event, Head, MemoryTarget, OutputTarget, Resampler, Source, StemDesk,
+};
 
 pub const TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -221,13 +223,16 @@ impl GatedTarget {
     /// `inner` gated.
     pub fn around(inner: Box<dyn OutputTarget>) -> (GatedTarget, Arc<Gate>) {
         let gate = Arc::new(Gate::default());
-        (
-            GatedTarget {
-                inner,
-                gate: gate.clone(),
-            },
-            gate,
-        )
+        (GatedTarget::sharing(inner, &gate), gate)
+    }
+
+    /// `inner` gated by `gate`, which other targets may share (the frames
+    /// it lets through are theirs together).
+    pub fn sharing(inner: Box<dyn OutputTarget>, gate: &Arc<Gate>) -> GatedTarget {
+        GatedTarget {
+            inner,
+            gate: gate.clone(),
+        }
     }
 }
 
@@ -258,18 +263,39 @@ pub fn gated_mixer_lanes(caps: Capabilities) -> (GatedTarget, Captures, Arc<Gate
     let device = MemoryTarget::new(caps, SimClock::Instant);
     let captures = device.captures();
     let mixer = Mixer::open(Box::new(device), MixerOptions::default());
-    let (desk, input) = StemDesk::new(&mixer, "Player", Role::Lead, 1.0);
-    let (target, gate) = GatedTarget::around(Box::new(input));
+    let (desk, head) = StemDesk::new(&mixer, "Player", Role::Lead, 1.0);
+    let (target, gate) = GatedTarget::around(head.target);
     (
         target,
         captures,
         gate,
         MixerLanes {
             parts: desk.stems,
-            faders: desk.lanes,
+            faders: head.faders.lanes,
             mixer,
         },
     )
+}
+
+/// A player's two heads on the desk of a mixer on a [`MemoryTarget`] of
+/// `clock` ([`StemDesk::two_heads`]: the PLAYER group, the four stems
+/// inside it), both gated by one [`Gate`], the device's streams, the
+/// strips, and the mixer (dropped after the player).
+pub fn gated_desk(
+    caps: Capabilities,
+    clock: SimClock,
+) -> (Head, Head, Captures, Arc<Gate>, StemDesk, Mixer) {
+    let device = MemoryTarget::new(caps, clock);
+    let captures = device.captures();
+    let mixer = Mixer::open(Box::new(device), MixerOptions::default());
+    let (desk, lead, guest) = StemDesk::two_heads(&mixer, "Player", 1.0);
+    let gate = Arc::new(Gate::default());
+    let gated = |head: Head| Head {
+        target: Box::new(GatedTarget::sharing(head.target, &gate)),
+        ..head
+    };
+    let (lead, guest) = (gated(lead), gated(guest));
+    (lead, guest, captures, gate, desk, mixer)
 }
 
 /// What [`gated_mixer_lanes`] keeps: the part strips and faders, and the

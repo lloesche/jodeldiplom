@@ -13,8 +13,7 @@ use jodel_output::SampleFormat::*;
 use jodel_output::{SimClock, StreamFormat};
 use jodel_playback::{
     choose_route, probe, probe_header, Codec, Container, CoverOrigin, Event, FileFacts,
-    MemoryTarget, PlayState, Player, PlayerOptions, Resampler, Settings, Source, Stage,
-    LOSSY_HEADROOM,
+    MemoryTarget, PlayState, Player, PlayerOptions, Resampler, Settings, Source, LOSSY_HEADROOM,
 };
 
 const RATE: u32 = 44_100;
@@ -331,7 +330,6 @@ fn lossy_files_route_as_pcm_and_read_user_tags() {
     assert!(facts.float);
     assert_eq!(facts.decoded_from, Some("MP3"));
     let route = choose_route(&facts, &caps(&[44_100], &[S24In32]), &Settings::default()).unwrap();
-    assert_eq!(route.stage, Stage::Passthrough);
     assert!(!route.lossless);
     assert_eq!(route.headroom, LOSSY_HEADROOM);
     assert_eq!(route.describe(), "44.1 kHz decoded from MP3 (-1.5 dB)");
@@ -524,7 +522,6 @@ fn lossy_tracks_play_gaplessly_and_never_bit_perfect() {
     for start in &starts {
         assert!(!start.bit_perfect);
         assert!(!start.route.lossless);
-        assert_eq!(start.route.stage, Stage::Passthrough);
     }
     assert_eq!(starts[0].route.decoded_from, Some("MP3"));
     assert_eq!(starts[1].route.decoded_from, Some("Vorbis"));

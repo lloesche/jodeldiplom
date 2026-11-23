@@ -1154,14 +1154,12 @@ impl App {
         let state = &mut self.state;
         let song = crate::core::karaoke::song_index(state)
             .filter(|_| crate::core::karaoke::in_mode(state));
-        let (Some(index), Some(track)) = (song, state.playing.track.as_ref()) else {
+        // Where in the song each block was sung, through the head it was
+        // heard on (a hand-over moves the microphone's tap).
+        let Some(index) = song else {
             return;
         };
-        if track.index != index {
-            return;
-        }
-        let out_rate = f64::from(track.output.format.rate.max(1));
-        let Some((_, frame0, seconds0)) = state.playing.anchor.filter(|a| a.0 == index) else {
+        let Some(clock) = crate::core::voice_time::VoiceClock::of(state, index) else {
             return;
         };
         let path = state.queue.paths[index].clone();
@@ -1198,6 +1196,7 @@ impl App {
         }
         // A frame's pitch is that of the window before it: its middle.
         let centre = jodel_rhythm::yin::WINDOW / 2.0;
+        let placed = clock.place(&self.sung);
         // Kept as it is heard, where that is on.
         if state.config.karaoke_keep {
             if self.kept.as_ref().is_none_or(|k| k.song != path) {
@@ -1209,16 +1208,15 @@ impl App {
                 ));
             }
             if let Some(kept) = self.kept.as_mut() {
-                for block in &self.sung {
-                    let at = seconds0 + (block.stream_frame as f64 - frame0 as f64) / out_rate;
+                for &(block, at, continues) in &placed {
                     let how = (late, source.key());
-                    kept.push(&block.samples, block.rate, at, block.continues, how);
+                    kept.push(&block.samples, block.rate, at, continues, how);
                 }
             }
         }
-        for block in &self.sung {
+        for &(block, at, continues) in &placed {
             let fresh = match &self.yin {
-                Some((rate, _)) => *rate != block.rate || !block.continues,
+                Some((rate, _)) => *rate != block.rate || !continues,
                 None => true,
             };
             if fresh {
@@ -1227,11 +1225,10 @@ impl App {
             let Some((_, yin)) = self.yin.as_mut() else {
                 continue;
             };
-            let factor = out_rate / f64::from(block.rate.max(1));
+            let rate = f64::from(block.rate.max(1));
             for (i, &x) in block.samples.iter().enumerate() {
                 yin.push(&[x], |cents| {
-                    let frame = block.stream_frame as f64 + i as f64 * factor;
-                    let t = seconds0 + (frame - frame0 as f64) / out_rate - centre;
+                    let t = at + i as f64 / rate - centre;
                     singing.hear(t - late, cents);
                     if estimating {
                         estimate.hear(singing, t, cents);
@@ -1740,14 +1737,14 @@ impl App {
         let Some(engine) = &mut self.engine else {
             return;
         };
-        let (lead, strip) = (
-            engine.lead.clone(),
+        let (song, strip) = (
+            engine.song_faders(),
             engine.strip(core::desk::StripKind::Preview).clone(),
         );
         match (what, &mut engine.previews) {
             (Preview::Play { path }, previews) => previews
                 .get_or_insert_with(|| {
-                    crate::preview::Previews::new(lead, strip, self.state.engine_settings())
+                    crate::preview::Previews::new(song, strip, self.state.engine_settings())
                 })
                 .play(&engine.mixer, path),
             (Preview::Silent, Some(p)) => p.silent(),

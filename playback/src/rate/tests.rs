@@ -166,14 +166,12 @@ fn gc7_plays_the_48k_family_and_refuses_the_44k_family() {
     let caps = gc7();
     let def = exact();
     let route = choose_route(&pcm(192_000, 2, 24), &caps, &def).unwrap();
-    assert_eq!(route.stage, Stage::Passthrough);
     assert_eq!(route.format, StreamFormat::new(192_000, 2, S24Packed));
     // S16 would lose bits: never offered.
     assert_eq!(route.formats, [S24Packed]);
     assert!(route.lossless);
     // 16-bit 48 kHz may use S16, 44.1 kHz cannot play.
     let r = choose_route(&pcm(48_000, 2, 16), &caps, &def).unwrap();
-    assert_eq!(r.stage, Stage::Passthrough);
     assert_eq!(r.formats, [S24Packed, S16]);
     let none = choose_route(&pcm(44_100, 2, 16), &caps, &def).unwrap_err();
     assert!(none.reason.contains("48 kHz, 96 kHz, 192 kHz"), "{none}");
@@ -207,12 +205,7 @@ fn plain_pcm_plays_at_its_own_rate_and_channels() {
     // A rate outside the probe list is not in the matrix.
     assert!(choose_route(&pcm(32_000, 2, 16), &caps, &def).is_err());
     let caps32 = device(&[32_000], &[S32], &[2]);
-    assert_eq!(
-        choose_route(&pcm(32_000, 2, 24), &caps32, &def)
-            .unwrap()
-            .stage,
-        Stage::Passthrough
-    );
+    assert!(choose_route(&pcm(32_000, 2, 24), &caps32, &def).is_ok());
     // 32-bit and float files play, flagged as not lossless.
     let wide = pcm(44_100, 2, 32);
     let r = choose_route(&wide, &caps, &def).unwrap();
@@ -320,7 +313,6 @@ fn gc7_resamples_the_44k_family() {
     let route = choose_route(&pcm(44_100, 2, 16), &caps, &def).unwrap();
     assert_eq!(route.describe(), "44.1 kHz → resample 48 kHz (160/147)");
     assert_eq!(route.formats, [S24Packed]);
-    assert_eq!(route.stage, Stage::Passthrough);
     assert!(route.passed_over.is_some());
     for (rate, out, ratio) in [
         (22_050, 48_000, (320, 147)),
@@ -465,40 +457,4 @@ fn exhaustive_resampling_invariants() {
             }
         }
     }
-}
-
-/// A transition's stems play at the open output's format: stereo, at its
-/// rate (resampled from the separator's when it is another, if
-/// resampling is on), in a format holding 24 bits; never lossless.
-#[test]
-fn a_transitions_stems_follow_the_open_output() {
-    let file = pcm(96_000, 1, 24);
-    let open = StreamFormat::new(176_400, 2, S32);
-    let route = stems_at(&file, &full(), &resampling(None), &open).unwrap();
-    assert_eq!(route.stage, Stage::Stems);
-    assert_eq!(
-        (route.input_rate, route.output_rate, route.channels),
-        (96_000, 176_400, 2)
-    );
-    assert!(route.fits(&open) && !route.lossless);
-    assert_eq!(
-        route.resample.map(|r| (r.from, r.to)),
-        Some((44_100, 176_400))
-    );
-    assert_eq!(
-        route.describe(),
-        "96 kHz → stems 44.1 kHz → resample 176.4 kHz (4/1)"
-    );
-    // At the separator's own rate, resampling off too.
-    let at_44 = StreamFormat::new(44_100, 2, S32);
-    let route = stems_at(&file, &full(), &exact(), &at_44).unwrap();
-    assert!(route.resample.is_none());
-    assert_eq!(route.describe(), "96 kHz → stems 44.1 kHz");
-    // Not at another rate without resampling, nor in a format that loses
-    // bits, nor on a mono output.
-    assert_eq!(stems_at(&file, &full(), &exact(), &open), None);
-    let s16 = StreamFormat::new(48_000, 2, S16);
-    assert_eq!(stems_at(&file, &gc7(), &resampling(None), &s16), None);
-    let mono = StreamFormat::new(44_100, 1, S32);
-    assert_eq!(stems_at(&file, &full(), &exact(), &mono), None);
 }

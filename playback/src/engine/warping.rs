@@ -1,7 +1,7 @@
 //! Frames read along a time map ([`Warping`]): at a changing speed
 //! (varispeed), or stretched in time with the pitch kept. Any number of
-//! interleaved channels at the stems' rate: a transition's stereo stem mix,
-//! or a head's four stereo stems read along its map ([`super::lanes`]).
+//! interleaved channels at the stems' rate: a head's four stereo stems read
+//! along its map ([`super::lanes`]).
 
 use std::sync::Arc;
 
@@ -172,11 +172,6 @@ impl Warping {
             Reader::Speed(_) => 0.0,
             Reader::Stretch(s) => s.off,
         }
-    }
-
-    /// The map it reads along.
-    pub(super) fn map(&self) -> &Arc<TimeMap> {
-        &self.map
     }
 
     /// The input has ended.

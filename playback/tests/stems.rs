@@ -4,9 +4,8 @@
 //! levels in place of the file while one is touched. A level is heard
 //! within the device's buffer; untouched, the file is heard bit for bit
 //! again; seeks, gapless changes, a failing separator and stems kept in a
-//! store; and the stems a transition sums kept under full scale. The
-//! separator here gives each stem a quarter of the mix, so all four add up
-//! to it.
+//! store. The separator here gives each stem a quarter of the mix, so all
+//! four add up to it.
 
 mod common;
 
@@ -18,10 +17,10 @@ use common::lanes::{broken, device_samples, options, quarter, tone_file, CLOSE, 
 use common::*;
 use jodel_output::mixer::{Mixer, MixerOptions, Role, Strip};
 use jodel_output::{Capabilities, SampleFormat, SimClock};
-use jodel_playback::stems::{Stem, CEILING, LANES, STEMS};
+use jodel_playback::stems::{Stem, LANES, STEMS};
 use jodel_playback::{
-    Captures, Envelope, Event, MakeStems, MemoryTarget, Player, PlayerOptions, Stage, StemDesk,
-    StemFile, StemStore, StemWriter, TempoMode, TransitionPlan, TransitionState,
+    Captures, Event, MakeStems, MemoryTarget, Player, PlayerOptions, StemDesk, StemFile, StemStore,
+    StemWriter,
 };
 use SampleFormat::*;
 
@@ -71,14 +70,14 @@ fn held_desk(caps: Capabilities) -> Held {
     let captures = device.captures();
     let (device, gate) = GatedTarget::around(Box::new(device));
     let mixer = Mixer::open(Box::new(device), MixerOptions::default());
-    let (desk, input) = StemDesk::new(&mixer, "Player", Role::Lead, 1.0);
-    let (input, engine) = GatedTarget::around(Box::new(input));
+    let (desk, head) = StemDesk::new(&mixer, "Player", Role::Lead, 1.0);
+    let (input, engine) = GatedTarget::around(head.target);
     engine.allow_all();
     let (player, events) = Player::new(Box::new(input), options(false, true, quarter));
     player.make_stems(MakeStems::Separate).unwrap();
     let lanes = MixerLanes {
         parts: desk.stems,
-        faders: desk.lanes,
+        faders: head.faders.lanes,
         mixer,
     };
     Held {
@@ -355,84 +354,4 @@ fn kept_stems_play_without_a_separation() {
         let worst = off(&got, 1_000, &file, 1_000, frames - 1_000, scale);
         assert!(worst <= 600.0, "solo {solo}: {worst} steps off");
     }
-}
-
-/// The stems a transition sums (its playing track on them before the
-/// window, at their full gains) where they add up to over full scale (three
-/// of them each the whole track, at half scale): what the device gets stays
-/// under the stems' ceiling, nothing clipped, and held near it.
-#[test]
-fn a_transitions_stems_summed_over_full_scale_are_kept_under_it() {
-    let dir = temp_dir("stems-over");
-    let frames = 8 * RATE as usize;
-    let (a_path, a) = tones_of(&dir, "a.wav", frames);
-    let b_path = dir.join("b.wav");
-    write_wav(&b_path, RATE, 2, &vec![0; 2 * frames]);
-    let store = kept(
-        &dir,
-        &a_path,
-        &a,
-        &[Stem::Bass, Stem::Vocals, Stem::Other],
-        1.0,
-    );
-    let target = MemoryTarget::new(caps(&[RATE], &[S24In32Low]), SimClock::Instant);
-    let captures = target.captures();
-    let options = PlayerOptions {
-        stem_store: Some(store),
-        ..options(false, true, quarter)
-    };
-    let (player, events) = Player::new(Box::new(target), options);
-    player.load(vec![a_path, b_path]).unwrap();
-    player.play(0).unwrap();
-    collect_until(&events, |e| matches!(e, Event::TrackStarted(_)));
-    let fade = |from, to| Envelope::fade(from, to, 0.0, 1.0);
-    player
-        .transition(TransitionPlan {
-            from: 0,
-            into: 1,
-            start: 5.0,
-            length: 2.0,
-            entry: 0.0,
-            beats: Vec::new(),
-            lanes: std::array::from_fn(|i| {
-                if i < STEMS {
-                    fade(1.0, 0.0)
-                } else {
-                    fade(0.0, 1.0)
-                }
-            }),
-            tempo: TempoMode::Varispeed,
-            settle: 0.0,
-            glide: false,
-        })
-        .unwrap();
-    let seen = until_queue_end(&events);
-    drop(player);
-    assert!(seen
-        .iter()
-        .any(|e| matches!(e, Event::Transition(TransitionState::Started { .. }))));
-    // On its stems from about a second before the window (offline, it
-    // holds there until it is).
-    let rate = RATE as usize;
-    let onto = seen
-        .iter()
-        .find_map(|e| match e {
-            Event::TrackStarted(s) if s.index == 0 && s.route.stage == Stage::Stems => {
-                Some(s.output_frame as usize)
-            }
-            _ => None,
-        })
-        .expect("A on its stems");
-    assert!(onto < 4 * rate + rate / 4, "on its stems at {onto}");
-    let got = played(&captures);
-    // After the switch's crossfade, to the window.
-    let stretch = &got[2 * (onto + rate / 25)..2 * (5 * rate - rate / 20)];
-    let ceiling = CEILING * f64::from(1 << 23);
-    let peak = stretch
-        .iter()
-        .map(|&s| f64::from(s.abs()))
-        .fold(0.0, f64::max);
-    assert!(peak <= ceiling + 2.0, "{peak} over {ceiling}");
-    assert!(peak > 0.95 * ceiling, "held at {peak}, under {ceiling}");
-    assert!(!got.iter().any(|&s| s.abs() >= (1 << 23) - 1), "clipped");
 }

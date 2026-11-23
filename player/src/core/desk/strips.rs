@@ -43,15 +43,13 @@ impl StripKind {
         StripKind::Other,
     ];
 
-    /// The name the app gives the strip on the mixer.
+    /// The name of the strip on the mixer: a stem's is the stem's own, as
+    /// the player's desk names it ([`jodel_playback::StemDesk`]).
     pub fn name(self) -> &'static str {
         match self {
             StripKind::Player => "Player",
-            StripKind::Drums => "Drums",
-            StripKind::Bass => "Bass",
-            StripKind::Vocals => "Vocals",
-            StripKind::Other => "Other",
             StripKind::Preview => "Preview",
+            part => part.stem().map_or("", Stem::id),
         }
     }
 

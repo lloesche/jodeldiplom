@@ -15,7 +15,7 @@ use std::time::Duration;
 use common::*;
 use jodel_output::{SampleFormat, SimClock};
 use jodel_playback::{
-    Event, Headroom, MemoryTarget, Player, PlayerOptions, Resampler, Settings, Stage, TrackStart,
+    Event, Headroom, MemoryTarget, Player, PlayerOptions, Resampler, Settings, TrackStart,
 };
 use SampleFormat::*;
 
@@ -178,7 +178,6 @@ fn pieces(legs: &[&TrackStart], all: &[i32]) -> Vec<i32> {
     for (i, leg) in legs.iter().enumerate() {
         // Each switch meets on the 147 : 160 grid of the two rates.
         assert_eq!(147 * leg.output_frame, 160 * leg.from_frame, "{i}");
-        assert_eq!(leg.route.stage, Stage::Passthrough);
         let headroom = leg.route.resample.expect("resampled").headroom;
         let whole = resampled(44_100, 48_000, all, headroom);
         let from = 2 * leg.output_frame as usize;
@@ -292,7 +291,6 @@ fn another_format_fades_out_and_in_at_one_frame() {
     assert_eq!(legs[0].route.output_rate, 44_100);
     let down = resampled(48_000, 44_100, &all, Headroom::NONE);
     let exact = &legs[1];
-    assert_eq!(exact.route.stage, Stage::Passthrough);
     assert_eq!(exact.route.resample, None);
     assert_eq!(exact.output_frame, 0, "a new stream");
     let from = exact.from_frame as usize;

@@ -72,6 +72,8 @@ pub(crate) struct SlotState {
     pub(crate) queued: AtomicU64,
     pub(crate) capacity: AtomicU64,
     pub(crate) dropped: AtomicU64,
+    /// The stream frame of its output the mixer takes next.
+    pub(crate) next: AtomicU64,
     pub(crate) automation: AutomationState,
     /// Where its output's frames went last on the device.
     pub(crate) mapped: Mapped,
@@ -165,6 +167,7 @@ impl SlotState {
             queued: AtomicU64::new(0),
             capacity: AtomicU64::new(0),
             dropped: AtomicU64::new(0),
+            next: AtomicU64::new(0),
             automation: AutomationState {
                 gains: (0..curves_of(strips.len() - 1))
                     .map(|_| AtomicU64::new(1f64.to_bits()))
@@ -386,6 +389,14 @@ impl Fader {
     /// with none open.
     pub fn dropped(&self) -> u64 {
         self.slot.state.dropped.load(Ordering::Relaxed)
+    }
+
+    /// The stream frame of the output open on its input that the mixer
+    /// takes next, as of the last frames mixed (what it holds before that
+    /// is mixed, if not heard yet); `None` with none open.
+    pub fn mixed_to(&self) -> Option<u64> {
+        let state = &self.slot.state;
+        (state.format.load(Ordering::Relaxed) != 0).then(|| state.next.load(Ordering::Relaxed))
     }
 
     /// Whether the last ramp set has run to its end (one waiting for its

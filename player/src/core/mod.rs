@@ -32,6 +32,7 @@ pub mod sync;
 pub mod text;
 pub mod transition;
 mod update;
+pub mod voice_time;
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -296,10 +297,10 @@ pub struct Playing {
     pub state: PlayState,
     /// Seconds into the track, as heard.
     pub position: f64,
-    /// The last position the engine told (track, output frame, seconds into
-    /// the track): where the output's frames are in the song. None since a
-    /// track started, a seek or a jump, until the next.
-    pub anchor: Option<(usize, u64, f64)>,
+    /// The last position the engine told: where a head's output frames are
+    /// in the song. None since a track started, a seek or a jump, until the
+    /// next.
+    pub anchor: Option<Anchor>,
     /// Output frames a second of the track took between the last two
     /// positions told (a transition's next track goes at another speed for
     /// a while); `None` before two.
@@ -327,17 +328,44 @@ impl Default for Playing {
     }
 }
 
+/// A frame of the player's output: stream frame `frame` of head `head`
+/// ([`jodel_playback::TrackStart::head`]). A transition's next track plays
+/// on the player's other head, and from its hand-over the output frames
+/// told are that head's, counted from its first: a frame is a frame of the
+/// head it was told with.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct HeadFrame {
+    /// The head.
+    pub head: usize,
+    /// Its output's stream frame.
+    pub frame: u64,
+}
+
+/// A position the engine told ([`jodel_playback::Position`]): track `index`
+/// heard at `at`, `seconds` into it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Anchor {
+    /// The track's index in the queue.
+    pub index: usize,
+    /// The output frame heard, and its head.
+    pub at: HeadFrame,
+    /// Seconds into the track there.
+    pub seconds: f64,
+}
+
 impl Playing {
-    /// A position told: track `index` heard at output frame `frame`,
-    /// `seconds` into it.
-    pub fn anchor_at(&mut self, index: usize, frame: u64, seconds: f64) {
-        if let Some((i, f, s)) = self.anchor {
-            let dt = seconds - s;
-            if i == index && dt > 0.01 && frame > f {
-                self.speed = Some((frame - f) as f64 / dt);
+    /// A position told: the output's speed through the track since the
+    /// last (of the same track on the same head: none across a hand-over),
+    /// and the anchor there.
+    pub fn anchor_at(&mut self, at: Anchor) {
+        if let Some(was) = self.anchor {
+            let dt = at.seconds - was.seconds;
+            let same = was.index == at.index && was.at.head == at.at.head;
+            if same && dt > 0.01 && at.at.frame > was.at.frame {
+                self.speed = Some((at.at.frame - was.at.frame) as f64 / dt);
             }
         }
-        self.anchor = Some((index, frame, seconds));
+        self.anchor = Some(at);
     }
 
     /// The positions told before say nothing of what follows (another

@@ -15,10 +15,14 @@ pub mod mouse;
 pub mod strips;
 pub mod taper;
 
-use jodel_output::mixer::{DeskView, MasterView, Meters, MicView, PartsView, StripView};
+use jodel_output::lanes::Parts;
+use jodel_output::mixer::{
+    DeskView, InputView, MasterView, Meters, MicView, PartsView, Role, StripView,
+};
 
 use crate::core::keymap::Op;
 use crate::core::update::say_info;
+use crate::core::HeadFrame;
 use crate::core::{Effect, Screen, Side, State, VolumeChange, DOUBLE_CLICK_MS};
 
 pub use meter::{Meter, Pair};
@@ -68,9 +72,10 @@ pub enum DeskChange {
     Level(StripKind, f64),
     /// Muted or not.
     Mute(StripKind, bool),
-    /// Muted or not from a frame of the player's output (its stream frame,
-    /// [`jodel_output::mixer::Fader::at_stream`]): a bar's first beat.
-    MuteAt(StripKind, bool, u64),
+    /// Muted or not from a frame of the player's output (of its head, as
+    /// [`jodel_output::mixer::Fader::at_stream`] takes it): a bar's first
+    /// beat.
+    MuteAt(StripKind, bool, HeadFrame),
     /// Soloed or not.
     Solo(StripKind, bool),
     /// The controllers' gain of a stem's lane, not the user's strip: the
@@ -201,9 +206,10 @@ pub struct DeskState {
     pub mic_port: MicView,
     /// Each fader strip as last looked at ([`StripKind::index`]).
     pub views: [Option<StripView>; StripKind::COUNT],
-    /// The track whose stems stopped ([`jodel_playback::Event::PartsStopped`]):
-    /// it has none.
-    pub parts_failed: Option<usize>,
+    /// The tracks whose stems stopped
+    /// ([`jodel_playback::Event::PartsStopped`]): they have none (the
+    /// playing one, and a transition's next track, each on its head).
+    pub parts_failed: Vec<usize>,
     /// A stem's change waiting for its bar (the track, seconds into it): the
     /// stems are made until then, even if none is touched any more.
     pub stems_pending: Option<(usize, f64)>,
@@ -232,12 +238,39 @@ impl DeskState {
     }
 
     /// The switch of the player's input between its main and its stems, as
-    /// last looked at: `None` without an input of lanes.
+    /// last looked at: the Lead's (the head on air), else the first with
+    /// lanes; `None` without an input of lanes.
     pub fn parts(&self) -> Option<PartsView> {
-        self.view(StripKind::Player)?
-            .inputs
-            .iter()
-            .find_map(|i| i.parts)
+        let inputs = &self.view(StripKind::Player)?.inputs;
+        let lead = inputs.iter().find(|i| i.role == Role::Lead);
+        lead.and_then(|i| i.parts)
+            .or_else(|| inputs.iter().find_map(|i| i.parts))
+    }
+
+    /// Whether the player's stems are on the desk, as last looked at: every
+    /// head of it with an output open has its parts there (the one on air,
+    /// and a transition's next track's), and there is one.
+    pub fn stems_there(&self) -> bool {
+        let present = |p: Option<PartsView>| p.is_some_and(|p| p.state == Parts::Present);
+        let open = self.open_heads();
+        if open.is_empty() {
+            // None open as looked at: the Lead's parts as it left them.
+            return present(self.parts());
+        }
+        open.iter().all(|i| present(i.parts))
+    }
+
+    /// The player's heads with an output open, as last looked at.
+    pub fn open_heads(&self) -> Vec<&InputView> {
+        self.view(StripKind::Player).map_or(Vec::new(), |v| {
+            v.inputs.iter().filter(|i| i.format.is_some()).collect()
+        })
+    }
+
+    /// How many of the player's heads have an output open (two while a
+    /// transition's next track plays on the second).
+    pub fn heads_open(&self) -> u16 {
+        self.open_heads().len().min(2) as u16
     }
 
     /// Whether the player's stems have strips on the desk: its input has
@@ -535,7 +568,6 @@ mod tests {
     use super::*;
     use crate::config::Config;
     use crate::core::{update, Action};
-    use jodel_output::lanes::Parts;
     use jodel_output::mixer::Timebase;
 
     fn tab() -> State {
@@ -646,7 +678,6 @@ mod tests {
 
     /// A look with the player's stems on the desk.
     fn look_with_stems() -> Look {
-        use jodel_output::mixer::{InputView, Role};
         let mut look = look(0.5, false);
         let player = look.strips[0].as_mut().unwrap();
         player.view.inputs.push(InputView {

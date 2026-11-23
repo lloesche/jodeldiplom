@@ -17,7 +17,7 @@ impl Engine {
             return self.emit_queue();
         }
         let heard = self.heard.as_ref().map(|h| h.index);
-        let playing = self.playing.as_ref().map(|t| t.index);
+        let playing = self.head.playing.as_ref().map(|t| t.index);
         let waiting = self.next.as_ref().map(|t| t.index);
         if [heard, playing, waiting].contains(&Some(index)) {
             // What is heard (or about to be) goes: the track after it
@@ -72,7 +72,7 @@ impl Engine {
     /// track is gone; nothing it held can stay).
     fn reindex(&mut self, map: &dyn Fn(usize) -> Option<usize>) {
         let keep = |i: usize| map(i).unwrap_or(i);
-        for track in [self.playing.as_mut(), self.next.as_mut()]
+        for track in [self.head.playing.as_mut(), self.next.as_mut()]
             .into_iter()
             .flatten()
         {
@@ -81,13 +81,12 @@ impl Engine {
                 cue.event.reindex(map);
             }
         }
-        if let Some(switch) = &mut self.switch {
+        if let Some(switch) = &mut self.head.switch {
             switch.track.index = keep(switch.track.index);
         }
         if let Some(heard) = &mut self.heard {
             heard.index = keep(heard.index);
         }
-        self.stem_gains.reindex(&keep);
         self.tail = self.tail.and_then(map);
         for cue in &mut self.cues {
             cue.event.reindex(map);
@@ -99,7 +98,7 @@ impl Engine {
 
 impl CueEvent {
     /// Its track's index moved by `map` (kept where that track is gone).
-    fn reindex(&mut self, map: &dyn Fn(usize) -> Option<usize>) {
+    pub(super) fn reindex(&mut self, map: &dyn Fn(usize) -> Option<usize>) {
         let keep = |i: &mut usize| *i = map(*i).unwrap_or(*i);
         match self {
             CueEvent::Started(start, heard) => {

@@ -84,6 +84,7 @@ impl Slot {
         self.state.capacity.store(0, Ordering::Relaxed);
         self.state.queued.store(0, Ordering::Relaxed);
         self.state.dropped.store(0, Ordering::Relaxed);
+        self.state.next.store(0, Ordering::Relaxed);
         let stream = self.stream.take();
         if stream.is_some() {
             self.automation.reset();
@@ -255,6 +256,7 @@ impl Slot {
         if let Some(st) = &self.stream {
             s.queued.store(st.link.shared.ring.len(), Ordering::Relaxed);
             s.dropped.store(st.link.shared.dropped(), Ordering::Relaxed);
+            s.next.store(st.link.shared.head(), Ordering::Relaxed);
         }
     }
 }

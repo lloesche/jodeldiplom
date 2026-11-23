@@ -12,9 +12,7 @@ use common::*;
 use jodel_output::{Capabilities, SampleFormat, SimClock, StreamFormat};
 use jodel_playback::rate::Resample;
 use jodel_playback::resample::output_frames;
-use jodel_playback::{
-    Error, Event, MemoryTarget, PlayState, Player, PlayerOptions, Settings, Stage,
-};
+use jodel_playback::{Error, Event, MemoryTarget, PlayState, Player, PlayerOptions, Settings};
 use SampleFormat::*;
 
 fn gc7() -> Capabilities {
@@ -92,7 +90,6 @@ fn pcm_at_44k_plays_resampled_to_48k() {
     );
 
     let start = started(&events)[0];
-    assert_eq!(start.route.stage, Stage::Passthrough);
     assert_eq!(start.route.resample, Some(Resample::new(44_100, 48_000)));
     assert_eq!(
         start.route.describe(),
@@ -121,7 +118,6 @@ fn a_flac_file_at_44k_plays_resampled_to_48k() {
         "bytes differ"
     );
     let start = started(&events)[0];
-    assert_eq!(start.route.stage, Stage::Passthrough);
     assert_eq!(
         start.route.describe(),
         "44.1 kHz → resample 48 kHz (160/147)"

@@ -13,14 +13,21 @@
 //! on time give way to the whole mix too. While it waits or reads along
 //! the map nothing moves the head to another route (new settings wait), and
 //! no transition is set up. Once the map runs straight again (and a stretch
-//! is steered back onto it), the head goes back onto its own route at the
-//! same format, a switch met where the map puts it ([`Engine::reroute`],
-//! with the settings then): from there it plays the file bit for bit, as
-//! it would have. A switch back that does not come about is asked again a
-//! second later.
+//! is steered back onto it), or the head is told to leave it
+//! ([`Engine::leave_map`]: a transition called off that had it glide), the
+//! head goes back onto its own route at the same format, a switch met where
+//! the map puts it ([`Engine::reroute`], with the settings then): from
+//! there it plays the file bit for bit, as it would have. A switch back
+//! that does not come about is asked again a second later.
+//!
+//! A transition reads its tracks along maps too ([`Engine::read_along_at`]): the
+//! playing one along its glide, the next one, on a head of its own, from
+//! its first frame ([`Engine::start_along`]).
 
 use std::sync::Arc;
 use std::time::Duration;
+
+use jodel_output::Clock;
 
 use crate::error::Error;
 use crate::transition::TempoMode;
@@ -41,6 +48,11 @@ const STRAIGHT: f64 = 0.3;
 /// asked again.
 const RETRY: f64 = 1.0;
 
+/// Seconds of a head's silence still to be heard (a transition's next
+/// track's before its window) under which, on a device, stems not
+/// separated in time give way to the whole mix.
+const SOON: f64 = 0.25;
+
 /// A [`crate::Command::Along`] waiting for the playing head to be written
 /// up to its frame.
 pub(super) struct PendingAlong {
@@ -50,81 +62,147 @@ pub(super) struct PendingAlong {
     from: u64,
 }
 
+/// Why a track cannot be read along a map now, if it cannot.
+fn refusal(engine: &Engine, track: &Track) -> Option<String> {
+    let Some(out) = engine.head.out.as_ref() else {
+        return Some("no output is open".into());
+    };
+    if track.route.channels > 2 {
+        Some(format!(
+            "it has {} channels, and stems are made of two at most",
+            track.route.channels
+        ))
+    } else if !track.plain() && track.along.is_none() {
+        Some("it is not on its own route".into())
+    } else if out.output.lanes() <= 1 {
+        Some("the output takes no stems beside it".into())
+    } else if engine.head.lead > 0 {
+        Some("its count-in is playing".into())
+    } else if engine.head.switch.as_ref().is_some_and(|s| s.spliced) {
+        Some("its move to another route is meeting it".into())
+    } else {
+        None
+    }
+}
+
 impl Engine {
-    /// Whether a head is read along a map, or waits to be.
+    /// Whether a head is read along a map (and not leaving it), or waits
+    /// to be.
     pub(super) fn along_under_way(&self) -> bool {
-        self.along_at.is_some() || self.playing.as_ref().is_some_and(|t| t.along.is_some())
+        let on_map = self.head.playing.as_ref().and_then(|t| t.along.as_ref());
+        self.head.along_at.is_some() || on_map.is_some_and(|a| !a.leave)
     }
 
     /// Whether a head read along a map (or waiting to be) holds its route:
     /// any but the switch back it asked for waits.
     pub(super) fn along_holds_route(&self) -> bool {
-        let on_map = self.playing.as_ref().and_then(|t| t.along.as_ref());
-        self.along_at.is_some() || on_map.is_some_and(|a| a.back != Back::Asked)
+        let on_map = self.head.playing.as_ref().and_then(|t| t.along.as_ref());
+        self.head.along_at.is_some() || on_map.is_some_and(|a| a.back != Back::Asked)
     }
 
     /// [`crate::Command::Along`]: the playing track is read along `map`
-    /// from output frame `from` (the frame written next, if that is
-    /// later), by `tempo`; it writes no further until it is. Refused (with
-    /// a notice) with nothing playing, for a track of more than two
-    /// channels or off its own route (a transition's), off an output of
-    /// lanes, while a transition is set up, a count-in plays or a route
-    /// switch is meeting the track; a route switch not meeting it yet is
-    /// dropped, and a jump waiting (with a notice).
+    /// (the output's seconds to the track's) from output frame `from` (the
+    /// frame written next, if that is later), by `tempo`; it writes no
+    /// further until it is. Refused (with a notice) with nothing playing,
+    /// while a transition is set up, and where [`Engine::read_along_at`] refuses.
     pub(super) fn read_along(&mut self, map: Arc<TimeMap>, from: u64, tempo: TempoMode) {
         let refuse = |why: &str| format!("This track cannot be read along a time map: {why}");
-        let (Some(track), Some(out)) = (self.playing.as_ref(), self.out.as_ref()) else {
+        let (Some(track), Some(out)) = (self.head.playing.as_ref(), self.head.out.as_ref()) else {
             let message = "Nothing is playing to be read along a time map".into();
             return self.notice(None, message);
         };
         let index = track.index;
-        let why = if track.route.channels > 2 {
-            Some(format!(
-                "it has {} channels, and stems are made of two at most",
-                track.route.channels
-            ))
-        } else if !track.plain() && track.along.is_none() {
-            Some("it is not on its own route".into())
-        } else if out.output.lanes() <= 1 {
-            Some("the output takes no stems beside it".into())
-        } else if self.transition.is_some() {
-            Some("a transition is set up".into())
-        } else if self.lead > 0 {
-            Some("its count-in is playing".into())
-        } else if self.switch.as_ref().is_some_and(|s| s.spliced) {
-            Some("its move to another route is meeting it".into())
-        } else {
-            None
-        };
-        if let Some(why) = why {
-            return self.notice(Some(index), refuse(&why));
-        }
-        let heard = Arc::new(HeardWarp {
+        let heard = HeardWarp {
             map,
             origin: 0,
             a0: 0.0,
             out_rate: out.info.format.rate,
-        });
-        self.lanes.prepare_along(track, &heard, from);
-        self.along_at = Some(PendingAlong {
+        };
+        let why = if self.transition.is_some() {
+            Err("a transition is set up".into())
+        } else {
+            self.read_along_at(heard, from, tempo)
+        };
+        if let Err(why) = why {
+            self.notice(Some(index), refuse(&why));
+        }
+    }
+
+    /// Why `track` cannot be read along a map now, if it cannot.
+    pub(super) fn along_refusal(&self, track: &Track) -> Option<String> {
+        refusal(self, track)
+    }
+
+    /// The playing track is read along a map, as `heard` puts it, from
+    /// output frame `from` (the frame written next, if that is later), by
+    /// `tempo`; it writes no further until it is. Why not, for a track of
+    /// more than two channels or off its own route (not along a map), off
+    /// an output of lanes, while a count-in plays or a route switch is
+    /// meeting the track; a route switch not meeting it yet is dropped, and
+    /// a jump waiting (with a notice).
+    pub(super) fn read_along_at(
+        &mut self,
+        heard: HeardWarp,
+        from: u64,
+        tempo: TempoMode,
+    ) -> Result<(), String> {
+        let track = self.head.playing.as_ref().ok_or("nothing is playing")?;
+        if let Some(why) = refusal(self, track) {
+            return Err(why);
+        }
+        let index = track.index;
+        let heard = Arc::new(heard);
+        self.head.lanes.prepare_along(track, &heard, from);
+        self.head.along_at = Some(PendingAlong {
             segment: track.segment.id,
             map: AlongMap { heard, tempo },
             from,
         });
         self.cancel_switch();
         self.drop_jump_fill();
-        if self.pending_jump.take().is_some() {
+        if self.head.pending_jump.take().is_some() {
             let message =
                 "The jump waiting for its time is dropped: the track is read along a time map";
             self.notice(Some(index), message.into());
+        }
+        Ok(())
+    }
+
+    /// A head that is not playing yet (a transition's next track, on a head
+    /// of its own) is read along a map from its first frame, output frame
+    /// 0, as `heard` puts it there, by `tempo`, silent until the clock of
+    /// `heard_from` (the playing head's) is at its frame (its stems may be
+    /// waited for until that is near): its stems' run starts now.
+    pub(super) fn start_along(
+        &mut self,
+        track: &mut Track,
+        heard: HeardWarp,
+        tempo: TempoMode,
+        heard_from: (Clock, u64),
+    ) {
+        let heard = Arc::new(heard);
+        self.head.lanes.prepare_along(track, &heard, 0);
+        track.go_along(AlongMap { heard, tempo }, 0, 0);
+        if let Some(along) = track.along.as_mut() {
+            along.heard_from = Some(heard_from);
+        }
+    }
+
+    /// The playing head leaves its map as soon as it can (a transition
+    /// called off that had it glide): it goes back onto its own route from
+    /// where the map has it, as once a map runs straight.
+    pub(super) fn leave_map(&mut self) {
+        self.head.along_at = None;
+        if let Some(along) = self.head.playing.as_mut().and_then(|t| t.along.as_mut()) {
+            along.leave = true;
         }
     }
 
     /// The sample index the playing `track` writes no further than for a
     /// move onto a map waiting for its frame.
     pub(super) fn along_limit(&self, track: &Track) -> Option<usize> {
-        let pending = self.along_at.as_ref()?;
-        let written = self.out.as_ref()?.output.written();
+        let pending = self.head.along_at.as_ref()?;
+        let written = self.head.out.as_ref()?.output.written();
         let ch = usize::from(track.route.channels);
         let to = pending.from.saturating_sub(written) as usize * ch;
         Some(track.out_at + to)
@@ -133,7 +211,7 @@ impl Engine {
     /// Moves `track` onto `map` from the frame written next, its route's
     /// output made through a switch's fade first (to crossfade from).
     fn begin_along(&mut self, track: &mut Track, map: AlongMap) -> Result<(), Error> {
-        let out = self.out.as_ref().ok_or(Error::Stopped)?;
+        let out = self.head.out.as_ref().ok_or(Error::Stopped)?;
         let (at, rate) = (out.output.written(), out.info.format.rate);
         let fade = frames_of(self.switch_fade, rate) as usize;
         while track.unwritten() < fade {
@@ -167,7 +245,7 @@ impl Engine {
         track: &mut Track,
         wait: Duration,
     ) -> Result<Progress, Error> {
-        let out = self.out.as_ref().ok_or(Error::Stopped)?;
+        let out = self.head.out.as_ref().ok_or(Error::Stopped)?;
         let (written, rate) = (out.output.written(), out.info.format.rate);
         let ch = usize::from(track.route.channels).max(1);
         let index = track.index;
@@ -181,24 +259,36 @@ impl Engine {
         let ask = self.lane_ask(track, written, 0);
         let next = next_of(&self.queue, track, self.hold, self.transition.is_none());
         let target = main_end + margin + fade + 1;
-        let making = match self.lanes.make_along(&ask.want(track, next), target, wait) {
+        let making = match self
+            .head
+            .lanes
+            .make_along(&ask.want(track, next), target, wait)
+        {
             Ok(making) => making,
             Err(reason) => {
                 self.emit(Event::PartsStopped { index, reason });
                 Default::default()
             }
         };
-        let (end, done) = self.lanes.along_made();
+        let (end, done) = self.head.lanes.along_made();
         let to = if done {
             end
         } else {
             end.saturating_sub(margin)
         };
         // On a device stems that are not separated in time would leave it
-        // with nothing to play: the whole mix from here.
+        // with nothing to play: the whole mix from here (unless a while of
+        // its silence is still to be heard first: a transition's next
+        // track's frames late then are dropped on the desk, in time).
         let short = to < main_end + fade.max(1);
-        if !self.offline && short && making.waiting && self.lanes.along_separating() {
-            self.lanes.along_whole(track, written);
+        let silent = track
+            .along
+            .as_ref()
+            .and_then(|a| a.heard_from.as_ref())
+            .map_or(0, |(clock, at)| at.saturating_sub(clock.position()));
+        let soon = (silent as f64) < SOON * f64::from(rate);
+        if !self.offline && short && soon && making.waiting && self.head.lanes.along_separating() {
+            self.head.lanes.along_whole(track, written);
             let reason = "the stems were not separated in time: the whole mix plays".into();
             self.emit(Event::PartsStopped { index, reason });
             return Ok(Progress::Busy);
@@ -211,8 +301,11 @@ impl Engine {
             return Ok(Progress::Busy);
         }
         let before = track.out_buf.len();
-        track.mix_clips += self.lanes.sum_parts(main_end, to, ch, &mut track.out_buf);
-        let clipped = self.lanes.along_clipped();
+        track.mix_clips += self
+            .head
+            .lanes
+            .sum_parts(main_end, to, ch, &mut track.out_buf);
+        let clipped = self.head.lanes.along_clipped();
         if let Some(along) = track.along.as_mut() {
             // The route's main crossfaded into the sum, once.
             if let Some(tail) = along.tail.take() {
@@ -229,41 +322,41 @@ impl Engine {
     }
 
     /// A move onto a map whose frame is the one written next is made (one
-    /// given for another segment than the head's, or once a transition is
-    /// set up, is dropped; one waits while a route switch is meeting the
-    /// head); the head read along a map goes back onto its own route once
-    /// the map has run straight a while there and a stretch is steered
-    /// back onto it (it is at its own tempo then): a switch at the same
-    /// format, met where the map puts it, asked again a second later when
-    /// it does not come about.
+    /// given for another segment than the head's is dropped; one waits
+    /// while a route switch is meeting the head); the head read along a map
+    /// goes back onto its own route once the map has run straight a while
+    /// there and a stretch is steered back onto it (it is at its own tempo
+    /// then), or once it is told to leave it: a switch at the same format,
+    /// met where the map puts it, asked again a second later when it does
+    /// not come about.
     pub(super) fn along_turn(&mut self) -> Result<(), Error> {
-        let Some(out) = self.out.as_ref() else {
+        let Some(out) = self.head.out.as_ref() else {
             return Ok(());
         };
         let (written, rate) = (out.output.written(), out.info.format.rate);
         let retry = written + (RETRY * f64::from(rate)) as u64;
-        if let Some(pending) = self.along_at.take() {
-            let Some(mut track) = self.playing.take() else {
-                self.lanes.forget_ahead();
+        if let Some(pending) = self.head.along_at.take() {
+            let Some(mut track) = self.head.playing.take() else {
+                self.head.lanes.forget_ahead();
                 return Ok(());
             };
-            let meeting = self.switch.as_ref().is_some_and(|s| s.spliced);
-            let result = if track.segment.id != pending.segment || self.transition.is_some() {
-                self.lanes.forget_ahead();
+            let meeting = self.head.switch.as_ref().is_some_and(|s| s.spliced);
+            let result = if track.segment.id != pending.segment {
+                self.head.lanes.forget_ahead();
                 Ok(())
             } else if written < pending.from || meeting {
-                self.along_at = Some(pending);
+                self.head.along_at = Some(pending);
                 Ok(())
             } else {
                 self.cancel_switch();
                 self.begin_along(&mut track, pending.map)
             };
-            self.playing = Some(track);
+            self.head.playing = Some(track);
             return result;
         }
-        let switching = self.switch.is_some();
-        let steady = self.lanes.along_offset().abs() < 1.0;
-        let Some(along) = self.playing.as_mut().and_then(|t| t.along.as_mut()) else {
+        let switching = self.head.switch.is_some();
+        let steady = self.head.lanes.along_offset().abs() < 1.0;
+        let Some(along) = self.head.playing.as_mut().and_then(|t| t.along.as_mut()) else {
             return Ok(());
         };
         match along.back {
@@ -274,14 +367,14 @@ impl Engine {
         let heard = &along.map.heard;
         let a = heard.a0
             + written.saturating_sub(heard.origin) as f64 / f64::from(heard.out_rate.max(1));
-        let straight = a >= heard.map.settled_at() + STRAIGHT && steady;
+        let straight = along.leave || (a >= heard.map.settled_at() + STRAIGHT && steady);
         if along.back != Back::Reading || !straight {
             return Ok(());
         }
         along.back = Back::Asked;
         self.reroute();
-        if self.switch.is_none() {
-            if let Some(along) = self.playing.as_mut().and_then(|t| t.along.as_mut()) {
+        if self.head.switch.is_none() {
+            if let Some(along) = self.head.playing.as_mut().and_then(|t| t.along.as_mut()) {
                 along.back = Back::Retry(retry);
             }
         }

@@ -463,9 +463,17 @@ pub(crate) fn transition_event(state: &mut State, event: TransitionState) {
     match event {
         TransitionState::Armed => d.status = Status::Armed,
         // Only for one it has: a late word of one called off is not taken.
-        TransitionState::Started { output_frame } => {
+        TransitionState::Started {
+            head,
+            output_frame,
+            origin,
+        } => {
             if d.sent.is_some() {
-                d.status = Status::Mixing(output_frame);
+                let start = crate::core::HeadFrame {
+                    head,
+                    frame: output_frame,
+                };
+                d.status = Status::Mixing(tr::MixStart { start, origin });
             }
         }
         TransitionState::Finished => {

@@ -19,6 +19,7 @@ use crate::target::OutputTarget;
 use crate::transition::{TempoMode, TransitionPlan, TransitionState};
 use crate::warp::TimeMap;
 
+use super::heads::Head;
 use super::jump::JumpAt;
 use super::lanes::MakeStems;
 use super::Engine;
@@ -80,8 +81,9 @@ pub enum Command {
     /// Moves to this many seconds into the track being heard (clamped to
     /// the track). A paused player stays paused.
     Seek(f64),
-    /// Plays the next track; while a transition is heard, its next track
-    /// plays on alone at once, from where it is heard.
+    /// Plays the next track; while a transition is mixed, its next track
+    /// plays on alone at once, from where it is heard (the playing one
+    /// fading out over a few milliseconds).
     Next,
     /// Plays the previous track (the first one restarts).
     Previous,
@@ -97,11 +99,17 @@ pub enum Command {
     /// Plays a transition from the playing track into the next
     /// ([`TransitionPlan`]), replacing one armed or preparing (its tracks
     /// stay where they are; one heard is not replaced);
-    /// [`Event::Transition`] says how it goes. Only moving playback
-    /// elsewhere (play, seek, next, previous, stop, load, the next track
-    /// taken out of the queue) calls it off. The stems as a mixer plays
-    /// them ([`Command::StemMask`]) go into its fades, at their time; new
-    /// settings wait for its end.
+    /// [`Event::Transition`] says how it goes. The desk mixes it: the next
+    /// track plays on the player's second head ([`Player::on_desk`]; a
+    /// player without one calls it off: it needs a desk), linked to the
+    /// playing one, and the plan's lanes are automation of both heads'
+    /// inputs, so the desk's stem levels apply to both, on their frames.
+    /// Only moving playback elsewhere (play, seek, next, previous, stop,
+    /// load, the next track taken out of the queue) calls it off; new
+    /// settings wait for its end. Once it is handed over, the tracks after
+    /// play at the output format open, where they have a route at it, until
+    /// playback stops, a track is picked (play, previous, next outside a
+    /// mix, load), the queue ends or the settings change.
     Transition(Box<TransitionPlan>),
     /// Calls the transition off, if it is not heard yet (a mix under way
     /// plays to its end).
@@ -124,7 +132,7 @@ pub enum Command {
     /// How much of the playing track is kept behind what is heard and
     /// decoded ahead of it, in seconds, so that a [`Command::Jump`] within
     /// is heard at once (zero: none, as it plays otherwise). None while a
-    /// transition is set up, nor for a track it left on its stems.
+    /// transition is set up, nor for a track read along a map.
     JumpWindow {
         /// Seconds kept behind.
         back: f64,
@@ -138,17 +146,10 @@ pub enum Command {
     /// kept. The output is the same either way; a mixer may play the parts
     /// in place of main.
     MakeStems(MakeStems),
-    /// The stems as a mixer plays them, for what a transition mixes inside
-    /// the engine (its two tracks on their stems, faded by its lanes, are
-    /// heard as main, so a mixer's stem levels do not reach them there):
-    /// each stem's gain in [`crate::stems::LANES`]'s order (0 for one
-    /// muted), from `at` seconds into the playing track (a bar's first
-    /// beat), else at once. Outside a transition it changes nothing heard;
-    /// with gains other than one, the next track's return to its own route
-    /// after a transition waits until its stems are parts of the output
-    /// again, so a mixer can play them on from there. Other gains given
-    /// outside a transition also have the next one try stems that failed
-    /// again ([`Event::StemsStopped`]).
+    /// Taken and ignored: the desk plays the stems at their levels, a
+    /// transition's two tracks too (each on a head of its own). Each
+    /// stem's gain in [`crate::stems::LANES`]'s order, from `at` seconds
+    /// into the playing track, else at once.
     StemMask {
         /// Each stem's gain, drums, bass, vocals, other.
         gains: [f64; crate::stems::STEMS],
@@ -189,6 +190,11 @@ pub enum PlayState {
 pub struct TrackStart {
     /// The track's index in the queue.
     pub index: usize,
+    /// The head it plays on: 0 the target [`Player::new`] or
+    /// [`Player::on_desk`] is given first, 1 the second (a transition's next
+    /// track starts on the other head; [`Position::output_frame`] counts
+    /// that head's frames from then).
+    pub head: usize,
     /// The file: format, tags, cover.
     pub info: Arc<TrackInfo>,
     /// The route the rate policy chose.
@@ -213,12 +219,19 @@ pub struct TrackStart {
 pub struct Position {
     /// The track's index in the queue.
     pub index: usize,
+    /// The head whose output frames `output_frame` counts
+    /// ([`TrackStart::head`]).
+    pub head: usize,
     /// Seconds into the track.
     pub seconds: f64,
     /// The file frame being heard.
     pub frame: u64,
     /// The output frame being heard (as [`jodel_output::Output::position`]
-    /// counts them).
+    /// counts them), of the head played on. At a transition's hand-over
+    /// it steps back: from there it counts the next track's head's frames,
+    /// from its first (heard [`crate::NEXT_LEAD`] before the window); the
+    /// transition's [`TransitionState::Started`] is on the playing head's
+    /// frames.
     pub output_frame: u64,
 }
 
@@ -286,13 +299,9 @@ pub enum Event {
         /// A sentence for the user.
         message: String,
     },
-    /// The stems a transition mixes stopped (the separator failed): the
-    /// track plays on its own route from where they stopped (the
-    /// transition fades it whole), and the transitions after take their
-    /// tracks whole, each one stem, until stems may work again: other gains
-    /// in [`Command::StemMask`] outside a transition, a stop (or a new
-    /// queue), or stems separated again as parts of the output
-    /// ([`Command::MakeStems`]).
+    /// Not sent any more: a transition's stems that fail are its tracks'
+    /// parts that stop ([`Event::PartsStopped`]), and the desk fades a
+    /// track without parts by its lanes' mean.
     StemsStopped {
         /// The track.
         index: usize,
@@ -341,9 +350,9 @@ pub struct PlayerOptions {
     /// them).
     pub capabilities: Option<Capabilities>,
     /// Where the stems get their separator ([`crate::stems`]): the parts
-    /// of an output of lanes ([`Command::MakeStems`]) and a transition's
-    /// mix. `None`: only stems kept are parts, and a transition fades its
-    /// tracks whole.
+    /// of an output of lanes ([`Command::MakeStems`]), a head read along a
+    /// map's too. `None`: only stems kept are parts (a head along a map has
+    /// the whole mix as one, and a transition fades it whole).
     pub separator: Option<SeparatorSource>,
     /// Where tracks' stems are kept ([`crate::stem_file`]): a track found
     /// there plays its kept stems, and only one that is not is separated.
@@ -352,11 +361,11 @@ pub struct PlayerOptions {
     /// (and fades out and in at another); zero: they meet at one frame.
     pub switch_fade: Duration,
     /// The output is not a device playing in real time (a file being
-    /// rendered, a test's output): what a transition needs is waited for
-    /// rather than gone without. The playing track holds at the window
-    /// until it is on the stems the window needs, and each piece of the
-    /// mix waits for the next track's frames however long they take. A
-    /// device could not wait (it would run dry); a file loses nothing by it.
+    /// rendered, a test's output): stems are waited for rather than gone
+    /// without, a transition's next track's too (on a desk that plays what
+    /// it is given at once, its link holds the playing track at the next
+    /// track's first frame until it has begun). A device could not wait
+    /// (it would run dry); a file loses nothing by it.
     pub offline: bool,
 }
 
@@ -384,9 +393,28 @@ pub struct Player {
 impl Player {
     /// Starts the engine on `target`. Events arrive on the receiver.
     pub fn new(target: Box<dyn OutputTarget>, options: PlayerOptions) -> (Player, Receiver<Event>) {
+        Player::start(target, None, options)
+    }
+
+    /// Starts the engine on a desk ([`crate::StemDesk::two_heads`]): it
+    /// plays on `lead`'s input, and a transition's next track on `guest`'s
+    /// (the two heads swap at each hand-over). Events arrive on the
+    /// receiver.
+    pub fn on_desk(lead: Head, guest: Head, options: PlayerOptions) -> (Player, Receiver<Event>) {
+        Player::start(lead.target, Some((lead.faders.input, guest)), options)
+    }
+
+    fn start(
+        target: Box<dyn OutputTarget>,
+        desk: Option<(jodel_output::mixer::Fader, Head)>,
+        options: PlayerOptions,
+    ) -> (Player, Receiver<Event>) {
         let (command_tx, command_rx) = mpsc::channel();
         let (event_tx, event_rx) = mpsc::channel();
-        let engine = Engine::new(target, options, event_tx);
+        let mut engine = Engine::new(target, options, event_tx);
+        if let Some((fader, second)) = desk {
+            engine = engine.with_heads(fader, second);
+        }
         let thread = std::thread::Builder::new()
             .name("jodel-playback".into())
             .spawn(move || engine.run(command_rx))
@@ -502,15 +530,6 @@ impl Player {
     /// [`Command::MakeStems`].
     pub fn make_stems(&self, make: MakeStems) -> Result<(), Error> {
         self.send(Command::MakeStems(make))
-    }
-
-    /// [`Command::StemMask`].
-    pub fn stem_mask(
-        &self,
-        gains: [f64; crate::stems::STEMS],
-        at: Option<f64>,
-    ) -> Result<(), Error> {
-        self.send(Command::StemMask { gains, at })
     }
 }
 

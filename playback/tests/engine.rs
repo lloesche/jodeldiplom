@@ -9,7 +9,7 @@ use std::time::Duration;
 use common::*;
 use jodel_output::{SampleFormat, SimClock, StreamFormat};
 use jodel_playback::{
-    Error, Event, MemoryTarget, PlayState, Player, PlayerOptions, Settings, Source, Stage, TapMiss,
+    Error, Event, MemoryTarget, PlayState, Player, PlayerOptions, Settings, Source, TapMiss,
 };
 use SampleFormat::*;
 
@@ -80,7 +80,6 @@ fn engine_output_equals_the_file() {
             "{name}: bytes differ"
         );
         let start = started(&events)[0];
-        assert_eq!(start.route.stage, Stage::Passthrough);
         assert_eq!(start.output.format.rate, rate);
         // A memory output is not an exclusive device.
         assert!(!start.bit_perfect);
@@ -338,7 +337,6 @@ fn plain_pcm_plays_untouched_and_seeks_exactly() {
     player.seek(30_001.0 / 48_000.0).unwrap();
     let seen = collect_until(&events, |e| matches!(e, Event::Seeked { .. }));
     let start = started(&seen)[0];
-    assert_eq!(start.route.stage, Stage::Passthrough);
     assert_eq!(start.output.format.sample, S24In32Low);
     gate.allow_all();
     until_queue_end(&events);

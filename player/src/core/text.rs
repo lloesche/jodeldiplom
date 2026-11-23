@@ -1,7 +1,7 @@
 //! Text both frontends draw and the mouse needs to locate: rates, times,
 //! the signal path, the status light and the list toggle.
 
-use jodel_playback::{PlayState, Stage, Stem};
+use jodel_playback::{PlayState, Stem};
 use unicode_width::UnicodeWidthStr;
 
 use crate::core::keymap::Op;
@@ -92,16 +92,7 @@ pub fn signal_path(state: &State) -> Option<Vec<Seg>> {
     let route = &track.route;
     let arrow = || seg(" → ", Tone::Dim);
     let input = khz_short(route.input_rate);
-    let output = khz_short(route.decoded_rate());
     let mut out = vec![seg(format!("file {input}"), Tone::Source)];
-    match route.stage {
-        Stage::Passthrough => {}
-        Stage::Stems => {
-            out.push(arrow());
-            // Only a transition's tracks: mixed on their stems.
-            out.push(seg(format!("stems {output} (a transition)"), Tone::Warn));
-        }
-    }
     if let Some(step) = route.resample {
         out.push(arrow());
         out.push(seg(
@@ -233,9 +224,6 @@ pub fn status_light(state: &State) -> (&'static str, String, Tone) {
     };
     if track.info.is_lossy() {
         return ("○", lossy_label(&track.info), Tone::Dim);
-    }
-    if track.route.stage == Stage::Stems {
-        return ("○", "stems".into(), Tone::Dim);
     }
     ("○", "PCM".into(), Tone::Dim)
 }

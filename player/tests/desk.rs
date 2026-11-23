@@ -360,11 +360,14 @@ fn a_stems_strip_takes_the_pointer_and_its_buttons() {
         changes(&fx),
         [DeskChange::Level(StripKind::Bass, taper::gain(1.0))]
     );
-    // The stems touched: the transitions are told the stems' gains.
-    assert!(fx.iter().any(|e| matches!(
-        e,
-        Effect::Engine(jodel_playback::Command::StemMask { at: None, .. })
-    )));
+    // The stems touched: the engine is told nothing but to make them (the
+    // desk plays them, a transition's two tracks too).
+    for e in &fx {
+        assert!(
+            !matches!(e, Effect::Engine(c) if !matches!(c, jodel_playback::Command::MakeStems(_))),
+            "{e:?}"
+        );
+    }
 }
 
 /// Each stem a quarter of the mix, so the four add up to it.
@@ -433,7 +436,7 @@ fn a_stem_muted_on_its_frame_is_heard_and_unmuted_the_file_is_again() {
     app.dispatch(Action::ShowSide(Side::Mixer));
     assert!(until(&mut app, |a| a.state.gpu != jodeldiplom::core::Gpu::Looking));
     app.dispatch(Action::Gpu(Some("the quarter".into())));
-    let heard = |a: &App| a.state.playing.anchor.map_or(0, |(_, frame, _)| frame);
+    let heard = |a: &App| a.state.playing.anchor.map_or(0, |p| p.at.frame);
     // Once the stems are there: muted half a second on (the mixer is a
     // few periods ahead of what is heard), for a second.
     let present = |a: &App| {
@@ -455,7 +458,11 @@ fn a_stem_muted_on_its_frame_is_heard_and_unmuted_the_file_is_again() {
         "too late to set it: the stems there at {} s",
         heard(&app) as f64 / f64::from(RATE)
     );
-    app.run(Effect::Desk(DeskChange::MuteAt(StripKind::Drums, true, on)));
+    app.run(Effect::Desk(DeskChange::MuteAt(
+        StripKind::Drums,
+        true,
+        jodeldiplom::core::HeadFrame { head: 0, frame: on },
+    )));
     // A strip has one change of its mute waiting: the next once this one
     // has landed.
     assert!(common::wait_for(
@@ -466,7 +473,10 @@ fn a_stem_muted_on_its_frame_is_heard_and_unmuted_the_file_is_again() {
     app.run(Effect::Desk(DeskChange::MuteAt(
         StripKind::Drums,
         false,
-        off,
+        jodeldiplom::core::HeadFrame {
+            head: 0,
+            frame: off,
+        },
     )));
     // Then a seek back to 1 s, and the drums muted a second after the
     // first position told from there: Position's output frame and the
@@ -486,15 +496,19 @@ fn a_stem_muted_on_its_frame_is_heard_and_unmuted_the_file_is_again() {
         let p = &a.state.playing;
         p.speed.is_some()
             && p.anchor
-                .is_some_and(|(_, _, seconds)| (SEEK..SEEK + 1.0).contains(&seconds))
+                .is_some_and(|p| (SEEK..SEEK + 1.0).contains(&p.seconds))
     };
     assert!(common::wait_for(&mut app, Duration::from_secs(30), fresh));
-    let (_, frame, seconds) = app.state.playing.anchor.unwrap();
+    let anchor = app.state.playing.anchor.unwrap();
+    let (frame, seconds) = (anchor.at.frame, anchor.seconds);
     let again = frame + u64::from(RATE);
     app.run(Effect::Desk(DeskChange::MuteAt(
         StripKind::Drums,
         true,
-        again,
+        jodeldiplom::core::HeadFrame {
+            head: anchor.at.head,
+            frame: again,
+        },
     )));
     // Where the song is heard when the mixer takes the mute: a second on
     // (the positions come every 100 ms; the mixer runs a little ahead).
@@ -506,7 +520,7 @@ fn a_stem_muted_on_its_frame_is_heard_and_unmuted_the_file_is_again() {
         })
     };
     assert!(common::wait_for(&mut app, Duration::from_secs(30), muted));
-    let (_, _, heard_then) = app.state.playing.anchor.unwrap();
+    let heard_then = app.state.playing.anchor.unwrap().seconds;
     assert!(
         (heard_then - (seconds + 1.0)).abs() < 0.25,
         "muted with {heard_then} s heard, the frame of {} s",

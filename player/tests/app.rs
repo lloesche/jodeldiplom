@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use jodel_output::SimClock;
-use jodel_playback::{Headroom, PlayState, Stage};
+use jodel_playback::{Headroom, PlayState};
 use jodeldiplom::app::{App, AppOptions, Output};
 use jodeldiplom::config::Config;
 use jodeldiplom::core::keymap::{lookup, Key, KeyCode, Meaning, Op};
@@ -79,8 +79,6 @@ fn alt_enter_plays_the_folder_through_the_null_output() {
         .is_some()));
     assert_eq!(app.state.queue.paths.len(), 4);
     assert_eq!(app.state.queue.current, Some(0));
-    let track = app.state.playing.track.clone().unwrap();
-    assert_eq!(track.route.stage, Stage::Passthrough);
     assert_eq!(
         path_text(&app),
         "file 44.1 → null output (not exclusive), not bit-perfect"
@@ -445,4 +443,249 @@ fn the_device_volume_moves_the_device_playing() {
         volume_device(&Output::Null(SimClock::Realtime), Some("x")),
         None
     );
+}
+
+/// No separator: the stems are never made (a transition fades its tracks
+/// whole), and no GPU is set up for a test.
+fn no_separator() -> Option<&'static dyn jodel_playback::stems::Separator> {
+    None
+}
+
+/// Each stem a quarter of the mix.
+struct Quarter;
+
+impl jodel_playback::stems::Separator for Quarter {
+    fn name(&self) -> String {
+        "quarter".into()
+    }
+
+    fn masks(&self, _frames: usize, stft: &[f32]) -> Result<Vec<f32>, String> {
+        Ok((0..4 * stft.len())
+            .map(|i| if i % 2 == 0 { 0.25 } else { 0.0 })
+            .collect())
+    }
+}
+
+static QUARTER: Quarter = Quarter;
+
+fn quarter() -> Option<&'static dyn jodel_playback::stems::Separator> {
+    Some(&QUARTER)
+}
+
+const MIX_RATE: u32 = 44_100;
+
+/// The app on a memory desk with two tracks (8 s and 12 s), the first
+/// playing, stems by `separator` (on a "GPU" when there is one), and a
+/// transition sent to the engine and armed: from 4 s of the first, over
+/// two seconds, into the second's first second, a fade with the beats at
+/// one tempo. Its folder goes with it.
+fn armed_transition(
+    tag: &str,
+    separator: fn() -> Option<&'static dyn jodel_playback::stems::Separator>,
+) -> (App, std::path::PathBuf) {
+    use jodel_output::{Capabilities, SampleFormat, StreamFormat};
+    use jodel_playback::{Command, Envelope, TempoMode, TransitionPlan};
+    use jodeldiplom::app::MemoryOutput;
+    use jodeldiplom::core::transition::Status;
+    let dir = common::temp_dir(tag);
+    let (a, b) = (dir.join("a.wav"), dir.join("b.wav"));
+    common::write_wav(&a, MIX_RATE, 8.0);
+    common::write_wav(&b, MIX_RATE, 12.0);
+    let mut caps = Capabilities::new();
+    caps.insert(StreamFormat::new(MIX_RATE, 2, SampleFormat::S24In32Low));
+    let mut options = AppOptions::new(dir.clone());
+    options.output = Output::Memory(MemoryOutput::new(caps, SimClock::Paced));
+    options.devices = Arc::new(|| Ok(Vec::new()));
+    options.separator = separator;
+    let mut app = App::new(options);
+    if separator().is_some() {
+        assert!(common::wait_for(&mut app, WAIT, |a| a.state.gpu
+            != jodeldiplom::core::Gpu::Looking));
+        app.dispatch(Action::Gpu(Some("the quarter".into())));
+    }
+    app.run(Effect::Engine(Command::Load(vec![a, b])));
+    app.run(Effect::Engine(Command::Play(0)));
+    assert!(common::wait_for(&mut app, WAIT, |a| a
+        .state
+        .playing
+        .anchor
+        .is_some_and(|p| p.index == 0)));
+    let fade = |from: f64, to: f64| Envelope::fade(from, to, 0.0, 1.0);
+    let plan = TransitionPlan {
+        from: 0,
+        into: 1,
+        start: 4.0,
+        length: 2.0,
+        entry: 1.0,
+        beats: (0..5)
+            .map(|i| (4.0 + 0.5 * f64::from(i), 1.0 + 0.5 * f64::from(i)))
+            .collect(),
+        lanes: std::array::from_fn(|i| {
+            if i < 4 {
+                fade(1.0, 0.0)
+            } else {
+                fade(0.0, 1.0)
+            }
+        }),
+        tempo: TempoMode::Varispeed,
+        settle: 0.5,
+        glide: false,
+    };
+    app.run(Effect::Engine(Command::Transition(Box::new(plan))));
+    assert!(common::wait_for(&mut app, WAIT, |a| a
+        .state
+        .transition
+        .draft
+        .status
+        == Status::Armed));
+    (app, dir)
+}
+
+/// Handed over: the second track on the other head, and two positions
+/// told of it (the frame of a change is worked out from them).
+fn on_b(app: &App) -> bool {
+    let p = &app.state.playing;
+    p.speed.is_some()
+        && p.anchor
+            .is_some_and(|p| p.index == 1 && p.at.head == 1 && p.seconds > 3.5)
+}
+
+/// The app's engine plays on two heads of its desk: a transition sent to
+/// it is mixed there (not called off for want of a desk), its next track
+/// starts on the other head, and a stem's strip muted from a frame of
+/// that head's output after the hand-over lands on that frame (worked out
+/// from the positions told of it), not at once.
+#[test]
+fn a_transition_plays_on_the_desk_and_a_mute_after_it_lands_on_the_new_heads_frame() {
+    let _guard = common::real_time();
+    use jodeldiplom::core::desk::{DeskChange, StripKind};
+    let (mut app, dir) = armed_transition("app-transition", no_separator);
+    assert!(
+        common::wait_for(&mut app, WAIT, on_b),
+        "{:?}",
+        app.state.message
+    );
+    let said = app.state.message.as_ref().map(|m| m.text.clone());
+    assert!(!said.as_deref().unwrap_or("").contains("desk"), "{said:?}");
+    // A second on, on the second head's frames.
+    let anchor = app.state.playing.anchor.unwrap();
+    let on = jodeldiplom::core::HeadFrame {
+        frame: anchor.at.frame + u64::from(MIX_RATE),
+        ..anchor.at
+    };
+    app.run(Effect::Desk(DeskChange::MuteAt(StripKind::Drums, true, on)));
+    let muted = |a: &App| {
+        a.desk().is_some_and(|d| {
+            d.strips
+                .iter()
+                .any(|s| s.name == StripKind::Drums.name() && s.mute)
+        })
+    };
+    assert!(common::wait_for(&mut app, WAIT, muted));
+    let heard_then = app.state.playing.anchor.unwrap().seconds;
+    assert!(
+        (heard_then - (anchor.seconds + 1.0)).abs() < 0.25,
+        "muted with {heard_then} s heard, the frame of {} s",
+        anchor.seconds + 1.0
+    );
+    app.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The app's state with the desk as it is now looked at (the meters left
+/// out), drawn on the Mixer tab.
+fn mixer_tab(app: &App) -> String {
+    use jodeldiplom::core::desk::{self, Look, StripKind};
+    use jodeldiplom::view::{self, CellPictures, Links, Scene};
+    let view_now = app.desk().expect("a desk");
+    let ids = StripKind::ALL.map(|kind| {
+        view_now
+            .strips
+            .iter()
+            .find(|s| s.name == kind.name())
+            .map_or(0, |s| s.id)
+    });
+    let mut state = app.state.clone();
+    state.side = jodeldiplom::core::Side::Mixer;
+    let look = Look::of(view_now, jodel_output::mixer::Meters::default(), ids);
+    let now = state.now_ms;
+    desk::feed(&mut state, look, now);
+    let (cols, rows) = (120, 36);
+    state.size = (cols, rows);
+    let backend = ratatui::backend::TestBackend::new(cols, rows);
+    let mut terminal = ratatui::Terminal::new(backend).unwrap();
+    let spectrum = jodeldiplom::spectrum::SpectrumFrame::default();
+    let scene = Scene {
+        state: &state,
+        spectrum: &spectrum,
+        background: ratatui::style::Color::Reset,
+        links: Links::Underlined,
+        heard: 0.0,
+    };
+    terminal
+        .draw(|frame| view::draw(frame, &scene, &mut CellPictures))
+        .unwrap();
+    view::buffer_text(terminal.backend().buffer())
+}
+
+/// How many of the player's heads have an output open on the desk, and
+/// the Lead's vocals lane's gain as last mixed (with it heard).
+fn heads_and_voice(app: &App) -> (usize, Option<f64>) {
+    use jodel_output::mixer::Role;
+    use jodeldiplom::core::desk::StripKind;
+    let desk = app.desk().expect("a desk");
+    let vocals = desk
+        .strips
+        .iter()
+        .find(|s| s.name == StripKind::Vocals.name())
+        .map(|s| s.id);
+    let Some(player) = desk.strips.iter().find(|s| s.name == "Player") else {
+        return (0, None);
+    };
+    let open = player.inputs.iter().filter(|i| i.format.is_some()).count();
+    let voice = player
+        .inputs
+        .iter()
+        .find(|i| i.role == Role::Lead)
+        .and_then(|i| i.lanes.iter().find(|l| Some(l.strip) == vocals && l.heard))
+        .map(|l| l.gain);
+    (open, voice)
+}
+
+/// Through a transition on the real desk: the Karaoke voice (the vocals
+/// lane) set before it is on the next track's head too, and heard there
+/// after the hand-over; the Mixer tab shows the next track's head (NEXT)
+/// while it plays beside the playing one, and no more once the head handed
+/// over from has played out and closed after the mix.
+#[test]
+fn the_voice_and_the_mixer_tab_follow_a_transition_on_the_desk() {
+    let _guard = common::real_time();
+    use jodeldiplom::core::desk::{DeskChange, StripKind};
+    use jodeldiplom::core::transition::Status;
+    let (mut app, dir) = armed_transition("app-transition-voice", quarter);
+    app.run(Effect::Desk(DeskChange::Lane(StripKind::Vocals, 0.25)));
+    // Both heads open: the next track's beside the playing one.
+    assert!(common::wait_for(&mut app, WAIT, |a| heads_and_voice(a).0 == 2));
+    let text = mixer_tab(&app);
+    assert!(text.contains("NEXT"), "{text}");
+    // Handed over, the mix done, the head handed over from closed.
+    assert!(common::wait_for(&mut app, WAIT, on_b));
+    assert!(common::wait_for(&mut app, WAIT, |a| {
+        a.state.transition.draft.status == Status::Draft && heads_and_voice(a).0 == 1
+    }));
+    let text = mixer_tab(&app);
+    assert!(!text.contains("NEXT"), "{text}");
+    // The voice on the next track's head, now on air.
+    let voice = |a: &App| {
+        heads_and_voice(a)
+            .1
+            .is_some_and(|g| (g - 0.25).abs() < 1e-6)
+    };
+    assert!(
+        common::wait_for(&mut app, WAIT, voice),
+        "{:?}",
+        heads_and_voice(&app)
+    );
+    app.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
 }

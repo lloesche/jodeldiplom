@@ -632,7 +632,6 @@ pub fn desk_state(cols: u16, rows: u16) -> State {
     // The engine told of the stems as the desk has them (as the first
     // update would).
     state.stems_sent.make = jodeldiplom::core::stems::make_wanted(&state);
-    state.stems_sent.mask = jodeldiplom::core::stems::mask(&state);
     state
 }
 

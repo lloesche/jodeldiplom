@@ -19,15 +19,18 @@
 //! - [`Player`] (module [`engine`]): commands in, [`Event`]s out, one decode
 //!   thread. Seek, pause, gapless track changes at the same output format,
 //!   a clean reopen when the format changes, resampling when the route
-//!   asks for it, and events timed to the output clock.
+//!   asks for it, and events timed to the output clock. On a desk with two
+//!   heads ([`Player::on_desk`]) it plays transitions: the next track on
+//!   the second head, linked to the playing one, both automated by the
+//!   plan ([`transition`]).
 //! - [`stems`]: a track's stems, separated into drums, bass, vocals and
 //!   other in a thread of its own as it plays (or read where they are
 //!   kept, [`stem_file`]): handed on beside the file as parts of an output
-//!   of lanes ([`MakeStems`]), for a mixer to play on its strips; and
-//!   summed by a transition, which mixes its two tracks on [`Stage::Stems`]
-//!   routes (never bit-perfect).
+//!   of lanes ([`MakeStems`]), for a mixer to play on its strips (read
+//!   along a time map for a head that is: a transition's tracks).
 //! - [`desk`]: a player on a mixer's desk ([`StemDesk`]): its group strip,
-//!   a strip for each stem inside it, and the lane input it plays on.
+//!   a strip for each stem inside it, and the lane input it plays on (two,
+//!   for a player with two heads).
 //! - [`SpectrumTap`]: a lock-free ring of the most recent frames a
 //!   mixer's device plays, tagged with their frame index, so a UI can
 //!   analyse what is heard now.
@@ -72,12 +75,12 @@ pub mod warp;
 
 pub use desk::StemDesk;
 pub use engine::{
-    Command, Event, JumpAt, MakeStems, PlayState, Player, PlayerOptions, Position, TrackStart,
-    OPEN_BUSY_WAIT,
+    Command, Event, Head, HeadFaders, JumpAt, MakeStems, PlayState, Player, PlayerOptions,
+    Position, TrackStart, OPEN_BUSY_WAIT,
 };
 pub use error::Error;
 pub use rate::{
-    choose_route, FileFacts, Headroom, NoRoute, Resample, Route, Settings, Stage, LOSSY_HEADROOM,
+    choose_route, FileFacts, Headroom, NoRoute, Resample, Route, Settings, LOSSY_HEADROOM,
 };
 pub use resample::{FilterDesign, Requantizer, Resampler};
 pub use source::{
@@ -89,4 +92,4 @@ pub use tap::{SpectrumTap, TapCursor, TapFrame, TapMiss, TapWindow};
 pub use target::{
     any_capabilities, Capture, Captures, DeviceTarget, MemoryTarget, NullTarget, OutputTarget,
 };
-pub use transition::{Envelope, Point, TempoMode, TransitionPlan, TransitionState};
+pub use transition::{Envelope, Point, TempoMode, TransitionPlan, TransitionState, NEXT_LEAD};

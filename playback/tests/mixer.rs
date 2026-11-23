@@ -1,6 +1,7 @@
 //! The engine through a mixer ([`jodel_output::mixer`]): on its Lead input,
-//! alone at gain 1, the device gets exactly the bytes it gets without one,
-//! on every route and through seeks, jumps, pauses and reopens; and
+//! alone at gain 1 (and on a desk with two heads, the second idle), the
+//! device gets exactly the bytes it gets without one, on every route and
+//! through seeks, jumps, pauses and reopens; and
 //! [`Command::PlayAt`] starts a track a share of its length in. The device
 //! here plays what it is given at once, so the mixer mixes a period as
 //! soon as the engine has written one: its one path, as on a device.
@@ -22,6 +23,8 @@ use SampleFormat::*;
 enum Via {
     Direct,
     Mixer,
+    /// A player's two heads on the desk (`StemDesk::two_heads`).
+    Desk,
 }
 
 fn options(resample: bool) -> PlayerOptions {
@@ -46,37 +49,47 @@ fn run(
     options: PlayerOptions,
     script: Script,
 ) -> Vec<(StreamFormat, Vec<u8>)> {
-    let (target, captures, gate, mixer) = match via {
+    let (player, events, captures, gate, mixer) = match via {
         Via::Direct => {
             let (target, captures, gate) = GatedTarget::new(caps);
-            (target, captures, gate, None)
+            let (player, events) = Player::new(Box::new(target), options);
+            (player, events, captures, gate, None)
         }
         Via::Mixer => {
             let (target, captures, gate, mixer) = gated_mixer(caps);
-            (target, captures, gate, Some(mixer))
+            let (player, events) = Player::new(Box::new(target), options);
+            (player, events, captures, gate, Some(mixer))
+        }
+        Via::Desk => {
+            let (lead, guest, captures, gate, _desk, mixer) =
+                gated_desk(caps, jodel_output::SimClock::Instant);
+            let (player, events) = Player::on_desk(lead, guest, options);
+            (player, events, captures, gate, Some(mixer))
         }
     };
-    let (player, events) = Player::new(Box::new(target), options);
     script(&player, &events, &gate, &captures);
     drop(player);
     drop(mixer);
     captured(&captures)
 }
 
-/// The same bytes, stream for stream, with and without the mixer.
+/// The same bytes, stream for stream, with and without the mixer, and on
+/// a desk with two heads.
 fn same_through_the_mixer(caps: Capabilities, options: PlayerOptions, script: Script) {
     let direct = run(Via::Direct, caps.clone(), options.clone(), script);
-    let mixed = run(Via::Mixer, caps, options, script);
     assert!(!direct.is_empty() && direct.iter().all(|(_, b)| !b.is_empty()));
-    assert_eq!(direct.len(), mixed.len(), "streams");
-    for ((format, a), (format_mixed, b)) in direct.iter().zip(&mixed) {
-        assert_eq!(format, format_mixed);
-        assert!(
-            a == b,
-            "{format}: {} bytes directly, {} through the mixer",
-            a.len(),
-            b.len()
-        );
+    for via in [Via::Mixer, Via::Desk] {
+        let mixed = run(via, caps.clone(), options.clone(), script);
+        assert_eq!(direct.len(), mixed.len(), "streams {via:?}");
+        for ((format, a), (format_mixed, b)) in direct.iter().zip(&mixed) {
+            assert_eq!(format, format_mixed);
+            assert!(
+                a == b,
+                "{format}: {} bytes directly, {} through {via:?}",
+                a.len(),
+                b.len()
+            );
+        }
     }
 }
 

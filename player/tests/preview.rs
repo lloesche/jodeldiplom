@@ -256,7 +256,11 @@ fn a_preview_crossfades_on_one_frame_over_the_song_running_on() {
     let (player, events) = Player::new(Box::new(target), PlayerOptions::default());
     player.load(vec![song.clone()]).unwrap();
     player.play(0).unwrap();
-    let mut previews = Previews::new(lead.clone(), mixer.strip("Preview"), Settings::default());
+    let mut previews = Previews::new(
+        vec![lead.clone()],
+        mixer.strip("Preview"),
+        Settings::default(),
+    );
     wait("the song plays", &mixer, &mut previews, |_| {
         heard.len() > 4_800
     });
@@ -355,7 +359,7 @@ fn a_file_played_to_its_end_makes_room_and_another_rate_is_resampled() {
     wav(&other, 96_000, 3 * 96_000, |_| 3_000_000);
     let (mixer, heard) = realtime_mixer();
     let (_target, lead) = mixer.input(&mixer.strip("Player"), Role::Lead, 1.0);
-    let mut previews = Previews::new(lead, mixer.strip("Preview"), Settings::default());
+    let mut previews = Previews::new(vec![lead], mixer.strip("Preview"), Settings::default());
     // A file heard to its end (from a third in: 0.67 s): its player goes.
     previews.play(&mixer, short);
     wait("it is heard", &mixer, &mut previews, |_| {
@@ -430,7 +434,7 @@ fn every_move_is_a_crossfade_and_the_players_crossfaded_out_go() {
     let (player, _events) = Player::new(Box::new(target), PlayerOptions::default());
     player.load(vec![song]).unwrap();
     player.play(0).unwrap();
-    let mut previews = Previews::new(lead, mixer.strip("Preview"), Settings::default());
+    let mut previews = Previews::new(vec![lead], mixer.strip("Preview"), Settings::default());
     wait("the song plays", &mixer, &mut previews, |_| {
         heard.ends_near(4_800, level, 0)
     });
@@ -529,7 +533,7 @@ fn quick_moves_across_rates_with_nothing_playing_fail_nothing() {
         .collect();
     let (mixer, heard) = realtime_mixer();
     let (_target, lead) = mixer.input(&mixer.strip("Player"), Role::Lead, 1.0);
-    let mut previews = Previews::new(lead, mixer.strip("Preview"), Settings::default());
+    let mut previews = Previews::new(vec![lead], mixer.strip("Preview"), Settings::default());
     // Moved on before anything has opened the device (a player opens a
     // WAV file's output within a millisecond or two: no pause between).
     for path in &files[..3] {
@@ -550,6 +554,62 @@ fn quick_moves_across_rates_with_nothing_playing_fail_nothing() {
     assert_eq!((now.epoch, now.rate), (tb.epoch, 48_000));
     previews.end();
     wait("the players are gone", &mixer, &mut previews, |p| p.done());
+    drop(mixer);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// The song is both heads of its player (a transition's next track plays
+/// on the second): the preview ducks both, so neither is heard under it,
+/// and brings both back at its end.
+#[test]
+fn a_preview_ducks_both_heads_of_the_song() {
+    let dir = common::temp_dir("preview-heads");
+    let (a, b, file) = (dir.join("a.wav"), dir.join("b.wav"), dir.join("file.wav"));
+    let (level_a, level_b, level) = (1_000_000, 500_000, 2_000_000);
+    wav(&a, RATE, 30 * RATE, |_| level_a);
+    wav(&b, RATE, 30 * RATE, |_| level_b);
+    wav(&file, RATE, 6 * RATE, |_| level);
+    let (mixer, heard) = paced_mixer();
+    let (_desk, lead, guest) = jodel_playback::StemDesk::two_heads(&mixer, "Player", 1.0);
+    let song = vec![lead.faders.input.clone(), guest.faders.input.clone()];
+    // Each head played on by a player of its own here, as the engine plays
+    // a transition's two tracks on them: the Lead's first, which opens the
+    // device (the guest's is offered its format).
+    let mut previews = Previews::new(song.clone(), mixer.strip("Preview"), Settings::default());
+    let mut players = Vec::new();
+    for (head, path) in [(lead, &a), (guest, &b)] {
+        let (player, _events) = Player::new(head.target, PlayerOptions::default());
+        player.load(vec![path.clone()]).unwrap();
+        player.play(0).unwrap();
+        players.push(player);
+        let heard_before = heard.len();
+        wait("the head plays", &mixer, &mut previews, |_| {
+            heard.len() > heard_before + 4_800
+        });
+    }
+    wait("both heads play", &mixer, &mut previews, |_| {
+        heard.ends_near(4_800, level_a + level_b, 1)
+    });
+    previews.play(&mixer, file);
+    wait("both heads are down", &mixer, &mut previews, |_| {
+        song.iter().all(|f| f.settled() && f.gain() == 0.0)
+    });
+    // The file alone: neither head is heard under it.
+    wait("the file is heard alone", &mixer, &mut previews, |_| {
+        heard.ends_near(2 * FADE, level, 1)
+    });
+    previews.end();
+    wait("the players are gone", &mixer, &mut previews, |p| p.done());
+    wait("both heads are back", &mixer, &mut previews, |_| {
+        song.iter().all(|f| f.settled() && f.gain() == 1.0)
+    });
+    wait("the song as it was", &mixer, &mut previews, |_| {
+        heard.ends_near(FADE, level_a + level_b, 1)
+    });
+    for player in &players {
+        player.send(Command::Stop).unwrap();
+    }
+    drop(players);
     drop(mixer);
     let _ = std::fs::remove_dir_all(dir);
 }

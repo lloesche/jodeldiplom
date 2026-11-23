@@ -151,13 +151,13 @@ fn run(path: &Path, from: f64) -> Result<(), String> {
     let device = MemoryTarget::new(caps, SimClock::Realtime);
     let captures = device.captures();
     let mixer = Mixer::open(Box::new(device), MixerOptions::default());
-    let (desk, input) = StemDesk::new(&mixer, "Player", Role::Lead, 1.0);
+    let (desk, head) = StemDesk::new(&mixer, "Player", Role::Lead, 1.0);
     let options = PlayerOptions {
         separator: Some(gpu as fn() -> _),
         position_interval: Duration::from_millis(5),
         ..PlayerOptions::default()
     };
-    let (player, events) = Player::new(Box::new(input), options);
+    let (player, events) = Player::new(head.target, options);
     player.jump_window(24.0, 24.0).map_err(|e| e.to_string())?;
     // The stems made beside the file throughout, as the Transition tab has
     // them, so a strip muted is heard at once.

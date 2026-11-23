@@ -3,8 +3,10 @@
 //! mixer ([`jodel_output::mixer`]), from a third in. It fades in from its
 //! first audio while everything heard before (the song, the file before)
 //! fades out from that very frame: one crossfade on the mixer's clock. At
-//! the end the file fades out and the song back in. The song's player is
-//! never touched; it runs on under it.
+//! the end the file fades out and the song back in. The song is every head
+//! of its player (the one on air and a transition's next track's: a mix
+//! under way is ducked whole, and stays so through its hand-over). The
+//! song's player is never touched; it runs on under it.
 //!
 //! At most two players at a time. A player faded all the way out is let
 //! go of, and so is one whose file has ended or failed. A file asked for
@@ -74,8 +76,8 @@ fn let_go(voices: Vec<Voice>) {
 
 /// The preview's players.
 pub struct Previews {
-    /// The song's fader.
-    lead: Fader,
+    /// The song's faders: each head's input.
+    song: Vec<Fader>,
     /// The strip the players are on.
     strip: Strip,
     settings: Settings,
@@ -88,11 +90,12 @@ pub struct Previews {
 }
 
 impl Previews {
-    /// Previews over the song on `lead`, played on `strip` with `settings`
-    /// (resampled to the device as it runs, no stems).
-    pub fn new(lead: Fader, strip: Strip, settings: Settings) -> Previews {
+    /// Previews over the song on `song` (its player's heads' inputs),
+    /// played on `strip` with `settings` (resampled to the device as it
+    /// runs, no stems).
+    pub fn new(song: Vec<Fader>, strip: Strip, settings: Settings) -> Previews {
         Previews {
-            lead,
+            song,
             strip,
             settings: Settings {
                 resample: true,
@@ -128,7 +131,9 @@ impl Previews {
     /// Over: what is heard fades out, the song back in.
     pub fn end(&mut self) {
         self.silent();
-        self.lead.set(Ramp::fade(1.0, FADE, Start::Now));
+        for fader in &self.song {
+            fader.set(Ramp::fade(1.0, FADE, Start::Now));
+        }
         self.ended = true;
     }
 
@@ -192,7 +197,7 @@ impl Previews {
             .voices
             .iter()
             .map(|v| &v.fader)
-            .chain([&self.lead])
+            .chain(&self.song)
             .collect();
         // Set before the player opens its output: the fade is on what it
         // loads.

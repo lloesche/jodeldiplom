@@ -151,10 +151,10 @@ fn calls_in_a_second(make: MakeStems, present: bool) -> u64 {
     let file = tone_file(&dir, "tones.wav", OUT, 10 * OUT as usize);
     let device = MemoryTarget::new(caps(&[OUT], &[S24In32Low]), SimClock::Realtime);
     let mixer = Mixer::open(Box::new(device), MixerOptions::default());
-    let (desk, input) = StemDesk::new(&mixer, "Player", Role::Lead, 1.0);
+    let (desk, head) = StemDesk::new(&mixer, "Player", Role::Lead, 1.0);
     let calls = Arc::new(Calls::default());
     let target = Counted {
-        inner: Box::new(input),
+        inner: head.target,
         calls: calls.clone(),
     };
     let (player, events) = Player::new(Box::new(target), options(false, false, quarter));

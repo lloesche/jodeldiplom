@@ -100,9 +100,12 @@ fn gap(prev: Channel, next: Channel, tight: bool) -> u16 {
     }
 }
 
-/// Info lines each strip wants under its name.
-fn info_rows(channel: Channel) -> u16 {
+/// Info lines each strip wants under its name, with the player's `heads`
+/// open (two while a transition's next track plays on its second).
+fn info_rows(channel: Channel, heads: u16) -> u16 {
     match channel {
+        // The player's: its format, each head open, its ring.
+        Channel::Strip(StripKind::Player) => 2 + heads.max(1),
         Channel::Strip(_) => 3,
         Channel::Mic => 6,
         Channel::Main => 4,
@@ -117,8 +120,8 @@ fn gaps(set: &[Channel], tight: bool) -> u16 {
 }
 
 /// The desk inside the list pane's border; `stems`: the player has its
-/// stems on the desk.
-pub fn compute(inner: Rect, stems: bool) -> DeskLayout {
+/// stems on the desk; `heads`: how many of its heads have an output open.
+pub fn compute(inner: Rect, stems: bool, heads: u16) -> DeskLayout {
     let room = inner.width.saturating_sub(2);
     let player = Channel::Strip(StripKind::Player);
     let preview = Channel::Strip(StripKind::Preview);
@@ -168,7 +171,7 @@ pub fn compute(inner: Rect, stems: bool) -> DeskLayout {
     }
     let (set, w, tight) = chosen.unwrap_or_else(|| (vec![Channel::Main], vec![room], true));
     let total: u16 = w.iter().sum::<u16>() + gaps(&set, tight);
-    let lines = set.iter().map(|&c| info_rows(c)).max().unwrap_or(0);
+    let lines = set.iter().map(|&c| info_rows(c, heads)).max().unwrap_or(0);
     let mut x = inner.x + 1 + room.saturating_sub(total) / 2;
     let channels = set
         .iter()
@@ -193,9 +196,9 @@ pub fn compute(inner: Rect, stems: bool) -> DeskLayout {
                     height: frame.height - 1,
                     ..frame
                 };
-                strip(channel, frame, lines.saturating_sub(1))
+                strip(channel, frame, lines.saturating_sub(1), heads)
             } else {
-                strip(channel, frame, lines)
+                strip(channel, frame, lines, heads)
             }
         })
         .collect::<Vec<ChannelLayout>>();
@@ -218,7 +221,7 @@ pub fn compute(inner: Rect, stems: bool) -> DeskLayout {
 
 /// One strip in `frame`, its tall section under `lines` rows of lines (the
 /// most any strip shown wants, so the sections line up as on a desk).
-fn strip(channel: Channel, frame: Rect, lines: u16) -> ChannelLayout {
+fn strip(channel: Channel, frame: Rect, lines: u16, heads: u16) -> ChannelLayout {
     let iw = frame.width.saturating_sub(2);
     let ih = frame.height.saturating_sub(2);
     let (x0, y0) = (frame.x + 1, frame.y + 1);
@@ -230,7 +233,7 @@ fn strip(channel: Channel, frame: Rect, lines: u16) -> ChannelLayout {
     let section_h = ih.saturating_sub(1 + info + spacer + foot_rows);
     let row = |y: u16| Rect::new(x0, y, iw, 1);
     let name = row(y0).intersection(frame);
-    let info_rect = Rect::new(x0, y0 + 1, iw, info.min(info_rows(channel)));
+    let info_rect = Rect::new(x0, y0 + 1, iw, info.min(info_rows(channel, heads)));
     let section = Rect::new(x0, section_y, iw, section_h);
     let value = Rect::new(x0, section_y + section_h, iw, foot_rows.min(1));
     let foot = Rect::new(
@@ -361,7 +364,7 @@ mod tests {
             (38, 8, true),
         ] {
             let inner = Rect::new(1, 1, w, h);
-            let desk = compute(inner, stems);
+            let desk = compute(inner, stems, 1);
             assert!(!desk.channels.is_empty());
             assert_eq!(desk.channels.last().unwrap().channel, Channel::Main);
             for c in &desk.channels {
@@ -399,7 +402,7 @@ mod tests {
 
     #[test]
     fn a_wide_desk_has_every_strip_and_a_tall_fader() {
-        let desk = compute(Rect::new(1, 1, 118, 32), false);
+        let desk = compute(Rect::new(1, 1, 118, 32), false, 1);
         assert_eq!(desk.channels.len(), 4);
         assert!(desk.stems.is_none());
         let player = desk.channel(Channel::Strip(StripKind::Player)).unwrap();
@@ -410,14 +413,14 @@ mod tests {
         assert!(mic.track.is_none());
         assert!(mic.buttons.iter().any(|b| b.1 == DeskButton::Echo));
         // Narrow: the microphone goes first.
-        let desk = compute(Rect::new(1, 1, 62, 18), false);
+        let desk = compute(Rect::new(1, 1, 62, 18), false, 1);
         assert!(desk.channel(Channel::Mic).is_none());
         assert!(desk.channel(Channel::Strip(StripKind::Player)).is_some());
     }
 
     #[test]
     fn the_stems_sit_beside_the_player_under_their_bracket() {
-        let desk = compute(Rect::new(1, 1, 118, 32), true);
+        let desk = compute(Rect::new(1, 1, 118, 32), true, 1);
         let order: Vec<Channel> = desk.channels.iter().map(|c| c.channel).collect();
         assert_eq!(order, Channel::ALL);
         let player = desk.channel(Channel::Strip(StripKind::Player)).unwrap();
@@ -444,7 +447,7 @@ mod tests {
         // Narrower: the microphone, then the preview go; the stems stay
         // longer, the player and the master always.
         let names = |w| {
-            compute(Rect::new(1, 1, w, 24), true)
+            compute(Rect::new(1, 1, w, 24), true, 1)
                 .channels
                 .iter()
                 .map(|c| c.channel)
@@ -454,7 +457,7 @@ mod tests {
         assert!(names(96).contains(&Channel::Strip(StripKind::Preview)));
         // An 80-column terminal (78 inside the pane): all but the
         // microphone, the master's lamps whole.
-        let at80 = compute(Rect::new(1, 1, 78, 22), true);
+        let at80 = compute(Rect::new(1, 1, 78, 22), true, 1);
         let shown: Vec<Channel> = at80.channels.iter().map(|c| c.channel).collect();
         assert!(
             shown.contains(&Channel::Strip(StripKind::Preview)),

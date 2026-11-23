@@ -11,16 +11,14 @@ use std::time::Duration;
 use jodel_output::{Clock, Output, StreamInfo};
 
 use crate::error::Error;
-use crate::rate::{Route, Stage};
-use crate::resample::{Requantizer, Resampler};
+use crate::rate::Route;
+use crate::resample::Resampler;
 use crate::source::{Source, TrackInfo};
-use crate::stems::{Gains, SeparatorSource, StemRun};
 use crate::transition::{TempoMode, TransitionState};
 use crate::warp::TimeMap;
 
 use super::api::TrackStart;
-use super::warping::Warping;
-use super::{PREROLL_RESAMPLE, PREROLL_STEMS};
+use super::PREROLL_RESAMPLE;
 
 /// How a track's segment begins on the output (what its stem parts start
 /// like, [`super::lanes`]).
@@ -30,11 +28,10 @@ pub(super) enum SegStart {
     /// starts there too).
     Cold,
     /// Out of what played before, main crossfaded from it over `fade`
-    /// frames: a jump, a route met at the same format.
+    /// frames: a jump, a route met at the same format, a move onto a map
+    /// (over none for a transition's next track, read along its map from
+    /// its first frame).
     Joined { fade: usize },
-    /// Out of what played before with no seam: a transition's timeline
-    /// made straight, its next track taking over.
-    Continued,
 }
 
 /// A segment of a track's output: output frame `seg_out` is track frame
@@ -74,8 +71,8 @@ pub(super) struct Heard {
     pub(super) seg_out: u64,
     /// The track frame at the segment's start.
     pub(super) seg_frame: u64,
-    /// The track is read along a time map (a transition's next track):
-    /// its position comes from that, not from a straight line.
+    /// The track is read along a time map (a head's, a transition's
+    /// tracks'): its position comes from that, not from a straight line.
     pub(super) warp: Option<Arc<HeardWarp>>,
 }
 
@@ -107,6 +104,13 @@ pub(super) struct Along {
     pub(super) tail: Option<Vec<i32>>,
     /// Its way back onto its own route, once the map runs straight.
     pub(super) back: Back,
+    /// It leaves the map as soon as it can, straight or not
+    /// ([`super::Engine::leave_map`]).
+    pub(super) leave: bool,
+    /// For a transition's next track (silent before its window): the
+    /// playing head's clock, and its frame from which this one is heard.
+    /// Its stems may be waited for until then is near.
+    pub(super) heard_from: Option<(Clock, u64)>,
     /// The parts' clips counted into the track's so far.
     pub(super) clips: u64,
 }
@@ -168,13 +172,11 @@ pub(super) fn frames_of(duration: Duration, rate: u32) -> u64 {
 
 /// How many track frames before the switch `route` starts decoding.
 pub(super) fn preroll(route: &Route, rate: u32) -> u64 {
-    let mut seconds: f64 = 0.0;
-    if route.stage == Stage::Stems {
-        seconds = seconds.max(PREROLL_STEMS);
-    }
-    if route.resample.is_some() {
-        seconds = seconds.max(PREROLL_RESAMPLE);
-    }
+    let seconds = if route.resample.is_some() {
+        PREROLL_RESAMPLE
+    } else {
+        0.0
+    };
     (seconds * f64::from(rate)).round() as u64
 }
 
@@ -221,10 +223,40 @@ pub(super) fn fade(samples: &mut [i32], channels: usize, rising: bool) {
     }
 }
 
+impl HeardWarp {
+    /// The same, its output frames counted `by` fewer (`by` is frame 0 of
+    /// another output that follows this one).
+    fn rebased(&self, by: u64) -> HeardWarp {
+        let back = self.origin.min(by);
+        let early = (by - back) as f64 / f64::from(self.out_rate.max(1));
+        HeardWarp {
+            map: Arc::clone(&self.map),
+            origin: self.origin - back,
+            a0: self.a0 + early,
+            out_rate: self.out_rate,
+        }
+    }
+}
+
 impl Heard {
+    /// The same, its output frames counted `by` fewer: as heard on an
+    /// output whose frame 0 is this one's frame `by` (the head a
+    /// transition hands over to).
+    pub(super) fn rebased(&self, by: u64) -> Heard {
+        let back = self.seg_out.min(by);
+        let since = rescale(by - back, self.route.output_rate, self.route.input_rate);
+        Heard {
+            seg_out: self.seg_out - back,
+            seg_frame: self.seg_frame + since,
+            warp: self.warp.as_ref().map(|w| Arc::new(w.rebased(by))),
+            ..self.clone()
+        }
+    }
+
     pub(super) fn frame_at(&self, output_frame: u64) -> u64 {
         if let Some(w) = &self.warp {
-            let frame = (w.seconds_at(output_frame) * f64::from(self.info.rate)) as u64;
+            // Rounded: a map's arithmetic is a hair off whole frames.
+            let frame = (w.seconds_at(output_frame) * f64::from(self.info.rate)).round() as u64;
             return self.info.frames.map_or(frame, |total| frame.min(total));
         }
         let since = output_frame.saturating_sub(self.seg_out);
@@ -272,8 +304,8 @@ pub(super) enum CueEvent {
     },
     /// A transition's progress, as heard.
     Transition(TransitionState),
-    /// The track heard is now mapped by this (its timeline was made
-    /// straight again after a transition, or it jumped).
+    /// The track heard is now mapped by this (it went onto a map, or it
+    /// jumped).
     Heard(Heard),
     /// A jump within the track is heard.
     Jumped {
@@ -318,25 +350,11 @@ pub(super) struct Track {
     /// frames after `seg_out` before it may have any (its route fades in).
     pub(super) parts_cut: Option<u64>,
     pub(super) parts_rise: u64,
-    /// On an output of lanes, a track met at the same format that has no
-    /// parts of its own (a transition's track on its stems): the output
-    /// frame up to which the parts of the track it took over from stay
-    /// valid, so they end only once its crossfade has met it.
-    pub(super) parts_hold: Option<u64>,
     /// The clip count last queued, and the output frame it was queued at.
     pub(super) clips: Option<(u64, u64)>,
     /// The error that ended the track early, reported once what was
     /// decoded before it is written.
     pub(super) failure: Option<Error>,
-    /// On a [`Stage::Stems`] route (a transition's): the separation,
-    /// started when the track is first stepped.
-    pub(super) stems: Option<StemRun>,
-    /// Every stem has been taken.
-    pub(super) stems_done: bool,
-    /// Why the separation stopped: the track goes back to its own route.
-    pub(super) stems_error: Option<String>,
-    /// The requantization of a stem mix the device takes at its own rate.
-    pub(super) requantizer: Requantizer,
     /// Decoded ahead for a switch, not written yet: its output frames
     /// count from 0 at `seg_frame`, and its cues are held.
     pub(super) pending: bool,
@@ -349,21 +367,10 @@ pub(super) struct Track {
     /// The route it switched from, to go back to if its output does not
     /// open.
     pub(super) fallback: Option<Route>,
-    /// A transition's fades of its stems (on its stems without them: each
-    /// at one, the whole track).
-    pub(super) gains: Option<Gains>,
-    /// A transition's next track: its stems read along the time map.
-    pub(super) warp: Option<Box<Warping>>,
     /// Read along a time map as stem parts, main their sum.
     pub(super) along: Option<Along>,
-    /// The separator its stems use, in place of the player's: a
-    /// transition's [`crate::stems::whole_mix`] (no separator, or the
-    /// stems failed), set only where a transition prepares its tracks.
-    pub(super) separator: Option<SeparatorSource>,
-    /// Samples clipped where the engine summed into its output: a
-    /// transition adding the next track to this one's (past the soft
-    /// limit's bend, so none in practice), or a head read along a map
-    /// summing its parts into main.
+    /// Samples clipped where a head read along a map summed its parts
+    /// into main.
     pub(super) mix_clips: u64,
     /// The samples a jump's crossfade replaced, from this frame of
     /// `out_buf`, put back once written ([`super::jump`]).
@@ -394,12 +401,6 @@ pub(super) struct Switch {
     /// The routes have met: the old track's output ends where the new
     /// one's begins.
     pub(super) spliced: bool,
-    /// The new route has caught up and waits for the old one's stem parts
-    /// ([`super::Engine::waits_for_parts`]): the old one plays on meanwhile.
-    pub(super) for_parts: bool,
-    /// The output frame written next when that wait began: it lasts
-    /// [`super::PARTS_PATIENCE`] at most.
-    pub(super) parts_wait: Option<u64>,
 }
 
 /// What a switch is waiting for.
@@ -450,19 +451,11 @@ impl Track {
             segments,
             parts_cut: None,
             parts_rise: 0,
-            parts_hold: None,
             clips: None,
             failure: None,
-            stems: None,
-            stems_done: false,
-            stems_error: None,
-            requantizer: Requantizer::new(),
             pending: false,
             held: VecDeque::new(),
-            gains: None,
-            warp: None,
             along: None,
-            separator: None,
             mix_clips: 0,
             clip_base: 0,
             fallback: None,
@@ -477,13 +470,10 @@ impl Track {
         (self.out_buf.len() - self.out_at) / usize::from(self.route.channels)
     }
 
-    /// Samples clipped by the source's requantization, the resampler and
-    /// the stem mix's requantization, since the track opened.
+    /// Samples clipped by the source's requantization, the resampler and a
+    /// head's sum of its parts, since the track opened.
     pub(super) fn clipped(&self) -> u64 {
-        self.source.clipped()
-            + self.resampler.as_ref().map_or(0, |r| r.clipped())
-            + self.requantizer.clipped()
-            + self.mix_clips
+        self.source.clipped() + self.resampler.as_ref().map_or(0, |r| r.clipped()) + self.mix_clips
     }
 
     /// The track's output starts a new segment: output frame `seg_out` is
@@ -512,61 +502,28 @@ impl Track {
     }
 
     /// Whether the track plays its plain route as the settings make it:
-    /// the file (resampled perhaps), not a stems route, nor read along a
-    /// transition's map or faded by it, nor decoded ahead for a switch.
+    /// the file (resampled perhaps), not read along a map, nor decoded
+    /// ahead for a switch.
     pub(super) fn plain(&self) -> bool {
         self.plain_route() && !self.pending
     }
 
     /// Whether its route is its plain one: the file (resampled perhaps),
-    /// not a stems route, nor read along a map or faded by a transition
-    /// (decoded ahead for a switch or not).
+    /// not read along a map (decoded ahead for a switch or not).
     pub(super) fn plain_route(&self) -> bool {
-        self.route.stage != Stage::Stems
-            && self.warp.is_none()
-            && self.gains.is_none()
-            && self.along.is_none()
+        self.along.is_none()
     }
 
-    /// Where a map puts the track, from `seg_out` on, when it is read along
-    /// one: a head's ([`Along`]), or a transition's from where the map's
-    /// time is the track's.
+    /// Where its map puts the track, from `seg_out` on, when it is read
+    /// along one ([`Along`]).
     pub(super) fn heard_warp(&self) -> Option<Arc<HeardWarp>> {
-        if let Some(along) = &self.along {
-            return Some(Arc::clone(&along.map.heard));
-        }
-        self.warp.as_ref().map(|w| {
-            Arc::new(HeardWarp {
-                map: Arc::clone(w.map()),
-                origin: self.seg_out,
-                a0: self.seg_frame as f64 / f64::from(self.info.rate.max(1)),
-                out_rate: self.route.output_rate,
-            })
-        })
-    }
-
-    /// Whether a transition plays the track whole: its one stem all of it
-    /// ([`Track::separator`]), so a mixer's mask of the stems does not
-    /// apply to it.
-    pub(super) fn whole(&self) -> bool {
-        self.separator.is_some()
-    }
-
-    /// Whether a transition mixes its stems: on a stems route, faded by the
-    /// transition's lanes.
-    pub(super) fn mixes_stems(&self) -> bool {
-        self.route.stage == Stage::Stems && self.gains.is_some()
+        self.along.as_ref().map(|a| Arc::clone(&a.map.heard))
     }
 
     /// Whether everything of the track (or of what it was told to play) is
     /// made: its output ends at `seg_out + emitted`.
     pub(super) fn made_all(&self) -> bool {
-        let done = if self.route.stage == Stage::Stems {
-            self.stems_done
-        } else {
-            self.source_done
-        };
-        done && self.resampler.as_ref().is_none_or(Resampler::is_finished)
+        self.source_done && self.resampler.as_ref().is_none_or(Resampler::is_finished)
     }
 
     /// Restarts the track at `frame`: the source moves there and the
@@ -575,18 +532,10 @@ impl Track {
         let frame = self.info.frames.map_or(frame, |total| frame.min(total));
         self.restore = None;
         self.ahead_done = false;
-        if self.route.stage == Stage::Stems {
-            // A new separation starts there when the track is next stepped.
-            self.stems = None;
-            self.stems_done = false;
-            self.stems_error = None;
-            self.requantizer.reset();
-        } else {
-            if self.source.position() != frame {
-                self.source.seek(frame)?;
-            }
-            self.source_done = false;
+        if self.source.position() != frame {
+            self.source.seek(frame)?;
         }
+        self.source_done = false;
         if let Some(resampler) = &mut self.resampler {
             resampler.reset();
         }
@@ -625,6 +574,8 @@ impl Track {
             map,
             tail: Some(tail[..fade * ch].to_vec()),
             back: Back::Reading,
+            leave: false,
+            heard_from: None,
             clips: 0,
         });
     }

@@ -1,176 +1,262 @@
-//! The engine's side of a transition ([`crate::transition`]).
+//! The engine's side of a transition ([`crate::transition`]): its plan
+//! compiled onto the desk, which mixes the playing track's head (A) and a
+//! second head ([`super::heads`]) for the next track (B).
 //!
-//! Armed, it waits until the playing track (A) is [`LEAD`] before the
-//! window. Then A moves onto a stems route at the open format (the
-//! seamless switch; with every gain at one its stems add up to the mix as
-//! closely as the separator's do),
-//! with its fades as its stems' gains, and the next track (B) opens on a
-//! stems route at the same format from a little before where the window
-//! meets it, its stems faded by its own lanes and read along the time map
-//! ([`Warping`]), so its beats fall on A's. B decodes ahead on the turns a
-//! switch gets. From the window's first frame, each new piece of A's
-//! output has B's frames for the same output frames added to it; at the
-//! window's last frame A is dropped and B plays on, gliding back to its
-//! own tempo, and once it is there its position runs straight again and
-//! it moves back onto its own route.
+//! Armed, it waits until A is [`LEAD`] before the window. Then:
 //!
-//! Without a stem separator (or once it failed: [`super::Engine`]'s
-//! `stems_failed`) both tracks go through [`whole_mix`], which puts the
-//! whole music in one stem: their fades are then those of that stem's
-//! lanes. Whether a track is whole is its own ([`Track::separator`]), so a
-//! track whose stems fail in the middle of a transition leaves the other
-//! one's as they are.
+//! - B opens on the second head at the open output's format (its route is
+//!   chosen for that format alone, so the device never opens again), read
+//!   along the plan's map from its first frame ([`super::along`]), which
+//!   the desk link puts on A's stream frame `origin`,
+//!   [`crate::transition::NEXT_LEAD`] before the window; it writes ahead on
+//!   turns of its own;
+//! - with a glide, A reads along the glide;
+//! - the plan's lanes become automation of each head's input, on its own
+//!   stream frames ([`compile`]): each stem's envelope its part's curve,
+//!   their mean main's (for a head heard without parts), A whole and B
+//!   silent before the window.
 //!
-//! Each stem of a track that is not whole is at its gain as a mixer plays
-//! it ([`crate::Command::StemMask`], [`super::stem_mask`]), so a stem muted
-//! on a mixer's strip stays out of the mix the mixer hears as main here. A
-//! whole track takes no mask: its one stem is all of it.
+//! A is written up to the window's end and no further; there B is made the
+//! desk's Lead, A's output plays out what it holds and closes, and the
+//! heads swap: B plays on, settles off its map back onto its own route at
+//! the same format, and the transition is finished. The cue clock is B's
+//! from the hand-over (its frames count from its first). The output format
+//! stays the open one until playback stops or a track is picked.
+//!
+//! Pausing pauses A, and the link holds B. `Next` in the window fades A out
+//! from where the desk mixes it and puts B at its end values, and hands
+//! over once A is written to its fade's end. Called off in the window (the
+//! queue changed, B failed), B fades out and A comes back whole. Moving
+//! playback elsewhere drops B; new settings wait for the end (and the
+//! format is no longer held then).
 
 use std::sync::Arc;
 use std::time::Duration;
 
+use jodel_output::mixer::{Automation, Fader, GainCurve, Role};
+
 use super::api::{Event, TrackStart};
-use super::stem_mask::StemsMask;
-use super::track::{rescale, Cue, CueEvent, Heard, HeardWarp, Progress, SegStart, Track};
-use super::warping::Warping;
-use super::{Engine, SWITCH_TURN};
+use super::track::{drop_later, frames_of, rescale, Cue, CueEvent, HeardWarp, Track};
+use super::Engine;
 use crate::error::Error;
-use crate::rate::{stems_at, FileFacts, Stage};
-use crate::stems::{whole_mix, Gains, STEMS};
-use crate::transition::{Side, TransitionPlan, TransitionState};
+use crate::rate::Settings;
+use crate::source::Source;
+use crate::stems::{Stem, LANES};
+use crate::transition::{Envelope, Side, TransitionPlan, TransitionState, NEXT_LEAD};
 use crate::warp::{Glide, TimeMap};
 
-/// Output frames the playing track must hold unwritten for an armed
-/// transition to read it again on a switch (what a jump decoded ahead).
-const AHEAD_FRAMES: usize = 4096;
-
 /// Seconds before the window that the tracks start to be prepared.
-pub(super) const LEAD: f64 = 4.0;
+const LEAD: f64 = 4.0;
 
-/// Seconds of B's output made before the window (dropped): its resamplers
-/// settle there.
-const B_LEAD: f64 = 1.0;
+/// How long a track takes to fade out when a mix is cut short (`Next`, or
+/// called off in its window).
+const CUT: Duration = Duration::from_millis(30);
 
-/// Seconds of B's input before its first read position (the interpolation
-/// reaches back into them).
-const B_MARGIN: f64 = 0.05;
+/// Seconds of output between the points of a curve that the plan's
+/// envelopes do not give exactly (through a glide, or a mean of lanes).
+const STEP: f64 = 0.01;
 
-/// How long one piece of the mix may wait for B to make its frames (the
-/// output holds about half a second); past it, that piece goes without B.
-const MIX_PATIENCE: Duration = Duration::from_millis(150);
-
-/// Seconds after the glide back to its tempo that B's position is made
-/// straight again.
-const SETTLED: f64 = 0.3;
-
-/// Full scale of the 24-bit samples the tracks are mixed in.
-const FULL: f64 = 8_388_607.0;
-
-/// Where the mix's peaks start to bend toward full scale (−1 dBFS): two
-/// loud masters added go over full scale, and a hard clip there is heard.
-const KNEE: f64 = 0.891 * FULL;
-
-/// A sample of the two tracks added: as it is up to [`KNEE`], above it
-/// bent smoothly (a tanh with slope 1 at the knee) toward full scale,
-/// which it never reaches. Whether it still had to be clipped.
-fn soft_limit(sum: i64) -> (i32, bool) {
-    let x = sum as f64;
-    if x.abs() <= KNEE {
-        return (sum as i32, false);
-    }
-    let room = FULL - KNEE;
-    let bent = (KNEE + room * ((x.abs() - KNEE) / room).tanh()).copysign(x);
-    let kept = bent.round().clamp(-FULL - 1.0, FULL);
-    (kept as i32, kept != bent.round())
-}
+/// A share of the window just before a point of an envelope.
+const EPSILON: f64 = 1e-12;
 
 /// Where a transition is.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Phase {
     /// Waiting for the playing track to come near the window.
     Armed,
-    /// B decodes ahead; the window has not started.
-    Preparing,
-    /// The window is being written: B's output is added to A's.
-    Mixing,
-    /// B plays alone, gliding back to its own tempo.
-    Settling,
+    /// B writes ahead, and the window is written once it is mixing.
+    Prepared(Prepared),
+    /// B plays alone, on its way back to its own route. `cut`: `Next` cut
+    /// the mix short (it was called off then, and its settling says
+    /// nothing).
+    Settling { cut: bool },
+}
+
+/// A transition's tracks as prepared for its window.
+struct Prepared {
+    /// The window's first and last stream frames of A.
+    window: (u64, u64),
+    /// A's stream frame that B's frame 0 is linked to.
+    origin: u64,
+    /// The heads' automation (A's, B's).
+    curves: [Curves; 2],
+    /// The window is being written.
+    mixing: bool,
+    /// `Next` cut the mix short, A ending at this stream frame, its fade
+    /// out's end: it hands over there.
+    cut: Option<u64>,
+}
+
+/// A head's automation: main's curve and each part's, in [`LANES`]' order.
+struct Curves {
+    main: GainCurve,
+    parts: Vec<GainCurve>,
+}
+
+impl Curves {
+    /// The automation of these curves.
+    fn automation(&self) -> Automation {
+        self.with(Automation::new(), |c| c.clone())
+    }
+
+    /// Each curve made by `curve`, as an automation on top of `base`.
+    fn with(&self, base: Automation, curve: impl Fn(&GainCurve) -> GainCurve) -> Automation {
+        let main = base.main(curve(&self.main));
+        self.parts
+            .iter()
+            .enumerate()
+            .fold(main, |a, (k, c)| a.part(k, curve(c)))
+    }
+}
+
+/// A gain held from stream frame `frame` on.
+fn held(frame: u64, gain: f64) -> GainCurve {
+    GainCurve::new(&[(frame, gain)]).expect("one finite point")
 }
 
 /// A transition under way.
 pub(super) struct Transition {
     plan: Arc<TransitionPlan>,
-    /// B's time along the output's (A's before the window, where they are
-    /// the same).
+    /// B's time along A's output's (A's own time before the window, A's
+    /// time through the glide's inverse in it).
     map: Arc<TimeMap>,
-    /// A's time along the output's through the window.
+    /// A's time along its output's through the window.
     glide: Glide,
-    /// The same as a map A is read along, when it glides.
-    map_a: Option<Arc<TimeMap>>,
+    /// The settings when it was armed (others since: the format is not held
+    /// after it).
+    settings: Settings,
     phase: Phase,
-    /// B, decoding ahead (pending) until it takes over.
-    b: Option<Track>,
-    /// B's output frames count from 0 at A's time `a0`.
-    a0: f64,
-    /// The output frame of B's output frame 0, once A's timeline is known.
-    origin: Option<u64>,
-    /// The window's first and last output frames, once known.
-    window: Option<(u64, u64)>,
-    /// B's output frame of `b.out_buf[b.out_at]`.
-    b_next: u64,
-    /// Output frames up to which A's output has had B's added.
-    mixed_to: u64,
 }
 
 impl Transition {
-    /// The playing track and the next one, by their indices in the queue.
-    pub(super) fn tracks(&self) -> (usize, usize) {
-        (self.plan.from, self.plan.into)
+    /// Its tracks as prepared, from then until the hand-over.
+    fn prepared(&self) -> Option<&Prepared> {
+        match &self.phase {
+            Phase::Prepared(p) => Some(p),
+            _ => None,
+        }
     }
 
-    /// A's gains: its lanes at its own time, times the stems on then (by
-    /// `mask`; a whole track has none).
-    fn gains_a(plan: &Arc<TransitionPlan>, mask: Option<StemsMask>) -> Gains {
-        let plan = Arc::clone(plan);
-        Arc::new(move |t| {
-            let g = plan.gains(Side::From, plan.share(t));
-            let on = mask.as_ref().map_or([1.0; STEMS], |m| m.for_a(t));
-            std::array::from_fn(|s| g[s] * on[s])
-        })
+    fn prepared_mut(&mut self) -> Option<&mut Prepared> {
+        match &mut self.phase {
+            Phase::Prepared(p) => Some(p),
+            _ => None,
+        }
     }
 
-    /// B's gains: its lanes at the playing track's time where B is at `t`
-    /// (the output's time there, along the glide), times the stems on
-    /// then (by `mask`; a whole track has none).
-    fn gains_b(
-        plan: &Arc<TransitionPlan>,
-        map: &Arc<TimeMap>,
-        glide: Glide,
-        mask: Option<StemsMask>,
-    ) -> Gains {
-        let (plan, map) = (Arc::clone(plan), Arc::clone(map));
-        Arc::new(move |t| {
-            let a = glide.at(map.inverse(t));
-            let g = plan.gains(Side::Into, plan.share(a));
-            let on = mask.as_ref().map_or([1.0; STEMS], |m| m.for_b(t, || a));
-            std::array::from_fn(|s| g[s] * on[s])
-        })
+    /// Whether its window is being written (and not handed over yet).
+    fn mixing(&self) -> bool {
+        self.prepared().is_some_and(|p| p.mixing)
     }
 }
 
 /// The output frame at which A's time `seconds` is heard, on its timeline.
-pub(super) fn output_frame_of(track: &Track, seconds: f64) -> u64 {
+fn output_frame_of(track: &Track, seconds: f64) -> u64 {
     let frame = (seconds * f64::from(track.info.rate)).round().max(0.0) as u64;
     let since = frame.saturating_sub(track.seg_frame);
     track.seg_out + rescale(since, track.route.input_rate, track.route.output_rate)
 }
 
 /// A's time at the output frame being written.
-pub(super) fn seconds_written(track: &Track, written: u64) -> f64 {
+fn seconds_written(track: &Track, written: u64) -> f64 {
     let since = written.saturating_sub(track.seg_out);
     (track.seg_frame as f64
         + since as f64 * f64::from(track.route.input_rate) / f64::from(track.route.output_rate))
         / f64::from(track.info.rate.max(1))
+}
+
+/// The plan's lanes as each head's automation (A's, then B's), at `rate`:
+/// with the window from A's stream frame `w0`, and B's frame 0 on A's
+/// `origin`. Each part's curve is its stem's envelope at A's time heard on
+/// each frame (through the glide's inverse, A's time along the output's),
+/// main's their mean; before the window A is whole and B silent.
+fn compile(plan: &TransitionPlan, glide: &Glide, w0: u64, origin: u64, rate: u32) -> [Curves; 2] {
+    let rate = f64::from(rate);
+    // A's stream frame (fractional) where it is at its time `a`.
+    let frame_of = |a: f64| w0 as f64 + (glide.inverse(a) - plan.start) * rate;
+    let head = |side: Side, before: f64, shift: u64| {
+        let lanes = LANES.map(|s: Stem| plan.lane(side, s));
+        let lane_curve = |envelopes: &[&Envelope]| {
+            let differ = envelopes.windows(2).any(|w| w[0] != w[1]);
+            curve(
+                plan,
+                envelopes,
+                before,
+                !glide.is_identity() || differ,
+                |a| (frame_of(a) - shift as f64).round().max(0.0) as u64,
+            )
+        };
+        Curves {
+            main: lane_curve(&lanes),
+            parts: lanes.iter().map(|&e| lane_curve(&[e])).collect(),
+        }
+    };
+    [head(Side::From, 1.0, 0), head(Side::Into, 0.0, origin)]
+}
+
+/// The curve of the mean of `envelopes` over the window and after it (at
+/// `before` before it), on the frames `frame_of` puts A's times on: a point
+/// on each of theirs (two on a cut), and every [`STEP`] between when
+/// `dense`.
+fn curve(
+    plan: &TransitionPlan,
+    envelopes: &[&Envelope],
+    before: f64,
+    dense: bool,
+    frame_of: impl Fn(f64) -> u64,
+) -> GainCurve {
+    let mut shares: Vec<f64> = envelopes
+        .iter()
+        .flat_map(|e| e.points.iter().map(|p| p.at))
+        .filter(|&s| s > 0.0)
+        .collect();
+    let last = shares.iter().copied().fold(0.0, f64::max);
+    if dense && plan.length > 0.0 {
+        let step = STEP / plan.length;
+        shares.extend((1..).map(|k| k as f64 * step).take_while(|&s| s < last));
+    }
+    shares.sort_by(f64::total_cmp);
+    shares.dedup();
+    // The mean just before `share` and just after it.
+    let mean = |share: f64| {
+        let n = envelopes.len().max(1) as f64;
+        let (left, right) = envelopes
+            .iter()
+            .map(|e| around(e, share))
+            .fold((0.0, 0.0), |(l, r), (a, b)| (l + a, r + b));
+        (left / n, right / n)
+    };
+    let at = |share: f64| frame_of(plan.start + share * plan.length);
+    // Two points on a frame are a cut (smoothed): only where the gain cuts.
+    let near = |x: f64, y: f64| (x - y).abs() <= 1e-9;
+    let mut points = vec![(at(0.0), before)];
+    let (_, first) = mean(0.0);
+    if !near(first, before) {
+        points.push((at(0.0), first));
+    }
+    for share in shares {
+        let (left, right) = mean(share);
+        if !near(left, right) {
+            points.push((at(share), left));
+        }
+        points.push((at(share), right));
+    }
+    GainCurve::new(&points).expect("frames in order, gains finite")
+}
+
+/// `envelope`'s gain just before `share` and just after it: two on a cut
+/// there, else the same.
+fn around(envelope: &Envelope, share: f64) -> (f64, f64) {
+    let at = envelope.gain(share);
+    let points = &envelope.points;
+    if !points.iter().any(|p| p.at == share && p.cut) {
+        return (at, at);
+    }
+    let after = points
+        .iter()
+        .rev()
+        .find(|p| p.at == share)
+        .map_or(at, |p| p.gain);
+    (envelope.gain(share - EPSILON), after)
 }
 
 impl Engine {
@@ -181,20 +267,22 @@ impl Engine {
         if self.transition_heard() {
             return;
         }
-        // Another plan for one armed or preparing: the tracks stay where
-        // they are (on their stems), and it prepares again from there.
+        // Another plan for one armed or preparing: its next track goes, and
+        // it prepares again from where the tracks are.
         if self.transition.is_some() {
-            self.forget_transition(None);
+            self.drop_transition(None);
         }
-        let playing = self.playing.as_ref().map(|t| t.index);
-        let why = if playing != Some(plan.from) {
-            Some("that track is not the one playing")
-        } else if self.along_under_way() {
-            Some("a track is read along a time map")
+        let playing = self.head.playing.as_ref().map(|t| t.index);
+        let why = if self.desk.is_none() {
+            Some("needs a desk")
         } else if plan.into != plan.from + 1 || plan.into >= self.queue.len() {
             Some("there is no next track to go into")
         } else if plan.length.is_nan() || plan.length <= 0.0 {
             Some("the window is empty")
+        } else if playing != Some(plan.from) {
+            Some("that track is not the one playing")
+        } else if self.along_under_way() {
+            Some("a track is read along a time map")
         } else {
             None
         };
@@ -203,80 +291,88 @@ impl Engine {
                 reason: why.into(),
             }));
         }
-        // B on A's beats as they are heard: along the output's time, which
+        // B on A's beats as they are heard: along A's output's time, which
         // runs as A's up to the window and A along the glide in it.
         let beats = plan.time_map();
         let glide = plan.glide_of(&beats);
-        let map = Arc::new(beats.through_glide(&glide));
-        let map_a = (!glide.is_identity()).then(|| Arc::new(glide.map()));
-        let a0 = plan.start - B_LEAD;
         self.transition = Some(Transition {
+            map: Arc::new(beats.through_glide(&glide)),
             plan: Arc::new(plan),
-            map,
             glide,
-            map_a,
+            settings: self.settings,
             phase: Phase::Armed,
-            b: None,
-            a0,
-            origin: None,
-            window: None,
-            b_next: 0,
-            mixed_to: 0,
         });
-        // A decoded ahead for jumps ([`super::jump`]): what it holds is
-        // read again from where it is written, so the transition mixes into
-        // what is made from now on.
-        let ahead = self
-            .playing
-            .as_ref()
-            .filter(|a| a.unwritten() > AHEAD_FRAMES)
-            .map(|a| a.route.clone());
-        if let (Some(route), None) = (ahead, &self.switch) {
-            let _ = self.begin_switch(route);
-        }
         self.emit(Event::Transition(TransitionState::Armed));
     }
 
     /// Drops the transition, saying why when there is a reason (and it
-    /// had not finished), and puts what it changed back: the playing track
-    /// loses its fades and goes back to the route the settings choose; a
-    /// next track that has taken over runs on a straight timeline from
-    /// here. B, if it has not taken over, is dropped in the background.
+    /// had not finished), and puts what it changed back: in its window B
+    /// fades out over [`CUT`] (and closes then) and A comes back whole;
+    /// before it B goes and A loses its automation; A leaves its glide, and
+    /// is routed as the settings choose. One `Next` cut short hands over
+    /// now instead (A is faded out already): B plays on.
     pub(super) fn drop_transition(&mut self, reason: Option<&str>) {
+        let t = self.transition.as_ref();
+        if let Some(cut) = t.and_then(Transition::prepared).and_then(|p| p.cut) {
+            if let Some(a) = self.head.playing.take() {
+                let written = self.head.out.as_ref().map_or(cut, |o| o.output.written());
+                self.hand_over_transition(a, cut.min(written));
+            }
+        } else if t.is_some_and(Transition::mixing) {
+            self.fade_next_out();
+        }
         let Some(t) = self.forget_transition(reason) else {
             return;
         };
-        if t.phase == Phase::Settling {
-            let written = self.out.as_ref().map_or(0, |o| o.output.written());
-            self.straighten(&t, written);
-        } else {
-            let from = t.plan.from;
-            if let Some(a) = self.playing.as_mut().filter(|a| a.index == from) {
-                a.gains = None;
-            }
-            if let Some(s) = self.switch.as_mut().filter(|s| s.track.index == from) {
-                s.track.gains = None;
-            }
+        let along = self.head.along_at.is_some()
+            || self
+                .head
+                .playing
+                .as_ref()
+                .is_some_and(|a| a.along.is_some());
+        if !matches!(t.phase, Phase::Settling { .. }) && along {
+            self.leave_map();
         }
         self.reroute();
     }
 
-    /// Drops the transition and B (in the background), saying why when
-    /// there is a reason and it had not finished, without putting anything
-    /// back (playback is moving elsewhere anyway). Returns what it was.
+    /// Playback moves elsewhere (a seek, a new timeline): the transition is
+    /// forgotten, and the output a hand-over left playing out what it holds
+    /// closes at once.
+    pub(super) fn abandon_transition(&mut self, reason: &str) {
+        self.forget_transition(Some(reason));
+        self.cut_parked();
+    }
+
+    /// Drops the transition, saying why when there is a reason and it had
+    /// not finished, without routing anything again (playback is moving
+    /// elsewhere anyway): before the hand-over B (unless it is fading out
+    /// already) goes and A loses its automation; after it, B loses its
+    /// automation. Returns what it was.
     pub(super) fn forget_transition(&mut self, reason: Option<&str>) -> Option<Transition> {
-        let mut t = self.transition.take()?;
-        if let Some(b) = t.b.take() {
-            super::drop_later(b);
-        }
+        let t = self.transition.take()?;
         // What it queued to be said as it is heard (its window started,
         // say) is not said after it is gone.
-        self.cues
-            .retain(|c| !matches!(c.event, CueEvent::Transition(_)));
-        if t.phase == Phase::Settling {
-            // Handed over already: it is done, as far as anyone can hear.
-            self.emit(Event::Transition(TransitionState::Finished));
-        } else if let Some(reason) = reason {
+        self.drop_transition_cues();
+        let on_air = self.faders().map(|(f, _)| f.clone());
+        let called_off = match &t.phase {
+            Phase::Settling { cut } => {
+                on_air.inspect(Fader::clear_automation);
+                // Handed over already: it is done, as far as anyone can
+                // hear (one cut short by `Next` was called off then).
+                if !cut {
+                    self.emit(Event::Transition(TransitionState::Finished));
+                }
+                return Some(t);
+            }
+            Phase::Prepared(p) => p.cut.is_some(),
+            Phase::Armed => false,
+        };
+        if self.parked_track().is_some() {
+            self.drop_parked();
+            on_air.inspect(Fader::clear_automation);
+        }
+        if let Some(reason) = reason.filter(|_| !called_off) {
             self.emit(Event::Transition(TransitionState::Cancelled {
                 reason: reason.into(),
             }));
@@ -284,39 +380,98 @@ impl Engine {
         Some(t)
     }
 
-    /// [`super::Command::Next`] while a transition is heard: the next track
-    /// plays on alone at once. Mixing, from where it is heard now (from
-    /// its first frame in the window, when the window is not heard yet),
-    /// read again there, the playing track cut off; settling (it plays
-    /// alone already), on a straight timeline from here. Whether it did.
+    /// The cues a transition queued to be said as they are heard go.
+    fn drop_transition_cues(&mut self) {
+        self.cues
+            .retain(|c| !matches!(c.event, CueEvent::Transition(_)));
+    }
+
+    /// Where each head's input is mixed next, on its stream frames (where
+    /// a change of its automation is heard from), and the output's rate.
+    fn mix_fronts(&self) -> Option<(u64, u64, u32)> {
+        let (fa, fb) = self.faders()?;
+        let out = self.head.out.as_ref()?;
+        let a = fa.mixed_to().unwrap_or_else(|| out.clock.position());
+        Some((a, fb.mixed_to().unwrap_or(0), out.info.format.rate))
+    }
+
+    /// In the window, the transition is dropped: from where each is mixed
+    /// next, B fades out over [`CUT`] and A comes back whole (each curve
+    /// from its gain there to one), and B's head plays out what it has and
+    /// closes.
+    fn fade_next_out(&mut self) {
+        let (Some(t), Some((a, b, rate))) = (self.transition.as_ref(), self.mix_fronts()) else {
+            return;
+        };
+        let Some(Prepared { curves, .. }) = t.prepared() else {
+            return;
+        };
+        let fade = frames_of(CUT, rate);
+        let back = curves[0].with(Automation::new(), |c| {
+            GainCurve::new(&[(a, c.gain(a, rate)), (a + fade, 1.0)]).expect("in order")
+        });
+        let out = GainCurve::new(&[(b, 1.0), (b + fade, 0.0)]).expect("in order");
+        let gone = curves[1].with(Automation::new().input(out), |c| held(b, c.gain(b, rate)));
+        if let Some((fa, fb)) = self.faders() {
+            let _ = fa.automate(back);
+            let _ = fb.automate(gone);
+        }
+        self.retire_parked();
+    }
+
+    /// [`super::Command::Next`] while a transition is heard. Mixing: from
+    /// where the desk mixes A next it fades out over [`CUT`] and B goes to
+    /// its end values (each automation replaced, which the desk smooths),
+    /// A is handed over from once it is written to its fade's end, the mix
+    /// called off now (cut to the next track). Settling (B plays alone
+    /// already): the track after B. Whether it did either.
     pub(super) fn cut_to_next(&mut self) -> bool {
         let Some(t) = self.transition.as_ref() else {
             return false;
         };
-        match t.phase {
-            Phase::Settling => {
-                self.drop_transition(None);
-                true
+        let p = match &t.phase {
+            Phase::Settling { .. } => {
+                let next = t.plan.into + 1;
+                self.pick();
+                self.jump(next, 0.0);
+                return true;
             }
-            Phase::Mixing => {
-                let (Some(origin), Some(out)) = (t.origin, self.out.as_ref()) else {
-                    return false;
-                };
-                let rate = f64::from(out.info.format.rate.max(1));
-                let heard = out.clock.position();
-                let frame = t.window.map_or(heard, |(start, _)| heard.max(start));
-                let seconds = t
-                    .map
-                    .at(t.a0 + frame.saturating_sub(origin) as f64 / rate)
-                    .max(0.0);
-                let into = t.plan.into;
-                self.forget_transition(Some("cut to the next track"));
-                self.paused = false;
-                self.jump(into, seconds);
-                true
-            }
-            Phase::Armed | Phase::Preparing => false,
+            // Cut already: it ends as soon as it can.
+            Phase::Prepared(p) if p.cut.is_some() => return true,
+            Phase::Prepared(p) if p.mixing => p,
+            Phase::Prepared(_) | Phase::Armed => return false,
+        };
+        let Some((front, _, rate)) = self.mix_fronts() else {
+            return false;
+        };
+        let end = front.max(p.origin);
+        let fade = frames_of(CUT, rate);
+        let out_a = GainCurve::new(&[(end, 1.0), (end + fade, 0.0)]).expect("in order");
+        let a = p.curves[0].with(Automation::new().input(out_a), |c| {
+            held(end, c.gain(end, rate))
+        });
+        let b = p.curves[1].with(Automation::new(), |c| {
+            held(0, c.points().last().map_or(1.0, |p| p.1))
+        });
+        if let Some((fa, fb)) = self.faders() {
+            let _ = fa.automate(a);
+            let _ = fb.automate(b);
         }
+        // A is written on to where its fade ends (no further than the
+        // window), and handed over from there; nothing more of the window
+        // is said.
+        let written = self.head.out.as_ref().map_or(0, |o| o.output.written());
+        if let Some(p) = self.transition.as_mut().and_then(Transition::prepared_mut) {
+            p.cut = Some(end + fade);
+            p.window.1 = p.window.1.min((end + fade).max(written));
+        }
+        self.drop_transition_cues();
+        self.emit(Event::Transition(TransitionState::Cancelled {
+            reason: "cut to the next track".into(),
+        }));
+        // Paused, the next track plays (as next does).
+        self.resume();
+        true
     }
 
     /// Whether a transition is heard (mixing, or the next track settling
@@ -324,7 +479,7 @@ impl Engine {
     pub(super) fn transition_heard(&self) -> bool {
         self.transition
             .as_ref()
-            .is_some_and(|t| matches!(t.phase, Phase::Mixing | Phase::Settling))
+            .is_some_and(|t| t.mixing() || matches!(t.phase, Phase::Settling { .. }))
     }
 
     /// Whether a transition is under way past being armed (its tracks
@@ -333,38 +488,15 @@ impl Engine {
     pub(super) fn transition_running(&self) -> bool {
         self.transition
             .as_ref()
-            .is_some_and(|t| t.phase != Phase::Armed)
+            .is_some_and(|t| !matches!(t.phase, Phase::Armed))
     }
 
-    /// A mixer's stem gains changed during a transition
-    /// ([`crate::Command::StemMask`]): its fades take them, on both tracks,
-    /// at the time the change is heard at (or at once).
-    pub(super) fn retune_transition(&mut self) {
-        let mask = self.transition_mask();
-        let Some(t) = self.transition.as_mut() else {
-            return;
-        };
-        let (plan, map, glide) = (Arc::clone(&t.plan), Arc::clone(&t.map), t.glide);
-        let on = |track: &Track| (!track.whole()).then(|| mask.clone());
-        if let Some(b) = t.b.as_mut() {
-            b.gains = Some(Transition::gains_b(&plan, &map, glide, on(b)));
-        }
-        for track in [
-            self.playing.as_mut(),
-            self.switch.as_mut().map(|s| &mut s.track),
-        ]
-        .into_iter()
-        .flatten()
-        {
-            if track.gains.is_none() {
-                continue;
-            }
-            if track.index == plan.from {
-                track.gains = Some(Transition::gains_a(&plan, on(track)));
-            } else if track.index == plan.into {
-                track.gains = Some(Transition::gains_b(&plan, &map, glide, on(track)));
-            }
-        }
+    /// Whether a transition has its tracks where it needs them (prepared or
+    /// mixed): the playing track is not moved to another route.
+    pub(super) fn transition_holds_route(&self) -> bool {
+        self.transition
+            .as_ref()
+            .is_some_and(|t| t.prepared().is_some())
     }
 
     /// Queues a cue at `at`, or after the last one queued.
@@ -373,59 +505,44 @@ impl Engine {
         self.cues.push_back(Cue { at, event });
     }
 
-    /// The next track, which has taken over, runs on a straight timeline
-    /// from output frame `from` (it is at its own tempo there, or close).
-    fn straighten(&mut self, t: &Transition, from: u64) {
-        let Some(b) = self.playing.as_mut() else {
-            return;
-        };
-        if b.index != t.plan.into {
-            return;
+    /// The sample index the playing `track` (A) writes no further than
+    /// while its transition is prepared or mixed: its window's end.
+    pub(super) fn transition_limit(&self, track: &Track) -> Option<usize> {
+        let t = self.transition.as_ref()?;
+        let end = t.prepared()?.window.1;
+        if track.index != t.plan.from || track.pending {
+            return None;
         }
-        let rate = self.out.as_ref().map_or(1, |o| o.info.format.rate);
-        let origin = t.origin.unwrap_or(from);
-        let seconds = t
-            .map
-            .at(t.a0 + from.saturating_sub(origin) as f64 / f64::from(rate));
-        let frame = (seconds * f64::from(b.info.rate)).round().max(0.0) as u64;
-        // Output frames counted from the new start, so cues land as before.
-        b.emitted = b.emitted.saturating_sub(from.saturating_sub(b.seg_out));
-        b.begin_segment(from, frame, SegStart::Continued);
-        let heard = Heard {
-            index: b.index,
-            info: b.info.clone(),
-            route: b.route.clone(),
-            seg_out: from,
-            seg_frame: frame,
-            warp: None,
-        };
-        self.queue_cue(from, CueEvent::Heard(heard));
+        let written = self.head.out.as_ref()?.output.written();
+        let ch = usize::from(track.route.channels);
+        Some(track.out_at + end.saturating_sub(written) as usize * ch)
     }
 
     /// The transition's turn, when it has one: getting ready near the
-    /// window, B decoding ahead, the hand-over at the window's end, and
-    /// B's return to a straight timeline. Returns whether it took the turn.
+    /// window, the window's start, B's turns, the hand-over at the
+    /// window's end, and B back on its own route. Returns whether it took
+    /// the turn.
     pub(super) fn transition_turn(&mut self) -> Result<bool, Error> {
-        let Some(phase) = self.transition.as_ref().map(|t| t.phase) else {
+        let Some(t) = self.transition.as_ref() else {
             return Ok(false);
         };
-        let Some(written) = self.out.as_ref().map(|o| o.output.written()) else {
+        let Some(written) = self.head.out.as_ref().map(|o| o.output.written()) else {
             return Ok(false);
         };
-        match phase {
+        let start = t.plan.start;
+        match &t.phase {
             Phase::Armed => {
-                let Some(a) = &self.playing else {
+                let Some(a) = &self.head.playing else {
                     return Ok(false);
                 };
-                let plan = Arc::clone(&self.transition.as_ref().expect("checked").plan);
                 let now = seconds_written(a, written);
-                if now > plan.start + 0.05 {
+                if now > start + 0.05 {
                     self.drop_transition(Some("the window has already passed"));
-                } else if now >= plan.start - LEAD {
-                    // A route switch under way (new settings) is the
-                    // transition's to make now: it moves the track
-                    // itself (one already meeting its old route ends first).
-                    if self.switch.as_ref().is_some_and(|s| s.spliced) {
+                } else if now >= start - LEAD {
+                    // A route switch under way (new settings) is dropped:
+                    // the transition has the track now (one already meeting
+                    // its old route ends first).
+                    if self.head.switch.as_ref().is_some_and(|s| s.spliced) {
                         return Ok(false);
                     }
                     self.cancel_switch();
@@ -435,512 +552,260 @@ impl Engine {
                 }
                 Ok(false)
             }
-            Phase::Preparing | Phase::Mixing => {
-                if phase == Phase::Mixing {
-                    let t = self.transition.as_ref().expect("checked");
-                    let end = t.window.map(|w| w.1);
-                    let drained = self.playing.as_ref().is_some_and(|a| a.unwritten() == 0);
-                    if end.is_some_and(|end| written >= end) && drained {
-                        let a = self.playing.take();
-                        self.hand_over_transition(a);
-                        return Ok(true);
+            Phase::Prepared(p) => {
+                let ((w0, w1), origin, cut, mixing) = (p.window, p.origin, p.cut, p.mixing);
+                if !mixing && written >= w0 {
+                    let started = TransitionState::Started {
+                        head: self.head.id,
+                        output_frame: w0,
+                        origin,
+                    };
+                    self.queue_cue(w0, CueEvent::Transition(started));
+                    if let Some(p) = self.transition.as_mut().and_then(Transition::prepared_mut) {
+                        p.mixing = true;
                     }
                 }
-                self.b_turn()
-            }
-            Phase::Settling => {
-                let t = self.transition.as_ref().expect("checked");
-                let Some(origin) = t.origin else {
-                    return Ok(false);
-                };
-                let rate = self.out.as_ref().map_or(1, |o| o.info.format.rate);
-                let clock = t.a0 + written.saturating_sub(origin) as f64 / f64::from(rate);
-                if clock >= t.map.settled_at() + SETTLED {
-                    self.settle_transition(written);
+                if let Some(a) = self.head.playing.take_if(|_| written >= w1) {
+                    self.hand_over_transition(a, cut.map_or(w1, |at| at.min(w1)));
                     return Ok(true);
+                }
+                match self.parked_turn() {
+                    Ok(did) => Ok(did),
+                    Err(why) => {
+                        self.drop_transition(Some(&format!("the next track failed: {why}")));
+                        Ok(true)
+                    }
+                }
+            }
+            Phase::Settling { .. } => {
+                let back = self
+                    .head
+                    .playing
+                    .as_ref()
+                    .is_some_and(|b| b.along.is_none());
+                if back && self.head.switch.is_none() {
+                    self.settle_transition(written);
                 }
                 Ok(false)
             }
         }
     }
 
-    /// Moves A onto a stems route with its fades (unless it is on one),
-    /// and opens B ahead of the window.
+    /// Prepares the window: B opened on the second head, read along the
+    /// map from its first frame and linked to A's frame `origin`; A along
+    /// the glide; both heads automated. Why it cannot be, if it cannot.
     fn prepare_transition(&mut self) -> Result<(), String> {
-        let (plan, map, a0, glide, map_a) = {
-            let t = self.transition.as_ref().expect("checked");
-            (
-                Arc::clone(&t.plan),
-                Arc::clone(&t.map),
-                t.a0,
-                t.glide,
-                t.map_a.clone(),
-            )
-        };
-        let open = self
-            .out
-            .as_ref()
-            .map(|o| o.info.format)
-            .ok_or("nothing is playing")?;
-        let caps = self.capabilities().map_err(|e| e.to_string())?;
-        let settings = self.settings;
-        let whole = self.separator.is_none() || self.stems_failed;
-        let separator = whole.then_some(whole_mix as fn() -> _);
-        // The stems as a mixer plays them (and a change of them to come, at
-        // its time), for a track that is not whole.
-        let mask = self.transition_mask();
-        let on = |whole: bool| (!whole).then(|| mask.clone());
-        // A on its stems, faded by its lanes.
-        let a = self.playing.as_ref().ok_or("nothing is playing")?;
-        let a_facts = FileFacts::from(&*a.info);
-        // A is on its stems already when a plan replaced one that had
-        // prepared (it stays where that one put it), or when the track a
-        // transition before left on its stems is still on them. Not read
-        // along a glide (this plan's or that earlier one's): only its fades.
-        if a.route.stage == Stage::Stems && map_a.is_none() && a.warp.is_none() {
-            let a = self.playing.as_mut().expect("checked");
-            a.gains = Some(Transition::gains_a(&plan, on(a.whole())));
+        let t = self.transition.as_ref().expect("armed");
+        let (plan, map, glide) = (Arc::clone(&t.plan), Arc::clone(&t.map), t.glide);
+        let out = self.head.out.as_ref().ok_or("nothing is playing")?;
+        let (open, written, rate) = (out.info.format, out.output.written(), out.info.format.rate);
+        // What refuses at once, before anything of B is opened.
+        if !self.parked_takes_lanes() {
+            return Err("the next track's head takes no stems".into());
+        }
+        let a = self.head.playing.as_ref().ok_or("nothing is playing")?;
+        if let Some(why) = self.along_refusal(a).filter(|_| !glide.is_identity()) {
+            return Err(format!("the playing track cannot change its tempo: {why}"));
+        }
+        let w0 = output_frame_of(a, plan.start);
+        let w1 = if glide.is_identity() {
+            output_frame_of(a, plan.start + plan.length)
         } else {
-            // Onto its stems, or onto a fresh track on them: to be read
-            // along this plan's glide (a plan with a glide replacing one
-            // that had put A on its stems), or no longer along the map an
-            // earlier transition read it by (its next track, still on its
-            // stems and its map).
-            let route = if a.route.stage == Stage::Stems {
-                a.route.clone()
-            } else {
-                stems_at(&a_facts, &caps, &settings, &open)
-                    .ok_or("the output cannot take the stems of this track")?
-            };
-            self.begin_switch(route).map_err(|e| e.to_string())?;
-            let switch = self.switch.as_mut().expect("just begun");
-            switch.track.separator = separator;
-            switch.track.gains = Some(Transition::gains_a(&plan, on(whole)));
-            if let Some(map_a) = map_a {
-                // From its first frame, where the glide is still none (the
-                // switch meets the file a second on, on its grid).
-                let s = switch.track.seg_frame as f64 / f64::from(switch.track.info.rate.max(1));
-                switch.track.warp = Some(Box::new(Warping::new(map_a, s, s, plan.tempo, 2)));
-            }
-        }
-        // B from a little before the window, read along the map.
-        let path = self.queue[plan.into].clone();
-        let source = crate::source::Source::open(&path).map_err(|e| e.to_string())?;
+            w0 + (glide.length() * f64::from(rate)).round() as u64
+        };
+        let origin = w0.saturating_sub((NEXT_LEAD * f64::from(rate)).round() as u64);
+        // B, routed for the open format alone.
+        let source = Source::open(&self.queue[plan.into]).map_err(|e| e.to_string())?;
         let info = source.info().clone();
-        let route = stems_at(&FileFacts::from(&*info), &caps, &settings, &open)
-            .ok_or("the output cannot take the next track's stems")?;
-        let b_origin = (map.at(a0) - B_MARGIN).max(0.0);
-        let frame = (b_origin * f64::from(info.rate)).floor() as u64;
-        let mut b = Track::new(
-            plan.into,
-            info.clone(),
-            route,
-            source,
-            self.segments.clone(),
-        )
-        .map_err(|e| e.to_string())?;
-        b.start_at(frame).map_err(|e| e.to_string())?;
-        b.pending = true;
-        b.begin_segment(0, b.seg_frame, SegStart::Cold);
-        b.separator = separator;
-        b.gains = Some(Transition::gains_b(&plan, &map, glide, on(whole)));
-        b.warp = Some(Box::new(Warping::new(
-            Arc::clone(&map),
-            a0,
-            frame as f64 / f64::from(info.rate),
-            plan.tempo,
-            2,
-        )));
-        let t = self.transition.as_mut().expect("checked");
-        t.b = Some(b);
-        t.phase = Phase::Preparing;
-        Ok(())
-    }
-
-    /// Offline ([`super::PlayerOptions::offline`]), the playing track holds
-    /// within a second of the window while its move onto its stems is under
-    /// way, and the move decodes meanwhile (on a device it could not wait:
-    /// the window then goes on as it can). Returns whether it held.
-    pub(super) fn hold_for_transition(&mut self) -> Result<bool, Error> {
-        let moving = self.switch.as_ref().is_some_and(|s| !s.spliced && !s.done);
-        if !self.offline || !moving {
-            return Ok(false);
+        if info.channels > 2 {
+            return Err("the next track has more than two channels".into());
         }
-        let (Some(t), Some(a), Some(out)) = (&self.transition, &self.playing, &self.out) else {
-            return Ok(false);
-        };
-        let near = out.output.written() + u64::from(out.info.format.rate);
-        if t.phase != Phase::Preparing || near < output_frame_of(a, t.plan.start) {
-            return Ok(false);
-        }
-        let mut switch = self.switch.take().expect("checked");
-        match self.produce(&mut switch.track, Duration::from_millis(10)) {
-            Ok(Progress::Complete) => switch.done = true,
-            Ok(Progress::Busy) => {}
-            Err(error) if error.is_skippable() => {
-                self.broke(&mut switch.track, error);
-                switch.done = true;
-            }
-            Err(error) => return Err(error),
-        }
-        self.switch = Some(switch);
-        self.try_splice()?;
-        Ok(true)
-    }
-
-    /// B's turn to decode ahead: when the output holds half its buffer, is
-    /// paused, or took nothing of the last write, as a switch's.
-    fn b_turn(&mut self) -> Result<bool, Error> {
-        let Some(out) = &self.out else {
-            return Ok(false);
-        };
-        let buffered = out.output.written().saturating_sub(out.clock.position());
-        let ring = out.info.ring_frames;
-        let rate = out.info.format.rate;
-        let turn = self.paused
-            || self.offline
-            || (ring > 0 && buffered.saturating_mul(2) >= ring)
-            || self.stalled.is_some_and(|at| at.elapsed() < SWITCH_TURN);
-        let t = self.transition.as_mut().expect("checked");
-        let Some(b) = t.b.as_ref() else {
-            return Ok(false);
-        };
-        // Far enough ahead: a quarter of a second past the frame being
-        // written, once it is laid onto A's timeline (its stems are
-        // separated well ahead, so it makes that much at once). Its output
-        // is mixed with the stems on as it is made, so a stem switched on
-        // a bar (a second ahead or more) is heard there on it too.
-        let ahead = ((b.out_buf.len() - b.out_at) / 2) as u64;
-        let written = out.output.written();
-        let enough = match t.origin {
-            Some(origin) => origin + t.b_next + ahead >= written + u64::from(rate) / 4,
-            None => ahead >= 2 * u64::from(rate),
-        };
-        if !turn || enough {
-            return Ok(false);
-        }
-        let mut b = t.b.take().expect("checked");
-        let before = b.emitted;
-        let result = self.produce(&mut b, Duration::ZERO);
-        let waiting = b.emitted == before;
-        if let Some(why) = b.stems_error.take() {
-            super::drop_later(b);
-            self.drop_transition(Some(&format!("the next track's stems failed: {why}")));
-            return Ok(true);
-        }
-        match result {
-            Ok(_) => {}
-            Err(error) if error.is_skippable() => {
-                super::drop_later(b);
-                self.drop_transition(Some(&format!("the next track failed: {error}")));
-                return Ok(true);
-            }
-            Err(error) => return Err(error),
-        }
-        if let Some(t) = self.transition.as_mut() {
-            t.b = Some(b);
-        }
-        Ok(!waiting)
-    }
-
-    /// Adds B's output to the piece of A's that was just made (it starts
-    /// at the frame being written), cutting A's at the window's end.
-    pub(super) fn mix_transition(&mut self, a: &mut Track) -> Result<(), Error> {
-        let Some(out) = &self.out else {
-            return Ok(());
-        };
-        let (written, channels, rate) = (
-            out.output.written(),
-            usize::from(out.info.format.channels),
-            out.info.format.rate,
-        );
-        let Some(t) = self.transition.as_mut() else {
-            return Ok(());
-        };
-        if !matches!(t.phase, Phase::Preparing | Phase::Mixing) || a.out_at != 0 {
-            return Ok(());
-        }
-        // The window and B's timeline on A's (straight while it plays on).
-        let (w0, w1) = match t.window {
-            Some(w) => w,
-            None => {
-                let w0 = output_frame_of(a, t.plan.start);
-                // A covers its window in the glide's length of output.
-                let w1 = if t.glide.is_identity() {
-                    output_frame_of(a, t.plan.start + t.plan.length)
-                } else {
-                    w0 + (t.glide.length() * f64::from(rate)).round() as u64
-                };
-                let lead = ((t.plan.start - t.a0) * f64::from(rate)).round() as u64;
-                t.origin = Some(w0.saturating_sub(lead));
-                (w0, w1)
-            }
-        };
-        let frames = (a.out_buf.len() / channels) as u64;
-        let (from, to) = (written.max(t.mixed_to), written + frames);
-        if to <= w0 {
-            return Ok(());
-        }
-        if t.phase == Phase::Preparing {
-            t.phase = Phase::Mixing;
-            t.window = Some((w0, w1));
-            let unglided = t.map_a.is_some() && a.warp.is_none();
-            self.queue_cue(
-                w0,
-                CueEvent::Transition(TransitionState::Started { output_frame: w0 }),
-            );
-            if unglided {
-                // The next track is laid onto the glide, which the playing
-                // one cannot follow: it goes on alone, as it is (its move
-                // onto the gliding track dropped), rather than off its
-                // beats.
-                a.gains = None;
-                self.cancel_switch();
-                self.drop_transition(Some(
-                    "the playing track was not on its stems in time to change its tempo",
-                ));
-                return Ok(());
-            }
-        }
-        let t = self.transition.as_mut().expect("checked");
-        let origin = t.origin.expect("set with the window");
-        let first = from.max(w0);
-        let last = to.min(w1);
-        if a.gains.is_none() {
-            // A is not on its stems yet (the move to them has not met the
-            // window in time): it fades as a whole, by its lanes' mean.
-            let plan = Arc::clone(&t.plan);
-            for f in first..last {
-                let gains = plan.gains(Side::From, plan.share(seconds_written(a, f)));
-                let g = gains.iter().sum::<f64>() / gains.len() as f64;
-                let at = ((f - written) as usize) * channels;
-                for s in &mut a.out_buf[at..at + channels] {
-                    *s = (f64::from(*s) * g).round() as i32;
-                }
-            }
-        }
-        let t = self.transition.as_mut().expect("checked");
-        let mut b = t.b.take().expect("B is there while mixing");
-        let mut f = first;
-        let mut spent = Duration::ZERO;
-        while f < last {
-            let j = f - origin;
-            // B's frames before this one are not heard.
-            let t = self.transition.as_mut().expect("checked");
-            if t.b_next < j {
-                let have = ((b.out_buf.len() - b.out_at) / channels) as u64;
-                let skip = (j - t.b_next).min(have);
-                b.out_at += skip as usize * channels;
-                t.b_next += skip;
-            }
-            let have = ((b.out_buf.len() - b.out_at) / channels) as u64;
-            if t.b_next == j && have > 0 {
-                let n = have.min(last - f);
-                let a_at = ((f - written) as usize) * channels;
-                for k in 0..n as usize * channels {
-                    let sum = i64::from(a.out_buf[a_at + k]) + i64::from(b.out_buf[b.out_at + k]);
-                    let (kept, clipped) = soft_limit(sum);
-                    a.mix_clips += u64::from(clipped);
-                    a.out_buf[a_at + k] = kept;
-                }
-                b.out_at += n as usize * channels;
-                t.b_next += n;
-                f += n;
-                continue;
-            }
-            // B must make more; it may wait for its stems, a little.
-            if b.out_at > 1 << 16 {
-                b.out_buf.drain(..b.out_at);
-                b.out_at = 0;
-            }
-            if spent >= MIX_PATIENCE && !self.offline {
-                // Behind: the rest of this piece goes without it (its
-                // frames are skipped when they come, so it stays in time).
-                break;
-            }
-            let before = b.emitted;
-            match self.produce(&mut b, Duration::from_millis(10)) {
-                Ok(Progress::Complete) => {
-                    if b.emitted == before {
-                        break;
-                    }
-                }
-                Ok(Progress::Busy) => {}
-                Err(error) if error.is_skippable() => break,
-                Err(error) => return Err(error),
-            }
-            if b.emitted == before {
-                spent += Duration::from_millis(10);
-            }
-        }
-        let t = self.transition.as_mut().expect("checked");
-        t.mixed_to = to.min(w1);
-        t.b = Some(b);
-        if to > w1 {
-            // A ends at the window's end; B goes on from there.
-            a.out_buf.truncate(((w1 - written) as usize) * channels);
-            a.emitted = a.emitted.saturating_sub(to - w1);
-        }
-        Ok(())
-    }
-
-    /// The window's end is written (or A ended in it): B plays on alone,
-    /// and `a` goes.
-    pub(super) fn hand_over_transition(&mut self, a: Option<Track>) {
-        let Some(t) = self.transition.as_mut() else {
-            return;
-        };
-        let Some(mut b) = t.b.take() else {
-            return;
-        };
-        let written = self.out.as_ref().map_or(0, |o| o.output.written());
-        let rate = self.out.as_ref().map_or(1, |o| o.info.format.rate);
-        let origin = t.origin.unwrap_or(written);
-        let end = written;
-        // B's frames before the end are not heard.
-        let channels = usize::from(b.route.channels);
-        let j = end.saturating_sub(origin);
-        if t.b_next < j {
-            let have = ((b.out_buf.len() - b.out_at) / channels) as u64;
-            let skip = (j - t.b_next).min(have);
-            b.out_at += skip as usize * channels;
-            t.b_next += skip;
-        }
-        b.pending = false;
-        b.begin_segment(origin, b.seg_frame, SegStart::Continued);
-        let warp = HeardWarp {
-            map: Arc::clone(&t.map),
-            origin,
-            a0: t.a0,
+        let route = self
+            .route_at(&info, open)
+            .map_err(|none| format!("the next track does not play at {open} ({none})"))?;
+        let b = Track::new(plan.into, info, route, source, self.segments.clone())
+            .map_err(|e| e.to_string())?;
+        self.open_parked(b)
+            .map_err(|e| format!("the next track's output did not open: {e}"))?;
+        // Its frame 0 at A's time there (at `origin`), along the map, heard
+        // from the window on.
+        let clock = self.head.out.as_ref().expect("checked").clock.clone();
+        let heard = HeardWarp {
+            map,
+            origin: 0,
+            a0: plan.start - (w0 - origin) as f64 / f64::from(rate),
             out_rate: rate,
         };
-        let seconds = t.map.at(t.a0 + j as f64 / f64::from(rate));
-        let from_frame = (seconds * f64::from(b.info.rate)).round().max(0.0) as u64;
-        // A move of A onto its stems that has not met it yet goes with it.
-        if let Some(switch) = self.switch.take() {
-            super::drop_later(switch.track);
+        self.with_parked(|e| {
+            let mut b = e.head.playing.take().expect("just opened");
+            e.start_along(&mut b, heard, plan.tempo, (clock, w0));
+            e.head.playing = Some(b);
+        });
+        let (fa, fb) = self.faders().expect("on a desk");
+        let (fa, fb) = (fa.clone(), fb.clone());
+        fb.follow(&fa, origin).map_err(|e| e.to_string())?;
+        if !glide.is_identity() {
+            // A along the glide from the frame written next, the glide's
+            // time at its stream frame 0 (none before the window).
+            let heard = HeardWarp {
+                map: Arc::new(glide.map()),
+                origin: 0,
+                a0: plan.start - w0 as f64 / f64::from(rate),
+                out_rate: rate,
+            };
+            self.read_along_at(heard, written, plan.tempo)
+                .map_err(|why| format!("the playing track cannot change its tempo: {why}"))?;
         }
+        let curves = compile(&plan, &glide, w0, origin, rate);
+        fa.automate(curves[0].automation())
+            .and_then(|()| fb.automate(curves[1].automation()))
+            .map_err(|e| e.to_string())?;
+        let t = self.transition.as_mut().expect("armed");
+        t.phase = Phase::Prepared(Prepared {
+            window: (w0, w1),
+            origin,
+            curves,
+            mixing: false,
+            cut: None,
+        });
+        Ok(())
+    }
+
+    /// A (`a`) is written to `end` (its stream frame; it ended there, or
+    /// the window did, or `Next` cut it there): B is made the desk's Lead
+    /// before A is a guest again, A's output plays out what it holds, and
+    /// the heads swap. A's end and B's start are cued on one frame, on B's
+    /// clock from here (A's frames less `origin`).
+    pub(super) fn hand_over_transition(&mut self, a: Track, end: u64) {
         let Some(t) = self.transition.as_mut() else {
             return;
         };
-        t.phase = Phase::Settling;
-        t.origin = Some(origin);
-        if let Some(a) = &a {
-            // A's cues past the end are not heard.
-            self.cues
-                .retain(|c| c.at <= end || !matches!(c.event, CueEvent::Clipped { .. }));
-            self.queue_cue(end, CueEvent::Ended { index: a.index });
+        let Some(&Prepared { origin, cut, .. }) = t.prepared() else {
+            return;
+        };
+        t.phase = Phase::Settling { cut: cut.is_some() };
+        let from = t.plan.from;
+        // The format stays where it is, unless the settings changed.
+        let pin = t.settings == self.settings;
+        if let Some((fa, fb)) = self.faders() {
+            let _ = fb.set_role(Role::Lead);
+            let _ = fa.set_role(Role::Guest);
         }
-        // B's held cues from the end on.
-        b.held.retain(|c| c.at + origin >= end);
-        let out = self.out.as_ref().expect("an output is open");
+        let open = self.head.out.as_ref().map(|o| o.info.format);
+        if let Some(out) = self.head.out.as_mut() {
+            let _ = out.output.drain(Some(Duration::ZERO));
+        }
+        // A's cues past the end are not heard; it ends there.
+        self.cues
+            .retain(|c| c.at <= end || !matches!(c.event, CueEvent::Clipped { .. }));
+        self.queue_cue(end, CueEvent::Ended { index: from });
+        self.cancel_switch();
+        self.head.along_at = None;
+        self.head.pending_jump = None;
+        self.drop_jump_fill();
+        drop_later(a);
+        self.swap_heads();
+        // B's clock from here: the cues, and what is heard until B is.
+        for cue in &mut self.cues {
+            cue.at = cue.at.saturating_sub(origin);
+        }
+        self.heard = self.heard.as_ref().map(|h| h.rebased(origin));
+        self.last_report = None;
+        self.pinned = open.filter(|_| pin);
+        let Some(mut b) = self.head.playing.take() else {
+            return;
+        };
+        let end = end.saturating_sub(origin);
+        b.pending = false;
+        b.held.retain(|c| c.at >= end);
+        // On air: its clock is its own now, A's no longer.
+        if let Some(along) = b.along.as_mut() {
+            along.heard_from = None;
+        }
+        let heard = b.heard();
         let start = TrackStart {
             index: b.index,
+            head: self.head.id,
             info: b.info.clone(),
             route: b.route.clone(),
-            output: out.info.clone(),
-            device: self.target.name(),
+            output: self.head.out.as_ref().expect("B's output").info.clone(),
+            device: self.head.target.name(),
             bit_perfect: false,
             output_frame: end,
-            from_frame,
-        };
-        let heard = Heard {
-            index: b.index,
-            info: b.info.clone(),
-            route: b.route.clone(),
-            seg_out: origin,
-            seg_frame: b.seg_frame,
-            warp: Some(Arc::new(warp)),
+            from_frame: heard.frame_at(end),
         };
         self.queue_cue(end, CueEvent::Started(Box::new(start), heard));
         self.release(&mut b);
-        self.playing = Some(b);
-        if let Some(a) = a {
-            super::drop_later(a);
-        }
+        self.head.playing = Some(b);
     }
 
-    /// B is back at its own tempo: its timeline runs straight from the
-    /// frame being written, and it moves back onto its own route.
+    /// B is back on its own route (or ended): its automation goes (it is at
+    /// its end values, one in a plan that ends with every stem in), the
+    /// transition is finished, and settings that waited apply (the format
+    /// no longer held when they changed).
     fn settle_transition(&mut self, written: u64) {
         let Some(t) = self.transition.take() else {
             return;
         };
-        self.straighten(&t, written);
-        self.queue_cue(written, CueEvent::Transition(TransitionState::Finished));
-        // Back onto its own route, without a break where the format allows.
+        if let Some((fader, _)) = self.faders() {
+            fader.clear_automation();
+        }
+        if matches!(t.phase, Phase::Settling { cut: false }) {
+            self.queue_cue(written, CueEvent::Transition(TransitionState::Finished));
+        }
+        if t.settings != self.settings {
+            self.pinned = None;
+        }
         self.reroute();
     }
 
     /// A ended (`a`): inside the window, B takes over at once (and `None`
     /// comes back); before it, the transition is off and `a` comes back
-    /// to end as usual.
+    /// to end as usual. B ending as it settles finishes it.
     pub(super) fn transition_takes_over(&mut self, a: Track) -> Option<Track> {
-        match self.transition.as_ref().map(|t| t.phase) {
-            Some(Phase::Mixing) => {
-                if let Some(t) = self.transition.as_mut() {
-                    if let Some((w0, _)) = t.window {
-                        let written = self.out.as_ref().map_or(w0, |o| o.output.written());
-                        t.window = Some((w0, written.max(w0)));
-                    }
-                }
-                self.hand_over_transition(Some(a));
-                None
-            }
-            Some(Phase::Settling) | None => Some(a),
-            Some(_) => {
-                self.forget_transition(Some("the track ended before the window"));
-                Some(a)
-            }
+        let written = self.head.out.as_ref().map_or(0, |o| o.output.written());
+        let Some(t) = self.transition.as_ref() else {
+            return Some(a);
+        };
+        if t.mixing() {
+            self.hand_over_transition(a, written);
+            return None;
         }
+        if matches!(t.phase, Phase::Settling { .. }) {
+            self.settle_transition(written);
+        } else {
+            self.forget_transition(Some("the track ended before the window"));
+        }
+        Some(a)
     }
-}
 
-impl Engine {
     /// The queue was reordered ([`super::queue`]): a transition follows
     /// its tracks while the next one is still the one after the playing
-    /// one, and is called off otherwise.
+    /// one, and is called off otherwise (one handed over follows its next
+    /// track).
     pub(super) fn reindex_transition(&mut self, map: &dyn Fn(usize) -> Option<usize>) {
         let Some(t) = self.transition.as_mut() else {
             return;
         };
-        match (map(t.plan.from), map(t.plan.into)) {
-            (Some(from), Some(into)) if into == from + 1 => {
-                if (from, into) != (t.plan.from, t.plan.into) {
-                    t.plan = Arc::new(TransitionPlan {
-                        from,
-                        into,
-                        ..(*t.plan).clone()
-                    });
-                    if let Some(b) = &mut t.b {
-                        b.index = into;
-                    }
+        let settling = matches!(t.phase, Phase::Settling { .. });
+        let (from, into) = (map(t.plan.from), map(t.plan.into));
+        let (from, into) = match (from, into) {
+            (Some(from), Some(into)) if into == from + 1 => (from, into),
+            (from, Some(into)) if settling => (from.unwrap_or(t.plan.from), into),
+            _ => return self.drop_transition(Some("the queue changed")),
+        };
+        if (from, into) != (t.plan.from, t.plan.into) {
+            t.plan = Arc::new(TransitionPlan {
+                from,
+                into,
+                ..(*t.plan).clone()
+            });
+            if let Some(b) = self.parked_track() {
+                b.index = into;
+                for cue in &mut b.held {
+                    cue.event.reindex(map);
                 }
             }
-            _ => self.drop_transition(Some("the queue changed")),
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn the_mix_bends_its_peaks_under_full_scale() {
-        // Up to the knee, as added.
-        assert_eq!(soft_limit(1_000_000), (1_000_000, false));
-        assert_eq!(soft_limit(-7_000_000), (-7_000_000, false));
-        // Over it, under full scale and in order, with no clip.
-        let mut last = KNEE as i32;
-        for x in [7_600_000_i64, 8_388_607, 9_000_000, 12_000_000, 16_777_214] {
-            let (y, clipped) = soft_limit(x);
-            assert!(!clipped && y > last && f64::from(y) <= FULL, "{x} {y}");
-            assert_eq!(soft_limit(-x).0, -y);
-            last = y;
-        }
-        // Smooth at the knee.
-        let k = KNEE as i64;
-        assert!((soft_limit(k + 1000).0 as i64 - (k + 1000)).abs() <= 1);
     }
 }

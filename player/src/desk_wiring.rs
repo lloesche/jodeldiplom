@@ -1,10 +1,13 @@
 //! The desk the app plays on, and the engine on it: a mixer that owns the
 //! output device ([`jodel_output::mixer`]), the player's strip as a group
 //! with a strip for each of its stems inside it (drums, bass, vocals,
-//! other), the preview's strip, and the engine on a lane input of the
-//! player's: its main on the group, each stem's lane on its strip. With
-//! every strip as it starts, main alone is heard, at gain 1, and reaches
-//! the device bit for bit.
+//! other), the preview's strip, and the engine on two heads, each a lane
+//! input of the player's ([`StemDesk::two_heads`]): its main on the group,
+//! each stem's lane on its strip. The engine plays on the head on air, the
+//! desk's Lead; a transition's next track on the other, and the two swap at
+//! its hand-over. The user's strips act on both. With every strip as it
+//! starts, main alone is heard, at gain 1, and reaches the device bit for
+//! bit.
 //!
 //! Where it plays ([`Output`]): a device, a null output or a memory one.
 //! The Mixer tab's settings are made on the strips here ([`Engine::apply`]),
@@ -14,15 +17,15 @@
 use std::sync::mpsc::Receiver;
 use std::sync::Arc;
 
-use jodel_output::mixer::{Curve, Fader, MicView, Mixer, MixerOptions, Ramp, Role, Start, Strip};
+use jodel_output::mixer::{Curve, Fader, MicView, Mixer, MixerOptions, Ramp, Start, Strip};
 use jodel_output::{Capabilities, SimClock};
 use jodel_playback::{
-    any_capabilities, Captures, DeviceTarget, Event, MemoryTarget, NullTarget, OutputTarget,
-    Player, PlayerOptions, SpectrumTap,
+    any_capabilities, Captures, DeviceTarget, Event, HeadFaders, MemoryTarget, NullTarget,
+    OutputTarget, Player, PlayerOptions, SpectrumTap, StemDesk,
 };
 
 use crate::core::desk::{DeskChange, Look, StripKind};
-use crate::core::State;
+use crate::core::{HeadFrame, State};
 
 /// Where the engine plays.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -114,12 +117,11 @@ const LANE_RAMP: std::time::Duration = std::time::Duration::from_millis(20);
 pub(crate) struct Engine {
     pub(crate) previews: Option<crate::preview::Previews>,
     pub(crate) player: Player,
-    /// The engine's fader on the mixer: over its main and every stem (the
-    /// preview's duck).
-    pub(crate) lead: Fader,
-    /// Each stem's lane's fader ([`StripKind::PARTS`]'s order): the
-    /// controllers' gain on top of its strip (the Karaoke tab's voice).
-    lanes: Vec<Fader>,
+    /// The engine's heads' faders, by head id
+    /// ([`jodel_playback::TrackStart::head`]): the first is the one it
+    /// starts on. Its input's fader is the preview's duck, each stem's
+    /// lane's ([`StripKind::PARTS`]' order) the Karaoke tab's voice.
+    heads: [HeadFaders; 2],
     /// The desk's strips ([`StripKind::index`]), the Mixer tab's faders.
     strips: Vec<Strip>,
     /// The microphone's port as last told.
@@ -131,7 +133,7 @@ pub(crate) struct Engine {
 
 impl Engine {
     /// The mixer on `target` (which takes `capabilities`), its strips, and
-    /// the engine on the player's lane input with `options`; the engine's
+    /// the engine on the player's two heads with `options`; the engine's
     /// events.
     pub(crate) fn start(
         target: Box<dyn OutputTarget>,
@@ -149,29 +151,22 @@ impl Engine {
         // ahead of what is heard.
         let tap = SpectrumTap::new(1 << 19);
         mixer.set_monitor(Some(Box::new(tap.clone())));
-        let strips: Vec<Strip> = {
-            let player = mixer.strip(StripKind::Player.name());
-            let mut strips = vec![player.clone()];
-            for kind in StripKind::ALL.into_iter().skip(1) {
-                strips.push(match kind.parent() {
-                    Some(_) => mixer.strip_in(&player, kind.name()),
-                    None => mixer.strip(kind.name()),
-                });
-            }
-            strips
-        };
-        let parts: Vec<&Strip> = StripKind::PARTS
-            .iter()
-            .map(|k| &strips[k.index()])
-            .collect();
-        let (input, lead, lanes) =
-            mixer.input_lanes(&strips[StripKind::Player.index()], &parts, Role::Lead, 1.0);
-        let (player, events) = Player::new(Box::new(input), options);
+        // The player's group and its stems' strips, and the preview's: by
+        // kind ([`StripKind::index`]).
+        let (desk, lead, guest) = StemDesk::two_heads(&mixer, StripKind::Player.name(), 1.0);
+        let strips = StripKind::ALL
+            .map(|kind| match (kind, kind.stem()) {
+                (StripKind::Player, _) => desk.group.clone(),
+                (_, Some(stem)) => desk.stem(stem).clone(),
+                _ => mixer.strip(kind.name()),
+            })
+            .to_vec();
+        let heads = [lead.faders.clone(), guest.faders.clone()];
+        let (player, events) = Player::on_desk(lead, guest, options);
         let engine = Engine {
             previews: None,
             player,
-            lead,
-            lanes,
+            heads,
             strips,
             mic: MicView::default(),
             tap,
@@ -185,20 +180,27 @@ impl Engine {
         &self.strips[kind.index()]
     }
 
+    /// Both heads' input faders (the song, for the preview to duck): the
+    /// one on air and a transition's next track's alike.
+    pub(crate) fn song_faders(&self) -> Vec<Fader> {
+        self.heads.iter().map(|h| h.input.clone()).collect()
+    }
+
     /// Sets a strip of the mixer as the Mixer tab has it, or a stem's lane.
     pub(crate) fn apply(&self, change: DeskChange) {
         match change {
             DeskChange::Level(kind, gain) => self.strip(kind).set_level(gain),
             DeskChange::Mute(kind, on) => self.strip(kind).set_mute(on),
-            DeskChange::MuteAt(kind, on, frame) => {
-                // On that frame of the player's output, as it plays now (at
+            DeskChange::MuteAt(kind, on, at) => {
+                // On that frame of that head's output, as it plays now (at
                 // once before any of it is mixed).
-                let start = self.lead.at_stream(frame);
-                self.strip(kind).set_mute_at(on, start);
+                self.strip(kind).set_mute_at(on, self.at_stream(at));
             }
             DeskChange::Solo(kind, on) => self.strip(kind).set_solo(on),
             DeskChange::Lane(kind, gain) => {
-                if let Some(lane) = kind.lane().and_then(|k| self.lanes.get(k)) {
+                // On both heads: the voice holds through a transition.
+                let lanes = self.heads.iter().filter_map(|h| h.lanes.get(kind.lane()?));
+                for lane in lanes {
                     lane.set(Ramp {
                         start: Start::Now,
                         to: gain,
@@ -208,6 +210,16 @@ impl Engine {
                 }
             }
         }
+    }
+
+    /// When `at` is mixed, as its head's output plays now. A head the
+    /// engine has not is a bug; it is taken as now.
+    fn at_stream(&self, at: HeadFrame) -> Start {
+        let Some(head) = self.heads.get(at.head) else {
+            debug_assert!(false, "the engine has no head {}", at.head);
+            return Start::Now;
+        };
+        head.input.at_stream(at.frame)
     }
 
     /// Every setting of the desk on a new mixer (its strips start at 0

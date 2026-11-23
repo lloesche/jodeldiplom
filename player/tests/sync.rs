@@ -579,7 +579,8 @@ fn the_app_plays_the_clicks_and_hears_a_ta_after_each() {
     };
     assert!((d - (TA + bridge)).abs() <= 0.015, "{d}: {what}");
     // Kept; then the song again: its output is the only one on the
-    // Player's strip, and the microphone's tap is on it.
+    // Player's strip (the clicks' input gone, the player's two heads
+    // there, one of them open), and the microphone's tap is on it.
     app.dispatch(Action::Op(Op::SyncKeep));
     assert!(app.state.karaoke.sync.is_none());
     assert!(app
@@ -601,7 +602,8 @@ fn the_app_plays_the_clicks_and_hears_a_ta_after_each() {
     assert!(common::wait_for(&mut app, Duration::from_secs(10), |a| {
         let desk = a.desk().unwrap();
         let player = desk.strips.iter().find(|s| s.name == "Player").unwrap();
-        player.inputs.len() == 1 && desk.mic.port == MicPort::Hearing
+        let open = player.inputs.iter().filter(|i| i.format.is_some()).count();
+        player.inputs.len() == 2 && open == 1 && desk.mic.port == MicPort::Hearing
     }));
     drop(singer);
     app.shutdown();

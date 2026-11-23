@@ -296,8 +296,22 @@ pub enum Status {
     Draft,
     /// Taken by the engine: it starts at the window.
     Armed,
-    /// The window is being heard: from this output frame.
-    Mixing(u64),
+    /// The window is being heard (as
+    /// [`jodel_playback::TransitionState::Started`] tells it), through the
+    /// hand-over and the next track's settling.
+    Mixing(MixStart),
+}
+
+/// Where a mix started: the window's first frame, of the playing track's
+/// head, and that head's frame the next track's head's first is linked to
+/// (the positions told from the hand-over on count the next track's
+/// head's frames, these fewer).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MixStart {
+    /// The window's first frame.
+    pub start: crate::core::HeadFrame,
+    /// The next track's head's frame 0, on the playing head's frames.
+    pub origin: u64,
 }
 
 /// The editing cursor on the lanes.

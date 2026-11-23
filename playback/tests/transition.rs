@@ -1,8 +1,9 @@
-//! Transitions: the playing track and the next one heard together over a
-//! window, each faded by its lanes, the next one's beats on the playing
-//! one's, then the next one on its own and back on its own route. The
-//! separator gives each stem a quarter of the mix, so the stems of a track
-//! add up to the track, and what comes out can be worked out.
+//! Transitions on a desk: the playing track and the next one, each on a
+//! head of its own, heard together over a window, each faded by its lanes
+//! (the desk's automation), the next one's beats on the playing one's, then
+//! the next one on its own and back on its own route. The separator gives
+//! each stem a quarter of the mix, so the stems of a track add up to the
+//! track, and what comes out can be worked out.
 
 mod common;
 
@@ -10,65 +11,43 @@ use std::time::Duration;
 
 use common::transition::*;
 use common::*;
-use jodel_output::SampleFormat;
+use jodel_output::{SampleFormat, SimClock};
 use jodel_playback::stems::STEMS;
+use jodel_playback::warp::TimeMap;
 use jodel_playback::{
-    Envelope, Event, Player, PlayerOptions, Stage, TempoMode, TransitionPlan, TransitionState,
+    Envelope, Event, MakeStems, MemoryTarget, Player, TempoMode, TransitionPlan, TransitionState,
 };
 use SampleFormat::*;
 
-#[test]
-fn a_fade_at_one_tempo_mixes_the_two_and_hands_over() {
-    let _serial = serial();
-    let dir = temp_dir("transition-fade");
-    let tone =
-        |hz: [f64; 2]| move |t: f64, c: usize| 0.4 * (2.0 * std::f64::consts::PI * hz[c] * t).sin();
-    let (a_path, a) = wav(&dir, "a.wav", 12.0, tone([1_000.0, 5_000.0]));
-    let (b_path, b) = wav(&dir, "b.wav", 12.0, tone([2_000.0, 3_000.0]));
-    let (target, captures, gate) = GatedTarget::new(caps(&[RATE], &[S24In32Low]));
-    let (player, events) = Player::new(Box::new(target), options());
-    player.load(vec![a_path, b_path]).unwrap();
-    gate.allow(2_048);
-    player.play(0).unwrap();
-    collect_until(&events, |e| matches!(e, Event::TrackStarted(_)));
-    // From 5 s of A, over 2 s, into B at 1 s: B's time is A's less 4 s.
-    let plan = TransitionPlan {
+/// From 5 s of A over 2 s into B at 1 s (B's time is A's less 4 s), by
+/// `lanes`.
+fn fade_plan(lanes: [Envelope; 2 * STEMS], settle: f64) -> TransitionPlan {
+    TransitionPlan {
         from: 0,
         into: 1,
         start: 5.0,
         length: 2.0,
         entry: 1.0,
         beats: beats(5.0, 0.5, 1.0, 0.5, 5),
-        lanes: lanes(
-            Envelope::fade(1.0, 0.0, 0.0, 1.0),
-            Envelope::fade(0.0, 1.0, 0.0, 1.0),
-        ),
+        lanes,
         tempo: TempoMode::Varispeed,
-        settle: 1.0,
+        settle,
         glide: false,
-    };
-    player.transition(plan.clone()).unwrap();
-    let seen = step_to_end(&gate, &events);
-    drop(player);
-    let states = transitions(&seen);
-    assert_eq!(states[0], &TransitionState::Armed, "{states:?}");
-    let w0 = 5 * RATE as u64;
-    assert!(
-        states.contains(&&TransitionState::Started { output_frame: w0 }),
-        "{states:?}"
-    );
-    assert!(states.contains(&&TransitionState::Finished), "{states:?}");
-    let legs = starts(&seen);
-    let into = legs.iter().find(|s| s.index == 1).expect("B started");
-    assert_eq!(into.output_frame, 7 * u64::from(RATE));
-    assert_eq!(into.from_frame, 3 * u64::from(RATE));
-    let streams = captured(&captures);
-    assert_eq!(streams.len(), 1, "one stream throughout");
-    let got = samples(&streams[0].1);
+    }
+}
+
+fn fades() -> [Envelope; 2 * STEMS] {
+    lanes(
+        Envelope::fade(1.0, 0.0, 0.0, 1.0),
+        Envelope::fade(0.0, 1.0, 0.0, 1.0),
+    )
+}
+
+/// The worst difference in the window (5 s to 7 s, but its edges) between
+/// `got` and A and B faded by `plan`'s first lanes, B's frame the output's
+/// less 4 s; and where.
+fn off_in_window(plan: &TransitionPlan, got: &[i32], a: &[i32], b: &[i32]) -> (f64, usize) {
     let rate = RATE as usize;
-    // A as it is before it moves onto its stems.
-    assert!(got[..2 * rate / 2] == a[..2 * rate / 2]);
-    // Inside the window: each faded by its lanes (equal power).
     let offset = 4 * rate;
     let (mut worst, mut at) = (0.0f64, 0);
     for f in (5 * rate + 200)..(7 * rate - 200) {
@@ -82,43 +61,64 @@ fn a_fade_at_one_tempo_mixes_the_two_and_hands_over() {
             }
         }
     }
-    // The gains follow the lanes in short steps, ramped (so a cut does not
-    // click): within half a percent of full scale where a fade is steepest.
-    let stages: Vec<_> = legs
-        .iter()
-        .map(|s| (s.index, s.route.stage, s.output_frame, s.from_frame))
-        .collect();
+    (worst, at)
+}
+
+#[test]
+fn a_fade_at_one_tempo_mixes_the_two_and_hands_over() {
+    let _serial = serial();
+    let dir = temp_dir("transition-fade");
+    let (a_path, a) = wav(&dir, "a.wav", 12.0, tone([1_000.0, 5_000.0]));
+    let (b_path, b) = wav(&dir, "b.wav", 12.0, tone([2_000.0, 3_000.0]));
+    let desk = Desk::new(caps(&[RATE], &[S24In32Low]), options());
+    desk.play(vec![a_path, b_path]);
+    let plan = fade_plan(fades(), 1.0);
+    desk.player.transition(plan.clone()).unwrap();
+    let seen = step_to_end(&desk.gate, &desk.events);
+    let streams = desk.close();
+    let states = transitions(&seen);
+    assert_eq!(states[0], &TransitionState::Armed, "{states:?}");
+    let w0 = 5 * RATE as u64;
+    assert!(
+        states.contains(&&TransitionState::Started {
+            head: 0,
+            output_frame: w0,
+            origin: origin(5.0),
+        }),
+        "{states:?}"
+    );
+    assert!(states.contains(&&TransitionState::Finished), "{states:?}");
+    // B heard from the window's end, its own output's frames counted from
+    // its first (a second before the window).
+    let legs = starts(&seen);
+    let into = legs.iter().find(|s| s.index == 1).expect("B started");
+    assert_eq!(into.output_frame + origin(5.0), 7 * u64::from(RATE));
+    assert_eq!(into.from_frame, 3 * u64::from(RATE));
+    assert_eq!(streams.len(), 1, "one stream throughout");
+    let got = samples(&streams[0].1);
+    let rate = RATE as usize;
+    // A as it is before the next track is heard with it.
+    assert!(got[..2 * rate] == a[..2 * rate]);
+    // Inside the window: each faded by its lanes (equal power), on the
+    // desk's automation.
+    let (worst, at) = off_in_window(&plan, &got, &a, &b);
     assert!(
         worst < 0.005 * FULL,
-        "off by {worst} in the window at {:.4} s, channel {}; {states:?}; starts {stages:?}; A there {}, B there {}, got {}",
-        (at / 2) as f64 / f64::from(RATE),
-        at % 2,
-        a[at],
-        b[at - 2 * offset],
-        got[at]
+        "off by {worst} in the window at {:.4} s",
+        (at / 2) as f64 / f64::from(RATE)
     );
     // B on its own route at the end, exactly the file.
     let end = got.len() / 2;
     assert_eq!(end, 16 * rate, "A to 7 s, then B from 3 s to its end");
+    let offset = 4 * rate;
     let tail = (end - rate)..end;
-    let shift = (-3i64..=3).find(|&d| {
-        tail.clone()
-            .all(|f| got[2 * f] == b[(2 * (f - offset) as i64 + 2 * d) as usize])
-    });
-    let stages: Vec<_> = legs
-        .iter()
-        .map(|s| (s.index, s.route.stage, s.output_frame))
-        .collect();
-    assert_eq!(
-        shift,
-        Some(0),
-        "B at the end, shifted by {shift:?}; starts {stages:?}"
-    );
     assert!(
-        tail.clone().all(|f| got[2 * f] == b[2 * (f - offset)] && got[2 * f + 1] == b[2 * (f - offset) + 1]),
+        tail.clone()
+            .all(|f| got[2 * f] == b[2 * (f - offset)] && got[2 * f + 1] == b[2 * (f - offset) + 1]),
         "B is bit-perfect again at the end"
     );
-    assert_eq!(legs.last().unwrap().route.stage, Stage::Passthrough);
+    let back = legs.last().unwrap();
+    assert_eq!((back.index, back.route.resample), (1, None));
 }
 
 #[test]
@@ -140,45 +140,22 @@ fn beats_meet(tempo: TempoMode, within: f64) {
     // A at 120 BPM, B at 125: B plays 4 % slower in the window.
     let (a_path, _) = wav(&dir, "a.wav", 12.0, clicks(0.5, 0.0, 3_000.0));
     let (b_path, _) = wav(&dir, "b.wav", 12.0, clicks(0.48, 0.0, 5_000.0));
-    let (target, captures, gate) = GatedTarget::new(caps(&[RATE], &[S24In32Low]));
-    let (player, events) = Player::new(Box::new(target), options());
-    player.load(vec![a_path, b_path]).unwrap();
-    gate.allow(2_048);
-    player.play(0).unwrap();
-    collect_until(&events, |e| matches!(e, Event::TrackStarted(_)));
+    let desk = Desk::new(caps(&[RATE], &[S24In32Low]), options());
+    desk.play(vec![a_path, b_path]);
     // Only B is heard from the window's start (A cut, B cut in).
     let plan = TransitionPlan {
-        from: 0,
-        into: 1,
-        start: 5.0,
-        length: 2.0,
         entry: 1.92,
         beats: beats(5.0, 0.5, 1.92, 0.48, 5),
         lanes: lanes(Envelope::cut(1.0, 0.0, 0.0), Envelope::cut(0.0, 1.0, 0.0)),
         tempo,
-        settle: 2.0,
-        glide: false,
+        ..fade_plan(fades(), 2.0)
     };
-    player.transition(plan).unwrap();
-    let seen = step_to_end(&gate, &events);
-    drop(player);
+    desk.player.transition(plan).unwrap();
+    let seen = step_to_end(&desk.gate, &desk.events);
+    let streams = desk.close();
     assert!(transitions(&seen).contains(&&TransitionState::Finished));
-    let got = samples(&captured(&captures)[0].1);
-    // The clicks' starts: the left channel's first sample past 15 % of
-    // full scale at least 0.2 s after the last click's.
-    let rate = f64::from(RATE);
-    let onsets: Vec<f64> = {
-        let mut out: Vec<f64> = Vec::new();
-        for f in 0..got.len() / 2 {
-            let t = f as f64 / rate;
-            let v = f64::from(got[2 * f]).abs() / FULL;
-            if v > 0.15 && out.last().is_none_or(|&last| t - last > 0.2) {
-                out.push(t);
-            }
-        }
-        out
-    };
-    // In the window, on A's beats (5.0, 5.5, ...) within a millisecond.
+    let onsets = onsets(&samples(&streams[0].1));
+    // In the window, on A's beats (5.0, 5.5, ...).
     let in_window: Vec<f64> = onsets
         .iter()
         .copied()
@@ -194,6 +171,7 @@ fn beats_meet(tempo: TempoMode, within: f64) {
     }
     // Back at its own tempo at the end: 0.48 s apart.
     let late: Vec<f64> = onsets.iter().copied().filter(|&t| t > 11.0).collect();
+    assert!(late.len() >= 2, "{onsets:?}");
     for w in late.windows(2) {
         assert!((w[1] - w[0] - 0.48).abs() < within, "{late:?}");
     }
@@ -211,46 +189,27 @@ fn stretched_gliding_the_tempo_meets_the_beats_too() {
     glide_meets(TempoMode::Stretch, 0.004, ALL, false);
 }
 
-/// The same with two stems muted on a mixer's strips
-/// ([`jodel_playback::Command::StemMask`]): the clicks at half their level.
+/// The same with two stems' strips muted on the desk (both tracks' stems
+/// on them): the clicks at half their level.
 #[test]
-fn gliding_with_stems_muted_on_a_mixer_meets_the_beats_too() {
+fn gliding_with_stems_muted_on_the_desk_meets_the_beats_too() {
     let _serial = serial();
     glide_meets(TempoMode::Varispeed, 0.001, drums_bass(), false);
 }
 
-/// The same with the plan replaced after A has moved onto its stems for one
-/// without a glide: A goes onto a fresh stems track read along the glide.
+/// The same with a plan without the glide replaced, once its next track is
+/// being prepared, by one with it: the playing track goes along the glide.
 #[test]
-fn a_glide_planned_once_on_its_stems_meets_the_beats_too() {
+fn a_glide_planned_once_the_next_track_is_prepared_meets_the_beats_too() {
     let _serial = serial();
     glide_meets(TempoMode::Varispeed, 0.001, ALL, true);
 }
 
-/// A at 120 BPM, B at 126, the tempo gliding across a 4 s window: A alone
-/// through its first half, B alone through its second. Every click (A's,
-/// then B's) is where A's beat is heard along the glide, within `within`
-/// seconds; A's are closer together as it goes; after the window B is at
-/// its own tempo at once; and the position heard follows the glide. Each
-/// stem at its gain in `mask`, as a mixer plays them; with `replan`, the
-/// plan comes once A is on its stems for a plan without the glide.
-fn glide_meets(tempo: TempoMode, within: f64, mask: [f64; STEMS], replan: bool) {
-    let dir = temp_dir(&format!(
-        "transition-glide-{tempo:?}-{}-{replan}",
-        mask == ALL
-    ));
-    let b_period = 60.0 / 126.0;
-    let (a_path, _) = wav(&dir, "a.wav", 14.0, clicks(0.5, 0.0, 3_000.0));
-    let (b_path, _) = wav(&dir, "b.wav", 14.0, clicks(b_period, 0.0, 5_000.0));
-    let (target, captures, gate) = GatedTarget::new(caps(&[RATE], &[S24In32Low]));
-    let (player, events) = Player::new(Box::new(target), options());
-    player.stem_mask(mask, None).unwrap();
-    player.load(vec![a_path, b_path]).unwrap();
-    gate.allow(2_048);
-    player.play(0).unwrap();
-    collect_until(&events, |e| matches!(e, Event::TrackStarted(_)));
+/// The plan of [`glide_meets`]: A at 120 BPM, B at 126, a 4 s window from
+/// 5 s, A alone through its first half, B alone through its second.
+fn glide_plan(tempo: TempoMode, b_period: f64) -> TransitionPlan {
     let entry = 4.0 * b_period;
-    let plan = TransitionPlan {
+    TransitionPlan {
         from: 0,
         into: 1,
         start: 5.0,
@@ -261,53 +220,60 @@ fn glide_meets(tempo: TempoMode, within: f64, mask: [f64; STEMS], replan: bool) 
         tempo,
         settle: 0.5,
         glide: true,
-    };
+    }
+}
+
+/// A at 120 BPM, B at 126, the tempo gliding across a 4 s window: every
+/// click (A's, then B's) is where A's beat is heard along the glide, within
+/// `within` seconds; A's are closer together as it goes; after the window
+/// B is at its own tempo at once; and the position heard follows the
+/// glide. The stems' strips muted where `mask` has 0; with `replan`, the
+/// plan comes once the next track is prepared for a plan without the
+/// glide.
+fn glide_meets(tempo: TempoMode, within: f64, mask: [f64; STEMS], replan: bool) {
+    let dir = temp_dir(&format!(
+        "transition-glide-{tempo:?}-{}-{replan}",
+        mask == ALL
+    ));
+    let b_period = 60.0 / 126.0;
+    let (a_path, _) = wav(&dir, "a.wav", 14.0, clicks(0.5, 0.0, 3_000.0));
+    let (b_path, _) = wav(&dir, "b.wav", 14.0, clicks(b_period, 0.0, 5_000.0));
+    let desk = Desk::new(caps(&[RATE], &[S24In32Low]), options());
+    if mask != ALL {
+        desk.player.make_stems(MakeStems::Separate).unwrap();
+        desk.mask(mask);
+    }
+    desk.play(vec![a_path, b_path]);
+    let plan = glide_plan(tempo, b_period);
     let glide = plan.glide_of(&plan.time_map());
     assert!((glide.end_speed() - 1.05).abs() < 1e-3, "{glide:?}");
     if replan {
-        // First without the glide, until A is on its stems.
+        // First without the glide, until the next track is prepared (from
+        // 1 s on).
         let flat = TransitionPlan {
             glide: false,
             ..plan.clone()
         };
-        player.transition(flat).unwrap();
+        desk.player.transition(flat).unwrap();
         step_until(
-            &gate,
-            &events,
-            |e| matches!(e, Event::TrackStarted(s) if s.index == 0 && s.route.stage == Stage::Stems),
+            &desk.gate,
+            &desk.events,
+            |e| matches!(e, Event::Position(p) if p.output_frame >= 3 * u64::from(RATE) / 2),
         );
     }
-    player.transition(plan).unwrap();
-    // The output held at 2.5 s for a while, as a device playing in real
-    // time leaves A's move onto its stems (from 1 s on) the time it needs
-    // (the trickle goes several times faster than that).
-    gate.allow(5 * u64::from(RATE) / 2);
-    gate.wait_written(5 * u64::from(RATE) / 2);
-    std::thread::sleep(Duration::from_millis(1_500));
-    let seen = step_to_end(&gate, &events);
+    desk.player.transition(plan).unwrap();
+    let seen = step_to_end(&desk.gate, &desk.events);
+    let streams = desk.close();
     assert!(
         !seen.iter().any(|e| matches!(e, Event::Notice { .. })),
         "{seen:?}"
     );
-    drop(player);
     assert!(
         transitions(&seen).contains(&&TransitionState::Finished),
         "{:?}",
         transitions(&seen)
     );
-    let got = samples(&captured(&captures)[0].1);
-    let rate = f64::from(RATE);
-    let onsets: Vec<f64> = {
-        let mut out: Vec<f64> = Vec::new();
-        for f in 0..got.len() / 2 {
-            let t = f as f64 / rate;
-            let v = f64::from(got[2 * f]).abs() / FULL;
-            if v > 0.15 && out.last().is_none_or(|&last| t - last > 0.2) {
-                out.push(t);
-            }
-        }
-        out
-    };
+    let onsets = onsets(&samples(&streams[0].1));
     // A's beats as heard along the glide, and the window's end.
     let heard: Vec<f64> = (0..=8)
         .map(|k| glide.inverse(5.0 + 0.5 * f64::from(k)))
@@ -340,6 +306,7 @@ fn glide_meets(tempo: TempoMode, within: f64, mask: [f64; STEMS], replan: bool) 
         assert!((w[1] - w[0] - b_period).abs() < within, "{after:?}");
     }
     // The position heard in the window: A's time along the glide.
+    let rate = f64::from(RATE);
     let positions: Vec<(f64, f64)> = seen
         .iter()
         .filter_map(|e| match e {
@@ -357,11 +324,11 @@ fn glide_meets(tempo: TempoMode, within: f64, mask: [f64; STEMS], replan: bool) 
         );
     }
 }
+
 /// A gliding transition called off in its window (its next track taken
-/// out of the queue):
-/// the playing track goes on from where the glide had it, at its own
-/// speed, without a jump (its clicks keep their place and then their
-/// spacing).
+/// out of the queue): the playing track goes on from where the glide had
+/// it, at its own speed, without a jump (its clicks keep their place and
+/// then their spacing).
 #[test]
 fn a_glide_called_off_in_its_window_goes_on_without_a_jump() {
     let _serial = serial();
@@ -369,40 +336,24 @@ fn a_glide_called_off_in_its_window_goes_on_without_a_jump() {
     let b_period = 60.0 / 126.0;
     let (a_path, _) = wav(&dir, "a.wav", 14.0, clicks(0.5, 0.0, 3_000.0));
     let (b_path, _) = wav(&dir, "b.wav", 14.0, clicks(b_period, 0.0, 5_000.0));
-    let (target, captures, gate) = GatedTarget::new(caps(&[RATE], &[S24In32Low]));
-    let (player, events) = Player::new(Box::new(target), options());
-    player.load(vec![a_path, b_path]).unwrap();
-    gate.allow(2_048);
-    player.play(0).unwrap();
-    collect_until(&events, |e| matches!(e, Event::TrackStarted(_)));
-    let entry = 4.0 * b_period;
+    let desk = Desk::new(caps(&[RATE], &[S24In32Low]), options());
+    desk.play(vec![a_path, b_path]);
+    // Only A is heard.
     let plan = TransitionPlan {
-        from: 0,
-        into: 1,
-        start: 5.0,
-        length: 4.0,
-        entry,
-        beats: beats(5.0, 0.5, entry, b_period, 9),
-        // Only A is heard.
         lanes: lanes(Envelope::flat(1.0), Envelope::flat(0.0)),
-        tempo: TempoMode::Varispeed,
-        settle: 0.5,
-        glide: true,
+        ..glide_plan(TempoMode::Varispeed, b_period)
     };
     let glide = plan.glide_of(&plan.time_map());
-    player.transition(plan).unwrap();
-    gate.allow(5 * u64::from(RATE) / 2);
-    gate.wait_written(5 * u64::from(RATE) / 2);
-    std::thread::sleep(Duration::from_millis(1_500));
-    // Into the window, then other settings call it off.
+    desk.player.transition(plan).unwrap();
+    // Into the window, then the next track taken out calls it off.
     let mut seen = step_until(
-        &gate,
-        &events,
+        &desk.gate,
+        &desk.events,
         |e| matches!(e, Event::Position(p) if p.output_frame >= 7 * u64::from(RATE)),
     );
-    player.remove(1).unwrap();
-    seen.extend(step_to_end(&gate, &events));
-    drop(player);
+    desk.player.remove(1).unwrap();
+    seen.extend(step_to_end(&desk.gate, &desk.events));
+    let streams = desk.close();
     assert!(
         transitions(&seen)
             .iter()
@@ -410,19 +361,7 @@ fn a_glide_called_off_in_its_window_goes_on_without_a_jump() {
         "{:?}",
         transitions(&seen)
     );
-    let got = samples(&captured(&captures)[0].1);
-    let rate = f64::from(RATE);
-    let onsets: Vec<f64> = {
-        let mut out: Vec<f64> = Vec::new();
-        for f in 0..got.len() / 2 {
-            let t = f as f64 / rate;
-            let v = f64::from(got[2 * f]).abs() / FULL;
-            if v > 0.15 && out.last().is_none_or(|&last| t - last > 0.2) {
-                out.push(t);
-            }
-        }
-        out
-    };
+    let onsets = onsets(&samples(&streams[0].1));
     // Along the glide up to where it was called off, then half a second
     // apart (the gap across the change between the glide's and that).
     let mut gliding = true;
@@ -445,6 +384,7 @@ fn a_glide_called_off_in_its_window_goes_on_without_a_jump() {
     }
     assert!(!gliding, "it went on gliding: {onsets:?}");
 }
+
 #[test]
 fn a_transition_is_called_off_by_a_seek_and_when_it_does_not_fit() {
     let _serial = serial();
@@ -452,151 +392,117 @@ fn a_transition_is_called_off_by_a_seek_and_when_it_does_not_fit() {
     let tone = |t: f64, _c: usize| 0.3 * (2.0 * std::f64::consts::PI * 440.0 * t).sin();
     let (a_path, _) = wav(&dir, "a.wav", 12.0, tone);
     let (b_path, _) = wav(&dir, "b.wav", 12.0, tone);
-    let (target, _captures, gate) = GatedTarget::new(caps(&[RATE], &[S24In32Low]));
-    let (player, events) = Player::new(Box::new(target), options());
-    player.load(vec![a_path, b_path]).unwrap();
-    gate.allow(2_048);
-    player.play(0).unwrap();
-    collect_until(&events, |e| matches!(e, Event::TrackStarted(_)));
+    let desk = Desk::new(caps(&[RATE], &[S24In32Low]), options());
+    desk.play(vec![a_path, b_path]);
     let plan = TransitionPlan {
-        from: 0,
-        into: 1,
         start: 8.0,
-        length: 2.0,
         entry: 0.0,
         beats: Vec::new(),
-        lanes: lanes(
-            Envelope::fade(1.0, 0.0, 0.0, 1.0),
-            Envelope::fade(0.0, 1.0, 0.0, 1.0),
-        ),
-        tempo: TempoMode::Varispeed,
         settle: 0.0,
-        glide: false,
+        ..fade_plan(fades(), 0.0)
     };
     // Not the playing track: called off at once.
-    player
+    desk.player
         .transition(TransitionPlan {
             from: 1,
             into: 2,
             ..plan.clone()
         })
         .unwrap();
-    let seen = collect_until(&events, |e| matches!(e, Event::Transition(_)));
+    let seen = collect_until(&desk.events, |e| matches!(e, Event::Transition(_)));
     assert!(matches!(
         transitions(&seen)[0],
         TransitionState::Cancelled { .. }
     ));
     // Armed, then a seek calls it off.
-    player.transition(plan).unwrap();
-    collect_until(&events, |e| {
+    desk.player.transition(plan).unwrap();
+    collect_until(&desk.events, |e| {
         matches!(e, Event::Transition(TransitionState::Armed))
     });
-    player.seek(2.0).unwrap();
-    let seen = collect_until(&events, |e| matches!(e, Event::Transition(_)));
+    desk.player.seek(2.0).unwrap();
+    let seen = collect_until(&desk.events, |e| matches!(e, Event::Transition(_)));
     assert!(
         matches!(transitions(&seen)[0], TransitionState::Cancelled { reason } if reason == "a seek"),
         "{seen:?}"
     );
-    gate.allow_all();
-    let rest = until_queue_end(&events);
+    desk.gate.allow_all();
+    let rest = until_queue_end(&desk.events);
     // Without it, the tracks follow each other as usual.
     assert_eq!(starts(&rest).iter().filter(|s| s.index == 1).count(), 1);
     assert!(transitions(&rest).is_empty());
+}
+
+/// A player with no second head (not on a desk): a transition is called
+/// off, as it needs one.
+#[test]
+fn a_transition_without_a_second_head_is_called_off() {
+    let dir = temp_dir("transition-one-head");
+    let (a_path, _) = wav(&dir, "a.wav", 3.0, tone([440.0, 440.0]));
+    let (b_path, _) = wav(&dir, "b.wav", 3.0, tone([440.0, 440.0]));
+    let target = MemoryTarget::new(caps(&[RATE], &[S24In32Low]), SimClock::Instant);
+    let (player, events) = Player::new(Box::new(target), options());
+    player.load(vec![a_path, b_path]).unwrap();
+    player.play(0).unwrap();
+    collect_until(&events, |e| matches!(e, Event::TrackStarted(_)));
+    player.transition(fade_plan(fades(), 1.0)).unwrap();
+    let seen = collect_until(&events, |e| matches!(e, Event::Transition(_)));
+    assert!(
+        matches!(transitions(&seen)[0], TransitionState::Cancelled { reason } if reason == "needs a desk"),
+        "{seen:?}"
+    );
 }
 
 #[test]
 fn without_a_separator_the_tracks_fade_whole() {
     let _serial = serial();
     let dir = temp_dir("transition-whole");
-    let tone =
-        |hz: [f64; 2]| move |t: f64, c: usize| 0.4 * (2.0 * std::f64::consts::PI * hz[c] * t).sin();
     let (a_path, a) = wav(&dir, "a.wav", 10.0, tone([1_000.0, 5_000.0]));
     let (b_path, b) = wav(&dir, "b.wav", 10.0, tone([2_000.0, 3_000.0]));
-    let (target, captures, gate) = GatedTarget::new(caps(&[RATE], &[S24In32Low]));
-    let (player, events) = Player::new(
-        Box::new(target),
-        PlayerOptions {
-            separator: None,
-            ..options()
-        },
-    );
-    player.load(vec![a_path, b_path]).unwrap();
-    gate.allow(2_048);
-    player.play(0).unwrap();
-    collect_until(&events, |e| matches!(e, Event::TrackStarted(_)));
-    let plan = TransitionPlan {
-        from: 0,
-        into: 1,
-        start: 5.0,
-        length: 2.0,
-        entry: 1.0,
-        beats: beats(5.0, 0.5, 1.0, 0.5, 5),
-        lanes: lanes(
-            Envelope::fade(1.0, 0.0, 0.0, 1.0),
-            Envelope::fade(0.0, 1.0, 0.0, 1.0),
-        ),
-        tempo: TempoMode::Varispeed,
-        settle: 1.0,
-        glide: false,
+    let options = jodel_playback::PlayerOptions {
+        separator: None,
+        ..options()
     };
-    player.transition(plan.clone()).unwrap();
-    let seen = step_to_end(&gate, &events);
-    drop(player);
+    let desk = Desk::new(caps(&[RATE], &[S24In32Low]), options);
+    desk.play(vec![a_path, b_path]);
+    let plan = fade_plan(fades(), 1.0);
+    desk.player.transition(plan.clone()).unwrap();
+    let seen = step_to_end(&desk.gate, &desk.events);
+    let streams = desk.close();
     assert!(transitions(&seen).contains(&&TransitionState::Finished));
-    let got = samples(&captured(&captures)[0].1);
-    let rate = RATE as usize;
-    let offset = 4 * rate;
-    let mut worst = 0.0f64;
-    for f in (5 * rate + 200)..(7 * rate - 200) {
-        let share = plan.share(f as f64 / f64::from(RATE));
-        let (ga, gb) = (plan.lanes[0].gain(share), plan.lanes[STEMS].gain(share));
-        for c in 0..2 {
-            let want = ga * f64::from(a[2 * f + c]) + gb * f64::from(b[2 * (f - offset) + c]);
-            worst = worst.max((f64::from(got[2 * f + c]) - want).abs());
-        }
-    }
+    let got = samples(&streams[0].1);
+    let (worst, _) = off_in_window(&plan, &got, &a, &b);
     assert!(worst < 0.005 * FULL, "off by {worst}");
 }
 
 #[test]
 fn the_next_track_is_heard_where_the_map_puts_it() {
     let _serial = serial();
-    use jodel_playback::warp::TimeMap;
     let dir = temp_dir("transition-heard");
     let (a_path, _) = wav(&dir, "a.wav", 12.0, clicks(0.5, 0.0, 3_000.0));
     let (b_path, _) = wav(&dir, "b.wav", 12.0, clicks(0.48, 0.0, 5_000.0));
-    let (target, _captures, gate) = GatedTarget::new(caps(&[RATE], &[S24In32Low]));
-    let (player, events) = Player::new(Box::new(target), options());
-    player.load(vec![a_path, b_path]).unwrap();
-    gate.allow(2_048);
-    player.play(0).unwrap();
-    collect_until(&events, |e| matches!(e, Event::TrackStarted(_)));
+    let desk = Desk::new(caps(&[RATE], &[S24In32Low]), options());
+    desk.play(vec![a_path, b_path]);
     let pairs = beats(5.0, 0.5, 1.92, 0.48, 5);
     let plan = TransitionPlan {
-        from: 0,
-        into: 1,
-        start: 5.0,
-        length: 2.0,
         entry: 1.92,
         beats: pairs.clone(),
         lanes: lanes(Envelope::cut(1.0, 0.0, 0.0), Envelope::cut(0.0, 1.0, 0.0)),
-        tempo: TempoMode::Varispeed,
-        settle: 2.0,
-        glide: false,
+        ..fade_plan(fades(), 2.0)
     };
-    player.transition(plan).unwrap();
-    let seen = step_to_end(&gate, &events);
-    drop(player);
+    desk.player.transition(plan).unwrap();
+    let seen = step_to_end(&desk.gate, &desk.events);
+    drop(desk);
     let map = TimeMap::new(&pairs, 2.0);
     // While B glides back to its tempo (from 7 s to 9 s of A's time), the
     // positions reported are those of the map; after that, a straight line.
+    // B's output frames are A's less the link's origin.
     let mut checked = 0;
     for e in &seen {
         let Event::Position(p) = e else { continue };
         if p.index != 1 {
             continue;
         }
-        let a_time = p.output_frame as f64 / f64::from(RATE);
+        let a_time = (p.output_frame + origin(5.0)) as f64 / f64::from(RATE);
         if a_time < 7.05 {
             continue;
         }
@@ -614,43 +520,29 @@ fn the_next_track_is_heard_where_the_map_puts_it() {
 #[test]
 fn next_while_a_transition_mixes_cuts_into_the_next_track_where_it_is() {
     let _serial = serial();
-    use jodel_playback::warp::TimeMap;
     let dir = temp_dir("transition-cut");
     let (a_path, _) = wav(&dir, "a.wav", 14.0, clicks(0.5, 0.0, 3_000.0));
     let (b_path, _) = wav(&dir, "b.wav", 14.0, clicks(0.48, 0.0, 5_000.0));
-    let (target, _captures, gate) = GatedTarget::new(caps(&[RATE], &[S24In32Low]));
-    let (player, events) = Player::new(Box::new(target), options());
-    player.load(vec![a_path, b_path]).unwrap();
-    gate.allow(2_048);
-    player.play(0).unwrap();
-    collect_until(&events, |e| matches!(e, Event::TrackStarted(_)));
+    let desk = Desk::new(caps(&[RATE], &[S24In32Low]), options());
+    desk.play(vec![a_path, b_path]);
     // A window of 4 s from 5 s of A, B entering at 1.92 s.
     let pairs = beats(5.0, 0.5, 1.92, 0.48, 9);
     let plan = TransitionPlan {
-        from: 0,
-        into: 1,
-        start: 5.0,
         length: 4.0,
         entry: 1.92,
         beats: pairs.clone(),
-        lanes: lanes(
-            Envelope::fade(1.0, 0.0, 0.0, 1.0),
-            Envelope::fade(0.0, 1.0, 0.0, 1.0),
-        ),
-        tempo: TempoMode::Varispeed,
-        settle: 0.0,
-        glide: false,
+        ..fade_plan(fades(), 0.0)
     };
-    player.transition(plan).unwrap();
+    desk.player.transition(plan).unwrap();
     // A second into the window, next.
     step_until(
-        &gate,
-        &events,
+        &desk.gate,
+        &desk.events,
         |e| matches!(e, Event::Position(p) if p.index == 0 && p.seconds >= 6.0),
     );
-    player.next().unwrap();
-    let seen = step_to_end(&gate, &events);
-    drop(player);
+    desk.player.next().unwrap();
+    let seen = step_to_end(&desk.gate, &desk.events);
+    drop(desk);
     assert!(
         transitions(&seen).iter().any(
             |t| matches!(t, TransitionState::Cancelled { reason } if reason == "cut to the next track")
@@ -658,6 +550,7 @@ fn next_while_a_transition_mixes_cuts_into_the_next_track_where_it_is() {
         "{:?}",
         transitions(&seen)
     );
+    assert!(!transitions(&seen).contains(&&TransitionState::Finished));
     // B goes on where the mix had it (not from its start), and A is gone.
     let map = TimeMap::new(&pairs, 0.0);
     let first_b = seen
@@ -681,6 +574,45 @@ fn next_while_a_transition_mixes_cuts_into_the_next_track_where_it_is() {
     );
 }
 
+/// `Next` in the window: A fades out over a few milliseconds and B goes
+/// to its end values, so nothing clicks: no step from one sample to the
+/// next beyond what the two low tones make (a cut at full scale would be
+/// ten times that).
+#[test]
+fn next_mid_mix_does_not_click() {
+    let _serial = serial();
+    let dir = temp_dir("transition-cut-click");
+    let (a_path, _) = wav(&dir, "a.wav", 12.0, tone([200.0, 230.0]));
+    let (b_path, _) = wav(&dir, "b.wav", 12.0, tone([170.0, 190.0]));
+    let desk = Desk::new(caps(&[RATE], &[S24In32Low]), options());
+    desk.play(vec![a_path, b_path]);
+    desk.player.transition(fade_plan(fades(), 0.0)).unwrap();
+    step_until(
+        &desk.gate,
+        &desk.events,
+        |e| matches!(e, Event::Position(p) if p.index == 0 && p.seconds >= 5.8),
+    );
+    desk.player.next().unwrap();
+    let seen = step_to_end(&desk.gate, &desk.events);
+    let streams = desk.close();
+    assert!(transitions(&seen).iter().any(
+        |t| matches!(t, TransitionState::Cancelled { reason } if reason == "cut to the next track")
+    ));
+    let got = samples(&streams[0].1);
+    let rate = RATE as usize;
+    // Two tones of 0.4 move by 0.4 · 2π · 230 / 44100 of full scale a
+    // sample at most, each.
+    let most = 2.0 * 0.4 * 2.0 * std::f64::consts::PI * 230.0 / f64::from(RATE) * FULL;
+    let steepest = (4 * rate..8 * rate)
+        .flat_map(|f| (0..2).map(move |c| (f, c)))
+        .map(|(f, c)| (f64::from(got[2 * (f + 1) + c]) - f64::from(got[2 * f + c])).abs())
+        .fold(0.0, f64::max);
+    assert!(
+        steepest < 1.2 * most,
+        "a step of {steepest} (the tones make {most} at most)"
+    );
+}
+
 #[test]
 fn a_transition_called_off_while_it_prepares_leaves_the_track_as_it_was() {
     let _serial = serial();
@@ -688,46 +620,34 @@ fn a_transition_called_off_while_it_prepares_leaves_the_track_as_it_was() {
     let tone = |t: f64, _c: usize| 0.3 * (2.0 * std::f64::consts::PI * 440.0 * t).sin();
     let (a_path, a) = wav(&dir, "a.wav", 12.0, tone);
     let (b_path, _) = wav(&dir, "b.wav", 12.0, tone);
-    let (target, captures, gate) = GatedTarget::new(caps(&[RATE], &[S24In32Low]));
-    let (player, events) = Player::new(Box::new(target), options());
-    player.load(vec![a_path, b_path]).unwrap();
-    gate.allow(2_048);
-    player.play(0).unwrap();
-    collect_until(&events, |e| matches!(e, Event::TrackStarted(_)));
-    player
+    let desk = Desk::new(caps(&[RATE], &[S24In32Low]), options());
+    desk.play(vec![a_path, b_path]);
+    desk.player
         .transition(TransitionPlan {
-            from: 0,
-            into: 1,
             start: 6.0,
-            length: 2.0,
             entry: 0.0,
             beats: Vec::new(),
-            lanes: lanes(
-                Envelope::fade(1.0, 0.0, 0.0, 1.0),
-                Envelope::fade(0.0, 1.0, 0.0, 1.0),
-            ),
-            tempo: TempoMode::Varispeed,
-            settle: 0.0,
-            glide: false,
+            ..fade_plan(fades(), 0.0)
         })
         .unwrap();
     // Into the preparation (from 2 s of A), then called off.
-    while gate.written() < 3 * u64::from(RATE) {
-        gate.allow(gate.written() + 4_096);
-        std::thread::sleep(Duration::from_millis(15));
-    }
-    player.cancel_transition().unwrap();
-    let seen = step_to_end(&gate, &events);
-    drop(player);
+    step_until(
+        &desk.gate,
+        &desk.events,
+        |e| matches!(e, Event::Position(p) if p.output_frame >= 3 * u64::from(RATE)),
+    );
+    desk.player.cancel_transition().unwrap();
+    let seen = step_to_end(&desk.gate, &desk.events);
+    let streams = desk.close();
     assert!(
         transitions(&seen)
             .iter()
             .any(|s| matches!(s, TransitionState::Cancelled { .. })),
         "{seen:?}"
     );
-    // A plays on to its end, back on its own route: the file exactly at
-    // its end, and nothing faded where the window would have been.
-    let got = samples(&captured(&captures)[0].1);
+    // A plays on to its end, as it is: the file exactly at its end, and
+    // nothing faded where the window would have been.
+    let got = samples(&streams[0].1);
     assert_eq!(got.len(), 2 * a.len(), "A to its end, then B");
     let rate = RATE as usize;
     let peak = |from: usize, to: usize| {
@@ -745,4 +665,141 @@ fn a_transition_called_off_while_it_prepares_leaves_the_track_as_it_was() {
         tail.clone().all(|f| got[2 * f] == a[2 * f]),
         "A as it is at the end"
     );
+}
+
+/// The heads at one rate through a mix and after it: the next track, of
+/// another rate, is resampled to the open one, and so is the track after
+/// it, gaplessly, on the one device stream; only a track picked opens the
+/// device again at its own rate.
+#[test]
+fn the_rate_stays_through_and_after_a_mix_until_a_track_is_picked() {
+    let _serial = serial();
+    let dir = temp_dir("transition-rate");
+    let (a_path, _) = wav(&dir, "a.wav", 8.0, tone([1_000.0, 5_000.0]));
+    let tone48 = |seconds: f64, name: &str| {
+        let path = dir.join(name);
+        write_wav(
+            &path,
+            48_000,
+            2,
+            &tones(48_000, (seconds * 48_000.0) as usize),
+        );
+        path
+    };
+    let (b_path, c_path) = (tone48(8.0, "b.wav"), tone48(2.0, "c.wav"));
+    let options = jodel_playback::PlayerOptions {
+        settings: jodel_playback::Settings::default(),
+        ..options()
+    };
+    let desk = Desk::new(caps(&[RATE, 48_000], &[S24In32Low]), options);
+    desk.play(vec![a_path, b_path, c_path]);
+    desk.player.transition(fade_plan(fades(), 0.5)).unwrap();
+    let seen = step_until(
+        &desk.gate,
+        &desk.events,
+        |e| matches!(e, Event::TrackStarted(s) if s.index == 2),
+    );
+    assert!(transitions(&seen).contains(&&TransitionState::Finished));
+    let rates: Vec<(usize, u32)> = starts(&seen)
+        .iter()
+        .map(|s| (s.index, s.output.format.rate))
+        .collect();
+    assert!(rates.iter().all(|&(_, r)| r == RATE), "{rates:?}");
+    assert_eq!(desk.captures.list().len(), 1, "one stream: {rates:?}");
+    // Picked: at its own rate.
+    desk.player.play(2).unwrap();
+    desk.gate.allow_all();
+    let seen = until_queue_end(&desk.events);
+    let picked = starts(&seen).into_iter().find(|s| s.index == 2).expect("C");
+    assert_eq!(picked.output.format.rate, 48_000);
+    let streams = desk.close();
+    assert_eq!(streams.len(), 2);
+    assert_eq!(streams[1].0.rate, 48_000);
+}
+
+/// On a device in real time: a stem's strip muted on a bar 0.1 s ahead in
+/// the window is heard off on its frame, on both tracks; a pause in the
+/// window holds the next track with the playing one (its link): after it
+/// the two are mixed where they were, nothing of either dropped.
+#[test]
+fn in_real_time_a_stem_muted_on_its_bar_and_a_pause_keep_the_mix_in_place() {
+    let _serial = serial();
+    let _real_time = real_time();
+    let dir = temp_dir("transition-paced");
+    let (a_path, a) = wav(&dir, "a.wav", 10.0, tone([1_000.0, 5_000.0]));
+    let (b_path, b) = wav(&dir, "b.wav", 10.0, tone([2_000.0, 3_000.0]));
+    let options = jodel_playback::PlayerOptions {
+        offline: false,
+        position_interval: Duration::from_millis(10),
+        ..options()
+    };
+    let desk = Desk::paced(caps(&[RATE], &[S24In32Low]), options);
+    desk.player.make_stems(MakeStems::Separate).unwrap();
+    desk.play(vec![a_path, b_path]);
+    let plan = fade_plan(fades(), 1.0);
+    desk.player.transition(plan.clone()).unwrap();
+    let heard_past = |seconds: f64| {
+        let seen = collect_until(
+            &desk.events,
+            |e| matches!(e, Event::Position(p) if p.index == 0 && p.seconds >= seconds),
+        );
+        match seen.last() {
+            Some(Event::Position(p)) => p.output_frame,
+            _ => unreachable!(),
+        }
+    };
+    // The drums off on a bar a tenth of a second ahead of what is heard.
+    let bar = heard_past(5.2) + u64::from(RATE) / 10;
+    desk.desk.stems[0].set_mute_at(true, desk.lead.input.at_stream(bar));
+    // Paused for a while later in the window.
+    heard_past(6.0);
+    desk.player.pause().unwrap();
+    std::thread::sleep(Duration::from_millis(400));
+    desk.player.resume().unwrap();
+    let seen = until_queue_end(&desk.events);
+    assert!(transitions(&seen).contains(&&TransitionState::Finished));
+    let dropped: u64 = desk
+        .mixer
+        .desk()
+        .strips
+        .iter()
+        .flat_map(|s| s.inputs.iter().map(|i| i.dropped))
+        .sum();
+    assert_eq!(dropped, 0, "frames dropped");
+    let streams = desk.close();
+    assert_eq!(streams.len(), 1);
+    let got = samples(&streams[0].1);
+    let rate = RATE as usize;
+    let offset = 4 * rate;
+    // What the window plays at A's frame `f`, a share `share` of it.
+    let want = |f: usize, c: usize, share: f64| {
+        let s = plan.share(f as f64 / f64::from(RATE));
+        share
+            * (plan.lanes[0].gain(s) * f64::from(a[2 * f + c])
+                + plan.lanes[STEMS].gain(s) * f64::from(b[2 * (f - offset) + c]))
+    };
+    // How far `got` is off that over A's frames `range`, the device's
+    // frames `shift` later.
+    let off = |range: std::ops::Range<usize>, shift: usize, share: f64| {
+        range
+            .flat_map(|f| (0..2).map(move |c| (f, c)))
+            .map(|(f, c)| (f64::from(got[2 * (f + shift) + c]) - want(f, c, share)).abs())
+            .fold(0.0, f64::max)
+    };
+    // Where the device has A's frames before the pause, and after it.
+    let found = |at: usize, share: f64| {
+        (0..2 * rate)
+            .find(|&d| off(at..at + 64, d, share) < 0.002 * FULL)
+            .unwrap_or_else(|| panic!("the mix at {at} not found"))
+    };
+    let before = found(5 * rate + rate / 10, 1.0);
+    let bar = bar as usize;
+    let unmuted = off(5 * rate + rate / 20..bar - 600, before, 1.0);
+    let muted = off(bar + rate / 40..6 * rate - rate / 20, before, 0.75);
+    assert!(unmuted < 0.01 * FULL, "before the bar, off by {unmuted}");
+    assert!(muted < 0.01 * FULL, "after the bar, off by {muted}");
+    // After the pause, both still where the window has them.
+    let after = found(6 * rate + rate / 2, 0.75);
+    let held = off(6 * rate + rate / 2..7 * rate - 200, after, 0.75);
+    assert!(held < 0.01 * FULL, "after the pause, off by {held}");
 }

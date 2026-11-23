@@ -5,32 +5,33 @@
 //!
 //! - The stem keys (`alt+1` to `alt+4`, the bottom bar's buttons, the
 //!   palette) mute a stem's strip, or unmute it: on the first beat of the
-//!   next bar at least [`DESK_SOON`] ahead ([`ENGINE_SOON`] while the
-//!   engine's own mix is heard, [`SEPARATE_SOON`] while the stems are still
-//!   to be separated), with Stem switching "on the next bar" (also with no
-//!   stems made yet: the engine starts them on the frame heard and writes
-//!   again what it holds); at once without bars, or with it "instantly". A
-//!   key pressed again before that bar takes the change back: what is meant
-//!   is the desk's setting, set at once.
+//!   next bar at least [`DESK_SOON`] ahead ([`SEPARATE_SOON`] while the
+//!   stems are still to be separated), with Stem switching "on the next
+//!   bar" (also with no stems made yet: the engine starts them on the frame
+//!   heard and writes again what it holds); at once without bars, or with
+//!   it "instantly". A key pressed again before that bar takes the change
+//!   back: what is meant is the desk's setting, set at once.
 //! - `alt+0` puts every stem's strip back as it starts (unmuted, 0 dB,
 //!   not soloed), so the file is heard as it is again, bit-perfect.
 //! - The engine makes the playing track's stems ([`MakeStems`]) while a
-//!   stem's strip is touched (or a change of one waits for its bar) or the
-//!   Mixer, Karaoke or Transition tab shows: from the stems kept, else
-//!   separated on the GPU (without one, only the kept ones). Otherwise it
-//!   makes none, so the GPU and the processor rest.
+//!   stem's strip is touched (or a change of one waits for its bar), the
+//!   Mixer, Karaoke or Transition tab shows, or a transition is armed or
+//!   mixed (its lanes fade each stem): from the stems kept, else separated
+//!   on the GPU (without one, only the kept ones). Otherwise it makes none,
+//!   so the GPU and the processor rest.
 //! - The Karaoke tab's voice is the vocals lane's gain, a controller's on
 //!   top of the strip ([`lanes_due`]): while the tab or the mode shows, 1
 //!   elsewhere.
-//! - What a transition mixes inside the engine follows the strips
-//!   ([`mask`], [`Command::StemMask`]): its tracks are heard as the player's
-//!   main there.
+//! - A transition's two tracks play on the same strips, each on a head of
+//!   the player's own (`desk_wiring`): the stems' strips act on both, a
+//!   bar's change on its frame of the head the playing track is on (the
+//!   playing track's bars and the position last told: through the mix the
+//!   track handed over from, then the next).
 //!
 //! What the engine and the mixer were last told of all this is kept in
 //! [`StemsSent`], and every change goes out from [`follow`] (after any
 //! action) or a stem key, once.
 
-use jodel_output::lanes::Parts;
 use jodel_playback::stems::{Stem, STEMS};
 use jodel_playback::{Command, MakeStems};
 
@@ -38,15 +39,11 @@ use super::desk::{taper, DeskChange, StripKind};
 use super::lanes::{self, Block};
 use super::transition::Status;
 use super::update::say_info;
-use super::{karaoke, Effect, Gpu, Screen, Side, State};
+use super::{karaoke, Effect, Gpu, HeadFrame, Rhythm, Screen, Side, State};
 
 /// Seconds ahead of what is heard that a stem's strip can be muted on a bar
 /// at the soonest: the mixer takes a change for a frame it has yet to mix.
 pub const DESK_SOON: f64 = 0.1;
-
-/// The same while the engine's mix is what is heard (a transition armed or
-/// under way: it is made some half a second ahead).
-pub const ENGINE_SOON: f64 = 1.0;
 
 /// The same while the playing track's stems are not there yet and must be
 /// separated on the GPU first (none kept): the separator takes some 0.4 to
@@ -65,8 +62,6 @@ const DUE_AFTER: f64 = 0.5;
 /// at 1, no stems made) until [`engine_started`] gives them what is due.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct StemsSent {
-    /// The stems' gains for a transition ([`mask`]).
-    pub mask: [f64; STEMS],
     /// The stems' lanes' gains ([`lanes_due`]).
     pub lanes: [f64; STEMS],
     /// When the stems are made ([`make_wanted`]).
@@ -76,7 +71,6 @@ pub struct StemsSent {
 impl Default for StemsSent {
     fn default() -> Self {
         StemsSent {
-            mask: [1.0; STEMS],
             lanes: [1.0; STEMS],
             make: MakeStems::Never,
         }
@@ -88,16 +82,19 @@ impl Default for StemsSent {
 pub struct Bar {
     /// Its first beat, in seconds into the playing track.
     pub seconds: f64,
-    /// That beat's frame of the player's output (its stream frame).
-    pub frame: u64,
+    /// That beat's frame of the player's output: of the head the position
+    /// last told is of (the playing track's, [`super::Anchor::at`]).
+    pub at: HeadFrame,
     /// Its number, from 1.
     pub number: usize,
 }
 
 /// When the engine should make the playing track's stems: while a stem's
-/// strip is touched (or a change of one waits for its bar), or the Mixer,
-/// Karaoke or Transition tab (or the mode) shows; from the stems kept, else
-/// on the GPU (only kept ones without one, and while it is looked for).
+/// strip is touched (or a change of one waits for its bar), the Mixer,
+/// Karaoke or Transition tab (or the mode) shows, or a transition is armed
+/// or mixed (both its tracks' stems, each on its head, faded by its lanes);
+/// from the stems kept, else on the GPU (only kept ones without one, and
+/// while it is looked for).
 pub fn make_wanted(state: &State) -> MakeStems {
     let tab = state.screen == Screen::Main
         && matches!(state.side, Side::Mixer | Side::Karaoke | Side::Transition);
@@ -111,7 +108,9 @@ pub fn make_wanted(state: &State) -> MakeStems {
             .is_some_and(|t| t.index == index)
             && state.heard() < at + DUE_AFTER
     });
-    if !(tab || pending || karaoke::in_mode(state) || state.desk.stems_touched()) {
+    let transition = state.transition.draft.status != Status::Draft;
+    let shown = tab || karaoke::in_mode(state);
+    if !(shown || pending || transition || state.desk.stems_touched()) {
         return MakeStems::Never;
     }
     match state.gpu {
@@ -132,27 +131,6 @@ pub fn lanes_due(state: &State) -> [f64; STEMS] {
     StripKind::PARTS.map(|k| if k == StripKind::Vocals { voice } else { 1.0 })
 }
 
-/// Each stem's gain as the mixer plays it (drums, bass, vocals, other): its
-/// strip's fader (0 muted) times its lane's gain, times its solo gate (0
-/// while another stem is soloed and neither it nor the player is). A
-/// transition mixes its tracks with these ([`Command::StemMask`]).
-pub fn mask(state: &State) -> [f64; STEMS] {
-    let lanes = lanes_due(state);
-    let any_solo = StripKind::PARTS.iter().any(|&k| state.desk.setting(k).solo);
-    let player_solo = state.desk.setting(StripKind::Player).solo;
-    let mut out = [1.0; STEMS];
-    for (k, kind) in StripKind::PARTS.into_iter().enumerate() {
-        let s = state.desk.setting(kind);
-        let gate = if !any_solo || s.solo || player_solo {
-            1.0
-        } else {
-            0.0
-        };
-        out[k] = s.gain() * lanes[k] * gate;
-    }
-    out
-}
-
 /// Whether `stem` is off: its strip muted, or its fader all the way down.
 pub fn is_off(state: &State, stem: Stem) -> bool {
     let s = state.desk.setting(StripKind::for_stem(stem));
@@ -160,78 +138,95 @@ pub fn is_off(state: &State, stem: Stem) -> bool {
 }
 
 /// How far ahead of what is heard a stem's change can land now
-/// ([`DESK_SOON`], [`ENGINE_SOON`], [`SEPARATE_SOON`]), on the playing
-/// track of `analysis`. Stems not there yet start on the frame heard, and
-/// the engine writes what it holds again with them once they are made: kept
-/// ones at once (some 15 ms), so [`DESK_SOON`] is enough; separated ones
-/// once their first chunk is ([`separated_first`]). It cannot while a
-/// jump's crossfade is held, a route switch is under way or a jump waits
-/// for its time: a first touch then lands up to about a second late.
-fn lead(state: &State, analysis: &jodel_rhythm::Analysis) -> f64 {
-    let engine_mixes = state.transition.draft.status != Status::Draft;
-    if engine_mixes {
-        ENGINE_SOON
-    } else if separated_first(state, analysis) {
+/// ([`DESK_SOON`], [`SEPARATE_SOON`]), on the playing track, with a
+/// transition armed or mixed too (the desk plays both its tracks'
+/// stems on their strips). Stems not there yet start on the frame heard,
+/// and the engine writes what it holds again with them once they are made:
+/// kept ones at once (some 15 ms), so [`DESK_SOON`] is enough; separated
+/// ones once their first chunk is ([`separated_first`]). It cannot while a
+/// jump's crossfade is held, a route switch is under way, a transition is
+/// set up or a jump waits for its time: a first touch then lands up to
+/// about a second late.
+fn lead(state: &State) -> f64 {
+    if separated_first(state) {
         SEPARATE_SOON
     } else {
         DESK_SOON
     }
 }
 
-/// Whether the playing track's stems (of `analysis`) must be separated
-/// before a change of them is heard: they are not there (none made, or the
-/// desk does not play them yet), none are kept (as the queue's facts or
-/// the analysis know), none failed, and the GPU separates them. Without
+/// Whether the stems must be separated before a change of them is heard:
+/// they are not there (none made, or the desk does not play them yet on
+/// every head with an output open), and of the tracks they are for
+/// ([`stem_tracks`]) one has none kept (as the queue's facts or its
+/// analysis know) and none failed, and the GPU separates them. Without
 /// one, stems not kept never come (a stem key says so).
-fn separated_first(state: &State, analysis: &jodel_rhythm::Analysis) -> bool {
-    let Some(track) = state.playing.track.as_ref() else {
+fn separated_first(state: &State) -> bool {
+    let there = state.stems_sent.make != MakeStems::Never && state.desk.stems_there();
+    let gpu = matches!(state.gpu, Gpu::Present(_));
+    let waiting = stem_tracks(state)
+        .into_iter()
+        .any(|i| !kept(state, i) && !state.desk.parts_failed.contains(&i));
+    !there && waiting && gpu
+}
+
+/// The tracks the desk plays the stems of: the playing one, and while a
+/// transition is armed or mixed its two (each on a head).
+fn stem_tracks(state: &State) -> Vec<usize> {
+    let mut tracks: Vec<usize> = state.playing.track.iter().map(|t| t.index).collect();
+    if let Some(sent) = state.transition.draft.in_force() {
+        tracks.extend([sent.plan.from, sent.plan.into]);
+    }
+    tracks.sort_unstable();
+    tracks.dedup();
+    tracks
+}
+
+/// Whether track `index` has its stems kept, as its analysis or the
+/// queue's facts know.
+fn kept(state: &State, index: usize) -> bool {
+    let Some(path) = state.queue.paths.get(index) else {
         return false;
     };
-    let there = state.stems_sent.make != MakeStems::Never
-        && state
-            .desk
-            .parts()
-            .is_some_and(|p| p.state == Parts::Present);
-    let kept = analysis.stems
-        || state
-            .facts
-            .get(&track.info.path)
-            .is_some_and(|f| f.stems == Some(true));
-    let failed = state.desk.parts_failed == Some(track.index);
-    let gpu = matches!(state.gpu, Gpu::Present(_));
-    !there && !kept && !failed && gpu
+    let analysed = matches!(state.rhythm.get(path), Some(Rhythm::Ready(r)) if r.analysis.stems);
+    analysed || state.facts.get(path).is_some_and(|f| f.stems == Some(true))
 }
 
 /// The bar a stem's change lands on now: the first of the playing track far
 /// enough after what is heard ([`lead`]), its frame worked out from the
 /// last position the engine told and how fast the output went through the
-/// track between the last two; `None` with the changes at once (the
-/// setting, no bars there, fewer than two positions since the track
-/// started, a seek or a jump: the first can come before the mixer has
-/// mixed anything of the output again, with no frame of it to time a
-/// change on).
+/// track between the last two, on the head that position was told of;
+/// `None` with the changes at once (the setting, no bars there, fewer than
+/// two positions since the track started, a seek or a jump: the first can
+/// come before the mixer has mixed anything of the output again, with no
+/// frame of it to time a change on). A transition's hand-over starts the
+/// next track on the other head: its bars are timed from its own
+/// positions, on its head's frames, once two are told.
 pub fn bar(state: &State) -> Option<Bar> {
     if !state.config.stems_on_bar {
         return None;
     }
     let track = state.playing.track.as_ref()?;
-    let (index, output_frame, seconds) = state.playing.anchor?;
+    let anchor = state.playing.anchor?;
     let speed = state.playing.speed?;
-    if index != track.index {
+    if anchor.index != track.index {
         return None;
     }
     let a = &lanes::rhythmed(state, Block::Now)?.analysis;
-    let after = state.heard() + lead(state, a);
+    let after = state.heard() + lead(state);
     let (at, number) = a
         .downbeats
         .iter()
         .enumerate()
         .map(|(k, &d)| (a.beats[d], k + 1))
         .find(|&(t, _)| t >= after)?;
-    let frame = output_frame as f64 + (at - seconds) * speed;
+    let frame = anchor.at.frame as f64 + (at - anchor.seconds) * speed;
     Some(Bar {
         seconds: at,
-        frame: frame.round().max(0.0) as u64,
+        at: HeadFrame {
+            head: anchor.at.head,
+            frame: frame.round().max(0.0) as u64,
+        },
         number,
     })
 }
@@ -242,7 +237,7 @@ pub(crate) fn toggle(state: &mut State, stem: Stem, fx: &mut Vec<Effect>) {
     let on = !state.desk.setting(kind).mute;
     let bar = bar(state);
     mute(state, kind, on, bar, fx);
-    told(state, bar, fx);
+    told(state, bar);
 }
 
 /// `alt+0`: every stem's strip as it starts, the mutes on the next bar, so
@@ -263,7 +258,7 @@ pub(crate) fn reset(state: &mut State, fx: &mut Vec<Effect>) {
             mute(state, kind, false, bar, fx);
         }
     }
-    told(state, bar, fx);
+    told(state, bar);
 }
 
 fn mute(state: &mut State, kind: StripKind, on: bool, bar: Option<Bar>, fx: &mut Vec<Effect>) {
@@ -277,33 +272,13 @@ fn mute(state: &mut State, kind: StripKind, on: bool, bar: Option<Bar>, fx: &mut
         state.desk.stems_pending = Some((track.index, later));
     }
     fx.push(Effect::Desk(match bar {
-        Some(bar) => DeskChange::MuteAt(kind, on, bar.frame),
+        Some(bar) => DeskChange::MuteAt(kind, on, bar.at),
         None => DeskChange::Mute(kind, on),
     }));
 }
 
-/// The seconds into the playing track of a stem's change still to come on
-/// a bar, if one is.
-fn pending_at(state: &State) -> Option<f64> {
-    let (index, at) = state.desk.stems_pending?;
-    let playing = state.playing.track.as_ref()?.index == index;
-    (playing && state.heard() < at).then_some(at)
-}
-
-/// The engine's transitions told the stems' gains when they changed: from
-/// `at` seconds into the playing track (a bar), else at once.
-fn send_mask(state: &mut State, at: Option<f64>, fx: &mut Vec<Effect>) {
-    let gains = mask(state);
-    if state.stems_sent.mask != gains {
-        state.stems_sent.mask = gains;
-        fx.push(Effect::Engine(Command::StemMask { gains, at }));
-    }
-}
-
-/// After a stem key: the engine's transitions told at the same bar, and
-/// what is heard said.
-fn told(state: &mut State, bar: Option<Bar>, fx: &mut Vec<Effect>) {
-    send_mask(state, bar.map(|b| b.seconds), fx);
+/// After a stem key: what is heard said.
+fn told(state: &mut State, bar: Option<Bar>) {
     let on: Vec<&str> = StripKind::PARTS
         .iter()
         .filter_map(|k| k.stem())
@@ -328,11 +303,10 @@ fn told(state: &mut State, bar: Option<Bar>, fx: &mut Vec<Effect>) {
     say_info(state, what);
 }
 
-/// After any action: the mixer's lanes, the engine's transitions and when
-/// the engine makes stems follow the state when they changed (a fader or a
-/// mute on the Mixer tab, the Karaoke tab shown or left, its voice moved, a
-/// tab shown). A change of the gains while a stem key's waits for its bar
-/// goes with it, at that bar.
+/// After any action: the mixer's lanes and when the engine makes stems
+/// follow the state when they changed (the Karaoke tab shown or left, its
+/// voice moved, a stem's strip touched, a tab shown, a transition armed or
+/// done).
 pub(crate) fn follow(state: &mut State, fx: &mut Vec<Effect>) {
     let lanes = lanes_due(state);
     for (k, kind) in StripKind::PARTS.into_iter().enumerate() {
@@ -341,8 +315,6 @@ pub(crate) fn follow(state: &mut State, fx: &mut Vec<Effect>) {
         }
     }
     state.stems_sent.lanes = lanes;
-    let at = pending_at(state);
-    send_mask(state, at, fx);
     let make = make_wanted(state);
     if make != state.stems_sent.make {
         state.stems_sent.make = make;
@@ -362,12 +334,15 @@ pub fn engine_started(state: &mut State, fx: &mut Vec<Effect>) {
 /// none until they are asked for again (another track has its own). The
 /// strips keep their settings.
 pub(crate) fn stopped(state: &mut State, index: usize, reason: &str) {
-    state.desk.parts_failed = Some(index);
+    if !state.desk.parts_failed.contains(&index) {
+        state.desk.parts_failed.push(index);
+    }
     say_failed(state, reason);
 }
 
-/// A transition's stems (the engine's own mix) stopped: its tracks go on
-/// whole; the stems on the desk are not touched by it.
+/// A transition's stems stopped ([`jodel_playback::Event::StemsStopped`],
+/// no longer sent: a head's parts that stop are told as any parts are):
+/// its tracks go on whole.
 pub(crate) fn transition_stopped(state: &mut State, reason: &str) {
     say_failed(state, reason);
 }

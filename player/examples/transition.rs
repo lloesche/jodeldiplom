@@ -1,6 +1,6 @@
 //! Renders a transition between two tracks to a 24-bit WAV file, to listen
-//! to: the engine plays them into a memory output in real time, nothing
-//! goes to a device.
+//! to: the engine plays them on a desk with two heads, mixed into a memory
+//! output in real time; nothing goes to a device.
 //!
 //! ```text
 //! cargo run --release -p jodeldiplom --example transition -- FROM INTO OUT.wav [--preset fade|drums|bass|vocals] [--stretch] [--bars N] [--rate HZ]
@@ -21,11 +21,13 @@ use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
 use jodel_gpu::GpuSeparator;
+use jodel_output::mixer::{Mixer, MixerOptions, Start};
 use jodel_output::{Capabilities, SampleFormat, SimClock, StreamFormat};
 use jodel_playback::stems::Separator;
 use jodel_playback::warp::TimeMap;
 use jodel_playback::{
-    Event, MemoryTarget, Player, PlayerOptions, Settings, TempoMode, TransitionState,
+    Event, MakeStems, MemoryTarget, Player, PlayerOptions, Settings, StemDesk, TempoMode,
+    TransitionState,
 };
 use jodel_rhythm::{Analysis, Method};
 use jodeldiplom::core::transition::{self, Preset};
@@ -140,15 +142,26 @@ fn render(
     );
     let mut caps = Capabilities::new();
     caps.insert(StreamFormat::new(rate, 2, SampleFormat::S24In32Low));
-    let target = MemoryTarget::new(caps, SimClock::Realtime);
-    let captures = target.captures();
+    let device = MemoryTarget::new(caps, SimClock::Realtime);
+    let captures = device.captures();
+    let mixer = Mixer::open(Box::new(device), MixerOptions::default());
+    let (_desk, lead, guest) = StemDesk::two_heads(&mixer, "Player", 1.0);
+    let first = lead.faders.input.clone();
+    let separator = GpuSeparator::shared().is_some().then_some(gpu as fn() -> _);
     let options = PlayerOptions {
         settings: Settings::default(),
-        separator: GpuSeparator::shared().is_some().then_some(gpu as fn() -> _),
+        separator,
         position_interval: Duration::from_millis(50),
         ..PlayerOptions::default()
     };
-    let (player, events) = Player::new(Box::new(target), options);
+    let (player, events) = Player::on_desk(lead, guest, options);
+    // Each stem of either track faded by its own lane (without a separator
+    // each track fades whole).
+    if separator.is_some() {
+        player
+            .make_stems(MakeStems::Separate)
+            .map_err(|e| e.to_string())?;
+    }
     player
         .load(vec![from.to_path_buf(), into.to_path_buf()])
         .map_err(|e| e.to_string())?;
@@ -177,9 +190,14 @@ fn render(
     let (mut w0, mut finished_at) = (None, None);
     loop {
         match next("the transition")? {
-            Event::Transition(TransitionState::Started { output_frame }) => {
-                println!("the window started at output frame {output_frame}");
-                w0 = Some(output_frame);
+            Event::Transition(TransitionState::Started { output_frame, .. }) => {
+                // Where that frame of the playing track is on the device.
+                let at = match first.at_stream(output_frame) {
+                    Start::At { time, .. } => (time.as_secs_f64() * f64::from(rate)).round(),
+                    _ => output_frame as f64,
+                };
+                println!("the window started at output frame {output_frame} (device frame {at})");
+                w0 = Some(at as u64);
             }
             Event::Transition(TransitionState::Finished) => {
                 println!("the next track is back at its own tempo");
@@ -189,8 +207,11 @@ fn render(
                 return Err(format!("the transition was called off: {reason}"));
             }
             Event::TrackStarted(s) => println!(
-                "track {} started at output frame {} (its frame {}, {:?})",
-                s.index, s.output_frame, s.from_frame, s.route.stage
+                "track {} started at output frame {} (its frame {}, {})",
+                s.index,
+                s.output_frame,
+                s.from_frame,
+                s.route.describe()
             ),
             Event::Error { error, .. } => return Err(error.to_string()),
             Event::Notice { message, .. } => println!("notice: {message}"),
@@ -202,9 +223,11 @@ fn render(
         }
     }
     drop(player);
+    drop(mixer);
     let w0 = w0.ok_or("the window never started")?;
     // The file starts BEFORE seconds ahead of the window: the track plays
-    // straight from the seek up to there.
+    // straight from the seek up to there (the device's frames, as the desk
+    // put the window's first frame on them).
     let cut = w0.saturating_sub((BEFORE * f64::from(rate)).round() as u64);
     // The stream from the seek on, as a WAV file.
     let list = captures.list();

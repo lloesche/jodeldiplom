@@ -6,10 +6,17 @@
 //! seconds, and where the next track is at its start), which beats meet
 //! (pairs of beats, one of each track), how each stem fades
 //! ([`Envelope`]s over the window) and how the tempo is matched
-//! ([`TempoMode`]). The engine plays it ([`crate::Command::Transition`])
-//! and reports how it goes ([`TransitionState`]).
+//! ([`TempoMode`]). The engine plays it on a desk
+//! ([`crate::Command::Transition`], [`crate::Player::on_desk`]) and reports
+//! how it goes ([`TransitionState`]).
 
 use crate::stems::{Stem, STEMS};
+
+/// Seconds of the playing track before the window at which the next
+/// track's output starts: its frame 0 is mixed there (silent until the
+/// window), and from the hand-over on the output frames the player reports
+/// are its, counted from there.
+pub const NEXT_LEAD: f64 = 1.0;
 
 /// A point of an [`Envelope`]: the gain at a share of the window.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -227,10 +234,19 @@ impl TransitionPlan {
 pub enum TransitionState {
     /// Taken: it starts when the playing track reaches the window.
     Armed,
-    /// The window started to be heard at this output frame.
+    /// The window started to be heard at this output frame of the playing
+    /// track's head.
     Started {
+        /// The head ([`crate::TrackStart::head`]) whose output frames
+        /// these are.
+        head: usize,
         /// The output frame.
         output_frame: u64,
+        /// That head's output frame the next track's head's frame 0 is
+        /// linked to: from the hand-over on, the positions told count the
+        /// next track's head's frames, these fewer than the playing
+        /// head's.
+        origin: u64,
     },
     /// The next track has taken over and is back at its own tempo.
     Finished,

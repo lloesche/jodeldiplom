@@ -169,26 +169,6 @@ impl From<&TrackInfo> for FileFacts {
     }
 }
 
-/// What runs between the file and the DAC.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum Stage {
-    /// The file's PCM, unchanged.
-    Passthrough,
-    /// Separated into stems at 44.1 kHz ([`crate::stems`]) and summed, each
-    /// faded by a transition's lanes, at the open output's format.
-    Stems,
-}
-
-impl Stage {
-    /// A short name for logs and UIs.
-    pub fn name(self) -> String {
-        match self {
-            Stage::Passthrough => "PCM".into(),
-            Stage::Stems => "stems".into(),
-        }
-    }
-}
-
 /// A sample-rate conversion after the source: `from` Hz to `to` Hz, by
 /// `up / down` in lowest terms.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -240,8 +220,6 @@ impl Resample {
 /// The way a track plays: what runs, at which rate, in which format.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Route {
-    /// What runs between the file and the DAC.
-    pub stage: Stage,
     /// The file's rate.
     pub input_rate: u32,
     /// The rate the device is opened at.
@@ -313,12 +291,9 @@ impl Route {
 
     fn describe_stages(&self) -> String {
         let input = khz(self.input_rate);
-        match self.stage {
-            Stage::Passthrough => match self.decoded_from {
-                Some(codec) => format!("{input} decoded from {codec}"),
-                None => input,
-            },
-            Stage::Stems => format!("{input} → stems {}", khz(self.decoded_rate())),
+        match self.decoded_from {
+            Some(codec) => format!("{input} decoded from {codec}"),
+            None => input,
         }
     }
 }
@@ -448,44 +423,6 @@ pub fn choose_route(
     pcm_route(file, caps, settings)
 }
 
-/// The stems of `file` at the open output's format, when the device takes
-/// it there (and resampling is allowed, unless it is the stems' own rate):
-/// where a transition mixes its tracks, at the output open, never
-/// bit-perfect.
-pub(crate) fn stems_at(
-    file: &FileFacts,
-    caps: &Capabilities,
-    settings: &Settings,
-    open: &StreamFormat,
-) -> Option<Route> {
-    let rate = open.rate;
-    if open.channels != 2 || (rate != crate::stems::RATE && !settings.resample) {
-        return None;
-    }
-    let (_, formats) = fit(rate, 2, &lossless_formats(24), caps, settings).ok()?;
-    if !formats.contains(&open.sample) {
-        return None;
-    }
-    Some(Route {
-        stage: Stage::Stems,
-        input_rate: file.rate,
-        output_rate: rate,
-        channels: 2,
-        format: *open,
-        formats,
-        resample: (rate != crate::stems::RATE)
-            .then(|| Resample::new(crate::stems::RATE, rate).with_headroom(settings.headroom)),
-        lossless: false,
-        decoded_from: None,
-        headroom: if rate != crate::stems::RATE {
-            settings.headroom
-        } else {
-            Headroom::NONE
-        },
-        passed_over: None,
-    })
-}
-
 /// The file's PCM.
 fn pcm_route(file: &FileFacts, caps: &Capabilities, settings: &Settings) -> Result<Route, NoRoute> {
     let lossless = !file.float && file.bits <= 24 && file.decoded_from.is_none();
@@ -498,7 +435,6 @@ fn pcm_route(file: &FileFacts, caps: &Capabilities, settings: &Settings) -> Resu
     let headroom = headroom_for(file, settings);
     match fit(file.rate, file.channels, &wanted, caps, settings) {
         Ok((format, formats)) => Ok(Route {
-            stage: Stage::Passthrough,
             input_rate: file.rate,
             output_rate: file.rate,
             channels: file.channels,
@@ -518,7 +454,6 @@ fn pcm_route(file: &FileFacts, caps: &Capabilities, settings: &Settings) -> Resu
                 .flatten();
             match target {
                 Some((format, formats)) => Ok(Route {
-                    stage: Stage::Passthrough,
                     input_rate: file.rate,
                     output_rate: format.rate,
                     channels: file.channels,
@@ -528,7 +463,7 @@ fn pcm_route(file: &FileFacts, caps: &Capabilities, settings: &Settings) -> Resu
                     lossless: false,
                     decoded_from: file.decoded_from,
                     headroom,
-                    passed_over: Some(format!("{}: {why}", Stage::Passthrough.name())),
+                    passed_over: Some(format!("PCM: {why}")),
                 }),
                 None => Err(NoRoute {
                     reason: format!(

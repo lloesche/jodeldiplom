@@ -211,8 +211,8 @@ fn a_first_touch_is_heard_on_its_frame_through_a_mixer() {
     let device = MemoryTarget::new(caps(&[RATE], &[S24In32Low]), SimClock::Paced);
     let captures = device.captures();
     let mixer = Mixer::open(Box::new(device), MixerOptions::default());
-    let (desk, input) = StemDesk::new(&mixer, "Player", Role::Lead, 1.0);
-    let (player, events) = Player::new(Box::new(input), options);
+    let (desk, head) = StemDesk::new(&mixer, "Player", Role::Lead, 1.0);
+    let (player, events) = Player::new(head.target, options);
     player.load(vec![file]).unwrap();
     player.play(0).unwrap();
     let heard = |e: &Event| match e {
@@ -224,7 +224,7 @@ fn a_first_touch_is_heard_on_its_frame_through_a_mixer() {
     player.make_stems(MakeStems::Kept).unwrap();
     let at = now + u64::from(RATE) / 4;
     desk.stem(Stem::Drums)
-        .set_mute_at(true, desk.lanes[0].at_stream(at));
+        .set_mute_at(true, head.faders.input.at_stream(at));
     let seen = until_queue_end(&events);
     drop(player);
     drop(desk);

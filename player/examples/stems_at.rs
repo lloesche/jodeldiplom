@@ -104,14 +104,14 @@ fn run(path: &Path, from: f64) -> Result<(), String> {
     let device = MemoryTarget::new(caps, SimClock::Realtime);
     let captures = device.captures();
     let mixer = Mixer::open(Box::new(device), MixerOptions::default());
-    let (desk, input) = StemDesk::new(&mixer, "Player", Role::Lead, 1.0);
-    let (lead, drums) = (&desk.fader, desk.stem(Stem::Drums));
+    let (desk, head) = StemDesk::new(&mixer, "Player", Role::Lead, 1.0);
+    let (lead, drums) = (head.faders.input.clone(), desk.stem(Stem::Drums));
     let options = PlayerOptions {
         separator: Some(gpu as fn() -> _),
         position_interval: Duration::from_millis(20),
         ..PlayerOptions::default()
     };
-    let (player, events) = Player::new(Box::new(input), options);
+    let (player, events) = Player::new(head.target, options);
     player
         .make_stems(MakeStems::Separate)
         .map_err(|e| e.to_string())?;
@@ -173,8 +173,10 @@ fn run(path: &Path, from: f64) -> Result<(), String> {
                 }
             }
             Event::TrackStarted(s) => println!(
-                "on {:?} from output frame {} (its frame {})",
-                s.route.stage, s.output_frame, s.from_frame
+                "on {} from output frame {} (its frame {})",
+                s.route.describe(),
+                s.output_frame,
+                s.from_frame
             ),
             Event::Error { error, .. } => return Err(error.to_string()),
             Event::PartsStopped { reason, .. } => return Err(reason),

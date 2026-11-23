@@ -47,45 +47,42 @@
 //! cues and fades), `produce` (making a track's output and writing it),
 //! `switch` (moving a track to a new route), `play` (opening, starting,
 //! seeking, stopping and running into the next track), `jump`, `queue`,
-//! `transition`, `warping`, `along` (a head read along a time map), and
-//! `lanes` (the stems as
-//! parts of an output of lanes).
+//! `transition` (a transition compiled onto a desk), `heads` (a second
+//! output on the desk, for a transition's next track), `warping`, `along`
+//! (a head read along a time map), and `lanes` (the stems as parts of an
+//! output of lanes).
 
 use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use jodel_output::Capabilities;
+use jodel_output::{Capabilities, StreamFormat};
 
 use crate::error::Error;
-use crate::rate::{choose_route, FileFacts, Route, Settings};
+use crate::rate::{choose_route, FileFacts, NoRoute, Route, Settings};
 use crate::source::TrackInfo;
-use crate::stem_file::StemStore;
-use crate::stems::SeparatorSource;
 use crate::target::OutputTarget;
 
 mod along;
 mod api;
+mod heads;
 mod jump;
 mod lanes;
 mod play;
 mod produce;
 mod queue;
-mod stem_mask;
 mod switch;
 mod track;
 mod transition;
 mod warping;
 
 pub use api::{Command, Event, PlayState, Player, PlayerOptions, Position, TrackStart};
+pub use heads::{Head, HeadFaders};
 pub use jump::JumpAt;
 pub use lanes::MakeStems;
 
-use track::{
-    drop_later, preroll, Cue, CueEvent, Heard, OpenOutput, Progress, StartAt, Switch, Track,
-};
+use track::{drop_later, preroll, Cue, CueEvent, Heard, Progress, StartAt, Track};
 
 /// How long one output write may block, so commands stay responsive.
 const WRITE_WAIT: Duration = Duration::from_millis(10);
@@ -101,40 +98,37 @@ pub const OPEN_BUSY_WAIT: Duration = Duration::from_millis(1_000);
 /// The pause between those tries.
 const OPEN_BUSY_STEP: Duration = Duration::from_millis(100);
 
-/// Frames of a stem mix taken at a time.
-const STEM_FRAMES: usize = 4096;
+/// Frames of a count-in's silence written at a time.
+const SILENCE_FRAMES: usize = 4096;
 
 /// How far before the frame heard a switch's new route starts decoding, so
-/// that it has settled by the time it is heard: a separation (a
-/// transition's track onto its stems) has context, a resampler's filter is
+/// that it has settled by the time it is heard: a resampler's filter is
 /// full.
-const PREROLL_STEMS: f64 = 1.0;
-
 const PREROLL_RESAMPLE: f64 = 0.1;
 
 /// How much of a switch's new route is decoded before the old one fades
 /// out for an output at another format, so the new output starts at once.
 const SWITCH_PREFILL: Duration = Duration::from_millis(200);
 
-/// Seconds of output a switch back onto a track's own route after a
-/// transition waits for its stem parts at most ([`Switch::parts_wait`]).
-const PARTS_PATIENCE: f64 = 2.0;
-
 /// How long the new route has the thread after a write the output did not
 /// take (it is full, paused or held back).
 const SWITCH_TURN: Duration = Duration::from_millis(20);
 
 struct Engine {
-    target: Box<dyn OutputTarget>,
-    caps: Option<Capabilities>,
+    /// The head played on (on a desk, the one on air).
+    head: heads::HeadState,
+    /// On a desk: the other head, parked ([`heads`]).
+    desk: Option<Box<heads::HeadState>>,
+    /// The format the routes are chosen for, where they can be, since a
+    /// transition handed over at it: the device is not opened again for
+    /// the tracks after until playback stops, a track is picked, the queue
+    /// ends or the settings change.
+    pinned: Option<StreamFormat>,
     settings: Settings,
     position_interval: Duration,
     events: Sender<Event>,
     queue: Vec<PathBuf>,
-    out: Option<OpenOutput>,
     paused: bool,
-    /// The track being decoded.
-    playing: Option<Track>,
     /// The next track, opened, waiting for the output to play out before
     /// the output is reopened at its format.
     next: Option<Track>,
@@ -146,101 +140,59 @@ struct Engine {
     cues: VecDeque<Cue>,
     heard: Option<Heard>,
     last_report: Option<(Instant, u64)>,
-    /// Where a transition's stems get their separator (the parts have
-    /// theirs in `lanes`).
-    separator: Option<SeparatorSource>,
-    /// Where tracks' stems are kept.
-    stem_store: Option<Arc<dyn StemStore>>,
-    /// The stems of a transition's track failed: the transitions after it
-    /// take their tracks whole ([`crate::stems::whole_mix`]) until stems
-    /// may work again: the mix changes outside a transition
-    /// ([`Command::StemMask`]), playback stops (a new queue too), or the
-    /// parts of the output are separated again.
-    stems_failed: bool,
-    /// The playing track's move to another route, under way.
-    switch: Option<Switch>,
     /// [`PlayerOptions::switch_fade`].
     switch_fade: Duration,
     /// [`PlayerOptions::offline`].
     offline: bool,
-    /// The settings changed while a switch was being handed over: route
-    /// the track again once it has been.
-    reroute_later: bool,
-    /// When the output last took nothing of a write.
-    stalled: Option<Instant>,
     /// A transition from the playing track into the next, under way.
     transition: Option<transition::Transition>,
-    /// [`Command::StemMask`]: each stem's gain as a mixer plays them, and
-    /// the changes of them to come at times of a track.
-    stem_gains: stem_mask::StemGains,
     /// [`Command::JumpWindow`]: seconds kept behind, decoded ahead.
     jump_window: (f64, f64),
-    /// A [`Command::Along`] waiting for its frame.
-    along_at: Option<along::PendingAlong>,
-    /// A [`Command::Jump`] waiting for its time.
-    pending_jump: Option<jump::PendingJump>,
-    /// A reading of the playing track at a jump's target it does not hold.
-    jump_fill: Option<Box<jump::JumpFill>>,
     /// Seconds of silence the next track installed starts after
     /// ([`Command::PlayIn`]).
     lead_in: f64,
-    /// Output frames of that silence still to write, before the playing
-    /// track's.
-    lead: u64,
     /// [`Command::HoldAtEnd`].
     hold: bool,
-    /// The playing track's stems as parts of the output.
-    lanes: lanes::StemLanes,
     /// Where the tracks' segments get their ids.
     segments: track::Segments,
 }
 
 impl Engine {
     fn new(target: Box<dyn OutputTarget>, options: PlayerOptions, events: Sender<Event>) -> Engine {
+        let lanes = lanes::StemLanes::new(options.separator, options.stem_store, options.offline);
         Engine {
-            target,
-            caps: options.capabilities,
+            head: heads::HeadState::new(0, target, options.capabilities, lanes),
+            desk: None,
+            pinned: None,
             settings: options.settings,
             position_interval: options.position_interval,
             events,
             queue: Vec::new(),
-            out: None,
             paused: false,
-            playing: None,
             next: None,
             finishing: false,
             tail: None,
             cues: VecDeque::new(),
             heard: None,
             last_report: None,
-            separator: options.separator,
-            stem_store: options.stem_store.clone(),
-            stems_failed: false,
-            switch: None,
             switch_fade: options.switch_fade,
             offline: options.offline,
-            reroute_later: false,
-            stalled: None,
             transition: None,
-            stem_gains: stem_mask::StemGains::default(),
             jump_window: (0.0, 0.0),
-            along_at: None,
-            pending_jump: None,
-            jump_fill: None,
             lead_in: 0.0,
-            lead: 0,
             hold: false,
-            lanes: lanes::StemLanes::new(options.separator, options.stem_store, options.offline),
             segments: track::Segments::default(),
         }
     }
 
     /// Whether there is work to do: a track to write or an output playing
-    /// out, or (paused too) a switch's new route to decode.
+    /// out, or (paused too) a switch's new route to decode. (A transition's
+    /// next track writes on the turns of the playing one.)
     fn busy(&self) -> bool {
-        let switching = self.playing.is_some() && self.switch.as_ref().is_some_and(|s| !s.spliced);
-        let reading = self.playing.is_some() && self.jump_fill.is_some();
-        switching || reading || (!self.paused && (self.playing.is_some() || self.finishing))
+        let switching =
+            self.head.playing.is_some() && self.head.switch.as_ref().is_some_and(|s| !s.spliced);
+        let reading = self.head.playing.is_some() && self.head.jump_fill.is_some();
+        switching || reading || (!self.paused && (self.head.playing.is_some() || self.finishing))
     }
 
     fn emit(&self, event: Event) {
@@ -285,17 +237,17 @@ impl Engine {
                 self.emit_queue();
             }
             Command::Play(index) => {
-                self.paused = false;
+                self.pick();
                 self.jump(index, 0.0);
             }
             Command::PlayIn { index, lead } => {
-                self.paused = false;
+                self.pick();
                 self.lead_in = if lead.is_finite() { lead.max(0.0) } else { 0.0 };
                 self.jump(index, 0.0);
                 self.lead_in = 0.0;
             }
             Command::PlayAt { index, share } => {
-                self.paused = false;
+                self.pick();
                 let share = if share.is_finite() {
                     share.clamp(0.0, 1.0)
                 } else {
@@ -312,7 +264,7 @@ impl Engine {
                         self.cues
                             .retain(|c| !matches!(c.event, CueEvent::QueueEnded));
                         self.finishing = false;
-                        let end = self.out.as_ref().map_or(0, |o| o.output.written());
+                        let end = self.head.out.as_ref().map_or(0, |o| o.output.written());
                         if let Err(error) = self.advance(last + 1, end) {
                             self.fail(None, error);
                         }
@@ -322,42 +274,36 @@ impl Engine {
             Command::Remove(index) => self.remove_track(index),
             Command::Move { from, to } => self.move_track(from, to),
             Command::Pause => {
-                if self.paused || self.out.is_none() {
+                if self.paused || self.head.out.is_none() {
                     return;
                 }
-                if let Some(out) = &mut self.out {
+                if let Some(out) = &mut self.head.out {
                     if let Err(e) = out.output.pause() {
                         return self.fail(None, e.into());
                     }
+                }
+                if let Err(e) = self.pause_parked(true) {
+                    return self.fail(None, e);
                 }
                 self.paused = true;
                 self.report_position(true);
                 self.emit(Event::State(PlayState::Paused));
             }
-            Command::Resume => {
-                if !self.paused {
+            Command::Resume => self.resume(),
+            Command::Seek(seconds) => self.seek(seconds),
+            Command::Next => {
+                // While a transition is heard, into its next track at once.
+                if self.cut_to_next() {
                     return;
                 }
-                if let Some(out) = &mut self.out {
-                    if let Err(e) = out.output.resume() {
-                        return self.fail(None, e.into());
-                    }
-                }
-                self.paused = false;
-                self.emit(Event::State(PlayState::Playing));
-            }
-            Command::Seek(seconds) => self.seek(seconds),
-            // While a transition is heard, into its next track at once.
-            Command::Next if self.cut_to_next() => {}
-            Command::Next => {
                 if let Some(index) = self.current_index() {
-                    self.paused = false;
+                    self.pick();
                     self.jump(index + 1, 0.0);
                 }
             }
             Command::Previous => {
                 if let Some(index) = self.current_index() {
-                    self.paused = false;
+                    self.pick();
                     self.jump(index.saturating_sub(1), 0.0);
                 }
             }
@@ -371,10 +317,36 @@ impl Engine {
             Command::CancelTransition => {}
             Command::Jump { index, to, at } => self.jump_within(index, to, at),
             Command::JumpWindow { back, ahead } => self.jump_window = (back, ahead),
-            Command::MakeStems(make) => self.lanes.set_make(make),
-            Command::StemMask { gains, at } => self.set_stem_mask(gains, at),
+            Command::MakeStems(make) => self.every_lanes().for_each(|l| l.set_make(make)),
+            // The desk plays the stems at their levels, the next track's
+            // too, on its own head.
+            Command::StemMask { .. } => {}
             Command::Along { map, from, tempo } => self.read_along(map, from, tempo),
         }
+    }
+
+    /// A track is picked to play (not run into): playback plays, and the
+    /// device opens again at the track's own rate if it must.
+    fn pick(&mut self) {
+        self.paused = false;
+        self.pinned = None;
+    }
+
+    /// [`Command::Resume`]: the outputs paused play on.
+    fn resume(&mut self) {
+        if !self.paused {
+            return;
+        }
+        if let Some(out) = &mut self.head.out {
+            if let Err(e) = out.output.resume() {
+                return self.fail(None, e.into());
+            }
+        }
+        if let Err(e) = self.pause_parked(false) {
+            return self.fail(None, e);
+        }
+        self.paused = false;
+        self.emit(Event::State(PlayState::Playing));
     }
 
     fn notice(&self, index: Option<usize>, message: String) {
@@ -390,30 +362,59 @@ impl Engine {
         // for its end (its tracks' routes are chosen again then); armed, it
         // takes them when it prepares.
         if settings != self.settings && self.transition_running() {
+            // (The format is not held after it: `settle_transition`.)
             self.settings = settings;
-            let index = self.playing.as_ref().map(|t| t.index);
+            let index = self.head.playing.as_ref().map(|t| t.index);
             self.notice(
                 index,
                 "The new settings apply once the transition is over".into(),
             );
             return;
         }
+        if settings != self.settings {
+            self.pinned = None;
+        }
         self.settings = settings;
         self.reroute();
     }
 
     /// The route the settings choose for `info` now, or why there is none
-    /// (a sentence).
+    /// (a sentence): at the format held since a transition, where there is
+    /// one there; else from what the target takes (the format no longer
+    /// held then).
     fn route_for(&mut self, info: &TrackInfo) -> Result<Route, String> {
+        if let Some(route) = self.held_route(info) {
+            return Ok(route);
+        }
+        self.pinned = None;
+        let name = self.head.target.name();
         let caps = self
-            .capabilities()
-            .map_err(|e| format!("Could not ask {} what it takes: {e}", self.target.name()))?;
+            .target_caps()
+            .map_err(|e| format!("Could not ask {name} what it takes: {e}"))?;
         choose_route(&FileFacts::from(info), &caps, &self.settings).map_err(|none| {
-            format!(
-                "No route for this track with these settings on {} ({none})",
-                self.target.name()
-            )
+            format!("No route for this track with these settings on {name} ({none})")
         })
+    }
+
+    /// The route the settings choose for `info` at `format` alone.
+    fn route_at(&self, info: &TrackInfo, format: StreamFormat) -> Result<Route, NoRoute> {
+        let mut caps = Capabilities::new();
+        caps.insert(format);
+        choose_route(&FileFacts::from(info), &caps, &self.settings)
+    }
+
+    /// The route for `info` at the format held since a transition, if one
+    /// is held and the track has a route there.
+    fn held_route(&self, info: &TrackInfo) -> Option<Route> {
+        self.route_at(info, self.pinned?).ok()
+    }
+
+    /// What the target takes, asked once.
+    fn target_caps(&mut self) -> Result<Capabilities, Error> {
+        if self.head.caps.is_none() {
+            self.head.caps = Some(self.head.target.capabilities()?);
+        }
+        Ok(self.head.caps.clone().expect("asked"))
     }
 
     /// How `track` is heard when it is read along a map (a head along its
@@ -421,13 +422,7 @@ impl Engine {
     /// along its beats): then its position is its map's, not a straight
     /// line from its segment.
     fn heard_along(&self, track: &Track) -> Option<Heard> {
-        if track.along.is_some() {
-            return Some(track.heard());
-        }
-        self.heard
-            .as_ref()
-            .filter(|h| h.index == track.index && h.warp.is_some() && track.warp.is_some())
-            .cloned()
+        track.along.is_some().then(|| track.heard())
     }
 
     fn emit_play_state(&self) {
@@ -449,14 +444,7 @@ impl Engine {
         self.heard
             .as_ref()
             .map(|h| h.index)
-            .or(self.playing.as_ref().map(|t| t.index))
-    }
-
-    fn capabilities(&mut self) -> Result<Capabilities, Error> {
-        if self.caps.is_none() {
-            self.caps = Some(self.target.capabilities()?);
-        }
-        Ok(self.caps.clone().unwrap_or_default())
+            .or(self.head.playing.as_ref().map(|t| t.index))
     }
 
     /// Queues a cue of `track` at output frame `at` (or after the last one
@@ -475,23 +463,23 @@ impl Engine {
 
     /// Drops everything decoded and queued, without closing the output.
     fn clear_timeline(&mut self) {
-        self.forget_transition(Some("playback moved elsewhere"));
+        self.abandon_transition("playback moved elsewhere");
         self.cues.clear();
-        self.playing = None;
+        self.head.playing = None;
         self.next = None;
         self.finishing = false;
         self.tail = None;
         self.cancel_switch();
-        self.reroute_later = false;
-        self.along_at = None;
-        self.pending_jump = None;
+        self.head.reroute_later = false;
+        self.head.along_at = None;
+        self.head.pending_jump = None;
         self.drop_jump_fill();
-        self.lead = 0;
+        self.head.lead = 0;
     }
 
     /// Sends the cues the output clock has reached.
     fn fire_cues(&mut self) {
-        let position = match &self.out {
+        let position = match &self.head.out {
             Some(out) => out.clock.position(),
             None => return,
         };
@@ -547,6 +535,7 @@ impl Engine {
         };
         let event = Position {
             index: heard.index,
+            head: self.head.id,
             seconds: heard.seconds_at(output_frame),
             frame: heard.frame_at(output_frame),
             output_frame,
@@ -556,7 +545,7 @@ impl Engine {
     }
 
     fn report_position(&mut self, force: bool) {
-        let (Some(_), Some(out)) = (&self.heard, &self.out) else {
+        let (Some(_), Some(out)) = (&self.heard, &self.head.out) else {
             return;
         };
         let position = out.clock.position();
@@ -574,26 +563,24 @@ impl Engine {
     /// the track; or, while finishing, let the output play out. A switch
     /// under way takes its turns first ([`Engine::work_switch`]).
     fn work(&mut self) -> Result<(), Error> {
-        if self.lead > 0 && self.playing.is_some() {
+        if self.head.lead > 0 && self.head.playing.is_some() {
             return self.write_lead();
         }
         self.along_turn()?;
-        if self.playing.is_some() && self.work_switch()? {
+        self.tend_parked();
+        if self.head.playing.is_some() && self.work_switch()? {
             return Ok(());
         }
-        if self.playing.is_some() && self.transition_turn()? {
+        if self.head.playing.is_some() && self.transition_turn()? {
             return Ok(());
         }
-        if self.playing.is_some() && self.hold_for_transition()? {
-            return Ok(());
-        }
-        if self.playing.is_some() && self.jump_fill_turn()? {
+        if self.head.playing.is_some() && self.jump_fill_turn()? {
             return Ok(());
         }
         if self.jump_turn()? {
             return Ok(());
         }
-        if let Some(mut track) = self.playing.take() {
+        if let Some(mut track) = self.head.playing.take() {
             let progress = match self.step(&mut track) {
                 Ok(progress) => progress,
                 Err(error) if error.is_skippable() => {
@@ -602,22 +589,14 @@ impl Engine {
                 }
                 Err(error) => return Err(error),
             };
-            if let Some(why) = track.stems_error.take() {
-                self.stems_stopped(track, &why);
-                return Ok(());
-            }
             match progress {
-                Progress::Busy => {
-                    // A transition adds the next track to what was just made.
-                    self.mix_transition(&mut track)?;
-                    self.playing = Some(track);
-                }
+                Progress::Busy => self.head.playing = Some(track),
                 Progress::Complete => self.finish(track)?,
             }
             return Ok(());
         }
         if self.finishing {
-            let drained = match &mut self.out {
+            let drained = match &mut self.head.out {
                 Some(out) => out.output.drain(Some(WRITE_WAIT))?,
                 None => true,
             };

@@ -10,9 +10,7 @@ use std::time::Duration;
 
 use common::*;
 use jodel_output::{Capabilities, SampleFormat, SimClock};
-use jodel_playback::{
-    Event, Headroom, MemoryTarget, Player, PlayerOptions, Resampler, Settings, Stage,
-};
+use jodel_playback::{Event, Headroom, MemoryTarget, Player, PlayerOptions, Resampler, Settings};
 use SampleFormat::*;
 
 fn options(headroom: Headroom) -> PlayerOptions {
@@ -195,7 +193,6 @@ fn bit_perfect_routes_have_no_headroom() {
             _ => None,
         })
         .unwrap();
-    assert_eq!(start.route.stage, Stage::Passthrough);
     assert_eq!(start.route.resample, None);
     // A FLAC file played bit-perfect: its own samples.
     let target = MemoryTarget::new(caps(&[44_100], &[S24In32Low]), SimClock::Instant);

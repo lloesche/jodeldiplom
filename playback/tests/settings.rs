@@ -12,8 +12,7 @@ use jodel_output::{
     Capabilities, Error as OutputError, OpenRequest, Output, SampleFormat, SimClock, StreamFormat,
 };
 use jodel_playback::{
-    Error, Event, MemoryTarget, OutputTarget, Player, PlayerOptions, Settings, Stage,
-    OPEN_BUSY_WAIT,
+    Error, Event, MemoryTarget, OutputTarget, Player, PlayerOptions, Settings, OPEN_BUSY_WAIT,
 };
 use SampleFormat::*;
 
@@ -71,7 +70,6 @@ fn the_file_plays_at_its_own_rate() {
     for (name, rate) in [(F44, 44_100u32), (F48, 48_000)] {
         let (streams, events) = play_all(caps(&[rate, 2 * rate, 4 * rate], &[S24In32Low]), &[name]);
         let start = started(&events)[0];
-        assert_eq!(start.route.stage, Stage::Passthrough);
         assert!(start.route.lossless);
         assert_eq!(streams.len(), 1);
         assert_eq!(streams[0].0, StreamFormat::new(rate, 2, S24In32Low));

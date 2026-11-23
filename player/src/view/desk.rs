@@ -292,7 +292,7 @@ fn stems_said(state: &State) -> (bool, &'static str) {
         };
     }
     let track = state.playing.track.as_ref();
-    if track.is_some_and(|t| state.desk.parts_failed == Some(t.index)) {
+    if track.is_some_and(|t| state.desk.parts_failed.contains(&t.index)) {
         return (false, "no stems");
     }
     match state.gpu {
@@ -367,21 +367,38 @@ fn source_lines(state: &State, kind: StripKind, iw: usize) -> Vec<Line<'static>>
         .desk
         .view(kind)
         .map_or(Vec::new(), |s| s.inputs.iter().collect());
-    let format = inputs
-        .iter()
-        .find_map(|i| i.format.as_ref())
-        .map_or_else(|| "—".to_owned(), format_short);
+    let lead = inputs.iter().find(|i| i.role == Role::Lead).copied();
+    // The player's format is its Lead's (the head on air); the preview's
+    // any player's (they all play at the device's).
+    let format = match kind {
+        StripKind::Player => lead.and_then(|i| i.format.as_ref()),
+        _ => inputs.iter().find_map(|i| i.format.as_ref()),
+    };
+    let format = format.map_or_else(|| "—".to_owned(), format_short);
     let mut lines = vec![Line::from(plain(format))];
     match kind {
         StripKind::Player => {
-            let lead = inputs.iter().find(|i| i.role == Role::Lead);
-            lines.push(Line::from(vec![
-                lamp(lead.is_some_and(|i| i.heard), GREEN),
-                plain(" LEAD"),
-            ]));
+            lines.push(head_line(lead, iw));
+            // The other head only while it has an output open: a
+            // transition's next track, or the one handed over from playing
+            // out what it holds.
+            let other = state
+                .desk
+                .open_heads()
+                .into_iter()
+                .find(|i| i.role != Role::Lead);
+            if let Some(i) = other {
+                lines.push(head_line(Some(i), iw));
+            }
             let fill = lead.map_or(0.0, |i| i.queued as f64 / i.capacity.max(1) as f64);
-            let [lit, unlit] = super::blocks(fill, iw.saturating_sub(5).max(1), SOURCE);
-            lines.push(Line::from(vec![dim("ring "), lit, unlit]));
+            // The late frames a head following the other dropped.
+            let dropped: u64 = inputs.iter().map(|i| i.dropped).sum();
+            let drops = (dropped > 0).then(|| format!(" ↓{dropped}"));
+            let room = iw.saturating_sub(5 + drops.as_deref().map_or(0, width));
+            let [lit, unlit] = super::blocks(fill, room.max(1), SOURCE);
+            let mut ring = vec![dim("ring "), lit, unlit];
+            ring.extend(drops.map(|d| Span::styled(d, Style::new().fg(WARN))));
+            lines.push(Line::from(ring));
         }
         _ => {
             for (k, name) in ["A ", "B "].iter().enumerate() {
@@ -401,6 +418,28 @@ fn source_lines(state: &State, kind: StripKind, iw: usize) -> Vec<Line<'static>>
         }
     }
     lines
+}
+
+/// A head of the player on its strip (read only): lit while heard, LEAD
+/// for the one on air (the desk's Lead), NEXT for the other; while a
+/// transition's automation is in force on it, the gain it puts on its
+/// main (in dB, without its decimal where that does not fit).
+fn head_line(input: Option<&InputView>, iw: usize) -> Line<'static> {
+    let lead = input.is_none_or(|i| i.role == Role::Lead);
+    let mut spans = vec![
+        lamp(input.is_some_and(|i| i.heard), GREEN),
+        plain(if lead { " LEAD" } else { " NEXT" }),
+    ];
+    let automation = input.and_then(|i| i.automation.as_ref());
+    if let Some(a) = automation.filter(|a| !a.settled) {
+        let db = taper::db_of_gain(a.input * a.main);
+        let mut said = format!(" {}", taper::number(db, 1, false));
+        if 6 + width(&said) > iw {
+            said = format!(" {}", taper::number(db, 0, false));
+        }
+        spans.push(Span::styled(said, Style::new().fg(WARN)));
+    }
+    Line::from(spans)
 }
 
 fn fader_strip(
