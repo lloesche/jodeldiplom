@@ -55,7 +55,6 @@
 
 #![warn(missing_docs)]
 
-mod aac;
 pub mod desk;
 pub mod engine;
 mod error;

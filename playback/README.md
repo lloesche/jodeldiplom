@@ -39,7 +39,8 @@ WAV, AIFF, CAF and ALAC files to bit-perfect, exclusive device output, and AAC, 
   HE-AAC file that signals nothing and whose container states the core
   rate cannot be told from AAC-LC without decoding its SBR data; it plays as
   its LC core. The rate is the AudioSpecificConfig's (what the decoder
-  gives; the first decoded packet is checked against it), the bit rate the
+  gives; every decoded packet, of any codec, is checked against the rate
+  the track states), the bit rate the
   average the `esds` descriptor states. AAC plays from MP4 only (an ADTS
   `.aac` stream or AAC in CAF is refused).
 
@@ -68,9 +69,10 @@ WAV, AIFF, CAF and ALAC files to bit-perfect, exclusive device output, and AAC, 
   the target (the MP3 bit reservoir, the Vorbis window, the AAC overlap;
   for AAC into the encoder delay) and drop what comes before it; a
   container that cannot seek or read on from where it landed is decoded
-  from the start instead. An AAC seek starts a new decoder, so the noise
-  of noise-substituted (PNS) bands is the same at every seek to a frame,
-  though not the noise a decode from the start has there. Seeks are
+  from the start instead. Every seek starts a new decoder, so a seek to a
+  frame always gives the same samples (an AAC stream's noise-substituted
+  (PNS) bands the same noise, though not the noise a decode from the start
+  has there). Seeks are
   sample-accurate on every format.
 - `rate`: `choose_route(file, capabilities, settings)` is a pure function
   from the file, the device's exclusive capability matrix and the settings
@@ -558,7 +560,7 @@ source signal is 0) and seek sample-accurately (equal to the full decode
 from the target, on and around packet edges, through the engine too);
 tags and covers from MP4 atoms, ID3v2 and Vorbis comments;
 user-defined ID3v2 tags; HE-AAC, signalled after an LC header or not at
-all, is refused with a clear message (`src/aac.rs` tests the header
+all, is refused with a clear message (`src/source/aac.rs` tests the header
 variants, the iTunSMPB tag and the edit-list rules); 32-bit integer and float WAV are requantized (exact
 where they fit, dithered otherwise, clips counted); lossy tracks play
 gaplessly into one stream, never bit-perfect, and a resampled lossy track

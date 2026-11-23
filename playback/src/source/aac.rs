@@ -12,11 +12,18 @@
 //! - **The bit rate**, from the elementary stream descriptor (`esds`).
 //!
 //! [`mp4_track`] reads the atoms it needs from the file's `moov` atom; the
-//! file is only read.
+//! file is only read. [`open_track`] puts it together for a track being
+//! opened.
 
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
+
+use symphonia::core::codecs::audio::AudioCodecParameters;
+use symphonia::core::formats;
+
+use super::meta::bare_key;
+use super::{Container, Tags};
 
 /// The largest `moov` atom read (its sample tables grow with the length).
 const MAX_MOOV: u64 = 64 * 1024 * 1024;
@@ -537,6 +544,70 @@ pub(crate) fn trim(rate: u32, track: &Mp4Track, smpb: Option<(u64, u64, u64)>) -
         }
     };
     (delay > 0 || length < total).then_some(Trim { delay, length })
+}
+
+/// What an AAC track plays as.
+pub(super) struct Track {
+    /// The rate the decoder gives: the core rate of the stream's
+    /// configuration (the container's own may differ).
+    pub rate: u32,
+    /// The average bit rate the `esds` states.
+    pub bitrate: Option<u32>,
+    /// The length after the trim.
+    pub frames: Option<u64>,
+    /// The frames to play of what is decoded.
+    pub trim: Option<Trim>,
+}
+
+/// Checks that an AAC track decodes correctly (AAC-LC, mono or stereo, in
+/// MP4), and finds its rate, bit rate and gapless trim; else why it does
+/// not play.
+pub(super) fn open_track(
+    path: &Path,
+    container: Container,
+    track: &formats::Track,
+    params: &AudioCodecParameters,
+    tags: &Tags,
+) -> Result<Track, String> {
+    if container != Container::Mp4 {
+        return Err(format!(
+            "AAC audio plays from MP4/M4A files only, not from {}",
+            container.name()
+        ));
+    }
+    let config = params
+        .extra_data
+        .as_deref()
+        .and_then(config)
+        .ok_or("the AAC stream's decoder configuration is missing or unreadable")?;
+    let mp4 = mp4_track(path, track.id);
+    let entry_rate = mp4.as_ref().map_or(params.sample_rate, |t| t.entry_rate);
+    let timescale = mp4.as_ref().map(|t| t.media_timescale).or_else(|| {
+        track
+            .time_base
+            .filter(|tb| tb.numer.get() == 1)
+            .map(|tb| tb.denom.get())
+    });
+    if let Some(why) = refusal(&config, entry_rate, timescale) {
+        return Err(why);
+    }
+    let smpb = tags
+        .all
+        .iter()
+        .find(|(key, _)| bare_key(key).eq_ignore_ascii_case("iTunSMPB"))
+        .and_then(|(_, value)| itunsmpb(value));
+    let trim = mp4.as_ref().and_then(|t| trim(config.rate, t, smpb));
+    let frames = match (trim, &mp4) {
+        (Some(trim), _) => Some(trim.length),
+        (None, Some(t)) => Some(frames(t.media_duration, t.media_timescale, config.rate)),
+        (None, None) => None,
+    };
+    Ok(Track {
+        rate: config.rate,
+        bitrate: mp4.and_then(|t| t.avg_bitrate),
+        frames,
+        trim,
+    })
 }
 
 #[cfg(test)]
