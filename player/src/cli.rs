@@ -16,8 +16,9 @@ Usage: {bin} [options] [path]
 
 A music player for PCM files (FLAC, WAV, AIFF, CAF, ALAC) that
 plays bit-perfect to an exclusively held output device, and resamples only
-when no rate the device takes carries the file bit-perfect. MP3 (and MP2,
-MP1) and Ogg Vorbis play too, gapless, decoded to 24 bits.
+when no rate the device takes carries the file bit-perfect. AAC-LC (in
+M4A/MP4), MP3 (and MP2, MP1) and Ogg Vorbis play too, gapless, decoded to
+24 bits.
 
   path                 a folder to start the file browser in, or a file to
                        play at once (the browser opens on its folder);

@@ -26,9 +26,11 @@
 //!
 //! Lossy tracks play gapless: the encoder delay and padding the container
 //! states (the LAME/Xing header of an MP3 file, the granule positions of an
-//! Ogg stream) are trimmed by the decoder, so a track starts with its first
-//! sample, ends with its last and has exactly the length the header says.
-//! [`Source::seek`] moves to an exact frame on every format.
+//! Ogg stream) are trimmed by the decoder, and those of AAC in an MP4 file
+//! (its `iTunSMPB` tag, else its edit list) here ([`crate::aac`]), so a
+//! track starts with its first sample, ends with its last and has exactly
+//! the length the header says. [`Source::seek`] moves to an exact frame on
+//! every format.
 
 use std::fs::{self, File};
 use std::path::{Path, PathBuf};
@@ -48,6 +50,7 @@ use symphonia::core::meta::{
 };
 use symphonia::core::units::{TimeBase, Timestamp};
 
+use crate::aac;
 use crate::error::Error;
 use crate::headers;
 use crate::resample::Requantizer;
@@ -112,10 +115,13 @@ pub enum Codec {
     Mp3,
     /// Vorbis.
     Vorbis,
+    /// AAC-LC (in MP4).
+    Aac,
 }
 
 impl Codec {
-    /// Its usual name: `FLAC`, `PCM`, `ALAC`, `MP1`, `MP2`, `MP3`, `Vorbis`.
+    /// Its usual name: `FLAC`, `PCM`, `ALAC`, `MP1`, `MP2`, `MP3`, `Vorbis`,
+    /// `AAC`.
     pub fn name(self) -> &'static str {
         match self {
             Codec::Flac => "FLAC",
@@ -125,13 +131,17 @@ impl Codec {
             Codec::Mp2 => "MP2",
             Codec::Mp3 => "MP3",
             Codec::Vorbis => "Vorbis",
+            Codec::Aac => "AAC",
         }
     }
 
     /// Whether the codec is lossy: what it decodes to is not the signal
     /// that was encoded.
     pub fn is_lossy(self) -> bool {
-        matches!(self, Codec::Mp1 | Codec::Mp2 | Codec::Mp3 | Codec::Vorbis)
+        matches!(
+            self,
+            Codec::Mp1 | Codec::Mp2 | Codec::Mp3 | Codec::Vorbis | Codec::Aac
+        )
     }
 }
 
@@ -207,7 +217,8 @@ pub struct TrackInfo {
     pub float: bool,
     /// For lossy codecs, the bit rate in bits per second, when known: an
     /// MP3 file's constant rate or the average of a VBR file (from its
-    /// Xing header), a Vorbis stream's nominal rate.
+    /// Xing header), a Vorbis stream's nominal rate, the average an AAC
+    /// stream's descriptor states.
     pub bitrate: Option<u32>,
     /// The length in frames, when the file states it. For lossy codecs it
     /// leaves out the encoder delay and padding.
@@ -257,9 +268,20 @@ pub struct Source {
     info: Arc<TrackInfo>,
     reader: Box<dyn FormatReader>,
     decoder: Box<dyn AudioDecoder>,
+    /// What the decoder is made from.
+    params: AudioCodecParameters,
     track_id: u32,
     /// The track's timestamps per frame, when they are not frames.
     time_base: Option<(u64, u64)>,
+    /// Decoded frames before the track's first frame (the encoder delay
+    /// of AAC in MP4, which the decoder does not trim).
+    delay: u64,
+    /// The track's length when frames decoded after it are dropped here
+    /// (the padding of AAC in MP4).
+    end: Option<u64>,
+    /// The rate of the decoded audio is still to be checked (AAC, whose
+    /// container and stream header may disagree).
+    unchecked_rate: bool,
     /// The frame index of the next frame [`Source::read`] returns.
     position: u64,
     /// Frames before this index are dropped (after a seek).
@@ -276,8 +298,8 @@ pub struct Source {
     ended: bool,
 }
 
-/// A packet decoded: its first frame index, the frames to drop from its
-/// start, and its frames.
+/// A packet decoded: its first decoded frame index (the dither seed), the
+/// frames to drop from its start, and its frames.
 struct Block {
     start: u64,
     skip: usize,
@@ -290,6 +312,9 @@ struct Opened {
     track: Track,
     params: AudioCodecParameters,
     info: TrackInfo,
+    /// The frames to play of what is decoded, when the decoder does not
+    /// trim them itself.
+    trim: Option<aac::Trim>,
 }
 
 /// Which covers [`open_reader`] looks for.
@@ -350,8 +375,15 @@ fn open_reader(path: &Path, covers: Covers) -> Result<Opened, Error> {
     };
     let params = params.clone();
     let codec = codec_of(&params).map_err(failed)?;
-    let rate = params
-        .sample_rate
+    let (tags, embedded) = read_metadata(reader.as_mut());
+    let aac = (codec == Codec::Aac)
+        .then(|| aac_track(path, container, &track, &params, &tags))
+        .transpose()
+        .map_err(failed)?;
+    let rate = aac
+        .as_ref()
+        .map(|a| a.rate)
+        .or(params.sample_rate)
         .filter(|&r| r > 0)
         .ok_or_else(|| failed("no sample rate".into()))?;
     let channels = params.channels.as_ref().map_or(0, |c| c.count());
@@ -391,9 +423,9 @@ fn open_reader(path: &Path, covers: Covers) -> Result<Opened, Error> {
     let bitrate = match codec {
         Codec::Mp1 | Codec::Mp2 | Codec::Mp3 => headers::mpeg(path),
         Codec::Vorbis => params.extra_data.as_deref().and_then(headers::vorbis),
+        Codec::Aac => aac.as_ref().and_then(|a| a.bitrate),
         _ => None,
     };
-    let (tags, embedded) = read_metadata(reader.as_mut());
     let cover = match covers {
         Covers::EmbeddedOrFolder => embedded.or_else(|| folder_cover(path)),
         Covers::Embedded => embedded,
@@ -407,7 +439,10 @@ fn open_reader(path: &Path, covers: Covers) -> Result<Opened, Error> {
         bits,
         float,
         bitrate,
-        frames: track.num_frames,
+        frames: match &aac {
+            Some(a) => a.frames,
+            None => track.num_frames,
+        },
         tags,
         cover,
     };
@@ -416,6 +451,73 @@ fn open_reader(path: &Path, covers: Covers) -> Result<Opened, Error> {
         track,
         params,
         info,
+        trim: aac.and_then(|a| a.trim),
+    })
+}
+
+/// What an AAC track plays as.
+struct AacTrack {
+    /// The rate the decoder gives: the core rate of the stream's
+    /// configuration (the container's own may differ).
+    rate: u32,
+    bitrate: Option<u32>,
+    /// The length after the trim.
+    frames: Option<u64>,
+    trim: Option<aac::Trim>,
+}
+
+/// Checks that an AAC track decodes correctly (AAC-LC, mono or stereo, in
+/// MP4), and finds its rate, bit rate and gapless trim; else why it does
+/// not play.
+fn aac_track(
+    path: &Path,
+    container: Container,
+    track: &Track,
+    params: &AudioCodecParameters,
+    tags: &Tags,
+) -> Result<AacTrack, String> {
+    if container != Container::Mp4 {
+        return Err(format!(
+            "AAC audio plays from MP4/M4A files only, not from {}",
+            container.name()
+        ));
+    }
+    let config = params
+        .extra_data
+        .as_deref()
+        .and_then(aac::config)
+        .ok_or("the AAC stream's decoder configuration is missing or unreadable")?;
+    let mp4 = aac::mp4_track(path, track.id);
+    let entry_rate = mp4.as_ref().map_or(params.sample_rate, |t| t.entry_rate);
+    let timescale = mp4.as_ref().map(|t| t.media_timescale).or_else(|| {
+        track
+            .time_base
+            .filter(|tb| tb.numer.get() == 1)
+            .map(|tb| tb.denom.get())
+    });
+    if let Some(why) = aac::refusal(&config, entry_rate, timescale) {
+        return Err(why);
+    }
+    let smpb = tags
+        .all
+        .iter()
+        .find(|(key, _)| bare_key(key).eq_ignore_ascii_case("iTunSMPB"))
+        .and_then(|(_, value)| aac::itunsmpb(value));
+    let trim = mp4.as_ref().and_then(|t| aac::trim(config.rate, t, smpb));
+    let frames = match (trim, &mp4) {
+        (Some(trim), _) => Some(trim.length),
+        (None, Some(t)) => Some(aac::frames(
+            t.media_duration,
+            t.media_timescale,
+            config.rate,
+        )),
+        (None, None) => None,
+    };
+    Ok(AacTrack {
+        rate: config.rate,
+        bitrate: mp4.and_then(|t| t.avg_bitrate),
+        frames,
+        trim,
     })
 }
 
@@ -443,9 +545,7 @@ fn codec_of(params: &AudioCodecParameters) -> Result<Codec, String> {
         codec_ids::CODEC_ID_MP2 => Codec::Mp2,
         codec_ids::CODEC_ID_MP3 => Codec::Mp3,
         codec_ids::CODEC_ID_VORBIS => Codec::Vorbis,
-        codec_ids::CODEC_ID_AAC => {
-            return Err("AAC audio is not supported (an M4A file plays when it holds ALAC)".into())
-        }
+        codec_ids::CODEC_ID_AAC => Codec::Aac,
         codec_ids::CODEC_ID_OPUS => return Err("Opus audio is not supported".into()),
         // Of the decoders built in, only PCM is left.
         id if symphonia::default::get_codecs()
@@ -468,8 +568,11 @@ impl Source {
             track,
             params,
             info,
+            trim,
         } = open_reader(path, Covers::EmbeddedOrFolder)?;
         let decoder = make_decoder(path, &params, &info)?;
+        // The container's rate may not be the decoder's (AAC).
+        let unchecked_rate = info.codec == Codec::Aac;
         let time_base = track
             .time_base
             .and_then(|tb| frames_per_tick(tb, info.rate));
@@ -477,8 +580,12 @@ impl Source {
             info: Arc::new(info),
             reader,
             decoder,
+            params,
             track_id: track.id,
             time_base,
+            delay: trim.map_or(0, |t| t.delay),
+            end: trim.map(|t| t.length),
+            unchecked_rate,
             position: 0,
             skip_to: 0,
             after_seek: false,
@@ -572,7 +679,8 @@ impl Source {
         Ok(block.frames - block.skip)
     }
 
-    /// The timestamp of `frame` in the track's time base.
+    /// The timestamp of decoded frame `frame` (counted from the encoder
+    /// delay's start) in the track's time base.
     fn frame_to_ts(&self, frame: u64) -> i64 {
         match self.time_base {
             None => frame as i64,
@@ -589,7 +697,8 @@ impl Source {
     }
 
     /// Decodes the next packet with frames to keep into `scratch` (24-bit
-    /// integers) or `wide` (24-bit units), whole; `None` at the end.
+    /// integers) or `wide` (24-bit units), whole but for frames after the
+    /// track's end; `None` at the end.
     fn next_block(&mut self) -> Result<Option<Block>, Error> {
         let channels = usize::from(self.info.channels);
         while !self.ended {
@@ -617,14 +726,31 @@ impl Source {
                 .pts
                 .get()
                 .saturating_add(packet.trim_start.get() as i64);
-            let start = self.ts_to_frame(ts).max(0) as u64;
+            let decoded_at = self.ts_to_frame(ts).max(0) as u64;
+            // Its first frame in the track: before 0 in an encoder delay
+            // that is trimmed here.
+            let start = decoded_at as i64 - self.delay as i64;
+            if self.end.is_some_and(|end| start >= end as i64) {
+                self.ended = true;
+                break;
+            }
             let decoded = self.decoder.decode(&packet).map_err(|e| Error::Source {
                 path: self.info.path.clone(),
                 message: format!("decoding failed ({e})"),
             })?;
-            let frames = decoded.frames();
+            let mut frames = decoded.frames();
             if frames == 0 {
                 continue;
+            }
+            if self.unchecked_rate {
+                self.unchecked_rate = false;
+                let rate = decoded.spec().rate();
+                if rate != self.info.rate {
+                    return Err(self.failed(format!(
+                        "the stream decodes at {rate} Hz, not the {} Hz it states",
+                        self.info.rate
+                    )));
+                }
             }
             if self.info.fits_24_bits() {
                 decoded.copy_to_vec_interleaved(&mut self.scratch);
@@ -642,7 +768,7 @@ impl Source {
             }
             if self.after_seek {
                 self.after_seek = false;
-                if start > self.skip_to {
+                if start > self.skip_to as i64 {
                     // The reader landed after the target: decode from the
                     // start of the track instead, dropping up to the
                     // target.
@@ -650,8 +776,18 @@ impl Source {
                     continue;
                 }
             }
-            // After a seek the packet may start before the frame asked for.
-            let skip = self.skip_to.saturating_sub(start).min(frames as u64) as usize;
+            // The padding after the track's end is dropped.
+            if let Some(end) = self.end {
+                let keep = (end as i64 - start).clamp(0, frames as i64) as usize;
+                if keep < frames {
+                    frames = keep;
+                    self.scratch.truncate(frames * channels);
+                    self.wide.truncate(frames * channels);
+                }
+            }
+            // After a seek (or in the encoder delay) the packet may start
+            // before the frame asked for.
+            let skip = (self.skip_to as i64 - start).clamp(0, frames as i64) as usize;
             if skip == frames {
                 continue;
             }
@@ -663,9 +799,9 @@ impl Source {
                 },
                 frames * channels
             );
-            self.position = start + frames as u64;
+            self.position = (start + frames as i64) as u64;
             return Ok(Some(Block {
-                start,
+                start: decoded_at,
                 skip,
                 frames,
             }));
@@ -678,6 +814,7 @@ impl Source {
     fn rewind(&mut self) -> Result<(), Error> {
         let opened = open_reader(&self.info.path, Covers::Embedded)?;
         self.decoder = make_decoder(&self.info.path, &opened.params, &self.info)?;
+        self.params = opened.params;
         self.reader = opened.reader;
         self.track_id = opened.track.id;
         self.ended = false;
@@ -707,7 +844,9 @@ impl Source {
         } else {
             0
         };
-        let from = frame.saturating_sub(preroll);
+        // From before the target in decoded frames: into the encoder delay
+        // when the target is near the start.
+        let from = (frame + self.delay).saturating_sub(preroll);
         let sought = self.reader.seek(
             SeekMode::Accurate,
             SeekTo::Timestamp {
@@ -720,7 +859,14 @@ impl Source {
             self.rewind()?;
             return Ok(frame);
         }
-        self.decoder.reset();
+        if self.info.codec == Codec::Aac {
+            // A new decoder: its noise generator (for noise-substituted
+            // bands) starts afresh, so a seek to a frame always gives the
+            // same samples.
+            self.decoder = make_decoder(&self.info.path, &self.params, &self.info)?;
+        } else {
+            self.decoder.reset();
+        }
         self.after_seek = true;
         Ok(frame)
     }

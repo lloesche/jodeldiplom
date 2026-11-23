@@ -1,5 +1,5 @@
-//! The formats beside FLAC and WAV: AIFF, CAF, ALAC in MP4, MP3, MP2,
-//! Vorbis in Ogg, and the requantization of floating-point and 32-bit PCM.
+//! The formats beside FLAC and WAV: AIFF, CAF, ALAC and AAC in MP4, MP3,
+//! MP2, Vorbis in Ogg, and the requantization of floating-point and 32-bit PCM.
 //! The fixtures in `tests/fixtures/formats` are made by its `make.py` from
 //! the two signals recomputed here ([`lossless`], [`lossy`]).
 
@@ -20,6 +20,8 @@ use jodel_playback::{
 const RATE: u32 = 44_100;
 const LOSSLESS_FRAMES: usize = 3_000;
 const LOSSY_FRAMES: usize = 20_000;
+/// The average bit rate `aac.m4a`'s descriptor states (96 kbit/s asked).
+const AAC_BITRATE: u32 = 96_808;
 
 fn format_fixture(name: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -209,9 +211,11 @@ fn alac_in_mp4_has_tags_and_its_cover() {
 
 #[test]
 fn lossy_tracks_start_and_end_exactly() {
+    // The AAC bit rate is the average its descriptor states.
     for (name, codec, bitrate) in [
         ("lossy.mp3", Codec::Mp3, 96_000),
         ("lossy.ogg", Codec::Vorbis, 64_000),
+        ("aac.m4a", Codec::Aac, AAC_BITRATE),
     ] {
         let path = format_fixture(name);
         let (source, got) = read_all(&path);
@@ -231,7 +235,8 @@ fn lossy_tracks_start_and_end_exactly() {
         let (lag, snr) = best_lag(&got, |i| lossy(i, 0), 2_000);
         assert_eq!(lag, 0, "{name} is shifted by {lag} frames");
         assert!(snr > 20.0, "{name}: {snr:.1} dB");
-        // The tags and the cover (ID3v2 APIC, METADATA_BLOCK_PICTURE).
+        // The tags and the cover (ID3v2 APIC, METADATA_BLOCK_PICTURE, MP4
+        // covr).
         assert_eq!(info.tags.title.as_deref(), Some("Format Test"), "{name}");
         assert_eq!(info.tags.artist.as_deref(), Some("Fixture Band"), "{name}");
         assert_eq!(info.tags.album.as_deref(), Some("Formats"), "{name}");
@@ -244,10 +249,12 @@ fn lossy_tracks_start_and_end_exactly() {
 
 #[test]
 fn lossy_seeks_are_sample_accurate() {
-    for name in ["lossy.mp3", "lossy.ogg"] {
+    for name in ["lossy.mp3", "lossy.ogg", "aac.m4a"] {
         let path = format_fixture(name);
         let (_, full) = read_all(&path);
-        for frame in [1u64, 577, 1_152, 4_321, 12_345, 19_999] {
+        // Within the first packets, on and around packet edges (1024 for
+        // AAC, 1152 for MP3), deep in, the last frame.
+        for frame in [1u64, 577, 1_023, 1_024, 1_025, 1_152, 4_321, 12_345, 19_999] {
             let from = read_from(&path, frame);
             assert_eq!(
                 from.len(),
@@ -340,6 +347,7 @@ fn headers_agree_with_the_full_open() {
         "lossy.mp3",
         "lossy.ogg",
         "lossy.mp2",
+        "aac.m4a",
     ] {
         let path = format_fixture(name);
         let full = probe(&path).unwrap();
@@ -350,12 +358,22 @@ fn headers_agree_with_the_full_open() {
 
 #[test]
 fn unsupported_codecs_say_so() {
-    let error = probe(format_fixture("aac.m4a")).unwrap_err().to_string();
-    assert!(error.contains("AAC audio is not supported"), "{error}");
-    let error = probe_header(format_fixture("aac.m4a"))
-        .unwrap_err()
-        .to_string();
-    assert!(error.contains("AAC audio is not supported"), "{error}");
+    // HE-AAC, signalled after an LC header (which the decoder would take
+    // for LC) or not at all (an LC core at half the track's rate): refused,
+    // not played without its upper band.
+    for (name, says) in [
+        ("he-aac.m4a", "HE-AAC (AAC with SBR) is not supported"),
+        ("he-aac-implicit.m4a", "this looks like HE-AAC"),
+    ] {
+        let path = format_fixture(name);
+        for error in [
+            probe(&path).unwrap_err().to_string(),
+            probe_header(&path).unwrap_err().to_string(),
+        ] {
+            assert!(error.contains(says), "{name}: {error}");
+            assert!(error.contains("only AAC-LC plays"), "{name}: {error}");
+        }
+    }
     let dir = temp_dir("not-audio");
     let junk = dir.join("junk.mp3");
     std::fs::write(&junk, vec![0x55u8; 4096]).unwrap();
@@ -484,18 +502,25 @@ fn started(events: &[Event]) -> Vec<&jodel_playback::TrackStart> {
 fn lossy_tracks_play_gaplessly_and_never_bit_perfect() {
     let mp3 = format_fixture("lossy.mp3");
     let ogg = format_fixture("lossy.ogg");
+    let aac = format_fixture("aac.m4a");
     let target = MemoryTarget::new(caps(&[44_100], &[S24In32]), SimClock::Instant);
     let captures = target.captures();
     let (player, events) = Player::new(Box::new(target), lossy_options(false));
     player
-        .load(vec![mp3.clone(), ogg.clone(), mp3.clone()])
+        .load(vec![
+            mp3.clone(),
+            ogg.clone(),
+            aac.clone(),
+            aac.clone(),
+            mp3.clone(),
+        ])
         .unwrap();
     player.play(0).unwrap();
     let seen = until_queue_end(&events);
     collect_until(&events, |e| matches!(e, Event::State(PlayState::Stopped)));
     drop(player);
     let starts = started(&seen);
-    assert_eq!(starts.len(), 3);
+    assert_eq!(starts.len(), 5);
     for start in &starts {
         assert!(!start.bit_perfect);
         assert!(!start.route.lossless);
@@ -507,37 +532,46 @@ fn lossy_tracks_play_gaplessly_and_never_bit_perfect() {
         starts[1].route.describe(),
         "44.1 kHz decoded from Vorbis (-1.5 dB)"
     );
+    assert_eq!(starts[2].route.decoded_from, Some("AAC"));
     // One stream, each track its exact length, back to back, turned down
     // by the headroom.
     let streams = captured(&captures);
     assert_eq!(streams.len(), 1);
     let a = read_lossy(&mp3);
     let b = read_lossy(&ogg);
+    let c = read_lossy(&aac);
     let mut want = a.clone();
     want.extend(&b);
+    want.extend(&c);
+    want.extend(&c);
     want.extend(&a);
-    assert_eq!(streams[0].1.len(), 3 * 2 * LOSSY_FRAMES * 4);
+    assert_eq!(streams[0].1.len(), 5 * 2 * LOSSY_FRAMES * 4);
     assert!(streams[0].1 == device_bytes(&want, S24In32));
 }
 
 #[test]
 fn a_lossy_track_seeks_exactly_while_playing() {
-    let mp3 = format_fixture("lossy.mp3");
-    let (target, captures, gate) = GatedTarget::new(caps(&[44_100], &[S24In32]));
-    let (player, events) = Player::new(Box::new(target), lossy_options(false));
-    player.load(vec![mp3.clone()]).unwrap();
-    gate.allow(3_333);
-    player.play(0).unwrap();
-    gate.wait_written(3_333);
-    player.seek(15_001.0 / 44_100.0).unwrap();
-    collect_until(&events, |e| matches!(e, Event::Seeked { .. }));
-    gate.allow_all();
-    until_queue_end(&events);
-    drop(player);
-    let full = read_lossy(&mp3);
-    let mut want = full[..2 * 3_333].to_vec();
-    want.extend(&full[2 * 15_001..]);
-    assert!(captured(&captures)[0].1 == device_bytes(&want, S24In32));
+    for name in ["lossy.mp3", "aac.m4a"] {
+        let path = format_fixture(name);
+        let (target, captures, gate) = GatedTarget::new(caps(&[44_100], &[S24In32]));
+        let (player, events) = Player::new(Box::new(target), lossy_options(false));
+        player.load(vec![path.clone()]).unwrap();
+        gate.allow(3_333);
+        player.play(0).unwrap();
+        gate.wait_written(3_333);
+        player.seek(15_001.0 / 44_100.0).unwrap();
+        collect_until(&events, |e| matches!(e, Event::Seeked { .. }));
+        gate.allow_all();
+        until_queue_end(&events);
+        drop(player);
+        let full = read_lossy(&path);
+        let mut want = full[..2 * 3_333].to_vec();
+        want.extend(&full[2 * 15_001..]);
+        assert!(
+            captured(&captures)[0].1 == device_bytes(&want, S24In32),
+            "{name}"
+        );
+    }
 }
 
 #[test]

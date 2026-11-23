@@ -1,7 +1,7 @@
 """Writes the source signals of the format fixtures and encodes them.
 
 Run from this folder: `python make.py` (needs ffmpeg with libmp3lame and
-libvorbis on PATH). The intermediate WAV files and the cover are deleted at
+libvorbis on PATH; its own AAC encoder). The intermediate WAV files and the cover are deleted at
 the end. The tests recompute both signals, so the formulas here and in
 `playback/tests/formats.rs` must stay the same.
 """
@@ -126,10 +126,36 @@ def main():
            "-c:a", "libvorbis", "-q:a", "0", "lossy.ogg")
     ffmpeg("-i", "lossy.wav", *bare, "-ac", "1", "-t", "0.25",
            "-c:a", "mp2", "-b:a", "64k", "lossy.mp2")
-    ffmpeg("-i", "lossy.wav", *bare, "-ac", "1", "-t", "0.1",
-           "-c:a", "aac", "-b:a", "32k", "aac.m4a")
+    aac_fixtures(tags, bare, cover)
     for name in ["lossless.wav", "lossy.wav", "cover.png"]:
         os.remove(name)
+
+
+def patch(source, target, old, new):
+    """Copies `source` to `target` with the one occurrence of `old` (as
+    long as `new`) replaced: the stream's AudioSpecificConfig."""
+    with open(source, "rb") as f:
+        data = f.read()
+    assert len(old) == len(new) and data.count(old) == 1, (source, old)
+    with open(target, "wb") as f:
+        f.write(data.replace(old, new))
+
+
+def aac_fixtures(tags, bare, cover):
+    """AAC-LC with the encoder's edit list (no noise substitution, so seeks
+    compare exactly), and two HE-AAC files that must be refused: copies of a
+    short LC file whose header is changed (no SBR data is in them)."""
+    ffmpeg("-i", "lossy.wav", *cover, *bare, *tags, "-c:a", "aac", "-b:a", "96k",
+           "-aac_pns", "0", "aac.m4a")
+    ffmpeg("-i", "lossy.wav", *bare, "-ac", "1", "-t", "0.1",
+           "-c:a", "aac", "-b:a", "32k", "lc-mono.m4a")
+    # LC, 44.1 kHz, mono, then the sync extension 0x2b7 for SBR, absent.
+    lc = bytes.fromhex("120856e500")
+    # SBR present, at 88.2 kHz: HE-AAC signalled backward compatibly.
+    patch("lc-mono.m4a", "he-aac.m4a", lc, bytes.fromhex("120856e588"))
+    # An LC core at 22.05 kHz in a 44.1 kHz track, SBR unsignalled.
+    patch("lc-mono.m4a", "he-aac-implicit.m4a", lc, bytes.fromhex("1388000000"))
+    os.remove("lc-mono.m4a")
 
 
 if __name__ == "__main__":

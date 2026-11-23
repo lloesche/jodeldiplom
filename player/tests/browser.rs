@@ -225,6 +225,7 @@ fn rows_of_the_other_formats_come_from_their_headers() {
         ("lossy.mp3", "MP3 96k", Some("Format Test")),
         ("lossy.ogg", "VORBIS 64k", Some("Format Test")),
         ("lossy.mp2", "MP2 64k", None),
+        ("aac.m4a", "AAC 97k", Some("Format Test")),
     ] {
         let path = format_fixture(name);
         assert!(browser::is_playable(&path), "{name}");
@@ -238,10 +239,16 @@ fn rows_of_the_other_formats_come_from_their_headers() {
     let quick = browser::quick_details(&format_fixture("lossy.mp3"));
     assert!((quick.seconds.unwrap() - 20_000.0 / 44_100.0).abs() < 1e-6);
     assert_eq!(quick.artist.as_deref(), Some("Fixture Band"));
-    // AAC in an M4A file is listed, and its row says why it does not play.
-    let aac = browser::quick_details(&format_fixture("aac.m4a"));
-    assert_eq!(aac.chip, "?");
-    assert!(aac.error.unwrap().contains("AAC audio is not supported"));
+    let quick = browser::quick_details(&format_fixture("aac.m4a"));
+    assert!((quick.seconds.unwrap() - 20_000.0 / 44_100.0).abs() < 1e-6);
+    // HE-AAC in an M4A file is listed, and its row says why it does not
+    // play.
+    let he = browser::quick_details(&format_fixture("he-aac.m4a"));
+    assert_eq!(he.chip, "?");
+    assert!(he
+        .error
+        .unwrap()
+        .contains("HE-AAC (AAC with SBR) is not supported"));
 }
 
 /// The chips: lossy codecs with their bit rate, lossless ones with the
@@ -302,5 +309,9 @@ fn format_chips() {
     assert_eq!(
         chip(&info(Container::Ogg, Codec::Vorbis, 44_100, Some(160_000))),
         "VORBIS 160k"
+    );
+    assert_eq!(
+        chip(&info(Container::Mp4, Codec::Aac, 44_100, Some(256_000))),
+        "AAC 256k"
     );
 }

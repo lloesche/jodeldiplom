@@ -1,7 +1,7 @@
 # jodel-playback
 
 The playback engine between files and [`jodel-output`](../output): FLAC,
-WAV, AIFF, CAF and ALAC files to bit-perfect, exclusive device output, and MP3 (MP2, MP1) and Ogg Vorbis decoded to
+WAV, AIFF, CAF and ALAC files to bit-perfect, exclusive device output, and AAC, MP3 (MP2, MP1) and Ogg Vorbis decoded to
 24 bits, gapless. It has no UI; a player puts its own on top.
 
 ## Modules
@@ -19,13 +19,29 @@ WAV, AIFF, CAF and ALAC files to bit-perfect, exclusive device output, and MP3 (
   |---|---|---|
   | FLAC | FLAC | Vorbis comments, picture blocks |
   | WAV (RF64), AIFF/AIFF-C, CAF | PCM (integer, float); CAF also ALAC | RIFF INFO, ID3v2 |
-  | MP4/M4A | ALAC (AAC is reported as not supported) | MP4 atoms, `covr` |
+  | MP4/M4A | ALAC, AAC-LC (HE-AAC is reported as not supported) | MP4 atoms, `covr` |
   | MPEG audio | MP3, MP2, MP1 | ID3v2 (`APIC`), ID3v1, APE |
   | Ogg | Vorbis | Vorbis comments, `METADATA_BLOCK_PICTURE` |
 
   Symphonia features: `flac`, `wav`, `pcm`, `aiff`, `caf`, `alac`, `isomp4`,
-  `mp1`, `mp2`, `mp3`, `ogg`, `vorbis`, `id3v1`, `id3v2`. Symphonia 0.6 has
-  no Opus decoder; Opus and AAC files are refused with a message saying so.
+  `aac`, `mp1`, `mp2`, `mp3`, `ogg`, `vorbis`, `id3v1`, `id3v2`. Symphonia
+  0.6 has no Opus decoder; Opus files are refused with a message saying so.
+
+  AAC (`aac`): symphonia decodes AAC-LC only, mono or stereo, in
+  1024-frame packets. `aac::config` reads the stream's
+  AudioSpecificConfig itself and refuses, naming the reason, HE-AAC and
+  HE-AAC v2 (SBR and PS, signalled hierarchically or by the sync
+  extensions after an LC header, which symphonia would take for LC), HE-AAC
+  whose SBR is not signalled at all but whose track runs at twice the LC
+  core's rate, the other profiles (Main, LTP, LD, ELD, USAC, ...),
+  more than two channels, program config elements and 960-frame packets:
+  such a file is never played at its core rate without its upper band. An
+  HE-AAC file that signals nothing and whose container states the core
+  rate cannot be told from AAC-LC without decoding its SBR data; it plays as
+  its LC core. The rate is the AudioSpecificConfig's (what the decoder
+  gives; the first decoded packet is checked against it), the bit rate the
+  average the `esds` descriptor states. AAC plays from MP4 only (an ADTS
+  `.aac` stream or AAC in CAF is refused).
 
   Samples: integer sources of at most 24 bits pass exactly (16 bits shifted
   up). Lossy decoders, floating-point PCM and integer PCM above 24 bits are
@@ -43,10 +59,18 @@ WAV, AIFF, CAF and ALAC files to bit-perfect, exclusive device output, and MP3 (
   Gapless: the decoders drop the encoder delay and padding the container
   states (an MP3 file's LAME/Xing header, an Ogg stream's granule
   positions), so a lossy track's length is its original sample count and
-  its first sample is the first one encoded. Lossy seeks decode from 8,192
-  frames before the target (the MP3 bit reservoir, the Vorbis window) and
-  drop what comes before it; a container that cannot seek or read on from
-  where it landed is decoded from the start instead. Seeks are
+  its first sample is the first one encoded. AAC in MP4 is trimmed by the
+  source itself (the demuxer applies no edit list): the delay and length
+  come from the iTunes `iTunSMPB` tag when it fits in the track, else from
+  the track's edit list (`elst`, one edit after any empty ones; within a
+  tick of a coarse movie timescale the track's own length is taken), else
+  every decoded frame plays. Lossy seeks decode from 8,192 frames before
+  the target (the MP3 bit reservoir, the Vorbis window, the AAC overlap;
+  for AAC into the encoder delay) and drop what comes before it; a
+  container that cannot seek or read on from where it landed is decoded
+  from the start instead. An AAC seek starts a new decoder, so the noise
+  of noise-substituted (PNS) bands is the same at every seek to a frame,
+  though not the noise a decode from the start has there. Seeks are
   sample-accurate on every format.
 - `rate`: `choose_route(file, capabilities, settings)` is a pure function
   from the file, the device's exclusive capability matrix and the settings
@@ -57,7 +81,7 @@ WAV, AIFF, CAF and ALAC files to bit-perfect, exclusive device output, and MP3 (
   | File | Route |
   |---|---|
   | lossless PCM (FLAC, WAV, AIFF, CAF, ALAC) | its own rate and channels, untouched |
-  | lossy (MP3, Vorbis, ...) | decoded to 24 bits, its own rate and channels; never lossless |
+  | lossy (MP3, AAC, Vorbis, ...) | decoded to 24 bits, its own rate and channels; never lossless |
 
   The route fits when its rate is within the cap and the device takes it
   in a format holding every bit of the file (24-bit formats for lossy and
@@ -527,13 +551,15 @@ builds only; print the numbers with
 `tests/formats.rs` covers the other formats with the small fixtures in
 `tests/fixtures/formats` (made by its `make.py` with FFmpeg, see its
 README): AIFF (written by the test, 16 and 24 bits), ALAC in MP4 and CAF
-decode to exactly the PCM of the FLAC fixture and seek exactly; MP3 and
-Vorbis have their original sample count, start on the first sample (the
-best-matching lag against the source signal is 0) and seek
-sample-accurately (equal to the full decode from the target, through the
-engine too); tags and covers from MP4 atoms, ID3v2 and Vorbis comments;
-user-defined ID3v2 tags; AAC is refused
-with a clear message; 32-bit integer and float WAV are requantized (exact
+decode to exactly the PCM of the FLAC fixture and seek exactly; MP3,
+Vorbis and AAC-LC in MP4 (its edit list) have their original sample
+count, start on the first sample (the best-matching lag against the
+source signal is 0) and seek sample-accurately (equal to the full decode
+from the target, on and around packet edges, through the engine too);
+tags and covers from MP4 atoms, ID3v2 and Vorbis comments;
+user-defined ID3v2 tags; HE-AAC, signalled after an LC header or not at
+all, is refused with a clear message (`src/aac.rs` tests the header
+variants, the iTunSMPB tag and the edit-list rules); 32-bit integer and float WAV are requantized (exact
 where they fit, dithered otherwise, clips counted); lossy tracks play
 gaplessly into one stream, never bit-perfect, and a resampled lossy track
 equals a fresh resample of the unquantized decode.

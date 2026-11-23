@@ -1,6 +1,6 @@
 //! The playback engine between files and [`jodel_output`]: FLAC, WAV,
-//! AIFF, CAF and ALAC files to bit-perfect device output, and MP3 (MP2,
-//! MP1) and Ogg Vorbis files decoded to 24 bits, gapless.
+//! AIFF, CAF and ALAC files to bit-perfect device output, and AAC-LC (in
+//! MP4), MP3 (MP2, MP1) and Ogg Vorbis files decoded to 24 bits, gapless.
 //!
 //! # Layers
 //!
@@ -55,6 +55,7 @@
 
 #![warn(missing_docs)]
 
+mod aac;
 pub mod desk;
 pub mod engine;
 mod error;

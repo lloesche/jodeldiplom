@@ -1,7 +1,7 @@
 # jodeldiplom
 
 A music player for PCM files (FLAC, WAV, AIFF, CAF, ALAC in
-M4A/MP4), and for MP3 (MP2, MP1) and Ogg Vorbis, on top of
+M4A/MP4), and for AAC-LC (in M4A/MP4), MP3 (MP2, MP1) and Ogg Vorbis, on top of
 [`jodel-playback`](../playback) and [`jodel-output`](../output): bit-perfect,
 exclusive output, a plain file browser instead of a library database, and
 two frontends with the same layout, keys and mouse support:
@@ -878,8 +878,8 @@ The browser lists folders and files ending in `.flac`, `.wav`, `.aif`,
 `.oga`. Each file's row shows a format chip, read from the file's headers
 without decoding audio: `FLAC 44.1`,
 `ALAC 96`, `WAV 48`, `AIFF 96`, `CAF 192`, and for lossy files the codec
-and bit rate, `MP3 320k` (a VBR file's average), `VORBIS 160k`. An M4A file holding AAC
-is listed with `?` and the reason (AAC is not supported).
+and bit rate, `MP3 320k` (a VBR file's average), `AAC 256k`, `VORBIS 160k`. An M4A file
+holding HE-AAC is listed with `?` and the reason (only AAC-LC plays).
 
 ### The Mixer tab
 

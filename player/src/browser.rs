@@ -144,8 +144,8 @@ pub fn chip(info: &TrackInfo) -> String {
 }
 
 /// The extensions the browser lists, in lower case: FLAC; WAV; AIFF; CAF;
-/// MP4 audio (ALAC plays; AAC is reported as not supported); MPEG audio
-/// layers III, II and I; Ogg Vorbis.
+/// MP4 audio (ALAC and AAC-LC play; HE-AAC is reported as not supported);
+/// MPEG audio layers III, II and I; Ogg Vorbis.
 pub const PLAYABLE: [&str; 13] = [
     "flac", "wav", "aif", "aiff", "aifc", "caf", "m4a", "mp4", "mp3", "mp2", "mp1", "ogg", "oga",
 ];

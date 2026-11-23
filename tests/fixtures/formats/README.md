@@ -19,4 +19,6 @@ recompute both signals from the same formulas.
 | `lossy.mp3` | 6,447 | the lossy signal, LAME 96 kbit/s CBR with its Xing/LAME header (encoder delay and padding), ID3v2.3 tags and the cover (`APIC`) |
 | `lossy.ogg` | 5,452 | the lossy signal, libvorbis q0 (64 kbit/s nominal), Vorbis comments and the cover (`METADATA_BLOCK_PICTURE`) |
 | `lossy.mp2` | 2,089 | the first 0.25 s of the lossy signal, mono, MP2 64 kbit/s |
-| `aac.m4a` | 1,321 | the first 0.1 s of the lossy signal, mono, AAC: for the "not supported" message only |
+| `aac.m4a` | 6,818 | the lossy signal, FFmpeg's AAC-LC encoder at 96 kbit/s without noise substitution, with its edit list (1,024 frames of encoder delay), tags and the cover (`covr`) |
+| `he-aac.m4a` | 1,321 | the first 0.1 s of the lossy signal, mono, AAC-LC whose header is changed to announce SBR after the LC header (backward-compatible HE-AAC signalling): refused |
+| `he-aac-implicit.m4a` | 1,321 | the same, its header changed to an LC core at 22.05 kHz in the 44.1 kHz track (HE-AAC whose SBR is not signalled): refused |

@@ -11,8 +11,9 @@ in both:
 What it does:
 
 - **Formats**: FLAC, WAV (RF64), AIFF/AIFF-C, CAF, ALAC (in M4A/MP4 and
-  CAF), MP3, MP2, MP1 and Ogg Vorbis, read with symphonia. AAC and Opus are
-  refused with a message saying so.
+  CAF), AAC-LC (in M4A/MP4), MP3, MP2, MP1 and Ogg Vorbis, read with
+  symphonia, lossy ones gapless. HE-AAC and Opus are refused with a message
+  saying so.
 - **Bit-perfect, exclusive output**: the device is opened exclusively
   (WASAPI exclusive mode on Windows, the Core Audio HAL in hog mode on
   macOS, ALSA `hw` on Linux) at the file's own rate, in an integer format
