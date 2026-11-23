@@ -553,19 +553,14 @@ impl TextOp {
 /// What Karaoke mode's picture drew last: each piece of text and the
 /// pixels it may cover. A frame redraws only the pieces that changed (a
 /// line filling as it is sung), with the backdrop put back under them.
-/// And its bubbles bursting, for the GPU to draw over it ([`Layer::sprays`]).
+/// And what of its bubbles the GPU draws over it ([`Layer::over`]: their
+/// liquid, with a GPU, and their bursts), as last painted.
 #[derive(Default)]
 pub struct Layer {
     drawn: Vec<(TextOp, Rect)>,
-    sprays: Vec<super::particles::Spray>,
-}
-
-impl Layer {
-    /// The bubbles bursting in the picture last painted, for the GPU
-    /// ([`super::particles`]): the picture itself has none of it.
-    pub fn sprays(&self) -> &[super::particles::Spray] {
-        &self.sprays
-    }
+    /// What the GPU draws over the picture; whether there is one to (set
+    /// it before painting: the bars' fill is painted only without).
+    pub over: super::notes::Over,
 }
 
 /// Where `a` and `b` meet, if they do.
@@ -607,8 +602,8 @@ pub fn paint(
     // them.
     let room = bar.map_or(ah, |(_, by, _, _)| by.saturating_sub(ay));
     let lyrics = (ax, ay, aw, room);
-    let (ops, sprays) = text_ops(text, picture, area, ah);
-    layer.sprays = sprays;
+    let (ops, over) = text_ops(text, picture, (area, ah), layer.over.gpu);
+    layer.over = over;
     let now: Vec<(TextOp, Rect)> = ops
         .into_iter()
         .map(|op| {
@@ -698,17 +693,18 @@ pub fn paint(
 }
 
 /// The pieces of text of `picture`: its lines (moving into their places
-/// while they scroll) and the count-in's number.
+/// while they scroll) and the count-in's number; what the GPU draws over
+/// them (with one, `gpu`).
 fn text_ops(
     text: &mut BigText,
     picture: &KaraokePicture,
-    area: Rect,
-    room: usize,
-) -> (Vec<TextOp>, Vec<super::particles::Spray>) {
+    (area, room): (Rect, usize),
+    gpu: bool,
+) -> (Vec<TextOp>, super::notes::Over) {
     let (ax, ay, aw, ah) = area;
     let big = (ah as f32 / 11.0).clamp(20.0, 160.0).round();
     let accent = rgb(colors::ACCENT);
-    let (mut ops, mut sprays) = (Vec::new(), Vec::new());
+    let (mut ops, mut over) = (Vec::new(), super::notes::Over::new(gpu));
     let mut line_op =
         |text: &mut BigText, line: &LyricLine, base: f32, slot: Slot, rest: [u8; 3], alpha: f32| {
             let alpha = alpha * line.alpha.clamp(0.0, 1.0) as f32;
@@ -733,8 +729,8 @@ fn text_ops(
             };
             let x_of = |text: &mut BigText, at| x_of_char(text, &line.text, base, slot.px, at);
             let at = (x, slot.y);
-            sprays.extend(super::notes::sprays(line, at, slot.px, |c| x_of(text, c)));
-            let sung = SungOp::of(line, slot.px, |c| x_of(text, c));
+            over.add(line, at, slot.px, |c| x_of(text, c));
+            let sung = SungOp::of(line, slot.px, gpu, |c| x_of(text, c));
             ops.push(TextOp {
                 text: line.text.clone(),
                 base,
@@ -876,7 +872,7 @@ fn text_ops(
             sung: None,
         });
     }
-    (ops, sprays)
+    (ops, over)
 }
 #[cfg(test)]
 mod tests {
@@ -918,7 +914,7 @@ mod tests {
             alpha: 1.0,
             notes: Vec::new(),
             hits: Vec::new(),
-            bursts: Vec::new(),
+            liquid: Vec::new(),
             trail: Vec::new(),
             voice: None,
         }
@@ -950,7 +946,7 @@ mod tests {
             line: 1,
         });
         let digit_at = |text: &mut BigText, p: KaraokePicture| {
-            let ops = text_ops(text, &p, (0, 0, 640, 360), 360).0;
+            let ops = text_ops(text, &p, ((0, 0, 640, 360), 360), false).0;
             let digit: Vec<&TextOp> = ops.iter().filter(|o| o.text == "3").collect();
             assert_eq!(digit.len(), 1);
             let at = digit[0].at;
@@ -967,7 +963,7 @@ mod tests {
                 alpha: 1.0,
                 notes: Vec::new(),
                 hits: Vec::new(),
-                bursts: Vec::new(),
+                liquid: Vec::new(),
                 trail: Vec::new(),
                 voice: None,
             },

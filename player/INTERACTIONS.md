@@ -439,23 +439,47 @@ stem keys are their mutes.
   - `the_singing_corrects_a_measured_or_echo_delay_near_it` (`core::lag`)
   - `each_level_asks_its_own_share_of_a_word` (`core::singing`)
 - **K20.** With the game on, a note's bubble (a bar under its letters in
-  the picture and the terminal; on the GPU's stage a word's pill holds
-  its notes' bubbles) fills where the singer's pitch hit it (a paler gold
-  where close, a gap under 60 ms bridged on every level). On easy, the
+  the picture; on the GPU's stage a word's pill is its
+  notes' bubbles in a row) fills with a glowing liquid as the singer's pitch
+  hits it, poured in from its start to a level: how much of it was hit
+  (gold, a paler gold as much as it was only close; a gap under 60 ms
+  bridged on every level). The liquid's front is a living surface (a
+  meniscus and waves moving along it, sloshing a moment when the fill
+  jumps, as in the sweep) and a light shimmers through it. On easy, the
   moment a word counts as the scoring counts it (a tenth of the frames it
   will have had hit, one more to be sure; one the scoring counts that
   never got there, as it ends), all its bubbles fill, the part already
   sung and the part to come: a sweep across the word to full (0.2 s),
-  then they burst (0.5 s). On any level a bubble bursts once its fill
+  then they burst (0.5 s). On any level a bubble is full once its fill
   covers 85 % of it (on medium even in a word that scores a half: the
-  bubble shows what was sung). Each bubble bursts when it is full, in
-  every frontend: it pops (larger, white hot) and throws sparkles off it,
-  fading. In the window the GPU draws the bursts (one record a burst, its
-  particles worked out in the shader from the time), over the stage's
-  pills (a pill pops in the stage's shader) and over the picture painted
-  on the processor, which shows the bubble full and never changes for a
-  burst; the software window draws none. In the terminal the bubble
-  brightens and ✦ ✧ · cycle either side of it. It all goes by the
+  bubble shows what was sung), then sweeps to full and bursts. In the
+  last stretch (above 85 %) its skin strains: a slight bulge (up to
+  about 1.1 times) and a wobble. Full, the whole bubble bursts at once,
+  on its own, the moment it is full (a word's bubbles one after the
+  other, never together as a word; those not full stay with their
+  liquid), on the stage and in the picture, and is gone: it overfills,
+  bulging to 1.3 times in
+  80 ms, then tears; its liquid splashes out in 12 drops of a few sizes
+  in its colour that arc out and fall, stretched along their way, fading,
+  with 6 torn bits of its skin and a few sparkles; a faint wet sheen fades
+  where it was in 0.2 s; then the spot is empty (the word keeps its sung
+  colour). A bubble never full (filled partly, under 85 %) keeps its
+  liquid at its level and never strains, overfills or bursts. In the
+  window the GPU draws the liquid and the burst, the stage's bubbles and
+  the picture's alike: one instance a bubble's liquid in the stage's
+  pipeline (its level, pressure, wobble phase, when it jumped and when it
+  bursts; the surface, wobble and overfilling worked out in the shader
+  from the time) and one record a burst for the particles (its drops and
+  bits). The picture painted on the processor paints a bubble's bar empty
+  under its liquid and stops painting it as its burst starts (it changes
+  once); the software window paints the fill flat and draws no burst, the
+  bar simply goes. The shaders' maths is held to the processor's on the
+  GPU. On the
+  stage each bubble of a word's pill (its stretch of the pill, a hair
+  apart from the next) holds its liquid and strains, overfills and
+  bursts on its own; the stage's shader bulges it, then it is not drawn,
+  its drops and bits flying from its place as particles, while the
+  word's other bubbles stay until they fill and burst in turn. It all goes by the
   singing's own time, the song's as heard less the delay (its frames come
   that much later), so the sweep and the burst are seen whole; a paused
   song holds them; the singer's arrow and dot go by it too. A bubble is
@@ -463,7 +487,8 @@ stem keys are their mutes.
   second (a nudge mid-song too), what the frames from there did to the
   score (and the key followed) is taken back and they are heard again,
   the score before kept: no burst comes twice, no word scored bursts
-  again. The scoring is as it was.
+  again; a bubble no longer full shows again as it is and bursts again
+  only when it fills again. The scoring is as it was.
   - `a_word_counted_on_easy_fills_all_its_bubbles_at_once` (`core::bubbles`)
   - `on_easy_a_word_is_full_exactly_when_the_scoring_counts_it`
     (`core::bubbles`)
@@ -474,16 +499,27 @@ stem keys are their mutes.
   - `a_seek_back_takes_back_what_was_heard_from_there` (`core::bubbles`)
   - `short_seeks_back_in_a_row_are_as_heard_straight`,
     `a_delay_nudged_mid_song_is_as_heard_straight` (`core::singing::undo`)
-  - `the_stage_bursts_each_bubble_once_however_late_the_voice`
-    (`gui::pop`)
-  - `the_arrow_shows_while_singing_however_late_the_voice` (bubbles)
-  - `a_seek_back_brings_no_ghost_bursts_on_the_stage` (bubbles)
+  - `a_bubble_fills_to_its_level_sweeps_full_then_bursts` (`view::bubbles`)
+  - `a_bubble_under_pressure_bulges_and_wobbles`,
+    `the_front_ripples_and_sloshes_after_a_jump` (`gui::liquid`)
+  - `a_bubble_leaves_a_fading_sheen`,
+    `the_bits_of_skin_fly_out_and_fade`, `the_drops_arc_out_fall_and_fade`
+    (`gui::shards`)
   - `the_sparkles_fly_up_and_fade`, `a_burst_on_a_lane_goes_by_with_it`
     (`gui::particles`)
-  - `a_bubble_fills_and_bursts_in_the_terminal` (bubbles)
-  - `a_bubble_bursts_over_the_picture_not_in_it` (bubbles)
-  - `the_gpu_draws_the_bursts_over_the_picture` (bubbles)
+  - `the_particles_shader_draws_what_sprite_says`,
+    `the_stage_shader_s_liquid_is_its_reference` (`gui::shader_check`)
+  - `each_bubble_of_a_word_bursts_once_however_late_the_voice`,
+    `a_full_bubble_bursts_and_the_partly_filled_one_beside_it_stays`,
+    `a_pill_partly_filled_never_pops` (`gui::pop`)
+  - `the_stage_bursts_each_bubble_of_a_word_on_its_own` (bubbles)
+  - `the_arrow_shows_while_singing_however_late_the_voice` (bubbles)
+  - `a_seek_back_brings_no_ghost_bursts_on_the_stage` (bubbles)
+  - `a_bubble_bursts_over_the_picture_and_is_gone_from_it` (bubbles)
+  - `the_gpu_draws_the_bubbles_over_the_picture` (bubbles)
   - `the_stage_bursts_a_word_counted` (bubbles)
+  - `a_bubble_partly_filled_never_pops` (bubbles)
+  - `a_bubble_unpopped_by_a_seek_back_shows_again` (bubbles)
 - **K18.** `s` on the Karaoke tab (or the palette) syncs, with a
   microphone open (else it says one is needed) and the player's strip
   heard on the Mixer tab (not muted or far down, nor another strip soloed:

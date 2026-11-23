@@ -1,0 +1,274 @@
+//! The shaders held to their processor's references, on the GPU: the
+//! particles' (every quad of a burst and of a word scored: where, how
+//! large, how turned, its colour and how much it shows, [`sprite`]) and
+//! the stage's liquid (its bulge and wobble, its overfilling, the front's
+//! waves and slosh, the shimmer, [`super::liquid`]), each worked out by
+//! the shader's own functions in a compute pass over the shader as the
+//! window composes it, at sample points, against the processor's. Skipped
+//! (with a note) without a GPU.
+
+use super::liquid;
+use super::particles::{self, sprite, Kind, Spray, QUADS};
+use super::sparks::TAU;
+
+/// A device on the window's GPU, none without one.
+fn gpu() -> Option<(wgpu::Device, wgpu::Queue)> {
+    let _turn = jodel_gpu::setting_up();
+    let adapter = jodel_gpu::chosen().adapter.clone();
+    match adapter.and_then(super::present::open) {
+        Ok((_, device, queue)) => Some((device, queue)),
+        Err(e) => {
+            eprintln!("no GPU ({e}): skipped");
+            None
+        }
+    }
+}
+
+/// `body` (WGSL over `i`, the sample, reading `ins` and writing `outs`)
+/// after `source`, run on the GPU for `n` samples, `per` vec4s out each.
+fn run(
+    (device, queue): &(wgpu::Device, wgpu::Queue),
+    source: &str,
+    body: &str,
+    ins: &[[f32; 4]],
+    (n, per): (usize, usize),
+) -> Vec<[f32; 4]> {
+    let code = format!(
+        "{source}
+@group(1) @binding(0) var<storage, read> ins: array<vec4<f32>>;
+@group(1) @binding(1) var<storage, read_write> outs: array<vec4<f32>>;
+@compute @workgroup_size(1)
+fn check(@builtin(global_invocation_id) id: vec3<u32>) {{
+    let i = id.x;
+{body}
+}}
+"
+    );
+    let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("jodeldiplom shader check"),
+        source: wgpu::ShaderSource::Wgsl(code.into()),
+    });
+    let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        label: Some("jodeldiplom shader check"),
+        layout: None,
+        module: &module,
+        entry_point: Some("check"),
+        compilation_options: Default::default(),
+        cache: None,
+    });
+    let bytes: &[u8] = bytemuck::cast_slice(ins);
+    let size = (n * per * 16) as u64;
+    let buffer = |size: u64, usage| {
+        device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("jodeldiplom shader check"),
+            size,
+            usage,
+            mapped_at_creation: false,
+        })
+    };
+    use wgpu::BufferUsages as U;
+    let input = buffer(bytes.len() as u64, U::STORAGE | U::COPY_DST);
+    let output = buffer(size, U::STORAGE | U::COPY_SRC);
+    let back = buffer(size, U::MAP_READ | U::COPY_DST);
+    queue.write_buffer(&input, 0, bytes);
+    let bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("jodeldiplom shader check"),
+        layout: &pipeline.get_bind_group_layout(1),
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: input.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: output.as_entire_binding(),
+            },
+        ],
+    });
+    let mut encoder = device.create_command_encoder(&Default::default());
+    {
+        let mut pass = encoder.begin_compute_pass(&Default::default());
+        pass.set_pipeline(&pipeline);
+        pass.set_bind_group(1, &bind, &[]);
+        pass.dispatch_workgroups(n as u32, 1, 1);
+    }
+    encoder.copy_buffer_to_buffer(&output, 0, &back, 0, size);
+    queue.submit([encoder.finish()]);
+    let slice = back.slice(..);
+    let (tx, rx) = std::sync::mpsc::channel();
+    slice.map_async(wgpu::MapMode::Read, move |r| {
+        let _ = tx.send(r);
+    });
+    device
+        .poll(wgpu::PollType::wait_indefinitely())
+        .expect("the GPU done");
+    rx.recv().unwrap().expect("mapped");
+    let mapped = slice.get_mapped_range().expect("read back");
+    bytemuck::cast_slice::<u8, [f32; 4]>(&mapped).to_vec()
+}
+
+/// Whether `a` is `b` within `abs` (and a share `rel` of it).
+fn near(a: f32, b: f32, abs: f32, rel: f32) -> bool {
+    (a - b).abs() <= abs + rel * b.abs()
+}
+
+/// Every quad of a few bursts (a bubble's, small and large, drifting or
+/// not; a word scored's and its multiplier's) at times through their lives
+/// and past them: the shader's [`sprite`] as the processor's.
+#[test]
+fn the_particles_shader_draws_what_sprite_says() {
+    let Some(gpu) = gpu() else {
+        return;
+    };
+    let gold = [1.0, 0.75, 0.24];
+    let spray = |at, half, size, seed, drift, kind| Spray {
+        at,
+        half,
+        start: 10.0,
+        drift,
+        size,
+        seed,
+        rgb: gold,
+        kind,
+    };
+    let sprays = [
+        spray((400.0, 300.0), (30.0, 4.0), 41.0, 7, 0.0, Kind::Burst),
+        spray(
+            (180.0, 160.0),
+            (84.0, 23.0),
+            94.0,
+            104_729,
+            -150.0,
+            Kind::Burst,
+        ),
+        spray((200.0, 330.0), (0.0, 0.0), 20.0, 4242, -150.0, Kind::Scored),
+        spray((600.0, 330.0), (0.0, 0.0), 20.0, 99, -150.0, Kind::ScoredUp),
+    ];
+    let ages = [
+        -0.01, 0.0, 0.03, 0.079, 0.081, 0.12, 0.25, 0.4, 0.49, 0.6, 0.9, 1.2,
+    ];
+    let mut samples = Vec::new();
+    for s in &sprays {
+        for &age in &ages {
+            for q in 0..QUADS {
+                samples.push((*s, q, 10.0 + age));
+            }
+        }
+    }
+    let ins: Vec<[f32; 4]> = samples
+        .iter()
+        .flat_map(|(s, q, t)| {
+            let p = s.packed();
+            let raw: &[f32] = bytemuck::cast_slice(std::slice::from_ref(&p));
+            [
+                [raw[0], raw[1], raw[2], raw[3]],
+                [raw[4], raw[5], raw[6], raw[7]],
+                [raw[8], raw[9], raw[10], raw[11]],
+                [*q as f32, *t, 0.0, 0.0],
+            ]
+        })
+        .collect();
+    let body = "
+    let sp = sprite_of(ins[i * 4u], ins[i * 4u + 1u], ins[i * 4u + 2u], u32(ins[i * 4u + 3u].x), ins[i * 4u + 3u].y);
+    outs[i * 3u] = vec4<f32>(sp.at, sp.half);
+    outs[i * 3u + 1u] = vec4<f32>(sp.rgb, sp.alpha);
+    outs[i * 3u + 2u] = vec4<f32>(f32(sp.look), sp.turn, f32(sp.shows), 0.0);";
+    let outs = run(&gpu, &particles::shader(), body, &ins, (samples.len(), 3));
+    let mut shown = 0;
+    for (k, (s, q, t)) in samples.iter().enumerate() {
+        let (a, c, w) = (outs[k * 3], outs[k * 3 + 1], outs[k * 3 + 2]);
+        let what = format!("{:?} quad {q} at {t}", s.kind);
+        let cpu = sprite(s, *q, *t);
+        assert_eq!(cpu.is_some(), w[2] > 0.5, "{what}: shows");
+        let Some(p) = cpu else { continue };
+        shown += 1;
+        let pos = |x: f32, y: f32| near(x, y, 0.05, 2e-4);
+        assert!(
+            pos(a[0], p.at.0) && pos(a[1], p.at.1),
+            "{what}: at {a:?} {p:?}"
+        );
+        assert!(
+            pos(a[2], p.half.0) && pos(a[3], p.half.1),
+            "{what}: size {a:?} {p:?}"
+        );
+        for i in 0..3 {
+            assert!(
+                near(c[i], p.rgb[i], 2e-3, 0.0),
+                "{what}: colour {c:?} {p:?}"
+            );
+        }
+        assert!(near(c[3], p.alpha, 3e-3, 2e-3), "{what}: alpha {c:?} {p:?}");
+        assert_eq!(w[0] as u32, p.look.code(), "{what}: look");
+        let (dt, ds) = ((w[1] - p.turn).cos(), (w[1] - p.turn).sin());
+        assert!(
+            dt > 0.0 && ds.abs() < 3e-3,
+            "{what}: turn {} {}",
+            w[1],
+            p.turn
+        );
+    }
+    assert!(shown > 500, "{shown}");
+}
+
+/// The liquid's maths, at points across their ranges: the shader's
+/// [`liquid::bulge`], [`liquid::swell`], [`liquid::slosh`],
+/// [`liquid::front`], [`liquid::shimmer`] and [`liquid::amplitude`] as the
+/// processor's.
+#[test]
+fn the_stage_shader_s_liquid_is_its_reference() {
+    let Some(gpu) = gpu() else {
+        return;
+    };
+    let mut samples = Vec::new();
+    for k in 0..240 {
+        let f = k as f32;
+        let pressure = (f * 0.37).fract();
+        let time = f * 0.113;
+        let phase = (f * 0.71).fract() * TAU;
+        let s = (f * 0.29).fract() * 1.2 - 0.1;
+        let since = (f * 0.53).fract() * 0.8 - 0.1;
+        let y = (f * 0.43).fract() * 2.4 - 1.2;
+        let amp = 1.0 + (f * 0.17).fract() * 6.0;
+        let jumped = time - since;
+        let (x, y2, half) = (f * 3.7, (f * 1.9).fract() * 40.0, (f * 0.61).fract() * 30.0);
+        samples.push([
+            [pressure, time, phase, s],
+            [since, y, amp, jumped],
+            [x, y2, half, 0.0],
+        ]);
+    }
+    let ins: Vec<[f32; 4]> = samples.iter().flatten().copied().collect();
+    let body = "
+    let a = ins[i * 3u];
+    let b = ins[i * 3u + 1u];
+    let c = ins[i * 3u + 2u];
+    outs[i * 2u] = vec4<f32>(bulge(a.x, a.y, a.z), swell(a.w), slosh(b.x));
+    outs[i * 2u + 1u] = vec4<f32>(front(b.y, a.y, b.z, b.w), shimmer(c.x, c.y, a.y), amplitude(c.z), 0.0);";
+    let source = super::stage_gpu::shader();
+    let outs = run(&gpu, &source, body, &ins, (samples.len(), 2));
+    for (k, [a, b, c]) in samples.iter().enumerate() {
+        let (g, h) = (outs[k * 2], outs[k * 2 + 1]);
+        let what = format!("sample {k}: {a:?} {b:?} {c:?}");
+        let (bx, by) = liquid::bulge(a[0], a[1], a[2]);
+        assert!(
+            near(g[0], bx, 1e-3, 0.0) && near(g[1], by, 1e-3, 0.0),
+            "{what}: bulge {g:?}"
+        );
+        assert!(
+            near(g[2], liquid::swell(a[3]), 1e-4, 0.0),
+            "{what}: swell {g:?}"
+        );
+        assert!(
+            near(g[3], liquid::slosh(b[0]), 1e-3, 1e-3),
+            "{what}: slosh {g:?}"
+        );
+        let f = liquid::front(b[1], a[1], b[2], b[3]);
+        assert!(near(h[0], f, 5e-3, 2e-3), "{what}: front {h:?} {f}");
+        let s = liquid::shimmer(c[0], c[1], a[1]);
+        assert!(near(h[1], s, 3e-3, 0.0), "{what}: shimmer {h:?} {s}");
+        assert!(
+            near(h[2], liquid::amplitude(c[2]), 1e-5, 0.0),
+            "{what}: amplitude"
+        );
+    }
+}

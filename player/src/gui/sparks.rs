@@ -1,5 +1,11 @@
-//! What sparkles: a number that looks random, the same for the same seed,
-//! and a four-pointed sparkle drawn in pixels.
+//! What sparkles: a number that looks random, the same for the same seed
+//! (and a particle's own, [`rand`]), a colour mixed, and a four-pointed
+//! sparkle drawn in pixels.
+
+/// White, sRGB.
+pub const WHITE: [f32; 3] = [1.0, 1.0, 1.0];
+/// A whole turn, radians.
+pub const TAU: f32 = std::f32::consts::TAU;
 
 /// A number from 0 to 1 that looks random, the same for the same `i`.
 pub fn noise(i: u32) -> f32 {
@@ -10,6 +16,17 @@ pub fn noise(i: u32) -> f32 {
     x = x.wrapping_mul(0x297A_2D39);
     x ^= x >> 15;
     (x >> 8) as f32 / (1u32 << 24) as f32
+}
+
+/// Number `j` of quad `q` of a burst of `seed` (24 bits): [`noise`], as
+/// the particles' shader has it (`r`).
+pub fn rand(seed: u32, q: u32, j: u32) -> f32 {
+    noise((seed & 0xFF_FFFF).wrapping_mul(31).wrapping_add(q * 7 + j))
+}
+
+/// `a` towards `b` by `t`.
+pub fn mix(a: [f32; 3], b: [f32; 3], t: f32) -> [f32; 3] {
+    [0, 1, 2].map(|i| a[i] + (b[i] - a[i]) * t)
 }
 
 /// A four-pointed sparkle at (`x`, `y`), its rays `size` long: a bright

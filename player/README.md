@@ -855,21 +855,32 @@ nearest. **Hard** wants the song's own key, octaves aside, within a
 semitone, and draws your line as you sing it, smoothed (a median over
 50 ms, then a glide half way each frame).
 
-The notes are **bubbles** that fill as you hit them (a gap of a consonant
-under 60 ms bridged). On **easy**, the moment a word counts all its
-bubbles fill, the part already sung and the part to come: a quick sweep
-to full (0.2 s), then they burst (0.5 s): the bubble pops, larger and
-white hot, and sparkles fly off it and fade (sparks off the pill in the
-window, sparkles in pixels without a GPU, ✦ ✧ · either side of it in the
-terminal). On **medium** they fill where your pitch was heard on the note
-(gold, or the paler gold where close), and one filled 85 % bursts too
-(even in a word that scores a half: it shows what you sang); on **hard**
-the same, only a bubble you truly fill bursts. Each bubble bursts as it
-fills, in every frontend, by your singing's own time (the song's less the
-delay, so you see the whole sweep and burst; a paused song holds them).
-In the window the GPU draws the bursts (a record a burst, the particles
-worked out in its shader), so they cost the processor nothing; without a
-GPU the bubbles fill and nothing bursts.
+The notes are **bubbles** that fill with a glowing liquid as you hit them
+(a gap of a consonant under 60 ms bridged), poured in from the note's
+start to a level: how much of it you hit. The liquid's front ripples and
+sloshes, and a light shimmers through it. On **easy**, the moment a word
+counts all its bubbles fill, the part already sung and the part to come:
+a quick sweep to full (0.2 s). In the last stretch the bubble strains,
+bulging a little and wobbling; full, the whole of it bursts (0.5 s): it
+overfills, bulging to about 1.3 times in 80 ms, then tears, its liquid
+splashing out in drops that arc out and fall, torn bits of its skin and
+a few sparkles flying with them, and it is gone: a faint wet sheen fades
+where it was, then the spot is empty (the word keeps its sung colour).
+Each bubble bursts on its own the moment it is full: a word sung over
+several notes has several bubbles in a row (on the stage, along its
+pill), bursting one after the other as each fills, the others keeping
+their liquid. On **medium** they fill where your pitch was
+heard on the note (gold, or the paler gold where close), and one filled
+85 % bursts too (even in a word that scores a half: it shows what you
+sang); on **hard** the same, only a bubble you truly fill bursts. A
+bubble only partly filled never bursts: it keeps its liquid at the level
+you sang. Each bubble bursts as it fills, in every frontend, by your
+singing's own time (the song's less the delay, so you see the whole
+sweep and burst; a paused song holds them); sought back before what
+filled it, it shows again as it is. In the window the GPU draws the
+liquid and the bursts (a record a bubble, its surface, wobble, drops and
+bits worked out in its shaders), so they cost the processor nothing;
+without a GPU the fill shows flat and a bubble full simply disappears.
 The points are as they were. When a song ends you get its
 points, the words hit (and half hit), the longest streak and a medal by
 the words (a half hit as half of one: bronze for half of them, silver

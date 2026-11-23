@@ -2,12 +2,17 @@
 //! trail and sparks, the lyrics at the bottom and the song's progress,
 //! drawn over the pixmap each frame as instances of a few shapes, each a
 //! signed distance in the fragment shader (a pill, a capsule, a star, a
-//! disc, an arrow) or a run of text from a glyph atlas. One pipeline,
-//! premultiplied: a shape's light that is to add up (a glow, a spark)
-//! comes with no coverage, so it adds; the rest goes over.
+//! disc, an arrow, a bubble and its liquid) or a run of text from a glyph
+//! atlas. One pipeline, premultiplied: a shape's light that is to add up
+//! (a glow, a spark) comes with no coverage, so it adds; the rest goes
+//! over. The note bubbles' liquid, strain and overfilling are drawn here
+//! for the stage's bubbles and the picture's alike ([`Instance::bubble`],
+//! [`Instance::liquid`], [`super::liquid`]).
 //!
 //! [`StageFrame`] is what the window gets each frame: the instances, and
 //! the text the atlas did not hold yet ([`AtlasUpload`]).
+
+use super::liquid::{amplitude, GROW};
 
 /// The atlas's width and height, in pixels.
 pub const ATLAS: u32 = 2048;
@@ -18,9 +23,9 @@ pub mod kind {
     /// corner radius (0: round ends), `params[1]` its glow, `params[2]` its
     /// outline. Over in `color`, outlined and glowing in `color2`.
     pub const PILL: f32 = 0.0;
-    /// The part of a rounded box (as [`PILL`]) between `uv[0]` and `uv[1]`
-    /// across: `color` at its top, `color2` at its bottom, glowing in
-    /// `color2` by `params[1]`.
+    /// The part of a rounded box (as [`PILL`], round ends) between `uv[0]`
+    /// and `uv[1]` across: `color` at its top, `color2` at its bottom,
+    /// glowing in `color2` by `params[1]`.
     pub const FILL: f32 = 1.0;
     /// A capsule from (`shape[0]`, `shape[1]`) to (`shape[2]`,
     /// `shape[3]`), `params[1]` thick each way, glowing `params[2]` in
@@ -39,6 +44,22 @@ pub mod kind {
     /// left of `params[1]` (pixels across the window) in `color2`, right of
     /// it in `color`.
     pub const TEXT: f32 = 6.0;
+    /// A note's bubble: a [`PILL`] straining and bursting as its
+    /// [`Instance::strain`] says ([`super::Instance::bubble`]).
+    pub const BUBBLE: f32 = 7.0;
+    /// A bubble's liquid: a [`FILL`] (its ends `params[2]` round, 0: round)
+    /// straining with its bubble, its front living where
+    /// [`super::flags::FRONT`] (its fill jumped at `uv[2]`)
+    /// ([`super::Instance::liquid`]).
+    pub const LIQUID: f32 = 8.0;
+}
+
+/// The flags of a bubble or its liquid ([`Instance::strain`]`[3]`).
+pub mod flags {
+    /// It is bursting: overfilling from `strain[1]`, gone once it tears.
+    pub const POPPING: u32 = 1;
+    /// Its liquid's front is a living surface (it is not full).
+    pub const FRONT: u32 = 2;
 }
 
 /// One shape, as the shader takes it: the quad it covers (`x0, y0, x1,
@@ -59,12 +80,179 @@ pub struct Instance {
     pub params: [f32; 4],
     /// Atlas texels, or a fill's span.
     pub uv: [f32; 4],
+    /// A bubble's strain (and its liquid's): its pressure, when it bursts,
+    /// its wobble's phase, its [`flags`].
+    pub strain: [f32; 4],
 }
 
 // SAFETY: plain f32s in a `repr(C)` struct, no padding: any bytes are one.
 unsafe impl bytemuck::Zeroable for Instance {}
 // SAFETY: as above.
 unsafe impl bytemuck::Pod for Instance {}
+
+/// How a bubble strains and bursts: how much it strains (0 to 1), its
+/// wobble's phase (radians), and when it bursts (the singing's time), once
+/// it has begun to.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Strain {
+    /// How much it strains.
+    pub pressure: f32,
+    /// Its wobble's phase.
+    pub phase: f32,
+    /// When it burst, while it overfills.
+    pub popping: Option<f32>,
+}
+
+/// A bubble's skin: its body, its edge (outline and glow), how far its
+/// glow reaches and how wide its outline is.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Skin {
+    /// Its body.
+    pub body: [f32; 4],
+    /// Its edge.
+    pub edge: [f32; 4],
+    /// Its glow's reach, pixels.
+    pub glow: f32,
+    /// Its outline's width, pixels.
+    pub outline: f32,
+}
+
+/// A liquid's colours: at its top, at its bottom, and how far it glows.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Tint {
+    /// At its top.
+    pub top: [f32; 4],
+    /// At its bottom.
+    pub bottom: [f32; 4],
+    /// Its glow's reach, pixels.
+    pub glow: f32,
+}
+
+/// The liquids' colours: where fully hit and where only half.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Palette {
+    /// Fully hit.
+    pub full: Tint,
+    /// Half hit.
+    pub half: Tint,
+}
+
+impl Palette {
+    /// The tint of a liquid `fully` hit (else half).
+    pub fn of(&self, fully: bool) -> Tint {
+        if fully {
+            self.full
+        } else {
+            self.half
+        }
+    }
+}
+
+/// A bubble's liquid: from and to across (pixels), whether its front is
+/// living (it is not full), when its fill jumped (the singing's time), and
+/// its tint.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Pour {
+    /// From and to across.
+    pub span: (f32, f32),
+    /// Whether its front is living.
+    pub front: bool,
+    /// When its fill jumped.
+    pub jumped: f32,
+    /// Its tint.
+    pub tint: Tint,
+}
+
+impl Instance {
+    /// A note's bubble at `centre`, `half` its size, its ends `radius`
+    /// round (0: round ends), in its `skin`, straining as `strain` says (its
+    /// quad made room to bulge).
+    pub fn bubble(
+        centre: (f32, f32),
+        half: (f32, f32),
+        radius: f32,
+        skin: &Skin,
+        strain: &Strain,
+    ) -> Instance {
+        let (mx, my) = Self::room(half, skin.glow, 0.0);
+        Instance {
+            quad: [centre.0 - mx, centre.1 - my, centre.0 + mx, centre.1 + my],
+            shape: [centre.0, centre.1, half.0, half.1],
+            color: skin.body,
+            color2: skin.edge,
+            params: [kind::BUBBLE, skin.glow, skin.outline, radius],
+            uv: [0.0; 4],
+            strain: Self::strain_of(strain, false),
+        }
+    }
+
+    /// The liquid of a bubble at `centre`, `half` its size, its ends
+    /// `radius` round (0: round ends), poured as `pour` says, straining with
+    /// it; none where too little shows.
+    pub fn liquid(
+        centre: (f32, f32),
+        half: (f32, f32),
+        radius: f32,
+        pour: &Pour,
+        strain: &Strain,
+    ) -> Option<Instance> {
+        if pour.span.1 - pour.span.0 < 0.5 {
+            return None;
+        }
+        let ripple = if pour.front {
+            amplitude(half.1) * 3.5 + 1.0
+        } else {
+            0.0
+        };
+        let (mx, my) = Self::room(half, pour.tint.glow, ripple);
+        Some(Instance {
+            quad: [centre.0 - mx, centre.1 - my, centre.0 + mx, centre.1 + my],
+            shape: [centre.0, centre.1, half.0, half.1],
+            color: pour.tint.top,
+            color2: pour.tint.bottom,
+            params: [kind::LIQUID, pour.tint.glow, radius, 0.0],
+            uv: [pour.span.0, pour.span.1, pour.jumped, 0.0],
+            strain: Self::strain_of(strain, pour.front),
+        })
+    }
+
+    /// How far a bubble `half` its size reaches from its centre, glowing
+    /// `glow` and its front's waves `ripple` further across: bulged to
+    /// 1 + [`GROW`].
+    fn room(half: (f32, f32), glow: f32, ripple: f32) -> (f32, f32) {
+        let big = 1.0 + GROW;
+        (
+            half.0 * big + glow + ripple + 1.0,
+            half.1 * big + glow + 1.0,
+        )
+    }
+
+    fn strain_of(s: &Strain, front: bool) -> [f32; 4] {
+        let mut bits = 0;
+        if s.popping.is_some() {
+            bits |= flags::POPPING;
+        }
+        if front {
+            bits |= flags::FRONT;
+        }
+        [s.pressure, s.popping.unwrap_or(0.0), s.phase, bits as f32]
+    }
+
+    /// The strain a bubble or its liquid was made with.
+    pub fn strained(&self) -> Strain {
+        let bits = self.strain[3] as u32;
+        Strain {
+            pressure: self.strain[0],
+            phase: self.strain[2],
+            popping: (bits & flags::POPPING != 0).then_some(self.strain[1]),
+        }
+    }
+
+    /// Whether this is a liquid whose front is living.
+    pub fn living(&self) -> bool {
+        self.params[0] == kind::LIQUID && self.strain[3] as u32 & flags::FRONT != 0
+    }
+}
 
 /// Text new to the atlas: its place there and its coverage, row by row.
 #[derive(Clone, Debug, PartialEq)]
@@ -84,9 +272,63 @@ pub struct StageFrame {
     pub uploads: Vec<AtlasUpload>,
     /// The bursts showing ([`super::particles`]).
     pub sprays: Vec<super::particles::Spray>,
-    /// The singing's time, in seconds: what a pill bursting
-    /// ([`Instance::uv`] `[0]` its start, `[1]` 1) and the bursts go by.
+    /// The singing's time, in seconds: what the bubbles' strain and the
+    /// bursts go by.
     pub clock: f32,
+}
+
+/// `stage` (none: none) with the picture's bubbles' liquid (`bubbles`)
+/// and bursts (`sprays`) drawn over it too, at `clock` (the singing's
+/// time) where there is no stage.
+pub fn with_picture(
+    stage: Option<StageFrame>,
+    bubbles: &[Instance],
+    sprays: &[super::particles::Spray],
+    clock: f32,
+) -> Option<StageFrame> {
+    match stage {
+        Some(mut f) => {
+            f.instances.extend_from_slice(bubbles);
+            f.sprays.extend_from_slice(sprays);
+            Some(f)
+        }
+        None => (!bubbles.is_empty() || !sprays.is_empty()).then(|| StageFrame {
+            instances: bubbles.to_vec(),
+            sprays: sprays.to_vec(),
+            clock,
+            ..Default::default()
+        }),
+    }
+}
+
+/// The kinds and flags as the shader takes them.
+fn kinds_wgsl() -> String {
+    let k = |f: f32| f as u32;
+    format!(
+        "const K_PILL: u32 = {}u;
+const K_FILL: u32 = {}u;
+const K_SEGMENT: u32 = {}u;
+const K_SPARK: u32 = {}u;
+const K_DISC: u32 = {}u;
+const K_ARROW: u32 = {}u;
+const K_BUBBLE: u32 = {}u;
+const K_LIQUID: u32 = {}u;
+",
+        k(kind::PILL),
+        k(kind::FILL),
+        k(kind::SEGMENT),
+        k(kind::SPARK),
+        k(kind::DISC),
+        k(kind::ARROW),
+        k(kind::BUBBLE),
+        k(kind::LIQUID),
+    )
+}
+
+/// The stage's shader: [`SHADER`], its kinds ([`kind`]) and the liquid's
+/// maths ([`super::liquid::wgsl`]).
+pub fn shader() -> String {
+    format!("{}{SHADER}{}", kinds_wgsl(), super::liquid::wgsl())
 }
 
 const SHADER: &str = r"
@@ -111,6 +353,7 @@ struct In {
     @location(3) color2: vec4<f32>,
     @location(4) params: vec4<f32>,
     @location(5) uv: vec4<f32>,
+    @location(6) strain: vec4<f32>,
 };
 
 struct Out {
@@ -122,6 +365,7 @@ struct Out {
     @location(4) @interpolate(flat) params: vec4<f32>,
     @location(5) @interpolate(flat) uv: vec4<f32>,
     @location(6) @interpolate(flat) quad: vec4<f32>,
+    @location(7) @interpolate(flat) strain: vec4<f32>,
 };
 
 @vertex
@@ -137,6 +381,7 @@ fn vs(@builtin(vertex_index) v: u32, i: In) -> Out {
     o.params = i.params;
     o.uv = i.uv;
     o.quad = i.quad;
+    o.strain = i.strain;
     return o;
 }
 
@@ -174,63 +419,89 @@ fn glow(d: f32, size: f32) -> f32 {
     return exp(-t * t * 3.0) * (1.0 - smoothstep(0.85, 1.0, t));
 }
 
+// A pill or a bubble (`liquid`: their liquid, a fill), at `p`.
+fn pill(o: Out, p: vec2<f32>, k: u32) -> vec4<f32> {
+    let bubble = k == K_BUBBLE || k == K_LIQUID;
+    let liquid = k == K_FILL || k == K_LIQUID;
+    let c = o.shape.xy;
+    var half = o.shape.zw;
+    var sc = vec2<f32>(1.0);
+    var flash = 0.0;
+    let flags = u32(o.strain.w);
+    if bubble {
+        // Straining as it nears full (bulging, wobbling), overfilling as
+        // it bursts (bulging more, brighter; gone once it tears, its drops
+        // and bits drawn as particles).
+        let s = strained(o.strain, screen.time);
+        if s.z <= 0.0 {
+            return vec4<f32>(0.0);
+        }
+        sc = s.xy;
+        if (flags & POPPING) != 0u {
+            flash = clamp((screen.time - o.strain.y) / SWELL, 0.0, 1.0) * 0.3;
+        }
+    }
+    half = half * sc;
+    var r = o.params.w;
+    if k == K_LIQUID {
+        r = o.params.z;
+    }
+    if k == K_FILL || r <= 0.0 {
+        r = min(half.x, half.y);
+    }
+    let d = round_box(p - c, half, r);
+    let cover = clamp(0.5 - d, 0.0, 1.0);
+    if liquid {
+        // The liquid between its span (bulging with its bubble), its top
+        // light to its bottom, shimmering; its front (where it is filling)
+        // a living surface.
+        let x0 = c.x + (o.uv.x - c.x) * sc.x;
+        var x1 = c.x + (o.uv.y - c.x) * sc.x;
+        if k == K_LIQUID && (flags & FRONT) != 0u {
+            x1 = x1 + front((p.y - c.y) / max(half.y, 0.5), screen.time, amplitude(o.shape.w), o.uv.z);
+        }
+        let across = smoothstep(x0 - 0.5, x0 + 0.5, p.x)
+            * (1.0 - smoothstep(x1 - 0.5, x1 + 0.5, p.x));
+        let down = clamp((p.y - (c.y - half.y)) / max(2.0 * half.y, 1.0), 0.0, 1.0);
+        let col = mix(o.color.rgb, o.color2.rgb, down) + vec3<f32>(flash);
+        // A shine along its top, and (a bubble's) the light moving through it.
+        var shine = (1.0 - smoothstep(0.0, 0.35, down)) * 0.35;
+        if bubble {
+            shine = shine + 0.3 * shimmer(p.x, p.y, screen.time);
+        }
+        let gs = max(o.params.y, 1.0);
+        let soft = smoothstep(x0 - gs, x0, p.x)
+            * (1.0 - smoothstep(x1, x1 + gs, p.x));
+        let a = cover * across * o.color.a;
+        let g = glow(d, o.params.y) * soft * o.color2.a * 0.45;
+        return over_plus(min(col + vec3<f32>(shine), vec3<f32>(1.0)), a, o.color2.rgb * g);
+    }
+    let outline = o.params.z;
+    let edge = clamp(0.5 - abs(d + outline * 0.5) + outline * 0.5, 0.0, 1.0) * cover;
+    // Lighter at its top, as glass.
+    let down = clamp((p.y - (c.y - half.y)) / max(2.0 * half.y, 1.0), 0.0, 1.0);
+    let body = mix(o.color.rgb * (1.15 - 0.3 * down), vec3<f32>(1.0), flash);
+    let a_body = cover * o.color.a;
+    let col = mix(body, o.color2.rgb, edge * o.color2.a / max(a_body + edge * o.color2.a, 1e-4));
+    let a = max(a_body, edge * o.color2.a);
+    let g = glow(d, o.params.y) * o.color2.a * 0.5;
+    return over_plus(col, a, o.color2.rgb * g);
+}
+
 @fragment
 fn fs(o: Out) -> @location(0) vec4<f32> {
-    let k = o.params.x;
+    let k = u32(round(o.params.x));
     let p = o.p;
-    if k < 0.5 || (k > 0.5 && k < 1.5) {
-        // A pill, or its fill.
-        let c = o.shape.xy;
-        var half = o.shape.zw;
-        var gl = o.params.y;
-        var dim = 1.0;
-        if k < 0.5 && o.uv.y > 0.5 {
-            // Bursting: grown by its pop, lit less as the burst goes.
-            let t = clamp((screen.time - o.uv.x) / BURST, 0.0, 1.0);
-            let pp = popped(t);
-            half = vec2<f32>(half.x + 2.0 * half.y * 0.28 * pp, half.y * (1.0 + 0.28 * pp));
-            dim = 1.0 - t;
-            gl = gl * (0.33 + 0.67 * dim);
-        }
-        var r = o.params.w;
-        if r <= 0.0 {
-            r = min(half.x, half.y);
-        }
-        let d = round_box(p - c, half, r);
-        let cover = clamp(0.5 - d, 0.0, 1.0);
-        if k > 0.5 {
-            // The fill, between its span, its top light to its bottom.
-            let across = smoothstep(o.uv.x - 0.5, o.uv.x + 0.5, p.x)
-                * (1.0 - smoothstep(o.uv.y - 0.5, o.uv.y + 0.5, p.x));
-            let down = clamp((p.y - (c.y - half.y)) / max(2.0 * half.y, 1.0), 0.0, 1.0);
-            let col = mix(o.color.rgb, o.color2.rgb, down);
-            // A shine along its top.
-            let shine = (1.0 - smoothstep(0.0, 0.35, down)) * 0.35;
-            let gs = max(o.params.y, 1.0);
-            let soft = smoothstep(o.uv.x - gs, o.uv.x, p.x)
-                * (1.0 - smoothstep(o.uv.y, o.uv.y + gs, p.x));
-            let a = cover * across * o.color.a;
-            let g = glow(d, o.params.y) * soft * o.color2.a * 0.45;
-            return over_plus(min(col + vec3<f32>(shine), vec3<f32>(1.0)), a, o.color2.rgb * g);
-        }
-        let outline = o.params.z;
-        let edge = clamp(0.5 - abs(d + outline * 0.5) + outline * 0.5, 0.0, 1.0) * cover;
-        // Lighter at its top, as glass.
-        let down = clamp((p.y - (c.y - half.y)) / max(2.0 * half.y, 1.0), 0.0, 1.0);
-        let body = o.color.rgb * (1.15 - 0.3 * down);
-        let a_body = cover * o.color.a * dim;
-        let col = mix(body, o.color2.rgb, edge * o.color2.a / max(a_body + edge * o.color2.a, 1e-4));
-        let a = max(a_body, edge * o.color2.a);
-        let g = glow(d, gl) * o.color2.a * 0.5;
-        return over_plus(col, a, o.color2.rgb * g);
+    if k == K_PILL || k == K_FILL || k == K_BUBBLE || k == K_LIQUID {
+        return pill(o, p, k);
     }
-    if k < 2.5 {
+    if k == K_SEGMENT {
         let d = segment(p, o.shape.xy, o.shape.zw) - o.params.y;
         let cover = clamp(0.5 - d, 0.0, 1.0);
         let g = glow(d, o.params.z) * o.color2.a;
         return over_plus(o.color.rgb, cover * o.color.a, o.color2.rgb * g);
     }
-    if k < 3.5 {
+    if k == K_SPARK {
         // A spark: a core and two crossed rays, turned, all light.
         let s = sin(o.shape.w);
         let co = cos(o.shape.w);
@@ -245,13 +516,13 @@ fn fs(o: Out) -> @location(0) vec4<f32> {
         let light = (core + max(ray_x, ray_y) * 0.9 + halo) * o.color.a;
         return vec4<f32>(out_rgb(o.color.rgb) * light, 0.0);
     }
-    if k < 4.5 {
+    if k == K_DISC {
         let d = length(p - o.shape.xy) - o.shape.z;
         let cover = clamp(0.5 - d, 0.0, 1.0);
         let g = glow(d, o.shape.w) * o.color2.a;
         return over_plus(o.color.rgb, cover * o.color.a, o.color2.rgb * g);
     }
-    if k < 5.5 {
+    if k == K_ARROW {
         // An arrow pointing right: a rounded triangle, its tip at shape.xy.
         let len = o.shape.z;
         let q = p - (o.shape.xy - vec2<f32>(len * 0.5, 0.0));
@@ -335,13 +606,11 @@ impl StagePass {
         });
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("jodeldiplom stage"),
-            source: wgpu::ShaderSource::Wgsl(
-                format!("{SHADER}{}", super::particles::pop_wgsl()).into(),
-            ),
+            source: wgpu::ShaderSource::Wgsl(shader().into()),
         });
         let attributes = wgpu::vertex_attr_array![
             0 => Float32x4, 1 => Float32x4, 2 => Float32x4,
-            3 => Float32x4, 4 => Float32x4, 5 => Float32x4
+            3 => Float32x4, 4 => Float32x4, 5 => Float32x4, 6 => Float32x4
         ];
         let premultiplied = wgpu::BlendComponent {
             src_factor: wgpu::BlendFactor::One,

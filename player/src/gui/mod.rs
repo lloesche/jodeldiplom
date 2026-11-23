@@ -6,11 +6,15 @@
 pub mod canvas;
 pub mod fonts;
 pub mod karaoke;
-mod notes;
+pub mod liquid;
+pub mod notes;
 pub mod particles;
 pub mod pop;
 pub mod present;
 pub mod raster;
+#[cfg(test)]
+mod shader_check;
+pub mod shards;
 pub mod sparks;
 pub mod stage;
 pub mod stage_gpu;
@@ -431,9 +435,13 @@ impl Gui {
         let stage = match screen {
             Screen::Gpu(_) => {
                 let stage = canvas.stage_frame(&app.state, heard, dt);
-                // The picture's bubbles bursting, over it on the GPU.
+                // The picture's bubbles' liquid and bursts, over it on the GPU.
                 let clock = app.state.karaoke.lag.sung_clock(heard) as f32;
-                particles::with_sprays(stage, canvas.picture_sprays(), clock)
+                let over = canvas
+                    .picture_over()
+                    .map(|o| (&o.bubbles[..], &o.sprays[..]));
+                let (bubbles, sprays) = over.unwrap_or((&[], &[]));
+                stage_gpu::with_picture(stage, bubbles, sprays, clock)
             }
             Screen::Soft(_) => None,
         };

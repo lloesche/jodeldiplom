@@ -934,13 +934,10 @@ impl Canvas {
         }
     }
 
-    /// The bubbles bursting in Karaoke mode's picture as last painted (none
-    /// without it), for the GPU to draw over it ([`super::particles`]).
-    pub fn picture_sprays(&self) -> &[super::particles::Spray] {
-        match self.karaoke {
-            Some(_) => self.karaoke_layer.sprays(),
-            None => &[],
-        }
+    /// What the GPU draws over Karaoke mode's picture as last painted (none
+    /// without it): its bubbles' liquid and bursts.
+    pub fn picture_over(&self) -> Option<&super::notes::Over> {
+        self.karaoke.as_ref().map(|_| &self.karaoke_layer.over)
     }
 
     /// Karaoke mode's picture: the backdrop (made again for another cover
@@ -965,6 +962,7 @@ impl Canvas {
             self.backdrop = Some(super::karaoke::Backdrop::new(art, area.2, area.3));
         }
         let full = full || !fits;
+        self.karaoke_layer.over.gpu = self.layers;
         let Some(backdrop) = &self.backdrop else {
             return Vec::new();
         };

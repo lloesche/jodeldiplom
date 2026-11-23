@@ -64,8 +64,8 @@ pub struct LyricLine {
     /// characters, and whether fully (else half); a bubble full swept
     /// full ([`crate::core::bubbles`]).
     pub hits: Vec<(f32, f32, bool)>,
-    /// The bubbles bursting now (the game on).
-    pub bursts: Vec<super::bubbles::Burst>,
+    /// The bubbles with liquid in them, bursting or burst (the game on).
+    pub liquid: Vec<super::bubbles::Liquid>,
     /// The singer's pitch along them: where (characters) and how high
     /// (as the notes' heights).
     pub trail: Vec<(f32, f32)>,
@@ -218,7 +218,7 @@ fn line(text: impl Into<String>, fill: f64, kind: LineKind) -> LyricLine {
         alpha: 1.0,
         notes: Vec::new(),
         hits: Vec::new(),
-        bursts: Vec::new(),
+        liquid: Vec::new(),
         trail: Vec::new(),
         voice: None,
     }

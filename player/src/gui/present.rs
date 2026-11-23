@@ -144,7 +144,7 @@ type Opened = (wgpu::Adapter, wgpu::Device, wgpu::Queue);
 
 /// A device on `adapter` (not a software renderer), with limits for a
 /// texture the size of any window.
-fn open(adapter: wgpu::Adapter) -> Result<Opened, String> {
+pub(super) fn open(adapter: wgpu::Adapter) -> Result<Opened, String> {
     let info = adapter.get_info();
     if info.device_type == wgpu::DeviceType::Cpu {
         return Err(format!("{}: a software renderer", info.name));

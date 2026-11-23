@@ -15,7 +15,7 @@ use std::collections::HashMap;
 
 use super::karaoke::{BigText, COVER_PAD};
 use super::sparks::noise;
-use super::stage_gpu::{kind, AtlasUpload, Instance, StageFrame, ATLAS};
+use super::stage_gpu::{kind, AtlasUpload, Instance, Palette, Skin, StageFrame, Tint, ATLAS};
 use crate::core::singing::{multiplier, Hit};
 use crate::core::State;
 use crate::view::karaoke::{KaraokePicture, LineKind, LyricLine};
@@ -322,6 +322,7 @@ fn pill(
         color2: edge,
         params: [kind::PILL, glow, outline, radius],
         uv: [0.0; 4],
+        strain: [0.0; 4],
     }
 }
 
@@ -349,6 +350,7 @@ fn fill(
         color2: bottom,
         params: [kind::FILL, glow, 0.0, 0.0],
         uv: [x0, x1, 0.0, 0.0],
+        strain: [0.0; 4],
     })
 }
 
@@ -382,6 +384,7 @@ fn segment(
         color2: glow_color,
         params: [kind::SEGMENT, thick, glow, 0.0],
         uv: [0.0; 4],
+        strain: [0.0; 4],
     }
 }
 
@@ -394,6 +397,7 @@ fn disc(c: (f32, f32), r: f32, core: [f32; 4], glow_color: [f32; 4], glow: f32) 
         color2: glow_color,
         params: [kind::DISC, 0.0, 0.0, 0.0],
         uv: [0.0; 4],
+        strain: [0.0; 4],
     }
 }
 
@@ -436,6 +440,7 @@ impl Stage {
             color2: filled,
             params: [kind::TEXT, split, 0.0, 0.0],
             uv: [u as f32, v as f32, (u + w) as f32, (v + h) as f32],
+            strain: [0.0; 4],
         });
     }
 
@@ -640,16 +645,12 @@ impl Stage {
             if fade <= 0.0 {
                 continue;
             }
-            // Its bubbles as filled (the game on): the pill pops while one
-            // bursts, the sparkles of those bursting handed to the GPU.
+            // Its bubbles, a row along it (the game on), each with its
+            // liquid, straining, bursting as it fills and gone after, its
+            // bursts handed to the GPU.
             let bub = pills.pill(game, l, wi);
-            for &(k, (a, b), at) in &bub.bursting {
-                let span = (across(a), across(b), c.1);
-                sprays.push(super::pop::sparkles(l, k, span, p, at, clock, lane.pps));
-            }
-            let (body, edge, glow) = if bub.burst.is_some() {
-                super::pop::lit(p)
-            } else if end <= now {
+            sprays.extend(bub.sprays(&across, (c, half, p), (clock, lane.pps)));
+            let (body, edge, glow) = if end <= now {
                 (rgba(WHITE, 0.07), rgba(WHITE, 0.22), 0.0)
             } else if start <= now {
                 (rgba(WHITE, 0.16), rgba(ACTIVE, 0.95), p * 0.4)
@@ -658,30 +659,26 @@ impl Stage {
             };
             let faded = |c: [f32; 4]| [c[0], c[1], c[2], c[3] * fade];
             let outline = (p * 0.05).max(1.2);
-            let mut shape = pill(c, half, faded(body), faded(edge), glow, outline, 0.0);
-            if let Some(at) = bub.burst {
-                super::pop::bursting(&mut shape, at, p);
-            }
-            out.push(shape);
-            let mut filled = 0.0f64;
-            // Where it was hit, as the time went by under the playhead.
-            if game {
-                for (a, b, full) in bub.spans {
-                    filled += b - a;
-                    let (top, bottom, g) = if full {
-                        (rgba(GOLD_TOP, fade), rgba(GOLD_DEEP, 0.8 * fade), p * 0.35)
-                    } else {
-                        (
-                            rgba(PALE_TOP, 0.85 * fade),
-                            rgba(PALE, 0.45 * fade),
-                            p * 0.15,
-                        )
-                    };
-                    if let Some(f) = fill(c, half, (across(a), across(b)), top, bottom, g) {
-                        out.push(f);
-                    }
-                }
-            }
+            let skin = Skin {
+                body: faded(body),
+                edge: faded(edge),
+                glow,
+                outline,
+            };
+            // Their liquid, as the time went by under the playhead.
+            let palette = Palette {
+                full: Tint {
+                    top: rgba(GOLD_TOP, fade),
+                    bottom: rgba(GOLD_DEEP, 0.8 * fade),
+                    glow: p * 0.35,
+                },
+                half: Tint {
+                    top: rgba(PALE_TOP, 0.85 * fade),
+                    bottom: rgba(PALE, 0.45 * fade),
+                    glow: p * 0.15,
+                },
+            };
+            let filled = bub.draw(&mut out, (c, half), (&skin, &palette), &across, p);
             if !text.is_empty() {
                 let hit = filled > 0.5 * (end - start);
                 texts.push((text.to_owned(), px, c.0 - tw / 2.0, c.1, (end, hit, fade)));
@@ -856,6 +853,7 @@ impl Stage {
                 color2: [0.0; 4],
                 params: [kind::SPARK, 0.0, 0.0, 0.0],
                 uv: [0.0; 4],
+                strain: [0.0; 4],
             });
         }
         if self.arrow.shown > 0.0 {
@@ -880,6 +878,7 @@ impl Stage {
                 color2: rgba(arrow_color, 0.6 * a),
                 params: [kind::ARROW, p * 0.35, 0.0, 0.0],
                 uv: [0.0; 4],
+                strain: [0.0; 4],
             });
         }
 
