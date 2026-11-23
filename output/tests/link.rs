@@ -222,6 +222,9 @@ fn a_leader_short_of_frames_holds_its_follower() {
     assert!(gap > Some(4_800), "{gap:?}");
 }
 
+/// The least looks at a late follower's position as it goes.
+const LOOKS: usize = 10;
+
 #[test]
 fn a_late_follower_drops_its_frames_up_to_where_it_is_due() {
     let _guard = real_time();
@@ -244,9 +247,11 @@ fn a_late_follower_drops_its_frames_up_to_where_it_is_due() {
     let (first, second) = (48_000, 48_000);
     ob.write(&follow(0, first, 1), None).unwrap();
     wait_until("dropped", || p.fb.dropped() > 0);
+    // Over 1.3 s (past the follower running dry), and at least LOOKS
+    // looks however coarsely a runner sleeps.
     let until = Instant::now() + Duration::from_millis(1_300);
     let mut samples = Vec::new();
-    while Instant::now() < until {
+    while Instant::now() < until || samples.len() < LOOKS {
         let before = p.mixer.timebase().heard;
         let position = ob.position().unwrap();
         std::thread::sleep(Duration::from_millis(2));
@@ -279,7 +284,7 @@ fn a_late_follower_drops_its_frames_up_to_where_it_is_due() {
         let next = b.iter().find(|h| h.device as u64 >= device);
         next.map_or(written, |h| h.frame)
     };
-    assert!(samples.len() > 20);
+    assert!(samples.len() >= LOOKS);
     for (before, position, after) in samples {
         assert!(
             played_by(before) <= position && position <= next_at(after),
