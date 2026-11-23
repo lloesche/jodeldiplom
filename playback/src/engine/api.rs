@@ -16,7 +16,8 @@ use crate::source::TrackInfo;
 use crate::stem_file::StemStore;
 use crate::stems::SeparatorSource;
 use crate::target::OutputTarget;
-use crate::transition::{TransitionPlan, TransitionState};
+use crate::transition::{TempoMode, TransitionPlan, TransitionState};
+use crate::warp::TimeMap;
 
 use super::jump::JumpAt;
 use super::lanes::MakeStems;
@@ -153,6 +154,22 @@ pub enum Command {
         gains: [f64; crate::stems::STEMS],
         /// Seconds into the playing track; `None`: at once.
         at: Option<f64>,
+    },
+    /// The engine's own: the playing track read along a time map from an
+    /// output frame on (on an output of lanes, its stems read along it as
+    /// its parts, its main their sum), back on its own route once the map
+    /// runs straight. A track of more than two channels is not (an
+    /// [`Event::Notice`] says why).
+    #[doc(hidden)]
+    Along {
+        /// The track's seconds at each second of the output (its frames
+        /// over its rate).
+        map: Arc<TimeMap>,
+        /// The output frame it is read along the map from (the frame
+        /// written next, if that is later).
+        from: u64,
+        /// How it follows the map.
+        tempo: TempoMode,
     },
 }
 

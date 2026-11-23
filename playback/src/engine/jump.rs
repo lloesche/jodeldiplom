@@ -212,6 +212,10 @@ impl Engine {
         if self.transition.is_some() {
             return self.notice(Some(index), "No jumps while a transition is set up".into());
         }
+        if track.along.is_some() {
+            let message = "No jumps while the track is read along a time map";
+            return self.notice(Some(index), message.into());
+        }
         let rate = track.info.rate;
         let (a, _) = grid(&track.route);
         let (a, seg) = (a as i64, track.seg_frame as i64);

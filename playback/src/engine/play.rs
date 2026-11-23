@@ -3,7 +3,6 @@
 //! it, the next track run into gaplessly or through a reopen, stopping,
 //! and the end of the queue.
 
-use std::sync::Arc;
 use std::time::Instant;
 
 use jodel_output::{OpenRequest, Output, StreamFormat};
@@ -13,7 +12,7 @@ use crate::rate::{choose_route, FileFacts, Route};
 use crate::source::Source;
 
 use super::api::{Event, PlayState, TrackStart};
-use super::track::{Cue, CueEvent, Heard, HeardWarp, OpenOutput, SegStart, StartAt, Track};
+use super::track::{Cue, CueEvent, Heard, OpenOutput, SegStart, StartAt, Track};
 use super::{Engine, OPEN_BUSY_STEP, OPEN_BUSY_WAIT};
 
 impl Engine {
@@ -89,10 +88,11 @@ impl Engine {
     fn open_output(&mut self, route: &Route) -> Result<(), Error> {
         self.close_output();
         let mut request = route.open_request();
-        // Main and the four stems, where the target takes them and there
-        // are stems to make.
+        // Main and the four stems, where the target takes them (with no
+        // separator nor stems kept, a head read along a map has the whole
+        // mix as a stem).
         let lanes = 1 + crate::stems::STEMS as u16;
-        if self.lanes.possible() && self.target.lanes() >= lanes {
+        if self.target.lanes() >= lanes {
             request = request.lanes(lanes);
         }
         let mut output = self.open_target(&request)?;
@@ -141,17 +141,8 @@ impl Engine {
                     route: track.route.clone(),
                     seg_out: track.seg_out,
                     seg_frame: track.seg_frame,
-                    // A track read along a map (the playing one along a
-                    // transition's glide) is heard along it, from here,
-                    // where the map's time is the track's.
-                    warp: track.warp.as_ref().map(|w| {
-                        Arc::new(HeardWarp {
-                            map: Arc::clone(w.map()),
-                            origin: track.seg_out,
-                            a0: track.seg_frame as f64 / f64::from(track.info.rate.max(1)),
-                            out_rate: track.route.output_rate,
-                        })
-                    }),
+                    // A track read along a map is heard along it.
+                    warp: track.heard_warp(),
                 },
             ),
         }
@@ -282,7 +273,7 @@ impl Engine {
         let transitioned = self
             .playing
             .as_ref()
-            .is_some_and(|t| t.warp.is_some() || t.gains.is_some());
+            .is_some_and(|t| t.warp.is_some() || t.gains.is_some() || t.along.is_some());
         if transitioned {
             self.jump_on(heard.index, StartAt::Seconds(seconds), None);
             if let Some(h) = &self.heard {

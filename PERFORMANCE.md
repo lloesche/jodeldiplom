@@ -95,6 +95,15 @@ few 24-bit steps; an eighth of a core at 384 kHz is not worth losing that.
 A real separator's stems add up to the song only roughly (about −30 dB off
 it, measured on real songs), and the stems are played as separated.
 
+**Reading the parts along a time map** (a head read along one, mixer
+step 3): the same 8 channels, read along the map at the separator's
+44.1 kHz before the resampling above, whatever the output's rate
+(`cargo test --release -p jodel-playback --lib eight_channels --
+--nocapture`): varispeed 1.6 M frames a second, 37× real time (2.7 % of
+a core); stretched (a phase vocoder a channel) 1.0 M, 23× (4.3 %). Main
+is their sum, so nothing else is read or resampled while a head follows
+a map.
+
 **Memory.** A stem run keeps its stems as 8 × f32 at 44.1 kHz,
 1.41 MB a second:
 

@@ -46,6 +46,10 @@
 //! route waits for them while a mixer plays the stems at other levels
 //! ([`crate::Command::StemMask`]).
 //!
+//! A head read along a time map ([`along`]) has parts whatever was asked:
+//! its stems read along the map are its parts, and its main is their sum
+//! (with no separator, the whole mix as the other instruments' part).
+//!
 //! The parts' requantization is not limited and its clips are not reported
 //! (the desk shows them). The runs here are the parts' own: a transition's
 //! tracks on their stems are separated for its mix ([`crate::stems`]), and
@@ -53,6 +57,7 @@
 //! run starts here once this one's file is read; a transition's next track
 //! needs none of it, as it opens with a run of its own ahead of the window.
 
+mod along;
 mod buffer;
 mod catch_up;
 mod control;
@@ -69,11 +74,12 @@ use jodel_output::StreamFormat;
 
 use crate::error::Error;
 use crate::stem_file::StemStore;
-use crate::stems::{SeparatorSource, StemRun, RATE as STEM_RATE, STEMS};
+use crate::stems::{SeparatorSource, StemRun, Unkept, RATE as STEM_RATE, STEMS};
 
 use super::api::Event;
 use super::track::{frames_of, Progress, SegStart, Track};
 use super::{Engine, PREROLL_RESAMPLE, WRITE_WAIT};
+pub(super) use along::PendingAlong;
 use buffer::Buffer;
 use control::{Plan, State, Supply, Timeline};
 use stream::{run_start, Grid, Line, Made, Stream};
@@ -298,11 +304,14 @@ impl StemLanes {
     /// Whether parts may come for `track`: they are asked for, can be made,
     /// and none failed or went missing for it.
     pub(super) fn coming_for(&self, track: &Track) -> bool {
-        let off = self
-            .off
+        self.make != MakeStems::Never && self.possible() && !self.is_off(track)
+    }
+
+    /// Whether the stems of `track` failed or are not kept.
+    fn is_off(&self, track: &Track) -> bool {
+        self.off
             .as_ref()
-            .is_some_and(|(i, p)| *i == track.index && *p == track.info.path);
-        self.make != MakeStems::Never && self.possible() && !off
+            .is_some_and(|(i, p)| *i == track.index && *p == track.info.path)
     }
 
     /// The track has no parts any more: none until asked for again (with
@@ -313,14 +322,30 @@ impl StemLanes {
         self.end_at(from, None);
     }
 
-    /// Where a run gets its stems: from the store, else the separator
-    /// (none: the store only). `None`: no runs.
-    fn separator(&self) -> Option<Option<SeparatorSource>> {
+    /// Where a run gets the stems the store does not keep, as the stems
+    /// are asked for. `None`: no runs.
+    fn unkept(&self) -> Option<Unkept> {
         match self.make {
             MakeStems::Never => None,
-            MakeStems::Kept => Some(None),
-            MakeStems::Separate => Some(self.separator),
+            MakeStems::Kept => Some(Unkept::Missing),
+            MakeStems::Separate => Some(self.separator.into()),
         }
+    }
+
+    /// Where a run for `want` gets the stems not kept: as they are asked
+    /// for (`None`: no runs, also while the track may have no parts or
+    /// they failed for it). A head read along a map has them whatever was
+    /// asked, as its main is their sum: separated when they are asked for
+    /// and there is a separator, else (and once they failed) the whole mix.
+    fn unkept_for(&self, want: &Want) -> Option<Unkept> {
+        let off = self.is_off(want.track);
+        if want.track.along.is_none() {
+            return self.unkept().filter(|_| want.able && !off);
+        }
+        Some(match (self.make, self.separator) {
+            (MakeStems::Separate, Some(separator)) if !off => Unkept::Separate(separator),
+            _ => Unkept::Whole,
+        })
     }
 
     /// Before a write: the runs started, kept or stopped as the stems are
@@ -343,11 +368,7 @@ impl StemLanes {
             limit: None,
             failed,
         };
-        let off = self
-            .off
-            .as_ref()
-            .is_some_and(|(i, p)| *i == track.index && *p == track.info.path);
-        let Some(separator) = self.separator().filter(|_| want.able && !off) else {
+        let Some(unkept) = self.unkept_for(want) else {
             if self.stream.is_some() {
                 self.end_at(from, want.hold);
             }
@@ -358,7 +379,7 @@ impl StemLanes {
             return quiet(self, None);
         };
         if !self.stream.as_ref().is_some_and(|s| s.line.same(&line)) {
-            self.start(line, want, separator);
+            self.start(line, want, unkept);
         }
         // What this write needs; on a device nothing while there are none
         // (they could not be said to be there in it anyway).
@@ -376,7 +397,7 @@ impl StemLanes {
             }
             Ok(_) => {}
         }
-        let following = self.follow_next(want, separator);
+        let following = self.follow_next(want);
         let done = self.stream.as_ref().is_some_and(|s| s.done);
         let there = self.buffer.there(from);
         let limit = if !self.offline {
@@ -453,7 +474,10 @@ impl StemLanes {
     /// the frames written up to there have none, from as far back as they
     /// may be written again ([`Want::floor`]), so they are once the parts
     /// are made ([`StemLanes::rewind_to`]).
-    fn start(&mut self, line: Line, want: &Want, separator: Option<SeparatorSource>) {
+    fn start(&mut self, line: Line, want: &Want, unkept: Unkept) {
+        if line.along.is_some() {
+            return self.start_along(line, want, unkept);
+        }
         let track = want.track;
         let from = self
             .timeline
@@ -483,7 +507,7 @@ impl StemLanes {
         let path = &track.info.path;
         // The run kept, the next track's (from its start), or a new one.
         let usable = |run: &StemRun| -> Option<(i128, i128)> {
-            if &run.path != path || run.failed() || run.missing() {
+            if &run.path != path || run.whole || run.failed() || run.missing() {
                 return None;
             }
             let grid = Grid::of(&line, run.start)?;
@@ -507,7 +531,7 @@ impl StemLanes {
         }
         let (mut run, (o, r)) = found.unwrap_or_else(|| {
             let start = run_start(&line, line.frame_at(x));
-            let run = StemRun::start(path.clone(), start, separator, self.store.clone());
+            let run = StemRun::start(path.clone(), start, unkept, self.store.clone());
             let grid = Grid::of(&line, start).expect("a run starts on the line's grid");
             let (o, r) = grid.at_or_before(x);
             (run, if r < 0 { grid.first_at_run(0) } else { (o, r) })
@@ -515,7 +539,7 @@ impl StemLanes {
         run.seek(r as u64);
         run.set_keep(want.keep.0, want.keep.1);
         let channels = usize::from(track.route.channels);
-        self.stream = Some(Stream::new(line, o as i64, channels));
+        self.stream = Some(Stream::new(line, o as i64, channels, 0.0));
         self.run = Some(run);
     }
 
@@ -548,18 +572,19 @@ impl StemLanes {
     }
 
     /// The next track's run, started once this one's file is read (or its
-    /// parts are made to its end), and how its parts stand.
-    fn follow_next(&mut self, want: &Want, separator: Option<SeparatorSource>) -> Following {
-        let next = match want.next {
-            Next::Nothing => {
+    /// parts are made to its end), and how its parts stand (none when none
+    /// are asked for: a head read along a map has its parts whatever was).
+    fn follow_next(&mut self, want: &Want) -> Following {
+        let (next, unkept) = match (want.next, self.unkept()) {
+            (Next::Nothing, _) => {
                 self.prestart = None;
                 return Following::Fine;
             }
-            Next::Unable => {
+            (Next::Unable, _) | (_, None) => {
                 self.prestart = None;
                 return Following::Not;
             }
-            Next::Track(next) => next,
+            (Next::Track(next), Some(unkept)) => (next, unkept),
         };
         if self.prestart.as_ref().is_some_and(|p| &p.path != next) {
             self.prestart = None;
@@ -570,7 +595,7 @@ impl StemLanes {
             || self.stream.as_ref().is_some_and(|s| s.done);
         if self.prestart.is_none() && read {
             let store = self.store.clone();
-            self.prestart = Some(StemRun::start(next.clone(), 0, separator, store));
+            self.prestart = Some(StemRun::start(next.clone(), 0, unkept, store));
         }
         let Some(p) = self.prestart.as_mut() else {
             return Following::Coming;
@@ -675,13 +700,14 @@ impl Engine {
     /// transition is heard (an armed or preparing one leaves the playing
     /// track on its file until it moves onto its stems), or on the stems
     /// route a transition that is over left it on, until it is back on its
-    /// own (so a mixer plays its stems across that move).
+    /// own (so a mixer plays its stems across that move); and a head read
+    /// along a map, whose main is its parts' sum.
     pub(super) fn parts_able(&self, track: &Track) -> bool {
         if self.transition_heard() {
             return false;
         }
         let left = self.transition.is_none() && track.mixes_stems() && !track.pending;
-        track.plain() || left
+        track.plain() || left || track.along.is_some()
     }
 
     /// Whether the move of a track a transition left on its stems (`old`)

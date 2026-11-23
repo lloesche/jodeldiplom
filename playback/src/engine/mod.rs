@@ -173,6 +173,8 @@ struct Engine {
     stem_gains: stem_mask::StemGains,
     /// [`Command::JumpWindow`]: seconds kept behind, decoded ahead.
     jump_window: (f64, f64),
+    /// A [`Command::Along`] waiting for its frame.
+    along_at: Option<lanes::PendingAlong>,
     /// A [`Command::Jump`] waiting for its time.
     pending_jump: Option<jump::PendingJump>,
     /// A reading of the playing track at a jump's target it does not hold.
@@ -220,6 +222,7 @@ impl Engine {
             transition: None,
             stem_gains: stem_mask::StemGains::default(),
             jump_window: (0.0, 0.0),
+            along_at: None,
             pending_jump: None,
             jump_fill: None,
             lead_in: 0.0,
@@ -368,6 +371,7 @@ impl Engine {
             Command::JumpWindow { back, ahead } => self.jump_window = (back, ahead),
             Command::MakeStems(make) => self.lanes.set_make(make),
             Command::StemMask { gains, at } => self.set_stem_mask(gains, at),
+            Command::Along { map, from, tempo } => self.read_along(map, from, tempo),
         }
     }
 
@@ -410,13 +414,25 @@ impl Engine {
         })
     }
 
-    /// How `track` is heard when it is read along a map (the playing track
-    /// along a transition's glide, the next one along its beats): then its
-    /// position is its map's, not a straight line from its segment.
-    fn heard_along(&self, track: &Track) -> Option<&Heard> {
+    /// How `track` is heard when it is read along a map (a head along its
+    /// own, the playing track along a transition's glide, the next one
+    /// along its beats): then its position is its map's, not a straight
+    /// line from its segment.
+    fn heard_along(&self, track: &Track) -> Option<Heard> {
+        if track.along.is_some() {
+            return Some(Heard {
+                index: track.index,
+                info: track.info.clone(),
+                route: track.route.clone(),
+                seg_out: track.seg_out,
+                seg_frame: track.seg_frame,
+                warp: track.heard_warp(),
+            });
+        }
         self.heard
             .as_ref()
             .filter(|h| h.index == track.index && h.warp.is_some() && track.warp.is_some())
+            .cloned()
     }
 
     fn emit_play_state(&self) {
@@ -472,6 +488,7 @@ impl Engine {
         self.tail = None;
         self.cancel_switch();
         self.reroute_later = false;
+        self.along_at = None;
         self.pending_jump = None;
         self.drop_jump_fill();
         self.lead = 0;
@@ -565,6 +582,7 @@ impl Engine {
         if self.lead > 0 && self.playing.is_some() {
             return self.write_lead();
         }
+        self.along_turn()?;
         if self.playing.is_some() && self.work_switch()? {
             return Ok(());
         }

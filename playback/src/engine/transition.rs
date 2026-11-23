@@ -518,7 +518,7 @@ impl Engine {
                 // From its first frame, where the glide is still none (the
                 // switch meets the file a second on, on its grid).
                 let s = switch.track.seg_frame as f64 / f64::from(switch.track.info.rate.max(1));
-                switch.track.warp = Some(Box::new(Warping::new(map_a, s, s, plan.tempo)));
+                switch.track.warp = Some(Box::new(Warping::new(map_a, s, s, plan.tempo, 2)));
             }
         }
         // B from a little before the window, read along the map.
@@ -547,6 +547,7 @@ impl Engine {
             a0,
             frame as f64 / f64::from(info.rate),
             plan.tempo,
+            2,
         )));
         let t = self.transition.as_mut().expect("checked");
         t.b = Some(b);

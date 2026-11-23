@@ -40,12 +40,12 @@ impl Engine {
             return self.reroute_next();
         };
         let (index, info, current) = (track.index, track.info.clone(), track.route.clone());
-        // A track a transition made (read along its time map, its stems
-        // faded by it, or on its stand-in separator) is not on its route as
-        // the settings make it once the transition is over, though the
-        // route is the same: it moves to a fresh one.
-        let leftover = self.transition.is_none()
-            && (track.warp.is_some() || track.gains.is_some() || track.separator.is_some());
+        // A track read along a map (a head's, a transition's), its stems
+        // faded by a transition or on its stand-in separator, is not on its
+        // route as the settings make it once that is over, though the route
+        // is the same: it moves to a fresh one.
+        let leftover =
+            self.transition.is_none() && (!track.plain_route() || track.separator.is_some());
         let keeping = |why: String| format!("{why}; keeping {} for this track", current.describe());
         let route = match self.route_for(&info) {
             Ok(route) => route,
@@ -317,18 +317,23 @@ impl Engine {
         let (a_new, b_new) = grid(&switch.track.route);
         let step_out = switch.grid / a_old * b_old;
         let start = switch.track.seg_frame;
-        // An old track read along a map (the playing one along a
-        // transition's glide, called off) has no grid with the output: it
-        // meets the new one at output frame `from` itself, where its map
-        // puts it (on the new route's grid; the crossfade takes the rest).
-        let along = self.heard_along(old).cloned();
+        // An old track read along a map (a head along its own, the playing
+        // one along a transition's glide, called off) has no grid with the
+        // output: it meets the new one on the first frame of the new
+        // route's grid its map reaches at or after output frame `from`, at
+        // the output frame the map puts it on (to half a frame; the
+        // crossfade takes the rest).
+        let along = self.heard_along(old);
         // The grid point at or after output frame `from`, as (track frame,
         // output frame), and the new route's output frame for it.
         let meet = |from: u64| {
             if let Some(h) = &along {
-                let frame = start + h.frame_at(from).saturating_sub(start) / a_new * a_new;
+                let warp = h.warp.as_ref().expect("heard along a map");
+                let frame = start + h.frame_at(from).saturating_sub(start).div_ceil(a_new) * a_new;
+                let rate = f64::from(old.info.rate.max(1));
+                let at = warp.output_frame_at(frame as f64 / rate);
                 let j = (frame - start) / a_new * b_new;
-                return (frame, from.max(old.seg_out), j);
+                return (frame, at.max(from).max(old.seg_out), j);
             }
             let n = from.saturating_sub(old.seg_out).div_ceil(step_out);
             let frame = old.seg_frame + n * switch.grid;

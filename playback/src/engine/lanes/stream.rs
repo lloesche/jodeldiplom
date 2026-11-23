@@ -12,8 +12,17 @@
 //! resampler, gives parts on the very instants of the output's frames: the
 //! parts add up to what the track plays, frame for frame, as closely as the
 //! separator's stems add up to the song.
+//!
+//! A head read along a time map ([`crate::engine::track::Along`]) has its
+//! line follow the map instead: the stems are read along it at the
+//! separator's rate ([`Warping`]), every channel at the same instants,
+//! before they are resampled to the output's rate, so its main (their sum)
+//! and its parts stay on the same frames.
 
-use crate::engine::track::{SegStart, Track};
+use std::sync::Arc;
+
+use crate::engine::track::{AlongMap, SegStart, Track};
+use crate::engine::warping::Warping;
 use crate::resample::{output_frames, Requantizer, Resampler};
 use crate::stems::{Pull, StemRun, RATE as STEM_RATE, STEMS};
 
@@ -21,7 +30,7 @@ use crate::stems::{Pull, StemRun, RATE as STEM_RATE, STEMS};
 const PIECE: usize = 4096;
 
 /// The line the output follows a track along.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone)]
 pub(super) struct Line {
     /// The track's segment ([`Track::segment`]), and how it began.
     pub(super) segment: u64,
@@ -36,15 +45,20 @@ pub(super) struct Line {
     pub(super) end: Option<u64>,
     /// The gain the track's samples are heard at (its route's headroom).
     pub(super) gain: f64,
+    /// The map the track is read along from `seg_out` on, if it is.
+    pub(super) along: Option<AlongMap>,
 }
 
 impl Line {
     /// The line `track` is heard along.
     pub(super) fn of(track: &Track) -> Line {
         let (rate, out) = (track.info.rate.max(1), track.route.output_rate.max(1));
+        let along = track.along.as_ref().map(|a| a.map.clone());
+        // Read along a map, it ends where its stems do.
         let end = track
             .info
             .frames
+            .filter(|_| along.is_none())
             .and_then(|total| total.checked_sub(track.seg_frame))
             .map(|left| track.seg_out + output_frames(rate, out, left));
         let route = &track.route;
@@ -60,20 +74,36 @@ impl Line {
             seg_frame: track.seg_frame,
             end,
             gain,
+            along,
         }
     }
 
     /// Whether `other` is this line: the same segment at the same rates
-    /// and gain, its start elsewhere along it (a route met at the same
-    /// format goes on from a frame of it).
+    /// and gain, read along the same map if along one, its start elsewhere
+    /// along it (a route met at the same format goes on from a frame of
+    /// it).
     pub(super) fn same(&self, other: &Line) -> bool {
         let along = (i128::from(other.seg_out) - i128::from(self.seg_out)) * i128::from(self.rate)
             == (i128::from(other.seg_frame) - i128::from(self.seg_frame)) * i128::from(self.out);
+        let map = match (&self.along, &other.along) {
+            (None, None) => true,
+            (Some(a), Some(b)) => Arc::ptr_eq(&a.heard, &b.heard) && a.tempo == b.tempo,
+            _ => false,
+        };
         self.segment == other.segment
             && self.rate == other.rate
             && self.out == other.out
             && self.gain == other.gain
             && along
+            && map
+    }
+
+    /// The map's time at output frame `o`, and the track's seconds it reads
+    /// there (read along a map only).
+    pub(super) fn along_at(&self, o: i64) -> Option<(f64, f64)> {
+        let heard = &self.along.as_ref()?.heard;
+        let a = heard.a0 + (o - heard.origin as i64) as f64 / f64::from(self.out);
+        Some((a, heard.map.at(a)))
     }
 
     /// The track frame heard at output frame `o`, rounded down (0 before
@@ -199,9 +229,9 @@ pub(super) enum Made {
 /// The parts of one track at the output's rate, from a run: the stems
 /// taken in order, made the track's channels (a mono file's stems are
 /// averaged, a file of more than two channels has them on its front pair
-/// and nothing on the rest), scaled by the track's headroom as main is,
-/// resampled to the output's rate (requantized to 24 bits) and cut or
-/// padded to the track's end.
+/// and nothing on the rest), read along its map when the line has one,
+/// scaled by the track's headroom as main is, resampled to the output's
+/// rate (requantized to 24 bits) and cut or padded to the track's end.
 pub(super) struct Stream {
     pub(super) line: Line,
     /// The output frame of the stream's first frame (before the output's
@@ -212,6 +242,7 @@ pub(super) struct Stream {
     /// The track's channels, and the stems' (one or two each).
     channels: usize,
     pairs: usize,
+    warping: Option<Warping>,
     resampler: Option<Resampler>,
     requantizer: Requantizer,
     taken: Vec<f64>,
@@ -223,20 +254,30 @@ pub(super) struct Stream {
 
 impl Stream {
     /// A stream on `line` whose first frame is heard at output frame
-    /// `first`, for a track of `channels` channels.
-    pub(super) fn new(line: Line, first: i64, channels: usize) -> Stream {
+    /// `first`, for a track of `channels` channels; read along the line's
+    /// map, from a run whose first frame is the track's seconds
+    /// `read_from`.
+    pub(super) fn new(line: Line, first: i64, channels: usize, read_from: f64) -> Stream {
         let pairs = channels.clamp(1, 2);
         let resampler = (line.out != STEM_RATE).then(|| {
             let mut r = Resampler::new(STEM_RATE, line.out, STEMS * pairs);
             r.set_gain(line.gain);
             r
         });
+        let warping = line
+            .along_at(first)
+            .zip(line.along.as_ref())
+            .map(|((a, _), along)| {
+                let map = Arc::clone(&along.heard.map);
+                Warping::new(map, a, read_from, along.tempo, STEMS * pairs)
+            });
         Stream {
             line,
             first,
             made: 0,
             channels,
             pairs,
+            warping,
             resampler,
             requantizer: Requantizer::new(),
             taken: Vec::new(),
@@ -281,16 +322,19 @@ impl Stream {
                         }
                     }
                 }
-                match self.resampler.as_mut() {
-                    Some(r) => r.process_float(&self.feed, &mut self.out),
-                    None => {
-                        let (q, gain) = (&mut self.requantizer, self.line.gain);
-                        self.out
-                            .extend(self.feed.iter().map(|&y| q.quantize(y * gain)));
-                    }
+                if let Some(w) = self.warping.as_mut() {
+                    w.read(&mut self.feed);
                 }
+                self.put_feed();
             }
             Pull::End => {
+                // What the map's reader holds comes out before the end.
+                if let Some(w) = self.warping.as_mut() {
+                    self.feed.clear();
+                    w.end();
+                    w.read(&mut self.feed);
+                    self.put_feed();
+                }
                 // The stems end with the track: the stream is cut or
                 // padded to its end.
                 let length = self.length();
@@ -322,6 +366,18 @@ impl Stream {
         put(self.first + self.made as i64, &self.laid);
         self.made += frames as u64;
         Made::Frames
+    }
+
+    /// The stems in `feed` resampled (or requantized) onto `out`.
+    fn put_feed(&mut self) {
+        match self.resampler.as_mut() {
+            Some(r) => r.process_float(&self.feed, &mut self.out),
+            None => {
+                let (q, gain) = (&mut self.requantizer, self.line.gain);
+                self.out
+                    .extend(self.feed.iter().map(|&y| q.quantize(y * gain)));
+            }
+        }
     }
 
     /// Lays the first `frames` made out in the track's channels.
@@ -363,6 +419,7 @@ mod tests {
             seg_frame,
             end: None,
             gain: 1.0,
+            along: None,
         }
     }
 
@@ -419,12 +476,12 @@ mod tests {
     #[test]
     fn a_line_is_the_same_further_along_it() {
         let a = line(44_100, 48_000, 1_000, 0);
-        let mut b = a;
+        let mut b = a.clone();
         (b.seg_out, b.seg_frame) = (1_160, 147);
         assert!(a.same(&b));
         b.seg_frame = 148;
         assert!(!a.same(&b));
-        let mut c = a;
+        let mut c = a.clone();
         c.gain = 0.5;
         assert!(!a.same(&c));
         assert_eq!(a.frame_at(1_160), 147);

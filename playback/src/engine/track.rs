@@ -15,7 +15,7 @@ use crate::rate::{Route, Stage};
 use crate::resample::{Requantizer, Resampler};
 use crate::source::{Source, TrackInfo};
 use crate::stems::{Gains, SeparatorSource, StemRun};
-use crate::transition::TransitionState;
+use crate::transition::{TempoMode, TransitionState};
 use crate::warp::TimeMap;
 
 use super::api::TrackStart;
@@ -89,6 +89,27 @@ pub(super) struct HeardWarp {
     pub(super) out_rate: u32,
 }
 
+/// A map a head's stems are read along, and how ([`Along`]).
+#[derive(Clone)]
+pub(super) struct AlongMap {
+    pub(super) heard: Arc<HeardWarp>,
+    pub(super) tempo: TempoMode,
+}
+
+/// A head read along a time map ([`crate::Command::Along`]) on an output
+/// of lanes: its stems are read along the map as its parts, and its main
+/// is their sum ([`super::lanes`]), from output frame `seg_out` of its
+/// segment.
+pub(super) struct Along {
+    pub(super) map: AlongMap,
+    /// Main of the route it was on, from the segment's first frame on: the
+    /// sum is crossfaded in from it.
+    pub(super) tail: Vec<i32>,
+    /// Its move back onto its own route, once the map runs straight, has
+    /// been asked for.
+    pub(super) returning: bool,
+}
+
 impl HeardWarp {
     /// The track's seconds at `output_frame`.
     pub(super) fn seconds_at(&self, output_frame: u64) -> f64 {
@@ -96,6 +117,12 @@ impl HeardWarp {
         self.map
             .at(self.a0 + since / f64::from(self.out_rate.max(1)))
             .max(0.0)
+    }
+
+    /// The output frame nearest where the track is at `seconds`.
+    pub(super) fn output_frame_at(&self, seconds: f64) -> u64 {
+        let since = (self.map.inverse(seconds) - self.a0) * f64::from(self.out_rate.max(1));
+        (self.origin as f64 + since).round().max(0.0) as u64
     }
 }
 
@@ -313,12 +340,16 @@ pub(super) struct Track {
     pub(super) gains: Option<Gains>,
     /// A transition's next track: its stems read along the time map.
     pub(super) warp: Option<Box<Warping>>,
+    /// Read along a time map as stem parts, main their sum.
+    pub(super) along: Option<Along>,
     /// The separator its stems use, in place of the player's: a
     /// transition's [`crate::stems::whole_mix`] (no separator, or the
     /// stems failed), set only where a transition prepares its tracks.
     pub(super) separator: Option<SeparatorSource>,
-    /// Samples clipped when a transition added the next track to this
-    /// one's output (past the soft limit's bend, so none in practice).
+    /// Samples clipped where the engine summed into its output: a
+    /// transition adding the next track to this one's (past the soft
+    /// limit's bend, so none in practice), or a head read along a map
+    /// summing its parts into main.
     pub(super) mix_clips: u64,
     /// The samples a jump's crossfade replaced, from this frame of
     /// `out_buf`, put back once written ([`super::jump`]).
@@ -416,6 +447,7 @@ impl Track {
             held: VecDeque::new(),
             gains: None,
             warp: None,
+            along: None,
             separator: None,
             mix_clips: 0,
             clip_base: 0,
@@ -473,10 +505,30 @@ impl Track {
     }
 
     /// Whether its route is its plain one: the file (resampled perhaps),
-    /// not a stems route, nor read along a transition's map or faded by it
+    /// not a stems route, nor read along a map or faded by a transition
     /// (decoded ahead for a switch or not).
     pub(super) fn plain_route(&self) -> bool {
-        self.route.stage != Stage::Stems && self.warp.is_none() && self.gains.is_none()
+        self.route.stage != Stage::Stems
+            && self.warp.is_none()
+            && self.gains.is_none()
+            && self.along.is_none()
+    }
+
+    /// Where a map puts the track, from `seg_out` on, when it is read along
+    /// one: a head's ([`Along`]), or a transition's from where the map's
+    /// time is the track's.
+    pub(super) fn heard_warp(&self) -> Option<Arc<HeardWarp>> {
+        if let Some(along) = &self.along {
+            return Some(Arc::clone(&along.map.heard));
+        }
+        self.warp.as_ref().map(|w| {
+            Arc::new(HeardWarp {
+                map: Arc::clone(w.map()),
+                origin: self.seg_out,
+                a0: self.seg_frame as f64 / f64::from(self.info.rate.max(1)),
+                out_rate: self.route.output_rate,
+            })
+        })
     }
 
     /// Whether a transition plays the track whole: its one stem all of it

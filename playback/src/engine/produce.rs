@@ -9,7 +9,7 @@ use jodel_output::lanes::lane_width;
 use crate::error::Error;
 use crate::rate::Stage;
 use crate::resample::Resampler;
-use crate::stems::{Pull, StemRun};
+use crate::stems::{Pull, StemRun, Unkept};
 
 use super::track::{Cue, CueEvent, Progress, Track};
 use super::{Engine, STEM_FRAMES, WRITE_WAIT};
@@ -124,9 +124,12 @@ impl Engine {
     pub(super) fn step(&mut self, track: &mut Track) -> Result<Progress, Error> {
         let (back, ahead) = self.window_frames(track);
         if track.out_at < track.out_buf.len() {
-            // A jump waiting for its time: written no further than it.
-            let limit = self
-                .jump_limit(track)
+            // A jump or a move onto a map waiting for its frame: written no
+            // further than it.
+            let limit = [self.jump_limit(track), self.along_limit(track)]
+                .into_iter()
+                .flatten()
+                .min()
                 .map_or(track.out_buf.len(), |l| l.min(track.out_buf.len()));
             let mut frames = 0;
             if track.out_at < limit {
@@ -164,8 +167,12 @@ impl Engine {
     }
 
     /// Decodes one piece of `track` and appends its output to `out_buf`
-    /// (a stem mix waits up to `wait` for its stems).
+    /// (a stem mix, or a head read along a map, waits up to `wait` for its
+    /// stems).
     pub(super) fn produce(&mut self, track: &mut Track, wait: Duration) -> Result<Progress, Error> {
+        if track.along.is_some() {
+            return self.step_along(track, wait);
+        }
         if track.route.stage == Stage::Stems {
             return self.step_stems(track, wait);
         }
@@ -235,7 +242,7 @@ impl Engine {
             StemRun::start(
                 track.info.path.clone(),
                 track.seg_frame,
-                Some(separator),
+                Unkept::Separate(separator),
                 self.stem_store.clone(),
             )
         });
@@ -292,7 +299,7 @@ impl Engine {
     /// Counts the output frames just made and queues a clip count when the
     /// source's requantization or the resampler clipped (at most four a
     /// second of output).
-    fn after_output(&mut self, track: &mut Track, before: usize) {
+    pub(super) fn after_output(&mut self, track: &mut Track, before: usize) {
         let start = track.seg_out + track.emitted;
         let made = (track.out_buf.len() - before) / usize::from(track.route.channels);
         track.emitted += made as u64;

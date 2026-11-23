@@ -33,6 +33,24 @@ pub const LANES: [Stem; STEMS] = [Stem::Drums, Stem::Bass, Stem::Vocals, Stem::O
 /// setting a GPU up never holds up playback. `None`: there is none.
 pub type SeparatorSource = fn() -> Option<&'static dyn Separator>;
 
+/// Where a stem run gets the stems of a track that are not kept.
+#[derive(Clone, Copy)]
+pub(crate) enum Unkept {
+    /// Nowhere: the run has none ([`Pull::Missing`]).
+    Missing,
+    /// Separated by this separator.
+    Separate(SeparatorSource),
+    /// The whole mix as the other instruments' stem, the rest silent: the
+    /// file as it is, in a stem (no transform, so nothing of it changes).
+    Whole,
+}
+
+impl From<Option<SeparatorSource>> for Unkept {
+    fn from(separator: Option<SeparatorSource>) -> Unkept {
+        separator.map_or(Unkept::Missing, Unkept::Separate)
+    }
+}
+
 /// `stem`'s place in [`Stem::ALL`], the order a run keeps the stems in.
 fn slot(stem: Stem) -> usize {
     Stem::ALL.iter().position(|&s| s == stem).unwrap_or(0)
@@ -175,6 +193,9 @@ pub(crate) struct StemRun {
     pub(crate) path: PathBuf,
     /// The track frame it starts at.
     pub(crate) start: u64,
+    /// Its stems are the whole mix ([`Unkept::Whole`]), not kept nor
+    /// separated (unless the store had them after all).
+    pub(crate) whole: bool,
     stems: Receiver<Message>,
     /// The whole file has been read (the rest is being separated).
     read: Arc<AtomicBool>,
@@ -354,13 +375,12 @@ const RAMP: f64 = RATE as f64 / 100.0;
 
 impl StemRun {
     /// Starts the stems of `path` from track frame `start`: read from
-    /// `store` where it keeps them, else separated by `separator` (none:
-    /// the run has no stems, [`Pull::Missing`]). The store is asked in the
-    /// run's thread.
+    /// `store` where it keeps them, else as `unkept` says. The store is
+    /// asked in the run's thread.
     pub(crate) fn start(
         path: PathBuf,
         start: u64,
-        separator: Option<SeparatorSource>,
+        unkept: Unkept,
         store: Option<Arc<dyn StemStore>>,
     ) -> StemRun {
         let (tx, rx) = mpsc::sync_channel(AHEAD);
@@ -370,12 +390,13 @@ impl StemRun {
             let (path, read, cancel) = (path.clone(), read.clone(), cancel.clone());
             move || {
                 let kept = store.as_ref().and_then(|s| s.open(&path));
-                let done = match (kept, separator) {
+                let done = match (kept, unkept) {
                     (Some(file), _) => read_kept(file, start, &tx, &read, &cancel),
-                    (None, Some(separator)) => {
+                    (None, Unkept::Separate(separator)) => {
                         separate(&path, start, separator, &tx, &read, &cancel)
                     }
-                    (None, None) => {
+                    (None, Unkept::Whole) => whole(&path, start, &tx, &read, &cancel),
+                    (None, Unkept::Missing) => {
                         let _ = tx.send(Message::Missing);
                         return;
                     }
@@ -401,6 +422,7 @@ impl StemRun {
         StemRun {
             path,
             start,
+            whole: matches!(unkept, Unkept::Whole),
             stems,
             read,
             cancel,
@@ -707,6 +729,61 @@ fn read_kept(
         }
     }
     read.store(true, Ordering::Relaxed);
+    Ok(())
+}
+
+/// The run's thread with no separator ([`Unkept::Whole`]): decodes the
+/// file and sends it on as the other instruments' stem, the others silent,
+/// until it ends or the run is dropped (`cancel`).
+fn whole(
+    path: &std::path::Path,
+    start: u64,
+    tx: &SyncSender<Message>,
+    read: &AtomicBool,
+    cancel: &AtomicBool,
+) -> Result<(), String> {
+    let mut source = Source::open(path).map_err(|e| e.to_string())?;
+    if start > 0 {
+        source.seek(start).map_err(|e| e.to_string())?;
+    }
+    let channels = usize::from(source.info().channels).max(1);
+    let mut feed = StereoFeed::new(source.info().rate);
+    let other = slot(Stem::Other);
+    let gone = Cell::new(false);
+    let stopped = || gone.get() || cancel.load(Ordering::Relaxed);
+    let mut put = |left: Vec<f32>, right: Vec<f32>| {
+        if stopped() {
+            return;
+        }
+        let n = left.len();
+        let mut stems: Vec<[Vec<f32>; 2]> =
+            (0..STEMS).map(|_| [vec![0.0; n], vec![0.0; n]]).collect();
+        stems[other] = [left, right];
+        let piece = Separated {
+            stems,
+            separated: false,
+        };
+        if tx.send(Message::Stems(piece)).is_err() {
+            gone.set(true);
+        }
+    };
+    let mut block = Vec::new();
+    loop {
+        block.clear();
+        if source
+            .read_unquantized(&mut block)
+            .map_err(|e| e.to_string())?
+            == 0
+        {
+            break;
+        }
+        feed.push(&block, channels, &mut put);
+        if stopped() {
+            return Ok(());
+        }
+    }
+    read.store(true, Ordering::Relaxed);
+    feed.finish(&mut put);
     Ok(())
 }
 

@@ -1,6 +1,7 @@
-//! The next track's stems read along a transition's time map
-//! ([`Warping`]): at a changing speed (varispeed), or stretched in time with
-//! the pitch kept.
+//! Frames read along a time map ([`Warping`]): at a changing speed
+//! (varispeed), or stretched in time with the pitch kept. Any number of
+//! interleaved channels at the stems' rate: a transition's stereo stem mix,
+//! or a head's four stereo stems read along its map ([`super::lanes`]).
 
 use std::sync::Arc;
 
@@ -9,15 +10,26 @@ use crate::stretch::Stretcher;
 use crate::transition::TempoMode;
 use crate::warp::{TimeMap, VarResampler};
 
-/// How B's stems follow the time map.
+/// How the frames follow the time map.
 enum Reader {
     /// Read at a changing speed: faster is higher (varispeed).
     Speed(VarResampler),
     /// Stretched in time, the pitch kept: one stretcher a channel, their
-    /// speed steered so their position follows the map, what one has made
-    /// ahead of the other, and the input frames still to drop before the
-    /// map's first position (the stretchers start there).
-    Stretch(Box<[Stretcher; 2]>, [Vec<f64>; 2], usize),
+    /// speed steered so their position follows the map (they all go at
+    /// the same speed, so their frames stay on the same instants).
+    Stretch(Box<Stretch>),
+}
+
+/// The stretchers of [`Reader::Stretch`].
+struct Stretch {
+    channels: Vec<Stretcher>,
+    /// What one has made ahead of the others.
+    ahead: Vec<Vec<f64>>,
+    /// The input frames still to drop before the map's first position
+    /// (the stretchers start there).
+    skip: usize,
+    /// One channel's input, taken out of the interleaved frames.
+    channel: Vec<f64>,
 }
 
 /// Seconds over which a stretcher's position is steered back onto the map.
@@ -26,60 +38,79 @@ const STEER: f64 = 0.25;
 /// The most the steering changes the map's speed by.
 const STEER_LIMIT: f64 = 0.05;
 
-/// B's stems read along the time map.
+/// Frames read along a time map.
 pub(super) struct Warping {
     map: Arc<TimeMap>,
-    /// A's time at B's first output frame.
+    /// The map's time at the first frame read.
     a0: f64,
-    /// B's time at its stems' first frame.
+    /// The time the map reads at the input's first frame.
     b_origin: f64,
+    channels: usize,
     reader: Reader,
-    /// The stems have all been read.
+    /// The input has all been pushed.
     ended: bool,
 }
 
 impl Warping {
-    /// B read along `map` from A's time `a0`, its stems starting at B's
-    /// time `b_origin`, by `tempo`.
-    pub(super) fn new(map: Arc<TimeMap>, a0: f64, b_origin: f64, tempo: TempoMode) -> Warping {
+    /// `channels` interleaved channels read along `map` from its time
+    /// `a0`, their input starting at the map's read time `b_origin`, by
+    /// `tempo`.
+    pub(super) fn new(
+        map: Arc<TimeMap>,
+        a0: f64,
+        b_origin: f64,
+        tempo: TempoMode,
+        channels: usize,
+    ) -> Warping {
+        let channels = channels.max(1);
         let reader = match tempo {
-            TempoMode::Varispeed => Reader::Speed(VarResampler::new(2)),
+            TempoMode::Varispeed => Reader::Speed(VarResampler::new(channels)),
             TempoMode::Stretch => {
                 let speed = map.speed(a0);
-                let mut pair = [Stretcher::new(RATE), Stretcher::new(RATE)];
-                for s in &mut pair {
-                    s.set_speed(speed);
-                }
+                let stretchers = (0..channels)
+                    .map(|_| {
+                        let mut s = Stretcher::new(RATE);
+                        s.set_speed(speed);
+                        s
+                    })
+                    .collect();
                 let skip = ((map.at(a0) - b_origin) * f64::from(RATE)).round().max(0.0);
-                Reader::Stretch(Box::new(pair), [Vec::new(), Vec::new()], skip as usize)
+                Reader::Stretch(Box::new(Stretch {
+                    channels: stretchers,
+                    ahead: vec![Vec::new(); channels],
+                    skip: skip as usize,
+                    channel: Vec::new(),
+                }))
             }
         };
         Warping {
             map,
             a0,
             b_origin,
+            channels,
             reader,
             ended: false,
         }
     }
 
-    /// Reads `stems` (interleaved stereo at the stems' rate) along the map
-    /// and replaces them with what was read.
-    pub(super) fn read(&mut self, stems: &mut Vec<f64>) {
+    /// Reads `frames` (interleaved, at the stems' rate) along the map and
+    /// replaces them with what was read.
+    pub(super) fn read(&mut self, frames: &mut Vec<f64>) {
         let Warping {
             map,
             a0,
             b_origin,
+            channels,
             reader,
             ended,
         } = self;
-        let rate = f64::from(RATE);
+        let (rate, ch) = (f64::from(RATE), *channels);
         let position = |k: u64| (map.at(*a0 + k as f64 / rate) - *b_origin) * rate;
         match reader {
             Reader::Speed(reader) => {
-                reader.push(stems);
-                stems.clear();
-                let frames = if *ended {
+                reader.push(frames);
+                frames.clear();
+                let n = if *ended {
                     // Up to the end of the input, then nothing more.
                     let taken = reader.taken() as f64;
                     let mut n = 0usize;
@@ -90,37 +121,38 @@ impl Warping {
                 } else {
                     usize::MAX
                 };
-                reader.pull(stems, frames, position);
+                reader.pull(frames, n, position);
             }
-            Reader::Stretch(pair, ahead, skip) => {
+            Reader::Stretch(s) => {
                 // The stretchers start at the map's first position.
-                let dropped = (*skip).min(stems.len() / 2);
-                stems.drain(..2 * dropped);
-                *skip -= dropped;
-                let skipped = ((position(0)).round().max(0.0)) as usize;
-                for (c, s) in pair.iter_mut().enumerate() {
-                    let channel: Vec<f64> = stems.iter().skip(c).step_by(2).copied().collect();
-                    s.push(&channel);
+                let dropped = s.skip.min(frames.len() / ch);
+                frames.drain(..ch * dropped);
+                s.skip -= dropped;
+                let skipped = position(0).round().max(0.0) as usize;
+                for (c, stretcher) in s.channels.iter_mut().enumerate() {
+                    s.channel.clear();
+                    s.channel.extend(frames.iter().skip(c).step_by(ch).copied());
+                    stretcher.push(&s.channel);
                     if *ended {
-                        s.finish();
+                        stretcher.finish();
                     }
                 }
-                stems.clear();
+                frames.clear();
                 // Steer: the map's speed here, and the way back onto it.
-                let k = pair[0].output_position();
-                let off = position(k) - skipped as f64 - pair[0].input_position();
+                let k = s.channels[0].output_position();
+                let off = position(k) - skipped as f64 - s.channels[0].input_position();
                 let speed = map.speed(*a0 + k as f64 / rate)
                     * (1.0 + (off / (STEER * rate)).clamp(-STEER_LIMIT, STEER_LIMIT));
-                for (s, carry) in pair.iter_mut().zip(ahead.iter_mut()) {
-                    s.set_speed(speed);
-                    s.pull(carry, usize::MAX >> 1);
+                for (stretcher, carry) in s.channels.iter_mut().zip(s.ahead.iter_mut()) {
+                    stretcher.set_speed(speed);
+                    stretcher.pull(carry, usize::MAX >> 1);
                 }
-                let n = ahead[0].len().min(ahead[1].len());
-                stems.reserve(2 * n);
+                let n = s.ahead.iter().map(Vec::len).min().unwrap_or(0);
+                frames.reserve(ch * n);
                 for i in 0..n {
-                    stems.extend([ahead[0][i], ahead[1][i]]);
+                    frames.extend(s.ahead.iter().map(|carry| carry[i]));
                 }
-                for carry in ahead.iter_mut() {
+                for carry in &mut s.ahead {
                     carry.drain(..n);
                 }
             }
@@ -132,11 +164,65 @@ impl Warping {
         &self.map
     }
 
-    /// The stems have ended.
+    /// The input has ended.
     pub(super) fn end(&mut self) {
         self.ended = true;
         if let Reader::Speed(reader) = &mut self.reader {
             reader.end();
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Instant;
+
+    use super::*;
+
+    /// What reading four stereo stems (8 channels at the stems' rate) along
+    /// a map costs, both ways, in the stem run's pieces of 4096 frames.
+    /// Release builds only; the numbers are printed (`PERFORMANCE.md` has
+    /// them), and each way must keep at least twice ahead of real time.
+    #[test]
+    fn eight_channels_keep_ahead_of_real_time() {
+        if cfg!(debug_assertions) {
+            println!("speed is measured in release builds only");
+            return;
+        }
+        let (channels, seconds) = (8usize, 8.0);
+        let frames = (f64::from(RATE) * seconds) as usize;
+        let input: Vec<f64> = (0..frames * channels)
+            .map(|k| (k as f64 * 0.001).sin() * 4e6)
+            .collect();
+        // Up to 5 % faster and back, as a transition's map goes.
+        let map = Arc::new(TimeMap::from_knots(
+            vec![(1.0, 1.0), (2.0, 2.05), (4.0, 4.15)],
+            vec![1.0, 1.05, 1.05],
+            1.0,
+        ));
+        for tempo in [TempoMode::Varispeed, TempoMode::Stretch] {
+            let mut warping = Warping::new(Arc::clone(&map), 0.0, 0.0, tempo, channels);
+            let (mut made, mut piece) = (0usize, Vec::new());
+            let start = Instant::now();
+            for chunk in input.chunks(4096 * channels) {
+                piece.clear();
+                piece.extend_from_slice(chunk);
+                warping.read(&mut piece);
+                made += piece.len() / channels;
+            }
+            warping.end();
+            piece.clear();
+            warping.read(&mut piece);
+            made += piece.len() / channels;
+            let took = start.elapsed().as_secs_f64();
+            let realtime = made as f64 / f64::from(RATE) / took;
+            println!(
+                "8 ch at 44100 along a map, {tempo:?}: {:>6.2} M frames/s, {realtime:>6.1}x real time ({:.1} % of a core)",
+                made as f64 / took / 1e6,
+                100.0 / realtime,
+            );
+            assert!(made > frames / 2, "{tempo:?}: {made} frames made");
+            assert!(realtime >= 2.0, "{tempo:?}: only {realtime:.1}x real time");
         }
     }
 }
