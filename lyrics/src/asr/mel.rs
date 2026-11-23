@@ -70,6 +70,61 @@ pub fn frames_of(samples: usize) -> usize {
     samples / HOP
 }
 
+/// What every voice's features are made with, made once: the real DFT as a
+/// table (cos and sin of each bin at each sample, windowed) and the
+/// filters.
+struct Tables {
+    cos: Vec<f32>,
+    sin: Vec<f32>,
+    filters: Vec<f32>,
+}
+
+fn tables() -> &'static Tables {
+    static TABLES: std::sync::OnceLock<Tables> = std::sync::OnceLock::new();
+    TABLES.get_or_init(|| {
+        let window: Vec<f64> = (0..N_FFT)
+            .map(|n| 0.5 - 0.5 * (2.0 * std::f64::consts::PI * n as f64 / N_FFT as f64).cos())
+            .collect();
+        let mut cos = vec![0.0f32; BINS * N_FFT];
+        let mut sin = vec![0.0f32; BINS * N_FFT];
+        for b in 0..BINS {
+            for n in 0..N_FFT {
+                let a = 2.0 * std::f64::consts::PI * ((b * n) % N_FFT) as f64 / N_FFT as f64;
+                cos[b * N_FFT + n] = (a.cos() * window[n]) as f32;
+                sin[b * N_FFT + n] = (a.sin() * window[n]) as f32;
+            }
+        }
+        Tables {
+            cos,
+            sin,
+            filters: filters(),
+        }
+    })
+}
+
+/// The features of each of `pieces` ([`features`]): one piece on eight
+/// threads, many on up to eight, each piece on one (the same features).
+pub fn features_of(pieces: &[&[f32]]) -> Vec<(Vec<f32>, usize)> {
+    if pieces.len() < 2 {
+        return pieces.iter().map(|p| features(p, 8)).collect();
+    }
+    let workers = std::thread::available_parallelism()
+        .map_or(4, |n| n.get())
+        .min(8);
+    let mut out = vec![(Vec::new(), 0); pieces.len()];
+    let each = pieces.len().div_ceil(workers);
+    std::thread::scope(|s| {
+        for (slots, pieces) in out.chunks_mut(each).zip(pieces.chunks(each)) {
+            s.spawn(move || {
+                for (slot, piece) in slots.iter_mut().zip(pieces) {
+                    *slot = features(piece, 1);
+                }
+            });
+        }
+    });
+    out
+}
+
 /// The log-mel features of `voice` (16 kHz mono), `[MELS][frames]`, and
 /// the frames.
 pub fn features(voice: &[f32], threads: usize) -> (Vec<f32>, usize) {
@@ -95,20 +150,7 @@ pub fn features(voice: &[f32], threads: usize) -> (Vec<f32>, usize) {
         }
         voice[i as usize]
     };
-    let window: Vec<f64> = (0..N_FFT)
-        .map(|n| 0.5 - 0.5 * (2.0 * std::f64::consts::PI * n as f64 / N_FFT as f64).cos())
-        .collect();
-    // The real DFT as a table: cos and sin of each bin at each sample.
-    let mut cos = vec![0.0f32; BINS * N_FFT];
-    let mut sin = vec![0.0f32; BINS * N_FFT];
-    for b in 0..BINS {
-        for n in 0..N_FFT {
-            let a = 2.0 * std::f64::consts::PI * ((b * n) % N_FFT) as f64 / N_FFT as f64;
-            cos[b * N_FFT + n] = (a.cos() * window[n]) as f32;
-            sin[b * N_FFT + n] = (a.sin() * window[n]) as f32;
-        }
-    }
-    let filters = filters();
+    let Tables { cos, sin, filters } = tables();
     // Frame-major first: [frame][mel].
     let mut logs = vec![0.0f32; frames * MELS];
     par_rows(&mut logs, MELS, threads, |t, row| {
@@ -172,5 +214,20 @@ mod tests {
         let top = f.iter().copied().fold(f32::MIN, f32::max);
         let low = f.iter().copied().fold(f32::MAX, f32::min);
         assert!(top - low <= 2.0 + 1e-6, "held within 8 (2 after scaling)");
+    }
+
+    #[test]
+    fn many_pieces_get_the_features_each_gets_alone() {
+        let pieces: Vec<Vec<f32>> = (0..5)
+            .map(|k| {
+                (0..8_000 + 1_000 * k)
+                    .map(|i| (i as f32 * (0.03 + 0.01 * k as f32)).sin() * 0.2)
+                    .collect()
+            })
+            .collect();
+        let all: Vec<&[f32]> = pieces.iter().map(|p| &p[..]).collect();
+        for (piece, got) in pieces.iter().zip(features_of(&all)) {
+            assert_eq!(got, features(piece, 8));
+        }
     }
 }

@@ -99,24 +99,45 @@ a half-precision scale and offset a group), about 0.5 GB on the GPU
 against 1.9 GB as the checkpoint holds them. The log-mels come from the
 processor.
 - The encoder runs over the whole voice in one list of dispatches: the
-  three convolutions as patches through a 4-bit `qa_matmul` (four pieces
-  of a second at a time), the steps placed with their positions, and 18
-  layers with attention inside windows of 8 s.
+  three convolutions as patches through a 4-bit `qa_matmul` (tiles of
+  128 × 64; four pieces of a second at a time), the steps placed with their
+  positions, and 18 layers with attention inside windows of 8 s.
 - The decoder runs the prompt in one pass, filling a cache of keys and
   values.
-- Then it writes a token a step: a 4-bit `qa_matvec` for each matrix, the
-  attention over the cache split into chunks of 128 positions and put
-  together, and the next token chosen on the GPU (`qa_argmax`). Steps go
-  eight at a time between reads.
+- Then it writes a token a step, in five dispatches a layer
+  (`fused.wgsl`): the row normed through its queries, key and value
+  (`qa_rows`, a few rows through a 4-bit matrix); those normed, turned,
+  into the cache and attending in chunks of 128 positions
+  (`qa_dec_attend`); the chunks put together through the output matrix and
+  added to the row; the row normed through gate and up to their product;
+  and that through the down matrix, added to the row. Then the last norm,
+  the head (each workgroup's largest logit with it), and the next token
+  with its embedding (`qa_argmax_embed`): 143 dispatches a step, where a
+  kernel for each step of the arithmetic took 340. Each kernel sums in the
+  order those did, so the tokens are theirs. Steps go eight at a time
+  between reads (four for pieces heard together).
+- Pieces of the same length are heard together (`GpuAsr::tokens_of`): a
+  voice's 3 s glimpses 16 at a time, the encoder and prompt over all of
+  them, then the decoder a row each until every one has ended. A row's
+  sums do not depend on the rows with it, so each piece gets the tokens it
+  gets alone; one that has not ended in the room the pieces together have
+  (49 tokens) is heard again on its own. The parts of a transcript differ
+  in length and are heard one at a time.
+- The kernels take 24 KB of workgroup memory (`qa_matmul`'s tiles): a GPU
+  with only 16 KB has no recogniser.
 
 The voice is heard in parts of at most 30 s, each cut at the quietest moment from 20 s on (jodel_lyrics::asr::parts_of), each on its own. In one pass over minutes the decoder loops (oh oh oh… up to its limit) or stops early. A part's tokens also stop when the last 32 repeat a cycle of four or fewer (loop_start). Each part keeps its start and end.
 
 Each group's scale and offset are fitted by least squares over a spread of scales around its range, as llama.cpp's k-quants do. That halves the words changed against full precision on test clips (52 % to 24 %, most of it the loops of non-English clips). JODEL_ASR_8BIT=enc,conv,proj,embed,head,dec (any of them) holds those matrices at 8 bits instead (9 u32s a group). All at 8 bits changes 2.5 % of the words, as the CPU's 8-bit rounding does.
 
 On an RTX 5080:
-- **Speed:** a four-minute voice takes about 4 s (a 30 s part: 0.15 s for the
-  encoder and prompt, then about 7 ms a token). The CPU's version takes about
-  13 s for 20 s of voice.
+- **Speed:** a 30 s part takes 0.12 s for the encoder and prompt, then
+  3.5 ms a token (7.5 ms with a kernel for each step of the arithmetic). A
+  glimpse takes 20 ms, heard 16 at a time (150 ms one at a time; 25 ms 8
+  at a time): 1.9 to 4.8 s of glimpses for a song of 2.5 to 9 minutes,
+  where they took 15 to 36 s. With the separator running beside it, 39 ms
+  a glimpse (270 ms one at a time). The keys and values of 16 glimpses
+  take 390 MB. The CPU's version takes about 13 s for 20 s of voice.
 - **Start:** from the packed file it starts in 1.5 s
   (`jodel_lyrics::asr::packed`, written by `asr_pack` in 17 s; 491 MB, the tied
   head kept once). From the checkpoint it takes 13 s.
@@ -128,7 +149,9 @@ On an RTX 5080:
 - **Accuracy:** the encoder's output matches the CPU's, with the weights
   rounded the same way, to 1e-5. A 20 s clip writes the official model's
   tokens exactly.
-- **Timing output:** `JODEL_ASR_TIMES=1` prints the time of each part.
+- **Timing output:** `JODEL_ASR_TIMES=1` prints the time of each run (a
+  part, or glimpses heard together): its encoder and prompt, its steps, and
+  their dispatches and submissions a step.
 
 ## Stem playback
 

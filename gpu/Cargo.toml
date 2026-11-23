@@ -15,5 +15,8 @@ wgpu = { version = "30.0.2", default-features = false, features = ["std", "parki
 
 [dev-dependencies]
 hound = "3.5"
+# The recogniser's kernels checked through Metal's and DirectX's writers on any
+# machine (wgpu's own naga).
+naga = { version = "30.0.2", features = ["wgsl-in", "msl-out", "hlsl-out"] }
 jodel-output = { path = "../output" }
 jodel-playback = { path = "../playback" }

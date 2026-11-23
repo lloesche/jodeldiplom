@@ -62,6 +62,16 @@ pub const LONGEST_WAIT: Duration = Duration::from_secs(1);
 
 /// Runs of work that does not rest under way now.
 static LIVE: AtomicU32 = AtomicU32::new(0);
+thread_local! {
+    /// Submissions [`dispatch`] has made on this thread, for traces.
+    static SUBMITTED: Cell<u64> = const { Cell::new(0) };
+}
+
+/// The submissions of work the calling thread has made through this
+/// module so far, for traces.
+pub(crate) fn submissions() -> u64 {
+    SUBMITTED.with(Cell::get)
+}
 
 /// Counts a run of work that does not rest while it lives.
 struct Live;
@@ -301,6 +311,7 @@ pub(crate) fn dispatch<K: Copy + Eq + Hash>(
                 pass.dispatch_workgroups(x, y, z);
             }
         }
+        SUBMITTED.with(|s| s.set(s.get() + 1));
         if last {
             finish(&mut encoder);
             queue.submit([encoder.finish()]);

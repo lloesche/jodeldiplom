@@ -1251,6 +1251,7 @@ dependencies = [
  "jodel-output",
  "jodel-playback",
  "jodel-rhythm",
+ "naga",
  "pollster",
  "wgpu",
 ]

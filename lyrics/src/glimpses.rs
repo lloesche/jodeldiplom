@@ -69,18 +69,42 @@ pub fn hear_glimpses(
     voice: &[f32],
     mut hear: impl FnMut(&[f32]) -> Result<String, String>,
 ) -> Result<Vec<Part>, String> {
+    hear_glimpses_at_once(voice, |pieces| pieces.iter().map(|p| hear(p)).collect())
+}
+
+/// [`hear_glimpses`] with the glimpses where the voice is heard all given
+/// to `hear` at once (in order; it gives each one's words), for a
+/// recogniser that hears many together.
+pub fn hear_glimpses_at_once(
+    voice: &[f32],
+    hear: impl FnOnce(&[&[f32]]) -> Result<Vec<String>, String>,
+) -> Result<Vec<Part>, String> {
     let rate = f64::from(crate::VOCALS_RATE);
     let sung = crate::spread::vocal_stretches(voice);
     let mut out = Vec::new();
+    let mut pieces = Vec::new();
     for (start, end) in glimpses_of(voice.len() as f64 / rate) {
-        let from = ((start * rate) as usize).min(voice.len());
-        let to = ((end * rate) as usize).min(voice.len());
-        let text = if sung.iter().any(|&(a, b)| a < end && start < b) {
-            hear(&voice[from..to])?
-        } else {
-            String::new()
-        };
-        out.push(Part { start, end, text });
+        if sung.iter().any(|&(a, b)| a < end && start < b) {
+            let from = ((start * rate) as usize).min(voice.len());
+            let to = ((end * rate) as usize).min(voice.len());
+            pieces.push((out.len(), &voice[from..to]));
+        }
+        out.push(Part {
+            start,
+            end,
+            text: String::new(),
+        });
+    }
+    let heard = hear(&pieces.iter().map(|p| p.1).collect::<Vec<_>>())?;
+    if heard.len() != pieces.len() {
+        return Err(format!(
+            "{} glimpses heard of {}",
+            heard.len(),
+            pieces.len()
+        ));
+    }
+    for ((at, _), text) in pieces.into_iter().zip(heard) {
+        out[at].text = text;
     }
     Ok(out)
 }
