@@ -28,7 +28,10 @@ pub enum SimClock {
     /// pads with silence and counts an underrun, exactly as a device would.
     Manual,
     /// A thread plays one period (the request's `period`) every period of
-    /// wall-clock time, like a device.
+    /// wall-clock time, like a device. Woken late (its host ran it late),
+    /// it plays the periods owed from what is queued, and the time past
+    /// that is lost, as if the device had stalled with its host: what the
+    /// writer had no chance to write is not heard as silence.
     Realtime,
     /// A thread plays what is written, no faster than wall-clock time (a
     /// period every period at most, from the first frame), but only what
@@ -127,24 +130,54 @@ struct SimDriver {
     thread: Option<JoinHandle<()>>,
 }
 
+/// The longest sleep of a simulated device waiting for its next period.
+/// One sleep for the whole wait can overshoot it by several periods where
+/// timers are coalesced (20–70 ms for 10 ms on a macOS VM, where a 1 ms
+/// sleep mostly overshoots by a few): the device would keep wall-clock
+/// time only in bursts of the periods owed.
+const SLEEP_STEP: Duration = Duration::from_millis(1);
+
+/// Sleeps until `until`, in steps of [`SLEEP_STEP`] at most.
+fn sleep_until(until: Instant) {
+    loop {
+        let now = Instant::now();
+        if now >= until {
+            return;
+        }
+        std::thread::sleep((until - now).min(SLEEP_STEP));
+    }
+}
+
 impl SimDriver {
     fn spawn_realtime(&mut self) {
         let device = self.device.clone();
         let period_frames = self.period;
         let period = device.shared.format.frames_to_duration(period_frames);
         self.thread = Some(std::thread::spawn(move || {
+            let format = device.shared.format;
             let mut next = Instant::now();
             while !device.stop.load(Ordering::SeqCst) {
                 next += period;
                 if device.running.load(Ordering::SeqCst) {
                     device.play(period_frames, false);
+                    // Periods owed by a late wake (the host stalled it, 40–
+                    // 90 ms on a macOS VM): played from what is queued, as
+                    // fast as it goes, and the time past that is lost. A
+                    // writer has no chance to fill the ring in such a
+                    // burst, so its silence would be the host's, not the
+                    // writer's.
+                    while next <= Instant::now() {
+                        let played = device.play(period_frames, true);
+                        if played < period_frames {
+                            next = Instant::now() + format.frames_to_duration(played);
+                            break;
+                        }
+                        next += period;
+                    }
                 } else {
                     next = Instant::now() + period;
                 }
-                let now = Instant::now();
-                if next > now {
-                    std::thread::sleep(next - now);
-                }
+                sleep_until(next);
             }
         }));
     }
