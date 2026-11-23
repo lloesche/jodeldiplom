@@ -839,15 +839,15 @@ fn sung_to_the_end(state: &mut State) {
     let Some(path) = singing.song().map(Path::to_path_buf) else {
         return;
     };
-    if !state.config.karaoke_game || singing.scored_words == 0 {
+    if !state.config.karaoke_game || singing.tally.scored_words == 0 {
         return;
     }
     let (points, hit, half, words, streak, level) = (
-        singing.score,
-        singing.hit_words,
-        singing.half_words,
-        singing.scored_words,
-        singing.best_streak,
+        singing.tally.score,
+        singing.tally.hit_words,
+        singing.tally.half_words,
+        singing.tally.scored_words,
+        singing.tally.best_streak,
         singing.level,
     );
     let key = (path.display().to_string(), level);

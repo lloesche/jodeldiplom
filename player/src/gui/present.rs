@@ -134,8 +134,9 @@ struct Painter {
     uniforms: wgpu::Buffer,
     /// What the pass reads: made again when a texture is.
     bind: Option<wgpu::BindGroup>,
-    /// Karaoke mode's stage, drawn over it all.
+    /// Karaoke mode's stage, drawn over it all, and its bursts over that.
     stage: super::stage_gpu::StagePass,
+    particles: super::particles::ParticlePass,
 }
 
 /// An adapter and a device opened on it.
@@ -243,6 +244,7 @@ impl Painter {
         });
         let (tiles, tiles_view) = tiles_texture(&device, view_format, (1, 1, 1));
         let stage = super::stage_gpu::StagePass::new(&device, format);
+        let particles = super::particles::ParticlePass::new(&device, format);
         Painter {
             device,
             queue,
@@ -256,6 +258,7 @@ impl Painter {
             uniforms,
             bind: None,
             stage,
+            particles,
         }
     }
 
@@ -263,6 +266,7 @@ impl Painter {
     /// of `size`.
     fn set_stage(&mut self, frame: Option<&super::stage_gpu::StageFrame>, size: (u32, u32)) {
         self.stage.set(&self.device, &self.queue, frame, size);
+        self.particles.set(&self.device, &self.queue, frame, size);
     }
 
     /// The layer for the next frame (`None`: none): its new tiles sent
@@ -501,6 +505,7 @@ impl Painter {
             pass.set_bind_group(0, &bind, &[]);
             pass.draw(0..3, 0..1);
             self.stage.draw(&mut pass);
+            self.particles.draw(&mut pass);
         }
         then(&mut encoder);
         self.queue.submit([encoder.finish()]);

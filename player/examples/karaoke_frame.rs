@@ -92,14 +92,17 @@ fn main() {
         }
         println!(
             "score {} ({} of {} words, {} half)",
-            singing.score, singing.hit_words, singing.scored_words, singing.half_words
+            singing.tally.score,
+            singing.tally.hit_words,
+            singing.tally.scored_words,
+            singing.tally.half_words
         );
     }
     for l in lines.iter_mut().filter(|l| l.kind == LineKind::Current) {
         if let Some(i) = l.id {
             let notes = singing.lines[i].clone();
             if sing.is_some() {
-                sung_on(&singing, true, i, &notes, t, l);
+                sung_on(&singing, (true, 0.0), i, &notes, t, l);
             }
             l.notes = notes.notes;
         }
@@ -156,9 +159,9 @@ fn main() {
         before: Vec::new(),
         moved: 1.0,
         score: sing.map(|_| Score {
-            points: singing.score,
+            points: singing.tally.score,
             level,
-            streak: singing.streak,
+            streak: singing.tally.streak,
         }),
     };
     // The window, at 1600 × 900.
@@ -261,9 +264,9 @@ fn gpu_frames(
             },
             moved,
             score: sing.map(|_| Score {
-                points: singing.score,
+                points: singing.tally.score,
                 level,
-                streak: singing.streak,
+                streak: singing.tally.streak,
             }),
         };
         if moved >= 1.0 {
@@ -290,6 +293,7 @@ fn gpu_frames(
             sung: sung.to_vec(),
             game: true,
             length: Some(melody.cents.len() as f64 / 100.0),
+            late: 0.0,
         };
         let frame = stage.frame(
             &song,
@@ -315,6 +319,10 @@ fn gpu_frames(
     }
     println!(
         "score {} ({} of {} words, {} half, streak {})",
-        singing.score, singing.hit_words, singing.scored_words, singing.half_words, singing.streak
+        singing.tally.score,
+        singing.tally.hit_words,
+        singing.tally.scored_words,
+        singing.tally.half_words,
+        singing.tally.streak
     );
 }

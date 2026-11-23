@@ -35,8 +35,11 @@ use std::sync::Arc;
 use jodel_rhythm::waveform::Melody;
 
 mod judge;
+mod tally;
+mod undo;
 
-pub use judge::{Credit, SungKey, KEY_FRAMES};
+pub use judge::{Credit, KeyStep, SungKey, KEY_FRAMES};
+pub use tally::Tally;
 
 /// How strictly the singing is held to the song's notes.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -513,24 +516,13 @@ pub struct Singing {
     /// for the pitch drawn as sung.
     recent: VecDeque<f64>,
     glide: Option<f64>,
-    /// The words scored so far (of [`Singing::words`]).
-    next_word: usize,
     /// When the last frame (sung or not) was, in the song.
     last: Option<f64>,
-    /// The score.
-    pub score: u32,
-    /// The words hit.
-    pub hit_words: u32,
-    /// The words half hit.
-    pub half_words: u32,
-    /// The words scored (hit or not).
-    pub scored_words: u32,
-    /// The words hit in a row up to now (a half hit keeps it).
-    pub streak: u32,
-    /// The longest streak.
-    pub best_streak: u32,
-    /// The last word scored.
-    pub last_scored: Option<Scored>,
+    /// The scoring so far.
+    pub tally: Tally,
+    /// What each of the last frames did, to be taken back when sought back
+    /// a little ([`Singing::hear`]).
+    undo: undo::Log,
 }
 
 impl Singing {
@@ -630,20 +622,60 @@ impl Singing {
         self.frames.clear();
         self.recent.clear();
         self.glide = None;
-        self.next_word = 0;
         self.last = None;
-        self.score = 0;
-        self.hit_words = 0;
-        self.half_words = 0;
-        self.scored_words = 0;
-        self.streak = 0;
-        self.best_streak = 0;
-        self.last_scored = None;
+        self.tally = Tally::default();
+        self.undo.clear();
+    }
+
+    /// The frames heard on line `l`'s word `w` so far (on its notes, with a
+    /// pitch or not): what the scoring holds its hits against.
+    pub fn noted(&self, l: usize, w: usize) -> u32 {
+        self.frames.get(&(l, w)).map_or(0, |f| f.0)
+    }
+
+    /// When the last frame was, in seconds into the song.
+    pub fn last_heard(&self) -> Option<f64> {
+        self.last
+    }
+
+    /// A frame at `t` coming: from before the last by more than a second
+    /// (the song started again, sought back far), the scoring starts over;
+    /// by less (sought back a little, the delay nudged), what the frames
+    /// from `t` on did is taken back (they are heard again), the score
+    /// before them kept.
+    fn sought(&mut self, t: f64) {
+        if self.last.is_some_and(|last| t < last - 1.0) {
+            self.restart();
+            return;
+        }
+        let from = t - jodel_rhythm::yin::HOP / 2.0;
+        let back = self.undo.take_from(from);
+        let Some(first) = back.last() else {
+            return;
+        };
+        self.tally = first.tally;
+        for u in back {
+            if let Some((word, hit)) = u.word {
+                if let Some(c) = self.frames.get_mut(&word) {
+                    c.0 -= 1;
+                    c.1 -= u32::from(hit == Some(Hit::Full));
+                    c.2 -= u32::from(hit == Some(Hit::Half));
+                }
+            }
+            if let Some(step) = u.key {
+                self.sung_key.undo(step);
+            }
+        }
+
+        let keep = self.heard.partition_point(|h| h.t < from);
+        self.heard.truncate(keep);
+        self.recent.clear();
+        self.glide = None;
     }
 
     /// The multiplier now.
     pub fn multiplier(&self) -> u32 {
-        multiplier(self.streak)
+        multiplier(self.tally.streak)
     }
 
     /// The note sung at `t`: its line and index.
@@ -665,22 +697,29 @@ impl Singing {
     /// A frame of the singer: `cents` (none where nothing is sung) at `t`
     /// seconds into the song. A frame from before the last by more than a
     /// second (the song started again, sought back) starts the scoring
-    /// over.
+    /// over; from before it by less, what the frames from it on did is
+    /// taken back first.
     pub fn hear(&mut self, t: f64, cents: Option<f32>) {
-        if self.last.is_some_and(|last| t < last - 1.0) {
-            self.restart();
-        }
+        self.sought(t);
         self.last = Some(t);
+        let mut undo = undo::Undo {
+            t,
+            word: None,
+            key: None,
+            tally: self.tally,
+        };
         let note = self.note_at(t);
         if let Some((l, k)) = note {
             let n = self.lines[l].notes[k];
             let counts = self.frames.entry((l, n.word)).or_insert((0, 0, 0));
             counts.0 += 1;
+            undo.word = Some(((l, n.word), None));
             if let Some(c) = cents {
                 let c = f64::from(c);
-                self.sung_key.hear(c, n.cents);
+                undo.key = Some(self.sung_key.hear(c, n.cents));
                 let off = self.sung_key.off(self.level, c, n.cents);
                 let hit = self.level.judge(off);
+                undo.word = Some(((l, n.word), hit));
                 match hit {
                     Some(Hit::Full) => counts.1 += 1,
                     Some(Hit::Half) => counts.2 += 1,
@@ -724,46 +763,15 @@ impl Singing {
             self.glide = None;
         }
         // The words over by now, scored.
-        while let Some(&(l, w, end)) = self.words.get(self.next_word) {
+        while let Some(&(l, w, end)) = self.words.get(self.tally.next_word) {
             if end + SCORED_AFTER > t {
                 break;
             }
-            self.next_word += 1;
-            let (noted, hit, half) = self.frames.get(&(l, w)).copied().unwrap_or((0, 0, 0));
-            if noted == 0 {
-                // Not heard at all (sought past): not scored.
-                continue;
-            }
-            self.scored_words += 1;
-            let credit = self
-                .level
-                .credit(f64::from(noted), f64::from(hit), f64::from(half));
-            let got = credit.hit();
-            let base = match got {
-                Some(Hit::Full) => {
-                    self.hit_words += 1;
-                    self.streak += 1;
-                    WORD_POINTS
-                }
-                Some(Hit::Half) => {
-                    self.half_words += 1;
-                    WORD_POINTS / 2
-                }
-                None => {
-                    self.streak = 0;
-                    0
-                }
-            };
-            self.best_streak = self.best_streak.max(self.streak);
-            let points = base * self.multiplier();
-            self.score += points;
-            self.last_scored = Some(Scored {
-                end,
-                hit: got,
-                points,
-                streak: self.streak,
-            });
+            self.tally.next_word += 1;
+            let counts = self.frames.get(&(l, w)).copied().unwrap_or((0, 0, 0));
+            self.tally.score_word(self.level, counts, end);
         }
+        self.undo.push(undo);
     }
 
     /// The words with notes in the song.

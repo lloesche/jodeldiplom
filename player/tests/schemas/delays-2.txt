@@ -1,0 +1,4 @@
+jodeldiplom-cache delays 2 by jodeldiplom x
+-	30	Speakers	Built-in mic
+140	-	Speakers	USB mic
+152	-20	{0.0.0.00000000}.{out}	{0.0.1.00000000}.{mic}

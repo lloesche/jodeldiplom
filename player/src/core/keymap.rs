@@ -1277,7 +1277,7 @@ pub const KEYMAP: &[Binding] = &[
     ),
     b(Context::Karaoke, &[Key::ch('-')], Op::KeyDown, "the key a semitone down (the tempo kept; not the drums)"),
     b(Context::Karaoke, &[Key::ch('+'), Key::ch('=')], Op::KeyUp, "the key a semitone up"),
-    b(Context::Karaoke, &[Key::ch('0')], Op::KeyReset, "the song's own key"),
+    b(Context::Karaoke, &[Key::ch('0')], Op::KeyReset, "the song's own key (the Delay row at hand: not nudged)"),
     // Syncing.
     b(
         Context::Sync,

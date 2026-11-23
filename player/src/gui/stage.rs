@@ -14,6 +14,7 @@
 use std::collections::HashMap;
 
 use super::karaoke::{BigText, COVER_PAD};
+use super::sparks::noise;
 use super::stage_gpu::{kind, AtlasUpload, Instance, StageFrame, ATLAS};
 use crate::core::singing::{multiplier, Hit};
 use crate::core::State;
@@ -57,17 +58,6 @@ const ACTIVE: Rgb = [1.0, 0.86, 0.5];
 
 fn rgba(c: Rgb, a: f32) -> [f32; 4] {
     [c[0], c[1], c[2], a]
-}
-
-/// A number from 0 to 1 that looks random, the same for the same `i`.
-fn noise(i: u32) -> f32 {
-    let mut x = i.wrapping_mul(0x9E37_79B9) ^ 0x85EB_CA6B;
-    x ^= x >> 15;
-    x = x.wrapping_mul(0x2C1B_3C6D);
-    x ^= x >> 12;
-    x = x.wrapping_mul(0x297A_2D39);
-    x ^= x >> 15;
-    (x >> 8) as f32 / (1u32 << 24) as f32
 }
 
 /// Text kept in the atlas, shelf by shelf: where each (text, size) is.
@@ -175,7 +165,7 @@ impl Arrow {
 pub struct Stage {
     text: BigText,
     atlas: Atlas,
-    sparks: Vec<Spark>,
+    sparks: std::collections::VecDeque<Spark>,
     arrow: Arrow,
     seed: u32,
     /// Sparks owed to the next frame (a share of one).
@@ -187,6 +177,10 @@ pub struct Stage {
     badge: (u32, f32, f32),
     /// Where the capitals' middle is in text of a size ([`Stage::cap_middle`]).
     caps: HashMap<u32, f32>,
+    /// The song's time at the frame before: what moves goes by the song.
+    before: Option<f64>,
+    /// The words scored bursting, handed to the GPU ([`super::particles`]).
+    sprays: Vec<super::particles::Spray>,
 }
 
 /// What the stage is made from, besides the picture.
@@ -199,6 +193,8 @@ pub struct Song<'a> {
     pub game: bool,
     /// How long the song is, in seconds, where known.
     pub length: Option<f64>,
+    /// How late the voice comes, in seconds: the singing's time is the song's less it.
+    pub late: f64,
 }
 
 impl<'a> Song<'a> {
@@ -224,6 +220,7 @@ impl<'a> Song<'a> {
                 .and_then(|t| t.info.duration())
                 .map(|d| d.as_secs_f64())
                 .filter(|&d| d > 0.0),
+            late: state.karaoke.lag.late,
         }
     }
 }
@@ -480,7 +477,7 @@ impl Stage {
     ) {
         for _ in 0..n {
             if self.sparks.len() >= MOST_SPARKS {
-                self.sparks.remove(0);
+                self.sparks.pop_front();
             }
             let (a, b, c, d, e) = (
                 self.rand(),
@@ -491,7 +488,7 @@ impl Stage {
             );
             let white = self.rand() < 0.3;
             let (f, g, i, j) = (self.rand(), self.rand(), self.rand(), self.rand());
-            self.sparks.push(Spark {
+            self.sparks.push_back(Spark {
                 x: x + (a - 0.5) * size * 0.6,
                 y: y + (b - 0.5) * size * 0.6,
                 vx: (c - 0.65) * reach * 4.0 * spread,
@@ -519,6 +516,9 @@ impl Stage {
         dt: f32,
     ) -> StageFrame {
         let dt = dt.clamp(0.0, 0.1);
+        let clock = crate::core::lag::sung_clock(now, song.late);
+        let before = self.before.replace(now);
+        let song_dt = before.map_or(0.0, |b| (now - b).clamp(0.0, 0.1)) as f32;
         let mut out: Vec<Instance> = Vec::new();
         let lane = Lane::new(area, now);
         let (x, y, w, h) = area;
@@ -623,6 +623,8 @@ impl Stage {
             last_end = t1;
             laid.push((px, tw, t0, t1));
         }
+        let mut pills = super::pop::Pills::new(singing, clock);
+        let mut sprays = Vec::new();
         for (k, &(l, wi, start, end, height)) in words.iter().enumerate() {
             let text = word_text(l, wi);
             let (px, tw, t0, t1) = laid[k];
@@ -638,7 +640,16 @@ impl Stage {
             if fade <= 0.0 {
                 continue;
             }
-            let (body, edge, glow) = if end <= now {
+            // Its bubbles as filled (the game on): the pill pops while one
+            // bursts, the sparkles of those bursting handed to the GPU.
+            let bub = pills.pill(game, l, wi);
+            for &(k, (a, b), at) in &bub.bursting {
+                let span = (across(a), across(b), c.1);
+                sprays.push(super::pop::sparkles(l, k, span, p, at, clock, lane.pps));
+            }
+            let (body, edge, glow) = if bub.burst.is_some() {
+                super::pop::lit(p)
+            } else if end <= now {
                 (rgba(WHITE, 0.07), rgba(WHITE, 0.22), 0.0)
             } else if start <= now {
                 (rgba(WHITE, 0.16), rgba(ACTIVE, 0.95), p * 0.4)
@@ -646,29 +657,16 @@ impl Stage {
                 (rgba(WHITE, 0.12), rgba(WHITE, 0.5), 0.0)
             };
             let faded = |c: [f32; 4]| [c[0], c[1], c[2], c[3] * fade];
-            out.push(pill(
-                c,
-                half,
-                faded(body),
-                faded(edge),
-                glow,
-                (p * 0.05).max(1.2),
-                0.0,
-            ));
+            let outline = (p * 0.05).max(1.2);
+            let mut shape = pill(c, half, faded(body), faded(edge), glow, outline, 0.0);
+            if let Some(at) = bub.burst {
+                super::pop::bursting(&mut shape, at, p);
+            }
+            out.push(shape);
             let mut filled = 0.0f64;
             // Where it was hit, as the time went by under the playhead.
             if game {
-                let mut spans: Vec<(f64, f64, bool)> = Vec::new();
-                for hf in singing.heard_on(l, start, end) {
-                    let Some(hit) = hf.hit else { continue };
-                    let full = hit == Hit::Full;
-                    // A short gap (a frame not heard) bridged.
-                    match spans.last_mut() {
-                        Some(s) if s.2 == full && hf.t - s.1 < 0.06 => s.1 = hf.t + 0.01,
-                        _ => spans.push((hf.t, hf.t + 0.01, full)),
-                    }
-                }
-                for (a, b, full) in spans {
+                for (a, b, full) in bub.spans {
                     filled += b - a;
                     let (top, bottom, g) = if full {
                         (rgba(GOLD_TOP, fade), rgba(GOLD_DEEP, 0.8 * fade), p * 0.35)
@@ -709,8 +707,8 @@ impl Stage {
             .heard
             .iter()
             .rev()
-            .take_while(|h| h.t >= now - behind)
-            .filter(|h| h.t <= now)
+            .take_while(|h| h.t >= clock - behind)
+            .filter(|h| h.t <= clock)
             .collect();
         let mut last_point: Option<((f32, f32), Option<Hit>, f64)> = None;
         for pair in recent.windows(2).rev() {
@@ -773,7 +771,7 @@ impl Stage {
         }
 
         // The singer: their trail, and where they are now.
-        let fresh = last_point.filter(|(_, _, t)| now - t < ARROW_HOLD);
+        let fresh = last_point.filter(|(_, _, t)| clock - t < ARROW_HOLD);
         self.arrow.step(fresh.map(|(p, _, _)| p.1), dt);
         let hitting = if game { fresh.and_then(|f| f.1) } else { None };
         let arrow_color = match hitting {
@@ -808,7 +806,7 @@ impl Stage {
                 Some(Hit::Half) => 80.0,
                 None => 28.0,
             };
-            self.owed += rate * dt;
+            self.owed += rate * song_dt;
             let n = self.owed.floor() as usize;
             self.owed -= n as f32;
             let color = if hitting.is_some() { GOLD } else { CORAL };
@@ -818,34 +816,32 @@ impl Stage {
         }
         // A word scored: a burst where it hit; more as the multiplier
         // goes up.
-        if let Some(scored) = singing.last_scored.filter(|s| Some(s.end) != self.scored) {
+        // Once a word (not again sought back a little), any again started over.
+        let over = before.is_some_and(|b| now < b - 1.0) || singing.heard.is_empty();
+        self.scored = self.scored.filter(|_| !over);
+        let last = singing.tally.last_scored;
+        if let Some(scored) = last.filter(|s| self.scored.is_none_or(|e| s.end > e)) {
             self.scored = Some(scored.end);
             if game && scored.hit == Some(Hit::Full) {
                 let up = multiplier(scored.streak) > multiplier(scored.streak.saturating_sub(1));
                 let at = (lane.x(scored.end).max(x), self.arrow.y);
-                let n = if up { 70 } else { 16 };
-                self.emit(
-                    n,
-                    if up { tip } else { at },
-                    GOLD,
-                    p * 0.65,
-                    if up { 2.5 } else { 1.4 },
-                    p,
-                );
+                let from = if up { tip } else { at };
+                self.sprays
+                    .push(super::pop::scored(from, p, clock, lane.pps, up, scored.end));
                 if up {
                     self.badge.2 = 0.0;
                 }
             }
         }
         for s in &mut self.sparks {
-            s.age += dt;
+            s.age += song_dt;
             // Their own way, and by with the lane.
-            s.x += (s.vx - lane.pps) * dt;
-            s.y += s.vy * dt;
-            let drag = (-2.4 * dt).exp();
+            s.x += (s.vx - lane.pps) * song_dt;
+            s.y += s.vy * song_dt;
+            let drag = (-2.4 * song_dt).exp();
             s.vx *= drag;
             s.vy *= drag;
-            s.turn += s.spin * dt;
+            s.turn += s.spin * song_dt;
         }
         self.sparks.retain(|s| s.age < s.life);
         for s in &self.sparks {
@@ -919,9 +915,9 @@ impl Stage {
                 rgba(GOLD_TOP, a),
                 rgba(GOLD_TOP, a),
             );
-            if game && singing.streak > 0 {
+            if game && singing.tally.streak > 0 {
                 let small = (p * 0.36).round().max(9.0);
-                let streak = format!("{} in a row", singing.streak);
+                let streak = format!("{} in a row", singing.tally.streak);
                 let sw = self.text.measure(&streak, small);
                 self.text(
                     &mut out,
@@ -1101,9 +1097,13 @@ impl Stage {
             );
         }
 
+        self.sprays.retain(|s| s.alive(clock));
+        sprays.extend_from_slice(&self.sprays);
         StageFrame {
             instances: out,
             uploads: std::mem::take(&mut self.atlas.uploads),
+            sprays,
+            clock: clock as f32,
         }
     }
 }

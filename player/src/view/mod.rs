@@ -7,6 +7,7 @@
 //! window leaves their cells empty and paints pixels there after the frame
 //! is drawn. The spectrum's axis labels are cells in both ([`plot`]).
 
+pub mod bubbles;
 pub mod desk;
 pub mod karaoke;
 pub mod lanes;

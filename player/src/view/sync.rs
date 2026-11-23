@@ -17,18 +17,22 @@ use crate::core::sync::{Outcome, CLICKS};
 use crate::core::text::signed_ms;
 use crate::core::State;
 
-/// Where the delay in force comes from as the tab says it, with the nudge
-/// on it where there is one: `from your singing`, `measured · nudged
-/// −20 ms`.
+/// Where the delay in force comes from as the tab says it, with the
+/// singing's correction and the nudge on it where there are: `from your
+/// singing`, `measured · your singing +30 ms · nudged −20 ms`.
 pub fn source_text(state: &State) -> String {
     let lag = &state.karaoke.lag;
-    let nudge = (lag.nudge * 1000.0).round() as i32;
-    let nudged = if nudge == 0 {
+    let corrected = (lag.corrected * 1000.0).round() as i32;
+    let corrected = if corrected == 0 {
         String::new()
     } else {
-        format!(" · nudged {}", signed_ms(nudge))
+        format!(" · your singing {}", signed_ms(corrected))
     };
-    format!("{}{nudged}", lag.source.name())
+    let nudged = match lag.nudge {
+        Some(n) => format!(" · nudged {}", signed_ms((n * 1000.0).round() as i32)),
+        None => String::new(),
+    };
+    format!("{}{corrected}{nudged}", lag.source.name())
 }
 
 /// The keys while a sync shows, for the pane's bottom border: keep only

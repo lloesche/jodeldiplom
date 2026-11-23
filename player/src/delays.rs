@@ -4,7 +4,8 @@
 //! version of the file is read.
 //!
 //! After the header, a line a pair: the delay measured in ms (`-`: none,
-//! only a nudge), the nudge in ms, the output device's id and the
+//! only a nudge), the nudge in ms (`-`: none; version 1 wrote 0 for none,
+//! before a nudge of 0 meant anything), the output device's id and the
 //! microphone's, tab apart.
 
 use std::fmt::Write as _;
@@ -26,7 +27,8 @@ pub fn to_text(kept: &Delays) -> String {
         let measured = d
             .measured_ms
             .map_or_else(|| "-".to_owned(), |m| m.to_string());
-        let _ = writeln!(body, "{measured}\t{}\t{}\t{}", d.nudge_ms, key.0, key.1);
+        let nudge = d.nudge_ms.map_or_else(|| "-".to_owned(), |n| n.to_string());
+        let _ = writeln!(body, "{measured}\t{nudge}\t{}\t{}", key.0, key.1);
     }
     DELAYS.wrap(&body)
 }
@@ -34,13 +36,18 @@ pub fn to_text(kept: &Delays) -> String {
 /// The delays in a file's `text` (every version; lines not read skipped,
 /// a nudge out of its range brought into it).
 pub fn from_text(text: &str) -> Delays {
-    let body = DELAYS.open(text).map_or("", |(_, rest)| rest);
+    let (version, body) = DELAYS.open(text).unwrap_or((0, ""));
     let mut out = Delays::new();
     for line in body.lines() {
         let mut parts = line.splitn(4, '\t');
+        let nudge = |n: &str| match (n, version) {
+            ("-", _) => Some(None),
+            ("0", 1) => Some(None),
+            (n, _) => n.parse::<i32>().ok().map(Some),
+        };
         let (Some(measured), Some(nudge), Some(output), Some(mic)) = (
             parts.next(),
-            parts.next().and_then(|n| n.parse::<i32>().ok()),
+            parts.next().and_then(nudge),
             parts.next(),
             parts.next(),
         ) else {
@@ -57,7 +64,7 @@ pub fn from_text(text: &str) -> Delays {
             (output.to_owned(), mic.to_owned()),
             Delay {
                 measured_ms,
-                nudge_ms: nudge.clamp(NUDGE_LEAST, NUDGE_MOST),
+                nudge_ms: nudge.map(|n| n.clamp(NUDGE_LEAST, NUDGE_MOST)),
             },
         );
     }
@@ -116,14 +123,14 @@ mod tests {
             headset.clone(),
             Delay {
                 measured_ms: Some(152),
-                nudge_ms: -20,
+                nudge_ms: Some(-20),
             },
         );
         kept.insert(
             other_mic.clone(),
             Delay {
                 measured_ms: None,
-                nudge_ms: 30,
+                nudge_ms: Some(30),
             },
         );
         assert_eq!(save_beside(Some(&config), &kept), None);
@@ -136,8 +143,19 @@ mod tests {
         let text = std::fs::read_to_string(dir.join(FILE)).unwrap();
         assert_eq!(from_text(&text.replace("152\t", "x\t")).len(), 1);
         let far = from_text(&text.replace("\t30\t", "\t900\t"));
-        assert_eq!(far[&other_mic].nudge_ms, NUDGE_MOST);
+        assert_eq!(far[&other_mic].nudge_ms, Some(NUDGE_MOST));
         assert!(load(&dir.join("none.txt")).is_empty());
+        // Version 1 wrote 0 for no nudge (before a nudge of 0 meant
+        // anything): read as none; version 2 tells them apart.
+        let v1 = "jodeldiplom-cache delays 1 by x\n120\t0\tout\tmic\n140\t-30\tout\tusb\n";
+        let old = from_text(v1);
+        let pair = |m: &str| ("out".to_owned(), m.to_owned());
+        assert_eq!(old[&pair("mic")].nudge_ms, None);
+        assert_eq!(old[&pair("usb")].nudge_ms, Some(-30));
+        let v2 = "jodeldiplom-cache delays 2 by x\n120\t0\tout\tmic\n120\t-\tout\tusb\n";
+        let new = from_text(v2);
+        assert_eq!(new[&pair("mic")].nudge_ms, Some(0));
+        assert_eq!(new[&pair("usb")].nudge_ms, None);
         assert!(load_beside(None).is_empty() && save_beside(None, &kept).is_none());
         let _ = std::fs::remove_dir_all(&dir);
     }

@@ -156,7 +156,7 @@ fn the_song_sung_scores_every_word_at_every_level() {
         s.prepare(Path::new("a"), &lyrics, &m, 1, level);
         sing(&mut s, |t| Some(melody_at(t)));
         assert_eq!(
-            (s.hit_words, s.scored_words, s.score),
+            (s.tally.hit_words, s.tally.scored_words, s.tally.score),
             (4, 4, 400),
             "{level:?}"
         );
@@ -170,7 +170,7 @@ fn a_fourth_down_counts_on_easy_and_medium_but_not_on_hard() {
         let mut s = Singing::default();
         s.prepare(Path::new("a"), &lyrics, &m, 1, level);
         sing(&mut s, |t| Some(melody_at(t) - 500.0));
-        s.hit_words
+        s.tally.hit_words
     };
     // The key followed from the first frames on: every word.
     assert_eq!(score(Level::Easy), 4);
@@ -180,7 +180,7 @@ fn a_fourth_down_counts_on_easy_and_medium_but_not_on_hard() {
     let mut s = Singing::default();
     s.prepare(Path::new("a"), &lyrics, &m, 1, Level::Hard);
     sing(&mut s, |t| Some(melody_at(t) - 1200.0));
-    assert_eq!(s.hit_words, 4);
+    assert_eq!(s.tally.hit_words, 4);
 }
 
 #[test]
@@ -196,7 +196,7 @@ fn the_shape_is_enough_on_easy_the_steps_on_medium() {
         let mut s = Singing::default();
         s.prepare(Path::new("a"), &lyrics, &m, 1, level);
         sing(&mut s, off);
-        s.hit_words
+        s.tally.hit_words
     };
     assert_eq!(score(Level::Easy), 4);
     assert_eq!(score(Level::Medium), 2);
@@ -215,9 +215,12 @@ fn close_on_medium_scores_half_and_draws_on_the_nearest_semitone() {
         s
     };
     let s = sung(Level::Medium);
-    assert_eq!((s.hit_words, s.half_words, s.score), (3, 1, 350));
+    assert_eq!(
+        (s.tally.hit_words, s.tally.half_words, s.tally.score),
+        (3, 1, 350)
+    );
     // The half hit kept the streak: the first, third and last hit.
-    assert_eq!((s.streak, s.best_streak), (3, 3));
+    assert_eq!((s.tally.streak, s.tally.best_streak), (3, 3));
     // Drawn on the note where it hit, a semitone step off where it half
     // hit.
     let at = |s: &Singing, t: f64| {
@@ -230,11 +233,14 @@ fn close_on_medium_scores_half_and_draws_on_the_nearest_semitone() {
     assert_eq!(at(&s, 1.5), Some((6200.0, Some(Hit::Half))));
     // On easy it all hits, on its notes.
     let s = sung(Level::Easy);
-    assert_eq!((s.hit_words, s.half_words, s.score), (4, 0, 400));
+    assert_eq!(
+        (s.tally.hit_words, s.tally.half_words, s.tally.score),
+        (4, 0, 400)
+    );
     assert_eq!(at(&s, 1.5), Some((6400.0, Some(Hit::Full))));
     // On hard: as sung, no half hits.
     let s = sung(Level::Hard);
-    assert_eq!((s.hit_words, s.half_words), (3, 0));
+    assert_eq!((s.tally.hit_words, s.tally.half_words), (3, 0));
     let (cents, hit) = at(&s, 1.5).unwrap();
     assert!((cents - 6190.0).abs() < 0.01 && hit.is_none(), "{cents}");
 }
@@ -265,7 +271,7 @@ fn each_level_asks_its_own_share_of_a_word() {
         s.prepare(Path::new("a"), &lyrics, &m, 1, level);
         // In tune for the first `share` of each word, then nothing.
         sing(&mut s, |t| (t.fract() < share - 1e-9).then(|| melody_at(t)));
-        s.hit_words
+        s.tally.hit_words
     };
     assert_eq!(hit_words(Level::Easy, 0.15), 4);
     assert_eq!(hit_words(Level::Medium, 0.15), 0);
@@ -312,9 +318,9 @@ fn a_streak_multiplies_the_points_and_a_miss_ends_it() {
     }
     // Words 1-4 at ×1, 5-9 at ×2, 10-12 at ×3, the 13th nothing, the
     // 14th at ×1 again.
-    assert_eq!(s.score, 4 * 100 + 5 * 200 + 3 * 300 + 100);
-    assert_eq!((s.streak, s.best_streak), (1, 12));
-    let last = s.last_scored.unwrap();
+    assert_eq!(s.tally.score, 4 * 100 + 5 * 200 + 3 * 300 + 100);
+    assert_eq!((s.tally.streak, s.tally.best_streak), (1, 12));
+    let last = s.tally.last_scored.unwrap();
     assert_eq!(
         (last.hit, last.points, last.streak),
         (Some(Hit::Full), 100, 1)
@@ -327,10 +333,13 @@ fn silence_scores_nothing_and_singing_again_from_the_start_starts_over() {
     let mut s = Singing::default();
     s.prepare(Path::new("a"), &lyrics, &m, 1, Level::Medium);
     sing(&mut s, |_| None);
-    assert_eq!((s.hit_words, s.scored_words, s.score), (0, 4, 0));
+    assert_eq!(
+        (s.tally.hit_words, s.tally.scored_words, s.tally.score),
+        (0, 4, 0)
+    );
     // From the start again: over.
     sing(&mut s, |t| Some(melody_at(t)));
-    assert_eq!((s.hit_words, s.scored_words), (4, 4));
+    assert_eq!((s.tally.hit_words, s.tally.scored_words), (4, 4));
 }
 
 /// Played two semitones up, the notes are: the song sung in its key no
@@ -345,14 +354,17 @@ fn in_another_key_the_notes_move_and_the_singing_is_held_to_them() {
         s.prepare(Path::new("a"), &lyrics, &m, 1, level);
         assert_eq!(s.word_at(0.5).map(|(_, c)| c), Some(6200.0));
         sing(&mut s, |t| Some(melody_at(t) + 200.0));
-        assert_eq!(s.hit_words, 4, "{level:?}");
+        assert_eq!(s.tally.hit_words, 4, "{level:?}");
     }
     let mut s = Singing::default();
     s.prepare(Path::new("a"), &lyrics, &m, 1, Level::Hard);
     let heights: Vec<f32> = s.lines[0].notes.iter().map(|n| n.height).collect();
     s.set_key(2);
     sing(&mut s, |t| Some(melody_at(t)));
-    assert_eq!(s.hit_words, 0, "the song's own key is two semitones off");
+    assert_eq!(
+        s.tally.hit_words, 0,
+        "the song's own key is two semitones off"
+    );
     let moved: Vec<f32> = s.lines[0].notes.iter().map(|n| n.height).collect();
     assert_eq!(heights, moved);
     assert_eq!(s.lines[0].height(6600.0), s.lines[0].notes[1].height);

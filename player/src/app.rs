@@ -1175,8 +1175,8 @@ impl App {
             return;
         };
         let level = state.config.karaoke_level;
-        // A delay measured needs no estimate.
-        let estimating = crate::core::lag::measured(state).is_none();
+        // Estimated even with a delay measured: the singing corrects it
+        // ([`crate::core::lag::correction`]).
         let karaoke = &mut state.karaoke;
         let (singing, estimate) = (&mut karaoke.singing, &mut karaoke.lag.estimate);
         let (late, source) = (karaoke.lag.late, karaoke.lag.source);
@@ -1230,9 +1230,7 @@ impl App {
                 yin.push(&[x], |cents| {
                     let t = at + i as f64 / rate - centre;
                     singing.hear(t - late, cents);
-                    if estimating {
-                        estimate.hear(singing, t, cents);
-                    }
+                    estimate.hear(singing, t, cents);
                 });
             }
         }

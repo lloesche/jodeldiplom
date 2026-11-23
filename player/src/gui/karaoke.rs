@@ -10,12 +10,11 @@ use image::imageops::{self, FilterType};
 use image::RgbImage;
 
 use super::fonts;
+use super::notes::SungOp;
 use super::raster::{pack, unpack};
 use crate::art::Art;
 use crate::view::colors;
-use crate::view::karaoke::{
-    line_color, KaraokePicture, LineKind, LyricLine, HALF_HIT, HIT, NOTE_AHEAD, SINGER,
-};
+use crate::view::karaoke::{line_color, KaraokePicture, LineKind, LyricLine, HIT};
 
 /// How dark the layer over the blurred cover is (0 clear, 1 black).
 const SHADE: f32 = 0.55;
@@ -126,14 +125,14 @@ fn shade(c: [u8; 3], dark: f32) -> [u8; 3] {
     c.map(|v| (f32::from(v) * (1.0 - dark)).round() as u8)
 }
 
-fn rgb(color: ratatui::style::Color) -> [u8; 3] {
+pub(super) fn rgb(color: ratatui::style::Color) -> [u8; 3] {
     match color {
         ratatui::style::Color::Rgb(r, g, b) => [r, g, b],
         _ => [200, 200, 200],
     }
 }
 
-fn mix(a: [u8; 3], b: [u8; 3], t: f32) -> [u8; 3] {
+pub(super) fn mix(a: [u8; 3], b: [u8; 3], t: f32) -> [u8; 3] {
     let t = t.clamp(0.0, 1.0);
     [0, 1, 2].map(|i| (f32::from(a[i]) * (1.0 - t) + f32::from(b[i]) * t).round() as u8)
 }
@@ -436,9 +435,9 @@ fn gap(px: f32) -> f32 {
 /// size; where the notes go in it (their highest's top and lowest's
 /// bottom, from the text's top), and a note's thickness.
 const NOTES_ROOM: f32 = 1.45;
-const NOTES_TOP: f32 = 1.3;
-const NOTES_BOTTOM: f32 = 2.5;
-const NOTE_THICK: f32 = 0.09;
+pub(super) const NOTES_TOP: f32 = 1.3;
+pub(super) const NOTES_BOTTOM: f32 = 2.5;
+pub(super) const NOTE_THICK: f32 = 0.09;
 
 /// Whether `line` gets room for notes under it: a lyric being sung.
 fn noted(line: &LyricLine) -> bool {
@@ -495,192 +494,6 @@ fn slots(
         .collect()
 }
 
-/// Draws `op`'s notes within `clip`: a bar under the letters each is sung
-/// on, as high as it goes against the line's middle, those sung already
-/// in the notes' colour and those to come darker.
-fn draw_notes(target: &mut Target, op: &TextOp, clip: Rect) {
-    if op.notes.is_empty() || op.alpha <= 0.004 {
-        return;
-    }
-    let (cx, cy, cw, ch) = clip;
-    let x1c = (cx + cw).min(target.width);
-    let y1c = (cy + ch).min(target.height);
-    let thick = (op.px * NOTE_THICK).max(3.0);
-    let (top, bottom) = (op.px * NOTES_TOP, op.px * NOTES_BOTTOM - thick);
-    // A note's top at `height`.
-    let y_of = |height: f32| op.at.1 + bottom - (height + 1.0) / 2.0 * (bottom - top);
-    let sung = rgb(crate::view::lanes::NOTE);
-    let ahead = rgb(NOTE_AHEAD);
-    let hit = rgb(HIT);
-    let half = rgb(HALF_HIT);
-    let put = |target: &mut Target, px: usize, py: usize, color: [u8; 3], alpha: f32| {
-        if px < cx || px >= x1c || py < cy || py >= y1c {
-            return;
-        }
-        let i = py * target.width + px;
-        target.pixels[i] = pack(mix(unpack(target.pixels[i]), color, alpha));
-    };
-    for &(x0, x1, height) in &op.notes {
-        let y = y_of(height);
-        let (x0, x1) = (op.at.0 + x0, op.at.0 + x1);
-        let (px0, px1) = (x0.round().max(0.0) as usize, x1.round().max(0.0) as usize);
-        let (py0, py1) = (
-            y.round().max(0.0) as usize,
-            (y + thick).round().max(0.0) as usize,
-        );
-        for px in px0..px1 {
-            let off = px as f32 - op.at.0;
-            let on = op.hits.iter().find(|h| off >= h.0 && off < h.1);
-            let color = if let Some(&(_, _, full)) = on {
-                if full {
-                    hit
-                } else {
-                    half
-                }
-            } else if (px as f32) < op.fill_x {
-                sung
-            } else {
-                ahead
-            };
-            for py in py0..py1 {
-                put(target, px, py, color, op.alpha);
-            }
-        }
-    }
-    // The singer's pitch: a thin line along their frames (apart where they
-    // were not singing), then a dot where they are now.
-    let singer = rgb(SINGER);
-    let line = (thick * 0.45).max(2.0);
-    for pair in op.trail.windows(2) {
-        let ((xa, ha), (xb, hb)) = (pair[0], pair[1]);
-        if (xb - xa).abs() > op.px * 0.6 {
-            continue;
-        }
-        let (ya, yb) = (y_of(ha) + thick / 2.0, y_of(hb) + thick / 2.0);
-        let steps = ((xb - xa).abs().max((yb - ya).abs()).ceil() as usize).max(1);
-        for k in 0..=steps {
-            let f = k as f32 / steps as f32;
-            let (x, y) = (op.at.0 + xa + f * (xb - xa), ya + f * (yb - ya));
-            let (y0, y1) = (
-                (y - line / 2.0).round() as i64,
-                (y + line / 2.0).round() as i64,
-            );
-            for py in y0..y1 {
-                if py >= 0 && x >= 0.0 {
-                    put(
-                        target,
-                        x.round() as usize,
-                        py as usize,
-                        singer,
-                        op.alpha * 0.9,
-                    );
-                }
-            }
-        }
-    }
-    if let Some((x, height, way)) = op.voice {
-        // Sparkles on, white hot near the singer: gold on the note, coral
-        // off it.
-        let glint = if way == 0 {
-            mix([255, 255, 255], hit, 0.45)
-        } else {
-            mix([255, 255, 255], singer, 0.55)
-        };
-        // The tail: the last of their frames shed sparkles, which drift
-        // back and apart, shrink, twinkle and fade.
-        let n = op.trail.len();
-        for k in 0..SPARKLE_FRAMES.min(n) {
-            let i = n - 1 - k;
-            let r = |j: u32| noise(i as u32 * 5 + j);
-            if r(0) > SPARKLE_SHARE {
-                continue;
-            }
-            let age = k as f32 / SPARKLE_FRAMES as f32;
-            let (tx, th) = op.trail[i];
-            let sx = op.at.0 + tx - age * op.px * (0.3 + 0.6 * r(1));
-            let sy = y_of(th) + thick / 2.0 + (r(2) - 0.5) * age * op.px * 1.1;
-            let size = op.px * (0.34 - 0.22 * age) * (0.55 + 0.6 * r(3));
-            let twinkle = 0.55 + 0.45 * (age * 28.0 + r(4) * std::f32::consts::TAU).sin();
-            let alpha = (1.0 - age).powf(1.4) * twinkle * op.alpha;
-            sparkle(
-                &mut |px, py, a| put(target, px, py, glint, a),
-                sx,
-                sy,
-                size,
-                alpha,
-            );
-        }
-        let (x, y) = (op.at.0 + x, y_of(height) + thick / 2.0);
-        // A glow around the singer now.
-        let glow = thick * 3.0;
-        for py in ((y - glow).floor() as i64).max(0)..(y + glow).ceil() as i64 {
-            for px in ((x - glow).floor() as i64).max(0)..(x + glow).ceil() as i64 {
-                let (dx, dy) = (px as f32 + 0.5 - x, py as f32 + 0.5 - y);
-                let f = 1.0 - (dx * dx + dy * dy).sqrt() / glow;
-                if f > 0.0 {
-                    put(
-                        target,
-                        px as usize,
-                        py as usize,
-                        glint,
-                        op.alpha * 0.45 * f * f,
-                    );
-                }
-            }
-        }
-        let r = thick * 1.2;
-        let (x0, x1) = ((x - r).floor() as i64, (x + r).ceil() as i64);
-        let (y0, y1) = ((y - r).floor() as i64, (y + r).ceil() as i64);
-        for py in y0.max(0)..y1 {
-            for px in x0.max(0)..x1 {
-                let (dx, dy) = (px as f32 + 0.5 - x, py as f32 + 0.5 - y);
-                let cover = (r - (dx * dx + dy * dy).sqrt() + 0.5).clamp(0.0, 1.0);
-                if cover > 0.0 {
-                    put(target, px as usize, py as usize, singer, op.alpha * cover);
-                }
-            }
-        }
-    }
-}
-
-/// The singer's last frames that shed sparkles behind them (0.5 s).
-const SPARKLE_FRAMES: usize = 50;
-/// The share of those frames that shed one.
-const SPARKLE_SHARE: f32 = 0.4;
-
-/// A number from 0 to 1 that looks random, the same for the same `i`.
-fn noise(i: u32) -> f32 {
-    let mut x = i.wrapping_mul(0x9E37_79B9) ^ 0x85EB_CA6B;
-    x ^= x >> 15;
-    x = x.wrapping_mul(0x2C1B_3C6D);
-    x ^= x >> 12;
-    x = x.wrapping_mul(0x297A_2D39);
-    x ^= x >> 15;
-    (x >> 8) as f32 / (1u32 << 24) as f32
-}
-
-/// A four-pointed sparkle at (`x`, `y`), its rays `size` long: a bright
-/// core and two thin crossed rays, each pixel `put` with its cover times
-/// `alpha`.
-fn sparkle(put: &mut dyn FnMut(usize, usize, f32), x: f32, y: f32, size: f32, alpha: f32) {
-    if alpha <= 0.01 || size < 0.5 {
-        return;
-    }
-    let ray = (size * 0.09).max(0.9);
-    for py in ((y - size).floor() as i64).max(0)..(y + size).ceil() as i64 {
-        for px in ((x - size).floor() as i64).max(0)..(x + size).ceil() as i64 {
-            let (dx, dy) = ((px as f32 + 0.5 - x).abs(), (py as f32 + 0.5 - y).abs());
-            let core = (1.0 - (dx * dx + dy * dy).sqrt() / (size * 0.28)).clamp(0.0, 1.0);
-            let across = (1.0 - dy / ray).clamp(0.0, 1.0) * (1.0 - dx / size).clamp(0.0, 1.0);
-            let down = (1.0 - dx / ray).clamp(0.0, 1.0) * (1.0 - dy / size).clamp(0.0, 1.0);
-            let cover = core.max(across.max(down) * 0.9);
-            if cover > 0.0 {
-                put(px as usize, py as usize, alpha * cover);
-            }
-        }
-    }
-}
-
 /// How far into `line` (at `px`, glyphs made at `base`) character `at` is,
 /// in pixels (a fraction through one, through its width).
 fn x_of_char(text: &mut BigText, line: &str, base: f32, px: f32, at: f32) -> f32 {
@@ -708,18 +521,8 @@ struct TextOp {
     fill_x: f32,
     colors: ([u8; 3], [u8; 3]),
     alpha: f32,
-    /// The notes its words are sung on, under it: each one's left and
-    /// right, in pixels from the text's left, and its height (-1 to 1).
-    notes: Vec<(f32, f32, f32)>,
-    /// Where the singer hit them: left and right, in pixels from the
-    /// text's left, and whether fully (else half).
-    hits: Vec<(f32, f32, bool)>,
-    /// The singer's pitch along them: where (pixels from the text's left)
-    /// and how high.
-    trail: Vec<(f32, f32)>,
-    /// The singer now: where, how high, and which way to go (0 on the
-    /// note).
-    voice: Option<(f32, f32, i8)>,
+    /// The notes under it and the singing on them, where it has notes.
+    sung: Option<SungOp>,
 }
 
 impl TextOp {
@@ -732,7 +535,7 @@ impl TextOp {
         let x1 = (self.at.0 + width + pad).min((bounds.0 + bounds.2) as f32);
         let y1 = (self.at.1
             + self.px
-                * if self.notes.is_empty() {
+                * if self.sung.is_none() {
                     1.5
                 } else {
                     NOTES_BOTTOM
@@ -750,9 +553,26 @@ impl TextOp {
 /// What Karaoke mode's picture drew last: each piece of text and the
 /// pixels it may cover. A frame redraws only the pieces that changed (a
 /// line filling as it is sung), with the backdrop put back under them.
+/// And its bubbles bursting, for the GPU to draw over it ([`Layer::sprays`]).
 #[derive(Default)]
 pub struct Layer {
     drawn: Vec<(TextOp, Rect)>,
+    sprays: Vec<super::particles::Spray>,
+}
+
+impl Layer {
+    /// The bubbles bursting in the picture last painted, for the GPU
+    /// ([`super::particles`]): the picture itself has none of it.
+    pub fn sprays(&self) -> &[super::particles::Spray] {
+        &self.sprays
+    }
+}
+
+/// Where `a` and `b` meet, if they do.
+fn intersect(a: Rect, b: Rect) -> Option<Rect> {
+    let (x0, y0) = (a.0.max(b.0), a.1.max(b.1));
+    let (x1, y1) = ((a.0 + a.2).min(b.0 + b.2), (a.1 + a.3).min(b.1 + b.3));
+    (x1 > x0 && y1 > y0).then(|| (x0, y0, x1 - x0, y1 - y0))
 }
 
 fn overlaps(a: Rect, b: Rect) -> bool {
@@ -787,7 +607,8 @@ pub fn paint(
     // them.
     let room = bar.map_or(ah, |(_, by, _, _)| by.saturating_sub(ay));
     let lyrics = (ax, ay, aw, room);
-    let ops = text_ops(text, picture, area, ah);
+    let (ops, sprays) = text_ops(text, picture, area, ah);
+    layer.sprays = sprays;
     let now: Vec<(TextOp, Rect)> = ops
         .into_iter()
         .map(|op| {
@@ -817,11 +638,15 @@ pub fn paint(
     };
     let draw_in = |target: &mut Target, text: &mut BigText, ops: &[(TextOp, Rect)], clip: Rect| {
         for (op, rect) in ops {
-            if overlaps(*rect, clip) {
+            // Only within what the op may cover, so a frame drawn where it
+            // changed is the frame drawn afresh.
+            if let Some(clip) = intersect(*rect, clip) {
                 text.draw(
                     target, &op.text, op.base, op.px, op.at, op.fill_x, op.colors, op.alpha, clip,
                 );
-                draw_notes(target, op, clip);
+                if let Some(sung) = &op.sung {
+                    super::notes::draw(target, sung, op.at, op.px, op.fill_x, op.alpha, clip);
+                }
             }
         }
     };
@@ -874,11 +699,16 @@ pub fn paint(
 
 /// The pieces of text of `picture`: its lines (moving into their places
 /// while they scroll) and the count-in's number.
-fn text_ops(text: &mut BigText, picture: &KaraokePicture, area: Rect, room: usize) -> Vec<TextOp> {
+fn text_ops(
+    text: &mut BigText,
+    picture: &KaraokePicture,
+    area: Rect,
+    room: usize,
+) -> (Vec<TextOp>, Vec<super::particles::Spray>) {
     let (ax, ay, aw, ah) = area;
     let big = (ah as f32 / 11.0).clamp(20.0, 160.0).round();
     let accent = rgb(colors::ACCENT);
-    let mut ops = Vec::new();
+    let (mut ops, mut sprays) = (Vec::new(), Vec::new());
     let mut line_op =
         |text: &mut BigText, line: &LyricLine, base: f32, slot: Slot, rest: [u8; 3], alpha: f32| {
             let alpha = alpha * line.alpha.clamp(0.0, 1.0) as f32;
@@ -897,52 +727,23 @@ fn text_ops(text: &mut BigText, picture: &KaraokePicture, area: Rect, room: usiz
                 slot.px,
                 chars * line.fill.clamp(0.0, 1.0) as f32,
             );
-            let sung = match line.kind {
+            let sung_color = match line.kind {
                 LineKind::Current => accent,
                 _ => rest,
             };
-            let notes = line
-                .notes
-                .iter()
-                .map(|n| {
-                    let x0 = x_of_char(text, &line.text, base, slot.px, n.from);
-                    let x1 = x_of_char(text, &line.text, base, slot.px, n.to);
-                    // A hair apart, note from note.
-                    let gap = (slot.px * 0.04).min((x1 - x0) * 0.2);
-                    (x0 + gap, x1 - gap, n.height)
-                })
-                .collect();
-            let hits = line
-                .hits
-                .iter()
-                .map(|&(a, b, full)| {
-                    (
-                        x_of_char(text, &line.text, base, slot.px, a),
-                        x_of_char(text, &line.text, base, slot.px, b),
-                        full,
-                    )
-                })
-                .collect();
-            let trail = line
-                .trail
-                .iter()
-                .map(|&(at, h)| (x_of_char(text, &line.text, base, slot.px, at), h))
-                .collect();
-            let voice = line
-                .voice
-                .map(|(at, h, way)| (x_of_char(text, &line.text, base, slot.px, at), h, way));
+            let x_of = |text: &mut BigText, at| x_of_char(text, &line.text, base, slot.px, at);
+            let at = (x, slot.y);
+            sprays.extend(super::notes::sprays(line, at, slot.px, |c| x_of(text, c)));
+            let sung = SungOp::of(line, slot.px, |c| x_of(text, c));
             ops.push(TextOp {
                 text: line.text.clone(),
                 base,
                 px: slot.px,
                 at: (x, slot.y),
                 fill_x,
-                colors: (sung, rest),
+                colors: (sung_color, rest),
                 alpha,
-                notes,
-                hits,
-                trail,
-                voice,
+                sung,
             });
         };
     let faded = |kind: LineKind| match kind {
@@ -1022,10 +823,7 @@ fn text_ops(text: &mut BigText, picture: &KaraokePicture, area: Rect, room: usiz
             fill_x: f32::MAX,
             colors: (rgb(HIT), rgb(HIT)),
             alpha: 1.0,
-            notes: Vec::new(),
-            hits: Vec::new(),
-            trail: Vec::new(),
-            voice: None,
+            sung: None,
         });
         let small = (px * 0.45).round().max(10.0);
         let level = match score.multiplier() {
@@ -1044,10 +842,7 @@ fn text_ops(text: &mut BigText, picture: &KaraokePicture, area: Rect, room: usiz
             fill_x: f32::MAX,
             colors: (rgb(colors::DIM), rgb(colors::DIM)),
             alpha: 1.0,
-            notes: Vec::new(),
-            hits: Vec::new(),
-            trail: Vec::new(),
-            voice: None,
+            sung: None,
         });
     }
     // The count-in: its number at the top, above the lines and apart from
@@ -1078,13 +873,10 @@ fn text_ops(text: &mut BigText, picture: &KaraokePicture, area: Rect, room: usiz
             fill_x: f32::MAX,
             colors: (accent, accent),
             alpha: 1.0 - t * t * t,
-            notes: Vec::new(),
-            hits: Vec::new(),
-            trail: Vec::new(),
-            voice: None,
+            sung: None,
         });
     }
-    ops
+    (ops, sprays)
 }
 #[cfg(test)]
 mod tests {
@@ -1126,6 +918,7 @@ mod tests {
             alpha: 1.0,
             notes: Vec::new(),
             hits: Vec::new(),
+            bursts: Vec::new(),
             trail: Vec::new(),
             voice: None,
         }
@@ -1157,7 +950,7 @@ mod tests {
             line: 1,
         });
         let digit_at = |text: &mut BigText, p: KaraokePicture| {
-            let ops = text_ops(text, &p, (0, 0, 640, 360), 360);
+            let ops = text_ops(text, &p, (0, 0, 640, 360), 360).0;
             let digit: Vec<&TextOp> = ops.iter().filter(|o| o.text == "3").collect();
             assert_eq!(digit.len(), 1);
             let at = digit[0].at;
@@ -1174,6 +967,7 @@ mod tests {
                 alpha: 1.0,
                 notes: Vec::new(),
                 hits: Vec::new(),
+                bursts: Vec::new(),
                 trail: Vec::new(),
                 voice: None,
             },

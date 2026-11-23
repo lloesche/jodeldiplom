@@ -1,7 +1,11 @@
 //! A song's singing kept by Karaoke mode (`karaoke_keep`, a
 //! `recordings/sing-*` folder) heard again as the game hears it: its pitch
 //! frame by frame, scored at each level; and what the detection and the
-//! scoring made of it, to tune them on real singing.
+//! scoring made of it, to tune them on real singing: at each level the
+//! words whose note bubbles all end up full and burst
+//! ([`jodeldiplom::core::bubbles`]), and the delay in force as the game
+//! follows it through the song from the one it took then (the estimate
+//! from the singing correcting a measured one).
 //!
 //! ```text
 //! cargo run --release -p jodeldiplom --example sing_replay -- FOLDER [--late SECONDS] [--words] [--auto]
@@ -20,7 +24,9 @@ use std::sync::Arc;
 
 use jodel_rhythm::waveform::Melody;
 use jodel_rhythm::yin::{Yin, WINDOW};
+use jodeldiplom::core::bubbles;
 use jodeldiplom::core::lag::estimate::{self, Estimator};
+use jodeldiplom::core::lag::{self, Lag, Source};
 use jodeldiplom::core::singing::{Hit, Level, Singing};
 use jodeldiplom::keep;
 
@@ -162,8 +168,28 @@ fn main() {
         &melody,
         args.iter().any(|a| a == "--words"),
     );
+    // The delay in force through the song, as the game follows it from the
+    // one it took then.
+    let kept_source = about
+        .lines()
+        .filter_map(|l| l.strip_prefix("late "))
+        .filter_map(|l| l.split_whitespace().nth(2))
+        .next_back()
+        .map_or(Source::Default, |k| match k {
+            "measured" => Source::Measured,
+            "echo" => Source::Echo,
+            "singing" => Source::Singing,
+            _ => Source::Default,
+        });
+    let sung_at = about
+        .lines()
+        .find_map(|l| l.strip_prefix("level "))
+        .and_then(Level::parse)
+        .unwrap_or_default();
+    let raw = pitch(&voice, rate, &marks, &keys, 0.0);
+    follow(&raw, &lyrics, &melody, (kept_late, kept_source), sung_at);
     if args.iter().any(|a| a == "--auto") {
-        auto(&pitch(&voice, rate, &marks, &keys, 0.0), &lyrics, &melody);
+        auto(&raw, &lyrics, &melody);
     }
 }
 
@@ -235,6 +261,7 @@ fn auto(raw: &[Frame], lyrics: &Arc<jodel_lyrics::Lyrics>, melody: &Melody) {
 /// each asks), how far off the notes the pitch was; with `words_too`, each
 /// word on medium.
 fn score(frames: &[Frame], lyrics: &Arc<jodel_lyrics::Lyrics>, melody: &Melody, words_too: bool) {
+    let mut bursts = Vec::new();
     for level in Level::ALL {
         let mut s = Singing::default();
         s.prepare(Path::new("song"), lyrics, melody, 1, level);
@@ -247,10 +274,10 @@ fn score(frames: &[Frame], lyrics: &Arc<jodel_lyrics::Lyrics>, melody: &Melody, 
             "  {:<6} ({:>2.0} % of a word) {:>3} of {} words, {} half: {:.0} % · off its note: median {:.0} cents, 75 % under {:.0}, 90 % under {:.0}",
             level.name(),
             level.share() * 100.0,
-            s.hit_words,
-            s.scored_words,
-            s.half_words,
-            100.0 * f64::from(s.hit_words) / f64::from(s.scored_words.max(1)),
+            s.tally.hit_words,
+            s.tally.scored_words,
+            s.tally.half_words,
+            100.0 * f64::from(s.tally.hit_words) / f64::from(s.tally.scored_words.max(1)),
             quantile(&mut offs.clone(), 0.5),
             quantile(&mut offs.clone(), 0.75),
             quantile(&mut offs, 0.9),
@@ -258,7 +285,82 @@ fn score(frames: &[Frame], lyrics: &Arc<jodel_lyrics::Lyrics>, melody: &Melody, 
         if level == Level::Medium && words_too {
             words(&s, lyrics);
         }
+        let (burst, all) = bubbles::words_full(&s, f64::MAX);
+        bursts.push(format!("{} {burst} of {all}", level.name()));
     }
+    // The words whose bubbles all end up full, and burst.
+    println!("  bursting words: {}", bursts.join(" · "));
+}
+
+/// The delay in force as the game follows it through the song from the one
+/// `kept` (as `about.txt` has it: measured, or else), sung at `level`: the
+/// estimate from `raw` (the frames as heard) correcting it
+/// ([`lag::correction`]), the value in force every 10 s.
+fn follow(
+    raw: &[Frame],
+    lyrics: &Arc<jodel_lyrics::Lyrics>,
+    melody: &Melody,
+    kept: (f64, Source),
+    level: Level,
+) {
+    let mut s = Singing::default();
+    s.prepare(Path::new("song"), lyrics, melody, 1, level);
+    let (base, source) = kept;
+    let (measured, echo) = match source {
+        Source::Measured => (Some(base), None),
+        Source::Echo => (None, Some(base)),
+        _ => (None, None),
+    };
+    // As the game followed it (no nudge then).
+    let known = lag::Known {
+        measured,
+        echo,
+        nudge: None,
+    };
+    let mut lag = Lag::default();
+    lag.step(base, source, 0.0, true);
+    if source == Source::Singing {
+        lag.estimate.lag = Some(base);
+    }
+    let mut said = Vec::new();
+    let mut next = 10.0;
+    let mut moved_at = None;
+    for &(t, c) in raw {
+        lag.estimate.hear(&s, t, c);
+        lag.settle(known, t, false);
+        if moved_at.is_none() && (lag.late - base).abs() >= 0.0095 {
+            moved_at = Some(t);
+        }
+        if t >= next {
+            said.push(format!(
+                "{:.0}({})",
+                lag.late * 1000.0,
+                lag.estimate
+                    .lag
+                    .map_or("-".to_owned(), |l| format!("{:.0}", l * 1000.0))
+            ));
+            next += 10.0;
+        }
+    }
+    let first = s
+        .lines
+        .iter()
+        .filter_map(|l| l.notes.first().map(|n| n.start))
+        .fold(f64::INFINITY, f64::min);
+    println!(
+        "\nThe delay in force from {:.0} ms ({}), sung at {} from {first:.0} s, every 10 s (the estimate): {}",
+        base * 1000.0,
+        source.key(),
+        level.name(),
+        said.join(" ")
+    );
+    println!(
+        "  the estimate settles on {}; the delay in force moves 10 ms by {}",
+        lag.estimate
+            .lag
+            .map_or_else(|| "nothing".to_owned(), |l| format!("{:.0} ms", l * 1000.0)),
+        moved_at.map_or_else(|| "never".to_owned(), |t| format!("{t:.0} s"))
+    );
 }
 
 /// Each word: when, the share of its note time with a pitch, the share

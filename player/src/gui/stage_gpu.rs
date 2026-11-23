@@ -82,6 +82,11 @@ pub struct StageFrame {
     pub instances: Vec<Instance>,
     /// Text to put into the atlas first.
     pub uploads: Vec<AtlasUpload>,
+    /// The bursts showing ([`super::particles`]).
+    pub sprays: Vec<super::particles::Spray>,
+    /// The singing's time, in seconds: what a pill bursting
+    /// ([`Instance::uv`] `[0]` its start, `[1]` 1) and the bursts go by.
+    pub clock: f32,
 }
 
 const SHADER: &str = r"
@@ -89,6 +94,10 @@ struct Screen {
     size: vec2<f32>,
     srgb: f32,
     atlas: f32,
+    time: f32,
+    pad0: f32,
+    pad1: f32,
+    pad2: f32,
 };
 
 @group(0) @binding(0) var<uniform> screen: Screen;
@@ -172,7 +181,17 @@ fn fs(o: Out) -> @location(0) vec4<f32> {
     if k < 0.5 || (k > 0.5 && k < 1.5) {
         // A pill, or its fill.
         let c = o.shape.xy;
-        let half = o.shape.zw;
+        var half = o.shape.zw;
+        var gl = o.params.y;
+        var dim = 1.0;
+        if k < 0.5 && o.uv.y > 0.5 {
+            // Bursting: grown by its pop, lit less as the burst goes.
+            let t = clamp((screen.time - o.uv.x) / BURST, 0.0, 1.0);
+            let pp = popped(t);
+            half = vec2<f32>(half.x + 2.0 * half.y * 0.28 * pp, half.y * (1.0 + 0.28 * pp));
+            dim = 1.0 - t;
+            gl = gl * (0.33 + 0.67 * dim);
+        }
         var r = o.params.w;
         if r <= 0.0 {
             r = min(half.x, half.y);
@@ -199,10 +218,10 @@ fn fs(o: Out) -> @location(0) vec4<f32> {
         // Lighter at its top, as glass.
         let down = clamp((p.y - (c.y - half.y)) / max(2.0 * half.y, 1.0), 0.0, 1.0);
         let body = o.color.rgb * (1.15 - 0.3 * down);
-        let a_body = cover * o.color.a;
+        let a_body = cover * o.color.a * dim;
         let col = mix(body, o.color2.rgb, edge * o.color2.a / max(a_body + edge * o.color2.a, 1e-4));
         let a = max(a_body, edge * o.color2.a);
-        let g = glow(d, o.params.y) * o.color2.a * 0.5;
+        let g = glow(d, gl) * o.color2.a * 0.5;
         return over_plus(col, a, o.color2.rgb * g);
     }
     if k < 2.5 {
@@ -287,7 +306,7 @@ impl StagePass {
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
-                        min_binding_size: wgpu::BufferSize::new(16),
+                        min_binding_size: wgpu::BufferSize::new(32),
                     },
                     count: None,
                 },
@@ -316,7 +335,9 @@ impl StagePass {
         });
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("jodeldiplom stage"),
-            source: wgpu::ShaderSource::Wgsl(SHADER.into()),
+            source: wgpu::ShaderSource::Wgsl(
+                format!("{SHADER}{}", super::particles::pop_wgsl()).into(),
+            ),
         });
         let attributes = wgpu::vertex_attr_array![
             0 => Float32x4, 1 => Float32x4, 2 => Float32x4,
@@ -364,7 +385,7 @@ impl StagePass {
         });
         let uniforms = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("jodeldiplom stage"),
-            size: 16,
+            size: 32,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -474,11 +495,12 @@ impl StagePass {
         if let Some(buffer) = &self.instances {
             queue.write_buffer(buffer, 0, bytes);
         }
-        let mut uniforms = [0u8; 16];
+        let mut uniforms = [0u8; 32];
         uniforms[0..4].copy_from_slice(&(size.0 as f32).to_le_bytes());
         uniforms[4..8].copy_from_slice(&(size.1 as f32).to_le_bytes());
         uniforms[8..12].copy_from_slice(&(if self.srgb { 1f32 } else { 0.0 }).to_le_bytes());
         uniforms[12..16].copy_from_slice(&(ATLAS as f32).to_le_bytes());
+        uniforms[16..20].copy_from_slice(&frame.clock.to_le_bytes());
         queue.write_buffer(&self.uniforms, 0, &uniforms);
         self.count = frame.instances.len() as u32;
     }

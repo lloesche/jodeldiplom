@@ -1,0 +1,232 @@
+//! What bursting bubbles cost the processor (and the GPU, where there is
+//! one): Karaoke mode's picture painted frame by frame at 1600 × 900 with
+//! none bursting and with 20 at once, and the GPU's stage made frame by
+//! frame (and shown, offscreen) with none and with 20 words bursting
+//! together.
+//!
+//! ```text
+//! cargo run --release -p jodeldiplom --example burst_load
+//! ```
+
+use std::path::Path;
+use std::sync::Arc;
+use std::time::Instant;
+
+use jodeldiplom::core::singing::{Level, Note, Singing};
+use jodeldiplom::gui::karaoke::{paint, Backdrop, BigText, Layer, Target};
+use jodeldiplom::gui::stage::{Song, Stage};
+use jodeldiplom::view::bubbles::Burst;
+use jodeldiplom::view::karaoke::{KaraokePicture, LineKind, LyricLine};
+use ratatui::layout::Rect;
+
+const FRAMES: usize = 120;
+const WORDS: usize = 20;
+
+fn main() {
+    let (w, h) = (1600usize, 900usize);
+    println!("{FRAMES} frames at {w} × {h}, {WORDS} words; ms a frame (median, 90 %):");
+    let shown = |gpu: Option<(f64, f64)>| {
+        gpu.map_or_else(
+            || "no GPU".to_owned(),
+            |(m, p)| format!("{m:.3} ms, {p:.3} ms"),
+        )
+    };
+    for bursting in [false, true] {
+        let ((median, p90), gpu) = picture(w, h, bursting);
+        println!(
+            "  picture, {:<12} CPU {median:.3} ms, {p90:.3} ms · shown offscreen (with read-back) {}",
+            if bursting { "20 bursting" } else { "none" },
+            shown(gpu)
+        );
+    }
+    for bursting in [false, true] {
+        let (cpu, gpu) = stage(w, h, bursting);
+        let gpu = shown(gpu);
+        println!(
+            "  stage,   {:<12} CPU {:.3} ms, {:.3} ms · shown offscreen (with read-back) {gpu}",
+            if bursting { "20 bursting" } else { "none" },
+            cpu.0,
+            cpu.1
+        );
+    }
+}
+
+fn quantiles(mut v: Vec<f64>) -> (f64, f64) {
+    v.sort_by(f64::total_cmp);
+    (v[v.len() / 2], v[(v.len() - 1) * 9 / 10])
+}
+
+/// The picture's line of 20 words, each on a note, all bursting (or none)
+/// as the frames go by; each frame painted where it changed.
+fn picture(w: usize, h: usize, bursting: bool) -> ((f64, f64), Option<(f64, f64)>) {
+    let text = vec!["la"; WORDS].join(" ");
+    let notes: Vec<Note> = (0..WORDS)
+        .map(|k| Note {
+            from: k as f32 * 3.0,
+            to: k as f32 * 3.0 + 2.0,
+            height: ((k % 5) as f32 - 2.0) / 2.0,
+            start: k as f64,
+            end: k as f64 + 1.0,
+            cents: 6000.0,
+            word: k,
+        })
+        .collect();
+    let backdrop = Backdrop::new(None, w, h);
+    let (mut text_big, mut layer) = (BigText::lyrics(), Layer::default());
+    let mut pixels = vec![0u32; w * h];
+    let (mut took, mut shown) = (Vec::new(), Vec::new());
+    let mut gpu = jodeldiplom::gui::present::Offscreen::new(false).ok();
+    for f in 0..FRAMES {
+        let age = (f as f32 / 60.0 / 0.5).fract();
+        let line = LyricLine {
+            text: text.clone(),
+            fill: 1.0,
+            kind: LineKind::Current,
+            id: Some(0),
+            alpha: 1.0,
+            notes: notes.clone(),
+            hits: vec![(0.0, text.chars().count() as f32, true)],
+            bursts: if bursting {
+                notes
+                    .iter()
+                    .enumerate()
+                    .map(|(k, n)| Burst {
+                        from: n.from,
+                        to: n.to,
+                        height: n.height,
+                        age,
+                        start: f as f64 / 60.0 - f64::from(age) * 0.5,
+                        seed: k as u32,
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            },
+            trail: Vec::new(),
+            voice: None,
+        };
+        let picture = KaraokePicture {
+            area: Rect::new(0, 0, 100, 24),
+            lines: vec![line],
+            count: None,
+            cue: None,
+            controls: None,
+            start: None,
+            before: Vec::new(),
+            moved: 1.0,
+            score: None,
+        };
+        let mut target = Target {
+            pixels: &mut pixels,
+            width: w,
+            height: h,
+        };
+        let started = Instant::now();
+        paint(
+            &mut target,
+            &mut text_big,
+            &mut layer,
+            &backdrop,
+            &picture,
+            (0, 0, w, h),
+            None,
+            f == 0,
+        );
+        if f > 0 {
+            took.push(started.elapsed().as_secs_f64() * 1000.0);
+        }
+        // Its bursts drawn by the GPU over it.
+        if let Some(gpu) = gpu.as_mut() {
+            let clock = (f as f64 / 60.0) as f32;
+            let frame = jodeldiplom::gui::particles::with_sprays(None, layer.sprays(), clock);
+            let started = Instant::now();
+            gpu.set_stage(frame.as_ref(), w as u32, h as u32);
+            let _ = gpu.show_pixels(&pixels, w as u32, h as u32);
+            shown.push(started.elapsed().as_secs_f64() * 1000.0);
+        }
+    }
+    (
+        quantiles(took),
+        (!shown.is_empty()).then(|| quantiles(shown)),
+    )
+}
+
+/// The stage of a line of 20 short words sung all through on easy (each
+/// counts at once: they burst together), or not sung; frames at 60 a
+/// second through the bursts.
+fn stage(w: usize, h: usize, bursting: bool) -> ((f64, f64), Option<(f64, f64)>) {
+    let word = |k: usize| jodel_lyrics::Word {
+        start: Some(1.0 + k as f64 * 0.04),
+        end: Some(1.0 + (k + 1) as f64 * 0.04),
+        confidence: 0.9,
+        ..jodel_lyrics::Word::new("la")
+    };
+    let lyrics = Arc::new(jodel_lyrics::Lyrics {
+        lines: vec![jodel_lyrics::Line {
+            words: (0..WORDS).map(word).collect(),
+            ..jodel_lyrics::Line::default()
+        }],
+        source: jodel_lyrics::Source::Unknown,
+        timing: jodel_lyrics::Timing::default(),
+    });
+    let mut melody = jodel_rhythm::waveform::Melody {
+        cents: vec![0; 400],
+        sure: vec![0; 400],
+    };
+    for i in 100..200 {
+        melody.cents[i] = 6000 + 100 * ((i / 4) % 3) as u16;
+        melody.sure[i] = 255;
+    }
+    let mut singing = Singing::default();
+    singing.prepare(Path::new("load"), &lyrics, &melody, 1, Level::Easy);
+    let mut gpu = jodeldiplom::gui::present::Offscreen::new(false).ok();
+    let blank = vec![0u32; w * h];
+    let mut stage = Stage::new();
+    let (mut cpu, mut shown) = (Vec::new(), Vec::new());
+    let mut heard = 0usize;
+    for f in 0..FRAMES {
+        let now = 0.9 + f as f64 / 60.0;
+        while (heard as f64) / 100.0 <= now {
+            let t = heard as f64 / 100.0;
+            let c = singing
+                .word_at(t)
+                .map(|(_, c)| c as f32)
+                .filter(|_| bursting);
+            singing.hear(t, c);
+            heard += 1;
+        }
+        let song = Song::new(&singing, lyrics.lines.iter().collect(), Some(4.0));
+        let picture = KaraokePicture {
+            area: Rect::new(0, 0, 100, 24),
+            lines: Vec::new(),
+            count: None,
+            cue: None,
+            controls: None,
+            start: None,
+            before: Vec::new(),
+            moved: 1.0,
+            score: None,
+        };
+        let started = Instant::now();
+        let frame = stage.frame(
+            &song,
+            &picture,
+            (0.0, 0.0, w as f32, h as f32),
+            now,
+            1.0 / 60.0,
+        );
+        cpu.push(started.elapsed().as_secs_f64() * 1000.0);
+        if let Some(gpu) = gpu.as_mut() {
+            let started = Instant::now();
+            gpu.set_stage(Some(&frame), w as u32, h as u32);
+            let _ = gpu.show_pixels(&blank, w as u32, h as u32);
+            shown.push(started.elapsed().as_secs_f64() * 1000.0);
+        }
+    }
+    let full = jodeldiplom::core::bubbles::words_full(&singing, f64::INFINITY).0;
+    println!("  (stage: {full} words full)");
+    (
+        quantiles(cpu),
+        (!shown.is_empty()).then(|| quantiles(shown)),
+    )
+}

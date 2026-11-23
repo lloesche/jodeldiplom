@@ -13,7 +13,15 @@
 //! 3. the delay **estimated from the singing** ([`estimate`]);
 //! 4. [`DEFAULT_LATE`].
 //!
-//! The singer's nudge is added to any of them. What is kept of it, a pair
+//! A measured or echo delay is still corrected by the singing: where the
+//! estimate from the singing is within [`CORRECT_WITHIN`] of it, the
+//! estimate is taken ([`correction`]; a sync's clicks are answered a little
+//! sooner than words are sung). The estimate is held against that delay
+//! before it is taken: it must fit the singing clearly better
+//! ([`estimate::Estimator::anchor`]), so silence or a few windows never
+//! move it. The singer's nudge is added to any of them, and wins over the
+//! correction: a delay nudged (even to 0) is not corrected ([`target`]).
+//! [`Lag::settle`] is the one step of all this. What is kept of it, a pair
 //! of an output and a microphone each ([`Delays`]: the delay measured and
 //! the nudge), is here too; `crate::delays` keeps it on disk. Another pair
 //! starts the echo's wait and the estimate over: they were of the other.
@@ -38,6 +46,10 @@ pub const SLEW: f64 = 0.02;
 pub const STEADY_WITHIN: f64 = 0.010;
 /// How long it stays there, in seconds.
 pub const STEADY_FOR: f64 = 3.0;
+/// How far from a measured or echo delay the estimate from the singing may
+/// be and still correct it, each way, in seconds: further off, one of the
+/// two is wrong, and the one measured stands.
+pub const CORRECT_WITHIN: f64 = 0.06;
 /// The least nudge on a delay, in ms.
 pub const NUDGE_LEAST: i32 = -200;
 /// The most.
@@ -49,13 +61,14 @@ pub const NUDGE_STEP: i32 = 10;
 pub type Pair = (String, String);
 
 /// What is kept of the delay for a pair: the one measured (none yet) and
-/// the nudge on whatever delay is in force, in ms.
+/// the nudge on whatever delay is in force, in ms (none: not nudged, the
+/// singing may correct it; 0 is a nudge, the delay as it is).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Delay {
     /// Measured by a sync.
     pub measured_ms: Option<i32>,
     /// The singer's nudge.
-    pub nudge_ms: i32,
+    pub nudge_ms: Option<i32>,
 }
 
 /// What is kept of the delay, by pair.
@@ -102,8 +115,6 @@ impl Source {
 pub struct Steady {
     /// The value it has stayed near, and since when (seconds).
     anchor: Option<(f64, f64)>,
-    /// The last value read.
-    last: f64,
 }
 
 impl Steady {
@@ -119,14 +130,15 @@ impl Steady {
             Some((at, _)) if (delay - at).abs() <= STEADY_WITHIN => {}
             _ => self.anchor = Some((delay, now)),
         }
-        self.last = delay;
     }
 
-    /// The delay, once it has been steady for [`STEADY_FOR`] at `now`.
+    /// The delay it has stayed near, once it has been steady for
+    /// [`STEADY_FOR`] at `now` (the same while it stays: what the singing
+    /// corrects holds still).
     pub fn steady(&self, now: f64) -> Option<f64> {
         self.anchor
             .filter(|&(_, since)| now - since >= STEADY_FOR)
-            .map(|_| self.last)
+            .map(|(at, _)| at)
     }
 }
 
@@ -141,6 +153,68 @@ pub fn resolve(measured: Option<f64>, echo: Option<f64>, sung: Option<f64>) -> (
         .unwrap_or((DEFAULT_LATE, Source::Default))
 }
 
+/// How far the singing's estimate `sung` moves `base` (from `source`), in
+/// seconds: to it, where `base` was measured or is the echo's and `sung`
+/// is within [`CORRECT_WITHIN`] of it; else not at all.
+pub fn correction(base: f64, source: Source, sung: Option<f64>) -> f64 {
+    match (source, sung) {
+        (Source::Measured | Source::Echo, Some(s)) if (s - base).abs() <= CORRECT_WITHIN + 1e-9 => {
+            s - base
+        }
+        _ => 0.0,
+    }
+}
+
+/// The delay to take and its parts ([`target`]).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Target {
+    /// How late the voice comes, in seconds: all of it.
+    pub late: f64,
+    /// The first there is ([`resolve`]), in seconds.
+    pub base: f64,
+    /// The singing's correction on it ([`correction`]), in seconds.
+    pub corrected: f64,
+    /// Where `base` comes from.
+    pub source: Source,
+}
+
+/// The delay to take from the one `measured`, the `echo`'s once steady,
+/// the one estimated from the singing (`sung`) and the singer's `nudge`
+/// (seconds; none: not nudged): the first there is, the singing's
+/// correction on a measured or echo one, the nudge on top. A nudge wins
+/// over the correction: with one, even of 0, there is none (the singer set
+/// the delay by ear).
+pub fn target(
+    measured: Option<f64>,
+    echo: Option<f64>,
+    sung: Option<f64>,
+    nudge: Option<f64>,
+) -> Target {
+    let (base, source) = resolve(measured, echo, sung);
+    let corrected = match nudge {
+        None => correction(base, source, sung),
+        Some(_) => 0.0,
+    };
+    Target {
+        late: base + corrected + nudge.unwrap_or(0.0),
+        base,
+        corrected,
+        source,
+    }
+}
+
+/// What the delay in force follows at a moment ([`Lag::settle`]): the
+/// delay measured, the echo's once steady, the nudge (seconds; none: none).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Known {
+    /// Measured by a sync.
+    pub measured: Option<f64>,
+    /// The echo canceller's, steady.
+    pub echo: Option<f64>,
+    /// The singer's nudge.
+    pub nudge: Option<f64>,
+}
+
 /// The singer's delay: what is known of it, and the one in force.
 #[derive(Clone, Debug)]
 pub struct Lag {
@@ -148,10 +222,14 @@ pub struct Lag {
     pub late: f64,
     /// Where the value it goes to comes from.
     pub source: Source,
-    /// That value before the nudge, in seconds.
+    /// That value before the singing's correction and the nudge, in
+    /// seconds.
     pub base: f64,
-    /// The nudge in it, in seconds.
-    pub nudge: f64,
+    /// How far the singing corrected a measured or echo delay in it, in
+    /// seconds ([`correction`]).
+    pub corrected: f64,
+    /// The nudge in it, in seconds (none: none).
+    pub nudge: Option<f64>,
     /// The echo canceller's delay, until steady.
     pub echo: Steady,
     /// The delay estimated from the singing.
@@ -165,9 +243,18 @@ pub struct Lag {
     pub changed: bool,
     /// The measured delay and the nudge it was last given, in ms: a
     /// change of either is taken at once.
-    given: Option<(Option<i32>, i32)>,
+    given: Option<(Option<i32>, Option<i32>)>,
     /// When it last stepped, in seconds.
     at: Option<f64>,
+    /// What it last followed ([`Lag::settle`]).
+    known: Known,
+}
+
+/// The singing's own time at `heard` seconds into the song as heard, the
+/// voice coming `late`: what its bubbles' sweep and burst, its sparks and
+/// the singer's dot go by.
+pub fn sung_clock(heard: f64, late: f64) -> f64 {
+    heard - late
 }
 
 impl Default for Lag {
@@ -176,7 +263,8 @@ impl Default for Lag {
             late: DEFAULT_LATE,
             source: Source::Default,
             base: DEFAULT_LATE,
-            nudge: 0.0,
+            corrected: 0.0,
+            nudge: None,
             echo: Steady::default(),
             estimate: estimate::Estimator::default(),
             kept: Delays::new(),
@@ -184,6 +272,7 @@ impl Default for Lag {
             changed: false,
             given: None,
             at: None,
+            known: Known::default(),
         }
     }
 }
@@ -202,6 +291,35 @@ impl Lag {
         }
         let most = SLEW * since;
         self.late += (target - self.late).clamp(-most, most);
+    }
+
+    /// The delay in force followed at `now` from what is `known`: the
+    /// estimate held against the delay it would correct
+    /// ([`estimate::Estimator::anchor`]), the [`target`] of it all, and a
+    /// [`Lag::step`] towards it (at once when `jump`). The game, the tests
+    /// and `sing_replay` all go by this.
+    pub fn settle(&mut self, known: Known, now: f64, jump: bool) -> Target {
+        self.known = known;
+        self.estimate.anchor(known.measured.or(known.echo));
+        let t = target(known.measured, known.echo, self.estimate.lag, known.nudge);
+        (self.base, self.corrected, self.nudge) = (t.base, t.corrected, known.nudge);
+        self.step(t.late, t.source, now, jump);
+        t
+    }
+
+    /// The delay the scoring goes to now, in seconds, as the Delay slider
+    /// shows it: the [`target`] of what is known, with the nudge as it is
+    /// set now (`nudge_ms`), not as last followed.
+    pub fn in_force(&self, nudge_ms: Option<i32>) -> f64 {
+        let k = self.known;
+        let nudge = nudge_ms.map(|ms| f64::from(ms) / 1000.0);
+        target(k.measured, k.echo, self.estimate.lag, nudge).late
+    }
+
+    /// The singing's own time at `heard` seconds into the song as heard:
+    /// its frames of a moment come [`Lag::late`] after it ([`sung_clock`]).
+    pub fn sung_clock(&self, heard: f64) -> f64 {
+        sung_clock(heard, self.late)
     }
 }
 
@@ -226,32 +344,49 @@ pub fn measured(state: &State) -> Option<f64> {
         .map(|ms| f64::from(ms) / 1000.0)
 }
 
-/// The nudge for the output and microphone in use, in ms.
-pub fn nudge_ms(state: &State) -> i32 {
+/// The nudge for the output and microphone in use, in ms (none: not
+/// nudged).
+pub fn nudged(state: &State) -> Option<i32> {
     let lag = &state.karaoke.lag;
-    lag.kept.get(&lag.pair).map_or(0, |d| d.nudge_ms)
+    lag.kept.get(&lag.pair).and_then(|d| d.nudge_ms)
+}
+
+/// [`nudged`], 0 for none.
+pub fn nudge_ms(state: &State) -> i32 {
+    nudged(state).unwrap_or(0)
 }
 
 /// Sets the nudge for the output and microphone in use (kept), within
 /// [`NUDGE_LEAST`] to [`NUDGE_MOST`].
 pub fn set_nudge(state: &mut State, ms: i32) {
     let ms = ms.clamp(NUDGE_LEAST, NUDGE_MOST);
-    if nudge_ms(state) == ms {
+    if nudged(state) == Some(ms) {
         return;
     }
     let lag = &mut state.karaoke.lag;
-    lag.kept.entry(lag.pair.clone()).or_default().nudge_ms = ms;
+    lag.kept.entry(lag.pair.clone()).or_default().nudge_ms = Some(ms);
     lag.changed = true;
 }
 
-/// Keeps `ms` as the delay measured for `pair`, its nudge back to 0.
+/// The nudge for the output and microphone in use gone: the delay not
+/// nudged (the singing may correct it) again (kept).
+pub fn unset_nudge(state: &mut State) {
+    if nudged(state).is_none() {
+        return;
+    }
+    let lag = &mut state.karaoke.lag;
+    lag.kept.entry(lag.pair.clone()).or_default().nudge_ms = None;
+    lag.changed = true;
+}
+
+/// Keeps `ms` as the delay measured for `pair`, its nudge gone.
 pub fn keep_measured(state: &mut State, pair: &Pair, ms: i32) {
     let lag = &mut state.karaoke.lag;
     lag.kept.insert(
         pair.clone(),
         Delay {
             measured_ms: Some(ms),
-            nudge_ms: 0,
+            nudge_ms: None,
         },
     );
     lag.changed = true;
@@ -263,18 +398,20 @@ pub fn keep_measured(state: &mut State, pair: &Pair, ms: i32) {
 /// ([`Lag::step`]); a nudge or a sync is taken at once.
 pub fn follow(state: &mut State, echo: Option<(bool, Option<f64>)>, now: f64) {
     let measured = measured(state);
-    let nudge_ms = nudge_ms(state);
+    let nudge_ms = nudged(state);
     let singing = crate::core::karaoke::in_mode(state)
         && state.playing.state == jodel_playback::PlayState::Playing;
     let lag = &mut state.karaoke.lag;
     lag.echo.hear(echo, now);
-    let (base, source) = resolve(measured, lag.echo.steady(now), lag.estimate.lag);
+    let known = Known {
+        measured,
+        echo: lag.echo.steady(now),
+        nudge: nudge_ms.map(|ms| f64::from(ms) / 1000.0),
+    };
     let given = (measured.map(|m| (m * 1000.0).round() as i32), nudge_ms);
     let jump = !singing || lag.given != Some(given);
     lag.given = Some(given);
-    lag.base = base;
-    lag.nudge = f64::from(nudge_ms) / 1000.0;
-    lag.step(base + lag.nudge, source, now, jump);
+    lag.settle(known, now, jump);
 }
 
 #[cfg(test)]
@@ -290,6 +427,18 @@ mod tests {
         assert_eq!(resolve(None, Some(0.2), Some(0.3)), (0.2, Source::Echo));
         assert_eq!(resolve(None, None, Some(0.3)), (0.3, Source::Singing));
         assert_eq!(resolve(None, None, None), (DEFAULT_LATE, Source::Default));
+    }
+
+    #[test]
+    fn the_singing_corrects_a_measured_or_echo_delay_near_it() {
+        // 36 ms short: corrected; 80 ms off: one of them is wrong, none.
+        assert!((correction(0.264, Source::Measured, Some(0.3)) - 0.036).abs() < 1e-9);
+        assert!((correction(0.08, Source::Echo, Some(0.05)) + 0.03).abs() < 1e-9);
+        assert_eq!(correction(0.12, Source::Measured, Some(0.2)), 0.0);
+        assert_eq!(correction(0.264, Source::Measured, None), 0.0);
+        // The estimate itself, or the default: nothing to correct.
+        assert_eq!(correction(0.2, Source::Singing, Some(0.2)), 0.0);
+        assert_eq!(correction(DEFAULT_LATE, Source::Default, Some(0.18)), 0.0);
     }
 
     #[test]

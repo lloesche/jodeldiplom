@@ -934,6 +934,15 @@ impl Canvas {
         }
     }
 
+    /// The bubbles bursting in Karaoke mode's picture as last painted (none
+    /// without it), for the GPU to draw over it ([`super::particles`]).
+    pub fn picture_sprays(&self) -> &[super::particles::Spray] {
+        match self.karaoke {
+            Some(_) => self.karaoke_layer.sprays(),
+            None => &[],
+        }
+    }
+
     /// Karaoke mode's picture: the backdrop (made again for another cover
     /// or size), the lyrics and the count-in, then the controls' text over
     /// it. `full`: all of it; else only the text, where it was and is (the

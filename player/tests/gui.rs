@@ -1039,12 +1039,7 @@ fn the_stage_draws_the_lane_over_the_pixmap() {
         singing.hear(f64::from(i) / 100.0, Some(6000.0));
     }
     let (w, h) = (800u32, 450u32);
-    let song = Song {
-        singing: &singing,
-        sung: lyrics.lines.iter().collect(),
-        game: true,
-        length: Some(3.0),
-    };
+    let song = Song::new(&singing, lyrics.lines.iter().collect(), Some(3.0));
     let picture = KaraokePicture {
         area: Rect::new(0, 0, 80, 24),
         lines: Vec::new(),

@@ -99,7 +99,7 @@ pub const SCORES: Schema = Schema {
 /// The singer's delays measured and nudged ([`crate::delays`]).
 pub const DELAYS: Schema = Schema {
     name: "delays",
-    version: 1,
+    version: 2,
 };
 
 /// Every schema.

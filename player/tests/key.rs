@@ -178,7 +178,10 @@ fn the_notes_and_the_scoring_follow_the_key_heard() {
         let sung = if t < 1.0 { 6200.0 } else { 6600.0 };
         state.karaoke.singing.hear(t, Some(sung));
     }
-    assert_eq!(state.karaoke.singing.hit_words, 2, "sung in the new key");
+    assert_eq!(
+        state.karaoke.singing.tally.hit_words, 2,
+        "sung in the new key"
+    );
     // Another song picked: the engine says 0, and the next positions too.
     update(&mut state, Action::Engine(Event::Key { semitones: 0 }));
     update(&mut state, heard(0));

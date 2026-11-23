@@ -6,8 +6,12 @@
 pub mod canvas;
 pub mod fonts;
 pub mod karaoke;
+mod notes;
+pub mod particles;
+pub mod pop;
 pub mod present;
 pub mod raster;
+pub mod sparks;
 pub mod stage;
 pub mod stage_gpu;
 
@@ -425,7 +429,12 @@ impl Gui {
             .last_stage
             .map_or(0.0, |at| now.duration_since(at).as_secs_f32());
         let stage = match screen {
-            Screen::Gpu(_) => canvas.stage_frame(&app.state, heard, dt),
+            Screen::Gpu(_) => {
+                let stage = canvas.stage_frame(&app.state, heard, dt);
+                // The picture's bubbles bursting, over it on the GPU.
+                let clock = app.state.karaoke.lag.sung_clock(heard) as f32;
+                particles::with_sprays(stage, canvas.picture_sprays(), clock)
+            }
             Screen::Soft(_) => None,
         };
         self.last_stage = stage.is_some().then_some(now);

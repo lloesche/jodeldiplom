@@ -246,14 +246,21 @@ fn delay_files_are_pinned_and_every_version_is_read() {
         ),
         Delay {
             measured_ms: Some(152),
-            nudge_ms: -20,
+            nudge_ms: Some(-20),
         },
     );
     kept.insert(
         ("Speakers".into(), "Built-in mic".into()),
         Delay {
             measured_ms: None,
-            nudge_ms: 30,
+            nudge_ms: Some(30),
+        },
+    );
+    kept.insert(
+        ("Speakers".into(), "USB mic".into()),
+        Delay {
+            measured_ms: Some(140),
+            nudge_ms: None,
         },
     );
     let kept_text = pinned(&cache::DELAYS, "txt", to_text(&kept).as_bytes());

@@ -645,3 +645,80 @@ pub fn real_time() -> std::sync::RwLockWriteGuard<'static, ()> {
 }
 
 static REAL_TIME: std::sync::RwLock<()> = std::sync::RwLock::new(());
+
+/// A line "la lo" to sing in Karaoke mode: "la" a second on C4, "lo" the
+/// next on G4; its notes made at `level`.
+pub fn bubble_song(
+    level: jodeldiplom::core::singing::Level,
+) -> (
+    jodeldiplom::core::singing::Singing,
+    Arc<jodel_lyrics::Lyrics>,
+) {
+    let word = |text: &str, s: f64| jodel_lyrics::Word {
+        start: Some(s),
+        end: Some(s + 1.0),
+        confidence: 0.9,
+        ..jodel_lyrics::Word::new(text)
+    };
+    let lyrics = Arc::new(jodel_lyrics::Lyrics {
+        lines: vec![jodel_lyrics::Line {
+            words: vec![word("la", 0.0), word("lo", 1.0)],
+            ..jodel_lyrics::Line::default()
+        }],
+        source: jodel_lyrics::Source::Unknown,
+        timing: jodel_lyrics::Timing::default(),
+    });
+    let mut melody = jodel_rhythm::waveform::Melody {
+        cents: vec![0; 300],
+        sure: vec![0; 300],
+    };
+    for i in 0..200 {
+        melody.cents[i] = if i < 100 { 6000 } else { 6700 };
+        melody.sure[i] = 255;
+    }
+    let mut singing = jodeldiplom::core::singing::Singing::default();
+    singing.prepare(Path::new("a"), &lyrics, &melody, 1, level);
+    (singing, lyrics)
+}
+
+/// `singing` of [`bubble_song`] hears "la" sung on its note for its first
+/// 15 % (on easy: it counts, at 0.10 s), then nothing, a frame every 10 ms
+/// up to `to` seconds (from `from`).
+pub fn sing_bubbles(singing: &mut jodeldiplom::core::singing::Singing, from: f64, to: f64) {
+    let mut i = (from * 100.0).round() as u32;
+    while f64::from(i) / 100.0 <= to {
+        let t = f64::from(i) / 100.0;
+        singing.hear(t, (t < 0.15 - 1e-9).then_some(6000.0));
+        i += 1;
+    }
+}
+
+/// Karaoke mode's picture of [`bubble_song`] at `heard` (the game on, the
+/// voice coming `late`) in `area`: its line being sung with its bubbles as
+/// `singing` filled them.
+pub fn bubble_picture(
+    singing: &jodeldiplom::core::singing::Singing,
+    lyrics: &jodel_lyrics::Lyrics,
+    (heard, late): (f64, f64),
+    area: ratatui::layout::Rect,
+) -> jodeldiplom::view::karaoke::KaraokePicture {
+    use jodeldiplom::view::karaoke::{sung_on, timed_lines, KaraokePicture, LineKind};
+    let sung: Vec<&jodel_lyrics::Line> = lyrics.lines.iter().collect();
+    let mut lines = timed_lines(&sung, heard).expect("timed lines");
+    for l in lines.iter_mut().filter(|l| l.kind == LineKind::Current) {
+        let notes = singing.lines[0].clone();
+        sung_on(singing, (true, late), 0, &notes, heard, l);
+        l.notes = notes.notes;
+    }
+    KaraokePicture {
+        area,
+        lines,
+        count: None,
+        cue: None,
+        controls: None,
+        start: None,
+        before: Vec::new(),
+        moved: 1.0,
+        score: None,
+    }
+}

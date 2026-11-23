@@ -148,7 +148,7 @@ fn a_delay_measured_is_kept_for_its_output_and_microphone_the_nudge_back_to_0() 
         state.karaoke.lag.kept[&pair("headset")],
         Delay {
             measured_ms: Some(150),
-            nudge_ms: 0
+            nudge_ms: None
         }
     );
     assert_eq!(lag::measured(&state), Some(0.15));
@@ -277,7 +277,7 @@ fn the_delay_in_force_is_the_first_there_is_and_says_where_it_comes_from() {
         pair("headset"),
         Delay {
             measured_ms: Some(120),
-            nudge_ms: -20,
+            nudge_ms: Some(-20),
         },
     );
     lag::follow(&mut state, None, 20.0);
@@ -294,6 +294,58 @@ fn the_delay_in_force_is_the_first_there_is_and_says_where_it_comes_from() {
         jodeldiplom::view::sync::source_text(&state),
         "measured · nudged −20 ms"
     );
+}
+
+/// A delay measured a little short of what the singing says: corrected to
+/// the singing's, and the tab says by how much; one far off is not taken.
+/// The singer's nudge wins: set on the Delay slider while a correction is
+/// in force, the delay stays where they set it, whatever the singing says
+/// after.
+#[test]
+fn the_singing_corrects_a_measured_delay_a_little_short() {
+    use jodeldiplom::core::sliders::Slider;
+    let mut state = tab("headset");
+    let measured = |state: &mut State, ms| {
+        let d = Delay {
+            measured_ms: Some(ms),
+            nudge_ms: None,
+        };
+        state.karaoke.lag.kept.insert(pair("headset"), d);
+    };
+    measured(&mut state, 264);
+    state.karaoke.lag.estimate.lag = Some(0.30);
+    lag::follow(&mut state, None, 0.0);
+    let l = &state.karaoke.lag;
+    assert!((l.late - 0.30).abs() < 1e-9 && l.source == Source::Measured);
+    let text = jodeldiplom::view::sync::source_text;
+    assert_eq!(text(&state), "measured · your singing +36 ms");
+    assert_eq!(Slider::Delay.text(&state).trim(), "300 ms");
+    // 136 ms off: one of them is wrong; the one measured stands.
+    state.karaoke.lag.estimate.lag = Some(0.40);
+    lag::follow(&mut state, None, 0.1);
+    assert!((state.karaoke.lag.late - 0.264).abs() < 1e-9);
+    assert_eq!(text(&state), "measured");
+    // Back near, then nudged a step up on the slider: 310 ms, the nudge on
+    // the one measured, no correction.
+    state.karaoke.lag.estimate.lag = Some(0.30);
+    lag::follow(&mut state, None, 0.2);
+    state.karaoke.focus = Slider::Delay;
+    op(&mut state, Op::SliderUp);
+    for (t, sung) in [(0.3, Some(0.30)), (0.4, Some(0.32)), (0.5, None)] {
+        state.karaoke.lag.estimate.lag = sung;
+        lag::follow(&mut state, None, t);
+        assert!((state.karaoke.lag.late - 0.31).abs() < 1e-9, "{sung:?}");
+        assert_eq!(Slider::Delay.text(&state).trim(), "310 ms");
+    }
+    assert_eq!(text(&state), "measured · nudged +46 ms");
+    // `0` with the Delay row at hand: not nudged again, the singing's
+    // correction back.
+    key(&mut state, Key::ch('0'));
+    assert_eq!(lag::nudged(&state), None);
+    state.karaoke.lag.estimate.lag = Some(0.30);
+    lag::follow(&mut state, None, 0.6);
+    assert!((state.karaoke.lag.late - 0.30).abs() < 1e-9);
+    assert_eq!(text(&state), "measured · your singing +36 ms");
 }
 
 /// Another output or microphone: the echo's wait and the estimate start
@@ -343,7 +395,7 @@ fn mid_song_the_delay_never_jumps_but_a_nudge_or_a_sync_does_at_once() {
         pair("headset"),
         Delay {
             measured_ms: Some(140),
-            nudge_ms: 0,
+            nudge_ms: None,
         },
     );
     lag::follow(&mut state, None, 2.2);

@@ -766,9 +766,18 @@ the echo canceller's, once **steady** (within 10 ms of itself for 3 s;
 with a headset there is no echo, so never); the delay **estimated from
 your singing** (the last 20 s of it held against the song's notes every
 2 s, at each delay from 0 to 400 ms, averaged over about half a minute:
-where the most of each word scores, as the level scores it, once clearly
-better than 150 ms); or 150 ms. The tab's **Delay** row shows the value
-in force (0 to 600 ms) and its sync row where it comes from. Mid-song it
+where the most of each word scores, as the level scores it (easy as
+medium), once clearly better than 150 ms); or 150 ms. Your singing
+corrects a delay measured or the echo's too: where its estimate (all your
+singing averaged, the delay nearest the one measured that fits within
+0.5 % of the best, once the best fits 1 % better) is within 60 ms of it,
+that is taken (a sync's "ta" comes a little sooner than a sung word does);
+silence and noise move nothing, and a sync again starts the correction
+over. Your nudge wins: nudged (even to 0), the delay is the one measured
+and your nudge, whatever the singing says; a sync drops the nudge, and so
+does `0` on the Delay row (it is "not nudged" again). The tab's **Delay** row shows the value in force
+(0 to 600 ms) and its sync row where it comes from (`measured · your
+singing +30 ms`). Mid-song it
 moves at most 20 ms a second towards a new value, so the scoring never
 jumps; `←` `→` on the Delay row (or the pointer) nudge it, at once
 (−200 to +400 ms, kept per output and microphone). Another output or
@@ -781,7 +790,7 @@ this measures the whole way, output, ears and microphone. The dots light
 up as the clicks play, gold once answered; at the end, your delay (the
 median of the answers within 150 ms of the median, at least 5 of 8, else
 "again?"): keep (`enter`) keeps it for the output and microphone it was
-measured with (in `delays.txt` beside the settings, the nudge back to 0),
+measured with (in `delays.txt` beside the settings, the nudge dropped),
 again (`r`), cancel (`esc`), each a button too. The clicks play on the
 player's strip: with it muted, far down or another soloed on the Mixer tab,
 there is no sync, and the tab says why.
@@ -797,9 +806,12 @@ from), and the key the song was heard in where it was not its own
 the game does (in the song's own key) and
 tells how the pitch was detected (how much of the notes had a pitch, how
 steadily, the jumps), when the singing came in against the words, and
-what each level scored, word by word with `--words`; with `--auto`, the
-delay the game estimates from the singing as the song goes, and the
-scoring at it: for tuning the game on real singing.
+what each level scored, word by word with `--words`, and how many words
+would burst at each; the delay in force as the game follows it from the
+one it took then (every 10 s, and where the estimate settles); with
+`--auto`, the delay the game estimates from the singing as the song goes
+at each level, and the scoring at it: for tuning the game on real
+singing.
 
 The song's notes show (`p` hides them): from the voice's melody, each
 lead word on its own (backing words in parentheses none; a word without
@@ -841,7 +853,24 @@ only gets there with close frames scores 50. On both your line snaps
 where it scores: onto the note, or (close) onto the semitone you are
 nearest. **Hard** wants the song's own key, octaves aside, within a
 semitone, and draws your line as you sing it, smoothed (a median over
-50 ms, then a glide half way each frame). When a song ends you get its
+50 ms, then a glide half way each frame).
+
+The notes are **bubbles** that fill as you hit them (a gap of a consonant
+under 60 ms bridged). On **easy**, the moment a word counts all its
+bubbles fill, the part already sung and the part to come: a quick sweep
+to full (0.2 s), then they burst (0.5 s): the bubble pops, larger and
+white hot, and sparkles fly off it and fade (sparks off the pill in the
+window, sparkles in pixels without a GPU, ✦ ✧ · either side of it in the
+terminal). On **medium** they fill where your pitch was heard on the note
+(gold, or the paler gold where close), and one filled 85 % bursts too
+(even in a word that scores a half: it shows what you sang); on **hard**
+the same, only a bubble you truly fill bursts. Each bubble bursts as it
+fills, in every frontend, by your singing's own time (the song's less the
+delay, so you see the whole sweep and burst; a paused song holds them).
+In the window the GPU draws the bursts (a record a burst, the particles
+worked out in its shader), so they cost the processor nothing; without a
+GPU the bubbles fill and nothing bursts.
+The points are as they were. When a song ends you get its
 points, the words hit (and half hit), the longest streak and a medal by
 the words (a half hit as half of one: bronze for half of them, silver
 70 %, gold 85 %), and the best score of each song at each level is kept

@@ -407,17 +407,83 @@ stem keys are their mutes.
   microphone in use, else the echo canceller's once steady (within 10 ms
   of itself for 3 s; a delay that jumps is never taken), else the one
   estimated from the singing, else 150 ms; the nudge (−200 to +400 ms in
-  steps of 10, kept per output and microphone) on any of them. The tab's
-  Delay row shows the value in force, its sync row where it comes from.
-  Mid-song it moves at most 20 ms a second; a nudge or a sync is taken at
-  once. Another output or microphone starts the estimate and the echo's
-  wait over. Each level has its own share of a word to hit (easy a tenth,
-  medium a quarter, hard two fifths).
+  steps of 10, kept per output and microphone) on any of them. A measured
+  or echo delay is corrected by the singing: the estimate (made with one
+  measured too, held against it, all the singing averaged, the delay
+  nearest it that fits within 0.5 % of the best, once the best fits 1 %
+  better than it, the best itself within 60 ms of it) is taken where it
+  is within 60 ms of it; further off, the one measured stands. Silence
+  and noise move nothing; a sync again lets the estimate go (it must win
+  against the new one afresh), the echo unsteady a while does not. A
+  nudge wins: with one, even of 0 (kept apart from none, `-` in
+  `delays.txt` version 2), there is no correction, and the Delay slider
+  sets the nudge on the delay measured, so the delay stays where it was
+  set; a sync drops the nudge, and so does `0` with the Delay row at hand
+  (else `0` is the song's own key). The tab's Delay row
+  shows the value in force, its sync row where it comes from (with the
+  singing's correction: `measured · your singing +30 ms`). Mid-song it
+  moves at most 20 ms a second; a nudge or a sync is taken at once.
+  Another output or microphone starts the estimate and the echo's wait
+  over. Each level has its own share of a word to hit (easy a tenth,
+  medium a quarter, hard two fifths); the estimate holds easy's singing
+  against the notes as medium does (easy's hill is too flat to read).
   - `the_delay_in_force_is_the_first_there_is_and_says_where_it_comes_from`
+  - `the_singing_corrects_a_measured_delay_a_little_short`
   - `mid_song_the_delay_never_jumps_but_a_nudge_or_a_sync_does_at_once`
   - `another_pair_starts_the_estimate_over`
   - `singing_heard_120_ms_late_is_found_within_10_ms` (`core::lag::estimate`)
+  - `the_singing_corrects_a_delay_measured_a_little_short`,
+    `a_sync_again_lets_the_estimate_go`,
+    `noise_never_corrects_a_delay_measured`, `easy_is_estimated_as_medium`
+    (`core::lag::estimate`)
+  - `the_singing_corrects_a_measured_or_echo_delay_near_it` (`core::lag`)
   - `each_level_asks_its_own_share_of_a_word` (`core::singing`)
+- **K20.** With the game on, a note's bubble (a bar under its letters in
+  the picture and the terminal; on the GPU's stage a word's pill holds
+  its notes' bubbles) fills where the singer's pitch hit it (a paler gold
+  where close, a gap under 60 ms bridged on every level). On easy, the
+  moment a word counts as the scoring counts it (a tenth of the frames it
+  will have had hit, one more to be sure; one the scoring counts that
+  never got there, as it ends), all its bubbles fill, the part already
+  sung and the part to come: a sweep across the word to full (0.2 s),
+  then they burst (0.5 s). On any level a bubble bursts once its fill
+  covers 85 % of it (on medium even in a word that scores a half: the
+  bubble shows what was sung). Each bubble bursts when it is full, in
+  every frontend: it pops (larger, white hot) and throws sparkles off it,
+  fading. In the window the GPU draws the bursts (one record a burst, its
+  particles worked out in the shader from the time), over the stage's
+  pills (a pill pops in the stage's shader) and over the picture painted
+  on the processor, which shows the bubble full and never changes for a
+  burst; the software window draws none. In the terminal the bubble
+  brightens and ✦ ✧ · cycle either side of it. It all goes by the
+  singing's own time, the song's as heard less the delay (its frames come
+  that much later), so the sweep and the burst are seen whole; a paused
+  song holds them; the singer's arrow and dot go by it too. A bubble is
+  full once, at a time the frames up to it fix; sought back under a
+  second (a nudge mid-song too), what the frames from there did to the
+  score (and the key followed) is taken back and they are heard again,
+  the score before kept: no burst comes twice, no word scored bursts
+  again. The scoring is as it was.
+  - `a_word_counted_on_easy_fills_all_its_bubbles_at_once` (`core::bubbles`)
+  - `on_easy_a_word_is_full_exactly_when_the_scoring_counts_it`
+    (`core::bubbles`)
+  - `medium_fills_where_a_pitch_hit_and_is_full_only_filled` (`core::bubbles`)
+  - `hard_fills_as_before_and_is_full_only_truly_filled` (`core::bubbles`)
+  - `each_bubble_is_full_once_its_time_fixed_by_the_frames_up_to_it`
+    (`core::bubbles`)
+  - `a_seek_back_takes_back_what_was_heard_from_there` (`core::bubbles`)
+  - `short_seeks_back_in_a_row_are_as_heard_straight`,
+    `a_delay_nudged_mid_song_is_as_heard_straight` (`core::singing::undo`)
+  - `the_stage_bursts_each_bubble_once_however_late_the_voice`
+    (`gui::pop`)
+  - `the_arrow_shows_while_singing_however_late_the_voice` (bubbles)
+  - `a_seek_back_brings_no_ghost_bursts_on_the_stage` (bubbles)
+  - `the_sparkles_fly_up_and_fade`, `a_burst_on_a_lane_goes_by_with_it`
+    (`gui::particles`)
+  - `a_bubble_fills_and_bursts_in_the_terminal` (bubbles)
+  - `a_bubble_bursts_over_the_picture_not_in_it` (bubbles)
+  - `the_gpu_draws_the_bursts_over_the_picture` (bubbles)
+  - `the_stage_bursts_a_word_counted` (bubbles)
 - **K18.** `s` on the Karaoke tab (or the palette) syncs, with a
   microphone open (else it says one is needed) and the player's strip
   heard on the Mixer tab (not muted or far down, nor another strip soloed:
@@ -427,8 +493,8 @@ stem keys are their mutes.
   in (the song's voice left before the microphone's tap moves to the
   clicks left out). Five answers within 150 ms of their median make the
   delay (their median), kept with `enter` for the output and microphone
-  the sync started with (`delays.txt` beside the settings), the nudge back
-  to 0; else "again?". `r` goes again, `esc` cancels (each a button too),
+  the sync started with (`delays.txt` beside the settings), the nudge
+  dropped; else "again?". `r` goes again, `esc` cancels (each a button too),
   leaving the tab calls it off, the output changing ends it.
   - `s_stops_the_song_and_plays_the_clicks_with_a_microphone_open`
   - `no_sync_without_a_microphone_or_where_the_clicks_are_not_heard`

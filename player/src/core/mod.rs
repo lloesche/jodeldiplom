@@ -16,6 +16,7 @@
 //! [`Action`]s and draw [`State`] with the same [`crate::view`] widgets.
 
 pub mod action;
+pub mod bubbles;
 pub mod desk;
 pub mod grid;
 pub mod karaoke;

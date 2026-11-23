@@ -21,7 +21,7 @@ use crate::core::layout::SWITCH;
 use crate::core::layout::{
     KaraokeLayout, KaraokeTabLayout, SliderLayout, KARAOKE_ENTER, KARAOKE_START,
 };
-use crate::core::singing::{notes_of, Hit, Level, LineNotes, Medal, Note, Singing, SongResult};
+use crate::core::singing::{notes_of, Level, LineNotes, Medal, Note, Singing, SongResult};
 use crate::core::sliders::Slider;
 use crate::core::text::{self, width};
 use crate::core::{Gpu, State};
@@ -61,8 +61,11 @@ pub struct LyricLine {
     /// ([`notes_of`]); none where they are not known or not shown.
     pub notes: Vec<Note>,
     /// Where the singer hit them (the game on): from and to, in
-    /// characters, and whether fully (else half).
+    /// characters, and whether fully (else half); a bubble full swept
+    /// full ([`crate::core::bubbles`]).
     pub hits: Vec<(f32, f32, bool)>,
+    /// The bubbles bursting now (the game on).
+    pub bursts: Vec<super::bubbles::Burst>,
     /// The singer's pitch along them: where (characters) and how high
     /// (as the notes' heights).
     pub trail: Vec<(f32, f32)>,
@@ -124,18 +127,21 @@ fn with_notes(
             }
         };
         if ours {
-            sung_on(singing, state.config.karaoke_game, i, &notes, heard, l);
+            let game = (state.config.karaoke_game, state.karaoke.lag.late);
+            sung_on(singing, game, i, &notes, heard, l);
         }
         l.notes = notes.notes;
     }
 }
 
-/// The singer's hits (`game` on), trail and pitch now, as `singing` heard
+/// The singer's hits and the bubbles bursting (`game` on,
+/// [`super::bubbles::fill`], by the singing's time: `heard` less `late`,
+/// how late the voice comes), trail and pitch now, as `singing` heard
 /// them, on line `i`'s `notes`, up to `heard` seconds into the song, into
 /// `l`.
 pub fn sung_on(
     singing: &Singing,
-    game: bool,
+    (game, late): (bool, f64),
     i: usize,
     notes: &LineNotes,
     heard: f64,
@@ -156,21 +162,16 @@ pub fn sung_on(
         let Some(at) = char_at(h.t) else { continue };
         let height = notes.height(h.cents);
         l.trail.push((at, height));
-        if let (true, Some(hit)) = (game, h.hit) {
-            let full = hit == Hit::Full;
-            let to = char_at(h.t + 0.0099).unwrap_or(at);
-            match l.hits.last_mut() {
-                Some(span) if span.2 == full && (at - span.1).abs() < 0.05 => {
-                    span.1 = to.max(span.1)
-                }
-                _ => l.hits.push((at, to.max(at), full)),
-            }
-        }
         last_at = Some((h.t, at, height, h.off));
+    }
+    if game {
+        let clock = crate::core::lag::sung_clock(heard, late);
+        super::bubbles::fill(singing, i, clock, l);
     }
     // The singer now: their last pitch, if just sung.
     if let Some((t, at, height, off)) = last_at {
-        if heard - t < 0.15 {
+        // By the singing's time: its frames come that much after the song.
+        if crate::core::lag::sung_clock(heard, late) - t < 0.15 {
             let way = match off {
                 Some(o) if o > tolerance => -1,
                 Some(o) if o < -tolerance => 1,
@@ -217,6 +218,7 @@ fn line(text: impl Into<String>, fill: f64, kind: LineKind) -> LyricLine {
         alpha: 1.0,
         notes: Vec::new(),
         hits: Vec::new(),
+        bursts: Vec::new(),
         trail: Vec::new(),
         voice: None,
     }
@@ -627,9 +629,9 @@ fn score_now(state: &State) -> Option<Score> {
     let index = karaoke::song_index(state)?;
     let path = state.queue.paths.get(index)?;
     (state.config.karaoke_game && singing.is_of(path) && singing.words() > 0).then_some(Score {
-        points: singing.score,
+        points: singing.tally.score,
         level: singing.level,
-        streak: singing.streak,
+        streak: singing.tally.streak,
     })
 }
 
@@ -1310,65 +1312,13 @@ pub fn karaoke_cells(buf: &mut Buffer, picture: &KaraokePicture) {
         Paragraph::new(line_widget)
             .alignment(HorizontalAlignment::Left)
             .render(Rect::new(x, y, width(&text) as u16, 1), buf);
-        // The notes its words are sung on, in the row under it, under the
-        // letters sung on them (each character's cells), at five heights;
-        // those sung already brighter.
+        // The notes its words are sung on, in the row under it.
         if y + 1 < bottom && line.alpha >= 0.5 && !line.notes.is_empty() {
-            let mut cell_of = Vec::with_capacity(chars.len() + 1);
-            let mut at = 0u16;
-            for c in &chars {
-                cell_of.push(at);
-                at += width(&c.to_string()) as u16;
-            }
-            cell_of.push(at);
-            let last = chars.len();
-            for note in &line.notes {
-                let level = (note.height * 2.0).round().clamp(-2.0, 2.0) as i32;
-                let glyph = NOTE_GLYPHS[(level + 2) as usize];
-                let a = (note.from.floor().max(0.0) as usize).min(last);
-                let b = (note.to.ceil() as usize).clamp(a + 1, last.max(a + 1));
-                let (c0, c1) = (
-                    cell_of[a.min(last)],
-                    cell_of[b.min(last)].max(cell_of[a.min(last)] + 1),
-                );
-                for c in c0..c1 {
-                    let ch = cell_of.iter().rposition(|&k| k <= c).unwrap_or(0);
-                    let mid = ch as f32 + 0.5;
-                    let hit = line.hits.iter().find(|h| mid >= h.0 && mid < h.1);
-                    let color = if let Some(&(_, _, full)) = hit {
-                        if full {
-                            HIT
-                        } else {
-                            HALF_HIT
-                        }
-                    } else if ch < split {
-                        crate::view::lanes::NOTE
-                    } else {
-                        NOTE_AHEAD
-                    };
-                    buf[(x + c, y + 1)].set_symbol(glyph).set_fg(color);
-                }
-            }
-            // The singer now: which way to go, or on the note.
-            if let Some((at, _, way)) = line.voice {
-                let ch = (at.floor().max(0.0) as usize).min(last.saturating_sub(1));
-                let glyph = match way {
-                    1 => "↑",
-                    -1 => "↓",
-                    _ => "●",
-                };
-                buf[(x + cell_of[ch], y + 1)]
-                    .set_symbol(glyph)
-                    .set_fg(SINGER);
-            }
+            super::bubbles::notes_row(buf, line, (x, y + 1), &chars, split);
         }
         y += 2;
     }
 }
-
-/// A note's mark in the terminal, lowest to highest: scan lines at five
-/// heights of a cell.
-const NOTE_GLYPHS: [&str; 5] = ["⎽", "⎼", "─", "⎻", "⎺"];
 
 /// The notes' colour: those sung ([`NOTE`]) and those to come.
 ///

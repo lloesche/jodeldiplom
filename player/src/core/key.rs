@@ -32,8 +32,14 @@ pub fn text(semitones: i8) -> String {
 }
 
 /// Carries out a key's op ([`Op::KeyDown`], [`Op::KeyUp`],
-/// [`Op::KeyReset`]: the tabs' keys, the palette).
+/// [`Op::KeyReset`]: the tabs' keys, the palette). With the Delay slider
+/// at hand on the Karaoke tab or in the mode, `0` puts the delay back as
+/// not nudged instead ([`super::lag::unset_nudge`]).
 pub(crate) fn step(state: &mut State, op: Op, fx: &mut Vec<Effect>) {
+    let karaoke = state.side == super::Side::Karaoke || super::karaoke::in_mode(state);
+    if op == Op::KeyReset && karaoke && state.karaoke.focus == super::sliders::Slider::Delay {
+        return super::lag::unset_nudge(state);
+    }
     let key = i32::from(state.playing.key);
     let to = match op {
         Op::KeyDown => key - 1,

@@ -152,11 +152,13 @@ fn voice_stepped(value: i32, up: bool) -> i32 {
 pub const DELAY_MOST: i32 = 600;
 
 /// The singer's delay in force as the Delay slider has it, in ms: the
-/// base the scoring takes and the nudge on it (on the tab, where no song
-/// is sung, it is what the scoring takes at once).
+/// base the scoring takes, the singing's correction and the nudge on it
+/// (on the tab, where no song is sung, it is what the scoring takes at
+/// once): [`super::lag::Lag::in_force`]. The slider sets the nudge on the
+/// base alone: a nudge drops the correction ([`super::lag::target`]).
 fn delay_ms(state: &State) -> i32 {
-    let base = (state.karaoke.lag.base * 1000.0).round() as i32;
-    base + super::lag::nudge_ms(state)
+    let late = state.karaoke.lag.in_force(super::lag::nudged(state));
+    (late * 1000.0).round() as i32
 }
 
 #[cfg(test)]
