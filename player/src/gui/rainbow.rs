@@ -1,4 +1,4 @@
-//! A streak's shine on the GPU: while the singing keeps up (a [`Shine`]
+//! A streak's shine on the GPU: while the singing keeps up (a [`Glow`]
 //! level above 0: the multiplier above ×1 for now, a shine meter's tier
 //! later), rainbow bands fan out from the playhead behind the pills, more
 //! of them, brighter and faster a level up, the whole lane glowing at the
@@ -30,7 +30,7 @@ pub const STEP_LIFE: f32 = 1.4;
 /// before, or part way there) and when that was (seconds, the singing's
 /// clock).
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub struct Shine {
+pub struct Glow {
     /// Its level.
     pub level: f32,
     /// How strong it showed as it changed.
@@ -39,7 +39,7 @@ pub struct Shine {
     pub since: f32,
 }
 
-impl Shine {
+impl Glow {
     /// How strong it is at `time`, and how far it has collapsed
     /// ([`shine_at`]).
     pub fn at(&self, time: f32) -> (f32, f32) {
@@ -86,7 +86,7 @@ pub fn hue(h: f32) -> [f32; 3] {
 /// How strong `s` is at `time`, and how far it has collapsed (0 to 1):
 /// easing over [`RISE`] from how strong it showed to its level, up or down
 /// a level alike; lost (its level 0), collapsing over [`COLLAPSE`].
-pub fn shine_at(s: &Shine, time: f32) -> (f32, f32) {
+pub fn shine_at(s: &Glow, time: f32) -> (f32, f32) {
     let t = (time - s.since).max(0.0);
     if s.level <= 0.0 && s.from > 0.0 {
         let c = (t / COLLAPSE).clamp(0.0, 1.0);
@@ -98,7 +98,7 @@ pub fn shine_at(s: &Shine, time: f32) -> (f32, f32) {
 
 /// How many bands `s` fans out: a whole number (no seam where the angle
 /// turns), more a level up.
-fn count(s: &Shine) -> f32 {
+fn count(s: &Glow) -> f32 {
     6.0 + 4.0 * (s.level.max(s.from) + 0.5).floor()
 }
 
@@ -114,13 +114,7 @@ fn scale(c: [f32; 3], k: f32) -> [f32; 3] {
 /// `size` (half its width and height), `s` at `time`: rays turning round
 /// the playhead, more as it is higher, reaching further, the whole lane
 /// glowing at the top; collapsing into the playhead, drained, when lost.
-pub fn bands(
-    p: (f32, f32),
-    origin: (f32, f32),
-    size: (f32, f32),
-    s: &Shine,
-    time: f32,
-) -> [f32; 3] {
+pub fn bands(p: (f32, f32), origin: (f32, f32), size: (f32, f32), s: &Glow, time: f32) -> [f32; 3] {
     let (k, c) = shine_at(s, time);
     if k <= 0.001 {
         return [0.0; 3];
@@ -143,7 +137,7 @@ pub fn bands(
 
 /// The swirl's light at `p` round the singer's arrow at `centre`, `radius`
 /// out, `s` at `time`: three arms turning, faster as it is higher.
-pub fn swirl(p: (f32, f32), centre: (f32, f32), radius: f32, s: &Shine, time: f32) -> [f32; 3] {
+pub fn swirl(p: (f32, f32), centre: (f32, f32), radius: f32, s: &Glow, time: f32) -> [f32; 3] {
     let (k, c) = shine_at(s, time);
     if k <= 0.001 {
         return [0.0; 3];
@@ -164,7 +158,7 @@ pub fn swirl(p: (f32, f32), centre: (f32, f32), radius: f32, s: &Shine, time: f3
 
 /// The rainbow edge's light `d` pixels outside a bar `half_y` half high
 /// (negative inside), `x` across, `s` at `time`: colours running along it.
-pub fn rim(d: f32, x: f32, half_y: f32, s: &Shine, time: f32) -> [f32; 3] {
+pub fn rim(d: f32, x: f32, half_y: f32, s: &Glow, time: f32) -> [f32; 3] {
     let (k, c) = shine_at(s, time);
     if k <= 0.001 {
         return [0.0; 3];
@@ -177,7 +171,7 @@ pub fn rim(d: f32, x: f32, half_y: f32, s: &Shine, time: f32) -> [f32; 3] {
 
 /// The rainbow edge's light at `p` round a bar at `c`, `half` its size
 /// (its corners a little round), `s` at `time` ([`rim`]).
-pub fn rim_at(p: (f32, f32), c: (f32, f32), half: (f32, f32), s: &Shine, time: f32) -> [f32; 3] {
+pub fn rim_at(p: (f32, f32), c: (f32, f32), half: (f32, f32), s: &Glow, time: f32) -> [f32; 3] {
     let d = round_box((p.0 - c.0, p.1 - c.1), half, half.0.min(half.1) * 0.3);
     rim(d, p.0, half.1, s, time)
 }
@@ -191,7 +185,7 @@ pub fn lane_mask(p: (f32, f32), c: (f32, f32), half: (f32, f32)) -> f32 {
 
 /// Text's colour `col` at `x` (pixels across) in `s`'s rainbow at `time`:
 /// the rainbow running along it as strongly as `s` shows.
-pub fn text_tint(col: [f32; 3], x: f32, s: &Shine, time: f32) -> [f32; 3] {
+pub fn text_tint(col: [f32; 3], x: f32, s: &Glow, time: f32) -> [f32; 3] {
     let k = shine_at(s, time).0;
     mix3(col, hue(x * 0.01 - time * 0.6), 0.85 * k.min(1.0))
 }
@@ -201,7 +195,7 @@ pub fn text_tint(col: [f32; 3], x: f32, s: &Shine, time: f32) -> [f32; 3] {
 pub fn bands_of(
     origin: (f32, f32),
     (centre, half): ((f32, f32), (f32, f32)),
-    s: &Shine,
+    s: &Glow,
     time: f64,
 ) -> Option<Instance> {
     s.shows(time as f32).then(|| Instance {
@@ -220,7 +214,7 @@ pub fn bands_of(
 
 /// The swirl round `centre`, `radius` out, as `s` says, while anything of
 /// it shows at `time`.
-pub fn swirl_of(centre: (f32, f32), radius: f32, s: &Shine, time: f64) -> Option<Instance> {
+pub fn swirl_of(centre: (f32, f32), radius: f32, s: &Glow, time: f64) -> Option<Instance> {
     let m = radius * 1.8 + 2.0;
     s.shows(time as f32).then(|| Instance {
         quad: [centre.0 - m, centre.1 - m, centre.0 + m, centre.1 + m],
@@ -232,7 +226,7 @@ pub fn swirl_of(centre: (f32, f32), radius: f32, s: &Shine, time: f64) -> Option
 
 /// The rainbow edge round a bar at `centre`, `half` its size, as `s` says,
 /// while anything of it shows at `time`.
-pub fn rim_of(centre: (f32, f32), half: (f32, f32), s: &Shine, time: f64) -> Option<Instance> {
+pub fn rim_of(centre: (f32, f32), half: (f32, f32), s: &Glow, time: f64) -> Option<Instance> {
     let m = (half.1 * 0.9).max(1.5) * 3.0 + 1.0;
     let (mx, my) = (half.0 + m, half.1 + m);
     s.shows(time as f32).then(|| Instance {
@@ -244,20 +238,20 @@ pub fn rim_of(centre: (f32, f32), half: (f32, f32), s: &Shine, time: f64) -> Opt
 }
 
 /// `text` (an instance of text) in `s`'s rainbow ([`text_tint`]).
-pub fn in_rainbow(text: &mut Instance, s: &Shine) {
+pub fn in_rainbow(text: &mut Instance, s: &Glow) {
     text.strain = [s.level, s.from, s.since, flags::RAINBOW as f32];
 }
 
 /// The shine an instance of the bands, a swirl, a rim or text in rainbow
 /// was made with, as the shader reads it.
-pub fn shine_of(i: &Instance) -> Option<Shine> {
+pub fn shine_of(i: &Instance) -> Option<Glow> {
     let k = i.params[0];
     if [kind::BANDS, kind::SWIRL, kind::RIM].contains(&k) {
         let [_, level, from, since] = i.params;
-        return Some(Shine { level, from, since });
+        return Some(Glow { level, from, since });
     }
     let rainbow = k == kind::TEXT && i.strain[3] as u32 & flags::RAINBOW != 0;
-    rainbow.then_some(Shine {
+    rainbow.then_some(Glow {
         level: i.strain[0],
         from: i.strain[1],
         since: i.strain[2],
@@ -499,8 +493,8 @@ mod tests {
     use super::*;
     use crate::gui::particles::Kind;
 
-    fn shine(level: f32, from: f32) -> Shine {
-        Shine {
+    fn shine(level: f32, from: f32) -> Glow {
+        Glow {
             level,
             from,
             since: 10.0,

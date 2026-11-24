@@ -331,8 +331,6 @@ pub enum Op {
     KaraokeRecordEcho,
     /// Karaoke: the game (scoring) on or off.
     KaraokeGame,
-    /// Karaoke: the next level the singing is scored at.
-    KaraokeLevel,
     /// Karaoke: the song's notes shown or hidden.
     KaraokeNotes,
     /// Karaoke: each song's singing kept, or not.
@@ -456,7 +454,6 @@ impl Op {
             Op::MicNext => "Microphone: the next one",
             Op::KaraokeRecordEcho => "Karaoke: record the echo canceller (30 s)",
             Op::KaraokeGame => "Karaoke: the game (scoring) on or off",
-            Op::KaraokeLevel => "Karaoke: the next level (easy, medium, hard)",
             Op::KaraokeNotes => "Karaoke: show or hide the song's notes",
             Op::KaraokeKeep => "Karaoke: keep your singing of each song, or not",
             Op::KaraokeSync => "Karaoke: sync (measure how late your voice comes)",
@@ -1228,12 +1225,6 @@ pub const KEYMAP: &[Binding] = &[
         &[Key::ch('g')],
         Op::KaraokeGame,
         "the game on or off: the singing scored, or just sung",
-    ),
-    b(
-        Context::Karaoke,
-        &[Key::ch('d')],
-        Op::KaraokeLevel,
-        "the next level: easy (any key, the shape), medium (any key, the steps), hard (the song's key)",
     ),
     b(
         Context::Karaoke,

@@ -1,15 +1,16 @@
-//! A streak's shine as the window draws it: on the stage, rainbow bands
-//! from the playhead (more and brighter a level up, the whole lane at the
-//! top), a swirl round the arrow, the multiplier in rainbow; a burst from
-//! the playhead each step up, once; the bands collapsing into the playhead
-//! when the streak is lost; in the picture, a rainbow edge on the bar
-//! under the word sung, and a smaller burst a step up. The streak is set
-//! on the singing's tally as the scoring would. With `JODEL_FRAMES` set to
-//! a folder, the frames are saved there as PNGs.
+//! The singing's shine as the window draws it: on the stage, rainbow
+//! bands from the playhead (more and brighter a tier up, the whole lane
+//! at the top), a swirl round the arrow, the multiplier in rainbow; a
+//! burst from the playhead each tier up, once; the bands collapsing into
+//! the playhead when a phrase reaches no tier; in the picture, a rainbow
+//! edge on the bar under the word sung, and a smaller burst a step up. The
+//! tier is set on the singing's tally as the scoring would. With
+//! `JODEL_FRAMES` set to a folder, the frames are saved there as PNGs.
 
 mod common;
 
-use jodeldiplom::core::singing::{Hit, Level, Scored, Singing};
+use jodeldiplom::core::shine::{Shone, Tier};
+use jodeldiplom::core::singing::Singing;
 use jodeldiplom::gui::karaoke::{paint, Backdrop, BigText, Layer, Target};
 use jodeldiplom::gui::notes::Over;
 use jodeldiplom::gui::particles::Kind;
@@ -17,7 +18,7 @@ use jodeldiplom::gui::present::Offscreen;
 use jodeldiplom::gui::rainbow::shine_of;
 use jodeldiplom::gui::stage::{Song, Stage};
 use jodeldiplom::gui::stage_gpu::{kind, with_picture, StageFrame};
-use jodeldiplom::gui::streak::{Moment, PictureShine, Sung};
+use jodeldiplom::gui::streak::{PictureShine, Sung};
 use ratatui::layout::Rect;
 
 /// `pixels` (`0x00RRGGBB`, `w` wide) as a PNG at `name` in the folder
@@ -35,15 +36,16 @@ fn save_frame(name: &str, pixels: &[u32], w: usize) {
     img.save(std::path::Path::new(&dir).join(name)).unwrap();
 }
 
-/// A streak at a moment: its length, and the word that took it there
-/// (when it ended), if one just did.
-type At = (u32, Option<f64>);
+/// The shine at a moment: the tier the last phrase reached, and when that
+/// phrase ended.
+type At = (Option<Tier>, f64);
 
 /// [`common::bubble_song`] sung on "la"'s note all along, frame by frame
-/// at 60 a second up to `until`, the streak as `streak` says at each
-/// moment (the tally set as the scoring sets it): the stage's frames.
-fn stage_frames(streak: impl Fn(f64) -> At, until: f64) -> Vec<(f64, StageFrame)> {
-    let (mut singing, lyrics) = common::bubble_song(Level::Easy);
+/// at 60 a second up to `until`, the last phrase as `at` says at each
+/// moment (the tally set as the scoring sets it), a streak of five words
+/// (×2): the stage's frames.
+fn stage_frames(at: impl Fn(f64) -> At, until: f64) -> Vec<(f64, StageFrame)> {
+    let (mut singing, lyrics) = common::bubble_song();
     let picture = common::bubble_picture(&singing, &lyrics, (0.0, 0.0), Rect::new(0, 0, 80, 24));
     let mut stage = Stage::new();
     let (mut t, mut heard, mut out) = (0.0, 0u32, Vec::new());
@@ -52,7 +54,8 @@ fn stage_frames(streak: impl Fn(f64) -> At, until: f64) -> Vec<(f64, StageFrame)
             singing.hear(f64::from(heard) / 100.0, Some(6000.0));
             heard += 1;
         }
-        set(&mut singing, streak(t));
+        set(&mut singing, at(t));
+        singing.tally.streak = 5;
         let song = Song::new(&singing, lyrics.lines.iter().collect(), Some(3.0));
         let frame = stage.frame(&song, &picture, (0.0, 0.0, 800.0, 450.0), t, 1.0 / 60.0);
         out.push((t, frame));
@@ -61,17 +64,20 @@ fn stage_frames(streak: impl Fn(f64) -> At, until: f64) -> Vec<(f64, StageFrame)
     out
 }
 
-/// The tally of `singing` with a streak `at`.
-fn set(singing: &mut Singing, (streak, scored): At) {
-    singing.tally.streak = streak;
-    if let Some(end) = scored {
-        singing.tally.last_scored = Some(Scored {
-            end,
-            hit: Some(Hit::Full),
-            points: 10,
-            streak,
-        });
+/// `singing` with its last phrase `at`: decided (at the last frame heard)
+/// where it is another.
+fn set(singing: &mut Singing, (tier, end): At) {
+    if singing.last_phrase().map(|p| (p.tier, p.end)) == Some((tier, end)) {
+        return;
     }
+    let shone = Shone {
+        line: 0,
+        end,
+        value: 0.8,
+        diva: 0.9,
+        tier,
+    };
+    singing.decided(singing.last_heard().unwrap_or(0.0), shone);
 }
 
 /// The light a stage frame's instances of `k` add (summed over its
@@ -101,20 +107,21 @@ fn gpu() -> Option<Offscreen> {
         .ok()
 }
 
-/// Each level its bands: none at ×1, a soft shimmer at ×2, more at ×3,
-/// the whole lane at ×4, each level more light than the one below; the
-/// swirl round the arrow and the multiplier in rainbow while it shines.
+/// Each tier its bands: none without one, a soft shimmer at Good, more
+/// at Great, the whole lane from Amazing, each more light than the one
+/// below; the swirl round the arrow and the multiplier in rainbow while it
+/// shines.
 #[test]
-fn the_bands_shine_by_the_level() {
+fn the_bands_shine_by_the_tier() {
     let mut lights = Vec::new();
     let mut gpu = gpu();
-    for (streak, level, name) in [
-        (0, 0.0, ""),
-        (5, 1.0, "x2"),
-        (10, 2.0, ""),
-        (20, 3.0, "top"),
+    for (tier, level, name) in [
+        (None, 0.0, ""),
+        (Some(Tier::Good), 1.0, "good"),
+        (Some(Tier::Great), 2.0, ""),
+        (Some(Tier::Amazing), 3.0, "amazing"),
     ] {
-        let frames = stage_frames(|_| (streak, None), 0.6);
+        let frames = stage_frames(|_| (tier, 0.1), 0.6);
         let (_, frame) = frames.last().unwrap();
         let shines = level > 0.0;
         let bands = frame.instances.iter().find(|i| i.params[0] == kind::BANDS);
@@ -133,7 +140,7 @@ fn the_bands_shine_by_the_level() {
             .filter(|i| i.params[0] == kind::TEXT && shine_of(i).is_some());
         assert_eq!(
             rainbow.count(),
-            usize::from(level > 0.0),
+            usize::from(shines),
             "the multiplier in rainbow"
         );
         if let Some(gpu) = gpu.as_mut() {
@@ -145,26 +152,26 @@ fn the_bands_shine_by_the_level() {
         }
     }
     if !lights.is_empty() {
-        assert_eq!(lights[0], 0, "none at ×1");
+        assert_eq!(lights[0], 0, "none without a tier");
         assert!(lights.windows(2).all(|w| w[1] > w[0]), "{lights:?}");
         assert!(lights[3] > 3 * lights[1], "the top far more: {lights:?}");
     }
 }
 
-/// Each step up, one burst from the playhead (a step-up record, from its
-/// start for its life, once however many frames show it; none for a word
-/// that keeps the level); the multiplier pops.
+/// Each tier up, one burst from the playhead (a step-up record, from its
+/// start for its life, once however many frames show it; none for a
+/// phrase that keeps the tier).
 #[test]
-fn a_step_up_bursts_once_a_step() {
-    // ×1 to 0.2 s; 5 in a row at 0.2 s (×2), 6 at 0.4 s (still ×2), 10 at
-    // 0.6 s (×3).
-    let streak = |t: f64| match t {
-        t if t < 0.2 => (4, Some(0.1)),
-        t if t < 0.4 => (5, Some(0.2)),
-        t if t < 0.6 => (6, Some(0.4)),
-        _ => (10, Some(0.6)),
+fn a_step_up_bursts_once_a_tier() {
+    // None to 0.2 s; Good at 0.2 s; Good again at 0.4 s; Amazing at 0.6 s
+    // (two up).
+    let at = |t: f64| match t {
+        t if t < 0.2 => (None, 0.1),
+        t if t < 0.4 => (Some(Tier::Good), 0.2),
+        t if t < 0.6 => (Some(Tier::Good), 0.4),
+        _ => (Some(Tier::Amazing), 0.6),
     };
-    let frames = stage_frames(streak, 1.1);
+    let frames = stage_frames(at, 1.1);
     let mut ups: Vec<(u32, u32)> = Vec::new();
     for (t, frame) in &frames {
         let here: Vec<_> = frame
@@ -182,13 +189,7 @@ fn a_step_up_bursts_once_a_step() {
             here.iter().map(|s| (s.start.to_bits(), s.seed)).collect();
         assert_eq!(keys.len(), here.len(), "once in a frame at {t}");
     }
-    assert_eq!(ups.len(), 2, "two steps up: {ups:?}");
-    let scored = frames
-        .iter()
-        .flat_map(|(_, f)| f.sprays.iter().filter(|s| s.kind == Kind::Scored))
-        .map(|s| s.start.to_bits())
-        .collect::<std::collections::HashSet<_>>();
-    assert_eq!(scored.len(), 4, "each word its sparks where it hit");
+    assert_eq!(ups.len(), 3, "three steps up: {ups:?}");
     if let Some(mut gpu) = gpu() {
         let (_, frame) = frames.iter().find(|(t, _)| *t > 0.6 + 0.25).unwrap();
         let (_, pixels) = light_of(&mut gpu, frame, -1.0);
@@ -196,12 +197,19 @@ fn a_step_up_bursts_once_a_step() {
     }
 }
 
-/// Lost, the bands collapse into the playhead and drain: less light each
-/// moment, none after [`jodeldiplom::gui::rainbow::COLLAPSE`].
+/// A phrase reaching no tier: the bands collapse into the playhead and
+/// drain, less light each moment, none after
+/// [`jodeldiplom::gui::rainbow::COLLAPSE`].
 #[test]
-fn a_lost_streak_collapses_into_the_playhead() {
-    let streak = |t: f64| if t < 0.6 { (20, None) } else { (0, None) };
-    let frames = stage_frames(streak, 1.3);
+fn a_phrase_without_a_tier_collapses_the_shine() {
+    let at = |t: f64| {
+        if t < 0.6 {
+            (Some(Tier::Amazing), 0.1)
+        } else {
+            (None, 0.6)
+        }
+    };
+    let frames = stage_frames(at, 1.3);
     let at = |t: f64| &frames.iter().find(|(f, _)| *f >= t).unwrap().1;
     let bands = at(0.7)
         .instances
@@ -254,25 +262,27 @@ fn painted(
     (pixels, layer.over)
 }
 
-/// The picture while the streak shines: a rainbow edge on the bar under
-/// the word sung (none at ×1), a step up's burst from it, smaller than the
-/// stage's, once; drawn round the bar on the GPU.
+/// The picture while the singing shines: a rainbow edge on the bar under
+/// the word sung (none without a tier), a step up's burst from it, smaller
+/// than the stage's, once; drawn round the bar on the GPU.
 #[test]
 fn the_picture_s_bar_gets_a_rainbow_edge() {
-    let (mut singing, lyrics) = common::bubble_song(Level::Medium);
+    let (mut singing, lyrics) = common::bubble_song();
     let mut shine = PictureShine::default();
     let (w, h) = (800usize, 450usize);
     let mut ups = std::collections::HashSet::new();
     let mut last = None;
     for f in 0..40 {
         let t = 0.3 + f64::from(f) / 60.0;
-        singing.hear(t, Some(6000.0));
+        // Heard, not sung: the word's bar stays (sung, it would count and
+        // burst).
+        singing.hear(t, None);
         set(
             &mut singing,
             if t < 0.5 {
-                (4, Some(0.2))
+                (None, 0.2)
             } else {
-                (5, Some(0.5))
+                (Some(Tier::Good), 0.5)
             },
         );
         let picture = common::bubble_picture(&singing, &lyrics, (t, 0.0), Rect::new(0, 0, 80, 24));
@@ -282,7 +292,7 @@ fn the_picture_s_bar_gets_a_rainbow_edge() {
             singing: &singing,
             game: true,
         };
-        let (edge, sprays) = shine.frame(Some(&over), song, Moment { now: t, clock: t });
+        let (edge, sprays) = shine.frame(Some(&over), song, t);
         let (bubbles, sprays): (Vec<_>, Vec<_>) = (edge.into_iter().collect(), sprays.to_vec());
         if (t - 0.5).abs() > 0.02 {
             assert_eq!(bubbles.len(), usize::from(t > 0.5), "{t}");

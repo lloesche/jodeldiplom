@@ -6,7 +6,7 @@
 use std::collections::VecDeque;
 
 use super::judge::KeyStep;
-use super::{Hit, Tally};
+use super::Tally;
 
 /// How far back what the frames did is kept, in seconds: more than a seek
 /// back that is taken back rather than started over.
@@ -17,7 +17,7 @@ pub const UNDO_FOR: f64 = 1.5;
 #[derive(Clone, Debug)]
 pub struct Undo {
     pub t: f64,
-    pub word: Option<((usize, usize), Option<Hit>)>,
+    pub word: Option<((usize, usize), bool)>,
     pub key: Option<KeyStep>,
     pub tally: Tally,
 }
@@ -59,7 +59,9 @@ mod tests {
     use super::super::*;
     use std::path::Path;
 
-    /// Ten words a second each, on C4, E4, G4, D4 and A4 in turn.
+    /// Ten words a second each, on C4, E4, G4, D4 and A4 in turn, in lines
+    /// of three, three and four; held to a reference of itself sung
+    /// straight (each phrase scored as it ends).
     fn song() -> Singing {
         const PITCH: [u16; 5] = [6000, 6400, 6700, 6200, 6900];
         let mut m = Melody {
@@ -70,24 +72,40 @@ mod tests {
             m.cents[i] = PITCH[(i / 100) % 5];
             m.sure[i] = 255;
         }
-        let words = (0..10)
-            .map(|k| jodel_lyrics::Word {
-                start: Some(k as f64),
-                end: Some(k as f64 + 1.0),
-                confidence: 0.9,
-                ..jodel_lyrics::Word::new("la")
-            })
-            .collect();
+        let word = |k: usize| jodel_lyrics::Word {
+            start: Some(k as f64),
+            end: Some(k as f64 + 1.0),
+            confidence: 0.9,
+            ..jodel_lyrics::Word::new("la")
+        };
+        let lines = [0..3, 3..6, 6..10].map(|r| jodel_lyrics::Line {
+            words: r.map(word).collect(),
+            ..jodel_lyrics::Line::default()
+        });
         let lyrics = Arc::new(jodel_lyrics::Lyrics {
-            lines: vec![jodel_lyrics::Line {
-                words,
-                ..jodel_lyrics::Line::default()
-            }],
+            lines: lines.to_vec(),
             source: jodel_lyrics::Source::Unknown,
             timing: jodel_lyrics::Timing::default(),
         });
         let mut s = Singing::default();
-        s.prepare(Path::new("a"), &lyrics, &m, 1, Level::Medium);
+        s.prepare(Path::new("a"), &lyrics, &crate::core::singing::melodic(&m));
+        let frames: Vec<(f64, Option<f32>)> = (-50..1100)
+            .map(|i| {
+                let t = f64::from(i) / 100.0;
+                (t, s.word_at(t).map(|(_, c)| c as f32))
+            })
+            .collect();
+        let frames = shine::reference::keyed(&s.notes, &frames);
+        let phrases = (0..s.notes.lines.len())
+            .map(|l| {
+                let yardstick = shine::measure::yardstick(&s.notes, l, &frames)?;
+                Some(shine::Phrase {
+                    yardstick,
+                    par: shine::Par::default(),
+                })
+            })
+            .collect();
+        s.set_reference(Some(Arc::new(shine::Reference { phrases })));
         s
     }
 
@@ -106,7 +124,8 @@ mod tests {
     /// every 10 ms: each from before the last frame (sought back a little,
     /// the delay nudged), heard again sung otherwise. The same as the
     /// frames as they ended up heard straight through: the scoring, the
-    /// counts, the frames kept and the sung key.
+    /// counts, the frames kept, the sung key and every moment (the words,
+    /// the bubbles burst, the streak, the phrases' shine).
     fn same_as_straight(passes: &[(f64, f64)]) {
         let mut s = song();
         // The pass each frame was last heard on.
@@ -133,14 +152,24 @@ mod tests {
             }
         }
         assert_eq!(s.tally, straight.tally, "{passes:?}");
+        assert_eq!(s.counts, straight.counts, "{passes:?}");
         assert_eq!(s.frames, straight.frames, "{passes:?}");
         assert_eq!(s.heard, straight.heard, "{passes:?}");
         assert_eq!(s.sung_key, straight.sung_key, "{passes:?}");
+        assert_eq!(s.moments(), straight.moments(), "{passes:?}");
+        assert_eq!(s.popped, straight.popped, "{passes:?}");
     }
 
     #[test]
     fn short_seeks_back_in_a_row_are_as_heard_straight() {
         same_as_straight(&[(0.0, 2.0), (1.6, 2.2), (1.9, 2.4), (2.3, 3.5), (3.1, 6.0)]);
+        // Back over a phrase's end as it is scored: scored again.
+        same_as_straight(&[(0.0, 6.5), (5.9, 7.0), (6.3, 9.0)]);
+        let mut s = song();
+        for i in -50..=700 {
+            s.hear(f64::from(i) / 100.0, sung(&s, f64::from(i) / 100.0, 0));
+        }
+        assert_eq!(s.shone().count(), 2, "the reference is set: phrases scored");
     }
 
     /// The delay nudged mid-song: the frames' times step back by the

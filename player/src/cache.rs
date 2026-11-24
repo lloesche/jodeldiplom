@@ -9,7 +9,8 @@
 //! | [`LYRICS_NONE`] | that none were found, and when (`lyrics/*.none`) |
 //! | [`LYRICS_TIMED`] | its lyrics timed word by word (`lyrics/*.timed.lrc`) |
 //! | [`GRID`] | a beat grid fixed by hand (`grids/*.txt`) |
-//! | [`SCORES`] | the best scores sung, a song and a level each (`scores.txt`) |
+//! | [`SCORES`] | the best scores sung, a song each (`scores.txt`) |
+//! | [`SHINE`] | the original singer's phrases measured, the shine's yardstick (`shine/*.txt`) |
 //! | [`DELAYS`] | the singer's delays, an output and a microphone each (`delays.txt`, beside the settings) |
 //! | [`COVER_LAYERS`] | a cover taken apart (`covers/*.layers`, binary: `JDLC` and the version byte) |
 //! | [`COVER_SONG`] | which cover taken apart is a song's (`covers/songs/*.txt`) |
@@ -95,9 +96,18 @@ pub const GRID: Schema = Schema {
     version: 1,
 };
 
-/// The best scores sung ([`crate::scores`]).
+/// The best scores sung ([`crate::scores`]). Version 1 kept one a level
+/// (there were three).
 pub const SCORES: Schema = Schema {
     name: "scores",
+    version: 2,
+};
+
+/// The original singer's phrases as the shine holds a singer to them
+/// ([`crate::shine_cache`]); what they hold is versioned apart, by
+/// [`crate::core::shine::reference::VERSION`] in the file.
+pub const SHINE: Schema = Schema {
+    name: "shine",
     version: 1,
 };
 
@@ -129,7 +139,7 @@ pub const COVER_ALBUM: Schema = Schema {
 };
 
 /// Every schema.
-pub const ALL: [Schema; 11] = [
+pub const ALL: [Schema; 12] = [
     ANALYSIS,
     WAVEFORM,
     LYRICS_TEXT,
@@ -137,6 +147,7 @@ pub const ALL: [Schema; 11] = [
     LYRICS_TIMED,
     GRID,
     SCORES,
+    SHINE,
     DELAYS,
     COVER_LAYERS,
     COVER_SONG,

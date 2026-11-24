@@ -822,24 +822,27 @@ fn text_ops(
             sung: None,
         });
         let small = (px * 0.45).round().max(10.0);
-        let level = match score.multiplier() {
-            1 => score.level.name().to_owned(),
-            m => format!("{} · ×{m}", score.level.name()),
-        };
-        let lw = text.measure_from(&level, small, small);
-        ops.push(TextOp {
-            text: level,
-            base: small,
-            px: small,
-            at: (
-                ax as f32 + aw as f32 - margin - lw,
-                ay as f32 + margin * 0.6 + px * 1.25,
-            ),
-            fill_x: f32::MAX,
-            colors: (rgb(colors::DIM), rgb(colors::DIM)),
-            alpha: 1.0,
-            sung: None,
-        });
+        // Under it the tier the last phrase reached, and the multiplier.
+        let tier = score.tier.map(|t| t.name().to_owned());
+        let times = (score.multiplier() > 1).then(|| format!("×{}", score.multiplier()));
+        let under: Vec<String> = tier.into_iter().chain(times).collect();
+        if !under.is_empty() {
+            let times = under.join(" · ");
+            let lw = text.measure_from(&times, small, small);
+            ops.push(TextOp {
+                text: times,
+                base: small,
+                px: small,
+                at: (
+                    ax as f32 + aw as f32 - margin - lw,
+                    ay as f32 + margin * 0.6 + px * 1.25,
+                ),
+                fill_x: f32::MAX,
+                colors: (rgb(colors::DIM), rgb(colors::DIM)),
+                alpha: 1.0,
+                sung: None,
+            });
+        }
     }
     // The count-in: its number at the top, above the lines and apart from
     // them (it never moves with them), shrinking and fading over its beat;

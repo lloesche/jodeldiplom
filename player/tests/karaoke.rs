@@ -751,15 +751,11 @@ fn the_speech_model_is_found_where_the_build_put_it() {
     let beside = put(&exe);
     assert_eq!(model_in(Some(&exe), Some(&settings)), Some(beside));
     let _ = std::fs::remove_dir_all(&root);
-    // Nothing to download in the player: `d` on the tab is the game's
-    // level, not a download.
+    // Nothing to download in the player: `d` on the tab does nothing.
     let state = tab();
     let d = jodeldiplom::core::keymap::lookup(&state, jodeldiplom::core::keymap::Key::ch('d'));
     assert!(
-        matches!(
-            d,
-            Some(jodeldiplom::core::keymap::Meaning::Op(Op::KaraokeLevel))
-        ),
+        !matches!(d, Some(jodeldiplom::core::keymap::Meaning::Op(_))),
         "{d:?}"
     );
 }
@@ -940,21 +936,16 @@ fn the_sliders_and_buttons_take_clicks() {
         mouse::hit(&state, start.x + 1, start.y + 1),
         Some(Target::Button(Op::KaraokeStart))
     );
-    // The game is set on the tab, not here: a song is sung at one level
-    // from its start to its end. No keys for it, and the ops do nothing.
+    // The game is set on the tab, not here: it stays as it is from a
+    // song's start to its end. No keys for it, and the ops do nothing.
     use jodeldiplom::core::keymap::{lookup, Key, Meaning};
     let before = state.config.clone();
-    for (key, o) in [
-        ('g', Op::KaraokeGame),
-        ('d', Op::KaraokeLevel),
-        ('p', Op::KaraokeNotes),
-    ] {
+    for (key, o) in [('g', Op::KaraokeGame), ('p', Op::KaraokeNotes)] {
         assert!(!matches!(lookup(&state, Key::ch(key)), Some(Meaning::Op(x)) if x == o));
         op(&mut state, o);
     }
     assert_eq!(state.config, before);
-    // On the tab: the game, each level and the notes take clicks.
-    use jodeldiplom::core::singing::Level;
+    // On the tab: the game and the notes take clicks.
     op(&mut state, Op::Back);
     let Layout::Main(m) = layout::compute(&state) else {
         panic!()
@@ -968,13 +959,6 @@ fn the_sliders_and_buttons_take_clicks() {
         mouse::hit(&state, k.show_notes.x + 13, k.show_notes.y),
         Some(Target::Button(Op::KaraokeNotes))
     );
-    let levels: Vec<Level> = k.levels.iter().map(|l| l.1).collect();
-    assert_eq!(levels, Level::ALL);
-    let (hard, _) = k.levels[2];
-    let target = mouse::hit(&state, hard.x + 1, hard.y);
-    assert_eq!(target, Some(Target::KaraokeLevel(Level::Hard)));
-    update(&mut state, Action::KaraokeLevel(Level::Hard));
-    assert_eq!(state.config.karaoke_level, Level::Hard);
 }
 
 /// In the mode the controls come up only with the pointer near the bottom
@@ -1172,25 +1156,19 @@ fn the_tab_says_how_well_the_text_fits_the_song() {
 }
 
 #[test]
-fn g_d_and_p_set_the_game_and_are_saved() {
-    use jodeldiplom::core::singing::Level;
+fn g_and_p_set_the_game_and_are_saved() {
     let mut state = tab();
     assert!(state.config.karaoke_game && state.config.karaoke_notes);
-    assert_eq!(state.config.karaoke_level, Level::Medium);
     let fx = op(&mut state, Op::KaraokeGame);
     assert!(!state.config.karaoke_game);
     assert!(fx.iter().any(|e| matches!(e, Effect::SaveConfig)));
-    op(&mut state, Op::KaraokeLevel);
-    assert_eq!(state.config.karaoke_level, Level::Hard);
-    op(&mut state, Op::KaraokeLevel);
-    assert_eq!(state.config.karaoke_level, Level::Easy);
     op(&mut state, Op::KaraokeNotes);
     assert!(!state.config.karaoke_notes);
 }
 
 #[test]
 fn a_song_sung_to_its_end_shows_its_medal_and_keeps_its_best() {
-    use jodeldiplom::core::singing::{Level, Medal};
+    use jodeldiplom::core::singing::Medal;
     use std::sync::Arc;
     let mut state = tab();
     // A song of four words, a second each on C4: three of them sung.
@@ -1219,7 +1197,11 @@ fn a_song_sung_to_its_end_shows_its_medal_and_keeps_its_best() {
     });
     let path = state.queue.paths[0].clone();
     let singing = &mut state.karaoke.singing;
-    singing.prepare(&path, &lyrics, &melody, 1, Level::Medium);
+    singing.prepare(
+        &path,
+        &lyrics,
+        &jodeldiplom::core::singing::melodic(&melody),
+    );
     for i in 0..450 {
         let t = f64::from(i) / 100.0;
         singing.hear(t, (t < 3.0).then_some(6000.0));
@@ -1229,8 +1211,7 @@ fn a_song_sung_to_its_end_shows_its_medal_and_keeps_its_best() {
     assert_eq!((result.points, result.hit, result.words), (300, 3, 4));
     assert_eq!(result.medal, Some(Medal::Silver));
     assert!(result.new_best() && state.karaoke.bests_changed);
-    let key = (path.display().to_string(), Level::Medium);
-    assert_eq!(state.karaoke.bests[&key].points, 300);
+    assert_eq!(state.karaoke.bests[&path.display().to_string()].points, 300);
     // Sung worse next time: the best stays.
     state.karaoke.bests_changed = false;
     let singing = &mut state.karaoke.singing;

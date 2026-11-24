@@ -3,18 +3,17 @@
 //! from what [`Singing`] heard; the window sweeps a bubble full to full
 //! and burst it ([`crate::view::bubbles`]).
 //!
-//! A bubble fills where a frame of the singer's pitch hit its note (fully
-//! or half, as [`Singing`] judged it; a gap of frames without a pitch, a
-//! consonant, under [`BRIDGE`] filled over, on every level, as the stage
-//! always did). It is full ([`Bubble::full_at`]):
+//! A bubble fills where a frame of the singer's pitch hit its note (as
+//! [`Singing`] judged it; a gap of frames without a pitch, a consonant,
+//! under [`BRIDGE`] filled over). It is full ([`Bubble::full_at`]):
 //!
-//! - on [`Level::Easy`], as soon as its word counts: all the word's
+//! - as soon as its word counts: all the word's
 //!   bubbles at once, the part already sung and the part to come. A word
-//!   counts as the scoring counts it ([`Level::credit`]): its frames that
+//!   counts as the scoring counts it ([`credit`]): its frames that
 //!   hit against all the frames it will have had (those heard on it, and
 //!   those to come until it ends), a little more to be sure; a word the
 //!   scoring counts that never got there, full as it ends;
-//! - on any level, once its fill covers [`FULL`] of it.
+//! - once its fill covers [`FULL`] of it.
 //!
 //! A word is full once all its bubbles are ([`Word::full_at`]). Each time
 //! is fixed by the frames up to it, so a bubble is full once.
@@ -23,7 +22,8 @@ use std::ops::Range;
 
 use jodel_rhythm::yin::HOP;
 
-use super::singing::{Hit, Level, Singing};
+use super::singing::judge::credit;
+use super::singing::Singing;
 
 /// The share of a bubble its fill covers for it to be full.
 pub const FULL: f64 = 0.85;
@@ -34,12 +34,11 @@ pub const BRIDGE: f64 = 0.06;
 /// A note's bubble as the singing filled it.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Bubble {
-    /// Where it is filled as sung: from, to (seconds into the song), and
-    /// whether fully hit (else half).
-    pub spans: Vec<(f64, f64, bool)>,
+    /// Where it is filled as sung: from, to (seconds into the song).
+    pub spans: Vec<(f64, f64)>,
     /// When it filled whole (seconds into the song), if it did.
     pub full_at: Option<f64>,
-    /// Whether it filled with its word (on easy, its word counting): it
+    /// Whether it filled with its word (its word counting): it
     /// sweeps full across the word, else across itself.
     pub by_word: bool,
 }
@@ -81,13 +80,12 @@ impl Bubbles {
 /// Line `l`'s bubbles as `singing` heard them up to `upto` seconds into
 /// the song; none for a line it has no notes of.
 pub fn line(singing: &Singing, l: usize, upto: f64) -> Bubbles {
-    let Some(notes) = singing.lines.get(l) else {
+    let Some(notes) = singing.notes.lines.get(l) else {
         return Bubbles::default();
     };
     let (Some(first), Some(last)) = (notes.notes.first(), notes.notes.last()) else {
         return Bubbles::default();
     };
-    let level = singing.level;
     let mut out = Bubbles {
         notes: vec![Bubble::default(); notes.notes.len()],
         words: Vec::new(),
@@ -124,22 +122,24 @@ pub fn line(singing: &Singing, l: usize, upto: f64) -> Bubbles {
             f64::from(singing.noted(l, w.word)) + to_come.max(0.0)
         })
         .collect();
-    let counts = |frames: f64, hit: f64| level.credit(frames, hit, 0.0).hit() == Some(Hit::Full);
+    let counts = |frames: f64, hit: f64| credit(frames, hit) >= 1.0;
     // How much of each bubble the fill covers (seconds), the frames that
     // hit each word.
     let mut covered = vec![0.0; out.notes.len()];
     let mut hits = vec![0.0; out.words.len()];
     for h in singing.heard_on(l, first.start, upto.min(last.end)) {
-        let Some(hit) = h.hit else { continue };
+        if !h.hit {
+            continue;
+        }
         let k = notes.notes.partition_point(|n| n.start <= h.t);
         let Some(k) = k.checked_sub(1).filter(|&k| h.t < notes.notes[k].end) else {
             continue;
         };
-        let (full, n) = (hit == Hit::Full, &notes.notes[k]);
+        let n = &notes.notes[k];
         let b = &mut out.notes[k];
         let to = (h.t + HOP).min(n.end);
         match b.spans.last_mut() {
-            Some(s) if s.2 == full && h.t - s.1 < BRIDGE => {
+            Some(s) if h.t - s.1 < BRIDGE => {
                 if to > s.1 {
                     covered[k] += to - s.1;
                     s.1 = to;
@@ -147,28 +147,26 @@ pub fn line(singing: &Singing, l: usize, upto: f64) -> Bubbles {
             }
             _ => {
                 covered[k] += to - h.t;
-                b.spans.push((h.t, to, full));
+                b.spans.push((h.t, to));
             }
         }
         if b.full_at.is_none() && covered[k] >= FULL * (n.end - n.start) {
             b.full_at = Some(h.t);
         }
-        // On easy a word counts as soon as it is hit for its share of a
+        // A word counts as soon as it is hit for its share of a
         // little more than it will have had (the delay slewing packs up to
         // its slew more frames into a second): all its bubbles full.
         let w = word_of[k];
-        if level == Level::Easy && full {
-            hits[w] += 1.0;
-            if counts(expected[w] * (1.0 + super::lag::SLEW) + 1.0, hits[w]) {
-                fill_word(&mut out, w, h.t);
-            }
+        hits[w] += 1.0;
+        if counts(expected[w] * (1.0 + super::lag::SLEW) + 1.0, hits[w]) {
+            fill_word(&mut out, w, h.t);
         }
     }
     // A word over that the scoring counts and that never got there early:
     // full as it ends.
     for w in 0..out.words.len() {
         let end = out.words[w].time.1;
-        if level == Level::Easy && heard_to >= end && counts(expected[w], hits[w]) {
+        if heard_to >= end && counts(expected[w], hits[w]) {
             fill_word(&mut out, w, end);
         }
         let word = &mut out.words[w];
@@ -193,12 +191,20 @@ fn fill_word(out: &mut Bubbles, w: usize, t: f64) {
 /// The words of `singing`'s song full by `upto` (all their bubbles), and
 /// the words with notes.
 pub fn words_full(singing: &Singing, upto: f64) -> (usize, usize) {
-    (0..singing.lines.len())
+    (0..singing.notes.lines.len())
         .map(|l| line(singing, l, upto))
         .fold((0, 0), |(n, all), b| {
             (n + b.words_full(), all + b.words.len())
         })
 }
+
+/// How long a bubble full takes to sweep to full before it bursts, in
+/// seconds of the song.
+pub const SWEEP: f64 = 0.2;
+
+/// How long of its burst a bubble overfills (bulging) before it tears and
+/// its liquid splashes out, in seconds.
+pub const SWELL: f64 = 0.08;
 
 #[cfg(test)]
 mod tests;

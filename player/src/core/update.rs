@@ -416,7 +416,6 @@ pub fn update(state: &mut State, action: Action) -> Vec<Effect> {
             karaoke::slide_to(state, slider, share, &mut fx);
         }
         Action::KaraokeSlideEnd => state.karaoke.dragging = None,
-        Action::KaraokeLevel(level) => karaoke::set_level(state, level, &mut fx),
         Action::KaraokeStep { slider, by } => karaoke::step(state, slider, by, &mut fx),
         Action::Sync(event) => super::sync::event(state, event),
         Action::Desk(what) => desk::act(state, what, &mut fx),
@@ -921,7 +920,6 @@ fn is_input(action: &Action) -> bool {
             | Action::TransitionPanEnd
             | Action::KaraokeSlide { .. }
             | Action::KaraokeSlideEnd
-            | Action::KaraokeLevel(_)
             | Action::KaraokeStep { .. }
             | Action::Desk(_)
             | Action::SeekTo(_)
@@ -2060,7 +2058,6 @@ fn apply_op(state: &mut State, op: Op, fx: &mut Vec<Effect>) {
         Op::KaraokeStart
         | Op::KaraokeRecordEcho
         | Op::KaraokeGame
-        | Op::KaraokeLevel
         | Op::KaraokeNotes
         | Op::KaraokeKeep
         | Op::SliderDown

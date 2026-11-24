@@ -1,5 +1,5 @@
 //! The note bubbles of Karaoke mode as the window draws them: each filling
-//! with liquid as it is sung, a word counted on easy swept full,
+//! with liquid as it is sung, a word counted swept full,
 //! straining, then bursting whole (it overfills, tears, its liquid
 //! splashing out, and is gone), in the picture painted on the processor
 //! (its liquid and its burst drawn by the GPU over it, the bubble gone from
@@ -12,7 +12,7 @@
 
 mod common;
 
-use jodeldiplom::core::singing::{Level, Singing};
+use jodeldiplom::core::singing::Singing;
 use jodeldiplom::gui::karaoke::{paint, Backdrop, BigText, Layer, Target};
 use jodeldiplom::gui::notes::Over;
 use jodeldiplom::gui::particles::{Kind, Spray};
@@ -22,9 +22,13 @@ use jodeldiplom::view::bubbles::{BURST, SWEEP, SWELL};
 use jodeldiplom::view::karaoke::KaraokePicture;
 use ratatui::layout::Rect;
 
-/// When "la" of [`common::bubble_song`] counts on easy: its 11th frame hit
-/// (a tenth of the 100 it has, and one more).
+/// When "la" of [`common::bubble_song`] counts: its 11th frame hit (a
+/// tenth of the 100 it has, and one more).
 const COUNTED: f64 = 0.10;
+
+/// How long "la" is sung for it to fill partly and never count (under the
+/// tenth it asks).
+const PARTLY: f64 = 0.06;
 
 /// `pixels` (`0x00RRGGBB`, `w` wide) as a PNG at `name` in the folder
 /// `JODEL_FRAMES` names, where it is set (to look at a frame).
@@ -145,7 +149,7 @@ fn bubble_sprays(frame: &StageFrame) -> Vec<&Spray> {
     frame.sprays.iter().filter(|s| !scored(s)).collect()
 }
 
-/// A word counted on easy in the window's picture, the voice 264 ms late,
+/// A word counted in the window's picture, the voice 264 ms late,
 /// with a GPU and without: the bubble's bar fills (seen part way: painted
 /// flat without a GPU, its liquid handed to the GPU with one, over the bar
 /// painted empty); from its burst on it is no longer painted (the picture
@@ -156,7 +160,7 @@ fn bubble_sprays(frame: &StageFrame) -> Vec<&Spray> {
 #[test]
 fn a_bubble_bursts_over_the_picture_and_is_gone_from_it() {
     for gpu in [false, true] {
-        let (mut singing, lyrics) = common::bubble_song(Level::Easy);
+        let (mut singing, lyrics) = common::bubble_song();
         let (w, h) = (640usize, 360usize);
         let backdrop = Backdrop::new(None, w, h);
         let area = Rect::new(0, 0, 80, 24);
@@ -240,10 +244,10 @@ fn a_bubble_bursts_over_the_picture_and_is_gone_from_it() {
 }
 
 /// A frame of the picture of [`common::bubble_song`] at `at` (the voice
-/// as it comes) sung at `level` on "la" until `until`, for a window with a
+/// as it comes) sung on "la" until `until`, for a window with a
 /// GPU: painted, and what the GPU draws over it.
-fn picture_at(level: Level, until: f64, at: f64, size: (usize, usize)) -> (Vec<u32>, Over) {
-    let (mut singing, lyrics) = common::bubble_song(level);
+fn picture_at(until: f64, at: f64, size: (usize, usize)) -> (Vec<u32>, Over) {
+    let (mut singing, lyrics) = common::bubble_song();
     hear_until(&mut singing, (0.0, at), until);
     let picture = common::bubble_picture(&singing, &lyrics, (at, 0.0), Rect::new(0, 0, 80, 24));
     painted(&picture, size, true)
@@ -273,14 +277,14 @@ fn the_gpu_draws_the_bubbles_over_the_picture() {
     let (w, h) = (800usize, 450usize);
     let lum = |p: u32| ((p >> 16) & 255) + ((p >> 8) & 255) + (p & 255);
     let popped = COUNTED + SWEEP;
-    for (name, level, until, at) in [
-        ("partial", Level::Medium, 0.6, 0.8),
-        ("pressure", Level::Easy, 0.15, popped - 0.012),
-        ("bulge", Level::Easy, 0.15, popped + SWELL * 0.6),
-        ("splash", Level::Easy, 0.15, popped + 0.29),
-        ("after", Level::Easy, 0.15, popped + BURST + 0.1),
+    for (name, until, at) in [
+        ("partial", PARTLY, 0.8),
+        ("pressure", 0.15, popped - 0.012),
+        ("bulge", 0.15, popped + SWELL * 0.6),
+        ("splash", 0.15, popped + 0.29),
+        ("after", 0.15, popped + BURST + 0.1),
     ] {
-        let (pixels, over) = picture_at(level, until, at, (w, h));
+        let (pixels, over) = picture_at(until, at, (w, h));
         let bursting = matches!(name, "bulge" | "splash");
         let liquid = matches!(name, "partial" | "pressure" | "bulge");
         assert_eq!(over.sprays.len(), usize::from(bursting), "{name}");
@@ -333,7 +337,9 @@ fn the_gpu_draws_the_bubbles_over_the_picture() {
                 let (x, y) = (sp.at.0.floor() as usize, sp.at.1.floor() as usize);
                 let what = format!("{name}: {:?} {q} at {x},{y}", sp.look);
                 let count = match sp.look {
-                    Look::Sparkle | Look::Note | Look::Bit => &mut sparkles,
+                    Look::Sparkle | Look::Note | Look::Bit | Look::Angel | Look::Coin => {
+                        &mut sparkles
+                    }
                     Look::Shard => &mut bits,
                     Look::Drop => &mut drops,
                     Look::Sheen => continue,
@@ -401,8 +407,8 @@ fn liquid_drawn(b: &Instance, lit: &[u32], plain: &[u32], w: usize, what: &str) 
     }
 }
 
-/// The stage on the GPU, the voice 264 ms late: "la" sung partly on medium
-/// keeps its liquid at its level, its pill whole; counted on easy, its
+/// The stage on the GPU, the voice 264 ms late: "la" sung too little to
+/// count keeps its liquid at its level, its pill whole; counted, its
 /// bubble (its word's one) strains just before full, overfills, then is
 /// gone, its drops, bits and sparks flying (one burst); after, only "lo"'s
 /// pill. Skipped (with a note) without a GPU.
@@ -418,8 +424,8 @@ fn the_stage_bursts_a_word_counted() {
     };
     let (w, h) = (800u32, 450u32);
     let area = (0.0, 0.0, w as f32, h as f32);
-    let mut frame_at = |level: Level, until: f64, now: f64| {
-        let (mut singing, lyrics) = common::bubble_song(level);
+    let mut frame_at = |until: f64, now: f64| {
+        let (mut singing, lyrics) = common::bubble_song();
         let mut stage = Stage::new();
         let picture =
             common::bubble_picture(&singing, &lyrics, (now, LATE), Rect::new(0, 0, 80, 24));
@@ -451,32 +457,32 @@ fn the_stage_bursts_a_word_counted() {
         (shown, word_pills(&frame), bubbles, lit, fills)
     };
     let popped = LATE + COUNTED + SWEEP;
-    let (partial, pills, sprays, _, fronts) = frame_at(Level::Medium, 0.6, LATE + 0.8);
+    let (partial, pills, sprays, _, fronts) = frame_at(PARTLY, LATE + 0.8);
     assert_eq!(
         (pills.0, pills.1, pills.2, sprays),
         (2, 0, 0.0, vec![]),
         "partly"
     );
     assert_eq!(fronts, 1, "its liquid's front");
-    let (strain, pills, sprays, _, _) = frame_at(Level::Easy, 0.15, popped - 0.012);
+    let (strain, pills, sprays, _, _) = frame_at(0.15, popped - 0.012);
     assert_eq!((pills.0, pills.1, sprays), (2, 0, vec![]), "straining");
     assert!(pills.2 > 0.5, "straining: {}", pills.2);
-    let (bulge, pills, sprays, _, _) = frame_at(Level::Easy, 0.15, popped + SWELL * 0.9);
+    let (bulge, pills, sprays, _, _) = frame_at(0.15, popped + SWELL * 0.9);
     assert_eq!(
         (pills.0, pills.1, sprays),
         (2, 1, vec![Kind::Burst]),
         "overfilling"
     );
-    let (splash, pills, sprays, lit, _) = frame_at(Level::Easy, 0.15, popped + 0.29);
+    let (splash, pills, sprays, lit, _) = frame_at(0.15, popped + 0.29);
     assert_eq!(
         (pills.0, pills.1, sprays),
         (1, 0, vec![Kind::Burst]),
         "splashing"
     );
     assert!(lit > 400, "its drops, bits and sparks: {lit}");
-    let (after, pills, sprays, _, _) = frame_at(Level::Easy, 0.15, popped + BURST + 0.1);
+    let (after, pills, sprays, _, _) = frame_at(0.15, popped + BURST + 0.1);
     assert_eq!((pills.0, pills.1, sprays), (1, 0, vec![]), "gone");
-    let (calm, pills, sprays, lit, _) = frame_at(Level::Medium, 0.15, popped + 0.29);
+    let (calm, pills, sprays, lit, _) = frame_at(PARTLY, popped + 0.29);
     assert_eq!(
         (pills.0, pills.1, sprays, lit),
         (2, 0, vec![], 0),
@@ -498,121 +504,19 @@ fn the_stage_bursts_a_word_counted() {
     assert!(b > s + 300, "overfilling: {b} against {s}");
 }
 
-/// "lala" a second, its first half on C4 and its second on G4: one word
-/// of two notes, two bubbles in a row on its pill. At `level`, sung on its
-/// first note all through (it fills) and on its second for half of it
-/// (it does not), heard up to `upto`.
-fn two_bubbles(level: Level, upto: f64) -> (Singing, std::sync::Arc<jodel_lyrics::Lyrics>) {
-    let lyrics = std::sync::Arc::new(jodel_lyrics::Lyrics {
-        lines: vec![jodel_lyrics::Line {
-            words: vec![jodel_lyrics::Word {
-                start: Some(0.0),
-                end: Some(1.0),
-                confidence: 0.9,
-                ..jodel_lyrics::Word::new("lala")
-            }],
-            ..jodel_lyrics::Line::default()
-        }],
-        source: jodel_lyrics::Source::Unknown,
-        timing: jodel_lyrics::Timing::default(),
-    });
-    let mut melody = jodel_rhythm::waveform::Melody {
-        cents: vec![0; 300],
-        sure: vec![0; 300],
-    };
-    for i in 0..100 {
-        melody.cents[i] = if i < 50 { 6000 } else { 6700 };
-        melody.sure[i] = 255;
-    }
-    let mut singing = Singing::default();
-    singing.prepare(std::path::Path::new("b"), &lyrics, &melody, 1, level);
-    let mut i = 0u32;
-    while f64::from(i) / 100.0 <= upto {
-        let t = f64::from(i) / 100.0;
-        let cents = match t {
-            t if t < 0.5 => Some(6000.0),
-            t if t < 0.75 => Some(6700.0),
-            _ => None,
-        };
-        singing.hear(t, cents);
-        i += 1;
-    }
-    (singing, lyrics)
-}
-
-/// The stage, a word of two bubbles on medium: its first full bursts on
-/// its own (one burst, from its place: the pill's first half) and is gone,
-/// while its second, half filled, stays with its liquid (its front
-/// living), and never bursts. Its frames (first overfilling, then
-/// splashing, the second still filling) saved, with a GPU.
-#[test]
-fn the_stage_bursts_each_bubble_of_a_word_on_its_own() {
-    use jodeldiplom::core::bubbles;
-    use jodeldiplom::gui::present::Offscreen;
-    let full_at = |s: &Singing| bubbles::line(s, 0, f64::INFINITY).notes[0].full_at;
-    let (singing, _) = two_bubbles(Level::Medium, 2.0);
-    let start = full_at(&singing).expect("the first fills") + SWEEP;
-    assert_eq!(bubbles::line(&singing, 0, 9.0).notes[1].full_at, None);
-    let mut gpu = Offscreen::new(false).ok();
-    for (name, at) in [
-        ("before", start - 0.05),
-        ("overfilling", start + SWELL * 0.6),
-        ("splashing", start + 0.15),
-        ("after", start + BURST + 0.1),
-    ] {
-        let (singing, lyrics) = two_bubbles(Level::Medium, at);
-        let frame = stage_at(&singing, &lyrics, at, 0.0);
-        let sprays = bubble_sprays(&frame);
-        let bubbles = word_pills(&frame);
-        let fronts = fronts(&frame.instances);
-        match name {
-            "before" => assert_eq!((bubbles.0, sprays.len()), (2, 0), "{name}"),
-            "overfilling" => assert_eq!((bubbles.0, bubbles.1), (2, 1), "{name}"),
-            "after" => assert_eq!((bubbles.0, sprays.len()), (1, 0), "{name}"),
-            _ => assert_eq!(bubbles.0, 1, "{name}: the first gone"),
-        }
-        if name == "overfilling" || name == "splashing" {
-            assert_eq!(sprays.len(), 1, "{name}: one burst, the first's");
-            assert_eq!(sprays[0].kind, Kind::Burst);
-            // From the pill's first half: left of the bubble that stays.
-            let stays = frame
-                .instances
-                .iter()
-                .find(|i| i.params[0] == kind::BUBBLE && i.strained().popping.is_none())
-                .expect("the second bubble");
-            assert!(sprays[0].at.0 < stays.shape[0], "{name}");
-        }
-        // The second's liquid, its front living (the first's too, maybe,
-        // before it is swept full).
-        assert!(
-            fronts == 1 || (name == "before" && fronts >= 1),
-            "{name}: {fronts}"
-        );
-        if let Some(gpu) = gpu.as_mut() {
-            gpu.set_stage(Some(&frame), 800, 450);
-            let shown = gpu.show_pixels(&vec![0u32; 800 * 450], 800, 450);
-            save_frame(
-                &format!("stage_two_{name}.png"),
-                &shown.expect("a frame"),
-                800,
-            );
-        }
-    }
-}
-
-/// A bubble filled about 60 % on medium (its note sung for 0.6 s of its
-/// second) is never full: after its time it is still drawn with its
+/// A bubble filled about 6 % (its note sung for 0.06 s of its second,
+/// too little to count) is never full: after its time it is still drawn with its
 /// liquid at its level, on every frontend, and nothing strains, overfills
 /// or bursts.
 #[test]
 fn a_bubble_partly_filled_never_pops() {
     use jodeldiplom::core::bubbles;
-    let (mut singing, lyrics) = common::bubble_song(Level::Medium);
-    hear_until(&mut singing, (0.0, 1.6), 0.6);
+    let (mut singing, lyrics) = common::bubble_song();
+    hear_until(&mut singing, (0.0, 1.6), PARTLY);
     let b = bubbles::line(&singing, 0, f64::INFINITY);
     assert_eq!(b.notes[0].full_at, None);
     let filled: f64 = b.notes[0].spans.iter().map(|s| s.1 - s.0).sum();
-    assert!((0.5..0.7).contains(&filled), "{filled}");
+    assert!((0.05..0.07).contains(&filled), "{filled}");
     for heard in [0.8, 1.1, 1.3] {
         // The picture: its bar painted, its liquid at its level for the
         // GPU, unstrained, no burst.
@@ -623,7 +527,7 @@ fn a_bubble_partly_filled_never_pops() {
             (liquid.pops_at, liquid.begun(), liquid.pressure()),
             (None, false, 0.0)
         );
-        assert!((liquid.level - 0.6).abs() < 0.06, "{}", liquid.level);
+        assert!((liquid.level - PARTLY).abs() < 0.01, "{}", liquid.level);
         let over = painted(&picture, (640, 360), true).1;
         assert!(over.sprays.is_empty() && over.bubbles.len() == 1);
         let strain = over.bubbles[0].strained();
@@ -648,7 +552,7 @@ fn a_bubble_partly_filled_never_pops() {
 /// did.
 #[test]
 fn a_bubble_unpopped_by_a_seek_back_shows_again() {
-    let (mut singing, lyrics) = common::bubble_song(Level::Easy);
+    let (mut singing, lyrics) = common::bubble_song();
     let now = 0.9;
     // How "la" shows at `now`: its liquid's level, whether the picture
     // paints its bar (and its bursts for the GPU), the stage's word pills
@@ -691,7 +595,7 @@ fn a_bubble_unpopped_by_a_seek_back_shows_again() {
 /// playhead while they sing (by the singing's time, as the picture's dot).
 #[test]
 fn the_arrow_shows_while_singing_however_late_the_voice() {
-    let (mut singing, lyrics) = common::bubble_song(Level::Easy);
+    let (mut singing, lyrics) = common::bubble_song();
     let mut stage = Stage::new();
     let area = (0.0, 0.0, 800.0, 450.0);
     let picture = common::bubble_picture(&singing, &lyrics, (0.0, LATE), Rect::new(0, 0, 80, 24));
@@ -718,7 +622,7 @@ fn the_arrow_shows_while_singing_however_late_the_voice() {
 /// once).
 #[test]
 fn a_seek_back_brings_no_ghost_bursts_on_the_stage() {
-    let (mut singing, lyrics) = common::bubble_song(Level::Easy);
+    let (mut singing, lyrics) = common::bubble_song();
     let mut stage = Stage::new();
     let area = (0.0, 0.0, 800.0, 450.0);
     let picture = common::bubble_picture(&singing, &lyrics, (0.0, 0.0), Rect::new(0, 0, 80, 24));

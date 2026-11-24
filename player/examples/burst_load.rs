@@ -12,7 +12,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
 
-use jodeldiplom::core::singing::{Level, Note, Singing};
+use jodeldiplom::core::singing::{Note, Singing};
 use jodeldiplom::gui::karaoke::{paint, Backdrop, BigText, Layer, Target};
 use jodeldiplom::gui::stage::{Song, Stage};
 use jodeldiplom::view::bubbles::Liquid;
@@ -89,7 +89,7 @@ fn picture(w: usize, h: usize, bursting: bool) -> ((f64, f64), Option<(f64, f64)
             id: Some(0),
             alpha: 1.0,
             notes: notes.clone(),
-            hits: vec![(0.0, text.chars().count() as f32, true)],
+            hits: vec![(0.0, text.chars().count() as f32)],
             // Each bubble bursting, or with its liquid in it (60 %).
             liquid: notes
                 .iter()
@@ -101,7 +101,6 @@ fn picture(w: usize, h: usize, bursting: bool) -> ((f64, f64), Option<(f64, f64)
                     time: (n.start, n.end),
                     height: n.height,
                     level: if bursting { 1.0 } else { 0.6 },
-                    full: 1.0,
                     jumped: f64::NEG_INFINITY,
                     pops_at: bursting.then_some(f as f64 / 60.0 - f64::from(age) * 0.5),
                     age: bursting.then_some(f64::from(age) * 0.5),
@@ -158,7 +157,7 @@ fn picture(w: usize, h: usize, bursting: bool) -> ((f64, f64), Option<(f64, f64)
     )
 }
 
-/// The stage of a line of 20 short words sung all through on easy (each
+/// The stage of a line of 20 short words sung all through (each
 /// counts at once: they burst together), or not sung; frames at 60 a
 /// second through the bursts. With the streak's `shine` at its top, a step
 /// up every 15 frames (the tally set as the scoring would).
@@ -186,7 +185,11 @@ fn stage(w: usize, h: usize, bursting: bool, shine: bool) -> ((f64, f64), Option
         melody.sure[i] = 255;
     }
     let mut singing = Singing::default();
-    singing.prepare(Path::new("load"), &lyrics, &melody, 1, Level::Easy);
+    singing.prepare(
+        Path::new("load"),
+        &lyrics,
+        &jodeldiplom::core::singing::melodic(&melody),
+    );
     let mut gpu = jodeldiplom::gui::present::Offscreen::new(false).ok();
     let blank = vec![0u32; w * h];
     let mut stage = Stage::new();
@@ -208,7 +211,7 @@ fn stage(w: usize, h: usize, bursting: bool, shine: bool) -> ((f64, f64), Option
             if f % 15 == 0 {
                 singing.tally.last_scored = Some(jodeldiplom::core::singing::Scored {
                     end: now,
-                    hit: Some(jodeldiplom::core::singing::Hit::Full),
+                    hit: true,
                     points: 40,
                     streak: 20,
                 });

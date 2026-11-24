@@ -367,7 +367,7 @@ pub struct KaraokeState {
     pub sync: Option<super::sync::Session>,
     /// How the last song was sung, shown until the next is started.
     pub result: Option<super::singing::SongResult>,
-    /// The best scores sung, by song and level.
+    /// The best scores sung, by song.
     pub bests: crate::scores::Bests,
     /// Whether the best scores changed since they were last saved.
     pub bests_changed: bool,
@@ -470,9 +470,7 @@ pub(crate) fn apply(state: &mut State, op: Op, fx: &mut Vec<Effect>) -> bool {
         Op::MicNext => fx.push(Effect::NextMic),
         Op::KaraokeRecordEcho => fx.push(Effect::RecordEcho),
         Op::KaraokeSync => super::sync::begin(state, fx),
-        Op::KaraokeGame | Op::KaraokeLevel | Op::KaraokeNotes | Op::KaraokeKeep => {
-            game_setting(state, op, fx)
-        }
+        Op::KaraokeGame | Op::KaraokeNotes | Op::KaraokeKeep => game_setting(state, op, fx),
         Op::Up | Op::Down => focus_by(state, if op == Op::Up { -1 } else { 1 }),
         Op::SliderDown | Op::SliderUp | Op::SliderFineDown | Op::SliderFineUp => {
             slide_key(state, op, fx)
@@ -494,25 +492,18 @@ fn focus_by(state: &mut State, by: i32) {
     state.karaoke.focus = all[(at + by).clamp(0, all.len() as i32 - 1) as usize];
 }
 
-/// The game's settings: scoring on or off (`g`), the next level (`d`),
-/// the notes shown or not (`p`); saved, and said.
+/// The game's settings: scoring on or off (`g`), the notes shown or not
+/// (`p`), the singing kept or not; saved, and said.
 fn game_setting(state: &mut State, op: Op, fx: &mut Vec<Effect>) {
     let config = &mut state.config;
     let said = match op {
         Op::KaraokeGame => {
             config.karaoke_game = !config.karaoke_game;
             if config.karaoke_game {
-                format!(
-                    "Game on: the singing is scored ({})",
-                    config.karaoke_level.name()
-                )
+                "Game on: the singing is scored, each phrase shining".to_owned()
             } else {
                 "Game off: just singing, nothing scored".to_owned()
             }
-        }
-        Op::KaraokeLevel => {
-            config.karaoke_level = config.karaoke_level.next();
-            level_said(config.karaoke_level)
         }
         Op::KaraokeKeep => {
             config.karaoke_keep = !config.karaoke_keep;
@@ -533,21 +524,6 @@ fn game_setting(state: &mut State, op: Op, fx: &mut Vec<Effect>) {
     };
     fx.push(Effect::SaveConfig);
     super::update::say_info(state, said);
-}
-
-/// What is said of `level` when it is picked.
-fn level_said(level: super::singing::Level) -> String {
-    format!("Level {}: {}", level.name(), level.what())
-}
-
-/// `level` picked on the tab (a click): kept in the settings.
-pub(crate) fn set_level(state: &mut State, level: super::singing::Level, fx: &mut Vec<Effect>) {
-    if state.config.karaoke_level == level {
-        return;
-    }
-    state.config.karaoke_level = level;
-    fx.push(Effect::SaveConfig);
-    super::update::say_info(state, level_said(level));
 }
 
 /// [`apply`] in the mode: START, play and pause, the sliders, the next or
@@ -832,25 +808,24 @@ pub(crate) fn held(state: &mut State, index: usize) {
 }
 
 /// The song in the mode sung to its end, the game on: how it went (its
-/// points, words hit, medal and best before), kept to show, and its best
-/// score at the level raised where it was beaten.
+/// points, words hit, the phrases' tiers, medal and best before), kept to
+/// show, and its best score raised where it was beaten.
 fn sung_to_the_end(state: &mut State) {
+    if !state.config.karaoke_game {
+        return;
+    }
+    // Its last words and phrases scored (heard on to past its end).
+    state.karaoke.singing.finish();
     let singing = &state.karaoke.singing;
     let Some(path) = singing.song().map(Path::to_path_buf) else {
         return;
     };
-    if !state.config.karaoke_game || singing.tally.scored_words == 0 {
+    if singing.tally.scored_words == 0 {
         return;
     }
-    let (points, hit, half, words, streak, level) = (
-        singing.tally.score,
-        singing.tally.hit_words,
-        singing.tally.half_words,
-        singing.tally.scored_words,
-        singing.tally.best_streak,
-        singing.level,
-    );
-    let key = (path.display().to_string(), level);
+    let tally = singing.tally;
+    let (points, hit, words) = (tally.score, tally.hit_words, tally.scored_words);
+    let key = path.display().to_string();
     let best = state.karaoke.bests.get(&key).map(|b| b.points);
     let title = state
         .details
@@ -864,12 +839,11 @@ fn sung_to_the_end(state: &mut State) {
         title,
         points,
         hit,
-        half,
         words,
-        streak,
-        level,
+        streak: tally.best_streak,
+        phrases: singing.shone().copied().collect(),
         medal: whole
-            .then(|| super::singing::Medal::of(hit, half, words))
+            .then(|| super::singing::Medal::of(hit, words))
             .flatten(),
         best,
         whole,

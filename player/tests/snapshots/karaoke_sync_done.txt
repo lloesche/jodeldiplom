@@ -15,16 +15,16 @@
 │ │                                     │   │                                                                        │ │
 │ │                                     │   │                                                                        │ │
 │ │                                     │   ╰────────────────────────────────────────────────────────────────────────╯ │
-│ │                                     │                                                                              │
 │ │                                     │   Lyrics  Morning Light:                                                     │
 │ │                                     │     next  Undertow:                                                          │
 │ │                                     │     next  Glass Rooms:                                                       │
-│ ╰─────────────────────────────────────╯                                                                              │
-│                                           Mic     ▯▯▯▯▯▯▯▯▯▯▯▯  Headset  (i: the next one)                           │
+│ │                                     │                                                                              │
+│ ╰─────────────────────────────────────╯   Mic     ▯▯▯▯▯▯▯▯▯▯▯▯  Headset  (i: the next one)                           │
 │                                           Echo    on, once music plays                                               │
 │                                           Words   not timed: the speech model is not in this build (make puts it the │
 │                                                                                                                      │
 │                                           Here and in the mode the voice plays at its level, the rest as it is.      │
+│                                           Each song waits for START, then counts in 3, 2, 1, a second each; again af │
 ╰ enter keep · r again · esc cancel ───────────────────────────────────────────────────────────────────────────────────╯
 
 

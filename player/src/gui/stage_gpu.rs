@@ -42,7 +42,9 @@ pub mod kind {
     pub const ARROW: f32 = 5.0;
     /// Text from the atlas: `uv` its texels there, drawn over the quad;
     /// left of `params[1]` (pixels across the window) in `color2`, right of
-    /// it in `color`.
+    /// it in `color`. Where `shape[3]` is set, it pops round (`shape[0]`,
+    /// `shape[1]`) from `shape[2]` and shows `shape[3]` seconds, as a
+    /// [`BADGE`] does.
     pub const TEXT: f32 = 6.0;
     /// A note's bubble: a [`PILL`] straining and bursting as its
     /// [`Instance::strain`] says ([`super::Instance::bubble`]).
@@ -63,6 +65,29 @@ pub mod kind {
     /// A streak's rainbow edge round a bar at `shape` (centre, half size);
     /// its shine as [`BANDS`]' ([`crate::gui::rainbow::rim_of`]).
     pub const RIM: f32 = 11.0;
+    /// The shine meter ([`crate::gui::glory::meter_at`]): `shape` its middle
+    /// and half size, `params[1..]` its fill from, to and since.
+    pub const METER: f32 = 12.0;
+    /// The ring of the time left ([`crate::gui::glory::ring_at`]): `shape`
+    /// its middle, radius and thickness, `params[1]` the share left,
+    /// `strain[0..3]` the shine.
+    pub const RING: f32 = 13.0;
+    /// A phrase's mark on the progress bar: a disc at (`shape[0]`,
+    /// `shape[1]`), `shape[2]` across, in `color`, popping from `params[1]`
+    /// ([`crate::gui::glory::mark_pop`]).
+    pub const MARK: f32 = 14.0;
+    /// Great's glow round the lane (`shape` its middle and half size) in
+    /// `color`, `params[1]` its reach, `params[2]` its strength: light.
+    pub const GLOW: f32 = 15.0;
+    /// Amazing's flames along an edge from `shape[0]` to `shape[2]` at
+    /// `shape[1]`, outward `shape[3]` (1 down, -1 up), `params[1]` high,
+    /// `params[2]` strong ([`crate::gui::glory::blaze`]): light.
+    pub const BLAZE: f32 = 16.0;
+    /// A badge: a round [`PILL`] (`shape` its middle and half size) in
+    /// `color`, ringed `params[3]` wide in `color2`, popping round its
+    /// middle from `params[1]` (the singing's time) and showing
+    /// `params[2]` seconds ([`crate::gui::glory::label_pop`]).
+    pub const BADGE: f32 = 17.0;
 }
 
 /// The flags of a bubble or its liquid, or of text ([`Instance::strain`]`[3]`).
@@ -140,26 +165,6 @@ pub struct Tint {
     pub bottom: [f32; 4],
     /// Its glow's reach, pixels.
     pub glow: f32,
-}
-
-/// The liquids' colours: where fully hit and where only half.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Palette {
-    /// Fully hit.
-    pub full: Tint,
-    /// Half hit.
-    pub half: Tint,
-}
-
-impl Palette {
-    /// The tint of a liquid `fully` hit (else half).
-    pub fn of(&self, fully: bool) -> Tint {
-        if fully {
-            self.full
-        } else {
-            self.half
-        }
-    }
 }
 
 /// A bubble's liquid: from and to across (pixels), whether its front is
@@ -282,10 +287,17 @@ pub struct AtlasUpload {
 pub struct StageFrame {
     /// The shapes, back to front.
     pub instances: Vec<Instance>,
+    /// The shapes over everything, the light's bloom too (a tier's name
+    /// on its badge), back to front.
+    pub top: Vec<Instance>,
     /// Text to put into the atlas first.
     pub uploads: Vec<AtlasUpload>,
     /// The bursts showing ([`super::particles`]).
     pub sprays: Vec<super::particles::Spray>,
+    /// The shapes that are light to bloom, drawn apart ([`super::bloom`]).
+    pub lights: Vec<Instance>,
+    /// The bursts that are light to bloom.
+    pub light_sprays: Vec<super::particles::Spray>,
     /// The singing's time, in seconds: what the bubbles' strain and the
     /// bursts go by.
     pub clock: f32,
@@ -330,6 +342,13 @@ const K_LIQUID: u32 = {}u;
 const K_BANDS: u32 = {}u;
 const K_SWIRL: u32 = {}u;
 const K_RIM: u32 = {}u;
+const K_METER: u32 = {}u;
+const K_RING: u32 = {}u;
+const K_MARK: u32 = {}u;
+const K_GLOW: u32 = {}u;
+const K_BLAZE: u32 = {}u;
+const K_TEXT: u32 = {}u;
+const K_BADGE: u32 = {}u;
 ",
         k(kind::PILL),
         k(kind::FILL),
@@ -342,6 +361,13 @@ const K_RIM: u32 = {}u;
         k(kind::BANDS),
         k(kind::SWIRL),
         k(kind::RIM),
+        k(kind::METER),
+        k(kind::RING),
+        k(kind::MARK),
+        k(kind::GLOW),
+        k(kind::BLAZE),
+        k(kind::TEXT),
+        k(kind::BADGE),
     )
 }
 
@@ -350,10 +376,11 @@ const K_RIM: u32 = {}u;
 /// ([`super::rainbow::stage_wgsl`]).
 pub fn shader() -> String {
     format!(
-        "{}{SHADER}{}{}",
+        "{}{SHADER}{}{}{}",
         kinds_wgsl(),
         super::liquid::wgsl(),
-        super::rainbow::stage_wgsl()
+        super::rainbow::stage_wgsl(),
+        super::glory::wgsl()
     )
 }
 
@@ -396,17 +423,38 @@ struct Out {
 
 @vertex
 fn vs(@builtin(vertex_index) v: u32, i: In) -> Out {
-    let corner = vec2<f32>(f32(v & 1u), f32((v >> 1u) & 1u));
-    let p = mix(i.quad.xy, i.quad.zw, corner);
+    var quad = i.quad;
     var o: Out;
-    o.pos = vec4<f32>(p.x / screen.size.x * 2.0 - 1.0, 1.0 - p.y / screen.size.y * 2.0, 0.0, 1.0);
-    o.p = p;
     o.shape = i.shape;
     o.color = i.color;
     o.color2 = i.color2;
     o.params = i.params;
+    // Text or a badge popping (round where, from when, how long), the
+    // badge drawn as a pill.
+    let k = u32(round(i.params.x));
+    var pop = vec4<f32>(0.0);
+    if k == K_TEXT && i.shape.w > 0.0 {
+        pop = i.shape;
+    }
+    if k == K_BADGE {
+        pop = vec4<f32>(i.shape.xy, i.params.yz);
+        o.params = vec4<f32>(f32(K_PILL), 0.0, i.params.w, 0.0);
+    }
+    if pop.w > 0.0 {
+        let s = label_pop(screen.time - pop.z, pop.w);
+        quad = pop.xyxy + (quad - pop.xyxy) * s.x;
+        o.color.a = o.color.a * s.y;
+        o.color2.a = o.color2.a * s.y;
+        if k == K_BADGE {
+            o.shape = vec4<f32>(i.shape.xy, i.shape.zw * s.x);
+        }
+    }
+    let corner = vec2<f32>(f32(v & 1u), f32((v >> 1u) & 1u));
+    let p = mix(quad.xy, quad.zw, corner);
+    o.pos = vec4<f32>(p.x / screen.size.x * 2.0 - 1.0, 1.0 - p.y / screen.size.y * 2.0, 0.0, 1.0);
+    o.p = p;
     o.uv = i.uv;
-    o.quad = i.quad;
+    o.quad = quad;
     o.strain = i.strain;
     return o;
 }
@@ -521,6 +569,9 @@ fn fs(o: Out) -> @location(0) vec4<f32> {
     if k == K_PILL || k == K_FILL || k == K_BUBBLE || k == K_LIQUID {
         return pill(o, p, k);
     }
+    if k >= K_METER && k <= K_BLAZE {
+        return glory(o, p, k);
+    }
     if k == K_BANDS || k == K_SWIRL || k == K_RIM {
         return shine(o, p, k);
     }
@@ -601,21 +652,118 @@ fn shine(o: Out, p: vec2<f32>, k: u32) -> vec4<f32> {
 }
 ";
 
+/// How a pass's shapes go onto what is drawn: over it (premultiplied,
+/// covering it as much as they cover), or added to it (light).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Blend {
+    /// Over it.
+    Over,
+    /// Added.
+    Add,
+}
+
+impl Blend {
+    /// Its blend, premultiplied.
+    pub fn state(self) -> wgpu::BlendState {
+        let c = wgpu::BlendComponent {
+            src_factor: wgpu::BlendFactor::One,
+            dst_factor: match self {
+                Blend::Over => wgpu::BlendFactor::OneMinusSrcAlpha,
+                Blend::Add => wgpu::BlendFactor::One,
+            },
+            operation: wgpu::BlendOperation::Add,
+        };
+        wgpu::BlendState { color: c, alpha: c }
+    }
+}
+
+/// Whether `format` takes linear light from the shaders: an sRGB one
+/// (encoded as it is written) or a float one (light as it is).
+pub fn takes_linear(format: wgpu::TextureFormat) -> bool {
+    format.is_srgb()
+        || matches!(
+            format,
+            wgpu::TextureFormat::Rgba16Float | wgpu::TextureFormat::Rgba32Float
+        )
+}
+
+/// What a stage pass draws next: its shapes (back to front), those over
+/// everything (drawn apart: [`StagePass::draw_top`]), the text to put into
+/// the atlas first, and the singing's time.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Feed<'a> {
+    /// The shapes.
+    pub instances: &'a [Instance],
+    /// The shapes over everything.
+    pub top: &'a [Instance],
+    /// The text.
+    pub uploads: &'a [AtlasUpload],
+    /// The time.
+    pub clock: f32,
+}
+
+impl StageFrame {
+    /// Its stage, as the stage pass draws it.
+    pub fn feed(&self) -> Feed<'_> {
+        Feed {
+            instances: &self.instances,
+            top: &self.top,
+            uploads: &self.uploads,
+            clock: self.clock,
+        }
+    }
+
+    /// Its light, as the light's pass draws it (no text: the light has
+    /// none).
+    pub fn light_feed(&self) -> Feed<'_> {
+        Feed {
+            instances: &self.lights,
+            clock: self.clock,
+            ..Feed::default()
+        }
+    }
+}
+
 /// The stage's pipeline and what it reads.
 pub struct StagePass {
     pipeline: wgpu::RenderPipeline,
+    layout: wgpu::BindGroupLayout,
     bind: wgpu::BindGroup,
     uniforms: wgpu::Buffer,
-    atlas: wgpu::Texture,
+    sampler: wgpu::Sampler,
+    /// The text's atlas, made with the first text put into it (a pass
+    /// never given any has a texel of it).
+    atlas: Option<wgpu::Texture>,
     instances: Option<wgpu::Buffer>,
-    /// The instances in the buffer for the next frame.
-    count: u32,
-    srgb: bool,
+    /// The instances in the buffer for the next frame: the shapes, then
+    /// those over everything.
+    count: (u32, u32),
+    linear: bool,
+}
+
+/// A texture of the atlas's format, `side` square, and its view.
+fn atlas_texture(device: &wgpu::Device, side: u32) -> (wgpu::Texture, wgpu::TextureView) {
+    let atlas = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("jodeldiplom stage atlas"),
+        size: wgpu::Extent3d {
+            width: side,
+            height: side,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::R8Unorm,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+    let view = atlas.create_view(&wgpu::TextureViewDescriptor::default());
+    (atlas, view)
 }
 
 impl StagePass {
-    /// For frames of `format`.
-    pub fn new(device: &wgpu::Device, format: wgpu::TextureFormat) -> StagePass {
+    /// For frames of `format`, its shapes going on as `blend` says.
+    pub fn new(device: &wgpu::Device, format: wgpu::TextureFormat, blend: Blend) -> StagePass {
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("jodeldiplom stage"),
             entries: &[
@@ -660,11 +808,6 @@ impl StagePass {
             0 => Float32x4, 1 => Float32x4, 2 => Float32x4,
             3 => Float32x4, 4 => Float32x4, 5 => Float32x4, 6 => Float32x4
         ];
-        let premultiplied = wgpu::BlendComponent {
-            src_factor: wgpu::BlendFactor::One,
-            dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
-            operation: wgpu::BlendOperation::Add,
-        };
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("jodeldiplom stage"),
             layout: Some(&pipeline_layout),
@@ -690,10 +833,7 @@ impl StagePass {
                 compilation_options: Default::default(),
                 targets: &[Some(wgpu::ColorTargetState {
                     format,
-                    blend: Some(wgpu::BlendState {
-                        color: premultiplied,
-                        alpha: premultiplied,
-                    }),
+                    blend: Some(blend.state()),
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
             }),
@@ -706,30 +846,36 @@ impl StagePass {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let atlas = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("jodeldiplom stage atlas"),
-            size: wgpu::Extent3d {
-                width: ATLAS,
-                height: ATLAS,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::R8Unorm,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-            view_formats: &[],
-        });
-        let view = atlas.create_view(&wgpu::TextureViewDescriptor::default());
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("jodeldiplom stage"),
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
             ..Default::default()
         });
-        let bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let (_, texel) = atlas_texture(device, 1);
+        let bind = StagePass::bind(device, (&layout, &uniforms, &sampler), &texel);
+        StagePass {
+            pipeline,
+            layout,
+            bind,
+            uniforms,
+            sampler,
+            atlas: None,
+            instances: None,
+            count: (0, 0),
+            linear: takes_linear(format),
+        }
+    }
+
+    /// The bind group of `uniforms`, `atlas` and `sampler` in `layout`.
+    fn bind(
+        device: &wgpu::Device,
+        (layout, uniforms, sampler): (&wgpu::BindGroupLayout, &wgpu::Buffer, &wgpu::Sampler),
+        atlas: &wgpu::TextureView,
+    ) -> wgpu::BindGroup {
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("jodeldiplom stage"),
-            layout: &layout,
+            layout,
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
@@ -737,45 +883,42 @@ impl StagePass {
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&view),
+                    resource: wgpu::BindingResource::TextureView(atlas),
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,
-                    resource: wgpu::BindingResource::Sampler(&sampler),
+                    resource: wgpu::BindingResource::Sampler(sampler),
                 },
             ],
-        });
-        StagePass {
-            pipeline,
-            bind,
-            uniforms,
-            atlas,
-            instances: None,
-            count: 0,
-            srgb: format.is_srgb(),
-        }
+        })
     }
 
-    /// The next frame's stage (`None`: none), for a window of `size`.
+    /// What it draws next (`None`: nothing), for a window of `size`: the
+    /// text put into its atlas, its shapes sent over.
     pub fn set(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        frame: Option<&StageFrame>,
+        (device, queue): (&wgpu::Device, &wgpu::Queue),
+        feed: Option<Feed>,
         size: (u32, u32),
     ) {
-        self.count = 0;
-        let Some(frame) = frame else {
+        self.count = (0, 0);
+        let Some(feed) = feed else {
             return;
         };
-        for up in &frame.uploads {
+        if self.atlas.is_none() && !feed.uploads.is_empty() {
+            let (atlas, view) = atlas_texture(device, ATLAS);
+            self.bind =
+                StagePass::bind(device, (&self.layout, &self.uniforms, &self.sampler), &view);
+            self.atlas = Some(atlas);
+        }
+        for up in feed.uploads {
             let (x, y, w, h) = up.rect;
-            if w == 0 || h == 0 {
+            let Some(atlas) = self.atlas.as_ref().filter(|_| w > 0 && h > 0) else {
                 continue;
-            }
+            };
             queue.write_texture(
                 wgpu::TexelCopyTextureInfo {
-                    texture: &self.atlas,
+                    texture: atlas,
                     mip_level: 0,
                     origin: wgpu::Origin3d { x, y, z: 0 },
                     aspect: wgpu::TextureAspect::All,
@@ -793,10 +936,13 @@ impl StagePass {
                 },
             );
         }
-        if frame.instances.is_empty() {
+        if feed.instances.is_empty() && feed.top.is_empty() {
             return;
         }
-        let bytes: &[u8] = bytemuck::cast_slice(&frame.instances);
+        let bytes: Vec<u8> = (bytemuck::cast_slice::<Instance, u8>(feed.instances).iter())
+            .chain(bytemuck::cast_slice::<Instance, u8>(feed.top))
+            .copied()
+            .collect();
         let fits = self
             .instances
             .as_ref()
@@ -810,29 +956,35 @@ impl StagePass {
             }));
         }
         if let Some(buffer) = &self.instances {
-            queue.write_buffer(buffer, 0, bytes);
+            queue.write_buffer(buffer, 0, &bytes);
         }
         let mut uniforms = [0u8; 32];
         uniforms[0..4].copy_from_slice(&(size.0 as f32).to_le_bytes());
         uniforms[4..8].copy_from_slice(&(size.1 as f32).to_le_bytes());
-        uniforms[8..12].copy_from_slice(&(if self.srgb { 1f32 } else { 0.0 }).to_le_bytes());
+        uniforms[8..12].copy_from_slice(&(if self.linear { 1f32 } else { 0.0 }).to_le_bytes());
         uniforms[12..16].copy_from_slice(&(ATLAS as f32).to_le_bytes());
-        uniforms[16..20].copy_from_slice(&frame.clock.to_le_bytes());
+        uniforms[16..20].copy_from_slice(&feed.clock.to_le_bytes());
         queue.write_buffer(&self.uniforms, 0, &uniforms);
-        self.count = frame.instances.len() as u32;
+        self.count = (feed.instances.len() as u32, feed.top.len() as u32);
     }
 
-    /// Draws the stage into `pass` (nothing without one).
+    /// Draws its shapes into `pass` (nothing without any).
     pub fn draw(&self, pass: &mut wgpu::RenderPass) {
-        let Some(buffer) = &self.instances else {
+        self.draw_range(pass, 0..self.count.0);
+    }
+
+    /// Draws its shapes over everything into `pass`.
+    pub fn draw_top(&self, pass: &mut wgpu::RenderPass) {
+        self.draw_range(pass, self.count.0..self.count.0 + self.count.1);
+    }
+
+    fn draw_range(&self, pass: &mut wgpu::RenderPass, range: std::ops::Range<u32>) {
+        let Some(buffer) = self.instances.as_ref().filter(|_| !range.is_empty()) else {
             return;
         };
-        if self.count == 0 {
-            return;
-        }
         pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, &self.bind, &[]);
         pass.set_vertex_buffer(0, buffer.slice(..));
-        pass.draw(0..4, 0..self.count);
+        pass.draw(0..4, range);
     }
 }

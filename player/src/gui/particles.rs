@@ -14,9 +14,9 @@
 //! numbers ([`shader`]). Where there is no GPU (the software window, the
 //! tests' pixmaps) the bursts are not drawn: a bubble burst is simply gone.
 
-use super::rainbow;
 use super::shards::{self, DROPS, FIRST_DROP, FIRST_SHARD};
 use super::sparks::{mix, rand, TAU, WHITE};
+use super::{fanfare, rainbow};
 use crate::view::bubbles::BURST;
 
 /// The sparkles a bubble throws.
@@ -41,6 +41,12 @@ pub enum Kind {
     /// The streak a level up: stars, notes and rainbow bits shot out from
     /// the playhead ([`super::rainbow::step_up`]).
     StepUp,
+    /// A flight of angels descending, the singing Diva
+    /// ([`super::fanfare::angel`]).
+    Angels,
+    /// A jackpot of coins and stars, a phrase Diva
+    /// ([`super::fanfare::coin`]).
+    Jackpot,
 }
 
 impl Kind {
@@ -50,6 +56,8 @@ impl Kind {
             Kind::Burst => 0,
             Kind::Scored => 1,
             Kind::StepUp => 2,
+            Kind::Angels => 3,
+            Kind::Jackpot => 4,
         }
     }
 }
@@ -119,6 +127,8 @@ impl Spray {
             Kind::Scored => SCORED_LIFE,
             Kind::Burst => BURST as f32,
             Kind::StepUp => rainbow::STEP_LIFE,
+            Kind::Angels => fanfare::ANGELS_LIFE,
+            Kind::Jackpot => fanfare::JACKPOT_LIFE,
         }
     }
 
@@ -145,6 +155,10 @@ pub enum Look {
     Note,
     /// A rainbow bit (a step up's): a small bar, over.
     Bit,
+    /// An angel, its wings beating: light.
+    Angel,
+    /// A gold coin, spinning: light.
+    Coin,
 }
 
 impl Look {
@@ -157,6 +171,8 @@ impl Look {
             Look::Drop => 3,
             Look::Note => 4,
             Look::Bit => 5,
+            Look::Angel => 6,
+            Look::Coin => 7,
         }
     }
 }
@@ -195,6 +211,8 @@ pub fn sprite(s: &Spray, q: u32, time: f32) -> Option<Sprite> {
         (Kind::Burst, q) if q < FIRST_DROP + DROPS => shards::drop(s, q, age),
         (Kind::Scored, q) if q > 0 && q < SCORED_SPARKS => spark(s, q, age),
         (Kind::StepUp, q) => rainbow::step_up(s, q, age),
+        (Kind::Angels, q) => fanfare::angel(s, q, age),
+        (Kind::Jackpot, q) => fanfare::coin(s, q, age),
         _ => None,
     }
 }
@@ -266,21 +284,26 @@ const SCORED_LIFE: f32 = {SCORED_LIFE:?};
 const K_BURST: u32 = {}u;
 const K_SCORED: u32 = {}u;
 const K_STEP_UP: u32 = {}u;
+const K_ANGELS: u32 = {}u;
+const K_JACKPOT: u32 = {}u;
 const SPREAD: f32 = {SPREAD:?};
 const LOOK_SPARKLE: u32 = {}u;
 const LOOK_SHEEN: u32 = {}u;
 const LOOK_SHARD: u32 = {}u;
 const LOOK_DROP: u32 = {}u;
-{SHADER}{}{}",
+{SHADER}{}{}{}",
         Kind::Burst.code(),
         Kind::Scored.code(),
         Kind::StepUp.code(),
+        Kind::Angels.code(),
+        Kind::Jackpot.code(),
         Look::Sparkle.code(),
         Look::Sheen.code(),
         Look::Shard.code(),
         Look::Drop.code(),
         shards::wgsl(),
-        rainbow::particles_wgsl()
+        rainbow::particles_wgsl(),
+        fanfare::wgsl()
     )
 }
 
@@ -391,6 +414,10 @@ fn sprite_of(at: vec4<f32>, motion: vec4<f32>, color: vec4<f32>, q: u32, time: f
     var life = SCORED_LIFE;
     if k == K_BURST {
         life = BURST;
+    } else if k == K_ANGELS {
+        life = ANGELS_LIFE;
+    } else if k == K_JACKPOT {
+        life = JACKPOT_LIFE;
     } else if k == K_STEP_UP {
         life = STEP_LIFE;
     }
@@ -412,6 +439,12 @@ fn sprite_of(at: vec4<f32>, motion: vec4<f32>, color: vec4<f32>, q: u32, time: f
             return drop(at, color.rgb, size, seed, q, age, drift);
         }
         return o;
+    }
+    if k == K_ANGELS {
+        return angel(at, color.rgb, size, seed, q, age);
+    }
+    if k == K_JACKPOT {
+        return coin(at, color.rgb, size, seed, q, age);
     }
     if k == K_STEP_UP {
         return step_up(at, size, seed, q, age, drift);
@@ -444,6 +477,10 @@ fn vs(@builtin(vertex_index) v: u32, i: In) -> Out {
         reach = vec2<f32>(half.x + half.y * 3.0 + 2.0);
     } else if sp.look == LOOK_DROP {
         reach = vec2<f32>(half.x + 2.0);
+    } else if sp.look == LOOK_ANGEL {
+        reach = half * 1.9 + vec2<f32>(4.0);
+    } else if sp.look == LOOK_COIN {
+        reach = half * 1.5 + vec2<f32>(2.0);
     } else if sp.look == LOOK_NOTE || sp.look == LOOK_BIT {
         reach = vec2<f32>(length(half) * 1.5 + 2.0);
     }
@@ -484,6 +521,12 @@ fn fs(o: Out) -> @location(0) vec4<f32> {
     if look == LOOK_NOTE {
         return draw_note(o.p, o.shape.xy, half, o.what.y, o.look);
     }
+    if look == LOOK_ANGEL {
+        return draw_angel(o.p, o.shape.xy, half, o.what.y, o.look);
+    }
+    if look == LOOK_COIN {
+        return draw_coin(o.p, o.shape.xy, half, o.what.y, o.look);
+    }
     if look == LOOK_BIT {
         return draw_bit(o.p, o.shape.xy, half, o.what.y, o.look);
     }
@@ -513,12 +556,16 @@ pub struct ParticlePass {
     sprays: Option<wgpu::Buffer>,
     /// The bursts in the buffer.
     kept: Vec<Spray>,
-    srgb: bool,
+    linear: bool,
 }
 
 impl ParticlePass {
-    /// For frames of `format`.
-    pub fn new(device: &wgpu::Device, format: wgpu::TextureFormat) -> ParticlePass {
+    /// For frames of `format`, the bursts going on as `blend` says.
+    pub fn new(
+        device: &wgpu::Device,
+        format: wgpu::TextureFormat,
+        blend: super::stage_gpu::Blend,
+    ) -> ParticlePass {
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("jodeldiplom particles"),
             entries: &[wgpu::BindGroupLayoutEntry {
@@ -545,12 +592,6 @@ impl ParticlePass {
         let attributes = wgpu::vertex_attr_array![
             0 => Float32x4, 1 => Float32x4, 2 => Float32x4
         ];
-        // Light, added: premultiplied, with no coverage.
-        let added = wgpu::BlendComponent {
-            src_factor: wgpu::BlendFactor::One,
-            dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
-            operation: wgpu::BlendOperation::Add,
-        };
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("jodeldiplom particles"),
             layout: Some(&pipeline_layout),
@@ -573,10 +614,7 @@ impl ParticlePass {
                 compilation_options: Default::default(),
                 targets: &[Some(wgpu::ColorTargetState {
                     format,
-                    blend: Some(wgpu::BlendState {
-                        color: added,
-                        alpha: added,
-                    }),
+                    blend: Some(blend.state()),
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
             }),
@@ -603,21 +641,19 @@ impl ParticlePass {
             uniforms,
             sprays: None,
             kept: Vec::new(),
-            srgb: format.is_srgb(),
+            linear: super::stage_gpu::takes_linear(format),
         }
     }
 
-    /// The next frame's bursts and the singing's time (`frame`; none:
-    /// none), in a window of `size`: the time, and the bursts where they
-    /// changed.
+    /// The next frame's bursts at `time` (the singing's), in a window of
+    /// `size`: the time, and the bursts where they changed.
     pub fn set(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        frame: Option<&super::stage_gpu::StageFrame>,
+        (device, queue): (&wgpu::Device, &wgpu::Queue),
+        sprays: &[Spray],
+        time: f32,
         size: (u32, u32),
     ) {
-        let (sprays, time) = frame.map_or((&[][..], 0.0), |f| (&f.sprays[..], f.clock));
         if self.kept.as_slice() != sprays {
             self.kept = sprays.to_vec();
             let packed: Vec<Packed> = sprays.iter().map(Spray::packed).collect();
@@ -641,7 +677,7 @@ impl ParticlePass {
         let mut uniforms = [0u8; 16];
         uniforms[0..4].copy_from_slice(&(size.0 as f32).to_le_bytes());
         uniforms[4..8].copy_from_slice(&(size.1 as f32).to_le_bytes());
-        uniforms[8..12].copy_from_slice(&(if self.srgb { 1f32 } else { 0.0 }).to_le_bytes());
+        uniforms[8..12].copy_from_slice(&(if self.linear { 1f32 } else { 0.0 }).to_le_bytes());
         uniforms[12..16].copy_from_slice(&time.to_le_bytes());
         queue.write_buffer(&self.uniforms, 0, &uniforms);
     }

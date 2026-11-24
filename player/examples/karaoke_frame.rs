@@ -17,7 +17,7 @@
 
 use std::path::Path;
 
-use jodeldiplom::core::singing::{Level, Singing};
+use jodeldiplom::core::singing::Singing;
 use jodeldiplom::gui::karaoke::{paint, Backdrop, BigText, Layer, Target};
 use jodeldiplom::view::karaoke::{sung_on, timed_lines, KaraokePicture, LineKind, Score};
 use ratatui::layout::Rect;
@@ -43,7 +43,7 @@ fn main() {
         .collect();
     let mut lines = timed_lines(&sung, t).expect("timed lines");
     // `--sing CENTS`: a singer who sings the melody that far off (in the
-    // key they keep), heard up to `t`, scored at medium.
+    // key they keep), heard up to `t`.
     let sing: Option<f32> = args
         .iter()
         .position(|a| a == "--sing")
@@ -51,34 +51,22 @@ fn main() {
         .and_then(|v| v.parse().ok());
     let lyrics = std::sync::Arc::new(lyrics.clone());
     let mut singing = Singing::default();
-    // `--level NAME`: the level scored at (medium unless given).
-    let level = args
-        .iter()
-        .position(|a| a == "--level")
-        .and_then(|k| args.get(k + 1))
-        .and_then(|v| Level::parse(v))
-        .unwrap_or(Level::Medium);
-    singing.prepare(Path::new("song"), &lyrics, &melody, 1, level);
+    singing.prepare(
+        Path::new("song"),
+        &lyrics,
+        &jodeldiplom::core::singing::melodic(&melody),
+    );
     let gpu: Option<usize> = args
         .iter()
         .position(|a| a == "--gpu")
         .and_then(|k| args.get(k + 1))
         .and_then(|v| v.parse().ok());
     if let Some(frames) = gpu {
-        gpu_frames(
-            &args[4],
-            &sung,
-            &melody,
-            &mut singing,
-            sing,
-            level,
-            t,
-            frames,
-        );
+        gpu_frames(&args[4], &sung, &melody, &mut singing, sing, t, frames);
         return;
     }
     if let Some(off) = sing {
-        let mut k = 0;
+        let mut k = 0u32;
         while f64::from(k) / 100.0 <= t {
             let at = f64::from(k) / 100.0;
             let i = k as usize;
@@ -88,16 +76,13 @@ fn main() {
             k += 1;
         }
         println!(
-            "score {} ({} of {} words, {} half)",
-            singing.tally.score,
-            singing.tally.hit_words,
-            singing.tally.scored_words,
-            singing.tally.half_words
+            "score {} ({} of {} words)",
+            singing.tally.score, singing.tally.hit_words, singing.tally.scored_words,
         );
     }
     for l in lines.iter_mut().filter(|l| l.kind == LineKind::Current) {
         if let Some(i) = l.id {
-            let notes = singing.lines[i].clone();
+            let notes = singing.notes.lines[i].clone();
             if sing.is_some() {
                 sung_on(&singing, (true, 0.0), i, &notes, t, l);
             }
@@ -157,7 +142,7 @@ fn main() {
         moved: 1.0,
         score: sing.map(|_| Score {
             points: singing.tally.score,
-            level,
+            tier: singing.last_phrase().and_then(|p| p.tier),
             streak: singing.tally.streak,
         }),
     };
@@ -204,7 +189,6 @@ fn gpu_frames(
     melody: &jodel_rhythm::waveform::Melody,
     singing: &mut Singing,
     sing: Option<f32>,
-    level: Level,
     t: f64,
     frames: usize,
 ) {
@@ -255,7 +239,7 @@ fn gpu_frames(
             moved,
             score: sing.map(|_| Score {
                 points: singing.tally.score,
-                level,
+                tier: singing.last_phrase().and_then(|p| p.tier),
                 streak: singing.tally.streak,
             }),
         };
@@ -308,11 +292,10 @@ fn gpu_frames(
         img.save(&name).unwrap();
     }
     println!(
-        "score {} ({} of {} words, {} half, streak {})",
+        "score {} ({} of {} words, streak {})",
         singing.tally.score,
         singing.tally.hit_words,
         singing.tally.scored_words,
-        singing.tally.half_words,
         singing.tally.streak
     );
 }

@@ -9,10 +9,10 @@
 //! at sample points, against the processor's. Skipped (with a note)
 //! without a GPU.
 
-use super::liquid;
 use super::particles::{self, sprite, Kind, Spray, QUADS};
-use super::rainbow::{self, Shine};
+use super::rainbow::{self, Glow};
 use super::sparks::TAU;
+use super::{glory, liquid};
 
 /// A device on the window's GPU, none without one.
 fn gpu() -> Option<(wgpu::Device, wgpu::Queue)> {
@@ -147,9 +147,19 @@ fn the_particles_shader_draws_what_sprite_says() {
         spray((200.0, 330.0), (0.0, 0.0), 20.0, 4242, -150.0, Kind::Scored),
         spray((600.0, 330.0), (0.0, 0.0), 20.0, 99, -150.0, Kind::StepUp),
         spray((220.0, 200.0), (0.0, 0.0), 47.0, 31_337, 0.0, Kind::StepUp),
+        spray(
+            (800.0, -90.0),
+            (720.0, 675.0),
+            90.0,
+            4242,
+            0.0,
+            Kind::Angels,
+        ),
+        spray((900.0, 70.0), (0.0, 0.0), 30.0, 777, 0.0, Kind::Jackpot),
     ];
     let ages = [
-        -0.01, 0.0, 0.03, 0.079, 0.081, 0.12, 0.25, 0.4, 0.49, 0.6, 0.9, 1.2,
+        -0.01, 0.0, 0.03, 0.079, 0.081, 0.12, 0.25, 0.4, 0.49, 0.6, 0.9, 1.2, 1.7, 2.3, 3.1, 4.4,
+        5.9,
     ];
     let mut samples = Vec::new();
     for s in &sprays {
@@ -342,7 +352,7 @@ fn the_stage_shader_s_shine_is_its_reference() {
     let (mut lit, mut masked) = (0, 0);
     for (k, [a, b, c, h]) in samples.iter().enumerate() {
         let what = format!("sample {k}: {a:?} {b:?} {c:?}");
-        let s = Shine {
+        let s = Glow {
             level: a[0],
             from: a[1],
             since: a[2],
@@ -384,4 +394,128 @@ fn the_stage_shader_s_shine_is_its_reference() {
         masked += usize::from(mask > 0.01 && mask < 0.99);
     }
     assert!(lit > 100 && masked > 10, "{lit} {masked}");
+}
+
+/// The light's tone map at brightnesses from none to far past white, into
+/// a frame that takes linear light and one that does not: the shader's
+/// [`super::bloom::TONE`] as the processor's [`super::bloom::tone`].
+#[test]
+fn the_bloom_s_tone_map_is_its_reference() {
+    let Some(gpu) = gpu() else {
+        return;
+    };
+    let ins: Vec<[f32; 4]> = (0..64)
+        .map(|k| {
+            let x = k as f32 * 0.15 - 0.5;
+            [x, x * 2.0, x * 0.3, f32::from(k % 2 == 0)]
+        })
+        .collect();
+    let body = "
+    let a = ins[i];
+    outs[i] = vec4<f32>(tone(a.xyz, a.w), 0.0);";
+    let outs = run(&gpu, super::bloom::TONE, body, &ins, (ins.len(), 1));
+    for (a, g) in ins.iter().zip(&outs) {
+        for c in 0..3 {
+            let want = super::bloom::tone(a[c], a[3] > 0.5);
+            assert!(near(g[c], want, 2e-3, 2e-3), "{a:?}: {g:?}");
+        }
+    }
+}
+
+/// The shine's looks at points across their ranges: the shader's
+/// [`glory::meter_fill`], [`glory::fill_color`], [`glory::meter_at`],
+/// [`glory::ring_at`], [`glory::mark_pop`], [`glory::label_pop`],
+/// [`glory::glow_at`] and [`glory::blaze`] as the processor's.
+#[test]
+fn the_stage_shader_s_glory_is_its_reference() {
+    let Some(gpu) = gpu() else {
+        return;
+    };
+    let mut samples = Vec::new();
+    for k in 0..360 {
+        let f = k as f32;
+        let fr = |m: f32| (f * m).fract();
+        let time = 3.0 + fr(0.37) * 4.0;
+        samples.push([
+            [
+                fr(0.61) * 1.2 - 0.1,
+                fr(0.29) * 2.0 - 1.0,
+                fr(0.43) * 1.1,
+                time,
+            ],
+            [fr(0.17), fr(0.53), time - fr(0.71) * 1.5, fr(0.23) * 3.0],
+            [
+                200.0 + fr(0.19) * 80.0 - 40.0,
+                300.0 + fr(0.83) * 80.0 - 40.0,
+                fr(0.31) * 60.0 - 20.0,
+                fr(0.47) * 4.0,
+            ],
+        ]);
+    }
+    let ins: Vec<[f32; 4]> = samples.iter().flatten().copied().collect();
+    let body = "
+    let a = ins[i * 3u];
+    let b = ins[i * 3u + 1u];
+    let c = ins[i * 3u + 2u];
+    let s = vec3<f32>(b.w, 1.0, 3.0);
+    outs[i * 6u] = vec4<f32>(meter_fill(b.x, b.y, b.z, a.w), mark_pop(a.w - b.z), glow_at(c.z, 20.0, a.w, 0.7));
+    outs[i * 6u + 1u] = vec4<f32>(fill_color(a.z, a.x, a.w), 0.0);
+    outs[i * 6u + 2u] = meter_at(a.x, a.y, a.z, a.w);
+    outs[i * 6u + 3u] = ring_at(c.xy, vec2<f32>(200.0, 300.0), vec2<f32>(30.0, 6.0), b.x, s, a.w);
+    outs[i * 6u + 4u] = vec4<f32>(blaze(c.x * 3.0, c.z, 40.0, a.w, 0.8), 0.0);
+    outs[i * 6u + 5u] = vec4<f32>(label_pop(a.w - b.z, 1.8), 0.0, 0.0);";
+    let source = super::stage_gpu::shader();
+    let outs = run(&gpu, &source, body, &ins, (samples.len(), 6));
+    let close = |g: &[f32], c: &[f32], what: &str| {
+        for (x, y) in g.iter().zip(c) {
+            assert!(near(*x, *y, 3e-3, 3e-3), "{what}: {g:?} {c:?}");
+        }
+    };
+    let (mut lit, mut shown) = (0, 0);
+    for (k, [a, b, c]) in samples.iter().enumerate() {
+        let g = &outs[k * 6..k * 6 + 6];
+        let what = format!("sample {k}: {a:?} {b:?} {c:?}");
+        let shine = Glow {
+            level: b[3],
+            from: 1.0,
+            since: 3.0,
+        };
+        let pop = glory::mark_pop(a[3] - b[2]);
+        close(
+            &g[0],
+            &[
+                glory::meter_fill(b[0], b[1], b[2], a[3]),
+                pop.0,
+                pop.1,
+                glory::glow_at(c[2], 20.0, a[3], 0.7),
+            ],
+            &format!("{what}: fill, pop, glow"),
+        );
+        close(
+            &g[1][..3],
+            &glory::fill_color(a[2], a[0], a[3]),
+            &format!("{what}: fill colour"),
+        );
+        close(
+            &g[2],
+            &glory::meter_at(a[0], a[1], a[2], a[3]),
+            &format!("{what}: meter"),
+        );
+        let ring = glory::ring_at(
+            (c[0], c[1]),
+            (200.0, 300.0),
+            (30.0, 6.0),
+            b[0],
+            &shine,
+            a[3],
+        );
+        close(&g[3], &ring, &format!("{what}: ring"));
+        let blaze = glory::blaze(c[0] * 3.0, c[2], 40.0, a[3], 0.8);
+        close(&g[4][..3], &blaze, &format!("{what}: blaze"));
+        lit += usize::from(blaze.iter().sum::<f32>() > 0.05);
+        let label = glory::label_pop(a[3] - b[2], 1.8);
+        close(&g[5][..2], &[label.0, label.1], &format!("{what}: label"));
+        shown += usize::from(label.1 > 0.0 && label.1 < 1.0);
+    }
+    assert!(lit > 50 && shown > 10, "{lit} {shown}");
 }

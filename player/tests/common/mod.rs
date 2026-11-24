@@ -647,10 +647,8 @@ pub fn real_time() -> std::sync::RwLockWriteGuard<'static, ()> {
 static REAL_TIME: std::sync::RwLock<()> = std::sync::RwLock::new(());
 
 /// A line "la lo" to sing in Karaoke mode: "la" a second on C4, "lo" the
-/// next on G4; its notes made at `level`.
-pub fn bubble_song(
-    level: jodeldiplom::core::singing::Level,
-) -> (
+/// next on G4, and its notes.
+pub fn bubble_song() -> (
     jodeldiplom::core::singing::Singing,
     Arc<jodel_lyrics::Lyrics>,
 ) {
@@ -677,12 +675,16 @@ pub fn bubble_song(
         melody.sure[i] = 255;
     }
     let mut singing = jodeldiplom::core::singing::Singing::default();
-    singing.prepare(Path::new("a"), &lyrics, &melody, 1, level);
+    singing.prepare(
+        Path::new("a"),
+        &lyrics,
+        &jodeldiplom::core::singing::melodic(&melody),
+    );
     (singing, lyrics)
 }
 
 /// `singing` of [`bubble_song`] hears "la" sung on its note for its first
-/// 15 % (on easy: it counts, at 0.10 s), then nothing, a frame every 10 ms
+/// 15 % (it counts, at 0.10 s), then nothing, a frame every 10 ms
 /// up to `to` seconds (from `from`).
 pub fn sing_bubbles(singing: &mut jodeldiplom::core::singing::Singing, from: f64, to: f64) {
     let mut i = (from * 100.0).round() as u32;
@@ -706,7 +708,7 @@ pub fn bubble_picture(
     let sung: Vec<&jodel_lyrics::Line> = lyrics.lines.iter().collect();
     let mut lines = timed_lines(&sung, heard).expect("timed lines");
     for l in lines.iter_mut().filter(|l| l.kind == LineKind::Current) {
-        let notes = singing.lines[0].clone();
+        let notes = singing.notes.lines[0].clone();
         sung_on(singing, (true, late), 0, &notes, heard, l);
         l.notes = notes.notes;
     }

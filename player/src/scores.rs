@@ -1,16 +1,17 @@
-//! The best scores sung, a song and a level each: `scores.txt` in the data
-//! folder ([`crate::cache::SCORES`]). The singer's own record, not a cache:
-//! every version of the file is read.
+//! The best scores sung, a song each: `scores.txt` in the data folder
+//! ([`crate::cache::SCORES`]). The singer's own record, not a cache: every
+//! version of the file is read.
 //!
-//! After the header, a line a best score: the level, the points, the words
-//! hit, the words scored, and the song (its path), tab apart.
+//! After the header, a line a best score: the points, the words hit, the
+//! words scored, and the song (its path), tab apart. Version 1 had a level
+//! in front (there were three): read without it, a song's best of them
+//! kept.
 
 use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::path::Path;
 
 use crate::cache::SCORES;
-use crate::core::singing::Level;
 
 /// A best score.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -23,25 +24,17 @@ pub struct Best {
     pub words: u32,
 }
 
-/// The best scores, by song (its path) and level.
-pub type Bests = HashMap<(String, Level), Best>;
+/// The best scores, by song (its path).
+pub type Bests = HashMap<String, Best>;
 
-/// `bests` as the file holds them, in order (by song, then level).
+/// `bests` as the file holds them, in order (by song).
 pub fn to_text(bests: &Bests) -> String {
-    let mut keys: Vec<&(String, Level)> = bests.keys().collect();
-    keys.sort_by(|a, b| a.0.cmp(&b.0).then((a.1 as u8).cmp(&(b.1 as u8))));
+    let mut songs: Vec<&String> = bests.keys().collect();
+    songs.sort();
     let mut body = String::new();
-    for key in keys {
-        let b = &bests[key];
-        let _ = writeln!(
-            body,
-            "{}\t{}\t{}\t{}\t{}",
-            key.1.name(),
-            b.points,
-            b.hit,
-            b.words,
-            key.0
-        );
+    for song in songs {
+        let b = &bests[song];
+        let _ = writeln!(body, "{}\t{}\t{}\t{song}", b.points, b.hit, b.words);
     }
     SCORES.wrap(&body)
 }
@@ -49,12 +42,16 @@ pub fn to_text(bests: &Bests) -> String {
 /// The best scores in a file's `text` (every version; lines not read
 /// skipped).
 pub fn from_text(text: &str) -> Bests {
-    let body = SCORES.open(text).map_or("", |(_, rest)| rest);
+    let (version, body) = SCORES.open(text).unwrap_or((SCORES.version, ""));
     let mut out = Bests::new();
     for line in body.lines() {
-        let mut parts = line.splitn(5, '\t');
-        let (Some(level), Some(points), Some(hit), Some(words), Some(song)) = (
-            parts.next().and_then(Level::parse),
+        // Version 1's level in front, left out.
+        let line = match version {
+            1 => line.split_once('\t').map_or("", |(_, rest)| rest),
+            _ => line,
+        };
+        let mut parts = line.splitn(4, '\t');
+        let (Some(points), Some(hit), Some(words), Some(song)) = (
             parts.next().and_then(|p| p.parse().ok()),
             parts.next().and_then(|p| p.parse().ok()),
             parts.next().and_then(|p| p.parse().ok()),
@@ -62,7 +59,13 @@ pub fn from_text(text: &str) -> Bests {
         ) else {
             continue;
         };
-        out.insert((song.to_owned(), level), Best { points, hit, words });
+        let best = Best { points, hit, words };
+        match out.get(song) {
+            Some(was) if was.points >= points => {}
+            _ => {
+                out.insert(song.to_owned(), best);
+            }
+        }
     }
     out
 }
@@ -90,7 +93,7 @@ mod tests {
     fn scores_go_to_text_and_back() {
         let mut bests = Bests::new();
         bests.insert(
-            ("Z:/a b/song.flac".into(), Level::Hard),
+            "Z:/a b/song.flac".into(),
             Best {
                 points: 3400,
                 hit: 34,
@@ -98,18 +101,32 @@ mod tests {
             },
         );
         bests.insert(
-            ("Z:/a b/song.flac".into(), Level::Easy),
+            "Z:/other.flac".into(),
             Best {
-                points: 3900,
-                hit: 39,
-                words: 40,
+                points: 900,
+                hit: 9,
+                words: 12,
             },
         );
         let text = to_text(&bests);
-        assert!(text.starts_with("jodeldiplom-cache scores 1"));
+        assert!(text.starts_with("jodeldiplom-cache scores 2"));
         assert_eq!(from_text(&text), bests);
         // A line not read is skipped, the rest kept.
-        let broken = text.replace("hard\t3400", "harder\t3400");
+        let broken = text.replace("3400\t34", "x\t34");
         assert_eq!(from_text(&broken).len(), 1);
+    }
+
+    /// Version 1's lines had a level: read without it, a song's best of
+    /// its levels kept.
+    #[test]
+    fn version_one_is_read_without_its_levels() {
+        let v1 = "jodeldiplom-cache scores 1 by jodeldiplom x\n\
+                  easy\t3900\t39\t40\tZ:/a.flac\n\
+                  hard\t3400\t34\t40\tZ:/a.flac\n\
+                  medium\t100\t1\t9\tZ:/b.flac\n";
+        let bests = from_text(v1);
+        assert_eq!(bests.len(), 2);
+        assert_eq!(bests["Z:/a.flac"].points, 3900);
+        assert_eq!(bests["Z:/b.flac"].words, 9);
     }
 }

@@ -16,7 +16,7 @@
 use std::collections::HashMap;
 
 use super::particles::{Kind, Spray};
-use super::stage_gpu::{Instance, Palette, Pour, Skin, Strain};
+use super::stage_gpu::{Instance, Pour, Skin, Strain, Tint};
 use crate::core::bubbles::{self, Bubbles};
 use crate::core::singing::Singing;
 use crate::view::bubbles::Liquid;
@@ -112,13 +112,13 @@ impl Pill {
 
     /// Draws the pill at `c`, `half` (`px` high) into `out` in its `skin`:
     /// each bubble not torn, straining and overfilling as it does, and its
-    /// liquid in `palette`; without bubbles, the pill whole. How much of
+    /// liquid in `tint`; without bubbles, the pill whole. How much of
     /// the word is filled, in seconds of it.
     pub fn draw(
         &self,
         out: &mut Vec<Instance>,
         (c, half): ((f32, f32), (f32, f32)),
-        (skin, palette): (&Skin, &Palette),
+        (skin, tint): (&Skin, &Tint),
         across: &dyn Fn(f64) -> f32,
         px: f32,
     ) -> f64 {
@@ -143,7 +143,7 @@ impl Pill {
                 span: (x0, x0 + (x1 - x0) * b.level as f32),
                 front: b.level < 1.0,
                 jumped: b.jumped.max(-1e6) as f32,
-                tint: palette.of(b.fully()),
+                tint: *tint,
             };
             out.extend(Instance::liquid(bc, bh, 0.0, &pour, &strain));
         }
@@ -191,7 +191,7 @@ impl<'a> Pills<'a> {
     /// Line `l`'s word `word`'s pill ([`pill`]), with the game on (`game`;
     /// off, the pill whole).
     pub fn pill(&mut self, game: bool, l: usize, word: usize) -> Pill {
-        let (Some(notes), true) = (self.singing.lines.get(l), game) else {
+        let (Some(notes), true) = (self.singing.notes.lines.get(l), game) else {
             return Pill::default();
         };
         let singing = self.singing;
@@ -252,16 +252,14 @@ impl<'a> super::stage::Song<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::singing::Level;
-    use crate::gui::stage_gpu::{kind, Tint};
     use crate::view::bubbles::{BURST, SWELL};
 
     /// "lala" a second, its first half on C4, its second on G4 (two notes,
-    /// two bubbles), sung as `sung` says at each moment (cents, or none) at
-    /// `level`, heard `late` seconds late: frame by frame at 60 a second,
-    /// as the stage goes by the singing's time (the song's less `late`), on
-    /// to 1.2 s, back to 0.25 s, on again. Each frame's pill.
-    fn frames(level: Level, sung: impl Fn(f64) -> Option<f32>, late: f64) -> Vec<(f64, Pill)> {
+    /// two bubbles), sung as `sung` says at each moment (cents, or none),
+    /// heard `late` seconds late: frame by frame at 60 a second, as the
+    /// stage goes by the singing's time (the song's less `late`), on to
+    /// 1.2 s, back to 0.25 s, on again. Each frame's pill.
+    fn frames(sung: impl Fn(f64) -> Option<f32>, late: f64) -> Vec<(f64, Pill)> {
         let mut m = jodel_rhythm::waveform::Melody {
             cents: vec![0; 200],
             sure: vec![255; 200],
@@ -283,7 +281,11 @@ mod tests {
             timing: jodel_lyrics::Timing::default(),
         });
         let mut s = Singing::default();
-        s.prepare(std::path::Path::new("a"), &lyrics, &m, 1, level);
+        s.prepare(
+            std::path::Path::new("a"),
+            &lyrics,
+            &crate::core::singing::melodic(&m),
+        );
         let mut out = Vec::new();
         let mut heard = 0;
         for f in (0..72).chain(15..90) {
@@ -299,7 +301,7 @@ mod tests {
                 heard += 1;
             }
             let b = bubbles::line(&s, 0, f64::INFINITY);
-            out.push((clock, pill(&s.lines[0].notes, &b, (0, 0), clock)));
+            out.push((clock, pill(&s.notes.lines[0].notes, &b, (0, 0), clock)));
         }
         out
     }
@@ -321,14 +323,14 @@ mod tests {
         out
     }
 
-    /// On easy, however late the voice: the word counts and both its
+    /// However late the voice: the word counts and both its
     /// bubbles sweep full, each bursting once on its own, torn after its
     /// overfilling; sought back before, each shows again, and bursts again
     /// on the way.
     #[test]
     fn each_bubble_of_a_word_bursts_once_however_late_the_voice() {
         for late in [0.0, 0.264] {
-            let frames = frames(Level::Easy, |t| (t < 0.15).then_some(6000.0), late);
+            let frames = frames(|t| (t < 0.15).then_some(6000.0), late);
             assert!(frames.iter().all(|f| f.1.bubbles.len() == 2));
             for i in 0..2 {
                 let starts = bursts(&frames, i);
@@ -349,67 +351,11 @@ mod tests {
         }
     }
 
-    /// On medium, the word's first bubble sung all through, its second a
-    /// half: the first fills, bursts on its own and is gone; the second
-    /// keeps its liquid at its level, never strains or bursts, and is drawn
-    /// alone, from the word's middle on, holding half its liquid.
-    #[test]
-    fn a_full_bubble_bursts_and_the_partly_filled_one_beside_it_stays() {
-        let sung = |t: f64| match t {
-            t if t < 0.5 => Some(6000.0),
-            t if t < 0.75 => Some(6700.0),
-            _ => None,
-        };
-        let frames = frames(Level::Medium, sung, 0.0);
-        let starts = bursts(&frames, 0);
-        assert_eq!(starts.len(), 1, "the first bursts once");
-        assert!(bursts(&frames, 1).is_empty(), "the second never");
-        let (clock, last) = frames.last().unwrap();
-        assert!(*clock > starts[0] + BURST);
-        assert!(last.bubbles[0].torn());
-        let second = &last.bubbles[1];
-        assert!(!second.begun() && second.pressure() == 0.0);
-        assert!((second.level - 0.5).abs() < 0.08, "{}", second.level);
-        let mut out = Vec::new();
-        let skin = lit(20.0);
-        let tint = Tint {
-            top: [1.0; 4],
-            bottom: [1.0; 4],
-            glow: 0.0,
-        };
-        let palette = Palette {
-            full: tint,
-            half: tint,
-        };
-        let across = |t: f64| 20.0 + 160.0 * t as f32;
-        last.draw(
-            &mut out,
-            ((100.0, 50.0), (80.0, 10.0)),
-            (&skin, &palette),
-            &across,
-            20.0,
-        );
-        assert_eq!(out.len(), 2, "{out:?}");
-        let (bubble, liquid) = (out[0], out[1]);
-        assert_eq!(
-            (bubble.params[0], liquid.params[0]),
-            (kind::BUBBLE, kind::LIQUID)
-        );
-        assert!(bubble.shape[0] > 100.0 && (bubble.shape[2] - 40.0).abs() < 1.5);
-        let (a, b) = (liquid.uv[0], liquid.uv[1]);
-        assert!(
-            ((b - a) / (2.0 * bubble.shape[2]) - 0.5).abs() < 0.1,
-            "{a} {b}"
-        );
-        assert!(liquid.living() && bubble.strained() == strain(second));
-        assert_eq!(bubble.strained().popping, None);
-    }
-
-    /// On medium, the word's first bubble sung 60 % (not full): no burst,
-    /// no strain, its liquid kept, both bubbles drawn all the way on.
+    /// The word sung 5 % (under the tenth it asks, its first bubble a tenth
+    /// full): no burst, no strain, its liquid kept, both drawn all the way on.
     #[test]
     fn a_pill_partly_filled_never_pops() {
-        let frames = frames(Level::Medium, |t| (t < 0.3).then_some(6000.0), 0.0);
+        let frames = frames(|t| (t < 0.05).then_some(6000.0), 0.0);
         let mut filled = 0.0f64;
         for (_, p) in &frames {
             for b in &p.bubbles {
@@ -418,9 +364,9 @@ mod tests {
             }
             filled = filled.max(p.filled());
         }
-        assert!(filled > 0.25 && filled < 0.4, "{filled}");
+        assert!(filled > 0.03 && filled < 0.08, "{filled}");
         assert!(
-            frames.last().unwrap().1.bubbles[0].level > 0.5,
+            frames.last().unwrap().1.bubbles[0].level > 0.08,
             "its liquid kept"
         );
     }

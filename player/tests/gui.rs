@@ -988,7 +988,7 @@ fn the_window_searches_the_help() {
 /// over the pixmap as it is elsewhere. Skipped (with a note) without a GPU.
 #[test]
 fn the_stage_draws_the_lane_over_the_pixmap() {
-    use jodeldiplom::core::singing::{Level, Singing};
+    use jodeldiplom::core::singing::Singing;
     use jodeldiplom::gui::present::Offscreen;
     use jodeldiplom::gui::stage::{Lane, Song, Stage};
     use jodeldiplom::view::karaoke::KaraokePicture;
@@ -1027,13 +1027,12 @@ fn the_stage_draws_the_lane_over_the_pixmap() {
     singing.prepare(
         std::path::Path::new("a"),
         &lyrics,
-        &melody,
-        1,
-        Level::Medium,
+        &jodeldiplom::core::singing::melodic(&melody),
     );
-    // Sung on the note up to 0.5 s: "la" half filled.
+    // Sung on the note for its first 0.06 s (too little to count: "la"
+    // keeps its liquid there), then heard up to 0.5 s.
     for i in 0..=50 {
-        singing.hear(f64::from(i) / 100.0, Some(6000.0));
+        singing.hear(f64::from(i) / 100.0, (i <= 5).then_some(6000.0));
     }
     let (w, h) = (800u32, 450u32);
     let song = Song::new(&singing, lyrics.lines.iter().collect(), Some(3.0));
@@ -1059,7 +1058,7 @@ fn the_stage_draws_the_lane_over_the_pixmap() {
     let at = |x: f32, y: f32| shown[y as usize * w as usize + x as usize];
     let rgb = |c: u32| ((c >> 16) & 255, (c >> 8) & 255, c & 255);
     let lane = Lane::new(area, now);
-    let height = |cents: f64| singing.lines[0].height(cents);
+    let height = |cents: f64| singing.notes.lines[0].height(cents);
     // "lo" ahead: its pill's glass, grey.
     let (r, g, b) = rgb(at(lane.x(1.5), lane.y(height(6700.0)) + 2.0));
     assert!(
@@ -1067,7 +1066,7 @@ fn the_stage_draws_the_lane_over_the_pixmap() {
         "the pill ahead: {r} {g} {b}"
     );
     // "la" sung on its note: gold behind the playhead.
-    let (r, g, b) = rgb(at(lane.x(0.25), lane.y(height(6000.0)) + 4.0));
+    let (r, g, b) = rgb(at(lane.x(0.03), lane.y(height(6000.0)) + 4.0));
     assert!(r > 180 && g > 100 && b < 120, "the hit: {r} {g} {b}");
     // Nothing far above the lane.
     assert_eq!(at(w as f32 / 2.0, 2.0), 0);

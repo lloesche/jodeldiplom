@@ -269,8 +269,7 @@ fn stage(
         singing: &app.state.karaoke.singing,
         game: app.state.config.karaoke_game,
     };
-    let at = streak::Moment { now: heard, clock };
-    let (edge, ups) = shine.frame(over, song, at);
+    let (edge, ups) = shine.frame(over, song, clock);
     let ours = over.into_iter();
     let bubbles = ours.clone().flat_map(|o| o.bubbles.iter().copied());
     let bubbles: Vec<_> = bubbles.chain(edge).collect();

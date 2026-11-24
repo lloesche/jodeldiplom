@@ -423,9 +423,11 @@ stem keys are their mutes.
   singing's correction: `measured · your singing +30 ms`). Mid-song it
   moves at most 20 ms a second; a nudge or a sync is taken at once.
   Another output or microphone starts the estimate and the echo's wait
-  over. Each level has its own share of a word to hit (easy a tenth,
-  medium a quarter, hard two fifths); the estimate holds easy's singing
-  against the notes as medium does (easy's hill is too flat to read).
+  over. A word counts when a tenth of its note time is hit, within 3
+  semitones of the melody in the singer's own key (one way of scoring);
+  the estimate holds the singing to the notes a little more strictly
+  (within 1.5 semitones, a quarter of a word: what the bubbles let count
+  counts at so many delays that its hill would be too flat to read).
   - `the_delay_in_force_is_the_first_there_is_and_says_where_it_comes_from`
   - `the_singing_corrects_a_measured_delay_a_little_short`
   - `mid_song_the_delay_never_jumps_but_a_nudge_or_a_sync_does_at_once`
@@ -433,52 +435,43 @@ stem keys are their mutes.
   - `singing_heard_120_ms_late_is_found_within_10_ms` (`core::lag::estimate`)
   - `the_singing_corrects_a_delay_measured_a_little_short`,
     `a_sync_again_lets_the_estimate_go`,
-    `noise_never_corrects_a_delay_measured`, `easy_is_estimated_as_medium`
-    (`core::lag::estimate`)
+    `noise_never_corrects_a_delay_measured` (`core::lag::estimate`)
   - `the_singing_corrects_a_measured_or_echo_delay_near_it` (`core::lag`)
-  - `each_level_asks_its_own_share_of_a_word` (`core::singing`)
+  - `a_word_asks_a_tenth_of_its_note_time`,
+    `any_key_counts_the_shape_within_three_semitones` (`core::singing`)
 - **K20.** With the game on, a note's bubble (a bar under its letters in
   the picture; on the GPU's stage a word's pill is its
   notes' bubbles in a row) fills with a glowing liquid as the singer's pitch
   hits it, poured in from its start to a level: how much of it was hit
-  (gold, a paler gold as much as it was only close; a gap under 60 ms
-  bridged on every level). The liquid's front is a living surface (a
+  (a gap under 60 ms bridged). The liquid's front is a living surface (a
   meniscus and waves moving along it, sloshing a moment when the fill
-  jumps, as in the sweep) and a light shimmers through it. On easy, the
-  moment a word counts as the scoring counts it (a tenth of the frames it
+  jumps, as in the sweep) and a light shimmers through it. The moment a
+  word counts as the scoring counts it (a tenth of the frames it
   will have had hit, one more to be sure; one the scoring counts that
   never got there, as it ends), all its bubbles fill, the part already
   sung and the part to come: a sweep across the word to full (0.2 s),
-  then they burst (0.5 s). On any level a bubble is full once its fill
-  covers 85 % of it (on medium even in a word that scores a half: the
-  bubble shows what was sung), then sweeps to full and bursts. In the
+  then they burst (0.5 s). A bubble is also full once its fill
+  covers 85 % of it, then sweeps to full and bursts. In the
   last stretch (above 85 %) its skin strains: a slight bulge (up to
   about 1.1 times) and a wobble. Full, the whole bubble bursts at once,
-  on its own, the moment it is full (a word's bubbles one after the
-  other, never together as a word; those not full stay with their
-  liquid), on the stage and in the picture, and is gone: it overfills,
+  on the stage and in the picture, and is gone: it overfills,
   bulging to 1.3 times in
   80 ms, then tears; its liquid splashes out in 12 drops of a few sizes
   in its colour that arc out and fall, stretched along their way, fading,
   with 6 torn bits of its skin and a few sparkles; a faint wet sheen fades
   where it was in 0.2 s; then the spot is empty (the word keeps its sung
-  colour). A bubble never full (filled partly, under 85 %) keeps its
-  liquid at its level and never strains, overfills or bursts. In the
-  window the GPU draws the liquid and the burst, the stage's bubbles and
-  the picture's alike: one instance a bubble's liquid in the stage's
-  pipeline (its level, pressure, wobble phase, when it jumped and when it
-  bursts; the surface, wobble and overfilling worked out in the shader
-  from the time) and one record a burst for the particles (its drops and
-  bits). The picture painted on the processor paints a bubble's bar empty
-  under its liquid and stops painting it as its burst starts (it changes
-  once); the software window paints the fill flat and draws no burst, the
-  bar simply goes. The shaders' maths is held to the processor's on the
-  GPU. On the
-  stage each bubble of a word's pill (its stretch of the pill, a hair
-  apart from the next) holds its liquid and strains, overfills and
-  bursts on its own; the stage's shader bulges it, then it is not drawn,
-  its drops and bits flying from its place as particles, while the
-  word's other bubbles stay until they fill and burst in turn. It all goes by the
+  colour). A bubble never full (filled partly, its word not counting)
+  keeps its liquid at its level and never strains, overfills or bursts.
+  In the window the GPU draws the liquid and the burst, the stage's
+  bubbles and the picture's alike: one instance a bubble's liquid in the
+  stage's pipeline (its level, pressure, wobble phase, when it jumped and
+  when it bursts; the surface, wobble and overfilling worked out in the
+  shader from the time) and one record a burst for the particles (its
+  drops and bits). The picture painted on the processor paints a
+  bubble's bar empty under its liquid and stops painting it as its burst
+  starts (it changes once); the software window paints the fill flat and
+  draws no burst, the bar simply goes. The shaders' maths is held to the
+  processor's on the GPU. It all goes by the
   singing's own time, the song's as heard less the delay (its frames come
   that much later), so the sweep and the burst are seen whole; a paused
   song holds them; the singer's arrow and dot go by it too. A bubble is
@@ -487,12 +480,10 @@ stem keys are their mutes.
   score (and the key followed) is taken back and they are heard again,
   the score before kept: no burst comes twice, no word scored bursts
   again; a bubble no longer full shows again as it is and bursts again
-  only when it fills again. The scoring is as it was.
-  - `a_word_counted_on_easy_fills_all_its_bubbles_at_once` (`core::bubbles`)
-  - `on_easy_a_word_is_full_exactly_when_the_scoring_counts_it`
-    (`core::bubbles`)
-  - `medium_fills_where_a_pitch_hit_and_is_full_only_filled` (`core::bubbles`)
-  - `hard_fills_as_before_and_is_full_only_truly_filled` (`core::bubbles`)
+  only when it fills again. When each bubble bursts is plain data for
+  whatever follows it (the sounds: `core::bubbles::pops`).
+  - `a_word_counted_fills_all_its_bubbles_at_once` (`core::bubbles`)
+  - `a_word_is_full_exactly_when_the_scoring_counts_it` (`core::bubbles`)
   - `each_bubble_is_full_once_its_time_fixed_by_the_frames_up_to_it`
     (`core::bubbles`)
   - `a_seek_back_takes_back_what_was_heard_from_there` (`core::bubbles`)
@@ -509,9 +500,7 @@ stem keys are their mutes.
   - `the_particles_shader_draws_what_sprite_says`,
     `the_stage_shader_s_liquid_is_its_reference` (`gui::shader_check`)
   - `each_bubble_of_a_word_bursts_once_however_late_the_voice`,
-    `a_full_bubble_bursts_and_the_partly_filled_one_beside_it_stays`,
     `a_pill_partly_filled_never_pops` (`gui::pop`)
-  - `the_stage_bursts_each_bubble_of_a_word_on_its_own` (bubbles)
   - `the_arrow_shows_while_singing_however_late_the_voice` (bubbles)
   - `a_seek_back_brings_no_ghost_bursts_on_the_stage` (bubbles)
   - `a_bubble_bursts_over_the_picture_and_is_gone_from_it` (bubbles)
@@ -519,42 +508,89 @@ stem keys are their mutes.
   - `the_stage_bursts_a_word_counted` (bubbles)
   - `a_bubble_partly_filled_never_pops` (bubbles)
   - `a_bubble_unpopped_by_a_seek_back_shows_again` (bubbles)
-- **K21.** With the game on and the streak's multiplier above ×1, the
-  streak shines at a level (×2 the first, ×4 the top; an intensity a
-  shine meter can drive later): in the window's stage, rainbow bands fan
-  out from the playhead behind the pills, their colours running round
-  (more bands, reaching further, brighter and turning faster a level up:
-  a soft shimmer at the first, the whole lane glowing at the top), coming
-  in over 0.25 s from how strong it showed; down a level (not lost), it
-  eases down the same way and shines on; a swirl turns round the singer's
-  arrow; the multiplier's number shows in rainbow. Nothing of it shows at
-  ×1. Each word scored throws a burst from the playhead for each level the
-  shine went up since the word before (several words scored in a frame:
-  one a step), once a word (sought back under a second, not again; begun
-  again, again): stars, notes and rainbow bits shot out, mostly up,
-  spinning, arcing down and fading, their colours running round. Lost, the
-  bands and the swirl collapse into the playhead over 0.5 s, their colour
-  draining. A seek snaps the shine to its level, with no rise or
-  collapse. In the picture (no stage) the bar under the word being sung
-  gets a rainbow edge while it shines, and a smaller burst from it a step
-  up. Each frame the processor gives only the time, the level (when it
-  changed and how strong it showed then) and a record a step up; the
-  shaders move it all, their maths held to the processor's on the GPU.
-  The software window draws none of it.
-  - `the_shine_follows_the_level`,
-    `a_drop_eases_down_and_a_level_mid_collapse_comes_in_smoothly`,
-    `a_step_up_for_each_level_however_many_words_a_frame`,
-    `a_step_up_once_across_a_seek_back_and_again_after_a_restart`
+- **K21.** With the game on, the singing shines at the tier its last
+  phrase reached (K22: Good the first, Diva the top; none: nothing): in
+  the window's stage, rainbow bands fan out from the playhead behind the
+  pills, their colours running round (more bands, reaching further,
+  brighter and turning faster a tier up: a soft shimmer at Good, the
+  whole lane glowing from Amazing), coming in over 0.25 s from how
+  strong it showed; down a tier (not lost), it eases down the same way
+  and shines on; a swirl turns round the singer's arrow; the
+  multiplier's number shows in rainbow. Each phrase decided throws a
+  burst from the playhead for each tier the shine went up (once a
+  phrase; sought back under a second, not again; begun again, again):
+  stars, notes and rainbow bits shot out, mostly up, spinning, arcing
+  down and fading. A phrase reaching no tier collapses the bands and the
+  swirl into the playhead over 0.5 s, their colour draining. A seek
+  snaps the shine to its tier, with no rise or collapse. In the picture
+  (no stage) the bar under the word being sung gets a rainbow edge while
+  it shines, and a smaller burst from it a step up. Great adds a glow
+  round the lane, Amazing flames blazing off its edges, Diva angels
+  descending (a flight every 2.2 s while it holds) and a jackpot of coins
+  and stars from the meter as a phrase is Diva. The glow, the flames, the
+  angels and the jackpot are light: drawn apart at high range, blurred
+  down a chain of halved textures and back up, tone mapped and added over
+  the frame (they bloom). Each frame the processor gives only the time,
+  the tier (when it changed and how strong it showed then), where the
+  lane is and a record a burst; the shaders move it all, their maths held
+  to the processor's on the GPU. The software window draws none of it.
+  - `the_shine_follows_the_tier`, `a_step_up_for_each_tier_once_a_phrase`
     (`gui::streak`)
   - `the_bands_grow_with_the_level`, `a_lost_streak_collapses_into_the_playhead`,
     `a_drop_of_a_level_still_shines`,
     `a_step_up_bursts_and_its_pieces_arc_and_fade`, `the_rainbow_goes_round`
     (`gui::rainbow`)
   - `the_stage_shader_s_shine_is_its_reference`,
+    `the_stage_shader_s_glory_is_its_reference`,
     `the_particles_shader_draws_what_sprite_says` (`gui::shader_check`)
-  - `the_bands_shine_by_the_level`, `a_step_up_bursts_once_a_step`,
-    `a_lost_streak_collapses_into_the_playhead`,
+  - `light_rolls_off_to_white` (`gui::bloom`),
+    `the_bloom_s_tone_map_is_its_reference` (`gui::shader_check`)
+  - `the_bands_shine_by_the_tier`, `a_step_up_bursts_once_a_tier`,
+    `a_phrase_without_a_tier_collapses_the_shine`,
     `the_picture_s_bar_gets_a_rainbow_edge` (streak)
+- **K22.** Each phrase (a sung line) shines: once its frames are in (0.35 s
+  after its last note), it is measured (its words' frames within 3
+  semitones of their notes, how far off the notes its pitch is, the
+  voicing's lag, the spread on held notes, the long notes held, its top
+  and bottom reached) and held against the original singer's same
+  phrase (the song's vocals heard as the singer is, the least of three
+  hearings; a word's frames counted while it is sung, half the
+  original's on it counting it whole): its shine, the coverage's share
+  times the quality measures' shares weighted (pitch 0.45, timing 0.20,
+  steadiness 0.15, sustain and range 0.10). Its tier: Good at 60 % of
+  the original, Great 75 %, Amazing 87 %, Diva 90 % with the pitch's
+  share at 90 % too, each bar times what the original itself reaches on
+  that phrase in its everyday hearings (another rate, the delay off,
+  octave errors, pitch lost: the least, less half its spread) where
+  that is under 1, so the original is Diva on every phrase; a phrase it
+  reaches under 70 % of itself on has no shine (there half the phrase
+  sung, or near silence, could be Diva). A phrase the original is heard
+  too little on (under two words, or 15 % of its notes) has no shine.
+  The original's phrases are worked out off the audio thread once the
+  words are timed (from the kept stems; a song without them separated
+  for it) and kept in `shine/` in the data folder (schema `shine`, the
+  measuring's version in the file); a song without them has no shine
+  until they come. The meter at the top of the stage fills as the phrase is sung (its words
+  hit) and springs to the shine reached, its tier's name popping over it
+  on a badge (popping and fading as the shader times it, drawn over the
+  light); the top right shows the points, the tier and the
+  multiplier. Along the bottom the song's progress shows each phrase in
+  its tier's colour, a mark a phrase popping as its tier is decided (a
+  little jackpot on Diva), and the time left in a ring that drains, in
+  the rainbow while the singing shines. Each word scored, the streak up
+  a multiplier or broken, and each phrase's tier decided are kept as the
+  singing's moments, plain data for what follows them (the sounds); a
+  song's result has its phrases' tiers, its best tier and how many
+  reached each.
+  - `the_original_shines_as_itself_and_silence_not_at_all`,
+    `a_singer_off_the_notes_shines_less_in_another_key_alike`,
+    `the_bars_are_a_share_of_what_the_original_reaches`,
+    `weak_singing_is_never_diva_however_low_the_par`,
+    `a_reference_from_a_voice_and_as_text`,
+    `the_singing_scores_each_phrase_as_it_ends` (`core::shine`)
+  - `short_seeks_back_in_a_row_are_as_heard_straight` (`core::singing`:
+    the moments, the phrases' shine among them, as heard straight)
+  - `shine_files_are_pinned` (schemas)
 - **K18.** `s` on the Karaoke tab (or the palette) syncs, with a
   microphone open (else it says one is needed) and the player's strip
   heard on the Mixer tab (not muted or far down, nor another strip soloed:

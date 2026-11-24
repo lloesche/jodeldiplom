@@ -29,6 +29,7 @@ pub mod layout;
 pub mod mic;
 pub mod mouse;
 pub mod preview;
+pub mod shine;
 pub mod singing;
 pub mod sliders;
 pub mod stems;

@@ -22,7 +22,7 @@ pub const TIMES: &str = "times.txt";
 pub const LYRICS: &str = "lyrics.lrc";
 /// The song's waveform and melody, as the analysis keeps them.
 pub const MELODY: &str = "song.wave";
-/// What was sung: the song, the level, how late the voice came as the
+/// What was sung: the song, how late the voice came as the
 /// game took it and where that came from (`late <sample> <seconds>
 /// <source>`, [`crate::core::lag::Source::key`]), and the key the song was
 /// heard in where it was not its own (`key <sample> <semitones>`, from that
@@ -65,7 +65,6 @@ pub struct Kept {
     marks: Vec<(usize, f64)>,
     lyrics: Arc<jodel_lyrics::Lyrics>,
     waveform: Arc<jodel_rhythm::waveform::Waveform>,
-    level: &'static str,
     /// How late the voice came, as the game took it, each time it changed:
     /// the sample, the seconds, where that came from.
     late: Vec<(usize, f64, &'static str)>,
@@ -75,12 +74,11 @@ pub struct Kept {
 }
 
 impl Kept {
-    /// For `song`, sung at `level` against `lyrics` and `waveform`.
+    /// For `song`, sung against `lyrics` and `waveform`.
     pub fn new(
         song: PathBuf,
         lyrics: Arc<jodel_lyrics::Lyrics>,
         waveform: Arc<jodel_rhythm::waveform::Waveform>,
-        level: &'static str,
     ) -> Kept {
         Kept {
             song,
@@ -89,7 +87,6 @@ impl Kept {
             marks: Vec::new(),
             lyrics,
             waveform,
-            level,
             late: Vec::new(),
             keys: Vec::new(),
         }
@@ -159,7 +156,6 @@ impl Kept {
         durable::write_atomic(&folder.join(MELODY), &self.waveform.to_bytes())?;
         let mut about = String::new();
         let _ = writeln!(about, "song {}", self.song.display());
-        let _ = writeln!(about, "level {}", self.level);
         let _ = writeln!(about, "rate {}", self.rate);
         for (k, l, source) in &self.late {
             let _ = writeln!(about, "late {k} {l:.4} {source}");
@@ -244,7 +240,7 @@ mod tests {
             jodel_lyrics::Source::Unknown,
         ));
         let waveform = Arc::new(jodel_rhythm::waveform::Waveform::default());
-        let mut kept = Kept::new("/a.flac".into(), lyrics, waveform, "easy");
+        let mut kept = Kept::new("/a.flac".into(), lyrics, waveform);
         kept.push(&[0.5; 100], 1000, 2.0, false, Sung::new(0.15, "default", 0));
         kept.push(&[-0.5; 100], 1000, 2.1, true, Sung::new(0.15, "default", 2));
         kept.push(

@@ -11,20 +11,20 @@
 │ │                                     │   Delay       ━━━━━━━━━━●─────────────────────────────  150 ms               │
 │ │                                     │   Sync  (s)    sync   default                                                │
 │ │                  ♪                  │   Key         ━━━━━━━━━━━━━━━━━━━━●───────────────────       0               │
-│ │                                     │   Game  (g)    on    your singing scored, a medal and a best for each song   │
-│ │                                     │   Level (d)    easy   medium   hard   any key, its steps                     │
+│ │                                     │   Game  (g)    on    your singing scored line by line against the original   │
 │ │                                     │   Notes (p)    on    the song's notes run by in the mode, for you to sing on │
 │ │                                     │   Keep         off   your singing is not saved                               │
 │ │                                     │                                                                              │
 │ │                                     │   Lyrics  Morning Light: found, words timed (ctc:test)                       │
 │ │                                     │     next  Undertow: found, words timed (ctc:test)                            │
 │ │                                     │     next  Glass Rooms:                                                       │
-│ ╰─────────────────────────────────────╯                                                                              │
-│                                           Mic     ⠋ opening…                                                         │
+│ │                                     │                                                                              │
+│ ╰─────────────────────────────────────╯   Mic     ⠋ opening…                                                         │
 │                                           Words   not timed: the speech model is not in this build (make puts it the │
 │                                                                                                                      │
 │                                           Here and in the mode the voice plays at its level, the rest as it is.      │
 │                                           Each song waits for START, then counts in 3, 2, 1, a second each; again af │
+│                                           The microphone only listens: it is never played; the music stays as it is. │
 ╰ enter Karaoke mode · ↑ ↓ row · ← → its value · s sync ───────────────────────────────────────────────────────────────╯
 
 

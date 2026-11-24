@@ -227,8 +227,6 @@ pub enum Action {
     },
     /// The drag of a Karaoke slider ended.
     KaraokeSlideEnd,
-    /// A level picked on the Karaoke tab.
-    KaraokeLevel(crate::core::singing::Level),
     /// The wheel turned over a Karaoke slider (no drag starts).
     KaraokeStep {
         /// The slider.

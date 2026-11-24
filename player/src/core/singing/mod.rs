@@ -1,431 +1,53 @@
 //! The singing scored: the notes of a song's lines (from the voice's
-//! melody, under the words' letters) and the singer's pitch against them,
-//! frame by frame, word by word.
+//! melody, under the words' letters: [`Notes`]) and the singer's pitch
+//! against them, frame by frame, word by word, phrase by phrase.
 //!
 //! Each frame of the singer's pitch (from the microphone, at the time in
-//! the song it was sung) is held against the note sung there. On
-//! [`Level::Easy`] and [`Level::Medium`] the singer may sing in any key:
-//! their pitch is moved by how far, all along, they have sung from the
-//! song (the median over the last [`KEY_FRAMES`]), octaves aside. On
-//! [`Level::Hard`] only octaves are let off. A frame within the level's
-//! [`Level::tolerance`] hits; on [`Level::Medium`] one a little further
-//! off, within [`Level::near`], half hits. A word whose note time is hit
-//! for at least the level's share of it ([`Level::share`]: a tenth on
-//! easy, a quarter on medium, two fifths on hard; a pitch is heard on only
-//! about half of a word sung well, its consonants and breaths having none)
-//! scores [`WORD_POINTS`]; one that only gets there with its half hits,
-//! half of that. Words hit in a row are a
-//! streak, and the points a word scores are times the streak's
-//! [`multiplier`] (a half hit keeps the streak, a miss ends it).
+//! the song it was sung) is held against the note sung there, in any key:
+//! the pitch is moved by how far, all along, the singer has sung from the
+//! song (the median over the last [`KEY_FRAMES`]), octaves aside. A frame
+//! within [`TOLERANCE`] (the melody's shape, 3 semitones) hits. A word
+//! whose note time is hit for at least [`SHARE`] of it scores
+//! [`WORD_POINTS`]. Words hit in a row are a streak, and the points a word
+//! scores are times the streak's [`multiplier`] (a miss ends it).
+//!
+//! Each phrase (a sung line), once its frames are in, is measured and held
+//! against the original singer's same phrase ([`crate::core::shine`], the
+//! [`Reference`] set with [`Singing::set_reference`]): its shine and the
+//! tier it reached. Without a reference the phrases have no shine, the
+//! words are scored all the same. What happens (a word scored, a bubble
+//! bursting, the streak up or lost, a phrase's tier) is one stream of
+//! moments ([`Singing::moments_since`]).
 //!
 //! The song played in another key ([`Singing::set_key`]) has its notes in
 //! that key: they move by its semitones, so the singing is held against
 //! what is heard.
 //!
-//! The singer's pitch as drawn ([`Heard::cents`]) follows the level: on
-//! easy and medium a frame that hits sits on its note, one that half hits
-//! on the semitone it is nearest; on hard, and off the notes, it is the
-//! pitch sung, its jitter smoothed (a median over [`SMOOTH_FRAMES`], then
-//! a glide).
+//! The singer's pitch as drawn ([`Heard::cents`]): a frame that hits sits
+//! on its note; off the notes it is the pitch sung, its jitter smoothed (a
+//! median over [`SMOOTH_FRAMES`], then a glide).
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use jodel_rhythm::waveform::Melody;
+use jodel_lyrics::Lyrics;
+use jodel_rhythm::waveform::{Melody, Waveform};
 
-mod judge;
+use crate::core::shine::{self, Reference, Shone};
+
+pub mod judge;
+mod moments;
+mod notes;
+mod result;
 mod tally;
 mod undo;
 
-pub use judge::{Credit, KeyStep, SungKey, KEY_FRAMES};
+pub use judge::{KeyStep, SungKey, KEY_FRAMES, SHARE, TOLERANCE};
+pub use moments::{Cue, Cursor, Moment, Since};
+pub use notes::{notes_of, LineNotes, Note, Notes};
+pub use result::{Medal, SongResult};
 pub use tally::Tally;
-
-/// How strictly the singing is held to the song's notes.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
-pub enum Level {
-    /// The shape of the melody, in any key: within 3 semitones.
-    Easy,
-    /// Its steps, in any key: within 1.5 semitones.
-    #[default]
-    Medium,
-    /// The song's own notes, octaves aside: within a semitone.
-    Hard,
-}
-
-impl Level {
-    /// All, easiest first.
-    pub const ALL: [Level; 3] = [Level::Easy, Level::Medium, Level::Hard];
-
-    /// How far from a note a frame may be and still hit, in hundredths of
-    /// a semitone.
-    pub fn tolerance(self) -> f64 {
-        match self {
-            Level::Easy => 300.0,
-            Level::Medium => 150.0,
-            Level::Hard => 100.0,
-        }
-    }
-
-    /// How far from a note a frame may be and still half hit (none: no
-    /// half hits at the level).
-    pub fn near(self) -> Option<f64> {
-        (self == Level::Medium).then_some(300.0)
-    }
-
-    /// Whether the singer may sing in their own key.
-    pub fn any_key(self) -> bool {
-        self != Level::Hard
-    }
-
-    /// Whether the singer's pitch is drawn on the note they hit (else
-    /// always as sung).
-    pub fn snaps(self) -> bool {
-        self != Level::Hard
-    }
-
-    /// Its name, as shown and in the settings.
-    pub fn name(self) -> &'static str {
-        match self {
-            Level::Easy => "easy",
-            Level::Medium => "medium",
-            Level::Hard => "hard",
-        }
-    }
-
-    /// The level named `name`.
-    pub fn parse(name: &str) -> Option<Level> {
-        Level::ALL.into_iter().find(|l| l.name() == name)
-    }
-
-    /// What it asks of the singer.
-    pub fn what(self) -> &'static str {
-        match self {
-            Level::Easy => "any key, the melody's shape",
-            Level::Medium => "any key, its steps",
-            Level::Hard => "the song's own key",
-        }
-    }
-
-    /// The next, after the hardest the easiest.
-    pub fn next(self) -> Level {
-        match self {
-            Level::Easy => Level::Medium,
-            Level::Medium => Level::Hard,
-            Level::Hard => Level::Easy,
-        }
-    }
-}
-
-/// A note sung in a line: under which of its characters (from `from` to
-/// `to`, fractions of a character where a letter is sung through it), when
-/// (`start` to `end`, seconds into the song), its pitch (hundredths of a
-/// MIDI note, an octave heard wrong folded back), and how high that is
-/// against the line's middle, from -1 (its lowest) to 1 (its highest).
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Note {
-    /// Where it starts, in characters of the line's text.
-    pub from: f32,
-    /// Where it ends.
-    pub to: f32,
-    /// How high: -1 to 1, 0 the line's middle.
-    pub height: f32,
-    /// When it starts, in seconds into the song.
-    pub start: f64,
-    /// When it ends.
-    pub end: f64,
-    /// Its pitch, in hundredths of a MIDI note.
-    pub cents: f64,
-    /// Which of the line's words it is of.
-    pub word: usize,
-}
-
-/// A line's notes, and the pitch its heights are measured from and over.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct LineNotes {
-    /// Its notes, in order.
-    pub notes: Vec<Note>,
-    /// The middle (height 0), in hundredths of a MIDI note.
-    pub mid: f64,
-    /// How far from the middle height 1 is.
-    pub range: f64,
-}
-
-impl LineNotes {
-    /// How high `cents` is against the line's middle (-1 to 1).
-    pub fn height(&self, cents: f64) -> f32 {
-        ((cents - self.mid) / self.range.max(1.0)).clamp(-1.0, 1.0) as f32
-    }
-}
-
-/// A medal for a song sung: by the words hit, a half hit as half of one
-/// (not by the points, which the streaks multiply).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Medal {
-    /// Half of them.
-    Bronze,
-    /// 70 %.
-    Silver,
-    /// 85 %.
-    Gold,
-}
-
-impl Medal {
-    /// The medal for `hit` and `half` hit of `words` words, if any.
-    pub fn of(hit: u32, half: u32, words: u32) -> Option<Medal> {
-        if words == 0 {
-            return None;
-        }
-        let share = (f64::from(hit) + f64::from(half) / 2.0) / f64::from(words);
-        if share >= 0.85 {
-            Some(Medal::Gold)
-        } else if share >= 0.7 {
-            Some(Medal::Silver)
-        } else if share >= 0.5 {
-            Some(Medal::Bronze)
-        } else {
-            None
-        }
-    }
-
-    /// Its name.
-    pub fn name(self) -> &'static str {
-        match self {
-            Medal::Bronze => "Bronze",
-            Medal::Silver => "Silver",
-            Medal::Gold => "Gold",
-        }
-    }
-}
-
-/// How a song was sung, shown when it ends.
-#[derive(Clone, Debug, PartialEq)]
-pub struct SongResult {
-    /// The song's title.
-    pub title: String,
-    /// The points.
-    pub points: u32,
-    /// The words hit.
-    pub hit: u32,
-    /// The words half hit.
-    pub half: u32,
-    /// The words scored.
-    pub words: u32,
-    /// The most words hit in a row.
-    pub streak: u32,
-    /// The level sung at.
-    pub level: Level,
-    /// The medal won, if any.
-    pub medal: Option<Medal>,
-    /// The best score of the song at that level before (none: the first).
-    pub best: Option<u32>,
-    /// Whether the song was sung whole (from its start): only then a medal
-    /// and a best.
-    pub whole: bool,
-}
-
-impl SongResult {
-    /// Whether it beat the best before (or is the first).
-    pub fn new_best(&self) -> bool {
-        self.best.is_none_or(|b| self.points > b)
-    }
-}
-
-/// The least range, in hundredths of a semitone, a line's notes are spread
-/// over each way from its middle: a line that stays closer keeps its notes
-/// nearer the middle (4 semitones each way to the top).
-const NOTE_RANGE: f64 = 400.0;
-/// The most: notes further out (an octave each way) stay at the edge.
-const NOTE_RANGE_MOST: f64 = 1200.0;
-/// The least of a character a note is drawn under.
-const NOTE_LEAST_CHARS: f32 = 0.25;
-
-/// Where in `w` (in characters, a fraction through one) the voice is at
-/// `t`: by its letters' times where it has them (each letter from its
-/// time to the next's), else spread evenly over the word.
-fn char_at(w: &jodel_lyrics::Word, t: f64) -> f32 {
-    let n = w.text.chars().count();
-    let (Some(start), Some(end)) = (w.start, w.end) else {
-        return 0.0;
-    };
-    if n == 0 {
-        return 0.0;
-    }
-    let times: Option<Vec<f64>> = (w.letters.len() == n)
-        .then(|| (0..n).map(|i| w.letter_at(i)).collect())
-        .flatten();
-    let Some(times) = times else {
-        return (n as f64 * ((t - start) / (end - start).max(1e-3)).clamp(0.0, 1.0)) as f32;
-    };
-    for i in 0..n {
-        let from = times[i];
-        let to = if i + 1 < n { times[i + 1] } else { end };
-        if t < to || i + 1 == n {
-            let share = ((t - from) / (to - from).max(1e-3)).clamp(0.0, 1.0);
-            return (i as f64 + share) as f32;
-        }
-    }
-    n as f32
-}
-
-/// The notes `melody` sings `line` on ([`Melody::notes_between`] of each
-/// lead word, not a backing one, what is not a note taken out), each under
-/// the letters sung then; its height its pitch against the line's middle
-/// (the median over its notes' length), an octave off folded back (the
-/// pitch heard an octave wrong), spread over the line's own range
-/// ([`NOTE_RANGE`] to [`NOTE_RANGE_MOST`]). A word's notes go under all of
-/// it, end to end, and over all its time. Every lead word gets a note: one
-/// without a pitch of its own one between its neighbours', under all of
-/// it. None with fewer than two notes heard.
-///
-/// [`Melody::notes_between`]: jodel_rhythm::waveform::Melody::notes_between
-pub fn notes_of(line: &jodel_lyrics::Line, melody: &Melody) -> LineNotes {
-    let mut at = 0.0f32;
-    /// A word: where it is in the text (from, to), when (start, end),
-    /// whether it gets notes, and its own (each with how long it is heard).
-    type Word = (f32, f32, (f64, f64), bool, Vec<(Note, f64)>);
-    let mut words: Vec<Word> = Vec::new();
-    for (k, w) in line.words.iter().enumerate() {
-        if k > 0 {
-            at += 1.0;
-        }
-        let n = w.text.chars().count() as f32;
-        // Only the lead's words: a backing part in parentheses (an echo) is
-        // quieter under it, its pitch unsure and its time squeezed between
-        // the lead's. A lead word heard weakly is timed between its
-        // neighbours, close enough for the melody sung there.
-        let lead = w.start.is_some() && w.end.is_some() && !w.backing;
-        let (ws, we) = (w.start.unwrap_or(0.0), w.end.unwrap_or(0.0));
-        let mut own: Vec<(Note, f64)> = Vec::new();
-        if lead {
-            for (a, b, c) in melody.notes_between(ws, we) {
-                let (from, to) = (at + char_at(w, a), at + char_at(w, b));
-                // Too short under the letters to read (a note on a quick
-                // consonant).
-                if to - from >= NOTE_LEAST_CHARS {
-                    let note = Note {
-                        from,
-                        to,
-                        height: 0.0,
-                        start: a,
-                        end: b,
-                        cents: c,
-                        word: k,
-                    };
-                    own.push((note, b - a));
-                }
-            }
-        }
-        // Under the whole word, end to end and over all its time: its
-        // first note from its first letter, its last to its last, each on
-        // to the next.
-        if let Some(first) = own.first_mut() {
-            first.0.from = at;
-            first.0.start = ws;
-        }
-        if let Some(last) = own.last_mut() {
-            last.0.to = at + n;
-            last.0.end = we;
-        }
-        for i in 1..own.len() {
-            own[i - 1].0.to = own[i].0.from;
-            own[i - 1].0.end = own[i].0.start;
-        }
-        words.push((at, at + n, (ws, we), lead, own));
-        at += n;
-    }
-    let heard: Vec<(f64, f64)> = words
-        .iter()
-        .flat_map(|w| w.4.iter().map(|(n, d)| (n.cents, *d)))
-        .collect();
-    if heard.len() < 2 {
-        return LineNotes::default();
-    }
-    // The middle: half the singing below it, half above.
-    let middle = |notes: &[(f64, f64)]| {
-        let mut by = notes.to_vec();
-        by.sort_by(|a, b| a.0.total_cmp(&b.0));
-        let half = by.iter().map(|n| n.1).sum::<f64>() / 2.0;
-        let mut sum = 0.0;
-        for (c, d) in &by {
-            sum += d;
-            if sum >= half {
-                return *c;
-            }
-        }
-        by.last().map_or(0.0, |n| n.0)
-    };
-    let mid = middle(&heard);
-    for w in &mut words {
-        for (n, _) in &mut w.4 {
-            while n.cents - mid > 900.0 {
-                n.cents -= 1200.0;
-            }
-            while mid - n.cents > 900.0 {
-                n.cents += 1200.0;
-            }
-        }
-    }
-    let heard: Vec<(f64, f64)> = words
-        .iter()
-        .flat_map(|w| w.4.iter().map(|(n, d)| (n.cents, *d)))
-        .collect();
-    let mid = middle(&heard);
-    let range = heard
-        .iter()
-        .map(|n| (n.0 - mid).abs())
-        .fold(NOTE_RANGE, f64::max)
-        .min(NOTE_RANGE_MOST);
-    // Every lead word gets a note: one without a pitch of its own, one
-    // under all of it between the word before's last note and the next's
-    // first (or the one there is).
-    let own: Vec<bool> = words.iter().map(|w| !w.4.is_empty()).collect();
-    for k in 0..words.len() {
-        if !words[k].3 || own[k] {
-            continue;
-        }
-        let before = (0..k).rev().find_map(|j| {
-            own[j]
-                .then(|| words[j].4.last().map(|n| n.0.cents))
-                .flatten()
-        });
-        let after = (k + 1..words.len()).find_map(|j| {
-            own[j]
-                .then(|| words[j].4.first().map(|n| n.0.cents))
-                .flatten()
-        });
-        let guess = match (before, after) {
-            (Some(a), Some(b)) => (a + b) / 2.0,
-            (Some(c), None) | (None, Some(c)) => c,
-            (None, None) => continue,
-        };
-        let (from, to, (ws, we)) = (words[k].0, words[k].1, words[k].2);
-        words[k].4.push((
-            Note {
-                from,
-                to,
-                height: 0.0,
-                start: ws,
-                end: we,
-                cents: guess,
-                word: k,
-            },
-            0.0,
-        ));
-    }
-    let mut out = LineNotes {
-        notes: Vec::new(),
-        mid,
-        range,
-    };
-    for w in words {
-        for (mut n, _) in w.4 {
-            n.height = out.height(n.cents);
-            out.notes.push(n);
-        }
-    }
-    out
-}
 
 /// What a word hit scores.
 pub const WORD_POINTS: u32 = 100;
@@ -447,8 +69,8 @@ pub fn multiplier(streak: u32) -> u32 {
 pub struct Scored {
     /// When in the song it ended, in seconds.
     pub end: f64,
-    /// How it was hit (none: missed).
-    pub hit: Option<Hit>,
+    /// Whether it was hit (else missed).
+    pub hit: bool,
     /// The points it scored.
     pub points: u32,
     /// The streak after it.
@@ -461,57 +83,71 @@ pub const SMOOTH_FRAMES: usize = 5;
 /// way (a slide followed within about 30 ms).
 const GLIDE: f64 = 0.5;
 
-/// How a frame hit its note.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Hit {
-    /// Within the level's tolerance.
-    Full,
-    /// Close, within [`Level::near`].
-    Half,
-}
-
 /// A frame of the singer's pitch, as held against the song.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Heard {
     /// When in the song it was sung, in seconds.
     pub t: f64,
     /// The pitch as drawn, in hundredths of a MIDI note: moved into the
-    /// song's key (and octave, by the note there) as the level allows, on
-    /// the note or a semitone where it snaps.
+    /// song's key (and octave, by the note there), on the note where it
+    /// hits.
     pub cents: f64,
     /// How far off the note it was (none off a note), in hundredths of a
     /// semitone: above the note when positive.
     pub off: Option<f64>,
     /// Whether it hit the note.
-    pub hit: Option<Hit>,
+    pub hit: bool,
     /// Which line's note it was on.
     pub line: Option<usize>,
+}
+
+/// A waveform of only `melody` (the notes need no more of it).
+pub fn melodic(melody: &Melody) -> Arc<Waveform> {
+    Arc::new(Waveform {
+        melody: Some(melody.clone()),
+        ..Waveform::default()
+    })
+}
+
+/// What the notes were made from: the song, its lyrics and its waveform
+/// (told apart by identity, never by address alone).
+#[derive(Clone, Debug)]
+struct Source {
+    path: PathBuf,
+    lyrics: Arc<Lyrics>,
+    waveform: Arc<Waveform>,
+}
+
+impl Source {
+    fn is(&self, path: &std::path::Path, lyrics: &Arc<Lyrics>, waveform: &Arc<Waveform>) -> bool {
+        self.path == path
+            && Arc::ptr_eq(&self.lyrics, lyrics)
+            && Arc::ptr_eq(&self.waveform, waveform)
+    }
 }
 
 /// One song's singing, scored as it goes.
 #[derive(Clone, Debug, Default)]
 pub struct Singing {
-    /// The song the notes are of: its path, and the lyrics and melody they
-    /// were made from (by address).
-    key: Option<(PathBuf, usize, usize)>,
-    /// Each sung line's notes, by its index among the song's sung lines.
-    pub lines: Vec<LineNotes>,
-    /// Every note in time: start, end, line, note.
-    order: Vec<(f64, f64, usize, usize)>,
-    /// Every word with notes, by when it ends: its line, word and end.
-    words: Vec<(usize, usize, f64)>,
-    /// The level it is scored at.
-    pub level: Level,
-    /// The key the song is heard in, in semitones from its own: the notes
-    /// are moved by it.
-    shift: i8,
+    /// What the notes are of.
+    source: Option<Source>,
+    /// The notes.
+    pub notes: Notes,
+    /// The original singer's phrases the shine holds these to.
+    reference: Option<Arc<Reference>>,
     /// The singer's pitch frames so far, in time.
     pub heard: Vec<Heard>,
+    /// Every frame since the singing last started over, as the shine
+    /// measures it.
+    frames: Vec<shine::Frame>,
+    /// What happened so far ([`Singing::moments_since`]), and the bubbles
+    /// in it that burst.
+    log: moments::Log,
+    popped: HashSet<(usize, usize)>,
     /// How far the singer sings from the song (octaves aside).
     sung_key: SungKey,
-    /// Each word's frames on a note, those that hit and those that half
-    /// hit.
-    frames: HashMap<(usize, usize), (u32, u32, u32)>,
+    /// Each word's frames on a note, and those that hit.
+    counts: HashMap<(usize, usize), (u32, u32)>,
     /// How far off the last frames sung were, and the last drawn as sung,
     /// for the pitch drawn as sung.
     recent: VecDeque<f64>,
@@ -527,73 +163,42 @@ pub struct Singing {
 
 impl Singing {
     /// Ready for `path`'s singing with its `lyrics` (their sung lines in
-    /// order) and `melody` (`melody_id` telling one from another): its
-    /// notes made anew when any of them changed (and its scoring started
-    /// over). `level`: the level to score at (a change starts the scoring
-    /// over too).
+    /// order) and the melody of its `waveform`: its notes made anew when
+    /// any of them is another (and its scoring started over, its reference
+    /// let go), in the key they were in.
     pub fn prepare(
         &mut self,
         path: &std::path::Path,
-        lyrics: &Arc<jodel_lyrics::Lyrics>,
-        melody: &Melody,
-        melody_id: usize,
-        level: Level,
+        lyrics: &Arc<Lyrics>,
+        waveform: &Arc<Waveform>,
     ) {
-        let key = (path.to_owned(), Arc::as_ptr(lyrics) as usize, melody_id);
-        if self.key.as_ref() != Some(&key) {
-            let sung: Vec<&jodel_lyrics::Line> = lyrics
-                .lines
-                .iter()
-                .filter(|l| !l.words.is_empty())
-                .collect();
-            self.lines = sung.iter().map(|l| notes_of(l, melody)).collect();
-            let shift = std::mem::take(&mut self.shift);
-            self.set_key(shift);
-            self.order = self
-                .lines
-                .iter()
-                .enumerate()
-                .flat_map(|(l, ln)| {
-                    ln.notes
-                        .iter()
-                        .enumerate()
-                        .map(move |(k, n)| (n.start, n.end, l, k))
-                })
-                .collect();
-            self.order.sort_by(|a, b| a.0.total_cmp(&b.0));
-            let mut ends: HashMap<(usize, usize), f64> = HashMap::new();
-            for (l, ln) in self.lines.iter().enumerate() {
-                for n in &ln.notes {
-                    let e = ends.entry((l, n.word)).or_insert(n.end);
-                    *e = e.max(n.end);
-                }
-            }
-            self.words = ends.into_iter().map(|((l, w), e)| (l, w, e)).collect();
-            self.words.sort_by(|a, b| a.2.total_cmp(&b.2));
-            self.key = Some(key);
-            self.level = level;
-            self.restart();
-        } else if self.level != level {
-            self.level = level;
-            self.restart();
+        if self
+            .source
+            .as_ref()
+            .is_some_and(|s| s.is(path, lyrics, waveform))
+        {
+            return;
         }
+        let shift = self.notes.shift();
+        self.notes = waveform
+            .melody
+            .as_ref()
+            .map_or_else(Notes::default, |m| Notes::new(lyrics, m));
+        self.notes.set_key(shift);
+        self.source = Some(Source {
+            path: path.to_owned(),
+            lyrics: Arc::clone(lyrics),
+            waveform: Arc::clone(waveform),
+        });
+        self.reference = None;
+        self.restart();
     }
 
     /// The song is heard `semitones` from its own key from now: its notes
     /// (and the singing drawn on them) move by the change, their heights in
     /// their lines as they were; the scoring goes on.
     pub fn set_key(&mut self, semitones: i8) {
-        let by = 100.0 * f64::from(i32::from(semitones) - i32::from(self.shift));
-        self.shift = semitones;
-        if by == 0.0 {
-            return;
-        }
-        for line in &mut self.lines {
-            line.mid += by;
-            for note in &mut line.notes {
-                note.cents += by;
-            }
-        }
+        let by = self.notes.set_key(semitones);
         for heard in &mut self.heard {
             heard.cents += by;
         }
@@ -601,25 +206,51 @@ impl Singing {
 
     /// The key its notes are in, in semitones from the song's own.
     pub fn shift(&self) -> i8 {
-        self.shift
+        self.notes.shift()
     }
 
     /// Whether its notes are those of `path`.
     pub fn is_of(&self, path: &std::path::Path) -> bool {
-        self.key.as_ref().is_some_and(|k| k.0 == path)
+        self.source.as_ref().is_some_and(|s| s.path == path)
+    }
+
+    /// Whether its notes were made from these.
+    pub fn is_made_of(
+        &self,
+        path: &std::path::Path,
+        lyrics: &Arc<Lyrics>,
+        waveform: &Arc<Waveform>,
+    ) -> bool {
+        self.source
+            .as_ref()
+            .is_some_and(|s| s.is(path, lyrics, waveform))
     }
 
     /// The song its notes are of.
     pub fn song(&self) -> Option<&std::path::Path> {
-        self.key.as_ref().map(|k| k.0.as_path())
+        self.source.as_ref().map(|s| s.path.as_path())
     }
 
-    /// The scoring started over (the song from its start, or another
-    /// level): no frames, no score.
+    /// The original singer's phrases the shine holds these to (none: no
+    /// shine); taken where it has a phrase a line.
+    pub fn set_reference(&mut self, reference: Option<Arc<Reference>>) {
+        self.reference = reference.filter(|r| r.phrases.len() == self.notes.lines.len());
+    }
+
+    /// The original singer's phrases, where known.
+    pub fn reference(&self) -> Option<&Arc<Reference>> {
+        self.reference.as_ref()
+    }
+
+    /// The scoring started over (the song from its start): no frames, no
+    /// score, no moments.
     pub fn restart(&mut self) {
         self.heard.clear();
-        self.sung_key.clear();
         self.frames.clear();
+        self.log.clear();
+        self.popped.clear();
+        self.sung_key.clear();
+        self.counts.clear();
         self.recent.clear();
         self.glide = None;
         self.last = None;
@@ -630,7 +261,7 @@ impl Singing {
     /// The frames heard on line `l`'s word `w` so far (on its notes, with a
     /// pitch or not): what the scoring holds its hits against.
     pub fn noted(&self, l: usize, w: usize) -> u32 {
-        self.frames.get(&(l, w)).map_or(0, |f| f.0)
+        self.counts.get(&(l, w)).map_or(0, |f| f.0)
     }
 
     /// When the last frame was, in seconds into the song.
@@ -656,19 +287,28 @@ impl Singing {
         self.tally = first.tally;
         for u in back {
             if let Some((word, hit)) = u.word {
-                if let Some(c) = self.frames.get_mut(&word) {
+                if let Some(c) = self.counts.get_mut(&word) {
                     c.0 -= 1;
-                    c.1 -= u32::from(hit == Some(Hit::Full));
-                    c.2 -= u32::from(hit == Some(Hit::Half));
+                    c.1 -= u32::from(hit);
                 }
             }
             if let Some(step) = u.key {
                 self.sung_key.undo(step);
             }
         }
-
         let keep = self.heard.partition_point(|h| h.t < from);
         self.heard.truncate(keep);
+        let keep = self
+            .frames
+            .partition_point(|f| f.t < from - shine::FRAME_LATE);
+        self.frames.truncate(keep);
+        self.log.take_back(from);
+        self.popped = (self.log.all().iter())
+            .filter_map(|m| match m.cue {
+                Cue::Pop { line, note, .. } => Some((line, note)),
+                _ => None,
+            })
+            .collect();
         self.recent.clear();
         self.glide = None;
     }
@@ -678,20 +318,14 @@ impl Singing {
         multiplier(self.tally.streak)
     }
 
-    /// The note sung at `t`: its line and index.
-    fn note_at(&self, t: f64) -> Option<(usize, usize)> {
-        let i = self.order.partition_point(|n| n.0 <= t);
-        let n = self.order.get(i.checked_sub(1)?)?;
-        (t < n.1).then_some((n.2, n.3))
+    /// The note sung at `t`: its line and index ([`Notes::note_at`]).
+    pub fn note_at(&self, t: f64) -> Option<(usize, usize)> {
+        self.notes.note_at(t)
     }
 
-    /// The note sung at `t` seconds into the song (none between the
-    /// notes): the word it is of (its line and its index there) and its
-    /// pitch, in hundredths of a MIDI note.
+    /// The note sung at `t` ([`Notes::word_at`]).
     pub fn word_at(&self, t: f64) -> Option<((usize, usize), f64)> {
-        let (l, k) = self.note_at(t)?;
-        let n = &self.lines[l].notes[k];
-        Some(((l, n.word), n.cents))
+        self.notes.word_at(t)
     }
 
     /// A frame of the singer: `cents` (none where nothing is sung) at `t`
@@ -708,45 +342,36 @@ impl Singing {
             key: None,
             tally: self.tally,
         };
-        let note = self.note_at(t);
-        if let Some((l, k)) = note {
-            let n = self.lines[l].notes[k];
-            let counts = self.frames.entry((l, n.word)).or_insert((0, 0, 0));
+        if let Some((l, k)) = self.notes.note_at(t) {
+            let n = self.notes.lines[l].notes[k];
+            let counts = self.counts.entry((l, n.word)).or_insert((0, 0));
             counts.0 += 1;
-            undo.word = Some(((l, n.word), None));
+            undo.word = Some(((l, n.word), false));
             if let Some(c) = cents {
                 let c = f64::from(c);
                 undo.key = Some(self.sung_key.hear(c, n.cents));
-                let off = self.sung_key.off(self.level, c, n.cents);
-                let hit = self.level.judge(off);
+                let off = self.sung_key.off(c, n.cents);
+                let hit = judge::hits(off);
                 undo.word = Some(((l, n.word), hit));
-                match hit {
-                    Some(Hit::Full) => counts.1 += 1,
-                    Some(Hit::Half) => counts.2 += 1,
-                    None => {}
-                }
+                counts.1 += u32::from(hit);
                 self.recent.push_back(off);
                 if self.recent.len() > SMOOTH_FRAMES {
                     self.recent.pop_front();
                 }
-                let drawn = match hit {
-                    Some(Hit::Full) if self.level.snaps() => 0.0,
-                    Some(Hit::Half) if self.level.snaps() => (off / 100.0).round() * 100.0,
-                    _ => {
-                        let mut sorted: Vec<f64> = self.recent.iter().copied().collect();
-                        sorted.sort_by(f64::total_cmp);
-                        // The median takes out a frame heard wrong; half
-                        // way on from the last drawn softens a wobble, and
-                        // still follows a slide within a few frames.
-                        let median = sorted[sorted.len() / 2];
-                        let drawn = self.glide.map_or(median, |g| g + GLIDE * (median - g));
-                        self.glide = Some(drawn);
-                        drawn
-                    }
-                };
-                if hit.is_some() && self.level.snaps() {
+                let drawn = if hit {
                     self.glide = None;
-                }
+                    0.0
+                } else {
+                    let mut sorted: Vec<f64> = self.recent.iter().copied().collect();
+                    sorted.sort_by(f64::total_cmp);
+                    // The median takes out a frame heard wrong; half way on
+                    // from the last drawn softens a wobble, and still
+                    // follows a slide within a few frames.
+                    let median = sorted[sorted.len() / 2];
+                    let drawn = self.glide.map_or(median, |g| g + GLIDE * (median - g));
+                    self.glide = Some(drawn);
+                    drawn
+                };
                 self.heard.push(Heard {
                     t,
                     cents: n.cents + drawn,
@@ -762,21 +387,161 @@ impl Singing {
             self.recent.clear();
             self.glide = None;
         }
-        // The words over by now, scored.
-        while let Some(&(l, w, end)) = self.words.get(self.tally.next_word) {
+        self.frames.push(shine::Frame {
+            t: t - shine::FRAME_LATE,
+            cents,
+            key: self.sung_key.median(),
+        });
+        self.score_words(t);
+        self.pops(t);
+        self.shine_phrases(t);
+        self.undo.push(undo);
+    }
+
+    /// The words over by `t`, scored: each a moment, the streak's level up
+    /// or lost with it.
+    fn score_words(&mut self, t: f64) {
+        while let Some(&(l, w, end)) = self.notes.words().get(self.tally.next_word) {
             if end + SCORED_AFTER > t {
                 break;
             }
             self.tally.next_word += 1;
-            let counts = self.frames.get(&(l, w)).copied().unwrap_or((0, 0, 0));
-            self.tally.score_word(self.level, counts, end);
+            let counts = self.counts.get(&(l, w)).copied().unwrap_or((0, 0));
+            let before = multiplier(self.tally.streak);
+            if !self.tally.score_word(counts, end) {
+                continue;
+            }
+            let streak = self.tally.streak;
+            let hit = self.tally.last_scored.is_some_and(|s| s.hit);
+            self.log.push(t, t, Cue::Word { end, hit, streak });
+            let now = multiplier(streak);
+            if now > before {
+                self.log.push(t, t, Cue::StreakUp(now - 1));
+            } else if now < before && before > 1 {
+                self.log.push(t, t, Cue::StreakLost);
+            }
         }
-        self.undo.push(undo);
+    }
+
+    /// The bubbles of the lines about `t` whose time to burst the frames
+    /// up to `t` fixed: each a moment as it bursts and as it splashes out.
+    fn pops(&mut self, t: f64) {
+        let mut new = Vec::new();
+        for (l, ln) in self.notes.lines.iter().enumerate() {
+            let (Some(first), Some(last)) = (ln.notes.first(), ln.notes.last()) else {
+                continue;
+            };
+            if first.start > t || last.end + SCORED_AFTER + 0.1 < t {
+                continue;
+            }
+            let b = crate::core::bubbles::line(self, l, f64::INFINITY);
+            let line_end = last.to.max(1.0);
+            for (k, (bubble, n)) in b.notes.iter().zip(&ln.notes).enumerate() {
+                let Some(full) = bubble.full_at else { continue };
+                if self.popped.contains(&(l, k)) {
+                    continue;
+                }
+                let across = (0.5 * (n.from + n.to) / line_end).clamp(0.0, 1.0);
+                new.push((full, l, k, n.height, across));
+            }
+        }
+        new.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)).then(a.2.cmp(&b.2)));
+        for (full, line, note, height, across) in new {
+            self.popped.insert((line, note));
+            let at = full + crate::core::bubbles::SWEEP;
+            let pop = Cue::Pop {
+                line,
+                note,
+                height,
+                across,
+            };
+            self.log.push(at, t, pop);
+            let splash = Cue::Splash {
+                line,
+                note,
+                height,
+                across,
+            };
+            self.log.push(at + crate::core::bubbles::SWELL, t, splash);
+        }
+    }
+
+    /// The phrases whose frames are all in by `t` (seconds into the song),
+    /// measured and held against the original's: each a moment with its
+    /// shine and tier.
+    fn shine_phrases(&mut self, t: f64) {
+        let ready = t - shine::FRAME_LATE - shine::measure::MASK_AROUND;
+        while let Some(&(l, end)) = self.notes.phrases().get(self.tally.next_phrase) {
+            if end > ready {
+                break;
+            }
+            self.tally.next_phrase += 1;
+            let Some(original) = self.reference.as_ref().and_then(|r| r.phrase(l)) else {
+                continue;
+            };
+            let measured =
+                shine::measure::phrase(&self.notes, l, &self.frames, &original.yardstick);
+            let Some(s) = measured.map(|m| shine::shine(&m, &original.yardstick)) else {
+                continue;
+            };
+            let shone = Shone::new(l, end, &s, original.par);
+            self.log.push(t, t, Cue::Phrase(shone));
+        }
+    }
+
+    /// The song sung to its end: silence heard on to past its last note,
+    /// so its last words and phrases are scored (nothing when nothing was
+    /// heard).
+    pub fn finish(&mut self) {
+        let Some(mut t) = self.last else {
+            return;
+        };
+        let ends = self.notes.words().last().map_or(0.0, |w| w.2);
+        let ends = ends.max(self.notes.phrases().last().map_or(0.0, |p| p.1));
+        let until = ends + SCORED_AFTER + shine::measure::MASK_AROUND + shine::FRAME_LATE + 0.02;
+        while t < until {
+            t += jodel_rhythm::yin::HOP;
+            self.hear(t, None);
+        }
+    }
+
+    /// The moments new to `cursor` (which moves past them), and whether
+    /// what it read before was taken back.
+    pub fn moments_since(&self, cursor: &mut Cursor) -> Since<'_> {
+        self.log.since(cursor)
+    }
+
+    /// All the moments so far, in the order they were decided.
+    pub fn moments(&self) -> &[Moment] {
+        self.log.all()
+    }
+
+    /// The phrases that shone so far, in order.
+    pub fn shone(&self) -> impl Iterator<Item = &Shone> {
+        self.log.all().iter().filter_map(|m| match &m.cue {
+            Cue::Phrase(p) => Some(p),
+            _ => None,
+        })
+    }
+
+    /// A phrase's shine decided elsewhere (a take replayed, a picture
+    /// drawn of a moment): into the moments at `at` (the singing's time),
+    /// as if decided here.
+    pub fn decided(&mut self, at: f64, shone: Shone) {
+        self.log.push(at, at, Cue::Phrase(shone));
+    }
+
+    /// The last phrase that shone, if any.
+    pub fn last_phrase(&self) -> Option<&Shone> {
+        self.log.all().iter().rev().find_map(|m| match &m.cue {
+            Cue::Phrase(p) => Some(p),
+            _ => None,
+        })
     }
 
     /// The words with notes in the song.
     pub fn words(&self) -> usize {
-        self.words.len()
+        self.notes.words().len()
     }
 
     /// The frames heard on line `l` from `from` to `to` seconds.

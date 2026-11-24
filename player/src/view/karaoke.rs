@@ -20,7 +20,7 @@ use crate::core::layout::SWITCH;
 use crate::core::layout::{
     KaraokeLayout, KaraokeTabLayout, SliderLayout, KARAOKE_ENTER, KARAOKE_START,
 };
-use crate::core::singing::{notes_of, Level, LineNotes, Medal, Note, Singing, SongResult};
+use crate::core::singing::{notes_of, LineNotes, Medal, Note, Singing, SongResult};
 use crate::core::sliders::Slider;
 use crate::core::text::{self, width};
 use crate::core::{Gpu, State};
@@ -60,9 +60,8 @@ pub struct LyricLine {
     /// ([`notes_of`]); none where they are not known or not shown.
     pub notes: Vec<Note>,
     /// Where the singer hit them (the game on): from and to, in
-    /// characters, and whether fully (else half); a bubble full swept
-    /// full ([`crate::core::bubbles`]).
-    pub hits: Vec<(f32, f32, bool)>,
+    /// characters; a bubble full swept full ([`crate::core::bubbles`]).
+    pub hits: Vec<(f32, f32)>,
     /// The bubbles with liquid in them, bursting or burst (the game on).
     pub liquid: Vec<super::bubbles::Liquid>,
     /// The singer's pitch along them: where (characters) and how high
@@ -78,8 +77,8 @@ pub struct LyricLine {
 pub struct Score {
     /// The points.
     pub points: u32,
-    /// The level they are scored at.
-    pub level: Level,
+    /// The tier the last phrase reached, if any.
+    pub tier: Option<crate::core::shine::Tier>,
     /// The words hit in a row now.
     pub streak: u32,
 }
@@ -109,7 +108,7 @@ fn with_notes(
     }
     let path = &state.queue.paths[index];
     let singing = &state.karaoke.singing;
-    let ours = singing.is_of(path) && !singing.lines.is_empty();
+    let ours = singing.is_of(path) && !singing.notes.lines.is_empty();
     let melody = match state.rhythm.get(path) {
         Some(crate::core::Rhythm::Ready(r)) => r.waveform.as_ref().and_then(|w| w.melody.clone()),
         _ => None,
@@ -118,7 +117,7 @@ fn with_notes(
     for l in lines.iter_mut().filter(|l| l.kind == LineKind::Current) {
         let Some(i) = l.id else { continue };
         let notes = if ours {
-            singing.lines.get(i).cloned().unwrap_or_default()
+            singing.notes.lines.get(i).cloned().unwrap_or_default()
         } else {
             match (sung.get(i), &melody) {
                 (Some(line), Some(m)) => notes_of(line, m),
@@ -155,7 +154,7 @@ pub fn sung_on(
         let share = ((t - n.start) / (n.end - n.start).max(1e-3)) as f32;
         Some(n.from + share * (n.to - n.from))
     };
-    let tolerance = singing.level.tolerance();
+    let tolerance = crate::core::singing::TOLERANCE;
     let mut last_at = None;
     for h in singing.heard_on(i, first.start, heard.min(last.end)) {
         let Some(at) = char_at(h.t) else { continue };
@@ -337,54 +336,46 @@ pub fn lines_now(state: &State, t: f64) -> Vec<LyricLine> {
     }
 }
 
-/// How a song was sung, as lines: its medal, its points and words hit, its
-/// level and whether it beat the best, and the song coming next.
+/// How a song was sung, as lines: its medal, its points and words hit, how
+/// its phrases shone (by tier) and whether it beat the best, and the song
+/// coming next.
 pub fn result_lines(r: &SongResult, next: &str) -> Vec<LyricLine> {
     let medal = match r.medal {
         Some(m) => format!("{} medal", m.name()),
         None if !r.whole => "Not sung from the start: no medal, no best".to_owned(),
         None => "No medal this time".to_owned(),
     };
-    let best = if !r.whole {
-        format!(
-            "{} · your best {}",
-            r.level.name(),
-            points_text(r.best.unwrap_or(0))
-        )
-    } else if r.new_best() {
+    let best = if r.whole && r.new_best() {
         match r.best {
-            Some(_) => format!("{} · a new best!", r.level.name()),
-            None => format!("{} · your first score", r.level.name()),
+            Some(_) => "A new best!".to_owned(),
+            None => "Your first score".to_owned(),
         }
     } else {
-        format!(
-            "{} · your best {}",
-            r.level.name(),
-            points_text(r.best.unwrap_or(0))
-        )
+        format!("Your best {}", points_text(r.best.unwrap_or(0)))
+    };
+    let tiers: Vec<String> = crate::core::shine::Tier::ALL
+        .iter()
+        .rev()
+        .zip(r.tier_counts().into_iter().rev())
+        .filter(|(_, n)| *n > 0)
+        .map(|(t, n)| format!("{n} {}", t.name()))
+        .collect();
+    let best = if tiers.is_empty() {
+        best
+    } else {
+        format!("{} · {best}", tiers.join(" · "))
     };
     vec![
         line(r.title.clone(), 0.0, LineKind::Info),
         line(medal, 0.0, LineKind::Medal(r.medal)),
         line(
-            if r.half > 0 {
-                format!(
-                    "{} points · {} of {} words, {} half · {} in a row",
-                    points_text(r.points),
-                    r.hit,
-                    r.words,
-                    r.half,
-                    r.streak
-                )
-            } else {
-                format!(
-                    "{} points · {} of {} words · {} in a row",
-                    points_text(r.points),
-                    r.hit,
-                    r.words,
-                    r.streak
-                )
-            },
+            format!(
+                "{} points · {} of {} words · {} in a row",
+                points_text(r.points),
+                r.hit,
+                r.words,
+                r.streak
+            ),
             0.0,
             LineKind::Next,
         ),
@@ -629,7 +620,7 @@ fn score_now(state: &State) -> Option<Score> {
     let path = state.queue.paths.get(index)?;
     (state.config.karaoke_game && singing.is_of(path) && singing.words() > 0).then_some(Score {
         points: singing.tally.score,
-        level: singing.level,
+        tier: singing.last_phrase().and_then(|p| p.tier),
         streak: singing.tally.streak,
     })
 }
@@ -1064,8 +1055,8 @@ fn choices(
     }
 }
 
-/// The game's settings on the tab: the game on or off, the level, the
-/// notes shown or hidden; each a click (or its key: g, d, p).
+/// The game's settings on the tab: the game on or off, the notes shown or
+/// hidden, the singing kept; each a click (or its key: g, p).
 fn game_settings(buf: &mut Buffer, state: &State, layout: &KaraokeTabLayout) {
     let config = &state.config;
     let right = layout.title.right();
@@ -1086,29 +1077,12 @@ fn game_settings(buf: &mut Buffer, state: &State, layout: &KaraokeTabLayout) {
         &switch(layout.game, game),
         game,
         if game {
-            "your singing scored, a medal and a best for each song"
+            "your singing scored line by line against the original"
         } else {
             "just singing, nothing scored"
         },
         right,
     );
-    if let Some(&(first, _)) = layout.levels.first() {
-        let items: Vec<(Rect, &str, bool)> = layout
-            .levels
-            .iter()
-            .map(|&(r, level)| (r, level.name(), level == config.karaoke_level))
-            .collect();
-        choices(
-            buf,
-            layout.game.x,
-            first.y,
-            "Level (d)",
-            &items,
-            game,
-            config.karaoke_level.what(),
-            right,
-        );
-    }
     let notes = config.karaoke_notes;
     choices(
         buf,
@@ -1208,8 +1182,6 @@ fn slider(buf: &mut Buffer, state: &State, s: &SliderLayout, show_focus: bool) {
 pub const NOTE_AHEAD: Color = Color::Rgb(78, 120, 146);
 /// A note where the singer hit it: gold.
 pub const HIT: Color = Color::Rgb(255, 190, 60);
-/// Where they half hit it: a paler gold.
-pub const HALF_HIT: Color = Color::Rgb(176, 150, 104);
 /// The singer's own pitch: coral.
 pub const SINGER: Color = Color::Rgb(240, 110, 80);
 

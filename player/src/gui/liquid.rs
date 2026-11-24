@@ -1,7 +1,7 @@
 //! The liquid a note's bubble fills with as it is sung, on the GPU: its
 //! front (where the singing fills it) a living surface, a meniscus and a
 //! few waves moving along it, sloshing a moment when the fill jumps (the
-//! sweep on easy); a shimmer moving through it; and the bubble under
+//! sweep to full); a shimmer moving through it; and the bubble under
 //! pressure in the last stretch to full (a slight bulge and a wobble),
 //! then overfilling as it bursts (bulging to 1 + [`GROW`]). The processor
 //! gives only a bubble's level, pressure, wobble phase, when its fill

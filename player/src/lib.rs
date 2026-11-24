@@ -47,6 +47,7 @@ pub mod rhythm;
 pub mod scores;
 pub mod session;
 pub mod setup;
+pub mod shine_cache;
 pub mod single;
 pub mod spectrum;
 pub mod stems_cache;

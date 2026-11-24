@@ -92,8 +92,6 @@ pub enum Target {
     TransitionOverview(crate::core::lanes::Block),
     /// A Karaoke slider's row.
     KaraokeSlider(Slider),
-    /// A level on the Karaoke tab.
-    KaraokeLevel(crate::core::singing::Level),
 }
 
 fn tone_rects(lines: &[Vec<text::Seg>], tone: Tone, area: Rect) -> Vec<Rect> {
@@ -164,9 +162,6 @@ pub fn regions(state: &State) -> Vec<(Rect, Target)> {
                     out.push((s.row, Target::KaraokeSlider(s.slider)));
                 }
                 out.push((k.game, Target::Button(Op::KaraokeGame)));
-                for &(rect, level) in &k.levels {
-                    out.push((rect, Target::KaraokeLevel(level)));
-                }
                 out.push((k.show_notes, Target::Button(Op::KaraokeNotes)));
                 out.push((k.keep, Target::Button(Op::KaraokeKeep)));
                 out.push((k.sync, Target::Button(Op::KaraokeSync)));
@@ -501,7 +496,6 @@ pub fn action_at(state: &State, input: MouseInput, x: f64) -> Option<Action> {
         (Down(Left), Target::Device) => Some(Action::OpenSettings(SettingsRow::Device)),
         (Down(Left), Target::Cover) => Some(Action::Op(Op::NowPlaying)),
         (Down(Left), Target::Button(op) | Target::Link(op)) => Some(Action::Op(op)),
-        (Down(Left), Target::KaraokeLevel(level)) => Some(Action::KaraokeLevel(level)),
         (Down(Left), Target::SettingsLess(i)) => Some(Action::SettingsClick(i, -1)),
         (Down(Left), Target::SettingsMore(i)) => Some(Action::SettingsClick(i, 1)),
         (Down(Left), Target::SettingsValue(i)) => Some(Action::SettingsClick(i, 0)),

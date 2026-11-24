@@ -1,0 +1,4 @@
+jodeldiplom-cache shine 1 by jodeldiplom x
+version 3
+none
+0.4125	21.5	-	0.75	0.97	0.915	12,30,2,7	0.8,1	12,30,5

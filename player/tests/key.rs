@@ -13,7 +13,6 @@ use jodeldiplom::core::desk::{Channel, StripKind};
 use jodeldiplom::core::keymap::{self, Key, KeyCode, Meaning, Op};
 use jodeldiplom::core::layout::{self, Layout};
 use jodeldiplom::core::mouse::{self, MouseButton, MouseInput, MouseKind};
-use jodeldiplom::core::singing::Level;
 use jodeldiplom::core::sliders::Slider;
 use jodeldiplom::core::{update, Action, Effect, Side, State};
 use jodeldiplom::gui::mixer::said;
@@ -160,7 +159,11 @@ fn the_notes_and_the_scoring_follow_the_key_heard() {
     state.side = Side::Karaoke;
     let (lyrics, melody) = two_note_song();
     let singing = &mut state.karaoke.singing;
-    singing.prepare(std::path::Path::new("a"), &lyrics, &melody, 1, Level::Hard);
+    singing.prepare(
+        std::path::Path::new("a"),
+        &lyrics,
+        &jodeldiplom::core::singing::melodic(&melody),
+    );
     let note = |state: &State| state.karaoke.singing.word_at(0.5).map(|(_, c)| c);
     assert_eq!(note(&state), Some(6000.0));
     let index = state.playing.track.as_ref().map_or(0, |t| t.index);

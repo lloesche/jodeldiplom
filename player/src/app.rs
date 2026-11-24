@@ -339,6 +339,8 @@ pub struct App {
     details: DetailsWorker,
     rhythm: RhythmWorker,
     lyrics: crate::lyrics::LyricsWorker,
+    /// The original singer's phrases, worked out for the shine.
+    shine: crate::shine_cache::ShineWorker,
     /// The microphone, open while Karaoke shows; how it opens, how they
     /// are listed, and why it last did not open (not tried again until
     /// Karaoke shows anew).
@@ -597,6 +599,13 @@ impl App {
             details,
             rhythm,
             lyrics,
+            shine: crate::shine_cache::ShineWorker::new(
+                options
+                    .rhythm_cache
+                    .as_deref()
+                    .map_or_else(Default::default, crate::shine_cache::Folders::beside),
+                options.notify.clone(),
+            ),
             mic: None,
             open_mic: options.mic.clone(),
             list_mics: options.mics.clone(),
@@ -1102,6 +1111,16 @@ impl App {
             any = true;
             self.mic_opened(ask, result);
         }
+        // The original singer's phrases, for the notes they were worked out
+        // for (the song's words timed anew since: asked again).
+        while let Some(found) = self.shine.take() {
+            let singing = &mut self.state.karaoke.singing;
+            let made = &found.made;
+            if singing.is_made_of(&made.path, &made.lyrics, &made.waveform) {
+                singing.set_reference(found.reference);
+                any = true;
+            }
+        }
         any |= self.pump_previews();
         // Bit-perfect only while the mixer passes the song through; a
         // device that refused the microphone's tap is told, each time.
@@ -1202,25 +1221,23 @@ impl App {
         let Some(waveform) = waveform.filter(|w| w.melody.is_some()) else {
             return;
         };
-        let level = state.config.karaoke_level;
+        let game = state.config.karaoke_game;
         // Estimated even with a delay measured: the singing corrects it
         // ([`crate::core::lag::correction`]).
         let karaoke = &mut state.karaoke;
         let (singing, estimate) = (&mut karaoke.singing, &mut karaoke.lag.estimate);
         let (late, source) = (karaoke.lag.late, karaoke.lag.source);
-        if let Some(melody) = &waveform.melody {
-            singing.prepare(
-                &path,
-                &lyrics,
-                melody,
-                Arc::as_ptr(&waveform) as usize,
-                level,
-            );
-        }
+        singing.prepare(&path, &lyrics, &waveform);
         // Without a microphone the notes are still made (the lane shows
         // them), nothing heard.
         if !heard {
             return;
+        }
+        // The original singer's phrases, for the shine (the game on, a
+        // microphone open): worked out (or read) off this thread, set as
+        // they come ([`App::pump`]).
+        if game && singing.reference().is_none() {
+            self.shine.want(&path, &lyrics, &waveform);
         }
         // A frame's pitch is that of the window before it: its middle.
         let centre = jodel_rhythm::yin::WINDOW / 2.0;
@@ -1232,7 +1249,6 @@ impl App {
                     path.clone(),
                     Arc::clone(&lyrics),
                     Arc::clone(&waveform),
-                    level.name(),
                 ));
             }
             if let Some(kept) = self.kept.as_mut() {
@@ -1745,7 +1761,6 @@ impl App {
                     karaoke_lead,
                     karaoke_echo,
                     karaoke_game,
-                    karaoke_level,
                     karaoke_notes,
                     karaoke_keep,
                     data_folder,

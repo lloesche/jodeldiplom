@@ -26,7 +26,6 @@
 //! karaoke_lead = 200                  # karaoke: the words light up this many ms before they are sung (0 to 1000)
 //! karaoke_echo = true                 # karaoke: take the music's echo (from the speakers) out of the singer the microphone hears
 //! karaoke_game = true                 # karaoke: score the singing (points, medals, high scores); false: just sing
-//! karaoke_level = "medium"            # karaoke: how strictly it is scored: "easy" (any key, the shape), "medium" (any key, the steps), "hard" (the song's key)
 //! karaoke_notes = true                # karaoke: the song's notes under the line being sung
 //! karaoke_keep = false                # karaoke: keep your singing of each song (recordings, beside this file), to tune the game
 //! transition_lyrics = true            # the Transition tab: the lyrics on the vocals lane (L)
@@ -107,8 +106,6 @@ pub struct Config {
     pub karaoke_echo: bool,
     /// Karaoke: the singing is scored (points, medals, high scores).
     pub karaoke_game: bool,
-    /// Karaoke: how strictly the singing is scored.
-    pub karaoke_level: crate::core::singing::Level,
     /// Karaoke: the song's notes show under the line being sung.
     pub karaoke_notes: bool,
     /// Karaoke: each song's singing is kept ([`crate::keep`]).
@@ -144,7 +141,6 @@ impl Default for Config {
             karaoke_lead: 200,
             karaoke_echo: true,
             karaoke_game: true,
-            karaoke_level: crate::core::singing::Level::Medium,
             karaoke_notes: true,
             karaoke_keep: false,
             transition_lyrics: true,
@@ -363,14 +359,9 @@ impl Config {
                         _ => return Err(at("karaoke_keep takes true or false")),
                     }
                 }
-                "karaoke_level" => {
-                    config.karaoke_level = parse_string(value)
-                        .as_deref()
-                        .and_then(crate::core::singing::Level::parse)
-                        .ok_or_else(|| {
-                            at("karaoke_level takes \"easy\", \"medium\" or \"hard\"")
-                        })?;
-                }
+                // An older file's level the singing was scored at: there is
+                // one way of scoring now.
+                "karaoke_level" => {}
                 "karaoke_lead" => {
                     config.karaoke_lead = value
                         .parse::<u16>()
@@ -428,7 +419,6 @@ impl Config {
         let _ = writeln!(text, "karaoke_lead = {}", self.karaoke_lead);
         let _ = writeln!(text, "karaoke_echo = {}", self.karaoke_echo);
         let _ = writeln!(text, "karaoke_game = {}", self.karaoke_game);
-        let _ = writeln!(text, "karaoke_level = {}", quote(self.karaoke_level.name()));
         let _ = writeln!(text, "karaoke_notes = {}", self.karaoke_notes);
         let _ = writeln!(text, "karaoke_keep = {}", self.karaoke_keep);
         let _ = writeln!(text, "transition_lyrics = {}", self.transition_lyrics);
@@ -552,7 +542,6 @@ mod tests {
             karaoke_lead: 350,
             karaoke_echo: false,
             karaoke_game: false,
-            karaoke_level: crate::core::singing::Level::Hard,
             karaoke_notes: false,
             karaoke_keep: true,
             transition_lyrics: false,
@@ -590,6 +579,11 @@ mod tests {
         assert!(warnings.is_empty(), "{warnings:?}");
         assert_eq!(config.karaoke_voice, 20);
         assert!(!config.to_text().contains("karaoke_mic ="));
+        // The level the singing was scored at, from when there were three:
+        // read without a word, not written back.
+        let (config, warnings) = Config::parse("karaoke_level = \"hard\"\n").unwrap();
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert!(!config.to_text().contains("karaoke_level"));
     }
 
     #[test]

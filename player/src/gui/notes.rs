@@ -16,8 +16,8 @@ use super::karaoke::{mix, rgb, Rect, Target, NOTES_BOTTOM, NOTES_TOP, NOTE_THICK
 use super::particles::{Kind, Spray};
 use super::raster::{pack, unpack};
 use super::sparks::{noise, sparkle};
-use super::stage_gpu::{Instance, Palette, Pour, Tint};
-use crate::view::karaoke::{LineKind, LyricLine, HALF_HIT, HIT, NOTE_AHEAD, SINGER};
+use super::stage_gpu::{Instance, Pour, Tint};
+use crate::view::karaoke::{LineKind, LyricLine, HIT, NOTE_AHEAD, SINGER};
 
 /// The notes under a line and the singing on them, in pixels from the
 /// text's left.
@@ -25,9 +25,8 @@ use crate::view::karaoke::{LineKind, LyricLine, HALF_HIT, HIT, NOTE_AHEAD, SINGE
 pub(super) struct SungOp {
     /// Each note's left and right, and its height (-1 to 1).
     notes: Vec<(f32, f32, f32)>,
-    /// Where they are filled (painted flat, without a GPU): left and right,
-    /// and whether fully (else half).
-    hits: Vec<(f32, f32, bool)>,
+    /// Where they are filled (painted flat, without a GPU): left and right.
+    hits: Vec<(f32, f32)>,
     /// The singer's pitch along them: where and how high.
     trail: Vec<(f32, f32)>,
     /// The singer now: where, how high, and which way to go (0 on the
@@ -60,7 +59,7 @@ impl SungOp {
         let hits = line.hits.iter().filter(|_| !gpu);
         Some(SungOp {
             notes,
-            hits: hits.map(|&(a, b, f)| (x_of(a), x_of(b), f)).collect(),
+            hits: hits.map(|&(a, b)| (x_of(a), x_of(b))).collect(),
             trail: line.trail.iter().map(|&(at, h)| (x_of(at), h)).collect(),
             voice: line.voice.map(|(at, h, way)| (x_of(at), h, way)),
         })
@@ -137,7 +136,7 @@ impl Over {
             );
             if b.bursting().is_some() {
                 let start = b.pops_at.unwrap_or_default();
-                let tint = tint(if b.fully() { HIT } else { HALF_HIT }, thick);
+                let tint = tint(HIT, thick);
                 self.sprays.push(Spray {
                     at: c,
                     half,
@@ -152,15 +151,11 @@ impl Over {
             if !self.gpu || b.torn() {
                 continue;
             }
-            let palette = Palette {
-                full: tint(HIT, thick),
-                half: tint(HALF_HIT, thick),
-            };
             let pour = Pour {
                 span: (x0, x0 + (x1 - x0) * b.level as f32),
                 front: b.level < 1.0,
                 jumped: b.jumped.max(-1e6) as f32,
-                tint: palette.of(b.fully()),
+                tint: tint(HIT, thick),
             };
             // Its ends as square as its bar's.
             let strain = super::pop::strain(b);
@@ -212,12 +207,7 @@ pub(super) fn draw(
     let thick = bar(px, at.1, 0.0).1;
     // A note's top at `height`.
     let y_of = |height: f32| bar(px, at.1, height).0;
-    let (sung_c, ahead, hit, half) = (
-        rgb(crate::view::lanes::NOTE),
-        rgb(NOTE_AHEAD),
-        rgb(HIT),
-        rgb(HALF_HIT),
-    );
+    let (sung_c, ahead, hit) = (rgb(crate::view::lanes::NOTE), rgb(NOTE_AHEAD), rgb(HIT));
     let mut put = |px: usize, py: usize, color: [u8; 3], a: f32| {
         if px < cx || px >= x1c || py < cy || py >= y1c {
             return;
@@ -235,11 +225,10 @@ pub(super) fn draw(
         );
         for qx in px0..px1 {
             let off = qx as f32 - at.0;
-            let color = match sung.hits.iter().find(|h| off >= h.0 && off < h.1) {
-                Some(&(_, _, true)) => hit,
-                Some(_) => half,
-                None if (qx as f32) < fill_x => sung_c,
-                None => ahead,
+            let color = match sung.hits.iter().any(|h| off >= h.0 && off < h.1) {
+                true => hit,
+                false if (qx as f32) < fill_x => sung_c,
+                false => ahead,
             };
             for qy in py0..py1 {
                 put(qx, qy, color, alpha);

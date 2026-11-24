@@ -124,6 +124,8 @@ pub(super) struct Painter {
     /// Karaoke mode's stage, drawn over it all, and its bursts over that.
     stage: super::stage_gpu::StagePass,
     particles: super::particles::ParticlePass,
+    /// The light that blooms ([`super::bloom`]).
+    light: super::bloom::Light,
 }
 
 /// An adapter and a device opened on it.
@@ -234,8 +236,11 @@ impl Painter {
             mapped_at_creation: false,
         });
         let (tiles, tiles_view) = tiles_texture(&device, view_format, (1, 1, 1));
-        let stage = super::stage_gpu::StagePass::new(&device, format);
-        let particles = super::particles::ParticlePass::new(&device, format);
+        let stage =
+            super::stage_gpu::StagePass::new(&device, format, super::stage_gpu::Blend::Over);
+        let particles =
+            super::particles::ParticlePass::new(&device, format, super::stage_gpu::Blend::Over);
+        let light = super::bloom::Light::new(&device, format);
         Painter {
             device,
             queue,
@@ -250,14 +255,18 @@ impl Painter {
             bind: None,
             stage,
             particles,
+            light,
         }
     }
 
     /// Karaoke mode's stage for the next frame (`None`: none), in a frame
     /// of `size`.
     fn set_stage(&mut self, frame: Option<&StageFrame>, size: (u32, u32)) {
-        self.stage.set(&self.device, &self.queue, frame, size);
-        self.particles.set(&self.device, &self.queue, frame, size);
+        let gpu = (&self.device, &self.queue);
+        self.stage.set(gpu, frame.map(StageFrame::feed), size);
+        let (sprays, time) = frame.map_or((&[][..], 0.0), |f| (&f.sprays[..], f.clock));
+        self.particles.set(gpu, sprays, time, size);
+        self.light.set(gpu, frame, size);
     }
 
     /// The next frame, of `size` pixels: the pixels in `changes` sent over
@@ -278,8 +287,10 @@ impl Painter {
         self.bind();
     }
 
-    /// The frame prepared, into `pass` (its viewport the window's); false
-    /// where there is none yet.
+    /// The frame prepared, into `pass` (its viewport the window's): the
+    /// pixels, the stage and its bursts, the light and its bloom added over
+    /// them (drawn and blurred as the frame was prepared), and the stage's
+    /// shapes over everything; false where there is none yet.
     pub(super) fn draw(&self, pass: &mut wgpu::RenderPass<'_>) -> bool {
         let Some(bind) = &self.bind else {
             return false;
@@ -289,6 +300,8 @@ impl Painter {
         pass.draw(0..3, 0..1);
         self.stage.draw(pass);
         self.particles.draw(pass);
+        self.light.composite(pass);
+        self.stage.draw_top(pass);
         true
     }
 

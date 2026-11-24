@@ -3,8 +3,8 @@
 //! each was heard, before any delay is taken off, and its pitch), and
 //! every [`EVERY`] of the song they are held against its notes at each
 //! delay from 0 to [`MOST`] in steps of [`STEP`] ([`measure`]): how much
-//! of the singing scores at each, as the scoring at the song's level
-//! scores it (at medium for easy: [`judged_at`]; [`fit`]). On real singing that is a broad hill, and one
+//! of the singing scores at each, held to the notes a little more strictly
+//! than the scoring ([`fit`]). On real singing that is a broad hill, and one
 //! window of it a noisy one, so the measures are averaged into a curve
 //! (the first ones evenly, then each followed in over the last half minute
 //! or so: [`FOLLOW`]), each delay weighed with its neighbours ([`SPREAD`]);
@@ -16,7 +16,7 @@
 //! delays tried 20 ms apart for that).
 //!
 //! What counts is what the scoring counts: each word's share of its note
-//! time hit, up to the share its level asks. Counting every frame hit
+//! time hit, up to the share it asks. Counting every frame hit
 //! instead favours a later delay: a singer holds a vowel past a word's
 //! end, and a later delay pulls those frames back into it, though the
 //! word scores no more for them (on a real headset's singing, frames
@@ -26,7 +26,7 @@ use std::collections::VecDeque;
 use std::path::PathBuf;
 
 use super::DEFAULT_LATE;
-use crate::core::singing::{Hit, Level, Singing, SungKey};
+use crate::core::singing::{Singing, SungKey};
 
 /// How much of the singing is held against the notes, in seconds.
 pub const WINDOW: f64 = 20.0;
@@ -53,34 +53,38 @@ pub const MARGIN_LEAST: f64 = 0.2;
 /// What the share of the frames that hit weighs, in words: enough to tell
 /// apart delays at which as many words score, too little to outweigh one.
 pub const TIE: f64 = 0.5;
+/// How strictly the singing is held to the notes for the estimate: a frame
+/// within this (hundredths of a semitone, in the singer's own key) hits,
+/// one within [`ESTIMATE_NEAR`] half hits, and a word asks
+/// [`ESTIMATE_SHARE`] of its note time. Stricter than the scoring's
+/// ([`crate::core::singing::TOLERANCE`]): what the bubbles let count counts
+/// at so many delays near the right one that they all score alike, a hill
+/// too flat to read (how late the voice comes is the equipment's, not the
+/// singer's).
+const ESTIMATE_TOLERANCE: f64 = 150.0;
+const ESTIMATE_NEAR: f64 = 300.0;
+const ESTIMATE_SHARE: f64 = 0.25;
 
-/// The level the singing is held against the notes at for the estimate,
-/// sung at `level`: medium for easy (easy lets so much count that every
-/// delay near the right one scores alike, a hill too flat to read; how
-/// late the voice comes is the equipment's, not the level's), else the
-/// level itself.
-pub fn judged_at(level: Level) -> Level {
-    match level {
-        Level::Easy => Level::Medium,
-        other => other,
+/// A word's credit for the estimate, made smooth (0 to 1): its frames that
+/// hit and those with the half hits, each a share of the
+/// [`ESTIMATE_SHARE`] of its `noted` frames it asks, averaged (a word
+/// that scores counts one, whatever more of it is hit).
+fn smooth(noted: f64, hit: f64, half: f64) -> f64 {
+    let needed = ESTIMATE_SHARE * noted;
+    if needed <= 0.0 {
+        return 0.0;
     }
+    0.5 * ((hit / needed).min(1.0) + ((hit + half) / needed).min(1.0))
 }
 
 /// How well `frames` (when each was heard, before any delay, and its
 /// pitch: none where nothing was sung) fit the notes of `singing` heard
-/// `lag` seconds late, as its scoring would have it: each word's credit
-/// ([`Level::credit`]: its frames that hit, the singer's own key followed
-/// where the level allows, against what the level asks), made smooth
-/// ([`Credit::smooth`]: a word that scores counts one, whatever more of it
-/// is hit), summed; and, to tell apart the delays at which as many words
-/// score, the share of the frames with a pitch on the notes that hit,
-/// [`TIE`] of a word at most. And how many frames with a pitch land on
-/// notes.
-///
-/// [`Level::credit`]: crate::core::singing::Level::credit
-/// [`Credit::smooth`]: crate::core::singing::Credit::smooth
+/// `lag` seconds late: each word's credit ([`smooth`]: its frames that
+/// hit, the singer's own key followed), summed; and, to tell apart the
+/// delays at which as many words score, the share of the frames with a
+/// pitch on the notes that hit, [`TIE`] of a word at most. And how many
+/// frames with a pitch land on notes.
 pub fn fit(singing: &Singing, frames: &[(f64, Option<f32>)], lag: f64) -> (f64, usize) {
-    let level = judged_at(singing.level);
     let mut key = SungKey::default();
     // The word being heard (frames come in time, so a word's come
     // together): which, its frames on its notes, those that hit and half
@@ -94,7 +98,7 @@ pub fn fit(singing: &Singing, frames: &[(f64, Option<f32>)], lag: f64) -> (f64, 
         };
         if word.is_none_or(|w| w.0 != at) {
             if let Some((_, noted, hit, half)) = word {
-                scored += level.credit(noted, hit, half).smooth();
+                scored += smooth(noted, hit, half);
             }
             word = Some((at, 0.0, 0.0, 0.0));
         }
@@ -108,20 +112,17 @@ pub fn fit(singing: &Singing, frames: &[(f64, Option<f32>)], lag: f64) -> (f64, 
         let cents = f64::from(cents);
         key.hear(cents, note);
         on += 1;
-        match level.judge(key.off(level, cents, note)) {
-            Some(Hit::Full) => {
-                w.2 += 1.0;
-                hits += 1.0;
-            }
-            Some(Hit::Half) => {
-                w.3 += 1.0;
-                hits += 0.5;
-            }
-            None => {}
+        let off = key.off(cents, note).abs();
+        if off <= ESTIMATE_TOLERANCE {
+            w.2 += 1.0;
+            hits += 1.0;
+        } else if off <= ESTIMATE_NEAR {
+            w.3 += 1.0;
+            hits += 0.5;
         }
     }
     if let Some((_, noted, hit, half)) = word {
-        scored += level.credit(noted, hit, half).smooth();
+        scored += smooth(noted, hit, half);
     }
     (scored + TIE * hits / on.max(1) as f64, on)
 }
@@ -385,13 +386,13 @@ mod tests {
     use std::sync::Arc;
 
     /// A song of 40 words, half a second each, on a melody that moves
-    /// (C4, E4, G4, D4, A4 over and over), and its notes made at `level`.
-    fn song(level: Level) -> (Singing, impl Fn(f64) -> Option<f32>) {
-        song_of(level, 40)
+    /// (C4, E4, G4, D4, A4 over and over), and its notes.
+    fn song() -> (Singing, impl Fn(f64) -> Option<f32>) {
+        song_of(40)
     }
 
     /// [`song`] of `n` words.
-    fn song_of(level: Level, n: usize) -> (Singing, impl Fn(f64) -> Option<f32>) {
+    fn song_of(n: usize) -> (Singing, impl Fn(f64) -> Option<f32>) {
         const PITCH: [u16; 5] = [6000, 6400, 6700, 6200, 6900];
         let mut m = Melody {
             cents: vec![0; n * 50 + 100],
@@ -420,7 +421,7 @@ mod tests {
             timing: jodel_lyrics::Timing::default(),
         });
         let mut s = Singing::default();
-        s.prepare(Path::new("a"), &lyrics, &m, 1, level);
+        s.prepare(Path::new("a"), &lyrics, &crate::core::singing::melodic(&m));
         let pitch = move |t: f64| {
             (t >= 0.0 && t < n as f64 * 0.5).then(|| f32::from(PITCH[(t / 0.5) as usize % 5]))
         };
@@ -458,19 +459,21 @@ mod tests {
 
     #[test]
     fn singing_heard_120_ms_late_is_found_within_10_ms() {
-        for level in Level::ALL {
-            let (s, pitch) = song(level);
-            let frames = heard(&pitch, 0.12, 0.5);
-            let lag = best(&s, &frames, None).expect("an estimate");
-            assert!((lag - 0.12).abs() <= 0.0101, "{level:?}: {lag}");
-            // From itself: nothing better.
-            assert_eq!(best(&s, &frames, Some(lag)), None, "{level:?}");
-        }
-        // From an estimate far off: taken where the words score clearly
-        // better (on hard; easier levels score as many words 230 ms off).
-        let (s, pitch) = song(Level::Hard);
+        let (s, pitch) = song();
         let frames = heard(&pitch, 0.12, 0.5);
-        assert!(best(&s, &frames, Some(0.35)).is_some_and(|l| (l - 0.12).abs() <= 0.0101));
+        let lag = best(&s, &frames, None).expect("an estimate");
+        assert!((lag - 0.12).abs() <= 0.0101, "{lag}");
+        // From itself: nothing better.
+        assert_eq!(best(&s, &frames, Some(lag)), None);
+        // From an estimate 230 ms off: taken where the words score clearly
+        // better (sung with a pitch on under a third of the frames, so a
+        // word heard only half on its notes is short of what it asks).
+        let frames = heard(&pitch, 0.12, 0.3);
+        let from_far = best(&s, &frames, Some(0.35));
+        assert!(
+            from_far.is_some_and(|l| (l - 0.12).abs() <= 0.0101),
+            "{from_far:?}"
+        );
     }
 
     #[test]
@@ -486,7 +489,7 @@ mod tests {
 
     #[test]
     fn too_few_frames_with_a_pitch_give_none() {
-        let (s, pitch) = song(Level::Medium);
+        let (s, pitch) = song();
         // A tenth of 20 s: 200 frames, under the 300 needed.
         let frames = heard(&pitch, 0.12, 0.1);
         assert!(frames.iter().filter(|f| f.1.is_some()).count() < LEAST_VOICED);
@@ -495,9 +498,9 @@ mod tests {
 
     #[test]
     fn the_estimator_settles_as_the_song_is_sung() {
-        let (s, pitch) = song(Level::Hard);
+        let (s, pitch) = song();
         let mut e = Estimator::default();
-        let frames = heard(&pitch, 0.25, 0.5);
+        let frames = heard(&pitch, 0.25, 0.3);
         // The first time through: too few measures for a first estimate
         // (no few windows decide it).
         for &(t, cents) in &frames {
@@ -515,7 +518,7 @@ mod tests {
         );
         // Sung as the default has it: nothing clearly better, none.
         let mut d = Estimator::default();
-        let frames = heard(&pitch, DEFAULT_LATE, 0.5);
+        let frames = heard(&pitch, DEFAULT_LATE, 0.3);
         for _ in 0..2 {
             for &(t, cents) in &frames {
                 d.hear(&s, t, cents);
@@ -560,14 +563,14 @@ mod tests {
     #[test]
     fn the_singing_corrects_a_delay_measured_a_little_short() {
         use super::super::{Lag, Source};
-        // A song of a minute and a half, sung with a pitch on a third of
-        // the frames: a word's credit short of what hard asks, so each
+        // A song of a minute and a half, sung with a pitch on a fifth of
+        // the frames: a word's credit short of what the estimate asks, so each
         // frame on its note counts.
-        let (s, pitch) = song_of(Level::Hard, 180);
+        let (s, pitch) = song_of(180);
         let measured = 0.264;
         let mut lag = Lag::default();
         lag.step(measured, Source::Measured, 0.0, true);
-        let frames = heard_for(&pitch, 0.30, 0.35, 6000);
+        let frames = heard_for(&pitch, 0.30, 0.2, 6000);
         let found = follow(&mut lag, &s, &frames, measured).expect("an estimate");
         assert!(found <= 30.0, "found after {found} s");
         let sung = lag.estimate.lag;
@@ -580,11 +583,11 @@ mod tests {
         follow(&mut lag, &s, &silence, measured);
         assert_eq!((lag.estimate.lag, lag.late), was);
         // Sung as measured: nothing fits clearly better, no estimate.
-        let frames = heard_for(&pitch, measured, 0.35, 6000);
+        let frames = heard_for(&pitch, measured, 0.2, 6000);
         assert_eq!(follow(&mut Lag::default(), &s, &frames, measured), None);
         // Sung 80 ms later than measured: the singing points elsewhere, so
         // an estimate made near is let go, and nothing is corrected.
-        let frames = heard_for(&pitch, measured + 0.08, 0.35, 6000);
+        let frames = heard_for(&pitch, measured + 0.08, 0.2, 6000);
         let mut far = Lag::default();
         far.estimate.lag = Some(0.29);
         follow(&mut far, &s, &frames, measured);
@@ -596,9 +599,9 @@ mod tests {
     /// new one; the same again (after the echo unsteady a while) keeps it.
     #[test]
     fn a_sync_again_lets_the_estimate_go() {
-        let (s, pitch) = song_of(Level::Hard, 180);
+        let (s, pitch) = song_of(180);
         let mut lag = super::super::Lag::default();
-        follow(&mut lag, &s, &heard_for(&pitch, 0.30, 0.35, 6000), 0.264);
+        follow(&mut lag, &s, &heard_for(&pitch, 0.30, 0.2, 6000), 0.264);
         let e = &mut lag.estimate;
         assert!(e.lag.is_some());
         e.anchor(None);
@@ -612,33 +615,20 @@ mod tests {
     }
 
     /// Noise (a pitch anywhere, frame by frame, as loud as singing) never
-    /// moves a delay measured, at any level.
+    /// moves a delay measured.
     #[test]
     fn noise_never_corrects_a_delay_measured() {
-        for level in Level::ALL {
-            let (s, _) = song_of(level, 180);
-            let noise: Vec<(f64, Option<f32>)> = (0..9000)
-                .map(|i| {
-                    let r = (f64::from(i) * 0.618_034).fract();
-                    let q = (f64::from(i) * 0.414_214).fract();
-                    let c = (q < 0.7).then_some(4800.0 + 2400.0 * r as f32);
-                    (f64::from(i) / 100.0, c)
-                })
-                .collect();
-            let mut lag = super::super::Lag::default();
-            follow(&mut lag, &s, &noise, 0.264);
-            assert_eq!(lag.estimate.lag, None, "{level:?}");
-        }
-    }
-
-    /// Easy's singing is held against the notes as medium's: the same
-    /// estimate.
-    #[test]
-    fn easy_is_estimated_as_medium() {
-        let frames = heard(&song(Level::Medium).1, 0.12, 0.5);
-        let (easy, medium) = (song(Level::Easy).0, song(Level::Medium).0);
-        assert_eq!(judged_at(Level::Easy), Level::Medium);
-        assert_eq!(best(&easy, &frames, None), best(&medium, &frames, None));
-        assert!(best(&easy, &frames, None).is_some());
+        let (s, _) = song_of(180);
+        let noise: Vec<(f64, Option<f32>)> = (0..9000)
+            .map(|i| {
+                let r = (f64::from(i) * 0.618_034).fract();
+                let q = (f64::from(i) * 0.414_214).fract();
+                let c = (q < 0.7).then_some(4800.0 + 2400.0 * r as f32);
+                (f64::from(i) / 100.0, c)
+            })
+            .collect();
+        let mut lag = super::super::Lag::default();
+        follow(&mut lag, &s, &noise, 0.264);
+        assert_eq!(lag.estimate.lag, None);
     }
 }

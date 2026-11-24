@@ -33,7 +33,6 @@ use ratatui::layout::Rect;
 
 use crate::core::karaoke;
 use crate::core::keymap::Op;
-use crate::core::singing::Level;
 use crate::core::sliders::Slider;
 use crate::core::text::{self, width};
 use crate::core::{Gpu, Screen, Side, State};
@@ -129,8 +128,6 @@ pub struct KaraokeTabLayout {
     pub sliders: Vec<SliderLayout>,
     /// The game on or off: its row, a click turns it.
     pub game: Rect,
-    /// The levels, side by side: a click picks one.
-    pub levels: Vec<(Rect, Level)>,
     /// The notes shown or hidden: its row.
     pub show_notes: Rect,
     /// The singing kept or not: its row.
@@ -1051,22 +1048,11 @@ fn karaoke_tab(inner: Rect, session: Option<&crate::core::sync::Session>) -> Kar
             at += w + 2;
         }
     }
-    // The game's settings, a row each: a switch, the levels, a switch.
+    // The game's settings, a switch a row.
     let game = Rect::new(x, row(11), (SLIDER_LABEL + SWITCH).min(room), 1);
-    let mut at = x + SLIDER_LABEL;
-    let levels = Level::ALL
-        .iter()
-        .map(|&level| {
-            let w = width(level.name()) as u16 + 2;
-            let r = Rect::new(at, row(12), w, 1);
-            at += w + 1;
-            (r, level)
-        })
-        .filter(|(r, _)| r.right() <= x + room)
-        .collect();
-    let show_notes = Rect::new(x, row(13), (SLIDER_LABEL + SWITCH).min(room), 1);
-    let keep = Rect::new(x, row(14), (SLIDER_LABEL + SWITCH).min(room), 1);
-    let notes_y = row(16);
+    let show_notes = Rect::new(x, row(12), (SLIDER_LABEL + SWITCH).min(room), 1);
+    let keep = Rect::new(x, row(13), (SLIDER_LABEL + SWITCH).min(room), 1);
+    let notes_y = row(15);
     let notes = Rect::new(x, notes_y, room, inner.bottom().saturating_sub(notes_y));
     KaraokeTabLayout {
         cover,
@@ -1074,7 +1060,6 @@ fn karaoke_tab(inner: Rect, session: Option<&crate::core::sync::Session>) -> Kar
         enter,
         sliders,
         game,
-        levels,
         show_notes,
         keep,
         sync,
@@ -1088,7 +1073,7 @@ fn karaoke_tab(inner: Rect, session: Option<&crate::core::sync::Session>) -> Kar
 /// Karaoke mode: the whole screen, and the controls' bar over its bottom
 /// while they show (the sliders, the seek bar and the keys at the left,
 /// START at the right). The game's settings are not here but on the tab:
-/// a song is sung at one level from its start to its end.
+/// they stay as they are from a song's start to its end.
 fn karaoke_mode(state: &State, area: Rect) -> KaraokeLayout {
     let controls = karaoke::controls_shown(state).then(|| {
         let bar = Rect::new(

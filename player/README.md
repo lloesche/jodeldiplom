@@ -725,7 +725,6 @@ seven times over where its text has it once.
 | `i` | the next microphone |
 | `r` | record 30 s of what the echo canceller works with (also in the mode) |
 | `g` / a click on Game | the game on or off: the singing scored, or just sung |
-| `d` / a click on a level | the level: easy, medium, hard |
 | `p` / a click on Notes | the song's notes shown or hidden |
 | a click on Keep | your singing of each song kept, or not |
 
@@ -757,8 +756,8 @@ the echo canceller's, once **steady** (within 10 ms of itself for 3 s;
 with a headset there is no echo, so never); the delay **estimated from
 your singing** (the last 20 s of it held against the song's notes every
 2 s, at each delay from 0 to 400 ms, averaged over about half a minute:
-where the most of each word scores, as the level scores it (easy as
-medium), once clearly better than 150 ms); or 150 ms. Your singing
+where the most of each word scores, held to the notes a little more
+strictly than the game, once clearly better than 150 ms); or 150 ms. Your singing
 corrects a delay measured or the echo's too: where its estimate (all your
 singing averaged, the delay nearest the one measured that fits within
 0.5 % of the best, once the best fits 1 % better) is within 60 ms of it,
@@ -830,48 +829,65 @@ you are now.
 As you sing, the microphone's pitch (YIN, 100 frames a second, at the
 time in the song it was sung: the output frame playing as it was caught,
 less the delay) is held against the notes, and with the game on (`g`)
-the words you hit count. A word counts when enough of its note time is
-hit, a share by the level (easy a tenth, medium a quarter, hard two
-fifths: a pitch is heard on only about half of a word sung well, its
-consonants and breaths having none): 100 points, times the multiplier, shown
-top right with the level (`d`). Words hit in a row are a streak: 5 make
-the multiplier ×2, 10 ×3, 20 ×4 (shown over the playhead with the
-streak); a word half hit keeps it, one missed ends it. While it is above
-×1 the streak shines: rainbow bands fan out from the playhead behind the
-pills, a soft shimmer at ×2, more of them, brighter and faster a step up,
-the whole lane glowing at ×4; a swirl turns round your arrow and the
-multiplier shows in rainbow. Each step up throws stars, notes and
-rainbow bits from the playhead that spin, arc down and fade; lose the
-streak and the bands collapse into the playhead in half a second, their
-colour draining. In the picture (no stage) the bar under the word you
-sing gets a rainbow edge, and a smaller burst a step up. **Easy** and
-**medium** follow the key you sing in (how far you sing from the song,
-octaves aside, over the last 3 s) and want you within 3 and 1.5
-semitones; on medium, within 3 is close, a paler gold, and a word that
-only gets there with close frames scores 50. On both your line snaps
-where it scores: onto the note, or (close) onto the semitone you are
-nearest. **Hard** wants the song's own key, octaves aside, within a
-semitone, and draws your line as you sing it, smoothed (a median over
-50 ms, then a glide half way each frame).
+the words you hit count. There is one way of scoring, generous: it
+follows the key you sing in (how far you sing from the song, octaves
+aside, over the last 3 s) and wants the melody's shape, within 3
+semitones. A word counts when a tenth of its note time is hit (a pitch
+is heard on only about half of a word sung well, its consonants and
+breaths having none): 100 points, times the multiplier, shown top right.
+Words hit in a row are a streak: 5 make the multiplier ×2, 10 ×3, 20 ×4
+(shown over the playhead, the streak beside it); a word missed ends it. Your
+line snaps onto the note where it hits; off the notes it is drawn as you
+sing it, smoothed (a median over 50 ms, then a glide half way each
+frame).
+
+Each **phrase** (a sung line) also **shines**: as it ends it is measured
+against the original singer's same phrase (the song's vocals, heard as
+your voice is) and scored as a share of it: how much of each word you
+sang while it is sung (half as much as the original is heard on it is
+all of it), times how near the notes your
+pitch was, your timing, how steady your held notes, how long you held
+the long ones and whether you reached its top and bottom, each against
+the original's. The **shine meter** at the top fills as you sing a
+phrase and springs to its shine as it ends, its tier popping over it
+on a badge (drawn over the light, so the bloom never washes it out):
+**Good** (60 % of the original), **Great** (75 %), **Amazing** (87 %),
+**Diva** (90 %, the pitch at 90 % of the original's too). Each phrase's
+bars are set by what the original itself reaches on it, heard every
+everyday way (another rate, the delay off, octave errors, pitch lost),
+so the original singer is Diva on every phrase, and a rough original
+makes Diva easier; a phrase the original reaches under 70 % of itself on
+(so rough that half of it sung could be Diva) has no shine. A phrase the
+original is heard too little on (fewer than two words, or under 15 % of
+its notes) only fills its bubbles. The
+original's phrases are worked out off the audio thread once the words
+are timed (a few seconds, from the song's kept stems) and kept in
+`shine` in the data folder; until then the song has no shine. The tier
+lights the stage: Good is a rainbow streak (bands fanning out from the
+playhead behind the pills, a swirl round your arrow, the multiplier in
+rainbow; each tier up throws stars, notes and rainbow bits from the
+playhead; a phrase with no tier collapses it into the playhead), Great
+adds a glow round the lane, Amazing flames blazing off its edges, and
+Diva angels descending and a jackpot of coins and stars from the meter.
+The light blooms (the GPU draws it apart, at high range, blurs it and
+tone maps it over the frame). Along the bottom the song's progress shows
+each phrase sung in its tier's colour, a mark a phrase popping as its
+tier is decided (a little jackpot on Diva), and the time left in a ring
+that drains as the song goes, in the rainbow while you shine. In the
+picture (no stage) the bar under the word you sing gets a rainbow edge,
+and a smaller burst a step up.
 
 The notes are **bubbles** that fill with a glowing liquid as you hit them
 (a gap of a consonant under 60 ms bridged), poured in from the note's
 start to a level: how much of it you hit. The liquid's front ripples and
-sloshes, and a light shimmers through it. On **easy**, the moment a word
-counts all its bubbles fill, the part already sung and the part to come:
-a quick sweep to full (0.2 s). In the last stretch the bubble strains,
-bulging a little and wobbling; full, the whole of it bursts (0.5 s): it
-overfills, bulging to about 1.3 times in 80 ms, then tears, its liquid
-splashing out in drops that arc out and fall, torn bits of its skin and
-a few sparkles flying with them, and it is gone: a faint wet sheen fades
-where it was, then the spot is empty (the word keeps its sung colour).
-Each bubble bursts on its own the moment it is full: a word sung over
-several notes has several bubbles in a row (on the stage, along its
-pill), bursting one after the other as each fills, the others keeping
-their liquid. On **medium** they fill where your pitch was
-heard on the note (gold, or the paler gold where close), and one filled
-85 % bursts too (even in a word that scores a half: it shows what you
-sang); on **hard** the same, only a bubble you truly fill bursts. A
+sloshes, and a light shimmers through it. The moment a word counts all
+its bubbles fill, the part already sung and the part to come: a quick
+sweep to full (0.2 s). In the last stretch the bubble strains, bulging a
+little and wobbling; full, the whole of it bursts (0.5 s): it overfills,
+bulging to about 1.3 times in 80 ms, then tears, its liquid splashing
+out in drops that arc out and fall, torn bits of its skin and a few
+sparkles flying with them, and it is gone: a faint wet sheen fades where
+it was, then the spot is empty (the word keeps its sung colour). A
 bubble only partly filled never bursts: it keeps its liquid at the level
 you sang. Each bubble bursts as it fills, by your singing's own time
 (the song's less the delay, so you see the whole sweep and burst; a paused song holds them); sought back before what
@@ -879,11 +895,10 @@ filled it, it shows again as it is. In the window the GPU draws the
 liquid and the bursts (a record a bubble, its surface, wobble, drops and
 bits worked out in its shaders), so they cost the processor nothing;
 without a GPU the fill shows flat and a bubble full simply disappears.
-The points are as they were. When a song ends you get its
-points, the words hit (and half hit), the longest streak and a medal by
-the words (a half hit as half of one: bronze for half of them, silver
-70 %, gold 85 %), and the best score of each song at each level is kept
-(`scores.txt` in the data folder).
+When a song ends you get its points, the words hit, the longest streak,
+how many phrases reached each tier and a medal by the words (bronze for
+half of them, silver 70 %, gold 85 %), and the best score of each song
+is kept (`scores.txt` in the data folder).
 
 A song is sung only once its lyrics are ready (found, and their words
 timed where they can be): until then, and for a song with none, the

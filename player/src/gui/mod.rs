@@ -5,10 +5,13 @@
 //! one widget under them ([`embed`]), on iced's GPU through its shader
 //! widget, or as an image with iced's CPU renderer where there is no GPU.
 
+pub mod bloom;
 pub mod canvas;
 pub mod embed;
 mod embed_gpu;
+pub mod fanfare;
 pub mod fonts;
+pub mod glory;
 pub mod karaoke;
 pub mod keys;
 pub mod liquid;

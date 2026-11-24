@@ -214,11 +214,10 @@ fn grid_files_are_pinned_and_every_version_is_read() {
 
 #[test]
 fn score_files_are_pinned_and_every_version_is_read() {
-    use jodeldiplom::core::singing::Level;
     use jodeldiplom::scores::{from_text, to_text, Best, Bests};
     let mut bests = Bests::new();
     bests.insert(
-        ("/music/a song.flac".into(), Level::Medium),
+        "/music/a song.flac".into(),
         Best {
             points: 2300,
             hit: 23,
@@ -346,6 +345,40 @@ fn cover_files_are_pinned() {
         store.album("a0123456789abcdef"),
         vec![("fc0d153cdfbefb992e61".to_owned(), seen)]
     );
+}
+
+/// A cache file of the original singer's phrases: pinned, read back the
+/// same; one measured another way (its measuring's version) not read.
+#[test]
+fn shine_files_are_pinned() {
+    use jodeldiplom::core::shine::{Par, Phrase, Reference, Yardstick};
+    use jodeldiplom::shine_cache;
+    let reference = Reference {
+        phrases: vec![
+            None,
+            Some(Phrase {
+                yardstick: Yardstick {
+                    word_hits: vec![12.0, 30.0, 2.0, 7.0],
+                    voiced: 0.4125,
+                    off: Some(21.5),
+                    spread: None,
+                    held: vec![0.8, 1.0],
+                    range: Some(0.75),
+                    mask: [vec![false; 12], vec![true; 30], vec![false; 5]].concat(),
+                },
+                par: Par {
+                    shine: 0.97,
+                    pitch: 0.915,
+                },
+            }),
+        ],
+    };
+    let text = shine_cache::to_text(&reference);
+    let kept = pinned(&cache::SHINE, "txt", text.as_bytes());
+    let kept = String::from_utf8(kept).unwrap();
+    assert_eq!(shine_cache::from_text(&kept), Some(reference));
+    let other = kept.replace("\nversion ", "\nversion 9");
+    assert_eq!(shine_cache::from_text(&other), None);
 }
 
 /// Every version of every schema keeps its sample.
