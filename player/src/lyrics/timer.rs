@@ -4,6 +4,7 @@
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::thread;
+use std::time::{Duration, Instant};
 
 use jodel_lyrics::{Lyrics, Maker};
 
@@ -69,24 +70,31 @@ impl WordTimer for SpeechTimer {
     fn time(&self, path: &Path, lyrics: &Lyrics, others: &Others) -> Result<Lyrics, String> {
         use jodel_lyrics::aligner::CtcAligner;
         let model = self.acoustic()?;
+        let started = Instant::now();
         let voice = track_voice(path)?;
+        let voiced = started.elapsed();
         // Any text checked against what is sung (one from LRCLIB swapped
         // for one of its others when it does not fit: `others` has none
         // for the file's own); what was heard, in the transcript's parts
         // and in glimpses, also pins the words to where it was.
+        let mut steps = Steps::default();
         let (lyrics, fit, parts, glimpses) = match self.recogniser() {
-            Some(asr) => match asr.transcribe(&voice) {
+            Some(asr) => match steps.of(|| asr.transcribe(&voice), |s| &mut s.heard) {
                 Ok(heard) => {
                     let (lyrics, fit) = prepare_text(lyrics, &heard, others);
-                    let glimpses = asr.glimpses(&voice).unwrap_or_default();
-                    (lyrics, fit, heard.parts, glimpses)
+                    let glimpses = steps.of(|| asr.glimpses(&voice), |s| &mut s.glimpsed);
+                    (lyrics, fit, heard.parts, glimpses.unwrap_or_default())
                 }
                 Err(_) => (lyrics.clone(), None, Vec::new(), Vec::new()),
             },
             None => (lyrics.clone(), None, Vec::new(), Vec::new()),
         };
-        let mut timed = CtcAligner::new(model).align_heard_in(&voice, &lyrics, &parts, &glimpses);
+        let mut timed = steps.of(
+            || CtcAligner::new(model).align_heard_in(&voice, &lyrics, &parts, &glimpses),
+            |s| &mut s.aligned,
+        );
         timed.timing.fit = fit;
+        steps.note(path, voiced);
         Ok(timed)
     }
 
@@ -94,14 +102,24 @@ impl WordTimer for SpeechTimer {
         use jodel_lyrics::aligner::CtcAligner;
         let asr = self.recogniser().ok_or("no speech recogniser here")?;
         let model = self.acoustic()?;
+        let started = Instant::now();
         let voice = track_voice(path)?;
-        let heard = asr.transcribe(&voice)?;
+        let voiced = started.elapsed();
+        let mut steps = Steps::default();
+        let heard = steps.of(|| asr.transcribe(&voice), |s| &mut s.heard)?;
         if jodel_lyrics::fit::words(&heard.text).len() < HEARD_LEAST {
             return Err(TOO_LITTLE_HEARD.into());
         }
         let text = transcript_lyrics(&heard, asr_maker());
-        let glimpses = asr.glimpses(&voice).unwrap_or_default();
-        let timed = CtcAligner::new(model).align_heard_in(&voice, &text, &heard.parts, &glimpses);
+        let glimpses = steps.of(|| asr.glimpses(&voice), |s| &mut s.glimpsed);
+        let timed = steps.of(
+            || {
+                let glimpses = glimpses.unwrap_or_default();
+                CtcAligner::new(model).align_heard_in(&voice, &text, &heard.parts, &glimpses)
+            },
+            |s| &mut s.aligned,
+        );
+        steps.note(path, voiced);
         // The lines made again where the words' timing says they break.
         Ok(relined(&timed))
     }
@@ -122,15 +140,58 @@ impl SpeechTimer {
         let mut cpu = jodel_lyrics::speech::Wav2Vec2::open(&self.models.speech_now())?;
         let m: Arc<dyn jodel_lyrics::aligner::Acoustic + Send + Sync> =
             match jodel_gpu::GpuSpeech::new(&cpu) {
-                Ok(gpu) => Arc::new(gpu),
-                Err(_) => {
+                Ok(gpu) => {
+                    crate::trace::note("lyrics: the speech model runs on the GPU");
+                    Arc::new(gpu)
+                }
+                Err(why) => {
                     let threads = thread::available_parallelism().map_or(2, |n| n.get());
+                    crate::trace::note(format_args!(
+                        "lyrics: the speech model runs on {} processor threads ({why})",
+                        (threads / 2).max(1)
+                    ));
                     cpu.set_threads((threads / 2).max(1));
                     Arc::new(cpu)
                 }
             };
         *kept = Some(Arc::clone(&m));
         Ok(m)
+    }
+}
+
+/// How long a song's timing took, step by step, for the trace.
+#[derive(Default)]
+struct Steps {
+    heard: Duration,
+    glimpsed: Duration,
+    aligned: Duration,
+}
+
+impl Steps {
+    /// `f`, its time added to the step `field` picks.
+    fn of<T>(
+        &mut self,
+        f: impl FnOnce() -> T,
+        field: impl FnOnce(&mut Self) -> &mut Duration,
+    ) -> T {
+        let started = Instant::now();
+        let out = f();
+        *field(self) += started.elapsed();
+        out
+    }
+
+    /// The trace's line for `path`, its voice got in `voiced`.
+    fn note(&self, path: &Path, voiced: Duration) {
+        let s = |d: Duration| d.as_secs_f64();
+        crate::trace::note(format_args!(
+            "lyrics: {} timed: the voice {:.1} s, heard {:.1} s, glimpses {:.1} s, aligned {:.1} s",
+            path.file_name()
+                .map_or_else(String::new, |n| n.to_string_lossy().into_owned()),
+            s(voiced),
+            s(self.heard),
+            s(self.glimpsed),
+            s(self.aligned),
+        ));
     }
 }
 
