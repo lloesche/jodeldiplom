@@ -16,9 +16,21 @@ use super::parts::{split, touch, LaneRun, Switch};
 use super::ramp::{resolve_starts, start_of, Audio, GainId};
 use super::run::Run;
 use super::strips::Strips;
+use super::voices::EffectsRun;
 use super::SlotState;
 use crate::caps::Capabilities;
 use crate::lanes::Parts;
+
+/// A lane heard in a chunk: its strip, its samples, the gains it is heard
+/// at, and whether it may go to the device as written (an exact lane, at
+/// exactly 1, alone).
+#[derive(Clone, Copy)]
+pub(crate) struct HeardLane<'a> {
+    pub(super) strip: u64,
+    pub(super) samples: &'a [i32],
+    pub(super) gains: Gains<'a>,
+    pub(super) exact: bool,
+}
 
 /// An input as the mixer thread runs it.
 pub(super) struct Slot {
@@ -101,12 +113,17 @@ impl Slot {
     }
 
     /// Its heard lanes: strip, samples, the gains they are heard at.
-    fn heard_lanes(&self) -> impl Iterator<Item = (u64, &[i32], Gains<'_>)> + '_ {
+    fn heard_lanes(&self) -> impl Iterator<Item = HeardLane<'_>> + '_ {
         self.lanes
             .iter()
             .enumerate()
             .filter(|(_, l)| l.heard)
-            .map(|(k, l)| (l.strip, self.samples(k), l.gains.as_gains()))
+            .map(|(k, l)| HeardLane {
+                strip: l.strip,
+                samples: self.samples(k),
+                gains: l.gains.as_gains(),
+                exact: l.exact,
+            })
     }
 
     /// Its lanes metered: the heard ones at the gains they are heard at,
@@ -333,25 +350,33 @@ impl Run {
             lanes.filter_map(move |l| Some((l.strip, audio?)))
         });
         self.strips.fill(first, n, format.rate, audio);
-        let (mut heard, mut alone) = (0, None);
-        for (&id, slot) in self.slots.iter_mut() {
+        for slot in self.slots.values_mut() {
             slot.fill(first, n, format.rate, &self.strips, &self.starts);
-            for (k, _) in slot.lanes.iter().enumerate().filter(|(_, l)| l.heard) {
-                heard += 1;
-                alone = Some((id, k));
-            }
         }
         self.strips.chunk_done();
+        // The effects: their cues due start, the voices sounding summed, at
+        // their strip's path.
+        if let Some(fx) = &mut self.effects {
+            fx.chunk(n, ch, format.rate, &self.slots);
+            fx.take_gains(&self.strips);
+        }
+        let effects = self.effects.as_ref().and_then(EffectsRun::lane);
+        // Every lane heard: the inputs', the effects'.
+        let heard = || {
+            self.slots
+                .values()
+                .flat_map(Slot::heard_lanes)
+                .chain(effects)
+        };
         // Each strip's meter: its subtree's heard lanes at those gains.
+        let fx_meter = effects.map(|l| (l.strip, l.samples, l.gains, true));
         let lanes = self.slots.values().flat_map(Slot::metered_lanes);
-        self.strips.meter(ch, lanes);
+        self.strips.meter(ch, lanes.chain(fx_meter));
         // One exact lane heard at 1 (or none): as written; else summed.
-        let untouched = match (heard, alone) {
+        let (count, alone) = heard().fold((0, None), |(k, _), l| (k + 1, Some(l)));
+        let untouched = match (count, alone) {
             (0, _) => true,
-            (1, Some((id, k))) => {
-                let lane = &self.slots[&id].lanes[k];
-                lane.exact && lane.gains.flat() == Some(1.0)
-            }
+            (1, Some(l)) => l.exact && l.gains.flat() == Some(1.0),
             _ => false,
         };
         self.out.clear();
@@ -363,8 +388,8 @@ impl Run {
         }
         let made = if untouched && device.mix.at_rest() {
             match alone {
-                Some((id, k)) if heard == 1 => {
-                    self.out.extend_from_slice(self.slots[&id].samples(k));
+                Some(l) if count == 1 => {
+                    self.out.extend_from_slice(l.samples);
                     Made::Passthrough
                 }
                 _ => {
@@ -374,14 +399,18 @@ impl Run {
             }
         } else {
             device.mix.begin(n * ch);
-            for (_, samples, gains) in self.slots.values().flat_map(Slot::heard_lanes) {
-                device.mix.add(samples, gains);
+            for l in heard() {
+                device.mix.add(l.samples, l.gains);
             }
             device.mix.end(untouched, &mut self.out);
             Made::Mixed
         };
+        let sounded = effects.is_some();
         self.untouched = made != Made::Mixed;
         self.gave(ch);
+        if sounded {
+            self.effects_until = end;
+        }
         self.frame = end;
         true
     }

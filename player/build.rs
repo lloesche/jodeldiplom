@@ -6,6 +6,10 @@
 //!   `include_bytes!`; the binary includes that file and hands the fonts
 //!   to the library. Without them the window uses the embedded Cascadia
 //!   Mono.
+//! - The key of its game sounds kept on disk: `$OUT_DIR/sfx_key.rs`, a
+//!   hash of the code that makes them (`src/sfx/`'s `synth.rs` and
+//!   `sounds.rs`, not how they are played), so a bank kept by another
+//!   build of them is made again (`src/sfx/store.rs`).
 //! - Its icon on Windows (GNU and GNU-LLVM targets): `windres` compiles
 //!   `assets/jodeldiplom.rc` into an object linked into the executable.
 //!   `WINDRES` names another resource compiler; without one the
@@ -23,7 +27,31 @@ const LYRICS_FONT: &str = "AtkinsonHyperlegibleNext-SemiBold.ttf";
 
 fn main() {
     embed_fonts();
+    sounds_key();
     windows_icon();
+}
+
+/// The files whose code makes the game's sounds.
+const SOUND_SOURCES: [&str; 2] = ["src/sfx/synth.rs", "src/sfx/sounds.rs"];
+
+fn sounds_key() {
+    let manifest = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
+    // FNV-1a, 64 bits, over the files as text (line endings as LF).
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for file in SOUND_SOURCES {
+        let path = manifest.join(file);
+        println!("cargo:rerun-if-changed={}", path.display());
+        let text = std::fs::read_to_string(&path).expect("read a sound's source");
+        for b in file.bytes().chain(text.replace("\r\n", "\n").bytes()) {
+            hash ^= u64::from(b);
+            hash = hash.wrapping_mul(0x0100_0000_01b3);
+        }
+    }
+    let code = format!(
+        "/// The key of the sounds this build makes (build.rs).\npub const SOUNDS_KEY: u64 = {hash:#018x};\n"
+    );
+    let out = PathBuf::from(env::var("OUT_DIR").unwrap()).join("sfx_key.rs");
+    std::fs::write(out, code).expect("write sfx_key.rs");
 }
 
 fn embed_fonts() {

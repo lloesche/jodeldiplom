@@ -117,12 +117,19 @@
 //!   isolated, the voice queued for its takers). The microphone has no
 //!   strip and is no input: nothing of it can reach the device. The
 //!   outputs on inputs run no taps of their own.
+//! - **Effects:** [`Mixer::effects`] gives the desk an effects input on a
+//!   strip of its own: short sounds (a game's) from a bank at the
+//!   device's rate, each started on a frame of an input's stream, summed
+//!   with the inputs after the strip's gain; while none sounds, nothing
+//!   of it reaches the device (see `effects.rs`). It is in what the
+//!   microphone's tap hears, as everything summed is.
 //! - **Monitor:** a [`Monitor`] sees every frame as it goes to the device
 //!   (a spectrum of what is heard).
 
 mod automation;
 mod chunk;
 mod desk;
+mod effects;
 mod envelope;
 mod fader;
 mod follow;
@@ -134,12 +141,14 @@ mod ramp;
 mod run;
 mod strip;
 mod strips;
+mod voices;
 
 pub use crate::lanes::SWITCH_FADE;
 pub use automation::{Automation, AutomationView, GainCurve, CUT_FADE};
 pub use desk::{
     DeskView, InputView, LaneView, MasterView, Meters, MicPort, MicView, PartsView, StripView,
 };
+pub use effects::{EffectCue, Effects, EffectsView, SoundBank, LATE as EFFECT_LATE, VOICES};
 pub use fader::{Fader, InputTarget};
 pub use ramp::{equal_power, Curve, Ramp, Start};
 pub use strip::{Strip, METER_CHANNELS, STRIP_RAMP};
@@ -308,6 +317,17 @@ pub(crate) enum Msg {
         over: Duration,
     },
     Mic(Option<Input>),
+    /// The effects input on strip `.0`, its cues through `.1`, in place of
+    /// any before.
+    Effects(u64, Arc<effects::CueQueue>),
+    /// The effects input of `queue` gone: what the mixer thread ran of it
+    /// goes back in `done` (`None`: another one runs now).
+    EffectsGone {
+        queue: Arc<effects::CueQueue>,
+        done: Sender<Option<Box<voices::EffectsRun>>>,
+    },
+    /// The effects input's sounds from now on.
+    EffectsBank(Arc<effects::SoundBank>),
     Monitor(Option<Box<dyn Monitor>>),
     /// An output started or paused: something to mix, or to settle.
     Wake,

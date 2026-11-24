@@ -1,6 +1,6 @@
 //! The desk's strips as the Mixer tab names them: the player's group with
-//! its four stems inside it, the preview's strip, the microphone's and the
-//! master.
+//! its four stems inside it, the preview's strip, the karaoke game's
+//! effects' strip, the microphone's and the master.
 
 use jodel_playback::stems::{Stem, LANES};
 
@@ -19,11 +19,13 @@ pub enum StripKind {
     Other,
     /// The preview's players.
     Preview,
+    /// The karaoke game's sound effects ([`crate::sfx`]).
+    Effects,
 }
 
 impl StripKind {
     /// How many there are.
-    pub const COUNT: usize = 6;
+    pub const COUNT: usize = 7;
 
     /// Every one, left to right on the desk.
     pub const ALL: [StripKind; StripKind::COUNT] = [
@@ -33,6 +35,7 @@ impl StripKind {
         StripKind::Vocals,
         StripKind::Other,
         StripKind::Preview,
+        StripKind::Effects,
     ];
 
     /// The player's stems, in the order of their lanes ([`LANES`]).
@@ -49,6 +52,7 @@ impl StripKind {
         match self {
             StripKind::Player => "Player",
             StripKind::Preview => "Preview",
+            StripKind::Effects => "Effects",
             part => part.stem().map_or("", Stem::id),
         }
     }
@@ -62,6 +66,7 @@ impl StripKind {
             StripKind::Vocals => "VOCALS",
             StripKind::Other => "OTHER",
             StripKind::Preview => "PREVIEW",
+            StripKind::Effects => "EFFECTS",
         }
     }
 
@@ -71,6 +76,7 @@ impl StripKind {
             StripKind::Player => "PLAY",
             StripKind::Vocals => "VOX",
             StripKind::Preview => "PREV",
+            StripKind::Effects => "FX",
             other => other.label(),
         }
     }
@@ -84,12 +90,19 @@ impl StripKind {
             StripKind::Vocals => 3,
             StripKind::Other => 4,
             StripKind::Preview => 5,
+            StripKind::Effects => 6,
         }
     }
 
     /// Whether it is one of the player's stems.
     pub fn is_part(self) -> bool {
         self.stem().is_some()
+    }
+
+    /// Whether the settings keep its fader and mute between runs (the
+    /// effects': a taste, not a mix); the others start at 0 dB each run.
+    pub fn kept(self) -> bool {
+        self == StripKind::Effects
     }
 
     /// The group it sits in: the player's, for a stem.
@@ -104,7 +117,7 @@ impl StripKind {
             StripKind::Bass => Some(Stem::Bass),
             StripKind::Vocals => Some(Stem::Vocals),
             StripKind::Other => Some(Stem::Other),
-            StripKind::Player | StripKind::Preview => None,
+            StripKind::Player | StripKind::Preview | StripKind::Effects => None,
         }
     }
 
@@ -138,13 +151,14 @@ pub enum Channel {
 
 impl Channel {
     /// Left to right.
-    pub const ALL: [Channel; 8] = [
+    pub const ALL: [Channel; 9] = [
         Channel::Strip(StripKind::Player),
         Channel::Strip(StripKind::Drums),
         Channel::Strip(StripKind::Bass),
         Channel::Strip(StripKind::Vocals),
         Channel::Strip(StripKind::Other),
         Channel::Strip(StripKind::Preview),
+        Channel::Strip(StripKind::Effects),
         Channel::Mic,
         Channel::Main,
     ];
@@ -189,6 +203,6 @@ mod tests {
             assert_eq!(LANES[k], kind.stem().unwrap());
         }
         assert!(!StripKind::Player.is_part() && StripKind::Player.parent().is_none());
-        assert!(!StripKind::Preview.is_part());
+        assert!(!StripKind::Preview.is_part() && !StripKind::Effects.is_part());
     }
 }

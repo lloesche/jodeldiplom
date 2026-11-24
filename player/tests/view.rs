@@ -1005,7 +1005,7 @@ fn the_mixer_tab_is_a_desk() {
         let desk = m.desk.expect("the desk");
         desk.channels.iter().map(|c| c.channel).collect::<Vec<_>>()
     };
-    assert_eq!(shown(&state).len(), 8, "every strip at 120 columns");
+    assert_eq!(shown(&state), Channel::ALL, "every strip at 120 columns");
     // An 80-column window: the microphone goes first.
     let state = common::desk_state(80, 24);
     snapshot("mixer_small", &draw(&state));

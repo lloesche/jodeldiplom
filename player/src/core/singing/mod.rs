@@ -446,23 +446,33 @@ impl Singing {
             }
         }
         new.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)).then(a.2.cmp(&b.2)));
-        for (full, line, note, height, across) in new {
-            self.popped.insert((line, note));
-            let at = full + crate::core::bubbles::SWEEP;
-            let pop = Cue::Pop {
-                line,
-                note,
-                height,
-                across,
-            };
-            self.log.push(at, t, pop);
-            let splash = Cue::Splash {
-                line,
-                note,
-                height,
-                across,
-            };
-            self.log.push(at + crate::core::bubbles::SWELL, t, splash);
+        // Those full on the same frame burst together.
+        let mut k = 0;
+        while k < new.len() {
+            let together = new[k..].iter().take_while(|b| b.0 == new[k].0).count();
+            for (j, &(full, line, note, height, across)) in new[k..k + together].iter().enumerate()
+            {
+                self.popped.insert((line, note));
+                let at = full + crate::core::bubbles::SWEEP;
+                let burst = (j, together);
+                let pop = Cue::Pop {
+                    line,
+                    note,
+                    height,
+                    across,
+                    burst,
+                };
+                self.log.push(at, t, pop);
+                let splash = Cue::Splash {
+                    line,
+                    note,
+                    height,
+                    across,
+                    burst,
+                };
+                self.log.push(at + crate::core::bubbles::SWELL, t, splash);
+            }
+            k += together;
         }
     }
 

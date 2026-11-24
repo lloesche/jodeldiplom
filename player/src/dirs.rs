@@ -121,6 +121,12 @@ impl Data {
         self.0.join("covers")
     }
 
+    /// The karaoke game's sounds made, a rate each
+    /// ([`crate::sfx::store::BankStore`]).
+    pub fn sounds(&self) -> PathBuf {
+        self.0.join("sounds")
+    }
+
     /// The best scores sung.
     pub fn scores(&self) -> PathBuf {
         self.0.join("scores.txt")
@@ -132,7 +138,7 @@ const RECENT: &str = "recent-analyses.txt";
 
 /// Forgets what the player made and can make again (`--clean-cache`): the
 /// beat analyses (not the record `--diag` shows), the stems kept, the
-/// lyrics, the covers taken apart. The models stay. What it did, a line a
+/// lyrics, the game's sounds, the covers taken apart. The models stay. What it did, a line a
 /// folder.
 pub fn forget_cache(data: &Data) -> Vec<String> {
     let mut said = Vec::new();
@@ -143,6 +149,7 @@ pub fn forget_cache(data: &Data) -> Vec<String> {
         ),
         (data.stems(), "kept stems"),
         (data.lyrics(), "lyrics"),
+        (data.sounds(), "game sounds (a rate each)"),
     ] {
         let Ok(entries) = std::fs::read_dir(&dir) else {
             said.push(format!("No {what} in {}", dir.display()));

@@ -22,6 +22,11 @@ impl Envelope {
         }
     }
 
+    /// Room for the gains of `n` frames, so filling them never allocates.
+    pub(crate) fn reserve(&mut self, n: usize) {
+        self.each.reserve(n.saturating_sub(self.each.len()));
+    }
+
     /// The gain of every frame, when it is one.
     pub(crate) fn flat(&self) -> Option<f64> {
         self.flat

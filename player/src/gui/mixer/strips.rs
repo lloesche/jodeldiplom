@@ -185,7 +185,7 @@ fn fader_strip<'a>(
         StripKind::Drums | StripKind::Bass | StripKind::Vocals | StripKind::Other => {
             (kind.short_label(), false)
         }
-        StripKind::Player | StripKind::Preview => (kind.label(), true),
+        StripKind::Player | StripKind::Preview | StripKind::Effects => (kind.label(), true),
     };
     let section = fader::view(Fader {
         channel: Channel::Strip(kind),

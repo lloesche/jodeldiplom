@@ -206,12 +206,6 @@ pub fn bar(state: &State) -> Option<Bar> {
     if !state.config.stems_on_bar {
         return None;
     }
-    let track = state.playing.track.as_ref()?;
-    let anchor = state.playing.anchor?;
-    let speed = state.playing.speed?;
-    if anchor.index != track.index {
-        return None;
-    }
     let a = &lanes::rhythmed(state, Block::Now)?.analysis;
     let after = state.heard() + lead(state);
     let (at, number) = a
@@ -220,13 +214,9 @@ pub fn bar(state: &State) -> Option<Bar> {
         .enumerate()
         .map(|(k, &d)| (a.beats[d], k + 1))
         .find(|&(t, _)| t >= after)?;
-    let frame = anchor.at.frame as f64 + (at - anchor.seconds) * speed;
     Some(Bar {
         seconds: at,
-        at: HeadFrame {
-            head: anchor.at.head,
-            frame: frame.round().max(0.0) as u64,
-        },
+        at: state.playing.frame_at(at)?,
         number,
     })
 }

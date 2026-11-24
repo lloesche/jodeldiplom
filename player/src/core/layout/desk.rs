@@ -20,8 +20,8 @@
 //! desk centred. What is inside a strip is the window's to lay out
 //! ([crate::gui::mixer]). The stems' strips are
 //! there while the player has stems on the desk (its input has lanes).
-//! Where it is too narrow, the microphone goes first, then the preview,
-//! then the stems.
+//! Where it is too narrow, the microphone goes first, then the karaoke
+//! game's effects' strip, then the preview, then the stems.
 
 use ratatui::layout::Rect;
 
@@ -59,8 +59,9 @@ fn widths(channel: Channel) -> (u16, u16, u16) {
         Channel::Strip(
             StripKind::Drums | StripKind::Bass | StripKind::Vocals | StripKind::Other,
         ) => (7, 7, 10),
-        // The preview without a scale of its own where it is narrow.
-        Channel::Strip(StripKind::Preview) => (9, 12, 16),
+        // The preview and the effects without a scale of their own where it
+        // is narrow.
+        Channel::Strip(StripKind::Preview | StripKind::Effects) => (9, 12, 16),
         Channel::Strip(StripKind::Player) => (12, 12, 16),
         Channel::Mic => (18, 18, 22),
         // The master's lamps whole: "○ BIT-PERFECT  ○ LIMIT".
@@ -93,6 +94,7 @@ pub fn compute(inner: Rect, stems: bool) -> DeskLayout {
     let room = inner.width.saturating_sub(2);
     let player = Channel::Strip(StripKind::Player);
     let preview = Channel::Strip(StripKind::Preview);
+    let effects = Channel::Strip(StripKind::Effects);
     let parts: Vec<Channel> = if stems {
         StripKind::PARTS.map(Channel::Strip).to_vec()
     } else {
@@ -105,7 +107,8 @@ pub fn compute(inner: Rect, stems: bool) -> DeskLayout {
             .collect()
     };
     let mut sets: Vec<Vec<Channel>> = vec![
-        with(&[preview, Channel::Mic, Channel::Main]),
+        with(&[preview, effects, Channel::Mic, Channel::Main]),
+        with(&[preview, effects, Channel::Main]),
         with(&[preview, Channel::Main]),
     ];
     if stems {
@@ -223,8 +226,9 @@ mod tests {
 
     #[test]
     fn a_narrow_desk_loses_the_microphone_first() {
+        // Wide: every strip, the effects' too (it takes no room).
         let desk = compute(Rect::new(1, 1, 118, 32), false);
-        assert_eq!(desk.channels.len(), 4);
+        assert_eq!(desk.channels.len(), 5);
         assert!(desk.stems.is_none());
         let desk = compute(Rect::new(1, 1, 62, 18), false);
         assert!(desk.channel(Channel::Mic).is_none());
@@ -233,6 +237,12 @@ mod tests {
 
     #[test]
     fn the_stems_sit_beside_the_player_under_their_bracket() {
+        // Wide enough for all, the effects' strip too.
+        let wide = compute(Rect::new(1, 1, 170, 32), true);
+        let order: Vec<Channel> = wide.channels.iter().map(|c| c.channel).collect();
+        assert_eq!(order, Channel::ALL);
+        // At the usual widths too: karaoke with the stems has its effects'
+        // strip.
         let desk = compute(Rect::new(1, 1, 118, 32), true);
         let order: Vec<Channel> = desk.channels.iter().map(|c| c.channel).collect();
         assert_eq!(order, Channel::ALL);

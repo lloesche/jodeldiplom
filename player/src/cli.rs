@@ -237,6 +237,7 @@ pub fn app_options(args: &Args) -> Result<AppOptions, String> {
             swept.stems(),
             swept.lyrics(),
             swept.models(),
+            swept.sounds(),
         ];
         dirs.extend(crate::cover::CoverStore::dirs_in(&swept.covers()));
         dirs.extend(crate::dirs::settings_dir());

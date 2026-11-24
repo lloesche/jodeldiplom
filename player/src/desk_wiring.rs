@@ -3,7 +3,8 @@
 //! with a strip for each of its stems inside it (drums, bass, vocals,
 //! other), the preview's strip, and the engine on two heads, each a lane
 //! input of the player's ([`StemDesk::two_heads`]): its main on the group,
-//! each stem's lane on its strip. The engine plays on the head on air, the
+//! each stem's lane on its strip; and the karaoke game's effects input
+//! on a strip of its own ([`crate::sfx`]). The engine plays on the head on air, the
 //! desk's Lead; a transition's next track on the other, and the two swap at
 //! its hand-over. The user's strips act on both. With every strip as it
 //! starts, main alone is heard, at gain 1, and reaches the device bit for
@@ -17,7 +18,9 @@
 use std::sync::mpsc::Receiver;
 use std::sync::Arc;
 
-use jodel_output::mixer::{Curve, Fader, MicView, Mixer, MixerOptions, Ramp, Start, Strip};
+use jodel_output::mixer::{
+    Curve, Effects, Fader, MicView, Mixer, MixerOptions, Ramp, Start, Strip,
+};
 use jodel_output::{Capabilities, SimClock};
 use jodel_playback::{
     any_capabilities, Captures, DeviceTarget, Event, HeadFaders, MemoryTarget, NullTarget,
@@ -126,6 +129,10 @@ pub(crate) struct Engine {
     strips: Vec<Strip>,
     /// The microphone's port as last told.
     pub(crate) mic: MicView,
+    /// The karaoke game's sounds, and the effects input they play on (on
+    /// the Effects strip).
+    sfx: crate::sfx::Sfx,
+    effects: Effects,
     /// The mixer's monitor: what the device plays.
     pub(crate) tap: SpectrumTap,
     pub(crate) mixer: Mixer,
@@ -162,6 +169,7 @@ impl Engine {
             })
             .to_vec();
         let heads = [lead.faders.clone(), guest.faders.clone()];
+        let effects = mixer.effects(&strips[StripKind::Effects.index()]);
         let (player, events) = Player::on_desk(lead, guest, options);
         let engine = Engine {
             previews: None,
@@ -169,6 +177,8 @@ impl Engine {
             heads,
             strips,
             mic: MicView::default(),
+            sfx: crate::sfx::Sfx::default(),
+            effects,
             tap,
             mixer,
         };
@@ -228,6 +238,18 @@ impl Engine {
         for change in crate::core::desk::changes(state) {
             self.apply(change);
         }
+    }
+
+    /// A frame drawn: the karaoke game's new moments cued on the effects
+    /// input ([`crate::sfx::Sfx::frame`]).
+    pub(crate) fn sound_effects(&mut self, state: &State) {
+        let desk = crate::sfx::Desk {
+            effects: &self.effects,
+            heads: [&self.heads[0].input, &self.heads[1].input],
+            rate: self.mixer.timebase().rate,
+            data: state.data_dir.as_deref(),
+        };
+        self.sfx.frame(state, desk);
     }
 
     /// The Mixer tab's look for a frame: the desk and the meters since the

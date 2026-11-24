@@ -363,6 +363,11 @@ impl Fader {
         GainId::new(self.slot.id, self.lane)
     }
 
+    /// Its input's id.
+    pub(crate) fn slot_id(&self) -> u64 {
+        self.slot.id
+    }
+
     fn ramps(&self) -> &AtomicU64 {
         &self.slot.ramps[usize::from(self.lane)]
     }

@@ -225,8 +225,10 @@ fn the_faders_are_set_on_the_mixer_and_again_on_a_new_one() {
         let s = desk.strips.iter().find(|s| s.name == kind.name()).unwrap();
         (s.level, s.mute, s.solo)
     };
-    // Every start at 0 dB: nothing added.
+    // Every start at 0 dB: nothing added; the game's effects on a strip
+    // of their own.
     assert_eq!(level(&app, StripKind::Player), (1.0, false, false));
+    assert_eq!(level(&app, StripKind::Effects), (1.0, false, false));
     app.dispatch(Action::ShowSide(Side::Mixer));
     // The tab keeps drawing; the microphone stays closed until its strip
     // is selected (K6), and closes when another one is.
@@ -264,6 +266,7 @@ fn the_faders_are_set_on_the_mixer_and_again_on_a_new_one() {
         "after the restart: {l} {mute}"
     );
     assert_eq!(level(&app, StripKind::Preview), (1.0, false, true));
+    assert_eq!(level(&app, StripKind::Effects), (1.0, false, false));
     // Away from the tab and Karaoke, the microphone closes.
     app.dispatch(Action::ShowSide(Side::Browser));
     assert!(app.state.karaoke.mic.name.is_none());

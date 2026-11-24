@@ -729,7 +729,7 @@ pub fn update(state: &mut State, action: Action) -> Vec<Effect> {
     karaoke::want_lyrics(state, &mut fx);
     super::stems::follow(state, &mut fx);
     super::sync::follow(state, &mut fx);
-    desk::settle(state);
+    desk::settle(state, &mut fx);
     prepare(state, &mut fx);
     state.info_width_held = state.info_width_held.max(text::info_width(state));
     if check_details {

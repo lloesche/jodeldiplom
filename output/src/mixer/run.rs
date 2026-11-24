@@ -16,6 +16,7 @@ use super::parts::LaneRun;
 use super::ramp::{GainId, Waiting, When};
 use super::strip::channel_peaks;
 use super::strips::Strips;
+use super::voices::{EffectsRun, RESERVED_CHANNELS};
 use super::{Curve, MixShared, MixerOptions, Monitor, Msg, Ramp, Role, Start, Timebase};
 use crate::backend::AudioPriority;
 use crate::caps::Capabilities;
@@ -53,6 +54,8 @@ pub(super) struct Run {
     pub(super) device: Option<Device>,
     /// The microphone's port.
     pub(super) port: Port,
+    /// The effects input.
+    pub(super) effects: Option<EffectsRun>,
     monitor: Option<Box<dyn Monitor>>,
     /// The device's openings.
     pub(super) epoch: u64,
@@ -73,6 +76,9 @@ pub(super) struct Run {
     /// The id of the newest output opened (0: none): a strip's change for
     /// the first audio waits for one newer.
     newest_output: u64,
+    /// The device frame the effects' last sound sounded to, in this
+    /// opening of the device.
+    pub(super) effects_until: u64,
 }
 
 /// Whether the device's `format` is one `request` asks for.
@@ -99,6 +105,7 @@ impl Run {
             slots: BTreeMap::new(),
             device: None,
             port: Port::default(),
+            effects: None,
             monitor: None,
             epoch: 0,
             clipped: 0,
@@ -109,6 +116,7 @@ impl Run {
             untouched: true,
             starts: Vec::new(),
             newest_output: 0,
+            effects_until: 0,
         }
     }
 
@@ -116,9 +124,16 @@ impl Run {
         let _priority = AudioPriority::enter();
         let mut busy = false;
         loop {
-            // Nothing running: nothing to do until word comes.
-            let got = if self.running().next().is_none() {
-                rx.recv().map_err(|_| RecvTimeoutError::Disconnected)
+            // Nothing running: nothing to do until word comes (a cue pushed
+            // to the effects is word too).
+            let got = if !self.playing() {
+                let got = if self.effects_idle() {
+                    rx.recv().map_err(|_| RecvTimeoutError::Disconnected)
+                } else {
+                    Err(RecvTimeoutError::Timeout)
+                };
+                self.effects_awake();
+                got
             } else if busy {
                 rx.recv_timeout(Duration::ZERO)
             } else {
@@ -241,6 +256,26 @@ impl Run {
                 self.port.set(input);
                 self.fit_mic();
             }
+            Msg::Effects(strip, queue) => {
+                // One made before goes with this message (its handle, if it
+                // lives, still holds its bank).
+                self.effects = Some(EffectsRun::new(strip, queue));
+                self.fit_effects();
+            }
+            Msg::EffectsGone { queue, done } => {
+                let ours = self
+                    .effects
+                    .as_ref()
+                    .is_some_and(|fx| Arc::ptr_eq(&fx.queue, &queue));
+                let run = if ours { self.effects.take() } else { None };
+                let _ = done.send(run.map(Box::new));
+            }
+            Msg::EffectsBank(bank) => {
+                if let Some(fx) = &mut self.effects {
+                    fx.load(bank);
+                }
+                self.fit_effects();
+            }
             Msg::Monitor(monitor) => {
                 if let Some(old) = &mut self.monitor {
                     if self.device.is_some() {
@@ -256,6 +291,67 @@ impl Run {
             Msg::Quit => return false,
         }
         true
+    }
+
+    /// Room for the effects' sounds, so the first of them allocates
+    /// nothing: their sum and gains, the mix, the device's frames and their
+    /// strip's meter, for a period at the device's rate or their bank's
+    /// (the higher), of up to [`RESERVED_CHANNELS`] channels.
+    fn fit_effects(&mut self) {
+        let Some(fx) = &mut self.effects else {
+            return;
+        };
+        let device = self.device.as_ref().map_or(0, |d| d.format.rate);
+        let rate = device.max(fx.rate().unwrap_or(0));
+        let frames = (self.options.period.as_secs_f64() * f64::from(rate)).ceil() as usize;
+        fx.reserve(frames);
+        self.strips
+            .reserve_meter(fx.strip, frames * RESERVED_CHANNELS);
+        if let Some(d) = &mut self.device {
+            d.mix.reserve(frames);
+            let out = 2 * frames * usize::from(d.format.channels);
+            self.out.reserve(out.saturating_sub(self.out.len()));
+        }
+    }
+
+    /// Whether an output runs, or (on a device that plays in real time)
+    /// the effects want the device playing: a voice sounds, a cue for now
+    /// waits.
+    fn playing(&self) -> bool {
+        self.running().next().is_some() || self.effects_due()
+    }
+
+    /// Whether the effects want the device playing with no output running.
+    /// Whether the effects want the device playing with no output running:
+    /// they have more to play, or what they played is not all heard yet
+    /// (it would wait in the device's buffer, paused).
+    fn effects_due(&self) -> bool {
+        let Some(device) = self.device.as_ref().filter(|d| d.info.realtime) else {
+            return false;
+        };
+        let more = self.effects.as_ref().is_some_and(EffectsRun::wants_device);
+        more || device
+            .output
+            .position()
+            .is_ok_and(|p| p < self.effects_until)
+    }
+
+    /// About to wait for word with nothing to mix: a cue pushed from now on
+    /// sends it. False when one came already (no wait then).
+    fn effects_idle(&self) -> bool {
+        let Some(fx) = &self.effects else {
+            return true;
+        };
+        fx.queue.idle.store(true, Ordering::SeqCst);
+        let realtime = self.device.as_ref().is_some_and(|d| d.info.realtime);
+        !(realtime && fx.queue.has_cues())
+    }
+
+    /// Word came: cues need not send it.
+    fn effects_awake(&self) {
+        if let Some(fx) = &self.effects {
+            fx.queue.idle.store(false, Ordering::SeqCst);
+        }
     }
 
     /// Forgets input `id`: its waiting ramps never come (nor those to start
@@ -494,6 +590,7 @@ impl Run {
         self.epoch += 1;
         self.shared.epoch.store(self.epoch, Ordering::Release);
         self.frame = 0;
+        self.effects_until = 0;
         self.given = 0;
         self.out.clear();
         self.sent = 0;
@@ -546,6 +643,7 @@ impl Run {
             output,
             paused: false,
         });
+        self.fit_effects();
         Ok(())
     }
 
@@ -651,7 +749,7 @@ impl Run {
         }
         self.unlink(id);
         self.fit_mic();
-        if self.streams().next().is_none() {
+        if self.streams().next().is_none() && !self.effects_due() {
             self.close_device(false);
         }
     }
@@ -662,6 +760,9 @@ impl Run {
     /// to it first, so its frames keep their places.
     fn flush(&mut self, id: u64) -> Result<(), Error> {
         self.unlink(id);
+        if let Some(fx) = &mut self.effects {
+            fx.flushed(id);
+        }
         // Its frames restart: there is no stream frame to time a change on
         // until they are mixed again.
         let flushed = self.slots.values_mut();
@@ -696,10 +797,15 @@ impl Run {
     /// silence for the rest); otherwise once every running output holds a
     /// period, or is draining, and never a period past the origin of a
     /// follower not running yet. With nothing running (a follower held by
-    /// its leader does not count), the device pauses. Returns whether there
-    /// was work.
+    /// its leader does not count) and no effects to finish, the device
+    /// pauses (or closes, with no output open). Returns whether there was
+    /// work.
     fn turn(&mut self) -> bool {
-        let playing = self.running().next().is_some();
+        let playing = self.playing();
+        if !playing && self.device.is_some() && self.streams().next().is_none() {
+            // The effects held it open after the last output: now done.
+            self.close_device(false);
+        }
         let Some(device) = &mut self.device else {
             return false;
         };
@@ -811,7 +917,9 @@ impl Run {
         }
         let busy = self.slots.values().filter(|s| !s.idle());
         let busy = busy.flat_map(|s| s.lanes.iter().map(|l| l.strip));
-        self.strips.settle_idle(busy);
+        let effects = self.effects.as_ref().filter(|fx| fx.busy());
+        self.strips
+            .settle_idle(busy.chain(effects.map(|fx| fx.strip)));
         *self.shared.timebase() = Timebase {
             epoch: self.epoch,
             rate: self.device.as_ref().map_or(0, |d| d.format.rate),

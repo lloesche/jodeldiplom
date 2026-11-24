@@ -469,6 +469,11 @@ impl Strips {
         &self.0.get(&id).expect("an input's strip lives").path
     }
 
+    /// Strip `id`'s gains along its path this chunk, if it lives.
+    pub(super) fn path_of(&self, id: u64) -> Option<&Envelope> {
+        self.0.get(&id).map(|s| &s.path)
+    }
+
     /// The gains along strip `id`'s path of a lane input's main on it this
     /// chunk (its `lead` for its own `heard`).
     pub(super) fn lead_path(&self, id: u64) -> &Envelope {
@@ -506,6 +511,12 @@ impl Strips {
             let peaks = channel_peaks(&s.sum, channels, f64::abs);
             s.state.peaks.raise(&peaks);
         }
+    }
+
+    /// Room in strip `id`'s meter, and its groups', for chunks of `samples`
+    /// samples, so metering them never allocates.
+    pub(super) fn reserve_meter(&mut self, id: u64, samples: usize) {
+        self.each_up(id, |s| s.sum.reserve(samples.saturating_sub(s.sum.len())));
     }
 
     /// Strips none of whose subtree's inputs will be heard for now

@@ -26,6 +26,14 @@ pub(crate) enum Gains<'a> {
 }
 
 impl Gains<'_> {
+    /// The gain of every frame, when it is one.
+    pub(crate) fn flat(self) -> Option<f64> {
+        match self {
+            Gains::Flat(g) => Some(g),
+            Gains::Each(_) => None,
+        }
+    }
+
     /// Adds `samples` (`channels` per frame) at these gains to `sums`.
     pub(crate) fn accumulate(self, sums: &mut [f64], samples: &[i32], channels: usize) {
         let ch = channels.max(1);
@@ -120,6 +128,17 @@ impl Mix {
     /// Frames held back.
     pub(crate) fn held(&self) -> usize {
         self.sums.len() / self.channels
+    }
+
+    /// Room for summing chunks of `frames` frames (and what the limiter
+    /// holds back), so that it never allocates.
+    pub(crate) fn reserve(&mut self, frames: usize) {
+        let frames = frames + self.ahead;
+        let samples = frames * self.channels;
+        self.sums.reserve(samples.saturating_sub(self.sums.len()));
+        self.weight
+            .reserve(frames.saturating_sub(self.weight.len()));
+        self.env.reserve(frames.saturating_sub(self.env.len()));
     }
 
     /// Starts summing `samples` more samples (whole frames), after those

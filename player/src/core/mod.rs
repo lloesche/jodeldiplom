@@ -312,6 +312,10 @@ pub struct Playing {
     /// positions told (a transition's next track goes at another speed for
     /// a while); `None` before two.
     pub speed: Option<f64>,
+    /// How many times the anchor was forgotten ([`Playing::forget_anchor`]):
+    /// a frame worked out before one is not a frame of the same song's
+    /// place after it.
+    pub anchors_forgotten: u64,
     /// Samples the resampler clipped, as heard, since the track (or the
     /// last seek) started.
     pub clipped: u64,
@@ -332,6 +336,7 @@ impl Default for Playing {
             position: 0.0,
             anchor: None,
             speed: None,
+            anchors_forgotten: 0,
             clipped: 0,
             mixed: false,
             key: 0,
@@ -402,6 +407,22 @@ impl Playing {
     pub fn forget_anchor(&mut self) {
         self.anchor = None;
         self.speed = None;
+        self.anchors_forgotten += 1;
+    }
+
+    /// The frame of the playing track's output where `seconds` into it is
+    /// heard: from the last position told, at the output's speed through
+    /// the track. `None` before two positions of it were told since it
+    /// started (or a seek, or a jump), and for a time before the output's
+    /// first frame.
+    pub fn frame_at(&self, seconds: f64) -> Option<HeadFrame> {
+        let track = self.track.as_ref()?;
+        let anchor = self.anchor.filter(|a| a.index == track.index)?;
+        let frame = anchor.at.frame as f64 + (seconds - anchor.seconds) * self.speed?;
+        (frame >= 0.0).then(|| HeadFrame {
+            head: anchor.at.head,
+            frame: frame.round() as u64,
+        })
     }
 
     /// The track's length in seconds, when known.
@@ -797,6 +818,7 @@ impl State {
 
     /// A state with the browser in `dir`, the given settings and size.
     pub fn new(dir: PathBuf, config: Config, size: (u16, u16)) -> State {
+        let desk = desk::DeskState::new(&config);
         let transition =
             transition::tab::TransitionTab::with(config.transition_preset, config.transition_tempo);
         State {
@@ -843,7 +865,7 @@ impl State {
             stems_sent: stems::StemsSent::default(),
             transition,
             karaoke: karaoke::KaraokeState::default(),
-            desk: desk::DeskState::default(),
+            desk,
             mic: None,
             drawn_heard: None,
             drawn_ms: None,

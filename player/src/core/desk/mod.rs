@@ -1,10 +1,14 @@
 //! The Mixer tab ([`crate::core::Side::Mixer`]): the mixer as a desk. A channel
 //! strip for the player, a group with a strip for each of its stems inside
-//! it (drums, bass, vocals, other), and one for the preview, each with a
-//! fader, mute and solo; the microphone's strip, which is only listened to;
-//! the master with the device. Every strip starts at 0 dB and nothing is
-//! kept between runs: the desk adds no gain until a fader is moved, and
-//! with every stem's strip as it starts the player is heard as its file.
+//! it (drums, bass, vocals, other), one for the preview and one for the
+//! karaoke game's sound effects, each with a fader, mute and solo; the
+//! microphone's strip, which is only listened to; the master with the
+//! device. Every strip starts at 0 dB and nothing is kept between runs
+//! (the desk adds no gain until a fader is moved, and with every stem's
+//! strip as it starts the player is heard as its file), but for the
+//! Effects strip's fader and mute ([`StripKind::kept`]): the settings keep
+//! them (`karaoke_effects`), saved as they change (a fader held, once it
+//! is let go).
 //!
 //! The settings live here and go out as [`Effect::Desk`]; the app sets its
 //! strips by them, and again on every new mixer ([`changes`]). What the
@@ -47,6 +51,9 @@ impl Default for StripSetting {
         }
     }
 }
+
+// A fader is never NaN: −∞ to +6 dB.
+impl Eq for StripSetting {}
 
 impl StripSetting {
     /// Whether it is touched: anything but as a strip starts.
@@ -218,6 +225,17 @@ pub struct DeskState {
 }
 
 impl DeskState {
+    /// The desk as a run starts: every strip as a strip starts, the
+    /// Effects strip as the settings keep it.
+    pub fn new(config: &crate::config::Config) -> DeskState {
+        let mut desk = DeskState::default();
+        desk.strips[StripKind::Effects.index()] = StripSetting {
+            solo: false,
+            ..config.karaoke_effects
+        };
+        desk
+    }
+
     /// What is set on `strip`.
     pub fn setting(&self, strip: StripKind) -> StripSetting {
         self.strips[strip.index()]
@@ -310,9 +328,11 @@ pub fn let_go(state: &State) -> Option<DeskAction> {
 }
 
 /// After any action: a fader held is let go of once the tab is left.
-pub(crate) fn settle(state: &mut State) {
+pub(crate) fn settle(state: &mut State, fx: &mut Vec<Effect>) {
     if !shown(state) {
-        state.desk.dragging = None;
+        if let Some(drag) = state.desk.dragging.take() {
+            keep(state, drag.strip, fx);
+        }
     }
 }
 
@@ -399,6 +419,26 @@ pub(crate) fn apply(state: &mut State, op: Op, fx: &mut Vec<Effect>) -> bool {
     true
 }
 
+/// `strip`'s fader and mute into the settings, saved, when it is a strip
+/// they keep ([`StripKind::kept`]) and they changed; not while its fader is
+/// held (once it is let go).
+fn keep(state: &mut State, strip: StripKind, fx: &mut Vec<Effect>) {
+    let held = state.desk.dragging.is_some_and(|d| d.strip == strip);
+    if !strip.kept() || held {
+        return;
+    }
+    let mut s = state.desk.setting(strip);
+    s.solo = false;
+    // Below what the file takes: off.
+    if s.db < -100.0 {
+        s.db = f64::NEG_INFINITY;
+    }
+    if state.config.karaoke_effects != s {
+        state.config.karaoke_effects = s;
+        fx.push(Effect::SaveConfig);
+    }
+}
+
 /// What the master says to a key it has no use for.
 const MAIN_SAID: &str = "The master adds no gain: ↑ ↓ move the device's own volume";
 
@@ -467,6 +507,7 @@ fn set_level(state: &mut State, strip: StripKind, db: f64, fx: &mut Vec<Effect>)
     }
     s.db = db;
     fx.push(Effect::Desk(DeskChange::Level(strip, taper::gain(db))));
+    keep(state, strip, fx);
     true
 }
 
@@ -476,6 +517,7 @@ fn press(state: &mut State, button: DeskButton, fx: &mut Vec<Effect>) {
             let s = state.desk.setting_mut(strip);
             s.mute = !s.mute;
             fx.push(Effect::Desk(DeskChange::Mute(strip, s.mute)));
+            keep(state, strip, fx);
         }
         DeskButton::Solo(strip) => {
             let s = state.desk.setting_mut(strip);
@@ -533,7 +575,11 @@ pub(crate) fn act(state: &mut State, action: DeskAction, fx: &mut Vec<Effect>) {
                 }
             }
         }
-        DeskAction::Release => state.desk.dragging = None,
+        DeskAction::Release => {
+            if let Some(drag) = state.desk.dragging.take() {
+                keep(state, drag.strip, fx);
+            }
+        }
         DeskAction::Wheel(channel, steps) => match channel {
             Channel::Strip(strip) => {
                 let db = taper::step(state.desk.setting(strip).db, f64::from(steps));
@@ -599,6 +645,17 @@ mod tests {
         assert_eq!(desk_fx(&fx), [DeskChange::Level(StripKind::Preview, 1.0)]);
         // At 0 dB already: nothing to send.
         assert!(desk_fx(&update(&mut s, Action::Op(Op::Top))).is_empty());
+        // The effects' fader: kept in the settings, saved.
+        update(&mut s, Action::Op(Op::DeskNextStrip));
+        let fx = update(&mut s, Action::Op(Op::Down));
+        assert_eq!(
+            desk_fx(&fx),
+            [DeskChange::Level(StripKind::Effects, taper::gain(-1.0))]
+        );
+        assert!(fx.contains(&Effect::SaveConfig));
+        assert_eq!(s.config.karaoke_effects.db, -1.0);
+        let fx = update(&mut s, Action::Op(Op::DeskMute));
+        assert!(fx.contains(&Effect::SaveConfig) && s.config.karaoke_effects.mute);
         // The master steps the device's own volume; the microphone has no
         // fader.
         update(&mut s, Action::Op(Op::DeskNextStrip));
@@ -626,6 +683,14 @@ mod tests {
                 DeskChange::Solo(StripKind::Preview, true),
             ]
         );
+        assert_eq!(
+            all[18..],
+            [
+                DeskChange::Level(StripKind::Effects, taper::gain(-1.0)),
+                DeskChange::Mute(StripKind::Effects, true),
+                DeskChange::Solo(StripKind::Effects, false),
+            ]
+        );
         for (k, kind) in StripKind::PARTS.into_iter().enumerate() {
             assert_eq!(
                 all[3 + 3 * k..6 + 3 * k],
@@ -636,7 +701,7 @@ mod tests {
                 ]
             );
         }
-        assert_eq!(all.len(), 18);
+        assert_eq!(all.len(), 21);
     }
 
     #[test]
@@ -656,6 +721,7 @@ mod tests {
             [
                 Channel::Strip(StripKind::Player),
                 Channel::Strip(StripKind::Preview),
+                Channel::Strip(StripKind::Effects),
                 Channel::Mic,
                 Channel::Main,
             ]
@@ -690,6 +756,41 @@ mod tests {
             automation: None,
         });
         look
+    }
+
+    /// The effects' strip starts as the settings keep it; its fader
+    /// dragged is saved once let go of, not on every step.
+    #[test]
+    fn the_effects_strip_is_kept_in_the_settings() {
+        let config = Config {
+            karaoke_effects: StripSetting {
+                db: -6.0,
+                mute: true,
+                solo: false,
+            },
+            ..Config::default()
+        };
+        let mut s = State::new("/m".into(), config, (120, 36));
+        s.side = Side::Mixer;
+        let set = s.desk.setting(StripKind::Effects);
+        assert_eq!((set.db, set.mute), (-6.0, true));
+        assert!(changes(&s).contains(&DeskChange::Mute(StripKind::Effects, true)));
+        let grab = Action::Desk(DeskAction::Grab {
+            strip: StripKind::Effects,
+            position: 0.3,
+        });
+        assert!(!update(&mut s, grab).contains(&Effect::SaveConfig));
+        let slid = update(&mut s, Action::Desk(DeskAction::Slide(0.2)));
+        assert!(!slid.contains(&Effect::SaveConfig));
+        assert_eq!(s.config.karaoke_effects.db, -6.0, "not yet");
+        let fx = update(&mut s, Action::Desk(DeskAction::Release));
+        assert!(fx.contains(&Effect::SaveConfig));
+        let db = s.desk.setting(StripKind::Effects).db;
+        assert_eq!(s.config.karaoke_effects.db, db);
+        // All the way down: off.
+        s.desk.selected = Channel::Strip(StripKind::Effects);
+        update(&mut s, Action::Op(Op::Bottom));
+        assert_eq!(s.config.karaoke_effects.db, f64::NEG_INFINITY);
     }
 
     #[test]
@@ -761,7 +862,7 @@ mod tests {
             strips: vec![(7, vec![peak / 2.0]), (3, vec![peak])],
             limited,
         };
-        Look::of(desk, meters, [3, 10, 11, 12, 13, 7])
+        Look::of(desk, meters, [3, 10, 11, 12, 13, 7, 14])
     }
 
     #[test]

@@ -1360,6 +1360,9 @@ impl App {
         }
         self.state.drawn_heard = Some(heard);
         self.state.drawn_ms = Some(self.now_ms());
+        if let Some(engine) = &mut self.engine {
+            engine.sound_effects(&self.state);
+        }
         heard
     }
 
@@ -1763,6 +1766,7 @@ impl App {
                     karaoke_game,
                     karaoke_notes,
                     karaoke_keep,
+                    karaoke_effects,
                     data_folder,
                 );
                 self.saved = file.clone();

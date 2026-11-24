@@ -616,7 +616,7 @@ pub fn fill_desk(state: &mut State, rate: u32) {
     state.karaoke.mic.name = Some("Yeti Stereo Microphone".into());
     let now = state.now_ms;
     for at in [now.saturating_sub(16), now] {
-        let ids = [1, 3, 4, 5, 6, 2];
+        let ids = [1, 3, 4, 5, 6, 2, 7];
         desk::feed(state, Look::of(view.clone(), meters.clone(), ids), at);
     }
 }

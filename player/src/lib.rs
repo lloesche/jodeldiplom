@@ -12,7 +12,8 @@
 //! - [`app`]: the running player: the engine ([`jodel_playback::Player`]) on
 //!   a mixer that owns the device, the background workers, the spectrum
 //!   and the cover; [`preview`]: the players of a preview, on the mixer
-//!   too.
+//!   too; [`sfx`]: the karaoke game's sound effects, made in code, played
+//!   through the mixer's effects input on the frames of their moments.
 //! - [`browser`]: folder listing, lazy file details, recursive search.
 //! - [`config`], [`cli`]: the settings file and the command line.
 //! - [`cache`]: what is kept on disk between runs, and its schemas.
@@ -47,6 +48,7 @@ pub mod rhythm;
 pub mod scores;
 pub mod session;
 pub mod setup;
+pub mod sfx;
 pub mod shine_cache;
 pub mod single;
 pub mod spectrum;

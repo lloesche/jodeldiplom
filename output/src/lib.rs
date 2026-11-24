@@ -62,7 +62,9 @@
 //! meters its strips and the device, and taps the device for the
 //! microphone ([`mixer::Mixer::set_mic`]). A player's outputs can come in
 //! one stream as [`lanes`]: main (the file, passed through as written) and
-//! parts that make it, each on a strip of its own.
+//! parts that make it, each on a strip of its own. Its effects input
+//! ([`mixer::Mixer::effects`]) plays short sounds (a game's) on a strip of
+//! their own, each started on a frame of an input's stream.
 //!
 //! # Tests without a device
 //!

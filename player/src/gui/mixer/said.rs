@@ -127,6 +127,8 @@ pub(super) fn source_lines(state: &State, kind: StripKind) -> Vec<Line> {
             }
             lines
         }
+        // No player: the karaoke game's sounds.
+        StripKind::Effects => vec![vec![t("game sounds", DIM)]],
     }
 }
 

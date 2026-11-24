@@ -28,6 +28,8 @@
 //! karaoke_game = true                 # karaoke: score the singing (points, medals, high scores); false: just sing
 //! karaoke_notes = true                # karaoke: the song's notes under the line being sung
 //! karaoke_keep = false                # karaoke: keep your singing of each song (recordings, beside this file), to tune the game
+//! karaoke_effects = 0.0               # karaoke: the game's sound effects, the Effects strip's fader in dB ("off": none)
+//! karaoke_effects_mute = false        # karaoke: the Effects strip muted
 //! transition_lyrics = true            # the Transition tab: the lyrics on the vocals lane (L)
 //! data_folder = "D:\\Music data"      # the folder the data folder is made in; absent: the system's place
 //! ```
@@ -110,6 +112,10 @@ pub struct Config {
     pub karaoke_notes: bool,
     /// Karaoke: each song's singing is kept ([`crate::keep`]).
     pub karaoke_keep: bool,
+    /// Karaoke: the game's sound effects ([`crate::sfx`]): the Effects
+    /// strip's fader (to a tenth of a dB, −∞ off) and mute (its solo is
+    /// not kept).
+    pub karaoke_effects: crate::core::desk::StripSetting,
     /// The folder the data folder ([`crate::dirs::DATA`]) is in; `None`:
     /// the system's place for it ([`crate::dirs::default_data_parent`]).
     pub data_folder: Option<PathBuf>,
@@ -143,6 +149,7 @@ impl Default for Config {
             karaoke_game: true,
             karaoke_notes: true,
             karaoke_keep: false,
+            karaoke_effects: crate::core::desk::StripSetting::default(),
             transition_lyrics: true,
             data_folder: None,
         }
@@ -359,6 +366,27 @@ impl Config {
                         _ => return Err(at("karaoke_keep takes true or false")),
                     }
                 }
+                "karaoke_effects" => {
+                    let id = parse_string(value).unwrap_or_else(|| value.to_owned());
+                    config.karaoke_effects.db = match id.as_str() {
+                        "off" => f64::NEG_INFINITY,
+                        db => db
+                            .parse::<f64>()
+                            .ok()
+                            .filter(|d| (-100.0..=6.0).contains(d))
+                            .map(|d| (d * 10.0).round() / 10.0)
+                            .ok_or_else(|| {
+                                at("karaoke_effects takes a level in dB, -100 to 6, or \"off\"")
+                            })?,
+                    };
+                }
+                "karaoke_effects_mute" => {
+                    config.karaoke_effects.mute = match value {
+                        "true" => true,
+                        "false" => false,
+                        _ => return Err(at("karaoke_effects_mute takes true or false")),
+                    }
+                }
                 // An older file's level the singing was scored at: there is
                 // one way of scoring now.
                 "karaoke_level" => {}
@@ -421,6 +449,13 @@ impl Config {
         let _ = writeln!(text, "karaoke_game = {}", self.karaoke_game);
         let _ = writeln!(text, "karaoke_notes = {}", self.karaoke_notes);
         let _ = writeln!(text, "karaoke_keep = {}", self.karaoke_keep);
+        let effects = self.karaoke_effects;
+        if effects.db > f64::NEG_INFINITY {
+            let _ = writeln!(text, "karaoke_effects = {:.1}", effects.db);
+        } else {
+            let _ = writeln!(text, "karaoke_effects = {}", quote("off"));
+        }
+        let _ = writeln!(text, "karaoke_effects_mute = {}", effects.mute);
         let _ = writeln!(text, "transition_lyrics = {}", self.transition_lyrics);
         match &self.data_folder {
             Some(path) => {
@@ -544,6 +579,11 @@ mod tests {
             karaoke_game: false,
             karaoke_notes: false,
             karaoke_keep: true,
+            karaoke_effects: crate::core::desk::StripSetting {
+                db: -12.5,
+                mute: true,
+                solo: false,
+            },
             transition_lyrics: false,
             data_folder: Some(if cfg!(windows) {
                 r"D:\Music data".into()

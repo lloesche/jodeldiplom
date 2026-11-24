@@ -26,7 +26,9 @@ pub enum Cue {
     },
     /// A note's bubble bursts (full, swept to full): its line and note,
     /// how high its note is (-1 to 1) and where along its line it is (0
-    /// its start, 1 its end).
+    /// its start, 1 its end), and the bubbles bursting with it (full on
+    /// the same frame): its place among them, in their order on the lines,
+    /// and how many there are.
     Pop {
         /// Its line.
         line: usize,
@@ -36,6 +38,8 @@ pub enum Cue {
         height: f32,
         /// Where along the line.
         across: f32,
+        /// Its place among the bubbles bursting together, and their count.
+        burst: (usize, usize),
     },
     /// Its liquid splashing out as it tears, a bulge after it bursts
     /// ([`crate::core::bubbles::SWELL`]); as [`Cue::Pop`].
@@ -48,6 +52,8 @@ pub enum Cue {
         height: f32,
         /// Where along the line.
         across: f32,
+        /// Its place among the bubbles bursting together, and their count.
+        burst: (usize, usize),
     },
     /// The streak up to a level (1: ×2, up to 3: ×4).
     StreakUp(u32),
