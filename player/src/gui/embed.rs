@@ -77,6 +77,8 @@ pub(super) struct Shared {
     /// ([`super::drawables`]).
     #[cfg(target_os = "macos")]
     view: Option<usize>,
+    #[cfg(target_os = "macos")]
+    view_asked: bool,
 }
 
 impl std::fmt::Debug for Shared {
@@ -109,6 +111,8 @@ impl Default for Embed {
             ticked: None,
             #[cfg(target_os = "macos")]
             view: None,
+            #[cfg(target_os = "macos")]
+            view_asked: false,
         })))
     }
 }
@@ -151,12 +155,22 @@ impl Embed {
     }
 
     /// macOS: a task that finds the window `id`'s view, for its Metal layer
-    /// to keep three drawables from the next redraw on.
+    /// to keep three drawables from the next redraw on; none once it was
+    /// asked for (whatever the answer).
     #[cfg(target_os = "macos")]
     pub fn find_view<T: Send + 'static>(&self, id: iced::window::Id) -> iced::Task<T> {
+        let mut shared = self.lock();
+        if shared.view_asked {
+            return iced::Task::none();
+        }
+        shared.view_asked = true;
         let embed = self.clone();
         iced::window::run(id, move |window| {
-            embed.lock().view = super::drawables::view_of(window);
+            let view = super::drawables::view_of(window);
+            if view.is_none() {
+                crate::trace::note("metal layer: the window has no AppKit view");
+            }
+            embed.lock().view = view;
         })
         .discard()
     }

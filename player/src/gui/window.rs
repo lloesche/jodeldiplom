@@ -223,6 +223,12 @@ impl Gui {
         if matches!(&self.phase, Phase::Running(app) if app.state.quit) {
             return self.leave();
         }
+        // macOS: the window's view, for its Metal layer, asked for once the
+        // window is known (its opening may come before the window listens).
+        #[cfg(target_os = "macos")]
+        if let Some(id) = self.window {
+            return Task::batch([task, self.embed.find_view(id)]);
+        }
         task
     }
 
@@ -274,14 +280,10 @@ impl Gui {
                     window::Event::Opened {
                         size, scale_factor, ..
                     } => {
+                        #[cfg(target_os = "macos")]
+                        super::set_dock_icon();
                         self.size = size;
                         self.scale = scale_factor;
-                        self.paint.dirty = true;
-                        #[cfg(target_os = "macos")]
-                        {
-                            super::set_dock_icon();
-                            return self.embed.find_view(id);
-                        }
                     }
                     window::Event::Resized(size) => self.size = size,
                     window::Event::Rescaled(scale) => self.scale = scale,

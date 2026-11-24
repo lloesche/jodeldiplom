@@ -10,6 +10,8 @@
 //! resize, inside the redraw, before the widgets see it), so the canvas's
 //! widget puts three back on each redraw ([`keep_three`]).
 
+use std::sync::atomic::{AtomicBool, Ordering};
+
 use objc2::msg_send;
 use objc2::runtime::{AnyClass, AnyObject};
 
@@ -42,14 +44,22 @@ pub fn keep_three(view: usize) {
     unsafe {
         let layer: *mut AnyObject = msg_send![view as *mut AnyObject, layer];
         let Some(layer) = find(layer, metal, 2) else {
+            if !NOT_FOUND.swap(true, Ordering::Relaxed) {
+                crate::trace::note("metal layer: none under the window's view");
+            }
             return;
         };
         let count: usize = msg_send![layer, maximumDrawableCount];
         if count < DRAWABLES {
             let () = msg_send![layer, setMaximumDrawableCount: DRAWABLES];
+            let now: usize = msg_send![layer, maximumDrawableCount];
+            crate::trace::note(format_args!("metal layer: {count} drawables, now {now}"));
         }
     }
 }
+
+/// Whether the trace was told the layer was not found (once).
+static NOT_FOUND: AtomicBool = AtomicBool::new(false);
 
 /// `layer` where it is a `class`, else the first of its sublayers (down to
 /// `depth` levels) that is.
