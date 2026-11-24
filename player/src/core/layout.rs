@@ -697,8 +697,7 @@ fn main_wide(state: &State, area: Rect) -> MainLayout {
             voice,
             ..karaoke_tab(inner, state.karaoke.sync.as_ref())
         }),
-        desk: (state.side == Side::Mixer)
-            .then(|| desk::compute(inner, state.desk.has_stems(), state.desk.heads_open())),
+        desk: (state.side == Side::Mixer).then(|| desk::compute(inner, state.desk.has_stems())),
         bottom,
     }
 }

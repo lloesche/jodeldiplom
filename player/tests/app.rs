@@ -593,10 +593,10 @@ fn a_transition_plays_on_the_desk_and_a_mute_after_it_lands_on_the_new_heads_fra
 }
 
 /// The app's state with the desk as it is now looked at (the meters left
-/// out), drawn on the Mixer tab.
+/// out): what the Mixer tab's PLAYER strip says.
 fn mixer_tab(app: &App) -> String {
-    use jodeldiplom::core::desk::{self, Look, StripKind};
-    use jodeldiplom::view::{self, CellPictures, Scene};
+    use jodeldiplom::core::desk::{self, Channel, Look, StripKind};
+    use jodeldiplom::gui::mixer::said;
     let view_now = app.desk().expect("a desk");
     let ids = StripKind::ALL.map(|kind| {
         view_now
@@ -610,21 +610,7 @@ fn mixer_tab(app: &App) -> String {
     let look = Look::of(view_now, jodel_output::mixer::Meters::default(), ids);
     let now = state.now_ms;
     desk::feed(&mut state, look, now);
-    let (cols, rows) = (120, 36);
-    state.size = (cols, rows);
-    let backend = ratatui::backend::TestBackend::new(cols, rows);
-    let mut terminal = ratatui::Terminal::new(backend).unwrap();
-    let spectrum = jodeldiplom::spectrum::SpectrumFrame::default();
-    let scene = Scene {
-        state: &state,
-        spectrum: &spectrum,
-        pointer: None,
-        heard: 0.0,
-    };
-    terminal
-        .draw(|frame| view::draw(frame, &scene, &mut CellPictures))
-        .unwrap();
-    view::buffer_text(terminal.backend().buffer())
+    said::text(&state, Channel::Strip(StripKind::Player)).join("\n")
 }
 
 /// How many of the player's heads have an output open on the desk, and

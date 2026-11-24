@@ -9,12 +9,14 @@ mod common;
 use std::sync::Arc;
 
 use jodel_playback::{Command, Event};
+use jodeldiplom::core::desk::{Channel, StripKind};
 use jodeldiplom::core::keymap::{self, Key, KeyCode, Meaning, Op};
 use jodeldiplom::core::layout::{self, Layout};
 use jodeldiplom::core::mouse::{self, MouseButton, MouseInput, MouseKind};
 use jodeldiplom::core::singing::Level;
 use jodeldiplom::core::sliders::Slider;
 use jodeldiplom::core::{update, Action, Effect, Side, State};
+use jodeldiplom::gui::mixer::said;
 use jodeldiplom::view::{self, CellPictures, Scene};
 
 fn op(state: &mut State, op: Op) -> Vec<Effect> {
@@ -122,7 +124,7 @@ fn the_key_slider_is_a_row_of_the_tab() {
         row: key.track.y,
     };
     let right = f64::from(key.track.x + key.track.width);
-    let action = mouse::action_at(&state, press, right, f64::from(key.track.y) + 0.5);
+    let action = mouse::action_at(&state, press, right);
     let fx = update(&mut state, action.expect("an action"));
     assert_eq!(keys_sent(&fx), [6]);
     update(&mut state, Action::KaraokeSlideEnd);
@@ -135,14 +137,17 @@ fn the_mixer_tab_changes_the_key_and_its_player_strip_shows_it() {
     let mut state = common::desk_state(120, 36);
     assert_eq!(meant(&state, '+'), Some(Op::KeyUp));
     assert_eq!(meant(&state, '0'), Some(Op::KeyReset));
-    assert!(draw(&state).contains("│● LEAD     │"));
+    let lead = |state: &State| {
+        let player = Channel::Strip(StripKind::Player);
+        said::text(state, player)[1].clone()
+    };
+    assert_eq!(lead(&state), "● LEAD");
     let fx = op(&mut state, Op::KeyDown);
     assert_eq!(keys_sent(&fx), [-1]);
     op(&mut state, Op::KeyDown);
-    let text = draw(&state);
-    assert!(text.contains("● LEAD −2"), "{text}");
+    assert_eq!(lead(&state), "● LEAD −2");
     op(&mut state, Op::KeyReset);
-    assert!(draw(&state).contains("│● LEAD     │"));
+    assert_eq!(lead(&state), "● LEAD");
 }
 
 /// The song's notes and the scoring are in the key heard: a position

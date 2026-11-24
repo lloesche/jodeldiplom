@@ -7,7 +7,6 @@
 //! drawn. The spectrum's axis labels are cells ([`plot`]).
 
 pub mod bubbles;
-pub mod desk;
 pub mod karaoke;
 pub mod lanes;
 pub mod plot;
@@ -164,6 +163,9 @@ fn line(segs: &[Seg]) -> Line<'static> {
 
 /// How long the pulse stays bright after a beat, in seconds.
 const PULSE_SECONDS: f64 = 0.12;
+
+/// The Mixer tab's bottom border: its keys.
+const DESK_FOOTER: &str = "← → strip · ↑ ↓ fader · home 0 dB · m mute · s solo · e echo";
 
 /// The beat pulse's look now: bright for a moment on each beat of the
 /// playing track (in the accent colour on the first beat of a bar) where
@@ -343,7 +345,7 @@ fn draw_main(frame: &mut Frame, scene: &Scene, m: &MainLayout, pictures: &mut dy
         ),
         Side::Karaoke if state.karaoke.sync.is_some() => sync::footer(state).into(),
         Side::Karaoke => "enter Karaoke mode · ↑ ↓ row · ← → its value · s sync".into(),
-        Side::Mixer => desk::FOOTER.into(),
+        Side::Mixer => DESK_FOOTER.into(),
     };
     let block = bordered(Line::from(title)).title_bottom(Line::from(Span::styled(
         format!(" {footer} "),
@@ -374,11 +376,9 @@ fn draw_main(frame: &mut Frame, scene: &Scene, m: &MainLayout, pictures: &mut dy
                     karaoke::draw_tab(frame, scene, layout, pictures);
                 }
             }
-            Side::Mixer => {
-                if let Some(layout) = &m.desk {
-                    desk::draw(frame.buffer_mut(), state, layout);
-                }
-            }
+            // The window draws the desk in iced's widgets over its rows
+            // ([`crate::gui::mixer`]).
+            Side::Mixer => {}
         }
     }
     if let (Some(rect), Some(filter)) = (m.filter, &state.browser.filter) {

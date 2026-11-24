@@ -1,6 +1,7 @@
 //! `jodeldiplom`: a file-browser music player for PCM and lossy files, in a
-//! window: a UI core, ratatui widgets that draw it into cells, and the
-//! window that rasterises those cells and paints the pictures in pixels.
+//! window: a UI core, an iced window around it, and, for the screens not
+//! ported to iced yet, ratatui widgets that draw the core into cells, which
+//! the window rasterises with the pictures in pixels.
 //!
 //! # Layers
 //!
@@ -16,9 +17,10 @@
 //! - [`config`], [`cli`]: the settings file and the command line.
 //! - [`cache`]: what is kept on disk between runs, and its schemas.
 //! - [`spectrum`], [`art`]: the spectrum of what is heard, cover images.
-//! - [`gui`]: winit, and the GPU or softbuffer; the widgets rasterised by
-//!   a small ratatui pixel backend with an embedded font, covers and
-//!   spectra painted in pixels.
+//! - [`gui`]: the iced window; the Mixer tab in iced's widgets, the other
+//!   screens' cells rasterised by a small ratatui pixel backend with an
+//!   embedded font, covers and spectra painted in pixels, shown in one
+//!   widget (on the GPU through iced's shader widget).
 
 #![warn(missing_docs)]
 

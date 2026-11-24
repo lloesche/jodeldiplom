@@ -1,22 +1,19 @@
-//! The window's frames through the GPU: the pixmap is kept in a texture
-//! the size of the window, each frame sends over only the pixels that
-//! changed ([`Changes`]), and a triangle over the whole window copies the
-//! texture onto it, pixel for pixel. Handing a whole window's buffer to
-//! the system each frame (as softbuffer does, and on macOS with a new
-//! buffer every time) costs more than drawing it; this costs a few rows.
+//! The old screens' frames on the GPU ([`Painter`], inside iced's frame
+//! through [`super::embed_gpu`]): the pixmap is kept in a texture the size
+//! of the window, each frame sends over only the pixels that changed
+//! ([`Changes`]), and a triangle over the whole window copies the texture
+//! onto it, pixel for pixel; a few rows a frame, not the whole window.
 //!
 //! A lane that follows the playhead comes as a layer ([`LayerFrame`]): its
 //! tiles kept in a texture array, drawn over the pixmap at the column (and
 //! share of one) the frame says, with the playhead over it. A frame that
-//! moves only the layer sends over nothing but its place.
-
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+//! moves only the layer sends over nothing but its place. Karaoke mode's
+//! stage and its bursts are drawn over it all.
 
 use jodel_gpu::Turned;
-use winit::window::Window;
 
 use super::canvas::{Canvas, Changes, LayerFrame, PixelRect, MOST_SLOTS};
+use super::stage_gpu::StageFrame;
 
 const SHADER: &str = r"
 struct Layer {
@@ -96,16 +93,6 @@ const LAYER_BYTES: u64 = 128;
 /// The pixmap's words (`0x00RRGGBB`) as they lie in memory, B G R x.
 const TEXTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Bgra8Unorm;
 
-/// How a frame went.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Shown {
-    /// It is on its way to the window.
-    Yes,
-    /// The window took none now (covered, or a frame timed out); the
-    /// texture has the changes all the same.
-    NotNow,
-}
-
 /// The pixmap's copy on the GPU, for one window size.
 struct Kept {
     texture: wgpu::Texture,
@@ -117,7 +104,7 @@ struct Kept {
 }
 
 /// The pixmap kept on the GPU and the pass that copies it onto a frame.
-struct Painter {
+pub(super) struct Painter {
     device: wgpu::Device,
     queue: wgpu::Queue,
     pipeline: wgpu::RenderPipeline,
@@ -161,7 +148,11 @@ pub(super) fn open(adapter: wgpu::Adapter) -> Result<Opened, String> {
 
 impl Painter {
     /// For frames of `format`.
-    fn new(device: wgpu::Device, queue: wgpu::Queue, format: wgpu::TextureFormat) -> Painter {
+    pub(super) fn new(
+        device: wgpu::Device,
+        queue: wgpu::Queue,
+        format: wgpu::TextureFormat,
+    ) -> Painter {
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("jodeldiplom window"),
             entries: &[
@@ -264,9 +255,46 @@ impl Painter {
 
     /// Karaoke mode's stage for the next frame (`None`: none), in a frame
     /// of `size`.
-    fn set_stage(&mut self, frame: Option<&super::stage_gpu::StageFrame>, size: (u32, u32)) {
+    fn set_stage(&mut self, frame: Option<&StageFrame>, size: (u32, u32)) {
         self.stage.set(&self.device, &self.queue, frame, size);
         self.particles.set(&self.device, &self.queue, frame, size);
+    }
+
+    /// The next frame, of `size` pixels: the pixels in `changes` sent over
+    /// (all of them where the size or the pixmap's changed), `layer` and
+    /// `stage` over it.
+    pub(super) fn prepare(
+        &mut self,
+        canvas: &Canvas,
+        changes: &Changes,
+        size: (u32, u32),
+        layer: Option<LayerFrame>,
+        stage: Option<&StageFrame>,
+    ) {
+        let size = (size.0.max(1), size.1.max(1));
+        self.upload(canvas, changes, size.0, size.1);
+        self.set_layer(layer);
+        self.set_stage(stage, size);
+        self.bind();
+    }
+
+    /// The frame prepared, into `pass` (its viewport the window's); false
+    /// where there is none yet.
+    pub(super) fn draw(&self, pass: &mut wgpu::RenderPass<'_>) -> bool {
+        let Some(bind) = &self.bind else {
+            return false;
+        };
+        pass.set_pipeline(&self.pipeline);
+        pass.set_bind_group(0, bind, &[]);
+        pass.draw(0..3, 0..1);
+        self.stage.draw(pass);
+        self.particles.draw(pass);
+        true
+    }
+
+    /// The device and the queue it draws with.
+    pub(super) fn queue(&self) -> &wgpu::Queue {
+        &self.queue
     }
 
     /// The layer for the next frame (`None`: none): its new tiles sent
@@ -468,16 +496,17 @@ impl Painter {
         }
     }
 
-    /// The texture onto `target`, with whatever else `then` adds to the
-    /// commands; submitted. False where there is no texture yet.
+    /// The texture onto `target` in a pass of its own, with whatever else
+    /// `then` adds to the commands; submitted. False where there is no
+    /// texture yet.
     fn paint(
         &mut self,
         target: &wgpu::Texture,
         then: impl FnOnce(&mut wgpu::CommandEncoder),
     ) -> bool {
-        let Some(bind) = self.bind().cloned() else {
+        if self.bind().is_none() {
             return false;
-        };
+        }
         let view = target.create_view(&wgpu::TextureViewDescriptor::default());
         let mut encoder = self
             .device
@@ -501,11 +530,7 @@ impl Painter {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
-            pass.set_pipeline(&self.pipeline);
-            pass.set_bind_group(0, &bind, &[]);
-            pass.draw(0..3, 0..1);
-            self.stage.draw(&mut pass);
-            self.particles.draw(&mut pass);
+            self.draw(&mut pass);
         }
         then(&mut encoder);
         self.queue.submit([encoder.finish()]);
@@ -552,272 +577,6 @@ fn srgb_to_linear(c: f32) -> f32 {
     } else {
         ((c + 0.055) / 1.055).powf(2.4)
     }
-}
-
-/// The window's frames through the GPU.
-pub struct GpuWindow {
-    // Both dropped in the GPU's turn.
-    surface: Turned<wgpu::Surface<'static>>,
-    config: wgpu::SurfaceConfiguration,
-    painter: Turned<Painter>,
-    /// What draws: the adapter's name and backend.
-    pub name: String,
-    /// The last frame's work is done on the GPU (set from wgpu's callback).
-    done: Arc<AtomicBool>,
-    /// A frame was sent.
-    pending: bool,
-    /// When the last [`GpuWindow::show`] began, the frame before it was not
-    /// yet done on the GPU: it missed its turn, the GPU busy with other
-    /// work.
-    pub behind: bool,
-}
-
-impl GpuWindow {
-    /// Sets up the GPU for `window`; an error where there is no GPU that
-    /// can show into it.
-    pub fn new(window: Arc<Window>) -> Result<GpuWindow, String> {
-        // In the GPU's turn: the stems and the analyses set theirs up on
-        // other threads meanwhile ([`jodel_gpu::setting_up`]).
-        let _turn = jodel_gpu::setting_up();
-        let size = window.inner_size();
-        // The process's one instance and GPU ([`jodel_gpu::chosen`]): the
-        // adapters are listed again only where that GPU cannot draw here.
-        let chosen = jodel_gpu::chosen();
-        let surface = chosen
-            .instance
-            .create_surface(window.clone())
-            .map_err(|e| format!("no surface: {e}"))?;
-        let (adapter, device, queue) = window_device(chosen, &surface, monitor_gpu(&window))?;
-        let caps = surface.get_capabilities(&adapter);
-        // A format that takes the bytes as they are; else an sRGB one,
-        // read through an sRGB view so they come out the same.
-        let format = [
-            wgpu::TextureFormat::Bgra8Unorm,
-            wgpu::TextureFormat::Rgba8Unorm,
-        ]
-        .into_iter()
-        .find(|f| caps.formats.contains(f))
-        .or_else(|| caps.formats.first().copied())
-        .ok_or("the window takes no format")?;
-        let alpha_mode = if caps.alpha_modes.contains(&wgpu::CompositeAlphaMode::Opaque) {
-            wgpu::CompositeAlphaMode::Opaque
-        } else {
-            caps.alpha_modes
-                .first()
-                .copied()
-                .unwrap_or(wgpu::CompositeAlphaMode::Auto)
-        };
-        let config = wgpu::SurfaceConfiguration {
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-            format,
-            color_space: Default::default(),
-            width: size.width.max(1),
-            height: size.height.max(1),
-            present_mode: wgpu::PresentMode::AutoVsync,
-            desired_maximum_frame_latency: 2,
-            alpha_mode,
-            view_formats: Vec::new(),
-        };
-        surface.configure(&device, &config);
-        let info = adapter.get_info();
-        let name = format!("{} ({:?})", info.name, info.backend);
-        crate::trace::note(format_args!("window: on {name}"));
-        Ok(GpuWindow {
-            surface: Turned::new(surface),
-            config,
-            painter: Turned::new(Painter::new(device, queue, format)),
-            name,
-            done: Arc::new(AtomicBool::new(true)),
-            pending: false,
-            behind: false,
-        })
-    }
-
-    /// Karaoke mode's stage over the next frame (`None`: none), for a
-    /// window of `width` × `height`.
-    pub fn set_stage(
-        &mut self,
-        frame: Option<&super::stage_gpu::StageFrame>,
-        width: u32,
-        height: u32,
-    ) {
-        self.painter.set_stage(frame, (width.max(1), height.max(1)));
-    }
-
-    /// Shows the canvas in a window of `width` × `height` pixels, sending
-    /// over the pixels in `changes` (all of them where the window or the
-    /// pixmap changed size), and `layer` over it (with no changes: a frame
-    /// that only moves the layer).
-    pub fn show(
-        &mut self,
-        canvas: &Canvas,
-        changes: &Changes,
-        width: u32,
-        height: u32,
-        layer: Option<LayerFrame>,
-    ) -> Result<Shown, String> {
-        let (width, height) = (width.max(1), height.max(1));
-        // Whether the last frame is done on the GPU by now (the callbacks
-        // of work done run here, without waiting).
-        let _ = self.painter.device.poll(wgpu::PollType::Poll);
-        self.behind = self.pending && !self.done.load(Ordering::Acquire);
-        if (self.config.width, self.config.height) != (width, height) {
-            self.config.width = width;
-            self.config.height = height;
-            self.surface.configure(&self.painter.device, &self.config);
-        }
-        self.painter.upload(canvas, changes, width, height);
-        self.painter.set_layer(layer);
-        let device = &self.painter.device;
-        let (frame, again) = match self.surface.get_current_texture() {
-            wgpu::CurrentSurfaceTexture::Success(frame) => (frame, false),
-            // Shown this once, the surface set up again for the next.
-            wgpu::CurrentSurfaceTexture::Suboptimal(frame) => (frame, true),
-            wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => {
-                return Ok(Shown::NotNow);
-            }
-            wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
-                self.surface.configure(device, &self.config);
-                return Ok(Shown::NotNow);
-            }
-            wgpu::CurrentSurfaceTexture::Validation => {
-                return Err("the window's frame was refused".into());
-            }
-        };
-        let shown = if self.painter.paint(&frame.texture, |_| {}) {
-            self.done.store(false, Ordering::Release);
-            let done = Arc::clone(&self.done);
-            self.painter
-                .queue
-                .on_submitted_work_done(move || done.store(true, Ordering::Release));
-            self.pending = true;
-            self.painter.queue.present(frame);
-            Shown::Yes
-        } else {
-            Shown::NotNow
-        };
-        if again {
-            self.surface.configure(&self.painter.device, &self.config);
-        }
-        Ok(shown)
-    }
-}
-
-/// A device for a window's `surface`, on the first of these that shows
-/// into it and opens: the process's GPU ([`jodel_gpu::chosen`]) through
-/// DirectX 12 (its sibling), which hands its frames to the compositor
-/// most directly; the chosen adapter itself; the adapters listed again
-/// for the GPU the window's monitor is on (DirectX 12 first); else the
-/// adapter the system offers for the surface. The first three only on the
-/// monitor's GPU (`monitor`: its vendor and device ids, [`jodel_gpu::card`]):
-/// a frame drawn on another one is copied over to it by the system, and
-/// on Windows that shows it a good part of a second late. Where the
-/// monitor's GPU is not known, the system's offer.
-fn window_device(
-    chosen: &jodel_gpu::Chosen,
-    surface: &wgpu::Surface<'_>,
-    monitor: Option<(u32, u32)>,
-) -> Result<Opened, String> {
-    let shows = |a: &wgpu::Adapter| {
-        let info = a.get_info();
-        info.device_type != wgpu::DeviceType::Cpu
-            && monitor.is_some_and(|ids| jodel_gpu::card(&info) == ids)
-            && a.is_surface_supported(surface)
-    };
-    // Why the GPU chosen for the process does not draw, for the trace.
-    let mut failed = None;
-    for kept in [chosen.sibling.as_ref(), chosen.adapter.as_ref().ok()]
-        .into_iter()
-        .flatten()
-    {
-        if shows(kept) {
-            match open(kept.clone()) {
-                Ok(opened) => return Ok(opened),
-                Err(e) => failed = Some(e),
-            }
-        }
-    }
-    let listed = monitor.and_then(|_| {
-        let mut adapters: Vec<wgpu::Adapter> =
-            pollster::block_on(chosen.instance.enumerate_adapters(wgpu::Backends::all()))
-                .into_iter()
-                .filter(|a| shows(a))
-                .collect();
-        adapters.sort_by_key(|a| a.get_info().backend != wgpu::Backend::Dx12);
-        adapters.into_iter().find_map(|a| open(a).ok())
-    });
-    let opened = match listed {
-        Some(opened) => opened,
-        None => {
-            let adapter = pollster::block_on(chosen.instance.request_adapter(
-                &wgpu::RequestAdapterOptions {
-                    power_preference: wgpu::PowerPreference::LowPower,
-                    compatible_surface: Some(surface),
-                    ..Default::default()
-                },
-            ))
-            .map_err(|e| format!("no GPU for the window: {e}"))?;
-            open(adapter)?
-        }
-    };
-    if crate::trace::on() {
-        let why = match (failed, &chosen.adapter) {
-            (Some(e), _) => e,
-            (None, Err(e)) => e.clone(),
-            (None, Ok(_)) if monitor.is_none() => "the monitor's GPU is not known".into(),
-            (None, Ok(a)) => format!(
-                "{} cannot show into it, or is not the monitor's",
-                a.get_info().name
-            ),
-        };
-        crate::trace::note(format_args!(
-            "window: not on the GPU chosen for the process ({why}): on {} instead",
-            opened.0.get_info().name
-        ));
-    }
-    Ok(opened)
-}
-
-/// The vendor and device ids of the GPU the monitor `window` is on (most
-/// of), where the system says.
-#[cfg(windows)]
-fn monitor_gpu(window: &Window) -> Option<(u32, u32)> {
-    use windows::Win32::Foundation::HWND;
-    use windows::Win32::Graphics::Dxgi::{CreateDXGIFactory1, IDXGIFactory1};
-    use windows::Win32::Graphics::Gdi::{MonitorFromWindow, MONITOR_DEFAULTTONEAREST};
-    use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
-
-    let RawWindowHandle::Win32(handle) = window.window_handle().ok()?.as_raw() else {
-        return None;
-    };
-    let hwnd = HWND(handle.hwnd.get() as *mut std::ffi::c_void);
-    // SAFETY: plain calls on a live window and the factory's own objects.
-    unsafe {
-        let monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
-        let factory: IDXGIFactory1 = CreateDXGIFactory1().ok()?;
-        for i in 0.. {
-            let Ok(adapter) = factory.EnumAdapters1(i) else {
-                break;
-            };
-            for j in 0.. {
-                let Ok(output) = adapter.EnumOutputs(j) else {
-                    break;
-                };
-                if output.GetDesc().is_ok_and(|d| d.Monitor == monitor) {
-                    let desc = adapter.GetDesc1().ok()?;
-                    return Some((desc.VendorId, desc.DeviceId));
-                }
-            }
-        }
-    }
-    None
-}
-
-/// Elsewhere it is not known: the window takes the adapter the system
-/// offers for it ([`window_device`]).
-#[cfg(not(windows))]
-fn monitor_gpu(_: &Window) -> Option<(u32, u32)> {
-    None
 }
 
 /// The window's frames drawn into a texture off screen and read back:

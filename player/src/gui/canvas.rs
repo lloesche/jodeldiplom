@@ -349,7 +349,8 @@ impl Changes {
         }
     }
 
-    fn merge(&mut self, other: Changes) {
+    /// `other`'s pixels too.
+    pub fn merge(&mut self, other: Changes) {
         if other.all {
             self.all = true;
             self.rects.clear();

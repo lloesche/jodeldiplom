@@ -7,8 +7,11 @@ mod common;
 
 use std::path::PathBuf;
 
+use jodeldiplom::core::desk::{Channel, StripKind};
 use jodeldiplom::core::keymap::Op;
+use jodeldiplom::core::layout::{self, Layout};
 use jodeldiplom::core::{update, Action, DeviceChoice, Screen, Side, State};
+use jodeldiplom::gui::mixer::said;
 use jodeldiplom::spectrum::{sine, tap_frames_for, Analyzer, SpectrumFrame};
 use jodeldiplom::view::lanes::WavePlot;
 use jodeldiplom::view::{self, CellPictures, Pictures, Scene};
@@ -444,7 +447,6 @@ fn transition_tab() {
 #[test]
 fn the_karaoke_tab_shows_the_voice_with_every_word() {
     use jodeldiplom::core::lanes::{self, Block};
-    use jodeldiplom::core::layout::{self, Layout};
     let mut state = common::transition_state(120, 40);
     state.side = Side::Karaoke;
     common::sung_every(&mut state, 0.5);
@@ -960,35 +962,26 @@ fn the_queue_is_got_ready_ahead_and_its_icons_light_up_in_turn() {
     assert_eq!(colors(&state)[3], DIM);
 }
 
+/// The Mixer tab: the canvas draws its box and its keys and leaves the
+/// rows to the window's desk ([`said`] is what its strips say); the core
+/// lays out which strips show.
 #[test]
 fn the_mixer_tab_is_a_desk() {
     let state = common::desk_state(120, 36);
     let text = draw(&state);
     snapshot("mixer", &text);
+    has(&text, &[" Mixer ", "← → strip", "m mute"]);
+    let said = |channel| said::text(&state, channel).join(" | ");
+    assert_eq!(said::stems(&state), "● STEMS heard");
+    let player = said(Channel::Strip(StripKind::Player));
+    has(&player, &["96k 24b", "● LEAD"]);
+    assert!(said(Channel::Strip(StripKind::Vocals)).contains("muted"));
+    let mic = said(Channel::Mic);
+    has(&mic, &["● −31 dB 42ms", "fill 10ms xrun 0", "PITCH"]);
+    let main = said(Channel::Main);
     has(
-        &text,
+        &main,
         &[
-            " Mixer ",
-            "PLAYER",
-            "● STEMS heard",
-            "DRUMS",
-            "BASS",
-            "VOCALS",
-            "OTHER",
-            "muted",
-            "PREVIEW",
-            "MIC",
-            "MAIN · USB Audio DAC",
-            "96k 24b",
-            "LEAD",
-            "0.0 dB",
-            "[M]",
-            "[S]",
-            "LISTEN ONLY",
-            "[ECHO]",
-            "● −31 dB 42ms",
-            "fill 10ms xrun 0",
-            "IN VOICE",
             "WASAPI exclusive",
             "96 kHz · 24 bit · 2 ch",
             "BIT-PERFECT",
@@ -997,22 +990,19 @@ fn the_mixer_tab_is_a_desk() {
             "VOLUME —",
         ],
     );
-    // An 80-column window: shorter faders, narrower stems (the vocals
-    // as VOX), the preview without its scale, the microphone gone first,
-    // the master's lamps whole.
+    let shown = |state: &State| {
+        let Layout::Main(m) = layout::compute(state) else {
+            panic!("the main screen");
+        };
+        let desk = m.desk.expect("the desk");
+        desk.channels.iter().map(|c| c.channel).collect::<Vec<_>>()
+    };
+    assert_eq!(shown(&state).len(), 8, "every strip at 120 columns");
+    // An 80-column window: the microphone goes first.
     let state = common::desk_state(80, 24);
-    let text = draw(&state);
-    snapshot("mixer_small", &text);
-    has(
-        &text,
-        &[
-            "PLAYER",
-            "STEMS",
-            "VOX",
-            "PREVIEW",
-            "MAIN",
-            "○ BIT-PERFECT  ○ LIMIT",
-        ],
-    );
-    assert!(!text.contains("LISTEN ONLY"));
+    snapshot("mixer_small", &draw(&state));
+    let strips = shown(&state);
+    assert!(strips.contains(&Channel::Strip(StripKind::Preview)));
+    assert!(strips.contains(&Channel::Strip(StripKind::Vocals)));
+    assert!(!strips.contains(&Channel::Mic));
 }

@@ -94,13 +94,6 @@ pub enum Target {
     KaraokeSlider(Slider),
     /// A level on the Karaoke tab.
     KaraokeLevel(crate::core::singing::Level),
-    /// A fader's track on the Mixer tab.
-    DeskFader(crate::core::desk::StripKind),
-    /// A button on the Mixer tab.
-    DeskButton(crate::core::desk::DeskButton),
-    /// A strip on the Mixer tab (a click selects it, the wheel moves its
-    /// fader).
-    DeskChannel(crate::core::desk::Channel),
 }
 
 fn tone_rects(lines: &[Vec<text::Seg>], tone: Tone, area: Rect) -> Vec<Rect> {
@@ -177,9 +170,6 @@ pub fn regions(state: &State) -> Vec<(Rect, Target)> {
                 out.push((k.show_notes, Target::Button(Op::KaraokeNotes)));
                 out.push((k.keep, Target::Button(Op::KaraokeKeep)));
                 out.push((k.sync, Target::Button(Op::KaraokeSync)));
-            }
-            if let (Some(desk), None) = (&m.desk, &state.palette) {
-                crate::core::desk::mouse::regions(state, desk, &mut out);
             }
             if let (Some(tab), None) = (&m.transition, &state.palette) {
                 if let Some(fit) = tab.fit {
@@ -372,21 +362,15 @@ fn slider_share(state: &State, slider: Slider, x: f64) -> Option<f64> {
 /// What a mouse event does, if anything. The pointer is taken to be in
 /// the middle of its cell.
 pub fn action(state: &State, input: MouseInput) -> Option<Action> {
-    action_at(
-        state,
-        input,
-        f64::from(input.col) + 0.5,
-        f64::from(input.row) + 0.5,
-    )
+    action_at(state, input, f64::from(input.col) + 0.5)
 }
 
-/// [`action`] with the pointer known within its cell: `x` and `y` are in
-/// cells from the left and top edges (the GUI knows them to the pixel).
-/// Only a Karaoke slider uses `x`: cell by cell, a 40-cell track moves
-/// 2.6 % a step (5.1 % for the microphone's 200 %); pixel by pixel, every
-/// whole percent is in reach. Only a Mixer tab fader uses `y`, for the same
-/// reason.
-pub fn action_at(state: &State, input: MouseInput, x: f64, y: f64) -> Option<Action> {
+/// [`action`] with the pointer known within its cell: `x` is in cells from
+/// the left edge (the GUI knows it to the pixel). Only a Karaoke slider
+/// uses it: cell by cell, a 40-cell track moves 2.6 % a step (5.1 % for
+/// the microphone's 200 %); pixel by pixel, every whole percent is in
+/// reach.
+pub fn action_at(state: &State, input: MouseInput, x: f64) -> Option<Action> {
     use MouseButton::{Left, Right};
     use MouseKind::*;
     // A drag on the progress bar follows the pointer anywhere.
@@ -416,10 +400,6 @@ pub fn action_at(state: &State, input: MouseInput, x: f64, y: f64) -> Option<Act
             Up(Left) => Some(Action::KaraokeSlideEnd),
             _ => None,
         };
-    }
-    // And a Mixer tab fader held.
-    if let Some(action) = crate::core::desk::mouse::held(state, input.kind, y) {
-        return action;
     }
     // While a sync shows, only its panel's buttons take a click.
     if state.karaoke.sync.is_some() {
@@ -456,9 +436,6 @@ pub fn action_at(state: &State, input: MouseInput, x: f64, y: f64) -> Option<Act
         };
     }
     let target = hit(state, input.col, input.row)?;
-    if let Some(action) = crate::core::desk::mouse::on(state, input.kind, target, y) {
-        return action;
-    }
     match (input.kind, target) {
         (Down(Right), Target::TransitionLane(block) | Target::TransitionOverview(block)) => {
             Some(Action::TransitionPanStart {

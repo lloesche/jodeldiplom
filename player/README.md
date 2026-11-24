@@ -4,8 +4,9 @@ A music player for PCM files (FLAC, WAV, AIFF, CAF, ALAC in
 M4A/MP4), and for AAC-LC (in M4A/MP4), MP3 (MP2, MP1) and Ogg Vorbis, on top of
 [`jodel-playback`](../playback) and [`jodel-output`](../output): bit-perfect,
 exclusive output, a plain file browser instead of a library database, in
-a window: `jodeldiplom` (winit, ratatui widgets rasterised in pixels,
-frames through wgpu or else softbuffer; on macOS the app
+a window: `jodeldiplom` (iced on wgpu, its CPU renderer without a GPU;
+the screens not ported to iced yet are ratatui widgets rasterised in
+pixels, shown inside it: see [The window](#the-window); on macOS the app
 `Jodeldiplom.app`). A Windows release build opens no console window;
 started from a terminal, it attaches to that one, so `--help`, `--diag`,
 `--list-devices`, `--clean-cache`, `--clean-diag` and errors print there
@@ -1015,11 +1016,15 @@ moved, and nothing of it is kept: every start is at 0 dB, unmuted, nothing
 soloed. A new mixer (another device, an engine restarted) gets the faders
 as they were set this run.
 
-With the mouse, a fader's cap follows the pointer up and down while held
-(the pointer may leave the track; in the window to the pixel, so it moves
-by less than a cell); a press elsewhere on the track brings the cap there;
-within 0.4 rows of 0 dB it is at exactly 0 dB, as in a desk's detent (a
-key step across 0 dB stops there too); a double click is 0 dB;
+The tab is drawn in the window's own widgets (iced, [The
+window](#the-window)): brushed panels, backlit scribble strips, buttons
+that glow when on, LED-segment meters with their peak ticks, the caps
+gliding to a level set by a key. With the mouse, a fader's cap follows
+the pointer up and down while held, to the pixel (the pointer may leave
+the track; a cap taken off its middle does not jump); a press elsewhere
+on the track brings the cap there; within 5 pixels of 0 dB it is at
+exactly 0 dB, as in a desk's detent (a key step across 0 dB stops there
+too); a double click is 0 dB;
 the wheel over a strip moves its fader by 1 dB (over the master, the
 device's volume); a click selects a strip, and `[M]`, `[S]` and `[ECHO]`
 are buttons.
@@ -1044,8 +1049,8 @@ The capitals keep their commands here (`M` the beat pulse, `S` stop);
 
 | Module | |
 |---|---|
-| `core` | state, `Action`, `update(state, action) -> effects`, layout in cells with its collapse rules, keymap, mouse regions; the Transition tab (`core::transition::tab`, the lanes it shares with Karaoke in `core::lanes`), the grid fixes (`core::grid`), the transitions' presets and plans (`core::transition`), the Karaoke tab and mode (`core::karaoke`, its sliders in `core::sliders`), the key the song plays in (`core::key`), the Mixer tab's desk (`core::desk`: its strips, settings, the fader's taper, the meters' ballistics, its mouse) and the stems on it (`core::stems`: the stem keys as strip mutes on a bar of the head on air, when the engine makes stems, the Karaoke voice's lanes on both heads). Pure. |
-| `view` | the ratatui widgets, drawing the state into cells; the cover, the spectrum, the Transition tab's lanes (`view::transition`, with `view::lanes`, which the Karaoke tab shares) and Karaoke mode's picture (`view::karaoke`) go through `view::Pictures`, which the window paints in pixels (Karaoke mode's picture in `gui::karaoke`). The Mixer tab (`view::desk`) is cells only |
+| `core` | state, `Action`, `update(state, action) -> effects`, layout in cells with its collapse rules, keymap, mouse regions; the Transition tab (`core::transition::tab`, the lanes it shares with Karaoke in `core::lanes`), the grid fixes (`core::grid`), the transitions' presets and plans (`core::transition`), the Karaoke tab and mode (`core::karaoke`, its sliders in `core::sliders`), the key the song plays in (`core::key`), the Mixer tab's desk (`core::desk`: its strips, settings, the fader's taper, the meters' ballistics, the actions its widgets send) and the stems on it (`core::stems`: the stem keys as strip mutes on a bar of the head on air, when the engine makes stems, the Karaoke voice's lanes on both heads). Pure. |
+| `view` | the ratatui widgets, drawing the state into cells; the cover, the spectrum, the Transition tab's lanes (`view::transition`, with `view::lanes`, which the Karaoke tab shares) and Karaoke mode's picture (`view::karaoke`) go through `view::Pictures`, which the window paints in pixels (Karaoke mode's picture in `gui::karaoke`). The Mixer tab's rows are left empty: the window draws the desk there |
 | `app` | the running player: the engine and its desk, background workers, the spectrum (the mixer's monitor), cover; carries out the effects |
 | `desk_wiring` | the desk the engine plays on: a mixer that holds the device (`jodel_output::mixer`), the player's strip with its stems' strips inside it, the preview's, the engine on two lane inputs of them (its two heads: a transition's next track plays on the other); the Mixer tab's settings made on it, its look for a frame |
 | `preview` | the preview's players, guests on the mixer (one per file, two at most): only the latest file loaded, crossfades on the mixer's clock, the song ducked and back |
@@ -1056,7 +1061,7 @@ The capitals keep their commands here (`M` the beat pulse, `S` stop);
 | `grids` | the beat grids fixed by hand, kept per track in the settings folder |
 | `cache` | the schemas of what is kept on disk between runs, and their versions |
 | `stems_cache` | the tracks' stems kept (`stems/`): their files' names, the store the engine reads them from, pruning to 30 GB |
-| `gui` | the window; `gui::raster::PixelBackend` draws the cells into pixels with the embedded font, `gui::Canvas` paints covers, the spectrum and the Transition lanes at their cell rects |
+| `gui` | the window, an iced application (`gui::window`); the Mixer tab in iced's widgets (`gui::mixer`); every other screen the old canvas in one widget under them (`gui::embed`, on the GPU through `gui::embed_gpu` and `gui::present`): `gui::raster::PixelBackend` draws the cells into pixels with the embedded font, `gui::Canvas` paints covers, the spectrum and the Transition lanes at their cell rects |
 
 The window's font is Sarasa Fixed J (Iosevka's Latin with Source Han Sans
 for Japanese, Chinese and Korean, each of those exactly two cells wide),
@@ -1076,48 +1081,53 @@ Gothic, Microsoft YaHei, Malgun Gothic … on Windows, Hiragino and the
 like on macOS, Noto CJK or whatever fontconfig picks on Linux). The size
 follows the window's scale factor.
 
-The window draws on the processor, so it draws only what it must. Its
-pixmap holds the window buffer's own words (`0x00RRGGBB`), so a frame
-goes out as a plain copy. Only the cells that changed are rasterised,
-and a cover (with the caption over it) is painted again only when it is
-new, moved, or a cell under it was redrawn; the spectrum only when it
-moved. The Transition lanes stay in the pixmap too: their columns sit on a grid
-of whole pixels from the track's start (the view's start snapped to
-it, within a pixel), so a view that scrolled is shifted by whole
-columns, and only the columns new to it or whose marks changed (the
-playhead, the cursor, a selection, a fade's curve) are painted, each in
-one pass; the bar numbers are painted again only when they moved. A
-frame that changed no pixel is not handed to the window at all. The
-frames go to the window through the GPU (wgpu: Metal, Direct3D 12 or
-Vulkan, `gui/present.rs`): the pixmap is kept in a texture the size of
-the window, each frame sends over only the rects of pixels that changed
-(`Canvas::take_changes`), and one triangle copies the texture onto the
-window pixel for pixel. On Windows it draws on the GPU the window's
-monitor is connected to (the one DXGI lists that monitor under,
-Direct3D 12 where it can): a frame drawn on another GPU, such as a
-processor's integrated one, is copied across by the system and shown a
-good part of a second late. Where no GPU can show into the window (or with
-`JODELDIPLOM_SOFTBUFFER=1` set) softbuffer hands the whole window over
-each frame instead, which on macOS means a new buffer of the whole
-window every time. It draws 60
-times a second while something follows the pointer or slides (a drag,
-a block sliding, input), 30 times while a track plays (the spectrum,
-the clock, the Transition tab's lanes going by), not at all while paused once
-the spectrum stands still, and not while the window cannot be seen
-(minimised, on another desktop, covered). `cargo run --release -p
-jodeldiplom --example frames -- [WIDTH HEIGHT SCALE] [FRAMES]` times the
-frames headless, per screen: the widgets, the pictures, the copy, and
+### The window
+
+The window is an iced application (`gui::window`, iced's development
+version pinned to a commit on the same wgpu as the rest of the player, so
+there is one GPU stack): `core::State` is its state, keys go through
+`core::keymap`, and the frames come at every refresh of the display while
+something moves smoothly, 30 a second while only the spectrum and the
+clock move, four a second at rest; the player's threads wake it. Without
+a GPU (or with `JODELDIPLOM_SOFTWARE=1` set) iced draws on the processor.
+Karaoke mode makes it fullscreen.
+
+The screens are moving to iced's own widgets one at a time. Ported: the
+Mixer tab (`gui::mixer`: the strips where the core lays them out, the
+faders, scales and meters as canvases, the caps gliding to their levels).
+Every other screen is the old canvas, drawn as before and shown in one
+widget filling the window under the ported ones (`gui::embed`); the
+pointer over it goes to `core::mouse` in cells. On the GPU that widget is
+iced's shader widget (`gui::embed_gpu`), with Karaoke mode's stage drawn
+over it in the same pass; on the processor, an image.
+
+The old canvas draws on the processor, so it draws only what it must.
+Only the cells that changed are rasterised, and a cover (with the caption
+over it) is painted again only when it is new, moved, or a cell under it
+was redrawn; the spectrum only when it moved. The Transition lanes stay
+in the pixmap too: their columns sit on a grid of whole pixels from the
+track's start (the view's start snapped to it, within a pixel), so a view
+that scrolled is shifted by whole columns, and only the columns new to it
+or whose marks changed (the playhead, the cursor, a selection, a fade's
+curve) are painted, each in one pass; the bar numbers are painted again
+only when they moved. On the GPU (`gui/present.rs`) the pixmap is kept in
+a texture the size of the window, each frame sends over only the rects of
+pixels that changed (`Canvas::take_changes`), and one triangle copies the
+texture onto the window pixel for pixel; a lane that follows the playhead
+scrolls on the GPU, so most frames of a playing Karaoke tab send nothing
+but where it stands. `cargo run --release -p jodeldiplom --example frames
+-- [WIDTH HEIGHT SCALE] [FRAMES]` times the canvas's frames headless, per
+screen: the widgets, the pictures, the copy into a window's buffer, and
 how many frames changed (default 3024 × 1890 at scale 2, a 16-inch
-MacBook Pro's window maximised; on a desktop processor the browser
-takes about 2.7 ms a frame, the Transition tab 3.9 ms while its view follows
-the playhead and 2.2 ms while held; the copy is softbuffer's, the GPU
-path sends only the changed rects). The tests check that frames drawn
-one after another give the pixels each would have drawn afresh, on the
+MacBook Pro's window maximised; on a desktop processor the browser takes
+about 2.7 ms a frame, the Transition tab 3.9 ms while its view follows the
+playhead and 2.2 ms while held). The tests check that frames drawn one
+after another give the pixels each would have drawn afresh, on the
 Transition tab through scrolling, seeking, a held view, a selection, a
 transition's curves and a zoom, and, on a GPU, that the frames drawn
-through the window's path off screen and read back are the canvas
-pixel for pixel (into a plain and an sRGB frame, through a resize and a
-skipped frame).
+through the window's path off screen and read back are the canvas pixel
+for pixel (into a plain and an sRGB frame, through a resize and a skipped
+frame).
 
 The icon (a dotted spectrum rolling off from one colour to another) is drawn by `src/icon.rs`: the window sets it at run time (on
 macOS the Dock icon), on Windows `build.rs` builds `assets/jodeldiplom.ico`
@@ -1178,12 +1188,12 @@ How a file's contents were made is versioned apart from its schema:
 ## Finding what holds it up
 
 With `JODELDIPLOM_TRACE=FILE` set, the player writes a timing trace to
-`FILE`: the window's start (the window, its GPU surface, the canvas, the
-app), and every update or frame that took longer than 30 ms, with what it
-was. Slow work belongs on a thread of its own; the trace says which. Every
-5 s it also writes a line on the window's frames: how many, how many came
-late (the frame before was not through the GPU by the next one), the
-longest gap, how long drawing and showing took, and how
+`FILE`: the window's start (iced's, the app's), and every update or frame
+that took longer than 30 ms, with what it was. Slow work belongs on a
+thread of its own; the trace says which. Every 5 s it also writes a line
+on the old canvas's frames: how many, how many came late (the frame before
+the last was not through the GPU by the next one), the longest gap, how
+long drawing and handing the changes to the GPU took, and how
 background GPU work gave way (frames late while it ran, its rests, the
 share of the GPU it keeps to now).
 

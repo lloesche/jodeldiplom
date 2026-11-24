@@ -2,7 +2,7 @@
 name = "jodeldiplom"
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.90"
+rust-version = "1.93"
 license = "MIT"
 description = "A file-browser music player for PCM and lossy files, in a window"
 
@@ -14,15 +14,19 @@ jodel-rhythm = { path = "../rhythm" }
 jodel-lyrics = { path = "../lyrics" }
 # Every file written: whole or not at all, made durable.
 durable = { path = "../durable" }
-# The widgets and their cell buffer; the window rasterises the cells itself
-# (no terminal backend).
+# The widgets and their cell buffer, for the screens the window still
+# draws in cells; it rasterises the cells itself (no terminal backend).
 ratatui = { version = "0.30.2", default-features = false, features = ["std", "layout-cache"] }
 image = { version = "0.25.10", default-features = false, features = ["jpeg", "png"] }
 ab_glyph = "0.2.32"
-softbuffer = "0.4.8"
-winit = "0.30.13"
-# The window's frames through the GPU (softbuffer where there is none);
-# the same wgpu as jodel-gpu.
+# The window: iced's development version, pinned to a commit on the same
+# wgpu as ours (30), so the app has one GPU stack. Its wgpu renderer
+# without wgpu's own backends (ours, below, pick them), its CPU renderer
+# where there is no GPU, its canvas (the faders and meters), smol for its
+# timers.
+iced = { git = "https://github.com/iced-rs/iced.git", rev = "98bd48fe011efc0ec5819fee0fa7673a7169ff11", default-features = false, features = ["wgpu-bare", "vello-cpu", "advanced", "canvas", "smol", "image-without-codecs", "x11", "wayland", "wayland-dlopen", "wayland-decorations", "linux-theme-detection"] }
+# The old screens' frames and the pictures on the GPU, in iced's shader
+# widget; the same wgpu as jodel-gpu.
 wgpu = { version = "30.0.2", default-features = false, features = ["std", "parking_lot", "dx12", "metal", "vulkan", "wgsl"] }
 pollster = "1.0.1"
 bytemuck = "1.25.2"
@@ -35,7 +39,7 @@ ureq = { version = "3", default-features = false, features = ["rustls"] }
 
 [target.'cfg(windows)'.dependencies.windows]
 version = "0.62.2"
-features = ["Win32_System_Console", "Win32_Graphics_Dxgi", "Win32_Graphics_Gdi", "Win32_Storage_FileSystem", "Win32_System_SystemInformation", "Win32_UI_WindowsAndMessaging"]
+features = ["Win32_System_Console", "Win32_Storage_FileSystem", "Win32_System_SystemInformation", "Win32_UI_WindowsAndMessaging"]
 
 # Setup's check of the disk's free space and the memory (statvfs, sysctl).
 [target.'cfg(unix)'.dependencies]

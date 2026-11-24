@@ -767,7 +767,7 @@ fn the_speech_model_is_found_where_the_build_put_it() {
 /// What `input` does with the pointer at `x` cells, done.
 #[track_caller]
 fn point(state: &mut State, input: MouseInput, x: f64) {
-    let action = mouse::action_at(state, input, x, f64::from(input.row) + 0.5).expect("an action");
+    let action = mouse::action_at(state, input, x).expect("an action");
     update(state, action);
 }
 

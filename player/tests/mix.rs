@@ -188,7 +188,8 @@ fn a_stem_key_during_a_mix_lands_on_its_bar_of_the_head_on_air() {
 #[test]
 fn the_player_strip_shows_both_heads_during_a_mix() {
     use jodel_output::mixer::{AutomationView, Role};
-    use jodeldiplom::view::{self, CellPictures, Scene};
+    use jodeldiplom::core::desk::Channel;
+    use jodeldiplom::gui::mixer::said;
     let mut state = common::desk_state(120, 36);
     let automation = |main: f64| AutomationView {
         input: 1.0,
@@ -206,36 +207,19 @@ fn the_player_strip_shows_both_heads_during_a_mix() {
     next.automation = Some(automation(0.25));
     next.dropped = 12;
     player.inputs.push(next);
-    let draw = |state: &State| {
-        let (cols, rows) = state.size;
-        let backend = ratatui::backend::TestBackend::new(cols, rows);
-        let mut terminal = ratatui::Terminal::new(backend).unwrap();
-        let spectrum = jodeldiplom::spectrum::SpectrumFrame::default();
-        let scene = Scene {
-            state,
-            spectrum: &spectrum,
-            pointer: None,
-            heard: 0.0,
-        };
-        terminal
-            .draw(|frame| view::draw(frame, &scene, &mut CellPictures))
-            .unwrap();
-        view::buffer_text(terminal.backend().buffer())
-    };
-    let text = draw(&state);
-    for want in ["● LEAD −6.0", "● NEXT −12", "↓12"] {
-        assert!(text.contains(want), "no {want:?} in\n{text}");
-    }
+    let lines = |state: &State| said::text(state, Channel::Strip(StripKind::Player));
+    let text = lines(&state);
+    assert_eq!(
+        text[1..],
+        ["● LEAD −6.0", "● NEXT −12.0", "ring ▮▮▮▮▯▯ ↓12"]
+    );
     // Once the mix is over: the head on air alone, as before.
     let player = state.desk.views[StripKind::Player.index()]
         .as_mut()
         .unwrap();
     player.inputs.truncate(1);
     player.inputs[0].automation = None;
-    let text = draw(&state);
-    assert!(text.contains("│● LEAD     │"), "{text}");
-    assert!(text.contains("│ring ▮▮▮▮▯▯│"), "{text}");
-    assert!(!text.contains("NEXT"), "{text}");
+    assert_eq!(lines(&state)[1..], ["● LEAD", "ring ▮▮▮▮▯▯"]);
 }
 
 /// A mix under way, from frame `w0` of head 0, the next track's frame 0 on

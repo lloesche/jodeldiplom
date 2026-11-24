@@ -68,6 +68,11 @@ pub fn main_font() -> &'static [u8] {
     built_in().main.unwrap_or(FONT)
 }
 
+/// The built-in Noto Emoji, if the binary has it.
+pub fn emoji_font() -> Option<&'static [u8]> {
+    built_in().emoji
+}
+
 /// Whether the window draws with the built-in Sarasa Fixed (else Cascadia
 /// Mono), and whether it has the built-in Noto Emoji.
 pub fn built_in_fonts() -> (bool, bool) {

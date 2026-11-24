@@ -1,5 +1,7 @@
 //! The Mixer tab: its faders, buttons and keys, what they send to the
-//! mixer, and the settings made again on a new mixer.
+//! mixer, and the settings made again on a new mixer. The window's Mixer
+//! tab sends the desk's actions ([`DeskAction`]): these are what its
+//! faders, buttons and strips send.
 
 mod common;
 
@@ -9,37 +11,17 @@ use std::time::Duration;
 use jodel_output::input::Input;
 use jodel_output::SimClock;
 use jodeldiplom::app::{App, AppOptions, Output};
-use jodeldiplom::core::desk::mouse::{cap_y, position_at, DETENT_ROWS};
 use jodeldiplom::core::desk::{taper, Channel, DeskAction, DeskButton, DeskChange, StripKind};
 use jodeldiplom::core::keymap::{lookup, Key, KeyCode, Meaning, Op};
-use jodeldiplom::core::layout::desk::ChannelLayout;
-use jodeldiplom::core::layout::{self, Layout};
-use jodeldiplom::core::mouse::{self, MouseButton, MouseInput, MouseKind};
 use jodeldiplom::core::{update, Action, Effect, Side, State, DOUBLE_CLICK_MS};
 
 fn tab() -> State {
     common::desk_state(120, 36)
 }
 
-fn strip_layout(state: &State, channel: Channel) -> ChannelLayout {
-    let Layout::Main(m) = layout::compute(state) else {
-        panic!("the main screen")
-    };
-    m.desk.expect("the desk").channel(channel).unwrap().clone()
-}
-
-/// What the pointer does at (`x`, `y`) cells, carried out.
-#[track_caller]
-fn point(state: &mut State, kind: MouseKind, x: f64, y: f64) -> Vec<Effect> {
-    let input = MouseInput {
-        kind,
-        col: x as u16,
-        row: y as u16,
-    };
-    match mouse::action_at(state, input, x, y) {
-        Some(action) => update(state, action),
-        None => Vec::new(),
-    }
+/// What the Mixer tab's widgets send, carried out.
+fn desk(state: &mut State, action: DeskAction) -> Vec<Effect> {
+    update(state, Action::Desk(action))
 }
 
 fn changes(fx: &[Effect]) -> Vec<DeskChange> {
@@ -55,151 +37,126 @@ fn db(state: &State, strip: StripKind) -> f64 {
     state.desk.setting(strip).db
 }
 
-const LEFT: MouseKind = MouseKind::Down(MouseButton::Left);
-const DRAG: MouseKind = MouseKind::Drag(MouseButton::Left);
-const UP: MouseKind = MouseKind::Up(MouseButton::Left);
+fn grab(strip: StripKind, position: f64) -> DeskAction {
+    DeskAction::Grab { strip, position }
+}
 
 #[test]
-fn a_fader_follows_the_pointer_by_eighths_of_a_cell() {
+fn a_held_fader_follows_the_pointer_to_unity_exactly() {
     let mut state = tab();
-    let player = Channel::Strip(StripKind::Player);
-    let track = strip_layout(&state, player).track.unwrap();
-    let x = f64::from(track.x) + 1.5;
-    // Taken by the cap, a little off its middle: it does not jump.
-    let at = cap_y(track, taper::position_of(0.0));
-    let fx = point(&mut state, LEFT, x, at + 0.3);
-    assert_eq!(db(&state, StripKind::Player), 0.0);
+    let player = StripKind::Player;
+    let unity = taper::position_of(0.0);
+    // Taken where the cap is: it does not move.
+    let fx = desk(&mut state, grab(player, unity));
+    assert_eq!(db(&state, player), 0.0);
     assert!(changes(&fx).is_empty(), "{fx:?}");
     assert!(state.desk.dragging.is_some());
-    // Down an eighth of a cell at a time, the cap's middle staying under
-    // the pointer where it was taken: within the detent (0.4 rows) it
-    // stays at exactly 0 dB, then every step is a lower level.
+    // Down a little at a time: every step a lower level, sent to the mixer.
     let mut last = 0.0;
     for k in 1..=24 {
-        let y = at + 0.3 + f64::from(k) / 8.0;
-        let fx = point(&mut state, DRAG, x, y);
-        let now = db(&state, StripKind::Player);
-        let want = taper::snap(taper::db_at(position_at(track, y - 0.3)));
-        assert_eq!(now, want, "step {k}");
-        if f64::from(k) / 8.0 < DETENT_ROWS {
-            assert_eq!(now, 0.0, "step {k}: in the detent");
-            assert!(changes(&fx).is_empty());
-            continue;
-        }
+        let position = unity - f64::from(k) / 100.0;
+        let fx = desk(&mut state, DeskAction::Slide(position));
+        let now = db(&state, player);
+        assert_eq!(now, taper::snap(taper::db_at(position)), "step {k}");
         assert!(now < last, "step {k}: {now} after {last}");
-        assert_eq!(
-            changes(&fx),
-            [DeskChange::Level(StripKind::Player, taper::gain(now))]
-        );
+        assert_eq!(changes(&fx), [DeskChange::Level(player, taper::gain(now))]);
         last = now;
     }
-    // Back up into the detent: exactly 0 dB, unity, bit-perfect.
-    point(&mut state, DRAG, x, at + 0.3 + 0.2);
-    assert_eq!(db(&state, StripKind::Player), 0.0);
-    assert_eq!(taper::gain(db(&state, StripKind::Player)), 1.0);
-    // The pointer may leave the track while held: far below, off; far
-    // above (and beside), the top.
-    point(&mut state, DRAG, x + 30.0, 500.0);
-    assert_eq!(db(&state, StripKind::Player), f64::NEG_INFINITY);
-    point(&mut state, DRAG, 0.5, 0.5);
-    assert_eq!(db(&state, StripKind::Player), taper::TOP_DB);
-    point(&mut state, UP, 0.5, 0.5);
+    // Back at unity's position: exactly 0 dB, unity gain, bit-perfect.
+    desk(&mut state, DeskAction::Slide(unity));
+    assert_eq!(db(&state, player), 0.0);
+    assert_eq!(taper::gain(db(&state, player)), 1.0);
+    // The ends: off, and the top.
+    desk(&mut state, DeskAction::Slide(0.0));
+    assert_eq!(db(&state, player), f64::NEG_INFINITY);
+    desk(&mut state, DeskAction::Slide(1.0));
+    assert_eq!(db(&state, player), taper::TOP_DB);
+    desk(&mut state, DeskAction::Release);
     assert!(state.desk.dragging.is_none());
-    // Let go, the pointer moves nothing.
-    point(&mut state, DRAG, x, at);
-    assert_eq!(db(&state, StripKind::Player), taper::TOP_DB);
+    // Let go, a slide moves nothing.
+    desk(&mut state, DeskAction::Slide(unity));
+    assert_eq!(db(&state, player), taper::TOP_DB);
 }
 
 #[test]
 fn a_press_on_the_track_brings_the_cap_and_a_double_click_is_unity() {
     let mut state = tab();
-    let preview = Channel::Strip(StripKind::Preview);
-    let track = strip_layout(&state, preview).track.unwrap();
-    let x = f64::from(track.x) + 1.5;
+    let preview = StripKind::Preview;
     // Low on the track: the cap comes there, and the strip is selected.
-    let y = f64::from(track.bottom()) - 3.5;
-    point(&mut state, LEFT, x, y);
-    let low = db(&state, StripKind::Preview);
+    desk(&mut state, grab(preview, 0.15));
+    let low = db(&state, preview);
     assert!(low < -30.0, "{low}");
-    assert_eq!(state.desk.selected, preview);
-    point(&mut state, UP, x, y);
+    assert_eq!(state.desk.selected, Channel::Strip(preview));
+    desk(&mut state, DeskAction::Release);
     // A second press soon after: back to 0 dB, nothing held.
     state.now_ms += DOUBLE_CLICK_MS / 2;
-    let fx = point(&mut state, LEFT, x, y);
-    assert_eq!(db(&state, StripKind::Preview), 0.0);
-    assert_eq!(changes(&fx), [DeskChange::Level(StripKind::Preview, 1.0)]);
+    let fx = desk(&mut state, grab(preview, 0.15));
+    assert_eq!(db(&state, preview), 0.0);
+    assert_eq!(changes(&fx), [DeskChange::Level(preview, 1.0)]);
     assert!(state.desk.dragging.is_none());
     // Long after, a press is a press.
     state.now_ms += DOUBLE_CLICK_MS * 4;
-    point(&mut state, LEFT, x, y);
-    assert_eq!(db(&state, StripKind::Preview), low);
+    desk(&mut state, grab(preview, 0.15));
+    assert_eq!(db(&state, preview), low);
+}
+
+/// A stem's fader held while the strips change under it (the stems gone,
+/// the window narrower: its widget is not where it was, or not at all) is
+/// let go of on the next release of the left button, wherever that is:
+/// nothing stays held. A release with no fader held does nothing.
+#[test]
+fn a_fader_held_while_the_strips_change_is_let_go_of_on_any_release() {
+    use jodeldiplom::core::desk::let_go;
+    let mut state = tab();
+    assert_eq!(let_go(&state), None);
+    let drums = StripKind::Drums;
+    desk(&mut state, grab(drums, taper::position_of(0.0)));
+    assert!(state.desk.dragging.is_some());
+    // The stems go from the player's head, and the window narrows.
+    let player = state.desk.views[StripKind::Player.index()]
+        .as_mut()
+        .unwrap();
+    for input in &mut player.inputs {
+        input.parts = None;
+    }
+    assert!(!state.desk.has_stems());
+    update(&mut state, Action::Resize(80, 24));
+    let release = let_go(&state).expect("a release");
+    desk(&mut state, release);
+    assert!(state.desk.dragging.is_none());
+    assert_eq!(let_go(&state), None);
 }
 
 #[test]
 fn the_wheel_moves_a_fader_by_a_db_and_the_buttons_toggle() {
     let mut state = tab();
-    let player = strip_layout(&state, Channel::Strip(StripKind::Player));
-    let track = player.track.unwrap();
-    let (x, y) = (f64::from(track.x) + 0.5, f64::from(track.y) + 2.5);
-    point(&mut state, MouseKind::ScrollUp, x, y);
-    assert_eq!(db(&state, StripKind::Player), 1.0);
-    // Anywhere over the strip.
-    let name = player.name;
-    let fx = point(
-        &mut state,
-        MouseKind::ScrollDown,
-        f64::from(name.x) + 1.5,
-        f64::from(name.y) + 0.5,
-    );
-    assert_eq!(db(&state, StripKind::Player), 0.0);
-    assert_eq!(changes(&fx), [DeskChange::Level(StripKind::Player, 1.0)]);
+    let player = StripKind::Player;
+    desk(&mut state, DeskAction::Wheel(Channel::Strip(player), 1));
+    assert_eq!(db(&state, player), 1.0);
+    let fx = desk(&mut state, DeskAction::Wheel(Channel::Strip(player), -1));
+    assert_eq!(db(&state, player), 0.0);
+    assert_eq!(changes(&fx), [DeskChange::Level(player, 1.0)]);
     // [M] and [S].
     for (button, change) in [
-        (
-            DeskButton::Mute(StripKind::Player),
-            DeskChange::Mute(StripKind::Player, true),
-        ),
-        (
-            DeskButton::Solo(StripKind::Player),
-            DeskChange::Solo(StripKind::Player, true),
-        ),
+        (DeskButton::Mute(player), DeskChange::Mute(player, true)),
+        (DeskButton::Solo(player), DeskChange::Solo(player, true)),
     ] {
-        let rect = player.buttons.iter().find(|b| b.1 == button).unwrap().0;
-        let fx = point(
-            &mut state,
-            LEFT,
-            f64::from(rect.x) + 1.5,
-            f64::from(rect.y) + 0.5,
-        );
+        let fx = desk(&mut state, DeskAction::Press(button));
         assert_eq!(changes(&fx), [change]);
     }
-    let s = state.desk.setting(StripKind::Player);
+    let s = state.desk.setting(player);
     assert!(s.mute && s.solo);
     // A click on the master selects it; the wheel there steps the
     // device's own volume, never a gain of ours.
-    let main = strip_layout(&state, Channel::Main);
-    let (mx, my) = (f64::from(main.name.x) + 2.5, f64::from(main.name.y) + 0.5);
-    point(&mut state, LEFT, mx, my);
+    desk(&mut state, DeskAction::Select(Channel::Main));
     assert_eq!(state.desk.selected, Channel::Main);
-    let fx = point(&mut state, MouseKind::ScrollUp, mx, my);
+    let fx = desk(&mut state, DeskAction::Wheel(Channel::Main, 1));
     assert!(changes(&fx).is_empty());
     assert!(fx.contains(&Effect::DeviceVolume(
         jodeldiplom::core::VolumeChange::Step(1)
     )));
     // The microphone's ECHO turns its echo canceller off, and saves it.
-    let mic = strip_layout(&state, Channel::Mic);
-    let echo = mic
-        .buttons
-        .iter()
-        .find(|b| b.1 == DeskButton::Echo)
-        .unwrap()
-        .0;
-    let fx = point(
-        &mut state,
-        LEFT,
-        f64::from(echo.x) + 1.5,
-        f64::from(echo.y) + 0.5,
-    );
+    let fx = desk(&mut state, DeskAction::Press(DeskButton::Echo));
     assert!(!state.config.karaoke_echo);
     assert!(fx.contains(&Effect::SaveConfig));
 }
@@ -315,51 +272,26 @@ fn the_faders_are_set_on_the_mixer_and_again_on_a_new_one() {
 }
 
 #[test]
-fn a_stems_strip_takes_the_pointer_and_its_buttons() {
+fn a_stems_strip_takes_its_fader_and_its_buttons() {
     let mut state = tab();
     assert!(state.desk.has_stems());
     // The vocals' [M] (muted on that desk) unmutes them, at once.
-    let vocals = strip_layout(&state, Channel::Strip(StripKind::Vocals));
-    let mute = vocals
-        .buttons
-        .iter()
-        .find(|b| b.1 == DeskButton::Mute(StripKind::Vocals))
-        .unwrap()
-        .0;
-    let fx = point(
-        &mut state,
-        LEFT,
-        f64::from(mute.x) + f64::from(mute.width) / 2.0,
-        f64::from(mute.y) + 0.5,
-    );
-    assert_eq!(changes(&fx), [DeskChange::Mute(StripKind::Vocals, false)]);
-    assert_eq!(state.desk.selected, Channel::Strip(StripKind::Vocals));
-    // The drums' fader follows the pointer down; the wheel over the bass.
-    let track = strip_layout(&state, Channel::Strip(StripKind::Drums))
-        .track
-        .unwrap();
-    let x = f64::from(track.x) + 1.5;
-    let at = cap_y(track, taper::position_of(0.0));
-    point(&mut state, LEFT, x, at);
-    let fx = point(&mut state, DRAG, x, at + 3.0);
-    let drums = db(&state, StripKind::Drums);
-    assert!(drums < 0.0, "{drums}");
-    assert_eq!(
-        changes(&fx),
-        [DeskChange::Level(StripKind::Drums, taper::gain(drums))]
-    );
-    point(&mut state, UP, x, at + 3.0);
-    let bass = strip_layout(&state, Channel::Strip(StripKind::Bass)).name;
-    let fx = point(
-        &mut state,
-        MouseKind::ScrollUp,
-        f64::from(bass.x) + 1.5,
-        f64::from(bass.y) + 0.5,
-    );
-    assert_eq!(
-        changes(&fx),
-        [DeskChange::Level(StripKind::Bass, taper::gain(1.0))]
-    );
+    let vocals = StripKind::Vocals;
+    let fx = desk(&mut state, DeskAction::Press(DeskButton::Mute(vocals)));
+    assert_eq!(changes(&fx), [DeskChange::Mute(vocals, false)]);
+    assert_eq!(state.desk.selected, Channel::Strip(vocals));
+    // The drums' fader taken and moved down; the wheel over the bass.
+    let drums = StripKind::Drums;
+    let unity = taper::position_of(0.0);
+    desk(&mut state, grab(drums, unity));
+    let fx = desk(&mut state, DeskAction::Slide(unity - 0.1));
+    let level = db(&state, drums);
+    assert!(level < 0.0, "{level}");
+    assert_eq!(changes(&fx), [DeskChange::Level(drums, taper::gain(level))]);
+    desk(&mut state, DeskAction::Release);
+    let bass = StripKind::Bass;
+    let fx = desk(&mut state, DeskAction::Wheel(Channel::Strip(bass), 1));
+    assert_eq!(changes(&fx), [DeskChange::Level(bass, taper::gain(1.0))]);
     // The stems touched: the engine is told nothing but to make them (the
     // desk plays them, a transition's two tracks too).
     for e in &fx {

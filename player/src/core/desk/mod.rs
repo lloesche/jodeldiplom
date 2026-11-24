@@ -11,7 +11,6 @@
 //! desk shows comes in once a drawn frame ([`feed`]).
 
 pub mod meter;
-pub mod mouse;
 pub mod strips;
 pub mod taper;
 
@@ -88,12 +87,11 @@ pub enum DeskChange {
 pub struct Drag {
     /// Which.
     pub strip: StripKind,
-    /// How far the cap's middle is below the pointer, in rows: a cap
-    /// taken by its edge does not jump.
-    pub offset: f64,
 }
 
-/// What the mouse does on the desk ([`crate::core::Action::Desk`]).
+/// What the mouse does on the desk ([`crate::core::Action::Desk`]): the
+/// window's Mixer tab sends these ([`crate::gui::mixer`]), the pointer's
+/// positions worked out to the pixel there.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum DeskAction {
     /// A strip was clicked: it is selected.
@@ -105,8 +103,6 @@ pub enum DeskAction {
         strip: StripKind,
         /// Where the cap goes.
         position: f64,
-        /// See [`Drag::offset`].
-        offset: f64,
     },
     /// The fader held moved to `position`.
     Slide(f64),
@@ -267,12 +263,6 @@ impl DeskState {
         })
     }
 
-    /// How many of the player's heads have an output open (two while a
-    /// transition's next track plays on the second).
-    pub fn heads_open(&self) -> u16 {
-        self.open_heads().len().min(2) as u16
-    }
-
     /// Whether the player's stems have strips on the desk: its input has
     /// lanes.
     pub fn has_stems(&self) -> bool {
@@ -309,6 +299,14 @@ pub fn on_tab(state: &State) -> bool {
 /// microphone's strip selected.
 pub fn listens(state: &State) -> bool {
     shown(state) && state.desk.selected == Channel::Mic
+}
+
+/// What the left button let go of does to the desk, wherever the pointer
+/// is: a fader held is let go of. The core knows a fader is held, whatever
+/// became of the widget that took it (the strips changed meanwhile: stems
+/// came, a head opened, the window was resized).
+pub fn let_go(state: &State) -> Option<DeskAction> {
+    state.desk.dragging.map(|_| DeskAction::Release)
 }
 
 /// After any action: a fader held is let go of once the tab is left.
@@ -508,11 +506,7 @@ pub(crate) fn act(state: &mut State, action: DeskAction, fx: &mut Vec<Effect>) {
     }
     match action {
         DeskAction::Select(channel) => state.desk.selected = channel,
-        DeskAction::Grab {
-            strip,
-            position,
-            offset,
-        } => {
+        DeskAction::Grab { strip, position } => {
             state.desk.selected = Channel::Strip(strip);
             let now = state.now_ms;
             let double = state
@@ -527,7 +521,7 @@ pub(crate) fn act(state: &mut State, action: DeskAction, fx: &mut Vec<Effect>) {
                 return;
             }
             state.desk.last_press = Some((strip, now));
-            state.desk.dragging = Some(Drag { strip, offset });
+            state.desk.dragging = Some(Drag { strip });
             set_level(state, strip, taper::snap(taper::db_at(position)), fx);
         }
         DeskAction::Slide(position) => {
@@ -728,7 +722,6 @@ mod tests {
             Action::Desk(DeskAction::Grab {
                 strip: StripKind::Player,
                 position,
-                offset: 0.0,
             })
         };
         update(&mut s, grab(0.75));

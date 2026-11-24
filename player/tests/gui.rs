@@ -6,6 +6,7 @@ mod common;
 
 use std::sync::Arc;
 
+use iced::keyboard::{key::Named, Key as IcedKey, Modifiers};
 use image::Rgb;
 use jodeldiplom::art::{sample_cover, Art};
 use jodeldiplom::core::layout::{self, Layout};
@@ -16,7 +17,6 @@ use jodeldiplom::spectrum::{sine, tap_frames_for, Analyzer, SpectrumFrame};
 use jodeldiplom::view::{self, colors, Plot, Scene};
 use ratatui::layout::Rect;
 use ratatui::style::Color;
-use winit::keyboard::{Key as WinKey, ModifiersState, NamedKey};
 
 fn rgb(color: Color) -> [u8; 3] {
     match color {
@@ -940,19 +940,19 @@ fn after_a_track_change_the_next_block_is_blank_until_its_analysis_is_in() {
 }
 
 /// The window's keys on the help: `?`, `/`, then "volume" typed (a capital
-/// too), as winit reports them. The window shows only the device volume's
+/// too), as iced reports them. The window shows only the device volume's
 /// keys under the search line; esc clears the search, a second leaves.
 #[test]
 fn the_window_searches_the_help() {
     let mut canvas = Canvas::new(80, 24, font_px(1.0));
     let mut state = sized(&mut canvas, 1280, 800);
-    let press = |state: &mut State, key: WinKey| {
-        let key = gui::key(&key, ModifiersState::empty()).unwrap();
+    let press = |state: &mut State, key: IcedKey| {
+        let key = gui::key(&key, Modifiers::empty()).unwrap();
         if let Some(action) = jodeldiplom::core::keymap::action(state, key) {
             update(state, action);
         }
     };
-    let ch = |c: &str| WinKey::Character(c.into());
+    let ch = |c: &str| IcedKey::Character(c.into());
     press(&mut state, ch("?"));
     press(&mut state, ch("/"));
     for c in ["V", "o", "l", "u", "m", "e"] {
@@ -975,11 +975,11 @@ fn the_window_searches_the_help() {
     for gone in ["play / pause", "Browser and queue"] {
         assert!(!text.contains(gone), "{gone:?} in\n{text}");
     }
-    press(&mut state, WinKey::Named(NamedKey::Escape));
+    press(&mut state, IcedKey::Named(Named::Escape));
     draw(&mut canvas, &state, &spectrum, None);
     assert!(canvas.text().contains("play / pause"));
     assert_eq!(state.screen, Screen::Help);
-    press(&mut state, WinKey::Named(NamedKey::Escape));
+    press(&mut state, IcedKey::Named(Named::Escape));
     assert_eq!(state.screen, Screen::Main);
 }
 
@@ -1073,49 +1073,29 @@ fn the_stage_draws_the_lane_over_the_pixmap() {
     assert_eq!(at(w as f32 / 2.0, 2.0), 0);
 }
 
+/// The Mixer tab's rows are left to the window's own widgets
+/// ([`jodeldiplom::gui::mixer`]): the canvas paints its box and its keys,
+/// and nothing inside.
 #[test]
-fn the_mixer_tab_is_painted_from_its_cells() {
-    use jodeldiplom::core::desk::{Channel, StripKind};
+fn the_canvas_leaves_the_mixer_tab_to_the_window() {
     let mut canvas = Canvas::new(80, 24, font_px(1.0));
     let grid = canvas.fit(1280, 800);
     let mut state = common::desk_state(grid.0, grid.1);
     state.size = grid;
-    state.desk.selected = Channel::Strip(StripKind::Player);
     draw(&mut canvas, &state, &spectrum(176_400, 1_000.0), None);
-    let image = canvas.image();
     let Layout::Main(m) = layout::compute(&state) else {
         panic!("the main screen");
     };
-    let desk = m.desk.expect("the desk");
-    // The player, its four stems and the master (the narrowing leaves the
-    // preview and the microphone out at this size).
-    assert!(desk.channels.len() >= 6, "{:?}", desk.channels.len());
-    assert!(desk.channel(Channel::Strip(StripKind::Vocals)).is_some());
-    // The player's meters at −12 / −9 dBFS: their bottom cells lit green,
-    // their top cells (above 0 dBFS on the fader's ruler) unlit.
-    let player = desk.channel(Channel::Strip(StripKind::Player)).unwrap();
-    let green = Rgb(rgb(colors::GREEN));
-    for bar in &player.meters {
-        let low = Rect::new(bar.x, bar.bottom() - 1, 1, 1);
-        let (x, y, w, h) = pixel_rect(&canvas, low);
-        let lit = (y..y + h)
-            .flat_map(|yy| (x..x + w).map(move |xx| (xx, yy)))
-            .filter(|&(xx, yy)| *image.get_pixel(xx, yy) == green)
-            .count();
-        assert!(lit as u32 > w * h / 2, "{bar:?}: {lit} of {}", w * h);
-        let top = Rect::new(bar.x, bar.y, 1, 1);
-        let (x, y, w, h) = pixel_rect(&canvas, top);
-        assert!(
-            (y..y + h).all(|yy| (x..x + w).all(|xx| *image.get_pixel(xx, yy) != green)),
-            "{bar:?}: lit at the top"
-        );
-    }
-    // The cap sits on the track at 0 dB, in the accent colour (the player
-    // is selected).
-    let track = player.track.unwrap();
-    let unity = jodeldiplom::core::desk::taper::UNITY;
-    let row = jodeldiplom::core::desk::mouse::cap_row(track, unity);
-    let (x, y, w, h) = pixel_rect(&canvas, Rect::new(track.x, row, 3, 1));
-    let accent = Rgb(rgb(colors::ACCENT));
-    assert!((y..y + h).any(|yy| (x..x + w).any(|xx| *image.get_pixel(xx, yy) == accent)));
+    assert!(m.desk.is_some(), "the desk is laid out");
+    let image = canvas.image();
+    let (x, y, w, h) = pixel_rect(&canvas, m.rows);
+    let lit = (y..y + h)
+        .flat_map(|yy| (x..x + w).map(move |xx| (xx, yy)))
+        .filter(|&(xx, yy)| *image.get_pixel(xx, yy) != bg())
+        .count();
+    assert_eq!(lit, 0, "the desk's rows are the window's");
+    assert!(
+        canvas.text().contains("m mute"),
+        "the keys in the box's border"
+    );
 }
