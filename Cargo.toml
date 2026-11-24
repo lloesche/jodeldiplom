@@ -1,12 +1,13 @@
 # The player (terminal and window) is in player/, its playback engine in
 # playback/, the bit-perfect device output in output/, its beat and tempo
 # analysis and stem separation in rhythm/ (on the GPU in gpu/), its lyrics
-# for karaoke in lyrics/. Every file written goes through durable/ (whole or
-# not at all, made durable).
+# for karaoke in lyrics/, the checkpoints the speech, depth and cut-out
+# models are read from in tensors/. Every file written goes through
+# durable/ (whole or not at all, made durable).
 # Resolver 3 picks dependency versions that build on each member's
 # rust-version.
 [workspace]
-members = ["durable", "gpu", "lyrics", "output", "playback", "player", "rhythm"]
+members = ["durable", "gpu", "lyrics", "output", "playback", "player", "rhythm", "tensors"]
 resolver = "3"
 
 # The beat analysis runs long loops over whole tracks; its tests would take

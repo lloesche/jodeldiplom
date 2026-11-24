@@ -1,23 +1,6 @@
-// The separator's kernels. Every one reads `src` and `aux` and writes
-// `dst`; `p` holds its numbers (named per kernel below). Buffers hold f32,
-// tokens of features laid out one after the other.
-
-struct Params {
-    f0: u32, f1: u32, f2: u32, f3: u32,
-    f4: u32, f5: u32, f6: u32, f7: u32,
-    f8: u32, f9: u32, f10: u32, f11: u32,
-}
-
-@group(0) @binding(0) var<storage, read> src: array<f32>;
-@group(0) @binding(1) var<storage, read> aux: array<f32>;
-@group(0) @binding(2) var<storage, read_write> dst: array<f32>;
-@group(0) @binding(3) var<uniform> p: Params;
-
-// The invocation's place in a one-dimensional job spread over a grid of
-// workgroups of 256 (a dispatch has at most 65535 groups per side).
-fn linear_id(gid: vec3<u32>, groups: vec3<u32>) -> u32 {
-    return gid.x + gid.y * groups.x * 256u;
-}
+// The separator's kernels, compiled after `bindings.wgsl` (the bindings)
+// and `common.wgsl` (the tiles, GELU); the beat network, the speech model
+// and the recogniser use some of them too.
 
 // ---- dst[c_off + r*ldc + c] (+)= Σk src[a_off + r*lda + k] · aux[w_off + k*n + c] (+ aux[bias_off + c])
 // f0 m, f1 n, f2 k, f3 a_off, f4 lda, f5 w_off, f6 c_off, f7 ldc, f8 bias_off,
@@ -26,30 +9,7 @@ fn linear_id(gid: vec3<u32>, groups: vec3<u32>) -> u32 {
 // The tiles hold vectors: a step of k reads one of A (its four rows) and
 // one of B (its four columns) for 16 multiply-adds, and the 16 steps are
 // written out (no loop for the compiler to unroll, which Apple's does not
-// always do with the loops wgpu writes for Metal).
-var<workgroup> tile_a: array<vec4<f32>, 256>;
-var<workgroup> tile_b: array<vec4<f32>, 256>;
-
-// The four rows × four columns an invocation sums.
-struct Acc {
-    r0: vec4<f32>,
-    r1: vec4<f32>,
-    r2: vec4<f32>,
-    r3: vec4<f32>,
-}
-
-// One step of k (kk of the tile's 16) for the invocation at (lx, ly).
-fn mm_step(acc: Acc, kk: u32, lx: u32, ly: u32) -> Acc {
-    let a = tile_a[kk * 16u + ly];
-    let b = tile_b[kk * 16u + lx];
-    return Acc(
-        fma(vec4<f32>(a.x), b, acc.r0),
-        fma(vec4<f32>(a.y), b, acc.r1),
-        fma(vec4<f32>(a.z), b, acc.r2),
-        fma(vec4<f32>(a.w), b, acc.r3),
-    );
-}
-
+// always do with the loops wgpu writes for Metal): `common.wgsl`'s tiles.
 // A's value at row r, column ka (0 outside the matrix).
 fn a_at(r: u32, ka: u32) -> f32 {
     if (r < p.f0 && ka < p.f2) {
@@ -99,22 +59,7 @@ fn matmul(@builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgroup_id) w
         workgroupBarrier();
         let lx = lid.x;
         let ly = lid.y;
-        acc = mm_step(acc, 0u, lx, ly);
-        acc = mm_step(acc, 1u, lx, ly);
-        acc = mm_step(acc, 2u, lx, ly);
-        acc = mm_step(acc, 3u, lx, ly);
-        acc = mm_step(acc, 4u, lx, ly);
-        acc = mm_step(acc, 5u, lx, ly);
-        acc = mm_step(acc, 6u, lx, ly);
-        acc = mm_step(acc, 7u, lx, ly);
-        acc = mm_step(acc, 8u, lx, ly);
-        acc = mm_step(acc, 9u, lx, ly);
-        acc = mm_step(acc, 10u, lx, ly);
-        acc = mm_step(acc, 11u, lx, ly);
-        acc = mm_step(acc, 12u, lx, ly);
-        acc = mm_step(acc, 13u, lx, ly);
-        acc = mm_step(acc, 14u, lx, ly);
-        acc = mm_step(acc, 15u, lx, ly);
+        acc = mm_tile(acc, lx, ly);
         workgroupBarrier();
     }
     let r0 = row0 + lid.y * 4u;
@@ -339,15 +284,6 @@ fn attention(@builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgroup_id
 }
 
 // ---- Gated GELU, in place: dst[i] = gelu(dst[i]) · src[i]. f0 count.
-// GELU with the error function as Abramowitz and Stegun's 7.1.26.
-fn gelu(x: f32) -> f32 {
-    let z = abs(x) * 0.70710678;
-    let t = 1.0 / (1.0 + 0.3275911 * z);
-    let poly = t * (0.254829592 + t * (-0.284496736 + t * (1.421413741 + t * (-1.453152027 + t * 1.061405429))));
-    let erf = sign(x) * (1.0 - poly * exp(-z * z));
-    return 0.5 * x * (1.0 + erf);
-}
-
 @compute @workgroup_size(256)
 fn geglu(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) groups: vec3<u32>) {
     let i = linear_id(gid, groups);

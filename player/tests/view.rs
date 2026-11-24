@@ -120,6 +120,12 @@ fn main_screen() {
 #[test]
 fn queue_side() {
     let mut state = common::playing_state(120, 36);
+    // As the app: lyrics are got ready too, the track playing's done.
+    state.preparing.push(jodeldiplom::core::Job::Lyrics);
+    let playing = state.queue.paths[1].clone();
+    state
+        .ready
+        .insert(playing, vec![jodeldiplom::core::Job::Lyrics]);
     update(&mut state, Action::ShowSide(Side::Queue));
     let text = draw(&state);
     has(&text, &["▶ 2 Morning Light", "playing 2 of 5"]);
@@ -814,6 +820,8 @@ fn the_fade_curves_go_to_the_lanes_of_a_transition() {
 fn the_queue_is_got_ready_ahead_and_its_icons_light_up_in_turn() {
     use jodeldiplom::core::{Effect, Job};
     let mut state = common::playing_state(120, 40);
+    // As the app: lyrics are got ready too.
+    state.preparing.push(Job::Lyrics);
     let paths = state.queue.paths.clone();
     let current = state.playing.track.as_ref().unwrap().index;
     state.prepared = (Vec::new(), None);

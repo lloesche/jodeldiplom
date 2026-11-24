@@ -13,7 +13,9 @@ use jodel_lyrics::speech::{
 };
 use jodel_lyrics::{Maker, VOCALS_RATE};
 
-use super::{adapter, bytes, guarded, setting_up, spread, Turned, PARAM_SIZE, PARAM_STRIDE};
+use crate::packer::Packer;
+
+use super::{bytes, guarded, spread, Turned, PARAM_SIZE, PARAM_STRIDE};
 
 const CHANNELS: usize = 512;
 const DIM: usize = 768;
@@ -99,7 +101,7 @@ fn conv_frames(samples: usize) -> [usize; 7] {
 
 /// The weights as one buffer's contents, and where each is (in f32s).
 fn pack(model: &Wav2Vec2) -> (Vec<f32>, HashMap<String, u32>) {
-    let mut data: Vec<f32> = Vec::with_capacity(95_000_000);
+    let mut data = Packer::default();
     let mut at = HashMap::new();
     let mut parts: HashMap<String, Vec<f32>> = HashMap::new();
     model.visit(&mut |name, values| {
@@ -108,25 +110,23 @@ fn pack(model: &Wav2Vec2) -> (Vec<f32>, HashMap<String, u32>) {
         if fused {
             parts.insert(name.to_owned(), values.to_vec());
         } else {
-            at.insert(name.to_owned(), data.len() as u32);
-            data.extend_from_slice(values);
+            at.insert(name.to_owned(), data.push(values) as u32);
         }
     });
     for l in 0..LAYERS {
         let mut take = |what: &str| parts.remove(&format!("{l}.{what}")).unwrap_or_default();
         let (q, k, v) = (take("q.w"), take("k.w"), take("v.w"));
-        at.insert(format!("{l}.qkv.w"), data.len() as u32);
+        let mut qkv = Vec::with_capacity(3 * DIM * DIM);
         for i in 0..DIM {
             for w in [&q, &k, &v] {
-                data.extend_from_slice(&w[i * DIM..(i + 1) * DIM]);
+                qkv.extend_from_slice(&w[i * DIM..(i + 1) * DIM]);
             }
         }
-        at.insert(format!("{l}.qkv.b"), data.len() as u32);
-        for b in ["q.b", "k.b", "v.b"] {
-            data.extend(take(b));
-        }
+        at.insert(format!("{l}.qkv.w"), data.push(&qkv) as u32);
+        let b: Vec<f32> = ["q.b", "k.b", "v.b"].iter().flat_map(|b| take(b)).collect();
+        at.insert(format!("{l}.qkv.b"), data.push(&b) as u32);
     }
-    (data, at)
+    (data.data, at)
 }
 
 /// One dispatch.
@@ -394,19 +394,9 @@ pub struct GpuSpeech {
 impl GpuSpeech {
     /// The model on the best GPU, from the CPU's (its weights as they are).
     pub fn new(model: &Wav2Vec2) -> Result<GpuSpeech, String> {
-        let _turn = setting_up();
-        let adapter = adapter()?;
-        let info = adapter.get_info();
-        let limits = adapter.limits();
-        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-            label: Some("jodel-gpu speech"),
-            required_limits: limits.clone(),
-            ..Default::default()
-        }))
-        .map_err(|e| format!("{}: {e}", info.name))?;
-        let probe = device.clone();
-        let inner = guarded(&probe, || Inner::new(device, queue, &limits, model))
-            .map_err(|e| format!("{}: {e}", info.name))?;
+        let (inner, name) = crate::device::open("jodel-gpu speech", |device, queue, limits| {
+            Inner::new(device, queue, limits, model)
+        })?;
         let mut conv0 = Vec::new();
         model.visit(&mut |name, values| {
             if name == "conv0" {
@@ -414,7 +404,7 @@ impl GpuSpeech {
             }
         });
         Ok(GpuSpeech {
-            name: info.name,
+            name,
             conv0,
             inner: Turned::new(Mutex::new(inner)),
         })
@@ -553,11 +543,7 @@ impl Inner {
             bind_group_layouts: &[Some(&layout)],
             ..Default::default()
         });
-        let source = format!(
-            "{}\n{}",
-            include_str!("kernels.wgsl"),
-            include_str!("speech.wgsl")
-        );
+        let source = crate::kernels_source(&[include_str!("speech.wgsl")]);
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("jodel-gpu speech kernels"),
             source: wgpu::ShaderSource::Wgsl(source.into()),

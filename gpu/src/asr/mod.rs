@@ -37,7 +37,7 @@ use self::calibration::Stats;
 use self::ops::Op;
 use self::pack::{pack, Layout};
 use self::shape::{longest, Room, Shape};
-use super::{adapter, guarded, setting_up, spread, Turned, PARAM_SIZE, PARAM_STRIDE};
+use super::{guarded, spread, Turned, PARAM_SIZE, PARAM_STRIDE};
 
 /// The longest part of a voice heard at once, in seconds.
 pub const MAX_SECONDS: usize = jodel_lyrics::asr::PART_SECONDS as usize;
@@ -142,12 +142,7 @@ impl Kernel {
 /// The kernels' source: the shared helpers, the recogniser's kernels, the
 /// fused ones.
 fn source() -> String {
-    format!(
-        "{}\n{}\n{}",
-        include_str!("../kernels.wgsl"),
-        include_str!("asr.wgsl"),
-        include_str!("fused.wgsl")
-    )
+    crate::kernels_source(&[include_str!("asr.wgsl"), include_str!("fused.wgsl")])
 }
 
 /// The buffers.
@@ -229,21 +224,11 @@ pub struct GpuAsr {
 impl GpuAsr {
     /// The packed model on the best GPU.
     pub fn new(model: &PackedModel) -> Result<GpuAsr, String> {
-        let _turn = setting_up();
-        let adapter = adapter()?;
-        let info = adapter.get_info();
-        let limits = adapter.limits();
-        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-            label: Some("jodel-gpu asr"),
-            required_limits: limits.clone(),
-            ..Default::default()
-        }))
-        .map_err(|e| format!("{}: {e}", info.name))?;
-        let probe = device.clone();
-        let inner = guarded(&probe, || Inner::new(device, queue, &limits, model))
-            .map_err(|e| format!("{}: {e}", info.name))?;
+        let (inner, name) = crate::device::open("jodel-gpu asr", |device, queue, limits| {
+            Inner::new(device, queue, limits, model)
+        })?;
         Ok(GpuAsr {
-            name: info.name,
+            name,
             vocab: model.vocab.clone(),
             inner: Turned::new(Mutex::new(inner)),
         })

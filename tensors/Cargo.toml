@@ -1,0 +1,9 @@
+[package]
+name = "jodel-tensors"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+license = "MIT"
+description = "A .safetensors file's tensors as f32: the checkpoints the speech, depth and matte models are read from"
+
+[dependencies]

@@ -153,6 +153,51 @@ On an RTX 5080:
   part, or glimpses heard together): its encoder and prompt, its steps, and
   their dispatches and submissions a step.
 
+## The cover's depth and cut-out
+
+`GpuDepth` runs Depth Anything 3 Small (Apache-2.0, `depth-anything/DA3-SMALL`)
+and `GpuMatte` BEN2 Base (MIT, `PramaLLC/BEN2`) on their checkpoints as
+published (read through `jodel-tensors`), in full precision, for the player
+to take covers apart (`jodeldiplom::cover`). Both run on one small set of
+kernels (`src/vision/*.wgsl` after the shared `src/common.wgsl`): a
+convolution as a matrix multiply that reads its patches where they lie (a
+linear layer is a 1 × 1 one; a transposed one with its stride as its size
+writes its pixels spread out; a band of rows at a time where asked),
+attention as two batched matrix multiplies around a softmax (Swin's
+relative positions and shifted windows' mask added there), LayerNorm, an
+instance norm merged from chunks' means and spreads, resizing as PyTorch's
+interpolate, adaptive pooling, strided copies, Swin's windows, 2-D rotary
+positions, tables and activations.
+
+The two share one device (`vision::net::Gpu`, set up once when first
+needed). Each network keeps its weights on it, with a tail for its size's
+constants, and makes its plan's buffers when it runs: another input size
+rewrites the tail and makes the plan again, nothing more; `release` lets the
+plan's buffers go (the player does after each cover, so one network's are
+held at a time).
+
+- **Depth Anything 3 Small** at 504 × 504 (the longest side 504, as its
+  processor makes it, by area where it shrinks and bicubic where it grows):
+  the ViT-S/14 with its later layers' per-head norms, 2-D rotary positions
+  and camera token, then the DPT head's depth branch.
+- **BEN2 Base** at 1024 × 1024: the quarters and the half-size whole through
+  Swin-B together, then its decoder. Its shallow features are only used
+  halved by bilinear interpolation, so a 3 × 3 convolution and that halving
+  run as one 4 × 4 convolution; its last stage (1024 × 1024 × 128) is made
+  128 rows at a time, twice (first for its instance norm's statistics), so
+  neither of those 512 MB maps is ever held.
+
+On an RTX 5080: a cover's depth takes 21 ms (PyTorch's own: 36 ms) and its
+matte 270 ms (PyTorch in full precision: 149 ms, in its default half
+precision 113 ms). On the GPU the depth holds 129 MB of weights and 247 MB
+while it runs, the matte 359 MB and 808 MB. On 42 covers, against the
+authors' code in full precision on the same inputs, the depth correlates to
+0.999998 or better and is at most 0.27 % of its range off; the matte at
+most 0.011 off (the official half-precision run is up to 0.99 off its own
+full-precision one). `cargo test -p jodel-gpu --test vision` holds both to
+the reference on a generated scene (`tests/fixtures`);
+`examples/vision_check.rs` runs the comparison on reference dumps.
+
 ## Stem playback
 
 The player also uses it for stem playback (`jodel_playback::stems`): eight

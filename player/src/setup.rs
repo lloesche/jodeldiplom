@@ -1,10 +1,12 @@
 //! The player's self-check, and its setup when that fails.
 //!
 //! Most of what the player needs is inside its executable (the beat and key
-//! networks, the stem separator, the singer's isolator, the fonts). Two
+//! networks, the stem separator, the singer's isolator, the fonts). Four
 //! models are too big for it: the speech model that times karaoke's words
-//! ([`crate::lyrics::MODEL_FILE`]) and the speech recogniser that checks
-//! fetched lyrics belong to the song ([`crate::lyrics::ASR_FILE`]). Their
+//! ([`crate::lyrics::MODEL_FILE`]), the speech recogniser that checks
+//! fetched lyrics belong to the song ([`crate::lyrics::ASR_FILE`]), and the
+//! depth and cut-out models that take covers apart for karaoke's background
+//! ([`crate::cover::DEPTH_FILE`], [`crate::cover::MATTE_FILE`]). Their
 //! names, lengths and SHA-256s are built in ([`manifest`]).
 //!
 //! At every start [`ready`] looks for them in `models` beside the
@@ -83,8 +85,52 @@ pub struct Need {
     pub source: Source,
 }
 
-/// The files the player needs beside its executable, with their checksums.
+/// The files the player needs beside its executable, with their checksums:
+/// the speech models, and the covers' models where this machine has a
+/// usable GPU (they run nowhere else).
 pub fn manifest() -> Vec<Need> {
+    manifest_for(jodel_gpu::gpu_name().is_some())
+}
+
+/// The models the player has found, by what they are ([`Found::of`] the
+/// paths setup gives in the manifest's order).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Found {
+    /// The word-timing model ([`lyrics::MODEL_FILE`]).
+    pub speech: PathBuf,
+    /// The speech recogniser ([`lyrics::ASR_FILE`]).
+    pub asr: PathBuf,
+    /// The covers' depth and cut-out models, where the machine needs them.
+    pub covers: Option<crate::cover::CoverModels>,
+}
+
+impl Found {
+    /// The models among `paths` (setup's, every needed file's path), each
+    /// known by its file's name; `None` without the speech models.
+    pub fn of(paths: &[PathBuf]) -> Option<Found> {
+        let named = |file: &str| {
+            paths
+                .iter()
+                .find(|p| p.file_name().is_some_and(|n| n == file))
+                .cloned()
+        };
+        let covers = match (
+            named(crate::cover::DEPTH_FILE),
+            named(crate::cover::MATTE_FILE),
+        ) {
+            (Some(depth), Some(matte)) => Some(crate::cover::CoverModels { depth, matte }),
+            _ => None,
+        };
+        Some(Found {
+            speech: named(lyrics::MODEL_FILE)?,
+            asr: named(lyrics::ASR_FILE)?,
+            covers,
+        })
+    }
+}
+
+/// [`manifest`] for a machine with a usable GPU (`gpu`) or without.
+pub fn manifest_for(gpu: bool) -> Vec<Need> {
     let asr_parts = lyrics::ASR_PARTS
         .iter()
         .map(|&(name, bytes, sha)| Part {
@@ -100,7 +146,7 @@ pub fn manifest() -> Vec<Need> {
             .to_owned(),
         })
         .collect();
-    vec![
+    let mut needs = vec![
         Need {
             file: lyrics::MODEL_FILE.to_owned(),
             bytes: lyrics::MODEL_BYTES,
@@ -130,7 +176,39 @@ pub fn manifest() -> Vec<Need> {
                     .to_owned(),
             },
         },
-    ]
+    ];
+    if !gpu {
+        return needs;
+    }
+    needs.extend([
+        Need {
+            file: crate::cover::DEPTH_FILE.to_owned(),
+            bytes: crate::cover::DEPTH_BYTES,
+            sha256: crate::cover::DEPTH_SHA256.to_owned(),
+            title: "the depth model".to_owned(),
+            credit: "Depth Anything 3 Small by ByteDance Seed".to_owned(),
+            why: "It sees how near each part of a cover is, so karaoke's background can move \
+                  it in depth."
+                .to_owned(),
+            source: Source::Download {
+                url: crate::cover::DEPTH_URL.to_owned(),
+            },
+        },
+        Need {
+            file: crate::cover::MATTE_FILE.to_owned(),
+            bytes: crate::cover::MATTE_BYTES,
+            sha256: crate::cover::MATTE_SHA256.to_owned(),
+            title: "the cover's cut-out model".to_owned(),
+            credit: "BEN2 by Prama".to_owned(),
+            why: "It cuts the singer (or whatever stands out) off a cover, so karaoke's \
+                  background can light and move them on their own."
+                .to_owned(),
+            source: Source::Download {
+                url: crate::cover::MATTE_URL.to_owned(),
+            },
+        },
+    ]);
+    needs
 }
 
 /// Where the needed files are looked for, and where setup puts them.
@@ -213,7 +291,7 @@ fn stamp(store: &Path, sha256: &str, path: &Path) -> Result<(), String> {
 
 /// Where a needed file was found.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Found {
+pub enum Lookup {
     /// There and checked (stamped) as it is.
     Checked(PathBuf),
     /// There at its length, not checked as it is: to be hashed.
@@ -225,7 +303,7 @@ pub enum Found {
 /// Where `need` is: a copy checked anywhere first, else the first at its
 /// length (a copy beside the executable that is wrong is passed over once
 /// a good one is in the store).
-pub fn look(need: &Need, places: &Places) -> Found {
+pub fn look(need: &Need, places: &Places) -> Lookup {
     // Through the mover: while the data folder moves, one not yet moved is
     // where it was.
     let candidates: Vec<PathBuf> = places
@@ -238,12 +316,12 @@ pub fn look(need: &Need, places: &Places) -> Found {
         .iter()
         .find(|p| stamped(&places.store, &need.sha256, p))
     {
-        return Found::Checked(p.clone());
+        return Lookup::Checked(p.clone());
     }
     candidates
         .into_iter()
         .next()
-        .map_or(Found::Missing, Found::Unchecked)
+        .map_or(Lookup::Missing, Lookup::Unchecked)
 }
 
 /// Every needed file's path, when all are there and checked: the player
@@ -252,7 +330,7 @@ pub fn ready(manifest: &[Need], places: &Places) -> Option<Vec<PathBuf>> {
     manifest
         .iter()
         .map(|need| match look(need, places) {
-            Found::Checked(p) => Some(p),
+            Lookup::Checked(p) => Some(p),
             _ => None,
         })
         .collect()
@@ -705,9 +783,9 @@ fn attempt(
     let mut tasks = Vec::new();
     for (i, need) in manifest.iter().enumerate() {
         match look(need, places) {
-            Found::Checked(p) => paths[i] = Some(p),
-            Found::Unchecked(p) => tasks.push(Task::Check(i, p)),
-            Found::Missing => tasks.extend(obtain(i, need)),
+            Lookup::Checked(p) => paths[i] = Some(p),
+            Lookup::Unchecked(p) => tasks.push(Task::Check(i, p)),
+            Lookup::Missing => tasks.extend(obtain(i, need)),
         }
     }
     teller.set(true, |s| {
@@ -1154,11 +1232,14 @@ mod tests {
     }
 
     #[test]
-    fn the_built_in_manifest_names_both_models() {
-        let m = manifest();
-        assert_eq!(m.len(), 2);
+    fn the_built_in_manifest_names_the_four_models() {
+        assert_eq!(manifest_for(false).len(), 2);
+        let m = manifest_for(true);
+        assert_eq!(m.len(), 4);
         assert_eq!(m[0].file, lyrics::MODEL_FILE);
         assert_eq!(m[1].file, lyrics::ASR_FILE);
+        assert_eq!(m[2].file, crate::cover::DEPTH_FILE);
+        assert_eq!(m[3].file, crate::cover::MATTE_FILE);
         for need in &m {
             assert_eq!(need.sha256.len(), 64);
             assert!(need.sha256.chars().all(|c| c.is_ascii_hexdigit()));
@@ -1216,7 +1297,7 @@ mod tests {
         fs::write(dir.join("beside/asr.bin"), b"part A, part B").unwrap();
         assert_eq!(
             look(&manifest[0], &places),
-            Found::Unchecked(dir.join("beside/speech.bin"))
+            Lookup::Unchecked(dir.join("beside/speech.bin"))
         );
         let work = Arc::new(work);
         let setup = Setup::start(
@@ -1313,7 +1394,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             look(&manifest[0], &places),
-            Found::Unchecked(old.join("speech.bin"))
+            Lookup::Unchecked(old.join("speech.bin"))
         );
         let work = Arc::new(work);
         let setup = Setup::start(
@@ -1369,7 +1450,7 @@ mod tests {
         let path = dir.join("store/speech.bin");
         std::thread::sleep(Duration::from_millis(20));
         fs::write(&path, b"the speech MODEL").unwrap();
-        assert_eq!(look(&manifest[0], &places), Found::Unchecked(path));
+        assert_eq!(look(&manifest[0], &places), Lookup::Unchecked(path));
         assert_eq!(ready(&manifest, &places), None);
     }
 }

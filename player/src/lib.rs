@@ -31,6 +31,7 @@ pub mod cache;
 pub mod cli;
 pub mod config;
 pub mod core;
+pub mod cover;
 pub mod delays;
 pub mod desk_wiring;
 pub mod diag;

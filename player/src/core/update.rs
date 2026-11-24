@@ -672,6 +672,9 @@ pub fn update(state: &mut State, action: Action) -> Vec<Effect> {
                 Some(Facts::Lyrics(f)) => {
                     state.facts.entry(path.clone()).or_default().lyrics = Some(f)
                 }
+                Some(Facts::Cover(f)) => {
+                    state.facts.entry(path.clone()).or_default().cover = Some(f)
+                }
                 None => {}
             }
             let jobs = state.ready.entry(path).or_default();
@@ -1577,8 +1580,8 @@ pub enum Readiness {
     /// Not yet: some work for it is still to come.
     Waiting,
     /// Everything is in the caches: its analysis and waveforms (while the
-    /// tempo is on) and its lyrics, looked up and timed (where they are got
-    /// ready).
+    /// tempo is on), its lyrics, looked up and timed, and its cover taken
+    /// apart (where they are got ready).
     Done,
 }
 
@@ -1602,9 +1605,12 @@ pub fn readiness(state: &State, path: &Path) -> Readiness {
         Some(karaoke::SongLyrics::Pending) | None => false,
         Some(_) => true,
     };
-    let rhythm = state.prepared.1.is_none() || has(Job::Rhythm) || analysed;
-    let lyrics = !state.prepares_lyrics || has(Job::Lyrics) || settled;
-    if rhythm && lyrics {
+    let done = |job: &Job| match job {
+        Job::Rhythm => state.prepared.1.is_none() || has(Job::Rhythm) || analysed,
+        Job::Lyrics => has(Job::Lyrics) || settled,
+        Job::Cover => has(Job::Cover),
+    };
+    if state.preparing.iter().all(done) {
         Readiness::Done
     } else {
         Readiness::Waiting

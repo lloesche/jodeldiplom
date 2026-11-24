@@ -115,6 +115,12 @@ impl Data {
         self.0.join("lyrics")
     }
 
+    /// The covers taken apart, and which is each song's
+    /// ([`crate::cover::CoverStore`]).
+    pub fn covers(&self) -> PathBuf {
+        self.0.join("covers")
+    }
+
     /// The best scores sung.
     pub fn scores(&self) -> PathBuf {
         self.0.join("scores.txt")
@@ -126,7 +132,8 @@ const RECENT: &str = "recent-analyses.txt";
 
 /// Forgets what the player made and can make again (`--clean-cache`): the
 /// beat analyses (not the record `--diag` shows), the stems kept, the
-/// lyrics. The models stay. What it did, a line a folder.
+/// lyrics, the covers taken apart. The models stay. What it did, a line a
+/// folder.
 pub fn forget_cache(data: &Data) -> Vec<String> {
     let mut said = Vec::new();
     for (dir, what) in [
@@ -156,6 +163,12 @@ pub fn forget_cache(data: &Data) -> Vec<String> {
             dir.display()
         ));
     }
+    let covers = crate::cover::CoverStore::new(data.covers());
+    said.push(format!(
+        "Forgot {} files of covers taken apart in {}",
+        covers.forget(),
+        data.covers().display()
+    ));
     said
 }
 

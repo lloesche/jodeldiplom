@@ -62,6 +62,7 @@ pub fn run(args: &Args) -> Result<(), String> {
         }],
     );
     section("GPU (wgpu)", gpu(&settings.effective));
+    section("Covers taken apart (karaoke's background)", covers());
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_secs());
@@ -94,6 +95,62 @@ pub fn recent_lines(entries: &[String], now: u64) -> Vec<String> {
                 Some(at) => lines.push(ago(now.saturating_sub(at))),
                 None => lines.push(line.to_owned()),
             }
+        }
+    }
+    lines
+}
+
+/// Whether covers are taken apart on this machine: the two models'
+/// weights, whether they set up on the GPU, how long a cover of 1024 × 1024
+/// takes (the models, then the taking apart), the GPU memory they hold.
+fn covers() -> Vec<String> {
+    use crate::cover::{self, GpuSplitter};
+    use crate::setup::Lookup;
+    let data = crate::dirs::Data::current()
+        .unwrap_or_else(|| crate::dirs::Data::in_parent(std::path::Path::new(".")));
+    let places = crate::setup::Places::player(&data);
+    let found: Vec<std::path::PathBuf> = crate::setup::manifest()
+        .iter()
+        .filter_map(|need| match crate::setup::look(need, &places) {
+            Lookup::Checked(p) | Lookup::Unchecked(p) => Some(p),
+            Lookup::Missing => None,
+        })
+        .collect();
+    let Some(models) = crate::setup::Found::of(&found).and_then(|f| f.covers) else {
+        return vec![format!(
+            "the models are not here ({} and {}; setup gets them where there is a usable GPU): the background keeps its blur",
+            cover::DEPTH_FILE,
+            cover::MATTE_FILE
+        )];
+    };
+    let mut lines = vec![
+        format!("found: {}", models.depth.display()),
+        format!("found: {}", models.matte.display()),
+    ];
+    let splitter = GpuSplitter::new(models);
+    let image = crate::art::sample_cover(1024);
+    let started = std::time::Instant::now();
+    match splitter.parts(&image) {
+        Err(e) => lines.push(format!(
+            "runs here: no ({e}); the background keeps its blur"
+        )),
+        Ok(_) => {
+            let setup = started.elapsed();
+            let started = std::time::Instant::now();
+            let parts = splitter.parts(&image);
+            let models = started.elapsed();
+            let started = std::time::Instant::now();
+            if let Ok(parts) = parts {
+                let _ = cover::split(&image, &parts);
+            }
+            lines.push(format!(
+                "runs here: yes; set up and the first cover {} ms, then a cover {} ms on the GPU (depth and cut-out) and {} ms taking it apart; on the GPU {} MB between covers, at most {} MB while one is taken apart",
+                setup.as_millis(),
+                models.as_millis(),
+                started.elapsed().as_millis(),
+                splitter.gpu_bytes().0 >> 20,
+                splitter.gpu_bytes().1 >> 20
+            ));
         }
     }
     lines

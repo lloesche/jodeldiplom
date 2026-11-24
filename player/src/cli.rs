@@ -238,6 +238,7 @@ pub fn app_options(args: &Args) -> Result<AppOptions, String> {
             swept.lyrics(),
             swept.models(),
         ];
+        dirs.extend(crate::cover::CoverStore::dirs_in(&swept.covers()));
         dirs.extend(crate::dirs::settings_dir());
         for dir in dirs {
             durable::sweep(&dir, day);
@@ -298,14 +299,17 @@ pub fn models_ready(
     crate::setup::ready(&manifest, &places).ok_or((manifest, places))
 }
 
-/// Gives the app the models setup found (in [`crate::setup::manifest`]'s
-/// order: the speech model, the speech recogniser).
+/// Gives the app the models setup found (each known by its file:
+/// [`crate::setup::Found`]): the speech models to the lyrics, the covers'
+/// models to the covers' step.
 pub fn set_models(options: &mut AppOptions, paths: &[PathBuf]) {
-    let [speech, asr] = paths else {
+    let Some(found) = crate::setup::Found::of(paths) else {
         return;
     };
-    let models = crate::lyrics::Models::new(speech.clone(), asr.clone());
-    options.model = Some(speech.clone());
+    options.covers = found.covers.clone();
+    let (speech, asr) = (found.speech, found.asr);
+    let models = crate::lyrics::Models::new(speech.clone(), asr);
+    options.model = Some(speech);
     if let Some(lyrics) = &mut options.lyrics {
         lyrics.timer =
             Some(Arc::new(crate::lyrics::SpeechTimer::new(models))
@@ -357,6 +361,29 @@ mod tests {
 
     fn args(list: &[&str]) -> Result<Args, String> {
         parse(list.iter().map(|s| s.to_string()))
+    }
+
+    /// What setup's `ready` gives (every needed file's path, in the
+    /// manifest's order) sets the speech model, the timer and the covers'
+    /// models, with or without the covers' files.
+    #[test]
+    fn the_models_setup_found_reach_the_app() {
+        use crate::setup::{manifest_for, Found};
+        let dir = std::path::Path::new("/models");
+        for gpu in [true, false] {
+            let paths: Vec<PathBuf> = manifest_for(gpu)
+                .iter()
+                .map(|n| dir.join(&n.file))
+                .collect();
+            let mut options = AppOptions::new(PathBuf::from("."));
+            options.lyrics = Some(crate::lyrics::Options::new(false));
+            set_models(&mut options, &paths);
+            assert_eq!(options.model, Some(dir.join(crate::lyrics::MODEL_FILE)));
+            assert!(options.lyrics.as_ref().unwrap().timer.is_some());
+            assert_eq!(options.covers.is_some(), gpu);
+            let found = Found::of(&paths).unwrap();
+            assert_eq!(found.asr, dir.join(crate::lyrics::ASR_FILE));
+        }
     }
 
     #[test]

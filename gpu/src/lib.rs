@@ -37,12 +37,14 @@ mod asr;
 mod device;
 mod net;
 pub mod pace;
+mod packer;
 mod speech;
+pub mod vision;
 pub use asr::{GpuAsr, MAX_NEW, MAX_SECONDS};
-use device::adapter;
 pub use device::{card, chosen, gpu_name, setting_up, Chosen, Turn, Turned};
 pub use net::GpuNetwork;
 pub use speech::GpuSpeech;
+pub use vision::{GpuDepth, GpuMatte};
 
 use jodel_rhythm::stems::{self, Separator, BAND_BINS, DIM, STEMS};
 
@@ -146,12 +148,8 @@ struct Offsets {
 /// [input][output].
 fn pack_weights() -> Result<(Vec<f32>, Offsets), String> {
     let mut w = stems::weights();
-    let mut data: Vec<f32> = Vec::with_capacity(18_000_000);
-    let mut put = |values: Vec<f32>| -> u32 {
-        let at = data.len() as u32;
-        data.extend(values);
-        at
-    };
+    let mut data = packer::Packer::default();
+    let mut put = |values: Vec<f32>| -> u32 { data.push(&values) as u32 };
     let linear = |w: &mut jodel_rhythm::net::weights::Weights,
                   put: &mut dyn FnMut(Vec<f32>) -> u32,
                   name: &str,
@@ -160,13 +158,7 @@ fn pack_weights() -> Result<(Vec<f32>, Offsets), String> {
                   bias: bool|
      -> Result<Layer, String> {
         let raw = w.take(&format!("{name}.weight"), &[outputs, inputs])?;
-        let mut t = vec![0.0f32; raw.len()];
-        for o in 0..outputs {
-            for i in 0..inputs {
-                t[i * outputs + o] = raw[o * inputs + i];
-            }
-        }
-        let weight = put(t);
+        let weight = put(packer::transposed(&raw, outputs, inputs));
         let bias = if bias {
             put(w.take(&format!("{name}.bias"), &[outputs])?)
         } else {
@@ -279,7 +271,7 @@ fn pack_weights() -> Result<(Vec<f32>, Offsets), String> {
         return Err(format!("unused weights: {:?}", w.left()));
     }
     Ok((
-        data,
+        data.data,
         Offsets {
             split_norm,
             split,
@@ -653,6 +645,54 @@ pub struct GpuSeparator {
     inner: Turned<Mutex<Inner>>,
 }
 
+/// The kernels' source for the separator, the beat network, the speech
+/// model and the recogniser: their prelude (`bindings.wgsl`), the shared
+/// helpers (`common.wgsl`), the separator's kernels (`kernels.wgsl`), then
+/// `more`.
+pub(crate) fn kernels_source(more: &[&str]) -> String {
+    let mut parts = vec![
+        include_str!("bindings.wgsl"),
+        include_str!("common.wgsl"),
+        include_str!("kernels.wgsl"),
+    ];
+    parts.extend(more);
+    parts.join("\n")
+}
+
+/// Every kernel of `source` parses and validates, and Metal's and DirectX's
+/// writers take it (as wgpu would on a Mac and through DirectX 12), on any
+/// machine; each of `entries` is in both outputs.
+#[cfg(test)]
+pub(crate) fn check_source(
+    source: &str,
+    capabilities: naga::valid::Capabilities,
+    entries: &[&str],
+) {
+    let module = naga::front::wgsl::parse_str(source).unwrap_or_else(|e| panic!("{e}"));
+    let info = naga::valid::Validator::new(naga::valid::ValidationFlags::all(), capabilities)
+        .validate(&module)
+        .unwrap_or_else(|e| panic!("{e:?}"));
+    let (msl, _) = naga::back::msl::write_string(
+        &module,
+        &info,
+        &naga::back::msl::Options::default(),
+        &naga::back::msl::PipelineOptions::default(),
+    )
+    .unwrap_or_else(|e| panic!("{e}"));
+    let mut hlsl = String::new();
+    naga::back::hlsl::Writer::new(
+        &mut hlsl,
+        &naga::back::hlsl::Options::default(),
+        &naga::back::hlsl::PipelineOptions::default(),
+    )
+    .write(&module, &info, None)
+    .unwrap_or_else(|e| panic!("{e}"));
+    for e in entries {
+        assert!(msl.contains(e), "{e} in Metal");
+        assert!(hlsl.contains(e), "{e} in HLSL");
+    }
+}
+
 /// `values` as little-endian bytes.
 fn bytes(values: &[f32]) -> Vec<u8> {
     values.iter().flat_map(|v| v.to_le_bytes()).collect()
@@ -768,21 +808,11 @@ impl GpuSeparator {
 
     /// Sets up the separator on the best GPU.
     pub fn new() -> Result<GpuSeparator, String> {
-        let _turn = setting_up();
-        let adapter = adapter()?;
-        let info = adapter.get_info();
-        let limits = adapter.limits();
-        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-            label: Some("jodel-gpu"),
-            required_limits: limits.clone(),
-            ..Default::default()
-        }))
-        .map_err(|e| format!("{}: {e}", info.name))?;
-        let probe = device.clone();
-        let inner = guarded(&probe, || Inner::new(device, queue, &limits))
-            .map_err(|e| format!("{}: {e}", info.name))?;
+        let (inner, name) = crate::device::open("jodel-gpu", |device, queue, limits| {
+            Inner::new(device, queue, limits)
+        })?;
         Ok(GpuSeparator {
-            name: info.name,
+            name,
             inner: Turned::new(Mutex::new(inner)),
         })
     }
@@ -881,7 +911,7 @@ impl Inner {
         });
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("jodel-gpu kernels"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("kernels.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(kernels_source(&[]).into()),
         });
         let pipelines = Kernel::ALL
             .iter()
@@ -1282,5 +1312,26 @@ impl Separator for GpuSeparator {
             .lock()
             .map_err(|_| "the GPU separator failed before".to_owned())?
             .masks(frames, stft)
+    }
+}
+
+#[cfg(test)]
+mod shader_tests {
+    /// The separator's, the beat network's and the speech model's kernels
+    /// (with the shared prelude and helpers) validate and write for Metal
+    /// and DirectX.
+    #[test]
+    fn the_kernels_validate_and_write_for_metal_and_directx() {
+        for more in [
+            &[][..],
+            &[include_str!("net.wgsl")][..],
+            &[include_str!("speech.wgsl")][..],
+        ] {
+            super::check_source(
+                &super::kernels_source(more),
+                naga::valid::Capabilities::empty(),
+                &["matmul", "rmsnorm", "attention", "geglu"],
+            );
+        }
     }
 }

@@ -9,6 +9,7 @@ description = "The stem separator of jodel-rhythm on the GPU, through wgpu"
 [dependencies]
 jodel-rhythm = { path = "../rhythm" }
 jodel-lyrics = { path = "../lyrics" }
+jodel-tensors = { path = "../tensors" }
 pollster = "1.0.1"
 # Native backends only: no WebGPU or GLES.
 wgpu = { version = "30.0.2", default-features = false, features = ["std", "parking_lot", "dx12", "metal", "vulkan", "wgsl"] }

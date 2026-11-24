@@ -134,6 +134,9 @@ pub struct AppOptions {
     pub mover: Option<Arc<crate::mover::Mover>>,
     /// Where the engine separates stems (the real one: the GPU's).
     pub separator: SeparatorSource,
+    /// The covers' models, as setup found them ([`crate::setup::Found`]);
+    /// `None`: covers are not taken apart.
+    pub covers: Option<crate::cover::CoverModels>,
 }
 
 impl AppOptions {
@@ -164,6 +167,7 @@ impl AppOptions {
             data: None,
             mover: None,
             separator: gpu_separator,
+            covers: None,
         }
     }
 }
@@ -384,6 +388,10 @@ pub struct App {
     art_tx: Sender<(u64, Option<RgbImage>)>,
     art_rx: Receiver<(u64, Option<RgbImage>)>,
     next_art: u64,
+    /// The covers' step of the preparation ([`crate::cover`]), holding
+    /// the song playing's layers: none without a data folder or the
+    /// covers' models.
+    covers: Option<crate::cover::CoverWorker>,
     started: Instant,
     /// Where the session is kept, what was last saved there, and since
     /// when it has been out of date.
@@ -548,7 +556,23 @@ impl App {
         state.queues_dir = options.queues.clone();
         // There is always a lyrics worker (one without the web or a cache
         // where the options give none): the queue waits for it too.
-        state.prepares_lyrics = true;
+        state.preparing.push(core::Job::Lyrics);
+        // Covers are taken apart where there is a data folder to keep them.
+        let covers = options
+            .data
+            .as_ref()
+            .zip(options.covers.clone())
+            .map(|(data, models)| {
+                crate::cover::CoverWorker::start(
+                    data.covers(),
+                    models,
+                    tx.clone(),
+                    options.notify.clone(),
+                )
+            });
+        if covers.is_some() {
+            state.preparing.push(core::Job::Cover);
+        }
         state.karaoke.model = match &options.model {
             Some(path) if path.is_file() => core::karaoke::ModelState::Ready,
             Some(_) => core::karaoke::ModelState::Coming,
@@ -605,6 +629,7 @@ impl App {
             art_tx,
             art_rx,
             next_art: 0,
+            covers,
             started: Instant::now(),
             session: options.session.clone(),
             session_saved: restored.clone(),
@@ -783,6 +808,9 @@ impl App {
         };
         if let Action::Engine(Event::TrackStarted(start)) = &action {
             self.cover_for(start.info.cover.as_ref());
+            if let Some(covers) = &self.covers {
+                covers.want(&start.info);
+            }
         }
         if let Action::Engine(
             Event::Position(_)
@@ -1341,6 +1369,15 @@ impl App {
         self.art.as_ref()
     }
 
+    /// The cover of the track heard taken apart (subject, plate, depth,
+    /// rim, palette), once ready; `None` where it has no cover or this
+    /// machine cannot take covers apart.
+    pub fn cover_layers(&self) -> Option<crate::cover::Layers> {
+        self.covers
+            .as_ref()
+            .and_then(crate::cover::CoverWorker::current)
+    }
+
     /// Sets the cover directly (tests and screenshots).
     pub fn set_art(&mut self, image: RgbImage) {
         self.next_art += 1;
@@ -1538,6 +1575,9 @@ impl App {
             Effect::WantRhythm(paths, recipe) => self.rhythm.want(paths, recipe),
             Effect::WantLyrics(paths) => self.lyrics.want(paths),
             Effect::Prepare(paths, recipe) => {
+                if let Some(covers) = &self.covers {
+                    covers.prepare(paths.clone());
+                }
                 self.lyrics.prepare(paths.clone());
                 self.rhythm.prepare(paths, recipe);
             }

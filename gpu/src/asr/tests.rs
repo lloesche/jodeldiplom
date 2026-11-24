@@ -14,34 +14,14 @@ mod common;
 /// them (as wgpu would, on a Mac and through DirectX 12).
 #[test]
 fn the_kernels_validate_and_write_for_metal_and_directx() {
-    let module = naga::front::wgsl::parse_str(&source()).unwrap_or_else(|e| panic!("{e}"));
-    let info = naga::valid::Validator::new(
-        naga::valid::ValidationFlags::all(),
-        // unpack2x16float (the scales and offsets); no f16 arithmetic, no
-        // subgroups.
+    // unpack2x16float (the scales and offsets); no f16 arithmetic, no
+    // subgroups.
+    let entries: Vec<&str> = Kernel::ALL.iter().map(|k| k.entry()).collect();
+    crate::check_source(
+        &source(),
         naga::valid::Capabilities::SHADER_FLOAT16_IN_FLOAT32,
-    )
-    .validate(&module)
-    .unwrap_or_else(|e| panic!("{e:?}"));
-    let (msl, _) = naga::back::msl::write_string(
-        &module,
-        &info,
-        &naga::back::msl::Options::default(),
-        &naga::back::msl::PipelineOptions::default(),
-    )
-    .unwrap_or_else(|e| panic!("{e}"));
-    let mut hlsl = String::new();
-    naga::back::hlsl::Writer::new(
-        &mut hlsl,
-        &naga::back::hlsl::Options::default(),
-        &naga::back::hlsl::PipelineOptions::default(),
-    )
-    .write(&module, &info, None)
-    .unwrap_or_else(|e| panic!("{e}"));
-    for k in Kernel::ALL {
-        assert!(msl.contains(k.entry()), "{} in Metal", k.entry());
-        assert!(hlsl.contains(k.entry()), "{} in HLSL", k.entry());
-    }
+        &entries,
+    );
 }
 
 /// A fused step gives the unfused step's logits but for rounding (the

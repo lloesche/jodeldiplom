@@ -491,7 +491,7 @@ fn row_line(left: Vec<Span<'static>>, right: Vec<Span<'static>>, w: usize) -> Li
 ///   them from the voice.
 fn status_spans(state: &State, path: &std::path::Path) -> Vec<Span<'static>> {
     use crate::core::karaoke::SongLyrics;
-    use crate::core::{LyricsFacts, QueueFacts, Rhythm, RhythmFacts};
+    use crate::core::{Job, LyricsFacts, QueueFacts, Rhythm, RhythmFacts};
     let mut facts = state.facts.get(path).cloned().unwrap_or_default();
     // Known here already (the songs wanted now), though not told yet.
     if let Some(Rhythm::Ready(r)) = state.rhythm.get(path) {
@@ -504,6 +504,7 @@ fn status_spans(state: &State, path: &std::path::Path) -> Vec<Span<'static>> {
         stems,
         tempo,
         lyrics,
+        cover,
     } = facts;
     // Heard by machine learning (no trusted source): lit in orange.
     let known = state.karaoke.lyrics.get(path);
@@ -511,21 +512,35 @@ fn status_spans(state: &State, path: &std::path::Path) -> Vec<Span<'static>> {
     let lyrics = heard
         || matches!(lyrics, Some(LyricsFacts::Timed | LyricsFacts::Untimed))
         || matches!(known, Some(SongLyrics::Found { .. }));
-    let has = [
-        key == Some(true),
-        stems == Some(true),
-        tempo == Some(true),
-        lyrics,
-    ];
+    // Each job's icons, lit when it found them (the lyrics heard by
+    // machine learning in orange): the analysis's key, stems and tempo, the
+    // lyrics, the cover taken apart; for the jobs the queue is got ready
+    // by, in that order.
+    let icons = |job: &Job| -> Vec<(&'static str, bool, bool)> {
+        match job {
+            Job::Rhythm => vec![
+                ("♯", key == Some(true), false),
+                ("▥", stems == Some(true), false),
+                ("♩", tempo == Some(true), false),
+            ],
+            Job::Lyrics => vec![("¶", lyrics, heard)],
+            Job::Cover => vec![("◐", cover == Some(true), false)],
+        }
+    };
     let mut out = Vec::new();
-    for (k, (icon, has)) in ["♯", "▥", "♩", "¶"].into_iter().zip(has).enumerate() {
-        let color = match (has, k == 3 && heard) {
-            (true, true) => WARN,
-            (true, false) => ACCENT,
-            (false, _) => DIM,
-        };
-        out.push(Span::styled(icon, Style::new().fg(color)));
-        out.push(Span::raw(" "));
+    for job in [Job::Rhythm, Job::Lyrics, Job::Cover] {
+        if !state.preparing.contains(&job) {
+            continue;
+        }
+        for (icon, has, warn) in icons(&job) {
+            let color = match (has, warn) {
+                (true, true) => WARN,
+                (true, false) => ACCENT,
+                (false, _) => DIM,
+            };
+            out.push(Span::styled(icon, Style::new().fg(color)));
+            out.push(Span::raw(" "));
+        }
     }
     out.push(Span::raw(" "));
     out

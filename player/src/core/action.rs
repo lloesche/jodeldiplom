@@ -16,6 +16,9 @@ pub enum Job {
     Rhythm,
     /// Its lyrics looked up, or their words timed.
     Lyrics,
+    /// Its cover taken apart (subject, plate, depth) for the karaoke
+    /// background ([`crate::cover`]).
+    Cover,
 }
 
 /// What a file's analysis found, as the queue's icons show it.
@@ -95,6 +98,9 @@ pub enum Facts {
     Rhythm(RhythmFacts),
     /// The lyrics'.
     Lyrics(LyricsFacts),
+    /// The cover's: whether it was taken apart (a song without a cover,
+    /// or a machine that cannot, has none).
+    Cover(bool),
 }
 
 /// Every input to the UI core.

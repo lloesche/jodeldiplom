@@ -118,6 +118,8 @@ pub struct QueueFacts {
     pub tempo: Option<bool>,
     /// Its lyrics, once settled.
     pub lyrics: Option<LyricsFacts>,
+    /// Its cover, taken apart.
+    pub cover: Option<bool>,
 }
 
 impl QueueFacts {
@@ -702,8 +704,10 @@ pub struct State {
     pub ready: HashMap<PathBuf, Vec<Job>>,
     /// What each file's finished work found, for the queue's icons.
     pub facts: HashMap<PathBuf, QueueFacts>,
-    /// Whether lyrics are got ready too (there is a lyrics worker).
-    pub prepares_lyrics: bool,
+    /// The work each file of the queue is got ready by (a worker for
+    /// each): the analysis always, the lyrics and the cover where the app
+    /// has their workers. A file is ready when all of it is done.
+    pub preparing: Vec<Job>,
     /// The GPU for stems.
     pub gpu: Gpu,
     /// What the engine and the mixer were last given of the stems
@@ -832,7 +836,7 @@ impl State {
             working: HashMap::new(),
             ready: HashMap::new(),
             facts: HashMap::new(),
-            prepares_lyrics: false,
+            preparing: vec![Job::Rhythm],
             rhythm_recipe: RhythmRecipe::default(),
             gpu: Gpu::Looking,
             stems_sent: stems::StemsSent::default(),

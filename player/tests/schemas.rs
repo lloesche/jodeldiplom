@@ -272,6 +272,82 @@ fn delay_files_are_pinned_and_every_version_is_read() {
     }
 }
 
+fn small_layers() -> jodeldiplom::cover::CoverLayers {
+    use jodeldiplom::cover::{CoverLayers, NearMap, Swatch};
+    let near = |v: u16| NearMap {
+        width: 2,
+        height: 2,
+        near: vec![0, v, 30_000, 65_535],
+    };
+    CoverLayers {
+        plate: image::RgbImage::from_fn(4, 4, |x, y| image::Rgb([x as u8 * 60, y as u8 * 60, 9])),
+        subject: Some(image::RgbaImage::from_fn(4, 4, |x, y| {
+            image::Rgba([200, 10, 20, (x * y * 28) as u8])
+        })),
+        depth: near(1_000),
+        plate_depth: near(500),
+        outline: image::GrayImage::from_fn(4, 4, |x, _| image::Luma([x as u8 * 80])),
+        palette: vec![
+            Swatch {
+                rgb: [200, 10, 20],
+                share: 0.6,
+            },
+            Swatch {
+                rgb: [0, 60, 9],
+                share: 0.4,
+            },
+        ],
+    }
+}
+
+#[test]
+fn cover_files_are_pinned() {
+    use jodeldiplom::cover::{from_bytes, to_bytes, CoverStore, Perceptual};
+    // The layout pinned, whatever made it: a fixed maker here.
+    let layers = jodeldiplom::cover::Kept {
+        made: "a-maker".into(),
+        thumb: image::RgbImage::from_fn(2, 2, |x, y| image::Rgb([x as u8, y as u8, 7])),
+        layers: small_layers(),
+    };
+    let kept = pinned(&cache::COVER_LAYERS, "bin", &to_bytes(&layers));
+    assert_eq!(from_bytes(&kept), Some(layers));
+    // A song's entry and its album's covers, as the store writes them
+    // (fixed hashes: the files' layout is pinned, not the hashing).
+    let dir = temp_dir("covers");
+    let store = CoverStore::new(&dir);
+    let seen = Perceptual {
+        bits: 0x3626_c7de_a7b6_c100,
+        mean: [115, 103, 158],
+    };
+    store
+        .link("0123456789abcdef", Some("fc0d153cdfbefb992e61"))
+        .unwrap();
+    store
+        .add_to_album("a0123456789abcdef", "fc0d153cdfbefb992e61", &seen)
+        .unwrap();
+    let read = |p: &str| std::fs::read(dir.join(p)).unwrap();
+    let kept = pinned(
+        &cache::COVER_SONG,
+        "txt",
+        &read("songs/0123456789abcdef.txt"),
+    );
+    std::fs::write(dir.join("songs/0123456789abcdef.txt"), &kept).unwrap();
+    assert_eq!(
+        store.linked("0123456789abcdef"),
+        Some(Some("fc0d153cdfbefb992e61".to_owned()))
+    );
+    let kept = pinned(
+        &cache::COVER_ALBUM,
+        "txt",
+        &read("albums/a0123456789abcdef.txt"),
+    );
+    std::fs::write(dir.join("albums/a0123456789abcdef.txt"), &kept).unwrap();
+    assert_eq!(
+        store.album("a0123456789abcdef"),
+        vec![("fc0d153cdfbefb992e61".to_owned(), seen)]
+    );
+}
+
 /// Every version of every schema keeps its sample.
 #[test]
 fn every_version_keeps_its_sample() {

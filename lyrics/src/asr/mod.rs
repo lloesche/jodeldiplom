@@ -32,7 +32,8 @@ pub mod text;
 
 use std::path::Path;
 
-use crate::speech::{dot, gelu, matmul, par_rows, SafeTensors};
+use crate::speech::{dot, gelu, matmul, par_rows};
+use jodel_tensors::SafeTensors;
 
 /// Channels of the encoder's convolutions.
 pub const CONV: usize = 480;

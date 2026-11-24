@@ -11,6 +11,9 @@
 //! | [`GRID`] | a beat grid fixed by hand (`grids/*.txt`) |
 //! | [`SCORES`] | the best scores sung, a song and a level each (`scores.txt`) |
 //! | [`DELAYS`] | the singer's delays, an output and a microphone each (`delays.txt`, beside the settings) |
+//! | [`COVER_LAYERS`] | a cover taken apart (`covers/*.layers`, binary: `JDLC` and the version byte) |
+//! | [`COVER_SONG`] | which cover taken apart is a song's (`covers/songs/*.txt`) |
+//! | [`COVER_ALBUM`] | an album's covers taken apart, with their perceptual hashes (`covers/albums/*.txt`) |
 //!
 //! A text file starts with a header naming its schema and the version of
 //! it the file was written in, and the player that wrote it (for the
@@ -36,7 +39,9 @@
 //! [`jodel_rhythm::VERSION`] (in the name of its file, so another one is
 //! made afresh), timed lyrics on their aligner (named in the file, and a
 //! timing by another than the one the player times with now is timed
-//! again: `crate::lyrics::WordTimer::maker`). That is apart from the
+//! again: `crate::lyrics::WordTimer::maker`), a cover taken apart on its
+//! models and the way it is taken apart (`crate::cover::VERSION`, in the
+//! file, compared when it is read). That is apart from the
 //! schema: a better aligner raises its own version
 //! (`jodel_lyrics::VERSION`, `jodel_lyrics::speech::maker`), not the schema's.
 
@@ -102,8 +107,29 @@ pub const DELAYS: Schema = Schema {
     version: 2,
 };
 
+/// A cover taken apart: what made it and its palette, then its plate,
+/// subject, depth, plate's depth and rim as PNGs (binary, versioned by its
+/// own byte).
+pub const COVER_LAYERS: Schema = Schema {
+    name: "cover-layers",
+    version: 1,
+};
+
+/// A song's cover: which cover taken apart is its (or none).
+pub const COVER_SONG: Schema = Schema {
+    name: "cover-song",
+    version: 1,
+};
+
+/// An album's covers taken apart: each one's pixels' hash and perceptual
+/// hash.
+pub const COVER_ALBUM: Schema = Schema {
+    name: "cover-album",
+    version: 1,
+};
+
 /// Every schema.
-pub const ALL: [Schema; 8] = [
+pub const ALL: [Schema; 11] = [
     ANALYSIS,
     WAVEFORM,
     LYRICS_TEXT,
@@ -112,6 +138,9 @@ pub const ALL: [Schema; 8] = [
     GRID,
     SCORES,
     DELAYS,
+    COVER_LAYERS,
+    COVER_SONG,
+    COVER_ALBUM,
 ];
 
 /// The first word of a header.

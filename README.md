@@ -113,7 +113,8 @@ its `make.py` with FFmpeg) and two PCM FLAC files (`pcm`, made by its
 | `jodel-output` | [output](output) | bit-perfect exclusive PCM output (WASAPI, Core Audio HAL, ALSA hw), the mixer, microphone input with echo cancellation and singer isolation |
 | `jodel-playback` | [playback](playback) | the playback engine: files to the device, the rate policy, the resampler, gapless track changes, seeks, jumps, stems, transitions, events timed to what is heard |
 | `jodel-rhythm` | [rhythm](rhythm) | beat, downbeat, tempo, key and pitch analysis, and the stem separator on the CPU, in plain Rust |
-| `jodel-gpu` | [gpu](gpu) | the stem separator, the beat network and the speech recogniser on the GPU, through `wgpu` |
+| `jodel-tensors` | [tensors](tensors) | a `.safetensors` checkpoint's tensors as f32, for the speech, depth and cut-out models |
+| `jodel-gpu` | [gpu](gpu) | the stem separator, the beat network, the speech recogniser and the covers' depth and cut-out models on the GPU, through `wgpu` |
 | `jodel-lyrics` | [lyrics](lyrics) | lyrics for karaoke: LRC in and out, tokens for a speech model, forced alignment of words, the speech recogniser and its 4-bit packing |
 | `jodeldiplom` | [player](player) | the player: the window on its UI core and widgets, the browser, queue, Transition tab, karaoke, setup |
 
@@ -139,4 +140,8 @@ Two speech models are not in the repository; the player's setup downloads
 them from Hugging Face and checks their SHA-256s: `facebook/wav2vec2-base-960h`
 (Apache 2.0) for the word timing, and `Qwen/Qwen3-ASR-0.6B` (at a fixed
 revision) for the speech recogniser, which setup packs at 4 bits into
-`qwen3-asr-0.6b-q4.jdlasr` in the data folder.
+`qwen3-asr-0.6b-q4.jdlasr` in the data folder. Nor are the two models that
+take covers apart for karaoke's background, downloaded the same way at fixed
+revisions: `depth-anything/DA3-SMALL` (Depth Anything 3 Small, Apache 2.0)
+as `da3-small.safetensors` and `PramaLLC/BEN2` (BEN2 Base, MIT) as
+`ben2-base.safetensors`.

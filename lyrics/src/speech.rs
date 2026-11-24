@@ -28,8 +28,8 @@
 use std::path::Path;
 
 use crate::ctc::{Acoustic, Emissions};
-use crate::json::Json;
 use crate::{Maker, VOCALS_RATE};
+use jodel_tensors::SafeTensors;
 
 /// Frames of the model a second (one every 320 samples).
 pub const FRAME_SECONDS: f64 = 0.02;
@@ -54,113 +54,6 @@ const POS_KERNEL: usize = 128;
 const POS_GROUPS: usize = 16;
 const TOKENS: usize = 32;
 const EPS: f32 = 1e-5;
-
-/// A `.safetensors` file's f32 tensors.
-pub struct SafeTensors {
-    bytes: Vec<u8>,
-    header: Json,
-    data_start: usize,
-}
-
-impl SafeTensors {
-    /// Reads `path`.
-    pub fn open(path: &Path) -> Result<SafeTensors, String> {
-        let bytes = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
-        SafeTensors::parse(bytes)
-    }
-
-    /// The tensors in `bytes`.
-    pub fn parse(bytes: Vec<u8>) -> Result<SafeTensors, String> {
-        let len = bytes
-            .get(..8)
-            .map(|b| u64::from_le_bytes(b.try_into().unwrap()) as usize)
-            .ok_or("not a safetensors file")?;
-        let text = bytes
-            .get(8..8 + len)
-            .and_then(|h| std::str::from_utf8(h).ok())
-            .ok_or("a broken safetensors header")?;
-        let header = Json::parse(text).ok_or("a broken safetensors header")?;
-        Ok(SafeTensors {
-            data_start: 8 + len,
-            header,
-            bytes,
-        })
-    }
-
-    /// Tensor `name` with `shape`, as f32 (stored as f32, bf16 or f16).
-    pub fn get(&self, name: &str, shape: &[usize]) -> Result<Vec<f32>, String> {
-        let t = self.header.get(name).ok_or(format!("no tensor {name}"))?;
-        let dtype = t.get("dtype").and_then(Json::as_str).unwrap_or("");
-        let size = match dtype {
-            "F32" => 4,
-            "BF16" | "F16" => 2,
-            _ => return Err(format!("{name} is {dtype}, not f32, bf16 or f16")),
-        };
-        let got: Vec<usize> = t
-            .get("shape")
-            .and_then(Json::as_array)
-            .map(|a| {
-                a.iter()
-                    .filter_map(|d| d.as_f64().map(|d| d as usize))
-                    .collect()
-            })
-            .unwrap_or_default();
-        if got != shape {
-            return Err(format!("{name} is {got:?}, not {shape:?}"));
-        }
-        let offsets: Vec<usize> = t
-            .get("data_offsets")
-            .and_then(Json::as_array)
-            .map(|a| {
-                a.iter()
-                    .filter_map(|d| d.as_f64().map(|d| d as usize))
-                    .collect()
-            })
-            .unwrap_or_default();
-        let [from, to] = offsets[..] else {
-            return Err(format!("{name} has no data"));
-        };
-        let raw = self
-            .bytes
-            .get(self.data_start + from..self.data_start + to)
-            .ok_or(format!("{name} is past the file's end"))?;
-        if raw.len() != size * shape.iter().product::<usize>() {
-            return Err(format!("{name} has the wrong length"));
-        }
-        Ok(match dtype {
-            "F32" => raw
-                .chunks_exact(4)
-                .map(|b| f32::from_le_bytes(b.try_into().unwrap()))
-                .collect(),
-            "BF16" => raw
-                .chunks_exact(2)
-                .map(|b| f32::from_bits(u32::from(u16::from_le_bytes([b[0], b[1]])) << 16))
-                .collect(),
-            _ => raw
-                .chunks_exact(2)
-                .map(|b| f16_to_f32(u16::from_le_bytes([b[0], b[1]])))
-                .collect(),
-        })
-    }
-}
-
-/// An IEEE half-precision number as f32.
-fn f16_to_f32(h: u16) -> f32 {
-    let sign = u32::from(h >> 15) << 31;
-    let exp = u32::from((h >> 10) & 0x1f);
-    let frac = u32::from(h & 0x3ff);
-    let bits = match (exp, frac) {
-        (0, 0) => sign,
-        (0, f) => {
-            // Subnormal: normalise.
-            let shift = f.leading_zeros() - 21;
-            sign | ((113 - shift) << 23) | ((f << (shift + 1)) & 0x3ff) << 13
-        }
-        (31, f) => sign | 0x7f80_0000 | (f << 13),
-        (e, f) => sign | ((e + 112) << 23) | (f << 13),
-    };
-    f32::from_bits(bits)
-}
 
 /// A linear layer, its weight transposed to `[input][output]`.
 struct Linear {

@@ -9,3 +9,5 @@ description = "Lyrics for karaoke: LRC text in and out, tokens for a speech mode
 [dependencies]
 # Every file written: whole or not at all, made durable.
 durable = { path = "../durable" }
+# The checkpoints read as published.
+jodel-tensors = { path = "../tensors" }

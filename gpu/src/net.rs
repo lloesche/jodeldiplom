@@ -20,9 +20,7 @@ use jodel_rhythm::net::mel::BANDS;
 use jodel_rhythm::net::weights::Weights;
 use jodel_rhythm::net::{built_in_weights, NetRunner, PIECE_FRAMES};
 
-use super::{
-    adapter, bytes, guarded, rotary_table, setting_up, spread, Turned, PARAM_SIZE, PARAM_STRIDE,
-};
+use super::{bytes, guarded, rotary_table, spread, Turned, PARAM_SIZE, PARAM_STRIDE};
 
 /// The front end's channels after the stem, and the transformer's width.
 const STEM: usize = 32;
@@ -608,21 +606,11 @@ impl GpuNetwork {
 
     /// Sets the network up on the best GPU.
     pub fn new() -> Result<GpuNetwork, String> {
-        let _turn = setting_up();
-        let adapter = adapter()?;
-        let info = adapter.get_info();
-        let limits = adapter.limits();
-        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-            label: Some("jodel-gpu network"),
-            required_limits: limits.clone(),
-            ..Default::default()
-        }))
-        .map_err(|e| format!("{}: {e}", info.name))?;
-        let probe = device.clone();
-        let inner = guarded(&probe, || Inner::new(device, queue, &limits))
-            .map_err(|e| format!("{}: {e}", info.name))?;
+        let (inner, name) = crate::device::open("jodel-gpu network", |device, queue, limits| {
+            Inner::new(device, queue, limits)
+        })?;
         Ok(GpuNetwork {
-            name: info.name,
+            name,
             inner: Turned::new(Mutex::new(inner)),
         })
     }
@@ -767,11 +755,7 @@ impl Inner {
             bind_group_layouts: &[Some(&layout)],
             ..Default::default()
         });
-        let source = format!(
-            "{}\n{}",
-            include_str!("kernels.wgsl"),
-            include_str!("net.wgsl")
-        );
+        let source = crate::kernels_source(&[include_str!("net.wgsl")]);
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("jodel-gpu network kernels"),
             source: wgpu::ShaderSource::Wgsl(source.into()),

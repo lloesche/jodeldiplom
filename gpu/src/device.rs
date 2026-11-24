@@ -155,9 +155,33 @@ fn choose() -> Chosen {
 
 /// The adapter every device here comes from ([`chosen`]). Only in a turn
 /// ([`setting_up`]), held until the device is set up.
-pub(crate) fn adapter() -> Result<wgpu::Adapter, String> {
+fn adapter() -> Result<wgpu::Adapter, String> {
     debug_assert!(TURNS.get() > 0, "the GPU set up outside a turn");
     chosen().adapter.clone()
+}
+
+/// A device of its own on the chosen adapter ([`chosen`]), with all of
+/// the adapter's limits, labelled `label`, and what `make` sets up on it,
+/// all in one turn ([`setting_up`]) and inside error scopes (a failure on
+/// the device is an `Err`); with the GPU's name. Errors name the GPU.
+pub(crate) fn open<T>(
+    label: &'static str,
+    make: impl FnOnce(wgpu::Device, wgpu::Queue, &wgpu::Limits) -> Result<T, String>,
+) -> Result<(T, String), String> {
+    let _turn = setting_up();
+    let adapter = adapter()?;
+    let info = adapter.get_info();
+    let limits = adapter.limits();
+    let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+        label: Some(label),
+        required_limits: limits.clone(),
+        ..Default::default()
+    }))
+    .map_err(|e| format!("{}: {e}", info.name))?;
+    let probe = device.clone();
+    let made = super::guarded(&probe, || make(device, queue, &limits))
+        .map_err(|e| format!("{}: {e}", info.name))?;
+    Ok((made, info.name))
 }
 
 /// The name of the GPU the separator would use, without setting it up;
