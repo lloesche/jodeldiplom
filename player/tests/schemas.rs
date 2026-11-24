@@ -16,7 +16,7 @@ use jodel_rhythm::waveform::{Lane, Waveform};
 use jodel_rhythm::{Analysis, CandidateReport, Method, Region};
 use jodeldiplom::cache::{self, Schema};
 use jodeldiplom::core::grid::Grid;
-use jodeldiplom::lyrics::Cache;
+use jodeldiplom::lyrics::store::{Cache, Kept};
 use jodeldiplom::{grids, rhythm};
 
 /// The sample of `schema`'s version `version`.
@@ -153,14 +153,24 @@ fn lyrics_files_are_pinned() {
     let dir = temp_dir("lyrics");
     let c = Cache::new(&dir);
     let read = |name: &str| std::fs::read(dir.join(name)).unwrap();
-    // As found: its words only (the player keeps no times that came with
-    // a text).
-    let found = Lyrics::parse_text("[00:01.00]One line\n[00:03.50]Two\n", Source::Lrclib);
+    // As found: its words, and when the source synced its lines (no line
+    // or word times of their own).
+    let found = Lyrics::parse_text(
+        "[00:01.00]One line\n[00:03.50]Two\n[00:05.00]\nThree\n",
+        Source::Lrclib,
+    );
     c.store_text("k", &found).unwrap();
     let kept = pinned(&cache::LYRICS_TEXT, "lrc", &read("k.lrc"));
     let lines = |l: &Lyrics| -> Vec<String> { l.lines.iter().map(|l| l.text()).collect() };
     std::fs::write(dir.join("k.lrc"), &kept).unwrap();
-    assert_eq!(lines(&c.text("k").unwrap()), ["One line", "Two"]);
+    let text = |c: &Cache| match c.text("k") {
+        Kept::Current(l) => l,
+        other => panic!("not read: {other:?}"),
+    };
+    let back = text(&c);
+    assert_eq!(lines(&back), ["One line", "Two", "", "Three"]);
+    assert_eq!(back.lines, found.lines);
+    assert!(back.lines.iter().all(|l| l.time.is_none()));
     // None found.
     c.store_none("n", &Found::Instrumental, 1_700_000_000)
         .unwrap();
@@ -176,17 +186,21 @@ fn lyrics_files_are_pinned() {
         Source::Lrclib,
     );
     timed.timing.by = Some(jodel_lyrics::Maker::new("ctc:test", 2));
+    // When the source synced its lines is the text's, not kept with it.
+    timed.lines[0].synced = found.lines[0].synced;
     timed.lines[0].words[0].letters = vec![0.0, 0.1, 0.3];
     timed.lines[0].words[1].letters = vec![0.0, 0.04, 0.2, 0.5];
     c.store_timed("t", &timed).unwrap();
     let kept = pinned(&cache::LYRICS_TIMED, "lrc", &read("t.timed.lrc"));
     std::fs::write(dir.join("t.timed.lrc"), &kept).unwrap();
     let back = c.timed("t").unwrap();
+    timed.lines[0].synced = None;
     assert_eq!(back.to_lrc(), timed.to_lrc());
     assert_eq!(back.lines[0].words[1].letters.len(), 4);
+    assert_eq!(back.lines[0].synced, None);
     if cache::LYRICS_TEXT.version == 1 {
         std::fs::write(dir.join("k.lrc"), headerless(&read("k.lrc"))).unwrap();
-        assert_eq!(lines(&c.text("k").unwrap()), ["One line", "Two"]);
+        assert_eq!(lines(&text(&c)), ["One line", "Two"]);
     }
     let _ = std::fs::remove_dir_all(&dir);
 }

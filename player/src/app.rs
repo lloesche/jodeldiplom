@@ -121,7 +121,7 @@ pub struct AppOptions {
     /// the files' tags and `.lrc` files only, nothing cached or fetched.
     pub lyrics: Option<crate::lyrics::Options>,
     /// The speech model for the word timing, where it is or is fetched to
-    /// ([`crate::lyrics::Models`]); `None`: nowhere, the words shown untimed.
+    /// ([`crate::lyrics::models::Models`]); `None`: nowhere, the words shown untimed.
     pub model: Option<PathBuf>,
     /// How the microphone is opened (the real ones: [`open_mic`]).
     pub mic: MicOpener,

@@ -309,12 +309,11 @@ pub fn set_models(options: &mut AppOptions, paths: &[PathBuf]) {
     };
     options.covers = found.covers.clone();
     let (speech, asr) = (found.speech, found.asr);
-    let models = crate::lyrics::Models::new(speech.clone(), asr);
+    let models = crate::lyrics::models::Models::new(speech.clone(), asr);
     options.model = Some(speech);
     if let Some(lyrics) = &mut options.lyrics {
-        lyrics.timer =
-            Some(Arc::new(crate::lyrics::SpeechTimer::new(models))
-                as Arc<dyn crate::lyrics::WordTimer>);
+        lyrics.timer = Some(Arc::new(crate::lyrics::timer::SpeechTimer::new(models))
+            as Arc<dyn crate::lyrics::WordTimer>);
     }
 }
 
@@ -379,11 +378,14 @@ mod tests {
             let mut options = AppOptions::new(PathBuf::from("."));
             options.lyrics = Some(crate::lyrics::Options::new(false));
             set_models(&mut options, &paths);
-            assert_eq!(options.model, Some(dir.join(crate::lyrics::MODEL_FILE)));
+            assert_eq!(
+                options.model,
+                Some(dir.join(crate::lyrics::models::MODEL_FILE))
+            );
             assert!(options.lyrics.as_ref().unwrap().timer.is_some());
             assert_eq!(options.covers.is_some(), gpu);
             let found = Found::of(&paths).unwrap();
-            assert_eq!(found.asr, dir.join(crate::lyrics::ASR_FILE));
+            assert_eq!(found.asr, dir.join(crate::lyrics::models::ASR_FILE));
         }
     }
 

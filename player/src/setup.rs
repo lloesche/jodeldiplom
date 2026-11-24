@@ -3,8 +3,8 @@
 //! Most of what the player needs is inside its executable (the beat and key
 //! networks, the stem separator, the singer's isolator, the fonts). Four
 //! models are too big for it: the speech model that times karaoke's words
-//! ([`crate::lyrics::MODEL_FILE`]), the speech recogniser that checks
-//! fetched lyrics belong to the song ([`crate::lyrics::ASR_FILE`]), and the
+//! ([`crate::lyrics::models::MODEL_FILE`]), the speech recogniser that checks
+//! fetched lyrics belong to the song ([`crate::lyrics::models::ASR_FILE`]), and the
 //! depth and cut-out models that take covers apart for karaoke's background
 //! ([`crate::cover::DEPTH_FILE`], [`crate::cover::MATTE_FILE`]). Their
 //! names, lengths and SHA-256s are built in ([`manifest`]).
@@ -32,7 +32,8 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant, UNIX_EPOCH};
 
 use crate::browser::Notify;
-use crate::lyrics::{self, Sha256};
+use crate::download::Sha256;
+use crate::lyrics::models;
 
 /// A file downloaded as it is, checked against its length and SHA-256.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -96,9 +97,9 @@ pub fn manifest() -> Vec<Need> {
 /// paths setup gives in the manifest's order).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Found {
-    /// The word-timing model ([`lyrics::MODEL_FILE`]).
+    /// The word-timing model ([`models::MODEL_FILE`]).
     pub speech: PathBuf,
-    /// The speech recogniser ([`lyrics::ASR_FILE`]).
+    /// The speech recogniser ([`models::ASR_FILE`]).
     pub asr: PathBuf,
     /// The covers' depth and cut-out models, where the machine needs them.
     pub covers: Option<crate::cover::CoverModels>,
@@ -122,8 +123,8 @@ impl Found {
             _ => None,
         };
         Some(Found {
-            speech: named(lyrics::MODEL_FILE)?,
-            asr: named(lyrics::ASR_FILE)?,
+            speech: named(models::MODEL_FILE)?,
+            asr: named(models::ASR_FILE)?,
             covers,
         })
     }
@@ -131,11 +132,11 @@ impl Found {
 
 /// [`manifest`] for a machine with a usable GPU (`gpu`) or without.
 pub fn manifest_for(gpu: bool) -> Vec<Need> {
-    let asr_parts = lyrics::ASR_PARTS
+    let asr_parts = models::ASR_PARTS
         .iter()
         .map(|&(name, bytes, sha)| Part {
             name: name.to_owned(),
-            url: format!("{}/{name}", lyrics::ASR_BASE),
+            url: format!("{}/{name}", models::ASR_BASE),
             bytes,
             sha256: sha.to_owned(),
             title: match name {
@@ -148,22 +149,22 @@ pub fn manifest_for(gpu: bool) -> Vec<Need> {
         .collect();
     let mut needs = vec![
         Need {
-            file: lyrics::MODEL_FILE.to_owned(),
-            bytes: lyrics::MODEL_BYTES,
-            sha256: lyrics::MODEL_SHA256.to_owned(),
+            file: models::MODEL_FILE.to_owned(),
+            bytes: models::MODEL_BYTES,
+            sha256: models::MODEL_SHA256.to_owned(),
             title: "the word-timing model".to_owned(),
             credit: "wav2vec2 by Meta".to_owned(),
             why: "It hears where each sung word falls, so karaoke and the Transition tab's lyrics \
                   light up word by word."
                 .to_owned(),
             source: Source::Download {
-                url: lyrics::MODEL_URL.to_owned(),
+                url: models::MODEL_URL.to_owned(),
             },
         },
         Need {
-            file: lyrics::ASR_FILE.to_owned(),
-            bytes: lyrics::ASR_BYTES,
-            sha256: lyrics::ASR_SHA256.to_owned(),
+            file: models::ASR_FILE.to_owned(),
+            bytes: models::ASR_BYTES,
+            sha256: models::ASR_SHA256.to_owned(),
             title: "the speech recogniser".to_owned(),
             credit: "Qwen3-ASR 0.6B by Alibaba's Qwen team".to_owned(),
             why: "It listens to the singing to check that lyrics found online belong to the \
@@ -233,8 +234,8 @@ impl Places {
             .as_deref()
             .and_then(Path::parent)
         {
-            look.push(dir.join(lyrics::MODEL_DIR));
-            look.push(dir.join("..").join("Resources").join(lyrics::MODEL_DIR));
+            look.push(dir.join(models::MODEL_DIR));
+            look.push(dir.join("..").join("Resources").join(models::MODEL_DIR));
         }
         look.push(store.clone());
         Places { look, store }
@@ -371,7 +372,7 @@ impl Work for Real {
         to: &Path,
         progress: &mut dyn FnMut(u64),
     ) -> Result<(), String> {
-        lyrics::download(&part.url, to, part.bytes, &part.sha256, |done, _| {
+        crate::download::download(&part.url, to, part.bytes, &part.sha256, |done, _| {
             progress(done)
         })
     }
@@ -909,7 +910,7 @@ fn attempt(
                             ),
                             format!(
                                 "Copy the folder {} from a computer that has set the player up into {}, then try again.",
-                                lyrics::MODEL_DIR,
+                                models::MODEL_DIR,
                                 places.store.display()
                             ),
                         ));
@@ -1236,8 +1237,8 @@ mod tests {
         assert_eq!(manifest_for(false).len(), 2);
         let m = manifest_for(true);
         assert_eq!(m.len(), 4);
-        assert_eq!(m[0].file, lyrics::MODEL_FILE);
-        assert_eq!(m[1].file, lyrics::ASR_FILE);
+        assert_eq!(m[0].file, models::MODEL_FILE);
+        assert_eq!(m[1].file, models::ASR_FILE);
         assert_eq!(m[2].file, crate::cover::DEPTH_FILE);
         assert_eq!(m[3].file, crate::cover::MATTE_FILE);
         for need in &m {

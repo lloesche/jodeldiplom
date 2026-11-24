@@ -18,7 +18,7 @@
 //!
 //! A variant is `TAG` or `TAG:SETTING=VALUE,...`: the aligner's default
 //! settings with those changed (`window_penalty`, `opening_pull`,
-//! `inside_word`, `skip_penalty`, `island_heard`, `confident`, `trusted`,
+//! `inside_word`, `skip_penalty`, `island_heard`, `confident`,
 //! `unheard`, `glimpse_penalty`), `pins=0` to time without the transcript's parts and
 //! `glimpses=0` without the glimpses (as a text the recogniser has not
 //! heard). Each writes `ours-TAG.tsv` into every song's folder, a row for
@@ -33,41 +33,19 @@
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
+use jodel_lyrics::aligner::Acoustic;
 use jodel_lyrics::asr::Part;
-use jodel_lyrics::ctc::{align_heard, voice_pauses, Acoustic, CtcSettings, Hints};
+use jodel_lyrics::ctc::{align_heard, voice_pauses, CtcSettings, Hints};
 use jodel_lyrics::speech::Wav2Vec2;
 use jodel_lyrics::{Lyrics, Source};
 
-/// A 16 kHz mono 32-bit float WAV file's samples (after a 44-byte header).
-fn read_wav(path: &Path) -> Option<Vec<f32>> {
-    let bytes = std::fs::read(path).ok()?;
-    Some(
-        bytes
-            .get(44..)?
-            .as_chunks::<4>()
-            .0
-            .iter()
-            .map(|b| f32::from_le_bytes(*b))
-            .collect(),
-    )
-}
+#[path = "research/parts.rs"]
+mod parts;
+#[path = "research/wav.rs"]
+mod wav;
 
-/// The recogniser's parts or glimpses in `path`, if it is there.
-fn read_parts(path: &Path) -> Option<Vec<Part>> {
-    let text = std::fs::read_to_string(path).ok()?;
-    Some(
-        text.lines()
-            .filter_map(|row| {
-                let mut cells = row.splitn(3, '\t');
-                Some(Part {
-                    start: cells.next()?.trim().parse().ok()?,
-                    end: cells.next()?.trim().parse().ok()?,
-                    text: cells.next().unwrap_or("").to_owned(),
-                })
-            })
-            .collect(),
-    )
-}
+use parts::read_parts;
+use wav::read_wav;
 
 /// `parts` as `read_parts` reads them.
 fn parts_text(parts: &[Part]) -> String {
@@ -123,7 +101,6 @@ fn variant(spec: &str) -> Variant {
             "skip_penalty" => s.skip_penalty = value,
             "island_heard" => s.island_heard = value,
             "confident" => s.confident = value,
-            "trusted" => s.trusted = value,
             "unheard" => s.unheard = value,
             "glimpse_penalty" => s.glimpse_penalty = value,
             _ => panic!("no setting {name}"),
@@ -240,9 +217,14 @@ fn main() {
                     Vec::new()
                 },
             };
-            let Some((timed, _)) =
-                align_heard(&emissions, &lyrics, &model.vocab(), &v.settings, &hints)
-            else {
+            let Some((timed, _)) = align_heard(
+                &emissions,
+                &lyrics,
+                &model.vocab(),
+                &v.settings,
+                &hints,
+                &[],
+            ) else {
                 continue;
             };
             let mut tsv = String::new();

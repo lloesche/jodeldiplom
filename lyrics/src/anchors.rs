@@ -131,7 +131,7 @@ pub fn looped(part: &Part) -> bool {
 }
 
 /// The pairs `(i, j)` of a longest common subsequence of `a` and `b`.
-pub(crate) fn common(a: &[String], b: &[String]) -> Vec<(usize, usize)> {
+pub(crate) fn common<T: PartialEq>(a: &[T], b: &[T]) -> Vec<(usize, usize)> {
     let (n, m) = (a.len(), b.len());
     let mut t = vec![0u16; (n + 1) * (m + 1)];
     let at = |i: usize, j: usize| i * (m + 1) + j;

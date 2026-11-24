@@ -37,7 +37,8 @@ pub const TIMES: usize = 4;
 
 /// `lyrics` with the repeats the recogniser heard (in its transcript's
 /// `parts`) and the text leaves out put in, each line again as it is
-/// written but without a time of its own. Unchanged when none.
+/// written but without a time of its own (nor a synced one). Unchanged
+/// when none.
 pub fn with_repeats(lyrics: &Lyrics, parts: &[Part]) -> Lyrics {
     let heard: Vec<String> = parts
         .iter()
@@ -106,6 +107,7 @@ pub fn with_repeats(lyrics: &Lyrics, parts: &[Part]) -> Lyrics {
             .flat_map(|_| &lyrics.lines[l1..=l2])
             .map(|l| Line {
                 time: None,
+                synced: None,
                 ..l.clone()
             })
             .collect();

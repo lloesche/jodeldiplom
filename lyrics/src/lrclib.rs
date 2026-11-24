@@ -135,14 +135,21 @@ impl Record {
         self.plain.as_deref().or(self.synced.as_deref())
     }
 
-    /// What the record says of the track: its words, without any of the
-    /// times it may carry ([`Lyrics::parse_text`]).
+    /// What the record says of the track: its words ([`Record::text`]),
+    /// with the synced text's line times laid on them as the scaffold where
+    /// it is the same text ([`crate::scaffold::attach`]); no word times.
     pub fn found(&self) -> Found {
         if self.instrumental {
             return Found::Instrumental;
         }
         match self.text().map(|t| Lyrics::parse_text(t, Source::Lrclib)) {
-            Some(lyrics) if !lyrics.is_empty() => Found::Lyrics(lyrics),
+            Some(mut lyrics) if !lyrics.is_empty() => {
+                if let (Some(_), Some(synced)) = (&self.plain, &self.synced) {
+                    let synced = Lyrics::parse_text(synced, Source::Lrclib);
+                    crate::scaffold::attach(&mut lyrics, &synced);
+                }
+                Found::Lyrics(lyrics)
+            }
             _ => Found::NotFound,
         }
     }
@@ -249,11 +256,22 @@ mod tests {
             panic!("no lyrics");
         };
         assert_eq!(l.source, Source::Lrclib);
-        // The words only: LRCLIB's times are never used.
+        // The plain text's words, the synced text's line times on them as
+        // the scaffold only: no line or word times of their own.
         assert_eq!(l.timing.detail, Detail::None);
         assert_eq!(l.lines[1].time, None);
         assert_eq!(l.lines[1].text(), "Upon my neck");
-        // A record with only a timed text: its words, its times dropped.
+        let synced: Vec<_> = l.lines.iter().map(|l| l.synced.map(|s| s.start)).collect();
+        assert_eq!(synced, [Some(17.12), Some(47.1)]);
+        assert_eq!(l.lines[0].synced.unwrap().end, Some(47.1));
+        // A synced text of other words than the plain one: none.
+        let other = body.replacen("Upon my neck", "Down the hill and far away from here", 1);
+        let Found::Lyrics(l) = parse_get(&other).unwrap().found() else {
+            panic!("no lyrics");
+        };
+        assert!(l.lines.iter().all(|l| l.synced.is_none()));
+        // A record with only a timed text: its words, its word times
+        // dropped, its line times kept as the scaffold.
         let synced = r#"{"id":2,"trackName":"x","artistName":"y","instrumental":false,
             "plainLyrics":null,"syncedLyrics":"[00:17.12] <00:17.12>I <00:17.50>feel\n[00:20.00]\n[00:21.00] on"}"#;
         let Found::Lyrics(l) = parse_get(synced).unwrap().found() else {
@@ -267,6 +285,10 @@ mod tests {
                 .iter()
                 .all(|w| w.start.is_none() && w.end.is_none())));
         assert_eq!(l.lines[0].text(), "I feel");
+        assert_eq!(
+            l.lines[0].synced.map(|s| (s.start, s.end)),
+            Some((17.12, Some(20.0)))
+        );
         let instrumental = r#"{"id":1,"trackName":"x","artistName":"y","instrumental":true,
             "plainLyrics":null,"syncedLyrics":null}"#;
         assert_eq!(

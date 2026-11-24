@@ -14,15 +14,13 @@
 //! from LRCLIB, say), and every line is listed: its LRC time, where the
 //! words were heard, and the difference. `--voice-wav OUT.wav` also keeps
 //! the separated voice (16 kHz mono, 32-bit float) for other tools, and
-//! `--voice-in VOICE.wav` reads one kept before. Each `--anchors NAME=FILE[@BAND]`
-//! (rows of `LINE SECONDS`, the line counted among those with words) times
-//! the song again with those lines held within BAND seconds (1.5) of their
-//! times.
+//! `--voice-in VOICE.wav` reads one kept before.
 
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use jodel_lyrics::ctc::{align_heard, voice_pauses, Acoustic, CtcSettings, Hints};
+use jodel_lyrics::aligner::Acoustic;
+use jodel_lyrics::ctc::{align_heard, voice_pauses, CtcSettings, Hints};
 use jodel_lyrics::speech::Wav2Vec2;
 use jodel_lyrics::tokens::WAV2VEC2_960H;
 use jodel_lyrics::{Detail, Lyrics, Source};
@@ -76,6 +74,7 @@ fn line_errors(model: &Wav2Vec2, voice: &[f32], lyrics: &Lyrics) -> Option<Vec<f
             pauses: voice_pauses(voice, &emissions),
             ..Hints::default()
         },
+        &[],
     )?;
     println!("  heard {heard:.3} (the letters' mean probability on the path)");
     Some(
@@ -139,22 +138,10 @@ struct AgainstLrc<'a> {
     voice_out: Option<&'a Path>,
     /// A voice kept before, read instead of separating again.
     voice_in: Option<&'a Path>,
-    /// Anchor sets to try: a name, a file of `LINE SECONDS` rows (the
-    /// line's index among the lines with words), and how far a line may
-    /// start from its anchor.
-    anchors: Vec<(&'a str, &'a Path, f64)>,
 }
 
-/// A 16 kHz mono 32-bit float WAV file's samples, as [`write_wav`] writes.
-fn read_wav(path: &Path) -> Vec<f32> {
-    let bytes = std::fs::read(path).expect("the WAV file");
-    bytes[44..]
-        .as_chunks::<4>()
-        .0
-        .iter()
-        .map(|b| f32::from_le_bytes(*b))
-        .collect()
-}
+#[path = "research/wav.rs"]
+mod wav;
 
 /// Each line's start against its LRC time (aligned − LRC), in seconds.
 fn errors_of(timed: &[&jodel_lyrics::Line], aligned: &Lyrics) -> String {
@@ -170,16 +157,15 @@ fn errors_of(timed: &[&jodel_lyrics::Line], aligned: &Lyrics) -> String {
 /// One file against an LRC file's lines, line by line (on the GPU where
 /// there is one, as the player times words). Ends with a `RESULT` line:
 /// the seconds each step took, how well the words were heard, and each
-/// line's error; then a `RESULT-ANCHORED` line for each anchor set, timed
-/// again with those lines held near their anchors.
+/// line's error.
 fn against_lrc(model: Wav2Vec2, run: AgainstLrc) {
     let text = std::fs::read_to_string(run.lrc).expect("the LRC file");
     let lyrics = Lyrics::parse(&text, Source::Sidecar);
     let started = Instant::now();
     let voice = match run.voice_in {
-        Some(path) => read_wav(path),
+        Some(path) => wav::read_wav(path).expect("the WAV file"),
         None => {
-            jodeldiplom::lyrics::separate_16k(run.audio, false)
+            jodeldiplom::lyrics::timer::separate_16k(run.audio, false)
                 .expect("the voice")
                 .0
         }
@@ -203,8 +189,15 @@ fn against_lrc(model: Wav2Vec2, run: AgainstLrc) {
         pauses: voice_pauses(&voice, &emissions),
         ..Hints::default()
     };
-    let (aligned, heard) =
-        align_heard(&emissions, &untimed, &WAV2VEC2_960H, &settings, &pauses).expect("a path");
+    let (aligned, heard) = align_heard(
+        &emissions,
+        &untimed,
+        &WAV2VEC2_960H,
+        &settings,
+        &pauses,
+        &[],
+    )
+    .expect("a path");
     let aligned_in = started.elapsed().as_secs_f64();
     println!("heard {heard:.3}");
     let timed: Vec<&jodel_lyrics::Line> = lyrics
@@ -226,34 +219,8 @@ fn against_lrc(model: Wav2Vec2, run: AgainstLrc) {
         "RESULT separate {separated:.2} speech {heard_in:.2} align {aligned_in:.2} heard {heard:.3} errors {}",
         errors_of(&timed, &aligned)
     );
-    for &(name, path, band) in &run.anchors {
-        let mut anchored = untimed.clone();
-        let mut count = 0;
-        for row in std::fs::read_to_string(path).expect("the anchors").lines() {
-            let mut f = row.split_whitespace();
-            let (Some(Ok(line)), Some(Ok(time))) = (
-                f.next().map(str::parse::<usize>),
-                f.next().map(str::parse::<f64>),
-            ) else {
-                continue;
-            };
-            if let Some(l) = anchored.lines.get_mut(line) {
-                l.time = Some(time);
-                count += 1;
-            }
-        }
-        let settings = CtcSettings {
-            anchor_band: band,
-            ..settings.clone()
-        };
-        let (aligned, heard) =
-            align_heard(&emissions, &anchored, &WAV2VEC2_960H, &settings, &pauses).expect("a path");
-        println!(
-            "RESULT-ANCHORED {name} anchors {count} heard {heard:.3} errors {}",
-            errors_of(&timed, &aligned)
-        );
-    }
 }
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let model = Wav2Vec2::open(Path::new(&args[0])).expect("the model");
@@ -263,20 +230,6 @@ fn main() {
                 .position(|a| a == flag)
                 .map(|w| Path::new(&args[w + 1]))
         };
-        let anchors = args
-            .iter()
-            .enumerate()
-            .filter(|(_, a)| *a == "--anchors")
-            .filter_map(|(i, _)| args[i + 1].split_once('='))
-            .map(|(name, rest)| {
-                let (path, band) = rest.rsplit_once('@').unwrap_or((rest, "1.5"));
-                (
-                    name,
-                    Path::new(path),
-                    band.parse().expect("a band in seconds"),
-                )
-            })
-            .collect();
         return against_lrc(
             model,
             AgainstLrc {
@@ -284,7 +237,6 @@ fn main() {
                 lrc: Path::new(&args[k + 1]),
                 voice_out: after("--voice-wav"),
                 voice_in: after("--voice-in"),
-                anchors,
             },
         );
     }
@@ -302,7 +254,7 @@ fn main() {
             continue;
         };
         let started = Instant::now();
-        let (voice, mix) = match jodeldiplom::lyrics::separate_16k(path, true) {
+        let (voice, mix) = match jodeldiplom::lyrics::timer::separate_16k(path, true) {
             Ok(v) => v,
             Err(e) => {
                 println!("{name}: {e}");

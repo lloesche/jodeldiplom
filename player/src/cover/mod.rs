@@ -137,6 +137,6 @@ pub struct CoverModels {
 /// path, size and modification time: a file retagged is looked at afresh),
 /// or its path's hash where it cannot be read.
 pub fn song_key(path: &Path) -> String {
-    crate::lyrics::cache_key(path)
+    crate::lyrics::store::cache_key(path)
         .unwrap_or_else(|| format!("{:016x}", crate::rhythm::hash(&path.display().to_string())))
 }

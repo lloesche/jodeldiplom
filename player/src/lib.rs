@@ -37,6 +37,7 @@ pub mod delays;
 pub mod desk_wiring;
 pub mod diag;
 pub mod dirs;
+pub mod download;
 pub mod grids;
 pub mod gui;
 pub mod icon;

@@ -19,15 +19,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-fn read_wav(path: &Path) -> Vec<f32> {
-    let bytes = fs::read(path).unwrap();
-    bytes[44..]
-        .as_chunks::<4>()
-        .0
-        .iter()
-        .map(|b| f32::from_le_bytes(*b))
-        .collect()
-}
+#[path = "research/wav.rs"]
+mod wav;
 
 fn json_text(s: &str) -> String {
     let mut out = String::from("\"");
@@ -76,13 +69,15 @@ fn main() {
     let out = Path::new(&args[2]);
     fs::create_dir_all(out).unwrap();
     let models = data.join("models");
-    let asr =
-        jodel_lyrics::asr::packed::PackedModel::open(&models.join(jodeldiplom::lyrics::ASR_FILE))
-            .and_then(|p| jodel_gpu::GpuAsr::new(&p))
-            .expect("the speech recogniser on the GPU");
-    let cpu = jodel_lyrics::speech::Wav2Vec2::open(&models.join(jodeldiplom::lyrics::MODEL_FILE))
-        .unwrap();
-    let speech: Arc<dyn jodel_lyrics::ctc::Acoustic + Send + Sync> =
+    let asr = jodel_lyrics::asr::packed::PackedModel::open(
+        &models.join(jodeldiplom::lyrics::models::ASR_FILE),
+    )
+    .and_then(|p| jodel_gpu::GpuAsr::new(&p))
+    .expect("the speech recogniser on the GPU");
+    let cpu =
+        jodel_lyrics::speech::Wav2Vec2::open(&models.join(jodeldiplom::lyrics::models::MODEL_FILE))
+            .unwrap();
+    let speech: Arc<dyn jodel_lyrics::aligner::Acoustic + Send + Sync> =
         Arc::new(jodel_gpu::GpuSpeech::new(&cpu).expect("the speech model on the GPU"));
     let cached = analyses(data);
     let recipe = jodeldiplom::core::RhythmRecipe {
@@ -118,7 +113,7 @@ fn main() {
             .filter(|(s, _, _)| s.starts_with(&song_text))
             .find_map(|(_, key, text)| jodeldiplom::rhythm::from_text(key, text))
             .or_else(|| jodeldiplom::rhythm::analyze_file(&song, &recipe).ok());
-        let voice = read_wav(&dir.join("voice.wav"));
+        let voice = wav::read_wav(&dir.join("voice.wav")).expect("the voice");
         let heard = match asr.transcribe(&voice) {
             Ok(h) => h,
             Err(e) => {
@@ -126,9 +121,10 @@ fn main() {
                 continue;
             }
         };
-        let text = jodeldiplom::lyrics::transcript_lyrics(&heard, jodeldiplom::lyrics::asr_maker());
+        let text =
+            jodeldiplom::lyrics::transcript_lyrics(&heard, jodeldiplom::lyrics::timer::asr_maker());
         let glimpses = asr.glimpses(&voice).unwrap_or_default();
-        let timed = jodel_lyrics::ctc::CtcAligner::new(Arc::clone(&speech)).align_heard_in(
+        let timed = jodel_lyrics::aligner::CtcAligner::new(Arc::clone(&speech)).align_heard_in(
             &voice,
             &text,
             &heard.parts,

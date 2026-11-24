@@ -23,11 +23,12 @@
 //! words' confidences in percent, and where the aligner heard the letters,
 //! a `[#:letters ...]` line: for each word its characters' times after its
 //! start in hundredths, joined by commas (`-` for a word without them);
-//! other players pass these over.
+//! and for a line its source synced, a `[#:synced START END]` line (in
+//! seconds, `-` for no end). Other players pass these over.
 
 use std::fmt::Write as _;
 
-use crate::{Detail, Fit, Line, Lyrics, Maker, Source, Timing, Word, GIVEN};
+use crate::{Detail, Fit, Line, Lyrics, Maker, Source, Synced, Timing, Word, GIVEN};
 
 /// The names a section of a song goes by, for the section tags dropped.
 const SECTIONS: [&str; 17] = [
@@ -65,6 +66,9 @@ const FIT_TAG: &str = "fit";
 const CONFIDENCE: &str = "confidence";
 /// Our per-line comment with the words' letters' times.
 const LETTERS: &str = "letters";
+/// Our per-line comment with when the source synced the line
+/// ([`crate::Line::synced`]): its start and end in seconds, `-` for none.
+const SYNCED: &str = "synced";
 
 /// Whether `text` has LRC times (`[mm:ss.xx]` at the start of a line).
 pub fn is_synced(text: &str) -> bool {
@@ -119,6 +123,11 @@ pub fn parse(text: &str, source: Source) -> Lyrics {
                             confide(&mut lines[last_made.clone()], values);
                         } else if let Some(values) = value.trim().strip_prefix(LETTERS) {
                             letter(&mut lines[last_made.clone()], values);
+                        } else if let Some(values) = value.trim().strip_prefix(SYNCED) {
+                            let synced = synced_of(values);
+                            for (_, line) in &mut lines[last_made.clone()] {
+                                line.synced = synced;
+                            }
                         }
                     }
                     _ => {}
@@ -209,6 +218,26 @@ fn confide(lines: &mut [(f64, Line)], values: &str) {
             }
         }
     }
+}
+
+/// The [`SYNCED`] comment for `line`, when its source synced it.
+fn write_synced(s: &mut String, line: &Line) {
+    if let Some(synced) = line.synced {
+        let end = synced.end.map_or("-".into(), |e| format!("{e:.2}"));
+        let _ = writeln!(s, "[#:{SYNCED} {:.2} {end}]", synced.start);
+    }
+}
+
+/// When a line was synced, from a [`SYNCED`] comment's `values` (`start
+/// end`, the end `-` when there is none).
+fn synced_of(values: &str) -> Option<Synced> {
+    let mut v = values.split_whitespace();
+    let start = v.next()?.parse::<f64>().ok().filter(|t| t.is_finite())?;
+    let end = match v.next()? {
+        "-" => None,
+        e => Some(e.parse::<f64>().ok().filter(|t| t.is_finite())?),
+    };
+    Some(Synced { start, end })
 }
 
 /// Sets the words' letters' times in `lines` from `values` (a word's
@@ -562,6 +591,7 @@ pub fn write(lyrics: &Lyrics) -> String {
         }
         if line.is_break {
             let _ = writeln!(s, "{}", crate::BREAK);
+            write_synced(&mut s, line);
             continue;
         }
         let timed = line.words.iter().any(|w| w.start.is_some());
@@ -583,6 +613,7 @@ pub fn write(lyrics: &Lyrics) -> String {
             }
         }
         s.push('\n');
+        write_synced(&mut s, line);
         if timed && lyrics.timing.by.is_some() {
             let _ = write!(s, "[#:{CONFIDENCE}");
             for w in &line.words {
@@ -629,6 +660,29 @@ mod tests {
         assert_eq!(format_time(62.34), "01:02.34");
         assert_eq!(format_time(6005.0), "100:05.00");
         assert_eq!(parse_time(&format_time(123.45)), Some(123.45));
+    }
+
+    #[test]
+    fn when_a_line_was_synced_is_written_and_read_back() {
+        let found = Lyrics::parse_text(
+            "[00:04.00]Out of time\n[00:07.25]Still here\n[00:09.00]\n",
+            Source::Lrclib,
+        );
+        let written = write(&found);
+        assert!(
+            written.contains("Out of time\n[#:synced 4.00 7.25]\n"),
+            "{written}"
+        );
+        assert!(
+            written.contains("Still here\n[#:synced 7.25 9.00]\n"),
+            "{written}"
+        );
+        let back = parse(&written, Source::Unknown);
+        assert_eq!(back.lines, found.lines);
+        assert!(back.lines.iter().all(|l| l.time.is_none()));
+        // A comment that does not read leaves the line unsynced.
+        let broken = parse("Line\n[#:synced soon -]\n", Source::Unknown);
+        assert_eq!(broken.lines[0].synced, None);
     }
 
     #[test]

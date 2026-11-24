@@ -72,7 +72,7 @@ fn main() {
             continue;
         }
         let t = Instant::now();
-        match jodeldiplom::lyrics::separate_16k(Path::new(path), true) {
+        match jodeldiplom::lyrics::timer::separate_16k(Path::new(path), true) {
             Ok((voice, mix)) => {
                 let n = voice.len().min(mix.len());
                 let band: Vec<f32> = (0..n).map(|i| mix[i] - voice[i]).collect();

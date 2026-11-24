@@ -115,7 +115,7 @@ fn analyses(dir: &Path) -> BTreeMap<PathBuf, (u32, PathBuf)> {
 
 /// Our timed words of `path` as the game shows them, read only.
 fn shown_lyrics(data: &Path, path: &Path) -> Option<Lyrics> {
-    let key = jodeldiplom::lyrics::cache_key(path)?;
+    let key = jodeldiplom::lyrics::store::cache_key(path)?;
     let text = std::fs::read(data.join("lyrics").join(format!("{key}.timed.lrc"))).ok()?;
     let text = String::from_utf8_lossy(&text).into_owned();
     let lyrics = Lyrics::parse(
@@ -396,7 +396,7 @@ fn take(folder: &Path, song: Option<PathBuf>, separate: bool, show: bool) {
     let singing = singing(lyrics, &melody);
     let (original, orate) = if separate {
         (
-            jodeldiplom::lyrics::separate_16k(&path, false)
+            jodeldiplom::lyrics::timer::separate_16k(&path, false)
                 .expect("separated")
                 .0,
             16_000,

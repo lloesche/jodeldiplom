@@ -99,7 +99,7 @@ pub fn voice_of(stems: Option<&Path>, path: &Path) -> Result<(Vec<f32>, u32), St
     use jodel_playback::stems::{Stem, RATE};
     let kept = stems.and_then(|dir| crate::stems_cache::open(dir, path));
     let Some(mut file) = kept else {
-        return Ok((crate::lyrics::separate_16k(path, false)?.0, 16_000));
+        return Ok((crate::lyrics::timer::separate_16k(path, false)?.0, 16_000));
     };
     let vocals = Stem::ALL
         .iter()

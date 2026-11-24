@@ -70,11 +70,14 @@ pub const WAVEFORM: Schema = Schema {
     version: jodel_rhythm::waveform::FORMAT as u32,
 };
 
-/// Lyrics as found: their words only, a line each, the source in a
-/// `[source:…]` tag. Version 1 kept the times they came with.
+/// Lyrics as found: their words, a line each, the source in a
+/// `[source:…]` tag, and when the source synced a line, a
+/// `[#:synced START END]` line after it (the scaffold the aligner holds
+/// the line near: `jodel_lyrics::scaffold`). Version 1 kept the times they
+/// came with as the lines' own; version 2 kept no times at all.
 pub const LYRICS_TEXT: Schema = Schema {
     name: "lyrics",
-    version: 2,
+    version: 3,
 };
 
 /// That no lyrics were found (or the track has no words), and when.

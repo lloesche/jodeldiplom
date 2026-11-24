@@ -16,7 +16,12 @@
 //!   `facebook/wav2vec2-base-960h`.
 //! - [`ctc`]: forced alignment of those letters to a model's per-frame
 //!   log-probabilities (a Viterbi path with blanks), with skippable
-//!   backing words and line times held within a band.
+//!   backing words and what else is known of the voice as costs.
+//! - [`scaffold`]: a synced text's line times (LRCLIB's) laid on the text
+//!   timed, checked against the song aligned without them, and, where they
+//!   fit, the lines' words held near them.
+//! - [`aligner`]: it put together, on a speech model's emissions
+//!   ([`aligner::Acoustic`]): the [`Aligner`] the player uses.
 //! - [`spread`]: timing without a model: line times split across words by
 //!   syllables, plain text spread over where the voice is heard, and the
 //!   filling-in of words whose times were not trusted.
@@ -51,6 +56,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+pub mod aligner;
 pub mod anchors;
 pub mod asr;
 pub mod ctc;
@@ -61,6 +67,7 @@ pub mod lines;
 pub mod lrc;
 pub mod lrclib;
 pub mod repeats;
+pub mod scaffold;
 pub mod sources;
 pub mod speech;
 pub mod spread;
@@ -76,8 +83,10 @@ pub mod tokens;
 /// ([`repeats`]). 6: the recogniser's glimpses: a line's start where they
 /// heard it, no line spread over a stretch where they heard no words
 /// ([`glimpses`]); a line's first words heard weakly at a sung pace
-/// before the first heard surely ([`spread::interpolate`]).
-pub const VERSION: u32 = 6;
+/// before the first heard surely ([`spread::interpolate`]). 7: the lines held
+/// near their source's synced times where those fit the recording
+/// ([`scaffold`]).
+pub const VERSION: u32 = 7;
 
 /// The rate the aligners take the voice at, in Hz.
 pub const VOCALS_RATE: u32 = 16_000;
@@ -153,6 +162,11 @@ pub struct Line {
     pub words: Vec<Word>,
     /// When the line starts, as an LRC file gives it.
     pub time: Option<f64>,
+    /// When the line is sung as the text's source synced it (LRCLIB's
+    /// synced lyrics, an LRC file): kept with a found text as a scaffold
+    /// for the aligner, which holds the line's words near it only where it
+    /// fits the recording ([`scaffold`]). Never shown, never a line's time.
+    pub synced: Option<Synced>,
     /// Whether the whole line is in parentheses.
     pub backing: bool,
     /// Whether it marks a break in the singing rather than being sung: an
@@ -163,6 +177,16 @@ pub struct Line {
 
 /// How a break in the singing is written, and shown.
 pub const BREAK: &str = "♪";
+
+/// When a line is sung as its text's source synced it ([`Line::synced`]).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Synced {
+    /// Its time, in seconds from the start of the track.
+    pub start: f64,
+    /// The source's next time after it (the next line's, or a break's):
+    /// by then the line is over. `None` for the last.
+    pub end: Option<f64>,
+}
 
 impl Line {
     /// A line of `words` (as written, split at white space), marking the
@@ -367,18 +391,30 @@ impl Lyrics {
     }
 
     /// The words of `text` (plain, LRC or Enhanced LRC) from `source`, and
-    /// nothing else: every line and word time it came with is dropped, and
-    /// the lines without words (an LRC file's pauses) with them. What is
-    /// found elsewhere (a tag, a file beside the track, LRCLIB) is read this
-    /// way; only our own aligner times the words.
+    /// its line times as [`Line::synced`] (each line from its time to the
+    /// next one's): every word time it came with is dropped, the lines'
+    /// times are kept only as the scaffold, and the lines without words (an
+    /// LRC file's pauses) go. What is found
+    /// elsewhere (a tag, a file beside the track, LRCLIB) is read this way;
+    /// only our own aligner times the words.
     pub fn parse_text(text: &str, source: Source) -> Lyrics {
         let mut lyrics = lrc::parse(text, source);
+        for k in 0..lyrics.lines.len() {
+            let Some(start) = lyrics.lines[k].time else {
+                continue;
+            };
+            let end = lyrics.lines[k + 1..]
+                .iter()
+                .find_map(|l| l.time.filter(|&t| t > start));
+            lyrics.lines[k].synced = Some(Synced { start, end });
+        }
         lyrics.drop_times();
         lyrics
     }
 
-    /// Drops every time: the lines', the words' (and their confidence),
-    /// and the lines without words (a break stays, marked).
+    /// Drops every time but the scaffold ([`Line::synced`]): the lines',
+    /// the words' (and their confidence), and the lines without words (a
+    /// break stays, marked).
     pub fn drop_times(&mut self) {
         self.lines.retain(|l| !l.words.is_empty() || l.is_break);
         for line in &mut self.lines {

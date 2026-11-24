@@ -27,7 +27,8 @@
 
 use std::path::Path;
 
-use crate::ctc::{Acoustic, Emissions};
+use crate::aligner::Acoustic;
+use crate::ctc::Emissions;
 use crate::{Maker, VOCALS_RATE};
 use jodel_tensors::SafeTensors;
 

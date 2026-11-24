@@ -1,29 +1,47 @@
 //! One song timed as the player times it (its kept voice, the recogniser's
-//! fit check and repeats, the aligner), from a text file of its lyrics:
-//! each line with its start, and the words' times when `--words`.
+//! fit check and repeats, the aligner held to the source's synced times
+//! where they fit), from its lyrics as the player reads them: a text or
+//! LRC file, a file of the lyrics cache, or an LRCLIB record (`.json`, its
+//! plain text with the synced one's line times laid on it). Each line with
+//! its start, and the words' times when `--words`.
 //!
 //! ```text
-//! cargo run --release -p jodeldiplom --example time_one -- DATA_DIR SONG LYRICS.lrc [--words]
+//! cargo run --release -p jodeldiplom --example time_one -- DATA_DIR SONG LYRICS [--words]
 //! ```
 
 use std::path::Path;
 
-use jodeldiplom::lyrics::{Models, SpeechTimer, WordTimer};
+use jodeldiplom::lyrics::models::Models;
+use jodeldiplom::lyrics::timer::SpeechTimer;
+use jodeldiplom::lyrics::WordTimer;
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let data = Path::new(&args[0]);
     let song = Path::new(&args[1]);
     let found = std::fs::read_to_string(&args[2]).unwrap();
-    let body = jodeldiplom::cache::LYRICS_TEXT
-        .body(&found)
-        .unwrap_or(&found)
-        .to_owned();
-    let lyrics = jodel_lyrics::Lyrics::parse(&body, jodel_lyrics::Source::Lrclib);
+    let lyrics = if args[2].ends_with(".json") {
+        match jodel_lyrics::lrclib::parse_get(&found).map(|r| r.found()) {
+            Some(jodel_lyrics::Found::Lyrics(l)) => l,
+            other => panic!("no lyrics in the record: {other:?}"),
+        }
+    } else {
+        let body = jodeldiplom::cache::LYRICS_TEXT
+            .body(&found)
+            .unwrap_or(&found);
+        jodel_lyrics::Lyrics::parse_text(body, jodel_lyrics::Source::Lrclib)
+    };
+    let synced = lyrics.lines.iter().filter(|l| l.synced.is_some()).count();
+    println!(
+        "{synced} of {} lines synced by the source",
+        lyrics.lines.len()
+    );
     let words = args.iter().any(|a| a == "--words");
     let models = Models::new(
-        data.join("models").join(jodeldiplom::lyrics::MODEL_FILE),
-        data.join("models").join(jodeldiplom::lyrics::ASR_FILE),
+        data.join("models")
+            .join(jodeldiplom::lyrics::models::MODEL_FILE),
+        data.join("models")
+            .join(jodeldiplom::lyrics::models::ASR_FILE),
     );
     let timer = SpeechTimer::new(models);
     let timed = timer.time(song, &lyrics, &|| Vec::new()).unwrap();

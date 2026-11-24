@@ -44,8 +44,8 @@ fn main() {
         let path = Path::new(&args[3]);
         let text = fs::read_to_string(&args[4]).unwrap();
         let file = jodeldiplom::stems_cache::open(&stems, path).expect("its stems kept");
-        let voice = jodeldiplom::lyrics::voice_16k(file).unwrap();
-        let key = jodeldiplom::lyrics::cache_key(path).unwrap();
+        let voice = jodeldiplom::lyrics::timer::voice_16k(file).unwrap();
+        let key = jodeldiplom::lyrics::store::cache_key(path).unwrap();
         let dir = out.join(&key);
         fs::create_dir_all(&dir).unwrap();
         let lines: Vec<&str> = text
@@ -96,7 +96,7 @@ fn main() {
         let Some(file) = jodeldiplom::stems_cache::open(&stems, path) else {
             continue;
         };
-        let Ok(voice) = jodeldiplom::lyrics::voice_16k(file) else {
+        let Ok(voice) = jodeldiplom::lyrics::timer::voice_16k(file) else {
             continue;
         };
         fs::create_dir_all(&dir).unwrap();

@@ -43,21 +43,21 @@ pub fn run(args: &Args) -> Result<(), String> {
     );
     section(
         "Speech model (karaoke's word timing)",
-        vec![match crate::lyrics::model_path() {
+        vec![match crate::lyrics::models::model_path() {
             Some(path) => format!("found: {}", path.display()),
             None => format!(
                 "not found (looked beside the binary, in the app's Resources, and in the data folder) for {}",
-                crate::lyrics::MODEL_FILE
+                crate::lyrics::models::MODEL_FILE
             ),
         }],
     );
     section(
         "Speech recogniser (whether fetched lyrics fit the song)",
-        vec![match crate::lyrics::asr_model_path() {
+        vec![match crate::lyrics::models::asr_model_path() {
             Some(path) => format!("found: {}", path.display()),
             None => format!(
                 "not found (looked beside the binary, in the app's Resources, and in the data folder) for {}",
-                crate::lyrics::ASR_FILE
+                crate::lyrics::models::ASR_FILE
             ),
         }],
     );

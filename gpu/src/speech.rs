@@ -7,7 +7,8 @@ use std::collections::HashMap;
 use std::num::NonZeroU64;
 use std::sync::Mutex;
 
-use jodel_lyrics::ctc::{Acoustic, Emissions};
+use jodel_lyrics::aligner::Acoustic;
+use jodel_lyrics::ctc::Emissions;
 use jodel_lyrics::speech::{
     emissions_in_pieces, Levels, Wav2Vec2, CONTEXT_SECONDS, CONV, HOP, PIECE_SECONDS, RECEPTIVE,
 };

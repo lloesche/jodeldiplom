@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use jodel_gpu::GpuSpeech;
-use jodel_lyrics::ctc::Acoustic;
+use jodel_lyrics::aligner::Acoustic;
 use jodel_lyrics::speech::Wav2Vec2;
 
 fn read(path: &Path) -> Vec<f32> {

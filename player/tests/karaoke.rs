@@ -699,7 +699,7 @@ fn the_microphone_is_open_while_karaoke_shows() {
 
 #[test]
 fn the_speech_model_is_found_where_the_build_put_it() {
-    use jodeldiplom::lyrics::{model_in, MODEL_DIR, MODEL_FILE};
+    use jodeldiplom::lyrics::models::{model_in, MODEL_DIR, MODEL_FILE};
     let root = std::env::temp_dir().join(format!("jodel-model-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     let put = |dir: &std::path::Path| {
@@ -838,7 +838,7 @@ fn a_slider_under_the_pointer_lands_on_whole_percents() {
 
 #[test]
 fn the_speech_recogniser_is_found_beside_the_speech_model() {
-    use jodeldiplom::lyrics::{asr_model_in, ASR_FILE, MODEL_DIR};
+    use jodeldiplom::lyrics::models::{asr_model_in, ASR_FILE, MODEL_DIR};
     let root = std::env::temp_dir().join(format!("jodel-asr-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     let exe = root.join("Contents").join("MacOS");

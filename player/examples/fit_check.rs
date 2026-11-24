@@ -7,14 +7,17 @@
 //! ```
 //!
 //! Uses the speech recogniser where the player finds it
-//! (`lyrics::asr_model_path`), and the GPU.
+//! (`lyrics::models::asr_model_path`), and the GPU.
 
 use std::path::Path;
 use std::time::{Duration, Instant};
 
 use jodel_lyrics::fit::lyrics_fit;
 use jodel_lyrics::{Found, Lyrics};
-use jodeldiplom::lyrics::{asr_model_path, fitting, lrclib_of, separate_16k, track_of};
+use jodeldiplom::lyrics::models::asr_model_path;
+use jodeldiplom::lyrics::timer::separate_16k;
+use jodeldiplom::lyrics::web::lrclib_of;
+use jodeldiplom::lyrics::{fitting, track_of};
 
 fn first(l: &Lyrics) -> String {
     l.lines.first().map(|l| l.text()).unwrap_or_default()

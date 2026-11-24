@@ -8,7 +8,7 @@ use std::path::Path;
 use image::imageops::FilterType;
 use image::RgbImage;
 
-use crate::lyrics::Sha256;
+use crate::download::Sha256;
 
 /// The side covers are brought to before their pixels are hashed, so the
 /// same picture decoded at two sizes from one file is one cover.
