@@ -175,6 +175,7 @@ fn main() {
                     shown: shown.clone(),
                     t,
                     next: next.into(),
+                    again: false,
                 }),
             };
             let area = (0.0, 0.0, w as f32, h as f32);

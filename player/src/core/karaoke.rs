@@ -20,9 +20,9 @@
 //!   in its intro, or, when it is sung from less than three seconds in,
 //!   it starts that much later; a song paused in the mode goes on after a
 //!   count-in of its own;
-//! - a song sung to its end, the game on, shows how it went while the next
-//!   is held ([`result_shown`]): the first START during its reveal
-//!   completes it, the next starts the song;
+//! - a song heard to its end, the game on, shows how it went while the
+//!   next is held, or after the last ([`result_shown`]): the first START
+//!   during its reveal completes it, the next starts the song;
 //! - `esc` is the only way out: back to the tab (the voice still at its
 //!   level), playback where it is (a count-in under way is called off).
 
@@ -42,6 +42,7 @@ use crate::core::{Effect, Gpu, Screen, Side, State};
 
 mod result;
 pub use result::{clock_ms, result_motion, result_now, result_shown};
+pub(crate) use result::{ended, track_started};
 
 /// The numbers a count-in counts: "3", "2", "1", then the music.
 pub const COUNT: usize = 3;
@@ -636,13 +637,16 @@ fn refused(state: &mut State, index: Option<usize>) -> bool {
 /// its level, songs held at their ends. The song playing (or paused)
 /// stops and is held at its start for START, with its count-in; `here`:
 /// it goes on where it is instead (nothing stopped, no count-in). A
-/// transition armed or under way is called off. Not for a song without its
-/// lyrics ready ([`not_singable`]): it says why instead.
+/// transition armed is called off (one already mixing plays out: the
+/// engine cuts no mix it is heard in). A result from before is gone. Not
+/// for a song without its lyrics ready ([`not_singable`]): it says why
+/// instead.
 pub(crate) fn enter(state: &mut State, fx: &mut Vec<Effect>, here: bool) {
     if refused(state, song_index(state)) {
         return;
     }
     state.screen = Screen::Karaoke;
+    state.karaoke.result = None;
     // The voice is the mode's only slider.
     state.karaoke.focus = Slider::Voice;
     state.karaoke.controls_until = state.now_ms + CONTROLS_MS;
@@ -817,7 +821,6 @@ fn in_lead(state: &State) -> bool {
 pub(crate) fn held(state: &mut State, index: usize) {
     state.karaoke.held = Some(index);
     state.karaoke.countdown = None;
-    result::sung_to_the_end(state);
 }
 
 /// Notes where the song is heard from when it jumped (another song, a

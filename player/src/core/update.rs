@@ -2186,6 +2186,7 @@ fn engine_event(state: &mut State, event: Event) {
         Event::TrackStarted(start) => {
             let start = *start;
             draft::track_started(state, start.index);
+            karaoke::track_started(state);
             // Another track has stems of its own (or none) to find out.
             state.desk.parts_failed.retain(|&i| i == start.index);
             let playing = &mut state.playing;
@@ -2227,6 +2228,10 @@ fn engine_event(state: &mut State, event: Event) {
                 playing.clipped = samples;
             }
         }
+        Event::TrackEnded {
+            index,
+            finished: true,
+        } => karaoke::ended(state, index),
         Event::TrackEnded { .. } => {}
         Event::Error {
             index,

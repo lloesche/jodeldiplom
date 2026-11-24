@@ -1,6 +1,7 @@
 //! How a song was sung, shown when it ends ([`SongResult`]), its medal and
 //! what it comes to ([`Verdict`]).
 
+use super::Tally;
 use crate::core::shine::{Shone, Tier};
 
 /// A medal for a song sung: by the words hit (not by the points, which
@@ -43,8 +44,9 @@ impl Medal {
     }
 }
 
-/// What a song sung comes to: a medal, a cheer without one, or (not sung
-/// from its start) a word that medals and bests need the whole song.
+/// What a song sung comes to: a medal, a cheer without one, (not sung
+/// from its start) a word that medals and bests need the whole song, or
+/// (nothing scored) a wink at the microphone.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Verdict {
     /// The medal won.
@@ -53,6 +55,8 @@ pub enum Verdict {
     Cheer,
     /// Not sung from its start.
     Whole,
+    /// Nothing scored: not a word hit, or none heard at all.
+    Silent,
 }
 
 /// How a song was sung, shown when it ends.
@@ -80,18 +84,46 @@ pub struct SongResult {
 }
 
 impl SongResult {
-    /// Whether it is a new best: sung whole, and beating the best before
-    /// (or the song's first score).
+    /// How `title` was sung, by its `tally` and the `phrases` that shone,
+    /// the song having `notes` words on notes and `best` the best before:
+    /// sung whole where most of its words were heard (from its start), and
+    /// only then a medal by the words hit.
+    pub fn new(
+        title: String,
+        tally: &Tally,
+        phrases: Vec<Shone>,
+        notes: usize,
+        best: Option<u32>,
+    ) -> SongResult {
+        let (hit, words) = (tally.hit_words, tally.scored_words);
+        let whole = u64::from(words) * 10 >= notes as u64 * 9;
+        SongResult {
+            title,
+            points: tally.score,
+            hit,
+            words,
+            streak: tally.best_streak,
+            phrases,
+            medal: whole.then(|| Medal::of(hit, words)).flatten(),
+            best,
+            whole,
+        }
+    }
+
+    /// Whether it is a new best: a medal or a cheer (sung whole, something
+    /// scored), beating the best before (or the song's first score).
     pub fn new_best(&self) -> bool {
-        self.whole && self.best.is_none_or(|b| self.points > b)
+        matches!(self.verdict(), Verdict::Medal(_) | Verdict::Cheer)
+            && self.best.is_none_or(|b| self.points > b)
     }
 
     /// What it comes to.
     pub fn verdict(&self) -> Verdict {
-        match (self.whole, self.medal) {
-            (false, _) => Verdict::Whole,
-            (true, Some(m)) => Verdict::Medal(m),
-            (true, None) => Verdict::Cheer,
+        match (self.points, self.whole, self.medal) {
+            (0, _, _) => Verdict::Silent,
+            (_, false, _) => Verdict::Whole,
+            (_, true, Some(m)) => Verdict::Medal(m),
+            (_, true, None) => Verdict::Cheer,
         }
     }
 

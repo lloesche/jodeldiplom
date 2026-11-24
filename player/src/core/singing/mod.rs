@@ -473,6 +473,16 @@ impl Singing {
         }
     }
 
+    /// The song sung to its end, taken ([`Singing::finish`]): its scoring,
+    /// the phrases that shone and how many words it has on notes; the
+    /// scoring started over for the next time.
+    pub fn take(&mut self) -> (Tally, Vec<Shone>, usize) {
+        self.finish();
+        let taken = (self.tally, self.shone().copied().collect(), self.words());
+        self.restart();
+        taken
+    }
+
     /// The moments new to `cursor` (which moves past them), and whether
     /// what it read before was taken back.
     pub fn moments_since(&self, cursor: &mut Cursor) -> Since<'_> {

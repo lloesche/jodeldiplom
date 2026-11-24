@@ -12,18 +12,34 @@ use crate::core::singing::{Medal, Shown, SongResult, Verdict};
 use crate::core::State;
 
 /// A song's result as the mode shows it: what was shown, its reveal's time
-/// now ([`karaoke::result_now`]), and the song coming next.
+/// now ([`karaoke::result_now`]), and the song START plays.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ResultShown {
     /// The result and its reveal.
     pub shown: Arc<Shown>,
     /// Seconds into its reveal.
     pub t: f64,
-    /// The next song's title.
+    /// The title of the song START plays (none queued: empty).
     pub next: String,
+    /// Whether that is the song just sung, again (the queue played out).
+    pub again: bool,
 }
 
-/// The result shown now, at its reveal's time, with the song coming next.
+impl ResultShown {
+    /// The words for the song START plays: the next one, the one just sung
+    /// again, or none queued.
+    pub fn next_words(&self) -> String {
+        match (self.next.is_empty(), self.again) {
+            (true, _) => "Queue some songs, then START".to_owned(),
+            (false, true) => format!("Again: {}", self.next),
+            (false, false) => format!("Next: {}", self.next),
+        }
+    }
+}
+
+/// The result shown now, at its reveal's time, with the song START plays:
+/// the one held, or (none held, the queue played out) the queue's current
+/// one, the song just sung.
 pub fn result_now(state: &State) -> Option<ResultShown> {
     let (shown, t) = karaoke::result_now(state)?;
     let next = karaoke::song_index(state).map(|i| {
@@ -38,6 +54,7 @@ pub fn result_now(state: &State) -> Option<ResultShown> {
         shown: shown.clone(),
         t,
         next: next.unwrap_or_default(),
+        again: state.karaoke.held.is_none(),
     })
 }
 
@@ -56,6 +73,10 @@ pub fn verdict_words(r: &SongResult) -> (&'static str, &'static str) {
             ("So close!", "Bronze is just a few more words away")
         }
         Verdict::Cheer => ("Good warm-up!", "Sing it again and watch it grow"),
+        Verdict::Silent => (
+            "Silent night?",
+            "Did the mic fall asleep? Wake it up and sing along",
+        ),
     }
 }
 
@@ -70,18 +91,10 @@ pub fn best_words(r: &SongResult) -> String {
     }
 }
 
-/// The words for the song coming next.
-pub fn next_words(next: &str) -> String {
-    if next.is_empty() {
-        "Queue some songs, then START".to_owned()
-    } else {
-        format!("Next: {next}")
-    }
-}
-
-/// The result as the picture's lines, all of it at once, `next` the song
-/// coming: what a window that draws no stage shows of it (the stage draws
-/// it instead where it draws).
+/// The result as the picture's lines, all of it at once, `next` the words
+/// for the song START plays ([`ResultShown::next_words`]): what a window
+/// that draws no stage shows of it (the stage draws it instead where it
+/// draws).
 pub fn plain_lines(r: &SongResult, next: &str) -> Vec<LyricLine> {
     let (name, verdict) = verdict_words(r);
     let counts = format!(
@@ -96,7 +109,7 @@ pub fn plain_lines(r: &SongResult, next: &str) -> Vec<LyricLine> {
         (format!("{name} {verdict}"), LineKind::Current),
         (counts, LineKind::Next),
         (best_words(r), LineKind::Info),
-        (format!("{} · START", next_words(next)), LineKind::Info),
+        (format!("{next} · START"), LineKind::Info),
     ]
     .into_iter()
     .filter(|(text, _)| !text.is_empty())
@@ -135,6 +148,21 @@ mod tests {
         assert!(last.contains("Next Song") && last.ends_with("START"));
     }
 
+    /// The song START plays: the next, the one just sung again after the
+    /// last, or none queued.
+    #[test]
+    fn the_next_words_name_the_song_start_plays() {
+        let shown = |next: &str, again| ResultShown {
+            shown: Arc::new(Shown::new(result(None, true, None), 1, 0)),
+            t: 0.0,
+            next: next.into(),
+            again,
+        };
+        assert_eq!(shown("B", false).next_words(), "Next: B");
+        assert_eq!(shown("A", true).next_words(), "Again: A");
+        assert_eq!(shown("", true).next_words(), "Queue some songs, then START");
+    }
+
     #[test]
     fn the_words_are_kind() {
         let mut r = result(None, true, Some(100));
@@ -146,5 +174,12 @@ mod tests {
         assert_eq!(best_words(&result(None, true, None)), "Your first score!");
         assert_eq!(best_words(&result(None, false, None)), "");
         assert!(best_words(&result(None, true, Some(20_000))).starts_with("Your best"));
+        // Nothing scored: a wink at the microphone, cheeky, never shaming.
+        let mut silent = result(None, true, Some(100));
+        (silent.points, silent.hit) = (0, 0);
+        let (name, line) = verdict_words(&silent);
+        assert_eq!(name, "Silent night?");
+        assert!(line.contains("mic") && !line.to_lowercase().contains("no "));
+        assert_eq!(best_words(&silent), "Your best: 100");
     }
 }

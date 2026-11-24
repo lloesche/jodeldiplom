@@ -901,11 +901,14 @@ and faster), the words hit fill their bar, the longest streak pops up,
 each phrase pops in as a gem in its tier's colour (Diva's sparkling),
 then a medal by the words (bronze for half of them, silver 70 %, gold
 85 %) is stamped down, or a star cheers you on; a new best rains
-confetti, else the best before shows. START during the reveal shows it
-all at once; the next START sings the next song. The screen takes its
-light from the cover's colours where the cover was taken apart; it
-twinkles a few seconds once settled, then holds still (drawing nothing)
-until START. Without a GPU the result shows as plain lines. The best
+confetti, else the best before shows. Every song played to its end gets
+its result, the last of the queue too, and one where nothing was scored
+asks, with a wink, whether the microphone fell asleep (no medal, no
+best). START during the reveal shows it all at once; the next START
+sings the next song (after the last, the same one again: "Again"). The
+screen takes its light from the cover's colours where the cover was
+taken apart; it twinkles a few seconds once settled, then holds still
+(drawing nothing) until START. Without a GPU the result shows as plain lines. The best
 score of each song is kept (`scores.txt` in the data folder).
 
 A song is sung only once its lyrics are ready (found, and their words

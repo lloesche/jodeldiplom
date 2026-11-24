@@ -27,7 +27,7 @@ pub(super) fn shake(verdict: Verdict, hit: Option<f32>, u: f32) -> (f32, f32) {
         Verdict::Medal(Medal::Gold) => 0.9,
         Verdict::Medal(Medal::Silver) => 0.7,
         Verdict::Medal(Medal::Bronze) => 0.55,
-        Verdict::Cheer | Verdict::Whole => 0.0,
+        Verdict::Cheer | Verdict::Whole | Verdict::Silent => 0.0,
     } * u;
     let Some(a) = hit.filter(|a| (0.0..0.45).contains(a)) else {
         return (0.0, 0.0);
@@ -37,8 +37,8 @@ pub(super) fn shake(verdict: Verdict, hit: Option<f32>, u: f32) -> (f32, f32) {
 }
 
 /// The verdict's look: its light and deep colours (a medal's metal, a
-/// star's from the tint, a calm blue for a song not sung whole) and how
-/// strong its rays are.
+/// star's from the tint, a calm blue for a song not sung whole, a sleepy
+/// lilac for one where nothing was scored) and how strong its rays are.
 fn look(verdict: Verdict, tint: &Tint) -> (Rgb, Rgb, f32) {
     match verdict {
         Verdict::Medal(Medal::Gold) => ([1.0, 0.86, 0.36], [0.7, 0.4, 0.04], 0.6),
@@ -46,6 +46,7 @@ fn look(verdict: Verdict, tint: &Tint) -> (Rgb, Rgb, f32) {
         Verdict::Medal(Medal::Bronze) => ([1.0, 0.72, 0.46], [0.52, 0.26, 0.1], 0.35),
         Verdict::Cheer => (tint.soft, tint.glow.map(|k| k * 0.45), 0.3),
         Verdict::Whole => ([0.72, 0.84, 1.0], [0.25, 0.35, 0.65], 0.18),
+        Verdict::Silent => ([0.78, 0.74, 0.92], [0.3, 0.27, 0.45], 0.1),
     }
 }
 
@@ -249,7 +250,7 @@ impl Stage {
         let verdict = r.verdict();
         let medal = match verdict {
             Verdict::Medal(m) => Some(m),
-            Verdict::Cheer | Verdict::Whole => None,
+            Verdict::Cheer | Verdict::Whole | Verdict::Silent => None,
         };
         let shown_from = if medal.is_some() { -FALL } else { 0.0 };
         let Some(hit) = hit.filter(|&h| h >= shown_from) else {

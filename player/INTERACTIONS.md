@@ -211,14 +211,17 @@ stem keys are their mutes.
   there; the controls' seek bar seeks, except while a song is held for
   START or counting in. Nothing plays in the mode without a count-in:
   `space` pauses a song playing and is START otherwise, and a paused song
-  goes on at START only after the same count-in. A song sung to its end
-  (the game on) shows its result while the next waits: the first START
+  goes on at START only after the same count-in. A song played to its end
+  (the game on; sought on or not, the last of the queue too, nothing
+  scored too) shows its result while the next waits: the first START
   during its reveal completes it at once (nothing played again), the next
   plays the song.
   - `holding_stops_after_a_track_and_names_the_next` (engine)
   - `the_mode_arms_no_transitions_and_makes_no_jumps`
   - `next_in_the_mode_holds_the_next_song_for_start`
   - `start_during_the_reveal_completes_it_and_the_next_starts_the_song`
+  - `a_song_sought_on_and_played_out_shows_its_result`
+  - `a_song_played_out_with_nothing_scored_shows_its_result`
 - **K3b.** The mode's lines never move for its controls: those come up
   over the picture's bottom (the voice slider, the seek bar, the keys,
   START), while the pointer moves in the bottom quarter of the screen (for

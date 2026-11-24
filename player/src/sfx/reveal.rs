@@ -34,7 +34,10 @@ pub fn sound_of(beat: Beat, shown: &Shown) -> Option<(Sound, f32, f32)> {
             let step = (k as usize * steps) / (shown.reveal.ticks() as usize).max(1);
             (Sound::Tick(step.min(steps - 1)), 1.0, 0.0)
         }
+        // Nothing to cheer for nothing counted, or no word hit.
+        Beat::Points if r.points == 0 => return None,
         Beat::Points => (Sound::Sparkle(8), 1.0, 0.0),
+        Beat::Words if r.hit == 0 => return None,
         Beat::Words => (Sound::StepUp(1), 0.8, 0.0),
         Beat::Streak => {
             let level = crate::core::singing::multiplier(r.streak) - 1;
@@ -56,6 +59,8 @@ pub fn sound_of(beat: Beat, shown: &Shown) -> Option<(Sound, f32, f32)> {
         Beat::Verdict(Verdict::Medal(m)) => (Sound::Medal(m), 1.0, 0.0),
         Beat::Verdict(Verdict::Cheer) => (Sound::Tier(Tier::Good), 1.0, 0.0),
         Beat::Verdict(Verdict::Whole) => (Sound::Tier(Tier::Good), 0.7, 0.0),
+        // A cheeky little "womp" for a silent song.
+        Beat::Verdict(Verdict::Silent) => (Sound::Break, 0.6, 0.0),
         Beat::NewBest => (Sound::NewBest, 1.0, 0.0),
         Beat::Best(_) => (Sound::Pop(2), 0.5, 0.0),
         Beat::End => return None,

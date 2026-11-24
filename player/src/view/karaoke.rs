@@ -26,7 +26,7 @@ use crate::core::text::{self, width};
 use crate::core::{Gpu, State};
 
 mod result;
-pub use result::{best_words, next_words, plain_lines, result_now, verdict_words, ResultShown};
+pub use result::{best_words, plain_lines, result_now, verdict_words, ResultShown};
 
 /// What a lyric line is to the one being sung.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -257,7 +257,7 @@ pub fn lines_now(state: &State, t: f64) -> Vec<LyricLine> {
     // How the song before was sung, until the next is started: its words
     // (the stage draws it instead where it draws: [`KaraokePicture::result`]).
     if let Some(r) = result_now(state) {
-        return plain_lines(&r.shown.result, &r.next);
+        return plain_lines(&r.shown.result, &r.next_words());
     }
     let path = &state.queue.paths[index];
     let info = state

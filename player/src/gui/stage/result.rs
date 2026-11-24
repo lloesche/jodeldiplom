@@ -24,7 +24,7 @@ use super::{
     disc, fill, pill, rgba, Face, Rgb, Stage, COVER_PAD, GOLD, GOLD_DEEP, GOLD_TOP, WHITE,
 };
 use crate::core::singing::{Beat, SongResult, WORDS_FILL};
-use crate::view::karaoke::{best_words, next_words, points_text, KaraokePicture, ResultShown};
+use crate::view::karaoke::{best_words, points_text, KaraokePicture, ResultShown};
 
 mod medal;
 mod tint;
@@ -610,7 +610,7 @@ impl Stage {
         let start = (Face::SHOUT, "START");
         let sw = self.measure(start.0, start.1, px);
         let room_for = room.w * 0.92 - sw - px * 2.4;
-        let (text, _) = self.fitted(Face::NUMBER, &next_words(&shown.next), px, room_for);
+        let (text, _) = self.fitted(Face::NUMBER, &shown.next_words(), px, room_for);
         let tw = self.measure(Face::NUMBER, &text, px);
         let gap = px * 1.4;
         let left = room.x + room.w / 2.0 - (tw + gap + sw + px) / 2.0;
@@ -717,6 +717,7 @@ mod tests {
                 shown: std::sync::Arc::new(Shown::new(r.clone(), 1, 0)),
                 t,
                 next: "Next Song".into(),
+                again: false,
             }),
         };
         let area = (0.0, 0.0, 1600.0, 900.0);
@@ -793,5 +794,33 @@ mod tests {
             assert_eq!(star.shape[3], 1.0);
             assert!(!f.sprays.iter().any(|s| s.kind == Kind::Confetti));
         }
+    }
+
+    /// Nothing scored (no points, no words, no phrases): the scene draws
+    /// all the same, in the window and finite throughout, a star for its
+    /// wink at the microphone, no gems and no confetti.
+    #[test]
+    fn a_silent_result_draws_a_star_and_no_gems() {
+        let r = SongResult {
+            points: 0,
+            hit: 0,
+            words: 0,
+            streak: 0,
+            phrases: Vec::new(),
+            ..result(None, false, None)
+        };
+        let reveal = crate::core::singing::Reveal::of(&r);
+        for t in [0.0, 0.6, 1.0, 2.0, reveal.end() + 2.0] {
+            let f = frame_at(&r, t);
+            for i in f.instances.iter().chain(&f.top) {
+                let [x0, y0, x1, y1] = i.quad;
+                assert!(x0 < 1610.0 && x1 > -10.0 && y0 < 910.0 && y1 > -10.0);
+                assert!(i.quad.iter().chain(&i.shape).all(|v| v.is_finite()));
+            }
+        }
+        let f = frame_at(&r, reveal.end() + 2.0);
+        let kinds = |k| f.instances.iter().filter(|i| i.params[0] == k).count();
+        assert_eq!((kinds(kind::MEDAL), kinds(kind::GEM)), (1, 0));
+        assert!(!f.sprays.iter().any(|s| s.kind == Kind::Confetti));
     }
 }
