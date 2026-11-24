@@ -18,14 +18,14 @@ use super::stage_gpu::{kind, Instance, Pour, Skin, Strain};
 /// How much of a bubble's bulge its middle line takes (it grows along and
 /// up and down by this share of it; its thickness by all of it).
 pub const PATH_GROW: f32 = 0.35;
-/// The points of an S from one pitch to the next, between its ends.
-const S_POINTS: usize = 8;
-/// The most of a note an S to or from it takes, each way: under a half,
-/// so that the S's either side of a note never meet (a word's notes lie
-/// end to end, [`crate::core::singing::notes_of`]) and each note keeps a
-/// stretch at its own pitch.
-const S_SHARE: f32 = 0.4;
-const _: () = assert!(S_SHARE < 0.5);
+/// How far apart the points of an S from one pitch to the next are along
+/// it, in pixels: close enough that the tube's edge reads as a curve.
+const S_SPACING: f32 = 3.0;
+/// The fewest and the most points of an S, between its ends.
+const S_POINTS: (usize, usize) = (12, 96);
+/// How gently the middle line bends at its tightest, in tube radii: over
+/// one, or the tube's inner edge folds into a corner.
+const BEND: f32 = 1.5;
 
 /// A tube: its middle line (points sorted across), and its radius.
 #[derive(Clone, Debug, PartialEq)]
@@ -36,10 +36,12 @@ pub struct Snake {
     pub radius: f32,
 }
 
-/// `smoothstep` from 0 to 1.
+/// `smootherstep` from 0 to 1: flat at both ends and bending in and out
+/// gently (its curvature too starts and ends at 0), so a note's straight
+/// stretch runs into its S without a knee.
 fn ease(t: f32) -> f32 {
     let t = t.clamp(0.0, 1.0);
-    t * t * (3.0 - 2.0 * t)
+    t * t * t * (t * (6.0 * t - 15.0) + 10.0)
 }
 
 impl Snake {
@@ -59,8 +61,12 @@ impl Snake {
                 continue;
             }
             let (a, b) = (at - wide, at + wide);
-            for k in 0..=S_POINTS + 1 {
-                let x = a + (b - a) * k as f32 / (S_POINTS + 1) as f32;
+            // About its length along (more than the straight line between
+            // its ends) in steps of S_SPACING.
+            let along = (b - a).hypot(pair[1].2 - pair[0].2) * 1.2;
+            let n = ((along / S_SPACING).ceil() as usize).clamp(S_POINTS.0, S_POINTS.1);
+            for k in 0..=n + 1 {
+                let x = a + (b - a) * k as f32 / (n + 1) as f32;
                 if x > from && x < to {
                     xs.push(x);
                 }
@@ -210,29 +216,30 @@ impl Snake {
 
 /// The S from note `a` to note `b` (each from, to across and how far down;
 /// `b` right after `a`) of a tube `radius` thick: where they meet, and how
-/// far it reaches each way. Wider the further it goes, at most [`S_SHARE`]
-/// of either note.
+/// far it reaches each way. As wide as it must be for its tightest bend
+/// to be [`BEND`] radii round ([`ease`] bends most, 5.77 times the jump
+/// over its width squared, a fifth of the way in), a radius at least.
 fn ess(a: (f32, f32, f32), b: (f32, f32, f32), radius: f32) -> (f32, f32) {
-    let wide = (0.5 * (b.2 - a.2).abs() + 0.8 * radius)
-        .min(S_SHARE * (a.1 - a.0))
-        .min(S_SHARE * (b.1 - b.0));
-    ((a.1 + b.0) / 2.0, wide.max(0.5))
+    let jump = (b.2 - a.2).abs();
+    let wide = 0.5 * (5.77 * jump * BEND * radius).sqrt();
+    ((a.1 + b.0) / 2.0, wide.max(radius).max(0.5))
 }
 
-/// How far down the middle of a tube through `notes` is at `x`: each note's
-/// own height along it, an S (`smoothstep`) from one to the next round
-/// their meeting ([`ess`]).
+/// How far down the middle of a tube through `notes` is at `x`: the first
+/// note's height, plus each step to the next note's as an S ([`ease`])
+/// round their meeting ([`ess`]). The S's add up where they overlap (a
+/// short note between two wide ones), so the line stays as smooth as
+/// each; a note shorter than its S's rounds off short of its pitch, as a
+/// voice gliding through it.
 fn y_at(notes: &[(f32, f32, f32)], x: f32, radius: f32) -> f32 {
-    let Some(&(_, _, mut y)) = notes.first() else {
+    let Some(&(_, _, first)) = notes.first() else {
         return 0.0;
     };
-    for pair in notes.windows(2) {
+    let steps = notes.windows(2).map(|pair| {
         let (at, wide) = ess(pair[0], pair[1], radius);
-        if x >= at - wide {
-            y = pair[0].2 + (pair[1].2 - pair[0].2) * ease((x - (at - wide)) / (2.0 * wide));
-        }
-    }
-    y
+        (pair[1].2 - pair[0].2) * ease((x - (at - wide)) / (2.0 * wide))
+    });
+    first + steps.sum::<f32>()
 }
 
 /// The nearest point to `p` of the middle line `points` (sorted across),
@@ -300,24 +307,43 @@ mod tests {
         );
         assert_eq!(flat.points, vec![(120.0, 50.0), (280.0, 50.0)]);
         let notes = [
-            (100.0, 200.0, 50.0),
-            (200.0, 260.0, 10.0),
-            (260.0, 400.0, 70.0),
+            (100.0, 300.0, 50.0),
+            (300.0, 420.0, 10.0),
+            (420.0, 700.0, 70.0),
         ];
-        let s = Snake::through(&notes, (100.0, 400.0), 20.0);
+        let s = Snake::through(&notes, (100.0, 700.0), 20.0);
         assert_eq!(s.points.first().unwrap().0, 120.0);
-        assert_eq!(s.points.last().unwrap().0, 380.0);
+        assert_eq!(s.points.last().unwrap().0, 680.0);
         assert!(
             s.points.windows(2).all(|w| w[0].0 < w[1].0),
             "sorted across"
         );
-        assert_eq!(s.y_at(150.0), 50.0);
-        assert_eq!(s.y_at(230.0), 10.0);
-        assert_eq!(s.y_at(350.0), 70.0);
-        // Between: smooth (no step bigger than its S allows), within.
-        for k in 0..300 {
+        for (x, y) in [(150.0, 50.0), (360.0, 10.0), (650.0, 70.0)] {
+            assert!((s.y_at(x) - y).abs() < 1e-3, "{x}: {}", s.y_at(x));
+        }
+        // Between: within, smooth, and never bending tighter than BEND
+        // radii (the tube's inner edge round too).
+        let bend = |x: f32| {
+            y_at(&notes, x + 1.0, 20.0) - 2.0 * y_at(&notes, x, 20.0) + y_at(&notes, x - 1.0, 20.0)
+        };
+        for k in 0..600 {
             let x = 100.0 + k as f32;
             let (a, b) = (s.y_at(x), s.y_at(x + 1.0));
+            assert!((10.0..=70.0).contains(&a), "{x}: {a}");
+            assert!((a - b).abs() < 3.0, "{x}: {a} {b}");
+            assert!(bend(x).abs() <= 1.03 / (BEND * 20.0), "{x}: {}", bend(x));
+        }
+        // A short note between big jumps: rounded off, still smooth and
+        // within its neighbours' pitches.
+        let short = [
+            (100.0, 200.0, 50.0),
+            (200.0, 230.0, 10.0),
+            (230.0, 400.0, 70.0),
+        ];
+        let glide = Snake::through(&short, (100.0, 400.0), 20.0);
+        for k in 0..300 {
+            let x = 100.0 + k as f32;
+            let (a, b) = (glide.y_at(x), glide.y_at(x + 1.0));
             assert!((10.0..=70.0).contains(&a), "{x}: {a}");
             assert!((a - b).abs() < 3.0, "{x}: {a} {b}");
         }
@@ -326,9 +352,10 @@ mod tests {
         assert_eq!(dot.points, vec![(15.0, 5.0), (15.0, 5.0)]);
         // Its text where it is flat: on the long last note, not over the
         // bends.
-        let x = s.flattest(60.0, (110.0, 390.0));
-        assert!(x >= 284.0 && x + 60.0 <= 390.0, "{x}");
-        assert_eq!(s.y_at(x), s.y_at(x + 60.0));
+        let x = s.flattest(60.0, (110.0, 690.0));
+        // (The S into it ends at 471, its last few pixels flat to the eye.)
+        assert!(x >= 460.0 && x + 60.0 <= 690.0, "{x}");
+        assert!((s.y_at(x) - s.y_at(x + 60.0)).abs() < 0.5);
         // On one pitch, in the middle.
         assert_eq!(flat.flattest(60.0, (110.0, 290.0)), 170.0);
     }
