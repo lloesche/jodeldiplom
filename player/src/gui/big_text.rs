@@ -74,6 +74,16 @@ impl Face {
     fn tabular(self) -> bool {
         matches!(self, Face::Shout(_))
     }
+
+    /// The room added between its letters, a share of the size: the
+    /// bubbles' black weight sets its letters close, small and moving.
+    fn tracking(self) -> f32 {
+        if self == Face::BUBBLE {
+            0.06
+        } else {
+            0.0
+        }
+    }
 }
 
 /// Text in several faces, each made as it is first asked for.
@@ -171,6 +181,9 @@ impl BigText {
                 }
                 false => (own, 0),
             };
+            // The face's tracking, half on either side of the letter.
+            let track = self.face.tracking() * px;
+            let (advance, shift) = (advance + track, shift + (track / 2.0).round() as i32);
             let ascent = scaled.ascent();
             let g = id.with_scale_and_position(scale, ab_glyph::point(0.0, ascent));
             match font.outline_glyph(g) {
