@@ -1,9 +1,10 @@
 //! The backdrop's covers coming and going (fading in over the ground,
 //! cross-fading at a song change, fading out to it, two at most, the same
-//! cover read again the same), where the subject is, and on the GPU: the
-//! ground and the covers under the pixmap as far as its words let them
-//! through, calmer under the text, lit by the stems, their textures
-//! dropped with them.
+//! cover read again the same), the song's cover kept with them once it is
+//! seen to be theirs, where the subject is, and on the GPU: the ground and
+//! the covers under the pixmap as far as its words let them through, the
+//! whole cover on its card over its blur (at rest the cover itself, not
+//! the plate's fill), lit by the stems, their textures dropped with them.
 
 use std::sync::Arc;
 
@@ -17,37 +18,57 @@ use crate::cover::{split, Apart, Parts};
 /// A cover `side` square: a grey ground with a disc of `colour` round
 /// (`cx`, `cy`) (shares), the disc its subject, nearer; its key in the
 /// store `key`.
-pub(crate) fn disc_layers(side: usize, colour: [u8; 3], (cx, cy): (f32, f32)) -> Layers {
+fn disc_layers(side: usize, colour: [u8; 3], centre: (f32, f32)) -> Layers {
+    disc_cover(side, colour, centre, false).1
+}
+
+/// A cover as [`disc_layers`] has it, and its picture; with `lettering`, a
+/// white bar low on its left that the matte touches faintly (a stray speck
+/// of it: the plate there is filled).
+fn disc_cover(
+    side: usize,
+    colour: [u8; 3],
+    (cx, cy): (f32, f32),
+    lettering: bool,
+) -> (RgbImage, Layers) {
+    let n = side as f32;
     let inside = |x: usize, y: usize| {
-        let (dx, dy) = (x as f32 - cx * side as f32, y as f32 - cy * side as f32);
-        (dx * dx + dy * dy).sqrt() < side as f32 / 5.0
+        let (dx, dy) = (x as f32 - cx * n, y as f32 - cy * n);
+        (dx * dx + dy * dy).sqrt() < n / 5.0
+    };
+    let bar = |x: usize, y: usize| {
+        let (u, v) = (x as f32 / n, y as f32 / n);
+        lettering && (0.12..0.38).contains(&u) && (0.72..0.84).contains(&v)
     };
     let image = RgbImage::from_fn(side as u32, side as u32, |x, y| {
-        if inside(x as usize, y as usize) {
-            Rgb(colour)
-        } else {
-            Rgb([120, 110, 100])
+        let (x, y) = (x as usize, y as usize);
+        match (inside(x, y), bar(x, y)) {
+            (true, _) => Rgb(colour),
+            (_, true) => Rgb([250, 250, 250]),
+            _ => Rgb([120, 110, 100]),
         }
     });
-    let at = |f: &dyn Fn(bool) -> f32| {
-        (0..side * side)
-            .map(|i| f(inside(i % side, i / side)))
-            .collect()
-    };
+    let at =
+        |f: &dyn Fn(usize, usize) -> f32| (0..side * side).map(|i| f(i % side, i / side)).collect();
     let parts = Parts {
         depth: Depth {
             width: side,
             height: side,
-            values: at(&|i| if i { 1.0 } else { 4.0 }),
+            values: at(&|x, y| if inside(x, y) { 1.0 } else { 4.0 }),
         },
         matte: Matte {
             width: side,
             height: side,
-            values: at(&|i| if i { 1.0 } else { 0.0 }),
+            values: at(&|x, y| match (inside(x, y), bar(x, y)) {
+                (true, _) => 1.0,
+                (_, true) => 0.1,
+                _ => 0.0,
+            }),
         },
     };
-    let key = format!("{side}-{colour:?}-{cx}-{cy}");
-    Arc::new(Apart::new(key, split(&image, &parts)))
+    let key = format!("{side}-{colour:?}-{cx}-{cy}-{lettering}");
+    let layers = Arc::new(Apart::new(key, split(&image, &parts)));
+    (image, layers)
 }
 
 const DT: f32 = 1.0 / 60.0;
@@ -56,7 +77,6 @@ const WINDOW: (u32, u32) = (320, 180);
 fn cue(layers: Option<&Layers>) -> Cue {
     Cue {
         layers: layers.cloned(),
-        text: [-1.0; 2],
         ..Cue::default()
     }
 }
@@ -155,17 +175,56 @@ fn the_same_cover_read_again_is_the_same_and_two_at_most_show() {
 }
 
 #[test]
-fn the_subject_is_found_and_the_cut_keeps_it_in_a_tall_window() {
+fn the_subject_is_found_and_its_light_is_behind_it_on_the_card() {
     let a = disc_layers(100, [200, 40, 40], (0.75, 0.4));
     let s = Subject::of(&a.layers);
     assert!((s.focus.0 - 0.75).abs() < 0.03, "{:?}", s.focus);
     assert!(s.light.1 < 0.4 && s.light.1 > 0.2, "{:?}", s.light);
-    let fit = look::fit((600.0, 1200.0), (1.0, 1.0), s.focus, 1.04);
-    assert!(fit[2] < 0.75 && fit[2] + fit[0] > 0.75, "{fit:?}");
+    // On the card: right of its middle, above it.
+    let mut v = Visualiser::default();
+    let f = run(&mut v, &cue(Some(&a)), 2);
+    let look = f.slots[0].look;
+    let card = look.card;
+    let want = card[0] + 0.5 * card[2];
+    assert!(
+        (look.light[0] - want).abs() < 0.03 * card[2] * 2.0,
+        "{look:?}"
+    );
+    assert!(look.light[1] < 0.5 && look.read[3] == 1.0, "{look:?}");
     // A cover without one: its middle.
     let mut plain = a.layers.clone();
     plain.subject = None;
     assert_eq!(Subject::of(&plain).focus, (0.5, 0.45));
+}
+
+#[test]
+fn the_song_s_cover_is_kept_once_it_is_seen_to_be_theirs() {
+    let (picture, a) = disc_cover(96, [200, 40, 40], (0.5, 0.5), true);
+    let art = |id: u64, image: RgbImage| crate::art::Art {
+        id,
+        image: Arc::new(image),
+    };
+    assert!(subject::is_of(&picture, &a.layers));
+    // The same picture coded again, smaller: theirs too.
+    let smaller = image::imageops::resize(&picture, 64, 64, image::imageops::FilterType::Triangle);
+    assert!(subject::is_of(&smaller, &a.layers));
+    // Another song's cover, or another shape: not.
+    let other = RgbImage::from_pixel(96, 96, Rgb([30, 60, 160]));
+    let wide = RgbImage::from_pixel(120, 60, Rgb([120, 110, 100]));
+    assert!(!subject::is_of(&other, &a.layers) && !subject::is_of(&wide, &a.layers));
+    let mut v = Visualiser::default();
+    let with = |art: Option<crate::art::Art>| Cue {
+        art,
+        ..cue(Some(&a))
+    };
+    // The last song's cover still showing as theirs come: not kept...
+    let f = run(&mut v, &with(Some(art(1, other))), 2);
+    assert!(f.slots[0].art.is_none());
+    // ...the song's own, once it comes: kept, and kept after.
+    let f = run(&mut v, &with(Some(art(2, picture))), 1);
+    assert_eq!(f.slots[0].art.as_ref().map(|a| a.id), Some(2));
+    let f = run(&mut v, &cue(Some(&a)), 1);
+    assert_eq!(f.slots[0].art.as_ref().map(|a| a.id), Some(2));
 }
 
 #[test]
@@ -184,8 +243,8 @@ fn the_palette_lights_are_its_vivid_colours_at_full_strength() {
 }
 
 /// The GPU's frames of a red disc cover: the ground and the cover under the
-/// pixmap where its words let them through, calmer under the text, lit by
-/// the vocals; its textures dropped when it is gone.
+/// pixmap where its words let them through, the card brighter than the blur
+/// round it, lit by the vocals; its textures dropped when it is gone.
 #[test]
 fn the_backdrop_draws_on_the_gpu_and_drops_its_textures() {
     let Ok(mut gpu) = crate::gui::present::Offscreen::new(false) else {
@@ -195,12 +254,11 @@ fn the_backdrop_draws_on_the_gpu_and_drops_its_textures() {
     let (w, h) = (256u32, 256u32);
     let a = disc_layers(128, [220, 40, 40], (0.5, 0.5));
     let see = vec![crate::gui::raster::SEE_THROUGH; (w * h) as usize];
-    let frame_of = |layers: Option<&Layers>, levels: Levels, text: [f32; 2]| {
+    let frame_of = |layers: Option<&Layers>, levels: Levels| {
         let mut v = Visualiser::default();
         let cue = Cue {
             layers: layers.cloned(),
             levels,
-            text,
             ..Cue::default()
         };
         let mut f = None;
@@ -225,32 +283,25 @@ fn the_backdrop_draws_on_the_gpu_and_drops_its_textures() {
         }
         sum / n
     };
-    let none = [-1.0; 2];
     // The ground alone (no cover, the gradient): dark, not black.
-    let ground = shown(&mut gpu, Some(&frame_of(None, Levels::default(), none)));
+    let ground = shown(&mut gpu, Some(&frame_of(None, Levels::default())));
     assert_eq!(gpu.backdrop_held(), 0);
     let g = mean(&ground, 100..156, 100..156);
     assert!(g > 10.0 && g < 60.0, "{g}");
-    let quiet = shown(&mut gpu, Some(&frame_of(Some(&a), Levels::default(), none)));
+    let quiet = shown(&mut gpu, Some(&frame_of(Some(&a), Levels::default())));
     assert_eq!(gpu.backdrop_held(), 1);
-    // The cover shows, and its subject's middle is red.
-    let corner = mean(&quiet, 8..40, 8..40);
-    assert!(corner > 30.0, "{corner}");
+    // The card shows the cover whole, its subject's middle red; round it
+    // the blur, darker.
     let mid = quiet[(128 * w + 128) as usize];
     assert!((mid >> 16) & 255 > 2 * ((mid >> 8) & 255), "{mid:08x}");
-    // Calmer under text across the top half.
-    let calm = shown(
-        &mut gpu,
-        Some(&frame_of(Some(&a), Levels::default(), [0.0, 0.5])),
-    );
-    let (top, top_quiet) = (mean(&calm, 20..60, 20..236), mean(&quiet, 20..60, 20..236));
-    assert!(top < top_quiet * 0.8, "{top} {top_quiet}");
-    // The vocals light the subject; under the text they do not.
+    let (on_card, round) = (mean(&quiet, 36..56, 36..56), mean(&quiet, 2..12, 2..12));
+    assert!(round > 4.0 && on_card > round * 1.5, "{on_card} {round}");
+    // The vocals light the subject.
     let sung = Levels {
         vocals: 1.0,
         ..Levels::default()
     };
-    let lit = shown(&mut gpu, Some(&frame_of(Some(&a), sung, none)));
+    let lit = shown(&mut gpu, Some(&frame_of(Some(&a), sung)));
     let disc = |px: &[u32]| mean(px, 112..144, 112..144);
     assert!(
         disc(&lit) > disc(&quiet) * 1.15,
@@ -258,22 +309,10 @@ fn the_backdrop_draws_on_the_gpu_and_drops_its_textures() {
         disc(&lit),
         disc(&quiet)
     );
-    let whole = [0.0, 1.0];
-    let calm_quiet = shown(
-        &mut gpu,
-        Some(&frame_of(Some(&a), Levels::default(), whole)),
-    );
-    let calm_lit = shown(&mut gpu, Some(&frame_of(Some(&a), sung, whole)));
-    assert!(
-        disc(&calm_lit) <= disc(&calm_quiet) + 1.0,
-        "{} {}",
-        disc(&calm_lit),
-        disc(&calm_quiet)
-    );
     // A pixmap word over it: its own colour with as much of the backdrop as
     // its top byte lets through.
     let half: Vec<u32> = (0..w * h).map(|_| 0x8000_0000 | 0x0020_2020).collect();
-    gpu.set_backdrop(Some(&frame_of(Some(&a), Levels::default(), none)), w, h);
+    gpu.set_backdrop(Some(&frame_of(Some(&a), Levels::default())), w, h);
     let over = gpu.show_pixels(&half, w, h).expect("a frame");
     for at in [(128u32, 128u32), (20, 20)] {
         let i = (at.1 * w + at.0) as usize;
@@ -287,4 +326,45 @@ fn the_backdrop_draws_on_the_gpu_and_drops_its_textures() {
     let gone = shown(&mut gpu, None);
     assert_eq!(gpu.backdrop_held(), 0);
     assert_eq!(gone[(10 * w + 10) as usize] & 0x00ff_ffff, 0);
+}
+
+/// A cover whose matte touched its lettering faintly (the plate filled
+/// there): at rest the card shows the lettering from the cover itself,
+/// where the plate alone smudges it away.
+#[test]
+fn the_card_at_rest_is_the_cover_itself() {
+    let Ok(mut gpu) = crate::gui::present::Offscreen::new(false) else {
+        eprintln!("no GPU: skipped");
+        return;
+    };
+    let (w, h) = (256u32, 256u32);
+    let (picture, a) = disc_cover(128, [220, 40, 40], (0.6, 0.4), true);
+    let see = vec![crate::gui::raster::SEE_THROUGH; (w * h) as usize];
+    let mut bright = |art: Option<RgbImage>| {
+        let mut v = Visualiser::default();
+        let cue = Cue {
+            art: art.map(|image| crate::art::Art {
+                id: 1,
+                image: Arc::new(image),
+            }),
+            ..cue(Some(&a))
+        };
+        let mut f = None;
+        for _ in 0..frames(FADE * 2.0) {
+            f = Some(v.step(&cue, (w, h), DT));
+        }
+        gpu.set_backdrop(f.as_ref(), w, h);
+        let px = gpu.show_pixels(&see, w, h).expect("a frame");
+        // The bar's middle on the card (its cover units 0.25, 0.78).
+        let card = f.expect("a frame").slots[0].look.card;
+        let at = |c: usize, u: f32| {
+            let (mid, half, size) = (card[c], card[c + 2], [w, h][c] as f32);
+            ((mid - half + 2.0 * half * u) * size) as u32
+        };
+        let p = px[(at(1, 0.78) * w + at(0, 0.25)) as usize];
+        ((p >> 16) & 255) + ((p >> 8) & 255) + (p & 255)
+    };
+    let real = bright(Some(picture));
+    let filled = bright(None);
+    assert!(real > filled + 90, "{real} {filled}");
 }

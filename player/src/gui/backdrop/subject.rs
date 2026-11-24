@@ -1,5 +1,9 @@
 //! What the backdrop takes from a cover once, when it first shows: where
-//! its subject is ([`Subject`]) and the palette's lights ([`lights`]).
+//! its subject is ([`Subject`]), the palette's lights ([`lights`]) and
+//! whether the song's cover is the picture it was taken apart from
+//! ([`is_of`]).
+
+use image::RgbImage;
 
 use crate::cover::{CoverLayers, Swatch};
 
@@ -53,6 +57,44 @@ impl Subject {
             reach: (0.35 * (b - t)).max(0.1),
         }
     }
+}
+
+/// Whether `art` is the picture `layers` were taken apart from (or the same
+/// picture coded again, at another size): its shape theirs, and on a grid
+/// over it, where nothing was cut out, its pixels the plate's within what
+/// coding changes (the plate is the picture there but for where a hole
+/// was filled: the middle difference is taken).
+pub fn is_of(art: &RgbImage, layers: &CoverLayers) -> bool {
+    const GRID: u32 = 16;
+    let ((w, h), (aw, ah)) = (layers.size(), art.dimensions());
+    let shape = |a: u32, b: u32| u64::from(a) * u64::from(b);
+    if w == 0 || h == 0 || shape(aw, h).abs_diff(shape(ah, w)) * 100 > shape(ah, w) {
+        return false;
+    }
+    let at = |size: u32, k: u32| ((2 * k + 1) * size / (2 * GRID)).min(size.saturating_sub(1));
+    let mut diffs: Vec<u32> = Vec::new();
+    for gy in 0..GRID {
+        for gx in 0..GRID {
+            let (x, y) = (at(w, gx), at(h, gy));
+            if layers
+                .subject
+                .as_ref()
+                .is_some_and(|s| s.get_pixel(x, y).0[3] > 0)
+            {
+                continue;
+            }
+            let (p, q) = (
+                layers.plate.get_pixel(x, y).0,
+                art.get_pixel(at(aw, gx), at(ah, gy)).0,
+            );
+            diffs.push((0..3).map(|c| u32::from(p[c].abs_diff(q[c]))).sum());
+        }
+    }
+    if diffs.len() < 16 {
+        return false;
+    }
+    diffs.sort_unstable();
+    diffs[diffs.len() / 2] <= 3 * 12
 }
 
 /// A colour (sRGB bytes) as linear light, as bright as it can be: its

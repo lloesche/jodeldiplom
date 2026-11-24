@@ -275,6 +275,9 @@ impl Stage {
                 (f32::NEG_INFINITY, rgba(WHITE, alpha))
             };
             let (px, colors) = (word.px, (rgba(WHITE, alpha), done));
+            // Lit, its letters get a soft dark rim: the gold behind them is
+            // bright.
+            let rim = label.hit.then_some((super::Shade::RIM, alpha));
             let cap = self.cap_middle(Face::BUBBLE, px) - super::COVER_PAD as f32;
             // Where the tube is flattest; a run on its pitch where it is
             // flat there, else each letter at the tube's height under it.
@@ -284,6 +287,10 @@ impl Stage {
             let mid = word.snake.y_at(pen + word.width / 2.0);
             if left == right && left == mid {
                 let at = (pen, mid - cap);
+                if let Some(rim) = rim {
+                    let whole = (at, f32::INFINITY);
+                    self.shade(out, (Face::BUBBLE, &label.text), (px, 1.0), whole, rim);
+                }
                 self.text(out, Face::BUBBLE, &label.text, (px, 1.0), at, split, colors);
                 continue;
             }
@@ -292,6 +299,10 @@ impl Stage {
                 let letter = c.encode_utf8(&mut buf);
                 let wide = self.measure(Face::BUBBLE, letter, px);
                 let y = word.snake.y_at(pen + wide / 2.0) - cap;
+                if let Some(rim) = rim {
+                    let whole = ((pen, y), f32::INFINITY);
+                    self.shade(out, (Face::BUBBLE, letter), (px, 1.0), whole, rim);
+                }
                 self.text(
                     out,
                     Face::BUBBLE,

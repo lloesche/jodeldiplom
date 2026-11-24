@@ -23,8 +23,10 @@ mod comet;
 mod lines;
 mod meter;
 mod result;
+mod shade;
 mod shots;
 mod words;
+use self::shade::Shade;
 use super::sparks::noise;
 use super::stage_gpu::{kind, AtlasUpload, Instance, StageFrame, ATLAS};
 pub use result::Tint;
@@ -60,6 +62,8 @@ const MOST_SPARKS: usize = 700;
 /// sRGB colours, 0 to 1.
 type Rgb = [f32; 3];
 const WHITE: Rgb = [1.0, 1.0, 1.0];
+/// The lane's glass, dark and a little cool.
+const SMOKE: Rgb = [0.02, 0.025, 0.05];
 const GOLD_TOP: Rgb = [1.0, 0.93, 0.6];
 const GOLD: Rgb = [1.0, 0.72, 0.2];
 const GOLD_DEEP: Rgb = [0.98, 0.55, 0.12];
@@ -301,13 +305,6 @@ pub fn wanted(state: &State) -> bool {
         .paths
         .get(index)
         .is_some_and(|p| singing.is_of(p) && singing.words() > 0)
-}
-
-/// Where the stage's text is over the backdrop, its top and bottom (shares
-/// of the height): from the lane's band with its glass down to the line
-/// sung and the next under it.
-pub fn text_band() -> [f32; 2] {
-    [BAND.0 - PILL * 0.55, lines::LINES.1 + 0.05]
 }
 
 /// `picture` without what the stage draws instead: its lyric lines (and
@@ -598,14 +595,15 @@ impl Stage {
         let behind = lane.behind();
         let (from, to) = (now - behind - 0.5, now + AHEAD + 0.5);
 
-        // The lane: a band of glass, the playhead across it.
+        // The lane: a band of smoked glass (the bubbles read over any
+        // cover), the playhead across it.
         let lane_half = ((lane.band.1 - lane.band.0) / 2.0 + p * 0.55, w * 0.4875);
         let lane_mid = ((x + w * 0.5), (lane.band.0 + lane.band.1) / 2.0);
         out.push(pill(
             lane_mid,
             (lane_half.1, lane_half.0),
-            rgba(WHITE, 0.035),
-            rgba(WHITE, 0.07),
+            rgba(SMOKE, 0.34),
+            rgba(WHITE, 0.09),
             0.0,
             1.0,
             p * 0.7,

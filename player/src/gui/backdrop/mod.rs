@@ -1,33 +1,35 @@
 //! Karaoke mode's backdrop on the GPU: the song's cover taken apart
 //! ([`crate::cover::Apart`]: the plate, the subject cut out, their depth,
-//! the rim, the palette) drawn live as a calm visualiser of the music,
-//! under the stage, over the blurred cover it grew from. The sound moves
-//! light and colour more than anything; what moves moves a few pixels,
-//! slowly; where the text is it stays dim and soft so the lane, the
-//! bubbles and the lyrics read.
+//! the rim, the palette) drawn live as a calm visualiser of the music. The
+//! whole cover sits in the middle as a card, as large as it looks good
+//! ([`look::card`]: never a cover's pixel more than [`look::CAP`] window
+//! pixels, read smoothly where it is much enlarged, so no pixel nor block
+//! of its coding shows), its edge fading into the same cover blurred
+//! heavily, dark, filling the window under it and drifting slowly. The
+//! text needs nothing of it: the lane has its glass, the bubbles and the
+//! lyrics their own contrast.
 //!
-//! Each stem lights its own piece ([`music`], from the song's analysis,
-//! smoothed, as the desk lets it be heard): the drums' hits pulse and
-//! flicker on the subject's rim; the bass breathes the depth (the near
-//! layers a little larger); the vocals light the subject and a halo round
-//! it; the rest drifts the plate's colour through the palette and sweeps a
-//! broad light across it. The picture drifts slowly with its depth
-//! (parallax). The big moments are kept for a section starting (the whole
-//! lifts, rays from behind the subject) and for the singer's shine: Great
-//! glows round the subject, Amazing more with faint rays, Diva brightest,
-//! the rays golden.
+//! The life is on the subject. Each stem lights its own piece ([`music`],
+//! from the song's analysis, smoothed, as the desk lets it be heard): the
+//! drums' hits flash the rim round the cut-out; the vocals light the
+//! subject and a glow round it; the bass pops the subject out of the plate
+//! (larger, its shadow on the plate deeper); the rest sweeps the palette's
+//! light across the plate and lights the blur round the card. A cover
+//! without a clear subject has its nearest parts lit so. The big moments
+//! are kept for a section starting (the whole lifts, rays from behind the
+//! subject) and for the singer's shine: Great glows round the subject,
+//! Amazing more with faint rays, Diva brightest, the rays golden.
 //!
 //! [`Visualiser`] is the processor's side, frame by frame: the ground (the
-//! blurred cover, [`super::karaoke::ground`]), which covers show over it
-//! and how much (one fading in while it is still being prepared, a song's
-//! cover cross-fading into the next's, fading out to the ground), the
-//! music felt, and each cover's numbers for the shader ([`BackdropFrame`]).
-//! [`gpu`] draws it at half the window's size (it is soft, and the window's
-//! pass samples it once a pixel), the textures sent over once a cover and
-//! dropped once it no longer shows. The window's pass
-//! ([`super::present`]) adds it under the pixmap as far as the pixmap's
-//! words let it through ([`super::raster::SEE_THROUGH`]). Without a GPU
-//! the pixmap has the blurred cover itself.
+//! blurred cover, [`super::karaoke::ground`]: what shows while the layers
+//! are still being prepared), which covers show over it and how much (one
+//! fading in, a song's cover cross-fading into the next's, fading out to
+//! the ground), the music felt, and each cover's numbers for the shader
+//! ([`BackdropFrame`]). [`gpu`] draws it at the window's size, the
+//! textures sent over once a cover and dropped once it no longer shows.
+//! The window's pass ([`super::present`]) adds it under the pixmap as far
+//! as the pixmap's words let it through ([`super::raster::SEE_THROUGH`]).
+//! Without a GPU the pixmap has the blurred cover itself.
 
 pub mod gpu;
 pub mod look;
@@ -48,14 +50,18 @@ use crate::cover::Layers;
 
 /// How long a cover takes to fade in or out, in seconds.
 pub const FADE: f32 = 1.2;
-/// How much larger than the window the cover is drawn: room for the drift.
-const ZOOM: f32 = 1.04;
-/// How far the picture drifts, a share of the window's height.
-const DRIFT: f32 = 0.0045;
+/// How much larger than the window the blur under the card is drawn:
+/// room for its drift.
+const FILL_ZOOM: f32 = 1.15;
+/// How far the blur drifts, a share of the cover.
+const FILL_DRIFT: f32 = 0.04;
+/// How far the card's layers drift against each other (parallax), a share
+/// of the card.
+const DRIFT: f32 = 0.004;
 /// The drift's periods across and down, in seconds.
 const DRIFT_PERIODS: (f32, f32) = (37.0, 29.0);
-/// How much larger the near layers breathe with the bass, a share.
-const BREATH: f32 = 0.01;
+/// How much larger the subject grows with the bass, a share.
+const BREATH: f32 = 0.022;
 
 /// A cover's numbers as its shader reads them (`backdrop.wgsl`'s `Look`).
 #[repr(C)]
@@ -63,20 +69,32 @@ const BREATH: f32 = 0.01;
 pub struct Look {
     /// The window's width and height in pixels, the drift's time, unused.
     pub size: [f32; 4],
-    /// The drift (the cover's units), the breathing, the cover's share over
-    /// what is under it.
+    /// The card: its middle, its half width and height (the window's
+    /// shares, [`look::card`]).
+    pub card: [f32; 4],
+    /// How the card is read ([`look::softness`]): the level a card smaller
+    /// than its cover reads, how smoothly and how much softer still; and 1
+    /// with a subject cut out (0: its nearest parts stand for it).
+    pub read: [f32; 4],
+    /// The levels the cover is read blurred at ([`look::blurs`]): the blur
+    /// under the card, the glow round the subject, its shadow and the rim's
+    /// glow; unused.
+    pub levels: [f32; 4],
+    /// The layers' drift against each other (the cover's units), the
+    /// subject's growing with the bass, the cover's share over what is
+    /// under it.
     pub cam: [f32; 4],
     /// The rim's pulse (the drums), the vocals, the rest, the bass.
     pub music: [f32; 4],
     /// A section begun, the singer's glow, the rays, the lift.
     pub moments: [f32; 4],
-    /// The window's shares to the cover's units: scale, then offset.
-    pub fit: [f32; 4],
+    /// The window's shares to the blur's cover units: scale, then offset
+    /// (drifting; [`look::fill`]).
+    pub fill: [f32; 4],
     /// The light behind the subject (the window's shares), its reach (a
     /// share of the height), unused.
     pub light: [f32; 4],
-    /// What the breathing is centred on (the cover's units), and where the
-    /// text over it is (its top and bottom, shares of the height).
+    /// What the subject grows round (the cover's units), unused.
     pub focus: [f32; 4],
     /// The palette's vivid light.
     pub accent: [f32; 4],
@@ -101,11 +119,15 @@ pub struct Ground {
     pub image: Arc<RgbImage>,
 }
 
-/// A cover showing: its layers, where its subject is, its palette's
-/// lights, how much it shows (0 to 1, eased at the ends) and whether it is
-/// wanted (fading in) or not (fading out).
+/// A cover showing: its layers, the picture they were taken apart from
+/// (the song's cover, once it is seen to be it: [`subject::is_of`]), where
+/// its subject is, its palette's lights, how much it shows (0 to 1, eased
+/// at the ends) and whether it is wanted (fading in) or not (fading out).
 struct Slot {
     layers: Layers,
+    art: Option<Art>,
+    /// The cover last looked at for it (its id; 0 none).
+    tried: u64,
     subject: Subject,
     lights: [[f32; 3]; 3],
     shown: f32,
@@ -125,16 +147,16 @@ pub struct Cue {
     pub tier: u32,
     /// A section began since the last frame.
     pub section: bool,
-    /// Where the text over it is: its top and bottom (shares of the
-    /// height), -1 for none.
-    pub text: [f32; 2],
 }
 
-/// A cover of a frame, for the shader: its layers and its numbers.
+/// A cover of a frame, for the shader: its layers, the picture they were
+/// taken apart from (none: not at hand) and its numbers.
 #[derive(Clone, Debug)]
 pub struct SlotFrame {
     /// The cover taken apart.
     pub layers: Layers,
+    /// The cover itself.
+    pub art: Option<Art>,
     /// Its numbers.
     pub look: Look,
 }
@@ -179,17 +201,15 @@ impl Visualiser {
     }
 
     /// The frame for `app` at `heard` seconds into the song, `dt` seconds
-    /// after the last, in a `window` of pixels, the stage showing over it
-    /// (`staged`: the lane and its lines; else the lyrics in large type).
-    /// None (and nothing held) outside Karaoke mode or without the GPU
-    /// (`gpu`): the pixmap has its own ground then.
+    /// after the last, in a `window` of pixels. None (and nothing held)
+    /// outside Karaoke mode or without the GPU (`gpu`): the pixmap has its
+    /// own ground then.
     pub fn frame(
         &mut self,
         app: &App,
         gpu: bool,
         heard: f64,
         window: (u32, u32),
-        staged: bool,
         dt: f32,
     ) -> Option<BackdropFrame> {
         let state = &app.state;
@@ -212,11 +232,6 @@ impl Visualiser {
             levels,
             tier: super::streak::level(&state.karaoke.singing, state.config.karaoke_game),
             section,
-            text: if staged {
-                super::stage::text_band()
-            } else {
-                super::karaoke::text_band(window.1 as usize)
-            },
         };
         Some(self.step(&cue, window, dt))
     }
@@ -256,7 +271,7 @@ impl Visualiser {
                 image: Arc::new(super::karaoke::ground::small(cue.art.as_ref(), window)),
             },
         };
-        self.want(cue.layers.as_ref());
+        self.want(cue.layers.as_ref(), cue.art.as_ref());
         for s in &mut self.slots {
             let to = if s.wanted { 1.0 } else { 0.0 };
             let by = dt / FADE;
@@ -290,7 +305,8 @@ impl Visualiser {
                 let alpha = if so_far > 1e-6 { share / so_far } else { 0.0 };
                 SlotFrame {
                     layers: Arc::clone(&s.layers),
-                    look: self.look(s, &felt, window, cue.text, alpha),
+                    art: s.art.clone(),
+                    look: self.look(s, &felt, window, alpha),
                 }
             })
             .collect();
@@ -302,8 +318,9 @@ impl Visualiser {
     /// fading out where it still shows); the rest fading out. The same
     /// cover is the same however it was read ([`crate::cover::Apart::key`]).
     /// Two at most: a third coming drops the one of the others showing
-    /// least.
-    fn want(&mut self, layers: Option<&Layers>) {
+    /// least. The song's cover `art` is kept with them once it is seen to be
+    /// what they were taken apart from (it may come before or after them).
+    fn want(&mut self, layers: Option<&Layers>, art: Option<&Art>) {
         let Some(layers) = layers else {
             self.slots.iter_mut().for_each(|s| s.wanted = false);
             return;
@@ -313,6 +330,8 @@ impl Visualiser {
             Some(i) => self.slots.remove(i),
             None => Slot {
                 layers: Arc::clone(layers),
+                art: None,
+                tried: 0,
                 subject: Subject::of(&layers.layers),
                 lights: lights(&layers.layers.palette),
                 shown: 0.0,
@@ -328,51 +347,63 @@ impl Visualiser {
                 .unwrap_or(0);
             self.slots.remove(least);
         }
-        self.slots.push(Slot {
+        let mut slot = Slot {
             wanted: true,
             ..slot
-        });
+        };
+        // Each cover seen once: is it theirs?
+        if let Some(a) = art.filter(|a| slot.art.is_none() && a.id != slot.tried) {
+            slot.tried = a.id;
+            if subject::is_of(&a.image, &layers.layers) {
+                slot.art = Some(a.clone());
+            }
+        }
+        self.slots.push(slot);
     }
 
     /// `slot`'s numbers for the shader, with the music `felt`, in a
-    /// `window` of pixels with `text` over it (its top and bottom), drawn
-    /// over what is under it by `alpha`.
-    fn look(
-        &self,
-        slot: &Slot,
-        felt: &Felt,
-        window: (u32, u32),
-        text: [f32; 2],
-        alpha: f32,
-    ) -> Look {
+    /// `window` of pixels, drawn over what is under it by `alpha`.
+    fn look(&self, slot: &Slot, felt: &Felt, window: (u32, u32), alpha: f32) -> Look {
         let (w, h) = (window.0.max(1) as f32, window.1.max(1) as f32);
         let (cw, ch) = slot.layers.layers.size();
+        let cover = (cw as f32, ch as f32);
         let sub = &slot.subject;
-        let fit = look::fit((w, h), (cw as f32, ch as f32), sub.focus, ZOOM);
+        let card = look::card((w, h), cover);
+        let ([smooth, softer], level) = look::softness(2.0 * card[3] * h / cover.1.max(1.0));
+        let blurs = look::blurs((cw, ch), gpu::levels((cw, ch)));
         let tau = std::f32::consts::TAU;
         let t = self.clock;
-        // The drift, in pixels, then in the cover's units.
-        let drift = DRIFT * h;
-        let cam_px = (
-            drift * (t * tau / DRIFT_PERIODS.0).sin(),
-            0.6 * drift * (t * tau / DRIFT_PERIODS.1 + 1.3).sin(),
+        let wave = (
+            (t * tau / DRIFT_PERIODS.0).sin(),
+            (t * tau / DRIFT_PERIODS.1 + 1.3).sin(),
         );
-        let cam = [cam_px.0 / w * fit[0], cam_px.1 / h * fit[1]];
+        let cam = [DRIFT * wave.0, 0.6 * DRIFT * wave.1];
+        let mut fill = look::fill((w, h), cover, FILL_ZOOM);
+        fill[2] += FILL_DRIFT * fill[0] * wave.1;
+        fill[3] += 0.6 * FILL_DRIFT * fill[1] * wave.0;
         // The light behind the subject, in the window's shares.
         let light = (
-            (sub.light.0 - fit[2]) / fit[0],
-            (sub.light.1 - fit[3]) / fit[1],
+            card[0] + (2.0 * sub.light.0 - 1.0) * card[2],
+            card[1] + (2.0 * sub.light.1 - 1.0) * card[3],
         );
-        let lift = 0.3 * felt.section + 0.1 * felt.glow;
+        let lift = 0.35 * felt.section + 0.12 * felt.glow;
         let [accent, second, ground] = slot.lights.map(|c| [c[0], c[1], c[2], 0.0]);
+        let cut = if slot.layers.layers.subject.is_some() {
+            1.0
+        } else {
+            0.0
+        };
         Look {
             size: [w, h, t, 0.0],
+            card,
+            read: [level, smooth, softer, cut],
+            levels: [blurs[0], blurs[1], blurs[2], 0.0],
             cam: [cam[0], cam[1], BREATH * felt.bass, alpha],
             music: [felt.pulse, felt.vocals, felt.other, felt.bass],
             moments: [felt.section, felt.glow, felt.rays, lift],
-            fit,
-            light: [light.0, light.1, sub.reach / fit[1], 0.0],
-            focus: [sub.focus.0, sub.focus.1, text[0], text[1]],
+            fill,
+            light: [light.0, light.1, sub.reach * 2.0 * card[3], 0.0],
+            focus: [sub.focus.0, sub.focus.1, 0.0, 0.0],
             accent,
             second,
             ground,

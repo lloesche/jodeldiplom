@@ -263,7 +263,7 @@ impl Paint {
             let layer = canvas.layer_frame(heard);
             let stage = gpu.then(|| stage(canvas, app, shine, heard, dt)).flatten();
             staged = stage.is_some();
-            let backdrop = visualiser.frame(app, gpu, heard, place.size, staged, backdrop_dt);
+            let backdrop = visualiser.frame(app, gpu, heard, place.size, backdrop_dt);
             drawn = backdrop.is_some();
             Drawn {
                 layer,

@@ -7,8 +7,9 @@
 //! a streak's shine (its rise and collapse, the bands, the swirl, the rim,
 //! the rainbow, [`super::rainbow`]), the diploma's shapes (a star sticker,
 //! a wax seal, the rays, [`super::seal`]; its paper, a rubber stamp, a
-//! signature, [`super::paper`]) and the backdrop's maths
-//! ([`super::backdrop::look`]), each worked out by the shader's own
+//! signature, [`super::paper`]), the backdrop's maths
+//! ([`super::backdrop::look`]) and its smooth read of a texture (a cubic
+//! B-spline of its texels), each worked out by the shader's own
 //! functions in a compute pass over the shader as the window composes it,
 //! at sample points, against the processor's. Skipped (with a note)
 //! without a GPU.
@@ -34,11 +35,23 @@ fn gpu() -> Option<(wgpu::Device, wgpu::Queue)> {
 /// `body` (WGSL over `i`, the sample, reading `ins` and writing `outs`)
 /// after `source`, run on the GPU for `n` samples, `per` vec4s out each.
 fn run(
-    (device, queue): &(wgpu::Device, wgpu::Queue),
+    gpu: &(wgpu::Device, wgpu::Queue),
     source: &str,
     body: &str,
     ins: &[[f32; 4]],
     (n, per): (usize, usize),
+) -> Vec<[f32; 4]> {
+    run_reading(gpu, (source, body), ins, (n, per), None)
+}
+
+/// As [`run`], `source` and `body` reading a texture (`group(0)`: it at
+/// binding 0, a linear sampler at 1) where one is given.
+fn run_reading(
+    (device, queue): &(wgpu::Device, wgpu::Queue),
+    (source, body): (&str, &str),
+    ins: &[[f32; 4]],
+    (n, per): (usize, usize),
+    texture: Option<&wgpu::TextureView>,
 ) -> Vec<[f32; 4]> {
     let code = format!(
         "{source}
@@ -92,10 +105,34 @@ fn check(@builtin(global_invocation_id) id: vec3<u32>) {{
             },
         ],
     });
+    let read = texture.map(|view| {
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
+        });
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("jodeldiplom shader check"),
+            layout: &pipeline.get_bind_group_layout(0),
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&sampler),
+                },
+            ],
+        })
+    });
     let mut encoder = device.create_command_encoder(&Default::default());
     {
         let mut pass = encoder.begin_compute_pass(&Default::default());
         pass.set_pipeline(&pipeline);
+        if let Some(read) = &read {
+            pass.set_bind_group(0, read, &[]);
+        }
         pass.set_bind_group(1, &bind, &[]);
         pass.dispatch_workgroups(n as u32, 1, 1);
     }
@@ -719,9 +756,10 @@ fn the_stage_shader_s_tube_is_its_reference() {
 }
 
 /// The backdrop's maths at points across the window and through time: the
-/// shader's [`look::calm_at`], [`look::settle`], [`look::shift`], [`look::exposure`],
-/// [`look::vignette`], [`look::rim_light`], [`look::sweep`],
-/// [`look::drift`] and [`look::ray_fan`] as the processor's.
+/// shader's [`look::rounded_box`], [`look::card_edge`], [`look::falloff`],
+/// [`look::bspline`], [`look::shift`], [`look::vignette`],
+/// [`look::rim_light`], [`look::sweep`], [`look::drift`] and
+/// [`look::ray_fan`] as the processor's.
 #[test]
 fn the_backdrop_shader_s_maths_is_its_reference() {
     use super::backdrop::look;
@@ -735,33 +773,42 @@ fn the_backdrop_shader_s_maths_is_its_reference() {
             [fr(0.613), fr(0.377), fr(0.291), fr(0.733) * 60.0]
         })
         .collect();
-    let text = [0.15, 0.84];
     let body = "
     let s = ins[i];
-    let text = vec2<f32>(0.15, 0.84);
     let sh = shift(s.xy, s.z, vec2<f32>(0.01, -0.006), 0.008, vec2<f32>(0.45, 0.4));
-    outs[i * 3u] = vec4<f32>(calm_at(s.y, text), sh, exposure(s.z, s.x * 0.4));
-    outs[i * 3u + 1u] = vec4<f32>(vignette(s.x, s.y), rim_light(s.z, s.x, s.x, s.y, s.w), sweep(s.x, s.y, s.w, 1.0 + s.z), ray_fan(s.x - 0.5, s.y - 0.4, s.w, 0.2));
-    outs[i * 3u + 2u] = vec4<f32>(drift(s.w), settle(vec3<f32>(s.x * 0.4), s.y).x);";
+    let d = rounded_box((s.x - 0.5) * 400.0, (s.y - 0.5) * 300.0, 120.0, 100.0, 9.0);
+    outs[i * 4u] = vec4<f32>(d, card_edge(d, 2000.0), sh);
+    let rim = rim_light(s.z, s.x, s.x, s.y, s.w);
+    let rays = ray_fan(s.x - 0.5, s.y - 0.4, s.w, 0.2);
+    outs[i * 4u + 1u] = vec4<f32>(vignette(s.x, s.y), rim, sweep(s.x, s.y, s.w), rays);
+    outs[i * 4u + 2u] = vec4<f32>(drift(s.w), falloff(d, 30.0));
+    outs[i * 4u + 3u] = bspline(s.z);";
     let source = super::backdrop::gpu::shader(false);
-    let outs = run(&gpu, &source, body, &samples, (samples.len(), 3));
+    let outs = run(&gpu, &source, body, &samples, (samples.len(), 4));
     let close = |g: &[f32], c: &[f32], what: &str| {
         for (x, y) in g.iter().zip(c) {
             assert!(near(*x, *y, 3e-3, 2e-3), "{what}: {g:?} {c:?}");
         }
     };
-    let (mut calm, mut swept) = (0, 0);
+    let (mut edged, mut swept) = (0, 0);
     for (k, s) in samples.iter().enumerate() {
-        let g = &outs[k * 3..k * 3 + 3];
+        let g = &outs[k * 4..k * 4 + 4];
         let what = format!("sample {k}: {s:?}");
         let sh = look::shift([s[0], s[1]], s[2], [0.01, -0.006], 0.008, [0.45, 0.4]);
-        let c = look::calm_at(s[1], text);
+        let d = look::rounded_box(
+            (s[0] - 0.5) * 400.0,
+            (s[1] - 0.5) * 300.0,
+            120.0,
+            100.0,
+            9.0,
+        );
+        let edge = look::card_edge(d, 2000.0);
         close(
             &g[0],
-            &[c, sh[0], sh[1], look::exposure(s[2], s[0] * 0.4)],
-            &format!("{what}: calm, shift, exposure"),
+            &[d, edge, sh[0], sh[1]],
+            &format!("{what}: box, edge, shift"),
         );
-        let sweep = look::sweep(s[0], s[1], s[3], 1.0 + s[2]);
+        let sweep = look::sweep(s[0], s[1], s[3]);
         close(
             &g[1],
             &[
@@ -772,15 +819,105 @@ fn the_backdrop_shader_s_maths_is_its_reference() {
             ],
             &format!("{what}: vignette, rim, sweep, rays"),
         );
-        let d = look::drift(s[3]);
-        let settled = look::settle(s[0] * 0.4, s[1]);
+        let w = look::drift(s[3]);
         close(
             &g[2],
-            &[d[0], d[1], d[2], settled],
-            &format!("{what}: drift, settle"),
+            &[w[0], w[1], w[2], look::falloff(d, 30.0)],
+            &format!("{what}: drift, falloff"),
         );
-        calm += usize::from(c > 0.0 && c < 1.0);
+        close(&g[3], &look::bspline(s[2]), &format!("{what}: bspline"));
+        edged += usize::from(edge > 0.0 && edge < 1.0);
         swept += usize::from(sweep > 0.3);
     }
-    assert!(calm > 20 && swept > 20, "{calm} {swept}");
+    assert!(edged > 20 && swept > 20, "{edged} {swept}");
+}
+
+/// The backdrop's smooth read ([`super::backdrop::gpu::SMOOTH`], the
+/// ground's stretch) of a 4 × 4 texture at points across it and past its
+/// edges: a cubic B-spline of its texels (the edge's held), worked out
+/// texel by texel on the processor.
+#[test]
+fn the_backdrop_s_smooth_read_is_a_b_spline_of_its_texels() {
+    let Some(gpu) = gpu() else {
+        return;
+    };
+    let (device, queue) = &gpu;
+    // Each texel a fifteenth (exact in a byte).
+    let values: Vec<f32> = (0..16).map(|i| ((i * 7) % 16) as f32 / 15.0).collect();
+    let bytes: Vec<u8> = values
+        .iter()
+        .flat_map(|&v| [(v * 255.0).round() as u8, 0, 0, 255])
+        .collect();
+    let size = wgpu::Extent3d {
+        width: 4,
+        height: 4,
+        depth_or_array_layers: 1,
+    };
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("jodeldiplom shader check"),
+        size,
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8Unorm,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+    queue.write_texture(
+        texture.as_image_copy(),
+        &bytes,
+        wgpu::TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(16),
+            rows_per_image: Some(4),
+        },
+        size,
+    );
+    let view = texture.create_view(&Default::default());
+    let samples: Vec<[f32; 4]> = (0..400)
+        .map(|k| {
+            let f = k as f32;
+            let fr = |m: f32| (f * m).fract() * 1.4 - 0.2;
+            [fr(0.613), fr(0.377), 0.0, 0.0]
+        })
+        .collect();
+    let source = format!(
+        "{}{}
+@group(0) @binding(0) var src: texture_2d<f32>;
+@group(0) @binding(1) var soft: sampler;
+",
+        super::backdrop::look::wgsl(),
+        super::backdrop::gpu::SMOOTH
+    );
+    let body = "
+    outs[i] = smooth_at(src, ins[i].xy, 0u);";
+    let outs = run_reading(
+        &gpu,
+        (&source, body),
+        &samples,
+        (samples.len(), 1),
+        Some(&view),
+    );
+    // The cubic B-spline's weight `t` texels off.
+    let weight = |t: f32| {
+        let t = t.abs();
+        if t < 1.0 {
+            (4.0 - 6.0 * t * t + 3.0 * t * t * t) / 6.0
+        } else if t < 2.0 {
+            (2.0 - t).powi(3) / 6.0
+        } else {
+            0.0
+        }
+    };
+    for (s, g) in samples.iter().zip(&outs) {
+        let (x, y) = (s[0] * 4.0 - 0.5, s[1] * 4.0 - 0.5);
+        let mut want = 0.0;
+        for j in -3..7i32 {
+            for k in -3..7i32 {
+                let texel = values[(k.clamp(0, 3) * 4 + j.clamp(0, 3)) as usize];
+                want += weight(x - j as f32) * weight(y - k as f32) * texel;
+            }
+        }
+        assert!(near(g[0], want, 1e-2, 0.0), "{s:?}: {} {want}", g[0]);
+    }
 }

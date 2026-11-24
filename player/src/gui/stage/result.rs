@@ -297,10 +297,9 @@ impl Stage {
             }
         };
         if pen.shadow > 0.0 {
-            let dark = [0.02, 0.01, 0.05, 0.55 * color[3] * pen.shadow];
-            let drop = (px * 0.05).max(1.0) * scale;
-            let at = (left, top + drop);
-            turned(self.text(out, face, text, (px, scale), at, split, ([0.0; 4], dark)));
+            let shade = (super::Shade::DROP, color[3] * pen.shadow);
+            let from = self.shade(out, (face, text), (px, scale), ((left, top), split), shade);
+            out[from..].iter_mut().for_each(|i| turned(Some(i)));
         }
         let none = [color[0], color[1], color[2], 0.0];
         let at = (left, top);

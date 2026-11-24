@@ -1,32 +1,45 @@
 //! The backdrop's look as numbers: the pieces of its shader that are maths
 //! alone, each here twice, for the processor and in WGSL ([`wgsl`]), held
-//! to each other in `super::super::shader_check`: how calm it is under the
-//! text ([`calm_at`], [`settle`]), how a layer moves with its depth
-//! ([`shift`]), how bright it is shown ([`exposure`], [`vignette`]), the
-//! rim's light ([`rim_light`]), the light sweeping across the plate
-//! ([`sweep`]), the palette's slow drift ([`drift`]) and the rays from
-//! behind the subject ([`ray_fan`]). And where the cover sits in the
-//! window ([`fit`]), which only the processor works out.
+//! to each other in `super::super::shader_check`: the card's rounded edge
+//! ([`rounded_box`], [`card_edge`]) and the light and shadow falling off
+//! round it ([`falloff`]), the smooth cubic sampling's taps ([`bspline`]),
+//! how a layer moves with its depth ([`shift`]), the corners' shade
+//! ([`vignette`]), the rim's light ([`rim_light`]), the light sweeping
+//! across the plate ([`sweep`]), the palette's slow drift ([`drift`]) and
+//! the rays from behind the subject ([`ray_fan`]). And where the card and
+//! the blur under it sit in the window ([`card`], [`fill`]), how softly
+//! the card is read for its size ([`softness`]) and the levels the cover is
+//! read blurred at ([`blurs`]), which only the processor works out.
 
-/// How far the calm under the text reaches past it, a share of the height.
-pub const FEATHER: f32 = 0.12;
-/// The light the backdrop is shown at (linear: about half the cover's
-/// brightness as the eye sees it).
-pub const EXPOSE: f32 = 0.2;
-/// How much darker it is under the text.
-pub const CALM_DIM: f32 = 0.45;
-/// How much the brights are held down under the text.
-pub const CALM_KNEE: f32 = 7.0;
-/// How much darker the corners are.
-pub const VIGNETTE: f32 = 0.38;
+/// The card's side at most, a share of the window's height (and, for a
+/// tall window, of its width).
+pub const CARD: f32 = 0.84;
+/// The card's side at most, a share of the window's width.
+pub const CARD_ACROSS: f32 = 0.9;
+/// The most a cover's pixel is enlarged on the card: a small one (an MP3's
+/// 300 pixels) still most of a 5K screen's height, read softly; past this
+/// it would only be softer, not larger.
+pub const CAP: f32 = 6.0;
+/// The card's corners' radius, a share of its shorter side.
+pub const RADIUS: f32 = 0.022;
+/// How wide the card's edge fades into the blur, a share of its shorter
+/// side.
+pub const EDGE: f32 = 0.006;
+/// The blur under the card: the cover read about this many texels across.
+pub const BLUR_TEXELS: f32 = 12.0;
+/// How far the card's shadow and the light round it reach, a share of its
+/// shorter side.
+pub const REACH: f32 = 0.09;
 /// The rim's light at rest.
-pub const RIM_REST: f32 = 0.08;
+pub const RIM_REST: f32 = 0.18;
 /// The rim's light on a drum hit.
-pub const RIM_HIT: f32 = 0.8;
+pub const RIM_HIT: f32 = 2.2;
+/// How much darker the corners are.
+pub const VIGNETTE: f32 = 0.5;
 /// How long the light sweeping across the plate takes, in seconds.
-pub const SWEEP_PERIOD: f32 = 26.0;
-/// How wide the sweeping light is, a share of the height.
-pub const SWEEP_WIDTH: f32 = 0.38;
+pub const SWEEP_PERIOD: f32 = 17.0;
+/// How wide the sweeping light is, a share of the card.
+pub const SWEEP_WIDTH: f32 = 0.22;
 /// How long the palette takes to drift through its colours, in seconds.
 pub const DRIFT_PERIOD: f32 = 45.0;
 
@@ -36,11 +49,42 @@ pub fn smoothstep(a: f32, b: f32, x: f32) -> f32 {
     t * t * (3.0 - 2.0 * t)
 }
 
-/// How calm the backdrop is at `y` (a share of the height, down): 1 where
-/// the text is (`text`: its top and bottom; at -1, none), 0 away from it,
-/// fading over [`FEATHER`].
-pub fn calm_at(y: f32, text: [f32; 2]) -> f32 {
-    smoothstep(text[0] - FEATHER, text[0], y) * (1.0 - smoothstep(text[1], text[1] + FEATHER, y))
+/// How far (`dx`, `dy`) from a rounded box's middle is outside it (less
+/// than 0 inside), the box `hx` × `hy` from its middle to its sides, its
+/// corners rounded by `r`.
+pub fn rounded_box(dx: f32, dy: f32, hx: f32, hy: f32, r: f32) -> f32 {
+    let qx = dx.abs() - hx + r;
+    let qy = dy.abs() - hy + r;
+    let out = (qx.max(0.0).powi(2) + qy.max(0.0).powi(2)).sqrt();
+    out + qx.max(qy).min(0.0) - r
+}
+
+/// How much of the card shows `d` from its edge (less than 0 inside), its
+/// shorter side `side` long: all of it inside, fading over [`EDGE`] to
+/// none at the edge.
+pub fn card_edge(d: f32, side: f32) -> f32 {
+    1.0 - smoothstep(-EDGE * side, 0.0, d)
+}
+
+/// Light (or shade) falling off `d` outside the card (all of it inside),
+/// over `reach`: smoothly, as a soft light does.
+pub fn falloff(d: f32, reach: f32) -> f32 {
+    let x = d.max(0.0) / reach.max(1e-4);
+    1.0 / (1.0 + x * x * 3.0)
+}
+
+/// A smooth cubic (B-spline) read of a texture at `f`, the share of the
+/// way from one texel to the next: the two bilinear reads' weights and
+/// where they are, each from the first texel (`[g0, g1, h0, h1]`).
+pub fn bspline(f: f32) -> [f32; 4] {
+    let f2 = f * f;
+    let f3 = f2 * f;
+    let w0 = (1.0 - 3.0 * f + 3.0 * f2 - f3) / 6.0;
+    let w1 = (4.0 - 6.0 * f2 + 3.0 * f3) / 6.0;
+    let w2 = (1.0 + 3.0 * f + 3.0 * f2 - 3.0 * f3) / 6.0;
+    let w3 = f3 / 6.0;
+    let (g0, g1) = (w0 + w1, w2 + w3);
+    [g0, g1, w1 / g0 - 1.0, w3 / g1 + 1.0]
 }
 
 /// Where a layer is read for the cover's point `uv` at nearness `near`:
@@ -52,43 +96,30 @@ pub fn shift(uv: [f32; 2], near: f32, cam: [f32; 2], breath: f32, focus: [f32; 2
     [0, 1].map(|i| uv[i] - cam[i] * k - (uv[i] - focus[i]) * breath * near)
 }
 
-/// The light the backdrop is shown at where it is `calm` (0 to 1), lifted
-/// by `lift` (a section, the singer's shine).
-pub fn exposure(calm: f32, lift: f32) -> f32 {
-    EXPOSE * (1.0 - CALM_DIM * calm) * (1.0 + lift)
-}
-
-/// Light `x` (linear, already exposed) where it is `calm`: its brights held
-/// down under the text (a bright subject must not shout over the lyrics),
-/// the darks as they are.
-pub fn settle(x: f32, calm: f32) -> f32 {
-    x / (1.0 + CALM_KNEE * calm * x.max(0.0))
-}
-
 /// How much of the light shows at the window's point (`x`, `y`, shares):
 /// all of it in the middle, less towards the corners.
 pub fn vignette(x: f32, y: f32) -> f32 {
     let (dx, dy) = (x - 0.5, y - 0.5);
     let d = (dx * dx + dy * dy).sqrt() * 2.0;
-    1.0 - VIGNETTE * smoothstep(0.55, 1.45, d)
+    1.0 - VIGNETTE * smoothstep(0.35, 1.4, d)
 }
 
 /// The rim's light where its mask is `rim` (0 to 1, the edge brightest), at
 /// the cover's point (`u`, `v`) and time `t`, its drum hit at `pulse` (0 to
-/// 1): a faint shimmer at rest, bright and flickering a little on a hit.
+/// 1): a shimmer at rest, bright and flickering a little on a hit.
 pub fn rim_light(rim: f32, pulse: f32, u: f32, v: f32, t: f32) -> f32 {
-    let shimmer = 0.8 + 0.2 * (u * 37.0 + v * 23.0 + t * 1.3).sin();
+    let shimmer = 0.75 + 0.25 * (u * 23.0 + v * 17.0 + t * 1.3).sin();
     let flicker = 1.0 - 0.3 * pulse * (0.5 + 0.5 * (u * 131.0 - v * 97.0 + t * 17.0).sin());
     rim.max(0.0).powf(1.5) * (RIM_REST * shimmer + RIM_HIT * pulse * flicker)
 }
 
-/// The light sweeping across the window's point (`x`, `y`, shares) at time
-/// `t`, the window `aspect` wide for its height: a broad band, slanting,
-/// coming round every [`SWEEP_PERIOD`] (0 to 1).
-pub fn sweep(x: f32, y: f32, t: f32, aspect: f32) -> f32 {
-    let along = x * aspect * 0.82 + y * 0.57;
-    let span = aspect * 0.82 + 0.57 + 1.2;
-    let pos = (t / SWEEP_PERIOD).fract() * span - 0.6;
+/// The light sweeping across the card's point (`u`, `v`, the cover's
+/// units) at time `t`: a broad band, slanting, coming round every
+/// [`SWEEP_PERIOD`] (0 to 1).
+pub fn sweep(u: f32, v: f32, t: f32) -> f32 {
+    let along = u * 0.82 + v * 0.57;
+    let span = 0.82 + 0.57 + 1.0;
+    let pos = (t / SWEEP_PERIOD).fract() * span - 0.5;
     let d = (along - pos) / SWEEP_WIDTH;
     (-d * d).exp()
 }
@@ -117,12 +148,45 @@ pub fn ray_fan(dx: f32, dy: f32, t: f32, reach: f32) -> f32 {
     beams * (-d / (reach.max(0.01) * 2.5)).exp()
 }
 
-/// Where the cover is read for the window: a point (shares across and
-/// down) is `fit[0..2]` × it + `fit[2..4]` in the cover's units. The cover
-/// fills the `window` (its aspect kept, the rest cut off), `zoom` times
-/// larger still (room for the drift), the cut centred on `focus` (the
-/// cover's units) as far as the cover reaches.
-pub fn fit(window: (f32, f32), cover: (f32, f32), focus: (f32, f32), zoom: f32) -> [f32; 4] {
+/// Where the card is in a `window` (pixels) for a `cover` of pixels: its
+/// middle and its half width and height, shares of the window's. The whole
+/// cover, its aspect kept, as large as [`CARD`] and [`CARD_ACROSS`] let it
+/// be, but no cover pixel more than [`CAP`] window pixels across.
+pub fn card(window: (f32, f32), cover: (f32, f32)) -> [f32; 4] {
+    let (w, h) = (window.0.max(1.0), window.1.max(1.0));
+    let (cw, ch) = (cover.0.max(1.0), cover.1.max(1.0));
+    let room = (CARD * w.min(h)).min(CARD_ACROSS * w);
+    let scale = (room / cw.max(ch)).min(CAP);
+    [0.5, 0.5, cw * scale / (2.0 * w), ch * scale / (2.0 * h)]
+}
+
+/// How softly the card is read, its cover's pixel `scale` window pixels
+/// across: as it is up to a little enlarged, smoothly (cubic) when much
+/// enlarged (no pixel nor block of the cover's coding shows), softer still
+/// the more a small cover is (`[smooth, softer]`, each 0 to 1); and the level a
+/// smaller card reads (each level half the last).
+pub fn softness(scale: f32) -> ([f32; 2], f32) {
+    let smooth = smoothstep(1.2, 2.2, scale);
+    let softer = smoothstep(2.4, 5.0, scale) * 0.35;
+    ([smooth, softer], (1.0 / scale.max(1e-3)).log2().max(0.0))
+}
+
+/// The levels a `cover` (pixels) with `levels` of them is read blurred at:
+/// the blur under the card (about [`BLUR_TEXELS`] across), the glow round
+/// the subject (twice as fine) and its shadow and the rim's glow (four
+/// times), each at least the first.
+pub fn blurs(cover: (u32, u32), levels: u32) -> [f32; 3] {
+    let long = cover.0.max(cover.1).max(1) as f32;
+    let last = levels.max(1) as f32 - 1.0;
+    let blur = (long / BLUR_TEXELS).log2().floor().clamp(0.0, last);
+    [blur, (blur - 1.0).max(0.0), (blur - 2.0).max(0.0)]
+}
+
+/// Where the blur under the card is read for the window: a point (shares
+/// across and down) is `fit[0..2]` × it + `fit[2..4]` in the cover's
+/// units. The cover fills the `window` (its aspect kept, the rest cut off,
+/// centred), `zoom` times larger still (room for the drift).
+pub fn fill(window: (f32, f32), cover: (f32, f32), zoom: f32) -> [f32; 4] {
     let wa = window.0 / window.1.max(1.0);
     let ca = cover.0 / cover.1.max(1.0);
     let (sx, sy) = if wa > ca {
@@ -131,21 +195,18 @@ pub fn fit(window: (f32, f32), cover: (f32, f32), focus: (f32, f32), zoom: f32) 
         (wa / ca, 1.0)
     };
     let (sx, sy) = (sx / zoom, sy / zoom);
-    let ox = (focus.0 - sx / 2.0).clamp(0.0, 1.0 - sx);
-    let oy = (focus.1 - sy / 2.0).clamp(0.0, 1.0 - sy);
-    [sx, sy, ox, oy]
+    [sx, sy, (1.0 - sx) / 2.0, (1.0 - sy) / 2.0]
 }
 
 /// The functions above in WGSL, their constants with them.
 pub fn wgsl() -> String {
     format!(
-        "const FEATHER: f32 = {FEATHER:?};
-const EXPOSE: f32 = {EXPOSE:?};
-const CALM_DIM: f32 = {CALM_DIM:?};
-const VIGNETTE: f32 = {VIGNETTE:?};
-const CALM_KNEE: f32 = {CALM_KNEE:?};
+        "const RADIUS: f32 = {RADIUS:?};
+const EDGE: f32 = {EDGE:?};
+const REACH: f32 = {REACH:?};
 const RIM_REST: f32 = {RIM_REST:?};
 const RIM_HIT: f32 = {RIM_HIT:?};
+const VIGNETTE: f32 = {VIGNETTE:?};
 const SWEEP_PERIOD: f32 = {SWEEP_PERIOD:?};
 const SWEEP_WIDTH: f32 = {SWEEP_WIDTH:?};
 const DRIFT_PERIOD: f32 = {DRIFT_PERIOD:?};
@@ -155,37 +216,51 @@ const TAU_: f32 = 6.2831855;
 }
 
 const WGSL: &str = r"
-fn calm_at(y: f32, text: vec2<f32>) -> f32 {
-    return smoothstep(text.x - FEATHER, text.x, y) * (1.0 - smoothstep(text.y, text.y + FEATHER, y));
+fn rounded_box(dx: f32, dy: f32, hx: f32, hy: f32, r: f32) -> f32 {
+    let q = vec2<f32>(abs(dx) - hx + r, abs(dy) - hy + r);
+    return length(max(q, vec2<f32>(0.0))) + min(max(q.x, q.y), 0.0) - r;
+}
+
+fn card_edge(d: f32, side: f32) -> f32 {
+    return 1.0 - smoothstep(-EDGE * side, 0.0, d);
+}
+
+fn falloff(d: f32, reach: f32) -> f32 {
+    let x = max(d, 0.0) / max(reach, 1e-4);
+    return 1.0 / (1.0 + x * x * 3.0);
+}
+
+fn bspline(f: f32) -> vec4<f32> {
+    let f2 = f * f;
+    let f3 = f2 * f;
+    let w0 = (1.0 - 3.0 * f + 3.0 * f2 - f3) / 6.0;
+    let w1 = (4.0 - 6.0 * f2 + 3.0 * f3) / 6.0;
+    let w2 = (1.0 + 3.0 * f + 3.0 * f2 - 3.0 * f3) / 6.0;
+    let w3 = f3 / 6.0;
+    let g0 = w0 + w1;
+    let g1 = w2 + w3;
+    return vec4<f32>(g0, g1, w1 / g0 - 1.0, w3 / g1 + 1.0);
 }
 
 fn shift(uv: vec2<f32>, near: f32, cam: vec2<f32>, breath: f32, focus: vec2<f32>) -> vec2<f32> {
     return uv - cam * ((near - 0.5) * 2.0) - (uv - focus) * (breath * near);
 }
 
-fn exposure(calm: f32, lift: f32) -> f32 {
-    return EXPOSE * (1.0 - CALM_DIM * calm) * (1.0 + lift);
-}
-
-fn settle(x: vec3<f32>, calm: f32) -> vec3<f32> {
-    return x / (vec3<f32>(1.0) + CALM_KNEE * calm * max(x, vec3<f32>(0.0)));
-}
-
 fn vignette(x: f32, y: f32) -> f32 {
     let d = length(vec2<f32>(x - 0.5, y - 0.5)) * 2.0;
-    return 1.0 - VIGNETTE * smoothstep(0.55, 1.45, d);
+    return 1.0 - VIGNETTE * smoothstep(0.35, 1.4, d);
 }
 
 fn rim_light(rim: f32, pulse: f32, u: f32, v: f32, t: f32) -> f32 {
-    let shimmer = 0.8 + 0.2 * sin(u * 37.0 + v * 23.0 + t * 1.3);
+    let shimmer = 0.75 + 0.25 * sin(u * 23.0 + v * 17.0 + t * 1.3);
     let flicker = 1.0 - 0.3 * pulse * (0.5 + 0.5 * sin(u * 131.0 - v * 97.0 + t * 17.0));
     return pow(max(rim, 0.0), 1.5) * (RIM_REST * shimmer + RIM_HIT * pulse * flicker);
 }
 
-fn sweep(x: f32, y: f32, t: f32, aspect: f32) -> f32 {
-    let along = x * aspect * 0.82 + y * 0.57;
-    let span = aspect * 0.82 + 0.57 + 1.2;
-    let pos = fract(t / SWEEP_PERIOD) * span - 0.6;
+fn sweep(u: f32, v: f32, t: f32) -> f32 {
+    let along = u * 0.82 + v * 0.57;
+    let span = 0.82 + 0.57 + 1.0;
+    let pos = fract(t / SWEEP_PERIOD) * span - 0.5;
     let d = (along - pos) / SWEEP_WIDTH;
     return exp(-d * d);
 }
@@ -217,16 +292,71 @@ mod tests {
     use super::*;
 
     #[test]
-    fn it_is_calm_under_the_text_and_free_away_from_it() {
-        let text = [0.2, 0.8];
-        assert_eq!(calm_at(0.3, text), 1.0);
-        assert_eq!(calm_at(0.75, text), 1.0);
-        assert_eq!(calm_at(0.05, text), 0.0);
-        assert_eq!(calm_at(0.95, text), 0.0);
-        let edge = calm_at(0.2 - FEATHER / 2.0, text);
-        assert!(edge > 0.3 && edge < 0.7, "{edge}");
-        // At -1: none.
-        assert_eq!(calm_at(0.01, [-1.0, -1.0]), 0.0);
+    fn the_card_is_the_whole_cover_as_large_as_it_looks_good() {
+        // A wide window: as tall as it may be, square, in the middle.
+        let c = card((1600.0, 900.0), (1024.0, 1024.0));
+        assert_eq!((c[0], c[1]), (0.5, 0.5));
+        assert!((c[3] - CARD / 2.0).abs() < 1e-5, "{c:?}");
+        assert!((c[2] * 1600.0 - c[3] * 900.0).abs() < 1e-2, "{c:?}");
+        // A tall one: as wide as it may be.
+        let c = card((900.0, 1600.0), (1024.0, 1024.0));
+        assert!((c[2] - CARD / 2.0).abs() < 1e-5, "{c:?}");
+        // A small cover on a large screen: no more than CAP times its size.
+        let c = card((5120.0, 2880.0), (300.0, 300.0));
+        assert!((c[3] * 2.0 * 2880.0 - 300.0 * CAP).abs() < 0.1, "{c:?}");
+        // Its aspect kept.
+        let c = card((1600.0, 900.0), (1000.0, 500.0));
+        assert!((c[2] * 1600.0 - 2.0 * c[3] * 900.0).abs() < 1e-2, "{c:?}");
+    }
+
+    #[test]
+    fn a_card_much_enlarged_is_read_smoothly_and_a_small_one_from_its_levels() {
+        assert_eq!(softness(1.0), ([0.0, 0.0], 0.0));
+        let ([smooth, softer], level) = softness(2.5);
+        assert!(smooth == 1.0 && softer > 0.0 && softer < 0.1 && level == 0.0);
+        assert_eq!(softness(CAP).0, [1.0, 0.35]);
+        assert!((softness(0.25).1 - 2.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn the_blur_is_a_dozen_texels_across_whatever_the_cover_s_size() {
+        assert_eq!(blurs((1024, 1024), 9), [6.0, 5.0, 4.0]);
+        assert_eq!(blurs((300, 200), 9), [4.0, 3.0, 2.0]);
+        // A tiny cover: its own pixels; never past its last level.
+        assert_eq!(blurs((8, 8), 4), [0.0, 0.0, 0.0]);
+        assert_eq!(blurs((4096, 4096), 9), [8.0, 7.0, 6.0]);
+    }
+
+    #[test]
+    fn the_card_s_edge_is_rounded_and_fades_into_the_blur() {
+        // Inside, on the edge, outside.
+        assert!(rounded_box(0.0, 0.0, 10.0, 5.0, 1.0) < -4.9);
+        assert!(rounded_box(10.0, 0.0, 10.0, 5.0, 1.0).abs() < 1e-5);
+        assert!((rounded_box(13.0, 0.0, 10.0, 5.0, 1.0) - 3.0).abs() < 1e-5);
+        // The corner rounded: its tip is outside.
+        assert!(rounded_box(10.0, 5.0, 10.0, 5.0, 1.0) > 0.4);
+        assert_eq!(card_edge(-100.0, 1000.0), 1.0);
+        assert_eq!(card_edge(0.0, 1000.0), 0.0);
+        let half = card_edge(-EDGE * 500.0, 1000.0);
+        assert!(half > 0.3 && half < 0.7, "{half}");
+        assert_eq!(falloff(-3.0, 10.0), 1.0);
+        assert!(falloff(10.0, 10.0) < 0.3 && falloff(2.0, 10.0) > 0.85);
+    }
+
+    #[test]
+    fn the_cubic_read_weighs_its_four_texels_as_a_b_spline() {
+        for f in [0.0, 0.25, 0.5, 0.9] {
+            let [g0, g1, h0, h1] = bspline(f);
+            assert!((g0 + g1 - 1.0).abs() < 1e-5);
+            // The reads fall between the texels either side of the two.
+            assert!(
+                (-1.0..=0.0).contains(&h0) && (1.0..=2.0).contains(&h1),
+                "{f}"
+            );
+        }
+        // Halfway: alike either side.
+        let [g0, g1, h0, h1] = bspline(0.5);
+        assert!((g0 - g1).abs() < 1e-6 && (h0 + h1 - 1.0).abs() < 1e-6);
     }
 
     #[test]
@@ -241,24 +371,20 @@ mod tests {
     }
 
     #[test]
-    fn the_rim_rests_faintly_and_lights_on_a_hit() {
+    fn the_rim_shimmers_at_rest_and_lights_on_a_hit() {
         let rest = rim_light(1.0, 0.0, 0.3, 0.4, 2.0);
         let hit = rim_light(1.0, 1.0, 0.3, 0.4, 2.0);
-        assert!(rest > 0.05 && rest < 0.11, "{rest}");
-        assert!(hit > 0.5, "{hit}");
+        assert!(rest > 0.08 && rest < 0.25, "{rest}");
+        assert!(hit > 1.5, "{hit}");
         assert_eq!(rim_light(0.0, 1.0, 0.3, 0.4, 2.0), 0.0);
     }
 
     #[test]
-    fn the_sweep_crosses_the_window_and_comes_round() {
-        let seen: Vec<f32> = (0..26)
-            .map(|s| sweep(0.5, 0.5, s as f32, 16.0 / 9.0))
-            .collect();
+    fn the_sweep_crosses_the_card_and_comes_round() {
+        let seen: Vec<f32> = (0..170).map(|s| sweep(0.5, 0.5, s as f32 * 0.1)).collect();
         assert!(seen.iter().any(|&s| s > 0.95));
         assert!(seen.iter().any(|&s| s < 0.05));
-        assert!(
-            (sweep(0.5, 0.5, 3.0, 1.5) - sweep(0.5, 0.5, 3.0 + SWEEP_PERIOD, 1.5)).abs() < 1e-3
-        );
+        assert!((sweep(0.5, 0.5, 3.0) - sweep(0.5, 0.5, 3.0 + SWEEP_PERIOD)).abs() < 1e-3);
     }
 
     #[test]
@@ -272,20 +398,13 @@ mod tests {
     }
 
     #[test]
-    fn the_cover_fills_wide_and_tall_windows_round_its_subject() {
-        // Wide: all across, a band of it down, round the subject's top.
-        let f = fit((1600.0, 900.0), (1.0, 1.0), (0.5, 0.3), 1.0);
+    fn the_blur_fills_wide_and_tall_windows() {
+        let f = fill((1600.0, 900.0), (1.0, 1.0), 1.0);
         assert_eq!(f[0], 1.0);
-        assert!((f[1] - 0.5625).abs() < 1e-4);
-        assert!((f[3] - (0.3 - 0.28125)).abs() < 1e-4);
-        // Tall: all down, the subject to the right kept in.
-        let f = fit((800.0, 1400.0), (1.0, 1.0), (0.85, 0.5), 1.05);
-        assert!(f[1] < 1.0 && f[0] < 0.6);
-        assert!(f[2] <= 0.85 && f[2] + f[0] >= 0.85);
-        assert!(f[2] + f[0] <= 1.0);
-        // Never past the cover's edges.
-        let f = fit((1600.0, 900.0), (1.0, 1.0), (0.5, 0.98), 1.0);
-        assert!((f[3] + f[1] - 1.0).abs() < 1e-5);
+        assert!((f[1] - 0.5625).abs() < 1e-4 && (f[3] - 0.21875).abs() < 1e-4);
+        let f = fill((800.0, 1600.0), (1.0, 1.0), 1.25);
+        assert!((f[0] - 0.4).abs() < 1e-4 && (f[1] - 0.8).abs() < 1e-4);
+        assert!((f[2] - 0.3).abs() < 1e-4 && (f[3] - 0.1).abs() < 1e-4);
     }
 
     #[test]
@@ -303,13 +422,8 @@ mod tests {
     }
 
     #[test]
-    fn the_corners_are_darker_and_the_text_calmer() {
+    fn the_corners_are_darker() {
         assert_eq!(vignette(0.5, 0.5), 1.0);
         assert!(vignette(0.0, 0.0) < 0.7);
-        assert!(exposure(1.0, 0.0) < exposure(0.0, 0.0));
-        assert!(exposure(0.0, 0.3) > exposure(0.0, 0.0));
-        // Under the text the brights come down more than the darks.
-        assert!(settle(0.3, 1.0) < 0.3 * 0.5 && settle(0.01, 1.0) > 0.009);
-        assert_eq!(settle(0.3, 0.0), 0.3);
     }
 }

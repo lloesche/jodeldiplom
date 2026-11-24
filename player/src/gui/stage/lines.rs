@@ -4,11 +4,11 @@
 //! lines change (the one sung leaving upwards as it fades).
 
 use super::super::stage_gpu::Instance;
-use super::{rgba, Face, Stage, GOLD, WHITE};
+use super::{rgba, Face, Shade, Stage, GOLD, WHITE};
 use crate::view::karaoke::{KaraokePicture, LineKind, LyricLine};
 
 /// The line sung and the next: their tops, shares of the height.
-pub(super) const LINES: (f32, f32) = (0.68, 0.78);
+const LINES: (f32, f32) = (0.68, 0.78);
 
 impl Stage {
     /// Draws `picture`'s line sung and the next into `out`, in the window's
@@ -104,6 +104,10 @@ impl Stage {
             } else {
                 f32::NEG_INFINITY
             };
+            // A soft dark rim, so it reads over a bright cover.
+            let rim = (Shade::RIM, alpha);
+            let whole = ((lx, ty), f32::INFINITY);
+            self.shade(out, (Face::LINE, &line.text), (big, scale), whole, rim);
             self.text(
                 out,
                 Face::LINE,

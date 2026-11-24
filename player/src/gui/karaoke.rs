@@ -67,46 +67,39 @@ fn slots(
     big: f32,
 ) -> Vec<Slot> {
     let widest = width as f32 * 0.92;
-    let sizes: Vec<(f32, bool)> = lines
+    let sizes: Vec<f32> = lines
         .iter()
         .map(|l| {
-            let px = size_of(l.kind, big);
+            let px = match l.kind {
+                LineKind::Current => big,
+                LineKind::Next | LineKind::Previous => big * 0.62,
+                LineKind::Info => big * 0.42,
+                LineKind::Warning => big * 0.36,
+            };
             let w = text.measure(&l.text, px);
-            let px = if w > widest && w > 0.0 {
+            if w > widest && w > 0.0 {
                 (px * widest / w).max(10.0).round()
             } else {
                 px.round()
-            };
-            (px, noted(l))
+            }
         })
         .collect();
-    stack(&sizes, top, room)
-}
-
-/// A line's size by what it is, `big` the line sung's.
-fn size_of(kind: LineKind, big: f32) -> f32 {
-    match kind {
-        LineKind::Current => big,
-        LineKind::Next | LineKind::Previous => big * 0.62,
-        LineKind::Info => big * 0.42,
-        LineKind::Warning => big * 0.36,
-    }
-}
-
-/// The lines of `sizes` (each its size, and whether it has room for notes
-/// under it) stacked and centred in `room` rows of pixels from `top`.
-fn stack(sizes: &[(f32, bool)], top: usize, room: usize) -> Vec<Slot> {
-    let below = |(px, noted): (f32, bool)| if noted { px * NOTES_ROOM } else { 0.0 };
-    let total: f32 = sizes.iter().map(|&s| gap(s.0) + below(s)).sum();
-    let mut y = top as f32 + (room as f32 - total).max(0.0) / 2.0;
-    sizes
+    let below = |l: &LyricLine, px: f32| if noted(l) { px * NOTES_ROOM } else { 0.0 };
+    let total: f32 = lines
         .iter()
-        .map(|&s| {
+        .zip(&sizes)
+        .map(|(l, &px)| gap(px) + below(l, px))
+        .sum();
+    let mut y = top as f32 + (room as f32 - total).max(0.0) / 2.0;
+    lines
+        .iter()
+        .zip(sizes)
+        .map(|(l, px)| {
             let slot = Slot {
-                px: s.0,
-                y: y + (gap(s.0) - s.0) / 2.0,
+                px,
+                y: y + (gap(px) - px) / 2.0,
             };
-            y += gap(s.0) + below(s);
+            y += gap(px) + below(l, px);
             slot
         })
         .collect()
@@ -115,28 +108,6 @@ fn stack(sizes: &[(f32, bool)], top: usize, room: usize) -> Vec<Slot> {
 /// The line sung's size in a picture `height` pixels high.
 fn big_of(height: usize) -> f32 {
     (height as f32 / 11.0).clamp(20.0, 160.0).round()
-}
-
-/// Where the lyrics in large type are on a screen `height` pixels high
-/// (the line before, the line sung with room for its notes, the two
-/// coming), stacked as [`slots`] stacks them: their top and bottom, shares
-/// of the height.
-pub fn text_band(height: usize) -> [f32; 2] {
-    let big = big_of(height);
-    let kinds = [
-        LineKind::Previous,
-        LineKind::Current,
-        LineKind::Next,
-        LineKind::Next,
-    ];
-    let sizes: Vec<(f32, bool)> = kinds
-        .iter()
-        .map(|&k| (size_of(k, big).round(), k == LineKind::Current))
-        .collect();
-    let slots = stack(&sizes, 0, height);
-    let h = height.max(1) as f32;
-    let (first, last) = (slots[0], slots[slots.len() - 1]);
-    [first.y / h, (last.y + last.px * 1.3) / h]
 }
 
 /// How far into `line` (at `px`, glyphs made at `base`) character `at` is,
@@ -634,32 +605,6 @@ mod tests {
             mixed += usize::from(t != SEE_THROUGH && t >> 24 != 0);
         }
         assert!(mixed > 100, "{mixed}");
-    }
-
-    /// The lyrics in large type as a picture lays them out lie in the band
-    /// the backdrop keeps calm under them.
-    #[test]
-    fn the_lyrics_lie_in_their_text_band() {
-        let mut faces = Faces::default();
-        let lines = [
-            lyric("the line before it", 1.0, LineKind::Previous, 0),
-            lyric("the line sung now", 0.3, LineKind::Current, 1),
-            lyric("the next one", 0.0, LineKind::Next, 2),
-            lyric("and the one after", 0.0, LineKind::Next, 3),
-        ];
-        for h in [360usize, 900, 1600] {
-            let band = text_band(h);
-            let at = slots(faces.get(Face::LINE), &lines, 1600, 0, h, big_of(h));
-            let hf = h as f32;
-            assert!(
-                band[0] < band[1] && band[0] > 0.0 && band[1] < 1.0,
-                "{band:?}"
-            );
-            for s in at {
-                assert!(s.y >= band[0] * hf - 1.0, "{h}: {} {band:?}", s.y);
-                assert!(s.y + s.px <= band[1] * hf + 1.0, "{h}: {} {band:?}", s.y);
-            }
-        }
     }
 
     fn lyric(text: &str, fill: f64, kind: LineKind, id: usize) -> LyricLine {

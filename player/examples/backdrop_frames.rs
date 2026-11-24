@@ -8,14 +8,26 @@
 //! at 60 frames a second up to the moment looked at, drawn offscreen as the
 //! window draws them, and saved as PNGs into `OUT_DIR` (`<scene>.png`,
 //! written whole). `--bare`: the backdrop alone, no stage and no text
-//! (`<scene>-bare.png`), to tell what the music does to it.
+//! (`<scene>-bare.png`), to tell what the music does to it. `--size WxH`:
+//! every wide scene in a window of that size (the tall one `H` × 9 / 16
+//! wide and `H` high). `--shrink SIDE`: the cover as a small, coarsely
+//! coded one would be (its layers made `SIDE` pixels square, the plate
+//! through JPEG at quality 60). `--art IMAGE`: the first cover's picture
+//! itself (a JPEG or PNG, as a song's cover is decoded); without it, the
+//! picture is put back together from the layers (the subject over the
+//! plate). `--time`: how long the GPU takes to draw a frame of the
+//! backdrop at each scene's size. `--crop`: a cut of each frame pixel for
+//! pixel too (`<scene>-100.png`), to look for pixels and blocks.
 //!
 //! ```text
-//! cargo run --release -p jodeldiplom --example backdrop_frames -- OUT_DIR COVER.layers [NEXT.layers] [--only SCENE] [--bare]
+//! cargo run --release -p jodeldiplom --example backdrop_frames --
+//!     OUT_DIR COVER.layers [NEXT.layers] [--only SCENE] [--bare] [--size WxH]
+//!     [--shrink SIDE] [--art IMAGE] [--time] [--crop]
 //! ```
 
 use std::path::Path;
 use std::sync::Arc;
+use std::time::Instant;
 
 use jodeldiplom::art::Art;
 use jodeldiplom::core::shine::{Shone, Tier};
@@ -24,10 +36,10 @@ use jodeldiplom::cover::{Apart, CoverLayers, Layers};
 use jodeldiplom::gui::backdrop::music::Levels;
 use jodeldiplom::gui::backdrop::{Cue, Visualiser};
 use jodeldiplom::gui::big_text::Faces;
-use jodeldiplom::gui::karaoke::{self, paint, Backdrop, Layer};
+use jodeldiplom::gui::karaoke::{paint, Backdrop, Layer};
 use jodeldiplom::gui::present::Offscreen;
 use jodeldiplom::gui::raster::Target;
-use jodeldiplom::gui::stage::{text_band, without_lyrics, Song, Stage};
+use jodeldiplom::gui::stage::{without_lyrics, Song, Stage};
 use jodeldiplom::view::karaoke::{timed_lines, KaraokePicture, Score};
 use ratatui::layout::Rect;
 
@@ -246,13 +258,38 @@ fn cover_of(l: &CoverLayers) -> image::RgbImage {
     cover
 }
 
-/// The layers in `path` (its file name the key), saying how much of the
-/// cover its subject is.
-fn load(path: &Path) -> Layers {
+/// `layers` as a cover `side` pixels square would have them, its plate
+/// coded as a JPEG of quality 60 (the depth kept: it is the model's).
+fn shrink(layers: &CoverLayers, side: u32) -> CoverLayers {
+    use image::imageops::{resize, FilterType};
+    let small = resize(&layers.plate, side, side, FilterType::Triangle);
+    let mut jpeg = Vec::new();
+    image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg, 60)
+        .encode_image(&small)
+        .expect("a JPEG");
+    let plate = image::load_from_memory(&jpeg).expect("the JPEG").to_rgb8();
+    CoverLayers {
+        plate,
+        subject: layers
+            .subject
+            .as_ref()
+            .map(|s| resize(s, side, side, FilterType::Triangle)),
+        outline: resize(&layers.outline, side, side, FilterType::Triangle),
+        ..layers.clone()
+    }
+}
+
+/// The layers in `path` (its file name the key; made `shrink` pixels
+/// square if asked), saying how much of the cover its subject is.
+fn load(path: &Path, shrunk: Option<u32>) -> Layers {
     let bytes = std::fs::read(path).expect("the layers");
     let layers = jodeldiplom::cover::from_bytes(&bytes)
         .expect("layers")
         .layers;
+    let layers = match shrunk {
+        Some(side) => shrink(&layers, side),
+        None => layers,
+    };
     let share = layers.subject.as_ref().map_or(0.0, |s| {
         let a: f64 = s.pixels().map(|p| f64::from(p.0[3]) / 255.0).sum();
         a / f64::from(s.width() * s.height())
@@ -288,17 +325,70 @@ fn picture_at(sung: &[&jodel_lyrics::Line], now: f64, singing: &Singing) -> Kara
     }
 }
 
+/// `img` as a PNG in `file`, written whole.
+fn save(img: &image::RgbImage, file: &Path) {
+    let mut png = std::io::Cursor::new(Vec::new());
+    img.write_to(&mut png, image::ImageFormat::Png)
+        .expect("a PNG");
+    durable::write_atomic(file, png.get_ref()).expect("written");
+}
+
+/// How long the GPU takes to draw `frame`'s backdrop in a window of
+/// `size`: frames drawn one after the other (each a little later, so none
+/// is the last again) and read back once, less the reading back alone.
+fn time(
+    gpu: &mut Offscreen,
+    frame: &jodeldiplom::gui::backdrop::BackdropFrame,
+    size: (usize, usize),
+) {
+    let (w, h) = (size.0 as u32, size.1 as u32);
+    let pixels = vec![jodeldiplom::gui::raster::SEE_THROUGH; size.0 * size.1];
+    let mut later = frame.clone();
+    let mut run = |gpu: &mut Offscreen, n: usize| {
+        let start = Instant::now();
+        for _ in 0..n {
+            for s in &mut later.slots {
+                s.look.size[2] += 0.01;
+            }
+            gpu.set_backdrop(Some(&later), w, h);
+        }
+        gpu.show_pixels(&pixels, w, h).expect("a frame");
+        start.elapsed().as_secs_f64()
+    };
+    run(gpu, 3);
+    let once = (0..3).map(|_| run(gpu, 0)).fold(f64::MAX, f64::min);
+    let n = 40;
+    let many = (0..3).map(|_| run(gpu, n)).fold(f64::MAX, f64::min);
+    println!(
+        "{w}x{h}: {:.2} ms a frame ({})",
+        (many - once) / n as f64 * 1000.0,
+        gpu.name
+    );
+}
+
 fn main() {
     jodeldiplom::gui::fonts::use_fonts(EMBEDDED_FONTS);
     let args: Vec<String> = std::env::args().skip(1).collect();
     let out = std::path::PathBuf::from(args.first().expect("OUT_DIR"));
     let only = args.iter().skip_while(|a| *a != "--only").nth(1).cloned();
     let bare = args.iter().any(|a| a == "--bare");
+    let timed = args.iter().any(|a| a == "--time");
+    let cropped = args.iter().any(|a| a == "--crop");
+    let after = |flag: &str| args.iter().skip_while(|a| *a != flag).nth(1).cloned();
+    let size: Option<(usize, usize)> = after("--size").map(|s| {
+        let (w, h) = s.split_once('x').expect("WxH");
+        (w.parse().expect("W"), h.parse().expect("H"))
+    });
+    let shrunk: Option<u32> = after("--shrink").map(|s| s.parse().expect("SIDE"));
+    let picture = after("--art").map(|f| {
+        let bytes = std::fs::read(&f).expect("the picture");
+        jodeldiplom::art::decode(&bytes).expect("a JPEG or PNG")
+    });
     let files: Vec<&String> = args[1..]
         .iter()
         .take_while(|a| !a.starts_with("--"))
         .collect();
-    let covers: Vec<Layers> = files.iter().map(|f| load(Path::new(f))).collect();
+    let covers: Vec<Layers> = files.iter().map(|f| load(Path::new(f), shrunk)).collect();
     let first = covers.first().expect("a COVER.layers").clone();
     let next = covers.get(1).cloned().unwrap_or_else(|| first.clone());
     let arts: Vec<Art> = [&first, &next]
@@ -306,7 +396,10 @@ fn main() {
         .enumerate()
         .map(|(k, l)| Art {
             id: k as u64 + 1,
-            image: Arc::new(cover_of(&l.layers)),
+            image: Arc::new(match (&picture, k) {
+                (Some(p), 0) => p.clone(),
+                _ => cover_of(&l.layers),
+            }),
         })
         .collect();
     let (lyrics, melody) = song();
@@ -316,7 +409,11 @@ fn main() {
         if only.as_deref().is_some_and(|o| o != scene.name) {
             continue;
         }
-        let (w, h) = scene.size;
+        let (w, h) = match size {
+            Some((_, h)) if scene.size.0 < scene.size.1 => (h * 9 / 16, h),
+            Some(size) => size,
+            None => scene.size,
+        };
         let mut singing = Singing::default();
         singing.prepare(
             Path::new("song"),
@@ -361,11 +458,6 @@ fn main() {
                 levels: (scene.music)(now),
                 tier: jodeldiplom::gui::streak::level(&singing, true),
                 section: scene.section.is_some_and(|s| (now - s).abs() < 0.5 / FPS),
-                text: if scene.staged {
-                    text_band()
-                } else {
-                    karaoke::text_band(h)
-                },
             };
             frame = Some(visualiser.step(&cue, (w as u32, h as u32), (1.0 / FPS) as f32));
             let p = picture_at(&sung, now, &singing);
@@ -379,6 +471,9 @@ fn main() {
             picture = Some(p);
         }
         let picture = picture.expect("a frame");
+        if timed {
+            time(&mut gpu, frame.as_ref().expect("a frame"), (w, h));
+        }
         gpu.set_backdrop(frame.as_ref(), w as u32, h as u32);
         if !scene.staged || bare {
             gpu.set_stage(None, w as u32, h as u32);
@@ -424,9 +519,20 @@ fn main() {
         }
         let bare_name = if bare { "-bare" } else { "" };
         let file = out.join(format!("{}{bare_name}.png", scene.name));
-        let mut png = std::io::Cursor::new(Vec::new());
-        img.write_to(&mut png, image::ImageFormat::Png).unwrap();
-        durable::write_atomic(&file, png.get_ref()).unwrap();
+        save(&img, &file);
+        if cropped {
+            // Pixel for pixel: 1280 × 720 round the card's upper middle.
+            let (cw, ch) = (1280.min(w as u32), 720.min(h as u32));
+            let x = (w as u32 - cw) / 2;
+            let y = ((h as f32 * 0.4) as u32)
+                .saturating_sub(ch / 2)
+                .min(h as u32 - ch);
+            let cut = image::imageops::crop_imm(&img, x, y, cw, ch).to_image();
+            save(
+                &cut,
+                &out.join(format!("{}{bare_name}-100.png", scene.name)),
+            );
+        }
         // What the music lit: the pulse, the vocals, the rest, the bass; a
         // section, the glow, the rays, the lift.
         let look = frame.and_then(|f| f.slots.last().map(|s| s.look));
