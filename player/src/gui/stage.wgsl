@@ -1,7 +1,7 @@
 // Karaoke mode's stage on the GPU (`stage_gpu.rs`): its shapes, each a
 // signed distance, and its text from the atlas. Its kinds come before it;
 // the liquid's maths, the tubes, a streak's shine, the glory and the
-// result's shapes after it (`stage_gpu::shader`).
+// diploma's shapes after it (`stage_gpu::shader`).
 struct Screen {
     size: vec2<f32>,
     srgb: f32,
@@ -74,7 +74,13 @@ fn vs(@builtin(vertex_index) v: u32, i: In) -> Out {
     }
     let corner = vec2<f32>(f32(v & 1u), f32((v >> 1u) & 1u));
     let p = mix(quad.xy, quad.zw, corner);
-    o.pos = vec4<f32>(p.x / screen.size.x * 2.0 - 1.0, 1.0 - p.y / screen.size.y * 2.0, 0.0, 1.0);
+    // Text turned round its quad's middle (a stamp's words): drawn there,
+    // read where it was.
+    var at = p;
+    if k == K_TEXT && i.params.z != 0.0 {
+        at = turn_about(p, (quad.xy + quad.zw) * 0.5, i.params.z);
+    }
+    o.pos = vec4<f32>(at.x / screen.size.x * 2.0 - 1.0, 1.0 - at.y / screen.size.y * 2.0, 0.0, 1.0);
     o.p = p;
     o.uv = i.uv;
     o.quad = quad;
@@ -243,8 +249,11 @@ fn fs(o: Out) -> @location(0) vec4<f32> {
     if k == K_BANDS || k == K_SWIRL || k == K_RIM {
         return shine(o, p, k);
     }
-    if k == K_RAYS || k == K_GEM || k == K_MEDAL {
-        return trophy(o, p, k);
+    if k == K_RAYS || k == K_STAR || k == K_SEAL {
+        return seal_shape(o, p, k);
+    }
+    if k == K_PAPER || k == K_STAMP || k == K_SIGNATURE {
+        return paper_shape(o, p, k);
     }
     if k == K_SEGMENT {
         let d = segment(p, o.shape.xy, o.shape.zw) - o.params.y;

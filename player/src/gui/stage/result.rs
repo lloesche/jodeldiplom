@@ -1,35 +1,52 @@
-//! The result screen, one more scene of the stage: how the song before
-//! was sung, revealed beat by beat ([`crate::core::singing::Reveal`]) over
-//! the blurred cover, in Karaoke mode's faces, with the stage's light and
-//! bursts. The title drops in; the points count up (bumping at each tick,
-//! popping as they land); the words hit fill their bar; the best streak
-//! pops in its badge; each phrase's gem pops in, in song order, in its
-//! tier's colour (Diva's shining); the medal is stamped down with a shake,
-//! a shock ring, sparkles and its rays ([`medal`]), or a star stands for
-//! it; then a new best with confetti, or the best before, calmly; the next
-//! song and START at the bottom throughout.
+//! The result screen, one more scene of the stage: a Yodel Diploma handed
+//! out for the song before, filled in beat by beat
+//! ([`crate::core::singing::Reveal`]) over the backdrop (the cover's
+//! layers, lit by the music), in Karaoke mode's faces, with the stage's
+//! light and bursts. The sheet unrolls, its border tinted, its heading and
+//! the song's title (landing on its beat) certified as yodelled
+//! ([`sheet`]); the entries are written in by hand as their beats come:
+//! the points counting up (bumping at each tick, popping as they land),
+//! the words hit, the best streak ([`entries`]); each phrase's star
+//! sticker pops on, in song order, in its tier's colour (Diva's shining,
+//! [`stars`]); the grade is written in and the seal stamped down with a
+//! shake, a thump, sparkles and rays behind the sheet, or a star stands
+//! for it ([`seal`], whose [`seal::look`] is how each verdict looks);
+//! then a new best, a rubber stamp slapped on with confetti, or the best
+//! before, calmly; at the end the examiner signs and dates it. The song
+//! START plays and START under it throughout. It names nobody: it
+//! certifies the song.
 //!
-//! Everything is a pure function of the result and its reveal's time
-//! ([`ResultShown::t`]): each frame is made afresh from them, the bursts
-//! included (each from its beat's time, on the reveal's clock). The
-//! screen is tinted with the cover's palette where its layers have one
-//! ([`Tint::of`]), else the stage's own colours. Once settled it twinkles
-//! a while, the twinkle calming down as the reveal's time comes to its
-//! still point, where it stops ([`crate::core::singing::Motion`]).
+//! Everything is a pure function of the result, its reveal's time
+//! ([`ResultShown::t`]) and the day the result was first drawn on (read
+//! once a result, [`Kept`]): each frame is made afresh from them, the
+//! bursts included (each from its beat's time, on the reveal's clock).
+//! The diploma is tinted with the cover's palette where its layers have
+//! one ([`Tint::of`]), else the stage's own colours. Once settled it
+//! twinkles a while, the twinkle calming down as the reveal's time comes
+//! to its still point, where it stops ([`crate::core::singing::Motion`]).
+
+use std::collections::HashMap;
+use std::sync::Arc;
 
 use super::super::particles::{Kind, Spray};
-use super::super::rainbow::{in_rainbow, Glow};
 use super::super::stage_gpu::{kind, Instance, StageFrame};
-use super::{
-    disc, fill, pill, rgba, Face, Rgb, Stage, COVER_PAD, GOLD, GOLD_DEEP, GOLD_TOP, WHITE,
-};
-use crate::core::singing::{Beat, SongResult, WORDS_FILL};
-use crate::view::karaoke::{best_words, points_text, KaraokePicture, ResultShown};
+use super::{disc, pill, rgba, Face, Rgb, Stage, COVER_PAD, GOLD_DEEP, GOLD_TOP, WHITE};
+use crate::core::shine::Tier;
+use crate::core::singing::{Beat, Shown};
+use crate::view::karaoke::{best_words, date_words, points_text, KaraokePicture, ResultShown};
 
-mod medal;
+mod entries;
+mod seal;
+mod sheet;
+mod stars;
 mod tint;
 
+use seal::Look;
+use sheet::Inks;
 pub use tint::Tint;
+
+/// The diploma's printed words: Nunito, lighter than the lyrics'.
+const PRINT: Face = Face::Words(650);
 
 /// What the scene draws: over the backdrop, over everything, light (to
 /// bloom), and bursts (and those that are light).
@@ -42,9 +59,73 @@ struct Drawn {
     light_sprays: Vec<Spray>,
 }
 
-/// Where the scene is: the window's area, a hundredth of its height, the
-/// shake now (the medal stamped down), the room above the controls, and
-/// how much it twinkles (1, calming to 0 as it goes still).
+/// What the result screen keeps between frames: the words of the result
+/// shown, made once a result (its date read then, so it never turns over
+/// on screen at midnight), and text fitted to a width (forgotten with each
+/// new result); and where the day comes from (the system; a test's own).
+pub(super) struct Kept {
+    written: Option<Written>,
+    fitted: HashMap<String, Vec<(Fit, Arc<str>, f32)>>,
+    today: fn() -> Option<(i32, u32, u32)>,
+}
+
+impl Default for Kept {
+    fn default() -> Kept {
+        Kept {
+            written: None,
+            fitted: HashMap::new(),
+            today: crate::calendar::today,
+        }
+    }
+}
+
+/// Text fitted: its face, its size and the width it was fitted to (a
+/// quarter pixel's steps, whole pixels).
+type Fit = (Face, u32, u32);
+
+/// A result's words as the diploma writes them, made once a result: which
+/// result, its points, words hit and best streak, the words under its
+/// best, the tally's (by tier, the best first) and its date.
+struct Written {
+    id: u64,
+    points: String,
+    hits: String,
+    streak: String,
+    best: String,
+    tally: Vec<(Tier, String)>,
+    date: Option<String>,
+}
+
+impl Written {
+    /// `shown`'s words, dated by `today`.
+    fn of(shown: &Shown, today: fn() -> Option<(i32, u32, u32)>) -> Written {
+        let r = &shown.result;
+        let counts = r.tier_counts();
+        let tally = Tier::ALL
+            .iter()
+            .rev()
+            .filter(|&&tier| counts[tier as usize] > 0)
+            .map(|&tier| (tier, format!("{} {}", counts[tier as usize], tier.name())))
+            .collect();
+        Written {
+            id: shown.id,
+            points: points_text(r.points),
+            hits: format!("{} of {}", r.hit, r.words),
+            streak: format!("{} in a row", r.streak),
+            best: best_words(r),
+            tally,
+            date: today().map(|(y, m, d)| date_words(y, m, d)),
+        }
+    }
+}
+
+/// Where the scene is and what it is drawn in: the window's area and a
+/// hundredth of its height; the sheet's place (left, top, width, height)
+/// and its unit (a hundredth of its height, or of its width a little
+/// grown where it stands upright); the shake now (the seal stamped down);
+/// where the line of the song START plays is (above the controls); how
+/// much it twinkles (1, calming to 0 as it goes still); its inks; and how
+/// its verdict looks.
 #[derive(Clone, Copy, Debug)]
 struct Room {
     x: f32,
@@ -52,18 +133,54 @@ struct Room {
     w: f32,
     h: f32,
     u: f32,
+    sheet: (f32, f32, f32, f32),
+    s: f32,
     shake: (f32, f32),
-    bottom: f32,
+    next_y: f32,
     calm: f32,
+    inks: Inks,
+    look: Look,
 }
 
 impl Room {
-    /// The point `sx` of the width and `sy` of the height in, shaken.
-    fn at(&self, sx: f32, sy: f32) -> (f32, f32) {
-        (
-            self.x + self.w * sx + self.shake.0,
-            self.y + self.h * sy + self.shake.1,
-        )
+    /// The room in the window's area `(x, y, w, h)`, its controls from
+    /// `bottom` down, for a verdict that looks `look`: the sheet as large
+    /// as fits over the next song's line, landscape where the window is
+    /// wide, upright where it is tall.
+    fn new((x, y, w, h): (f32, f32, f32, f32), bottom: f32, tint: &Tint, look: Look) -> Room {
+        let u = h / 100.0;
+        let next_y = (y + h * 0.935).min(bottom - 3.2 * u);
+        let top = y + 3.0 * u;
+        let high = (next_y - 4.4 * u - top).max(10.0);
+        let sw = (w * 0.94).min(high * 1.5);
+        let sh = high.min(sw * 1.7);
+        let sheet = (x + (w - sw) / 2.0, top + (high - sh) / 2.0, sw, sh);
+        Room {
+            x,
+            y,
+            w,
+            h,
+            u,
+            sheet,
+            s: (sw / 0.85).min(sh) / 100.0,
+            shake: (0.0, 0.0),
+            next_y,
+            calm: 1.0,
+            inks: Inks::of(tint),
+            look,
+        }
+    }
+
+    /// The point `fx` of the sheet's width and `fy` of its height in,
+    /// shaken.
+    fn at(&self, fx: f32, fy: f32) -> (f32, f32) {
+        let (sx, sy, sw, sh) = self.sheet;
+        (sx + sw * fx + self.shake.0, sy + sh * fy + self.shake.1)
+    }
+
+    /// A share of the sheet's width.
+    fn across(&self, share: f32) -> f32 {
+        self.sheet.2 * share
     }
 }
 
@@ -104,51 +221,103 @@ fn bump(age: Option<f64>, by: f32) -> f32 {
     })
 }
 
+/// A burst of `kind` at `at` from `start` (the reveal's clock), `size`
+/// large, in `rgb`, scattered by `seed`.
+fn burst(at: (f32, f32), start: f64, size: f32, (seed, rgb): (u32, Rgb), kind: Kind) -> Spray {
+    Spray {
+        at,
+        half: (0.0, 0.0),
+        start: start as f32,
+        drift: 0.0,
+        size,
+        seed,
+        rgb,
+        kind,
+    }
+}
+
+/// How text is put down: how much of it is written yet (from its left; 1
+/// all of it), how dark a soft shadow under it is (0 none), and how far it
+/// is turned round its anchor (radians).
+#[derive(Clone, Copy, Debug)]
+struct Pen {
+    share: f32,
+    shadow: f32,
+    turn: f32,
+}
+
+impl Pen {
+    /// All of it, flat on the page.
+    const FLAT: Pen = Pen {
+        share: 1.0,
+        shadow: 0.0,
+        turn: 0.0,
+    };
+    /// All of it, a soft shadow under it.
+    const SHADED: Pen = Pen {
+        shadow: 1.0,
+        ..Pen::FLAT
+    };
+
+    /// Written as far as `share`.
+    fn writing(share: f32) -> Pen {
+        Pen { share, ..Pen::FLAT }
+    }
+}
+
 impl Stage {
     /// Text centred across on `c.0`, its capitals' middle on `c.1`
     /// (`anchor` 0 puts its left there, 1 its right), `px` drawn at
-    /// `scale`, in `color`, with a soft shadow under it where `shadow`;
-    /// its width drawn.
-    #[allow(clippy::too_many_arguments)]
-    fn words(
+    /// `scale`, in `color`, put down with `pen` (turned round `c`); its
+    /// width drawn.
+    fn written(
         &mut self,
         out: &mut Vec<Instance>,
         (face, text): (Face, &str),
         (px, scale): (f32, f32),
-        c: (f32, f32),
-        anchor: f32,
+        (c, anchor): ((f32, f32), f32),
         color: [f32; 4],
-        shadow: bool,
+        pen: Pen,
     ) -> f32 {
-        if scale <= 0.01 || color[3] <= 0.004 {
+        if scale <= 0.01 || color[3] <= 0.004 || pen.share <= 0.0 {
             return 0.0;
         }
         let w = self.measure(face, text, px) * scale;
         let top = c.1 - (self.cap_middle(face, px) - COVER_PAD as f32) * scale;
         let left = c.0 - w * anchor;
-        if shadow {
-            let dark = [0.02, 0.01, 0.05, 0.55 * color[3]];
+        let split = if pen.share >= 1.0 {
+            f32::INFINITY
+        } else {
+            left + w * pen.share
+        };
+        let turned = |i: Option<&mut Instance>| {
+            if let Some(i) = i.filter(|_| pen.turn != 0.0) {
+                i.params[2] = pen.turn;
+                (i.shape[0], i.shape[1]) = c;
+            }
+        };
+        if pen.shadow > 0.0 {
+            let dark = [0.02, 0.01, 0.05, 0.55 * color[3] * pen.shadow];
             let drop = (px * 0.05).max(1.0) * scale;
-            self.text(
-                out,
-                face,
-                text,
-                (px, scale),
-                (left, top + drop),
-                f32::NEG_INFINITY,
-                (dark, dark),
-            );
+            let at = (left, top + drop);
+            turned(self.text(out, face, text, (px, scale), at, split, ([0.0; 4], dark)));
         }
-        self.text(
-            out,
-            face,
-            text,
-            (px, scale),
-            (left, top),
-            f32::NEG_INFINITY,
-            (color, color),
-        );
+        let none = [color[0], color[1], color[2], 0.0];
+        let at = (left, top);
+        turned(self.text(out, face, text, (px, scale), at, split, (none, color)));
         w
+    }
+
+    /// The words of the result `shown`, made once a result (and the
+    /// fitted text of the result before forgotten).
+    fn words_of(&mut self, shown: &Shown) -> Written {
+        match self.kept.written.take() {
+            Some(w) if w.id == shown.id => w,
+            _ => {
+                self.kept.fitted.clear();
+                Written::of(shown, self.kept.today)
+            }
+        }
     }
 
     /// The result screen of `picture` (none without a result) in the
@@ -168,67 +337,47 @@ impl Stage {
         let verdict = reveal
             .find(|b| matches!(b, Beat::Verdict(_)))
             .map(|(at, _)| (t - at) as f32);
-        let u = h / 100.0;
         let rows = f32::from(picture.area.height.max(1));
         let bottom = picture.controls.map_or(y + h, |c| {
             y + h * f32::from(c.y.saturating_sub(picture.area.y)) / rows
         });
-        let room = Room {
-            x,
-            y,
-            w,
-            h,
-            u,
-            shake: medal::shake(r.verdict(), verdict, u),
-            bottom,
-            calm: clamp01((reveal.still() - t) as f32 / 2.0),
-        };
+        let look = seal::look(r.verdict(), tint);
+        let mut room = Room::new((x, y, w, h), bottom, tint, look);
+        room.shake = seal::shake(&look, verdict, room.s);
+        room.calm = clamp01((reveal.still() - t) as f32 / 2.0);
+        let words = self.words_of(&shown.shown);
         let mut d = Drawn::default();
-        // Over the cover: a little darker, a card for the numbers, a light
-        // behind the medal and the points.
+        // Over the backdrop: a little darker, a light behind the sheet, and
+        // the rays a medal sends out behind it.
         d.out.push(pill(
             (x + w / 2.0, y + h / 2.0),
             (w / 2.0 + 2.0, h / 2.0 + 2.0),
-            [0.0, 0.0, 0.02, 0.3],
+            [0.0, 0.0, 0.02, 0.35],
             [0.0; 4],
             0.0,
             0.0,
             1.0,
         ));
-        let card = fade(Some(t), 0.35);
-        let (cx, cy) = room.at(0.5, 0.42);
-        d.out.push(pill(
-            (cx, cy),
-            ((w * 0.45).min(h * 0.95), h * 0.295),
-            rgba(tint.card, 0.5 * card),
-            rgba(WHITE, 0.1 * card),
-            0.0,
-            1.5,
-            4.0 * u,
-        ));
         let lit = fade(Some(t - 0.2), 1.0);
+        let (_, _, sw, sh) = room.sheet;
         d.out.push(disc(
-            room.at(0.73, 0.3),
+            room.at(0.5, 0.5),
             0.0,
             [0.0; 4],
-            rgba(tint.glow, 0.22 * lit),
-            42.0 * u,
+            rgba(tint.glow, 0.16 * lit),
+            sw.max(sh) * 0.62,
         ));
-        d.out.push(disc(
-            room.at(0.34, 0.27),
-            0.0,
-            [0.0; 4],
-            rgba(GOLD, 0.1 * lit),
-            30.0 * u,
-        ));
-        self.title(&mut d, &room, r, (reveal.when(Beat::Title), t));
-        self.points(&mut d, &room, shown);
-        self.hits(&mut d, &room, r, reveal.age(Beat::Words, t), t);
-        self.streak(&mut d, &room, r, reveal.age(Beat::Streak, t), t);
-        self.gems(&mut d, &room, shown);
-        self.verdict(&mut d, &room, shown, tint, verdict);
-        self.best(&mut d, &room, shown);
+        seal::rays(&mut d, &room, verdict, t);
+        self.sheet(&mut d, &room, shown);
+        self.points(&mut d, &room, shown, &words);
+        self.hits(&mut d, &room, shown, &words);
+        self.streak(&mut d, &room, shown, &words);
+        self.stars(&mut d, &room, shown, &words);
+        self.verdict(&mut d, &room, shown, tint, (verdict, &words));
+        self.best(&mut d, &room, shown, &words);
+        self.signed(&mut d, &room, shown, &words);
         self.next(&mut d, &room, shown, tint);
+        self.kept.written = Some(words);
         Some(StageFrame {
             instances: d.out,
             top: d.top,
@@ -243,369 +392,49 @@ impl Stage {
 
     /// `text` in `face` at `px` fitted to `width`: as it is where it fits,
     /// else smaller (down to a little over half), else cut short with an
-    /// ellipsis; and the size it is drawn at.
-    fn fitted(&mut self, face: Face, text: &str, px: f32, width: f32) -> (String, f32) {
-        let full = self.measure(face, text, px).max(1.0);
-        let px = (px * (width / full).clamp(0.6, 1.0)).round().max(8.0);
-        let mut chars: Vec<char> = text.chars().collect();
-        let mut out = text.to_owned();
-        while self.measure(face, &out, px) > width && !chars.is_empty() {
-            chars.pop();
-            let kept: String = chars.iter().collect();
-            out = format!("{}…", kept.trim_end());
+    /// ellipsis; and the size it is drawn at. Kept, so a frame fits each
+    /// text once a result.
+    fn fitted(&mut self, face: Face, text: &str, px: f32, width: f32) -> (Arc<str>, f32) {
+        let fit = (face, (px * 4.0).round() as u32, width.round() as u32);
+        let kept = self.kept.fitted.get(text).into_iter().flatten();
+        if let Some((_, out, px)) = kept.into_iter().find(|k| k.0 == fit) {
+            return (out.clone(), *px);
         }
+        let (out, px) = self.fit(face, text, px, width);
+        let entry = self.kept.fitted.entry(text.to_owned()).or_default();
+        entry.push((fit, out.clone(), px));
         (out, px)
     }
 
-    /// The song's title, dropping in from above and bouncing, a sparkle off
-    /// each end as it lands.
-    fn title(&mut self, d: &mut Drawn, room: &Room, r: &SongResult, (at, t): (Option<f64>, f64)) {
-        let Some(at) = at.filter(|&at| t >= at) else {
-            return;
-        };
-        let a = t - at;
-        let u = room.u;
-        let px = (6.0 * u).round().max(14.0);
-        let (title, px) = self.fitted(Face::LINE, &r.title, px, room.w * 0.84);
-        let fall = 1.0 - ease_out(a as f32 / 0.45);
-        let wobble = (-(a as f32) * 7.0).exp() * (a as f32 * 16.0).sin() * 0.6 * u;
-        let (cx, cy) = room.at(0.5, 0.075);
-        let cy = cy - 6.0 * u * fall * fall + wobble;
-        let alpha = clamp01(a as f32 / 0.15);
-        let tw = self.words(
-            &mut d.out,
-            (Face::LINE, &title),
-            (px, 1.0),
-            (cx, cy),
-            0.5,
-            rgba(WHITE, alpha),
-            true,
-        );
-        // A sparkle off each end as it lands.
-        for (k, side) in [-1.0f32, 1.0].into_iter().enumerate() {
-            d.light_sprays.push(Spray {
-                at: (cx + side * (tw / 2.0 + px * 0.3), cy),
-                half: (0.0, 0.0),
-                start: (at + 0.4) as f32,
-                drift: -side * px * 0.3,
-                size: px * 0.45,
-                seed: 11 + k as u32,
-                rgb: GOLD_TOP,
-                kind: Kind::Scored,
-            });
+    /// [`Stage::fitted`], made: cut a character at a time, in place.
+    fn fit(&mut self, face: Face, text: &str, px: f32, width: f32) -> (Arc<str>, f32) {
+        let full = self.measure(face, text, px).max(1.0);
+        if full <= width {
+            return (text.into(), px);
         }
-    }
-
-    /// The points, counting up (each tick a bump), popping as they land
-    /// with a burst of sparks; "POINTS" over them.
-    fn points(&mut self, d: &mut Drawn, room: &Room, shown: &ResultShown) {
-        let (t, reveal) = (shown.t, &shown.shown.reveal);
-        let (from, to) = reveal.count();
-        let shows = fade(Some(t - from + 0.15), 0.15);
-        if shows <= 0.0 {
-            return;
-        }
-        let u = room.u;
-        let (cx, cy) = room.at(0.34, 0.27);
-        let label = (Face::SHOUT, "POINTS");
-        let soft = rgba(GOLD_TOP, 0.75 * shows);
-        let small = (2.6 * u).round().max(9.0);
-        self.words(
-            &mut d.out,
-            label,
-            (small, 1.0),
-            (cx, cy - 9.5 * u),
-            0.5,
-            soft,
-            false,
-        );
-        let last_tick = reveal
-            .beats()
-            .iter()
-            .rev()
-            .find(|(at, b)| matches!(b, Beat::Tick(..)) && *at <= t)
-            .map(|(at, _)| t - at);
-        let landed = reveal.age(Beat::Points, t);
-        let scale = match landed {
-            Some(_) => bump(landed, 0.22),
-            None => bump(last_tick, 0.05),
-        };
-        let value = points_text(reveal.points_at(t));
-        let px = (13.0 * u).round().max(20.0);
-        let px = px.min((room.w * 0.36 / (value.chars().count().max(4) as f32 * 0.6)).round());
-        // A glow behind them as they land.
-        let glow = landed.map_or(0.0, |a| (-(a as f32) * 2.5).exp());
-        d.lights.push(disc(
-            (cx, cy),
-            0.0,
-            [0.0; 4],
-            rgba(GOLD, 0.35 * glow),
-            px * 1.5,
-        ));
-        self.digits(&mut d.out, &value, (px, scale), (cx, cy), shows);
-        d.light_sprays.push(Spray {
-            at: (cx, cy),
-            half: (0.0, 0.0),
-            start: to as f32,
-            drift: px * 0.3,
-            size: px * 0.5,
-            seed: 23,
-            rgb: GOLD,
-            kind: Kind::Scored,
-        });
-    }
-
-    /// `value` in the numbers' face, figure by figure (each kept once in
-    /// the atlas, whatever the count), centred on `c`, gold.
-    fn digits(
-        &mut self,
-        out: &mut Vec<Instance>,
-        value: &str,
-        (px, scale): (f32, f32),
-        c: (f32, f32),
-        alpha: f32,
-    ) {
-        let widths: Vec<f32> = value
-            .chars()
-            .map(|ch| self.measure(Face::SHOUT, &ch.to_string(), px) * scale)
-            .collect();
-        let mut left = c.0 - widths.iter().sum::<f32>() / 2.0;
-        for (ch, cw) in value.chars().zip(widths) {
-            let gold = rgba(GOLD_TOP, alpha);
-            let text = (Face::SHOUT, ch.to_string());
-            self.words(
-                out,
-                (text.0, &text.1),
-                (px, scale),
-                (left, c.1),
-                0.0,
-                gold,
-                true,
-            );
-            left += cw;
-        }
-    }
-
-    /// The words hit: their bar filling to its share, the count rising
-    /// with it, a burst at its front as it is full.
-    fn hits(&mut self, d: &mut Drawn, room: &Room, r: &SongResult, age: Option<f64>, t: f64) {
-        let Some(a) = age else { return };
-        let u = room.u;
-        let (cx, cy) = room.at(0.34, 0.41);
-        let half = ((room.w * 0.17).min(36.0 * u), 2.3 * u);
-        let (grow, shows) = land(Some(a));
-        let share = r.hit as f32 / r.words.max(1) as f32;
-        let filled = share * ease_out(a as f32 / WORDS_FILL as f32);
-        let scale = 0.9 + 0.1 * grow;
-        let half = (half.0 * scale, half.1 * scale);
-        d.out.push(pill(
-            (cx, cy),
-            half,
-            [0.02, 0.02, 0.06, 0.55 * shows],
-            rgba(WHITE, 0.25 * shows),
-            0.0,
-            1.5,
-            0.0,
-        ));
-        let inner = (half.0 - 3.0, half.1 - 3.0);
-        let front = cx - inner.0 + 2.0 * inner.0 * filled;
-        if let Some(f) = fill(
-            (cx, cy),
-            inner,
-            (cx - inner.0, front),
-            rgba(GOLD_TOP, shows),
-            rgba(GOLD_DEEP, shows),
-            inner.1 * 0.8,
-        ) {
-            d.out.push(f);
-        }
-        let small = (2.4 * u).round().max(9.0);
-        let soft = rgba(WHITE, 0.7 * shows);
-        let (lx, rx) = (cx - half.0, cx + half.0);
-        let top = cy - half.1 - 2.4 * u;
-        self.words(
-            &mut d.out,
-            (Face::SHOUT, "WORDS"),
-            (small, 1.0),
-            (lx, top),
-            0.0,
-            soft,
-            false,
-        );
-        let count = format!(
-            "{} of {}",
-            (r.hit as f32 * filled / share.max(1e-6)).round() as u32,
-            r.words
-        );
-        let bright = rgba(WHITE, 0.95 * shows);
-        self.words(
-            &mut d.out,
-            (Face::NUMBER, &count),
-            (small * 1.15, 1.0),
-            (rx, top),
-            1.0,
-            bright,
-            false,
-        );
-        // The front glinting as it moves; a burst as it is full.
-        if (a as f32) < WORDS_FILL as f32 + 0.2 && filled > 0.0 {
-            let k = 1.0 - clamp01((a as f32 - WORDS_FILL as f32) / 0.2);
-            d.lights.push(disc(
-                (front, cy),
-                half.1 * 0.3,
-                rgba(WHITE, k),
-                rgba(GOLD, 0.6 * k),
-                half.1 * 2.0,
-            ));
-        }
-        if r.hit > 0 {
-            d.light_sprays.push(Spray {
-                at: (front.max(cx - inner.0), cy),
-                half: (0.0, 0.0),
-                start: (t - a + WORDS_FILL) as f32,
-                drift: half.1,
-                size: half.1 * 1.6,
-                seed: 31,
-                rgb: GOLD,
-                kind: Kind::Scored,
-            });
-        }
-    }
-
-    /// The best streak: a badge popping in with a burst of stars and notes.
-    fn streak(&mut self, d: &mut Drawn, room: &Room, r: &SongResult, age: Option<f64>, t: f64) {
-        let Some(a) = age else { return };
-        let u = room.u;
-        let (cx, cy) = room.at(0.34, 0.52);
-        let (scale, shows) = land(Some(a));
-        let px = (3.6 * u).round().max(10.0);
-        let text = format!("{} in a row", r.streak);
-        let tw = self.measure(Face::NUMBER, &text, px);
-        let half = ((tw / 2.0 + px * 0.8) * scale, px * 0.85 * scale);
-        let small = (2.2 * u).round().max(8.0);
-        let soft = rgba(WHITE, 0.7 * shows);
-        let label = (Face::SHOUT, "BEST STREAK");
-        self.words(
-            &mut d.out,
-            label,
-            (small, 1.0),
-            (cx, cy - half.1 - 2.2 * u),
-            0.5,
-            soft,
-            false,
-        );
-        d.out.push(pill(
-            (cx, cy),
-            half,
-            rgba(CORAL_DEEP, 0.95 * shows),
-            rgba([1.0, 0.62, 0.45], 0.8 * shows),
-            px * 0.5,
-            2.0,
-            0.0,
-        ));
-        let white = rgba(WHITE, shows);
-        self.words(
-            &mut d.out,
-            (Face::NUMBER, &text),
-            (px, scale),
-            (cx, cy),
-            0.5,
-            white,
-            true,
-        );
-        d.sprays.push(Spray {
-            at: (cx, cy - half.1),
-            half: (0.0, 0.0),
-            start: (t - a) as f32,
-            drift: 0.0,
-            size: px * 1.1,
-            seed: 41,
-            rgb: WHITE,
-            kind: Kind::StepUp,
-        });
-    }
-
-    /// A new best (popping in the rainbow, confetti raining, its words
-    /// under it), or the best before (calmly).
-    fn best(&mut self, d: &mut Drawn, room: &Room, shown: &ResultShown) {
-        let (t, reveal, r) = (shown.t, &shown.shown.reveal, &shown.shown.result);
-        let u = room.u;
-        let below = best_words(r);
-        if let Some(a) = reveal.age(Beat::NewBest, t) {
-            let (cx, cy) = room.at(0.5, 0.755);
-            let (scale, shows) = land(Some(a));
-            let px = (7.0 * u).round().max(16.0);
-            let tilt = (-(a as f32) * 4.0).exp() * (a as f32 * 12.0).sin() * 0.8 * u;
-            let banner = (Face::SHOUT, "NEW BEST!");
-            let at = (cx, cy + tilt);
-            let gold = rgba(GOLD_TOP, shows);
-            let start = d.top.len();
-            self.words(&mut d.top, banner, (px, scale * 1.08), at, 0.5, gold, true);
-            let drawn = d.top.len() > start;
-            if let Some(text) = d.top.last_mut().filter(|_| drawn) {
-                let shine = Glow {
-                    level: 1.0,
-                    from: 1.0,
-                    since: 0.0,
-                };
-                in_rainbow(text, &shine);
+        let px = (px * (width / full).clamp(0.6, 1.0)).round().max(8.0);
+        let mut out = text.to_owned();
+        while self.measure(face, &out, px) > width {
+            if out.ends_with('…') {
+                out.pop();
             }
-            let small = (2.6 * u).round().max(9.0);
-            let soft = rgba(WHITE, 0.85 * fade(Some(a - 0.25), 0.3));
-            self.words(
-                &mut d.top,
-                (Face::NUMBER, &below),
-                (small, 1.0),
-                (cx, cy + px * 0.72),
-                0.5,
-                soft,
-                true,
-            );
-            let start = (t - a) as f32;
-            for k in 0..5u32 {
-                d.sprays.push(super::super::confetti::shower(
-                    (room.x, room.y),
-                    (room.w, room.h),
-                    1.8 * u,
-                    f64::from(start + 0.12 * k as f32),
-                    ([1.0, 0.9, 0.7], 101 + k),
-                ));
+            if out.pop().is_none() {
+                break;
             }
-            for (k, side) in [-1.0f32, 1.0].into_iter().enumerate() {
-                d.sprays.push(Spray {
-                    at: (cx + side * px * 2.6, cy),
-                    half: (0.0, 0.0),
-                    start,
-                    drift: 0.0,
-                    size: px * 0.9,
-                    seed: 51 + k as u32,
-                    rgb: WHITE,
-                    kind: Kind::StepUp,
-                });
-            }
-        } else if let Some((at, _)) = reveal.find(|b| matches!(b, Beat::Best(_))) {
-            let shows = fade(Some(t - at), 0.5);
-            let px = (3.0 * u).round().max(10.0);
-            let soft = rgba(WHITE, 0.72 * shows);
-            self.words(
-                &mut d.out,
-                (Face::NUMBER, &below),
-                (px, 1.0),
-                room.at(0.5, 0.775),
-                0.5,
-                soft,
-                true,
-            );
+            out.truncate(out.trim_end().len());
+            out.push('…');
         }
+        (out.into(), px)
     }
 
-    /// The song coming next and START, at the bottom (above the controls'
-    /// bar): there throughout, START pulsing once the reveal is over.
+    /// The song START plays and START, under the sheet (above the
+    /// controls' bar): there throughout, START pulsing once the reveal is
+    /// over.
     fn next(&mut self, d: &mut Drawn, room: &Room, shown: &ResultShown, tint: &Tint) {
         let (t, reveal) = (shown.t, &shown.shown.reveal);
         let u = room.u;
         let px = (2.9 * u).round().max(10.0);
-        let cy = (room.y + room.h * 0.915).min(room.bottom - 3.2 * u);
+        let cy = room.next_y;
         let shows = fade(Some(t - 0.3), 0.5);
         let start = (Face::SHOUT, "START");
         let sw = self.measure(start.0, start.1, px);
@@ -615,14 +444,14 @@ impl Stage {
         let gap = px * 1.4;
         let left = room.x + room.w / 2.0 - (tw + gap + sw + px) / 2.0;
         let soft = rgba(tint.soft, 0.85 * shows);
-        self.words(
+        let next = (Face::NUMBER, &*text);
+        self.written(
             &mut d.out,
-            (Face::NUMBER, &text),
+            next,
             (px, 1.0),
-            (left, cy),
-            0.0,
+            ((left, cy), 0.0),
             soft,
-            true,
+            Pen::SHADED,
         );
         let over = reveal.age(Beat::End, t);
         let pulse = over.map_or(0.0, |a| 0.5 - 0.5 * (a as f32 * 4.0).cos()) * room.calm;
@@ -639,12 +468,9 @@ impl Stage {
             0.0,
         ));
         let white = rgba(WHITE, shows);
-        self.words(&mut d.out, start, (px, scale), c, 0.5, white, true);
+        self.written(&mut d.out, start, (px, scale), (c, 0.5), white, Pen::SHADED);
     }
 }
-
-/// The streak's badge: a deep coral.
-const CORAL_DEEP: Rgb = [0.86, 0.32, 0.3];
 
 /// An instance of `k` round `c`, reaching `reach` each way.
 fn shape(k: f32, c: (f32, f32), reach: f32, shape: [f32; 4]) -> Instance {
@@ -664,12 +490,29 @@ fn sparkle(c: (f32, f32), size: f32, turn: f32, color: [f32; 4]) -> Instance {
     }
 }
 
+/// A star sticker at `c`, `size` out to its points, turned `turn`, in
+/// `color`, glowing `glow` far in `halo`, its glint at `glint`.
+fn sticker(
+    c: (f32, f32),
+    (size, turn): (f32, f32),
+    color: [f32; 4],
+    (glow, halo): (f32, [f32; 4]),
+    glint: f32,
+) -> Instance {
+    let reach = size * 1.15 + glow + 1.0;
+    Instance {
+        color,
+        color2: halo,
+        params: [kind::STAR, glow, glint, 0.35 * color[3]],
+        ..shape(kind::STAR, c, reach, [c.0, c.1, size, turn])
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::shine::{Shone, Tier};
-    use crate::core::singing::Medal;
-    use crate::core::singing::Shown;
+    use crate::core::shine::Shone;
+    use crate::core::singing::{Medal, SongResult};
     use ratatui::layout::Rect;
 
     pub(super) fn result(medal: Option<Medal>, whole: bool, best: Option<u32>) -> SongResult {
@@ -700,10 +543,17 @@ mod tests {
         }
     }
 
-    /// The scene at `t` of a result, in a window of 1600 × 900 (its
-    /// controls' bar the bottom 3 of its 30 rows).
-    pub(super) fn frame_at(r: &SongResult, t: f64) -> StageFrame {
-        let picture = KaraokePicture {
+    /// A stage dated 24 November 2026.
+    pub(super) fn stage() -> Stage {
+        let mut stage = Stage::default();
+        stage.kept.today = || Some((2026, 11, 24));
+        stage
+    }
+
+    /// The picture of a result `id` at `t` (its controls' bar the bottom 3
+    /// of its 30 rows).
+    fn picture(r: &SongResult, id: u64, t: f64) -> KaraokePicture {
+        KaraokePicture {
             area: Rect::new(0, 0, 100, 30),
             lines: Vec::new(),
             count: None,
@@ -714,18 +564,49 @@ mod tests {
             moved: 1.0,
             score: None,
             result: Some(ResultShown {
-                shown: std::sync::Arc::new(Shown::new(r.clone(), 1, 0)),
+                shown: Arc::new(Shown::new(r.clone(), id, 0)),
                 t,
                 next: "Next Song".into(),
                 again: false,
             }),
-        };
-        let area = (0.0, 0.0, 1600.0, 900.0);
-        let frame = Stage::default().result(&picture, &Tint::STAGE, area);
+        }
+    }
+
+    /// The scene at `t` of a result, in a window `size`.
+    pub(super) fn frame_in(r: &SongResult, t: f64, size: (f32, f32)) -> StageFrame {
+        let area = (0.0, 0.0, size.0, size.1);
+        let frame = stage().result(&picture(r, 1, t), &Tint::STAGE, area);
         frame.expect("a result screen")
     }
 
-    /// A title too long for the window is cut short, not run off it.
+    /// The scene at `t` in a window of 1600 × 900.
+    pub(super) fn frame_at(r: &SongResult, t: f64) -> StageFrame {
+        frame_in(r, t, (1600.0, 900.0))
+    }
+
+    pub(super) fn count(f: &StageFrame, k: f32) -> usize {
+        f.instances
+            .iter()
+            .chain(&f.top)
+            .filter(|i| i.params[0] == k)
+            .count()
+    }
+
+    /// Everything of a frame inside a window `size`, and finite.
+    fn inside(f: &StageFrame, size: (f32, f32), what: &str) {
+        for i in f.instances.iter().chain(&f.top) {
+            let [x0, y0, x1, y1] = i.quad;
+            assert!(
+                x0 < size.0 + 10.0 && x1 > -10.0 && y0 < size.1 + 10.0 && y1 > -10.0,
+                "{what}: {i:?}"
+            );
+            let numbers = i.quad.iter().chain(&i.shape).chain(&i.params[2..]);
+            assert!(numbers.into_iter().all(|v| v.is_finite()), "{i:?}");
+        }
+    }
+
+    /// A title too long for the window is cut short, not run off it; one
+    /// that fits is kept as it is.
     #[test]
     fn a_long_title_is_cut_short() {
         let mut stage = Stage::default();
@@ -733,72 +614,61 @@ mod tests {
         let (text, px) = stage.fitted(Face::LINE, &long, 54.0, 800.0);
         assert!(text.ends_with('…') && stage.measure(Face::LINE, &text, px) <= 800.0);
         assert!(px >= 54.0 * 0.6 - 1.0);
+        assert_eq!(stage.fitted(Face::LINE, &long, 54.0, 800.0), (text, px));
         assert_eq!(
             stage.fitted(Face::LINE, "Short", 54.0, 800.0),
             ("Short".into(), 54.0)
         );
     }
 
-    /// Everything lands inside the window; before the title nothing of the
-    /// scene but its backdrop; more shows as the reveal goes on.
+    /// Everything lands inside the window, wide or tall; at first the
+    /// sheet alone (unrolling), more shows as the reveal goes on; at its
+    /// end the seal, a star a phrase, the stamp and the signature.
     #[test]
-    fn the_scene_grows_as_it_is_revealed_and_stays_in_the_window() {
+    fn the_diploma_fills_in_and_stays_in_the_window() {
         let r = result(Some(Medal::Gold), true, Some(9_000));
         let reveal = crate::core::singing::Reveal::of(&r);
-        let counts: Vec<usize> = [0.0, 1.0, 3.0, reveal.end() + 2.0]
-            .iter()
-            .map(|&t| {
-                let f = frame_at(&r, t);
-                for i in f.instances.iter().chain(&f.top) {
-                    let [x0, y0, x1, y1] = i.quad;
-                    assert!(
-                        x0 < 1610.0 && x1 > -10.0 && y0 < 910.0 && y1 > -10.0,
-                        "{t}: {i:?}"
-                    );
-                    assert!(
-                        i.quad.iter().chain(&i.shape).all(|v| v.is_finite()),
-                        "{i:?}"
-                    );
-                }
-                f.instances.len() + f.top.len()
-            })
-            .collect();
-        assert!(counts.windows(2).all(|c| c[0] < c[1]), "{counts:?}");
-        let last = frame_at(&r, reveal.end() + 2.0);
-        let medals = last
-            .instances
-            .iter()
-            .filter(|i| i.params[0] == kind::MEDAL)
-            .count();
-        let gems = last
-            .instances
-            .iter()
-            .filter(|i| i.params[0] == kind::GEM)
-            .count();
-        assert_eq!((medals, gems), (1, 4 + 3));
-        assert!(last.sprays.iter().any(|s| s.kind == Kind::Confetti));
+        for size in [(1600.0, 900.0), (600.0, 1000.0), (1024.0, 768.0)] {
+            let counts: Vec<usize> = [0.0, 1.0, 3.0, reveal.end() + 2.0]
+                .iter()
+                .map(|&t| {
+                    let f = frame_in(&r, t, size);
+                    inside(&f, size, &format!("{t}"));
+                    f.instances.len() + f.top.len()
+                })
+                .collect();
+            assert!(
+                counts.windows(2).all(|c| c[0] < c[1]),
+                "{size:?}: {counts:?}"
+            );
+            let last = frame_in(&r, reveal.end() + 2.0, size);
+            assert_eq!(count(&last, kind::PAPER), 1);
+            assert_eq!(count(&last, kind::SEAL), 1);
+            assert_eq!(count(&last, kind::STAMP), 1);
+            assert_eq!(count(&last, kind::SIGNATURE), 1);
+            // A sticker a phrase, the tally's three and the heading's two.
+            assert_eq!(count(&last, kind::STAR), 4 + 3 + 2);
+            assert!(last.sprays.iter().any(|s| s.kind == Kind::Confetti));
+        }
     }
 
-    /// No medal: a star badge, no confetti without a new best; not sung
-    /// whole: no medal, no new best, however high.
+    /// No medal: a star where the seal goes, no confetti without a new
+    /// best; not sung whole: no seal, no new best, however high.
     #[test]
     fn no_medal_and_not_whole_draw_a_star() {
         for r in [result(None, true, Some(50_000)), result(None, false, None)] {
             let reveal = crate::core::singing::Reveal::of(&r);
             let f = frame_at(&r, reveal.end() + 2.0);
-            let star = f
-                .instances
-                .iter()
-                .find(|i| i.params[0] == kind::MEDAL)
-                .expect("a star");
-            assert_eq!(star.shape[3], 1.0);
+            assert_eq!(count(&f, kind::SEAL), 0);
+            assert_eq!(count(&f, kind::STAMP), 0);
+            assert_eq!(count(&f, kind::STAR), 4 + 3 + 2 + 1);
             assert!(!f.sprays.iter().any(|s| s.kind == Kind::Confetti));
         }
     }
 
-    /// Nothing scored (no points, no words, no phrases): the scene draws
-    /// all the same, in the window and finite throughout, a star for its
-    /// wink at the microphone, no gems and no confetti.
+    /// Nothing scored (no points, no words, no phrases): the diploma all
+    /// the same, in the window and finite throughout: a sleepy star where
+    /// the seal goes and a "Zzz" stamp, no stickers, no seal, no confetti.
     #[test]
     fn a_silent_result_draws_a_star_and_no_gems() {
         let r = SongResult {
@@ -811,16 +681,29 @@ mod tests {
         };
         let reveal = crate::core::singing::Reveal::of(&r);
         for t in [0.0, 0.6, 1.0, 2.0, reveal.end() + 2.0] {
-            let f = frame_at(&r, t);
-            for i in f.instances.iter().chain(&f.top) {
-                let [x0, y0, x1, y1] = i.quad;
-                assert!(x0 < 1610.0 && x1 > -10.0 && y0 < 910.0 && y1 > -10.0);
-                assert!(i.quad.iter().chain(&i.shape).all(|v| v.is_finite()));
-            }
+            inside(&frame_at(&r, t), (1600.0, 900.0), &format!("{t}"));
         }
         let f = frame_at(&r, reveal.end() + 2.0);
-        let kinds = |k| f.instances.iter().filter(|i| i.params[0] == k).count();
-        assert_eq!((kinds(kind::MEDAL), kinds(kind::GEM)), (1, 0));
+        // The heading's two stars and the sleepy one.
+        assert_eq!((count(&f, kind::STAR), count(&f, kind::SEAL)), (2 + 1, 0));
+        assert_eq!(count(&f, kind::STAMP), 1);
         assert!(!f.sprays.iter().any(|s| s.kind == Kind::Confetti));
+    }
+
+    /// The day is read once a result: the same however often it is drawn
+    /// (even past midnight), the next result's its own.
+    #[test]
+    fn the_date_is_read_once_a_result() {
+        let mut stage = stage();
+        let r = result(Some(Medal::Gold), true, None);
+        let area = (0.0, 0.0, 1600.0, 900.0);
+        let date = |stage: &Stage| stage.kept.written.as_ref().and_then(|w| w.date.clone());
+        stage.result(&picture(&r, 1, 1.0), &Tint::STAGE, area);
+        assert_eq!(date(&stage).as_deref(), Some("24 November 2026"));
+        stage.kept.today = || Some((2026, 11, 25));
+        stage.result(&picture(&r, 1, 9.0), &Tint::STAGE, area);
+        assert_eq!(date(&stage).as_deref(), Some("24 November 2026"));
+        stage.result(&picture(&r, 2, 1.0), &Tint::STAGE, area);
+        assert_eq!(date(&stage).as_deref(), Some("25 November 2026"));
     }
 }

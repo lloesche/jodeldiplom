@@ -1,8 +1,10 @@
-//! Frames of Karaoke mode's result screen on the GPU, to look at its
-//! reveal: a Gold run with a new best and several Diva phrases (over a
-//! made-up cover, tinted by its palette), a run without a medal (over the
-//! plain backdrop), and a run not sung from its start (over another
-//! cover), each at moments of its reveal; in Karaoke mode's own fonts (as
+//! Frames of Karaoke mode's result screen (the Yodel Diploma) on the GPU,
+//! to look at its reveal: a Silver run short of its best, a Bronze one
+//! with a long Japanese title, a Gold run with a new best, long numbers
+//! and several Diva phrases (each over a made-up cover, tinted by its
+//! palette), a run without a medal (over the plain backdrop), a run not
+//! sung from its start (over another cover) and a silent one (nothing
+//! scored), each at moments of its reveal; in Karaoke mode's own fonts (as
 //! the player embeds them), the stage drawn offscreen and the frames saved
 //! as PNGs into `OUT_DIR` (`<run>-<seconds>.png`, written whole).
 //!
@@ -73,10 +75,10 @@ fn cover(a: [u8; 3], b: [u8; 3], c: [u8; 3]) -> Art {
 fn runs() -> Vec<(&'static str, SongResult, Option<Art>, Vec<Swatch>)> {
     let gold = SongResult {
         title: "Dancing in the Moonlight".into(),
-        points: 12_400,
-        hit: 41,
-        words: 45,
-        streak: 23,
+        points: 124_850,
+        hit: 187,
+        words: 243,
+        streak: 112,
         phrases: phrases("DGAgDDGA.gDAGGDgA"),
         medal: Some(Medal::Gold),
         best: Some(9_850),
@@ -104,8 +106,42 @@ fn runs() -> Vec<(&'static str, SongResult, Option<Art>, Vec<Swatch>)> {
         best: None,
         whole: false,
     };
+    let silver = SongResult {
+        title: "Take On Me".into(),
+        points: 7_820,
+        hit: 34,
+        words: 45,
+        streak: 11,
+        phrases: phrases("GgAG.gGgA"),
+        medal: Some(Medal::Silver),
+        best: Some(8_400),
+        whole: true,
+    };
+    let long = SongResult {
+        title: "君の名は。〜 夢灯籠 〜 前前前世 (movie ver.) スパークル 〜 なんでもないや".into(),
+        points: 4_210,
+        hit: 25,
+        words: 45,
+        streak: 9,
+        phrases: phrases("gG.gAg"),
+        medal: Some(Medal::Bronze),
+        best: None,
+        whole: true,
+    };
     let swatch = |rgb, share| Swatch { rgb, share };
     vec![
+        (
+            "silver",
+            silver,
+            Some(cover([120, 30, 30], [200, 120, 40], [250, 230, 200])),
+            vec![swatch([150, 50, 30], 0.5), swatch([60, 120, 200], 0.2)],
+        ),
+        (
+            "long-cjk",
+            long,
+            Some(cover([10, 30, 80], [60, 20, 90], [250, 180, 90])),
+            vec![swatch([30, 40, 110], 0.6), swatch([240, 170, 80], 0.25)],
+        ),
         (
             "gold",
             gold,
@@ -117,6 +153,22 @@ fn runs() -> Vec<(&'static str, SongResult, Option<Art>, Vec<Swatch>)> {
             ],
         ),
         ("no-medal", none, None, Vec::new()),
+        (
+            "silent",
+            SongResult {
+                title: "Stille Nacht".into(),
+                points: 0,
+                hit: 0,
+                words: 0,
+                streak: 0,
+                phrases: Vec::new(),
+                medal: None,
+                best: Some(4_200),
+                whole: true,
+            },
+            Some(cover([30, 30, 70], [70, 50, 110], [200, 190, 240])),
+            vec![swatch([50, 40, 100], 0.6), swatch([190, 180, 235], 0.3)],
+        ),
         (
             "not-whole",
             part,

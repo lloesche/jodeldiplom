@@ -189,7 +189,7 @@ pub fn glow_at(d: f32, wide: f32, time: f32, k: f32) -> f32 {
 
 /// A smooth number that looks random over the plane, 0 to 1: value noise
 /// on a lattice of [`noise`].
-fn vnoise(x: f32, y: f32) -> f32 {
+pub(super) fn vnoise(x: f32, y: f32) -> f32 {
     let (ix, iy) = (x.floor(), y.floor());
     let (fx, fy) = (x - ix, y - iy);
     let (sx, sy) = (fx * fx * (3.0 - 2.0 * fx), fy * fy * (3.0 - 2.0 * fy));

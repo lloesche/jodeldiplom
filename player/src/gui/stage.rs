@@ -234,6 +234,8 @@ pub struct Stage {
     meter: meter::Meter,
     /// The bursts that are light (the angels, the jackpots) showing.
     lights: Vec<super::particles::Spray>,
+    /// What the result screen keeps between frames ([`result::Kept`]).
+    kept: result::Kept,
 }
 
 /// What the stage is made from, besides the picture.

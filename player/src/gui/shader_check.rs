@@ -5,9 +5,10 @@
 //! the front's waves and slosh, the shimmer, [`super::liquid`]), a tube's
 //! nearest point (how far, where along, which side, [`super::snake`]) and
 //! a streak's shine (its rise and collapse, the bands, the swirl, the rim,
-//! the rainbow, [`super::rainbow`]) and the result's shapes (a gem, a
-//! medal and its star, the rays, [`super::trophy`]) and the backdrop's
-//! maths ([`super::backdrop::look`]), each worked out by the shader's own
+//! the rainbow, [`super::rainbow`]), the diploma's shapes (a star sticker,
+//! a wax seal, the rays, [`super::seal`]; its paper, a rubber stamp, a
+//! signature, [`super::paper`]) and the backdrop's maths
+//! ([`super::backdrop::look`]), each worked out by the shader's own
 //! functions in a compute pass over the shader as the window composes it,
 //! at sample points, against the processor's. Skipped (with a note)
 //! without a GPU.
@@ -15,7 +16,7 @@
 use super::particles::{self, sprite, Kind, Spray, QUADS};
 use super::rainbow::{self, Glow};
 use super::sparks::TAU;
-use super::{glory, liquid, trophy};
+use super::{glory, liquid, paper, seal};
 
 /// A device on the window's GPU, none without one.
 fn gpu() -> Option<(wgpu::Device, wgpu::Queue)> {
@@ -533,11 +534,11 @@ fn the_stage_shader_s_glory_is_its_reference() {
     assert!(lit > 50 && shown > 10, "{lit} {shown}");
 }
 
-/// The result's shapes at points in and round them: the shader's
-/// [`trophy::gem_at`], [`trophy::medal_at`] (a disc and a star badge),
-/// [`trophy::star`] and [`trophy::rays_at`] as the processor's.
+/// The diploma's stuck and pressed shapes at points in and round them:
+/// the shader's [`seal::sticker_at`], [`seal::seal_at`], [`seal::star`]
+/// and [`seal::rays_at`] as the processor's.
 #[test]
-fn the_stage_shader_s_trophies_are_their_reference() {
+fn the_stage_shader_s_seal_and_stars_are_their_reference() {
     let Some(gpu) = gpu() else {
         return;
     };
@@ -556,12 +557,11 @@ fn the_stage_shader_s_trophies_are_their_reference() {
         .collect();
     let body = "
     let s = ins[i];
-    outs[i * 4u] = vec4<f32>(gem_at(s.x, s.y, s.z), star(s.x, s.y, 0.56, 0.45));
-    outs[i * 4u + 1u] = vec4<f32>(medal_at(s.x, s.y, false, s.z), 0.0);
-    outs[i * 4u + 2u] = vec4<f32>(medal_at(s.x, s.y, true, s.z), 0.0);
-    outs[i * 4u + 3u] = vec4<f32>(rays_at(s.x * 200.0, s.y * 200.0, 150.0, 14.0, s.w), 0.0, 0.0, 0.0);";
+    outs[i * 3u] = vec4<f32>(sticker_at(s.x, s.y, s.z), star(s.x, s.y, 0.56, 0.45));
+    outs[i * 3u + 1u] = vec4<f32>(seal_at(s.x, s.y, s.z), wax_edge(s.w));
+    outs[i * 3u + 2u] = vec4<f32>(rays_at(s.x * 200.0, s.y * 200.0, 150.0, 14.0, s.w), 0.0, 0.0, 0.0);";
     let source = super::stage_gpu::shader();
-    let outs = run(&gpu, &source, body, &samples, (samples.len(), 4));
+    let outs = run(&gpu, &source, body, &samples, (samples.len(), 3));
     let close = |g: &[f32], c: &[f32], what: &str| {
         for (x, y) in g.iter().zip(c) {
             assert!(near(*x, *y, 2e-3, 2e-3), "{what}: {g:?} {c:?}");
@@ -569,24 +569,101 @@ fn the_stage_shader_s_trophies_are_their_reference() {
     };
     let mut inside = 0;
     for (k, s) in samples.iter().enumerate() {
-        let g = &outs[k * 4..k * 4 + 4];
+        let g = &outs[k * 3..k * 3 + 3];
         let what = format!("sample {k}: {s:?}");
-        let gem = trophy::gem_at(s[0], s[1], s[2]);
-        let star = trophy::star(s[0], s[1], 0.56, 0.45);
+        let sticker = seal::sticker_at(s[0], s[1], s[2]);
+        let star = seal::star(s[0], s[1], 0.56, 0.45);
         close(
             &g[0],
-            &[gem[0], gem[1], gem[2], star],
-            &format!("{what}: gem, star"),
+            &[sticker[0], sticker[1], sticker[2], star],
+            &format!("{what}: sticker, star"),
         );
-        let disc = trophy::medal_at(s[0], s[1], false, s[2]);
-        close(&g[1][..3], &disc, &format!("{what}: medal"));
-        let badge = trophy::medal_at(s[0], s[1], true, s[2]);
-        close(&g[2][..3], &badge, &format!("{what}: badge"));
-        let rays = trophy::rays_at(s[0] * 200.0, s[1] * 200.0, 150.0, 14.0, s[3]);
-        close(&g[3][..1], &[rays], &format!("{what}: rays"));
-        inside += usize::from(gem[0] < 0.0) + usize::from(disc[0] < 0.0);
+        let wax = seal::seal_at(s[0], s[1], s[2]);
+        let edge = seal::wax_edge(s[3]);
+        close(
+            &g[1],
+            &[wax[0], wax[1], wax[2], edge],
+            &format!("{what}: seal"),
+        );
+        let rays = seal::rays_at(s[0] * 200.0, s[1] * 200.0, 150.0, 14.0, s[3]);
+        close(&g[2][..1], &[rays], &format!("{what}: rays"));
+        inside += usize::from(sticker[0] < 0.0) + usize::from(wax[0] < 0.0);
     }
     assert!(inside > 300, "{inside}");
+}
+
+/// The diploma's paper at pixels over, round and off its sheet, unrolling
+/// and open: the shader's [`paper::paper_at`] (its tone or shadow and its
+/// border's inks), [`paper::stamp_at`], [`paper::signature_at`] (written
+/// part of the way and whole) and [`paper::turn_about`] as the
+/// processor's.
+#[test]
+fn the_stage_shader_s_paper_is_its_reference() {
+    let Some(gpu) = gpu() else {
+        return;
+    };
+    let (half, s) = ((480.0f32, 320.0f32), 6.5f32);
+    let samples: Vec<[f32; 4]> = (0..900)
+        .map(|k| {
+            let f = k as f32;
+            let fr = |m: f32| (f * m).fract();
+            // Most near the sheet's edges, where its border is.
+            let edge = k % 3 != 0;
+            let (x, y) = if edge {
+                let along = fr(0.613) * 2.0 - 1.0;
+                let across = fr(0.377) * 9.0 * s - 0.5 * s;
+                if k % 2 == 0 {
+                    (
+                        along * half.0,
+                        (half.1 - across) * if k % 4 == 0 { 1.0 } else { -1.0 },
+                    )
+                } else {
+                    (
+                        (half.0 - across) * if k % 5 < 2 { 1.0 } else { -1.0 },
+                        along * half.1,
+                    )
+                }
+            } else {
+                (fr(0.613) * 1100.0 - 550.0, fr(0.377) * 760.0 - 380.0)
+            };
+            let front = [-half.1 * 0.6, 0.0, half.1 * 0.7, half.1][k % 4];
+            [x, y, front, fr(0.291)]
+        })
+        .collect();
+    let body = "
+    let s = ins[i];
+    let half = vec2<f32>(480.0, 320.0);
+    outs[i * 3u] = paper_at(s.x, s.y, half, 6.5, s.z);
+    let sig = vec2<f32>(signature_at(s.x / 300.0, s.y / 300.0, s.w), signature_at(s.x / 300.0, s.y / 300.0, 1.0));
+    outs[i * 3u + 1u] = vec4<f32>(stamp_at(s.x * 0.4, s.y * 0.4, vec2<f32>(140.0, 45.0), 6.5), sig);
+    outs[i * 3u + 2u] = vec4<f32>(turn_about(s.xy, vec2<f32>(30.0, -20.0), s.w * 6.0), 0.0, 0.0);";
+    let source = super::stage_gpu::shader();
+    let outs = run(&gpu, &source, body, &samples, (samples.len(), 3));
+    let close = |g: &[f32], c: &[f32], what: &str| {
+        for (x, y) in g.iter().zip(c) {
+            assert!(near(*x, *y, 3e-3, 1e-3), "{what}: {g:?} {c:?}");
+        }
+    };
+    let (mut inked, mut rolled) = (0, 0);
+    for (k, p) in samples.iter().enumerate() {
+        let g = &outs[k * 3..k * 3 + 3];
+        let what = format!("sample {k}: {p:?}");
+        let sheet = paper::paper_at(p[0], p[1], half, s, p[2]);
+        close(&g[0], &sheet, &format!("{what}: paper"));
+        inked += usize::from(sheet[0] < 0.0 && sheet[2] + sheet[3] > 0.5);
+        rolled += usize::from(sheet[0] < 0.0 && p[1] > p[2]);
+        let stamp = paper::stamp_at(p[0] * 0.4, p[1] * 0.4, (140.0, 45.0), s);
+        let part = paper::signature_at(p[0] / 300.0, p[1] / 300.0, p[3]);
+        let whole = paper::signature_at(p[0] / 300.0, p[1] / 300.0, 1.0);
+        close(
+            &g[1],
+            &[stamp[0], stamp[1], part, whole],
+            &format!("{what}: stamp, signature"),
+        );
+        let (x, y) = paper::turn_about((p[0], p[1]), (30.0, -20.0), p[3] * 6.0);
+        close(&g[2][..2], &[x, y], &format!("{what}: turned"));
+    }
+    assert!(inked > 50 && rolled > 10, "{inked} {rolled}");
 }
 
 /// A tube's nearest points at pixels round and along it, past its ends

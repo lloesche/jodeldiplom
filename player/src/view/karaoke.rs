@@ -26,7 +26,10 @@ use crate::core::text::{self, width};
 use crate::core::{Gpu, State};
 
 mod result;
-pub use result::{best_words, plain_lines, result_now, verdict_words, ResultShown};
+pub use result::{
+    best_words, date_words, plain_lines, result_now, verdict_words, DiplomaWords, ResultShown,
+    DIPLOMA,
+};
 
 /// What a lyric line is to the one being sung.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

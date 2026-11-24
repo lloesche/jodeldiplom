@@ -23,12 +23,14 @@ pub mod liquid;
 pub mod mixer;
 pub mod notes;
 mod paint;
+pub mod paper;
 pub mod particles;
 mod pointer;
 pub mod pop;
 pub mod present;
 pub mod rainbow;
 pub mod raster;
+pub mod seal;
 #[cfg(test)]
 mod shader_check;
 pub mod shards;
@@ -38,7 +40,6 @@ pub mod stage;
 pub mod stage_gpu;
 pub mod streak;
 pub(crate) mod style;
-pub mod trophy;
 mod wake;
 pub mod window;
 

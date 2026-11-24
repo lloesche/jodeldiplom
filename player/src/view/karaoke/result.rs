@@ -80,6 +80,64 @@ pub fn verdict_words(r: &SongResult) -> (&'static str, &'static str) {
     }
 }
 
+/// The Yodel Diploma's printed words (the stage hands the result out as
+/// one): its heading, the lines round the song's title (yodelled duly, or
+/// with nothing scored very quietly), its entries' names, what the seal's
+/// place, the signature and the date are marked with, and the rubber stamp
+/// a silent song gets. Nobody's name: it certifies the song sung. (The
+/// grades are the stage's, with each verdict's look.)
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DiplomaWords {
+    /// Its heading.
+    pub heading: &'static str,
+    /// The line over the song's title.
+    pub certify: &'static str,
+    /// The line under it: yodelled duly, and very quietly.
+    pub yodelled: (&'static str, &'static str),
+    /// Its entries: the points, the words hit, the best streak.
+    pub entries: [&'static str; 3],
+    /// Where the seal goes, while it waits.
+    pub seal: &'static str,
+    /// Under the signature, and under the date.
+    pub signed: (&'static str, &'static str),
+    /// The rubber stamp of a song where nothing was scored.
+    pub asleep: &'static str,
+}
+
+/// The Yodel Diploma's printed words.
+pub const DIPLOMA: DiplomaWords = DiplomaWords {
+    heading: "Yodel Diploma",
+    certify: "This is to certify that the song",
+    yodelled: (
+        "has been duly yodelled, with these results",
+        "has been yodelled (very, very quietly), with these results",
+    ),
+    entries: ["Points", "Words hit", "Best streak"],
+    seal: "L.S.",
+    signed: ("Chief Yodel Examiner", "Date"),
+    asleep: "Zzz…",
+};
+
+/// A day as the diploma writes it: "24 November 2026".
+pub fn date_words(year: i32, month: u32, day: u32) -> String {
+    const MONTHS: [&str; 12] = [
+        "January",
+        "February",
+        "March",
+        "April",
+        "May",
+        "June",
+        "July",
+        "August",
+        "September",
+        "October",
+        "November",
+        "December",
+    ];
+    let month = MONTHS[(month.clamp(1, 12) - 1) as usize];
+    format!("{day} {month} {year}")
+}
+
 /// The words under the best: a new one's (its first score, or how much it
 /// went up from), or the one before.
 pub fn best_words(r: &SongResult) -> String {
@@ -181,5 +239,13 @@ mod tests {
         assert_eq!(name, "Silent night?");
         assert!(line.contains("mic") && !line.to_lowercase().contains("no "));
         assert_eq!(best_words(&silent), "Your best: 100");
+    }
+
+    /// The diploma writes the day out, and names nobody.
+    #[test]
+    fn the_diploma_s_words() {
+        assert_eq!(date_words(2026, 11, 24), "24 November 2026");
+        let words = format!("{DIPLOMA:?}").to_lowercase();
+        assert!(!words.contains("name") && !words.contains("bearer"));
     }
 }

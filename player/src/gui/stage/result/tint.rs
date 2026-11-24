@@ -1,19 +1,20 @@
-//! The result screen's tint: from the cover's palette where its layers
-//! have one (its most vivid colour lights the screen, a deep shade of it
-//! the card), else the stage's own colours.
+//! The diploma's tint: from the cover's palette where its layers
+//! have one (its most vivid colour lights the screen and its border, a
+//! deep shade of it its ink), else the stage's own colours.
 
 use super::super::{Rgb, ACTIVE, CORAL, GOLD};
 use crate::cover::Swatch;
 
-/// The screen's tint: its light's colour (vivid), the card's (deep), the
-/// ribbon's two, and a light one for its small words.
+/// The screen's tint: its light's colour (vivid), the ink's (deep), the
+/// border's and the ribbons' two, and a light one for its small words off
+/// the paper.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Tint {
     /// The light's.
     pub glow: Rgb,
-    /// The card's.
-    pub card: Rgb,
-    /// The ribbon's.
+    /// The ink's.
+    pub ink: Rgb,
+    /// The border's and the ribbons'.
     pub ribbon: (Rgb, Rgb),
     /// The small words'.
     pub soft: Rgb,
@@ -42,17 +43,17 @@ fn to_hsv(c: Rgb) -> (f32, f32, f32) {
 }
 
 impl Tint {
-    /// The stage's own: gold light, a deep violet card, coral and blue.
+    /// The stage's own: gold light, a deep violet ink, coral and blue.
     pub const STAGE: Tint = Tint {
         glow: GOLD,
-        card: [0.07, 0.05, 0.14],
+        ink: [0.07, 0.05, 0.14],
         ribbon: (CORAL, [0.32, 0.52, 1.0]),
         soft: ACTIVE,
     };
 
     /// From a cover's palette (largest share first): its most vivid colour
     /// (that is not too dark) for the light, the ribbons and the words, a
-    /// deep shade of it for the card; the stage's own without one.
+    /// deep shade of it for the ink; the stage's own without one.
     pub fn of(palette: &[Swatch]) -> Tint {
         let rgb = |s: &Swatch| s.rgb.map(|v| f32::from(v) / 255.0);
         let vivid = |s: &&Swatch| {
@@ -68,7 +69,7 @@ impl Tint {
             let (_, _, v) = to_hsv(rgb(&palette[0]));
             let g = 0.05 + 0.1 * v;
             return Tint {
-                card: [g, g, g * 1.1],
+                ink: [g, g, g * 1.1],
                 ..Tint::STAGE
             };
         }
@@ -81,7 +82,7 @@ impl Tint {
             .map_or(h + 0.45, |(oh, _, _)| oh);
         Tint {
             glow: hsv(h, s.max(0.6), 1.0),
-            card: hsv(h, s.clamp(0.4, 0.7), 0.17),
+            ink: hsv(h, s.clamp(0.4, 0.7), 0.17),
             ribbon: (hsv(h, s.max(0.65), 0.95), hsv(other, 0.65, 0.95)),
             soft: hsv(h, 0.3, 1.0),
         }
@@ -100,7 +101,7 @@ mod tests {
         let swatch = |rgb, share| Swatch { rgb, share };
         let blue = Tint::of(&[swatch([40, 40, 40], 0.6), swatch([30, 60, 200], 0.2)]);
         assert!(blue.glow[2] > blue.glow[0] && blue.glow[2] > 0.9);
-        assert!(blue.card.iter().all(|&c| c < 0.25));
+        assert!(blue.ink.iter().all(|&c| c < 0.25));
         let grey = Tint::of(&[swatch([120, 120, 120], 1.0)]);
         assert_eq!(grey.glow, Tint::STAGE.glow);
     }

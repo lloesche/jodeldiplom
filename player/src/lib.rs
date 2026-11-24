@@ -29,6 +29,7 @@ pub mod app;
 pub mod art;
 pub mod browser;
 pub mod cache;
+pub mod calendar;
 pub mod cli;
 pub mod config;
 pub mod core;

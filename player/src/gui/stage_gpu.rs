@@ -96,17 +96,30 @@ pub mod kind {
     pub const TUBE_LIQUID: f32 = 18.0;
     /// A burst of rays round (`shape[0]`, `shape[1]`), `shape[2]` their
     /// reach, `shape[3]` of them, turned `params[1]`, in `color`: light
-    /// ([`crate::gui::trophy::rays_at`]).
+    /// ([`crate::gui::seal::rays_at`]).
     pub const RAYS: f32 = 19.0;
-    /// A gem at (`shape[0]`, `shape[1]`), `shape[2]` its size, in `color`,
-    /// glowing `params[1]` in `color2`, its glint at `params[2]`
-    /// ([`crate::gui::trophy::gem_at`]).
-    pub const GEM: f32 = 20.0;
-    /// A medal at (`shape[0]`, `shape[1]`), `shape[2]` its radius, a star
-    /// badge where `shape[3]` is 1: from `color2` (deep) to `color`
-    /// (light), glowing `params[1]`, its sheen at `params[2]`
-    /// ([`crate::gui::trophy::medal_at`]).
-    pub const MEDAL: f32 = 21.0;
+    /// A star sticker at (`shape[0]`, `shape[1]`), `shape[2]` its size,
+    /// turned `shape[3]`, in `color`, glowing `params[1]` in `color2`, its
+    /// glint at `params[2]`, its shadow `params[3]` dark
+    /// ([`crate::gui::seal::sticker_at`]).
+    pub const STAR: f32 = 20.0;
+    /// A wax seal at (`shape[0]`, `shape[1]`), `shape[2]` its radius: from
+    /// `color2` (deep) to `color` (light), glowing `params[1]`, its sheen
+    /// at `params[2]`, its shadow `params[3]` dark
+    /// ([`crate::gui::seal::seal_at`]).
+    pub const SEAL: f32 = 21.0;
+    /// The diploma's sheet: `shape` its middle and half size, `params[2]`
+    /// its unit, unrolled down to `params[1]` from its middle; in `color`,
+    /// its border in `color2` and `uv` ([`crate::gui::paper::paper_at`]).
+    pub const PAPER: f32 = 22.0;
+    /// A rubber stamp's frame: `shape` its middle and half size, turned
+    /// `params[1]`, `params[2]` its unit; in `color`, its specks in
+    /// `color2` ([`crate::gui::paper::stamp_at`]).
+    pub const STAMP: f32 = 23.0;
+    /// A signature at (`shape[0]`, `shape[1]`), `shape[2]` its size,
+    /// written to `params[1]` along it, `params[2]` its pen's half width;
+    /// in `color` ([`crate::gui::paper::signature_at`]).
+    pub const SIGNATURE: f32 = 24.0;
 }
 
 /// The flags of a bubble or its liquid, or of text ([`Instance::strain`]`[3]`).
@@ -353,8 +366,11 @@ const K_TEXT: u32 = {}u;
 const K_BADGE: u32 = {}u;
 const K_TUBE_LIQUID: u32 = {}u;
 const K_RAYS: u32 = {}u;
-const K_GEM: u32 = {}u;
-const K_MEDAL: u32 = {}u;
+const K_STAR: u32 = {}u;
+const K_SEAL: u32 = {}u;
+const K_PAPER: u32 = {}u;
+const K_STAMP: u32 = {}u;
+const K_SIGNATURE: u32 = {}u;
 ",
         k(kind::PILL),
         k(kind::FILL),
@@ -376,26 +392,30 @@ const K_MEDAL: u32 = {}u;
         k(kind::BADGE),
         k(kind::TUBE_LIQUID),
         k(kind::RAYS),
-        k(kind::GEM),
-        k(kind::MEDAL),
+        k(kind::STAR),
+        k(kind::SEAL),
+        k(kind::PAPER),
+        k(kind::STAMP),
+        k(kind::SIGNATURE),
     )
 }
 
 /// The stage's shader: `stage.wgsl`, its kinds ([`kind`]), the liquid's
 /// maths ([`super::liquid::wgsl`]), a tube's nearest point
 /// ([`super::snake::wgsl`]), a streak's shine ([`super::rainbow::stage_wgsl`]),
-/// the glory ([`super::glory::wgsl`]) and the result's shapes
-/// ([`super::trophy::wgsl`]).
+/// the glory ([`super::glory::wgsl`]) and the diploma's shapes
+/// ([`super::seal::wgsl`], [`super::paper::wgsl`]).
 pub fn shader() -> String {
     format!(
-        "{}{}{}{}{}{}{}",
+        "{}{}{}{}{}{}{}{}",
         kinds_wgsl(),
         include_str!("stage.wgsl"),
         super::liquid::wgsl(),
         super::snake::wgsl(),
         super::rainbow::stage_wgsl(),
         super::glory::wgsl(),
-        super::trophy::wgsl()
+        super::seal::wgsl(),
+        super::paper::wgsl()
     )
 }
 
