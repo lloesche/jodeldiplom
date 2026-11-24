@@ -8,6 +8,8 @@
 pub mod big_text;
 pub mod bloom;
 pub mod canvas;
+#[cfg(target_os = "macos")]
+mod drawables;
 pub mod embed;
 mod embed_gpu;
 pub mod fanfare;

@@ -274,10 +274,14 @@ impl Gui {
                     window::Event::Opened {
                         size, scale_factor, ..
                     } => {
-                        #[cfg(target_os = "macos")]
-                        super::set_dock_icon();
                         self.size = size;
                         self.scale = scale_factor;
+                        self.paint.dirty = true;
+                        #[cfg(target_os = "macos")]
+                        {
+                            super::set_dock_icon();
+                            return self.embed.find_view(id);
+                        }
                     }
                     window::Event::Resized(size) => self.size = size,
                     window::Event::Rescaled(scale) => self.scale = scale,

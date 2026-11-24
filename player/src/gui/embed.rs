@@ -73,6 +73,10 @@ pub(super) struct Shared {
     /// and the redraw that sent the last one.
     every_redraw: bool,
     ticked: Option<Instant>,
+    /// The window's view, to keep its Metal layer at three drawables
+    /// ([`super::drawables`]).
+    #[cfg(target_os = "macos")]
+    view: Option<usize>,
 }
 
 impl std::fmt::Debug for Shared {
@@ -103,6 +107,8 @@ impl Default for Embed {
             handed: Duration::ZERO,
             every_redraw: false,
             ticked: None,
+            #[cfg(target_os = "macos")]
+            view: None,
         })))
     }
 }
@@ -142,6 +148,17 @@ impl Embed {
     /// missed every other refresh.
     pub fn tick_every_redraw(&self, on: bool) {
         self.lock().every_redraw = on;
+    }
+
+    /// macOS: a task that finds the window `id`'s view, for its Metal layer
+    /// to keep three drawables from the next redraw on.
+    #[cfg(target_os = "macos")]
+    pub fn find_view<T: Send + 'static>(&self, id: iced::window::Id) -> iced::Task<T> {
+        let embed = self.clone();
+        iced::window::run(id, move |window| {
+            embed.lock().view = super::drawables::view_of(window);
+        })
+        .discard()
     }
 
     /// Whether iced draws on the GPU (until it has drawn: as if it did).
@@ -273,6 +290,10 @@ impl Widget<Message, Theme, iced::Renderer> for Embedded {
     ) {
         if let Event::Window(iced::window::Event::RedrawRequested(at)) = event {
             let mut shared = self.embed.lock();
+            #[cfg(target_os = "macos")]
+            if let Some(view) = shared.view {
+                super::drawables::keep_three(view);
+            }
             if shared.every_redraw {
                 match shared.ticked {
                     // Once a redraw: iced hands the redraw to the widgets
