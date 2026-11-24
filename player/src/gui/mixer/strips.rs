@@ -134,12 +134,35 @@ fn push(label: &'static str, on: bool, color: Color, b: DeskButton) -> Element<'
         .boxed()
 }
 
-fn readout(said: String, color: Color) -> Element<'static, Message> {
-    container(text(said).size(12).font(style::digits()).color(color))
-        .padding([2, 6])
-        .center_x(Fill)
-        .style(|_| style::readout())
-        .boxed()
+/// A readout's text size, and a character's width in it (the digits'
+/// font is fixed-width: half an em).
+const READOUT: f32 = 12.0;
+const READOUT_CHAR: f32 = READOUT * 0.5;
+
+/// A readout on one line, its height the same whatever it says: what it
+/// says goes on a strip `w` wide whole, without its unit (`" dB"`) where
+/// it would not fit, cut short where even that would not.
+fn readout(said: String, unit: &str, color: Color, w: f32) -> Element<'static, Message> {
+    // The strip's padding and the readout's own, and its border.
+    let room = w - 12.0 - 12.0 - 2.0;
+    let fits = |s: &str| s.chars().count() as f32 * READOUT_CHAR <= room;
+    let said = match said.strip_suffix(unit) {
+        Some(bare) if !fits(&said) => bare.to_owned(),
+        _ => said,
+    };
+    container(
+        text(said)
+            .size(READOUT)
+            .font(style::digits())
+            .color(color)
+            .wrapping(text::Wrapping::None),
+    )
+    .padding([2, 6])
+    .height(READOUT * 1.3 + 4.0 + 2.0)
+    .center_x(Fill)
+    .clip(true)
+    .style(|_| style::readout())
+    .boxed()
 }
 
 fn looks(pair: &Pair, now_ms: u64) -> [MeterLook; 2] {
@@ -198,7 +221,9 @@ fn fader_strip<'a>(
     });
     let value = readout(
         taper::label(setting.db),
+        " dB",
         if setting.db == 0.0 { TEXT } else { WARN },
+        w,
     );
     column![
         scribble(label, Channel::Strip(kind), selected),
@@ -267,7 +292,7 @@ fn mic_strip(state: &State, selected: bool, lines: usize) -> Element<'_, Message
             labels: true,
             wide: false,
         }),
-        readout("LISTEN ONLY".into(), DIM),
+        readout("LISTEN ONLY".into(), "", DIM, f32::INFINITY),
         container(line_view(said::taps_line(state))).center_x(Fill),
     ]
     .spacing(6)

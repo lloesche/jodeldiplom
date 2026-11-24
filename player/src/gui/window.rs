@@ -540,8 +540,10 @@ impl Gui {
             Phase::Setup { .. } if self.paint.dirty => Pace::Refresh,
             _ => Pace::Every(REST),
         };
+        // At the refresh the canvas's widget ticks, from inside each redraw.
+        self.embed.tick_every_redraw(pace == Pace::Refresh);
         let frames = match pace {
-            Pace::Refresh => window::frames().map(Message::Frame),
+            Pace::Refresh => Subscription::none(),
             Pace::Every(every) if every != REST => iced::time::every(every).map(Message::Frame),
             Pace::Every(_) => Subscription::none(),
         };
