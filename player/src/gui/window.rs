@@ -462,15 +462,12 @@ impl Gui {
                     Some(id) if fullscreen != self.fullscreen => {
                         self.fullscreen = fullscreen;
                         self.paint.dirty = true;
-                        // A test (JODELDIPLOM_FULLSCREEN=window): the window
-                        // maximised without its frame, not a fullscreen
-                        // Space (macOS showed that at 30 frames a second).
-                        if covering_window() {
-                            return Task::batch([
-                                window::toggle_decorations(id),
-                                window::maximize(id, fullscreen),
-                            ]);
-                        }
+                        // macOS: the screen covered by the window itself, not
+                        // a fullscreen Space ([`super::cover`]).
+                        #[cfg(target_os = "macos")]
+                        return window::run(id, move |w| super::cover::cover(w, fullscreen))
+                            .discard();
+                        #[cfg(not(target_os = "macos"))]
                         window::set_mode(
                             id,
                             if fullscreen {
@@ -587,16 +584,6 @@ impl Gui {
 }
 
 /// A screenshot of the window as a PNG file.
-/// Whether Karaoke mode covers the screen with the window maximised
-/// without its frame instead of going fullscreen (`JODELDIPLOM_FULLSCREEN`
-/// set to `window`).
-fn covering_window() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| {
-        std::env::var("JODELDIPLOM_FULLSCREEN").is_ok_and(|v| v.eq_ignore_ascii_case("window"))
-    })
-}
-
 fn save_png(path: &Path, shot: &window::Screenshot) -> Result<(), String> {
     let image = image::RgbaImage::from_raw(shot.size.width, shot.size.height, shot.rgba.to_vec())
         .ok_or("the screenshot's size")?;

@@ -9,6 +9,8 @@ pub mod big_text;
 pub mod bloom;
 pub mod canvas;
 pub mod confetti;
+#[cfg(target_os = "macos")]
+mod cover;
 pub mod embed;
 mod embed_gpu;
 pub mod fanfare;

@@ -45,8 +45,9 @@ features = ["Win32_System_Console", "Win32_Storage_FileSystem", "Win32_System_Sy
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
-# The Dock icon when the window player runs outside its app bundle.
+# The Dock icon when the window player runs outside its app bundle, and
+# Karaoke mode covering the screen as a frameless window.
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6.5"
-objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSData"] }
-objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSApplication", "NSImage", "NSResponder"] }
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSData", "NSGeometry"] }
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSApplication", "NSImage", "NSResponder", "NSScreen", "NSView", "NSWindow"] }
