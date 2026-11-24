@@ -41,6 +41,7 @@ pub mod judge;
 mod moments;
 mod notes;
 mod result;
+mod reveal;
 mod tally;
 mod undo;
 
@@ -48,7 +49,8 @@ pub use bursts::Rescue;
 pub use judge::{KeyStep, SungKey, KEY_FRAMES, SHARE, TOLERANCE};
 pub use moments::{Burst, Cue, Cursor, Moment, Since};
 pub use notes::{notes_of, LineNotes, Note, Notes};
-pub use result::{Medal, SongResult};
+pub use result::{Medal, SongResult, Verdict};
+pub use reveal::{Beat, Motion, Reveal, Shown, DROP, WORDS_FILL};
 pub use tally::{Run, Tally};
 
 /// What a word hit scores.

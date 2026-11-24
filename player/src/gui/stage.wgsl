@@ -1,7 +1,7 @@
 // Karaoke mode's stage on the GPU (`stage_gpu.rs`): its shapes, each a
 // signed distance, and its text from the atlas. Its kinds come before it;
-// the liquid's maths, the tubes, a streak's shine and the glory after it
-// (`stage_gpu::shader`).
+// the liquid's maths, the tubes, a streak's shine, the glory and the
+// result's shapes after it (`stage_gpu::shader`).
 struct Screen {
     size: vec2<f32>,
     srgb: f32,
@@ -242,6 +242,9 @@ fn fs(o: Out) -> @location(0) vec4<f32> {
     }
     if k == K_BANDS || k == K_SWIRL || k == K_RIM {
         return shine(o, p, k);
+    }
+    if k == K_RAYS || k == K_GEM || k == K_MEDAL {
+        return trophy(o, p, k);
     }
     if k == K_SEGMENT {
         let d = segment(p, o.shape.xy, o.shape.zw) - o.params.y;

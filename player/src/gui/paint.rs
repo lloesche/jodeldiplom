@@ -7,10 +7,12 @@
 use std::time::{Duration, Instant};
 
 use super::embed::{Drawn, Embed};
+use super::stage::Tint;
 use super::stage_gpu::{self, StageFrame};
 use super::streak;
 use super::window::SetupRun;
 use crate::app::App;
+use crate::core::singing::Motion;
 use crate::core::Action;
 use crate::view::Scene;
 
@@ -65,6 +67,8 @@ pub struct Seen {
     pub layer: bool,
     /// A fader's cap on the Mixer tab is gliding.
     pub gliding: bool,
+    /// Karaoke mode's stage is drawn (iced draws on the GPU).
+    pub stage: bool,
 }
 
 /// Where a frame is drawn: the window's size in pixels, its scale factor,
@@ -112,8 +116,10 @@ impl Paint {
     /// now, and what is drawn now.
     pub fn plan(&self, app: &App, seen: Seen, at: Instant) -> Plan {
         let state = &app.state;
-        let smooth = app.smooth();
-        let moving = app.animating();
+        // A song's result moves only where the stage draws it.
+        let result = crate::core::karaoke::result_motion(state).filter(|_| seen.stage);
+        let smooth = app.smooth() || result == Some(Motion::Revealing);
+        let moving = app.animating() || result == Some(Motion::Twinkling);
         let layer = app.layer_moves();
         // The Mixer tab's meters and caps are iced's: every refresh.
         let mixer = crate::core::desk::on_tab(state) || seen.gliding;
@@ -254,7 +260,9 @@ impl Paint {
 }
 
 /// Karaoke mode's stage, stepped by `dt` seconds, with the picture's
-/// bubbles' liquid and bursts and its streak's shine over it.
+/// bubbles' liquid and bursts and its streak's shine over it; or the
+/// result screen alone (on its reveal's clock), tinted by the cover's
+/// palette where its layers are ready.
 fn stage(
     canvas: &mut super::Canvas,
     app: &App,
@@ -262,7 +270,12 @@ fn stage(
     heard: f64,
     dt: f32,
 ) -> Option<StageFrame> {
-    let stage = canvas.stage_frame(&app.state, heard, dt);
+    let layers = app.cover_layers();
+    let tint = Tint::of(layers.as_ref().map_or(&[][..], |l| &l.palette[..]));
+    let stage = canvas.stage_frame(&app.state, heard, dt, &tint);
+    if crate::core::karaoke::result_shown(&app.state).is_some() {
+        return stage;
+    }
     let clock = app.state.karaoke.lag.sung_clock(heard);
     let over = canvas.picture_over();
     let song = streak::Sung {

@@ -7,7 +7,8 @@
 //! behind it and sparks flying off it; the streak's multiplier over the
 //! playhead; the line sung and the next at the bottom; and the song's
 //! progress, its breaks apart, along the bottom edge. Its text is in
-//! Karaoke mode's own faces ([`Face`]).
+//! Karaoke mode's own faces ([`Face`]). While a song's result shows, the
+//! stage is the result screen instead ([`result`]).
 //!
 //! What moves by itself (the arrow, the sparks, the multiplier's pop) is
 //! stepped by the time between frames, so it moves the same at any frame
@@ -20,10 +21,12 @@ use super::rainbow;
 
 mod lines;
 mod meter;
+mod result;
 mod shots;
 mod words;
 use super::sparks::noise;
 use super::stage_gpu::{kind, AtlasUpload, Instance, StageFrame, ATLAS};
+pub use result::Tint;
 
 use crate::core::State;
 use crate::view::karaoke::{KaraokePicture, LyricLine};
@@ -246,9 +249,15 @@ impl<'a> Song<'a> {
 }
 
 /// Whether the stage shows for `state`: Karaoke mode, its notes shown, the
-/// song in it with notes made.
+/// song in it with notes made; or a song's result shown in it.
 pub fn wanted(state: &State) -> bool {
-    if !crate::core::karaoke::in_mode(state) || !state.config.karaoke_notes {
+    if !crate::core::karaoke::in_mode(state) {
+        return false;
+    }
+    if crate::core::karaoke::result_shown(state).is_some() {
+        return true;
+    }
+    if !state.config.karaoke_notes {
         return false;
     }
     let Some(index) = crate::core::karaoke::song_index(state) else {
@@ -263,12 +272,14 @@ pub fn wanted(state: &State) -> bool {
 }
 
 /// `picture` without what the stage draws instead: its lyric lines (and
-/// their notes).
+/// their notes); while a result shows, all its lines (the result's words)
+/// and the result.
 pub fn without_lyrics(picture: &KaraokePicture) -> KaraokePicture {
-    let keep = |l: &&LyricLine| l.id.is_none();
+    let keep = |l: &&LyricLine| l.id.is_none() && picture.result.is_none();
     KaraokePicture {
         lines: picture.lines.iter().filter(keep).cloned().collect(),
         before: picture.before.iter().filter(keep).cloned().collect(),
+        result: None,
         ..picture.clone()
     }
 }

@@ -895,10 +895,18 @@ filled it, it shows again as it is. In the window the GPU draws the
 liquid and the bursts (a record a bubble, its surface, wobble, drops and
 bits worked out in its shaders), so they cost the processor nothing;
 without a GPU the fill shows flat and a bubble full simply disappears.
-When a song ends you get its points, the words hit, the longest streak,
-how many phrases reached each tier and a medal by the words (bronze for
-half of them, silver 70 %, gold 85 %), and the best score of each song
-is kept (`scores.txt` in the data folder).
+When a song ends its result is revealed, beat by beat over a few seconds,
+each beat with a sound: the title drops in, the points count up (faster
+and faster), the words hit fill their bar, the longest streak pops up,
+each phrase pops in as a gem in its tier's colour (Diva's sparkling),
+then a medal by the words (bronze for half of them, silver 70 %, gold
+85 %) is stamped down, or a star cheers you on; a new best rains
+confetti, else the best before shows. START during the reveal shows it
+all at once; the next START sings the next song. The screen takes its
+light from the cover's colours where the cover was taken apart; it
+twinkles a few seconds once settled, then holds still (drawing nothing)
+until START. Without a GPU the result shows as plain lines. The best
+score of each song is kept (`scores.txt` in the data folder).
 
 A song is sung only once its lyrics are ready (found, and their words
 timed where they can be): until then, and for a song with none, the

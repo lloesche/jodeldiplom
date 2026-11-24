@@ -441,23 +441,21 @@ impl Canvas {
     }
 
     /// Karaoke mode's stage for the frame just drawn, at `heard` seconds
-    /// into the song, `dt` seconds after the last; none where it does not
-    /// show.
+    /// into the song, `dt` seconds after the last; the result screen in
+    /// `tint` while one shows; none where the stage does not show.
     pub fn stage_frame(
         &mut self,
         state: &crate::core::State,
         heard: f64,
         dt: f32,
+        tint: &super::stage::Tint,
     ) -> Option<super::stage_gpu::StageFrame> {
         let (picture, rect) = self.staged.as_ref()?;
         let (x, y, w, h) = *rect;
-        Some(self.stage.frame(
-            &super::stage::Song::of(state),
-            picture,
-            (x as f32, y as f32, w as f32, h as f32),
-            heard,
-            dt,
-        ))
+        let area = (x as f32, y as f32, w as f32, h as f32);
+        let song = super::stage::Song::of(state);
+        let result = self.stage.result(picture, tint, area);
+        Some(result.unwrap_or_else(|| self.stage.frame(&song, picture, area, heard, dt)))
     }
 
     /// Whether a layer shows now.

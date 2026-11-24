@@ -1046,6 +1046,7 @@ fn the_stage_draws_the_lane_over_the_pixmap() {
         before: Vec::new(),
         moved: 1.0,
         score: None,
+        result: None,
     };
     let now = 0.55;
     let area = (0.0, 0.0, w as f32, h as f32);

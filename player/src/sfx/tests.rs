@@ -94,10 +94,40 @@ fn write_the_sounds() {
         (2.6, Sound::Tier(Tier::Amazing), 1.0),
         (4.4, Sound::Tier(Tier::Diva), 1.0),
     ];
+    // A Gold result with a new best revealed, as the screen plays it.
+    let result = crate::core::singing::SongResult {
+        title: "Song".into(),
+        points: 12_400,
+        hit: 41,
+        words: 45,
+        streak: 23,
+        phrases: [Some(Tier::Diva), None, Some(Tier::Good), Some(Tier::Great)]
+            .into_iter()
+            .chain([Some(Tier::Amazing), Some(Tier::Diva)])
+            .map(|tier| crate::core::shine::Shone {
+                line: 0,
+                end: 1.0,
+                value: 0.9,
+                diva: 0.9,
+                tier,
+            })
+            .collect(),
+        medal: Some(crate::core::singing::Medal::Gold),
+        best: Some(9_000),
+        whole: true,
+    };
+    let shown = crate::core::singing::Shown::new(result, 1, 0);
+    let revealed: Vec<(f64, Sound, f32)> = shown
+        .reveal
+        .beats()
+        .iter()
+        .filter_map(|&(at, b)| reveal::sound_of(b, &shown).map(|(s, gain, _)| (at, s, gain)))
+        .collect();
     for (name, run) in [
         ("run-ripple", &ripple[..]),
         ("run-streak", &streak[..]),
         ("run-tiers", &tiers[..]),
+        ("run-result", &revealed[..]),
     ] {
         let path = dir.join(format!("{name}.wav"));
         durable::write_atomic(&path, &wav(&sequence(rate, run), rate)).unwrap();

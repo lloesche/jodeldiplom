@@ -21,12 +21,16 @@
 //!   bright arpeggio with glitter, Amazing a "ta-daa" in brass with a
 //!   shimmer, Diva a jackpot (a cascade of coins over bells, a whoosh, and
 //!   a big chord).
+//! - The result screen's: the count-up's ticks, the gems' plinks, the
+//!   medal's stamp and stinger, a new best's fanfare ([`super::cheers`]).
 //!
 //! Each is set to its own peak ([`Sound::peak_db`]), well under the
 //! song's; the Effects strip on the desk turns them all up or down.
 
+use super::cheers::{self, MEDALS, TICK_STEPS};
 use super::synth::{scatter, Buf, Envelope, Noise, Partial, Tone};
 use crate::core::shine::Tier;
+use crate::core::singing::Medal;
 
 /// The steps of the scale the pops and sparkles are on.
 pub const STEPS: usize = 9;
@@ -50,11 +54,22 @@ pub enum Sound {
     Zap,
     /// A phrase rated.
     Tier(Tier),
+    /// The result's points counting up a tick, on step k (0 to
+    /// [`TICK_STEPS`] - 1).
+    Tick(usize),
+    /// A phrase's gem popping in, by its tier (none: a plain one).
+    Gem(Option<Tier>),
+    /// The medal stamped down, and its stinger.
+    Medal(Medal),
+    /// A new best.
+    NewBest,
 }
 
 impl Sound {
     /// How many there are.
-    pub const COUNT: usize = 2 * STEPS + LEVELS as usize + 2 + Tier::ALL.len();
+    pub const COUNT: usize = Self::RESULT + TICK_STEPS + 1 + Tier::ALL.len() + MEDALS.len() + 1;
+    /// Where the result screen's start in the bank.
+    const RESULT: usize = 2 * STEPS + LEVELS as usize + 2 + Tier::ALL.len();
 
     /// Every one, in the order of [`Sound::index`].
     pub fn all() -> Vec<Sound> {
@@ -64,6 +79,11 @@ impl Sound {
         all.push(Sound::Break);
         all.push(Sound::Zap);
         all.extend(Tier::ALL.map(Sound::Tier));
+        all.extend((0..TICK_STEPS).map(Sound::Tick));
+        all.push(Sound::Gem(None));
+        all.extend(Tier::ALL.map(|t| Sound::Gem(Some(t))));
+        all.extend(MEDALS.map(Sound::Medal));
+        all.push(Sound::NewBest);
         all
     }
 
@@ -77,9 +97,15 @@ impl Sound {
             Sound::StepUp(l) => 2 * STEPS + (l.clamp(1, LEVELS) as usize - 1),
             Sound::Break => 2 * STEPS + levels,
             Sound::Zap => 2 * STEPS + levels + 1,
-            Sound::Tier(t) => {
-                2 * STEPS + levels + 2 + Tier::ALL.iter().position(|&x| x == t).unwrap_or(0)
+            Sound::Tier(t) => 2 * STEPS + levels + 2 + tier_index(t),
+            Sound::Tick(k) => Self::RESULT + k.min(TICK_STEPS - 1),
+            Sound::Gem(None) => Self::RESULT + TICK_STEPS,
+            Sound::Gem(Some(t)) => Self::RESULT + TICK_STEPS + 1 + tier_index(t),
+            Sound::Medal(m) => {
+                let k = MEDALS.iter().position(|&x| x == m).unwrap_or(0);
+                Self::RESULT + TICK_STEPS + 1 + Tier::ALL.len() + k
             }
+            Sound::NewBest => Self::COUNT - 1,
         }
     }
 
@@ -93,6 +119,11 @@ impl Sound {
             Sound::Break => "break".into(),
             Sound::Zap => "zap".into(),
             Sound::Tier(t) => format!("tier-{}", t.name().to_lowercase()),
+            Sound::Tick(k) => format!("tick-{k}"),
+            Sound::Gem(None) => "gem".into(),
+            Sound::Gem(Some(t)) => format!("gem-{}", t.name().to_lowercase()),
+            Sound::Medal(m) => format!("medal-{}", m.name().to_lowercase()),
+            Sound::NewBest => "new-best".into(),
         }
     }
 
@@ -109,6 +140,13 @@ impl Sound {
             Sound::Tier(Tier::Great) => -15.5,
             Sound::Tier(Tier::Amazing) => -13.5,
             Sound::Tier(Tier::Diva) => -12.0,
+            Sound::Tick(_) => -24.0,
+            Sound::Gem(None) => -26.0,
+            Sound::Gem(Some(t)) => -22.0 + 1.5 * tier_index(t) as f64,
+            Sound::Medal(Medal::Bronze) => -14.0,
+            Sound::Medal(Medal::Silver) => -13.0,
+            Sound::Medal(Medal::Gold) => -12.0,
+            Sound::NewBest => -12.5,
         }
     }
 
@@ -124,11 +162,20 @@ impl Sound {
             Sound::Tier(Tier::Great) => great(rate),
             Sound::Tier(Tier::Amazing) => amazing(rate),
             Sound::Tier(Tier::Diva) => diva(rate),
+            Sound::Tick(k) => cheers::tick(rate, k.min(TICK_STEPS - 1)),
+            Sound::Gem(t) => cheers::gem(rate, t),
+            Sound::Medal(m) => cheers::medal(rate, m),
+            Sound::NewBest => cheers::new_best(rate),
         };
         b.fade_out(0.01);
         b.peak_at(self.peak_db());
         b
     }
+}
+
+/// Where `t` is among the tiers, Good first.
+fn tier_index(t: Tier) -> usize {
+    Tier::ALL.iter().position(|&x| x == t).unwrap_or(0)
 }
 
 /// Step `s` of the major pentatonic scale on C5 (0: C5; 5: C6; below 0
@@ -139,7 +186,7 @@ pub fn penta(s: i32) -> f64 {
     523.251 * 2f64.powf(f64::from(semis) / 12.0)
 }
 
-fn env(attack: f64, hold: f64, decay: f64, length: f64) -> Envelope {
+pub(super) fn env(attack: f64, hold: f64, decay: f64, length: f64) -> Envelope {
     Envelope {
         attack,
         hold,
@@ -156,7 +203,7 @@ const ROUND: [Partial; 2] = [
 
 /// A plucked tone's partials: the higher ones die first, `bright` (0 to 1)
 /// how much of them there is.
-fn pluck(bright: f64) -> Vec<Partial> {
+pub(super) fn pluck(bright: f64) -> Vec<Partial> {
     (1..=6)
         .map(|n| {
             let n = f64::from(n);
@@ -166,7 +213,7 @@ fn pluck(bright: f64) -> Vec<Partial> {
 }
 
 /// A bell's partials (inharmonic, as a struck bar's).
-const BELL: [Partial; 4] = [
+pub(super) const BELL: [Partial; 4] = [
     Partial::new(1.0, 1.0, f64::INFINITY),
     Partial::new(2.0, 0.35, 0.4),
     Partial::new(2.76, 0.25, 0.25),
@@ -174,7 +221,7 @@ const BELL: [Partial; 4] = [
 ];
 
 /// A glassy grain: a sine and a high inharmonic overtone.
-const GLASS: [Partial; 2] = [
+pub(super) const GLASS: [Partial; 2] = [
     Partial::new(1.0, 1.0, f64::INFINITY),
     Partial::new(4.07, 0.18, 0.03),
 ];
@@ -367,7 +414,7 @@ fn great(rate: u32) -> Buf {
 }
 
 /// A brass-ish note: a saw's partials, its brightness swelling in.
-fn brass(freq: f64, hold: f64, length: f64) -> Tone {
+pub(super) fn brass(freq: f64, hold: f64, length: f64) -> Tone {
     let partials: Vec<Partial> = (1..=10)
         .map(|n| Partial::new(f64::from(n), 1.0 / f64::from(n), f64::INFINITY))
         .collect();
@@ -489,7 +536,15 @@ mod tests {
         for (k, s) in all.iter().enumerate() {
             assert_eq!(s.index(), k, "{s:?}");
         }
-        for s in [Sound::Pop(0), Sound::StepUp(3), Sound::Tier(Tier::Diva)] {
+        for s in [
+            Sound::Pop(0),
+            Sound::StepUp(3),
+            Sound::Tier(Tier::Diva),
+            Sound::Tick(7),
+            Sound::Gem(Some(Tier::Diva)),
+            Sound::Medal(Medal::Gold),
+            Sound::NewBest,
+        ] {
             let b = s.render(48_000);
             let peak = b.l.iter().chain(&b.r).fold(0.0f64, |m, v| m.max(v.abs()));
             let db = 20.0 * peak.log10();

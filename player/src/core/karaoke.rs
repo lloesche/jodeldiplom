@@ -20,11 +20,14 @@
 //!   in its intro, or, when it is sung from less than three seconds in,
 //!   it starts that much later; a song paused in the mode goes on after a
 //!   count-in of its own;
+//! - a song sung to its end, the game on, shows how it went while the next
+//!   is held ([`result_shown`]): the first START during its reveal
+//!   completes it, the next starts the song;
 //! - `esc` is the only way out: back to the tab (the voice still at its
 //!   level), playback where it is (a count-in under way is called off).
 
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use jodel_lyrics::{Detail, Lyrics, Source};
@@ -36,6 +39,9 @@ use crate::core::keymap::Op;
 use crate::core::sliders::Slider;
 use crate::core::transition::Status;
 use crate::core::{Effect, Gpu, Screen, Side, State};
+
+mod result;
+pub use result::{clock_ms, result_motion, result_now, result_shown};
 
 /// The numbers a count-in counts: "3", "2", "1", then the music.
 pub const COUNT: usize = 3;
@@ -365,8 +371,11 @@ pub struct KaraokeState {
     pub lag: super::lag::Lag,
     /// The sync shown on the tab.
     pub sync: Option<super::sync::Session>,
-    /// How the last song was sung, shown until the next is started.
-    pub result: Option<super::singing::SongResult>,
+    /// How the last song was sung, its reveal and when it was shown, until
+    /// the next is started ([`result_shown`]).
+    pub result: Option<Arc<super::singing::Shown>>,
+    /// How many results were shown (the last one's id).
+    pub results: u64,
     /// The best scores sung, by song.
     pub bests: crate::scores::Bests,
     /// Whether the best scores changed since they were last saved.
@@ -701,6 +710,10 @@ fn start(state: &mut State, fx: &mut Vec<Effect>) {
     if state.karaoke.countdown.is_some() || state.karaoke.resume_at.is_some() {
         return;
     }
+    // The first START during the result's reveal completes it, no more.
+    if result::skipped(state) {
+        return;
+    }
     state.karaoke.result = None;
     // A song held (being stopped as the mode began) counts as stopped.
     let held = state.karaoke.held.is_some();
@@ -804,59 +817,7 @@ fn in_lead(state: &State) -> bool {
 pub(crate) fn held(state: &mut State, index: usize) {
     state.karaoke.held = Some(index);
     state.karaoke.countdown = None;
-    sung_to_the_end(state);
-}
-
-/// The song in the mode sung to its end, the game on: how it went (its
-/// points, words hit, the phrases' tiers, medal and best before), kept to
-/// show, and its best score raised where it was beaten.
-fn sung_to_the_end(state: &mut State) {
-    if !state.config.karaoke_game {
-        return;
-    }
-    // Its last words and phrases scored (heard on to past its end).
-    state.karaoke.singing.finish();
-    let singing = &state.karaoke.singing;
-    let Some(path) = singing.song().map(Path::to_path_buf) else {
-        return;
-    };
-    if singing.tally.scored_words == 0 {
-        return;
-    }
-    let tally = singing.tally;
-    let (points, hit, words) = (tally.score, tally.hit_words, tally.scored_words);
-    let key = path.display().to_string();
-    let best = state.karaoke.bests.get(&key).map(|b| b.points);
-    let title = state
-        .details
-        .get(&path)
-        .and_then(|d| d.title.clone())
-        .unwrap_or_else(|| super::shown_title(state, &path));
-    // Only a song sung from its start (most of its words heard) wins a
-    // medal or a best.
-    let whole = u64::from(words) * 10 >= singing.words() as u64 * 9;
-    let result = super::singing::SongResult {
-        title,
-        points,
-        hit,
-        words,
-        streak: tally.best_streak,
-        phrases: singing.shone().copied().collect(),
-        medal: whole
-            .then(|| super::singing::Medal::of(hit, words))
-            .flatten(),
-        best,
-        whole,
-    };
-    if result.whole && result.new_best() {
-        state
-            .karaoke
-            .bests
-            .insert(key, crate::scores::Best { points, hit, words });
-        state.karaoke.bests_changed = true;
-    }
-    state.karaoke.result = Some(result);
-    state.karaoke.singing.restart();
+    result::sung_to_the_end(state);
 }
 
 /// Notes where the song is heard from when it jumped (another song, a

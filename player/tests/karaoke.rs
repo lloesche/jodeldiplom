@@ -3,6 +3,8 @@
 
 mod common;
 
+use common::karaoke_tab as tab;
+
 use jodel_playback::{Command, Event, PlayState};
 use jodeldiplom::core::desk::{taper, DeskChange, StripKind};
 use jodeldiplom::core::keymap::Op;
@@ -37,35 +39,6 @@ fn voice_sent(fx: &[Effect]) -> Option<f64> {
         Effect::Desk(DeskChange::Lane(StripKind::Vocals, gain)) => Some(*gain),
         _ => None,
     })
-}
-
-/// The Karaoke tab shown, a track playing, a GPU for the stems, the voice
-/// at 20 % of its travel (−35 dB), and every song's lyrics found (their words not timed: there is
-/// no speech model), so each can be sung.
-fn tab() -> State {
-    let mut state = common::transition_state(120, 40);
-    state.side = Side::Karaoke;
-    state.config.karaoke_voice = 20;
-    singable(&mut state);
-    state
-}
-
-/// Every song in the queue has its lyrics: found, as they are (kept for
-/// whichever karaoke comes to want).
-fn singable(state: &mut State) {
-    use jodel_lyrics::{Lyrics, Source};
-    use jodeldiplom::core::karaoke::SongLyrics;
-    use jodeldiplom::lyrics::Answer;
-    for path in state.queue.paths.clone() {
-        let lyrics = Lyrics::parse_text("la la la\nla la", Source::Lrclib);
-        state.karaoke.lyrics.insert(
-            path,
-            SongLyrics::from_answer(Answer::Found {
-                lyrics,
-                timed: None,
-            }),
-        );
-    }
 }
 
 /// Track `index` analysed with a beat of `beat` seconds from `first`.
@@ -1164,70 +1137,4 @@ fn g_and_p_set_the_game_and_are_saved() {
     assert!(fx.iter().any(|e| matches!(e, Effect::SaveConfig)));
     op(&mut state, Op::KaraokeNotes);
     assert!(!state.config.karaoke_notes);
-}
-
-#[test]
-fn a_song_sung_to_its_end_shows_its_medal_and_keeps_its_best() {
-    use jodeldiplom::core::singing::Medal;
-    use std::sync::Arc;
-    let mut state = tab();
-    // A song of four words, a second each on C4: three of them sung.
-    let mut melody = jodel_rhythm::waveform::Melody {
-        cents: vec![0; 500],
-        sure: vec![0; 500],
-    };
-    for i in 0..400 {
-        melody.cents[i] = 6000;
-        melody.sure[i] = 255;
-    }
-    let line = jodel_lyrics::Line {
-        words: (0..4)
-            .map(|k| jodel_lyrics::Word {
-                start: Some(f64::from(k)),
-                end: Some(f64::from(k) + 1.0),
-                ..jodel_lyrics::Word::new("la")
-            })
-            .collect(),
-        ..jodel_lyrics::Line::default()
-    };
-    let lyrics = Arc::new(jodel_lyrics::Lyrics {
-        lines: vec![line],
-        source: jodel_lyrics::Source::Unknown,
-        timing: jodel_lyrics::Timing::default(),
-    });
-    let path = state.queue.paths[0].clone();
-    let singing = &mut state.karaoke.singing;
-    singing.prepare(
-        &path,
-        &lyrics,
-        &jodeldiplom::core::singing::melodic(&melody),
-    );
-    for i in 0..450 {
-        let t = f64::from(i) / 100.0;
-        singing.hear(t, (t < 3.0).then_some(6000.0));
-    }
-    update(&mut state, Action::Engine(Event::Held { index: 1 }));
-    let result = state.karaoke.result.clone().expect("a result");
-    assert_eq!((result.points, result.hit, result.words), (300, 3, 4));
-    assert_eq!(result.medal, Some(Medal::Silver));
-    assert!(result.new_best() && state.karaoke.bests_changed);
-    assert_eq!(state.karaoke.bests[&path.display().to_string()].points, 300);
-    // Sung worse next time: the best stays.
-    state.karaoke.bests_changed = false;
-    let singing = &mut state.karaoke.singing;
-    for i in 0..450 {
-        singing.hear(f64::from(i) / 100.0, None);
-    }
-    update(&mut state, Action::Engine(Event::Held { index: 1 }));
-    let result = state.karaoke.result.clone().expect("a result");
-    assert_eq!(
-        (result.points, result.medal, result.best),
-        (0, None, Some(300))
-    );
-    assert!(!result.new_best() && !state.karaoke.bests_changed);
-    // The game off: no result.
-    state.karaoke.result = None;
-    state.config.karaoke_game = false;
-    update(&mut state, Action::Engine(Event::Held { index: 1 }));
-    assert!(state.karaoke.result.is_none());
 }

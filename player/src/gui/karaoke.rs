@@ -183,7 +183,6 @@ fn slots(
                 LineKind::Next | LineKind::Previous => big * 0.62,
                 LineKind::Info => big * 0.42,
                 LineKind::Warning => big * 0.36,
-                LineKind::Medal(_) => big * 0.8,
             };
             let w = text.measure(&l.text, px);
             if w > widest && w > 0.0 {
@@ -696,6 +695,7 @@ mod tests {
             before,
             moved,
             score: None,
+            result: None,
         }
     }
 

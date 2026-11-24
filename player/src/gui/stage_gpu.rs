@@ -94,6 +94,19 @@ pub mod kind {
     /// A tube's liquid ([`TUBE`]'s shape) along it from `uv[0]` to `uv[1]`
     /// across, as [`LIQUID`]'s.
     pub const TUBE_LIQUID: f32 = 18.0;
+    /// A burst of rays round (`shape[0]`, `shape[1]`), `shape[2]` their
+    /// reach, `shape[3]` of them, turned `params[1]`, in `color`: light
+    /// ([`crate::gui::trophy::rays_at`]).
+    pub const RAYS: f32 = 19.0;
+    /// A gem at (`shape[0]`, `shape[1]`), `shape[2]` its size, in `color`,
+    /// glowing `params[1]` in `color2`, its glint at `params[2]`
+    /// ([`crate::gui::trophy::gem_at`]).
+    pub const GEM: f32 = 20.0;
+    /// A medal at (`shape[0]`, `shape[1]`), `shape[2]` its radius, a star
+    /// badge where `shape[3]` is 1: from `color2` (deep) to `color`
+    /// (light), glowing `params[1]`, its sheen at `params[2]`
+    /// ([`crate::gui::trophy::medal_at`]).
+    pub const MEDAL: f32 = 21.0;
 }
 
 /// The flags of a bubble or its liquid, or of text ([`Instance::strain`]`[3]`).
@@ -339,6 +352,9 @@ const K_BLAZE: u32 = {}u;
 const K_TEXT: u32 = {}u;
 const K_BADGE: u32 = {}u;
 const K_TUBE_LIQUID: u32 = {}u;
+const K_RAYS: u32 = {}u;
+const K_GEM: u32 = {}u;
+const K_MEDAL: u32 = {}u;
 ",
         k(kind::PILL),
         k(kind::FILL),
@@ -359,22 +375,27 @@ const K_TUBE_LIQUID: u32 = {}u;
         k(kind::TEXT),
         k(kind::BADGE),
         k(kind::TUBE_LIQUID),
+        k(kind::RAYS),
+        k(kind::GEM),
+        k(kind::MEDAL),
     )
 }
 
 /// The stage's shader: `stage.wgsl`, its kinds ([`kind`]), the liquid's
 /// maths ([`super::liquid::wgsl`]), a tube's nearest point
-/// ([`super::snake::wgsl`]), a streak's shine ([`super::rainbow::stage_wgsl`])
-/// and the glory ([`super::glory::wgsl`]).
+/// ([`super::snake::wgsl`]), a streak's shine ([`super::rainbow::stage_wgsl`]),
+/// the glory ([`super::glory::wgsl`]) and the result's shapes
+/// ([`super::trophy::wgsl`]).
 pub fn shader() -> String {
     format!(
-        "{}{}{}{}{}{}",
+        "{}{}{}{}{}{}{}",
         kinds_wgsl(),
         include_str!("stage.wgsl"),
         super::liquid::wgsl(),
         super::snake::wgsl(),
         super::rainbow::stage_wgsl(),
-        super::glory::wgsl()
+        super::glory::wgsl(),
+        super::trophy::wgsl()
     )
 }
 

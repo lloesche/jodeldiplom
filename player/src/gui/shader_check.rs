@@ -5,7 +5,8 @@
 //! the front's waves and slosh, the shimmer, [`super::liquid`]), a tube's
 //! nearest point (how far, where along, which side, [`super::snake`]) and
 //! a streak's shine (its rise and collapse, the bands, the swirl, the rim,
-//! the rainbow, [`super::rainbow`]), each worked out by the shader's own
+//! the rainbow, [`super::rainbow`]) and the result's shapes (a gem, a
+//! medal and its star, the rays, [`super::trophy`]), each worked out by the shader's own
 //! functions in a compute pass over the shader as the window composes it,
 //! at sample points, against the processor's. Skipped (with a note)
 //! without a GPU.
@@ -13,7 +14,7 @@
 use super::particles::{self, sprite, Kind, Spray, QUADS};
 use super::rainbow::{self, Glow};
 use super::sparks::TAU;
-use super::{glory, liquid};
+use super::{glory, liquid, trophy};
 
 /// A device on the window's GPU, none without one.
 fn gpu() -> Option<(wgpu::Device, wgpu::Queue)> {
@@ -157,6 +158,14 @@ fn the_particles_shader_draws_what_sprite_says() {
             Kind::Angels,
         ),
         spray((900.0, 70.0), (0.0, 0.0), 30.0, 777, 0.0, Kind::Jackpot),
+        spray(
+            (800.0, 0.0),
+            (800.0, 900.0),
+            20.0,
+            5150,
+            0.0,
+            Kind::Confetti,
+        ),
     ];
     let ages = [
         -0.01, 0.0, 0.03, 0.079, 0.081, 0.12, 0.25, 0.4, 0.49, 0.6, 0.9, 1.2, 1.7, 2.3, 3.1, 4.4,
@@ -521,6 +530,62 @@ fn the_stage_shader_s_glory_is_its_reference() {
         shown += usize::from(label.1 > 0.0 && label.1 < 1.0);
     }
     assert!(lit > 50 && shown > 10, "{lit} {shown}");
+}
+
+/// The result's shapes at points in and round them: the shader's
+/// [`trophy::gem_at`], [`trophy::medal_at`] (a disc and a star badge),
+/// [`trophy::star`] and [`trophy::rays_at`] as the processor's.
+#[test]
+fn the_stage_shader_s_trophies_are_their_reference() {
+    let Some(gpu) = gpu() else {
+        return;
+    };
+    let samples: Vec<[f32; 4]> = (0..600)
+        .map(|k| {
+            let f = k as f32;
+            let fr = |m: f32| (f * m).fract();
+            // Off the middle by a little, where an angle would be undefined.
+            [
+                fr(0.613) * 2.6 - 1.3 + 0.001,
+                fr(0.377) * 2.4 - 1.2,
+                fr(0.291) * 3.4 - 1.7,
+                fr(0.733) * 12.0,
+            ]
+        })
+        .collect();
+    let body = "
+    let s = ins[i];
+    outs[i * 4u] = vec4<f32>(gem_at(s.x, s.y, s.z), star(s.x, s.y, 0.56, 0.45));
+    outs[i * 4u + 1u] = vec4<f32>(medal_at(s.x, s.y, false, s.z), 0.0);
+    outs[i * 4u + 2u] = vec4<f32>(medal_at(s.x, s.y, true, s.z), 0.0);
+    outs[i * 4u + 3u] = vec4<f32>(rays_at(s.x * 200.0, s.y * 200.0, 150.0, 14.0, s.w), 0.0, 0.0, 0.0);";
+    let source = super::stage_gpu::shader();
+    let outs = run(&gpu, &source, body, &samples, (samples.len(), 4));
+    let close = |g: &[f32], c: &[f32], what: &str| {
+        for (x, y) in g.iter().zip(c) {
+            assert!(near(*x, *y, 2e-3, 2e-3), "{what}: {g:?} {c:?}");
+        }
+    };
+    let mut inside = 0;
+    for (k, s) in samples.iter().enumerate() {
+        let g = &outs[k * 4..k * 4 + 4];
+        let what = format!("sample {k}: {s:?}");
+        let gem = trophy::gem_at(s[0], s[1], s[2]);
+        let star = trophy::star(s[0], s[1], 0.56, 0.45);
+        close(
+            &g[0],
+            &[gem[0], gem[1], gem[2], star],
+            &format!("{what}: gem, star"),
+        );
+        let disc = trophy::medal_at(s[0], s[1], false, s[2]);
+        close(&g[1][..3], &disc, &format!("{what}: medal"));
+        let badge = trophy::medal_at(s[0], s[1], true, s[2]);
+        close(&g[2][..3], &badge, &format!("{what}: badge"));
+        let rays = trophy::rays_at(s[0] * 200.0, s[1] * 200.0, 150.0, 14.0, s[3]);
+        close(&g[3][..1], &[rays], &format!("{what}: rays"));
+        inside += usize::from(gem[0] < 0.0) + usize::from(disc[0] < 0.0);
+    }
+    assert!(inside > 300, "{inside}");
 }
 
 /// A tube's nearest points at pixels round and along it, past its ends

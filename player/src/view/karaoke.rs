@@ -20,10 +20,13 @@ use crate::core::layout::SWITCH;
 use crate::core::layout::{
     KaraokeLayout, KaraokeTabLayout, SliderLayout, KARAOKE_ENTER, KARAOKE_START,
 };
-use crate::core::singing::{notes_of, LineNotes, Medal, Note, Singing, SongResult};
+use crate::core::singing::{notes_of, LineNotes, Note, Singing};
 use crate::core::sliders::Slider;
 use crate::core::text::{self, width};
 use crate::core::{Gpu, State};
+
+mod result;
+pub use result::{best_words, next_words, plain_lines, result_now, verdict_words, ResultShown};
 
 /// What a lyric line is to the one being sung.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -38,8 +41,6 @@ pub enum LineKind {
     Info,
     /// A warning (lyrics no trusted source has), in the warning colour.
     Warning,
-    /// The medal a song sung won (none: none this time), in its colour.
-    Medal(Option<Medal>),
 }
 
 /// A line of the mode's picture.
@@ -205,6 +206,10 @@ pub struct KaraokePicture {
     pub moved: f64,
     /// The singing's score so far (the game on).
     pub score: Option<Score>,
+    /// How the song before was sung, while the next waits for START (the
+    /// game on): drawn on the stage, revealed beat by beat (its words are
+    /// the lines then, for a window without one).
+    pub result: Option<ResultShown>,
 }
 
 fn line(text: impl Into<String>, fill: f64, kind: LineKind) -> LyricLine {
@@ -249,19 +254,10 @@ pub fn lines_now(state: &State, t: f64) -> Vec<LyricLine> {
     let Some(index) = karaoke::song_index(state) else {
         return vec![line("Queue some songs, then START", 0.0, LineKind::Info)];
     };
-    // How the song before was sung, until the next is started.
-    if let Some(result) = &state.karaoke.result {
-        let waiting = state.karaoke.held.is_some()
-            && state.karaoke.countdown.is_none()
-            && state.karaoke.resume_at.is_none();
-        if waiting {
-            let next = state
-                .details
-                .get(&state.queue.paths[index])
-                .and_then(|d| d.title.clone())
-                .unwrap_or_else(|| crate::core::shown_title(state, &state.queue.paths[index]));
-            return result_lines(result, &next);
-        }
+    // How the song before was sung, until the next is started: its words
+    // (the stage draws it instead where it draws: [`KaraokePicture::result`]).
+    if let Some(r) = result_now(state) {
+        return plain_lines(&r.shown.result, &r.next);
     }
     let path = &state.queue.paths[index];
     let info = state
@@ -333,64 +329,6 @@ pub fn lines_now(state: &State, t: f64) -> Vec<LyricLine> {
             heading(&format!("{} Looking for the lyrics…", text::spinner(state)))
         }
         None => heading(""),
-    }
-}
-
-/// How a song was sung, as lines: its medal, its points and words hit, how
-/// its phrases shone (by tier) and whether it beat the best, and the song
-/// coming next.
-pub fn result_lines(r: &SongResult, next: &str) -> Vec<LyricLine> {
-    let medal = match r.medal {
-        Some(m) => format!("{} medal", m.name()),
-        None if !r.whole => "Not sung from the start: no medal, no best".to_owned(),
-        None => "No medal this time".to_owned(),
-    };
-    let best = if r.whole && r.new_best() {
-        match r.best {
-            Some(_) => "A new best!".to_owned(),
-            None => "Your first score".to_owned(),
-        }
-    } else {
-        format!("Your best {}", points_text(r.best.unwrap_or(0)))
-    };
-    let tiers: Vec<String> = crate::core::shine::Tier::ALL
-        .iter()
-        .rev()
-        .zip(r.tier_counts().into_iter().rev())
-        .filter(|(_, n)| *n > 0)
-        .map(|(t, n)| format!("{n} {}", t.name()))
-        .collect();
-    let best = if tiers.is_empty() {
-        best
-    } else {
-        format!("{} · {best}", tiers.join(" · "))
-    };
-    vec![
-        line(r.title.clone(), 0.0, LineKind::Info),
-        line(medal, 0.0, LineKind::Medal(r.medal)),
-        line(
-            format!(
-                "{} points · {} of {} words · {} in a row",
-                points_text(r.points),
-                r.hit,
-                r.words,
-                r.streak
-            ),
-            0.0,
-            LineKind::Next,
-        ),
-        line(best, 0.0, LineKind::Info),
-        line(format!("Next: {next} · START"), 0.0, LineKind::Info),
-    ]
-}
-
-/// The colour of a medal (none: dim).
-pub fn medal_color(medal: Option<Medal>) -> Color {
-    match medal {
-        Some(Medal::Gold) => HIT,
-        Some(Medal::Silver) => Color::Rgb(205, 210, 222),
-        Some(Medal::Bronze) => Color::Rgb(210, 135, 70),
-        None => DIM,
     }
 }
 
@@ -600,6 +538,7 @@ pub fn picture(state: &State, layout: &KaraokeLayout, heard: f64) -> KaraokePict
     let t = heard + f64::from(state.config.karaoke_lead) / 1000.0;
     let lines = lines_now(state, t);
     let (before, moved) = scrolling(&lines, t, |t| lines_now(state, t));
+    let result = result_now(state);
     KaraokePicture {
         area: layout.screen,
         lines,
@@ -609,7 +548,9 @@ pub fn picture(state: &State, layout: &KaraokeLayout, heard: f64) -> KaraokePict
         start: layout.controls.as_ref().and_then(|c| c.start),
         before,
         moved,
-        score: score_now(state),
+        // The result's own points instead.
+        score: score_now(state).filter(|_| result.is_none()),
+        result,
     }
 }
 
@@ -1205,7 +1146,6 @@ pub fn line_color(kind: LineKind) -> Color {
         LineKind::Next => Color::Rgb(190, 190, 198),
         LineKind::Previous | LineKind::Info => DIM,
         LineKind::Warning => WARN,
-        LineKind::Medal(m) => medal_color(m),
     }
 }
 

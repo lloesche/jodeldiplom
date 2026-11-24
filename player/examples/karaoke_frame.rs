@@ -147,6 +147,7 @@ fn main() {
             tier: singing.last_phrase().and_then(|p| p.tier),
             streak: singing.tally.streak,
         }),
+        result: None,
     };
     // The window, at 1600 × 900.
     let (w, h) = (1600usize, 900usize);
@@ -244,6 +245,7 @@ fn gpu_frames(
                 tier: singing.last_phrase().and_then(|p| p.tier),
                 streak: singing.tally.streak,
             }),
+            result: None,
         };
         if moved >= 1.0 {
             before = Some(lines);

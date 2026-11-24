@@ -64,8 +64,8 @@ pub fn angel(s: &Spray, q: u32, age: f32) -> Option<Sprite> {
     if !(0.0..1.0).contains(&t) {
         return None;
     }
-    let x0 = s.at.0 + (a(1) * 2.0 - 1.0) * s.half.0;
-    let fall = s.half.1 * (0.45 + 0.35 * a(2));
+    let x0 = s.at.0 + (a(1) * 2.0 - 1.0) * s.band();
+    let fall = s.screen_height() * (0.45 + 0.35 * a(2));
     let sway = s.size * (0.6 + 0.6 * a(3));
     let ax = x0 + sway * (age * (0.9 + 0.5 * a(4)) + a(5) * TAU).sin();
     let ay = s.at.1 + fall * t + s.size * 0.4 * (age * 1.7 + a(6) * TAU).sin() * 0.3;

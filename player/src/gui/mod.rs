@@ -8,6 +8,7 @@
 pub mod big_text;
 pub mod bloom;
 pub mod canvas;
+pub mod confetti;
 #[cfg(target_os = "macos")]
 mod drawables;
 pub mod embed;
@@ -36,6 +37,7 @@ pub mod stage;
 pub mod stage_gpu;
 pub mod streak;
 pub(crate) mod style;
+pub mod trophy;
 mod wake;
 pub mod window;
 

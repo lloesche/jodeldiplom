@@ -8,8 +8,8 @@
 //!   and hands the fonts to the library. Without them the window uses the
 //!   embedded Cascadia Mono.
 //! - The key of its game sounds kept on disk: `$OUT_DIR/sfx_key.rs`, a
-//!   hash of the code that makes them (`src/sfx/`'s `synth.rs` and
-//!   `sounds.rs`, not how they are played), so a bank kept by another
+//!   hash of the code that makes them (`src/sfx/`'s `synth.rs`,
+//!   `sounds.rs` and `cheers.rs`, not how they are played), so a bank kept by another
 //!   build of them is made again (`src/sfx/store.rs`).
 //! - Its icon on Windows (GNU and GNU-LLVM targets): `windres` compiles
 //!   `assets/jodeldiplom.rc` into an object linked into the executable.
@@ -39,7 +39,7 @@ fn main() {
 }
 
 /// The files whose code makes the game's sounds.
-const SOUND_SOURCES: [&str; 2] = ["src/sfx/synth.rs", "src/sfx/sounds.rs"];
+const SOUND_SOURCES: [&str; 3] = ["src/sfx/synth.rs", "src/sfx/sounds.rs", "src/sfx/cheers.rs"];
 
 fn sounds_key() {
     let manifest = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());

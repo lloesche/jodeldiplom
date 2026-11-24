@@ -722,5 +722,35 @@ pub fn bubble_picture(
         before: Vec::new(),
         moved: 1.0,
         score: None,
+        result: None,
+    }
+}
+
+/// The Karaoke tab shown, a track playing, a GPU for the stems, the voice
+/// at 20 % of its travel (−35 dB), and every song's lyrics found (their words not timed: there is
+/// no speech model), so each can be sung.
+pub fn karaoke_tab() -> State {
+    let mut state = transition_state(120, 40);
+    state.side = jodeldiplom::core::Side::Karaoke;
+    state.config.karaoke_voice = 20;
+    singable(&mut state);
+    state
+}
+
+/// Every song in the queue has its lyrics: found, as they are (kept for
+/// whichever karaoke comes to want).
+pub fn singable(state: &mut State) {
+    use jodel_lyrics::{Lyrics, Source};
+    use jodeldiplom::core::karaoke::SongLyrics;
+    use jodeldiplom::lyrics::Answer;
+    for path in state.queue.paths.clone() {
+        let lyrics = Lyrics::parse_text("la la la\nla la", Source::Lrclib);
+        state.karaoke.lyrics.insert(
+            path,
+            SongLyrics::from_answer(Answer::Found {
+                lyrics,
+                timed: None,
+            }),
+        );
     }
 }

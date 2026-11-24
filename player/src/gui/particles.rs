@@ -16,7 +16,7 @@
 
 use super::shards::{self, DROPS, FIRST_DROP, FIRST_SHARD};
 use super::sparks::{mix, rand, TAU, WHITE};
-use super::{fanfare, rainbow};
+use super::{confetti, fanfare, rainbow};
 use crate::view::bubbles::BURST;
 
 /// The sparkles a bubble throws.
@@ -47,6 +47,8 @@ pub enum Kind {
     /// A jackpot of coins and stars, a phrase Diva
     /// ([`super::fanfare::coin`]).
     Jackpot,
+    /// A shower of confetti, a new best ([`super::confetti::piece`]).
+    Confetti,
 }
 
 impl Kind {
@@ -58,6 +60,7 @@ impl Kind {
             Kind::StepUp => 2,
             Kind::Angels => 3,
             Kind::Jackpot => 4,
+            Kind::Confetti => 5,
         }
     }
 }
@@ -121,6 +124,19 @@ impl Spray {
         self.seed & 0xFF_FFFF
     }
 
+    /// What falls over the whole screen (a shower of confetti, a flight
+    /// of angels) starts in a band this many pixels each way across its
+    /// middle (kept in `half.0`).
+    pub fn band(&self) -> f32 {
+        self.half.0
+    }
+
+    /// The screen's height it falls through (kept in `half.1`; the shaders
+    /// read it as `at.w`).
+    pub fn screen_height(&self) -> f32 {
+        self.half.1
+    }
+
     /// How long it lasts, in seconds.
     pub fn life(&self) -> f32 {
         match self.kind {
@@ -129,6 +145,7 @@ impl Spray {
             Kind::StepUp => rainbow::STEP_LIFE,
             Kind::Angels => fanfare::ANGELS_LIFE,
             Kind::Jackpot => fanfare::JACKPOT_LIFE,
+            Kind::Confetti => confetti::CONFETTI_LIFE,
         }
     }
 
@@ -213,6 +230,7 @@ pub fn sprite(s: &Spray, q: u32, time: f32) -> Option<Sprite> {
         (Kind::StepUp, q) => rainbow::step_up(s, q, age),
         (Kind::Angels, q) => fanfare::angel(s, q, age),
         (Kind::Jackpot, q) => fanfare::coin(s, q, age),
+        (Kind::Confetti, q) => confetti::piece(s, q, age),
         _ => None,
     }
 }
@@ -272,8 +290,9 @@ fn spark(s: &Spray, q: u32, age: f32) -> Option<Sprite> {
 }
 
 /// The particles' shader: [`SHADER`] given [`sprite`]'s numbers, a
-/// bubble's sheen, bits and drops ([`shards::wgsl`]), and a step up's
-/// pieces ([`rainbow::particles_wgsl`]).
+/// bubble's sheen, bits and drops ([`shards::wgsl`]), a step up's pieces
+/// ([`rainbow::particles_wgsl`]), the fanfare's ([`fanfare::wgsl`]) and
+/// confetti ([`confetti::wgsl`]).
 pub fn shader() -> String {
     format!(
         "const QUADS: u32 = {QUADS}u;
@@ -286,24 +305,27 @@ const K_SCORED: u32 = {}u;
 const K_STEP_UP: u32 = {}u;
 const K_ANGELS: u32 = {}u;
 const K_JACKPOT: u32 = {}u;
+const K_CONFETTI: u32 = {}u;
 const SPREAD: f32 = {SPREAD:?};
 const LOOK_SPARKLE: u32 = {}u;
 const LOOK_SHEEN: u32 = {}u;
 const LOOK_SHARD: u32 = {}u;
 const LOOK_DROP: u32 = {}u;
-{SHADER}{}{}{}",
+{SHADER}{}{}{}{}",
         Kind::Burst.code(),
         Kind::Scored.code(),
         Kind::StepUp.code(),
         Kind::Angels.code(),
         Kind::Jackpot.code(),
+        Kind::Confetti.code(),
         Look::Sparkle.code(),
         Look::Sheen.code(),
         Look::Shard.code(),
         Look::Drop.code(),
         shards::wgsl(),
         rainbow::particles_wgsl(),
-        fanfare::wgsl()
+        fanfare::wgsl(),
+        confetti::wgsl()
     )
 }
 
@@ -420,6 +442,8 @@ fn sprite_of(at: vec4<f32>, motion: vec4<f32>, color: vec4<f32>, q: u32, time: f
         life = JACKPOT_LIFE;
     } else if k == K_STEP_UP {
         life = STEP_LIFE;
+    } else if k == K_CONFETTI {
+        life = CONFETTI_LIFE;
     }
     if age < 0.0 || age >= life || q >= QUADS {
         return o;
@@ -448,6 +472,9 @@ fn sprite_of(at: vec4<f32>, motion: vec4<f32>, color: vec4<f32>, q: u32, time: f
     }
     if k == K_STEP_UP {
         return step_up(at, size, seed, q, age, drift);
+    }
+    if k == K_CONFETTI {
+        return confetti(at, color.rgb, size, seed, q, age);
     }
     if k == K_SCORED && q > 0u && q < SCORED_SPARKS {
         return spark(at, color.rgb, size, seed, q, age, drift, SPREAD);

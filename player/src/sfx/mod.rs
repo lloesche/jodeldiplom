@@ -20,9 +20,14 @@
 //! kept for when the device comes back to that rate ([`banks`]); until it
 //! is there, nothing sounds. With the Effects strip down (−∞ or muted) no
 //! moment is cued.
+//!
+//! A song's result revealed after it ([`reveal`]) sounds its beats at once,
+//! each on the frame that reaches it.
 
 pub mod banks;
+pub mod cheers;
 pub mod moments;
+pub mod reveal;
 pub mod sounds;
 pub mod store;
 pub mod synth;
@@ -76,13 +81,32 @@ pub struct Sfx {
     /// Cues with a time (the singing's) and no frame of the song's to time
     /// them by yet (no position told since a seek or a jump).
     pending: Vec<(EffectCue, f64)>,
+    /// The result's reveal as last heard.
+    reveal: reveal::RevealSounds,
 }
 
 impl Sfx {
     /// A frame drawn: the bank for the device's rate, then the game's new
-    /// moments cued on `desk`.
+    /// moments cued on `desk`, then the result's reveal's (after what the
+    /// moments call off, so it never calls them off).
     pub fn frame(&mut self, state: &State, desk: Desk<'_>) {
         self.load(&desk);
+        self.moments(state, &desk);
+        let now = crate::core::karaoke::result_now(state).map(|(s, t)| (&**s, t));
+        let cheers = self.reveal.frame(now);
+        if state.desk.setting(StripKind::Effects).gain() > 0.0 {
+            for c in cheers {
+                desk.effects.play(EffectCue {
+                    sound: c.sound.index(),
+                    gain: c.gain,
+                    pan: c.pan,
+                });
+            }
+        }
+    }
+
+    /// The game's new moments cued on `desk`.
+    fn moments(&mut self, state: &State, desk: &Desk<'_>) {
         let karaoke = &state.karaoke;
         // The song the singing is of, whatever plays now: its last
         // phrase's tier is decided as the next track comes.

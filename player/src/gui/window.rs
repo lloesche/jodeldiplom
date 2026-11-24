@@ -410,6 +410,7 @@ impl Gui {
             visible: self.visible(),
             layer: self.embed.gpu() && self.embed.has_layer(),
             gliding: self.caps.moving(),
+            stage: self.embed.gpu(),
         }
     }
 

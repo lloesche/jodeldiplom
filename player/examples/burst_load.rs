@@ -131,6 +131,7 @@ fn picture(w: usize, h: usize, bursting: bool) -> ((f64, f64), Option<(f64, f64)
             before: Vec::new(),
             moved: 1.0,
             score: None,
+            result: None,
         };
         let mut target = Target {
             pixels: &mut pixels,
@@ -239,6 +240,7 @@ fn stage(w: usize, h: usize, bursting: bool, shine: bool) -> ((f64, f64), Option
             before: Vec::new(),
             moved: 1.0,
             score: None,
+            result: None,
         };
         let started = Instant::now();
         let frame = stage.frame(

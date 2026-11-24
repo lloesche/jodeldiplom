@@ -1,10 +1,11 @@
-//! How a song was sung, shown when it ends ([`SongResult`]), and its medal.
+//! How a song was sung, shown when it ends ([`SongResult`]), its medal and
+//! what it comes to ([`Verdict`]).
 
 use crate::core::shine::{Shone, Tier};
 
 /// A medal for a song sung: by the words hit (not by the points, which
 /// the streaks multiply).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Medal {
     /// Half of them.
     Bronze,
@@ -42,6 +43,18 @@ impl Medal {
     }
 }
 
+/// What a song sung comes to: a medal, a cheer without one, or (not sung
+/// from its start) a word that medals and bests need the whole song.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Verdict {
+    /// The medal won.
+    Medal(Medal),
+    /// Sung whole, no medal this time.
+    Cheer,
+    /// Not sung from its start.
+    Whole,
+}
+
 /// How a song was sung, shown when it ends.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SongResult {
@@ -57,7 +70,7 @@ pub struct SongResult {
     pub streak: u32,
     /// Each phrase that shone, in order: its shine and tier.
     pub phrases: Vec<Shone>,
-    /// The medal won, if any.
+    /// The medal won, if any (none unless sung whole).
     pub medal: Option<Medal>,
     /// The best score of the song before (none: the first).
     pub best: Option<u32>,
@@ -67,9 +80,19 @@ pub struct SongResult {
 }
 
 impl SongResult {
-    /// Whether it beat the best before (or is the first).
+    /// Whether it is a new best: sung whole, and beating the best before
+    /// (or the song's first score).
     pub fn new_best(&self) -> bool {
-        self.best.is_none_or(|b| self.points > b)
+        self.whole && self.best.is_none_or(|b| self.points > b)
+    }
+
+    /// What it comes to.
+    pub fn verdict(&self) -> Verdict {
+        match (self.whole, self.medal) {
+            (false, _) => Verdict::Whole,
+            (true, Some(m)) => Verdict::Medal(m),
+            (true, None) => Verdict::Cheer,
+        }
     }
 
     /// The best tier a phrase reached, if any.
