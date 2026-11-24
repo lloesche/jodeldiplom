@@ -13,6 +13,10 @@
 //!   of noise rising under it.
 //! - [`Sound::Break`]: the streak lost: a soft "aww", a mellow voice-like
 //!   tone sliding down a fourth, darkening as it goes; quiet.
+//! - [`Sound::Zap`]: a shot fired to rescue a word missed: a "pew", a
+//!   bright buzzy tone diving three octaves in a tenth of a second, a
+//!   sparkle of noise on its start, an echo of it an octave down. The
+//!   word rescued pops as any ([`Sound::Pop`]) as the shot lands.
 //! - [`Sound::Tier`]: a phrase's rating: Good a two-note chime, Great a
 //!   bright arpeggio with glitter, Amazing a "ta-daa" in brass with a
 //!   shimmer, Diva a jackpot (a cascade of coins over bells, a whoosh, and
@@ -42,13 +46,15 @@ pub enum Sound {
     StepUp(u32),
     /// The streak lost.
     Break,
+    /// A shot fired to rescue a word missed.
+    Zap,
     /// A phrase rated.
     Tier(Tier),
 }
 
 impl Sound {
     /// How many there are.
-    pub const COUNT: usize = 2 * STEPS + LEVELS as usize + 1 + Tier::ALL.len();
+    pub const COUNT: usize = 2 * STEPS + LEVELS as usize + 2 + Tier::ALL.len();
 
     /// Every one, in the order of [`Sound::index`].
     pub fn all() -> Vec<Sound> {
@@ -56,6 +62,7 @@ impl Sound {
         all.extend((0..STEPS).map(Sound::Sparkle));
         all.extend((1..=LEVELS).map(Sound::StepUp));
         all.push(Sound::Break);
+        all.push(Sound::Zap);
         all.extend(Tier::ALL.map(Sound::Tier));
         all
     }
@@ -69,8 +76,9 @@ impl Sound {
             Sound::Sparkle(k) => STEPS + k.min(STEPS - 1),
             Sound::StepUp(l) => 2 * STEPS + (l.clamp(1, LEVELS) as usize - 1),
             Sound::Break => 2 * STEPS + levels,
+            Sound::Zap => 2 * STEPS + levels + 1,
             Sound::Tier(t) => {
-                2 * STEPS + levels + 1 + Tier::ALL.iter().position(|&x| x == t).unwrap_or(0)
+                2 * STEPS + levels + 2 + Tier::ALL.iter().position(|&x| x == t).unwrap_or(0)
             }
         }
     }
@@ -83,6 +91,7 @@ impl Sound {
             Sound::Sparkle(k) => format!("sparkle-{k}"),
             Sound::StepUp(l) => format!("step-up-{l}"),
             Sound::Break => "break".into(),
+            Sound::Zap => "zap".into(),
             Sound::Tier(t) => format!("tier-{}", t.name().to_lowercase()),
         }
     }
@@ -95,6 +104,7 @@ impl Sound {
             Sound::Sparkle(_) => -25.0,
             Sound::StepUp(l) => -16.5 + f64::from(l.clamp(1, LEVELS)),
             Sound::Break => -22.0,
+            Sound::Zap => -17.0,
             Sound::Tier(Tier::Good) => -18.0,
             Sound::Tier(Tier::Great) => -15.5,
             Sound::Tier(Tier::Amazing) => -13.5,
@@ -109,6 +119,7 @@ impl Sound {
             Sound::Sparkle(k) => sparkle(rate, k),
             Sound::StepUp(l) => step_up(rate, l.clamp(1, LEVELS)),
             Sound::Break => aww(rate),
+            Sound::Zap => zap(rate),
             Sound::Tier(Tier::Good) => good(rate),
             Sound::Tier(Tier::Great) => great(rate),
             Sound::Tier(Tier::Amazing) => amazing(rate),
@@ -204,6 +215,45 @@ fn pop(rate: u32, k: usize) -> Buf {
         .glide(0.8, 0.02)
         .amp(0.45);
     b.tone(0.0, 0.0, &thump);
+    b
+}
+
+/// A buzzy tone's partials: odd ones, as a square wave's, the higher
+/// dying first.
+fn buzz() -> Vec<Partial> {
+    [1.0, 3.0, 5.0, 7.0, 9.0]
+        .map(|n: f64| Partial::new(n, 1.0 / n, 0.12 / n))
+        .to_vec()
+}
+
+fn zap(rate: u32) -> Buf {
+    let mut b = Buf::new(rate, 0.24);
+    // The "pew": diving from high, its brightness closing as it goes.
+    let pew = Tone::new(2_400.0, env(0.0015, 0.01, 0.05, 0.14), &buzz())
+        .glide(0.12, 0.035)
+        .bright(9_000.0, 1_800.0, 0.05);
+    b.tone(0.0, 0.0, &pew);
+    // An echo an octave down, a moment later, softer.
+    let echo = Tone::new(1_200.0, env(0.002, 0.0, 0.05, 0.12), &buzz())
+        .glide(0.15, 0.04)
+        .bright(5_000.0, 1_200.0, 0.05)
+        .amp(0.35);
+    b.tone(0.03, 0.0, &echo);
+    // A sparkle of noise on its start.
+    b.noise(
+        0.0,
+        0.0,
+        &Noise {
+            from: 7_000.0,
+            to: 3_500.0,
+            q: 1.5,
+            envelope: env(0.0005, 0.0, 0.01, 0.03),
+            amp: 0.6,
+            length: 0.03,
+            seed: 0x2A9_u64,
+        },
+    );
+    b.room(0.2, 0.2);
     b
 }
 

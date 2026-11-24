@@ -18,7 +18,9 @@
 use std::path::Path;
 
 use jodeldiplom::core::singing::Singing;
-use jodeldiplom::gui::karaoke::{paint, Backdrop, BigText, Layer, Target};
+use jodeldiplom::gui::big_text::Faces;
+use jodeldiplom::gui::karaoke::{paint, Backdrop, Layer};
+use jodeldiplom::gui::raster::Target;
 use jodeldiplom::view::karaoke::{sung_on, timed_lines, KaraokePicture, LineKind, Score};
 use ratatui::layout::Rect;
 
@@ -157,7 +159,7 @@ fn main() {
     };
     paint(
         &mut target,
-        &mut BigText::lyrics(),
+        &mut Faces::default(),
         &mut Layer::default(),
         &backdrop,
         &picture,
@@ -196,8 +198,8 @@ fn gpu_frames(
     use jodeldiplom::gui::stage::{without_lyrics, Song, Stage};
     let (w, h) = (1600usize, 900usize);
     let mut gpu = Offscreen::new(false).expect("a GPU");
-    let mut stage = Stage::new();
-    let mut big = BigText::lyrics();
+    let mut stage = Stage::default();
+    let mut big = Faces::default();
     let backdrop = Backdrop::new(None, w, h);
     let mut heard_to = 0usize;
     let mut before: Option<Vec<jodeldiplom::view::karaoke::LyricLine>> = None;

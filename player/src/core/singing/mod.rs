@@ -16,8 +16,8 @@
 //! [`Reference`] set with [`Singing::set_reference`]): its shine and the
 //! tier it reached. Without a reference the phrases have no shine, the
 //! words are scored all the same. What happens (a word scored, a bubble
-//! bursting, the streak up or lost, a phrase's tier) is one stream of
-//! moments ([`Singing::moments_since`]).
+//! bursting, a shot rescuing a single word missed, the streak up or lost,
+//! a phrase's tier) is one stream of moments ([`Singing::moments_since`]).
 //!
 //! The song played in another key ([`Singing::set_key`]) has its notes in
 //! that key: they move by its semitones, so the singing is held against
@@ -27,7 +27,7 @@
 //! on its note; off the notes it is the pitch sung, its jitter smoothed (a
 //! median over [`SMOOTH_FRAMES`], then a glide).
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -36,6 +36,7 @@ use jodel_rhythm::waveform::{Melody, Waveform};
 
 use crate::core::shine::{self, Reference, Shone};
 
+mod bursts;
 pub mod judge;
 mod moments;
 mod notes;
@@ -43,11 +44,12 @@ mod result;
 mod tally;
 mod undo;
 
+pub use bursts::Rescue;
 pub use judge::{KeyStep, SungKey, KEY_FRAMES, SHARE, TOLERANCE};
-pub use moments::{Cue, Cursor, Moment, Since};
+pub use moments::{Burst, Cue, Cursor, Moment, Since};
 pub use notes::{notes_of, LineNotes, Note, Notes};
 pub use result::{Medal, SongResult};
-pub use tally::Tally;
+pub use tally::{Run, Tally};
 
 /// What a word hit scores.
 pub const WORD_POINTS: u32 = 100;
@@ -140,10 +142,9 @@ pub struct Singing {
     /// Every frame since the singing last started over, as the shine
     /// measures it.
     frames: Vec<shine::Frame>,
-    /// What happened so far ([`Singing::moments_since`]), and the bubbles
-    /// in it that burst.
+    /// What happened so far ([`Singing::moments_since`]), and what it
+    /// tells of the bubbles (those burst, the words rescued).
     log: moments::Log,
-    popped: HashSet<(usize, usize)>,
     /// How far the singer sings from the song (octaves aside).
     sung_key: SungKey,
     /// Each word's frames on a note, and those that hit.
@@ -248,7 +249,6 @@ impl Singing {
         self.heard.clear();
         self.frames.clear();
         self.log.clear();
-        self.popped.clear();
         self.sung_key.clear();
         self.counts.clear();
         self.recent.clear();
@@ -262,6 +262,16 @@ impl Singing {
     /// pitch or not): what the scoring holds its hits against.
     pub fn noted(&self, l: usize, w: usize) -> u32 {
         self.counts.get(&(l, w)).map_or(0, |f| f.0)
+    }
+
+    /// How line `l`'s word `w` was rescued, if it was.
+    pub fn rescue_of(&self, l: usize, w: usize) -> Option<Rescue> {
+        self.log.index().rescues.get(&(l, w)).copied()
+    }
+
+    /// The words rescued so far (their line and word) and how.
+    pub fn rescues(&self) -> impl Iterator<Item = ((usize, usize), &Rescue)> {
+        self.log.index().rescues.iter().map(|(&w, r)| (w, r))
     }
 
     /// When the last frame was, in seconds into the song.
@@ -303,12 +313,6 @@ impl Singing {
             .partition_point(|f| f.t < from - shine::FRAME_LATE);
         self.frames.truncate(keep);
         self.log.take_back(from);
-        self.popped = (self.log.all().iter())
-            .filter_map(|m| match m.cue {
-                Cue::Pop { line, note, .. } => Some((line, note)),
-                _ => None,
-            })
-            .collect();
         self.recent.clear();
         self.glide = None;
     }
@@ -399,16 +403,18 @@ impl Singing {
     }
 
     /// The words over by `t`, scored: each a moment, the streak's level up
-    /// or lost with it.
+    /// or lost with it. A word missed alone waits, rescued at once if the
+    /// next word burst already ([`bursts`]).
     fn score_words(&mut self, t: f64) {
         while let Some(&(l, w, end)) = self.notes.words().get(self.tally.next_word) {
             if end + SCORED_AFTER > t {
                 break;
             }
+            let order = self.tally.next_word;
             self.tally.next_word += 1;
             let counts = self.counts.get(&(l, w)).copied().unwrap_or((0, 0));
             let before = multiplier(self.tally.streak);
-            if !self.tally.score_word(counts, end) {
+            if !self.tally.score_word(counts, end, order) {
                 continue;
             }
             let streak = self.tally.streak;
@@ -420,59 +426,9 @@ impl Singing {
             } else if now < before && before > 1 {
                 self.log.push(t, t, Cue::StreakLost);
             }
-        }
-    }
-
-    /// The bubbles of the lines about `t` whose time to burst the frames
-    /// up to `t` fixed: each a moment as it bursts and as it splashes out.
-    fn pops(&mut self, t: f64) {
-        let mut new = Vec::new();
-        for (l, ln) in self.notes.lines.iter().enumerate() {
-            let (Some(first), Some(last)) = (ln.notes.first(), ln.notes.last()) else {
-                continue;
-            };
-            if first.start > t || last.end + SCORED_AFTER + 0.1 < t {
-                continue;
+            if self.tally.run == Run::Waiting(order) {
+                self.rescue_waiting(t);
             }
-            let b = crate::core::bubbles::line(self, l, f64::INFINITY);
-            let line_end = last.to.max(1.0);
-            for (k, (bubble, n)) in b.notes.iter().zip(&ln.notes).enumerate() {
-                let Some(full) = bubble.full_at else { continue };
-                if self.popped.contains(&(l, k)) {
-                    continue;
-                }
-                let across = (0.5 * (n.from + n.to) / line_end).clamp(0.0, 1.0);
-                new.push((full, l, k, n.height, across));
-            }
-        }
-        new.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)).then(a.2.cmp(&b.2)));
-        // Those full on the same frame burst together.
-        let mut k = 0;
-        while k < new.len() {
-            let together = new[k..].iter().take_while(|b| b.0 == new[k].0).count();
-            for (j, &(full, line, note, height, across)) in new[k..k + together].iter().enumerate()
-            {
-                self.popped.insert((line, note));
-                let at = full + crate::core::bubbles::SWEEP;
-                let burst = (j, together);
-                let pop = Cue::Pop {
-                    line,
-                    note,
-                    height,
-                    across,
-                    burst,
-                };
-                self.log.push(at, t, pop);
-                let splash = Cue::Splash {
-                    line,
-                    note,
-                    height,
-                    across,
-                    burst,
-                };
-                self.log.push(at + crate::core::bubbles::SWELL, t, splash);
-            }
-            k += together;
         }
     }
 

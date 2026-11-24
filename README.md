@@ -75,7 +75,8 @@ analyses, stems and lyrics.
   `pkg-config` to build, the ALSA library (`libasound.so.2`) to run.
 
 The player's fonts (Sarasa Fixed J, Noto Emoji, Atkinson Hyperlegible
-Next) are built in from [player/fonts](player/fonts), or from
+Next, and Karaoke mode's Nunito, Fredoka and M PLUS Rounded 1c) are built
+in from [player/fonts](player/fonts), or from
 the folder `JODELDIPLOM_FONTS` names. The speech models are not part of a
 build: the player gets them on its first start (its setup screen) and
 checks them against the checksums built into it.
@@ -129,7 +130,9 @@ Built-in models and fonts keep their own licences, kept beside them:
   `LICENSE-mini-bs-roformer`, `LICENSE-musical-key-cnn`, `LICENSE-fcpe`;
 - the player's fonts in [player/fonts](player/fonts):
   `LICENSE-SarasaGothic.txt`, `LICENSE-NotoEmoji.txt`,
-  `LICENSE-AtkinsonHyperlegibleNext.txt`, and the fallback font Cascadia
+  `LICENSE-AtkinsonHyperlegibleNext.txt`, `LICENSE-Nunito.txt`,
+  `LICENSE-Fredoka.txt`, `LICENSE-MPLUSRounded1c.txt`, and the fallback
+  font Cascadia
   Mono's, [player/assets/CascadiaMono-OFL.txt](player/assets/CascadiaMono-OFL.txt).
 
 The singer-isolation network (`output/models/voice-v6.bin`) and the

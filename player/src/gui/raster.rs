@@ -45,6 +45,37 @@ pub fn unpack(word: u32) -> [u8; 3] {
     [(word >> 16) as u8, (word >> 8) as u8, word as u8]
 }
 
+/// `a` towards `b` by `t` (0 to 1).
+pub fn mix(a: [u8; 3], b: [u8; 3], t: f32) -> [u8; 3] {
+    let t = t.clamp(0.0, 1.0);
+    [0, 1, 2].map(|i| (f32::from(a[i]) * (1.0 - t) + f32::from(b[i]) * t).round() as u8)
+}
+
+/// Where to draw into: the pixmap, its width and height.
+pub struct Target<'a> {
+    /// `0x00RRGGBB` words, row by row.
+    pub pixels: &'a mut [u32],
+    /// Its width.
+    pub width: usize,
+    /// Its height.
+    pub height: usize,
+}
+
+/// A rect of pixels: x, y, width, height.
+pub type PixelRect = (usize, usize, usize, usize);
+
+/// The rect around `a` (if any) and `b`.
+pub fn union(a: Option<PixelRect>, b: PixelRect) -> PixelRect {
+    match a {
+        None => b,
+        Some((x, y, w, h)) => {
+            let (x0, y0) = (x.min(b.0), y.min(b.1));
+            let (x1, y1) = ((x + w).max(b.0 + b.2), (y + h).max(b.1 + b.3));
+            (x0, y0, x1 - x0, y1 - y0)
+        }
+    }
+}
+
 /// The cells redrawn since [`PixelBackend::reset_damage`].
 #[derive(Clone, Debug, Default)]
 pub struct Damage {

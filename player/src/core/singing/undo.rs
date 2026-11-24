@@ -110,11 +110,15 @@ mod tests {
     }
 
     /// The pitch sung at `t` on pass `p`: the melody, off by a pass's own
-    /// amount on some frames, none on others (each pass sung otherwise).
+    /// amount on some frames, none on others (each pass sung otherwise);
+    /// some words missed (not sung), alone (rescued by the next) or two in
+    /// a row (the streak lost).
     fn sung(s: &Singing, t: f64, p: usize) -> Option<f32> {
         let i = (t * 100.0).round() as usize;
+        let k = t.max(0.0) as usize;
+        let missed = (k + p) % 4 == 3 || (p % 3 == 2 && (k + p) % 4 == 2);
         let off = [0.0, 220.0, -260.0, 140.0, 40.0][p % 5];
-        let quiet = (i * (p + 3)).is_multiple_of(7);
+        let quiet = missed || (i * (p + 3)).is_multiple_of(7);
         s.word_at(t)
             .map(|(_, c)| (c + off) as f32)
             .filter(|_| !quiet)
@@ -125,8 +129,9 @@ mod tests {
     /// the delay nudged), heard again sung otherwise. The same as the
     /// frames as they ended up heard straight through: the scoring, the
     /// counts, the frames kept, the sung key and every moment (the words,
-    /// the bubbles burst, the streak, the phrases' shine).
-    fn same_as_straight(passes: &[(f64, f64)]) {
+    /// the bubbles burst, the shots rescuing a word missed, the streak, the
+    /// phrases' shine).
+    fn same_as_straight(passes: &[(f64, f64)]) -> Singing {
         let mut s = song();
         // The pass each frame was last heard on.
         let mut last: Vec<Option<usize>> = vec![None; 1100];
@@ -157,7 +162,8 @@ mod tests {
         assert_eq!(s.heard, straight.heard, "{passes:?}");
         assert_eq!(s.sung_key, straight.sung_key, "{passes:?}");
         assert_eq!(s.moments(), straight.moments(), "{passes:?}");
-        assert_eq!(s.popped, straight.popped, "{passes:?}");
+        assert_eq!(s.log.index(), straight.log.index(), "{passes:?}");
+        straight
     }
 
     #[test]
@@ -165,6 +171,14 @@ mod tests {
         same_as_straight(&[(0.0, 2.0), (1.6, 2.2), (1.9, 2.4), (2.3, 3.5), (3.1, 6.0)]);
         // Back over a phrase's end as it is scored: scored again.
         same_as_straight(&[(0.0, 6.5), (5.9, 7.0), (6.3, 9.0)]);
+        // Back over a shot in flight (words missed alone, rescued by the
+        // next bursting), heard again otherwise, and on.
+        let s = same_as_straight(&[(0.0, 4.5), (4.2, 4.6), (4.3, 4.8), (3.9, 10.5)]);
+        assert!(
+            s.tally.rescued > 0 && s.rescues().count() > 0,
+            "{:?}",
+            s.tally
+        );
         let mut s = song();
         for i in -50..=700 {
             s.hear(f64::from(i) / 100.0, sung(&s, f64::from(i) / 100.0, 0));

@@ -1,11 +1,12 @@
 //! Two things for the player, `jodeldiplom`:
 //!
-//! - Its fonts: Sarasa Fixed J, Noto Emoji and Atkinson Hyperlegible Next
-//!   (for lyrics), from `fonts` (in the repository; or the folder
+//! - Its fonts: Sarasa Fixed J, Noto Emoji, Atkinson Hyperlegible Next
+//!   (for lyrics), and Karaoke mode's Nunito, Fredoka and M PLUS Rounded
+//!   1c, from `fonts` (in the repository; or the folder
 //!   `JODELDIPLOM_FONTS` names). `$OUT_DIR/fonts.rs` embeds them with
-//!   `include_bytes!`; the binary includes that file and hands the fonts
-//!   to the library. Without them the window uses the embedded Cascadia
-//!   Mono.
+//!   `include_bytes!` as `EMBEDDED_FONTS`; the binary includes that file
+//!   and hands the fonts to the library. Without them the window uses the
+//!   embedded Cascadia Mono.
 //! - The key of its game sounds kept on disk: `$OUT_DIR/sfx_key.rs`, a
 //!   hash of the code that makes them (`src/sfx/`'s `synth.rs` and
 //!   `sounds.rs`, not how they are played), so a bank kept by another
@@ -20,10 +21,16 @@ use std::env;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-/// The fonts' files (see `fonts/README.md`).
-const MAIN_FONT: &str = "SarasaFixedJ-Regular.ttf";
-const EMOJI_FONT: &str = "NotoEmoji.ttf";
-const LYRICS_FONT: &str = "AtkinsonHyperlegibleNext-SemiBold.ttf";
+/// The fonts' files (see `fonts/README.md`), by their field in
+/// `jodeldiplom::gui::fonts::BuiltIn`.
+const FONTS: [(&str, &str); 6] = [
+    ("main", "SarasaFixedJ-Regular.ttf"),
+    ("emoji", "NotoEmoji.ttf"),
+    ("lyrics", "AtkinsonHyperlegibleNext-SemiBold.ttf"),
+    ("words", "Nunito.ttf"),
+    ("shout", "Fredoka.ttf"),
+    ("rounded", "MPLUSRounded1c-ExtraBold.ttf"),
+];
 
 fn main() {
     embed_fonts();
@@ -60,23 +67,19 @@ fn embed_fonts() {
     let dir = env::var_os("JODELDIPLOM_FONTS")
         .map(PathBuf::from)
         .unwrap_or_else(|| manifest.join("fonts"));
-    let constant = |name: &str, file: &str| -> String {
+    let field = |(name, file): &(&str, &str)| -> String {
         let path = dir.join(file);
         println!("cargo:rerun-if-changed={}", path.display());
         if path.is_file() {
-            format!(
-                "const {name}: Option<&[u8]> = Some(include_bytes!({:?}));\n",
-                absolute(&path)
-            )
+            format!("    {name}: Some(include_bytes!({:?})),\n", absolute(&path))
         } else {
-            format!("const {name}: Option<&[u8]> = None;\n")
+            format!("    {name}: None,\n")
         }
     };
+    let fields: String = FONTS.iter().map(field).collect();
     let code = format!(
-        "// The window player's fonts found at build time (build.rs).\n{}{}{}",
-        constant("EMBEDDED_MAIN_FONT", MAIN_FONT),
-        constant("EMBEDDED_EMOJI_FONT", EMOJI_FONT),
-        constant("EMBEDDED_LYRICS_FONT", LYRICS_FONT),
+        "// The window player's fonts found at build time (build.rs).\n\
+         const EMBEDDED_FONTS: jodeldiplom::gui::fonts::BuiltIn = jodeldiplom::gui::fonts::BuiltIn {{\n{fields}}};\n"
     );
     let out = PathBuf::from(env::var("OUT_DIR").unwrap()).join("fonts.rs");
     std::fs::write(out, code).expect("write fonts.rs");

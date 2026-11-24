@@ -29,7 +29,8 @@ sed "s/@VERSION@/$version/g" "$here/Info.plist" > "$app/Contents/Info.plist"
 printf 'APPL????' > "$app/Contents/PkgInfo"
 install -m 755 -- "$binary" "$app/Contents/MacOS/jodeldiplom"
 install -m 644 -- "$assets/jodeldiplom.icns" "$app/Contents/Resources/"
-for file in LICENSE-SarasaGothic.txt LICENSE-NotoEmoji.txt LICENSE-AtkinsonHyperlegibleNext.txt; do
+for file in LICENSE-SarasaGothic.txt LICENSE-NotoEmoji.txt LICENSE-AtkinsonHyperlegibleNext.txt \
+    LICENSE-Nunito.txt LICENSE-Fredoka.txt LICENSE-MPLUSRounded1c.txt; do
     install -m 644 -- "$fonts/$file" "$app/Contents/Resources/"
 done
 install -m 644 -- "$assets/CascadiaMono-OFL.txt" "$app/Contents/Resources/LICENSE-CascadiaMono.txt"

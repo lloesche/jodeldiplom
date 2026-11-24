@@ -1,4 +1,4 @@
-//! The note bubbles of Karaoke mode as the window draws them: each filling
+//! The word bubbles of Karaoke mode as the window draws them: each filling
 //! with liquid as it is sung, a word counted swept full,
 //! straining, then bursting whole (it overfills, tears, its liquid
 //! splashing out, and is gone), in the picture painted on the processor
@@ -13,9 +13,11 @@
 mod common;
 
 use jodeldiplom::core::singing::Singing;
-use jodeldiplom::gui::karaoke::{paint, Backdrop, BigText, Layer, Target};
+use jodeldiplom::gui::big_text::Faces;
+use jodeldiplom::gui::karaoke::{paint, Backdrop, Layer};
 use jodeldiplom::gui::notes::Over;
 use jodeldiplom::gui::particles::{Kind, Spray};
+use jodeldiplom::gui::raster::Target;
 use jodeldiplom::gui::stage::{Song, Stage};
 use jodeldiplom::gui::stage_gpu::{kind, Instance, StageFrame};
 use jodeldiplom::view::bubbles::{BURST, SWEEP, SWELL};
@@ -80,7 +82,7 @@ fn painted(picture: &KaraokePicture, (w, h): (usize, usize), gpu: bool) -> (Vec<
     };
     let mut layer = Layer::default();
     layer.over.gpu = gpu;
-    let mut text = BigText::default();
+    let mut text = Faces::default();
     paint(
         &mut target,
         &mut text,
@@ -121,7 +123,7 @@ fn stage_at(singing: &Singing, lyrics: &jodel_lyrics::Lyrics, now: f64, late: f6
     let picture = common::bubble_picture(singing, lyrics, (now, late), Rect::new(0, 0, 80, 24));
     let mut song = Song::new(singing, lyrics.lines.iter().collect(), Some(3.0));
     song.late = late;
-    Stage::new().frame(&song, &picture, (0.0, 0.0, 800.0, 450.0), now, 1.0 / 60.0)
+    Stage::default().frame(&song, &picture, (0.0, 0.0, 800.0, 450.0), now, 1.0 / 60.0)
 }
 
 /// The words' bubbles on a stage, those overfilling, and the most any
@@ -130,7 +132,7 @@ fn word_pills(frame: &StageFrame) -> (usize, usize, f32) {
     let bubbles: Vec<_> = frame
         .instances
         .iter()
-        .filter(|i| i.params[0] == kind::BUBBLE)
+        .filter(|i| i.params[0] == kind::TUBE)
         .map(|i| i.strained())
         .collect();
     let swelling = bubbles.iter().filter(|s| s.popping.is_some()).count();
@@ -165,7 +167,7 @@ fn a_bubble_bursts_over_the_picture_and_is_gone_from_it() {
         let backdrop = Backdrop::new(None, w, h);
         let area = Rect::new(0, 0, 80, 24);
         let (mut kept, mut text, mut layer) =
-            (vec![0u32; w * h], BigText::default(), Layer::default());
+            (vec![0u32; w * h], Faces::default(), Layer::default());
         layer.over.gpu = gpu;
         let (mut heard, mut next, mut part_way, mut k) = (0.0, 0.0, false, 0);
         let (mut seen, mut after, mut liquid) = (None, None, 0);
@@ -426,7 +428,7 @@ fn the_stage_bursts_a_word_counted() {
     let area = (0.0, 0.0, w as f32, h as f32);
     let mut frame_at = |until: f64, now: f64| {
         let (mut singing, lyrics) = common::bubble_song();
-        let mut stage = Stage::new();
+        let mut stage = Stage::default();
         let picture =
             common::bubble_picture(&singing, &lyrics, (now, LATE), Rect::new(0, 0, 80, 24));
         // Frames at 60 a second up to now, as the window draws them.
@@ -445,7 +447,9 @@ fn the_stage_bursts_a_word_counted() {
         let blank = vec![0u32; (w * h) as usize];
         gpu.set_stage(Some(&frame), w, h);
         let shown = gpu.show_pixels(&blank, w, h).expect("a frame");
-        let bubbles: Vec<Kind> = bubble_sprays(&frame).iter().map(|s| s.kind).collect();
+        // A burst throws a spray a stretch of its tube, all at once.
+        let mut bubbles: Vec<Kind> = bubble_sprays(&frame).iter().map(|s| s.kind).collect();
+        bubbles.dedup();
         // The pixels its bursts light.
         let fills = fronts(&frame.instances);
         frame.sprays.clear();
@@ -514,8 +518,8 @@ fn a_bubble_partly_filled_never_pops() {
     let (mut singing, lyrics) = common::bubble_song();
     hear_until(&mut singing, (0.0, 1.6), PARTLY);
     let b = bubbles::line(&singing, 0, f64::INFINITY);
-    assert_eq!(b.notes[0].full_at, None);
-    let filled: f64 = b.notes[0].spans.iter().map(|s| s.1 - s.0).sum();
+    assert_eq!(b.words[0].full_at, None);
+    let filled: f64 = b.words[0].spans.iter().map(|s| s.1 - s.0).sum();
     assert!((0.05..0.07).contains(&filled), "{filled}");
     for heard in [0.8, 1.1, 1.3] {
         // The picture: its bar painted, its liquid at its level for the
@@ -541,7 +545,7 @@ fn a_bubble_partly_filled_never_pops() {
         let liquids = frame
             .instances
             .iter()
-            .filter(|i| i.params[0] == kind::LIQUID);
+            .filter(|i| i.params[0] == kind::TUBE_LIQUID);
         assert!(liquids.count() >= 1, "{heard}");
     }
 }
@@ -561,10 +565,11 @@ fn a_bubble_unpopped_by_a_seek_back_shows_again() {
         let picture = common::bubble_picture(singing, &lyrics, (now, 0.0), Rect::new(0, 0, 80, 24));
         let over = painted(&picture, (640, 360), true).1;
         let frame = stage_at(singing, &lyrics, now, 0.0);
-        let starts: Vec<u32> = bubble_sprays(&frame)
+        let mut starts: Vec<u32> = bubble_sprays(&frame)
             .iter()
             .map(|s| s.start.to_bits())
             .collect();
+        starts.dedup();
         let liquid = picture.lines[0].liquid.first();
         (
             liquid.map(|b| (b.level * 100.0).round() as u32),
@@ -596,7 +601,7 @@ fn a_bubble_unpopped_by_a_seek_back_shows_again() {
 #[test]
 fn the_arrow_shows_while_singing_however_late_the_voice() {
     let (mut singing, lyrics) = common::bubble_song();
-    let mut stage = Stage::new();
+    let mut stage = Stage::default();
     let area = (0.0, 0.0, 800.0, 450.0);
     let picture = common::bubble_picture(&singing, &lyrics, (0.0, LATE), Rect::new(0, 0, 80, 24));
     let (mut t, mut next, mut shown) = (0.0, 0.0, Vec::new());
@@ -623,7 +628,7 @@ fn the_arrow_shows_while_singing_however_late_the_voice() {
 #[test]
 fn a_seek_back_brings_no_ghost_bursts_on_the_stage() {
     let (mut singing, lyrics) = common::bubble_song();
-    let mut stage = Stage::new();
+    let mut stage = Stage::default();
     let area = (0.0, 0.0, 800.0, 450.0);
     let picture = common::bubble_picture(&singing, &lyrics, (0.0, 0.0), Rect::new(0, 0, 80, 24));
     // On to 1.6 s ("la" scored at 1.3 s), back to 1.0 s, on to 2.2 s.
@@ -646,12 +651,13 @@ fn a_seek_back_brings_no_ghost_bursts_on_the_stage() {
         unique.dedup();
         assert_eq!(unique.len(), keys.len(), "twice in a frame at {t}");
         for s in &frame.sprays {
-            let seen = match s.kind {
-                Kind::Scored | Kind::StepUp => &mut scored,
-                _ => &mut bubble,
+            // A bubble's sprays (a stretch of its tube each) by when.
+            let (seen, key) = match s.kind {
+                Kind::Scored | Kind::StepUp => (&mut scored, (s.start.to_bits(), s.seed)),
+                _ => (&mut bubble, (s.start.to_bits(), 0)),
             };
-            if !seen.contains(&(s.start.to_bits(), s.seed)) {
-                seen.push((s.start.to_bits(), s.seed));
+            if !seen.contains(&key) {
+                seen.push(key);
             }
         }
     }

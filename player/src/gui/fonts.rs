@@ -7,10 +7,14 @@
 //! Noto Emoji (monochrome, drawn in the text colour) when built in, then
 //! from the system's fonts, as a terminal falls back to other fonts.
 //!
-//! The binary embeds Sarasa Fixed and Noto Emoji when they are found at
-//! build time (see `build.rs`; they are in `fonts`) and hands them over
-//! with [`use_fonts`] before it starts; the tests do not, so they keep
-//! Cascadia Mono.
+//! Karaoke mode has faces of its own (Nunito for the words, Fredoka for
+//! the shouts and numbers, M PLUS Rounded 1c for the Japanese they lack:
+//! [`super::big_text::Face`]); the other tabs keep theirs.
+//!
+//! The binary embeds Sarasa Fixed, Noto Emoji and the others when they
+//! are found at build time (see `build.rs`; they are in `fonts`) and hands
+//! them over with [`use_fonts`] before it starts; the tests do not, so
+//! they keep Cascadia Mono.
 //!
 //! Each system has a list of fonts known to cover what the others lack; a
 //! font is read only when a character first needs it, and kept for the
@@ -25,29 +29,36 @@ use ab_glyph::{Font, FontRef};
 
 use super::FONT;
 
-/// The fonts the binary was built with.
-#[derive(Clone, Copy, Default)]
-struct BuiltIn {
-    main: Option<&'static [u8]>,
-    emoji: Option<&'static [u8]>,
-    lyrics: Option<&'static [u8]>,
+/// The fonts the binary was built with (each where it has it).
+#[derive(Clone, Copy, Debug, Default)]
+pub struct BuiltIn {
+    /// Sarasa Fixed J, the main font.
+    pub main: Option<&'static [u8]>,
+    /// Noto Emoji.
+    pub emoji: Option<&'static [u8]>,
+    /// Atkinson Hyperlegible Next, for lyrics.
+    pub lyrics: Option<&'static [u8]>,
+    /// Nunito (of variable weight), Karaoke mode's words.
+    pub words: Option<&'static [u8]>,
+    /// Fredoka (of variable weight), Karaoke mode's shouts and numbers.
+    pub shout: Option<&'static [u8]>,
+    /// M PLUS Rounded 1c ExtraBold, Karaoke mode's Japanese.
+    pub rounded: Option<&'static [u8]>,
 }
 
 static BUILT_IN: OnceLock<BuiltIn> = OnceLock::new();
 
-/// Hands the fonts the binary embeds (Sarasa Fixed, Noto Emoji,
-/// Atkinson Hyperlegible Next for lyrics) to the window; call it before the
+/// Hands the fonts the binary embeds to the window; call it before the
 /// window starts. Fonts that do not parse are left out.
-pub fn use_fonts(
-    main: Option<&'static [u8]>,
-    emoji: Option<&'static [u8]>,
-    lyrics: Option<&'static [u8]>,
-) {
+pub fn use_fonts(fonts: BuiltIn) {
     let parses = |data: &&'static [u8]| FontRef::try_from_slice(data).is_ok();
     let _ = BUILT_IN.set(BuiltIn {
-        main: main.filter(parses),
-        emoji: emoji.filter(parses),
-        lyrics: lyrics.filter(parses),
+        main: fonts.main.filter(parses),
+        emoji: fonts.emoji.filter(parses),
+        lyrics: fonts.lyrics.filter(parses),
+        words: fonts.words.filter(parses),
+        shout: fonts.shout.filter(parses),
+        rounded: fonts.rounded.filter(parses),
     });
 }
 
@@ -57,6 +68,23 @@ pub fn use_fonts(
 /// each letter unlike the others); `None` without it (the main font then).
 pub fn lyrics_font() -> Option<&'static [u8]> {
     built_in().lyrics
+}
+
+/// Karaoke mode's words' font, the built-in Nunito; `None` without it.
+pub fn words_font() -> Option<&'static [u8]> {
+    built_in().words
+}
+
+/// Karaoke mode's shouts' and numbers' font, the built-in Fredoka; `None`
+/// without it.
+pub fn shout_font() -> Option<&'static [u8]> {
+    built_in().shout
+}
+
+/// The font Karaoke mode's faces fall back on for Japanese, the built-in
+/// M PLUS Rounded 1c; `None` without it.
+pub fn rounded_font() -> Option<&'static [u8]> {
+    built_in().rounded
 }
 
 fn built_in() -> BuiltIn {

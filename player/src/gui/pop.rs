@@ -1,13 +1,11 @@
-//! The note bubbles on the GPU's stage ([`super::stage`]): a word's pill
-//! is its notes' bubbles in a row along it ([`Liquid`], one a note, as
-//! every frontend has them), each holding its liquid to its level, its
-//! front a living surface and the liquid shimmering, straining in the last
-//! stretch to full, overfilling as it bursts, the moment it is full, on
-//! its own, then not drawn (all in the stage's shader:
-//! [`Instance::bubble`], [`Instance::liquid`]); its drops, bits of skin,
-//! sheen and sparkles fly off from its place as particles (a [`Spray`]
-//! each, [`super::particles`]). The word's other bubbles stay with their
-//! liquid until they fill and burst in turn; a bubble never full keeps its
+//! The word bubbles on the GPU's stage ([`super::stage`]): a word's bubble
+//! is one tube through its notes ([`Snake`]), its liquid poured along it
+//! note by note ([`Liquid`], as every frontend has it), its front a living
+//! surface and the liquid shimmering, straining in the last stretch to
+//! full, overfilling as it bursts, all of it at once, then not drawn (all
+//! in the stage's shader, [`super::snake`]); its drops, bits of skin,
+//! sheen and sparkles fly off all along it as particles (a [`Spray`] a
+//! stretch of it, [`super::particles`]). A bubble never full keeps its
 //! liquid at its level. Made afresh each frame from the bubbles as the
 //! picture's are: one burst a bubble, none after a seek back before it
 //! (the bubble then shows again as it is). All of it goes by the singing's
@@ -16,6 +14,7 @@
 use std::collections::HashMap;
 
 use super::particles::{Kind, Spray};
+use super::snake::Snake;
 use super::stage_gpu::{Instance, Pour, Skin, Strain, Tint};
 use crate::core::bubbles::{self, Bubbles};
 use crate::core::singing::Singing;
@@ -23,6 +22,9 @@ use crate::view::bubbles::Liquid;
 
 /// Gold, as the stage's.
 const GOLD: [f32; 3] = [1.0, 0.72, 0.2];
+/// The least length of a stretch of a tube that bursts as one spray, in
+/// its radii.
+const STRETCH: f32 = 5.0;
 
 /// A bubble's strain on the GPU, as its [`Liquid`] has it.
 pub fn strain(b: &Liquid) -> Strain {
@@ -36,170 +38,136 @@ pub fn strain(b: &Liquid) -> Strain {
     }
 }
 
-/// A word's pill on the stage at a moment: its bubbles in a row (none:
-/// the pill whole, as without the game).
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct Pill {
-    /// Its bubbles, one a note, in order.
-    pub bubbles: Vec<Liquid>,
+/// Where a word's tube is on the stage: the tube, its ends across (its
+/// round ends included), and where across a time of its singing is.
+pub struct Laid<'a> {
+    /// The tube.
+    pub snake: &'a Snake,
+    /// Its left and right.
+    pub ends: (f32, f32),
+    /// Where across a time of the song is along it.
+    pub across: &'a dyn Fn(f64) -> f32,
 }
 
-impl Pill {
-    /// How much of its word is filled, in seconds of it.
-    pub fn filled(&self) -> f64 {
-        let each = |b: &Liquid| b.level * (b.time.1 - b.time.0);
-        self.bubbles.iter().map(each).sum()
-    }
-
-    /// Where its bubble `i` is across its pill from `c - half` to
-    /// `c + half` (pixels; `across` giving where on the lane a time of the
-    /// song is), `px` high: a hair apart from the next.
-    fn span(
-        &self,
-        i: usize,
-        (c, half): (f32, f32),
-        across: &dyn Fn(f64) -> f32,
-        px: f32,
-    ) -> (f32, f32) {
-        let gap = px * 0.04;
-        let b = &self.bubbles[i];
-        let x0 = if i == 0 {
-            c - half
-        } else {
-            across(b.time.0) + gap
-        };
-        let last = i + 1 == self.bubbles.len();
-        let x1 = if last {
-            c + half
-        } else {
-            across(b.time.1) - gap
-        };
-        (x0, x1.max(x0 + 1.0))
-    }
-
-    /// Its bursts for the GPU, of line `l`: each bubble bursting, from its
-    /// place on the pill at `c`, `half`, `px` high (`across` giving where
-    /// on the lane a time of the song is), at `clock`, the lane going
-    /// across at `pps`.
-    pub fn sprays(
-        &self,
-        across: &dyn Fn(f64) -> f32,
-        (c, half, px): ((f32, f32), (f32, f32), f32),
-        (clock, pps): (f64, f32),
-    ) -> Vec<Spray> {
-        let bursting = self.bubbles.iter().enumerate();
-        let bursting = bursting.filter(|(_, b)| b.bursting().is_some());
-        bursting
-            .filter_map(|(i, b)| {
-                let start = b.pops_at?;
-                let (x0, x1) = self.span(i, (c.0, half.0), across, px);
-                // Where it was as it burst: it has gone by with the lane since.
-                let back = pps * (clock - start) as f32;
-                Some(Spray {
-                    at: ((x0 + x1) / 2.0 + back, c.1),
-                    half: ((x1 - x0) / 2.0, half.1),
-                    start: start as f32,
-                    drift: -pps,
-                    // Larger than a pill: they fly off it, over the lane.
-                    size: px * 2.0,
-                    seed: b.seed,
-                    rgb: GOLD,
-                    kind: Kind::Burst,
-                })
-            })
-            .collect()
-    }
-
-    /// Draws the pill at `c`, `half` (`px` high) into `out` in its `skin`:
-    /// each bubble not torn, straining and overfilling as it does, and its
-    /// liquid in `tint`; without bubbles, the pill whole. How much of
-    /// the word is filled, in seconds of it.
-    pub fn draw(
-        &self,
-        out: &mut Vec<Instance>,
-        (c, half): ((f32, f32), (f32, f32)),
-        (skin, tint): (&Skin, &Tint),
-        across: &dyn Fn(f64) -> f32,
-        px: f32,
-    ) -> f64 {
-        if self.bubbles.is_empty() {
-            out.push(Instance::bubble(c, half, 0.0, skin, &Strain::default()));
-            return 0.0;
-        }
-        for (i, b) in self.bubbles.iter().enumerate() {
-            if b.torn() {
-                continue;
-            }
-            let (x0, x1) = self.span(i, (c.0, half.0), across, px);
-            let (bc, bh) = (((x0 + x1) / 2.0, c.1), ((x1 - x0) / 2.0, half.1));
-            let strain = strain(b);
-            let skin = if strain.popping.is_some() {
-                lit(px)
-            } else {
-                *skin
-            };
-            out.push(Instance::bubble(bc, bh, 0.0, &skin, &strain));
-            let pour = Pour {
-                span: (x0, x0 + (x1 - x0) * b.level as f32),
-                front: b.level < 1.0,
-                jumped: b.jumped.max(-1e6) as f32,
-                tint: *tint,
-            };
-            out.extend(Instance::liquid(bc, bh, 0.0, &pour, &strain));
-        }
-        self.filled()
-    }
-}
-
-/// Word `word`'s pill of line `l`, its `bubbles` as the singing filled
-/// them (its notes `notes`), at `clock` (the singing's time).
-pub fn pill(
-    notes: &[crate::core::singing::Note],
-    bubbles: &Bubbles,
-    (l, word): (usize, usize),
-    clock: f64,
-) -> Pill {
-    let Some(w) = bubbles.word(word) else {
-        return Pill::default();
+/// Where part `i` of bubble `b` is across its tube laid as `at`: from its
+/// note's start to its end, the first from the tube's left, the last to
+/// its right.
+fn span(b: &Liquid, i: usize, at: &Laid) -> (f32, f32) {
+    let p = &b.parts[i];
+    let x0 = if i == 0 {
+        at.ends.0
+    } else {
+        (at.across)(p.time.0)
     };
-    let each = w.notes.clone().filter_map(|k| Some((k, notes.get(k)?)));
-    Pill {
-        bubbles: each
-            .map(|(k, n)| Liquid::of(bubbles, l, k, n, clock))
-            .collect(),
+    let last = i + 1 == b.parts.len();
+    let x1 = if last {
+        at.ends.1
+    } else {
+        (at.across)(p.time.1)
+    };
+    (x0, x1.max(x0 + 1.0))
+}
+
+/// Bubble `b`'s bursts for the GPU, laid as `at`, `px` high, at `clock`,
+/// the lane going across at `pps`: while it bursts, one spray a stretch of
+/// its tube (at least [`STRETCH`] radii long), from where that was as it
+/// burst.
+pub fn sprays(b: &Liquid, at: &Laid, px: f32, (clock, pps): (f64, f32)) -> Vec<Spray> {
+    let Some(start) = b.pops_at.filter(|_| b.bursting().is_some()) else {
+        return Vec::new();
+    };
+    let r = at.snake.radius;
+    let (x0, x1) = at.ends;
+    let n = (((x1 - x0) / (STRETCH * r)).floor() as usize).clamp(1, 5);
+    let wide = (x1 - x0) / n as f32;
+    // Where it was as it burst: it has gone by with the lane since.
+    let back = pps * (clock - start) as f32;
+    (0..n)
+        .map(|k| {
+            let x = x0 + wide * (k as f32 + 0.5);
+            Spray {
+                at: (x + back, at.snake.y_at(x)),
+                half: (wide / 2.0, r),
+                start: start as f32,
+                drift: -pps,
+                // Larger than a tube: they fly off it, over the lane.
+                size: px * 2.0,
+                seed: b.seed.wrapping_add(k as u32 * 7919) & 0xFF_FFFF,
+                rgb: GOLD,
+                kind: Kind::Burst,
+            }
+        })
+        .collect()
+}
+
+/// Draws the tube laid as `at` with its bubble `liquid` (none: the game
+/// off, the tube empty) into `out` (its points into `paths`) in its `skin`,
+/// `px` high: straining and overfilling as it does, gone once torn, each
+/// part's liquid in `tint`.
+pub fn draw(
+    liquid: Option<&Liquid>,
+    (out, paths): (&mut Vec<Instance>, &mut Vec<[f32; 4]>),
+    at: &Laid,
+    (skin, tint): (&Skin, &Tint),
+    px: f32,
+) {
+    let Some(b) = liquid else {
+        let first = at.snake.put(paths);
+        out.push(at.snake.skin(first, skin, &Strain::default()));
+        return;
+    };
+    if b.torn() {
+        return;
+    }
+    let first = at.snake.put(paths);
+    let strain = strain(b);
+    let skin = if strain.popping.is_some() {
+        lit(px)
+    } else {
+        *skin
+    };
+    out.push(at.snake.skin(first, &skin, &strain));
+    for (i, p) in b.parts.iter().enumerate() {
+        let (x0, x1) = span(b, i, at);
+        let pour = Pour {
+            span: (x0, x0 + (x1 - x0) * p.level as f32),
+            front: p.level < 1.0,
+            jumped: p.jumped.max(-1e6) as f32,
+            tint: *tint,
+        };
+        out.extend(at.snake.liquid(first, &pour, &strain));
     }
 }
 
-/// The pills of the stage's words in a frame: each line's bubbles made
+/// The bubbles of the stage's words in a frame: each line's bubbles made
 /// once.
-pub struct Pills<'a> {
+pub struct Tubes<'a> {
     singing: &'a Singing,
     clock: f64,
     lines: HashMap<usize, Bubbles>,
 }
 
-impl<'a> Pills<'a> {
+impl<'a> Tubes<'a> {
     /// For `singing` at `clock` (the singing's time).
-    pub fn new(singing: &'a Singing, clock: f64) -> Pills<'a> {
-        Pills {
+    pub fn new(singing: &'a Singing, clock: f64) -> Tubes<'a> {
+        Tubes {
             singing,
             clock,
             lines: HashMap::new(),
         }
     }
 
-    /// Line `l`'s word `word`'s pill ([`pill`]), with the game on (`game`;
-    /// off, the pill whole).
-    pub fn pill(&mut self, game: bool, l: usize, word: usize) -> Pill {
-        let (Some(notes), true) = (self.singing.notes.lines.get(l), game) else {
-            return Pill::default();
-        };
+    /// Line `l`'s word `word`'s bubble as the singing filled it, with the
+    /// game on (`game`; off, none).
+    pub fn liquid(&mut self, game: bool, l: usize, word: usize) -> Option<Liquid> {
+        let notes = self.singing.notes.lines.get(l).filter(|_| game)?;
         let singing = self.singing;
         let b = self
             .lines
             .entry(l)
             .or_insert_with(|| bubbles::line(singing, l, f64::INFINITY));
-        pill(&notes.notes, b, (l, word), self.clock)
+        let b = b.word(word)?;
+        Some(Liquid::of(b, l, &notes.notes, self.clock))
     }
 }
 
@@ -215,7 +183,7 @@ pub fn lit(px: f32) -> Skin {
 }
 
 /// A word ending at `end` scored at (`x`, `y`) at `clock`, the stage's
-/// pills `px` high, the lane going across at `pps`: its sparks (scattered
+/// tubes `px` high, the lane going across at `pps`: its sparks (scattered
 /// by its end).
 pub fn scored((x, y): (f32, f32), px: f32, clock: f64, pps: f32, end: f64) -> Spray {
     Spray {
@@ -255,11 +223,11 @@ mod tests {
     use crate::view::bubbles::{BURST, SWELL};
 
     /// "lala" a second, its first half on C4, its second on G4 (two notes,
-    /// two bubbles), sung as `sung` says at each moment (cents, or none),
+    /// one bubble), sung as `sung` says at each moment (cents, or none),
     /// heard `late` seconds late: frame by frame at 60 a second, as the
     /// stage goes by the singing's time (the song's less `late`), on to
-    /// 1.2 s, back to 0.25 s, on again. Each frame's pill.
-    fn frames(sung: impl Fn(f64) -> Option<f32>, late: f64) -> Vec<(f64, Pill)> {
+    /// 1.2 s, back to 0.25 s, on again. Each frame's bubble.
+    fn frames(sung: impl Fn(f64) -> Option<f32>, late: f64) -> Vec<(f64, Liquid)> {
         let mut m = jodel_rhythm::waveform::Melody {
             cents: vec![0; 200],
             sure: vec![255; 200],
@@ -301,49 +269,43 @@ mod tests {
                 heard += 1;
             }
             let b = bubbles::line(&s, 0, f64::INFINITY);
-            out.push((clock, pill(&s.notes.lines[0].notes, &b, (0, 0), clock)));
+            let b = b.word(0).expect("its bubble");
+            out.push((clock, Liquid::of(b, 0, &s.notes.lines[0].notes, clock)));
         }
         out
     }
 
-    /// The times bubble `i` burst at in `frames`, each once.
-    fn bursts(frames: &[(f64, Pill)], i: usize) -> Vec<f64> {
-        let mut out: Vec<f64> = Vec::new();
-        for (clock, p) in frames {
-            let b = &p.bubbles[i];
-            if b.bursting().is_some() {
-                let start = b.pops_at.unwrap();
-                assert!((start..start + BURST).contains(clock));
-                assert_eq!(b.swelling().is_some(), *clock - start < SWELL);
-                if !out.contains(&start) {
-                    out.push(start);
-                }
-            }
-        }
-        out
-    }
-
-    /// However late the voice: the word counts and both its
-    /// bubbles sweep full, each bursting once on its own, torn after its
-    /// overfilling; sought back before, each shows again, and bursts again
+    /// However late the voice: the word counts and its one bubble (over
+    /// both notes) sweeps full and bursts once, torn after its
+    /// overfilling; sought back before, it shows again, and bursts again
     /// on the way.
     #[test]
-    fn each_bubble_of_a_word_bursts_once_however_late_the_voice() {
+    fn a_word_s_bubble_bursts_once_however_late_the_voice() {
         for late in [0.0, 0.264] {
             let frames = frames(|t| (t < 0.15).then_some(6000.0), late);
-            assert!(frames.iter().all(|f| f.1.bubbles.len() == 2));
-            for i in 0..2 {
-                let starts = bursts(&frames, i);
-                assert_eq!(starts.len(), 1, "late {late}: bubble {i} bursts once");
-                let start = starts[0];
-                for (clock, p) in &frames {
-                    assert_eq!(p.bubbles[i].torn(), *clock - start >= SWELL, "late {late}");
+            let liquid = |f: &(f64, Liquid)| f.1.clone();
+            assert!(frames.iter().all(|f| liquid(f).parts.len() == 2));
+            let mut starts: Vec<f64> = Vec::new();
+            for f in &frames {
+                let b = liquid(f);
+                if b.bursting().is_some() {
+                    let start = b.pops_at.unwrap();
+                    assert!((start..start + BURST).contains(&f.0));
+                    assert_eq!(b.swelling().is_some(), f.0 - start < SWELL);
+                    if !starts.contains(&start) {
+                        starts.push(start);
+                    }
                 }
-                let first = frames.iter().position(|f| f.1.bubbles[i].torn()).unwrap();
-                let back = frames[first..].iter().find(|f| f.0 < start).unwrap();
-                assert!(!back.1.bubbles[i].begun());
             }
-            assert_eq!(frames[0].1.bubbles[0].pressure(), 0.0);
+            assert_eq!(starts.len(), 1, "late {late}: it bursts once");
+            let start = starts[0];
+            for f in &frames {
+                assert_eq!(liquid(f).torn(), f.0 - start >= SWELL, "late {late}");
+            }
+            let first = frames.iter().position(|f| liquid(f).torn()).unwrap();
+            let back = frames[first..].iter().find(|f| f.0 < start).unwrap();
+            assert!(!liquid(back).begun());
+            assert_eq!(liquid(&frames[0]).pressure(), 0.0);
             // The sweep seen part way: more than what was sung, less than
             // the whole word.
             let filled = frames.iter().map(|(_, p)| p.filled());
@@ -351,23 +313,42 @@ mod tests {
         }
     }
 
-    /// The word sung 5 % (under the tenth it asks, its first bubble a tenth
-    /// full): no burst, no strain, its liquid kept, both drawn all the way on.
+    /// The word sung 5 % (under the tenth it asks, its first part a tenth
+    /// full): no burst, no strain, its liquid kept.
     #[test]
-    fn a_pill_partly_filled_never_pops() {
+    fn a_bubble_partly_filled_never_pops() {
         let frames = frames(|t| (t < 0.05).then_some(6000.0), 0.0);
         let mut filled = 0.0f64;
-        for (_, p) in &frames {
-            for b in &p.bubbles {
-                assert!(!b.begun() && b.pops_at.is_none(), "{b:?}");
-                assert_eq!(b.pressure(), 0.0, "it never strains");
-            }
-            filled = filled.max(p.filled());
+        for (_, b) in &frames {
+            assert!(!b.begun() && b.pops_at.is_none(), "{b:?}");
+            assert_eq!(b.pressure(), 0.0, "it never strains");
+            filled = filled.max(b.filled());
         }
         assert!(filled > 0.03 && filled < 0.08, "{filled}");
-        assert!(
-            frames.last().unwrap().1.bubbles[0].level > 0.08,
-            "its liquid kept"
+        let last = &frames.last().unwrap().1;
+        assert!(last.parts[0].level > 0.08, "its liquid kept");
+    }
+
+    /// A bubble bursting throws a spray a stretch of its tube, each where
+    /// that stretch was, up and down with it.
+    #[test]
+    fn a_tube_bursts_all_along_itself() {
+        let frames = frames(|t| (t < 0.15).then_some(6000.0), 0.0);
+        let (clock, b) = frames.iter().find(|f| f.1.bursting().is_some()).unwrap();
+        let snake = Snake::through(
+            &[(0.0, 100.0, 80.0), (100.0, 200.0, 40.0)],
+            (0.0, 200.0),
+            10.0,
         );
+        let across = |s: f64| (s * 200.0) as f32;
+        let at = Laid {
+            snake: &snake,
+            ends: (0.0, 200.0),
+            across: &across,
+        };
+        let sprays = sprays(b, &at, 20.0, (*clock, 0.0));
+        assert_eq!(sprays.len(), 4);
+        assert!(sprays[0].at.1 > 70.0 && sprays[3].at.1 < 50.0, "{sprays:?}");
+        assert!(sprays.windows(2).all(|w| w[0].seed != w[1].seed));
     }
 }

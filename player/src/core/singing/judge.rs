@@ -36,6 +36,12 @@ pub fn credit(noted: f64, hit: f64) -> f64 {
     }
 }
 
+/// Whether a word heard on its notes for `noted` frames, `hit` of them
+/// hitting, counts as hit ([`credit`]; none heard: not).
+pub fn counts((noted, hit): (u32, u32)) -> bool {
+    noted > 0 && credit(f64::from(noted), f64::from(hit)) >= 1.0
+}
+
 /// The frames of the singer's pitch the key they sing in is told from (the
 /// last 3 s of them on a note).
 pub const KEY_FRAMES: usize = 300;

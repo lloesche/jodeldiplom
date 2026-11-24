@@ -2,8 +2,9 @@
 //! particles' (every quad of a burst, of a word scored and of a step up:
 //! where, how large, how turned, its colour and how much it shows,
 //! [`sprite`]), the stage's liquid (its bulge and wobble, its overfilling,
-//! the front's waves and slosh, the shimmer, [`super::liquid`]) and a
-//! streak's shine (its rise and collapse, the bands, the swirl, the rim,
+//! the front's waves and slosh, the shimmer, [`super::liquid`]), a tube's
+//! nearest point (how far, where along, which side, [`super::snake`]) and
+//! a streak's shine (its rise and collapse, the bands, the swirl, the rim,
 //! the rainbow, [`super::rainbow`]), each worked out by the shader's own
 //! functions in a compute pass over the shader as the window composes it,
 //! at sample points, against the processor's. Skipped (with a note)
@@ -518,4 +519,56 @@ fn the_stage_shader_s_glory_is_its_reference() {
         shown += usize::from(label.1 > 0.0 && label.1 < 1.0);
     }
     assert!(lit > 50 && shown > 10, "{lit} {shown}");
+}
+
+/// A tube's nearest points at pixels round and along it, past its ends
+/// and out of reach: the shader's `tube_near` as the processor's
+/// [`super::snake::nearest`] (how far, where along, which side).
+#[test]
+fn the_stage_shader_s_tube_is_its_reference() {
+    let Some(gpu) = gpu() else {
+        return;
+    };
+    let notes = [
+        (100.0, 260.0, 300.0),
+        (260.0, 300.0, 220.0),
+        (300.0, 330.0, 260.0),
+        (330.0, 520.0, 180.0),
+    ];
+    let snake = super::snake::Snake::through(&notes, (100.0, 520.0), 22.0);
+    let points = snake.points.iter().map(|&(x, y)| [x, y, 0.0, 0.0]);
+    let n = snake.points.len();
+    let samples: Vec<[f32; 4]> = (0..400)
+        .map(|k| {
+            let f = k as f32;
+            let x = 60.0 + (f * 0.61).fract() * 500.0;
+            let y = 140.0 + (f * 0.37).fract() * 220.0;
+            [x, y, [30.0, 60.0, 8.0][k % 3], 0.0]
+        })
+        .collect();
+    let ins: Vec<[f32; 4]> = points.chain(samples.iter().copied()).collect();
+    let source = format!(
+        "fn path_point(i: u32) -> vec4<f32> {{\n    return ins[i];\n}}\n{}",
+        super::snake::NEAR_WGSL
+    );
+    let body = format!(
+        "
+    let s = ins[{n}u + i];
+    outs[i] = vec4<f32>(tube_near(s.xy, 0u, {n}u, s.z), 0.0);"
+    );
+    let outs = run(&gpu, &source, &body, &ins, (samples.len(), 1));
+    let mut close_by = 0;
+    for (s, g) in samples.iter().zip(&outs) {
+        let (d, along, side) = super::snake::nearest(&snake.points, (s[0], s[1]), s[2]);
+        let what = format!("{s:?}: {g:?} against {:?}", (d, along, side));
+        if d > 1e8 {
+            assert!(g[0] > 1e8, "{what}");
+            continue;
+        }
+        close_by += usize::from(d < 40.0);
+        assert!(near(g[0], d, 2e-3, 1e-4), "{what}: distance");
+        assert!(near(g[1], along, 2e-3, 1e-4), "{what}: along");
+        assert!(near(g[2], side, 2e-3, 1e-4), "{what}: side");
+    }
+    assert!(close_by > 60, "{close_by}");
 }

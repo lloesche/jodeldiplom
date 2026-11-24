@@ -62,7 +62,7 @@ fn sing(s: &mut Singing, share: impl Fn(usize) -> f64, (from, to): (f64, f64)) {
 }
 
 #[test]
-fn a_word_counted_fills_all_its_bubbles_at_once() {
+fn a_word_counted_is_full_at_once_over_all_its_notes() {
     let mut s = song();
     assert_eq!(
         s.notes.lines[0].notes.len(),
@@ -74,22 +74,28 @@ fn a_word_counted_fills_all_its_bubbles_at_once() {
     // at all.
     sing(&mut s, |_| 0.15, (0.0, 4.5));
     let b = line(&s, 0, 4.5);
-    for (k, x) in b.notes.iter().enumerate() {
-        let w = s.notes.lines[0].notes[k].word as f64;
+    assert_eq!(b.words.len(), 4, "one bubble a word");
+    for x in &b.words {
+        let w = x.word as f64;
         assert!(
-            x.full_at.is_some_and(|f| (f - (w + 0.10)).abs() < 1e-6) && x.by_word,
-            "{k}: {x:?}"
+            x.full_at.is_some_and(|f| (f - (w + 0.10)).abs() < 1e-6)
+                && s.rescue_of(0, x.word).is_none(),
+            "{x:?}"
         );
     }
     assert_eq!(b.words[0].notes, 0..2);
     assert_eq!(b.words[0].time, (0.0, 1.0));
-    assert!(b.notes[1].spans.is_empty(), "never sung, full all the same");
+    assert_eq!(
+        b.words[0].covered((0.5, 1.0)),
+        0.0,
+        "never sung, full all the same"
+    );
     assert_eq!(b.words_full(), 4);
     assert_eq!(words_full(&s, 5.0), (4, 4));
 }
 
-/// A word's bubbles are full exactly when the scoring counts the
-/// word hit, at shares about the tenth it asks.
+/// A word's bubble is full exactly when the scoring counts the word hit,
+/// at shares about the tenth it asks.
 #[test]
 fn a_word_is_full_exactly_when_the_scoring_counts_it() {
     let shares = [0.05, 0.08, 0.09, 0.1, 0.11, 0.12, 0.2, 0.0, 0.095, 0.105];
@@ -119,8 +125,10 @@ fn a_word_is_full_exactly_when_the_scoring_counts_it() {
     assert_eq!(scored.len(), shares.len());
     for (w, &(at, hit)) in b.words.iter().zip(&scored) {
         assert_eq!(w.time.1, at);
+        // Those missed alone before one that bursts are rescued (full by
+        // the shot, not by the singing).
         assert_eq!(
-            w.full_at.is_some(),
+            w.full_at.is_some() && s.rescue_of(0, w.word).is_none(),
             hit,
             "word {} ({}): {w:?}",
             w.word,
@@ -135,11 +143,11 @@ fn a_word_is_full_exactly_when_the_scoring_counts_it() {
 #[test]
 fn each_bubble_is_full_once_its_time_fixed_by_the_frames_up_to_it() {
     let mut s = song();
-    let mut fixed: Vec<Option<f64>> = vec![None; 5];
+    let mut fixed: Vec<Option<f64>> = vec![None; 4];
     for i in 0..=450 {
         let t = f64::from(i) / 100.0;
         sing(&mut s, |_| 0.3, (t, t));
-        for (k, x) in line(&s, 0, t).notes.iter().enumerate() {
+        for (k, x) in line(&s, 0, t).words.iter().enumerate() {
             match fixed[k] {
                 Some(a) => assert_eq!(Some(a), x.full_at, "{k} moved at {t}"),
                 None => fixed[k] = x.full_at,
@@ -199,5 +207,5 @@ fn a_seek_back_takes_back_what_was_heard_from_there() {
     sing(&mut s, |_| 1.0, (0.0, 3.0));
     sing(&mut s, |_| 0.0, (0.0, 0.3));
     assert_eq!(s.tally.scored_words, 0);
-    assert!(line(&s, 0, 0.3).notes.iter().all(|x| x.full_at.is_none()));
+    assert!(line(&s, 0, 0.3).words.iter().all(|x| x.full_at.is_none()));
 }

@@ -3,18 +3,19 @@
 //! each is sung on, as high as it goes against the line's middle; those
 //! sung already in the notes' colour, those to come darker; the singer's
 //! pitch along them as a line, sparkles shed behind it and a dot where
-//! they are now. Each bubble's liquid, its strain and its overfilling are
-//! drawn by the GPU over its bar, as the stage's bubbles are
-//! ([`Over`], [`super::stage_gpu::Instance::liquid`]), its burst too
-//! ([`super::particles`]); a bubble that bursts is no longer painted from
-//! the moment it starts to (the picture changes once). Without a GPU
+//! they are now. Each word's bubble's liquid, its strain and its
+//! overfilling are drawn by the GPU over its notes' bars, as the stage's
+//! bubbles are ([`Over`], [`super::stage_gpu::Instance::liquid`]), its
+//! burst too ([`super::particles`]); a word's bars whose bubble bursts are
+//! no longer painted from the moment it starts to (the picture changes
+//! once). Without a GPU
 //! (`Over::gpu` off) the bars are painted filled flat, gold as far as
 //! their level (a paler gold where close), and a bubble burst is simply
 //! gone.
 
-use super::karaoke::{mix, rgb, Rect, Target, NOTES_BOTTOM, NOTES_TOP, NOTE_THICK};
+use super::karaoke::{rgb, NOTES_BOTTOM, NOTES_TOP, NOTE_THICK};
 use super::particles::{Kind, Spray};
-use super::raster::{pack, unpack};
+use super::raster::{mix, pack, unpack, PixelRect, Target};
 use super::sparks::{noise, sparkle};
 use super::stage_gpu::{Instance, Pour, Tint};
 use crate::view::karaoke::{LineKind, LyricLine, HIT, NOTE_AHEAD, SINGER};
@@ -48,7 +49,7 @@ impl SungOp {
             return None;
         }
         // Those burst or bursting are gone from the picture.
-        let begun = |k: usize| line.liquid.iter().any(|b| b.note == k && b.begun());
+        let begun = |k: usize| line.liquid.iter().any(|b| b.has(k) && b.begun());
         let notes = line.notes.iter().enumerate().filter(|&(k, _)| !begun(k));
         let notes = notes
             .map(|(_, n)| {
@@ -128,19 +129,27 @@ impl Over {
             }
         };
         for b in &line.liquid {
-            let (x0, x1) = span(px, (at.0 + x_of(b.from), at.0 + x_of(b.to)));
-            let (y, thick) = bar(px, at.1, b.height);
-            let (c, half) = (
-                ((x0 + x1) / 2.0, y + thick / 2.0),
-                ((x1 - x0) / 2.0, thick / 2.0),
-            );
+            // Each part over its note's bar: where, and how thick.
+            let bars: Vec<((f32, f32), (f32, f32))> = (b.parts.iter())
+                .map(|p| {
+                    let (x0, x1) = span(px, (at.0 + x_of(p.from), at.0 + x_of(p.to)));
+                    let (y, thick) = bar(px, at.1, p.height);
+                    ((x0, x1), (y, thick))
+                })
+                .collect();
+            let Some(&(_, (_, thick))) = bars.first() else {
+                continue;
+            };
             if b.bursting().is_some() {
-                let start = b.pops_at.unwrap_or_default();
+                // All of it at once, from round its bars.
+                let top = bars.iter().map(|(_, y)| y.0).fold(f32::MAX, f32::min);
+                let bottom = bars.iter().map(|(_, y)| y.0 + y.1).fold(f32::MIN, f32::max);
+                let (left, right) = (bars[0].0 .0, bars[bars.len() - 1].0 .1);
                 let tint = tint(HIT, thick);
                 self.sprays.push(Spray {
-                    at: c,
-                    half,
-                    start: start as f32,
+                    at: ((left + right) / 2.0, (top + bottom) / 2.0),
+                    half: ((right - left) / 2.0, (bottom - top) / 2.0),
+                    start: b.pops_at.unwrap_or_default() as f32,
                     drift: 0.0,
                     size: px,
                     seed: b.seed,
@@ -151,16 +160,22 @@ impl Over {
             if !self.gpu || b.torn() {
                 continue;
             }
-            let pour = Pour {
-                span: (x0, x0 + (x1 - x0) * b.level as f32),
-                front: b.level < 1.0,
-                jumped: b.jumped.max(-1e6) as f32,
-                tint: tint(HIT, thick),
-            };
-            // Its ends as square as its bar's.
+            // Its ends as square as its bars'.
             let strain = super::pop::strain(b);
-            self.bubbles
-                .extend(Instance::liquid(c, half, thick * 0.2, &pour, &strain));
+            for (p, &((x0, x1), (y, thick))) in b.parts.iter().zip(&bars) {
+                let (c, half) = (
+                    ((x0 + x1) / 2.0, y + thick / 2.0),
+                    ((x1 - x0) / 2.0, thick / 2.0),
+                );
+                let pour = Pour {
+                    span: (x0, x0 + (x1 - x0) * p.level as f32),
+                    front: p.level < 1.0,
+                    jumped: p.jumped.max(-1e6) as f32,
+                    tint: tint(HIT, thick),
+                };
+                self.bubbles
+                    .extend(Instance::liquid(c, half, thick * 0.2, &pour, &strain));
+            }
         }
         // The bar under the word being sung (the last begun on the line
         // being sung, not burst).
@@ -168,7 +183,7 @@ impl Over {
             return;
         }
         let sung = line.fill as f32 * line.text.chars().count() as f32;
-        let burst = |k: usize| line.liquid.iter().any(|b| b.note == k && b.begun());
+        let burst = |k: usize| line.liquid.iter().any(|b| b.has(k) && b.begun());
         let mut notes = line.notes.iter().enumerate();
         let under = notes.rfind(|(k, n)| n.from <= sung && !burst(*k));
         self.rim = under.map(|(_, n)| {
@@ -196,7 +211,7 @@ pub(super) fn draw(
     px: f32,
     fill_x: f32,
     alpha: f32,
-    clip: Rect,
+    clip: PixelRect,
 ) {
     if alpha <= 0.004 {
         return;

@@ -13,9 +13,11 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use jodeldiplom::core::singing::{Note, Singing};
-use jodeldiplom::gui::karaoke::{paint, Backdrop, BigText, Layer, Target};
+use jodeldiplom::gui::big_text::Faces;
+use jodeldiplom::gui::karaoke::{paint, Backdrop, Layer};
+use jodeldiplom::gui::raster::Target;
 use jodeldiplom::gui::stage::{Song, Stage};
-use jodeldiplom::view::bubbles::Liquid;
+use jodeldiplom::view::bubbles::{Liquid, Part};
 use jodeldiplom::view::karaoke::{KaraokePicture, LineKind, LyricLine};
 use ratatui::layout::Rect;
 
@@ -74,7 +76,7 @@ fn picture(w: usize, h: usize, bursting: bool) -> ((f64, f64), Option<(f64, f64)
         })
         .collect();
     let backdrop = Backdrop::new(None, w, h);
-    let (mut text_big, mut layer) = (BigText::lyrics(), Layer::default());
+    let (mut text_big, mut layer) = (Faces::default(), Layer::default());
     let mut pixels = vec![0u32; w * h];
     let (mut took, mut shown) = (Vec::new(), Vec::new());
     let mut gpu = jodeldiplom::gui::present::Offscreen::new(false).ok();
@@ -90,21 +92,30 @@ fn picture(w: usize, h: usize, bursting: bool) -> ((f64, f64), Option<(f64, f64)
             alpha: 1.0,
             notes: notes.clone(),
             hits: vec![(0.0, text.chars().count() as f32)],
-            // Each bubble bursting, or with its liquid in it (60 %).
+            // Each word's bubble (one a note here) bursting, or with its
+            // liquid in it (60 %).
             liquid: notes
                 .iter()
                 .enumerate()
-                .map(|(k, n)| Liquid {
-                    note: k,
-                    from: n.from,
-                    to: n.to,
-                    time: (n.start, n.end),
-                    height: n.height,
-                    level: if bursting { 1.0 } else { 0.6 },
-                    jumped: f64::NEG_INFINITY,
-                    pops_at: bursting.then_some(f as f64 / 60.0 - f64::from(age) * 0.5),
-                    age: bursting.then_some(f64::from(age) * 0.5),
-                    seed: k as u32,
+                .map(|(k, n)| {
+                    let level = if bursting { 1.0 } else { 0.6 };
+                    Liquid {
+                        word: k,
+                        parts: vec![Part {
+                            note: k,
+                            from: n.from,
+                            to: n.to,
+                            time: (n.start, n.end),
+                            height: n.height,
+                            level,
+                            jumped: f64::NEG_INFINITY,
+                        }],
+                        time: (n.start, n.end),
+                        level,
+                        pops_at: bursting.then_some(f as f64 / 60.0 - f64::from(age) * 0.5),
+                        age: bursting.then_some(f64::from(age) * 0.5),
+                        seed: k as u32,
+                    }
                 })
                 .collect(),
             trail: Vec::new(),
@@ -192,7 +203,7 @@ fn stage(w: usize, h: usize, bursting: bool, shine: bool) -> ((f64, f64), Option
     );
     let mut gpu = jodeldiplom::gui::present::Offscreen::new(false).ok();
     let blank = vec![0u32; w * h];
-    let mut stage = Stage::new();
+    let mut stage = Stage::default();
     let (mut cpu, mut shown) = (Vec::new(), Vec::new());
     let mut heard = 0usize;
     for f in 0..FRAMES {

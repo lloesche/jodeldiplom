@@ -15,8 +15,10 @@ use std::sync::Arc;
 
 use jodeldiplom::core::shine::reference::Original;
 use jodeldiplom::core::singing::{Cue, Singing};
-use jodeldiplom::gui::karaoke::{paint, Backdrop, BigText, Layer, Target};
+use jodeldiplom::gui::big_text::Faces;
+use jodeldiplom::gui::karaoke::{paint, Backdrop, Layer};
 use jodeldiplom::gui::present::Offscreen;
+use jodeldiplom::gui::raster::Target;
 use jodeldiplom::gui::stage::{without_lyrics, Song, Stage};
 use jodeldiplom::view::karaoke::{timed_lines, KaraokePicture};
 use ratatui::layout::Rect;
@@ -117,8 +119,8 @@ fn main() {
     singing.set_reference(Some(Arc::new(reference)));
     let sung: Vec<&jodel_lyrics::Line> = lyrics.lines.iter().collect();
     let mut gpu = Offscreen::new(false).expect("a GPU");
-    let mut stage = Stage::new();
-    let mut big = BigText::lyrics();
+    let mut stage = Stage::default();
+    let mut big = Faces::default();
     let backdrop = Backdrop::new(None, w, h);
     let last = wanted.iter().copied().fold(0.0, f64::max);
     let mut heard = 0usize;

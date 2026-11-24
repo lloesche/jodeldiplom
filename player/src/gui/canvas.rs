@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 
-use crate::gui::raster::{pack, unpack, PixelBackend};
+use crate::gui::raster::{pack, unpack, PixelBackend, PixelRect};
 use image::RgbImage;
 use ratatui::layout::Rect;
 use ratatui::style::Color;
@@ -145,9 +145,9 @@ pub struct Canvas {
     rulers: Vec<KeptRuler>,
     /// The spectrum in the pixmap now.
     spectrum: Option<Plot>,
-    /// Karaoke mode's backdrop, its text, and the picture in the pixmap now.
+    /// Karaoke mode's backdrop, the text drawn large (by face), the picture now.
     backdrop: Option<super::karaoke::Backdrop>,
-    big_text: super::karaoke::BigText,
+    faces: super::big_text::Faces,
     karaoke: Option<KaraokePicture>,
     /// What the picture in the pixmap drew over the backdrop.
     karaoke_layer: super::karaoke::Layer,
@@ -312,9 +312,6 @@ pub struct LayerFrame {
     pub uploads: Vec<(usize, Vec<u32>)>,
 }
 
-/// A rect of pixels: x, y, width, height.
-pub type PixelRect = (usize, usize, usize, usize);
-
 /// The pixels of the pixmap that changed, for a window that keeps a copy
 /// of it (on the GPU) and sends over only those.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -379,10 +376,10 @@ impl Canvas {
             rulers: Vec::new(),
             spectrum: None,
             backdrop: None,
-            big_text: super::karaoke::BigText::lyrics(),
+            faces: super::big_text::Faces::default(),
             karaoke: None,
             karaoke_layer: super::karaoke::Layer::default(),
-            stage: super::stage::Stage::new(),
+            stage: super::stage::Stage::default(),
             staged: None,
             layers: false,
             strip: None,
@@ -958,14 +955,14 @@ impl Canvas {
         };
         let backend = self.terminal.backend_mut();
         let (width, height) = (backend.width, backend.height);
-        let mut target = super::karaoke::Target {
+        let mut target = super::raster::Target {
             pixels: &mut backend.pixmap,
             width,
             height,
         };
         let changed = super::karaoke::paint(
             &mut target,
-            &mut self.big_text,
+            &mut self.faces,
             &mut self.karaoke_layer,
             backdrop,
             picture,
@@ -1367,7 +1364,7 @@ impl Canvas {
         // The words over the columns just painted (each is painted whole
         // or not at all).
         if let Some(row) = row {
-            let big = &mut self.big_text;
+            let big = self.faces.get(super::big_text::Face::Lyrics);
             let text_px = self.font_px * text as f32;
             let backend = self.terminal.backend_mut();
             let y = y0 + row;
@@ -1393,12 +1390,12 @@ impl Canvas {
             let target_size = (backend.width, backend.height);
             let clip_rect = (x0, y0, w, h);
             let draw_run = |backend: &mut crate::gui::raster::PixelBackend,
-                            big: &mut super::karaoke::BigText,
+                            big: &mut super::big_text::BigText,
                             (x, y): (f64, usize),
                             run: &str,
                             size: f32,
                             fg: [u8; 3]| {
-                let mut target = super::karaoke::Target {
+                let mut target = super::raster::Target {
                     pixels: &mut backend.pixmap,
                     width: target_size.0,
                     height: target_size.1,

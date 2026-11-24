@@ -2,16 +2,12 @@
 //! dark layer, the lyrics in large type over it, filling as they are sung,
 //! and the count-in's numbers shrinking and fading on their beats.
 
-use std::collections::HashMap;
-use std::sync::Arc;
-
-use ab_glyph::{Font, FontRef, PxScale, ScaleFont};
 use image::imageops::{self, FilterType};
 use image::RgbImage;
 
-use super::fonts;
+use super::big_text::{BigText, Face, Faces};
 use super::notes::SungOp;
-use super::raster::{pack, unpack};
+use super::raster::{mix, pack, union, unpack, PixelRect, Target};
 use crate::art::Art;
 use crate::view::colors;
 use crate::view::karaoke::{line_color, KaraokePicture, LineKind, LyricLine, HIT};
@@ -132,282 +128,6 @@ pub(super) fn rgb(color: ratatui::style::Color) -> [u8; 3] {
     }
 }
 
-pub(super) fn mix(a: [u8; 3], b: [u8; 3], t: f32) -> [u8; 3] {
-    let t = t.clamp(0.0, 1.0);
-    [0, 1, 2].map(|i| (f32::from(a[i]) * (1.0 - t) + f32::from(b[i]) * t).round() as u8)
-}
-
-/// The pixels round text made for the atlas ([`BigText::coverage`]).
-pub const COVER_PAD: usize = 2;
-
-/// One glyph at one size: its coverage and where it sits from the pen.
-struct Glyph {
-    left: i32,
-    top: i32,
-    width: usize,
-    height: usize,
-    coverage: Vec<u8>,
-    advance: f32,
-}
-
-/// Text at any size, glyphs kept per character and size: in the main font,
-/// or (made with [`BigText::lyrics`]) in the lyrics font where there is one
-/// ([`fonts::lyrics_font`]), the main font for what it lacks.
-#[derive(Default)]
-pub struct BigText {
-    glyphs: HashMap<(char, u32), Option<Arc<Glyph>>>,
-    lyrics: bool,
-}
-
-/// Where to draw into: the pixmap, its width and height.
-pub struct Target<'a> {
-    /// `0x00RRGGBB` words, row by row.
-    pub pixels: &'a mut [u32],
-    /// Its width.
-    pub width: usize,
-    /// Its height.
-    pub height: usize,
-}
-
-impl BigText {
-    /// Text in the lyrics font.
-    pub fn lyrics() -> BigText {
-        BigText {
-            glyphs: HashMap::new(),
-            lyrics: true,
-        }
-    }
-
-    fn main_font() -> Option<FontRef<'static>> {
-        FontRef::try_from_slice(fonts::main_font()).ok()
-    }
-
-    fn lyrics_font() -> Option<FontRef<'static>> {
-        fonts::lyrics_font().and_then(|data| FontRef::try_from_slice(data).ok())
-    }
-
-    fn glyph(&mut self, c: char, px: f32) -> Option<Arc<Glyph>> {
-        let key = (c, px.round() as u32);
-        if let Some(g) = self.glyphs.get(&key) {
-            return g.clone();
-        }
-        let lyrics = self
-            .lyrics
-            .then(Self::lyrics_font)
-            .flatten()
-            .filter(|f| f.glyph_id(c).0 != 0);
-        let font = lyrics
-            .or_else(|| Self::main_font().filter(|f| f.glyph_id(c).0 != 0))
-            .or_else(|| fonts::font_for(c))
-            .or_else(Self::main_font);
-        let glyph = font.map(|font| {
-            let scale = PxScale::from(px);
-            let scaled = font.as_scaled(scale);
-            let id = font.glyph_id(c);
-            let advance = scaled.h_advance(id);
-            let ascent = scaled.ascent();
-            let g = id.with_scale_and_position(scale, ab_glyph::point(0.0, ascent));
-            match font.outline_glyph(g) {
-                Some(outline) => {
-                    let bounds = outline.px_bounds();
-                    let (width, height) = (bounds.width() as usize, bounds.height() as usize);
-                    let mut coverage = vec![0u8; width * height];
-                    outline.draw(|x, y, v| {
-                        let (x, y) = (x as usize, y as usize);
-                        if x < width && y < height {
-                            coverage[y * width + x] = (v.clamp(0.0, 1.0) * 255.0).round() as u8;
-                        }
-                    });
-                    Arc::new(Glyph {
-                        left: bounds.min.x as i32,
-                        top: bounds.min.y as i32,
-                        width,
-                        height,
-                        coverage,
-                        advance,
-                    })
-                }
-                // A space: nothing to draw, only its advance.
-                None => Arc::new(Glyph {
-                    left: 0,
-                    top: 0,
-                    width: 0,
-                    height: 0,
-                    coverage: Vec::new(),
-                    advance,
-                }),
-            }
-        });
-        self.glyphs.insert(key, glyph.clone());
-        // Sizes change with the screen: keep the cache from growing.
-        if self.glyphs.len() > 4096 {
-            self.glyphs.clear();
-        }
-        glyph
-    }
-
-    /// The width of `text` at `px`.
-    pub fn measure(&mut self, text: &str, px: f32) -> f32 {
-        self.measure_from(text, px, px)
-    }
-
-    /// `text` at `px` as coverage (0 to 255), row by row, for the GPU's
-    /// atlas: [`COVER_PAD`] pixels round it, its line's top [`COVER_PAD`]
-    /// down. Returns its width, height and coverage.
-    pub fn coverage(&mut self, text: &str, px: f32) -> (usize, usize, Vec<u8>) {
-        let w = self.measure(text, px).ceil().max(0.0) as usize + 2 * COVER_PAD;
-        let h = (px * 1.3).ceil().max(1.0) as usize + 2 * COVER_PAD;
-        let mut out = vec![0u8; w * h];
-        let mut pen = COVER_PAD as f32;
-        for c in text.chars() {
-            let Some(g) = self.glyph(c, px) else {
-                continue;
-            };
-            for gy in 0..g.height {
-                let ty = COVER_PAD as i32 + g.top + gy as i32;
-                if ty < 0 || ty >= h as i32 {
-                    continue;
-                }
-                for gx in 0..g.width {
-                    let tx = pen.floor() as i32 + g.left + gx as i32;
-                    if tx < 0 || tx >= w as i32 {
-                        continue;
-                    }
-                    let at = ty as usize * w + tx as usize;
-                    out[at] = out[at].max(g.coverage[gy * g.width + gx]);
-                }
-            }
-            pen += g.advance;
-        }
-        (w, h, out)
-    }
-
-    /// The width of `text` at `px`, its glyphs made at `base`.
-    fn measure_from(&mut self, text: &str, base: f32, px: f32) -> f32 {
-        let scale = px / base.max(1.0);
-        let sum: f32 = text
-            .chars()
-            .map(|c| self.glyph(c, base).map_or(0.0, |g| g.advance))
-            .sum();
-        sum * scale
-    }
-
-    /// Draws `text` at `px` with its top-left at `x`, `y`: left of `fill_x`
-    /// in `sung`, right of it in `rest`, at `alpha`. The glyphs are made at
-    /// `base` and scaled to `px`, so a size that changes from frame to
-    /// frame (the count-in shrinking, a line moving into its place) makes
-    /// no new glyphs. Only the pixels in `clip` are drawn. Returns the
-    /// pixels it covered.
-    #[allow(clippy::too_many_arguments)]
-    pub fn draw(
-        &mut self,
-        target: &mut Target,
-        text: &str,
-        base: f32,
-        px: f32,
-        (x, y): (f32, f32),
-        fill_x: f32,
-        colors: ([u8; 3], [u8; 3]),
-        alpha: f32,
-        clip: Rect,
-    ) -> Option<Rect> {
-        let (cx0, cy0) = (clip.0, clip.1);
-        let cx1 = (clip.0 + clip.2).min(target.width);
-        let cy1 = (clip.1 + clip.3).min(target.height);
-        let scale = px / base.max(1.0);
-        let exact = (scale - 1.0).abs() < 1e-3;
-        let mut pen = x;
-        let mut covered: Option<Rect> = None;
-        let mut put = |target: &mut Target, tx: usize, ty: usize, a: f32| {
-            let color = if (tx as f32) < fill_x {
-                colors.0
-            } else {
-                colors.1
-            };
-            let i = ty * target.width + tx;
-            target.pixels[i] = pack(mix(unpack(target.pixels[i]), color, alpha * a));
-            covered = Some(union(covered, (tx, ty, 1, 1)));
-        };
-        for c in text.chars() {
-            let Some(g) = self.glyph(c, base) else {
-                continue;
-            };
-            if exact {
-                for gy in 0..g.height {
-                    let ty = y.floor() as i32 + g.top + gy as i32;
-                    if ty < cy0 as i32 || ty >= cy1 as i32 {
-                        continue;
-                    }
-                    for gx in 0..g.width {
-                        let a = g.coverage[gy * g.width + gx];
-                        let tx = pen.floor() as i32 + g.left + gx as i32;
-                        if a == 0 || tx < cx0 as i32 || tx >= cx1 as i32 {
-                            continue;
-                        }
-                        put(target, tx as usize, ty as usize, f32::from(a) / 255.0);
-                    }
-                }
-            } else {
-                // Each pixel of the scaled glyph read from the glyph made
-                // at `base`, between its four nearest coverage values.
-                let (left, top) = (pen + g.left as f32 * scale, y + g.top as f32 * scale);
-                let (w, h) = (g.width as f32 * scale, g.height as f32 * scale);
-                let x0 = (left.floor().max(0.0) as usize).max(cx0);
-                let y0 = (top.floor().max(0.0) as usize).max(cy0);
-                let x1 = ((left + w).ceil().max(0.0) as usize).min(cx1);
-                let y1 = ((top + h).ceil().max(0.0) as usize).min(cy1);
-                for ty in y0..y1 {
-                    let v = (ty as f32 + 0.5 - top) / scale - 0.5;
-                    for tx in x0..x1 {
-                        let u = (tx as f32 + 0.5 - left) / scale - 0.5;
-                        let a = g.sample(u, v);
-                        if a > 0.5 {
-                            put(target, tx, ty, a / 255.0);
-                        }
-                    }
-                }
-            }
-            pen += g.advance * scale;
-        }
-        covered
-    }
-}
-
-impl Glyph {
-    /// The coverage at (`u`, `v`) in the glyph's pixels, 0 to 255, between
-    /// the four nearest; nothing outside.
-    fn sample(&self, u: f32, v: f32) -> f32 {
-        let (fx, fy) = (u.floor(), v.floor());
-        let (tx, ty) = (u - fx, v - fy);
-        let (x, y) = (fx as i64, fy as i64);
-        let at = |x: i64, y: i64| -> f32 {
-            if x < 0 || y < 0 || x >= self.width as i64 || y >= self.height as i64 {
-                0.0
-            } else {
-                f32::from(self.coverage[y as usize * self.width + x as usize])
-            }
-        };
-        let top = at(x, y) * (1.0 - tx) + at(x + 1, y) * tx;
-        let bottom = at(x, y + 1) * (1.0 - tx) + at(x + 1, y + 1) * tx;
-        top * (1.0 - ty) + bottom * ty
-    }
-}
-
-/// A rect of pixels: x, y, width, height.
-pub type Rect = (usize, usize, usize, usize);
-
-/// The rect around `a` (if any) and `b`.
-pub fn union(a: Option<Rect>, b: Rect) -> Rect {
-    match a {
-        None => b,
-        Some((x, y, w, h)) => {
-            let (x0, y0) = (x.min(b.0), y.min(b.1));
-            let (x1, y1) = ((x + w).max(b.0 + b.2), (y + h).max(b.1 + b.3));
-            (x0, y0, x1 - x0, y1 - y0)
-        }
-    }
-}
-
 /// The size glyphs of `px` are made at: their own up to 200 px (lines of
 /// lyrics, a few sizes each), else the next of steps a quarter apart
 /// (the count-in's numbers, shrinking every frame), scaled down from it.
@@ -515,6 +235,7 @@ fn lerp(a: f32, b: f32, t: f32) -> f32 {
 #[derive(Clone, Debug, PartialEq)]
 struct TextOp {
     text: String,
+    face: Face,
     base: f32,
     px: f32,
     at: (f32, f32),
@@ -528,7 +249,7 @@ struct TextOp {
 impl TextOp {
     /// The pixels it may cover (a little more than its glyphs), within
     /// `bounds`.
-    fn rect(&self, width: f32, bounds: Rect) -> Rect {
+    fn rect(&self, width: f32, bounds: PixelRect) -> PixelRect {
         let pad = self.px * 0.25 + 2.0;
         let x0 = (self.at.0 - pad).max(bounds.0 as f32);
         let y0 = (self.at.1 - pad).max(bounds.1 as f32);
@@ -557,20 +278,20 @@ impl TextOp {
 /// liquid, with a GPU, and their bursts), as last painted.
 #[derive(Default)]
 pub struct Layer {
-    drawn: Vec<(TextOp, Rect)>,
+    drawn: Vec<(TextOp, PixelRect)>,
     /// What the GPU draws over the picture; whether there is one to (set
     /// it before painting: the bars' fill is painted only without).
     pub over: super::notes::Over,
 }
 
 /// Where `a` and `b` meet, if they do.
-fn intersect(a: Rect, b: Rect) -> Option<Rect> {
+fn intersect(a: PixelRect, b: PixelRect) -> Option<PixelRect> {
     let (x0, y0) = (a.0.max(b.0), a.1.max(b.1));
     let (x1, y1) = ((a.0 + a.2).min(b.0 + b.2), (a.1 + a.3).min(b.1 + b.3));
     (x1 > x0 && y1 > y0).then(|| (x0, y0, x1 - x0, y1 - y0))
 }
 
-fn overlaps(a: Rect, b: Rect) -> bool {
+fn overlaps(a: PixelRect, b: PixelRect) -> bool {
     a.2 > 0
         && a.3 > 0
         && b.2 > 0
@@ -582,37 +303,39 @@ fn overlaps(a: Rect, b: Rect) -> bool {
 }
 
 /// Paints `picture` (its area in pixels: `area`) into `target` over the
-/// backdrop; the controls' bar (pixels) darker still. `full`: the whole
-/// area afresh; otherwise only the text that changed since `layer`'s last
-/// frame, the backdrop put back under it. Returns the pixels changed.
+/// backdrop, its text in Karaoke mode's faces (`faces`: [`Face::LINE`],
+/// the score and the count-in [`Face::NUMBER`] and [`Face::SHOUT`]); the
+/// controls' bar (pixels) darker still. `full`: the whole area afresh;
+/// otherwise only the text that changed since `layer`'s last frame, the
+/// backdrop put back under it. Returns the pixels changed.
 #[allow(clippy::too_many_arguments)]
 pub fn paint(
     target: &mut Target,
-    text: &mut BigText,
+    faces: &mut Faces,
     layer: &mut Layer,
     backdrop: &Backdrop,
     picture: &KaraokePicture,
-    area: Rect,
-    bar: Option<Rect>,
+    area: PixelRect,
+    bar: Option<PixelRect>,
     full: bool,
-) -> Vec<Rect> {
+) -> Vec<PixelRect> {
     let (ax, ay, aw, ah) = area;
     // The lyrics, centred on the whole screen (the controls never move
     // them), and drawn only above the controls' bar while it shows over
     // them.
     let room = bar.map_or(ah, |(_, by, _, _)| by.saturating_sub(ay));
     let lyrics = (ax, ay, aw, room);
-    let (ops, over) = text_ops(text, picture, (area, ah), layer.over.gpu);
+    let (ops, over) = text_ops(faces, picture, (area, ah), layer.over.gpu);
     layer.over = over;
-    let now: Vec<(TextOp, Rect)> = ops
+    let now: Vec<(TextOp, PixelRect)> = ops
         .into_iter()
         .map(|op| {
-            let w = text.measure_from(&op.text, op.base, op.px);
+            let w = faces.get(op.face).measure_from(&op.text, op.base, op.px);
             let rect = op.rect(w, lyrics);
             (op, rect)
         })
         .collect();
-    let put_back = |target: &mut Target, (rx, ry, rw, rh): Rect| {
+    let put_back = |target: &mut Target, (rx, ry, rw, rh): PixelRect| {
         // Within the area and the backdrop.
         let x0 = rx.max(ax);
         let x1 = (rx + rw)
@@ -631,20 +354,22 @@ pub fn paint(
                 .copy_from_slice(&backdrop.pixels[from..from + (x1 - x0)]);
         }
     };
-    let draw_in = |target: &mut Target, text: &mut BigText, ops: &[(TextOp, Rect)], clip: Rect| {
-        for (op, rect) in ops {
-            // Only within what the op may cover, so a frame drawn where it
-            // changed is the frame drawn afresh.
-            if let Some(clip) = intersect(*rect, clip) {
-                text.draw(
-                    target, &op.text, op.base, op.px, op.at, op.fill_x, op.colors, op.alpha, clip,
-                );
-                if let Some(sung) = &op.sung {
-                    super::notes::draw(target, sung, op.at, op.px, op.fill_x, op.alpha, clip);
+    let draw_in =
+        |target: &mut Target, faces: &mut Faces, ops: &[(TextOp, PixelRect)], clip: PixelRect| {
+            for (op, rect) in ops {
+                // Only within what the op may cover, so a frame drawn where it
+                // changed is the frame drawn afresh.
+                if let Some(clip) = intersect(*rect, clip) {
+                    faces.get(op.face).draw(
+                        target, &op.text, op.base, op.px, op.at, op.fill_x, op.colors, op.alpha,
+                        clip,
+                    );
+                    if let Some(sung) = &op.sung {
+                        super::notes::draw(target, sung, op.at, op.px, op.fill_x, op.alpha, clip);
+                    }
                 }
             }
-        }
-    };
+        };
     let changed = if full {
         put_back(target, area);
         if let Some((bx, by, bw, bh)) = bar {
@@ -655,13 +380,13 @@ pub fn paint(
                 }
             }
         }
-        draw_in(target, text, &now, lyrics);
+        draw_in(target, faces, &now, lyrics);
         vec![area]
     } else {
         // The pieces that differ from last frame's at the same place in
         // the list (or are new, or gone): where they were and are.
         let n = now.len().max(layer.drawn.len());
-        let mut dirty: Vec<Rect> = Vec::new();
+        let mut dirty: Vec<PixelRect> = Vec::new();
         for k in 0..n {
             let (old, new) = (layer.drawn.get(k), now.get(k));
             if old.map(|o| &o.0) == new.map(|n| &n.0) {
@@ -674,7 +399,7 @@ pub fn paint(
             }
         }
         // Overlapping ones as one, so nothing is drawn twice.
-        let mut merged: Vec<Rect> = Vec::new();
+        let mut merged: Vec<PixelRect> = Vec::new();
         for rect in dirty {
             let mut rect = rect;
             while let Some(i) = merged.iter().position(|&m| overlaps(m, rect)) {
@@ -684,7 +409,7 @@ pub fn paint(
         }
         for &rect in &merged {
             put_back(target, rect);
-            draw_in(target, text, &now, rect);
+            draw_in(target, faces, &now, rect);
         }
         merged
     };
@@ -696,9 +421,9 @@ pub fn paint(
 /// while they scroll) and the count-in's number; what the GPU draws over
 /// them (with one, `gpu`).
 fn text_ops(
-    text: &mut BigText,
+    faces: &mut Faces,
     picture: &KaraokePicture,
-    (area, room): (Rect, usize),
+    (area, room): (PixelRect, usize),
     gpu: bool,
 ) -> (Vec<TextOp>, super::notes::Over) {
     let (ax, ay, aw, ah) = area;
@@ -733,6 +458,7 @@ fn text_ops(
             let sung = SungOp::of(line, slot.px, gpu, |c| x_of(text, c));
             ops.push(TextOp {
                 text: line.text.clone(),
+                face: text.face(),
                 base,
                 px: slot.px,
                 at: (x, slot.y),
@@ -746,10 +472,10 @@ fn text_ops(
         LineKind::Previous => 0.5,
         _ => 1.0,
     };
-    let now = slots(text, &picture.lines, aw, ay, room, big);
+    let now = slots(faces.get(Face::LINE), &picture.lines, aw, ay, room, big);
     let moving = picture.moved < 1.0 && !picture.before.is_empty();
     let then = if moving {
-        slots(text, &picture.before, aw, ay, room, big)
+        slots(faces.get(Face::LINE), &picture.before, aw, ay, room, big)
     } else {
         Vec::new()
     };
@@ -766,7 +492,14 @@ fn text_ops(
             })
             .flatten();
         match (moving, was) {
-            (false, _) => line_op(text, line, slot.px, slot, rest, faded(line.kind)),
+            (false, _) => line_op(
+                faces.get(Face::LINE),
+                line,
+                slot.px,
+                slot,
+                rest,
+                faded(line.kind),
+            ),
             // From where it was to where it goes, its size and colour too;
             // its glyphs made at the larger size, scaled down.
             (true, Some(j)) => {
@@ -778,7 +511,14 @@ fn text_ops(
                 let kind = picture.before[j].kind;
                 let color = mix(rgb(line_color(kind)), rest, m);
                 let alpha = lerp(faded(kind), faded(line.kind), m);
-                line_op(text, line, old.px.max(slot.px), at, color, alpha);
+                line_op(
+                    faces.get(Face::LINE),
+                    line,
+                    old.px.max(slot.px),
+                    at,
+                    color,
+                    alpha,
+                );
             }
             // New: rising into its place as it fades in.
             (true, None) => {
@@ -786,7 +526,14 @@ fn text_ops(
                     y: slot.y + (1.0 - m) * gap(slot.px) * 0.5,
                     ..slot
                 };
-                line_op(text, line, slot.px, at, rest, faded(line.kind) * m);
+                line_op(
+                    faces.get(Face::LINE),
+                    line,
+                    slot.px,
+                    at,
+                    rest,
+                    faded(line.kind) * m,
+                );
             }
         }
     }
@@ -801,7 +548,14 @@ fn text_ops(
                     ..old
                 };
                 let rest = rgb(line_color(gone.kind));
-                line_op(text, gone, old.px, at, rest, faded(gone.kind) * (1.0 - m));
+                line_op(
+                    faces.get(Face::LINE),
+                    gone,
+                    old.px,
+                    at,
+                    rest,
+                    faded(gone.kind) * (1.0 - m),
+                );
             }
         }
     }
@@ -809,10 +563,11 @@ fn text_ops(
     if let Some(score) = picture.score {
         let px = (big * 0.42).round().max(12.0);
         let points = crate::view::karaoke::points_text(score.points);
-        let w = text.measure_from(&points, px, px);
+        let w = faces.get(Face::NUMBER).measure_from(&points, px, px);
         let margin = px * 0.8;
         ops.push(TextOp {
             text: points,
+            face: Face::NUMBER,
             base: px,
             px,
             at: (ax as f32 + aw as f32 - margin - w, ay as f32 + margin * 0.6),
@@ -828,9 +583,10 @@ fn text_ops(
         let under: Vec<String> = tier.into_iter().chain(times).collect();
         if !under.is_empty() {
             let times = under.join(" · ");
-            let lw = text.measure_from(&times, small, small);
+            let lw = faces.get(Face::SHOUT).measure_from(&times, small, small);
             ops.push(TextOp {
                 text: times,
+                face: Face::SHOUT,
                 base: small,
                 px: small,
                 at: (
@@ -860,9 +616,10 @@ fn text_ops(
         let px = most * (1.0 - 0.4 * shrink);
         let base = base_size(px);
         let digit = n.to_string();
-        let w = text.measure_from(&digit, base, px);
+        let w = faces.get(Face::SHOUT).measure_from(&digit, base, px);
         ops.push(TextOp {
             text: digit,
+            face: Face::SHOUT,
             base,
             px,
             at: (
@@ -880,6 +637,7 @@ fn text_ops(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
 
     #[test]
     fn the_backdrop_fills_the_screen_shaded() {
@@ -942,13 +700,13 @@ mod tests {
     #[test]
     fn the_break_count_stays_put_while_the_lines_move() {
         use crate::view::karaoke::Cue;
-        let mut text = BigText::default();
+        let mut text = Faces::default();
         let cue = Some(Cue {
             number: 3,
             through: 0.2,
             line: 1,
         });
-        let digit_at = |text: &mut BigText, p: KaraokePicture| {
+        let digit_at = |text: &mut Faces, p: KaraokePicture| {
             let ops = text_ops(text, &p, ((0, 0, 640, 360), 360), false).0;
             let digit: Vec<&TextOp> = ops.iter().filter(|o| o.text == "3").collect();
             assert_eq!(digit.len(), 1);
@@ -1045,7 +803,7 @@ mod tests {
             frames.push(p);
         }
         frames.push(picture(vec![a(), b(0.5), c()], Vec::new(), 1.0));
-        let mut text = BigText::default();
+        let mut text = Faces::default();
         let mut layer = Layer::default();
         let mut kept = vec![0u32; w * h];
         for (k, frame) in frames.iter().enumerate() {
@@ -1077,7 +835,7 @@ mod tests {
             };
             paint(
                 &mut target,
-                &mut BigText::default(),
+                &mut Faces::default(),
                 &mut Layer::default(),
                 &backdrop,
                 frame,
@@ -1103,7 +861,7 @@ mod tests {
                 lyric("after it", 0.0, LineKind::Next, 2),
             ]
         };
-        let mut text = BigText::default();
+        let mut text = Faces::default();
         let mut layer = Layer::default();
         let mut pixels = vec![0u32; w * h];
         let mut target = Target {

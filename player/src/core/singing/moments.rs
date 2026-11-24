@@ -1,8 +1,9 @@
 //! The singing's moments: one stream of what happened, as plain data for
 //! whatever follows the game (the sounds, the stage, the result). Each
-//! word scored, a bubble bursting and its liquid splashing out, the
-//! streak up a multiplier or lost, each phrase's tier decided; in the
-//! order they were decided, each at the time of the singing it happens
+//! word scored, a bubble bursting and its liquid splashing out, a shot
+//! rescuing a word missed, the streak up a multiplier or lost, each
+//! phrase's tier decided; in the order they were decided, each at the
+//! time of the singing it happens
 //! ([`Moment::at`]: a bubble bursts a sweep after it is full) and the frame
 //! that decided it ([`Moment::decided`]). Sought back, those decided from
 //! there on are taken back (and decided again as the frames come again);
@@ -10,6 +11,7 @@
 //! [`Cursor`] ([`super::Singing::moments_since`]), told when what it read
 //! was taken back.
 
+use super::bursts::Index;
 use crate::core::shine::Shone;
 
 /// What happened.
@@ -24,36 +26,28 @@ pub enum Cue {
         /// The streak after it.
         streak: u32,
     },
-    /// A note's bubble bursts (full, swept to full): its line and note,
-    /// how high its note is (-1 to 1) and where along its line it is (0
-    /// its start, 1 its end), and the bubbles bursting with it (full on
-    /// the same frame): its place among them, in their order on the lines,
-    /// and how many there are.
-    Pop {
-        /// Its line.
-        line: usize,
-        /// Its note on the line.
-        note: usize,
-        /// How high.
-        height: f32,
-        /// Where along the line.
-        across: f32,
-        /// Its place among the bubbles bursting together, and their count.
-        burst: (usize, usize),
-    },
+    /// A word's bubble bursts (full, swept to full): its line and word,
+    /// how high its notes are (-1 to 1, their mean over their time) and
+    /// where along its line it is (0 its start, 1 its end), the bubbles
+    /// bursting with it (full on the same frame): its place among them, in
+    /// their order on the lines, and how many there are. One a shot
+    /// rescued has that shot before it ([`Cue::Shot`] to it).
+    Pop(Burst),
     /// Its liquid splashing out as it tears, a bulge after it bursts
     /// ([`crate::core::bubbles::SWELL`]); as [`Cue::Pop`].
-    Splash {
-        /// Its line.
-        line: usize,
-        /// Its note on the line.
-        note: usize,
-        /// How high.
-        height: f32,
-        /// Where along the line.
+    Splash(Burst),
+    /// A shot fired by a bubble bursting (`from`: its line and word) at
+    /// the single word missed before it (`to`), rescuing it: it lands
+    /// [`crate::core::bubbles::FLIGHT`] after it is fired (the moment's
+    /// time), the word filling and bursting as if sung; `across` where the
+    /// bubble firing it is along its line (0 to 1).
+    Shot {
+        /// The bubble firing it: line, word.
+        from: (usize, usize),
+        /// The bubble it rescues: line, word.
+        to: (usize, usize),
+        /// Where the bubble firing it is along its line.
         across: f32,
-        /// Its place among the bubbles bursting together, and their count.
-        burst: (usize, usize),
     },
     /// The streak up to a level (1: ×2, up to 3: ×4).
     StreakUp(u32),
@@ -61,6 +55,21 @@ pub enum Cue {
     StreakLost,
     /// A phrase's shine and tier decided.
     Phrase(Shone),
+}
+
+/// A bubble bursting, as [`Cue::Pop`] and [`Cue::Splash`] tell it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Burst {
+    /// Its line.
+    pub line: usize,
+    /// Its word on the line.
+    pub word: usize,
+    /// How high.
+    pub height: f32,
+    /// Where along the line.
+    pub across: f32,
+    /// Its place among the bubbles bursting together, and their count.
+    pub burst: (usize, usize),
 }
 
 /// A moment: when it happens (the singing's time, seconds), the frame
@@ -94,10 +103,12 @@ pub struct Since<'a> {
     pub sought: bool,
 }
 
-/// The stream as [`super::Singing`] keeps it.
+/// The stream as [`super::Singing`] keeps it, and what it tells of the
+/// bubbles ([`Index`]): the one place either is written.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(super) struct Log {
     moments: Vec<Moment>,
+    index: Index,
     /// The run (one more each time moments are taken back), and the last
     /// cuts: the run each began, and how many moments were kept then.
     run: u64,
@@ -109,15 +120,26 @@ const CUTS: usize = 64;
 
 impl Log {
     pub(super) fn push(&mut self, at: f64, decided: f64, cue: Cue) {
-        self.moments.push(Moment { at, decided, cue });
+        let moment = Moment { at, decided, cue };
+        self.index.add(&moment);
+        self.moments.push(moment);
     }
 
     pub(super) fn all(&self) -> &[Moment] {
         &self.moments
     }
 
+    /// What its moments tell of the bubbles.
+    pub(super) fn index(&self) -> &Index {
+        &self.index
+    }
+
     fn cut(&mut self, keep: usize) {
         self.moments.truncate(keep);
+        self.index = Index::default();
+        for m in &self.moments {
+            self.index.add(m);
+        }
         self.run += 1;
         self.cuts.push_back((self.run, keep));
         if self.cuts.len() > CUTS {

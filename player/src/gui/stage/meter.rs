@@ -11,7 +11,7 @@
 //! shines. The processor gives the GPU only where each is and when it
 //! changed ([`crate::gui::glory`], [`crate::gui::fanfare`]).
 
-use super::{rgba, Lane, Stage, BREAK, GOLD, PROGRESS, WHITE};
+use super::{rgba, Face, Lane, Stage, BREAK, GOLD, PROGRESS, WHITE};
 use crate::core::shine::{Shone, Tier};
 use crate::core::singing::{Cue, Singing};
 use crate::gui::fanfare;
@@ -83,7 +83,11 @@ fn sung_so_far(singing: &Singing, clock: f64) -> Option<f32> {
         .iter()
         .rev()
         .take_while(|m| m.at >= start)
-        .filter(|m| matches!(m.cue, Cue::Word { end, hit: true, .. } if end >= start))
+        .filter(|m| match m.cue {
+            Cue::Word { end, hit, .. } => hit && end >= start,
+            Cue::Shot { to, .. } => to.0 == line,
+            _ => false,
+        })
         .count();
     Some(hit as f32 / words as f32)
 }
@@ -246,9 +250,9 @@ impl Stage {
         };
         let label = format!("{}!", tier.name());
         let px = (h * 0.07).round().clamp(18.0, 140.0);
-        let tw = self.text.measure(&label, px);
+        let tw = self.measure(Face::SHOUT, &label, px);
         // Over the meter, its middle on the meter's.
-        let ty = my - self.cap_middle(px) + super::COVER_PAD as f32;
+        let ty = my - self.cap_middle(Face::SHOUT, px) + super::COVER_PAD as f32;
         let c = tier_color(Some(tier));
         // On a badge of its own over the meter, ringed in the tier's colour,
         // over the light (its bloom would wash it out); both popping round
@@ -267,13 +271,12 @@ impl Stage {
         });
         let text = self.text(
             &mut d.top,
+            Face::SHOUT,
             &label,
-            px,
-            1.0,
+            (px, 1.0),
             (mx - tw / 2.0, ty),
             f32::NEG_INFINITY,
-            rgba(c, 1.0),
-            rgba(c, 1.0),
+            (rgba(c, 1.0), rgba(c, 1.0)),
         );
         if let Some(text) = text {
             text.shape = [mx, my, t, VERDICT];
@@ -404,17 +407,16 @@ impl Stage {
         );
         ring.strain = [shine.level, shine.from, shine.since, 0.0];
         d.out.push(ring);
-        let tw = self.text.measure(&label, px);
-        let ty = rc.1 - self.cap_middle(px) + super::COVER_PAD as f32;
+        let tw = self.measure(Face::NUMBER, &label, px);
+        let ty = rc.1 - self.cap_middle(Face::NUMBER, px) + super::COVER_PAD as f32;
         self.text(
             &mut d.out,
+            Face::NUMBER,
             &label,
-            px,
-            1.0,
+            (px, 1.0),
             (rc.0 - tw / 2.0, ty),
             f32::NEG_INFINITY,
-            rgba(WHITE, 0.9),
-            rgba(WHITE, 0.9),
+            (rgba(WHITE, 0.9), rgba(WHITE, 0.9)),
         );
     }
 }

@@ -42,6 +42,16 @@ impl LineNotes {
     pub fn height(&self, cents: f64) -> f32 {
         ((cents - self.mid) / self.range.max(1.0)).clamp(-1.0, 1.0) as f32
     }
+
+    /// How high its notes `notes` are together: their heights' mean over
+    /// their time (0 for none).
+    pub fn word_height(&self, notes: std::ops::Range<usize>) -> f32 {
+        let notes = self.notes.get(notes).unwrap_or_default();
+        let long = |n: &Note| (n.end - n.start).max(1e-3);
+        let time: f64 = notes.iter().map(long).sum();
+        let sum: f64 = notes.iter().map(|n| f64::from(n.height) * long(n)).sum();
+        (sum / time.max(1e-9)) as f32
+    }
 }
 
 /// The least range, in hundredths of a semitone, a line's notes are spread
@@ -140,6 +150,8 @@ pub fn notes_of(line: &jodel_lyrics::Line, melody: &Melody) -> LineNotes {
             last.0.to = at + n;
             last.0.end = we;
         }
+        // So a word's notes lie end to end, in order, none overlapping
+        // another (what a word's bubble drawn through them counts on).
         for i in 1..own.len() {
             own[i - 1].0.to = own[i].0.from;
             own[i - 1].0.end = own[i].0.start;
@@ -252,6 +264,8 @@ pub struct Notes {
     order: Vec<(f64, f64, usize, usize)>,
     /// Every word with notes, by when it ends: its line, word and end.
     words: Vec<(usize, usize, f64)>,
+    /// Each of those words' place among them, by its line and word.
+    word_order: std::collections::HashMap<(usize, usize), usize>,
     /// Every line with notes, by when it ends: its line and end.
     phrases: Vec<(usize, f64)>,
     /// The key they are in, in semitones from the song's own.
@@ -293,10 +307,14 @@ impl Notes {
             .filter_map(|(l, ln)| Some((l, ln.notes.last()?.end)))
             .collect();
         phrases.sort_by(|a, b| a.1.total_cmp(&b.1));
+        let word_order = (words.iter().enumerate())
+            .map(|(k, &(l, w, _))| ((l, w), k))
+            .collect();
         Notes {
             lines,
             order,
             words,
+            word_order,
             phrases,
             shift: 0,
         }
@@ -341,6 +359,11 @@ impl Notes {
     /// Every word with notes, by when it ends: its line, word and end.
     pub fn words(&self) -> &[(usize, usize, f64)] {
         &self.words
+    }
+
+    /// Line `l`'s word `w`'s place among [`Notes::words`].
+    pub fn word_order(&self, l: usize, w: usize) -> Option<usize> {
+        self.word_order.get(&(l, w)).copied()
     }
 
     /// Every line with notes, by when it ends: its line and end.

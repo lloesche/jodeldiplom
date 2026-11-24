@@ -4,16 +4,12 @@
 // console, it attaches to that one ([`attach_console`]).
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
-// The fonts build.rs found: `EMBEDDED_MAIN_FONT` and `EMBEDDED_EMOJI_FONT`.
+// The fonts build.rs found: `EMBEDDED_FONTS`.
 include!(concat!(env!("OUT_DIR"), "/fonts.rs"));
 
 fn main() -> std::process::ExitCode {
     attach_console();
-    jodeldiplom::gui::fonts::use_fonts(
-        EMBEDDED_MAIN_FONT,
-        EMBEDDED_EMOJI_FONT,
-        EMBEDDED_LYRICS_FONT,
-    );
+    jodeldiplom::gui::fonts::use_fonts(EMBEDDED_FONTS);
     jodeldiplom::main()
 }
 

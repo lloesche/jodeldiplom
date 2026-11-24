@@ -1049,7 +1049,7 @@ fn the_stage_draws_the_lane_over_the_pixmap() {
     };
     let now = 0.55;
     let area = (0.0, 0.0, w as f32, h as f32);
-    let mut stage = Stage::new();
+    let mut stage = Stage::default();
     let frame = stage.frame(&song, &picture, area, now, 1.0 / 60.0);
     gpu.set_stage(Some(&frame), w, h);
     let shown = gpu

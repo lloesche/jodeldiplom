@@ -2,12 +2,12 @@
 //! trail and sparks, the lyrics at the bottom and the song's progress,
 //! drawn over the pixmap each frame as instances of a few shapes, each a
 //! signed distance in the fragment shader (a pill, a capsule, a star, a
-//! disc, an arrow, a bubble and its liquid) or a run of text from a glyph
+//! disc, an arrow, a tube and its liquid) or a run of text from a glyph
 //! atlas. One pipeline, premultiplied: a shape's light that is to add up
 //! (a glow, a spark) comes with no coverage, so it adds; the rest goes
-//! over. The note bubbles' liquid, strain and overfilling are drawn here
-//! for the stage's bubbles and the picture's alike ([`Instance::bubble`],
-//! [`Instance::liquid`], [`super::liquid`]).
+//! over. The bubbles' liquid, strain and overfilling are drawn here for
+//! the stage's bubbles (tubes, [`super::snake`]) and the picture's alike
+//! ([`Instance::liquid`], [`super::liquid`]).
 //!
 //! [`StageFrame`] is what the window gets each frame: the instances, and
 //! the text the atlas did not hold yet ([`AtlasUpload`]).
@@ -46,11 +46,14 @@ pub mod kind {
     /// `shape[1]`) from `shape[2]` and shows `shape[3]` seconds, as a
     /// [`BADGE`] does.
     pub const TEXT: f32 = 6.0;
-    /// A note's bubble: a [`PILL`] straining and bursting as its
-    /// [`Instance::strain`] says ([`super::Instance::bubble`]).
-    pub const BUBBLE: f32 = 7.0;
-    /// A bubble's liquid: a [`FILL`] (its ends `params[2]` round, 0: round)
-    /// straining with its bubble, its front living where
+    /// A word's bubble, a tube ([`crate::gui::snake`]): round its middle
+    /// line (`params[3]` points from `shape[3]` in the path buffer),
+    /// `shape[2]` thick each way, bulging round `shape[0..2]`; straining and
+    /// bursting as its [`Instance::strain`] says; in `color`, outlined
+    /// `params[2]` and glowing `params[1]` in `color2`.
+    pub const TUBE: f32 = 7.0;
+    /// A picture's bubble's liquid: a [`FILL`] (its ends `params[2]` round,
+    /// 0: round) straining with its bubble, its front living where
     /// [`super::flags::FRONT`] (its fill jumped at `uv[2]`)
     /// ([`super::Instance::liquid`]).
     pub const LIQUID: f32 = 8.0;
@@ -88,6 +91,9 @@ pub mod kind {
     /// middle from `params[1]` (the singing's time) and showing
     /// `params[2]` seconds ([`crate::gui::glory::label_pop`]).
     pub const BADGE: f32 = 17.0;
+    /// A tube's liquid ([`TUBE`]'s shape) along it from `uv[0]` to `uv[1]`
+    /// across, as [`LIQUID`]'s.
+    pub const TUBE_LIQUID: f32 = 18.0;
 }
 
 /// The flags of a bubble or its liquid, or of text ([`Instance::strain`]`[3]`).
@@ -183,28 +189,6 @@ pub struct Pour {
 }
 
 impl Instance {
-    /// A note's bubble at `centre`, `half` its size, its ends `radius`
-    /// round (0: round ends), in its `skin`, straining as `strain` says (its
-    /// quad made room to bulge).
-    pub fn bubble(
-        centre: (f32, f32),
-        half: (f32, f32),
-        radius: f32,
-        skin: &Skin,
-        strain: &Strain,
-    ) -> Instance {
-        let (mx, my) = Self::room(half, skin.glow, 0.0);
-        Instance {
-            quad: [centre.0 - mx, centre.1 - my, centre.0 + mx, centre.1 + my],
-            shape: [centre.0, centre.1, half.0, half.1],
-            color: skin.body,
-            color2: skin.edge,
-            params: [kind::BUBBLE, skin.glow, skin.outline, radius],
-            uv: [0.0; 4],
-            strain: Self::strain_of(strain, false),
-        }
-    }
-
     /// The liquid of a bubble at `centre`, `half` its size, its ends
     /// `radius` round (0: round ends), poured as `pour` says, straining with
     /// it; none where too little shows.
@@ -246,7 +230,9 @@ impl Instance {
         )
     }
 
-    fn strain_of(s: &Strain, front: bool) -> [f32; 4] {
+    /// A bubble's `s` strain as the shader takes it, its liquid's front
+    /// living where `front`.
+    pub(super) fn strain_of(s: &Strain, front: bool) -> [f32; 4] {
         let mut bits = 0;
         if s.popping.is_some() {
             bits |= flags::POPPING;
@@ -269,7 +255,8 @@ impl Instance {
 
     /// Whether this is a liquid whose front is living.
     pub fn living(&self) -> bool {
-        self.params[0] == kind::LIQUID && self.strain[3] as u32 & flags::FRONT != 0
+        let liquid = [kind::LIQUID, kind::TUBE_LIQUID].contains(&self.params[0]);
+        liquid && self.strain[3] as u32 & flags::FRONT != 0
     }
 }
 
@@ -292,6 +279,8 @@ pub struct StageFrame {
     pub top: Vec<Instance>,
     /// Text to put into the atlas first.
     pub uploads: Vec<AtlasUpload>,
+    /// The tubes' middle lines, point by point (`x, y`, two unused).
+    pub paths: Vec<[f32; 4]>,
     /// The bursts showing ([`super::particles`]).
     pub sprays: Vec<super::particles::Spray>,
     /// The shapes that are light to bloom, drawn apart ([`super::bloom`]).
@@ -337,7 +326,7 @@ const K_SEGMENT: u32 = {}u;
 const K_SPARK: u32 = {}u;
 const K_DISC: u32 = {}u;
 const K_ARROW: u32 = {}u;
-const K_BUBBLE: u32 = {}u;
+const K_TUBE: u32 = {}u;
 const K_LIQUID: u32 = {}u;
 const K_BANDS: u32 = {}u;
 const K_SWIRL: u32 = {}u;
@@ -349,6 +338,7 @@ const K_GLOW: u32 = {}u;
 const K_BLAZE: u32 = {}u;
 const K_TEXT: u32 = {}u;
 const K_BADGE: u32 = {}u;
+const K_TUBE_LIQUID: u32 = {}u;
 ",
         k(kind::PILL),
         k(kind::FILL),
@@ -356,7 +346,7 @@ const K_BADGE: u32 = {}u;
         k(kind::SPARK),
         k(kind::DISC),
         k(kind::ARROW),
-        k(kind::BUBBLE),
+        k(kind::TUBE),
         k(kind::LIQUID),
         k(kind::BANDS),
         k(kind::SWIRL),
@@ -368,289 +358,25 @@ const K_BADGE: u32 = {}u;
         k(kind::BLAZE),
         k(kind::TEXT),
         k(kind::BADGE),
+        k(kind::TUBE_LIQUID),
     )
 }
 
-/// The stage's shader: [`SHADER`], its kinds ([`kind`]), the liquid's
-/// maths ([`super::liquid::wgsl`]) and a streak's shine
-/// ([`super::rainbow::stage_wgsl`]).
+/// The stage's shader: `stage.wgsl`, its kinds ([`kind`]), the liquid's
+/// maths ([`super::liquid::wgsl`]), a tube's nearest point
+/// ([`super::snake::wgsl`]), a streak's shine ([`super::rainbow::stage_wgsl`])
+/// and the glory ([`super::glory::wgsl`]).
 pub fn shader() -> String {
     format!(
-        "{}{SHADER}{}{}{}",
+        "{}{}{}{}{}{}",
         kinds_wgsl(),
+        include_str!("stage.wgsl"),
         super::liquid::wgsl(),
+        super::snake::wgsl(),
         super::rainbow::stage_wgsl(),
         super::glory::wgsl()
     )
 }
-
-const SHADER: &str = r"
-struct Screen {
-    size: vec2<f32>,
-    srgb: f32,
-    atlas: f32,
-    time: f32,
-    pad0: f32,
-    pad1: f32,
-    pad2: f32,
-};
-
-@group(0) @binding(0) var<uniform> screen: Screen;
-@group(0) @binding(1) var atlas: texture_2d<f32>;
-@group(0) @binding(2) var soft: sampler;
-
-struct In {
-    @location(0) quad: vec4<f32>,
-    @location(1) shape: vec4<f32>,
-    @location(2) color: vec4<f32>,
-    @location(3) color2: vec4<f32>,
-    @location(4) params: vec4<f32>,
-    @location(5) uv: vec4<f32>,
-    @location(6) strain: vec4<f32>,
-};
-
-struct Out {
-    @builtin(position) pos: vec4<f32>,
-    @location(0) p: vec2<f32>,
-    @location(1) @interpolate(flat) shape: vec4<f32>,
-    @location(2) @interpolate(flat) color: vec4<f32>,
-    @location(3) @interpolate(flat) color2: vec4<f32>,
-    @location(4) @interpolate(flat) params: vec4<f32>,
-    @location(5) @interpolate(flat) uv: vec4<f32>,
-    @location(6) @interpolate(flat) quad: vec4<f32>,
-    @location(7) @interpolate(flat) strain: vec4<f32>,
-};
-
-@vertex
-fn vs(@builtin(vertex_index) v: u32, i: In) -> Out {
-    var quad = i.quad;
-    var o: Out;
-    o.shape = i.shape;
-    o.color = i.color;
-    o.color2 = i.color2;
-    o.params = i.params;
-    // Text or a badge popping (round where, from when, how long), the
-    // badge drawn as a pill.
-    let k = u32(round(i.params.x));
-    var pop = vec4<f32>(0.0);
-    if k == K_TEXT && i.shape.w > 0.0 {
-        pop = i.shape;
-    }
-    if k == K_BADGE {
-        pop = vec4<f32>(i.shape.xy, i.params.yz);
-        o.params = vec4<f32>(f32(K_PILL), 0.0, i.params.w, 0.0);
-    }
-    if pop.w > 0.0 {
-        let s = label_pop(screen.time - pop.z, pop.w);
-        quad = pop.xyxy + (quad - pop.xyxy) * s.x;
-        o.color.a = o.color.a * s.y;
-        o.color2.a = o.color2.a * s.y;
-        if k == K_BADGE {
-            o.shape = vec4<f32>(i.shape.xy, i.shape.zw * s.x);
-        }
-    }
-    let corner = vec2<f32>(f32(v & 1u), f32((v >> 1u) & 1u));
-    let p = mix(quad.xy, quad.zw, corner);
-    o.pos = vec4<f32>(p.x / screen.size.x * 2.0 - 1.0, 1.0 - p.y / screen.size.y * 2.0, 0.0, 1.0);
-    o.p = p;
-    o.uv = i.uv;
-    o.quad = quad;
-    o.strain = i.strain;
-    return o;
-}
-
-// A colour as the frame takes it: linear where the frame is sRGB.
-fn out_rgb(c: vec3<f32>) -> vec3<f32> {
-    if screen.srgb > 0.5 {
-        return pow(c, vec3<f32>(2.2));
-    }
-    return c;
-}
-
-// Over: `c` covering `a`; plus light `l` added.
-fn over_plus(c: vec3<f32>, a: f32, l: vec3<f32>) -> vec4<f32> {
-    return vec4<f32>(out_rgb(c) * a + out_rgb(l), a);
-}
-
-fn round_box(p: vec2<f32>, half: vec2<f32>, r: f32) -> f32 {
-    let q = abs(p) - half + vec2<f32>(r);
-    return length(max(q, vec2<f32>(0.0))) + min(max(q.x, q.y), 0.0) - r;
-}
-
-fn segment(p: vec2<f32>, a: vec2<f32>, b: vec2<f32>) -> f32 {
-    let pa = p - a;
-    let ba = b - a;
-    let h = clamp(dot(pa, ba) / max(dot(ba, ba), 1e-4), 0.0, 1.0);
-    return length(pa - ba * h);
-}
-
-// The glow of a shape `d` pixels outside it, over `size`.
-fn glow(d: f32, size: f32) -> f32 {
-    if size <= 0.0 {
-        return 0.0;
-    }
-    let t = max(d, 0.0) / size;
-    return exp(-t * t * 3.0) * (1.0 - smoothstep(0.85, 1.0, t));
-}
-
-// A pill or a bubble (`liquid`: their liquid, a fill), at `p`.
-fn pill(o: Out, p: vec2<f32>, k: u32) -> vec4<f32> {
-    let bubble = k == K_BUBBLE || k == K_LIQUID;
-    let liquid = k == K_FILL || k == K_LIQUID;
-    let c = o.shape.xy;
-    var half = o.shape.zw;
-    var sc = vec2<f32>(1.0);
-    var flash = 0.0;
-    let flags = u32(o.strain.w);
-    if bubble {
-        // Straining as it nears full (bulging, wobbling), overfilling as
-        // it bursts (bulging more, brighter; gone once it tears, its drops
-        // and bits drawn as particles).
-        let s = strained(o.strain, screen.time);
-        if s.z <= 0.0 {
-            return vec4<f32>(0.0);
-        }
-        sc = s.xy;
-        if (flags & POPPING) != 0u {
-            flash = clamp((screen.time - o.strain.y) / SWELL, 0.0, 1.0) * 0.3;
-        }
-    }
-    half = half * sc;
-    var r = o.params.w;
-    if k == K_LIQUID {
-        r = o.params.z;
-    }
-    if k == K_FILL || r <= 0.0 {
-        r = min(half.x, half.y);
-    }
-    let d = round_box(p - c, half, r);
-    let cover = clamp(0.5 - d, 0.0, 1.0);
-    if liquid {
-        // The liquid between its span (bulging with its bubble), its top
-        // light to its bottom, shimmering; its front (where it is filling)
-        // a living surface.
-        let x0 = c.x + (o.uv.x - c.x) * sc.x;
-        var x1 = c.x + (o.uv.y - c.x) * sc.x;
-        if k == K_LIQUID && (flags & FRONT) != 0u {
-            x1 = x1 + front((p.y - c.y) / max(half.y, 0.5), screen.time, amplitude(o.shape.w), o.uv.z);
-        }
-        let across = smoothstep(x0 - 0.5, x0 + 0.5, p.x)
-            * (1.0 - smoothstep(x1 - 0.5, x1 + 0.5, p.x));
-        let down = clamp((p.y - (c.y - half.y)) / max(2.0 * half.y, 1.0), 0.0, 1.0);
-        let col = mix(o.color.rgb, o.color2.rgb, down) + vec3<f32>(flash);
-        // A shine along its top, and (a bubble's) the light moving through it.
-        var shine = (1.0 - smoothstep(0.0, 0.35, down)) * 0.35;
-        if bubble {
-            shine = shine + 0.3 * shimmer(p.x, p.y, screen.time);
-        }
-        let gs = max(o.params.y, 1.0);
-        let soft = smoothstep(x0 - gs, x0, p.x)
-            * (1.0 - smoothstep(x1, x1 + gs, p.x));
-        let a = cover * across * o.color.a;
-        let g = glow(d, o.params.y) * soft * o.color2.a * 0.45;
-        return over_plus(min(col + vec3<f32>(shine), vec3<f32>(1.0)), a, o.color2.rgb * g);
-    }
-    let outline = o.params.z;
-    let edge = clamp(0.5 - abs(d + outline * 0.5) + outline * 0.5, 0.0, 1.0) * cover;
-    // Lighter at its top, as glass.
-    let down = clamp((p.y - (c.y - half.y)) / max(2.0 * half.y, 1.0), 0.0, 1.0);
-    let body = mix(o.color.rgb * (1.15 - 0.3 * down), vec3<f32>(1.0), flash);
-    let a_body = cover * o.color.a;
-    let col = mix(body, o.color2.rgb, edge * o.color2.a / max(a_body + edge * o.color2.a, 1e-4));
-    let a = max(a_body, edge * o.color2.a);
-    let g = glow(d, o.params.y) * o.color2.a * 0.5;
-    return over_plus(col, a, o.color2.rgb * g);
-}
-
-@fragment
-fn fs(o: Out) -> @location(0) vec4<f32> {
-    let k = u32(round(o.params.x));
-    let p = o.p;
-    if k == K_PILL || k == K_FILL || k == K_BUBBLE || k == K_LIQUID {
-        return pill(o, p, k);
-    }
-    if k >= K_METER && k <= K_BLAZE {
-        return glory(o, p, k);
-    }
-    if k == K_BANDS || k == K_SWIRL || k == K_RIM {
-        return shine(o, p, k);
-    }
-    if k == K_SEGMENT {
-        let d = segment(p, o.shape.xy, o.shape.zw) - o.params.y;
-        let cover = clamp(0.5 - d, 0.0, 1.0);
-        let g = glow(d, o.params.z) * o.color2.a;
-        return over_plus(o.color.rgb, cover * o.color.a, o.color2.rgb * g);
-    }
-    if k == K_SPARK {
-        // A spark: a core and two crossed rays, turned, all light.
-        let s = sin(o.shape.w);
-        let co = cos(o.shape.w);
-        let q0 = p - o.shape.xy;
-        let q = abs(vec2<f32>(co * q0.x - s * q0.y, s * q0.x + co * q0.y));
-        let size = max(o.shape.z, 0.5);
-        let core = exp(-dot(q, q) / (size * size * 0.05));
-        let thin = max(size * 0.07, 0.8);
-        let ray_x = exp(-q.y * q.y / (thin * thin)) * pow(clamp(1.0 - q.x / size, 0.0, 1.0), 1.6);
-        let ray_y = exp(-q.x * q.x / (thin * thin)) * pow(clamp(1.0 - q.y / size, 0.0, 1.0), 1.6);
-        let halo = exp(-dot(q, q) / (size * size * 0.18)) * 0.35;
-        let light = (core + max(ray_x, ray_y) * 0.9 + halo) * o.color.a;
-        return vec4<f32>(out_rgb(o.color.rgb) * light, 0.0);
-    }
-    if k == K_DISC {
-        let d = length(p - o.shape.xy) - o.shape.z;
-        let cover = clamp(0.5 - d, 0.0, 1.0);
-        let g = glow(d, o.shape.w) * o.color2.a;
-        return over_plus(o.color.rgb, cover * o.color.a, o.color2.rgb * g);
-    }
-    if k == K_ARROW {
-        // An arrow pointing right: a rounded triangle, its tip at shape.xy.
-        let len = o.shape.z;
-        let q = p - (o.shape.xy - vec2<f32>(len * 0.5, 0.0));
-        // The triangle's three edges, as distances (negative inside).
-        let h = len * 0.5;
-        let w = len * 0.42;
-        let n1 = normalize(vec2<f32>(w, h));
-        let e1 = dot(vec2<f32>(q.x, abs(q.y)) - vec2<f32>(h, 0.0), n1);
-        let e2 = -q.x - h * 0.55;
-        let d = max(e1, e2) - len * 0.06;
-        let cover = clamp(0.5 - d, 0.0, 1.0);
-        let inner = clamp(-d / (len * 0.25), 0.0, 1.0);
-        let col = mix(o.color.rgb, vec3<f32>(1.0), inner * 0.55);
-        let g = glow(d, o.params.y) * o.color2.a;
-        return over_plus(col, cover * o.color.a, o.color2.rgb * g);
-    }
-    // Text: its coverage from the atlas, filled left of the split.
-    let t = (p - o.quad.xy) / max(o.quad.zw - o.quad.xy, vec2<f32>(1.0));
-    // Kept inside its own texels (their centres): never a column of the
-    // text beside it in the atlas.
-    let texel = clamp(mix(o.uv.xy, o.uv.zw, t), o.uv.xy + vec2<f32>(0.5), o.uv.zw - vec2<f32>(0.5));
-    let uv = texel / screen.atlas;
-    let a = textureSampleLevel(atlas, soft, uv, 0.0).r;
-    let filled = smoothstep(o.params.y - 0.75, o.params.y + 0.75, p.x);
-    var col = mix(o.color2.rgb, o.color.rgb, filled);
-    if (u32(o.strain.w) & RAINBOW) != 0u {
-        // In a streak's rainbow, running along it.
-        col = text_tint(col, p.x, o.strain.xyz, screen.time);
-    }
-    let alpha = mix(o.color2.a, o.color.a, filled) * a;
-    return over_plus(col, alpha, vec3<f32>(0.0));
-}
-
-// A streak's shine: its bands (within the lane, softly), a swirl, a
-// rainbow edge; light, added.
-fn shine(o: Out, p: vec2<f32>, k: u32) -> vec4<f32> {
-    let s = o.params.yzw;
-    if k == K_BANDS {
-        let inside = lane_mask(p, o.uv.xy, o.uv.zw);
-        let l = bands(p, o.shape.xy, o.shape.zw, s, screen.time);
-        return vec4<f32>(out_rgb(l) * inside, 0.0);
-    }
-    if k == K_SWIRL {
-        return vec4<f32>(out_rgb(swirl(p, o.shape.xy, o.shape.z, s, screen.time)), 0.0);
-    }
-    return vec4<f32>(out_rgb(rim_at(p, o.shape.xy, o.shape.zw, s, screen.time)), 0.0);
-}
-";
 
 /// How a pass's shapes go onto what is drawn: over it (premultiplied,
 /// covering it as much as they cover), or added to it (light).
@@ -698,6 +424,8 @@ pub struct Feed<'a> {
     pub top: &'a [Instance],
     /// The text.
     pub uploads: &'a [AtlasUpload],
+    /// The tubes' middle lines.
+    pub paths: &'a [[f32; 4]],
     /// The time.
     pub clock: f32,
 }
@@ -709,6 +437,7 @@ impl StageFrame {
             instances: &self.instances,
             top: &self.top,
             uploads: &self.uploads,
+            paths: &self.paths,
             clock: self.clock,
         }
     }
@@ -716,6 +445,9 @@ impl StageFrame {
     /// Its light, as the light's pass draws it (no text: the light has
     /// none).
     pub fn light_feed(&self) -> Feed<'_> {
+        // Nor tubes: their points are not sent with the light.
+        let tube = |i: &Instance| [kind::TUBE, kind::TUBE_LIQUID].contains(&i.params[0]);
+        debug_assert!(!self.lights.iter().any(tube), "a tube among the lights");
         Feed {
             instances: &self.lights,
             clock: self.clock,
@@ -732,8 +464,11 @@ pub struct StagePass {
     uniforms: wgpu::Buffer,
     sampler: wgpu::Sampler,
     /// The text's atlas, made with the first text put into it (a pass
-    /// never given any has a texel of it).
+    /// never given any has a texel of it), and its view.
     atlas: Option<wgpu::Texture>,
+    atlas_view: wgpu::TextureView,
+    /// The tubes' middle lines (a point at least).
+    paths: wgpu::Buffer,
     instances: Option<wgpu::Buffer>,
     /// The instances in the buffer for the next frame: the shapes, then
     /// those over everything.
@@ -759,6 +494,16 @@ fn atlas_texture(device: &wgpu::Device, side: u32) -> (wgpu::Texture, wgpu::Text
     });
     let view = atlas.create_view(&wgpu::TextureViewDescriptor::default());
     (atlas, view)
+}
+
+/// A buffer of tubes' points, `size` bytes.
+fn paths_buffer(device: &wgpu::Device, size: u64) -> wgpu::Buffer {
+    device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("jodeldiplom stage paths"),
+        size: size.max(16),
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    })
 }
 
 impl StagePass {
@@ -791,6 +536,16 @@ impl StagePass {
                     binding: 2,
                     visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: wgpu::BufferSize::new(16),
+                    },
                     count: None,
                 },
             ],
@@ -852,8 +607,9 @@ impl StagePass {
             min_filter: wgpu::FilterMode::Linear,
             ..Default::default()
         });
-        let (_, texel) = atlas_texture(device, 1);
-        let bind = StagePass::bind(device, (&layout, &uniforms, &sampler), &texel);
+        let (_, atlas_view) = atlas_texture(device, 1);
+        let paths = paths_buffer(device, 16);
+        let bind = StagePass::bind(device, (&layout, &uniforms, &sampler), &atlas_view, &paths);
         StagePass {
             pipeline,
             layout,
@@ -861,17 +617,21 @@ impl StagePass {
             uniforms,
             sampler,
             atlas: None,
+            atlas_view,
+            paths,
             instances: None,
             count: (0, 0),
             linear: takes_linear(format),
         }
     }
 
-    /// The bind group of `uniforms`, `atlas` and `sampler` in `layout`.
+    /// The bind group of `uniforms`, `atlas`, `sampler` and `paths` in
+    /// `layout`.
     fn bind(
         device: &wgpu::Device,
         (layout, uniforms, sampler): (&wgpu::BindGroupLayout, &wgpu::Buffer, &wgpu::Sampler),
         atlas: &wgpu::TextureView,
+        paths: &wgpu::Buffer,
     ) -> wgpu::BindGroup {
         device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("jodeldiplom stage"),
@@ -889,6 +649,10 @@ impl StagePass {
                     binding: 2,
                     resource: wgpu::BindingResource::Sampler(sampler),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: paths.as_entire_binding(),
+                },
             ],
         })
     }
@@ -905,11 +669,22 @@ impl StagePass {
         let Some(feed) = feed else {
             return;
         };
+        let mut rebind = false;
         if self.atlas.is_none() && !feed.uploads.is_empty() {
             let (atlas, view) = atlas_texture(device, ATLAS);
-            self.bind =
-                StagePass::bind(device, (&self.layout, &self.uniforms, &self.sampler), &view);
-            self.atlas = Some(atlas);
+            (self.atlas, self.atlas_view, rebind) = (Some(atlas), view, true);
+        }
+        let paths: &[u8] = bytemuck::cast_slice(feed.paths);
+        if self.paths.size() < paths.len() as u64 {
+            self.paths = paths_buffer(device, (paths.len() as u64).next_power_of_two());
+            rebind = true;
+        }
+        if !paths.is_empty() {
+            queue.write_buffer(&self.paths, 0, paths);
+        }
+        if rebind {
+            let with = (&self.layout, &self.uniforms, &self.sampler);
+            self.bind = StagePass::bind(device, with, &self.atlas_view, &self.paths);
         }
         for up in feed.uploads {
             let (x, y, w, h) = up.rect;

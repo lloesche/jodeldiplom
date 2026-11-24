@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Build the player, Jodeldiplom, into one bundle. It is built with its
-# fonts (Sarasa Fixed J, Atkinson Hyperlegible Next, Noto Emoji) inside;
+# fonts (Sarasa Fixed J, Atkinson Hyperlegible Next, Noto Emoji, and
+# Karaoke mode's Nunito, Fredoka and M PLUS Rounded 1c) inside;
 # on macOS it is the app "Jodeldiplom.app" instead of a binary in bin. The
 # fonts come from player/fonts, or from the folder JODELDIPLOM_FONTS names.
 #
@@ -53,7 +54,9 @@ esac
 
 fonts=${JODELDIPLOM_FONTS:-$repo/player/fonts}
 for file in SarasaFixedJ-Regular.ttf NotoEmoji.ttf AtkinsonHyperlegibleNext-SemiBold.ttf \
-    LICENSE-SarasaGothic.txt LICENSE-NotoEmoji.txt LICENSE-AtkinsonHyperlegibleNext.txt; do
+    Nunito.ttf Fredoka.ttf MPLUSRounded1c-ExtraBold.ttf \
+    LICENSE-SarasaGothic.txt LICENSE-NotoEmoji.txt LICENSE-AtkinsonHyperlegibleNext.txt \
+    LICENSE-Nunito.txt LICENSE-Fredoka.txt LICENSE-MPLUSRounded1c.txt; do
     if [[ ! -f $fonts/$file ]]; then
         printf 'No %s in %s\n' "$file" "$fonts" >&2
         exit 1
@@ -81,7 +84,8 @@ fi
 cp -- "$repo/LICENSE" "$stage/LICENSE.txt"
 cp -- "$repo/player/assets/CascadiaMono-OFL.txt" "$stage/LICENSE-CascadiaMono.txt"
 cp -- "$fonts/LICENSE-SarasaGothic.txt" "$fonts/LICENSE-NotoEmoji.txt" \
-    "$fonts/LICENSE-AtkinsonHyperlegibleNext.txt" "$stage/"
+    "$fonts/LICENSE-AtkinsonHyperlegibleNext.txt" "$fonts/LICENSE-Nunito.txt" \
+    "$fonts/LICENSE-Fredoka.txt" "$fonts/LICENSE-MPLUSRounded1c.txt" "$stage/"
 for file in "$repo"/rhythm/models/LICENSE-*; do
     cp -- "$file" "$stage/$(basename -- "$file").txt"
 done

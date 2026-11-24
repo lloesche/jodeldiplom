@@ -1,11 +1,13 @@
 //! Karaoke mode's stage, made frame by frame for the GPU
-//! ([`super::stage_gpu`]): the song's notes as pills on a lane that runs
-//! by a playhead (by time: [`AHEAD`] seconds of the song ahead of it), the
-//! words in them, filled where the singer hit them; the singer as an
-//! arrow at the playhead, gliding to their pitch, its trail behind it and
-//! sparks flying off it; the streak's multiplier over the playhead; the
-//! line sung and the next at the bottom; and the song's progress, its
-//! breaks apart, along the bottom edge.
+//! ([`super::stage_gpu`]): the song's words as tubes through their notes
+//! on a lane that runs by a playhead (by time: [`AHEAD`] seconds of the
+//! song ahead of it), their text riding in them, filled where the singer
+//! hit them ([`words`]); the shots rescuing a word missed ([`shots`]); the
+//! singer as an arrow at the playhead, gliding to their pitch, its trail
+//! behind it and sparks flying off it; the streak's multiplier over the
+//! playhead; the line sung and the next at the bottom; and the song's
+//! progress, its breaks apart, along the bottom edge. Its text is in
+//! Karaoke mode's own faces ([`Face`]).
 //!
 //! What moves by itself (the arrow, the sparks, the multiplier's pop) is
 //! stepped by the time between frames, so it moves the same at any frame
@@ -13,15 +15,18 @@
 
 use std::collections::HashMap;
 
-use super::karaoke::{BigText, COVER_PAD};
+use super::big_text::{BigText, Face, Faces, COVER_PAD};
 use super::rainbow;
 
+mod lines;
 mod meter;
+mod shots;
+mod words;
 use super::sparks::noise;
-use super::stage_gpu::{kind, AtlasUpload, Instance, Skin, StageFrame, Tint, ATLAS};
+use super::stage_gpu::{kind, AtlasUpload, Instance, StageFrame, ATLAS};
 
 use crate::core::State;
-use crate::view::karaoke::{KaraokePicture, LineKind, LyricLine};
+use crate::view::karaoke::{KaraokePicture, LyricLine};
 
 /// Where the playhead is, a share of the width from the left.
 pub const HEAD: f32 = 0.28;
@@ -31,8 +36,6 @@ pub const AHEAD: f64 = 4.0;
 const BAND: (f32, f32) = (0.17, 0.55);
 /// A pill's height, a share of the window's height.
 const PILL: f32 = 0.052;
-/// The line sung and the next: their tops, shares of the height.
-const LINES: (f32, f32) = (0.68, 0.78);
 /// The progress bar: its middle, a share of the height.
 const PROGRESS: f32 = 0.935;
 /// A gap between notes this long or longer is a break on the progress bar.
@@ -42,9 +45,6 @@ const ARROW_HOLD: f64 = 0.25;
 /// How fast the arrow follows the pitch (a critically damped spring, per
 /// second).
 const SPRING: f32 = 55.0;
-/// The least a word's text is made, a share of its size, to fit before
-/// the next word.
-const SMALLEST_TEXT: f32 = 0.75;
 /// The most sparks at once.
 const MOST_SPARKS: usize = 700;
 
@@ -61,20 +61,25 @@ fn rgba(c: Rgb, a: f32) -> [f32; 4] {
     [c[0], c[1], c[2], a]
 }
 
-/// Text kept in the atlas, shelf by shelf: where each (text, size) is.
+/// Text in a face at a size (a quarter pixel's steps).
+type Key = (Face, String, u32);
+
+/// Text kept in the atlas, shelf by shelf: where each (face, text, size)
+/// is.
 #[derive(Default)]
 struct Atlas {
-    places: HashMap<(String, u32), (u32, u32, u32, u32)>,
+    places: HashMap<Key, (u32, u32, u32, u32)>,
     /// Where the next goes: across, the shelf's top, the shelf's height.
     pen: (u32, u32, u32),
     uploads: Vec<AtlasUpload>,
 }
 
 impl Atlas {
-    /// Where `text` at `px` is in the atlas (put there now if it is not),
-    /// its quad's size; none where it does not fit even in an empty one.
+    /// Where `text` at `px` in `big`'s face is in the atlas (put there now
+    /// if it is not), its quad's size; none where it does not fit even in
+    /// an empty one.
     fn place(&mut self, big: &mut BigText, text: &str, px: f32) -> Option<(u32, u32, u32, u32)> {
-        let key = (text.to_owned(), (px * 4.0).round() as u32);
+        let key = (big.face(), text.to_owned(), (px * 4.0).round() as u32);
         if let Some(&place) = self.places.get(&key) {
             return Some(place);
         }
@@ -164,7 +169,8 @@ impl Arrow {
 /// Karaoke mode's stage between frames.
 #[derive(Default)]
 pub struct Stage {
-    text: BigText,
+    /// Its text, by face.
+    faces: Faces,
     atlas: Atlas,
     sparks: std::collections::VecDeque<Spark>,
     arrow: Arrow,
@@ -178,8 +184,9 @@ pub struct Stage {
     /// The multiplier shown, how much it shows, and how long since it
     /// went up.
     badge: (u32, f32, f32),
-    /// Where the capitals' middle is in text of a size ([`Stage::cap_middle`]).
-    caps: HashMap<u32, f32>,
+    /// Where the capitals' middle is in text of a face and size
+    /// ([`Stage::cap_middle`]).
+    caps: HashMap<(Face, u32), f32>,
     /// The song's time at the frame before: what moves goes by the song.
     before: Option<f64>,
     /// The words scored bursting, handed to the GPU ([`super::particles`]).
@@ -409,33 +416,29 @@ fn disc(c: (f32, f32), r: f32, core: [f32; 4], glow_color: [f32; 4], glow: f32) 
 }
 
 impl Stage {
-    /// A new stage.
-    pub fn new() -> Stage {
-        Stage {
-            text: BigText::lyrics(),
-            ..Stage::default()
-        }
+    /// The width of `text` in `face` at `px`.
+    fn measure(&mut self, face: Face, text: &str, px: f32) -> f32 {
+        self.faces.get(face).measure(text, px)
     }
 
-    /// A run of text: `text` at `px` (drawn at `scale` of that) with its
-    /// line's top-left at `at`; left of `split` (pixels across) in
-    /// `filled`, right of it in `rest`. What it put into `out`, if any.
+    /// A run of text: `text` in `face` at `px` (drawn at `scale` of that)
+    /// with its line's top-left at `at`; left of `split` (pixels across)
+    /// in `filled`, right of it in `rest`. What it put into `out`, if any.
     #[allow(clippy::too_many_arguments)]
     fn text<'o>(
         &mut self,
         out: &'o mut Vec<Instance>,
+        face: Face,
         text: &str,
-        px: f32,
-        scale: f32,
+        (px, scale): (f32, f32),
         at: (f32, f32),
         split: f32,
-        rest: [f32; 4],
-        filled: [f32; 4],
+        (rest, filled): ([f32; 4], [f32; 4]),
     ) -> Option<&'o mut Instance> {
         if text.trim().is_empty() {
             return None;
         }
-        let (u, v, w, h) = self.atlas.place(&mut self.text, text, px)?;
+        let (u, v, w, h) = self.atlas.place(self.faces.get(face), text, px)?;
         let pad = COVER_PAD as f32 * scale;
         let (x0, y0) = (at.0 - pad, at.1 - pad);
         out.push(Instance {
@@ -450,15 +453,15 @@ impl Stage {
         out.last_mut()
     }
 
-    /// How far down from the top of text made at `px` for the atlas
-    /// ([`BigText::coverage`]) the middle of its capitals is, between
-    /// their top and the baseline: kept by size.
-    fn cap_middle(&mut self, px: f32) -> f32 {
-        let key = (px * 4.0).round() as u32;
+    /// How far down from the top of text in `face` made at `px` for the
+    /// atlas ([`BigText::coverage`]) the middle of its capitals is, between
+    /// their top and the baseline: kept by face and size.
+    fn cap_middle(&mut self, face: Face, px: f32) -> f32 {
+        let key = (face, (px * 4.0).round() as u32);
         if let Some(&m) = self.caps.get(&key) {
             return m;
         }
-        let (w, h, coverage) = self.text.coverage("H", px);
+        let (w, h, coverage) = self.faces.get(face).coverage("H", px);
         let rows: Vec<usize> = (0..h)
             .filter(|&r| coverage[r * w..(r + 1) * w].iter().any(|&a| a > 64))
             .collect();
@@ -532,13 +535,12 @@ impl Stage {
         let song_dt = before.map_or(0.0, |b| (now - b).clamp(0.0, 0.1)) as f32;
         let mut out: Vec<Instance> = Vec::new();
         let lane = Lane::new(area, now);
-        let (x, y, w, h) = area;
+        let (x, _, w, _) = area;
         let singing = song.singing;
         let game = song.game;
         let p = lane.pill;
         let behind = lane.behind();
         let (from, to) = (now - behind - 0.5, now + AHEAD + 0.5);
-        let sung = &song.sung;
 
         // The lane: a band of glass, the playhead across it.
         let lane_half = ((lane.band.1 - lane.band.0) / 2.0 + p * 0.55, w * 0.4875);
@@ -561,149 +563,30 @@ impl Stage {
             rgba(WHITE, 0.18),
             p * 0.25,
         ));
-        // The streak's rainbow bands from the playhead, behind the pills.
+        // The streak's rainbow bands from the playhead, behind the tubes.
         let since = singing.moments_since(&mut self.cursor);
         let step = self.streak.step(singing, game, &since, clock);
         let lane_box = (lane_mid, (lane_half.1, lane_half.0));
         let bands = rainbow::bands_of((lane.head, lane_mid.1), lane_box, &step.glow, clock);
         out.extend(bands);
 
-        // The words, line by line: a pill each, as high as its longest
-        // note, as long as it is sung (or its text, where longer: the text
-        // made smaller to fit before the next word, down to
-        // [`SMALLEST_TEXT`] of its size), filled where it was hit.
-        let text_px = (p * 0.56).round().max(9.0);
-        let pad = p * 0.34;
-        let mut words: Vec<(usize, usize, f64, f64, f32)> = Vec::new();
-        for (l, notes) in singing.notes.lines.iter().enumerate() {
-            let (Some(first), Some(last)) = (notes.notes.first(), notes.notes.last()) else {
-                continue;
-            };
-            if last.end < from || first.start > to {
-                continue;
-            }
-            let at = words.len();
-            for n in &notes.notes {
-                match words.last_mut() {
-                    Some(wd) if wd.0 == l && wd.1 == n.word => {
-                        wd.3 = wd.3.max(n.end);
-                    }
-                    _ => words.push((l, n.word, n.start, n.end, n.height)),
-                }
-            }
-            // Each word as high as its longest note.
-            for wd in &mut words[at..] {
-                if let Some(n) = notes
-                    .notes
-                    .iter()
-                    .filter(|n| n.word == wd.1)
-                    .max_by(|a, b| (a.end - a.start).total_cmp(&(b.end - b.start)))
-                {
-                    wd.4 = n.height;
-                }
-            }
-        }
-        /// A word's text: it, its size, where (its left, its pill's
-        /// middle), and when it ends, whether it was hit, how much shows.
-        type Label = (String, f32, f32, f32, (f64, bool, f32));
-        let mut texts: Vec<Label> = Vec::new();
-        let word_text = |l: usize, wi: usize| -> &str {
-            sung.get(l)
-                .and_then(|line| line.words.get(wi))
-                .map(|w| w.text.as_str())
-                .unwrap_or_default()
-        };
-        // Laid out in time, one after another: no two pills meet. Each
-        // starts when it is sung, or just after the one before ends where
-        // that is later; it lasts as long as it is sung, or as its text
-        // (made smaller to fit before the next word, down to
-        // [`SMALLEST_TEXT`]), or a circle, whichever is longest.
-        let gap = f64::from(p * 0.15 / lane.pps);
-        let mut laid: Vec<(f32, f32, f64, f64)> = Vec::with_capacity(words.len());
-        let mut last_end = f64::NEG_INFINITY;
-        for (k, &(l, wi, start, end, _)) in words.iter().enumerate() {
-            let text = word_text(l, wi);
-            let t0 = start.max(last_end + gap);
-            let room = words.get(k + 1).map_or(f32::INFINITY, |next| {
-                ((next.2 - t0) as f32) * lane.pps - p * 0.15
-            });
-            let mut px = text_px;
-            let mut tw = self.text.measure(text, px);
-            if tw + 2.0 * pad > room {
-                let fit = ((room - 2.0 * pad) / tw.max(1.0)).clamp(SMALLEST_TEXT, 1.0);
-                // In steps of two pixels, so that the atlas keeps few sizes.
-                px = ((text_px * fit) / 2.0).floor().max(4.0) * 2.0;
-                tw = self.text.measure(text, px);
-            }
-            let least = (tw + 2.0 * pad).max(p);
-            let t1 = end.max(t0 + f64::from(least / lane.pps));
-            last_end = t1;
-            laid.push((px, tw, t0, t1));
-        }
-        let mut pills = super::pop::Pills::new(singing, clock);
+        // The words, each a tube through its notes, its bubble filling as it
+        // was hit; the shots rescuing those missed.
+        let mut paths = Vec::new();
+        let words = self.lay_words(song, &lane, (from, to));
         let mut sprays = Vec::new();
-        for (k, &(l, wi, start, end, height)) in words.iter().enumerate() {
-            let text = word_text(l, wi);
-            let (px, tw, t0, t1) = laid[k];
-            let (x0, x1) = (lane.x(t0), lane.x(t1));
-            if x1 < x - p || x0 > x + w + p {
-                continue;
-            }
-            // Its sung time across all of it.
-            let across = |t: f64| x0 + ((t - start) / (end - start).max(1e-3)) as f32 * (x1 - x0);
-            let c = ((x0 + x1) / 2.0, lane.y(height));
-            let half = ((x1 - x0) / 2.0, p / 2.0);
-            let fade = edge_fade(x0, (x, w)).min(edge_fade(x1, (x, w)));
-            if fade <= 0.0 {
-                continue;
-            }
-            // Its bubbles, a row along it (the game on), each with its
-            // liquid, straining, bursting as it fills and gone after, its
-            // bursts handed to the GPU.
-            let bub = pills.pill(game, l, wi);
-            sprays.extend(bub.sprays(&across, (c, half, p), (clock, lane.pps)));
-            let (body, edge, glow) = if end <= now {
-                (rgba(WHITE, 0.07), rgba(WHITE, 0.22), 0.0)
-            } else if start <= now {
-                (rgba(WHITE, 0.16), rgba(ACTIVE, 0.95), p * 0.4)
-            } else {
-                (rgba(WHITE, 0.12), rgba(WHITE, 0.5), 0.0)
-            };
-            let faded = |c: [f32; 4]| [c[0], c[1], c[2], c[3] * fade];
-            let outline = (p * 0.05).max(1.2);
-            let skin = Skin {
-                body: faded(body),
-                edge: faded(edge),
-                glow,
-                outline,
-            };
-            // Their liquid, as the time went by under the playhead.
-            let tint = Tint {
-                top: rgba(GOLD_TOP, fade),
-                bottom: rgba(GOLD_DEEP, 0.8 * fade),
-                glow: p * 0.35,
-            };
-            let filled = bub.draw(&mut out, (c, half), (&skin, &tint), &across, p);
-            if !text.is_empty() {
-                let hit = filled > 0.5 * (end - start);
-                texts.push((text.to_owned(), px, c.0 - tw / 2.0, c.1, (end, hit, fade)));
-            }
-        }
-        let word_y: HashMap<(usize, usize), f32> =
-            words.iter().map(|w| ((w.0, w.1), lane.y(w.4))).collect();
-        let y_of = |hf: &crate::core::singing::Heard| -> Option<f32> {
-            let l = hf.line?;
-            let notes = singing.notes.lines.get(l)?;
-            let n = notes
-                .notes
-                .iter()
-                .find(|n| hf.t >= n.start && hf.t < n.end)?;
-            let on = *word_y.get(&(l, n.word))?;
-            if hf.hit {
-                return Some(on);
-            }
-            Some(on + lane.y(notes.height(hf.cents)) - lane.y(n.height))
-        };
+        let labels = self.draw_words(
+            song,
+            (&lane, (x, w)),
+            &words,
+            (&mut out, &mut paths),
+            &mut sprays,
+            (now, clock),
+        );
+        let mut shots = shots::shots(song, &lane, &words, clock);
+        out.append(&mut shots.out);
+        sprays.append(&mut shots.sprays);
+        let y_of = |h: &crate::core::singing::Heard| words.y_of(song, &lane, h);
         let recent: Vec<_> = singing
             .heard
             .iter()
@@ -743,27 +626,7 @@ impl Stage {
             }
         }
         // The words over the trail.
-        for (word, px, tx, ty, (end, hit, fade)) in texts {
-            let alpha = if end <= now && !hit { 0.45 } else { 0.95 } * fade;
-            // Its capitals' middle on the pill's.
-            let at = (tx, ty - self.cap_middle(px) + COVER_PAD as f32);
-            // Dark on the gold where it was hit, up to the playhead.
-            let (split, done) = if hit {
-                (lane.head, [0.27, 0.15, 0.03, 0.95 * fade])
-            } else {
-                (f32::NEG_INFINITY, rgba(WHITE, alpha))
-            };
-            self.text(
-                &mut out,
-                &word,
-                px,
-                1.0,
-                at,
-                split,
-                rgba(WHITE, alpha),
-                done,
-            );
-        }
+        self.draw_labels(&mut out, &words, labels, (lane.head, now));
 
         // The singer: their trail, and where they are now.
         let fresh = last_point.filter(|(_, _, t)| clock - t < ARROW_HOLD);
@@ -874,7 +737,7 @@ impl Stage {
             let a = self.badge.1;
             let px = (p * 1.05).round();
             let label = format!("×{}", self.badge.0);
-            let tw = self.text.measure(&label, px) * pop;
+            let tw = self.measure(Face::SHOUT, &label, px) * pop;
             let cy = lane.band.0 - p * 1.55;
             out.push(disc(
                 (lane.head, cy),
@@ -885,13 +748,12 @@ impl Stage {
             ));
             let number = self.text(
                 &mut out,
+                Face::SHOUT,
                 &label,
-                px,
-                pop,
+                (px, pop),
                 (lane.head - tw / 2.0, cy - px * 0.62 * pop),
                 f32::NEG_INFINITY,
-                rgba(GOLD_TOP, a),
-                rgba(GOLD_TOP, a),
+                (rgba(GOLD_TOP, a), rgba(GOLD_TOP, a)),
             );
             // In rainbow while the singing shines.
             number
@@ -901,10 +763,10 @@ impl Stage {
             if game && singing.tally.streak > 0 {
                 let small = (p * 0.36).round().max(9.0);
                 let streak = format!("{} in a row", singing.tally.streak);
-                let ty = cy - self.cap_middle(small) + COVER_PAD as f32;
+                let ty = cy - self.cap_middle(Face::NUMBER, small) + COVER_PAD as f32;
                 let (sx, sw) = (
                     lane.head + tw / pop / 2.0 + p * 0.4,
-                    self.text.measure(&streak, small),
+                    self.measure(Face::NUMBER, &streak, small),
                 );
                 // On a dark pill of its own, to read over the flames.
                 top.push(pill(
@@ -918,112 +780,18 @@ impl Stage {
                 ));
                 self.text(
                     &mut top,
+                    Face::NUMBER,
                     &streak,
-                    small,
-                    1.0,
+                    (small, 1.0),
                     (sx, ty),
                     f32::NEG_INFINITY,
-                    rgba(WHITE, 0.8 * a),
-                    rgba(WHITE, 0.8 * a),
+                    (rgba(WHITE, 0.8 * a), rgba(WHITE, 0.8 * a)),
                 );
             }
         }
 
-        // The line sung and the next, moving up as the lines change.
-        let big = (h / 15.0).clamp(18.0, 120.0).round();
-        let slot = |kind: LineKind| -> Option<(f32, f32, f32)> {
-            let (cur, next) = (y + h * LINES.0, y + h * LINES.1);
-            match kind {
-                LineKind::Current => Some((cur, 1.0, 1.0)),
-                LineKind::Next => Some((next, 0.66, 0.6)),
-                LineKind::Previous => Some((cur - (next - cur), 0.66, 0.0)),
-                _ => None,
-            }
-        };
-        let moved = picture.moved.clamp(0.0, 1.0) as f32;
-        let mut drawn: Vec<(&LyricLine, f32, f32, f32)> = Vec::new();
-        // Only the first line coming (the view gives two).
-        let first_next = picture
-            .lines
-            .iter()
-            .position(|l| l.kind == LineKind::Next && l.id.is_some());
-        for (i, line) in picture
-            .lines
-            .iter()
-            .enumerate()
-            .filter(|(_, l)| l.id.is_some())
-        {
-            if line.kind == LineKind::Next && Some(i) != first_next {
-                continue;
-            }
-            let Some((ty, scale, alpha)) = slot(line.kind) else {
-                continue;
-            };
-            let from = picture
-                .before
-                .iter()
-                .find(|b| b.id == line.id)
-                .and_then(|b| slot(b.kind))
-                .unwrap_or((ty + (y + h * LINES.1 - y - h * LINES.0), scale, 0.0));
-            let lerp = |a: f32, b: f32| a + (b - a) * moved;
-            drawn.push((
-                line,
-                lerp(from.0, ty),
-                lerp(from.1, scale),
-                lerp(from.2, alpha),
-            ));
-        }
-        if moved < 1.0 {
-            for b in picture.before.iter().filter(|b| b.id.is_some()) {
-                if picture.lines.iter().any(|l| l.id == b.id) {
-                    continue;
-                }
-                let (Some(from), Some(to)) = (slot(b.kind), slot(LineKind::Previous)) else {
-                    continue;
-                };
-                let lerp = |a: f32, b: f32| a + (b - a) * moved;
-                drawn.push((
-                    b,
-                    lerp(from.0, to.0),
-                    lerp(from.1, to.1),
-                    lerp(from.2, to.2),
-                ));
-            }
-        }
-        for (line, ty, scale, alpha) in drawn {
-            let alpha = alpha * line.alpha as f32;
-            if alpha <= 0.01 {
-                continue;
-            }
-            // Smaller where it would not fit.
-            let width = self.text.measure(&line.text, big);
-            let scale = scale * (w * 0.92 / width.max(1.0)).min(1.0);
-            let lw = width * scale;
-            let lx = x + (w - lw) / 2.0;
-            let split = if line.kind == LineKind::Current {
-                let n = line.text.chars().count();
-                let at = line.fill.clamp(0.0, 1.0) * n as f64;
-                let whole = at.floor() as usize;
-                let before: String = line.text.chars().take(whole).collect();
-                let mut sx = self.text.measure(&before, big);
-                if let Some(c) = line.text.chars().nth(whole) {
-                    sx += (at - whole as f64) as f32 * self.text.measure(&c.to_string(), big);
-                }
-                lx + sx * scale
-            } else {
-                f32::NEG_INFINITY
-            };
-            self.text(
-                &mut out,
-                &line.text,
-                big,
-                scale,
-                (lx, ty),
-                split,
-                rgba(WHITE, 0.95 * alpha),
-                rgba(GOLD, alpha),
-            );
-        }
+        // The line sung and the next ([`lines`]).
+        self.lines(&mut out, picture, area);
 
         // The shine: the meter, the tiers' looks, the song's progress.
         let mut drawn = meter::Drawn {
@@ -1039,8 +807,9 @@ impl Stage {
             clock,
         };
         self.shine(&mut drawn, (singing, game, song.length), &at, &step);
-        let (out, top, lights, mut light_sprays) =
+        let (out, top, mut lights, mut light_sprays) =
             (drawn.out, drawn.top, drawn.lights, drawn.light_sprays);
+        lights.append(&mut shots.lights);
         self.lights.retain(|s| s.alive(clock));
         self.lights.append(&mut light_sprays);
 
@@ -1050,6 +819,7 @@ impl Stage {
             instances: out,
             top,
             uploads: std::mem::take(&mut self.atlas.uploads),
+            paths,
             sprays,
             clock: clock as f32,
             lights,
@@ -1098,7 +868,7 @@ mod tests {
 
     #[test]
     fn sparks_fly_and_go() {
-        let mut stage = Stage::new();
+        let mut stage = Stage::default();
         stage.emit(10, (100.0, 100.0), GOLD, 20.0, 1.0, 40.0);
         assert_eq!(stage.sparks.len(), 10);
         // Most fly back, and all go by with the lane.
@@ -1112,8 +882,8 @@ mod tests {
 
     #[test]
     fn the_capitals_middle_is_inside_the_text() {
-        let mut stage = Stage::new();
-        let m = stage.cap_middle(40.0);
+        let mut stage = Stage::default();
+        let m = stage.cap_middle(Face::LINE, 40.0);
         // Below the top, above the baseline (the ascent, about 0.9 of it).
         assert!(
             m > COVER_PAD as f32 + 4.0 && m < COVER_PAD as f32 + 40.0,
@@ -1134,6 +904,7 @@ mod tests {
         atlas.pen = (0, ATLAS - 2, 0);
         let c = atlas.place(&mut big, "again", 40.0).unwrap();
         assert_eq!((c.0, c.1), (0, 0));
-        assert!(!atlas.places.contains_key(&("hello".to_owned(), 160)));
+        let gone = (Face::Main, "hello".to_owned(), 160);
+        assert!(!atlas.places.contains_key(&gone));
     }
 }

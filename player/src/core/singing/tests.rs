@@ -167,7 +167,8 @@ fn any_key_counts_the_shape_within_three_semitones() {
         let mut s = Singing::default();
         s.prepare(Path::new("a"), &lyrics, &crate::core::singing::melodic(&m));
         sing(&mut s, |t| Some(melody_at(t) + off(t)));
-        s.tally.hit_words
+        // The words hit as sung (not rescued).
+        s.tally.hit_words - s.tally.rescued
     };
     // A fourth down (the key followed from the first frames on), an
     // octave down: every word.
@@ -240,13 +241,113 @@ fn medals_go_by_the_words() {
 }
 
 #[test]
-fn a_streak_multiplies_the_points_and_a_miss_ends_it() {
+fn a_streak_multiplies_the_points_and_two_misses_end_it() {
     assert_eq!(
         [0, 4, 5, 9, 10, 19, 20, 99].map(multiplier),
         [1, 1, 2, 2, 3, 3, 4, 4]
     );
-    // A song of 14 words, a second each on C4: the first 12 sung, the
-    // 13th missed, the last sung.
+    // A song of 14 words, a second each on C4: the 12th and 13th missed,
+    // the others sung.
+    let s = fourteen(&[11, 12]);
+    // Words 1-4 at ×1, 5-9 at ×2, 10-11 at ×3; the 12th waits for a
+    // rescue, the 13th missed too ends the streak; the 14th at ×1 again.
+    assert_eq!(s.tally.score, 4 * 100 + 5 * 200 + 2 * 300 + 100);
+    assert_eq!((s.tally.streak, s.tally.best_streak), (1, 11));
+    assert_eq!((s.tally.hit_words, s.tally.rescued), (12, 0));
+    let last = s.tally.last_scored.unwrap();
+    assert_eq!((last.hit, last.points, last.streak), (true, 100, 1));
+    let lost = s.moments().iter().filter(|m| m.cue == Cue::StreakLost);
+    assert_eq!(lost.count(), 1);
+    assert!(!s
+        .moments()
+        .iter()
+        .any(|m| matches!(m.cue, Cue::Shot { .. })));
+}
+
+/// A single word missed, the next burst: it fires a shot at the word
+/// missed, which is rescued (scored as if sung, the streak going on) and
+/// bursts as the shot lands.
+#[test]
+fn a_single_word_missed_is_rescued_by_the_next_to_burst() {
+    let s = fourteen(&[12]);
+    // Words 1-4 at ×1, 5-9 at ×2, 10-14 at ×3 (the 13th rescued).
+    assert_eq!(s.tally.score, 4 * 100 + 5 * 200 + 5 * 300);
+    assert_eq!((s.tally.streak, s.tally.best_streak), (14, 14));
+    assert_eq!((s.tally.hit_words, s.tally.rescued), (14, 1));
+    assert!(!s.moments().iter().any(|m| m.cue == Cue::StreakLost));
+    // The shot: from the 14th's bubble as it bursts, at the 13th.
+    let shots: Vec<_> = (s.moments().iter())
+        .filter_map(|m| match m.cue {
+            Cue::Shot { from, to, .. } => Some((m.at, from, to)),
+            _ => None,
+        })
+        .collect();
+    let [(fired, from, to)] = shots[..] else {
+        panic!("one shot: {shots:?}");
+    };
+    let popped = |w: usize| {
+        s.moments().iter().find_map(|m| match m.cue {
+            Cue::Pop(b) if b.word == w => Some(m.at),
+            _ => None,
+        })
+    };
+    assert_eq!((from, to), ((0, 13), (0, 12)));
+    // As it bursts, or as the word missed is scored, whichever is later.
+    let burst = popped(13).expect("the 14th bursts");
+    assert!(
+        fired >= burst - 1e-9 && fired < burst + 0.05,
+        "{fired} {burst}"
+    );
+    let rescue = s.rescue_of(0, 12).expect("rescued");
+    assert_eq!((rescue.from, rescue.fired), ((0, 13), fired));
+    let lands = fired + crate::core::bubbles::FLIGHT;
+    assert!((rescue.lands() - lands).abs() < 1e-9);
+    let rescued = popped(12).expect("the word rescued bursts");
+    assert!((rescued - lands - crate::core::bubbles::SWEEP).abs() < 1e-9);
+}
+
+/// A word missed, then the song sought forward past the next word, then
+/// a word hit: the word passed unheard ends the wait, nothing is
+/// rescued over them (no shot), and the streak goes on.
+#[test]
+fn a_seek_forward_past_a_word_missed_rescues_nothing() {
+    let (lyrics, m) = fourteen_song();
+    let mut s = Singing::default();
+    s.prepare(Path::new("a"), &lyrics, &crate::core::singing::melodic(&m));
+    // Words 1 to 11 sung, the 12th missed; on from 12 s to 13.5 s.
+    for i in (0..1200).chain(1350..1500) {
+        let t = f64::from(i) / 100.0;
+        let out = (11.0..12.0).contains(&t);
+        s.hear(t, (!out).then_some(6000.0));
+    }
+    s.finish();
+    assert!(!s
+        .moments()
+        .iter()
+        .any(|m| matches!(m.cue, Cue::Shot { .. })));
+    assert_eq!(s.tally.rescued, 0);
+    assert_eq!(s.rescues().count(), 0);
+    // The 12th missed and the 14th hit scored, the 13th not: the streak
+    // not lost.
+    assert_eq!((s.tally.scored_words, s.tally.streak), (13, 12));
+}
+
+/// A song of 14 words, a second each on C4, sung on all but those
+/// `missed` (by their place): heard to its end.
+fn fourteen(missed: &[usize]) -> Singing {
+    let (lyrics, m) = fourteen_song();
+    let mut s = Singing::default();
+    s.prepare(Path::new("a"), &lyrics, &crate::core::singing::melodic(&m));
+    for i in 0..1500 {
+        let t = f64::from(i) / 100.0;
+        let out = missed.contains(&(t as usize));
+        s.hear(t, (!out).then_some(6000.0));
+    }
+    s
+}
+
+/// A song of 14 words, a second each on C4, and its melody.
+fn fourteen_song() -> (Arc<jodel_lyrics::Lyrics>, Melody) {
     let m = melody(1500, &[(0, 1400, 6000)]);
     let l = line(
         (0..14)
@@ -258,19 +359,7 @@ fn a_streak_multiplies_the_points_and_a_miss_ends_it() {
         source: jodel_lyrics::Source::Unknown,
         timing: jodel_lyrics::Timing::default(),
     });
-    let mut s = Singing::default();
-    s.prepare(Path::new("a"), &lyrics, &crate::core::singing::melodic(&m));
-    for i in 0..1500 {
-        let t = f64::from(i) / 100.0;
-        let missed = (12.0..13.0).contains(&t);
-        s.hear(t, (!missed).then_some(6000.0));
-    }
-    // Words 1-4 at ×1, 5-9 at ×2, 10-12 at ×3, the 13th nothing, the
-    // 14th at ×1 again.
-    assert_eq!(s.tally.score, 4 * 100 + 5 * 200 + 3 * 300 + 100);
-    assert_eq!((s.tally.streak, s.tally.best_streak), (1, 12));
-    let last = s.tally.last_scored.unwrap();
-    assert_eq!((last.hit, last.points, last.streak), (true, 100, 1));
+    (lyrics, m)
 }
 
 #[test]

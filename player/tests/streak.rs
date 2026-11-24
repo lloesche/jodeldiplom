@@ -11,11 +11,13 @@ mod common;
 
 use jodeldiplom::core::shine::{Shone, Tier};
 use jodeldiplom::core::singing::Singing;
-use jodeldiplom::gui::karaoke::{paint, Backdrop, BigText, Layer, Target};
+use jodeldiplom::gui::big_text::Faces;
+use jodeldiplom::gui::karaoke::{paint, Backdrop, Layer};
 use jodeldiplom::gui::notes::Over;
 use jodeldiplom::gui::particles::Kind;
 use jodeldiplom::gui::present::Offscreen;
 use jodeldiplom::gui::rainbow::shine_of;
+use jodeldiplom::gui::raster::Target;
 use jodeldiplom::gui::stage::{Song, Stage};
 use jodeldiplom::gui::stage_gpu::{kind, with_picture, StageFrame};
 use jodeldiplom::gui::streak::{PictureShine, Sung};
@@ -47,7 +49,7 @@ type At = (Option<Tier>, f64);
 fn stage_frames(at: impl Fn(f64) -> At, until: f64) -> Vec<(f64, StageFrame)> {
     let (mut singing, lyrics) = common::bubble_song();
     let picture = common::bubble_picture(&singing, &lyrics, (0.0, 0.0), Rect::new(0, 0, 80, 24));
-    let mut stage = Stage::new();
+    let mut stage = Stage::default();
     let (mut t, mut heard, mut out) = (0.0, 0u32, Vec::new());
     while t <= until + 1e-9 {
         while f64::from(heard) / 100.0 <= t.min(0.95) {
@@ -248,7 +250,7 @@ fn painted(
     };
     let mut layer = Layer::default();
     layer.over.gpu = true;
-    let mut text = BigText::default();
+    let mut text = Faces::default();
     paint(
         &mut target,
         &mut text,

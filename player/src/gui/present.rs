@@ -12,7 +12,8 @@
 
 use jodel_gpu::Turned;
 
-use super::canvas::{Canvas, Changes, LayerFrame, PixelRect, MOST_SLOTS};
+use super::canvas::{Canvas, Changes, LayerFrame, MOST_SLOTS};
+use super::raster::PixelRect;
 use super::stage_gpu::StageFrame;
 
 const SHADER: &str = r"

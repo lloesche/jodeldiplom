@@ -48,7 +48,8 @@ jobs:
           fi
 
   # The player's fonts (Sarasa Fixed J, Noto Emoji, Atkinson Hyperlegible
-  # Next) are in the repository, in player/fonts.
+  # Next, and Karaoke mode's Nunito, Fredoka and M PLUS Rounded 1c) are
+  # in the repository, in player/fonts.
   build:
     name: Build ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
@@ -237,7 +238,7 @@ jobs:
           $bin = Get-ChildItem "$($bundle.FullName)/bin"
           if ($bin.Count -ne 1 -or $bin[0].Name -ne 'jodeldiplom.exe') { exit 1 }
           $player = "$($bundle.FullName)/bin/jodeldiplom.exe"
-          # Its fonts are built in (about 16 MB of it).
+          # Its fonts are built in (about 20 MB of it).
           if ((Get-Item $player).Length -lt 20MB) { exit 1 }
           # A window program (no console of its own): its output piped,
           # waited for. Hosted runners may have no audio service, so only

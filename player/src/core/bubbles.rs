@@ -1,28 +1,33 @@
-//! The note bubbles of Karaoke mode (a capsule under each note the words
-//! are sung on): how the singing fills them, and when one is full. Pure,
+//! The word bubbles of Karaoke mode (one under each word sung, through
+//! its notes): how the singing fills them, and when one is full. Pure,
 //! from what [`Singing`] heard; the window sweeps a bubble full to full
-//! and burst it ([`crate::view::bubbles`]).
+//! and bursts it ([`crate::view::bubbles`]).
 //!
-//! A bubble fills where a frame of the singer's pitch hit its note (as
-//! [`Singing`] judged it; a gap of frames without a pitch, a consonant,
-//! under [`BRIDGE`] filled over). It is full ([`Bubble::full_at`]):
+//! A bubble fills where a frame of the singer's pitch hit one of its
+//! notes (as [`Singing`] judged it; a gap of frames without a pitch, a
+//! consonant, under [`BRIDGE`] filled over). It is full ([`Bubble::full_at`]):
 //!
-//! - as soon as its word counts: all the word's
-//!   bubbles at once, the part already sung and the part to come. A word
-//!   counts as the scoring counts it ([`credit`]): its frames that
-//!   hit against all the frames it will have had (those heard on it, and
-//!   those to come until it ends), a little more to be sure; a word the
-//!   scoring counts that never got there, full as it ends;
-//! - once its fill covers [`FULL`] of it.
+//! - as soon as its word counts as the scoring counts it ([`credit`]):
+//!   its frames that hit against all the frames it will have had (those
+//!   heard on it, and those to come until it ends), a little more to be
+//!   sure; a word the scoring counts that never got there, full as it
+//!   ends;
+//! - once its fill covers [`FULL`] of it;
+//! - rescued: a single word missed, the next to burst shoots it full as
+//!   its shot lands ([`super::singing::Rescue`], [`Singing::rescue_of`]).
 //!
-//! A word is full once all its bubbles are ([`Word::full_at`]). Each time
-//! is fixed by the frames up to it, so a bubble is full once.
+//! A bubble full is a word the scoring counts hit: one full by its fill
+//! has been hit more than the scoring asks (pinned by the tuning: a
+//! compile-time check beside [`FULL`]), so a bubble never bursts, rescues
+//! the word before it, and is then scored missed.
+//!
+//! Each time is fixed by the frames up to it, so a bubble is full once.
 
 use std::ops::Range;
 
 use jodel_rhythm::yin::HOP;
 
-use super::singing::judge::credit;
+use super::singing::judge::{credit, SHARE};
 use super::singing::Singing;
 
 /// The share of a bubble its fill covers for it to be full.
@@ -31,47 +36,51 @@ pub const FULL: f64 = 0.85;
 /// seconds.
 pub const BRIDGE: f64 = 0.06;
 
-/// A note's bubble as the singing filled it.
-#[derive(Clone, Debug, Default, PartialEq)]
+// A bubble full by its fill is a word hit: each frame that hit fills at
+// most its own frame and a gap bridged, so a word filled to FULL had at
+// least FULL / (HOP + BRIDGE) of its 1 / HOP frames a second hit, more
+// than the scoring's share of them (its frames up to the delay's slew
+// more).
+const _: () = assert!(FULL * HOP >= SHARE * (HOP + BRIDGE) * (1.0 + super::lag::SLEW));
+
+/// A word's bubble as the singing filled it.
+#[derive(Clone, Debug, PartialEq)]
 pub struct Bubble {
+    /// The word's index on its line.
+    pub word: usize,
+    /// Its notes' indices on the line.
+    pub notes: Range<usize>,
+    /// When it is sung: from, to (seconds into the song).
+    pub time: (f64, f64),
     /// Where it is filled as sung: from, to (seconds into the song).
     pub spans: Vec<(f64, f64)>,
     /// When it filled whole (seconds into the song), if it did.
     pub full_at: Option<f64>,
-    /// Whether it filled with its word (its word counting): it
-    /// sweeps full across the word, else across itself.
-    pub by_word: bool,
 }
 
-/// A word's bubbles.
-#[derive(Clone, Debug, PartialEq)]
-pub struct Word {
-    /// The word's index on its line.
-    pub word: usize,
-    /// Its notes' (and bubbles') indices.
-    pub notes: Range<usize>,
-    /// When it is sung: from, to (seconds into the song).
-    pub time: (f64, f64),
-    /// When the last of its bubbles filled, once all are full.
-    pub full_at: Option<f64>,
+impl Bubble {
+    /// How much of `from` to `to` (seconds into the song) its fill covers,
+    /// in seconds.
+    pub fn covered(&self, (from, to): (f64, f64)) -> f64 {
+        let each = |&(a, z): &(f64, f64)| (z.min(to) - a.max(from)).max(0.0);
+        self.spans.iter().map(each).sum()
+    }
 }
 
-/// A line's bubbles: one a note, in order, and its words.
+/// A line's bubbles: one a word with notes, in order.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Bubbles {
-    /// The bubbles, as the line's notes.
-    pub notes: Vec<Bubble>,
-    /// The words, in order.
-    pub words: Vec<Word>,
+    /// The bubbles.
+    pub words: Vec<Bubble>,
 }
 
 impl Bubbles {
-    /// Word `word` of the line.
-    pub fn word(&self, word: usize) -> Option<&Word> {
+    /// Word `word`'s bubble.
+    pub fn word(&self, word: usize) -> Option<&Bubble> {
         self.words.iter().find(|w| w.word == word)
     }
 
-    /// The words full.
+    /// The bubbles full.
     pub fn words_full(&self) -> usize {
         self.words.iter().filter(|w| w.full_at.is_some()).count()
     }
@@ -86,10 +95,7 @@ pub fn line(singing: &Singing, l: usize, upto: f64) -> Bubbles {
     let (Some(first), Some(last)) = (notes.notes.first(), notes.notes.last()) else {
         return Bubbles::default();
     };
-    let mut out = Bubbles {
-        notes: vec![Bubble::default(); notes.notes.len()],
-        words: Vec::new(),
-    };
+    let mut out = Bubbles::default();
     let mut word_of = Vec::with_capacity(notes.notes.len());
     for (k, n) in notes.notes.iter().enumerate() {
         match out.words.last_mut() {
@@ -97,10 +103,11 @@ pub fn line(singing: &Singing, l: usize, upto: f64) -> Bubbles {
                 w.notes.end = k + 1;
                 w.time.1 = w.time.1.max(n.end);
             }
-            _ => out.words.push(Word {
+            _ => out.words.push(Bubble {
                 word: n.word,
                 notes: k..k + 1,
                 time: (n.start, n.end),
+                spans: Vec::new(),
                 full_at: None,
             }),
         }
@@ -125,7 +132,7 @@ pub fn line(singing: &Singing, l: usize, upto: f64) -> Bubbles {
     let counts = |frames: f64, hit: f64| credit(frames, hit) >= 1.0;
     // How much of each bubble the fill covers (seconds), the frames that
     // hit each word.
-    let mut covered = vec![0.0; out.notes.len()];
+    let mut covered = vec![0.0; out.words.len()];
     let mut hits = vec![0.0; out.words.len()];
     for h in singing.heard_on(l, first.start, upto.min(last.end)) {
         if !h.hit {
@@ -135,61 +142,49 @@ pub fn line(singing: &Singing, l: usize, upto: f64) -> Bubbles {
         let Some(k) = k.checked_sub(1).filter(|&k| h.t < notes.notes[k].end) else {
             continue;
         };
-        let n = &notes.notes[k];
-        let b = &mut out.notes[k];
-        let to = (h.t + HOP).min(n.end);
+        let w = word_of[k];
+        let b = &mut out.words[w];
+        let to = (h.t + HOP).min(b.time.1);
         match b.spans.last_mut() {
             Some(s) if h.t - s.1 < BRIDGE => {
                 if to > s.1 {
-                    covered[k] += to - s.1;
+                    covered[w] += to - s.1;
                     s.1 = to;
                 }
             }
             _ => {
-                covered[k] += to - h.t;
+                covered[w] += to - h.t;
                 b.spans.push((h.t, to));
             }
         }
-        if b.full_at.is_none() && covered[k] >= FULL * (n.end - n.start) {
+        if b.full_at.is_none() && covered[w] >= FULL * (b.time.1 - b.time.0) {
             b.full_at = Some(h.t);
         }
-        // A word counts as soon as it is hit for its share of a
-        // little more than it will have had (the delay slewing packs up to
-        // its slew more frames into a second): all its bubbles full.
-        let w = word_of[k];
+        // A word counts as soon as it is hit for its share of a little
+        // more than it will have had (the delay slewing packs up to its
+        // slew more frames into a second): full.
         hits[w] += 1.0;
         if counts(expected[w] * (1.0 + super::lag::SLEW) + 1.0, hits[w]) {
-            fill_word(&mut out, w, h.t);
+            b.full_at.get_or_insert(h.t);
         }
     }
-    // A word over that the scoring counts and that never got there early:
-    // full as it ends.
-    for w in 0..out.words.len() {
-        let end = out.words[w].time.1;
+    for (w, b) in out.words.iter_mut().enumerate() {
+        // A word over that the scoring counts and that never got there
+        // early: full as it ends.
+        let end = b.time.1;
         if heard_to >= end && counts(expected[w], hits[w]) {
-            fill_word(&mut out, w, end);
+            b.full_at.get_or_insert(end);
         }
-        let word = &mut out.words[w];
-        word.full_at = out.notes[word.notes.clone()]
-            .iter()
-            .map(|b| b.full_at)
-            .try_fold(f64::NEG_INFINITY, |m, f| f.map(|f| m.max(f)));
+        // Missed, then shot full by the next to burst.
+        if let (None, Some(r)) = (b.full_at, singing.rescue_of(l, b.word)) {
+            b.full_at = Some(r.lands());
+        }
     }
     out
 }
 
-/// Word `w`'s bubbles not yet full, full with it at `t`.
-fn fill_word(out: &mut Bubbles, w: usize, t: f64) {
-    for b in &mut out.notes[out.words[w].notes.clone()] {
-        if b.full_at.is_none() {
-            b.full_at = Some(t);
-            b.by_word = true;
-        }
-    }
-}
-
-/// The words of `singing`'s song full by `upto` (all their bubbles), and
-/// the words with notes.
+/// The words of `singing`'s song full by `upto` (their bubbles), and the
+/// words with notes.
 pub fn words_full(singing: &Singing, upto: f64) -> (usize, usize) {
     (0..singing.notes.lines.len())
         .map(|l| line(singing, l, upto))
@@ -205,6 +200,10 @@ pub const SWEEP: f64 = 0.2;
 /// How long of its burst a bubble overfills (bulging) before it tears and
 /// its liquid splashes out, in seconds.
 pub const SWELL: f64 = 0.08;
+
+/// How long a rescuing shot flies from the bubble that fires it to the
+/// one it rescues, in seconds.
+pub const FLIGHT: f64 = 0.32;
 
 #[cfg(test)]
 mod tests;

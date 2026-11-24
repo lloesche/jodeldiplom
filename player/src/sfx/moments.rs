@@ -72,8 +72,9 @@ fn pan(across: f32) -> f32 {
 /// bubbles and the streak have theirs).
 pub fn sound_of(cue: &Cue) -> Option<(Sound, f32)> {
     Some(match *cue {
-        Cue::Pop { height, across, .. } => (Sound::Pop(step(height)), pan(across)),
-        Cue::Splash { height, across, .. } => (Sound::Sparkle(step(height)), pan(across)),
+        Cue::Pop(b) => (Sound::Pop(step(b.height)), pan(b.across)),
+        Cue::Splash(b) => (Sound::Sparkle(step(b.height)), pan(b.across)),
+        Cue::Shot { across, .. } => (Sound::Zap, pan(across)),
         Cue::StreakUp(level) => (Sound::StepUp(level), 0.0),
         Cue::StreakLost => (Sound::Break, 0.0),
         Cue::Phrase(shone) => (Sound::Tier(shone.tier?), 0.0),
@@ -113,10 +114,11 @@ fn cues(moments: &[Moment], clock: f64) -> Vec<Cued> {
             continue;
         };
         let mut at = m.at;
-        if let Cue::Pop { burst: (j, n), .. } | Cue::Splash { burst: (j, n), .. } = m.cue {
+        if let Cue::Pop(b) | Cue::Splash(b) = m.cue {
             // Of the bubbles bursting together, the first few pop, one
             // after another; one splash, on the last of them.
-            let splash = matches!(m.cue, Cue::Splash { .. });
+            let (j, n) = b.burst;
+            let splash = matches!(m.cue, Cue::Splash(_));
             if j >= RIPPLE_MOST || (splash && j + 1 != n.min(RIPPLE_MOST)) {
                 continue;
             }
@@ -139,34 +141,50 @@ fn cues(moments: &[Moment], clock: f64) -> Vec<Cued> {
 mod tests {
     use super::*;
 
-    /// Bubble `note` bursting at `at` as `burst` (its place among those
-    /// bursting together, and their count).
-    fn pop(at: f64, note: usize, height: f32, burst: (usize, usize)) -> [Moment; 2] {
-        let (line, across) = (0, 0.25);
+    /// Word `word`'s bubble bursting at `at` as `burst` (its place among
+    /// those bursting together, and their count).
+    fn pop(at: f64, word: usize, height: f32, burst: (usize, usize)) -> [Moment; 2] {
+        let b = crate::core::singing::Burst {
+            line: 0,
+            word,
+            height,
+            across: 0.25,
+            burst,
+        };
         [
             Moment {
                 at,
                 decided: at - 0.2,
-                cue: Cue::Pop {
-                    line,
-                    note,
-                    height,
-                    across,
-                    burst,
-                },
+                cue: Cue::Pop(b),
             },
             Moment {
                 at: at + crate::core::bubbles::SWELL,
                 decided: at - 0.2,
-                cue: Cue::Splash {
-                    line,
-                    note,
-                    height,
-                    across,
-                    burst,
-                },
+                cue: Cue::Splash(b),
             },
         ]
+    }
+
+    /// A shot fired zaps as it is fired; the word it rescues pops as it
+    /// lands, as any.
+    #[test]
+    fn a_shot_zaps_and_its_word_pops_as_it_lands() {
+        let shot = Moment {
+            at: 2.0,
+            decided: 1.9,
+            cue: Cue::Shot {
+                from: (0, 3),
+                to: (0, 2),
+                across: 0.9,
+            },
+        };
+        let lands = 2.0 + crate::core::bubbles::FLIGHT + crate::core::bubbles::SWEEP;
+        let mut m = vec![shot];
+        m.extend(pop(lands, 2, 0.0, (0, 1)));
+        let c = cues(&m, 1.9);
+        assert_eq!((c[0].sound, c[0].at), (Sound::Zap, Some(2.0)));
+        assert!(c[0].pan > 0.15, "from the right of the line");
+        assert_eq!((c[1].sound, c[1].at), (Sound::Pop(4), Some(lands)));
     }
 
     #[test]
