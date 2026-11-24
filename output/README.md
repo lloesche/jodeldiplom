@@ -325,7 +325,7 @@ it was sung.
   more; or `First`, `Mean`, `Channel(n)`).
 - `Input` (cheap to clone): `peak` (a meter of the voice as captured),
   `voice_peak` (one of the singer isolated, below), `take_voice` (the voice
-  the canceller gives,
+  the canceller and the suppressor give, as the game hears it,
   `VoiceBlock`s of 128 samples with the stream frame each was sung at, the
   last 11 s or so kept), `only_silence(after)` (capture has run that long
   and every sample was exactly zero: a muted input, or on macOS a process
@@ -336,7 +336,9 @@ it was sung.
   Capture stops when the `Input` and its taps are dropped.
 - `MicTap`, in the device thread, resamples the voice to the output's rate
   (up to 352.8 kHz and beyond; cubic, varispeed) and lines it up with what
-  the buffer plays (its channels' mean), both brought down to about 44.1
+  the buffer plays, left and right (a mono output's channel on both; of
+  more than two, every channel after the first two on both halves alike),
+  all brought down to about 44.1
   or 48 kHz (the output's rate divided by 1, 2, 4 or 8), and queues them in
   blocks of 128 for the cleaner, a thread of its own. A control loop steers
   the ratio within ±0.2 % of nominal to hold the ring's fill at two capture
@@ -345,16 +347,35 @@ it was sung.
   continuously. The voice starts after both sides have run 100 ms, drops
   out on a dry ring (counted) until the target is queued again, and a fill
   held more than a period over its target (a capture burst, a device-thread
-  stall) is skipped at once.
+  stall) is skipped at once. Capture frames the ring has no room for are
+  counted as overruns only while the loop reads it: before (no tap yet,
+  warming up) the ring keeps the first second that came and drops the
+  rest, and the loop starts from the newest of that.
 - The echo canceller (`aec`, on as an input opens; `Input::set_echo_cancel`),
   on the cleaner's thread. The rule above the others: the singer is never
-  taken out. It has two parts:
-  - a delay finder, matching how the music's level moves in 16 bands
-    against the microphone's at every delay up to 1 s, moves the filter's
-    window to where the echo starts when it does not reach it (a wireless
-    speaker); once learnt, the window follows the echo's loudest part;
-  - a partitioned-block frequency-domain adaptive filter (200 ms of echo,
-    normalised per frequency), two of them: a shadow that learns while
+  taken out. It has three parts:
+  - a delay finder, matching the microphone's bins against the music's at
+    every delay up to 1 s, their phases only (matched by how the level
+    moves in bands, as before, it was a beat off as often as not: a song's
+    loudness repeats every beat), moves the filter's window to where the
+    echo starts when it does not reach it (a wireless speaker); once
+    learnt, the window follows the echo's loudest part only where the
+    finder hears the echo too (a filter that had learnt something else
+    dragged it off the echo for good), and the delay it tells is the
+    finder's;
+  - a partitioned-block frequency-domain adaptive filter (200 ms of echo)
+    on two channels of what plays, what left and right play alike and what
+    they play apart, normalised per frequency by the inverse of their 2 × 2
+    power: a laptop's microphone sits nearer one speaker, and from the mean
+    of the two the best linear filter took only 6 dB of a MacBook's echo
+    out, however long, whatever model of its speakers' distortion (a song
+    in mono leaves the second channel silent, and the canceller works as
+    one on the mean would, but for a little regularisation, the gain below
+    and the finder). The estimate of the filter in use takes a gain that
+    follows what of it the microphone holds (a speaker's limiter riding the
+    music's loudness: as a passage 7 dB louder began, a MacBook played it 2
+    dB louder, and the filter learnt before overshot by 8 dB), only ever
+    down, its chance wobble shrunk away. Two filters: a shadow that learns while
     nobody sings, and the filter in use, which copies the shadow only once
     it leaves clearly less. Neither learns from singing (a held note would
     draw them towards taking the note out). A room that changes while the
@@ -364,15 +385,33 @@ it was sung.
     second running: a room that changed does that soon, a voice never. The
     filters learn along the music prewhitened (each frequency's steady part
     taken out, so a held tone does not leave the rest of its band
-    unlearnt).
-  The voice it gives is the microphone less the echo predicted, nothing
-  more taken out. A residual suppressor was measured and left out: on real
-  songs it took 2 to 3 dB more of the echo out where nobody sang, as much
-  of a singer under the echo, and left the voice no further over the rest
-  while they sang. `Input::record_echo` writes what the canceller works with
-  for some seconds to a WAV file (three float channels at its rate: the
-  microphone, what plays, the voice it gives), queued by the cleaner and
-  written by a thread of its own, for tuning it to a room.
+    unlearnt). A filter in use worse than the microphone for 0.2 s running,
+    its gain not mending that, gives way to the shadow or the trial if
+    either does better, else everything starts over (started over within
+    30 ms, it was learning again every few seconds on a MacBook);
+  - a residual suppressor (`aec::Suppressor`) after it: per frequency, the
+    share of the canceller's estimate that its leftover is, learnt where
+    only the echo is heard (and again for a new filter), takes the voice's
+    bin down by what that share accounts for (a gain of √(1 − 1.5 ×
+    leftover/power), never under −20 dB), in frames of two blocks under a
+    √Hann window, one block late. It is for the pitch the game hears: where
+    the singer is the louder a bin passes nearly whole, where the leftover
+    is, it goes. A singer under the echo loses some of their level to it:
+    through `aec_room`'s laptop (five songs, the echo 10 dB over the singer)
+    0.1 to 0.9 dB through a linear speaker and 0 to 5.5 dB (median 0.2)
+    through a limiting one, for 0.2 to 11 dB more of the echo out where
+    nobody sang; on a MacBook's real recordings with a separated voice
+    mixed in, 2 to 5 dB (the voice 0 to 10 dB under the microphone's
+    echo), for 5 to 7 dB more out, the game's pitch then found on 1.3 to 7
+    times as many of the voice's frames. The level matters not to the
+    pitch, only how far the voice stands out.
+  The canceller's own voice is the microphone less the echo predicted,
+  nothing more taken out; `take_voice`, the meter and `record_echo` have the
+  suppressor's. `Input::record_echo` writes what the canceller works with
+  for some seconds to a WAV file (five float channels at its rate: the
+  microphone, what plays left and right, the canceller's voice, the voice
+  suppressed), queued by the cleaner and written by a thread of its own,
+  for tuning it to a room.
   `Input::echo_status` says how much echo goes, whether it has learnt, and
   how late the echo comes.
 - The singer isolated (`isolate`), after the canceller on its thread, for
@@ -389,8 +428,7 @@ it was sung.
   the canceller left down 23 dB, an echo never cancelled 24 dB, a fire 40
   dB; trained to lose the voice less rather than take out more band, a
   voice under that band 5 dB louder than itself loses 1.8 dB (11.5 dB in
-  its worst 5 %). It hears the microphone only, not what played.
-  `take_voice` stays the canceller's voice.
+  its worst 5 %). It hears the voice suppressed, not what played.
 - `Input::feed(rate, period)` gives an input fed by the caller (`MicFeed`)
   on a simulated clock, its cleaner run by the caller (`MicFeed::clean`),
   for tests with `FileOutput`.
@@ -538,10 +576,14 @@ minutes (44.1 kHz out, 48 kHz in) and 0.1 % slow at 352.8 kHz, within
 capture gap, a device stall and a capture burst; exact zeros are told apart
 from a quiet input; and the cleaner takes what plays, heard 30 ms later,
 out of the voice (43 dB down once learnt), lets a voice sung over it
-through (within 0.1 dB), and records three channels at its rate (what
-played as the music, the microphone at its echo's level), in a WAV header
-other readers take (WAVE_FORMAT_EXTENSIBLE, float, front left, right and
-centre, with a `fact` chunk). `aec`'s own
+through (within 0.1 dB), and records five channels at its rate (what
+played as the music, left and right alike from a mono output, the
+microphone at its echo's level), in a WAV header other readers take
+(WAVE_FORMAT_EXTENSIBLE, float, front left, right, centre, back left and
+right, with a `fact` chunk). The cleaner's own tests: a click comes out in
+the block stamped as the one it was heard in, at its sample, the canceller
+on or off; at a gap the block held is dropped and the next run's first
+given only with its successor. `aec`'s own
 tests: a room's echo (45 ms, a 40 ms tail) down 27 dB, a voice over it
 kept within 0.1 dB and 35 dB over what is left; a moved speaker learnt again; the volume turned up 12 dB
 learnt again (29 dB down after; 2.5 without the trial filter); a note held
@@ -554,7 +596,13 @@ finder): with the music alone the meter's peak falls by more than 20 dB
 echo is kept within 0.5 dB, 20 to 41 dB over the rest. A singer as a singer
 sounds (syllables of harmonics, consonants, soft ones) through such a room,
 from twice as loud as the echo to 24 dB under it: no syllable loses
-anything (each within 1 dB, the soft ones and the onsets too). `isolate`'s
+anything (each within 1 dB, the soft ones and the onsets too). Two
+speakers heard apart (the microphone by the left one): 31 dB out from left
+and right, 12.5 dB from their mean; music whose loudness repeats every 250
+ms, its echo 300 ms late: found within 15 ms; a loud passage through a
+limiter (the gain pulled down 8 dB): never started over, 43 dB out after;
+the suppressor: 9.5 dB more of a laptop's leftover out, the singer kept
+within 0.1 dB, and without an echo the voice exactly as it came. `isolate`'s
 own tests: the network streamed matches the trained one (PyTorch, the same
 f16 weights) on a made-up signal within 1e-5 in its gains and presence, fed
 in any pieces; a steady hiss goes (75 dB); the downsampler keeps 200 Hz to
@@ -570,15 +618,29 @@ linear speaker the voice stands 11 to 22 dB over what is left and 18 to
 33 dB of the echo goes; through one with a hard limiter (its gain moving
 with the music's loudness, which no linear filter follows) 9 to 12 dB go,
 and what is left is about as loud as the voice. How hard a real laptop's
-limiter is, a recording (`r` on the Karaoke tab) shows.
+limiter is, a recording (`r` on the Karaoke tab) shows. Measured again on
+five songs' separated bands (from `voice-train`) with the canceller as it
+is now: through a linear speaker 14 to 33 dB of the echo goes (as before,
+within 0.6 dB; one the canceller had failed on, 4.6 dB, now 14.2), through
+a limiting one 5 to 15 dB (before 4 to 14), the singer kept within 0.2 dB;
+the suppressor's cost and gain are above.
 
 Recordings go through the canceller again with `cargo run --release -p
 jodel-output --example aec_replay -- RECORDING.wav...` (one canceller over
 all of them, as one session; `--fresh` for one each), second by second,
-the voice it gives written beside each as `RECORDING.wav.replayed.wav` and
-the singer isolated from it as `RECORDING.wav.isolated.wav` (16 kHz, as
-the meter hears it, with the share of a core that took); a
-file of two channels (microphone, music) is a made-up session. Five from a MacBook's own
+the canceller's voice written beside each as `RECORDING.wav.replayed.wav`,
+the suppressed one as `RECORDING.wav.suppressed.wav` and the singer
+isolated from that as `RECORDING.wav.isolated.wav` (16 kHz, as the meter
+hears it, with the share of a core that took); it takes recordings of five
+channels, older ones of three (the mean of left and right for both), and
+files of two (microphone, music), a made-up session. Two later ones from
+a MacBook (built-in speakers and microphone): the echo 80.7 ms late,
+steady within ±13 µs; the best linear filter from the mean took out 5.8
+and 6.6 dB, no model of the speakers' distortion (polynomial, soft clip,
+limiter, before the filter) more than 0.3 dB besides; the canceller now
+never starts over on them (before, four times in 30 s) and the suppressor
+takes the echo about 14 dB down where nobody sang (the canceller alone
+about 7). Five from a MacBook's own
 speakers and microphone (the echo 81 ms late): 5 to 7 dB of the echo goes
 (its bass the speakers do not play, and their limiter, which no linear
 filter follows). On them the filter that learns grew beyond numbers within

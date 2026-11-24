@@ -27,8 +27,8 @@ pub(super) fn get_u64(v: &[f32]) -> u64 {
 }
 
 /// One block the tap queues for the cleaner: where it is, then the
-/// microphone's and what plays, [`BLOCK`] samples each at the canceller's
-/// rate.
+/// microphone's and what plays (left and right), [`BLOCK`] samples each at
+/// the canceller's rate.
 pub(super) struct Packet {
     /// The stream frame the block's first sample was handed to the device
     /// at (as [`crate::Output::position`] counts them).
@@ -38,19 +38,21 @@ pub(super) struct Packet {
     /// The block follows the one before without a gap.
     pub(super) continues: bool,
     pub(super) mic: [f32; BLOCK],
-    pub(super) reference: [f32; BLOCK],
+    pub(super) left: [f32; BLOCK],
+    pub(super) right: [f32; BLOCK],
 }
 
 impl Packet {
     /// Its length in the ring.
-    pub(super) const LEN: usize = 5 + 2 * BLOCK;
+    pub(super) const LEN: usize = 5 + 3 * BLOCK;
 
-    fn write(&self, out: &mut [f32; Packet::LEN]) {
+    pub(super) fn write(&self, out: &mut [f32; Packet::LEN]) {
         put_u64(self.stream_frame, &mut out[..3]);
         out[3] = self.rate as f32;
         out[4] = if self.continues { 1.0 } else { 0.0 };
         out[5..5 + BLOCK].copy_from_slice(&self.mic);
-        out[5 + BLOCK..].copy_from_slice(&self.reference);
+        out[5 + BLOCK..5 + 2 * BLOCK].copy_from_slice(&self.left);
+        out[5 + 2 * BLOCK..].copy_from_slice(&self.right);
     }
 
     pub(super) fn read(v: &[f32; Packet::LEN]) -> Packet {
@@ -59,19 +61,21 @@ impl Packet {
             rate: v[3] as u32,
             continues: v[4] != 0.0,
             mic: [0.0; BLOCK],
-            reference: [0.0; BLOCK],
+            left: [0.0; BLOCK],
+            right: [0.0; BLOCK],
         };
         p.mic.copy_from_slice(&v[5..5 + BLOCK]);
-        p.reference.copy_from_slice(&v[5 + BLOCK..]);
+        p.left.copy_from_slice(&v[5 + BLOCK..5 + 2 * BLOCK]);
+        p.right.copy_from_slice(&v[5 + 2 * BLOCK..]);
         p
     }
 }
 
 /// Lines an [`Input`] up with what an output plays, in its device thread:
 /// the voice resampled to the output's rate, and beside it what the
-/// buffer plays (its channels' mean), both brought down to the canceller's
-/// rate (the output's divided by a whole number) and queued, block by
-/// block, for the cleaner. It only reads the buffers. Hand it to
+/// buffer plays, left and right ([`MicTap::sides`]), all brought down to
+/// the canceller's rate (the output's divided by a whole number) and
+/// queued, block by block, for the cleaner. It only reads the buffers. Hand it to
 /// [`Output::set_tap`](crate::Output::set_tap).
 ///
 /// Only one tap of an input consumes it at a time: another one (on an
@@ -100,7 +104,8 @@ pub struct MicTap {
     /// Sums of the samples of the canceller's sample being made, and how
     /// many so far.
     mic_sum: f32,
-    reference_sum: f32,
+    left_sum: f32,
+    right_sum: f32,
     phase: usize,
     /// The block being filled, and how far.
     packet: Box<Packet>,
@@ -124,14 +129,16 @@ impl MicTap {
             buffer_stream: 0,
             at: 0,
             mic_sum: 0.0,
-            reference_sum: 0.0,
+            left_sum: 0.0,
+            right_sum: 0.0,
             phase: 0,
             packet: Box::new(Packet {
                 stream_frame: 0,
                 rate: 0,
                 continues: false,
                 mic: [0.0; BLOCK],
-                reference: [0.0; BLOCK],
+                left: [0.0; BLOCK],
+                right: [0.0; BLOCK],
             }),
             filled: 0,
             continues: false,
@@ -174,7 +181,8 @@ impl MicTap {
     /// Starts a new block: the next one queued does not follow the last.
     fn start_over(&mut self) {
         self.mic_sum = 0.0;
-        self.reference_sum = 0.0;
+        self.left_sum = 0.0;
+        self.right_sum = 0.0;
         self.phase = 0;
         self.filled = 0;
         self.continues = false;
@@ -186,9 +194,34 @@ impl MicTap {
     }
 }
 
+impl MicTap {
+    /// What a frame of 24-bit values plays left and right, full scale ±1:
+    /// of a mono output its channel on both; of a stereo one its two; of
+    /// more, the first two, every channel after them on both halves alike
+    /// (a centre, a subwoofer, the rear: the canceller hears them as what
+    /// both sides play). Their mean is the frame's mean in each case.
+    fn sides(frame: &[i32]) -> (f32, f32) {
+        let ch = frame.len().max(1);
+        let unit = 1.0 / 8_388_608.0;
+        match frame {
+            [] => (0.0, 0.0),
+            [one] => (*one as f32 * unit, *one as f32 * unit),
+            [l, r, rest @ ..] => {
+                let shared: f32 = rest.iter().map(|&s| s as f32).sum::<f32>();
+                let scale = 2.0 * unit / ch as f32;
+                (
+                    (*l as f32 + shared / 2.0) * scale,
+                    (*r as f32 + shared / 2.0) * scale,
+                )
+            }
+        }
+    }
+}
+
 impl Drop for MicTap {
     fn drop(&mut self) {
         if self.claimed {
+            self.input.shared().reading.store(false, Ordering::Release);
             self.input.shared().claimed.store(false, Ordering::Release);
         }
     }
@@ -231,7 +264,6 @@ impl Tap for MicTap {
         let shared = &*self.input.inner.shared;
         let voice = &mut self.voice[..frames];
         self.steer.render(shared, voice, &mut self.taken);
-        let scale = 1.0 / (8_388_608.0 * ch as f32);
         let rate = self.rate / self.factor as u32;
         for (frame, &mic) in samples.chunks_exact(ch).zip(self.voice[..frames].iter()) {
             if self.phase == 0 && self.filled == 0 {
@@ -239,16 +271,20 @@ impl Tap for MicTap {
             }
             self.at += 1;
             self.mic_sum += mic;
-            self.reference_sum += frame.iter().map(|&s| s as f32).sum::<f32>() * scale;
+            let (left, right) = MicTap::sides(frame);
+            self.left_sum += left;
+            self.right_sum += right;
             self.phase += 1;
             if self.phase < self.factor {
                 continue;
             }
             let n = self.factor as f32;
             self.packet.mic[self.filled] = self.mic_sum / n;
-            self.packet.reference[self.filled] = self.reference_sum / n;
+            self.packet.left[self.filled] = self.left_sum / n;
+            self.packet.right[self.filled] = self.right_sum / n;
             self.mic_sum = 0.0;
-            self.reference_sum = 0.0;
+            self.left_sum = 0.0;
+            self.right_sum = 0.0;
             self.phase = 0;
             self.filled += 1;
             if self.filled == BLOCK {

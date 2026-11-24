@@ -589,9 +589,10 @@ fn the_cleaner_takes_the_echo_of_what_plays_out_of_the_voice() {
     let status = input.echo_status();
     assert!(status.learnt && status.removed_db > 10.0, "{status:?}");
     assert!(input.voice_peak().is_some());
-    // The recording: half a second at the canceller's rate, three float
-    // channels; the second is what played (the music, as the engine sent
-    // it), the first the microphone (its echo, at half the level).
+    // The recording: half a second at the canceller's rate, five float
+    // channels; the second and third are what played (the music, as the
+    // engine sent it, left and right), the first the microphone (its echo,
+    // at half the level).
     let done = (0..500).find_map(|_| {
         std::thread::sleep(Duration::from_millis(10));
         recording.done()
@@ -603,20 +604,21 @@ fn the_cleaner_takes_the_echo_of_what_plays_out_of_the_voice() {
     let read32 = |at: usize| u32::from_le_bytes([wav[at], wav[at + 1], wav[at + 2], wav[at + 3]]);
     // WAVE_FORMAT_EXTENSIBLE, float (its sub-format), the samples after
     // the `fact` chunk.
-    assert_eq!((read16(20), read16(22), read32(24)), (0xFFFE, 3, rate));
+    assert_eq!((read16(20), read16(22), read32(24)), (0xFFFE, 5, rate));
     assert_eq!(read16(44), 3);
     assert_eq!((&wav[60..64], &wav[72..76]), (&b"fact"[..], &b"data"[..]));
     let samples: Vec<f32> = wav[80..]
         .chunks_exact(4)
         .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
         .collect();
-    let frames_recorded = samples.len() / 3;
+    let frames_recorded = samples.len() / 5;
     assert!(
         frames_recorded >= rate as usize / 2,
         "{frames_recorded} frames"
     );
-    let channel = |c: usize| -> Vec<f32> { samples.iter().skip(c).step_by(3).copied().collect() };
+    let channel = |c: usize| -> Vec<f32> { samples.iter().skip(c).step_by(5).copied().collect() };
     let (mic, played) = (channel(0), channel(1));
+    assert_eq!(played, channel(2), "left and right of a mono output");
     let ratio = db(power(&played)) - db(power(&music[..frames_recorded]));
     assert!(
         ratio.abs() < 1.0,

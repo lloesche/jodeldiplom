@@ -1,24 +1,29 @@
 //! The echo canceller over recordings of it: the player's `r` on the
-//! Karaoke tab records what it works with (three float channels: the
-//! microphone, the music going to the speakers, the voice it gave). Each
-//! file is fed again through one canceller, in the order given (as in one
-//! session: what it learnt carries over), and each second says how it is
-//! doing, with the voice it gives now beside the one recorded. The voice it
-//! gives now is written beside each file, as FILE.replayed.wav (mono,
-//! 32-bit float), and the singer isolated from it (`jodel_output::isolate`,
-//! as the meter hears it) as FILE.isolated.wav (16 kHz, lined up with the
-//! input), with how long that took.
+//! Karaoke tab records what it works with (five float channels: the
+//! microphone, the music going to the left and the right speaker, the voice
+//! the canceller gave, and that voice with its leftover suppressed). Each
+//! file is fed again through one canceller and suppressor, in the order
+//! given (as in one session: what they learnt carries over), and each
+//! second says how they are doing, with the voice they give now beside the
+//! one recorded. What they give now is written beside each file, as
+//! FILE.replayed.wav (the canceller's) and FILE.suppressed.wav (as the game
+//! hears it; mono, 32-bit float, lined up with the input), and the singer
+//! isolated from the latter (`jodel_output::isolate`, as the meter hears
+//! it) as FILE.isolated.wav (16 kHz, lined up with the input), with how
+//! long that took.
 //!
-//! A file of two float channels (the microphone, the music) is taken too:
-//! a made-up session, with no voice recorded to compare. `--fresh` gives
-//! each file a canceller of its own.
+//! Older recordings of three channels (the microphone, the mean of what
+//! the speakers played, the voice) are taken too, and files of two (the
+//! microphone, the music): a made-up session, with no voice recorded to
+//! compare. `--fresh` gives each file a canceller of its own.
 //!
 //! ```text
 //! cargo run --release -p jodel-output --example aec_replay -- [--fresh] RECORDING.wav...
 //! ```
 
-use jodel_output::aec::{EchoCanceller, BLOCK};
+use jodel_output::aec::{Whole, BLOCK};
 use jodel_output::isolate::{Downsampler, Isolator, DELAY, RATE};
+use std::path::Path;
 use std::time::Instant;
 
 fn db(x: &[f32]) -> f64 {
@@ -34,7 +39,7 @@ fn main() {
         eprintln!("usage: aec_replay [--fresh] RECORDING.wav...");
         std::process::exit(2);
     }
-    let mut aec: Option<EchoCanceller> = None;
+    let mut aec: Option<Whole> = None;
     for path in &paths {
         println!("{path}");
         if fresh {
@@ -63,16 +68,16 @@ fn write_wav(path: &str, rate: u32, x: &[f32]) {
     for v in x {
         b.extend_from_slice(&v.to_le_bytes());
     }
-    std::fs::write(path, b).unwrap_or_else(|e| panic!("{path}: {e}"));
+    durable::write_atomic(Path::new(path), &b).unwrap_or_else(|e| panic!("{path}: {e}"));
 }
 
-fn replay(path: &str, kept: &mut Option<EchoCanceller>) {
+fn replay(path: &str, kept: &mut Option<Whole>) {
     let b = std::fs::read(path).unwrap_or_else(|e| panic!("{path}: {e}"));
     let u16_at = |i: usize| u16::from_le_bytes([b[i], b[i + 1]]);
     let channels = usize::from(u16_at(22));
     let rate = u32::from_le_bytes([b[24], b[25], b[26], b[27]]);
     assert!(
-        channels == 2 || channels == 3,
+        matches!(channels, 2 | 3 | 5),
         "{path}: {channels} channels, not a recording of the canceller"
     );
     let at = b
@@ -85,42 +90,56 @@ fn replay(path: &str, kept: &mut Option<EchoCanceller>) {
         .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
         .collect();
     let channel = |c: usize| -> Vec<f32> { x.iter().skip(c).step_by(channels).copied().collect() };
-    let (mic, music) = (channel(0), channel(1));
-    let voice = (channels == 3).then(|| channel(2));
-    let aec = kept.get_or_insert_with(|| EchoCanceller::new(rate));
-    let mut out = vec![0.0f32; mic.len()];
-    let mut block = [0.0f32; BLOCK];
+    let mic = channel(0);
+    let (left, right) = if channels == 5 {
+        (channel(1), channel(2))
+    } else {
+        (channel(1), channel(1))
+    };
+    let music: Vec<f32> = left
+        .iter()
+        .zip(&right)
+        .map(|(l, r)| 0.5 * (l + r))
+        .collect();
+    let voice = match channels {
+        3 => Some(channel(2)),
+        5 => Some(channel(4)),
+        _ => None,
+    };
+    let whole = kept.get_or_insert_with(|| Whole::new(rate));
     let second = rate as usize;
-    for k in 0..mic.len() / BLOCK {
-        let r = k * BLOCK..(k + 1) * BLOCK;
-        aec.process(&mic[r.clone()], &music[r.clone()], &mut block);
-        out[r].copy_from_slice(&block);
-        let end = (k + 1) * BLOCK;
+    let mut seconds = Vec::new();
+    let cleaned = whole.run(&mic, &left, &right, |end, status| {
         if end / second != (end - BLOCK) / second {
-            let s = aec.status();
-            let w = end - second..end;
-            let recorded = voice.as_ref().map_or(String::new(), |v| {
-                format!(", recorded {:6.1}", db(&v[w.clone()]))
-            });
-            println!(
-                "{:3} s  learnt {:5}  removed {:5.1} dB  delay {:>6}  mic {:6.1}  voice now {:6.1}{recorded}  music {:6.1} dB",
-                end / second,
-                s.learnt,
-                s.removed_db,
-                s.delay
-                    .map_or("-".to_owned(), |d| format!("{:.0} ms", d * 1000.0)),
-                db(&mic[w.clone()]),
-                db(&out[w.clone()]),
-                db(&music[w]),
-            );
+            seconds.push((end, *status));
         }
+    });
+    let (out, suppressed) = (&cleaned.cancelled, &cleaned.suppressed);
+    for (end, s) in seconds {
+        let w = end - second..end;
+        let recorded = voice.as_ref().map_or(String::new(), |v| {
+            format!(", recorded {:6.1}", db(&v[w.clone()]))
+        });
+        println!(
+            "{:3} s  learnt {:5}  removed {:5.1} dB  delay {:>6}  mic {:6.1}  voice now {:6.1}  suppressed {:6.1}{recorded}  music {:6.1} dB",
+            end / second,
+            s.learnt,
+            s.removed_db,
+            s.delay
+                .map_or("-".to_owned(), |d| format!("{:.0} ms", d * 1000.0)),
+            db(&mic[w.clone()]),
+            db(&out[w.clone()]),
+            db(&suppressed[w.clone()]),
+            db(&music[w]),
+        );
     }
-    write_wav(&format!("{path}.replayed.wav"), rate, &out);
+    write_wav(&format!("{path}.replayed.wav"), rate, out);
+    write_wav(&format!("{path}.suppressed.wav"), rate, suppressed);
     // The singer isolated, block by block as the canceller's thread does.
     let started = Instant::now();
     let (mut down, mut iso) = (Downsampler::new(rate), Isolator::new());
     let (mut at_16k, mut isolated) = (Vec::new(), Vec::new());
-    for block in out.chunks(BLOCK) {
+    for block in suppressed.chunks(BLOCK) {
         down.process(block, &mut at_16k);
         iso.process(&at_16k, &mut isolated);
         at_16k.clear();

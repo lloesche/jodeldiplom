@@ -88,7 +88,7 @@ reaches the DAC bit for bit, and the device's rate follows the track.
 ## Karaoke as routing
 
 ```
-mic port ─► strip: echo canceller (sidechain: speaker output) ─► voice isolation
+mic port ─► strip: echo canceller (sidechain: speaker output) ─► residual suppressor ─► voice isolation
                 └─ taps: pitch detector (the game), recorder (Keep)
 ```
 
@@ -212,8 +212,9 @@ bit-exact tests, run through the desk.
   microphone's port.
 - **The microphone's port** (`Mixer::set_mic`): the desk taps its device
   for the microphone on each Lead output. Its chain: the clock bridge, the
-  echo canceller with the speaker output as its sidechain, then the singer
-  isolated; its taps are the voice queue the pitch detector and Keep read.
+  echo canceller with the speaker output (left and right) as its
+  sidechain, the residual suppressor, then the singer isolated; its taps
+  are the voice queue the pitch detector and Keep read.
   It has no strip and no route, so it cannot reach an output. The engine no
   longer knows of it.
 - **Bus and route types are deferred to step 4**: there is one bus and one

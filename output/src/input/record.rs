@@ -7,8 +7,13 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
-/// A recording of the canceller's channels ([`Input::record_echo`]).
-pub(super) const RECORD_CHANNELS: usize = 3;
+/// A recording of the canceller's channels ([`Input::record_echo`]): the
+/// microphone, left, right, the voice cancelled, the voice suppressed.
+pub(super) const RECORD_CHANNELS: usize = 5;
+/// The speakers its channels are said to be for (WAVE_FORMAT_EXTENSIBLE's
+/// mask): front left, front right, centre, back left, back right. Not the
+/// subwoofer: a player would play the fourth channel through a low-pass.
+const RECORD_SPEAKERS: u32 = 0x37;
 /// What a recording of the canceller queues at most: two seconds of its
 /// channels at its highest rate.
 pub(super) const RECORD_QUEUE: usize = RECORD_CHANNELS * 56_000 * 2;
@@ -38,11 +43,11 @@ const WAV_HEADER: usize = 80;
 
 /// A WAV header for `frames` of `channels` channels of 32-bit float at
 /// `rate`, as players everywhere read one (macOS's Quick Look among them):
-/// WAVE_FORMAT_EXTENSIBLE, saying which speaker each channel is for (front
-/// left, front right, centre, then on), and a `fact` chunk with the frame
-/// count, which a WAV file of floats should have. The plain 16-byte header
-/// of float data on three channels was refused by some.
-fn wav_header(channels: u16, rate: u32, frames: u64) -> Vec<u8> {
+/// WAVE_FORMAT_EXTENSIBLE, saying which speaker each channel is for (the
+/// mask `speakers`), and a `fact` chunk with the frame count, which a WAV
+/// file of floats should have. The plain 16-byte header of float data on
+/// three channels was refused by some.
+fn wav_header(channels: u16, speakers: u32, rate: u32, frames: u64) -> Vec<u8> {
     /// KSDATAFORMAT_SUBTYPE_IEEE_FLOAT.
     const FLOAT: [u8; 16] = [
         0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00, 0x80, 0x00, 0x00, 0xAA, 0x00, 0x38, 0x9B,
@@ -50,11 +55,6 @@ fn wav_header(channels: u16, rate: u32, frames: u64) -> Vec<u8> {
     ];
     let block = u32::from(channels) * 4;
     let data = (frames * u64::from(block)).min(u64::from(u32::MAX - WAV_HEADER as u32)) as u32;
-    let mask: u32 = if channels >= 32 {
-        u32::MAX
-    } else {
-        (1u32 << channels) - 1
-    };
     let mut h = Vec::with_capacity(WAV_HEADER);
     h.extend_from_slice(b"RIFF");
     h.extend_from_slice(&(WAV_HEADER as u32 - 8 + data).to_le_bytes());
@@ -69,7 +69,7 @@ fn wav_header(channels: u16, rate: u32, frames: u64) -> Vec<u8> {
     h.extend_from_slice(&32u16.to_le_bytes());
     h.extend_from_slice(&22u16.to_le_bytes());
     h.extend_from_slice(&32u16.to_le_bytes());
-    h.extend_from_slice(&mask.to_le_bytes());
+    h.extend_from_slice(&speakers.to_le_bytes());
     h.extend_from_slice(&FLOAT);
     h.extend_from_slice(b"fact");
     h.extend_from_slice(&4u32.to_le_bytes());
@@ -126,8 +126,13 @@ pub(super) fn write_recording(shared: &MicShared, path: &Path, seconds: f64) -> 
     }
     // The header, now the length is known; then the name.
     file.seek(SeekFrom::Start(0)).map_err(fail)?;
-    file.write_all(&wav_header(RECORD_CHANNELS as u16, rate, frames))
-        .map_err(fail)?;
+    file.write_all(&wav_header(
+        RECORD_CHANNELS as u16,
+        RECORD_SPEAKERS,
+        rate,
+        frames,
+    ))
+    .map_err(fail)?;
     file.commit().map_err(fail)
 }
 
@@ -137,33 +142,33 @@ mod tests {
 
     #[test]
     fn a_recording_has_the_header_players_read() {
-        let h = wav_header(3, 44_100, 1000);
+        let h = wav_header(RECORD_CHANNELS as u16, RECORD_SPEAKERS, 44_100, 1000);
         assert_eq!(h.len(), WAV_HEADER);
         let u16_at = |i: usize| u16::from_le_bytes([h[i], h[i + 1]]);
         let u32_at = |i: usize| u32::from_le_bytes([h[i], h[i + 1], h[i + 2], h[i + 3]]);
         assert_eq!(&h[0..4], b"RIFF");
         // The file's length less 8: the header's 72 and the samples'.
-        assert_eq!(u32_at(4), 72 + 1000 * 12);
+        assert_eq!(u32_at(4), 72 + 1000 * 20);
         assert_eq!(&h[8..16], b"WAVEfmt ");
         assert_eq!(u32_at(16), 40);
         assert_eq!(u16_at(20), 0xFFFE);
-        assert_eq!((u16_at(22), u32_at(24)), (3, 44_100));
-        assert_eq!((u32_at(28), u16_at(32), u16_at(34)), (44_100 * 12, 12, 32));
+        assert_eq!((u16_at(22), u32_at(24)), (5, 44_100));
+        assert_eq!((u32_at(28), u16_at(32), u16_at(34)), (44_100 * 20, 20, 32));
         assert_eq!((u16_at(36), u16_at(38)), (22, 32));
-        // Front left, front right, centre.
-        assert_eq!(u32_at(40), 0b111);
+        // Front left, front right, centre, back left, back right.
+        assert_eq!(u32_at(40), 0b11_0111);
         // The float sub-format, then the frames in `fact`, then the data.
         assert_eq!(&h[44..48], &[3, 0, 0, 0]);
         assert_eq!(&h[56..60], &[0x00, 0x38, 0x9B, 0x71]);
         assert_eq!(&h[60..64], b"fact");
         assert_eq!((u32_at(64), u32_at(68)), (4, 1000));
         assert_eq!(&h[72..76], b"data");
-        assert_eq!(u32_at(76), 1000 * 12);
+        assert_eq!(u32_at(76), 1000 * 20);
         // A file of it, for a reader of its own (`JODEL_WAV_SAMPLE`).
         if let Some(out) = std::env::var_os("JODEL_WAV_SAMPLE") {
             let mut bytes = h.clone();
-            for i in 0..3000u32 {
-                bytes.extend_from_slice(&((i % 3) as f32 * 0.25).to_le_bytes());
+            for i in 0..5000u32 {
+                bytes.extend_from_slice(&((i % 5) as f32 * 0.2).to_le_bytes());
             }
             std::fs::write(out, bytes).unwrap();
         }

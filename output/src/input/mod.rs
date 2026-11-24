@@ -21,8 +21,9 @@
 //!    [`Output::set_tap`](crate::Output::set_tap) (a mixer does it itself:
 //!    [`crate::mixer::Mixer::set_mic`]). In the device thread it
 //!    resamples the voice to the output's rate and queues it, with what
-//!    plays, for the cleaner: a thread that takes the music's echo out
-//!    ([`crate::aec`]).
+//!    plays (left and right), for the cleaner: a thread that takes the
+//!    music's echo out ([`crate::aec`]) and suppresses what the canceller
+//!    left of it ([`crate::aec::Suppressor`]).
 //! 3. [`Input::take_voice`] gives the voice cleaned, block by block
 //!    ([`VoiceBlock`]); [`Input::voice_peak`] is a meter of the singer
 //!    isolated from it ([`crate::isolate`]: the band the canceller missed
@@ -202,8 +203,11 @@ pub struct MicStatus {
     pub active: bool,
     /// Times the ring ran dry and the voice dropped out.
     pub underruns: u64,
-    /// Capture frames lost because the ring was full (nothing consumed
-    /// them).
+    /// Capture frames lost because the ring was full while the clock
+    /// bridge read the voice (it fell a second behind). Before it reads
+    /// (no tap yet, or warming up), the ring keeps the first second that
+    /// came and drops the rest, and the bridge starts from the newest of
+    /// that: nothing anyone wanted is lost, and nothing is counted.
     pub overruns: u64,
     /// Times the fill was held more than a period over its target and the
     /// excess was skipped.
@@ -400,9 +404,11 @@ impl Input {
     }
 
     /// Records what the echo canceller works with for `seconds` (of its
-    /// own time) to `path`, a WAV file of three channels at its rate,
-    /// 32-bit float (WAVE_FORMAT_EXTENSIBLE): the microphone as it hears it, what plays (the music
-    /// going to the speakers), and the voice it gives. For tuning it to a
+    /// own time) to `path`, a WAV file of five channels at its rate,
+    /// 32-bit float (WAVE_FORMAT_EXTENSIBLE): the microphone as it hears it,
+    /// what plays (the music going to the left and the right speaker), the
+    /// voice the canceller gives, and that voice with its leftover
+    /// suppressed (as the game hears it). For tuning it to a
     /// room. The cleaner queues its blocks; a thread of its own writes
     /// them. The handle says when it is done and how it went. It stops
     /// early, with what it has, when no block comes for a few seconds (no
@@ -495,11 +501,10 @@ impl MicFeed {
     /// Queues mono samples (full scale ±1) as one capture packet, at the
     /// time last set. Returns how many fitted (the ring holds a second).
     pub fn push(&mut self, samples: &[f32]) -> usize {
-        let before = self.producer.shared().overruns.load(Ordering::Relaxed);
+        let room = self.producer.shared().ring.free();
         let bytes: &[u8] = bytemuck_f32(samples);
         self.producer.push(bytes, Wire::F32, 1, samples.len());
-        let lost = self.producer.shared().overruns.load(Ordering::Relaxed) - before;
-        samples.len() - lost as usize
+        samples.len().min(room)
     }
 
     /// Sets the simulated clock that both the feed and the tap read

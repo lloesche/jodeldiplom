@@ -152,6 +152,9 @@ pub(crate) struct MicShared {
     pub(super) resyncs: AtomicU64,
     /// An insert holds the consumer side of the ring.
     pub(super) claimed: AtomicBool,
+    /// The clock bridge reads the ring: it is primed (set and cleared by
+    /// its [`super::bridge::Steer`]).
+    pub(super) reading: AtomicBool,
     pub(super) failed: AtomicBool,
     pub(super) failure: Mutex<Option<Error>>,
 }
@@ -204,6 +207,7 @@ impl MicShared {
             overruns: AtomicU64::new(0),
             resyncs: AtomicU64::new(0),
             claimed: AtomicBool::new(false),
+            reading: AtomicBool::new(false),
             failed: AtomicBool::new(false),
             failure: Mutex::new(None),
         })
@@ -341,7 +345,13 @@ impl Producer {
                 peak = peak.max(o.abs());
             }
             let queued = s.ring.push(&self.scratch[..n]);
-            if queued < n {
+            // Lost only while the bridge reads the voice: before it does
+            // (the microphone opened while the output is still being set
+            // up, or warming up), the ring fills with the first second and
+            // drops what comes after; the bridge starts from the newest of
+            // what it holds (a couple of capture periods, then the voice as
+            // it comes).
+            if queued < n && s.reading.load(Ordering::Acquire) {
                 s.overruns.fetch_add((n - queued) as u64, Ordering::Relaxed);
             }
             done += n;

@@ -595,9 +595,14 @@ would be without it, and nothing can feed back. It sees what the device
 plays (a tap at the output's last step that only reads), so the music's
 echo can be taken out of what it hears (`karaoke_echo = true` in the
 settings file, the default): an echo canceller learns from the music how
-what plays comes back from the speakers (within a second or so) and
-subtracts it, and takes nothing else out, so the singer always passes
-whole. The meter shows the singer isolated from that voice: a small
+what plays comes back from the speakers, left and right each its own way
+(within a second or so), and subtracts it, and takes nothing else out, so
+the singer always passes whole. What it cannot predict of the echo (on a
+laptop's own speakers, most of what they play apart and their limiter) is
+then turned down where it outweighs the voice, for the pitch the game
+hears; a singer much quieter than that leftover loses a few dB there,
+which the pitch does not mind. The meter shows the singer isolated from
+that voice: a small
 network trained on singing takes out what the canceller leaves of the band
 (through a laptop's speakers, most of it) and the room's own sounds (a
 fire, a fan), so only the voice moves it. The tab says how many dB of the echo
@@ -606,9 +611,11 @@ to a second late, from a wireless speaker too). The voice is kept block by
 block with where in the song it was sung, for scoring the singing. With
 `JODELDIPLOM_TRACE` set, the trace gets a line a second on the microphone
 and the canceller. `r` (on the tab or in the mode) records 30 s of what
-the canceller works with, as a WAV file of three channels of 32-bit float
-(the microphone, the music going to the speakers, the voice it gives; the
-extensible header with a channel layout, which every player reads), in
+the canceller works with, as a WAV file of five channels of 32-bit float
+(the microphone, the music going to the left and the right speaker, the
+voice the canceller gives, and that voice as the game hears it, its
+leftover turned down; the extensible header with a channel layout, which
+every player reads), in
 `recordings` in the settings folder: sing over the music while it
 records, to tune the canceller to a room. On macOS the system asks once
 whether the player (the app, or the terminal it runs in) may use the
@@ -787,8 +794,9 @@ there is no sync, and the tab says why.
 
 With **Keep** on, each song sung in the mode is saved when it ends (or
 the mode is left): a folder `recordings/sing-<seconds>` beside the
-settings file with the voice as the echo canceller cleaned it
-(`voice.wav`), where in the song each part was sung (`times.txt`), the
+settings file with the voice as the game heard it, the echo cancelled and
+its leftover turned down (`voice.wav`), where in the song each part was
+sung (`times.txt`), the
 lyrics with our word times and the song's melody as the game held the
 singing against them, and the delay the game took (and where it came
 from), and the key the song was heard in where it was not its own

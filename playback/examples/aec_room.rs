@@ -2,9 +2,11 @@
 //! through a simulated laptop (small speakers with a limiter and soft
 //! clipping, a room's tail), the microphone hears that and a singer (a
 //! separated voice from another song), and the canceller takes the song's
-//! echo out of what it hears. The microphone is never played, so there is
-//! no loop. Prints, a second at a time, how it is doing, then what it kept
-//! of the singer and what it took out of the song.
+//! echo out of what it hears, the residual suppressor after it (as the game
+//! hears the voice). The microphone is never played, so there is no loop.
+//! Prints, a second at a time, how it is doing, then what each kept of the
+//! singer and what it took out of the song. The song plays as one channel
+//! on both speakers (the laptop is made up of one).
 //!
 //! ```text
 //! cargo run --release -p jodel-playback --example aec_room -- SONG VOICE.wav [ECHO_DB] [DELAY_MS] [SECONDS] [linear]
@@ -21,7 +23,7 @@
 use std::f32::consts::PI;
 use std::path::Path;
 
-use jodel_output::aec::{EchoCanceller, BLOCK};
+use jodel_output::aec::{Whole, BLOCK};
 
 const RATE: u32 = 48_000;
 
@@ -161,40 +163,38 @@ fn main() {
     let mic: Vec<f32> = (0..n)
         .map(|i| echo[i] + voice[i] + 3e-4 * noise.next())
         .collect();
-    let mut aec = EchoCanceller::new(RATE);
-    let mut out = vec![0.0f32; n];
-    let mut block = [0.0f32; BLOCK];
     let mut learnt_at = None;
-    for b in 0..n / BLOCK {
-        let r = b * BLOCK..(b + 1) * BLOCK;
-        aec.process(&mic[r.clone()], &music[r.clone()], &mut block);
-        out[r].copy_from_slice(&block);
-        let s = aec.status();
+    let cleaned = Whole::new(RATE).run(&mic, &music[..n], &music[..n], |end, s| {
         if s.learnt && learnt_at.is_none() {
-            learnt_at = Some(((b + 1) * BLOCK) as f32 / RATE as f32);
+            learnt_at = Some(end as f32 / RATE as f32);
         }
-        if (b + 1) * BLOCK % (5 * RATE as usize) < BLOCK {
+        if end % (5 * RATE as usize) < BLOCK {
             println!(
                 "{:4.0} s  learnt {:5}  removed {:5.1} dB  filter {:5.1} dB  delay {:?}",
-                ((b + 1) * BLOCK) as f32 / RATE as f32,
+                end as f32 / RATE as f32,
                 s.learnt,
                 s.removed_db,
                 s.filter_db,
                 s.delay
             );
         }
+    });
+    let (out, suppressed) = (cleaned.cancelled, cleaned.suppressed);
+    println!("learnt after {learnt_at:?} s");
+    for (name, out) in [("cancelled", &out), ("suppressed", &suppressed)] {
+        // What came out where the singer sang, against the singer: the
+        // share kept (its projection), and how far over the rest of what
+        // came out.
+        let (o, v) = (pick(out, true), pick(&voice, true));
+        let a = o.iter().zip(&v).map(|(o, v)| f64::from(o * v)).sum::<f64>()
+            / v.iter().map(|v| f64::from(v * v)).sum::<f64>();
+        let rest: Vec<f32> = o.iter().zip(&v).map(|(o, v)| o - a as f32 * v).collect();
+        let over = db(a * a * power(&v)) - db(power(&rest));
+        // Where the singer did not sing: how much of the song's echo went.
+        let removed = db(power(&pick(&echo, false))) - db(power(&pick(out, false)));
+        println!(
+            "{name}: the singer kept at {:+.2} dB, {over:.1} dB over the rest; the echo removed {removed:.1} dB where they did not sing",
+            20.0 * a.abs().max(1e-9).log10()
+        );
     }
-    // What came out where the singer sang, against the singer: the share
-    // kept (its projection), and how far over the rest of what came out.
-    let (o, v) = (pick(&out, true), pick(&voice, true));
-    let a = o.iter().zip(&v).map(|(o, v)| f64::from(o * v)).sum::<f64>()
-        / v.iter().map(|v| f64::from(v * v)).sum::<f64>();
-    let rest: Vec<f32> = o.iter().zip(&v).map(|(o, v)| o - a as f32 * v).collect();
-    let over = db(a * a * power(&v)) - db(power(&rest));
-    // Where the singer did not sing: how much of the song's echo went.
-    let removed = db(power(&pick(&echo, false))) - db(power(&pick(&out, false)));
-    println!(
-        "learnt after {learnt_at:?} s; the singer kept at {:+.2} dB, {over:.1} dB over the rest; the echo removed {removed:.1} dB where they did not sing",
-        20.0 * a.abs().max(1e-9).log10()
-    );
 }

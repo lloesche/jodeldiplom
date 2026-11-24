@@ -72,8 +72,17 @@ impl Steer {
 
     /// Before a buffer of `frames` at `out_rate`: steers the ratio on the
     /// fill this buffer will leave, and says whether the ring holds the
-    /// whole buffer's voice (else the buffer gets none).
+    /// whole buffer's voice (else the buffer gets none). Whether it reads
+    /// the ring now (primed) is told to the capture, which counts what it
+    /// cannot queue as lost only then.
     pub(super) fn begin(&mut self, shared: &MicShared, out_rate: u32, frames: usize) -> bool {
+        let live = self.steer_buffer(shared, out_rate, frames);
+        shared.reading.store(self.primed, Ordering::Release);
+        live
+    }
+
+    /// [`Steer::begin`] but for telling whether it reads.
+    fn steer_buffer(&mut self, shared: &MicShared, out_rate: u32, frames: usize) -> bool {
         let in_rate = shared.rate.load(Ordering::Acquire);
         if in_rate == 0 || out_rate == 0 {
             return false;
