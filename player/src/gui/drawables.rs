@@ -42,24 +42,58 @@ pub fn keep_three(view: usize) {
     // to CALayers, `count`/`objectAtIndex:` to the NSArray `sublayers`
     // returns, the drawable count only to a CAMetalLayer.
     unsafe {
-        let layer: *mut AnyObject = msg_send![view as *mut AnyObject, layer];
-        let Some(layer) = find(layer, metal, 2) else {
-            if !NOT_FOUND.swap(true, Ordering::Relaxed) {
-                crate::trace::note("metal layer: none under the window's view");
+        let top: *mut AnyObject = msg_send![view as *mut AnyObject, layer];
+        let first = !SEEN.swap(true, Ordering::Relaxed);
+        let Some(layer) = find(top, metal, 2) else {
+            if first {
+                let name = if top.is_null() {
+                    "none".to_owned()
+                } else {
+                    (*top).class().name().to_string_lossy().into_owned()
+                };
+                crate::trace::note(format_args!(
+                    "metal layer: none under the window's view (its layer: {name})"
+                ));
             }
             return;
         };
         let count: usize = msg_send![layer, maximumDrawableCount];
+        let opaque: bool = msg_send![layer, isOpaque];
+        let sync: bool = msg_send![layer, displaySyncEnabled];
+        if first {
+            crate::trace::note(format_args!(
+                "metal layer: found ({}), {count} drawables, opaque {opaque}, display sync {sync}",
+                if layer == top {
+                    "the view's own"
+                } else {
+                    "a sublayer"
+                }
+            ));
+        }
         if count < DRAWABLES {
             let () = msg_send![layer, setMaximumDrawableCount: DRAWABLES];
             let now: usize = msg_send![layer, maximumDrawableCount];
             crate::trace::note(format_args!("metal layer: {count} drawables, now {now}"));
         }
+        // An experiment (JODELDIPLOM_LAYER=translucent): a layer not opaque
+        // is composited, never shown directly by the display.
+        if opaque && translucent() {
+            let () = msg_send![layer, setOpaque: false];
+            crate::trace::note("metal layer: made translucent");
+        }
     }
 }
 
-/// Whether the trace was told the layer was not found (once).
-static NOT_FOUND: AtomicBool = AtomicBool::new(false);
+/// Whether the layer is to be made translucent (`JODELDIPLOM_LAYER`).
+fn translucent() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| {
+        std::env::var("JODELDIPLOM_LAYER").is_ok_and(|v| v.eq_ignore_ascii_case("translucent"))
+    })
+}
+
+/// Whether the trace was told what the layer is like (once).
+static SEEN: AtomicBool = AtomicBool::new(false);
 
 /// `layer` where it is a `class`, else the first of its sublayers (down to
 /// `depth` levels) that is.

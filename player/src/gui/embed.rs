@@ -164,12 +164,18 @@ impl Embed {
             return iced::Task::none();
         }
         shared.view_asked = true;
+        crate::trace::note("metal layer: asking for the window's view");
         let embed = self.clone();
         iced::window::run(id, move |window| {
             let view = super::drawables::view_of(window);
-            if view.is_none() {
-                crate::trace::note("metal layer: the window has no AppKit view");
-            }
+            crate::trace::note(format_args!(
+                "metal layer: the window's view {}",
+                if view.is_some() {
+                    "found"
+                } else {
+                    "is not an AppKit one"
+                }
+            ));
             embed.lock().view = view;
         })
         .discard()
