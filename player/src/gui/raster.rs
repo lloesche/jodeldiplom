@@ -35,6 +35,32 @@ struct Glyph {
     coverage: Vec<u8>,
 }
 
+/// A pixmap word is premultiplied over what the GPU draws under the
+/// pixmap (Karaoke mode's backdrop, [`super::backdrop`]): its colour is
+/// the pixmap's own share, its top byte how much of what is under still
+/// shows (255: all of it, the colour then black). A colour packed
+/// ([`pack`]) covers what is under; drawing over a word goes through
+/// [`over`] and [`dim`], which keep the two together. This is a word
+/// that is all see-through.
+pub const SEE_THROUGH: u32 = 0xff00_0000;
+
+/// `word` with `colour` over it by `a` (0 to 1): the colour mixed into its
+/// own as [`mix`] does, and what shows through it less by as much.
+pub fn over(word: u32, colour: [u8; 3], a: f32) -> u32 {
+    let a = a.clamp(0.0, 1.0);
+    let through = ((word >> 24) as f32 * (1.0 - a)).round() as u32;
+    pack(mix(unpack(word), colour, a)) | through << 24
+}
+
+/// `word` darkened to `keep` (0 to 1) of itself: its own colour and what
+/// shows through it alike.
+pub fn dim(word: u32, keep: f32) -> u32 {
+    let keep = keep.clamp(0.0, 1.0);
+    let scale = |v: u32| (v as f32 * keep).round() as u32;
+    let [r, g, b] = unpack(word).map(|v| scale(u32::from(v)) as u8);
+    pack([r, g, b]) | scale(word >> 24) << 24
+}
+
 /// A colour as a pixmap word, `0x00RRGGBB`.
 pub fn pack([r, g, b]: [u8; 3]) -> u32 {
     u32::from(r) << 16 | u32::from(g) << 8 | u32::from(b)
@@ -380,14 +406,12 @@ impl PixelBackend {
         }
     }
 
-    fn put(&mut self, x: usize, y: usize, color: [u8; 3]) {
+    /// `color` over the pixel at (`x`, `y`) by `alpha` ([`over`]).
+    fn put_over(&mut self, x: usize, y: usize, color: [u8; 3], alpha: u8) {
         if x < self.width && y < self.height {
-            self.pixmap[y * self.width + x] = pack(color);
+            let i = y * self.width + x;
+            self.pixmap[i] = over(self.pixmap[i], color, f32::from(alpha) / 255.0);
         }
-    }
-
-    fn get(&self, x: usize, y: usize) -> [u8; 3] {
-        unpack(self.pixmap[y * self.width + x])
     }
 
     pub(crate) fn fill(&mut self, x0: usize, y0: usize, x1: usize, y1: usize, color: [u8; 3]) {
@@ -454,8 +478,7 @@ impl PixelBackend {
                         0.0
                     };
                     if alpha > 0.0 {
-                        let bg = self.get(ox + x, oy + y);
-                        self.put(ox + x, oy + y, blend(fg, bg, (alpha * 255.0) as u8));
+                        self.put_over(ox + x, oy + y, fg, (alpha * 255.0) as u8);
                     }
                 }
             }
@@ -513,10 +536,7 @@ impl PixelBackend {
                         continue;
                     }
                     let (tx, ty) = (px as usize, y + py as usize);
-                    if ty < self.height {
-                        let under = self.get(tx, ty);
-                        self.put(tx, ty, blend(fg, under, a));
-                    }
+                    self.put_over(tx, ty, fg, a);
                 }
             }
         }
@@ -579,9 +599,7 @@ impl PixelBackend {
                             let a = glyph.coverage[gy * glyph.width + gx];
                             if a > 0 {
                                 let (tx, ty) = (ox + px as usize, oy + py as usize);
-                                let under =
-                                    self.get(tx.min(self.width - 1), ty.min(self.height - 1));
-                                self.put(tx, ty, blend(fg, under, a));
+                                self.put_over(tx, ty, fg, a);
                             }
                         }
                     }
@@ -731,7 +749,7 @@ mod tests {
         // Whether the centre of a cell shows ink.
         fn lit(b: &PixelBackend, col: usize, row: usize) -> bool {
             let (w, h) = b.cell();
-            b.get(col * w + w / 2, row * h + h / 2) != b.default_bg
+            unpack(b.pixmap[(row * h + h / 2) * b.width + col * w + w / 2]) != b.default_bg
         }
         assert!((0..4).all(|col| lit(&b, col, 1)));
         assert!((4..10).all(|col| !lit(&b, col, 1) && b.buffer()[(col as u16, 1)].symbol() == " "));
@@ -758,13 +776,13 @@ mod tests {
         let (w, h) = b.cell();
         // The line is lit on every pixel row of both cells.
         for y in 0..2 * h {
-            let lit = (0..w).any(|x| b.get(x, y) != b.default_bg);
+            let lit = (0..w).any(|x| unpack(b.pixmap[y * b.width + x]) != b.default_bg);
             assert!(lit, "gap at row {y}");
         }
         // The text has ink inside its cells.
         let ink = (2 * w..4 * w)
             .flat_map(|x| (h..2 * h).map(move |y| (x, y)))
-            .filter(|&(x, y)| b.get(x, y) != b.default_bg)
+            .filter(|&(x, y)| unpack(b.pixmap[y * b.width + x]) != b.default_bg)
             .count();
         assert!(ink > w * h / 4, "{ink}");
     }

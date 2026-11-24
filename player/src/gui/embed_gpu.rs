@@ -1,8 +1,8 @@
 //! The old canvas on iced's GPU ([`super::embed`]): a primitive of iced's
 //! shader widget that hands each frame's changed pixels, the layer and
-//! Karaoke mode's stage to the [`Painter`], and draws it into iced's
-//! render pass, under what iced draws over it. The pass draws in window
-//! pixels, so the widget is at the window's top left corner.
+//! Karaoke mode's stage and backdrop to the [`Painter`], and draws it
+//! into iced's render pass, under what iced draws over it. The pass draws
+//! in window pixels, so the widget is at the window's top left corner.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -81,6 +81,7 @@ impl shader::Primitive for Frame {
             (size.width, size.height),
             layer,
             shared.stage.as_ref(),
+            shared.backdrop.as_ref(),
         );
         if let Some(stage) = &mut shared.stage {
             stage.uploads.clear();

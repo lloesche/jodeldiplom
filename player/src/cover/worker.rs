@@ -18,7 +18,7 @@ use jodel_gpu::{GpuDepth, GpuMatte};
 use jodel_playback::{Cover, Tags, TrackInfo};
 
 use super::store::{CoverStore, SongCover, Splitter};
-use super::{album_keys, split, CoverLayers, CoverModels, Layers, Parts};
+use super::{album_keys, split, Apart, CoverLayers, CoverModels, Layers, Parts};
 use crate::browser::Notify;
 use crate::core::{Action, Facts, Job};
 
@@ -155,6 +155,27 @@ struct Wanted {
     path: PathBuf,
     cover: Option<Cover>,
     tags: Tags,
+    /// Its cover's bytes' hash.
+    bytes: Option<u64>,
+}
+
+/// The song playing's layers, with the hash of its cover's bytes as the
+/// song brought them ([`bytes_hash`]): a song after it with the very same
+/// bytes (an album's) keeps them.
+struct Held {
+    bytes: Option<u64>,
+    layers: Layers,
+}
+
+/// The hash of a song's cover's bytes as its file has them (none without
+/// a cover): cheap enough for the window's thread.
+fn bytes_hash(cover: Option<&Cover>) -> Option<u64> {
+    use std::hash::{Hash, Hasher};
+    cover.map(|c| {
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        c.data.hash(&mut h);
+        h.finish()
+    })
 }
 
 struct Queue {
@@ -167,7 +188,7 @@ struct Shared {
     queue: Mutex<Queue>,
     ready: Condvar,
     /// The song playing's layers, once ready.
-    current: Mutex<Option<Layers>>,
+    current: Mutex<Option<Held>>,
 }
 
 /// The covers' worker thread.
@@ -231,14 +252,26 @@ impl CoverWorker {
         CoverWorker { shared }
     }
 
-    /// The song playing is now `info`'s: the last one's layers go at once,
-    /// and its own are made (or found) first.
+    /// The song playing is now `info`'s: its own layers are made (or found)
+    /// first, and the last one's go at once unless its cover's bytes are
+    /// the very same (an album's songs one after another keep them; the
+    /// worker keeps them too where the store gives the song the same cover
+    /// result).
     pub fn want(&self, info: &TrackInfo) {
-        *self
-            .shared
-            .current
-            .lock()
-            .unwrap_or_else(|e| e.into_inner()) = None;
+        let bytes = bytes_hash(info.cover.as_ref());
+        {
+            let mut current = self
+                .shared
+                .current
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            if current
+                .as_ref()
+                .is_none_or(|h| bytes.is_none() || h.bytes != bytes)
+            {
+                *current = None;
+            }
+        }
         self.shared
             .queue
             .lock()
@@ -247,6 +280,7 @@ impl CoverWorker {
             path: info.path.clone(),
             cover: info.cover.clone(),
             tags: info.tags.clone(),
+            bytes,
         });
         self.shared.ready.notify_all();
     }
@@ -257,7 +291,8 @@ impl CoverWorker {
             .current
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .clone()
+            .as_ref()
+            .map(|h| Arc::clone(&h.layers))
     }
 
     /// Gets `paths`' covers taken apart, in this order (what was asked for
@@ -281,18 +316,27 @@ enum Taken {
     Failed(String),
 }
 
+/// Whether [`take_apart`] gives a song's layers back: not, or so, with the
+/// layers held now (kept rather than read again where they are the same
+/// cover result).
+enum Back<'a> {
+    No,
+    Yes(Option<&'a Layers>),
+}
+
 /// Takes `path`'s cover apart (or finds it taken apart), its cover and
-/// tags `given` (the song playing's) or read from its file; `layers` asks
-/// for its layers back. `working` is told while work is under way.
+/// tags `given` (the song playing's) or read from its file, its layers
+/// given `back` or not. `working` is told while work is under way.
 fn take_apart(
     store: &CoverStore,
     splitter: &dyn Splitter,
     path: &Path,
     given: Option<(Option<Cover>, Tags)>,
-    layers: bool,
+    back: Back,
     working: &mut dyn FnMut(bool),
 ) -> Taken {
     let key = super::song_key(path);
+    let layers = matches!(back, Back::Yes(_));
     if store.ready(&key) {
         let Some(Some(hash)) = store.linked(&key) else {
             return Taken::Done {
@@ -300,9 +344,16 @@ fn take_apart(
                 has: false,
             };
         };
-        let found = layers
-            .then(|| store.load(&hash).map(|k| Arc::new(k.layers)))
-            .flatten();
+        let held = match back {
+            Back::Yes(held) => held.filter(|h| h.key == hash).cloned(),
+            Back::No => None,
+        };
+        let load = || {
+            store
+                .load(&hash)
+                .map(|k| Arc::new(Apart::new(hash.clone(), k.layers)))
+        };
+        let found = layers.then(|| held.or_else(load)).flatten();
         return Taken::Done {
             layers: found,
             has: true,
@@ -388,12 +439,18 @@ fn work(
             notify();
             sent
         };
-        let (path, given) = match (wanted, path) {
-            (Some(w), _) => (w.path, Some((w.cover, w.tags))),
-            (None, Some(p)) => (p, None),
+        let (path, given, bytes) = match (wanted, path) {
+            (Some(w), _) => (w.path, Some((w.cover, w.tags)), w.bytes),
+            (None, Some(p)) => (p, None, None),
             (None, None) => continue,
         };
         let playing = given.is_some();
+        let held = shared
+            .current
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+            .map(|h| Arc::clone(&h.layers));
         let mut working = |on: bool| {
             if on {
                 last_work = Some(Instant::now());
@@ -404,7 +461,12 @@ fn work(
                 on,
             });
         };
-        let taken = take_apart(store, splitter, &path, given, playing, &mut working);
+        let back = if playing {
+            Back::Yes(held.as_ref())
+        } else {
+            Back::No
+        };
+        let taken = take_apart(store, splitter, &path, given, back, &mut working);
         let has = match taken {
             Taken::Done { layers, has } => {
                 if playing {
@@ -416,7 +478,8 @@ fn work(
                         .wanted
                         .is_none();
                     if still {
-                        *shared.current.lock().unwrap_or_else(|e| e.into_inner()) = layers;
+                        *shared.current.lock().unwrap_or_else(|e| e.into_inner()) =
+                            layers.map(|layers| Held { bytes, layers });
                     }
                 }
                 has
@@ -517,7 +580,15 @@ mod tests {
         let info = jodel_playback::source::probe(&tracks[0]).unwrap();
         worker.want(&info);
         ready(&rx, 1);
-        assert!(worker.current().is_some());
+        let first = worker.current().expect("held");
+        // The album's next song, the same cover: the very layers stay,
+        // neither dropped nor read again.
+        let next = jodel_playback::source::probe(&tracks[1]).unwrap();
+        assert!(next.cover.is_some());
+        worker.want(&next);
+        assert!(worker.current().is_some_and(|l| Arc::ptr_eq(&l, &first)));
+        ready(&rx, 1);
+        assert!(worker.current().is_some_and(|l| Arc::ptr_eq(&l, &first)));
         let mut none = info.clone();
         none.cover = None;
         none.path = dir.join("elsewhere.wav");

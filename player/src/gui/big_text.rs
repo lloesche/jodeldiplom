@@ -14,7 +14,7 @@ use std::sync::Arc;
 use ab_glyph::{Font, FontRef, PxScale, ScaleFont, VariableFont};
 
 use super::fonts;
-use super::raster::{mix, pack, union, unpack, PixelRect, Target};
+use super::raster::{over, union, PixelRect, Target};
 
 /// The pixels round text made for the atlas ([`BigText::coverage`]).
 pub const COVER_PAD: usize = 2;
@@ -304,7 +304,7 @@ impl BigText {
                 colors.1
             };
             let i = ty * target.width + tx;
-            target.pixels[i] = pack(mix(unpack(target.pixels[i]), color, alpha * a));
+            target.pixels[i] = over(target.pixels[i], color, alpha * a);
             covered = Some(union(covered, (tx, ty, 1, 1)));
         };
         for c in text.chars() {

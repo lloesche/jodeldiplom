@@ -28,6 +28,7 @@ use iced::advanced::{mouse, Shell};
 use iced::widget::shader::{self, Shader};
 use iced::{Element, Event, Fill, Rectangle, Size, Theme, Widget as _};
 
+use super::backdrop::BackdropFrame;
 use super::canvas::{Canvas, Changes, LayerFrame};
 use super::embed_gpu::Frame;
 use super::pointer::{Pointer, PointerKind};
@@ -46,6 +47,8 @@ pub struct Drawn {
     pub layer: Option<LayerFrame>,
     /// Karaoke mode's stage, where it shows.
     pub stage: Option<StageFrame>,
+    /// Karaoke mode's backdrop, where it shows.
+    pub backdrop: Option<BackdropFrame>,
 }
 
 /// The canvas and what is waiting for the next frame on screen.
@@ -56,6 +59,8 @@ pub(super) struct Shared {
     /// The layer and the stage as they are now; their uploads not sent yet.
     pub(super) layer: Option<LayerFrame>,
     pub(super) stage: Option<StageFrame>,
+    /// The backdrop as it is now (its textures sent over as it first shows).
+    pub(super) backdrop: Option<BackdropFrame>,
     /// Whether iced draws on the GPU (its shader widget works); `None`
     /// until the first frame was drawn.
     pub(super) gpu: Option<bool>,
@@ -96,6 +101,7 @@ impl Default for Embed {
             changes: Changes::default(),
             layer: None,
             stage: None,
+            backdrop: None,
             gpu: None,
             scale: 1.0,
             image: None,
@@ -120,10 +126,11 @@ impl Embed {
         let shared = &mut *shared;
         shared.scale = scale;
         shared.canvas.set_font_px(super::font_px(f64::from(scale)));
-        // Lanes the GPU scrolls by itself, where it shows the canvas (and
-        // until iced says which renderer it has).
+        // What the GPU draws itself (the lanes it scrolls, Karaoke mode's
+        // ground and stage), where it shows the canvas (and until iced says
+        // which renderer it has).
         let gpu = shared.gpu.unwrap_or(true);
-        shared.canvas.set_layers(gpu);
+        shared.canvas.set_gpu(gpu);
         let drawn = draw(&mut shared.canvas, gpu);
         let changes = shared.canvas.take_changes();
         if !changes.is_empty() {
@@ -132,6 +139,7 @@ impl Embed {
         shared.changes.merge(changes);
         shared.layer = merge_layer(shared.layer.take(), drawn.layer);
         shared.stage = merge_stage(shared.stage.take(), drawn.stage);
+        shared.backdrop = drawn.backdrop;
     }
 
     /// Ticks at the display's refresh (`on`) or not: the widget sends one

@@ -6,7 +6,8 @@
 //! nearest point (how far, where along, which side, [`super::snake`]) and
 //! a streak's shine (its rise and collapse, the bands, the swirl, the rim,
 //! the rainbow, [`super::rainbow`]) and the result's shapes (a gem, a
-//! medal and its star, the rays, [`super::trophy`]), each worked out by the shader's own
+//! medal and its star, the rays, [`super::trophy`]) and the backdrop's
+//! maths ([`super::backdrop::look`]), each worked out by the shader's own
 //! functions in a compute pass over the shader as the window composes it,
 //! at sample points, against the processor's. Skipped (with a note)
 //! without a GPU.
@@ -638,4 +639,71 @@ fn the_stage_shader_s_tube_is_its_reference() {
         assert!(near(g[2], side, 2e-3, 1e-4), "{what}: side");
     }
     assert!(close_by > 60, "{close_by}");
+}
+
+/// The backdrop's maths at points across the window and through time: the
+/// shader's [`look::calm_at`], [`look::settle`], [`look::shift`], [`look::exposure`],
+/// [`look::vignette`], [`look::rim_light`], [`look::sweep`],
+/// [`look::drift`] and [`look::ray_fan`] as the processor's.
+#[test]
+fn the_backdrop_shader_s_maths_is_its_reference() {
+    use super::backdrop::look;
+    let Some(gpu) = gpu() else {
+        return;
+    };
+    let samples: Vec<[f32; 4]> = (0..500)
+        .map(|k| {
+            let f = k as f32;
+            let fr = |m: f32| (f * m).fract();
+            [fr(0.613), fr(0.377), fr(0.291), fr(0.733) * 60.0]
+        })
+        .collect();
+    let text = [0.15, 0.84];
+    let body = "
+    let s = ins[i];
+    let text = vec2<f32>(0.15, 0.84);
+    let sh = shift(s.xy, s.z, vec2<f32>(0.01, -0.006), 0.008, vec2<f32>(0.45, 0.4));
+    outs[i * 3u] = vec4<f32>(calm_at(s.y, text), sh, exposure(s.z, s.x * 0.4));
+    outs[i * 3u + 1u] = vec4<f32>(vignette(s.x, s.y), rim_light(s.z, s.x, s.x, s.y, s.w), sweep(s.x, s.y, s.w, 1.0 + s.z), ray_fan(s.x - 0.5, s.y - 0.4, s.w, 0.2));
+    outs[i * 3u + 2u] = vec4<f32>(drift(s.w), settle(vec3<f32>(s.x * 0.4), s.y).x);";
+    let source = super::backdrop::gpu::shader(false);
+    let outs = run(&gpu, &source, body, &samples, (samples.len(), 3));
+    let close = |g: &[f32], c: &[f32], what: &str| {
+        for (x, y) in g.iter().zip(c) {
+            assert!(near(*x, *y, 3e-3, 2e-3), "{what}: {g:?} {c:?}");
+        }
+    };
+    let (mut calm, mut swept) = (0, 0);
+    for (k, s) in samples.iter().enumerate() {
+        let g = &outs[k * 3..k * 3 + 3];
+        let what = format!("sample {k}: {s:?}");
+        let sh = look::shift([s[0], s[1]], s[2], [0.01, -0.006], 0.008, [0.45, 0.4]);
+        let c = look::calm_at(s[1], text);
+        close(
+            &g[0],
+            &[c, sh[0], sh[1], look::exposure(s[2], s[0] * 0.4)],
+            &format!("{what}: calm, shift, exposure"),
+        );
+        let sweep = look::sweep(s[0], s[1], s[3], 1.0 + s[2]);
+        close(
+            &g[1],
+            &[
+                look::vignette(s[0], s[1]),
+                look::rim_light(s[2], s[0], s[0], s[1], s[3]),
+                sweep,
+                look::ray_fan(s[0] - 0.5, s[1] - 0.4, s[3], 0.2),
+            ],
+            &format!("{what}: vignette, rim, sweep, rays"),
+        );
+        let d = look::drift(s[3]);
+        let settled = look::settle(s[0] * 0.4, s[1]);
+        close(
+            &g[2],
+            &[d[0], d[1], d[2], settled],
+            &format!("{what}: drift, settle"),
+        );
+        calm += usize::from(c > 0.0 && c < 1.0);
+        swept += usize::from(sweep > 0.3);
+    }
+    assert!(calm > 20 && swept > 20, "{calm} {swept}");
 }

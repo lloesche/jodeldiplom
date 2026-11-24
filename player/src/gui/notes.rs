@@ -15,7 +15,7 @@
 
 use super::karaoke::{rgb, NOTES_BOTTOM, NOTES_TOP, NOTE_THICK};
 use super::particles::{Kind, Spray};
-use super::raster::{mix, pack, unpack, PixelRect, Target};
+use super::raster::{mix, over, PixelRect, Target};
 use super::sparks::{noise, sparkle};
 use super::stage_gpu::{Instance, Pour, Tint};
 use crate::view::karaoke::{LineKind, LyricLine, HIT, NOTE_AHEAD, SINGER};
@@ -228,7 +228,7 @@ pub(super) fn draw(
             return;
         }
         let i = py * target.width + px;
-        target.pixels[i] = pack(mix(unpack(target.pixels[i]), color, a));
+        target.pixels[i] = over(target.pixels[i], color, a);
     };
     for &(x0, x1, height) in &sung.notes {
         let y = y_of(height);

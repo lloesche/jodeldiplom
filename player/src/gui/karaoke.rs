@@ -1,125 +1,17 @@
 //! Karaoke mode in pixels: the cover blurred over the whole screen under a
 //! dark layer, the lyrics in large type over it, filling as they are sung,
-//! and the count-in's numbers shrinking and fading on their beats.
+//! and the count-in's numbers shrinking and fading on their beats. The
+//! ground under them is [`ground`]'s.
 
-use image::imageops::{self, FilterType};
-use image::RgbImage;
+pub mod ground;
 
 use super::big_text::{BigText, Face, Faces};
 use super::notes::SungOp;
-use super::raster::{mix, pack, union, unpack, PixelRect, Target};
-use crate::art::Art;
+use super::raster::{dim, mix, union, PixelRect, Target};
 use crate::view::colors;
 use crate::view::karaoke::{line_color, KaraokePicture, LineKind, LyricLine, HIT};
 
-/// How dark the layer over the blurred cover is (0 clear, 1 black).
-const SHADE: f32 = 0.55;
-/// The long side of the cover before it is blurred, in pixels: the blur
-/// is done small and scaled up, so it is cheap at any screen size.
-const SMALL: u32 = 48;
-
-/// The screen's background: the cover blurred and shaded, at the screen's
-/// size, `0x00RRGGBB` words.
-pub struct Backdrop {
-    /// The cover it is made of (0: none).
-    pub art: u64,
-    /// Its size.
-    pub size: (usize, usize),
-    /// The pixels.
-    pub pixels: Vec<u32>,
-}
-
-impl Backdrop {
-    /// The backdrop for `art` (none: a plain dark gradient) at `width` ×
-    /// `height`.
-    pub fn new(art: Option<&Art>, width: usize, height: usize) -> Backdrop {
-        let (w, h) = (width.max(1) as u32, height.max(1) as u32);
-        let pixels = match art {
-            Some(art) => blurred(&art.image, w, h),
-            None => gradient(w, h),
-        };
-        Backdrop {
-            art: art.map_or(0, |a| a.id),
-            size: (width, height),
-            pixels,
-        }
-    }
-}
-
-/// `image` cropped to the screen's shape, shrunk, blurred three times,
-/// scaled up to `w` × `h` and shaded.
-fn blurred(image: &RgbImage, w: u32, h: u32) -> Vec<u32> {
-    // The middle of the cover in the screen's shape (it fills the screen).
-    let (iw, ih) = (image.width().max(1), image.height().max(1));
-    let screen = f64::from(w) / f64::from(h);
-    let (cw, ch) = if f64::from(iw) / f64::from(ih) > screen {
-        (((f64::from(ih) * screen).round() as u32).clamp(1, iw), ih)
-    } else {
-        (iw, ((f64::from(iw) / screen).round() as u32).clamp(1, ih))
-    };
-    let crop = imageops::crop_imm(image, (iw - cw) / 2, (ih - ch) / 2, cw, ch).to_image();
-    let (sw, sh) = if w >= h {
-        (SMALL, (SMALL * h / w).max(1))
-    } else {
-        ((SMALL * w / h).max(1), SMALL)
-    };
-    let mut small = imageops::resize(&crop, sw, sh, FilterType::Triangle);
-    for _ in 0..3 {
-        box_blur(&mut small, 2);
-    }
-    let big = imageops::resize(&small, w, h, FilterType::Triangle);
-    big.pixels().map(|p| pack(shade(p.0, SHADE))).collect()
-}
-
-/// A plain backdrop without a cover: the window's background, a little
-/// lighter towards the middle.
-fn gradient(w: u32, h: u32) -> Vec<u32> {
-    let base = rgb(colors::BG);
-    let mut out = Vec::with_capacity((w * h) as usize);
-    for y in 0..h {
-        let t = 1.0 - (2.0 * f64::from(y) / f64::from(h.max(1)) - 1.0).abs();
-        let lift = (18.0 * t) as u8;
-        let c = base.map(|v| v.saturating_add(lift));
-        out.extend(std::iter::repeat_n(pack(c), w as usize));
-    }
-    out
-}
-
-/// A box blur of `radius` pixels, across and then down, edges held.
-fn box_blur(image: &mut RgbImage, radius: i64) {
-    let (w, h) = (i64::from(image.width()), i64::from(image.height()));
-    let n = (2 * radius + 1) as u32;
-    let get = |img: &RgbImage, x: i64, y: i64| {
-        img.get_pixel(x.clamp(0, w - 1) as u32, y.clamp(0, h - 1) as u32)
-            .0
-    };
-    let source = image.clone();
-    for y in 0..h {
-        for x in 0..w {
-            let mut sum = [0u32; 3];
-            for d in -radius..=radius {
-                let p = get(&source, x + d, y);
-                (0..3).for_each(|i| sum[i] += u32::from(p[i]));
-            }
-            image.put_pixel(x as u32, y as u32, image::Rgb(sum.map(|s| (s / n) as u8)));
-        }
-    }
-    let source = image.clone();
-    for y in 0..h {
-        for x in 0..w {
-            let mut sum = [0u32; 3];
-            for d in -radius..=radius {
-                let p = get(&source, x, y + d);
-                (0..3).for_each(|i| sum[i] += u32::from(p[i]));
-            }
-            image.put_pixel(x as u32, y as u32, image::Rgb(sum.map(|s| (s / n) as u8)));
-        }
-    }
-}
-
-fn shade(c: [u8; 3], dark: f32) -> [u8; 3] {
-    c.map(|v| (f32::from(v) * (1.0 - dark)).round() as u8)
-}
+pub use ground::Backdrop;
 
 pub(super) fn rgb(color: ratatui::style::Color) -> [u8; 3] {
     match color {
@@ -175,42 +67,76 @@ fn slots(
     big: f32,
 ) -> Vec<Slot> {
     let widest = width as f32 * 0.92;
-    let sizes: Vec<f32> = lines
+    let sizes: Vec<(f32, bool)> = lines
         .iter()
         .map(|l| {
-            let px = match l.kind {
-                LineKind::Current => big,
-                LineKind::Next | LineKind::Previous => big * 0.62,
-                LineKind::Info => big * 0.42,
-                LineKind::Warning => big * 0.36,
-            };
+            let px = size_of(l.kind, big);
             let w = text.measure(&l.text, px);
-            if w > widest && w > 0.0 {
+            let px = if w > widest && w > 0.0 {
                 (px * widest / w).max(10.0).round()
             } else {
                 px.round()
-            }
+            };
+            (px, noted(l))
         })
         .collect();
-    let below = |l: &LyricLine, px: f32| if noted(l) { px * NOTES_ROOM } else { 0.0 };
-    let total: f32 = lines
-        .iter()
-        .zip(&sizes)
-        .map(|(l, &px)| gap(px) + below(l, px))
-        .sum();
+    stack(&sizes, top, room)
+}
+
+/// A line's size by what it is, `big` the line sung's.
+fn size_of(kind: LineKind, big: f32) -> f32 {
+    match kind {
+        LineKind::Current => big,
+        LineKind::Next | LineKind::Previous => big * 0.62,
+        LineKind::Info => big * 0.42,
+        LineKind::Warning => big * 0.36,
+    }
+}
+
+/// The lines of `sizes` (each its size, and whether it has room for notes
+/// under it) stacked and centred in `room` rows of pixels from `top`.
+fn stack(sizes: &[(f32, bool)], top: usize, room: usize) -> Vec<Slot> {
+    let below = |(px, noted): (f32, bool)| if noted { px * NOTES_ROOM } else { 0.0 };
+    let total: f32 = sizes.iter().map(|&s| gap(s.0) + below(s)).sum();
     let mut y = top as f32 + (room as f32 - total).max(0.0) / 2.0;
-    lines
+    sizes
         .iter()
-        .zip(sizes)
-        .map(|(l, px)| {
+        .map(|&s| {
             let slot = Slot {
-                px,
-                y: y + (gap(px) - px) / 2.0,
+                px: s.0,
+                y: y + (gap(s.0) - s.0) / 2.0,
             };
-            y += gap(px) + below(l, px);
+            y += gap(s.0) + below(s);
             slot
         })
         .collect()
+}
+
+/// The line sung's size in a picture `height` pixels high.
+fn big_of(height: usize) -> f32 {
+    (height as f32 / 11.0).clamp(20.0, 160.0).round()
+}
+
+/// Where the lyrics in large type are on a screen `height` pixels high
+/// (the line before, the line sung with room for its notes, the two
+/// coming), stacked as [`slots`] stacks them: their top and bottom, shares
+/// of the height.
+pub fn text_band(height: usize) -> [f32; 2] {
+    let big = big_of(height);
+    let kinds = [
+        LineKind::Previous,
+        LineKind::Current,
+        LineKind::Next,
+        LineKind::Next,
+    ];
+    let sizes: Vec<(f32, bool)> = kinds
+        .iter()
+        .map(|&k| (size_of(k, big).round(), k == LineKind::Current))
+        .collect();
+    let slots = stack(&sizes, 0, height);
+    let h = height.max(1) as f32;
+    let (first, last) = (slots[0], slots[slots.len() - 1]);
+    [first.y / h, (last.y + last.px * 1.3) / h]
 }
 
 /// How far into `line` (at `px`, glyphs made at `base`) character `at` is,
@@ -375,7 +301,7 @@ pub fn paint(
             for y in by..(by + bh).min(target.height) {
                 for x in bx..(bx + bw).min(target.width) {
                     let i = y * target.width + x;
-                    target.pixels[i] = pack(shade(unpack(target.pixels[i]), 0.6));
+                    target.pixels[i] = dim(target.pixels[i], 0.4);
                 }
             }
         }
@@ -426,7 +352,7 @@ fn text_ops(
     gpu: bool,
 ) -> (Vec<TextOp>, super::notes::Over) {
     let (ax, ay, aw, ah) = area;
-    let big = (ah as f32 / 11.0).clamp(20.0, 160.0).round();
+    let big = big_of(ah);
     let accent = rgb(colors::ACCENT);
     let (mut ops, mut over) = (Vec::new(), super::notes::Over::new(gpu));
     let mut line_op =
@@ -639,34 +565,101 @@ fn text_ops(
 }
 #[cfg(test)]
 mod tests {
+    use super::super::raster::{pack, unpack};
     use super::*;
+    use crate::art::Art;
     use std::sync::Arc;
 
+    /// Over the GPU's ground, a frame's words are premultiplied: each
+    /// word's own colour with as much of what is under added as its top
+    /// byte says comes out as the frame painted over that ground itself
+    /// (a line faded, the line sung, the count-in, the controls' bar).
     #[test]
-    fn the_backdrop_fills_the_screen_shaded() {
-        let cover = crate::art::sample_cover(64);
-        let art = Art {
-            id: 7,
-            image: Arc::new(cover),
+    fn a_frame_over_the_see_through_ground_is_the_frame_over_the_ground() {
+        use super::super::raster::SEE_THROUGH;
+        let (w, h) = (320, 180);
+        let ground = [40u8, 70, 110];
+        let solid = Backdrop {
+            art: Some(1),
+            size: (w, h),
+            pixels: vec![pack(ground); w * h],
         };
-        let b = Backdrop::new(Some(&art), 320, 180);
-        assert_eq!((b.art, b.size, b.pixels.len()), (7, (320, 180), 320 * 180));
-        // Shaded: nothing near white is left.
-        assert!(b.pixels.iter().all(|&p| unpack(p).iter().all(|&v| v < 160)));
-        // Blurred: neighbours differ little.
-        let step = b
-            .pixels
-            .chunks(320)
-            .flat_map(|row| row.windows(2))
-            .map(|w| {
-                let (a, c) = (unpack(w[0]), unpack(w[1]));
-                (0..3).map(|i| a[i].abs_diff(c[i])).max().unwrap_or(0)
-            })
-            .max()
-            .unwrap_or(0);
-        assert!(step < 40, "{step}");
-        let plain = Backdrop::new(None, 10, 10);
-        assert_eq!(plain.art, 0);
+        let lines = vec![
+            LyricLine {
+                alpha: 0.4,
+                ..lyric("before", 1.0, LineKind::Previous, 0)
+            },
+            lyric("sung now", 0.4, LineKind::Current, 1),
+            lyric("next", 0.0, LineKind::Next, 2),
+        ];
+        let p = KaraokePicture {
+            count: Some((2, 0.5)),
+            controls: Some(ratatui::layout::Rect::new(0, 21, 80, 3)),
+            ..picture(lines, Vec::new(), 1.0)
+        };
+        let bar = Some((0, 158, w, 22));
+        let paint_over = |backdrop: &Backdrop| {
+            let mut pixels = vec![0u32; w * h];
+            let mut target = Target {
+                pixels: &mut pixels,
+                width: w,
+                height: h,
+            };
+            let mut faces = Faces::default();
+            let mut layer = Layer::default();
+            let area = (0, 0, w, h);
+            paint(
+                &mut target,
+                &mut faces,
+                &mut layer,
+                backdrop,
+                &p,
+                area,
+                bar,
+                true,
+            );
+            pixels
+        };
+        let opaque = paint_over(&solid);
+        let through = paint_over(&Backdrop::through(w, h));
+        let mut mixed = 0;
+        for (&o, &t) in opaque.iter().zip(&through) {
+            let keep = (t >> 24) as f32 / 255.0;
+            let own = unpack(t);
+            for i in 0..3 {
+                let shown = f32::from(own[i]) + keep * f32::from(ground[i]);
+                let painted = f32::from(unpack(o)[i]);
+                assert!((shown - painted).abs() <= 1.5, "{o:08x} {t:08x}");
+            }
+            mixed += usize::from(t != SEE_THROUGH && t >> 24 != 0);
+        }
+        assert!(mixed > 100, "{mixed}");
+    }
+
+    /// The lyrics in large type as a picture lays them out lie in the band
+    /// the backdrop keeps calm under them.
+    #[test]
+    fn the_lyrics_lie_in_their_text_band() {
+        let mut faces = Faces::default();
+        let lines = [
+            lyric("the line before it", 1.0, LineKind::Previous, 0),
+            lyric("the line sung now", 0.3, LineKind::Current, 1),
+            lyric("the next one", 0.0, LineKind::Next, 2),
+            lyric("and the one after", 0.0, LineKind::Next, 3),
+        ];
+        for h in [360usize, 900, 1600] {
+            let band = text_band(h);
+            let at = slots(faces.get(Face::LINE), &lines, 1600, 0, h, big_of(h));
+            let hf = h as f32;
+            assert!(
+                band[0] < band[1] && band[0] > 0.0 && band[1] < 1.0,
+                "{band:?}"
+            );
+            for s in at {
+                assert!(s.y >= band[0] * hf - 1.0, "{h}: {} {band:?}", s.y);
+                assert!(s.y + s.px <= band[1] * hf + 1.0, "{h}: {} {band:?}", s.y);
+            }
+        }
     }
 
     fn lyric(text: &str, fill: f64, kind: LineKind, id: usize) -> LyricLine {

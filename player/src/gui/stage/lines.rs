@@ -8,7 +8,7 @@ use super::{rgba, Face, Stage, GOLD, WHITE};
 use crate::view::karaoke::{KaraokePicture, LineKind, LyricLine};
 
 /// The line sung and the next: their tops, shares of the height.
-const LINES: (f32, f32) = (0.68, 0.78);
+pub(super) const LINES: (f32, f32) = (0.68, 0.78);
 
 impl Stage {
     /// Draws `picture`'s line sung and the next into `out`, in the window's

@@ -301,6 +301,13 @@ pub fn wanted(state: &State) -> bool {
         .is_some_and(|p| singing.is_of(p) && singing.words() > 0)
 }
 
+/// Where the stage's text is over the backdrop, its top and bottom (shares
+/// of the height): from the lane's band with its glass down to the line
+/// sung and the next under it.
+pub fn text_band() -> [f32; 2] {
+    [BAND.0 - PILL * 0.55, lines::LINES.1 + 0.05]
+}
+
 /// `picture` without what the stage draws instead: its lyric lines (and
 /// their notes); while a result shows, all its lines (the result's words)
 /// and the result.

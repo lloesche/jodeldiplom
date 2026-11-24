@@ -241,6 +241,20 @@ impl DeskState {
         self.strips[strip.index()]
     }
 
+    /// What `strip`'s own inputs are heard at as the desk is set (a linear
+    /// gain): its fader and mute times its group's, and its solo gate as
+    /// the mixer's strips have it: while any strip is soloed, a strip is
+    /// heard only where it or the group it sits in is.
+    pub fn heard_gain(&self, strip: StripKind) -> f64 {
+        let soloed = |k: StripKind| self.setting(k).solo;
+        let any = StripKind::ALL.into_iter().any(soloed);
+        let group = strip.parent();
+        if any && !soloed(strip) && !group.is_some_and(soloed) {
+            return 0.0;
+        }
+        self.setting(strip).gain() * group.map_or(1.0, |g| self.setting(g).gain())
+    }
+
     /// `strip` as last looked at.
     pub fn view(&self, strip: StripKind) -> Option<&StripView> {
         self.views[strip.index()].as_ref()
@@ -883,5 +897,67 @@ mod tests {
         assert!(s.desk.readings.master[0].db > -7.0);
         assert!(s.desk.meters(StripKind::Preview)[0].db > -13.0);
         assert!(s.desk.limiting(10_016));
+    }
+
+    /// What a stem is heard at follows its fader and mute, its group's,
+    /// and the solos as the mixer gates them.
+    #[test]
+    fn a_strip_is_heard_as_its_faders_mutes_and_solos_say() {
+        let mut desk = DeskState::default();
+        let set = |desk: &mut DeskState, k: StripKind, s: StripSetting| {
+            desk.strips[k.index()] = s;
+        };
+        assert_eq!(desk.heard_gain(StripKind::Vocals), 1.0);
+        set(
+            &mut desk,
+            StripKind::Player,
+            StripSetting {
+                db: -6.0,
+                ..Default::default()
+            },
+        );
+        let half = taper::gain(-6.0);
+        assert!((desk.heard_gain(StripKind::Drums) - half).abs() < 1e-9);
+        set(
+            &mut desk,
+            StripKind::Drums,
+            StripSetting {
+                mute: true,
+                ..Default::default()
+            },
+        );
+        assert_eq!(desk.heard_gain(StripKind::Drums), 0.0);
+        // The bass soloed: the others of the group are not heard.
+        set(
+            &mut desk,
+            StripKind::Bass,
+            StripSetting {
+                solo: true,
+                ..Default::default()
+            },
+        );
+        assert!(desk.heard_gain(StripKind::Bass) > 0.0);
+        assert_eq!(desk.heard_gain(StripKind::Vocals), 0.0);
+        // The group soloed: all of it is.
+        set(
+            &mut desk,
+            StripKind::Player,
+            StripSetting {
+                solo: true,
+                ..Default::default()
+            },
+        );
+        assert_eq!(desk.heard_gain(StripKind::Vocals), 1.0);
+        // The effects soloed alone: no stem.
+        let mut desk = DeskState::default();
+        set(
+            &mut desk,
+            StripKind::Effects,
+            StripSetting {
+                solo: true,
+                ..Default::default()
+            },
+        );
+        assert_eq!(desk.heard_gain(StripKind::Other), 0.0);
     }
 }

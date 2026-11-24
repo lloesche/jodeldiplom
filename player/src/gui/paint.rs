@@ -6,6 +6,7 @@
 
 use std::time::{Duration, Instant};
 
+use super::backdrop::Visualiser;
 use super::embed::{Drawn, Embed};
 use super::stage::Tint;
 use super::stage_gpu::{self, StageFrame};
@@ -96,6 +97,9 @@ pub struct Paint {
     last_paced: Option<Instant>,
     /// The singing's streak as the picture shines with it.
     shine: streak::PictureShine,
+    /// Karaoke mode's backdrop on the GPU, and when its last frame was.
+    backdrop: Visualiser,
+    last_backdrop: Option<Instant>,
     frames: crate::trace::Frames,
 }
 
@@ -108,6 +112,8 @@ impl Paint {
             last_stage: None,
             last_paced: None,
             shine: streak::PictureShine::default(),
+            backdrop: Visualiser::default(),
+            last_backdrop: None,
             frames: crate::trace::Frames::default(),
         }
     }
@@ -119,7 +125,9 @@ impl Paint {
         // A song's result moves only where the stage draws it.
         let result = crate::core::karaoke::result_motion(state).filter(|_| seen.stage);
         let smooth = app.smooth() || result == Some(Motion::Revealing);
-        let moving = app.animating() || result == Some(Motion::Twinkling);
+        // The backdrop settles only in frames drawn: not while minimised.
+        let settling = seen.visible && self.backdrop.moving();
+        let moving = app.animating() || result == Some(Motion::Twinkling) || settling;
         let layer = app.layer_moves();
         // The Mixer tab's meters and caps are iced's: every refresh.
         let mixer = crate::core::desk::on_tab(state) || seen.gliding;
@@ -206,7 +214,7 @@ impl Paint {
         let what = if draw == Draw::LayerOnly {
             embed.draw(place.scale, |canvas, _| Drawn {
                 layer: canvas.layer_frame(heard),
-                stage: None,
+                ..Drawn::default()
             });
             "the layer alone".to_owned()
         } else {
@@ -226,14 +234,16 @@ impl Paint {
             .frame(gap, late, started.elapsed(), handed, &what);
     }
 
-    /// The whole frame: the widgets, the pictures, the layer and the stage.
+    /// The whole frame: the widgets, the pictures, the layer, the stage and
+    /// the backdrop under it.
     fn whole(&mut self, embed: &Embed, app: &mut App, place: Place, heard: f64) {
         let drawing = Instant::now();
         let shine = &mut self.shine;
-        let dt = self
-            .last_stage
-            .map_or(0.0, |at| drawing.duration_since(at).as_secs_f32());
-        let mut staged = false;
+        let since = |last: Option<Instant>| last.map_or(0.0, |at| (drawing - at).as_secs_f32());
+        let dt = since(self.last_stage);
+        let backdrop_dt = since(self.last_backdrop);
+        let visualiser = &mut self.backdrop;
+        let (mut staged, mut drawn) = (false, false);
         embed.draw(place.scale, |canvas, gpu| {
             let grid = canvas.fit(place.size.0, place.size.1);
             if grid != app.state.size {
@@ -250,10 +260,17 @@ impl Paint {
             let layer = canvas.layer_frame(heard);
             let stage = gpu.then(|| stage(canvas, app, shine, heard, dt)).flatten();
             staged = stage.is_some();
-            Drawn { layer, stage }
+            let backdrop = visualiser.frame(app, gpu, heard, place.size, staged, backdrop_dt);
+            drawn = backdrop.is_some();
+            Drawn {
+                layer,
+                stage,
+                backdrop,
+            }
         });
         crate::trace::took("frame: drawn", drawing, false);
         self.last_stage = staged.then_some(drawing);
+        self.last_backdrop = drawn.then_some(drawing);
         self.dirty = false;
         self.news = false;
     }
@@ -271,7 +288,7 @@ fn stage(
     dt: f32,
 ) -> Option<StageFrame> {
     let layers = app.cover_layers();
-    let tint = Tint::of(layers.as_ref().map_or(&[][..], |l| &l.palette[..]));
+    let tint = Tint::of(layers.as_ref().map_or(&[][..], |l| &l.layers.palette[..]));
     let stage = canvas.stage_frame(&app.state, heard, dt, &tint);
     if crate::core::karaoke::result_shown(&app.state).is_some() {
         return stage;

@@ -5,6 +5,7 @@
 //! one widget under them ([`embed`]), on iced's GPU through its shader
 //! widget, or as an image with iced's CPU renderer where there is no GPU.
 
+pub mod backdrop;
 pub mod big_text;
 pub mod bloom;
 pub mod canvas;

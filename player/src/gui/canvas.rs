@@ -163,9 +163,11 @@ pub struct Canvas {
     pub changed: bool,
     /// The pixels changed since [`Canvas::take_changes`].
     changes: Changes,
-    /// Lanes that follow the playhead go into a layer the window scrolls
-    /// itself ([`Canvas::set_layers`]), rather than into the pixmap.
-    layers: bool,
+    /// The window shows the pixmap on the GPU ([`Canvas::set_gpu`]): lanes
+    /// that follow the playhead go into a layer it scrolls itself, and
+    /// Karaoke mode's stage, its bubbles' liquid and its ground are its,
+    /// rather than in the pixmap.
+    gpu: bool,
     /// That layer, while such a lane shows.
     strip: Option<Strip>,
     /// The range of the last melody drawn, by its waveform.
@@ -381,7 +383,7 @@ impl Canvas {
             karaoke_layer: super::karaoke::Layer::default(),
             stage: super::stage::Stage::default(),
             staged: None,
-            layers: false,
+            gpu: false,
             strip: None,
             melody_range: None,
             melody_clean: None,
@@ -429,12 +431,13 @@ impl Canvas {
         (cols, rows)
     }
 
-    /// Whether lanes that follow the playhead go into a layer the window
-    /// scrolls ([`Canvas::layer_frame`]): only where the window can (the
-    /// GPU's); otherwise they are painted into the pixmap each frame.
-    pub fn set_layers(&mut self, on: bool) {
-        if on != self.layers {
-            self.layers = on;
+    /// Whether the window shows the pixmap on the GPU: lanes that follow the
+    /// playhead then go into a layer it scrolls ([`Canvas::layer_frame`]),
+    /// Karaoke mode's stage and ground are drawn there; otherwise all of it
+    /// is painted into the pixmap each frame.
+    pub fn set_gpu(&mut self, on: bool) {
+        if on != self.gpu {
+            self.gpu = on;
             self.strip = None;
             self.changes.all = true;
         }
@@ -796,11 +799,11 @@ impl Canvas {
                         self.paint_caption(*cover, *caption);
                     }
                 }
-                Paint::Wave(plot) if self.layers && plot.follow.is_some() => {
+                Paint::Wave(plot) if self.gpu && plot.follow.is_some() => {
                     let r = self.pixel_rect(plot.area);
                     following.push((Part::Wave(plot.clone(), 0, 0), r));
                 }
-                Paint::Ruler(plot) if self.layers && plot.follow.is_some() => {
+                Paint::Ruler(plot) if self.gpu && plot.follow.is_some() => {
                     let r = self.pixel_rect(plot.area);
                     following.push((Part::Ruler(plot.clone(), 0, 0), r));
                 }
@@ -819,8 +822,7 @@ impl Canvas {
                     // Where the GPU draws the stage, its lyrics are not in
                     // the pixmap.
                     let stripped;
-                    let picture: &KaraokePicture = if self.layers
-                        && super::stage::wanted(scene.state)
+                    let picture: &KaraokePicture = if self.gpu && super::stage::wanted(scene.state)
                     {
                         self.staged =
                             Some(((**full_picture).clone(), self.pixel_rect(full_picture.area)));
@@ -938,16 +940,21 @@ impl Canvas {
     ) -> Vec<PixelRect> {
         let area = self.pixel_rect(picture.area);
         let bar = picture.controls.map(|r| self.pixel_rect(r));
-        let id = art.map_or(0, |a| a.id);
+        // On the GPU the ground is its: all see-through here.
+        let art_id = (!self.gpu).then(|| art.map_or(0, |a| a.id));
         let fits = self
             .backdrop
             .as_ref()
-            .is_some_and(|b| b.art == id && b.size == (area.2, area.3));
+            .is_some_and(|b| (b.art, b.size) == (art_id, (area.2, area.3)));
         if !fits {
-            self.backdrop = Some(super::karaoke::Backdrop::new(art, area.2, area.3));
+            self.backdrop = Some(if self.gpu {
+                super::karaoke::Backdrop::through(area.2, area.3)
+            } else {
+                super::karaoke::Backdrop::new(art, area.2, area.3)
+            });
         }
         let full = full || !fits;
-        self.karaoke_layer.over.gpu = self.layers;
+        self.karaoke_layer.over.gpu = self.gpu;
         let Some(backdrop) = &self.backdrop else {
             return Vec::new();
         };

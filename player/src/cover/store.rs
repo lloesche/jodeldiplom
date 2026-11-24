@@ -28,7 +28,7 @@ use image::imageops::FilterType;
 use image::{GrayImage, ImageBuffer, ImageFormat, Luma, RgbImage};
 
 use super::hash::{perceptual, pixel_hash, Perceptual};
-use super::{CoverLayers, Layers, NearMap, Swatch, VERSION};
+use super::{Apart, CoverLayers, Layers, NearMap, Swatch, VERSION};
 use crate::cache;
 
 /// What takes a cover apart (the models on the GPU, or a stand-in).
@@ -193,7 +193,7 @@ impl CoverStore {
     ) -> Result<Option<Layers>, String> {
         if let Some(Some(hash)) = self.linked(&song.song) {
             if let Some(k) = self.load(&hash) {
-                return Ok(Some(Arc::new(k.layers)));
+                return Ok(Some(Arc::new(Apart::new(hash, k.layers))));
             }
         }
         let Some(image) = &song.image else {
@@ -204,7 +204,7 @@ impl CoverStore {
         // The same pixels, taken apart before.
         if let Some(k) = self.load(&hash) {
             self.link(&song.song, Some(&hash))?;
-            return Ok(Some(Arc::new(k.layers)));
+            return Ok(Some(Arc::new(Apart::new(hash, k.layers))));
         }
         // The same picture in the album: alike to its perceptual hash, and
         // pixel for pixel at a thumbnail's size.
@@ -217,7 +217,7 @@ impl CoverStore {
                 }
                 if let Some(k) = self.load(&other).filter(|k| same_picture(&k.thumb, &small)) {
                     self.link(&song.song, Some(&other))?;
-                    return Ok(Some(Arc::new(k.layers)));
+                    return Ok(Some(Arc::new(Apart::new(other, k.layers))));
                 }
             }
         }
@@ -232,7 +232,7 @@ impl CoverStore {
             self.add_to_album(album, &hash, &seen)?;
         }
         self.link(&song.song, Some(&hash))?;
-        Ok(Some(Arc::new(kept.layers)))
+        Ok(Some(Arc::new(Apart::new(hash, kept.layers))))
     }
 
     fn write(&self, path: &Path, bytes: &[u8]) -> Result<(), String> {

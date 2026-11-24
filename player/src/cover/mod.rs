@@ -120,8 +120,67 @@ impl CoverLayers {
     }
 }
 
-/// The layers as the app holds them: shared, with the cover they are of.
-pub type Layers = Arc<CoverLayers>;
+/// A cover taken apart as the app holds it: which cover result it is (its
+/// key in the store, the hash of the cover's pixels: an album's songs
+/// share it), its layers, and their texels as the window's GPU takes them
+/// (made here, on the covers' thread, so a song starting costs the window
+/// no more than sending them over).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Apart {
+    /// The cover result's key.
+    pub key: String,
+    /// The layers.
+    pub layers: CoverLayers,
+    /// Their texels for the GPU.
+    pub texels: Texels,
+}
+
+/// The layers' texels that are not as the layers keep them: the plate as
+/// RGBA, and the nearness of the cover and of the plate as a byte each,
+/// side by side, at the depth's size.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Texels {
+    /// The plate, four bytes a pixel.
+    pub plate: Vec<u8>,
+    /// The nearness, two bytes a pixel.
+    pub depth: Vec<u8>,
+}
+
+impl Apart {
+    /// The cover result `key`'s `layers`, with their texels.
+    pub fn new(key: String, layers: CoverLayers) -> Apart {
+        let plate = layers
+            .plate
+            .pixels()
+            .flat_map(|p| [p.0[0], p.0[1], p.0[2], 255])
+            .collect();
+        // The plate's nearness at the cover's depth's size (it is made at
+        // it; read across where kept otherwise).
+        let d = &layers.depth;
+        let (w, h) = (d.width as usize, d.height as usize);
+        let plate_near = |i: usize| {
+            let p = &layers.plate_depth;
+            if (p.width, p.height) == (d.width, d.height) {
+                p.near[i]
+            } else {
+                let (u, v) = ((i % w) as f32 + 0.5, (i / w) as f32 + 0.5);
+                (p.at(u / w as f32, v / h as f32) * 65535.0) as u16
+            }
+        };
+        let byte = |v: u16| (v >> 8) as u8;
+        let depth = (0..w * h)
+            .flat_map(|i| [byte(d.near[i]), byte(plate_near(i))])
+            .collect();
+        Apart {
+            key,
+            layers,
+            texels: Texels { plate, depth },
+        }
+    }
+}
+
+/// The layers as the app holds them: shared.
+pub type Layers = Arc<Apart>;
 
 /// The covers' models' weights where setup found them
 /// ([`crate::setup::Found`]).

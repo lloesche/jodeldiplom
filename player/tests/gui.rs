@@ -552,7 +552,7 @@ const LAYER_SIZE: (u32, u32) = (2411, 1507);
 fn layer_canvases() -> (Canvas, Canvas, (u16, u16)) {
     let mut flat = Canvas::new(80, 24, font_px(2.0));
     let mut layered = Canvas::new(80, 24, font_px(2.0));
-    layered.set_layers(true);
+    layered.set_gpu(true);
     let grid = flat.fit(LAYER_SIZE.0, LAYER_SIZE.1);
     layered.fit(LAYER_SIZE.0, LAYER_SIZE.1);
     (flat, layered, grid)
