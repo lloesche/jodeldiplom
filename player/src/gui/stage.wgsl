@@ -279,7 +279,7 @@ fn fs(o: Out) -> @location(0) vec4<f32> {
         let q = p - (o.shape.xy - vec2<f32>(len * 0.5, 0.0));
         // The triangle's three edges, as distances (negative inside).
         let h = len * 0.5;
-        let w = len * 0.42;
+        let w = len * 0.3;
         let n1 = normalize(vec2<f32>(w, h));
         let e1 = dot(vec2<f32>(q.x, abs(q.y)) - vec2<f32>(h, 0.0), n1);
         let e2 = -q.x - h * 0.55;

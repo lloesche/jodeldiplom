@@ -55,24 +55,36 @@ pub(super) struct Words {
     pub at: HashMap<(usize, usize), usize>,
 }
 
+/// How far the singer's arrow is drawn towards the note's tube when the
+/// voice is right on it.
+const PULL: f32 = 0.5;
+/// How far off the note (hundredths of a semitone) the pull is gone.
+const PULL_REACH: f64 = 200.0;
+
 impl Words {
     /// Line `l`'s word `w`, where laid.
     pub fn get(&self, l: usize, w: usize) -> Option<&Word> {
         self.at.get(&(l, w)).map(|&k| &self.laid[k])
     }
 
-    /// Where the singer's frame `h` is drawn down the lane: on its word's
-    /// tube where it hit, at its own pitch where it missed (none off the
-    /// notes or the words laid).
+    /// Where the singer's frame `h` is drawn down the lane: at the voice's
+    /// own pitch, drawn towards its word's tube the nearer it is to the
+    /// note ([`PULL`] of the way when right on it, none [`PULL_REACH`] off
+    /// or more); none off the notes or the words laid.
     pub fn y_of(&self, song: &Song, lane: &Lane, h: &Heard) -> Option<f32> {
         let l = h.line?;
         let notes = song.singing.notes.lines.get(l)?;
         let n = notes.notes.iter().find(|n| h.t >= n.start && h.t < n.end)?;
         let word = self.get(l, n.word)?;
-        if h.hit {
-            return Some(word.snake.y_at(word.across(h.t)));
-        }
-        Some(lane.y(notes.height(h.cents)))
+        // A hit's pitch is drawn on its note: the voice is the note and how
+        // far off it was.
+        let off = h.off.unwrap_or(0.0);
+        let voice = if h.hit { h.cents + off } else { h.cents };
+        let own = lane.y(notes.height(voice));
+        let tube = word.snake.y_at(word.across(h.t));
+        let near = (1.0 - off.abs() / PULL_REACH).clamp(0.0, 1.0) as f32;
+        let near = if h.off.is_some() { near } else { 0.0 };
+        Some(own + (tube - own) * PULL * near)
     }
 }
 

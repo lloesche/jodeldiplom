@@ -19,6 +19,7 @@ use std::collections::HashMap;
 use super::big_text::{BigText, Face, Faces, COVER_PAD};
 use super::rainbow;
 
+mod comet;
 mod lines;
 mod meter;
 mod result;
@@ -47,12 +48,12 @@ const BREAK: f64 = 4.0;
 const ARROW_HOLD: f64 = 0.25;
 /// How fast the arrow follows the pitch: a weight on a rubber band, its
 /// natural frequency (radians a second), damped just enough never to swing
-/// past (critically). Most of the way to a new pitch in about a fifth of a
+/// past (critically). Most of the way to a new pitch in about a tenth of a
 /// second.
-const SPRING: f32 = 22.0;
+const SPRING: f32 = 45.0;
 /// What the arrow goes for: the middle (median) of the pitches heard this
-/// long back, so a stray one, or a few, never pull it.
-const STEADY: f32 = 0.08;
+/// long back, so a stray one never pulls it.
+const STEADY: f32 = 0.035;
 /// The most sparks at once.
 const MOST_SPARKS: usize = 700;
 
@@ -209,6 +210,9 @@ pub struct Stage {
     atlas: Atlas,
     sparks: std::collections::VecDeque<Spark>,
     arrow: Arrow,
+    /// The arrow's comet tail, and the stardust owed to it.
+    comet: comet::Comet,
+    dust: f32,
     seed: u32,
     /// Sparks owed to the next frame (a share of one).
     owed: f32,
@@ -637,70 +641,37 @@ impl Stage {
             .take_while(|h| h.t >= clock - behind)
             .filter(|h| h.t <= clock)
             .collect();
-        let mut last_point: Option<((f32, f32), bool, f64)> = None;
-        for pair in recent.windows(2).rev() {
-            let (a, b) = (pair[1], pair[0]);
-            let (Some(ya), Some(yb)) = (y_of(a), y_of(b)) else {
-                continue;
-            };
-            let pa = (lane.x(a.t), ya);
-            let pb = (lane.x(b.t), yb);
-            last_point = Some((pb, b.hit, b.t));
-            // A hit is the fill itself; and from a hit to a miss the line
-            // would jump off the pill: neither drawn.
-            if b.t - a.t > 0.035 || (game && (a.hit || b.hit)) {
-                continue;
-            }
-            let (core, glow_c, thick, g) = if game && b.hit {
-                ([1.0, 0.9, 0.55, 0.95], GOLD, p * 0.07, p * 0.25)
-            } else {
-                (rgba(CORAL, 0.85), CORAL, p * 0.06, p * 0.22)
-            };
-            // A glow the length of the piece, so that pieces side by side
-            // add up to one line's.
-            let len = ((pb.0 - pa.0).powi(2) + (pb.1 - pa.1).powi(2)).sqrt();
-            let share = (len / (g * 0.9)).min(1.0);
-            out.push(segment(pa, pb, thick, core, rgba(glow_c, 0.5 * share), g));
-        }
-        if recent.len() == 1 {
-            let h = recent[0];
-            if let Some(yh) = y_of(h) {
-                last_point = Some(((lane.x(h.t), yh), h.hit, h.t));
-            }
-        }
-        // The words over the trail.
+        // The pitch heard last, where it is on the lane.
+        let last_point = recent
+            .iter()
+            .find_map(|h| y_of(h).map(|y| ((lane.x(h.t), y), h.hit, h.t)));
         self.draw_labels(&mut out, &words, labels, (lane.head, now));
 
-        // The singer: their trail, and where they are now.
+        // The singer: where they are now, a comet's tail behind them.
         let fresh = last_point.filter(|(_, _, t)| clock - t < ARROW_HOLD);
         self.arrow.step(fresh.map(|(p, _, _)| p.1), dt);
         let hitting = game && fresh.is_some_and(|f| f.1);
         let arrow_color = if hitting { GOLD } else { CORAL };
         let tip = (lane.head + p * 0.42, self.arrow.y);
-        if self.arrow.shown > 0.0 {
-            // The trail on to the arrow.
-            if let Some((pt, _, _)) = fresh {
-                let thick = if hitting { p * 0.16 } else { p * 0.07 };
-                out.push(segment(
-                    pt,
-                    (lane.head, self.arrow.y),
-                    thick,
-                    rgba(arrow_color, 0.85 * self.arrow.shown),
-                    rgba(arrow_color, 0.35 * self.arrow.shown),
-                    p * 0.3,
-                ));
-            }
-        }
+        let at = (self.arrow.shown > 0.0).then_some((now, self.arrow.y));
+        self.comet.step(at);
+        self.comet
+            .draw(&mut out, &lane, (arrow_color, p), self.arrow.shown);
 
-        // The sparks: owed by the time gone by, more on the note.
+        // Stardust along the tail, and sparks off the arrow on the note: owed
+        // by the time gone by.
         if self.arrow.shown > 0.5 {
-            let rate = if hitting { 150.0 } else { 28.0 };
-            self.owed += rate * song_dt;
+            let at = (lane.head, self.arrow.y);
+            self.dust += comet::DUST * song_dt;
+            let n = self.dust.floor() as usize;
+            self.dust -= n as f32;
+            self.emit(n, at, arrow_color, p * 0.26, 0.12, p);
+            self.owed += if hitting { 40.0 } else { 0.0 } * song_dt;
             let n = self.owed.floor() as usize;
             self.owed -= n as f32;
-            self.emit(n, (lane.head, self.arrow.y), arrow_color, p * 0.55, 1.0, p);
+            self.emit(n, at, arrow_color, p * 0.5, 1.0, p);
         } else {
-            self.owed = 0.0;
+            (self.owed, self.dust) = (0.0, 0.0);
         }
         // A word scored (once): a burst where it hit; each level it took the
         // streak up, a rainbow burst from the playhead, the multiplier popping.
@@ -737,12 +708,18 @@ impl Stage {
             let a = self.arrow.shown;
             out.push(disc(
                 (lane.head, self.arrow.y),
-                p * 0.16,
+                p * 0.11,
                 rgba([1.0, 0.98, 0.92], a),
                 rgba(arrow_color, 0.4 * a),
-                p * 0.6,
+                p * 0.45,
             ));
-            let len = p * 0.95;
+            // Slim, and beating gently while on the note.
+            let beat = if hitting {
+                1.0 + 0.08 * (clock as f32 * 14.0).sin()
+            } else {
+                1.0
+            };
+            let len = p * 0.9 * beat;
             out.push(Instance {
                 quad: [
                     tip.0 - len * 1.6,
@@ -901,7 +878,7 @@ mod tests {
             // Put for its first moments (the new pitch not yet the middle
             // of those heard), most of the way within 0.3 s, never past it,
             // and still by half a second.
-            assert!(at(0.02) < 105.0, "{fps}: {}", at(0.02));
+            assert!(at(0.01) < 110.0, "{fps}: {}", at(0.01));
             assert!(at(0.3) > 190.0, "{fps}: {}", at(0.3));
             let most = ys.iter().copied().fold(0.0, f32::max);
             assert!(most <= 200.01, "{fps}: {most}");
