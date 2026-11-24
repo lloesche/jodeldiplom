@@ -445,8 +445,10 @@ fn the_stage_shader_s_glory_is_its_reference() {
                 time,
             ],
             [fr(0.17), fr(0.53), time - fr(0.71) * 1.5, fr(0.23) * 3.0],
+            // Off by half a pixel so no point is the ring's centre, whose
+            // angle (atan2 of 0, 0) WGSL leaves undefined.
             [
-                200.0 + fr(0.19) * 80.0 - 40.0,
+                200.0 + fr(0.19) * 80.0 - 40.5,
                 300.0 + fr(0.83) * 80.0 - 40.0,
                 fr(0.31) * 60.0 - 20.0,
                 fr(0.47) * 4.0,
