@@ -135,6 +135,7 @@ fn main() {
     }
     let picture = KaraokePicture {
         area: Rect::new(0, 0, 100, 24),
+        bar: jodeldiplom::core::karaoke::controls::bar(Rect::new(0, 0, 100, 24)),
         lines,
         count: None,
         cue: None,
@@ -229,6 +230,7 @@ fn gpu_frames(
         let moved = ((now - changed_at) / 0.3).clamp(0.0, 1.0);
         let picture = KaraokePicture {
             area: Rect::new(0, 0, 100, 24),
+            bar: jodeldiplom::core::karaoke::controls::bar(Rect::new(0, 0, 100, 24)),
             lines: lines.clone(),
             count: None,
             cue: None,

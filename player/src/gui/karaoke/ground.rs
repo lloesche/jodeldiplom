@@ -11,7 +11,7 @@ use image::RgbImage;
 
 use super::rgb;
 use crate::art::Art;
-use crate::gui::raster::{pack, SEE_THROUGH};
+use crate::gui::raster::{between, pack, PixelRect, Target, SEE_THROUGH};
 use crate::view::colors;
 
 /// How dark the layer over the blurred cover is (0 clear, 1 black).
@@ -54,6 +54,27 @@ impl Backdrop {
             art: None,
             size: (width, height),
             pixels: vec![SEE_THROUGH; width * height],
+        }
+    }
+
+    /// The controls' bar `bar` (pixels) drawn over it in `target`, whose
+    /// `area` (pixels) it is the ground of, faded to `shown` (0: the
+    /// ground alone, 1: the bar as drawn).
+    pub fn fade_bar(&self, target: &mut Target, area: PixelRect, bar: PixelRect, shown: f32) {
+        if shown >= 1.0 {
+            return;
+        }
+        let (ax, ay, _, _) = area;
+        let (bx, by, bw, bh) = bar;
+        let x0 = bx.max(ax);
+        let x1 = (bx + bw).min(ax + self.size.0).min(target.width);
+        let y1 = (by + bh).min(ay + self.size.1).min(target.height);
+        for y in by.max(ay)..y1 {
+            for x in x0..x1 {
+                let ground = self.pixels[(y - ay) * self.size.0 + (x - ax)];
+                let at = y * target.width + x;
+                target.pixels[at] = between(ground, target.pixels[at], shown);
+            }
         }
     }
 }

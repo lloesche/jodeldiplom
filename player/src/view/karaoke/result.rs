@@ -6,7 +6,8 @@
 
 use std::sync::Arc;
 
-use super::{line, points_text, LineKind, LyricLine};
+use super::mode::line;
+use super::{points_text, LineKind, LyricLine};
 use crate::core::karaoke;
 use crate::core::singing::{Medal, Shown, SongResult, Verdict};
 use crate::core::State;

@@ -1038,6 +1038,7 @@ fn the_stage_draws_the_lane_over_the_pixmap() {
     let song = Song::new(&singing, lyrics.lines.iter().collect(), Some(3.0));
     let picture = KaraokePicture {
         area: Rect::new(0, 0, 80, 24),
+        bar: jodeldiplom::core::karaoke::controls::bar(Rect::new(0, 0, 80, 24)),
         lines: Vec::new(),
         count: None,
         cue: None,

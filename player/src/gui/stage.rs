@@ -23,8 +23,10 @@ mod comet;
 mod lines;
 mod meter;
 mod result;
+mod scene;
 mod shade;
 mod shots;
+mod start;
 mod words;
 use self::shade::Shade;
 use super::sparks::noise;
@@ -240,6 +242,8 @@ pub struct Stage {
     lights: Vec<super::particles::Spray>,
     /// What the result screen keeps between frames ([`result::Kept`]).
     kept: result::Kept,
+    /// What takes clicks as drawn last ([`Stage::targets`]).
+    targets: Vec<([f32; 4], crate::core::mouse::Target)>,
 }
 
 /// What the stage is made from, besides the picture.
@@ -832,6 +836,9 @@ impl Stage {
             lane_box,
             now,
             clock,
+            gone: picture.controls.map_or(0.0, |fade| {
+                crate::core::karaoke::controls::handover(fade).0 as f32
+            }),
         };
         self.shine(&mut drawn, (singing, game, song.length), &at, &step);
         let (out, top, mut lights, mut light_sprays) =

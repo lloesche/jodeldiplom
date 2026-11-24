@@ -23,7 +23,7 @@ use jodeldiplom::gui::karaoke::{paint, Backdrop, Layer};
 use jodeldiplom::gui::present::Offscreen;
 use jodeldiplom::gui::raster::Target;
 use jodeldiplom::gui::stage::{without_lyrics, Stage, Tint};
-use jodeldiplom::view::karaoke::{plain_lines, KaraokePicture, ResultShown};
+use jodeldiplom::view::karaoke::{plain_lines, KaraokePicture, ResultShown, Start};
 use ratatui::layout::Rect;
 
 // The fonts build.rs found: `EMBEDDED_FONTS`.
@@ -215,11 +215,12 @@ fn main() {
         for &t in &wanted {
             let picture = KaraokePicture {
                 area: Rect::new(0, 0, 100, 30),
+                bar: jodeldiplom::core::karaoke::controls::bar(Rect::new(0, 0, 100, 30)),
                 lines: lines.clone(),
                 count: None,
                 cue: None,
-                controls: Some(Rect::new(0, 27, 100, 3)),
-                start: None,
+                controls: None,
+                start: Some(Start { ready: true }),
                 before: Vec::new(),
                 moved: 1.0,
                 score: None,

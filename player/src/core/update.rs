@@ -419,7 +419,8 @@ pub fn update(state: &mut State, action: Action) -> Vec<Effect> {
         Action::KaraokeStep { slider, by } => karaoke::step(state, slider, by, &mut fx),
         Action::Sync(event) => super::sync::event(state, event),
         Action::Desk(what) => desk::act(state, what, &mut fx),
-        Action::PointerMoved { row } => karaoke::pointer_moved(state, row),
+        Action::PointerMoved { row } => karaoke::controls::pointer_moved(state, row),
+        Action::PointerLeft => karaoke::controls::pointer_left(state),
         Action::SelectRow(row) => {
             state.screen = Screen::Main;
             set_cursor(state, row);

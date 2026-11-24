@@ -921,49 +921,57 @@ score of each song is kept (`scores.txt` in the data folder).
 
 A song is sung only once its lyrics are ready (found, and their words
 timed where they can be): until then, and for a song with none, the
-button into the mode (and START in it) is greyed out, with why beside it
-(still looking for its lyrics, its words still being timed, none found,
-an instrumental), and does nothing but say so. A big folder just queued
-is got ready a track at a time, so its songs come singable one by one.
+button into the mode (and START's pill in it) is greyed out, with why
+beside it (still looking for its lyrics, its words still being timed,
+none found, an instrumental), and does nothing but say so. A big folder
+just queued is got ready a track at a time, so its songs come singable
+one by one.
 
-Karaoke mode fills the window (fullscreen): the song's
-cover blurred under a dark layer, its title and, once they are known, its
-lyrics. The voice plays at its level (as on the tab). Going in stops the song and holds it at its start (with shift,
-it goes on where it is). Each song waits for START (`enter`, `space`, or
-the button at the bottom right): "3", "2", "1" are counted a second each,
-numbers over the lines that shrink and fade, and "1" ends as the first
-word is sung. While a song waits, and for 2 s after START, its title and
-artist show alone, then fade out over a second; the first line then
-shows alone until it is sung, the lines after it coming up with it. A
-song with an intro plays at once, the title over its start and the count
-over the rest; where the singing starts sooner than the title and the
-count need (6 s), the music waits that much in silence. Until its words
-are timed, a song is counted in before its start, its title staying.
-The count follows what is heard, so it lands whatever the output's
-latency. It comes again whatever started the song (shift into the mode,
-`N`, a seek): before the first sung line as large, and after a break of
-8 s or more without singing, half as large in the same place at the top,
-apart from the lines and never moving with them. A lyric line that only marks a break (a note, an empty
-timed line, `[Instrumental]`, `(Guitar solo)`, `*Interlude*` and the
-like) is kept as a break, several in a row as one, and written as `♪` in
-our timing file; it is not sung, and the mode shows one `♪` through each
-long pause. Only whole:
-heard from less than three seconds before the words (the mode entered
-there, a seek), there is none.
-A song's end holds the next one for START; `N` skips to the next one,
-held the same way; `space` pauses, and a paused song goes on after the
-same count-in: nothing plays in the mode without one. The words light up
-a little before they are sung, `karaoke_lead` in the settings file (200
-ms by default), so they can be read first; lines move up into their
-places as the song goes on. The controls (the voice slider, the seek
-bar as on the other screens, the keys, START) come up over the bottom of
-the picture, never moving the lines: while the pointer moves in the
-bottom quarter of the screen (gone at once above it, or 3 s after it
-stops), while one is held, and while a song waits. The seek bar does
-nothing while a song is held for START or counting in. `esc` is the only
-way out: back to
-the tab, fullscreen ends, the voice still at its level, playback where it is (a
-count-in under way is called off).
+Karaoke mode fills the window (fullscreen): the song's cover blurred
+under a dark layer, its title and, once they are known, its lyrics. The
+voice plays at its level (as on the tab). Going in stops the song and
+holds it at its start (with shift, it goes on where it is). Each song
+waits for START (`enter`, `space`, or a click on START's gold pill low
+in the middle, there whenever a song waits, from the moment the mode
+opens, and under a song's result with the song it plays named before it;
+the only START there is to click; without a GPU a small "enter: START"
+says it): "3", "2", "1" are counted a second each, numbers over the
+lines that shrink and fade, and "1" ends as the first word is sung.
+While a song waits, and for 2 s after START, its title and artist show
+alone, then fade out over a second; the first line then shows alone
+until it is sung, the lines after it coming up with it. A song with an
+intro plays at once, the title over its start and the count over the
+rest; where the singing starts sooner than the title and the count need
+(6 s), the music waits that much in silence. Until its words are timed,
+a song is counted in before its start, its title staying. The count
+follows what is heard, so it lands whatever the output's latency. It
+comes again whatever started the song (shift into the mode, `N`, a
+seek): before the first sung line as large, and after a break of 8 s or
+more without singing, half as large in the same place at the top, apart
+from the lines and never moving with them. A lyric line that only marks
+a break (a note, an empty timed line, `[Instrumental]`, `(Guitar solo)`,
+`*Interlude*` and the like) is kept as a break, several in a row as one,
+and written as `♪` in our timing file; it is not sung, and the mode
+shows one `♪` through each long pause. Only whole: heard from less than
+three seconds before the words (the mode entered there, a seek), there
+is none. A song's end holds the next one for START; `N` skips to the
+next one, held the same way; `space` pauses, and a paused song goes on
+after the same count-in: nothing plays in the mode without one. The
+words light up a little before they are sung, `karaoke_lead` in the
+settings file (200 ms by default), so they can be read first; lines move
+up into their places as the song goes on. The controls (the voice
+slider, the seek bar as on the other screens, the keys) come up over the
+bottom of the picture, never moving the lines or START: only while the
+pointer is near the bottom (the bottom 15 % of the screen, never less
+than the bar and two rows) and while a slider or the seek bar is held
+(no key brings them up), fading in and out over 0.2 s, and going 1.5 s
+after the pointer leaves the bottom (or the window). The song's progress
+along the bottom gives way to them: it sinks and fades in the first half
+of their fade, and they come in the second (their seek bar and times
+stand for it), so the two never show at once. The seek bar does nothing
+while a song is held for START or counting in. `esc` is the only way
+out: back to the tab, fullscreen ends, the voice still at its level,
+playback where it is (a count-in under way is called off).
 
 The browser lists folders and files ending in `.flac`, `.wav`, `.aif`,
 `.aiff`, `.aifc`, `.caf`, `.m4a`, `.mp4`, `.mp3`, `.mp2`, `.mp1`, `.ogg` and

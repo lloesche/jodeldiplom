@@ -30,10 +30,13 @@ use std::sync::Arc;
 
 use super::super::particles::{Kind, Spray};
 use super::super::stage_gpu::{kind, Instance, StageFrame};
-use super::{disc, pill, rgba, Face, Rgb, Stage, COVER_PAD, GOLD_DEEP, GOLD_TOP, WHITE};
+use super::start::{self, Line};
+use super::{disc, pill, rgba, Face, Rgb, Stage, COVER_PAD};
 use crate::core::shine::Tier;
 use crate::core::singing::{Beat, Shown};
-use crate::view::karaoke::{best_words, date_words, points_text, KaraokePicture, ResultShown};
+use crate::view::karaoke::{
+    best_words, date_words, points_text, KaraokePicture, ResultShown, Start,
+};
 
 mod entries;
 mod seal;
@@ -123,9 +126,9 @@ impl Written {
 /// hundredth of its height; the sheet's place (left, top, width, height)
 /// and its unit (a hundredth of its height, or of its width a little
 /// grown where it stands upright); the shake now (the seal stamped down);
-/// where the line of the song START plays is (above the controls); how
-/// much it twinkles (1, calming to 0 as it goes still); its inks; and how
-/// its verdict looks.
+/// START's line under it (above the controls' bar); how much it twinkles
+/// (1, calming to 0 as it goes still); its inks; and how its verdict
+/// looks.
 #[derive(Clone, Copy, Debug)]
 struct Room {
     x: f32,
@@ -136,22 +139,21 @@ struct Room {
     sheet: (f32, f32, f32, f32),
     s: f32,
     shake: (f32, f32),
-    next_y: f32,
+    start: Line,
     calm: f32,
     inks: Inks,
     look: Look,
 }
 
 impl Room {
-    /// The room in the window's area `(x, y, w, h)`, its controls from
-    /// `bottom` down, for a verdict that looks `look`: the sheet as large
-    /// as fits over the next song's line, landscape where the window is
-    /// wide, upright where it is tall.
-    fn new((x, y, w, h): (f32, f32, f32, f32), bottom: f32, tint: &Tint, look: Look) -> Room {
+    /// The room in the window's area `(x, y, w, h)`, START's line at
+    /// `start`, for a verdict that looks `look`: the sheet as large as
+    /// fits over that line, landscape where the window is wide, upright
+    /// where it is tall.
+    fn new((x, y, w, h): (f32, f32, f32, f32), start: Line, tint: &Tint, look: Look) -> Room {
         let u = h / 100.0;
-        let next_y = (y + h * 0.935).min(bottom - 3.2 * u);
         let top = y + 3.0 * u;
-        let high = (next_y - 4.4 * u - top).max(10.0);
+        let high = (start.y - 4.4 * u - top).max(10.0);
         let sw = (w * 0.94).min(high * 1.5);
         let sh = high.min(sw * 1.7);
         let sheet = (x + (w - sw) / 2.0, top + (high - sh) / 2.0, sw, sh);
@@ -164,7 +166,7 @@ impl Room {
             sheet,
             s: (sw / 0.85).min(sh) / 100.0,
             shake: (0.0, 0.0),
-            next_y,
+            start,
             calm: 1.0,
             inks: Inks::of(tint),
             look,
@@ -240,7 +242,7 @@ fn burst(at: (f32, f32), start: f64, size: f32, (seed, rgb): (u32, Rgb), kind: K
 /// all of it), how dark a soft shadow under it is (0 none), and how far it
 /// is turned round its anchor (radians).
 #[derive(Clone, Copy, Debug)]
-struct Pen {
+pub(super) struct Pen {
     share: f32,
     shadow: f32,
     turn: f32,
@@ -254,7 +256,7 @@ impl Pen {
         turn: 0.0,
     };
     /// All of it, a soft shadow under it.
-    const SHADED: Pen = Pen {
+    pub(super) const SHADED: Pen = Pen {
         shadow: 1.0,
         ..Pen::FLAT
     };
@@ -270,7 +272,7 @@ impl Stage {
     /// (`anchor` 0 puts its left there, 1 its right), `px` drawn at
     /// `scale`, in `color`, put down with `pen` (turned round `c`); its
     /// width drawn.
-    fn written(
+    pub(super) fn written(
         &mut self,
         out: &mut Vec<Instance>,
         (face, text): (Face, &str),
@@ -336,12 +338,9 @@ impl Stage {
         let verdict = reveal
             .find(|b| matches!(b, Beat::Verdict(_)))
             .map(|(at, _)| (t - at) as f32);
-        let rows = f32::from(picture.area.height.max(1));
-        let bottom = picture.controls.map_or(y + h, |c| {
-            y + h * f32::from(c.y.saturating_sub(picture.area.y)) / rows
-        });
         let look = seal::look(r.verdict(), tint);
-        let mut room = Room::new((x, y, w, h), bottom, tint, look);
+        let start = Line::of(picture, (x, y, w, h));
+        let mut room = Room::new((x, y, w, h), start, tint, look);
         room.shake = seal::shake(&look, verdict, room.s);
         room.calm = clamp01((reveal.still() - t) as f32 / 2.0);
         let words = self.words_of(&shown.shown);
@@ -375,7 +374,7 @@ impl Stage {
         self.verdict(&mut d, &room, shown, tint, (verdict, &words));
         self.best(&mut d, &room, shown, &words);
         self.signed(&mut d, &room, shown, &words);
-        self.next(&mut d, &room, shown, tint);
+        self.next(&mut d, &room, (shown, picture.start), tint);
         self.kept.written = Some(words);
         Some(StageFrame {
             instances: d.out,
@@ -393,7 +392,13 @@ impl Stage {
     /// else smaller (down to a little over half), else cut short with an
     /// ellipsis; and the size it is drawn at. Kept, so a frame fits each
     /// text once a result.
-    fn fitted(&mut self, face: Face, text: &str, px: f32, width: f32) -> (Arc<str>, f32) {
+    pub(super) fn fitted(
+        &mut self,
+        face: Face,
+        text: &str,
+        px: f32,
+        width: f32,
+    ) -> (Arc<str>, f32) {
         let fit = (face, (px * 4.0).round() as u32, width.round() as u32);
         let kept = self.kept.fitted.get(text).into_iter().flatten();
         if let Some((_, out, px)) = kept.into_iter().find(|k| k.0 == fit) {
@@ -426,48 +431,32 @@ impl Stage {
         (out.into(), px)
     }
 
-    /// The song START plays and START, under the sheet (above the
-    /// controls' bar): there throughout, START pulsing once the reveal is
-    /// over.
-    fn next(&mut self, d: &mut Drawn, room: &Room, shown: &ResultShown, tint: &Tint) {
+    /// The song START plays and START's pill ([`super::start`]), under
+    /// the sheet, while the mode waits for START (`start`): there
+    /// throughout (fading in as the sheet unrolls; greyed unless the song
+    /// can be sung), START pulsing once the reveal is over.
+    fn next(
+        &mut self,
+        d: &mut Drawn,
+        room: &Room,
+        (shown, start): (&ResultShown, Option<Start>),
+        tint: &Tint,
+    ) {
+        let Some(start) = start else {
+            return;
+        };
         let (t, reveal) = (shown.t, &shown.shown.reveal);
-        let u = room.u;
-        let px = (2.9 * u).round().max(10.0);
-        let cy = room.next_y;
         let shows = fade(Some(t - 0.3), 0.5);
-        let start = (Face::SHOUT, "START");
-        let sw = self.measure(start.0, start.1, px);
-        let room_for = room.w * 0.92 - sw - px * 2.4;
-        let (text, _) = self.fitted(Face::NUMBER, &shown.next_words(), px, room_for);
-        let tw = self.measure(Face::NUMBER, &text, px);
-        let gap = px * 1.4;
-        let left = room.x + room.w / 2.0 - (tw + gap + sw + px) / 2.0;
-        let soft = rgba(tint.soft, 0.85 * shows);
-        let next = (Face::NUMBER, &*text);
-        self.written(
-            &mut d.out,
-            next,
-            (px, 1.0),
-            ((left, cy), 0.0),
-            soft,
-            Pen::SHADED,
-        );
         let over = reveal.age(Beat::End, t);
-        let pulse = over.map_or(0.0, |a| 0.5 - 0.5 * (a as f32 * 4.0).cos()) * room.calm;
-        let scale = 1.0 + 0.06 * pulse;
-        let c = (left + tw + gap + (sw + px) / 2.0, cy);
-        let lit = 0.55 + 0.45 * fade(over, 0.3);
-        d.out.push(pill(
-            c,
-            ((sw / 2.0 + px * 0.5) * scale, px * 0.8 * scale),
-            rgba(GOLD_DEEP, 0.9 * shows * lit),
-            rgba(GOLD_TOP, (0.5 + 0.5 * pulse) * shows),
-            0.0,
-            1.5,
-            0.0,
-        ));
-        let white = rgba(WHITE, shows);
-        self.written(&mut d.out, start, (px, scale), (c, 0.5), white, Pen::SHADED);
+        let look = start::Look {
+            shows,
+            pulse: over.map_or(0.0, |a| 0.5 - 0.5 * (a as f32 * 4.0).cos()) * room.calm,
+            lit: 0.55 + 0.45 * fade(over, 0.3),
+            ready: start.ready,
+        };
+        let words = shown.next_words();
+        let soft = rgba(tint.soft, 0.85 * shows);
+        self.start_pill(&mut d.out, &room.start, Some((&words, soft)), look);
     }
 }
 
@@ -549,16 +538,16 @@ mod tests {
         stage
     }
 
-    /// The picture of a result `id` at `t` (its controls' bar the bottom 3
-    /// of its 30 rows).
+    /// The picture of a result `id` at `t`, waiting for START.
     fn picture(r: &SongResult, id: u64, t: f64) -> KaraokePicture {
         KaraokePicture {
             area: Rect::new(0, 0, 100, 30),
+            bar: Rect::new(0, 25, 100, 5),
             lines: Vec::new(),
             count: None,
             cue: None,
-            controls: Some(Rect::new(0, 27, 100, 3)),
-            start: None,
+            controls: None,
+            start: Some(Start { ready: true }),
             before: Vec::new(),
             moved: 1.0,
             score: None,

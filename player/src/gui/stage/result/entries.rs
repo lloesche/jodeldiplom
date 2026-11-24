@@ -379,7 +379,9 @@ mod tests {
         ] {
             let mut stage = stage();
             let words = stage.words_of(&shown);
-            let room = Room::new((0.0, 0.0, w, h), h * 0.9, &Tint::STAGE, look);
+            let area = (0.0, 0.0, w, h);
+            let line = super::super::Line::above(area, h * 0.9);
+            let room = Room::new(area, line, &Tint::STAGE, look);
             let ((cx, cy), k) = stage.stamp_place(&room, &words, NEW_BEST.0);
             let s = room.s;
             let px = (STAMP_PX * s * k).round().max(9.0);

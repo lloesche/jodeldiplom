@@ -309,6 +309,7 @@ fn load(path: &Path, shrunk: Option<u32>) -> Layers {
 fn picture_at(sung: &[&jodel_lyrics::Line], now: f64, singing: &Singing) -> KaraokePicture {
     KaraokePicture {
         area: Rect::new(0, 0, 100, 24),
+        bar: jodeldiplom::core::karaoke::controls::bar(Rect::new(0, 0, 100, 24)),
         lines: timed_lines(sung, now).unwrap_or_default(),
         count: None,
         cue: None,

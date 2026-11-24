@@ -808,12 +808,18 @@ pub fn volume_step(level: f32, steps: i32) -> f32 {
 impl State {
     /// When the soonest thing is due ([`State::now_ms`] clock): changed
     /// settings to send, a paused song's count-in, a preview to start
-    /// (Ctrl held long enough).
+    /// (Ctrl held long enough), Karaoke mode's controls to fade out.
     pub fn due(&self) -> Option<u64> {
-        [self.settings_due, self.karaoke.resume_at, self.preview.due]
-            .into_iter()
-            .flatten()
-            .min()
+        let controls = karaoke::controls::due(self);
+        [
+            self.settings_due,
+            self.karaoke.resume_at,
+            self.preview.due,
+            controls,
+        ]
+        .into_iter()
+        .flatten()
+        .min()
     }
 
     /// A state with the browser in `dir`, the given settings and size.

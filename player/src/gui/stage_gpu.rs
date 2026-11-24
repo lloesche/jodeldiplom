@@ -318,6 +318,16 @@ pub struct StageFrame {
     pub clock: f32,
 }
 
+impl StageFrame {
+    /// A frame with nothing in it yet, at `clock` (the singing's time).
+    pub fn bare(clock: f32) -> StageFrame {
+        StageFrame {
+            clock,
+            ..StageFrame::default()
+        }
+    }
+}
+
 /// `stage` (none: none) with the picture's bubbles' liquid (`bubbles`)
 /// and bursts (`sprays`) drawn over it too, at `clock` (the singing's
 /// time) where there is no stage.
@@ -336,8 +346,7 @@ pub fn with_picture(
         None => (!bubbles.is_empty() || !sprays.is_empty()).then(|| StageFrame {
             instances: bubbles.to_vec(),
             sprays: sprays.to_vec(),
-            clock,
-            ..Default::default()
+            ..StageFrame::bare(clock)
         }),
     }
 }

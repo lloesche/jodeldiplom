@@ -38,6 +38,8 @@ pub enum MouseKind {
     ScrollUp,
     /// The wheel turned down.
     ScrollDown,
+    /// The pointer went out of the window.
+    Out,
 }
 
 /// A mouse event at a cell.
@@ -253,9 +255,6 @@ pub fn regions(state: &State) -> Vec<(Rect, Target)> {
         }
         Layout::Karaoke(k) => {
             if let Some(c) = &k.controls {
-                if let Some(start) = c.start {
-                    out.push((start, Target::Button(Op::KaraokeStart)));
-                }
                 for s in &c.sliders {
                     out.push((s.row, Target::KaraokeSlider(s.slider)));
                 }
@@ -355,17 +354,19 @@ fn slider_share(state: &State, slider: Slider, x: f64) -> Option<f64> {
 }
 
 /// What a mouse event does, if anything. The pointer is taken to be in
-/// the middle of its cell.
+/// the middle of its cell, over the cells alone.
 pub fn action(state: &State, input: MouseInput) -> Option<Action> {
-    action_at(state, input, f64::from(input.col) + 0.5)
+    action_at(state, input, f64::from(input.col) + 0.5, None)
 }
 
-/// [`action`] with the pointer known within its cell: `x` is in cells from
-/// the left edge (the GUI knows it to the pixel). Only a Karaoke slider
-/// uses it: cell by cell, a 40-cell track moves 2.6 % a step (5.1 % for
-/// the microphone's 200 %); pixel by pixel, every whole percent is in
-/// reach.
-pub fn action_at(state: &State, input: MouseInput, x: f64) -> Option<Action> {
+/// [`action`] with the pointer known within its cell and over what the
+/// window draws in pixels: `x` is in cells from the left edge (the GUI
+/// knows it to the pixel), and `over` the target drawn in pixels under the
+/// pointer, if any (Karaoke mode's START pill, on the stage), which is hit
+/// before the cells under it. Only a Karaoke slider uses `x`: cell by cell,
+/// a 40-cell track moves 2.6 % a step (5.1 % for the microphone's 200 %);
+/// pixel by pixel, every whole percent is in reach.
+pub fn action_at(state: &State, input: MouseInput, x: f64, over: Option<Target>) -> Option<Action> {
     use MouseButton::{Left, Right};
     use MouseKind::*;
     // A drag on the progress bar follows the pointer anywhere.
@@ -405,9 +406,14 @@ pub fn action_at(state: &State, input: MouseInput, x: f64) -> Option<Action> {
             _ => None,
         };
     }
-    // Moving over Karaoke mode's bottom shows its controls.
-    if input.kind == Moved && karaoke::in_mode(state) {
-        return Some(Action::PointerMoved { row: input.row });
+    // Moving over Karaoke mode's bottom shows its controls; off the
+    // window they go.
+    if karaoke::in_mode(state) {
+        match input.kind {
+            Moved => return Some(Action::PointerMoved { row: input.row }),
+            Out => return Some(Action::PointerLeft),
+            _ => {}
+        }
     }
     // And a queue row held: it goes where the pointer is.
     if state.queue.dragging {
@@ -430,7 +436,7 @@ pub fn action_at(state: &State, input: MouseInput, x: f64) -> Option<Action> {
             _ => None,
         };
     }
-    let target = hit(state, input.col, input.row)?;
+    let target = over.or_else(|| hit(state, input.col, input.row))?;
     match (input.kind, target) {
         (Down(Right), Target::TransitionLane(block) | Target::TransitionOverview(block)) => {
             Some(Action::TransitionPanStart {

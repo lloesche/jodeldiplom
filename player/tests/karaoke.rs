@@ -736,7 +736,7 @@ fn the_speech_model_is_found_where_the_build_put_it() {
 /// What `input` does with the pointer at `x` cells, done.
 #[track_caller]
 fn point(state: &mut State, input: MouseInput, x: f64) {
-    let action = mouse::action_at(state, input, x).expect("an action");
+    let action = mouse::action_at(state, input, x, None).expect("an action");
     update(state, action);
 }
 
@@ -893,22 +893,36 @@ fn the_sliders_and_buttons_take_clicks() {
         mouse::hit(&state, k.enter.x + 2, k.enter.y + 1),
         Some(Target::Button(Op::KaraokeEnter))
     );
-    // In the mode, waiting: START.
+    // In the mode, waiting: START is the stage's pill, from the moment the
+    // mode opens, never a cell of the controls (which wait for the
+    // pointer near the bottom). A press on the pill is START.
     op(&mut state, Op::KaraokeEnter);
     stopped(&mut state);
     let Layout::Karaoke(km) = layout::compute(&state) else {
         panic!()
     };
-    let start = km
-        .controls
-        .as_ref()
-        .expect("controls while waiting")
-        .start
-        .expect("START");
+    assert!(km.controls.is_none());
+    let shown = jodeldiplom::view::karaoke::picture(&state, &km, 0.0);
     assert_eq!(
-        mouse::hit(&state, start.x + 1, start.y + 1),
-        Some(Target::Button(Op::KaraokeStart))
+        shown.start,
+        Some(jodeldiplom::view::karaoke::Start { ready: true })
     );
+    // A press where the window drew START in pixels is START; the cells
+    // under it take none.
+    let press = |kind| MouseInput {
+        kind,
+        col: 40,
+        row: state.size.1 - 8,
+    };
+    let start = Some(Target::Button(Op::KaraokeStart));
+    let left = press(MouseKind::Down(MouseButton::Left));
+    assert!(matches!(
+        mouse::action_at(&state, left, 40.5, start),
+        Some(Action::Op(Op::KaraokeStart))
+    ));
+    assert!(mouse::action_at(&state, left, 40.5, None).is_none());
+    let right = press(MouseKind::Down(MouseButton::Right));
+    assert!(mouse::action_at(&state, right, 40.5, start).is_none());
     // The game is set on the tab, not here: it stays as it is from a
     // song's start to its end. No keys for it, and the ops do nothing.
     use jodeldiplom::core::keymap::{lookup, Key, Meaning};
@@ -934,91 +948,10 @@ fn the_sliders_and_buttons_take_clicks() {
     );
 }
 
-/// In the mode the controls come up only with the pointer near the bottom
-/// (and go at once above it), over the picture: the lines stay where they
-/// are. Under the slider, the seek bar seeks, except while the song is
-/// held for START.
-#[test]
-fn the_controls_come_up_near_the_bottom_over_the_lines_with_a_seek_bar() {
-    use jodeldiplom::view::karaoke::{picture, KaraokePicture};
-    let mut state = tab();
-    op(&mut state, Op::KaraokeEnter);
-    // A song playing (nothing waits for START), the controls gone.
-    state.karaoke.held = None;
-    state.karaoke.countdown = None;
-    state.playing.track = Some(common::now_track(44_100, state.engine_settings(), 2));
-    state.playing.state = PlayState::Playing;
-    state.playing.position = 30.0;
-    let later = state.now_ms + 10_000;
-    update(&mut state, Action::Tick(later));
-    assert!(!karaoke::controls_shown(&state));
-    let rows = state.size.1;
-    let moved = |row: u16| MouseInput {
-        kind: MouseKind::Moved,
-        col: 10,
-        row,
-    };
-    let point = |state: &mut State, input: MouseInput| {
-        if let Some(a) = mouse::action(state, input) {
-            update(state, a)
-        } else {
-            Vec::new()
-        }
-    };
-    let pictured = |state: &State| -> (KaraokePicture, Option<u16>) {
-        let Layout::Karaoke(k) = layout::compute(state) else {
-            panic!("the mode")
-        };
-        (picture(state, &k, 30.0), k.controls.map(|c| c.bar.y))
-    };
-    let (hidden, none) = pictured(&state);
-    assert_eq!(none, None);
-    // Above the bottom quarter: nothing.
-    point(&mut state, moved(rows / 2));
-    assert!(!karaoke::controls_shown(&state));
-    // In it: the controls, over the bottom; the lines where they were.
-    point(&mut state, moved(rows - 2));
-    assert!(karaoke::controls_shown(&state));
-    let (shown, bar) = pictured(&state);
-    bar.expect("the controls' bar");
-    // The same lines in the same picture: the window lays them out on the
-    // whole screen, the controls never move them.
-    assert_eq!((hidden.area, &hidden.lines), (shown.area, &shown.lines));
-    // The seek bar under the slider: a click and release seeks there.
-    let Layout::Karaoke(k) = layout::compute(&state) else {
-        panic!()
-    };
-    let c = k.controls.unwrap();
-    assert!(c.seek.y > c.sliders[0].row.y && c.seek.width > 10, "{c:?}");
-    let mid = c.seek.x + c.seek.width / 2;
-    assert_eq!(mouse::hit(&state, mid, c.seek.y), Some(Target::Bar));
-    let click = |kind| MouseInput {
-        kind,
-        col: mid,
-        row: c.seek.y,
-    };
-    point(&mut state, click(MouseKind::Down(MouseButton::Left)));
-    assert!(state.seek_drag.is_some());
-    let fx = point(&mut state, click(MouseKind::Up(MouseButton::Left)));
-    assert!(
-        engine(&fx).iter().any(|c| matches!(c, Command::Seek(_))),
-        "{fx:?}"
-    );
-    // Held for START: the bar does nothing.
-    state.karaoke.held = Some(2);
-    point(&mut state, click(MouseKind::Down(MouseButton::Left)));
-    let fx = point(&mut state, click(MouseKind::Up(MouseButton::Left)));
-    assert!(!engine(&fx).iter().any(|c| matches!(c, Command::Seek(_))));
-    state.karaoke.held = None;
-    // Back up above the bottom: they go at once.
-    point(&mut state, moved(1));
-    assert!(!karaoke::controls_shown(&state));
-}
-
 /// A song cannot be sung until its lyrics are ready: while they are looked
 /// for, while their words are timed, or when there are none (none found,
 /// an instrumental) the mode does not open for it, START does not play it,
-/// and the status line (and the greyed button) says why.
+/// and the status line (and the greyed button, the greyed START) says why.
 #[test]
 fn no_karaoke_for_a_song_until_its_lyrics_are_ready() {
     use jodeldiplom::lyrics::Answer;

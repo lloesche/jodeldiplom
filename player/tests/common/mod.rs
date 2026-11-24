@@ -714,6 +714,7 @@ pub fn bubble_picture(
     }
     KaraokePicture {
         area,
+        bar: jodeldiplom::core::karaoke::controls::bar(area),
         lines,
         count: None,
         cue: None,

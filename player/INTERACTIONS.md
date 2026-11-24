@@ -205,17 +205,17 @@ stem keys are their mutes.
   - `the_mode_plays_the_voice_at_its_level_and_esc_keeps_it_on_the_tab`
   - `shift_enter_goes_into_the_mode_where_the_song_is`
 - **K3.** In the mode, a song's end holds the next song at its start: only
-  START (`enter`, `space`, the button) plays it, after its count-in. `N`
-  holds the next song for START. The mode arms no transitions (one armed
-  is called off going in), and `g`, bar jumps and the seek keys do nothing
-  there; the controls' seek bar seeks, except while a song is held for
-  START or counting in. Nothing plays in the mode without a count-in:
-  `space` pauses a song playing and is START otherwise, and a paused song
-  goes on at START only after the same count-in. A song played to its end
-  (the game on; sought on or not, the last of the queue too, nothing
-  scored too) shows its result while the next waits: the first START
-  during its reveal completes it at once (nothing played again), the next
-  plays the song.
+  START (`enter`, `space`, a click on START's pill) plays it, after its
+  count-in. `N` holds the next song for START. The mode arms no
+  transitions (one armed is called off going in), and `g`, bar jumps and
+  the seek keys do nothing there; the controls' seek bar seeks, except
+  while a song is held for START or counting in. Nothing plays in the mode
+  without a count-in: `space` pauses a song playing and is START
+  otherwise, and a paused song goes on at START only after the same
+  count-in. A song played to its end (the game on; sought on or not, the
+  last of the queue too, nothing scored too) shows its result while the
+  next waits: the first START during its reveal completes it at once
+  (nothing played again), the next plays the song.
   - `holding_stops_after_a_track_and_names_the_next` (engine)
   - `the_mode_arms_no_transitions_and_makes_no_jumps`
   - `next_in_the_mode_holds_the_next_song_for_start`
@@ -223,13 +223,31 @@ stem keys are their mutes.
   - `a_song_sought_on_and_played_out_shows_its_result`
   - `a_song_played_out_with_nothing_scored_shows_its_result`
 - **K3b.** The mode's lines never move for its controls: those come up
-  over the picture's bottom (the voice slider, the seek bar, the keys,
-  START), while the pointer moves in the bottom quarter of the screen (for
-  3 s after it last moved there; at once gone above it), while a slider or
-  the seek bar is held, after a key moved the slider, and while a song
-  waits for START.
+  over the picture's bottom (the voice slider, the seek bar, the keys)
+  only while the pointer is near the bottom (the bottom 15 % of the rows,
+  never fewer than the bar's and two more) and while a slider or the seek
+  bar is held; no key brings them up. They fade in and out over 0.2 s,
+  and out 1.5 s after the pointer leaves the bottom (or the window); they
+  take clicks exactly while they show at all. The stage's progress (its
+  bar, marks and ring) and the bar never show at once: the progress sinks
+  and fades in the fade's first half, the bar comes in its second (and
+  the other way round as they go).
   - `the_controls_come_up_near_the_bottom_over_the_lines_with_a_seek_bar`
+  - `the_controls_fade_in_stay_linger_and_fade_out` (unit)
+  - `the_progress_goes_before_the_bar_comes` (unit)
+  - `the_progress_gives_way_to_the_controls_bar` (unit)
   - `space_never_plays_a_song_without_its_count_in`
+- **K3c.** START has one place to click: the stage's gold pill, low in the
+  middle and clear above the controls' bar (shown or not, it never
+  moves), whenever the mode waits for START: entering the mode, a song
+  held, under a song's result (the song it plays named before it). A
+  press on it is START, as `enter` is (during a result's reveal it
+  completes it, the next starts the song); greyed while that song cannot
+  be sung yet. The pointer shows a hand over it. The controls have no
+  START. Without a GPU there is no stage: a small "enter: START" under
+  the lines says it (a result's own lines end with START).
+  - `the_start_pill_is_start_by_click_during_and_after_the_reveal`
+  - `start_shows_alone_above_the_bar_and_is_its_target` (unit)
 - **K4.** A change of the voice's level never moves playback and never
   touches a transition (as S1). In the mode it is heard at once. The
   Voice slider is a position along its travel (`karaoke_voice`, 0 to

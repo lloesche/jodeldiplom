@@ -160,12 +160,10 @@ pub struct KaraokeLayout {
 /// Karaoke mode's controls.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct KaraokeControls {
-    /// The bar they are in.
+    /// The bar they are in ([`karaoke::controls::bar`]).
     pub bar: Rect,
     /// The sliders.
     pub sliders: Vec<SliderLayout>,
-    /// The START button, while nothing plays.
-    pub start: Option<Rect>,
     /// The time heard, the seek bar and the length, under the sliders.
     pub elapsed: Rect,
     /// The seek bar.
@@ -967,8 +965,6 @@ fn help(state: &State, area: Rect) -> HelpLayout {
 
 /// The label of the button into Karaoke mode.
 pub const KARAOKE_ENTER: &str = "▶  Enter Karaoke Mode";
-/// The START button's label.
-pub const KARAOKE_START: &str = "START";
 /// A slider's label column, in cells.
 pub const SLIDER_LABEL: u16 = 12;
 /// How wide a switch on the Karaoke tab is (" on " or " off ").
@@ -1071,30 +1067,13 @@ fn karaoke_tab(inner: Rect, session: Option<&crate::core::sync::Session>) -> Kar
 }
 
 /// Karaoke mode: the whole screen, and the controls' bar over its bottom
-/// while they show (the sliders, the seek bar and the keys at the left,
-/// START at the right). The game's settings are not here but on the tab:
-/// they stay as they are from a song's start to its end.
+/// while they show (the sliders, the seek bar and the keys; START is the
+/// stage's pill, above the bar). The game's settings are not here but on
+/// the tab: they stay as they are from a song's start to its end.
 fn karaoke_mode(state: &State, area: Rect) -> KaraokeLayout {
-    let controls = karaoke::controls_shown(state).then(|| {
-        let bar = Rect::new(
-            area.x,
-            area.bottom().saturating_sub(5),
-            area.width,
-            5.min(area.height),
-        );
-        let start_w = width(KARAOKE_START) as u16 + 8;
-        let start = karaoke::waiting(state).then(|| {
-            Rect::new(
-                bar.right().saturating_sub(start_w + 2),
-                bar.y + 1,
-                start_w,
-                3,
-            )
-        });
-        let room = bar
-            .width
-            .saturating_sub(start.map_or(0, |s| s.width + 4))
-            .saturating_sub(4);
+    let controls = karaoke::controls::shown(state).then(|| {
+        let bar = karaoke::controls::bar(area);
+        let room = bar.width.saturating_sub(4);
         let sliders = Slider::MODE
             .iter()
             .enumerate()
@@ -1120,7 +1099,6 @@ fn karaoke_mode(state: &State, area: Rect) -> KaraokeLayout {
         KaraokeControls {
             bar,
             sliders,
-            start,
             elapsed,
             seek,
             total,

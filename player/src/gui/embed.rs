@@ -12,7 +12,10 @@
 //! The widget fills the window from its top left corner (the GPU's pass
 //! draws in window pixels). The pointer over it goes to the window as it
 //! is ([`Pointer`]), in cells with the share of one (a slider follows it
-//! to the pixel); the window keeps what is held ([`super::pointer`]).
+//! to the pixel), and the target drawn in pixels under it (Karaoke mode's
+//! START pill, which the stage draws in pixels, not cells:
+//! [`Canvas::target_at`]; the hand shows over a button there); the window
+//! keeps what is held ([`super::pointer`]).
 //!
 //! With the CPU renderer the whole pixmap goes over as a new image each
 //! time a pixel changed: iced's images cannot be updated in part.
@@ -34,7 +37,7 @@ use super::embed_gpu::Frame;
 use super::pointer::{Pointer, PointerKind};
 use super::stage_gpu::StageFrame;
 use super::window::Message;
-use crate::core::mouse::MouseButton;
+use crate::core::mouse::{MouseButton, Target};
 
 /// The shortest time between two ticks at the refresh: 250 a second, past
 /// any display's refresh worth following.
@@ -379,6 +382,14 @@ impl Input {
             f64::from(at.y) * s / ch.max(1) as f64,
         )
     }
+
+    /// The target drawn in pixels at `at` (in the widget) in the frame
+    /// shown.
+    fn target(&self, at: iced::Point) -> Option<Target> {
+        let shared = self.0.lock();
+        let s = shared.scale;
+        shared.canvas.target_at(at.x * s, at.y * s)
+    }
 }
 
 impl shader::Program<Message> for Input {
@@ -418,7 +429,14 @@ impl shader::Program<Message> for Input {
                 iced::Point::new(p.x - bounds.x, p.y - bounds.y)
             });
         let (x, y) = self.cells(at);
-        let action = shader::Action::publish(Message::Pointer(Pointer { kind, x, y, over }));
+        let pointer = Pointer {
+            kind,
+            x,
+            y,
+            over,
+            on: self.target(at).filter(|_| over),
+        };
+        let action = shader::Action::publish(Message::Pointer(pointer));
         Some(if over && kind != PointerKind::Moved {
             action.and_capture()
         } else {
@@ -428,5 +446,18 @@ impl shader::Program<Message> for Input {
 
     fn draw(&self, _state: &(), _cursor: mouse::Cursor, _bounds: Rectangle) -> Frame {
         Frame::new(self.0.clone())
+    }
+
+    /// The hand over a button drawn in pixels (START's pill).
+    fn mouse_interaction(
+        &self,
+        _state: &(),
+        bounds: Rectangle,
+        cursor: mouse::Cursor,
+    ) -> mouse::Interaction {
+        match cursor.position_in(bounds).and_then(|at| self.target(at)) {
+            Some(Target::Button(_)) => mouse::Interaction::Pointer,
+            _ => mouse::Interaction::default(),
+        }
     }
 }

@@ -123,7 +123,7 @@ fn the_key_slider_is_a_row_of_the_tab() {
         row: key.track.y,
     };
     let right = f64::from(key.track.x + key.track.width);
-    let action = mouse::action_at(&state, press, right);
+    let action = mouse::action_at(&state, press, right, None);
     let fx = update(&mut state, action.expect("an action"));
     assert_eq!(keys_sent(&fx), [6]);
     update(&mut state, Action::KaraokeSlideEnd);

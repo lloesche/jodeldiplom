@@ -152,8 +152,9 @@ pub struct Canvas {
     /// What the picture in the pixmap drew over the backdrop.
     karaoke_layer: super::karaoke::Layer,
     /// Karaoke mode's stage, drawn by the GPU over the pixmap
-    /// ([`Canvas::stage_frame`]), and the picture it draws from (all its
-    /// lines) with where, while it shows.
+    /// ([`Canvas::stage_frame`]: START's pill, the result, the song's
+    /// lane), and the picture it draws from (all its lines) with where,
+    /// while the mode shows on the GPU.
     stage: super::stage::Stage,
     staged: Option<(KaraokePicture, PixelRect)>,
     /// How long the last frame took.
@@ -456,9 +457,19 @@ impl Canvas {
         let (picture, rect) = self.staged.as_ref()?;
         let (x, y, w, h) = *rect;
         let area = (x as f32, y as f32, w as f32, h as f32);
-        let song = super::stage::Song::of(state);
-        let result = self.stage.result(picture, tint, area);
-        Some(result.unwrap_or_else(|| self.stage.frame(&song, picture, area, heard, dt)))
+        let song = (&super::stage::Song::of(state), super::stage::wanted(state));
+        self.stage.scene(song, picture, area, (heard, dt), tint)
+    }
+
+    /// The target the stage drew in the frame shown at (`x`, `y`) (window
+    /// pixels), if any: START's pill.
+    pub fn target_at(&self, x: f32, y: f32) -> Option<crate::core::mouse::Target> {
+        self.staged.as_ref()?;
+        let inside = |[x0, y0, x1, y1]: [f32; 4]| (x0..=x1).contains(&x) && (y0..=y1).contains(&y);
+        let mut targets = self.stage.targets().iter();
+        targets
+            .find(|(at, _)| inside(*at))
+            .map(|&(_, target)| target)
     }
 
     /// Whether a layer shows now.
@@ -819,13 +830,19 @@ impl Canvas {
                     self.waves.extend(kept);
                 }
                 Paint::Karaoke(full_picture) => {
-                    // Where the GPU draws the stage, its lyrics are not in
-                    // the pixmap.
+                    // On the GPU the stage is drawn over it (START at
+                    // least); where it draws the lane, its lyrics are not
+                    // in the pixmap.
+                    if self.gpu {
+                        let rect = self.pixel_rect(full_picture.area);
+                        self.staged = Some(((**full_picture).clone(), rect));
+                    }
                     let stripped;
-                    let picture: &KaraokePicture = if self.gpu && super::stage::wanted(scene.state)
-                    {
-                        self.staged =
-                            Some(((**full_picture).clone(), self.pixel_rect(full_picture.area)));
+                    let picture: &KaraokePicture = if !self.gpu {
+                        // No stage, no pill: START said in words.
+                        stripped = crate::view::karaoke::with_start_cue(full_picture);
+                        &stripped
+                    } else if super::stage::wanted(scene.state) {
                         stripped = super::stage::without_lyrics(full_picture);
                         &stripped
                     } else {
@@ -839,8 +856,7 @@ impl Canvas {
                         // only where its text was and is.
                         let full = damaged
                             || karaoke.as_ref().is_none_or(|k| {
-                                (k.area, k.controls, k.start)
-                                    != (picture.area, picture.controls, picture.start)
+                                (k.area, k.controls) != (picture.area, picture.controls)
                             });
                         for rect in self.paint_karaoke(picture, art, full) {
                             frame.add(rect);
@@ -939,7 +955,7 @@ impl Canvas {
         full: bool,
     ) -> Vec<PixelRect> {
         let area = self.pixel_rect(picture.area);
-        let bar = picture.controls.map(|r| self.pixel_rect(r));
+        let bar = picture.controls.map(|_| self.pixel_rect(picture.bar));
         // On the GPU the ground is its: all see-through here.
         let art_id = (!self.gpu).then(|| art.map_or(0, |a| a.id));
         let fits = self
@@ -976,11 +992,29 @@ impl Canvas {
             full,
         );
         if full {
-            if let Some(controls) = picture.controls {
-                backend.overlay(controls);
-            }
+            self.overlay_controls(picture);
         }
         changed
+    }
+
+    /// Karaoke mode's controls over its picture, where they are laid out:
+    /// their cells' text and their bar, faded in as far as the bar shows
+    /// ([`crate::core::karaoke::controls::handover`]).
+    fn overlay_controls(&mut self, picture: &KaraokePicture) {
+        let (Some(fade), Some(backdrop)) = (picture.controls, &self.backdrop) else {
+            return;
+        };
+        let (area, bar) = (self.pixel_rect(picture.area), self.pixel_rect(picture.bar));
+        let backend = self.terminal.backend_mut();
+        backend.overlay(picture.bar);
+        let (width, height) = (backend.width, backend.height);
+        let mut target = super::raster::Target {
+            pixels: &mut backend.pixmap,
+            width,
+            height,
+        };
+        let shown = crate::core::karaoke::controls::handover(fade).1;
+        backdrop.fade_bar(&mut target, area, bar, shown as f32);
     }
 
     /// Text over the cover: the cover darkened towards its bottom, from

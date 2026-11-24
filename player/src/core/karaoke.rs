@@ -14,12 +14,12 @@
 //! - entering it stops the song and holds it at its start (entering it
 //!   with shift, [`Op::KaraokeEnterHere`], leaves the song where it is),
 //!   and a song's end holds the next one there: only [`Op::KaraokeStart`]
-//!   (the START button, `enter`, `space`) plays a song, with a count-in
-//!   of three seconds ([`Countdown`]) that ends as its first word is sung,
-//!   drawn from what is heard: the song plays at once and the count comes
-//!   in its intro, or, when it is sung from less than three seconds in,
-//!   it starts that much later; a song paused in the mode goes on after a
-//!   count-in of its own;
+//!   (START's pill on the stage, `enter`, `space`) plays a song, with a
+//!   count-in of three seconds ([`Countdown`]) that ends as its first word
+//!   is sung, drawn from what is heard: the song plays at once and the
+//!   count comes in its intro, or, when it is sung from less than three
+//!   seconds in, it starts that much later; a song paused in the mode goes
+//!   on after a count-in of its own;
 //! - a song heard to its end, the game on, shows how it went while the
 //!   next is held, or after the last ([`result_shown`]): the first START
 //!   during its reveal completes it, the next starts the song;
@@ -40,6 +40,7 @@ use crate::core::sliders::Slider;
 use crate::core::transition::Status;
 use crate::core::{Effect, Gpu, Screen, Side, State};
 
+pub mod controls;
 mod result;
 pub use result::{clock_ms, result_motion, result_now, result_shown};
 pub(crate) use result::{ended, track_started};
@@ -53,8 +54,6 @@ pub const COUNT_STEP: f64 = 1.0;
 pub const TITLE_HOLD: f64 = 2.0;
 /// How long they take to fade out, in seconds.
 pub const TITLE_FADE: f64 = 1.0;
-/// How long the mode's controls stay after the pointer last moved, in ms.
-pub const CONTROLS_MS: u64 = 3_000;
 /// A count-in: the track, how long each number shows, and the second of
 /// the track heard right after "1" (where the singing starts).
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -356,8 +355,8 @@ pub struct KaraokeState {
     /// A paused song goes on at this time ([`State::now_ms`]), after the
     /// count-in that shows until then.
     pub resume_at: Option<u64>,
-    /// The mode's controls show until then ([`State::now_ms`]).
-    pub controls_until: u64,
+    /// Where the mode's controls are by the pointer ([`controls`]).
+    pub controls: controls::Controls,
     /// Where the song playing has been heard from without a jump (the mode
     /// entered where it was, a seek, another song, a pause ended): a
     /// count-in shows only if it fits whole after it. The track, seconds.
@@ -407,35 +406,12 @@ pub fn waiting(state: &State) -> bool {
     in_mode(state) && !counting && (state.playing.state != PlayState::Playing || k.held.is_some())
 }
 
-/// Whether the mode's controls show (over the picture, which never moves
-/// for them): while the pointer moved lately near the bottom
-/// ([`in_reach`]), while a slider or the seek bar is held, after a key
-/// moved the slider, and while waiting for START.
-pub fn controls_shown(state: &State) -> bool {
-    waiting(state)
-        || state.karaoke.dragging.is_some()
-        || state.seek_drag.is_some()
-        || state.now_ms < state.karaoke.controls_until
-}
-
 /// Whether the seek bar does nothing now: in the mode, while a song is held
 /// for START or counting in (its silence before it, or a paused song's
 /// count before it goes on).
 pub fn seek_refused(state: &State) -> bool {
     in_mode(state)
         && (state.karaoke.held.is_some() || state.karaoke.resume_at.is_some() || in_lead(state))
-}
-
-/// The share of the screen, from the bottom, where the pointer brings the
-/// mode's controls up.
-pub const REACH: f64 = 0.25;
-
-/// Whether `row` is near enough the bottom to bring the controls up: the
-/// last [`REACH`] of the rows, and never fewer than the controls take.
-pub fn in_reach(state: &State, row: u16) -> bool {
-    let rows = state.size.1;
-    let reach = ((f64::from(rows) * REACH).ceil() as u16).max(6).min(rows);
-    row >= rows - reach
 }
 
 /// The count-in before a paused song goes on at `now_ms`: the number shown
@@ -649,7 +625,7 @@ pub(crate) fn enter(state: &mut State, fx: &mut Vec<Effect>, here: bool) {
     state.karaoke.result = None;
     // The voice is the mode's only slider.
     state.karaoke.focus = Slider::Voice;
-    state.karaoke.controls_until = state.now_ms + CONTROLS_MS;
+    state.karaoke.controls = controls::Controls::Hidden;
     state.karaoke.countdown = None;
     state.karaoke.resume_at = None;
     if state.transition.draft.status == Status::Armed {
@@ -705,6 +681,7 @@ pub(crate) fn leave(state: &mut State, fx: &mut Vec<Effect>) {
         }
     }
     state.karaoke.dragging = None;
+    state.karaoke.controls = controls::Controls::Hidden;
     fx.push(Effect::Engine(Command::HoldAtEnd(false)));
 }
 
@@ -882,18 +859,6 @@ pub(crate) fn tick(state: &mut State, fx: &mut Vec<Effect>) {
     }
 }
 
-/// The pointer moved over the mode to `row`: near the bottom its controls
-/// show for a while; anywhere above, they go at once.
-pub(crate) fn pointer_moved(state: &mut State, row: u16) {
-    if in_mode(state) {
-        state.karaoke.controls_until = if in_reach(state, row) {
-            state.now_ms + CONTROLS_MS
-        } else {
-            0
-        };
-    }
-}
-
 /// The slider the arrow keys move, a step (`op`: down or up, coarse or
 /// fine) of its own.
 fn slide_key(state: &mut State, op: Op, fx: &mut Vec<Effect>) {
@@ -941,9 +906,6 @@ fn set(state: &mut State, slider: Slider, value: i32, fx: &mut Vec<Effect>) {
             return super::lag::set_nudge(state, value - base);
         }
         Slider::Key => return super::key::set(state, value, fx),
-    }
-    if in_mode(state) {
-        state.karaoke.controls_until = state.now_ms + CONTROLS_MS;
     }
     if !fx.contains(&Effect::SaveConfig) {
         fx.push(Effect::SaveConfig);

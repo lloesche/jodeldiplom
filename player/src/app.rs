@@ -1468,6 +1468,8 @@ impl App {
             || (core::karaoke::in_mode(state) && state.playing.state == PlayState::Playing)
             // A paused song's count-in.
             || state.karaoke.resume_at.is_some()
+            // Karaoke mode's controls fading in or out.
+            || core::karaoke::controls::fading(state)
     }
 
     /// Whether a lane that follows the playhead goes by (a song playing:

@@ -8,8 +8,10 @@
 //! phrase by phrase by the tier each reached, a mark a phrase popping as
 //! its tier is decided (a little jackpot on Diva), and the time left in a
 //! ring that drains as the song goes, in the rainbow while the singing
-//! shines. The processor gives the GPU only where each is and when it
-//! changed ([`crate::gui::glory`], [`crate::gui::fanfare`]).
+//! shines; sinking away before the controls' bar fades in where it is (its
+//! seek bar and times stand for it then), so the two never show at once.
+//! The processor gives the GPU only where each is and when it changed
+//! ([`crate::gui::glory`], [`crate::gui::fanfare`]).
 
 use super::{rgba, Face, Lane, Stage, BREAK, GOLD, PROGRESS, WHITE};
 use crate::core::shine::{Shone, Tier};
@@ -25,6 +27,9 @@ use crate::gui::streak::Step;
 const VERDICT: f32 = 1.8;
 /// How often a new flight of angels comes while the singing is Diva.
 const ANGELS_EVERY: f32 = 2.2;
+/// How far the progress sinks as the controls come up, a share of the
+/// height.
+const SINK: f32 = 0.03;
 
 /// A tier's colour (sRGB); none's a cool grey.
 pub fn tier_color(tier: Option<Tier>) -> [f32; 3] {
@@ -93,13 +98,16 @@ fn sung_so_far(singing: &Singing, clock: f64) -> Option<f32> {
 }
 
 /// What the shine needs of the stage: the area, the lane and its box, the
-/// pills' height, the song's time and the singing's clock.
+/// pills' height, the song's time and the singing's clock, and how much
+/// the progress has gone for the controls' bar (0 to 1,
+/// [`crate::core::karaoke::controls::handover`]).
 pub struct Where {
     pub area: (f32, f32, f32, f32),
     pub lane: Lane,
     pub lane_box: ((f32, f32), (f32, f32)),
     pub now: f64,
     pub clock: f64,
+    pub gone: f32,
 }
 
 /// What the shine draws: over the stage, over everything (the light
@@ -286,7 +294,8 @@ impl Stage {
 
     /// The song's progress along the bottom: its sung stretches, the part
     /// sung coloured by the tiers its phrases reached, a mark a phrase, the
-    /// time left in its ring.
+    /// time left in its ring; sunk and faded as far as it has gone for the
+    /// controls (none once gone).
     fn progress(
         &mut self,
         d: &mut Drawn,
@@ -294,13 +303,22 @@ impl Stage {
         at: &Where,
         (shine, fresh): (&Glow, Option<Shone>),
     ) {
-        let Some(length) = length else {
+        let Some(length) = length.filter(|_| at.gone < 1.0) else {
             return;
         };
         let (x, y, w, h) = at.area;
         let now = at.now;
-        let (bx0, bx1) = (x + w * 0.06, x + w * 0.88);
-        let by = y + h * PROGRESS;
+        // The ring at the right, inside the window however narrow (the bar
+        // ends short of it).
+        let px = (h * 0.024).round().clamp(10.0, 44.0);
+        let (radius, thick) = (px * 1.75, (px * 0.22).max(2.5));
+        let ring_x = (x + w * 0.905 + radius).min(x + w - radius - thick * 3.0);
+        let (bx0, bx1) = (
+            x + w * 0.06,
+            (x + w * 0.88).min(ring_x - radius - w * 0.025),
+        );
+        let by = y + h * (PROGRESS + SINK * at.gone);
+        let first = d.out.len();
         let bh = (h * 0.0045).max(2.5);
         let bx = |t: f64| bx0 + (bx1 - bx0) * (t / length).clamp(0.0, 1.0) as f32;
         let bar = |c, half, color| super::pill(c, half, color, [0.0; 4], 0.0, 0.0, 0.0);
@@ -369,6 +387,7 @@ impl Stage {
             ));
         }
         // A little jackpot from a phrase's mark the moment it is Diva.
+        let fresh = fresh.filter(|_| at.gone < 0.5);
         if let Some(p) = fresh.filter(|p| p.tier == Some(Tier::Diva)) {
             d.light_sprays.push(fanfare::jackpot(
                 (bx(p.end), by),
@@ -389,10 +408,7 @@ impl Stage {
         let left = (length - now.max(0.0)).max(0.0);
         let secs = left.ceil() as u64;
         let label = format!("{}:{:02}", secs / 60, secs % 60);
-        let px = (h * 0.024).round().clamp(10.0, 44.0);
-        let radius = px * 1.75;
-        let rc = (bx1 + w * 0.025 + radius, by);
-        let thick = (px * 0.22).max(2.5);
+        let rc = (ring_x, by);
         let mut ring = shape(
             kind::RING,
             [
@@ -418,5 +434,132 @@ impl Stage {
             f32::NEG_INFINITY,
             (rgba(WHITE, 0.9), rgba(WHITE, 0.9)),
         );
+        let shows = 1.0 - at.gone;
+        for i in &mut d.out[first..] {
+            i.color[3] *= shows;
+            i.color2[3] *= shows;
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::karaoke::controls::{self, handover};
+    use crate::core::singing::Singing;
+    use crate::gui::stage::Song;
+    use crate::gui::stage_gpu::StageFrame;
+    use crate::view::karaoke::KaraokePicture;
+    use ratatui::layout::Rect;
+
+    /// A song of two words a second each from 1 s, its singing ready.
+    fn singing() -> (Singing, std::sync::Arc<jodel_lyrics::Lyrics>) {
+        let word = |text: &str, s: f64| jodel_lyrics::Word {
+            start: Some(s),
+            end: Some(s + 1.0),
+            confidence: 0.9,
+            ..jodel_lyrics::Word::new(text)
+        };
+        let line = jodel_lyrics::Line {
+            words: vec![word("la", 1.0), word("lo", 2.0)],
+            ..jodel_lyrics::Line::default()
+        };
+        let lyrics = std::sync::Arc::new(jodel_lyrics::Lyrics {
+            lines: vec![line],
+            source: jodel_lyrics::Source::Unknown,
+            timing: jodel_lyrics::Timing::default(),
+        });
+        let mut melody = jodel_rhythm::waveform::Melody {
+            cents: vec![0; 400],
+            sure: vec![0; 400],
+        };
+        for i in 100..300 {
+            melody.cents[i] = 6000;
+            melody.sure[i] = 255;
+        }
+        let mut singing = Singing::default();
+        let notes = crate::core::singing::melodic(&melody);
+        singing.prepare(std::path::Path::new("a"), &lyrics, &notes);
+        (singing, lyrics)
+    }
+
+    /// The stage at 1.2 s into the song in a window `w` × `h` (24 rows),
+    /// the controls faded in as far as `fade`.
+    fn frame(song: &Song, (w, h): (f32, f32), fade: Option<f64>) -> Vec<Instance> {
+        let area = Rect::new(0, 0, 80, 24);
+        let picture = KaraokePicture {
+            area,
+            bar: controls::bar(area),
+            lines: Vec::new(),
+            count: None,
+            cue: None,
+            controls: fade,
+            start: None,
+            before: Vec::new(),
+            moved: 1.0,
+            score: None,
+            result: None,
+        };
+        let f: StageFrame =
+            Stage::default().frame(song, &picture, (0.0, 0.0, w, h), 1.2, 1.0 / 60.0);
+        f.instances.iter().chain(&f.top).copied().collect()
+    }
+
+    /// The song's progress along the stage's bottom and the controls' bar
+    /// never show at once: in the fade's first half the progress (its
+    /// bar, marks and ring) sinks and fades, gone at its middle, when the
+    /// bar has not begun to show; back as the bar goes. Nothing else on the
+    /// stage moves for it (the lane and the lines stay where they are).
+    #[test]
+    fn the_progress_gives_way_to_the_controls_bar() {
+        let (singing, lyrics) = singing();
+        let song = Song::new(&singing, lyrics.lines.iter().collect(), Some(60.0));
+        let (w, h) = (800.0, 450.0);
+        let bar_top = h * 19.0 / 24.0;
+        let in_bar = |i: &Instance| i.quad[3] > bar_top && i.color[3] > 0.0;
+        let low = |i: &Instance| (i.quad[1] + i.quad[3]) / 2.0 > h * 0.85;
+        let alone = frame(&song, (w, h), None);
+        let hidden = frame(&song, (w, h), Some(0.0));
+        assert!(alone.iter().any(in_bar), "the progress, low on the stage");
+        assert_eq!(alone, hidden, "a bar that does not show changes nothing");
+        // A quarter in: the progress half gone, the bar not yet there.
+        let quarter = frame(&song, (w, h), Some(0.25));
+        let alpha = |f: &[Instance]| f.iter().filter(|i| low(i)).map(|i| i.color[3]).sum::<f32>();
+        assert!(alpha(&quarter) < alpha(&hidden) * 0.6 && alpha(&quarter) > 0.0);
+        assert_eq!(handover(0.25).1, 0.0);
+        // At the middle and after: the progress gone; only then the bar.
+        for fade in [0.5, 0.75, 1.0] {
+            let f = frame(&song, (w, h), Some(fade));
+            assert!(!f.iter().any(in_bar), "{fade}: nothing where the bar is");
+        }
+        assert_eq!(handover(0.5), (1.0, 0.0));
+        // The rest exactly as it was.
+        let rest =
+            |f: &[Instance]| -> Vec<Instance> { f.iter().filter(|i| !low(i)).copied().collect() };
+        assert_eq!(rest(&frame(&song, (w, h), Some(1.0))), rest(&hidden));
+    }
+
+    /// In a tall, narrow window the ring of the time left stays inside it,
+    /// the bar ending short of the ring.
+    #[test]
+    fn the_ring_stays_inside_a_tall_window() {
+        let (singing, lyrics) = singing();
+        let song = Song::new(&singing, lyrics.lines.iter().collect(), Some(60.0));
+        let (w, h) = (900.0, 1400.0);
+        let f = frame(&song, (w, h), None);
+        let ring = f
+            .iter()
+            .find(|i| i.params[0] == kind::RING)
+            .expect("the ring");
+        let [cx, _, radius, thick] = ring.shape;
+        assert!(cx + radius + thick <= w, "{cx} {radius} {thick}");
+        // The bar's track: what starts at its left, low down.
+        let track = |i: &&Instance| i.quad[1] > h * 0.85 && i.quad[0] < w * 0.1;
+        let bar_end = f
+            .iter()
+            .filter(track)
+            .map(|i| i.quad[2])
+            .fold(0.0, f32::max);
+        assert!(bar_end < cx - radius, "{bar_end} {cx}");
     }
 }

@@ -565,7 +565,8 @@ mod tests {
         ];
         let p = KaraokePicture {
             count: Some((2, 0.5)),
-            controls: Some(ratatui::layout::Rect::new(0, 21, 80, 3)),
+            bar: ratatui::layout::Rect::new(0, 21, 80, 3),
+            controls: Some(1.0),
             ..picture(lines, Vec::new(), 1.0)
         };
         let bar = Some((0, 158, w, 22));
@@ -625,6 +626,7 @@ mod tests {
     fn picture(lines: Vec<LyricLine>, before: Vec<LyricLine>, moved: f64) -> KaraokePicture {
         KaraokePicture {
             area: ratatui::layout::Rect::new(0, 0, 80, 24),
+            bar: crate::core::karaoke::controls::bar(ratatui::layout::Rect::new(0, 0, 80, 24)),
             lines,
             count: None,
             cue: None,

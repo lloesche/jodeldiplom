@@ -199,7 +199,8 @@ mod tests {
     fn room(w: f32, h: f32) -> Room {
         let tint = &super::super::Tint::STAGE;
         let look = super::super::seal::look(crate::core::singing::Verdict::Cheer, tint);
-        Room::new((0.0, 0.0, w, h), h * 0.9, tint, look)
+        let area = (0.0, 0.0, w, h);
+        Room::new(area, super::super::Line::above(area, h * 0.9), tint, look)
     }
 
     /// Many phrases fit in at most three rows, inside the sheet's middle;

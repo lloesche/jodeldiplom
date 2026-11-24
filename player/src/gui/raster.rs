@@ -61,6 +61,13 @@ pub fn dim(word: u32, keep: f32) -> u32 {
     pack([r, g, b]) | scale(word >> 24) << 24
 }
 
+/// Word `a` towards word `b` by `t` (0 to 1): their colours and what shows
+/// through them alike (so `b` drawn over the ground faded in by `t`).
+pub fn between(a: u32, b: u32, t: f32) -> u32 {
+    let through = |w: u32| [(w >> 24) as u8; 3];
+    pack(mix(unpack(a), unpack(b), t)) | u32::from(mix(through(a), through(b), t)[0]) << 24
+}
+
 /// A colour as a pixmap word, `0x00RRGGBB`.
 pub fn pack([r, g, b]: [u8; 3]) -> u32 {
     u32::from(r) << 16 | u32::from(g) << 8 | u32::from(b)
