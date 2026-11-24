@@ -75,5 +75,11 @@ pub fn cover(window: &dyn iced::window::Window, on: bool) {
         ns.setStyleMask(before.style);
         ns.setFrame_display(before.frame, true);
         ns.setMovable(true);
+    } else {
+        return;
     }
+    // A window whose style changed is no longer the key one: the keys go
+    // to it, and to its view, again.
+    ns.makeKeyAndOrderFront(None);
+    ns.makeFirstResponder(Some(view));
 }
