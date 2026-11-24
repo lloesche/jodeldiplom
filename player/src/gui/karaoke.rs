@@ -600,19 +600,23 @@ fn text_ops(
             });
         }
     }
-    // The count-in: its number at the top, above the lines and apart from
-    // them (it never moves with them), shrinking and fading over its beat;
-    // the one before the singing comes back after a break half as large.
+    // The count-in: its number in the lane behind the playhead, where the
+    // singing starts and no bubble is yet (clear of the meter and badges
+    // above the lane and of the lines below it; it never moves with
+    // them), shrinking and fading over its beat; the one before the
+    // singing comes back after a break half as large.
     let count = picture
         .count
         .map(|c| (c, 0.26))
         .or(picture.cue.map(|c| ((c.number, c.through), 0.13)));
     if let Some(((n, through), size)) = count {
+        let lane = super::stage::Lane::new((ax as f32, ay as f32, aw as f32, ah as f32), 0.0);
+        let behind = lane.head - ax as f32;
         // Smaller at once (ease-out), fading late, so it reads through
         // most of its beat.
         let t = through.clamp(0.0, 1.0) as f32;
         let shrink = 1.0 - (1.0 - t).powi(3);
-        let most = room as f32 * size;
+        let most = (room as f32 * size).min(behind * 0.9);
         let px = most * (1.0 - 0.4 * shrink);
         let base = base_size(px);
         let digit = n.to_string();
@@ -623,8 +627,8 @@ fn text_ops(
             base,
             px,
             at: (
-                ax as f32 + (aw as f32 - w) / 2.0,
-                ay as f32 + room as f32 * 0.03 + (most - px) / 2.0,
+                ax as f32 + (behind - w) / 2.0,
+                (lane.band.0 + lane.band.1 - px) / 2.0,
             ),
             fill_x: f32::MAX,
             colors: (accent, accent),
@@ -711,7 +715,13 @@ mod tests {
             let digit: Vec<&TextOp> = ops.iter().filter(|o| o.text == "3").collect();
             assert_eq!(digit.len(), 1);
             let at = digit[0].at;
-            assert!(at.1 < 360.0 * 0.2, "at the top: {at:?}");
+            // In the lane, behind the playhead.
+            let lane = crate::gui::stage::Lane::new((0.0, 0.0, 640.0, 360.0), 0.0);
+            assert!(at.0 < lane.head, "behind the playhead: {at:?}");
+            assert!(
+                at.1 > lane.band.0 && at.1 < lane.band.1,
+                "in the lane: {at:?}"
+            );
             at
         };
         let pausing = vec![

@@ -42,9 +42,14 @@ const PROGRESS: f32 = 0.935;
 const BREAK: f64 = 4.0;
 /// How soon after its last pitch the arrow fades, in seconds.
 const ARROW_HOLD: f64 = 0.25;
-/// How fast the arrow follows the pitch (a critically damped spring, per
-/// second).
-const SPRING: f32 = 55.0;
+/// How fast the arrow follows the pitch: a weight on a rubber band, its
+/// natural frequency (radians a second). Most of the way to a new pitch in
+/// about a tenth of a second; a stray pitch of a few milliseconds barely
+/// moves it.
+const SPRING: f32 = 30.0;
+/// The rubber band's damping (1: none past the pitch): a little under, so
+/// the arrow carries some momentum (it swings at most about 5 % past).
+const DAMPING: f32 = 0.7;
 /// The most sparks at once.
 const MOST_SPARKS: usize = 700;
 
@@ -145,12 +150,13 @@ impl Arrow {
                     self.speed = 0.0;
                     self.placed = true;
                 }
-                // A critically damped spring, in steps short enough to
-                // stay put at any frame rate.
+                // A damped spring, in steps short enough to move alike at
+                // any frame rate.
                 let steps = (dt / 0.004).ceil().max(1.0) as usize;
                 let h = dt / steps as f32;
                 for _ in 0..steps {
-                    let pull = -2.0 * SPRING * self.speed - SPRING * SPRING * (self.y - to);
+                    let pull =
+                        -2.0 * DAMPING * SPRING * self.speed - SPRING * SPRING * (self.y - to);
                     self.speed += pull * h;
                     self.y += self.speed * h;
                 }
@@ -845,16 +851,42 @@ mod tests {
 
     #[test]
     fn the_arrow_glides_to_the_pitch_alike_at_any_frame_rate() {
+        let mut ends = Vec::new();
         for fps in [60.0f32, 144.0] {
             let mut arrow = Arrow::default();
             arrow.step(Some(100.0), 1.0 / fps);
-            let frames = (0.08 * fps).round() as usize;
-            for _ in 0..frames {
+            let mut ys = Vec::new();
+            for _ in 0..(0.5 * fps).round() as usize {
                 arrow.step(Some(200.0), 1.0 / fps);
+                ys.push(arrow.y);
             }
-            // Most of the way within 80 ms, not past it.
-            assert!(arrow.y > 190.0 && arrow.y <= 200.5, "{fps}: {}", arrow.y);
+            let at = |s: f32| ys[(s * fps).round() as usize - 1];
+            // Some way in 30 ms (it has weight), most of the way within
+            // 120 ms; past the pitch a little (momentum), never far; and
+            // still by half a second.
+            assert!(at(0.03) > 110.0 && at(0.03) < 170.0, "{fps}: {}", at(0.03));
+            assert!(at(0.12) > 190.0, "{fps}: {}", at(0.12));
+            let most = ys.iter().copied().fold(0.0, f32::max);
+            assert!(most > 200.5 && most < 206.0, "{fps}: {most}");
+            assert!((at(0.5) - 200.0).abs() < 0.5, "{fps}: {}", at(0.5));
+            ends.push(at(0.12));
         }
+        assert!((ends[0] - ends[1]).abs() < 1.0, "{ends:?}");
+        // A stray pitch of 10 ms barely moves it.
+        let mut arrow = Arrow::default();
+        arrow.step(Some(100.0), 0.004);
+        for _ in 0..5 {
+            arrow.step(Some(100.0), 0.004);
+        }
+        for _ in 0..3 {
+            arrow.step(Some(300.0), 0.004);
+        }
+        let mut most: f32 = 0.0;
+        for _ in 0..50 {
+            arrow.step(Some(100.0), 0.004);
+            most = most.max(arrow.y - 100.0);
+        }
+        assert!(most < 40.0, "{most}");
         // Without a pitch it fades, and starts afresh where the next is.
         let mut arrow = Arrow::default();
         arrow.step(Some(100.0), 0.016);
