@@ -679,25 +679,7 @@ impl Inner {
                 encoder.copy_buffer_to_buffer(&buffers[&Buf::Logits], 0, staging, 0, size);
             },
         )?;
-        let slice = self.staging.slice(..size);
-        let (tx, rx) = std::sync::mpsc::channel();
-        slice.map_async(wgpu::MapMode::Read, move |r| {
-            let _ = tx.send(r);
-        });
-        self.device
-            .poll(wgpu::PollType::wait_indefinitely())
-            .map_err(|e| e.to_string())?;
-        rx.recv()
-            .map_err(|e| e.to_string())?
-            .map_err(|e| e.to_string())?;
-        let out: Vec<f32> = slice
-            .get_mapped_range()
-            .map_err(|e| e.to_string())?
-            .chunks_exact(4)
-            .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
-            .collect();
-        self.staging.unmap();
-        Ok(out)
+        crate::device::read_back(&self.device, &self.staging, size as usize / 4)
     }
 }
 

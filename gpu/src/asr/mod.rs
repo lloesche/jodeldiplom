@@ -10,9 +10,9 @@
 //! together ([`GpuAsr::tokens_of`], [`batch`]): the encoder over all of
 //! them, the decoder a row each, every row's sums as if it were heard
 //! alone, so each piece gets the tokens it gets on its own. A step of the
-//! decoder is five dispatches a layer ([`decoder`]). With
-//! `JODEL_ASR_TIMES` set, each run's encoder and prompt time and its
-//! tokens' time go to stderr.
+//! decoder is five dispatches a layer ([`decoder`]). What it did, the
+//! encoder's and the decoder's time and the GPU's submissions and waits,
+//! is told for traces ([`GpuAsr::hearing`]).
 
 mod batch;
 mod calibration;
@@ -33,6 +33,7 @@ use jodel_lyrics::asr::{
     mel, text, transcribe_parts, Transcript, CONV, DIM, ENC_DIM, HEAD, HEADS, KV_HEADS, VOCAB,
 };
 
+pub use self::batch::Hearing;
 use self::calibration::Stats;
 use self::ops::Op;
 use self::pack::{pack, Layout};
@@ -212,6 +213,8 @@ struct Inner {
     bind_index: HashMap<[Buf; 4], usize>,
     prompt_pieces: crate::pace::Pieces,
     step_pieces: crate::pace::Pieces,
+    /// What it did so far.
+    hearing: Hearing,
 }
 
 /// Qwen3-ASR-0.6B on the GPU.
@@ -243,6 +246,13 @@ impl GpuAsr {
         self.inner
             .lock()
             .map_err(|_| "the GPU speech recogniser failed before".to_owned())
+    }
+
+    /// What it did so far: its runs, the encoder's and the decoder's time,
+    /// the tokens, and the GPU's submissions and waits
+    /// ([`Hearing::since`] an earlier one says what it did between).
+    pub fn hearing(&self) -> Result<Hearing, String> {
+        Ok(self.lock()?.hearing)
     }
 
     /// What is sung in `voice` (16 kHz mono): its parts each heard on
@@ -423,6 +433,7 @@ impl Inner {
             bind_index: HashMap::new(),
             prompt_pieces: crate::pace::Pieces::resting(),
             step_pieces: crate::pace::Pieces::resting(),
+            hearing: Hearing::default(),
         })
     }
 
@@ -517,32 +528,10 @@ impl Inner {
                 }
             },
         )?;
-        let Some((_, _, count)) = read else {
-            self.device
-                .poll(wgpu::PollType::wait_indefinitely())
-                .map_err(|e| e.to_string())?;
-            return Ok(Vec::new());
-        };
-        let size = (count * 4) as u64;
-        let slice = self.staging.slice(..size);
-        let (tx, rx) = std::sync::mpsc::channel();
-        slice.map_async(wgpu::MapMode::Read, move |r| {
-            let _ = tx.send(r);
-        });
-        self.device
-            .poll(wgpu::PollType::wait_indefinitely())
-            .map_err(|e| e.to_string())?;
-        rx.recv()
-            .map_err(|e| e.to_string())?
-            .map_err(|e| e.to_string())?;
-        let out: Vec<f32> = slice
-            .get_mapped_range()
-            .map_err(|e| e.to_string())?
-            .chunks_exact(4)
-            .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
-            .collect();
-        self.staging.unmap();
-        Ok(out)
+        match read {
+            Some((_, _, count)) => crate::device::read_back(&self.device, &self.staging, count),
+            None => Ok(Vec::new()),
+        }
     }
 }
 

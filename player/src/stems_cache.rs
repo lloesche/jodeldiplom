@@ -10,7 +10,7 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use jodel_playback::stem_file::{self, StemFile, StemStore};
@@ -50,6 +50,91 @@ pub fn file_for(dir: &Path, path: &Path) -> Option<PathBuf> {
 /// Whether the stems of `path` are kept in `dir` (whole).
 pub fn is_kept(dir: &Path, path: &Path) -> bool {
     file_for(dir, path).is_some_and(|f| crate::mover::locate(&f).is_file())
+}
+
+/// The tracks whose stems are being written into their files now
+/// ([`Keeping`]).
+static SEPARATING: (Mutex<Vec<PathBuf>>, Condvar) = (Mutex::new(Vec::new()), Condvar::new());
+
+/// The stems of a track written into their file as they are separated
+/// (by its analysis). While it lives, what wants them waits for the file
+/// ([`open_waiting`]) rather than separate them again beside it, which
+/// would halve the speed of both on the one background separator; a write
+/// that fails ends it (dropped), so no one waits for a file that will not
+/// come.
+pub struct Keeping {
+    writer: jodel_playback::StemWriter,
+    _separating: Separating,
+}
+
+impl Keeping {
+    /// The stems of `path` (at `rate`, separated by `separator`) to be
+    /// written into the file `to`; `None` when it cannot be made (they are
+    /// separated live then).
+    pub fn create(to: &Path, path: &Path, rate: u32, separator: &str) -> Option<Keeping> {
+        let writer = jodel_playback::StemWriter::create(to, rate, separator).ok()?;
+        Some(Keeping {
+            writer,
+            _separating: Separating::new(path),
+        })
+    }
+
+    /// The next frames ([`jodel_playback::StemWriter::push`]).
+    pub fn push(
+        &mut self,
+        stems: [[&[f32]; 2]; jodel_playback::stems::STEMS],
+    ) -> std::io::Result<()> {
+        self.writer.push(stems)
+    }
+
+    /// The file made whole: kept, and those waiting for it told.
+    pub fn finish(self) -> std::io::Result<()> {
+        self.writer.finish()
+    }
+}
+
+/// A track marked as having its stems written now ([`Keeping`]).
+struct Separating(PathBuf);
+
+impl Separating {
+    fn new(path: &Path) -> Separating {
+        let (list, _) = &SEPARATING;
+        list.lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(path.to_owned());
+        Separating(path.to_owned())
+    }
+}
+
+impl Drop for Separating {
+    fn drop(&mut self) {
+        let (list, changed) = &SEPARATING;
+        let mut list = list.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(at) = list.iter().position(|p| *p == self.0) {
+            list.swap_remove(at);
+        }
+        changed.notify_all();
+    }
+}
+
+/// Waits while the stems of `path` are being written into their file
+/// ([`Keeping`]).
+fn wait_kept(path: &Path) {
+    let (list, changed) = &SEPARATING;
+    let list = list.lock().unwrap_or_else(|e| e.into_inner());
+    let _done = changed
+        .wait_while(list, |list| list.iter().any(|p| p == path))
+        .unwrap_or_else(|e| e.into_inner());
+}
+
+/// The stems of `path` kept in `dir`, opened ([`open`]); when none are,
+/// but they are being written into their file now ([`Keeping`]), once
+/// they are.
+pub fn open_waiting(dir: &Path, path: &Path) -> Option<StemFile> {
+    open(dir, path).or_else(|| {
+        wait_kept(path);
+        open(dir, path)
+    })
 }
 
 /// The stems of `path` kept in `dir`, opened (and marked as used).
@@ -142,5 +227,23 @@ mod tests {
         fs::write(&track, b"longer").unwrap();
         assert_ne!(file_for(&dir, &track).unwrap(), a);
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// What wants a track's stems waits while its analysis separates them
+    /// into their file, and for nothing else.
+    #[test]
+    fn stems_being_separated_are_waited_for() {
+        let (song, other) = (Path::new("waited.flac"), Path::new("other.flac"));
+        let separating = Separating::new(song);
+        let started = std::time::Instant::now();
+        wait_kept(other);
+        assert!(started.elapsed() < std::time::Duration::from_millis(50));
+        let done = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(80));
+            drop(separating);
+        });
+        wait_kept(song);
+        assert!(started.elapsed() >= std::time::Duration::from_millis(60));
+        done.join().unwrap();
     }
 }

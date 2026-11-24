@@ -252,3 +252,32 @@ pub(crate) fn report() -> Vec<String> {
     }
     lines
 }
+
+/// The first `count` f32s of `staging` (a buffer to map for reading),
+/// after a [`crate::pace::dispatch`] that wrote them (done, so this waits
+/// for no GPU work: not a wait in its tally).
+pub(crate) fn read_back(
+    device: &wgpu::Device,
+    staging: &wgpu::Buffer,
+    count: usize,
+) -> Result<Vec<f32>, String> {
+    let slice = staging.slice(..(count * 4) as u64);
+    let (tx, rx) = std::sync::mpsc::channel();
+    slice.map_async(wgpu::MapMode::Read, move |r| {
+        let _ = tx.send(r);
+    });
+    device
+        .poll(wgpu::PollType::wait_indefinitely())
+        .map_err(|e| e.to_string())?;
+    rx.recv()
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())?;
+    let out = slice
+        .get_mapped_range()
+        .map_err(|e| e.to_string())?
+        .chunks_exact(4)
+        .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+        .collect();
+    staging.unmap();
+    Ok(out)
+}

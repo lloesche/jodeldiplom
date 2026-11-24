@@ -40,7 +40,7 @@ pub mod pace;
 mod packer;
 mod speech;
 pub mod vision;
-pub use asr::{GpuAsr, MAX_NEW, MAX_SECONDS};
+pub use asr::{GpuAsr, Hearing, MAX_NEW, MAX_SECONDS};
 pub use device::{card, chosen, gpu_name, setting_up, Chosen, Turn, Turned};
 pub use net::GpuNetwork;
 pub use speech::GpuSpeech;
@@ -643,6 +643,8 @@ struct Inner {
 pub struct GpuSeparator {
     name: String,
     inner: Turned<Mutex<Inner>>,
+    /// What its runs cost, read without waiting for one.
+    counts: pace::Counts,
 }
 
 /// The kernels' source for the separator, the beat network, the speech
@@ -799,11 +801,17 @@ impl GpuSeparator {
         static GPU: OnceLock<Option<GpuSeparator>> = OnceLock::new();
         GPU.get_or_init(|| {
             let gpu = std::panic::catch_unwind(GpuSeparator::new).ok()?.ok()?;
-            gpu.inner.lock().ok()?.pieces = pace::Pieces::resting();
+            gpu.inner.lock().ok()?.pieces.rests = true;
             Some(gpu)
         })
         .as_ref()
         .or_else(GpuSeparator::shared)
+    }
+
+    /// What its GPU work cost so far ([`pace::Tally::since`] an earlier
+    /// tally says what was done between), without waiting for its work.
+    pub fn tally(&self) -> pace::Tally {
+        self.counts.tally()
     }
 
     /// Sets up the separator on the best GPU.
@@ -813,6 +821,7 @@ impl GpuSeparator {
         })?;
         Ok(GpuSeparator {
             name,
+            counts: inner.pieces.counts(),
             inner: Turned::new(Mutex::new(inner)),
         })
     }
@@ -1058,25 +1067,7 @@ impl Inner {
                 encoder.copy_buffer_to_buffer(&buffers[&Buf::Masks], 0, staging, 0, size);
             },
         )?;
-        let slice = self.staging.slice(..size);
-        let (tx, rx) = std::sync::mpsc::channel();
-        slice.map_async(wgpu::MapMode::Read, move |r| {
-            let _ = tx.send(r);
-        });
-        self.device
-            .poll(wgpu::PollType::wait_indefinitely())
-            .map_err(|e| e.to_string())?;
-        rx.recv()
-            .map_err(|e| e.to_string())?
-            .map_err(|e| e.to_string())?;
-        let out: Vec<f32> = slice
-            .get_mapped_range()
-            .map_err(|e| e.to_string())?
-            .chunks_exact(4)
-            .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
-            .collect();
-        self.staging.unmap();
-        Ok(out)
+        crate::device::read_back(&self.device, &self.staging, size as usize / 4)
     }
 }
 

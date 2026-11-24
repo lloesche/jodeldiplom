@@ -38,6 +38,9 @@ use crate::browser::Notify;
 use crate::cache;
 use crate::core::{Action, Facts, Heard, Job, RhythmFacts, RhythmRecipe, Rhythmed};
 
+mod report;
+pub use report::{describe, recent, remember, Timings, RECENT_KEPT};
+
 /// Full scale of the decoder's 24-bit units.
 const FULL_SCALE: f64 = 8_388_608.0;
 
@@ -68,23 +71,6 @@ impl Listened {
             ..self.evidence.conclude()
         }
     }
-}
-
-/// How long the parts of hearing a file took.
-#[derive(Clone, Debug, Default)]
-pub struct Timings {
-    /// Decoding the file and feeding the beat methods (and the stems).
-    pub decode: Duration,
-    /// What separated the stems (the GPU's name), when they were asked for
-    /// and there was one.
-    pub separator: Option<String>,
-    /// Separating the stems, start to finish (alongside the decoding).
-    pub stems: Option<Duration>,
-    /// Waiting for the stems once the file was decoded.
-    pub stems_waited: Option<Duration>,
-    /// From the end of decoding until the evidence was in: the beat
-    /// network and the cues, alongside the rest of the stems.
-    pub listen: Duration,
 }
 
 /// Decodes `path` and analyses it by `recipe`.
@@ -218,7 +204,9 @@ pub fn listen_reporting(
     let mut analyzer = Analyzer::with_methods(&recipe.methods);
     // The beat network on the GPU where there is one (a piece it fails on
     // runs on the processor).
-    if let Some(network) = jodel_gpu::GpuNetwork::shared() {
+    let network = jodel_gpu::GpuNetwork::shared();
+    let network_before = network.map(|n| (n, n.tally()));
+    if let Some(network) = network {
         analyzer.run_network_on(network);
     }
     let mut mix = LaneBuilder::new(SAMPLE_RATE);
@@ -226,10 +214,17 @@ pub fn listen_reporting(
     // time, so the GPU works while the file decodes and the network runs.
     let gpu = separator(recipe);
     let separator_name = gpu.map(|g| g.name());
+    let stems_before = gpu.map(|g| (g, g.tally()));
     let background = jodel_gpu::pace::is_background();
     let stems_report = report.clone();
     let stems = gpu.map(|gpu| {
         let (tx, rx) = std::sync::mpsc::sync_channel::<(Vec<f32>, Vec<f32>)>(STEMS_BEHIND);
+        // The stems' audio into their file as they come (a file that cannot
+        // be written is left out: they are separated live then); what
+        // wants them meanwhile waits for it.
+        let mut writer = keep
+            .as_deref()
+            .and_then(|to| crate::stems_cache::Keeping::create(to, path, rate, &gpu.name()));
         let worker = thread::spawn(move || {
             if background {
                 jodel_gpu::pace::background();
@@ -238,11 +233,6 @@ pub fn listen_reporting(
             let mut splitter = Splitter::overlapped(gpu);
             let mut parts = PartsBuilder::new();
             let mut voice = VoiceFeed::new();
-            // The stems' audio into their file as they come (a file that
-            // cannot be written is left out: they are separated live then).
-            let mut writer = keep
-                .as_deref()
-                .and_then(|to| jodel_playback::StemWriter::create(to, rate, &gpu.name()).ok());
             let mut take = |b: &jodel_rhythm::stems::StemBlock| {
                 parts.take(b);
                 voice.take(b);
@@ -390,125 +380,14 @@ pub fn listen_reporting(
             separator: separator_name,
             stems: stems_took,
             stems_waited,
+            stems_gpu: stems_took
+                .and(stems_before)
+                .map(|(g, before)| g.tally().since(&before)),
             listen,
+            network_gpu: network_before.map(|(n, before)| n.tally().since(&before)),
         },
         key,
     })
-}
-
-/// The file in the cache folder holding the last analyses
-/// ([`remember`]).
-const RECENT: &str = "recent-analyses.txt";
-/// How many analyses it keeps.
-pub const RECENT_KEPT: usize = 3;
-/// Between two analyses in the file.
-const RECENT_BREAK: &str = "\n---\n";
-
-/// The last analyses the player made (newest first), as kept in `dir`
-/// for `--diag`: each a few lines of text.
-pub fn recent(dir: &Path) -> Vec<String> {
-    fs::read_to_string(crate::mover::locate(&dir.join(RECENT)))
-        .map(|text| {
-            text.split(RECENT_BREAK)
-                .map(str::trim)
-                .filter(|entry| !entry.is_empty())
-                .map(str::to_owned)
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-/// Keeps `entry` as the newest of the last [`RECENT_KEPT`] analyses in
-/// `dir`.
-pub fn remember(dir: &Path, entry: &str) -> std::io::Result<()> {
-    let mut entries = recent(dir);
-    entries.insert(0, entry.trim().to_owned());
-    entries.truncate(RECENT_KEPT);
-    let dir = &crate::mover::current(dir);
-    fs::create_dir_all(dir)?;
-    write_whole(&dir.join(RECENT), entries.join(RECENT_BREAK).as_bytes())
-}
-
-/// Seconds as `1.23 s`.
-fn seconds(d: Duration) -> String {
-    format!("{:.2} s", d.as_secs_f64())
-}
-
-/// An analysis as [`remember`] keeps it: when (seconds since 1970), the
-/// file's name (not its folders), how it was heard, what was found and
-/// how long each part took.
-pub fn describe(
-    at: u64,
-    path: &Path,
-    recipe: &RhythmRecipe,
-    listened: &Listened,
-    analysis: &Analysis,
-    decide: Duration,
-    total: Duration,
-) -> String {
-    let name = path.file_name().unwrap_or_default().to_string_lossy();
-    let minutes = analysis.duration / 60.0;
-    let mut s = format!(
-        "at {at}\ntrack: {name} ({}:{:02})\n",
-        minutes.floor(),
-        (analysis.duration % 60.0).floor()
-    );
-    let ids: Vec<&str> = recipe.methods.iter().map(|m| m.id()).collect();
-    let heard = match (
-        &listened.timings.separator,
-        &listened.stems_failed,
-        analysis.stems,
-    ) {
-        (_, Some(e), _) => format!("the mix (the stems failed: {e})"),
-        (Some(gpu), None, true) => format!("stems separated on {gpu}"),
-        (None, None, _) if recipe.stems => "the mix (no GPU separates stems)".into(),
-        _ => "the mix (stems off)".into(),
-    };
-    let _ = writeln!(s, "methods: {}; the cues heard {heard}", ids.join(", "));
-    let tempo = match analysis.summary {
-        Some(t) if t.steady => format!("{:.2} BPM steady", t.bpm),
-        Some(t) => format!("{:.1} BPM ({:.1}–{:.1})", t.bpm, t.low, t.high),
-        None => "no beat".into(),
-    };
-    let key = analysis.key.map_or("no key".to_owned(), |k| {
-        if k.tagged {
-            format!("{} ({}, from its tags)", k.name(), k.camelot())
-        } else {
-            format!(
-                "{} ({}, {:.0} %)",
-                k.name(),
-                k.camelot(),
-                100.0 * k.confidence
-            )
-        }
-    });
-    let _ = writeln!(
-        s,
-        "found: {tempo}, confidence {:.2}, chosen {}, {} beats, {key}",
-        analysis.confidence,
-        analysis.chosen,
-        analysis.beats.len()
-    );
-    let t = &listened.timings;
-    let stems = match (t.stems, t.stems_waited) {
-        (Some(took), Some(waited)) => {
-            format!(
-                ", stems {} (waited {} after decoding)",
-                seconds(took),
-                seconds(waited)
-            )
-        }
-        _ => String::new(),
-    };
-    let _ = write!(
-        s,
-        "took: decoding {}{stems}, listening {}, deciding {}, all {}",
-        seconds(t.decode),
-        seconds(t.listen),
-        seconds(decide),
-        seconds(total)
-    );
-    s
 }
 
 /// Where analyses are kept: `analyses` in the data folder of the usual
@@ -1040,20 +919,21 @@ fn analyse(
             let deciding = Instant::now();
             let analysis = listened.analysis();
             let decide = deciding.elapsed();
+            let at = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_or(0, |d| d.as_secs());
+            let entry = describe(
+                at,
+                path,
+                recipe,
+                &listened,
+                &analysis,
+                decide,
+                started.elapsed(),
+            );
+            crate::trace::note(format_args!("beats: {}", entry.replace('\n', "; ")));
             if let Some(dir) = cache {
                 let _ = store(dir, path, &analysis, &listened.waveform);
-                let at = SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .map_or(0, |d| d.as_secs());
-                let entry = describe(
-                    at,
-                    path,
-                    recipe,
-                    &listened,
-                    &analysis,
-                    decide,
-                    started.elapsed(),
-                );
                 let _ = remember(dir, &entry);
             }
             if let Some(dir) = &stems_dir {

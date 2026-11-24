@@ -593,6 +593,8 @@ struct Inner {
 pub struct GpuNetwork {
     name: String,
     inner: Turned<Mutex<Inner>>,
+    /// What its runs cost, read without waiting for one.
+    counts: crate::pace::Counts,
 }
 
 impl GpuNetwork {
@@ -604,6 +606,13 @@ impl GpuNetwork {
             .as_ref()
     }
 
+    /// What its GPU work cost so far ([`crate::pace::Tally::since`] an
+    /// earlier tally says what was done between), without waiting for its
+    /// work.
+    pub fn tally(&self) -> crate::pace::Tally {
+        self.counts.tally()
+    }
+
     /// Sets the network up on the best GPU.
     pub fn new() -> Result<GpuNetwork, String> {
         let (inner, name) = crate::device::open("jodel-gpu network", |device, queue, limits| {
@@ -611,6 +620,7 @@ impl GpuNetwork {
         })?;
         Ok(GpuNetwork {
             name,
+            counts: inner.pieces.counts(),
             inner: Turned::new(Mutex::new(inner)),
         })
     }
@@ -877,24 +887,7 @@ impl Inner {
                 encoder.copy_buffer_to_buffer(&buffers[&Buf::Logits], 0, staging, 0, size);
             },
         )?;
-        let slice = self.staging.slice(..size);
-        let (tx, rx) = std::sync::mpsc::channel();
-        slice.map_async(wgpu::MapMode::Read, move |r| {
-            let _ = tx.send(r);
-        });
-        self.device
-            .poll(wgpu::PollType::wait_indefinitely())
-            .map_err(|e| e.to_string())?;
-        rx.recv()
-            .map_err(|e| e.to_string())?
-            .map_err(|e| e.to_string())?;
-        let out: Vec<f32> = slice
-            .get_mapped_range()
-            .map_err(|e| e.to_string())?
-            .chunks_exact(4)
-            .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
-            .collect();
-        self.staging.unmap();
+        let out = crate::device::read_back(&self.device, &self.staging, size as usize / 4)?;
         let downbeat: Vec<f32> = out.chunks(2).map(|o| o[1]).collect();
         let beat = out.chunks(2).map(|o| o[0] + o[1]).collect();
         Ok((beat, downbeat))

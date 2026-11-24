@@ -70,31 +70,28 @@ impl WordTimer for SpeechTimer {
     fn time(&self, path: &Path, lyrics: &Lyrics, others: &Others) -> Result<Lyrics, String> {
         use jodel_lyrics::aligner::CtcAligner;
         let model = self.acoustic()?;
-        let started = Instant::now();
-        let voice = track_voice(path)?;
-        let voiced = started.elapsed();
+        let mut steps = Steps::default();
+        let voice = steps.voice(path)?;
         // Any text checked against what is sung (one from LRCLIB swapped
         // for one of its others when it does not fit: `others` has none
         // for the file's own); what was heard, in the transcript's parts
         // and in glimpses, also pins the words to where it was.
-        let mut steps = Steps::default();
         let (lyrics, fit, parts, glimpses) = match self.recogniser() {
-            Some(asr) => match steps.of(|| asr.transcribe(&voice), |s| &mut s.heard) {
+            Some(asr) => match steps.hear(&asr, || asr.transcribe(&voice), |s| &mut s.heard) {
                 Ok(heard) => {
                     let (lyrics, fit) = prepare_text(lyrics, &heard, others);
-                    let glimpses = steps.of(|| asr.glimpses(&voice), |s| &mut s.glimpsed);
+                    let glimpses = steps.hear(&asr, || asr.glimpses(&voice), |s| &mut s.glimpsed);
                     (lyrics, fit, heard.parts, glimpses.unwrap_or_default())
                 }
                 Err(_) => (lyrics.clone(), None, Vec::new(), Vec::new()),
             },
             None => (lyrics.clone(), None, Vec::new(), Vec::new()),
         };
-        let mut timed = steps.of(
-            || CtcAligner::new(model).align_heard_in(&voice, &lyrics, &parts, &glimpses),
-            |s| &mut s.aligned,
-        );
+        let started = Instant::now();
+        let mut timed = CtcAligner::new(model).align_heard_in(&voice, &lyrics, &parts, &glimpses);
+        steps.aligned = started.elapsed();
         timed.timing.fit = fit;
-        steps.note(path, voiced);
+        steps.note(path);
         Ok(timed)
     }
 
@@ -102,24 +99,20 @@ impl WordTimer for SpeechTimer {
         use jodel_lyrics::aligner::CtcAligner;
         let asr = self.recogniser().ok_or("no speech recogniser here")?;
         let model = self.acoustic()?;
-        let started = Instant::now();
-        let voice = track_voice(path)?;
-        let voiced = started.elapsed();
         let mut steps = Steps::default();
-        let heard = steps.of(|| asr.transcribe(&voice), |s| &mut s.heard)?;
+        let voice = steps.voice(path)?;
+        let heard = steps.hear(&asr, || asr.transcribe(&voice), |s| &mut s.heard)?;
         if jodel_lyrics::fit::words(&heard.text).len() < HEARD_LEAST {
             return Err(TOO_LITTLE_HEARD.into());
         }
         let text = transcript_lyrics(&heard, asr_maker());
-        let glimpses = steps.of(|| asr.glimpses(&voice), |s| &mut s.glimpsed);
-        let timed = steps.of(
-            || {
-                let glimpses = glimpses.unwrap_or_default();
-                CtcAligner::new(model).align_heard_in(&voice, &text, &heard.parts, &glimpses)
-            },
-            |s| &mut s.aligned,
-        );
-        steps.note(path, voiced);
+        let glimpses = steps
+            .hear(&asr, || asr.glimpses(&voice), |s| &mut s.glimpsed)
+            .unwrap_or_default();
+        let started = Instant::now();
+        let timed = CtcAligner::new(model).align_heard_in(&voice, &text, &heard.parts, &glimpses);
+        steps.aligned = started.elapsed();
+        steps.note(path);
         // The lines made again where the words' timing says they break.
         Ok(relined(&timed))
     }
@@ -159,39 +152,99 @@ impl SpeechTimer {
     }
 }
 
-/// How long a song's timing took, step by step, for the trace.
+/// How long a song's timing took, step by step, for the trace; with the
+/// trace on, also what the separator and the recogniser did in their steps.
 #[derive(Default)]
 struct Steps {
-    heard: Duration,
-    glimpsed: Duration,
+    voiced: Duration,
+    /// The voice was separated now (not taken from the kept stems).
+    separated: bool,
+    /// The separator's GPU work meanwhile (other work on it included).
+    separator: Option<jodel_gpu::pace::Tally>,
+    heard: Step,
+    glimpsed: Step,
     aligned: Duration,
 }
 
+/// A step of the recogniser's: how long it took, and (with the trace on)
+/// what the recogniser did in it.
+#[derive(Default)]
+struct Step {
+    took: Duration,
+    hearing: Option<jodel_gpu::Hearing>,
+}
+
 impl Steps {
-    /// `f`, its time added to the step `field` picks.
-    fn of<T>(
+    /// The voice of `path` ([`track_voice`]), its time, and where it came
+    /// from.
+    fn voice(&mut self, path: &Path) -> Result<Vec<f32>, String> {
+        let separator = voice_separator()
+            .filter(|_| crate::trace::on())
+            .map(|g| (g, g.tally()));
+        let started = Instant::now();
+        let (voice, separated) = track_voice(path)?;
+        self.voiced = started.elapsed();
+        self.separated = separated;
+        self.separator = separator
+            .filter(|_| separated)
+            .map(|(g, before)| g.tally().since(&before));
+        Ok(voice)
+    }
+
+    /// `f`, a step of the recogniser `asr`'s, into the step `step` picks.
+    fn hear<T>(
         &mut self,
+        asr: &jodel_gpu::GpuAsr,
         f: impl FnOnce() -> T,
-        field: impl FnOnce(&mut Self) -> &mut Duration,
+        step: impl FnOnce(&mut Self) -> &mut Step,
     ) -> T {
+        let before = crate::trace::on().then(|| asr.hearing().ok()).flatten();
         let started = Instant::now();
         let out = f();
-        *field(self) += started.elapsed();
+        let step = step(self);
+        step.took = started.elapsed();
+        step.hearing = before.and_then(|b| Some(asr.hearing().ok()?.since(&b)));
         out
     }
 
-    /// The trace's line for `path`, its voice got in `voiced`.
-    fn note(&self, path: &Path, voiced: Duration) {
+    /// The trace's lines for `path`: the steps' times, what the separator
+    /// did for the voice (when it separated it), and the recogniser's work
+    /// in the transcript and in the glimpses.
+    fn note(&self, path: &Path) {
+        if !crate::trace::on() {
+            return;
+        }
         let s = |d: Duration| d.as_secs_f64();
+        let name = path
+            .file_name()
+            .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
+        let from = if self.separated {
+            "separated now"
+        } else {
+            "its kept stems"
+        };
         crate::trace::note(format_args!(
-            "lyrics: {} timed: the voice {:.1} s, heard {:.1} s, glimpses {:.1} s, aligned {:.1} s",
-            path.file_name()
-                .map_or_else(String::new, |n| n.to_string_lossy().into_owned()),
-            s(voiced),
-            s(self.heard),
-            s(self.glimpsed),
+            "lyrics: {name} timed: the voice {:.1} s ({from}), heard {:.1} s, glimpses {:.1} s, aligned {:.1} s",
+            s(self.voiced),
+            s(self.heard.took),
+            s(self.glimpsed.took),
             s(self.aligned),
         ));
+        if let Some(separator) = self.separator {
+            crate::trace::note(format_args!(
+                "lyrics: {name}, the separator for the voice (other work on it meanwhile included): {separator}"
+            ));
+        }
+        for (what, step) in [
+            ("the transcript", &self.heard),
+            ("the glimpses", &self.glimpsed),
+        ] {
+            if let Some(hearing) = &step.hearing {
+                crate::trace::note(format_args!(
+                    "lyrics: {name}, the recogniser in {what}: {hearing}"
+                ));
+            }
+        }
     }
 }
 
@@ -203,13 +256,15 @@ pub fn asr_maker() -> Maker {
     )
 }
 
-/// The voice of `path`, mono at 16 kHz: from the track's kept stems, else
-/// separated now.
-fn track_voice(path: &Path) -> Result<Vec<f32>, String> {
-    let kept = crate::stems_cache::dir().and_then(|dir| crate::stems_cache::open(&dir, path));
+/// The voice of `path`, mono at 16 kHz: from the track's kept stems (once
+/// its analysis has them in their file, if it is separating them now:
+/// [`crate::stems_cache::open_waiting`]), else separated now (true).
+fn track_voice(path: &Path) -> Result<(Vec<f32>, bool), String> {
+    let kept =
+        crate::stems_cache::dir().and_then(|dir| crate::stems_cache::open_waiting(&dir, path));
     match kept {
-        Some(file) => voice_16k(file),
-        None => Ok(separate_16k(path, false)?.0),
+        Some(file) => Ok((voice_16k(file)?, false)),
+        None => Ok((separate_16k(path, false)?.0, true)),
     }
 }
 /// The voice in a track's kept stems, mono at 16 kHz: the vocals' two
@@ -244,18 +299,23 @@ pub fn voice_16k(mut file: jodel_playback::StemFile) -> Result<Vec<f32>, String>
     Ok(out.into_iter().map(|v| v as f32).collect())
 }
 
+/// The separator a voice is separated on: on a thread of background work
+/// the background one, else the shared one.
+fn voice_separator() -> Option<&'static jodel_gpu::GpuSeparator> {
+    if jodel_gpu::pace::is_background() {
+        jodel_gpu::GpuSeparator::background()
+    } else {
+        jodel_gpu::GpuSeparator::shared()
+    }
+}
+
 /// The voice of `path` (and, with `mix`, the whole mix), mono at 16 kHz:
 /// the file decoded, separated into its stems on the GPU, the vocals'
 /// two channels averaged.
 pub fn separate_16k(path: &Path, mix: bool) -> Result<(Vec<f32>, Vec<f32>), String> {
     use jodel_playback::stems::{Stem, StereoFeed};
     use jodel_rhythm::stems::{Splitter, StemBlock};
-    let gpu = if jodel_gpu::pace::is_background() {
-        jodel_gpu::GpuSeparator::background()
-    } else {
-        jodel_gpu::GpuSeparator::shared()
-    }
-    .ok_or("no GPU for the stems")?;
+    let gpu = voice_separator().ok_or("no GPU for the stems")?;
     let vocals = Stem::ALL
         .iter()
         .position(|&s| s == Stem::Vocals)

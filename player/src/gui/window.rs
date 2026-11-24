@@ -453,8 +453,7 @@ impl Gui {
                     self.occluded = true;
                     plan.draw = super::paint::Draw::Nothing;
                 }
-                self.paint
-                    .draw(plan.draw, &self.embed, app, place, (heard, at));
+                self.paint.draw(plan, &self.embed, app, place, (heard, at));
                 // Karaoke mode is fullscreen; leaving it, the window comes
                 // back.
                 let fullscreen = crate::core::karaoke::in_mode(&app.state);

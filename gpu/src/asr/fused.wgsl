@@ -409,6 +409,20 @@ fn sd_dst4(i: u32) -> vec4<f32> {
     return vec4<f32>(dst[i], dst[i + 1u], dst[i + 2u], dst[i + 3u]);
 }
 
+// Value i of position jj from the cache at `cache`, the step's own (`own`)
+// at pos. The cache's slot at pos is read anyway, so the loads do not wait
+// on the choice: this dispatch writes that slot (for the steps after), so
+// what is read there is whatever the write left, and `select` discards it.
+fn sd_value(cache: u32, jj: u32, pos: u32, own: f32, i: u32) -> f32 {
+    return select(dst[cache + jj * 2048u + 1024u + i], own, jj == pos);
+}
+
+// sd_value of the four positions from jj.
+fn sd_values(cache: u32, jj: u32, pos: u32, own: f32, i: u32) -> vec4<f32> {
+    return vec4<f32>(sd_value(cache, jj, pos, own, i), sd_value(cache, jj + 1u, pos, own, i),
+                     sd_value(cache, jj + 2u, pos, own, i), sd_value(cache, jj + 3u, pos, own, i));
+}
+
 @compute @workgroup_size(256)
 fn qa_dec_attend(@builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgroup_id) wid: vec3<u32>) {
     let t = lid.x;
@@ -473,9 +487,26 @@ fn qa_dec_attend(@builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgrou
                 dots += dot(sd_v4(base + d), sd_v4(256u + d));
             }
         } else {
+            // The key's values read eight vectors at a time, all loads
+            // under way together, then added in their order.
             let at = cache + j * 2048u;
-            for (var d = 0u; d < 128u; d += 4u) {
-                dots += dot(sd_v4(base + d), sd_dst4(at + d));
+            for (var d = 0u; d < 128u; d += 32u) {
+                let k0 = sd_dst4(at + d);
+                let k1 = sd_dst4(at + d + 4u);
+                let k2 = sd_dst4(at + d + 8u);
+                let k3 = sd_dst4(at + d + 12u);
+                let k4 = sd_dst4(at + d + 16u);
+                let k5 = sd_dst4(at + d + 20u);
+                let k6 = sd_dst4(at + d + 24u);
+                let k7 = sd_dst4(at + d + 28u);
+                dots += dot(sd_v4(base + d), k0);
+                dots += dot(sd_v4(base + d + 4u), k1);
+                dots += dot(sd_v4(base + d + 8u), k2);
+                dots += dot(sd_v4(base + d + 12u), k3);
+                dots += dot(sd_v4(base + d + 16u), k4);
+                dots += dot(sd_v4(base + d + 20u), k5);
+                dots += dot(sd_v4(base + d + 24u), k6);
+                dots += dot(sd_v4(base + d + 28u), k7);
             }
         }
         s = dots * inverseSqrt(128.0);
@@ -503,17 +534,40 @@ fn qa_dec_attend(@builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgrou
         }
         workgroupBarrier();
     }
+    // The values weighted, in the positions' order: sixteen positions'
+    // values read at a time, all loads under way together (the step's own,
+    // not in the cache for the others yet, from sd_v).
     var acc = 0.0;
     let count = min(128u, n - chunk * 128u);
-    for (var q = 0u; q < count; q++) {
-        let jj = chunk * 128u + q;
-        var v = 0.0;
-        if (jj == pos) {
-            v = sd_v[384u + i];
-        } else {
-            v = dst[cache + jj * 2048u + 1024u + i];
-        }
-        acc += sd_red[256u + base + q] * v;
+    let first = chunk * 128u;
+    let own = sd_v[384u + i];
+    var q = 0u;
+    for (; q + 16u <= count; q += 16u) {
+        let at = first + q;
+        let v0 = sd_values(cache, at, pos, own, i);
+        let v1 = sd_values(cache, at + 4u, pos, own, i);
+        let v2 = sd_values(cache, at + 8u, pos, own, i);
+        let v3 = sd_values(cache, at + 12u, pos, own, i);
+        let w = 256u + base + q;
+        acc += sd_red[w] * v0.x;
+        acc += sd_red[w + 1u] * v0.y;
+        acc += sd_red[w + 2u] * v0.z;
+        acc += sd_red[w + 3u] * v0.w;
+        acc += sd_red[w + 4u] * v1.x;
+        acc += sd_red[w + 5u] * v1.y;
+        acc += sd_red[w + 6u] * v1.z;
+        acc += sd_red[w + 7u] * v1.w;
+        acc += sd_red[w + 8u] * v2.x;
+        acc += sd_red[w + 9u] * v2.y;
+        acc += sd_red[w + 10u] * v2.z;
+        acc += sd_red[w + 11u] * v2.w;
+        acc += sd_red[w + 12u] * v3.x;
+        acc += sd_red[w + 13u] * v3.y;
+        acc += sd_red[w + 14u] * v3.z;
+        acc += sd_red[w + 15u] * v3.w;
+    }
+    for (; q < count; q++) {
+        acc += sd_red[256u + base + q] * sd_value(cache, first + q, pos, own, i);
     }
     let out = p.f9 + ((row * 16u + 2u * kv + hb) * 8u + chunk) * 130u;
     if (i == 0u) {

@@ -51,24 +51,31 @@ track about 5 s of GPU time.
 A run as one submission keeps the GPU until it is done, and a window
 drawing on the same GPU waits for it: a stutter every chunk. So every
 network here (the separator, the beat network, the speech models) goes in
-submissions of about 5 ms of GPU time each, each waited for, their size
-learned as they run (`pace`), and other work on the GPU gets in between.
+submissions of about 5 ms of GPU time each, their size learned as they
+run (`pace`), and other work on the GPU gets in between. The next
+submission is made while the last one runs (that one waited for then),
+so the GPU never waits for the processor between them.
 
-Background work rests between its submissions while the window moves:
-`GpuSeparator::background()` (a separator of its own, so the analyses
-never wait for the stems of the track playing nor hold them up; the
-shared one where a second does not fit), `GpuNetwork`, `GpuSpeech` and
-`GpuAsr`. A
-window calls `pace::frame(late)` for each frame of something moving; while
-it does, background work keeps to a share of the time that starts at
-50 %, is cut by 40 % on each frame that came late while it ran (to 10 %
-at least) and climbs 5 points a second while frames are on time (to 75 %
-at most); while nothing moves it runs flat out. `GpuSeparator::shared()`
-never rests, and while it has work on the GPU background work waits
-before each submission (a second at most at a time), so one network is on
-the GPU at once. `pace::report()` says how it went (frames late, rests,
-time waited). `pace::background()` marks a thread as one doing background
-work, for its caller to pick the background separator there.
+Background work gives way while the window draws at the display's
+refresh (something on it moving smoothly): `GpuSeparator::background()` (a
+separator of its own, so the analyses never wait for the stems of the
+track playing nor hold them up; the shared one where a second does not
+fit), `GpuNetwork`, `GpuSpeech` and `GpuAsr`. A window calls
+`pace::frame(late)` for each such frame (not for its calm frames, a few
+dozen a second at most, which leave the GPU time enough); while it does,
+background work waits for each submission and rests after it (before its
+next submission, its processor work done meanwhile), keeping to a share of the time that starts at 50 %, is cut by 40 % on
+each frame that came late while it ran (to 10 % at least) and climbs 5
+points a second while frames are on time (to 75 % at most); otherwise it
+runs flat out. `GpuSeparator::shared()` never rests, and while it has
+work on the GPU background work waits before each submission (a second
+at most at a time), so one network is on the GPU at once.
+`pace::report()` says how it went (frames late, rests, time waited);
+`GpuSeparator::tally()`, `GpuNetwork::tally()` and `GpuAsr::hearing()`
+what each network's GPU work cost (submissions, waits for the GPU, rests,
+time held back), for the trace to tell each job's.
+`pace::background()` marks a thread as one doing background work, for its
+caller to pick the background separator there.
 
 ## The beat network
 
@@ -149,9 +156,11 @@ On an RTX 5080:
 - **Accuracy:** the encoder's output matches the CPU's, with the weights
   rounded the same way, to 1e-5. A 20 s clip writes the official model's
   tokens exactly.
-- **Timing output:** `JODEL_ASR_TIMES=1` prints the time of each run (a
-  part, or glimpses heard together): its encoder and prompt, its steps, and
-  their dispatches and submissions a step.
+- **Timing output:** `GpuAsr::hearing()` says what it did so far (the
+  difference of two, `Hearing::since`, what it did between): its runs and
+  pieces, the encoder's and prompts' time, the tokens and steps and their
+  time, and the GPU's submissions and waits; `gpu_asr_songs` prints it for
+  each file on stderr (`--glimpses`: the glimpses' too).
 
 ## The cover's depth and cut-out
 

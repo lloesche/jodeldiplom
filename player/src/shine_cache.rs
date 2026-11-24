@@ -94,10 +94,12 @@ pub fn store(dir: &Path, key: &str, reference: &Reference) -> std::io::Result<()
 }
 
 /// The voice of `path`, mono: the vocals of its stems kept in `stems` at
-/// their rate, else separated now at 16 kHz; and its rate.
+/// their rate (once its analysis has them in their file, if it is
+/// separating them now: [`crate::stems_cache::open_waiting`]), else
+/// separated now at 16 kHz; and its rate.
 pub fn voice_of(stems: Option<&Path>, path: &Path) -> Result<(Vec<f32>, u32), String> {
     use jodel_playback::stems::{Stem, RATE};
-    let kept = stems.and_then(|dir| crate::stems_cache::open(dir, path));
+    let kept = stems.and_then(|dir| crate::stems_cache::open_waiting(dir, path));
     let Some(mut file) = kept else {
         return Ok((crate::lyrics::timer::separate_16k(path, false)?.0, 16_000));
     };
@@ -267,15 +269,26 @@ fn work(folders: &Folders, made: Made) -> Found {
         };
     };
     let notes = Notes::new(&made.lyrics, melody);
+    // A song without kept stems is separated on the background separator
+    // (this thread does background work).
+    let separator = jodel_gpu::GpuSeparator::background()
+        .filter(|_| crate::trace::on())
+        .map(|g| (g, g.tally()));
     let started = std::time::Instant::now();
     let reference = match reference_of(folders, &made.path, &notes, (&made.lyrics, &made.waveform))
     {
         Ok(r) => {
             crate::trace::note(format!(
-                "shine: {} phrases of {} to shine on, in {:.1} s",
+                "shine: {} phrases of {} to shine on, in {:.1} s{}",
                 r.shining(),
                 made.path.display(),
-                started.elapsed().as_secs_f64()
+                started.elapsed().as_secs_f64(),
+                separator
+                    .map(|(g, before)| g.tally().since(&before))
+                    .filter(|t| t.submissions > 0)
+                    .map_or_else(String::new, |t| format!(
+                        " (the separator, other work on it meanwhile included: {t})"
+                    ))
             ));
             Some(Arc::new(r))
         }

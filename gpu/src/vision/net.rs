@@ -349,25 +349,7 @@ impl Net {
                     );
                 },
             )?;
-            let slice = p.staging.slice(..(count * 4) as u64);
-            let (tx, rx) = std::sync::mpsc::channel();
-            slice.map_async(wgpu::MapMode::Read, move |r| {
-                let _ = tx.send(r);
-            });
-            gpu.device
-                .poll(wgpu::PollType::wait_indefinitely())
-                .map_err(|e| e.to_string())?;
-            rx.recv()
-                .map_err(|e| e.to_string())?
-                .map_err(|e| e.to_string())?;
-            let out: Vec<f32> = slice
-                .get_mapped_range()
-                .map_err(|e| e.to_string())?
-                .chunks_exact(4)
-                .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
-                .collect();
-            p.staging.unmap();
-            Ok(out)
+            crate::device::read_back(&gpu.device, &p.staging, count)
         })
     }
 

@@ -308,11 +308,16 @@ impl CoverWorker {
 }
 
 /// A song's cover's step done: its layers (when asked for and it has a
-/// cover), whether it has them; or why not, when its file could not be
-/// read or its cover not taken apart (nothing is kept then: it is tried
-/// again).
+/// cover), whether it has them, and how long taking it apart took when it
+/// was taken apart now (not found kept); or why not, when its file could
+/// not be read or its cover not taken apart (nothing is kept then: it is
+/// tried again).
 enum Taken {
-    Done { layers: Option<Layers>, has: bool },
+    Done {
+        layers: Option<Layers>,
+        has: bool,
+        split: Option<Duration>,
+    },
     Failed(String),
 }
 
@@ -322,6 +327,21 @@ enum Taken {
 enum Back<'a> {
     No,
     Yes(Option<&'a Layers>),
+}
+
+/// A splitter that keeps how long its taking a picture apart took.
+struct Timed<'a> {
+    splitter: &'a dyn Splitter,
+    took: Mutex<Option<Duration>>,
+}
+
+impl Splitter for Timed<'_> {
+    fn split(&self, image: &RgbImage) -> Result<CoverLayers, String> {
+        let started = Instant::now();
+        let split = self.splitter.split(image);
+        *self.took.lock().unwrap_or_else(|e| e.into_inner()) = Some(started.elapsed());
+        split
+    }
 }
 
 /// Takes `path`'s cover apart (or finds it taken apart), its cover and
@@ -342,6 +362,7 @@ fn take_apart(
             return Taken::Done {
                 layers: None,
                 has: false,
+                split: None,
             };
         };
         let held = match back {
@@ -357,6 +378,7 @@ fn take_apart(
         return Taken::Done {
             layers: found,
             has: true,
+            split: None,
         };
     }
     working(true);
@@ -385,12 +407,17 @@ fn take_apart(
         albums: album_keys(path, Some(&tags)),
         image,
     };
-    let made = store.layers(&song, splitter);
+    let timed = Timed {
+        splitter,
+        took: Mutex::new(None),
+    };
+    let made = store.layers(&song, &timed);
     working(false);
     match made {
         Ok(found) => Taken::Done {
             has: found.is_some(),
             layers: found.filter(|_| layers),
+            split: timed.took.into_inner().unwrap_or_else(|e| e.into_inner()),
         },
         Err(why) => Taken::Failed(why),
     }
@@ -468,7 +495,14 @@ fn work(
         };
         let taken = take_apart(store, splitter, &path, given, back, &mut working);
         let has = match taken {
-            Taken::Done { layers, has } => {
+            Taken::Done { layers, has, split } => {
+                if let Some(took) = split {
+                    crate::trace::note(format_args!(
+                        "covers: {} taken apart in {:.1} s",
+                        path.file_name().unwrap_or_default().to_string_lossy(),
+                        took.as_secs_f64()
+                    ));
+                }
                 if playing {
                     // Still the song playing (no other wanted since).
                     let still = shared

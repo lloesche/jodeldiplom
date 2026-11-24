@@ -1,12 +1,16 @@
 //! Whole voices through the GPU's Qwen3-ASR: for each 16 kHz mono 32-bit
-//! float WAV file, a line `FILE<TAB>SECONDS<TAB>TOKENS<TAB>[LANGUAGE] TEXT`.
-//! `MODEL` is a packed file (`asr_pack`'s) or the checkpoint's folder, packed
-//! on the way (the bits each matrix gets by `JODEL_ASR_BITS`, as
-//! `quant::bits_by` reads it, 4 for all by default; the 4-bit ones weighted by
-//! the calibration statistics in the file `JODEL_ASR_STATS` names, if any).
+//! float WAV file, a line `FILE<TAB>SECONDS<TAB>TOKENS<TAB>[LANGUAGE] TEXT`;
+//! with `--glimpses`, a second line `FILE#glimpses<TAB>SECONDS<TAB>GLIMPSES
+//! <TAB>TEXT | TEXT | ...` (each glimpse's words, as the player hears them).
+//! What the recogniser did for each (its encoder's and decoder's time, the
+//! tokens, the GPU's submissions and waits) goes to stderr. `MODEL` is a
+//! packed file (`asr_pack`'s) or the checkpoint's folder, packed on the way
+//! (the bits each matrix gets by `JODEL_ASR_BITS`, as `quant::bits_by`
+//! reads it, 4 for all by default; the 4-bit ones weighted by the
+//! calibration statistics in the file `JODEL_ASR_STATS` names, if any).
 //!
 //! ```text
-//! cargo run --release -p jodel-gpu --example gpu_asr_songs -- MODEL VOICE.wav...
+//! cargo run --release -p jodel-gpu --example gpu_asr_songs -- MODEL [--glimpses] VOICE.wav...
 //! ```
 
 use std::io::Write;
@@ -26,7 +30,11 @@ fn read_wav(path: &Path) -> Vec<f32> {
 }
 
 fn main() {
-    let args: Vec<String> = std::env::args().skip(1).collect();
+    let mut args: Vec<String> = std::env::args().skip(1).collect();
+    let glimpses = args.iter().position(|a| a == "--glimpses");
+    if let Some(k) = glimpses {
+        args.remove(k);
+    }
     let started = Instant::now();
     let model = Path::new(&args[0]);
     let packed = if model.is_dir() {
@@ -49,6 +57,7 @@ fn main() {
     let mut out = std::io::stdout().lock();
     for file in &args[1..] {
         let voice = read_wav(Path::new(file));
+        let before = gpu.hearing().unwrap();
         let t = Instant::now();
         let got = gpu.transcribe(&voice).unwrap();
         writeln!(
@@ -60,6 +69,25 @@ fn main() {
             got.text.replace(['\t', '\n'], " ")
         )
         .unwrap();
+        let after = gpu.hearing().unwrap();
+        eprintln!("{file}: heard: {}", after.since(&before));
+        if glimpses.is_some() {
+            let t = Instant::now();
+            let heard = gpu.glimpses(&voice).unwrap();
+            let texts: Vec<String> = heard
+                .iter()
+                .map(|g| g.text.replace(['\t', '\n'], " "))
+                .collect();
+            writeln!(
+                out,
+                "{file}#glimpses\t{:.2}\t{}\t{}",
+                t.elapsed().as_secs_f64(),
+                heard.len(),
+                texts.join(" | ")
+            )
+            .unwrap();
+            eprintln!("{file}: glimpses: {}", gpu.hearing().unwrap().since(&after));
+        }
         out.flush().unwrap();
     }
 }

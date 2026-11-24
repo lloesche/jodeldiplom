@@ -5,13 +5,84 @@
 //! gets on its own; one that has not ended when the room the pieces
 //! together have is full is heard again on its own ([`super::NEW_AT_ONCE`]).
 
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use jodel_lyrics::asr::{loop_start, text, DIM};
 
 use super::ops::each;
 use super::shape::read;
 use super::{Buf, Inner, Kernel, Runs, Shape, MAX_NEW};
+
+/// What the recogniser did so far ([`super::GpuAsr::hearing`]), for
+/// traces: the difference of two ([`Hearing::since`]) is what it did
+/// between them.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Hearing {
+    /// The runs (pieces heard together, or one alone), and their pieces.
+    pub runs: usize,
+    pub pieces: usize,
+    /// The encoder and the prompts, and their GPU work.
+    pub prompted: Duration,
+    pub prompt_gpu: crate::pace::Tally,
+    /// The tokens written, the decoder's steps (each a token for every
+    /// piece of its run), their time and their GPU work.
+    pub tokens: usize,
+    pub steps: usize,
+    pub decoded: Duration,
+    pub step_gpu: crate::pace::Tally,
+}
+
+impl Hearing {
+    /// What was added since `earlier` (an earlier one of the same
+    /// recogniser).
+    pub fn since(&self, earlier: &Hearing) -> Hearing {
+        Hearing {
+            runs: self.runs.saturating_sub(earlier.runs),
+            pieces: self.pieces.saturating_sub(earlier.pieces),
+            prompted: self.prompted.saturating_sub(earlier.prompted),
+            prompt_gpu: self.prompt_gpu.since(&earlier.prompt_gpu),
+            tokens: self.tokens.saturating_sub(earlier.tokens),
+            steps: self.steps.saturating_sub(earlier.steps),
+            decoded: self.decoded.saturating_sub(earlier.decoded),
+            step_gpu: self.step_gpu.since(&earlier.step_gpu),
+        }
+    }
+
+    fn add(&mut self, run: &Hearing) {
+        self.runs += run.runs;
+        self.pieces += run.pieces;
+        self.prompted += run.prompted;
+        self.prompt_gpu = self.prompt_gpu.and(&run.prompt_gpu);
+        self.tokens += run.tokens;
+        self.steps += run.steps;
+        self.decoded += run.decoded;
+        self.step_gpu = self.step_gpu.and(&run.step_gpu);
+    }
+}
+
+impl std::fmt::Display for Hearing {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let steps = self.steps.max(1) as f64;
+        write!(
+            f,
+            "{} pieces in {} runs: the encoder and prompts {:.2} s ({} submissions, {} waits), \
+             {} tokens in {} steps in {:.2} s ({:.0} tokens a second; {:.2} ms, {:.2} submissions \
+             and {:.2} waits for the GPU a step)",
+            self.pieces,
+            self.runs,
+            self.prompted.as_secs_f64(),
+            self.prompt_gpu.submissions,
+            self.prompt_gpu.waits,
+            self.tokens,
+            self.steps,
+            self.decoded.as_secs_f64(),
+            self.tokens as f64 / self.decoded.as_secs_f64().max(1e-9),
+            self.decoded.as_secs_f64() * 1000.0 / steps,
+            self.step_gpu.submissions as f64 / steps,
+            self.step_gpu.waits as f64 / steps,
+        )
+    }
+}
 
 /// A piece's tokens while it is decoded.
 struct Written {
@@ -69,16 +140,14 @@ impl Inner {
     ) -> Result<Vec<Option<Vec<u32>>>, String> {
         let shape = Shape::with_room(features.len(), frames, self.new_at_once);
         let (b, cap, r) = (shape.pieces, shape.positions, shape.rows);
-        let t0 = Instant::now();
+        let (t0, prompts) = (Instant::now(), self.prompt_pieces.tally());
         let got = self.prompted(features, &shape)?;
-        let prompted = t0.elapsed();
-        let t1 = Instant::now();
+        let (t1, steps_before) = (Instant::now(), self.step_pieces.tally());
         let mut written: Vec<Written> = (0..b).map(|k| Written::new(got[k * cap + r])).collect();
         // Every piece has written as many as the others still writing.
         let a_read = read(b);
         let mut decoded = 1;
-        let (mut steps, mut dispatches) = (0, 0);
-        let submitted = crate::pace::submissions();
+        let mut steps = 0;
         loop {
             if written.iter().all(|w| w.done) || r + decoded + a_read >= cap {
                 break;
@@ -90,7 +159,6 @@ impl Inner {
             }
             let got = self.run(&ops, Some((Buf::Tokens, 0, b * cap)), Runs::Steps)?;
             steps += a_read;
-            dispatches += ops.len();
             for (k, w) in written.iter_mut().enumerate() {
                 if !w.done {
                     w.take(&got[k * cap + pos + 1..][..a_read]);
@@ -98,18 +166,16 @@ impl Inner {
             }
             decoded += a_read;
         }
-        if std::env::var_os("JODEL_ASR_TIMES").is_some() {
-            let tokens: usize = written.iter().map(|w| w.ids.len()).sum();
-            let decoding = t1.elapsed();
-            let a_step = |n: f64| n / steps.max(1) as f64;
-            eprintln!(
-                "asr: {b} pieces of {} steps, {r} rows: encoder+prefill {prompted:.2?}, {tokens} tokens in {steps} steps in {decoding:.2?} ({:.2?}, {} dispatches, {:.2} submissions a step)",
-                shape.steps,
-                decoding.div_f64(steps.max(1) as f64),
-                a_step(dispatches as f64),
-                a_step((crate::pace::submissions() - submitted) as f64),
-            );
-        }
+        self.hearing.add(&Hearing {
+            runs: 1,
+            pieces: b,
+            prompted: t1 - t0,
+            prompt_gpu: self.prompt_pieces.tally().since(&prompts),
+            tokens: written.iter().map(|w| w.ids.len()).sum(),
+            steps,
+            decoded: t1.elapsed(),
+            step_gpu: self.step_pieces.tally().since(&steps_before),
+        });
         Ok(written
             .into_iter()
             .map(|w| {

@@ -186,17 +186,20 @@ impl Paint {
         self.dirty = false;
     }
 
-    /// Draws what `draw` says, for the tick at `at`, `heard` seconds into
-    /// the track. A frame of what moves (no input in it) lets background
-    /// GPU work know how the window keeps up.
+    /// Draws what `plan` says, for the tick at `at`, `heard` seconds into
+    /// the track. A frame of what moves (no input in it) at the display's
+    /// refresh lets background GPU work know how the window keeps up, and
+    /// makes it give way ([`jodel_gpu::pace::frame`]); calm frames leave
+    /// the GPU time enough and say nothing.
     pub fn draw(
         &mut self,
-        draw: Draw,
+        plan: Plan,
         embed: &Embed,
         app: &mut App,
         place: Place,
         (heard, at): (f64, Instant),
     ) {
+        let draw = plan.draw;
         if draw == Draw::Nothing {
             return;
         }
@@ -227,7 +230,7 @@ impl Paint {
             }
         };
         let (late, handed) = embed.late();
-        if paced {
+        if paced && plan.pace == Pace::Refresh {
             jodel_gpu::pace::frame(late);
         }
         self.frames

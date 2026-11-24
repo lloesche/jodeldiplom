@@ -17,8 +17,9 @@
 // bits 8·(j % 4), then the scale and offset; 16: at 16 bits, groups of 16
 // u32s of two halves, value j in word j / 2, the low half first). Tiles
 // of 128 × 64 through k a group (32) at a time, held as vectors of four
-// rows and of four columns; each invocation keeps 8 rows × 4 columns, each
-// output's products added in the order of k.
+// rows and of four columns, the next group preloaded into registers while
+// one is multiplied; each invocation keeps 8 rows × 4 columns, each output's
+// products added in the order of k.
 var<workgroup> qa_a: array<vec4<f32>, 1024>;
 var<workgroup> qa_b: array<vec4<f32>, 512>;
 
@@ -49,6 +50,35 @@ fn qa_w_at(c: u32, groups: u32, g: u32, j: u32) -> f32 {
     return so.y + f32((qw[base + j / 8u] >> (4u * (j % 8u))) & 15u) * so.x;
 }
 
+// An invocation's share of a group's tiles (in registers, apart, so no
+// compiler takes them through memory): four vectors of A (rows 4·q.. at
+// k, q = aq + 8·h for h = 0..3) and two of B (columns c.. at values j and
+// j + 1).
+struct QaLoads {
+    a0: vec4<f32>,
+    a1: vec4<f32>,
+    a2: vec4<f32>,
+    a3: vec4<f32>,
+    b0: vec4<f32>,
+    b1: vec4<f32>,
+}
+
+fn qa_rows4(r: u32, k: u32) -> vec4<f32> {
+    return vec4<f32>(qa_a_at(r, k), qa_a_at(r + 1u, k), qa_a_at(r + 2u, k), qa_a_at(r + 3u, k));
+}
+
+fn qa_cols4(c: u32, groups: u32, g: u32, j: u32) -> vec4<f32> {
+    return vec4<f32>(qa_w_at(c, groups, g, j), qa_w_at(c + 1u, groups, g, j),
+                     qa_w_at(c + 2u, groups, g, j), qa_w_at(c + 3u, groups, g, j));
+}
+
+fn qa_loads(g: u32, row0: u32, aq: u32, ak: u32, c: u32, groups: u32, j: u32) -> QaLoads {
+    let k = g * 32u + ak;
+    let r = row0 + 4u * aq;
+    return QaLoads(qa_rows4(r, k), qa_rows4(r + 32u, k), qa_rows4(r + 64u, k), qa_rows4(r + 96u, k),
+                   qa_cols4(c, groups, g, j), qa_cols4(c, groups, g, j + 1u));
+}
+
 @compute @workgroup_size(16, 16)
 fn qa_matmul(@builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgroup_id) wid: vec3<u32>) {
     let k = p.f2;
@@ -70,21 +100,21 @@ fn qa_matmul(@builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgroup_id
     let aq = t / 32u;
     let bq = t / 16u;
     let bj = 2u * (t % 16u);
+    let c = col0 + 4u * bq;
+    // The next group's values loaded into registers while this one is
+    // multiplied from workgroup memory (one tile there, not two).
+    var next = qa_loads(0u, row0, aq, ak, c, groups, bj);
     for (var g = 0u; g < groups; g++) {
-        let k0 = g * 32u;
-        for (var h = 0u; h < 4u; h++) {
-            let q = aq + 8u * h;
-            let r = row0 + 4u * q;
-            qa_a[ak * 32u + q] = vec4<f32>(qa_a_at(r, k0 + ak), qa_a_at(r + 1u, k0 + ak),
-                                          qa_a_at(r + 2u, k0 + ak), qa_a_at(r + 3u, k0 + ak));
-        }
-        let c = col0 + 4u * bq;
-        for (var h = 0u; h < 2u; h++) {
-            let j = bj + h;
-            qa_b[j * 16u + bq] = vec4<f32>(qa_w_at(c, groups, g, j), qa_w_at(c + 1u, groups, g, j),
-                                           qa_w_at(c + 2u, groups, g, j), qa_w_at(c + 3u, groups, g, j));
-        }
+        qa_a[ak * 32u + aq] = next.a0;
+        qa_a[ak * 32u + aq + 8u] = next.a1;
+        qa_a[ak * 32u + aq + 16u] = next.a2;
+        qa_a[ak * 32u + aq + 24u] = next.a3;
+        qa_b[bj * 16u + bq] = next.b0;
+        qa_b[(bj + 1u) * 16u + bq] = next.b1;
         workgroupBarrier();
+        if (g + 1u < groups) {
+            next = qa_loads(g + 1u, row0, aq, ak, c, groups, bj);
+        }
         for (var kk = 0u; kk < 32u; kk++) {
             let a = qa_a[kk * 32u + 2u * lid.y];
             let a2 = qa_a[kk * 32u + 2u * lid.y + 1u];
