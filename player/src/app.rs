@@ -457,7 +457,8 @@ fn note_mic(mic: &jodel_output::Input, cleaned: Option<f32>, echo: &jodel_output
     crate::trace::note(format_args!(
         "microphone: {:.0} dBFS captured, {cleaned}; echo canceller {echo_line}; \
          {:.1} ms buffered (target {} frames at {} Hz), clocks {:+.0} ppm apart, \
-         {} underruns, {} resyncs, {} overruns",
+         {} underruns, {} resyncs, {} overruns, {} blocks lost to the canceller, \
+         {} cleaned blocks not taken",
         dbfs(mic.peak()),
         status.buffered().as_secs_f64() * 1000.0,
         status.target,
@@ -466,6 +467,8 @@ fn note_mic(mic: &jodel_output::Input, cleaned: Option<f32>, echo: &jodel_output
         status.underruns,
         status.resyncs,
         status.overruns,
+        status.blocks_dropped,
+        status.voice_dropped,
     ));
 }
 
