@@ -188,8 +188,9 @@ Diva, the diploma) to 0.28 / 0.34 / 1.85 ms. The effects library
 treatment, each with only that effect's code (and the helpers the
 effects share, `fx_heat` and the rest, once in it). The window makes the
 pipelines of the groups the tiers' rows use as it opens (`Group::used`:
-9, the stage's own and the rainbow's, the glow's, the flames' and the
-angels'), another effect's the first time it draws; the light (what
+10, the stage's own, the baked paper's among them, and the rainbow's, the
+glow's, the flames' and the angels'; and the one baking the paper, below),
+another effect's the first time it draws; the light (what
 blooms) only the groups light can be (the plain shapes, the lane's glow
 and its flames): 3. On the RTX 5080 (Vulkan, the driver's cache warm)
 the stage's pipelines take about 50 ms (35 ms for the 6 before the
@@ -211,6 +212,72 @@ small and few, their step 0.07–0.13 ms a frame at the Diva peak and with
 every effect, and a quad's look is the same over its pixels (one branch
 taken by the whole quad).
 
+**The diploma's paper, baked.** `frame_cost` on the M4 Max (Metal,
+3024 × 1964, two runs) had every scene within its budget but the
+diploma: 1016 frames, the GPU's total median 4.0 ms, mean 4.0, worst
+11.4–13.4; the stage step median 1.9, worst 5.8–7.8; the bursts' worst
+2.1–3.3 and the composite's and the `fx` step's 1.0–1.4 (all at their
+worst in the same frame). Kind by kind the sheet's paper was the dearest:
+2.62 ms alone (one a frame, over 0.53 screens), where every other kind
+took 0.52–0.8 ms alone, the floor of a pass timed apart. Yet the paper
+does not change once it has unrolled: its shader has no clock, and what
+moves on it (the stamps, the signature, the stars, the words) are shapes
+of their own. So the stage pass bakes it (`gui::stage_gpu::bake`): once a
+frame's paper has been the same three frames in a row (a window being
+resized is not baked frame by frame), it is drawn once into a texture of
+its own (its quad's pixels, half floats, premultiplied, linear where the
+frame takes linear light), and from then on read from there, a texel a
+pixel, by a shape of its own (`kind::BAKED`, its own pipeline,
+`Group::Baked`) while it stays that paper; while it unrolls (0.55 s) it
+is drawn as before. The sheet shaken as the seal is stamped down
+(0.45 s) shakes by whole pixels (`seal::shake`), everything on it with
+it, so the bake is read moved by whole pixels, each pixel as it was
+drawn; a paper moved by part of a pixel is another paper. Baked again
+where the sheet's size, its inks or anything else of it changes; a
+paper larger than the window, never. The texture is the window's size
+(47 MB at 3024 × 1964), made as a stage first shows (entering Karaoke
+mode) and cleared at once, kept while a stage shows, let go when none
+does, made again once a new window size has held three frames: making
+it costs about 3 ms on the RTX 5080 (0.6 ms of it on the processor, the
+rest the system making the memory the GPU's), which on the diploma's
+first frame or its bake frame went over the 4 ms budget, so the reveal
+pays only for drawing the paper into it. The pipelines are made as the
+window opens. What to do with the texture and a frame's paper (make,
+keep, let go; draw, bake, read) is decided apart from the GPU
+(`bake::Planner`), tested over frame sequences. It looks the same:
+against the same build drawing the paper each frame, every frame of
+`result_frames` (six diplomas, 23 moments each at 1600 × 900, the shakes
+among them) and `frame_cost`'s pictures at 3024 × 1964 then 1600 × 1000
+(a resize) are at most 1 in 255 off, on at most 5 % of the pixels (the
+half floats' rounding: a texture of full floats leaves some 70 pixels
+so, at twice the memory). On the RTX 5080 (two runs each of the same
+build drawing the paper each frame and baking it, the machine shared
+with other GPU work, more in some runs than in others) the paper alone
+went from 0.35–0.41 ms to 0.28–0.45 (the floor), the stage step from a
+median of 0.26–0.27 ms to 0.20–0.24 (p99 0.30–0.36 to 0.26–0.36), and the
+diploma's frames (each the lesser of its two runs) were 1.5–1.6 ms at
+the median and 1.7–2.3 at the 99th percentile without it, 1.4–1.7 and
+1.7–2.8 with it; the worst 1.9–4.1 ms without, 1.9–3.1 with, none at a
+moment of the reveal of its own.
+
+**The diploma's spike.** On the RTX 5080 the worst frame is another in
+every run (frames 26, 53, 119, 190, 482, 509, 546, 761, 861, 921 and
+924 of 1016 in eleven runs), most in the still end of the reveal where
+nothing lands, every step of it slower at once (a frame or a few in a
+row); nothing is made there (no pipeline, texture or buffer; the bake
+once, 0.58 s in). Each step's time is the GPU's between two timestamps
+with a wait and a submission between them, so whatever holds up the GPU
+or the process for a frame (another program drawing, the system) shows
+in every step of that frame: with another process's tests on the GPU at
+the same time, 229 frames went over 4 ms. The spike is the machine's,
+not the diploma's. So `frame_cost` times the diploma's reveal twice and
+takes each step of each frame at the lesser of the two runs'
+(`Judge::MinOfTwo`): a hitch at the same moment both times (the
+diploma's) stays, the machine's own, in one run, goes; that series is
+judged by its worst frame, as the other scenes are. It says which frame
+was the worst and what was on screen then (its time, the beats that had
+just landed, how much it drew).
+
 **What keeps the stage fast (the rules for its GPU code).** Held by
 tests that need no GPU (`gui::stage_gpu::groups`, `gui::particles`):
 
@@ -230,15 +297,17 @@ tests that need no GPU (`gui::stage_gpu::groups`, `gui::particles`):
 - Before a new effect lands, `frame_cost --budget` on the Mac: every
   scene's worst frame under 4 ms of GPU in all at 3024 × 1964 at density 2
   (the plan's target, the Diva peak at × 32 included), no step's worst
-  over 2.5 ms; it exits with 1 and names what went over:
+  over 2.5 ms; the diploma's worst frame of the two runs' lesser times
+  (above). It exits with 1 and names what went over, and prints each
+  scene's worst frame, what was on screen then, and how many frames went
+  over:
 
   ```text
-  cargo run --release -p jodeldiplom --example frame_cost -- \
-      "$HOME/Library/Application Support/Jodeldiplom Data/covers/<HASH>.layers" \
-      --budget 4 --step-budget 2.5
+  L=$(ls "$HOME/Library/Application Support/Jodeldiplom Data/covers/"*.layers | head -1)
+  cargo +1.100.0 run --release -p jodeldiplom --example frame_cost -- "$L" --budget 4 --step-budget 2.5
   ```
 
   (any cover's `.layers` file from the player's data folder; its scenes
   are the normal one, a tier's each at its rung, every effect at once and
   the diploma: the RTX 5080 takes 1.5–3.4 ms at worst over the singing
-  ones).
+  ones, the diploma 1.9–3.1 ms, each frame the lesser of its two runs).

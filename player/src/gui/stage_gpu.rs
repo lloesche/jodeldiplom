@@ -6,8 +6,9 @@
 //! atlas, and the effects' shapes ([`super::fx`]). Premultiplied: a
 //! shape's light that is to add up (a glow, a spark) comes with no
 //! coverage, so it adds; the rest goes over. Each group of kinds is drawn
-//! by a pipeline of its own ([`Group`]). The bubbles' liquid, strain and
-//! overfilling are drawn here for the stage's bubbles (tubes,
+//! by a pipeline of its own ([`Group`]); the diploma's paper, once it holds
+//! still, is drawn once and read back after (`bake`). The bubbles' liquid,
+//! strain and overfilling are drawn here for the stage's bubbles (tubes,
 //! [`super::snake`]) and the picture's alike ([`Instance::liquid`],
 //! [`super::liquid`]).
 //!
@@ -15,6 +16,7 @@
 //! screen passes, the music, and the text the atlas did not hold yet
 //! ([`AtlasUpload`]).
 
+mod bake;
 mod groups;
 mod pass;
 
@@ -119,10 +121,15 @@ pub mod kind {
     /// written to `params[1]` along it, `params[2]` its pen's half width;
     /// in `color` ([`crate::gui::paper::signature_at`]).
     pub const SIGNATURE: f32 = 19.0;
+    /// The diploma's paper read from its bake: the bake's pixels over the
+    /// quad, `shape[0..2]` where its corner is (whole pixels). Only the
+    /// stage's pass puts it in, for a [`PAPER`] held still
+    /// (`super::bake`).
+    pub const BAKED: f32 = 20.0;
 
     /// The stage's own kinds' names, by their numbers (the shaders' `K_`
     /// constants, in capitals).
-    pub const NAMES: [&str; 20] = [
+    pub const NAMES: [&str; 21] = [
         "pill",
         "fill",
         "segment",
@@ -143,6 +150,7 @@ pub mod kind {
         "paper",
         "stamp",
         "signature",
+        "baked",
     ];
 
     /// The name of kind `k`: the stage's own, or an effect's

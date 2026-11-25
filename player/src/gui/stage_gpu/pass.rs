@@ -1,7 +1,9 @@
 //! The stage's pass ([`StagePass`]): a pipeline a [`Group`], what they
 //! read (the window's numbers, the text's atlas, the tubes' lines, the
-//! effects' looks and the music), and a frame's shapes in runs of a group.
+//! effects' looks, the music and the diploma's paper baked), and a frame's
+//! shapes in runs of a group.
 
+use super::bake::Bake;
 use super::groups::{runs, Runs};
 use super::{shader, Feed, Group, Instance, ATLAS};
 use crate::gui::fx::Fx;
@@ -71,7 +73,34 @@ pub struct StagePass {
     /// group: the shapes, those over everything, the screen passes.
     runs: [Runs; 3],
     linear: bool,
+    /// The diploma's paper baked, where it draws one ([`Group::Paper`]),
+    /// and the bake's generation the bind group reads.
+    bake: Option<Bake>,
+    bound: u64,
 }
+
+/// The stage's numbers as its shader takes them (`Screen` in
+/// `stage.wgsl`): the frame's size, whether it takes linear light, the
+/// atlas's side, the singing's time, and where the frame's corner is in
+/// the window's pixels (none but on the paper's bake).
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(super) struct Screen {
+    pub(super) size: [f32; 2],
+    pub(super) srgb: f32,
+    pub(super) atlas: f32,
+    pub(super) time: f32,
+    pub(super) pad: f32,
+    pub(super) origin: [f32; 2],
+}
+
+// SAFETY: plain f32s in a `repr(C)` struct, no padding: any bytes are one.
+unsafe impl bytemuck::Zeroable for Screen {}
+// SAFETY: as above.
+unsafe impl bytemuck::Pod for Screen {}
+
+/// How many bytes [`Screen`] is.
+const SCREEN_BYTES: u64 = std::mem::size_of::<Screen>() as u64;
 
 /// A texture of the atlas's format, `side` square, and its view.
 fn atlas_texture(device: &wgpu::Device, side: u32) -> (wgpu::Texture, wgpu::TextureView) {
@@ -127,7 +156,7 @@ impl StagePass {
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
-                        min_binding_size: wgpu::BufferSize::new(32),
+                        min_binding_size: wgpu::BufferSize::new(SCREEN_BYTES),
                     },
                     count: None,
                 },
@@ -159,6 +188,16 @@ impl StagePass {
                 },
                 uniform_entry(4, LOOKS_BYTES),
                 uniform_entry(5, MUSIC_BYTES),
+                wgpu::BindGroupLayoutEntry {
+                    binding: 6,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
             ],
         });
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -174,7 +213,7 @@ impl StagePass {
             .collect();
         let uniforms = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("jodeldiplom stage"),
-            size: 32,
+            size: SCREEN_BYTES,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -196,14 +235,17 @@ impl StagePass {
         };
         let looks = uniform("jodeldiplom stage looks", LOOKS_BYTES);
         let music = uniform("jodeldiplom stage music", MUSIC_BYTES);
+        let bake = (groups.contains(&Group::Paper)).then(|| Bake::new(device, &pipeline_layout));
         let reads = Reads {
             layout: &layout,
-            uniforms: &uniforms,
             looks: &looks,
             music: &music,
             sampler: &sampler,
+            atlas: &atlas_view,
+            paths: &paths,
         };
-        let bind = reads.bind(device, &atlas_view, &paths);
+        let bind = reads.bind(device, &uniforms, None);
+        let bound = bake.as_ref().map_or(0, Bake::generation);
         StagePass {
             pipelines,
             pipeline_layout,
@@ -220,11 +262,15 @@ impl StagePass {
             instances: None,
             runs: Default::default(),
             linear: takes_linear(format),
+            bake,
+            bound,
         }
     }
 
-    /// What it draws next (`None`: nothing), for a window of `size`: the
-    /// text put into its atlas, its shapes sent over.
+    /// What it draws next (`None`: nothing, the paper's bake let go), for a
+    /// window of `size`: its numbers, the text put into its atlas, the
+    /// diploma's paper read from its bake where it holds still
+    /// ([`super::bake`]), its shapes sent over.
     pub fn set(
         &mut self,
         (device, queue): (&wgpu::Device, &wgpu::Queue),
@@ -233,31 +279,46 @@ impl StagePass {
     ) {
         self.runs = Default::default();
         let Some(feed) = feed else {
+            if let Some(bake) = &mut self.bake {
+                bake.no_stage((device, queue));
+            }
+            self.rebind(device, false);
             return;
         };
-        let mut rebind = false;
+        let mut grown = false;
         if self.atlas.is_none() && !feed.uploads.is_empty() {
             let (atlas, view) = atlas_texture(device, ATLAS);
-            (self.atlas, self.atlas_view, rebind) = (Some(atlas), view, true);
+            (self.atlas, self.atlas_view, grown) = (Some(atlas), view, true);
         }
         let paths: &[u8] = bytemuck::cast_slice(feed.paths);
         if self.paths.size() < paths.len() as u64 {
             self.paths = paths_buffer(device, (paths.len() as u64).next_power_of_two());
-            rebind = true;
+            grown = true;
         }
         if !paths.is_empty() {
             queue.write_buffer(&self.paths, 0, paths);
         }
-        if rebind {
-            let reads = Reads {
-                layout: &self.layout,
-                uniforms: &self.uniforms,
-                looks: &self.looks,
-                music: &self.music,
-                sampler: &self.sampler,
-            };
-            self.bind = reads.bind(device, &self.atlas_view, &self.paths);
-        }
+        let screen = Screen {
+            size: [size.0 as f32, size.1 as f32],
+            srgb: if self.linear { 1.0 } else { 0.0 },
+            atlas: ATLAS as f32,
+            time: feed.clock,
+            ..Screen::default()
+        };
+        queue.write_buffer(&self.uniforms, 0, bytemuck::bytes_of(&screen));
+        queue.write_buffer(&self.music, 0, bytemuck::cast_slice(&feed.music.uniform()));
+        queue.write_buffer(&self.looks, 0, bytemuck::cast_slice(&feed.looks.0));
+        let reads = Reads {
+            layout: &self.layout,
+            looks: &self.looks,
+            music: &self.music,
+            sampler: &self.sampler,
+            atlas: &self.atlas_view,
+            paths: &self.paths,
+        };
+        let baked = (self.bake.as_mut())
+            .and_then(|bake| bake.frame((device, queue), (feed.instances, &screen, size), &reads));
+        self.rebind(device, grown);
         for up in feed.uploads {
             let (x, y, w, h) = up.rect;
             let Some(atlas) = self.atlas.as_ref().filter(|_| w > 0 && h > 0) else {
@@ -286,7 +347,12 @@ impl StagePass {
         if feed.instances.is_empty() && feed.top.is_empty() && feed.screen.is_empty() {
             return;
         }
-        let parts = [feed.instances, feed.top, feed.screen];
+        // The paper read from its bake in its place.
+        let mut shapes = std::borrow::Cow::Borrowed(feed.instances);
+        if let Some(baked) = baked {
+            shapes.to_mut()[baked.at] = baked.shape;
+        }
+        let parts = [&shapes[..], feed.top, feed.screen];
         let bytes: Vec<u8> = (parts.iter())
             .flat_map(|p| bytemuck::cast_slice::<Instance, u8>(p))
             .copied()
@@ -306,15 +372,6 @@ impl StagePass {
         if let Some(buffer) = &self.instances {
             queue.write_buffer(buffer, 0, &bytes);
         }
-        let mut uniforms = [0u8; 32];
-        uniforms[0..4].copy_from_slice(&(size.0 as f32).to_le_bytes());
-        uniforms[4..8].copy_from_slice(&(size.1 as f32).to_le_bytes());
-        uniforms[8..12].copy_from_slice(&(if self.linear { 1f32 } else { 0.0 }).to_le_bytes());
-        uniforms[12..16].copy_from_slice(&(ATLAS as f32).to_le_bytes());
-        uniforms[16..20].copy_from_slice(&feed.clock.to_le_bytes());
-        queue.write_buffer(&self.uniforms, 0, &uniforms);
-        queue.write_buffer(&self.music, 0, bytemuck::cast_slice(&feed.music.uniform()));
-        queue.write_buffer(&self.looks, 0, bytemuck::cast_slice(&feed.looks.0));
         let mut from = 0;
         for (k, part) in parts.iter().enumerate() {
             self.runs[k] = runs(part, from);
@@ -327,6 +384,26 @@ impl StagePass {
                 *slot = Some(make(device, &self.pipeline_layout, self.target, group));
             }
         }
+    }
+
+    /// What the pipelines read made again where the atlas or the tubes'
+    /// lines `grown`, or the paper's bake is another.
+    fn rebind(&mut self, device: &wgpu::Device, grown: bool) {
+        let generation = self.bake.as_ref().map_or(0, Bake::generation);
+        if !grown && generation == self.bound {
+            return;
+        }
+        let reads = Reads {
+            layout: &self.layout,
+            looks: &self.looks,
+            music: &self.music,
+            sampler: &self.sampler,
+            atlas: &self.atlas_view,
+            paths: &self.paths,
+        };
+        let baked = self.bake.as_ref().and_then(Bake::view);
+        self.bind = reads.bind(device, &self.uniforms, baked);
+        self.bound = generation;
     }
 
     /// Draws its shapes into `pass` (nothing without any).
@@ -360,23 +437,26 @@ impl StagePass {
     }
 }
 
-/// What the stage's pipelines read, but for the atlas and the tubes'
-/// lines (made again as they grow).
-struct Reads<'a> {
+/// What the stage's pipelines read but their numbers and the paper's
+/// bake: the atlas and the tubes' lines as they are now (made again as
+/// they grow).
+pub(super) struct Reads<'a> {
     layout: &'a wgpu::BindGroupLayout,
-    uniforms: &'a wgpu::Buffer,
     looks: &'a wgpu::Buffer,
     music: &'a wgpu::Buffer,
     sampler: &'a wgpu::Sampler,
+    atlas: &'a wgpu::TextureView,
+    paths: &'a wgpu::Buffer,
 }
 
 impl Reads<'_> {
-    /// The bind group of these with `atlas` and `paths`.
-    fn bind(
+    /// The bind group of these with `uniforms` (the frame's numbers) and
+    /// `baked` (the paper's bake; none: the atlas stands for it).
+    pub(super) fn bind(
         &self,
         device: &wgpu::Device,
-        atlas: &wgpu::TextureView,
-        paths: &wgpu::Buffer,
+        uniforms: &wgpu::Buffer,
+        baked: Option<&wgpu::TextureView>,
     ) -> wgpu::BindGroup {
         device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("jodeldiplom stage"),
@@ -384,11 +464,11 @@ impl Reads<'_> {
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: self.uniforms.as_entire_binding(),
+                    resource: uniforms.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::TextureView(atlas),
+                    resource: wgpu::BindingResource::TextureView(self.atlas),
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,
@@ -396,7 +476,7 @@ impl Reads<'_> {
                 },
                 wgpu::BindGroupEntry {
                     binding: 3,
-                    resource: paths.as_entire_binding(),
+                    resource: self.paths.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 4,
@@ -406,6 +486,10 @@ impl Reads<'_> {
                     binding: 5,
                     resource: self.music.as_entire_binding(),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: wgpu::BindingResource::TextureView(baked.unwrap_or(self.atlas)),
+                },
             ],
         })
     }
@@ -413,7 +497,7 @@ impl Reads<'_> {
 
 /// `group`'s pipeline: the stage's shader with only its group's code
 /// ([`shader`]), into frames of `format` as `blend` says.
-fn make(
+pub(super) fn make(
     device: &wgpu::Device,
     layout: &wgpu::PipelineLayout,
     (format, blend): (wgpu::TextureFormat, Blend),

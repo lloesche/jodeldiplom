@@ -113,13 +113,16 @@ pub(super) fn look(verdict: Verdict, tint: &Tint) -> Look {
 
 /// The sheet's shake `hit` seconds after the verdict's beat (before it:
 /// less than none), `s` its unit: a seal stamped down, the bigger the
-/// medal the harder; a star none.
+/// medal the harder; a star none. In whole pixels: everything on the sheet
+/// moves with it, its paper read from its bake as it was drawn
+/// (`stage_gpu::bake`).
 pub(super) fn shake(look: &Look, hit: Option<f32>, s: f32) -> (f32, f32) {
     let Some(a) = hit.filter(|a| (0.0..0.45).contains(a)) else {
         return (0.0, 0.0);
     };
     let k = look.shake * s * (-a * 10.0).exp();
-    (k * (a * 95.0).sin(), 0.6 * k * (a * 80.0).cos())
+    let (dx, dy) = (k * (a * 95.0).sin(), 0.6 * k * (a * 80.0).cos());
+    (dx.round(), dy.round())
 }
 
 /// The rays turning out from behind the sheet once a medal is stamped
@@ -432,6 +435,7 @@ mod tests {
         assert_eq!(shake(&gold, Some(-0.1), 9.0), (0.0, 0.0));
         let (dx, dy) = shake(&gold, Some(0.02), 9.0);
         assert!(dx.abs() + dy.abs() > 0.5);
+        assert_eq!((dx.fract(), dy.fract()), (0.0, 0.0), "whole pixels");
         assert_eq!(shake(&gold, Some(3.0), 9.0), (0.0, 0.0));
         for v in [Verdict::Cheer, Verdict::Whole, Verdict::Silent] {
             assert_eq!(shake(&look(v, &Tint::STAGE), Some(0.02), 9.0), (0.0, 0.0));

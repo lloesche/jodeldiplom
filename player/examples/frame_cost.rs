@@ -11,27 +11,33 @@
 //! (`all`: the Diva peak with every registered effect in it at full
 //! strength at once, the edges on fire, the bulbs, the coins too, and the
 //! lyrics' lines in every lyric treatment in turn), and the Jodeldiplom
-//! after that song (a new best:
-//! its confetti), timed over its whole reveal. The singing scenes are
+//! after that song (a new best: its confetti), timed over its whole
+//! reveal, twice ([`Judge`]). The singing scenes are
 //! timed over their second up to the moment looked at, each in every size
 //! asked for (`--size WxH`, again for more; the default a 16-inch MacBook
 //! Pro's screen, 3024 × 1964), `--density D` pixels to a point (the
 //! window's scale; 2, a Retina screen's, by default); each step's median,
-//! mean and worst, the frame's total (and its worst), and what the
-//! processor spent making each frame's stage and backdrop. The GPU must
-//! write timestamps (Vulkan, DirectX 12, Metal on Apple's chips). `--png
+//! mean, 99th percentile and worst, the same of the frames' totals, and
+//! what the processor spent making each frame's stage and backdrop; which
+//! frame was the worst (its number, its time in the scene, the beats that
+//! had just landed or the phrase just decided, and how much it drew),
+//! and how many frames went over the budgets. The GPU must write
+//! timestamps (Vulkan, DirectX 12, Metal on Apple's chips). `--png
 //! OUT_DIR`: the last frame of each as a PNG (`<scene>-<W>x<H>.png`,
 //! written whole), to hold the look to. Each scene's stage is also timed
 //! kind by kind (the frame drawn with that kind of shape alone: its stage,
 //! screen-pass and top steps) and effect by effect (the frame with that
 //! effect's shapes alone, its light and its text in its treatment too: its
-//! stage, light, screen-pass and top steps). First, how long the device
-//! and the window's pipelines take to make.
+//! stage, light, screen-pass and top steps); the diploma's only once its
+//! sheet has unrolled, its paper baked (the paper alone is its bake read).
+//! First, how long the device and the window's pipelines take to make.
 //!
 //! `--budget MS`: exits with 1 (after printing it all) where any scene's
 //! worst frame took the GPU longer than that in all, or any step did;
-//! `--step-budget MS`: where any step's worst did (the budgets to hold
-//! to, and on which machine: PERFORMANCE.md).
+//! `--step-budget MS`: where any step's worst did. The diploma's frames
+//! are each the lesser of its two runs' ([`Judge::MinOfTwo`]): a hitch
+//! at the same moment both times counts, the machine's own in one does
+//! not (the budgets to hold to, and on which machine: PERFORMANCE.md).
 //!
 //! ```text
 //! cargo run --release -p jodeldiplom --example frame_cost --
@@ -45,7 +51,7 @@ use std::time::Instant;
 
 use jodeldiplom::art::Art;
 use jodeldiplom::core::shine::{Shone, Tier};
-use jodeldiplom::core::singing::{Shown, Singing, SongResult};
+use jodeldiplom::core::singing::{Reveal, Shown, Singing, SongResult, UNROLL};
 use jodeldiplom::cover::{Apart, Layers};
 use jodeldiplom::gui::backdrop::{BackdropFrame, Cue, Visualiser};
 use jodeldiplom::gui::big_text::Faces;
@@ -75,33 +81,37 @@ const DECIDED: [f64; 2] = [4.0, 9.2];
 /// A scene: its name, the tier its phrases are decided at (none: no
 /// phrase decided; the streak held at least at the tier's rung), whether
 /// the song's diploma is timed from the moment looked at (its whole
-/// reveal) rather than the singing up to it, and whether every effect is
-/// in its frames at once ([`every_effect`]).
+/// reveal) rather than the singing up to it, whether every effect is in
+/// its frames at once ([`every_effect`]), and how its frames are judged
+/// against the budgets.
 struct Scene {
     name: String,
     tier: Option<Tier>,
     diploma: bool,
     every: bool,
+    judge: Judge,
 }
 
 /// The scenes: the normal one, a tier's each, every effect at once and
-/// the diploma (at the top).
+/// the diploma (at the top, judged by the lesser of two runs).
 fn scenes() -> Vec<Scene> {
     let scene = |name: &str, tier, diploma, every| Scene {
         name: name.to_owned(),
         tier,
         diploma,
         every,
+        judge: Judge::Worst,
     };
     let tiers =
         (Tier::ALL.into_iter()).map(|t| scene(&t.name().to_lowercase(), Some(t), false, false));
+    let diploma = Scene {
+        judge: Judge::MinOfTwo,
+        ..scene("diploma", Some(Tier::TOP), true, false)
+    };
     [scene("normal", None, false, false)]
         .into_iter()
         .chain(tiers)
-        .chain([
-            scene("all", Some(Tier::TOP), false, true),
-            scene("diploma", Some(Tier::TOP), true, false),
-        ])
+        .chain([scene("all", Some(Tier::TOP), false, true), diploma])
         .collect()
 }
 
@@ -374,69 +384,210 @@ impl Rig<'_> {
     }
 }
 
-/// The frames timed (each its steps' GPU times) and what the processor
-/// took for each (the stage and the backdrop made, the pixmap painted):
-/// each step's median, mean and worst, the GPU's total, and the
-/// processor's, in milliseconds. Gives back each step's worst and the
-/// worst frame's total (`GPU total`).
+/// How a scene's frames are judged against the budgets: by its worst
+/// frame, or (a scene that can be shown again: the diploma's reveal) timed
+/// twice and each frame's steps taken at the lesser of the two runs', its
+/// worst frame judged then: a hitch at the same moment in both runs stays,
+/// the machine's own, in one, goes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Judge {
+    Worst,
+    MinOfTwo,
+}
+
+impl Judge {
+    /// How many times its frames are timed.
+    fn runs(self) -> usize {
+        match self {
+            Judge::Worst => 1,
+            Judge::MinOfTwo => 2,
+        }
+    }
+}
+
+/// What a frame drew: its shapes, its bursts, its light (shapes and
+/// bursts) and its text put into the atlas.
+#[derive(Clone, Copy, Debug)]
+struct Drew {
+    shapes: usize,
+    bursts: usize,
+    lights: usize,
+    uploads: usize,
+}
+
+impl Drew {
+    fn of(frame: &StageFrame) -> Drew {
+        Drew {
+            shapes: frame.instances.len() + frame.top.len() + frame.screen.len(),
+            bursts: frame.sprays.len(),
+            lights: frame.lights.len() + frame.light_sprays.len(),
+            uploads: frame.uploads.len(),
+        }
+    }
+}
+
+/// A frame timed: its steps' GPU times and what the processor took for
+/// its stage and its pixmap (ms), its time in the scene (s) and what it
+/// drew.
+struct Timed {
+    steps: Vec<(&'static str, f64)>,
+    cpu: [f64; 2],
+    at: f64,
+    drew: Drew,
+}
+
+impl Timed {
+    fn total(&self) -> f64 {
+        self.steps.iter().map(|s| s.1).sum()
+    }
+}
+
+/// The same frames timed in two runs: each step of each frame (and the
+/// processor's times) the lesser of the two runs'.
+fn lesser(a: Vec<Timed>, b: &[Timed]) -> Vec<Timed> {
+    (a.into_iter().zip(b))
+        .map(|(mut a, b)| {
+            for (s, t) in a.steps.iter_mut().zip(&b.steps) {
+                s.1 = s.1.min(t.1);
+            }
+            a.cpu = [0, 1].map(|k| a.cpu[k].min(b.cpu[k]));
+            a
+        })
+        .collect()
+}
+
+/// A series' 99th percentile (the nearest rank) and worst.
+#[derive(Clone, Copy, Debug, Default)]
+struct Spread {
+    p99: f64,
+    worst: f64,
+}
+
+/// The `frames` timed: each step's median, mean, 99th percentile and
+/// worst, the same of the GPU's totals and of the processor's times, in
+/// milliseconds; the worst frame (its number and, from `moment` at its
+/// time, what was on screen then) and how many frames went over the
+/// `budgets` ([`over`]'s). Gives back each step's spread and the totals'
+/// (`GPU total`).
 fn print(
     title: &str,
-    frames: &[Vec<(&'static str, f64)>],
-    cpu: &[[f64; 2]],
-) -> Vec<(&'static str, f64)> {
-    let stats = |v: &mut Vec<f64>| {
+    frames: &[Timed],
+    moment: &dyn Fn(f64) -> String,
+    (budget, step_budget): (Option<f64>, Option<f64>),
+) -> Vec<(&'static str, Spread)> {
+    let stats = |mut v: Vec<f64>| {
         v.sort_by(f64::total_cmp);
         let median = v.get(v.len() / 2).copied().unwrap_or(0.0);
-        let worst = v.last().copied().unwrap_or(0.0);
-        (median, v.iter().sum::<f64>() / v.len().max(1) as f64, worst)
+        let rank = (v.len() as f64 * 0.99).ceil() as usize;
+        let spread = Spread {
+            p99: v.get(rank.saturating_sub(1)).copied().unwrap_or(0.0),
+            worst: v.last().copied().unwrap_or(0.0),
+        };
+        let mean = v.iter().sum::<f64>() / v.len().max(1) as f64;
+        println!(
+            "{median:7.3} {mean:7.3} {:7.3} {:7.3}",
+            spread.p99, spread.worst
+        );
+        spread
     };
     println!(
-        "{title}: {} frames, ms (median / mean / worst)",
+        "{title}: {} frames, ms (median / mean / p99 / worst)",
         frames.len()
     );
     let names = frames
         .first()
-        .map_or(Vec::new(), |f| f.iter().map(|s| s.0).collect());
-    let mut worsts = Vec::new();
+        .map_or(Vec::new(), |f| f.steps.iter().map(|s| s.0).collect());
+    let mut spreads = Vec::new();
     for name in names {
-        let mut v: Vec<f64> = frames
-            .iter()
-            .flat_map(|f| f.iter().filter(|s| s.0 == name).map(|s| s.1))
+        let v = (frames.iter())
+            .flat_map(|f| f.steps.iter().filter(|s| s.0 == name).map(|s| s.1))
             .collect();
-        let (median, mean, worst) = stats(&mut v);
-        println!("  {name:<10} {median:7.3} {mean:7.3} {worst:7.3}");
-        worsts.push((name, worst));
+        print!("  {name:<10} ");
+        spreads.push((name, stats(v)));
     }
-    let mut total: Vec<f64> = frames.iter().map(|f| f.iter().map(|s| s.1).sum()).collect();
-    let (median, mean, worst) = stats(&mut total);
-    println!("  {:<10} {median:7.3} {mean:7.3} {worst:7.3}", "GPU total");
-    worsts.push(("GPU total", worst));
+    print!("  {:<10} ", "GPU total");
+    spreads.push((
+        "GPU total",
+        stats(frames.iter().map(Timed::total).collect()),
+    ));
     for (k, name) in ["CPU stage", "CPU pixmap"].into_iter().enumerate() {
-        let (median, mean, worst) = stats(&mut cpu.iter().map(|c| c[k]).collect());
-        println!("  {name:<10} {median:7.3} {mean:7.3} {worst:7.3}");
+        print!("  {name:<10} ");
+        stats(frames.iter().map(|f| f.cpu[k]).collect());
     }
-    worsts
+    let worst = (frames.iter().enumerate()).max_by(|a, b| a.1.total().total_cmp(&b.1.total()));
+    if let Some((n, f)) = worst {
+        let d = f.drew;
+        println!(
+            "  worst frame: #{n}, {}: {} shapes, {} bursts, {} lights, {} text uploads",
+            moment(f.at),
+            d.shapes,
+            d.bursts,
+            d.lights,
+            d.uploads
+        );
+    }
+    if let Some(budget) = budget {
+        let over = frames.iter().filter(|f| f.total() > budget).count();
+        println!("  {over} frames over {budget} ms in all");
+    }
+    if let Some(limit) = step_budget {
+        let over = (frames.iter())
+            .filter(|f| f.steps.iter().any(|s| s.1 > limit))
+            .count();
+        println!("  {over} frames with a step over {limit} ms");
+    }
+    spreads
 }
 
-/// What went over the budgets (`--budget`: the worst frame's GPU total
-/// and every step; `--step-budget`: every step), scene by scene: each
-/// as a line saying what, by how much.
+/// What went over the budgets (`--budget`: the frames' GPU total and
+/// every step; `--step-budget`: every step), scene by scene, each scene's
+/// worst frame (of the series its [`Judge`] makes): each as a line saying
+/// what, by how much.
 fn over(
-    scenes: &[(String, Vec<(&'static str, f64)>)],
+    scenes: &[(String, Vec<(&'static str, Spread)>)],
     (budget, step_budget): (Option<f64>, Option<f64>),
 ) -> Vec<String> {
     let mut over = Vec::new();
-    for (scene, worsts) in scenes {
-        for &(name, worst) in worsts {
+    for (scene, spreads) in scenes {
+        for &(name, spread) in spreads {
             let step = step_budget.filter(|_| name != "GPU total");
             for limit in [budget, step].into_iter().flatten() {
-                if worst > limit {
+                if spread.worst > limit {
+                    let worst = spread.worst;
                     over.push(format!("{scene}: {name} {worst:.3} ms over {limit} ms"));
                 }
             }
         }
     }
     over
+}
+
+/// When `now` is into the song (its phrases decided at `tier`, none:
+/// none decided, [`DECIDED`]).
+fn in_song(now: f64, tier: Option<Tier>) -> String {
+    let decided = tier.and_then(|tier| {
+        let d = DECIDED.iter().rev().find(|&&d| d <= now + 1e-9)?;
+        Some(format!(
+            ", {:.2} s after a phrase decided {}",
+            now - d,
+            tier.name()
+        ))
+    });
+    format!("{now:.3} s into the song{}", decided.unwrap_or_default())
+}
+
+/// When `t` is into the diploma's `reveal`: the beats that landed in the
+/// half second before.
+fn in_reveal(reveal: &Reveal, t: f64) -> String {
+    let beats: Vec<String> = (reveal.between(t - 0.5, t))
+        .map(|(at, beat)| format!("{beat:?} {:.2} s before", t - at))
+        .collect();
+    let landed = if beats.is_empty() {
+        "no beat in the half second before".to_owned()
+    } else {
+        beats.join(", ")
+    };
+    format!("{t:.3} s into the reveal, {landed}")
 }
 fn main() {
     jodeldiplom::gui::fonts::use_fonts(EMBEDDED_FONTS);
@@ -507,7 +658,7 @@ fn main() {
                 size: (w, h),
                 made: 0,
             };
-            let (mut cpu_ms, mut frames) = (Vec::new(), Vec::new());
+            let mut frames = Vec::new();
             let (mut kinds, mut effects) = (Alone::default(), Alone::default());
             let mut heard = 0usize;
             for f in 0.. {
@@ -549,40 +700,82 @@ fn main() {
                 }
                 if !scene.diploma && now > AT - TIMED {
                     let alone = Some((&mut kinds, &mut effects));
-                    frames.push(time(&mut gpu, &backdrop, &frame, (w, h), alone));
-                    cpu_ms.push(cpu);
+                    let steps = time(&mut gpu, &backdrop, &frame, (w, h), alone);
+                    let drew = Drew::of(&frame);
+                    frames.push(Timed {
+                        steps,
+                        cpu,
+                        at: now,
+                        drew,
+                    });
                 } else {
                     gpu.set_backdrop(Some(&backdrop), w, h);
                     gpu.set_stage(Some(&frame), w, h);
                 }
             }
+            let mut revealed = None;
             if scene.diploma {
                 // The song over: its result, a first score (a new best),
-                // revealed frame by frame until it is still.
+                // revealed frame by frame until it is still, as many times
+                // as it is judged by.
                 let (tally, phrases, notes) = singing.take();
                 let result = SongResult::new("Shine on".into(), &tally, phrases, notes, None);
                 let shown = Arc::new(Shown::new(result, 1, 0));
                 let still = shown.reveal.still();
-                for f in 0.. {
-                    let t = f as f64 / FPS;
-                    if t > still {
-                        break;
+                for run in 0..scene.judge.runs() {
+                    // Shown afresh each time, as after a song: the stage
+                    // gone (its paper's bake let go) and back, its bake's
+                    // texture made then, before the reveal.
+                    gpu.set_stage(None, w, h);
+                    let (_, lane, _) = rig.frame(&singing, AT, None);
+                    gpu.set_stage(Some(&lane), w, h);
+                    let mut timed = Vec::new();
+                    for f in 0.. {
+                        let t = f as f64 / FPS;
+                        if t > still {
+                            break;
+                        }
+                        let result = ResultShown {
+                            shown: shown.clone(),
+                            t,
+                            next: String::new(),
+                            again: false,
+                        };
+                        let (backdrop, frame, cpu) = rig.frame(&singing, AT, Some(result));
+                        // Kind by kind every tenth frame of the first run
+                        // (the reveal is long), once the sheet has unrolled
+                        // and its paper is baked: the paper alone is its
+                        // bake read.
+                        let alone = run == 0 && f % 10 == 0 && t >= UNROLL + 0.1;
+                        let alone = alone.then_some((&mut kinds, &mut effects));
+                        let steps = time(&mut gpu, &backdrop, &frame, (w, h), alone);
+                        let drew = Drew::of(&frame);
+                        timed.push(Timed {
+                            steps,
+                            cpu,
+                            at: t,
+                            drew,
+                        });
                     }
-                    let result = ResultShown {
-                        shown: shown.clone(),
-                        t,
-                        next: String::new(),
-                        again: false,
+                    frames = if run == 0 {
+                        timed
+                    } else {
+                        lesser(frames, &timed)
                     };
-                    let (backdrop, frame, cpu) = rig.frame(&singing, AT, Some(result));
-                    // Kind by kind every tenth frame: the reveal is long.
-                    let alone = (f % 10 == 0).then_some((&mut kinds, &mut effects));
-                    frames.push(time(&mut gpu, &backdrop, &frame, (w, h), alone));
-                    cpu_ms.push(cpu);
                 }
+                revealed = Some(shown);
             }
-            let title = format!("{} {w}x{h}", scene.name);
-            worsts.push((title.clone(), print(&title, &frames, &cpu_ms)));
+            let judged = match scene.judge {
+                Judge::Worst => "",
+                Judge::MinOfTwo => ", each frame the lesser of two runs",
+            };
+            let title = format!("{} {w}x{h}{judged}", scene.name);
+            let moment = |at: f64| match &revealed {
+                Some(shown) => in_reveal(&shown.reveal, at),
+                None => in_song(at, scene.tier),
+            };
+            let spreads = print(&title, &frames, &moment, budgets);
+            worsts.push((title, spreads));
             kinds.print("the stage, kind by kind");
             effects.print("the effects, one by one");
             if let Some(dir) = &png {

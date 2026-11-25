@@ -20,6 +20,8 @@ pub enum Group {
     Seal,
     /// The diploma's paper, stamps and signature.
     Paper,
+    /// The diploma's paper read from its bake ([`kind::BAKED`]).
+    Baked,
     /// An effect's shapes ([`fx::Spec::kinds`]).
     Shapes(Fx),
     /// Text in an effect's lyric treatment ([`fx::Spec::lyric`]).
@@ -47,6 +49,7 @@ impl Group {
             Group::Glory,
             Group::Seal,
             Group::Paper,
+            Group::Baked,
         ]
         .into_iter()
         .chain(shapes.map(Group::Shapes))
@@ -101,12 +104,13 @@ impl Group {
             kind::METER | kind::RING | kind::MARK => Group::Glory,
             kind::RAYS | kind::STAR | kind::SEAL => Group::Seal,
             kind::PAPER | kind::STAMP | kind::SIGNATURE => Group::Paper,
+            kind::BAKED => Group::Baked,
             _ => Group::Plain,
         }
     }
 
     /// As the shader takes it (`GROUP`, and its `G_` constants): the
-    /// stage's own 0 to 4, an effect's shapes [`SHAPES`] on, its
+    /// stage's own 0 to 5, an effect's shapes [`SHAPES`] on, its
     /// treatment's [`LYRIC`] on.
     pub fn code(self) -> u32 {
         match self {
@@ -115,6 +119,7 @@ impl Group {
             Group::Glory => 2,
             Group::Seal => 3,
             Group::Paper => 4,
+            Group::Baked => 5,
             Group::Shapes(fx) => SHAPES + fx.index() as u32,
             Group::Lyric(fx) => LYRIC + fx.index() as u32,
         }
@@ -162,7 +167,7 @@ fn kinds_wgsl() -> String {
 /// The groups as the shader takes them ([`Group`]): `G_` and its name, and
 /// where the effects' shapes' and treatments' begin.
 fn groups_wgsl() -> String {
-    let own = ["PLAIN", "BUBBLE", "GLORY", "SEAL", "PAPER"]
+    let own = ["PLAIN", "BUBBLE", "GLORY", "SEAL", "PAPER", "BAKED"]
         .iter()
         .enumerate()
         .map(|(g, name)| format!("const G_{name}: u32 = {g}u;\n"));

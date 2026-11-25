@@ -8,9 +8,10 @@ struct Screen {
     srgb: f32,
     atlas: f32,
     time: f32,
-    pad0: f32,
-    pad1: f32,
-    pad2: f32,
+    pad: f32,
+    // Where the frame's corner is, in the window's pixels: none but on the
+    // diploma's paper's bake (`stage_gpu::bake`).
+    origin: vec2<f32>,
 };
 
 @group(0) @binding(0) var<uniform> screen: Screen;
@@ -21,6 +22,8 @@ struct Screen {
 // The effects' looks (`fx::Spec::params`), and the music this frame.
 @group(0) @binding(4) var<uniform> looks: array<vec4<f32>, FX_COUNT>;
 @group(0) @binding(5) var<uniform> music: Music;
+// The diploma's paper, baked (`stage_gpu::bake`).
+@group(0) @binding(6) var baked: texture_2d<f32>;
 
 fn path_point(i: u32) -> vec4<f32> {
     return paths[i];
@@ -84,7 +87,8 @@ fn vs(@builtin(vertex_index) v: u32, i: In) -> Out {
     if k == K_TEXT && i.params.z != 0.0 {
         at = turn_about(p, (quad.xy + quad.zw) * 0.5, i.params.z);
     }
-    o.pos = vec4<f32>(at.x / screen.size.x * 2.0 - 1.0, 1.0 - at.y / screen.size.y * 2.0, 0.0, 1.0);
+    let f = at - screen.origin;
+    o.pos = vec4<f32>(f.x / screen.size.x * 2.0 - 1.0, 1.0 - f.y / screen.size.y * 2.0, 0.0, 1.0);
     o.p = p;
     o.uv = i.uv;
     o.quad = quad;
@@ -253,6 +257,15 @@ fn text(o: Out, p: vec2<f32>) -> vec4<f32> {
     return over_plus(c.rgb, c.a, vec3<f32>(0.0));
 }
 
+// The diploma's paper as it was baked (`stage_gpu::bake`), `shape.xy`
+// where the bake's corner is now (a whole pixel): each pixel as it was
+// drawn.
+fn baked_paper(o: Out) -> vec4<f32> {
+    let i = vec2<i32>(floor(o.pos.xy - o.shape.xy));
+    let hi = vec2<i32>(textureDimensions(baked)) - vec2<i32>(1);
+    return textureLoad(baked, clamp(i, vec2<i32>(0), hi), 0);
+}
+
 // A shape of this pipeline's group (`GROUP`: `stage_gpu::Group`; the
 // other groups' code is left out where it is compiled).
 @fragment
@@ -280,6 +293,9 @@ fn fs(o: Out) -> @location(0) vec4<f32> {
     }
     if GROUP == G_PAPER {
         return paper_shape(o, p, k);
+    }
+    if GROUP == G_BAKED {
+        return baked_paper(o);
     }
     if k == K_PILL || k == K_FILL {
         return pill(o, p, k, false);
