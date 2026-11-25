@@ -1622,6 +1622,7 @@ dependencies = [
 name = "jodel-gpu"
 version = "0.1.0"
 dependencies = [
+ "durable",
  "hound",
  "jodel-lyrics",
  "jodel-output",

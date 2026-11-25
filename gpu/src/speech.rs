@@ -4,7 +4,6 @@
 //! multiply), giving the same logits to within rounding.
 
 use std::collections::HashMap;
-use std::num::NonZeroU64;
 use std::sync::Mutex;
 
 use jodel_lyrics::aligner::Acoustic;
@@ -14,9 +13,12 @@ use jodel_lyrics::speech::{
 };
 use jodel_lyrics::{Maker, VOCALS_RATE};
 
+use crate::engine::{
+    self, guarded, kernels_source, params, spread, Access, Kernels, Model, Program,
+};
+use crate::pace::Pieces;
 use crate::packer::Packer;
-
-use super::{bytes, guarded, spread, Turned, PARAM_SIZE, PARAM_STRIDE};
+use crate::Turned;
 
 const CHANNELS: usize = 512;
 const DIM: usize = 768;
@@ -39,8 +41,8 @@ enum Kernel {
     Attention,
 }
 
-impl Kernel {
-    const ALL: [Kernel; 8] = [
+impl Kernels for Kernel {
+    const ALL: &'static [Kernel] = &[
         Kernel::Matmul,
         Kernel::Conv0,
         Kernel::ChanNormGelu,
@@ -50,6 +52,8 @@ impl Kernel {
         Kernel::PosAdd,
         Kernel::Attention,
     ];
+    const PARAM_BYTES: u64 = 48;
+    const EXTRA: &'static [Access] = &[];
 
     fn entry(self) -> &'static str {
         match self {
@@ -131,21 +135,7 @@ fn pack(model: &Wav2Vec2) -> (Vec<f32>, HashMap<String, u32>) {
 }
 
 /// One dispatch.
-struct Op {
-    kernel: Kernel,
-    /// src, aux, dst.
-    buffers: [Buf; 3],
-    params: [u32; 12],
-    groups: [u32; 3],
-}
-
-fn params(values: &[usize]) -> [u32; 12] {
-    let mut p = [0u32; 12];
-    for (slot, &v) in p.iter_mut().zip(values) {
-        *slot = v as u32;
-    }
-    p
-}
+type Op = engine::Op<Kernel, [Buf; 3], 12>;
 
 /// `dst` (`m × n` at `c_off`, rows `ldc` apart) (+)= `src` rows (`k` values
 /// from `a_off`, `lda` apart) times the weight at `w` (+ the bias at `bias`).
@@ -191,8 +181,8 @@ fn each(ops: &mut Vec<Op>, kernel: Kernel, buffers: [Buf; 3], count: usize, valu
     });
 }
 
-/// The dispatches of a piece of `samples` samples; its frames.
-fn plan(at: &HashMap<String, u32>, samples: usize) -> (Vec<Op>, usize) {
+/// The dispatches of a piece of `samples` samples.
+fn plan(at: &HashMap<String, u32>, samples: usize) -> Vec<Op> {
     let w = |name: &str| at[name] as usize;
     let wu = |name: &str| at[name];
     let frames = conv_frames(samples);
@@ -360,28 +350,13 @@ fn plan(at: &HashMap<String, u32>, samples: usize) -> (Vec<Op>, usize) {
         Some(wu("head.b")),
         false,
     );
-    (ops, f)
+    ops
 }
 
-/// A recorded piece length: its dispatches' bind groups and parameters.
-struct Plan {
-    ops: Vec<(Kernel, usize, u64, [u32; 3])>,
-    frames: usize,
-    _params: wgpu::Buffer,
-}
-
+/// The model on its device, and where its weights are there.
 struct Inner {
-    device: wgpu::Device,
-    queue: wgpu::Queue,
-    pipelines: HashMap<Kernel, wgpu::ComputePipeline>,
-    layout: wgpu::BindGroupLayout,
-    buffers: HashMap<Buf, wgpu::Buffer>,
-    staging: wgpu::Buffer,
+    model: Model<Kernel, Buf>,
     at: HashMap<String, u32>,
-    bind_groups: Vec<wgpu::BindGroup>,
-    bind_index: HashMap<([Buf; 3], usize), usize>,
-    plans: HashMap<usize, Plan>,
-    pieces: crate::pace::Pieces,
 }
 
 /// wav2vec2-base-960h on the GPU.
@@ -436,12 +411,9 @@ impl GpuSpeech {
             .inner
             .lock()
             .map_err(|_| "the GPU speech model failed before".to_owned())?;
-        let device = inner.device.clone();
+        let device = inner.model.program.device.clone();
         let x = levels.normalise(piece);
-        guarded(&device, || {
-            inner.plan(x.len());
-            inner.run(&x, &levels.channels(&x))
-        })
+        guarded(&device, || inner.run(&x, &levels.channels(&x)))
     }
 }
 
@@ -481,205 +453,32 @@ impl Inner {
             (Buf::Pos, f * DIM),
             (Buf::Logits, f * TOKENS),
         ];
-        for &(buf, len) in &sizes {
-            let size = (len * 4) as u64;
-            if size > limits.max_storage_buffer_binding_size || size > limits.max_buffer_size {
-                return Err(format!(
-                    "the GPU's buffers are too small for {buf:?} ({size} bytes)"
-                ));
-            }
-        }
-        let buffers: HashMap<Buf, wgpu::Buffer> = sizes
-            .iter()
-            .map(|&(buf, len)| {
-                let b = device.create_buffer(&wgpu::BufferDescriptor {
-                    label: Some("jodel-gpu speech"),
-                    size: (len.max(1) * 4) as u64,
-                    usage: wgpu::BufferUsages::STORAGE
-                        | wgpu::BufferUsages::COPY_DST
-                        | wgpu::BufferUsages::COPY_SRC,
-                    mapped_at_creation: false,
-                });
-                (buf, b)
-            })
-            .collect();
-        queue.write_buffer(&buffers[&Buf::Weights], 0, &bytes(&weights));
-        drop(weights);
-        let staging = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("jodel-gpu speech logits"),
-            size: (f * TOKENS * 4) as u64,
-            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        let storage = |binding, read_only| wgpu::BindGroupLayoutEntry {
-            binding,
-            visibility: wgpu::ShaderStages::COMPUTE,
-            ty: wgpu::BindingType::Buffer {
-                ty: wgpu::BufferBindingType::Storage { read_only },
-                has_dynamic_offset: false,
-                min_binding_size: None,
-            },
-            count: None,
-        };
-        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("jodel-gpu speech"),
-            entries: &[
-                storage(0, true),
-                storage(1, true),
-                storage(2, false),
-                wgpu::BindGroupLayoutEntry {
-                    binding: 3,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: true,
-                        min_binding_size: NonZeroU64::new(PARAM_SIZE),
-                    },
-                    count: None,
-                },
-            ],
-        });
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("jodel-gpu speech"),
-            bind_group_layouts: &[Some(&layout)],
-            ..Default::default()
-        });
-        let source = crate::kernels_source(&[include_str!("speech.wgsl")]);
-        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("jodel-gpu speech kernels"),
-            source: wgpu::ShaderSource::Wgsl(source.into()),
-        });
-        let pipelines = Kernel::ALL
-            .iter()
-            .map(|&k| {
-                let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                    label: Some(k.entry()),
-                    layout: Some(&pipeline_layout),
-                    module: &module,
-                    entry_point: Some(k.entry()),
-                    compilation_options: Default::default(),
-                    cache: None,
-                });
-                (k, pipeline)
-            })
-            .collect();
-        Ok(Inner {
+        let program = Program::new(
             device,
             queue,
-            pipelines,
-            layout,
-            buffers,
-            staging,
-            at,
-            bind_groups: Vec::new(),
-            bind_index: HashMap::new(),
-            plans: HashMap::new(),
-            pieces: crate::pace::Pieces::resting(),
-        })
-    }
-
-    /// The bind group of `buffers` with the parameters of plan `plan`.
-    fn bind_group(&mut self, buffers: [Buf; 3], params: &wgpu::Buffer, plan: usize) -> usize {
-        if let Some(&i) = self.bind_index.get(&(buffers, plan)) {
-            return i;
-        }
-        let entry = |binding: u32, buf: Buf| wgpu::BindGroupEntry {
-            binding,
-            resource: self.buffers[&buf].as_entire_binding(),
-        };
-        let group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("jodel-gpu speech"),
-            layout: &self.layout,
-            entries: &[
-                entry(0, buffers[0]),
-                entry(1, buffers[1]),
-                entry(2, buffers[2]),
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: params,
-                        offset: 0,
-                        size: NonZeroU64::new(PARAM_SIZE),
-                    }),
-                },
-            ],
-        });
-        self.bind_groups.push(group);
-        self.bind_index
-            .insert((buffers, plan), self.bind_groups.len() - 1);
-        self.bind_groups.len() - 1
-    }
-
-    /// The plan for pieces of `samples` samples, recorded on first use.
-    fn plan(&mut self, samples: usize) {
-        if self.plans.contains_key(&samples) {
-            return;
-        }
-        let (ops, frames) = plan(&self.at, samples);
-        let mut data = vec![0u8; ops.len() * PARAM_STRIDE as usize];
-        for (i, op) in ops.iter().enumerate() {
-            for (j, v) in op.params.iter().enumerate() {
-                let at = i * PARAM_STRIDE as usize + 4 * j;
-                data[at..at + 4].copy_from_slice(&v.to_le_bytes());
-            }
-        }
-        let params = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("jodel-gpu speech params"),
-            size: data.len() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        self.queue.write_buffer(&params, 0, &data);
-        let recorded = ops
-            .iter()
-            .enumerate()
-            .map(|(i, op)| {
-                let group = self.bind_group(op.buffers, &params, samples);
-                (op.kernel, group, i as u64 * PARAM_STRIDE, op.groups)
-            })
-            .collect();
-        // Pieces come in a few lengths (the last of a song's is shorter):
-        // older plans go when there are many.
-        if self.plans.len() > 8 {
-            self.plans.clear();
-            self.bind_groups.clear();
-            self.bind_index.clear();
-            return self.plan(samples);
-        }
-        self.plans.insert(
-            samples,
-            Plan {
-                ops: recorded,
-                frames,
-                _params: params,
-            },
-        );
-    }
-
-    /// One piece through its recorded plan, its first convolution's
-    /// channels at `channels` (each one's mean and 1/σ): the logits.
-    fn run(&mut self, x: &[f32], channels: &[f32]) -> Result<Vec<f32>, String> {
-        self.queue
-            .write_buffer(&self.buffers[&Buf::Audio], 0, &bytes(x));
-        self.queue
-            .write_buffer(&self.buffers[&Buf::Stats], 0, &bytes(channels));
-        let plan = &self.plans[&x.len()];
-        let size = (plan.frames * TOKENS * 4) as u64;
-        let (buffers, staging) = (&self.buffers, &self.staging);
-        crate::pace::dispatch(
-            &self.device,
-            &self.queue,
+            limits,
             "jodel-gpu speech",
-            &mut self.pieces,
-            &self.pipelines,
-            &self.bind_groups,
-            &plan.ops,
-            |_| {},
-            |encoder| {
-                encoder.copy_buffer_to_buffer(&buffers[&Buf::Logits], 0, staging, 0, size);
-            },
-        )?;
-        crate::device::read_back(&self.device, &self.staging, size as usize / 4)
+            &kernels_source(&[include_str!("speech.wgsl")]),
+        );
+        let model = Model::new(program, &sizes, f * TOKENS, Pieces::resting())?;
+        model.write(Buf::Weights, &weights);
+        Ok(Inner { model, at })
+    }
+
+    /// One piece through its plan (recorded on first use), its first
+    /// convolution's channels at `channels` (each one's mean and 1/σ): the
+    /// logits.
+    fn run(&mut self, x: &[f32], channels: &[f32]) -> Result<Vec<f32>, String> {
+        self.model.write(Buf::Audio, x);
+        self.model.write(Buf::Stats, channels);
+        let frames = conv_frames(x.len())[6];
+        let at = &self.at;
+        self.model.run(
+            x.len(),
+            || plan(at, x.len()),
+            |_, _| {},
+            (Buf::Logits, frames * TOKENS),
+        )
     }
 }
 

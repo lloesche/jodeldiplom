@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 rust-version = "1.87"
 license = "MIT"
-description = "The stem separator of jodel-rhythm on the GPU, through wgpu"
+description = "The player's networks on the GPU, through wgpu: the stem separator, the beat network, the speech models and the cover's depth and cut-out"
 
 [dependencies]
 jodel-rhythm = { path = "../rhythm" }
@@ -15,6 +15,8 @@ pollster = "1.0.1"
 wgpu = { version = "30.0.2", default-features = false, features = ["std", "parking_lot", "dx12", "metal", "vulkan", "wgsl"] }
 
 [dev-dependencies]
+# Every file the tests and examples write: whole or not at all, made durable.
+durable = { path = "../durable" }
 hound = "3.5"
 # The recogniser's kernels checked through Metal's and DirectX's writers on any
 # machine (wgpu's own naga).

@@ -35,6 +35,8 @@ use std::collections::HashMap;
 
 use jodel_tensors::SafeTensors;
 
+use crate::engine::{Access, Kernels};
+
 pub use depth::{Depth, GpuDepth};
 pub use matte::{GpuMatte, Matte};
 pub(crate) use ops::Plan;
@@ -62,8 +64,8 @@ pub(crate) enum Kernel {
     Softmax,
 }
 
-impl Kernel {
-    const ALL: [Kernel; 16] = [
+impl Kernels for Kernel {
+    const ALL: &'static [Kernel] = &[
         Kernel::Conv,
         Kernel::LayerNorm,
         Kernel::Act,
@@ -81,6 +83,9 @@ impl Kernel {
         Kernel::Bmm,
         Kernel::Softmax,
     ];
+    const PARAM_BYTES: u64 = 96;
+    /// After the parameters: the second buffer read.
+    const EXTRA: &'static [Access] = &[Access::Read];
 
     fn entry(self) -> &'static str {
         match self {

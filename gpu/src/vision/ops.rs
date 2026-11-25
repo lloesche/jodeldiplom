@@ -3,19 +3,11 @@
 //! `attention.wgsl`).
 
 use super::Kernel;
-use crate::spread;
+use crate::engine::{self, params, spread};
 
-/// One dispatch: its kernel, its buffers (plan buffers), its numbers and
-/// its workgroups.
-#[derive(Clone, Debug)]
-pub(crate) struct Op {
-    pub(crate) kernel: Kernel,
-    pub(crate) src: usize,
-    pub(crate) src2: usize,
-    pub(crate) dst: usize,
-    pub(crate) params: [u32; 24],
-    pub(crate) groups: [u32; 3],
-}
+/// One dispatch: its kernel, its buffers (the plan's: src, src2, dst), its
+/// numbers and its workgroups.
+pub(crate) type Op = engine::Op<Kernel, [usize; 3], 24>;
 
 /// An image (or rows of tokens) in a buffer: `views` of `h × w` pixels,
 /// each pixel's `c` channels from `off`, pixels `ld` apart.
@@ -182,14 +174,6 @@ pub(crate) struct Plan {
     free: Vec<usize>,
 }
 
-fn params(values: &[usize]) -> [u32; 24] {
-    let mut p = [0u32; 24];
-    for (slot, &v) in p.iter_mut().zip(values) {
-        *slot = u32::try_from(v).expect("a kernel's number fits 32 bits");
-    }
-    p
-}
-
 const SPARE: usize = 0;
 
 /// The pixels an instance norm's chunk spans.
@@ -254,7 +238,7 @@ impl Plan {
         src: usize,
         src2: usize,
         dst: usize,
-        p: [u32; 24],
+        p: [usize; 24],
         groups: [u32; 3],
     ) {
         assert!(
@@ -263,9 +247,7 @@ impl Plan {
         );
         self.ops.push(Op {
             kernel,
-            src,
-            src2,
-            dst,
+            buffers: [src, src2, dst],
             params: p,
             groups,
         });

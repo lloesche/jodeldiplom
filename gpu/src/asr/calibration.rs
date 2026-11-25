@@ -7,8 +7,9 @@
 
 use std::collections::HashMap;
 
-use super::ops::{fused, params, Op};
-use super::{spread, Buf, GpuAsr, Kernel};
+use super::ops::{fused, Op};
+use super::{Buf, GpuAsr, Kernel};
+use crate::engine::{params, spread};
 
 /// The statistics' bookkeeping.
 pub(super) struct Stats {
@@ -49,7 +50,7 @@ impl Stats {
         for op in ops {
             debug_assert!(!fused(op), "a fused multiply's input cannot be counted");
             if matches!(op.kernel, Kernel::Matmul | Kernel::Rows) {
-                let [m, _, k, a_off, lda, w] = [0, 1, 2, 3, 4, 5].map(|i| op.params[i] as usize);
+                let [m, _, k, a_off, lda, w] = [0, 1, 2, 3, 4, 5].map(|i| op.params[i]);
                 if let Some(&(_, s_off, _)) = self.at.get(&w) {
                     *self.rows_seen.entry(w).or_default() += m as u64;
                     out.push(Op {
@@ -73,9 +74,11 @@ impl GpuAsr {
         let mut inner = self.lock()?;
         if on {
             let zeros = vec![0.0f32; inner.stats.len];
-            inner
-                .queue
-                .write_buffer(&inner.buffers[&Buf::Stats], 0, &crate::bytes(&zeros));
+            inner.program.queue.write_buffer(
+                &inner.buffers[&Buf::Stats],
+                0,
+                &crate::engine::bytes(&zeros),
+            );
             inner.stats.rows_seen.clear();
         }
         inner.stats.on = on;

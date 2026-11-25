@@ -202,8 +202,11 @@ impl Inner {
                 *slot = id as f32;
             }
         }
-        self.queue
-            .write_buffer(&self.buffers[&Buf::Tokens], 0, &super::super::bytes(&ids));
+        self.program.queue.write_buffer(
+            &self.buffers[&Buf::Tokens],
+            0,
+            &crate::engine::bytes(&ids),
+        );
         let mut ops = self.encoder_ops(shape);
         let rows = b * r;
         each(

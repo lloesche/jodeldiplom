@@ -8,6 +8,7 @@
 )]
 
 use std::f64::consts::PI;
+use std::io::Cursor;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -23,18 +24,29 @@ fn gpu() -> Option<&'static dyn Separator> {
     GpuSeparator::shared().map(|g| g as &dyn Separator)
 }
 
-/// A kick every half second over a held A major chord, 24-bit stereo.
-fn kicks_and_chord() -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("jodel-gpu-playback-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
-    let path = dir.join("kicks.wav");
+/// A WAV file the test plays, under the build's own temporary folder
+/// (never the system's), gone with the test.
+struct Track(PathBuf);
+
+impl Drop for Track {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
+/// A kick every half second over a held A major chord, 24-bit stereo:
+/// made in memory, then written whole.
+fn kicks_and_chord() -> Track {
+    let path = Path::new(env!("CARGO_TARGET_TMPDIR"))
+        .join(format!("jodel-gpu-playback-{}.wav", std::process::id()));
     let spec = hound::WavSpec {
         channels: 2,
         sample_rate: RATE,
         bits_per_sample: 24,
         sample_format: hound::SampleFormat::Int,
     };
-    let mut writer = hound::WavWriter::create(&path, spec).unwrap();
+    let mut wav = Cursor::new(Vec::new());
+    let mut writer = hound::WavWriter::new(&mut wav, spec).unwrap();
     for n in 0..SECONDS * RATE as usize {
         let t = n as f64 / f64::from(RATE);
         let k = t % 0.5;
@@ -48,7 +60,8 @@ fn kicks_and_chord() -> PathBuf {
         writer.write_sample(v).unwrap();
     }
     writer.finalize().unwrap();
-    path
+    durable::write_atomic(&path, wav.get_ref()).unwrap();
+    Track(path)
 }
 
 /// The left channel of each stem's part as played beside the file, full
@@ -117,9 +130,9 @@ fn the_drums_keep_the_kicks_and_the_other_stem_the_chord() {
         eprintln!("skipped: no GPU");
         return;
     }
-    let path = kicks_and_chord();
+    let track = kicks_and_chord();
     let started = Instant::now();
-    let parts = played(&path);
+    let parts = played(&track.0);
     let took = started.elapsed();
     let part = |stem: Stem| &parts[LANES.iter().position(|&s| s == stem).unwrap()];
     let (drums, other) = (part(Stem::Drums), part(Stem::Other));

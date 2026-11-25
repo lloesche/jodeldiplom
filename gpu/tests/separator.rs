@@ -53,6 +53,36 @@ fn the_gpu_gives_the_cpu_masks() {
     assert!(p999 < 5e-3, "99.9th percentile {p999}");
 }
 
+/// A thread marked as doing background work gets the background
+/// separator, any other the shared one; and the background one separates
+/// as the shared one does.
+#[test]
+fn each_thread_gets_its_kind_of_separator() {
+    let Some(shared) = GpuSeparator::shared() else {
+        eprintln!("no usable GPU: skipped");
+        return;
+    };
+    let address = |s: Option<&'static GpuSeparator>| s.map(|s| s as *const GpuSeparator as usize);
+    assert_eq!(
+        address(GpuSeparator::for_this_thread()),
+        address(Some(shared))
+    );
+    let on_background = std::thread::spawn(move || {
+        jodel_gpu::pace::background();
+        address(GpuSeparator::for_this_thread())
+    })
+    .join()
+    .unwrap();
+    let background = GpuSeparator::background();
+    assert_eq!(on_background, address(background));
+    let (left, right) = clip(1.0);
+    let (frames, packed) = stems::packed_stft(&left, &right);
+    assert_eq!(
+        background.unwrap().masks(frames, &packed).unwrap(),
+        shared.masks(frames, &packed).unwrap()
+    );
+}
+
 #[test]
 fn a_full_chunk_is_quick() {
     let Some(gpu) = GpuSeparator::shared() else {

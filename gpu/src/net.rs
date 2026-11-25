@@ -12,15 +12,17 @@
 //! (`kernels.wgsl`, in the beat network's modes); the rest are in
 //! `net.wgsl`.
 
-use std::collections::HashMap;
-use std::num::NonZeroU64;
 use std::sync::{Mutex, OnceLock};
 
 use jodel_rhythm::net::mel::BANDS;
 use jodel_rhythm::net::{built_in_weights, NetRunner, PIECE_FRAMES};
 use jodel_rhythm::nn::weights::Weights;
 
-use super::{bytes, guarded, rotary_table, spread, Turned, PARAM_SIZE, PARAM_STRIDE};
+use crate::engine::{
+    self, guarded, kernels_source, params, rotary_table, spread, Access, Kernels, Model, Program,
+};
+use crate::pace::{self, Pieces};
+use crate::Turned;
 
 /// The front end's channels after the stem, and the transformer's width.
 const STEM: usize = 32;
@@ -43,8 +45,8 @@ enum Kernel {
     Attention,
 }
 
-impl Kernel {
-    const ALL: [Kernel; 10] = [
+impl Kernels for Kernel {
+    const ALL: &'static [Kernel] = &[
         Kernel::Matmul,
         Kernel::Norm,
         Kernel::Rope,
@@ -56,6 +58,8 @@ impl Kernel {
         Kernel::Flatten,
         Kernel::Attention,
     ];
+    const PARAM_BYTES: u64 = 48;
+    const EXTRA: &'static [Access] = &[];
 
     fn entry(self) -> &'static str {
         match self {
@@ -291,21 +295,7 @@ fn pack_weights() -> Result<(Vec<f32>, Offsets), String> {
 }
 
 /// One dispatch.
-struct Op {
-    kernel: Kernel,
-    /// src, aux, dst.
-    buffers: [Buf; 3],
-    params: [u32; 12],
-    groups: [u32; 3],
-}
-
-fn params(values: &[usize]) -> [u32; 12] {
-    let mut p = [0u32; 12];
-    for (slot, &v) in p.iter_mut().zip(values) {
-        *slot = v as u32;
-    }
-    p
-}
+type Op = engine::Op<Kernel, [Buf; 3], 12>;
 
 /// The dispatches of a piece of `frames` frames.
 fn plan(o: &Offsets, frames: usize) -> Vec<Op> {
@@ -569,24 +559,10 @@ fn plan(o: &Offsets, frames: usize) -> Vec<Op> {
     ops
 }
 
-/// A recorded piece size: its dispatches' bind groups and parameters.
-struct Plan {
-    ops: Vec<(Kernel, usize, u64, [u32; 3])>,
-    _params: wgpu::Buffer,
-}
-
+/// The network on its device, and where its weights are there.
 struct Inner {
-    device: wgpu::Device,
-    queue: wgpu::Queue,
-    pipelines: HashMap<Kernel, wgpu::ComputePipeline>,
-    layout: wgpu::BindGroupLayout,
-    buffers: HashMap<Buf, wgpu::Buffer>,
-    staging: wgpu::Buffer,
+    model: Model<Kernel, Buf>,
     offsets: Offsets,
-    bind_groups: Vec<wgpu::BindGroup>,
-    bind_index: HashMap<([Buf; 3], usize), usize>,
-    plans: HashMap<usize, Plan>,
-    pieces: crate::pace::Pieces,
 }
 
 /// The beat network on the GPU.
@@ -594,7 +570,7 @@ pub struct GpuNetwork {
     name: String,
     inner: Turned<Mutex<Inner>>,
     /// What its runs cost, read without waiting for one.
-    counts: crate::pace::Counts,
+    counts: pace::Counts,
 }
 
 impl GpuNetwork {
@@ -606,10 +582,9 @@ impl GpuNetwork {
             .as_ref()
     }
 
-    /// What its GPU work cost so far ([`crate::pace::Tally::since`] an
-    /// earlier tally says what was done between), without waiting for its
-    /// work.
-    pub fn tally(&self) -> crate::pace::Tally {
+    /// What its GPU work cost so far ([`pace::Tally::since`] an earlier
+    /// tally says what was done between), without waiting for its work.
+    pub fn tally(&self) -> pace::Tally {
         self.counts.tally()
     }
 
@@ -620,7 +595,7 @@ impl GpuNetwork {
         })?;
         Ok(GpuNetwork {
             name,
-            counts: inner.pieces.counts(),
+            counts: inner.model.pieces.counts(),
             inner: Turned::new(Mutex::new(inner)),
         })
     }
@@ -671,11 +646,8 @@ impl NetRunner for GpuNetwork {
         if frames == 0 || frames > PIECE_FRAMES || spect.len() != frames * BANDS {
             return Err(format!("{frames} frames, {} values", spect.len()));
         }
-        let device = inner.device.clone();
-        guarded(&device, || {
-            inner.plan(frames);
-            inner.run(frames, spect)
-        })
+        let device = inner.model.program.device.clone();
+        guarded(&device, || inner.run(frames, spect))
     }
 }
 
@@ -702,192 +674,30 @@ impl Inner {
             (Buf::Patches, 3 * wide / 4),
             (Buf::Logits, 2 * f),
         ];
-        for &(buf, len) in &sizes {
-            let size = (len * 4) as u64;
-            if size > limits.max_storage_buffer_binding_size || size > limits.max_buffer_size {
-                return Err(format!(
-                    "the GPU's buffers are too small for {buf:?} ({size} bytes)"
-                ));
-            }
-        }
-        let buffers: HashMap<Buf, wgpu::Buffer> = sizes
-            .iter()
-            .map(|&(buf, len)| {
-                let b = device.create_buffer(&wgpu::BufferDescriptor {
-                    label: Some("jodel-gpu network"),
-                    size: (len.max(1) * 4) as u64,
-                    usage: wgpu::BufferUsages::STORAGE
-                        | wgpu::BufferUsages::COPY_DST
-                        | wgpu::BufferUsages::COPY_SRC,
-                    mapped_at_creation: false,
-                });
-                (buf, b)
-            })
-            .collect();
-        queue.write_buffer(&buffers[&Buf::Weights], 0, &bytes(&weights));
-        queue.write_buffer(&buffers[&Buf::Table], 0, &bytes(&rotary_table(f)));
-        let staging = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("jodel-gpu network logits"),
-            size: (2 * f * 4) as u64,
-            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        let storage = |binding, read_only| wgpu::BindGroupLayoutEntry {
-            binding,
-            visibility: wgpu::ShaderStages::COMPUTE,
-            ty: wgpu::BindingType::Buffer {
-                ty: wgpu::BufferBindingType::Storage { read_only },
-                has_dynamic_offset: false,
-                min_binding_size: None,
-            },
-            count: None,
-        };
-        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("jodel-gpu network"),
-            entries: &[
-                storage(0, true),
-                storage(1, true),
-                storage(2, false),
-                wgpu::BindGroupLayoutEntry {
-                    binding: 3,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: true,
-                        min_binding_size: NonZeroU64::new(PARAM_SIZE),
-                    },
-                    count: None,
-                },
-            ],
-        });
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("jodel-gpu network"),
-            bind_group_layouts: &[Some(&layout)],
-            ..Default::default()
-        });
-        let source = crate::kernels_source(&[include_str!("net.wgsl")]);
-        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("jodel-gpu network kernels"),
-            source: wgpu::ShaderSource::Wgsl(source.into()),
-        });
-        let pipelines = Kernel::ALL
-            .iter()
-            .map(|&k| {
-                let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                    label: Some(k.entry()),
-                    layout: Some(&pipeline_layout),
-                    module: &module,
-                    entry_point: Some(k.entry()),
-                    compilation_options: Default::default(),
-                    cache: None,
-                });
-                (k, pipeline)
-            })
-            .collect();
-        Ok(Inner {
+        let program = Program::new(
             device,
             queue,
-            pipelines,
-            layout,
-            buffers,
-            staging,
-            offsets,
-            bind_groups: Vec::new(),
-            bind_index: HashMap::new(),
-            plans: HashMap::new(),
-            pieces: crate::pace::Pieces::resting(),
-        })
-    }
-
-    /// The bind group of `buffers` with the parameters of plan `plan`.
-    fn bind_group(&mut self, buffers: [Buf; 3], params: &wgpu::Buffer, plan: usize) -> usize {
-        if let Some(&i) = self.bind_index.get(&(buffers, plan)) {
-            return i;
-        }
-        let entry = |binding: u32, buf: Buf| wgpu::BindGroupEntry {
-            binding,
-            resource: self.buffers[&buf].as_entire_binding(),
-        };
-        let group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("jodel-gpu network"),
-            layout: &self.layout,
-            entries: &[
-                entry(0, buffers[0]),
-                entry(1, buffers[1]),
-                entry(2, buffers[2]),
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: params,
-                        offset: 0,
-                        size: NonZeroU64::new(PARAM_SIZE),
-                    }),
-                },
-            ],
-        });
-        self.bind_groups.push(group);
-        self.bind_index
-            .insert((buffers, plan), self.bind_groups.len() - 1);
-        self.bind_groups.len() - 1
-    }
-
-    /// The plan for pieces of `frames` frames, recorded on first use.
-    fn plan(&mut self, frames: usize) {
-        if self.plans.contains_key(&frames) {
-            return;
-        }
-        let ops = plan(&self.offsets, frames);
-        let mut data = vec![0u8; ops.len() * PARAM_STRIDE as usize];
-        for (i, op) in ops.iter().enumerate() {
-            for (j, v) in op.params.iter().enumerate() {
-                let at = i * PARAM_STRIDE as usize + 4 * j;
-                data[at..at + 4].copy_from_slice(&v.to_le_bytes());
-            }
-        }
-        let params = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("jodel-gpu network params"),
-            size: data.len() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        self.queue.write_buffer(&params, 0, &data);
-        let recorded = ops
-            .iter()
-            .enumerate()
-            .map(|(i, op)| {
-                let group = self.bind_group(op.buffers, &params, frames);
-                (op.kernel, group, i as u64 * PARAM_STRIDE, op.groups)
-            })
-            .collect();
-        self.plans.insert(
-            frames,
-            Plan {
-                ops: recorded,
-                _params: params,
-            },
-        );
-    }
-
-    /// One piece through the recorded plan: the beat and downbeat logits.
-    fn run(&mut self, frames: usize, spect: &[f32]) -> Result<(Vec<f32>, Vec<f32>), String> {
-        self.queue
-            .write_buffer(&self.buffers[&Buf::Spect], 0, &bytes(spect));
-        let size = (2 * frames * 4) as u64;
-        let (buffers, staging) = (&self.buffers, &self.staging);
-        crate::pace::dispatch(
-            &self.device,
-            &self.queue,
+            limits,
             "jodel-gpu network",
-            &mut self.pieces,
-            &self.pipelines,
-            &self.bind_groups,
-            &self.plans[&frames].ops,
-            |_| {},
-            |encoder| {
-                encoder.copy_buffer_to_buffer(&buffers[&Buf::Logits], 0, staging, 0, size);
-            },
+            &kernels_source(&[include_str!("net.wgsl")]),
+        );
+        let model = Model::new(program, &sizes, 2 * f, Pieces::resting())?;
+        model.write(Buf::Weights, &weights);
+        model.write(Buf::Table, &rotary_table(f));
+        Ok(Inner { model, offsets })
+    }
+
+    /// One piece through its plan (recorded on first use): the beat and
+    /// downbeat logits.
+    fn run(&mut self, frames: usize, spect: &[f32]) -> Result<(Vec<f32>, Vec<f32>), String> {
+        self.model.write(Buf::Spect, spect);
+        let offsets = &self.offsets;
+        let out = self.model.run(
+            frames,
+            || plan(offsets, frames),
+            |_, _| {},
+            (Buf::Logits, 2 * frames),
         )?;
-        let out = crate::device::read_back(&self.device, &self.staging, size as usize / 4)?;
         let downbeat: Vec<f32> = out.chunks(2).map(|o| o[1]).collect();
         let beat = out.chunks(2).map(|o| o[0] + o[1]).collect();
         Ok((beat, downbeat))

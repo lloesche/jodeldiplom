@@ -178,7 +178,7 @@ impl Steps {
     /// The voice of `path` ([`track_voice`]), its time, and where it came
     /// from.
     fn voice(&mut self, path: &Path) -> Result<Vec<f32>, String> {
-        let separator = voice_separator()
+        let separator = jodel_gpu::GpuSeparator::for_this_thread()
             .filter(|_| crate::trace::on())
             .map(|g| (g, g.tally()));
         let started = Instant::now();
@@ -299,23 +299,13 @@ pub fn voice_16k(mut file: jodel_playback::StemFile) -> Result<Vec<f32>, String>
     Ok(out.into_iter().map(|v| v as f32).collect())
 }
 
-/// The separator a voice is separated on: on a thread of background work
-/// the background one, else the shared one.
-fn voice_separator() -> Option<&'static jodel_gpu::GpuSeparator> {
-    if jodel_gpu::pace::is_background() {
-        jodel_gpu::GpuSeparator::background()
-    } else {
-        jodel_gpu::GpuSeparator::shared()
-    }
-}
-
 /// The voice of `path` (and, with `mix`, the whole mix), mono at 16 kHz:
 /// the file decoded, separated into its stems on the GPU, the vocals'
 /// two channels averaged.
 pub fn separate_16k(path: &Path, mix: bool) -> Result<(Vec<f32>, Vec<f32>), String> {
     use jodel_playback::stems::{Stem, StereoFeed};
     use jodel_rhythm::stems::{Splitter, StemBlock};
-    let gpu = voice_separator().ok_or("no GPU for the stems")?;
+    let gpu = jodel_gpu::GpuSeparator::for_this_thread().ok_or("no GPU for the stems")?;
     let vocals = Stem::ALL
         .iter()
         .position(|&s| s == Stem::Vocals)

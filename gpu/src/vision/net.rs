@@ -1,6 +1,6 @@
 //! The vision networks on the device: one GPU for both ([`Gpu`]: the
-//! device, its kernels and their bind group layout, set up once per process
-//! when first needed and kept), and each network's own part ([`Net`]: its
+//! device and the program of their kernels, set up once per process when
+//! first needed and kept), and each network's own part ([`Net`]: its
 //! weights uploaded once, and the buffers, bind groups and dispatches of
 //! its plan for one input size, made when it runs and let go when asked).
 //!
@@ -10,23 +10,15 @@
 //! buffers again, nothing more (no new device, no weights uploaded again).
 
 use std::collections::HashMap;
-use std::num::NonZeroU64;
 use std::sync::{Arc, Mutex};
 
 use super::{source, Kernel, Plan};
-use crate::{bytes, guarded, Turned, PARAM_STRIDE};
-
-/// Bytes of one dispatch's parameters.
-const PARAMS: u64 = 96;
+use crate::engine::{bytes, guarded, Kernels, Program, Recorded};
+use crate::Turned;
 
 /// The vision networks' GPU.
 pub(crate) struct Gpu {
-    device: wgpu::Device,
-    queue: wgpu::Queue,
-    layout: wgpu::BindGroupLayout,
-    pipelines: HashMap<Kernel, wgpu::ComputePipeline>,
-    /// The most a buffer may be bound with.
-    most: u64,
+    program: Program<Kernel>,
     /// The GPU's name.
     pub(crate) name: String,
 }
@@ -63,109 +55,27 @@ impl Gpu {
                 limits.max_compute_workgroup_storage_size
             ));
         }
-        let storage = |binding, read_only| wgpu::BindGroupLayoutEntry {
-            binding,
-            visibility: wgpu::ShaderStages::COMPUTE,
-            ty: wgpu::BindingType::Buffer {
-                ty: wgpu::BufferBindingType::Storage { read_only },
-                has_dynamic_offset: false,
-                min_binding_size: None,
-            },
-            count: None,
-        };
-        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("jodel-gpu vision"),
-            entries: &[
-                storage(0, true),
-                storage(1, true),
-                storage(2, false),
-                wgpu::BindGroupLayoutEntry {
-                    binding: 3,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: true,
-                        min_binding_size: NonZeroU64::new(PARAMS),
-                    },
-                    count: None,
-                },
-                storage(4, true),
-            ],
-        });
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("jodel-gpu vision"),
-            bind_group_layouts: &[Some(&layout)],
-            ..Default::default()
-        });
-        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("jodel-gpu vision"),
-            source: wgpu::ShaderSource::Wgsl(source().into()),
-        });
-        let pipelines = Kernel::ALL
-            .iter()
-            .map(|&k| {
-                let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                    label: Some(k.entry()),
-                    layout: Some(&pipeline_layout),
-                    module: &module,
-                    entry_point: Some(k.entry()),
-                    compilation_options: Default::default(),
-                    cache: None,
-                });
-                (k, pipeline)
-            })
-            .collect();
         Ok(Gpu {
-            device,
-            queue,
-            layout,
-            pipelines,
-            most: limits
-                .max_storage_buffer_binding_size
-                .min(limits.max_buffer_size),
+            program: Program::new(device, queue, limits, "jodel-gpu vision", &source()),
             name: String::new(),
         })
     }
-
-    fn buffer(&self, label: &'static str, len: usize) -> Result<wgpu::Buffer, String> {
-        let size = (len.max(1) * 4) as u64;
-        if size > self.most {
-            return Err(format!(
-                "the GPU's buffers are too small ({size} bytes needed)"
-            ));
-        }
-        Ok(self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some(label),
-            size,
-            usage: wgpu::BufferUsages::STORAGE
-                | wgpu::BufferUsages::COPY_DST
-                | wgpu::BufferUsages::COPY_SRC,
-            mapped_at_creation: false,
-        }))
-    }
 }
 
-/// A buffer bound whole at `binding`.
-fn entry(binding: u32, buf: &wgpu::Buffer) -> wgpu::BindGroupEntry<'_> {
-    wgpu::BindGroupEntry {
-        binding,
-        resource: buf.as_entire_binding(),
-    }
-}
-
-/// A plan on the device: its buffers, bind groups and dispatches.
+/// A plan on the device: its buffers, its dispatches recorded, and the
+/// buffer its result is read back through.
 struct Planned {
     buffers: Vec<wgpu::Buffer>,
     staging: wgpu::Buffer,
-    groups: Vec<wgpu::BindGroup>,
-    ops: Vec<crate::pace::Op<Kernel>>,
-    _params: wgpu::Buffer,
+    recorded: Recorded<Kernel>,
     bytes: u64,
 }
 
 /// One network's part on the GPU.
 pub(crate) struct Net {
     gpu: Arc<Turned<Gpu>>,
+    /// The network's name: its buffers' label (and an error's, where one
+    /// does not fit).
     label: &'static str,
     weights: wgpu::Buffer,
     /// The weights' f32s; the tail for constants follows them.
@@ -182,9 +92,10 @@ impl Net {
     /// f32s of constants after them.
     pub(crate) fn new(label: &'static str, base: &[f32], tail: usize) -> Result<Net, String> {
         let gpu = Gpu::shared()?;
-        let weights = guarded(&gpu.device, || {
-            let w = gpu.buffer(label, base.len() + tail)?;
-            gpu.queue.write_buffer(&w, 0, &bytes(base));
+        let program = &gpu.program;
+        let weights = guarded(&program.device, || {
+            let w = program.storage(label, base.len() + tail)?;
+            program.queue.write_buffer(&w, 0, &bytes(base));
             Ok(w)
         })?;
         Ok(Net {
@@ -239,77 +150,27 @@ impl Net {
         }
         self.planned = None;
         let gpu = Arc::clone(&self.gpu);
-        let label = self.label;
-        let weights = &self.weights;
-        let base = self.base;
-        let planned = guarded(&gpu.device, || {
-            gpu.queue
+        let program = &gpu.program;
+        let (label, weights, base) = (self.label, &self.weights, self.base);
+        let planned = guarded(&program.device, || {
+            program
+                .queue
                 .write_buffer(weights, (base * 4) as u64, &bytes(tail));
-            let mut total = 0;
             let buffers = plan
                 .sizes
                 .iter()
-                .map(|&len| {
-                    total += (len.max(1) * 4) as u64;
-                    gpu.buffer(label, len)
-                })
+                .map(|&len| program.storage(label, len))
                 .collect::<Result<Vec<_>, String>>()?;
-            let staging = gpu.device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some(label),
-                size: (read.max(1) * 4) as u64,
-                usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            });
-            let mut data = vec![0u8; plan.ops.len().max(1) * PARAM_STRIDE as usize];
-            for (i, op) in plan.ops.iter().enumerate() {
-                for (j, v) in op.params.iter().enumerate() {
-                    let at = i * PARAM_STRIDE as usize + 4 * j;
-                    data[at..at + 4].copy_from_slice(&v.to_le_bytes());
-                }
-            }
-            let params = gpu.device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some(label),
-                size: data.len() as u64,
-                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            });
-            gpu.queue.write_buffer(&params, 0, &data);
-            // A bind group for each (src, src2, dst) the plan uses.
-            let mut groups = Vec::new();
-            let mut index: HashMap<[usize; 3], usize> = HashMap::new();
-            let mut ops = Vec::with_capacity(plan.ops.len());
-            for (i, op) in plan.ops.iter().enumerate() {
-                let key = [op.src, op.src2, op.dst];
-                let group = *index.entry(key).or_insert_with(|| {
-                    groups.push(gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                        label: Some(label),
-                        layout: &gpu.layout,
-                        entries: &[
-                            entry(0, &buffers[key[0]]),
-                            entry(1, weights),
-                            entry(2, &buffers[key[2]]),
-                            wgpu::BindGroupEntry {
-                                binding: 3,
-                                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                                    buffer: &params,
-                                    offset: 0,
-                                    size: NonZeroU64::new(PARAMS),
-                                }),
-                            },
-                            entry(4, &buffers[key[1]]),
-                        ],
-                    }));
-                    groups.len() - 1
-                });
-                ops.push((op.kernel, group, i as u64 * PARAM_STRIDE, op.groups));
-            }
+            let staging = program.staging(read);
+            // A kernel's buffers: src, the weights, dst, then src2.
+            let recorded = program.record(&plan.ops, |[src, src2, dst]: [usize; 3]| {
+                vec![&buffers[src], weights, &buffers[dst], &buffers[src2]]
+            })?;
             Ok(Planned {
+                bytes: buffers.iter().map(wgpu::Buffer::size).sum(),
                 buffers,
                 staging,
-                groups,
-                ops,
-                _params: params,
-                bytes: total,
+                recorded,
             })
         })?;
         self.plan_bytes = planned.bytes;
@@ -326,18 +187,18 @@ impl Net {
         (from, offset, count): (usize, usize, usize),
     ) -> Result<Vec<f32>, String> {
         let gpu = Arc::clone(&self.gpu);
+        let program = &gpu.program;
         let p = self.planned.as_ref().ok_or("not planned")?;
         let pieces = &mut self.pieces;
-        guarded(&gpu.device, || {
-            gpu.queue.write_buffer(&p.buffers[into], 0, &bytes(input));
+        guarded(&program.device, || {
+            program
+                .queue
+                .write_buffer(&p.buffers[into], 0, &bytes(input));
             crate::pace::dispatch(
-                &gpu.device,
-                &gpu.queue,
-                "jodel-gpu vision",
+                program,
                 pieces,
-                &gpu.pipelines,
-                &p.groups,
-                &p.ops,
+                &p.recorded.groups,
+                &p.recorded.dispatches,
                 |_| {},
                 |encoder| {
                     encoder.copy_buffer_to_buffer(
@@ -349,48 +210,33 @@ impl Net {
                     );
                 },
             )?;
-            crate::device::read_back(&gpu.device, &p.staging, count)
+            crate::device::read_back(&program.device, &p.staging, count)
         })
     }
 
     /// Each kernel's share of a run (its dispatches each submitted and
-    /// waited for on its own, the best of three), for a diagnostic: the
-    /// kernel's name and work, its dispatches, its milliseconds; the
-    /// slowest first.
+    /// waited for on its own, the best of three, timed from encoding to
+    /// done), for a diagnostic: the kernel's name and work, its dispatches,
+    /// its milliseconds; the slowest first.
     pub(crate) fn profile(
         &mut self,
         into: usize,
         input: &[f32],
     ) -> Result<Vec<(String, usize, f64)>, String> {
-        let gpu = Arc::clone(&self.gpu);
+        let program = &self.gpu.program;
         let p = self.planned.as_ref().ok_or("not planned")?;
-        gpu.queue.write_buffer(&p.buffers[into], 0, &bytes(input));
+        program
+            .queue
+            .write_buffer(&p.buffers[into], 0, &bytes(input));
         let mut took: HashMap<String, (usize, f64)> = HashMap::new();
-        for &(kernel, group, offset, [x, y, z]) in &p.ops {
-            let mut best = f64::MAX;
-            for _ in 0..3 {
-                let mut encoder = gpu
-                    .device
-                    .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
-                {
-                    let mut pass =
-                        encoder.begin_compute_pass(&wgpu::ComputePassDescriptor::default());
-                    pass.set_pipeline(&gpu.pipelines[&kernel]);
-                    pass.set_bind_group(0, &p.groups[group], &[offset as u32]);
-                    pass.dispatch_workgroups(x, y, z);
-                }
-                let started = std::time::Instant::now();
-                gpu.queue.submit([encoder.finish()]);
-                gpu.device
-                    .poll(wgpu::PollType::wait_indefinitely())
-                    .map_err(|e| e.to_string())?;
-                best = best.min(started.elapsed().as_secs_f64() * 1000.0);
-            }
+        for (i, d) in p.recorded.dispatches.iter().enumerate() {
+            let best = program.time(&p.recorded, &|j| j == i)?;
+            let [x, y, z] = d.groups;
             let entry = took
-                .entry(format!("{} {x}x{y}x{z}", kernel.entry()))
+                .entry(format!("{} {x}x{y}x{z}", d.kernel.entry()))
                 .or_default();
             entry.0 += 1;
-            entry.1 += best;
+            entry.1 += best.as_secs_f64() * 1000.0;
         }
         let mut out: Vec<(String, usize, f64)> =
             took.into_iter().map(|(k, (n, ms))| (k, n, ms)).collect();

@@ -8,8 +8,9 @@
 //! `NAME.ben2in.f32`, shapes in `NAME.json`), so the networks see exactly
 //! what PyTorch saw, compares the outputs (`NAME.da3.f32`, `NAME.ben2.f32`;
 //! BEN2's official half-precision run `NAME.ben2h.f32` as a yardstick) and
-//! writes ours to `ROOT/ours/`. The weights: `JODEL_DEPTH_MODEL` and
-//! `JODEL_MATTE_MODEL`, else the data folder's.
+//! writes ours to `ROOT/ours/` (each file whole, through `durable`). The
+//! weights: `JODEL_DEPTH_MODEL` and `JODEL_MATTE_MODEL`, else the data
+//! folder's.
 
 use std::path::{Path, PathBuf};
 use std::time::Instant;
@@ -29,7 +30,7 @@ fn f32s(path: &Path) -> Vec<f32> {
 #[expect(clippy::disallowed_methods, reason = "debt (P6): its comparison dumps")]
 fn write_f32s(path: &Path, values: &[f32]) {
     let bytes: Vec<u8> = values.iter().flat_map(|v| v.to_le_bytes()).collect();
-    std::fs::write(path, bytes).unwrap();
+    durable::write_atomic(path, &bytes).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
 }
 
 fn model(var: &str, file: &str) -> PathBuf {
@@ -50,7 +51,7 @@ fn main() {
                 let s = scene(side);
                 let mut ppm = format!("P6\n{side} {side}\n255\n").into_bytes();
                 ppm.extend(&s.data);
-                std::fs::write(dir.join(format!("scene{side}.ppm")), ppm).unwrap();
+                durable::write_atomic(&dir.join(format!("scene{side}.ppm")), &ppm).unwrap();
             }
         }
         Some("ref") => reference(Path::new(&args[1]), &args[2..]),
@@ -76,7 +77,6 @@ fn reference(root: &Path, only: &[String]) {
     );
     let refs = root.join("ref");
     let ours = root.join("ours");
-    std::fs::create_dir_all(&ours).unwrap();
     let mut names: Vec<String> = std::fs::read_dir(&refs)
         .unwrap()
         .filter_map(|e| {

@@ -4,7 +4,8 @@
 //! few) and the kernels with a workgroup or an invocation a row.
 
 use super::pack::Matrix;
-use super::{spread, Buf, Kernel, VOCAB};
+use super::{Buf, Kernel, VOCAB};
+use crate::engine::{self, params, spread};
 
 /// Rounds of eight columns a workgroup of the head (`qa_rows`).
 const HEAD_ROUNDS: usize = 8;
@@ -17,23 +18,9 @@ const ENOUGH_WORKGROUPS: usize = 128;
 /// a matrix with more inputs takes one round of columns.
 const STAGED: usize = 1024;
 
-/// One dispatch.
-#[derive(Clone)]
-pub(super) struct Op {
-    pub(super) kernel: Kernel,
-    /// src, aux, dst, and the second dst of a kernel that writes two.
-    pub(super) buffers: [Buf; 4],
-    pub(super) params: [u32; 12],
-    pub(super) groups: [u32; 3],
-}
-
-pub(super) fn params(values: &[usize]) -> [u32; 12] {
-    let mut p = [0u32; 12];
-    for (slot, &v) in p.iter_mut().zip(values) {
-        *slot = v as u32;
-    }
-    p
-}
+/// One dispatch: its buffers src, aux, dst, and the second dst of a kernel
+/// that writes two.
+pub(super) type Op = engine::Op<Kernel, [Buf; 4], 12>;
 
 /// The kernels' flags (`qa_matmul`'s and `qa_rows`'s).
 const BIAS: usize = 1;
@@ -255,7 +242,7 @@ pub(super) fn rows(ops: &mut Vec<Op>, mul: &Mul) {
 /// Whether `op` takes its matrix's input other than as it lies in memory
 /// (normed or put together on the way), which calibrating cannot count.
 pub(super) fn fused(op: &Op) -> bool {
-    op.kernel == Kernel::Rows && op.params[9] as usize & (NORM | JOIN) != 0
+    op.kernel == Kernel::Rows && op.params[9] & (NORM | JOIN) != 0
 }
 
 /// A kernel with a workgroup a row.

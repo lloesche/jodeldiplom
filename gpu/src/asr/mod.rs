@@ -25,7 +25,6 @@ mod shape;
 mod tests;
 
 use std::collections::HashMap;
-use std::num::NonZeroU64;
 use std::sync::Mutex;
 
 use jodel_lyrics::asr::packed::PackedModel;
@@ -38,7 +37,10 @@ use self::calibration::Stats;
 use self::ops::Op;
 use self::pack::{pack, Layout};
 use self::shape::{longest, Room, Shape};
-use super::{guarded, spread, Turned, PARAM_SIZE, PARAM_STRIDE};
+use crate::engine::{
+    bytes, guarded, kernels_source, Access, Dispatch, Kernels, Program, PARAM_STRIDE,
+};
+use crate::Turned;
 
 /// The longest part of a voice heard at once, in seconds.
 pub const MAX_SECONDS: usize = jodel_lyrics::asr::PART_SECONDS as usize;
@@ -96,8 +98,8 @@ enum Kernel {
     ColSq,
 }
 
-impl Kernel {
-    const ALL: [Kernel; 17] = [
+impl Kernels for Kernel {
+    const ALL: &'static [Kernel] = &[
         Kernel::Matmul,
         Kernel::Rows,
         Kernel::Conv1,
@@ -116,6 +118,9 @@ impl Kernel {
         Kernel::ArgmaxEmbed,
         Kernel::ColSq,
     ];
+    const PARAM_BYTES: u64 = 48;
+    /// After the parameters: the weights (read), a second dst.
+    const EXTRA: &'static [Access] = &[Access::Read, Access::Write];
 
     fn entry(self) -> &'static str {
         match self {
@@ -143,7 +148,7 @@ impl Kernel {
 /// The kernels' source: the shared helpers, the recogniser's kernels, the
 /// fused ones.
 fn source() -> String {
-    crate::kernels_source(&[include_str!("asr.wgsl"), include_str!("fused.wgsl")])
+    kernels_source(&[include_str!("asr.wgsl"), include_str!("fused.wgsl")])
 }
 
 /// The buffers.
@@ -195,10 +200,7 @@ enum Runs {
 }
 
 struct Inner {
-    device: wgpu::Device,
-    queue: wgpu::Queue,
-    pipelines: HashMap<Kernel, wgpu::ComputePipeline>,
-    layout: wgpu::BindGroupLayout,
+    program: Program<Kernel>,
     buffers: HashMap<Buf, wgpu::Buffer>,
     room: Room,
     params: wgpu::Buffer,
@@ -282,7 +284,7 @@ impl GpuAsr {
             return Err(format!("{frames} frames"));
         }
         let mut inner = self.lock()?;
-        let device = inner.device.clone();
+        let device = inner.program.device.clone();
         guarded(&device, || {
             let shape = Shape::new(1, frames);
             inner.upload(&[&features], &shape);
@@ -324,7 +326,7 @@ impl GpuAsr {
                 };
                 let (now, rest) = left.split_at(n);
                 left = rest;
-                let device = inner.device.clone();
+                let device = inner.program.device.clone();
                 let chosen: Vec<&[f32]> = now.iter().map(|&i| &features[i].0[..]).collect();
                 let heard = guarded(&device, || inner.hear(&chosen, frames))?;
                 for (&i, ids) in now.iter().zip(heard) {
@@ -363,65 +365,21 @@ impl Inner {
         }
         let packed = pack(model, alone.positions)?;
         let stats = Stats::new(&packed.matrices);
-        let most_binding = limits
-            .max_storage_buffer_binding_size
-            .min(limits.max_buffer_size);
-        let room = Room::new(MOST_AT_ONCE, MOST_CACHE.min(most_binding), stats.len);
+        let program = Program::new(device, queue, limits, "jodel-gpu asr", &source());
+        let room = Room::new(MOST_AT_ONCE, MOST_CACHE.min(program.most()), stats.len);
         let mut all: Vec<(Buf, usize)> = room.buffers().collect();
         all.push((Buf::Small, packed.small.len()));
         all.push((Buf::Stats, stats.len));
         all.push((Buf::Spare, 1));
         all.push((Buf::Weights, packed.weights.len()));
-        for &(buf, len) in &all {
-            let size = (len * 4) as u64;
-            if size > most_binding {
-                return Err(format!(
-                    "the GPU's buffers are too small for {buf:?} ({size} bytes)"
-                ));
-            }
-        }
-        let buffers: HashMap<Buf, wgpu::Buffer> = all
-            .iter()
-            .map(|&(buf, len)| {
-                let b = device.create_buffer(&wgpu::BufferDescriptor {
-                    label: Some("jodel-gpu asr"),
-                    size: (len.max(1) * 4) as u64,
-                    usage: wgpu::BufferUsages::STORAGE
-                        | wgpu::BufferUsages::COPY_DST
-                        | wgpu::BufferUsages::COPY_SRC,
-                    mapped_at_creation: false,
-                });
-                (buf, b)
-            })
-            .collect();
-        queue.write_buffer(
-            &buffers[&Buf::Weights],
-            0,
-            &packed
-                .weights
-                .iter()
-                .flat_map(|v| v.to_le_bytes())
-                .collect::<Vec<u8>>(),
-        );
-        queue.write_buffer(&buffers[&Buf::Small], 0, &super::bytes(&packed.small));
-        let params = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("jodel-gpu asr params"),
-            size: MAX_OPS as u64 * PARAM_STRIDE,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        let staging = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("jodel-gpu asr tokens"),
-            size: (room.staging * 4) as u64,
-            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        let (layout, pipelines) = pipelines(&device);
+        let buffers = program.buffers(&all)?;
+        let write = |buf: Buf, data: &[u8]| program.queue.write_buffer(&buffers[&buf], 0, data);
+        write(Buf::Weights, &bytes(&packed.weights));
+        write(Buf::Small, &bytes(&packed.small));
+        let params = program.params_buffer(MAX_OPS);
+        let staging = program.staging(room.staging);
         Ok(Inner {
-            device,
-            queue,
-            pipelines,
-            layout,
+            program,
             buffers,
             room,
             params,
@@ -442,29 +400,11 @@ impl Inner {
         if let Some(&i) = self.bind_index.get(&buffers) {
             return i;
         }
-        let entry = |binding: u32, buf: Buf| wgpu::BindGroupEntry {
-            binding,
-            resource: self.buffers[&buf].as_entire_binding(),
-        };
-        let group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("jodel-gpu asr"),
-            layout: &self.layout,
-            entries: &[
-                entry(0, buffers[0]),
-                entry(1, buffers[1]),
-                entry(2, buffers[2]),
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &self.params,
-                        offset: 0,
-                        size: NonZeroU64::new(PARAM_SIZE),
-                    }),
-                },
-                entry(4, Buf::Weights),
-                entry(5, buffers[3]),
-            ],
-        });
+        let [a, b, c, d] = buffers.map(|buf| &self.buffers[&buf]);
+        let weights = &self.buffers[&Buf::Weights];
+        let group = self
+            .program
+            .bind_group(&[a, b, c, weights, d], &self.params);
         self.bind_groups.push(group);
         self.bind_index.insert(buffers, self.bind_groups.len() - 1);
         self.bind_groups.len() - 1
@@ -485,21 +425,18 @@ impl Inner {
         } else {
             ops
         };
-        assert!(ops.len() <= MAX_OPS, "{} dispatches", ops.len());
-        let mut data = vec![0u8; ops.len() * PARAM_STRIDE as usize];
-        for (i, op) in ops.iter().enumerate() {
-            for (j, v) in op.params.iter().enumerate() {
-                let at = i * PARAM_STRIDE as usize + 4 * j;
-                data[at..at + 4].copy_from_slice(&v.to_le_bytes());
-            }
+        if ops.len() > MAX_OPS {
+            return Err(format!("{} dispatches, room for {MAX_OPS}", ops.len()));
         }
-        self.queue.write_buffer(&self.params, 0, &data);
-        let recorded: Vec<crate::pace::Op<Kernel>> = ops
+        self.program.write_params(&self.params, ops)?;
+        let dispatches: Vec<Dispatch<Kernel>> = ops
             .iter()
             .enumerate()
-            .map(|(i, op)| {
-                let group = self.bind_group(op.buffers);
-                (op.kernel, group, i as u64 * PARAM_STRIDE, op.groups)
+            .map(|(i, op)| Dispatch {
+                kernel: op.kernel,
+                group: self.bind_group(op.buffers),
+                offset: i as u64 * PARAM_STRIDE,
+                groups: op.groups,
             })
             .collect();
         let pieces = match runs {
@@ -508,13 +445,10 @@ impl Inner {
         };
         let (buffers, staging) = (&self.buffers, &self.staging);
         crate::pace::dispatch(
-            &self.device,
-            &self.queue,
-            "jodel-gpu asr",
+            &self.program,
             pieces,
-            &self.pipelines,
             &self.bind_groups,
-            &recorded,
+            &dispatches,
             |_| {},
             |encoder| {
                 if let Some((buf, from, count)) = read {
@@ -529,72 +463,10 @@ impl Inner {
             },
         )?;
         match read {
-            Some((_, _, count)) => crate::device::read_back(&self.device, &self.staging, count),
+            Some((_, _, count)) => {
+                crate::device::read_back(&self.program.device, &self.staging, count)
+            }
             None => Ok(Vec::new()),
         }
     }
-}
-
-/// The bind group layout every kernel takes (src, aux, dst, the
-/// parameters, the weights, a second dst) and each kernel's pipeline.
-fn pipelines(
-    device: &wgpu::Device,
-) -> (
-    wgpu::BindGroupLayout,
-    HashMap<Kernel, wgpu::ComputePipeline>,
-) {
-    let storage = |binding, read_only| wgpu::BindGroupLayoutEntry {
-        binding,
-        visibility: wgpu::ShaderStages::COMPUTE,
-        ty: wgpu::BindingType::Buffer {
-            ty: wgpu::BufferBindingType::Storage { read_only },
-            has_dynamic_offset: false,
-            min_binding_size: None,
-        },
-        count: None,
-    };
-    let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        label: Some("jodel-gpu asr"),
-        entries: &[
-            storage(0, true),
-            storage(1, true),
-            storage(2, false),
-            wgpu::BindGroupLayoutEntry {
-                binding: 3,
-                visibility: wgpu::ShaderStages::COMPUTE,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: true,
-                    min_binding_size: NonZeroU64::new(PARAM_SIZE),
-                },
-                count: None,
-            },
-            storage(4, true),
-            storage(5, false),
-        ],
-    });
-    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some("jodel-gpu asr"),
-        bind_group_layouts: &[Some(&layout)],
-        ..Default::default()
-    });
-    let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("jodel-gpu asr kernels"),
-        source: wgpu::ShaderSource::Wgsl(source().into()),
-    });
-    let pipelines = Kernel::ALL
-        .iter()
-        .map(|&k| {
-            let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                label: Some(k.entry()),
-                layout: Some(&pipeline_layout),
-                module: &module,
-                entry_point: Some(k.entry()),
-                compilation_options: Default::default(),
-                cache: None,
-            });
-            (k, pipeline)
-        })
-        .collect();
-    (layout, pipelines)
 }

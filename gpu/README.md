@@ -1,7 +1,18 @@
 # jodel-gpu
 
-The stem separator and the beat network of [`jodel-rhythm`](../rhythm) on
-the GPU, through `wgpu` (Vulkan, DirectX 12 or Metal; no WebGPU or GLES).
+The player's networks on the GPU, through `wgpu` (Vulkan, DirectX 12 or
+Metal; no WebGPU or GLES), each giving what its CPU version gives to within
+rounding: the stem separator and the beat network of
+[`jodel-rhythm`](../rhythm) (`GpuSeparator`, `GpuNetwork`), the speech
+model and the speech recogniser of [`jodel-lyrics`](../lyrics)
+(`GpuSpeech`, `GpuAsr`), and the cover's depth and cut-out (`GpuDepth`,
+`GpuMatte`). Each is a program of kernels on one bind group layout, its
+dispatches planned on the processor and run in short submissions
+(`src/engine/`: the program, its buffers, parameters and bind groups;
+the separator, the beat network and the speech model keep a plan per input
+size there).
+
+## The stem separator
 
 ```rust
 use jodel_gpu::GpuSeparator;
@@ -18,7 +29,7 @@ if let Some(gpu) = GpuSeparator::shared() {
 lines for a diagnostic (the player's `--diag`): every adapter `wgpu` sees
 on every backend with the limits the separator needs, the one it would
 use, whether it sets up there (or the error), how long a 6 s chunk
-takes, and how that splits (`GpuSeparator::profile`: five whole chunks
+takes, and how that splits (its profile: five whole chunks
 in a row, the upload and the readback, and each kernel on its own with
 the matrix multiplies by layer, the best of three). It runs the same network on the same weights as the
 built-in CPU separator: the weights go up once (72 MB, the layers
@@ -74,8 +85,9 @@ at most at a time), so one network is on the GPU at once.
 `GpuSeparator::tally()`, `GpuNetwork::tally()` and `GpuAsr::hearing()`
 what each network's GPU work cost (submissions, waits for the GPU, rests,
 time held back), for the trace to tell each job's.
-`pace::background()` marks a thread as one doing background work, for its
-caller to pick the background separator there.
+`pace::background()` marks a thread as one doing background work, and
+`GpuSeparator::for_this_thread()` picks the background separator there
+(the shared one elsewhere).
 
 ## The beat network
 

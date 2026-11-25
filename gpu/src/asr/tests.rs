@@ -17,7 +17,7 @@ fn the_kernels_validate_and_write_for_metal_and_directx() {
     // unpack2x16float (the scales and offsets); no f16 arithmetic, no
     // subgroups.
     let entries: Vec<&str> = Kernel::ALL.iter().map(|k| k.entry()).collect();
-    crate::check_source(
+    crate::engine::check_source(
         &source(),
         naga::valid::Capabilities::SHADER_FLOAT16_IN_FLOAT32,
         &entries,

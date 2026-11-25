@@ -179,7 +179,7 @@ pub(crate) fn open<T>(
     }))
     .map_err(|e| format!("{}: {e}", info.name))?;
     let probe = device.clone();
-    let made = super::guarded(&probe, || make(device, queue, &limits))
+    let made = crate::engine::guarded(&probe, || make(device, queue, &limits))
         .map_err(|e| format!("{}: {e}", info.name))?;
     Ok((made, info.name))
 }

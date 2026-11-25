@@ -6,8 +6,9 @@ use jodel_lyrics::asr::{
     mel, piece_steps, CONV, DIM, ENC_DIM, ENC_FF, ENC_HEADS, PIECE, WINDOW_PIECES,
 };
 
-use super::ops::{each, matmul, params, per_row, After, Mul, Op};
+use super::ops::{each, matmul, per_row, After, Mul, Op};
 use super::{Buf, Inner, Kernel, Shape, BANDS, CONV_BATCH, PATCH, QKV_ENC};
+use crate::engine::params;
 
 impl Inner {
     /// The features of `shape`'s pieces (each `[MELS][frames]`) as pieces
@@ -26,8 +27,9 @@ impl Inner {
                 }
             }
         }
-        self.queue
-            .write_buffer(&self.buffers[&Buf::Pieces], 0, &super::super::bytes(&x));
+        self.program
+            .queue
+            .write_buffer(&self.buffers[&Buf::Pieces], 0, &crate::engine::bytes(&x));
     }
 
     /// The encoder's dispatches for `shape`'s pieces (their features

@@ -18,8 +18,9 @@
 
 use jodel_lyrics::asr::{DIM, FF, HEAD, HEADS, KV_HEADS, VOCAB};
 
-use super::ops::{each, matmul, params, per_row, rows, After, Before, Mul, Op, BLOCKS};
+use super::ops::{each, matmul, per_row, rows, After, Before, Mul, Op, BLOCKS};
 use super::{Buf, Inner, Kernel, Shape, KV, PARTS, QKV_DEC};
+use crate::engine::params;
 
 impl Inner {
     /// The decoder over the prompts of `shape`'s pieces (`shape.rows` rows
