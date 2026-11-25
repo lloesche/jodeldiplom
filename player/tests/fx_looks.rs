@@ -14,7 +14,7 @@ use jodeldiplom::gui::stage_gpu::{kind, StageFrame};
 
 #[path = "common/sung.rs"]
 mod sung;
-use sung::{picture_at, song, with_effects, LENGTH};
+use sung::{picture_at, song, with_effects, Fired, LENGTH};
 
 /// The line on fire, its look as made, or moved all the way to green by
 /// the tempo (1 at the free tempo, with no music).
@@ -50,16 +50,18 @@ fn a_look_moved_by_the_music_reaches_the_lyric_treatment() {
     let now = 9.0;
     let picture = picture_at(&sung, now, &singing);
     let song = Song::new(&singing, sung.clone(), Some(LENGTH));
-    let base = Stage::default().frame(&song, &picture, area, now, 1.0 / 60.0);
+    let mut stage = Stage::default();
+    let base = stage.frame(&song, &picture, area, now, 1.0 / 60.0);
     let row = |uses: &'static [Use]| Effects {
         held: uses,
         ..Effects::NONE
     };
     let (still, moved) = (row(&STILL), row(&MOVED));
     let fired = now - 5.0;
+    let neutral = Fired::phrase(fired);
     let (a, b) = (
-        with_effects(&base, area, &still, fired),
-        with_effects(&base, area, &moved, fired),
+        with_effects(&mut stage, &base, area, &still, neutral),
+        with_effects(&mut stage, &base, area, &moved, neutral),
     );
     let fire = Fx::LyricFire.index();
     assert_eq!(a.looks.0[fire][0], 0.0, "as made");

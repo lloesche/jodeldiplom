@@ -24,9 +24,10 @@
 //! processor, held to it on the GPU (`crate::gui::shader_check`, from their
 //! motions' probes: [`crate::gui::particles::MOTIONS`]).
 
-use super::{At, Layer, Live, Out, Slot, Spec};
+use super::{At, Layer, Live, Out, Playing, Slot, Spec};
 use crate::gui::particles::{Kind, Look, Spray, Sprite};
 use crate::gui::sparks::{mix, rand, TAU, WHITE};
+use jodel_rhythm::grid::When;
 
 /// A fountain of coins out of the playhead.
 pub const FOUNTAIN: Spec = Spec {
@@ -69,18 +70,62 @@ fn draw_fountain(at: &At, live: &Live, _: &mut Slot, out: &mut Out) {
     }
 }
 
-fn draw_rain(at: &At, live: &Live, _: &mut Slot, out: &mut Out) {
-    if let (&At::Playhead { pill, area, .. }, true) = (at, live.fired) {
-        let (w, h) = super::far_corner(area);
-        let seed = seed(live.clock, 0x4A_1700);
-        out.sprays.extend(coin_rain(
-            w,
-            h,
-            pill * 0.4 * live.strength,
-            live.clock,
-            seed,
-        ));
+/// The rain fired: where the beat grid is sure ([`super::Music::is_sure`]),
+/// a burst of coins on each of the next [`RAIN_BEATS`] beats of the grid,
+/// each begun as the beats counted ([`super::Music::beats`]) come within
+/// [`SIGHT`] of its beat, so its coins come into sight on it; the first
+/// where a sound fired with it lands ([`super::Music::land`] on the next
+/// beat: there, or at once where that is more than half a beat away) and
+/// the rest on the beats after. Else all of it at once, a cascade over a
+/// second or so. Sought on past a burst's beat by a beat or more, that
+/// burst is let go.
+fn draw_rain(at: &At, live: &Live, slot: &mut Slot, out: &mut Out) {
+    let &At::Playhead { pill, area, .. } = at else {
+        return;
+    };
+    let (w, h) = super::far_corner(area);
+    let m = &live.music;
+    let beat = m.beat_length();
+    let ahead = m.beats + SIGHT / beat;
+    if let (true, Some(by)) = (live.fired, live.by) {
+        let size = pill * 0.4 * live.strength;
+        if !m.is_sure() {
+            let seed = seed(live.clock, 0x4A_1700);
+            out.sprays.extend(coin_rain(w, h, size, live.clock, seed));
+            slot.playing = None;
+            return;
+        }
+        let mut left = RAIN_BEATS;
+        if m.land(live.clock, When::Beat) <= live.clock {
+            let seed = seed(live.clock, 0x4A_1700);
+            out.sprays
+                .push(coin_burst(w, h, size, live.clock as f32, seed));
+            left -= 1;
+        }
+        slot.playing = Some(Playing {
+            by,
+            at: live.clock as f32,
+            strength: live.strength,
+            next: m.beats.floor() + 1.0,
+            left,
+        });
     }
+    let Some(mut p) = slot.playing else {
+        return;
+    };
+    while p.left > 0 && ahead >= p.next {
+        // Begun a moment back, its beat that near already.
+        let late = ahead - p.next;
+        if late < 1.0 {
+            let seed = seed(live.clock, 0x4A_1700 + p.left);
+            let start = live.clock as f32 - late * beat;
+            let size = pill * 0.4 * p.strength;
+            out.sprays.push(coin_burst(w, h, size, start, seed));
+        }
+        p.next += 1.0;
+        p.left -= 1;
+    }
+    slot.playing = (p.left > 0).then_some(p);
 }
 
 fn draw_flick(at: &At, live: &Live, _: &mut Slot, out: &mut Out) {
@@ -111,6 +156,18 @@ const RAIN_SPREAD: f32 = 1.2;
 const BOUNCE: f32 = 0.32;
 /// How long a rain's coin bounces before it is gone, in seconds.
 const BOUNCED: f32 = 0.45;
+/// The bursts the rain comes in on the beat, a beat each.
+pub const RAIN_BEATS: u32 = 6;
+/// A burst's coins (its first quads).
+const BURST_COINS: u32 = 24;
+/// How long a burst's coins keep starting, in seconds.
+const BURST_SPREAD: f32 = 0.08;
+/// How long a burst lasts, in seconds: as a spray of the rain, its coins
+/// all in at once.
+pub const BURST_LIFE: f32 = RAIN_LIFE - RAIN_SPREAD + BURST_SPREAD;
+/// How long before its beat a burst starts: its coins, starting above the
+/// screen, come into sight on it.
+const SIGHT: f32 = 0.15;
 
 /// A fountain of coins out of `at` (the playhead), each `size` pixels in
 /// radius, at `clock` (the singing's time), scattered by `seed`.
@@ -143,6 +200,22 @@ pub fn coin_rain(width: f32, height: f32, size: f32, clock: f64, seed: u32) -> V
             kind: Kind::CoinRain,
         })
         .collect()
+}
+
+/// A burst of coins on a beat down a screen `width` × `height` from
+/// `start` (the singing's clock), across its width, each `size` pixels in
+/// radius.
+pub fn coin_burst(width: f32, height: f32, size: f32, start: f32, seed: u32) -> Spray {
+    Spray {
+        at: (width / 2.0, -size * 2.0),
+        half: (width / 2.0, height),
+        start,
+        drift: 0.0,
+        size,
+        seed,
+        rgb: GOLD,
+        kind: Kind::CoinBurst,
+    }
 }
 
 /// A coin or two flicked up out of a word hit at `at`, each `size` pixels
@@ -207,12 +280,28 @@ pub fn fountain(s: &Spray, q: u32, age: f32) -> Option<Sprite> {
 }
 
 /// Quad `q` of a spray of the rain `s`, `age` seconds on: a coin in at
-/// its own moment over the screen's width (`band`), falling faster and
-/// faster, swaying, spinning, bouncing once off the screen's bottom and
-/// fading.
+/// its own moment (within [`RAIN_SPREAD`] of the spray's start) over the
+/// screen's width, falling ([`falls`]).
 pub fn rain(s: &Spray, q: u32, age: f32) -> Option<Sprite> {
+    falls(s, q, age, RAIN_SPREAD)
+}
+
+/// Quad `q` of a burst of the rain on the beat `s`, `age` seconds on: the
+/// first [`BURST_COINS`] coins, each in within [`BURST_SPREAD`] of its
+/// start, falling ([`falls`]).
+pub fn burst(s: &Spray, q: u32, age: f32) -> Option<Sprite> {
+    (q < BURST_COINS)
+        .then(|| falls(s, q, age, BURST_SPREAD))
+        .flatten()
+}
+
+/// Quad `q` of falling coins `s`, `age` seconds on: a coin in at its own
+/// moment (within `spread` of the start) over the screen's width (`band`),
+/// falling faster and faster, swaying, spinning, bouncing once off the
+/// screen's bottom and fading.
+fn falls(s: &Spray, q: u32, age: f32, spread: f32) -> Option<Sprite> {
     let r = |j: u32| rand(s.seed, q, j);
-    let t = age - r(0) * RAIN_SPREAD;
+    let t = age - r(0) * spread;
     if t < 0.0 {
         return None;
     }
@@ -298,10 +387,10 @@ pub fn fountain_wgsl() -> String {
     format!("\nconst FOUNTAIN_COINS: u32 = {FOUNTAIN_COINS}u;\n{FOUNTAIN_WGSL}")
 }
 
-/// [`rain`] in WGSL.
+/// [`rain`] and [`burst`] in WGSL (both: they fall alike).
 pub fn rain_wgsl() -> String {
     format!(
-        "\nconst RAIN_SPREAD: f32 = {RAIN_SPREAD:?};\nconst BOUNCE: f32 = {BOUNCE:?};\nconst BOUNCED: f32 = {BOUNCED:?};\n{RAIN_WGSL}"
+        "\nconst RAIN_SPREAD: f32 = {RAIN_SPREAD:?};\nconst BOUNCE: f32 = {BOUNCE:?};\nconst BOUNCED: f32 = {BOUNCED:?};\nconst BURST_COINS: u32 = {BURST_COINS}u;\nconst BURST_SPREAD: f32 = {BURST_SPREAD:?};\n{RAIN_WGSL}"
     )
 }
 
@@ -357,8 +446,20 @@ fn coin_fountain(at: vec4<f32>, rgb: vec3<f32>, size: f32, seed: u32, q: u32, ag
 
 const RAIN_WGSL: &str = r"
 fn coin_rain(at: vec4<f32>, rgb: vec3<f32>, size: f32, seed: u32, q: u32, age: f32) -> Sp {
+    return coin_falls(at, rgb, size, seed, q, age, RAIN_SPREAD);
+}
+
+fn coin_burst(at: vec4<f32>, rgb: vec3<f32>, size: f32, seed: u32, q: u32, age: f32) -> Sp {
+    if q >= BURST_COINS {
+        var o: Sp;
+        return o;
+    }
+    return coin_falls(at, rgb, size, seed, q, age, BURST_SPREAD);
+}
+
+fn coin_falls(at: vec4<f32>, rgb: vec3<f32>, size: f32, seed: u32, q: u32, age: f32, spread: f32) -> Sp {
     var o: Sp;
-    let t = age - r(seed, q, 0u) * RAIN_SPREAD;
+    let t = age - r(seed, q, 0u) * spread;
     if t < 0.0 {
         return o;
     }
@@ -504,6 +605,7 @@ fn draw_gold(p: vec2<f32>, c: vec2<f32>, half: vec2<f32>, turn: f32, look: vec4<
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::gui::fx::Music;
     use crate::gui::particles::{sprite, QUADS};
 
     const CLOCK: f64 = 10.0;
@@ -593,6 +695,126 @@ mod tests {
                 assert!(p.at.1 < 400.0, "up: {p:?}");
             }
             assert!(shown(&s, FLICK_LIFE).is_empty());
+        }
+    }
+
+    /// The rain fired at `fire` to `music`, drawn at 60 frames a second
+    /// for four seconds: each burst made, with the frame it came in.
+    fn rained(music: impl Fn(f64) -> Music, fire: f64) -> Vec<(f64, Spray)> {
+        use crate::gui::fx::{Board, Effects, Fx, Use};
+        use crate::gui::streak::Step;
+        static RAIN: [Use; 1] = [Use::of(Fx::Rain, 1.0)];
+        let row = Effects {
+            on_phrase: &RAIN,
+            ..Effects::NONE
+        };
+        let tier = crate::core::shine::Tier::ALL[0];
+        let phrase = Step {
+            tier: Some(tier),
+            phrase: Some(crate::core::shine::Shone {
+                line: 0,
+                end: fire,
+                value: 1.0,
+                top: 0.9,
+                tier: Some(tier),
+            }),
+            ..Step::default()
+        };
+        let area = (0.0, 0.0, 1600.0, 900.0);
+        let playhead = At::Playhead {
+            tip: (400.0, 300.0),
+            pill: 40.0,
+            pps: 300.0,
+            word: None,
+            area,
+        };
+        let mut board = Board::default();
+        let mut made = Vec::new();
+        for f in 0..240 {
+            let t = fire + f64::from(f) / 60.0;
+            let step = if f == 0 { phrase } else { Step::default() };
+            let frame = board.frame_of([(1.0, &row)].into_iter(), &step, &music(t), t);
+            let (mut sprays, mut letters, mut shake) = (Vec::new(), Vec::new(), [0.0; 2]);
+            let mut out = Out {
+                shapes: &mut Vec::new(),
+                sprays: &mut sprays,
+                letters: &mut letters,
+                shake: &mut shake,
+            };
+            board.draw(&playhead, &frame, &mut out);
+            made.extend(sprays.into_iter().map(|s| (t, s)));
+        }
+        made
+    }
+
+    /// A steady grid at 120 a minute, `from` beats in at `fire`, `sure`.
+    fn steady(from: f64, fire: f64, sure: f32) -> impl Fn(f64) -> Music {
+        move |t| Music::steady(from + (t - fire) * 2.0, 120.0, 4, f64::from(sure), t)
+    }
+
+    /// Where the grid is sure, the rain comes in bursts, one a beat for
+    /// [`RAIN_BEATS`] beats, each coming into sight on its beat (the first
+    /// on the next beat); unsure, all of it at once, as with no music.
+    #[test]
+    fn on_a_sure_beat_the_rain_comes_in_bursts_on_the_beats() {
+        let fire = 5.0;
+        // A quarter of a beat before a beat, at 120 a minute.
+        let made = rained(steady(7.75, fire, 1.0), fire);
+        assert_eq!(made.len(), RAIN_BEATS as usize);
+        for (k, (t, s)) in made.iter().enumerate() {
+            assert_eq!(s.kind, Kind::CoinBurst);
+            let beat = fire + 0.125 + k as f64 * 0.5;
+            assert!(
+                (f64::from(s.start) + f64::from(SIGHT) - beat).abs() < 1e-4,
+                "{k}: {s:?}"
+            );
+            // Made the frame it starts, or (its beat that near) a moment
+            // after.
+            let late = t - f64::from(s.start);
+            assert!(
+                (0.0..1.0 / 60.0 + f64::from(SIGHT)).contains(&late),
+                "{k}: {late}"
+            );
+            // Its coins in at once, in sight on the beat.
+            let late = (0..QUADS)
+                .filter_map(|q| sprite(s, q, s.start + BURST_SPREAD + 0.01))
+                .count();
+            assert_eq!(late, BURST_COINS as usize);
+        }
+        let seen = |s: &Spray, after: f32| -> usize {
+            (0..QUADS)
+                .filter_map(|q| sprite(s, q, s.start + SIGHT + after))
+                .filter(|p| p.at.1 + p.half.1 > 0.0)
+                .count()
+        };
+        let s = &made[0].1;
+        assert!(seen(s, -0.1) < seen(s, 0.05), "into sight on the beat");
+        let unsure = rained(steady(7.75, fire, 0.2), fire);
+        assert_eq!(unsure.len(), RAIN_SPRAYS as usize);
+        assert!(unsure
+            .iter()
+            .all(|(t, s)| *t == fire && s.kind == Kind::CoinRain));
+        assert_eq!(rained(|_| Music::NEUTRAL, fire).len(), RAIN_SPRAYS as usize);
+    }
+
+    /// Fired a third into a beat (the next more than half a beat off: a
+    /// sound fired with it would not wait), the first burst comes at once
+    /// and the rest on the beats after, each in sight on its beat.
+    #[test]
+    fn fired_mid_beat_the_first_burst_comes_at_once() {
+        let fire = 5.0;
+        let music = steady(7.3, fire, 1.0);
+        assert_eq!(music(fire).land(fire, When::Beat), fire, "not waiting");
+        let made = rained(music, fire);
+        assert_eq!(made.len(), RAIN_BEATS as usize);
+        assert_eq!((made[0].0, made[0].1.start), (fire, fire as f32));
+        for (k, (_, s)) in made.iter().enumerate().skip(1) {
+            // Beat 8 is 0.35 s on, each after half a second later.
+            let beat = fire + 0.35 + (k - 1) as f64 * 0.5;
+            assert!(
+                (f64::from(s.start) + f64::from(SIGHT) - beat).abs() < 1e-3,
+                "{k}: {s:?}"
+            );
         }
     }
 }

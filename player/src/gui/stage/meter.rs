@@ -149,9 +149,9 @@ impl Stage {
             lane: at.lane_box,
             pill: at.lane.pill,
         };
-        self.board.shapes(&lane, effects, &mut d.lights);
+        self.effects_at(&lane, effects, (&mut d.lights, &mut Vec::new()));
         let sky = At::Sky { area: at.area };
-        self.board.sprays(&sky, effects, &mut d.light_sprays);
+        self.effects_at(&sky, effects, (&mut Vec::new(), &mut d.light_sprays));
         self.progress(d, (singing, length), at, (&step.glow, step.phrase), effects);
     }
     /// The meter, its fill, and the tier's name under it as a phrase is
@@ -178,7 +178,7 @@ impl Stage {
                 at: (mx + half.0, my),
                 size: half.1 * 2.2,
             };
-            self.board.sprays(&meter, effects, &mut d.light_sprays);
+            self.effects_at(&meter, effects, (&mut Vec::new(), &mut d.light_sprays));
         }
         let verdict_on = self.meter.shown.is_some_and(|(_, t)| clock - t < VERDICT);
         if !verdict_on {
@@ -353,7 +353,7 @@ impl Stage {
                 size: bh * 3.0,
                 line: p.line as u32,
             };
-            self.board.sprays(&mark, effects, &mut d.light_sprays);
+            self.effects_at(&mark, effects, (&mut Vec::new(), &mut d.light_sprays));
         }
         // The playhead's point on it.
         d.out.push(super::disc(

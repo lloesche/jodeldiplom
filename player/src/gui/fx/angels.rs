@@ -243,7 +243,13 @@ mod tests {
             let sky = At::Sky {
                 area: (0.0, 0.0, 1600.0, 900.0),
             };
-            board.sprays(&sky, &frame, &mut sprays);
+            let mut out = crate::gui::fx::Out {
+                shapes: &mut Vec::new(),
+                sprays: &mut sprays,
+                letters: &mut Vec::new(),
+                shake: &mut [0.0; 2],
+            };
+            board.draw(&sky, &frame, &mut out);
             assert!(sprays.iter().all(|s| s.kind == Kind::Angels));
             sprays.len()
         };

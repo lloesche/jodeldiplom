@@ -10,8 +10,9 @@
 //! while the demo sings ([`tag`]). The tiers' effects draw at their
 //! points of it ([`super::fx`]: the rainbow behind the tubes, the bursts
 //! from the playhead, the light round the lane, the screen passes over
-//! it all), as strong as the board eases them from the singing and the
-//! music. Its text is in
+//! it all, a word slammed down over everything, the screen shaken with
+//! it), as strong as the board eases them from the singing and the music.
+//! Its text is in
 //! Karaoke mode's own faces ([`Face`]). While a song's result shows, the
 //! stage is the result screen instead ([`result`]).
 //!
@@ -28,6 +29,7 @@ mod arrow;
 mod atlas;
 mod badge;
 mod comet;
+mod effects;
 mod lines;
 mod meter;
 mod result;
@@ -42,6 +44,7 @@ use self::atlas::Atlas;
 use self::shade::Shade;
 use super::sparks::noise;
 use super::stage_gpu::{kind, Instance, StageFrame};
+pub use effects::{over_at, screen_at};
 pub use result::Tint;
 
 use crate::core::State;
@@ -126,6 +129,8 @@ pub struct Stage {
     meter: meter::Meter,
     /// The effects' strengths and what they keep ([`fx::Board`]).
     board: fx::Board,
+    /// How far the effects shake the screen this frame, all of them.
+    shake: [f32; 2],
     /// The bursts that are light (the angels, the jackpots) showing.
     lights: Vec<super::particles::Spray>,
     /// What the result screen keeps between frames ([`result::Kept`]).
@@ -291,17 +296,6 @@ impl LaneBox {
     pub fn rect(&self) -> [f32; 4] {
         let ((cx, cy), (hx, hy)) = (self.middle, self.half);
         [cx - hx, cy - hy, cx + hx, cy + hy]
-    }
-}
-
-/// Where the effects' screen passes draw over a stage in the window's
-/// `area` round its `lane`: the area, the lyric band they keep mostly
-/// clear, the lane.
-pub fn screen_at(area: (f32, f32, f32, f32), lane: LaneBox) -> At {
-    At::Screen {
-        area,
-        band: lines::band(area),
-        lane,
     }
 }
 
@@ -568,11 +562,15 @@ impl Stage {
             length: song.length,
         });
         let effects = self.board.frame(&step, &music, clock);
+        self.shake = [0.0; 2];
+        // Over everything, lettered before any other text of the frame: the
+        // effects' big words and their light.
+        let (over, over_light) = self.over(&over_at(area, lane_box), &effects);
         let under = At::Under {
             head: (lane.head, lane_box.middle.1),
             lane: lane_box,
         };
-        self.board.shapes(&under, &effects, &mut out);
+        self.effects_at(&under, &effects, (&mut out, &mut Vec::new()));
 
         // The words, each a tube through its notes, its bubble filling as it
         // was hit; the shots rescuing those missed.
@@ -643,7 +641,9 @@ impl Stage {
             word: step.word.map(at),
             area,
         };
-        self.board.sprays(&playhead, &effects, &mut self.sprays);
+        let mut bursts = std::mem::take(&mut self.sprays);
+        self.effects_at(&playhead, &effects, (&mut Vec::new(), &mut bursts));
+        self.sprays = bursts;
         for s in &mut self.sparks {
             s.age += song_dt;
             // Their own way, and by with the lane.
@@ -704,7 +704,7 @@ impl Stage {
                 at: (lane.head, self.arrow.y),
                 radius: p * 0.9,
             };
-            self.board.shapes(&arrow, &effects, &mut out);
+            self.effects_at(&arrow, &effects, (&mut out, &mut Vec::new()));
         }
 
         // The multiplier, over the playhead ([`badge`]).
@@ -745,12 +745,14 @@ impl Stage {
             &at,
             (&step, &effects),
         );
-        let (out, top, mut lights, mut light_sprays) =
+        let (out, mut top, mut lights, mut light_sprays) =
             (drawn.out, drawn.top, drawn.lights, drawn.light_sprays);
+        top.extend(over);
+        lights.extend(over_light);
         // The screen passes over it all, clear of the lyric band.
         let mut screen = Vec::new();
-        self.board
-            .shapes(&screen_at(area, lane_box), &effects, &mut screen);
+        let at = screen_at(area, lane_box);
+        self.effects_at(&at, &effects, (&mut screen, &mut Vec::new()));
         lights.append(&mut shots.lights);
         self.lights.retain(|s| s.alive(clock));
         self.lights.append(&mut light_sprays);
@@ -769,6 +771,7 @@ impl Stage {
             screen,
             music,
             looks: effects.looks(),
+            shake: self.shake,
         }
     }
 }
@@ -811,45 +814,5 @@ mod tests {
             m > COVER_PAD as f32 + 4.0 && m < COVER_PAD as f32 + 40.0,
             "{m}"
         );
-    }
-
-    /// The screen passes get the lyric band (from the line sung's top to
-    /// the next's bottom, under the lane) and the lane's glass, and an
-    /// effect drawing there carries them.
-    #[test]
-    fn the_screen_passes_get_the_lyric_band() {
-        use crate::gui::fx::{Board, Effects, Fx, Music, Use};
-        let area = (0.0, 0.0, 1600.0, 900.0);
-        let glass = Lane::new(area, 0.0).glass(area);
-        let at = screen_at(area, glass);
-        let At::Screen { band, lane, .. } = at else {
-            panic!("{at:?}");
-        };
-        assert_eq!(band.0, 900.0 * 0.68);
-        assert!(band.1 > 900.0 * 0.78 && band.1 < 900.0, "{band:?}");
-        assert!(lane.rect()[3] < band.0, "the lane over the band: {lane:?}");
-        static FIRE: [Use; 1] = [Use::of(Fx::EdgeFire, 0.8)];
-        let row = Effects {
-            held: &FIRE,
-            ..Effects::NONE
-        };
-        let step = crate::gui::streak::Step {
-            tier: Some(crate::tiers::Tier::ALL[0]),
-            glow: crate::gui::rainbow::Glow {
-                level: 1.0,
-                from: 1.0,
-                since: 0.0,
-            },
-            ..Default::default()
-        };
-        let mut board = Board::default();
-        let frame = board.frame_of([(1.0, &row)].into_iter(), &step, &Music::NEUTRAL, 3.0);
-        let mut screen = Vec::new();
-        board.shapes(&at, &frame, &mut screen);
-        assert!(!screen.is_empty());
-        for i in &screen {
-            assert_eq!((i.shape[0], i.shape[1]), band);
-            assert_eq!(i.params[1], 0.8);
-        }
     }
 }

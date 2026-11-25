@@ -571,8 +571,11 @@ stem keys are their mutes.
   while the singing is at it, eased between the rows as its glow eases;
   or fired by a phrase reaching it), drawn at its point of the stage; a
   row lists nothing at its rung of the multiplier yet, and no row lists
-  the edges on fire, the marquee bulbs, the lyrics on fire or frosted or
-  the coins. The glow, the flames, the angels and the jackpot are light:
+  the edges on fire, the marquee bulbs, the lyrics on fire or frosted,
+  the coins or the word slam (these move with the beat where the song's
+  grid is sure: the fire flaring on a bar's first beat, the bulbs
+  chasing a bulb a beat, the coins raining in bursts on the beats, the
+  word landing on a bar's first beat and shaking the screen). The glow, the flames, the angels and the jackpot are light:
   drawn apart at high range, blurred down a chain of halved textures and
   back up, tone mapped and added over the frame (they bloom). Each frame
   the processor gives only the time, the tier (when it changed and how

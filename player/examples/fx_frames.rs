@@ -1,15 +1,20 @@
 //! The effects no tier's row uses yet ([`jodeldiplom::gui::fx`]: the
 //! screen's edges on fire, the marquee bulbs round the lane, the line sung
-//! on fire and frosted, the coins' fountain, rain and flick) seen and
-//! timed over a frame of Karaoke mode as the window draws it: a made-up
-//! song sung on its notes up to ten seconds in, over a cover taken apart
-//! (its `.layers` file), in a window of 3024 × 1964 (a 16-inch MacBook
-//! Pro's screen) by default. Each effect is put into the frame as the
-//! stage puts it (by the effects' board, from a row listing it: its screen
-//! pass, its text in its treatment, its bursts), at a few strengths and
-//! moments. Its GPU time is what it adds to the window pass's step it
-//! draws in (`fx`, `stage` or `bursts`), the median over a few frames.
-//! `--png OUT_DIR`: each frame whole as a PNG (`<effect>.png`).
+//! on fire and frosted, the coins' fountain, rain and flick, a word
+//! slammed down) seen and timed over a frame of Karaoke mode as the window
+//! draws it: a made-up song sung on its notes up to ten seconds in, over a
+//! cover taken apart (its `.layers` file), in a window of 3024 × 1964 (a
+//! 16-inch MacBook Pro's screen) by default. Each effect is put into the
+//! frame as the stage puts it (by the effects' board, from a row listing
+//! it: its screen pass, its text in its treatment, its bursts, its words),
+//! at a few strengths and moments: with no music, and moving with a
+//! steady beat (120 a minute, bars of four, the grid sure) at a few places
+//! in the beat and the bar (the bulbs' chase and flash, the fire's flare
+//! and breath, the rain's bursts, the slam landing on a bar's first beat,
+//! shouting the top tier's name or the multiplier). Its GPU time is what
+//! it adds to the window pass's step it draws in (`fx`, `stage`, `bursts`
+//! or `top`), the median over a few frames. `--png OUT_DIR`: each frame
+//! whole as a PNG (`<effect>-<what>.png`).
 //!
 //! ```text
 //! cargo run --release -p jodeldiplom --example fx_frames --
@@ -20,12 +25,13 @@ use std::path::Path;
 use std::sync::Arc;
 
 use jodeldiplom::art::Art;
+use jodeldiplom::core::shine::Tier;
 use jodeldiplom::core::singing::Singing;
 use jodeldiplom::cover::{Apart, Layers};
 use jodeldiplom::gui::backdrop::{BackdropFrame, Cue, Visualiser};
 use jodeldiplom::gui::big_text::Faces;
-use jodeldiplom::gui::fx::{Effects, Fx, Use};
-use jodeldiplom::gui::karaoke::{paint, Backdrop, Layer};
+use jodeldiplom::gui::fx::{By, Effects, Fx, Layer, Music, Use};
+use jodeldiplom::gui::karaoke::{paint, Backdrop, Layer as Pixmap};
 use jodeldiplom::gui::present::Offscreen;
 use jodeldiplom::gui::raster::Target;
 use jodeldiplom::gui::stage::{without_lyrics, Song, Stage, Tint};
@@ -33,7 +39,7 @@ use jodeldiplom::gui::stage_gpu::StageFrame;
 
 #[path = "../tests/common/sung.rs"]
 mod sung;
-use sung::{cover_of, levels, picture_at, song, with_effects, FPS, LENGTH};
+use sung::{cover_of, levels, picture_at, song, with_effects, Fired, FPS, LENGTH};
 
 // The fonts build.rs found: `EMBEDDED_FONTS`.
 include!(concat!(env!("OUT_DIR"), "/fonts.rs"));
@@ -41,15 +47,18 @@ include!(concat!(env!("OUT_DIR"), "/fonts.rs"));
 /// The moment the effects are drawn over.
 const AT: f64 = 10.0;
 /// Each frame timed this many times.
-const TIMES: usize = 7;
+const TIMES: usize = 15;
+/// The steady beat's tempo, beats a minute.
+const TEMPO: f64 = 120.0;
+
 /// The frame at [`AT`]: the song sung on its notes up to it, frame by
-/// frame as the window draws it (into `gpu`); its backdrop, its stage and
-/// the pixmap under them.
+/// frame as the window draws it (into `gpu`); its backdrop, its stage, the
+/// pixmap under them and the stage that made it.
 fn frame_at(
     gpu: &mut Offscreen,
     (art, layers): (&Art, &Layers),
     (w, h): (u32, u32),
-) -> (BackdropFrame, StageFrame, Vec<u32>) {
+) -> (BackdropFrame, StageFrame, Vec<u32>, Stage) {
     let (lyrics, melody) = song();
     let sung: Vec<&jodel_lyrics::Line> = lyrics.lines.iter().collect();
     let mut singing = Singing::default();
@@ -60,7 +69,7 @@ fn frame_at(
     );
     let mut stage = Stage::default();
     let mut visualiser = Visualiser::default();
-    let (mut faces, mut layer) = (Faces::default(), Layer::default());
+    let (mut faces, mut layer) = (Faces::default(), Pixmap::default());
     let under = Backdrop::through(w as usize, h as usize);
     let mut pixels = vec![0u32; (w * h) as usize];
     let mut heard = 0usize;
@@ -119,17 +128,21 @@ fn frame_at(
         last = Some((backdrop, frame));
     }
     let (backdrop, frame) = last.expect("a frame");
-    (backdrop, frame, pixels)
+    (backdrop, frame, pixels, stage)
 }
 
 /// An effect put into a frame: its name as shown, the effect, a row
-/// holding it at its strength (and firing it), and how long ago it fired
-/// (bursts; none: held, the word hit then).
+/// holding it at its strength (and firing it), how long ago it fired
+/// (bursts, a word; none: held, the word hit then), what fired it, and
+/// the music it moves with: none, or a steady beat (the beats counted at
+/// the frame).
 struct Shot {
     name: String,
     fx: Fx,
     row: Effects,
     ago: f64,
+    by: By,
+    beats: Option<f64>,
 }
 
 impl Shot {
@@ -141,9 +154,31 @@ impl Shot {
             row: Effects {
                 held: uses,
                 on_phrase: uses,
+                on_rung: uses,
                 ..Effects::NONE
             },
             ago,
+            by: By::Phrase(0),
+            beats: None,
+        }
+    }
+
+    /// `self` moving with a steady beat, `beats` beats in at the frame,
+    /// named for it.
+    fn on_beat(self, beats: f64, what: &str) -> Shot {
+        Shot {
+            name: format!("{}-beat-{what}", self.fx.spec().ident),
+            beats: Some(beats),
+            ..self
+        }
+    }
+
+    /// `self` fired by the top row (its phrase, or its rung reached).
+    fn by_top(self, rung: bool) -> Shot {
+        let top = Tier::TOP.index();
+        Shot {
+            by: if rung { By::Rung(top) } else { By::Phrase(top) },
+            ..self
         }
     }
 
@@ -152,6 +187,8 @@ impl Shot {
         let spec = self.fx.spec();
         if spec.is_screen() {
             "fx"
+        } else if spec.at.contains(&Layer::Over) {
+            "top"
         } else if spec.lyric.is_some() {
             "stage"
         } else {
@@ -159,9 +196,22 @@ impl Shot {
         }
     }
 
-    /// `base` with the effect in it, over the stage in `area`.
-    fn into(&self, base: &StageFrame, area: (f32, f32, f32, f32)) -> StageFrame {
-        with_effects(base, area, &self.row, f64::from(base.clock) - self.ago)
+    /// `base` (made by `stage`) with the effect in it, over the stage in
+    /// `area`: fired [`Shot::ago`] before the frame, to its music going on
+    /// from then (a steady grid, at the frame its beats counted).
+    fn into(&self, stage: &mut Stage, base: &StageFrame, area: (f32, f32, f32, f32)) -> StageFrame {
+        let clock = f64::from(base.clock);
+        let music = |t: f64| {
+            self.beats.map_or(Music::NEUTRAL, |b| {
+                Music::steady(b + (t - clock) * TEMPO / 60.0, TEMPO, 4, 1.0, t)
+            })
+        };
+        let fired = Fired {
+            at: clock - self.ago,
+            music: &music,
+            by: self.by,
+        };
+        with_effects(stage, base, area, &self.row, fired)
     }
 }
 /// The median of `v`.
@@ -212,6 +262,75 @@ fn write_png(file: &Path, pixels: &[u32], (w, h): (u32, u32)) {
     durable::write_atomic(file, bytes.get_ref()).expect("written");
 }
 
+/// What is shown: each effect with no music as made, then moving with the
+/// beat at places in it.
+fn shots() -> Vec<Shot> {
+    let mut shots = vec![
+        Shot::new(Fx::EdgeFire, 0.3, 0.0),
+        Shot::new(Fx::EdgeFire, 1.0, 0.0),
+        Shot::new(Fx::Bulbs, 0.3, 0.0),
+        Shot::new(Fx::Bulbs, 1.0, 0.0),
+        Shot::new(Fx::LyricFire, 0.3, 0.0),
+        Shot::new(Fx::LyricFire, 1.0, 0.0),
+        Shot::new(Fx::LyricFrost, 0.6, 0.0),
+        Shot::new(Fx::LyricFrost, 1.0, 0.0),
+        Shot::new(Fx::Fountain, 1.0, 0.5),
+        Shot::new(Fx::Rain, 1.0, 1.0),
+        Shot::new(Fx::Flick, 1.0, 0.15),
+        Shot::new(Fx::Slam, 1.0, 0.3).by_top(false),
+    ];
+    // The bulbs: on the one, after it, between beats, the next beats.
+    for (beats, what) in [
+        (8.0, "one"),
+        (8.2, "one-after"),
+        (8.5, "half"),
+        (9.0, "two"),
+        (9.5, "two-half"),
+        (10.0, "three"),
+    ] {
+        shots.push(Shot::new(Fx::Bulbs, 1.0, 0.0).on_beat(beats, what));
+    }
+    shots.push(Shot::new(Fx::Bulbs, 0.6, 0.0).on_beat(9.0, "two-0.6"));
+    // The fire: flaring on the one, falling back, between.
+    for (beats, what) in [
+        (8.0, "one"),
+        (8.15, "one-after"),
+        (8.5, "half"),
+        (9.0, "two"),
+    ] {
+        shots.push(Shot::new(Fx::EdgeFire, 1.0, 0.0).on_beat(beats, what));
+    }
+    // The rain: fired just before a beat, its bursts on the beats after.
+    for ago in [0.3, 0.8, 1.3, 2.0] {
+        let beats = 7.75 + ago * TEMPO / 60.0;
+        let what = format!("{ago}s");
+        shots.push(Shot::new(Fx::Rain, 1.0, ago).on_beat(beats, &what));
+    }
+    // The slam: fired two and a half beats into a bar, landing on the
+    // next bar's first beat 0.75 s on; a moment before it, on it, after.
+    for u in [-0.14, -0.1, -0.04, 0.0, 0.03, 0.08, 0.2, 0.45, 0.9, 1.05] {
+        let ago = 0.75 + u;
+        let beats = 6.5 + ago * TEMPO / 60.0;
+        let what = format!("diva-{u}s");
+        shots.push(
+            Shot::new(Fx::Slam, 1.0, ago)
+                .by_top(false)
+                .on_beat(beats, &what),
+        );
+    }
+    for u in [0.0, 0.2] {
+        let ago = 0.75 + u;
+        let what = format!("x32-{u}s");
+        let beats = 6.5 + ago * TEMPO / 60.0;
+        shots.push(
+            Shot::new(Fx::Slam, 1.0, ago)
+                .by_top(true)
+                .on_beat(beats, &what),
+        );
+    }
+    shots
+}
+
 fn main() {
     jodeldiplom::gui::fonts::use_fonts(EMBEDDED_FONTS);
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -238,27 +357,14 @@ fn main() {
     let mut gpu = Offscreen::timed().expect("a GPU that times");
     gpu.set_density(density);
     println!("{}, {w}x{h}, {density} pixels to a point", gpu.name);
-    let (backdrop, base, pixmap) = frame_at(&mut gpu, (&art, &layers), (w, h));
+    let (backdrop, base, pixmap, mut stage) = frame_at(&mut gpu, (&art, &layers), (w, h));
     let area = (0.0, 0.0, w as f32, h as f32);
-    let shots = [
-        Shot::new(Fx::EdgeFire, 0.3, 0.0),
-        Shot::new(Fx::EdgeFire, 1.0, 0.0),
-        Shot::new(Fx::Bulbs, 0.3, 0.0),
-        Shot::new(Fx::Bulbs, 1.0, 0.0),
-        Shot::new(Fx::LyricFire, 0.3, 0.0),
-        Shot::new(Fx::LyricFire, 1.0, 0.0),
-        Shot::new(Fx::LyricFrost, 0.6, 0.0),
-        Shot::new(Fx::LyricFrost, 1.0, 0.0),
-        Shot::new(Fx::Fountain, 1.0, 0.5),
-        Shot::new(Fx::Rain, 1.0, 1.0),
-        Shot::new(Fx::Flick, 1.0, 0.15),
-    ];
     println!("GPU ms, median: the window pass's step the effect draws in (what it adds)");
-    for shot in &shots {
-        let frame = shot.into(&base, area);
+    for shot in &shots() {
+        let frame = shot.into(&mut stage, &base, area);
         let step = shot.step();
         let (ms, added) = cost(&mut gpu, (&backdrop, &base), &frame, ((w, h), step));
-        println!("  {:<22} {step:<7} {ms:7.3}  ({added:+.3})", shot.name);
+        println!("  {:<26} {step:<7} {ms:7.3}  ({added:+.3})", shot.name);
         if let Some(dir) = &png {
             gpu.set_stage(Some(&frame), w, h);
             let pixels = gpu.show_pixels(&pixmap, w, h).expect("a frame");

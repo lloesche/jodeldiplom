@@ -58,7 +58,7 @@ pub(super) const STREAK: Tag = Tag(2);
 /// How long the jackpot and the payout are, beats (bars of `bar` beats),
 /// and the beat the payout's whoosh leads into it with: what they ask
 /// room for between the lines.
-pub(super) const JACKPOT_BEATS: f64 = 3.0;
+pub(crate) const JACKPOT_BEATS: f64 = 3.0;
 pub(super) fn payout_beats(bar: u32) -> f64 {
     2.0 * f64::from(bar.max(2))
 }

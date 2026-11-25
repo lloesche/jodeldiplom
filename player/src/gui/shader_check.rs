@@ -218,6 +218,150 @@ fn every_effect_s_shader_is_its_reference() {
     assert!(held >= 7, "{held}");
 }
 
+/// The music's uniform as the shaders read it, field by field by the
+/// names the effects use (`music.beat.w` the bar's pulse, `music.tempo.y`
+/// how sure the grid is, `music.count.x` the beats counted, a stem at its
+/// `STEM_` place, ...): each the [`super::fx::Music`] field it says.
+#[test]
+fn the_music_s_uniform_reads_as_its_fields() {
+    use super::fx::Music;
+    use jodel_rhythm::stems::Stem;
+    let Some(gpu) = gpu() else {
+        return;
+    };
+    let m = Music {
+        stems: [0.11, 0.22, 0.33, 0.44],
+        level: 0.55,
+        progress: 0.66,
+        melody: 61.0,
+        sung: 62.0,
+        singing: 1.0,
+        section: 0.77,
+        ..Music::steady(13.375, 97.0, 3, 0.88, 0.0)
+    };
+    let ins = m.uniform().to_vec();
+    let source = super::fx::music::wgsl();
+    let body = "
+    let m = Music(ins[0], ins[1], ins[2], ins[3], ins[4]);
+    outs[0] = vec4<f32>(m.beat.x, m.beat.y, m.beat.z, m.beat.w);
+    outs[1] = vec4<f32>(m.tempo.x, m.tempo.y, m.tempo.z, m.tempo.w);
+    outs[2] = vec4<f32>(m.stems[STEM_BASS], m.stems[STEM_DRUMS], m.stems[STEM_OTHER], m.stems[STEM_VOCALS]);
+    outs[3] = vec4<f32>(m.voice.x, m.voice.y, m.voice.z, m.voice.w);
+    outs[4] = vec4<f32>(m.count.x, m.count.y, 0.0, 0.0);";
+    let outs = run(&gpu, &source, body, &ins, (1, 5));
+    let stem = |s: Stem| m.stems[s as usize];
+    let want = [
+        [m.beat_phase, m.bar_phase, m.beat, m.downbeat],
+        [m.tempo, m.sure, m.level, m.progress],
+        [Stem::Bass, Stem::Drums, Stem::Other, Stem::Vocals].map(stem),
+        [m.melody, m.sung, m.singing, m.section],
+        [m.beats, m.bar_beats, 0.0, 0.0],
+    ];
+    assert_eq!(outs, want);
+    assert_eq!(Music::from_uniform(&m.uniform()).uniform(), m.uniform());
+}
+
+/// The word slam's taps of the atlas (`slam_cover`) as the processor's
+/// ([`super::fx::slam::cover`]), in an atlas of their own: a word's texels
+/// and another word's beside them, read in and round the word (between
+/// texels, past its edge, inside its letters, its outline's reach).
+#[test]
+fn the_slam_s_taps_are_their_reference() {
+    let Some(gpu) = gpu() else {
+        return;
+    };
+    let (device, queue) = &gpu;
+    const SIDE: u32 = 32;
+    let byte = |x: u32, y: u32| -> u8 {
+        if x >= 24 {
+            200
+        } else if (8..12).contains(&x) {
+            255
+        } else {
+            ((x * 7 + y * 13) % 256) as u8
+        }
+    };
+    let bytes: Vec<u8> = (0..SIDE * SIDE)
+        .flat_map(|i| [byte(i % SIDE, i / SIDE), 0, 0, 255])
+        .collect();
+    let size = wgpu::Extent3d {
+        width: SIDE,
+        height: SIDE,
+        depth_or_array_layers: 1,
+    };
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("jodeldiplom shader check"),
+        size,
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8Unorm,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+    queue.write_texture(
+        texture.as_image_copy(),
+        &bytes,
+        wgpu::TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(SIDE * 4),
+            rows_per_image: Some(SIDE),
+        },
+        size,
+    );
+    let view = texture.create_view(&Default::default());
+    let rect = [0.0, 0.0, 24.0, 20.0];
+    let samples: Vec<[f32; 4]> = (0..2000)
+        .map(|k| {
+            let f = k as f32;
+            let fr = |m: f32| (f * m).fract();
+            [
+                fr(0.613) * 30.0,
+                fr(0.377) * 24.0,
+                0.5 + fr(0.291) * 4.0,
+                0.0,
+            ]
+        })
+        .collect();
+    let source = format!(
+        "
+@group(0) @binding(0) var atlas: texture_2d<f32>;
+@group(0) @binding(1) var soft: sampler;
+{}",
+        super::fx::slam::cover_wgsl()
+    );
+    let body = format!(
+        "
+    let a = ins[i];
+    outs[i] = vec4<f32>(slam_cover(a.xy, vec4<f32>({:?}, {:?}, {:?}, {:?}), a.z, {SIDE}.0), 0.0, 0.0);",
+        rect[0], rect[1], rect[2], rect[3]
+    );
+    let outs = run_reading(
+        &gpu,
+        (&source, &body),
+        &samples,
+        (samples.len(), 1),
+        Some(&view),
+    );
+    let texel = |x: i32, y: i32| {
+        let (x, y) = (x.clamp(0, SIDE as i32 - 1), y.clamp(0, SIDE as i32 - 1));
+        f32::from(byte(x as u32, y as u32)) / 255.0
+    };
+    let mut inside = 0;
+    for (s, g) in samples.iter().zip(&outs) {
+        let want = super::fx::slam::cover(&texel, (s[0], s[1]), rect, s[2]);
+        for c in 0..2 {
+            // A GPU's linear filter weighs in steps of 1/256.
+            assert!(
+                near(g[c], want[c], 6e-3, 0.0),
+                "{s:?}: GPU {g:?}, processor {want:?}"
+            );
+        }
+        inside += usize::from(want[0] >= 1.0);
+    }
+    assert!(inside > 20, "{inside}");
+}
+
 /// Every quad of every kind's probes ([`particles::Motion::probes`]: a
 /// bubble's, small and large, drifting or not; a word scored's, a step
 /// up's, the angels', a jackpot's, confetti, the coins') at times through

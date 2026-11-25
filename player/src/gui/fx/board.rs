@@ -10,10 +10,8 @@
 //! and its look ([`Looks`], which the shaders read every frame).
 
 use super::music::Music;
-use super::{strength, At, Effects, Fx, Looks, Out, Param, Slot, Use};
-use crate::gui::particles::Spray;
+use super::{strength, At, By, Effects, Fx, Looks, Out, Param, Slot, Use};
 use crate::gui::rainbow::Glow;
-use crate::gui::stage_gpu::Instance;
 use crate::gui::streak::Step;
 use crate::tiers::{held_through, Tier, TIERS};
 
@@ -33,6 +31,7 @@ pub struct Frame {
     aim: [f32; Fx::COUNT],
     listed: [f32; Fx::COUNT],
     fired: [bool; Fx::COUNT],
+    by: [Option<By>; Fx::COUNT],
     rose: u32,
     looks: Looks,
     /// The music.
@@ -41,8 +40,9 @@ pub struct Frame {
 
 /// An effect in a frame, as it draws: the singing's clock, its strength
 /// now (as it fired, if it did), the strength it is going to, the strength
-/// its rows list for the glow's change, whether it fired this frame, the
-/// tiers the phrase rose, the singing's glow and the music.
+/// its rows list for the glow's change, whether it fired this frame (and
+/// what fired it), the tiers the phrase rose, the singing's glow, the music
+/// and its look.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Live {
     /// The singing's clock.
@@ -57,12 +57,16 @@ pub struct Live {
     pub listed: f32,
     /// Whether it fired.
     pub fired: bool,
+    /// What fired it, if it did.
+    pub by: Option<By>,
     /// The tiers the phrase rose.
     pub rose: u32,
     /// The singing's glow.
     pub glow: Glow,
     /// The music.
     pub music: Music,
+    /// Its look, as the music moved it.
+    pub look: [f32; 4],
 }
 
 impl Frame {
@@ -75,9 +79,11 @@ impl Frame {
             aim: self.aim[i],
             listed: self.listed[i],
             fired: self.fired[i],
+            by: self.by[i],
             rose: self.rose,
             glow: self.glow,
             music: self.music,
+            look: self.looks.0[i],
         }
     }
 
@@ -120,6 +126,9 @@ impl Board {
             if t < s.last {
                 s.last = f32::NEG_INFINITY;
             }
+            if s.playing.is_some_and(|p| t < p.at) {
+                s.playing = None;
+            }
         }
         let row = |t: Option<Tier>| t.and_then(|t| rows.clone().nth(t.index()).map(|(_, e)| e));
         if step.at_rung != self.rung {
@@ -150,6 +159,7 @@ impl Board {
             aim: [0.0; Fx::COUNT],
             listed: [0.0; Fx::COUNT],
             fired: [false; Fx::COUNT],
+            by: [None; Fx::COUNT],
             rose: 0,
             looks: Looks::SPECS,
             music: *music,
@@ -165,64 +175,39 @@ impl Board {
             frame.aim[i] = held(step.glow.level).max(rung.level);
             frame.listed[i] = held(peak).max(rung.level.max(rung.from));
         }
-        let mut fired: Vec<&Use> = Vec::new();
-        if let Some(r) = row(step.phrase.and_then(|p| p.tier)) {
-            fired.extend(r.on_phrase);
-            frame.rose = step.ups;
+        let mut fired: Vec<(&Use, By)> = Vec::new();
+        if let Some(t) = step.phrase.and_then(|p| p.tier) {
+            if let Some(r) = row(Some(t)) {
+                fired.extend(r.on_phrase.iter().map(|u| (u, By::Phrase(t.index()))));
+                frame.rose = step.ups;
+            }
         }
         let up = step.rung.filter(|(a, b)| b > a).and_then(|(_, b)| b);
-        if let Some(r) = row(up) {
-            fired.extend(r.on_rung);
+        if let (Some(t), Some(r)) = (up, row(up)) {
+            fired.extend(r.on_rung.iter().map(|u| (u, By::Rung(t.index()))));
         }
-        for u in &fired {
+        for &(u, by) in &fired {
             let i = u.fx.index();
             frame.fired[i] = true;
+            // The phrase's first: fired by both, it is the phrase's.
+            frame.by[i].get_or_insert(by);
             frame.now[i] = frame.now[i].max(u.strength);
         }
         let held = row(step.tier).map(|r| r.held).into_iter();
         for u in held.chain(row(self.rung).map(|r| r.at_rung)).flatten() {
             modulate(&mut frame, u, false);
         }
-        for u in fired {
+        for (u, _) in fired {
             modulate(&mut frame, u, true);
         }
         frame
     }
 
-    /// The effects' shapes at `at` (a slot of shapes) in `frame`, into
-    /// `shapes`.
-    pub fn shapes(&mut self, at: &At, frame: &Frame, shapes: &mut Vec<Instance>) {
-        let mut sprays = Vec::new();
-        self.draw(
-            at,
-            frame,
-            &mut Out {
-                shapes,
-                sprays: &mut sprays,
-            },
-        );
-        debug_assert!(sprays.is_empty(), "{:?} takes no bursts", at.layer());
-    }
-
-    /// The effects' bursts at `at` (a slot of bursts) in `frame`, into
-    /// `sprays`.
-    pub fn sprays(&mut self, at: &At, frame: &Frame, sprays: &mut Vec<Spray>) {
-        let mut shapes = Vec::new();
-        self.draw(
-            at,
-            frame,
-            &mut Out {
-                shapes: &mut shapes,
-                sprays,
-            },
-        );
-        debug_assert!(shapes.is_empty(), "{:?} takes no shapes", at.layer());
-    }
-
     /// Asks the effects drawing at `at`'s slot to draw there (in their
-    /// order: [`Fx::ALL`]), those with any strength or aim or that fired
-    /// in `frame`, into `out`.
-    fn draw(&mut self, at: &At, frame: &Frame, out: &mut Out) {
+    /// order: [`Fx::ALL`]), those with any strength or aim, that fired in
+    /// `frame` or still play out a firing, into `out` ([`Out`]: the slot's
+    /// shapes or bursts, the words, the shake added).
+    pub fn draw(&mut self, at: &At, frame: &Frame, out: &mut Out) {
         let layer = at.layer();
         for fx in Fx::ALL {
             let spec = fx.spec();
@@ -230,10 +215,12 @@ impl Board {
                 continue;
             }
             let live = frame.live(fx);
-            if live.strength == 0.0 && live.aim == 0.0 && !live.fired {
+            let slot = &mut self.slots[fx.index()];
+            let idle = live.strength == 0.0 && live.aim == 0.0 && !live.fired;
+            if idle && slot.playing.is_none() {
                 continue;
             }
-            (spec.draw)(at, &live, &mut self.slots[fx.index()], out);
+            (spec.draw)(at, &live, slot, out);
         }
     }
 }

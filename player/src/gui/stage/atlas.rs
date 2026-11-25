@@ -15,7 +15,7 @@ type Key = (Face, String, u32);
 pub(super) struct Atlas {
     places: HashMap<Key, Placed>,
     /// Where the next goes: across, the shelf's top, the shelf's height.
-    pen: (u32, u32, u32),
+    pub(super) pen: (u32, u32, u32),
     /// The text to put into the atlas on the GPU.
     pub(super) uploads: Vec<AtlasUpload>,
 }
@@ -26,6 +26,24 @@ impl Atlas {
     /// `px`. Text wider than the atlas (a long lyric line on a large
     /// screen) is made smaller to fit, its quad drawn larger by as much.
     pub(super) fn place(&mut self, big: &mut BigText, text: &str, px: f32) -> Option<Placed> {
+        self.place_or(big, text, px, true)
+    }
+
+    /// As [`Atlas::place`], but none where the atlas is too full for it:
+    /// never started again, so the places of the text already put in this
+    /// frame keep (an effect's big word waits for room).
+    pub(super) fn place_if_room(
+        &mut self,
+        big: &mut BigText,
+        text: &str,
+        px: f32,
+    ) -> Option<Placed> {
+        self.place_or(big, text, px, false)
+    }
+
+    /// [`Atlas::place`], starting the atlas again where it is full if
+    /// `again`, else none.
+    fn place_or(&mut self, big: &mut BigText, text: &str, px: f32, again: bool) -> Option<Placed> {
         let key = (big.face(), text.to_owned(), (px * 4.0).round() as u32);
         if let Some(&place) = self.places.get(&key) {
             return Some(place);
@@ -40,8 +58,17 @@ impl Atlas {
         if w > ATLAS || h > ATLAS {
             return None;
         }
-        if self.pen.0 + w > ATLAS {
-            self.pen = (0, self.pen.1 + self.pen.2 + 2, 0);
+        let next_shelf = self.pen.0 + w > ATLAS;
+        let pen_y = if next_shelf {
+            self.pen.1 + self.pen.2 + 2
+        } else {
+            self.pen.1
+        };
+        if pen_y + h > ATLAS && !again {
+            return None;
+        }
+        if next_shelf {
+            self.pen = (0, pen_y, 0);
         }
         if self.pen.1 + h > ATLAS {
             // Full: started again (what shows is put back as it is asked

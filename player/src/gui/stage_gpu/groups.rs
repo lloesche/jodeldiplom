@@ -71,14 +71,24 @@ impl Group {
 
     /// The groups used whose shapes can be light
     /// ([`super::StageFrame::lights`]): the plain shapes (sparks and
-    /// discs) and the effects drawing round the lane, where the light is
-    /// ([`fx::Layer::Lane`]).
+    /// discs), the effects drawing round the lane, where the light is
+    /// ([`fx::Layer::Lane`]), and those drawing over everything (their big
+    /// words' light, [`fx::Letters::glow`]).
     pub fn light() -> Vec<Group> {
         let lit = |g: &Group| match g.effect() {
-            Some(fx) => fx.spec().at.contains(&fx::Layer::Lane),
+            Some(fx) => [fx::Layer::Lane, fx::Layer::Over]
+                .iter()
+                .any(|l| fx.spec().at.contains(l)),
             None => *g == Group::Plain,
         };
         Group::used().into_iter().filter(lit).collect()
+    }
+
+    /// Whether what it draws keeps still as the screen shakes: an
+    /// effect's that says so ([`fx::Spec::still`]); the shader's `STILL`,
+    /// a constant of its pipeline.
+    pub fn still(self) -> bool {
+        self.effect().is_some_and(|fx| fx.spec().still)
     }
 
     /// The effect whose code its pipeline carries, if any.
@@ -183,7 +193,7 @@ fn groups_wgsl() -> String {
 /// ([`crate::gui::glory::wgsl`]), the diploma's shapes
 /// ([`crate::gui::seal::wgsl`], [`crate::gui::paper::wgsl`]), the effects
 /// (only the group's own effect's code: [`fx::wgsl::wgsl`]) and the music
-/// ([`fx::music::WGSL`]).
+/// ([`fx::music::wgsl`]).
 pub fn shader(group: Group) -> String {
     let own: Vec<Fx> = group.effect().into_iter().collect();
     compose(group, &own)
@@ -199,10 +209,12 @@ pub fn every_effect_shader() -> String {
 /// The stage's shader drawing `group`, with `effects`' code.
 fn compose(group: Group, effects: &[Fx]) -> String {
     format!(
-        "const GROUP: u32 = {}u;\n{}{}{}{}{}{}{}{}{}{}{}",
+        "const GROUP: u32 = {}u;\n// An effect's that keeps still as the screen shakes.\nconst STILL: bool = {};\n{}{}{}{}{}{}{}{}{}{}{}{}",
         group.code(),
+        group.still(),
         groups_wgsl(),
         kinds_wgsl(),
+        super::SCREEN_WGSL,
         include_str!("../stage.wgsl"),
         crate::gui::liquid::wgsl(),
         crate::gui::snake::wgsl(),
@@ -211,7 +223,7 @@ fn compose(group: Group, effects: &[Fx]) -> String {
         crate::gui::seal::wgsl(),
         crate::gui::paper::wgsl(),
         fx::wgsl::wgsl(effects),
-        fx::music::WGSL,
+        fx::music::wgsl(),
     )
 }
 
@@ -219,6 +231,69 @@ fn compose(group: Group, effects: &[Fx]) -> String {
 mod tests {
     use super::*;
     use crate::gui::fx::rainbow::{BANDS, SWIRL};
+
+    /// The window's numbers lie where the shaders read them: the fields in
+    /// the same order, each vec2 on 8 bytes, the whole a multiple of 16.
+    #[test]
+    fn the_screen_s_fields_lie_where_the_shaders_read_them() {
+        use super::super::{Screen, SCREEN_BYTES, SCREEN_WGSL};
+        use std::mem::offset_of;
+        let fields = [
+            ("size", offset_of!(Screen, size), "vec2<f32>"),
+            ("srgb", offset_of!(Screen, srgb), "f32"),
+            ("atlas", offset_of!(Screen, atlas), "f32"),
+            ("time", offset_of!(Screen, time), "f32"),
+            ("pad", offset_of!(Screen, pad), "f32"),
+            ("origin", offset_of!(Screen, origin), "vec2<f32>"),
+            ("shake", offset_of!(Screen, shake), "vec2<f32>"),
+            ("tail", offset_of!(Screen, tail), "vec2<f32>"),
+        ];
+        let declared: Vec<String> = (SCREEN_WGSL.lines())
+            .skip_while(|l| !l.starts_with("struct Screen"))
+            .skip(1)
+            .take_while(|l| !l.starts_with('}'))
+            .map(|l| l.trim().trim_end_matches(',').to_string())
+            .collect();
+        let mut at = 0usize;
+        for ((name, offset, ty), line) in fields.iter().zip(&declared) {
+            assert_eq!(line, &format!("{name}: {ty}"));
+            let (align, size) = if *ty == "f32" { (4, 4) } else { (8, 8) };
+            at = at.next_multiple_of(align);
+            assert_eq!(*offset, at, "{name}");
+            at += size;
+        }
+        assert_eq!(declared.len(), fields.len());
+        assert_eq!(SCREEN_BYTES, at as u64);
+        assert_eq!(SCREEN_BYTES % 16, 0);
+    }
+
+    /// A pipeline keeps still as the screen shakes (its `STILL`, a
+    /// constant of its own) only where its effect says so: the edges on
+    /// fire do, the marquee bulbs, the slam and the stage's own shapes
+    /// shake with the screen.
+    #[test]
+    fn only_an_effect_that_says_so_keeps_still() {
+        for g in Group::all() {
+            let src = shader(g);
+            let still = g.effect().is_some_and(|fx| fx.spec().still);
+            assert_eq!(g.still(), still, "{g:?}");
+            assert!(
+                src.contains(&format!("const STILL: bool = {still};")),
+                "{g:?}"
+            );
+        }
+        assert!(Group::Shapes(Fx::EdgeFire).still());
+        for g in [
+            Group::Shapes(Fx::Bulbs),
+            Group::Shapes(Fx::Slam),
+            Group::Plain,
+        ] {
+            assert!(!g.still(), "{g:?}");
+        }
+        assert!(
+            include_str!("../stage.wgsl").contains("select(screen.shake, vec2<f32>(0.0), STILL)")
+        );
+    }
 
     /// Every group a code of its own below [`Group::CODES`]; the stage's
     /// own kinds' names in their order.
@@ -328,8 +403,15 @@ mod tests {
                 ..crate::gui::streak::Step::default()
             };
             let frame = board.frame_of([(1.0, &row)].into_iter(), &step, &fx::Music::NEUTRAL, 10.0);
-            let mut shapes = Vec::new();
-            board.shapes(&at, &frame, &mut shapes);
+            let (mut shapes, mut sprays, mut letters, mut shake) =
+                (Vec::new(), Vec::new(), Vec::new(), [0.0; 2]);
+            let mut out = fx::Out {
+                shapes: &mut shapes,
+                sprays: &mut sprays,
+                letters: &mut letters,
+                shake: &mut shake,
+            };
+            board.draw(&at, &frame, &mut out);
             let why = "a screen pass draws only strips (PERFORMANCE.md, the stage's pipelines)";
             assert!(!shapes.is_empty(), "{fx:?} draws");
             for (n, a) in shapes.iter().enumerate() {

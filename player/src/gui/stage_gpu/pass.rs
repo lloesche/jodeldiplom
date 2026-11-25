@@ -5,7 +5,7 @@
 
 use super::bake::Bake;
 use super::groups::{runs, Runs};
-use super::{shader, Feed, Group, Instance, ATLAS};
+use super::{shader, Feed, Group, Instance, Screen, ATLAS, SCREEN_BYTES};
 use crate::gui::fx::Fx;
 use crate::gui::particles::{uniform_entry, MUSIC_BYTES};
 
@@ -78,29 +78,6 @@ pub struct StagePass {
     bake: Option<Bake>,
     bound: u64,
 }
-
-/// The stage's numbers as its shader takes them (`Screen` in
-/// `stage.wgsl`): the frame's size, whether it takes linear light, the
-/// atlas's side, the singing's time, and where the frame's corner is in
-/// the window's pixels (none but on the paper's bake).
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub(super) struct Screen {
-    pub(super) size: [f32; 2],
-    pub(super) srgb: f32,
-    pub(super) atlas: f32,
-    pub(super) time: f32,
-    pub(super) pad: f32,
-    pub(super) origin: [f32; 2],
-}
-
-// SAFETY: plain f32s in a `repr(C)` struct, no padding: any bytes are one.
-unsafe impl bytemuck::Zeroable for Screen {}
-// SAFETY: as above.
-unsafe impl bytemuck::Pod for Screen {}
-
-/// How many bytes [`Screen`] is.
-const SCREEN_BYTES: u64 = std::mem::size_of::<Screen>() as u64;
 
 /// A texture of the atlas's format, `side` square, and its view.
 fn atlas_texture(device: &wgpu::Device, side: u32) -> (wgpu::Texture, wgpu::TextureView) {
@@ -303,6 +280,7 @@ impl StagePass {
             srgb: if self.linear { 1.0 } else { 0.0 },
             atlas: ATLAS as f32,
             time: feed.clock,
+            shake: feed.shake,
             ..Screen::default()
         };
         queue.write_buffer(&self.uniforms, 0, bytemuck::bytes_of(&screen));

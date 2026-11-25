@@ -26,6 +26,7 @@ pub use motions::{Drawing, Motion, LOOKS, MOTIONS};
 use super::fx::Music;
 use super::shards::{self, DROPS, FIRST_DROP, FIRST_SHARD};
 use super::sparks::{mix, rand, TAU, WHITE};
+use super::stage_gpu::{Screen, SCREEN_BYTES};
 use crate::view::bubbles::BURST;
 
 /// The sparkles a bubble throws.
@@ -66,6 +67,12 @@ pub enum Kind {
     /// A coin or two flicked up out of a word hit
     /// ([`super::fx::coins::flick`]).
     CoinFlick,
+    /// A burst of gold coins down the screen on a beat
+    /// ([`super::fx::coins::burst`]).
+    CoinBurst,
+    /// The dust and sparkles a word slammed down throws up
+    /// ([`super::fx::slam::dust`]).
+    SlamDust,
 }
 
 impl Kind {
@@ -184,6 +191,8 @@ pub enum Look {
     Coin,
     /// A solid gold coin spinning on its edge, glinting: over.
     Gold,
+    /// A soft puff of dust: over.
+    Puff,
 }
 
 impl Look {
@@ -336,7 +345,7 @@ const BUBBLE_SPARKS: u32 = {BUBBLE_SPARKS}u;
 const DROPS: u32 = {DROPS}u;
 const SCORED_SPARKS: u32 = {SCORED_SPARKS}u;
 const SPREAD: f32 = {SPREAD:?};
-{codes}{}{}{SHADER}
+{codes}{}{}{}{SHADER}
 // How long a burst of kind `k` lasts.
 fn life_of(k: u32) -> f32 {{
 {lives}    return 0.0;
@@ -360,7 +369,8 @@ fn draw_of(look: u32, p: vec2<f32>, c: vec2<f32>, half: vec2<f32>, turn: f32, co
 {draws}    return vec4<f32>(0.0);
 }}
 {motions}{drawings}",
-        super::fx::music::WGSL,
+        super::stage_gpu::SCREEN_WGSL,
+        super::fx::music::wgsl(),
         super::rainbow::HUE,
     )
 }
@@ -369,12 +379,6 @@ fn draw_of(look: u32, p: vec2<f32>, c: vec2<f32>, half: vec2<f32>, turn: f32, co
 /// and a word scored's quads, and each sprite drawn (its numbers, its
 /// kinds' lives and calls given it by [`shader`]).
 const SHADER: &str = r"
-struct Screen {
-    size: vec2<f32>,
-    srgb: f32,
-    time: f32,
-};
-
 @group(0) @binding(0) var<uniform> screen: Screen;
 @group(0) @binding(1) var<uniform> music: Music;
 
@@ -518,7 +522,8 @@ fn vs(@builtin(vertex_index) v: u32, i: In) -> Out {
     // The quad: the sprite and its glow.
     let half = sp.half;
     let p = sp.at + corner * reach_of(sp.look, half);
-    o.pos = vec4<f32>(p.x / screen.size.x * 2.0 - 1.0, 1.0 - p.y / screen.size.y * 2.0, 0.0, 1.0);
+    let at = p + screen.shake;
+    o.pos = vec4<f32>(at.x / screen.size.x * 2.0 - 1.0, 1.0 - at.y / screen.size.y * 2.0, 0.0, 1.0);
     o.p = p;
     o.shape = vec4<f32>(sp.at, half);
     o.look = vec4<f32>(sp.rgb, sp.alpha);
@@ -586,7 +591,10 @@ impl ParticlePass {
     ) -> ParticlePass {
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("jodeldiplom particles"),
-            entries: &[uniform_entry(0, 16), uniform_entry(1, MUSIC_BYTES)],
+            entries: &[
+                uniform_entry(0, SCREEN_BYTES),
+                uniform_entry(1, MUSIC_BYTES),
+            ],
         });
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("jodeldiplom particles"),
@@ -638,7 +646,7 @@ impl ParticlePass {
                 mapped_at_creation: false,
             })
         };
-        let (uniforms, music) = (buffer(16), buffer(MUSIC_BYTES));
+        let (uniforms, music) = (buffer(SCREEN_BYTES), buffer(MUSIC_BYTES));
         let bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("jodeldiplom particles"),
             layout: &layout,
@@ -664,13 +672,13 @@ impl ParticlePass {
         }
     }
 
-    /// The next frame's bursts at `time` (the singing's) with `music`, in
-    /// a window of `size`: the time and the music, and the bursts where
-    /// they changed.
+    /// The next frame's bursts at `time` (the singing's) with `music`, the
+    /// screen shaken by `shake` (pixels), in a window of `size`: the time,
+    /// the shake and the music, and the bursts where they changed.
     pub fn set(
         &mut self,
         (device, queue): (&wgpu::Device, &wgpu::Queue),
-        (sprays, music): (&[Spray], &Music),
+        (sprays, music, shake): (&[Spray], &Music, [f32; 2]),
         time: f32,
         size: (u32, u32),
     ) {
@@ -694,12 +702,14 @@ impl ParticlePass {
                 queue.write_buffer(buffer, 0, bytes);
             }
         }
-        let mut uniforms = [0u8; 16];
-        uniforms[0..4].copy_from_slice(&(size.0 as f32).to_le_bytes());
-        uniforms[4..8].copy_from_slice(&(size.1 as f32).to_le_bytes());
-        uniforms[8..12].copy_from_slice(&(if self.linear { 1f32 } else { 0.0 }).to_le_bytes());
-        uniforms[12..16].copy_from_slice(&time.to_le_bytes());
-        queue.write_buffer(&self.uniforms, 0, &uniforms);
+        let screen = Screen {
+            size: [size.0 as f32, size.1 as f32],
+            srgb: if self.linear { 1.0 } else { 0.0 },
+            time,
+            shake,
+            ..Screen::default()
+        };
+        queue.write_buffer(&self.uniforms, 0, bytemuck::bytes_of(&screen));
         queue.write_buffer(&self.music, 0, bytemuck::cast_slice(&music.uniform()));
     }
 
@@ -716,7 +726,7 @@ impl ParticlePass {
 }
 
 /// How many bytes the music's uniform is ([`super::fx::music::Music::uniform`]).
-pub const MUSIC_BYTES: u64 = 64;
+pub const MUSIC_BYTES: u64 = std::mem::size_of::<super::fx::music::Uniform>() as u64;
 
 /// A uniform at `binding`, `size` bytes, both stages reading it.
 pub fn uniform_entry(binding: u32, size: u64) -> wgpu::BindGroupLayoutEntry {

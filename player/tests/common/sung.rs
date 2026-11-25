@@ -13,11 +13,13 @@ use jodeldiplom::core::shine::{Shone, Tier};
 use jodeldiplom::core::singing::Singing;
 use jodeldiplom::cover::CoverLayers;
 use jodeldiplom::gui::backdrop::music::Levels;
-use jodeldiplom::gui::fx::{self, At, Board, Effects, Music, Text};
+use jodeldiplom::gui::fx::{self, At, Board, By, Effects, Music, Out, Text};
+use jodeldiplom::gui::particles::Spray;
 use jodeldiplom::gui::rainbow::Glow;
-use jodeldiplom::gui::stage::{screen_at, Lane};
-use jodeldiplom::gui::stage_gpu::{kind, StageFrame};
+use jodeldiplom::gui::stage::{over_at, screen_at, Lane, Stage};
+use jodeldiplom::gui::stage_gpu::{kind, Instance, StageFrame};
 use jodeldiplom::gui::streak::Step;
+use jodeldiplom::tiers::TIERS;
 use jodeldiplom::view::karaoke::{timed_lines, KaraokePicture, Score};
 use ratatui::layout::Rect;
 
@@ -127,43 +129,122 @@ pub fn cover_of(l: &CoverLayers) -> image::RgbImage {
     cover
 }
 
-/// `base` (a frame of the stage over `area`, at its clock) with `effects`
-/// in it, as the board draws them from a row of them at full glow, its
-/// bursts fired at `fired` (the singing's clock: a phrase and a word hit
-/// then): their screen passes, the line sung in the strongest of their
-/// treatments, their bursts from the playhead, and their looks.
+/// When and how effects are put into a frame ([`with_effects`]): fired
+/// at `at` (the singing's clock: a word hit then too), to `music` (as it
+/// is at a moment of the singing's clock), by a phrase reaching a row or
+/// that row's rung reached (`by`).
+#[derive(Clone, Copy)]
+pub struct Fired<'a> {
+    pub at: f64,
+    pub music: &'a dyn Fn(f64) -> Music,
+    pub by: By,
+}
+
+/// No music, at any moment.
+pub fn still(_: f64) -> Music {
+    Music::NEUTRAL
+}
+
+impl Fired<'_> {
+    /// Fired at `at` by a phrase reaching the first row, with no music.
+    pub fn phrase(at: f64) -> Fired<'static> {
+        Fired {
+            at,
+            music: &still,
+            by: By::Phrase(0),
+        }
+    }
+}
+
+/// What `board` draws at `at` in `frame`: its shapes into `shapes`, its
+/// bursts into `sprays` (no words, no shake: those only over everything,
+/// as [`with_effects`] lets them be).
+fn draw(
+    board: &mut Board,
+    (at, frame): (&At, &fx::Frame),
+    shapes: &mut Vec<Instance>,
+    sprays: &mut Vec<Spray>,
+) {
+    let mut out = Out {
+        shapes,
+        sprays,
+        letters: &mut Vec::new(),
+        shake: &mut [0.0; 2],
+    };
+    board.draw(at, frame, &mut out);
+}
+
+/// None at all.
+static NONE: Effects = Effects::NONE;
+
+/// `base` (a frame of `stage` over `area`, at its clock) with `effects`
+/// in it, as the board draws them from the row `fired` names listing
+/// them, the singing at its glow, fired as it says: their screen passes,
+/// the line sung in the strongest of their treatments, their bursts from
+/// the playhead, what they draw over everything as it is at the frame's
+/// clock (a word slammed down, lettered by `stage`, the screen shaken),
+/// their looks and the music.
 pub fn with_effects(
+    stage: &mut Stage,
     base: &StageFrame,
     area: (f32, f32, f32, f32),
     effects: &Effects,
-    fired: f64,
+    fired: Fired,
 ) -> StageFrame {
     let clock = f64::from(base.clock);
-    let shone = Shone {
-        line: 0,
-        end: fired,
-        value: 1.0,
-        top: 0.9,
-        tier: Some(Tier::ALL[0]),
-    };
-    let step = Step {
-        tier: Some(Tier::ALL[0]),
+    let Fired {
+        at: fired,
+        music,
+        by,
+    } = fired;
+    let (By::Phrase(row) | By::Rung(row)) = by;
+    let tier = Tier::ALL[row];
+    // The rows up to the one listing the effects, the singing at its glow.
+    let rows: Vec<(f32, &Effects)> = (0..=row)
+        .map(|i| (TIERS[i].glow, if i == row { effects } else { &NONE }))
+        .collect();
+    let rows = || rows.iter().copied();
+    let glow = TIERS[row].glow;
+    let held = Step {
+        tier: Some(tier),
         glow: Glow {
-            level: 1.0,
-            from: 1.0,
+            level: glow,
+            from: glow,
             since: -10.0,
         },
-        phrase: Some(shone),
-        word: Some(fired),
+        at_rung: matches!(by, By::Rung(_)).then_some(tier),
         ..Step::default()
+    };
+    let step = match by {
+        By::Phrase(_) => Step {
+            phrase: Some(Shone {
+                line: 0,
+                end: fired,
+                value: 1.0,
+                top: 0.9,
+                tier: Some(tier),
+            }),
+            word: Some(fired),
+            ..held
+        },
+        By::Rung(_) => Step {
+            rung: Some((row.checked_sub(1).map(|r| Tier::ALL[r]), Some(tier))),
+            word: Some(fired),
+            ..held
+        },
     };
     let mut board = Board::default();
     let mut f = base.clone();
-    let drawn = board.frame_of([(1.0, effects)].into_iter(), &step, &Music::NEUTRAL, fired);
+    let drawn = board.frame_of(rows(), &step, &music(fired), fired);
     let lane = Lane::new(area, clock);
     let glass = lane.glass(area);
     let screen = screen_at(area, glass);
-    board.shapes(&screen, &drawn, &mut f.screen);
+    draw(
+        &mut board,
+        (&screen, &drawn),
+        &mut f.screen,
+        &mut Vec::new(),
+    );
     if let (Some(t), At::Screen { band, .. }) = (fx::treatment(Text::Sung, &drawn), screen) {
         // The line sung: the text in the lyric band with a split along it.
         let sung = f
@@ -182,11 +263,46 @@ pub fn with_effects(
         word: Some(word),
         area,
     };
-    board.sprays(&playhead, &drawn, &mut f.sprays);
+    draw(
+        &mut board,
+        (&playhead, &drawn),
+        &mut Vec::new(),
+        &mut f.sprays,
+    );
+    // What plays out over the frames after (the rain's bursts on the beat,
+    // a word slammed down), frame by frame up to the frame's clock, to the
+    // music then, drawn over everything as it is at the frame's clock.
+    let over = over_at(area, glass);
+    let after = At::Playhead {
+        tip,
+        pill: lane.pill,
+        pps: 0.0,
+        word: None,
+        area,
+    };
+    let (mut t, mut now) = (fired, drawn);
+    while t < clock {
+        draw(&mut board, (&over, &now), &mut Vec::new(), &mut f.sprays);
+        t = (t + 1.0 / FPS).min(clock);
+        now = board.frame_of(rows(), &held, &music(t), t);
+        draw(&mut board, (&after, &now), &mut Vec::new(), &mut f.sprays);
+    }
+    // The last: its words lettered as the stage letters them, its shake the
+    // frame's.
+    let mut letters = Vec::new();
+    let mut out = Out {
+        shapes: &mut f.top,
+        sprays: &mut f.sprays,
+        letters: &mut letters,
+        shake: &mut f.shake,
+    };
+    board.draw(&over, &now, &mut out);
+    stage.letter_into(&letters, &mut f);
     let looks = drawn.looks();
     for u in effects.lists().into_iter().flatten() {
         let i = u.fx.index();
         f.looks.0[i] = looks.0[i];
     }
+    f.music = music(clock);
     f
 }

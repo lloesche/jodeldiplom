@@ -892,8 +892,15 @@ a row a tier: its bars, its rung, its colours, glow, sounds and sticker;
 the effects are `gui::fx`), and a row can have an effect
 move with the music (its beat and bars, the stems' levels, the pitches)
 or show at a rung of the multiplier; more effects are made and wait for
-a row (the screen's edges on fire, marquee bulbs round the lane, the
-line sung on fire or frosted, coins). The light blooms (the GPU draws it
+a row (the screen's edges on fire, flaring on each bar's first beat and
+breathing with the bass; marquee bulbs round the lane, chasing a bulb a
+beat and all flashing on the one; the line sung on fire or frosted;
+coins, the rain of them in bursts on the beats; and a word slammed down
+onto the top of the lane, the tier's name or the multiplier, landing on
+a bar's first beat with a squash, a shake of the screen and a ring of
+dust, never over the notes or the lyrics).
+Where the song's beat grid is unsure they run freely, off the beat.
+The light blooms (the GPU draws it
 apart, at high range, blurs it and tone maps it over the frame). Along the bottom the song's progress shows
 each phrase sung in its tier's colour, a mark a phrase popping as its
 tier is decided (a little jackpot on Diva), and the time left in a ring

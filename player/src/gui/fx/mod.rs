@@ -24,6 +24,14 @@
 //! - **Bursts,** records the particles' pass works out
 //!   ([`super::particles::MOTIONS`]): a step up's, the jackpot, the
 //!   angels, the coins.
+//! - **Big words** over everything ([`Layer::Over`]), lettered by the
+//!   stage from its atlas ([`Letters`]) and drawn by the effect's own
+//!   pipeline, shaking the screen as they will: the word slam.
+//!
+//! A fired effect can play out over the frames after it ([`Playing`]:
+//! the rain's bursts on the beats, the slam waiting for a bar's first
+//! beat), what fired it known ([`By`]: a phrase reaching a row, or a
+//! row's rung).
 //!
 //! Each effect's WGSL names its helpers after it, so they all share the
 //! stage's shader; a test holds them apart. Its maths is in Rust too, the
@@ -43,6 +51,7 @@ pub mod lyric_fire;
 pub mod lyric_frost;
 pub mod music;
 pub mod rainbow;
+pub mod slam;
 pub mod step_up;
 pub mod wgsl;
 
@@ -93,6 +102,7 @@ registry! {
     Fountain => coins::FOUNTAIN,
     Rain => coins::RAIN,
     Flick => coins::FLICK,
+    Slam => slam::SPEC,
 }
 
 /// The first kind an effect's shapes have ([`Fx::kind`]): the stage's
@@ -273,6 +283,9 @@ pub enum Layer {
     Mark,
     /// Over the finished frame: screen passes.
     Screen,
+    /// Over everything, the light's bloom too: big words the stage letters
+    /// ([`Letters`]), shapes, bursts over the stage, and the screen shaken.
+    Over,
 }
 
 /// A slot of the stage's draw order with its geometry (pixels).
@@ -343,6 +356,15 @@ pub enum At {
         /// The lane.
         lane: LaneBox,
     },
+    /// The stage's area, the lane and the lyric band (its top and bottom).
+    Over {
+        /// The area: left, top, width, height.
+        area: (f32, f32, f32, f32),
+        /// The lane.
+        lane: LaneBox,
+        /// The lyric band's top and bottom.
+        band: (f32, f32),
+    },
 }
 
 impl At {
@@ -357,26 +379,106 @@ impl At {
             At::Sky { .. } => Layer::Sky,
             At::Mark { .. } => Layer::Mark,
             At::Screen { .. } => Layer::Screen,
+            At::Over { .. } => Layer::Over,
         }
     }
 }
 
-/// What a slot's effects draw into: its shapes and its bursts (each slot
-/// takes one or the other).
+/// What a slot's effects draw into ([`Board::draw`]): its shapes and its
+/// bursts (each slot takes one or the other, but [`Layer::Over`], which
+/// takes both), the big words for the stage to letter (only over
+/// everything), and how far they shake the screen (pixels: any slot's
+/// effects may; the stage adds them all up for the frame).
 pub struct Out<'a> {
     /// The shapes.
     pub shapes: &'a mut Vec<Instance>,
     /// The bursts.
     pub sprays: &'a mut Vec<Spray>,
+    /// The words.
+    pub letters: &'a mut Vec<Letters>,
+    /// The shake.
+    pub shake: &'a mut [f32; 2],
+}
+
+/// Big text an effect asks the stage to letter, in the stage's faces and
+/// through its atlas: `text` in `face` at `px` (smaller where it would be
+/// wider than `widest`), its box's foot (the middle of its bottom) at
+/// `foot`, scaled about it by `scale`, its quad `margin` pixels wider all
+/// round at its size (room for an outline), drawn as `shape` says (an
+/// instance of the effect's kind with its colours and params; the stage
+/// gives it its quad, its box (`shape`: left, top, right, bottom) and its
+/// place in the atlas (`uv`)); glowing `glow` strong (a copy of it in the
+/// light, which blooms, its `params[3]` the glow; 0: none); and a burst
+/// thrown from its foot as wide as the word lettered (`half.0` given it:
+/// half the box's width, at its size).
+///
+/// It is lettered only where the atlas has room for it as it is (never
+/// starting the atlas again, which would take the places of text already
+/// lettered in the frame): else not that frame.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Letters {
+    /// The text.
+    pub text: String,
+    /// Its face.
+    pub face: crate::gui::big_text::Face,
+    /// Its size, pixels.
+    pub px: f32,
+    /// The widest it may be, pixels.
+    pub widest: f32,
+    /// Its box's foot.
+    pub foot: (f32, f32),
+    /// Its scale across and down, about its foot.
+    pub scale: (f32, f32),
+    /// Its quad's margin, pixels.
+    pub margin: f32,
+    /// How it is drawn.
+    pub shape: Instance,
+    /// How strongly it glows.
+    pub glow: f32,
+    /// The burst from its foot.
+    pub burst: Option<Spray>,
+}
+
+/// What fired an effect: a phrase reaching a row's tier, or the singing
+/// reaching a row's rung (each the row's place, Good's 0). Fired by both
+/// in one frame, an effect fires once, by the phrase: the phrase's shout
+/// wins and the rung's is let go.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum By {
+    /// A phrase reaching the row.
+    Phrase(usize),
+    /// The row's rung reached.
+    Rung(usize),
+}
+
+/// A firing still playing out over the frames after it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Playing {
+    /// What fired it.
+    pub by: By,
+    /// When it fired, on the singing's clock (sought back before it, it
+    /// is gone).
+    pub at: f32,
+    /// How strongly it fired.
+    pub strength: f32,
+    /// Where its next step is, as the effect counts: the rain's next
+    /// burst, a beat of the grid ([`Music::beats`]); the slam's landing, on
+    /// the singing's clock.
+    pub next: f32,
+    /// The steps still to come: the rain's bursts; the slam's dust (1
+    /// until it has landed).
+    pub left: u32,
 }
 
 /// What an effect keeps between frames: when it last did what it does
 /// every while (0 to begin with; sought back before it, as long ago as
-/// can be).
+/// can be), and a firing still playing out (sought back before it, none).
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Slot {
     /// When, on the singing's clock.
     pub last: f32,
+    /// The firing playing out.
+    pub playing: Option<Playing>,
 }
 
 /// Which text a lyric treatment goes on.
@@ -481,7 +583,9 @@ pub struct Reference {
 /// shapes are: light comes with no coverage), its lyric treatment (with
 /// `fn lyric_<ident>(col, a, px, quad, time, strength, look) -> vec4<f32>`
 /// in its WGSL: the text's straight colour and coverage), its look's four
-/// numbers (the shaders' `looks[FX_<IDENT>]`), and its shader's reference.
+/// numbers (the shaders' `looks[FX_<IDENT>]`), its shader's reference, and
+/// whether its shapes keep still as the screen shakes (the edges on fire,
+/// which are the screen's own: its pipeline's `STILL`).
 #[derive(Clone, Copy, Debug)]
 pub struct Spec {
     /// Its name.
@@ -502,6 +606,8 @@ pub struct Spec {
     pub params: [f32; 4],
     /// Its shader's reference.
     pub reference: Option<Reference>,
+    /// Whether it keeps still as the screen shakes.
+    pub still: bool,
 }
 
 fn draws_nothing(_: &At, _: &Live, _: &mut Slot, _: &mut Out) {}
@@ -518,6 +624,7 @@ impl Spec {
         lyric: None,
         params: [0.0; 4],
         reference: None,
+        still: false,
     };
 
     /// Whether it draws screen passes.

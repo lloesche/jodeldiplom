@@ -2,18 +2,7 @@
 // signed distance, and its text from the atlas. Its kinds come before it;
 // the liquid's maths, the tubes, the shine's clock, the glory, the
 // diploma's shapes, the effects and the music after it
-// (`stage_gpu::shader`).
-struct Screen {
-    size: vec2<f32>,
-    srgb: f32,
-    atlas: f32,
-    time: f32,
-    pad: f32,
-    // Where the frame's corner is, in the window's pixels: none but on the
-    // diploma's paper's bake (`stage_gpu::bake`).
-    origin: vec2<f32>,
-};
-
+// (`stage_gpu::shader`); the window's numbers (`Screen`) before it.
 @group(0) @binding(0) var<uniform> screen: Screen;
 @group(0) @binding(1) var atlas: texture_2d<f32>;
 @group(0) @binding(2) var soft: sampler;
@@ -51,6 +40,12 @@ struct Out {
     @location(7) @interpolate(flat) strain: vec4<f32>,
 };
 
+// How far this pipeline's shapes are shaken: the screen's shake, none for
+// a pipeline that keeps still (`STILL`).
+fn shaken() -> vec2<f32> {
+    return select(screen.shake, vec2<f32>(0.0), STILL);
+}
+
 @vertex
 fn vs(@builtin(vertex_index) v: u32, i: In) -> Out {
     var quad = i.quad;
@@ -87,7 +82,9 @@ fn vs(@builtin(vertex_index) v: u32, i: In) -> Out {
     if k == K_TEXT && i.params.z != 0.0 {
         at = turn_about(p, (quad.xy + quad.zw) * 0.5, i.params.z);
     }
-    let f = at - screen.origin;
+    // Shaken with the screen, but for the screen passes (the screen's own),
+    // from the frame's corner (none but on the paper's bake).
+    let f = at + shaken() - screen.origin;
     o.pos = vec4<f32>(f.x / screen.size.x * 2.0 - 1.0, 1.0 - f.y / screen.size.y * 2.0, 0.0, 1.0);
     o.p = p;
     o.uv = i.uv;
@@ -259,9 +256,9 @@ fn text(o: Out, p: vec2<f32>) -> vec4<f32> {
 
 // The diploma's paper as it was baked (`stage_gpu::bake`), `shape.xy`
 // where the bake's corner is now (a whole pixel): each pixel as it was
-// drawn.
+// drawn, the screen's shake taken back (the bake was not shaken).
 fn baked_paper(o: Out) -> vec4<f32> {
-    let i = vec2<i32>(floor(o.pos.xy - o.shape.xy));
+    let i = vec2<i32>(floor(o.pos.xy - shaken() - o.shape.xy));
     let hi = vec2<i32>(textureDimensions(baked)) - vec2<i32>(1);
     return textureLoad(baked, clamp(i, vec2<i32>(0), hi), 0);
 }

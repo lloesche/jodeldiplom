@@ -16,11 +16,18 @@
 //! GPU ([`REFERENCE`]). The colours are the stage's (sRGB, as the frame
 //! takes them through `out_rgb`), premultiplied, for drawing over. Its
 //! look ([`Spec::params`], `p`): `x` its palette (0 classic gold to 1
-//! spooky orange), `y` the chase's speed (1 as made). It is drawn only in
-//! strips along the row ([`strips`]).
+//! spooky orange), `y` the chase's speed (1 as made), `z` how much it
+//! keeps to the beat (1 as made, 0 not at all). It is drawn only in strips
+//! along the row ([`strips`]).
+//!
+//! On the beat ([`lit_at`], the shader reading the music's uniform): the
+//! chase steps a bulb a beat, every bulb glows up a little on each beat,
+//! the flashing halves turn a beat each, and every bulb flashes on a bar's
+//! first beat. As sure as the beat grid is: where it is unsure, the chase
+//! runs by the clock as it does with no music.
 
-use super::helpers::{mix3, smoothstep};
-use super::{At, Fx, Layer, Live, Out, Reference, Slot, Spec};
+use super::helpers::{clamp01, mix3, smoothstep};
+use super::{At, Fx, Layer, Live, Music, Out, Reference, Slot, Spec};
 use crate::gui::stage_gpu::Instance;
 
 /// The bulbs: a strip along the row (`quad`), round the lane `shape`
@@ -36,7 +43,7 @@ pub const SPEC: Spec = Spec {
     draw,
     kinds: &["bulbs"],
     wgsl: Some(wgsl),
-    params: [0.0, 1.0, 0.0, 0.0],
+    params: [0.0, 1.0, 1.0, 0.0],
     reference: Some(REFERENCE),
     ..Spec::NONE
 };
@@ -106,6 +113,9 @@ const FLASH_FROM: f32 = 0.8;
 const FLASH_RATE: f32 = 5.0;
 /// How strong the glow is.
 const GLOW: f32 = 1.3;
+/// How much every bulb glows up on a beat (its pulse at its height), a
+/// share of the way to fully lit.
+const BEAT_GLOW: f32 = 0.35;
 
 /// A palette: a bulb lit, its glow, a bulb unlit, its socket, the
 /// socket's rim.
@@ -176,6 +186,31 @@ fn lit(k: i32, step: i32, flash: f32, beat: i32) -> f32 {
     chase.max(flash * on)
 }
 
+/// How lit bulb `k` is at `time`, its flashing `flash` strong, with the
+/// music `m` (the beats counted, the bar's and the beat's pulses, how sure
+/// the grid is) and its look `p` (`y` the chase's speed, `z` how much it
+/// keeps to the beat): by the clock (the chase [`RATE`] steps a second,
+/// the halves flashing [`FLASH_RATE`] times a second), and on the beat (a
+/// step a beat, the halves turning a beat each, every bulb glowing up a
+/// little on each beat and lit on a bar's first), the one going to the
+/// other as sure as the grid is.
+pub fn lit_at(k: i32, time: f32, flash: f32, p: [f32; 4], m: &Music) -> f32 {
+    let free = lit(
+        k,
+        (time * RATE * p[1]).floor() as i32,
+        flash,
+        (time * FLASH_RATE).floor() as i32,
+    );
+    let lock = clamp01(m.sure * p[2]);
+    if lock <= 0.0 {
+        return free;
+    }
+    let beat = m.beats.floor() as i32;
+    let on = lit(k, beat, flash, beat).max(m.downbeat);
+    let on = on + (1.0 - on) * BEAT_GLOW * m.beat;
+    free + (on - free) * lock
+}
+
 /// A bulb of radius `r`, `lit`, at `q` from its middle: what it puts
 /// over the frame (premultiplied) and its glow added.
 fn bulb(q: (f32, f32), r: f32, lit: f32, pal: &Palette) -> ([f32; 4], [f32; 3]) {
@@ -206,7 +241,8 @@ fn bulb(q: (f32, f32), r: f32, lit: f32, pal: &Palette) -> ([f32; 4], [f32; 3]) 
 /// on, `strength` strong (0: nothing at all; to 1 fading in; at 1
 /// flashing too), round `lane` (left, top, right, bottom, pixels), with
 /// `p` (its palette, 0 classic gold to 1 spooky orange; the chase's
-/// speed, 1 as made): premultiplied, as the frame takes it.
+/// speed, 1 as made; how much it keeps to the beat) and the music `m`
+/// ([`lit_at`]): premultiplied, as the frame takes it.
 pub fn bulbs(
     px: (f32, f32),
     size: (f32, f32),
@@ -214,6 +250,7 @@ pub fn bulbs(
     strength: f32,
     lane: [f32; 4],
     p: [f32; 4],
+    m: &Music,
 ) -> [f32; 4] {
     if strength <= 0.0 {
         return [0.0; 4];
@@ -271,9 +308,7 @@ pub fn bulbs(
         socket: mix3(CLASSIC.socket, SPOOKY.socket, t),
         rim: mix3(CLASSIC.rim, SPOOKY.rim, t),
     };
-    let step = (time * RATE * p[1]).floor() as i32;
     let flash = ((strength - FLASH_FROM) / (1.0 - FLASH_FROM)).clamp(0.0, 1.0);
-    let beat = (time * FLASH_RATE).floor() as i32;
     let (mut over, mut glow) = ([0.0f32; 4], [0.0f32; 3]);
     for j in -1..=1 {
         let k = ((k0 + j) % n + n) % n;
@@ -281,7 +316,7 @@ pub fn bulbs(
         let (o, g) = bulb(
             (px.0 - at.0, px.1 - at.1),
             r,
-            lit(k, step, flash, beat),
+            lit_at(k, time, flash, p, m),
             &pal,
         );
         for i in 0..4 {
@@ -322,6 +357,7 @@ const BULBS_BASE: f32 = {BASE:?};
 const BULBS_FLASH_FROM: f32 = {FLASH_FROM:?};
 const BULBS_FLASH_RATE: f32 = {FLASH_RATE:?};
 const BULBS_GLOW: f32 = {GLOW:?};
+const BULBS_BEAT_GLOW: f32 = {BEAT_GLOW:?};
 const BULBS_CLASSIC = array<vec3<f32>, 5>({});
 const BULBS_SPOOKY = array<vec3<f32>, 5>({});
 {SHADER}",
@@ -332,7 +368,7 @@ const BULBS_SPOOKY = array<vec3<f32>, 5>({});
 
 const SHADER: &str = r"
 fn bulbs_shape(o: Out, p: vec2<f32>, k: u32) -> vec4<f32> {
-    let c = fx_bulbs(p, screen.size, screen.time, o.params.y, o.shape, looks[FX_BULBS]);
+    let c = fx_bulbs(p, screen.size, screen.time, o.params.y, o.shape, looks[FX_BULBS], music);
     return vec4<f32>(out_rgb(c.rgb), c.a);
 }
 
@@ -363,6 +399,18 @@ fn bulbs_lit(k: i32, step: i32, flash: f32, beat: i32) -> f32 {
     return max(chase, flash * on);
 }
 
+fn bulbs_lit_at(k: i32, time: f32, flash: f32, p: vec4<f32>, m: Music) -> f32 {
+    let free = bulbs_lit(k, i32(floor(time * BULBS_RATE * p.y)), flash, i32(floor(time * BULBS_FLASH_RATE)));
+    let lock = clamp(m.tempo.y * p.z, 0.0, 1.0);
+    if lock <= 0.0 {
+        return free;
+    }
+    let beat = i32(floor(m.count.x));
+    var on = max(bulbs_lit(k, beat, flash, beat), m.beat.w);
+    on = on + (1.0 - on) * BULBS_BEAT_GLOW * m.beat.z;
+    return free + (on - free) * lock;
+}
+
 // A bulb: over the frame (premultiplied) in `over`, its glow in `glow`.
 struct BulbsLight {
     over: vec4<f32>,
@@ -389,7 +437,7 @@ fn bulbs_one(q: vec2<f32>, r: f32, lit: f32, pal: array<vec3<f32>, 5>) -> BulbsL
     return o;
 }
 
-fn fx_bulbs(px: vec2<f32>, size: vec2<f32>, time: f32, strength: f32, lane: vec4<f32>, p: vec4<f32>) -> vec4<f32> {
+fn fx_bulbs(px: vec2<f32>, size: vec2<f32>, time: f32, strength: f32, lane: vec4<f32>, p: vec4<f32>, mu: Music) -> vec4<f32> {
     if strength <= 0.0 {
         return vec4<f32>(0.0);
     }
@@ -442,14 +490,12 @@ fn fx_bulbs(px: vec2<f32>, size: vec2<f32>, time: f32, strength: f32, lane: vec4
         mix(BULBS_CLASSIC[3], BULBS_SPOOKY[3], t),
         mix(BULBS_CLASSIC[4], BULBS_SPOOKY[4], t),
     );
-    let step = i32(floor(time * BULBS_RATE * p.y));
     let flash = clamp((strength - BULBS_FLASH_FROM) / (1.0 - BULBS_FLASH_FROM), 0.0, 1.0);
-    let beat = i32(floor(time * BULBS_FLASH_RATE));
     var over = vec4<f32>(0.0);
     var glow = vec3<f32>(0.0);
     for (var j = -1; j <= 1; j++) {
         let k = ((k0 + j) % n + n) % n;
-        let b = bulbs_one(px - bulbs_at(k, nw, nh, ring), r, bulbs_lit(k, step, flash, beat), pal);
+        let b = bulbs_one(px - bulbs_at(k, nw, nh, ring), r, bulbs_lit_at(k, time, flash, p, mu), pal);
         over += b.over;
         glow += b.glow;
     }
@@ -464,16 +510,19 @@ fn fx_bulbs(px: vec2<f32>, size: vec2<f32>, time: f32, strength: f32, lane: vec4
 /// [`bulbs`].
 pub const REFERENCE: Reference = Reference {
     samples,
-    ins: 3,
+    ins: 9,
     outs: 1,
     body: "
-    let a = ins[i * 3u];
-    let b = ins[i * 3u + 1u];
-    outs[i] = fx_bulbs(a.xy, a.zw, b.x, b.y, ins[i * 3u + 2u], vec4<f32>(b.z, b.w, 0.0, 0.0));",
+    let a = ins[i * 9u];
+    let b = ins[i * 9u + 1u];
+    let p = vec4<f32>(b.z, b.w, ins[i * 9u + 3u].x, 0.0);
+    let m = Music(ins[i * 9u + 4u], ins[i * 9u + 5u], ins[i * 9u + 6u], ins[i * 9u + 7u], ins[i * 9u + 8u]);
+    outs[i] = fx_bulbs(a.xy, a.zw, b.x, b.y, ins[i * 9u + 2u], p, m);",
     cpu: |s| {
         let (a, b) = (s[0], s[1]);
-        let p = [b[2], b[3], 0.0, 0.0];
-        vec![bulbs((a[0], a[1]), (a[2], a[3]), b[0], b[1], s[2], p)]
+        let p = [b[2], b[3], s[3][0], 0.0];
+        let m = Music::from_uniform(&[s[4], s[5], s[6], s[7], s[8]]);
+        vec![bulbs((a[0], a[1]), (a[2], a[3]), b[0], b[1], s[2], p, &m)]
     },
     near: (3e-3, 3e-3),
     shows: |o| o[0][3] > 0.1,
@@ -515,7 +564,18 @@ fn samples() -> Vec<[f32; 4]> {
                 }
             };
             let strength = [0.0, 0.3, 0.7, 0.9, 1.0][k % 5];
-            [
+            // The music: none, or a grid somewhere in its beats.
+            let music = match k % 3 {
+                0 => Music::NEUTRAL,
+                _ => Music::steady(
+                    f64::from(fr(0.193)) * 300.0 + 0.0123,
+                    120.0,
+                    4,
+                    f64::from(fr(0.811)),
+                    0.0,
+                ),
+            };
+            let ins = [
                 [x + 0.013, y + 0.029, size.0, size.1],
                 [
                     fr(0.291) * 30.0 + 0.0123,
@@ -524,7 +584,9 @@ fn samples() -> Vec<[f32; 4]> {
                     0.5 + fr(0.71),
                 ],
                 lane,
-            ]
+                [[0.0, 1.0, fr(0.643) * 1.4][k % 3], 0.0, 0.0, 0.0],
+            ];
+            ins.into_iter().chain(music.uniform())
         })
         .collect()
 }
@@ -534,7 +596,9 @@ mod tests {
 
     const SIZE: (f32, f32) = (1600.0, 1000.0);
     const LANE: [f32; 4] = [80.0, 150.0, 1520.0, 600.0];
-    const CLASSIC_P: [f32; 4] = [0.0, 1.0, 0.0, 0.0];
+    const CLASSIC_P: [f32; 4] = [0.0, 1.0, 1.0, 0.0];
+    /// No music.
+    const STILL: &Music = &Music::NEUTRAL;
 
     /// Strength none: nothing anywhere, exactly.
     #[test]
@@ -542,8 +606,14 @@ mod tests {
         for k in 0..2000 {
             let f = k as f32;
             let px = ((f * 0.613).fract() * SIZE.0, (f * 0.377).fract() * SIZE.1);
-            assert_eq!(bulbs(px, SIZE, f * 0.01, 0.0, LANE, CLASSIC_P), [0.0; 4]);
-            assert_eq!(bulbs(px, SIZE, f * 0.01, -0.5, LANE, CLASSIC_P), [0.0; 4]);
+            assert_eq!(
+                bulbs(px, SIZE, f * 0.01, 0.0, LANE, CLASSIC_P, STILL),
+                [0.0; 4]
+            );
+            assert_eq!(
+                bulbs(px, SIZE, f * 0.01, -0.5, LANE, CLASSIC_P, STILL),
+                [0.0; 4]
+            );
         }
     }
 
@@ -557,7 +627,7 @@ mod tests {
         for k in 0..20_000 {
             let f = k as f32;
             let px = ((f * 0.613).fract() * SIZE.0, (f * 0.377).fract() * SIZE.1);
-            let c = bulbs(px, SIZE, 3.3, 1.0, LANE, CLASSIC_P);
+            let c = bulbs(px, SIZE, 3.3, 1.0, LANE, CLASSIC_P, STILL);
             for v in c {
                 assert!((0.0..=2.5).contains(&v) && v.is_finite(), "{px:?}: {c:?}");
             }
@@ -588,8 +658,9 @@ mod tests {
         let y = LANE[1] - r * OUT;
         let ring = ring(LANE, SIZE, r);
         let gap = (ring[2] - ring[0]) / ((ring[2] - ring[0]) / (r * 2.0 * SPACING) + 0.5).floor();
-        let light =
-            |k: f32, t: f32, s: f32| bulbs((ring[0] + k * gap, y), SIZE, t, s, LANE, CLASSIC_P)[1];
+        let light = |k: f32, t: f32, s: f32| {
+            bulbs((ring[0] + k * gap, y), SIZE, t, s, LANE, CLASSIC_P, STILL)[1]
+        };
         let row = |t: f32| (0..12).map(|k| light(k as f32, t, 0.6)).collect::<Vec<_>>();
         let (a, b) = (row(1.03), row(1.03 + 1.0 / RATE));
         assert_ne!(a, b);
@@ -621,7 +692,7 @@ mod tests {
                 let f = k as f32;
                 let px = ((f * 0.613).fract() * SIZE.0, (f * 0.377).fract() * SIZE.1);
                 assert!(inside(px) <= 1, "{lane:?} {px:?}");
-                if bulbs(px, SIZE, 2.2, 1.0, lane, CLASSIC_P) != [0.0; 4] {
+                if bulbs(px, SIZE, 2.2, 1.0, lane, CLASSIC_P, STILL) != [0.0; 4] {
                     assert_eq!(inside(px), 1, "{lane:?} {px:?}");
                 }
             }
@@ -630,5 +701,96 @@ mod tests {
             strips([0.0, 10.0, 100.0, 10.0], SIZE),
             Vec::<[f32; 4]>::new()
         );
+    }
+
+    /// The music as the bulbs take it, a steady grid's.
+    fn on_beat(beats: f64, sure: f32) -> Music {
+        Music::steady(beats, 120.0, 4, f64::from(sure), 0.0)
+    }
+
+    /// The row's light, bulb by bulb (a dozen), at `time` with `m`,
+    /// flashing `flash`.
+    fn row(time: f32, flash: f32, m: &Music) -> Vec<f32> {
+        (0..12)
+            .map(|k| lit_at(k, time, flash, CLASSIC_P, m))
+            .collect()
+    }
+
+    /// The grid sure: the chase steps a bulb a beat (whatever the clock
+    /// says within it), each bulb then as lit as the one before it was the
+    /// beat before.
+    #[test]
+    fn on_the_beat_the_chase_steps_a_bulb_a_beat() {
+        let (a, b) = (
+            row(3.0, 0.0, &on_beat(9.6, 1.0)),
+            row(3.0, 0.0, &on_beat(10.6, 1.0)),
+        );
+        for k in 1..12 {
+            assert!((b[k] - a[k - 1]).abs() < 1e-6, "{k}: {a:?} {b:?}");
+        }
+        // The clock within the beat moves nothing; another beat does.
+        assert_eq!(
+            row(3.0, 0.0, &on_beat(9.6, 1.0)),
+            row(3.04, 0.0, &on_beat(9.6, 1.0))
+        );
+        assert_ne!(a, b);
+    }
+
+    /// On a bar's first beat every bulb is lit, the flash falling away
+    /// after it; each beat lights them all up a little.
+    #[test]
+    fn every_bulb_flashes_on_the_one_and_glows_up_on_each_beat() {
+        let one = row(0.0, 0.0, &on_beat(8.0, 1.0));
+        assert!(one.iter().all(|&v| v > 0.99), "{one:?}");
+        let after = row(0.0, 0.0, &on_beat(8.5, 1.0));
+        assert!(after.iter().any(|&v| v < 0.6), "{after:?}");
+        let beat = row(0.0, 0.0, &on_beat(9.0, 1.0));
+        let between = row(0.0, 0.0, &on_beat(9.6, 1.0));
+        let dimmest = |r: &[f32]| r.iter().copied().fold(9.0, f32::min);
+        assert!(
+            dimmest(&beat) > dimmest(&between) + 0.1,
+            "{beat:?} {between:?}"
+        );
+        // At full strength, the halves flash in turn a beat each.
+        let on = |beats: f64| -> Vec<bool> {
+            row(0.0, 1.0, &on_beat(beats, 1.0))
+                .iter()
+                .map(|&v| v > 0.99)
+                .collect()
+        };
+        let (x, y) = (on(9.6), on(10.6));
+        for k in 0..12 {
+            assert!(x[k] || y[k], "{k}: {x:?} {y:?}");
+        }
+        assert_ne!(x, y);
+    }
+
+    /// Where the grid is unsure the bulbs run by the clock as they do with
+    /// no music; half sure, half way between; the look's lock off, by the
+    /// clock however sure.
+    #[test]
+    fn unsure_the_bulbs_run_freely() {
+        let free = row(1.03, 0.0, STILL);
+        assert_eq!(row(1.03, 0.0, &on_beat(9.3, 0.0)), free);
+        let sure = row(1.03, 0.0, &on_beat(9.3, 1.0));
+        let half = row(1.03, 0.0, &on_beat(9.3, 0.5));
+        assert_ne!(sure, free);
+        for k in 0..12 {
+            assert!((half[k] - (free[k] + sure[k]) / 2.0).abs() < 1e-5, "{k}");
+        }
+        let off = [0.0, 1.0, 0.0, 0.0];
+        let m = on_beat(9.3, 1.0);
+        assert_eq!(
+            lit_at(3, 1.03, 0.0, off, &m),
+            lit_at(3, 1.03, 0.0, off, STILL)
+        );
+        // As the shader has it: drawn round the lane, the music moves it.
+        let px = (
+            LANE[0] + 300.0,
+            LANE[1] - (LANE[3] - LANE[1]) * DIAMETER * 0.5 * OUT,
+        );
+        let a = bulbs(px, SIZE, 1.03, 0.6, LANE, CLASSIC_P, STILL);
+        let b = bulbs(px, SIZE, 1.03, 0.6, LANE, CLASSIC_P, &on_beat(8.0, 1.0));
+        assert_ne!(a, b);
     }
 }

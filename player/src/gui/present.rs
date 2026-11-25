@@ -383,10 +383,11 @@ impl Painter {
         self.stage.set(gpu, frame.map(StageFrame::feed), size);
         self.mark("uploads");
         let gpu = (&self.device, &self.queue);
-        let (sprays, music, time) = frame.map_or((&[][..], Music::NEUTRAL, 0.0), |f| {
-            (&f.sprays[..], f.music, f.clock)
-        });
-        self.particles.set(gpu, (sprays, &music), time, size);
+        let (sprays, music, shake, time) = frame
+            .map_or((&[][..], Music::NEUTRAL, [0.0; 2], 0.0), |f| {
+                (&f.sprays[..], f.music, f.shake, f.clock)
+            });
+        self.particles.set(gpu, (sprays, &music, shake), time, size);
         self.mark("sprays");
         let gpu = (&self.device, &self.queue);
         self.light.set(gpu, frame, (size, self.density));

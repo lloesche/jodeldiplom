@@ -349,7 +349,7 @@ fn the_gpu_draws_the_bubbles_over_the_picture() {
                     | Look::Gold => &mut sparkles,
                     Look::Shard => &mut bits,
                     Look::Drop => &mut drops,
-                    Look::Sheen => continue,
+                    Look::Sheen | Look::Puff => continue,
                 };
                 if sp.alpha > 0.3 {
                     *count += 1;

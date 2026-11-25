@@ -56,10 +56,11 @@ use jodel_synth::hall::HallSettings;
 use jodel_synth::{Command, Commands, Synth};
 
 pub use clock::Clock;
+pub(crate) use sounds::JACKPOT_BEATS;
 
 use key::Pentatonic;
 use palette::Palette;
-use sounds::{Score, HIGH, HIGHER, JACKPOT_BEATS, PAYOUT, PAYOUT_LEAD, STREAK};
+use sounds::{Score, HIGH, HIGHER, PAYOUT, PAYOUT_LEAD, STREAK};
 
 /// The synth's voices, and the notes that can wait in it.
 const VOICES: usize = 96;

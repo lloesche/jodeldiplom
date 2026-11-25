@@ -203,7 +203,16 @@ slices walked (well under a millisecond); the effects' screen passes are
 a step of the window's pass of their own (`fx`), nothing where none
 shows: drawn at 3024 × 1964 the edges on fire add 0.04–0.08 ms, the
 marquee bulbs 0.05 ms, the lyric treatments and the coins next to
-nothing (`examples/fx_frames.rs`). Every registered effect at full
+nothing (`examples/fx_frames.rs`). Moving with the beat costs them next
+to nothing more: the music is a uniform the shaders already read, and
+the fire's strips grow with its flare (the processor works the swell out
+from the same music). The word slam is one quad over the lane (9 taps of
+the atlas a pixel for its letters and outline, 1 inside a letter), in
+the `top` step, and a copy of it in the light, which blooms into its
+glow; its dust is a burst; it draws nothing while it shows under 2 %.
+The screen's shake is two numbers in the window's uniform the stage and
+the bursts share (the backdrop and the pixmap under the stage never
+shake, nor the screen passes that keep still). Every registered effect at full
 strength at once over the Diva peak (`frame_cost`'s `all` scene) costs
 the RTX 5080 1.8 ms a frame (worst 2.3 ms; the Diva peak alone 1.5 ms,
 worst 2.8 ms; the `fx` step 0.21 ms, worst 0.43 ms). The bursts are one

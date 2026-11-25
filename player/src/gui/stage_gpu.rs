@@ -30,6 +30,64 @@ use super::liquid::{amplitude, GROW};
 /// The atlas's width and height, in pixels.
 pub const ATLAS: u32 = 2048;
 
+/// The window's numbers as the stage's and the bursts' shaders read them
+/// (`screen`, [`SCREEN_WGSL`]): the frame's size, whether it takes linear
+/// light (1) or the colours as encoded (0), the atlas's side (the stage's
+/// text), the singing's time, where the frame's corner is in the window's
+/// pixels (none but on the diploma's paper's bake, `bake`) and how far
+/// the screen is shaken (pixels across and down). Everything the two
+/// passes draw shakes with it but the screen passes that keep still
+/// ([`super::fx::Spec::still`]) and the paper's bake (its own numbers, no
+/// shake: the paper read from it shakes as it is drawn); the backdrop and
+/// the pixmap under the stage, drawn apart, never do.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Screen {
+    /// The frame's width and height, pixels.
+    pub size: [f32; 2],
+    /// Whether it takes linear light.
+    pub srgb: f32,
+    /// The atlas's side.
+    pub atlas: f32,
+    /// The singing's time, seconds.
+    pub time: f32,
+    /// Unused (the origin's alignment).
+    pub pad: f32,
+    /// Where the frame's corner is.
+    pub origin: [f32; 2],
+    /// How far the screen is shaken.
+    pub shake: [f32; 2],
+    /// Unused (the size a multiple of 16 bytes).
+    pub tail: [f32; 2],
+}
+
+// SAFETY: plain f32s in a `repr(C)` struct, no padding (the vec2s'
+// alignment is `pad`): any bytes are one.
+unsafe impl bytemuck::Zeroable for Screen {}
+// SAFETY: as above.
+unsafe impl bytemuck::Pod for Screen {}
+
+/// [`Screen`] as the shaders declare it.
+pub const SCREEN_WGSL: &str = r"
+// The window's numbers (`stage_gpu::Screen`): the frame's size, linear
+// light (1) or not, the atlas's side, the singing's time, where the
+// frame's corner is (pixels; none but on the paper's bake) and how far the
+// screen is shaken (pixels; `STILL` pipelines keep still).
+struct Screen {
+    size: vec2<f32>,
+    srgb: f32,
+    atlas: f32,
+    time: f32,
+    pad: f32,
+    origin: vec2<f32>,
+    shake: vec2<f32>,
+    tail: vec2<f32>,
+};
+";
+
+/// How many bytes [`Screen`] is.
+pub const SCREEN_BYTES: u64 = std::mem::size_of::<Screen>() as u64;
+
 /// What a shape is ([`Instance::params`]`[0]`): the stage's own kinds,
 /// numbered from 0 as [`kind::NAMES`] names them; an effect's are its
 /// own ([`super::fx::Fx::kind`]).
@@ -359,6 +417,9 @@ pub struct StageFrame {
     pub music: super::fx::Music,
     /// The effects' looks this frame.
     pub looks: super::fx::Looks,
+    /// How far the screen is shaken (pixels across and down): all of it
+    /// but the screen passes, which are the screen's own.
+    pub shake: [f32; 2],
     /// The singing's time, in seconds: what the bubbles' strain and the
     /// bursts go by.
     pub clock: f32,
@@ -400,8 +461,8 @@ pub fn with_picture(
 /// What a stage pass draws next: its shapes (back to front), the screen
 /// passes and those over everything (each drawn apart:
 /// [`StagePass::draw_screen`], [`StagePass::draw_top`]), the text to put
-/// into the atlas first, the music, the effects' looks and the singing's
-/// time.
+/// into the atlas first, the music, the effects' looks, the screen's shake
+/// and the singing's time.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Feed<'a> {
     /// The shapes.
@@ -418,6 +479,8 @@ pub struct Feed<'a> {
     pub music: super::fx::Music,
     /// The effects' looks.
     pub looks: super::fx::Looks,
+    /// The screen's shake.
+    pub shake: [f32; 2],
     /// The time.
     pub clock: f32,
 }
@@ -433,20 +496,25 @@ impl StageFrame {
             paths: &self.paths,
             music: self.music,
             looks: self.looks,
+            shake: self.shake,
             clock: self.clock,
         }
     }
 
-    /// Its light, as the light's pass draws it (no text and no screen
-    /// passes: the light has none).
+    /// Its light, as the light's pass draws it (no screen passes: the
+    /// light has none), the text put into the atlas too: the light keeps
+    /// an atlas of its own, as the stage's, for the effects' big words'
+    /// light ([`super::fx::Letters::glow`]).
     pub fn light_feed(&self) -> Feed<'_> {
         // Nor tubes: their points are not sent with the light.
         let tube = |i: &Instance| [kind::TUBE, kind::TUBE_LIQUID].contains(&i.params[0]);
         debug_assert!(!self.lights.iter().any(tube), "a tube among the lights");
         Feed {
             instances: &self.lights,
+            uploads: &self.uploads,
             music: self.music,
             looks: self.looks,
+            shake: self.shake,
             clock: self.clock,
             ..Feed::default()
         }

@@ -5,7 +5,7 @@
 
 use super::{burst, scored, Kind, Look, Spray, Sprite, DRAW_SPARKLE, SCORED_LIFE};
 use crate::gui::confetti;
-use crate::gui::fx::{angels, coins, jackpot, step_up};
+use crate::gui::fx::{angels, coins, jackpot, slam, step_up};
 use crate::gui::shards;
 use crate::view::bubbles::BURST;
 
@@ -104,6 +104,12 @@ pub const LOOKS: &[Drawing] = &[
         reach: "half * 1.9 + vec2<f32>(3.0)",
         draw: "draw_gold",
         wgsl: coins::DRAW_GOLD,
+    },
+    Drawing {
+        look: Look::Puff,
+        reach: "half * 1.5 + vec2<f32>(1.0)",
+        draw: "draw_puff",
+        wgsl: slam::DRAW_PUFF,
     },
 ];
 
@@ -244,6 +250,32 @@ pub const MOTIONS: &[Motion] = &[
         probes: &[
             probe(Kind::CoinFlick, (500.0, 500.0), (0.0, 0.0), 14.0, 7),
             probe(Kind::CoinFlick, (500.0, 500.0), (0.0, 0.0), 14.0, 8),
+        ],
+    },
+    Motion {
+        kind: Kind::CoinBurst,
+        life: coins::BURST_LIFE,
+        quad: coins::burst,
+        call: "coin_burst(at, rgb, size, seed, q, age)",
+        // In the rain's: they fall alike.
+        wgsl: None,
+        probes: &[probe(
+            Kind::CoinBurst,
+            (1512.0, -60.0),
+            (1512.0, 1964.0),
+            30.0,
+            41,
+        )],
+    },
+    Motion {
+        kind: Kind::SlamDust,
+        life: slam::DUST_LIFE,
+        quad: slam::dust,
+        call: "slam_dust(at, rgb, size, seed, q, age)",
+        wgsl: Some(slam::dust_wgsl),
+        probes: &[
+            probe(Kind::SlamDust, (1512.0, 800.0), (420.0, 0.0), 32.0, 5),
+            probe(Kind::SlamDust, (700.0, 400.0), (150.0, 0.0), 12.0, 77),
         ],
     },
 ];

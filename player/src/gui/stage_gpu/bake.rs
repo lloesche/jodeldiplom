@@ -17,8 +17,8 @@
 //! pays only for drawing the paper into it. What to do with the texture
 //! and a frame's paper is decided apart from the GPU ([`Planner`]).
 
-use super::pass::{make, Reads, Screen};
-use super::{kind, Blend, Group, Instance};
+use super::pass::{make, Reads};
+use super::{kind, Blend, Group, Instance, Screen, SCREEN_BYTES};
 
 /// What a bake holds: half floats, as the shader gave them (premultiplied,
 /// linear where the frame takes linear light), read back pixel for pixel.
@@ -221,11 +221,10 @@ impl Bake {
             })
         };
         let one = std::mem::size_of::<Instance>() as u64;
-        let screen = std::mem::size_of::<Screen>() as u64;
         Bake {
             planner: Planner::new(device.limits().max_texture_dimension_2d),
             pipeline: make(device, layout, (FORMAT, Blend::Over), Group::Paper),
-            uniforms: buffer(screen, wgpu::BufferUsages::UNIFORM),
+            uniforms: buffer(SCREEN_BYTES, wgpu::BufferUsages::UNIFORM),
             instance: buffer(one, wgpu::BufferUsages::VERTEX),
             texture: None,
             generation: 0,
@@ -329,11 +328,13 @@ impl Bake {
             return;
         };
         // The frame's numbers, but the texture's size, its corner where the
-        // bake's is.
+        // bake's is, and not shaken: the paper read from it is, as it is
+        // drawn.
         let (x, y) = corner(paper);
         let numbers = Screen {
             size: [texture.width() as f32, texture.height() as f32],
             origin: [x, y],
+            shake: [0.0; 2],
             ..*screen
         };
         queue.write_buffer(&self.uniforms, 0, bytemuck::bytes_of(&numbers));

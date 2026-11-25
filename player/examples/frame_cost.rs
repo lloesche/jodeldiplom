@@ -9,7 +9,8 @@
 //! multiplier; at Diva's its jackpot flying, angels coming down, the
 //! flames, the rays, the rainbow, ×32), the worst the effects can make
 //! (`all`: the Diva peak with every registered effect in it at full
-//! strength at once, the edges on fire, the bulbs, the coins too, and the
+//! strength at once, moving with a steady beat, the edges on fire, the
+//! bulbs, the coins, a word slammed down too, and the
 //! lyrics' lines in every lyric treatment in turn), and the Jodeldiplom
 //! after that song (a new best: its confetti), timed over its whole
 //! reveal, twice ([`Judge`]). The singing scenes are
@@ -55,7 +56,7 @@ use jodeldiplom::core::singing::{Reveal, Shown, Singing, SongResult, UNROLL};
 use jodeldiplom::cover::{Apart, Layers};
 use jodeldiplom::gui::backdrop::{BackdropFrame, Cue, Visualiser};
 use jodeldiplom::gui::big_text::Faces;
-use jodeldiplom::gui::fx::{Effects, Fx, Treat, Use};
+use jodeldiplom::gui::fx::{By, Effects, Fx, Music, Treat, Use};
 use jodeldiplom::gui::karaoke::{paint, Backdrop, Layer};
 use jodeldiplom::gui::present::Offscreen;
 use jodeldiplom::gui::raster::Target;
@@ -65,7 +66,7 @@ use jodeldiplom::view::karaoke::{KaraokePicture, ResultShown};
 
 #[path = "../tests/common/sung.rs"]
 mod sung;
-use sung::{cover_of, levels, picture_at, song, with_effects, FPS, LENGTH};
+use sung::{cover_of, levels, picture_at, song, with_effects, Fired, FPS, LENGTH};
 
 // The fonts build.rs found: `EMBEDDED_FONTS`.
 include!(concat!(env!("OUT_DIR"), "/fonts.rs"));
@@ -131,16 +132,30 @@ fn the_rest() -> Effects {
     }
 }
 
-/// `frame` (the singing at Diva, over the stage in `area`) with every
-/// effect in it at full strength ([`the_rest`], fired at `fired`), the
-/// lyrics' lines in every lyric treatment in turn (each its own pipeline
-/// drawing): the dearest frame the effects can make.
+/// The music the effects move with in the `all` scene: a steady grid at
+/// 120 a minute, bars of four, sure, `now` seconds in (a bar's first beat
+/// a quarter of a second after each two seconds).
+fn steady(now: f64) -> Music {
+    Music::steady(now * 2.0 + 0.5, 120.0, 4, 1.0, now)
+}
+
+/// `frame` (the singing at Diva, over the stage in `area`, made by
+/// `stage`) with every effect in it at full strength ([`the_rest`], fired
+/// at `fired`, moving with a steady grid's music: [`steady`]), the lyrics'
+/// lines in every lyric treatment in turn (each its own pipeline drawing):
+/// the dearest frame the effects can make.
 fn every_effect(
+    stage: &mut Stage,
     frame: &StageFrame,
     area: (f32, f32, f32, f32),
     (rest, fired): (&Effects, f64),
 ) -> StageFrame {
-    let mut f = with_effects(frame, area, rest, fired);
+    let fired = Fired {
+        at: fired,
+        music: &steady,
+        by: By::Phrase(0),
+    };
+    let mut f = with_effects(stage, frame, area, rest, fired);
     let codes: Vec<f32> = (Fx::ALL.into_iter())
         .filter(|fx| fx.spec().lyric.is_some())
         .map(Fx::treatment_code)
@@ -692,7 +707,8 @@ fn main() {
                 let (backdrop, mut frame, cpu) = rig.frame(&singing, now, None);
                 if scene.every {
                     let area = (0.0, 0.0, w as f32, h as f32);
-                    frame = every_effect(&frame, area, (&rest, AT - TIMED));
+                    let fired = (&rest, AT - TIMED);
+                    frame = every_effect(&mut rig.stage, &frame, area, fired);
                 }
                 if rig.made == 1 {
                     gpu.set_backdrop(Some(&backdrop), w, h);

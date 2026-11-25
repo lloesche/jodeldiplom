@@ -441,11 +441,12 @@ impl Light {
     ) {
         self.shapes
             .set((device, queue), frame.map(StageFrame::light_feed), size);
-        let (sprays, music, time) = frame.map_or((&[][..], Music::NEUTRAL, 0.0), |f| {
-            (&f.light_sprays[..], f.music, f.clock)
-        });
+        let (sprays, music, shake, time) = frame
+            .map_or((&[][..], Music::NEUTRAL, [0.0; 2], 0.0), |f| {
+                (&f.light_sprays[..], f.music, f.shake, f.clock)
+            });
         self.bursts
-            .set((device, queue), (sprays, &music), time, size);
+            .set((device, queue), (sprays, &music, shake), time, size);
         self.lit = frame.is_some_and(|f| !f.lights.is_empty() || !f.light_sprays.is_empty());
         if !self.lit {
             return;
