@@ -5,9 +5,11 @@
 //! window draws them, and each step's GPU time read from timestamps (the
 //! window's pass drawn a step a pass): a normal frame (the singing at no
 //! tier), each tier's peak (a scene a tier, named after it: two phrases
-//! at it, the second just decided, the streak at its rung of the
-//! multiplier; at Diva's its jackpot flying, angels coming down, the
-//! flames, the rays, the rainbow, ×32), the worst the effects can make
+//! at it, the second just decided, the streak just reaching its rung of
+//! the multiplier; each with every effect its row lists, held, fired by
+//! the phrase and by the rung; at Diva's its jackpot flying, angels coming
+//! down, the flames, the rays, the rainbow, the coins raining, the words
+//! slammed, ×32), the worst the effects can make
 //! (`all`: the Diva peak with every registered effect in it at full
 //! strength at once, moving with a steady beat, the edges on fire, the
 //! bulbs, the coins, a word slammed down too, and the
@@ -79,8 +81,13 @@ const TIMED: f64 = 1.0;
 const AT: f64 = 10.0;
 const DECIDED: [f64; 2] = [4.0, 9.2];
 
+/// When a tier's scene sets its streak a word short of the tier's rung
+/// (none before): the next word hit (scored 9.5 s in) reaches the rung
+/// with its moment, so what reaching it fires is in the second timed.
+const CLIMBS: f64 = AT - TIMED;
+
 /// A scene: its name, the tier its phrases are decided at (none: no
-/// phrase decided; the streak held at least at the tier's rung), whether
+/// phrase decided; the streak reaching the tier's rung: [`CLIMBS`]), whether
 /// the song's diploma is timed from the moment looked at (its whole
 /// reveal) rather than the singing up to it, whether every effect is in
 /// its frames at once ([`every_effect`]), and how its frames are judged
@@ -676,6 +683,7 @@ fn main() {
             let mut frames = Vec::new();
             let (mut kinds, mut effects) = (Alone::default(), Alone::default());
             let mut heard = 0usize;
+            let mut climbing = false;
             for f in 0.. {
                 let now = f as f64 / FPS;
                 if now > AT + 1e-9 {
@@ -701,7 +709,12 @@ fn main() {
                         );
                     }
                     let streak = tier.spec().streak;
-                    singing.tally.streak = singing.tally.streak.max(streak);
+                    if now < CLIMBS {
+                        singing.tally.streak = 0;
+                    } else if !climbing {
+                        singing.tally.streak = streak - 1;
+                        climbing = true;
+                    }
                     singing.tally.best_streak = singing.tally.best_streak.max(streak);
                 }
                 let (backdrop, mut frame, cpu) = rig.frame(&singing, now, None);

@@ -3,7 +3,8 @@
 //! (the scoring started over) and Diva once more, at 60 frames a second
 //! for half a minute, the streak climbing through every rung of the
 //! multiplier and starting over, again and again. Every
-//! frame's shapes (over the stage, over everything, the light), its tubes'
+//! frame's shapes (over the stage, over everything, the light, the screen
+//! passes), its tubes'
 //! lines and its bursts go into the digest; a shape's kind by its name and
 //! text by the rainbow it shows in ([`shine_of`], only while it shows), so
 //! moving an effect's code or renumbering its kinds changes nothing here
@@ -104,7 +105,13 @@ impl Digest {
 
     fn frame(&mut self, f: &StageFrame) {
         self.floats(&[f.clock]);
-        for (list, mark) in [(&f.instances, 1), (&f.top, 2), (&f.lights, 3)] {
+        let lists = [
+            (&f.instances, 1),
+            (&f.top, 2),
+            (&f.lights, 3),
+            (&f.screen, 7),
+        ];
+        for (list, mark) in lists {
             self.word(mark);
             for i in list {
                 self.instance(i, f.clock);
@@ -177,6 +184,7 @@ fn digest() -> (u64, std::collections::BTreeMap<String, usize>) {
             .iter()
             .chain(&frame.top)
             .chain(&frame.lights)
+            .chain(&frame.screen)
         {
             *counts
                 .entry(kind::name(i.params[0]).to_owned())
@@ -192,17 +200,31 @@ fn digest() -> (u64, std::collections::BTreeMap<String, usize>) {
 /// The scripted singing draws the frames it drew when the digest was
 /// taken: the tiers' looks, the rainbow, the bursts and the light all as
 /// they were, and every tier's look in it (the lane's glow, the flames,
-/// the bands, the swirl).
+/// the bands, the swirl, the edges on fire, the bulbs, the coins, the
+/// word slammed).
 #[test]
 fn the_stage_draws_the_same_frames() {
     let (digest, counts) = digest();
     for name in [
-        "bands", "swirl", "glow", "blaze", "meter", "badge", "StepUp", "Angels", "Jackpot",
+        "bands",
+        "swirl",
+        "glow",
+        "blaze",
+        "meter",
+        "badge",
+        "StepUp",
+        "Angels",
+        "Jackpot",
+        "edge fire",
+        "bulbs",
+        "CoinFlick",
+        "slam",
+        "SlamDust",
     ] {
         assert!(
             counts.get(name).is_some_and(|&n| n > 0),
             "{name}: {counts:?}"
         );
     }
-    assert_eq!(digest, 11_953_424_288_785_215_725, "{counts:?}");
+    assert_eq!(digest, 15_161_341_025_112_537_099, "{counts:?}");
 }

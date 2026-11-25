@@ -323,14 +323,24 @@ mod tests {
             Group::Plain,
             Group::Shapes(Fx::Glow),
             Group::Shapes(Fx::Flames),
+            Group::Shapes(Fx::Slam),
         ] {
             assert!(light.contains(&g), "{g:?}");
         }
         assert!(!light.contains(&Group::Shapes(Fx::Rainbow)));
         let used = Group::used();
-        assert!(used.contains(&Group::Lyric(Fx::Rainbow)) && used.contains(&Group::Seal));
+        for g in [
+            Group::Seal,
+            Group::Lyric(Fx::Rainbow),
+            Group::Shapes(Fx::EdgeFire),
+            Group::Shapes(Fx::Bulbs),
+            Group::Shapes(Fx::Slam),
+            Group::Lyric(Fx::LyricFire),
+        ] {
+            assert!(used.contains(&g), "{g:?}");
+        }
         assert!(
-            !used.contains(&Group::Shapes(Fx::EdgeFire)),
+            !used.contains(&Group::Lyric(Fx::LyricFrost)),
             "no row lists it"
         );
     }

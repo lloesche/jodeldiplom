@@ -14,8 +14,8 @@
 //!   its WGSL (`<ident>_shape`): the rainbow's bands, the lane's glow, the
 //!   flames.
 //! - **Screen passes,** shapes over the finished frame (in the window
-//!   pass's "fx" step), given the lyric band to keep mostly clear: the
-//!   edges on fire, the marquee bulbs.
+//!   pass's "fx" step), given the lyric band and the score's corner to
+//!   keep mostly clear: the edges on fire, the marquee bulbs.
 //! - **Lyric treatments,** a function of a lyric's colour and coverage at
 //!   a pixel of its text (`lyric_<ident>`), each its own pipeline
 //!   ([`super::stage_gpu::Group::Lyric`]), on the shouts (the multiplier,
@@ -347,12 +347,16 @@ pub enum At {
         /// The phrase's line.
         line: u32,
     },
-    /// The stage's area, the lyric band (its top and bottom) and the lane.
+    /// The stage's area, the lyric band (its top and bottom), the score's
+    /// corner and the lane.
     Screen {
         /// The area: left, top, width, height.
         area: (f32, f32, f32, f32),
         /// The lyric band's top and bottom.
         band: (f32, f32),
+        /// The score's corner: left, top, right, bottom
+        /// ([`crate::gui::karaoke::score_corner`]).
+        score: [f32; 4],
         /// The lane.
         lane: LaneBox,
     },

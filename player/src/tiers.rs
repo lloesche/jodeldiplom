@@ -177,9 +177,14 @@ pub static TIERS: [TierSpec; 5] = [
         bands: 16.0,
         lane_light: 0.5,
         fx: Effects {
-            held: &[Use::of(Fx::Rainbow, 1.0), Use::of(Fx::Glow, 1.0)],
+            held: &[
+                Use::of(Fx::Rainbow, 1.0),
+                Use::of(Fx::Glow, 1.0),
+                Use::of(Fx::EdgeFire, 0.3),
+            ],
             on_phrase: &[Use::of(Fx::StepUp, 1.0)],
-            ..Effects::NONE
+            on_rung: &[Use::of(Fx::Fountain, 1.0)],
+            at_rung: &[Use::of(Fx::Flick, 1.0)],
         },
         backdrop_glow: 0.5,
         backdrop_rays: 0.1,
@@ -214,9 +219,12 @@ pub static TIERS: [TierSpec; 5] = [
                 Use::of(Fx::Rainbow, 1.0),
                 Use::of(Fx::Glow, 1.0),
                 Use::of(Fx::Flames, 1.0),
+                Use::of(Fx::EdgeFire, 0.6),
+                Use::of(Fx::LyricFire, 0.3),
             ],
             on_phrase: &[Use::of(Fx::StepUp, 1.0)],
-            ..Effects::NONE
+            on_rung: &[Use::of(Fx::Fountain, 1.0)],
+            at_rung: &[Use::of(Fx::Flick, 1.0), Use::of(Fx::Bulbs, 0.6)],
         },
         backdrop_glow: 0.65,
         backdrop_rays: 0.25,
@@ -252,9 +260,20 @@ pub static TIERS: [TierSpec; 5] = [
                 Use::of(Fx::Glow, 1.0),
                 Use::of(Fx::Flames, 1.0),
                 Use::of(Fx::Angels, 1.0),
+                Use::of(Fx::EdgeFire, 1.0),
+                Use::of(Fx::LyricFire, 0.6),
             ],
-            on_phrase: &[Use::of(Fx::StepUp, 1.0), Use::of(Fx::Jackpot, 1.0)],
-            ..Effects::NONE
+            on_phrase: &[
+                Use::of(Fx::StepUp, 1.0),
+                Use::of(Fx::Jackpot, 1.0),
+                Use::of(Fx::Slam, 1.0),
+            ],
+            on_rung: &[
+                Use::of(Fx::Fountain, 1.0),
+                Use::of(Fx::Rain, 1.0),
+                Use::of(Fx::Slam, 1.0),
+            ],
+            at_rung: &[Use::of(Fx::Flick, 1.0), Use::of(Fx::Bulbs, 1.0)],
         },
         backdrop_glow: 1.0,
         backdrop_rays: 0.7,

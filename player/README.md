@@ -889,21 +889,41 @@ lights the stage: Good is a rainbow streak (bands fanning out from the
 playhead behind the pills, a swirl round your arrow, the multiplier in
 rainbow; each tier up throws stars, notes and rainbow bits from the
 playhead; a phrase with no tier collapses it into the playhead), Great
-adds a glow round the lane, Awesome lights half the lane in the rainbow,
-Amazing all of it with flames blazing off its edges, and Diva angels
-descending and a jackpot of coins and stars from the meter. Each of
-these is an effect the tier's row lists in the tier table (`tiers.rs`,
-a row a tier: its bars, its rung, its colours, glow, sounds and sticker;
-the effects are `gui::fx`), and a row can have an effect
-move with the music (its beat and bars, the stems' levels, the pitches)
-or show at a rung of the multiplier; more effects are made and wait for
-a row (the screen's edges on fire, flaring on each bar's first beat and
-breathing with the bass; marquee bulbs round the lane, chasing a bulb a
-beat and all flashing on the one; the line sung on fire or frosted;
-coins, the rain of them in bursts on the beats; and a word slammed down
-onto the top of the lane, the tier's name or the multiplier, landing on
-a bar's first beat with a squash, a shake of the screen and a ring of
-dust, never over the notes or the lyrics).
+adds a glow round the lane, and from there it grows like a jackpot, each
+tier keeping what the one below has:
+
+- **Awesome** lights half the lane in the rainbow and sets the screen's
+  edges smouldering (low flames along the bottom, shorter up the sides,
+  flaring on each bar's first beat and breathing with the bass). Its
+  rung (×8) pays out: a fountain of gold coins shot up from the playhead
+  as it is reached, and a coin flicked up out of each word hit while it
+  holds.
+- **Amazing** lights all of the lane, flames blazing off its edges, the
+  edges' fire higher and the line being sung warmed by low flames at its
+  letters' feet; at its rung (×16) marquee bulbs light up round the
+  lane, chasing a bulb a beat.
+- **Diva** has angels descending, the edges ablaze and the sung line
+  burning hotter. A phrase reaching it fires a jackpot of coins and
+  stars from the meter and slams "DIVA!" down onto the top of the lane
+  (on a bar's first beat, with a squash, a shake of the screen and a
+  ring of dust). Reaching its rung (×32) slams "×32" down, rains coins
+  over the screen in bursts on the beats with the fountain, and every
+  other bulb flashes, the two halves in turn.
+
+The lyrics and the score stay readable through all of it: the edges'
+fire shrinks back from the lyric band and the score's corner and shows
+only faintly inside them, the bulbs' glow ends well before the
+line, the slammed word lands between the top of the screen and the lane
+(never over the notes or the lyrics), the coins cross the line in a few
+hundredths of a second, and the line on fire keeps its letters' shapes
+and brightness. Each of these is an effect the tier's row lists in the
+tier table (`tiers.rs`, a row a tier: its bars, its rung, its colours,
+glow, sounds and sticker; the effects are `gui::fx`): held while the
+singing is at the tier (eased between the rows as the glow eases),
+fired by a phrase reaching it, fired by reaching its rung, or held while
+at its rung; a row can have an effect move with the music (its beat and
+bars, the stems' levels, the pitches). The line sung frosted is made too
+and no row lists it: the jackpot only heats up.
 Where the song's beat grid is unsure they run freely, off the beat.
 The light blooms (the GPU draws it
 apart, at high range, blurs it and tone maps it over the frame). Along the bottom the song's progress shows

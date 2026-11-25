@@ -112,6 +112,27 @@ fn big_of(height: usize) -> f32 {
     (height as f32 / 11.0).clamp(20.0, 160.0).round()
 }
 
+/// The score's sizes in a picture `height` pixels high: its figures', the
+/// margin it keeps from the corner, and its rung's under it.
+fn score_sizes(height: usize) -> (f32, f32, f32) {
+    let px = (big_of(height) * 0.42).round().max(12.0);
+    (px, px * 0.8, (px * 0.45).round().max(10.0))
+}
+
+/// How many of its figures' sizes wide the score's corner is: room for a
+/// score of nine figures and for its rung's name under it.
+const SCORE_WIDE: f32 = 6.5;
+
+/// The corner the score takes top right in the window's `area` (left,
+/// top, width, height), its rung under it: left, top, right, bottom. The
+/// effects over the frame keep it clear (the edges on fire), as they do
+/// the lyric band.
+pub fn score_corner((x, y, w, h): (f32, f32, f32, f32)) -> [f32; 4] {
+    let (px, margin, small) = score_sizes(h as usize);
+    let bottom = y + margin * 0.6 + px * 1.25 + small * 1.5;
+    [x + w - margin - px * SCORE_WIDE, y, x + w, bottom]
+}
+
 /// How far into `line` (at `px`, glyphs made at `base`) character `at` is,
 /// in pixels (a fraction through one, through its width).
 fn x_of_char(text: &mut BigText, line: &str, base: f32, px: f32, at: f32) -> f32 {
@@ -529,9 +550,7 @@ fn text_ops(
     // up, last (however many pieces they are, those before keep their
     // places in the list: they are not drawn again for it).
     if let Some(score) = picture.score {
-        let px = (big * 0.42).round().max(12.0);
-        let margin = px * 0.8;
-        let small = (px * 0.45).round().max(10.0);
+        let (px, margin, small) = score_sizes(ah);
         // Under it the multiplier's rung, named as the badge names it.
         if let Some(times) = score.rung_label() {
             let lw = faces.get(Face::SHOUT).measure_from(&times, small, small);
@@ -664,6 +683,34 @@ mod tests {
             moved,
             score: None,
             result: None,
+        }
+    }
+
+    /// The score and its rung (a long score, the top rung's name) lie in
+    /// the score's corner, which the effects over the frame keep clear.
+    #[test]
+    fn the_score_lies_in_its_corner() {
+        let mut faces = Faces::default();
+        let (w, h) = (1600usize, 900usize);
+        let mut layer = Layer::default();
+        for _ in 0..200 {
+            layer.odometer.step(Some(987_654_321), 0.05);
+        }
+        let p = KaraokePicture {
+            score: Some(crate::view::karaoke::Score {
+                points: 987_654_321,
+                streak: 60,
+            }),
+            ..picture(Vec::new(), Vec::new(), 1.0)
+        };
+        let ops = text_ops(&mut faces, &p, ((0, 0, w, h), h), &layer).0;
+        let corner = score_corner((0.0, 0.0, w as f32, h as f32));
+        assert!(ops.len() > 9, "{}", ops.len());
+        for op in &ops {
+            let width = faces.get(op.face).measure_from(&op.text, op.base, op.px);
+            let (x, y) = op.at;
+            assert!(x >= corner[0] && x + width <= corner[2], "{}: {x}", op.text);
+            assert!(y >= corner[1] && y + op.px <= corner[3], "{}: {y}", op.text);
         }
     }
 

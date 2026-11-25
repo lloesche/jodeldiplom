@@ -12,12 +12,13 @@ use super::super::stage_gpu::{Instance, StageFrame};
 use super::{lines, LaneBox, Stage};
 
 /// Where the effects' screen passes draw over a stage in the window's
-/// `area` round its `lane`: the area, the lyric band they keep mostly
-/// clear, the lane.
+/// `area` round its `lane`: the area, the lyric band and the score's
+/// corner they keep mostly clear, the lane.
 pub fn screen_at(area: (f32, f32, f32, f32), lane: LaneBox) -> At {
     At::Screen {
         area,
         band: lines::band(area),
+        score: super::super::karaoke::score_corner(area),
         lane,
     }
 }
@@ -230,19 +231,24 @@ mod tests {
     }
 
     /// The screen passes get the lyric band (from the line sung's top to
-    /// the next's bottom, under the lane) and the lane's glass, and an
-    /// effect drawing there carries them.
+    /// the next's bottom, under the lane), the score's corner (top right)
+    /// and the lane's glass, and an effect drawing there carries them.
     #[test]
     fn the_screen_passes_get_the_lyric_band() {
         let area = (0.0, 0.0, 1600.0, 900.0);
         let glass = Lane::new(area, 0.0).glass(area);
         let at = screen_at(area, glass);
-        let At::Screen { band, lane, .. } = at else {
+        let At::Screen {
+            band, lane, score, ..
+        } = at
+        else {
             panic!("{at:?}");
         };
         assert_eq!(band.0, 900.0 * 0.68);
         assert!(band.1 > 900.0 * 0.78 && band.1 < 900.0, "{band:?}");
         assert!(lane.rect()[3] < band.0, "the lane over the band: {lane:?}");
+        assert_eq!((score[1], score[2]), (0.0, 1600.0), "top right: {score:?}");
+        assert!(score[0] > 1200.0 && score[3] > 0.0, "{score:?}");
         static FIRE: [Use; 1] = [Use::of(Fx::EdgeFire, 0.8)];
         let row = Effects {
             held: &FIRE,
@@ -264,6 +270,7 @@ mod tests {
         assert!(!screen.is_empty());
         for i in &screen {
             assert_eq!((i.shape[0], i.shape[1]), band);
+            assert_eq!(i.color2, score);
             assert_eq!(i.params[1], 0.8);
         }
     }

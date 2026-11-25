@@ -188,11 +188,21 @@ Diva, the diploma) to 0.28 / 0.34 / 1.85 ms. The effects library
 treatment, each with only that effect's code (and the helpers the
 effects share, `fx_heat` and the rest, once in it). The window makes the
 pipelines of the groups the tiers' rows use as it opens (`Group::used`:
-10, the stage's own, the baked paper's among them, and the rainbow's, the
-glow's, the flames' and the angels'; and the one baking the paper, below),
-another effect's the first time it draws; the light (what
-blooms) only the groups light can be (the plain shapes, the lane's glow
-and its flames): 3. On the RTX 5080 (Vulkan, the driver's cache warm)
+14 of the 15, the stage's own 6, the baked paper's among them, the
+shapes of the rainbow, the lane's glow, its flames, the edges on fire,
+the bulbs and the word slam, and the treatments of the rainbow and the
+lyrics on fire; and the one baking the paper, below), another effect's
+the first time it draws (only the lyrics frosted, which no row lists);
+the light (what blooms) only the groups light can be (the plain shapes,
+the lane's glow, its flames and the slammed word): 4. Made the first
+time one draws, the slam's pipelines cost a frame of 112 ms (60 ms in
+its text's step, 49 in the light's) the first time a word was slammed,
+before the rows listed it; made as the window opens, none. The window
+opens that much later: `frame_cost` made the device and the window's
+pipelines in 1.42 s with the rows wired (two runs) and 1.13 s with only
+the first four effects listed (one run, the same session, the same
+machine, neither near the 105–115 ms below). On the RTX 5080 (Vulkan,
+the driver's cache warm)
 the stage's pipelines take about 50 ms (35 ms for the 6 before the
 library, 70 ms for all 13), the light's 16 ms, the bursts' 4 ms, the
 window's device and all its pipelines about 105–115 ms (110 ms before
@@ -215,7 +225,14 @@ the bursts share (the backdrop and the pixmap under the stage never
 shake, nor the screen passes that keep still). Every registered effect at full
 strength at once over the Diva peak (`frame_cost`'s `all` scene) costs
 the RTX 5080 1.8 ms a frame (worst 2.3 ms; the Diva peak alone 1.5 ms,
-worst 2.8 ms; the `fx` step 0.21 ms, worst 0.43 ms). The bursts are one
+worst 2.8 ms; the `fx` step 0.21 ms, worst 0.43 ms). With the rows
+listing the effects (each tier's scene reaching its rung in its timed
+second, so what the rung fires is in it), the medians and worsts at
+3024 × 1964 (one run, the machine otherwise idle) were: Good 0.95 /
+1.28 ms, Great 1.40 / 2.44, Awesome 1.51 / 2.59, Amazing 1.66 / 2.64,
+Diva 1.59 / 3.01, `all` 1.50 / 2.01; no step's worst over 1.3 ms (the
+`fx` step's median 0.13 ms at Awesome, 0.18 at Amazing, 0.19 at Diva).
+The bursts are one
 pipeline for every look (`gui::particles::LOOKS`): a burst's quads are
 small and few, their step 0.07–0.13 ms a frame at the Diva peak and with
 every effect, and a quad's look is the same over its pixels (one branch
@@ -351,5 +368,7 @@ tests that need no GPU (`gui::stage_gpu::groups`, `gui::particles`):
 
   (any cover's `.layers` file from the player's data folder; its scenes
   are the normal one, a tier's each at its rung, every effect at once and
-  the diploma: the RTX 5080 takes 1.5–3.4 ms at worst over the singing
-  ones, the diploma 1.9–3.1 ms, each frame the lesser of its two runs).
+  the diploma: the RTX 5080 takes 1.3–3.4 ms at worst over the singing
+  ones, the diploma 1.6–3.1 ms, each frame the lesser of its two runs;
+  the normal scene's first frame timed has gone over, 4.0–4.7 ms, its
+  pixmap step 3.1–3.3 ms, with the rows wired or not).

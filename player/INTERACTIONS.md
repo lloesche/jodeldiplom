@@ -563,19 +563,35 @@ stem keys are their mutes.
   snaps the shine to its tier, with no rise or collapse. In the picture
   (no stage) the bar under the word being sung gets a rainbow edge while
   it shines, and a smaller burst from it a step up. Great adds a glow
-  round the lane (Awesome's the same, the rainbow brighter over more of
-  the lane), Amazing flames blazing off its edges, Diva angels
-  descending (a flight every 2.2 s while it holds, the first as soon as
-  it is to hold) and a jackpot of coins and stars from the meter as a
-  phrase is Diva. Each of these is an effect its tier's row lists (held
-  while the singing is at it, eased between the rows as its glow eases;
-  or fired by a phrase reaching it), drawn at its point of the stage; a
-  row lists nothing at its rung of the multiplier yet, and no row lists
-  the edges on fire, the marquee bulbs, the lyrics on fire or frosted,
-  the coins or the word slam (these move with the beat where the song's
-  grid is sure: the fire flaring on a bar's first beat, the bulbs
-  chasing a bulb a beat, the coins raining in bursts on the beats, the
-  word landing on a bar's first beat and shaking the screen). The glow, the flames, the angels and the jackpot are light:
+  round the lane; each tier above keeps what the one below shows and
+  adds to it, a jackpot growing. Awesome: the rainbow brighter over more
+  of the lane, the screen's edges on fire at 0.3 (held), a fountain of
+  coins from the playhead as its rung (×8) is reached and a coin flicked
+  up out of each word hit while the rung holds. Amazing: flames blazing
+  off the lane's edges, the edges' fire at 0.6, the line sung on fire
+  at 0.3 (held), the fountain at its rung (×16), the flicks and marquee
+  bulbs round the lane at 0.6 while it holds. Diva: angels descending
+  (a flight every 2.2 s while it holds, the first as soon as it is to
+  hold), the edges' fire at 1, the line sung on fire at 0.6 (held); a
+  phrase reaching it fires a jackpot of coins and stars from the meter
+  and slams "DIVA!" down; reaching its rung (×32) fires the fountain, a
+  rain of coins and a slam of "×32"; while it holds, the flicks and the
+  bulbs at 1 (every other bulb flashing). Each of these is an effect its
+  tier's row lists (held while the singing is at it, eased between the
+  rows as its glow eases; fired by a phrase reaching it; fired by
+  reaching its rung; or held while at its rung, eased in and out), drawn
+  at its point of the stage. They move with the beat where the song's
+  grid is sure: the fire flaring on a bar's first beat and breathing
+  with the bass, the bulbs chasing a bulb a beat, the coins raining in
+  bursts on the beats, the word landing on a bar's first beat and
+  shaking the screen. The lyrics and the score stay readable: the edges'
+  fire shrinks back from the lyric band and the score's corner (the
+  points top right and the rung under them) and shows at most faintly in
+  them, the bulbs' glow ends before the line,
+  the word lands between the top of the screen and the lane, the line on
+  fire keeps its letters' shapes and brightness. The line sung frosted
+  is made too and no row lists it. The glow, the flames, the angels,
+  the jackpot and the slammed word's glow are light:
   drawn apart at high range, blurred down a chain of halved textures and
   back up, tone mapped and added over the frame (they bloom). Each frame
   the processor gives only the time, the tier (when it changed and how
@@ -620,6 +636,9 @@ stem keys are their mutes.
     `the_line_sung_takes_the_strongest_treatment` (`gui::fx`),
     `nothing_of_the_library_shows_at_no_tier` (`gui::stage::meter`),
     `the_screen_passes_get_the_lyric_band` (`gui::stage`),
+    `the_score_s_corner_is_kept_mostly_clear`
+    (`gui::fx::edge_fire`), `the_score_lies_in_its_corner`
+    (`gui::karaoke`),
     `runs_split_by_group_and_treatment` (`gui::stage_gpu::groups`)
   - what keeps the stage fast on Apple's GPUs (PERFORMANCE.md):
     `each_pipeline_carries_only_its_own_effect_and_picks_by_its_group`,
