@@ -6,7 +6,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use super::measure::yardstick;
-use super::reference::{keyed, measure_all, Original};
+use super::reference::{keyed, measure_all, Original, VERSION};
 use super::*;
 use crate::core::singing::{melodic, Notes, Singing};
 use jodel_rhythm::waveform::Melody;
@@ -230,7 +230,10 @@ fn a_reference_from_a_voice_and_as_text() {
     let text = r.to_text();
     assert_eq!(Reference::from_text(&text), Some(r));
     assert_eq!(
-        Reference::from_text(&text.replace("version 3", "version 2")),
+        Reference::from_text(&text.replace(
+            &format!("version {VERSION}"),
+            &format!("version {}", VERSION - 1)
+        )),
         None
     );
 }

@@ -387,9 +387,16 @@ fn shine_files_are_pinned() {
             }),
         ],
     };
-    let text = shine_cache::to_text(&reference);
+    // The measuring's own version is apart from the schema's.
+    let measured = format!(
+        "\nversion {}\n",
+        jodeldiplom::core::shine::reference::VERSION
+    );
+    let text = shine_cache::to_text(&reference).replace(&measured, "\nversion x\n");
     let kept = pinned(&cache::SHINE, "txt", text.as_bytes());
-    let kept = String::from_utf8(kept).unwrap();
+    let kept = String::from_utf8(kept)
+        .unwrap()
+        .replace("\nversion x\n", &measured);
     assert_eq!(shine_cache::from_text(&kept), Some(reference));
     let other = kept.replace("\nversion ", "\nversion 9");
     assert_eq!(shine_cache::from_text(&other), None);

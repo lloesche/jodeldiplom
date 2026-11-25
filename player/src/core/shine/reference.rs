@@ -21,7 +21,9 @@ use jodel_rhythm::yin::{Yin, WINDOW};
 /// The version of what a reference holds and how it is measured: raised
 /// with any change to the measures, the hearings or the par, so a kept
 /// one is measured again ([`crate::cache::SHINE`] is the file's layout).
-pub const VERSION: u32 = 3;
+/// 4: the live tracker hears the voice's band only
+/// ([`jodel_rhythm::yin::BAND_LOW`]).
+pub const VERSION: u32 = 4;
 
 /// The delay the reference's microphone-rate hearings are off by (s).
 pub const REFERENCE_DELAY: f64 = 0.03;
