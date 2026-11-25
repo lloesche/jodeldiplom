@@ -10,8 +10,9 @@
 //! - A record marked `instrumental` has no words.
 
 use crate::json::Json;
+use crate::sources::{found_from, Texts};
 use crate::tokens::normalize;
-use crate::{Found, Lyrics, Source, Track};
+use crate::{Found, Source, Track};
 
 /// The service's address.
 pub const BASE: &str = "https://lrclib.net";
@@ -129,29 +130,21 @@ impl Record {
         })
     }
 
-    /// The text: the plain one, the synced one (its times to be dropped)
-    /// only where there is no other.
-    pub fn text(&self) -> Option<&str> {
-        self.plain.as_deref().or(self.synced.as_deref())
+    /// Its texts, plain and synced.
+    pub fn texts(&self) -> Texts<'_> {
+        Texts {
+            plain: self.plain.as_deref(),
+            synced: self.synced.as_deref(),
+        }
     }
 
-    /// What the record says of the track: its words ([`Record::text`]),
-    /// with the synced text's line times laid on them as the scaffold where
-    /// it is the same text ([`crate::scaffold::attach`]); no word times.
+    /// What the record says of the track: its words, the synced text's line
+    /// times as their scaffold ([`found_from`]); no word times.
     pub fn found(&self) -> Found {
         if self.instrumental {
             return Found::Instrumental;
         }
-        match self.text().map(|t| Lyrics::parse_text(t, Source::Lrclib)) {
-            Some(mut lyrics) if !lyrics.is_empty() => {
-                if let (Some(_), Some(synced)) = (&self.plain, &self.synced) {
-                    let synced = Lyrics::parse_text(synced, Source::Lrclib);
-                    crate::scaffold::attach(&mut lyrics, &synced);
-                }
-                Found::Lyrics(lyrics)
-            }
-            _ => Found::NotFound,
-        }
+        found_from(self.texts(), Source::Lrclib)
     }
 }
 
@@ -191,7 +184,7 @@ pub fn best<'a>(records: &'a [Record], track: &Track) -> Option<&'a Record> {
         |a: &str, b: &str| !a.is_empty() && !b.is_empty() && (a.contains(b) || b.contains(a));
     records
         .iter()
-        .filter(|r| r.instrumental || r.text().is_some())
+        .filter(|r| r.instrumental || r.plain.is_some() || r.synced.is_some())
         .filter(|r| r.title.as_deref().is_some_and(|t| alike(&loose(t), &title)))
         .filter(|r| {
             r.artist

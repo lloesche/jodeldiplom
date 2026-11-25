@@ -10,6 +10,8 @@
 //! −8 scales) and rounding to the group's range (the offset its minimum)
 //! both fit; a GPU's kernel reads them the same way.
 
+use jodel_tensors::f16_to_f32;
+
 /// Values a group.
 pub const GROUP: usize = 32;
 /// u32s a group.
@@ -49,23 +51,6 @@ pub fn f16_bits(x: f32) -> u16 {
         v += 1;
     }
     sign | v as u16
-}
-
-/// An IEEE half's bits as f32.
-pub fn f16_value(h: u16) -> f32 {
-    let sign = u32::from(h >> 15) << 31;
-    let exp = u32::from((h >> 10) & 0x1f);
-    let frac = u32::from(h & 0x3ff);
-    let bits = match (exp, frac) {
-        (0, 0) => sign,
-        (0, f) => {
-            let shift = f.leading_zeros() - 21;
-            sign | ((113 - shift) << 23) | (((f << (shift + 1)) & 0x3ff) << 13)
-        }
-        (31, f) => sign | 0x7f80_0000 | (f << 13),
-        (e, f) => sign | ((e + 112) << 23) | (f << 13),
-    };
-    f32::from_bits(bits)
 }
 
 /// `values` (`rows × cols`, `cols` a multiple of [`GROUP`]) at 4 bits:
@@ -131,7 +116,7 @@ fn quantize_groups(
         col = (col + GROUP) % cols;
         let (scale, offset) = if symmetric {
             let peak = g.iter().fold(0.0f32, |m, v| m.max(v.abs()));
-            let scale = f16_value(f16_bits(peak / 7.0));
+            let scale = f16_to_f32(f16_bits(peak / 7.0));
             (scale, -8.0 * scale)
         } else {
             fit(g, w)
@@ -172,7 +157,7 @@ fn error_of(g: &[f32], w: &[f32], scale: f32, offset: f32) -> f64 {
 /// scales around it, the nibbles it gives and the scale and offset fitted
 /// to them by weighted least squares.
 fn fit(g: &[f32], w: &[f32]) -> (f32, f32) {
-    let half = |x: f32| f16_value(f16_bits(x));
+    let half = |x: f32| f16_to_f32(f16_bits(x));
     let lo = g.iter().copied().fold(f32::MAX, f32::min);
     let hi = g.iter().copied().fold(f32::MIN, f32::max);
     let offset = half(lo);
@@ -222,7 +207,7 @@ pub const GROUP_WORDS_8: usize = 9;
 pub fn quantize8(values: &[f32], rows: usize, cols: usize) -> Vec<u32> {
     assert_eq!(values.len(), rows * cols);
     assert_eq!(cols % GROUP, 0, "{cols} inputs are not whole groups");
-    let half = |x: f32| f16_value(f16_bits(x));
+    let half = |x: f32| f16_to_f32(f16_bits(x));
     let mut out = Vec::with_capacity(rows * cols / GROUP * GROUP_WORDS_8);
     for g in values.chunks_exact(GROUP) {
         let lo = g.iter().copied().fold(f32::MAX, f32::min);
@@ -264,8 +249,8 @@ pub fn dequantize_row8(q: &[u32], cols: usize, row: usize, out: &mut [f32]) {
     let groups = cols / GROUP;
     for g in 0..groups {
         let words = &q[(row * groups + g) * GROUP_WORDS_8..][..GROUP_WORDS_8];
-        let scale = f16_value(words[8] as u16);
-        let offset = f16_value((words[8] >> 16) as u16);
+        let scale = f16_to_f32(words[8] as u16);
+        let offset = f16_to_f32((words[8] >> 16) as u16);
         for j in 0..GROUP {
             let n = (words[j / 4] >> (8 * (j % 4))) & 0xff;
             out[g * GROUP + j] = offset + n as f32 * scale;
@@ -278,8 +263,8 @@ pub fn dequantize_row(q: &[u32], cols: usize, row: usize, out: &mut [f32]) {
     let groups = cols / GROUP;
     for g in 0..groups {
         let words = &q[(row * groups + g) * GROUP_WORDS..][..GROUP_WORDS];
-        let scale = f16_value(words[4] as u16);
-        let offset = f16_value((words[4] >> 16) as u16);
+        let scale = f16_to_f32(words[4] as u16);
+        let offset = f16_to_f32((words[4] >> 16) as u16);
         for j in 0..GROUP {
             let n = (words[j / 8] >> (4 * (j % 8))) & 0xf;
             out[g * GROUP + j] = offset + n as f32 * scale;
@@ -395,6 +380,46 @@ pub fn bits_by(spec: &str) -> impl Fn(&str) -> u32 + '_ {
             .unwrap_or(4)
     }
 }
+
+/// Each `group` of `values` rounded to `bits` a value: a scale a group
+/// (from the largest magnitude when `symmetric`, else from the range, with
+/// its minimum).
+pub fn round_groups(values: &mut [f32], bits: u32, group: usize, symmetric: bool) {
+    if bits == 4 && group == GROUP && values.len() % group == 0 {
+        // Exactly as the 4-bit format holds them (scales as halves).
+        let rows = values.len() / group;
+        let q = quantize(values, rows, group, symmetric);
+        for (r, row) in values.chunks_exact_mut(group).enumerate() {
+            dequantize_row(&q, group, r, row);
+        }
+        return;
+    }
+    for g in values.chunks_mut(group) {
+        if symmetric {
+            let top = (1i32 << (bits - 1)) - 1;
+            let peak = g.iter().fold(0.0f32, |m, v| m.max(v.abs()));
+            if peak == 0.0 {
+                continue;
+            }
+            let scale = peak / top as f32;
+            for v in g.iter_mut() {
+                *v = (*v / scale).round().clamp(-(top as f32) - 1.0, top as f32) * scale;
+            }
+        } else {
+            let top = ((1u32 << bits) - 1) as f32;
+            let lo = g.iter().copied().fold(f32::MAX, f32::min);
+            let hi = g.iter().copied().fold(f32::MIN, f32::max);
+            if hi <= lo {
+                continue;
+            }
+            let scale = (hi - lo) / top;
+            for v in g.iter_mut() {
+                *v = lo + ((*v - lo) / scale).round().clamp(0.0, top) * scale;
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -461,12 +486,12 @@ mod tests {
     #[test]
     fn halves_round_trip() {
         for x in [0.0f32, 1.0, -2.5, 0.1, 65504.0, 6.1e-5, 3.0e-7, -1e-3] {
-            let back = f16_value(f16_bits(x));
+            let back = f16_to_f32(f16_bits(x));
             assert!((back - x).abs() <= x.abs() * 1e-3 + 6e-8, "{x} -> {back}");
         }
         assert_eq!(f16_bits(1.0), 0x3c00);
         assert_eq!(f16_bits(-2.0), 0xc000);
-        assert_eq!(f16_value(0x3555), 0.333_251_95);
+        assert_eq!(f16_to_f32(0x3555), 0.333_251_95);
     }
 
     #[test]
@@ -482,8 +507,8 @@ mod tests {
         let range = error_of(
             &g,
             &ones,
-            f16_value(f16_bits((hi - lo) / 15.0)),
-            f16_value(f16_bits(lo)),
+            f16_to_f32(f16_bits((hi - lo) / 15.0)),
+            f16_to_f32(f16_bits(lo)),
         );
         let (s, o) = fit(&g, &ones);
         assert!(error_of(&g, &ones, s, o) <= range);

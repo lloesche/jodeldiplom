@@ -66,6 +66,7 @@ pub mod json;
 pub mod lines;
 pub mod lrc;
 pub mod lrclib;
+mod nn;
 pub mod repeats;
 pub mod scaffold;
 pub mod sources;
@@ -85,8 +86,10 @@ pub mod tokens;
 /// ([`glimpses`]); a line's first words heard weakly at a sung pace
 /// before the first heard surely ([`spread::interpolate`]). 7: the lines held
 /// near their source's synced times where those fit the recording
-/// ([`scaffold`]).
-pub const VERSION: u32 = 7;
+/// ([`scaffold`]). 8: a file's synced lyrics tag kept as the scaffold of
+/// its plain one ([`sources::found_from`]); a text fits on one scale
+/// ([`fit::fits`]).
+pub const VERSION: u32 = 8;
 
 /// The rate the aligners take the voice at, in Hz.
 pub const VOCALS_RATE: u32 = 16_000;
@@ -333,7 +336,8 @@ pub struct Timing {
 /// How well a text fit what was heard in the voice ([`fit::lyrics_fit`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Fit {
-    /// The share of its words heard in order, in whole percent.
+    /// The share of its words heard in order, in whole percent
+    /// ([`fit::percent_of`]).
     pub percent: u8,
     /// Whether it took the place of the text first found, which fit less.
     pub swapped: bool,
@@ -343,14 +347,14 @@ impl Fit {
     /// A fit of `share` (0 to 1).
     pub fn new(share: f32, swapped: bool) -> Fit {
         Fit {
-            percent: (share.clamp(0.0, 1.0) * 100.0).round() as u8,
+            percent: fit::percent_of(share),
             swapped,
         }
     }
 
-    /// Whether the text fits ([`fit::FIT_LEAST`]).
+    /// Whether the text fits ([`fit::FIT_LEAST_PERCENT`]).
     pub fn fits(&self) -> bool {
-        f32::from(self.percent) >= fit::FIT_LEAST * 100.0
+        self.percent >= fit::FIT_LEAST_PERCENT
     }
 
     /// `78`, or `24 swapped`.
@@ -530,6 +534,30 @@ mod tests {
         assert_eq!(Fit::parse("36 swapped"), Some(swapped));
         assert!(!Fit::new(0.31, false).fits());
         assert_eq!(Fit::parse("120"), None);
+    }
+
+    #[test]
+    fn a_fit_is_judged_on_one_scale() {
+        // Just under the least: 35 % rounded, but not a fit, kept or not.
+        let f = Fit::new(0.347, false);
+        assert!(!fit::fits(0.347) && !f.fits());
+        assert_eq!(f.percent, 34);
+        assert!(!Fit::parse(&f.to_text()).unwrap().fits());
+        // Every share from just under the least to just over: the same
+        // verdict both ways, turning once.
+        let least = f32::from(fit::FIT_LEAST_PERCENT) / 100.0;
+        let near = 1 << 16;
+        let mut turns = 0;
+        let mut before = false;
+        for bits in least.to_bits() - near..=least.to_bits() + near {
+            let share = f32::from_bits(bits);
+            let fits = fit::fits(share);
+            assert_eq!(Fit::new(share, false).fits(), fits, "{share}");
+            turns += usize::from(fits != before);
+            before = fits;
+        }
+        assert_eq!(turns, 1);
+        assert!(before, "a share just over the least fits");
     }
 
     #[test]

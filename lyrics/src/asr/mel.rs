@@ -12,7 +12,7 @@
 //!
 //! The frames come `MELS`-major: `[mel][frame]`, as the model takes them.
 
-use crate::speech::par_rows;
+use crate::nn::par_rows;
 
 /// Samples a frame.
 pub const N_FFT: usize = 400;
@@ -155,7 +155,7 @@ pub fn features(voice: &[f32], threads: usize) -> (Vec<f32>, usize) {
     let mut logs = vec![0.0f32; frames * MELS];
     par_rows(&mut logs, MELS, threads, |t, row| {
         let start = (t * HOP) as i64 - half as i64;
-        let x: Vec<f32> = (0..N_FFT as i64).map(|n| at(start + n)).collect();
+        let x: [f32; N_FFT] = std::array::from_fn(|n| at(start + n as i64));
         let mut power = [0.0f32; BINS];
         for (b, p) in power.iter_mut().enumerate() {
             let (c, s) = (&cos[b * N_FFT..][..N_FFT], &sin[b * N_FFT..][..N_FFT]);

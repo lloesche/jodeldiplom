@@ -27,12 +27,19 @@
 
 pub mod mel;
 pub mod packed;
+mod parts;
 pub mod quant;
 pub mod text;
+mod weights;
 
+pub use parts::{
+    loop_start, parts_of, transcribe_parts, Part, Transcript, PART_LEAST, PART_SECONDS,
+};
+
+use std::convert::Infallible;
 use std::path::Path;
 
-use crate::speech::{dot, gelu, matmul, par_rows};
+use crate::nn::{attend, dot, gelu, halved, par_rows, rms_norm, Conv, Heads, LayerNorm, Linear};
 use jodel_tensors::SafeTensors;
 
 /// Channels of the encoder's convolutions.
@@ -69,13 +76,6 @@ pub const LAYERS: usize = 28;
 pub const VOCAB: usize = 151_936;
 /// The base of the decoder's rotary positions.
 pub const ROPE_BASE: f64 = 1e6;
-const LN_EPS: f32 = 1e-5;
-const RMS_EPS: f32 = 1e-6;
-
-/// Steps `n` values of a convolution with stride 2 and padding 1 give.
-fn halved(n: usize) -> usize {
-    n.div_ceil(2)
-}
 
 /// The encoder's steps for a piece of `frames` frames.
 pub fn piece_steps(frames: usize) -> usize {
@@ -85,115 +85,6 @@ pub fn piece_steps(frames: usize) -> usize {
 /// The encoder's steps for `frames` frames of features.
 pub fn audio_steps(frames: usize) -> usize {
     (frames / PIECE) * piece_steps(PIECE) + piece_steps(frames % PIECE)
-}
-
-/// A linear layer, its weight transposed to `[input][output]`.
-struct Linear {
-    inputs: usize,
-    outputs: usize,
-    weight: Vec<f32>,
-    bias: Option<Vec<f32>>,
-}
-
-impl Linear {
-    fn from_rows(raw: &[f32], outputs: usize, inputs: usize, bias: Option<Vec<f32>>) -> Linear {
-        let mut weight = vec![0.0f32; raw.len()];
-        for o in 0..outputs {
-            for i in 0..inputs {
-                weight[i * outputs + o] = raw[o * inputs + i];
-            }
-        }
-        Linear {
-            inputs,
-            outputs,
-            weight,
-            bias,
-        }
-    }
-
-    fn load(
-        t: &SafeTensors,
-        name: &str,
-        inputs: usize,
-        outputs: usize,
-        bias: bool,
-    ) -> Result<Linear, String> {
-        let raw = t.get(&format!("{name}.weight"), &[outputs, inputs])?;
-        let bias = if bias {
-            Some(t.get(&format!("{name}.bias"), &[outputs])?)
-        } else {
-            None
-        };
-        Ok(Linear::from_rows(&raw, outputs, inputs, bias))
-    }
-
-    fn forward(&self, x: &[f32], threads: usize) -> Vec<f32> {
-        let rows = x.len() / self.inputs;
-        let mut out = vec![0.0f32; rows * self.outputs];
-        matmul(
-            &self.weight,
-            self.inputs,
-            self.outputs,
-            x,
-            &mut out,
-            threads,
-        );
-        if let Some(b) = &self.bias {
-            for row in out.chunks_exact_mut(self.outputs) {
-                for (o, bias) in row.iter_mut().zip(b) {
-                    *o += bias;
-                }
-            }
-        }
-        out
-    }
-}
-
-/// A LayerNorm.
-struct LayerNorm {
-    weight: Vec<f32>,
-    bias: Vec<f32>,
-}
-
-impl LayerNorm {
-    fn load(t: &SafeTensors, name: &str, dim: usize) -> Result<LayerNorm, String> {
-        Ok(LayerNorm {
-            weight: t.get(&format!("{name}.weight"), &[dim])?,
-            bias: t.get(&format!("{name}.bias"), &[dim])?,
-        })
-    }
-
-    fn apply(&self, x: &mut [f32]) {
-        let dim = self.weight.len();
-        for row in x.chunks_exact_mut(dim) {
-            let mean = row.iter().map(|&v| f64::from(v)).sum::<f64>() / dim as f64;
-            let var = row
-                .iter()
-                .map(|&v| (f64::from(v) - mean).powi(2))
-                .sum::<f64>()
-                / dim as f64;
-            let k = 1.0 / (var + f64::from(LN_EPS)).sqrt();
-            for (d, v) in row.iter_mut().enumerate() {
-                *v = ((f64::from(*v) - mean) * k) as f32 * self.weight[d] + self.bias[d];
-            }
-        }
-    }
-}
-
-/// Each `weight.len()`-wide row of `x` RMS-normed and scaled, in place.
-fn rms_norm(x: &mut [f32], weight: &[f32]) {
-    let dim = weight.len();
-    for row in x.chunks_exact_mut(dim) {
-        let mean = row
-            .iter()
-            .map(|&v| f64::from(v) * f64::from(v))
-            .sum::<f64>()
-            / dim as f64;
-        let k = (1.0 / (mean + f64::from(RMS_EPS)).sqrt()) as f32;
-        for (v, w) in row.iter_mut().zip(weight) {
-            *v = *v * k * w;
-        }
-    }
 }
 
 struct EncoderLayer {
@@ -221,72 +112,6 @@ struct DecoderLayer {
     down: Linear,
 }
 
-/// A convolution's weight as `[tap·input][output]` (tap-major, the taps
-/// row by row over 3 bands × 3 steps), and its bias.
-struct Conv {
-    inputs: usize,
-    weight: Vec<f32>,
-    bias: Vec<f32>,
-}
-
-impl Conv {
-    fn load(t: &SafeTensors, name: &str, inputs: usize) -> Result<Conv, String> {
-        let raw = t.get(&format!("{name}.weight"), &[CONV, inputs, 3, 3])?;
-        let mut weight = vec![0.0f32; raw.len()];
-        for o in 0..CONV {
-            for i in 0..inputs {
-                for tap in 0..9 {
-                    weight[(tap * inputs + i) * CONV + o] = raw[(o * inputs + i) * 9 + tap];
-                }
-            }
-        }
-        Ok(Conv {
-            inputs,
-            weight,
-            bias: t.get(&format!("{name}.bias"), &[CONV])?,
-        })
-    }
-
-    /// `x` (`[images][bands][steps][inputs]`) through the convolution
-    /// (stride 2, padding 1) and GELU: `[images][bands/2][steps/2][480]`
-    /// (rounded up), and its bands and steps.
-    fn forward(
-        &self,
-        x: &[f32],
-        (images, bands, steps): (usize, usize, usize),
-        threads: usize,
-    ) -> (Vec<f32>, usize, usize) {
-        let (ob, os) = (halved(bands), halved(steps));
-        let width = 9 * self.inputs;
-        let rows = images * ob * os;
-        let mut patches = vec![0.0f32; rows * width];
-        par_rows(&mut patches, width, threads, |r, row| {
-            let (img, rest) = (r / (ob * os), r % (ob * os));
-            let (b, s) = (rest / os, rest % os);
-            for kb in 0..3 {
-                for ks in 0..3 {
-                    let (ib, is) = ((2 * b + kb) as i64 - 1, (2 * s + ks) as i64 - 1);
-                    if ib < 0 || is < 0 || ib >= bands as i64 || is >= steps as i64 {
-                        continue;
-                    }
-                    let from = ((img * bands + ib as usize) * steps + is as usize) * self.inputs;
-                    let to = (kb * 3 + ks) * self.inputs;
-                    row[to..to + self.inputs].copy_from_slice(&x[from..from + self.inputs]);
-                }
-            }
-        });
-        let mut out = vec![0.0f32; rows * CONV];
-        matmul(&self.weight, width, CONV, &patches, &mut out, threads);
-        for row in out.chunks_exact_mut(CONV) {
-            for (v, b) in row.iter_mut().zip(&self.bias) {
-                *v += b;
-            }
-        }
-        gelu(&mut out);
-        (out, ob, os)
-    }
-}
-
 /// What [`Qwen3Asr::visit`] hands each tensor to: its name, its values, and
 /// its shape when it is a matrix.
 pub type Visitor<'a> = dyn FnMut(&str, &[f32], Option<(usize, usize)>) + 'a;
@@ -311,19 +136,6 @@ pub struct Qwen3Asr {
     head: Vec<f32>,
     vocab: text::Vocab,
     threads: usize,
-}
-
-/// What the model heard.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct Transcript {
-    /// The language it named ("English"), empty when none.
-    pub language: String,
-    /// The words.
-    pub text: String,
-    /// The tokens it wrote.
-    pub ids: Vec<u32>,
-    /// The parts it was heard in, and their words.
-    pub parts: Vec<Part>,
 }
 
 /// The decoder's keys and values so far, a layer each: `[position][8·128]`.
@@ -388,69 +200,46 @@ impl Qwen3Asr {
         let mut encoder = Vec::new();
         for l in 0..ENC_LAYERS {
             let n = format!("{a}.layers.{l}");
+            let linear = |name: &str, inputs, outputs| {
+                Linear::load(t, &format!("{n}.{name}"), inputs, outputs)
+            };
             encoder.push(EncoderLayer {
                 norm: LayerNorm::load(t, &format!("{n}.self_attn_layer_norm"), ENC_DIM)?,
-                q: Linear::load(t, &format!("{n}.self_attn.q_proj"), ENC_DIM, ENC_DIM, true)?,
-                k: Linear::load(t, &format!("{n}.self_attn.k_proj"), ENC_DIM, ENC_DIM, true)?,
-                v: Linear::load(t, &format!("{n}.self_attn.v_proj"), ENC_DIM, ENC_DIM, true)?,
-                o: Linear::load(
-                    t,
-                    &format!("{n}.self_attn.out_proj"),
-                    ENC_DIM,
-                    ENC_DIM,
-                    true,
-                )?,
+                q: linear("self_attn.q_proj", ENC_DIM, ENC_DIM)?,
+                k: linear("self_attn.k_proj", ENC_DIM, ENC_DIM)?,
+                v: linear("self_attn.v_proj", ENC_DIM, ENC_DIM)?,
+                o: linear("self_attn.out_proj", ENC_DIM, ENC_DIM)?,
                 final_norm: LayerNorm::load(t, &format!("{n}.final_layer_norm"), ENC_DIM)?,
-                up: Linear::load(t, &format!("{n}.fc1"), ENC_DIM, ENC_FF, true)?,
-                down: Linear::load(t, &format!("{n}.fc2"), ENC_FF, ENC_DIM, true)?,
+                up: linear("fc1", ENC_DIM, ENC_FF)?,
+                down: linear("fc2", ENC_FF, ENC_DIM)?,
             });
         }
         let m = "thinker.model";
         let mut decoder = Vec::new();
         for l in 0..LAYERS {
             let n = format!("{m}.layers.{l}");
+            let linear = |name: &str, inputs, outputs| {
+                Linear::load_unbiased(t, &format!("{n}.{name}"), inputs, outputs)
+            };
+            let weight = |name: &str, dim| t.get(&format!("{n}.{name}.weight"), &[dim]);
             decoder.push(DecoderLayer {
-                norm: t.get(&format!("{n}.input_layernorm.weight"), &[DIM])?,
-                q: Linear::load(
-                    t,
-                    &format!("{n}.self_attn.q_proj"),
-                    DIM,
-                    HEADS * HEAD,
-                    false,
-                )?,
-                k: Linear::load(
-                    t,
-                    &format!("{n}.self_attn.k_proj"),
-                    DIM,
-                    KV_HEADS * HEAD,
-                    false,
-                )?,
-                v: Linear::load(
-                    t,
-                    &format!("{n}.self_attn.v_proj"),
-                    DIM,
-                    KV_HEADS * HEAD,
-                    false,
-                )?,
-                o: Linear::load(
-                    t,
-                    &format!("{n}.self_attn.o_proj"),
-                    HEADS * HEAD,
-                    DIM,
-                    false,
-                )?,
-                q_norm: t.get(&format!("{n}.self_attn.q_norm.weight"), &[HEAD])?,
-                k_norm: t.get(&format!("{n}.self_attn.k_norm.weight"), &[HEAD])?,
-                post_norm: t.get(&format!("{n}.post_attention_layernorm.weight"), &[DIM])?,
-                gate: Linear::load(t, &format!("{n}.mlp.gate_proj"), DIM, FF, false)?,
-                up: Linear::load(t, &format!("{n}.mlp.up_proj"), DIM, FF, false)?,
-                down: Linear::load(t, &format!("{n}.mlp.down_proj"), FF, DIM, false)?,
+                norm: weight("input_layernorm", DIM)?,
+                q: linear("self_attn.q_proj", DIM, HEADS * HEAD)?,
+                k: linear("self_attn.k_proj", DIM, KV_HEADS * HEAD)?,
+                v: linear("self_attn.v_proj", DIM, KV_HEADS * HEAD)?,
+                o: linear("self_attn.o_proj", HEADS * HEAD, DIM)?,
+                q_norm: weight("self_attn.q_norm", HEAD)?,
+                k_norm: weight("self_attn.k_norm", HEAD)?,
+                post_norm: weight("post_attention_layernorm", DIM)?,
+                gate: linear("mlp.gate_proj", DIM, FF)?,
+                up: linear("mlp.up_proj", DIM, FF)?,
+                down: linear("mlp.down_proj", FF, DIM)?,
             });
         }
         Ok(Qwen3Asr {
-            conv1: Conv::load(t, &format!("{a}.conv2d1"), 1)?,
-            conv2: Conv::load(t, &format!("{a}.conv2d2"), CONV)?,
-            conv3: Conv::load(t, &format!("{a}.conv2d3"), CONV)?,
+            conv1: Conv::load(t, &format!("{a}.conv2d1"), 1, CONV)?,
+            conv2: Conv::load(t, &format!("{a}.conv2d2"), CONV, CONV)?,
+            conv3: Conv::load(t, &format!("{a}.conv2d3"), CONV, CONV)?,
             conv_out: Linear {
                 inputs: CONV * bands,
                 outputs: ENC_DIM,
@@ -460,8 +249,8 @@ impl Qwen3Asr {
             positions: sinusoids(MAX_POSITIONS, ENC_DIM),
             encoder,
             post_norm: LayerNorm::load(t, &format!("{a}.ln_post"), ENC_DIM)?,
-            proj1: Linear::load(t, &format!("{a}.proj1"), ENC_DIM, ENC_DIM, true)?,
-            proj2: Linear::load(t, &format!("{a}.proj2"), ENC_DIM, DIM, true)?,
+            proj1: Linear::load(t, &format!("{a}.proj1"), ENC_DIM, ENC_DIM)?,
+            proj2: Linear::load(t, &format!("{a}.proj2"), ENC_DIM, DIM)?,
             embed: t.get(&format!("{m}.embed_tokens.weight"), &[VOCAB, DIM])?,
             decoder,
             norm: t.get(&format!("{m}.norm.weight"), &[DIM])?,
@@ -469,155 +258,6 @@ impl Qwen3Asr {
             vocab,
             threads: std::thread::available_parallelism().map_or(4, |n| n.get()),
         })
-    }
-
-    /// Hands each tensor to `f` by name, with its shape when it is a matrix
-    /// (`(rows, columns)`: a row an output, its inputs along it), for a
-    /// GPU's version:
-    ///
-    /// - `conv1.w` `[480][9]` (3 bands × 3 steps), `conv1.b`;
-    /// - `conv2.w`, `conv3.w` `[480][9·480]` (tap-major inputs), their `.b`;
-    /// - `conv_out.w` `[896][16·480]` (band-major inputs);
-    /// - per encoder layer `l`: `enc{l}.ln.w`, `.b`; `enc{l}.qkv.w`
-    ///   `[3·896][896]` (queries, keys, values), `enc{l}.qkv.b`;
-    ///   `enc{l}.o.w`, `.b`; `enc{l}.fln.w`, `.b`; `enc{l}.up.w` `[3584][896]`,
-    ///   `.b`; `enc{l}.down.w`, `.b`;
-    /// - `post.w`, `post.b`; `proj1.w`, `.b`; `proj2.w` `[1024][896]`, `.b`;
-    /// - `embed` and `head` `[151936][1024]`;
-    /// - per decoder layer `l`: `dec{l}.norm`; `dec{l}.qkv.w` `[4096][1024]`
-    ///   (2048 queries, 1024 keys, 1024 values); `dec{l}.o.w` `[1024][2048]`;
-    ///   `dec{l}.q_norm`, `dec{l}.k_norm` (128); `dec{l}.post_norm`;
-    ///   `dec{l}.gate_up.w` `[2·3072][1024]` (gates, then ups); `dec{l}.down.w`;
-    /// - `norm`.
-    pub fn visit(&self, f: &mut Visitor) {
-        /// Stacked linear layers' weights as rows, and their biases.
-        fn rows(parts: &[&Linear]) -> (Vec<f32>, usize, usize, Vec<f32>) {
-            let inputs = parts[0].inputs;
-            let outputs: usize = parts.iter().map(|l| l.outputs).sum();
-            let mut w = Vec::with_capacity(inputs * outputs);
-            let mut b = Vec::new();
-            for l in parts {
-                for o in 0..l.outputs {
-                    w.extend((0..inputs).map(|i| l.weight[i * l.outputs + o]));
-                }
-                b.extend(l.bias.clone().unwrap_or_default());
-            }
-            (w, outputs, inputs, b)
-        }
-        let linear = |f: &mut Visitor, name: &str, parts: &[&Linear]| {
-            let (w, o, i, b) = rows(parts);
-            f(&format!("{name}.w"), &w, Some((o, i)));
-            if !b.is_empty() {
-                f(&format!("{name}.b"), &b, None);
-            }
-        };
-        let conv = |f: &mut Visitor, name: &str, c: &Conv| {
-            let width = 9 * c.inputs;
-            let mut w = vec![0.0f32; width * CONV];
-            for i in 0..width {
-                for o in 0..CONV {
-                    w[o * width + i] = c.weight[i * CONV + o];
-                }
-            }
-            f(&format!("{name}.w"), &w, Some((CONV, width)));
-            f(&format!("{name}.b"), &c.bias, None);
-        };
-        conv(f, "conv1", &self.conv1);
-        conv(f, "conv2", &self.conv2);
-        conv(f, "conv3", &self.conv3);
-        linear(f, "conv_out", &[&self.conv_out]);
-        let norm = |f: &mut Visitor, name: &str, n: &LayerNorm| {
-            f(&format!("{name}.w"), &n.weight, None);
-            f(&format!("{name}.b"), &n.bias, None);
-        };
-        for (i, l) in self.encoder.iter().enumerate() {
-            norm(f, &format!("enc{i}.ln"), &l.norm);
-            linear(f, &format!("enc{i}.qkv"), &[&l.q, &l.k, &l.v]);
-            linear(f, &format!("enc{i}.o"), &[&l.o]);
-            norm(f, &format!("enc{i}.fln"), &l.final_norm);
-            linear(f, &format!("enc{i}.up"), &[&l.up]);
-            linear(f, &format!("enc{i}.down"), &[&l.down]);
-        }
-        norm(f, "post", &self.post_norm);
-        linear(f, "proj1", &[&self.proj1]);
-        linear(f, "proj2", &[&self.proj2]);
-        f("embed", &self.embed, Some((VOCAB, DIM)));
-        f("head", &self.head, Some((VOCAB, DIM)));
-        for (i, l) in self.decoder.iter().enumerate() {
-            f(&format!("dec{i}.norm"), &l.norm, None);
-            linear(f, &format!("dec{i}.qkv"), &[&l.q, &l.k, &l.v]);
-            linear(f, &format!("dec{i}.o"), &[&l.o]);
-            f(&format!("dec{i}.q_norm"), &l.q_norm, None);
-            f(&format!("dec{i}.k_norm"), &l.k_norm, None);
-            f(&format!("dec{i}.post_norm"), &l.post_norm, None);
-            linear(f, &format!("dec{i}.gate_up"), &[&l.gate, &l.up]);
-            linear(f, &format!("dec{i}.down"), &[&l.down]);
-        }
-        f("norm", &self.norm, None);
-    }
-
-    /// Rounds the large weights (every linear layer, the convolutions after
-    /// the first, the embeddings and the head) as a quantised copy would
-    /// hold them: groups of `group` along each output's inputs, `bits` a
-    /// weight, a scale a group, and a minimum too unless `symmetric`. For
-    /// measuring what quantising costs.
-    pub fn round_weights(&mut self, bits: u32, group: usize, symmetric: bool) {
-        let round = |w: &mut Vec<f32>, inputs: usize, outputs: usize, transposed: bool| {
-            let mut rows = if transposed {
-                let mut r = vec![0.0f32; w.len()];
-                for i in 0..inputs {
-                    for o in 0..outputs {
-                        r[o * inputs + i] = w[i * outputs + o];
-                    }
-                }
-                r
-            } else {
-                std::mem::take(w)
-            };
-            round_groups(&mut rows, bits, group, symmetric);
-            if transposed {
-                for i in 0..inputs {
-                    for o in 0..outputs {
-                        w[i * outputs + o] = rows[o * inputs + i];
-                    }
-                }
-            } else {
-                *w = rows;
-            }
-        };
-        let mut linears: Vec<&mut Linear> =
-            vec![&mut self.conv_out, &mut self.proj1, &mut self.proj2];
-        for l in &mut self.encoder {
-            linears.extend([
-                &mut l.q,
-                &mut l.k,
-                &mut l.v,
-                &mut l.o,
-                &mut l.up,
-                &mut l.down,
-            ]);
-        }
-        for l in &mut self.decoder {
-            linears.extend([
-                &mut l.q,
-                &mut l.k,
-                &mut l.v,
-                &mut l.o,
-                &mut l.gate,
-                &mut l.up,
-                &mut l.down,
-            ]);
-        }
-        for l in linears {
-            let (i, o) = (l.inputs, l.outputs);
-            round(&mut l.weight, i, o, true);
-        }
-        for c in [&mut self.conv2, &mut self.conv3] {
-            let i = 9 * c.inputs;
-            round(&mut c.weight, i, CONV, true);
-        }
-        round(&mut self.embed, DIM, VOCAB, false);
-        round(&mut self.head, DIM, VOCAB, false);
     }
 
     /// Runs on at most `threads` threads (all the processor has, at first).
@@ -700,35 +340,16 @@ impl Qwen3Asr {
         let q = l.q.forward(&x, self.threads);
         let k = l.k.forward(&x, self.threads);
         let v = l.v.forward(&x, self.threads);
-        let mut attended = vec![0.0f32; steps * ENC_DIM];
-        let scale = 1.0 / (ENC_HEAD as f32).sqrt();
-        par_rows(&mut attended, ENC_DIM, self.threads, |t, row| {
+        let heads = Heads {
+            query: ENC_HEADS,
+            kv: ENC_HEADS,
+            width: ENC_HEAD,
+        };
+        let within = |t: usize| {
             let from = t / window * window;
-            let to = (from + window).min(steps);
-            let mut scores = vec![0.0f32; to - from];
-            for head in 0..ENC_HEADS {
-                let qh = &q[t * ENC_DIM + head * ENC_HEAD..][..ENC_HEAD];
-                let mut best = f32::MIN;
-                for (u, s) in scores.iter_mut().enumerate() {
-                    let kh = &k[(from + u) * ENC_DIM + head * ENC_HEAD..][..ENC_HEAD];
-                    *s = dot(qh, kh) * scale;
-                    best = best.max(*s);
-                }
-                let mut total = 0.0f32;
-                for s in scores.iter_mut() {
-                    *s = (*s - best).exp();
-                    total += *s;
-                }
-                let out = &mut row[head * ENC_HEAD..(head + 1) * ENC_HEAD];
-                for (u, &s) in scores.iter().enumerate() {
-                    let vh = &v[(from + u) * ENC_DIM + head * ENC_HEAD..][..ENC_HEAD];
-                    let w = s / total;
-                    for (o, x) in out.iter_mut().zip(vh) {
-                        *o += w * x;
-                    }
-                }
-            }
-        });
+            from..(from + window).min(steps)
+        };
+        let attended = attend(&q, &k, &v, heads, within, self.threads);
         let o = l.o.forward(&attended, self.threads);
         for (a, b) in h.iter_mut().zip(&o) {
             *a += b;
@@ -809,7 +430,6 @@ impl Qwen3Asr {
     /// keys and values added to the cache.
     fn decoder_layer(&self, li: usize, h: &mut [f32], cache: &mut Cache) {
         let l = &self.decoder[li];
-        let rows = h.len() / DIM;
         let start = cache.len;
         let mut x = h.to_vec();
         rms_norm(&mut x, &l.norm);
@@ -823,34 +443,20 @@ impl Qwen3Asr {
         cache.keys[li].extend_from_slice(&k);
         cache.values[li].extend_from_slice(&v);
         let (keys, values) = (&cache.keys[li], &cache.values[li]);
-        let kv = KV_HEADS * HEAD;
-        let scale = 1.0 / (HEAD as f32).sqrt();
-        let mut attended = vec![0.0f32; rows * HEADS * HEAD];
-        par_rows(&mut attended, HEADS * HEAD, self.threads, |r, row| {
-            let seen = start + r + 1;
-            let mut scores = vec![0.0f32; seen];
-            for head in 0..HEADS {
-                let g = head / (HEADS / KV_HEADS);
-                let qh = &q[(r * HEADS + head) * HEAD..][..HEAD];
-                let mut best = f32::MIN;
-                for (u, s) in scores.iter_mut().enumerate() {
-                    *s = dot(qh, &keys[u * kv + g * HEAD..][..HEAD]) * scale;
-                    best = best.max(*s);
-                }
-                let mut total = 0.0f32;
-                for s in scores.iter_mut() {
-                    *s = (*s - best).exp();
-                    total += *s;
-                }
-                let out = &mut row[head * HEAD..(head + 1) * HEAD];
-                for (u, &s) in scores.iter().enumerate() {
-                    let w = s / total;
-                    for (o, x) in out.iter_mut().zip(&values[u * kv + g * HEAD..][..HEAD]) {
-                        *o += w * x;
-                    }
-                }
-            }
-        });
+        // Each row sees itself and every one before it.
+        let causal = |r: usize| 0..start + r + 1;
+        let attended = attend(
+            &q,
+            keys,
+            values,
+            Heads {
+                query: HEADS,
+                kv: KV_HEADS,
+                width: HEAD,
+            },
+            causal,
+            self.threads,
+        );
         let o = l.o.forward(&attended, self.threads);
         for (a, b) in h.iter_mut().zip(&o) {
             *a += b;
@@ -879,17 +485,8 @@ impl Qwen3Asr {
         let mut last = x[(rows - 1) * DIM..].to_vec();
         rms_norm(&mut last, &self.norm);
         let mut logits = vec![0.0f32; VOCAB];
-        let per = VOCAB.div_ceil(self.threads.max(1));
-        std::thread::scope(|s| {
-            for (c, chunk) in logits.chunks_mut(per).enumerate() {
-                let (last, head) = (&last, &self.head);
-                s.spawn(move || {
-                    for (i, v) in chunk.iter_mut().enumerate() {
-                        let t = c * per + i;
-                        *v = dot(last, &head[t * DIM..][..DIM]);
-                    }
-                });
-            }
+        par_rows(&mut logits, 1, self.threads, |t, v| {
+            v[0] = dot(&last, &self.head[t * DIM..][..DIM]);
         });
         logits
     }
@@ -938,142 +535,9 @@ impl Qwen3Asr {
     /// What is sung in `voice` (16 kHz mono): its parts ([`parts_of`])
     /// each heard on its own, greedily, at most `max` tokens each.
     pub fn transcribe(&self, voice: &[f32], max: usize) -> Transcript {
-        transcribe_parts(voice, &self.vocab, |part| Ok(self.tokens(part, max))).unwrap_or_default()
-    }
-}
-
-/// The longest part of a voice heard on its own, in seconds: the decoder
-/// keeps to what it hears in a part this long, where over minutes it may
-/// loop or stop early.
-pub const PART_SECONDS: f64 = 30.0;
-/// A part ends at the quietest moment of the voice after this many
-/// seconds of it.
-pub const PART_LEAST: f64 = 20.0;
-
-/// A stretch of a voice heard on its own, and what was heard in it.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct Part {
-    /// Where it starts and ends, in seconds.
-    pub start: f64,
-    /// Where it ends.
-    pub end: f64,
-    /// The words heard in it.
-    pub text: String,
-}
-
-/// Where `voice` (16 kHz) is cut into parts: sample offsets, from 0 to its
-/// length, at most [`PART_SECONDS`] apart, each cut at the quietest 0.2 s
-/// from [`PART_LEAST`] on (so a word is rarely cut).
-pub fn parts_of(voice: &[f32]) -> Vec<usize> {
-    let rate = f64::from(crate::VOCALS_RATE);
-    let most = (PART_SECONDS * rate) as usize;
-    let least = (PART_LEAST * rate) as usize;
-    let window = (0.2 * rate) as usize;
-    let step = window / 4;
-    let mut cuts = vec![0];
-    let mut at = 0;
-    while voice.len() - at > most {
-        let mut best = (f64::MAX, at + most);
-        let mut w = at + least;
-        while w + window <= at + most {
-            let energy: f64 = voice[w..w + window]
-                .iter()
-                .map(|&v| f64::from(v) * f64::from(v))
-                .sum();
-            if energy < best.0 {
-                best = (energy, w + window / 2);
-            }
-            w += step;
-        }
-        at = best.1;
-        cuts.push(at);
-    }
-    cuts.push(voice.len());
-    cuts
-}
-
-/// Where the tokens have fallen into a loop, if they have: the last 32
-/// all repeat a cycle of at most 4. Then the tokens to keep (up to two of
-/// the cycles).
-pub fn loop_start(ids: &[u32]) -> Option<usize> {
-    const SPAN: usize = 32;
-    if ids.len() < SPAN {
-        return None;
-    }
-    let tail = &ids[ids.len() - SPAN..];
-    (1..=4)
-        .find(|&p| (p..SPAN).all(|i| tail[i] == tail[i - p]))
-        .map(|p| ids.len() - SPAN + 2 * p)
-}
-
-/// The transcript of `voice` heard in parts ([`parts_of`]), `hear` giving
-/// each part's tokens: the parts' words joined, the first language named.
-pub fn transcribe_parts(
-    voice: &[f32],
-    vocab: &text::Vocab,
-    mut hear: impl FnMut(&[f32]) -> Result<Vec<u32>, String>,
-) -> Result<Transcript, String> {
-    let rate = f64::from(crate::VOCALS_RATE);
-    let cuts = parts_of(voice);
-    let mut out = Transcript::default();
-    for pair in cuts.windows(2) {
-        let ids = hear(&voice[pair[0]..pair[1]])?;
-        let (language, words) = text::split_language(&vocab.decode(&ids));
-        if out.language.is_empty() || out.language == "None" {
-            out.language = language;
-        }
-        if !words.is_empty() {
-            if !out.text.is_empty() {
-                out.text.push(' ');
-            }
-            out.text.push_str(&words);
-        }
-        out.parts.push(Part {
-            start: pair[0] as f64 / rate,
-            end: pair[1] as f64 / rate,
-            text: words,
-        });
-        out.ids.extend(ids);
-    }
-    Ok(out)
-}
-
-/// Each `group` of `values` rounded to `bits` a value: a scale a group
-/// (from the largest magnitude when `symmetric`, else from the range, with
-/// its minimum).
-fn round_groups(values: &mut [f32], bits: u32, group: usize, symmetric: bool) {
-    if bits == 4 && group == quant::GROUP && values.len() % group == 0 {
-        // Exactly as the 4-bit format holds them (scales as halves).
-        let rows = values.len() / group;
-        let q = quant::quantize(values, rows, group, symmetric);
-        for (r, row) in values.chunks_exact_mut(group).enumerate() {
-            quant::dequantize_row(&q, group, r, row);
-        }
-        return;
-    }
-    for g in values.chunks_mut(group) {
-        if symmetric {
-            let top = (1i32 << (bits - 1)) - 1;
-            let peak = g.iter().fold(0.0f32, |m, v| m.max(v.abs()));
-            if peak == 0.0 {
-                continue;
-            }
-            let scale = peak / top as f32;
-            for v in g.iter_mut() {
-                *v = (*v / scale).round().clamp(-(top as f32) - 1.0, top as f32) * scale;
-            }
-        } else {
-            let top = ((1u32 << bits) - 1) as f32;
-            let lo = g.iter().copied().fold(f32::MAX, f32::min);
-            let hi = g.iter().copied().fold(f32::MIN, f32::max);
-            if hi <= lo {
-                continue;
-            }
-            let scale = (hi - lo) / top;
-            for v in g.iter_mut() {
-                *v = lo + ((*v - lo) / scale).round().clamp(0.0, top) * scale;
-            }
-        }
+        let hear = |part: &[f32]| Ok::<_, Infallible>(self.tokens(part, max));
+        let Ok(heard) = transcribe_parts(voice, &self.vocab, hear);
+        heard
     }
 }
 
@@ -1091,40 +555,6 @@ pub fn argmax(v: &[f32]) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn a_long_voice_is_cut_where_it_is_quiet() {
-        let rate = 16_000;
-        // 70 s of a tone, silent at 24 s and 52 s.
-        let mut voice: Vec<f32> = (0..70 * rate)
-            .map(|i| (i as f32 * 0.03).sin() * 0.5)
-            .collect();
-        for q in [24, 52] {
-            for v in &mut voice[q * rate..q * rate + rate / 2] {
-                *v = 0.0;
-            }
-        }
-        let cuts = parts_of(&voice);
-        assert_eq!(cuts.len(), 4, "{cuts:?}");
-        assert_eq!((cuts[0], cuts[3]), (0, voice.len()));
-        for (cut, quiet) in cuts[1..3].iter().zip([24, 52]) {
-            let at = *cut as f64 / f64::from(rate as u32);
-            assert!(at >= quiet as f64 && at <= quiet as f64 + 0.5, "{at}");
-        }
-        assert_eq!(parts_of(&voice[..20 * rate]), vec![0, 20 * rate]);
-    }
-
-    #[test]
-    fn a_loop_is_cut_after_two_turns() {
-        let mut ids: Vec<u32> = (0..10).collect();
-        assert_eq!(loop_start(&ids), None);
-        for _ in 0..16 {
-            ids.extend([7, 8]);
-        }
-        assert_eq!(loop_start(&ids), Some(10 + 4));
-        let chorus: Vec<u32> = (0..40).map(|i| i % 9).collect();
-        assert_eq!(loop_start(&chorus), None, "a longer cycle is a chorus");
-    }
 
     #[test]
     fn a_second_is_thirteen_steps() {

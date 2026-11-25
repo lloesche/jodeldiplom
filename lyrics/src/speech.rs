@@ -29,12 +29,13 @@ use std::path::Path;
 
 use crate::aligner::Acoustic;
 use crate::ctc::Emissions;
+use crate::nn::{attend, gelu, matmul, Heads, LayerNorm, Linear};
 use crate::{Maker, VOCALS_RATE};
 use jodel_tensors::SafeTensors;
 
-/// Frames of the model a second (one every 320 samples).
+/// Seconds between the model's frames (one every 320 samples).
 pub const FRAME_SECONDS: f64 = 0.02;
-/// The samples one frame sees, and between frames.
+/// The samples one frame sees.
 pub const RECEPTIVE: usize = 400;
 /// Samples between frames.
 pub const HOP: usize = 320;
@@ -56,116 +57,32 @@ const POS_GROUPS: usize = 16;
 const TOKENS: usize = 32;
 const EPS: f32 = 1e-5;
 
-/// A linear layer, its weight transposed to `[input][output]`.
-struct Linear {
-    inputs: usize,
-    outputs: usize,
-    weight: Vec<f32>,
-    bias: Option<Vec<f32>>,
-}
-
-impl Linear {
-    /// From a `[outputs][inputs]` weight.
-    fn from_rows(raw: &[f32], outputs: usize, inputs: usize, bias: Option<Vec<f32>>) -> Linear {
-        let mut weight = vec![0.0f32; raw.len()];
-        for o in 0..outputs {
-            for i in 0..inputs {
-                weight[i * outputs + o] = raw[o * inputs + i];
-            }
-        }
-        Linear {
-            inputs,
-            outputs,
-            weight,
-            bias,
-        }
-    }
-
-    fn load(t: &SafeTensors, name: &str, inputs: usize, outputs: usize) -> Result<Linear, String> {
-        let raw = t.get(&format!("{name}.weight"), &[outputs, inputs])?;
-        let bias = t.get(&format!("{name}.bias"), &[outputs])?;
-        Ok(Linear::from_rows(&raw, outputs, inputs, Some(bias)))
-    }
-
-    /// `x` (`rows × inputs`) through the layer.
-    fn forward(&self, x: &[f32], threads: usize) -> Vec<f32> {
-        let rows = x.len() / self.inputs;
-        let mut out = vec![0.0f32; rows * self.outputs];
-        matmul(
-            &self.weight,
-            self.inputs,
-            self.outputs,
-            x,
-            &mut out,
-            threads,
-        );
-        if let Some(b) = &self.bias {
-            for row in out.chunks_exact_mut(self.outputs) {
-                for (o, bias) in row.iter_mut().zip(b) {
-                    *o += bias;
-                }
-            }
-        }
-        out
-    }
-}
-
-/// A LayerNorm's scale and shift.
-struct Norm {
-    weight: Vec<f32>,
-    bias: Vec<f32>,
-}
-
-impl Norm {
-    fn load(t: &SafeTensors, name: &str, dim: usize) -> Result<Norm, String> {
-        Ok(Norm {
-            weight: t.get(&format!("{name}.weight"), &[dim])?,
-            bias: t.get(&format!("{name}.bias"), &[dim])?,
-        })
-    }
-
-    /// Each row of `x` normalised, in place.
-    fn apply(&self, x: &mut [f32]) {
-        let dim = self.weight.len();
-        for row in x.chunks_exact_mut(dim) {
-            let mean = row.iter().map(|&v| f64::from(v)).sum::<f64>() / dim as f64;
-            let var = row
-                .iter()
-                .map(|&v| (f64::from(v) - mean).powi(2))
-                .sum::<f64>()
-                / dim as f64;
-            let k = 1.0 / (var + f64::from(EPS)).sqrt();
-            for (d, v) in row.iter_mut().enumerate() {
-                *v = ((f64::from(*v) - mean) * k) as f32 * self.weight[d] + self.bias[d];
-            }
-        }
-    }
-}
-
 struct Layer {
     q: Linear,
     k: Linear,
     v: Linear,
     o: Linear,
-    norm: Norm,
+    norm: LayerNorm,
     up: Linear,
     down: Linear,
-    final_norm: Norm,
+    final_norm: LayerNorm,
 }
 
 /// wav2vec2-base-960h on the CPU.
 pub struct Wav2Vec2 {
-    /// The first convolution, `[512][10]`, and its GroupNorm.
+    /// The first convolution, `[512][10]`, and its GroupNorm's scale and
+    /// shift (a group a channel).
     conv0: Vec<f32>,
-    group_norm: Norm,
+    group_weight: Vec<f32>,
+    group_bias: Vec<f32>,
     /// The other six, as `[k·512][512]` (tap-major inputs).
     convs: Vec<Vec<f32>>,
-    feature_norm: Norm,
+    feature_norm: LayerNorm,
     projection: Linear,
     /// The positional convolution per group, `[128·48][48]`, and its bias.
     pos: Vec<Vec<f32>>,
     pos_bias: Vec<f32>,
-    encoder_norm: Norm,
+    encoder_norm: LayerNorm,
     layers: Vec<Layer>,
     head: Linear,
     threads: usize,
@@ -181,7 +98,8 @@ impl Wav2Vec2 {
     pub fn load(t: &SafeTensors) -> Result<Wav2Vec2, String> {
         let fe = "wav2vec2.feature_extractor.conv_layers";
         let conv0 = t.get(&format!("{fe}.0.conv.weight"), &[CHANNELS, 1, 10])?;
-        let group_norm = Norm::load(t, &format!("{fe}.0.layer_norm"), CHANNELS)?;
+        let group_weight = t.get(&format!("{fe}.0.layer_norm.weight"), &[CHANNELS])?;
+        let group_bias = t.get(&format!("{fe}.0.layer_norm.bias"), &[CHANNELS])?;
         let mut convs = Vec::new();
         for (l, &(k, _)) in CONV.iter().enumerate().skip(1) {
             let raw = t.get(&format!("{fe}.{l}.conv.weight"), &[CHANNELS, CHANNELS, k])?;
@@ -196,7 +114,7 @@ impl Wav2Vec2 {
             }
             convs.push(w);
         }
-        let feature_norm = Norm::load(t, "wav2vec2.feature_projection.layer_norm", CHANNELS)?;
+        let feature_norm = LayerNorm::load(t, "wav2vec2.feature_projection.layer_norm", CHANNELS)?;
         let projection = Linear::load(t, "wav2vec2.feature_projection.projection", CHANNELS, DIM)?;
         let per = DIM / POS_GROUPS;
         let pc = "wav2vec2.encoder.pos_conv_embed.conv";
@@ -219,7 +137,7 @@ impl Wav2Vec2 {
             }
         }
         let pos_bias = t.get(&format!("{pc}.bias"), &[DIM])?;
-        let encoder_norm = Norm::load(t, "wav2vec2.encoder.layer_norm", DIM)?;
+        let encoder_norm = LayerNorm::load(t, "wav2vec2.encoder.layer_norm", DIM)?;
         let mut layers = Vec::new();
         for l in 0..LAYERS {
             let n = format!("wav2vec2.encoder.layers.{l}");
@@ -228,16 +146,17 @@ impl Wav2Vec2 {
                 k: Linear::load(t, &format!("{n}.attention.k_proj"), DIM, DIM)?,
                 v: Linear::load(t, &format!("{n}.attention.v_proj"), DIM, DIM)?,
                 o: Linear::load(t, &format!("{n}.attention.out_proj"), DIM, DIM)?,
-                norm: Norm::load(t, &format!("{n}.layer_norm"), DIM)?,
+                norm: LayerNorm::load(t, &format!("{n}.layer_norm"), DIM)?,
                 up: Linear::load(t, &format!("{n}.feed_forward.intermediate_dense"), DIM, FF)?,
                 down: Linear::load(t, &format!("{n}.feed_forward.output_dense"), FF, DIM)?,
-                final_norm: Norm::load(t, &format!("{n}.final_layer_norm"), DIM)?,
+                final_norm: LayerNorm::load(t, &format!("{n}.final_layer_norm"), DIM)?,
             });
         }
         let head = Linear::load(t, "lm_head", DIM, TOKENS)?;
         Ok(Wav2Vec2 {
             conv0,
-            group_norm,
+            group_weight,
+            group_bias,
             convs,
             feature_norm,
             projection,
@@ -264,8 +183,8 @@ impl Wav2Vec2 {
     /// - `head.w` `[768][32]`, `head.b`.
     pub fn visit(&self, f: &mut dyn FnMut(&str, &[f32])) {
         f("conv0", &self.conv0);
-        f("gn.w", &self.group_norm.weight);
-        f("gn.b", &self.group_norm.bias);
+        f("gn.w", &self.group_weight);
+        f("gn.b", &self.group_bias);
         for (l, w) in self.convs.iter().enumerate() {
             f(&format!("conv{}", l + 1), w);
         }
@@ -277,7 +196,7 @@ impl Wav2Vec2 {
                 f(&format!("{name}.b"), b);
             }
         };
-        let norm = |f: &mut dyn FnMut(&str, &[f32]), name: &str, n: &Norm| {
+        let norm = |f: &mut dyn FnMut(&str, &[f32]), name: &str, n: &LayerNorm| {
             f(&format!("{name}.w"), &n.weight);
             f(&format!("{name}.b"), &n.bias);
         };
@@ -345,7 +264,7 @@ impl Wav2Vec2 {
         for row in h.chunks_exact_mut(CHANNELS) {
             for (c, v) in row.iter_mut().enumerate() {
                 let (mean, k) = (channels[2 * c], channels[2 * c + 1]);
-                let (g, b) = (self.group_norm.weight[c], self.group_norm.bias[c]);
+                let (g, b) = (self.group_weight[c], self.group_bias[c]);
                 *v = (*v - mean) * k * g + b;
             }
         }
@@ -426,33 +345,12 @@ impl Wav2Vec2 {
         let q = l.q.forward(h, self.threads);
         let k = l.k.forward(h, self.threads);
         let v = l.v.forward(h, self.threads);
-        let mut attended = vec![0.0f32; frames * DIM];
-        let scale = 1.0 / (HEAD as f32).sqrt();
-        par_rows(&mut attended, DIM, self.threads, |t, row| {
-            let mut scores = vec![0.0f32; frames];
-            for head in 0..HEADS {
-                let qh = &q[t * DIM + head * HEAD..][..HEAD];
-                let mut best = f32::MIN;
-                for (u, s) in scores.iter_mut().enumerate() {
-                    let kh = &k[u * DIM + head * HEAD..][..HEAD];
-                    *s = dot(qh, kh) * scale;
-                    best = best.max(*s);
-                }
-                let mut total = 0.0f32;
-                for s in scores.iter_mut() {
-                    *s = (*s - best).exp();
-                    total += *s;
-                }
-                let out = &mut row[head * HEAD..(head + 1) * HEAD];
-                for (u, &s) in scores.iter().enumerate() {
-                    let vh = &v[u * DIM + head * HEAD..][..HEAD];
-                    let w = s / total;
-                    for (o, x) in out.iter_mut().zip(vh) {
-                        *o += w * x;
-                    }
-                }
-            }
-        });
+        let heads = Heads {
+            query: HEADS,
+            kv: HEADS,
+            width: HEAD,
+        };
+        let attended = attend(&q, &k, &v, heads, |_| 0..frames, self.threads);
         let o = l.o.forward(&attended, self.threads);
         for (a, b) in h.iter_mut().zip(&o) {
             *a += b;
@@ -668,7 +566,9 @@ pub fn log_softmax(logits: &mut [f32], tokens: usize) {
 
 /// The emissions of a whole voice: pieces of [`PIECE_SECONDS`] with
 /// [`CONTEXT_SECONDS`] either side, each piece's own frames kept, by
-/// `logits` (the CPU's [`Wav2Vec2::logits`], or a GPU's).
+/// `logits` (the CPU's [`Wav2Vec2::logits`], or a GPU's). `None` when
+/// `logits` gives none for a piece, or fewer frames than the piece has
+/// ([`Wav2Vec2::frames_of`]).
 pub fn emissions_in_pieces(
     voice: &[f32],
     mut logits: impl FnMut(&[f32]) -> Option<Vec<f32>>,
@@ -688,13 +588,16 @@ pub fn emissions_in_pieces(
         let start = from * per_frame;
         let end = ((to - 1) * per_frame + RECEPTIVE).min(voice.len());
         let mut l = logits(&voice[start..end])?;
+        // A model gives a piece the frames of its convolutions
+        // ([`Wav2Vec2::frames_of`]): every one of `from..to`.
+        let (skip, keep) = (first - from, last - first);
         let got = l.len() / TOKENS;
-        let skip = first - from;
-        let keep = (last - first).min(got.saturating_sub(skip));
+        debug_assert!(got >= skip + keep, "{got} frames, {} asked", skip + keep);
+        if got < skip + keep {
+            return None;
+        }
         log_softmax(&mut l, TOKENS);
         out.extend_from_slice(&l[skip * TOKENS..(skip + keep) * TOKENS]);
-        // A piece shorter than asked for (its end) closes the voice.
-        out.resize((first + (last - first)) * TOKENS, f32::MIN / 2.0);
         first = last;
     }
     Some(Emissions {
@@ -723,159 +626,6 @@ impl Acoustic for Wav2Vec2 {
     }
 }
 
-/// Runs `work` on each `width`-sized row of `data` on up to `threads`
-/// threads; `work` gets the row's index.
-pub(crate) fn par_rows(
-    data: &mut [f32],
-    width: usize,
-    threads: usize,
-    work: impl Fn(usize, &mut [f32]) + Sync,
-) {
-    let rows = data.len() / width.max(1);
-    let threads = threads.min(rows).max(1);
-    let per = rows.div_ceil(threads);
-    std::thread::scope(|s| {
-        for (c, chunk) in data.chunks_mut(per * width).enumerate() {
-            let work = &work;
-            s.spawn(move || {
-                for (r, row) in chunk.chunks_exact_mut(width).enumerate() {
-                    work(c * per + r, row);
-                }
-            });
-        }
-    });
-}
-
-#[inline(always)]
-pub(crate) fn dot(a: &[f32], b: &[f32]) -> f32 {
-    let mut lanes = [0.0f32; 8];
-    let (a8, b8) = (a.chunks_exact(8), b.chunks_exact(8));
-    let (ar, br) = (a8.remainder(), b8.remainder());
-    for (x, y) in a8.zip(b8) {
-        for k in 0..8 {
-            lanes[k] += x[k] * y[k];
-        }
-    }
-    let mut sum: f32 = lanes.iter().sum();
-    for (x, y) in ar.iter().zip(br) {
-        sum += x * y;
-    }
-    sum
-}
-
-/// `out` (`rows × n`) = `x` (`rows × k`) · `w` (`k × n`), rows spread over
-/// the threads.
-pub(crate) fn matmul(w: &[f32], k: usize, n: usize, x: &[f32], out: &mut [f32], threads: usize) {
-    let rows = out.len() / n.max(1);
-    if rows == 0 {
-        return;
-    }
-    // Pieces of 16 rows, handed out in turn.
-    let pieces = rows.div_ceil(16);
-    let threads = threads.min(pieces).max(1);
-    let next = std::sync::atomic::AtomicUsize::new(0);
-    let chunks: Vec<std::sync::Mutex<&mut [f32]>> =
-        out.chunks_mut(16 * n).map(std::sync::Mutex::new).collect();
-    std::thread::scope(|s| {
-        for _ in 0..threads {
-            s.spawn(|| loop {
-                let p = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                if p >= pieces {
-                    break;
-                }
-                let mut chunk = chunks[p].lock().unwrap();
-                let r0 = p * 16;
-                let r = chunk.len() / n;
-                matmul_rows(w, k, n, &x[r0 * k..(r0 + r) * k], &mut chunk);
-            });
-        }
-    });
-}
-
-/// Defines `$name` to run its body compiled for AVX2 and FMA when the
-/// processor has them, else as built (the same sums either way, though
-/// fused multiply-adds round once).
-macro_rules! fast {
-    ($(#[$doc:meta])* fn $name:ident($($arg:ident: $ty:ty),* $(,)?) $body:block) => {
-        $(#[$doc])*
-        fn $name($($arg: $ty),*) {
-            #[inline(always)]
-            fn imp($($arg: $ty),*) $body
-            #[cfg(target_arch = "x86_64")]
-            {
-                #[target_feature(enable = "avx2,fma")]
-                unsafe fn avx2($($arg: $ty),*) {
-                    imp($($arg),*)
-                }
-                if std::arch::is_x86_feature_detected!("avx2")
-                    && std::arch::is_x86_feature_detected!("fma")
-                {
-                    // SAFETY: the processor has AVX2 and FMA.
-                    return unsafe { avx2($($arg),*) };
-                }
-            }
-            imp($($arg),*)
-        }
-    };
-}
-
-fast! {
-    /// Rows of `x` through `w`: tiles of 4 rows by 16 outputs kept in
-    /// registers.
-    fn matmul_rows(w: &[f32], k: usize, n: usize, x: &[f32], out: &mut [f32]) {
-        let rows = out.len() / n;
-        let mut r = 0;
-        while r < rows {
-            let m = (rows - r).min(4);
-            let row = |i: usize| &x[(r + i.min(m - 1)) * k..][..k];
-            let (x0, x1, x2, x3) = (row(0), row(1), row(2), row(3));
-            let mut o = 0;
-            while o + 16 <= n {
-                let mut acc = [[0.0f32; 16]; 4];
-                for kk in 0..k {
-                    let wk: &[f32; 16] = w[kk * n + o..][..16].try_into().unwrap();
-                    let xs = [x0[kk], x1[kk], x2[kk], x3[kk]];
-                    for (a, xv) in acc.iter_mut().zip(xs) {
-                        for j in 0..16 {
-                            a[j] = xv.mul_add(wk[j], a[j]);
-                        }
-                    }
-                }
-                for (i, a) in acc.iter().enumerate().take(m) {
-                    out[(r + i) * n + o..][..16].copy_from_slice(a);
-                }
-                o += 16;
-            }
-            for o in o..n {
-                for i in 0..m {
-                    let xi = row(i);
-                    let mut sum = 0.0f32;
-                    for kk in 0..k {
-                        sum = xi[kk].mul_add(w[kk * n + o], sum);
-                    }
-                    out[(r + i) * n + o] = sum;
-                }
-            }
-            r += 4;
-        }
-    }
-}
-
-/// GELU with the error function (Abramowitz and Stegun 7.1.26, within
-/// 1.5e-7), in place.
-pub(crate) fn gelu(values: &mut [f32]) {
-    for v in values {
-        let x = *v;
-        let z = x.abs() * std::f32::consts::FRAC_1_SQRT_2;
-        let t = 1.0 / (1.0 + 0.327_591_1 * z);
-        let poly = t
-            * (0.254_829_6
-                + t * (-0.284_496_74 + t * (1.421_413_8 + t * (-1.453_152 + t * 1.061_405_4))));
-        let erf = (1.0 - poly * (-z * z).exp()).copysign(x);
-        *v = 0.5 * x * (1.0 + erf);
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -887,24 +637,15 @@ mod tests {
         assert_eq!(Wav2Vec2::frames_of(16_000), 49);
         assert_eq!(Wav2Vec2::frames_of(48_000), 149);
         assert_eq!(Wav2Vec2::frames_of(192_000), 599);
-    }
-
-    #[test]
-    fn matmul_matches_the_plain_sum() {
-        let (rows, k, n) = (23, 37, 41);
-        let x: Vec<f32> = (0..rows * k)
-            .map(|i| ((i * 7 % 13) as f32 - 6.0) / 7.0)
-            .collect();
-        let w: Vec<f32> = (0..k * n)
-            .map(|i| ((i * 5 % 11) as f32 - 5.0) / 9.0)
-            .collect();
-        let mut out = vec![0.0f32; rows * n];
-        matmul(&w, k, n, &x, &mut out, 3);
-        for r in 0..rows {
-            for o in 0..n {
-                let want: f32 = (0..k).map(|kk| x[r * k + kk] * w[kk * n + o]).sum();
-                assert!((out[r * n + o] - want).abs() < 1e-4, "{r} {o}");
-            }
+        // The convolutions one after the other give as many (as
+        // `Wav2Vec2::features` runs them), so a piece gets every frame
+        // `emissions_in_pieces` asks of it.
+        for samples in 0..20_000 {
+            let frames = CONV.iter().fold(
+                samples,
+                |n, &(k, s)| if n < k { 0 } else { (n - k) / s + 1 },
+            );
+            assert_eq!(frames, Wav2Vec2::frames_of(samples), "{samples}");
         }
     }
 

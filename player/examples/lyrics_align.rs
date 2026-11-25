@@ -28,7 +28,7 @@ use jodel_lyrics::{Detail, Lyrics, Source};
 /// The lyrics in a file's tags, when they have line times.
 fn timed_lyrics(path: &Path) -> Option<Lyrics> {
     let info = jodel_playback::probe_header(path).ok()?;
-    let text = jodel_lyrics::sources::lyrics_tag(&info.tags.all)?;
+    let text = jodel_lyrics::sources::lyrics_tags(&info.tags.all).synced?;
     let lyrics = Lyrics::parse(text, Source::Tag);
     (lyrics.timing.detail >= Detail::Lines).then_some(lyrics)
 }

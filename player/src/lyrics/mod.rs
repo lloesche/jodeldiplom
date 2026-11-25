@@ -40,7 +40,7 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use jodel_lyrics::fit::FIT_LEAST;
+use jodel_lyrics::fit::fits;
 use jodel_lyrics::lrclib::{self, Record};
 use jodel_lyrics::sources::{SidecarSource, TagSource};
 use jodel_lyrics::{Fit, Found, Lyrics, LyricsSource, Maker, Source, Track};
@@ -571,7 +571,7 @@ pub fn transcript_lyrics(transcript: &jodel_lyrics::asr::Transcript, maker: Make
 }
 
 /// Of `lyrics` and `others`, the text to time against a voice in which the
-/// recogniser `heard` this: `lyrics` when they fit ([`FIT_LEAST`]) or too
+/// recogniser `heard` this: `lyrics` when they fit ([`fits`]) or too
 /// little was heard to judge (under [`HEARD_LEAST`] words), else the best
 /// fitting of `others` when it fits, else `lyrics` still. And its fit, when
 /// judged.
@@ -581,7 +581,7 @@ pub fn fitting(lyrics: &Lyrics, heard: &str, others: &Others) -> (Lyrics, Option
         return (lyrics.clone(), None);
     }
     let fit = lyrics_fit(lyrics, heard);
-    if fit >= FIT_LEAST {
+    if fits(fit) {
         return (lyrics.clone(), Some(Fit::new(fit, false)));
     }
     let best = others()
@@ -592,7 +592,7 @@ pub fn fitting(lyrics: &Lyrics, heard: &str, others: &Others) -> (Lyrics, Option
         })
         .max_by(|a, b| a.1.total_cmp(&b.1));
     match best {
-        Some((other, f)) if f >= FIT_LEAST && f > fit => (other, Some(Fit::new(f, true))),
+        Some((other, f)) if fits(f) && f > fit => (other, Some(Fit::new(f, true))),
         _ => (lyrics.clone(), Some(Fit::new(fit, false))),
     }
 }
