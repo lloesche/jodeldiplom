@@ -1,12 +1,13 @@
-//! Frames of Karaoke mode's result screen (the Yodel Diploma) on the GPU,
-//! to look at its reveal: a Silver run short of its best, a Bronze one
-//! with a long Japanese title, a Gold run with a new best, long numbers
-//! and several Diva phrases (each over a made-up cover, tinted by its
-//! palette), a run without a medal (over the plain backdrop), a run not
-//! sung from its start (over another cover) and a silent one (nothing
-//! scored), each at moments of its reveal; in Karaoke mode's own fonts (as
-//! the player embeds them), the stage drawn offscreen and the frames saved
-//! as PNGs into `OUT_DIR` (`<run>-<seconds>.png`, written whole).
+//! Frames of Karaoke mode's result screen (the diploma headed
+//! "Jodeldiplom") on the GPU, to look at its reveal: a Silver run short
+//! of its best, a Bronze one with a long Japanese title, a Gold run with
+//! a new best, long numbers and several Diva phrases (each over a made-up
+//! cover, tinted by its palette), a run without a medal (over the plain
+//! backdrop), a run not sung from its start (over another cover) and a
+//! silent one (nothing scored), each at moments of its reveal; in Karaoke
+//! mode's own fonts (as the player embeds them), the stage drawn offscreen
+//! and the frames saved as PNGs into `OUT_DIR` (`<run>-<seconds>.png`,
+//! written whole).
 //!
 //! ```text
 //! cargo run --release -p jodeldiplom --example result_frames -- OUT_DIR [W H] [--at SECONDS ...]

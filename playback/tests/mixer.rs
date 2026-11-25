@@ -1,7 +1,7 @@
 //! The engine through a mixer ([`jodel_output::mixer`]): on its Lead input,
 //! alone at gain 1 (and on a desk with two heads, the second idle), the
-//! device gets exactly the bytes it gets without one, on every route and
-//! through seeks, jumps, pauses and reopens; and
+//! device gets exactly the bytes it gets without one at the desk's format,
+//! on every route and through seeks, jumps and pauses; and
 //! [`Command::PlayAt`] starts a track a share of its length in. The device
 //! here plays what it is given at once, so the mixer mixes a period as
 //! soon as the engine has written one: its one path, as on a device.
@@ -13,6 +13,7 @@ use std::sync::mpsc::Receiver;
 use std::time::Duration;
 
 use common::*;
+use jodel_output::mixer::{desk_format, DESK_RATE};
 use jodel_output::{Capabilities, SampleFormat, StreamFormat};
 use jodel_playback::{
     Captures, Command, Event, JumpAt, PlayState, Player, PlayerOptions, Settings,
@@ -73,10 +74,13 @@ fn run(
     captured(&captures)
 }
 
-/// The same bytes, stream for stream, with and without the mixer, and on
-/// a desk with two heads.
+/// The same bytes, stream for stream, without the mixer (on a device at
+/// the format the desk runs one that takes `caps` at), with it, and on a
+/// desk with two heads.
 fn same_through_the_mixer(caps: Capabilities, options: PlayerOptions, script: Script) {
-    let direct = run(Via::Direct, caps.clone(), options.clone(), script);
+    let desk = desk_format(&caps, DESK_RATE).expect("a desk's format");
+    let one = [desk].into_iter().collect();
+    let direct = run(Via::Direct, one, options.clone(), script);
     assert!(!direct.is_empty() && direct.iter().all(|(_, b)| !b.is_empty()));
     for via in [Via::Mixer, Via::Desk] {
         let mixed = run(via, caps.clone(), options.clone(), script);
@@ -104,7 +108,7 @@ fn to_the_end(files: Vec<PathBuf>) -> impl Fn(&Player, &Receiver<Event>, &Gate, 
 }
 
 #[test]
-fn flac_gapless_resampled_and_a_reopen_are_bit_exact() {
+fn flac_gapless_and_resampled_are_bit_exact() {
     let exact = options(false);
     let resampled = options(true);
     let cases = [
@@ -115,7 +119,7 @@ fn flac_gapless_resampled_and_a_reopen_are_bit_exact() {
         (
             caps(&[44_100, 48_000], &[S24In32Low]),
             vec![F44, F48],
-            &exact,
+            &resampled,
         ),
     ];
     for (caps, files, options) in cases {
@@ -220,4 +224,47 @@ fn play_at_starts_a_share_of_the_length_in() {
     let streams = captured(&captures);
     assert_eq!(streams.len(), 1);
     assert!(streams[0].1 == device_bytes(&samples[2 * from..], S24In32Low));
+}
+
+/// On a desk (stereo only), a mono file plays doubled onto both sides,
+/// exactly, and a 5.1 file folded down to stereo ([`Remix`]), each said so
+/// in its route; neither opens the device again.
+#[test]
+fn mono_and_5_1_files_play_as_stereo() {
+    use jodel_playback::remix::Remix;
+    let dir = temp_dir("mixer-channels");
+    let frames = 4_800usize;
+    let mono: Vec<i32> = (0..frames).map(|k| k as i32 * 37 - 90_000).collect();
+    let surround: Vec<i32> = (0..frames * 6)
+        .map(|i| ((i % 6) as i32 + 1) * 100_000 + (i / 6) as i32)
+        .collect();
+    let (m, s) = (dir.join("1-mono.wav"), dir.join("2-surround.wav"));
+    write_wav(&m, 48_000, 1, &mono);
+    write_wav(&s, 48_000, 6, &surround);
+    let (lead, captures, mixer) = mixer_lead(caps(&[48_000], &[S24In32Low]));
+    let (player, events) = Player::new(Box::new(lead), options(false));
+    player.load(vec![m, s]).unwrap();
+    player.play(0).unwrap();
+    let seen = until_queue_end(&events);
+    drop(player);
+    drop(mixer);
+    let routes: Vec<_> = seen
+        .iter()
+        .filter_map(|e| match e {
+            Event::TrackStarted(s) => Some(s.route.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(routes.len(), 2);
+    for (route, from) in routes.iter().zip([1, 6]) {
+        assert_eq!((route.input_channels, route.channels), (from, 2));
+        assert!(!route.lossless);
+    }
+    assert_eq!(routes[0].describe(), "48 kHz mono → stereo");
+    assert_eq!(routes[1].describe(), "48 kHz 5.1 → stereo");
+    let mut want: Vec<i32> = mono.iter().flat_map(|&s| [s, s]).collect();
+    Remix::to_stereo(6).unwrap().apply(&surround, &mut want);
+    let streams = captured(&captures);
+    assert_eq!(streams.len(), 1, "one opening, gapless");
+    assert!(streams[0].1 == device_bytes(&want, S24In32Low));
 }

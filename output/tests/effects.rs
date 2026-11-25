@@ -64,7 +64,7 @@ fn desk(sound: Vec<f32>) -> Desk {
 }
 
 fn desk_at(sound: Vec<f32>, rate: u32) -> Desk {
-    let (mixer, device) = instant_mixer();
+    let (mixer, device) = instant_mixer_at(rate);
     let player = mixer.strip("Player");
     let strip = mixer.strip("Effects");
     let effects = mixer.effects(&strip);
@@ -341,6 +341,48 @@ fn the_last_sound_is_heard_after_the_song_stops() {
     wait_until("both heard whole", || loud() == 2 * 4_800);
     std::thread::sleep(Duration::from_millis(300));
     assert_eq!(loud(), 2 * 4_800);
+    assert_eq!(effects.view().missed, 0);
+}
+
+/// The device is open before anything plays and stays open: the song over
+/// and its output closed, sounds cued then (a moment apart) are heard
+/// whole on the same opening of it, and it is still open after them.
+#[test]
+fn sounds_after_the_song_play_on_the_device_kept_open() {
+    let _guard = real_time();
+    let (mixer, device) = mixer();
+    let player = mixer.strip("Player");
+    let strip = mixer.strip("Effects");
+    let effects = mixer.effects(&strip);
+    let mut bank = SoundBank::new(RATE);
+    bank.add(vec![0.5; 2 * 4_800]);
+    effects.load(bank);
+    let open_now = || mixer.desk().master.stream.is_some();
+    wait_until("open from the start", open_now);
+    let (mut lead, _fader) = mixer.input(&player, Role::Lead, 1.0);
+    let mut out = open(&mut lead, RATE);
+    out.write(&frames(0, 9_600, |_| 0), None).unwrap();
+    out.drain(None).unwrap();
+    out.close().unwrap();
+    for n in 1..=2 {
+        std::thread::sleep(Duration::from_millis(300));
+        assert!(effects.play(EffectCue::new(0)));
+        wait_until("heard whole", || {
+            let v = effects.view();
+            v.played == n && v.sounding == 0
+        });
+    }
+    let loud = || {
+        device
+            .left(0)
+            .iter()
+            .filter(|v| v.abs_diff(4_194_304) <= 2)
+            .count()
+    };
+    wait_until("both heard whole", || loud() == 2 * 4_800);
+    std::thread::sleep(Duration::from_millis(300));
+    assert!(open_now(), "still open");
+    assert_eq!(device.streams.lock().unwrap().len(), 1, "opened once");
     assert_eq!(effects.view().missed, 0);
 }
 

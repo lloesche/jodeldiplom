@@ -193,8 +193,8 @@ fn settings() {
             "Settings",
             "Output device",
             "system default",
-            "Rate cap",
-            "none",
+            "Its rate",
+            "48 kHz",
             "● System default",
             "○ Speakers (USB Audio DAC)",
             "Saved to /home/me/.config/jodeldiplom/config.toml",
@@ -203,18 +203,21 @@ fn settings() {
     snapshot("settings", &text);
 }
 
-/// A rate cap the device cannot satisfy, as the settings show it.
+/// A rate the device lacks, as the settings show it: the one it runs at.
 #[test]
-fn settings_show_the_cap_in_force() {
+fn settings_show_the_rate_in_force() {
     let mut state = common::playing_state(120, 36);
     state.screen = Screen::Settings;
-    state.config.max_rate = Some(44_100);
+    state.config.set_rate(88_200);
     update(
         &mut state,
-        Action::DeviceRates(Some(vec![48_000, 96_000, 192_000])),
+        Action::DeviceRates(Some(vec![44_100, 48_000, 96_000])),
     );
     let text = draw(&state);
-    has(&text, &["48 kHz (saved: 44.1 kHz, below this device)"]);
+    has(
+        &text,
+        &["44.1 kHz (set: 88.2 kHz, which this device lacks)"],
+    );
 }
 
 #[test]

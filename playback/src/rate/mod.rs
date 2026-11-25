@@ -26,12 +26,17 @@
 //! over full scale where the master was near it). A bit-perfect route never
 //! has any.
 //!
+//! A file whose channels the device does not take, where it takes
+//! stereo, is made stereo on its way ([`crate::remix::Remix`]: mono
+//! doubled, more channels folded down), and is not lossless then.
+//!
 //! When nothing fits either way the answer is a [`NoRoute`] that says why.
 
 use std::fmt;
 
 use jodel_output::{Capabilities, OpenRequest, SampleFormat, StreamFormat};
 
+use crate::remix::Remix;
 use crate::source::TrackInfo;
 
 /// A gain below full scale for routes that are not bit-perfect, in tenths
@@ -119,7 +124,8 @@ fn headroom_for(file: &FileFacts, settings: &Settings) -> Headroom {
 /// The user's choices that shape a route.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Settings {
-    /// The highest output rate to use, if capped.
+    /// The highest output rate to use, if capped: on a plain device only (a
+    /// desk runs at its one rate, and offers no other).
     pub max_rate: Option<u32>,
     /// Resample when no rate the device takes carries the stream
     /// bit-perfect. Off: such files have no route.
@@ -222,6 +228,9 @@ impl Resample {
 pub struct Route {
     /// The file's rate.
     pub input_rate: u32,
+    /// The file's channels ([`Route::channels`] where it is not made
+    /// stereo on its way).
+    pub input_channels: u16,
     /// The rate the device is opened at.
     pub output_rate: u32,
     /// The channels the device is opened with.
@@ -258,6 +267,13 @@ impl Route {
         self.resample.map_or(self.output_rate, |r| r.from)
     }
 
+    /// How the file is made stereo on its way, where it is.
+    pub fn remix(&self) -> Option<Remix> {
+        (self.channels != self.input_channels)
+            .then(|| Remix::to_stereo(self.input_channels))
+            .flatten()
+    }
+
     /// Whether an output already open at `format` can play this route
     /// without reopening: same rate and channels, and a sample format of
     /// [`Route::formats`].
@@ -279,7 +295,8 @@ impl Route {
     /// `44.1 kHz → resample 48 kHz (160/147)`, and its headroom when it has
     /// some (`(160/147, -1 dB)`). A lossy file's route starts
     /// with what it was decoded from, for example `44.1 kHz decoded from
-    /// MP3`, and ends with its headroom (`(-1.5 dB)`).
+    /// MP3`, and ends with its headroom (`(-1.5 dB)`). A file made stereo
+    /// says so after its rate: `48 kHz 5.1 → stereo`.
     pub fn describe(&self) -> String {
         let stages = self.describe_stages();
         match self.resample {
@@ -290,7 +307,10 @@ impl Route {
     }
 
     fn describe_stages(&self) -> String {
-        let input = khz(self.input_rate);
+        let mut input = khz(self.input_rate);
+        if let Some(remix) = self.remix() {
+            input = format!("{input} {}", remix.describe());
+        }
         match self.decoded_from {
             Some(codec) => format!("{input} decoded from {codec}"),
             None => input,
@@ -423,9 +443,23 @@ pub fn choose_route(
     pcm_route(file, caps, settings)
 }
 
+/// The channels `file` plays in on a device that takes `caps`: its own,
+/// where the device takes them at some rate; else stereo, where it takes
+/// that.
+fn route_channels(file: &FileFacts, caps: &Capabilities) -> u16 {
+    let takes = |channels: u16| !caps.rates(channels).is_empty();
+    if file.channels != 2 && !takes(file.channels) && takes(2) {
+        2
+    } else {
+        file.channels
+    }
+}
+
 /// The file's PCM.
 fn pcm_route(file: &FileFacts, caps: &Capabilities, settings: &Settings) -> Result<Route, NoRoute> {
-    let lossless = !file.float && file.bits <= 24 && file.decoded_from.is_none();
+    let channels = route_channels(file, caps);
+    let lossless =
+        !file.float && file.bits <= 24 && file.decoded_from.is_none() && channels == file.channels;
     let bits = if !lossless || file.bits == 0 {
         24
     } else {
@@ -433,11 +467,12 @@ fn pcm_route(file: &FileFacts, caps: &Capabilities, settings: &Settings) -> Resu
     };
     let wanted = lossless_formats(bits);
     let headroom = headroom_for(file, settings);
-    match fit(file.rate, file.channels, &wanted, caps, settings) {
+    match fit(file.rate, channels, &wanted, caps, settings) {
         Ok((format, formats)) => Ok(Route {
             input_rate: file.rate,
+            input_channels: file.channels,
             output_rate: file.rate,
-            channels: file.channels,
+            channels,
             format,
             formats,
             resample: None,
@@ -450,13 +485,14 @@ fn pcm_route(file: &FileFacts, caps: &Capabilities, settings: &Settings) -> Resu
         Err(why) => {
             let target = settings
                 .resample
-                .then(|| resample_target(file.rate, file.channels, caps, settings))
+                .then(|| resample_target(file.rate, channels, caps, settings))
                 .flatten();
             match target {
                 Some((format, formats)) => Ok(Route {
                     input_rate: file.rate,
+                    input_channels: file.channels,
                     output_rate: format.rate,
-                    channels: file.channels,
+                    channels,
                     format,
                     formats,
                     resample: Some(Resample::new(file.rate, format.rate).with_headroom(headroom)),
@@ -470,7 +506,7 @@ fn pcm_route(file: &FileFacts, caps: &Capabilities, settings: &Settings) -> Resu
                         "no bit-perfect route for this {} {} file: {why}; {}{}",
                         khz(file.rate),
                         file.decoded_from.unwrap_or("PCM"),
-                        takes(caps, file.channels),
+                        takes(caps, channels),
                         resample_note(settings)
                     ),
                 }),

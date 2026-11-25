@@ -7,27 +7,22 @@
 //! under the signature's and the date's lines what they are; at the end
 //! the examiner signs it in one stroke and writes the day.
 
-use super::super::super::paper::signature_point;
 use super::super::super::stage_gpu::{kind, Instance};
 use super::super::{disc, rgba, segment, Face, Rgb, Stage, GOLD, GOLD_TOP};
 use super::{
-    burst, clamp01, ease_out, fade, land, sticker, Drawn, Pen, ResultShown, Room, Tint, Written,
-    PRINT,
+    burst, clamp01, fade, land, sticker, Drawn, Pen, ResultShown, Room, Tint, Written, PRINT,
 };
-use crate::core::singing::Beat;
+use crate::core::singing::signature::signature_point;
+use crate::core::singing::{signed, unrolled, Beat, Side, DATE_FROM, DATING};
 use crate::gui::particles::Kind;
 use crate::view::karaoke::DIPLOMA;
-
-/// How long the sheet takes to unroll, in seconds.
-const UNROLL: f32 = 0.55;
-/// How long the signature takes to write, and the date after it.
-const SIGNING: f32 = 0.9;
-const DATING: f32 = 0.6;
 /// Where the entries' lines are down the sheet, and where they run across
 /// (their names right of the first).
 pub(super) const ENTRIES: [f32; 3] = [0.43, 0.505, 0.575];
 pub(super) const LINE_FROM: f32 = 0.42;
 pub(super) const LINE_TO: f32 = 0.8;
+/// The most of the sheet's width the heading takes.
+pub(super) const HEADING_WIDE: f32 = 0.62;
 /// Where the signature and the date are written, down the sheet, and
 /// across.
 const SIGNED_Y: f32 = 0.87;
@@ -69,6 +64,14 @@ impl Inks {
     }
 }
 
+/// The heading's size in `room`: as large as the sheet's unit makes it,
+/// smaller where it would take more than [`HEADING_WIDE`] of the sheet.
+pub(super) fn heading_px(stage: &mut Stage, room: &Room) -> f32 {
+    let px = (10.5 * room.s).round().max(16.0);
+    let wide = stage.measure(Face::SHOUT, DIPLOMA.heading, px).max(1.0);
+    (px * (room.across(HEADING_WIDE) / wide).min(1.0)).floor()
+}
+
 impl Stage {
     /// The sheet unrolling (its first [`UNROLL`] seconds) and what is
     /// printed on it, each line once the front has passed it; the title
@@ -78,7 +81,7 @@ impl Stage {
         let (_, _, sw, sh) = room.sheet;
         let s = room.s;
         let inks = room.inks;
-        let open = ease_out(t as f32 / UNROLL);
+        let open = unrolled(shown.shown.reveal.age(Beat::Paper, t).unwrap_or(0.0)) as f32;
         let c = room.at(0.5, 0.5);
         let half = (sw / 2.0, sh / 2.0);
         let front = -half.1 + sh * open;
@@ -100,16 +103,19 @@ impl Stage {
         // What shows of something printed `fy` down the sheet.
         let printed = |fy: f32| clamp01((open - fy) * sh / (3.0 * s));
         let ink = |a: f32| rgba(inks.ink, a);
-        // The heading, two gold stars popping on beside it.
-        let hp = (10.5 * s).round().max(16.0);
-        let (heading, hp) = self.fitted(Face::SHOUT, DIPLOMA.heading, hp, room.across(0.62));
+        // The heading, two gold stars popping on beside it: one word, whole
+        // (smaller where the sheet is narrow, never cut short).
+        let hp = heading_px(self, room);
         let at = room.at(0.5, 0.135);
         let head = rgba(inks.heading, printed(0.135));
-        let text = (Face::SHOUT, &*heading);
+        let text = (Face::SHOUT, DIPLOMA.heading);
         let hw = self.written(&mut d.out, text, (hp, 1.0), (at, 0.5), head, Pen::FLAT);
-        let popped = t - f64::from(UNROLL) * 0.5;
-        for (k, side) in [-1.0f32, 1.0].into_iter().enumerate() {
-            let age = Some(popped - k as f64 * 0.08).filter(|&a| a >= 0.0);
+        for star in [Side::Left, Side::Right] {
+            let side = match star {
+                Side::Left => -1.0f32,
+                Side::Right => 1.0,
+            };
+            let age = shown.shown.reveal.age(Beat::Heading(star), t);
             let (scale, shows) = land(age);
             let star_at = (at.0 + side * (hw / 2.0 + hp * 0.55), at.1);
             let size = (hp * 0.36 * scale, side * 0.25);
@@ -206,7 +212,7 @@ impl Stage {
         };
         let s = room.s;
         let pen = rgba(room.inks.pen, 0.92);
-        let drawn = ease_out(a / SIGNING).min(1.0);
+        let drawn = signed(f64::from(a)) as f32;
         let size = (12.0 * s).min(room.across(0.13));
         let c = room.at(SIGNATURE_X, SIGNED_Y - 0.004);
         let reach = size * 1.3;
@@ -233,7 +239,7 @@ impl Stage {
         };
         let px = (3.2 * s).round().max(10.0);
         let (date, px) = self.fitted(Face::NUMBER, date, px, room.across(0.28));
-        let share = clamp01((a - SIGNING * 0.4) / DATING);
+        let share = clamp01((a - DATE_FROM as f32) / DATING as f32);
         let at = (room.at(DATE_X, SIGNED_Y), 0.5);
         let text = (Face::NUMBER, &*date);
         self.written(&mut d.out, text, (px, 1.0), at, pen, Pen::writing(share));

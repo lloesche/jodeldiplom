@@ -1,14 +1,19 @@
 //! A song's result revealed ([`Reveal`]): a timeline of beats, each landing
-//! at its time after the result is first shown. The title; the points
+//! at its time after the result is first shown. The sheet unrolling and
+//! the two stars by its heading popping on; the title; the points
 //! counting up, tick by tick, faster and faster; the words hit; the best
 //! streak; each phrase's gem in song order; the verdict (the medal stamped
 //! down, or a cheer where there is none, or a word that medals need the
 //! whole song); then a new best, or the best before; and the end, after
-//! which START goes on. It is a pure function of the result: the stage
-//! draws it and the sounds play it from the same beats, at the time since
-//! it was shown ([`Shown::time`]), as the singing's moments are one stream.
-//! Each beat's time is when it lands: what leads up to it (the medal
-//! falling, [`DROP`]) comes before it.
+//! which START goes on (the examiner signing and dating it then). It is a
+//! pure function of the result: the stage draws it and the sounds play it
+//! from the same beats, at the time since it was shown ([`Shown::time`]),
+//! as the singing's moments are one stream. Each beat's time is when it
+//! lands: what leads up to it (the medal falling, [`DROP`]) comes before
+//! it. What takes a while from its beat (the sheet unrolling, an entry
+//! written in by hand, the signature and the date) takes it here too
+//! ([`UNROLL`], [`WORDS_FILL`], [`STREAK_WRITE`], [`GRADE_WRITE`],
+//! [`SIGNING`], [`DATING`]), for the picture and the sounds alike.
 //!
 //! Once settled, the screen twinkles a while ([`TWINKLE`]), then goes
 //! still: its time stops there, so nothing is drawn again until something
@@ -17,7 +22,13 @@
 use super::result::{SongResult, Verdict};
 use crate::core::shine::Tier;
 
-/// When the title lands, in seconds.
+/// How long the sheet takes to unroll from its beat (the first), in
+/// seconds.
+pub const UNROLL: f64 = 0.55;
+/// When the two stars by the heading pop on, one after the other, as the
+/// sheet's front passes them.
+const HEADING_STARS: [f64; 2] = [UNROLL * 0.5, UNROLL * 0.5 + 0.08];
+/// When the title lands.
 const TITLE: f64 = 0.1;
 /// When the points start counting up.
 const COUNT_FROM: f64 = 0.55;
@@ -26,14 +37,21 @@ const TICKS: u32 = 18;
 /// How the count speeds up: the share counted is the time's share to this
 /// power, so the ticks (at even steps of it) come faster and faster.
 const SPEED_UP: f64 = 1.8;
-/// How long the words' bar takes to fill, in seconds.
+/// How long the words hit take to be written in, in seconds.
 pub const WORDS_FILL: f64 = 0.6;
+/// How long the best streak takes to be written in.
+pub const STREAK_WRITE: f64 = 0.45;
+/// How long the verdict's grade takes to be written in.
+pub const GRADE_WRITE: f64 = 0.6;
 /// How long all the gems take to pop in, at most (from the first to the
 /// last, however many), and how far apart two come at most.
 const GEMS: f64 = 1.3;
 const GEM_MOST: f64 = 0.12;
 /// How long a medal falls before it is stamped down on its beat.
 pub const DROP: f64 = 0.22;
+/// How long a rubber stamp (a new best's, a silent song's) takes from its
+/// beat to come down onto the sheet.
+pub const STAMP_DOWN: f64 = 0.1;
 /// How long the verdict takes to settle after its beat.
 const STAMP: f64 = 0.95;
 /// How long after the end everything has settled (the last beat's motion
@@ -41,19 +59,55 @@ const STAMP: f64 = 0.95;
 const SETTLE: f64 = 1.5;
 /// How long the settled screen twinkles before it goes still.
 const TWINKLE: f64 = 10.0;
+/// How long the signature takes to be written from the end.
+pub const SIGNING: f64 = 0.9;
+/// When after the end the date starts to be written.
+pub const DATE_FROM: f64 = SIGNING * 0.4;
+/// How long the date takes to be written.
+pub const DATING: f64 = 0.6;
+
+/// Eased out, slowing to its end (`x` 0 to 1).
+pub fn ease_out(x: f64) -> f64 {
+    1.0 - (1.0 - x.clamp(0.0, 1.0)).powi(3)
+}
+
+/// How much of the sheet has unrolled `age` seconds after its beat
+/// ([`Beat::Paper`]), 0 to 1: quickly, then slowing ([`UNROLL`]).
+pub fn unrolled(age: f64) -> f64 {
+    ease_out(age / UNROLL)
+}
+
+/// How much of the signature is written `age` seconds after the end, 0 to
+/// 1, along its stroke: quickly, then slowing ([`SIGNING`]).
+pub fn signed(age: f64) -> f64 {
+    ease_out(age / SIGNING)
+}
+
+/// Which of the heading's two stars.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Side {
+    /// The left one, first.
+    Left,
+    /// The right one.
+    Right,
+}
 
 /// What lands at a beat of the reveal.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Beat {
+    /// The sheet starts to unroll ([`UNROLL`]).
+    Paper,
+    /// A star by the heading pops on: the left one, then the right.
+    Heading(Side),
     /// The song's title.
     Title,
     /// The count-up a step on: tick `k` (from 0) of [`Reveal::ticks`].
     Tick(u32),
     /// The points all counted.
     Points,
-    /// The words hit: their bar starts filling ([`WORDS_FILL`]).
+    /// The words hit: they start to be written in ([`WORDS_FILL`]).
     Words,
-    /// The best streak.
+    /// The best streak: it starts to be written in ([`STREAK_WRITE`]).
     Streak,
     /// Phrase `i`'s gem, in its tier's colour (none: a plain one).
     Gem(usize, Option<Tier>),
@@ -65,7 +119,8 @@ pub enum Beat {
     /// The best before, shown calmly (where the demo key sang, with the
     /// word that this is no best: 0 where there was none).
     Best(u32),
-    /// The reveal is over.
+    /// The reveal is over: the examiner signs it ([`SIGNING`]) and dates
+    /// it ([`DATE_FROM`], [`DATING`]).
     End,
 }
 
@@ -84,7 +139,9 @@ pub struct Reveal {
 impl Reveal {
     /// The reveal of `r`.
     pub fn of(r: &SongResult) -> Reveal {
-        let mut beats = vec![(TITLE, Beat::Title)];
+        let mut beats = vec![(0.0, Beat::Paper), (TITLE, Beat::Title)];
+        let stars = [Side::Left, Side::Right].into_iter().zip(HEADING_STARS);
+        beats.extend(stars.map(|(side, at)| (at, Beat::Heading(side))));
         // The points: longer for more of them, the ticks at even steps of
         // what is counted (so faster and faster), then all of them.
         let span = (0.7 + 0.18 * f64::from(r.points + 1).log10()).min(1.5);
@@ -329,7 +386,16 @@ mod tests {
         assert!(times.windows(2).all(|w| w[0] <= w[1]), "{times:?}");
         let b = kinds(&r);
         let at = |beat: Beat| b.iter().position(|x| *x == beat).unwrap();
-        assert_eq!(b[0], Beat::Title);
+        assert_eq!(
+            b[..4],
+            [
+                Beat::Paper,
+                Beat::Title,
+                Beat::Heading(Side::Left),
+                Beat::Heading(Side::Right)
+            ]
+        );
+        assert_eq!(r.when(Beat::Heading(Side::Right)), Some(HEADING_STARS[1]));
         assert_eq!(r.ticks(), 17);
         assert!(at(Beat::Title) < at(Beat::Tick(0)));
         assert!(at(Beat::Tick(16)) < at(Beat::Points));

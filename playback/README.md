@@ -194,8 +194,10 @@ WAV, AIFF, CAF and ALAC files to bit-perfect, exclusive device output, and AAC, 
   (`jodel_output::mixer::InputTarget`) is one: several players on one
   device, each on an input of a strip (`let strip = mixer.strip("Player");
   let (target, fader) = mixer.input(&strip, Role::Lead, 1.0);
-  Player::new(Box::new(target), ..)`); alone at gain 1 with its strip at
-  0 dB the engine reaches the device bit for bit through it. The
+  Player::new(Box::new(target), ..)`). It offers the desk's one format
+  (the device opened once, at its rate), so every track is routed to it,
+  resampled where its rate is another; one at that rate, alone at gain 1
+  with its strip at 0 dB, reaches the device bit for bit through it. The
   microphone is the mixer's (`Mixer::set_mic`), not the engine's.
 - `desk`: `StemDesk`, a player on a mixer's desk as the app has it: a
   group strip, a strip inside it for each stem, and a lane input on them
@@ -334,11 +336,7 @@ lengths are exact); otherwise the samples go to the output as read.
   failed) each head's whole mix is its "other" part, so every plan is a
   beat-matched fade of the whole tracks.
 
-  The device keeps the open format after a mix: the tracks after it are
-  routed at it (resampled where they must be), gaplessly, until playback
-  stops, the queue ends, a track is picked (`Play`, `PlayAt`, `Previous`,
-  `Next` outside a mix, `Load`) or the settings change; a track with no
-  route there (resampling off) opens at its own rate.
+  Both heads play at the desk's one format, before a mix and after it.
 
   On a device, the engine never lets the output run dry for a
   transition: B's stems not separated in time give way to its whole mix

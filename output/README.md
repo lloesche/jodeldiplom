@@ -83,23 +83,33 @@ in a requested format is an error.
 
 Several players on one device. `Mixer::open(target, MixerOptions)` takes
 an `OutputTarget` and runs one thread, `jodel-mixer` (MMCSS "Pro Audio" on
-Windows), which holds the device; the device opens with the first output
-opened on an input and closes with the last. `mixer.strip(name)` makes a
+Windows, real-time on macOS), which opens the device at once at the desk's
+format and holds it open until the mixer is dropped: `desk_format(caps,
+rate)` picks stereo at `MixerOptions::rate` (`DESK_RATE`, 48 kHz, unless
+set), else 44.1 kHz where the device lacks it, else the lowest rate the
+device takes (one that takes only 96 kHz runs at 96 kHz), in the format of
+`SampleFormat::PREFERENCE` with the most bits it takes there;
+`Mixer::format()` tells it. Every output on an input plays at that
+format (each player resamples to it), so the device is never opened again
+for a song, and a song at the desk's rate reaches it bit for bit. Another
+device or another rate is another mixer. A device that fails is opened
+again by the next output opened. `mixer.strip(name)` makes a
 `Strip`, a channel of the desk, and `mixer.strip_in(&group, name)` one in
 a group, another strip (clones are the same strip; it lives while a clone,
 a child or an input on it does). `mixer.input(&strip, role, gain)` plugs
 an input into it: an `InputTarget`, where one player opens its outputs as
 on a device (opening another closes the one before), and a `Fader`, its
 gain, which any number of hands may hold. Each output opened is a full
-`Output` in the device's format (its own ring, `pause`, `flush`,
+`Output` in the desk's format (its own ring, `pause`, `flush`,
 `retract`, `drain`, clock), so the engine does not know the difference;
 its `StreamInfo` carries the device's backend, exclusive flag and latency.
 
 - **One mix path**, a device period (10 ms) at a time, as fast as the
   device takes frames. A device that plays in real time
   (`StreamInfo::realtime`, set by each backend, and by `FileOutput` for
-  `SimClock::Realtime`) takes the next period as soon as it has room: an
-  output short of frames is silence for the rest of it (its underrun).
+  `SimClock::Realtime`) takes the next period as soon as it has room, all
+  along: silence where nothing plays (it is never paused), and an output
+  short of frames is silence for the rest of it (its underrun).
   The mixer does not wait for a late output: its own ring (the player's
   half second) is what rides out hiccups, so one short of a period is far
   behind, while the device's short ring must stay full or every input
@@ -112,10 +122,10 @@ its `StreamInfo` carries the device's backend, exclusive flag and latency.
   flushed between the mixer's look at their rings and its take), and
   mixing it would play a period of silence as if written. With nothing
   running the thread sleeps until an output starts (or a handle asks
-  something). A device opening has nothing mixed on it yet, so a strip's
-  or a fader's ramp under way or due now ends there at once (a mute set
-  before the first audio is in force from its first frame); a fader's ramp
-  a crossfade's other side waits on keeps waiting.
+  something). Nothing of an input with no output running is heard, so a
+  strip's or a fader's ramp under way or due now ends at once (a mute set
+  before an output's first audio is in force from its first frame); a
+  fader's ramp a crossfade's other side waits on keeps waiting.
 - **Two gains:** an input is heard at its fader's gain (the controllers':
   a preview's crossfade) times its strip's (the user's:
   `Strip::set_level(gain)` linear, `set_mute(bool)`, `set_solo(bool)`,
@@ -209,9 +219,9 @@ its `StreamInfo` carries the device's backend, exclusive flag and latency.
   from there move with the leader's stream, never with the device's
   frames (`mixer/follow.rs`): each period the follower fills exactly the
   frames its leader gave, at the same offsets. A leader short of frames,
-  paused or flushed holds its follower, which loses nothing (a follower
-  of a leader that does not run does not keep the device running, and is
-  paused with it). A follower that is late drops its frames up to the
+  paused or flushed holds its follower, which loses nothing (silence
+  where they were, the device playing on). A follower that is late drops
+  its frames up to the
   frame due, an absolute stream frame, counted (`Fader::dropped`,
   `Stats::dropped`) and counted as played in its position; a leader's are
   never dropped. The follower's `at_stream` is its leader's from `origin`
@@ -260,8 +270,8 @@ its `StreamInfo` carries the device's backend, exclusive flag and latency.
   raises them with `fetch_max` in atomics and a look takes them with
   `swap`, so it is for the one who shows them.
 - **The clock:** `Mixer::timebase()` gives `Timebase { epoch, rate,
-  frame, heard }`: each opening of the device is an epoch with its own
-  frames. `Fader::set(Ramp { start, to, over, curve })` changes the gain
+  frame, heard }`: the device's opening is an epoch with its own frames
+  (another one only where the device failed and was opened again). `Fader::set(Ramp { start, to, over, curve })` changes the gain
   without blocking, in place of a ramp still waiting: from `Start::Now`
   (the next frame mixed), `Start::At { epoch, time }` (a time of an epoch;
   never, once the device has opened again), or `Start::FirstAudio` (the
@@ -282,21 +292,19 @@ its `StreamInfo` carries the device's backend, exclusive flag and latency.
   `position` leaves out what the device has not played yet (the mixer
   tells each output what of it is still downstream), so positions, cues
   and karaoke stay on what is heard. A `flush` (a seek) drops what the
-  device holds as well unless another input is heard; with nothing
-  running the device pauses, holding what it has.
-- **Formats:** no resampling in the mixer. The Lead owns the device's
-  format: when it opens at another one, every other output is closed
-  (`Error::Closed`) and the device plays out and opens again. A guest
-  never displaces one: while the device is open it is offered exactly
-  its format (fixed when first asked), so its player resamples; only with
-  nothing open does it open the device at its own. `Fader::set_role`
-  changes an input's role as it plays: it is asked again what it takes,
-  the microphone's tap goes to the newest Lead output, nothing opens
-  again; the only Lead with an output open cannot be made a guest.
+  device holds as well unless another input is heard.
+- **One format:** no resampling in the mixer. Every input, Lead or
+  guest, is offered the desk's one format (`InputTarget::capabilities`),
+  and an output asked at another is refused (`Error::FormatNotAccepted`).
+  The roles say only which input the microphone's frames are told in:
+  `Fader::set_role` changes one as it plays, the microphone's tap going
+  to the newest Lead output; the only Lead with an output open cannot be
+  made a guest.
 - **The microphone's port:** `Mixer::set_mic(Option<Input>)`. The mixer
   taps the device for the microphone while a Lead output is open, again for
-  each one and each opening of the device, so its echo canceller hears the
-  whole mix as its sidechain; a frame map of the Lead's chunks tells it the
+  each one, so its echo canceller hears the whole mix as its sidechain, at
+  the desk's one rate all along (what it has learnt of the room is kept
+  from song to song); a frame map of the Lead's chunks tells it the
   stream frames in the Lead's own count. A device that runs no taps is
   told in `Mixer::mic()` (`MicPort::CannotHear(why)`, each time counted
   in `refused`). A microphone replaced or taken away is let go of on a
@@ -502,16 +510,20 @@ the device has played (within a period), a ramp lands on its frame with
 everything before it bit for bit, a crossfade's two sides start on the
 frame the guest's first audio is, a starved guest at gain 1 leaves the
 Lead bit for bit, a flush drops what the device held, the microphone's
-port is told the Lead's frames while a guest played first, hears each
-opening of the device (at two rates) and never reaches it, the monitor
-sees two inputs summed, a fade out on an input with nothing to play
-settles, a seek keeps a fade under way and a pause ends it, and only the
-Lead opens the device again (a guest made while it is open is offered
-only its format, and closed when the Lead opens at another). Strips: one
-at 0 dB keeps its input bit for bit, a level change is a 20 ms linear
-ramp, mute and solo silence strips without a click, a strip's or a fader's
-ramp under way ends on its target when the device opens again, and the
-meters read each strip and the sum, then nothing once taken. `tests/desk.rs`:
+port is told the Lead's frames while a guest played first, hears song
+after song on the one opening of the device and never reaches it, the
+monitor sees two inputs summed (the device open after them), a fade out
+on an input with nothing to play settles, a seek keeps a fade under way
+and a pause ends it, every input (Lead or guest) is offered the desk's one
+format and another is refused, a closed input cannot open again while the
+device plays on, a device not there as the mixer starts is opened by the
+first output once it is, and a device that fails fails its outputs and is
+opened again by the next (another epoch, at the same format, a ramp under
+way ending on its target and a change for the last epoch never coming).
+Strips: one at 0 dB keeps its input bit for bit, a level change is a
+20 ms linear ramp, mute and solo silence strips without a click, and the
+meters read each strip and the sum, then nothing once taken.
+`tests/desk.rs`:
 a group's level and mute act on its child's input and its own, ramped from
 the frame set; a child's solo leaves it alone, a group's solo keeps its
 children and its own input, and solo off brings all back; a mute and a
@@ -520,8 +532,7 @@ frames (one set before them taking the place of another), the device
 getting the input bit for bit up to the period the change falls in and
 again after; a group mute for the first audio waits while an older
 child's output plays and starts on the first frame of one opened since on
-another child; a mute for a time of the device's last opening goes when it
-opens again, and one set for it then never comes; a lone input on a child
+another child; a lone input on a child
 of a group, all at 0 dB, reaches the device bit for bit, and again bit for
 bit once a group's ramp to -6 dB and back has played out; and a group
 meters its subtree. The units in `mixer/strips.rs` check the path rule
@@ -558,7 +569,8 @@ part touched from the first frame, across a pause, a flush and a new output
 (real time) and across an underrun in the middle of the switch, never lets
 a frame of main through; `Ending` then `Present` again switches back in;
 on a 16-bit device main is bit for bit again once a solo is released;
-mono and odd lane widths (1, 2 and 3 channels; 1 to 4 parts); the parts'
+odd lane widths (stereo, 1 to 3 parts; the units in `lanes.rs` lay out and
+split lanes of 1 and 3 channels too); the parts'
 strips meter the parts while main is heard; a part soloed keeps main heard
 while the control word is `None` and is heard alone once it is `Present`;
 targets refuse lanes they do

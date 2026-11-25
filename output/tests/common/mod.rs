@@ -84,6 +84,11 @@ pub fn mixer() -> (Mixer, Device) {
     mixer_on(Device::default())
 }
 
+/// A mixer whose device runs at `rate`.
+pub fn mixer_at(rate: u32) -> (Mixer, Device) {
+    mixer_on_at(Device::default(), rate)
+}
+
 /// A mixer on a device that takes what it is given at once: it mixes a
 /// period once every running output holds one, so what is heard together
 /// is what was written together, however the test thread is scheduled.
@@ -94,13 +99,38 @@ pub fn instant_mixer() -> (Mixer, Device) {
     })
 }
 
+/// A mixer that takes what it is given at once, its device at `rate`.
+pub fn instant_mixer_at(rate: u32) -> (Mixer, Device) {
+    let device = Device {
+        instant: true,
+        ..Device::default()
+    };
+    mixer_on_at(device, rate)
+}
+
 pub fn mixer_on(device: Device) -> (Mixer, Device) {
+    mixer_on_at(device, RATE)
+}
+
+pub fn mixer_on_at(device: Device, rate: u32) -> (Mixer, Device) {
     let options = MixerOptions {
         // Room for a busy test machine; the device period is the default.
         buffer: Duration::from_millis(200),
+        rate,
         ..MixerOptions::default()
     };
     (Mixer::open(Box::new(device.clone()), options), device)
+}
+
+/// Where on a device that plays all along (silence before anything is
+/// written) an output's frame 0 was heard: the first device frame from
+/// which `left` holds what was written there (left `f(frame)`), checked
+/// over its first 64 frames.
+pub fn lead_in(left: &[i32], f: impl Fn(u64) -> i32) -> usize {
+    let want: Vec<i32> = (0..64).map(&f).collect();
+    (0..left.len().saturating_sub(64))
+        .find(|&s| left[s..s + 64] == want[..])
+        .expect("what was written is heard")
 }
 
 /// Writes `a` and `b` to their outputs and drains both, each on a thread

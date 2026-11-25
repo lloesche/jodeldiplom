@@ -725,11 +725,12 @@ fn settings_change_the_engine_and_the_file() {
     assert_eq!(state.screen, Screen::Settings);
     assert_eq!(fx, vec![Effect::ListDevices]);
     op(&mut state, Op::Down);
+    // The device's rate: saved at once; the device opens again at it
+    // after the pause (`the_rate_follows_the_device`).
     let fx = op(&mut state, Op::ValueDown);
-    assert_eq!(state.config.max_rate, Some(44_100));
-    // Saved at once; the engine gets it after the pause (see
-    // `settings_reach_the_engine_after_a_pause`).
+    assert_eq!(state.config.rate(), 44_100);
     assert_eq!(fx, vec![Effect::SaveConfig]);
+    state.settings_due = None;
     // Resample when needed: on by default, toggles, reaches the engine.
     assert!(state.config.resample);
     op(&mut state, Op::Down);
@@ -1456,13 +1457,16 @@ fn settings_reach_the_engine_after_a_pause() {
     let mut state = listed();
     update(&mut state, Action::Tick(1_000));
     op(&mut state, Op::Settings);
-    state.settings.row = 1;
-    // Three steps of the rate cap, 100 ms apart: shown at once, not sent.
+    state.settings.row = 3;
+    // Three steps of the headroom, 100 ms apart: shown at once, not sent.
     for (i, at) in [1_000u64, 1_100, 1_200].into_iter().enumerate() {
         update(&mut state, Action::Tick(at));
         let fx = op(&mut state, Op::ValueUp);
         assert_eq!(fx, vec![Effect::SaveConfig], "step {i}");
-        assert_eq!(state.config.max_rate, jodeldiplom::config::RATE_CAPS[i + 1]);
+        assert_eq!(
+            state.config.headroom,
+            jodel_playback::Headroom::CHOICES[i + 1]
+        );
     }
     assert_eq!(
         state.settings_due,
@@ -1478,7 +1482,10 @@ fn settings_reach_the_engine_after_a_pause() {
         engine(&fx),
         vec![Command::SetSettings(state.engine_settings())]
     );
-    assert_eq!(state.engine_settings().max_rate, Some(192_000));
+    assert_eq!(
+        state.engine_settings().headroom,
+        jodel_playback::Headroom(20)
+    );
     assert_eq!(state.settings_due, None);
     assert!(engine(&update(&mut state, Action::Tick(5_000))).is_empty());
     // Quitting first sends what is pending.
@@ -1494,72 +1501,86 @@ fn settings_reach_the_engine_after_a_pause() {
     );
 }
 
-/// The rate caps offered are those the device can satisfy; a saved cap
-/// below every rate the device takes is shown as the lowest cap offered,
-/// and the engine plays with that, while the file keeps the saved one.
+/// The rates offered are those the device takes (the usual ones while not
+/// known, none for a device that takes no stereo); steps through them open
+/// the device again once, after the pause, at the one chosen, and only
+/// where the rate in force is not the one it is open at. Where the device
+/// lacks the rate set, it runs at 44.1 kHz, else at its lowest, said so,
+/// the rate set kept in the file.
 #[test]
-fn the_rate_caps_follow_the_device() {
-    use jodeldiplom::config::RATE_CAPS;
+fn the_rate_follows_the_device() {
+    use jodeldiplom::config::RATES;
     let mut state = listed();
-    // Not known yet: every cap.
-    assert_eq!(state.rate_caps(), RATE_CAPS.to_vec());
-    // A device with 48, 96 and 192 kHz only.
+    // Not known yet: the usual ones, 48 kHz set and in force.
+    assert_eq!(state.rates(), RATES.to_vec());
+    assert_eq!(state.output_rate(), 48_000);
+    // A device with 48, 96 and 192 kHz only, opened at 48.
     update(
         &mut state,
         Action::DeviceRates(Some(vec![192_000, 48_000, 96_000])),
     );
+    update(&mut state, Action::OutputOpened(Some(48_000)));
     assert_eq!(state.device_rates, Some(vec![48_000, 96_000, 192_000]));
-    let caps = state.rate_caps();
-    assert_eq!(
-        caps,
-        [
-            None,
-            Some(384_000),
-            Some(352_800),
-            Some(192_000),
-            Some(176_400),
-            Some(96_000),
-            Some(88_200),
-            Some(48_000)
-        ]
-    );
-    // Stepping goes round the offered caps only.
+    assert!(state.message.is_none());
+    // Stepping goes round its rates only, nothing opened again while it
+    // goes on; once it pauses, opened again once.
+    update(&mut state, Action::Tick(1_000));
     op(&mut state, Op::Settings);
     state.settings.row = 1;
-    let mut seen = vec![state.config.max_rate];
-    for _ in 0..caps.len() {
-        op(&mut state, Op::ValueUp);
-        seen.push(state.config.max_rate);
+    let mut seen = Vec::new();
+    for _ in 0..2 {
+        let fx = op(&mut state, Op::ValueUp);
+        assert_eq!(fx, vec![Effect::SaveConfig]);
+        seen.push(state.config.rate());
     }
-    assert_eq!(&seen[..caps.len()], &caps[..]);
-    assert_eq!(seen[caps.len()], None);
+    assert_eq!(seen, [96_000, 192_000]);
+    let due = state.settings_due.unwrap();
+    let fx = update(&mut state, Action::Tick(due));
+    assert_eq!(fx.iter().filter(|e| **e == Effect::ReopenOutput).count(), 1);
+    // Round to the rate it is open at: nothing opened again.
+    update(&mut state, Action::OutputOpened(Some(192_000)));
+    op(&mut state, Op::ValueUp);
     op(&mut state, Op::ValueDown);
-    assert_eq!(state.config.max_rate, Some(48_000));
-    op(&mut state, Op::ValueDown);
-    assert_eq!(state.config.max_rate, Some(88_200));
-    // A cap saved for another device: shown as the lowest offered, which
-    // the engine gets; the saved value stays.
+    let due = state.settings_due.unwrap();
+    let fx = update(&mut state, Action::Tick(due));
+    assert!(!fx.contains(&Effect::ReopenOutput), "{fx:?}");
+    // A rate it lacks: 44.1 kHz it lacks too, so its lowest; said so.
     let mut state = listed();
-    state.config.max_rate = Some(44_100);
+    state.config.set_rate(88_200);
     update(
         &mut state,
         Action::DeviceRates(Some(vec![48_000, 96_000, 192_000])),
     );
-    assert_eq!(state.config.max_rate, Some(44_100));
-    assert_eq!(state.effective_max_rate(), Some(48_000));
-    assert_eq!(state.engine_settings().max_rate, Some(48_000));
+    assert_eq!(state.config.rate(), 88_200);
+    assert_eq!(state.output_rate(), 48_000);
     let message = state.message.as_ref().unwrap().text.clone();
-    assert!(message.contains("using 48 kHz"), "{message}");
-    op(&mut state, Op::Settings);
-    // One step up from what is in force.
-    update(&mut state, Action::SettingsClick(1, 1));
-    assert_eq!(state.config.max_rate, None);
-    // Back on a device that takes 44.1 kHz, the saved cap is in force.
+    assert!(message.contains("runs at 48 kHz"), "{message}");
+    // On a device with 44.1 kHz: that.
     let mut state = listed();
-    state.config.max_rate = Some(44_100);
+    state.config.set_rate(96_000);
     update(&mut state, Action::DeviceRates(Some(vec![44_100, 48_000])));
-    assert_eq!(state.effective_max_rate(), Some(44_100));
+    assert_eq!(state.output_rate(), 44_100);
+    // And back on one that takes it, the rate set.
+    let mut state = listed();
+    state.config.set_rate(96_000);
+    update(&mut state, Action::DeviceRates(Some(vec![44_100, 96_000])));
+    assert_eq!(state.output_rate(), 96_000);
     assert!(state.message.is_none());
+}
+
+/// A device that takes no stereo has no rate to offer: its row steps to
+/// nothing (and does not fall over), the rate set stays.
+#[test]
+fn a_device_with_no_stereo_rates_steps_to_nothing() {
+    let mut state = listed();
+    update(&mut state, Action::DeviceRates(Some(Vec::new())));
+    assert!(state.rates().is_empty());
+    op(&mut state, Op::Settings);
+    state.settings.row = 1;
+    op(&mut state, Op::ValueUp);
+    op(&mut state, Op::ValueDown);
+    assert_eq!(state.config.rate(), 48_000);
+    assert_eq!(state.output_rate(), 48_000);
 }
 
 /// A notice from the engine is shown as a message; nothing stops.

@@ -111,6 +111,7 @@ mod tests {
         assert_eq!(lane_width(2, 1), 2);
         assert_eq!(lane_width(2, 5), 11);
         assert_eq!(lane_width(1, 5), 6);
+        assert_eq!(lane_width(3, 5), 16);
         let plain = StreamFormat::new(48_000, 2, SampleFormat::S16);
         assert_eq!(lane_format(plain, 1), plain);
         assert_eq!(

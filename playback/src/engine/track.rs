@@ -454,6 +454,11 @@ impl Track {
         mut source: Source,
         segments: Segments,
     ) -> Result<Track, Error> {
+        // A file the device does not take in its channels is read as
+        // stereo.
+        if route.channels != info.channels {
+            source.make_stereo();
+        }
         let resampler = route.resample.map(|r| {
             let mut resampler = Resampler::new(r.from, r.to, usize::from(route.channels));
             // The headroom scales the samples before the one

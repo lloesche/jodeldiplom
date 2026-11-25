@@ -269,20 +269,10 @@ pub fn list_devices() -> Result<Vec<DeviceChoice>, String> {
         .collect())
 }
 
-/// The rates a device takes exclusively in stereo (else in any channel
-/// count), lowest first.
+/// The rates a device takes exclusively in stereo (as the desk runs it),
+/// lowest first.
 pub fn device_rates(caps: &jodel_output::Capabilities) -> Vec<u32> {
-    let mut rates = caps.rates(2);
-    if rates.is_empty() {
-        rates = caps
-            .channel_counts()
-            .into_iter()
-            .flat_map(|channels| caps.rates(channels))
-            .collect();
-    }
-    rates.sort_unstable();
-    rates.dedup();
-    rates
+    caps.rates(jodel_output::mixer::DESK_CHANNELS)
 }
 
 /// `44.1 48 88.2 96 kHz · S24_3/S16 · 2 ch`: the exclusive rates, formats
@@ -752,21 +742,21 @@ impl App {
                 return;
             }
         };
-        // What the device takes, asked here once (the engine reuses it), so
-        // the settings offer only the rate caps it can satisfy and the
-        // engine starts with the cap in force before anything plays.
+        // What the device takes, asked here once (the mixer reuses it), so
+        // the settings offer the rates it takes and say which it runs at.
         let capabilities = target.capabilities().ok();
         self.dispatch(Action::DeviceRates(capabilities.as_ref().map(device_rates)));
         let generation = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
         let options = PlayerOptions {
             settings: self.state.engine_settings(),
             position_interval: Duration::from_millis(100),
-            capabilities: capabilities.clone(),
             separator: Some(self.separator),
             stem_store: self.stem_store.clone(),
             ..PlayerOptions::default()
         };
-        let (engine, events) = Engine::start(target, capabilities, options);
+        let rate = self.state.config.rate();
+        let (engine, events) = Engine::start(target, capabilities, rate, options);
+        self.dispatch(Action::OutputOpened(engine.mixer.format().map(|f| f.rate)));
         // The bars a jump can reach are kept ([`Op::JumpBar`]): four either
         // side of the one heard down to 48 BPM, and that one.
         let _ = engine.player.jump_window(JUMP_WINDOW, JUMP_WINDOW);
@@ -1691,7 +1681,12 @@ impl App {
                     mover.retry();
                 }
             }
-            Effect::SwitchDevice(id) => self.switch_device(id),
+            Effect::SwitchDevice(id) => {
+                if !matches!(self.output, Output::Null(_)) {
+                    self.restart_on(Output::Device(id));
+                }
+            }
+            Effect::ReopenOutput => self.restart_on(self.output.clone()),
             Effect::DeviceVolume(change) => {
                 let changed = change != core::VolumeChange::Read;
                 let Some(query) = volume_device(&self.output, self.playing_on.as_deref()) else {
@@ -1763,7 +1758,7 @@ impl App {
                 }
                 carry!(
                     device,
-                    max_rate,
+                    rates,
                     resample,
                     headroom,
                     bpm,
@@ -1871,16 +1866,15 @@ impl App {
 
     /// Moves playback to another device: the queue and the position
     /// carry over.
-    fn switch_device(&mut self, id: Option<String>) {
-        if matches!(self.output, Output::Null(_)) {
-            return;
-        }
+    /// Plays on `output` from now on (another device, or the same at
+    /// another rate: its mixer opens it once, at the rate set), carrying
+    /// the queue and the position over.
+    fn restart_on(&mut self, output: Output) {
         let queue = self.state.queue.paths.clone();
         let current = self.state.queue.current;
         let position = self.state.playing.position;
         let was = self.state.playing.state;
-        self.output = Output::Device(id);
-        let output = self.output.clone();
+        self.output = output.clone();
         // The old engine stops (and its late events are ignored) first.
         if let Some(engine) = self.engine.take() {
             let _ = engine.player.stop();

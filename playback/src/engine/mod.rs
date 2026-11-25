@@ -6,7 +6,9 @@
 //!
 //! - opens each track ([`crate::source::Source`]), chooses its route
 //!   ([`crate::rate::choose_route`]) against the target's capabilities, and
-//!   opens an output at the route's format;
+//!   opens an output at the route's format (on a desk, its one format:
+//!   every route goes to it, so what follows of formats changing is a
+//!   plain device's);
 //! - reads the source and resamples what it reads when the route has a
 //!   [`crate::rate::Resample`] step
 //!   ([`crate::Resampler`], one stream per track and per seek, so each
@@ -123,11 +125,6 @@ struct Engine {
     head: heads::HeadState,
     /// On a desk: the other head, parked ([`heads`]).
     desk: Option<Box<heads::HeadState>>,
-    /// The format the routes are chosen for, where they can be, since a
-    /// transition handed over at it: the device is not opened again for
-    /// the tracks after until playback stops, a track is picked, the queue
-    /// ends or the settings change.
-    pinned: Option<StreamFormat>,
     settings: Settings,
     position_interval: Duration,
     events: Sender<Event>,
@@ -171,7 +168,6 @@ impl Engine {
         Engine {
             head: heads::HeadState::new(0, target, options.capabilities, lanes),
             desk: None,
-            pinned: None,
             settings: options.settings,
             position_interval: options.position_interval,
             events,
@@ -333,12 +329,11 @@ impl Engine {
         }
     }
 
-    /// Track `index` is picked to play (not run into): playback plays, the
-    /// device opens again at the track's own rate if it must, and the key
-    /// goes back to 0 unless it is for this track ([`Engine::key_picked`]).
+    /// Track `index` is picked to play (not run into): playback plays, and
+    /// the key goes back to 0 unless it is for this track
+    /// ([`Engine::key_picked`]).
     fn pick(&mut self, index: usize) {
         self.paused = false;
-        self.pinned = None;
         self.key_picked(index);
     }
 
@@ -372,7 +367,6 @@ impl Engine {
         // for its end (its tracks' routes are chosen again then); armed, it
         // takes them when it prepares.
         if settings != self.settings && self.transition_running() {
-            // (The format is not held after it: `settle_transition`.)
             self.settings = settings;
             let index = self.head.playing.as_ref().map(|t| t.index);
             self.notice(
@@ -382,7 +376,6 @@ impl Engine {
             return;
         }
         if settings != self.settings {
-            self.pinned = None;
             // Shifted, the head keeps its map until it is back in its key.
             if self.head_shifted() {
                 let index = self.head.playing.as_ref().map(|t| t.index);
@@ -393,15 +386,9 @@ impl Engine {
         self.reroute();
     }
 
-    /// The route the settings choose for `info` now, or why there is none
-    /// (a sentence): at the format held since a transition, where there is
-    /// one there; else from what the target takes (the format no longer
-    /// held then).
+    /// The route the settings choose for `info` from what the target takes
+    /// (on a desk, its one format), or why there is none (a sentence).
     fn route_for(&mut self, info: &TrackInfo) -> Result<Route, String> {
-        if let Some(route) = self.held_route(info) {
-            return Ok(route);
-        }
-        self.pinned = None;
         let name = self.head.target.name();
         let caps = self
             .target_caps()
@@ -416,12 +403,6 @@ impl Engine {
         let mut caps = Capabilities::new();
         caps.insert(format);
         choose_route(&FileFacts::from(info), &caps, &self.settings)
-    }
-
-    /// The route for `info` at the format held since a transition, if one
-    /// is held and the track has a route there.
-    fn held_route(&self, info: &TrackInfo) -> Option<Route> {
-        self.route_at(info, self.pinned?).ok()
     }
 
     /// What the target takes, asked once.

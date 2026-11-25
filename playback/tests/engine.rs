@@ -490,13 +490,11 @@ fn the_tap_holds_the_most_recent_output() {
     assert_eq!(window, frames(total - 1024, total));
     collect_until(&events, |e| matches!(e, Event::State(PlayState::Stopped)));
     drop(player);
-    // The device closed with the engine's output.
-    let deadline = std::time::Instant::now() + TIMEOUT;
-    while tap.read_heard(&mut window) != Err(TapMiss::NoStream) {
-        assert!(std::time::Instant::now() < deadline);
-        std::thread::sleep(Duration::from_millis(1));
-    }
+    // The device stays open with the engine's output closed, and closes
+    // with the mixer.
+    assert!(tap.read_heard(&mut window).is_ok());
     drop(mixer);
+    assert_eq!(tap.read_heard(&mut window), Err(TapMiss::NoStream));
 }
 
 #[test]

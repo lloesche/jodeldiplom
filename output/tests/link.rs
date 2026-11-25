@@ -3,8 +3,8 @@
 //! period, sample for sample (a plain input and a lane input), and a fade
 //! for its first audio starts there; a follower linked after it gave frames
 //! starts its frames where they are due; a leader short of frames or paused
-//! holds its follower, which loses nothing (and the device pauses with the
-//! leader); a leader at its end lets its follower play on; a follower short
+//! holds its follower, which loses nothing (the device playing on, silence
+//! where they were); a leader at its end lets its follower play on; a follower short
 //! of frames drops its late ones to land on its frames again, counts them
 //! and plays them in its position; offline the render is the same however
 //! the writers are scheduled, and a follower paused holds nothing up; a
@@ -233,6 +233,7 @@ fn a_late_follower_drops_its_frames_up_to_where_it_is_due() {
     let mut oa = open_with(&mut p.a, Duration::from_millis(500));
     let mut ob = open_with(&mut p.b, Duration::from_secs(1));
     p.fb.follow(&p.fa, origin).unwrap();
+    let leading = oa.clock();
     let leader = std::thread::spawn(move || {
         oa.write(&lead(0, 4 * u64::from(RATE)), None).unwrap();
         drain(&mut oa);
@@ -241,9 +242,7 @@ fn a_late_follower_drops_its_frames_up_to_where_it_is_due() {
     // The follower starts a tenth of a second late, and later runs dry
     // for a while. Its position is taken as it goes, between two looks at
     // what the device played.
-    wait_until("past the origin", || {
-        p.mixer.timebase().frame > origin + 4_800
-    });
+    wait_until("past the origin", || leading.position() > origin + 4_800);
     let (first, second) = (48_000, 48_000);
     ob.write(&follow(0, first, 1), None).unwrap();
     wait_until("dropped", || p.fb.dropped() > 0);
@@ -294,7 +293,7 @@ fn a_late_follower_drops_its_frames_up_to_where_it_is_due() {
 }
 
 #[test]
-fn a_paused_leader_holds_its_follower_and_the_device_pauses() {
+fn a_paused_leader_holds_its_follower_and_the_device_plays_on() {
     let _guard = real_time();
     let mut p = pair_on(mixer());
     let origin = 4_800;
@@ -304,13 +303,13 @@ fn a_paused_leader_holds_its_follower_and_the_device_pauses() {
     let total = 72_000;
     ob.write(&follow(0, total, 1), None).unwrap();
     oa.write(&lead(0, 96_000), None).unwrap();
-    wait_until("following", || p.mixer.timebase().frame > origin + 9_600);
+    wait_until("following", || oa.position().unwrap() > origin + 9_600);
     oa.pause().unwrap();
     std::thread::sleep(Duration::from_millis(300));
     let (mixed, played) = (p.mixer.timebase().frame, ob.position().unwrap());
     std::thread::sleep(Duration::from_millis(300));
-    // Nothing is mixed: the device is paused; the follower holds.
-    assert_eq!(p.mixer.timebase().frame, mixed);
+    // The device plays on, silence where they were; the follower holds.
+    assert!(p.mixer.timebase().frame > mixed);
     assert_eq!(ob.position().unwrap(), played);
     assert!(played < total);
     oa.resume().unwrap();

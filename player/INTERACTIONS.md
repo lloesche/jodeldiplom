@@ -214,9 +214,14 @@ stem keys are their mutes.
   otherwise, and a paused song goes on at START only after the same
   count-in. A song played to its end (the game on; sought on or not, the
   last of the queue too, nothing scored too) shows its result while the
-  next waits: the first START during its reveal completes it at once
-  (nothing played again), the next plays the song.
+  next waits, a diploma headed "Jodeldiplom" filled in beat by beat, each
+  moment with its sound (heard after the song, on the device that stays
+  open): the first START during its reveal completes it at once
+  (nothing played or sounded again), the next plays the song.
   - `holding_stops_after_a_track_and_names_the_next` (engine)
+  - `the_result_is_heard_after_the_song`
+  - `sounds_after_the_song_play_on_the_device_kept_open` (output)
+  - `a_skip_plays_nothing_again` (sounds)
   - `the_mode_arms_no_transitions_and_makes_no_jumps`
   - `next_in_the_mode_holds_the_next_song_for_start`
   - `start_during_the_reveal_completes_it_and_the_next_starts_the_song`
@@ -289,10 +294,13 @@ stem keys are their mutes.
   Mixer tab alone does not open it). It is listened to, to hear the singer, and never
   played: it has no level, and nothing of it reaches the speakers. To take
   the music's echo out of it, it sees what the device plays, buffer by
-  buffer (a tap at the output's last step, set on every output opened:
-  another rate, another device, an engine restarted). `i` takes the next
-  input, kept in the settings.
-  - `the_microphone_goes_into_each_output` (engine)
+  buffer (a tap at the output's last step, set for every song's output,
+  at the device's one rate: what the echo canceller has learnt of the
+  room is kept from song to song; another device or rate, or an engine
+  restarted, starts it again). `i` takes the next input, kept in the
+  settings.
+  - `the_microphone_hears_song_after_song_on_one_opening` (output)
+  - `what_the_echo_canceller_learnt_carries_over_to_the_next_output` (output)
   - `the_microphone_is_open_while_karaoke_shows`
   - `the_faders_are_set_on_the_mixer_and_again_on_a_new_one`
 - **K16.** The microphone never changes what plays: with it open, tapped,
@@ -667,9 +675,31 @@ stem keys are their mutes.
   (its VOLUME is the device's own control, after the samples).
   - `every_control_sends_its_change`
   - `a_ramp_lands_on_its_frame_and_unity_solo_is_bit_exact` (output)
-- **M2.** A new mixer (another device, an engine restarted) gets the
-  faders, mutes and solos as they were set this run.
+- **M2.** A new mixer (another device, another rate, an engine
+  restarted) gets the faders, mutes and solos as they were set this run.
   - `the_faders_are_set_on_the_mixer_and_again_on_a_new_one`
+- **M8.** The output device is opened once, as the player starts, at the
+  rate set for it (48 kHz unless set; where it lacks that, 44.1 kHz, else
+  its lowest), and stays open until the player quits: songs at any rate,
+  the preview, the stems and the game's sounds all play at it (resampled
+  where theirs is another; a mono file doubled, one of more channels
+  folded down to stereo), the result's sounds after the song too. The
+  rate is the device's own (kept by its id). Only another device, or
+  another rate chosen in the settings (once the steps pause, where the
+  rate in force changed), opens it again, once, the queue and the place
+  carried over; a device not there at the start, or one that failed, is
+  opened by the next song.
+  - `the_device_opens_once_for_songs_at_any_rate`
+  - `the_rate_follows_the_device`
+  - `a_device_with_no_stereo_rates_steps_to_nothing`
+  - `another_rate_opens_the_device_again_where_the_song_was`
+  - `a_device_not_there_at_the_start_is_opened_once_it_is` (output)
+  - `a_device_that_fails_is_opened_again_by_the_next_output` (output)
+  - `mono_and_5_1_files_play_as_stereo` (engine)
+  - `the_rate_set_then_44_1_then_the_lowest` (output)
+  - `every_input_is_offered_the_desks_one_format` (output)
+  - `every_track_plays_at_the_desks_one_rate` (engine)
+  - `the_result_is_heard_after_the_song`
 - **M3.** A fader, mute or solo never moves playback and never clicks: it
   is a 20 ms ramp in the mixer; the preview's crossfades go on under it
   (they are its players' own faders, times the strip's).

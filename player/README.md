@@ -46,8 +46,8 @@ without one).
 | Option | |
 |---|---|
 | `--device ID\|NAME` | the output device (an id or a unique part of a name from `--list-devices`); default: the system default |
-| `--max-rate HZ` | highest output rate (`0`: no cap) |
-| `--no-resample` | never resample (for this run): files no rate the device takes carries bit-perfect are skipped |
+| `--rate HZ` | the rate the output device runs at (default 48000; where it lacks it, 44100, else its lowest) |
+| `--no-resample` | never resample (for this run): files at another rate than the device's are skipped |
 | `--headroom DB` | routes that are not bit-perfect play this many dB below full scale (`0`, `0.5`, `1`, `2`, `3`; default `0`), so overs need not clip: resampled routes (inter-sample overs) and floating-point files; lossy files (MP3, AAC, Vorbis) always at least 1.5 dB, as their decoded signal goes over full scale where the master was near it; bit-perfect routes are never touched |
 | `--config FILE` | the settings file (default: `config.toml` in the settings folder, see Folders and setup) |
 | `--list-devices` | list the devices and what each takes exclusively |
@@ -57,7 +57,7 @@ without one).
 
 Options override the settings file for one run; settings changed in the
 player are saved to it (only what was changed there, not the options).
-The file holds `device`, `max_rate`, `resample`, `headroom`, `bpm`, `beat_voting`, `beat_methods = "flux, network"`
+The file holds `device`, `rate."<device id>"` (each device's rate), `resample`, `headroom`, `bpm`, `beat_voting`, `beat_methods = "flux, network"`
 `beat_method = "network"`, `stems`, `stem_switch = "bar"|"instant"`, `skip_mix = "cut"|"mix"`, `skip_preset = "transition-tab"|"fade"|"drums-first"|"bass-swap"|"vocals-last"`
 (what the next track key does), `transition_preset` and `transition_tempo =
 "varispeed"|"stretch"` (the Transition tab's transition preset and tempo mode,
@@ -128,9 +128,14 @@ toggle in its top border (click it or press `tab`, which goes round all
 five); the right column has the cover, the title, the status
 light and the signal path, for example
 `file 96 → DAC (exclusive), bit-perfect`.
-When the device takes no rate that carries the file bit-perfect, the
-engine resamples (unless that is off) and the path shows the step and
-says so in the warning colour, for example
+The output device is opened once, as the player starts, at the rate set
+for it (48 kHz unless set; where it lacks that, 44.1 kHz, else its lowest),
+and stays open, at that rate, until the player quits: songs, stems, the
+preview and the game's sounds are all played at it, so nothing is ever
+cut short by the device opening again between songs, and the echo
+canceller keeps what it has learnt of the room. A file at that rate plays
+bit-perfect; any other is resampled (unless that is off) and the path
+shows the step and says so in the warning colour, for example
 `file 44.1 → resample 48 (160/147) → DAC (exclusive), not bit-perfect`
 (with headroom: `resample 48 (160/147, -1 dB)`); samples the resampler had
 to clip are counted there too. A lossy file plays 1.5 dB down (or the
@@ -157,27 +162,28 @@ Clicking the cover (or `f`) opens Now playing: the cover filling the
 screen with the title, artist, album and status light over its bottom
 left; `esc`, a click or `f` returns. Clicking the device name
 opens its setting. `,` (or the button) opens the settings: device (with
-what it takes exclusively), rate cap, resample when needed (on by default; saved as `resample`
-in the settings file) and the headroom (for what is not bit-perfect). The rate cap offers only
-the caps the device can satisfy (no cap, and those at or above the lowest
-rate it takes exclusively). A saved cap below every rate the device takes
-(saved for another device) is shown as the cap in force, the lowest one
-offered, with the saved value beside it, and the engine plays with that;
-the file keeps the saved cap, so it is in force again on a device that
-takes it, until a step changes it. Changes show at once and are saved at
+what it takes exclusively), its rate (the device's own, saved under its
+id as `rate."<id>"`; 48 kHz for a device with none), resample when needed
+(on by default; saved as `resample` in the settings file) and the
+headroom (for what is not bit-perfect). The rate offers the rates the
+device takes exclusively in stereo; once the steps pause, the device opens
+again at the rate chosen, where that is not the one it runs at (the only
+time it is opened again, with another device chosen), the queue and the
+place carried over. A rate set that the device lacks is shown with the
+rate it runs at instead (44.1 kHz, else its lowest), and a message says
+so; the file keeps
+the rate set, so it is in force again on a device that takes it. The other
+changes show at once and are saved at
 once; the engine gets them 400 ms after the last one, so stepping through
 values reroutes the track once, without a break. A change never
 stops playback: when the track has no route with the new settings, or its
 new output does not open, it keeps playing as it was and a message says
 so.
 
-A setting that moves the track playing to another route (the rate cap,
-resampling, the headroom) does so without a break, about half a second
-later (the new route is decoded ahead and takes over at an exact frame:
-crossfaded over 20 ms when the device stays at its rate; when the rate
-changes, the old route fades out, the device opens at the new rate, and
-the new route fades in from the frame after, so the only pause is the
-device's own). Below 72 columns the right column becomes a two-line summary; below
+A setting that moves the track playing to another route (resampling,
+the headroom) does so without a break, about half a second later (the new
+route is decoded ahead and takes over at an exact frame, crossfaded over
+20 ms). Below 72 columns the right column becomes a two-line summary; below
 18 rows the spectrum goes.
 
 `alt+↑` and `alt+↓` move the own volume control of the device playing a step

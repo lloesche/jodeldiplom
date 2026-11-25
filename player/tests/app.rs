@@ -79,17 +79,18 @@ fn alt_enter_plays_the_folder_through_the_null_output() {
         .is_some()));
     assert_eq!(app.state.queue.paths.len(), 4);
     assert_eq!(app.state.queue.current, Some(0));
+    // Resampled to the rate the device runs at (48 kHz).
     assert_eq!(
         path_text(&app),
-        "file 44.1 → null output (not exclusive), not bit-perfect"
+        "file 44.1 → resample 48 (160/147) → null output (not exclusive), not bit-perfect"
     );
     // The cover is the folder's cover.png.
     assert!(common::wait_for(&mut app, WAIT, |a| a.art().is_some()));
     assert_eq!(app.art().unwrap().image.width(), 300);
     // The spectrum shows the output rate.
-    assert_eq!(app.spectrum().rate, 44_100);
+    assert_eq!(app.spectrum().rate, 48_000);
     // The fixtures are short: the next track (48 kHz) follows by itself,
-    // then the WAV plays as plain PCM at its own rate.
+    // as it is, then the WAV (96 kHz) resampled.
     assert!(common::wait_for(&mut app, WAIT, |a| a
         .state
         .playing
@@ -105,7 +106,7 @@ fn alt_enter_plays_the_folder_through_the_null_output() {
         .as_ref()
         .is_some_and(|t| t.index >= 2)));
     if app.state.playing.track.as_ref().unwrap().index == 2 {
-        assert!(path_text(&app).starts_with("file 96 → null output"));
+        assert!(path_text(&app).starts_with("file 96 → resample 48 (1/2) → null output"));
         // Pause and resume with space.
         press(&mut app, Key::ch(' '));
         assert!(common::wait_for(&mut app, WAIT, |a| a.state.playing.state
@@ -379,7 +380,7 @@ fn a_file_argument_plays_at_once_and_settings_are_saved() {
     let tree = common::music_tree("autoplay");
     let config_file = tree.root.join("settings").join("config.toml");
     std::fs::create_dir_all(config_file.parent().unwrap()).unwrap();
-    std::fs::write(&config_file, "max_rate = 192000\n").unwrap();
+    std::fs::write(&config_file, "rate.\"default\" = 96000\n").unwrap();
     let mut options = options(&tree);
     options.autoplay = Some(tree.album.join("02 Ramp 48.flac"));
     options.config_file = Some(config_file.clone());
@@ -402,17 +403,21 @@ fn a_file_argument_plays_at_once_and_settings_are_saved() {
     // The whole folder is queued, from the file given.
     assert_eq!(track.index, 1);
     assert!(track.info.path.ends_with("02 Ramp 48.flac"));
-    // At its own rate, under the cap.
-    assert_eq!(track.route.output_rate, 48_000);
+    // Resampled to the rate the device runs at, the one set.
+    assert_eq!(track.route.output_rate, 96_000);
+    assert!(track.route.resample.is_some());
     assert_eq!(app.state.queue.paths.len(), 4);
-    // Settings: the rate cap down by one step is saved; the headroom from
-    // the command line is not.
+    // Settings: the device's rate a step up is saved (and the device
+    // opens again at it after the pause); the headroom from the command
+    // line is not.
     app.dispatch(Action::Op(Op::Settings));
     assert_eq!(app.state.screen, Screen::Settings);
+    let rates = app.state.rates();
+    let up = rates[rates.iter().position(|&r| r == 96_000).unwrap() + 1];
     app.dispatch(Action::SettingsClick(1, 1));
-    assert_eq!(app.state.config.max_rate, Some(176_400));
+    assert_eq!(app.state.config.rate(), up);
     let (saved, _) = Config::load(&config_file).unwrap();
-    assert_eq!(saved.max_rate, Some(176_400));
+    assert_eq!(saved.rate(), up);
     assert_eq!(saved.headroom, Headroom::NONE);
     // Every setting changed in the player is saved: the Transition tab's preset
     // and lyrics, the Karaoke tab's voice level.

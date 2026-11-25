@@ -551,6 +551,11 @@ pub fn update(state: &mut State, action: Action) -> Vec<Effect> {
             }
             if state.settings_due.is_some_and(|due| due <= now) {
                 send_settings(state, &mut fx);
+                // Another rate in force: the device opens again at it,
+                // once, the steps through the rates over.
+                if state.opened_rate != Some(state.output_rate()) {
+                    fx.push(Effect::ReopenOutput);
+                }
             }
             check_details = false;
         }
@@ -624,6 +629,7 @@ pub fn update(state: &mut State, action: Action) -> Vec<Effect> {
             }
         },
         Action::DeviceRates(rates) => device_rates(state, rates),
+        Action::OutputOpened(rate) => state.opened_rate = rate,
         Action::Engine(event) => {
             // A track starting (the device opened, or kept) shows the
             // device's volume as it is.
@@ -1331,9 +1337,14 @@ fn settings_open(state: &mut State, fx: &mut Vec<Effect>) {
     }
 }
 
+/// The one of `all` `step` away from `current` (from the first, where it
+/// is not among them), going round; `current` itself where `all` is empty.
 fn cycle<T: PartialEq + Copy>(all: &[T], current: T, step: i32) -> T {
-    let at = all.iter().position(|x| *x == current).unwrap_or(0) as i32;
     let n = all.len() as i32;
+    if n == 0 {
+        return current;
+    }
+    let at = all.iter().position(|x| *x == current).unwrap_or(0) as i32;
     all[((at + step) % n + n) as usize % n as usize]
 }
 
@@ -1347,11 +1358,11 @@ fn settings_step(state: &mut State, step: i32, fx: &mut Vec<Effect>) {
             }
             return;
         }
-        SettingsRow::RateCap => {
-            // From the cap in force, through the caps the device can
-            // satisfy.
-            let from = state.effective_max_rate();
-            state.config.max_rate = cycle(&state.rate_caps(), from, step);
+        SettingsRow::Rate => {
+            // Through the rates the device takes; it opens again at the
+            // one chosen once the steps pause ([`send_settings`]'s turn).
+            let rate = cycle(&state.rates(), state.output_rate(), step);
+            state.config.set_rate(rate);
         }
         SettingsRow::Resample => config.resample = !config.resample,
         SettingsRow::Headroom => config.headroom = cycle(&Headroom::CHOICES, config.headroom, step),
@@ -1617,35 +1628,26 @@ pub fn readiness(state: &State, path: &Path) -> Readiness {
     }
 }
 
-/// The device's rates arrived: a rate cap it cannot satisfy is shown as
-/// the cap in force ([`State::effective_max_rate`]), with a message.
+/// The device's rates (in stereo) arrived: where it does not take the rate
+/// set, a message says which it runs at ([`State::output_rate`]).
 fn device_rates(state: &mut State, rates: Option<Vec<u32>>) {
     state.device_rates = rates.map(|mut rates| {
         rates.sort_unstable();
         rates.dedup();
         rates
     });
-    let (Some(saved), Some(lowest)) = (
-        state.config.max_rate,
-        state.device_rates.as_ref().and_then(|r| r.first().copied()),
-    ) else {
-        return;
-    };
-    if saved >= lowest {
+    let (set, used) = (state.config.rate(), state.output_rate());
+    if state.device_rates.is_none() || set == used {
         return;
     }
-    let using = match state.effective_max_rate() {
-        Some(cap) => format!("{} kHz", text::khz_short(cap)),
-        None => "no cap".into(),
-    };
     let device = state.device_label();
     say(
         state,
         Level::Info,
         format!(
-            "Rate cap {} kHz is below every rate {device} takes ({} kHz up); using {using}",
-            text::khz_short(saved),
-            text::khz_short(lowest)
+            "{device} does not take {} kHz: it runs at {} kHz",
+            text::khz_short(set),
+            text::khz_short(used)
         ),
     );
 }

@@ -48,6 +48,16 @@ impl Buf {
         }
     }
 
+    /// Adds `other` (at the same rate) from `start`, at `gain`; what goes
+    /// past its end is left out.
+    pub fn mix(&mut self, start: f64, other: &Buf, gain: f64) {
+        let from = (start * self.rate).round().max(0.0) as usize;
+        let left = self.l.iter_mut().skip(from).zip(&other.l);
+        for (o, v) in left.chain(self.r.iter_mut().skip(from).zip(&other.r)) {
+            *o += gain * v;
+        }
+    }
+
     /// Adds `tone` from `start` at `pan`.
     pub fn tone(&mut self, start: f64, pan: f64, tone: &Tone) {
         let rate = self.rate;
@@ -352,9 +362,11 @@ pub fn scatter(seed: &mut u64) -> f64 {
     0.5 + 0.5 * white(seed)
 }
 
-/// A band-pass (constant peak gain), transposed direct form II.
+/// A band-pass (constant peak gain), transposed direct form II: one on
+/// `f` Hz ([`Biquad::band`], `q` its sharpness), retuned as it runs
+/// ([`Biquad::retuned`]), a sample at a time ([`Biquad::run`]).
 #[derive(Clone, Copy, Debug)]
-struct Biquad {
+pub struct Biquad {
     b0: f64,
     b2: f64,
     a1: f64,
@@ -364,7 +376,8 @@ struct Biquad {
 }
 
 impl Biquad {
-    fn band(f: f64, q: f64, rate: f64) -> Biquad {
+    /// A band-pass on `f` Hz at `rate`, `q` its sharpness.
+    pub fn band(f: f64, q: f64, rate: f64) -> Biquad {
         Biquad {
             b0: 0.0,
             b2: 0.0,
@@ -377,7 +390,7 @@ impl Biquad {
     }
 
     /// The same filter, its state kept, at `f` Hz.
-    fn retuned(self, f: f64, q: f64, rate: f64) -> Biquad {
+    pub fn retuned(self, f: f64, q: f64, rate: f64) -> Biquad {
         let w = TAU * f.min(0.45 * rate) / rate;
         let alpha = w.sin() / (2.0 * q);
         let a0 = 1.0 + alpha;
@@ -390,7 +403,8 @@ impl Biquad {
         }
     }
 
-    fn run(&mut self, x: f64) -> f64 {
+    /// The next sample out, for `x` in.
+    pub fn run(&mut self, x: f64) -> f64 {
         let y = self.b0 * x + self.z1;
         self.z1 = -self.a1 * y + self.z2;
         self.z2 = self.b2 * x - self.a2 * y;

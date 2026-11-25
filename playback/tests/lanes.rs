@@ -14,6 +14,7 @@ use std::sync::mpsc::Receiver;
 use common::lanes::*;
 use common::*;
 use jodel_output::lanes::Parts;
+use jodel_output::mixer::{desk_format, DESK_RATE};
 use jodel_output::{Capabilities, SampleFormat};
 use jodel_playback::{
     Captures, Command, Event, JumpAt, MakeStems, PlayState, Player, PlayerOptions,
@@ -24,8 +25,9 @@ use SampleFormat::*;
 
 type Script<'a> = &'a dyn Fn(&Player, &Receiver<Event>, &Gate, &Captures);
 
-/// What the device gets from `script` directly, and through a lane input
-/// with the quarter's stems made beside main: the same bytes. Offline, so
+/// What the device gets from `script` directly (at the format the desk
+/// runs the device at), and through a lane input with the quarter's stems
+/// made beside main: the same bytes. Offline, so
 /// the parts are there on every frame (waited for), untouched. With no
 /// separator none are asked for, and the lanes carry main alone.
 fn same_through_lanes(caps: Capabilities, options: PlayerOptions, script: Script) {
@@ -33,8 +35,9 @@ fn same_through_lanes(caps: Capabilities, options: PlayerOptions, script: Script
         Some(_) => (MakeStems::Separate, Parts::Present),
         None => (MakeStems::Never, Parts::None),
     };
+    let desk = desk_format(&caps, DESK_RATE).expect("a desk's format");
     let direct = {
-        let (target, captures, gate) = GatedTarget::new(caps.clone());
+        let (target, captures, gate) = GatedTarget::new([desk].into_iter().collect());
         let (player, events) = Player::new(Box::new(target), options.clone());
         script(&player, &events, &gate, &captures);
         drop(player);

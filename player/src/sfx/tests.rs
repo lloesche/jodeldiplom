@@ -37,29 +37,79 @@ fn wav(samples: &[f32], rate: u32) -> Vec<u8> {
     out
 }
 
-/// `sounds` (each at its time, seconds) mixed into one stereo take.
-fn sequence(rate: u32, sounds: &[(f64, Sound, f32)]) -> Vec<f32> {
+/// `sounds` (each at its time, seconds, with its gain and pan) mixed into
+/// one stereo take, as the desk mixes them (the near side whole).
+fn sequence(rate: u32, sounds: &[(f64, Sound, f32, f32)]) -> Vec<f32> {
     let end = sounds
         .iter()
-        .map(|&(t, s, _)| t + s.render(rate).seconds())
+        .map(|&(t, s, ..)| t + s.render(rate).seconds())
         .fold(0.0, f64::max);
     let mut out = vec![0.0f32; 2 * (end * f64::from(rate)).ceil() as usize + 2];
-    for &(t, s, gain) in sounds {
+    for &(t, s, gain, pan) in sounds {
         let at = 2 * (t * f64::from(rate)).round() as usize;
+        let p = pan.clamp(-1.0, 1.0);
+        let sides = [gain * (1.0 - p).min(1.0), gain * (1.0 + p).min(1.0)];
         for (k, v) in s.render(rate).interleaved().into_iter().enumerate() {
-            out[at + k] += gain * v;
+            out[at + k] += sides[k % 2] * v;
         }
     }
     out
 }
 
-/// Writes every sound, and a few runs of them as the game plays them, as
+/// A result of `points`, with `hit` words and a best streak of `streak`,
+/// `tiers` its phrases', its `medal`, the `best` before, sung whole or not.
+fn result(
+    (points, hit, streak): (u32, u32, u32),
+    tiers: &[Option<Tier>],
+    (medal, best, whole): (Option<crate::core::singing::Medal>, Option<u32>, bool),
+) -> crate::core::singing::SongResult {
+    crate::core::singing::SongResult {
+        title: "Song".into(),
+        points,
+        hit,
+        words: 45,
+        streak,
+        phrases: tiers
+            .iter()
+            .map(|&tier| crate::core::shine::Shone {
+                line: 0,
+                end: 1.0,
+                value: 0.9,
+                diva: 0.9,
+                tier,
+            })
+            .collect(),
+        medal,
+        best,
+        whole,
+        demo: false,
+    }
+}
+
+/// The sounds of `result`'s reveal as the screen plays them, frame by
+/// frame at 60 a second: each at the frame it is cued on.
+fn revealed(result: crate::core::singing::SongResult) -> Vec<(f64, Sound, f32, f32)> {
+    let shown = crate::core::singing::Shown::new(result, 1, 0);
+    let mut sounds = reveal::RevealSounds::default();
+    let mut heard = Vec::new();
+    for f in 0..(60.0 * (shown.reveal.settled() + 1.0)) as u64 {
+        let t = shown.time(f * 1000 / 60);
+        for c in sounds.frame(Some((&shown, t))) {
+            heard.push((t, c.sound, c.gain, c.pan));
+        }
+    }
+    heard
+}
+
+/// Writes every sound, and a few runs of them as the game plays them
+/// (a whole diploma revealed among them, for each kind of verdict), as
 /// WAV files into the folder `JODEL_SFX_WAVS` names, to listen to and to
 /// look at: `cargo test -p jodeldiplom sfx::tests::write_the_sounds --
 /// --ignored`.
 #[test]
 #[ignore]
 fn write_the_sounds() {
+    use crate::core::singing::Medal;
     let Some(dir) = std::env::var_os("JODEL_SFX_WAVS") else {
         return;
     };
@@ -73,65 +123,78 @@ fn write_the_sounds() {
     let mut ripple = Vec::new();
     for (k, step) in [0, 2, 4, 6, 8, 7, 5, 3, 1, 4].into_iter().enumerate() {
         let t = 0.16 * k as f64;
-        ripple.push((t, Sound::Pop(step), 1.0));
-        ripple.push((t + SWELL, Sound::Sparkle(step), 1.0));
+        ripple.push((t, Sound::Pop(step), 1.0, 0.0));
+        ripple.push((t + SWELL, Sound::Sparkle(step), 1.0, 0.0));
     }
     // A word's bubbles bursting together: a ripple.
     for j in 0..4 {
         let t = 2.0 + moments::RIPPLE * j as f64;
-        ripple.push((t, Sound::Pop(3 + j), 1.0));
+        ripple.push((t, Sound::Pop(3 + j), 1.0, 0.0));
     }
-    ripple.push((2.0 + 3.0 * moments::RIPPLE + SWELL, Sound::Sparkle(6), 1.0));
+    ripple.push((
+        2.0 + 3.0 * moments::RIPPLE + SWELL,
+        Sound::Sparkle(6),
+        1.0,
+        0.0,
+    ));
     let streak = [
-        (0.0, Sound::StepUp(1), 1.0),
-        (1.0, Sound::StepUp(2), 1.0),
-        (2.0, Sound::StepUp(3), 1.0),
-        (3.2, Sound::Break, 1.0),
+        (0.0, Sound::StepUp(1), 1.0, 0.0),
+        (1.0, Sound::StepUp(2), 1.0, 0.0),
+        (2.0, Sound::StepUp(3), 1.0, 0.0),
+        (3.2, Sound::Break, 1.0, 0.0),
     ];
     let tiers = [
-        (0.0, Sound::Tier(Tier::Good), 1.0),
-        (1.2, Sound::Tier(Tier::Great), 1.0),
-        (2.6, Sound::Tier(Tier::Amazing), 1.0),
-        (4.4, Sound::Tier(Tier::Diva), 1.0),
+        (0.0, Sound::Tier(Tier::Good), 1.0, 0.0),
+        (1.2, Sound::Tier(Tier::Great), 1.0, 0.0),
+        (2.6, Sound::Tier(Tier::Amazing), 1.0, 0.0),
+        (4.4, Sound::Tier(Tier::Diva), 1.0, 0.0),
     ];
-    // A Gold result with a new best revealed, as the screen plays it.
-    let result = crate::core::singing::SongResult {
-        title: "Song".into(),
-        points: 12_400,
-        hit: 41,
-        words: 45,
-        streak: 23,
-        phrases: [Some(Tier::Diva), None, Some(Tier::Good), Some(Tier::Great)]
-            .into_iter()
-            .chain([Some(Tier::Amazing), Some(Tier::Diva)])
-            .map(|tier| crate::core::shine::Shone {
-                line: 0,
-                end: 1.0,
-                value: 0.9,
-                diva: 0.9,
-                tier,
-            })
-            .collect(),
-        medal: Some(crate::core::singing::Medal::Gold),
-        best: Some(9_000),
-        whole: true,
-        demo: false,
+    // Diplomas revealed, as the screen plays them: a Gold one with a new
+    // best, a Silver one short of its best, one without a medal, one not
+    // sung from its start, one with nothing scored, and one the demo key
+    // sang (its best line no best, a tap).
+    let six = [Some(Tier::Diva), None, Some(Tier::Good), Some(Tier::Great)]
+        .into_iter()
+        .chain([Some(Tier::Amazing), Some(Tier::Diva)])
+        .collect::<Vec<_>>();
+    let gold = result(
+        (12_400, 41, 23),
+        &six,
+        (Some(Medal::Gold), Some(9_000), true),
+    );
+    let silver = result(
+        (7_300, 34, 12),
+        &six[..4],
+        (Some(Medal::Silver), Some(9_000), true),
+    );
+    let cheer = result(
+        (2_100, 14, 5),
+        &[None, Some(Tier::Good), None],
+        (None, None, true),
+    );
+    let whole = result((5_600, 30, 9), &six[..3], (None, Some(4_000), false));
+    let silent = result((0, 0, 0), &[], (None, None, false));
+    let demo = crate::core::singing::SongResult {
+        demo: true,
+        ..result((9_100, 40, 30), &six, (Some(Medal::Gold), None, true))
     };
-    let shown = crate::core::singing::Shown::new(result, 1, 0);
-    let revealed: Vec<(f64, Sound, f32)> = shown
-        .reveal
-        .beats()
-        .iter()
-        .filter_map(|&(at, b)| reveal::sound_of(b, &shown).map(|(s, gain, _)| (at, s, gain)))
-        .collect();
-    for (name, run) in [
-        ("run-ripple", &ripple[..]),
-        ("run-streak", &streak[..]),
-        ("run-tiers", &tiers[..]),
-        ("run-result", &revealed[..]),
-    ] {
+    let runs = [
+        ("run-ripple", ripple),
+        ("run-streak", streak.to_vec()),
+        ("run-tiers", tiers.to_vec()),
+        ("run-diploma-gold-new-best", revealed(gold)),
+        ("run-diploma-silver", revealed(silver)),
+        ("run-diploma-cheer", revealed(cheer)),
+        ("run-diploma-whole", revealed(whole)),
+        ("run-diploma-silent", revealed(silent)),
+        ("run-diploma-demo", revealed(demo)),
+    ];
+    for (name, run) in runs {
+        let take = sequence(rate, &run);
+        let peak = take.iter().fold(0.0f32, |m, v| m.max(v.abs()));
+        assert!(peak < 0.5, "{name}: {peak}");
         let path = dir.join(format!("{name}.wav"));
-        durable::write_atomic(&path, &wav(&sequence(rate, run), rate)).unwrap();
+        durable::write_atomic(&path, &wav(&take, rate)).unwrap();
     }
 }
 

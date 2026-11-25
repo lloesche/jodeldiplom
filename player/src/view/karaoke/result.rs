@@ -1,15 +1,14 @@
 //! A song's result in Karaoke mode's picture ([`ResultShown`]): what was
-//! shown and its reveal's time, for the stage to draw; and its words, kind
-//! ones and never shaming (no medal is cheered on; a song not sung from
-//! its start is told what medals take), as the stage writes them and as
-//! the picture's lines where no stage draws it.
+//! shown and its reveal's time, for the stage to draw; and its words (the
+//! verdict's are the core's, [`verdict_words`]), as the stage writes them
+//! and as the picture's lines where no stage draws it.
 
 use std::sync::Arc;
 
 use super::mode::line;
 use super::{points_text, LineKind, LyricLine};
 use crate::core::karaoke;
-use crate::core::singing::{Medal, Shown, SongResult, Verdict};
+use crate::core::singing::{verdict_words, Shown, SongResult};
 use crate::core::State;
 
 /// A song's result as the mode shows it: what was shown, its reveal's time
@@ -59,34 +58,13 @@ pub fn result_now(state: &State) -> Option<ResultShown> {
     })
 }
 
-/// The words for how the song was sung under the medal (or what stands
-/// for it): its name, and a line under it.
-pub fn verdict_words(r: &SongResult) -> (&'static str, &'static str) {
-    match r.verdict() {
-        Verdict::Whole => (
-            "Nice singing!",
-            "Sing it from the start for a medal and a best",
-        ),
-        Verdict::Medal(Medal::Gold) => ("GOLD", "Superstar!"),
-        Verdict::Medal(Medal::Silver) => ("SILVER", "Brilliant!"),
-        Verdict::Medal(Medal::Bronze) => ("BRONZE", "Well sung!"),
-        Verdict::Cheer if f64::from(r.hit) >= 0.4 * f64::from(r.words) => {
-            ("So close!", "Bronze is just a few more words away")
-        }
-        Verdict::Cheer => ("Good warm-up!", "Sing it again and watch it grow"),
-        Verdict::Silent => (
-            "Silent night?",
-            "Did the mic fall asleep? Wake it up and sing along",
-        ),
-    }
-}
-
-/// The Yodel Diploma's printed words (the stage hands the result out as
-/// one): its heading, the lines round the song's title (yodelled duly, or
-/// with nothing scored very quietly), its entries' names, what the seal's
-/// place, the signature and the date are marked with, and the rubber stamp
-/// a silent song gets. Nobody's name: it certifies the song sung. (The
-/// grades are the stage's, with each verdict's look.)
+/// The result diploma's printed words (the stage hands the result out as
+/// one): its heading ("Jodeldiplom", the one German word on it), the
+/// lines round the song's title (yodelled duly, or with nothing scored
+/// very quietly), its entries' names, what the seal's place, the
+/// signature and the date are marked with, and the rubber stamp a silent
+/// song gets. Nobody's name: it certifies the song sung. (The grades are
+/// the core's, [`Verdict::grade`](crate::core::singing::Verdict::grade).)
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct DiplomaWords {
     /// Its heading.
@@ -105,9 +83,9 @@ pub struct DiplomaWords {
     pub asleep: &'static str,
 }
 
-/// The Yodel Diploma's printed words.
+/// The result diploma's printed words.
 pub const DIPLOMA: DiplomaWords = DiplomaWords {
-    heading: "Yodel Diploma",
+    heading: "Jodeldiplom",
     certify: "This is to certify that the song",
     yodelled: (
         "has been duly yodelled, with these results",
@@ -183,6 +161,7 @@ pub fn plain_lines(r: &SongResult, next: &str) -> Vec<LyricLine> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::singing::Medal;
 
     fn result(medal: Option<Medal>, whole: bool, best: Option<u32>) -> SongResult {
         SongResult {

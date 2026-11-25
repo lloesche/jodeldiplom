@@ -12,12 +12,10 @@ use super::super::super::stage_gpu::{kind, Instance};
 use super::super::{disc, rgba, Face, Rgb, Stage, GOLD, WHITE};
 use super::sheet::{ENTRIES, LINE_FROM, LINE_TO};
 use super::{bump, burst, clamp01, fade, Drawn, Pen, ResultShown, Room, Written, PRINT};
-use crate::core::singing::{Beat, WORDS_FILL};
+use crate::core::singing::{Beat, STAMP_DOWN, STREAK_WRITE, WORDS_FILL};
 use crate::gui::particles::Kind;
 use crate::view::karaoke::points_text;
 
-/// How long the best streak takes to write.
-const STREAK_WRITE: f32 = 0.45;
 /// How long a new best's words take to write, after its stamp.
 const BEST_WRITE: f32 = 0.5;
 /// A new best's stamp: its words and red.
@@ -185,7 +183,7 @@ impl Stage {
         let Some(a) = shown.shown.reveal.age(Beat::Streak, t) else {
             return;
         };
-        let age = (a as f32, STREAK_WRITE);
+        let age = (a as f32, STREAK_WRITE as f32);
         let end = self.entry_written(d, room, (2, &words.streak), age);
         let at = room.entry(2, 0.0);
         let middle = ((at.0 + end.0) / 2.0, at.1 - 2.0 * room.s);
@@ -260,11 +258,11 @@ impl Stage {
     }
 
     /// A rubber stamp of `text` in `ink` slapped on `age` seconds before
-    /// `t` (the reveal's time; down from large in a tenth of a second, a
-    /// thump), turned, its frame worn
-    /// and its words specked where the ink did not take: right of the
-    /// entries' longest value, shrunk to fit there down to
-    /// [`STAMP_LEAST`] of its size, else by the heading's right corner.
+    /// `t` (the reveal's time; down from large in [`STAMP_DOWN`], a
+    /// thump), turned, its frame worn and its words specked where the ink
+    /// did not take: right of the entries' longest value, shrunk to fit
+    /// there down to [`STAMP_LEAST`] of its size, else by the heading's
+    /// right corner.
     pub(super) fn rubber_stamp(
         &mut self,
         d: &mut Drawn,
@@ -275,10 +273,11 @@ impl Stage {
     ) {
         let s = room.s;
         let ((cx, cy), k) = self.stamp_place(room, words, text);
-        let (scale, shows) = if age < 0.1 {
-            (1.9 - 0.9 * (age / 0.1) * (age / 0.1), clamp01(age / 0.04))
+        let down = STAMP_DOWN as f32;
+        let (scale, shows) = if age < down {
+            (1.9 - 0.9 * (age / down) * (age / down), clamp01(age / 0.04))
         } else {
-            let k = age - 0.1;
+            let k = age - down;
             (1.0 + 0.07 * (-k * 12.0).exp() * (k * 34.0).cos(), 1.0)
         };
         let px = (STAMP_PX * s * k).round().max(9.0);

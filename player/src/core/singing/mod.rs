@@ -46,6 +46,7 @@ mod moments;
 mod notes;
 mod result;
 mod reveal;
+pub mod signature;
 mod tally;
 mod undo;
 
@@ -54,8 +55,11 @@ pub use demo::Demo;
 pub use judge::{KeyStep, SungKey, KEY_FRAMES, SHARE, TOLERANCE};
 pub use moments::{Burst, Cue, Cursor, Moment, Since};
 pub use notes::{notes_of, LineNotes, Note, Notes};
-pub use result::{Medal, SongResult, Verdict};
-pub use reveal::{Beat, Motion, Reveal, Shown, DROP, WORDS_FILL};
+pub use result::{verdict_words, Medal, SongResult, Verdict};
+pub use reveal::{
+    ease_out, signed, unrolled, Beat, Motion, Reveal, Shown, Side, DATE_FROM, DATING, DROP,
+    GRADE_WRITE, SIGNING, STAMP_DOWN, STREAK_WRITE, UNROLL, WORDS_FILL,
+};
 pub use tally::{Run, Tally};
 
 /// What a word hit scores.

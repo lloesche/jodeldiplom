@@ -1,5 +1,8 @@
 //! How a song was sung, shown when it ends ([`SongResult`]), its medal and
-//! what it comes to ([`Verdict`]).
+//! what it comes to ([`Verdict`]), and the words for that: kind ones,
+//! never shaming (no medal is cheered on; a song not sung from its start
+//! is told what medals take), as the result is shown and written in on its
+//! diploma ([`verdict_words`], [`Verdict::grade`]).
 
 use super::Tally;
 use crate::core::shine::{Shone, Tier};
@@ -57,6 +60,42 @@ pub enum Verdict {
     Whole,
     /// Nothing scored: not a word hit, or none heard at all.
     Silent,
+}
+
+/// The name of a song not sung from its start, and of one with nothing
+/// scored.
+const WHOLE: &str = "Nice singing!";
+const SILENT: &str = "Silent night?";
+
+impl Verdict {
+    /// The grade written in on the diploma: a medal as its Latin, a cheer
+    /// as a line of its own, else the verdict's name.
+    pub fn grade(self) -> &'static str {
+        match self {
+            Verdict::Medal(Medal::Gold) => "summa cum laude",
+            Verdict::Medal(Medal::Silver) => "magna cum laude",
+            Verdict::Medal(Medal::Bronze) => "cum laude",
+            Verdict::Cheer => "participated with great enthusiasm",
+            Verdict::Whole => WHOLE,
+            Verdict::Silent => SILENT,
+        }
+    }
+}
+
+/// The words for how `r` was sung under the medal (or what stands for
+/// it): its name, and a line under it.
+pub fn verdict_words(r: &SongResult) -> (&'static str, &'static str) {
+    match r.verdict() {
+        Verdict::Whole => (WHOLE, "Sing it from the start for a medal and a best"),
+        Verdict::Medal(Medal::Gold) => ("GOLD", "Superstar!"),
+        Verdict::Medal(Medal::Silver) => ("SILVER", "Brilliant!"),
+        Verdict::Medal(Medal::Bronze) => ("BRONZE", "Well sung!"),
+        Verdict::Cheer if f64::from(r.hit) >= 0.4 * f64::from(r.words) => {
+            ("So close!", "Bronze is just a few more words away")
+        }
+        Verdict::Cheer => ("Good warm-up!", "Sing it again and watch it grow"),
+        Verdict::Silent => (SILENT, "Did the mic fall asleep? Wake it up and sing along"),
+    }
 }
 
 /// How a song was sung, shown when it ends.

@@ -318,7 +318,7 @@ fn a_flush_on_a_lane_stream_drops_what_the_device_holds_of_it() {
     let mut out = d.target.open(&lane_request(FORMAT)).unwrap();
     let (a, b) = (|_: u64| 444, |_: u64| 888);
     out.write(&lanes(0, 24_000, &a, &present), None).unwrap();
-    wait_until("it plays", || d.mixer.timebase().heard > 9_600);
+    wait_until("it plays", || out.position().unwrap() > 9_600);
     out.flush().unwrap();
     let flushed = d.mixer.timebase().heard as usize;
     assert_eq!(out.position().unwrap(), out.written());
@@ -338,7 +338,7 @@ fn a_retract_on_a_lane_stream_takes_back_every_lane() {
     let mut out = d.target.open(&lane_request(FORMAT)).unwrap();
     let (a, b) = (|_: u64| 444, |_: u64| 888);
     out.write(&lanes(0, 20_000, &a, &present), None).unwrap();
-    wait_until("it plays", || d.mixer.timebase().heard > 4_800);
+    wait_until("it plays", || out.position().unwrap() > 4_800);
     let back = out.retract(12_000).unwrap();
     assert!(back > 0);
     assert_eq!(out.written(), 20_000 - back);
@@ -358,7 +358,7 @@ fn a_paused_lane_stream_goes_on_where_it_was() {
     let mut out = d.target.open(&lane_request(FORMAT)).unwrap();
     let main = |k: u64| 4 * (k as i32 + 1);
     out.write(&lanes(0, 9_600, &main, &present), None).unwrap();
-    wait_until("it plays", || d.mixer.timebase().heard > 4_800);
+    wait_until("it plays", || out.position().unwrap() > 4_800);
     out.pause().unwrap();
     std::thread::sleep(Duration::from_millis(50));
     out.resume().unwrap();
@@ -381,7 +381,7 @@ fn the_microphone_is_told_a_lane_streams_frames() {
     let (mut guest, _guest_fader) = d.mixer.input(&preview, Role::Guest, 0.0);
     let mut g = open(&mut guest, RATE);
     g.write(&frames(0, 9_600, |k| k as i32), None).unwrap();
-    wait_until("the guest plays", || d.mixer.timebase().heard > 9_600);
+    wait_until("the guest plays", || g.position().unwrap() == 9_600);
     let mut out = d.target.open(&lane_request(FORMAT)).unwrap();
     let total = u64::from(RATE);
     out.write(&lanes(0, total, &constant, &present), None)
@@ -503,14 +503,14 @@ fn touched_across_a_pause_a_flush_and_a_new_output_no_main_is_heard() {
     let mut out = d.target.open(&lane_request(FORMAT)).unwrap();
     out.write(&lanes(0, 9_600, &constant, &present), None)
         .unwrap();
-    wait_until("it plays", || d.mixer.timebase().heard > 4_800);
+    wait_until("it plays", || out.position().unwrap() > 4_800);
     // Paused and resumed.
     out.pause().unwrap();
     std::thread::sleep(Duration::from_millis(50));
     out.resume().unwrap();
     out.write(&lanes(9_600, 9_600, &constant, &present), None)
         .unwrap();
-    wait_until("it plays on", || d.mixer.timebase().heard > 14_400);
+    wait_until("it plays on", || out.position().unwrap() > 14_400);
     // Flushed (a seek).
     out.flush().unwrap();
     let w = out.written();
@@ -687,11 +687,10 @@ fn lanes_at(channels: u16, parts: usize) {
 }
 
 #[test]
-fn mono_and_odd_lane_widths_mix_as_wide_ones() {
-    lanes_at(1, 4);
-    lanes_at(2, 2);
-    lanes_at(1, 1);
-    lanes_at(3, 3);
+fn odd_lane_widths_mix_as_wide_ones() {
+    for parts in [1, 2, 3] {
+        lanes_at(2, parts);
+    }
 }
 
 #[test]

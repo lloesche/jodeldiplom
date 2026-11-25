@@ -321,10 +321,9 @@ impl OutputTarget for InputTarget {
         self.slot.name.clone()
     }
 
-    /// What the input takes, fixed when first asked (until its role
-    /// changes, [`Fader::set_role`]): a Lead the device's capabilities; a
-    /// guest exactly the device's format while it is open, else the
-    /// device's capabilities.
+    /// What the input takes: the desk's one format, whatever its role
+    /// ([`Mixer::format`]; asked of the device again where it was not
+    /// there, or failed). [`Error::NoDevice`] while it has none.
     fn capabilities(&mut self) -> Result<Capabilities, Error> {
         let slot = self.slot.id;
         ask(&self.slot.tx, |done| Msg::Capabilities { slot, done })?
@@ -519,12 +518,11 @@ impl Fader {
         self.slot.tx.send(msg).map_err(|_| Error::Closed)
     }
 
-    /// Makes the input a [`Role::Lead`] or a [`Role::Guest`]: what it is
-    /// offered is asked again on its next open ([`InputTarget`]'s
-    /// capabilities), and the microphone's tap goes to the newest Lead
-    /// output (see [`Mixer::set_mic`]). The output open on it plays on as
-    /// it is: a guest made Lead is at the device's format, so nothing
-    /// opens again. Waits for the mixer thread (a device period, about).
+    /// Makes the input a [`Role::Lead`] or a [`Role::Guest`]: the
+    /// microphone's tap goes to the newest Lead output (see
+    /// [`Mixer::set_mic`]). The output open on it plays on as it is (every
+    /// input plays at the desk's one format). Waits for the mixer thread
+    /// (a device period, about).
     ///
     /// [`Error::InvalidArgument`] when a Lead with an output open would
     /// leave no Lead output open; [`Error::Closed`] when the input is

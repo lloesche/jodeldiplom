@@ -10,8 +10,8 @@
 //! not; a part's curve through exactly 1 does not let the switch go, the
 //! input's own curve moving does not hold it, and curves that end at 1
 //! bring main back bit for bit. A guest made Lead takes the microphone's
-//! tap and is asked again what it takes, with no new opening of the
-//! device; the only Lead playing cannot be made a guest. (What the mixer
+//! tap, offered the desk's one format as before, with no new opening of
+//! the device; the only Lead playing cannot be made a guest. (What the mixer
 //! thread allocates is counted in `automation_alloc.rs`.)
 
 mod common;
@@ -223,29 +223,29 @@ fn a_set_ends_with_its_output_and_one_given_with_none_open_is_the_nexts() {
     fader.automate(set(0.5)).unwrap();
     play(&mixer, &mut target, &mut out, &rest, 4_800);
     out.drain(None).unwrap();
-    // Its output closed (the device with it): the set is gone. One given
+    // Its output closed (the device plays on): the set is gone. One given
     // now is the next output's, from its first frame.
     drop(out);
     wait_until("gone", || automation_view(&mixer).is_none());
     fader.automate(set(0.25)).unwrap();
     let mut out = open_started(&mut target, RATE, L);
-    play(&mixer, &mut target, &mut out, &rest, 4_800);
+    play(&mixer, &mut target, &mut out, &rest, 9_600);
     assert_eq!(automation_view(&mixer).map(|v| v.input), Some(0.25));
     out.drain(None).unwrap();
-    // Another output on the input (the old one closed first, the device
-    // opens again): the set ends with the one it was for.
+    // Another output on the input (the old one closed first): the set
+    // ends with the one it was for.
     let mut out = open_started(&mut target, RATE, L);
     wait_until("ended", || automation_view(&mixer).is_none());
-    play(&mixer, &mut target, &mut out, &rest, 4_800);
+    play(&mixer, &mut target, &mut out, &rest, 14_400);
     out.drain(None).unwrap();
     drop(out);
     drop(mixer);
-    let opened: Vec<Vec<i32>> = (0..3).map(|i| device.left(i)).collect();
-    let lengths: Vec<usize> = opened.iter().map(Vec::len).collect();
-    assert_eq!(lengths, [4_800; 3]);
-    assert_eq!(off(&opened[0], 0, 4_800, |_| f64::from(L) * 0.5), None);
-    assert_eq!(off(&opened[1], 0, 4_800, |_| f64::from(L) * 0.25), None);
-    assert_eq!(wrong(&opened[2], 0, 4_800, |_| L), None);
+    // The three, one after the other, on the one opening of the device.
+    let left = device.left(0);
+    assert_eq!(left.len(), 14_400);
+    assert_eq!(off(&left, 0, 4_800, |_| f64::from(L) * 0.5), None);
+    assert_eq!(off(&left, 4_800, 9_600, |_| f64::from(L) * 0.25), None);
+    assert_eq!(wrong(&left, 9_600, 14_400, |_| L), None);
 }
 
 #[test]
@@ -591,7 +591,7 @@ fn automation_is_refused_for_a_part_the_input_lacks() {
 }
 
 #[test]
-fn a_guest_made_lead_takes_the_microphone_and_is_asked_again() {
+fn a_guest_made_lead_takes_the_microphone() {
     let _guard = real_time();
     let (mixer, device) = mixer();
     let (sa, sb) = (mixer.strip("A"), mixer.strip("B"));
@@ -601,8 +601,8 @@ fn a_guest_made_lead_takes_the_microphone_and_is_asked_again() {
     let (mut b, fb) = mixer.input(&sb, Role::Guest, 1.0);
     let mut oa = open_with(&mut a, Duration::from_secs(3));
     oa.write(&frames(0, 96_000, |_| 0), None).unwrap();
-    wait_until("the lead plays", || mixer.timebase().heard > 24_000);
-    // A guest while the device is open: offered its format alone.
+    wait_until("the lead plays", || oa.position().unwrap() > 24_000);
+    // A guest is offered the desk's format alone, as the Lead is.
     assert_eq!(b.capabilities().unwrap().iter().count(), 1);
     let mut ob = open_with(&mut b, Duration::from_secs(3));
     ob.write(&frames(0, 48_000, |_| 0), None).unwrap();
@@ -612,9 +612,9 @@ fn a_guest_made_lead_takes_the_microphone_and_is_asked_again() {
     let lead_frames = singer.voice().iter().map(|v| v.stream_frame).max();
     assert!(lead_frames > Some(24_000), "{lead_frames:?}");
     // Made Lead: the tap is on its output (the newest Lead's), told in its
-    // frames, and it is asked again what it takes.
+    // frames; it is offered the same one format.
     fb.set_role(Role::Lead).unwrap();
-    assert_eq!(b.capabilities().unwrap().iter().count(), 2);
+    assert_eq!(b.capabilities().unwrap().iter().count(), 1);
     singer.voice();
     std::thread::sleep(Duration::from_millis(200));
     let told = singer.voice().iter().map(|v| v.stream_frame).max().unwrap();

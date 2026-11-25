@@ -22,11 +22,15 @@
 //! moment is cued.
 //!
 //! A song's result revealed after it ([`reveal`]) sounds its beats at once,
-//! each on the frame that reaches it.
+//! each on the frame that reaches it, the diploma's own sounds among them
+//! ([`diploma`]). The song is over then and its output closed: the desk's
+//! device plays all along, so they sound all the same.
 
 pub mod banks;
 pub mod cheers;
+pub mod diploma;
 pub mod moments;
+pub mod pen;
 pub mod reveal;
 pub mod sounds;
 pub mod store;

@@ -9,8 +9,11 @@
 //!   embedded Cascadia Mono.
 //! - The key of its game sounds kept on disk: `$OUT_DIR/sfx_key.rs`, a
 //!   hash of the code that makes them (`src/sfx/`'s `synth.rs`,
-//!   `sounds.rs` and `cheers.rs`, not how they are played), so a bank kept by another
-//!   build of them is made again (`src/sfx/store.rs`).
+//!   `sounds.rs`, `cheers.rs`, `diploma.rs` and `pen.rs`, and what the
+//!   diploma's are timed to: the reveal's times and the signature's
+//!   stroke, `src/core/singing/`'s `reveal.rs` and `signature.rs`; not how
+//!   they are played), so a bank kept by another build of them is made
+//!   again (`src/sfx/store.rs`).
 //! - Its icon on Windows (GNU and GNU-LLVM targets): `windres` compiles
 //!   `assets/jodeldiplom.rc` into an object linked into the executable.
 //!   `WINDRES` names another resource compiler; without one the
@@ -39,7 +42,15 @@ fn main() {
 }
 
 /// The files whose code makes the game's sounds.
-const SOUND_SOURCES: [&str; 3] = ["src/sfx/synth.rs", "src/sfx/sounds.rs", "src/sfx/cheers.rs"];
+const SOUND_SOURCES: [&str; 7] = [
+    "src/sfx/synth.rs",
+    "src/sfx/sounds.rs",
+    "src/sfx/cheers.rs",
+    "src/sfx/diploma.rs",
+    "src/sfx/pen.rs",
+    "src/core/singing/reveal.rs",
+    "src/core/singing/signature.rs",
+];
 
 fn sounds_key() {
     let manifest = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());

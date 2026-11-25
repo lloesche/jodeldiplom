@@ -1,17 +1,21 @@
 //! The result screen's sounds, made here at the desk's rate like the
 //! game's others ([`super::sounds`]):
 //!
-//! - [`Sound::Tick`]: the points counting up: a short bright blip, a step
-//!   of the scale higher as the count goes, a click of noise on it.
+//! - [`Sound::Tick`]: the points counting up, as a coin counter's: the
+//!   click of its wheel, a coin's metallic blip on it, a step of the scale
+//!   higher as the count goes (the ticks coming faster and faster, the
+//!   tune runs up).
 //! - [`Sound::Gem`]: a phrase's gem popping in: a glassy plink, higher and
 //!   richer by its tier (none a soft tink, Good a chime, Great two bells,
 //!   Amazing a bright pair with a shimmer, Diva a sparkling run).
-//! - [`Sound::Medal`]: the medal stamped down: a thump and a crack of
-//!   noise, then its stinger: Bronze a warm plucked chord, Silver bells
-//!   ringing up to a chord, Gold a "ta-da-daa" in brass over bells and a
-//!   cascade of glitter.
-//! - [`Sound::NewBest`]: a new best: a fanfare, four brass notes rising to
-//!   a held chord, a roll of noise under them and a shimmer over it.
+//! - [`Sound::Medal`]: the medal's wax seal pressed down: a thump, the
+//!   wax's soft squelch and a crack, then its stinger: Bronze a warm
+//!   plucked chord, Silver bells ringing up to a chord, Gold a
+//!   "ta-da-daa" in brass over bells and a cascade of glitter.
+//! - [`Sound::NewBest`]: a new best: its rubber stamp slapped on
+//!   ([`super::diploma::rubber_stamp`]), then a fanfare, four brass notes
+//!   rising to a held chord, a roll of noise under them and a shimmer over
+//!   it.
 //!
 //! [`Sound::Tick`]: super::Sound::Tick
 //! [`Sound::Gem`]: super::Sound::Gem
@@ -21,42 +25,45 @@
 use super::sounds::{brass, env, penta, pluck, BELL, GLASS};
 use super::synth::{scatter, Buf, Noise, Partial, Tone};
 use crate::core::shine::Tier;
-use crate::core::singing::Medal;
+use crate::core::singing::{Medal, STAMP_DOWN};
 
 /// The steps of the scale the count-up's ticks climb.
-pub const TICK_STEPS: usize = 8;
+pub const TICK_STEPS: usize = 12;
 /// The medals, in the bank's order.
 pub const MEDALS: [Medal; 3] = [Medal::Bronze, Medal::Silver, Medal::Gold];
 
-/// A square-ish tone's partials, short.
-fn blip() -> Vec<Partial> {
-    [1.0, 3.0, 5.0]
-        .map(|n: f64| Partial::new(n, 1.0 / n, 0.03 / n))
-        .to_vec()
+/// A coin's partials: a square-ish tone, short, and the ring of a metal
+/// disc over it.
+fn coin() -> Vec<Partial> {
+    vec![
+        Partial::new(1.0, 1.0, 0.04),
+        Partial::new(3.0, 0.3, 0.012),
+        Partial::new(2.76, 0.25, 0.03),
+        Partial::new(5.4, 0.12, 0.015),
+    ]
 }
 
 /// Tick `step` of the count-up.
 pub fn tick(rate: u32, step: usize) -> Buf {
-    let mut b = Buf::new(rate, 0.07);
-    let f = penta(7 + step as i32);
-    b.tone(
-        0.0,
-        0.0,
-        &Tone::new(f, env(0.0005, 0.006, 0.012, 0.05), &blip()),
-    );
+    let mut b = Buf::new(rate, 0.09);
+    // The counter's wheel clicking on.
     b.noise(
         0.0,
         0.0,
         &Noise {
-            from: 6_000.0,
-            to: 5_000.0,
-            q: 1.5,
-            envelope: env(0.0002, 0.0, 0.002, 0.006),
-            amp: 0.5,
+            from: 3_800.0,
+            to: 3_000.0,
+            q: 2.2,
+            envelope: env(0.0002, 0.0, 0.0015, 0.006),
+            amp: 0.9,
             length: 0.006,
             seed: 0x71C + step as u64,
         },
     );
+    // A coin's blip on it, up the scale as the count goes.
+    let f = penta(step as i32);
+    let blip = Tone::new(f, env(0.0006, 0.004, 0.02, 0.075), &coin()).glide(1.02, 0.01);
+    b.tone(0.002, 0.0, &blip);
     b
 }
 
@@ -105,30 +112,30 @@ pub fn gem(rate: u32, tier: Option<Tier>) -> Buf {
     b
 }
 
-/// The stamp under a medal: a thump sliding down and a crack of noise.
+/// The wax seal pressed down under a medal: a thump sliding down, the
+/// soft squelch of the wax giving under it, and a crack of noise.
 fn stamp(b: &mut Buf) {
     let sine = [Partial::new(1.0, 1.0, f64::INFINITY)];
     let thump = Tone::new(140.0, env(0.001, 0.01, 0.06, 0.25), &sine).glide(0.4, 0.05);
     b.tone(0.0, 0.0, &thump);
-    b.noise(
-        0.0,
-        0.0,
-        &Noise {
-            from: 2_500.0,
-            to: 600.0,
-            q: 0.8,
-            envelope: env(0.0005, 0.0, 0.03, 0.12),
-            amp: 0.9,
-            length: 0.12,
-            seed: 0x57A3,
-        },
-    );
+    let noise = |from, to, q, decay, amp, seed| Noise {
+        from,
+        to,
+        q,
+        envelope: env(0.0005, 0.0, decay, 4.0 * decay),
+        amp,
+        length: 4.0 * decay,
+        seed,
+    };
+    b.noise(0.0, 0.0, &noise(2_500.0, 600.0, 0.8, 0.03, 0.6, 0x57A3));
+    b.noise(0.004, 0.0, &noise(520.0, 230.0, 1.4, 0.05, 1.1, 0x3A1));
 }
 
 /// `medal` stamped down, and its stinger.
 pub fn medal(rate: u32, medal: Medal) -> Buf {
     let mut b = Buf::new(rate, 2.2);
     stamp(&mut b);
+    super::diploma::medal_grade(&mut b, medal);
     let at = 0.12;
     match medal {
         Medal::Bronze => {
@@ -169,9 +176,18 @@ pub fn medal(rate: u32, medal: Medal) -> Buf {
     b
 }
 
-/// A new best's fanfare.
+/// A new best: its stamp slapped on, then its fanfare.
 pub fn new_best(rate: u32) -> Buf {
-    let mut b = Buf::new(rate, 2.4);
+    let mut b = Buf::new(rate, 2.65);
+    super::diploma::rubber_stamp(&mut b, 0.0);
+    let mut fanfare = Buf::new(rate, 2.4);
+    fanfare_into(&mut fanfare);
+    b.mix(STAMP_DOWN + 0.12, &fanfare, 0.8);
+    b
+}
+
+/// A new best's fanfare, into `b`.
+fn fanfare_into(b: &mut Buf) {
     // A roll of noise under it, swelling.
     b.noise(
         0.0,
@@ -205,5 +221,4 @@ pub fn new_best(rate: u32) -> Buf {
         b.tone(t, 1.6 * scatter(&mut seed) - 0.8, &grain);
     }
     b.room(0.35, 1.2);
-    b
 }

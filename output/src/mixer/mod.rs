@@ -3,7 +3,14 @@
 //! curves on one clock.
 //!
 //! [`Mixer::open`] takes an [`OutputTarget`] (the device, or a test's
-//! memory) and runs one thread, `jodel-mixer`, which holds the device output.
+//! memory) and runs one thread, `jodel-mixer`, which opens the device at
+//! once at the desk's format ([`desk_format`]: stereo, at the rate set for
+//! the device) and holds it open until the mixer is dropped. In real time
+//! it plays all along: silence where nothing sounds, never paused, never
+//! closed between songs. A device that is not there as the mixer starts,
+//! or that fails, is asked again what it takes, and opened, by the next
+//! output opened (a failure's is another epoch). Another device, or
+//! another rate, is another mixer.
 //! [`Mixer::strip`] makes a [`Strip`], a channel of the desk, and
 //! [`Mixer::strip_in`] one in a group (another strip);
 //! [`Mixer::input`] plugs an input into one: an [`InputTarget`], where one
@@ -11,7 +18,7 @@
 //! any number of hands may hold. The input goes when its target and every
 //! fader are dropped, or at once with [`Fader::close`] (or with
 //! [`Fader::withdraw`], only while nothing of it has been heard). Each
-//! output opened is a full [`Output`] in the device's format (pause,
+//! output opened is a full [`Output`] in the desk's format (pause,
 //! flush, retract, drain, its clock) with the ring the player writes; the
 //! mixer drains every running one a device period at a time, sums them and
 //! writes the device, as fast as the device takes frames: in real time on
@@ -100,18 +107,19 @@
 //!   hiccups, so a gain change is heard within it. An input's position
 //!   ([`Output::position`]) leaves out what the device has not played yet,
 //!   so it is what is heard.
-//! - **Formats:** the mixer does not resample. The [`Role::Lead`] input
-//!   owns the device's format: when it opens at another one, every other
-//!   output is closed ([`Error::Closed`]) and the device opens again at
-//!   it. A [`Role::Guest`] never displaces one: it is offered exactly the
-//!   device's format while the device is open, so its player resamples;
-//!   only with nothing open does it open the device at its own.
-//!   [`Fader::set_role`] changes an input's role as it plays (the incoming
-//!   song of a transition taking the lead).
+//! - **One format:** the mixer does not resample. Every input is offered
+//!   the desk's one format ([`InputTarget`]'s capabilities), so each
+//!   player resamples to it (songs, stems, the preview); an output asked
+//!   at another is refused ([`Error::FormatNotAccepted`]). A song at the
+//!   desk's rate plays bit for bit (see "Bit for bit"). An input's
+//!   [`Role`] says which is the main player, the one the microphone's
+//!   frames are told in; [`Fader::set_role`] changes it as it plays (the
+//!   incoming song of a transition taking the lead).
 //! - **The microphone's port:** [`Mixer::set_mic`] gives the desk a
 //!   microphone. The mixer taps the device for it while a Lead output is
-//!   open (again for each one, and each opening of the device), so its echo
-//!   canceller hears the whole mix as its sidechain, the stream frames told
+//!   open (again for each one), so its echo canceller hears the whole mix
+//!   as its sidechain (at the one rate all along: what it has learnt of
+//!   the room is kept from song to song), the stream frames told
 //!   in the Lead's own; the chain behind is the microphone's
 //!   ([`crate::input`]: the clock bridge, the echo canceller, the singer
 //!   isolated, the voice queued for its takers). The microphone has no
@@ -121,7 +129,8 @@
 //!   strip of its own: short sounds (a game's) from a bank at the
 //!   device's rate, each started on a frame of an input's stream, summed
 //!   with the inputs after the strip's gain; while none sounds, nothing
-//!   of it reaches the device (see `effects.rs`). It is in what the
+//!   of it reaches the device (see `effects.rs`); one for now sounds on
+//!   the next period, a song playing or not. It is in what the
 //!   microphone's tap hears, as everything summed is.
 //! - **Monitor:** a [`Monitor`] sees every frame as it goes to the device
 //!   (a spectrum of what is heard).
@@ -138,6 +147,7 @@ mod mic;
 mod mix;
 mod parts;
 mod ramp;
+mod rate;
 mod run;
 mod strip;
 mod strips;
@@ -151,6 +161,7 @@ pub use desk::{
 pub use effects::{EffectCue, Effects, EffectsView, SoundBank, LATE as EFFECT_LATE, VOICES};
 pub use fader::{Fader, InputTarget};
 pub use ramp::{equal_power, Curve, Ramp, Start};
+pub use rate::{desk_format, desk_rate, DESK_CHANNELS, DESK_RATE, FALLBACK_RATE};
 pub use strip::{Strip, METER_CHANNELS, STRIP_RAMP};
 
 use std::collections::BTreeMap;
@@ -162,6 +173,7 @@ use std::time::Duration;
 
 use crate::caps::Capabilities;
 use crate::error::Error;
+use crate::format::StreamFormat;
 use crate::input::Input;
 use crate::output::{Clock, OpenRequest, Output, OutputTarget, StreamInfo};
 use fader::SlotState;
@@ -178,8 +190,11 @@ pub struct MixerOptions {
     /// written. Defaults to 40 ms.
     pub buffer: Duration,
     /// The device's capabilities, when the caller has probed them already
-    /// (otherwise the mixer asks the target once, when first asked).
+    /// (otherwise the mixer asks the target, as it opens).
     pub capabilities: Option<Capabilities>,
+    /// The rate set for the device ([`desk_format`] falls back from it
+    /// where the device does not take it). Defaults to [`DESK_RATE`].
+    pub rate: u32,
 }
 
 impl Default for MixerOptions {
@@ -188,16 +203,17 @@ impl Default for MixerOptions {
             period: Duration::from_millis(10),
             buffer: Duration::from_millis(40),
             capabilities: None,
+            rate: DESK_RATE,
         }
     }
 }
 
-/// What an input is to the device's format.
+/// What an input is to the desk.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Role {
-    /// The main player: owns the device's format.
+    /// The main player: the microphone's frames are told in its.
     Lead,
-    /// Another player (a preview): plays at the device's format.
+    /// Another player (a preview).
     Guest,
 }
 
@@ -343,6 +359,9 @@ pub(crate) struct MixShared {
     timebase: Mutex<Timebase>,
     /// What the device runs at (`None`: closed).
     device: Mutex<Option<StreamInfo>>,
+    /// The desk's format (`None`: the device takes no stereo stream, or
+    /// is not there).
+    format: Mutex<Option<StreamFormat>>,
     mic: Mutex<MicView>,
     /// Since the start, over every opening of the device.
     clipped: AtomicU64,
@@ -374,6 +393,10 @@ impl MixShared {
         lock(&self.device)
     }
 
+    pub(crate) fn format(&self) -> MutexGuard<'_, Option<StreamFormat>> {
+        lock(&self.format)
+    }
+
     pub(crate) fn mic(&self) -> MutexGuard<'_, MicView> {
         lock(&self.mic)
     }
@@ -393,13 +416,17 @@ pub struct Mixer {
 }
 
 impl Mixer {
-    /// Starts the mixer on `target`. The device opens when the first input
-    /// opens an output, and closes with the last.
-    pub fn open(target: Box<dyn OutputTarget>, options: MixerOptions) -> Mixer {
+    /// Starts the mixer on `target`, the device opened at once at the
+    /// desk's format, for as long as the mixer runs.
+    pub fn open(mut target: Box<dyn OutputTarget>, options: MixerOptions) -> Mixer {
         let (tx, rx) = mpsc::channel();
         let shared = Arc::new(MixShared::default());
         let name = target.name();
-        let run = run::Run::new(target, options, tx.clone(), shared.clone());
+        let caps = options.capabilities.clone();
+        let caps = caps.or_else(|| target.capabilities().ok());
+        let format = caps.and_then(|c| desk_format(&c, options.rate));
+        *shared.format() = format;
+        let run = run::Run::new(target, format, options, tx.clone(), shared.clone());
         let thread = std::thread::Builder::new()
             .name("jodel-mixer".into())
             .spawn(move || run.run(rx))
@@ -410,6 +437,13 @@ impl Mixer {
             name,
             thread: Some(thread),
         }
+    }
+
+    /// The desk's format: what the device runs at, and what every output on
+    /// an input plays at (`None`: the device takes no stereo stream, or is
+    /// not there: the next output opened asks it again).
+    pub fn format(&self) -> Option<StreamFormat> {
+        *self.shared.format()
     }
 
     /// A new strip named `name` at the top of the desk, after those made

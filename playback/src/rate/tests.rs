@@ -348,12 +348,11 @@ fn gc7_resamples_the_44k_family() {
         .unwrap()
         .resample
         .is_none());
-    // No mono at all: resampling cannot help.
-    let none = choose_route(&pcm(44_100, 1, 16), &caps, &def).unwrap_err();
-    assert!(
-        none.reason.contains("nor any rate to resample to"),
-        "{none}"
-    );
+    // No mono at all: mono plays as stereo (doubled), resampled.
+    let mono = choose_route(&pcm(44_100, 1, 16), &caps, &def).unwrap();
+    assert_eq!((mono.input_channels, mono.channels), (1, 2));
+    assert_eq!(mono.output_rate, 48_000);
+    assert!(!mono.lossless);
     // Resampling off: no route.
     let none = choose_route(&pcm(44_100, 2, 16), &caps, &exact()).unwrap_err();
     assert!(none.reason.contains("(resampling is off)"), "{none}");

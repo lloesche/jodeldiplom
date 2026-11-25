@@ -334,6 +334,37 @@ mod tests {
     const RATE: u32 = 48_000;
     const FADE: usize = 480; // 10 ms
 
+    /// A lane stream of 1 and of 3 channels (the desk mixes stereo, the
+    /// lanes take any width): each lane's samples, and the words of the
+    /// frames supplied.
+    #[test]
+    fn a_lane_stream_splits_at_any_width() {
+        for channels in [1usize, 3] {
+            let mut lanes: Vec<LaneRun> = (0..3)
+                .map(|k| LaneRun::new(GainId::new(1, k), 0, 1.0))
+                .collect();
+            let width = channels * 3 + 1;
+            assert_eq!(crate::lanes::lane_width(channels as u16, 3), width);
+            // Frame f: lane k's sample c is f·100 + k·10 + c, the word f.
+            let samples: Vec<i32> = (0..4)
+                .flat_map(|f| {
+                    let lanes = (0..3)
+                        .flat_map(move |k| (0..channels).map(move |c| f * 100 + k * 10 + c as i32));
+                    lanes.chain(std::iter::once(f))
+                })
+                .collect();
+            let mut words = Vec::new();
+            split(&samples, channels, 1, 2, &mut lanes, &mut words);
+            assert_eq!(words, [1, 2]);
+            for (k, lane) in lanes.iter().enumerate() {
+                let want: Vec<i32> = (0..4)
+                    .flat_map(|f| (0..channels).map(move |c| f * 100 + k as i32 * 10 + c as i32))
+                    .collect();
+                assert_eq!(lane.samples, want, "{channels} channels, lane {k}");
+            }
+        }
+    }
+
     /// The words of `n` frames supplied, each from the last `(from, word)`
     /// at or before it.
     fn words(sw: &mut Switch, w: &[(usize, Parts)], n: usize) {

@@ -292,7 +292,7 @@ fn the_start_pill_is_start_by_click_during_and_after_the_reveal() {
 /// or past it, none bunched up to the next tick nor dropped as stale.
 #[test]
 fn the_reveal_sounds_on_the_frames_clock() {
-    use jodeldiplom::sfx::reveal::{sound_of, RevealSounds};
+    use jodeldiplom::sfx::reveal::{sounds_of, RevealSounds};
     let mut state = tab();
     op(&mut state, Op::KaraokeEnter);
     four_words(&mut state);
@@ -322,8 +322,7 @@ fn the_reveal_sounds_on_the_frames_clock() {
         .reveal
         .beats()
         .iter()
-        .filter(|&&(_, b)| sound_of(b, &shown).is_some())
-        .map(|&(at, _)| at)
+        .flat_map(|&(at, b)| sounds_of(b, &shown).map(move |_| at))
         .collect();
     assert_eq!(heard.len(), due.len(), "{heard:?}\n{due:?}");
     for (t, at) in heard.iter().zip(&due) {
@@ -507,9 +506,11 @@ fn a_song_sought_on_and_played_out_shows_its_result() {
 /// none of it, and runs to its end as ever.
 #[test]
 fn a_song_played_out_with_nothing_scored_shows_its_result() {
+    use jodeldiplom::core::singing::verdict_words;
     use jodeldiplom::core::singing::{Beat, Verdict};
-    use jodeldiplom::sfx::reveal::sound_of;
-    use jodeldiplom::view::karaoke::verdict_words;
+    use jodeldiplom::sfx::diploma::{Diploma, Entry};
+    use jodeldiplom::sfx::reveal::sounds_of;
+    use jodeldiplom::sfx::Sound;
     for (notes, best) in [(true, None), (true, Some(1_200)), (false, None)] {
         let mut state = started(0);
         let key = state.queue.paths[0].display().to_string();
@@ -543,11 +544,12 @@ fn a_song_played_out_with_nothing_scored_shows_its_result() {
             .iter()
             .any(|(_, b)| matches!(b, Beat::Tick(_) | Beat::Gem(..) | Beat::NewBest)));
         assert_eq!(reveal.points_at(reveal.end()), 0);
-        for beat in [Beat::Points, Beat::Words] {
-            assert!(reveal.when(beat).is_some());
-            assert_eq!(sound_of(beat, &shown), None, "{beat:?}");
-        }
-        assert!(sound_of(Beat::Verdict(Verdict::Silent), &shown).is_some());
+        // Nothing cheered: no ding, the pen alone for the words.
+        assert!(reveal.when(Beat::Points).is_some() && reveal.when(Beat::Words).is_some());
+        assert_eq!(sounds_of(Beat::Points, &shown).count(), 0);
+        let words: Vec<Sound> = sounds_of(Beat::Words, &shown).map(|h| h.0).collect();
+        assert_eq!(words, [Sound::Diploma(Diploma::Scribbled(Entry::Words))]);
+        assert!(sounds_of(Beat::Verdict(Verdict::Silent), &shown).count() > 0);
         let lines = jodeldiplom::view::karaoke::lines_now(&state, 0.0);
         assert!(
             lines.iter().any(|l| l.text.contains("0 of 0 words")),

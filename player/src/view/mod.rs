@@ -832,13 +832,6 @@ fn draw_now(frame: &mut Frame, scene: &Scene, n: &NowLayout, pictures: &mut dyn 
     underline_links(frame.buffer_mut(), scene, &segs, caption);
 }
 
-fn rate_cap_label(cap: Option<u32>) -> String {
-    match cap {
-        None => "none".into(),
-        Some(rate) => format!("{} kHz", khz_short(rate)),
-    }
-}
-
 fn draw_settings(frame: &mut Frame, scene: &Scene, s: &SettingsLayout) {
     let state = scene.state;
     frame.render_widget(
@@ -857,7 +850,8 @@ fn draw_settings(frame: &mut Frame, scene: &Scene, s: &SettingsLayout) {
             Style::new().fg(TEXT)
         };
         let marker = if selected { "▸ " } else { "  " };
-        let label = format!("{marker}{}", row.label());
+        let indent = if row.under() { "  " } else { "" };
+        let label = format!("{marker}{indent}{}", row.label());
         let label_rect = Rect::new(
             line_rect.rect.x,
             line_rect.rect.y,
@@ -867,15 +861,15 @@ fn draw_settings(frame: &mut Frame, scene: &Scene, s: &SettingsLayout) {
         frame.render_widget(Paragraph::new(Span::styled(label, label_style)), label_rect);
         let value = match row {
             SettingsRow::Device => format!("{}  ▾", state.device_label()),
-            SettingsRow::RateCap => {
-                let used = state.effective_max_rate();
-                if used == state.config.max_rate {
-                    rate_cap_label(used)
+            SettingsRow::Rate => {
+                let (set, used) = (state.config.rate(), state.output_rate());
+                if used == set {
+                    format!("{} kHz", khz_short(used))
                 } else {
                     format!(
-                        "{} (saved: {}, below this device)",
-                        rate_cap_label(used),
-                        rate_cap_label(state.config.max_rate)
+                        "{} kHz (set: {} kHz, which this device lacks)",
+                        khz_short(used),
+                        khz_short(set)
                     )
                 }
             }
@@ -887,7 +881,7 @@ fn draw_settings(frame: &mut Frame, scene: &Scene, s: &SettingsLayout) {
                 headroom => format!("{headroom} where not bit-perfect"),
             },
             SettingsRow::Resample => if state.config.resample {
-                "on: when no rate carries the file bit-perfect"
+                "on: files at another rate than the device's"
             } else {
                 "off: such files are skipped"
             }

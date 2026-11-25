@@ -55,7 +55,7 @@ pub use update::{
 };
 
 use crate::browser::{Details, Entry};
-use crate::config::{Config, RATE_CAPS};
+use crate::config::{Config, RATES};
 
 /// The beat analysis of a file, as far as it has come.
 #[derive(Clone, Debug)]
@@ -156,7 +156,7 @@ pub enum Screen {
     Main,
     /// The big cover, big spectrum and the signal path.
     NowPlaying,
-    /// Device, rate cap, resampling, the headroom and the player's other
+    /// Device, its rate, resampling, the headroom and the player's other
     /// settings.
     Settings,
     /// Every key binding, from the keymap.
@@ -448,9 +448,9 @@ pub struct DeviceChoice {
 pub enum SettingsRow {
     /// The output device.
     Device,
-    /// The highest output rate.
-    RateCap,
-    /// Resample when no rate carries a file bit-perfect.
+    /// The rate the output device runs at.
+    Rate,
+    /// Resample files at another rate than the device's.
     Resample,
     /// The gain below full scale on resampled routes.
     Headroom,
@@ -476,7 +476,7 @@ impl SettingsRow {
     /// Every row, top to bottom.
     pub const ALL: [SettingsRow; 13] = [
         SettingsRow::Device,
-        SettingsRow::RateCap,
+        SettingsRow::Rate,
         SettingsRow::Resample,
         SettingsRow::Headroom,
         SettingsRow::Tempo,
@@ -494,19 +494,27 @@ impl SettingsRow {
     pub fn label(self) -> &'static str {
         match self {
             SettingsRow::Device => "Output device",
-            SettingsRow::RateCap => "Rate cap",
+            SettingsRow::Rate => "Its rate",
             SettingsRow::Resample => "Resample when needed",
             SettingsRow::Headroom => "Headroom",
             SettingsRow::Tempo => "Tempo and beats",
             SettingsRow::Voting => "Beat voting",
-            SettingsRow::Method(jodel_rhythm::Method::Flux) => "  Spectral flux",
-            SettingsRow::Method(jodel_rhythm::Method::Network) => "  Beat This! network",
+            SettingsRow::Method(jodel_rhythm::Method::Flux) => "Spectral flux",
+            SettingsRow::Method(jodel_rhythm::Method::Network) => "Beat This! network",
             SettingsRow::Stems => "Stems",
             SettingsRow::StemSwitch => "Stem switching",
             SettingsRow::SkipMix => "Next track (N)",
-            SettingsRow::SkipPreset => "  Its transition",
+            SettingsRow::SkipPreset => "Its transition",
             SettingsRow::DataFolder => "Data folder",
         }
+    }
+
+    /// Whether it belongs to the row above it (shown set in under it).
+    pub fn under(self) -> bool {
+        matches!(
+            self,
+            SettingsRow::Rate | SettingsRow::Method(_) | SettingsRow::SkipPreset
+        )
     }
 }
 
@@ -702,10 +710,14 @@ pub struct State {
     pub autoplay: Option<PathBuf>,
     /// This run plays into the null output whatever the device setting.
     pub null_output: bool,
-    /// The rates the output device takes exclusively (in stereo, else in
-    /// any channel count), lowest first, once known: they decide which
-    /// rate caps the settings offer ([`State::rate_caps`]).
+    /// The rates the output device takes exclusively in stereo, lowest
+    /// first, once known: the rates the settings offer it
+    /// ([`State::rates`]), and the one it runs at ([`State::output_rate`]).
     pub device_rates: Option<Vec<u32>>,
+    /// The rate the running mixer opened the device at (`None`: none open,
+    /// or not known yet): settings that change the rate in force open it
+    /// again ([`Effect::ReopenOutput`]).
+    pub opened_rate: Option<u32>,
     /// When changed settings are to be sent to the engine ([`State::now_ms`]
     /// clock; [`SETTINGS_DELAY_MS`] after the last change).
     pub settings_due: Option<u64>,
@@ -857,6 +869,7 @@ impl State {
             autoplay: None,
             null_output: false,
             device_rates: None,
+            opened_rate: None,
             settings_due: None,
             quit: false,
             rhythm: HashMap::new(),
@@ -886,50 +899,26 @@ impl State {
         self.drawn_heard.unwrap_or(self.playing.position)
     }
 
-    /// The rate caps the settings offer, highest first: "no cap", and the
-    /// caps the device can satisfy (at or above the lowest rate it takes).
-    /// Every cap while the device's rates are not known.
-    pub fn rate_caps(&self) -> Vec<Option<u32>> {
-        let lowest = self
-            .device_rates
-            .as_ref()
-            .and_then(|rates| rates.first().copied());
-        RATE_CAPS
-            .into_iter()
-            .filter(|cap| match (cap, lowest) {
-                (Some(cap), Some(lowest)) => *cap >= lowest,
-                _ => true,
-            })
-            .collect()
+    /// The rates the settings offer the output device, lowest first: those
+    /// it takes in stereo (none for a device that takes no stereo), or, not
+    /// known, the usual ones ([`RATES`]).
+    pub fn rates(&self) -> Vec<u32> {
+        self.device_rates.clone().unwrap_or_else(|| RATES.to_vec())
     }
 
-    /// The rate cap in force: the configured one, or, when the device
-    /// takes no rate at or below it (a cap saved for another device), the
-    /// nearest cap offered, the lowest one ([`State::rate_caps`]). The
-    /// configured cap itself stays as it is (and in the file), so it is
-    /// back in force on a device that can satisfy it.
-    pub fn effective_max_rate(&self) -> Option<u32> {
-        let cap = self.config.max_rate?;
-        if self.cap_fits(cap) {
-            return Some(cap);
-        }
-        self.rate_caps().into_iter().flatten().min()
+    /// The rate the output device runs at: the one set for it, where it
+    /// takes it; else 44.1 kHz, else its lowest
+    /// ([`jodel_output::mixer::desk_rate`]). The one set stays as it is
+    /// (and in the file), so it is back on a device that takes it.
+    pub fn output_rate(&self) -> u32 {
+        let set = self.config.rate();
+        let rates = self.device_rates.as_deref().unwrap_or(&[]);
+        jodel_output::mixer::desk_rate(rates, set).unwrap_or(set)
     }
 
-    fn cap_fits(&self, cap: u32) -> bool {
-        self.device_rates
-            .as_ref()
-            .and_then(|rates| rates.first())
-            .is_none_or(|&lowest| cap >= lowest)
-    }
-
-    /// The settings the engine plays with: the config's, with the rate cap
-    /// in force ([`State::effective_max_rate`]).
+    /// The settings the engine plays with.
     pub fn engine_settings(&self) -> Settings {
-        Settings {
-            max_rate: self.effective_max_rate(),
-            ..self.config.settings()
-        }
+        self.config.settings()
     }
 
     /// The selected settings row.

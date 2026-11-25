@@ -1,13 +1,14 @@
-//! The optional config file: defaults for the output device, the rate cap
-//! and whether to resample when no rate carries a file bit-perfect, and
-//! the player's other settings.
+//! The optional config file: defaults for the output device, the rate it
+//! runs at and whether to resample files at another rate, and the
+//! player's other settings.
 //!
 //! The file holds `key = value` lines (a small subset of TOML):
 //!
 //! ```toml
 //! device = "{0.0.0.00000000}.{...}"   # an id from --list-devices; absent: the system default
-//! max_rate = 192000                   # absent or 0: no cap
-//! resample = true                     # false: skip files no rate carries bit-perfect
+//! rate."{0.0.0.00000000}.{...}" = 96000  # a device's rate, by its id ("default": the system's); absent: 48000
+//!                                     # (where the device lacks it: 44100, else its lowest)
+//! resample = true                     # false: skip files at another rate than the device's
 //! headroom = 0                        # dB below full scale where not bit-perfect: 0, 0.5, 1, 2, 3 (lossy files at least 1.5)
 //! bpm = true                          # false: no tempo, no beat pulse, no beat analysis
 //! beat_voting = true                  # true: the beat_methods vote; false: beat_method decides
@@ -39,6 +40,7 @@
 //! Command-line options override it for one run. Settings changed in the
 //! UI are written back to it.
 
+use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::fs;
 use std::io;
@@ -54,10 +56,13 @@ use crate::core::transition::Preset;
 pub struct Config {
     /// The output device id; `None`: the system default.
     pub device: Option<String>,
-    /// The highest output rate, if capped.
-    pub max_rate: Option<u32>,
-    /// Resample when no rate the device takes carries a file bit-perfect
-    /// (`false`: such files are skipped).
+    /// The rate each output device runs at, all along, by its id
+    /// ([`DEFAULT_DEVICE`] for the system's default): one with none runs
+    /// at [`jodel_output::mixer::DESK_RATE`] (and where a device does not
+    /// take its rate, [`jodel_output::mixer::desk_rate`] falls back).
+    pub rates: BTreeMap<String, u32>,
+    /// Resample a file at another rate than the device's (`false`: such
+    /// files are skipped).
     pub resample: bool,
     /// The gain below full scale on resampled routes.
     pub headroom: Headroom,
@@ -128,7 +133,7 @@ impl Default for Config {
     fn default() -> Self {
         Config {
             device: None,
-            max_rate: None,
+            rates: BTreeMap::new(),
             resample: true,
             headroom: Headroom::NONE,
             bpm: true,
@@ -156,27 +161,37 @@ impl Default for Config {
     }
 }
 
-/// The rate caps the settings screen offers, highest first (`None`: no cap).
-pub const RATE_CAPS: [Option<u32>; 9] = [
-    None,
-    Some(384_000),
-    Some(352_800),
-    Some(192_000),
-    Some(176_400),
-    Some(96_000),
-    Some(88_200),
-    Some(48_000),
-    Some(44_100),
-];
+/// The rates the settings screen offers where the device's are not known.
+pub const RATES: [u32; 6] = [44_100, 48_000, 88_200, 96_000, 176_400, 192_000];
+
+/// The id the system's default output device's rate is kept under.
+pub const DEFAULT_DEVICE: &str = "default";
 
 impl Config {
     /// The engine's rate policy settings.
     pub fn settings(&self) -> Settings {
         Settings {
-            max_rate: self.max_rate,
             resample: self.resample,
             headroom: self.headroom,
+            ..Settings::default()
         }
+    }
+
+    /// The id the output device's rate is kept under.
+    fn device_key(&self) -> &str {
+        self.device.as_deref().unwrap_or(DEFAULT_DEVICE)
+    }
+
+    /// The rate set for the output device (none set: the desk's own).
+    pub fn rate(&self) -> u32 {
+        let set = self.rates.get(self.device_key()).copied();
+        set.unwrap_or(jodel_output::mixer::DESK_RATE)
+    }
+
+    /// Sets the rate for the output device.
+    pub fn set_rate(&mut self, rate: u32) {
+        let key = self.device_key().to_owned();
+        self.rates.insert(key, rate);
     }
 
     /// The beat methods in force: the voting ones, or the one.
@@ -207,11 +222,16 @@ impl Config {
                     let id = parse_string(value).ok_or_else(|| at("device takes a string"))?;
                     config.device = (!id.is_empty() && id != "default").then_some(id);
                 }
-                "max_rate" => {
-                    let rate: u32 = value
+                device_rate if device_rate.starts_with("rate.") => {
+                    let id = &device_rate["rate.".len()..];
+                    let id = parse_string(id)
+                        .ok_or_else(|| at("rate.\"<device id>\" takes the id in quotes"))?;
+                    let rate = value
                         .parse()
-                        .map_err(|_| at("max_rate takes a rate in Hz"))?;
-                    config.max_rate = (rate > 0).then_some(rate);
+                        .ok()
+                        .filter(|&rate: &u32| rate > 0)
+                        .ok_or_else(|| at("a device's rate is in Hz"))?;
+                    config.rates.insert(id, rate);
                 }
                 "resample" => {
                     config.resample = match value {
@@ -414,7 +434,9 @@ impl Config {
                 "# device = \"...\"   (an id from --list-devices; absent: the system default)\n",
             ),
         }
-        let _ = writeln!(text, "max_rate = {}", self.max_rate.unwrap_or(0));
+        for (id, rate) in &self.rates {
+            let _ = writeln!(text, "rate.{} = {rate}", quote(id));
+        }
         let _ = writeln!(text, "resample = {}", self.resample);
         let _ = writeln!(text, "headroom = {}", self.headroom.value());
         let _ = writeln!(text, "bpm = {}", self.bpm);
@@ -558,7 +580,12 @@ mod tests {
     fn settings_round_trip() {
         let config = Config {
             device: Some(r#"{0.0.0}.{a"b\c}"#.into()),
-            max_rate: Some(192_000),
+            rates: [
+                ("{0.0.0}.{x}".to_owned(), 96_000),
+                ("default".to_owned(), 44_100),
+            ]
+            .into_iter()
+            .collect(),
             resample: false,
             headroom: Headroom(5),
             bpm: false,
@@ -629,13 +656,25 @@ mod tests {
     #[test]
     fn comments_unknown_keys_and_errors() {
         let (config, warnings) = Config::parse(
-            "# hi\nresample = false # trailing\nvolume = 3\nmax_rate = 0\n[section]\n",
+            "# hi\nresample = false # trailing\nvolume = 3\nrate.\"default\" = 44100\n[section]\n",
         )
         .unwrap();
         assert!(!config.resample);
-        assert_eq!(config.max_rate, None);
+        assert_eq!(config.rate(), 44_100);
         assert_eq!(warnings, vec!["line 3: unknown setting \"volume\""]);
-        assert!(Config::parse("max_rate = fast").is_err());
+        assert!(Config::parse("rate.\"default\" = fast").is_err());
+        assert!(Config::parse("rate.\"default\" = 0").is_err());
+        assert!(Config::parse("rate.default = 44100").is_err());
+        // A device's own; one with none at 48 kHz.
+        let mut config = Config::default();
+        assert_eq!(config.rate(), 48_000);
+        config.set_rate(96_000);
+        config.device = Some("usb".into());
+        assert_eq!(config.rate(), 48_000);
+        config.set_rate(44_100);
+        assert_eq!(config.rate(), 44_100);
+        config.device = None;
+        assert_eq!(config.rate(), 96_000);
         assert!(Config::parse("resample = maybe").is_err());
         assert!(!Config::parse("resample = false").unwrap().0.resample);
         assert!(Config::parse("just words").is_err());

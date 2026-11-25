@@ -1,9 +1,8 @@
 //! A transition's two heads on the desk as playback moves around it: next
 //! while it is prepared and while it settles, stop, play and previous in
 //! its window, its next track moved away in its window (it fades out, the
-//! playing track comes back whole), the format held after it and when it is
-//! not (resampling off, other settings), the heads' roles over two
-//! hand-overs in a row, a head read along a map refusing one, and on a
+//! playing track comes back whole), the heads' roles over two hand-overs
+//! in a row, a head read along a map refusing one, and on a
 //! device a next track whose stems come late (it waits while it is silent,
 //! then plays its whole mix).
 
@@ -20,8 +19,8 @@ use jodel_output::{Input, SampleFormat};
 use jodel_playback::stems::{Separator, STEMS};
 use jodel_playback::warp::TimeMap;
 use jodel_playback::{
-    Command, Envelope, Event, Headroom, MakeStems, PlayState, PlayerOptions, Settings, TempoMode,
-    TransitionPlan, TransitionState,
+    Command, Envelope, Event, MakeStems, PlayState, PlayerOptions, TempoMode, TransitionPlan,
+    TransitionState,
 };
 use SampleFormat::*;
 
@@ -249,67 +248,6 @@ fn steepest(got: &[i32], frames: std::ops::Range<usize>) -> f64 {
         .flat_map(|f| (0..2).map(move |c| (f, c)))
         .map(|(f, c)| (f64::from(got[2 * (f + 1) + c]) - f64::from(got[2 * f + c])).abs())
         .fold(0.0, f64::max)
-}
-
-/// Two tracks at 44.1 kHz and one at 48: mixed from the first into the
-/// second, then run into the third. Returns the rate each started at.
-fn rates_after_a_mix(name: &str, options: PlayerOptions, change: Option<Settings>) -> Vec<u32> {
-    let dir = temp_dir(name);
-    let (a, _) = wav(&dir, "a.wav", 8.0, tone([1_000.0, 5_000.0]));
-    let (b, _) = wav(&dir, "b.wav", 8.0, tone([2_000.0, 3_000.0]));
-    let c = dir.join("c.wav");
-    write_wav(&c, 48_000, 2, &tones(48_000, 48_000));
-    let desk = Desk::new(caps(&[RATE, 48_000], &[S24In32Low]), options);
-    desk.play(vec![a, b, c]);
-    desk.player.transition(plan(0, 4.0, 0.5)).unwrap();
-    let mut seen = step_until(&desk.gate, &desk.events, |e| {
-        matches!(e, Event::Transition(TransitionState::Started { .. }))
-    });
-    if let Some(settings) = change {
-        desk.player.set_settings(settings).unwrap();
-    }
-    seen.extend(step_to_end(&desk.gate, &desk.events));
-    drop(desk);
-    assert!(transitions(&seen).contains(&&TransitionState::Finished));
-    assert!(
-        !seen
-            .iter()
-            .any(|e| matches!(e, Event::Error { skipped: true, .. })),
-        "a track skipped: {seen:?}"
-    );
-    let mut rates: Vec<(usize, u32)> = starts(&seen)
-        .iter()
-        .map(|s| (s.index, s.output.format.rate))
-        .collect();
-    rates.dedup_by_key(|r| r.0);
-    // (The first's start is taken by `Desk::play`.)
-    assert_eq!(rates.iter().map(|r| r.0).collect::<Vec<_>>(), [1, 2]);
-    rates.into_iter().map(|r| r.1).collect()
-}
-
-/// The format held after a mix is not held where a track has no route at
-/// it (resampling off): it opens at its own rate, not skipped; nor after
-/// other settings came during the mix.
-#[test]
-fn the_format_held_after_a_mix_gives_way_where_it_must() {
-    let _serial = serial();
-    // Resampling off: the third has no route at 44.1 kHz.
-    let rates = rates_after_a_mix("desk-rate-exact", options(), None);
-    assert_eq!(rates, [RATE, 48_000]);
-    // Resampling on: held.
-    let resampling = PlayerOptions {
-        settings: Settings::default(),
-        ..options()
-    };
-    let rates = rates_after_a_mix("desk-rate-held", resampling.clone(), None);
-    assert_eq!(rates, [RATE, RATE]);
-    // Other settings during the mix: no longer held after it.
-    let other = Settings {
-        headroom: Headroom::CHOICES[1],
-        ..Settings::default()
-    };
-    let rates = rates_after_a_mix("desk-rate-settings", resampling, Some(other));
-    assert_eq!(rates, [RATE, 48_000]);
 }
 
 /// Two hand-overs in a row: each next track starts on the other head,

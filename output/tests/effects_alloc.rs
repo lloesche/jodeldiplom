@@ -1,13 +1,13 @@
 //! What the mixer thread allocates and frees while the effects input plays:
-//! nothing, from the very first sound after the device opens, on each
-//! opening (here a second one at another rate, with more channels). A
+//! nothing, from the very first sound after the device opens, at each
+//! rate a desk runs at (here 48 and 96 kHz). A
 //! counting allocator (this binary's alone) counts every call on the
 //! thread named `jodel-mixer` while sounds are cued on stream frames, wait
 //! for them, start (more at once than there are voices, so one takes
 //! another's place) and are summed with the input; the simulated device's
 //! own memory, which grows as it plays on that thread, is left out. The
-//! bank, the effects input and the device's opening are messages (freed
-//! and reserved as the mixer thread takes them), the cues are not: they
+//! bank and the effects input are messages (freed and reserved as the
+//! mixer thread takes them), the cues are not: they
 //! come through a queue of fixed size. The song plays a little before the
 //! sounds, so its own stream's buffers are at their sizes.
 
@@ -21,7 +21,7 @@ use std::time::Duration;
 use common::*;
 use jodel_output::mixer::{EffectCue, Mixer, MixerOptions, Role, SoundBank, VOICES};
 use jodel_output::{
-    Capabilities, Clock, Error, OpenRequest, Output, OutputTarget, Stats, StreamFormat, StreamInfo,
+    Capabilities, Clock, Error, OpenRequest, Output, OutputTarget, Stats, StreamInfo,
 };
 
 /// Counts what the mixer thread allocates and frees while counting is on.
@@ -137,33 +137,18 @@ impl Output for Quiet {
     }
 }
 
-/// The test's devices: stereo, and six channels, by what is asked; their
-/// own work kept out of the mixer's count.
-struct QuietDevices {
-    stereo: Device,
-    six: Device,
-}
+/// The test's device, its own work kept out of the mixer's count.
+struct QuietDevice(Device);
 
-impl OutputTarget for QuietDevices {
+impl OutputTarget for QuietDevice {
     fn name(&self) -> String {
-        self.stereo.name()
+        self.0.name()
     }
     fn capabilities(&mut self) -> Result<Capabilities, Error> {
-        let mut formats = Vec::new();
-        for d in [&self.stereo, &self.six] {
-            for rate in [RATE, 96_000] {
-                formats.push(StreamFormat::new(rate, d.channels(), d.format()));
-            }
-        }
-        Ok(formats.into_iter().collect())
+        self.0.capabilities()
     }
     fn open(&mut self, request: &OpenRequest) -> Result<Box<dyn Output>, Error> {
-        let device = if request.channels == 6 {
-            &mut self.six
-        } else {
-            &mut self.stereo
-        };
-        Ok(Box::new(Quiet(device.open(request)?)))
+        Ok(Box::new(Quiet(self.0.open(request)?)))
     }
 }
 
@@ -186,45 +171,41 @@ fn bank(rate: u32) -> SoundBank {
     bank
 }
 
+/// One counting test at a time (the count is the binary's).
+static ONE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 #[test]
 fn playing_effects_allocates_nothing_on_the_mixer_thread() {
-    let stereo = Device {
-        instant: true,
-        ..Device::default()
-    };
-    let six = Device {
-        channels: Some(6),
-        ..stereo.clone()
-    };
-    let options = MixerOptions {
-        buffer: Duration::from_millis(200),
-        ..MixerOptions::default()
-    };
-    let devices = QuietDevices {
-        stereo: stereo.clone(),
-        six: six.clone(),
-    };
-    let mixer = Mixer::open(Box::new(devices), options);
-    let player = mixer.strip("Player");
-    let strip = mixer.strip("Effects");
-    let effects = mixer.effects(&strip);
-    strip.set_level(0.5);
-    let (mut target, fader) = mixer.input(&player, Role::Lead, 1.0);
-    let mut played = 0;
-    for (rate, channels, device) in [(RATE, 2, &stereo), (96_000, 6, &six)] {
+    let _one = ONE.lock().unwrap_or_else(|e| e.into_inner());
+    for rate in [RATE, 96_000] {
+        let device = Device {
+            instant: true,
+            ..Device::default()
+        };
+        let options = MixerOptions {
+            buffer: Duration::from_millis(200),
+            rate,
+            ..MixerOptions::default()
+        };
+        let mixer = Mixer::open(Box::new(QuietDevice(device.clone())), options);
+        let player = mixer.strip("Player");
+        let strip = mixer.strip("Effects");
+        let effects = mixer.effects(&strip);
+        strip.set_level(0.5);
+        let (mut target, fader) = mixer.input(&player, Role::Lead, 1.0);
         effects.load(bank(rate));
-        let request = OpenRequest::new(rate, channels as u16)
+        let request = OpenRequest::new(rate, 2)
             .formats(&[device.format()])
             .prefill(Duration::ZERO);
         let mut out = target.open(&request).unwrap();
         taken(&mut target);
         // The song alone first: its stream's buffers at their sizes.
-        out.write(&wide(0, 1_920, channels), None).unwrap();
+        out.write(&wide(0, 1_920, 2), None).unwrap();
         wait_until("mixed", || mixer.timebase().frame == 1_920);
         MIXER_ALLOCATIONS.store(0, Ordering::Relaxed);
         COUNTING.store(true, Ordering::Relaxed);
-        // The first sound of this opening; then more at once than there
-        // are voices; then one every 1 000 frames.
+        // The first sound; then more at once than there are voices; then
+        // one every 1 000 frames.
         effects.play_at(EffectCue::new(0), &fader, 2_000);
         for _ in 0..VOICES + 4 {
             effects.play_at(EffectCue::new(0), &fader, 5_000);
@@ -232,14 +213,50 @@ fn playing_effects_allocates_nothing_on_the_mixer_thread() {
         for k in 0..18 {
             effects.play_at(EffectCue::new(0), &fader, 6_000 + 1_000 * k);
         }
-        out.write(&wide(1_920, 22_080, channels), None).unwrap();
+        out.write(&wide(1_920, 22_080, 2), None).unwrap();
         wait_until("mixed", || mixer.timebase().frame == 24_000);
         COUNTING.store(false, Ordering::Relaxed);
         assert_eq!(MIXER_ALLOCATIONS.load(Ordering::Relaxed), 0, "{rate}");
-        played += 1 + VOICES as u64 + 4 + 18;
         let view = effects.view();
-        assert_eq!(view.played, played, "{rate}: {view:?}");
+        assert_eq!(view.played, 1 + VOICES as u64 + 4 + 18, "{rate}: {view:?}");
         assert_eq!(view.rate, rate);
         out.drain(None).unwrap();
     }
+}
+
+/// In real time with no output open at all, the device playing on
+/// (silence): nothing is allocated as the mixer goes on, nor as sounds
+/// for now are played on it.
+#[test]
+fn idle_in_real_time_allocates_nothing() {
+    let _one = ONE.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = real_time();
+    let options = MixerOptions {
+        buffer: Duration::from_millis(200),
+        ..MixerOptions::default()
+    };
+    let mixer = Mixer::open(Box::new(QuietDevice(Device::default())), options);
+    let strip = mixer.strip("Effects");
+    let effects = mixer.effects(&strip);
+    effects.load(bank(RATE));
+    // A first sound: what it reserves is reserved.
+    assert!(effects.play(EffectCue::new(0)));
+    wait_until("heard", || {
+        let v = effects.view();
+        v.played == 1 && v.sounding == 0
+    });
+    MIXER_ALLOCATIONS.store(0, Ordering::Relaxed);
+    COUNTING.store(true, Ordering::Relaxed);
+    let from = mixer.timebase().frame;
+    for _ in 0..5 {
+        assert!(effects.play(EffectCue::new(0)));
+        std::thread::sleep(Duration::from_millis(60));
+    }
+    wait_until("idle a while, every sound heard", || {
+        let v = effects.view();
+        mixer.timebase().frame > from + u64::from(RATE) / 2 && v.played == 6 && v.sounding == 0
+    });
+    COUNTING.store(false, Ordering::Relaxed);
+    assert_eq!(MIXER_ALLOCATIONS.load(Ordering::Relaxed), 0);
+    assert_eq!(effects.view().missed, 0);
 }

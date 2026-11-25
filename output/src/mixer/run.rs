@@ -17,7 +17,9 @@ use super::ramp::{GainId, Waiting, When};
 use super::strip::channel_peaks;
 use super::strips::Strips;
 use super::voices::{EffectsRun, RESERVED_CHANNELS};
-use super::{Curve, MixShared, MixerOptions, Monitor, Msg, Ramp, Role, Start, Timebase};
+use super::{
+    desk_format, Curve, MixShared, MixerOptions, Monitor, Msg, Ramp, Role, Start, Timebase,
+};
 use crate::backend::AudioPriority;
 use crate::caps::Capabilities;
 use crate::error::Error;
@@ -27,7 +29,7 @@ use crate::output::{Core, OpenRequest, Output, OutputTarget, StreamInfo};
 use crate::shared::Shared;
 
 /// How long the device may take to play out what it holds before it is
-/// opened again at another format, or flushed.
+/// flushed.
 const DRAIN_WAIT: Duration = Duration::from_millis(500);
 /// How long the thread waits for its inputs, with outputs running on a
 /// device that plays only what it is given.
@@ -45,8 +47,9 @@ pub(super) struct Device {
 pub(super) struct Run {
     target: Box<dyn OutputTarget>,
     options: MixerOptions,
-    /// The device's capabilities, once asked.
-    caps: Option<Capabilities>,
+    /// The desk's format: what the device is opened at, and every output
+    /// on an input plays at (`None`: the device has none to offer).
+    format: Option<StreamFormat>,
     tx: Sender<Msg>,
     shared: Arc<MixShared>,
     pub(super) strips: Strips,
@@ -76,9 +79,6 @@ pub(super) struct Run {
     /// The id of the newest output opened (0: none): a strip's change for
     /// the first audio waits for one newer.
     newest_output: u64,
-    /// The device frame the effects' last sound sounded to, in this
-    /// opening of the device.
-    pub(super) effects_until: u64,
 }
 
 /// Whether the device's `format` is one `request` asks for.
@@ -91,13 +91,14 @@ fn accepts(request: &OpenRequest, format: StreamFormat) -> bool {
 impl Run {
     pub(super) fn new(
         target: Box<dyn OutputTarget>,
+        format: Option<StreamFormat>,
         options: MixerOptions,
         tx: Sender<Msg>,
         shared: Arc<MixShared>,
     ) -> Run {
         Run {
             target,
-            caps: options.capabilities.clone(),
+            format,
             options,
             tx,
             shared,
@@ -116,24 +117,22 @@ impl Run {
             untouched: true,
             starts: Vec::new(),
             newest_output: 0,
-            effects_until: 0,
         }
     }
 
     pub(super) fn run(mut self, rx: Receiver<Msg>) {
         let _priority = AudioPriority::enter(self.options.period);
+        // The desk's device, open from the start to the end (where it
+        // cannot be opened now, the first output opened tries again, and
+        // says why it cannot).
+        let _ = self.open_desk();
         let mut busy = false;
         loop {
-            // Nothing running: nothing to do until word comes (a cue pushed
-            // to the effects is word too).
+            // Nothing to play (no device, or one that plays only what it is
+            // given, with no output running): nothing to do until word
+            // comes.
             let got = if !self.playing() {
-                let got = if self.effects_idle() {
-                    rx.recv().map_err(|_| RecvTimeoutError::Disconnected)
-                } else {
-                    Err(RecvTimeoutError::Timeout)
-                };
-                self.effects_awake();
-                got
+                rx.recv().map_err(|_| RecvTimeoutError::Disconnected)
             } else if busy {
                 rx.recv_timeout(Duration::ZERO)
             } else {
@@ -160,7 +159,23 @@ impl Run {
             self.report();
         }
         self.close_streams(Error::Closed);
-        self.close_device(false);
+        self.close_device();
+    }
+
+    /// The desk's format: as decided, or (none yet: the device was not
+    /// there, or it failed) asked of the device now ([`desk_format`]),
+    /// for every handle to see ([`super::Mixer::format`]).
+    fn desk(&mut self) -> Result<StreamFormat, Error> {
+        if self.format.is_none() {
+            let caps = self.target.capabilities()?;
+            self.set_format(desk_format(&caps, self.options.rate));
+        }
+        self.format.ok_or(Error::NoDevice)
+    }
+
+    fn set_format(&mut self, format: Option<StreamFormat>) {
+        self.format = format;
+        *self.shared.format() = format;
     }
 
     /// Carries out `msg`; false: quit.
@@ -314,44 +329,11 @@ impl Run {
         }
     }
 
-    /// Whether an output runs, or (on a device that plays in real time)
-    /// the effects want the device playing: a voice sounds, a cue for now
-    /// waits.
+    /// Whether there is something to mix: on a device that plays in real
+    /// time, always (it is never paused: silence where nothing sounds);
+    /// on one that plays only what it is given, while an output runs.
     fn playing(&self) -> bool {
-        self.running().next().is_some() || self.effects_due()
-    }
-
-    /// Whether the effects want the device playing with no output running.
-    /// Whether the effects want the device playing with no output running:
-    /// they have more to play, or what they played is not all heard yet
-    /// (it would wait in the device's buffer, paused).
-    fn effects_due(&self) -> bool {
-        let Some(device) = self.device.as_ref().filter(|d| d.info.realtime) else {
-            return false;
-        };
-        let more = self.effects.as_ref().is_some_and(EffectsRun::wants_device);
-        more || device
-            .output
-            .position()
-            .is_ok_and(|p| p < self.effects_until)
-    }
-
-    /// About to wait for word with nothing to mix: a cue pushed from now on
-    /// sends it. False when one came already (no wait then).
-    fn effects_idle(&self) -> bool {
-        let Some(fx) = &self.effects else {
-            return true;
-        };
-        fx.queue.idle.store(true, Ordering::SeqCst);
-        let realtime = self.device.as_ref().is_some_and(|d| d.info.realtime);
-        !(realtime && fx.queue.has_cues())
-    }
-
-    /// Word came: cues need not send it.
-    fn effects_awake(&self) {
-        if let Some(fx) = &self.effects {
-            fx.queue.idle.store(false, Ordering::SeqCst);
-        }
+        self.device.as_ref().is_some_and(|d| d.info.realtime) || self.running().next().is_some()
     }
 
     /// Forgets input `id`: its waiting ramps never come (nor those to start
@@ -453,9 +435,8 @@ impl Run {
         self.streams().filter(|s| s.live())
     }
 
-    /// Input `id` is made a `role`: asked again what it takes, the
-    /// microphone fitted again; refused for a Lead with an output open
-    /// when no other Lead has one.
+    /// Input `id` is made a `role`: the microphone fitted again; refused
+    /// for a Lead with an output open when no other Lead has one.
     fn set_role(&mut self, id: u64, role: Role) -> Result<(), Error> {
         let slot = self.slots.get(&id).ok_or(Error::Closed)?;
         if slot.state.role() == role {
@@ -469,40 +450,25 @@ impl Run {
             ));
         }
         let slot = self.slots.get_mut(&id).expect("checked");
-        slot.caps = None;
         slot.state.set_role(role);
         self.fit_mic();
         Ok(())
     }
 
+    /// What an input's outputs may open at: the desk's one format,
+    /// whatever the input.
     fn capabilities(&mut self, slot: u64) -> Result<Capabilities, Error> {
-        let Some(s) = self.slots.get(&slot) else {
+        if !self.slots.contains_key(&slot) {
             return Err(Error::Closed);
-        };
-        if let Some(caps) = &s.caps {
-            return Ok(caps.clone());
         }
-        let caps = match (&self.device, s.state.role()) {
-            (Some(d), Role::Guest) => [d.format].into_iter().collect(),
-            _ => match &self.caps {
-                Some(caps) => caps.clone(),
-                None => {
-                    let caps = self.target.capabilities()?;
-                    self.caps = Some(caps.clone());
-                    caps
-                }
-            },
-        };
-        if let Some(s) = self.slots.get_mut(&slot) {
-            s.caps = Some(caps.clone());
-        }
-        Ok(caps)
+        let format = self.desk()?;
+        Ok([format].into_iter().collect())
     }
 
     fn open(&mut self, slot_id: u64, request: &OpenRequest) -> Result<Box<dyn Output>, Error> {
         request.validate()?;
         let slot = self.slots.get(&slot_id).ok_or(Error::Closed)?;
-        let (role, lanes) = (slot.state.role(), slot.lanes.len() as u16);
+        let lanes = slot.lanes.len() as u16;
         if request.lanes != 1 && request.lanes != lanes {
             return Err(Error::InvalidArgument(format!(
                 "an input of {lanes} lanes opens 1 or {lanes}, not {}",
@@ -514,25 +480,21 @@ impl Run {
             old.link.shared.fail(Error::Closed);
             self.closed(old.link.id);
         }
-        let fits = self
-            .device
-            .as_ref()
-            .is_some_and(|d| accepts(request, d.format));
-        if !fits {
-            if self.device.is_some() {
-                // Only the Lead opens the device again; a guest takes it
-                // as it is.
-                if role == Role::Guest {
-                    return Err(Error::FormatNotAccepted {
-                        rate: request.rate,
-                        channels: request.channels,
-                    });
-                }
-                self.close_streams(Error::Closed);
-                self.close_device(true);
-            }
-            self.open_device(request)?;
+        // Every output plays at the desk's format (its player resamples to
+        // it); the device is open at it, or (it was not there, or failed)
+        // opened now.
+        let format = self.desk()?;
+        if !accepts(request, format) {
+            return Err(Error::FormatNotAccepted {
+                rate: request.rate,
+                channels: request.channels,
+            });
         }
+        if self.device.is_none() {
+            self.open_desk()?;
+        }
+        // What was set while it had none is in force from its first frame.
+        self.settle_idle();
         let device = self.device.as_ref().expect("the device is open");
         let format = device.format;
         let chunk = format.duration_to_frames(self.options.period).max(1);
@@ -573,10 +535,11 @@ impl Run {
         Ok(Box::new(InputOutput { core }))
     }
 
-    fn open_device(&mut self, request: &OpenRequest) -> Result<(), Error> {
-        let request = request
-            .clone()
-            .lanes(1)
+    /// Opens the device at the desk's format.
+    fn open_desk(&mut self) -> Result<(), Error> {
+        let format = self.desk()?;
+        let request = OpenRequest::new(format.rate, format.channels)
+            .formats(&[format.sample])
             .period(self.options.period)
             .buffer(self.options.buffer)
             .prefill(self.options.buffer / 2);
@@ -590,7 +553,6 @@ impl Run {
         self.epoch += 1;
         self.shared.epoch.store(self.epoch, Ordering::Release);
         self.frame = 0;
-        self.effects_until = 0;
         self.given = 0;
         self.out.clear();
         self.sent = 0;
@@ -706,14 +668,8 @@ impl Run {
         }
     }
 
-    /// Closes the device; with `drain`, after it has played what was
-    /// mixed.
-    fn close_device(&mut self, drain: bool) {
-        if drain && self.write_all().is_ok() {
-            if let Some(d) = &mut self.device {
-                let _ = d.output.drain(Some(DRAIN_WAIT));
-            }
-        }
+    /// Closes the device.
+    fn close_device(&mut self) {
         let Some(mut device) = self.device.take() else {
             return;
         };
@@ -740,7 +696,7 @@ impl Run {
     }
 
     /// Output `id` closed (or was let go of): the outputs following it
-    /// follow no one, and the device closes with the last one.
+    /// follow no one. The device stays open.
     fn closed(&mut self, id: u64) {
         for slot in self.slots.values_mut() {
             if slot.stream.as_ref().is_some_and(|s| s.link.id == id) {
@@ -749,9 +705,6 @@ impl Run {
         }
         self.unlink(id);
         self.fit_mic();
-        if self.streams().next().is_none() && !self.effects_due() {
-            self.close_device(false);
-        }
     }
 
     /// Output `id` was flushed (a seek): its link and those of the outputs
@@ -786,26 +739,25 @@ impl Run {
         flushed
     }
 
-    /// The device failed: so does every input's output.
+    /// The device failed: so does every input's output; the next one
+    /// opened asks the device again what it takes, and opens it again
+    /// (another epoch).
     fn device_failed(&mut self, error: Error) {
         self.close_streams(error);
-        self.close_device(false);
+        self.close_device();
+        self.set_format(None);
     }
 
     /// Writes what is mixed, or mixes the next period: when the device
     /// plays in real time, as it takes frames (an output short of them is
     /// silence for the rest); otherwise once every running output holds a
     /// period, or is draining, and never a period past the origin of a
-    /// follower not running yet. With nothing running (a follower held by
-    /// its leader does not count) and no effects to finish, the device
-    /// pauses (or closes, with no output open). Returns whether there was
-    /// work.
+    /// follower not running yet. A device that plays only what it is given
+    /// pauses with nothing running (a follower held by its leader does not
+    /// count); one in real time plays on, silence where nothing sounds.
+    /// Returns whether there was work.
     fn turn(&mut self) -> bool {
         let playing = self.playing();
-        if !playing && self.device.is_some() && self.streams().next().is_none() {
-            // The effects held it open after the last output: now done.
-            self.close_device(false);
-        }
         let Some(device) = &mut self.device else {
             return false;
         };
@@ -882,6 +834,25 @@ impl Run {
         }
     }
 
+    /// Nothing of an idle input will be heard for now: its ramps end, and
+    /// so do those of a strip with only idle inputs (what is set before an
+    /// output's first audio is in force from its first frame).
+    fn settle_idle(&mut self) {
+        for slot in self.slots.values_mut().filter(|s| s.idle()) {
+            for lane in &mut slot.lanes {
+                lane.gain.settle();
+            }
+            if let Some(switch) = &mut slot.switch {
+                switch.settle();
+            }
+        }
+        let busy = self.slots.values().filter(|s| !s.idle());
+        let busy = busy.flat_map(|s| s.lanes.iter().map(|l| l.strip));
+        let effects = self.effects.as_ref().filter(|fx| fx.busy());
+        self.strips
+            .settle_idle(busy.chain(effects.map(|fx| fx.strip)));
+    }
+
     /// Publishes the clock, what each output has on the device still, and
     /// each input's state; settles the ramps of inputs and strips with
     /// nothing to mix.
@@ -902,24 +873,10 @@ impl Run {
         if let Some(e) = failed {
             self.device_failed(e);
         }
-        // Nothing of an idle input will be heard for now: its ramps end, and
-        // so do those of a strip with only idle inputs.
+        self.settle_idle();
         for slot in self.slots.values_mut() {
-            if slot.idle() {
-                for lane in &mut slot.lanes {
-                    lane.gain.settle();
-                }
-                if let Some(switch) = &mut slot.switch {
-                    switch.settle();
-                }
-            }
             slot.publish();
         }
-        let busy = self.slots.values().filter(|s| !s.idle());
-        let busy = busy.flat_map(|s| s.lanes.iter().map(|l| l.strip));
-        let effects = self.effects.as_ref().filter(|fx| fx.busy());
-        self.strips
-            .settle_idle(busy.chain(effects.map(|fx| fx.strip)));
         *self.shared.timebase() = Timebase {
             epoch: self.epoch,
             rate: self.device.as_ref().map_or(0, |d| d.format.rate),

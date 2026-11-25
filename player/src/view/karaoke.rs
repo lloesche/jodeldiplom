@@ -31,8 +31,7 @@ pub use mode::{
     SCROLL,
 };
 pub use result::{
-    best_words, date_words, plain_lines, result_now, verdict_words, DiplomaWords, ResultShown,
-    DIPLOMA,
+    best_words, date_words, plain_lines, result_now, DiplomaWords, ResultShown, DIPLOMA,
 };
 
 /// What to do about a microphone giving only silence, for this system.

@@ -1,5 +1,5 @@
-//! The result screen, one more scene of the stage: a Yodel Diploma handed
-//! out for the song before, filled in beat by beat
+//! The result screen, one more scene of the stage: a diploma (headed
+//! "Jodeldiplom") handed out for the song before, filled in beat by beat
 //! ([`crate::core::singing::Reveal`]) over the backdrop (the cover's
 //! layers, lit by the music), in Karaoke mode's faces, with the stage's
 //! light and bursts. The sheet unrolls, its border tinted, its heading and
@@ -194,11 +194,6 @@ fn clamp01(x: f32) -> f32 {
 fn back(x: f32) -> f32 {
     let x = clamp01(x) - 1.0;
     1.0 + 2.7 * x * x * x + 1.7 * x * x
-}
-
-/// Eased out, slowing to its end.
-fn ease_out(x: f32) -> f32 {
-    1.0 - (1.0 - clamp01(x)).powi(3)
 }
 
 /// Something landing `age` seconds ago: its scale (growing past its size
@@ -638,6 +633,55 @@ mod tests {
             // A sticker a phrase, the tally's three and the heading's two.
             assert_eq!(count(&last, kind::STAR), 4 + 3 + 2);
             assert!(last.sprays.iter().any(|s| s.kind == Kind::Confetti));
+        }
+    }
+
+    /// The heading ("Jodeldiplom") fits between its two stars, and they on
+    /// the sheet, however wide or tall the window: the stars clear of its
+    /// words either side, inside the sheet's border.
+    #[test]
+    fn the_heading_fits_between_its_stars() {
+        let r = result(Some(Medal::Gold), true, None);
+        for size in [
+            (1600.0, 900.0),
+            (900.0, 1400.0),
+            (500.0, 900.0),
+            (1024.0, 768.0),
+        ] {
+            let f = frame_in(&r, 3.0, size);
+            let all = || f.instances.iter().chain(&f.top);
+            let paper = all().find(|i| i.params[0] == kind::PAPER).unwrap();
+            let [cx, cy, hx, hy] = paper.shape;
+            // The room the frame was drawn in, and the heading's size there.
+            let area = (0.0, 0.0, size.0, size.1);
+            let line = Line::of(&picture(&r, 1, 3.0), area);
+            let look = seal::look(r.verdict(), &Tint::STAGE);
+            let room = Room::new(area, line, &Tint::STAGE, look);
+            assert_eq!(room.sheet.2, 2.0 * hx, "{size:?}: the same sheet");
+            let mut stage = stage();
+            let heading = crate::view::karaoke::DIPLOMA.heading;
+            assert_eq!(heading, "Jodeldiplom");
+            let hp = sheet::heading_px(&mut stage, &room);
+            assert!(hp >= 16.0, "{size:?}: {hp}");
+            let half = stage.measure(Face::SHOUT, heading, hp) / 2.0;
+            assert!(
+                half <= room.across(sheet::HEADING_WIDE) / 2.0 + 0.5,
+                "whole"
+            );
+            let row = cy - hy + 0.135 * 2.0 * hy;
+            let stars: Vec<[f32; 4]> = all()
+                .filter(|i| i.params[0] == kind::STAR && (i.shape[1] - row).abs() < 1.0)
+                .map(|i| i.shape)
+                .collect();
+            assert_eq!(stars.len(), 2, "{size:?}");
+            for [x, _, reach, _] in stars {
+                let out = (x - cx).abs();
+                assert!(out - reach * 1.15 > half, "{size:?}: {out} {reach} {half}");
+                assert!(
+                    out + reach * 1.15 < hx * 0.93,
+                    "{size:?}: {out} {reach} {hx}"
+                );
+            }
         }
     }
 

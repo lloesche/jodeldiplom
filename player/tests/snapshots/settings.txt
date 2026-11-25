@@ -1,8 +1,8 @@
 ╭ Settings ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │                                                                                                                      │
 │   Output device         ‹ system default  ▾                                       ›                                  │
-│   Rate cap              ‹ none                                                    ›                                  │
-│   Resample when needed  ‹ on: when no rate carries the file bit-perfect           ›                                  │
+│     Its rate            ‹ 48 kHz                                                  ›                                  │
+│   Resample when needed  ‹ on: files at another rate than the device's             ›                                  │
 │   Headroom              ‹ none (lossy files -1.5 dB, for their overs)             ›                                  │
 │   Tempo and beats       ‹ on: tempo, beat pulse and beat analysis                 ›                                  │
 │   Beat voting           ‹ on: the checked methods vote                            ›                                  │

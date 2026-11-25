@@ -178,29 +178,26 @@ impl Output for PacedOutput {
     }
 }
 
-/// A mixer on a null device in real time: a period an input is short of is
-/// mixed without it, as on a device.
-fn realtime_mixer() -> (Mixer, Heard) {
-    mixer_on(Box::new(NullTarget::new(
-        any_capabilities(),
-        SimClock::Realtime,
-    )))
+/// A mixer on a null device in real time, at `rate`: a period an input is
+/// short of is mixed without it, as on a device.
+fn realtime_mixer(rate: u32) -> (Mixer, Heard) {
+    let device = NullTarget::new(any_capabilities(), SimClock::Realtime);
+    mixer_on(Box::new(device), rate)
 }
 
 /// A mixer on a [`Paced`] device: every period is mixed once each running
 /// input holds it.
 fn paced_mixer() -> (Mixer, Heard) {
-    mixer_on(Box::new(Paced(NullTarget::new(
-        any_capabilities(),
-        SimClock::Instant,
-    ))))
+    let device = Paced(NullTarget::new(any_capabilities(), SimClock::Instant));
+    mixer_on(Box::new(device), jodel_output::mixer::DESK_RATE)
 }
 
-fn mixer_on(device: Box<dyn OutputTarget>) -> (Mixer, Heard) {
+fn mixer_on(device: Box<dyn OutputTarget>, rate: u32) -> (Mixer, Heard) {
     let mixer = Mixer::open(
         device,
         MixerOptions {
             buffer: Duration::from_millis(200),
+            rate,
             ..MixerOptions::default()
         },
     );
@@ -353,11 +350,11 @@ fn a_file_played_to_its_end_makes_room_and_another_rate_is_resampled() {
         dir.join("one.wav"),
         dir.join("other.wav"),
     );
-    // Nothing plays: the first file opens the device at 44.1 kHz.
+    // The device runs at 44.1 kHz, as the files.
     wav(&short, 44_100, 44_100, |_| 500_000);
     wav(&one, 44_100, 3 * 44_100, |_| 1_000_000);
     wav(&other, 96_000, 3 * 96_000, |_| 3_000_000);
-    let (mixer, heard) = realtime_mixer();
+    let (mixer, heard) = realtime_mixer(44_100);
     let (_target, lead) = mixer.input(&mixer.strip("Player"), Role::Lead, 1.0);
     let mut previews = Previews::new(vec![lead], mixer.strip("Preview"), Settings::default());
     // A file heard to its end (from a third in: 0.67 s): its player goes.
@@ -367,16 +364,19 @@ fn a_file_played_to_its_end_makes_room_and_another_rate_is_resampled() {
     });
     assert_eq!(mixer.timebase().rate, 44_100);
     wait(
-        "it played out: the device closed",
+        "it played out: its player went",
         &mixer,
         &mut previews,
-        |_| mixer.timebase().rate == 0,
+        |p| p.players() == 0,
     );
+    // And for 100 ms after, nothing more happens: nothing said, no player
+    // back, the device playing on.
     for _ in 0..50 {
         assert!(previews.pump(&mixer).is_empty());
         std::thread::sleep(Duration::from_millis(2));
     }
     assert_eq!(previews.players(), 0, "its player was let go of");
+    assert_eq!(mixer.timebase().rate, 44_100);
     // So two more files each have a place: the second, at 96 kHz, comes
     // in over the first, resampled to the device's 44.1 kHz.
     previews.play(&mixer, one);
@@ -531,7 +531,7 @@ fn quick_moves_across_rates_with_nothing_playing_fail_nothing() {
             path
         })
         .collect();
-    let (mixer, heard) = realtime_mixer();
+    let (mixer, heard) = realtime_mixer(jodel_output::mixer::DESK_RATE);
     let (_target, lead) = mixer.input(&mixer.strip("Player"), Role::Lead, 1.0);
     let mut previews = Previews::new(vec![lead], mixer.strip("Preview"), Settings::default());
     // Moved on before anything has opened the device (a player opens a

@@ -139,18 +139,21 @@ pub(crate) struct Engine {
 }
 
 impl Engine {
-    /// The mixer on `target` (which takes `capabilities`), its strips, and
-    /// the engine on the player's two heads with `options`; the engine's
-    /// events.
+    /// The mixer on `target` (which takes `capabilities`), its device
+    /// opened at once at `rate` (or what it falls back to), its strips, and
+    /// the engine on the player's two heads with `options`, routing every
+    /// track to the desk's one format; the engine's events.
     pub(crate) fn start(
         target: Box<dyn OutputTarget>,
         capabilities: Option<Capabilities>,
+        rate: u32,
         options: PlayerOptions,
     ) -> (Engine, Receiver<Event>) {
         let mixer = Mixer::open(
             target,
             MixerOptions {
                 capabilities,
+                rate,
                 ..MixerOptions::default()
             },
         );

@@ -63,6 +63,7 @@ pub mod engine;
 mod error;
 mod headers;
 pub mod rate;
+pub mod remix;
 pub mod resample;
 pub mod source;
 pub mod stem_file;

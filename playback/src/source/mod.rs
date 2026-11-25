@@ -50,6 +50,7 @@ use symphonia::core::units::{TimeBase, Timestamp};
 
 use crate::error::Error;
 use crate::headers;
+use crate::remix::Remix;
 use crate::resample::Requantizer;
 
 use meta::{folder_cover, read_metadata};
@@ -295,6 +296,12 @@ pub struct Source {
     /// What [`Source::read`] scales requantized samples by (headroom).
     gain: f64,
     ended: bool,
+    /// The file's channels made stereo as they are read
+    /// ([`Source::make_stereo`]), and the frames as the file has them on
+    /// their way there.
+    remix: Option<Remix>,
+    unmixed: Vec<i32>,
+    unmixed_wide: Vec<f64>,
 }
 
 /// A packet decoded: its first decoded frame index (the dither seed), the
@@ -524,7 +531,26 @@ impl Source {
             requantizer: Requantizer::new(),
             gain: 1.0,
             ended: false,
+            remix: None,
+            unmixed: Vec::new(),
+            unmixed_wide: Vec::new(),
         })
+    }
+
+    /// Reads the file as stereo from now on, whatever its channels
+    /// ([`Remix`]: mono doubled, more channels folded down); nothing
+    /// changes for a stereo file.
+    pub fn make_stereo(&mut self) {
+        self.remix = Remix::to_stereo(self.info.channels);
+    }
+
+    /// The channels [`Source::read`] gives a frame.
+    pub fn channels(&self) -> u16 {
+        if self.remix.is_some() {
+            2
+        } else {
+            self.info.channels
+        }
     }
 
     /// What the file is.
@@ -553,9 +579,22 @@ impl Source {
     }
 
     /// Appends the next packet's frames to `out` as interleaved 24-bit
-    /// samples (`channels` per frame), and returns how many frames it
-    /// appended: 0 at the end of the file.
+    /// samples ([`Source::channels`] per frame), and returns how many
+    /// frames it appended: 0 at the end of the file.
     pub fn read(&mut self, out: &mut Vec<i32>) -> Result<usize, Error> {
+        let Some(remix) = self.remix.take() else {
+            return self.read_file(out);
+        };
+        let mut unmixed = std::mem::take(&mut self.unmixed);
+        unmixed.clear();
+        let read = self.read_file(&mut unmixed);
+        remix.apply(&unmixed, out);
+        (self.remix, self.unmixed) = (Some(remix), unmixed);
+        read
+    }
+
+    /// [`Source::read`] in the file's own channels.
+    fn read_file(&mut self, out: &mut Vec<i32>) -> Result<usize, Error> {
         let channels = usize::from(self.info.channels);
         let Some(block) = self.next_block()? else {
             return Ok(0);
@@ -591,8 +630,22 @@ impl Source {
     /// Appends the next packet's frames to `out` as interleaved samples in
     /// 24-bit units (full scale ±2²³), before any requantization, and
     /// returns how many frames it appended: 0 at the end of the file.
-    /// Integer sources of at most 24 bits give their exact values.
+    /// Integer sources of at most 24 bits give their exact values (a
+    /// fold-down of more channels to stereo aside).
     pub fn read_unquantized(&mut self, out: &mut Vec<f64>) -> Result<usize, Error> {
+        let Some(remix) = self.remix.take() else {
+            return self.read_unquantized_file(out);
+        };
+        let mut unmixed = std::mem::take(&mut self.unmixed_wide);
+        unmixed.clear();
+        let read = self.read_unquantized_file(&mut unmixed);
+        remix.apply_wide(&unmixed, out);
+        (self.remix, self.unmixed_wide) = (Some(remix), unmixed);
+        read
+    }
+
+    /// [`Source::read_unquantized`] in the file's own channels.
+    fn read_unquantized_file(&mut self, out: &mut Vec<f64>) -> Result<usize, Error> {
         let channels = usize::from(self.info.channels);
         let Some(block) = self.next_block()? else {
             return Ok(0);

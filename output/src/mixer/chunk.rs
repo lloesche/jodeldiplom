@@ -18,7 +18,6 @@ use super::run::Run;
 use super::strips::Strips;
 use super::voices::EffectsRun;
 use super::SlotState;
-use crate::caps::Capabilities;
 use crate::lanes::Parts;
 
 /// A lane heard in a chunk: its strip, its samples, the gains it is heard
@@ -45,8 +44,6 @@ pub(super) struct Slot {
     /// The id of the last output opened on it (0: none): a fade for the
     /// first audio waits for one newer.
     pub(super) opened: u64,
-    /// What it was offered, once asked.
-    pub(super) caps: Option<Capabilities>,
     /// A lane of it was heard in the last chunk.
     pub(super) heard: bool,
     pub(super) stream: Option<Stream>,
@@ -73,7 +70,6 @@ impl Slot {
             switch: (lanes.len() > 1).then(Switch::new),
             automation: AutomationRun::new(lanes.len() - 1),
             opened: 0,
-            caps: None,
             heard: false,
             stream: None,
             mapped: (0, 0),
@@ -405,12 +401,8 @@ impl Run {
             device.mix.end(untouched, &mut self.out);
             Made::Mixed
         };
-        let sounded = effects.is_some();
         self.untouched = made != Made::Mixed;
         self.gave(ch);
-        if sounded {
-            self.effects_until = end;
-        }
         self.frame = end;
         true
     }

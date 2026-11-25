@@ -307,6 +307,9 @@ pub enum Action {
     /// engine starts with [`crate::core::State::engine_settings`] after
     /// this, so this sends nothing to it.
     DeviceRates(Option<Vec<u32>>),
+    /// The rate the new mixer opened the output device at (`None`: none
+    /// open).
+    OutputOpened(Option<u32>),
     /// The playback engine reported something.
     Engine(Event),
     /// A file's beats were analysed by a recipe (or could not be).
@@ -466,6 +469,10 @@ pub enum Effect {
     /// Play on this device from now on (`None`: the system default),
     /// carrying the queue and the position over.
     SwitchDevice(Option<String>),
+    /// Open the output device again at the rate set
+    /// ([`crate::config::Config::rate`]), carrying the queue and the
+    /// position over.
+    ReopenOutput,
     /// Read or step the output device's own volume control (answered with
     /// [`Action::DeviceVolume`]).
     DeviceVolume(super::VolumeChange),

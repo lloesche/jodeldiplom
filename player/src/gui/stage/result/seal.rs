@@ -14,12 +14,12 @@
 use super::super::super::stage_gpu::kind;
 use super::super::{disc, pill, rgba, segment, Face, Rgb, Stage, GOLD, GOLD_TOP, WHITE};
 use super::{
-    burst, clamp01, ease_out, fade, land, shape, sparkle, sticker, Drawn, Pen, ResultShown, Room,
-    Tint, Written, PRINT,
+    burst, clamp01, fade, land, shape, sparkle, sticker, Drawn, Pen, ResultShown, Room, Tint,
+    Written, PRINT,
 };
-use crate::core::singing::{Medal, Verdict, DROP};
+use crate::core::singing::{ease_out, verdict_words, Medal, Verdict, DROP, GRADE_WRITE};
 use crate::gui::particles::Kind;
-use crate::view::karaoke::{verdict_words, DIPLOMA};
+use crate::view::karaoke::DIPLOMA;
 
 /// How long a seal falls, as the scene takes it.
 const FALL: f32 = DROP as f32;
@@ -28,8 +28,6 @@ const FALL: f32 = DROP as f32;
 const SEAL_AT: (f32, f32) = (0.865, 0.8);
 const GRADE_Y: f32 = 0.765;
 const REMARK_Y: f32 = 0.815;
-/// How long the grade takes to write.
-const GRADE_WRITE: f32 = 0.6;
 
 /// How a verdict looks on the diploma.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -44,11 +42,10 @@ pub(super) struct Look {
     rays: f32,
     /// How hard the sheet shakes as the seal is stamped down, in its units.
     shake: f32,
-    /// The grade's ink (none: the pen's) and its size, in units.
+    /// The grade's ink (none: the pen's) and its size, in units (its words
+    /// the verdict's, [`Verdict::grade`]).
     ink: Option<Rgb>,
     grade_px: f32,
-    /// The grade's own words (none: the verdict's name).
-    grade: Option<&'static str>,
     /// The line under the song's title.
     pub(super) yodelled: &'static str,
     /// A rubber stamp slapped on with the verdict: its words and ink.
@@ -60,7 +57,7 @@ pub(super) struct Look {
 /// from its start; a sleepy lilac one, "Zzz" stamped beside it and the
 /// song yodelled very quietly, where nothing was scored.
 pub(super) fn look(verdict: Verdict, tint: &Tint) -> Look {
-    let medal = |m, light, deep, (rays, shake), ink, grade| Look {
+    let medal = |m, light, deep, (rays, shake), ink| Look {
         medal: Some(m),
         light,
         deep,
@@ -68,11 +65,10 @@ pub(super) fn look(verdict: Verdict, tint: &Tint) -> Look {
         shake,
         ink: Some(ink),
         grade_px: 6.0,
-        grade: Some(grade),
         yodelled: DIPLOMA.yodelled.0,
         stamp: None,
     };
-    let star = |light: Rgb, grade| Look {
+    let star = |light: Rgb| Look {
         medal: None,
         light,
         deep: light.map(|k| k * 0.45),
@@ -80,7 +76,6 @@ pub(super) fn look(verdict: Verdict, tint: &Tint) -> Look {
         shake: 0.0,
         ink: None,
         grade_px: 4.6,
-        grade,
         yodelled: DIPLOMA.yodelled.0,
         stamp: None,
     };
@@ -91,7 +86,6 @@ pub(super) fn look(verdict: Verdict, tint: &Tint) -> Look {
             [0.62, 0.36, 0.03],
             (0.6, 1.1),
             [0.7, 0.42, 0.03],
-            "summa cum laude",
         ),
         Verdict::Medal(Medal::Silver) => medal(
             Medal::Silver,
@@ -99,7 +93,6 @@ pub(super) fn look(verdict: Verdict, tint: &Tint) -> Look {
             [0.42, 0.46, 0.58],
             (0.45, 0.85),
             [0.36, 0.4, 0.52],
-            "magna cum laude",
         ),
         Verdict::Medal(Medal::Bronze) => medal(
             Medal::Bronze,
@@ -107,14 +100,13 @@ pub(super) fn look(verdict: Verdict, tint: &Tint) -> Look {
             [0.48, 0.22, 0.08],
             (0.35, 0.7),
             [0.55, 0.27, 0.1],
-            "cum laude",
         ),
-        Verdict::Cheer => star(tint.glow, Some("participated with great enthusiasm")),
-        Verdict::Whole => star([0.5, 0.68, 1.0], None),
+        Verdict::Cheer => star(tint.glow),
+        Verdict::Whole => star([0.5, 0.68, 1.0]),
         Verdict::Silent => Look {
             yodelled: DIPLOMA.yodelled.1,
             stamp: Some((DIPLOMA.asleep, [0.42, 0.38, 0.6])),
-            ..star([0.72, 0.66, 0.86], None)
+            ..star([0.72, 0.66, 0.86])
         },
     }
 }
@@ -209,11 +201,11 @@ impl Stage {
     fn grade(&mut self, d: &mut Drawn, room: &Room, shown: &ResultShown, hit: f32) {
         let r = &shown.shown.result;
         let (s, look) = (room.s, room.look);
-        let (name, remark) = verdict_words(r);
-        let grade = look.grade.unwrap_or(name);
+        let (_, remark) = verdict_words(r);
+        let grade = r.verdict().grade();
         let px = (look.grade_px * s).round().max(12.0);
         let (grade, px) = self.fitted(Face::NUMBER, grade, px, room.across(0.6));
-        let share = clamp01(hit / GRADE_WRITE);
+        let share = clamp01(hit / GRADE_WRITE as f32);
         let c = room.at(0.5, GRADE_Y);
         let pen = rgba(look.ink.unwrap_or(room.inks.pen), 0.95);
         let text = (Face::NUMBER, &*grade);
@@ -383,7 +375,7 @@ fn stamped(
 ) {
     if (0.0..0.55).contains(&hit) {
         let k = hit / 0.55;
-        let ring = radius * (1.05 + 1.0 * ease_out(k));
+        let ring = radius * (1.05 + 1.0 * ease_out(f64::from(k)) as f32);
         let line = rgba(room.inks.ink, 0.4 * (1.0 - k) * (1.0 - k));
         let width = radius * 0.05 * (1.0 - k) + 1.0;
         d.out
@@ -453,9 +445,9 @@ mod tests {
     fn each_verdict_looks_its_own() {
         let of = |v| look(v, &Tint::STAGE);
         let gold = of(Verdict::Medal(Medal::Gold));
-        assert_eq!(gold.grade, Some("summa cum laude"));
+        assert_eq!(Verdict::Medal(Medal::Gold).grade(), "summa cum laude");
         assert!(gold.medal.is_some() && gold.rays > 0.0 && gold.stamp.is_none());
-        assert_eq!(of(Verdict::Medal(Medal::Bronze)).grade, Some("cum laude"));
+        assert_eq!(Verdict::Medal(Medal::Bronze).grade(), "cum laude");
         for v in [Verdict::Cheer, Verdict::Whole, Verdict::Silent] {
             let l = of(v);
             assert!(
@@ -464,7 +456,8 @@ mod tests {
             );
         }
         let silent = of(Verdict::Silent);
-        assert_eq!((silent.grade, silent.yodelled), (None, DIPLOMA.yodelled.1));
+        assert_eq!(Verdict::Silent.grade(), "Silent night?");
+        assert_eq!(silent.yodelled, DIPLOMA.yodelled.1);
         assert!(silent.yodelled.contains("quietly") && silent.stamp.is_some());
         assert_eq!(of(Verdict::Cheer).yodelled, DIPLOMA.yodelled.0);
     }

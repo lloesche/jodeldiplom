@@ -24,15 +24,18 @@
 //! same numbers to other music, so it cancels what it cued on them. A cue
 //! for now starts on the next period mixed.
 //!
-//! On a device that plays in real time, the effects keep it playing while
-//! a voice sounds or a cue for now waits, with no output running (a song
-//! over, paused, or the next held back): the last sound is heard to its
-//! end, then the device pauses (or closes, with no output open).
+//! The desk's device plays all along in real time (see [`Mixer`]), so a
+//! cue for now sounds on the next period mixed whatever the outputs do (a
+//! song over, paused, or the next held back). On a device that plays only
+//! what it is given it waits for an output to run; while the device is
+//! down (not there, or failed) cues pushed wait in the queue for the
+//! mixer thread's next message (an output opened), and sound once it is
+//! open again.
 //!
 //! While no voice sounds, the effects input adds nothing, and what goes to
 //! the device is as it was without it, bit for bit.
 
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -149,9 +152,6 @@ pub(crate) struct CueQueue {
     pub(crate) missed: AtomicU64,
     pub(crate) sounding: AtomicU64,
     pub(crate) rate: AtomicU64,
-    /// The mixer thread waits for word, with nothing to mix: a cue pushed
-    /// then wakes it.
-    pub(crate) idle: AtomicBool,
 }
 
 /// A cue as the mixer thread takes it.
@@ -176,13 +176,7 @@ impl CueQueue {
             missed: AtomicU64::new(0),
             sounding: AtomicU64::new(0),
             rate: AtomicU64::new(0),
-            idle: AtomicBool::new(false),
         }
-    }
-
-    /// Whether cues are in it, not taken yet.
-    pub(crate) fn has_cues(&self) -> bool {
-        self.tail.load(Ordering::SeqCst) != self.head.load(Ordering::SeqCst)
     }
 
     /// Pushes a cue (one producer at a time); false when full.
@@ -301,10 +295,6 @@ impl Effects {
         let pushed = self.queue.push(cue, on);
         if !pushed {
             self.queue.miss();
-        }
-        // The mixer thread waiting for word: this is word.
-        if self.queue.idle.swap(false, Ordering::SeqCst) {
-            let _ = self.tx.send(Msg::Wake);
         }
         pushed
     }

@@ -20,15 +20,14 @@
 //! desk's Lead, A's output plays out what it holds and closes, and the
 //! heads swap: B plays on, settles off its map back onto its own route at
 //! the same format, and the transition is finished. The cue clock is B's
-//! from the hand-over (its frames count from its first). The output format
-//! stays the open one until playback stops or a track is picked.
+//! from the hand-over (its frames count from its first). Both play at the
+//! desk's one format.
 //!
 //! Pausing pauses A, and the link holds B. `Next` in the window fades A out
 //! from where the desk mixes it and puts B at its end values, and hands
 //! over once A is written to its fade's end. Called off in the window (the
 //! queue changed, B failed), B fades out and A comes back whole. Moving
-//! playback elsewhere drops B; new settings wait for the end (and the
-//! format is no longer held then).
+//! playback elsewhere drops B; new settings wait for the end.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -41,7 +40,6 @@ use super::track::{
 };
 use super::Engine;
 use crate::error::Error;
-use crate::rate::Settings;
 use crate::source::Source;
 use crate::stems::{Stem, LANES};
 use crate::transition::{Envelope, Side, TransitionPlan, TransitionState, NEXT_LEAD};
@@ -123,9 +121,6 @@ pub(super) struct Transition {
     map: Arc<TimeMap>,
     /// A's time along its output's through the window.
     glide: Glide,
-    /// The settings when it was armed (others since: the format is not held
-    /// after it).
-    settings: Settings,
     phase: Phase,
 }
 
@@ -303,7 +298,6 @@ impl Engine {
             map: Arc::new(beats.through_glide(&glide)),
             plan: Arc::new(plan),
             glide,
-            settings: self.settings,
             phase: Phase::Armed,
         });
         self.emit(Event::Transition(TransitionState::Armed));
@@ -621,12 +615,12 @@ impl Engine {
         // B, routed for the open format alone.
         let source = Source::open(&self.queue[plan.into]).map_err(|e| e.to_string())?;
         let info = source.info().clone();
-        if info.channels > 2 {
-            return Err("the next track has more than two channels".into());
-        }
         let route = self
             .route_at(&info, open)
             .map_err(|none| format!("the next track does not play at {open} ({none})"))?;
+        if route.channels > 2 {
+            return Err("the next track has more than two channels".into());
+        }
         let b = Track::new(plan.into, info, route, source, self.segments.clone())
             .map_err(|e| e.to_string())?;
         self.open_parked(b)
@@ -699,13 +693,10 @@ impl Engine {
         };
         t.phase = Phase::Settling { cut: cut.is_some() };
         let from = t.plan.from;
-        // The format stays where it is, unless the settings changed.
-        let pin = t.settings == self.settings;
         if let Some((fa, fb)) = self.faders() {
             let _ = fb.set_role(Role::Lead);
             let _ = fa.set_role(Role::Guest);
         }
-        let open = self.head.out.as_ref().map(|o| o.info.format);
         if let Some(out) = self.head.out.as_mut() {
             let _ = out.output.drain(Some(Duration::ZERO));
         }
@@ -725,7 +716,6 @@ impl Engine {
         }
         self.heard = self.heard.as_ref().map(|h| h.rebased(origin));
         self.last_report = None;
-        self.pinned = open.filter(|_| pin);
         let Some(mut b) = self.head.playing.take() else {
             return;
         };
@@ -762,8 +752,7 @@ impl Engine {
 
     /// B is back on its own route (or ended): its automation goes (it is at
     /// its end values, one in a plan that ends with every stem in), the
-    /// transition is finished, and settings that waited apply (the format
-    /// no longer held when they changed).
+    /// transition is finished, and settings that waited apply.
     fn settle_transition(&mut self, written: u64) {
         let Some(t) = self.transition.take() else {
             return;
@@ -773,9 +762,6 @@ impl Engine {
         }
         if matches!(t.phase, Phase::Settling { cut: false }) {
             self.queue_cue(written, CueEvent::Transition(TransitionState::Finished));
-        }
-        if t.settings != self.settings {
-            self.pinned = None;
         }
         self.reroute();
     }

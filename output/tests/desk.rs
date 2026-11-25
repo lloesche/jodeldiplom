@@ -4,8 +4,8 @@
 //! other strip, a group's solo keeps its children, and solo off brings all
 //! back; a mute and a level set for a desk frame start their ramps on that
 //! very frame; a group mute for the first audio starts on the first frame
-//! of an output opened since on a child, not on an older one's; a change
-//! for a time of an epoch gone never comes; a lone input on a child of a
+//! of an output opened since on a child, not on an older one's; a lone
+//! input on a child of a
 //! group, all at 0 dB, reaches the device bit for bit, and again bit for
 //! bit once a group's ramp has played out; and a group meters its subtree.
 
@@ -399,35 +399,4 @@ fn passthrough_comes_back_exactly_after_a_group_ramp() {
     let half = |f: usize| 0.5 * f64::from(sample(f as u64));
     assert_eq!(off(&left, 4_800 + 960, 9_600, half), None);
     assert_eq!(wrong(10_560, 14_400), None);
-}
-
-#[test]
-fn a_change_for_a_time_of_an_epoch_gone_never_comes() {
-    let (mixer, device) = instant_mixer();
-    let group = mixer.strip("Player");
-    let child = mixer.strip_in(&group, "Main");
-    let (mut lead, _fader) = mixer.input(&child, Role::Lead, 1.0);
-    let level = 1_000_000;
-    let mut first = open_started(&mut lead, RATE, level);
-    first.write(&frames(1, 4_799, |_| level), None).unwrap();
-    wait_until("mixed", || mixer.timebase().frame == 4_800);
-    let tb = mixer.timebase();
-    group.set_mute_at(true, tb.at(20_000));
-    taken(&mut lead);
-    assert_eq!(group.pending_mute(), Some(true));
-    // The Lead at another rate: a new epoch, and the mute waiting for a
-    // frame of the last one goes; one set for it now never comes either.
-    let mut out = open(&mut lead, 96_000);
-    wait_until("a new epoch", || mixer.timebase().epoch == 2);
-    assert_eq!(group.pending_mute(), None);
-    group.set_mute_at(true, tb.at(10_000));
-    taken(&mut lead);
-    out.write(&frames(0, 48_000, |_| level), None).unwrap();
-    out.drain(None).unwrap();
-    assert!(!group.mute() && group.pending_mute().is_none());
-    drop((first, out));
-    drop(mixer);
-    let left = device.left(1);
-    assert_eq!(left.len(), 48_000);
-    assert_eq!(left.iter().position(|&v| v != level), None);
 }

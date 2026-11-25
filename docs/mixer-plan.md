@@ -74,16 +74,16 @@ drift apart by tens of parts per million.
 
 ### Bit-perfect
 
-A real desk always processes. Ours, by default, does nothing: the song
-reaches the DAC bit for bit, and the device's rate follows the track.
+A real desk always processes. Ours, by default, does nothing: a song at
+the desk's rate reaches the DAC bit for bit. The device runs at one rate
+from start to end ("One device, one rate, as built").
 
 - Per output and per block, the desk checks whether the path from one source
   is **transparent** (unity faders, no filter acting, nothing else heard),
   and then copies that source's samples as they came. Today's "one input
   heard at unity" rule, widened from an input to a path.
-- One source per output owns its **format** (now: the main player). Its
-  tracks set the device's rate; every other source is resampled inside its
-  own player.
+- The desk owns the **format**: every source (songs, stems, the
+  preview, the game's sounds) is resampled to it inside its own player.
 
 ## Karaoke as routing
 
@@ -395,13 +395,9 @@ bit-exact tests, run through the desk.
   stem mask, and the transition-only stem paths. The desk's look-ahead
   limiter and dither take the overlap, so a loud overlap measures slightly
   differently than before.
-- **The rate after a mix**: the next track opens resampled to the open
-  format, and the device keeps that rate after the mix: the tracks after
-  are routed at it, gaplessly, until playback stops, the queue ends, a
-  track is picked (Play, PlayAt, Previous, Next outside a mix, Load) or
-  the settings change; a track with no route there (resampling off)
-  opens at its own rate. No gap mid-song or on an album's seam; a DJ set
-  runs at one rate. This is a held format in the engine, not a setting.
+- **The rate after a mix**: the next track plays at the desk's one
+  format, as every track does ("One device, one rate, as built"); the
+  format the engine once held after a mix is gone.
 - **The app on two heads** (`player/src/desk_wiring.rs`,
   `core/stems.rs`): a stem key lands on its bar on the head on air, 0.1 s
   ahead (0.75 s while the stems are still to be separated), during a mix
@@ -415,6 +411,49 @@ bit-exact tests, run through the desk.
   presets, the next key's mix, the cues) stays in the player.
 - **Still to come**: checks on real files at a USB DAC's rates, through
   the device in real time.
+
+### One device, one rate, as built
+
+- **The desk opens the output device once**, as the mixer starts
+  (`Mixer::open`), at the desk's format (`desk_format`): stereo, at the
+  rate set for the device (`MixerOptions::rate`, the player's rate for
+  that device, kept by its id, 48 kHz unless set), else 44.1 kHz where the
+  device lacks it,
+  else its lowest rate (a device that takes only 96 kHz runs at 96 kHz),
+  in the format with the most bits it takes there. It holds it open until
+  the mixer is dropped: in real time it plays all along, silence where
+  nothing sounds, never paused and never closed when an output closes. A
+  device not there as the mixer starts has no format yet (`Mixer::format`
+  is `None`); a device that fails closes, its outputs failing with its
+  error. Either way the next output opened asks the device again what it
+  takes, decides the format and opens it (after a failure, another
+  epoch: a ramp under way ends on its target, a change for a time of the
+  last epoch never comes).
+- **Everything is resampled to the desk's rate**: every input is offered
+  that one format (`InputTarget::capabilities`), so each player routes to
+  it (songs, stems, the preview), the game's sounds are made at it, and
+  the microphone's reference is at it. A song at that rate plays bit for
+  bit, as before; one at another is resampled, never a reason to open the
+  device again. A file of another channel count is made stereo in its
+  player as it is read (`playback/src/remix.rs`): mono doubled exactly,
+  more channels folded down with the ITU-R BS.775 coefficients (the centre
+  and the surrounds at −3 dB, the LFE left out, each side scaled to stay
+  within full scale), not lossless then. This ends bit-perfect playback at a song's own rate, by
+  the user's choice: no gap, no click and no re-learning between songs.
+- **Deleted with it**: the device closing with the last output and opening
+  again at the next one's format; the Lead's and the guest's format
+  negotiation (the roles now only say whose frames the microphone's tap
+  tells); the format the engine held after a mix (`pinned`, the D7
+  policy); the effects' keeping the device open, the reopening for them
+  and its linger; the player's rate cap (`max_rate`, its setting and
+  `--max-rate`; the playback crate keeps its cap for plain targets).
+- **The only reopening** is the user's: another device, or another rate
+  in the settings (the row under the device, opened again once the steps
+  pause and only where the rate in force changed; `--rate`), starts a new
+  mixer with the queue and the place carried over.
+- **The echo canceller** hears one rate all along, so it keeps what it
+  has learnt of the room from song to song (it starts again only at
+  another rate).
 
 ### The key shift, as built
 

@@ -61,12 +61,9 @@ impl Engine {
         let path = self.queue[index].clone();
         let source = Source::open(&path)?;
         let info = source.info().clone();
-        let route = match route.or_else(|| self.held_route(&info)) {
+        let route = match route {
             Some(route) => route,
             None => {
-                // No route at the format held (if one is): it is held no
-                // longer.
-                self.pinned = None;
                 let caps = self.target_caps()?;
                 choose_route(&FileFacts::from(&*info), &caps, &self.settings)?
             }
@@ -343,8 +340,6 @@ impl Engine {
     /// Stops playback and closes the output.
     pub(super) fn stop(&mut self, announce: bool) {
         let was_active = self.head.out.is_some() || self.head.playing.is_some();
-        // The device opens again at a track's own rate from here.
-        self.pinned = None;
         self.every_lanes().for_each(|l| l.stop());
         self.clear_timeline();
         self.close_output();
@@ -439,8 +434,6 @@ impl Engine {
     pub(super) fn advance(&mut self, mut index: usize, end: u64) -> Result<(), Error> {
         loop {
             if index >= self.queue.len() {
-                // The device opens again at a track's own rate after.
-                self.pinned = None;
                 self.cues.push_back(Cue {
                     at: end,
                     event: CueEvent::QueueEnded,

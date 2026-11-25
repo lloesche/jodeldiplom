@@ -65,7 +65,8 @@ pub struct StripView {
 /// An input of a strip (listed on its main lane's strip).
 #[derive(Clone, Debug, PartialEq)]
 pub struct InputView {
-    /// What it is to the device's format.
+    /// Whether it is the main player (the one the microphone's frames are
+    /// told in) or another.
     pub role: Role,
     /// Its controllers' gain (its own [`super::Fader`]'s), at the last frame
     /// mixed.

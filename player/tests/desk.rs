@@ -525,3 +525,111 @@ fn a_stem_muted_on_its_frame_is_heard_and_unmuted_the_file_is_again() {
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// The device is opened once, as the player starts, at the rate set (48
+/// kHz by default), and stays open while songs at 44.1, 48 and 96 kHz play
+/// one into the next: each is routed to its rate, the 44.1 and 96 kHz ones
+/// resampled, the 48 kHz one as it is; the device is never opened again.
+#[test]
+fn the_device_opens_once_for_songs_at_any_rate() {
+    let _guard = common::real_time();
+    use jodel_output::{Capabilities, SampleFormat, StreamFormat};
+    use jodeldiplom::app::MemoryOutput;
+    let dir = common::temp_dir("one-rate");
+    let rates = [44_100, 48_000, 96_000];
+    for (k, rate) in rates.into_iter().enumerate() {
+        common::write_wav(&dir.join(format!("{k}.wav")), rate, 1.0);
+    }
+    let mut caps = Capabilities::new();
+    for rate in rates {
+        caps.insert(StreamFormat::new(rate, 2, SampleFormat::S24In32Low));
+    }
+    let memory = MemoryOutput::new(caps, SimClock::Realtime);
+    let mut options = AppOptions::new(dir.clone());
+    options.output = Output::Memory(memory.clone());
+    options.devices = Arc::new(|| Ok(Vec::new()));
+    options.separator = || None;
+    options.autoplay = Some(dir.join("0.wav"));
+    let mut app = App::new(options);
+    // Each song's route as it plays, until the last has ended.
+    let mut routes = vec![None; rates.len()];
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    loop {
+        if let Some(t) = &app.state.playing.track {
+            routes[t.index] = Some(t.route.clone());
+        }
+        let stopped = app.state.playing.state == jodel_playback::PlayState::Stopped;
+        if stopped && routes.iter().all(Option::is_some) {
+            break;
+        }
+        assert!(std::time::Instant::now() < deadline, "{routes:?}");
+        app.pump_wait(Duration::from_millis(5));
+    }
+    let tb = app.desk().unwrap().master.timebase;
+    assert_eq!((tb.epoch, tb.rate), (1, 48_000));
+    app.shutdown();
+    let engines = memory.captures();
+    assert_eq!(engines.len(), 1);
+    let streams = engines[0].list();
+    assert_eq!(streams.len(), 1, "opened once");
+    assert_eq!(streams[0].format.rate, 48_000);
+    for (route, rate) in routes.into_iter().flatten().zip(rates) {
+        assert_eq!((route.input_rate, route.output_rate), (rate, 48_000));
+        assert_eq!(route.resample.is_some(), rate != 48_000, "{rate}");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Another rate set for the device opens it again once, on a new mixer at
+/// that rate: the song paused where it was stays paused there, the same
+/// song.
+#[test]
+fn another_rate_opens_the_device_again_where_the_song_was() {
+    let _guard = common::real_time();
+    use jodel_output::{Capabilities, SampleFormat, StreamFormat};
+    use jodel_playback::PlayState;
+    use jodeldiplom::app::MemoryOutput;
+    let dir = common::temp_dir("reopen-rate");
+    common::write_wav(&dir.join("a.wav"), 48_000, 8.0);
+    let mut caps = Capabilities::new();
+    for rate in [48_000, 96_000] {
+        caps.insert(StreamFormat::new(rate, 2, SampleFormat::S24In32Low));
+    }
+    let memory = MemoryOutput::new(caps, SimClock::Realtime);
+    let mut options = AppOptions::new(dir.clone());
+    options.output = Output::Memory(memory.clone());
+    options.devices = Arc::new(|| Ok(Vec::new()));
+    options.separator = || None;
+    options.autoplay = Some(dir.join("a.wav"));
+    let mut app = App::new(options);
+    assert_eq!(app.state.opened_rate, Some(48_000));
+    let wait = Duration::from_secs(30);
+    let played = |a: &App| a.state.playing.position > 1.5;
+    assert!(common::wait_for(&mut app, wait, played));
+    app.dispatch(Action::Op(Op::PlayPause));
+    let paused = |a: &App| a.state.playing.state == PlayState::Paused;
+    assert!(common::wait_for(&mut app, wait, paused));
+    let (index, at) = (app.state.queue.current, app.state.playing.position);
+    app.state.config.set_rate(96_000);
+    app.run(Effect::ReopenOutput);
+    let back = |a: &App| {
+        a.state.playing.track.is_some()
+            && a.state.playing.state == PlayState::Paused
+            && (a.state.playing.position - at).abs() < 0.5
+    };
+    assert!(
+        common::wait_for(&mut app, wait, back),
+        "paused where it was"
+    );
+    assert_eq!(app.state.queue.current, index);
+    assert_eq!(app.state.opened_rate, Some(96_000));
+    let route = app.state.playing.track.as_ref().unwrap().route.clone();
+    assert_eq!(route.output_rate, 96_000);
+    app.shutdown();
+    let engines = memory.captures();
+    assert_eq!(engines.len(), 2, "a new mixer");
+    let streams = engines[1].list();
+    assert_eq!(streams.len(), 1);
+    assert_eq!(streams[0].format.rate, 96_000);
+    let _ = std::fs::remove_dir_all(&dir);
+}

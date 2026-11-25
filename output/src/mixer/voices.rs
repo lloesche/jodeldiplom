@@ -127,14 +127,6 @@ impl EffectsRun {
         })
     }
 
-    /// Whether it wants the device playing with no output running: a
-    /// voice sounds, or a cue for now waits (in its list or its queue).
-    pub(super) fn wants_device(&self) -> bool {
-        !self.voices.is_empty()
-            || self.waiting.iter().any(|w| w.on.is_none())
-            || self.queue.has_cues()
-    }
-
     /// Whether it may be heard for now (a voice sounding or a cue waiting).
     pub(super) fn busy(&self) -> bool {
         !self.voices.is_empty() || !self.waiting.is_empty()

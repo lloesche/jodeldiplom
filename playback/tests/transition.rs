@@ -713,12 +713,11 @@ fn a_transition_called_off_while_it_prepares_leaves_the_track_as_it_was() {
     );
 }
 
-/// The heads at one rate through a mix and after it: the next track, of
-/// another rate, is resampled to the open one, and so is the track after
-/// it, gaplessly, on the one device stream; only a track picked opens the
-/// device again at its own rate.
+/// Every track at the desk's one rate, through a mix, after it and when
+/// picked: the first (44.1 kHz) and the next two (48 kHz) on a desk running
+/// at 48 kHz, on the one device stream, never opened again.
 #[test]
-fn the_rate_stays_through_and_after_a_mix_until_a_track_is_picked() {
+fn every_track_plays_at_the_desks_one_rate() {
     let _serial = serial();
     let dir = temp_dir("transition-rate");
     let (a_path, _) = wav(&dir, "a.wav", 8.0, tone([1_000.0, 5_000.0]));
@@ -750,17 +749,16 @@ fn the_rate_stays_through_and_after_a_mix_until_a_track_is_picked() {
         .iter()
         .map(|s| (s.index, s.output.format.rate))
         .collect();
-    assert!(rates.iter().all(|&(_, r)| r == RATE), "{rates:?}");
-    assert_eq!(desk.captures.list().len(), 1, "one stream: {rates:?}");
-    // Picked: at its own rate.
+    assert!(rates.iter().all(|&(_, r)| r == 48_000), "{rates:?}");
+    // Picked: at the same rate.
     desk.player.play(2).unwrap();
     desk.gate.allow_all();
     let seen = until_queue_end(&desk.events);
     let picked = starts(&seen).into_iter().find(|s| s.index == 2).expect("C");
     assert_eq!(picked.output.format.rate, 48_000);
     let streams = desk.close();
-    assert_eq!(streams.len(), 2);
-    assert_eq!(streams[1].0.rate, 48_000);
+    assert_eq!(streams.len(), 1, "one stream: {rates:?}");
+    assert_eq!(streams[0].0.rate, 48_000);
 }
 
 /// On a device in real time: a stem's strip muted on a bar 0.1 s ahead in

@@ -340,11 +340,10 @@ fn switch_format(target: GatedTarget, gate: &Gate, path: &Path) -> Vec<Event> {
     seen
 }
 
-/// A route moved to another format mid-track: the parts end over a
-/// mixer's switch's length before the old route fades out, are none over
-/// the fade and over the new route's rise, and only then there again; on
-/// the mixer with the drums muted, nothing jumps (only the fades and the
-/// mixer's own switch move the level).
+/// A route moved to another format mid-track (on a device of its own: a
+/// desk runs at one format): the parts end over a mixer's switch's length
+/// before the old route fades out, are none over the fade and over the new
+/// route's rise, and only then there again.
 #[test]
 fn a_switch_to_another_format_ends_the_parts_before_its_fades() {
     let dir = temp_dir("lanes-format");
@@ -375,46 +374,4 @@ fn a_switch_to_another_format_ends_the_parts_before_its_fades() {
     // out, its last 5 ms, they ring apart from main.)
     let (worst, _) = new.worst(back[0]..new.frames() - 240);
     assert!(worst <= CLOSE, "{worst} steps off after the switch");
-    // Through the mixer, the drums muted.
-    let (target, captures, gate, lanes) = gated_mixer_lanes(caps);
-    lanes.parts[0].set_mute(true);
-    let seen = switch_format(target, &gate, &path);
-    assert!(!seen.iter().any(|e| matches!(e, Event::Error { .. })));
-    drop(lanes);
-    let streams = captured(&captures);
-    assert_eq!(streams.len(), 2, "two streams");
-    // The left channel's 100 Hz moves at most this much a frame; a step of
-    // the level (three quarters to all, all to nothing) at once would be
-    // over ten times that.
-    let most = 2.0 * std::f64::consts::PI * 100.0 / 44_100.0 * 4_194_304.0;
-    for (format, bytes) in &streams {
-        let got: Vec<i32> = bytes
-            .chunks_exact(4)
-            .map(|b| (i32::from_le_bytes([b[0], b[1], b[2], b[3]]) << 8) >> 8)
-            .collect();
-        let left: Vec<i32> = got.iter().step_by(2).copied().collect();
-        let step = left
-            .windows(2)
-            .map(|w| f64::from((w[1] - w[0]).abs()))
-            .fold(0.0, f64::max);
-        assert!(
-            step <= 1.5 * most,
-            "{format}: a step of {step} (at most {most})"
-        );
-    }
-    // Three quarters of the file before the switch and after it.
-    let left = |i: usize| {
-        let b = &streams[1].1[8 * i..8 * i + 4];
-        (i32::from_le_bytes([b[0], b[1], b[2], b[3]]) << 8) >> 8
-    };
-    let first = streams[0].1.len() / 8;
-    let from = (first as f64 * 48_000.0 / 44_100.0).round() as usize;
-    let file = slow_tones(2 * 48_000);
-    let off = (2_000..streams[1].1.len() / 8 - 240)
-        .map(|i| (f64::from(left(i)) - 0.75 * f64::from(file[2 * (from + i)])).abs())
-        .fold(0.0, f64::max);
-    assert!(
-        off <= 2.0 * CLOSE as f64,
-        "{off} steps off three quarters after the switch"
-    );
 }

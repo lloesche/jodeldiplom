@@ -22,12 +22,16 @@
 //!   shimmer, Diva a jackpot (a cascade of coins over bells, a whoosh, and
 //!   a big chord).
 //! - The result screen's: the count-up's ticks, the gems' plinks, the
-//!   medal's stamp and stinger, a new best's fanfare ([`super::cheers`]).
+//!   medal's seal pressed down and its stinger, a new best's stamp and
+//!   fanfare ([`super::cheers`]); and the diploma's own, from its paper
+//!   unrolling to the examiner's signature ([`Sound::Diploma`],
+//!   [`super::diploma`]).
 //!
 //! Each is set to its own peak ([`Sound::peak_db`]), well under the
 //! song's; the Effects strip on the desk turns them all up or down.
 
 use super::cheers::{self, MEDALS, TICK_STEPS};
+use super::diploma::Diploma;
 use super::synth::{scatter, Buf, Envelope, Noise, Partial, Tone};
 use crate::core::shine::Tier;
 use crate::core::singing::Medal;
@@ -63,13 +67,17 @@ pub enum Sound {
     Medal(Medal),
     /// A new best.
     NewBest,
+    /// One of the diploma's own.
+    Diploma(Diploma),
 }
 
 impl Sound {
     /// How many there are.
-    pub const COUNT: usize = Self::RESULT + TICK_STEPS + 1 + Tier::ALL.len() + MEDALS.len() + 1;
+    pub const COUNT: usize = Self::DIPLOMA + Diploma::ALL.len();
     /// Where the result screen's start in the bank.
     const RESULT: usize = 2 * STEPS + LEVELS as usize + 2 + Tier::ALL.len();
+    /// Where the diploma's start.
+    const DIPLOMA: usize = Self::RESULT + TICK_STEPS + 1 + Tier::ALL.len() + MEDALS.len() + 1;
 
     /// Every one, in the order of [`Sound::index`].
     pub fn all() -> Vec<Sound> {
@@ -84,6 +92,7 @@ impl Sound {
         all.extend(Tier::ALL.map(|t| Sound::Gem(Some(t))));
         all.extend(MEDALS.map(Sound::Medal));
         all.push(Sound::NewBest);
+        all.extend(Diploma::ALL.map(Sound::Diploma));
         all
     }
 
@@ -105,7 +114,8 @@ impl Sound {
                 let k = MEDALS.iter().position(|&x| x == m).unwrap_or(0);
                 Self::RESULT + TICK_STEPS + 1 + Tier::ALL.len() + k
             }
-            Sound::NewBest => Self::COUNT - 1,
+            Sound::NewBest => Self::DIPLOMA - 1,
+            Sound::Diploma(d) => Self::DIPLOMA + d.index(),
         }
     }
 
@@ -124,6 +134,7 @@ impl Sound {
             Sound::Gem(Some(t)) => format!("gem-{}", t.name().to_lowercase()),
             Sound::Medal(m) => format!("medal-{}", m.name().to_lowercase()),
             Sound::NewBest => "new-best".into(),
+            Sound::Diploma(d) => d.name(),
         }
     }
 
@@ -147,6 +158,7 @@ impl Sound {
             Sound::Medal(Medal::Silver) => -13.0,
             Sound::Medal(Medal::Gold) => -12.0,
             Sound::NewBest => -12.5,
+            Sound::Diploma(d) => d.peak_db(),
         }
     }
 
@@ -166,6 +178,7 @@ impl Sound {
             Sound::Gem(t) => cheers::gem(rate, t),
             Sound::Medal(m) => cheers::medal(rate, m),
             Sound::NewBest => cheers::new_best(rate),
+            Sound::Diploma(d) => d.render(rate),
         };
         b.fade_out(0.01);
         b.peak_at(self.peak_db());
@@ -529,22 +542,20 @@ fn diva(rate: u32) -> Buf {
 mod tests {
     use super::*;
 
+    /// Each sound in its place in the bank, under a name of its own; each
+    /// set to its peak, under the song's (none over -12 dBFS), ending on
+    /// silence.
     #[test]
     fn every_sound_has_its_place_and_its_peak() {
         let all = Sound::all();
         assert_eq!(all.len(), Sound::COUNT);
+        let mut names = std::collections::HashSet::new();
         for (k, s) in all.iter().enumerate() {
             assert_eq!(s.index(), k, "{s:?}");
+            assert!(names.insert(s.name()), "{s:?}");
+            assert!(s.peak_db() <= -12.0, "{s:?}");
         }
-        for s in [
-            Sound::Pop(0),
-            Sound::StepUp(3),
-            Sound::Tier(Tier::Diva),
-            Sound::Tick(7),
-            Sound::Gem(Some(Tier::Diva)),
-            Sound::Medal(Medal::Gold),
-            Sound::NewBest,
-        ] {
+        for s in all {
             let b = s.render(48_000);
             let peak = b.l.iter().chain(&b.r).fold(0.0f64, |m, v| m.max(v.abs()));
             let db = 20.0 * peak.log10();

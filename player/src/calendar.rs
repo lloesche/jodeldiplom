@@ -1,4 +1,4 @@
-//! The day where the player is, from the system: what a Yodel Diploma is
+//! The day where the player is, from the system: what the result's diploma is
 //! dated with.
 
 /// Today's date where the player is (year, month 1 to 12, day), if the

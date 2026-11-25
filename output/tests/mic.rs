@@ -631,3 +631,93 @@ fn the_cleaner_takes_the_echo_of_what_plays_out_of_the_voice() {
     );
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+/// The echo canceller learns the room once: song after song on the same
+/// device (each its own output and tap, at the one rate), what it has
+/// learnt carries over, and the next song's echo is taken out from its
+/// first second.
+#[test]
+fn what_the_echo_canceller_learnt_carries_over_to_the_next_output() {
+    let rate = 48_000u32;
+    let format = StreamFormat::new(rate, 2, SampleFormat::S24In32);
+    let s = rate as usize;
+    let music = |seed: u32, frames: usize| -> Vec<f32> {
+        let (mut seed, mut lp) = (seed, 0.0f32);
+        (0..frames)
+            .map(|_| {
+                seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                let n = (seed >> 8) as f32 / (1u32 << 24) as f32 - 0.5;
+                lp += (n - lp) * 0.25;
+                0.5 * lp
+            })
+            .collect()
+    };
+    let full = 8_388_608.0f32;
+    let delay = (rate as usize * 30) / 1000;
+    let (input, mut feed) = Input::feed(rate, 240);
+    let (mut sent, mut periods) = (0usize, 0usize);
+    let frame_bytes = 2 * format.sample.bytes();
+    // Two songs, one output each; the microphone runs on through both,
+    // hearing each 30 ms late at half its level.
+    let songs = [music(5, 6 * s), music(9, 3 * s)];
+    let mut second: Vec<VoiceBlock> = Vec::new();
+    let mut learnt_as_the_second_began = None;
+    for (n, song) in songs.iter().enumerate() {
+        let engine: Vec<i32> = song
+            .iter()
+            .flat_map(|&m| {
+                let v = (m * full) as i32;
+                [v, v]
+            })
+            .collect();
+        let first_sent = sent;
+        let mut heard: Vec<f32> = Vec::new();
+        let mut blocks = Vec::new();
+        play_heard(format, &engine, |out, k, sink| {
+            if k == 0 {
+                out.set_tap(Some(Box::new(input.tap()))).unwrap();
+            }
+            let so_far = sink.bytes();
+            let from = heard.len() * frame_bytes;
+            let to = so_far.len() / frame_bytes * frame_bytes;
+            let new = unpack(&so_far[from..to], format.sample);
+            heard.extend(new.chunks_exact(2).map(|f| f[0] as f32 / full));
+            let heard = &heard;
+            feed_period(&mut feed, periods, &mut sent, |i| {
+                let i = i - first_sent;
+                if i >= delay && i - delay < heard.len() {
+                    0.5 * heard[i - delay]
+                } else {
+                    0.0
+                }
+            });
+            periods += 1;
+            feed.clean();
+            input.take_voice(&mut blocks);
+            if n == 1 && k == 20 {
+                learnt_as_the_second_began = Some(input.echo_status().learnt);
+            }
+        });
+        if n == 1 {
+            second = blocks;
+        }
+    }
+    assert_eq!(learnt_as_the_second_began, Some(true), "still learnt");
+    // The second song's first second, cleaned: its echo far down.
+    let mut cleaned = vec![0.0f32; s];
+    for b in &second {
+        for (i, &v) in b.samples.iter().enumerate() {
+            if let Some(c) = cleaned.get_mut(b.stream_frame as usize + i) {
+                *c = v;
+            }
+        }
+    }
+    let power = |x: &[f32]| x.iter().map(|v| v * v).sum::<f32>() / x.len().max(1) as f32;
+    let db = |p: f32| 10.0 * p.max(1e-20).log10();
+    let echo = power(&songs[1][s / 4..s]) / 4.0;
+    let removed = db(echo) - db(power(&cleaned[s / 4..s]));
+    assert!(
+        removed > 20.0,
+        "the second song's echo removed {removed:.1} dB"
+    );
+}

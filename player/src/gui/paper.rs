@@ -1,11 +1,11 @@
-//! The Yodel Diploma's paper on the GPU, in the stage's shader: the sheet
+//! The result diploma's paper on the GPU, in the stage's shader: the sheet
 //! (cream, its fibres and its aged edges, an ornate border of interlaced
 //! waves between ruled lines with a rosette in each corner, in two inks),
 //! unrolling from its top, the rest of it a roll lying across under its
 //! front, the sheet casting a soft shadow; a red rubber stamp's frame
 //! (two rounded rules, the ink worn in places, specks where it did not
 //! take over the words inside it); and a signature written in one stroke
-//! (loops leaning right, then a swash back under them), as far as it is
+//! (the core's: [`crate::core::singing::signature`]), as far as it is
 //! written. Text turned round its middle (a stamp's words) is drawn with
 //! [`turn_about`].
 //!
@@ -18,14 +18,10 @@ use std::f32::consts::{PI, TAU};
 use super::glory::vnoise;
 use super::rainbow::round_box;
 use super::seal::{clamp01, line, smoothstep};
+use crate::core::singing::signature::{pen_point, PEN};
 
 /// The roll's radius at its start, in `s`.
 const ROLL: f32 = 3.2;
-/// How far the signature's loops go along it (the rest: its swash).
-const LOOPS: f32 = 0.78;
-/// How many straight steps the signature is drawn in.
-const PEN: u32 = 120;
-
 /// `p` turned by `a` (radians, clockwise on the screen) round `c`.
 pub fn turn_about(p: (f32, f32), c: (f32, f32), a: f32) -> (f32, f32) {
     let (s, co) = a.sin_cos();
@@ -133,36 +129,9 @@ pub fn stamp_at(x: f32, y: f32, half: (f32, f32), s: f32) -> [f32; 2] {
     [ink, speck]
 }
 
-/// The signature's loops at `v` (0 to 1) along them: five and a half,
-/// the first tall, leaning right, on a line.
-fn loops(v: f32) -> (f32, f32) {
-    let w = TAU * 5.5 * v;
-    let c = 0.07 + 0.24 * (-v * 6.0).exp() + 0.04 * (v * 13.0 + 1.0).sin();
-    let y = 0.1 - 2.0 * c * (0.5 - 0.5 * w.cos());
-    (-0.92 + 1.7 * v - 0.085 * w.sin() - 0.35 * (y - 0.1), y)
-}
-
-/// The signature's pen at `u` (0 to 1) along it (its width about 2, its
-/// middle at 0, down positive): its loops, then a swash back under them.
-pub fn signature_point(u: f32) -> (f32, f32) {
-    if u <= LOOPS {
-        return loops(u / LOOPS);
-    }
-    let q = (u - LOOPS) / (1.0 - LOOPS);
-    let (a, b, c) = (loops(1.0), (1.1, 0.34), (-0.8, 0.22));
-    let (p, r) = ((1.0 - q) * (1.0 - q), q * q);
-    let m = 2.0 * q * (1.0 - q);
-    (p * a.0 + m * b.0 + r * c.0, p * a.1 + m * b.1 + r * c.1)
-}
-
-/// The signature's point `i` of [`PEN`] + 1 along it: what it is drawn
-/// through, on the processor and (as a table, [`wgsl`]) on the GPU.
-fn pen_point(i: u32) -> (f32, f32) {
-    signature_point(i as f32 / PEN as f32)
-}
-
 /// How far `(x, y)` is from the signature written as far as `drawn` along
-/// it (0 to 1), in its own units ([`signature_point`]): through its points
+/// it (0 to 1), in its own units
+/// ([`crate::core::singing::signature::signature_point`]): through its points
 /// ([`pen_point`]) up to `drawn` of the way, the last step part of the
 /// way; far without it.
 pub fn signature_at(x: f32, y: f32, drawn: f32) -> f32 {
@@ -365,6 +334,7 @@ fn paper_shape(o: Out, p: vec2<f32>, k: u32) -> vec4<f32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::singing::signature::signature_point;
 
     /// The sheet shows down to its front, a roll under it while it
     /// unrolls, gone once it is open; its border inked near its edges, not
