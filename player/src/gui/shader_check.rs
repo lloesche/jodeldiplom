@@ -770,8 +770,8 @@ fn the_stage_shader_s_tube_is_its_reference() {
 /// The backdrop's maths at points across the window and through time: the
 /// shader's [`look::rounded_box`], [`look::card_edge`], [`look::falloff`],
 /// [`look::bspline`], [`look::shift`], [`look::vignette`],
-/// [`look::rim_light`], [`look::sweep`], [`look::drift`] and
-/// [`look::ray_fan`] as the processor's.
+/// [`look::sweep`], [`look::drift`] and [`look::ray_fan`] as the
+/// processor's.
 #[test]
 fn the_backdrop_shader_s_maths_is_its_reference() {
     use super::backdrop::look;
@@ -790,9 +790,8 @@ fn the_backdrop_shader_s_maths_is_its_reference() {
     let sh = shift(s.xy, s.z, vec2<f32>(0.01, -0.006), 0.008, vec2<f32>(0.45, 0.4));
     let d = rounded_box((s.x - 0.5) * 400.0, (s.y - 0.5) * 300.0, 120.0, 100.0, 9.0);
     outs[i * 4u] = vec4<f32>(d, card_edge(d, 2000.0), sh);
-    let rim = rim_light(s.z, s.x, s.x, s.y, s.w);
     let rays = ray_fan(s.x - 0.5, s.y - 0.4, s.w, 0.2);
-    outs[i * 4u + 1u] = vec4<f32>(vignette(s.x, s.y), rim, sweep(s.x, s.y, s.w), rays);
+    outs[i * 4u + 1u] = vec4<f32>(vignette(s.x, s.y), 0.0, sweep(s.x, s.y, s.w), rays);
     outs[i * 4u + 2u] = vec4<f32>(drift(s.w), falloff(d, 30.0));
     outs[i * 4u + 3u] = bspline(s.z);";
     let source = super::backdrop::gpu::shader(false);
@@ -825,11 +824,11 @@ fn the_backdrop_shader_s_maths_is_its_reference() {
             &g[1],
             &[
                 look::vignette(s[0], s[1]),
-                look::rim_light(s[2], s[0], s[0], s[1], s[3]),
+                0.0,
                 sweep,
                 look::ray_fan(s[0] - 0.5, s[1] - 0.4, s[3], 0.2),
             ],
-            &format!("{what}: vignette, rim, sweep, rays"),
+            &format!("{what}: vignette, sweep, rays"),
         );
         let w = look::drift(s[3]);
         close(

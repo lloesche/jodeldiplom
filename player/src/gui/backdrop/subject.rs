@@ -112,9 +112,9 @@ fn light_of(rgb: [u8; 3]) -> [f32; 3] {
     lin.map(|c| c / most)
 }
 
-/// The palette's lights: its most vivid colour (the subject's halo and the
-/// rim), the next most vivid (the sweep) and its largest (the plate's
-/// drift); a warm white for each it does not have.
+/// The palette's lights: its most vivid colour (the rays and the plate's
+/// drift), the next most vivid (the sweep and the drift) and its largest
+/// (the drift); a warm white for each it does not have.
 pub fn lights(palette: &[Swatch]) -> [[f32; 3]; 3] {
     let vivid = |s: &Swatch| {
         let c = s.rgb.map(f32::from);

@@ -1,13 +1,13 @@
 //! The backdrop on the GPU ([`super`]): the ground (the blurred cover,
 //! small) in a texture of its own, sent over when the cover or the window
 //! changes; each cover showing has its pieces in textures (the plate, the
-//! subject with its matte, their depth, the rim), their texels made on the
+//! subject with its matte, their depth), their texels made on the
 //! covers' thread ([`crate::cover::Texels`]) and sent over once when it
 //! first shows, with the picture they were taken apart from (the song's
 //! cover, where it is at hand: the card at rest is the real cover, the
 //! plate only where the moving subject uncovers it), their smaller levels
 //! made here (the blur under the card,
-//! the glow round the subject and a small card read them), and dropped
+//! the subject's shadow and a small card read them), and dropped
 //! once it no longer shows. A frame draws the ground stretched smoothly
 //! over a texture the window's size, then each cover's shader
 //! (`backdrop.wgsl`, its maths in [`super::look`]) over it by its share, in
@@ -357,9 +357,9 @@ fn texture(
 
 /// A cover's pieces as its textures take them: the plate (RGBA), the
 /// subject (RGBA, its matte; one clear texel without one), the depth
-/// (nearness of the cover and of the plate, a byte each) and the rim; all
-/// as the covers' thread made them.
-fn pieces(apart: &crate::cover::Apart) -> [Upload<'_>; 4] {
+/// (nearness of the cover and of the plate, a byte each); all as the
+/// covers' thread made them.
+fn pieces(apart: &crate::cover::Apart) -> [Upload<'_>; 3] {
     use wgpu::TextureFormat as F;
     let l = &apart.layers;
     let none: &[u8] = &[0; 4];
@@ -387,7 +387,6 @@ fn pieces(apart: &crate::cover::Apart) -> [Upload<'_>; 4] {
             (l.depth.width, l.depth.height),
             &apart.texels.depth,
         ),
-        texels(F::R8Unorm, 1, l.outline.dimensions(), l.outline.as_raw()),
     ]
 }
 
@@ -477,9 +476,8 @@ impl BackdropPass {
                 texture_entry(1),
                 texture_entry(2),
                 texture_entry(3),
-                texture_entry(4),
-                sampler_entry(5),
-                texture_entry(6),
+                sampler_entry(4),
+                texture_entry(5),
             ],
         });
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -699,7 +697,7 @@ impl BackdropPass {
                 texture((device, queue), (encoder, &mut self.stretch), t, levels)
             })
             .collect();
-        // The plate, the subject, the depth, the rim; the picture.
+        // The plate, the subject, the depth; the picture.
         let mut views: Vec<wgpu::TextureView> = textures
             .iter()
             .map(|t| t.create_view(&wgpu::TextureViewDescriptor::default()))
@@ -717,14 +715,14 @@ impl BackdropPass {
             binding: 0,
             resource: uniforms.as_entire_binding(),
         }];
-        for (view, binding) in views.iter().zip([1, 2, 3, 4, 6]) {
+        for (view, binding) in views.iter().zip([1, 2, 3, 5]) {
             entries.push(wgpu::BindGroupEntry {
                 binding,
                 resource: wgpu::BindingResource::TextureView(view),
             });
         }
         entries.push(wgpu::BindGroupEntry {
-            binding: 5,
+            binding: 4,
             resource: wgpu::BindingResource::Sampler(&self.sampler),
         });
         let bind = device.create_bind_group(&wgpu::BindGroupDescriptor {

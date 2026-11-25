@@ -4,9 +4,9 @@
 //! ([`rounded_box`], [`card_edge`]) and the light and shadow falling off
 //! round it ([`falloff`]), the smooth cubic sampling's taps ([`bspline`]),
 //! how a layer moves with its depth ([`shift`]), the corners' shade
-//! ([`vignette`]), the rim's light ([`rim_light`]), the light sweeping
-//! across the plate ([`sweep`]), the palette's slow drift ([`drift`]) and
-//! the rays from behind the subject ([`ray_fan`]). And where the card and
+//! ([`vignette`]), the light sweeping across the plate ([`sweep`]), the
+//! palette's slow drift ([`drift`]) and the rays from behind the subject
+//! ([`ray_fan`]). And where the card and
 //! the blur under it sit in the window ([`card`], [`fill`]), how softly
 //! the card is read for its size ([`softness`]) and the levels the cover is
 //! read blurred at ([`blurs`]), which only the processor works out.
@@ -30,10 +30,6 @@ pub const BLUR_TEXELS: f32 = 12.0;
 /// How far the card's shadow and the light round it reach, a share of its
 /// shorter side.
 pub const REACH: f32 = 0.09;
-/// The rim's light at rest.
-pub const RIM_REST: f32 = 0.18;
-/// The rim's light on a drum hit.
-pub const RIM_HIT: f32 = 2.2;
 /// How much darker the corners are.
 pub const VIGNETTE: f32 = 0.5;
 /// How long the light sweeping across the plate takes, in seconds.
@@ -104,15 +100,6 @@ pub fn vignette(x: f32, y: f32) -> f32 {
     1.0 - VIGNETTE * smoothstep(0.35, 1.4, d)
 }
 
-/// The rim's light where its mask is `rim` (0 to 1, the edge brightest), at
-/// the cover's point (`u`, `v`) and time `t`, its drum hit at `pulse` (0 to
-/// 1): a shimmer at rest, bright and flickering a little on a hit.
-pub fn rim_light(rim: f32, pulse: f32, u: f32, v: f32, t: f32) -> f32 {
-    let shimmer = 0.75 + 0.25 * (u * 23.0 + v * 17.0 + t * 1.3).sin();
-    let flicker = 1.0 - 0.3 * pulse * (0.5 + 0.5 * (u * 131.0 - v * 97.0 + t * 17.0).sin());
-    rim.max(0.0).powf(1.5) * (RIM_REST * shimmer + RIM_HIT * pulse * flicker)
-}
-
 /// The light sweeping across the card's point (`u`, `v`, the cover's
 /// units) at time `t`: a broad band, slanting, coming round every
 /// [`SWEEP_PERIOD`] (0 to 1).
@@ -172,14 +159,13 @@ pub fn softness(scale: f32) -> ([f32; 2], f32) {
 }
 
 /// The levels a `cover` (pixels) with `levels` of them is read blurred at:
-/// the blur under the card (about [`BLUR_TEXELS`] across), the glow round
-/// the subject (twice as fine) and its shadow and the rim's glow (four
-/// times), each at least the first.
-pub fn blurs(cover: (u32, u32), levels: u32) -> [f32; 3] {
+/// the blur under the card (about [`BLUR_TEXELS`] across) and the subject's
+/// shadow (four times as fine), each at least the first.
+pub fn blurs(cover: (u32, u32), levels: u32) -> [f32; 2] {
     let long = cover.0.max(cover.1).max(1) as f32;
     let last = levels.max(1) as f32 - 1.0;
     let blur = (long / BLUR_TEXELS).log2().floor().clamp(0.0, last);
-    [blur, (blur - 1.0).max(0.0), (blur - 2.0).max(0.0)]
+    [blur, (blur - 2.0).max(0.0)]
 }
 
 /// Where the blur under the card is read for the window: a point (shares
@@ -204,8 +190,6 @@ pub fn wgsl() -> String {
         "const RADIUS: f32 = {RADIUS:?};
 const EDGE: f32 = {EDGE:?};
 const REACH: f32 = {REACH:?};
-const RIM_REST: f32 = {RIM_REST:?};
-const RIM_HIT: f32 = {RIM_HIT:?};
 const VIGNETTE: f32 = {VIGNETTE:?};
 const SWEEP_PERIOD: f32 = {SWEEP_PERIOD:?};
 const SWEEP_WIDTH: f32 = {SWEEP_WIDTH:?};
@@ -249,12 +233,6 @@ fn shift(uv: vec2<f32>, near: f32, cam: vec2<f32>, breath: f32, focus: vec2<f32>
 fn vignette(x: f32, y: f32) -> f32 {
     let d = length(vec2<f32>(x - 0.5, y - 0.5)) * 2.0;
     return 1.0 - VIGNETTE * smoothstep(0.35, 1.4, d);
-}
-
-fn rim_light(rim: f32, pulse: f32, u: f32, v: f32, t: f32) -> f32 {
-    let shimmer = 0.75 + 0.25 * sin(u * 23.0 + v * 17.0 + t * 1.3);
-    let flicker = 1.0 - 0.3 * pulse * (0.5 + 0.5 * sin(u * 131.0 - v * 97.0 + t * 17.0));
-    return pow(max(rim, 0.0), 1.5) * (RIM_REST * shimmer + RIM_HIT * pulse * flicker);
 }
 
 fn sweep(u: f32, v: f32, t: f32) -> f32 {
@@ -320,11 +298,11 @@ mod tests {
 
     #[test]
     fn the_blur_is_a_dozen_texels_across_whatever_the_cover_s_size() {
-        assert_eq!(blurs((1024, 1024), 9), [6.0, 5.0, 4.0]);
-        assert_eq!(blurs((300, 200), 9), [4.0, 3.0, 2.0]);
+        assert_eq!(blurs((1024, 1024), 9), [6.0, 4.0]);
+        assert_eq!(blurs((300, 200), 9), [4.0, 2.0]);
         // A tiny cover: its own pixels; never past its last level.
-        assert_eq!(blurs((8, 8), 4), [0.0, 0.0, 0.0]);
-        assert_eq!(blurs((4096, 4096), 9), [8.0, 7.0, 6.0]);
+        assert_eq!(blurs((8, 8), 4), [0.0, 0.0]);
+        assert_eq!(blurs((4096, 4096), 9), [8.0, 6.0]);
     }
 
     #[test]
@@ -368,15 +346,6 @@ mod tests {
         // Breathing in reads nearer the focus: larger on screen.
         let b = shift([0.3, 0.3], 1.0, [0.0; 2], 0.01, focus);
         assert!(b[0] > 0.3 && b[0] - 0.3 < 0.003);
-    }
-
-    #[test]
-    fn the_rim_shimmers_at_rest_and_lights_on_a_hit() {
-        let rest = rim_light(1.0, 0.0, 0.3, 0.4, 2.0);
-        let hit = rim_light(1.0, 1.0, 0.3, 0.4, 2.0);
-        assert!(rest > 0.08 && rest < 0.25, "{rest}");
-        assert!(hit > 1.5, "{hit}");
-        assert_eq!(rim_light(0.0, 1.0, 0.3, 0.4, 2.0), 0.0);
     }
 
     #[test]

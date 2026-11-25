@@ -1,4 +1,5 @@
-//! What the backdrop hears: each stem's level at the moment heard, read
+//! What the backdrop hears: each stem's level at the moment heard (the
+//! drums' not: they light nothing), read
 //! from the song's analysis (its waveform's lanes, 10 ms a frame: the
 //! stems as separated, so the vocals light the subject even with the
 //! Karaoke voice turned down for the singer), each against how loud that
@@ -51,8 +52,6 @@ impl Follower {
 /// song) to 1 (as loud as it gets).
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Levels {
-    /// The drums (their peaks: the hits).
-    pub drums: f32,
     /// The bass.
     pub bass: f32,
     /// The vocals.
@@ -65,13 +64,12 @@ impl Levels {
     /// Each scaled by its own of `gains` (drums, bass, vocals, other: what
     /// the desk lets each be heard at,
     /// [`crate::core::desk::DeskState::heard_gain`]; a stem muted, or not
-    /// soloed, is not seen either).
-    pub fn times(self, gains: [f32; 4]) -> Levels {
+    /// soloed, is not seen either; the drums' is not needed).
+    pub fn times(self, [_, bass, vocals, other]: [f32; 4]) -> Levels {
         Levels {
-            drums: self.drums * gains[0],
-            bass: self.bass * gains[1],
-            vocals: self.vocals * gains[2],
-            other: self.other * gains[3],
+            bass: self.bass * bass,
+            vocals: self.vocals * vocals,
+            other: self.other * other,
         }
     }
 }
@@ -122,10 +120,10 @@ const WINDOW: f64 = 0.04;
 #[derive(Clone, Debug)]
 pub struct Song {
     waveform: Arc<Waveform>,
-    /// The mix's and each stem's range (as [`Waveform::stems`]: bass,
-    /// drums, other, vocals); the drums' of their peaks.
+    /// The mix's and the stems' ranges (bass, other, vocals: of
+    /// [`Waveform::stems`], the drums left out).
     mix: Range,
-    stems: Option<[Range; 4]>,
+    stems: Option<[Range; 3]>,
     /// Where the sections start, in seconds.
     pub sections: Vec<f64>,
 }
@@ -138,7 +136,6 @@ impl Song {
         let stems = waveform.stems.as_ref().map(|s| {
             [
                 Range::of(&s[0].rms),
-                Range::of(&s[1].peak),
                 Range::of(&s[2].rms),
                 Range::of(&s[3].rms),
             ]
@@ -158,20 +155,18 @@ impl Song {
     }
 
     /// The levels heard at `t` seconds; without stems, the mix's for each
-    /// (the drums a little less, the vocals not: a mix lights no subject).
+    /// (the vocals not: a mix lights no subject).
     pub fn levels(&self, t: f64) -> Levels {
         let from = t - WINDOW;
         match (&self.waveform.stems, &self.stems) {
             (Some(lanes), Some(r)) => Levels {
                 bass: r[0].share(lanes[0].rms_between(from, t)),
-                drums: r[1].share(lanes[1].peak_between(from, t)),
-                other: r[2].share(lanes[2].rms_between(from, t)),
-                vocals: r[3].share(lanes[3].rms_between(from, t)),
+                other: r[1].share(lanes[2].rms_between(from, t)),
+                vocals: r[2].share(lanes[3].rms_between(from, t)),
             },
             _ => {
                 let mix = self.mix.share(self.waveform.mix.rms_between(from, t));
                 Levels {
-                    drums: mix * 0.6,
                     bass: mix,
                     vocals: 0.0,
                     other: mix,
@@ -246,8 +241,6 @@ pub fn sections(mix: &Lane, downbeats: &[f64]) -> Vec<f64> {
 /// The pieces' light as felt now (each 0 to 1).
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Felt {
-    /// The rim's pulse: the drums' hits.
-    pub pulse: f32,
     /// The depth's breathing: the bass.
     pub bass: f32,
     /// The subject's light: the vocals.
@@ -265,13 +258,9 @@ pub struct Felt {
 /// How long a section's swell holds before it fades, in seconds.
 const SECTION_HOLD: f32 = 0.6;
 
-/// The levels and moments smoothed: each with its own attack and release,
-/// the drums' hits found as their peaks rise past their own recent level.
+/// The levels and moments smoothed: each with its own attack and release.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Feel {
-    fast: Follower,
-    slow: Follower,
-    pulse: Follower,
     bass: Follower,
     vocals: Follower,
     other: Follower,
@@ -288,9 +277,6 @@ pub struct Feel {
 impl Default for Feel {
     fn default() -> Feel {
         Feel {
-            fast: Follower::new(0.005, 0.05),
-            slow: Follower::new(0.25, 0.4),
-            pulse: Follower::new(0.015, 0.18),
             bass: Follower::new(0.25, 0.8),
             vocals: Follower::new(0.15, 0.7),
             other: Follower::new(0.6, 1.6),
@@ -317,9 +303,6 @@ impl Feel {
     /// `dt` seconds on: the stems at `levels`, the singer's shine at
     /// `tier`, a section begun (`section`).
     pub fn step(&mut self, levels: Levels, tier: u32, section: bool, dt: f32) -> Felt {
-        let fast = self.fast.step(levels.drums, dt);
-        let slow = self.slow.step(levels.drums, dt);
-        let hit = ((fast - slow) * 3.0).clamp(0.0, 1.0);
         if section {
             self.hold = SECTION_HOLD;
         }
@@ -329,7 +312,6 @@ impl Feel {
         let (glow, rays) = tier_light(tier);
         let rays = rays.max(swell * 0.6);
         let felt = Felt {
-            pulse: self.pulse.step(hit, dt),
             bass: self.bass.step(levels.bass, dt),
             vocals: self.vocals.step(levels.vocals, dt),
             other: self.other.step(levels.other, dt),
@@ -338,9 +320,6 @@ impl Feel {
             section: swell,
         };
         let aims = [
-            (fast, levels.drums),
-            (slow, levels.drums),
-            (felt.pulse, hit),
             (felt.bass, levels.bass),
             (felt.vocals, levels.vocals),
             (felt.other, levels.other),
@@ -432,31 +411,6 @@ mod tests {
         assert!(song.levels(10.3).vocals < 0.1);
         let muted = song.levels(10.9).times([1.0, 1.0, 0.0, 1.0]);
         assert_eq!(muted.vocals, 0.0);
-    }
-
-    #[test]
-    fn a_drum_hit_pulses_and_a_held_level_does_not() {
-        let mut feel = Feel::default();
-        let dt = 1.0 / 60.0;
-        let quiet = Levels::default();
-        let hit = Levels {
-            drums: 1.0,
-            ..quiet
-        };
-        for _ in 0..30 {
-            feel.step(quiet, 0, false, dt);
-        }
-        let mut most: f32 = 0.0;
-        for _ in 0..3 {
-            most = most.max(feel.step(hit, 0, false, dt).pulse);
-        }
-        assert!(most > 0.5, "{most}");
-        // Held loud: the pulse dies down.
-        let mut held = 1.0;
-        for _ in 0..90 {
-            held = feel.step(hit, 0, false, dt).pulse;
-        }
-        assert!(held < 0.1, "{held}");
     }
 
     #[test]

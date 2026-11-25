@@ -98,8 +98,9 @@ pub struct CoverLayers {
     pub depth: NearMap,
     /// The plate's nearness: under the subject filled from around it.
     pub plate_depth: NearMap,
-    /// The subject's rim, for its outline to shimmer: 255 at its edge,
-    /// fading inwards; without a subject, the depth's edges.
+    /// The subject's rim: 255 at its edge, fading inwards; without a
+    /// subject, the depth's edges. Kept as the layers' files hold it; the
+    /// backdrop draws no rim now.
     pub outline: GrayImage,
     /// The cover's main colours, the largest share first.
     pub palette: Vec<Swatch>,

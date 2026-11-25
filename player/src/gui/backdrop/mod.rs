@@ -1,6 +1,6 @@
 //! Karaoke mode's backdrop on the GPU: the song's cover taken apart
 //! ([`crate::cover::Apart`]: the plate, the subject cut out, their depth,
-//! the rim, the palette) drawn live as a calm visualiser of the music. The
+//! the palette) drawn live as a calm visualiser of the music. The
 //! whole cover sits in the middle as a card, as large as it looks good
 //! ([`look::card`]: never a cover's pixel more than [`look::CAP`] window
 //! pixels, read smoothly where it is much enlarged, so no pixel nor block
@@ -11,14 +11,14 @@
 //!
 //! The life is on the subject. Each stem lights its own piece ([`music`],
 //! from the song's analysis, smoothed, as the desk lets it be heard): the
-//! drums' hits flash the rim round the cut-out; the vocals light the
-//! subject and a glow round it; the bass pops the subject out of the plate
+//! vocals light the subject; the bass pops the subject out of the plate
 //! (larger, its shadow on the plate deeper); the rest sweeps the palette's
-//! light across the plate and lights the blur round the card. A cover
-//! without a clear subject has its nearest parts lit so. The big moments
-//! are kept for a section starting (the whole lifts, rays from behind the
-//! subject) and for the singer's shine: Great glows round the subject,
-//! Amazing more with faint rays, Diva brightest, the rays golden.
+//! light across the plate and lights the blur round the card; the drums
+//! light nothing. A cover without a clear subject has its nearest parts
+//! lit so. The big moments are kept for a section starting (the whole
+//! lifts, rays from behind the subject) and for the singer's shine: Great
+//! lights the subject, Amazing more with faint rays, Diva brightest, the
+//! rays golden.
 //!
 //! [`Visualiser`] is the processor's side, frame by frame: the ground (the
 //! blurred cover, [`super::karaoke::ground`]: what shows while the layers
@@ -77,14 +77,13 @@ pub struct Look {
     /// with a subject cut out (0: its nearest parts stand for it).
     pub read: [f32; 4],
     /// The levels the cover is read blurred at ([`look::blurs`]): the blur
-    /// under the card, the glow round the subject, its shadow and the rim's
-    /// glow; unused.
+    /// under the card, the subject's shadow; unused.
     pub levels: [f32; 4],
     /// The layers' drift against each other (the cover's units), the
     /// subject's growing with the bass, the cover's share over what is
     /// under it.
     pub cam: [f32; 4],
-    /// The rim's pulse (the drums), the vocals, the rest, the bass.
+    /// The vocals, the rest, the bass; unused.
     pub music: [f32; 4],
     /// A section begun, the singer's glow, the rays, the lift.
     pub moments: [f32; 4],
@@ -397,9 +396,9 @@ impl Visualiser {
             size: [w, h, t, 0.0],
             card,
             read: [level, smooth, softer, cut],
-            levels: [blurs[0], blurs[1], blurs[2], 0.0],
+            levels: [blurs[0], blurs[1], 0.0, 0.0],
             cam: [cam[0], cam[1], BREATH * felt.bass, alpha],
-            music: [felt.pulse, felt.vocals, felt.other, felt.bass],
+            music: [felt.vocals, felt.other, felt.bass, 0.0],
             moments: [felt.section, felt.glow, felt.rays, lift],
             fill,
             light: [light.0, light.1, sub.reach * 2.0 * card[3], 0.0],

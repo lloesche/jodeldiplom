@@ -17,13 +17,13 @@ struct Look {
     // The level a card smaller than its cover reads, how smoothly it is
     // read and how much softer still, 1 with a subject cut out.
     read: vec4<f32>,
-    // The levels read blurred: under the card, the glow round the subject,
-    // its shadow and the rim's glow; unused.
+    // The levels read blurred: under the card, the subject's shadow;
+    // unused.
     levels: vec4<f32>,
     // The layers' drift (the cover's units), the subject's growing, this
     // cover's share.
     cam: vec4<f32>,
-    // The rim's pulse (drums), the vocals, the rest, the bass.
+    // The vocals, the rest, the bass; unused.
     music: vec4<f32>,
     // A section begun, the singer's glow, the rays, the lift.
     moments: vec4<f32>,
@@ -44,9 +44,8 @@ struct Look {
 @group(0) @binding(1) var plate: texture_2d<f32>;
 @group(0) @binding(2) var subject: texture_2d<f32>;
 @group(0) @binding(3) var depth: texture_2d<f32>;
-@group(0) @binding(4) var rim: texture_2d<f32>;
-@group(0) @binding(5) var soft: sampler;
-@group(0) @binding(6) var original: texture_2d<f32>;
+@group(0) @binding(4) var soft: sampler;
+@group(0) @binding(5) var original: texture_2d<f32>;
 
 struct Out {
     @builtin(position) pos: vec4<f32>,
@@ -102,16 +101,14 @@ fn fs(o: Out) -> @location(0) vec4<f32> {
     let p = o.uv;
     let t = look.size.z;
     let px = look.size.xy;
-    let pulse = look.music.x;
-    let vocals = look.music.y;
-    let other = look.music.z;
-    let bass = look.music.w;
+    let vocals = look.music.x;
+    let other = look.music.y;
+    let bass = look.music.z;
     let section = look.moments.x;
     let glow = look.moments.y;
     let cut = look.read.w;
     let blur = u32(look.levels.x);
-    let halo_l = u32(look.levels.y);
-    let edge_l = u32(look.levels.z);
+    let shadow_l = u32(look.levels.y);
 
     // How far each pixel is outside the card, in pixels.
     let half = look.card.zw * px;
@@ -143,7 +140,7 @@ fn fs(o: Out) -> @location(0) vec4<f32> {
         col = col * (1.0 - 0.6 * falloff(d - 0.01 * side, REACH * side));
     }
 
-    // The card: the plate, the subject over it, their depth, the rim.
+    // The card: the plate, the subject over it, their depth.
     var a = 0.0;
     if shown > 0.0 {
         let uv = (p - look.card.xy + look.card.zw) / (2.0 * look.card.zw);
@@ -159,17 +156,15 @@ fn fs(o: Out) -> @location(0) vec4<f32> {
         let rest = textureSampleLevel(subject, soft, up, look.read.x).a;
         let uncovered = clamp(4.0 * (rest - a), 0.0, 1.0);
         var plate_c = mix(card_at(original, up).rgb, card_at(plate, up).rgb, uncovered);
-        // Lit where the cut is sure of it; the glow round it where it is not
-        // there at all. Without a cut-out its nearest parts stand for it.
+        // Lit where the cut is sure of it. Without a cut-out its nearest
+        // parts stand for it.
         var presence = smoothstep(0.5, 0.95, a);
-        var around_s = smooth_at(subject, us, halo_l).a * (1.0 - a) * (1.0 - a);
         if cut < 0.5 {
             presence = 0.8 * smoothstep(0.55, 0.95, near.r);
-            around_s = smoothstep(0.45, 0.95, smooth_at(depth, uv, 3u).r) * (1.0 - presence);
         }
         // The subject's shadow on the plate, deeper as the bass pops it out.
         let off = vec2<f32>(0.004, 0.009) * (0.5 + bass);
-        let shade = smooth_at(subject, us - off, edge_l).a;
+        let shade = smooth_at(subject, us - off, shadow_l).a;
         plate_c = plate_c * (1.0 - (0.2 + 0.4 * bass) * shade * (1.0 - a));
         // The plate takes the palette's colour with the rest of the music,
         // its light sweeping across.
@@ -178,15 +173,8 @@ fn fs(o: Out) -> @location(0) vec4<f32> {
         let swept = sweep(uv.x, uv.y, t) * (0.12 + 1.1 * other);
         plate_c = plate_c + (plate_c + vec3<f32>(0.04)) * sweep_c * swept;
         var card_c = plate_c * (1.0 - a) + s.rgb * a;
-        // The voice lights the subject, and a glow round it.
+        // The voice lights the subject.
         card_c = card_c * (1.0 + presence * (0.55 * vocals + 0.45 * glow + 0.3 * section));
-        card_c = card_c + warm * around_s * (0.03 + 0.4 * vocals + 0.45 * glow + 0.3 * section);
-        // The rim: the drums' hits, a line and its glow.
-        let edge = card_at(rim, us).r;
-        let edge_glow = smooth_at(rim, us, edge_l).r;
-        let rim_c = mix(look.accent.rgb, vec3<f32>(1.0), 0.35);
-        let lit = rim_light(edge, pulse, us.x, us.y, t) + edge_glow * (0.1 + 1.3 * pulse);
-        card_c = card_c + rim_c * lit;
         col = mix(col, card_c * CARD_LIGHT, shown);
     }
 

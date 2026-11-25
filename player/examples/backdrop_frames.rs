@@ -5,7 +5,7 @@
 //! the singer at Diva, a cover fading in over its blur and one cross-fading
 //! into the next, the lyrics in large type without the stage, and tall and
 //! wide windows. The music is made up (each stem's level a function of
-//! time, the drums hitting on the beat), the backdrop and the stage stepped
+//! time), the backdrop and the stage stepped
 //! at 60 frames a second up to the moment looked at, drawn offscreen as the
 //! window draws them, and saved as PNGs into `OUT_DIR` (`<scene>.png`,
 //! written whole). `--bare`: the backdrop alone, no stage and no text
@@ -107,15 +107,6 @@ fn song() -> (Arc<jodel_lyrics::Lyrics>, jodel_rhythm::waveform::Melody) {
     (Arc::new(lyrics), m)
 }
 
-/// The drums on the beat (120 a minute): a hit for 40 ms, then quiet.
-fn beat(t: f64) -> f32 {
-    if (t * 2.0).fract() < 0.08 {
-        1.0
-    } else {
-        0.1
-    }
-}
-
 /// A scene: its name, the window, the music at a time, the shine tier
 /// from when, a section starting when, which cover shows from when (the
 /// second from `next`, if any), whether the stage shows, and when it is
@@ -135,17 +126,9 @@ struct Scene {
 
 fn quiet(_: f64) -> Levels {
     Levels {
-        drums: 0.05,
         bass: 0.05,
         vocals: 0.0,
         other: 0.05,
-    }
-}
-
-fn drums(t: f64) -> Levels {
-    Levels {
-        drums: beat(t),
-        ..quiet(t)
     }
 }
 
@@ -170,18 +153,16 @@ fn other(t: f64) -> Levels {
     }
 }
 
-fn loud(t: f64) -> Levels {
+fn loud(_: f64) -> Levels {
     Levels {
-        drums: beat(t),
         bass: 0.85,
         vocals: 0.9,
         other: 0.8,
     }
 }
 
-fn middling(t: f64) -> Levels {
+fn middling(_: f64) -> Levels {
     Levels {
-        drums: beat(t) * 0.7,
         bass: 0.5,
         vocals: 0.6,
         other: 0.5,
@@ -208,8 +189,6 @@ fn scenes() -> Vec<Scene> {
     };
     vec![
         s("quiet", quiet, 10.0),
-        s("drums-quiet", drums, 10.2),
-        s("drums-hit", drums, 10.03),
         s("bass-loud", bass, 10.0),
         s("vocals-loud", vocals, 10.0),
         s("other-loud", other, 10.0),
@@ -564,8 +543,8 @@ fn main() {
                 &out.join(format!("{}{bare_name}-100.png", scene.name)),
             );
         }
-        // What the music lit: the pulse, the vocals, the rest, the bass; a
-        // section, the glow, the rays, the lift.
+        // What the music lit: the vocals, the rest, the bass; a section,
+        // the glow, the rays, the lift.
         let look = frame.and_then(|f| f.slots.last().map(|s| s.look));
         let felt = look.map(|l| (l.music, l.moments));
         println!("{} (felt {felt:.2?})", file.display());
