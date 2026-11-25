@@ -493,11 +493,12 @@ fn the_stage_shader_s_glory_is_its_reference() {
                 time,
             ],
             [fr(0.17), fr(0.53), time - fr(0.71) * 1.5, fr(0.23) * 3.0],
-            // Off by half a pixel so no point is the ring's centre, whose
-            // angle (atan2 of 0, 0) WGSL leaves undefined.
+            // Off the ring's centre and its level line, whose angles (atan2
+            // of 0, 0, and ±π, where the fill's edge may be) a GPU may give
+            // either way (Apple's did).
             [
                 200.0 + fr(0.19) * 80.0 - 40.5,
-                300.0 + fr(0.83) * 80.0 - 40.0,
+                300.0 + fr(0.83) * 80.0 - 40.3,
                 fr(0.31) * 60.0 - 20.0,
                 fr(0.47) * 4.0,
             ],
@@ -583,10 +584,11 @@ fn the_stage_shader_s_seal_and_stars_are_their_reference() {
         .map(|k| {
             let f = k as f32;
             let fr = |m: f32| (f * m).fract();
-            // Off the middle by a little, where an angle would be undefined.
+            // Off the middle, where an angle would be undefined and the
+            // sticker's facets all meet (a GPU may pick any; Apple's did).
             [
                 fr(0.613) * 2.6 - 1.3 + 0.001,
-                fr(0.377) * 2.4 - 1.2,
+                fr(0.377) * 2.4 - 1.2 + 0.013,
                 fr(0.291) * 3.4 - 1.7,
                 fr(0.733) * 12.0,
             ]
@@ -697,8 +699,18 @@ fn the_stage_shader_s_paper_is_its_reference() {
             &[stamp[0], stamp[1], part, whole],
             &format!("{what}: stamp, signature"),
         );
+        // A point turned is off by the sine's rounding times how far out it
+        // is (on GitHub's Intel Mac, 0.008 of a pixel at 470 out).
         let (x, y) = paper::turn_about((p[0], p[1]), (30.0, -20.0), p[3] * 6.0);
-        close(&g[2][..2], &[x, y], &format!("{what}: turned"));
+        let out = (p[0] - 30.0).hypot(p[1] + 20.0);
+        for (gv, want) in g[2][..2].iter().zip([x, y]) {
+            assert!(
+                (gv - want).abs() <= 3e-3 + 1e-4 * out,
+                "{what}: turned: {:?} {:?}",
+                &g[2][..2],
+                [x, y]
+            );
+        }
     }
     assert!(inked > 50 && rolled > 10, "{inked} {rolled}");
 }
