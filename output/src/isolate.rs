@@ -358,11 +358,11 @@ impl Isolator {
         for (layer, state) in w.layers.iter().zip(&mut self.state) {
             affine(&layer.w_ih, &layer.b_ih, &self.hidden, &mut self.gi);
             affine(&layer.w_hh, &layer.b_hh, state, &mut self.gh);
-            for i in 0..h {
+            for (i, s) in state.iter_mut().enumerate().take(h) {
                 let r = sigmoid(self.gi[i] + self.gh[i]);
                 let z = sigmoid(self.gi[h + i] + self.gh[h + i]);
                 let n = (self.gi[2 * h + i] + r * self.gh[2 * h + i]).tanh();
-                state[i] = (1.0 - z) * n + z * state[i];
+                *s = (1.0 - z) * n + z * *s;
             }
             self.hidden.copy_from_slice(state);
         }
