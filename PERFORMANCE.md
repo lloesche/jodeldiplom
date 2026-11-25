@@ -233,8 +233,8 @@ does not change once it has unrolled: its shader has no clock, and what
 moves on it (the stamps, the signature, the stars, the words) are shapes
 of their own. So the stage pass bakes it (`gui::stage_gpu::bake`): once a
 frame's paper has been the same three frames in a row (a window being
-resized is not baked frame by frame), it is drawn once into a texture of
-its own (its quad's pixels, half floats, premultiplied, linear where the
+resized is not baked frame by frame), it is drawn into a texture of its
+own (in four strips, below; its quad's pixels, half floats, premultiplied, linear where the
 frame takes linear light), and from then on read from there, a texel a
 pixel, by a shape of its own (`kind::BAKED`, its own pipeline,
 `Group::Baked`) while it stays that paper; while it unrolls (0.55 s) it
@@ -269,12 +269,45 @@ the median and 1.7–2.3 at the 99th percentile without it, 1.4–1.7 and
 1.7–2.8 with it; the worst 1.9–4.1 ms without, 1.9–3.1 with, none at a
 moment of the reveal of its own.
 
+**The bake in strips.** Baked so, the M4 Max (`frame_cost --budget 4
+--step-budget 2.5` at 3024 × 1964) drew the diploma's paper alone in
+0.55 ms, its stage step at a median of 0.58 ms, its frames at a median of
+2.54 ms and 3.43 at the 99th percentile, and no singing scene had a frame
+over 4 ms. The one frame over the budget was the bake's own, in both runs
+of the two: frame 35, 0.583 s into the reveal, its `uploads` step (where
+the bake is drawn, in a submission of its own) 2.251 ms, 4.452 ms in all:
+the whole sheet drawn into the texture at once. So it is baked in four
+strips across it, top to bottom, one a frame (a scissor rect a strip, the
+first clearing the texture): while it is baked, the strips in are read
+from the bake and the rows below them drawn as they are (the paper's
+shape, its quad starting under them), so each of those four frames draws
+the paper about once, a quarter of it into the texture; it is read whole
+once the last strip is in. Changed, moved (by whole pixels too) or the
+window resized before then, it starts over, once it has held still again
+(`bake::Planner`, its strips tested over frame sequences). On the RTX 5080
+(the diploma's frames each the lesser of two runs; three runs baking at
+once, two in strips, the machine shared) the bake frame's `uploads` step
+was 0.21–0.26 ms against 0.07–0.08 on the frames round it; in strips it
+is 0.15–0.16 ms on each of frames 35–38: a strip about 0.08 ms, a quarter
+of the paper's drawing and about 0.05 ms any pass in a submission of its
+own costs here, so on this GPU a strip costs half the bake, not a quarter.
+The stage step on those frames goes 0.23, 0.21, 0.19, 0.18 ms as less of
+the paper is drawn as it is (0.23–0.24 with all of it, 0.18 read), their
+totals 1.43–1.48 ms against 1.55 for the bake frame before. It looks the
+same: against the build baking at once, `result_frames` (six diplomas, 34
+moments each at 1600 × 900: every frame from 0.55 to 0.70 s, the seal
+stamped and the sheet shaken in each, and more) are the same but in the
+three frames where part of the paper is still drawn as it is (0.58, 0.60,
+0.62 s), those at most 1 in 255 off on 1–4 % of the pixels (the bake's
+half floats rounded where the drawn rows are not); `frame_cost`'s pictures
+at 3024 × 1964 then 1600 × 1000 (a resize) are the same.
+
 **The diploma's spike.** On the RTX 5080 the worst frame is another in
 every run (frames 26, 53, 119, 190, 482, 509, 546, 761, 861, 921 and
 924 of 1016 in eleven runs), most in the still end of the reveal where
 nothing lands, every step of it slower at once (a frame or a few in a
-row); nothing is made there (no pipeline, texture or buffer; the bake
-once, 0.58 s in). Each step's time is the GPU's between two timestamps
+row); nothing is made there (no pipeline, texture or buffer; the bake's
+four strips, 0.58–0.63 s in). Each step's time is the GPU's between two timestamps
 with a wait and a submission between them, so whatever holds up the GPU
 or the process for a frame (another program drawing, the system) shows
 in every step of that frame: with another process's tests on the GPU at

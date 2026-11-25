@@ -246,8 +246,8 @@ impl StagePass {
 
     /// What it draws next (`None`: nothing, the paper's bake let go), for a
     /// window of `size`: its numbers, the text put into its atlas, the
-    /// diploma's paper read from its bake where it holds still
-    /// ([`super::bake`]), its shapes sent over.
+    /// diploma's paper read from its bake where it holds still (strip by
+    /// strip as it is baked: [`super::bake`]), its shapes sent over.
     pub fn set(
         &mut self,
         (device, queue): (&wgpu::Device, &wgpu::Queue),
@@ -325,10 +325,15 @@ impl StagePass {
         if feed.instances.is_empty() && feed.top.is_empty() && feed.screen.is_empty() {
             return;
         }
-        // The paper read from its bake in its place.
+        // The paper read from its bake in its place, what is not baked yet
+        // of it drawn after.
         let mut shapes = std::borrow::Cow::Borrowed(feed.instances);
         if let Some(baked) = baked {
-            shapes.to_mut()[baked.at] = baked.shape;
+            let shapes = shapes.to_mut();
+            shapes[baked.at] = baked.shape;
+            if let Some(rest) = baked.rest {
+                shapes.insert(baked.at + 1, rest);
+            }
         }
         let parts = [&shapes[..], feed.top, feed.screen];
         let bytes: Vec<u8> = (parts.iter())
