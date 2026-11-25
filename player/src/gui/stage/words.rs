@@ -13,13 +13,15 @@ use super::super::big_text::Face;
 use super::super::pop::{self, Laid};
 use super::super::snake::Snake;
 use super::super::stage_gpu::{Instance, Skin, Tint};
-use super::{edge_fade, rgba, Lane, Song, Stage, ACTIVE, GOLD_DEEP, GOLD_TOP, WHITE};
+use super::{edge_fade, rgba, Lane, Song, Stage, ACTIVE, GOLD, GOLD_DEEP, GOLD_TOP, SMOKE, WHITE};
 use crate::core::singing::Heard;
 use crate::view::bubbles::Liquid;
 
 /// The least a word's text is made, a share of its size, to fit before
 /// the next word.
 const SMALLEST_TEXT: f32 = 0.75;
+/// How much of what is behind a word's bubble its dark body hides.
+const BODY: f32 = 0.88;
 
 /// A word laid on the lane: its line and word, when it is sung (from, to),
 /// where it is across (its left and right), its tube, and its text's size
@@ -89,13 +91,15 @@ impl Words {
 }
 
 /// A word's text to draw over the trail: it, its word, and when it ends,
-/// whether it was hit, how much shows.
+/// whether it was hit, how much shows, how far across its liquid reaches
+/// unbroken from its left ([`pop::front`]).
 pub(super) struct Label {
     text: String,
     word: usize,
     end: f64,
     hit: bool,
     fade: f32,
+    poured: f32,
 }
 
 impl Stage {
@@ -214,12 +218,14 @@ impl Stage {
             if let Some(b) = &liquid {
                 sprays.extend(pop::sprays(b, &at, p, (clock, lane.pps)));
             }
+            // Dark inside, so their words read over any cover; outlined in
+            // gold with a soft halo behind, brightest while sung.
             let (body, edge, glow) = if end <= now {
-                (rgba(WHITE, 0.07), rgba(WHITE, 0.22), 0.0)
+                (rgba(SMOKE, 0.8), rgba(GOLD, 0.4), p * 0.2)
             } else if start <= now {
-                (rgba(WHITE, 0.16), rgba(ACTIVE, 0.95), p * 0.4)
+                (rgba(SMOKE, BODY), rgba(ACTIVE, 1.0), p * 0.5)
             } else {
-                (rgba(WHITE, 0.12), rgba(WHITE, 0.5), 0.0)
+                (rgba(SMOKE, BODY), rgba(GOLD, 0.9), p * 0.3)
             };
             let faded = |c: [f32; 4]| [c[0], c[1], c[2], c[3] * fade];
             let skin = Skin {
@@ -237,13 +243,17 @@ impl Stage {
             pop::draw(liquid.as_ref(), (out, paths), &at, (&skin, &tint), p);
             let filled = liquid.as_ref().map_or(0.0, Liquid::filled);
             let text = word_text(song, word.line, word.word);
-            if !text.is_empty() {
+            // Burst, its words go with it.
+            if !text.is_empty() && !liquid.as_ref().is_some_and(Liquid::torn) {
                 labels.push(Label {
                     text: text.to_owned(),
                     word: k,
                     end,
                     hit: filled > 0.5 * (end - start),
                     fade,
+                    poured: liquid
+                        .as_ref()
+                        .map_or(f32::NEG_INFINITY, |b| pop::front(b, &at)),
                 });
             }
         }
@@ -252,14 +262,14 @@ impl Stage {
 
     /// Draws the words' `labels` (of `words`) into `out`, each on the
     /// flattest stretch of its tube, its letters riding the tube's middle
-    /// there: dark on the gold where it was hit, up to the playhead `head`;
+    /// there at `now`: dark on the gold as far as it is poured unbroken;
     /// faint once over and missed.
     pub(super) fn draw_labels(
         &mut self,
         out: &mut Vec<Instance>,
         words: &Words,
         labels: Vec<Label>,
-        (head, now): (f32, f64),
+        now: f64,
     ) {
         for label in labels {
             let word = &words.laid[label.word];
@@ -269,14 +279,10 @@ impl Stage {
             } else {
                 0.95
             } * fade;
-            let (split, done) = if label.hit {
-                (head, [0.27, 0.15, 0.03, 0.95 * fade])
-            } else {
-                (f32::NEG_INFINITY, rgba(WHITE, alpha))
-            };
+            let (split, done) = (label.poured, [0.27, 0.15, 0.03, 0.95 * fade]);
             let (px, colors) = (word.px, (rgba(WHITE, alpha), done));
-            // Lit, its letters get a soft dark rim: the gold behind them is
-            // bright.
+            // Lit, its letters get a soft dark rim: the gold of a note further
+            // on, poured after one missed, is bright.
             let rim = label.hit.then_some((super::Shade::RIM, alpha));
             let cap = self.cap_middle(Face::BUBBLE, px) - super::COVER_PAD as f32;
             // Where the tube is flattest; a run on its pitch where it is

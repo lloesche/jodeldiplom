@@ -656,7 +656,7 @@ impl Stage {
         let last_point = recent
             .iter()
             .find_map(|h| y_of(h).map(|y| ((lane.x(h.t), y), h.hit, h.t)));
-        self.draw_labels(&mut out, &words, labels, (lane.head, now));
+        self.draw_labels(&mut out, &words, labels, now);
 
         // The singer: where they are now, a comet's tail behind them.
         let fresh = last_point.filter(|(_, _, t)| clock - t < ARROW_HOLD);

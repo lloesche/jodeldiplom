@@ -68,6 +68,21 @@ fn span(b: &Liquid, i: usize, at: &Laid) -> (f32, f32) {
     (x0, x1.max(x0 + 1.0))
 }
 
+/// How far across bubble `b`, laid as `at`, its liquid reaches unbroken
+/// from its left: its parts full one after another, up to the first that
+/// is not, as far as that one is filled.
+pub fn front(b: &Liquid, at: &Laid) -> f32 {
+    let mut to = at.ends.0;
+    for (i, p) in b.parts.iter().enumerate() {
+        let (x0, x1) = span(b, i, at);
+        to = x0 + (x1 - x0) * p.level.clamp(0.0, 1.0) as f32;
+        if p.level < 1.0 {
+            break;
+        }
+    }
+    to
+}
+
 /// Bubble `b`'s bursts for the GPU, laid as `at`, `px` high, at `clock`,
 /// the lane going across at `pps`: while it bursts, one spray a stretch of
 /// its tube (at least [`STRETCH`] radii long), from where that was as it

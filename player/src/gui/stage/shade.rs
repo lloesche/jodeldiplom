@@ -1,7 +1,7 @@
 //! Dark copies of the stage's text under it ([`Shade`]), so it reads over
 //! whatever is behind: a soft shadow dropped under the result's words, a
-//! soft dark rim round the lyrics and a lit bubble's letters over the
-//! cover.
+//! dark outline round the lyrics and a soft rim round a lit bubble's
+//! letters.
 
 use super::super::stage_gpu::Instance;
 use super::{Face, Stage};
@@ -26,6 +26,23 @@ impl Shade {
     pub(super) const RIM: Shade = Shade {
         at: &[(-0.03, 0.02), (0.03, 0.02), (0.0, -0.03)],
         dark: 0.3,
+    };
+    /// A dark outline all round it and a soft shadow under it (the lyrics
+    /// scrolling over a busy cover): copies on a ring, overlapping into a
+    /// solid edge, and one dropped further.
+    pub(super) const OUTLINE: Shade = Shade {
+        at: &[
+            (0.04, 0.0),
+            (0.028, 0.028),
+            (0.0, 0.04),
+            (-0.028, 0.028),
+            (-0.04, 0.0),
+            (-0.028, -0.028),
+            (0.0, -0.04),
+            (0.028, -0.028),
+            (0.0, 0.08),
+        ],
+        dark: 0.45,
     };
 }
 

@@ -1,6 +1,7 @@
 //! Frames of Karaoke mode's backdrop on the GPU, with the stage over it, to
 //! judge its look: covers already taken apart (`.layers` files from the
-//! player's data folder), each stem quiet and loud, a section starting,
+//! player's data folder) or pictures (a JPEG or PNG, taken apart without
+//! the models: no subject), each stem quiet and loud, a section starting,
 //! the singer at Diva, a cover fading in over its blur and one cross-fading
 //! into the next, the lyrics in large type without the stage, and tall and
 //! wide windows. The music is made up (each stem's level a function of
@@ -21,7 +22,7 @@
 //!
 //! ```text
 //! cargo run --release -p jodeldiplom --example backdrop_frames --
-//!     OUT_DIR COVER.layers [NEXT.layers] [--only SCENE] [--bare] [--size WxH]
+//!     OUT_DIR COVER.layers|COVER.jpg [NEXT] [--only SCENE] [--bare] [--size WxH]
 //!     [--shrink SIDE] [--art IMAGE] [--time] [--crop]
 //! ```
 
@@ -29,10 +30,11 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
 
+use jodel_gpu::vision::{Depth, Matte};
 use jodeldiplom::art::Art;
 use jodeldiplom::core::shine::{Shone, Tier};
 use jodeldiplom::core::singing::Singing;
-use jodeldiplom::cover::{Apart, CoverLayers, Layers};
+use jodeldiplom::cover::{Apart, CoverLayers, Layers, Parts};
 use jodeldiplom::gui::backdrop::music::Levels;
 use jodeldiplom::gui::backdrop::{Cue, Visualiser};
 use jodeldiplom::gui::big_text::Faces;
@@ -279,13 +281,41 @@ fn shrink(layers: &CoverLayers, side: u32) -> CoverLayers {
     }
 }
 
+/// A picture taken apart without the models: no subject, its depth nearer
+/// towards its bottom (as a photo's ground comes nearer).
+fn picture_apart(image: &image::RgbImage) -> CoverLayers {
+    let side = 64;
+    let depth = Depth {
+        width: side,
+        height: side,
+        values: (0..side * side)
+            .map(|i| 3.0 - 2.0 * (i / side) as f32 / (side - 1) as f32)
+            .collect(),
+    };
+    let matte = Matte {
+        width: 1,
+        height: 1,
+        values: vec![0.0],
+    };
+    jodeldiplom::cover::split(image, &Parts { depth, matte })
+}
+
 /// The layers in `path` (its file name the key; made `shrink` pixels
-/// square if asked), saying how much of the cover its subject is.
+/// square if asked), saying how much of the cover its subject is. A JPEG
+/// or PNG is the picture itself, decoded as a song's cover is and taken
+/// apart without the models ([`picture_apart`]).
 fn load(path: &Path, shrunk: Option<u32>) -> Layers {
     let bytes = std::fs::read(path).expect("the layers");
-    let layers = jodeldiplom::cover::from_bytes(&bytes)
-        .expect("layers")
-        .layers;
+    let picture = ["jpg", "jpeg", "png"]
+        .iter()
+        .any(|e| path.extension().is_some_and(|x| x.eq_ignore_ascii_case(e)));
+    let layers = if picture {
+        picture_apart(&jodeldiplom::art::decode(&bytes).expect("a JPEG or PNG"))
+    } else {
+        jodeldiplom::cover::from_bytes(&bytes)
+            .expect("layers")
+            .layers
+    };
     let layers = match shrunk {
         Some(side) => shrink(&layers, side),
         None => layers,

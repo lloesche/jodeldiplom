@@ -25,7 +25,7 @@ impl Stage {
             let (cur, next) = (y + h * LINES.0, y + h * LINES.1);
             match kind {
                 LineKind::Current => Some((cur, 1.0, 1.0)),
-                LineKind::Next => Some((next, 0.66, 0.6)),
+                LineKind::Next => Some((next, 0.66, 0.75)),
                 LineKind::Previous => Some((cur - (next - cur), 0.66, 0.0)),
                 _ => None,
             }
@@ -104,8 +104,8 @@ impl Stage {
             } else {
                 f32::NEG_INFINITY
             };
-            // A soft dark rim, so it reads over a bright cover.
-            let rim = (Shade::RIM, alpha);
+            // A dark outline, so it reads over any cover as it scrolls.
+            let rim = (Shade::OUTLINE, alpha);
             let whole = ((lx, ty), f32::INFINITY);
             self.shade(out, (Face::LINE, &line.text), (big, scale), whole, rim);
             self.text(

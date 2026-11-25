@@ -6,8 +6,8 @@
 //! pixels, read smoothly where it is much enlarged, so no pixel nor block
 //! of its coding shows), its edge fading into the same cover blurred
 //! heavily, dark, filling the window under it and drifting slowly. The
-//! text needs nothing of it: the lane has its glass, the bubbles and the
-//! lyrics their own contrast.
+//! text needs nothing of it: the lane has its glass, the bubbles their
+//! dark bodies and the lyrics their dark outline.
 //!
 //! The life is on the subject. Each stem lights its own piece ([`music`],
 //! from the song's analysis, smoothed, as the desk lets it be heard): the

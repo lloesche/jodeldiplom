@@ -157,7 +157,8 @@ fn shade_liquid(o: Out, p: vec2<f32>, d: f32, u: f32, span: vec2<f32>, down: f32
 
 // A skin of glass `d` outside it, `down` its depth there, `flash` its
 // overfilling: its body lighter at its top, outlined (`params.z` wide) and
-// glowing (`params.y` far) in `color2`.
+// glowing (`params.y` far) in `color2`, the glow behind it (a dark body
+// stays dark, a see-through one lit).
 fn shade_skin(o: Out, d: f32, down: f32, flash: f32) -> vec4<f32> {
     let cover = clamp(0.5 - d, 0.0, 1.0);
     let outline = o.params.z;
@@ -166,7 +167,7 @@ fn shade_skin(o: Out, d: f32, down: f32, flash: f32) -> vec4<f32> {
     let a_body = cover * o.color.a;
     let col = mix(body, o.color2.rgb, edge * o.color2.a / max(a_body + edge * o.color2.a, 1e-4));
     let a = max(a_body, edge * o.color2.a);
-    let g = glow(d, o.params.y) * o.color2.a * 0.5;
+    let g = glow(d, o.params.y) * o.color2.a * 0.5 * (1.0 - a);
     return over_plus(col, a, o.color2.rgb * g);
 }
 
