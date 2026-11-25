@@ -9,6 +9,7 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 use super::automation::AutomationRun;
+use super::fader::Mapped;
 use super::input::{Span, Stream};
 use super::mic::Port;
 use super::mix::{Gains, Made};
@@ -141,7 +142,7 @@ impl Slot {
     /// of it are mixed again, there is no stream frame to time a change on.
     pub(super) fn unmap(&mut self) {
         self.mapped = (0, 0);
-        self.state.mapped.store(0, 0);
+        self.state.mapped.store(&Mapped::default());
     }
 
     /// Its stream frames go `offset` device frames on in epoch `epoch`:
@@ -150,7 +151,8 @@ impl Slot {
         let mapped = (epoch, offset);
         if mapped != self.mapped {
             self.mapped = mapped;
-            self.state.mapped.store(mapped.0, mapped.1);
+            let (epoch, offset) = mapped;
+            self.state.mapped.store(&Mapped { epoch, offset });
         }
     }
 

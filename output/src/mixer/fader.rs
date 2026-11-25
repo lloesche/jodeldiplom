@@ -2,19 +2,20 @@
 //! outputs, and its [`Fader`]s, the controllers' gains: the input's own
 //! and, for an input with parts ([`Mixer::input_lanes`]), one per part.
 
-use std::sync::atomic::{fence, AtomicBool, AtomicU64, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::Arc;
 use std::time::Duration;
 
 use super::automation::{curves_of, Automation};
 use super::desk::unpack_format;
-use super::input::ask;
+use super::input::{self, ask};
 use super::ramp::GainId;
 use super::{Mixer, Msg, Ramp, Role, Start, Strip};
 use crate::caps::Capabilities;
 use crate::error::Error;
 use crate::output::{OpenRequest, Output, OutputTarget};
+use crate::seqlock::{Packed, SeqLock};
 
 /// What the mixer thread publishes about a fader's gain.
 pub(crate) struct FaderState {
@@ -76,7 +77,7 @@ pub(crate) struct SlotState {
     pub(crate) next: AtomicU64,
     pub(crate) automation: AutomationState,
     /// Where its output's frames went last on the device.
-    pub(crate) mapped: Mapped,
+    pub(crate) mapped: SeqLock<Mapped>,
 }
 
 /// A role as a word, for an atomic.
@@ -87,44 +88,27 @@ fn role_word(role: Role) -> u8 {
     }
 }
 
-/// The device epoch (0: none, not mapped) and the device frame less the
-/// stream frame where an input's output's frames went last, written by the
-/// mixer thread and read by any: a sequence lock (the count is odd while a
-/// write is under way, so a reader that sees the same even count before
-/// and after has both of one write).
-#[derive(Default)]
+/// Where an input's output's frames went last, written by the mixer
+/// thread and read by any (through a [`SeqLock`]): frames of device epoch
+/// `epoch` (0: none, not mapped) go `offset` device frames on from their
+/// stream frames.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Mapped {
-    seq: AtomicU64,
-    epoch: AtomicU64,
-    offset: AtomicU64,
+    pub(crate) epoch: u64,
+    pub(crate) offset: u64,
 }
 
-impl Mapped {
-    /// The mixer thread: frames of epoch `epoch` go `offset` device frames
-    /// on from their stream frames (epoch 0: not mapped).
-    pub(crate) fn store(&self, epoch: u64, offset: u64) {
-        let seq = self.seq.load(Ordering::Relaxed);
-        self.seq.store(seq + 1, Ordering::Relaxed);
-        fence(Ordering::Release);
-        self.epoch.store(epoch, Ordering::Relaxed);
-        self.offset.store(offset, Ordering::Relaxed);
-        self.seq.store(seq + 2, Ordering::Release);
+impl Packed for Mapped {
+    const WORDS: usize = 2;
+
+    fn pack(&self, words: &mut [u64]) {
+        words.copy_from_slice(&[self.epoch, self.offset]);
     }
 
-    /// The epoch and the offset of one write (`None`: not mapped).
-    pub(crate) fn load(&self) -> Option<(u64, u64)> {
-        loop {
-            let seq = self.seq.load(Ordering::Acquire);
-            if seq % 2 == 1 {
-                std::hint::spin_loop();
-                continue;
-            }
-            let epoch = self.epoch.load(Ordering::Relaxed);
-            let offset = self.offset.load(Ordering::Relaxed);
-            fence(Ordering::Acquire);
-            if self.seq.load(Ordering::Relaxed) == seq {
-                return (epoch != 0).then_some((epoch, offset));
-            }
+    fn unpack(words: &[u64]) -> Mapped {
+        Mapped {
+            epoch: words[0],
+            offset: words[1],
         }
     }
 }
@@ -174,7 +158,7 @@ impl SlotState {
                     .collect(),
                 ..AutomationState::default()
             },
-            mapped: Mapped::default(),
+            mapped: SeqLock::default(),
         }
     }
 }
@@ -331,14 +315,15 @@ impl OutputTarget for InputTarget {
 
     /// Opens an output of one lane, or of as many as the input has
     /// ([`OutputTarget::lanes`]; anything else is
-    /// [`Error::InvalidArgument`]).
+    /// [`Error::InvalidArgument`]). A request refused leaves the output
+    /// open on the input playing.
     fn open(&mut self, request: &OpenRequest) -> Result<Box<dyn Output>, Error> {
-        let (slot, request) = (self.slot.id, request.clone());
-        ask(&self.slot.tx, |done| Msg::Open {
-            slot,
-            request,
-            done,
-        })?
+        if self.slot.closed.load(Ordering::Acquire) {
+            return Err(Error::Closed);
+        }
+        let lanes = self.slot.strips.len() as u16;
+        let shared = &self.slot.strips[0].handle.shared;
+        input::open(&self.slot.tx, shared, self.slot.id, lanes, request)
     }
 
     /// Main and the parts: 1 for a plain input.
@@ -428,7 +413,7 @@ impl Fader {
             .epoch
             .load(Ordering::Acquire);
         match state.mapped.load() {
-            Some((epoch, offset)) if rate > 0 && epoch == now => {
+            Mapped { epoch, offset } if epoch != 0 && rate > 0 && epoch == now => {
                 let frame = stream_frame.wrapping_add(offset);
                 Start::At {
                     epoch,
@@ -534,10 +519,10 @@ impl Fader {
 
     /// Shuts the input now, while its target may still be held (by a
     /// player on its way out): its output closes ([`Error::Closed`]), and
-    /// so does the device when that was the last, and every later open or
-    /// question on its [`InputTarget`] fails with [`Error::Closed`], so it
-    /// can never take the device again. Ramps set after it do nothing; the
-    /// gains stay at their last values.
+    /// every later open or question on its [`InputTarget`] fails with
+    /// [`Error::Closed`]. The device plays on (the desk keeps it open for
+    /// every other input). Ramps set after it do nothing; the gains stay
+    /// at their last values.
     pub fn close(&self) {
         self.slot.forget();
     }

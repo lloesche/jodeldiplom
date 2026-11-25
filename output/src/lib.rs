@@ -98,6 +98,7 @@ pub mod mixer;
 mod output;
 pub mod pack;
 mod ring;
+mod seqlock;
 mod shared;
 mod spsc;
 mod tap;

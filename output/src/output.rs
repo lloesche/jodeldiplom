@@ -318,6 +318,12 @@ pub struct Clock {
 }
 
 impl Clock {
+    /// The output's stream (a mixer's microphone port taps its device
+    /// through it, from a thread of its own).
+    pub(crate) fn shared(&self) -> Arc<Shared> {
+        self.shared.clone()
+    }
+
     /// Stream frames played (see [`Output::position`]).
     pub fn position(&self) -> u64 {
         self.shared.position()
@@ -382,7 +388,6 @@ pub(crate) struct Core {
     running: bool,
     paused: bool,
     started: bool,
-    closed: bool,
 }
 
 impl Core {
@@ -401,6 +406,7 @@ impl Core {
         // ([`OpenRequest::check_lanes`]) and made the ring for them.
         let lanes = request.lanes;
         debug_assert_eq!(shared.format, lane_format(info.format, lanes));
+        shared.set_period(info.device_buffer_frames);
         Core {
             shared,
             driver,
@@ -411,8 +417,14 @@ impl Core {
             running: false,
             paused: false,
             started: false,
-            closed: false,
         }
+    }
+
+    /// The device runs (or not): a device that pulls on its own takes a
+    /// new tap at its next buffer ([`Shared::set_tap`]).
+    fn set_running(&mut self, running: bool) {
+        self.running = running;
+        self.shared.set_pulling(running && self.driver.pulls());
     }
 
     pub(crate) fn set_prefill(&mut self, frames: u64) {
@@ -420,16 +432,13 @@ impl Core {
     }
 
     fn usable(&self) -> Result<(), Error> {
-        if self.closed {
-            return Err(Error::Closed);
-        }
-        self.shared.check()
+        self.shared.usable()
     }
 
     fn start(&mut self) -> Result<(), Error> {
         if !self.running {
             self.driver.start()?;
-            self.running = true;
+            self.set_running(true);
             self.started = true;
         }
         Ok(())
@@ -577,7 +586,7 @@ impl Output for Core {
         }
         if self.running {
             self.driver.pause()?;
-            self.running = false;
+            self.set_running(false);
         }
         self.paused = true;
         Ok(())
@@ -604,7 +613,7 @@ impl Output for Core {
     fn flush(&mut self) -> Result<(), Error> {
         self.usable()?;
         self.driver.flush()?;
-        self.running = false;
+        self.set_running(false);
         self.started = false;
         Ok(())
     }
@@ -620,17 +629,7 @@ impl Output for Core {
 
     fn set_tap(&mut self, tap: Option<Box<dyn Tap>>) -> Result<(), Error> {
         self.usable()?;
-        // A device that pulls takes it within a buffer or two.
-        let wait = if self.running && self.driver.pulls() {
-            let period = self
-                .info
-                .format
-                .frames_to_duration(self.info.device_buffer_frames);
-            (4 * period).clamp(Duration::from_millis(50), Duration::from_millis(500))
-        } else {
-            Duration::ZERO
-        };
-        self.shared.set_tap(tap, wait);
+        self.shared.set_tap(tap);
         Ok(())
     }
 
@@ -646,20 +645,17 @@ impl Output for Core {
     }
 
     fn close(&mut self) -> Result<(), Error> {
-        if self.closed {
+        if !self.shared.close() {
             return Err(Error::Closed);
         }
-        self.closed = true;
-        self.running = false;
+        self.set_running(false);
         self.driver.close()
     }
 }
 
 impl Drop for Core {
     fn drop(&mut self) {
-        if !self.closed {
-            let _ = self.close();
-        }
+        let _ = self.close();
     }
 }
 

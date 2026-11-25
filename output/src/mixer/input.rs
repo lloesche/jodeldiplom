@@ -1,17 +1,23 @@
 //! A mixer input's streams: full [`Output`]s whose ring the mixer drains,
 //! and the map that keeps the microphone's tap on the device in the Lead
 //! stream's frames.
+//!
+//! An output is made on the thread that opens it ([`open`]): its ring,
+//! its handle and what the mixer thread keeps of it, with room for every
+//! chunk, so the mixer thread takes it in, mixes it and lets it go
+//! without allocating.
 
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::mpsc::{self, Sender};
+use std::sync::mpsc::{self, Sender, SyncSender};
 use std::sync::Arc;
 
 use super::follow::Follow;
-use super::Msg;
+use super::{MixShared, Msg};
 use crate::error::Error;
 use crate::format::StreamFormat;
-use crate::output::{forward_output, Core, Driver};
+use crate::lanes::lane_format;
+use crate::output::{forward_output, Core, Driver, OpenRequest, Output, StreamInfo};
 use crate::pack::unpack_sample;
 use crate::shared::Shared;
 use crate::tap::Tap;
@@ -44,7 +50,9 @@ pub(crate) struct Stream {
     pub(crate) samples: Vec<i32>,
     /// Its chunks on the device not all played yet: the device frame its
     /// frames start at, the stream frames dropped just before it (played
-    /// once the device is there), and how many of its frames follow.
+    /// once the device is there), and how many of its frames follow. Room
+    /// for what the device's ring holds is made at the start ([`open`]);
+    /// past it the two oldest become one ([`Stream::note_sent`]).
     sent: VecDeque<(u64, u64, u64)>,
     /// The timeline epoch (restarts by flush) of what was taken last.
     epoch: u64,
@@ -88,7 +96,10 @@ impl Span {
 }
 
 impl Stream {
-    pub(crate) fn new(link: Arc<Link>, lanes: u16) -> Stream {
+    /// The stream of `link`, of `lanes` lanes, with room for chunks of up
+    /// to `chunk` frames, `sent` of them on the device not played yet.
+    pub(crate) fn new(link: Arc<Link>, lanes: u16, chunk: usize, sent: usize) -> Stream {
+        let format = link.shared.format;
         Stream {
             link,
             lanes,
@@ -97,9 +108,9 @@ impl Stream {
             got: 0,
             at: 0,
             frame: 0,
-            bytes: Vec::new(),
-            samples: Vec::new(),
-            sent: VecDeque::new(),
+            bytes: Vec::with_capacity(chunk * format.frame_bytes()),
+            samples: Vec::with_capacity(chunk * usize::from(format.channels)),
+            sent: VecDeque::with_capacity(sent),
             epoch: 0,
         }
     }
@@ -136,8 +147,7 @@ impl Stream {
             self.got = got;
         }
         if dropped > 0 || self.got > 0 {
-            self.sent
-                .push_back((first + from as u64, dropped, self.got));
+            self.note_sent((first + from as u64, dropped, self.got));
         }
         self.samples.resize(n * usize::from(format.channels), 0);
         let sb = format.sample.bytes();
@@ -145,6 +155,24 @@ impl Stream {
             *s = unpack_sample(b, format.sample);
         }
         rendered.is_some()
+    }
+
+    /// Notes a chunk sent to the device. With no room left (the device
+    /// holds more than its ring), the two oldest become one: frames that
+    /// follow on, as they do from chunk to chunk, are counted exactly
+    /// (but for the frames dropped before the second, played as soon as
+    /// the device reaches the first); a gap between them counts the oldest
+    /// as played.
+    fn note_sent(&mut self, chunk: (u64, u64, u64)) {
+        if self.sent.len() == self.sent.capacity() {
+            if let Some((d, dropped, n)) = self.sent.pop_front() {
+                let follows = self.sent.front_mut().filter(|next| next.0 == d + n);
+                if let Some(next) = follows {
+                    *next = (d, dropped + next.1, n + next.2);
+                }
+            }
+        }
+        self.sent.push_back(chunk);
     }
 
     /// What it gave in the chunk taken last (`None`: nothing).
@@ -211,11 +239,95 @@ impl Stream {
 }
 
 /// Asks the mixer thread and waits for its answer (`Closed` when it is
-/// gone).
-pub(crate) fn ask<T>(tx: &Sender<Msg>, msg: impl FnOnce(Sender<T>) -> Msg) -> Result<T, Error> {
-    let (reply, answer) = mpsc::channel();
+/// gone). The answer's way is made here, room for it and all, so the
+/// mixer thread's answer allocates nothing.
+pub(crate) fn ask<T>(tx: &Sender<Msg>, msg: impl FnOnce(SyncSender<T>) -> Msg) -> Result<T, Error> {
+    let (reply, answer) = mpsc::sync_channel(1);
     tx.send(msg(reply)).map_err(|_| Error::Closed)?;
     answer.recv().map_err(|_| Error::Closed)
+}
+
+/// The mixer's answer to an output made for it ([`Msg::Open`]).
+pub(crate) enum Opened {
+    /// It plays: on a device of this backend, in real time or not.
+    Yes {
+        backend: &'static str,
+        realtime: bool,
+    },
+    /// Not in that format: the desk is in this one now.
+    Desk(StreamFormat),
+}
+
+/// Opens an output for `request` on input `slot` (of `lanes` lanes) of the
+/// mixer of `tx` and `shared`. Its ring, its handle and the mixer's side of
+/// it are made here, on the opener's thread, at the desk's format as the
+/// handles see it (asked of the mixer when they see none, and made again
+/// when the desk has changed since); the mixer thread takes it in, the
+/// output on the input before it closing only then.
+pub(crate) fn open(
+    tx: &Sender<Msg>,
+    shared: &MixShared,
+    slot: u64,
+    lanes: u16,
+    request: &OpenRequest,
+) -> Result<Box<dyn Output>, Error> {
+    request.validate()?;
+    if request.lanes != 1 && request.lanes != lanes {
+        return Err(Error::InvalidArgument(format!(
+            "an input of {lanes} lanes opens 1 or {lanes}, not {}",
+            request.lanes
+        )));
+    }
+    let seen = *shared.format();
+    let mut format = match seen {
+        Some(format) => format,
+        None => {
+            let caps = ask(tx, |done| Msg::Capabilities { slot, done })??;
+            let desk = caps.iter().next().copied();
+            desk.ok_or(Error::NoDevice)?
+        }
+    };
+    loop {
+        // Every output plays at the desk's format (its player resamples to
+        // it).
+        if !request.takes(format) {
+            return Err(Error::FormatNotAccepted {
+                rate: request.rate,
+                channels: request.channels,
+            });
+        }
+        let chunk = format.duration_to_frames(shared.period).max(1);
+        let ring = lane_format(format, request.lanes);
+        let ring = Arc::new(Shared::new(ring, request.ring_frames(&format, chunk)));
+        let link = Arc::new(Link {
+            id: shared.ids.fetch_add(1, Ordering::Relaxed),
+            shared: ring.clone(),
+            running: AtomicBool::new(false),
+            paused: AtomicBool::new(false),
+        });
+        // What the device's ring holds of it, and the device's own buffer.
+        let sent = shared.buffer.as_secs_f64() / shared.period.as_secs_f64().max(1e-3);
+        let sent = sent.ceil() as usize + 2;
+        let stream = Stream::new(link.clone(), request.lanes, chunk as usize, sent);
+        match ask(tx, |done| Msg::Open { slot, stream, done })?? {
+            Opened::Yes { backend, realtime } => {
+                let info = StreamInfo {
+                    format,
+                    backend,
+                    device_buffer_frames: chunk,
+                    ring_frames: ring.ring.capacity(),
+                    realtime,
+                };
+                let driver = InputDriver {
+                    link,
+                    tx: tx.clone(),
+                };
+                let core = Core::new(ring, Box::new(driver), info, request);
+                return Ok(Box::new(InputOutput { core }));
+            }
+            Opened::Desk(desk) => format = desk,
+        }
+    }
 }
 
 /// The "device" of a stream: the mixer.
@@ -305,6 +417,11 @@ impl FrameMap {
         self.head.store(head + 1, Ordering::Release);
     }
 
+    /// The entry added next.
+    pub(crate) fn head(&self) -> u64 {
+        self.head.load(Ordering::Acquire)
+    }
+
     fn get(&self, k: u64) -> (u64, u64, u64) {
         let e = &self.entries[k as usize % MAP_ENTRIES];
         (
@@ -328,8 +445,9 @@ pub(crate) struct MappedTap {
 }
 
 impl MappedTap {
-    pub(crate) fn new(inner: Box<dyn Tap>, map: Arc<FrameMap>) -> MappedTap {
-        let next = map.head.load(Ordering::Acquire);
+    /// `inner` told the Lead's frames of `map` from its entry `next` on
+    /// (what came before is another Lead's, or none).
+    pub(crate) fn new(inner: Box<dyn Tap>, map: Arc<FrameMap>, next: u64) -> MappedTap {
         MappedTap {
             inner,
             map,
@@ -404,7 +522,9 @@ mod tests {
         let format = StreamFormat::new(48_000, 2, SampleFormat::S32);
         let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
         let map = Arc::new(FrameMap::new());
-        let mut tap = MappedTap::new(Box::new(Begins(seen.clone())), map.clone());
+        // Another Lead's frames before: not this tap's.
+        map.push(0, 5_000, 300);
+        let mut tap = MappedTap::new(Box::new(Begins(seen.clone())), map.clone(), map.head());
         // The Lead starts at device frame 300 with its frame 0; three full
         // chunks, a starved one (40 of 100), and on after a gap.
         map.push(300, 0, 100);

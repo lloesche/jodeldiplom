@@ -135,6 +135,7 @@
 //! - **Monitor:** a [`Monitor`] sees every frame as it goes to the device
 //!   (a spectrum of what is heard).
 
+mod aside;
 mod automation;
 mod chunk;
 mod desk;
@@ -166,7 +167,7 @@ pub use strip::{Strip, METER_CHANNELS, STRIP_RAMP};
 
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::mpsc::{self, Sender};
+use std::sync::mpsc::{self, Sender, SyncSender};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread::JoinHandle;
 use std::time::Duration;
@@ -175,7 +176,8 @@ use crate::caps::Capabilities;
 use crate::error::Error;
 use crate::format::StreamFormat;
 use crate::input::Input;
-use crate::output::{Clock, OpenRequest, Output, OutputTarget, StreamInfo};
+use crate::output::{Clock, OutputTarget, StreamInfo};
+use crate::seqlock::{Packed, SeqLock};
 use fader::SlotState;
 use ramp::GainId;
 use strip::{Change, Entry, Peaks, StripState};
@@ -225,6 +227,23 @@ pub struct Timebase {
     pub frame: u64,
     /// The frame being heard.
     pub heard: u64,
+}
+
+impl Packed for Timebase {
+    const WORDS: usize = 4;
+
+    fn pack(&self, words: &mut [u64]) {
+        words.copy_from_slice(&[self.epoch, u64::from(self.rate), self.frame, self.heard]);
+    }
+
+    fn unpack(words: &[u64]) -> Timebase {
+        Timebase {
+            epoch: words[0],
+            rate: words[1] as u32,
+            frame: words[2],
+            heard: words[3],
+        }
+    }
 }
 
 impl Timebase {
@@ -283,21 +302,22 @@ pub(crate) enum Msg {
     /// to start; says whether it was.
     Withdraw {
         gain: GainId,
-        done: Sender<bool>,
+        done: SyncSender<bool>,
     },
     Capabilities {
         slot: u64,
-        done: Sender<Result<Capabilities, Error>>,
+        done: SyncSender<Result<Capabilities, Error>>,
     },
+    /// An output on input `slot`, made by its opener ([`input::open`]).
     Open {
         slot: u64,
-        request: OpenRequest,
-        done: Sender<Result<Box<dyn Output>, Error>>,
+        stream: input::Stream,
+        done: SyncSender<Result<input::Opened, Error>>,
     },
     Closed(u64),
     Flush {
         stream: u64,
-        done: Sender<Result<(), Error>>,
+        done: SyncSender<Result<(), Error>>,
     },
     /// The output on input `slot` follows the one on input `leader.0` from
     /// its frame `leader.1` (`None`: no one); `done` hears whether it
@@ -305,7 +325,7 @@ pub(crate) enum Msg {
     Follow {
         slot: u64,
         leader: Option<(u64, u64)>,
-        done: Option<Sender<Result<(), Error>>>,
+        done: Option<SyncSender<Result<(), Error>>>,
     },
     Ramp {
         gain: GainId,
@@ -320,7 +340,7 @@ pub(crate) enum Msg {
     Role {
         slot: u64,
         role: Role,
-        done: Sender<Result<(), Error>>,
+        done: SyncSender<Result<(), Error>>,
     },
     Crossfade {
         into: GainId,
@@ -336,7 +356,7 @@ pub(crate) enum Msg {
     /// goes back in `done` (`None`: another one runs now).
     EffectsGone {
         queue: Arc<effects::CueQueue>,
-        done: Sender<Option<Box<voices::EffectsRun>>>,
+        done: SyncSender<Option<Box<voices::EffectsRun>>>,
     },
     /// The effects input's sounds from now on.
     EffectsBank(Arc<effects::SoundBank>),
@@ -347,12 +367,20 @@ pub(crate) enum Msg {
 }
 
 /// What the mixer thread publishes, and what the handles keep for a look
-/// at the desk. The clock is behind a lock taken every turn, for an
-/// instant; what the device runs at and the microphone's port behind
-/// locks of their own, taken when they change.
+/// at the desk. The clock, written every turn, is read without a lock;
+/// what the device runs at behind a lock taken when it opens or closes,
+/// the microphone's port behind one its helper takes.
 #[derive(Default)]
 pub(crate) struct MixShared {
-    timebase: Mutex<Timebase>,
+    timebase: SeqLock<Timebase>,
+    /// The device period, how much is mixed at a time
+    /// ([`MixerOptions::period`]), and the device's ring
+    /// ([`MixerOptions::buffer`]).
+    pub(crate) period: Duration,
+    pub(crate) buffer: Duration,
+    /// Jobs the mixer thread had for its helper past the room it keeps for
+    /// them (see `aside.rs`).
+    pub(crate) overflows: AtomicU64,
     /// What the device runs at (`None`: closed).
     device: Mutex<Option<StreamInfo>>,
     /// The desk's format (`None`: the device takes no stereo stream, or
@@ -381,8 +409,13 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
 }
 
 impl MixShared {
-    pub(crate) fn timebase(&self) -> MutexGuard<'_, Timebase> {
-        lock(&self.timebase)
+    pub(crate) fn timebase(&self) -> Timebase {
+        self.timebase.load()
+    }
+
+    /// The mixer thread: the clock is `t` now.
+    pub(crate) fn set_timebase(&self, t: Timebase) {
+        self.timebase.store(&t);
     }
 
     pub(crate) fn device(&self) -> MutexGuard<'_, Option<StreamInfo>> {
@@ -416,13 +449,17 @@ impl Mixer {
     /// desk's format, for as long as the mixer runs.
     pub fn open(mut target: Box<dyn OutputTarget>, options: MixerOptions) -> Mixer {
         let (tx, rx) = mpsc::channel();
-        let shared = Arc::new(MixShared::default());
+        let shared = Arc::new(MixShared {
+            period: options.period,
+            buffer: options.buffer,
+            ..MixShared::default()
+        });
         let name = target.name();
         let caps = options.capabilities.clone();
         let caps = caps.or_else(|| target.capabilities().ok());
         let format = caps.and_then(|c| desk_format(&c));
         *shared.format() = format;
-        let run = run::Run::new(target, format, options, tx.clone(), shared.clone());
+        let run = run::Run::new(target, format, options, shared.clone());
         let thread = std::thread::Builder::new()
             .name("jodel-mixer".into())
             .spawn(move || run.run(rx))
@@ -466,7 +503,7 @@ impl Mixer {
     /// The clock, as of the last frames mixed: what a [`Ramp`] is timed
     /// on (a cheaper look than [`Mixer::desk`], which has it too).
     pub fn timebase(&self) -> Timebase {
-        *self.shared.timebase()
+        self.shared.timebase()
     }
 
     /// The microphone listened to (`None`: none). The mixer taps the device
@@ -474,6 +511,13 @@ impl Mixer {
     /// stands is [`Mixer::mic`]. Nothing of it is ever played.
     pub fn set_mic(&self, mic: Option<Input>) {
         let _ = self.tx.send(Msg::Mic(mic));
+    }
+
+    /// Times the mixer thread had more to hand its helper thread than the
+    /// room it keeps for that, each one an allocation on the mixer thread:
+    /// 0 unless something is wrong.
+    pub fn helper_overflows(&self) -> u64 {
+        self.shared.overflows.load(Ordering::Relaxed)
     }
 
     /// Sets the [`Monitor`] that sees every frame (`None`: none).
@@ -488,5 +532,62 @@ impl Drop for Mixer {
         if let Some(thread) = self.thread.take() {
             let _ = thread.join();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{FileOutput, OpenRequest, Output, SampleFormat, SimClock};
+
+    /// A device in real time at 48 kHz, stereo.
+    struct Sim;
+
+    impl OutputTarget for Sim {
+        fn name(&self) -> String {
+            "sim".into()
+        }
+
+        fn capabilities(&mut self) -> Result<Capabilities, Error> {
+            let format = StreamFormat::new(48_000, 2, SampleFormat::S32);
+            Ok([format].into_iter().collect())
+        }
+
+        fn open(&mut self, request: &OpenRequest) -> Result<Box<dyn Output>, Error> {
+            let caps = self.capabilities()?;
+            let out = FileOutput::open(std::io::sink(), &caps, request, SimClock::Realtime)?;
+            Ok(Box::new(out))
+        }
+    }
+
+    /// An input plays one output at a time, and a request it refuses
+    /// (another rate, other channels, lanes it has not, no format at all)
+    /// leaves the one it plays playing.
+    #[test]
+    fn a_request_refused_leaves_the_output_playing() {
+        let mixer = Mixer::open(Box::new(Sim), MixerOptions::default());
+        let strip = mixer.strip("Player");
+        let (mut target, _fader) = mixer.input(&strip, Role::Lead, 1.0);
+        let request = OpenRequest::new(48_000, 2).formats(&[SampleFormat::S32]);
+        let mut out = target.open(&request).unwrap();
+        let tenth = vec![1_000; 2 * 4_800];
+        out.write(&tenth, None).unwrap();
+        let refused = [
+            OpenRequest::new(44_100, 2).formats(&[SampleFormat::S32]),
+            OpenRequest::new(48_000, 1).formats(&[SampleFormat::S32]),
+            request.clone().lanes(2),
+            request.clone().formats(&[]),
+        ];
+        for bad in &refused {
+            assert!(target.open(bad).is_err(), "{bad:?}");
+        }
+        out.write(&tenth, None).unwrap();
+        assert!(out.drain(Some(Duration::from_secs(10))).unwrap());
+        assert_eq!(out.position().unwrap(), 9_600);
+        // The next one opened takes its place.
+        let mut next = target.open(&request).unwrap();
+        assert!(matches!(out.write(&tenth, None), Err(Error::Closed)));
+        next.write(&tenth, None).unwrap();
+        assert!(next.drain(Some(Duration::from_secs(10))).unwrap());
     }
 }

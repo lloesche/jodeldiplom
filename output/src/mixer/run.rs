@@ -2,14 +2,15 @@
 //! ask, and mixes a period at a time as the device takes frames.
 
 use std::collections::BTreeMap;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
+use std::sync::atomic::Ordering;
+use std::sync::mpsc::{Receiver, RecvTimeoutError};
 use std::sync::Arc;
 use std::time::Duration;
 
+use super::aside::{Aside, Gone};
 use super::chunk::Slot;
 use super::desk::pack_format;
-use super::input::{InputDriver, InputOutput, Link, Stream};
+use super::input::{Opened, Stream};
 use super::mic::Port;
 use super::mix::Mix;
 use super::parts::LaneRun;
@@ -25,7 +26,7 @@ use crate::caps::Capabilities;
 use crate::error::Error;
 use crate::format::StreamFormat;
 use crate::lanes::lane_format;
-use crate::output::{Core, OpenRequest, Output, OutputTarget, StreamInfo};
+use crate::output::{OpenRequest, Output, OutputTarget, StreamInfo};
 use crate::shared::Shared;
 
 /// How long the device may take to play out what it holds before it is
@@ -39,6 +40,8 @@ pub(super) struct Device {
     pub(super) output: Box<dyn Output>,
     pub(super) format: StreamFormat,
     pub(super) info: StreamInfo,
+    /// Its stream, as the microphone's port taps it.
+    taps: Arc<Shared>,
     /// Paused by the mixer (nothing to play).
     paused: bool,
     pub(super) mix: Mix,
@@ -50,7 +53,6 @@ pub(super) struct Run {
     /// The desk's format: what the device is opened at, and every output
     /// on an input plays at (`None`: the device has none to offer).
     format: Option<StreamFormat>,
-    tx: Sender<Msg>,
     shared: Arc<MixShared>,
     pub(super) strips: Strips,
     pub(super) slots: BTreeMap<u64, Slot>,
@@ -79,26 +81,29 @@ pub(super) struct Run {
     /// The id of the newest output opened (0: none): a strip's change for
     /// the first audio waits for one newer.
     newest_output: u64,
+    /// The helper thread, last: dropped (joined) once the rest is.
+    aside: Aside,
 }
 
 impl Run {
+    /// The mixer's thread, made on the caller's (with the microphone's
+    /// port and its helper thread).
     pub(super) fn new(
         target: Box<dyn OutputTarget>,
         format: Option<StreamFormat>,
         options: MixerOptions,
-        tx: Sender<Msg>,
         shared: Arc<MixShared>,
     ) -> Run {
         Run {
             target,
             format,
             options,
-            tx,
+            port: Port::new(),
+            aside: Aside::new(shared.clone()),
             shared,
             strips: Strips::default(),
             slots: BTreeMap::new(),
             device: None,
-            port: Port::default(),
             effects: None,
             monitor: None,
             epoch: 0,
@@ -153,6 +158,8 @@ impl Run {
         }
         self.close_streams(Error::Closed);
         self.close_device();
+        // The microphone goes too; the helper is joined as the run ends.
+        self.port.set(&mut self.aside, None);
     }
 
     /// The desk's format: as decided, or (none yet: the device was not
@@ -207,12 +214,8 @@ impl Run {
             Msg::Capabilities { slot, done } => {
                 let _ = done.send(self.capabilities(slot));
             }
-            Msg::Open {
-                slot,
-                request,
-                done,
-            } => {
-                let _ = done.send(self.open(slot, &request));
+            Msg::Open { slot, stream, done } => {
+                let _ = done.send(self.open(slot, stream));
             }
             Msg::Closed(stream) => self.closed(stream),
             Msg::Flush { stream, done } => {
@@ -261,7 +264,7 @@ impl Run {
                 }
             }
             Msg::Mic(input) => {
-                self.port.set(input);
+                self.port.set(&mut self.aside, input);
                 self.fit_mic();
             }
             Msg::Effects(strip, queue) => {
@@ -337,8 +340,7 @@ impl Run {
             self.wait_for(GainId::new(id, k as u16), None);
         }
         if let Some(stream) = self.slots.remove(&id).and_then(|s| s.stream) {
-            stream.link.shared.fail(Error::Closed);
-            self.closed(stream.link.id);
+            self.retire(stream, Error::Closed);
         }
     }
 
@@ -352,8 +354,8 @@ impl Run {
             .filter(|s| s.state.role() == Role::Lead)
             .filter_map(|s| s.stream.as_ref().map(|st| st.link.id))
             .max();
-        let output = self.device.as_mut().map(|d| &mut d.output);
-        self.port.fit(output, self.epoch, lead, &self.shared);
+        let device = self.device.as_ref().map(|d| &d.taps);
+        self.port.fit(&mut self.aside, device, self.epoch, lead);
     }
 
     /// A ramp set on each of `gains` has been taken (whether it comes or
@@ -458,70 +460,53 @@ impl Run {
         Ok([format].into_iter().collect())
     }
 
-    fn open(&mut self, slot_id: u64, request: &OpenRequest) -> Result<Box<dyn Output>, Error> {
-        request.validate()?;
-        let slot = self.slots.get(&slot_id).ok_or(Error::Closed)?;
-        let lanes = slot.lanes.len() as u16;
-        if request.lanes != 1 && request.lanes != lanes {
-            return Err(Error::InvalidArgument(format!(
-                "an input of {lanes} lanes opens 1 or {lanes}, not {}",
-                request.lanes
-            )));
+    /// Takes in `stream`, an output its opener made for input `slot_id`
+    /// ([`super::input::open`]), in place of the one the input plays (one
+    /// at a time), once it can play: its input is there, it is in the
+    /// desk's format, and the device is open at it (or, not there or
+    /// failed, opened now). Otherwise the output on the input plays on.
+    fn open(&mut self, slot_id: u64, stream: Stream) -> Result<Opened, Error> {
+        let admitted = self.admit(slot_id, &stream);
+        if !matches!(admitted, Ok(Opened::Yes { .. })) {
+            self.retire(stream, Error::Closed);
+            return admitted;
         }
-        // An input plays one output at a time.
         if let Some(old) = self.slots.get_mut(&slot_id).and_then(Slot::drop_stream) {
-            old.link.shared.fail(Error::Closed);
-            self.closed(old.link.id);
+            self.retire(old, Error::Closed);
         }
-        // Every output plays at the desk's format (its player resamples to
-        // it); the device is open at it, or (it was not there, or failed)
-        // opened now.
+        // What was set while it had none is in force from its first frame.
+        self.settle_idle();
+        let id = stream.link.id;
+        self.newest_output = id;
+        let format = self.device.as_ref().expect("admitted").format;
+        let slot = self.slots.get_mut(&slot_id).expect("admitted");
+        slot.opened = id;
+        let s = &slot.state;
+        s.format.store(pack_format(Some(format)), Ordering::Relaxed);
+        s.capacity
+            .store(stream.link.shared.ring.capacity(), Ordering::Relaxed);
+        slot.stream = Some(stream);
+        self.fit_mic();
+        admitted
+    }
+
+    /// Whether `stream` can play on input `slot_id` (see [`Self::open`]).
+    fn admit(&mut self, slot_id: u64, stream: &Stream) -> Result<Opened, Error> {
+        if !self.slots.contains_key(&slot_id) {
+            return Err(Error::Closed);
+        }
         let format = self.desk()?;
-        if !request.takes(format) {
-            return Err(Error::FormatNotAccepted {
-                rate: request.rate,
-                channels: request.channels,
-            });
+        if stream.link.shared.format != lane_format(format, stream.lanes) {
+            return Ok(Opened::Desk(format));
         }
         if self.device.is_none() {
             self.open_desk()?;
         }
-        // What was set while it had none is in force from its first frame.
-        self.settle_idle();
         let device = self.device.as_ref().expect("the device is open");
-        let format = device.format;
-        let chunk = format.duration_to_frames(self.options.period).max(1);
-        let ring = lane_format(format, request.lanes);
-        let shared = Arc::new(Shared::new(ring, request.ring_frames(&format, chunk)));
-        let id = self.shared.ids.fetch_add(1, Ordering::Relaxed);
-        self.newest_output = id;
-        let link = Arc::new(Link {
-            id,
-            shared: shared.clone(),
-            running: AtomicBool::new(false),
-            paused: AtomicBool::new(false),
-        });
-        let info = StreamInfo {
-            format,
+        Ok(Opened::Yes {
             backend: device.info.backend,
-            device_buffer_frames: chunk,
-            ring_frames: shared.ring.capacity(),
             realtime: device.info.realtime,
-        };
-        let driver = InputDriver {
-            link: link.clone(),
-            tx: self.tx.clone(),
-        };
-        let shared_capacity = shared.ring.capacity();
-        let core = Core::new(shared, Box::new(driver), info, request);
-        let slot = self.slots.get_mut(&slot_id).expect("checked");
-        slot.opened = id;
-        let s = &slot.state;
-        s.format.store(pack_format(Some(format)), Ordering::Relaxed);
-        s.capacity.store(shared_capacity, Ordering::Relaxed);
-        slot.stream = Some(Stream::new(link, request.lanes));
-        self.fit_mic();
-        Ok(Box::new(InputOutput { core }))
+        })
     }
 
     /// Opens the device at the desk's format.
@@ -534,6 +519,7 @@ impl Run {
             .prefill(self.options.buffer / 2);
         let output = self.target.open(&request)?;
         let info = output.info().clone();
+        let taps = output.clock().shared();
         if let Some(m) = &mut self.monitor {
             m.opened(&info, output.clock());
         }
@@ -592,6 +578,7 @@ impl Run {
             mix: Mix::new(info.format),
             info,
             output,
+            taps,
             paused: false,
         });
         self.fit_effects();
@@ -675,23 +662,34 @@ impl Run {
 
     /// Closes every input's output with `error`.
     fn close_streams(&mut self, error: Error) {
-        for slot in self.slots.values_mut() {
+        let mut next = self.slots.keys().next().copied();
+        while let Some(id) = next {
+            next = self.slots.range(id + 1..).next().map(|(&k, _)| k);
+            let slot = self.slots.get_mut(&id).expect("listed");
             if let Some(stream) = slot.drop_stream() {
-                stream.link.running.store(false, Ordering::SeqCst);
-                stream.link.shared.fail(error.clone());
+                self.retire(stream, error.clone());
             }
         }
         self.fit_mic();
     }
 
-    /// Output `id` closed (or was let go of): the outputs following it
-    /// follow no one. The device stays open.
+    /// Output `id` closed (or was let go of). The device stays open.
     fn closed(&mut self, id: u64) {
-        for slot in self.slots.values_mut() {
-            if slot.stream.as_ref().is_some_and(|s| s.link.id == id) {
-                slot.drop_stream();
-            }
+        let playing = |s: &&mut Slot| s.stream.as_ref().is_some_and(|st| st.link.id == id);
+        let stream = self.slots.values_mut().find(playing);
+        if let Some(stream) = stream.and_then(Slot::drop_stream) {
+            self.retire(stream, Error::Closed);
         }
+    }
+
+    /// Output `stream` goes: it fails with `error` (its handle hears it),
+    /// the outputs following it follow no one, the microphone is fitted
+    /// again, and it is let go of on the helper thread.
+    fn retire(&mut self, stream: Stream, error: Error) {
+        let id = stream.link.id;
+        stream.link.running.store(false, Ordering::SeqCst);
+        stream.link.shared.fail(error);
+        self.aside.drop_later(Gone::Stream(stream));
         self.unlink(id);
         self.fit_mic();
     }
@@ -866,12 +864,14 @@ impl Run {
         for slot in self.slots.values_mut() {
             slot.publish();
         }
-        *self.shared.timebase() = Timebase {
+        self.shared.set_timebase(Timebase {
             epoch: self.epoch,
             rate: self.device.as_ref().map_or(0, |d| d.format.rate),
             frame: self.frame,
             heard,
-        };
+        });
+        // What its helper had no room for yet goes now.
+        self.aside.flush();
         self.shared
             .passthrough
             .store(self.untouched, Ordering::Relaxed);

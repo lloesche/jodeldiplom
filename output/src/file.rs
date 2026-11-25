@@ -79,7 +79,9 @@ impl Write for MemorySink {
     }
 }
 
-type Sink = Arc<Mutex<Box<dyn Write + Send>>>;
+/// Where the simulated device plays, and the buffer it plays through (made
+/// once: nothing is allocated as it plays).
+type Sink = Arc<Mutex<(Box<dyn Write + Send>, Vec<u8>)>>;
 
 /// The simulated device: pulls from the ring through the same path as the
 /// real backends and writes what it plays to the sink.
@@ -100,9 +102,9 @@ impl SimDevice {
         } else {
             frames
         };
-        let mut chunk = vec![0u8; 4096 * fb];
         let mut stream = 0;
-        let mut sink = self.sink.lock().unwrap_or_else(|e| e.into_inner());
+        let mut played = self.sink.lock().unwrap_or_else(|e| e.into_inner());
+        let (sink, chunk) = &mut *played;
         while left > 0 {
             let n = left.min(4096) as usize;
             let buf = &mut chunk[..n * fb];
@@ -242,10 +244,11 @@ impl Driver for SimDriver {
         if let Some(t) = self.thread.take() {
             let _ = t.join();
         }
-        let mut sink = self.device.sink.lock().unwrap_or_else(|e| e.into_inner());
+        let mut played = self.device.sink.lock().unwrap_or_else(|e| e.into_inner());
+        let sink = &mut played.0;
         sink.flush().map_err(Error::from)?;
         // The stream is over: the sink is let go of.
-        drop(std::mem::replace(&mut *sink, Box::new(io::sink())));
+        drop(std::mem::replace(sink, Box::new(io::sink())));
         Ok(())
     }
 
@@ -341,7 +344,7 @@ impl FileOutput {
         let shared = Arc::new(Shared::new(ring, ring_frames));
         let device = Arc::new(SimDevice {
             shared: shared.clone(),
-            sink: Arc::new(Mutex::new(sink)),
+            sink: Arc::new(Mutex::new((sink, vec![0; 4096 * ring.frame_bytes()]))),
             running: AtomicBool::new(false),
             stop: AtomicBool::new(false),
         });

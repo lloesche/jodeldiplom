@@ -221,29 +221,30 @@ unsafe impl Sync for IoContext {}
 
 impl IoContext {
     /// Fills our stream's buffer: the ring's stereo frames, on a wider
-    /// stream in its first two channels with silence in the rest. `None`
-    /// when the handle had the consumer suspended (silence, nothing counts).
-    fn fill(&self, out: &mut [u8]) -> Option<u64> {
+    /// stream in its first two channels with silence in the rest (a chunk
+    /// at a time). Returns its frames, every one delivered: those rendered
+    /// while the handle kept the consumer out are silence, which the
+    /// timeline counts at the next render that goes through.
+    fn fill(&self, out: &mut [u8]) -> u64 {
         let fb = self.shared.format.frame_bytes();
         if self.channels == 2 {
-            self.shared.render_or_skip(out)?;
-            return Some((out.len() / fb) as u64);
+            self.shared.render_or_skip(out);
+            return (out.len() / fb) as u64;
         }
         let wide = fb / 2 * self.channels;
         let frames = out.len() / wide;
         // SAFETY: see the Sync impl.
         let scratch = unsafe { &mut *self.scratch.get() };
-        let mut skipped = false;
         for (start, chunk) in out.chunks_mut(SPREAD_FRAMES * wide).enumerate() {
             let n = (frames - start * SPREAD_FRAMES).min(SPREAD_FRAMES);
             let stereo = &mut scratch[..n * fb];
-            skipped |= self.shared.render_or_skip(stereo).is_none();
+            self.shared.render_or_skip(stereo);
             for (frame, pair) in chunk.chunks_exact_mut(wide).zip(stereo.chunks_exact(fb)) {
                 frame[..fb].copy_from_slice(pair);
                 frame[fb..].fill(0);
             }
         }
-        (!skipped).then_some(frames as u64)
+        frames as u64
     }
 
     /// Whether the device still runs the stream's format.
@@ -278,7 +279,7 @@ unsafe extern "C-unwind" fn io_proc(
     let list = output.as_ptr();
     let count = (*list).mNumberBuffers as usize;
     let buffers = std::ptr::addr_of_mut!((*list).mBuffers) as *mut AudioBuffer;
-    let mut frames = Some(0);
+    let mut frames = 0;
     for i in 0..count {
         let b = &mut *buffers.add(i);
         if b.mData.is_null() {
@@ -291,9 +292,6 @@ unsafe extern "C-unwind" fn io_proc(
             bytes.fill(0);
         }
     }
-    let Some(frames) = frames else {
-        return 0;
-    };
     let delivered = ctx.delivered.load(Ordering::Relaxed);
     let ahead = (*output_time.as_ptr()).mSampleTime - (*now.as_ptr()).mSampleTime;
     // `now` is the time of this call: the clock is read at it.
@@ -595,6 +593,65 @@ mod tests {
         faster.mSampleRate = 96_000.0;
         assert!(!same_io(&stereo, &faster));
         assert!(!same_io(&stereo, &eight));
+    }
+
+    /// A buffer of a stream wider than stereo is rendered a chunk at a
+    /// time: with the consumer kept out from a chunk on, the whole buffer
+    /// is delivered, the chunks kept out counted as silence, so the
+    /// position stays on the device's frames.
+    #[test]
+    fn a_wide_buffer_kept_out_midway_is_delivered_whole() {
+        use crate::tap::Tap;
+
+        /// Keeps the consumer out from the buffer after the one it sees.
+        struct HoldsOut(Arc<Shared>);
+        impl Tap for HoldsOut {
+            fn begin(&mut self, _: usize, _: u64, _: usize, _: StreamFormat) {
+                self.0.hold_out();
+            }
+            fn see(&mut self, _: &[i32], _: StreamFormat) {}
+        }
+
+        let format = StreamFormat::new(48_000, 2, SampleFormat::F32);
+        let shared = Arc::new(Shared::new(format, 8192));
+        let frames = 3000;
+        shared.ring.push_with(frames, |a, b| {
+            a.fill(0);
+            b.fill(0);
+        });
+        shared.note_written(frames, 0, 0);
+        let tap = HoldsOut(shared.clone());
+        shared.set_tap(Some(Box::new(tap)));
+        let float = kAudioFormatFlagIsFloat | kAudioFormatFlagIsPacked;
+        let mut io = asbd(32, 4, float);
+        io.mChannelsPerFrame = 4;
+        io.mBytesPerFrame = 16;
+        let ctx = IoContext {
+            shared: shared.clone(),
+            stream_index: 0,
+            channels: 4,
+            latency: 0.0,
+            delivered: AtomicU64::new(0),
+            scratch: UnsafeCell::new(vec![0; SPREAD_FRAMES * format.frame_bytes()]),
+            device: 0,
+            stream: 0,
+            io,
+        };
+        let mut out = vec![0u8; frames as usize * 16];
+        assert_eq!(ctx.fill(&mut out), frames);
+        let rest = frames - SPREAD_FRAMES as u64;
+        assert_eq!(shared.ring.len(), rest);
+        // Let go (the tap holds the stream), and play the rest: after the
+        // silence the device played meanwhile.
+        shared.unsuspend();
+        shared.set_tap(None);
+        let mut out = vec![0u8; rest as usize * 16];
+        assert_eq!(ctx.fill(&mut out), rest);
+        let now = std::time::Instant::now();
+        shared.report(frames, now, false);
+        assert_eq!(shared.position(), SPREAD_FRAMES as u64);
+        shared.report(frames + rest, now, false);
+        assert_eq!(shared.position(), frames);
     }
 
     /// What was delivered, less what is still ahead of the hardware and
