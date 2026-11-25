@@ -1,7 +1,7 @@
 # jodel-playback
 
 The playback engine between files and [`jodel-output`](../output): FLAC,
-WAV, AIFF, CAF and ALAC files to bit-perfect, exclusive device output, and AAC, MP3 (MP2, MP1) and Ogg Vorbis decoded to
+WAV, AIFF, CAF and ALAC files to a device's shared output (the system's mixer), lossless where the rate is the device's, and AAC, MP3 (MP2, MP1) and Ogg Vorbis decoded to
 24 bits, gapless. It has no UI; a player puts its own on top.
 
 ## Modules
@@ -75,7 +75,7 @@ WAV, AIFF, CAF and ALAC files to bit-perfect, exclusive device output, and AAC, 
   has there). Seeks are
   sample-accurate on every format.
 - `rate`: `choose_route(file, capabilities, settings)` is a pure function
-  from the file, the device's exclusive capability matrix and the settings
+  from the file, the device's capabilities (shared: its mix format) and the settings
   (rate cap, resampling, headroom) to a `Route` (output
   rate, channels, format preference, resample step) or a `NoRoute` with a
   sentence saying why nothing fits.
@@ -87,14 +87,14 @@ WAV, AIFF, CAF and ALAC files to bit-perfect, exclusive device output, and AAC, 
 
   The route fits when its rate is within the cap and the device takes it
   in a format holding every bit of the file (24-bit formats for lossy and
-  floating-point files). Such a bit-perfect route always wins.
+  floating-point files). Such a lossless route always wins.
 
   When none fits and `Settings::resample` is on (the default), the route
   gains a `Resample` step to a rate the device takes in a 24-bit format
   within the cap, and is no longer lossless: the lowest such rate above
   the file's own, else the highest one below.
 
-  A route that is not bit-perfect carries the headroom setting
+  A route that is not lossless carries the headroom setting
   (`Settings::headroom`, none, 0.5, 1, 2 or 3 dB; `Route::headroom`) at
   its one requantization to 24 bits: a resampled route's resampler scales
   its input by `10^(−dB/20)` in its `f64` computation, and a lossy or
@@ -103,7 +103,7 @@ WAV, AIFF, CAF and ALAC files to bit-perfect, exclusive device output, and AAC, 
   near-full-scale signal need not clip, with no extra rounding. A lossy
   file's route always has at least `LOSSY_HEADROOM` (1.5 dB): an MP3 of a
   loud master decodes up to about 1 dB over full scale. The path says so:
-  `44.1 kHz decoded from MP3 (-1.5 dB)`. Bit-perfect routes never carry
+  `44.1 kHz decoded from MP3 (-1.5 dB)`. Lossless routes never carry
   any.
 
   | Device | File | Route |
@@ -331,7 +331,7 @@ lengths are exact); otherwise the samples go to the output as read.
   count B's head's frames (A's less `origin`). B's position follows the
   map while its speed glides back to 1 (with `glide`, what is left of
   it). A little after that it goes back onto its own route at the same
-  format, bit-perfect again where it was before, its automation goes, and
+  format, lossless again where it was before, its automation goes, and
   the transition is `Finished`. Without a separator (or once its stems
   failed) each head's whole mix is its "other" part, so every plan is a
   beat-matched fade of the whole tracks.
@@ -508,10 +508,6 @@ lengths are exact); otherwise the samples go to the output as read.
   file as any route switch does, so a mixer playing the parts at other
   levels across a transition hears no jump at either end. Without a lane
   target the output is as it always was.
-- **A busy device**: opening an output that the device reports busy
-  (`DeviceBusy`: in use by another application, hog mode held, `EBUSY`, as
-  it can be right after one of our outputs closed) is tried again every
-  100 ms for up to `OPEN_BUSY_WAIT` (1 s) before it fails.
 - **Resampling** runs after the source.
   Each track, and each seek, is its own resampler stream, starting from
   silence and flushed at its end, so a seek gives exactly a fresh resample
@@ -646,7 +642,7 @@ user-defined ID3v2 tags; HE-AAC, signalled after an LC header or not at
 all, is refused with a clear message (`src/source/aac.rs` tests the header
 variants, the iTunSMPB tag and the edit-list rules); 32-bit integer and float WAV are requantized (exact
 where they fit, dithered otherwise, clips counted); lossy tracks play
-gaplessly into one stream, never bit-perfect, and a resampled lossy track
+gaplessly into one stream, never lossless, and a resampled lossy track
 equals a fresh resample of the unquantized decode.
 `tests/resampled.rs` plays through the engine on the GC7's matrix:
 44.1 kHz PCM and FLAC at 48 kHz (bytes equal a fresh resample), a seek,

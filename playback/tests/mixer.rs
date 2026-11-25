@@ -13,7 +13,7 @@ use std::sync::mpsc::Receiver;
 use std::time::Duration;
 
 use common::*;
-use jodel_output::mixer::{desk_format, DESK_RATE};
+use jodel_output::mixer::desk_format;
 use jodel_output::{Capabilities, SampleFormat, StreamFormat};
 use jodel_playback::{
     Captures, Command, Event, JumpAt, PlayState, Player, PlayerOptions, Settings,
@@ -78,7 +78,7 @@ fn run(
 /// the format the desk runs one that takes `caps` at), with it, and on a
 /// desk with two heads.
 fn same_through_the_mixer(caps: Capabilities, options: PlayerOptions, script: Script) {
-    let desk = desk_format(&caps, DESK_RATE).expect("a desk's format");
+    let desk = desk_format(&caps).expect("a desk's format");
     let one = [desk].into_iter().collect();
     let direct = run(Via::Direct, one, options.clone(), script);
     assert!(!direct.is_empty() && direct.iter().all(|(_, b)| !b.is_empty()));

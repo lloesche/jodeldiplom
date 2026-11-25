@@ -178,26 +178,26 @@ impl Output for PacedOutput {
     }
 }
 
-/// A mixer on a null device in real time, at `rate`: a period an input is
-/// short of is mixed without it, as on a device.
+/// A mixer on a null device in real time that runs at `rate` (as a shared
+/// device runs at the system's): a period an input is short of is mixed
+/// without it, as on a device.
 fn realtime_mixer(rate: u32) -> (Mixer, Heard) {
-    let device = NullTarget::new(any_capabilities(), SimClock::Realtime);
-    mixer_on(Box::new(device), rate)
+    let device = NullTarget::new(any_capabilities(rate), SimClock::Realtime);
+    mixer_on(Box::new(device))
 }
 
-/// A mixer on a [`Paced`] device: every period is mixed once each running
-/// input holds it.
+/// A mixer on a [`Paced`] device at 48 kHz: every period is mixed once
+/// each running input holds it.
 fn paced_mixer() -> (Mixer, Heard) {
-    let device = Paced(NullTarget::new(any_capabilities(), SimClock::Instant));
-    mixer_on(Box::new(device), jodel_output::mixer::DESK_RATE)
+    let device = Paced(NullTarget::new(any_capabilities(48_000), SimClock::Instant));
+    mixer_on(Box::new(device))
 }
 
-fn mixer_on(device: Box<dyn OutputTarget>, rate: u32) -> (Mixer, Heard) {
+fn mixer_on(device: Box<dyn OutputTarget>) -> (Mixer, Heard) {
     let mixer = Mixer::open(
         device,
         MixerOptions {
             buffer: Duration::from_millis(200),
-            rate,
             ..MixerOptions::default()
         },
     );
@@ -531,7 +531,7 @@ fn quick_moves_across_rates_with_nothing_playing_fail_nothing() {
             path
         })
         .collect();
-    let (mixer, heard) = realtime_mixer(jodel_output::mixer::DESK_RATE);
+    let (mixer, heard) = realtime_mixer(48_000);
     let (_target, lead) = mixer.input(&mixer.strip("Player"), Role::Lead, 1.0);
     let mut previews = Previews::new(vec![lead], mixer.strip("Preview"), Settings::default());
     // Moved on before anything has opened the device (a player opens a
@@ -570,7 +570,7 @@ fn a_preview_ducks_both_heads_of_the_song() {
     wav(&b, RATE, 30 * RATE, |_| level_b);
     wav(&file, RATE, 6 * RATE, |_| level);
     let (mixer, heard) = paced_mixer();
-    let (_desk, lead, guest) = jodel_playback::StemDesk::two_heads(&mixer, "Player", 1.0);
+    let (_desk, lead, guest) = jodel_playback::StemDesk::two_heads(&mixer, None, "Player", 1.0);
     let song = vec![lead.faders.input.clone(), guest.faders.input.clone()];
     // Each head played on by a player of its own here, as the engine plays
     // a transition's two tracks on them: the Lead's first, which opens the

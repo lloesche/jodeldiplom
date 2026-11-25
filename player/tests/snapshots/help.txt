@@ -13,7 +13,7 @@
 │   B                     go to its album folder                                                                       │
 │   R                     go to its artist folder                                                                      │
 │   M                     tempo and beat pulse on / off                                                                │
-│   alt+1                 stems: drums on / off (any off: not bit-perfect)                                             │
+│   alt+1                 stems: drums on / off (any off: the stems are heard, not the file)                           │
 │   alt+2                 stems: bass on / off                                                                         │
 │   alt+3                 stems: vocals on / off                                                                       │
 │   alt+4                 stems: other on / off                                                                        │

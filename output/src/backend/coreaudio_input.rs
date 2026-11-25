@@ -6,29 +6,29 @@
 //! per channel, at the device's nominal rate. The IOProc mixes each
 //! buffer down into the microphone ring.
 //!
-//! The input may sit on the device an output of ours holds in hog mode (an
-//! audio interface with both): hog mode is per process, so the input runs
-//! beside the output there. That device's IO buffer is the output's and is
-//! left alone (elsewhere it is set to about 5 ms), and its rate is the
-//! output's: when the output reopens at another rate, a listener on the
-//! device's nominal rate tells the tap, which resamples from the new
-//! one. A device another process holds in hog mode cannot be opened.
+//! The device is shared, as the output's is: nothing about it is changed
+//! but this process's IO buffer, set to about 5 ms (on an audio interface
+//! that has both, the output of ours on it then runs with that buffer
+//! too). When its nominal rate changes (in Audio MIDI Setup), a listener
+//! tells the tap, which resamples from the new one. A device another
+//! process holds in hog mode cannot be opened.
 //!
 //! The process needs the system's permission to use the microphone; without
 //! it the HAL delivers silence.
 
-use super::coreaudio::{addr, get, get_string, get_vec, set, status_error, system_devices, GLOBAL};
+use super::coreaudio_hal::{
+    addr, get, get_string, get_vec, hogged, set, status_error, system_devices, Listener, GLOBAL,
+};
 use crate::device::Device;
 use crate::error::Error;
 use crate::input::{Input, InputInfo, MicShared, Mono, Producer, Wire, CAPTURE_PERIOD};
 use objc2_core_audio::{
     kAudioDevicePropertyBufferFrameSize, kAudioDevicePropertyDeviceUID,
-    kAudioDevicePropertyHogMode, kAudioDevicePropertyNominalSampleRate,
-    kAudioDevicePropertyStreams, kAudioHardwarePropertyDefaultInputDevice,
-    kAudioObjectPropertyName, kAudioObjectPropertyScopeInput, kAudioObjectSystemObject,
-    kAudioStreamPropertyVirtualFormat, AudioDeviceCreateIOProcID, AudioDeviceDestroyIOProcID,
-    AudioDeviceIOProcID, AudioDeviceStart, AudioDeviceStop, AudioObjectAddPropertyListener,
-    AudioObjectID, AudioObjectPropertyAddress, AudioObjectRemovePropertyListener,
+    kAudioDevicePropertyNominalSampleRate, kAudioDevicePropertyStreams,
+    kAudioHardwarePropertyDefaultInputDevice, kAudioObjectPropertyName,
+    kAudioObjectPropertyScopeInput, kAudioObjectSystemObject, kAudioStreamPropertyVirtualFormat,
+    AudioDeviceCreateIOProcID, AudioDeviceDestroyIOProcID, AudioDeviceIOProcID, AudioDeviceStart,
+    AudioDeviceStop, AudioObjectID, AudioObjectPropertyAddress,
 };
 use objc2_core_audio_types::{
     kAudioFormatFlagIsAlignedHigh, kAudioFormatFlagIsBigEndian, kAudioFormatFlagIsFloat,
@@ -40,7 +40,7 @@ use std::ffi::c_void;
 use std::ptr::NonNull;
 use std::sync::Arc;
 
-pub(crate) const INPUT_BACKEND: &str = "Core Audio HAL";
+pub(crate) const INPUT_BACKEND: &str = "Core Audio (shared)";
 
 const INPUT: u32 = kAudioObjectPropertyScopeInput;
 
@@ -195,7 +195,8 @@ struct Running {
     device: AudioObjectID,
     proc_id: AudioDeviceIOProcID,
     ctx: *mut Ctx,
-    listening: bool,
+    /// Removed before the context is freed.
+    listener: Option<Listener>,
 }
 
 // SAFETY: the HAL calls used here are thread-safe; `ctx` is freed only in
@@ -204,19 +205,11 @@ unsafe impl Send for Running {}
 
 impl Drop for Running {
     fn drop(&mut self) {
-        let rate = addr(kAudioDevicePropertyNominalSampleRate, GLOBAL);
+        self.listener = None;
         // SAFETY: undoes what `open_input` registered, then frees the
         // context nothing calls with any more.
         unsafe {
             AudioDeviceStop(self.device, self.proc_id);
-            if self.listening {
-                AudioObjectRemovePropertyListener(
-                    self.device,
-                    NonNull::from(&rate),
-                    Some(rate_changed),
-                    self.ctx.cast(),
-                );
-            }
             AudioDeviceDestroyIOProcID(self.device, self.proc_id);
             drop(Box::from_raw(self.ctx));
         }
@@ -246,23 +239,13 @@ pub(crate) fn open_input(uid: &str, mono: Mono) -> Result<Input, Error> {
     if rate == 0 {
         return Err(Error::Unsupported("the input reports no rate".into()));
     }
-    // A device in another process's hog mode is not ours to use; on one in
-    // ours (an output of ours plays on it) the IO buffer is the output's.
-    let pid = std::process::id() as i32;
-    let owner: i32 = get(
-        device,
-        addr(kAudioDevicePropertyHogMode, GLOBAL),
-        "hog mode",
-    )
-    .unwrap_or(-1);
-    if owner != -1 && owner != pid {
+    // A device in another process's hog mode is not ours to use.
+    if hogged(device) {
         return Err(Error::DeviceBusy);
     }
     let bfs = addr(kAudioDevicePropertyBufferFrameSize, GLOBAL);
     let want = (u64::from(rate) * CAPTURE_PERIOD.as_micros() as u64 / 1_000_000).max(16) as u32;
-    if owner != pid {
-        let _ = set(device, bfs, want, "set buffer frame size");
-    }
+    let _ = set(device, bfs, want, "set buffer frame size");
     let period = get::<u32>(device, bfs, "get buffer frame size").unwrap_or(want);
     let shared = MicShared::new(rate, period, false);
     let channels = format.mChannelsPerFrame as usize;
@@ -289,21 +272,16 @@ pub(crate) fn open_input(uid: &str, mono: Mono) -> Result<Input, Error> {
         unsafe { drop(Box::from_raw(ctx)) };
         return Err(status_error("AudioDeviceCreateIOProcID", status));
     }
-    let rate_address = addr(kAudioDevicePropertyNominalSampleRate, GLOBAL);
-    // SAFETY: the listener gets the same context, removed before it is freed.
-    let listening = unsafe {
-        AudioObjectAddPropertyListener(
-            device,
-            NonNull::from(&rate_address),
-            Some(rate_changed),
-            ctx.cast(),
-        )
-    } == 0;
+    let listener = Listener::add(
+        &[(device, addr(kAudioDevicePropertyNominalSampleRate, GLOBAL))],
+        Some(rate_changed),
+        ctx.cast(),
+    );
     let running = Running {
         device,
         proc_id,
         ctx,
-        listening,
+        listener: Some(listener),
     };
     // SAFETY: starts our IOProc on the device.
     let status = unsafe { AudioDeviceStart(device, proc_id) };

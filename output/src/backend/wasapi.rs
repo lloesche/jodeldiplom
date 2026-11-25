@@ -1,21 +1,27 @@
-//! Windows: WASAPI in exclusive mode, event-driven.
+//! Windows: WASAPI in shared mode, event-driven.
 //!
 //! Device ids are the endpoint ids from `IMMDevice::GetId`; names are the
-//! endpoints' friendly names. Formats are asked with
-//! `IsFormatSupported(EXCLUSIVE)` as `WAVEFORMATEXTENSIBLE` and, for one or
-//! two channels, also as a plain `WAVEFORMATEX` (some drivers accept only
-//! one of the two). WASAPI has no low-aligned 24-in-32 container, so
-//! [`SampleFormat::S24In32Low`] is never accepted here.
+//! endpoints' friendly names. A device is shared with every other
+//! application. Its one format ([`mix_format`]) is the audio engine's mix
+//! format (`GetMixFormat`): the rate and sample format set for the device
+//! in the system's sound settings (usually 32-bit float at 48 kHz), in
+//! stereo, which the engine maps to its own channels
+//! (`AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM`; at the mix rate it converts
+//! nothing else).
 //!
 //! The stream lives on its own thread: COM in the multithreaded apartment,
-//! `Initialize(EXCLUSIVE, EVENTCALLBACK)` with the buffer-alignment retry,
-//! MMCSS "Pro Audio", one buffer prefilled before `Start`, then one device
-//! buffer per event. The position comes from `IAudioClock` after every
-//! buffer. Pause is `Stop` (the device keeps its buffer and its clock);
-//! flush is `Stop` + `Reset`.
+//! `Initialize(SHARED, EVENTCALLBACK)` with a buffer of two engine periods
+//! (so a late wake-up is not a gap), MMCSS "Pro Audio", the buffer filled
+//! before `Start`, then on every event as much as the engine has taken
+//! (`GetBufferSize` less `GetCurrentPadding`). The position comes from
+//! `IAudioClock` after every buffer, at the performance-counter time it
+//! stamped it: what the endpoint plays, after what the engine and the
+//! driver hold (about 25 ms on the developer's machine). Pause is `Stop`
+//! (the engine keeps the buffer and the clock); flush is `Stop` + `Reset`.
+//! A change of the device's format in the sound settings, or the device
+//! going away, invalidates the stream: [`Error::DeviceLost`].
 
 use super::thread::{Command, Request, ThreadDriver};
-use crate::caps::{candidates, Capabilities, PROBE_RATES};
 use crate::device::Device;
 use crate::error::Error;
 use crate::format::{SampleFormat, StreamFormat};
@@ -28,29 +34,28 @@ use std::time::{Duration, Instant};
 use windows::core::{HRESULT, HSTRING, PWSTR};
 use windows::Win32::Devices::FunctionDiscovery::PKEY_Device_FriendlyName;
 use windows::Win32::Foundation::{
-    CloseHandle, ERROR_NOT_FOUND, HANDLE, RPC_E_CHANGED_MODE, S_OK, WAIT_OBJECT_0, WAIT_TIMEOUT,
+    CloseHandle, ERROR_NOT_FOUND, HANDLE, RPC_E_CHANGED_MODE, WAIT_OBJECT_0, WAIT_TIMEOUT,
 };
 use windows::Win32::Media::Audio::{
     eConsole, eRender, EDataFlow, IAudioClient, IAudioClock, IAudioRenderClient, IMMDevice,
-    IMMDeviceEnumerator, MMDeviceEnumerator, AUDCLNT_E_BUFFER_SIZE_NOT_ALIGNED,
-    AUDCLNT_E_DEVICE_INVALIDATED, AUDCLNT_E_DEVICE_IN_USE, AUDCLNT_E_EXCLUSIVE_MODE_NOT_ALLOWED,
-    AUDCLNT_E_RESOURCES_INVALIDATED, AUDCLNT_E_UNSUPPORTED_FORMAT, AUDCLNT_SHAREMODE_EXCLUSIVE,
+    IMMDeviceEnumerator, MMDeviceEnumerator, AUDCLNT_E_DEVICE_INVALIDATED, AUDCLNT_E_DEVICE_IN_USE,
+    AUDCLNT_E_RESOURCES_INVALIDATED, AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM,
     AUDCLNT_STREAMFLAGS_EVENTCALLBACK, DEVICE_STATE_ACTIVE, WAVEFORMATEX, WAVEFORMATEXTENSIBLE,
     WAVE_FORMAT_PCM,
 };
-use windows::Win32::Media::KernelStreaming::{
-    KSDATAFORMAT_SUBTYPE_PCM, SPEAKER_FRONT_CENTER, WAVE_FORMAT_EXTENSIBLE,
-};
+use windows::Win32::Media::KernelStreaming::{KSDATAFORMAT_SUBTYPE_PCM, WAVE_FORMAT_EXTENSIBLE};
+use windows::Win32::Media::Multimedia::{KSDATAFORMAT_SUBTYPE_IEEE_FLOAT, WAVE_FORMAT_IEEE_FLOAT};
 use windows::Win32::System::Com::{
     CoCreateInstance, CoInitializeEx, CoTaskMemFree, CoUninitialize, CLSCTX_ALL,
     COINIT_MULTITHREADED, STGM_READ,
 };
+use windows::Win32::System::Performance::{QueryPerformanceCounter, QueryPerformanceFrequency};
 use windows::Win32::System::Threading::{
     AvRevertMmThreadCharacteristics, AvSetMmThreadCharacteristicsW, CreateEventW, SetEvent,
     WaitForMultipleObjects, INFINITE,
 };
 
-pub(crate) const BACKEND: &str = "WASAPI exclusive";
+pub(crate) const BACKEND: &str = "WASAPI (shared)";
 
 /// COM for the current thread, balanced on drop. A thread already in a
 /// single-threaded apartment keeps it.
@@ -115,18 +120,14 @@ fn backend_error(call: &'static str, hr: HRESULT, message: &str) -> Error {
 }
 
 pub(super) fn map_error(call: &'static str, e: windows::core::Error) -> Error {
-    map_hresult(call, e.code(), &e.message())
-}
-
-fn map_hresult(call: &'static str, hr: HRESULT, message: &str) -> Error {
+    let hr = e.code();
     if hr == AUDCLNT_E_DEVICE_IN_USE {
+        // Another application holds it in exclusive mode.
         Error::DeviceBusy
-    } else if hr == AUDCLNT_E_EXCLUSIVE_MODE_NOT_ALLOWED {
-        Error::ExclusiveNotAllowed
     } else if hr == AUDCLNT_E_DEVICE_INVALIDATED || hr == AUDCLNT_E_RESOURCES_INVALIDATED {
         Error::DeviceLost
     } else {
-        backend_error(call, hr, message)
+        backend_error(call, hr, &e.message())
     }
 }
 
@@ -208,189 +209,101 @@ pub(super) fn endpoints(flow: EDataFlow) -> Result<Vec<Device>, Error> {
     }
 }
 
-/// The endpoint's own channel count and mask, from its mix format.
-fn native_layout(client: &IAudioClient) -> (u16, u32) {
-    // SAFETY: GetMixFormat returns a CoTaskMem WAVEFORMATEX(-TENSIBLE),
-    // read unaligned (the struct is packed) and freed.
-    unsafe {
-        match client.GetMixFormat() {
-            Ok(p) => {
-                let w: WAVEFORMATEX = ptr::read_unaligned(p);
-                let mask = if u32::from(w.wFormatTag) == WAVE_FORMAT_EXTENSIBLE && w.cbSize >= 22 {
-                    let x: WAVEFORMATEXTENSIBLE =
-                        ptr::read_unaligned(p as *const WAVEFORMATEXTENSIBLE);
-                    x.dwChannelMask
-                } else {
-                    0
-                };
-                CoTaskMemFree(Some(p as *const _));
-                (w.nChannels, mask)
-            }
-            Err(_) => (2, 0x3),
-        }
-    }
-}
-
-fn channel_mask(channels: u16, native: (u16, u32)) -> u32 {
-    match channels {
-        1 => SPEAKER_FRONT_CENTER,
-        2 => 0x3, // front left | front right
-        n if n == native.0 => native.1,
-        _ => 0,
-    }
-}
-
-/// The wave format for `f`, as WAVEFORMATEXTENSIBLE or (when `extensible`
-/// is false) a plain WAVEFORMATEX, if WASAPI can describe it that way.
-fn descriptor(f: StreamFormat, mask: u32, extensible: bool) -> Option<WAVEFORMATEXTENSIBLE> {
-    let container = (f.sample.bytes() * 8) as u16;
-    let valid = match f.sample {
+/// The sample format of a container of `bits` with `valid` bits, float or
+/// integer, if it is one of ours.
+fn sample_of(float: bool, bits: u16, valid: u16) -> Option<SampleFormat> {
+    match (float, bits, valid) {
+        (true, 32, _) => Some(SampleFormat::F32),
+        (false, 16, 16) => Some(SampleFormat::S16),
+        (false, 24, 24) => Some(SampleFormat::S24Packed),
         // Valid bits are left-justified in a WASAPI container.
-        SampleFormat::S24In32Low => return None,
-        other => other.valid_bits() as u16,
-    };
-    if !extensible && (container != valid || f.channels > 2) {
-        return None;
+        (false, 32, 24) => Some(SampleFormat::S24In32),
+        (false, 32, 32) => Some(SampleFormat::S32),
+        _ => None,
     }
+}
+
+/// What a device takes: the engine's mix format's rate and sample format,
+/// in stereo (the engine maps stereo to its own channels).
+fn mix_of(client: &IAudioClient) -> Result<StreamFormat, Error> {
+    // SAFETY: GetMixFormat returns a CoTaskMem WAVEFORMATEX(-TENSIBLE),
+    // read unaligned (the structs are packed), the extensible part only
+    // where it says it has one, and freed.
+    let (w, float, valid) = unsafe {
+        let p = client
+            .GetMixFormat()
+            .map_err(|e| map_error("GetMixFormat", e))?;
+        let w: WAVEFORMATEX = ptr::read_unaligned(p);
+        let tag = u32::from(w.wFormatTag);
+        let read = if tag == WAVE_FORMAT_EXTENSIBLE && w.cbSize >= 22 {
+            let x: WAVEFORMATEXTENSIBLE = ptr::read_unaligned(p as *const WAVEFORMATEXTENSIBLE);
+            let sub = x.SubFormat;
+            let float = sub == KSDATAFORMAT_SUBTYPE_IEEE_FLOAT;
+            let pcm = sub == KSDATAFORMAT_SUBTYPE_PCM;
+            (float || pcm).then_some((float, x.Samples.wValidBitsPerSample))
+        } else {
+            let float = tag == WAVE_FORMAT_IEEE_FLOAT;
+            (float || tag == WAVE_FORMAT_PCM).then_some((float, w.wBitsPerSample))
+        };
+        CoTaskMemFree(Some(p as *const _));
+        let (float, valid) = read.ok_or_else(unreadable)?;
+        (w, float, valid)
+    };
+    let sample = sample_of(float, w.wBitsPerSample, valid).ok_or_else(unreadable)?;
+    if w.nChannels == 0 || w.nSamplesPerSec == 0 {
+        return Err(unreadable());
+    }
+    Ok(StreamFormat::new(w.nSamplesPerSec, 2, sample))
+}
+
+fn unreadable() -> Error {
+    Error::Unsupported("the device's mix format is not PCM or 32-bit float".into())
+}
+
+/// The wave format for `f`, stereo (front left and right).
+fn descriptor(f: StreamFormat) -> WAVEFORMATEXTENSIBLE {
+    let container = (f.sample.bytes() * 8) as u16;
+    let (valid, sub) = match f.sample {
+        SampleFormat::F32 => (32, KSDATAFORMAT_SUBTYPE_IEEE_FLOAT),
+        other => (other.valid_bits() as u16, KSDATAFORMAT_SUBTYPE_PCM),
+    };
     let block = f.channels * container / 8;
     let mut w = WAVEFORMATEXTENSIBLE::default();
-    w.Format.wFormatTag = if extensible {
-        WAVE_FORMAT_EXTENSIBLE as u16
-    } else {
-        WAVE_FORMAT_PCM as u16
-    };
+    w.Format.wFormatTag = WAVE_FORMAT_EXTENSIBLE as u16;
     w.Format.nChannels = f.channels;
     w.Format.nSamplesPerSec = f.rate;
     w.Format.wBitsPerSample = container;
     w.Format.nBlockAlign = block;
     w.Format.nAvgBytesPerSec = f.rate * u32::from(block);
-    w.Format.cbSize = if extensible { 22 } else { 0 };
+    w.Format.cbSize = 22;
     w.Samples.wValidBitsPerSample = valid;
-    w.dwChannelMask = mask;
-    w.SubFormat = KSDATAFORMAT_SUBTYPE_PCM;
-    Some(w)
+    w.dwChannelMask = 0x3;
+    w.SubFormat = sub;
+    w
 }
 
-/// Asks the driver whether it takes `f` exclusively, in either descriptor.
-/// Returns the descriptor it took, or the last refusal code.
-fn accepted(
-    client: &IAudioClient,
-    f: StreamFormat,
-    mask: u32,
-) -> Result<WAVEFORMATEXTENSIBLE, HRESULT> {
-    let mut last = AUDCLNT_E_UNSUPPORTED_FORMAT;
-    for extensible in [true, false] {
-        let Some(w) = descriptor(f, mask, extensible) else {
-            continue;
-        };
-        // SAFETY: `w` outlives the call; no closest match is asked for.
-        let hr = unsafe {
-            client.IsFormatSupported(
-                AUDCLNT_SHAREMODE_EXCLUSIVE,
-                &w as *const _ as *const WAVEFORMATEX,
-                None,
-            )
-        };
-        if hr == S_OK {
-            return Ok(w);
-        }
-        last = hr;
-    }
-    Err(last)
-}
-
-/// A refusal that means the whole device, not the format, is unavailable.
-fn device_refusal(hr: HRESULT) -> Option<Error> {
-    (hr == AUDCLNT_E_EXCLUSIVE_MODE_NOT_ALLOWED
-        || hr == AUDCLNT_E_DEVICE_IN_USE
-        || hr == AUDCLNT_E_DEVICE_INVALIDATED)
-        .then(|| map_hresult("IsFormatSupported", hr, ""))
-}
-
-pub(crate) fn capabilities(id: &str) -> Result<Capabilities, Error> {
+pub(crate) fn mix_format(id: &str) -> Result<StreamFormat, Error> {
     let _com = Com::init()?;
     let dev = find(&enumerator()?, id)?;
-    let client = activate(&dev)?;
-    let native = native_layout(&client);
-    let mut layouts = vec![(2u16, 0x3u32)];
-    if native.0 != 2 && native.0 > 0 {
-        layouts.push(native);
-    }
-    let mut caps = Capabilities::new();
-    let mut refusal = None;
-    for (channels, mask) in layouts {
-        for rate in PROBE_RATES {
-            for sample in SampleFormat::ALL {
-                let f = StreamFormat::new(rate, channels, sample);
-                match accepted(&client, f, mask) {
-                    Ok(_) => caps.insert(f),
-                    Err(hr) => refusal = refusal.or(device_refusal(hr)),
-                }
-            }
-        }
-    }
-    match refusal {
-        Some(e) if caps.is_empty() => Err(e),
-        _ => Ok(caps),
-    }
+    mix_of(&activate(&dev)?)
 }
 
-/// Converts frames at `rate` to 100 ns units, rounded as the alignment
-/// retry in the WASAPI documentation does.
-fn frames_to_hns(frames: u32, rate: u32) -> i64 {
-    (10_000.0 * 1000.0 / f64::from(rate) * f64::from(frames) + 0.5) as i64
+/// 100 ns units as frames at `rate`.
+fn hns_to_frames(hns: i64, rate: u32) -> u64 {
+    (hns.max(0) as u64 * u64::from(rate)).div_ceil(10_000_000)
 }
 
-/// `Initialize(EXCLUSIVE, EVENTCALLBACK)` with the alignment retry: on
-/// `AUDCLNT_E_BUFFER_SIZE_NOT_ALIGNED`, read the aligned size from the
-/// failed client, release it and initialise a fresh one with that size.
-fn initialize(
-    device: &IMMDevice,
-    w: &WAVEFORMATEXTENSIBLE,
-    period: Duration,
-) -> Result<IAudioClient, Error> {
-    let client = activate(device)?;
-    let fmt = w as *const _ as *const WAVEFORMATEX;
-    let rate = w.Format.nSamplesPerSec;
-    let (mut default_period, mut minimum) = (0i64, 0i64);
-    // SAFETY: COM calls on a client owned here; `w` outlives them.
+/// The performance counter now, in 100 ns units (as `IAudioClock` stamps
+/// its positions).
+fn qpc_now() -> u64 {
+    let (mut count, mut freq) = (0i64, 0i64);
+    // SAFETY: two out parameters on the stack; both calls cannot fail on
+    // Windows XP and later.
     unsafe {
-        client
-            .GetDevicePeriod(Some(&mut default_period), Some(&mut minimum))
-            .map_err(|e| map_error("GetDevicePeriod", e))?;
-        let hns = (period.as_nanos() / 100).min(i64::MAX as u128) as i64;
-        let hns = hns.max(minimum);
-        match client.Initialize(
-            AUDCLNT_SHAREMODE_EXCLUSIVE,
-            AUDCLNT_STREAMFLAGS_EVENTCALLBACK,
-            hns,
-            hns,
-            fmt,
-            None,
-        ) {
-            Ok(()) => Ok(client),
-            Err(e) if e.code() == AUDCLNT_E_BUFFER_SIZE_NOT_ALIGNED => {
-                let frames = client
-                    .GetBufferSize()
-                    .map_err(|e| map_error("GetBufferSize", e))?;
-                drop(client);
-                let hns = frames_to_hns(frames, rate);
-                let client = activate(device)?;
-                client
-                    .Initialize(
-                        AUDCLNT_SHAREMODE_EXCLUSIVE,
-                        AUDCLNT_STREAMFLAGS_EVENTCALLBACK,
-                        hns,
-                        hns,
-                        fmt,
-                        None,
-                    )
-                    .map_err(|e| map_error("IAudioClient::Initialize", e))?;
-                Ok(client)
-            }
-            Err(e) => Err(map_error("IAudioClient::Initialize", e)),
-        }
+        let _ = QueryPerformanceCounter(&mut count);
+        let _ = QueryPerformanceFrequency(&mut freq);
     }
+    (i128::from(count.max(0)) * 10_000_000 / i128::from(freq.max(1))) as u64
 }
 
 /// Everything the device thread owns.
@@ -400,50 +313,43 @@ struct Stream {
     clock: IAudioClock,
     clock_hz: u64,
     event: Event,
+    /// The engine buffer, in frames.
     frames: u32,
     format: StreamFormat,
 }
 
-fn open_stream(id: &str, request: &OpenRequest) -> Result<(Stream, Duration), Error> {
+/// The stream and the engine's period in frames.
+fn open_stream(id: &str, request: &OpenRequest) -> Result<(Stream, u64), Error> {
     let dev = find(&enumerator()?, id)?;
-    let probe = activate(&dev)?;
-    let native = native_layout(&probe);
-    let mask = channel_mask(request.channels, native);
-    let mut refusal = None;
-    let mut chosen = None;
-    for sample in candidates(&request.formats) {
-        let f = StreamFormat::new(request.rate, request.channels, sample);
-        let w = match accepted(&probe, f, mask) {
-            Ok(w) => w,
-            Err(hr) => {
-                refusal = refusal.or(device_refusal(hr));
-                continue;
-            }
-        };
-        match initialize(&dev, &w, request.period) {
-            Ok(client) => {
-                chosen = Some((client, f));
-                break;
-            }
-            Err(Error::Backend { code, .. })
-                if code == i64::from(AUDCLNT_E_UNSUPPORTED_FORMAT.0) =>
-            {
-                continue
-            }
-            Err(e) => return Err(e),
-        }
-    }
-    drop(probe);
-    let Some((client, format)) = chosen else {
-        return Err(refusal.unwrap_or(Error::FormatNotAccepted {
+    let client = activate(&dev)?;
+    let format = mix_of(&client)?;
+    if !request.takes(format) {
+        return Err(Error::FormatNotAccepted {
             rate: request.rate,
             channels: request.channels,
-        }));
-    };
+        });
+    }
+    let w = descriptor(format);
     let event = Event::new()?;
-    // SAFETY: COM calls on the initialised client owned here.
+    // SAFETY: COM calls on the client owned here; `w` outlives them.
     let setup = unsafe {
-        (|| -> Result<(Stream, Duration), Error> {
+        (|| -> Result<(Stream, u64), Error> {
+            let mut period = 0i64;
+            client
+                .GetDevicePeriod(Some(&mut period), None)
+                .map_err(|e| map_error("GetDevicePeriod", e))?;
+            let asked = (request.period.as_nanos() / 100).min(i64::MAX as u128) as i64;
+            let period = period.max(asked);
+            client
+                .Initialize(
+                    AUDCLNT_SHAREMODE_SHARED,
+                    AUDCLNT_STREAMFLAGS_EVENTCALLBACK | AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM,
+                    2 * period,
+                    0,
+                    &w as *const _ as *const WAVEFORMATEX,
+                    None,
+                )
+                .map_err(|e| map_error("IAudioClient::Initialize", e))?;
             client
                 .SetEventHandle(event.0)
                 .map_err(|e| map_error("SetEventHandle", e))?;
@@ -459,7 +365,7 @@ fn open_stream(id: &str, request: &OpenRequest) -> Result<(Stream, Duration), Er
             let clock_hz = clock
                 .GetFrequency()
                 .map_err(|e| map_error("IAudioClock::GetFrequency", e))?;
-            let latency = client.GetStreamLatency().unwrap_or(0).max(0) as u64;
+            let period = hns_to_frames(period, format.rate).clamp(1, u64::from(frames));
             Ok((
                 Stream {
                     client: client.clone(),
@@ -470,7 +376,7 @@ fn open_stream(id: &str, request: &OpenRequest) -> Result<(Stream, Duration), Er
                     frames,
                     format,
                 },
-                Duration::from_nanos(latency * 100),
+                period,
             ))
         })()
     };
@@ -481,30 +387,41 @@ fn open_stream(id: &str, request: &OpenRequest) -> Result<(Stream, Duration), Er
 }
 
 impl Stream {
-    /// Hands the device one buffer from the ring.
+    /// Hands the engine what it has room for, from the ring.
     fn fill(&self, shared: &Shared) -> Result<(), Error> {
-        let bytes = self.frames as usize * self.format.frame_bytes();
-        // SAFETY: GetBuffer returns `frames` frames of device memory, valid
+        // SAFETY: GetBuffer returns `room` frames of engine memory, valid
         // until ReleaseBuffer.
         unsafe {
+            let queued = self
+                .client
+                .GetCurrentPadding()
+                .map_err(|e| map_error("GetCurrentPadding", e))?;
+            let room = self.frames.saturating_sub(queued);
+            if room == 0 {
+                return Ok(());
+            }
             let data = self
                 .render
-                .GetBuffer(self.frames)
+                .GetBuffer(room)
                 .map_err(|e| map_error("GetBuffer", e))?;
+            let bytes = room as usize * self.format.frame_bytes();
             shared.render(std::slice::from_raw_parts_mut(data, bytes));
             self.render
-                .ReleaseBuffer(self.frames, 0)
+                .ReleaseBuffer(room, 0)
                 .map_err(|e| map_error("ReleaseBuffer", e))
         }
     }
 
-    /// Publishes the device clock's position.
+    /// Publishes the device clock's position, at the time the clock
+    /// stamped it.
     fn report(&self, shared: &Shared, running: bool) {
-        let mut pos = 0u64;
+        let (mut pos, mut stamped) = (0u64, 0u64);
         // SAFETY: a clock read on the thread that owns the clock.
-        if unsafe { self.clock.GetPosition(&mut pos, None) }.is_ok() {
+        if unsafe { self.clock.GetPosition(&mut pos, Some(&mut stamped)) }.is_ok() {
             let frames = u128::from(pos) * u128::from(self.format.rate) / u128::from(self.clock_hz);
-            shared.report(frames as u64, Instant::now(), running);
+            let ago = Duration::from_nanos(qpc_now().saturating_sub(stamped) * 100);
+            let at = Instant::now().checked_sub(ago).unwrap_or_else(Instant::now);
+            shared.report(frames as u64, at, running);
         }
     }
 }
@@ -537,7 +454,7 @@ fn run(stream: Stream, shared: Arc<Shared>, commands: Receiver<Request>, wake: E
     let _mmcss = Mmcss::enter();
     let handles = [stream.event.0, wake.0];
     let mut running = false;
-    // The device buffer holds a prefill that has not been reset.
+    // The engine buffer holds a prefill that has not been reset.
     let mut primed = false;
     loop {
         // SAFETY: both handles stay open while this loop runs.
@@ -558,7 +475,7 @@ fn run(stream: Stream, shared: Arc<Shared>, commands: Receiver<Request>, wake: E
             continue;
         }
         if woke == WAIT_TIMEOUT {
-            // A running exclusive stream signals every period.
+            // A running stream is signalled every engine period.
             shared.fail(Error::Timeout("the device stopped asking for data"));
             // SAFETY: as above.
             let _ = unsafe { stream.client.Stop() };
@@ -636,7 +553,7 @@ fn run(stream: Stream, shared: Arc<Shared>, commands: Receiver<Request>, wake: E
     }
 }
 
-/// Opens `id` exclusively; the stream runs on its own thread.
+/// Opens `id` shared; the stream runs on its own thread.
 pub(crate) fn open(id: &str, request: &OpenRequest) -> Result<Core, Error> {
     request.validate()?;
     let wake = Event::new()?;
@@ -655,7 +572,7 @@ pub(crate) fn open(id: &str, request: &OpenRequest) -> Result<Core, Error> {
                 }
             };
             match open_stream(&id_owned, &request_owned) {
-                Ok((stream, latency)) => {
+                Ok((stream, period)) => {
                     let shared = Arc::new(Shared::new(
                         stream.format,
                         request_owned.ring_frames(&stream.format, u64::from(stream.frames)),
@@ -663,12 +580,9 @@ pub(crate) fn open(id: &str, request: &OpenRequest) -> Result<Core, Error> {
                     let info = StreamInfo {
                         format: stream.format,
                         backend: BACKEND,
-                        exclusive: true,
-                        device_buffer_frames: u64::from(stream.frames),
-                        device_latency: latency,
+                        device_buffer_frames: period,
                         ring_frames: shared.ring.capacity(),
                         realtime: true,
-                        float_io: false,
                     };
                     let _ = ready_tx.send(Ok((info, shared.clone())));
                     run(stream, shared, commands, wake);
@@ -747,11 +661,12 @@ mod tests {
     use super::*;
 
     /// The fields that matter, copied out of the packed struct.
-    fn fields(w: &WAVEFORMATEXTENSIBLE) -> (u16, u16, u16, u16, u32, u32) {
+    fn fields(w: &WAVEFORMATEXTENSIBLE) -> (u16, u16, u16, u16, u32, u32, bool) {
         let f = w.Format;
         // SAFETY: every variant of the samples union is a u16.
         let valid = unsafe { w.Samples.wValidBitsPerSample };
         let mask = w.dwChannelMask;
+        let sub = w.SubFormat;
         (
             f.wFormatTag,
             f.wBitsPerSample,
@@ -759,30 +674,37 @@ mod tests {
             f.nBlockAlign,
             f.nAvgBytesPerSec,
             mask,
+            sub == KSDATAFORMAT_SUBTYPE_IEEE_FLOAT,
         )
     }
 
     #[test]
     fn descriptors_follow_the_container_rules() {
-        let f = |s| StreamFormat::new(96_000, 2, s);
-        let w = descriptor(f(SampleFormat::S24In32), 0x3, true).unwrap();
-        assert_eq!(fields(&w), (0xFFFE, 32, 24, 8, 96_000 * 8, 0x3));
-        assert!(descriptor(f(SampleFormat::S24In32), 0x3, false).is_none());
-        assert!(descriptor(f(SampleFormat::S24In32Low), 0x3, true).is_none());
-        let w = descriptor(f(SampleFormat::S24Packed), 0x3, false).unwrap();
-        assert_eq!(fields(&w), (1, 24, 24, 6, 96_000 * 6, 0x3));
-        let eight = StreamFormat::new(48_000, 8, SampleFormat::S16);
-        assert!(descriptor(eight, 0x63f, false).is_none());
+        let f = |s| StreamFormat::new(48_000, 2, s);
         assert_eq!(
-            fields(&descriptor(eight, 0x63f, true).unwrap()),
-            (0xFFFE, 16, 16, 16, 48_000 * 16, 0x63f)
+            fields(&descriptor(f(SampleFormat::F32))),
+            (0xFFFE, 32, 32, 8, 48_000 * 8, 0x3, true)
+        );
+        assert_eq!(
+            fields(&descriptor(f(SampleFormat::S24In32))),
+            (0xFFFE, 32, 24, 8, 48_000 * 8, 0x3, false)
+        );
+        assert_eq!(
+            fields(&descriptor(f(SampleFormat::S16))),
+            (0xFFFE, 16, 16, 4, 48_000 * 4, 0x3, false)
         );
     }
 
     #[test]
-    fn alignment_retry_duration() {
-        // 480 frames at 48 kHz is 10 ms.
-        assert_eq!(frames_to_hns(480, 48_000), 100_000);
-        assert_eq!(frames_to_hns(441, 44_100), 100_000);
+    fn mix_formats_map_to_sample_formats() {
+        assert_eq!(sample_of(true, 32, 32), Some(SampleFormat::F32));
+        assert_eq!(sample_of(false, 32, 24), Some(SampleFormat::S24In32));
+        assert_eq!(sample_of(false, 32, 32), Some(SampleFormat::S32));
+        assert_eq!(sample_of(false, 24, 24), Some(SampleFormat::S24Packed));
+        assert_eq!(sample_of(false, 16, 16), Some(SampleFormat::S16));
+        assert_eq!(sample_of(true, 64, 64), None);
+        assert_eq!(sample_of(false, 32, 20), None);
+        // 10 ms of 100 ns units at 48 kHz.
+        assert_eq!(hns_to_frames(100_000, 48_000), 480);
     }
 }

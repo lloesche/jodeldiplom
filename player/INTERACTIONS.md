@@ -669,34 +669,37 @@ stem keys are their mutes.
 
 ## Mixer
 
-- **M1.** Bit-perfect is the default: every start has each strip at 0 dB,
-  unmuted, nothing soloed, and nothing of the desk is kept between runs.
-  The desk adds no gain until a fader is moved; the master never adds any
-  (its VOLUME is the device's own control, after the samples).
+- **M1.** The file as it is is the default: every start has each strip
+  at 0 dB, unmuted, nothing soloed, the player's volume at 0 dB, and
+  nothing of the desk is kept between runs. The desk adds no gain until
+  a fader is moved; the master never adds any above unity: its VOLUME is
+  the player's own (a gain over every strip, 0 dB at most), which
+  `alt+↑` `alt+↓`, and `↑` `↓` or the wheel on the master, move a dB at a
+  time on every system. The system's volume is the system's.
   - `every_control_sends_its_change`
+  - `the_volume_keys_step_the_players_own_volume`
   - `a_ramp_lands_on_its_frame_and_unity_solo_is_bit_exact` (output)
-- **M2.** A new mixer (another device, another rate, an engine
-  restarted) gets the faders, mutes and solos as they were set this run.
+- **M2.** A new mixer (another device, an engine restarted) gets the faders, mutes and solos as they were set this run.
   - `the_faders_are_set_on_the_mixer_and_again_on_a_new_one`
-- **M8.** The output device is opened once, as the player starts, at the
-  rate set for it (48 kHz unless set; where it lacks that, 44.1 kHz, else
-  its lowest), and stays open until the player quits: songs at any rate,
-  the preview, the stems and the game's sounds all play at it (resampled
+- **M8.** The output device is opened once, as the player starts,
+  shared (through the system's mixer, beside every other application), at
+  the rate the system runs it at (its sound settings set it, not the
+  player), and stays open until the player quits: songs at any rate, the
+  preview, the stems and the game's sounds all play at it (resampled
   where theirs is another; a mono file doubled, one of more channels
-  folded down to stereo), the result's sounds after the song too. The
-  rate is the device's own (kept by its id). Only another device, or
-  another rate chosen in the settings (once the steps pause, where the
-  rate in force changed), opens it again, once, the queue and the place
-  carried over; a device not there at the start, or one that failed, is
-  opened by the next song.
+  folded down to stereo), the result's sounds after the song too. Only
+  another device chosen in the settings opens it again, once, the queue
+  and the place carried over; a device not there at the start, or one that failed, is
+  opened by the next song. One the system starts running at another rate
+  (its format changed in the sound settings, Audio MIDI Setup or another
+  application on macOS) fails as lost, and the next song is routed to its
+  new rate, the engine asking the desk what it takes for each route.
   - `the_device_opens_once_for_songs_at_any_rate`
-  - `the_rate_follows_the_device`
-  - `a_device_with_no_stereo_rates_steps_to_nothing`
-  - `another_rate_opens_the_device_again_where_the_song_was`
   - `a_device_not_there_at_the_start_is_opened_once_it_is` (output)
   - `a_device_that_fails_is_opened_again_by_the_next_output` (output)
+  - `a_device_back_at_another_rate_routes_the_next_track_there` (engine)
   - `mono_and_5_1_files_play_as_stereo` (engine)
-  - `the_rate_set_then_44_1_then_the_lowest` (output)
+  - `the_targets_one_rate_in_its_best_format` (output)
   - `every_input_is_offered_the_desks_one_format` (output)
   - `every_track_plays_at_the_desks_one_rate` (engine)
   - `the_result_is_heard_after_the_song`

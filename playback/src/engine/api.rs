@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::time::Duration;
 
-use jodel_output::{Capabilities, StreamInfo};
+use jodel_output::StreamInfo;
 
 use crate::error::Error;
 use crate::rate::{Route, Settings};
@@ -214,10 +214,6 @@ pub struct TrackStart {
     pub output: StreamInfo,
     /// The output target's name (the device).
     pub device: String,
-    /// The samples reach the device unchanged: the device is held
-    /// exclusively, the route is lossless and the format holds its bits.
-    /// Never for lossy files.
-    pub bit_perfect: bool,
     /// The output frame it starts at ([`Position::output_frame`]).
     pub output_frame: u64,
     /// The track frame it starts from (0, or where a seek or a switch of
@@ -357,10 +353,6 @@ pub struct PlayerOptions {
     pub settings: Settings,
     /// How often position events are sent while playing.
     pub position_interval: Duration,
-    /// The target's capabilities, when the caller has probed them already
-    /// (otherwise the engine asks the target once, when it first needs
-    /// them).
-    pub capabilities: Option<Capabilities>,
     /// Where the stems get their separator ([`crate::stems`]): the parts
     /// of an output of lanes ([`Command::MakeStems`]), a head read along a
     /// map's too. `None`: only stems kept are parts (a head along a map has
@@ -386,7 +378,6 @@ impl Default for PlayerOptions {
         PlayerOptions {
             settings: Settings::default(),
             position_interval: Duration::from_millis(100),
-            capabilities: None,
             separator: None,
             stem_store: None,
             switch_fade: Duration::from_millis(20),

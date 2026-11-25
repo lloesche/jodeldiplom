@@ -145,7 +145,7 @@ fn render(
     let device = MemoryTarget::new(caps, SimClock::Realtime);
     let captures = device.captures();
     let mixer = Mixer::open(Box::new(device), MixerOptions::default());
-    let (_desk, lead, guest) = StemDesk::two_heads(&mixer, "Player", 1.0);
+    let (_desk, lead, guest) = StemDesk::two_heads(&mixer, None, "Player", 1.0);
     let first = lead.faders.input.clone();
     let separator = GpuSeparator::shared().is_some().then_some(gpu as fn() -> _);
     let options = PlayerOptions {

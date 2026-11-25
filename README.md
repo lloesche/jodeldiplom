@@ -14,17 +14,17 @@ What it does:
   CAF), AAC-LC (in M4A/MP4), MP3, MP2, MP1 and Ogg Vorbis, read with
   symphonia, lossy ones gapless. HE-AAC and Opus are refused with a message
   saying so.
-- **Bit-perfect, exclusive output**: the device is opened exclusively
-  (WASAPI exclusive mode on Windows, the Core Audio HAL in hog mode on
-  macOS, ALSA `hw` on Linux) at the file's own rate, in an integer format
-  that holds every bit, so the samples reach the DAC unchanged: no system
-  mixer, resampler or software volume in between. The signal path on
-  screen says whether a track plays bit-perfect.
+- **Shared output**: the device is opened through the system's mixer
+  (WASAPI shared mode on Windows, the Core Audio HAL without hog mode on
+  macOS, ALSA `default`, the sound server, on Linux), once, at the rate
+  the system runs it at, so other applications play beside it and a
+  call's screen share hears it. A file at that rate reaches the system's
+  mixer unchanged; the signal path on screen shows a resampling step.
 - **Gapless**: tracks at one output format play into one stream; lossy
   files have their encoder delay and padding trimmed. A format change
   reopens the device cleanly.
-- **Resampling** only where the device takes no rate that carries the file
-  bit-perfect: our own rational polyphase FIR in `f64` (≥ 160 dB stopband),
+- **Resampling** only where the file is at another rate than the device's:
+  our own rational polyphase FIR in `f64` (≥ 160 dB stopband),
   requantized once to 24 bits with TPDF dither, with optional headroom.
 - **A mixer in front of the device**: several players on one device; the
   browser's preview of a song is a second player on it. Alone at gain 1 the
@@ -110,7 +110,7 @@ its `make.py` with FFmpeg) and two PCM FLAC files (`pcm`, made by its
 | Crate | Folder | What it is |
 |---|---|---|
 | `durable` | [durable](durable) | every file the workspace writes: whole or not at all, made durable (temporary file, fsync, rename, directory fsync), and journals for changes of several files |
-| `jodel-output` | [output](output) | bit-perfect exclusive PCM output (WASAPI, Core Audio HAL, ALSA hw), the mixer, microphone input with echo cancellation and singer isolation |
+| `jodel-output` | [output](output) | shared PCM output through the system's mixer (WASAPI, Core Audio HAL, ALSA default), the mixer, microphone input with echo cancellation and singer isolation |
 | `jodel-playback` | [playback](playback) | the playback engine: files to the device, the rate policy, the resampler, gapless track changes, seeks, jumps, stems, transitions, events timed to what is heard |
 | `jodel-rhythm` | [rhythm](rhythm) | beat, downbeat, tempo, key and pitch analysis, and the stem separator on the CPU, in plain Rust |
 | `jodel-tensors` | [tensors](tensors) | a `.safetensors` checkpoint's tensors as f32, for the speech, depth and cut-out models |

@@ -1,11 +1,11 @@
-//! Lists the output devices and what each accepts exclusively.
+//! Lists the output devices and the format each takes: its mix format, at
+//! the rate the system runs it at.
 //!
 //! `cargo run -p jodel-output --example devices`
 //!
-//! Plays nothing: the capability probe only asks the driver which formats
-//! it would accept.
+//! Plays nothing: the system is only asked for each device's mix format.
 
-use jodel_output::{capabilities, devices, SampleFormat, BACKEND, PROBE_RATES};
+use jodel_output::{devices, mix_format, BACKEND};
 
 fn main() {
     println!("backend: {BACKEND}");
@@ -25,32 +25,9 @@ fn main() {
             if device.is_default { "  (default)" } else { "" }
         );
         println!("    id: {}", device.id);
-        let caps = match capabilities(&device.id) {
-            Ok(caps) => caps,
-            Err(e) => {
-                println!("    probe failed: {e}");
-                continue;
-            }
-        };
-        if caps.is_empty() {
-            println!("    accepts nothing exclusively at the probed rates");
-            continue;
-        }
-        for channels in caps.channel_counts() {
-            println!("    exclusive, {channels} ch (ok = accepted, - = refused)");
-            print!("    {:>7}", "rate");
-            for f in SampleFormat::ALL {
-                print!(" {:>9}", f.name());
-            }
-            println!();
-            for rate in PROBE_RATES {
-                let accepted = caps.formats(rate, channels);
-                print!("    {rate:>7}");
-                for f in SampleFormat::ALL {
-                    print!(" {:>9}", if accepted.contains(&f) { "ok" } else { "-" });
-                }
-                println!();
-            }
+        match mix_format(&device.id) {
+            Ok(format) => println!("    takes {format}"),
+            Err(e) => println!("    cannot be asked: {e}"),
         }
     }
 }

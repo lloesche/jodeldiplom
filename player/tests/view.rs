@@ -105,7 +105,7 @@ fn main_screen() {
             "WAV 96",
             "The Ramps",
             "○ PCM",
-            "file 44.1 → USB Audio DAC (exclusive), bit-perfect",
+            "file 44.1 → USB Audio DAC",
             "♩ 128 BPM",
             "1:23",
             "4:05",
@@ -193,31 +193,12 @@ fn settings() {
             "Settings",
             "Output device",
             "system default",
-            "Its rate",
-            "48 kHz",
             "● System default",
             "○ Speakers (USB Audio DAC)",
             "Saved to /home/me/.config/jodeldiplom/config.toml",
         ],
     );
     snapshot("settings", &text);
-}
-
-/// A rate the device lacks, as the settings show it: the one it runs at.
-#[test]
-fn settings_show_the_rate_in_force() {
-    let mut state = common::playing_state(120, 36);
-    state.screen = Screen::Settings;
-    state.config.set_rate(88_200);
-    update(
-        &mut state,
-        Action::DeviceRates(Some(vec![44_100, 48_000, 96_000])),
-    );
-    let text = draw(&state);
-    has(
-        &text,
-        &["44.1 kHz (set: 88.2 kHz, which this device lacks)"],
-    );
 }
 
 #[test]
@@ -993,12 +974,11 @@ fn the_mixer_tab_is_a_desk() {
     has(
         &main,
         &[
-            "WASAPI exclusive",
+            "WASAPI",
             "96 kHz · 24 bit · 2 ch",
-            "BIT-PERFECT",
             "LIMIT",
             "12:04.3",
-            "VOLUME —",
+            "VOLUME ▮▮▮▮▮▮ 0.0 dB",
         ],
     );
     let shown = |state: &State| {

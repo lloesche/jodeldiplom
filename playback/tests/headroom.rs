@@ -1,7 +1,7 @@
-//! Headroom on routes that are not bit-perfect: a gain before their one
+//! Headroom on routes that are not lossless: a gain before their one
 //! requantization (inside the resampler, or where a floating-point or lossy
 //! file is turned into 24 bits) that keeps overs from clipping, and that
-//! never touches a bit-perfect route.
+//! never touches a lossless route.
 
 mod common;
 
@@ -176,9 +176,9 @@ fn headroom_keeps_a_floating_point_file_from_clipping() {
     std::fs::remove_dir_all(dir).unwrap();
 }
 
-/// A bit-perfect route plays the file's samples whatever the headroom.
+/// A lossless route plays the file's samples whatever the headroom.
 #[test]
-fn bit_perfect_routes_have_no_headroom() {
+fn lossless_routes_have_no_headroom() {
     let dir = temp_dir("headroom-exact");
     let wav = dir.join("overs.wav");
     let samples = overs(10_000);
@@ -194,7 +194,7 @@ fn bit_perfect_routes_have_no_headroom() {
         })
         .unwrap();
     assert_eq!(start.route.resample, None);
-    // A FLAC file played bit-perfect: its own samples.
+    // A FLAC file played losslessly: its own samples.
     let target = MemoryTarget::new(caps(&[44_100], &[S24In32Low]), SimClock::Instant);
     let captures = target.captures();
     let (player, events) = Player::new(Box::new(target), options(Headroom(30)));
@@ -208,7 +208,7 @@ fn bit_perfect_routes_have_no_headroom() {
 }
 
 /// A headroom change while a track plays moves a resampled track to the new
-/// gain without a break, and leaves a bit-perfect one alone.
+/// gain without a break, and leaves a lossless one alone.
 #[test]
 fn a_headroom_change_reroutes_resampled_tracks_only() {
     let dir = temp_dir("headroom-change");

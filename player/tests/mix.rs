@@ -157,7 +157,6 @@ fn a_stem_key_during_a_mix_lands_on_its_bar_of_the_head_on_air() {
             route: track.route.clone(),
             output: track.output.clone(),
             device: "DAC".into(),
-            bit_perfect: false,
             output_frame: 88_200,
             from_frame: (20.0 * f64::from(track.info.rate)) as u64,
         }))),

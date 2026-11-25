@@ -515,7 +515,7 @@ mod tests {
 
     /// The cap goes where the pointer puts it, to the pixel, the ends
     /// beyond the travel; within [`DETENT_PX`] of 0 dB it is at 0 dB
-    /// exactly, the detent bit-perfect playback depends on landing in.
+    /// exactly, the detent unity gain depends on landing in.
     #[test]
     fn the_cap_is_where_the_pointer_puts_it_with_a_detent_at_unity() {
         let f = fader();

@@ -180,11 +180,11 @@ fn playing_effects_allocates_nothing_on_the_mixer_thread() {
     for rate in [RATE, 96_000] {
         let device = Device {
             instant: true,
+            rate: Some(rate),
             ..Device::default()
         };
         let options = MixerOptions {
             buffer: Duration::from_millis(200),
-            rate,
             ..MixerOptions::default()
         };
         let mixer = Mixer::open(Box::new(QuietDevice(device.clone())), options);

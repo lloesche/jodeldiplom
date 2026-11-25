@@ -1,26 +1,24 @@
-//! Listing, probing and opening the system's output devices.
+//! Listing the system's output devices, the format each takes, and opening them.
 
 use crate::backend;
-use crate::caps::Capabilities;
 use crate::error::Error;
+use crate::format::StreamFormat;
 use crate::output::{delegate_output, Core, OpenRequest};
 
-/// The exclusive backend this build uses: `"WASAPI exclusive"`,
-/// `"Core Audio HAL (hog mode)"`, `"ALSA hw"`, or `"none"`.
+/// The backend this build uses: `"WASAPI (shared)"`, `"Core Audio
+/// (shared)"`, `"ALSA default (shared)"`, or `"none"`.
 pub const BACKEND: &str = backend::BACKEND;
 
 /// An output device.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Device {
     /// A stable id to store in a config and pass to [`open`]: the WASAPI
-    /// endpoint id, the Core Audio device UID, or an ALSA
-    /// `hw:CARD=<id>,DEV=<n>` name.
+    /// endpoint id, the Core Audio device UID, or an ALSA PCM name
+    /// (`default`).
     pub id: String,
     /// A name for people.
     pub name: String,
-    /// Whether this is the system's default output. ALSA has no default
-    /// `hw:` device; there the first card's first playback device is
-    /// marked.
+    /// Whether this is the system's default output (ALSA's `default`).
     pub is_default: bool,
 }
 
@@ -64,19 +62,23 @@ pub(crate) fn pick(all: Vec<Device>, query: &str) -> Result<Device, Error> {
     }
 }
 
-/// What the device `id` accepts exclusively over [`crate::PROBE_RATES`]
-/// and every [`crate::SampleFormat`], in stereo and in the device's own
-/// channel layout. Nothing is played and the device is not started:
-/// WASAPI and ALSA answer format queries without starting a stream, and
-/// Core Audio lists its physical formats.
-pub fn capabilities(id: &str) -> Result<Capabilities, Error> {
-    backend::capabilities(id)
+/// The one format the device `id` takes, opened shared: stereo, at the
+/// rate the system runs it at (its sound settings, not this crate, set
+/// it), in the sample format the system mixes in (32-bit float as a rule).
+/// WASAPI's is the engine's mix format; Core Audio's the IO format of the
+/// device's first output stream of two channels or more; ALSA's 32-bit
+/// float at the sound server's rate. Nothing is played and nothing about
+/// the device is changed. Ask it again after the device was lost: the
+/// system may run it at another rate by then.
+pub fn mix_format(id: &str) -> Result<StreamFormat, Error> {
+    backend::mix_format(id)
 }
 
-/// Opens the device `id` exclusively at exactly `request.rate` and
-/// `request.channels`, in the first of `request.formats` it accepts. The
-/// device does not start until the prefill is written. A device takes plain
-/// streams only: more than one lane is [`Error::InvalidArgument`].
+/// Opens the device `id` shared, beside every other application, at its
+/// [`mix_format`]: a request at another rate or channel count, or that
+/// does not list its sample format, is [`Error::FormatNotAccepted`]. The
+/// device does not start until the prefill is written. A device takes
+/// plain streams only: more than one lane is [`Error::InvalidArgument`].
 pub fn open(id: &str, request: &OpenRequest) -> Result<DeviceOutput, Error> {
     request.check_lanes(1)?;
     Ok(DeviceOutput {
@@ -84,42 +86,7 @@ pub fn open(id: &str, request: &OpenRequest) -> Result<DeviceOutput, Error> {
     })
 }
 
-/// A device's own output volume control: the one the system's volume
-/// slider moves. The device applies it after it has received the samples,
-/// so the stream stays bit-perfect; at `level` 1.0 the control passes the
-/// signal unchanged.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Volume {
-    /// From 0.0 (silent) to 1.0 (full), as the system's slider shows it.
-    pub level: f32,
-    /// The gain at that level in dB (0 at full), when the device says.
-    pub db: Option<f32>,
-    /// Whether the output is muted, when the device has a mute control.
-    pub muted: Option<bool>,
-}
-
-/// The volume control of the device `id`, while anything may hold it
-/// (including an exclusive stream of this process). `None`: the device
-/// has none this process can set (on Windows and Linux the system's
-/// volume keys reach the device of an exclusive stream themselves, and
-/// this always says `None`).
-///
-/// macOS needs it: the system's volume keys do not reach a device that a
-/// process holds in hog mode, so the level stays where it was when the
-/// stream opened.
-pub fn volume(id: &str) -> Result<Option<Volume>, Error> {
-    backend::volume(id)
-}
-
-/// Sets the volume control of the device `id` to `level` (clamped to
-/// 0.0–1.0; every channel to the same level where there is no master),
-/// unmutes it when `level` is above 0, and returns the control as it is
-/// then. An error where [`volume`] says `None`.
-pub fn set_volume(id: &str, level: f32) -> Result<Volume, Error> {
-    backend::set_volume(id, level.clamp(0.0, 1.0))
-}
-
-/// An exclusive device stream (see [`crate::Output`]).
+/// A shared device stream (see [`crate::Output`]).
 pub struct DeviceOutput {
     core: Core,
 }

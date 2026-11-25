@@ -7,25 +7,23 @@ use std::io;
 /// Why an output call failed.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Error {
-    /// This platform, or this request on it, has no exclusive output path.
+    /// This platform, or this request on it, has no output path.
     Unsupported(String),
     /// The system has no output device.
     NoDevice,
     /// No device has this id (or matches this name).
     DeviceNotFound(String),
     /// The device accepts none of the requested formats at this rate and
-    /// channel count in exclusive mode.
+    /// channel count (shared, a device takes its mix format only).
     FormatNotAccepted {
         /// The requested rate.
         rate: u32,
         /// The requested channel count.
         channels: u16,
     },
-    /// Another application holds the device (exclusively, or the sound
-    /// server holds the `hw:` device).
+    /// Another application holds the device for itself (exclusive mode on
+    /// Windows, hog mode on macOS, a `hw:` device on Linux).
     DeviceBusy,
-    /// The user has disallowed exclusive use of this device.
-    ExclusiveNotAllowed,
     /// The device went away (unplugged or disabled) while open.
     DeviceLost,
     /// A malformed argument: the message says which.
@@ -63,10 +61,9 @@ impl fmt::Display for Error {
             Error::DeviceNotFound(id) => write!(f, "no output device {id:?}"),
             Error::FormatNotAccepted { rate, channels } => write!(
                 f,
-                "the device accepts none of the requested formats at {rate} Hz, {channels} ch, exclusively"
+                "the device accepts none of the requested formats at {rate} Hz, {channels} ch"
             ),
             Error::DeviceBusy => f.write_str("the device is in use by another application"),
-            Error::ExclusiveNotAllowed => f.write_str("exclusive use of the device is not allowed"),
             Error::DeviceLost => f.write_str("the device was removed"),
             Error::InvalidArgument(what) => write!(f, "invalid argument: {what}"),
             Error::Pack(e) => write!(f, "{e}"),

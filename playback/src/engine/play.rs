@@ -3,17 +3,13 @@
 //! it, the next track run into gaplessly or through a reopen, stopping,
 //! and the end of the queue.
 
-use std::time::Instant;
-
-use jodel_output::{OpenRequest, Output, StreamFormat};
-
 use crate::error::Error;
 use crate::rate::{choose_route, FileFacts, Route};
 use crate::source::Source;
 
 use super::api::{Event, PlayState, TrackStart};
 use super::track::{Cue, CueEvent, OpenOutput, SegStart, StartAt, Track};
-use super::{Engine, OPEN_BUSY_STEP, OPEN_BUSY_WAIT};
+use super::Engine;
 
 impl Engine {
     /// Opens track `index` at `seconds` and chooses its route.
@@ -71,20 +67,6 @@ impl Engine {
         Track::new(index, info, route, source, self.segments.clone())
     }
 
-    /// Opens an output, trying again while the device is busy, for up to
-    /// [`OPEN_BUSY_WAIT`].
-    fn open_target(&mut self, request: &OpenRequest) -> Result<Box<dyn Output>, Error> {
-        let deadline = Instant::now() + OPEN_BUSY_WAIT;
-        loop {
-            match self.head.target.open(request) {
-                Err(jodel_output::Error::DeviceBusy) if Instant::now() < deadline => {
-                    std::thread::sleep(OPEN_BUSY_STEP);
-                }
-                result => return Ok(result?),
-            }
-        }
-    }
-
     /// Opens an output at `route`'s format (with lanes where the target
     /// takes them), paused when `paused`, in place of the one open.
     pub(super) fn open_output(&mut self, route: &Route, paused: bool) -> Result<(), Error> {
@@ -97,7 +79,7 @@ impl Engine {
         if self.head.target.lanes() >= lanes {
             request = request.lanes(lanes);
         }
-        let mut output = self.open_target(&request)?;
+        let mut output = self.head.target.open(&request)?;
         if paused {
             output.pause()?;
         }
@@ -121,8 +103,6 @@ impl Engine {
 
     pub(super) fn started(&self, track: &Track) -> Cue {
         let out = self.head.out.as_ref().expect("an output is open");
-        let format: StreamFormat = out.info.format;
-        let bit_perfect = out.info.exclusive && track.route.lossless && track.route.fits(&format);
         let start = TrackStart {
             index: track.index,
             head: self.head.id,
@@ -130,7 +110,6 @@ impl Engine {
             route: track.route.clone(),
             output: out.info.clone(),
             device: self.head.target.name(),
-            bit_perfect,
             output_frame: track.seg_out,
             from_frame: track.seg_frame,
         };

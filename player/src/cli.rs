@@ -13,28 +13,27 @@ use crate::config::{self, Config};
 pub const USAGE: &str = "\
 Usage: {bin} [options] [path]
 
-A music player for PCM files (FLAC, WAV, AIFF, CAF, ALAC) that holds
-an output device exclusively, opened once at one rate (48 kHz unless set),
-plays files at that rate bit-perfect and resamples the others. AAC-LC (in
-M4A/MP4), MP3 (and MP2, MP1) and Ogg Vorbis play too, gapless, decoded to
-24 bits.
+A music player for PCM files (FLAC, WAV, AIFF, CAF, ALAC) that plays
+through the system's mixer, beside every other application: it opens the
+output device once, at the rate the system runs it at (its sound settings
+choose it), plays files at that rate as they are and resamples the
+others. AAC-LC (in M4A/MP4), MP3 (and MP2, MP1) and Ogg Vorbis play too,
+gapless, decoded to 24 bits.
 
   path                 a folder to start the file browser in, or a file to
                        play at once (the browser opens on its folder);
                        default: the current folder
   --device ID|NAME     the output device: an id or a unique part of a name
                        from --list-devices; default: the system default
-  --rate HZ            the rate the output device runs at, for this run
-                       (default: the one set for it, else 48000; where it
-                       lacks it, 44100, else its lowest)
   --no-resample        never resample: files at another rate than the
                        device's are skipped
-  --headroom DB        routes that are not bit-perfect play this many dB below full scale
+  --headroom DB        routes that change the samples (resampled, floating-point
+                       files) play this many dB below full scale
                        (0, 0.5, 1, 2, 3; default 0), so inter-sample overs
-                       do not clip; bit-perfect routes are never touched
+                       do not clip; files played as they are are never touched
   --config FILE        the settings file; default: {config}
-  --list-devices       list the output devices and what each takes
-                       exclusively, then exit
+  --list-devices       list the output devices and what each takes (its
+                       rate and format, as the system mixes it), then exit
   --diag               print what the player finds on this system (build,
                        settings, devices and their volume, the GPU and
                        whether stems separate on it) for a bug report, then
@@ -56,8 +55,6 @@ pub struct Args {
     pub path: Option<PathBuf>,
     /// `--device`.
     pub device: Option<String>,
-    /// `--rate`.
-    pub rate: Option<u32>,
     /// `--no-resample`.
     pub no_resample: bool,
     /// `--headroom`.
@@ -92,11 +89,6 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
         match arg.as_str() {
             "-h" | "--help" => out.help = true,
             "--device" => out.device = Some(value("--device")?),
-            "--rate" => {
-                let text = value("--rate")?;
-                let rate = text.parse().ok().filter(|&r: &u32| r > 0);
-                out.rate = Some(rate.ok_or(format!("--rate takes a rate in Hz, not {text:?}"))?);
-            }
             "--no-resample" => out.no_resample = true,
             "--headroom" => {
                 let text = value("--headroom")?;
@@ -160,9 +152,6 @@ pub fn settings(args: &Args) -> Result<Settings, String> {
     let mut effective = saved.clone();
     if let Some(device) = &args.device {
         effective.device = (device != "default").then(|| device.clone());
-    }
-    if let Some(rate) = args.rate {
-        effective.set_rate(rate);
     }
     if args.no_resample {
         effective.resample = false;
@@ -394,8 +383,6 @@ mod tests {
         let a = args(&[
             "--device",
             "USB",
-            "--rate",
-            "96000",
             "--no-resample",
             "--headroom",
             "0.5",
@@ -405,7 +392,6 @@ mod tests {
         ])
         .unwrap();
         assert_eq!(a.device.as_deref(), Some("USB"));
-        assert_eq!(a.rate, Some(96_000));
         assert!(a.no_resample);
         assert_eq!(a.headroom, Some(Headroom(5)));
         assert!(args(&["--headroom", "lots"])
@@ -423,9 +409,7 @@ mod tests {
 
     #[test]
     fn bad_arguments_say_why() {
-        assert!(args(&["--rate", "loud"]).unwrap_err().contains("loud"));
         assert!(args(&["--device"]).unwrap_err().contains("needs a value"));
-        assert!(args(&["--rate", "0"]).is_err());
         assert!(args(&["a", "b"]).is_err());
         assert!(args(&["--frobnicate"])
             .unwrap_err()
@@ -438,11 +422,9 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("jodeldiplom-cli-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let file = dir.join("c.toml");
-        std::fs::write(&file, "headroom = 1\nrate.\"default\" = 96000\n").unwrap();
-        let a = args(&["--config", file.to_str().unwrap(), "--rate", "44100"]).unwrap();
+        std::fs::write(&file, "headroom = 1\n").unwrap();
+        let a = args(&["--config", file.to_str().unwrap()]).unwrap();
         let s = settings(&a).unwrap();
-        assert_eq!(s.saved.rate(), 96_000);
-        assert_eq!(s.effective.rate(), 44_100);
         assert_eq!(s.effective.headroom, Headroom(10));
         assert!(s.effective.resample);
         // --headroom for this run only.

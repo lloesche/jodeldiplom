@@ -147,14 +147,14 @@ fn the_wheel_moves_a_fader_by_a_db_and_the_buttons_toggle() {
     let s = state.desk.setting(player);
     assert!(s.mute && s.solo);
     // A click on the master selects it; the wheel there steps the
-    // device's own volume, never a gain of ours.
+    // player's own volume, never above unity.
     desk(&mut state, DeskAction::Select(Channel::Main));
     assert_eq!(state.desk.selected, Channel::Main);
     let fx = desk(&mut state, DeskAction::Wheel(Channel::Main, 1));
     assert!(changes(&fx).is_empty());
-    assert!(fx.contains(&Effect::DeviceVolume(
-        jodeldiplom::core::VolumeChange::Step(1)
-    )));
+    let fx = desk(&mut state, DeskAction::Wheel(Channel::Main, -2));
+    assert_eq!(state.desk.volume, -2.0);
+    assert_eq!(changes(&fx), [DeskChange::Volume(taper::gain(-2.0))]);
     // The microphone's ECHO turns its echo canceller off, and saves it.
     let fx = desk(&mut state, DeskAction::Press(DeskButton::Echo));
     assert!(!state.config.karaoke_echo);
@@ -376,9 +376,9 @@ fn a_stem_muted_on_its_frame_is_heard_and_unmuted_the_file_is_again() {
     // few periods ahead of what is heard), for a second.
     let present = |a: &App| {
         a.desk().is_some_and(|d| {
-            d.strips[0]
-                .inputs
+            d.strips
                 .iter()
+                .flat_map(|s| &s.inputs)
                 .any(|i| i.parts.is_some_and(|p| p.state == Parts::Present))
         })
     };
@@ -526,10 +526,11 @@ fn a_stem_muted_on_its_frame_is_heard_and_unmuted_the_file_is_again() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// The device is opened once, as the player starts, at the rate set (48
-/// kHz by default), and stays open while songs at 44.1, 48 and 96 kHz play
-/// one into the next: each is routed to its rate, the 44.1 and 96 kHz ones
-/// resampled, the 48 kHz one as it is; the device is never opened again.
+/// The device is opened once, as the player starts, at the rate the system
+/// runs it at (48 kHz here), and stays open while songs at 44.1, 48 and 96
+/// kHz play one into the next: each is routed to its rate, the 44.1 and 96
+/// kHz ones resampled, the 48 kHz one as it is; the device is never opened
+/// again.
 #[test]
 fn the_device_opens_once_for_songs_at_any_rate() {
     let _guard = common::real_time();
@@ -541,9 +542,7 @@ fn the_device_opens_once_for_songs_at_any_rate() {
         common::write_wav(&dir.join(format!("{k}.wav")), rate, 1.0);
     }
     let mut caps = Capabilities::new();
-    for rate in rates {
-        caps.insert(StreamFormat::new(rate, 2, SampleFormat::S24In32Low));
-    }
+    caps.insert(StreamFormat::new(48_000, 2, SampleFormat::S24In32Low));
     let memory = MemoryOutput::new(caps, SimClock::Realtime);
     let mut options = AppOptions::new(dir.clone());
     options.output = Output::Memory(memory.clone());
@@ -577,59 +576,5 @@ fn the_device_opens_once_for_songs_at_any_rate() {
         assert_eq!((route.input_rate, route.output_rate), (rate, 48_000));
         assert_eq!(route.resample.is_some(), rate != 48_000, "{rate}");
     }
-    let _ = std::fs::remove_dir_all(&dir);
-}
-
-/// Another rate set for the device opens it again once, on a new mixer at
-/// that rate: the song paused where it was stays paused there, the same
-/// song.
-#[test]
-fn another_rate_opens_the_device_again_where_the_song_was() {
-    let _guard = common::real_time();
-    use jodel_output::{Capabilities, SampleFormat, StreamFormat};
-    use jodel_playback::PlayState;
-    use jodeldiplom::app::MemoryOutput;
-    let dir = common::temp_dir("reopen-rate");
-    common::write_wav(&dir.join("a.wav"), 48_000, 8.0);
-    let mut caps = Capabilities::new();
-    for rate in [48_000, 96_000] {
-        caps.insert(StreamFormat::new(rate, 2, SampleFormat::S24In32Low));
-    }
-    let memory = MemoryOutput::new(caps, SimClock::Realtime);
-    let mut options = AppOptions::new(dir.clone());
-    options.output = Output::Memory(memory.clone());
-    options.devices = Arc::new(|| Ok(Vec::new()));
-    options.separator = || None;
-    options.autoplay = Some(dir.join("a.wav"));
-    let mut app = App::new(options);
-    assert_eq!(app.state.opened_rate, Some(48_000));
-    let wait = Duration::from_secs(30);
-    let played = |a: &App| a.state.playing.position > 1.5;
-    assert!(common::wait_for(&mut app, wait, played));
-    app.dispatch(Action::Op(Op::PlayPause));
-    let paused = |a: &App| a.state.playing.state == PlayState::Paused;
-    assert!(common::wait_for(&mut app, wait, paused));
-    let (index, at) = (app.state.queue.current, app.state.playing.position);
-    app.state.config.set_rate(96_000);
-    app.run(Effect::ReopenOutput);
-    let back = |a: &App| {
-        a.state.playing.track.is_some()
-            && a.state.playing.state == PlayState::Paused
-            && (a.state.playing.position - at).abs() < 0.5
-    };
-    assert!(
-        common::wait_for(&mut app, wait, back),
-        "paused where it was"
-    );
-    assert_eq!(app.state.queue.current, index);
-    assert_eq!(app.state.opened_rate, Some(96_000));
-    let route = app.state.playing.track.as_ref().unwrap().route.clone();
-    assert_eq!(route.output_rate, 96_000);
-    app.shutdown();
-    let engines = memory.captures();
-    assert_eq!(engines.len(), 2, "a new mixer");
-    let streams = engines[1].list();
-    assert_eq!(streams.len(), 1);
-    assert_eq!(streams[0].format.rate, 96_000);
     let _ = std::fs::remove_dir_all(&dir);
 }

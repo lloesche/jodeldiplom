@@ -1,5 +1,5 @@
 //! The playback engine between files and [`jodel_output`]: FLAC, WAV,
-//! AIFF, CAF and ALAC files to bit-perfect device output, and AAC-LC (in
+//! AIFF, CAF and ALAC files to device output, and AAC-LC (in
 //! MP4), MP3 (MP2, MP1) and Ogg Vorbis files decoded to 24 bits, gapless.
 //!
 //! # Layers
@@ -8,8 +8,8 @@
 //!   (requantizing lossy, floating-point and 32-bit samples once, with
 //!   dither), seeks to an exact frame, and reads tags and the cover.
 //! - [`rate`]: the pure rate policy, [`rate::choose_route`]: from the file,
-//!   the device's exclusive [`jodel_output::Capabilities`] and the
-//!   [`Settings`] to a [`Route`] (output rate, channels, format), or a [`NoRoute`] that says why nothing fits. A bit-perfect
+//!   the device's [`jodel_output::Capabilities`] and the
+//!   [`Settings`] to a [`Route`] (output rate, channels, format), or a [`NoRoute`] that says why nothing fits. A lossless
 //!   route always wins; when there is none, the route can gain a
 //!   [`Resample`] step (unless [`Settings::resample`] is off).
 //! - [`resample`]: the [`Resampler`], a rational polyphase FIR in `f64`
@@ -77,7 +77,7 @@ pub mod warp;
 pub use desk::StemDesk;
 pub use engine::{
     ratio_of, Command, Event, Head, HeadFaders, JumpAt, MakeStems, PlayState, Player,
-    PlayerOptions, Position, TrackStart, KEY_RANGE, OPEN_BUSY_WAIT,
+    PlayerOptions, Position, TrackStart, KEY_RANGE,
 };
 pub use error::Error;
 pub use rate::{

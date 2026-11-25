@@ -1,13 +1,13 @@
-//! Linux: ALSA capture.
-//!
-//! A microphone needs no bit-perfect path, so inputs go through ALSA's
-//! plugins: `default` (the sound server, where there is one) and every
-//! capture device as `plughw:CARD=<id>,DEV=<n>`. A stream opens with
-//! ALSA's resampling off where the device allows it, so it runs at a rate
-//! the hardware has (48 kHz, or the nearest), in 32-bit float where the
-//! plugin converts, 2 channels or fewer, with a period of about 5 ms. A
-//! thread of its own reads it period by period into the microphone ring.
+//! Linux: ALSA capture from `default`, as the output plays to it
+//! ([`super::alsa_output`]): the sound server's default source, chosen in
+//! the system's sound settings (ALSA's own `dsnoop` where no server runs).
+//! No `plughw:` or `hw:` device is opened, so the microphone stays the
+//! other applications' too (a call's, say). A stream runs at the server's
+//! rate (48 kHz, or the nearest), in 32-bit float where the PCM takes it,
+//! 2 channels or fewer, with a period of about 5 ms. A thread of its own
+//! reads it period by period into the microphone ring.
 
+use super::alsa_output::{map_error, open_pcm, DEFAULT, SERVER_RATE};
 use crate::device::Device;
 use crate::error::Error;
 use crate::input::{Input, InputInfo, MicShared, Mono, Producer, Wire, CAPTURE_PERIOD};
@@ -18,58 +18,16 @@ use std::sync::{mpsc, Arc};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
-pub(crate) const INPUT_BACKEND: &str = "ALSA";
+pub(crate) const INPUT_BACKEND: &str = "ALSA default (shared)";
 
-const ENOENT: i32 = 2;
 const EAGAIN: i32 = 11;
-const EBUSY: i32 = 16;
-const ENODEV: i32 = 19;
-
-fn map_error(call: &'static str, e: alsa::Error) -> Error {
-    match e.errno() {
-        EBUSY => Error::DeviceBusy,
-        ENODEV => Error::DeviceLost,
-        errno => Error::Backend {
-            call,
-            code: -i64::from(errno),
-            message: e.to_string(),
-        },
-    }
-}
 
 pub(crate) fn input_devices() -> Result<Vec<Device>, Error> {
-    let mut out = vec![Device {
-        id: "default".into(),
-        name: "Default input".into(),
+    Ok(vec![Device {
+        id: DEFAULT.into(),
+        name: "Default input (the system's)".into(),
         is_default: true,
-    }];
-    for card in alsa::card::Iter::new() {
-        let card = card.map_err(|e| map_error("snd_card_next", e))?;
-        let Ok(ctl) = alsa::Ctl::from_card(&card, false) else {
-            continue;
-        };
-        let Ok(info) = ctl.card_info() else {
-            continue;
-        };
-        let card_id = info.get_id().unwrap_or_default().to_owned();
-        let card_name = info.get_name().unwrap_or_default().to_owned();
-        for dev in alsa::ctl::DeviceIter::new(&ctl) {
-            let Ok(pcm) = ctl.pcm_info(dev as u32, 0, Direction::Capture) else {
-                continue;
-            };
-            let pcm_name = pcm.get_name().unwrap_or_default();
-            out.push(Device {
-                id: format!("plughw:CARD={card_id},DEV={dev}"),
-                name: if pcm_name.is_empty() {
-                    card_name.clone()
-                } else {
-                    format!("{card_name}: {pcm_name}")
-                },
-                is_default: false,
-            });
-        }
-    }
-    Ok(out)
+    }])
 }
 
 struct Config {
@@ -96,10 +54,8 @@ fn configure(pcm: &PCM) -> Result<Config, Error> {
     .map(|(_, w)| w)
     .ok_or_else(|| Error::Unsupported("the input takes no PCM format we read".into()))?;
     let channels = hwp.set_channels_near(2).map_err(err("set_channels_near"))?;
-    // The hardware's own rate where the plugin lets us ask for it.
-    let _ = hwp.set_rate_resample(false);
     let rate = hwp
-        .set_rate_near(48_000, ValueOr::Nearest)
+        .set_rate_near(SERVER_RATE, ValueOr::Nearest)
         .map_err(err("set_rate_near"))?;
     let period = (u64::from(rate) * CAPTURE_PERIOD.as_micros() as u64 / 1_000_000).max(16);
     hwp.set_period_size_near(period as Frames, ValueOr::Nearest)
@@ -181,12 +137,7 @@ pub(crate) fn open_input(id: &str, mono: Mono) -> Result<Input, Error> {
     let thread = std::thread::Builder::new()
         .name("jodel-input-alsa".into())
         .spawn(move || {
-            // Non-blocking, so the thread sees a stop within its wait.
-            let opened = PCM::new(&id_owned, Direction::Capture, true)
-                .map_err(|e| match e.errno() {
-                    ENOENT | ENODEV => Error::DeviceNotFound(id_owned.clone()),
-                    _ => map_error("snd_pcm_open", e),
-                })
+            let opened = open_pcm(&id_owned, Direction::Capture)
                 .and_then(|pcm| configure(&pcm).map(|c| (pcm, c)));
             match opened {
                 Ok((pcm, config)) => {

@@ -372,7 +372,7 @@ mod tests {
     fn the_songs_blocks_left_at_the_start_are_left_out() {
         let (mixer, strip) = {
             let target = jodel_playback::NullTarget::new(
-                jodel_playback::any_capabilities(),
+                jodel_playback::any_capabilities(48_000),
                 jodel_output::SimClock::Realtime,
             );
             let mixer = Mixer::open(Box::new(target), Default::default());

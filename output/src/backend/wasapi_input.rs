@@ -30,7 +30,7 @@ use windows::Win32::Media::Multimedia::{KSDATAFORMAT_SUBTYPE_IEEE_FLOAT, WAVE_FO
 use windows::Win32::System::Com::CoTaskMemFree;
 use windows::Win32::System::Threading::WaitForMultipleObjects;
 
-pub(crate) const INPUT_BACKEND: &str = "WASAPI shared";
+pub(crate) const INPUT_BACKEND: &str = "WASAPI (shared)";
 
 pub(crate) fn input_devices() -> Result<Vec<Device>, Error> {
     endpoints(eCapture)

@@ -18,7 +18,6 @@
 use std::time::{Duration, Instant};
 
 use jodel_output::mixer::Fader;
-use jodel_output::Capabilities;
 
 use super::along::PendingAlong;
 use super::jump::{JumpFill, PendingJump};
@@ -63,7 +62,6 @@ pub(super) struct HeadState {
     pub(super) target: Box<dyn OutputTarget>,
     /// Its input's own fader, on a desk (`None` on a plain target).
     pub(super) fader: Option<Fader>,
-    pub(super) caps: Option<Capabilities>,
     pub(super) out: Option<OpenOutput>,
     /// The playing track's stems as parts of the output.
     pub(super) lanes: StemLanes,
@@ -88,17 +86,11 @@ pub(super) struct HeadState {
 }
 
 impl HeadState {
-    pub(super) fn new(
-        id: usize,
-        target: Box<dyn OutputTarget>,
-        caps: Option<Capabilities>,
-        lanes: StemLanes,
-    ) -> HeadState {
+    pub(super) fn new(id: usize, target: Box<dyn OutputTarget>, lanes: StemLanes) -> HeadState {
         HeadState {
             id,
             target,
             fader: None,
-            caps,
             out: None,
             lanes,
             playing: None,
@@ -132,7 +124,7 @@ impl Engine {
     /// input whose fader is `first`, and `second` is the other head.
     pub(super) fn with_heads(mut self, first: Fader, second: Head) -> Engine {
         self.head.fader = Some(first);
-        let mut parked = HeadState::new(1, second.target, None, self.head.lanes.sibling());
+        let mut parked = HeadState::new(1, second.target, self.head.lanes.sibling());
         parked.fader = Some(second.faders.input);
         self.desk = Some(Box::new(parked));
         self

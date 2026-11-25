@@ -1,5 +1,5 @@
 //! Sample-rate conversion, for the routes where no rate the device takes
-//! carries the stream bit-perfect.
+//! carries the stream losslessly.
 //!
 //! [`Resampler`] is a synchronous rational polyphase FIR: the rate changes
 //! by `up / down`, the exact ratio of the two rates reduced by their

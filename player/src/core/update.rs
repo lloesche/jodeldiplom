@@ -16,10 +16,10 @@ use crate::core::text;
 use crate::core::transition::Preset;
 use crate::core::transition::{draft, jump, tab, viewport};
 use crate::core::{
-    Action, Click, DeviceChoice, DeviceVolume, Effect, Facts, Filter, FolderPick, FolderRow, Gpu,
-    Heard, Job, Level, Message, NowTrack, Palette, Placing, Rhythm, RhythmRecipe, Screen, Search,
-    SettingsRow, Side, State, VolumeChange, WalkPurpose, DOUBLE_CLICK_MS, MESSAGE_MS, RHYTHM_AHEAD,
-    SEEK_STEP, SETTINGS_DELAY_MS, TYPE_AHEAD_MS,
+    Action, Click, DeviceChoice, Effect, Facts, Filter, FolderPick, FolderRow, Gpu, Heard, Job,
+    Level, Message, NowTrack, Palette, Placing, Rhythm, RhythmRecipe, Screen, Search, SettingsRow,
+    Side, State, WalkPurpose, DOUBLE_CLICK_MS, MESSAGE_MS, RHYTHM_AHEAD, SEEK_STEP,
+    SETTINGS_DELAY_MS, TYPE_AHEAD_MS,
 };
 
 /// One row of the browser side of the list.
@@ -551,11 +551,6 @@ pub fn update(state: &mut State, action: Action) -> Vec<Effect> {
             }
             if state.settings_due.is_some_and(|due| due <= now) {
                 send_settings(state, &mut fx);
-                // Another rate in force: the device opens again at it,
-                // once, the steps through the rates over.
-                if state.opened_rate != Some(state.output_rate()) {
-                    fx.push(Effect::ReopenOutput);
-                }
             }
             check_details = false;
         }
@@ -628,17 +623,7 @@ pub fn update(state: &mut State, action: Action) -> Vec<Effect> {
                 );
             }
         },
-        Action::DeviceRates(rates) => device_rates(state, rates),
-        Action::OutputOpened(rate) => state.opened_rate = rate,
-        Action::Engine(event) => {
-            // A track starting (the device opened, or kept) shows the
-            // device's volume as it is.
-            if matches!(event, Event::TrackStarted(_)) && !state.null_output {
-                fx.push(Effect::DeviceVolume(VolumeChange::Read));
-            }
-            engine_event(state, event)
-        }
-        Action::DeviceVolume { result, changed } => device_volume(state, result, changed),
+        Action::Engine(event) => engine_event(state, event),
         Action::Rhythm(path, recipe, result) => {
             // Only for a file still wanted, by the recipe in force.
             if state.rhythm_wanted.contains(&path) && recipe == state.rhythm_recipe {
@@ -1358,12 +1343,6 @@ fn settings_step(state: &mut State, step: i32, fx: &mut Vec<Effect>) {
             }
             return;
         }
-        SettingsRow::Rate => {
-            // Through the rates the device takes; it opens again at the
-            // one chosen once the steps pause ([`send_settings`]'s turn).
-            let rate = cycle(&state.rates(), state.output_rate(), step);
-            state.config.set_rate(rate);
-        }
         SettingsRow::Resample => config.resample = !config.resample,
         SettingsRow::Headroom => config.headroom = cycle(&Headroom::CHOICES, config.headroom, step),
         // The tempo rows are not the engine's: saved, not sent.
@@ -1628,30 +1607,6 @@ pub fn readiness(state: &State, path: &Path) -> Readiness {
     }
 }
 
-/// The device's rates (in stereo) arrived: where it does not take the rate
-/// set, a message says which it runs at ([`State::output_rate`]).
-fn device_rates(state: &mut State, rates: Option<Vec<u32>>) {
-    state.device_rates = rates.map(|mut rates| {
-        rates.sort_unstable();
-        rates.dedup();
-        rates
-    });
-    let (set, used) = (state.config.rate(), state.output_rate());
-    if state.device_rates.is_none() || set == used {
-        return;
-    }
-    let device = state.device_label();
-    say(
-        state,
-        Level::Info,
-        format!(
-            "{device} does not take {} kHz: it runs at {} kHz",
-            text::khz_short(set),
-            text::khz_short(used)
-        ),
-    );
-}
-
 fn choose_device(state: &mut State, fx: &mut Vec<Effect>) {
     let Some(choice) = state
         .settings
@@ -1676,41 +1631,7 @@ fn choose_device(state: &mut State, fx: &mut Vec<Effect>) {
         );
     } else {
         say(state, Level::Info, format!("Playing on {}", choice.name));
-        state.device_volume = None;
         fx.push(Effect::SwitchDevice(choice.id));
-    }
-}
-
-/// The device's volume control as read or set ([`Action::DeviceVolume`]):
-/// kept for the signal path; a change by a key is said.
-fn device_volume(state: &mut State, result: Result<Option<DeviceVolume>, String>, changed: bool) {
-    match result {
-        Ok(Some(volume)) => {
-            state.device_volume = Some(volume);
-            if changed {
-                say(
-                    state,
-                    Level::Info,
-                    format!("Device volume {}", volume.label()),
-                );
-            }
-        }
-        Ok(None) => {
-            state.device_volume = None;
-            if changed {
-                let text = if state.null_output {
-                    "The null output has no volume"
-                } else {
-                    "The system's volume keys set this device's volume"
-                };
-                say(state, Level::Info, text);
-            }
-        }
-        Err(error) => {
-            if changed {
-                say(state, Level::Error, format!("Device volume: {error}"));
-            }
-        }
     }
 }
 
@@ -1896,8 +1817,13 @@ fn apply_op(state: &mut State, op: Op, fx: &mut Vec<Effect>) {
         Op::AllStems => super::stems::reset(state, fx),
         Op::JumpBar(offset) => jump::jump_bar(state, isize::from(offset), false, fx),
         Op::JumpBarAtEnd(offset) => jump::jump_bar(state, isize::from(offset), true, fx),
-        Op::VolumeUp => fx.push(Effect::DeviceVolume(VolumeChange::Step(1))),
-        Op::VolumeDown => fx.push(Effect::DeviceVolume(VolumeChange::Step(-1))),
+        Op::VolumeUp | Op::VolumeDown => {
+            let by = if op == Op::VolumeUp { 1.0 } else { -1.0 };
+            let db = super::desk::taper::step(state.desk.volume, by);
+            super::desk::set_volume(state, db, fx);
+            let volume = super::desk::taper::label(state.desk.volume);
+            say(state, Level::Info, format!("Volume {volume}"));
+        }
         Op::ToggleBpm => {
             state.config.bpm = !state.config.bpm;
             let what = if state.config.bpm { "on" } else { "off" };
@@ -2204,7 +2130,6 @@ fn engine_event(state: &mut State, event: Event) {
                 route: start.route,
                 output: start.output,
                 device: start.device,
-                bit_perfect: start.bit_perfect,
             });
             playing.position = at;
             playing.clipped = 0;

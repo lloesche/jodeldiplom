@@ -254,7 +254,6 @@ fn negotiation_follows_the_preference_and_refuses_other_rates() {
         out.format(),
         StreamFormat::new(96_000, 2, SampleFormat::S24Packed)
     );
-    assert!(!out.info().exclusive);
     for request in [OpenRequest::new(88_200, 2), OpenRequest::new(96_000, 1)] {
         assert!(matches!(
             FileOutput::open(std::io::sink(), &caps, &request, SimClock::Instant),

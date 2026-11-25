@@ -15,12 +15,12 @@ use std::time::{Duration, Instant};
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct OpenRequest {
     /// Frames per second. The device is opened at exactly this rate or not
-    /// at all.
+    /// at all (a shared device takes only the system's mix rate).
     pub rate: u32,
     /// Samples per frame.
     pub channels: u16,
     /// Formats to try, most wanted first; the first one the device accepts
-    /// exclusively is used. Defaults to [`SampleFormat::PREFERENCE`].
+    /// is used. Defaults to [`SampleFormat::PREFERENCE`].
     pub formats: Vec<SampleFormat>,
     /// The device period to ask for (WASAPI buffer duration, ALSA period,
     /// Core Audio IO buffer). The device may round it, and never goes below
@@ -107,6 +107,14 @@ impl OpenRequest {
         Ok(())
     }
 
+    /// Whether this request opens at `format`: its rate and channels, in a
+    /// format it lists (a shared device takes its one format only).
+    pub(crate) fn takes(&self, format: StreamFormat) -> bool {
+        format.rate == self.rate
+            && format.channels == self.channels
+            && self.formats.contains(&format.sample)
+    }
+
     pub(crate) fn validate(&self) -> Result<(), Error> {
         if self.rate == 0 || self.channels == 0 {
             return Err(Error::InvalidArgument(
@@ -141,24 +149,14 @@ pub struct StreamInfo {
     pub format: StreamFormat,
     /// Which backend plays it.
     pub backend: &'static str,
-    /// Whether the device is held exclusively (bit-perfect path). Test
-    /// outputs say `false`.
-    pub exclusive: bool,
-    /// The device buffer (one period) in frames.
+    /// The device buffer (one period) in frames, as it was opened.
     pub device_buffer_frames: u64,
-    /// The latency the device adds after its buffer, as it reports it.
-    pub device_latency: Duration,
     /// The ring length in frames.
     pub ring_frames: u64,
     /// The device plays in real time, on a clock of its own: it takes
     /// frames as it plays them, ready or not. A file or a test's memory
     /// takes what it is given at once (or when told), and says `false`.
     pub realtime: bool,
-    /// The device's IO boundary takes 32-bit float (Core Audio, when its
-    /// virtual format is not integer). The samples are converted exactly:
-    /// every 24-bit value is a float the device turns back into the same
-    /// integer.
-    pub float_io: bool,
 }
 
 /// Counters since the output was opened.
@@ -298,7 +296,7 @@ pub trait OutputTarget: Send {
     /// A name for people (the device name).
     fn name(&self) -> String;
 
-    /// What it accepts exclusively.
+    /// What it accepts.
     fn capabilities(&mut self) -> Result<Capabilities, Error>;
 
     /// Opens an output for `request`.

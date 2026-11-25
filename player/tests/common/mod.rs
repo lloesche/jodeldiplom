@@ -165,16 +165,18 @@ pub fn now_track(rate: u32, settings: Settings, index: usize) -> NowTrack {
             origin: CoverOrigin::Embedded,
         }),
     };
-    let route = choose_route(&FileFacts::from(&info), &any_capabilities(), &settings).unwrap();
+    let route = choose_route(
+        &FileFacts::from(&info),
+        &any_capabilities(info.rate),
+        &settings,
+    )
+    .unwrap();
     let output = StreamInfo {
         format: StreamFormat::new(route.output_rate, 2, SampleFormat::S24In32),
         backend: "null",
-        exclusive: true,
         device_buffer_frames: 4_096,
-        device_latency: Duration::ZERO,
         ring_frames: 65_536,
         realtime: true,
-        float_io: false,
     };
     NowTrack {
         index,
@@ -182,7 +184,6 @@ pub fn now_track(rate: u32, settings: Settings, index: usize) -> NowTrack {
         route,
         output,
         device: "USB Audio DAC".into(),
-        bit_perfect: true,
     }
 }
 
@@ -540,12 +541,9 @@ pub fn fill_desk(state: &mut State, rate: u32) {
             stream: Some(StreamInfo {
                 format,
                 backend: "WASAPI",
-                exclusive: true,
                 device_buffer_frames: 960,
-                device_latency: Duration::ZERO,
                 ring_frames: 65_536,
                 realtime: true,
-                float_io: false,
             }),
             timebase: Timebase {
                 epoch: 1,

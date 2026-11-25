@@ -26,17 +26,23 @@ impl StemDesk {
     /// the stem's name; and a head on them in `role` at `gain`, for a
     /// player with one ([`crate::Player::new`] on its target).
     pub fn new(mixer: &Mixer, name: &str, role: Role, gain: f64) -> (StemDesk, Head) {
-        let desk = StemDesk::strips(mixer, name);
+        let desk = StemDesk::strips(mixer, None, name);
         let head = desk.head(mixer, role, gain);
         (desk, head)
     }
 
-    /// The same strips, and two heads on them for one player
+    /// The same strips (the group in `parent`, where given), and two heads
+    /// on them for one player
     /// ([`crate::Player::on_desk`]), each a lane input at `gain`: the first
     /// the desk's Lead, the second a guest (a transition's next track; the
     /// two swap roles at each hand-over, their faders stay each input's).
-    pub fn two_heads(mixer: &Mixer, name: &str, gain: f64) -> (StemDesk, Head, Head) {
-        let desk = StemDesk::strips(mixer, name);
+    pub fn two_heads(
+        mixer: &Mixer,
+        parent: Option<&Strip>,
+        name: &str,
+        gain: f64,
+    ) -> (StemDesk, Head, Head) {
+        let desk = StemDesk::strips(mixer, parent, name);
         let lead = desk.head(mixer, Role::Lead, gain);
         let guest = desk.head(mixer, Role::Guest, gain);
         (desk, lead, guest)
@@ -53,9 +59,13 @@ impl StemDesk {
         }
     }
 
-    /// The group named `name` on `mixer` and a strip in it for each stem.
-    fn strips(mixer: &Mixer, name: &str) -> StemDesk {
-        let group = mixer.strip(name);
+    /// The group named `name` on `mixer` (in `parent`, where given) and a
+    /// strip in it for each stem.
+    fn strips(mixer: &Mixer, parent: Option<&Strip>, name: &str) -> StemDesk {
+        let group = match parent {
+            Some(parent) => mixer.strip_in(parent, name),
+            None => mixer.strip(name),
+        };
         let stems = LANES
             .iter()
             .map(|s| mixer.strip_in(&group, s.id()))

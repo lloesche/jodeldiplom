@@ -82,7 +82,7 @@ fn alt_enter_plays_the_folder_through_the_null_output() {
     // Resampled to the rate the device runs at (48 kHz).
     assert_eq!(
         path_text(&app),
-        "file 44.1 → resample 48 (160/147) → null output (not exclusive), not bit-perfect"
+        "file 44.1 → resample 48 (160/147) → null output"
     );
     // The cover is the folder's cover.png.
     assert!(common::wait_for(&mut app, WAIT, |a| a.art().is_some()));
@@ -384,7 +384,7 @@ fn a_file_argument_plays_at_once_and_settings_are_saved() {
     let tree = common::music_tree("autoplay");
     let config_file = tree.root.join("settings").join("config.toml");
     std::fs::create_dir_all(config_file.parent().unwrap()).unwrap();
-    std::fs::write(&config_file, "rate.\"default\" = 96000\n").unwrap();
+    std::fs::write(&config_file, "resample = true\n").unwrap();
     let mut options = options(&tree);
     options.autoplay = Some(tree.album.join("02 Ramp 48.flac"));
     options.config_file = Some(config_file.clone());
@@ -407,21 +407,18 @@ fn a_file_argument_plays_at_once_and_settings_are_saved() {
     // The whole folder is queued, from the file given.
     assert_eq!(track.index, 1);
     assert!(track.info.path.ends_with("02 Ramp 48.flac"));
-    // Resampled to the rate the device runs at, the one set.
-    assert_eq!(track.route.output_rate, 96_000);
-    assert!(track.route.resample.is_some());
+    // At the rate the device runs at, as it is.
+    assert_eq!(track.route.output_rate, 48_000);
+    assert!(track.route.resample.is_none());
     assert_eq!(app.state.queue.paths.len(), 4);
-    // Settings: the device's rate a step up is saved (and the device
-    // opens again at it after the pause); the headroom from the command
-    // line is not.
+    // Settings: resampling turned off is saved; the headroom from the
+    // command line is not.
     app.dispatch(Action::Op(Op::Settings));
     assert_eq!(app.state.screen, Screen::Settings);
-    let rates = app.state.rates();
-    let up = rates[rates.iter().position(|&r| r == 96_000).unwrap() + 1];
     app.dispatch(Action::SettingsClick(1, 1));
-    assert_eq!(app.state.config.rate(), up);
+    assert!(!app.state.config.resample);
     let (saved, _) = Config::load(&config_file).unwrap();
-    assert_eq!(saved.rate(), up);
+    assert!(!saved.resample);
     assert_eq!(saved.headroom, Headroom::NONE);
     // Every setting changed in the player is saved: the Transition tab's preset
     // and lyrics, the Karaoke tab's voice level.
@@ -534,33 +531,6 @@ fn the_session_and_saved_queues_come_back() {
     assert_eq!(app.state.queue.paths, queued);
     app.shutdown();
     let _ = std::fs::remove_dir_all(&keep);
-}
-
-/// alt+↑ / alt+↓ move the volume of the device the engine plays on (its
-/// id), not the system default looked up anew: on macOS that can name
-/// another device or none while the player hogs its own.
-#[test]
-fn the_device_volume_moves_the_device_playing() {
-    let _guard = common::real_time();
-    use jodeldiplom::app::volume_device;
-    let default = Output::Device(None);
-    let named = Output::Device(Some("USB DAC".into()));
-    assert_eq!(
-        volume_device(&default, Some("BuiltInSpeakerDevice")),
-        Some(Some("BuiltInSpeakerDevice".into()))
-    );
-    assert_eq!(
-        volume_device(&named, Some("AppleUSBAudioEngine:DAC")),
-        Some(Some("AppleUSBAudioEngine:DAC".into()))
-    );
-    // Before the engine has found a device: the one asked for.
-    assert_eq!(volume_device(&default, None), Some(None));
-    assert_eq!(volume_device(&named, None), Some(Some("USB DAC".into())));
-    // The null output has none.
-    assert_eq!(
-        volume_device(&Output::Null(SimClock::Realtime), Some("x")),
-        None
-    );
 }
 
 /// No separator: the stems are never made (a transition fades its tracks

@@ -1,19 +1,18 @@
 //! Where the engine plays to: a device, memory, nowhere, or a mixer's input
 //! ([`jodel_output::mixer::InputTarget`], several players on one device).
 //!
-//! The engine asks an [`OutputTarget`] for its exclusive
-//! [`Capabilities`] (once, for the rate policy) and opens one
-//! [`Output`] per stream format it needs.
+//! The engine asks an [`OutputTarget`] for its [`Capabilities`] (once, for
+//! the rate policy) and opens one [`Output`] per stream format it needs.
 
 use std::sync::{Arc, Mutex};
 
 pub use jodel_output::OutputTarget;
 use jodel_output::{
     Capabilities, Error, FileOutput, MemorySink, NullOutput, OpenRequest, Output, SampleFormat,
-    SimClock, StreamFormat, PROBE_RATES,
+    SimClock, StreamFormat,
 };
 
-/// A real output device, opened exclusively through `jodel-output`.
+/// A real output device, opened shared through `jodel-output`.
 pub struct DeviceTarget {
     device: jodel_output::Device,
 }
@@ -38,8 +37,11 @@ impl OutputTarget for DeviceTarget {
         self.device.name.clone()
     }
 
+    /// Its one format, asked anew each time (it is the system's).
     fn capabilities(&mut self) -> Result<Capabilities, Error> {
-        jodel_output::capabilities(&self.device.id)
+        Ok([jodel_output::mix_format(&self.device.id)?]
+            .into_iter()
+            .collect())
     }
 
     fn open(&mut self, request: &OpenRequest) -> Result<Box<dyn Output>, Error> {
@@ -47,16 +49,13 @@ impl OutputTarget for DeviceTarget {
     }
 }
 
-/// Every rate of [`PROBE_RATES`] plus the common rates below them, 1 to 8
-/// channels, every format: what a stand-in that "takes anything" reports.
-pub fn any_capabilities() -> Capabilities {
+/// Every format at 1 to 8 channels, at `rate`: what a stand-in for a
+/// device the system runs at `rate` reports (a device offers one rate).
+pub fn any_capabilities(rate: u32) -> Capabilities {
     let mut caps = Capabilities::new();
-    let extra = [8_000, 11_025, 16_000, 22_050, 24_000, 32_000];
-    for rate in extra.into_iter().chain(PROBE_RATES) {
-        for channels in 1..=8 {
-            for sample in SampleFormat::ALL {
-                caps.insert(StreamFormat::new(rate, channels, sample));
-            }
+    for channels in 1..=8 {
+        for sample in SampleFormat::ALL {
+            caps.insert(StreamFormat::new(rate, channels, sample));
         }
     }
     caps

@@ -427,10 +427,7 @@ fn wide_pcm_is_requantized_once_and_exact_where_it_fits() {
         &Settings::default(),
     )
     .unwrap();
-    assert!(
-        !route.lossless,
-        "32-bit files are not bit-perfect at 24 bits"
-    );
+    assert!(!route.lossless, "32-bit files are not lossless at 24 bits");
     assert_eq!(route.decoded_from, None);
 
     // Real 32-bit detail: dithered to 24 bits, within the dither's reach,
@@ -497,7 +494,7 @@ fn started(events: &[Event]) -> Vec<&jodel_playback::TrackStart> {
 }
 
 #[test]
-fn lossy_tracks_play_gaplessly_and_never_bit_perfect() {
+fn lossy_tracks_play_gaplessly_and_never_lossless() {
     let mp3 = format_fixture("lossy.mp3");
     let ogg = format_fixture("lossy.ogg");
     let aac = format_fixture("aac.m4a");
@@ -520,7 +517,6 @@ fn lossy_tracks_play_gaplessly_and_never_bit_perfect() {
     let starts = started(&seen);
     assert_eq!(starts.len(), 5);
     for start in &starts {
-        assert!(!start.bit_perfect);
         assert!(!start.route.lossless);
     }
     assert_eq!(starts[0].route.decoded_from, Some("MP3"));

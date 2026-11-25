@@ -99,7 +99,10 @@ impl Output {
     /// on (none for the null and the memory ones); why there is none.
     pub(crate) fn target(&self) -> Result<(Box<dyn OutputTarget>, Option<String>), String> {
         Ok(match self {
-            Output::Null(clock) => (Box::new(NullTarget::new(any_capabilities(), *clock)), None),
+            Output::Null(clock) => (
+                Box::new(NullTarget::new(any_capabilities(48_000), *clock)),
+                None,
+            ),
             Output::Memory(memory) => (Box::new(memory.memory()), None),
             Output::Device(query) => {
                 let target = DeviceTarget::find(query.as_deref().unwrap_or("default"))
@@ -127,6 +130,9 @@ pub(crate) struct Engine {
     heads: [HeadFaders; 2],
     /// The desk's strips ([`StripKind::index`]), the Mixer tab's faders.
     strips: Vec<Strip>,
+    /// The group every strip is in: its level is the player's own volume
+    /// ([`crate::core::desk::DeskState::volume`]).
+    main: Strip,
     /// The microphone's port as last told.
     pub(crate) mic: MicView,
     /// The karaoke game's sounds, and the effects input they play on (on
@@ -140,20 +146,18 @@ pub(crate) struct Engine {
 
 impl Engine {
     /// The mixer on `target` (which takes `capabilities`), its device
-    /// opened at once at `rate` (or what it falls back to), its strips, and
-    /// the engine on the player's two heads with `options`, routing every
-    /// track to the desk's one format; the engine's events.
+    /// opened at once at the system's mix rate, its strips, and the engine
+    /// on the player's two heads with `options`, routing every track to the
+    /// desk's one format; the engine's events.
     pub(crate) fn start(
         target: Box<dyn OutputTarget>,
         capabilities: Option<Capabilities>,
-        rate: u32,
         options: PlayerOptions,
     ) -> (Engine, Receiver<Event>) {
         let mixer = Mixer::open(
             target,
             MixerOptions {
                 capabilities,
-                rate,
                 ..MixerOptions::default()
             },
         );
@@ -162,13 +166,15 @@ impl Engine {
         let tap = SpectrumTap::new(1 << 19);
         mixer.set_monitor(Some(Box::new(tap.clone())));
         // The player's group and its stems' strips, and the preview's: by
-        // kind ([`StripKind::index`]).
-        let (desk, lead, guest) = StemDesk::two_heads(&mixer, StripKind::Player.name(), 1.0);
+        // kind ([`StripKind::index`]), all in the main group.
+        let main = mixer.strip("Main");
+        let (desk, lead, guest) =
+            StemDesk::two_heads(&mixer, Some(&main), StripKind::Player.name(), 1.0);
         let strips = StripKind::ALL
             .map(|kind| match (kind, kind.stem()) {
                 (StripKind::Player, _) => desk.group.clone(),
                 (_, Some(stem)) => desk.stem(stem).clone(),
-                _ => mixer.strip(kind.name()),
+                _ => mixer.strip_in(&main, kind.name()),
             })
             .to_vec();
         let heads = [lead.faders.clone(), guest.faders.clone()];
@@ -179,6 +185,7 @@ impl Engine {
             player,
             heads,
             strips,
+            main,
             mic: MicView::default(),
             sfx: crate::sfx::Sfx::default(),
             effects,
@@ -203,6 +210,7 @@ impl Engine {
     pub(crate) fn apply(&self, change: DeskChange) {
         match change {
             DeskChange::Level(kind, gain) => self.strip(kind).set_level(gain),
+            DeskChange::Volume(gain) => self.main.set_level(gain),
             DeskChange::Mute(kind, on) => self.strip(kind).set_mute(on),
             DeskChange::MuteAt(kind, on, at) => {
                 // On that frame of that head's output, as it plays now (at

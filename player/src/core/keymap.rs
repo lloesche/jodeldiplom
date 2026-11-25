@@ -411,8 +411,8 @@ impl Op {
             Op::ToggleVocals => "Stems: vocals on / off",
             Op::ToggleOther => "Stems: other on / off",
             Op::AllStems => "Stems: all on (the file as it is)",
-            Op::VolumeUp => "Device volume: up",
-            Op::VolumeDown => "Device volume: down",
+            Op::VolumeUp => "Volume: up",
+            Op::VolumeDown => "Volume: down",
             Op::TransitionBarBack => "Transition: a bar back",
             Op::TransitionBarForward => "Transition: a bar on",
             Op::TransitionBeatBack => "Transition: a beat back",
@@ -752,7 +752,7 @@ pub const KEYMAP: &[Binding] = &[
         Context::Global,
         &[Key::alt('1')],
         Op::ToggleDrums,
-        "stems: drums on / off (any off: not bit-perfect)",
+        "stems: drums on / off (any off: the stems are heard, not the file)",
     ),
     b(
         Context::Global,
@@ -1353,7 +1353,7 @@ pub const KEYMAP: &[Binding] = &[
         Context::Desk,
         &[UP],
         Op::Up,
-        "the fader 1 dB up (the master: the device's own volume a step up)",
+        "the fader 1 dB up (the master: the player's volume, up to 0 dB)",
     ),
     b(
         Context::Desk,
@@ -1377,7 +1377,7 @@ pub const KEYMAP: &[Binding] = &[
         Context::Desk,
         &[Key::plain(K::Home)],
         Op::Top,
-        "the fader to 0 dB: nothing added, bit-perfect again",
+        "the fader to 0 dB: nothing added",
     ),
     b(
         Context::Desk,

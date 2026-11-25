@@ -11,10 +11,10 @@
 //! reads only and changes nothing.
 //!
 //! `--tone <device>` (`default`, an id or part of a name) then opens that
-//! device exclusively as the player does (48 kHz stereo), plays a 1 kHz
-//! tone at −20 dBFS for three seconds, and prints the opened format,
-//! whether samples cross the IO boundary as float, the stream's formats
-//! and the volume controls while it is held.
+//! device shared as the player does (stereo, at the device's nominal
+//! rate), plays a 1 kHz tone at −20 dBFS for three seconds, and prints the
+//! opened format, the stream's formats and the volume controls while it
+//! plays.
 
 #[cfg(target_os = "macos")]
 fn main() {
@@ -31,7 +31,7 @@ fn main() {
 
 #[cfg(target_os = "macos")]
 mod mac {
-    use jodel_output::{find_device, open, OpenRequest, Output};
+    use jodel_output::{find_device, mix_format, open, OpenRequest, Output};
     use objc2_core_audio::{
         kAudioDevicePropertyDeviceUID, kAudioDevicePropertyHogMode, kAudioDevicePropertyStreams,
         kAudioDevicePropertySupportsMixing, kAudioHardwarePropertyDevices,
@@ -351,22 +351,16 @@ mod mac {
         };
         let query = args.get(at + 1).map_or("default", String::as_str);
         let device = find_device(query)?;
-        let rate = 48_000;
-        let mut out = open(&device.id, &OpenRequest::new(rate, 2))?;
+        let format = mix_format(&device.id)?;
+        let rate = format.rate;
+        let mut out = open(&device.id, &OpenRequest::new(rate, format.channels))?;
         let info = out.info().clone();
         println!(
-            "tone on {}: opened {} via {}, samples to the device as {}",
-            device.name,
-            info.format,
-            info.backend,
-            if info.float_io {
-                "32-bit float (converted)"
-            } else {
-                "the opened integer format"
-            }
+            "tone on {}: opened {} via {}",
+            device.name, info.format, info.backend
         );
         if let Some(object) = find(&device.id) {
-            println!("while held:");
+            println!("while playing:");
             print_device(object);
         }
         // 1 kHz at −20 dBFS (a tenth of full scale), three seconds.

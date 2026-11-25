@@ -13,7 +13,7 @@
 │                                                              │
 ╰ /music/Album ────────────────────────────────────────────────╯
  ▶ Morning Light — The Ramps
- ○ PCM  file 44.1 → USB Audio DAC (exclusive), bit-perfect
+ ○ PCM  file 44.1 → USB Audio DAC
  0 dB
 
 

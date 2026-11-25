@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 rust-version = "1.85"
 license = "MIT"
-description = "Bit-perfect exclusive PCM output to audio devices (WASAPI, Core Audio HAL, ALSA hw)"
+description = "PCM output to audio devices through the system mixer, shared (WASAPI, Core Audio HAL, ALSA default)"
 
 [dependencies]
 # Every file written: whole or not at all, made durable.
@@ -22,6 +22,7 @@ features = [
   "Win32_System_Variant",
   "Win32_Devices_FunctionDiscovery",
   "Win32_UI_Shell_PropertiesSystem",
+  "Win32_System_Performance",
   "Win32_System_Threading",
   "Win32_Security",
 ]

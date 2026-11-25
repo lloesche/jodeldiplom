@@ -1,8 +1,8 @@
 //! `--diag`: what the player finds on this system, for a bug report. It
 //! reads only: the build and the system, the settings, where the caches
-//! are, every output device with what it takes exclusively and its own
-//! volume control, the GPU side (every adapter, whether the stem
-//! separator sets up on it, how long a chunk takes), and the last
+//! are, every output device with what it takes, the GPU side (every
+//! adapter, whether the stem separator sets up on it, how long a chunk
+//! takes), and the last
 //! analyses the player made (what was found, how long each part
 //! took), the microphones (the one karaoke uses listened to for two
 //! seconds) and where the speech model is. Nothing is played.
@@ -288,22 +288,9 @@ fn output() -> Vec<String> {
             if device.is_default { " (default)" } else { "" }
         ));
         lines.push(format!("  id: {}", device.id));
-        lines.push(match jodel_output::capabilities(&device.id) {
-            Ok(caps) => format!("  exclusive: {}", crate::app::capability_summary(&caps)),
-            Err(error) => format!("  exclusive: cannot probe: {error}"),
-        });
-        lines.push(match jodel_output::volume(&device.id) {
-            Ok(Some(v)) => format!(
-                "  own volume control: level {:.3}{}{}",
-                v.level,
-                v.db.map_or(String::new(), |db| format!(", {db:.1} dB")),
-                match v.muted {
-                    Some(true) => ", muted",
-                    _ => "",
-                }
-            ),
-            Ok(None) => "  own volume control: none the player sets (the system's keys do)".into(),
-            Err(error) => format!("  own volume control: cannot read: {error}"),
+        lines.push(match jodel_output::mix_format(&device.id) {
+            Ok(format) => format!("  takes: {}", crate::app::format_summary(format)),
+            Err(error) => format!("  takes: cannot be asked: {error}"),
         });
     }
     lines

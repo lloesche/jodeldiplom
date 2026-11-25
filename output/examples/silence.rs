@@ -1,16 +1,16 @@
-//! Plays digital silence (all-zero samples) through the exclusive path.
+//! Plays digital silence (all-zero samples) on a device, shared.
 //!
-//! `cargo run -p jodel-output --example silence -- <device> <rate> <seconds> [--controls]`
+//! `cargo run -p jodel-output --example silence -- <device> <seconds> [--controls]`
 //!
 //! `<device>` is `default`, a device id, or part of a device name (see the
-//! `devices` example). The stream is stereo, in the first format of the
-//! default preference list the device accepts. The example prints the
+//! `devices` example). The stream is in the device's mix format: stereo,
+//! at the rate the system runs the device at. The example prints the
 //! opened format, then the device position and latency as it plays, then
 //! the counters. With `--controls` it also pauses for 200 ms halfway,
 //! resumes, and flushes once near the end, checking the position each
 //! time.
 
-use jodel_output::{find_device, open, OpenRequest, Output};
+use jodel_output::{find_device, mix_format, open, OpenRequest, Output};
 use std::time::{Duration, Instant};
 
 fn main() {
@@ -24,27 +24,25 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let controls = args.iter().any(|a| a == "--controls");
     let positional: Vec<&String> = args.iter().filter(|a| !a.starts_with("--")).collect();
-    let [device, rate, seconds] = positional[..] else {
-        return Err("usage: silence <device> <rate> <seconds> [--controls]".into());
+    let [device, seconds] = positional[..] else {
+        return Err("usage: silence <device> <seconds> [--controls]".into());
     };
-    let rate: u32 = rate.parse()?;
     let seconds: f64 = seconds.parse()?;
     let device = find_device(device)?;
     println!("device: {} ({})", device.name, device.id);
 
     let t_open = Instant::now();
-    let mut out = open(&device.id, &OpenRequest::new(rate, 2))?;
+    let format = mix_format(&device.id)?;
+    let rate = format.rate;
+    let mut out = open(&device.id, &OpenRequest::new(rate, format.channels))?;
     let info = out.info().clone();
     println!(
-        "opened in {:?}: {} via {}, exclusive {}, device buffer {} frames, device latency {:?}, ring {} frames{}",
+        "opened in {:?}: {} via {}, device buffer {} frames, ring {} frames",
         t_open.elapsed(),
         info.format,
         info.backend,
-        info.exclusive,
         info.device_buffer_frames,
-        info.device_latency,
         info.ring_frames,
-        if info.float_io { ", float_io" } else { "" }
     );
 
     let total = (seconds * f64::from(rate)) as u64;

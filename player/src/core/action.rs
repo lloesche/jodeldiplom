@@ -302,14 +302,6 @@ pub enum Action {
     },
     /// The output devices were listed.
     Devices(Result<Vec<DeviceChoice>, String>),
-    /// The rates the output device takes exclusively, lowest first
-    /// (`None`: not known), probed when the engine starts on it. The
-    /// engine starts with [`crate::core::State::engine_settings`] after
-    /// this, so this sends nothing to it.
-    DeviceRates(Option<Vec<u32>>),
-    /// The rate the new mixer opened the output device at (`None`: none
-    /// open).
-    OutputOpened(Option<u32>),
     /// The playback engine reported something.
     Engine(Event),
     /// A file's beats were analysed by a recipe (or could not be).
@@ -349,15 +341,6 @@ pub enum Action {
         path: PathBuf,
         /// Which part.
         part: Heard,
-    },
-    /// The output device's volume control after [`Effect::DeviceVolume`]:
-    /// as it is now, `None` when the player cannot set it (the system's
-    /// keys can), or why it could not be read or set.
-    DeviceVolume {
-        /// The control, or the failure.
-        result: Result<Option<super::DeviceVolume>, String>,
-        /// It was changed by a key (say so), not only read.
-        changed: bool,
     },
     /// A failure outside the engine (a config file that could not be
     /// written, a device that could not be opened).
@@ -469,13 +452,6 @@ pub enum Effect {
     /// Play on this device from now on (`None`: the system default),
     /// carrying the queue and the position over.
     SwitchDevice(Option<String>),
-    /// Open the output device again at the rate set
-    /// ([`crate::config::Config::rate`]), carrying the queue and the
-    /// position over.
-    ReopenOutput,
-    /// Read or step the output device's own volume control (answered with
-    /// [`Action::DeviceVolume`]).
-    DeviceVolume(super::VolumeChange),
     /// Read the clipboard's text (answered with [`Action::Paste`], or a
     /// message when it holds none).
     ReadClipboard,

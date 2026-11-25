@@ -1,23 +1,24 @@
-//! Linux: ALSA `hw:` devices.
+//! Linux: ALSA's `default` PCM, shared.
 //!
-//! Only `hw:` devices are listed and opened: no `plug`, `dmix` or `softvol`
-//! plugin sits between us and the driver. Every open turns resampling off
-//! (`set_rate_resample(false)`) and checks that the rate set is exactly the
-//! rate asked for. Device ids are `hw:CARD=<card id>,DEV=<n>`; ALSA has no
-//! default `hw:` device, so the first card's first playback device is
-//! marked default.
+//! The one device is `default`, which goes to the sound server where one
+//! runs (PipeWire or PulseAudio, through their ALSA plugins) and to ALSA's
+//! own mixer (`dmix`) where none does: the sink is the system's default,
+//! chosen in its sound settings. No `hw:` device is opened, so every other
+//! application plays beside us.
 //!
-//! ALSA has no MSB-aligned 24-in-32 format: [`SampleFormat::S24In32`] is
-//! never accepted here ([`SampleFormat::S32`] carries the same bytes).
+//! Its one format ([`mix_format`]) is stereo 32-bit float at the server's
+//! rate: ALSA cannot ask the server for its rate, so it is [`SERVER_RATE`]
+//! (what PipeWire, PulseAudio and `dmix` run at unless set otherwise), or
+//! the nearest the PCM has; a server at another rate converts.
 //!
 //! The stream runs on its own thread with the PCM in non-blocking mode: it
 //! waits for a period of room, renders one period from the ring, writes it
-//! and reports `snd_pcm_delay` as the position. Pause is
-//! `snd_pcm_pause` where the hardware supports it; otherwise the device
-//! queue is dropped (those frames count as played) and refilled on resume.
+//! and reports `snd_pcm_delay` as the position (the servers' plugins count
+//! their own latency in it). Pause is `snd_pcm_pause` where the PCM
+//! supports it; otherwise the device queue is dropped (those frames count
+//! as played) and refilled on resume.
 
 use super::thread::{Command, Request, ThreadDriver};
-use crate::caps::{candidates, Capabilities, PROBE_RATES};
 use crate::device::Device;
 use crate::error::Error;
 use crate::format::{SampleFormat, StreamFormat};
@@ -29,7 +30,13 @@ use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-pub(crate) const BACKEND: &str = "ALSA hw";
+pub(crate) const BACKEND: &str = "ALSA default (shared)";
+
+/// The rate asked of a shared PCM.
+pub(super) const SERVER_RATE: u32 = 48_000;
+
+/// The one PCM: the system's default.
+pub(super) const DEFAULT: &str = "default";
 
 const ENOENT: i32 = 2;
 const EAGAIN: i32 = 11;
@@ -38,17 +45,7 @@ const ENODEV: i32 = 19;
 const EPIPE: i32 = 32;
 const ESTRPIPE: i32 = 86;
 
-fn alsa_format(sample: SampleFormat) -> Option<Format> {
-    match sample {
-        SampleFormat::S16 => Some(Format::S16LE),
-        SampleFormat::S24Packed => Some(Format::S243LE),
-        SampleFormat::S24In32Low => Some(Format::S24LE),
-        SampleFormat::S32 => Some(Format::S32LE),
-        SampleFormat::S24In32 => None,
-    }
-}
-
-fn map_error(call: &'static str, e: alsa::Error) -> Error {
+pub(super) fn map_error(call: &'static str, e: alsa::Error) -> Error {
     match e.errno() {
         EBUSY => Error::DeviceBusy,
         ENODEV => Error::DeviceLost,
@@ -60,96 +57,42 @@ fn map_error(call: &'static str, e: alsa::Error) -> Error {
     }
 }
 
-fn open_pcm(id: &str) -> Result<PCM, Error> {
-    if !id.starts_with("hw:") {
-        return Err(Error::InvalidArgument(format!(
-            "{id:?} is not a hw: device; only hw: devices are bit-perfect"
-        )));
-    }
-    // Non-blocking, so a device held by a sound server fails at once.
-    PCM::new(id, Direction::Playback, true).map_err(|e| match e.errno() {
+/// Opens the PCM `id` for `direction`, non-blocking (so a device held by
+/// another application fails at once, and a thread sees a stop within its
+/// wait).
+pub(super) fn open_pcm(id: &str, direction: Direction) -> Result<PCM, Error> {
+    PCM::new(id, direction, true).map_err(|e| match e.errno() {
         ENOENT | ENODEV => Error::DeviceNotFound(id.into()),
         _ => map_error("snd_pcm_open", e),
     })
 }
 
 pub(crate) fn devices() -> Result<Vec<Device>, Error> {
-    let mut out = Vec::new();
-    for card in alsa::card::Iter::new() {
-        let card = card.map_err(|e| map_error("snd_card_next", e))?;
-        let Ok(ctl) = alsa::Ctl::from_card(&card, false) else {
-            continue;
-        };
-        let Ok(info) = ctl.card_info() else {
-            continue;
-        };
-        let card_id = info.get_id().unwrap_or_default().to_owned();
-        let card_name = info.get_name().unwrap_or_default().to_owned();
-        for dev in alsa::ctl::DeviceIter::new(&ctl) {
-            let Ok(pcm) = ctl.pcm_info(dev as u32, 0, Direction::Playback) else {
-                continue;
-            };
-            let pcm_name = pcm.get_name().unwrap_or_default();
-            out.push(Device {
-                id: format!("hw:CARD={card_id},DEV={dev}"),
-                name: if pcm_name.is_empty() {
-                    card_name.clone()
-                } else {
-                    format!("{card_name}: {pcm_name}")
-                },
-                is_default: out.is_empty(),
-            });
-        }
-    }
-    Ok(out)
+    Ok(vec![Device {
+        id: DEFAULT.into(),
+        name: "Default output (the system's)".into(),
+        is_default: true,
+    }])
 }
 
-/// Whether the hardware takes exactly `f`, with no resampling.
-fn accepts(pcm: &PCM, f: StreamFormat) -> bool {
-    let Some(format) = alsa_format(f.sample) else {
-        return false;
-    };
-    let Ok(hwp) = HwParams::any(pcm) else {
-        return false;
-    };
-    hwp.set_rate_resample(false).is_ok()
-        && hwp.set_access(Access::RWInterleaved).is_ok()
-        && hwp.set_channels(u32::from(f.channels)).is_ok()
-        && hwp.set_format(format).is_ok()
-        && hwp.set_rate(f.rate, ValueOr::Nearest).is_ok()
-        && hwp.get_rate().map(|r| r == f.rate).unwrap_or(false)
+/// The PCM's one format: stereo float at [`SERVER_RATE`], or the nearest
+/// rate it has.
+fn format_of(pcm: &PCM) -> Result<StreamFormat, Error> {
+    let err = |call| move |e| map_error(call, e);
+    let hwp = HwParams::any(pcm).map_err(err("snd_pcm_hw_params_any"))?;
+    hwp.set_access(Access::RWInterleaved)
+        .map_err(err("set_access"))?;
+    hwp.set_channels(2).map_err(err("set_channels"))?;
+    hwp.set_format(Format::FloatLE)
+        .map_err(|_| Error::Unsupported("the PCM takes no 32-bit float".into()))?;
+    let rate = hwp
+        .set_rate_near(SERVER_RATE, ValueOr::Nearest)
+        .map_err(err("set_rate_near"))?;
+    Ok(StreamFormat::new(rate, 2, SampleFormat::F32))
 }
 
-pub(crate) fn capabilities(id: &str) -> Result<Capabilities, Error> {
-    let pcm = open_pcm(id)?;
-    let (min, max) = {
-        let hwp = HwParams::any(&pcm).map_err(|e| map_error("snd_pcm_hw_params_any", e))?;
-        (
-            hwp.get_channels_min().unwrap_or(2),
-            hwp.get_channels_max().unwrap_or(2),
-        )
-    };
-    let mut layouts = Vec::new();
-    if (min..=max).contains(&2) {
-        layouts.push(2u16);
-    }
-    for n in [min, max] {
-        if n != 2 && (1..=64).contains(&n) && !layouts.contains(&(n as u16)) {
-            layouts.push(n as u16);
-        }
-    }
-    let mut caps = Capabilities::new();
-    for channels in layouts {
-        for rate in PROBE_RATES {
-            for sample in SampleFormat::ALL {
-                let f = StreamFormat::new(rate, channels, sample);
-                if accepts(&pcm, f) {
-                    caps.insert(f);
-                }
-            }
-        }
-    }
-    Ok(caps)
+pub(crate) fn mix_format(id: &str) -> Result<StreamFormat, Error> {
+    format_of(&open_pcm(id, Direction::Playback)?)
 }
 
 struct Config {
@@ -160,26 +103,22 @@ struct Config {
 }
 
 fn configure(pcm: &PCM, request: &OpenRequest) -> Result<Config, Error> {
-    let format = candidates(&request.formats)
-        .into_iter()
-        .map(|s| StreamFormat::new(request.rate, request.channels, s))
-        .find(|f| accepts(pcm, *f))
-        .ok_or(Error::FormatNotAccepted {
+    let format = format_of(pcm)?;
+    if !request.takes(format) {
+        return Err(Error::FormatNotAccepted {
             rate: request.rate,
             channels: request.channels,
-        })?;
+        });
+    }
     let err = |call| move |e| map_error(call, e);
     let period = format.duration_to_frames(request.period).max(16);
     {
         let hwp = HwParams::any(pcm).map_err(err("snd_pcm_hw_params_any"))?;
-        hwp.set_rate_resample(false)
-            .map_err(err("set_rate_resample"))?;
         hwp.set_access(Access::RWInterleaved)
             .map_err(err("set_access"))?;
         hwp.set_channels(u32::from(format.channels))
             .map_err(err("set_channels"))?;
-        hwp.set_format(alsa_format(format.sample).expect("accepted format"))
-            .map_err(err("set_format"))?;
+        hwp.set_format(Format::FloatLE).map_err(err("set_format"))?;
         hwp.set_rate(format.rate, ValueOr::Nearest)
             .map_err(err("set_rate"))?;
         hwp.set_period_size_near(period as Frames, ValueOr::Nearest)
@@ -389,15 +328,15 @@ fn run(mut stream: Stream, shared: Arc<Shared>, commands: Receiver<Request>) {
     }
 }
 
-/// Opens the `hw:` device `id`; the stream runs on its own thread.
+/// Opens the PCM `id`; the stream runs on its own thread.
 pub(crate) fn open(id: &str, request: &OpenRequest) -> Result<Core, Error> {
     request.validate()?;
     let (ready_tx, ready_rx) = mpsc::sync_channel(1);
     let id_owned = id.to_owned();
     let request_owned = request.clone();
     let mut driver = ThreadDriver::spawn("jodel-output-alsa", Box::new(|| {}), move |commands| {
-        let opened =
-            open_pcm(&id_owned).and_then(|pcm| configure(&pcm, &request_owned).map(|c| (pcm, c)));
+        let opened = open_pcm(&id_owned, Direction::Playback)
+            .and_then(|pcm| configure(&pcm, &request_owned).map(|c| (pcm, c)));
         match opened {
             Ok((pcm, config)) => {
                 let shared = Arc::new(Shared::new(
@@ -407,12 +346,9 @@ pub(crate) fn open(id: &str, request: &OpenRequest) -> Result<Core, Error> {
                 let info = StreamInfo {
                     format: config.format,
                     backend: BACKEND,
-                    exclusive: true,
                     device_buffer_frames: config.period,
-                    device_latency: config.format.frames_to_duration(config.buffer),
                     ring_frames: shared.ring.capacity(),
                     realtime: true,
-                    float_io: false,
                 };
                 let scratch = vec![0; config.period as usize * config.format.frame_bytes()];
                 let _ = ready_tx.send(Ok((info, shared.clone())));
@@ -448,40 +384,5 @@ pub(crate) fn open(id: &str, request: &OpenRequest) -> Result<Core, Error> {
             let _ = driver.close();
             Err(e)
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn formats_map_to_alsa_names() {
-        let names: Vec<Option<String>> = SampleFormat::ALL
-            .iter()
-            .map(|&s| alsa_format(s).map(|f| f.to_string()))
-            .collect();
-        assert_eq!(
-            names,
-            [
-                Some("S16_LE".to_string()),
-                Some("S24_3LE".to_string()),
-                None,
-                Some("S24_LE".to_string()),
-                Some("S32_LE".to_string())
-            ]
-        );
-    }
-
-    #[test]
-    fn only_hw_devices_open() {
-        assert!(matches!(
-            open_pcm("default"),
-            Err(Error::InvalidArgument(_))
-        ));
-        assert!(matches!(
-            open_pcm("plughw:0,0"),
-            Err(Error::InvalidArgument(_))
-        ));
     }
 }

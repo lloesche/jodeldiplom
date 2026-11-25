@@ -58,9 +58,7 @@ pub enum Tone {
     ArtistLink,
     /// Its album (a link to the album folder).
     AlbumLink,
-    /// Good news (bit-perfect).
-    Good,
-    /// A warning (not bit-perfect, not exclusive).
+    /// A warning (a resampling step, samples clipped).
     Warn,
     /// The beat pulse: drawn brighter for a moment on each beat.
     Pulse,
@@ -82,11 +80,11 @@ fn seg(text: impl Into<String>, tone: Tone) -> Seg {
     }
 }
 
-/// The signal path of the track being heard, for example
-/// `file 96 → DAC (exclusive), bit-perfect`, or with a resampler
-/// `file 44.1 → resample 48 (160/147) → DAC (exclusive), not bit-perfect`.
-/// A lossy file is never called bit-perfect; its path ends with what it
-/// was decoded from: `file 44.1 → DAC (exclusive), decoded from MP3`.
+/// The signal path of the track being heard, for example `file 48 → DAC`,
+/// or with a resampler `file 44.1 → resample 48 (160/147) → DAC`. A lossy
+/// file's ends with what it was decoded from: `file 44.1 → DAC, decoded
+/// from MP3`. No verdict on bit-perfection: the system's mixer, after the
+/// device's name, may resample and sets the volume.
 pub fn signal_path(state: &State) -> Option<Vec<Seg>> {
     let track = state.playing.track.as_ref()?;
     let route = &track.route;
@@ -102,24 +100,8 @@ pub fn signal_path(state: &State) -> Option<Vec<Seg>> {
     }
     out.push(arrow());
     out.push(seg(track.device.clone(), Tone::Device));
-    if track.output.exclusive {
-        match &state.device_volume {
-            Some(volume) => out.push(seg(
-                format!(" (exclusive, volume {})", volume.label()),
-                Tone::Dim,
-            )),
-            None => out.push(seg(" (exclusive)", Tone::Dim)),
-        }
-    } else {
-        out.push(seg(" (not exclusive)", Tone::Warn));
-    }
-    out.push(seg(", ", Tone::Dim));
     if let Some(codec) = route.decoded_from {
-        out.push(seg(format!("decoded from {codec}"), Tone::Dim));
-    } else if track.bit_perfect && !state.playing.mixed {
-        out.push(seg("bit-perfect", Tone::Good));
-    } else {
-        out.push(seg("not bit-perfect", Tone::Warn));
+        out.push(seg(format!(", decoded from {codec}"), Tone::Dim));
     }
     if state.playing.clipped > 0 {
         out.push(seg(
@@ -370,18 +352,19 @@ pub fn shorten(text: &str, max: usize) -> String {
 }
 
 /// Wraps a signal path ([`signal_path`]) to `max` cells between its
-/// steps: a new line starts with a step's `→`, and the device's
-/// `(exclusive), bit-perfect` stays one piece (with the device's name when
-/// both fit on a line), so no phrase is split and no word is left alone.
-/// A piece longer than a line is wrapped at its spaces.
+/// steps: a new line starts with a step's `→`, and what follows the
+/// device (`, decoded from MP3`, the samples clipped) stays one piece
+/// (with the device's name when both fit on a line), so no phrase is split
+/// and no word is left alone. A piece longer than a line is wrapped at its
+/// spaces.
 pub fn wrap_path(path: &[Seg], max: usize) -> Vec<Vec<Seg>> {
     // The pieces: each starts at an arrow, or is the device's tail.
     let mut pieces: Vec<Vec<Seg>> = Vec::new();
     let mut tail = false;
     for s in path {
-        let starts = s.text == " → " || (s.text.starts_with(" (") && !tail);
+        let starts = s.text == " → " || (s.text.starts_with(", ") && !tail);
         if starts || pieces.is_empty() {
-            tail = s.text.starts_with(" (");
+            tail = s.text.starts_with(", ");
             pieces.push(Vec::new());
         }
         pieces.last_mut().unwrap().push(s.clone());
@@ -390,7 +373,7 @@ pub fn wrap_path(path: &[Seg], max: usize) -> Vec<Vec<Seg>> {
     // The device and its tail stay together when they fit on a line.
     let tail = pieces
         .iter()
-        .position(|p| p.first().is_some_and(|s| s.text.starts_with(" (")));
+        .position(|p| p.first().is_some_and(|s| s.text.starts_with(", ")));
     if let Some(t) = tail.filter(|&t| t > 0) {
         if piece_width(&pieces[t - 1]) + piece_width(&pieces[t]) <= max + 1 {
             let tail = pieces.remove(t);
@@ -405,8 +388,9 @@ pub fn wrap_path(path: &[Seg], max: usize) -> Vec<Vec<Seg>> {
             used = 0;
         }
         if used == 0 {
+            // A line starts with the step's arrow, or the tail's words.
             if let Some(first) = piece.first_mut() {
-                first.text = first.text.trim_start().to_owned();
+                first.text = first.text.trim_start().trim_start_matches(", ").to_owned();
             }
             piece.retain(|s| !s.text.is_empty());
         }
@@ -557,7 +541,7 @@ mod tests {
             seg("file 44.1", Tone::Source),
             seg(" → ", Tone::Dim),
             seg("Speakers (USB DAC)", Tone::Device),
-            seg(", bit-perfect", Tone::Good),
+            seg(", decoded from MP3", Tone::Dim),
         ];
         let lines = wrap(&segs, 16);
         for line in &lines {

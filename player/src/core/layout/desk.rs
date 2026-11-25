@@ -64,7 +64,7 @@ fn widths(channel: Channel) -> (u16, u16, u16) {
         Channel::Strip(StripKind::Preview | StripKind::Effects) => (9, 12, 16),
         Channel::Strip(StripKind::Player) => (12, 12, 16),
         Channel::Mic => (18, 18, 22),
-        // The master's lamps whole: "○ BIT-PERFECT  ○ LIMIT".
+        // The master's lines whole: its backend, format and volume.
         Channel::Main => (24, 26, 36),
     }
 }

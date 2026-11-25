@@ -18,12 +18,14 @@ pub const RATE: u32 = 48_000;
 pub const FORMAT: SampleFormat = SampleFormat::S32;
 
 /// A device that keeps what it played: every stream opened, with its
-/// clock. In real time, or (`instant`) taking what it is given at once; in
+/// clock. In real time, or (`instant`) taking what it is given at once; as
+/// a shared device does, at one rate ([`RATE`], or `rate` when given), in
 /// [`FORMAT`], or `sample` when given; stereo, or `channels` when given.
 #[derive(Clone, Default)]
 pub struct Device {
     pub streams: Arc<Mutex<Vec<(MemorySink, Clock)>>>,
     pub instant: bool,
+    pub rate: Option<u32>,
     pub sample: Option<SampleFormat>,
     pub channels: Option<u16>,
 }
@@ -34,9 +36,9 @@ impl OutputTarget for Device {
     }
 
     fn capabilities(&mut self) -> Result<Capabilities, Error> {
-        Ok([RATE, 96_000]
+        let rate = self.rate.unwrap_or(RATE);
+        Ok([StreamFormat::new(rate, self.channels(), self.format())]
             .into_iter()
-            .map(|r| StreamFormat::new(r, self.channels(), self.format()))
             .collect())
     }
 
@@ -113,10 +115,13 @@ pub fn mixer_on(device: Device) -> (Mixer, Device) {
 }
 
 pub fn mixer_on_at(device: Device, rate: u32) -> (Mixer, Device) {
+    let device = Device {
+        rate: Some(rate),
+        ..device
+    };
     let options = MixerOptions {
         // Room for a busy test machine; the device period is the default.
         buffer: Duration::from_millis(200),
-        rate,
         ..MixerOptions::default()
     };
     (Mixer::open(Box::new(device.clone()), options), device)

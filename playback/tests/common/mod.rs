@@ -288,7 +288,7 @@ pub fn gated_desk(
     let device = MemoryTarget::new(caps, clock);
     let captures = device.captures();
     let mixer = Mixer::open(Box::new(device), MixerOptions::default());
-    let (desk, lead, guest) = StemDesk::two_heads(&mixer, "Player", 1.0);
+    let (desk, lead, guest) = StemDesk::two_heads(&mixer, None, "Player", 1.0);
     let gate = Arc::new(Gate::default());
     let gated = |head: Head| Head {
         target: Box::new(GatedTarget::sharing(head.target, &gate)),

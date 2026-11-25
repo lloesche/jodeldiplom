@@ -55,7 +55,7 @@ pub use update::{
 };
 
 use crate::browser::{Details, Entry};
-use crate::config::{Config, RATES};
+use crate::config::Config;
 
 /// The beat analysis of a file, as far as it has come.
 #[derive(Clone, Debug)]
@@ -291,8 +291,6 @@ pub struct NowTrack {
     pub output: StreamInfo,
     /// The output's name.
     pub device: String,
-    /// The samples reach the device unchanged.
-    pub bit_perfect: bool,
 }
 
 /// What is playing.
@@ -319,10 +317,6 @@ pub struct Playing {
     /// Samples the resampler clipped, as heard, since the track (or the
     /// last seek) started.
     pub clipped: u64,
-    /// The mixer is summing what goes to the device (a preview over the
-    /// song, a fade): nothing reaches it as written now, bit-perfect route
-    /// or not.
-    pub mixed: bool,
     /// The key the song plays in, in semitones from its own, as asked
     /// (shown at once; the engine's word on it, [`super::key`]).
     pub key: i8,
@@ -338,7 +332,6 @@ impl Default for Playing {
             speed: None,
             anchors_forgotten: 0,
             clipped: 0,
-            mixed: false,
             key: 0,
         }
     }
@@ -439,7 +432,7 @@ pub struct DeviceChoice {
     pub id: Option<String>,
     /// The name.
     pub name: String,
-    /// What it takes exclusively, in a few words.
+    /// What it takes (its mix format), in a few words.
     pub summary: String,
 }
 
@@ -448,8 +441,6 @@ pub struct DeviceChoice {
 pub enum SettingsRow {
     /// The output device.
     Device,
-    /// The rate the output device runs at.
-    Rate,
     /// Resample files at another rate than the device's.
     Resample,
     /// The gain below full scale on resampled routes.
@@ -474,9 +465,8 @@ pub enum SettingsRow {
 
 impl SettingsRow {
     /// Every row, top to bottom.
-    pub const ALL: [SettingsRow; 13] = [
+    pub const ALL: [SettingsRow; 12] = [
         SettingsRow::Device,
-        SettingsRow::Rate,
         SettingsRow::Resample,
         SettingsRow::Headroom,
         SettingsRow::Tempo,
@@ -494,7 +484,6 @@ impl SettingsRow {
     pub fn label(self) -> &'static str {
         match self {
             SettingsRow::Device => "Output device",
-            SettingsRow::Rate => "Its rate",
             SettingsRow::Resample => "Resample when needed",
             SettingsRow::Headroom => "Headroom",
             SettingsRow::Tempo => "Tempo and beats",
@@ -511,10 +500,7 @@ impl SettingsRow {
 
     /// Whether it belongs to the row above it (shown set in under it).
     pub fn under(self) -> bool {
-        matches!(
-            self,
-            SettingsRow::Rate | SettingsRow::Method(_) | SettingsRow::SkipPreset
-        )
+        matches!(self, SettingsRow::Method(_) | SettingsRow::SkipPreset)
     }
 }
 
@@ -710,14 +696,6 @@ pub struct State {
     pub autoplay: Option<PathBuf>,
     /// This run plays into the null output whatever the device setting.
     pub null_output: bool,
-    /// The rates the output device takes exclusively in stereo, lowest
-    /// first, once known: the rates the settings offer it
-    /// ([`State::rates`]), and the one it runs at ([`State::output_rate`]).
-    pub device_rates: Option<Vec<u32>>,
-    /// The rate the running mixer opened the device at (`None`: none open,
-    /// or not known yet): settings that change the rate in force open it
-    /// again ([`Effect::ReopenOutput`]).
-    pub opened_rate: Option<u32>,
     /// When changed settings are to be sent to the engine ([`State::now_ms`]
     /// clock; [`SETTINGS_DELAY_MS`] after the last change).
     pub settings_due: Option<u64>,
@@ -763,58 +741,8 @@ pub struct State {
     /// The clock ([`State::now_ms`]) when the last frame was drawn: what
     /// moves by itself between ticks (a block sliding) is drawn by it.
     pub drawn_ms: Option<u64>,
-    /// The output device's own volume control, when the player can set it
-    /// (macOS), as last read or set.
-    pub device_volume: Option<DeviceVolume>,
     /// The preview while Ctrl is held in the browser ([`preview`]).
     pub preview: preview::PreviewState,
-}
-
-/// The output device's own volume control (the one the system's slider
-/// moves): the device applies it after it has the samples, so playback
-/// stays bit-perfect. On macOS the system's volume keys do not reach a
-/// device the player holds exclusively, so the player sets it.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct DeviceVolume {
-    /// From 0.0 (silent) to 1.0 (full: the signal unchanged).
-    pub level: f32,
-    /// The gain at that level in dB, when the device says.
-    pub db: Option<f32>,
-    /// Whether it is muted, when the device has a mute control.
-    pub muted: Option<bool>,
-}
-
-impl DeviceVolume {
-    /// `50 %`, `50 % (−12.0 dB)` or `muted`.
-    pub fn label(&self) -> String {
-        if self.muted == Some(true) {
-            return "muted".into();
-        }
-        let percent = (self.level * 100.0).round();
-        match self.db {
-            Some(db) if self.level < 1.0 => format!("{percent} % ({db:.1} dB)").replace('-', "−"),
-            _ => format!("{percent} %"),
-        }
-    }
-}
-
-/// What to do with the device's volume ([`Effect::DeviceVolume`]).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum VolumeChange {
-    /// Read it.
-    Read,
-    /// Move it by this many steps of [`VOLUME_STEPS`].
-    Step(i32),
-}
-
-/// The device volume's steps from silent to full: sixteen, as the system's
-/// volume keys on macOS.
-pub const VOLUME_STEPS: f32 = 16.0;
-
-/// `level` moved by `steps` of [`VOLUME_STEPS`], from the nearest step.
-pub fn volume_step(level: f32, steps: i32) -> f32 {
-    let at = (level.clamp(0.0, 1.0) * VOLUME_STEPS).round() + steps as f32;
-    at.clamp(0.0, VOLUME_STEPS) / VOLUME_STEPS
 }
 
 impl State {
@@ -868,8 +796,6 @@ impl State {
             last_click: None,
             autoplay: None,
             null_output: false,
-            device_rates: None,
-            opened_rate: None,
             settings_due: None,
             quit: false,
             rhythm: HashMap::new(),
@@ -888,7 +814,6 @@ impl State {
             mic: None,
             drawn_heard: None,
             drawn_ms: None,
-            device_volume: None,
             preview: preview::PreviewState::default(),
         }
     }
@@ -897,23 +822,6 @@ impl State {
     /// else as reported.
     pub fn heard(&self) -> f64 {
         self.drawn_heard.unwrap_or(self.playing.position)
-    }
-
-    /// The rates the settings offer the output device, lowest first: those
-    /// it takes in stereo (none for a device that takes no stereo), or, not
-    /// known, the usual ones ([`RATES`]).
-    pub fn rates(&self) -> Vec<u32> {
-        self.device_rates.clone().unwrap_or_else(|| RATES.to_vec())
-    }
-
-    /// The rate the output device runs at: the one set for it, where it
-    /// takes it; else 44.1 kHz, else its lowest
-    /// ([`jodel_output::mixer::desk_rate`]). The one set stays as it is
-    /// (and in the file), so it is back on a device that takes it.
-    pub fn output_rate(&self) -> u32 {
-        let set = self.config.rate();
-        let rates = self.device_rates.as_deref().unwrap_or(&[]);
-        jodel_output::mixer::desk_rate(rates, set).unwrap_or(set)
     }
 
     /// The settings the engine plays with.

@@ -1,18 +1,18 @@
 //! Plays digital silence with a microphone tapped beside it, to try the
 //! microphone path: the voice is heard, cleaned and metered, never played.
 //!
-//! `cargo run -p jodel-output --example mic -- <output> <input> [rate] [seconds] [--mono first|mean|<n>] [--every MS]`
+//! `cargo run -p jodel-output --example mic -- <output> <input> [seconds] [--mono first|mean|<n>] [--every MS]`
 //!
 //! With no arguments it lists the output and input devices. `<output>` and
 //! `<input>` are `default`, an id, or part of a name. The output opens
-//! exclusively in stereo at `rate` (48000 by default) for `seconds` (20);
-//! the microphone opens in shared mode at its own rate and is tapped beside
-//! it. Every `MS` (500) it prints the microphone ring's fill against its
-//! target, the correction to the ratio of the two clocks, the voice's peak
-//! as captured and as cleaned, and the counters.
+//! shared in its mix format (stereo, at the rate the system runs it at)
+//! for `seconds` (20); the microphone opens shared at its own rate and is
+//! tapped beside it. Every `MS` (500) it prints the microphone
+//! ring's fill against its target, the correction to the ratio of the two
+//! clocks, the voice's peak as captured and as cleaned, and the counters.
 
 use jodel_output::input::{find_input, input_devices, open_input_with, Mono, INPUT_BACKEND};
-use jodel_output::{devices, find_device, open, OpenRequest, Output, BACKEND};
+use jodel_output::{devices, find_device, mix_format, open, OpenRequest, Output, BACKEND};
 use std::time::{Duration, Instant};
 
 fn main() {
@@ -69,23 +69,23 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let (output, input) = match positional[..] {
         [] => return list(),
         [o, i, ..] => (o, i),
-        _ => return Err("usage: mic <output> <input> [rate] [seconds] [--mono M]".into()),
+        _ => return Err("usage: mic <output> <input> [seconds] [--mono M]".into()),
     };
-    let rate: u32 = positional.get(2).map_or(Ok(48_000), |r| r.parse())?;
-    let seconds: f64 = positional.get(3).map_or(Ok(20.0), |s| s.parse())?;
+    let seconds: f64 = positional.get(2).map_or(Ok(20.0), |s| s.parse())?;
 
     let output = find_device(output)?;
     let input = find_input(input)?;
-    let mut out = open(&output.id, &OpenRequest::new(rate, 2))?;
+    let format = mix_format(&output.id)?;
+    let rate = format.rate;
+    let mut out = open(&output.id, &OpenRequest::new(rate, format.channels))?;
     let info = out.info().clone();
     println!(
-        "output: {} — {} via {}, device buffer {} frames ({:.1} ms), device latency {:?}",
+        "output: {} — {} via {}, device buffer {} frames ({:.1} ms)",
         output.name,
         info.format,
         info.backend,
         info.device_buffer_frames,
         info.device_buffer_frames as f64 * 1000.0 / f64::from(rate),
-        info.device_latency
     );
     let t_open = Instant::now();
     let mic = open_input_with(&input.id, mono)?;

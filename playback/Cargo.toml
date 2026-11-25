@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 rust-version = "1.85"
 license = "MIT"
-description = "Playback engine: FLAC, WAV, AIFF, CAF, ALAC, AAC, MP3 and Vorbis files to bit-perfect device output, gapless"
+description = "Playback engine: FLAC, WAV, AIFF, CAF, ALAC, AAC, MP3 and Vorbis files to a device through the system's mixer, gapless"
 
 [dependencies]
 # Every file written: whole or not at all, made durable.

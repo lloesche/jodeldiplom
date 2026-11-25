@@ -4,7 +4,7 @@
 │   alt+↓                 device volume a step down                                                                    │
 │                                                                                                                      │
 │ Mixer tab                                                                                                            │
-│   ↑                     the fader 1 dB up (the master: the device's own volume a step up)                            │
+│   ↑                     the fader 1 dB up (the master: the player's volume, up to 0 dB)                              │
 │                                                                                                                      │
 │                                                                                                                      │
 │                                                                                                                      │

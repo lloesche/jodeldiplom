@@ -14,14 +14,14 @@ use std::sync::mpsc::Receiver;
 use common::lanes::*;
 use common::*;
 use jodel_output::lanes::Parts;
-use jodel_output::mixer::{desk_format, DESK_RATE};
+use jodel_output::mixer::desk_format;
 use jodel_output::{Capabilities, SampleFormat};
 use jodel_playback::{
     Captures, Command, Event, JumpAt, MakeStems, PlayState, Player, PlayerOptions,
 };
 use SampleFormat::*;
 
-// ---- 1. The bit-perfect proof -------------------------------------------
+// ---- 1. The lossless proof -------------------------------------------
 
 type Script<'a> = &'a dyn Fn(&Player, &Receiver<Event>, &Gate, &Captures);
 
@@ -35,7 +35,7 @@ fn same_through_lanes(caps: Capabilities, options: PlayerOptions, script: Script
         Some(_) => (MakeStems::Separate, Parts::Present),
         None => (MakeStems::Never, Parts::None),
     };
-    let desk = desk_format(&caps, DESK_RATE).expect("a desk's format");
+    let desk = desk_format(&caps).expect("a desk's format");
     let direct = {
         let (target, captures, gate) = GatedTarget::new([desk].into_iter().collect());
         let (player, events) = Player::new(Box::new(target), options.clone());

@@ -81,13 +81,6 @@ pub(super) struct Run {
     newest_output: u64,
 }
 
-/// Whether the device's `format` is one `request` asks for.
-fn accepts(request: &OpenRequest, format: StreamFormat) -> bool {
-    format.rate == request.rate
-        && format.channels == request.channels
-        && request.formats.contains(&format.sample)
-}
-
 impl Run {
     pub(super) fn new(
         target: Box<dyn OutputTarget>,
@@ -168,7 +161,7 @@ impl Run {
     fn desk(&mut self) -> Result<StreamFormat, Error> {
         if self.format.is_none() {
             let caps = self.target.capabilities()?;
-            self.set_format(desk_format(&caps, self.options.rate));
+            self.set_format(desk_format(&caps));
         }
         self.format.ok_or(Error::NoDevice)
     }
@@ -484,7 +477,7 @@ impl Run {
         // it); the device is open at it, or (it was not there, or failed)
         // opened now.
         let format = self.desk()?;
-        if !accepts(request, format) {
+        if !request.takes(format) {
             return Err(Error::FormatNotAccepted {
                 rate: request.rate,
                 channels: request.channels,
@@ -511,13 +504,9 @@ impl Run {
         let info = StreamInfo {
             format,
             backend: device.info.backend,
-            exclusive: device.info.exclusive,
             device_buffer_frames: chunk,
-            device_latency: device.info.device_latency
-                + format.frames_to_duration(device.info.ring_frames),
             ring_frames: shared.ring.capacity(),
             realtime: device.info.realtime,
-            float_io: device.info.float_io,
         };
         let driver = InputDriver {
             link: link.clone(),

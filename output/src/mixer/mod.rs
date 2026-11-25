@@ -4,13 +4,13 @@
 //!
 //! [`Mixer::open`] takes an [`OutputTarget`] (the device, or a test's
 //! memory) and runs one thread, `jodel-mixer`, which opens the device at
-//! once at the desk's format ([`desk_format`]: stereo, at the rate set for
-//! the device) and holds it open until the mixer is dropped. In real time
-//! it plays all along: silence where nothing sounds, never paused, never
+//! once at the desk's format ([`desk_format`]: stereo, at the system's mix
+//! rate) and holds it open until the mixer is dropped. In real time it
+//! plays all along: silence where nothing sounds, never paused, never
 //! closed between songs. A device that is not there as the mixer starts,
 //! or that fails, is asked again what it takes, and opened, by the next
-//! output opened (a failure's is another epoch). Another device, or
-//! another rate, is another mixer.
+//! output opened (a failure's is another epoch). Another device is another
+//! mixer.
 //! [`Mixer::strip`] makes a [`Strip`], a channel of the desk, and
 //! [`Mixer::strip_in`] one in a group (another strip);
 //! [`Mixer::input`] plugs an input into one: an [`InputTarget`], where one
@@ -161,7 +161,7 @@ pub use desk::{
 pub use effects::{EffectCue, Effects, EffectsView, SoundBank, LATE as EFFECT_LATE, VOICES};
 pub use fader::{Fader, InputTarget};
 pub use ramp::{equal_power, Curve, Ramp, Start};
-pub use rate::{desk_format, desk_rate, DESK_CHANNELS, DESK_RATE, FALLBACK_RATE};
+pub use rate::{desk_format, DESK_CHANNELS};
 pub use strip::{Strip, METER_CHANNELS, STRIP_RAMP};
 
 use std::collections::BTreeMap;
@@ -192,9 +192,6 @@ pub struct MixerOptions {
     /// The device's capabilities, when the caller has probed them already
     /// (otherwise the mixer asks the target, as it opens).
     pub capabilities: Option<Capabilities>,
-    /// The rate set for the device ([`desk_format`] falls back from it
-    /// where the device does not take it). Defaults to [`DESK_RATE`].
-    pub rate: u32,
 }
 
 impl Default for MixerOptions {
@@ -203,7 +200,6 @@ impl Default for MixerOptions {
             period: Duration::from_millis(10),
             buffer: Duration::from_millis(40),
             capabilities: None,
-            rate: DESK_RATE,
         }
     }
 }
@@ -424,7 +420,7 @@ impl Mixer {
         let name = target.name();
         let caps = options.capabilities.clone();
         let caps = caps.or_else(|| target.capabilities().ok());
-        let format = caps.and_then(|c| desk_format(&c, options.rate));
+        let format = caps.and_then(|c| desk_format(&c));
         *shared.format() = format;
         let run = run::Run::new(target, format, options, tx.clone(), shared.clone());
         let thread = std::thread::Builder::new()

@@ -317,7 +317,7 @@ fn master(state: &State, selected: bool, lines: usize) -> Element<'_, Message> {
             wide: true,
         }),
         container(line_view(said::volume_line(state))).center_x(Fill),
-        container(text("adds no gain").size(11).color(DIM)).center_x(Fill),
+        container(text("the player's volume").size(11).color(DIM)).center_x(Fill),
     ]
     .spacing(6)
     .width(Length::Fill)

@@ -232,8 +232,8 @@ fn desk_clock(seconds: f64) -> String {
     format!("{}.{}", core_text::clock((tenths / 10) as f64), tenths % 10)
 }
 
-/// The master's lines: the device's backend and format, the BIT-PERFECT
-/// and LIMIT lamps, the clips and the desk's clock.
+/// The master's lines: the device's backend and format, the LIMIT lamp,
+/// the clips and the desk's clock.
 pub(super) fn master_lines(state: &State) -> Vec<Line> {
     let master = state.desk.master.as_ref();
     let stream = master.and_then(|m| m.stream.as_ref());
@@ -244,10 +244,7 @@ pub(super) fn master_lines(state: &State) -> Vec<Line> {
     );
     vec![
         match stream {
-            Some(s) => vec![
-                t(s.backend, TEXT),
-                t(if s.exclusive { "exclusive" } else { "shared" }, DIM),
-            ],
+            Some(s) => vec![t(s.backend, TEXT)],
             None => vec![t("closed", DIM)],
         },
         match stream {
@@ -263,11 +260,6 @@ pub(super) fn master_lines(state: &State) -> Vec<Line> {
             None => vec![t("—", DIM)],
         },
         vec![
-            Piece::Lamp(
-                master.is_some_and(|m| m.passthrough) && stream.is_some(),
-                GREEN,
-            ),
-            t("BIT-PERFECT", TEXT),
             Piece::Lamp(state.desk.limiting(state.now_ms), FAIL),
             t("LIMIT", TEXT),
         ],
@@ -280,23 +272,14 @@ pub(super) fn master_lines(state: &State) -> Vec<Line> {
     ]
 }
 
-/// The device's own volume, under the master's meter.
+/// The player's own volume, under the master's meter.
 pub(super) fn volume_line(state: &State) -> Line {
-    match state.device_volume {
-        Some(v) => {
-            let said = match (v.muted, v.db) {
-                (Some(true), _) => "muted".to_owned(),
-                (_, Some(db)) if v.level < 1.0 => taper::label(f64::from(db)),
-                _ => format!("{:.0} %", v.level * 100.0),
-            };
-            vec![
-                t("VOLUME", TEXT),
-                Piece::Bar(v.level, 60.0, ACCENT),
-                Piece::Digits(said, TEXT),
-            ]
-        }
-        None => vec![t("VOLUME", TEXT), t("—", DIM)],
-    }
+    let db = state.desk.volume;
+    vec![
+        t("VOLUME", TEXT),
+        Piece::Bar((taper::position_of(db) / taper::UNITY) as f32, 60.0, ACCENT),
+        Piece::Digits(taper::label(db), TEXT),
+    ]
 }
 
 /// The microphone's PITCH and REC lamps (the game, the singing kept):

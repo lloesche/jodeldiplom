@@ -915,7 +915,6 @@ fn after_a_track_change_the_next_block_is_blank_until_its_analysis_is_in() {
                 route: track.route.clone(),
                 output: track.output,
                 device: "DAC".into(),
-                bit_perfect: false,
                 output_frame: 0,
                 from_frame: 0,
             },

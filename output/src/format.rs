@@ -3,8 +3,9 @@
 use std::fmt;
 use std::time::Duration;
 
-/// How one sample is laid out in device memory. Every format is signed
-/// little-endian integer PCM, interleaved by frame.
+/// How one sample is laid out in device memory: signed little-endian
+/// integer PCM, or 32-bit float (what the systems' mixers run in),
+/// interleaved by frame.
 ///
 /// The engine's samples are 24-bit values in `i32` words (see
 /// [`crate::pack`]); the table says how each format holds one.
@@ -16,10 +17,12 @@ use std::time::Duration;
 /// | [`S24In32`](Self::S24In32) | 4 | 24 | MSB-aligned, `v << 8` (WASAPI and Core Audio "aligned high") |
 /// | [`S24In32Low`](Self::S24In32Low) | 4 | 24 | low-aligned, *v* sign-extended (ALSA `S24_LE`) |
 /// | [`S32`](Self::S32) | 4 | 32 | `v << 8` |
+/// | [`F32`](Self::F32) | 4 | 24 | the float *v* / 2²³ (full scale ±1.0) |
 ///
 /// `S24In32` and `S32` carry the same bytes for 24-bit content; they differ
 /// in what the device is told about the valid bits, and some devices accept
-/// only one of them.
+/// only one of them. `F32` holds every 24-bit value exactly: its mantissa
+/// has 24 bits.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum SampleFormat {
     /// Signed 16-bit.
@@ -32,25 +35,30 @@ pub enum SampleFormat {
     S24In32Low,
     /// Signed 32-bit.
     S32,
+    /// 32-bit IEEE float, full scale ±1.0.
+    F32,
 }
 
 impl SampleFormat {
-    /// Every format, narrowest first.
-    pub const ALL: [SampleFormat; 5] = [
+    /// Every format, the integer ones narrowest first, then float.
+    pub const ALL: [SampleFormat; 6] = [
         SampleFormat::S16,
         SampleFormat::S24Packed,
         SampleFormat::S24In32,
         SampleFormat::S24In32Low,
         SampleFormat::S32,
+        SampleFormat::F32,
     ];
 
     /// The default preference order for opening a device: every format that
-    /// holds 24 bits losslessly first, 16-bit last.
-    pub const PREFERENCE: [SampleFormat; 5] = [
+    /// holds 24 bits losslessly first (the integer ones, then float),
+    /// 16-bit last.
+    pub const PREFERENCE: [SampleFormat; 6] = [
         SampleFormat::S24In32,
         SampleFormat::S32,
         SampleFormat::S24In32Low,
         SampleFormat::S24Packed,
+        SampleFormat::F32,
         SampleFormat::S16,
     ];
 
@@ -59,15 +67,21 @@ impl SampleFormat {
         match self {
             SampleFormat::S16 => 2,
             SampleFormat::S24Packed => 3,
-            SampleFormat::S24In32 | SampleFormat::S24In32Low | SampleFormat::S32 => 4,
+            SampleFormat::S24In32
+            | SampleFormat::S24In32Low
+            | SampleFormat::S32
+            | SampleFormat::F32 => 4,
         }
     }
 
-    /// The precision the device is told about.
+    /// The precision the device is told about (a float's: its mantissa's).
     pub const fn valid_bits(self) -> u32 {
         match self {
             SampleFormat::S16 => 16,
-            SampleFormat::S24Packed | SampleFormat::S24In32 | SampleFormat::S24In32Low => 24,
+            SampleFormat::S24Packed
+            | SampleFormat::S24In32
+            | SampleFormat::S24In32Low
+            | SampleFormat::F32 => 24,
             SampleFormat::S32 => 32,
         }
     }
@@ -85,6 +99,7 @@ impl SampleFormat {
             SampleFormat::S24In32 => "S24in32",
             SampleFormat::S24In32Low => "S24in32lo",
             SampleFormat::S32 => "S32",
+            SampleFormat::F32 => "F32",
         }
     }
 }
@@ -160,7 +175,8 @@ mod tests {
                 (3, 24, true),
                 (4, 24, true),
                 (4, 24, true),
-                (4, 32, true)
+                (4, 32, true),
+                (4, 24, true)
             ]
         );
     }
@@ -170,7 +186,7 @@ mod tests {
         let mut sorted = SampleFormat::PREFERENCE;
         sorted.sort();
         assert_eq!(sorted, SampleFormat::ALL);
-        assert_eq!(SampleFormat::PREFERENCE[4], SampleFormat::S16);
+        assert_eq!(SampleFormat::PREFERENCE[5], SampleFormat::S16);
     }
 
     #[test]

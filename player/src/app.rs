@@ -41,16 +41,6 @@ const JUMP_WINDOW: f64 = 24.0;
 /// Lists the output devices with a summary of what each takes.
 pub type DeviceLister = Arc<dyn Fn() -> Result<Vec<DeviceChoice>, String> + Send + Sync>;
 
-/// Reads or steps the volume control of a device (`None`: the system
-/// default; else an id or a name, the id of the device playing once there
-/// is one, see [`volume_device`]): the control as it is then, or `None`
-/// when the player cannot set it.
-pub type VolumeControl = Arc<
-    dyn Fn(Option<&str>, core::VolumeChange) -> Result<Option<core::DeviceVolume>, String>
-        + Send
-        + Sync,
->;
-
 /// Opens a microphone: the input with this id, or the system's default.
 pub type MicOpener =
     Arc<dyn Fn(Option<&str>) -> Result<jodel_output::input::Input, String> + Send + Sync>;
@@ -99,8 +89,6 @@ pub struct AppOptions {
     pub notify: Notify,
     /// Lists the devices for the settings.
     pub devices: DeviceLister,
-    /// The device's own volume control.
-    pub volume: VolumeControl,
     /// Messages to show at the start (config warnings).
     pub notes: Vec<String>,
     /// Where beat analyses are kept ([`crate::rhythm::cache_dir`]); `None`: not
@@ -153,7 +141,6 @@ impl AppOptions {
             size: (120, 40),
             notify: Arc::new(|| {}),
             devices: Arc::new(list_devices),
-            volume: Arc::new(device_volume),
             notes: Vec::new(),
             rhythm_cache: None,
             grids: None,
@@ -170,49 +157,6 @@ impl AppOptions {
             covers: None,
         }
     }
-}
-
-/// The device whose own volume `alt+↑` / `alt+↓` read and move: the one
-/// the engine plays on (`playing_on`, its id) once it has found it, else
-/// the one `output` names (`None` inside: the system default). `None`: no
-/// device (the null output).
-///
-/// The device playing, not the system default looked up anew: on macOS
-/// the default can name another device or none while the player holds its
-/// device in hog mode.
-pub fn volume_device(output: &Output, playing_on: Option<&str>) -> Option<Option<String>> {
-    match output {
-        Output::Null(_) | Output::Memory(_) => None,
-        Output::Device(query) => Some(playing_on.map(str::to_owned).or_else(|| query.clone())),
-    }
-}
-
-/// The real device's volume control ([`jodel_output::volume`]), read or
-/// moved a step ([`core::volume_step`]).
-pub fn device_volume(
-    query: Option<&str>,
-    change: core::VolumeChange,
-) -> Result<Option<core::DeviceVolume>, String> {
-    let device = match query {
-        Some(query) => jodel_output::find_device(query),
-        None => jodel_output::default_device(),
-    }
-    .map_err(|e| e.to_string())?;
-    let Some(now) = jodel_output::volume(&device.id).map_err(|e| e.to_string())? else {
-        return Ok(None);
-    };
-    let volume = match change {
-        core::VolumeChange::Read => now,
-        core::VolumeChange::Step(steps) => {
-            jodel_output::set_volume(&device.id, core::volume_step(now.level, steps))
-                .map_err(|e| e.to_string())?
-        }
-    };
-    Ok(Some(core::DeviceVolume {
-        level: volume.level,
-        db: volume.db,
-        muted: volume.muted,
-    }))
 }
 
 /// The subfolders of `dir`, by name (none hidden or the system's), for the
@@ -245,15 +189,15 @@ pub fn list_folders(dir: Option<&Path>) -> Vec<PathBuf> {
     folders
 }
 
-/// The real devices, each with its exclusive capabilities in a few words.
+/// The real devices, each with its mix format in a few words.
 pub fn list_devices() -> Result<Vec<DeviceChoice>, String> {
     let devices = jodel_output::devices().map_err(|e| e.to_string())?;
     Ok(devices
         .into_iter()
         .map(|device| {
-            let summary = match jodel_output::capabilities(&device.id) {
-                Ok(caps) => capability_summary(&caps),
-                Err(error) => format!("cannot probe: {error}"),
+            let summary = match jodel_output::mix_format(&device.id) {
+                Ok(format) => format_summary(format),
+                Err(error) => format!("cannot be asked: {error}"),
             };
             let name = if device.is_default {
                 format!("{} (default)", device.name)
@@ -269,44 +213,14 @@ pub fn list_devices() -> Result<Vec<DeviceChoice>, String> {
         .collect())
 }
 
-/// The rates a device takes exclusively in stereo (as the desk runs it),
-/// lowest first.
-pub fn device_rates(caps: &jodel_output::Capabilities) -> Vec<u32> {
-    caps.rates(jodel_output::mixer::DESK_CHANNELS)
-}
-
-/// `44.1 48 88.2 96 kHz · S24_3/S16 · 2 ch`: the exclusive rates, formats
-/// and channel counts.
-pub fn capability_summary(caps: &jodel_output::Capabilities) -> String {
-    if caps.is_empty() {
-        return "no exclusive formats".into();
-    }
-    let channels = caps.channel_counts();
-    let main = if channels.contains(&2) {
-        2
-    } else {
-        channels[0]
-    };
-    let rates: Vec<String> = caps
-        .rates(main)
-        .into_iter()
-        .map(core::text::khz_short)
-        .collect();
-    let mut formats: Vec<jodel_output::SampleFormat> = caps
-        .iter()
-        .filter(|f| f.channels == main)
-        .map(|f| f.sample)
-        .collect();
-    formats.sort();
-    formats.dedup();
-    formats.reverse();
-    let formats: Vec<&str> = formats.iter().map(|f| f.name()).collect();
-    let channels: Vec<String> = channels.iter().map(u16::to_string).collect();
+/// `48 kHz · F32 · 2 ch`: a device's mix format, the rate the system runs
+/// it at first.
+pub fn format_summary(format: jodel_output::StreamFormat) -> String {
     format!(
         "{} kHz · {} · {} ch",
-        rates.join(" "),
-        formats.join("/"),
-        channels.join("/")
+        core::text::khz_short(format.rate),
+        format.sample,
+        format.channels
     )
 }
 
@@ -323,7 +237,6 @@ pub struct App {
     rx: Receiver<Action>,
     notify: Notify,
     devices: DeviceLister,
-    volume: VolumeControl,
     saved: Config,
     baseline: Config,
     details: DetailsWorker,
@@ -586,7 +499,6 @@ impl App {
             rx,
             notify: options.notify.clone(),
             devices: options.devices.clone(),
-            volume: options.volume.clone(),
             saved: options.saved.clone(),
             baseline: options.config.clone(),
             details,
@@ -742,10 +654,8 @@ impl App {
                 return;
             }
         };
-        // What the device takes, asked here once (the mixer reuses it), so
-        // the settings offer the rates it takes and say which it runs at.
+        // What the device takes (its mix format), asked here once.
         let capabilities = target.capabilities().ok();
-        self.dispatch(Action::DeviceRates(capabilities.as_ref().map(device_rates)));
         let generation = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
         let options = PlayerOptions {
             settings: self.state.engine_settings(),
@@ -754,9 +664,7 @@ impl App {
             stem_store: self.stem_store.clone(),
             ..PlayerOptions::default()
         };
-        let rate = self.state.config.rate();
-        let (engine, events) = Engine::start(target, capabilities, rate, options);
-        self.dispatch(Action::OutputOpened(engine.mixer.format().map(|f| f.rate)));
+        let (engine, events) = Engine::start(target, capabilities, options);
         // The bars a jump can reach are kept ([`Op::JumpBar`]): four either
         // side of the one heard down to 48 BPM, and that one.
         let _ = engine.player.jump_window(JUMP_WINDOW, JUMP_WINDOW);
@@ -1115,14 +1023,8 @@ impl App {
             }
         }
         any |= self.pump_previews();
-        // Bit-perfect only while the mixer passes the song through; a
-        // device that refused the microphone's tap is told, each time.
+        // A device that refused the microphone's tap is told, each time.
         if let Some(engine) = &mut self.engine {
-            let mixed = !engine.mixer.passthrough();
-            if self.state.playing.mixed != mixed {
-                self.state.playing.mixed = mixed;
-                any = true;
-            }
             let mic = engine.mixer.mic();
             if mic != engine.mic {
                 engine.mic = mic.clone();
@@ -1686,26 +1588,6 @@ impl App {
                     self.restart_on(Output::Device(id));
                 }
             }
-            Effect::ReopenOutput => self.restart_on(self.output.clone()),
-            Effect::DeviceVolume(change) => {
-                let changed = change != core::VolumeChange::Read;
-                let Some(query) = volume_device(&self.output, self.playing_on.as_deref()) else {
-                    self.dispatch(Action::DeviceVolume {
-                        result: Ok(None),
-                        changed,
-                    });
-                    return;
-                };
-                let tx = self.tx.clone();
-                let notify = self.notify.clone();
-                let volume = self.volume.clone();
-                thread::spawn(move || {
-                    let result = volume(query.as_deref(), change);
-                    if tx.send(Action::DeviceVolume { result, changed }).is_ok() {
-                        notify();
-                    }
-                });
-            }
             Effect::SaveGrid(path, grid) => {
                 if let Some(store) = &self.grids {
                     store.save(path, grid);
@@ -1758,7 +1640,6 @@ impl App {
                 }
                 carry!(
                     device,
-                    rates,
                     resample,
                     headroom,
                     bpm,

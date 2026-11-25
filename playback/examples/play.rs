@@ -6,12 +6,12 @@
 //!   --null           play into a null output on a real-time clock (no device)
 //!   --seconds N      stop after N seconds
 //!   --max-rate HZ    highest output rate
-//!   --no-resample    no resampling when no rate carries the file bit-perfect
+//!   --no-resample    files at another rate than the output's are skipped
 //! ```
 //!
-//! With `--null` the target accepts every rate and format, so the route is
-//! the best the policy has for the file. Without it the device is opened
-//! exclusively.
+//! With `--null` the target is a stand-in for a device at 48 kHz, in every
+//! format. Without it the device is opened shared, at the system's mix
+//! rate.
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -86,7 +86,10 @@ fn main() -> ExitCode {
         }
     };
     let target: Box<dyn OutputTarget> = if arguments.null {
-        Box::new(NullTarget::new(any_capabilities(), SimClock::Realtime))
+        Box::new(NullTarget::new(
+            any_capabilities(48_000),
+            SimClock::Realtime,
+        ))
     } else {
         match DeviceTarget::find(&arguments.device) {
             Ok(target) => Box::new(target),
@@ -150,12 +153,8 @@ fn main() -> ExitCode {
                     println!("  passed over: {why}");
                 }
                 println!(
-                    "  output: {} on {} ({}), exclusive: {}, bit-perfect: {}",
-                    start.output.format,
-                    start.device,
-                    start.output.backend,
-                    start.output.exclusive,
-                    if start.bit_perfect { "yes" } else { "no" }
+                    "  output: {} on {} ({})",
+                    start.output.format, start.device, start.output.backend,
                 );
             }
             Event::Position(p) => println!("  {:7.2} s  (frame {})", p.seconds, p.frame),

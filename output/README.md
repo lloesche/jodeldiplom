@@ -1,35 +1,39 @@
 # jodel-output
 
-Bit-perfect PCM output to audio devices. The crate opens a device
-**exclusively**, at exactly the stream's rate, in an integer format the device
-takes natively, so the samples reach the DAC unchanged: no OS mixer,
-resampler or software volume in between. It works for any integer PCM.
+PCM output to audio devices, shared with every other application. The
+crate opens a device **shared**, through the system's mixer, in the
+system's mix format: the rate the system runs the device at (its sound
+settings choose it, not this crate) and, as a rule, 32-bit float. Other
+applications play beside it, a call's screen share or "share sound" hears
+it, and the volume keys, Bluetooth and AirPods behave as for any other
+application. It works for any integer PCM.
 
 | OS | Backend |
 |---|---|
-| Windows | WASAPI exclusive mode, event-driven (`windows` 0.62) |
-| macOS | Core Audio HAL: hog mode, mixing off, physical format at the nominal rate (integer; a float-only device, such as the built-in speakers, as 24-bit samples converted exactly to float), our own IOProc (`objc2-core-audio` 0.3) |
-| Linux | ALSA `hw:` devices, resampling off, exact rate (`alsa` 0.12) |
+| Windows | WASAPI shared mode, event-driven, in the engine's mix format (`GetMixFormat`), in stereo, which the engine maps to its channels; the position from `IAudioClock`, stamped with the performance counter's time (`windows` 0.62) |
+| macOS | Core Audio HAL, shared: our own IOProc in the first output stream of two channels or more, in its IO (virtual) format at that format's rate (a wider stream plays on its first two channels); no hog mode, mixing left on, the device's format and rate never changed; a change of the device's nominal rate, the stream's format or the device going away fails the stream (`objc2-core-audio` 0.3) |
+| Linux | ALSA `default` (the sound server, PipeWire or PulseAudio, else ALSA's `dmix`): the system's default sink, chosen in its sound settings; 32-bit float at the server's rate (48 kHz unless the PCM says otherwise) (`alsa` 0.12) |
 
-There is no shared-mode fallback: a device that cannot be opened exclusively
-in a requested format is an error.
+There is no exclusive mode: nothing holds a device for itself, and the rate
+is the system's.
 
 ## API
 
 - `devices()`, `default_device()`, `find_device(query)`: the output devices
   (`Device { id, name, is_default }`).
-- `volume(id)`, `set_volume(id, level)`: the device's own volume control
-  (`Volume { level, db, muted }`), the one the system's slider moves and
-  the device applies after it has the samples. macOS only: its volume keys
-  do not reach a device held in hog mode, so the player sets it; on
-  Windows and Linux the system's keys reach the device, and `volume` says
-  `None`.
-- `capabilities(id)`: the rate × channels × format combinations the device
-  accepts exclusively, probed without playing anything.
-- `open(id, &OpenRequest::new(rate, channels))`: opens exclusively in the
-  first of `OpenRequest::formats` the device accepts (default order: S24in32,
-  S32, S24in32lo, S24_3, S16). `choose_format` is the rule, as a pure
-  function.
+- `mix_format(id)`: the one format the device takes, its mix format:
+  stereo, at the rate the system runs it at, in the sample format the
+  system mixes in (as a rule `SampleFormat::F32`, the float the systems'
+  mixers take, full scale ±1.0: every 24-bit value is a float exactly).
+  Nothing is played and nothing about the device is changed. It is asked
+  anew after the device was lost: the system may run it at another rate
+  by then.
+- `open(id, &OpenRequest::new(rate, channels))`: opens shared at the mix
+  format; a request at another rate or channel count, or one whose
+  `OpenRequest::formats` (default order: S24in32, S32, S24in32lo, S24_3,
+  F32, S16) lacks its sample format, is `FormatNotAccepted`.
+  `choose_format` is the rule for targets that take several formats (a
+  file, a test's stand-in), as a pure function.
 - The `Output` trait: `write` (blocking with a timeout, into a ring the
   backend drains from its own thread), `drain`, `position` (stream frames
   played, from the device clock), `latency`, `pause`/`resume`, `flush`,
@@ -84,16 +88,20 @@ in a requested format is an error.
 Several players on one device. `Mixer::open(target, MixerOptions)` takes
 an `OutputTarget` and runs one thread, `jodel-mixer` (MMCSS "Pro Audio" on
 Windows, real-time on macOS), which opens the device at once at the desk's
-format and holds it open until the mixer is dropped: `desk_format(caps,
-rate)` picks stereo at `MixerOptions::rate` (`DESK_RATE`, 48 kHz, unless
-set), else 44.1 kHz where the device lacks it, else the lowest rate the
-device takes (one that takes only 96 kHz runs at 96 kHz), in the format of
-`SampleFormat::PREFERENCE` with the most bits it takes there;
-`Mixer::format()` tells it. Every output on an input plays at that
-format (each player resamples to it), so the device is never opened again
-for a song, and a song at the desk's rate reaches it bit for bit. Another
-device or another rate is another mixer. A device that fails is opened
-again by the next output opened. `mixer.strip(name)` makes a
+format and holds it open until the mixer is dropped: `desk_format(caps)`
+picks stereo at the target's one rate (a device's: the system's mix rate;
+a stand-in offers one rate too), in the format of
+`SampleFormat::PREFERENCE` with the most bits it takes there (on a shared
+device, its one, as a rule F32); `Mixer::format()` tells it. Every output on an
+input plays at that format (each player resamples to it), so the device
+is never opened again for a song, and a song at the desk's rate reaches
+the system's mixer bit for bit. Another device is another mixer. A device
+that fails (also when its format is changed in the system's sound
+settings: Windows invalidates the stream, and on macOS a listener on the
+device's nominal rate and the stream's format fails it) is asked again
+what it takes, and opened, by the next output opened; each input is
+offered the new format then, and a player asks for it anew for each
+route. `mixer.strip(name)` makes a
 `Strip`, a channel of the desk, and `mixer.strip_in(&group, name)` one in
 a group, another strip (clones are the same strip; it lives while a clone,
 a child or an input on it does). `mixer.input(&strip, role, gain)` plugs
@@ -102,7 +110,7 @@ on a device (opening another closes the one before), and a `Fader`, its
 gain, which any number of hands may hold. Each output opened is a full
 `Output` in the desk's format (its own ring, `pause`, `flush`,
 `retract`, `drain`, clock), so the engine does not know the difference;
-its `StreamInfo` carries the device's backend, exclusive flag and latency.
+its `StreamInfo` carries the device's backend.
 
 - **One mix path**, a device period (10 ms) at a time, as fast as the
   device takes frames. A device that plays in real time
@@ -467,8 +475,8 @@ it was sung.
 | OS | Capture backend |
 |---|---|
 | Windows | WASAPI shared, event-driven, at the endpoint's mix format; `IAudioClient3` for a period near 5 ms, else the engine's default (10 ms) |
-| macOS | Core Audio HAL input IOProc on the device's first input stream, interleaved or not, float or integer. On the device an output of ours holds in hog mode the IO buffer is left as the output set it, and a listener follows its nominal rate when the output reopens. Needs the system's microphone permission (otherwise silence) |
-| Linux | ALSA through its plugins: `default` and `plughw:CARD=<id>,DEV=<n>`, rate resampling off where allowed, float where the plugin converts |
+| macOS | Core Audio HAL input IOProc on the device's first input stream, shared (a device another process holds in hog mode is refused), interleaved or not, float or integer; this process's IO buffer set to about 5 ms, and a listener follows the device's nominal rate when it is changed. Needs the system's microphone permission (otherwise silence) |
+| Linux | ALSA `default`, as the output: the system's default source, chosen in its sound settings, at the server's rate (48 kHz, or the nearest), float where the PCM takes it; no `plughw:` or `hw:` device, so a call keeps the microphone too |
 
 Samples are `i32` words holding signed 24-bit values, right-aligned: what the
 playback engine hands over. `pack` documents the layouts and what happens to
@@ -479,12 +487,13 @@ a value that does not fit (outside 24 bits, or low bits for 16-bit output):
 ## Examples
 
 ```sh
-cargo run -p jodel-output --example devices                       # list devices and the exclusive capability matrix
-cargo run -p jodel-output --example silence -- default 48000 2    # 2 s of digital silence, exclusive
-cargo run -p jodel-output --example silence -- default 96000 2 --controls   # also pause, resume and flush
+cargo run -p jodel-output --example devices                       # list devices and the mix format each takes
+cargo run -p jodel-output --example silence -- default 2          # 2 s of digital silence at the system's rate
+cargo run -p jodel-output --example silence -- default 2 --controls        # also pause, resume and flush
+cargo run --release -p jodel-output --example tone                # 3 s of 440 Hz, the clock's lag behind the start and its rate
 cargo run -p jodel-output --example coreaudio_info -- --tone default        # macOS: raw formats and volume controls, then a -20 dBFS tone
 cargo run -p jodel-output --example mic                                      # list outputs and inputs
-cargo run -p jodel-output --example mic -- default default 48000 30          # 30 s of silence, the default microphone tapped beside it
+cargo run -p jodel-output --example mic -- default default 30                # 30 s of silence, the default microphone tapped beside it
 ```
 
 `mic` takes `--mono first|mean|auto|<n>` and `--every MS` (how often it
@@ -732,37 +741,40 @@ more).
 
 The device paths need a device:
 
-- **Windows:** `devices` and `silence` have been run on the developer's
-  machine (see the phase report). `mic` has run there with the GC7's
-  microphone input (WASAPI shared, 48 kHz, a 7 ms period from
-  `IAudioClient3`) into the monitor's HDMI output at 44.1 and 48 kHz, voice
-  level 0: no underruns on either side, the fill within about 0.5 ms of its
-  14 ms target, the correction settling within a few hundred ppm. Not yet
-  tried by ear: the input carried no signal (its peak stayed near
-  −160 dBFS), and the output was not the DAC.
-- **macOS** (not yet run on a Mac): on the MacBook, from the repository's root:
-  1. `cargo test -p jodel-output` (includes the physical-format mapping test).
-  2. `cargo run -p jodel-output --example devices`: every output device with
-     its physical formats. Nothing is changed on the device.
-  3. `cargo run -p jodel-output --example silence -- default 48000 2 --controls`,
-     then the same at a rate the DAC lists above 48 kHz. It takes hog mode
-     (other apps go silent for the run), sets the physical format, plays
-     silence, and restores format, mixing and hog mode on close. The opened
-     line says `float_io` when the IOProc format is Float32 rather than the
-     integer physical format. A device whose physical formats are all
-     32-bit float (the built-in speakers, many virtual devices) lists them
-     as S24in32 and opens with `float_io`: every 24-bit value is a float
-     exactly, so the samples reach it unchanged.
-  The IOProc publishes the position under a short mutex; if that ever
-  shows up as glitches, it is the first thing to replace with atomics.
-  4. The microphone: `mic` lists the inputs; `mic -- default default 48000 30`,
-     then the same with
-     the input on the device the output plays on, if it has one (the hog-mode
-     case), at two rates in turn. The terminal it runs in needs microphone permission
+- **Windows:** on the developer's machine (Sound Blaster GC7, Windows 11)
+  every endpoint takes 48 kHz stereo F32, its mix format. `tone` plays
+  3 s of 440 Hz on the default endpoint, shared: the engine's period is
+  10 ms (two of them buffered), and the clock (`IAudioClock`, stamped with
+  the performance counter) runs about 25 ms behind the start (what the
+  engine and the driver hold between the stream and the speakers), at
+  the wall clock's rate after that; no underruns. Two `tone`s at once on
+  the same endpoint both play; `silence -- default 2 --controls` holds
+  its position through a pause and is at what was written after a flush;
+  through the playback engine (`play`) a 48 kHz FLAC plays at 48 kHz, F32,
+  and a 44.1 kHz one resampled to it. `mic` had run there with
+  the GC7's microphone input (WASAPI shared, 48 kHz, a 7 ms period from
+  `IAudioClient3`) into the monitor's HDMI output, voice level 0: no
+  underruns on either side, the fill within about 0.5 ms of its 14 ms
+  target, the correction settling within a few hundred ppm.
+- **macOS** (shared mode not yet run on a Mac): on the MacBook, from the
+  repository's root:
+  1. `cargo test -p jodel-output` (includes the IO-format mapping test).
+  2. `cargo run -p jodel-output --example devices`: every output device
+     with the format it takes. Nothing is changed on the device.
+  3. `cargo run -p jodel-output --example silence -- default 2 --controls`
+     and `tone`, with music playing in another application: both heard,
+     nothing about the device changed (Audio MIDI Setup shows the same
+     format and rate before, during and after). `tone -- default 20`,
+     the device's rate changed in Audio MIDI Setup while it plays: the
+     stream fails with "the device was removed", not playing on at the
+     wrong speed.
+  4. The microphone: `mic` lists the inputs; `mic -- default default 30`,
+     then the same with the input on the device the output plays on, if
+     it has one. The terminal it runs in needs microphone permission
      (System Settings → Privacy & Security → Microphone), or the voice is
      silence and the peak stays at −∞.
-- **Linux:** type-checked and unit-tested in WSL, which has no sound card.
-  On a box with a DAC: `devices`, then `silence -- hw:CARD=<id>,DEV=0 <rate> 2`.
-  A sound server (PipeWire, PulseAudio) holding the card makes the open fail
-  with "device in use". The microphone (type-checked only): `mic` lists
-  `default` and the `plughw:` inputs; `mic -- hw:CARD=<id>,DEV=0 default`.
+- **Linux:** type-checked, linted and unit-tested in WSL (Fedora, PipeWire
+  without an audio sink there): `devices` lists `default`, taking 48 kHz
+  stereo F32; opening fails there for want of a sink. On a desktop:
+  `devices`, then `tone` and `silence -- default 2` with music playing in
+  another application; the microphone: `mic -- default default`.

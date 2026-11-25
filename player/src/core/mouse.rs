@@ -662,8 +662,8 @@ mod tests {
         let Layout::Settings(l) = layout::compute(&s) else {
             panic!()
         };
-        // The third row: resampling.
-        let more = l.lines[2].more;
+        // The second row: resampling.
+        let more = l.lines[1].more;
         let a = action(&s, down(more.x, more.y)).unwrap();
         let fx = update(&mut s, a);
         assert!(!s.config.resample);

@@ -1,19 +1,17 @@
 //! Settings changes while a track plays, the file's own rate on a device
-//! that takes several, and opening a device that is busy for a moment.
+//! that takes several, and opening a device that is busy.
 
 mod common;
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use common::*;
 use jodel_output::{
     Capabilities, Error as OutputError, OpenRequest, Output, SampleFormat, SimClock, StreamFormat,
 };
-use jodel_playback::{
-    Error, Event, MemoryTarget, OutputTarget, Player, PlayerOptions, Settings, OPEN_BUSY_WAIT,
-};
+use jodel_playback::{Error, Event, MemoryTarget, OutputTarget, Player, PlayerOptions, Settings};
 use SampleFormat::*;
 
 fn settings(max_rate: Option<u32>, resample: bool) -> Settings {
@@ -139,7 +137,7 @@ fn a_route_switch_mid_track_keeps_the_position() {
         streams.iter().map(|s| s.0.rate).collect::<Vec<_>>(),
         [48_000, 44_100, 48_000]
     );
-    // Bit-perfect before and after: the file's samples, the first stream
+    // Lossless before and after: the file's samples, the first stream
     // from its start, the last one to its end.
     let first = streams[0].1.len() / 8;
     let last = streams[2].1.len() / 8;
@@ -231,26 +229,10 @@ impl<T: OutputTarget> OutputTarget for Flaky<T> {
     }
 }
 
-/// A device busy for its first opens is opened once it is free; one busy
-/// for longer than [`OPEN_BUSY_WAIT`] fails and playback stops.
+/// A device another application holds for itself fails the open at once,
+/// tried once, and playback stops.
 #[test]
-fn a_busy_device_is_tried_again() {
-    let opens = Arc::new(AtomicUsize::new(0));
-    let target = Flaky {
-        inner: MemoryTarget::new(caps(&[44_100], &[S24In32Low]), SimClock::Instant),
-        busy: 3,
-        refuse_rate: None,
-        opens: opens.clone(),
-    };
-    let (player, events) = Player::new(Box::new(target), options());
-    player.load(vec![fixture(F44)]).unwrap();
-    player.play(0).unwrap();
-    let seen = until_queue_end(&events);
-    assert!(!seen.iter().any(|e| matches!(e, Event::Error { .. })));
-    assert_eq!(started(&seen).len(), 1);
-    assert_eq!(opens.load(Ordering::SeqCst), 4);
-    drop(player);
-
+fn a_busy_device_fails_the_open() {
     let opens = Arc::new(AtomicUsize::new(0));
     let target = Flaky {
         inner: MemoryTarget::new(caps(&[44_100], &[S24In32Low]), SimClock::Instant),
@@ -260,10 +242,8 @@ fn a_busy_device_is_tried_again() {
     };
     let (player, events) = Player::new(Box::new(target), options());
     player.load(vec![fixture(F44)]).unwrap();
-    let at = Instant::now();
     player.play(0).unwrap();
     let seen = collect_until(&events, |e| matches!(e, Event::Error { .. }));
-    assert!(at.elapsed() >= OPEN_BUSY_WAIT);
     assert!(seen.iter().any(|e| matches!(
         e,
         Event::Error {
@@ -272,7 +252,7 @@ fn a_busy_device_is_tried_again() {
             ..
         }
     )));
-    assert!(opens.load(Ordering::SeqCst) >= 5);
+    assert_eq!(opens.load(Ordering::SeqCst), 1);
 }
 
 /// When the new route's output does not open, the track goes back to the

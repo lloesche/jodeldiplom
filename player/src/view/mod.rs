@@ -29,7 +29,7 @@ use crate::browser::EntryKind;
 use crate::core::layout::{
     self, Bottom, HelpLayout, Layout, MainLayout, NowLayout, SettingsLayout, SETTINGS_LABEL,
 };
-use crate::core::text::{self, clock, khz_short, width, Seg, Tone};
+use crate::core::text::{self, clock, width, Seg, Tone};
 use crate::core::{
     browser_rows, device_window, help_shown, list_cursor, palette_window, row_entry, Gpu, Level,
     Rhythm, Row, Screen, SettingsRow, Side, State,
@@ -55,7 +55,7 @@ pub mod colors {
     pub const SELECTED: Color = Color::Rgb(46, 46, 58);
     /// Buttons.
     pub const BUTTON: Color = Color::Rgb(38, 38, 47);
-    /// Good news (bit-perfect, done).
+    /// Good news (done, chosen).
     pub const GREEN: Color = Color::Rgb(46, 204, 113);
     /// Warnings.
     pub const WARN: Color = Color::Rgb(240, 160, 60);
@@ -147,7 +147,6 @@ fn tone_style(tone: Tone) -> Style {
         Tone::Dim | Tone::AlbumLink => s.fg(DIM),
         Tone::Source => s.fg(SOURCE).add_modifier(Modifier::BOLD),
         Tone::Device => s.fg(TEXT).add_modifier(Modifier::UNDERLINED),
-        Tone::Good => s.fg(GREEN),
         Tone::Warn => s.fg(WARN),
         Tone::Pulse => s.fg(DIM),
     }
@@ -861,24 +860,12 @@ fn draw_settings(frame: &mut Frame, scene: &Scene, s: &SettingsLayout) {
         frame.render_widget(Paragraph::new(Span::styled(label, label_style)), label_rect);
         let value = match row {
             SettingsRow::Device => format!("{}  ▾", state.device_label()),
-            SettingsRow::Rate => {
-                let (set, used) = (state.config.rate(), state.output_rate());
-                if used == set {
-                    format!("{} kHz", khz_short(used))
-                } else {
-                    format!(
-                        "{} kHz (set: {} kHz, which this device lacks)",
-                        khz_short(used),
-                        khz_short(set)
-                    )
-                }
-            }
             SettingsRow::Headroom => match state.config.headroom {
                 Headroom::NONE => "none (lossy files -1.5 dB, for their overs)".to_owned(),
                 headroom if headroom < jodel_playback::LOSSY_HEADROOM => {
-                    format!("{headroom} where not bit-perfect, lossy files -1.5 dB")
+                    format!("{headroom} where the samples change, lossy files -1.5 dB")
                 }
-                headroom => format!("{headroom} where not bit-perfect"),
+                headroom => format!("{headroom} where the samples change"),
             },
             SettingsRow::Resample => if state.config.resample {
                 "on: files at another rate than the device's"

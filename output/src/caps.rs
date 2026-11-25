@@ -1,16 +1,11 @@
-//! What a device accepts exclusively, and choosing a format from it.
+//! What a target accepts, and choosing a format from it.
 
 use crate::format::{SampleFormat, StreamFormat};
 use std::collections::BTreeSet;
 
-/// The rates [`crate::capabilities`] probes: the 44.1 and 48 kHz families
-/// from 1× to 16×.
-pub const PROBE_RATES: [u32; 10] = [
-    44_100, 48_000, 88_200, 96_000, 176_400, 192_000, 352_800, 384_000, 705_600, 768_000,
-];
-
-/// The (rate, channels, format) combinations a device accepts in exclusive
-/// mode, as probed by [`crate::capabilities`] or built by hand for tests.
+/// The (rate, channels, format) combinations a target accepts: for a device
+/// opened shared, its mix format as [`crate::capabilities`] reads it (one
+/// rate, the system's); for a file or a test, what it was built with.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Capabilities {
     formats: BTreeSet<StreamFormat>,

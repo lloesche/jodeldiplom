@@ -570,7 +570,6 @@ fn track_started(state: &mut State, index: usize) {
         route: track.route,
         output: track.output,
         device: track.device,
-        bit_perfect: track.bit_perfect,
         output_frame: 0,
         from_frame: 0,
     };

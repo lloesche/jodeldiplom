@@ -13,7 +13,7 @@ use jodel_playback::{
 };
 use SampleFormat::*;
 
-/// Bit-perfect routes only.
+/// Lossless routes only.
 fn options() -> PlayerOptions {
     PlayerOptions {
         settings: Settings {
@@ -81,8 +81,6 @@ fn engine_output_equals_the_file() {
         );
         let start = started(&events)[0];
         assert_eq!(start.output.format.rate, rate);
-        // A memory output is not an exclusive device.
-        assert!(!start.bit_perfect);
         assert!(start.route.lossless);
     }
 }

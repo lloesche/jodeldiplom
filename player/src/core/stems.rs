@@ -12,7 +12,7 @@
 //!   it "instantly". A key pressed again before that bar takes the change
 //!   back: what is meant is the desk's setting, set at once.
 //! - `alt+0` puts every stem's strip back as it starts (unmuted, 0 dB,
-//!   not soloed), so the file is heard as it is again, bit-perfect.
+//!   not soloed), so the file is heard as it is again.
 //! - The engine makes the playing track's stems ([`MakeStems`]) while a
 //!   stem's strip is touched (or a change of one waits for its bar), the
 //!   Mixer, Karaoke or Transition tab shows, or a transition is armed or
@@ -278,9 +278,12 @@ fn told(state: &mut State, bar: Option<Bar>) {
     let mut what = if on.len() == STEMS && !state.desk.stems_touched() {
         "Stems: all on, the file as it is".to_owned()
     } else if on.is_empty() {
-        "Stems: none (not bit-perfect)".to_owned()
+        "Stems: none (the stems are heard, not the file)".to_owned()
     } else {
-        format!("Stems: {} (not bit-perfect)", on.join(", "))
+        format!(
+            "Stems: {} (the stems are heard, not the file)",
+            on.join(", ")
+        )
     };
     if let Some(bar) = bar {
         what.push_str(&format!(", from bar {}", bar.number));

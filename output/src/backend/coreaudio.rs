@@ -1,273 +1,91 @@
-//! macOS: the Core Audio HAL directly, in hog mode.
+//! macOS: the Core Audio HAL directly, shared, with our own IOProc.
 //!
 //! Device ids are Core Audio device UIDs; names are the devices' names.
-//! What a device accepts is what its output streams list in
-//! `kAudioStreamPropertyAvailablePhysicalFormats`: interleaved, signed,
-//! little-endian integer PCM, mapped to [`SampleFormat`] by bits per
-//! channel, bytes per channel and the "aligned high" flag. A 32-bit float
-//! physical format (all that built-in speakers and many virtual devices
-//! list) counts as [`SampleFormat::S24In32`]: every 24-bit value is a
-//! float exactly, so the stream reaches the device unchanged, converted at
-//! the IO boundary (step 4). An integer format is preferred where a device
-//! lists both. Listing them does not touch the device.
+//! A device is shared with every other application: the HAL mixes our
+//! IOProc's buffers with theirs. Nothing about the device is changed: no
+//! hog mode, mixing left on, its physical format and nominal rate as the
+//! system (Audio MIDI Setup) has them. Its one format ([`mix_format`]) is
+//! stereo in the IO (virtual) format of its first output stream of two
+//! channels or more, the format an IOProc exchanges (32-bit float on a
+//! mixable device, [`SampleFormat::F32`]), at that format's rate; on a
+//! stream of more channels the stream plays on the first two and the rest
+//! get silence. Reading it does not touch the device.
 //!
-//! Opening, in order:
+//! An IOProc on the HAL device rather than the AUHAL output unit: it needs
+//! no new dependency (the unit is in AudioToolbox), runs shared as well as
+//! the unit does, and gives the stream's own output time stamps, which the
+//! position below is made of. The unit's extras (its own format and rate
+//! conversion, default-device following) are not wanted: the stream is in
+//! the device's own format, and the player follows the default device
+//! itself.
 //!
-//! 1. take hog mode (`kAudioDevicePropertyHogMode` = our pid; refused if
-//!    another process holds it);
-//! 2. turn mixing off where the device lets us
-//!    (`kAudioDevicePropertySupportsMixing` = 0);
-//! 3. set the chosen physical format on the output stream; it carries the
-//!    nominal rate. Wait (up to 2 s) until the device reports it;
-//! 4. read the stream's virtual format, the format the IOProc exchanges.
-//!    If it is the same integer layout, the ring's bytes go to the device
-//!    as they are; if it is 32-bit float, each sample is converted exactly
-//!    at the IO boundary (every 24-bit value is a float the HAL turns back
-//!    into the same integer) and [`StreamInfo::float_io`] says so;
-//! 5. ask for an IO buffer of one period and register our IOProc.
-//!
-//! Closing first has the IOProc deliver silence until the device has taken
-//! enough of it to fill what it holds (two IO buffers, its latency and
-//! safety offset, and 20 ms; at most [`SETTLE_WAIT`]; a paused device runs
-//! again for it), then undoes the
-//! rest in reverse: stop, destroy the IOProc, restore the physical format,
-//! turn mixing back on, release hog mode. Stopped at once, a device kept
-//! our last samples in its buffers, and some (USB interfaces) played them
-//! again read as the restored format: a burst of noise.
-//!
-//! The IOProc fills the device buffer from the ring. The position is the
-//! frames delivered minus how far ahead of "now" the buffer's output time
-//! is, minus the device and stream latency.
+//! Opening: refuse a device another process holds in hog mode
+//! ([`Error::DeviceBusy`]), ask for an IO buffer of one period (a setting
+//! of this process only, which the microphone's IO buffer on the same
+//! device replaces; the stream info keeps the one it opened with), register
+//! our IOProc, and listen to the device's nominal rate, its being alive and
+//! the stream's IO format: anything changed there (another application, or
+//! Audio MIDI Setup) fails the stream with [`Error::DeviceLost`], so it is
+//! opened again in the device's new format. The IOProc fills the device
+//! buffer from the ring. The position ([`played`]) is the frames delivered
+//! minus how far ahead of "now" the buffer's output time is, minus the
+//! device and stream latency.
 
-use crate::caps::{candidates, Capabilities, PROBE_RATES};
-use crate::device::{Device, Volume};
+use super::coreaudio_hal::{
+    addr, get, get_string, hogged, output_streams, set, status_error, system_devices, Listener,
+    GLOBAL, OUTPUT,
+};
+use crate::device::Device;
 use crate::error::Error;
 use crate::format::{SampleFormat, StreamFormat};
 use crate::output::{Core, Driver, OpenRequest, StreamInfo};
-use crate::pack::unpack_sample;
 use crate::shared::Shared;
 use objc2_core_audio::{
     kAudioDevicePropertyBufferFrameSize, kAudioDevicePropertyDeviceIsAlive,
-    kAudioDevicePropertyDeviceUID, kAudioDevicePropertyHogMode, kAudioDevicePropertyLatency,
-    kAudioDevicePropertySafetyOffset, kAudioDevicePropertyStreams,
-    kAudioDevicePropertySupportsMixing, kAudioHardwarePropertyDefaultOutputDevice,
-    kAudioHardwarePropertyDevices, kAudioObjectPropertyElementMain, kAudioObjectPropertyName,
-    kAudioObjectPropertyScopeGlobal, kAudioObjectPropertyScopeOutput, kAudioObjectSystemObject,
-    kAudioStreamPropertyAvailablePhysicalFormats, kAudioStreamPropertyLatency,
-    kAudioStreamPropertyPhysicalFormat, kAudioStreamPropertyVirtualFormat,
-    AudioDeviceCreateIOProcID, AudioDeviceDestroyIOProcID, AudioDeviceIOProcID, AudioDeviceStart,
-    AudioDeviceStop, AudioObjectGetPropertyData, AudioObjectGetPropertyDataSize,
-    AudioObjectHasProperty, AudioObjectID, AudioObjectIsPropertySettable,
-    AudioObjectPropertyAddress, AudioObjectSetPropertyData, AudioStreamRangedDescription,
+    kAudioDevicePropertyDeviceUID, kAudioDevicePropertyLatency,
+    kAudioDevicePropertyNominalSampleRate, kAudioHardwarePropertyDefaultOutputDevice,
+    kAudioObjectPropertyName, kAudioObjectSystemObject, kAudioStreamPropertyLatency,
+    kAudioStreamPropertyVirtualFormat, AudioDeviceCreateIOProcID, AudioDeviceDestroyIOProcID,
+    AudioDeviceIOProcID, AudioDeviceStart, AudioDeviceStop, AudioObjectID,
+    AudioObjectPropertyAddress,
 };
 use objc2_core_audio_types::{
     kAudioFormatFlagIsAlignedHigh, kAudioFormatFlagIsBigEndian, kAudioFormatFlagIsFloat,
     kAudioFormatFlagIsNonInterleaved, kAudioFormatFlagIsSignedInteger, kAudioFormatLinearPCM,
     AudioBuffer, AudioBufferList, AudioStreamBasicDescription, AudioTimeStamp,
 };
-use objc2_core_foundation::{CFRetained, CFString};
 use std::cell::UnsafeCell;
 use std::ffi::c_void;
-use std::mem::size_of;
-use std::ptr::{null, NonNull};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::ptr::NonNull;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
-pub(crate) const BACKEND: &str = "Core Audio HAL (hog mode)";
+pub(crate) const BACKEND: &str = "Core Audio (shared)";
 
-pub(super) const GLOBAL: u32 = kAudioObjectPropertyScopeGlobal;
-const OUTPUT: u32 = kAudioObjectPropertyScopeOutput;
-
-pub(super) fn addr(selector: u32, scope: u32) -> AudioObjectPropertyAddress {
-    AudioObjectPropertyAddress {
-        mSelector: selector,
-        mScope: scope,
-        mElement: kAudioObjectPropertyElementMain,
-    }
-}
-
-pub(super) fn status_error(call: &'static str, status: i32) -> Error {
-    Error::Backend {
-        call,
-        code: i64::from(status),
-        message: String::new(),
-    }
-}
-
-/// Reads a fixed-size property.
-pub(super) fn get<T: Copy>(
-    object: AudioObjectID,
-    address: AudioObjectPropertyAddress,
-    call: &'static str,
-) -> Result<T, Error> {
-    // SAFETY: `value` is a plain-data out buffer of the size we pass.
-    unsafe {
-        let mut value: T = std::mem::zeroed();
-        let mut size = size_of::<T>() as u32;
-        let status = AudioObjectGetPropertyData(
-            object,
-            NonNull::from(&address),
-            0,
-            null(),
-            NonNull::from(&mut size),
-            NonNull::from(&mut value).cast(),
-        );
-        if status == 0 {
-            Ok(value)
-        } else {
-            Err(status_error(call, status))
-        }
-    }
-}
-
-/// Reads an array property.
-pub(super) fn get_vec<T: Copy>(
-    object: AudioObjectID,
-    address: AudioObjectPropertyAddress,
-) -> Vec<T> {
-    // SAFETY: the buffer is sized from the property's reported size.
-    unsafe {
-        let mut size = 0u32;
-        if AudioObjectGetPropertyDataSize(
-            object,
-            NonNull::from(&address),
-            0,
-            null(),
-            NonNull::from(&mut size),
-        ) != 0
-            || (size as usize) < size_of::<T>()
-        {
-            return Vec::new();
-        }
-        let mut values: Vec<T> = (0..size as usize / size_of::<T>())
-            .map(|_| std::mem::zeroed())
-            .collect();
-        let mut size = (values.len() * size_of::<T>()) as u32;
-        let status = AudioObjectGetPropertyData(
-            object,
-            NonNull::from(&address),
-            0,
-            null(),
-            NonNull::from(&mut size),
-            NonNull::new_unchecked(values.as_mut_ptr().cast()),
-        );
-        if status != 0 {
-            return Vec::new();
-        }
-        values.truncate(size as usize / size_of::<T>());
-        values
-    }
-}
-
-pub(super) fn set<T: Copy>(
-    object: AudioObjectID,
-    address: AudioObjectPropertyAddress,
-    value: T,
-    call: &'static str,
-) -> Result<(), Error> {
-    // SAFETY: passes a plain-data value of its own size.
-    let status = unsafe {
-        AudioObjectSetPropertyData(
-            object,
-            NonNull::from(&address),
-            0,
-            null(),
-            size_of::<T>() as u32,
-            NonNull::from(&value).cast(),
-        )
-    };
-    if status == 0 {
-        Ok(())
-    } else {
-        Err(status_error(call, status))
-    }
-}
-
-fn settable(object: AudioObjectID, address: AudioObjectPropertyAddress) -> bool {
-    let mut flag: u8 = 0;
-    // SAFETY: a one-byte Boolean out parameter.
-    unsafe {
-        AudioObjectIsPropertySettable(object, NonNull::from(&address), NonNull::from(&mut flag))
-            == 0
-            && flag != 0
-    }
-}
-
-/// Reads a CFString property and releases it.
-pub(super) fn get_string(object: AudioObjectID, selector: u32) -> Option<String> {
-    let p: *const CFString =
-        get(object, addr(selector, GLOBAL), "AudioObjectGetPropertyData").ok()?;
-    // SAFETY: string properties are returned with +1 retain count.
-    let s = unsafe { CFRetained::from_raw(NonNull::new(p as *mut CFString)?) };
-    Some(s.to_string())
-}
-
-fn output_streams(device: AudioObjectID) -> Vec<AudioObjectID> {
-    get_vec(device, addr(kAudioDevicePropertyStreams, OUTPUT))
-}
-
-pub(super) fn system_devices() -> Vec<AudioObjectID> {
-    get_vec(
-        kAudioObjectSystemObject as AudioObjectID,
-        addr(kAudioHardwarePropertyDevices, GLOBAL),
-    )
-}
+/// The stereo frames a wider stream's buffer is rendered by at a time.
+const SPREAD_FRAMES: usize = 1024;
 
 pub(crate) fn devices() -> Result<Vec<Device>, Error> {
-    let system: AudioObjectID = get(
+    let default: AudioObjectID = get(
         kAudioObjectSystemObject as AudioObjectID,
         addr(kAudioHardwarePropertyDefaultOutputDevice, GLOBAL),
         "default output device",
     )
     .unwrap_or(0);
-    let listed: Vec<(AudioObjectID, String)> = system_devices()
+    Ok(system_devices()
         .into_iter()
         .filter(|&d| !output_streams(d).is_empty())
-        .filter_map(|d| Some((d, get_string(d, kAudioDevicePropertyDeviceUID)?)))
-        .collect();
-    let objects: Vec<AudioObjectID> = listed.iter().map(|&(d, _)| d).collect();
-    let pid = std::process::id() as i32;
-    let default = default_output(system, &objects, |d| hog_owner(d) == Some(pid));
-    Ok(listed
-        .into_iter()
-        .map(|(d, id)| {
+        .filter_map(|d| {
+            let id = get_string(d, kAudioDevicePropertyDeviceUID)?;
             let name = get_string(d, kAudioObjectPropertyName).unwrap_or_else(|| id.clone());
-            Device {
+            Some(Device {
                 id,
                 name,
-                is_default: Some(d) == default,
-            }
+                is_default: d == default,
+            })
         })
         .collect())
-}
-
-/// The process that holds `device` in hog mode (`None`: no one, or it
-/// cannot be read).
-fn hog_owner(device: AudioObjectID) -> Option<i32> {
-    get::<i32>(
-        device,
-        addr(kAudioDevicePropertyHogMode, GLOBAL),
-        "get hog mode",
-    )
-    .ok()
-    .filter(|&pid| pid != -1)
-}
-
-/// The output device to mark as the default among `listed`: the system's
-/// default output where it is one of them, else the one this process holds
-/// in hog mode (`ours`). While this process hogs the default device, the
-/// system's default output can name none of the devices, and the device
-/// the player plays on is the default it chose.
-fn default_output(
-    system: AudioObjectID,
-    listed: &[AudioObjectID],
-    ours: impl Fn(AudioObjectID) -> bool,
-) -> Option<AudioObjectID> {
-    if listed.contains(&system) {
-        return Some(system);
-    }
-    listed.iter().copied().find(|&d| ours(d))
 }
 
 fn find(uid: &str) -> Result<AudioObjectID, Error> {
@@ -280,20 +98,24 @@ fn find(uid: &str) -> Result<AudioObjectID, Error> {
         .ok_or_else(|| Error::DeviceNotFound(uid.into()))
 }
 
-/// The sample format of an interleaved little-endian signed integer
-/// description, if it is one of ours.
-pub(super) fn sample_format(d: &AudioStreamBasicDescription) -> Option<SampleFormat> {
+/// The sample format of an interleaved little-endian description, 32-bit
+/// float or signed integer, if it is one of ours.
+fn sample_format(d: &AudioStreamBasicDescription) -> Option<SampleFormat> {
     let flags = d.mFormatFlags;
     if d.mFormatID != kAudioFormatLinearPCM
-        || flags & kAudioFormatFlagIsFloat != 0
         || flags & kAudioFormatFlagIsBigEndian != 0
         || flags & kAudioFormatFlagIsNonInterleaved != 0
-        || flags & kAudioFormatFlagIsSignedInteger == 0
         || d.mChannelsPerFrame == 0
     {
         return None;
     }
     let bytes = d.mBytesPerFrame / d.mChannelsPerFrame;
+    if flags & kAudioFormatFlagIsFloat != 0 {
+        return (d.mBitsPerChannel == 32 && bytes == 4).then_some(SampleFormat::F32);
+    }
+    if flags & kAudioFormatFlagIsSignedInteger == 0 {
+        return None;
+    }
     match (d.mBitsPerChannel, bytes) {
         (16, 2) => Some(SampleFormat::S16),
         (24, 3) => Some(SampleFormat::S24Packed),
@@ -304,235 +126,142 @@ pub(super) fn sample_format(d: &AudioStreamBasicDescription) -> Option<SampleFor
     }
 }
 
-pub(super) fn is_float32(d: &AudioStreamBasicDescription) -> bool {
-    d.mFormatID == kAudioFormatLinearPCM
-        && d.mFormatFlags & kAudioFormatFlagIsFloat != 0
-        && d.mFormatFlags & (kAudioFormatFlagIsBigEndian | kAudioFormatFlagIsNonInterleaved) == 0
-        && d.mBitsPerChannel == 32
+/// The stereo format an IO format `d` plays: its rate (whole Hz) and sample
+/// format, where it has two channels or more.
+fn stereo_of(d: &AudioStreamBasicDescription) -> Option<StreamFormat> {
+    let rate = d.mSampleRate.round();
+    (d.mChannelsPerFrame >= 2 && rate >= 1.0)
+        .then(|| sample_format(d))
+        .flatten()
+        .map(|sample| StreamFormat::new(rate as u32, 2, sample))
 }
 
-/// The sample format a physical format carries: its integer layout, or
-/// 24 bits for 32-bit float (see the module notes).
-fn physical_sample(d: &AudioStreamBasicDescription) -> Option<SampleFormat> {
-    sample_format(d).or_else(|| is_float32(d).then_some(SampleFormat::S24In32))
+/// Whether two IO formats are the same for a stream opened at the first.
+fn same_io(a: &AudioStreamBasicDescription, b: &AudioStreamBasicDescription) -> bool {
+    a.mSampleRate == b.mSampleRate
+        && a.mFormatID == b.mFormatID
+        && a.mFormatFlags == b.mFormatFlags
+        && a.mBytesPerFrame == b.mBytesPerFrame
+        && a.mChannelsPerFrame == b.mChannelsPerFrame
+        && a.mBitsPerChannel == b.mBitsPerChannel
 }
 
-/// The rates a ranged description covers among the probed ones (and its
-/// own rate, if it names one).
-fn rates_of(r: &AudioStreamRangedDescription) -> Vec<u32> {
-    let (lo, hi) = (r.mSampleRateRange.mMinimum, r.mSampleRateRange.mMaximum);
-    let mut rates: Vec<u32> = PROBE_RATES
-        .into_iter()
-        .filter(|&rate| f64::from(rate) >= lo && f64::from(rate) <= hi)
-        .collect();
-    let own = r.mFormat.mSampleRate;
-    if own > 0.0 && own.fract() == 0.0 && !rates.contains(&(own as u32)) {
-        rates.push(own as u32);
-    }
-    rates
+/// The output stream we play on: its index among the device's output
+/// streams (= the buffer index in the IOProc's buffer list), the stream,
+/// its IO format, and the stereo format it plays.
+struct IoStream {
+    index: usize,
+    stream: AudioObjectID,
+    io: AudioStreamBasicDescription,
+    format: StreamFormat,
 }
 
-pub(crate) fn capabilities(uid: &str) -> Result<Capabilities, Error> {
-    let device = find(uid)?;
-    let mut caps = Capabilities::new();
-    for stream in output_streams(device) {
-        for r in get_vec::<AudioStreamRangedDescription>(
-            stream,
-            addr(kAudioStreamPropertyAvailablePhysicalFormats, GLOBAL),
-        ) {
-            if let Some(sample) = physical_sample(&r.mFormat) {
-                for rate in rates_of(&r) {
-                    caps.insert(StreamFormat::new(
-                        rate,
-                        r.mFormat.mChannelsPerFrame as u16,
-                        sample,
-                    ));
-                }
-            }
-        }
-    }
-    Ok(caps)
+fn io_format(stream: AudioObjectID) -> Result<AudioStreamBasicDescription, Error> {
+    get(
+        stream,
+        addr(kAudioStreamPropertyVirtualFormat, GLOBAL),
+        "get virtual format",
+    )
 }
 
-/// `kAudioDevicePropertyVolumeScalar` ('volm'): a volume control's level,
-/// 0 to 1, as the system's slider shows it.
-const VOLUME_SCALAR: u32 = u32::from_be_bytes(*b"volm");
-/// `kAudioDevicePropertyVolumeDecibels` ('vold'): its gain in dB.
-const VOLUME_DB: u32 = u32::from_be_bytes(*b"vold");
-/// `kAudioDevicePropertyMute` ('mute').
-const MUTE: u32 = u32::from_be_bytes(*b"mute");
-
-/// A control of the output: element 0 is the master, 1… the channels.
-fn control(selector: u32, element: u32) -> AudioObjectPropertyAddress {
-    AudioObjectPropertyAddress {
-        mSelector: selector,
-        mScope: OUTPUT,
-        mElement: element,
-    }
-}
-
-fn has(object: AudioObjectID, address: AudioObjectPropertyAddress) -> bool {
-    // SAFETY: asks whether the object has the property.
-    unsafe { AudioObjectHasProperty(object, NonNull::from(&address)) }
-}
-
-/// The output channels across the device's output streams.
-fn output_channels(device: AudioObjectID) -> u32 {
+/// The device's first output stream of two channels or more in a format
+/// of ours.
+fn io_stream(device: AudioObjectID) -> Result<IoStream, Error> {
     output_streams(device)
         .into_iter()
-        .filter_map(|stream| {
-            get::<AudioStreamBasicDescription>(
+        .enumerate()
+        .find_map(|(index, stream)| {
+            let io = io_format(stream).ok()?;
+            let format = stereo_of(&io)?;
+            Some(IoStream {
+                index,
                 stream,
-                addr(kAudioStreamPropertyVirtualFormat, GLOBAL),
-                "get virtual format",
-            )
-            .ok()
+                io,
+                format,
+            })
         })
-        .map(|d| d.mChannelsPerFrame)
-        .sum()
+        .ok_or_else(|| Error::Unsupported("the device has no stereo stream we play".into()))
 }
 
-/// The volume controls this process can set: the master where there is
-/// one, else each channel's.
-fn volume_elements(device: AudioObjectID) -> Vec<u32> {
-    let usable = |element: u32| {
-        let address = control(VOLUME_SCALAR, element);
-        has(device, address) && settable(device, address)
-    };
-    if usable(0) {
-        return vec![0];
-    }
-    (1..=output_channels(device))
-        .filter(|&e| usable(e))
-        .collect()
+pub(crate) fn mix_format(uid: &str) -> Result<StreamFormat, Error> {
+    Ok(io_stream(find(uid)?)?.format)
 }
 
-/// The volume as `elements` have it (their mean level).
-fn read_volume(device: AudioObjectID, elements: &[u32]) -> Option<Volume> {
-    let levels: Vec<f32> = elements
-        .iter()
-        .filter_map(|&e| get::<f32>(device, control(VOLUME_SCALAR, e), "get volume").ok())
-        .collect();
-    if levels.is_empty() {
-        return None;
-    }
-    let level = levels.iter().sum::<f32>() / levels.len() as f32;
-    let db = get::<f32>(device, control(VOLUME_DB, elements[0]), "get volume dB").ok();
-    let muted = (0..=output_channels(device))
-        .find(|&e| has(device, control(MUTE, e)))
-        .and_then(|e| get::<u32>(device, control(MUTE, e), "get mute").ok())
-        .map(|m| m != 0);
-    Some(Volume { level, db, muted })
+/// Stream frames played as of an IOProc call: `delivered` frames were
+/// handed over before this buffer, whose first frame reaches the hardware
+/// `ahead` frames from now, and the DAC `latency` frames after that.
+fn played(delivered: u64, ahead: f64, latency: f64) -> u64 {
+    (delivered as f64 - ahead.max(0.0) - latency).max(0.0) as u64
 }
 
-pub(crate) fn volume(uid: &str) -> Result<Option<Volume>, Error> {
-    let device = find(uid)?;
-    Ok(read_volume(device, &volume_elements(device)))
-}
-
-pub(crate) fn set_volume(uid: &str, level: f32) -> Result<Volume, Error> {
-    let device = find(uid)?;
-    let elements = volume_elements(device);
-    if elements.is_empty() {
-        return Err(Error::Unsupported(
-            "the device has no volume control of its own".into(),
-        ));
-    }
-    for &e in &elements {
-        set(device, control(VOLUME_SCALAR, e), level, "set volume")?;
-    }
-    if level > 0.0 {
-        for e in 0..=output_channels(device) {
-            let mute = control(MUTE, e);
-            if has(device, mute)
-                && settable(device, mute)
-                && get::<u32>(device, mute, "get mute").is_ok_and(|m| m != 0)
-            {
-                set(device, mute, 0u32, "unmute")?;
-            }
-        }
-    }
-    read_volume(device, &elements).ok_or(Error::Unsupported(
-        "the device's volume could not be read back".into(),
-    ))
-}
-
-/// How the IOProc hands samples to the device.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Transport {
-    /// The ring's bytes as they are.
-    Direct,
-    /// Converted to 32-bit float.
-    Float32,
-}
-
-/// What the IOProc reads; owned by the driver, freed after the IOProc is
-/// destroyed.
+/// What the IOProc and the listener read; owned by the driver, freed after
+/// both are gone.
 struct IoContext {
     shared: Arc<Shared>,
-    transport: Transport,
-    /// Index of our stream among the device's output streams (= the
-    /// buffer index in the IOProc's buffer list).
+    /// Our stream's buffer index in the IOProc's buffer list.
     stream_index: usize,
+    /// The stream's channels (2 or more; ours are the first two).
+    channels: usize,
     /// Device and stream latency, in frames.
     latency: f64,
     /// Device frames delivered since the last restart.
     delivered: AtomicU64,
-    /// Scratch for the float conversion; only the IOProc touches it.
+    /// A wider stream's stereo frames before they are spread; only the
+    /// IOProc touches it.
     scratch: UnsafeCell<Vec<u8>>,
-    /// Closing: the IOProc delivers only silence.
-    silence: AtomicBool,
-    /// Device frames of that silence delivered.
-    silent: AtomicU64,
-    /// Device frames of silence to deliver before the device stops.
-    settle: u64,
-    /// Bytes of one device frame in the IOProc's buffer.
-    device_frame_bytes: usize,
+    /// What the stream was opened at, for the listener to compare.
+    device: AudioObjectID,
+    stream: AudioObjectID,
+    io: AudioStreamBasicDescription,
 }
 
-/// The longest a close waits for the device to take its silence.
-const SETTLE_WAIT: Duration = Duration::from_millis(300);
-
-// SAFETY: `scratch` is used only from the IOProc, which the HAL calls on
-// one thread at a time; everything else is atomic or internally synchronised.
+// SAFETY: `scratch` is used only from the IOProc, which the HAL calls on one
+// thread at a time; everything else is atomic or internally synchronised.
 unsafe impl Sync for IoContext {}
 
 impl IoContext {
-    /// Fills one device buffer. Returns the device frames delivered, or
-    /// `None` when the handle had the consumer suspended (the buffer is
-    /// silence and nothing counts).
+    /// Fills our stream's buffer: the ring's stereo frames, on a wider
+    /// stream in its first two channels with silence in the rest. `None`
+    /// when the handle had the consumer suspended (silence, nothing counts).
     fn fill(&self, out: &mut [u8]) -> Option<u64> {
-        let format = self.shared.format;
-        match self.transport {
-            Transport::Direct => {
-                self.shared.render_or_skip(out)?;
-                Some((out.len() / format.frame_bytes()) as u64)
-            }
-            Transport::Float32 => {
-                // SAFETY: see the Sync impl.
-                let scratch = unsafe { &mut *self.scratch.get() };
-                let ch = usize::from(format.channels);
-                let frames = out.len() / (4 * ch);
-                let per_chunk = scratch.len() / format.frame_bytes();
-                let mut done = 0;
-                let mut skipped = false;
-                while done < frames {
-                    let n = per_chunk.min(frames - done);
-                    let packed = &mut scratch[..n * format.frame_bytes()];
-                    skipped |= self.shared.render_or_skip(packed).is_none();
-                    let floats = &mut out[done * 4 * ch..(done + n) * 4 * ch];
-                    for (sample, f) in packed
-                        .chunks_exact(format.sample.bytes())
-                        .zip(floats.chunks_exact_mut(4))
-                    {
-                        let v = unpack_sample(sample, format.sample) as f32 / 8_388_608.0;
-                        f.copy_from_slice(&v.to_le_bytes());
-                    }
-                    done += n;
-                }
-                (!skipped).then_some(frames as u64)
+        let fb = self.shared.format.frame_bytes();
+        if self.channels == 2 {
+            self.shared.render_or_skip(out)?;
+            return Some((out.len() / fb) as u64);
+        }
+        let wide = fb / 2 * self.channels;
+        let frames = out.len() / wide;
+        // SAFETY: see the Sync impl.
+        let scratch = unsafe { &mut *self.scratch.get() };
+        let mut skipped = false;
+        for (start, chunk) in out.chunks_mut(SPREAD_FRAMES * wide).enumerate() {
+            let n = (frames - start * SPREAD_FRAMES).min(SPREAD_FRAMES);
+            let stereo = &mut scratch[..n * fb];
+            skipped |= self.shared.render_or_skip(stereo).is_none();
+            for (frame, pair) in chunk.chunks_exact_mut(wide).zip(stereo.chunks_exact(fb)) {
+                frame[..fb].copy_from_slice(pair);
+                frame[fb..].fill(0);
             }
         }
+        (!skipped).then_some(frames as u64)
+    }
+
+    /// Whether the device still runs the stream's format.
+    fn unchanged(&self) -> bool {
+        let alive = get::<u32>(
+            self.device,
+            addr(kAudioDevicePropertyDeviceIsAlive, GLOBAL),
+            "alive",
+        )
+        .is_ok_and(|a| a != 0);
+        let rate = get::<f64>(
+            self.device,
+            addr(kAudioDevicePropertyNominalSampleRate, GLOBAL),
+            "nominal rate",
+        );
+        alive
+            && rate.is_ok_and(|r| r.round() as u32 == self.shared.format.rate)
+            && io_format(self.stream).is_ok_and(|io| same_io(&io, &self.io))
     }
 }
 
@@ -549,22 +278,6 @@ unsafe extern "C-unwind" fn io_proc(
     let list = output.as_ptr();
     let count = (*list).mNumberBuffers as usize;
     let buffers = std::ptr::addr_of_mut!((*list).mBuffers) as *mut AudioBuffer;
-    if ctx.silence.load(Ordering::Acquire) {
-        // Closing: silence, counted, so the device holds none of ours.
-        let mut frames = 0;
-        for i in 0..count {
-            let b = &mut *buffers.add(i);
-            if b.mData.is_null() {
-                continue;
-            }
-            std::slice::from_raw_parts_mut(b.mData as *mut u8, b.mDataByteSize as usize).fill(0);
-            if i == ctx.stream_index {
-                frames = b.mDataByteSize as usize / ctx.device_frame_bytes.max(1);
-            }
-        }
-        ctx.silent.fetch_add(frames as u64, Ordering::Release);
-        return 0;
-    }
     let mut frames = Some(0);
     for i in 0..count {
         let b = &mut *buffers.add(i);
@@ -582,120 +295,30 @@ unsafe extern "C-unwind" fn io_proc(
         return 0;
     };
     let delivered = ctx.delivered.load(Ordering::Relaxed);
-    // The first frame of this buffer reaches the hardware at the output
-    // time and the DAC `latency` frames later.
     let ahead = (*output_time.as_ptr()).mSampleTime - (*now.as_ptr()).mSampleTime;
-    let played = delivered as f64 - ahead.max(0.0) - ctx.latency;
+    // `now` is the time of this call: the clock is read at it.
     ctx.shared
-        .report(played.max(0.0) as u64, Instant::now(), true);
+        .report(played(delivered, ahead, ctx.latency), Instant::now(), true);
     ctx.delivered.store(delivered + frames, Ordering::Relaxed);
     0
 }
 
-struct Opened {
-    device: AudioObjectID,
-    stream: AudioObjectID,
-    took_hog: bool,
-    mixing: Option<u32>,
-    original: Option<AudioStreamBasicDescription>,
-}
-
-impl Opened {
-    /// Undoes what open changed, in reverse.
-    fn restore(&self) {
-        if let Some(original) = self.original {
-            let _ = set(
-                self.stream,
-                addr(kAudioStreamPropertyPhysicalFormat, GLOBAL),
-                original,
-                "restore format",
-            );
-        }
-        if let Some(mixing) = self.mixing {
-            let _ = set(
-                self.device,
-                addr(kAudioDevicePropertySupportsMixing, GLOBAL),
-                mixing,
-                "restore mixing",
-            );
-        }
-        if self.took_hog {
-            let _ = set(
-                self.device,
-                addr(kAudioDevicePropertyHogMode, GLOBAL),
-                -1i32,
-                "release hog mode",
-            );
-        }
+/// A property the stream depends on changed: it fails, unless the device
+/// still runs its format.
+unsafe extern "C-unwind" fn changed(
+    _object: AudioObjectID,
+    _count: u32,
+    _addresses: NonNull<AudioObjectPropertyAddress>,
+    client: *mut c_void,
+) -> i32 {
+    let ctx = &*(client as *const IoContext);
+    if !ctx.unchanged() {
+        ctx.shared.fail(Error::DeviceLost);
     }
+    0
 }
 
-fn same_format(a: &AudioStreamBasicDescription, b: &AudioStreamBasicDescription) -> bool {
-    a.mSampleRate == b.mSampleRate
-        && a.mFormatID == b.mFormatID
-        && a.mBitsPerChannel == b.mBitsPerChannel
-        && a.mBytesPerFrame == b.mBytesPerFrame
-        && a.mChannelsPerFrame == b.mChannelsPerFrame
-        && sample_format(a) == sample_format(b)
-        && is_float32(a) == is_float32(b)
-}
-
-/// Picks (stream index, stream, physical description) for the request:
-/// the first format the request prefers that a stream takes, as integer
-/// samples where a stream lists them, else as float.
-fn choose(
-    device: AudioObjectID,
-    request: &OpenRequest,
-) -> Option<(
-    usize,
-    AudioObjectID,
-    AudioStreamBasicDescription,
-    StreamFormat,
-)> {
-    let streams = output_streams(device);
-    let lists: Vec<Vec<AudioStreamRangedDescription>> = streams
-        .iter()
-        .map(|&stream| {
-            get_vec(
-                stream,
-                addr(kAudioStreamPropertyAvailablePhysicalFormats, GLOBAL),
-            )
-        })
-        .collect();
-    let matches = |sample: SampleFormat, float: bool, d: &AudioStreamBasicDescription| {
-        let carries = if float {
-            is_float32(d) && physical_sample(d) == Some(sample)
-        } else {
-            sample_format(d) == Some(sample)
-        };
-        carries && d.mChannelsPerFrame == u32::from(request.channels)
-    };
-    for float in [false, true] {
-        for sample in candidates(&request.formats) {
-            for (index, (&stream, list)) in streams.iter().zip(&lists).enumerate() {
-                for r in list {
-                    if !matches(sample, float, &r.mFormat) || !rates_of(r).contains(&request.rate) {
-                        continue;
-                    }
-                    let mut d = r.mFormat;
-                    d.mSampleRate = f64::from(request.rate);
-                    return Some((
-                        index,
-                        stream,
-                        d,
-                        StreamFormat::new(request.rate, request.channels, sample),
-                    ));
-                }
-            }
-        }
-    }
-    None
-}
-
-fn configure(
-    uid: &str,
-    request: &OpenRequest,
-) -> Result<(Opened, IoContext, StreamInfo, u64), Error> {
+fn configure(uid: &str, request: &OpenRequest) -> Result<(IoContext, StreamInfo), Error> {
     let device = find(uid)?;
     if get::<u32>(
         device,
@@ -707,158 +330,72 @@ fn configure(
     {
         return Err(Error::DeviceLost);
     }
-    let (stream_index, stream, physical, format) =
-        choose(device, request).ok_or(Error::FormatNotAccepted {
+    if hogged(device) {
+        return Err(Error::DeviceBusy);
+    }
+    let s = io_stream(device)?;
+    if !request.takes(s.format) {
+        return Err(Error::FormatNotAccepted {
             rate: request.rate,
             channels: request.channels,
-        })?;
-    let mut opened = Opened {
-        device,
-        stream,
-        took_hog: false,
-        mixing: None,
-        original: None,
-    };
-    let result = (|| {
-        // 1. Hog mode. Setting the property toggles it for the calling
-        // process (the value passed is ignored): it takes a free device and
-        // releases one we hold, and leaves another owner's alone.
-        let pid = std::process::id() as i32;
-        let hog = addr(kAudioDevicePropertyHogMode, GLOBAL);
-        let owner: i32 = get(device, hog, "get hog mode")?;
-        if owner != -1 && owner != pid {
-            return Err(Error::DeviceBusy);
-        }
-        if owner != pid {
-            set(device, hog, pid, "set hog mode")?;
-            if get::<i32>(device, hog, "get hog mode")? != pid {
-                return Err(Error::DeviceBusy);
-            }
-            opened.took_hog = true;
-        }
-        // 2. Mixing off.
-        let mixing = addr(kAudioDevicePropertySupportsMixing, GLOBAL);
-        if settable(device, mixing) {
-            if let Ok(old) = get::<u32>(device, mixing, "get mixing") {
-                if old != 0 {
-                    set(device, mixing, 0u32, "set mixing")?;
-                    opened.mixing = Some(old);
-                }
-            }
-        }
-        // 3. Physical format and rate.
-        let pf = addr(kAudioStreamPropertyPhysicalFormat, GLOBAL);
-        let original: AudioStreamBasicDescription = get(stream, pf, "get physical format")?;
-        if !same_format(&original, &physical) {
-            opened.original = Some(original);
-            set(stream, pf, physical, "set physical format")?;
-            let deadline = Instant::now() + Duration::from_secs(2);
-            loop {
-                let now: AudioStreamBasicDescription = get(stream, pf, "get physical format")?;
-                if same_format(&now, &physical) {
-                    break;
-                }
-                if Instant::now() >= deadline {
-                    return Err(Error::Timeout(
-                        "the device did not switch to the physical format",
-                    ));
-                }
-                std::thread::sleep(Duration::from_millis(10));
-            }
-        }
-        // 4. The IOProc's format.
-        let virtual_format: AudioStreamBasicDescription = get(
-            stream,
-            addr(kAudioStreamPropertyVirtualFormat, GLOBAL),
-            "get virtual format",
-        )?;
-        let transport = if virtual_format.mChannelsPerFrame != u32::from(format.channels) {
-            return Err(Error::Unsupported(format!(
-                "the IO format has {} channels, the stream {}",
-                virtual_format.mChannelsPerFrame, format.channels
-            )));
-        } else if sample_format(&virtual_format) == Some(format.sample) {
-            Transport::Direct
-        } else if is_float32(&virtual_format) {
-            Transport::Float32
-        } else {
-            return Err(Error::Unsupported(
-                "the device's IO format is neither the physical format nor float".into(),
-            ));
-        };
-        // 5. One period of IO buffer.
-        let period = format.duration_to_frames(request.period).max(16) as u32;
-        let bfs = addr(kAudioDevicePropertyBufferFrameSize, GLOBAL);
-        let _ = set(device, bfs, period, "set buffer frame size");
-        let buffer = get::<u32>(device, bfs, "get buffer frame size").unwrap_or(period);
-        let device_latency =
-            get::<u32>(device, addr(kAudioDevicePropertyLatency, OUTPUT), "latency").unwrap_or(0);
-        let stream_latency = get::<u32>(
-            stream,
-            addr(kAudioStreamPropertyLatency, GLOBAL),
-            "stream latency",
-        )
-        .unwrap_or(0);
-        let safety = get::<u32>(
-            device,
-            addr(kAudioDevicePropertySafetyOffset, OUTPUT),
-            "safety offset",
-        )
-        .unwrap_or(0);
-        let latency = u64::from(device_latency) + u64::from(stream_latency);
-        let shared = Arc::new(Shared::new(
-            format,
-            request.ring_frames(&format, u64::from(buffer)),
-        ));
-        let info = StreamInfo {
-            format,
-            backend: BACKEND,
-            exclusive: true,
-            device_buffer_frames: u64::from(buffer),
-            device_latency: format.frames_to_duration(latency + u64::from(safety)),
-            ring_frames: shared.ring.capacity(),
-            realtime: true,
-            float_io: transport == Transport::Float32,
-        };
-        let ctx = IoContext {
-            shared,
-            transport,
-            stream_index,
-            latency: latency as f64,
-            delivered: AtomicU64::new(0),
-            scratch: UnsafeCell::new(vec![0; 4096 * format.frame_bytes()]),
-            silence: AtomicBool::new(false),
-            silent: AtomicU64::new(0),
-            settle: 2 * u64::from(buffer)
-                + latency
-                + u64::from(safety)
-                + u64::from(format.rate / 50),
-            device_frame_bytes: match transport {
-                Transport::Direct => format.frame_bytes(),
-                Transport::Float32 => 4 * usize::from(format.channels),
-            },
-        };
-        Ok((ctx, info, u64::from(buffer)))
-    })();
-    match result {
-        Ok((ctx, info, buffer)) => Ok((opened, ctx, info, buffer)),
-        Err(e) => {
-            opened.restore();
-            Err(e)
-        }
+        });
     }
+    let format = s.format;
+    // One period of IO buffer, for this process only.
+    let period = format.duration_to_frames(request.period).max(16) as u32;
+    let bfs = addr(kAudioDevicePropertyBufferFrameSize, GLOBAL);
+    let _ = set(device, bfs, period, "set buffer frame size");
+    let buffer = get::<u32>(device, bfs, "get buffer frame size").unwrap_or(period);
+    let device_latency =
+        get::<u32>(device, addr(kAudioDevicePropertyLatency, OUTPUT), "latency").unwrap_or(0);
+    let stream_latency = get::<u32>(
+        s.stream,
+        addr(kAudioStreamPropertyLatency, GLOBAL),
+        "stream latency",
+    )
+    .unwrap_or(0);
+    let shared = Arc::new(Shared::new(
+        format,
+        request.ring_frames(&format, u64::from(buffer)),
+    ));
+    let info = StreamInfo {
+        format,
+        backend: BACKEND,
+        device_buffer_frames: u64::from(buffer),
+        ring_frames: shared.ring.capacity(),
+        realtime: true,
+    };
+    let channels = s.io.mChannelsPerFrame as usize;
+    let ctx = IoContext {
+        shared,
+        stream_index: s.index,
+        channels,
+        latency: f64::from(device_latency) + f64::from(stream_latency),
+        delivered: AtomicU64::new(0),
+        scratch: UnsafeCell::new(if channels == 2 {
+            Vec::new()
+        } else {
+            vec![0; SPREAD_FRAMES * format.frame_bytes()]
+        }),
+        device,
+        stream: s.stream,
+        io: s.io,
+    };
+    Ok((ctx, info))
 }
 
 struct HalDriver {
-    opened: Opened,
+    device: AudioObjectID,
     proc_id: AudioDeviceIOProcID,
     ctx: *mut IoContext,
+    /// Removed in `close`, before the context is freed.
+    listener: Option<Listener>,
     running: bool,
     closed: bool,
 }
 
 // SAFETY: the HAL calls used here are thread-safe; `ctx` is only freed in
-// `close`, after the IOProc is destroyed.
+// `close`, after the IOProc and the listener are gone.
 unsafe impl Send for HalDriver {}
 
 impl HalDriver {
@@ -870,7 +407,7 @@ impl HalDriver {
     fn stop(&mut self) -> Result<(), Error> {
         if self.running {
             // SAFETY: stops our IOProc on our device.
-            let status = unsafe { AudioDeviceStop(self.opened.device, self.proc_id) };
+            let status = unsafe { AudioDeviceStop(self.device, self.proc_id) };
             self.running = false;
             if status != 0 {
                 return Err(status_error("AudioDeviceStop", status));
@@ -884,7 +421,7 @@ impl Driver for HalDriver {
     fn start(&mut self) -> Result<(), Error> {
         if !self.running {
             // SAFETY: starts our IOProc on our device.
-            let status = unsafe { AudioDeviceStart(self.opened.device, self.proc_id) };
+            let status = unsafe { AudioDeviceStart(self.device, self.proc_id) };
             if status != 0 {
                 return Err(status_error("AudioDeviceStart", status));
             }
@@ -918,26 +455,16 @@ impl Driver for HalDriver {
             return Ok(());
         }
         self.closed = true;
-        // Silence through the device's buffers before it stops and its
-        // format changes back, also after a pause (the device stopped with
-        // our samples in it): it runs again for that, silent.
-        self.ctx().silence.store(true, Ordering::Release);
-        if self.start().is_ok() {
-            let ctx = self.ctx();
-            let deadline = Instant::now() + SETTLE_WAIT;
-            while ctx.silent.load(Ordering::Acquire) < ctx.settle && Instant::now() < deadline {
-                std::thread::sleep(Duration::from_millis(2));
-            }
-        }
+        self.listener = None;
         let stopped = self.stop();
         self.ctx().shared.freeze();
-        // SAFETY: destroys our IOProc; after this the HAL no longer calls it,
-        // so the context can be freed.
+        // SAFETY: destroys our IOProc; after this the HAL no longer calls it
+        // (nor, the listener removed, anything else), so the context can be
+        // freed.
         unsafe {
-            AudioDeviceDestroyIOProcID(self.opened.device, self.proc_id);
+            AudioDeviceDestroyIOProcID(self.device, self.proc_id);
             drop(Box::from_raw(self.ctx));
         }
-        self.opened.restore();
         stopped
     }
 }
@@ -948,17 +475,18 @@ impl Drop for HalDriver {
     }
 }
 
-/// Opens the device with UID `uid` in hog mode.
+/// Opens the device with UID `uid` shared.
 pub(crate) fn open(uid: &str, request: &OpenRequest) -> Result<Core, Error> {
     request.validate()?;
-    let (opened, ctx, info, _buffer) = configure(uid, request)?;
+    let (ctx, info) = configure(uid, request)?;
+    let (device, stream) = (ctx.device, ctx.stream);
     let shared = ctx.shared.clone();
     let ctx = Box::into_raw(Box::new(ctx));
     let mut proc_id: AudioDeviceIOProcID = None;
     // SAFETY: registers `io_proc` with a context that lives until close.
     let status = unsafe {
         AudioDeviceCreateIOProcID(
-            opened.device,
+            device,
             Some(io_proc),
             ctx.cast(),
             NonNull::from(&mut proc_id),
@@ -967,13 +495,22 @@ pub(crate) fn open(uid: &str, request: &OpenRequest) -> Result<Core, Error> {
     if status != 0 || proc_id.is_none() {
         // SAFETY: the IOProc was not registered, so nothing else holds ctx.
         unsafe { drop(Box::from_raw(ctx)) };
-        opened.restore();
         return Err(status_error("AudioDeviceCreateIOProcID", status));
     }
+    let listener = Listener::add(
+        &[
+            (device, addr(kAudioDevicePropertyNominalSampleRate, GLOBAL)),
+            (device, addr(kAudioDevicePropertyDeviceIsAlive, GLOBAL)),
+            (stream, addr(kAudioStreamPropertyVirtualFormat, GLOBAL)),
+        ],
+        Some(changed),
+        ctx.cast(),
+    );
     let driver = HalDriver {
-        opened,
+        device,
         proc_id,
         ctx,
+        listener: Some(listener),
         running: false,
         closed: false,
     };
@@ -987,7 +524,7 @@ mod tests {
 
     fn asbd(bits: u32, bytes: u32, flags: u32) -> AudioStreamBasicDescription {
         AudioStreamBasicDescription {
-            mSampleRate: 96_000.0,
+            mSampleRate: 48_000.0,
             mFormatID: kAudioFormatLinearPCM,
             mFormatFlags: flags,
             mBytesPerPacket: bytes * 2,
@@ -1000,8 +537,10 @@ mod tests {
     }
 
     #[test]
-    fn physical_formats_map_to_sample_formats() {
+    fn io_formats_map_to_sample_formats() {
         let int = kAudioFormatFlagIsSignedInteger;
+        let float = kAudioFormatFlagIsFloat | kAudioFormatFlagIsPacked;
+        assert_eq!(sample_format(&asbd(32, 4, float)), Some(SampleFormat::F32));
         assert_eq!(
             sample_format(&asbd(16, 2, int | kAudioFormatFlagIsPacked)),
             Some(SampleFormat::S16)
@@ -1022,49 +561,50 @@ mod tests {
             sample_format(&asbd(32, 4, int | kAudioFormatFlagIsPacked)),
             Some(SampleFormat::S32)
         );
-        assert_eq!(sample_format(&asbd(32, 4, kAudioFormatFlagIsFloat)), None);
+        assert_eq!(sample_format(&asbd(64, 8, float)), None);
+        assert_eq!(
+            sample_format(&asbd(32, 4, float | kAudioFormatFlagIsNonInterleaved)),
+            None
+        );
         assert_eq!(
             sample_format(&asbd(24, 3, int | kAudioFormatFlagIsBigEndian)),
             None
         );
-        assert!(is_float32(&asbd(
-            32,
-            4,
-            kAudioFormatFlagIsFloat | kAudioFormatFlagIsPacked
-        )));
     }
 
+    /// Stereo at the IO format's own rate, on a stream of two channels or
+    /// more; a changed rate or layout is another format.
     #[test]
-    fn float_physical_formats_carry_24_bits() {
-        let float = asbd(32, 4, kAudioFormatFlagIsFloat | kAudioFormatFlagIsPacked);
-        assert_eq!(physical_sample(&float), Some(SampleFormat::S24In32));
-        let int = asbd(
-            32,
-            4,
-            kAudioFormatFlagIsSignedInteger | kAudioFormatFlagIsPacked,
+    fn a_stream_plays_stereo_at_its_io_rate() {
+        let float = kAudioFormatFlagIsFloat | kAudioFormatFlagIsPacked;
+        let mut eight = asbd(32, 4, float);
+        eight.mChannelsPerFrame = 8;
+        eight.mBytesPerFrame = 32;
+        eight.mSampleRate = 44_100.0;
+        assert_eq!(
+            stereo_of(&eight),
+            Some(StreamFormat::new(44_100, 2, SampleFormat::F32))
         );
-        assert_eq!(physical_sample(&int), Some(SampleFormat::S32));
-        assert!(!same_format(
-            &float,
-            &asbd(
-                24,
-                4,
-                kAudioFormatFlagIsSignedInteger | kAudioFormatFlagIsAlignedHigh
-            )
-        ));
-        let double = asbd(64, 8, kAudioFormatFlagIsFloat | kAudioFormatFlagIsPacked);
-        assert_eq!(physical_sample(&double), None);
+        let mut mono = asbd(32, 4, float);
+        mono.mChannelsPerFrame = 1;
+        mono.mBytesPerFrame = 4;
+        assert_eq!(stereo_of(&mono), None);
+        let stereo = asbd(32, 4, float);
+        assert!(same_io(&stereo, &stereo));
+        let mut faster = stereo;
+        faster.mSampleRate = 96_000.0;
+        assert!(!same_io(&stereo, &faster));
+        assert!(!same_io(&stereo, &eight));
     }
 
+    /// What was delivered, less what is still ahead of the hardware and
+    /// the DAC's latency; never below zero.
     #[test]
-    fn the_default_is_the_systems_else_the_device_we_hog() {
-        let listed = [40, 52, 77];
-        // The system's default output, whatever we hog.
-        assert_eq!(default_output(52, &listed, |d| d == 77), Some(52));
-        // None while we hog the default device: the hogged one.
-        assert_eq!(default_output(0, &listed, |d| d == 77), Some(77));
-        assert_eq!(default_output(99, &listed, |d| d == 40), Some(40));
-        // Nothing hogged and no default: none.
-        assert_eq!(default_output(0, &listed, |_| false), None);
+    fn the_position_is_what_reached_the_dac() {
+        assert_eq!(played(48_000, 512.0, 40.0), 47_448);
+        // An output time behind now counts as now.
+        assert_eq!(played(1_000, -30.0, 0.0), 1_000);
+        assert_eq!(played(100, 512.0, 40.0), 0);
+        assert_eq!(played(0, 0.0, 0.0), 0);
     }
 }

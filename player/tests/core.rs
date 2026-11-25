@@ -496,7 +496,6 @@ fn engine_events_drive_the_now_playing_state() {
             route: track.route.clone(),
             output: track.output,
             device: "DAC".into(),
-            bit_perfect: true,
             output_frame: 0,
             from_frame: 0,
         }))),
@@ -507,7 +506,7 @@ fn engine_events_drive_the_now_playing_state() {
         .iter()
         .map(|s| s.text.clone())
         .collect::<String>();
-    assert_eq!(text, "file 44.1 → DAC (exclusive), bit-perfect");
+    assert_eq!(text, "file 44.1 → DAC");
     assert_eq!(jodeldiplom::core::text::status_light(&state).1, "PCM");
     // Seeking moves the position at once and asks the engine.
     state.playing.position = 20.0;
@@ -576,7 +575,7 @@ fn engine_events_drive_the_now_playing_state() {
     ));
 }
 
-/// A lossy file is never bit-perfect: the path says what it was decoded
+/// A lossy file's path says what it was decoded
 /// from and the status light names the codec and its bit rate.
 #[test]
 fn a_lossy_track_says_what_it_was_decoded_from() {
@@ -593,7 +592,7 @@ fn a_lossy_track_says_what_it_was_decoded_from() {
     assert_eq!(facts.decoded_from, Some("MP3"));
     let route = jodel_playback::choose_route(
         &facts,
-        &jodel_playback::any_capabilities(),
+        &jodel_playback::any_capabilities(info.rate),
         &state.config.settings(),
     )
     .unwrap();
@@ -607,15 +606,13 @@ fn a_lossy_track_says_what_it_was_decoded_from() {
             route,
             output: track.output,
             device: "DAC".into(),
-            bit_perfect: false,
             output_frame: 0,
             from_frame: 0,
         }))),
     );
     let segs = signal_path(&state).unwrap();
     let text: String = segs.iter().map(|s| s.text.as_str()).collect();
-    assert_eq!(text, "file 44.1 → DAC (exclusive), decoded from MP3");
-    assert!(!text.contains("bit-perfect"));
+    assert_eq!(text, "file 44.1 → DAC, decoded from MP3");
     let tail = segs.iter().find(|s| s.text.contains("decoded")).unwrap();
     assert_eq!(tail.tone, Tone::Dim);
     let (light, label, tone) = status_light(&state);
@@ -652,7 +649,6 @@ fn a_resampled_route_shows_its_step_and_its_clips() {
             route: track.route.clone(),
             output: track.output,
             device: "DAC".into(),
-            bit_perfect: false,
             output_frame: 0,
             from_frame: 0,
         }))),
@@ -664,14 +660,11 @@ fn a_resampled_route_shows_its_step_and_its_clips() {
             .map(|s| s.text.clone())
             .collect()
     };
-    assert_eq!(
-        text(&state),
-        "file 44.1 → resample 48 (160/147) → DAC (exclusive), not bit-perfect"
-    );
+    assert_eq!(text(&state), "file 44.1 → resample 48 (160/147) → DAC");
     let segs = signal_path(&state).unwrap();
     let tone = |needle: &str| segs.iter().find(|s| s.text.contains(needle)).unwrap().tone;
     assert_eq!(tone("resample"), Tone::Warn);
-    assert_eq!(tone("not bit-perfect"), Tone::Warn);
+    assert_eq!(tone("DAC"), Tone::Device);
     // With headroom the step says so.
     let mut with = state.clone();
     if let Some(t) = with.playing.track.as_mut() {
@@ -680,7 +673,7 @@ fn a_resampled_route_shows_its_step_and_its_clips() {
     }
     assert_eq!(
         text(&with),
-        "file 44.1 → resample 48 (160/147, -1 dB) → DAC (exclusive), not bit-perfect"
+        "file 44.1 → resample 48 (160/147, -1 dB) → DAC"
     );
     update(
         &mut state,
@@ -690,7 +683,7 @@ fn a_resampled_route_shows_its_step_and_its_clips() {
             output_frame: 4_800,
         }),
     );
-    assert!(text(&state).ends_with("not bit-perfect, 12 samples clipped"));
+    assert!(text(&state).ends_with("→ DAC, 12 samples clipped"));
     // A seek starts the count again.
     update(
         &mut state,
@@ -699,23 +692,7 @@ fn a_resampled_route_shows_its_step_and_its_clips() {
             seconds: 1.0,
         }),
     );
-    assert!(text(&state).ends_with("not bit-perfect"));
-}
-
-#[test]
-fn a_bit_perfect_route_is_not_while_the_mixer_sums() {
-    let mut state = common::playing_state(120, 40);
-    let text = |state: &State| -> String {
-        text::signal_path(state)
-            .unwrap()
-            .iter()
-            .map(|s| s.text.clone())
-            .collect()
-    };
-    state.playing.track.as_mut().unwrap().bit_perfect = true;
-    assert!(text(&state).ends_with(", bit-perfect"));
-    state.playing.mixed = true;
-    assert!(text(&state).ends_with("not bit-perfect"));
+    assert!(text(&state).ends_with("→ DAC"));
 }
 
 #[test]
@@ -724,13 +701,6 @@ fn settings_change_the_engine_and_the_file() {
     let fx = op(&mut state, Op::Settings);
     assert_eq!(state.screen, Screen::Settings);
     assert_eq!(fx, vec![Effect::ListDevices]);
-    op(&mut state, Op::Down);
-    // The device's rate: saved at once; the device opens again at it
-    // after the pause (`the_rate_follows_the_device`).
-    let fx = op(&mut state, Op::ValueDown);
-    assert_eq!(state.config.rate(), 44_100);
-    assert_eq!(fx, vec![Effect::SaveConfig]);
-    state.settings_due = None;
     // Resample when needed: on by default, toggles, reaches the engine.
     assert!(state.config.resample);
     op(&mut state, Op::Down);
@@ -1177,7 +1147,8 @@ fn line_text(line: &[Seg]) -> String {
 }
 
 /// Checks wrapped signal path lines: within `max`, a new line only at a
-/// step's arrow or the device's tail, the tail in one piece, no lone word.
+/// step's arrow or the device's tail (what it was decoded from), the tail
+/// in one piece, no lone word.
 fn check_path_lines(lines: &[Vec<Seg>], max: usize, device: &str) {
     let texts: Vec<String> = lines.iter().map(|l| line_text(l)).collect();
     // A device name wider than a line has to break between its words.
@@ -1190,16 +1161,14 @@ fn check_path_lines(lines: &[Vec<Seg>], max: usize, device: &str) {
         );
         if i > 0 && fits {
             assert!(
-                text.starts_with("→ ") || text.starts_with('('),
+                text.starts_with("→ ") || text.starts_with("decoded from"),
                 "a break inside a step: {texts:?}"
             );
         }
     }
-    let tail = texts
-        .iter()
-        .find(|t| t.contains("bit-perfect"))
-        .expect("the tail");
-    assert!(tail.contains("(exclusive), "), "{texts:?}");
+    if let Some(tail) = texts.iter().find(|t| t.contains("decoded")) {
+        assert!(tail.contains("decoded from MP3"), "{texts:?}");
+    }
     if fits {
         assert!(
             texts.iter().any(|t| t.contains(device)),
@@ -1235,7 +1204,11 @@ fn the_right_column_fits_the_signal_path() {
                 .unwrap()..];
             if need <= cols / 2 {
                 // Room for every line: the path is one line.
-                assert_eq!(right, need, "{name} at {cols}");
+                assert_eq!(
+                    right,
+                    need.max(layout::right_width(cols)),
+                    "{name} at {cols}"
+                );
                 assert_eq!(path.len(), 1, "{name} at {cols}: {path:?}");
             }
             check_path_lines(path, usize::from(info.width), name);
@@ -1259,11 +1232,15 @@ fn the_signal_path_wraps_between_steps() {
         seg("resample 48 (160/147)", Tone::Warn),
         arrow(),
         seg(device, Tone::Device),
-        seg(" (exclusive)", Tone::Dim),
-        seg(", ", Tone::Dim),
-        seg("not bit-perfect", Tone::Warn),
+        seg(", decoded from MP3", Tone::Dim),
     ];
     let whole = line_text(&resampled);
+    let words = |t: &str| -> Vec<String> {
+        t.replace(',', "")
+            .split_whitespace()
+            .map(str::to_owned)
+            .collect()
+    };
     for max in [30, 36, 45, 56, 60, 70, 80, width(&whole)] {
         let lines = text::wrap_path(&resampled, max);
         check_path_lines(&lines, max, device);
@@ -1272,7 +1249,7 @@ fn the_signal_path_wraps_between_steps() {
             .map(|l| line_text(l))
             .collect::<Vec<_>>()
             .join(" ");
-        assert_eq!(joined, whole, "nothing lost at {max}");
+        assert_eq!(words(&joined), words(&whole), "nothing lost at {max}");
     }
     let texts = |max| -> Vec<String> {
         text::wrap_path(&resampled, max)
@@ -1286,7 +1263,7 @@ fn the_signal_path_wraps_between_steps() {
         texts(60),
         [
             "file 44.1 → resample 48 (160/147)",
-            "→ Speakers (Sound Blaster GC7) (exclusive), not bit-perfect",
+            "→ Speakers (Sound Blaster GC7), decoded from MP3",
         ]
     );
     // Else the tail goes on its own line, whole.
@@ -1295,29 +1272,22 @@ fn the_signal_path_wraps_between_steps() {
         [
             "file 44.1 → resample 48 (160/147)",
             "→ Speakers (Sound Blaster GC7)",
-            "(exclusive), not bit-perfect",
+            "decoded from MP3",
         ]
     );
-    // The bit-perfect case at the column's usual width.
+    // A file as it is, at the column's usual width.
     let plain = vec![
         seg("file 48", Tone::Source),
         arrow(),
         seg(device, Tone::Device),
-        seg(" (exclusive)", Tone::Dim),
-        seg(", ", Tone::Dim),
-        seg("bit-perfect", Tone::Good),
     ];
     assert_eq!(
         texts_of(&plain, 33),
-        [
-            "file 48",
-            "→ Speakers (Sound Blaster GC7)",
-            "(exclusive), bit-perfect"
-        ]
+        ["file 48", "→ Speakers (Sound Blaster GC7)"]
     );
     assert_eq!(
         texts_of(&plain, 63),
-        ["file 48 → Speakers (Sound Blaster GC7) (exclusive), bit-perfect"]
+        ["file 48 → Speakers (Sound Blaster GC7)"]
     );
 }
 
@@ -1417,7 +1387,10 @@ fn clicking_the_title_artist_or_album_jumps() {
         );
     }
     // Past the end of the title there is no link.
-    assert_eq!(mouse::hit(&state, info.x + 40, info.y), Some(Target::Info));
+    assert_eq!(
+        mouse::hit(&state, info.x + info.width - 1, info.y),
+        Some(Target::Info)
+    );
     let click = MouseInput {
         kind: MouseKind::Down(MouseButton::Left),
         col: info.x + 2,
@@ -1457,7 +1430,7 @@ fn settings_reach_the_engine_after_a_pause() {
     let mut state = listed();
     update(&mut state, Action::Tick(1_000));
     op(&mut state, Op::Settings);
-    state.settings.row = 3;
+    state.settings.row = 2;
     // Three steps of the headroom, 100 ms apart: shown at once, not sent.
     for (i, at) in [1_000u64, 1_100, 1_200].into_iter().enumerate() {
         update(&mut state, Action::Tick(at));
@@ -1501,88 +1474,6 @@ fn settings_reach_the_engine_after_a_pause() {
     );
 }
 
-/// The rates offered are those the device takes (the usual ones while not
-/// known, none for a device that takes no stereo); steps through them open
-/// the device again once, after the pause, at the one chosen, and only
-/// where the rate in force is not the one it is open at. Where the device
-/// lacks the rate set, it runs at 44.1 kHz, else at its lowest, said so,
-/// the rate set kept in the file.
-#[test]
-fn the_rate_follows_the_device() {
-    use jodeldiplom::config::RATES;
-    let mut state = listed();
-    // Not known yet: the usual ones, 48 kHz set and in force.
-    assert_eq!(state.rates(), RATES.to_vec());
-    assert_eq!(state.output_rate(), 48_000);
-    // A device with 48, 96 and 192 kHz only, opened at 48.
-    update(
-        &mut state,
-        Action::DeviceRates(Some(vec![192_000, 48_000, 96_000])),
-    );
-    update(&mut state, Action::OutputOpened(Some(48_000)));
-    assert_eq!(state.device_rates, Some(vec![48_000, 96_000, 192_000]));
-    assert!(state.message.is_none());
-    // Stepping goes round its rates only, nothing opened again while it
-    // goes on; once it pauses, opened again once.
-    update(&mut state, Action::Tick(1_000));
-    op(&mut state, Op::Settings);
-    state.settings.row = 1;
-    let mut seen = Vec::new();
-    for _ in 0..2 {
-        let fx = op(&mut state, Op::ValueUp);
-        assert_eq!(fx, vec![Effect::SaveConfig]);
-        seen.push(state.config.rate());
-    }
-    assert_eq!(seen, [96_000, 192_000]);
-    let due = state.settings_due.unwrap();
-    let fx = update(&mut state, Action::Tick(due));
-    assert_eq!(fx.iter().filter(|e| **e == Effect::ReopenOutput).count(), 1);
-    // Round to the rate it is open at: nothing opened again.
-    update(&mut state, Action::OutputOpened(Some(192_000)));
-    op(&mut state, Op::ValueUp);
-    op(&mut state, Op::ValueDown);
-    let due = state.settings_due.unwrap();
-    let fx = update(&mut state, Action::Tick(due));
-    assert!(!fx.contains(&Effect::ReopenOutput), "{fx:?}");
-    // A rate it lacks: 44.1 kHz it lacks too, so its lowest; said so.
-    let mut state = listed();
-    state.config.set_rate(88_200);
-    update(
-        &mut state,
-        Action::DeviceRates(Some(vec![48_000, 96_000, 192_000])),
-    );
-    assert_eq!(state.config.rate(), 88_200);
-    assert_eq!(state.output_rate(), 48_000);
-    let message = state.message.as_ref().unwrap().text.clone();
-    assert!(message.contains("runs at 48 kHz"), "{message}");
-    // On a device with 44.1 kHz: that.
-    let mut state = listed();
-    state.config.set_rate(96_000);
-    update(&mut state, Action::DeviceRates(Some(vec![44_100, 48_000])));
-    assert_eq!(state.output_rate(), 44_100);
-    // And back on one that takes it, the rate set.
-    let mut state = listed();
-    state.config.set_rate(96_000);
-    update(&mut state, Action::DeviceRates(Some(vec![44_100, 96_000])));
-    assert_eq!(state.output_rate(), 96_000);
-    assert!(state.message.is_none());
-}
-
-/// A device that takes no stereo has no rate to offer: its row steps to
-/// nothing (and does not fall over), the rate set stays.
-#[test]
-fn a_device_with_no_stereo_rates_steps_to_nothing() {
-    let mut state = listed();
-    update(&mut state, Action::DeviceRates(Some(Vec::new())));
-    assert!(state.rates().is_empty());
-    op(&mut state, Op::Settings);
-    state.settings.row = 1;
-    op(&mut state, Op::ValueUp);
-    op(&mut state, Op::ValueDown);
-    assert_eq!(state.config.rate(), 48_000);
-    assert_eq!(state.output_rate(), 48_000);
-}
-
 /// A notice from the engine is shown as a message; nothing stops.
 #[test]
 fn engine_notices_are_shown() {
@@ -1607,7 +1498,7 @@ fn the_headroom_setting_steps_and_reaches_the_engine() {
     use jodel_playback::Headroom;
     let mut state = listed();
     op(&mut state, Op::Settings);
-    state.settings.row = 3;
+    state.settings.row = 2;
     assert_eq!(
         state.settings_row(),
         jodeldiplom::core::SettingsRow::Headroom
@@ -2118,7 +2009,7 @@ fn stems_switch_from_keys_and_buttons_with_a_gpu() {
         .as_ref()
         .unwrap()
         .text
-        .contains("not bit-perfect"));
+        .contains("the stems are heard, not the file"));
     // Four buttons in the order people name them, by initial at 87
     // columns; a click switches one.
     update(&mut state, Action::Resize(87, 30));
@@ -2870,7 +2761,6 @@ fn hand_over(state: &mut State, seconds: f64) {
             route: track.route.clone(),
             output: track.output,
             device: "DAC".into(),
-            bit_perfect: false,
             output_frame: 0,
             from_frame: (seconds * f64::from(track.info.rate)) as u64,
         }))),
@@ -3480,18 +3370,11 @@ fn the_stems_are_made_while_touched_or_a_tab_shows_them() {
     assert_eq!(makes(&fx), [MakeStems::Separate]);
 }
 
-/// alt+↑ and alt+↓ step the device's own volume control (the app sets it
-/// and answers); a track starting reads it; the signal path shows it, and
-/// a device whose volume is the system's to set says so.
+/// alt+↑ and alt+↓ step the player's own volume (the desk's master gain,
+/// on every system), never above unity, and say where it is.
 #[test]
-fn the_device_volume_steps_reads_and_shows() {
-    use jodeldiplom::core::{volume_step, DeviceVolume, VolumeChange};
-    // Sixteen steps, as macOS's keys, from the nearest one.
-    assert_eq!(volume_step(0.062, 1), 0.125);
-    assert_eq!(volume_step(0.5, -1), 0.4375);
-    assert_eq!(volume_step(1.0, 1), 1.0);
-    assert_eq!(volume_step(0.0, -1), 0.0);
-
+fn the_volume_keys_step_the_players_own_volume() {
+    use jodeldiplom::core::desk::{taper, DeskChange};
     let mut state = listed();
     let alt = |code| Key {
         code,
@@ -3506,95 +3389,16 @@ fn the_device_volume_steps_reads_and_shows() {
             "{code:?}"
         );
     }
-    assert_eq!(
-        op(&mut state, Op::VolumeUp),
-        vec![Effect::DeviceVolume(VolumeChange::Step(1))]
-    );
+    // At unity: up stays there.
+    assert!(op(&mut state, Op::VolumeUp).is_empty());
+    assert_eq!(state.desk.volume, 0.0);
+    assert_eq!(state.message.as_ref().unwrap().text, "Volume 0.0 dB");
     assert_eq!(
         op(&mut state, Op::VolumeDown),
-        vec![Effect::DeviceVolume(VolumeChange::Step(-1))]
+        vec![Effect::Desk(DeskChange::Volume(taper::gain(-1.0)))]
     );
-
-    // A track starting reads the volume.
-    let track = common::now_track(44_100, state.config.settings(), 0);
-    let fx = update(
-        &mut state,
-        Action::Engine(Event::TrackStarted(Box::new(jodel_playback::TrackStart {
-            index: 0,
-            head: 0,
-            info: track.info.clone(),
-            route: track.route.clone(),
-            output: track.output.clone(),
-            device: "Speakers".into(),
-            bit_perfect: true,
-            output_frame: 0,
-            from_frame: 0,
-        }))),
-    );
-    assert!(
-        fx.contains(&Effect::DeviceVolume(VolumeChange::Read)),
-        "{fx:?}"
-    );
-
-    // Read: shown in the signal path, nothing said.
-    let half = DeviceVolume {
-        level: 0.5,
-        db: Some(-12.0),
-        muted: Some(false),
-    };
-    update(
-        &mut state,
-        Action::DeviceVolume {
-            result: Ok(Some(half)),
-            changed: false,
-        },
-    );
-    assert_eq!(state.device_volume, Some(half));
-    assert!(state.message.is_none());
-    let path: String = text::signal_path(&state)
-        .unwrap()
-        .iter()
-        .map(|s| s.text.as_str())
-        .collect();
-    assert!(
-        path.contains("Speakers (exclusive, volume 50 % (−12.0 dB)), bit-perfect"),
-        "{path}"
-    );
-
-    // Changed by a key: said.
-    let full = DeviceVolume {
-        level: 1.0,
-        db: Some(0.0),
-        muted: Some(false),
-    };
-    update(
-        &mut state,
-        Action::DeviceVolume {
-            result: Ok(Some(full)),
-            changed: true,
-        },
-    );
-    assert_eq!(state.message.as_ref().unwrap().text, "Device volume 100 %");
-
-    // A device whose volume the system's keys set: nothing shown, said so.
-    update(
-        &mut state,
-        Action::DeviceVolume {
-            result: Ok(None),
-            changed: true,
-        },
-    );
-    assert_eq!(state.device_volume, None);
-    assert_eq!(
-        state.message.as_ref().unwrap().text,
-        "The system's volume keys set this device's volume"
-    );
-    let path: String = text::signal_path(&state)
-        .unwrap()
-        .iter()
-        .map(|s| s.text.as_str())
-        .collect();
-    assert!(path.contains("Speakers (exclusive), bit-perfect"), "{path}");
+    assert_eq!(state.desk.volume, -1.0);
+    assert_eq!(state.message.as_ref().unwrap().text, "Volume −1.0 dB");
 }
 
 /// The playing track at 128 BPM and the next at 64: beats pair two to

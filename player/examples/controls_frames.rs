@@ -14,7 +14,6 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Duration;
 
 use jodel_output::{SampleFormat, StreamFormat, StreamInfo};
 use jodel_playback::{
@@ -106,16 +105,18 @@ fn now_track(state: &State, path: PathBuf, index: usize) -> NowTrack {
         cover: None,
     };
     let settings = state.engine_settings();
-    let route = choose_route(&FileFacts::from(&info), &any_capabilities(), &settings).unwrap();
+    let route = choose_route(
+        &FileFacts::from(&info),
+        &any_capabilities(info.rate),
+        &settings,
+    )
+    .unwrap();
     let output = StreamInfo {
         format: StreamFormat::new(route.output_rate, 2, SampleFormat::S24In32),
         backend: "null",
-        exclusive: true,
         device_buffer_frames: 4_096,
-        device_latency: Duration::ZERO,
         ring_frames: 65_536,
         realtime: true,
-        float_io: false,
     };
     NowTrack {
         index,
@@ -123,7 +124,6 @@ fn now_track(state: &State, path: PathBuf, index: usize) -> NowTrack {
         route,
         output,
         device: "null".into(),
-        bit_perfect: true,
     }
 }
 

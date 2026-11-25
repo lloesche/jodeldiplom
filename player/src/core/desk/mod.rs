@@ -26,7 +26,7 @@ use jodel_output::mixer::{
 use crate::core::keymap::Op;
 use crate::core::update::say_info;
 use crate::core::HeadFrame;
-use crate::core::{Effect, Screen, Side, State, VolumeChange, DOUBLE_CLICK_MS};
+use crate::core::{Effect, Screen, Side, State, DOUBLE_CLICK_MS};
 
 pub use meter::{Meter, Pair};
 pub use strips::{Channel, DeskButton, StripKind};
@@ -87,6 +87,8 @@ pub enum DeskChange {
     /// The controllers' gain of a stem's lane, not the user's strip: the
     /// Karaoke tab's voice on the vocals.
     Lane(StripKind, f64),
+    /// The player's own volume ([`DeskState::volume`]), a linear gain.
+    Volume(f64),
 }
 
 /// A fader held with the mouse.
@@ -197,6 +199,10 @@ pub struct DeskState {
     /// run only. A stem's mute is what is meant: one set on a bar is here
     /// at once, and lands there.
     pub strips: [StripSetting; StripKind::COUNT],
+    /// The player's own volume in dB, at most 0 (the default: unity): the
+    /// master's gain, over everything the desk plays; this run only. The
+    /// system's volume is the system's.
+    pub volume: f64,
     /// The fader held with the mouse.
     pub dragging: Option<Drag>,
     /// The last press on a fader and when ([`State::now_ms`]), for a
@@ -364,7 +370,18 @@ pub fn changes(state: &State) -> Vec<DeskChange> {
                 DeskChange::Solo(strip, s.solo),
             ]
         })
+        .chain([DeskChange::Volume(taper::gain(state.desk.volume))])
         .collect()
+}
+
+/// Moves the player's own volume to `db` (at most 0 dB), sending it when it
+/// changed.
+pub fn set_volume(state: &mut State, db: f64, fx: &mut Vec<Effect>) {
+    let db = db.min(0.0);
+    if state.desk.volume != db {
+        state.desk.volume = db;
+        fx.push(Effect::Desk(DeskChange::Volume(taper::gain(db))));
+    }
 }
 
 /// A look this long after the last one finds peaks from long ago (the
@@ -454,7 +471,7 @@ fn keep(state: &mut State, strip: StripKind, fx: &mut Vec<Effect>) {
 }
 
 /// What the master says to a key it has no use for.
-const MAIN_SAID: &str = "The master adds no gain: ↑ ↓ move the device's own volume";
+const MAIN_SAID: &str = "The master has no mute or solo: ↑ ↓ move the player's volume";
 
 fn no_fader(state: &mut State) {
     say_info(
@@ -492,23 +509,26 @@ fn select_by(state: &mut State, by: isize) {
 fn fader_key(state: &mut State, channel: Channel, op: Op, fx: &mut Vec<Effect>) {
     match channel {
         Channel::Strip(strip) => {
-            let db = state.desk.setting(strip).db;
-            let to = match op {
-                Op::Up => taper::step(db, 1.0),
-                Op::Down => taper::step(db, -1.0),
-                Op::PageUp => taper::step(db, 6.0),
-                Op::PageDown => taper::step(db, -6.0),
-                Op::Top => 0.0,
-                _ => f64::NEG_INFINITY,
-            };
+            let to = fader_step(state.desk.setting(strip).db, op);
             set_level(state, strip, to, fx);
         }
-        Channel::Main => match op {
-            Op::Up => fx.push(Effect::DeviceVolume(VolumeChange::Step(1))),
-            Op::Down => fx.push(Effect::DeviceVolume(VolumeChange::Step(-1))),
-            _ => say_info(state, MAIN_SAID),
-        },
+        Channel::Main => {
+            let to = fader_step(state.desk.volume, op);
+            set_volume(state, to, fx);
+        }
         Channel::Mic => no_fader(state),
+    }
+}
+
+/// Where a fader at `db` goes for the key `op`.
+fn fader_step(db: f64, op: Op) -> f64 {
+    match op {
+        Op::Up => taper::step(db, 1.0),
+        Op::Down => taper::step(db, -1.0),
+        Op::PageUp => taper::step(db, 6.0),
+        Op::PageDown => taper::step(db, -6.0),
+        Op::Top => 0.0,
+        _ => f64::NEG_INFINITY,
     }
 }
 
@@ -599,7 +619,10 @@ pub(crate) fn act(state: &mut State, action: DeskAction, fx: &mut Vec<Effect>) {
                 let db = taper::step(state.desk.setting(strip).db, f64::from(steps));
                 set_level(state, strip, db, fx);
             }
-            Channel::Main => fx.push(Effect::DeviceVolume(VolumeChange::Step(steps))),
+            Channel::Main => {
+                let db = taper::step(state.desk.volume, f64::from(steps));
+                set_volume(state, db, fx);
+            }
             Channel::Mic => {}
         },
         DeskAction::Press(button) => {
@@ -670,14 +693,15 @@ mod tests {
         assert_eq!(s.config.karaoke_effects.db, -1.0);
         let fx = update(&mut s, Action::Op(Op::DeskMute));
         assert!(fx.contains(&Effect::SaveConfig) && s.config.karaoke_effects.mute);
-        // The master steps the device's own volume; the microphone has no
-        // fader.
+        // The master steps the player's own volume, never above unity; the
+        // microphone has no fader.
         update(&mut s, Action::Op(Op::DeskNextStrip));
         assert!(desk_fx(&update(&mut s, Action::Op(Op::Up))).is_empty());
         update(&mut s, Action::Op(Op::DeskNextStrip));
-        let fx = update(&mut s, Action::Op(Op::Up));
-        assert!(fx.contains(&Effect::DeviceVolume(VolumeChange::Step(1))));
-        assert!(desk_fx(&fx).is_empty());
+        assert!(desk_fx(&update(&mut s, Action::Op(Op::Up))).is_empty());
+        let fx = update(&mut s, Action::Op(Op::Down));
+        assert_eq!(desk_fx(&fx), [DeskChange::Volume(taper::gain(-1.0))]);
+        assert_eq!(s.desk.volume, -1.0);
         // Every setting again for a new mixer: each strip's, the stems'
         // as they start.
         let all = changes(&s);
@@ -703,6 +727,7 @@ mod tests {
                 DeskChange::Level(StripKind::Effects, taper::gain(-1.0)),
                 DeskChange::Mute(StripKind::Effects, true),
                 DeskChange::Solo(StripKind::Effects, false),
+                DeskChange::Volume(taper::gain(-1.0)),
             ]
         );
         for (k, kind) in StripKind::PARTS.into_iter().enumerate() {
@@ -715,7 +740,7 @@ mod tests {
                 ]
             );
         }
-        assert_eq!(all.len(), 21);
+        assert_eq!(all.len(), 22);
     }
 
     #[test]

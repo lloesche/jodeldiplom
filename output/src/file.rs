@@ -373,12 +373,9 @@ impl FileOutput {
         let info = StreamInfo {
             format,
             backend: "file",
-            exclusive: false,
             device_buffer_frames: period,
-            device_latency: Duration::ZERO,
             ring_frames: shared.ring.capacity(),
             realtime: clock == SimClock::Realtime,
-            float_io: false,
         };
         let mut core = Core::new(shared, Box::new(driver), info, request);
         if matches!(clock, SimClock::Instant | SimClock::Paced) {

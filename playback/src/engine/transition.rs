@@ -734,7 +734,6 @@ impl Engine {
             route: b.route.clone(),
             output: self.head.out.as_ref().expect("B's output").info.clone(),
             device: self.head.target.name(),
-            bit_perfect: false,
             output_frame: end,
             from_frame: heard.frame_at(end),
         };

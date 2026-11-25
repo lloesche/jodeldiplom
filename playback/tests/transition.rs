@@ -115,7 +115,7 @@ fn a_fade_at_one_tempo_mixes_the_two_and_hands_over() {
     assert!(
         tail.clone()
             .all(|f| got[2 * f] == b[2 * (f - offset)] && got[2 * f + 1] == b[2 * (f - offset) + 1]),
-        "B is bit-perfect again at the end"
+        "B is lossless again at the end"
     );
     let back = legs.last().unwrap();
     assert_eq!((back.index, back.route.resample), (1, None));
@@ -736,7 +736,7 @@ fn every_track_plays_at_the_desks_one_rate() {
         settings: jodel_playback::Settings::default(),
         ..options()
     };
-    let desk = Desk::new(caps(&[RATE, 48_000], &[S24In32Low]), options);
+    let desk = Desk::new(caps(&[48_000], &[S24In32Low]), options);
     desk.play(vec![a_path, b_path, c_path]);
     desk.player.transition(fade_plan(fades(), 0.5)).unwrap();
     let seen = step_until(

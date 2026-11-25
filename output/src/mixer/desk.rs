@@ -166,6 +166,7 @@ pub(crate) fn pack_format(format: Option<StreamFormat>) -> u64 {
         SampleFormat::S24In32 => 3,
         SampleFormat::S24In32Low => 4,
         SampleFormat::S32 => 5,
+        SampleFormat::F32 => 6,
     };
     u64::from(f.rate) | (u64::from(f.channels) << 32) | (sample << 48)
 }
@@ -178,6 +179,7 @@ pub(crate) fn unpack_format(word: u64) -> Option<StreamFormat> {
         3 => SampleFormat::S24In32,
         4 => SampleFormat::S24In32Low,
         5 => SampleFormat::S32,
+        6 => SampleFormat::F32,
         _ => return None,
     };
     Some(StreamFormat::new(word as u32, (word >> 32) as u16, sample))

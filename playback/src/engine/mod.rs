@@ -33,9 +33,7 @@
 //!   starts there, faded in, from the frame after it. Settings never stop
 //!   playback: when the track has no route with them, or its new route
 //!   cannot be opened, it keeps playing as it was and a [`Event::Notice`]
-//!   says so; the new settings apply to the tracks that start after it;
-//! - opens outputs again for up to [`OPEN_BUSY_WAIT`] while the device
-//!   reports it is busy (as it can right after an output on it closed).
+//!   says so; the new settings apply to the tracks that start after it.
 //!
 //! Events about what is heard (track started and ended, clipped samples,
 //! errors of skipped tracks, the end of the queue) are queued against the
@@ -95,14 +93,6 @@ const WRITE_WAIT: Duration = Duration::from_millis(10);
 
 /// How long the thread waits for a command while it has nothing to write.
 const IDLE_WAIT: Duration = Duration::from_millis(10);
-
-/// How long opening an output is tried again while the device reports it
-/// is busy ([`jodel_output::Error::DeviceBusy`]: WASAPI's device in use,
-/// Core Audio's hog mode held, ALSA's `EBUSY`), before the open fails.
-pub const OPEN_BUSY_WAIT: Duration = Duration::from_millis(1_000);
-
-/// The pause between those tries.
-const OPEN_BUSY_STEP: Duration = Duration::from_millis(100);
 
 /// Frames of a count-in's silence written at a time.
 const SILENCE_FRAMES: usize = 4096;
@@ -166,7 +156,7 @@ impl Engine {
     fn new(target: Box<dyn OutputTarget>, options: PlayerOptions, events: Sender<Event>) -> Engine {
         let lanes = lanes::StemLanes::new(options.separator, options.stem_store, options.offline);
         Engine {
-            head: heads::HeadState::new(0, target, options.capabilities, lanes),
+            head: heads::HeadState::new(0, target, lanes),
             desk: None,
             settings: options.settings,
             position_interval: options.position_interval,
@@ -405,12 +395,11 @@ impl Engine {
         choose_route(&FileFacts::from(info), &caps, &self.settings)
     }
 
-    /// What the target takes, asked once.
+    /// What the target takes, asked anew for each route: on a desk its one
+    /// format, which is the device's, and changes when the device comes back
+    /// at another rate (one round trip to the mixer's thread).
     fn target_caps(&mut self) -> Result<Capabilities, Error> {
-        if self.head.caps.is_none() {
-            self.head.caps = Some(self.head.target.capabilities()?);
-        }
-        Ok(self.head.caps.clone().expect("asked"))
+        Ok(self.head.target.capabilities()?)
     }
 
     /// How `track` is heard when it is read along a map (a head along its

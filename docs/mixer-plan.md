@@ -415,12 +415,18 @@ bit-exact tests, run through the desk.
 ### One device, one rate, as built
 
 - **The desk opens the output device once**, as the mixer starts
-  (`Mixer::open`), at the desk's format (`desk_format`): stereo, at the
-  rate set for the device (`MixerOptions::rate`, the player's rate for
-  that device, kept by its id, 48 kHz unless set), else 44.1 kHz where the
-  device lacks it,
-  else its lowest rate (a device that takes only 96 kHz runs at 96 kHz),
-  in the format with the most bits it takes there. It holds it open until
+  (`Mixer::open`), shared, through the system's mixer (WASAPI shared mode,
+  the Core Audio HAL without hog mode, ALSA `default`), at the desk's
+  format (`desk_format`): the device's one format (`mix_format`): stereo,
+  at the system's mix rate (set in the system's sound settings; the player
+  has no rate setting), as a rule in 32-bit float; a test's stand-in
+  offers one rate too. Other applications play beside it, and a call's
+  screen share hears the music and the karaoke; exclusive access is gone
+  with bit-perfect playback at a song's own rate, which bought it nothing
+  any more, and the player no longer calls anything bit-perfect: after
+  the device comes the system's mixer, which may resample and sets the
+  volume. The player's own volume is the gain of a group every strip is
+  in (`alt+↑` `alt+↓`, the master's fader keys), at most 0 dB. It holds it open until
   the mixer is dropped: in real time it plays all along, silence where
   nothing sounds, never paused and never closed when an output closes. A
   device not there as the mixer starts has no format yet (`Mixer::format`
@@ -447,13 +453,21 @@ bit-exact tests, run through the desk.
   policy); the effects' keeping the device open, the reopening for them
   and its linger; the player's rate cap (`max_rate`, its setting and
   `--max-rate`; the playback crate keeps its cap for plain targets).
-- **The only reopening** is the user's: another device, or another rate
-  in the settings (the row under the device, opened again once the steps
-  pause and only where the rate in force changed; `--rate`), starts a new
-  mixer with the queue and the place carried over.
+- **The only reopening** is the user's: another device starts a new mixer
+  with the queue and the place carried over. The per-device rate setting
+  (`rate."<id>"`, its settings row, `--rate`) is gone: the system sets the
+  rate. A change of the device's format in the system's settings fails the
+  stream as the device lost (Windows invalidates it; on macOS a listener
+  on the device's nominal rate, its being alive and the stream's IO
+  format fails it), and the next output opens it at the new one: the
+  engine asks its input what it takes for each route (it keeps nothing it
+  was told), so the next song is routed to the new rate.
 - **The echo canceller** hears one rate all along, so it keeps what it
   has learnt of the room from song to song (it starts again only at
-  another rate).
+  another rate). Shared, the system adds its own buffering after the
+  stream (on Windows about 25 ms, measured); the device clock the
+  position comes from runs after it, so the canceller's and the
+  karaoke's delays are measured with it in.
 
 ### The key shift, as built
 

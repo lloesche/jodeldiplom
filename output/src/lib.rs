@@ -1,27 +1,27 @@
-//! Bit-perfect PCM output to audio devices.
+//! PCM output to audio devices, shared with every other application.
 //!
-//! The crate opens an output device **exclusively** at exactly the stream's
-//! rate, in an integer format the device takes natively, so the samples
-//! reach the DAC unchanged: no OS mixer, resampler or software volume in
-//! between. It is not tied to any decoder; anything that produces integer
-//! PCM can use it.
+//! The crate opens an output device **shared**, through the system's
+//! mixer, in the system's mix format: the rate the system runs the device
+//! at (its sound settings choose it, not this crate) and, as a rule,
+//! 32-bit float. Other applications play beside it, and a call's screen
+//! share hears it. It is not tied to any decoder; anything that produces
+//! integer PCM can use it.
 //!
 //! | OS | Backend |
 //! |---|---|
-//! | Windows | WASAPI exclusive mode, event-driven |
-//! | macOS | Core Audio HAL: hog mode, mixing off, the device's physical integer format at the nominal rate, our own IOProc |
-//! | Linux | ALSA `hw:` devices with resampling off and the exact rate |
+//! | Windows | WASAPI shared mode, event-driven, the engine's mix format |
+//! | macOS | Core Audio HAL, shared: our own IOProc in the device's IO format at its nominal rate, nothing about the device changed |
+//! | Linux | ALSA `default` (the sound server, PipeWire or PulseAudio, else `dmix`), and the servers' own `pipewire` and `pulse` |
 //!
-//! There is no shared-mode fallback: a device that cannot be opened
-//! exclusively in a requested format is an error.
+//! There is no exclusive mode: nothing holds a device for itself.
 //!
 //! # Use
 //!
-//! 1. [`devices`] lists the devices; [`capabilities`] probes what one takes
-//!    exclusively (rates × formats × channels) without playing anything.
-//! 2. [`open`] opens one with an [`OpenRequest`]: rate, channels and a
-//!    format preference list. The first format the device accepts is used
-//!    ([`choose_format`] is the rule).
+//! 1. [`devices`] lists the devices; [`mix_format`] reads the one format
+//!    one takes (the system's rate, stereo, as a rule 32-bit float)
+//!    without playing anything.
+//! 2. [`open`] opens one with an [`OpenRequest`] at that format: its rate,
+//!    channels and a format preference list that holds its sample format.
 //! 3. The [`Output`] handle takes the engine's samples with
 //!    [`Output::write`]: `i32` words holding 24-bit values (see [`pack`]
 //!    for the exact contract and what happens to values that do not fit).
@@ -30,11 +30,12 @@
 //!    [`Output::latency`] is how far behind the writer the DAC is.
 //!
 //! ```no_run
-//! use jodel_output::{open, default_device, OpenRequest, Output};
+//! use jodel_output::{default_device, mix_format, open, OpenRequest, Output};
 //! use std::time::Duration;
 //!
 //! let device = default_device()?;
-//! let mut out = open(&device.id, &OpenRequest::new(96_000, 2))?;
+//! let f = mix_format(&device.id)?;
+//! let mut out = open(&device.id, &OpenRequest::new(f.rate, f.channels))?;
 //! println!("playing {}", out.format());
 //! let silence = vec![0i32; 2 * 9_600];
 //! for _ in 0..10 {
@@ -74,10 +75,11 @@
 //!
 //! # Examples
 //!
-//! `cargo run -p jodel-output --example devices` prints every device's
-//! exclusive capability matrix; `cargo run -p jodel-output --example silence
-//! -- default 48000 2` plays two seconds of digital silence through the
-//! exclusive path.
+//! `cargo run -p jodel-output --example devices` prints the mix format
+//! every device takes; `cargo run -p jodel-output --example silence --
+//! default mix 2` plays two seconds of digital silence at the system's rate,
+//! and `--example tone` three seconds of 440 Hz with how the device's clock
+//! runs.
 
 #![warn(missing_docs)]
 
@@ -100,10 +102,9 @@ mod shared;
 mod tap;
 mod timeline;
 
-pub use caps::{candidates, choose_format, Capabilities, PROBE_RATES};
+pub use caps::{candidates, choose_format, Capabilities};
 pub use device::{
-    capabilities, default_device, devices, find_device, open, set_volume, volume, Device,
-    DeviceOutput, Volume, BACKEND,
+    default_device, devices, find_device, mix_format, open, Device, DeviceOutput, BACKEND,
 };
 pub use dither::Requantizer;
 pub use error::Error;

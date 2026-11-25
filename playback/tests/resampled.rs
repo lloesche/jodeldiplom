@@ -96,7 +96,6 @@ fn pcm_at_44k_plays_resampled_to_48k() {
         "44.1 kHz → resample 48 kHz (160/147)"
     );
     assert!(!start.route.lossless);
-    assert!(!start.bit_perfect);
     // Positions are in the file's frames and seconds.
     let (output_frame, frame, seconds) = ends(&events)[0];
     assert_eq!(output_frame, 21_769);

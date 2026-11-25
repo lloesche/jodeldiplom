@@ -13,7 +13,8 @@
 //!   its low 8 bits are zero (16-bit content scaled to 24 bits).
 //!
 //! Every format has the same full scale, so a value outside 24 bits fits
-//! none of them; `S32` has no headroom above the 24-bit range either.
+//! none of them; neither `S32` nor [`SampleFormat::F32`] (full scale
+//! ±1.0, every 24-bit value exactly) has headroom above the 24-bit range.
 //!
 //! [`PackMode`] says what happens to a value that does not fit:
 //!
@@ -218,18 +219,32 @@ pub fn pack(
                 o.copy_from_slice(&clamp(*s).to_le_bytes());
             }
         }
+        SampleFormat::F32 => {
+            for (s, o) in samples.iter().zip(out.chunks_exact_mut(4)) {
+                o.copy_from_slice(&(clamp(*s) as f32 / FLOAT_SCALE).to_le_bytes());
+            }
+        }
     }
     Ok(report)
 }
+
+/// The float of full scale: 2²³, the 24-bit value that is 1.0.
+const FLOAT_SCALE: f32 = 8_388_608.0;
 
 /// Reads one packed sample back as a 24-bit value: the inverse of [`pack`]
 /// for every value that fits. `bytes` must be `format.bytes()` long.
 ///
 /// `S16` comes back scaled to 24 bits (`s << 8`). For `S32` and `S24In32`
 /// the low byte is dropped (`w >> 8`), and for `S24In32Low` the top byte is
-/// ignored, as devices do.
+/// ignored, as devices do. `F32` is scaled by 2²³, rounded and clamped to
+/// 24 bits.
 pub fn unpack_sample(bytes: &[u8], format: SampleFormat) -> i32 {
     match format {
+        SampleFormat::F32 => {
+            let f = f32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+            // `as` saturates (and maps NaN to 0) before the clamp.
+            ((f * FLOAT_SCALE).round() as i32).clamp(SAMPLE_MIN, SAMPLE_MAX)
+        }
         SampleFormat::S16 => i32::from(i16::from_le_bytes([bytes[0], bytes[1]])) << 8,
         SampleFormat::S24Packed => i32::from_le_bytes([0, bytes[0], bytes[1], bytes[2]]) >> 8,
         SampleFormat::S24In32 | SampleFormat::S32 => {
@@ -297,6 +312,17 @@ mod tests {
                 .unwrap()
                 .0,
             [0x56, 0x34, 0x12, 0x00, 0xFE, 0xFF, 0xFF, 0xFF]
+        );
+        assert_eq!(
+            packed(&[0x40_0000, SAMPLE_MIN], SampleFormat::F32, PackMode::Exact)
+                .unwrap()
+                .0,
+            [0x00, 0x00, 0x00, 0x3F, 0x00, 0x00, 0x80, 0xBF]
+        );
+        // A float a mixer made past full scale comes back clamped.
+        assert_eq!(
+            unpack_sample(&2.0f32.to_le_bytes(), SampleFormat::F32),
+            SAMPLE_MAX
         );
         let s16 = [0x12_3400, -0x100];
         assert_eq!(

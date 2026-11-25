@@ -1,4 +1,4 @@
-//! The rate policy: from what a file is, what the device takes exclusively
+//! The rate policy: from what a file is, what the device takes
 //! and the user's settings to the [`Route`] a track plays through, or the
 //! reason none fits ([`NoRoute`]).
 //!
@@ -12,18 +12,18 @@
 //! A route fits when its output rate is within `max_rate` and the device
 //! takes the file's channel count at that rate in a format that holds every
 //! bit of the stream: at least the file's bits (24 for lossy and
-//! floating-point files). Such a bit-perfect route always wins.
+//! floating-point files). Such a lossless route always wins.
 //!
 //! When none fits and [`Settings::resample`] is on, the route gains a
 //! [`Resample`] step ([`crate::resample`]) to a rate the device takes in a
 //! 24-bit format within the cap, and is no longer lossless: the lowest such
 //! rate above the file's rate, else the highest one below it.
 //!
-//! A route that is not bit-perfect carries the [`Settings::headroom`] at
+//! A route that is not lossless carries the [`Settings::headroom`] at
 //! its one requantization to 24 bits: inside the resampler, or where a
 //! lossy or floating-point file is turned into 24-bit samples. A lossy
 //! file's always has at least [`LOSSY_HEADROOM`] (its decoded signal goes
-//! over full scale where the master was near it). A bit-perfect route never
+//! over full scale where the master was near it). A lossless route never
 //! has any.
 //!
 //! A file whose channels the device does not take, where it takes
@@ -39,12 +39,12 @@ use jodel_output::{Capabilities, OpenRequest, SampleFormat, StreamFormat};
 use crate::remix::Remix;
 use crate::source::TrackInfo;
 
-/// A gain below full scale for routes that are not bit-perfect, in tenths
+/// A gain below full scale for routes that are not lossless, in tenths
 /// of a dB (`Headroom(10)` is −1 dB): the samples are scaled by it before
 /// the route's one requantization to 24 bits (in the resampler's `f64`
 /// computation, or the source's for a lossy or floating-point file), so
 /// overs of a near-full-scale signal (inter-sample ones, or a lossy
-/// codec's) need not clip. It never touches a bit-perfect route.
+/// codec's) need not clip. It never touches a lossless route.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Headroom(pub u16);
 
@@ -112,7 +112,7 @@ impl fmt::Display for Headroom {
 /// decoded from MP3 or AAC peaks up to about 1 dB over full scale.
 pub const LOSSY_HEADROOM: Headroom = Headroom(15);
 
-/// The headroom of `file`'s route when it is not bit-perfect.
+/// The headroom of `file`'s route when it is not lossless.
 fn headroom_for(file: &FileFacts, settings: &Settings) -> Headroom {
     if file.decoded_from.is_some() {
         settings.headroom.max(LOSSY_HEADROOM)
@@ -128,10 +128,10 @@ pub struct Settings {
     /// desk runs at its one rate, and offers no other).
     pub max_rate: Option<u32>,
     /// Resample when no rate the device takes carries the stream
-    /// bit-perfect. Off: such files have no route.
+    /// lossless. Off: such files have no route.
     pub resample: bool,
-    /// The headroom of routes that are not bit-perfect ([`Headroom`]; a
-    /// lossy file's is at least [`LOSSY_HEADROOM`]); bit-perfect routes
+    /// The headroom of routes that are not lossless ([`Headroom`]; a
+    /// lossy file's is at least [`LOSSY_HEADROOM`]); lossless routes
     /// never have any.
     pub headroom: Headroom,
 }
@@ -242,7 +242,7 @@ pub struct Route {
     /// device takes at this rate that holds the stream's bits.
     pub formats: Vec<SampleFormat>,
     /// The sample-rate conversion after the source, when no rate the
-    /// device takes carries the stream bit-perfect.
+    /// device takes carries the stream losslessly.
     pub resample: Option<Resample>,
     /// Whether the samples reach the device unchanged: false for resampled
     /// routes, for files with more than 24 bits or floating-point samples,
@@ -253,10 +253,10 @@ pub struct Route {
     pub decoded_from: Option<&'static str>,
     /// The gain below full scale at the route's one requantization (as in
     /// [`Resample::headroom`] when it is resampled; else the source's, for
-    /// a lossy or floating-point file). None on a bit-perfect route.
+    /// a lossy or floating-point file). None on a lossless route.
     pub headroom: Headroom,
     /// The better choice that was passed over, and why (a resampled route:
-    /// why it is not bit-perfect).
+    /// why it is not lossless).
     pub passed_over: Option<String>,
 }
 
@@ -356,9 +356,9 @@ fn takes(caps: &Capabilities, channels: u16) -> String {
     let rates = caps.rates(channels);
     if rates.is_empty() {
         if caps.is_empty() {
-            return "the device reported no exclusive formats".into();
+            return "the device reported no formats".into();
         }
-        return format!("the device takes no {channels}-channel stream exclusively");
+        return format!("the device takes no {channels}-channel stream");
     }
     let list: Vec<String> = rates.iter().map(|&r| khz(r)).collect();
     format!(
@@ -419,7 +419,7 @@ fn resample_target(
     }
 }
 
-/// The end of a reason when nothing fits bit-perfect.
+/// The end of a reason when nothing fits lossless.
 fn resample_note(settings: &Settings) -> &'static str {
     if settings.resample {
         "; nor any rate to resample to in a 24-bit format"
@@ -428,7 +428,7 @@ fn resample_note(settings: &Settings) -> &'static str {
     }
 }
 
-/// Picks how `file` plays on a device that accepts `caps` exclusively, with
+/// Picks how `file` plays on a device that accepts `caps`, with
 /// `settings`. Pure: it opens nothing.
 pub fn choose_route(
     file: &FileFacts,
@@ -503,7 +503,7 @@ fn pcm_route(file: &FileFacts, caps: &Capabilities, settings: &Settings) -> Resu
                 }),
                 None => Err(NoRoute {
                     reason: format!(
-                        "no bit-perfect route for this {} {} file: {why}; {}{}",
+                        "no lossless route for this {} {} file: {why}; {}{}",
                         khz(file.rate),
                         file.decoded_from.unwrap_or("PCM"),
                         takes(caps, channels),

@@ -2,8 +2,9 @@
 
 A music player for PCM files (FLAC, WAV, AIFF, CAF, ALAC in
 M4A/MP4), and for AAC-LC (in M4A/MP4), MP3 (MP2, MP1) and Ogg Vorbis, on top of
-[`jodel-playback`](../playback) and [`jodel-output`](../output): bit-perfect,
-exclusive output, a plain file browser instead of a library database, in
+[`jodel-playback`](../playback) and [`jodel-output`](../output): output
+through the system's mixer, beside every other application (a call's
+screen share hears it), a plain file browser instead of a library database, in
 a window: `jodeldiplom` (iced on wgpu, its CPU renderer without a GPU;
 the screens not ported to iced yet are ratatui widgets rasterised in
 pixels, shown inside it: see [The window](#the-window); on macOS the app
@@ -46,18 +47,17 @@ without one).
 | Option | |
 |---|---|
 | `--device ID\|NAME` | the output device (an id or a unique part of a name from `--list-devices`); default: the system default |
-| `--rate HZ` | the rate the output device runs at (default 48000; where it lacks it, 44100, else its lowest) |
 | `--no-resample` | never resample (for this run): files at another rate than the device's are skipped |
-| `--headroom DB` | routes that are not bit-perfect play this many dB below full scale (`0`, `0.5`, `1`, `2`, `3`; default `0`), so overs need not clip: resampled routes (inter-sample overs) and floating-point files; lossy files (MP3, AAC, Vorbis) always at least 1.5 dB, as their decoded signal goes over full scale where the master was near it; bit-perfect routes are never touched |
+| `--headroom DB` | routes that change the samples play this many dB below full scale (`0`, `0.5`, `1`, `2`, `3`; default `0`), so overs need not clip: resampled routes (inter-sample overs) and floating-point files; lossy files (MP3, AAC, Vorbis) always at least 1.5 dB, as their decoded signal goes over full scale where the master was near it; files played as they are are never touched |
 | `--config FILE` | the settings file (default: `config.toml` in the settings folder, see Folders and setup) |
-| `--list-devices` | list the devices and what each takes exclusively |
+| `--list-devices` | list the devices and what each takes (its rate and format, as the system mixes it) |
 | `--clean-cache` | forget the beat analyses, the stems kept, the lyrics and the karaoke game's sounds in the data folder (each made again when wanted); the models stay (`make clean-cache`) |
 | `--clean-diag` | forget the record of the last analyses `--diag` shows (`make clean-diag`) |
-| `--diag` | print what the player finds on this system, for a bug report: the build, the OS and processor, the settings in force, the cache folders, every output device with what it takes exclusively and its own volume control, and the GPU side (every adapter on every backend with the limits the separator needs, whether the separator sets up on the one it picks or the error, a 6 s chunk's time and how it splits between the kernels, the upload and the readback, and whether the beat analysis will listen to stems), then the last three beat analyses the player made (`recent-analyses.txt` in the analysis cache: when, the file's name without its folders, what the cues heard, the tempo found, and how long decoding, the stems, listening and deciding took; analyses taken from the cache are not counted). Plays nothing. The Windows window binary has no console: run it with `jodeldiplom` |
+| `--diag` | print what the player finds on this system, for a bug report: the build, the OS and processor, the settings in force, the cache folders, every output device with what it takes, and the GPU side (every adapter on every backend with the limits the separator needs, whether the separator sets up on the one it picks or the error, a 6 s chunk's time and how it splits between the kernels, the upload and the readback, and whether the beat analysis will listen to stems), then the last three beat analyses the player made (`recent-analyses.txt` in the analysis cache: when, the file's name without its folders, what the cues heard, the tempo found, and how long decoding, the stems, listening and deciding took; analyses taken from the cache are not counted). Plays nothing. The Windows window binary has no console: run it with `jodeldiplom` |
 
 Options override the settings file for one run; settings changed in the
 player are saved to it (only what was changed there, not the options).
-The file holds `device`, `rate."<device id>"` (each device's rate), `resample`, `headroom`, `bpm`, `beat_voting`, `beat_methods = "flux, network"`
+The file holds `device`, `resample`, `headroom`, `bpm`, `beat_voting`, `beat_methods = "flux, network"`
 `beat_method = "network"`, `stems`, `stem_switch = "bar"|"instant"`, `skip_mix = "cut"|"mix"`, `skip_preset = "transition-tab"|"fade"|"drums-first"|"bass-swap"|"vocals-last"`
 (what the next track key does), `transition_preset` and `transition_tempo =
 "varispeed"|"stretch"` (the Transition tab's transition preset and tempo mode,
@@ -122,36 +122,38 @@ downloaded whole is kept. About 45 s on a fast line. To spare a computer
 the downloads, put the `models` folder beside the executable.
 
 ## Screen
-
 One list pane with a **Browser / Queue / Transition / Karaoke / Mixer**
 toggle in its top border (click it or press `tab`, which goes round all
 five); the right column has the cover, the title, the status
-light and the signal path, for example
-`file 96 → DAC (exclusive), bit-perfect`.
-The output device is opened once, as the player starts, at the rate set
-for it (48 kHz unless set; where it lacks that, 44.1 kHz, else its lowest),
-and stays open, at that rate, until the player quits: songs, stems, the
-preview and the game's sounds are all played at it, so nothing is ever
-cut short by the device opening again between songs, and the echo
-canceller keeps what it has learnt of the room. A file at that rate plays
-bit-perfect; any other is resampled (unless that is off) and the path
-shows the step and says so in the warning colour, for example
-`file 44.1 → resample 48 (160/147) → DAC (exclusive), not bit-perfect`
+light and the signal path, for example `file 48 → DAC`.
+The output device is opened once, as the player starts, shared, through
+the system's mixer: other applications play beside it, and a call's
+screen share or "share sound" hears the music and the karaoke. It runs at
+the rate the system runs the device at (set in the system's sound
+settings, Audio MIDI Setup on macOS; 48 kHz as a rule), in the system's
+mix format (32-bit float as a rule), and stays open until the player
+quits: songs, stems, the preview and the game's sounds are all played at
+it, so nothing is ever cut short by the device opening again between
+songs, and the echo canceller keeps what it has learnt of the room. When
+the system starts running the device at another rate (its format changed
+in the sound settings), the song playing stops and the next one played
+is routed to the new rate. A file at that rate plays as it is; any other
+is resampled (unless that is off) and the path shows the step in the
+warning colour, for example `file 44.1 → resample 48 (160/147) → DAC`
 (with headroom: `resample 48 (160/147, -1 dB)`); samples the resampler had
-to clip are counted there too. A lossy file plays 1.5 dB down (or the
-headroom setting's, when more), as its decoded signal goes over full scale
-where a loud master was near it: `file 44.1 decoded from MP3 (-1.5 dB)`.
-While the mixer sums what goes to the device (a preview over the song, its
-fades) the path says `not bit-perfect`, whatever the route.
-A lossy file is never called bit-perfect: its path ends with what it was
-decoded from, for example `file 44.1 → DAC (exclusive), decoded from MP3`,
-and the status light names the codec and its bit rate
+to clip are counted there too. The path says nothing of bit-perfection:
+after the device's name comes the system's mixer, which may resample and
+sets the volume. A lossy file plays 1.5 dB down (or the headroom
+setting's, when more), as its decoded signal goes over full scale where a
+loud master was near it: `file 44.1 decoded from MP3 (-1.5 dB)`. Its
+path ends with what it was decoded from, for example `file 44.1 → DAC,
+decoded from MP3`, and the status light names the codec and its bit rate
 (`○ MP3 320 kbps · lossy`). Lossy files play gapless (encoder delay and
 padding trimmed).
 The right column is as wide as its longest line needs, up to half the
 screen (the list gives up the room); where the path still does not fit it
-wraps before a `→` step or before `(exclusive), bit-perfect`, never inside
-a phrase. Long titles, artists and albums end in `…`. The title, artist
+wraps before a `→` step or before what follows the device (`decoded from
+MP3`), never inside a phrase. Long titles, artists and albums end in `…`. The title, artist
 and album are links (underlined under the pointer): the title and the album show the track in its folder, the artist
 the folder above it with the album selected (`T`, `B`, `R`).
 At the bottom: the spectrum of what is heard (the mix the device plays,
@@ -162,19 +164,13 @@ Clicking the cover (or `f`) opens Now playing: the cover filling the
 screen with the title, artist, album and status light over its bottom
 left; `esc`, a click or `f` returns. Clicking the device name
 opens its setting. `,` (or the button) opens the settings: device (with
-what it takes exclusively), its rate (the device's own, saved under its
-id as `rate."<id>"`; 48 kHz for a device with none), resample when needed
-(on by default; saved as `resample` in the settings file) and the
-headroom (for what is not bit-perfect). The rate offers the rates the
-device takes exclusively in stereo; once the steps pause, the device opens
-again at the rate chosen, where that is not the one it runs at (the only
-time it is opened again, with another device chosen), the queue and the
-place carried over. A rate set that the device lacks is shown with the
-rate it runs at instead (44.1 kHz, else its lowest), and a message says
-so; the file keeps
-the rate set, so it is in force again on a device that takes it. The other
-changes show at once and are saved at
-once; the engine gets them 400 ms after the last one, so stepping through
+what it takes: the rate the system runs it at and its format), resample
+when needed (on by default; saved as `resample` in the settings file) and
+the headroom (for what is resampled). The device's rate is not a
+setting of the player's: the system's sound settings set it. A settings
+file from before, with a `rate."<id>"` line, says it is an unknown
+setting. Another device chosen opens it, the queue and the place carried
+over. The changes show at once and are saved at once; the engine gets them 400 ms after the last one, so stepping through
 values reroutes the track once, without a break. A change never
 stops playback: when the track has no route with the new settings, or its
 new output does not open, it keeps playing as it was and a message says
@@ -186,16 +182,12 @@ route is decoded ahead and takes over at an exact frame, crossfaded over
 20 ms). Below 72 columns the right column becomes a two-line summary; below
 18 rows the spectrum goes.
 
-`alt+↑` and `alt+↓` move the own volume control of the device playing a step
-(of sixteen, as the system's keys; also the palette's "Device volume: up /
-down"), and the signal path shows it: `MacBook Pro Speakers (exclusive,
-volume 50 % (−12.0 dB))`. That is the control the system's volume slider
-moves, applied by the device after it has the samples, so playback stays
-bit-perfect (at 100 % the control passes the signal unchanged). macOS needs
-it: its volume keys do not reach a device the player holds in hog mode,
-so the level stays where the slider was when the player took the device
-(raising it above 0 also unmutes). On Windows and Linux the system's keys
-reach the device themselves, and these keys say so.
+`alt+↑` and `alt+↓` move the player's own volume a step of 1 dB, never
+above 0 dB (also the palette's "Volume: up / down", and `↑` `↓` or the
+wheel on the Mixer tab's master), and say where it is: the master's gain,
+over everything the desk plays (the song, the preview, the game's
+sounds), on every system. The system's volume is the system's: its keys
+and sliders.
 
 The stems of the track playing can be switched on and off: `alt+1`
 drums, `alt+2` bass, `alt+3` vocals, `alt+4` other, `alt+0` all on (`option` on a Mac; also the palette's "Stems: …"
@@ -204,10 +196,9 @@ after the transport buttons, `D B V O` where the row is short; a stem
 that is off is crossed out). Each stem is a strip of the Mixer tab inside
 the player's (below), and these keys mute its strip or unmute it; `alt+0`
 puts every stem's strip back as it starts (unmuted, 0 dB, not soloed).
-With every stem's strip as it starts the file plays as it is,
-bit-perfect where it was; with one touched the desk plays the stems in
-place of the file (a 10 ms crossfade, the stems being the same music), so
-the path is no longer bit-perfect. A stem switched is heard within the
+With every stem's strip as it starts the file plays as it is; with
+one touched the desk plays the stems in place of the file (a 10 ms
+crossfade, the stems being the same music). A stem switched is heard within the
 device's buffer: the stems are made beside the file as it plays, from the
 stems kept (the queue keeps them as it gets tracks ready) or else
 separated on the GPU, while a stem's strip is touched or the Mixer, Karaoke
@@ -488,7 +479,7 @@ keeps its pitch. The tempo glides across the window: the playing track
 starts it at its own tempo, the next track follows its beats, and by the
 window's end the playing track is at the next one's tempo and the next
 one at its own (the glide changes the speed by 30 % at most; the rest
-the next track makes up after the window). It then plays bit-perfect
+the next track makes up after the window). It then plays as it is
 again where it did before.
 
 Where the two tempi are far apart, the beats pair two to one rather than
@@ -1015,7 +1006,7 @@ keys go through the strips drawn.
   itself and each started on the frame of the song its moment is seen
   on. Its fader and mute are kept in the settings (`karaoke_effects`,
   `karaoke_effects_mute`); down to −∞ or muted, none is played. While
-  one sounds, the output is mixed (not bit-perfect); the microphone's
+  one sounds, the output is mixed; the microphone's
   echo canceller hears them as it hears the song.
 - **PLAYER** and **PREVIEW**: the name on a scribble strip (lit when
   selected), what the strip carries (the format; the player's LEAD row,
@@ -1049,7 +1040,7 @@ keys go through the strips drawn.
   stand: `● STEMS heard` (the desk plays them in place of the file: a
   stem's strip is touched), `○ STEMS ready` (made, the file heard),
   `separating…`, `loading…` (kept, being read) or `no stems`. With every
-  stem's strip as it starts the file is heard, bit-perfect; the stem keys
+  stem's strip as it starts the file is heard as it is; the stem keys
   (above) are these strips' mutes.
 - **MIC**: listened to, never played: no fader (`LISTEN ONLY`), but its
   meters as captured (IN) and with the singer isolated (VOICE), its port
@@ -1063,13 +1054,12 @@ keys go through the strips drawn.
   mode). The microphone is open while this strip is selected (`←` `→`
   to it, or a click), and closed again when another is; until then the
   strip says it is closed. Without one it says so.
-- **MAIN**: the device, its backend (exclusive or shared) and format, the
-  BIT-PERFECT lamp (the last frames went to the device as an input wrote
-  them: nothing summed, limited or dithered; off while a preview mixes),
+- **MAIN**: the device, its backend (shared, as every one is) and format,
   the LIMIT lamp (the limiter turned the gain down, held lit for a
   second), the samples clipped and the desk's clock, a big L/R meter, and
-  VOLUME: the device's own volume (`—` where the player cannot set it).
-  The master never adds gain of its own.
+  VOLUME: the player's own volume (the master's gain over every strip, 0
+  dB at most; `↑` `↓` and the wheel move it, as `alt+↑` `alt+↓` do
+  anywhere; this run only). The master never adds gain above unity.
 
 The meters are peak meters, the microphone's and the master's over −60
 to 0 dBFS: green below −18, yellow to −6, red above; they rise at once and fall 20 dB a second, a tick
@@ -1077,7 +1067,7 @@ holds each peak for 1.5 s, and a lamp over each lights for 1.5 s when a
 peak reaches full scale. They move by themselves while the tab shows, so
 the window keeps drawing.
 
-Bit-perfect stays the default: the desk adds no gain until a fader is
+The file as it is stays the default: the desk adds no gain until a fader is
 moved, and nothing of it is kept: every start is at 0 dB, unmuted, nothing
 soloed. A new mixer (another device, an engine restarted) gets the faders
 as they were set this run.
@@ -1092,13 +1082,13 @@ on the track brings the cap there; within 5 pixels of 0 dB it is at
 exactly 0 dB, as in a desk's detent (a key step across 0 dB stops there
 too); a double click is 0 dB;
 the wheel over a strip moves its fader by 1 dB (over the master, the
-device's volume); a click selects a strip, and `[M]`, `[S]` and `[ECHO]`
+player's volume); a click selects a strip, and `[M]`, `[S]` and `[ECHO]`
 are buttons.
 
 | Key | Mixer tab |
 |---|---|
 | `←` `→` | the strip to the left, to the right (player, its stems, preview, microphone, master) |
-| `↑` `↓` | the fader 1 dB up, down (at −45 dB or below: off; from off: −45 dB; on the master, the device's own volume a step) |
+| `↑` `↓` | the fader 1 dB up, down (at −45 dB or below: off; from off: −45 dB; on the master, the player's volume, never above 0 dB) |
 | `pgup` `pgdn` | the fader 6 dB up, down |
 | `home` | the fader to 0 dB: nothing added |
 | `end` | the fader off (−∞) |

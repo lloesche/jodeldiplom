@@ -1,8 +1,12 @@
 //! The rate policy against devices, rates, depths and caps.
 
 use super::*;
-use jodel_output::PROBE_RATES;
 use SampleFormat::*;
+
+/// The 44.1 and 48 kHz families from 1× to 16×.
+const RATE_FAMILIES: [u32; 10] = [
+    44_100, 48_000, 88_200, 96_000, 176_400, 192_000, 352_800, 384_000, 705_600, 768_000,
+];
 
 fn device(rates: &[u32], formats: &[SampleFormat], channels: &[u16]) -> Capabilities {
     let mut caps = Capabilities::new();
@@ -35,7 +39,7 @@ fn hdmi() -> Capabilities {
 
 /// A DAC that takes everything up to 384 kHz in S32.
 fn full() -> Capabilities {
-    device(&PROBE_RATES[..8], &[S32], &[1, 2])
+    device(&RATE_FAMILIES[..8], &[S32], &[1, 2])
 }
 
 fn pcm(rate: u32, channels: u16, bits: u32) -> FileFacts {
@@ -48,7 +52,7 @@ fn pcm(rate: u32, channels: u16, bits: u32) -> FileFacts {
     }
 }
 
-/// Bit-perfect routes only.
+/// Lossless routes only.
 fn settings(max_rate: Option<u32>) -> Settings {
     Settings {
         max_rate,
@@ -72,7 +76,7 @@ fn resampling(max_rate: Option<u32>) -> Settings {
 /// A lossy file's route has headroom where its decoded samples are
 /// turned into 24 bits (or in the resampler): at least
 /// [`LOSSY_HEADROOM`], more when the setting asks. A floating-point
-/// file's has the setting's; a bit-perfect one none.
+/// file's has the setting's; a lossless one none.
 #[test]
 fn lossy_and_floating_point_files_get_headroom() {
     let mp3 = FileFacts {
@@ -118,7 +122,7 @@ fn lossy_and_floating_point_files_get_headroom() {
     );
 }
 
-/// Headroom goes on resampled routes, never on bit-perfect ones.
+/// Headroom goes on resampled routes, never on lossless ones.
 #[test]
 fn headroom_is_for_resampled_routes_only() {
     let one = Headroom(10);
@@ -133,7 +137,7 @@ fn headroom_is_for_resampled_routes_only() {
         route.describe(),
         "44.1 kHz → resample 48 kHz (160/147, -1 dB)"
     );
-    // Bit-perfect routes are the same as without headroom.
+    // Lossless routes are the same as without headroom.
     for file in [pcm(48_000, 2, 24), pcm(96_000, 2, 16)] {
         let with = choose_route(&file, &gc7, &s).unwrap();
         assert_eq!(with.resample, None);
@@ -225,7 +229,7 @@ fn plain_pcm_plays_at_its_own_rate_and_channels() {
 
 #[test]
 fn sixteen_bit_only_and_empty_devices() {
-    let s16 = device(&PROBE_RATES, &[S16], &[2]);
+    let s16 = device(&RATE_FAMILIES, &[S16], &[2]);
     let def = exact();
     let r = choose_route(&pcm(44_100, 2, 16), &s16, &def).unwrap();
     assert_eq!(r.format.sample, S16);
@@ -235,22 +239,22 @@ fn sixteen_bit_only_and_empty_devices() {
         .contains("lose bits"));
     let empty = Capabilities::new();
     let none = choose_route(&pcm(44_100, 2, 16), &empty, &def).unwrap_err();
-    assert!(none.reason.contains("no exclusive formats"), "{none}");
+    assert!(none.reason.contains("no formats"), "{none}");
     assert!(choose_route(&pcm(48_000, 2, 24), &empty, &def).is_err());
 }
 
 /// Every rate, depth and cap against every single-rate device: a
-/// bit-perfect route is at the file's own rate, which the device takes
+/// lossless route is at the file's own rate, which the device takes
 /// in a format holding its bits, within the cap; there is none only
 /// when that does not fit.
 #[test]
 fn exhaustive_policy_invariants() {
-    let caps_sets: Vec<Capabilities> = PROBE_RATES[..8]
+    let caps_sets: Vec<Capabilities> = RATE_FAMILIES[..8]
         .iter()
         .map(|&r| device(&[r], &[S24In32], &[2]))
         .chain([full(), gc7(), hdmi(), Capabilities::new()])
         .collect();
-    for &rate in &PROBE_RATES[..8] {
+    for &rate in &RATE_FAMILIES[..8] {
         for bits in [16, 24] {
             for cap in [None, Some(48_000), Some(96_000), Some(192_000)] {
                 let s = settings(cap);
@@ -343,7 +347,7 @@ fn gc7_resamples_the_44k_family() {
         resampled(pcm(192_000, 8, 24), &caps, def),
         Some((192_000, 96_000, (1, 2)))
     );
-    // The 48 kHz family stays bit-perfect.
+    // The 48 kHz family stays lossless.
     assert!(choose_route(&pcm(48_000, 2, 24), &caps, &def)
         .unwrap()
         .resample
@@ -379,7 +383,7 @@ fn hdmi_resamples_high_rates_down() {
 #[test]
 fn resampling_to_keep_the_bits() {
     // 48 kHz only in S16, 96 kHz in S24: a 24-bit file goes to 96 kHz,
-    // a 16-bit one plays bit-perfect at 48 kHz.
+    // a 16-bit one plays losslessly at 48 kHz.
     let mut caps = device(&[48_000], &[S16], &[2]);
     caps.insert(StreamFormat::new(96_000, 2, S24In32));
     let def = Settings::default();
@@ -392,7 +396,7 @@ fn resampling_to_keep_the_bits() {
         .resample
         .is_none());
     // A 16-bit-only device has nothing to resample to.
-    let s16 = device(&PROBE_RATES, &[S16], &[2]);
+    let s16 = device(&RATE_FAMILIES, &[S16], &[2]);
     let none = choose_route(&pcm(44_100, 2, 24), &s16, &def).unwrap_err();
     assert!(
         none.reason.contains("nor any rate to resample to"),
@@ -401,13 +405,13 @@ fn resampling_to_keep_the_bits() {
 }
 
 /// With resampling on, every file at every rate against every device
-/// and cap: a bit-perfect route is unchanged; otherwise the route
+/// and cap: a lossless route is unchanged; otherwise the route
 /// resamples to the rate the rule names, in a 24-bit format the device
 /// takes within the cap; and there is no route only when the device
 /// takes no such rate at all.
 #[test]
 fn exhaustive_resampling_invariants() {
-    let mut caps_sets: Vec<Capabilities> = PROBE_RATES[..8]
+    let mut caps_sets: Vec<Capabilities> = RATE_FAMILIES[..8]
         .iter()
         .map(|&r| device(&[r], &[S24In32], &[2]))
         .chain([full(), gc7(), hdmi(), Capabilities::new()])
@@ -419,7 +423,7 @@ fn exhaustive_resampling_invariants() {
         8_000, 22_050, 32_000, 44_100, 48_000, 88_200, 96_000, 176_400,
     ]
     .into_iter()
-    .chain(PROBE_RATES[4..].iter().copied())
+    .chain(RATE_FAMILIES[4..].iter().copied())
     .map(|r| pcm(r, 2, 24))
     .collect();
     for file in &files {

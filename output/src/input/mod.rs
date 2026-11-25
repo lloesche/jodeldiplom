@@ -87,8 +87,8 @@ use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-/// The capture backend this build uses: `"WASAPI shared"`, `"Core Audio
-/// HAL"`, `"ALSA"`, or `"none"`.
+/// The capture backend this build uses: `"WASAPI (shared)"`, `"Core Audio
+/// (shared)"`, `"ALSA default (shared)"`, or `"none"`.
 pub const INPUT_BACKEND: &str = backend::INPUT_BACKEND;
 
 /// The capture period asked for.
