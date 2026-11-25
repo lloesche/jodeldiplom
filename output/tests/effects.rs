@@ -309,28 +309,8 @@ fn the_last_sound_is_heard_after_the_song_stops() {
     let mut bank = SoundBank::new(RATE);
     bank.add(vec![0.5; 2 * 4_800]);
     effects.load(bank);
-    let (mut lead, _fader) = mixer.input(&player, Role::Lead, 1.0);
-    let mut out = open(&mut lead, RATE);
-    out.write(&frames(0, 9_600, |_| 0), None).unwrap();
-    out.drain(None).unwrap();
-    // Paused, the song over: a sound now.
-    out.pause().unwrap();
-    assert!(effects.play(EffectCue::new(0)));
-    wait_until("heard whole", || {
-        let v = effects.view();
-        v.played == 1 && v.sounding == 0
-    });
-    // A sound, then the song paused at once.
-    out.resume().unwrap();
-    out.write(&frames(0, 4_800, |_| 0), None).unwrap();
-    assert!(effects.play(EffectCue::new(0)));
-    out.pause().unwrap();
-    wait_until("heard whole", || {
-        let v = effects.view();
-        v.played == 2 && v.sounding == 0
-    });
-    // The device plays out what it holds (its buffer, 200 ms here) before
-    // it pauses: both heard whole.
+    // The sound's samples on the device (two sounding at once would add
+    // up to more: each must be heard before the next is cued).
     let loud = || {
         device
             .left(0)
@@ -338,6 +318,29 @@ fn the_last_sound_is_heard_after_the_song_stops() {
             .filter(|v| v.abs_diff(4_194_304) <= 2)
             .count()
     };
+    let (mut lead, _fader) = mixer.input(&player, Role::Lead, 1.0);
+    let mut out = open(&mut lead, RATE);
+    out.write(&frames(0, 9_600, |_| 0), None).unwrap();
+    out.drain(None).unwrap();
+    // Paused, the song over: a sound now, heard whole. Mixed is not yet
+    // heard: a mixer catching up mixes it all at once, ahead of the device.
+    out.pause().unwrap();
+    assert!(effects.play(EffectCue::new(0)));
+    wait_until("mixed whole", || {
+        let v = effects.view();
+        v.played == 1 && v.sounding == 0
+    });
+    wait_until("heard whole", || loud() == 4_800);
+    // A sound, then the song paused at once.
+    out.resume().unwrap();
+    out.write(&frames(0, 4_800, |_| 0), None).unwrap();
+    assert!(effects.play(EffectCue::new(0)));
+    out.pause().unwrap();
+    wait_until("mixed whole", || {
+        let v = effects.view();
+        v.played == 2 && v.sounding == 0
+    });
+    // The device plays on (it stays open, in real time): both heard whole.
     wait_until("both heard whole", || loud() == 2 * 4_800);
     std::thread::sleep(Duration::from_millis(300));
     assert_eq!(loud(), 2 * 4_800);
@@ -364,14 +367,8 @@ fn sounds_after_the_song_play_on_the_device_kept_open() {
     out.write(&frames(0, 9_600, |_| 0), None).unwrap();
     out.drain(None).unwrap();
     out.close().unwrap();
-    for n in 1..=2 {
-        std::thread::sleep(Duration::from_millis(300));
-        assert!(effects.play(EffectCue::new(0)));
-        wait_until("heard whole", || {
-            let v = effects.view();
-            v.played == n && v.sounding == 0
-        });
-    }
+    // Each heard on the device before the next is cued (mixed is not yet
+    // heard): two sounding at once would add up to more.
     let loud = || {
         device
             .left(0)
@@ -379,7 +376,15 @@ fn sounds_after_the_song_play_on_the_device_kept_open() {
             .filter(|v| v.abs_diff(4_194_304) <= 2)
             .count()
     };
-    wait_until("both heard whole", || loud() == 2 * 4_800);
+    for n in 1..=2 {
+        std::thread::sleep(Duration::from_millis(300));
+        assert!(effects.play(EffectCue::new(0)));
+        wait_until("mixed whole", || {
+            let v = effects.view();
+            v.played == n && v.sounding == 0
+        });
+        wait_until("heard whole", || loud() == n as usize * 4_800);
+    }
     std::thread::sleep(Duration::from_millis(300));
     assert!(open_now(), "still open");
     assert_eq!(device.streams.lock().unwrap().len(), 1, "opened once");
