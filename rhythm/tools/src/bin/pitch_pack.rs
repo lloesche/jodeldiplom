@@ -126,10 +126,6 @@ fn options() -> Options {
     }
 }
 
-#[expect(
-    clippy::disallowed_methods,
-    reason = "debt (P7): writes the shipped pitch model"
-)]
 fn main() {
     let o = options();
     let bytes = std::fs::read(&o.input).unwrap_or_else(|e| panic!("{}: {e}", o.input));

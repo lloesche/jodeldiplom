@@ -134,7 +134,6 @@ fn stem(path: &Path) -> String {
     path.file_stem().unwrap().to_string_lossy().into_owned()
 }
 
-#[expect(clippy::disallowed_methods, reason = "debt (P7): its packed weights")]
 fn write_pitch(path: &Path, p: &Pitch) {
     let mut out = Vec::with_capacity(p.hz.len() * 8);
     for (h, c) in p.hz.iter().zip(&p.confidence) {
@@ -270,7 +269,6 @@ fn vector(name: &str, shape: Vec<usize>, values: Vec<f32>) -> PackedTensor {
     }
 }
 
-#[expect(clippy::disallowed_methods, reason = "debt (P7): its packed weights")]
 fn write_tensors(path: &str, mut tensors: Vec<PackedTensor>) {
     tensors.sort_by(|a, b| a.name.cmp(&b.name));
     durable::write_atomic(Path::new(path), &pack(&tensors).unwrap()).expect("the statistics");

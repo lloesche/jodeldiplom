@@ -334,7 +334,7 @@ mod tests {
         assert_eq!(takes(), Vec::<PathBuf>::new());
         // The next save is a take, whole; the one cut short goes once old.
         let folder = kept.save(&dir).unwrap();
-        assert_eq!(takes(), [folder.clone()]);
+        assert_eq!(takes(), std::slice::from_ref(&folder));
         for name in [VOICE, TIMES, LYRICS, MELODY, ABOUT] {
             assert!(folder.join(name).is_file(), "{name}");
         }
