@@ -1,8 +1,10 @@
 //! The GPU's time between the steps of a frame, to measure what each pass
 //! costs ([`super::present::Offscreen::timed`]): a timestamp written after
-//! each step in an encoder of its own, submitted between the steps'
-//! submissions, so each one falls once the GPU has done everything before
-//! it. Frames are marked one after the other without waiting (so the GPU
+//! each step at the start of a pass of its own (clearing one pixel), in an
+//! encoder of its own submitted between the steps' submissions, so each
+//! one falls once the GPU has done everything before it. A pass's
+//! timestamps are all a device needs (Apple's GPUs write none between
+//! passes). Frames are marked one after the other without waiting (so the GPU
 //! stays busy, as while the window draws) and read back together, each
 //! step as the time since the mark before it.
 
@@ -20,11 +22,12 @@ pub(super) struct Stamps {
     marked: Vec<&'static str>,
     /// Nanoseconds a tick.
     period: f64,
+    /// The pixel each mark's pass clears.
+    pixel: wgpu::TextureView,
 }
 
 /// What a device needs to write them.
-pub(super) const FEATURES: wgpu::Features =
-    wgpu::Features::TIMESTAMP_QUERY.union(wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS);
+pub(super) const FEATURES: wgpu::Features = wgpu::Features::TIMESTAMP_QUERY;
 
 impl Stamps {
     pub(super) fn new(device: &wgpu::Device, queue: &wgpu::Queue) -> Stamps {
@@ -47,6 +50,22 @@ impl Stamps {
             read: buffer(wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ),
             marked: Vec::new(),
             period: f64::from(queue.get_timestamp_period()),
+            pixel: device
+                .create_texture(&wgpu::TextureDescriptor {
+                    label: Some("jodeldiplom stamps"),
+                    size: wgpu::Extent3d {
+                        width: 1,
+                        height: 1,
+                        depth_or_array_layers: 1,
+                    },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: wgpu::TextureFormat::Rgba8Unorm,
+                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+                    view_formats: &[],
+                })
+                .create_view(&wgpu::TextureViewDescriptor::default()),
         }
     }
 
@@ -62,7 +81,26 @@ impl Stamps {
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("jodeldiplom stamps"),
         });
-        encoder.write_timestamp(&self.set, at);
+        encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("jodeldiplom stamps"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &self.pixel,
+                depth_slice: None,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                    store: wgpu::StoreOp::Discard,
+                },
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: Some(wgpu::RenderPassTimestampWrites {
+                query_set: &self.set,
+                beginning_of_pass_write_index: Some(at),
+                end_of_pass_write_index: None,
+            }),
+            occlusion_query_set: None,
+            multiview_mask: None,
+        });
         queue.submit([encoder.finish()]);
         self.marked.push(name);
     }

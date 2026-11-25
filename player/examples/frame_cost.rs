@@ -5,14 +5,16 @@
 //! step's GPU time read from timestamps (the window's pass drawn a step a
 //! pass): a normal frame (the singing at no tier), and the Diva peak (two
 //! phrases Diva, the second just decided: its jackpot flying, angels
-//! coming down, the flames, the rays, the rainbow). Each scene is timed
-//! over its second up to the moment looked at, in every size asked for
+//! coming down, the flames, the rays, the rainbow), and the Jodeldiplom
+//! after that song (a new best: its confetti), timed over its whole
+//! reveal. The singing scenes are timed over their second up to the moment
+//! looked at, each in every size asked for
 //! (`--size WxH`, again for more; the default a 16-inch MacBook Pro's
 //! screen, 3024 × 1964), `--density D` pixels to a point (the window's
 //! scale; 2, a Retina screen's, by default); each step's median and mean,
-//! the frame's total, and what the processor spent making each frame's
-//! stage and backdrop. The GPU must write timestamps between submissions
-//! (Vulkan, DirectX 12). `--png OUT_DIR`: the last frame of each as a PNG
+//! the frame's total (and its worst), and what the processor spent making each frame's
+//! stage and backdrop. The GPU must write timestamps (Vulkan, DirectX 12,
+//! Metal on Apple's chips). `--png OUT_DIR`: the last frame of each as a PNG
 //! (`<scene>-<W>x<H>.png`, written whole), to hold the look to.
 //!
 //! ```text
@@ -26,16 +28,17 @@ use std::time::Instant;
 
 use jodeldiplom::art::Art;
 use jodeldiplom::core::shine::{Shone, Tier};
-use jodeldiplom::core::singing::Singing;
+use jodeldiplom::core::singing::{Shown, Singing, SongResult};
 use jodeldiplom::cover::{Apart, CoverLayers, Layers};
 use jodeldiplom::gui::backdrop::music::Levels;
-use jodeldiplom::gui::backdrop::{Cue, Visualiser};
+use jodeldiplom::gui::backdrop::{BackdropFrame, Cue, Visualiser};
 use jodeldiplom::gui::big_text::Faces;
 use jodeldiplom::gui::karaoke::{paint, Backdrop, Layer};
 use jodeldiplom::gui::present::Offscreen;
 use jodeldiplom::gui::raster::Target;
-use jodeldiplom::gui::stage::{without_lyrics, Song, Stage};
-use jodeldiplom::view::karaoke::{timed_lines, KaraokePicture, Score};
+use jodeldiplom::gui::stage::{without_lyrics, Song, Stage, Tint};
+use jodeldiplom::gui::stage_gpu::StageFrame;
+use jodeldiplom::view::karaoke::{timed_lines, KaraokePicture, ResultShown, Score};
 use ratatui::layout::Rect;
 
 // The fonts build.rs found: `EMBEDDED_FONTS`.
@@ -110,24 +113,34 @@ fn music() -> Levels {
     }
 }
 
-/// A scene: its name, the singing's phrases decided Diva when, and the
-/// moment looked at.
+/// A scene: its name, the singing's phrases decided Diva when, the
+/// moment looked at, and whether the song's diploma is timed from there
+/// (its whole reveal) rather than the singing up to it.
 struct Scene {
     name: &'static str,
     diva: &'static [f64],
     at: f64,
+    diploma: bool,
 }
 
-const SCENES: [Scene; 2] = [
+const SCENES: [Scene; 3] = [
     Scene {
         name: "normal",
         diva: &[],
         at: 10.0,
+        diploma: false,
     },
     Scene {
         name: "diva",
         diva: &[4.0, 9.2],
         at: 10.0,
+        diploma: false,
+    },
+    Scene {
+        name: "diploma",
+        diva: &[4.0, 9.2],
+        at: 10.0,
+        diploma: true,
     },
 ];
 
@@ -165,6 +178,84 @@ fn picture_at(sung: &[&jodel_lyrics::Line], now: f64, singing: &Singing) -> Kara
     }
 }
 
+/// What makes a scene's frames in one size: the stage, the backdrop and
+/// the pixmap under them, as the window keeps them.
+struct Rig<'a> {
+    stage: Stage,
+    visualiser: Visualiser,
+    pixels: Vec<u32>,
+    faces: Faces,
+    layer: Layer,
+    under: Backdrop,
+    art: &'a Art,
+    layers: &'a Layers,
+    sung: &'a [&'a jodel_lyrics::Line],
+    size: (u32, u32),
+    /// Frames made so far.
+    made: usize,
+}
+
+impl Rig<'_> {
+    /// The frame at `now` (`result`: the diploma shown over it), and what
+    /// the processor took for its stage and its pixmap, ms.
+    fn frame(
+        &mut self,
+        singing: &Singing,
+        now: f64,
+        result: Option<ResultShown>,
+    ) -> (BackdropFrame, StageFrame, [f64; 2]) {
+        let (w, h) = self.size;
+        self.made += 1;
+        let started = Instant::now();
+        let cue = Cue {
+            art: Some(self.art.clone()),
+            layers: Some(self.layers.clone()),
+            levels: music(),
+            tier: jodeldiplom::gui::streak::level(singing, true),
+            section: false,
+        };
+        let backdrop = self.visualiser.step(&cue, (w, h), (1.0 / FPS) as f32);
+        let picture = KaraokePicture {
+            result,
+            ..picture_at(self.sung, now, singing)
+        };
+        let song = Song::new(singing, self.sung.to_vec(), Some(LENGTH));
+        let area = (0.0, 0.0, w as f32, h as f32);
+        // As the window has it: the result screen while one shows, else
+        // the lane.
+        let frame = self
+            .stage
+            .scene(
+                (&song, true),
+                &picture,
+                area,
+                (now, (1.0 / FPS) as f32),
+                &Tint::STAGE,
+            )
+            .expect("a stage");
+        let stage_ms = started.elapsed().as_secs_f64() * 1000.0;
+        // The pixmap as the window paints it: only what changed.
+        let started = Instant::now();
+        let mut target = Target {
+            pixels: &mut self.pixels,
+            width: w as usize,
+            height: h as usize,
+        };
+        paint(
+            &mut target,
+            &mut self.faces,
+            &mut self.layer,
+            &self.under,
+            &without_lyrics(&picture),
+            (0, 0, w as usize, h as usize),
+            None,
+            self.made == 1,
+        );
+        let pixmap_ms = started.elapsed().as_secs_f64() * 1000.0;
+        (backdrop, frame, [stage_ms, pixmap_ms])
+    }
+}
+
 /// The frames timed (each its steps' GPU times) and what the processor
 /// took for each (the stage and the backdrop made, the pixmap painted):
 /// each step's median and mean, the GPU's total, and the processor's, in
@@ -189,7 +280,11 @@ fn print(title: &str, frames: &[Vec<(&'static str, f64)>], cpu: &[[f64; 2]]) {
     }
     let mut total: Vec<f64> = frames.iter().map(|f| f.iter().map(|s| s.1).sum()).collect();
     let (median, mean) = stats(&mut total);
-    println!("  {:<10} {median:7.3} {mean:7.3}", "GPU total");
+    let worst = total.last().copied().unwrap_or(0.0);
+    println!(
+        "  {:<10} {median:7.3} {mean:7.3}  (worst {worst:.3})",
+        "GPU total"
+    );
     for (k, name) in ["CPU stage", "CPU pixmap"].into_iter().enumerate() {
         let (median, mean) = stats(&mut cpu.iter().map(|c| c[k]).collect());
         println!("  {name:<10} {median:7.3} {mean:7.3}");
@@ -240,21 +335,28 @@ fn main() {
                 &lyrics,
                 &jodeldiplom::core::singing::melodic(&melody),
             );
-            let mut stage = Stage::default();
-            let mut visualiser = Visualiser::default();
-            let mut cpu_ms = Vec::new();
-            let (mut heard, mut f) = (0usize, 0usize);
-            // The pixmap under it all (the picture without its lyrics: the
-            // stage draws them), sent over once.
-            let mut pixels = vec![0u32; (w * h) as usize];
-            let (mut faces, mut layer) = (Faces::default(), Layer::default());
-            let under = Backdrop::through(w as usize, h as usize);
-            loop {
+            let mut rig = Rig {
+                stage: Stage::default(),
+                visualiser: Visualiser::default(),
+                // The pixmap under it all (the picture without its lyrics:
+                // the stage draws them), sent over once.
+                pixels: vec![0u32; (w * h) as usize],
+                faces: Faces::default(),
+                layer: Layer::default(),
+                under: Backdrop::through(w as usize, h as usize),
+                art: &art,
+                layers: &layers,
+                sung: &sung,
+                size: (w, h),
+                made: 0,
+            };
+            let (mut cpu_ms, mut frames) = (Vec::new(), Vec::new());
+            let mut heard = 0usize;
+            for f in 0.. {
                 let now = f as f64 / FPS;
                 if now > scene.at + 1e-9 {
                     break;
                 }
-                f += 1;
                 while (heard as f64) / 100.0 <= now {
                     let t = heard as f64 / 100.0;
                     let c = singing.word_at(t).map(|(_, c)| c as f32);
@@ -273,55 +375,53 @@ fn main() {
                         },
                     );
                 }
-                let started = Instant::now();
-                let cue = Cue {
-                    art: Some(art.clone()),
-                    layers: Some(layers.clone()),
-                    levels: music(),
-                    tier: jodeldiplom::gui::streak::level(&singing, true),
-                    section: false,
-                };
-                let backdrop = visualiser.step(&cue, (w, h), (1.0 / FPS) as f32);
-                let picture = picture_at(&sung, now, &singing);
-                let song = Song::new(&singing, sung.clone(), Some(LENGTH));
-                let area = (0.0, 0.0, w as f32, h as f32);
-                let frame = stage.frame(&song, &picture, area, now, (1.0 / FPS) as f32);
-                let stage_ms = started.elapsed().as_secs_f64() * 1000.0;
-                // The pixmap as the window paints it: only what changed.
-                let started = Instant::now();
-                let mut target = Target {
-                    pixels: &mut pixels,
-                    width: w as usize,
-                    height: h as usize,
-                };
-                paint(
-                    &mut target,
-                    &mut faces,
-                    &mut layer,
-                    &under,
-                    &without_lyrics(&picture),
-                    (0, 0, w as usize, h as usize),
-                    None,
-                    f == 1,
-                );
-                let pixmap_ms = started.elapsed().as_secs_f64() * 1000.0;
-                if f == 1 {
+                let (backdrop, frame, cpu) = rig.frame(&singing, now, None);
+                if rig.made == 1 {
                     gpu.set_backdrop(Some(&backdrop), w, h);
-                    gpu.show_pixels(&pixels, w, h).expect("a frame");
+                    gpu.show_pixels(&rig.pixels, w, h).expect("a frame");
                 }
-                if now > scene.at - TIMED {
+                if !scene.diploma && now > scene.at - TIMED {
                     gpu.time_frame(Some(&backdrop), Some(&frame), w, h)
                         .expect("timed");
-                    cpu_ms.push([stage_ms, pixmap_ms]);
+                    cpu_ms.push(cpu);
                 } else {
                     gpu.set_backdrop(Some(&backdrop), w, h);
                     gpu.set_stage(Some(&frame), w, h);
                 }
             }
-            let frames = gpu.costs().expect("the times");
+            if scene.diploma {
+                // The song over: its result, a first score (a new best),
+                // revealed frame by frame until it is still.
+                let (tally, phrases, notes) = singing.take();
+                let result = SongResult::new("Shine on".into(), &tally, phrases, notes, None);
+                let shown = Arc::new(Shown::new(result, 1, 0));
+                let still = shown.reveal.still();
+                for f in 0.. {
+                    let t = f as f64 / FPS;
+                    if t > still {
+                        break;
+                    }
+                    let result = ResultShown {
+                        shown: shown.clone(),
+                        t,
+                        next: String::new(),
+                        again: false,
+                    };
+                    let (backdrop, frame, cpu) = rig.frame(&singing, scene.at, Some(result));
+                    gpu.time_frame(Some(&backdrop), Some(&frame), w, h)
+                        .expect("timed");
+                    cpu_ms.push(cpu);
+                    // Read back as it goes: the reveal has more marks than
+                    // are held at once.
+                    if f % 100 == 99 {
+                        frames.extend(gpu.costs().expect("the times"));
+                    }
+                }
+            }
+            frames.extend(gpu.costs().expect("the times"));
             print(&format!("{} {w}x{h}", scene.name), &frames, &cpu_ms);
             if let Some(dir) = &png {
-                let shown = gpu.show_pixels(&pixels, w, h).expect("a frame");
+                let shown = gpu.show_pixels(&rig.pixels, w, h).expect("a frame");
                 let mut img = image::RgbImage::new(w, h);
                 for (i, p) in shown.iter().enumerate() {
                     img.put_pixel(
