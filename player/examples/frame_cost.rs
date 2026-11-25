@@ -178,6 +178,72 @@ fn picture_at(sung: &[&jodel_lyrics::Line], now: f64, singing: &Singing) -> Kara
     }
 }
 
+/// The light drawn whole, then each part of it alone: every timed frame
+/// is timed once for each, to tell what of the light costs.
+const PARTS: [&str; 3] = ["all of it", "its shapes alone", "its bursts alone"];
+
+/// What the timed frames' light held: the shapes, how many screens
+/// their quads cover in all, and the bursts.
+#[derive(Default)]
+struct Light {
+    frames: usize,
+    shapes: usize,
+    screens: f64,
+    bursts: usize,
+}
+
+impl Light {
+    /// The light's step in each of [`PARTS`] (`frames`: the timed frames,
+    /// a part after the other), and what it held on average.
+    fn print(&self, frames: &[Vec<(&'static str, f64)>], (w, h): (u32, u32)) {
+        let n = self.frames.max(1) as f64;
+        println!(
+            "  light held {:.1} shapes covering {:.2} screens of {w}x{h}, {:.1} bursts",
+            self.shapes as f64 / n,
+            self.screens / n,
+            self.bursts as f64 / n
+        );
+        for (k, part) in PARTS.iter().enumerate() {
+            let mut v: Vec<f64> = (frames.iter().skip(k).step_by(PARTS.len()))
+                .flat_map(|f| f.iter().filter(|s| s.0 == "light").map(|s| s.1))
+                .collect();
+            v.sort_by(f64::total_cmp);
+            let median = v.get(v.len() / 2).copied().unwrap_or(0.0);
+            println!("  light, {part:<17} {median:7.3}");
+        }
+    }
+}
+
+/// `frame` over `backdrop` timed once for each of [`PARTS`], its light
+/// counted into `light`.
+fn time_parts(
+    gpu: &mut Offscreen,
+    backdrop: &BackdropFrame,
+    frame: &StageFrame,
+    (w, h): (u32, u32),
+    light: &mut Light,
+) {
+    light.frames += 1;
+    light.shapes += frame.lights.len();
+    light.bursts += frame.light_sprays.len();
+    light.screens += (frame.lights.iter())
+        .map(|i| f64::from((i.quad[2] - i.quad[0]) * (i.quad[3] - i.quad[1])))
+        .sum::<f64>()
+        / f64::from(w * h);
+    let shapes = StageFrame {
+        light_sprays: Vec::new(),
+        ..frame.clone()
+    };
+    let bursts = StageFrame {
+        lights: Vec::new(),
+        ..frame.clone()
+    };
+    for f in [frame, &shapes, &bursts] {
+        gpu.time_frame(Some(backdrop), Some(f), w, h)
+            .expect("timed");
+    }
+}
+
 /// What makes a scene's frames in one size: the stage, the backdrop and
 /// the pixmap under them, as the window keeps them.
 struct Rig<'a> {
@@ -351,6 +417,7 @@ fn main() {
                 made: 0,
             };
             let (mut cpu_ms, mut frames) = (Vec::new(), Vec::new());
+            let mut light = Light::default();
             let mut heard = 0usize;
             for f in 0.. {
                 let now = f as f64 / FPS;
@@ -381,8 +448,7 @@ fn main() {
                     gpu.show_pixels(&rig.pixels, w, h).expect("a frame");
                 }
                 if !scene.diploma && now > scene.at - TIMED {
-                    gpu.time_frame(Some(&backdrop), Some(&frame), w, h)
-                        .expect("timed");
+                    time_parts(&mut gpu, &backdrop, &frame, (w, h), &mut light);
                     cpu_ms.push(cpu);
                 } else {
                     gpu.set_backdrop(Some(&backdrop), w, h);
@@ -408,18 +474,19 @@ fn main() {
                         again: false,
                     };
                     let (backdrop, frame, cpu) = rig.frame(&singing, scene.at, Some(result));
-                    gpu.time_frame(Some(&backdrop), Some(&frame), w, h)
-                        .expect("timed");
+                    time_parts(&mut gpu, &backdrop, &frame, (w, h), &mut light);
                     cpu_ms.push(cpu);
                     // Read back as it goes: the reveal has more marks than
                     // are held at once.
-                    if f % 100 == 99 {
+                    if f % 40 == 39 {
                         frames.extend(gpu.costs().expect("the times"));
                     }
                 }
             }
             frames.extend(gpu.costs().expect("the times"));
-            print(&format!("{} {w}x{h}", scene.name), &frames, &cpu_ms);
+            let all: Vec<_> = frames.iter().step_by(PARTS.len()).cloned().collect();
+            print(&format!("{} {w}x{h}", scene.name), &all, &cpu_ms);
+            light.print(&frames, (w, h));
             if let Some(dir) = &png {
                 let shown = gpu.show_pixels(&rig.pixels, w, h).expect("a frame");
                 let mut img = image::RgbImage::new(w, h);

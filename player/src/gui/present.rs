@@ -379,8 +379,12 @@ impl Painter {
     fn set_stage(&mut self, frame: Option<&StageFrame>, size: (u32, u32)) {
         let gpu = (&self.device, &self.queue);
         self.stage.set(gpu, frame.map(StageFrame::feed), size);
+        self.mark("uploads");
+        let gpu = (&self.device, &self.queue);
         let (sprays, time) = frame.map_or((&[][..], 0.0), |f| (&f.sprays[..], f.clock));
         self.particles.set(gpu, sprays, time, size);
+        self.mark("sprays");
+        let gpu = (&self.device, &self.queue);
         self.light.set(gpu, frame, (size, self.density));
         self.mark("light");
         self.light.blur((&self.device, &self.queue));

@@ -1,12 +1,11 @@
 //! The GPU's time between the steps of a frame, to measure what each pass
-//! costs ([`super::present::Offscreen::timed`]): a timestamp written after
-//! each step at the start of a pass of its own (clearing one pixel), in an
-//! encoder of its own submitted between the steps' submissions, so each
-//! one falls once the GPU has done everything before it. A pass's
+//! costs ([`super::present::Offscreen::timed`]): once the GPU has done the
+//! step (waited for: Apple's GPUs start a pass that needs nothing before
+//! it early, alongside what is still being drawn), a timestamp written at
+//! the start of a pass of its own (clearing one pixel). A pass's
 //! timestamps are all a device needs (Apple's GPUs write none between
-//! passes). Frames are marked one after the other without waiting (so the GPU
-//! stays busy, as while the window draws) and read back together, each
-//! step as the time since the mark before it.
+//! passes). Each step is the time since the mark before it, read back
+//! together: the GPU's own time and what submitting it took.
 
 /// The most marks read back at once.
 const MOST: u32 = 2048;
@@ -69,8 +68,8 @@ impl Stamps {
         }
     }
 
-    /// Marks the end of step `name` ([`START`]: a frame's start) once
-    /// everything submitted before is done.
+    /// Marks the end of step `name` ([`START`]: a frame's start), waiting
+    /// for everything submitted before to be done.
     pub(super) fn mark(
         &mut self,
         (device, queue): (&wgpu::Device, &wgpu::Queue),
@@ -78,6 +77,7 @@ impl Stamps {
     ) {
         let at = self.marked.len() as u32;
         assert!(at < MOST, "more than {MOST} marks before they are read");
+        let _ = device.poll(wgpu::PollType::wait_indefinitely());
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("jodeldiplom stamps"),
         });
