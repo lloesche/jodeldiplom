@@ -415,8 +415,10 @@ fn on_a_device_a_key_change_is_heard_within_a_tenth_of_a_second() {
     }
     drop(player);
     println!("keys heard after {latencies:.3?} s");
+    // Measured between positions, told every tenth of a second: a key in
+    // force by the next one told after it was asked for came within it.
     for latency in latencies {
-        assert!(latency < 0.1, "heard {latency} s after it was asked for");
+        assert!(latency <= 0.1, "heard {latency} s after it was asked for");
     }
     drop(captures);
 }

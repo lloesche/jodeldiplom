@@ -115,12 +115,13 @@ fn the_result_is_heard_after_the_song() {
     // To its end, and the reveal after it drawn frame by frame, where the
     // mixer is noted as its first beat and its last are cued.
     let mixing = |a: &App| a.desk().unwrap().master.timebase.frame as usize;
-    let (mut paper, mut signed, mut until) = (None, None, None);
+    // The signature's beat is reached on the frame whose reveal time
+    // passes its end from the frame before's, as the sounds read it.
+    let (mut paper, mut signed, mut until, mut before) = (None, None, None, None);
     let deadline = Instant::now() + wait;
     while until.is_none_or(|u| Instant::now() < u) {
         assert!(Instant::now() < deadline, "the song ends");
         app.pump_wait(Duration::from_millis(16));
-        let before = karaoke::result_now(&app.state).map(|(_, t)| t);
         app.heard_for_frame();
         let Some((shown, after)) = karaoke::result_now(&app.state) else {
             continue;
@@ -136,6 +137,7 @@ fn the_result_is_heard_after_the_song() {
         if signed.is_none() && after >= end && before.is_some_and(|t| t < end) {
             signed = Some(mixing(&app));
         }
+        before = Some(after);
     }
     let (paper, signed) = (paper.unwrap(), signed.expect("signed"));
     let desk = app.desk().unwrap();
