@@ -10,7 +10,7 @@
 use super::alsa_output::{map_error, open_pcm, DEFAULT, SERVER_RATE};
 use crate::device::Device;
 use crate::error::Error;
-use crate::input::{Input, InputInfo, MicShared, Mono, Producer, Wire, CAPTURE_PERIOD};
+use crate::input::{Input, InputInfo, MicClock, Mono, Opened, Producer, Wire, CAPTURE_PERIOD};
 use alsa::pcm::{Access, Format, Frames, HwParams, PCM};
 use alsa::{Direction, ValueOr};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -141,7 +141,8 @@ pub(crate) fn open_input(id: &str, mono: Mono) -> Result<Input, Error> {
                 .and_then(|pcm| configure(&pcm).map(|c| (pcm, c)));
             match opened {
                 Ok((pcm, config)) => {
-                    let shared = MicShared::new(config.rate, config.period as u32, false);
+                    let (producer, opened) =
+                        Opened::new(config.rate, config.period as u32, mono, MicClock::system());
                     let info = InputInfo {
                         id: id_owned.clone(),
                         name: id_owned.clone(),
@@ -151,8 +152,8 @@ pub(crate) fn open_input(id: &str, mono: Mono) -> Result<Input, Error> {
                         period_frames: config.period as u32,
                         mono,
                     };
-                    let _ = ready_tx.send(Ok((info, shared.clone())));
-                    run(pcm, config, Producer::new(shared, mono), stop_thread);
+                    let _ = ready_tx.send(Ok((info, opened)));
+                    run(pcm, config, producer, stop_thread);
                 }
                 Err(e) => {
                     let _ = ready_tx.send(Err(e));
@@ -166,12 +167,12 @@ pub(crate) fn open_input(id: &str, mono: Mono) -> Result<Input, Error> {
     let opened = ready_rx
         .recv_timeout(Duration::from_secs(10))
         .unwrap_or(Err(Error::Timeout("opening the input")));
-    let (mut info, shared) = opened?;
+    let (mut info, opened) = opened?;
     if let Some(d) = input_devices()
         .ok()
         .and_then(|all| all.into_iter().find(|d| d.id == info.id))
     {
         info.name = d.name;
     }
-    Ok(Input::new(info, shared, Box::new(running)))
+    Ok(Input::new(info, opened, Box::new(running)))
 }

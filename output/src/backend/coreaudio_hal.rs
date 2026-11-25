@@ -3,13 +3,15 @@
 //! and setting them, hog mode, and listening to them.
 
 use crate::error::Error;
+use block2::RcBlock;
+use dispatch2::{DispatchQueue, DispatchQueueAttr, DispatchRetained};
 use objc2_core_audio::{
     kAudioDevicePropertyHogMode, kAudioDevicePropertyStreams, kAudioHardwarePropertyDevices,
     kAudioObjectPropertyElementMain, kAudioObjectPropertyScopeGlobal,
-    kAudioObjectPropertyScopeOutput, kAudioObjectSystemObject, AudioObjectAddPropertyListener,
+    kAudioObjectPropertyScopeOutput, kAudioObjectSystemObject, AudioObjectAddPropertyListenerBlock,
     AudioObjectGetPropertyData, AudioObjectGetPropertyDataSize, AudioObjectID,
-    AudioObjectPropertyAddress, AudioObjectPropertyListenerProc, AudioObjectRemovePropertyListener,
-    AudioObjectSetPropertyData,
+    AudioObjectPropertyAddress, AudioObjectPropertyListenerProc,
+    AudioObjectRemovePropertyListenerBlock, AudioObjectSetPropertyData,
 };
 use objc2_core_foundation::{CFRetained, CFString};
 use std::ffi::c_void;
@@ -155,17 +157,25 @@ pub(super) fn hogged(device: AudioObjectID) -> bool {
     .is_ok_and(|pid| pid != -1)
 }
 
+/// What the HAL calls a listener block with: how many addresses changed,
+/// and they.
+type Notice = dyn Fn(u32, NonNull<AudioObjectPropertyAddress>);
+
 /// A property listener: `proc_` called with `client` whenever one of the
-/// properties it was added for changes, until it is dropped. The caller
-/// keeps `client` alive until then.
+/// properties it was added for changes, until it is dropped. The calls
+/// come one at a time on a serial queue of the listener's own, and dropping
+/// it waits for one under way: once it is dropped nothing calls with
+/// `client` any more, and the caller may free it (keeping it alive until
+/// then). It must not be dropped from inside `proc_` (that would wait on
+/// itself).
 pub(super) struct Listener {
-    added: Vec<(AudioObjectID, AudioObjectPropertyAddress)>,
-    proc_: AudioObjectPropertyListenerProc,
-    client: *mut c_void,
+    queue: DispatchRetained<DispatchQueue>,
+    added: Vec<(AudioObjectID, AudioObjectPropertyAddress, RcBlock<Notice>)>,
 }
 
-// SAFETY: the HAL's listener calls are thread-safe; `client` is only handed
-// back to the HAL.
+// SAFETY: the blocks are called only by the HAL, on `queue`, and released
+// on drop after the HAL let them go and the queue is drained; the queue is
+// thread-safe. `client` is only handed to `proc_`.
 unsafe impl Send for Listener {}
 
 impl Listener {
@@ -175,37 +185,52 @@ impl Listener {
         proc_: AudioObjectPropertyListenerProc,
         client: *mut c_void,
     ) -> Listener {
+        let queue = DispatchQueue::new("jodel.coreaudio.listener", DispatchQueueAttr::SERIAL);
         let added = on
             .iter()
-            .copied()
-            .filter(|(object, address)| {
-                // SAFETY: registers `proc_` with `client`, removed on drop.
-                unsafe {
-                    AudioObjectAddPropertyListener(*object, NonNull::from(address), proc_, client)
-                        == 0
-                }
+            .filter_map(|&(object, address)| {
+                let block: RcBlock<Notice> = RcBlock::new(
+                    move |count: u32, addresses: NonNull<AudioObjectPropertyAddress>| {
+                        if let Some(proc_) = proc_ {
+                            // SAFETY: the caller keeps `client` alive while
+                            // the listener lives, and its drop waits for
+                            // this call.
+                            unsafe { proc_(object, count, addresses, client) };
+                        }
+                    },
+                );
+                // SAFETY: registers the block on our queue; removed on drop.
+                let status = unsafe {
+                    AudioObjectAddPropertyListenerBlock(
+                        object,
+                        NonNull::from(&address),
+                        Some(&queue),
+                        RcBlock::as_ptr(&block),
+                    )
+                };
+                (status == 0).then_some((object, address, block))
             })
             .collect();
-        Listener {
-            added,
-            proc_,
-            client,
-        }
+        Listener { queue, added }
     }
 }
 
 impl Drop for Listener {
     fn drop(&mut self) {
-        for (object, address) in &self.added {
-            // SAFETY: removes what `add` registered.
+        for (object, address, block) in &self.added {
+            // SAFETY: removes what `add` registered, with the same queue and
+            // block.
             unsafe {
-                AudioObjectRemovePropertyListener(
+                AudioObjectRemovePropertyListenerBlock(
                     *object,
                     NonNull::from(address),
-                    self.proc_,
-                    self.client,
+                    Some(&self.queue),
+                    RcBlock::as_ptr(block),
                 );
             }
         }
+        // A call the HAL queued before the removal runs before this one:
+        // once it returns, none is left.
+        self.queue.exec_sync(|| {});
     }
 }

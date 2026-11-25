@@ -4,6 +4,7 @@
 
 use super::capture::MicShared;
 use super::MAX_ADJUST;
+use crate::spsc;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
@@ -75,15 +76,27 @@ impl Steer {
     /// whole buffer's voice (else the buffer gets none). Whether it reads
     /// the ring now (primed) is told to the capture, which counts what it
     /// cannot queue as lost only then.
-    pub(super) fn begin(&mut self, shared: &MicShared, out_rate: u32, frames: usize) -> bool {
-        let live = self.steer_buffer(shared, out_rate, frames);
-        shared.reading.store(self.primed, Ordering::Release);
+    pub(super) fn begin(
+        &mut self,
+        shared: &MicShared,
+        ring: &mut spsc::Consumer<f32>,
+        out_rate: u32,
+        frames: usize,
+    ) -> bool {
+        let live = self.steer_buffer(shared, ring, out_rate, frames);
+        shared.bridge.reading.store(self.primed, Ordering::Release);
         live
     }
 
     /// [`Steer::begin`] but for telling whether it reads.
-    fn steer_buffer(&mut self, shared: &MicShared, out_rate: u32, frames: usize) -> bool {
-        let in_rate = shared.rate.load(Ordering::Acquire);
+    fn steer_buffer(
+        &mut self,
+        shared: &MicShared,
+        ring: &mut spsc::Consumer<f32>,
+        out_rate: u32,
+        frames: usize,
+    ) -> bool {
+        let in_rate = shared.capture.rate.load(Ordering::Acquire);
         if in_rate == 0 || out_rate == 0 {
             return false;
         }
@@ -96,11 +109,15 @@ impl Steer {
         if self.nominal * (1.0 + 2.0 * MAX_ADJUST) >= MAX_RATIO as f64 {
             return false;
         }
-        let packet = shared.packet.load(Ordering::Relaxed);
-        let period = shared.period.load(Ordering::Relaxed).max(packet).max(1);
+        let packet = shared.capture.packet.load(Ordering::Relaxed);
+        let period = shared
+            .capture
+            .period
+            .load(Ordering::Relaxed)
+            .max(packet)
+            .max(1);
         let target = 2 * period as usize;
-        shared.target.store(target as u32, Ordering::Relaxed);
-        let ring = &shared.ring;
+        shared.bridge.target.store(target as u32, Ordering::Relaxed);
         let queued = ring.len();
         let arriving = self.arriving(shared, packet);
         // What to keep queued for the fill to be at its target after this
@@ -109,7 +126,7 @@ impl Steer {
         let keep = (keep.round().max(0.0) as usize).max(self.need(frames));
         if !self.primed {
             let warm = |rate: u32| rate as u64 * WARM_UP.as_millis() as u64 / 1000;
-            let first_at = shared.first_at.load(Ordering::Relaxed);
+            let first_at = shared.capture.first_at.load(Ordering::Relaxed);
             let captured = if first_at == 0 {
                 u64::MAX
             } else {
@@ -129,7 +146,7 @@ impl Steer {
         if queued < need {
             // The capture stalled: no voice until the target is queued
             // again. The loop holds its estimate of the clocks meanwhile.
-            shared.underruns.fetch_add(1, Ordering::Relaxed);
+            shared.bridge.underruns.fetch_add(1, Ordering::Relaxed);
             self.primed = false;
             self.history = [0.0; 4];
             self.position = 0;
@@ -139,7 +156,7 @@ impl Steer {
             // Far too much queued (the device thread stalled): skip to the
             // target.
             ring.skip(queued - keep);
-            shared.resyncs.fetch_add(1, Ordering::Relaxed);
+            shared.bridge.resyncs.fetch_add(1, Ordering::Relaxed);
             self.smoothed = None;
         } else {
             let fill = queued as f64 - need as f64 + arriving;
@@ -152,7 +169,7 @@ impl Steer {
             if over > f64::from(period) && excess >= 1.0 {
                 ring.skip(excess as usize);
                 self.smoothed = Some(fill - excess);
-                shared.resyncs.fetch_add(1, Ordering::Relaxed);
+                shared.bridge.resyncs.fetch_add(1, Ordering::Relaxed);
             }
         }
         // A faster ratio may need a sample more than is queued.
@@ -161,9 +178,14 @@ impl Steer {
 
     /// Fills `voice` with the capture resampled; the buffer's
     /// [`Steer::begin`] made sure the ring holds it.
-    pub(super) fn render(&mut self, shared: &MicShared, voice: &mut [f32], taken: &mut [f32]) {
+    pub(super) fn render(
+        &mut self,
+        ring: &mut spsc::Consumer<f32>,
+        voice: &mut [f32],
+        taken: &mut [f32],
+    ) {
         let need = self.need(voice.len()).min(taken.len());
-        let got = shared.ring.pop(&mut taken[..need]);
+        let got = ring.pop_slice(&mut taken[..need]);
         let mut next = taken[..got].iter();
         for out in voice.iter_mut() {
             let t = (self.position & 0xFFFF_FFFF) as f32 / 4_294_967_296.0;
@@ -181,7 +203,7 @@ impl Steer {
     /// arrived continuously: what has come in since the last packet, minus
     /// half a packet (so the fill means what is queued on average).
     fn arriving(&self, shared: &MicShared, packet: u32) -> f64 {
-        let pushed_at = shared.pushed_at.load(Ordering::Acquire);
+        let pushed_at = shared.capture.pushed_at.load(Ordering::Acquire);
         let since = if pushed_at == 0 {
             0.0
         } else {
@@ -212,8 +234,12 @@ impl Steer {
         }
         self.adjust = (KP * error + KI * self.integral).clamp(-MAX_ADJUST, MAX_ADJUST);
         self.set_step();
-        shared.fill.store(smoothed.to_bits(), Ordering::Relaxed);
         shared
+            .bridge
+            .fill
+            .store(smoothed.to_bits(), Ordering::Relaxed);
+        shared
+            .bridge
             .adjust
             .store(self.adjust.to_bits(), Ordering::Relaxed);
     }
@@ -230,7 +256,19 @@ fn catmull_rom(h: &[f32; 4], t: f32) -> f32 {
 
 #[cfg(test)]
 mod tests {
+    use super::super::capture::{MicClock, Opened, Wire};
+    use super::super::Mono;
     use super::*;
+    use crate::input::Producer;
+
+    /// Queues `samples` captured at time 0, then an empty packet at 1 s:
+    /// the capture is past its warm-up, and nothing is arriving.
+    fn queued_a_second_ago(capture: &mut Producer, samples: &[f32]) {
+        let bytes: Vec<u8> = samples.iter().flat_map(|v| v.to_le_bytes()).collect();
+        capture.push(&bytes, Wire::F32, 1, samples.len());
+        capture.shared().set_time(Duration::from_secs(1));
+        capture.push(&[], Wire::F32, 1, 0);
+    }
 
     #[test]
     fn catmull_rom_is_exact_on_its_points_and_on_quadratics() {
@@ -247,19 +285,21 @@ mod tests {
 
     #[test]
     fn same_rates_pass_the_voice_through_unchanged() {
-        let shared = MicShared::new(48_000, 240, true);
+        let (mut capture, opened) = Opened::new(48_000, 240, Mono::Auto, MicClock::caller());
+        let shared = &*opened.shared;
+        let mut ring = shared.capture.ring.consumer().unwrap();
         let mut steer = Steer::new();
         let ramp: Vec<f32> = (0..48_000).map(|i| (i as f32 * 0.01).sin()).collect();
-        shared.ring.push(&ramp);
-        shared.packet.store(240, Ordering::Relaxed);
+        queued_a_second_ago(&mut capture, &ramp);
+        shared.capture.packet.store(240, Ordering::Relaxed);
         let mut taken = vec![0.0; 4096 * MAX_RATIO];
         let mut voice = vec![0.0; 480];
         // The output's warm-up first, consuming nothing.
         for _ in 0..10 {
-            assert!(!steer.begin(&shared, 48_000, 480));
+            assert!(!steer.begin(shared, &mut ring, 48_000, 480));
         }
-        assert!(steer.begin(&shared, 48_000, 480));
-        steer.render(&shared, &mut voice, &mut taken);
+        assert!(steer.begin(shared, &mut ring, 48_000, 480));
+        steer.render(&mut ring, &mut voice, &mut taken);
         // The first buffer runs at the nominal ratio, three samples late
         // (the interpolator's history), from the target (and half a packet,
         // with none arriving) before the end.

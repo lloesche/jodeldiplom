@@ -72,7 +72,7 @@ mod clean;
 mod record;
 mod tap;
 
-pub(crate) use capture::{MicShared, Producer, Wire};
+pub(crate) use capture::{MicClock, MicShared, Opened, Producer, Wire};
 pub use clean::VoiceBlock;
 pub use record::EchoRecording;
 pub use tap::MicTap;
@@ -83,8 +83,9 @@ use crate::error::Error;
 use clean::Cleaner;
 use record::write_recording;
 use std::path::Path;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use std::thread::JoinHandle;
 use std::time::Duration;
 
 /// The capture backend this build uses: `"WASAPI (shared)"`, `"Core Audio
@@ -237,7 +238,13 @@ struct InputInner {
     /// The backend's stream; dropping it stops capture.
     stream: Mutex<Option<Box<dyn Send>>>,
     /// The cleaner's thread (none for a [`MicFeed`], whose caller runs it).
-    cleaner: Mutex<Option<std::thread::JoinHandle<()>>>,
+    cleaner: Option<CleanerThread>,
+}
+
+/// The thread a device's input cleans on, and what tells it to stop.
+struct CleanerThread {
+    stop: Arc<AtomicBool>,
+    thread: JoinHandle<()>,
 }
 
 impl Drop for InputInner {
@@ -248,14 +255,9 @@ impl Drop for InputInner {
             .unwrap_or_else(|e| e.into_inner())
             .take();
         drop(stream);
-        self.shared.stop.store(true, Ordering::Release);
-        let cleaner = self
-            .cleaner
-            .get_mut()
-            .unwrap_or_else(|e| e.into_inner())
-            .take();
-        if let Some(thread) = cleaner {
-            let _ = thread.join();
+        if let Some(cleaner) = self.cleaner.take() {
+            cleaner.stop.store(true, Ordering::Release);
+            let _ = cleaner.thread.join();
         }
     }
 }
@@ -268,29 +270,46 @@ pub struct Input {
 }
 
 impl Input {
-    pub(crate) fn new(info: InputInfo, shared: Arc<MicShared>, stream: Box<dyn Send>) -> Input {
-        let cleaner = if shared.simulated {
-            None
-        } else {
+    /// A device's input, as its backend opened it: its cleaner runs on a
+    /// thread of its own.
+    pub(crate) fn new(info: InputInfo, opened: Opened, stream: Box<dyn Send>) -> Input {
+        let Opened {
+            shared,
+            mut cleaner,
+        } = opened;
+        let stop = Arc::new(AtomicBool::new(false));
+        let cleaner = {
             let shared = Arc::clone(&shared);
+            let stopped = Arc::clone(&stop);
             std::thread::Builder::new()
                 .name("jodel-mic-clean".into())
                 .spawn(move || {
-                    let mut cleaner = Cleaner::new();
-                    while !shared.stop.load(Ordering::Acquire) {
+                    while !stopped.load(Ordering::Acquire) {
                         if !cleaner.run(&shared) {
                             std::thread::sleep(Duration::from_millis(5));
                         }
                     }
                 })
                 .ok()
+                .map(|thread| CleanerThread { stop, thread })
         };
+        Input::wrap_running(info, shared, stream, cleaner)
+    }
+
+    /// The handle over a capture that runs: its stream, and its cleaner's
+    /// thread if it has one.
+    fn wrap_running(
+        info: InputInfo,
+        shared: Arc<MicShared>,
+        stream: Box<dyn Send>,
+        cleaner: Option<CleanerThread>,
+    ) -> Input {
         Input {
             inner: Arc::new(InputInner {
                 shared,
                 info,
                 stream: Mutex::new(Some(stream)),
-                cleaner: Mutex::new(cleaner),
+                cleaner,
             }),
         }
     }
@@ -299,11 +318,7 @@ impl Input {
     /// at `rate` with packets of `period_frames`, on the caller's clock
     /// ([`MicFeed::set_time`]). For tests and simulations.
     pub fn feed(rate: u32, period_frames: u32) -> (Input, MicFeed) {
-        Self::fed(
-            MicShared::new(rate, period_frames, true),
-            rate,
-            period_frames,
-        )
+        Self::fed(rate, period_frames, MicClock::caller())
     }
 
     /// An input the caller feeds as [`Input::feed`] does, but on the
@@ -313,11 +328,10 @@ impl Input {
     /// as it does for a device, however late that thread wakes; on a
     /// simulated clock, set only when the thread wakes, it never sees any.
     pub fn feed_in_real_time(rate: u32, period_frames: u32) -> (Input, MicFeed) {
-        let shared = MicShared::fed_in_real_time(rate, period_frames);
-        Self::fed(shared, rate, period_frames)
+        Self::fed(rate, period_frames, MicClock::system())
     }
 
-    fn fed(shared: Arc<MicShared>, rate: u32, period_frames: u32) -> (Input, MicFeed) {
+    fn fed(rate: u32, period_frames: u32, clock: MicClock) -> (Input, MicFeed) {
         let info = InputInfo {
             id: "feed".into(),
             name: "feed".into(),
@@ -327,11 +341,10 @@ impl Input {
             period_frames,
             mono: Mono::Auto,
         };
-        let feed = MicFeed {
-            producer: Producer::new(shared.clone(), Mono::Auto),
-            cleaner: Cleaner::new(),
-        };
-        (Input::new(info, shared, Box::new(())), feed)
+        let (producer, Opened { shared, cleaner }) =
+            Opened::new(rate, period_frames, Mono::Auto, clock);
+        let feed = MicFeed { producer, cleaner };
+        (Input::wrap_running(info, shared, Box::new(()), None), feed)
     }
 
     fn shared(&self) -> &MicShared {
@@ -345,13 +358,13 @@ impl Input {
 
     /// The capture rate now.
     pub fn rate(&self) -> u32 {
-        self.shared().rate.load(Ordering::Acquire)
+        self.shared().capture.rate.load(Ordering::Acquire)
     }
 
     /// The voice's recent peak as captured: 0.0 to 1.0 (full scale),
     /// falling by about 30 dB a second.
     pub fn peak(&self) -> f32 {
-        f32::from_bits(self.shared().peak.load(Ordering::Relaxed))
+        f32::from_bits(self.shared().capture.peak.load(Ordering::Relaxed))
     }
 
     /// Turns the echo canceller on or off ([`crate::aec`]): on (as it
@@ -374,32 +387,33 @@ impl Input {
     /// [`Input::peak`] is then the voice).
     pub fn voice_peak(&self) -> Option<f32> {
         let s = self.shared();
-        let at = s.voice_at.load(Ordering::Relaxed);
+        let at = s.cleaned.voice_at.load(Ordering::Relaxed);
         let fresh = at != 0 && s.now_ns().saturating_sub(at - 1) < 500_000_000;
-        fresh.then(|| f32::from_bits(s.voice_peak.load(Ordering::Relaxed)))
+        fresh.then(|| f32::from_bits(s.cleaned.voice_peak.load(Ordering::Relaxed)))
     }
 
     /// Takes the voice cleaned since the last call into `out` (appended),
     /// oldest first. The cleaner keeps the last few seconds; what nobody
-    /// takes in time is dropped ([`MicStatus::voice_dropped`]).
+    /// takes in time is dropped ([`MicStatus::voice_dropped`]). One clone
+    /// takes at a time: while another one takes, this takes nothing (and
+    /// leaves it for the next call).
     pub fn take_voice(&self, out: &mut Vec<VoiceBlock>) {
-        let ring = &self.shared().voice;
-        let mut packet = [0.0f32; VoiceBlock::LEN];
-        while ring.len() >= VoiceBlock::LEN {
-            ring.pop(&mut packet);
-            out.push(VoiceBlock::read(&packet));
+        if let Some(mut voice) = self.shared().cleaned.voice.consumer() {
+            while let Some(v) = voice.pop() {
+                out.push(v.block());
+            }
         }
     }
 
     /// How the echo canceller is doing: the echo it removes in dB, and
     /// whether it has learnt the echo's way (see [`crate::aec::EchoStatus`]).
     pub fn echo_status(&self) -> crate::aec::EchoStatus {
-        let s = self.shared();
+        let c = &self.shared().cleaned;
         crate::aec::EchoStatus {
-            removed_db: f32::from_bits(s.echo_removed.load(Ordering::Relaxed)),
-            filter_db: f32::from_bits(s.echo_filter.load(Ordering::Relaxed)),
-            learnt: s.echo_learnt.load(Ordering::Relaxed),
-            delay: Some(f32::from_bits(s.echo_delay.load(Ordering::Relaxed))).filter(|d| *d >= 0.0),
+            removed_db: f32::from_bits(c.echo_removed.load(Ordering::Relaxed)),
+            filter_db: f32::from_bits(c.echo_filter.load(Ordering::Relaxed)),
+            learnt: c.echo_learnt.load(Ordering::Relaxed),
+            delay: Some(f32::from_bits(c.echo_delay.load(Ordering::Relaxed))).filter(|d| *d >= 0.0),
         }
     }
 
@@ -415,21 +429,16 @@ impl Input {
     /// output tapped). One recording at a time.
     pub fn record_echo(&self, path: &Path, seconds: f64) -> Result<EchoRecording, String> {
         let shared = Arc::clone(&self.inner.shared);
-        if shared.recording.swap(true, Ordering::AcqRel) {
-            return Err("a recording is under way".into());
-        }
+        let record = shared
+            .cleaned
+            .record
+            .consumer()
+            .ok_or("a recording is under way")?;
         let path = path.to_owned();
         let thread = std::thread::Builder::new()
             .name("jodel-echo-record".into())
-            .spawn(move || {
-                let result = write_recording(&shared, &path, seconds);
-                shared.recording.store(false, Ordering::Release);
-                result.map(|()| path)
-            })
-            .map_err(|e| {
-                self.shared().recording.store(false, Ordering::Release);
-                e.to_string()
-            })?;
+            .spawn(move || write_recording(&shared, record, &path, seconds).map(|()| path))
+            .map_err(|e| e.to_string())?;
         Ok(EchoRecording {
             thread: Some(thread),
         })
@@ -441,39 +450,35 @@ impl Input {
     /// to use the microphone (the HAL then delivers silence, no error).
     pub fn only_silence(&self, after: Duration) -> bool {
         let s = self.shared();
-        let first = s.first_at.load(Ordering::Relaxed);
+        let first = s.capture.first_at.load(Ordering::Relaxed);
         first != 0
-            && !s.signal.load(Ordering::Relaxed)
+            && !s.capture.signal.load(Ordering::Relaxed)
             && s.now_ns().saturating_sub(first - 1) >= after.as_nanos() as u64
     }
 
     /// How the path is doing.
     pub fn status(&self) -> MicStatus {
         let s = self.shared();
+        let (c, b) = (&s.capture, &s.bridge);
         MicStatus {
-            rate: s.rate.load(Ordering::Acquire),
-            period_frames: s.period.load(Ordering::Relaxed),
-            packet_frames: s.packet.load(Ordering::Relaxed),
-            fill: f64::from_bits(s.fill.load(Ordering::Relaxed)),
-            target: s.target.load(Ordering::Relaxed),
-            adjust: f64::from_bits(s.adjust.load(Ordering::Relaxed)),
-            active: s.claimed.load(Ordering::Acquire),
-            underruns: s.underruns.load(Ordering::Relaxed),
-            overruns: s.overruns.load(Ordering::Relaxed),
-            resyncs: s.resyncs.load(Ordering::Relaxed),
-            blocks_dropped: s.blocks_dropped.load(Ordering::Relaxed),
-            voice_dropped: s.voice_dropped.load(Ordering::Relaxed),
+            rate: c.rate.load(Ordering::Acquire),
+            period_frames: c.period.load(Ordering::Relaxed),
+            packet_frames: c.packet.load(Ordering::Relaxed),
+            fill: f64::from_bits(b.fill.load(Ordering::Relaxed)),
+            target: b.target.load(Ordering::Relaxed),
+            adjust: f64::from_bits(b.adjust.load(Ordering::Relaxed)),
+            active: c.ring.has_consumer(),
+            underruns: b.underruns.load(Ordering::Relaxed),
+            overruns: c.overruns.load(Ordering::Relaxed),
+            resyncs: b.resyncs.load(Ordering::Relaxed),
+            blocks_dropped: b.blocks_dropped.load(Ordering::Relaxed),
+            voice_dropped: s.cleaned.voice_dropped.load(Ordering::Relaxed),
         }
     }
 
     /// The error that stopped capture, if one did.
     pub fn failure(&self) -> Option<Error> {
-        let s = self.shared();
-        if s.failed.load(Ordering::Acquire) {
-            s.failure.lock().unwrap_or_else(|e| e.into_inner()).clone()
-        } else {
-            None
-        }
+        self.shared().failure()
     }
 
     /// A tap that lines this input up with what an output plays, for the
@@ -501,7 +506,7 @@ impl MicFeed {
     /// Queues mono samples (full scale ±1) as one capture packet, at the
     /// time last set. Returns how many fitted (the ring holds a second).
     pub fn push(&mut self, samples: &[f32]) -> usize {
-        let room = self.producer.shared().ring.free();
+        let room = self.producer.free();
         let bytes: &[u8] = bytemuck_f32(samples);
         self.producer.push(bytes, Wire::F32, 1, samples.len());
         samples.len().min(room)
@@ -511,10 +516,7 @@ impl MicFeed {
     /// (nothing reads it on [`Input::feed_in_real_time`]'s, whose clock is
     /// the system's).
     pub fn set_time(&self, t: Duration) {
-        self.producer
-            .shared()
-            .sim_now
-            .store(t.as_nanos() as u64, Ordering::Release);
+        self.producer.shared().set_time(t);
     }
 
     /// Runs the cleaner over every block the tap has queued (a device's
@@ -537,5 +539,172 @@ fn bytemuck_f32(samples: &[f32]) -> &[u8] {
     #[cfg(not(target_endian = "little"))]
     {
         compile_error!("jodel-output assumes a little-endian host")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::tap::{Packet, Stamp};
+    use super::*;
+    use crate::aec::BLOCK;
+    use crate::format::{SampleFormat, StreamFormat};
+    use crate::tap::Tap;
+
+    const PERIOD: usize = 240;
+
+    /// A feed and the device buffers a tap sees, 5 ms each, side by side.
+    struct Bench {
+        input: Input,
+        feed: MicFeed,
+        /// Buffers so far.
+        step: u64,
+    }
+
+    impl Bench {
+        fn new() -> Bench {
+            let (input, feed) = Input::feed(48_000, PERIOD as u32);
+            input.set_echo_cancel(false);
+            Bench {
+                input,
+                feed,
+                step: 0,
+            }
+        }
+
+        /// One capture packet, then one buffer of silence through `tap`.
+        fn run(&mut self, tap: &mut MicTap) {
+            self.feed.set_time(Duration::from_millis(5 * self.step));
+            self.feed.push(&[0.25; PERIOD]);
+            self.see(tap);
+            self.feed.clean();
+        }
+
+        /// One buffer through `tap`, nothing captured.
+        fn see(&mut self, tap: &mut MicTap) {
+            let format = StreamFormat::new(48_000, 2, SampleFormat::S24In32);
+            tap.begin(PERIOD, self.step * PERIOD as u64, PERIOD, format);
+            tap.see(&[0; 2 * PERIOD], format);
+            self.step += 1;
+        }
+
+        fn voice(&self) -> Vec<VoiceBlock> {
+            let mut voice = Vec::new();
+            self.input.take_voice(&mut voice);
+            voice
+        }
+    }
+
+    /// A second tap of an input queues nothing while the first lives, and
+    /// takes nothing of the capture ring; once the first is dropped it
+    /// takes over, its first block following none. A tap that finds the
+    /// cleaner's queue taken (half its ends free) gives the ring back
+    /// untouched.
+    #[test]
+    fn a_second_tap_takes_over_when_the_first_is_dropped() {
+        let mut bench = Bench::new();
+        let mut first = bench.input.tap();
+        for _ in 0..60 {
+            bench.run(&mut first);
+        }
+        assert!(bench.input.status().active);
+        let given = bench.voice();
+        assert!(!given.is_empty() && !given[0].continues);
+        assert!(given[1..].iter().all(|v| v.continues));
+
+        let mut second = bench.input.tap();
+        let room = bench.feed.producer.free();
+        for _ in 0..30 {
+            bench.see(&mut second);
+        }
+        bench.feed.clean();
+        assert_eq!(bench.feed.producer.free(), room, "the ring is the first's");
+        assert!(bench.voice().is_empty(), "the second queued nothing");
+
+        drop(first);
+        let blocks = bench.input.shared().bridge.blocks.producer().unwrap();
+        bench.run(&mut second);
+        assert!(!bench.input.status().active, "the ring was given back");
+        assert_eq!(bench.feed.producer.free(), room - PERIOD);
+        drop(blocks);
+
+        for _ in 0..60 {
+            bench.run(&mut second);
+        }
+        let given = bench.voice();
+        assert!(!given.is_empty() && !given[0].continues);
+        assert!(given[1..].iter().all(|v| v.continues));
+    }
+
+    /// Two clones taking the voice at once while the cleaner gives it:
+    /// every block is taken once, whole, by one of them, and each one's
+    /// come in order.
+    #[test]
+    fn two_clones_take_the_voice_at_once() {
+        const BLOCKS: u64 = 3000;
+        let (input, mut feed) = Input::feed(48_000, 240);
+        input.set_echo_cancel(false);
+        let mut tap_end = input.shared().bridge.blocks.producer().unwrap();
+        let done = Arc::new(AtomicBool::new(false));
+        let takers: Vec<_> = (0..2)
+            .map(|_| {
+                let input = input.clone();
+                let done = Arc::clone(&done);
+                std::thread::spawn(move || {
+                    let mut taken = Vec::new();
+                    while !done.load(Ordering::Acquire) {
+                        input.take_voice(&mut taken);
+                        std::thread::yield_now();
+                    }
+                    taken
+                })
+            })
+            .collect();
+        for k in 0..BLOCKS {
+            // A click at a place of its own in each block.
+            let mut mic = [0.0; BLOCK];
+            mic[k as usize % BLOCK] = 0.5;
+            let packet = Packet {
+                stamp: Stamp {
+                    stream_frame: k * BLOCK as u64,
+                    rate: 48_000,
+                    continues: k > 0,
+                },
+                mic,
+                left: [0.0; BLOCK],
+                right: [0.0; BLOCK],
+            };
+            while !tap_end.push(packet) {
+                feed.clean();
+            }
+            if k % 8 == 0 {
+                feed.clean();
+            }
+        }
+        feed.clean();
+        done.store(true, Ordering::Release);
+        let mut all = Vec::new();
+        for taker in takers {
+            let taken = taker.join().unwrap();
+            assert!(taken
+                .windows(2)
+                .all(|w| w[0].stream_frame < w[1].stream_frame));
+            all.extend(taken);
+        }
+        // What neither took before they stopped.
+        input.take_voice(&mut all);
+        all.sort_by_key(|v| v.stream_frame);
+        // The newest block is still with the suppressor.
+        assert_eq!(all.len() as u64, BLOCKS - 1);
+        for (k, v) in all.iter().enumerate() {
+            assert_eq!(
+                (v.stream_frame, v.rate, v.continues, v.samples.len()),
+                ((k * BLOCK) as u64, 48_000, k > 0, BLOCK)
+            );
+            for (i, s) in v.samples.iter().enumerate() {
+                let want = if i == k % BLOCK { 0.5 } else { 0.0 };
+                assert!((s - want).abs() < 1e-5, "block {k} sample {i}: {s}");
+            }
+        }
+        assert_eq!(input.status().voice_dropped, 0);
     }
 }

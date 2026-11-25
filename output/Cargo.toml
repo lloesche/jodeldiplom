@@ -28,7 +28,9 @@ features = [
 ]
 
 [target.'cfg(target_os = "macos")'.dependencies]
-objc2-core-audio = { version = "0.3.2", default-features = false, features = ["std", "AudioHardware", "AudioHardwareDeprecated", "objc2-core-audio-types"] }
+block2 = { version = "0.6.1", default-features = false, features = ["alloc"] }
+dispatch2 = { version = "0.3.1", default-features = false, features = ["alloc"] }
+objc2-core-audio = { version = "0.3.2", default-features = false, features = ["std", "AudioHardware", "AudioHardwareDeprecated", "block2", "dispatch2", "objc2", "objc2-core-audio-types"] }
 objc2-core-audio-types = { version = "0.3.2", default-features = false, features = ["std", "CoreAudioBaseTypes"] }
 objc2-core-foundation = { version = "0.3.2", default-features = false, features = ["std", "CFString"] }
 

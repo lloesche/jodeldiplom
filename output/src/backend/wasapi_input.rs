@@ -13,7 +13,7 @@ use super::wasapi::{
 };
 use crate::device::Device;
 use crate::error::Error;
-use crate::input::{Input, InputInfo, MicShared, Mono, Producer, Wire, CAPTURE_PERIOD};
+use crate::input::{Input, InputInfo, MicClock, Mono, Opened, Producer, Wire, CAPTURE_PERIOD};
 use std::ptr;
 use std::sync::mpsc;
 use std::thread::JoinHandle;
@@ -264,7 +264,8 @@ pub(crate) fn open_input(id: &str, mono: Mono) -> Result<Input, Error> {
             };
             match open_capture(&id_owned) {
                 Ok((cap, name)) => {
-                    let shared = MicShared::new(cap.rate, cap.period, false);
+                    let (producer, opened) =
+                        Opened::new(cap.rate, cap.period, mono, MicClock::system());
                     let info = InputInfo {
                         id: id_owned.clone(),
                         name,
@@ -274,8 +275,8 @@ pub(crate) fn open_input(id: &str, mono: Mono) -> Result<Input, Error> {
                         period_frames: cap.period,
                         mono,
                     };
-                    let _ = ready_tx.send(Ok((info, shared.clone())));
-                    run(cap, Producer::new(shared, mono), stop);
+                    let _ = ready_tx.send(Ok((info, opened)));
+                    run(cap, producer, stop);
                 }
                 Err(e) => {
                     let _ = ready_tx.send(Err(e));
@@ -297,6 +298,6 @@ pub(crate) fn open_input(id: &str, mono: Mono) -> Result<Input, Error> {
         .recv_timeout(Duration::from_secs(10))
         .unwrap_or(Err(Error::Timeout("opening the input")));
     // On an error `running` is dropped here, which joins the thread.
-    let (info, shared) = opened?;
-    Ok(Input::new(info, shared, Box::new(running)))
+    let (info, opened) = opened?;
+    Ok(Input::new(info, opened, Box::new(running)))
 }

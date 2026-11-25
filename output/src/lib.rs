@@ -99,6 +99,7 @@ mod output;
 pub mod pack;
 mod ring;
 mod shared;
+mod spsc;
 mod tap;
 mod timeline;
 

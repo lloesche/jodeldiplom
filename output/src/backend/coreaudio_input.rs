@@ -9,9 +9,14 @@
 //! The device is shared, as the output's is: nothing about it is changed
 //! but this process's IO buffer, set to about 5 ms (on an audio interface
 //! that has both, the output of ours on it then runs with that buffer
-//! too). When its nominal rate changes (in Audio MIDI Setup), a listener
-//! tells the tap, which resamples from the new one. A device another
-//! process holds in hog mode cannot be opened.
+//! too). A listener follows the device: when its nominal rate changes (in
+//! Audio MIDI Setup) it tells the tap, which resamples from the new one;
+//! when the device is gone (a USB microphone unplugged: it is no longer
+//! alive, or no longer an object the HAL knows) or its stream's layout is
+//! no longer the one the IOProc reads, the capture fails with
+//! [`Error::DeviceLost`] and the IOProc queues nothing more. A query that
+//! fails otherwise tells nothing, and the change is let pass. A device
+//! another process holds in hog mode cannot be opened.
 //!
 //! The process needs the system's permission to use the microphone; without
 //! it the HAL delivers silence.
@@ -21,10 +26,13 @@ use super::coreaudio_hal::{
 };
 use crate::device::Device;
 use crate::error::Error;
-use crate::input::{Input, InputInfo, MicShared, Mono, Producer, Wire, CAPTURE_PERIOD};
+use crate::input::{
+    Input, InputInfo, MicClock, MicShared, Mono, Opened, Producer, Wire, CAPTURE_PERIOD,
+};
 use objc2_core_audio::{
-    kAudioDevicePropertyBufferFrameSize, kAudioDevicePropertyDeviceUID,
-    kAudioDevicePropertyNominalSampleRate, kAudioDevicePropertyStreams,
+    kAudioDevicePropertyBufferFrameSize, kAudioDevicePropertyDeviceIsAlive,
+    kAudioDevicePropertyDeviceUID, kAudioDevicePropertyNominalSampleRate,
+    kAudioDevicePropertyStreams, kAudioHardwareBadDeviceError, kAudioHardwareBadObjectError,
     kAudioHardwarePropertyDefaultInputDevice, kAudioObjectPropertyName,
     kAudioObjectPropertyScopeInput, kAudioObjectSystemObject, kAudioStreamPropertyVirtualFormat,
     AudioDeviceCreateIOProcID, AudioDeviceDestroyIOProcID, AudioDeviceIOProcID, AudioDeviceStart,
@@ -38,7 +46,7 @@ use objc2_core_audio_types::{
 use std::cell::UnsafeCell;
 use std::ffi::c_void;
 use std::ptr::NonNull;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 pub(crate) const INPUT_BACKEND: &str = "Core Audio (shared)";
 
@@ -116,18 +124,91 @@ fn input_wire(d: &AudioStreamBasicDescription) -> Option<(Wire, bool)> {
     Some((wire, planar))
 }
 
-/// What the IOProc and the rate listener read; freed after both are gone.
+/// What the IOProc and the listener read; freed after both are gone.
 struct Ctx {
     /// Only the IOProc touches it (the HAL calls it on one thread at a time).
     producer: UnsafeCell<Producer>,
     shared: Arc<MicShared>,
+    device: AudioObjectID,
+    stream: AudioObjectID,
     wire: Wire,
     planar: bool,
-    channels: usize,
+    /// Held through [`Ctx::follow`]: the opener's look and the listener's
+    /// come one after the other, so a rate read earlier is never stored
+    /// over one read later.
+    following: Mutex<()>,
 }
 
 // SAFETY: see `producer`; everything else is immutable or synchronised.
 unsafe impl Sync for Ctx {}
+
+/// What a look at the device tells.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Look {
+    /// Still there, in the layout the IOProc reads.
+    Fine,
+    /// Gone, or in another layout: the capture is lost.
+    Lost,
+    /// A query failed for another reason: nothing is known.
+    Unknown,
+}
+
+/// Whether a failed query says its object is gone.
+fn gone(error: &Error) -> bool {
+    matches!(error, Error::Backend { code, .. }
+        if *code == i64::from(kAudioHardwareBadObjectError)
+            || *code == i64::from(kAudioHardwareBadDeviceError))
+}
+
+impl Ctx {
+    fn look(&self) -> Look {
+        let alive = get::<u32>(
+            self.device,
+            addr(kAudioDevicePropertyDeviceIsAlive, GLOBAL),
+            "alive",
+        );
+        match alive {
+            Ok(0) => return Look::Lost,
+            Ok(_) => {}
+            Err(e) if gone(&e) => return Look::Lost,
+            Err(_) => return Look::Unknown,
+        }
+        let format = get::<AudioStreamBasicDescription>(
+            self.stream,
+            addr(kAudioStreamPropertyVirtualFormat, GLOBAL),
+            "input virtual format",
+        );
+        match format {
+            Ok(f) if input_wire(&f) == Some((self.wire, self.planar)) => Look::Fine,
+            Ok(_) => Look::Lost,
+            Err(_) => Look::Unknown,
+        }
+    }
+
+    /// Follows the device: a capture whose device is gone, or whose stream
+    /// no longer has the layout the IOProc reads, fails; a new nominal rate
+    /// is told to the tap; when the look tells nothing, nothing changes.
+    fn follow(&self) -> Look {
+        let _one_at_a_time = self.following.lock().unwrap_or_else(|e| e.into_inner());
+        let look = self.look();
+        match look {
+            Look::Lost => self.shared.fail(Error::DeviceLost),
+            Look::Fine => {
+                if let Ok(rate) = get::<f64>(
+                    self.device,
+                    addr(kAudioDevicePropertyNominalSampleRate, GLOBAL),
+                    "nominal rate",
+                ) {
+                    if rate >= 1.0 {
+                        self.shared.set_rate(rate.round() as u32);
+                    }
+                }
+            }
+            Look::Unknown => {}
+        }
+        look
+    }
+}
 
 unsafe extern "C-unwind" fn input_proc(
     _device: AudioObjectID,
@@ -139,13 +220,16 @@ unsafe extern "C-unwind" fn input_proc(
     client: *mut c_void,
 ) -> i32 {
     let ctx = &*(client as *const Ctx);
+    if ctx.shared.failed() {
+        return 0;
+    }
     let producer = &mut *ctx.producer.get();
     let list = input.as_ptr();
     let count = (*list).mNumberBuffers as usize;
     let buffers = std::ptr::addr_of!((*list).mBuffers) as *const AudioBuffer;
     let sb = ctx.wire.bytes();
     if ctx.planar {
-        let n = ctx.channels.min(count).min(MAX_PLANES);
+        let n = count.min(MAX_PLANES);
         let mut planes: [&[u8]; MAX_PLANES] = [&[]; MAX_PLANES];
         for (i, plane) in planes.iter_mut().enumerate().take(n) {
             let b = &*buffers.add(i);
@@ -171,22 +255,14 @@ unsafe extern "C-unwind" fn input_proc(
     0
 }
 
-unsafe extern "C-unwind" fn rate_changed(
-    device: AudioObjectID,
+/// A property the capture depends on changed ([`Ctx::follow`]).
+unsafe extern "C-unwind" fn changed(
+    _object: AudioObjectID,
     _count: u32,
     _addresses: NonNull<AudioObjectPropertyAddress>,
     client: *mut c_void,
 ) -> i32 {
-    let ctx = &*(client as *const Ctx);
-    if let Ok(rate) = get::<f64>(
-        device,
-        addr(kAudioDevicePropertyNominalSampleRate, GLOBAL),
-        "nominal rate",
-    ) {
-        if rate >= 1.0 {
-            ctx.shared.set_rate(rate.round() as u32);
-        }
-    }
+    (*(client as *const Ctx)).follow();
     0
 }
 
@@ -247,14 +323,15 @@ pub(crate) fn open_input(uid: &str, mono: Mono) -> Result<Input, Error> {
     let want = (u64::from(rate) * CAPTURE_PERIOD.as_micros() as u64 / 1_000_000).max(16) as u32;
     let _ = set(device, bfs, want, "set buffer frame size");
     let period = get::<u32>(device, bfs, "get buffer frame size").unwrap_or(want);
-    let shared = MicShared::new(rate, period, false);
-    let channels = format.mChannelsPerFrame as usize;
+    let (producer, opened) = Opened::new(rate, period, mono, MicClock::system());
     let ctx = Box::into_raw(Box::new(Ctx {
-        producer: UnsafeCell::new(Producer::new(shared.clone(), mono)),
-        shared: shared.clone(),
+        shared: Arc::clone(producer.shared()),
+        producer: UnsafeCell::new(producer),
+        device,
+        stream,
         wire,
         planar,
-        channels,
+        following: Mutex::new(()),
     }));
     let mut proc_id: AudioDeviceIOProcID = None;
     // SAFETY: registers `input_proc` with a context that lives until the
@@ -273,8 +350,12 @@ pub(crate) fn open_input(uid: &str, mono: Mono) -> Result<Input, Error> {
         return Err(status_error("AudioDeviceCreateIOProcID", status));
     }
     let listener = Listener::add(
-        &[(device, addr(kAudioDevicePropertyNominalSampleRate, GLOBAL))],
-        Some(rate_changed),
+        &[
+            (device, addr(kAudioDevicePropertyNominalSampleRate, GLOBAL)),
+            (device, addr(kAudioDevicePropertyDeviceIsAlive, GLOBAL)),
+            (stream, addr(kAudioStreamPropertyVirtualFormat, GLOBAL)),
+        ],
+        Some(changed),
         ctx.cast(),
     );
     let running = Running {
@@ -288,6 +369,12 @@ pub(crate) fn open_input(uid: &str, mono: Mono) -> Result<Input, Error> {
     if status != 0 {
         return Err(status_error("AudioDeviceStart", status));
     }
+    // What changed before the listener was there: a device lost already
+    // is not opened (`running`, dropped, stops it).
+    // SAFETY: the context lives until `running` drops.
+    if unsafe { (*ctx).follow() } == Look::Lost {
+        return Err(Error::DeviceLost);
+    }
     let info = InputInfo {
         id: uid.to_owned(),
         name: get_string(device, kAudioObjectPropertyName).unwrap_or_else(|| uid.to_owned()),
@@ -297,7 +384,7 @@ pub(crate) fn open_input(uid: &str, mono: Mono) -> Result<Input, Error> {
         period_frames: period,
         mono,
     };
-    Ok(Input::new(info, shared, Box::new(running)))
+    Ok(Input::new(info, opened, Box::new(running)))
 }
 
 #[cfg(test)]

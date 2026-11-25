@@ -3,6 +3,8 @@
 //! floats.
 
 use super::capture::MicShared;
+use crate::aec::BLOCK;
+use crate::spsc;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
@@ -10,13 +12,16 @@ use std::time::{Duration, Instant};
 /// A recording of the canceller's channels ([`Input::record_echo`]): the
 /// microphone, left, right, the voice cancelled, the voice suppressed.
 pub(super) const RECORD_CHANNELS: usize = 5;
+/// A block of the canceller's, its channels interleaved, as it is queued
+/// for the recording.
+pub(super) type RecordBlock = [[f32; RECORD_CHANNELS]; BLOCK];
 /// The speakers its channels are said to be for (WAVE_FORMAT_EXTENSIBLE's
 /// mask): front left, front right, centre, back left, back right. Not the
 /// subwoofer: a player would play the fourth channel through a low-pass.
 const RECORD_SPEAKERS: u32 = 0x37;
-/// What a recording of the canceller queues at most: two seconds of its
-/// channels at its highest rate.
-pub(super) const RECORD_QUEUE: usize = RECORD_CHANNELS * 56_000 * 2;
+/// What a recording of the canceller queues at most, in blocks: two
+/// seconds at its highest rate.
+pub(super) const RECORD_QUEUE: usize = 56_000 * 2 / BLOCK;
 
 /// A recording of the echo canceller ([`Input::record_echo`]).
 pub struct EchoRecording {
@@ -80,42 +85,44 @@ fn wav_header(channels: u16, speakers: u32, rate: u32, frames: u64) -> Vec<u8> {
     h
 }
 
-/// Writes the canceller's queued blocks to `path` as they come, for
-/// `seconds` of them (or until none comes for three seconds), under a
+/// Writes the canceller's blocks queued on `record` to `path` as they come,
+/// for `seconds` of them (or until none comes for three seconds), under a
 /// temporary name that becomes `path` only once the recording is whole
 /// ([`durable::AtomicFile`]).
-pub(super) fn write_recording(shared: &MicShared, path: &Path, seconds: f64) -> Result<(), String> {
+pub(super) fn write_recording(
+    shared: &MicShared,
+    mut record: spsc::Consumer<RecordBlock>,
+    path: &Path,
+    seconds: f64,
+) -> Result<(), String> {
     use std::io::{Seek, SeekFrom, Write};
     let fail = |e: std::io::Error| format!("{}: {e}", path.display());
-    let ring = &shared.record;
     // What was queued before is not this recording's.
-    ring.skip(ring.len());
+    record.skip(record.len());
     let mut file = durable::AtomicFile::create(path).map_err(fail)?;
     file.write_all(&[0u8; WAV_HEADER]).map_err(fail)?;
-    let mut buf = vec![0.0f32; RECORD_CHANNELS * 4096];
-    let mut bytes = Vec::with_capacity(buf.len() * 4);
+    let mut bytes = Vec::with_capacity(RECORD_CHANNELS * BLOCK * 4);
     let mut frames = 0u64;
     let mut rate = 0u32;
     let mut last = Instant::now();
     loop {
-        let n = ring.pop(&mut buf);
-        if n == 0 {
+        let Some(block) = record.pop() else {
             if last.elapsed() > Duration::from_secs(3) {
                 break;
             }
             std::thread::sleep(Duration::from_millis(20));
             continue;
-        }
+        };
         last = Instant::now();
         if rate == 0 {
-            rate = shared.echo_rate.load(Ordering::Relaxed);
+            rate = shared.cleaned.echo_rate.load(Ordering::Relaxed);
         }
         bytes.clear();
-        for v in &buf[..n] {
+        for v in block.iter().flatten() {
             bytes.extend_from_slice(&v.to_le_bytes());
         }
         file.write_all(&bytes).map_err(fail)?;
-        frames += (n / RECORD_CHANNELS) as u64;
+        frames += BLOCK as u64;
         if rate > 0 && frames as f64 >= seconds * f64::from(rate) {
             break;
         }
