@@ -24,8 +24,9 @@ const SMALLEST_TEXT: f32 = 0.75;
 const BODY: f32 = 0.88;
 
 /// A word laid on the lane: its line and word, when it is sung (from, to),
-/// where it is across (its left and right), its tube, and its text's size
-/// and width.
+/// where it is across (its left and right), its tube, its text's size and
+/// width, where its text sits along it (from its left) and whether on one
+/// pitch there ([`text_on`]).
 pub(super) struct Word {
     pub line: usize,
     pub word: usize,
@@ -34,15 +35,21 @@ pub(super) struct Word {
     pub snake: Snake,
     px: f32,
     width: f32,
+    text_at: f32,
+    level: bool,
 }
 
 impl Word {
     /// Where across `t` (seconds into the song) is along it: its sung time
     /// over all of it.
     pub fn across(&self, t: f64) -> f32 {
+        self.x.0 + self.share(t) * (self.x.1 - self.x.0)
+    }
+
+    /// How much of its sung time is gone at `t`.
+    fn share(&self, t: f64) -> f32 {
         let (start, end) = self.time;
-        let share = ((t - start) / (end - start).max(1e-3)) as f32;
-        self.x.0 + share * (self.x.1 - self.x.0)
+        ((t - start) / (end - start).max(1e-3)) as f32
     }
 
     /// Its middle line's middle.
@@ -149,7 +156,9 @@ impl Stage {
             let least = (width + 2.0 * pad).max(p);
             let t1 = end.max(t0 + f64::from(least / lane.pps));
             last_end = t1;
-            let x = (lane.x(t0), lane.x(t1));
+            // As long as its times say, whatever its place in the window.
+            let long = ((t1 - t0) as f32) * lane.pps;
+            let x = (lane.x(t0), lane.x(t0) + long);
             let mut word = Word {
                 line: l,
                 word: w,
@@ -161,19 +170,31 @@ impl Stage {
                 },
                 px,
                 width,
+                text_at: 0.0,
+                level: true,
             };
-            // Through its notes, each at its own height.
+            // Through its notes, each at its own height: made from its own
+            // left, its text placed on it there, then moved to where it
+            // is. So both come out the same every frame as it scrolls: on
+            // the window's pixels, rounding alone would choose between two
+            // stretches as flat (a glide's two ends) and its text jump
+            // from one to the other and back.
             let notes = &singing.notes.lines[l].notes;
             let mut through: Vec<(f32, f32, f32)> = (notes.iter().filter(|n| n.word == w))
-                .map(|n| (word.across(n.start), word.across(n.end), lane.y(n.height)))
+                .map(|n| {
+                    let (a, b) = (word.share(n.start), word.share(n.end));
+                    (a * long, b * long, lane.y(n.height))
+                })
                 .collect();
             if let Some(first) = through.first_mut() {
-                first.0 = x.0;
+                first.0 = 0.0;
             }
             if let Some(last) = through.last_mut() {
-                last.1 = x.1;
+                last.1 = long;
             }
-            word.snake = Snake::through(&through, x, p / 2.0);
+            let shape = Snake::through(&through, (0.0, long), p / 2.0);
+            (word.text_at, word.level) = text_on(&shape, (long, width));
+            word.snake = shape.moved(x.0);
             out.at.insert((l, w), out.laid.len());
             out.laid.push(word);
         }
@@ -285,14 +306,12 @@ impl Stage {
             // on, poured after one missed, is bright.
             let rim = label.hit.then_some((super::Shade::RIM, alpha));
             let cap = self.cap_middle(Face::BUBBLE, px) - super::COVER_PAD as f32;
-            // Where the tube is flattest; a run on its pitch where it is
-            // flat there, else each letter at the tube's height under it.
-            let inset = word.snake.radius * 0.5;
-            let mut pen = (word.snake).flattest(word.width, (word.x.0 + inset, word.x.1 - inset));
-            let (left, right) = (word.snake.y_at(pen), word.snake.y_at(pen + word.width));
-            let mid = word.snake.y_at(pen + word.width / 2.0);
-            if left == right && left == mid {
-                let at = (pen, mid - cap);
+            // Where its layout put it ([`text_on`]): a run on its pitch
+            // where the tube is flat there, else each letter at the tube's
+            // height under it.
+            let mut pen = word.x.0 + word.text_at;
+            if word.level {
+                let at = (pen, word.snake.y_at(pen + word.width / 2.0) - cap);
                 if let Some(rim) = rim {
                     let whole = (at, f32::INFINITY);
                     self.shade(out, (Face::BUBBLE, &label.text), (px, 1.0), whole, rim);
@@ -324,10 +343,128 @@ impl Stage {
     }
 }
 
+/// Where text `width` across sits in a word's tube `shape` (made from its
+/// left, at 0, `long` across): its left, on the flattest stretch
+/// ([`Snake::flattest`], half a radius in from the ends), and whether the
+/// tube is on one pitch all under it.
+fn text_on(shape: &Snake, (long, width): (f32, f32)) -> (f32, bool) {
+    let inset = shape.radius * 0.5;
+    let pen = shape.flattest(width, (inset, long - inset));
+    let ys = [pen, pen + width, pen + width / 2.0].map(|x| shape.y_at(x));
+    (pen, ys[0] == ys[1] && ys[0] == ys[2])
+}
+
 /// Line `l`'s word `w`'s text in `song` (none where it has none).
 fn word_text<'a>(song: &Song<'a>, l: usize, w: usize) -> &'a str {
     song.sung
         .get(l)
         .and_then(|line| line.words.get(w))
         .map_or("", |w| w.text.as_str())
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::core::singing::Singing;
+    use crate::gui::stage::{Song, Stage};
+    use crate::gui::stage_gpu::{kind, StageFrame};
+    use crate::view::karaoke::KaraokePicture;
+    use ratatui::layout::Rect;
+
+    /// A song of one short word, "my", gliding up from one note to
+    /// another as long, its singing ready.
+    fn glide() -> (Singing, std::sync::Arc<jodel_lyrics::Lyrics>) {
+        let line = jodel_lyrics::Line {
+            words: vec![jodel_lyrics::Word {
+                start: Some(1.0),
+                end: Some(1.4),
+                confidence: 0.9,
+                ..jodel_lyrics::Word::new("my")
+            }],
+            ..jodel_lyrics::Line::default()
+        };
+        let lyrics = std::sync::Arc::new(jodel_lyrics::Lyrics {
+            lines: vec![line],
+            source: jodel_lyrics::Source::Unknown,
+            timing: jodel_lyrics::Timing::default(),
+        });
+        let mut melody = jodel_rhythm::waveform::Melody {
+            cents: vec![0; 300],
+            sure: vec![0; 300],
+        };
+        for i in 100..140 {
+            melody.cents[i] = if i < 120 { 6000 } else { 6700 };
+            melody.sure[i] = 255;
+        }
+        let mut singing = Singing::default();
+        let notes = crate::core::singing::melodic(&melody);
+        singing.prepare(std::path::Path::new("a"), &lyrics, &notes);
+        (singing, lyrics)
+    }
+
+    /// The word's text in `frame`, each piece where it is from the tube's
+    /// left (across) and down.
+    fn text_in_tube(frame: &StageFrame) -> Vec<(f32, f32)> {
+        let tubes: Vec<_> = (frame.instances.iter())
+            .filter(|i| i.params[0] == kind::TUBE)
+            .collect();
+        let [tube] = tubes[..] else {
+            panic!("one tube: {}", tubes.len());
+        };
+        let left = frame.paths[tube.shape[3] as usize][0];
+        let q = tube.quad;
+        (frame.instances.iter())
+            .filter(|i| i.params[0] == kind::TEXT)
+            .filter(|i| {
+                let (x, y) = ((i.quad[0] + i.quad[2]) / 2.0, (i.quad[1] + i.quad[3]) / 2.0);
+                x > q[0] && x < q[2] && y > q[1] && y < q[3]
+            })
+            .map(|i| (i.quad[0] - left, i.quad[1]))
+            .collect()
+    }
+
+    /// A word's text sits in the same place in its tube every frame as the
+    /// tube scrolls across the window, at any frame rate: a glide (the
+    /// word's two notes as long) is as flat at its two ends, and where its
+    /// text goes is not left to how the window's pixels round, frame by
+    /// frame (it jumped from one end to the other and back).
+    #[test]
+    fn a_word_s_text_stays_put_in_its_tube_as_it_scrolls() {
+        let (singing, lyrics) = glide();
+        let song = Song::new(&singing, lyrics.lines.iter().collect(), Some(3.0));
+        let area = Rect::new(0, 0, 100, 24);
+        let picture = KaraokePicture {
+            area,
+            bar: crate::core::karaoke::controls::bar(area),
+            lines: Vec::new(),
+            count: None,
+            cue: None,
+            controls: None,
+            start: None,
+            before: Vec::new(),
+            moved: 1.0,
+            score: None,
+            result: None,
+        };
+        for (w, h, fps) in [(1600.0, 900.0, 60.0), (1512.0, 982.0, 120.0)] {
+            let mut stage = Stage::default();
+            let mut first: Option<Vec<(f32, f32)>> = None;
+            // From coming in on the right to the playhead.
+            let frames = (3.0 * fps) as usize;
+            for f in 0..frames {
+                let now = -2.0 + f as f64 / fps;
+                let frame = stage.frame(&song, &picture, (0.0, 0.0, w, h), now, 1.0 / fps as f32);
+                let text = text_in_tube(&frame);
+                assert!(!text.is_empty(), "{w}x{h} at {now:.3}: its text");
+                let first = first.get_or_insert_with(|| text.clone());
+                let moved = (first.iter().zip(&text))
+                    .map(|(a, b)| (a.0 - b.0).abs().max((a.1 - b.1).abs()))
+                    .fold(0.0, f32::max);
+                assert!(
+                    text.len() == first.len() && moved < 0.01,
+                    "{w}x{h} at {now:.3}: its text moved {moved} px in its tube, \
+                     {first:?} then {text:?}"
+                );
+            }
+        }
+    }
 }

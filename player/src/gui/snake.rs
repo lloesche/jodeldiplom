@@ -86,6 +86,14 @@ impl Snake {
         snake
     }
 
+    /// It moved `dx` across.
+    pub fn moved(mut self, dx: f32) -> Snake {
+        for p in &mut self.points {
+            p.0 += dx;
+        }
+        self
+    }
+
     /// How far down its middle line is at `x` (its ends' height past them).
     pub fn y_at(&self, x: f32) -> f32 {
         let p = &self.points;
@@ -115,7 +123,11 @@ impl Snake {
 
     /// Where text `wide` across reads best along it between `from` and
     /// `to` (its left): the flattest stretch that wide (a note's own pitch
-    /// where one is long enough), of those as flat the nearest the middle.
+    /// where one is long enough), of those as flat the nearest the middle,
+    /// and of those the leftmost. A tie (a glide's two ends, as flat and as
+    /// near) goes by how its numbers round: the same each frame only for a
+    /// tube made in the same place each frame (the stage's words are made
+    /// from their own left, then moved: [`Snake::moved`]).
     pub fn flattest(&self, wide: f32, (from, to): (f32, f32)) -> f32 {
         let middle = (from + to - wide) / 2.0;
         if to - from <= wide {
