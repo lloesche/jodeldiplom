@@ -167,8 +167,49 @@ fn the_bars_are_a_share_of_what_the_original_reaches() {
         Some(Tier::named("Amazing"))
     );
     assert_eq!(Tier::of(&at(0.48, None), rough), Some(Tier::named("Good")));
-    let shone = Shone::new(0, 1.0, &at(0.752, None), rough);
+    let shone = Shone::new(0, 1.0, &at(0.752, None), rough, Some(Tier::TOP));
     assert!((shone.of_top() - 1.0).abs() < 1e-6);
+}
+
+/// Diva is earned in a row: a phrase at its bars counts as Diva only
+/// right after one that counted Amazing or Diva, else as Amazing; the
+/// tiers under it count as reached whatever came before.
+#[test]
+fn diva_is_earned_in_a_row() {
+    let diva = Shine {
+        value: 0.95,
+        coverage: 1.0,
+        pitch: Some(0.95),
+        ..Shine::default()
+    };
+    let par = Par::default();
+    let (amazing, awesome) = (Tier::named("Amazing"), Tier::named("Awesome"));
+    let after = |before| Shone::new(0, 1.0, &diva, par, before).tier;
+    assert_eq!(after(Some(Tier::TOP)), Some(Tier::TOP));
+    assert_eq!(after(Some(amazing)), Some(Tier::TOP));
+    assert_eq!(after(Some(awesome)), Some(amazing));
+    assert_eq!(after(Some(Tier::named("Good"))), Some(amazing));
+    assert_eq!(after(None), Some(amazing), "after none, or at the start");
+    for t in Tier::ALL.into_iter().filter(|t| !t.spec().earned) {
+        assert_eq!(t.counted(None), t, "{}", t.name());
+    }
+    // A run of phrases at Diva's bars: the first Amazing, then Diva on.
+    let mut before = None;
+    let run: Vec<_> = (0..4)
+        .map(|_| {
+            before = after(before);
+            before
+        })
+        .collect();
+    assert_eq!(
+        run,
+        [
+            Some(amazing),
+            Some(Tier::TOP),
+            Some(Tier::TOP),
+            Some(Tier::TOP)
+        ]
+    );
 }
 
 /// On a phrase whose original reaches as little of itself as a phrase may
@@ -263,7 +304,9 @@ fn reference_of(n: &Notes, frames: &[(f64, Option<f32>)]) -> Arc<Reference> {
 
 /// The live singing: each phrase scored as its frames are in, against the
 /// reference set, as a moment; none without one; the last scored by
-/// [`Singing::finish`].
+/// [`Singing::finish`]. The original Diva from its second phrase on (the
+/// first has none before it to earn Diva after), the phrase before
+/// forgotten as the scoring starts over and kept by a seek back a little.
 #[test]
 fn the_singing_scores_each_phrase_as_it_ends() {
     let (lyrics, m) = song();
@@ -279,17 +322,36 @@ fn the_singing_scores_each_phrase_as_it_ends() {
     for &(t, c) in &frames[..400] {
         s.hear(t, c);
     }
-    // The first phrase (1 to 3 s) scored once its frames are in.
+    // The first phrase (1 to 3 s) scored once its frames are in: at
+    // Diva's bars, with no phrase before it to earn Diva after.
+    let first = Tier::TOP.counted(None);
+    assert!(first < Tier::TOP);
     assert_eq!(s.shone().count(), 1);
     let last = *s.last_phrase().unwrap();
-    assert_eq!((last.line, last.tier), (0, Some(Tier::TOP)));
+    assert_eq!((last.line, last.tier), (0, Some(first)));
     // The second (4 to 6 s), its frames stopping as it ends: scored as
-    // the song is finished.
+    // the song is finished, Diva after the first.
     for &(t, c) in &frames[400..605] {
         s.hear(t, c);
     }
     assert_eq!(s.shone().count(), 1);
     s.finish();
     let tiers: Vec<_> = s.shone().map(|p| p.tier).collect();
-    assert_eq!(tiers, [Some(Tier::TOP), Some(Tier::TOP)]);
+    assert_eq!(tiers, [Some(first), Some(Tier::TOP)]);
+    // Sought back a little over the second's end: scored again, after the
+    // first as before.
+    let end = s.last_phrase().unwrap().end;
+    let back = frames.iter().position(|&(t, _)| t >= end).unwrap();
+    for &(t, c) in &frames[back..] {
+        s.hear(t, c);
+    }
+    s.finish();
+    let tiers: Vec<_> = s.shone().map(|p| p.tier).collect();
+    assert_eq!(tiers, [Some(first), Some(Tier::TOP)]);
+    // Sung again from the start: the scoring over, the first not Diva.
+    for &(t, c) in &frames[..400] {
+        s.hear(t, c);
+    }
+    let tiers: Vec<_> = s.shone().map(|p| p.tier).collect();
+    assert_eq!(tiers, [Some(first)]);
 }

@@ -11,6 +11,10 @@
 //! ×2 the first's, doubling a rung ([`crate::core::singing::rung`],
 //! [`Tier::multiplier`]).
 //!
+//! A row may have to be earned in a row (Diva's: [`TierSpec::earned`]): a
+//! phrase reaching it counts as it only right after a phrase that counted
+//! at least the row below, else as that row ([`Tier::counted`]).
+//!
 //! A look held while the singing glows is a value a row: between two rows
 //! (the glow easing from one to the other) it is the straight line between
 //! their values ([`held`]), below the first from none.
@@ -53,6 +57,10 @@ pub struct TierSpec {
     pub bar: f64,
     /// The share of the original's pitch it takes too, if it asks one.
     pub pitch_bar: Option<f64>,
+    /// Whether it must be earned in a row: a phrase clearing its bars counts
+    /// as it only right after a phrase that counted at least the row below
+    /// (else as that row: [`Tier::counted`]); never the first row's.
+    pub earned: bool,
     /// The words hit in a row its rung of the multiplier takes (the rung,
     /// named after it: [`Tier::multiplier`]).
     pub streak: u32,
@@ -95,6 +103,7 @@ pub static TIERS: [TierSpec; 5] = [
         name: "Good",
         bar: 0.60,
         pitch_bar: None,
+        earned: false,
         streak: 5,
         color: [0.35, 0.92, 0.62],
         fill: Paint::Rainbow,
@@ -127,6 +136,7 @@ pub static TIERS: [TierSpec; 5] = [
         name: "Great",
         bar: 0.72,
         pitch_bar: None,
+        earned: false,
         streak: 10,
         color: [1.0, 0.78, 0.22],
         fill: Paint::Rgb([1.0, 0.72, 0.16]),
@@ -159,6 +169,7 @@ pub static TIERS: [TierSpec; 5] = [
         name: "Awesome",
         bar: 0.80,
         pitch_bar: None,
+        earned: false,
         streak: 20,
         color: [1.0, 0.56, 0.3],
         fill: Paint::Rgb([1.0, 0.5, 0.22]),
@@ -191,6 +202,7 @@ pub static TIERS: [TierSpec; 5] = [
         name: "Amazing",
         bar: 0.87,
         pitch_bar: None,
+        earned: false,
         streak: 35,
         color: [1.0, 0.35, 0.6],
         fill: Paint::Rgb([1.0, 0.3, 0.58]),
@@ -227,6 +239,7 @@ pub static TIERS: [TierSpec; 5] = [
         name: "Diva",
         bar: 0.94,
         pitch_bar: Some(0.92),
+        earned: true,
         streak: 55,
         color: [0.96, 0.93, 1.0],
         fill: Paint::Rgb([1.0, 0.95, 0.85]),
@@ -454,6 +467,15 @@ mod tests {
         let half = held(a.glow / 2.0, value);
         assert!((half - value(a) / 2.0).abs() < 1e-6);
         assert_eq!(held(2.0, value), value(Tier::TOP.spec()));
+    }
+
+    /// A row earned in a row is above the first (it has a row below to be
+    /// earned after and to count as instead).
+    #[test]
+    fn every_earned_row_has_a_row_below() {
+        for (i, t) in TIERS.iter().enumerate() {
+            assert!(!t.earned || i > 0, "{}", t.name);
+        }
     }
 
     #[test]

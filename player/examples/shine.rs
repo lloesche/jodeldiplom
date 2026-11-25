@@ -13,9 +13,11 @@
 //! as the game works it out, then the original heard other everyday ways
 //! than the reference and its par were ([`EVERYDAY`]: other rates, the
 //! delay further off, other octave errors and pitch lost), each phrase's
-//! tier: every phrase with a shine must be Diva. A line a song, `DIVA` at
-//! its start when all are, and the closest any came (its shine over its
-//! Diva bar, its pitch over its pitch bar). Then the other way: the
+//! tier, counted in a row as the game does: every phrase with a shine
+//! must be Diva but the first (Diva is earned after a phrase at least the
+//! tier below). A line a song, `DIVA` at its start when all are, how many
+//! are Diva, and the closest any came (its shine over its Diva bar, its
+//! pitch over its pitch bar). Then the other way: the
 //! original heard everyday but sung weakly ([`WEAK`]: near silence, every
 //! other word left out), never Diva on any phrase.
 //!
@@ -168,16 +170,37 @@ fn singing(lyrics: Lyrics, melody: &Melody) -> Singing {
     s
 }
 
-/// The tier of each of `heard`'s phrases with a shine, and how near Diva
-/// each came: its shine over its bar, its pitch over its pitch bar.
-fn tiers(heard: &[Option<Measured>], r: &Reference) -> Vec<(usize, Option<Tier>, f64, f64)> {
+/// A phrase heard: its line, the tier it counts as (in a row, as the game
+/// scores it), what Diva's bars reached count as there (Diva but where
+/// the phrase scored before it falls short of earning it), and how near
+/// Diva's bars it came: its shine over its bar, its pitch over its pitch
+/// bar.
+struct Heard {
+    line: usize,
+    tier: Option<Tier>,
+    top_here: Tier,
+    over: f64,
+    pitch: f64,
+}
+
+/// Each of `heard`'s phrases with a shine, in order (one not measured is
+/// not scored, as in the game: the next counts after the one before it).
+fn tiers(heard: &[Option<Measured>], r: &Reference) -> Vec<Heard> {
     let mut out = Vec::new();
-    for (l, p) in heard.iter().enumerate() {
-        let Some(original) = r.phrase(l) else {
+    let mut before = None;
+    for (line, p) in heard.iter().enumerate() {
+        let Some(original) = r.phrase(line) else {
             continue;
         };
+        let top_here = Tier::TOP.counted(before);
         let Some(s) = p.as_ref().map(|p| shine::shine(p, &original.yardstick)) else {
-            out.push((l, None, 0.0, 0.0));
+            out.push(Heard {
+                line,
+                tier: None,
+                top_here,
+                over: 0.0,
+                pitch: 0.0,
+            });
             continue;
         };
         let par = original.par;
@@ -186,7 +209,15 @@ fn tiers(heard: &[Option<Measured>], r: &Reference) -> Vec<(usize, Option<Tier>,
             (Some(p), Some(top)) => p / (top * par.pitch_scale()),
             _ => f64::INFINITY,
         };
-        out.push((l, Tier::of(&s, par), s.value / bar, pitch));
+        let tier = Shone::new(line, 0.0, &s, par, before).tier;
+        before = tier;
+        out.push(Heard {
+            line,
+            tier,
+            top_here,
+            over: s.value / bar,
+            pitch,
+        });
     }
     out
 }
@@ -218,18 +249,23 @@ fn songs(filter: Option<&str>) {
         let made = started.elapsed().as_secs_f64();
         let mut worst = (f64::INFINITY, f64::INFINITY);
         let (mut fails, mut weak_fails) = (Vec::new(), Vec::new());
-        let mut n = 0;
+        let (mut n, mut diva) = (0, 0);
         for how in &EVERYDAY {
             let heard = original.measure(how, &yardsticks);
-            for (l, tier, over, pitch) in tiers(&heard, &r) {
+            for h in tiers(&heard, &r) {
                 n += 1;
-                worst = (worst.0.min(over), worst.1.min(pitch));
-                if tier != Some(Tier::TOP) {
+                diva += usize::from(h.tier == Some(Tier::TOP));
+                worst = (worst.0.min(h.over), worst.1.min(h.pitch));
+                if h.tier != Some(h.top_here) {
                     fails.push(format!(
-                        "{:?} at {} Hz {:+.0} ms: phrase {l} {tier:?} ({over:.2} {pitch:.2})",
+                        "{:?} at {} Hz {:+.0} ms: phrase {} {:?} ({:.2} {:.2})",
                         how.seed,
                         how.rate,
-                        how.late * 1000.0
+                        how.late * 1000.0,
+                        h.line,
+                        h.tier,
+                        h.over,
+                        h.pitch
                     ));
                 }
             }
@@ -251,12 +287,15 @@ fn songs(filter: Option<&str>) {
                 })
                 .collect();
             let heard = measure_all(&notes, &weak, &yardsticks);
-            for (l, tier, over, _) in tiers(&heard, &r) {
+            for h in tiers(&heard, &r) {
                 weak_all += 1;
-                weak_most = weak_most.max(over);
-                if tier == Some(Tier::TOP) {
+                weak_most = weak_most.max(h.over);
+                if h.tier == Some(Tier::TOP) {
                     weak_divas += 1;
-                    weak_fails.push(format!("sung weakly, {name}: phrase {l} Diva ({over:.2})"));
+                    weak_fails.push(format!(
+                        "sung weakly, {name}: phrase {} Diva ({:.2})",
+                        h.line, h.over
+                    ));
                 }
             }
         }
@@ -267,7 +306,7 @@ fn songs(filter: Option<&str>) {
         heard_enough += enough;
         rough += enough - shining;
         all += n;
-        divas += n - fails.len();
+        divas += diva;
         songs += 1;
         let ok = fails.is_empty() && weak_fails.is_empty();
         songs_ok += usize::from(ok);
@@ -277,7 +316,7 @@ fn songs(filter: Option<&str>) {
             shining,
             enough,
             r.phrases.len(),
-            n - fails.len(),
+            diva,
             n,
             worst.0,
             worst.1,
@@ -288,7 +327,7 @@ fn songs(filter: Option<&str>) {
         }
     }
     println!(
-        "\n{songs_ok} of {songs} songs Diva on every phrase in every hearing and never sung weakly; {divas} of {all} phrase hearings Diva; sung weakly, {weak_divas} of {weak_all} Diva (the most {weak_most:.2} of its bar); {rough} of {heard_enough} phrases heard enough too rough to shine"
+        "\n{songs_ok} of {songs} songs Diva from the second phrase on in every hearing and never sung weakly; {divas} of {all} phrase hearings Diva; sung weakly, {weak_divas} of {weak_all} Diva (the most {weak_most:.2} of its bar); {rough} of {heard_enough} phrases heard enough too rough to shine"
     );
 }
 

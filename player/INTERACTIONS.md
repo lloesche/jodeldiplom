@@ -650,10 +650,19 @@ stem keys are their mutes.
   the pitch's share at 92 % too, each bar times what the original itself
   reaches on that phrase in its everyday hearings (another rate, the delay off,
   octave errors, pitch lost: the least, less half its spread) where
-  that is under 1, so the original is Diva on every phrase; a phrase it
-  reaches under 70 % of itself on has no shine (there half the phrase
-  sung, or near silence, could be Diva). A phrase the original is heard
-  too little on (under two words, or 15 % of its notes) has no shine.
+  that is under 1, so the original reaches Diva's bars on every phrase;
+  a phrase it reaches under 70 % of itself on has no shine (there half
+  the phrase sung, or near silence, could be Diva). A phrase the
+  original is heard too little on (under two words, or 15 % of its
+  notes) has no shine. Diva is earned in a row: a phrase reaching its
+  bars counts as Diva only right after a phrase that counted Amazing or
+  better, else as Amazing (its tier row says so: `earned`), so the first
+  phrase scored is never Diva and the original is Diva from its second
+  phrase on; the phrase before is the last one scored (one without a
+  shine is skipped), forgotten as the scoring starts over (the song from
+  its start, a seek back over a second) and as it was after a seek back
+  under a second. The tier a phrase counts as is the one everything reads:
+  the meter's badge, the marks, the effects and sounds, the diploma.
   The original's phrases are worked out off the audio thread once the
   words are timed (from the kept stems; a song without them separated
   for it) and kept in `shine/` in the data folder (schema `shine`, the
@@ -683,9 +692,11 @@ stem keys are their mutes.
   - `the_original_shines_as_itself_and_silence_not_at_all`,
     `a_singer_off_the_notes_shines_less_in_another_key_alike`,
     `the_bars_are_a_share_of_what_the_original_reaches`,
+    `diva_is_earned_in_a_row`,
     `weak_singing_is_never_diva_however_low_the_par`,
     `a_reference_from_a_voice_and_as_text`,
-    `the_singing_scores_each_phrase_as_it_ends` (`core::shine`)
+    `the_singing_scores_each_phrase_as_it_ends` (`core::shine`),
+    `every_earned_row_has_a_row_below` (`tiers`)
   - `short_seeks_back_in_a_row_are_as_heard_straight` (`core::singing`:
     the moments, the phrases' shine among them, as heard straight),
     `a_streak_multiplies_the_points_and_two_misses_end_it`,

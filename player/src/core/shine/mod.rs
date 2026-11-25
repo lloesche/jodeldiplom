@@ -19,7 +19,9 @@
 //! the delay off, octave errors, the pitch lost now and then) reach the
 //! top tier's bar ([`Tier::TOP`], Diva) on every phrase, since each
 //! phrase's bars are set from the least they reach ([`Par`],
-//! [`Tier::of`]).
+//! [`Tier::of`]). Diva is earned in a row ([`Tier::counted`]): a phrase
+//! reaching it counts as it only right after one that counted at least
+//! Amazing, so the original is Diva from its second phrase on.
 
 pub mod measure;
 pub mod reference;
@@ -158,11 +160,29 @@ impl Tier {
         };
         Tier::ALL.into_iter().rev().find(|&t| clears(t))
     }
+
+    /// What a phrase reaching this tier counts as, the phrase before it
+    /// having counted as `before` (none: no tier, or no phrase before it):
+    /// a row earned in a row ([`crate::tiers::TierSpec::earned`]) only
+    /// after one at least the row below, else the row below (and so on
+    /// down, where that is earned too).
+    pub fn counted(self, before: Option<Tier>) -> Tier {
+        let mut t = self;
+        while t.spec().earned {
+            let below = Tier::ALL[t.index() - 1];
+            if before >= Some(below) {
+                break;
+            }
+            t = below;
+        }
+        t
+    }
 }
 
 /// A phrase as it shone, scored when it ended: its line, when it ended
 /// (seconds into the song), its shine (each against its own bar for the
-/// top tier, 1: the top's) and the tier it reached.
+/// top tier, 1: the top's) and the tier it counts as (what everything
+/// shown, heard and tallied of it reads).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Shone {
     /// Its line (among the sung lines).
@@ -174,19 +194,22 @@ pub struct Shone {
     /// The top tier's bar for it (its shine at which it is the top, the
     /// pitch aside).
     pub top: f32,
-    /// The tier reached, if any.
+    /// The tier it counts as, if any: the one reached ([`Tier::of`]),
+    /// earned in a row where its row asks it ([`Tier::counted`]).
     pub tier: Option<Tier>,
 }
 
 impl Shone {
-    /// `line`'s phrase ending at `end` shone `shine`, its original at `par`.
-    pub fn new(line: usize, end: f64, shine: &Shine, par: Par) -> Shone {
+    /// `line`'s phrase ending at `end` shone `shine`, its original at `par`,
+    /// the phrase scored before it having counted as `before` (none: no
+    /// tier, or none scored before it since the scoring started).
+    pub fn new(line: usize, end: f64, shine: &Shine, par: Par, before: Option<Tier>) -> Shone {
         Shone {
             line,
             end,
             value: shine.value as f32,
             top: (Tier::TOP.bar() * par.scale()) as f32,
-            tier: Tier::of(shine, par),
+            tier: Tier::of(shine, par).map(|t| t.counted(before)),
         }
     }
 

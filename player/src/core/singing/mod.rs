@@ -452,7 +452,8 @@ impl Singing {
 
     /// The phrases whose frames are all in by `t` (seconds into the song),
     /// measured and held against the original's: each a moment with its
-    /// shine and tier.
+    /// shine and the tier it counts as after the last one scored (the
+    /// moments taken back by a seek back, started over by a restart).
     fn shine_phrases(&mut self, t: f64) {
         let ready = t - shine::FRAME_LATE - shine::measure::MASK_AROUND;
         while let Some(&(l, end)) = self.notes.phrases().get(self.tally.next_phrase) {
@@ -468,7 +469,8 @@ impl Singing {
             let Some(s) = measured.map(|m| shine::shine(&m, &original.yardstick)) else {
                 continue;
             };
-            let shone = Shone::new(l, end, &s, original.par);
+            let before = self.last_phrase().and_then(|p| p.tier);
+            let shone = Shone::new(l, end, &s, original.par, before);
             self.log.push(t, t, Cue::Phrase(shone));
         }
     }

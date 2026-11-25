@@ -869,10 +869,15 @@ phrase and springs to its shine as it ends, its tier popping over it
 on a badge (drawn over the light, so the bloom never washes it out):
 **Good** (60 % of the original), **Great** (72 %), **Awesome** (80 %),
 **Amazing** (87 %), **Diva** (94 %, the pitch at 92 % of the original's
-too: the original always, a good take on a few phrases a song). Each
+too: the original from its second phrase on, a good take on a few
+phrases a song). Diva
+has to be earned in a row: a phrase at Diva's bars counts as Diva only
+right after a phrase that was Amazing or better, else as Amazing, so the
+first phrase you sing is never Diva (nor after starting over). Each
 phrase's bars are set by what the original itself reaches on it, heard every
 everyday way (another rate, the delay off, octave errors, pitch lost),
-so the original singer is Diva on every phrase, and a rough original
+so the original singer reaches Diva's bars on every phrase (and is Diva
+from its second on), and a rough original
 makes Diva easier; a phrase the original reaches under 70 % of itself on
 (so rough that half of it sung could be Diva) has no shine. A phrase the
 original is heard too little on (fewer than two words, or under 15 % of
