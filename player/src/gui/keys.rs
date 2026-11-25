@@ -4,7 +4,8 @@
 
 use iced::keyboard::{key::Named, Key as IcedKey, Modifiers};
 
-use crate::core::keymap::{Key, KeyCode};
+use crate::core::keymap::{self, Key, KeyCode, Op};
+use crate::core::State;
 
 /// An iced key as the core's [`Key`], with `modifiers` held.
 pub fn key(key: &IcedKey, modifiers: Modifiers) -> Option<Key> {
@@ -55,6 +56,18 @@ pub fn pressed(plain: &IcedKey, logical: &IcedKey, modifiers: Modifiers) -> Opti
         k.shift |= shifted_digit;
         k
     })
+}
+
+/// Whether `key` let go of is the demo key, held
+/// ([`crate::core::singing::Demo`]): the key alone, whatever is held with
+/// it now or shows over the mode.
+pub fn lets_go_of_demo(state: &State, key: &IcedKey) -> bool {
+    let demo = |k: Key| {
+        keymap::KEYMAP
+            .iter()
+            .any(|b| b.op == Op::KaraokeDemo && b.keys.contains(&k))
+    };
+    state.karaoke.demo.held() && self::key(key, Modifiers::empty()).is_some_and(demo)
 }
 
 /// The key's name as the setup screen takes it: one character, `"enter"`

@@ -616,6 +616,27 @@ stem keys are their mutes.
   - `short_seeks_back_in_a_row_are_as_heard_straight` (`core::singing`:
     the moments, the phrases' shine among them, as heard straight)
   - `shine_files_are_pinned` (schemas)
+- **K23.** `p` held in Karaoke mode, the demo sings: the game hears a
+  perfect singer in place of the microphone (with one open or none), for
+  showing the game off. Its frames are the notes the bubbles are made of,
+  a few cents of slow wobble on them, nothing where no note is due, at
+  the singing's own time (the song heard less how late the voice comes),
+  so the words burst, the streak, the multiplier, the shots, the shine
+  and the sounds go as for a singer on time; the microphone's pitch is
+  not listened to meanwhile, nor is the delay estimated from it. Let go
+  of (or the window left, or the mode), it stops at once: nothing after.
+  "AUTO" shows in the stage's top left corner while it is held. A song
+  the demo sang in (since its scoring last started) shows its result and
+  diploma as any, never as a best ("Sung by the demo key: not a best"
+  where the best goes), and its singing is not kept (`karaoke_keep`).
+  - `held_through_a_phrase_every_word_bursts_and_the_multiplier_goes_up`,
+    `let_go_it_stops_at_once`,
+    `nothing_is_sung_off_the_notes_and_nothing_without_the_key`
+    (`core::singing::demo`)
+  - `a_song_the_demo_sang_shows_its_result_and_sets_no_best`
+  - `the_demo_key_is_held_in_the_mode_only`
+  - `the_demo_sings_with_no_microphone` (app)
+  - `a_song_the_demo_sang_in_is_not_kept` (`keep`)
 - **K18.** `s` on the Karaoke tab (or the palette) syncs, with a
   microphone open (else it says one is needed) and the player's strip
   heard on the Mixer tab (not muted or far down, nor another strip soloed:

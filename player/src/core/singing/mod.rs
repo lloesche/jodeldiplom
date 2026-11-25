@@ -26,6 +26,9 @@
 //! The singer's pitch as drawn ([`Heard::cents`]): a frame that hits sits
 //! on its note; off the notes it is the pitch sung, its jitter smoothed (a
 //! median over [`SMOOTH_FRAMES`], then a glide).
+//!
+//! The demo key held, a perfect singer is heard in place of the
+//! microphone ([`Demo`]).
 
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
@@ -37,6 +40,7 @@ use jodel_rhythm::waveform::{Melody, Waveform};
 use crate::core::shine::{self, Reference, Shone};
 
 mod bursts;
+mod demo;
 pub mod judge;
 mod moments;
 mod notes;
@@ -46,6 +50,7 @@ mod tally;
 mod undo;
 
 pub use bursts::Rescue;
+pub use demo::Demo;
 pub use judge::{KeyStep, SungKey, KEY_FRAMES, SHARE, TOLERANCE};
 pub use moments::{Burst, Cue, Cursor, Moment, Since};
 pub use notes::{notes_of, LineNotes, Note, Notes};

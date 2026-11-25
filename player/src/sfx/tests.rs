@@ -115,6 +115,7 @@ fn write_the_sounds() {
         medal: Some(crate::core::singing::Medal::Gold),
         best: Some(9_000),
         whole: true,
+        demo: false,
     };
     let shown = crate::core::singing::Shown::new(result, 1, 0);
     let revealed: Vec<(f64, Sound, f32)> = shown

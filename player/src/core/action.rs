@@ -117,6 +117,9 @@ pub enum Action {
     /// The Ctrl key, as the frontend saw it: held in the browser, it
     /// previews the file selected ([`crate::core::preview`]).
     Ctrl(crate::core::preview::Ctrl),
+    /// The demo key let go of (or the window left while it was held): the
+    /// demo stops singing at once ([`crate::core::singing::Demo`]).
+    DemoLetGo,
     /// Select a list row (mouse).
     SelectRow(usize),
     /// Do on a list row what `enter` does (a double click).

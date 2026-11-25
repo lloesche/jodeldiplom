@@ -973,6 +973,15 @@ while a song is held for START or counting in. `esc` is the only way
 out: back to the tab, fullscreen ends, the voice still at its level,
 playback where it is (a count-in under way is called off).
 
+| Key | Karaoke mode |
+|---|---|
+| `enter` / `space` / a click on START | START (`space` pauses a song playing) |
+| `N` `P` | the next or previous song, held for START |
+| `←` `→` | the voice 1 dB down, up (`shift`: 1 % of its travel) |
+| `i` / `r` | the next microphone / record 30 s for the echo canceller |
+| hold `p` | the demo sings: a perfect singer in place of the microphone, to show the game off ("AUTO" in the corner); that song's score is no best and its singing is not kept |
+| `esc` | back to the tab |
+
 The browser lists folders and files ending in `.flac`, `.wav`, `.aif`,
 `.aiff`, `.aifc`, `.caf`, `.m4a`, `.mp4`, `.mp3`, `.mp2`, `.mp1`, `.ogg` and
 `.oga`. Each file's row shows a format chip, read from the file's headers

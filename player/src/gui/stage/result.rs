@@ -528,6 +528,7 @@ mod tests {
             medal,
             best,
             whole,
+            demo: false,
         }
     }
 

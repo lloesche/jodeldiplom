@@ -83,6 +83,7 @@ fn runs() -> Vec<(&'static str, SongResult, Option<Art>, Vec<Swatch>)> {
         medal: Some(Medal::Gold),
         best: Some(9_850),
         whole: true,
+        demo: false,
     };
     let none = SongResult {
         title: "Bohemian Rhapsody".into(),
@@ -94,6 +95,7 @@ fn runs() -> Vec<(&'static str, SongResult, Option<Art>, Vec<Swatch>)> {
         medal: None,
         best: Some(3_400),
         whole: true,
+        demo: false,
     };
     let part = SongResult {
         title: "こんにちは世界".into(),
@@ -105,6 +107,7 @@ fn runs() -> Vec<(&'static str, SongResult, Option<Art>, Vec<Swatch>)> {
         medal: None,
         best: None,
         whole: false,
+        demo: false,
     };
     let silver = SongResult {
         title: "Take On Me".into(),
@@ -116,6 +119,7 @@ fn runs() -> Vec<(&'static str, SongResult, Option<Art>, Vec<Swatch>)> {
         medal: Some(Medal::Silver),
         best: Some(8_400),
         whole: true,
+        demo: false,
     };
     let long = SongResult {
         title: "君の名は。〜 夢灯籠 〜 前前前世 (movie ver.) スパークル 〜 なんでもないや".into(),
@@ -127,6 +131,7 @@ fn runs() -> Vec<(&'static str, SongResult, Option<Art>, Vec<Swatch>)> {
         medal: Some(Medal::Bronze),
         best: None,
         whole: true,
+        demo: false,
     };
     let swatch = |rgb, share| Swatch { rgb, share };
     vec![
@@ -165,6 +170,7 @@ fn runs() -> Vec<(&'static str, SongResult, Option<Art>, Vec<Swatch>)> {
                 medal: None,
                 best: Some(4_200),
                 whole: true,
+                demo: false,
             },
             Some(cover([30, 30, 70], [70, 50, 110], [200, 190, 240])),
             vec![swatch([50, 40, 100], 0.6), swatch([190, 180, 235], 0.3)],

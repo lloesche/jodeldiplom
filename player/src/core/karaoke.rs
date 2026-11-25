@@ -23,6 +23,8 @@
 //! - a song heard to its end, the game on, shows how it went while the
 //!   next is held, or after the last ([`result_shown`]): the first START
 //!   during its reveal completes it, the next starts the song;
+//! - `p` held, the demo sings ([`super::singing::Demo`]): for showing the
+//!   game off, never a best;
 //! - `esc` is the only way out: back to the tab (the voice still at its
 //!   level), playback where it is (a count-in under way is called off).
 
@@ -366,6 +368,9 @@ pub struct KaraokeState {
     pub last_heard: Option<(usize, f64, u64)>,
     /// The singing of the song in the mode, scored.
     pub singing: super::singing::Singing,
+    /// The demo key, held in the mode: a perfect singer heard in place of
+    /// the microphone.
+    pub demo: super::singing::Demo,
     /// How late the singer's voice comes, as the scoring takes it, and what
     /// is kept of it.
     pub lag: super::lag::Lag,
@@ -564,6 +569,7 @@ fn apply_mode(state: &mut State, op: Op, fx: &mut Vec<Effect>) -> bool {
         }
         Op::MicNext => fx.push(Effect::NextMic),
         Op::KaraokeRecordEcho => fx.push(Effect::RecordEcho),
+        Op::KaraokeDemo => state.karaoke.demo.hold(),
         Op::Quit | Op::VolumeUp | Op::VolumeDown => return false,
         _ => {}
     }
@@ -681,6 +687,7 @@ pub(crate) fn leave(state: &mut State, fx: &mut Vec<Effect>) {
         }
     }
     state.karaoke.dragging = None;
+    state.karaoke.demo.let_go();
     state.karaoke.controls = controls::Controls::Hidden;
     fx.push(Effect::Engine(Command::HoldAtEnd(false)));
 }

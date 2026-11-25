@@ -51,6 +51,9 @@ pub struct Tally {
     pub last_scored: Option<Scored>,
     /// How the last words scored left the streak.
     pub run: Run,
+    /// Some of it was sung by the demo key ([`super::Demo`]): never a
+    /// best.
+    pub demo: bool,
 }
 
 impl Tally {

@@ -317,6 +317,9 @@ pub enum Op {
     KaraokeEnterHere,
     /// Karaoke mode: START, the song held after a count-in.
     KaraokeStart,
+    /// Karaoke mode: the demo sings while the key is held
+    /// ([`crate::core::singing::Demo`]).
+    KaraokeDemo,
     /// Karaoke: the slider a step down.
     SliderDown,
     /// Karaoke: the slider a step up.
@@ -447,6 +450,7 @@ impl Op {
             Op::KaraokeEnter => "Karaoke mode",
             Op::KaraokeEnterHere => "Karaoke mode where the song is",
             Op::KaraokeStart => "Karaoke: start the song",
+            Op::KaraokeDemo => "Karaoke: the demo sings (held)",
             Op::SliderDown => "Slider down",
             Op::SliderUp => "Slider up",
             Op::SliderFineDown => "Slider a percent down",
@@ -532,6 +536,7 @@ impl Op {
                 | Op::DeskNextStrip
                 | Op::SyncKeep
                 | Op::SyncAgain
+                | Op::KaraokeDemo
         )
     }
 }
@@ -1300,6 +1305,12 @@ pub const KEYMAP: &[Binding] = &[
         &[Key::ch('r')],
         Op::KaraokeRecordEcho,
         "record 30 s for tuning the echo canceller",
+    ),
+    b(
+        Context::KaraokeMode,
+        &[Key::ch('p')],
+        Op::KaraokeDemo,
+        "hold: the demo sings the song perfectly, AUTO showing (its score no best, its singing not kept)",
     ),
     b(
         Context::KaraokeMode,

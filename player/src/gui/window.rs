@@ -282,12 +282,15 @@ impl Gui {
                     window::Event::Resized(size) => self.size = size,
                     window::Event::Rescaled(scale) => self.scale = scale,
                     window::Event::CloseRequested => return self.leave(),
-                    // Ctrl let go of in another window is never seen: let
-                    // go of here.
-                    window::Event::Unfocused
-                        if self.app().is_some_and(|app| app.state.preview.ctrl) =>
-                    {
-                        self.act(Action::Ctrl(Ctrl::Released));
+                    // Ctrl (or the demo key) let go of in another window is
+                    // never seen: let go of here.
+                    window::Event::Unfocused => {
+                        if self.app().is_some_and(|app| app.state.preview.ctrl) {
+                            self.act(Action::Ctrl(Ctrl::Released));
+                        }
+                        if self.app().is_some_and(|app| app.state.karaoke.demo.held()) {
+                            self.act(Action::DemoLetGo);
+                        }
                     }
                     _ => {}
                 }
@@ -325,6 +328,14 @@ impl Gui {
                     } else {
                         Ctrl::Released
                     }));
+                }
+            }
+            iced::Event::Keyboard(keyboard::Event::KeyReleased { key, .. }) => {
+                if self
+                    .app()
+                    .is_some_and(|app| super::keys::lets_go_of_demo(&app.state, &key))
+                {
+                    self.act(Action::DemoLetGo);
                 }
             }
             iced::Event::Keyboard(keyboard::Event::KeyPressed {

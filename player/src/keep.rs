@@ -5,7 +5,9 @@
 //! `karaoke_keep` on, saved when the song ends or the mode is left: a
 //! folder `recordings/sing-<seconds>` beside the settings file, its files
 //! ([`VOICE`], [`TIMES`], [`LYRICS`], [`MELODY`], [`ABOUT`]) each written
-//! durably. The `sing_replay` example reads one back.
+//! durably. The `sing_replay` example reads one back. A song the demo key
+//! sang in ([`crate::core::singing::Demo`]) is not saved: it was not all
+//! sung.
 
 use std::fmt::Write as _;
 use std::io;
@@ -71,6 +73,8 @@ pub struct Kept {
     /// The key the song was heard in, each time it changed: the sample,
     /// the semitones from its own.
     keys: Vec<(usize, i8)>,
+    /// The demo key sang in the song.
+    demo: bool,
 }
 
 impl Kept {
@@ -89,6 +93,7 @@ impl Kept {
             waveform,
             late: Vec::new(),
             keys: Vec::new(),
+            demo: false,
         }
     }
 
@@ -129,9 +134,15 @@ impl Kept {
         );
     }
 
-    /// Whether anything was heard.
-    pub fn is_empty(&self) -> bool {
-        self.samples.is_empty()
+    /// The demo key sang in the song: it is not saved.
+    pub fn sung_by_demo(&mut self) {
+        self.demo = true;
+    }
+
+    /// Whether it is to be saved: something was heard, and the demo key
+    /// sang none of the song.
+    pub fn worth_saving(&self) -> bool {
+        !self.samples.is_empty() && !self.demo
     }
 
     /// Saves it into a new folder in `dir`, durably; its path.
@@ -264,5 +275,21 @@ mod tests {
         assert_eq!((back.len(), rate), (300, 1000));
         assert!((back[0] - 0.5).abs() < 1e-3 && (back[150] + 0.5).abs() < 1e-3);
         assert_eq!(read_times("0 2.000000\n200 5.000000\n"), kept.marks);
+    }
+
+    #[test]
+    fn a_song_the_demo_sang_in_is_not_kept() {
+        let lyrics = Arc::new(jodel_lyrics::Lyrics::parse(
+            "la la",
+            jodel_lyrics::Source::Unknown,
+        ));
+        let waveform = Arc::new(jodel_rhythm::waveform::Waveform::default());
+        let mut kept = Kept::new("/a.flac".into(), lyrics, waveform);
+        assert!(!kept.worth_saving(), "nothing heard");
+        kept.push(&[0.5; 100], 1000, 2.0, false, Sung::new(0.15, "default", 0));
+        assert!(kept.worth_saving());
+        kept.sung_by_demo();
+        kept.push(&[0.5; 100], 1000, 9.0, false, Sung::new(0.15, "default", 0));
+        assert!(!kept.worth_saving(), "the demo sang in it");
     }
 }

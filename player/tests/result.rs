@@ -646,3 +646,76 @@ fn no_result_where_no_song_was_played_out_in_the_mode() {
     track_started(&mut state, 1);
     assert!(none(&state) && karaoke::result_shown(&state).is_none());
 }
+
+/// `p` as the window sends it in the mode.
+fn demo_key(state: &mut State) {
+    use jodeldiplom::core::keymap::{lookup, Key, Meaning};
+    let Some(Meaning::Op(op)) = lookup(state, Key::ch('p')) else {
+        panic!("p does nothing");
+    };
+    update(state, Action::Op(op));
+}
+
+/// With `p` held (no microphone open: none is in a test), the demo sings
+/// the four words, the window's frames asking every 16 ms; then the song
+/// is played out. Its result shows as any song's, every word hit, but it
+/// is no best: none kept where there was none, the one before staying,
+/// the best's line saying why.
+#[test]
+fn a_song_the_demo_sang_shows_its_result_and_sets_no_best() {
+    use jodeldiplom::core::singing::Medal;
+    for before in [None, Some(100)] {
+        let mut state = tab();
+        op(&mut state, Op::KaraokeEnter);
+        four_words(&mut state);
+        let key = state.queue.paths[0].display().to_string();
+        if let Some(points) = before {
+            let best = jodeldiplom::scores::Best {
+                points,
+                hit: 1,
+                words: 4,
+            };
+            state.karaoke.bests.insert(key.clone(), best);
+        }
+        demo_key(&mut state);
+        let mut t = 0.0;
+        while t <= 4.5 {
+            let k = &mut state.karaoke;
+            k.demo.sing(&mut k.singing, t);
+            t += 0.016;
+        }
+        ended(&mut state, 0);
+        let r = &state.karaoke.result.as_ref().expect("a result").result;
+        assert_eq!((r.points, r.hit, r.words), (400, 4, 4));
+        assert_eq!(r.medal, Some(Medal::Gold));
+        assert!(r.demo && !r.new_best());
+        assert_eq!(state.karaoke.bests.get(&key).map(|b| b.points), before);
+        assert!(!state.karaoke.bests_changed);
+        assert!(jodeldiplom::view::karaoke::best_words(r).contains("demo"));
+    }
+}
+
+/// `p` is the demo key in the mode only (on the tab it shows or hides the
+/// notes), held while it repeats; let go of (as the window tells it: the
+/// key alone, whatever is held with it), or the mode left, it stops.
+#[test]
+fn the_demo_key_is_held_in_the_mode_only() {
+    use iced::keyboard::Key as IcedKey;
+    use jodeldiplom::gui::keys::lets_go_of_demo;
+    let mut state = tab();
+    let notes = state.config.karaoke_notes;
+    demo_key(&mut state);
+    assert!(!state.karaoke.demo.held() && state.config.karaoke_notes != notes);
+    op(&mut state, Op::KaraokeEnter);
+    demo_key(&mut state);
+    demo_key(&mut state);
+    assert!(state.karaoke.demo.held());
+    assert!(!lets_go_of_demo(&state, &IcedKey::Character("x".into())));
+    assert!(lets_go_of_demo(&state, &IcedKey::Character("p".into())));
+    update(&mut state, Action::DemoLetGo);
+    assert!(!state.karaoke.demo.held());
+    assert!(!lets_go_of_demo(&state, &IcedKey::Character("p".into())));
+    demo_key(&mut state);
+    op(&mut state, Op::Back);
+    assert!(!state.karaoke.demo.held(), "the mode left");
+}

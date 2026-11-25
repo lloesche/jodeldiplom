@@ -6,7 +6,8 @@
 //! singer as an arrow at the playhead, gliding to their pitch, its trail
 //! behind it and sparks flying off it; the streak's multiplier over the
 //! playhead; the line sung and the next at the bottom; and the song's
-//! progress, its breaks apart, along the bottom edge. Its text is in
+//! progress, its breaks apart, along the bottom edge; "AUTO" in a corner
+//! while the demo sings ([`tag`]). Its text is in
 //! Karaoke mode's own faces ([`Face`]). While a song's result shows, the
 //! stage is the result screen instead ([`result`]).
 //!
@@ -27,6 +28,7 @@ mod scene;
 mod shade;
 mod shots;
 mod start;
+mod tag;
 mod words;
 use self::shade::Shade;
 use super::sparks::noise;
@@ -270,6 +272,8 @@ pub struct Song<'a> {
     pub length: Option<f64>,
     /// How late the voice comes, in seconds: the singing's time is the song's less it.
     pub late: f64,
+    /// Whether the demo key is held ([`crate::core::singing::Demo`]).
+    pub demo: bool,
 }
 
 impl<'a> Song<'a> {
@@ -296,6 +300,7 @@ impl<'a> Song<'a> {
                 .map(|d| d.as_secs_f64())
                 .filter(|&d| d > 0.0),
             late: state.karaoke.lag.late,
+            demo: state.karaoke.demo.held(),
         }
     }
 }
@@ -767,6 +772,9 @@ impl Stage {
         // up; the streak beside it, over the light (Amazing's flames blaze
         // up there).
         let mut top = Vec::new();
+        if song.demo {
+            self.demo_tag(&mut top, area);
+        }
         let m = if game { singing.multiplier() } else { 1 };
         let shown_target = if m > 1 { 1.0 } else { 0.0 };
         if m > 1 {

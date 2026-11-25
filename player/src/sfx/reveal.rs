@@ -134,6 +134,7 @@ mod tests {
             medal: Some(Medal::Gold),
             best: Some(5_000),
             whole: true,
+            demo: false,
         }
     }
 

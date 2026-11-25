@@ -274,6 +274,7 @@ fn gpu_frames(
             game: true,
             length: Some(melody.cents.len() as f64 / 100.0),
             late: 0.0,
+            demo: false,
         };
         let frame = stage.frame(
             &song,

@@ -924,7 +924,7 @@ impl App {
         let Some(kept) = self.kept.take() else {
             return;
         };
-        if kept.is_empty() {
+        if !kept.worth_saving() {
             return;
         }
         let dir = match self.state.config_file.as_deref().and_then(Path::parent) {
@@ -1199,7 +1199,8 @@ impl App {
     /// comes: [`crate::core::lag`]), held against the song's notes in
     /// Karaoke mode ([`crate::core::singing`]), and the delay estimated
     /// from it. `heard` false: no microphone; the notes made all the same,
-    /// nothing heard.
+    /// nothing heard. The demo key held, the demo sings instead
+    /// ([`crate::core::singing::Demo`]).
     fn sing(&mut self, heard: bool) {
         let state = &mut self.state;
         let song = crate::core::karaoke::song_index(state)
@@ -1225,40 +1226,53 @@ impl App {
             return;
         };
         let game = state.config.karaoke_game;
+        let sung_now = state.karaoke.lag.sung_clock(state.heard());
         // Estimated even with a delay measured: the singing corrects it
         // ([`crate::core::lag::correction`]).
         let karaoke = &mut state.karaoke;
         let (singing, estimate) = (&mut karaoke.singing, &mut karaoke.lag.estimate);
         let (late, source) = (karaoke.lag.late, karaoke.lag.source);
+        let demo = &mut karaoke.demo;
         singing.prepare(&path, &lyrics, &waveform);
-        // Without a microphone the notes are still made (the lane shows
-        // them), nothing heard.
-        if !heard {
+        // Without a microphone (nor the demo) the notes are still made (the
+        // lane shows them), nothing heard.
+        if !heard && !demo.held() {
             return;
         }
         // The original singer's phrases, for the shine (the game on, a
-        // microphone open): worked out (or read) off this thread, set as
-        // they come ([`App::pump`]).
+        // microphone open or the demo singing): worked out (or read) off
+        // this thread, set as they come ([`App::pump`]).
         if game && singing.reference().is_none() {
             self.shine.want(&path, &lyrics, &waveform);
+        }
+        // Kept as it is heard, where that is on.
+        if state.config.karaoke_keep && self.kept.as_ref().is_none_or(|k| k.song != path) {
+            self.kept = Some(crate::keep::Kept::new(
+                path.clone(),
+                Arc::clone(&lyrics),
+                Arc::clone(&waveform),
+            ));
+        }
+        // The singer's pitch comes from one place: the demo key held, the
+        // demo, up to the singing's time now (the microphone not listened
+        // to, the delay not estimated from it, the song's singing not
+        // kept; the pitch tracker starts afresh after); else the
+        // microphone, through the pitch tracker.
+        if demo.held() {
+            demo.sing(singing, sung_now);
+            if let Some(kept) = self.kept.as_mut().filter(|k| k.song == path) {
+                kept.sung_by_demo();
+            }
+            self.yin = None;
+            return;
         }
         // A frame's pitch is that of the window before it: its middle.
         let centre = jodel_rhythm::yin::WINDOW / 2.0;
         let placed = clock.place(&self.sung);
-        // Kept as it is heard, where that is on.
-        if state.config.karaoke_keep {
-            if self.kept.as_ref().is_none_or(|k| k.song != path) {
-                self.kept = Some(crate::keep::Kept::new(
-                    path.clone(),
-                    Arc::clone(&lyrics),
-                    Arc::clone(&waveform),
-                ));
-            }
-            if let Some(kept) = self.kept.as_mut() {
-                for &(block, at, continues) in &placed {
-                    let how = crate::keep::Sung::new(late, source.key(), singing.shift());
-                    kept.push(&block.samples, block.rate, at, continues, how);
-                }
+        if let Some(kept) = self.kept.as_mut().filter(|_| state.config.karaoke_keep) {
+            for &(block, at, continues) in &placed {
+                let how = crate::keep::Sung::new(late, source.key(), singing.shift());
+                kept.push(&block.samples, block.rate, at, continues, how);
             }
         }
         for &(block, at, continues) in &placed {

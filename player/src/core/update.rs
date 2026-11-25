@@ -357,6 +357,7 @@ pub fn update(state: &mut State, action: Action) -> Vec<Effect> {
     let selected = preview::watched(state);
     match action {
         Action::Ctrl(how) => preview::ctrl(state, how, &mut fx),
+        Action::DemoLetGo => state.karaoke.demo.let_go(),
         Action::Op(op) => apply_op(state, op, &mut fx),
         Action::Type(c) => {
             if let Some(palette) = &mut state.palette {
@@ -2052,8 +2053,8 @@ fn apply_op(state: &mut State, op: Op, fx: &mut Vec<Effect>) {
             state.screen = Screen::Main;
             super::sync::begin(state, fx);
         }
-        // Only while a sync shows.
-        Op::SyncKeep | Op::SyncAgain => {}
+        // Only while a sync shows; only held in Karaoke mode.
+        Op::SyncKeep | Op::SyncAgain | Op::KaraokeDemo => {}
         Op::KeyDown | Op::KeyUp | Op::KeyReset => super::key::step(state, op, fx),
         Op::MicNext => fx.push(Effect::NextMic),
         Op::KaraokeStart

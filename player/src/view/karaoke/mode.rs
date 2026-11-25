@@ -106,7 +106,7 @@ pub fn draw_mode(
     for s in &c.sliders {
         slider(buf, state, s, true);
     }
-    let hint = "esc leaves  ·  ↑ ↓ slider  ·  ← → level  ·  enter / space START  ·  N next song";
+    let hint = "esc leaves  ·  ↑ ↓ slider  ·  ← → level  ·  enter / space START  ·  N next song  ·  hold p demo";
     let max = usize::from(c.hint.width);
     buf.set_string(
         c.hint.x,

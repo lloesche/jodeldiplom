@@ -264,6 +264,115 @@ fn a_song_picked_while_paused_plays() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// No microphone (none opens), Karaoke mode entered where the song plays,
+/// four words a second each coming up on C4: `p` held, the demo sings
+/// them as the frames are drawn, every word hit and the song marked as the
+/// demo's; let go of, nothing more is heard.
+#[test]
+fn the_demo_sings_with_no_microphone() {
+    use jodeldiplom::core::karaoke::{self, SongLyrics};
+    use jodeldiplom::core::{Rhythm, Rhythmed, Side};
+    use std::time::Instant;
+    let _guard = common::real_time();
+    let dir = common::temp_dir("demo-no-mic");
+    common::write_wav(&dir.join("a.wav"), 44_100, 30.0);
+    std::fs::write(dir.join("a.lrc"), "la la la la\n").unwrap();
+    let mut options = AppOptions::new(dir.clone());
+    options.output = Output::Null(SimClock::Realtime);
+    options.size = (120, 36);
+    options.devices = Arc::new(|| Ok(Vec::new()));
+    options.mic = Arc::new(|_| Err("no microphone".into()));
+    options.mics = Arc::new(|| Ok(Vec::new()));
+    options.separator = || None;
+    let mut app = App::new(options);
+    assert!(common::wait_for(&mut app, WAIT, |a| !a
+        .state
+        .browser
+        .loading));
+    let path = dir.join("a.wav");
+    let row = app
+        .state
+        .browser
+        .entries
+        .iter()
+        .position(|e| e.path == path)
+        .unwrap();
+    app.dispatch(Action::SelectRow(row));
+    press(&mut app, alt_enter());
+    let ready = |a: &App| {
+        a.state.playing.state == PlayState::Playing
+            && matches!(a.state.rhythm.get(&path), Some(Rhythm::Ready(_)))
+            && karaoke::not_singable(&a.state, 0).is_none()
+    };
+    app.dispatch(Action::ShowSide(Side::Karaoke));
+    assert!(
+        common::wait_for(&mut app, WAIT, ready),
+        "{:?} {:?} {:?} {:?}",
+        app.state.playing.state,
+        app.state.rhythm.get(&path).map(std::mem::discriminant),
+        karaoke::not_singable(&app.state, 0),
+        app.state.queue.paths
+    );
+    app.dispatch(Action::Op(Op::KaraokeEnterHere));
+    assert_eq!(app.state.screen, Screen::Karaoke);
+    assert!(app.state.karaoke.mic.name.is_none(), "no microphone");
+    // The words from a second after where the song is, the melody under
+    // them.
+    let from = app.state.playing.position.ceil() + 1.0;
+    let Some(Rhythm::Ready(r)) = app.state.rhythm.get(&path).cloned() else {
+        unreachable!()
+    };
+    let frames = 3100;
+    let mut melody = jodel_rhythm::waveform::Melody {
+        cents: vec![0; frames],
+        sure: vec![0; frames],
+    };
+    for i in (from as usize * 100)..((from as usize + 4) * 100) {
+        (melody.cents[i], melody.sure[i]) = (6000, 255);
+    }
+    let waveform = jodel_rhythm::waveform::Waveform {
+        melody: Some(melody),
+        ..Default::default()
+    };
+    let rhythm = Rhythmed::new((*r.analysis).clone(), Some(waveform));
+    app.state
+        .rhythm
+        .insert(path.clone(), Rhythm::Ready(Arc::new(rhythm)));
+    let mut lyrics = jodel_lyrics::Lyrics::parse_text("la la la la", jodel_lyrics::Source::Lrclib);
+    for (k, w) in lyrics.lines[0].words.iter_mut().enumerate() {
+        (w.start, w.end) = (Some(from + k as f64), Some(from + k as f64 + 1.0));
+    }
+    let found = jodeldiplom::lyrics::Answer::Found {
+        lyrics,
+        timed: None,
+    };
+    let found = SongLyrics::from_answer(found);
+    app.state.karaoke.lyrics.insert(path.clone(), found);
+    press(&mut app, Key::ch('p'));
+    assert!(app.state.karaoke.demo.held());
+    // Drawn frame by frame through the last word.
+    let draw_until = |app: &mut App, t: f64| {
+        let end = Instant::now() + WAIT;
+        while Instant::now() < end && app.state.playing.position < t {
+            app.pump_wait(Duration::from_millis(16));
+            app.heard_for_frame();
+        }
+    };
+    draw_until(&mut app, from + 4.6);
+    let singing = &app.state.karaoke.singing;
+    let tally = singing.tally;
+    assert!(singing.is_of(&path));
+    assert_eq!((tally.hit_words, tally.scored_words), (4, 4), "{tally:?}");
+    assert!(tally.demo && !singing.heard.is_empty());
+    // Let go of: nothing heard after.
+    app.dispatch(Action::DemoLetGo);
+    let last = app.state.karaoke.singing.last_heard();
+    draw_until(&mut app, from + 5.5);
+    assert_eq!(app.state.karaoke.singing.last_heard(), last);
+    app.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn a_file_argument_plays_at_once_and_settings_are_saved() {
     let _guard = common::real_time();

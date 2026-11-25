@@ -140,8 +140,12 @@ pub fn date_words(year: i32, month: u32, day: u32) -> String {
 }
 
 /// The words under the best: a new one's (its first score, or how much it
-/// went up from), or the one before.
+/// went up from), or the one before; where the demo key sang, that it is
+/// none.
 pub fn best_words(r: &SongResult) -> String {
+    if r.demo {
+        return "Sung by the demo key: not a best".to_owned();
+    }
     match (r.new_best(), r.best) {
         (true, None) => "Your first score!".to_owned(),
         (true, Some(b)) => format!("Up from {}", points_text(b)),
@@ -191,6 +195,7 @@ mod tests {
             medal,
             best,
             whole,
+            demo: false,
         }
     }
 

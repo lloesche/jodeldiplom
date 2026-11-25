@@ -62,7 +62,8 @@ pub enum Beat {
     Verdict(Verdict),
     /// A new best ([`SongResult::new_best`]).
     NewBest,
-    /// The best before, shown calmly.
+    /// The best before, shown calmly (where the demo key sang, with the
+    /// word that this is no best: 0 where there was none).
     Best(u32),
     /// The reveal is over.
     End,
@@ -117,10 +118,11 @@ impl Reveal {
         }
         beats.push((t, Beat::Verdict(verdict)));
         t += STAMP;
+        // The demo's song has its best line too: that it is none.
         let best = if r.new_best() {
             Some(Beat::NewBest)
         } else {
-            r.best.map(Beat::Best)
+            r.best.or(r.demo.then_some(0)).map(Beat::Best)
         };
         if let Some(best) = best {
             beats.push((t, best));
@@ -306,6 +308,7 @@ mod tests {
             medal: whole.then(|| Medal::of(hit, words)).flatten(),
             best,
             whole,
+            demo: false,
         }
     }
 

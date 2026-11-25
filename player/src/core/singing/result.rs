@@ -81,6 +81,9 @@ pub struct SongResult {
     /// Whether the song was sung whole (from its start): only then a medal
     /// and a best.
     pub whole: bool,
+    /// Whether the demo key sang some of it ([`super::Demo`]): shown all
+    /// the same, never a best.
+    pub demo: bool,
 }
 
 impl SongResult {
@@ -107,13 +110,16 @@ impl SongResult {
             medal: whole.then(|| Medal::of(hit, words)).flatten(),
             best,
             whole,
+            demo: tally.demo,
         }
     }
 
     /// Whether it is a new best: a medal or a cheer (sung whole, something
-    /// scored), beating the best before (or the song's first score).
+    /// scored, none of it by the demo key), beating the best before (or the
+    /// song's first score).
     pub fn new_best(&self) -> bool {
-        matches!(self.verdict(), Verdict::Medal(_) | Verdict::Cheer)
+        !self.demo
+            && matches!(self.verdict(), Verdict::Medal(_) | Verdict::Cheer)
             && self.best.is_none_or(|b| self.points > b)
     }
 
