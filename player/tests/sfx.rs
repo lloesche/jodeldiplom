@@ -15,7 +15,7 @@ use jodel_playback::PlayState;
 use jodeldiplom::app::{App, AppOptions, MemoryOutput, Output};
 use jodeldiplom::core::keymap::Op;
 use jodeldiplom::core::singing::Beat;
-use jodeldiplom::core::{karaoke, Action, Side};
+use jodeldiplom::core::{karaoke, Action, Rhythm, Side};
 use jodeldiplom::core::{Anchor, HeadFrame, Playing};
 use jodeldiplom::sfx::diploma::Diploma;
 use jodeldiplom::sfx::Sound;
@@ -36,11 +36,11 @@ fn frames(app: &mut App, timeout: Duration, mut done: impl FnMut(&App) -> bool) 
 }
 
 /// Where `sound` (its left side) is heard in `left` (the device's left
-/// channel, full scale 1) near device frame `near` (within 60 ms): the
-/// frame its first `span` frames line up best from, and how well
-/// (normalized correlation, 1: alone and whole), against how well at its
-/// best 200 ms away (where it is not).
-fn heard_near(left: &[f32], sound: Sound, near: usize, span: usize) -> (usize, f64, f64) {
+/// channel, full scale 1) near the device frames `near` (from the first
+/// to the last, within 60 ms): the frame its first `span` frames line up
+/// best from, and how well (normalized correlation, 1: alone and whole),
+/// against how well at its best 200 ms after (where it is not).
+fn heard_near(left: &[f32], sound: Sound, near: (usize, usize), span: usize) -> (usize, f64, f64) {
     let made: Vec<f32> = sound
         .render(RATE)
         .interleaved()
@@ -60,17 +60,21 @@ fn heard_near(left: &[f32], sound: Sound, near: usize, span: usize) -> (usize, f
         dot / (made_energy * energy).sqrt().max(1e-12)
     };
     let reach = RATE as usize * 6 / 100;
-    let best = |from: usize| {
-        (from.saturating_sub(reach)..from + reach)
+    let best = |(first, last): (usize, usize)| {
+        (first.saturating_sub(reach)..last + reach)
             .map(|f| (f, at(f)))
             .fold((0, f64::MIN), |b, x| if x.1 > b.1 { x } else { b })
     };
     let (frame, fit) = best(near);
-    let (_, away) = best(near + RATE as usize / 5);
+    let after = near.1 + RATE as usize / 5;
+    let (_, away) = best((after, after));
     (frame, fit, away)
 }
 
 const RATE: u32 = 48_000;
+
+/// A frame of the device's stream (stereo, 24 bits in 32).
+const FRAME_BYTES: usize = 8;
 
 /// A song sung to its end in Karaoke mode, the game on, through the whole
 /// player on a memory device playing in real time: the device is opened
@@ -95,26 +99,46 @@ fn the_result_is_heard_after_the_song() {
     options.mic = Arc::new(|_| Ok(jodel_output::input::Input::feed(48_000, 240).0));
     options.mics = Arc::new(|| Ok(Vec::new()));
     options.separator = || None;
-    options.autoplay = Some(song);
+    // The beats by the flux alone, of the mix: the networks' inference
+    // (the beat network's, and the separator's where there is a GPU, as on
+    // the macOS runners), unoptimised, would take the processors from the
+    // mixer as it plays in real time on a small machine.
+    options.config.beat_voting = false;
+    options.config.beat_method = jodel_rhythm::Method::Flux;
+    options.config.stems = false;
+    options.autoplay = Some(song.clone());
     let mut app = App::new(options);
     let wait = Duration::from_secs(30);
     let playing = |a: &App| a.state.playing.state == PlayState::Playing;
     assert!(frames(&mut app, wait, playing));
     // Its frames drawn as it plays: the sounds' bank made at the device's
-    // rate meanwhile.
+    // rate meanwhile, and the song analysed before it is sung.
     app.dispatch(Action::ShowSide(Side::Karaoke));
     assert!(frames(&mut app, wait, |a| karaoke::not_singable(
         &a.state, 0
     )
-    .is_none()));
+    .is_none()
+        && matches!(a.state.rhythm.get(&song), Some(Rhythm::Ready(_)))));
     frames(&mut app, Duration::from_millis(1_500), |_| false);
     app.dispatch(Action::Op(Op::KaraokeEnter));
     app.dispatch(Action::Op(Op::KaraokeStart));
     let started = |a: &App| a.state.karaoke.countdown.is_none() && playing(a);
     assert!(frames(&mut app, wait, started), "START");
     // To its end, and the reveal after it drawn frame by frame, where the
-    // mixer is noted as its first beat and its last are cued.
-    let mixing = |a: &App| a.desk().unwrap().master.timebase.frame as usize;
+    // mixer is noted as its first beat and its last are cued: from just
+    // before the frame's sounds are cued to just after (the frames the
+    // mixer went through meanwhile, however long this thread was held up).
+    // A frame of the mixer's is a frame of what the device played once the
+    // silence the device filled underruns with so far is added (played,
+    // but none of the mixer's frames).
+    let played = memory.captures().last().expect("a device").list()[0]
+        .sink
+        .clone();
+    let mixing = |a: &App| {
+        let clock = a.desk().unwrap().master.timebase;
+        let device = (played.len() / FRAME_BYTES) as u64;
+        (clock.frame + device.saturating_sub(clock.heard)) as usize
+    };
     // The signature's beat is reached on the frame whose reveal time
     // passes its end from the frame before's, as the sounds read it.
     let (mut paper, mut signed, mut until, mut before) = (None, None, None, None);
@@ -122,20 +146,22 @@ fn the_result_is_heard_after_the_song() {
     while until.is_none_or(|u| Instant::now() < u) {
         assert!(Instant::now() < deadline, "the song ends");
         app.pump_wait(Duration::from_millis(16));
+        let cueing = mixing(&app);
         app.heard_for_frame();
         let Some((shown, after)) = karaoke::result_now(&app.state) else {
             continue;
         };
+        let cued = (cueing, mixing(&app));
         let (end, settled) = (
             shown.reveal.when(Beat::End).unwrap(),
             shown.reveal.settled(),
         );
         if paper.is_none() {
-            paper = Some(mixing(&app));
+            paper = Some(cued);
             until = Some(Instant::now() + Duration::from_secs_f64(settled + 1.0));
         }
         if signed.is_none() && after >= end && before.is_some_and(|t| t < end) {
-            signed = Some(mixing(&app));
+            signed = Some(cued);
         }
         before = Some(after);
     }

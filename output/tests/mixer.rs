@@ -264,8 +264,12 @@ fn a_flush_drops_what_the_device_holds_of_it() {
     out.write(&frames(0, 24_000, |_| 111), None).unwrap();
     wait_until("it plays", || out.position().unwrap() > 9_600);
     out.flush().unwrap();
-    let flushed = mixer.timebase().heard as usize;
     assert_eq!(out.position().unwrap(), out.written());
+    // Where the device was at the flush: as the mixer tells it next (what
+    // it told last is from before it, however long before the flush came).
+    let before = mixer.timebase().heard;
+    wait_until("heard told again", || mixer.timebase().heard != before);
+    let flushed = mixer.timebase().heard as usize;
     out.write(&frames(0, 9_600, |_| 222), None).unwrap();
     out.drain(None).unwrap();
     drop(out);
@@ -328,7 +332,10 @@ fn the_microphone_hears_the_device_in_the_leads_frames() {
         refused: 0,
     };
     assert_eq!(mixer.desk().mic, hearing);
-    let voice = singer.voice();
+    // Cleaned to the Lead's last frames.
+    let voice = singer.voice_until("the voice to the end", |v| {
+        v.iter().any(|b| b.stream_frame > total - 4_800)
+    });
     assert!(voice.len() > 100, "{} blocks", voice.len());
     // Told in the Lead's frames: the device's run 9 600 and more ahead.
     let last = voice.iter().map(|b| b.stream_frame).max().unwrap();
@@ -365,8 +372,7 @@ fn the_microphone_hears_song_after_song_on_one_opening() {
             .unwrap();
         out.drain(None).unwrap();
         assert_eq!(mixer.mic().port, MicPort::Hearing);
-        let voice = singer.voice();
-        assert!(voice.len() > 20, "{} blocks", voice.len());
+        let voice = singer.voice_until("the voice", |v| v.len() > 20);
         runs.push(voice.iter().map(|b| b.stream_frame).max().unwrap());
     }
     assert_eq!(device.streams.lock().unwrap().len(), 1);
@@ -389,7 +395,7 @@ fn the_microphone_never_reaches_the_device() {
     let mut out = open(&mut lead, RATE);
     out.write(&frames(0, u64::from(RATE), |_| 0), None).unwrap();
     out.drain(None).unwrap();
-    assert!(singer.voice().len() > 100, "the voice was heard");
+    singer.voice_until("the voice heard", |v| v.len() > 100);
     let desk = mixer.desk();
     assert!(desk.master.passthrough);
     drop(out);
@@ -502,7 +508,7 @@ fn every_input_is_offered_the_desks_one_format() {
 #[test]
 fn a_closed_input_cannot_open_again_and_the_device_stays() {
     let _guard = real_time();
-    let (mixer, _device) = mixer();
+    let (mixer, device) = mixer();
     let strip = mixer.strip("Player");
     let (mut g1, f1) = mixer.input(&strip, Role::Guest, 1.0);
     let mut o1 = open(&mut g1, RATE);
@@ -519,8 +525,13 @@ fn a_closed_input_cannot_open_again_and_the_device_stays() {
     assert_eq!(o2.format().rate, RATE);
     drop(f1);
     drop(g1);
+    // Everything above taken by the mixer, and the device mixed into:
+    // still the one opening, at its rate.
+    taken(&mut g2);
+    wait_until("the device mixed into", || mixer.timebase().epoch != 0);
     let tb = mixer.timebase();
     assert_eq!((tb.epoch, tb.rate), (1, RATE));
+    assert_eq!(device.streams.lock().unwrap().len(), 1, "opened once");
 }
 
 #[test]

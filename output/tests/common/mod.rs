@@ -290,6 +290,19 @@ impl Singer {
         self.input.take_voice(&mut voice);
         voice
     }
+
+    /// The voice given since the last call, once what is given so far is
+    /// `done` ([`wait_until`] it, `what`): the cleaner, on its thread,
+    /// may be behind what the device has played.
+    pub fn voice_until(&self, what: &str, done: impl Fn(&[VoiceBlock]) -> bool) -> Vec<VoiceBlock> {
+        let voice = Mutex::new(Vec::new());
+        wait_until(what, || {
+            let mut voice = voice.lock().unwrap();
+            self.input.take_voice(&mut voice);
+            done(&voice)
+        });
+        voice.into_inner().unwrap()
+    }
 }
 
 impl Drop for Singer {

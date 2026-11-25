@@ -1,6 +1,7 @@
 //! The look-ups: the sources in order, the cache, and LRCLIB over the web.
 
 use super::*;
+use std::time::Instant;
 
 #[test]
 fn the_tag_then_the_sidecar_then_the_web() {
@@ -162,45 +163,43 @@ impl WordTimer for Counting {
 #[test]
 fn lrclib_is_asked_once_a_second_at_most() {
     let (dir, file) = place("spacing");
-    let (dir2, file2) = place("spacing2");
     let web = Stub::new(|_, _| ok(RECORD));
-    let f = finder(&dir, web.clone());
-    // Another finder on the same LRCLIB (as the worker's two threads).
-    let g = Finder {
-        cache: Some(Cache::new(dir2.join("cache"))),
-        ..f.clone()
+    // No cache: nothing written between the requests, so the time from
+    // one to the next is the look-ups' own.
+    let f = Finder {
+        cache: None,
+        ..finder(&dir, web.clone())
     };
+    // Other finders on the same LRCLIB (as the worker's two threads).
+    let (g, h) = (f.clone(), f.clone());
+    // Each wait asked for, and when.
     let waits = Mutex::new(Vec::new());
     let wait = |d| {
-        waits.lock().unwrap().push(d);
+        waits.lock().unwrap().push((d, Instant::now()));
         true
     };
+    let first = Instant::now();
     assert_eq!(lines(&f.lookup(&track(&file), 1, &wait)).len(), 2);
     assert!(
         waits.lock().unwrap().is_empty(),
         "the first is asked at once"
     );
-    assert_eq!(lines(&g.lookup(&track(&file2), 1, &wait)).len(), 2);
+    assert_eq!(lines(&g.lookup(&track(&file), 1, &wait)).len(), 2);
+    // The second waits what is left of a second from the first: no more,
+    // and no less than a second less the time since before the first.
     let waited = waits.lock().unwrap().clone();
-    assert_eq!(waited.len(), 1);
-    assert!(
-        waited[0] <= SPACING && waited[0] > SPACING / 2,
-        "{waited:?}"
-    );
-    // Stopped while waiting: nothing asked.
-    let (dir3, file3) = place("spacing3");
-    let h = Finder {
-        cache: Some(Cache::new(dir3.join("cache"))),
-        ..f.clone()
+    let [(d, at)] = waited[..] else {
+        panic!("{waited:?}");
     };
+    assert!(d <= SPACING && d + (at - first) >= SPACING, "{waited:?}");
+    // Stopped while waiting (its turn a second after the second's, still
+    // ahead): nothing asked.
     assert_eq!(
-        h.lookup(&track(&file3), 1, &|_| false),
+        h.lookup(&track(&file), 1, &|_| false),
         Answer::Failed("stopped".into())
     );
     assert_eq!(web.asked().len(), 2);
-    for d in [dir, dir2, dir3] {
-        let _ = fs::remove_dir_all(&d);
-    }
+    let _ = fs::remove_dir_all(&dir);
 }
 
 #[test]

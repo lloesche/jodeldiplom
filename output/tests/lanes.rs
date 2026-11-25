@@ -388,7 +388,10 @@ fn the_microphone_is_told_a_lane_streams_frames() {
         .unwrap();
     out.drain(None).unwrap();
     assert_eq!(d.mixer.mic().port, MicPort::Hearing);
-    let voice = singer.voice();
+    // Cleaned to the lane stream's last frames.
+    let voice = singer.voice_until("the voice to the end", |v| {
+        v.iter().any(|b| b.stream_frame > total - 4_800)
+    });
     assert!(voice.len() > 100, "{} blocks", voice.len());
     // Told in the lane stream's frames: the device's run 9 600 and more
     // ahead.

@@ -9,6 +9,12 @@
 //! moving an effect's code or renumbering its kinds changes nothing here
 //! unless what is drawn changes. The song is the one the GPU's timings
 //! sing (`common/sung.rs`).
+//!
+//! On Windows x86_64 only: the digest takes every float drawn to its last
+//! bit, and the system's maths library rounds a few of those differently
+//! on Linux and macOS.
+
+#![cfg(all(windows, target_arch = "x86_64"))]
 
 use std::path::Path;
 use std::sync::Arc;

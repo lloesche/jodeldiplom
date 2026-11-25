@@ -57,6 +57,8 @@ pub mod spectrum;
 pub mod stems_cache;
 pub mod sync;
 pub mod tiers;
+#[cfg(test)]
+mod told;
 pub mod trace;
 pub mod view;
 

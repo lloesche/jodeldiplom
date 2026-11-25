@@ -658,16 +658,10 @@ fn the_microphone_is_open_while_karaoke_shows() {
     let mut app = App::new(options);
     assert!(opened.lock().unwrap().is_empty());
     // Opened in the background: the tab shows at once, the microphone
-    // comes after.
+    // comes after (however long the thread opening it takes to run).
     let open = |app: &mut App| {
-        for _ in 0..200 {
-            app.pump();
-            if app.state.karaoke.mic.name.is_some() {
-                return true;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(5));
-        }
-        false
+        let wait = std::time::Duration::from_secs(30);
+        common::wait_for(app, wait, |a| a.state.karaoke.mic.name.is_some())
     };
     app.dispatch(Action::ShowSide(Side::Karaoke));
     assert!(open(&mut app));

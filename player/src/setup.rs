@@ -1093,6 +1093,7 @@ mod system {
 )]
 mod tests {
     use super::*;
+    use crate::told::Told;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     fn sha(data: &[u8]) -> String {
@@ -1116,6 +1117,7 @@ mod tests {
     struct Fake {
         web: Vec<(String, Vec<u8>)>,
         offline: std::sync::atomic::AtomicBool,
+        /// Downloads asked for (offline too).
         downloads: AtomicUsize,
         free: Option<u64>,
         memory: Option<u64>,
@@ -1128,10 +1130,10 @@ mod tests {
             to: &Path,
             progress: &mut dyn FnMut(u64),
         ) -> Result<(), String> {
+            self.downloads.fetch_add(1, Ordering::SeqCst);
             if self.offline.load(Ordering::SeqCst) {
                 return Err("no network".into());
             }
-            self.downloads.fetch_add(1, Ordering::SeqCst);
             let data = &self.web.iter().find(|(u, _)| *u == part.url).unwrap().1;
             progress(data.len() as u64);
             if data.len() as u64 != part.bytes || sha(data) != part.sha256 {
@@ -1224,16 +1226,19 @@ mod tests {
         }
     }
 
-    /// Runs setup to its end or a failure.
-    fn settle(setup: &Setup) -> Status {
-        for _ in 0..500 {
+    /// Setup started, and what it tells.
+    fn start(manifest: Vec<Need>, places: Places, work: Arc<dyn Work>) -> (Setup, Arc<Told>) {
+        let told = Told::new();
+        let setup = Setup::start(manifest, places, work, told.notify());
+        (setup, told)
+    }
+
+    /// Where setup ends: finished or failed.
+    fn settle(setup: &Setup, told: &Told) -> Status {
+        told.until("setup settles", || {
             let s = setup.status();
-            if s.finished.is_some() || s.failure.is_some() {
-                return s;
-            }
-            std::thread::sleep(Duration::from_millis(5));
-        }
-        panic!("setup did not settle: {:?}", setup.status());
+            (s.finished.is_some() || s.failure.is_some()).then_some(s)
+        })
     }
 
     #[test]
@@ -1258,17 +1263,8 @@ mod tests {
         let work = Arc::new(work);
         let places = places(&dir);
         assert_eq!(ready(&manifest, &places), None);
-        let told = Arc::new(AtomicUsize::new(0));
-        let t = Arc::clone(&told);
-        let setup = Setup::start(
-            manifest.clone(),
-            places.clone(),
-            work.clone(),
-            Arc::new(move || {
-                t.fetch_add(1, Ordering::SeqCst);
-            }),
-        );
-        let s = settle(&setup);
+        let (setup, told) = start(manifest.clone(), places.clone(), work.clone());
+        let s = settle(&setup, &told);
         assert_eq!(s.failure, None);
         let paths = s.finished.clone().unwrap();
         assert_eq!(
@@ -1280,7 +1276,7 @@ mod tests {
         assert_eq!(s.steps.len(), 5);
         assert!(s.steps.iter().all(|st| st.state == StepState::Done));
         assert_eq!(s.overall(), 1.0);
-        assert!(told.load(Ordering::SeqCst) > 0);
+        assert!(told.count() > 0);
         assert!(
             !dir.join("store/asr.bin.download").exists(),
             "the parts removed"
@@ -1305,13 +1301,8 @@ mod tests {
             Lookup::Unchecked(dir.join("beside/speech.bin"))
         );
         let work = Arc::new(work);
-        let setup = Setup::start(
-            manifest.clone(),
-            places.clone(),
-            work.clone(),
-            Arc::new(|| {}),
-        );
-        let s = settle(&setup);
+        let (setup, told) = start(manifest.clone(), places.clone(), work.clone());
+        let s = settle(&setup, &told);
         let paths = s.finished.expect("finished");
         assert_eq!(
             paths[0],
@@ -1337,20 +1328,26 @@ mod tests {
         let (manifest, work) = fake();
         work.offline.store(true, Ordering::SeqCst);
         let work = Arc::new(work);
-        let setup = Setup::start(manifest, places(&dir), work.clone(), Arc::new(|| {}));
-        let s = settle(&setup);
+        let (setup, told) = start(manifest, places(&dir), work.clone());
+        let s = settle(&setup, &told);
         let f = s.failure.expect("a failure");
         assert!(f.what.contains("no network"), "{f:?}");
         assert!(f.advice.contains("online"), "{f:?}");
         assert_eq!(s.finished, None);
+        // Where it ends once tried again (a download asked for again).
+        let retried = || {
+            let tried = work.downloads.load(Ordering::SeqCst);
+            setup.retry();
+            told.until("setup settles again", || {
+                let s = setup.status();
+                let again = work.downloads.load(Ordering::SeqCst) > tried;
+                (again && (s.finished.is_some() || s.failure.is_some())).then_some(s)
+            })
+        };
         // Still offline: it fails again.
-        setup.retry();
-        std::thread::sleep(Duration::from_millis(50));
-        assert!(settle(&setup).failure.is_some());
+        assert!(retried().failure.is_some());
         work.offline.store(false, Ordering::SeqCst);
-        setup.retry();
-        std::thread::sleep(Duration::from_millis(50));
-        let s = settle(&setup);
+        let s = retried();
         assert_eq!(s.failure, None);
         assert!(s.finished.is_some());
     }
@@ -1361,21 +1358,16 @@ mod tests {
         let (manifest, mut work) = fake();
         work.free = Some(10);
         let work = Arc::new(work);
-        let setup = Setup::start(
-            manifest.clone(),
-            places(&dir),
-            work.clone(),
-            Arc::new(|| {}),
-        );
-        let f = settle(&setup).failure.expect("no room");
+        let (setup, told) = start(manifest.clone(), places(&dir), work.clone());
+        let f = settle(&setup, &told).failure.expect("no room");
         assert!(f.what.contains("not enough free space"), "{f:?}");
         assert_eq!(work.downloads.load(Ordering::SeqCst), 0);
 
         let dir = temp("memory");
         let (manifest, mut work) = fake();
         work.memory = Some(4 << 30);
-        let setup = Setup::start(manifest, places(&dir), Arc::new(work), Arc::new(|| {}));
-        let f = settle(&setup).failure.expect("too little memory");
+        let (setup, told) = start(manifest, places(&dir), Arc::new(work));
+        let f = settle(&setup, &told).failure.expect("too little memory");
         assert!(f.what.contains("memory"), "{f:?}");
         assert!(f.advice.contains("Copy the folder"), "{f:?}");
     }
@@ -1402,13 +1394,8 @@ mod tests {
             Lookup::Unchecked(old.join("speech.bin"))
         );
         let work = Arc::new(work);
-        let setup = Setup::start(
-            manifest.clone(),
-            places.clone(),
-            work.clone(),
-            Arc::new(|| {}),
-        );
-        let s = settle(&setup);
+        let (setup, told) = start(manifest.clone(), places.clone(), work.clone());
+        let s = settle(&setup, &told);
         assert_eq!(s.failure, None);
         assert_eq!(
             s.finished.unwrap(),
@@ -1421,13 +1408,8 @@ mod tests {
             fs::rename(old.join(name), places.store.join(name)).unwrap();
         }
         assert_eq!(ready(&manifest, &places), None);
-        let setup = Setup::start(
-            manifest.clone(),
-            places.clone(),
-            work.clone(),
-            Arc::new(|| {}),
-        );
-        let s = settle(&setup);
+        let (setup, told) = start(manifest.clone(), places.clone(), work.clone());
+        let s = settle(&setup, &told);
         assert_eq!(
             s.finished.unwrap(),
             vec![
@@ -1444,13 +1426,8 @@ mod tests {
         let dir = temp("stale");
         let (manifest, work) = fake();
         let places = places(&dir);
-        let setup = Setup::start(
-            manifest.clone(),
-            places.clone(),
-            Arc::new(work),
-            Arc::new(|| {}),
-        );
-        settle(&setup).finished.expect("finished");
+        let (setup, told) = start(manifest.clone(), places.clone(), Arc::new(work));
+        settle(&setup, &told).finished.expect("finished");
         // Rewritten, the same length: not taken without a check.
         let path = dir.join("store/speech.bin");
         std::thread::sleep(Duration::from_millis(20));

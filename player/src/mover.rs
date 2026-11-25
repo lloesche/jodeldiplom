@@ -503,6 +503,7 @@ fn run(settings: &Path, shared: &Shared) {
 )]
 mod tests {
     use super::*;
+    use crate::told::Told;
 
     fn temp(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("mover-{name}-{}", std::process::id()));
@@ -511,15 +512,19 @@ mod tests {
         dir
     }
 
-    fn settle(mover: &Mover) -> Status {
-        for _ in 0..1000 {
+    /// The move started on the journal in `settings`, and what it tells.
+    fn start(settings: &Path) -> (Mover, Arc<Told>) {
+        let told = Told::new();
+        let mover = Mover::start(settings.to_owned(), told.notify()).unwrap();
+        (mover, told)
+    }
+
+    /// Where the move ends: finished or failed.
+    fn settle(mover: &Mover, told: &Told) -> Status {
+        told.until("the move settles", || {
             let s = mover.status();
-            if s.finished || s.failure.is_some() {
-                return s;
-            }
-            std::thread::sleep(Duration::from_millis(5));
-        }
-        panic!("the move did not settle: {:?}", mover.status());
+            (s.finished || s.failure.is_some()).then_some(s)
+        })
     }
 
     #[test]
@@ -536,8 +541,8 @@ mod tests {
         assert_eq!(current(&from.join("c.txt")), to.join("c.txt"));
         // Read before it moved: from the old place.
         assert_eq!(locate(&from.join("b.txt")), from.join("b.txt"));
-        let mover = Mover::start(settings.clone(), Arc::new(|| {})).unwrap();
-        let s = settle(&mover);
+        let (mover, told) = start(&settings);
+        let s = settle(&mover, &told);
         assert!(s.finished && s.failure.is_none(), "{s:?}");
         assert_eq!(fs::read(to.join("stems/a.stems")).unwrap().len(), 3000);
         assert_eq!(fs::read(to.join("b.txt")).unwrap(), b"bee");
@@ -581,8 +586,8 @@ mod tests {
         fs::rename(from.join("one"), to.join("one")).unwrap();
         fs::write(to.join("two"), b"newer").unwrap();
         fs::write(to.join("three.moving"), b"thr").unwrap();
-        let mover = Mover::start(settings.clone(), Arc::new(|| {})).unwrap();
-        let s = settle(&mover);
+        let (mover, told) = start(&settings);
+        let s = settle(&mover, &told);
         assert!(s.finished, "{s:?}");
         assert_eq!(
             fs::read(to.join("two")).unwrap(),
@@ -665,16 +670,19 @@ mod tests {
             .open(from.join("held"))
             .unwrap();
         begin(&settings, &[(from.clone(), to.clone())]).unwrap();
-        let mover = Mover::start(settings.clone(), Arc::new(|| {})).unwrap();
-        std::thread::sleep(Duration::from_millis(1500));
-        let s = mover.status();
+        let (mover, told) = start(&settings);
+        // Its first pass over: the held one waits.
+        let s = told.until("the first pass", || {
+            let s = mover.status();
+            (s.waiting > 0 || s.finished || s.failure.is_some()).then_some(s)
+        });
         assert!(!s.finished, "not done while a file is held: {s:?}");
         assert_eq!(s.waiting, 1, "{s:?}");
         assert!(to.join("a").exists() && to.join("b").exists());
         assert!(from.join("held").exists());
         assert_eq!(journal(&settings).len(), 1, "the journal stays");
         drop(held);
-        let s = settle(&mover);
+        let s = settle(&mover, &told);
         assert!(s.finished, "{s:?}");
         assert_eq!(fs::read(to.join("held")).unwrap(), b"held");
         assert!(gone(&from));

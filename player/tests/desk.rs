@@ -199,17 +199,10 @@ fn the_keys_of_the_mixer_tab_leave_the_global_capitals_alone() {
     assert_eq!(s.side, Side::Browser);
 }
 
-/// Waits until `done`, pumping the app.
-fn until(app: &mut App, mut done: impl FnMut(&App) -> bool) -> bool {
-    for _ in 0..400 {
-        app.pump();
-        if done(app) {
-            return true;
-        }
-        std::thread::sleep(Duration::from_millis(5));
-    }
-    false
-}
+/// The longest wait for what the app does in the background (a
+/// microphone opened, the GPU looked for): long past what that takes on a
+/// loaded machine, only what never comes runs into it.
+const WAIT: Duration = Duration::from_secs(30);
 
 #[test]
 fn the_faders_are_set_on_the_mixer_and_again_on_a_new_one() {
@@ -233,9 +226,14 @@ fn the_faders_are_set_on_the_mixer_and_again_on_a_new_one() {
     // The tab keeps drawing; the microphone stays closed until its strip
     // is selected (K6), and closes when another one is.
     assert!(app.animating());
-    assert!(!until(&mut app, |a| a.state.karaoke.mic.name.is_some()));
+    let mic_open = |a: &App| a.state.karaoke.mic.name.is_some();
+    assert!(!common::wait_for(
+        &mut app,
+        Duration::from_secs(2),
+        mic_open
+    ));
     app.dispatch(Action::Desk(DeskAction::Select(Channel::Mic)));
-    assert!(until(&mut app, |a| a.state.karaoke.mic.name.is_some()));
+    assert!(common::wait_for(&mut app, WAIT, mic_open));
     app.dispatch(Action::Desk(DeskAction::Select(Channel::Strip(
         StripKind::Player,
     ))));
@@ -367,10 +365,18 @@ fn a_stem_muted_on_its_frame_is_heard_and_unmuted_the_file_is_again() {
     options.separator = quarter;
     options.autoplay = Some(file);
     let mut app = App::new(options);
+    // Held while the GPU is looked for: the stems are made once it is told,
+    // and the song would play on meanwhile, however long the looking takes
+    // on a loaded machine.
+    let playing = |a: &App| a.state.playing.state == jodel_playback::PlayState::Playing;
+    assert!(common::wait_for(&mut app, WAIT, playing));
+    app.run(Effect::Engine(jodel_playback::Command::Pause));
     // The Mixer tab shows: the stems are made, on the "GPU" (the quarter).
     app.dispatch(Action::ShowSide(Side::Mixer));
-    assert!(until(&mut app, |a| a.state.gpu != jodeldiplom::core::Gpu::Looking));
+    assert!(common::wait_for(&mut app, WAIT, |a| a.state.gpu
+        != jodeldiplom::core::Gpu::Looking));
     app.dispatch(Action::Gpu(Some("the quarter".into())));
+    app.run(Effect::Engine(jodel_playback::Command::Resume));
     let heard = |a: &App| a.state.playing.anchor.map_or(0, |p| p.at.frame);
     // Once the stems are there: muted half a second on (the mixer is a
     // few periods ahead of what is heard), for a second.

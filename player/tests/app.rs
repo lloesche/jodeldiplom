@@ -281,10 +281,13 @@ fn the_demo_sings_with_no_microphone() {
     let mut options = AppOptions::new(dir.clone());
     options.output = Output::Null(SimClock::Realtime);
     options.size = (120, 36);
-    // The beats by the flux alone: the network's inference, unoptimised,
-    // takes longer than the wait on a slow machine.
+    // The beats by the flux alone, and of the mix: the networks' inference
+    // (the beat network's, and the separator's where there is a GPU, as on
+    // the macOS runners), unoptimised, takes longer than the wait on a slow
+    // machine, and nothing here hears the stems.
     options.config.beat_voting = false;
     options.config.beat_method = jodel_rhythm::Method::Flux;
+    options.config.stems = false;
     options.devices = Arc::new(|| Ok(Vec::new()));
     options.mic = Arc::new(|_| Err("no microphone".into()));
     options.mics = Arc::new(|| Ok(Vec::new()));

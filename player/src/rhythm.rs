@@ -28,7 +28,7 @@ use jodel_gpu::GpuSeparator;
 use jodel_playback::{Resampler, Source, StereoFeed};
 use jodel_rhythm::stems::{PartsBuilder, Separator, Splitter};
 use jodel_rhythm::waveform::{Lane, LaneBuilder, Melody, Waveform};
-use jodel_rhythm::{Analysis, Analyzer, Evidence, SAMPLE_RATE};
+use jodel_rhythm::{Analysis, Analyzer, Evidence, Method, SAMPLE_RATE};
 
 use crate::browser::Notify;
 use crate::core::{Action, Facts, Heard, Job, RhythmFacts, RhythmRecipe, Rhythmed};
@@ -202,8 +202,12 @@ pub fn listen_reporting(
     let mut key_out = Vec::new();
     let mut analyzer = Analyzer::with_methods(&recipe.methods);
     // The beat network on the GPU where there is one (a piece it fails on
-    // runs on the processor).
-    let network = jodel_gpu::GpuNetwork::shared();
+    // runs on the processor), set up only for a recipe that runs it.
+    let network = recipe
+        .methods
+        .contains(&Method::Network)
+        .then(jodel_gpu::GpuNetwork::shared)
+        .flatten();
     let network_before = network.map(|n| (n, n.tally()));
     if let Some(network) = network {
         analyzer.run_network_on(network);
@@ -771,8 +775,6 @@ impl Drop for RhythmWorker {
 )]
 mod tests {
     use std::fs;
-
-    use jodel_rhythm::Method;
 
     use super::*;
 

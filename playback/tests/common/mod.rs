@@ -88,6 +88,11 @@ pub fn collect_until(events: &Receiver<Event>, done: impl Fn(&Event) -> bool) ->
 /// Lets frames through a few at a time until a track starts: a switch of
 /// route meets the old one a little after what was written, so the old one
 /// must be let through to there. Returns the events up to it.
+///
+/// Paced by the engine, not the clock: the next few go through once the
+/// engine has found the gate shut [`TURNS`] times since, each a turn for a
+/// new route to decode ahead (as it gets on an idle machine in the time),
+/// however slowly a loaded one runs it.
 pub fn trickle_until_started(gate: &Gate, events: &Receiver<Event>) -> Vec<Event> {
     trickle_until(gate, events, |e| matches!(e, Event::TrackStarted(_)))
 }
@@ -100,15 +105,15 @@ pub fn trickle_until(
 ) -> Vec<Event> {
     let deadline = Instant::now() + TIMEOUT;
     let mut seen = Vec::new();
-    let mut last = Instant::now();
+    let mut last = gate.refused();
     loop {
         assert!(
             Instant::now() < deadline,
             "no matching event; seen: {seen:#?}"
         );
-        if last.elapsed() >= Duration::from_millis(20) {
+        if gate.refused() >= last + TURNS {
             gate.allow(gate.written() + 256);
-            last = Instant::now();
+            last = gate.refused();
         }
         match events.recv_timeout(Duration::from_millis(5)) {
             Ok(event) => {
@@ -137,17 +142,30 @@ pub fn captured(captures: &Captures) -> Vec<(StreamFormat, Vec<u8>)> {
         .collect()
 }
 
+/// How many times the engine finds the gate shut between two of
+/// [`trickle_until`]'s steps: two writes refused, each after the engine's
+/// wait of 10 ms for room, as many as 20 ms gives it on an idle machine.
+const TURNS: u64 = 2;
+
 /// How many output frames the test lets through, across every stream.
 #[derive(Default)]
 pub struct Gate {
-    state: Mutex<(u64, u64)>, // (allowed, written)
+    state: Mutex<Let>,
     changed: Condvar,
+}
+
+#[derive(Default)]
+struct Let {
+    allowed: u64,
+    written: u64,
+    /// Writes that took nothing: the gate was shut.
+    refused: u64,
 }
 
 impl Gate {
     pub fn allow(&self, frames: u64) {
         let mut s = self.state.lock().unwrap();
-        s.0 = frames;
+        s.allowed = frames;
         self.changed.notify_all();
     }
 
@@ -156,16 +174,25 @@ impl Gate {
     }
 
     pub fn written(&self) -> u64 {
-        self.state.lock().unwrap().1
+        self.state.lock().unwrap().written
+    }
+
+    /// How many writes the gate has refused (it was shut).
+    pub fn refused(&self) -> u64 {
+        self.state.lock().unwrap().refused
     }
 
     /// Waits until `frames` have gone through.
     pub fn wait_written(&self, frames: u64) {
         let mut s = self.state.lock().unwrap();
         let deadline = Instant::now() + TIMEOUT;
-        while s.1 < frames {
+        while s.written < frames {
             let left = deadline.saturating_duration_since(Instant::now());
-            assert!(!left.is_zero(), "only {} of {frames} frames written", s.1);
+            assert!(
+                !left.is_zero(),
+                "only {} of {frames} frames written",
+                s.written
+            );
             s = self.changed.wait_timeout(s, left).unwrap().0;
         }
     }
@@ -175,7 +202,7 @@ impl Gate {
     pub fn written_within(&self, frames: u64, timeout: Duration) -> bool {
         let deadline = Instant::now() + timeout;
         let mut s = self.state.lock().unwrap();
-        while s.1 < frames {
+        while s.written < frames {
             let left = deadline.saturating_duration_since(Instant::now());
             if left.is_zero() {
                 return false;
@@ -188,15 +215,19 @@ impl Gate {
     fn take(&self, frames: u64, timeout: Option<Duration>) -> u64 {
         let mut s = self.state.lock().unwrap();
         let wait = timeout.unwrap_or(Duration::from_millis(5));
-        if s.0 <= s.1 {
+        if s.allowed <= s.written {
             s = self.changed.wait_timeout(s, wait).unwrap().0;
         }
-        frames.min(s.0.saturating_sub(s.1))
+        let took = frames.min(s.allowed.saturating_sub(s.written));
+        if took == 0 {
+            s.refused += 1;
+        }
+        took
     }
 
     fn wrote(&self, frames: u64) {
         let mut s = self.state.lock().unwrap();
-        s.1 += frames;
+        s.written += frames;
         self.changed.notify_all();
     }
 
@@ -204,7 +235,7 @@ impl Gate {
     /// not written.
     fn unwrote(&self, frames: u64) {
         let mut s = self.state.lock().unwrap();
-        s.1 -= frames;
+        s.written -= frames;
         self.changed.notify_all();
     }
 }

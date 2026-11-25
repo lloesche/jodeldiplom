@@ -380,6 +380,8 @@ fn songs_got_ready_ahead_are_timed_into_the_cache_quietly() {
     };
     let (busy_tx, busy_rx) = mpsc::channel();
     let busy_tx = Mutex::new(busy_tx);
+    let (done_tx, done_rx) = mpsc::channel();
+    let done_tx = Mutex::new(done_tx);
     let options = Options {
         cache: Some(dir.join("cache")),
         online: false,
@@ -390,7 +392,9 @@ fn songs_got_ready_ahead_are_timed_into_the_cache_quietly() {
         working: Some(Arc::new(move |path: &Path, on: bool| {
             let _ = busy_tx.lock().unwrap().send((path.to_owned(), on));
         })),
-        done: None,
+        done: Some(Arc::new(move |path: &Path, facts| {
+            let _ = done_tx.lock().unwrap().send((path.to_owned(), facts));
+        })),
     };
     let (tx, rx) = mpsc::channel();
     let worker = LyricsWorker::new(options, move |path, answer| {
@@ -400,6 +404,9 @@ fn songs_got_ready_ahead_are_timed_into_the_cache_quietly() {
     let wait = Duration::from_secs(10);
     assert_eq!(busy_rx.recv_timeout(wait).unwrap(), (song.clone(), true));
     assert_eq!(busy_rx.recv_timeout(wait).unwrap(), (song.clone(), false));
+    // Done with once its timing is in the cache (the timing ends before).
+    let timed = (song.clone(), crate::core::LyricsFacts::Timed);
+    assert_eq!(done_rx.recv_timeout(wait).unwrap(), timed);
     assert!(rx.recv_timeout(Duration::from_millis(200)).is_err());
     worker.want(vec![song.clone()]);
     let (_, answer) = rx.recv_timeout(wait).unwrap();
