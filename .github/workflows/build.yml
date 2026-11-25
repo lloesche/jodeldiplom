@@ -44,7 +44,7 @@ jobs:
         run: |
           set -euo pipefail
           failed=()
-          for manifest in */Cargo.toml; do
+          for manifest in */Cargo.toml */*/Cargo.toml; do
             package=$(sed -n 's/^name = "\(.*\)"$/\1/p' "$manifest" | head -n 1)
             version=$(sed -n 's/^rust-version = "\(.*\)"$/\1/p' "$manifest" | head -n 1)
             if [[ -z $version ]]; then
