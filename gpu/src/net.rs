@@ -17,8 +17,8 @@ use std::num::NonZeroU64;
 use std::sync::{Mutex, OnceLock};
 
 use jodel_rhythm::net::mel::BANDS;
-use jodel_rhythm::net::weights::Weights;
 use jodel_rhythm::net::{built_in_weights, NetRunner, PIECE_FRAMES};
+use jodel_rhythm::nn::weights::Weights;
 
 use super::{bytes, guarded, rotary_table, spread, Turned, PARAM_SIZE, PARAM_STRIDE};
 

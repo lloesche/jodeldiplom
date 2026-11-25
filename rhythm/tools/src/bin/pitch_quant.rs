@@ -31,9 +31,10 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::Instant;
 
-use jodel_rhythm::net::weights::{Kind, PackedTensor, Weights};
+use jodel_rhythm::nn::weights::{Kind, Weights};
 use jodel_rhythm::pitch::{spectrogram, Pitch, PitchNet, RATE};
 use jodel_rhythm::waveform::Melody;
+use jodel_rhythm_tools::pack::{pack, PackedTensor};
 
 /// The options and the words left.
 struct Args {
@@ -140,7 +141,7 @@ fn write_pitch(path: &Path, p: &Pitch) {
         out.extend(h.to_le_bytes());
         out.extend(c.to_le_bytes());
     }
-    std::fs::write(path, out).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+    durable::write_atomic(path, &out).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
 }
 
 fn read_pitch(path: &Path) -> Pitch {
@@ -157,7 +158,6 @@ fn read_pitch(path: &Path) -> Pitch {
 fn reference(args: &Args) {
     let net = load_net(args.get("weights"));
     let dir = PathBuf::from(args.get("refs"));
-    std::fs::create_dir_all(&dir).expect("the reference folder");
     let started = Instant::now();
     let voices = args.voices();
     for (i, v) in voices.iter().enumerate() {
@@ -273,7 +273,7 @@ fn vector(name: &str, shape: Vec<usize>, values: Vec<f32>) -> PackedTensor {
 #[expect(clippy::disallowed_methods, reason = "debt (P7): its packed weights")]
 fn write_tensors(path: &str, mut tensors: Vec<PackedTensor>) {
     tensors.sort_by(|a, b| a.name.cmp(&b.name));
-    std::fs::write(path, Weights::pack(&tensors).unwrap()).expect("the statistics");
+    durable::write_atomic(Path::new(path), &pack(&tensors).unwrap()).expect("the statistics");
     println!("{} matrices to {path}", tensors.len());
 }
 /// The length of the rows matrix `name` multiplies.

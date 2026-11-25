@@ -1,7 +1,8 @@
 # The player (its window) is in player/, its playback engine in
 # playback/, the device output (shared, through the system's mixer), the
 # mixer and the microphone in output/, its beat and tempo
-# analysis and stem separation in rhythm/ (on the GPU in gpu/), its lyrics
+# analysis and stem separation in rhythm/ (on the GPU in gpu/; the tools
+# that make its pitch weights in rhythm/tools/), its lyrics
 # for karaoke in lyrics/, the checkpoints the speech, depth and cut-out
 # models are read from in tensors/, the synthesizer of the game's sound
 # effects in synth/. Every file written goes through
@@ -9,7 +10,7 @@
 # Resolver 3 picks dependency versions that build on each member's
 # rust-version.
 [workspace]
-members = ["durable", "gpu", "lyrics", "output", "playback", "player", "rhythm", "synth", "tensors"]
+members = ["durable", "gpu", "lyrics", "output", "playback", "player", "rhythm", "rhythm/tools", "synth", "tensors"]
 resolver = "3"
 
 # The beat analysis runs long loops over whole tracks; its tests would take

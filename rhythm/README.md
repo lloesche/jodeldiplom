@@ -1,14 +1,39 @@
 # jodel-rhythm
 
-Beat, downbeat and tempo analysis of whole tracks, in plain Rust with no
-dependencies. Two methods analyse the track, each through several
+The player's ([`jodeldiplom`](../player)) analysis of music, in plain Rust
+with no dependencies. It began as beat, downbeat and tempo analysis and is
+still mostly that: two methods analyse the track, each through several
 trackers, and a vote among them picks one beat grid and says how sure it
 is. A meter then listens for what a listener hears (the backbeat, accents,
 chord changes) to choose which level of that grid's pulse is the beat.
-It also tells the key a song is in (`key`) and follows the pitch of a
-voice (`pitch`). The player
-([`jodeldiplom`](../player)) uses it to show the tempo, the key and a beat
-pulse.
+
+It holds more than the beat:
+
+- **stems** (`stems`): a song separated into bass, drums, other
+  instruments and vocals, which the beat analysis listens to and the
+  player plays (its weights, 71.6 MB, are built in);
+- **the key** (`key`, 1.9 MB of weights) and **the pitch of a voice**
+  (`pitch`, 8.1 MB), for the player's display and karaoke;
+- **the pitch of a voice as it is sung** (`yin`), live from a microphone;
+- **waveforms** (`waveform`): each stem's for display, and the sung
+  melody's notes;
+- **the networks' shared parts** (`nn`): their layers, their weights file
+  and its blocks of fewer bits, and the threads they take (half the
+  processors, so playback and the interface keep theirs);
+- **generated music** (`synth`) for its own tests, the GPU crate's and
+  the player's.
+
+So a crate that wants only a beat grid compiles all of it and builds in
+about 90 MB of weights. The player uses every part; it shows the tempo,
+the key and a beat pulse, and sings along.
+
+The tools that make and measure the built-in pitch weights are a crate
+of their own, kept out of the library: `jodel-rhythm-tools` in
+[tools/](tools), beside the Python converters.
+
+Timings below were measured on one machine, a 12th Gen Intel Core
+i9-12900K (24 threads; the analysis takes 12) under Windows 11, in a
+release build, while other builds were running on it.
 
 ```rust
 use jodel_rhythm::{Analyzer, Method, SAMPLE_RATE};
@@ -157,9 +182,10 @@ licence ([models/LICENSE-beat-this](models/LICENSE-beat-this)).
    - per frame, a beat and a downbeat logit.
 
    A track runs in 30-second pieces that overlap by a quarter second.
-   The layers are plain loops written so the compiler vectorises them, with
-   an AVX2 build of the hot ones picked at run time. The work is spread over
-   half the processors. A four-minute track takes about 3 s here.
+   The layers (`nn::layers`, shared with the other networks) are plain
+   loops written so the compiler vectorises them, with an AVX2 build of the
+   hot ones picked at run time. The work is spread over half the
+   processors (`nn::threads`). A four-minute track takes about 6.5 s.
    A `net::NetRunner` runs the pieces elsewhere (`jodel-gpu`'s `GpuNetwork`,
    the player's analysis wherever there is a GPU):
    `Analyzer::run_network_on` hands it each piece's spectrogram and takes
@@ -295,7 +321,8 @@ Sommer, after Korzeniowski and Widmer, ISMIR 2018; MIT, see
   magnitude through `log1p`. With these settings librosa's
   octave-by-octave downsampling scales out exactly, so each bin is one
   Hann-windowed DFT at its frequency over its own length, at the full
-  rate, threaded. About 25 ms for a four-minute song.
+  rate, on half the processors (`nn::threads`). The spectrum of a
+  four-minute song takes about 0.07 s, the key about 0.17 s.
 - **The network.** Nine convolutions with batch norm (folded into a scale
   and a shift) and ELU, three 2×2 max pools, the average over the whole
   song, 24 scores. The largest is the key; its softmax share is the
@@ -332,15 +359,18 @@ of [FCPE](https://github.com/CNChTu/FCPE) (CNChTu, MIT, see
   the rest reaches 92 frames either way. So the statistics come first, from
   the first convolution alone, and the song goes through in windows of 30 s
   with 96 frames more each side: the same values as at once, without the
-  song's activations in memory (a 2:21 song in about 1.6 s on 16 threads).
-- **The weights** are built in at about 6 bits a weight: Q5_K (`net::q4k`,
+  song's activations in memory, on half the processors (`nn::threads`): a
+  2:21 song in about 3.2 s.
+- **The weights** are built in at about 6 bits a weight: Q5_K (`nn::quant`,
   the block layout of GGML's files: blocks of 256 with eight 6-bit scales
   and minimums under a half-precision scale and minimum), fitted by GPTQ on
   the products of the inputs of 120 voice stems, 8.1 MB against 43 MB.
-  `tools/convert_fcpe.py` reads the checkpoint (weight norm folded);
-  `examples/pitch_pack.rs` packs it into `models/pitch.bin` (`BTQ1`, see
-  `net::weights`), the first convolution and the depthwise ones as halves
-  (their rows are not whole blocks), the vectors as they are.
+  `tools/convert_fcpe.py` reads the checkpoint (weight norm folded); the
+  `pitch_pack` tool (`jodel-rhythm-tools`) packs it into `models/pitch.bin`
+  (`BTQ1`, see `nn::weights`), the first convolution and the depthwise ones
+  as halves (their rows are not whole blocks), the vectors as they are.
+  The fitting and GPTQ are the tools' (`tools/src/pack/`, shared with
+  `pitch_quant`, which measures them); the library only reads the blocks.
 
 Against the original (PyTorch, a script kept out of this repository), at
 full precision: each layer within about 2e-6, the same pitch on every frame
@@ -398,6 +428,9 @@ and the grid of sixteenths often stays.
   separator against the authors' output on a generated clip, chunks
   faded back into the track, and kicks going to the drums and a chord
   to the tonal part.
+
+`cargo test -p jodel-rhythm-tools` runs the packing's tests: its
+fitting, GPTQ and file writer, read back by the library.
 
 The synthetic cases:
 - steady tempi of 90, 128 and 174 BPM;

@@ -1,4 +1,4 @@
-//! The network's layers, on token-major `f32` buffers.
+//! The networks' layers, on token-major `f32` buffers.
 
 use std::sync::Mutex;
 

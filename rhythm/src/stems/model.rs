@@ -16,8 +16,8 @@
 
 use super::stft::BINS;
 use super::STEMS;
-use crate::net::layers::{dot, exp_shifted, fast, gelu, par_chunks, Linear, Rotary, HEAD};
-use crate::net::weights::Weights;
+use crate::nn::layers::{dot, exp_shifted, fast, gelu, par_chunks, Linear, Rotary, HEAD};
+use crate::nn::weights::Weights;
 
 /// Bins per band, low to high.
 pub const BAND_BINS: [usize; 62] = [

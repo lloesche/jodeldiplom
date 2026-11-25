@@ -4,6 +4,6 @@ version = "0.1.0"
 edition = "2021"
 rust-version = "1.85"
 license = "MIT"
-description = "Beat, downbeat and tempo analysis: several trackers that vote on one beat grid"
+description = "The player's music analysis: a beat grid voted on by several trackers, stems, the key, a voice's pitch (networks of our own inference, their weights built in)"
 
 [dependencies]

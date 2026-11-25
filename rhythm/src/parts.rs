@@ -14,8 +14,9 @@
 //! where the drums play and the cues can follow where the drums and the
 //! bass are ([`crate::presence`]).
 
-use crate::frontend::Mel;
+use crate::frontend::{compress, expand, Mel};
 use crate::presence::Levels;
+use crate::stats::upper_median;
 use crate::waveform::Lane;
 
 /// Frames on each side of the median along time (0.2 s at 100 frames a
@@ -38,28 +39,11 @@ pub struct Parts {
     pub lanes: Option<[Lane; 4]>,
 }
 
-/// The magnitude a log-mel value stands for (the frontend's
-/// `ln(1 + 1000·x)` undone).
-fn linear(v: f32) -> f32 {
-    v.exp_m1() / 1000.0
-}
-
-/// A magnitude as a log-mel value again.
-fn log(x: f32) -> f32 {
-    (1000.0 * x).ln_1p()
-}
-
-/// The median of `values` (reordered).
-fn median(values: &mut [f32]) -> f32 {
-    let mid = values.len() / 2;
-    *values.select_nth_unstable_by(mid, f32::total_cmp).1
-}
-
 impl Parts {
     /// The fast split of `mel` into drums and tonal sound.
     pub fn split(mel: &Mel) -> Parts {
         let (frames, bands) = (mel.frames(), mel.bands);
-        let x: Vec<f32> = mel.data.iter().map(|&v| linear(v)).collect();
+        let x: Vec<f32> = mel.data.iter().map(|&v| expand(v)).collect();
         let at = |t: usize, b: usize| x[t * bands + b];
         let mut drums = vec![0.0; x.len()];
         let mut tonal = vec![0.0; x.len()];
@@ -73,21 +57,21 @@ impl Parts {
             for b in 0..bands {
                 along.clear();
                 along.extend((t0..t1).map(|u| at(u, b)));
-                let h = median(&mut along);
+                let h = upper_median(&mut along, f32::total_cmp).unwrap_or(0.0);
                 across.clear();
                 let (b0, b1) = (
                     b.saturating_sub(BAND_RADIUS),
                     (b + BAND_RADIUS + 1).min(bands),
                 );
                 across.extend((b0..b1).map(|c| at(t, c)));
-                let p = median(&mut across);
+                let p = upper_median(&mut across, f32::total_cmp).unwrap_or(0.0);
                 let (h2, p2) = (h * h, p * p);
                 let total = h2 + p2;
                 let v = at(t, b);
                 let i = t * bands + b;
                 if total > 0.0 {
-                    drums[i] = log(v * p2 / total);
-                    tonal[i] = log(v * h2 / total);
+                    drums[i] = compress(v * p2 / total);
+                    tonal[i] = compress(v * h2 / total);
                 }
             }
         }
@@ -120,7 +104,7 @@ mod tests {
         let mut count = 0.0;
         for t in frames {
             for b in bands.clone() {
-                sum += f64::from(linear(mel.frame(t)[b]));
+                sum += f64::from(expand(mel.frame(t)[b]));
                 count += 1.0;
             }
         }

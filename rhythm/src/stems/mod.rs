@@ -22,8 +22,8 @@ use std::sync::OnceLock;
 
 use crate::fft::Complex;
 use crate::frontend::{Frontend, FrontendConfig};
-use crate::net::layers::par_chunks;
-use crate::net::weights::Weights;
+use crate::nn::layers::par_chunks;
+use crate::nn::weights::Weights;
 use crate::parts::Parts;
 use crate::presence::Levels;
 use crate::waveform::LaneBuilder;
@@ -111,7 +111,7 @@ impl Separator for CpuSeparator {
     }
 
     fn masks(&self, frames: usize, stft: &[f32]) -> Result<Vec<f32>, String> {
-        Ok(self.model.masks(frames, stft, crate::net::threads()))
+        Ok(self.model.masks(frames, stft, crate::nn::threads()))
     }
 }
 
@@ -168,7 +168,7 @@ struct Forward {
 /// side on the analysis's threads), and the values packed for
 /// [`Separator::masks`].
 fn forward(left: &[f32], right: &[f32]) -> (Forward, Vec<f32>) {
-    let threads = crate::net::threads();
+    let threads = crate::nn::threads();
     let mut spectra: Vec<Vec<Complex>> = vec![Vec::new(); 2];
     par_chunks(&mut spectra, 1, threads, |c, slot| {
         slot[0] = Stft::new().forward(if c == 0 { left } else { right });
@@ -196,7 +196,7 @@ fn inverse(chunk: &Forward, masks: &[f32]) -> Result<Vec<[Vec<f32>; 2]>, String>
     if masks.len() != STEMS * frames * FRAME {
         return Err(format!("{} masks for {frames} frames", masks.len()));
     }
-    let threads = crate::net::threads();
+    let threads = crate::nn::threads();
     let inverse = |s: usize, c: usize| {
         let mask = &masks[s * frames * FRAME..][..frames * FRAME];
         let spectrum = &channels[c];

@@ -1,8 +1,9 @@
 //! The pitch of a voice, frame by frame: our own inference of FCPE (Fast
 //! Context-based Pitch Estimation, CNChTu; code and weights under the MIT
 //! licence, see `models/LICENSE-fcpe`), its bundled convolution-only
-//! model, the weights built in at about 6 bits a value (Q5_K fitted by
-//! GPTQ, see [`crate::net::q4k`]; `examples/pitch_pack.rs` made them).
+//! model, the weights built in at about 6 bits a value (Q5_K, read as
+//! [`crate::nn::quant`] says; fitted by GPTQ in the `pitch_pack` tool of
+//! `jodel-rhythm-tools`, `rhythm/tools/src/pack/gptq.rs`).
 //!
 //! The voice, at 16 kHz mono, becomes a log-mel spectrogram as the
 //! authors' extractor makes it: frames of 1024 samples (periodic Hann
@@ -32,10 +33,11 @@ use std::f64::consts::PI;
 use std::sync::OnceLock;
 
 use crate::fft::{Complex, RealFft};
-use crate::net::layers::{par_chunks, Linear};
-use crate::net::weights::Weights;
+use crate::nn::layers::{par_chunks, Linear};
+use crate::nn::threads;
+use crate::nn::weights::Weights;
 
-/// The weights, built in (`examples/pitch_pack.rs`).
+/// The weights, built in (made by the `pitch_pack` tool, `rhythm/tools`).
 static WEIGHTS: &[u8] = include_bytes!("../models/pitch.bin");
 
 /// The rate the network hears.
@@ -66,10 +68,6 @@ pub const WINDOW: usize = 3000;
 /// Frames heard beyond each side of a window: more than the network's
 /// reach after the group norm (1 + 1 + 6·15).
 pub const HALO: usize = 96;
-
-fn threads() -> usize {
-    std::thread::available_parallelism().map_or(4, |n| n.get())
-}
 
 /// A voice's pitch, a value a frame ([`FPS`] a second).
 #[derive(Clone, Debug, Default, PartialEq)]

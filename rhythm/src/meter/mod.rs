@@ -36,7 +36,7 @@ pub use bars::downbeats;
 
 use crate::activation::Curve;
 use crate::cues::Cues;
-use crate::metrics::{between, f_measure};
+use crate::metrics::{between, f_measure, median_interval};
 use crate::vote::{within, Candidate, TOLERANCE};
 
 /// Pulses on each side of a beat whose cues score its grouping: 24 beats
@@ -221,16 +221,9 @@ struct Pulses {
     change: Vec<f64>,
 }
 
-/// The median interval of `beats`.
-fn median_interval(beats: &[f64]) -> f64 {
-    let mut gaps: Vec<f64> = beats.windows(2).map(|w| w[1] - w[0]).collect();
-    gaps.sort_by(f64::total_cmp);
-    gaps.get(gaps.len() / 2).copied().unwrap_or(0.5)
-}
-
 impl Pulses {
     fn new(grid: &[f64], cues: &Cues) -> Pulses {
-        let usual = median_interval(grid);
+        let usual = median_interval(grid).unwrap_or(0.5);
         let (mut times, mut real, mut first) = (Vec::new(), Vec::new(), Vec::new());
         for (i, &b) in grid.iter().enumerate() {
             first.push(times.len());

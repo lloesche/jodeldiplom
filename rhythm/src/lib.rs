@@ -1,4 +1,14 @@
-//! Beat, downbeat and tempo analysis of a whole track.
+//! The player's analysis of music: mostly beat, downbeat and tempo
+//! analysis of a whole track (below), and with it
+//!
+//! - [`stems`]: the song separated into bass, drums, other instruments and
+//!   vocals (a network whose 71.6 MB of weights are built in);
+//! - [`key`]: the key a song is in, and [`pitch`]: a voice's pitch over a
+//!   whole song (two more networks, their weights built in);
+//! - [`yin`]: a voice's pitch live, as it is sung;
+//! - [`waveform`]: the stems' waveforms for display and the sung melody;
+//! - [`nn`]: what the networks share (layers, the weights file, threads);
+//! - [`synth`]: generated music, for tests.
 //!
 //! # Pipeline
 //!
@@ -56,9 +66,11 @@ pub mod key;
 pub mod meter;
 pub mod metrics;
 pub mod net;
+pub mod nn;
 pub mod parts;
 pub mod pitch;
 pub mod presence;
+mod stats;
 pub mod stems;
 pub mod summary;
 pub mod synth;
@@ -67,7 +79,7 @@ pub mod vote;
 pub mod waveform;
 pub mod yin;
 
-use activation::{Activation, Curve, Flux};
+use activation::{Curve, Flux};
 use cues::Cues;
 use frontend::{Frontend, FrontendConfig};
 use net::{NetFrontend, Network};
@@ -536,12 +548,6 @@ impl Evidence {
         analysis.derive();
         analysis
     }
-}
-
-/// Analyses a whole track of mono samples at [`SAMPLE_RATE`] with every
-/// method.
-pub fn analyze(samples: &[f32]) -> Analysis {
-    analyze_with(samples, &Method::ALL)
 }
 
 /// Analyses a whole track of mono samples at [`SAMPLE_RATE`] with

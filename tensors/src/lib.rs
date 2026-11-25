@@ -10,20 +10,43 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-/// One tensor's entry in the header.
+/// How a tensor's values are stored.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum DType {
+    F32,
+    Bf16,
+    F16,
+    /// Any other type, by its name. The file still opens and such a tensor
+    /// fails only when it is read ([`SafeTensors::get`]): published
+    /// checkpoints carry integer buffers (position ids, step counters)
+    /// beside the weights, and a reader takes only the weights it names.
+    Other(String),
+}
+
+impl DType {
+    fn of(name: &str) -> DType {
+        match name {
+            "F32" => DType::F32,
+            "BF16" => DType::Bf16,
+            "F16" => DType::F16,
+            other => DType::Other(other.to_owned()),
+        }
+    }
+}
+
+/// One tensor's entry in the header: its type, shape and bytes in the
+/// file (within it, checked when the header is read).
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Entry {
-    dtype: String,
+    dtype: DType,
     shape: Vec<usize>,
-    from: usize,
-    to: usize,
+    bytes: std::ops::Range<usize>,
 }
 
 /// A `.safetensors` file's tensors.
 pub struct SafeTensors {
     bytes: Vec<u8>,
     entries: HashMap<String, Entry>,
-    data_start: usize,
 }
 
 impl SafeTensors {
@@ -33,22 +56,26 @@ impl SafeTensors {
         SafeTensors::parse(bytes)
     }
 
-    /// The tensors in `bytes`.
+    /// The tensors in `bytes`. A header that does not parse, or places a
+    /// tensor outside the file, is an error.
     pub fn parse(bytes: Vec<u8>) -> Result<SafeTensors, String> {
         let len = bytes
             .get(..8)
-            .map(|b| u64::from_le_bytes(b.try_into().unwrap()) as usize)
+            .map(|b| u64::from_le_bytes(b.try_into().unwrap()))
             .ok_or("not a safetensors file")?;
-        let text = bytes
-            .get(8..8usize.saturating_add(len))
-            .and_then(|h| std::str::from_utf8(h).ok())
-            .ok_or("a broken safetensors header")?;
-        let entries = header(text).ok_or("a broken safetensors header")?;
-        Ok(SafeTensors {
-            data_start: 8 + len,
-            entries,
-            bytes,
-        })
+        let data_start = usize::try_from(len)
+            .ok()
+            .and_then(|len| len.checked_add(8))
+            .filter(|&end| end <= bytes.len())
+            .ok_or(format!(
+                "a safetensors header of {len} bytes in a file of {}",
+                bytes.len()
+            ))?;
+        let text = std::str::from_utf8(&bytes[8..data_start])
+            .map_err(|_| "a safetensors header that is not UTF-8")?;
+        let entries = header(text, data_start, bytes.len())
+            .map_err(|e| format!("a broken safetensors header: {e}"))?;
+        Ok(SafeTensors { entries, bytes })
     }
 
     /// Whether the file has a tensor `name`.
@@ -59,35 +86,24 @@ impl SafeTensors {
     /// Tensor `name` with `shape`, as f32 (stored as f32, bf16 or f16).
     pub fn get(&self, name: &str, shape: &[usize]) -> Result<Vec<f32>, String> {
         let t = self.entries.get(name).ok_or(format!("no tensor {name}"))?;
-        let size = match t.dtype.as_str() {
-            "F32" => 4,
-            "BF16" | "F16" => 2,
-            other => return Err(format!("{name} is {other}, not f32, bf16 or f16")),
+        fn half(b: &[u8]) -> u16 {
+            u16::from_le_bytes([b[0], b[1]])
+        }
+        let (size, value): (usize, fn(&[u8]) -> f32) = match &t.dtype {
+            DType::F32 => (4, |b| f32::from_le_bytes(b.try_into().unwrap())),
+            DType::Bf16 => (2, |b| f32::from_bits(u32::from(half(b)) << 16)),
+            DType::F16 => (2, |b| f16_to_f32(half(b))),
+            DType::Other(other) => return Err(format!("{name} is {other}, not f32, bf16 or f16")),
         };
         if t.shape != shape {
             return Err(format!("{name} is {:?}, not {shape:?}", t.shape));
         }
-        let raw = self
-            .bytes
-            .get(self.data_start + t.from..self.data_start + t.to)
-            .ok_or(format!("{name} is past the file's end"))?;
-        if raw.len() != size * shape.iter().product::<usize>() {
+        let raw = &self.bytes[t.bytes.clone()];
+        let count = shape.iter().try_fold(1usize, |n, &d| n.checked_mul(d));
+        if count.and_then(|n| n.checked_mul(size)) != Some(raw.len()) {
             return Err(format!("{name} has the wrong length"));
         }
-        Ok(match t.dtype.as_str() {
-            "F32" => raw
-                .chunks_exact(4)
-                .map(|b| f32::from_le_bytes(b.try_into().unwrap()))
-                .collect(),
-            "BF16" => raw
-                .chunks_exact(2)
-                .map(|b| f32::from_bits(u32::from(u16::from_le_bytes([b[0], b[1]])) << 16))
-                .collect(),
-            _ => raw
-                .chunks_exact(2)
-                .map(|b| f16_to_f32(u16::from_le_bytes([b[0], b[1]])))
-                .collect(),
-        })
+        Ok(raw.chunks_exact(size).map(value).collect())
     }
 }
 
@@ -226,21 +242,26 @@ impl Reader<'_> {
     }
 }
 
-/// The header's tensors.
-fn header(text: &str) -> Option<HashMap<String, Entry>> {
+/// The header's tensors, their data from `data_start` in a file of `len`
+/// bytes; an error naming the tensor and what is wrong where its entry
+/// is broken or places it outside the file.
+fn header(text: &str, data_start: usize, len: usize) -> Result<HashMap<String, Entry>, String> {
     let mut r = Reader {
         s: text.as_bytes(),
         at: 0,
     };
-    let Value::Object(fields) = r.value()? else {
-        return None;
+    let Some(Value::Object(fields)) = r.value() else {
+        return Err("not a JSON object".into());
     };
-    let numbers = |v: &Value| -> Option<Vec<usize>> {
-        match v {
+    // Whole numbers a `usize` holds, not saturated casts.
+    let whole =
+        |n: f64| (n >= 0.0 && n.fract() == 0.0 && n < usize::MAX as f64).then_some(n as usize);
+    let numbers = |v: Option<&Value>| -> Option<Vec<usize>> {
+        match v? {
             Value::List(items) => items
                 .iter()
                 .map(|i| match i {
-                    Value::Number(n) => Some(*n as usize),
+                    Value::Number(n) => whole(*n),
                     _ => None,
                 })
                 .collect(),
@@ -252,25 +273,39 @@ fn header(text: &str) -> Option<HashMap<String, Entry>> {
         if name == "__metadata__" {
             continue;
         }
-        let Value::Object(f) = v else { return None };
+        let Value::Object(f) = v else {
+            return Err(format!("{name}: not an object"));
+        };
         let get = |k: &str| f.iter().find(|(n, _)| n == k).map(|(_, v)| v);
         let Some(Value::Text(dtype)) = get("dtype") else {
-            return None;
+            return Err(format!("{name}: no dtype"));
         };
-        let shape = numbers(get("shape")?)?;
-        let offsets = numbers(get("data_offsets")?)?;
-        let [from, to] = offsets[..] else { return None };
+        let shape = numbers(get("shape"))
+            .ok_or_else(|| format!("{name}: a shape that is not whole numbers"))?;
+        let offsets = numbers(get("data_offsets"));
+        let Some([from, to]) = offsets.as_deref() else {
+            return Err(format!(
+                "{name}: data offsets that are not two whole numbers"
+            ));
+        };
+        let bytes = data_start
+            .checked_add(*from)
+            .zip(data_start.checked_add(*to))
+            .map(|(a, b)| a..b)
+            .filter(|b| b.start <= b.end && b.end <= len)
+            .ok_or_else(|| {
+                format!("{name}: data offsets {from}..{to} outside the file's {len} bytes")
+            })?;
         out.insert(
             name,
             Entry {
-                dtype: dtype.clone(),
+                dtype: DType::of(dtype),
                 shape,
-                from,
-                to,
+                bytes,
             },
         );
     }
-    Some(out)
+    Ok(out)
 }
 
 #[cfg(test)]
@@ -326,5 +361,55 @@ mod tests {
         assert!(t.get("a.weight", &[2]).is_err());
         assert!(t.get("d", &[2]).is_err());
         assert!(SafeTensors::parse(b"short".to_vec()).is_err());
+    }
+
+    /// A file whose header places a tensor at `offsets` (four bytes of
+    /// data follow it).
+    fn placed(offsets: &str) -> Vec<u8> {
+        let header = format!(r#"{{"a":{{"dtype":"F32","shape":[1],"data_offsets":{offsets}}}}}"#);
+        let mut out = (header.len() as u64).to_le_bytes().to_vec();
+        out.extend(header.as_bytes());
+        out.extend(1.5f32.to_le_bytes());
+        out
+    }
+
+    /// A corrupt header is an error when the file is read, never a panic
+    /// or a wrapped offset: offsets past the file or past what a `usize`
+    /// holds, backwards, negative or fractional; a header longer than the
+    /// file; an unsupported type fails only when that tensor is read.
+    #[test]
+    fn a_corrupt_header_is_an_error() {
+        assert_eq!(
+            SafeTensors::parse(placed("[0,4]")).unwrap().get("a", &[1]),
+            Ok(vec![1.5])
+        );
+        for (offsets, why) in [
+            ("[0,5]", "a: data offsets 0..5 outside the file's"),
+            ("[4,0]", "a: data offsets 4..0 outside"),
+            (
+                "[1e300,1e300]",
+                "a: data offsets that are not two whole numbers",
+            ),
+            (
+                "[18446744073709551615,18446744073709551616]",
+                "a: data offsets that are not two whole numbers",
+            ),
+            ("[-4,0]", "a: data offsets that are not two whole numbers"),
+            ("[0.5,4]", "a: data offsets that are not two whole numbers"),
+            ("[0]", "a: data offsets that are not two whole numbers"),
+        ] {
+            let err = SafeTensors::parse(placed(offsets)).err().unwrap();
+            assert!(err.contains(why), "{offsets}: {err}");
+        }
+        let mut long = placed("[0,4]");
+        long[..8].copy_from_slice(&u64::MAX.to_le_bytes());
+        let err = SafeTensors::parse(long).err().unwrap();
+        assert!(
+            err.contains("header of 18446744073709551615 bytes"),
+            "{err}"
+        );
+        let ints = file(&[("i", "I64", &[1], vec![0; 8])]);
+        let t = SafeTensors::parse(ints).unwrap();
+        assert!(t.get("i", &[1]).unwrap_err().contains("I64"));
     }
 }

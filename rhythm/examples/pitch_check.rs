@@ -11,7 +11,7 @@
 use std::path::Path;
 use std::time::Instant;
 
-use jodel_rhythm::net::weights::Weights;
+use jodel_rhythm::nn::weights::Weights;
 use jodel_rhythm::pitch::{spectrogram, Pitch, PitchNet, BANDS};
 
 fn read(path: &Path) -> Vec<f32> {

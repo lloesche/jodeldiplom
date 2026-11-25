@@ -150,7 +150,7 @@ fn pack_weights() -> Result<(Vec<f32>, Offsets), String> {
     let mut w = stems::weights();
     let mut data = packer::Packer::default();
     let mut put = |values: Vec<f32>| -> u32 { data.push(&values) as u32 };
-    let linear = |w: &mut jodel_rhythm::net::weights::Weights,
+    let linear = |w: &mut jodel_rhythm::nn::weights::Weights,
                   put: &mut dyn FnMut(Vec<f32>) -> u32,
                   name: &str,
                   inputs: usize,

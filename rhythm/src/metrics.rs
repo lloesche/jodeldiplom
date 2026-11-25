@@ -1,5 +1,7 @@
 //! Comparing beat lists.
 
+use crate::stats::upper_median;
+
 /// The F-measure of `estimated` against `reference` (both ascending, in
 /// seconds): a beat matches when it lies within `tolerance` of a
 /// reference beat not matched yet. 1 when both are empty, 0 when only
@@ -59,15 +61,15 @@ pub fn doubled(beats: &[f64]) -> Vec<f64> {
 /// The F-measure two unrelated grids reach by chance: the share of the
 /// denser grid's beat interval that the tolerance window covers.
 fn chance(a: &[f64], b: &[f64], tolerance: f64) -> f64 {
-    let interval = |beats: &[f64]| {
-        let mut gaps: Vec<f64> = beats.windows(2).map(|w| w[1] - w[0]).collect();
-        if gaps.is_empty() {
-            return f64::INFINITY;
-        }
-        gaps.sort_by(f64::total_cmp);
-        gaps[gaps.len() / 2]
-    };
+    let interval = |beats: &[f64]| median_interval(beats).unwrap_or(f64::INFINITY);
     (2.0 * tolerance / interval(a).min(interval(b))).min(0.95)
+}
+
+/// The median interval between `beats` (of an even count of intervals, the
+/// upper one); `None` for fewer than two beats.
+pub(crate) fn median_interval(beats: &[f64]) -> Option<f64> {
+    let mut gaps: Vec<f64> = beats.windows(2).map(|w| w[1] - w[0]).collect();
+    upper_median(&mut gaps, f64::total_cmp)
 }
 
 /// How much `a` and `b` agree on where the beats are, beyond chance, at

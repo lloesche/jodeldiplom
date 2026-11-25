@@ -1,0 +1,14 @@
+[package]
+name = "jodel-rhythm-tools"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+license = "MIT"
+publish = false
+description = "The tools that make and measure jodel-rhythm's built-in pitch weights: the packing (block fitting, GPTQ) and its measurement on voices"
+
+[dependencies]
+jodel-rhythm = { path = ".." }
+# Every file written (the built-in pitch weights among them): whole or not
+# at all, made durable.
+durable = { path = "../../durable" }

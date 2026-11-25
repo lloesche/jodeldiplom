@@ -1,5 +1,7 @@
 //! Tempo from beats: per beat, and for the whole track.
 
+use crate::stats::median;
+
 /// A track's tempo in one look.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Summary {
@@ -30,7 +32,7 @@ pub fn local_bpm(beats: &[f64]) -> Vec<f64> {
             let lo = i.saturating_sub(SPAN);
             let hi = (i + SPAN).min(intervals.len());
             let mut near: Vec<f64> = intervals[lo..hi].to_vec();
-            60.0 / median(&mut near)
+            60.0 / median(&mut near).expect("intervals near every beat")
         })
         .collect()
 }
@@ -86,17 +88,6 @@ pub fn summarize(beats: &[f64], local: &[f64], trusted: &[bool]) -> Option<Summa
         high,
         steady,
     })
-}
-
-/// The median (sorts `values`).
-fn median(values: &mut [f64]) -> f64 {
-    values.sort_by(f64::total_cmp);
-    let n = values.len();
-    if n % 2 == 1 {
-        values[n / 2]
-    } else {
-        0.5 * (values[n / 2 - 1] + values[n / 2])
-    }
 }
 
 /// The least-squares slope of beat time against beat number.

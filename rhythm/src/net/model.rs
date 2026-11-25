@@ -13,11 +13,11 @@
 //!   RMS normalisation, and a layer to two logits: the downbeat, and
 //!   the beat as beat plus downbeat.
 
-use super::layers::{
+use super::mel::BANDS;
+use crate::nn::layers::{
     gelu, par_chunks, Affine, Attention, Conv, FeedForward, Linear, RmsNorm, Rotary,
 };
-use super::mel::BANDS;
-use super::weights::Weights;
+use crate::nn::weights::Weights;
 
 /// The widest sequence the rotary tables cover (frames per chunk).
 pub(crate) const MAX_FRAMES: usize = 1500;

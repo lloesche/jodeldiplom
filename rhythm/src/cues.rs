@@ -9,7 +9,7 @@
 //! bass cue as far as the bass is ([`crate::presence::present`]): what
 //! leaks into an absent stem, scaled up like any onset, is no cue.
 
-use crate::activation::{moving_mean, sliding_max, Activation, Curve, Flux};
+use crate::activation::{normalised, Curve, Flux};
 use crate::frontend::Mel;
 use crate::parts::Parts;
 use crate::presence::{self, Levels};
@@ -114,26 +114,7 @@ pub fn change(mel: &Mel) -> Curve {
             .sum();
         *r = (diff / bands as f64) as f32;
     }
-    let slow = moving_mean(&raw, (0.5 * fps).round() as usize);
-    let lifted: Vec<f32> = raw
-        .iter()
-        .zip(&slow)
-        .map(|(r, m)| (r - m).max(0.0))
-        .collect();
-    let peak = lifted.iter().copied().fold(0.0, f32::max);
-    let local = sliding_max(&lifted, (3.0 * fps).round() as usize);
-    let values = lifted
-        .iter()
-        .zip(&local)
-        .map(|(&v, &m)| {
-            if peak <= 0.0 {
-                0.0
-            } else {
-                (v / m.max(0.05 * peak)).min(1.0)
-            }
-        })
-        .collect();
-    Curve { values, fps }
+    normalised(&raw, fps, 0.0)
 }
 
 #[cfg(test)]

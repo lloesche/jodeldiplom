@@ -1,15 +1,14 @@
 //! Activations: curves that rise where a beat is likely.
 //!
-//! An [`Activation`] turns a [`Mel`] spectrogram into a [`Curve`] in
-//! `0..=1`, frame by frame. The spectral-flux activations ([`Flux`]) are
-//! these; the network's beat probability ([`crate::net`]) is another
-//! such curve, from its own spectrogram, and goes through the same
-//! trackers and the same vote.
+//! A [`Flux`] turns a [`Mel`] spectrogram into a [`Curve`] in `0..=1`,
+//! frame by frame. The network's beat probability ([`crate::net`]) is
+//! another such curve, from its own spectrogram, and goes through the
+//! same trackers and the same vote.
 
 use std::borrow::Cow;
 use std::collections::VecDeque;
 
-use crate::frontend::Mel;
+use crate::frontend::{Mel, GAIN};
 
 /// A curve sampled at a fixed frame rate.
 #[derive(Clone, Debug, Default)]
@@ -38,14 +37,6 @@ impl Curve {
     }
 }
 
-/// Something that turns a spectrogram into a beat activation.
-pub trait Activation: Send + Sync {
-    /// A short name for reports, such as `flux` or `flux-low`.
-    fn name(&self) -> &'static str;
-    /// The activation of `mel`, at its frame rate.
-    fn curve(&self, mel: &Mel) -> Curve;
-}
-
 /// Spectral flux over a range of bands: how much the log-mel spectrum
 /// rose since a moment ago, summed over the bands.
 ///
@@ -69,8 +60,6 @@ pub struct Flux {
     gain: f32,
 }
 
-/// The gain of the frontend's compression, `ln(1 + 1000·x)`.
-const MEL_GAIN: f32 = 1000.0;
 /// The gain the cues compare the spectrum at.
 const CUE_GAIN: f32 = 10.0;
 
@@ -83,14 +72,14 @@ impl Flux {
         name: "flux",
         low_hz: 0.0,
         high_hz: f64::INFINITY,
-        gain: MEL_GAIN,
+        gain: GAIN,
     };
     /// Over the bands below 250 Hz: kick drums and bass.
     pub const LOW: Flux = Flux {
         name: "flux-low",
         low_hz: 0.0,
         high_hz: 250.0,
-        gain: MEL_GAIN,
+        gain: GAIN,
     };
     /// Kick drums, in the drums part: below 150 Hz.
     pub const KICK: Flux = Flux {
@@ -129,10 +118,10 @@ impl Flux {
         let first = range.start.saturating_sub(1);
         let width = (range.end + 1).min(mel.bands) - first;
         // Frame t's bands `first..first + width` start at t·stride + offset.
-        let (data, stride, offset): (Cow<[f32]>, usize, usize) = if self.gain == MEL_GAIN {
+        let (data, stride, offset): (Cow<[f32]>, usize, usize) = if self.gain == GAIN {
             (Cow::Borrowed(&mel.data), mel.bands, first)
         } else {
-            let scale = self.gain / MEL_GAIN;
+            let scale = self.gain / GAIN;
             let owned = (0..frames)
                 .flat_map(|t| &mel.frame(t)[first..first + width])
                 .map(|&v| (scale * v.exp_m1()).ln_1p())
@@ -155,44 +144,50 @@ impl Flux {
         }
         out
     }
+
+    /// A short name for reports, such as `flux` or `flux-low`.
+    pub fn name(&self) -> &'static str {
+        self.name
+    }
+
+    /// The activation of `mel`, at its frame rate.
+    pub fn curve(&self, mel: &Mel) -> Curve {
+        let bands = mel.bands_between(self.low_hz, self.high_hz).len().max(1);
+        let silent = SILENT_PER_BAND * self.gain / GAIN * bands as f32;
+        normalised(&self.raw(mel), mel.fps, silent)
+    }
 }
 
 /// Below this (raw flux summed per band, at the frontend's gain) a frame
 /// is treated as silent. Quiet sound reads in proportion to the gain.
 const SILENT_PER_BAND: f32 = 0.002;
 
-impl Activation for Flux {
-    fn name(&self) -> &'static str {
-        self.name
-    }
-
-    fn curve(&self, mel: &Mel) -> Curve {
-        let fps = mel.fps;
-        let raw = self.raw(mel);
-        let bands = mel.bands_between(self.low_hz, self.high_hz).len().max(1);
-        let silent = SILENT_PER_BAND * self.gain / MEL_GAIN * bands as f32;
-        let mean = moving_mean(&raw, (0.5 * fps).round() as usize);
-        let lifted: Vec<f32> = raw
-            .iter()
-            .zip(&mean)
-            .map(|(r, m)| (r - m).max(0.0))
-            .collect();
-        let peak = lifted.iter().copied().fold(0.0, f32::max);
-        let floor = (0.05 * peak).max(10.0 * silent);
-        let local = sliding_max(&lifted, (3.0 * fps).round() as usize);
-        let values = lifted
-            .iter()
-            .zip(&local)
-            .map(|(&v, &m)| {
-                if peak <= silent {
-                    0.0
-                } else {
-                    (v / m.max(floor)).min(1.0)
-                }
-            })
-            .collect();
-        Curve { values, fps }
-    }
+/// `raw` (at `fps`) as a curve in `0..=1`: less its one-second moving mean
+/// (negative parts dropped), over the largest value within three seconds
+/// (at least 5 % of the peak, and ten times `silent`); 0 throughout where
+/// its peak is at most `silent`.
+pub(crate) fn normalised(raw: &[f32], fps: f64, silent: f32) -> Curve {
+    let mean = moving_mean(raw, (0.5 * fps).round() as usize);
+    let lifted: Vec<f32> = raw
+        .iter()
+        .zip(&mean)
+        .map(|(r, m)| (r - m).max(0.0))
+        .collect();
+    let peak = lifted.iter().copied().fold(0.0, f32::max);
+    let floor = (0.05 * peak).max(10.0 * silent);
+    let local = sliding_max(&lifted, (3.0 * fps).round() as usize);
+    let values = lifted
+        .iter()
+        .zip(&local)
+        .map(|(&v, &m)| {
+            if peak <= silent {
+                0.0
+            } else {
+                (v / m.max(floor)).min(1.0)
+            }
+        })
+        .collect();
+    Curve { values, fps }
 }
 
 /// The mean over `±radius` frames (fewer at the ends).

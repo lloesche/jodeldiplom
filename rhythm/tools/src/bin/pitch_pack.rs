@@ -7,19 +7,19 @@
 //! given, `KIND` one of `f32`, `f16`, `q4k`, `q5k`, `q8`, `PATTERN` a
 //! tensor's name, `*` matching any run of characters.
 //!
-//! The K blocks (Q4_K, Q5_K) are fitted as `jodel_rhythm::net::q4k` says:
-//! with `--stats FILE` (`pitch_quant stats`: each matrix's mean square
-//! input a column) by those statistics to the power `--power` (1 if not
-//! given); with `--gptq FILE` (`pitch_quant stats --gram`: each matrix's
-//! mean product of each two inputs) by GPTQ; with `--refine`, their
-//! scales refined.
+//! The K blocks (Q4_K, Q5_K) are fitted as `src/pack/fit.rs` says: with
+//! `--stats FILE` (`pitch_quant stats`: each matrix's mean square input a
+//! column) by those statistics to the power `--power` (1 if not given);
+//! with `--gptq FILE` (`pitch_quant stats --gram`: each matrix's mean
+//! product of each two inputs) by GPTQ (`src/pack/gptq.rs`); with `--refine`,
+//! their scales refined.
 //!
 //! The built-in file, from the workspace (`fcpe-f32.bin` the full
 //! precision weights, `gram-120.bin` the grams of the first 120 voices of
 //! the calibration list, both kept out of this repository):
 //!
 //! ```text
-//! cargo run --release -p jodel-rhythm --example pitch_pack -- \
+//! cargo run --release -p jodel-rhythm-tools --bin pitch_pack -- \
 //!     fcpe-f32.bin rhythm/models/pitch.bin --gptq gram-120.bin \
 //!     '*=q5k' input_stack.0.weight=f16 '*.4.conv.weight=f16'
 //! ```
@@ -27,8 +27,11 @@
 //! Every matrix whose rows are whole blocks is Q5_K by GPTQ; the first
 //! convolution and the depthwise ones (rows of 384 and 31) are halves.
 
-use jodel_rhythm::net::q4k::{BLOCK, Q8_BLOCK};
-use jodel_rhythm::net::weights::{Kind, PackedTensor, Weights};
+use std::path::Path;
+
+use jodel_rhythm::nn::quant::{BLOCK, Q8_BLOCK};
+use jodel_rhythm::nn::weights::{Kind, Weights};
+use jodel_rhythm_tools::pack::{pack, PackedTensor};
 
 /// Whether `name` matches `pattern`, `*` any run of characters.
 fn matches(pattern: &str, name: &str) -> bool {
@@ -185,7 +188,8 @@ fn main() {
             gram,
         });
     }
-    let packed = Weights::pack(&tensors).expect("packed");
-    std::fs::write(&o.output, &packed).unwrap_or_else(|e| panic!("{}: {e}", o.output));
+    let packed = pack(&tensors).expect("packed");
+    durable::write_atomic(Path::new(&o.output), &packed)
+        .unwrap_or_else(|e| panic!("{}: {e}", o.output));
     println!("{} bytes, from {}", packed.len(), bytes.len());
 }

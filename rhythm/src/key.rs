@@ -18,8 +18,9 @@
 use std::f64::consts::PI;
 use std::sync::OnceLock;
 
-use crate::net::layers::par_chunks;
-use crate::net::weights::Weights;
+use crate::nn::layers::par_chunks;
+use crate::nn::threads;
+use crate::nn::weights::Weights;
 
 /// The weights, built in (`tools/convert_keynet.py`).
 static WEIGHTS: &[u8] = include_bytes!("../models/keynet.bin");
@@ -183,8 +184,7 @@ pub fn spectrum(samples: &[f32]) -> (Vec<f32>, usize) {
     // r = 2^(1/24).
     let r2 = 2f64.powf(2.0 / PER_OCTAVE);
     let q = (r2 + 1.0) / (r2 - 1.0);
-    let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
-    par_chunks(&mut out, n.max(1), threads, |k, row| {
+    par_chunks(&mut out, n.max(1), threads(), |k, row| {
         let f = FMIN * 2f64.powf(k as f64 / PER_OCTAVE);
         let length = q * f64::from(RATE) / f;
         // The taps: np.arange(-L//2, L//2) (floats), a periodic Hann
@@ -260,8 +260,7 @@ impl Block {
         let plane = f * t;
         let pad = self.k / 2;
         let mut y = vec![0.0f32; self.out * plane];
-        let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
-        par_chunks(&mut y, plane, threads, |o, out| {
+        par_chunks(&mut y, plane, threads(), |o, out| {
             for i in 0..self.inp {
                 let src = &x[i * plane..(i + 1) * plane];
                 for dy in 0..self.k {

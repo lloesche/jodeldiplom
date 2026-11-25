@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Converts FCPE's bundled checkpoint into a weights file at full precision,
-which `examples/pitch_pack.rs` quantises into the file jodel-rhythm embeds
-for following a voice's pitch (`jodel_rhythm::pitch`).
+which `pitch_pack` (jodel-rhythm-tools, beside this script) quantises into
+the file jodel-rhythm embeds for following a voice's pitch
+(`jodel_rhythm::pitch`).
 
     python -I tools/convert_fcpe.py fcpe_c_v001.pt fcpe-f32.bin
 

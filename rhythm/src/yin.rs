@@ -54,8 +54,8 @@ pub struct Yin {
     at: f64,
     sum: f32,
     count: u32,
-    /// The voice at [`RATE`], the last [`WINDOW`] of it and what came
-    /// since the last frame.
+    /// The voice at [`RATE`]: up to two windows of it, the last
+    /// [`WINDOW`] the one heard.
     voice: Vec<f32>,
     /// Samples since the last frame.
     since: usize,
@@ -151,12 +151,14 @@ impl Yin {
             let y = self.band.run(self.sum / self.count as f32);
             self.sum = 0.0;
             self.count = 0;
-            self.voice.push(y);
-            if self.voice.len() > self.window {
-                self.voice.drain(..self.voice.len() - self.window);
+            // The voice grows to two windows, then drops the older one: a
+            // window moved once a window, not once a sample.
+            if self.voice.len() == 2 * self.window {
+                self.voice.drain(..self.window);
             }
+            self.voice.push(y);
             self.since += 1;
-            if self.since >= self.hop && self.voice.len() == self.window {
+            if self.since >= self.hop && self.voice.len() >= self.window {
                 self.since = 0;
                 frame(self.pitch());
             }
@@ -165,7 +167,7 @@ impl Yin {
 
     /// The pitch of the last [`WINDOW`], if clear.
     fn pitch(&mut self) -> Option<f32> {
-        let x = &self.voice;
+        let x = &self.voice[self.voice.len() - self.window..];
         let rms = (x.iter().map(|v| v * v).sum::<f32>() / x.len() as f32).sqrt();
         if 20.0 * rms.max(1e-9).log10() < QUIET_DB {
             return None;
@@ -384,6 +386,76 @@ mod tests {
         let heard = frames(48_000, &mixed(&[&voice, &fan]));
         let share = share_at(&heard, cents(140.0), 25.0);
         assert!(share > 0.8, "{share}");
+    }
+
+    /// The frames (as bits) of `pieces` with the window moved for every
+    /// sample, as [`Yin::push`] once did: the voice kept at exactly a
+    /// window.
+    fn frames_moving_every_sample(rate: u32, pieces: &[&[f32]]) -> Vec<Option<u32>> {
+        let mut yin = Yin::new(rate);
+        let mut heard = Vec::new();
+        for &x in pieces.iter().flat_map(|p| p.iter()) {
+            yin.sum += x;
+            yin.count += 1;
+            yin.at += 1.0;
+            if yin.at < yin.step {
+                continue;
+            }
+            yin.at -= yin.step;
+            let y = yin.band.run(yin.sum / yin.count as f32);
+            yin.sum = 0.0;
+            yin.count = 0;
+            yin.voice.push(y);
+            if yin.voice.len() > yin.window {
+                yin.voice.drain(..yin.voice.len() - yin.window);
+            }
+            yin.since += 1;
+            if yin.since >= yin.hop && yin.voice.len() == yin.window {
+                yin.since = 0;
+                heard.push(yin.pitch().map(f32::to_bits));
+            }
+        }
+        heard
+    }
+
+    /// A voice gliding from 140 to 320 Hz under hiss, with rests, at
+    /// 44.1 kHz in pieces of uneven length (as a device gives them): the
+    /// window moved once a window gives every frame, bit for bit, that
+    /// moving it every sample gives.
+    #[test]
+    fn the_window_moves_without_changing_a_frame() {
+        let rate = 44_100;
+        let glide: Vec<f32> = (0..rate as usize)
+            .map(|i| {
+                let t = i as f64 / f64::from(rate);
+                let phase = std::f64::consts::TAU * (140.0 * t + 90.0 * t * t);
+                let sung = if (t * 4.0).fract() > 0.8 { 0.0 } else { 0.05 };
+                (sung * (phase.sin() + 0.5 * (2.0 * phase).sin())) as f32
+            })
+            .collect();
+        let block = mixed(&[&glide, &hiss(rate, 1.0, 0.01, 11)]);
+        let mut pieces = Vec::new();
+        let mut at = 0;
+        for size in [1, 7, 441, 64, 1000, 3, 256].iter().cycle() {
+            if at >= block.len() {
+                break;
+            }
+            let end = (at + size).min(block.len());
+            pieces.push(&block[at..end]);
+            at = end;
+        }
+        let mut yin = Yin::new(rate);
+        let mut heard = Vec::new();
+        for piece in &pieces {
+            yin.push(piece, |p| heard.push(p.map(f32::to_bits)));
+        }
+        let voiced = heard.iter().filter(|p| p.is_some()).count();
+        assert!(
+            voiced > 50 && voiced + 10 < heard.len(),
+            "{voiced} of {}",
+            heard.len()
+        );
+        assert_eq!(heard, frames_moving_every_sample(rate, &pieces));
     }
 
     /// A bass's low note, its fundamental under the band: heard at its own

@@ -11,6 +11,30 @@ use std::f64::consts::PI;
 
 use crate::fft::RealFft;
 
+/// The gain of the compression: a magnitude `x` is `ln(1 + GAIN·x)`.
+///
+/// It is computed in two roundings, which differ by an ulp at times; each
+/// stays the one its stage was tuned with:
+/// - the front end's, `log_mel`: `(1 + GAIN·x).ln()`;
+/// - the fast split's into parts ([`crate::parts`]), [`compress`]:
+///   `(GAIN·x).ln_1p()`, undone by [`expand`].
+pub(crate) const GAIN: f32 = 1000.0;
+
+/// A magnitude as the front end's log-mel value.
+fn log_mel(x: f32) -> f32 {
+    (1.0 + GAIN * x).ln()
+}
+
+/// A magnitude as a log-mel value in the split's rounding (see [`GAIN`]).
+pub(crate) fn compress(x: f32) -> f32 {
+    (GAIN * x).ln_1p()
+}
+
+/// The magnitude a log-mel value stands for ([`compress`] undone).
+pub(crate) fn expand(v: f32) -> f32 {
+    v.exp_m1() / GAIN
+}
+
 /// How a [`Frontend`] frames and filters.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct FrontendConfig {
@@ -132,11 +156,6 @@ impl Frontend {
         }
     }
 
-    /// The configuration.
-    pub fn config(&self) -> &FrontendConfig {
-        &self.config
-    }
-
     /// Takes in more samples.
     pub fn push(&mut self, samples: &[f32]) {
         self.pending.extend_from_slice(samples);
@@ -171,7 +190,7 @@ impl Frontend {
                     .zip(&self.magnitudes[filter.first..])
                     .map(|(w, m)| w * m)
                     .sum();
-                self.data.push((1.0 + 1000.0 * value).ln());
+                self.data.push(log_mel(value));
             }
             self.start += hop;
         }

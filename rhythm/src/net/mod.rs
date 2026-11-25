@@ -14,16 +14,15 @@
 //!
 //! A [`NetRunner`] runs a piece's layers somewhere else (the GPU, see
 //! `jodel-gpu`); [`Network::predict_with`] takes one, and a piece it fails
-//! on runs here instead.
+//! on runs here instead. Its layers and weights file are the crate's
+//! shared ones ([`crate::nn`]).
 
-pub(crate) mod layers;
 pub mod mel;
 mod model;
-pub mod q4k;
-pub mod weights;
 
 use std::sync::OnceLock;
 
+use crate::nn::{threads, weights::Weights};
 pub use mel::{NetFrontend, NetMel};
 use model::{Model, MAX_FRAMES};
 
@@ -37,8 +36,8 @@ const BORDER: usize = 6;
 pub const PIECE_FRAMES: usize = MAX_FRAMES;
 
 /// The built-in weights, parsed afresh (for a [`NetRunner`] to load).
-pub fn built_in_weights() -> Result<weights::Weights, String> {
-    weights::Weights::parse(WEIGHTS)
+pub fn built_in_weights() -> Result<Weights, String> {
+    Weights::parse(WEIGHTS)
 }
 
 /// Runs the network's layers on a piece somewhere else than here (a
@@ -67,20 +66,12 @@ pub struct Network {
     model: Model,
 }
 
-/// How many threads the network uses: half the processors, so playback
-/// and the interface keep theirs.
-pub fn threads() -> usize {
-    std::thread::available_parallelism()
-        .map(|n| (n.get() / 2).max(1))
-        .unwrap_or(1)
-}
-
 impl Network {
     /// The built-in network, loaded on first use.
     pub fn shared() -> &'static Network {
         static NETWORK: OnceLock<Network> = OnceLock::new();
         NETWORK.get_or_init(|| {
-            let weights = weights::Weights::parse(WEIGHTS).expect("the built-in weights");
+            let weights = Weights::parse(WEIGHTS).expect("the built-in weights");
             Network {
                 model: Model::load(weights).expect("the built-in weights"),
             }
