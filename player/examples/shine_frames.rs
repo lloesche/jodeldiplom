@@ -231,7 +231,6 @@ fn picture_at(sung: &[&jodel_lyrics::Line], now: f64, singing: &Singing) -> Kara
         moved: 1.0,
         score: Some(jodeldiplom::view::karaoke::Score {
             points: singing.tally.score,
-            tier: singing.last_phrase().and_then(|p| p.tier),
             streak: singing.tally.streak,
         }),
         result: None,

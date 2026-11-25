@@ -4,12 +4,14 @@
 //! sung on the notes (`tests/common/sung.rs`), drawn offscreen as the
 //! window draws them, and each step's GPU time read from timestamps (the
 //! window's pass drawn a step a pass): a normal frame (the singing at no
-//! tier), the Diva peak (two phrases Diva, the second just decided: its
-//! jackpot flying, angels coming down, the flames, the rays, the rainbow),
-//! the worst the effects can make (`all`: the Diva peak with every
-//! registered effect in it at full strength at once, the edges on fire,
-//! the bulbs, the coins too, and the lyrics' lines in every lyric
-//! treatment in turn), and the Jodeldiplom after that song (a new best:
+//! tier), each tier's peak (a scene a tier, named after it: two phrases
+//! at it, the second just decided, the streak at its rung of the
+//! multiplier; at Diva's its jackpot flying, angels coming down, the
+//! flames, the rays, the rainbow, ×32), the worst the effects can make
+//! (`all`: the Diva peak with every registered effect in it at full
+//! strength at once, the edges on fire, the bulbs, the coins too, and the
+//! lyrics' lines in every lyric treatment in turn), and the Jodeldiplom
+//! after that song (a new best:
 //! its confetti), timed over its whole reveal. The singing scenes are
 //! timed over their second up to the moment looked at, each in every size
 //! asked for (`--size WxH`, again for more; the default a 16-inch MacBook
@@ -65,48 +67,43 @@ include!(concat!(env!("OUT_DIR"), "/fonts.rs"));
 /// How long before the moment looked at each scene is timed.
 const TIMED: f64 = 1.0;
 
-/// A scene: its name, the singing's phrases decided Diva when, the
-/// moment looked at, whether the song's diploma is timed from there (its
-/// whole reveal) rather than the singing up to it, and whether every
-/// effect is in its frames at once ([`every_effect`]).
+/// The moment each scene is looked at, and when its two phrases are
+/// decided.
+const AT: f64 = 10.0;
+const DECIDED: [f64; 2] = [4.0, 9.2];
+
+/// A scene: its name, the tier its phrases are decided at (none: no
+/// phrase decided; the streak held at least at the tier's rung), whether
+/// the song's diploma is timed from the moment looked at (its whole
+/// reveal) rather than the singing up to it, and whether every effect is
+/// in its frames at once ([`every_effect`]).
 struct Scene {
-    name: &'static str,
-    diva: &'static [f64],
-    at: f64,
+    name: String,
+    tier: Option<Tier>,
     diploma: bool,
     every: bool,
 }
 
-const SCENES: [Scene; 4] = [
-    Scene {
-        name: "normal",
-        diva: &[],
-        at: 10.0,
-        diploma: false,
-        every: false,
-    },
-    Scene {
-        name: "diva",
-        diva: &[4.0, 9.2],
-        at: 10.0,
-        diploma: false,
-        every: false,
-    },
-    Scene {
-        name: "all",
-        diva: &[4.0, 9.2],
-        at: 10.0,
-        diploma: false,
-        every: true,
-    },
-    Scene {
-        name: "diploma",
-        diva: &[4.0, 9.2],
-        at: 10.0,
-        diploma: true,
-        every: false,
-    },
-];
+/// The scenes: the normal one, a tier's each, every effect at once and
+/// the diploma (at the top).
+fn scenes() -> Vec<Scene> {
+    let scene = |name: &str, tier, diploma, every| Scene {
+        name: name.to_owned(),
+        tier,
+        diploma,
+        every,
+    };
+    let tiers =
+        (Tier::ALL.into_iter()).map(|t| scene(&t.name().to_lowercase(), Some(t), false, false));
+    [scene("normal", None, false, false)]
+        .into_iter()
+        .chain(tiers)
+        .chain([
+            scene("all", Some(Tier::TOP), false, true),
+            scene("diploma", Some(Tier::TOP), true, false),
+        ])
+        .collect()
+}
 
 /// The effects Diva's row does not list, each at full strength, held and
 /// fired by a phrase: with Diva's own, every registered effect at once.
@@ -488,7 +485,7 @@ fn main() {
     let rest = the_rest();
     let mut worsts = Vec::new();
     for &(w, h) in &sizes {
-        for scene in &SCENES {
+        for scene in &scenes() {
             let mut singing = Singing::default();
             singing.prepare(
                 Path::new("song"),
@@ -515,7 +512,7 @@ fn main() {
             let mut heard = 0usize;
             for f in 0.. {
                 let now = f as f64 / FPS;
-                if now > scene.at + 1e-9 {
+                if now > AT + 1e-9 {
                     break;
                 }
                 while (heard as f64) / 100.0 <= now {
@@ -524,28 +521,33 @@ fn main() {
                     singing.hear(t, c);
                     heard += 1;
                 }
-                if scene.diva.iter().any(|d| (now - d).abs() < 0.5 / FPS) {
-                    singing.decided(
-                        now,
-                        Shone {
-                            line: 0,
-                            end: now,
-                            value: 1.0,
-                            top: 0.9,
-                            tier: Some(Tier::TOP),
-                        },
-                    );
+                if let Some(tier) = scene.tier {
+                    if DECIDED.iter().any(|d| (now - d).abs() < 0.5 / FPS) {
+                        singing.decided(
+                            now,
+                            Shone {
+                                line: 0,
+                                end: now,
+                                value: 1.0,
+                                top: 0.9,
+                                tier: Some(tier),
+                            },
+                        );
+                    }
+                    let streak = tier.spec().streak;
+                    singing.tally.streak = singing.tally.streak.max(streak);
+                    singing.tally.best_streak = singing.tally.best_streak.max(streak);
                 }
                 let (backdrop, mut frame, cpu) = rig.frame(&singing, now, None);
                 if scene.every {
                     let area = (0.0, 0.0, w as f32, h as f32);
-                    frame = every_effect(&frame, area, (&rest, scene.at - TIMED));
+                    frame = every_effect(&frame, area, (&rest, AT - TIMED));
                 }
                 if rig.made == 1 {
                     gpu.set_backdrop(Some(&backdrop), w, h);
                     gpu.show_pixels(&rig.pixels, w, h).expect("a frame");
                 }
-                if !scene.diploma && now > scene.at - TIMED {
+                if !scene.diploma && now > AT - TIMED {
                     let alone = Some((&mut kinds, &mut effects));
                     frames.push(time(&mut gpu, &backdrop, &frame, (w, h), alone));
                     cpu_ms.push(cpu);
@@ -572,7 +574,7 @@ fn main() {
                         next: String::new(),
                         again: false,
                     };
-                    let (backdrop, frame, cpu) = rig.frame(&singing, scene.at, Some(result));
+                    let (backdrop, frame, cpu) = rig.frame(&singing, AT, Some(result));
                     // Kind by kind every tenth frame: the reveal is long.
                     let alone = (f % 10 == 0).then_some((&mut kinds, &mut effects));
                     frames.push(time(&mut gpu, &backdrop, &frame, (w, h), alone));

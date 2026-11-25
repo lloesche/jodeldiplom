@@ -238,12 +238,13 @@ mod tests {
         assert!(rows(&[], 30.0).is_empty());
     }
 
-    /// The tally of every tier fits in a row on the sheets the diploma is
-    /// drawn on (it wraps only past that).
+    /// The tally of every tier fits in a row on a wide sheet, in two on
+    /// the upright ones the diploma is drawn on, each row inside the
+    /// sheet.
     #[test]
-    fn every_tier_s_tally_fits_in_a_row() {
+    fn every_tier_s_tally_fits_in_a_row_or_two() {
         let mut stage = Stage::default();
-        for (w, h) in [(1600.0, 900.0), (900.0, 1400.0), (500.0, 900.0)] {
+        for (w, h, most) in [(1600.0, 900.0, 1), (900.0, 1400.0, 2), (500.0, 900.0, 2)] {
             let room = room(w, h);
             let px = (2.4 * room.s).round().max(8.0);
             let each = 1.05 * room.s * 2.6 + px * 1.2;
@@ -252,7 +253,12 @@ mod tests {
                 .rev()
                 .map(|t| stage.measure(PRINT, &format!("99 {}", t.name()), px) + each)
                 .collect();
-            assert_eq!(tally_rows(&wide, room.across(TALLY_WIDE)).count(), 1);
+            let rows: Vec<_> = tally_rows(&wide, room.across(TALLY_WIDE)).collect();
+            assert!(rows.len() <= most, "{w}: {rows:?}");
+            for r in rows {
+                let across = wide[r].iter().sum::<f32>();
+                assert!(across <= room.sheet.2 * 0.95, "{w}: {across}");
+            }
         }
     }
 

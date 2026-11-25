@@ -129,12 +129,12 @@ pub fn album_keys(path: &Path, tags: Option<&jodel_playback::Tags>) -> Vec<Strin
                 album.trim().to_lowercase(),
                 artist.trim().to_lowercase()
             );
-            keys.push(format!("a{:016x}", crate::rhythm::hash(&text)));
+            keys.push(format!("a{}", crate::cache::name(&text)));
         }
     }
     if let Some(dir) = path.parent() {
         let text = format!("folder {}", dir.display());
-        keys.push(format!("f{:016x}", crate::rhythm::hash(&text)));
+        keys.push(format!("f{}", crate::cache::name(&text)));
     }
     keys
 }

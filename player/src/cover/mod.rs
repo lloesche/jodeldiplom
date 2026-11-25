@@ -198,5 +198,5 @@ pub struct CoverModels {
 /// or its path's hash where it cannot be read.
 pub fn song_key(path: &Path) -> String {
     crate::lyrics::store::cache_key(path)
-        .unwrap_or_else(|| format!("{:016x}", crate::rhythm::hash(&path.display().to_string())))
+        .unwrap_or_else(|| crate::cache::name(&path.display().to_string()))
 }

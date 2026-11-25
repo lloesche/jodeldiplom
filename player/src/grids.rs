@@ -18,7 +18,7 @@ use crate::browser::Notify;
 use crate::cache;
 use crate::core::grid::Grid;
 use crate::core::Action;
-use crate::rhythm::{beats_text, hash, parse_beats};
+use crate::rhythm::{beats_text, parse_beats};
 
 /// Where the grids are kept: `grids` in the settings folder (fixed by hand,
 /// they are not data the player could make again).
@@ -34,7 +34,7 @@ fn key(path: &Path) -> Option<String> {
 
 /// The file of the grid stored under `key` in `dir`.
 fn file(dir: &Path, key: &str) -> PathBuf {
-    dir.join(format!("{:016x}.txt", hash(key)))
+    dir.join(format!("{}.txt", crate::cache::name(key)))
 }
 
 /// A grid as its file's text, under `key`, in [`cache::GRID`]'s version.

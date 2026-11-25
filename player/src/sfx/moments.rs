@@ -75,8 +75,8 @@ pub fn sound_of(cue: &Cue) -> Option<(Sound, f32)> {
         Cue::Pop(b) => (Sound::Pop(step(b.height)), pan(b.across)),
         Cue::Splash(b) => (Sound::Sparkle(step(b.height)), pan(b.across)),
         Cue::Shot { across, .. } => (Sound::Zap, pan(across)),
-        Cue::StreakUp(level) => (Sound::StepUp(level), 0.0),
-        Cue::StreakLost => (Sound::Break, 0.0),
+        Cue::StreakUp(rung) => (Sound::StepUp(rung), 0.0),
+        Cue::StreakLost(_) => (Sound::Break, 0.0),
         Cue::Phrase(shone) => (Sound::Tier(shone.tier?), 0.0),
         Cue::Word { .. } => return None,
     })
@@ -249,8 +249,8 @@ mod tests {
                 hit: true,
                 streak: 5,
             }),
-            at(Cue::StreakUp(1)),
-            at(Cue::StreakLost),
+            at(Cue::StreakUp(Tier::ALL[0])),
+            at(Cue::StreakLost(Tier::ALL[0])),
             at(phrase(Some(Tier::TOP))),
             at(phrase(None)),
         ];
@@ -258,7 +258,7 @@ mod tests {
         assert_eq!(
             c,
             [
-                (Sound::StepUp(1), None),
+                (Sound::StepUp(Tier::ALL[0]), None),
                 (Sound::Break, None),
                 (Sound::Tier(Tier::TOP), None),
             ]

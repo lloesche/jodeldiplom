@@ -67,7 +67,7 @@ pub fn key(path: &Path, lyrics: &Lyrics, waveform: &Waveform) -> String {
             .fold(0u64, |h, &s| h.rotate_left(3) ^ u64::from(s));
         let _ = write!(text, "melody {} {cents:x} {sure:x}", m.cents.len());
     }
-    format!("{:016x}", crate::rhythm::hash(&text))
+    crate::cache::name(&text)
 }
 
 /// The folder the files are kept in: `shine` beside the analyses' folder

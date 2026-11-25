@@ -166,16 +166,21 @@ pub struct LyricLine {
 pub struct Score {
     /// The points.
     pub points: u32,
-    /// The tier the last phrase reached, if any.
-    pub tier: Option<crate::core::shine::Tier>,
     /// The words hit in a row now.
     pub streak: u32,
 }
 
 impl Score {
-    /// The multiplier now (1 to 4).
-    pub fn multiplier(&self) -> u32 {
-        crate::core::singing::multiplier(self.streak)
+    /// The multiplier's rung now ([`crate::core::singing::rung`]).
+    pub fn rung(&self) -> Option<crate::core::shine::Tier> {
+        crate::core::singing::rung(self.streak)
+    }
+
+    /// The rung under the points, as the badge names it: its tier and its
+    /// multiplier ("Amazing ×16"); none at ×1.
+    pub fn rung_label(&self) -> Option<String> {
+        self.rung()
+            .map(|t| format!("{} ×{}", t.name(), t.multiplier()))
     }
 }
 
@@ -611,7 +616,6 @@ fn score_now(state: &State) -> Option<Score> {
     let path = state.queue.paths.get(index)?;
     (state.config.karaoke_game && singing.is_of(path) && singing.words() > 0).then_some(Score {
         points: singing.tally.score,
-        tier: singing.last_phrase().and_then(|p| p.tier),
         streak: singing.tally.streak,
     })
 }
@@ -709,6 +713,18 @@ pub fn line_color(kind: LineKind) -> Color {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Under the points the rung, named as the badge names it (none at
+    /// ×1), whatever the last phrase reached.
+    #[test]
+    fn the_score_names_the_rung() {
+        let score = |streak| Score { points: 0, streak };
+        assert_eq!(score(0).rung_label(), None);
+        for t in crate::core::shine::Tier::ALL {
+            let label = score(t.spec().streak).rung_label();
+            assert_eq!(label, Some(format!("{} ×{}", t.name(), t.multiplier())));
+        }
+    }
 
     fn lines(ids: &[usize]) -> Vec<LyricLine> {
         ids.iter()

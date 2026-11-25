@@ -38,6 +38,7 @@ use jodel_lyrics::Lyrics;
 use jodel_rhythm::waveform::{Melody, Waveform};
 
 use crate::core::shine::{self, Reference, Shone};
+use crate::tiers::Tier;
 
 mod bursts;
 mod demo;
@@ -67,15 +68,21 @@ pub const WORD_POINTS: u32 = 100;
 /// How long after a word's end it is scored (the last frames of it come
 /// in a little late).
 const SCORED_AFTER: f64 = 0.3;
-/// The multiplier of a streak of `streak` words hit in a row: 1 to 4.
-pub fn multiplier(streak: u32) -> u32 {
-    match streak {
-        0..5 => 1,
-        5..10 => 2,
-        10..20 => 3,
-        _ => 4,
-    }
+/// The multiplier's rung at a streak of `streak` words hit in a row: the
+/// last tier whose streak it reaches ([`crate::tiers::TierSpec::streak`]),
+/// the rung named after it; none under the first's (×1).
+pub fn rung(streak: u32) -> Option<Tier> {
+    (Tier::ALL.into_iter().rev()).find(|t| streak >= t.spec().streak)
 }
+
+/// The multiplier of a streak of `streak` words hit in a row: ×1 under the
+/// first rung, then its rung's ([`rung`], [`Tier::multiplier`]).
+pub fn multiplier(streak: u32) -> u32 {
+    rung(streak).map_or(1, Tier::multiplier)
+}
+
+// The top rung's multiplier (2 to the tiers' count) fits a `u32`.
+const _: () = assert!(Tier::COUNT < 32);
 
 /// A word as it was scored.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -328,9 +335,9 @@ impl Singing {
         self.glide = None;
     }
 
-    /// The multiplier now.
-    pub fn multiplier(&self) -> u32 {
-        multiplier(self.tally.streak)
+    /// The multiplier's rung now ([`rung`]).
+    pub fn rung(&self) -> Option<Tier> {
+        rung(self.tally.streak)
     }
 
     /// The note sung at `t`: its line and index ([`Notes::note_at`]).
@@ -413,7 +420,7 @@ impl Singing {
         self.undo.push(undo);
     }
 
-    /// The words over by `t`, scored: each a moment, the streak's level up
+    /// The words over by `t`, scored: each a moment, the streak's rung up
     /// or lost with it. A word missed alone waits, rescued at once if the
     /// next word burst already ([`bursts`]).
     fn score_words(&mut self, t: f64) {
@@ -424,18 +431,18 @@ impl Singing {
             let order = self.tally.next_word;
             self.tally.next_word += 1;
             let counts = self.counts.get(&(l, w)).copied().unwrap_or((0, 0));
-            let before = multiplier(self.tally.streak);
+            let before = rung(self.tally.streak);
             if !self.tally.score_word(counts, end, order) {
                 continue;
             }
             let streak = self.tally.streak;
             let hit = self.tally.last_scored.is_some_and(|s| s.hit);
             self.log.push(t, t, Cue::Word { end, hit, streak });
-            let now = multiplier(streak);
-            if now > before {
-                self.log.push(t, t, Cue::StreakUp(now - 1));
-            } else if now < before && before > 1 {
-                self.log.push(t, t, Cue::StreakLost);
+            let now = rung(streak);
+            if let Some(up) = now.filter(|&n| Some(n) > before) {
+                self.log.push(t, t, Cue::StreakUp(up));
+            } else if let Some(from) = before.filter(|_| now < before) {
+                self.log.push(t, t, Cue::StreakLost(from));
             }
             if self.tally.run == Run::Waiting(order) {
                 self.rescue_waiting(t);

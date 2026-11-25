@@ -145,7 +145,8 @@ fn the_bars_are_a_share_of_what_the_original_reaches() {
     let par = Par::default();
     assert_eq!(Tier::of(&at(0.59, None), par), None);
     assert_eq!(Tier::of(&at(0.60, None), par), Some(Tier::named("Good")));
-    assert_eq!(Tier::of(&at(0.80, None), par), Some(Tier::named("Great")));
+    assert_eq!(Tier::of(&at(0.75, None), par), Some(Tier::named("Great")));
+    assert_eq!(Tier::of(&at(0.82, None), par), Some(Tier::named("Awesome")));
     assert_eq!(Tier::of(&at(0.88, None), par), Some(Tier::named("Amazing")));
     assert_eq!(Tier::of(&at(0.95, Some(0.95)), par), Some(Tier::TOP));
     // Diva asks the pitch too.
@@ -153,19 +154,20 @@ fn the_bars_are_a_share_of_what_the_original_reaches() {
         Tier::of(&at(0.95, Some(0.85)), par),
         Some(Tier::named("Amazing"))
     );
-    // An original that reaches only 0.8 (its everyday hearings): 90 % of
-    // that is Diva, the others as much lower.
+    // An original that reaches only 0.8 (its everyday hearings): 94 % of
+    // that is Diva (its pitch 92 % of the original's), the others as
+    // much lower.
     let rough = Par {
         shine: 0.8,
         pitch: 0.8,
     };
-    assert_eq!(Tier::of(&at(0.73, Some(0.73)), rough), Some(Tier::TOP));
+    assert_eq!(Tier::of(&at(0.76, Some(0.74)), rough), Some(Tier::TOP));
     assert_eq!(
-        Tier::of(&at(0.73, Some(0.70)), rough),
+        Tier::of(&at(0.76, Some(0.70)), rough),
         Some(Tier::named("Amazing"))
     );
     assert_eq!(Tier::of(&at(0.48, None), rough), Some(Tier::named("Good")));
-    let shone = Shone::new(0, 1.0, &at(0.72, None), rough);
+    let shone = Shone::new(0, 1.0, &at(0.752, None), rough);
     assert!((shone.of_top() - 1.0).abs() < 1e-6);
 }
 

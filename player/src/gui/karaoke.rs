@@ -532,12 +532,8 @@ fn text_ops(
         let px = (big * 0.42).round().max(12.0);
         let margin = px * 0.8;
         let small = (px * 0.45).round().max(10.0);
-        // Under it the tier the last phrase reached, and the multiplier.
-        let tier = score.tier.map(|t| t.name().to_owned());
-        let times = (score.multiplier() > 1).then(|| format!("×{}", score.multiplier()));
-        let under: Vec<String> = tier.into_iter().chain(times).collect();
-        if !under.is_empty() {
-            let times = under.join(" · ");
+        // Under it the multiplier's rung, named as the badge names it.
+        if let Some(times) = score.rung_label() {
             let lw = faces.get(Face::SHOUT).measure_from(&times, small, small);
             ops.push(TextOp {
                 text: times,

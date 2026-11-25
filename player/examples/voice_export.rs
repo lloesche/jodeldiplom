@@ -81,7 +81,7 @@ fn main() {
         }
         let song = parts[2];
         let path = Path::new(song.rsplitn(3, ' ').nth(2).unwrap_or(song));
-        let lyrics_key = format!("{:016x}", jodeldiplom::rhythm::hash(song));
+        let lyrics_key = jodeldiplom::cache::name(song);
         let dir = out.join(&lyrics_key);
         if dir.join("voice.wav").is_file() {
             continue;

@@ -8,9 +8,8 @@
 //! - [`Sound::Sparkle`]: the splash's glitter, on the same step two
 //!   octaves up: four glassy grains scattered over 90 ms, across the
 //!   sides, in a small room.
-//! - [`Sound::StepUp`]: the streak going up a level: a quick rising major
-//!   arpeggio, plucked, higher, longer and brighter at each level, a swish
-//!   of noise rising under it.
+//! - [`Sound::StepUp`]: the streak up a rung of the multiplier, by the
+//!   tier the rung is named after ([`super::recipes::step_up`]).
 //! - [`Sound::Break`]: the streak lost: a soft "aww", a mellow voice-like
 //!   tone sliding down a fourth, darkening as it goes; quiet.
 //! - [`Sound::Zap`]: a shot fired to rescue a word missed: a "pew", a
@@ -35,15 +34,13 @@ use std::sync::LazyLock;
 
 use super::cheers::{self, MEDALS, TICK_STEPS};
 use super::diploma::Diploma;
+use super::recipes;
 use super::synth::{scatter, Buf, Envelope, Noise, Partial, Tone};
 use crate::core::shine::Tier;
 use crate::core::singing::Medal;
 
 /// The steps of the scale the pops and sparkles are on.
 pub const STEPS: usize = 9;
-
-/// The streak's levels a step up has a sound for (1: ×2, up to ×4).
-pub const LEVELS: u32 = 3;
 
 /// A sound of the game.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -53,8 +50,8 @@ pub enum Sound {
     Pop(usize),
     /// Its splash's glitter, on step k.
     Sparkle(usize),
-    /// The streak up to level k (1 to [`LEVELS`]).
-    StepUp(u32),
+    /// The streak up to the rung named after a tier.
+    StepUp(Tier),
     /// The streak lost.
     Break,
     /// A shot fired to rescue a word missed.
@@ -78,7 +75,7 @@ pub enum Sound {
 static BANK: LazyLock<Vec<Sound>> = LazyLock::new(|| {
     let mut all: Vec<Sound> = (0..STEPS).map(Sound::Pop).collect();
     all.extend((0..STEPS).map(Sound::Sparkle));
-    all.extend((1..=LEVELS).map(Sound::StepUp));
+    all.extend(Tier::ALL.map(Sound::StepUp));
     all.push(Sound::Break);
     all.push(Sound::Zap);
     all.extend(Tier::ALL.map(Sound::Tier));
@@ -106,19 +103,18 @@ impl Sound {
         BANK.clone()
     }
 
-    /// It, a step or a level out of range the nearest there is.
+    /// It, a step out of range the nearest there is.
     fn in_range(self) -> Sound {
         match self {
             Sound::Pop(k) => Sound::Pop(k.min(STEPS - 1)),
             Sound::Sparkle(k) => Sound::Sparkle(k.min(STEPS - 1)),
-            Sound::StepUp(l) => Sound::StepUp(l.clamp(1, LEVELS)),
             Sound::Tick(k) => Sound::Tick(k.min(TICK_STEPS - 1)),
             other => other,
         }
     }
 
-    /// Where it is in the bank ([`Sound::all`]'s order). A step or a level
-    /// out of range is the nearest there is.
+    /// Where it is in the bank ([`Sound::all`]'s order). A step out of
+    /// range is the nearest there is.
     pub fn index(self) -> usize {
         PLACES[&self.in_range()]
     }
@@ -129,7 +125,7 @@ impl Sound {
         match self {
             Sound::Pop(k) => format!("pop-{k}"),
             Sound::Sparkle(k) => format!("sparkle-{k}"),
-            Sound::StepUp(l) => format!("step-up-{l}"),
+            Sound::StepUp(t) => format!("step-up-{}", t.name().to_lowercase()),
             Sound::Break => "break".into(),
             Sound::Zap => "zap".into(),
             Sound::Tier(t) => format!("tier-{}", t.name().to_lowercase()),
@@ -148,7 +144,7 @@ impl Sound {
         match self {
             Sound::Pop(_) => -13.0,
             Sound::Sparkle(_) => -25.0,
-            Sound::StepUp(l) => -16.5 + f64::from(l.clamp(1, LEVELS)),
+            Sound::StepUp(t) => recipes::step_up_peak_db(t.index() + 1),
             Sound::Break => -22.0,
             Sound::Zap => -17.0,
             Sound::Tier(t) => t.spec().chime.peak_db,
@@ -168,7 +164,7 @@ impl Sound {
         let mut b = match self {
             Sound::Pop(k) => pop(rate, k),
             Sound::Sparkle(k) => sparkle(rate, k),
-            Sound::StepUp(l) => step_up(rate, l.clamp(1, LEVELS)),
+            Sound::StepUp(t) => recipes::step_up(rate, t.index() + 1),
             Sound::Break => aww(rate),
             Sound::Zap => zap(rate),
             Sound::Tier(t) => (t.spec().chime.make)(rate),
@@ -324,45 +320,6 @@ fn sparkle(rate: u32, k: usize) -> Buf {
         b.tone(at, pan, &grain);
     }
     b.room(0.35, 0.5);
-    b
-}
-
-fn step_up(rate: u32, level: u32) -> Buf {
-    let l = f64::from(level);
-    let mut b = Buf::new(rate, 0.55 + 0.1 * l);
-    // A major chord, a whole tone higher each level, one note more each
-    // level above the first.
-    let root = 523.251 * 2f64.powf(2.0 * (l - 1.0) / 12.0);
-    let ratios = [1.0, 1.25, 1.5, 2.0, 2.5, 3.0];
-    let notes = 3 + level as usize;
-    let bright = 0.35 + 0.15 * l;
-    let gap = 0.042;
-    for (i, r) in ratios.iter().take(notes).enumerate() {
-        let last = i + 1 == notes;
-        let decay = if last { 0.22 } else { 0.07 };
-        let length = if last { 0.45 } else { 0.18 };
-        let mut tone = Tone::new(root * r, env(0.002, 0.0, decay, length), &pluck(bright));
-        if last {
-            tone = tone.vibrato(6.0, 12.0, 0.15);
-        }
-        let pan = -0.3 + 0.6 * i as f64 / (notes - 1) as f64;
-        b.tone(gap * i as f64, pan, &tone);
-    }
-    // A swish rising under it.
-    b.noise(
-        0.0,
-        0.0,
-        &Noise {
-            from: 1_200.0,
-            to: 5_000.0 + 1_500.0 * l,
-            q: 2.0,
-            envelope: env(0.12, 0.0, 0.05, 0.25),
-            amp: 0.08 + 0.04 * l,
-            length: 0.25,
-            seed: 0xC0FFEE + u64::from(level),
-        },
-    );
-    b.room(0.2, 0.6);
     b
 }
 

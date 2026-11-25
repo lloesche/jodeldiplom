@@ -542,14 +542,19 @@ stem keys are their mutes.
   - `a_bubble_partly_filled_never_pops` (bubbles)
   - `a_bubble_unpopped_by_a_seek_back_shows_again` (bubbles)
 - **K21.** With the game on, the singing shines at the tier its last
-  phrase reached (K22: Good the first, Diva the top; none: nothing): in
-  the window's stage, rainbow bands fan out from the playhead behind the
-  pills, their colours running round (more bands, reaching further,
-  brighter and turning faster a tier up: a soft shimmer at Good, the
-  whole lane glowing from Amazing), coming in over 0.25 s from how
+  phrase reached (K22: Good, Great, Awesome, Amazing, Diva the top;
+  none: nothing): in the window's stage, rainbow bands fan out from the
+  playhead behind the pills, their colours running round (more bands,
+  reaching further, brighter and turning faster a tier up: a soft
+  shimmer at Good, half the lane lit at Awesome, the whole lane glowing
+  from Amazing), coming in over 0.25 s from how
   strong it showed; down a tier (not lost), it eases down the same way
   and shines on; a swirl turns round the singer's arrow; the
-  multiplier's number shows in rainbow. Each phrase decided throws a
+  multiplier's × shows in rainbow over the playhead, popping as it goes
+  up a rung, and left of it, on a dark pill, the rung's name in its
+  tier's colour and the streak ("Amazing 42 in a row ×16"; laid out by
+  the widest it can be, smaller where the screen's edge is near, never
+  past it). Each phrase decided throws a
   burst from the playhead for each tier the shine went up (once a
   phrase; sought back under a second, not again; begun again, again):
   stars, notes and rainbow bits shot out, mostly up, spinning, arcing
@@ -558,7 +563,8 @@ stem keys are their mutes.
   snaps the shine to its tier, with no rise or collapse. In the picture
   (no stage) the bar under the word being sung gets a rainbow edge while
   it shines, and a smaller burst from it a step up. Great adds a glow
-  round the lane, Amazing flames blazing off its edges, Diva angels
+  round the lane (Awesome's the same, the rainbow brighter over more of
+  the lane), Amazing flames blazing off its edges, Diva angels
   descending (a flight every 2.2 s while it holds, the first as soon as
   it is to hold) and a jackpot of coins and stars from the meter as a
   phrase is Diva. Each of these is an effect its tier's row lists (held
@@ -574,11 +580,17 @@ stem keys are their mutes.
   music (the beat and the bar, the levels, the pitches); the shaders move
   it all, their maths held to the processor's on the GPU. The software
   window draws none of it.
+  - `every_row_is_in_order_and_in_the_bank` (`tiers`: a row a tier,
+    each looking and sounding other than the one before, its sounds in
+    the bank, its mark on the meter, its rung above the one before)
   - `the_glow_eases_in_and_a_seek_snaps_it`,
     `a_step_up_for_each_level_with_the_phrase_only`,
     `a_step_up_for_each_tier_passed`,
     `a_rung_reached_comes_with_its_moment_and_a_seek_snaps_it`
     (`gui::streak`)
+  - `the_badge_comes_pops_and_goes_with_the_rung`,
+    `the_pill_fits_before_the_times_and_inside_the_stage`
+    (`gui::stage::badge`)
   - `a_new_level_rises_and_a_lost_one_collapses`,
     `a_drop_of_a_level_eases_down_and_shines_on`, `the_rainbow_goes_round`
     (`gui::rainbow`)
@@ -589,7 +601,7 @@ stem keys are their mutes.
     `a_flight_comes_every_while_at_the_top_and_at_once_after_a_seek`
     (`gui::fx::angels`)
   - `a_held_strength_is_its_row_s_at_the_row_and_eases_between`,
-    `the_lane_glow_and_flames_ramp_as_before`,
+    `the_lane_glow_and_flames_ramp_between_the_rows_that_list_them`,
     `the_rainbow_is_as_strong_as_the_row_its_glow_eases_by`,
     `a_phrase_fires_its_row_s_effects_once`, `no_row_moves_what_it_fires`,
     `rung_effects_are_held_and_fired_by_rung`,
@@ -631,9 +643,9 @@ stem keys are their mutes.
   original's on it counting it whole): its shine, the coverage's share
   times the quality measures' shares weighted (pitch 0.45, timing 0.20,
   steadiness 0.15, sustain and range 0.10). Its tier: Good at 60 % of
-  the original, Great 75 %, Amazing 87 %, Diva 90 % with the pitch's
-  share at 90 % too, each bar times what the original itself reaches on
-  that phrase in its everyday hearings (another rate, the delay off,
+  the original, Great 72 %, Awesome 80 %, Amazing 87 %, Diva 94 % with
+  the pitch's share at 92 % too, each bar times what the original itself
+  reaches on that phrase in its everyday hearings (another rate, the delay off,
   octave errors, pitch lost: the least, less half its spread) where
   that is under 1, so the original is Diva on every phrase; a phrase it
   reaches under 70 % of itself on has no shine (there half the phrase
@@ -646,8 +658,9 @@ stem keys are their mutes.
   until they come. The meter at the top of the stage fills as the phrase is sung (its words
   hit) and springs to the shine reached, its tier's name popping over it
   on a badge (popping and fading as the shader times it, drawn over the
-  light); the top right shows the points, the tier and the
-  multiplier, the points rolling up as on an odometer (only the figures
+  light); the top right shows the points and under them the
+  multiplier's rung as the badge names it ("Amazing ×16", whatever the
+  last phrase reached), the points rolling up as on an odometer (only the figures
   that change turning, the low ones spinning laps on a big jump; each
   change in its own 0.35 s to 0.6 s, eased, alongside those still
   rolling: never past the score, never more than 0.6 s behind it, each
@@ -655,8 +668,12 @@ stem keys are their mutes.
   once). Along the bottom the song's progress shows each phrase in its
   tier's colour, a mark a phrase popping as its tier is decided (a
   little jackpot on Diva), and the time left in a ring that drains, in
-  the rainbow while the singing shines. Each word scored, the streak up
-  a multiplier or broken, and each phrase's tier decided are kept as the
+  the rainbow while the singing shines. Words hit in a row climb the
+  multiplier's rungs, a rung a tier (its row's), named after it: ×2 Good
+  at 5 in a row, ×4 Great at 10, ×8 Awesome at 20, ×16 Amazing at 35,
+  ×32 Diva at 55; a word is worth 100 points times the multiplier. Each
+  word scored, the streak up a rung (to which) or broken (from which),
+  and each phrase's tier decided are kept as the
   singing's moments, plain data for what follows them (the sounds); a
   song's result has its phrases' tiers, its best tier and how many
   reached each.
@@ -667,14 +684,18 @@ stem keys are their mutes.
     `a_reference_from_a_voice_and_as_text`,
     `the_singing_scores_each_phrase_as_it_ends` (`core::shine`)
   - `short_seeks_back_in_a_row_are_as_heard_straight` (`core::singing`:
-    the moments, the phrases' shine among them, as heard straight)
+    the moments, the phrases' shine among them, as heard straight),
+    `a_streak_multiplies_the_points_and_two_misses_end_it`,
+    `a_single_word_missed_is_rescued_by_the_next_to_burst`
+    (`core::singing`: the rungs and their points)
   - `shine_files_are_pinned` (schemas)
   - `a_jump_rolls_up_to_the_score_and_never_past_it`,
     `a_word_turns_only_the_figures_that_change`,
     `its_lag_is_bounded_while_points_keep_coming`,
     `a_seek_back_or_a_new_song_snaps`,
     `it_draws_the_points_at_rest_and_rolls_inside_its_cells`
-    (`gui::karaoke::odometer`)
+    (`gui::karaoke::odometer`), `the_score_names_the_rung`
+    (`view::karaoke::mode`)
   - `the_picture_is_painted_again_while_its_score_rolls_and_then_not`,
     `a_score_come_while_the_mode_was_left_shows_at_once`
     (`gui::canvas::karaoke`),
@@ -684,8 +705,9 @@ stem keys are their mutes.
   showing the game off. Its frames are the notes the bubbles are made of,
   a few cents of slow wobble on them, nothing where no note is due, at
   the singing's own time (the song heard less how late the voice comes),
-  so the words burst, the streak, the multiplier, the shots, the shine
-  and the sounds go as for a singer on time; the microphone's pitch is
+  so the words burst, the streak, the multiplier up to ×32 Diva, the
+  shots, the shine and the sounds go as for a singer on time; the
+  microphone's pitch is
   not listened to meanwhile, nor is the delay estimated from it. Let go
   of (or the window left, or the mode), it stops at once: nothing after.
   "AUTO" shows in the stage's top left corner while it is held. A song

@@ -11,14 +11,13 @@
 //! stems. One [`RhythmWorker`] thread analyses the files it is asked for,
 //! in the order asked, and answers with [`Action::Rhythm`]; it first looks
 //! for the GPU and says what it found ([`Action::Gpu`]). Results are kept
-//! in the user's cache folder, one small text file per track and recipe,
-//! named by a hash of its path, size, modification time,
-//! [`jodel_rhythm::VERSION`] and the recipe, so a changed file, a changed
-//! analysis or another recipe is analysed afresh.
+//! in the data folder's `analyses`, one small text file per track and
+//! recipe with its waveform beside it ([`kept`]), named by a hash of the
+//! file's path, size and modification time, [`jodel_rhythm::VERSION`] and
+//! the recipe ([`cache_key`]), so a changed file, a changed analysis or
+//! another recipe is analysed afresh.
 
 use std::collections::VecDeque;
-use std::fmt::Write as _;
-use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Condvar, Mutex};
@@ -27,19 +26,19 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use jodel_gpu::GpuSeparator;
 use jodel_playback::{Resampler, Source, StereoFeed};
-use jodel_rhythm::meter::{Grouping, Span};
 use jodel_rhythm::stems::{PartsBuilder, Separator, Splitter};
 use jodel_rhythm::waveform::{Lane, LaneBuilder, Melody, Waveform};
-use jodel_rhythm::{
-    Analysis, Analyzer, CandidateReport, Evidence, Method, Region, SAMPLE_RATE, VERSION,
-};
+use jodel_rhythm::{Analysis, Analyzer, Evidence, SAMPLE_RATE};
 
 use crate::browser::Notify;
-use crate::cache;
 use crate::core::{Action, Facts, Heard, Job, RhythmFacts, RhythmRecipe, Rhythmed};
 
 mod report;
 pub use report::{describe, recent, remember, Timings, RECENT_KEPT};
+mod kept;
+use kept::load_analysis;
+pub(crate) use kept::{beats_text, parse_beats};
+pub use kept::{cache_dir, cache_key, from_text, is_stored, key_parts, load, store, to_text};
 
 /// Full scale of the decoder's 24-bit units.
 const FULL_SCALE: f64 = 8_388_608.0;
@@ -390,246 +389,6 @@ pub fn listen_reporting(
     })
 }
 
-/// Where analyses are kept: `analyses` in the data folder of the usual
-/// settings ([`crate::dirs::Data::current`]; the player itself is told its
-/// own).
-pub fn cache_dir() -> Option<PathBuf> {
-    crate::dirs::Data::current().map(|d| d.analyses())
-}
-
-/// What identifies a file's analysis: its path, size and modification
-/// time, the analysis version, the methods and whether the cues listened
-/// to stems.
-pub fn cache_key(path: &Path, methods: &[Method], stems: bool) -> Option<String> {
-    let meta = fs::metadata(path).ok()?;
-    let modified = meta
-        .modified()
-        .ok()
-        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-        .map_or(0, |d| d.as_nanos());
-    let ids: Vec<&str> = methods.iter().map(|m| m.id()).collect();
-    let stems = if stems { "+stems" } else { "" };
-    Some(format!(
-        "{} {} {modified} v{VERSION} {}{stems}",
-        path.display(),
-        meta.len(),
-        ids.join("+")
-    ))
-}
-
-/// FNV-1a, 64 bits.
-pub fn hash(text: &str) -> u64 {
-    text.bytes().fold(0xcbf2_9ce4_8422_2325, |h, b| {
-        (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3)
-    })
-}
-
-/// The cache file for `key` in `dir`.
-fn cache_file(dir: &Path, key: &str) -> PathBuf {
-    dir.join(format!("{:016x}.txt", hash(key)))
-}
-
-/// Beat times are stored in units of 0.1 ms.
-const TICKS: f64 = 10_000.0;
-
-/// Appends `beats` to `s` as ` d1 d2 ...`: each the ticks since the last.
-pub(crate) fn beats_text(s: &mut String, beats: &[f64]) {
-    let mut last = 0i64;
-    for &b in beats {
-        let t = (b * TICKS).round() as i64;
-        let _ = write!(s, " {}", t - last);
-        last = t;
-    }
-}
-
-/// The beats in [`beats_text`]'s words.
-pub(crate) fn parse_beats(words: &str) -> Option<Vec<f64>> {
-    let mut t = 0i64;
-    words
-        .split_whitespace()
-        .map(|d| {
-            t += d.parse::<i64>().ok()?;
-            Some(t as f64 / TICKS)
-        })
-        .collect()
-}
-
-/// An analysis as the cache file's text, under its `key`, in
-/// [`cache::ANALYSIS`]'s version.
-pub fn to_text(key: &str, a: &Analysis) -> String {
-    cache::ANALYSIS.wrap(&analysis_text(key, a))
-}
-
-/// The cache file's text after its header.
-fn analysis_text(key: &str, a: &Analysis) -> String {
-    let mut s = format!("jodel-rhythm {VERSION}\nkey {}\n", key.replace('\n', " "));
-    let _ = writeln!(s, "duration {:.4}", a.duration);
-    let _ = writeln!(s, "confidence {:.4}", a.confidence);
-    let _ = writeln!(s, "chosen {}", a.chosen);
-    for g in &a.groupings {
-        let _ = writeln!(
-            s,
-            "grouping {:.4} {} {}",
-            g.start, g.grouping.pulses, g.grouping.phase
-        );
-    }
-    let ids: Vec<&str> = a.methods.iter().map(|m| m.id()).collect();
-    let _ = writeln!(s, "methods {}", ids.join(" "));
-    let _ = writeln!(s, "stems {}", a.stems);
-    match a.key {
-        Some(k) if k.tagged => {
-            let _ = writeln!(s, "tonality {} tag", k.class);
-        }
-        Some(k) => {
-            let _ = writeln!(s, "tonality {} {:.4}", k.class, k.confidence);
-        }
-        None => {}
-    }
-    s.push_str("beats");
-    beats_text(&mut s, &a.beats);
-    s.push_str("\ndownbeats");
-    for i in &a.downbeats {
-        let _ = write!(s, " {i}");
-    }
-    s.push('\n');
-    for r in &a.regions {
-        let _ = writeln!(s, "region {:.4} {:.4} {:.4}", r.start, r.end, r.confidence);
-    }
-    for c in &a.candidates {
-        let _ = writeln!(s, "candidate {:.3} {:.4} {}", c.bpm, c.agreement, c.name);
-    }
-    s
-}
-
-/// The analysis in a cache file's text, if it was stored under `key` in
-/// [`cache::ANALYSIS`]'s version.
-pub fn from_text(key: &str, text: &str) -> Option<Analysis> {
-    let mut lines = cache::ANALYSIS.body(text)?.lines();
-    if lines.next()? != format!("jodel-rhythm {VERSION}") {
-        return None;
-    }
-    if lines.next()?.strip_prefix("key ")? != key.replace('\n', " ") {
-        return None;
-    }
-    let mut a = Analysis::default();
-    for line in lines {
-        let (word, rest) = line.split_once(' ').unwrap_or((line, ""));
-        match word {
-            "duration" => a.duration = rest.parse().ok()?,
-            "confidence" => a.confidence = rest.parse().ok()?,
-            "chosen" => a.chosen = rest.to_owned(),
-            "grouping" => {
-                let mut parts = rest.split_whitespace();
-                let start = parts.next()?.parse().ok()?;
-                let pulses = parts.next()?.parse().ok()?;
-                let phase = parts.next()?.parse().ok()?;
-                a.groupings.push(Span {
-                    start,
-                    grouping: Grouping::new(pulses, phase)?,
-                });
-            }
-            "stems" => a.stems = rest.parse().ok()?,
-            "tonality" => {
-                let (class, confidence) = rest.split_once(' ')?;
-                let class: u8 = class.parse().ok()?;
-                if class >= 24 {
-                    return None;
-                }
-                let tagged = confidence == "tag";
-                a.key = Some(jodel_rhythm::key::Key {
-                    class,
-                    confidence: if tagged {
-                        1.0
-                    } else {
-                        confidence.parse().ok()?
-                    },
-                    tagged,
-                });
-            }
-            "methods" => {
-                for id in rest.split_whitespace() {
-                    a.methods.push(Method::parse(id)?);
-                }
-            }
-            "beats" => a.beats = parse_beats(rest)?,
-            "downbeats" => {
-                for i in rest.split_whitespace() {
-                    a.downbeats.push(i.parse().ok()?);
-                }
-            }
-            "region" => {
-                let v: Vec<f64> = rest
-                    .split_whitespace()
-                    .map(|x| x.parse().ok())
-                    .collect::<Option<_>>()?;
-                let [start, end, confidence] = v[..] else {
-                    return None;
-                };
-                a.regions.push(Region {
-                    start,
-                    end,
-                    confidence,
-                });
-            }
-            "candidate" => {
-                let mut parts = rest.splitn(3, ' ');
-                a.candidates.push(CandidateReport {
-                    bpm: parts.next()?.parse().ok()?,
-                    agreement: parts.next()?.parse().ok()?,
-                    name: parts.next()?.to_owned(),
-                });
-            }
-            _ => return None,
-        }
-    }
-    a.derive();
-    Some(a)
-}
-
-/// The analysis of `path` by `recipe` from the cache in `dir`, without its
-/// waveform.
-fn load_analysis(dir: &Path, path: &Path, recipe: &RhythmRecipe) -> Option<Analysis> {
-    let key = cache_key(path, &recipe.methods, recipe.stems)?;
-    let file = crate::mover::locate(&cache_file(dir, &key));
-    from_text(&key, &fs::read_to_string(&file).ok()?)
-}
-
-/// The stored analysis of `path` by `recipe` and its waveform, if there
-/// are both for the file as it is now.
-pub fn load(dir: &Path, path: &Path, recipe: &RhythmRecipe) -> Option<(Analysis, Waveform)> {
-    let key = cache_key(path, &recipe.methods, recipe.stems)?;
-    // Where it is now: while the data folder moves, not yet moved is where
-    // it was.
-    let file = crate::mover::locate(&cache_file(dir, &key));
-    let analysis = from_text(&key, &fs::read_to_string(&file).ok()?)?;
-    let waveform = Waveform::from_bytes(&fs::read(file.with_extension("wave")).ok()?)?;
-    Some((analysis, waveform))
-}
-
-/// Writes `bytes` to `file` whole, then renames it into place.
-fn write_whole(file: &Path, bytes: &[u8]) -> std::io::Result<()> {
-    durable::write_atomic(file, bytes)
-}
-
-/// Stores the analysis of `path` and its waveform, under the methods it
-/// used (the waveform first: an analysis without one is not loaded).
-pub fn store(
-    dir: &Path,
-    path: &Path,
-    analysis: &Analysis,
-    waveform: &Waveform,
-) -> std::io::Result<()> {
-    let Some(key) = cache_key(path, &analysis.methods, analysis.stems) else {
-        return Ok(());
-    };
-    // Where it goes now: while the data folder moves, into the new one.
-    let dir = &crate::mover::current(dir);
-    fs::create_dir_all(dir)?;
-    let file = cache_file(dir, &key);
-    write_whole(&file.with_extension("wave"), &waveform.to_bytes())?;
-    write_whole(&file, to_text(&key, analysis).as_bytes())
-}
-
 struct Wanted {
     /// Files wanted, to be taken from the cache at once ([`load`]).
     load: VecDeque<PathBuf>,
@@ -647,18 +406,6 @@ struct Wanted {
     /// Counts [`RhythmWorker::prepare`]s, the same way.
     prepared: u64,
     stop: bool,
-}
-
-/// Whether the analysis of `path` by `recipe` is in the cache in `dir`
-/// (without reading it), and with stems, the stems themselves beside it
-/// ([`crate::stems_cache::beside`]).
-pub fn is_stored(dir: &Path, path: &Path, recipe: &RhythmRecipe) -> bool {
-    let analysed = cache_key(path, &recipe.methods, recipe.stems).is_some_and(|key| {
-        let file = cache_file(dir, &key);
-        file.is_file() && file.with_extension("wave").is_file()
-    });
-    analysed
-        && (!recipe.stems || crate::stems_cache::is_kept(&crate::stems_cache::beside(dir), path))
 }
 
 /// Analyses files in the background, one at a time, and answers from the
@@ -1023,46 +770,11 @@ impl Drop for RhythmWorker {
     reason = "tests: tracks that change under their analysis"
 )]
 mod tests {
-    use super::*;
+    use std::fs;
 
-    #[test]
-    fn an_analysis_round_trips_through_its_text_under_its_key_only() {
-        let truth = jodel_rhythm::synth::beat_times(0.5, 19.5, |_| 120.0);
-        let samples = jodel_rhythm::synth::band(20.0, &truth, 4, 0.5).samples;
-        let mut a = jodel_rhythm::analyze_with(&samples, &[Method::Flux]);
-        assert!(a.beats.len() > 30);
-        a.key = Some(jodel_rhythm::key::Key {
-            class: 7,
-            confidence: 0.4375,
-            tagged: false,
-        });
-        let text = to_text("song.flac 123 456 v1", &a);
-        let back = from_text("song.flac 123 456 v1", &text).unwrap();
-        assert_eq!(back.beats.len(), a.beats.len());
-        assert!(back
-            .beats
-            .iter()
-            .zip(&a.beats)
-            .all(|(x, y)| (x - y).abs() < 1e-4));
-        assert_eq!(back.downbeats, a.downbeats);
-        assert_eq!(back.regions.len(), a.regions.len());
-        assert_eq!(back.candidates.len(), a.candidates.len());
-        assert_eq!(back.chosen, a.chosen);
-        assert_eq!(back.groupings.len(), a.groupings.len());
-        assert!(back
-            .groupings
-            .iter()
-            .zip(&a.groupings)
-            .all(|(x, y)| x.grouping == y.grouping && (x.start - y.start).abs() < 1e-4));
-        assert_eq!(back.methods, vec![Method::Flux]);
-        assert_eq!(back.key, a.key);
-        a.key = jodel_rhythm::key::Key::from_tag("Ebm");
-        let tagged = from_text("song.flac 123 456 v1", &to_text("song.flac 123 456 v1", &a));
-        assert_eq!(tagged.unwrap().key, a.key);
-        let (s, t) = (a.summary.unwrap(), back.summary.unwrap());
-        assert!((s.bpm - t.bpm).abs() < 0.01);
-        assert!(from_text("song.flac 123 999 v1", &text).is_none());
-    }
+    use jodel_rhythm::Method;
+
+    use super::*;
 
     #[test]
     fn the_last_three_analyses_are_kept_newest_first() {
@@ -1086,49 +798,6 @@ mod tests {
             vec!["none yet (analyses taken from the cache are not counted)".to_owned()]
         );
         fs::remove_dir_all(&dir).unwrap();
-    }
-
-    #[test]
-    fn the_cache_follows_the_file() {
-        let dir = std::env::temp_dir().join(format!("jodel-rhythm-test-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
-        let file = dir.join("track.wav");
-        fs::write(&file, b"one").unwrap();
-        let cache = dir.join("cache");
-        let recipe = |methods: &[Method]| RhythmRecipe {
-            methods: methods.to_vec(),
-            stems: false,
-        };
-        let a = Analysis {
-            beats: vec![0.5, 1.0, 1.5, 2.0, 2.5],
-            confidence: 0.9,
-            methods: vec![Method::Network],
-            ..Analysis::default()
-        };
-        let wave = Waveform {
-            mix: Lane {
-                peak: vec![1, 2, 3],
-                rms: vec![0, 1, 2],
-            },
-            stems: None,
-            melody: None,
-        };
-        store(&cache, &file, &a, &wave).unwrap();
-        let (back, back_wave) = load(&cache, &file, &recipe(&[Method::Network])).unwrap();
-        assert_eq!(back.beats, a.beats);
-        assert_eq!(back_wave, wave);
-        // Other methods, or stems: analysed afresh.
-        assert!(load(&cache, &file, &recipe(&Method::ALL)).is_none());
-        let with_stems = RhythmRecipe {
-            stems: true,
-            ..recipe(&[Method::Network])
-        };
-        assert!(load(&cache, &file, &with_stems).is_none());
-        // Another size: analysed afresh.
-        fs::write(&file, b"longer").unwrap();
-        assert!(load(&cache, &file, &recipe(&[Method::Network])).is_none());
-        let _ = fs::remove_dir_all(&dir);
     }
 
     /// A 16-bit mono WAV of `seconds` of clicks at 120 BPM.

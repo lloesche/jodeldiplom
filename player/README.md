@@ -845,8 +845,14 @@ in, in about a third of a second (a big jump a little longer, never
 more than 0.6 s behind); on a jackpot the low columns spin whole laps
 in a blur, and the number glows and swells while it counts. A lower
 score (a seek back, another song) shows at once.
-Words hit in a row are a streak: 5 make the multiplier ×2, 10 ×3, 20 ×4
-(shown over the playhead, the streak beside it); a word missed ends it. Your
+Words hit in a row are a streak, climbing the multiplier's rungs, each
+named after a tier: 5 make it ×2 (Good), 10 ×4 (Great), 20 ×8 (Awesome),
+35 ×16 (Amazing), 55 ×32 (Diva). It shows over the playhead as
+"Amazing 42 in a row ×16": the × over the playhead, popping as it goes
+up a rung, and left of it a dark pill with the rung's name in its tier's
+colour and the streak (the meter is right of the playhead); the points
+top right have the rung under them ("Amazing ×16"). A word missed ends
+it. Your
 line snaps onto the note where it hits; off the notes it is drawn as you
 sing it, smoothed (a median over 50 ms, then a glide half way each
 frame).
@@ -861,9 +867,10 @@ the long ones and whether you reached its top and bottom, each against
 the original's. The **shine meter** at the top fills as you sing a
 phrase and springs to its shine as it ends, its tier popping over it
 on a badge (drawn over the light, so the bloom never washes it out):
-**Good** (60 % of the original), **Great** (75 %), **Amazing** (87 %),
-**Diva** (90 %, the pitch at 90 % of the original's too). Each phrase's
-bars are set by what the original itself reaches on it, heard every
+**Good** (60 % of the original), **Great** (72 %), **Awesome** (80 %),
+**Amazing** (87 %), **Diva** (94 %, the pitch at 92 % of the original's
+too: the original always, a good take on a few phrases a song). Each
+phrase's bars are set by what the original itself reaches on it, heard every
 everyday way (another rate, the delay off, octave errors, pitch lost),
 so the original singer is Diva on every phrase, and a rough original
 makes Diva easier; a phrase the original reaches under 70 % of itself on
@@ -877,10 +884,12 @@ lights the stage: Good is a rainbow streak (bands fanning out from the
 playhead behind the pills, a swirl round your arrow, the multiplier in
 rainbow; each tier up throws stars, notes and rainbow bits from the
 playhead; a phrase with no tier collapses it into the playhead), Great
-adds a glow round the lane, Amazing flames blazing off its edges, and
-Diva angels descending and a jackpot of coins and stars from the meter.
-Each of these is an effect the tier's row lists in the tier table
-(`tiers.rs`; the effects are `gui::fx`), and a row can have an effect
+adds a glow round the lane, Awesome lights half the lane in the rainbow,
+Amazing all of it with flames blazing off its edges, and Diva angels
+descending and a jackpot of coins and stars from the meter. Each of
+these is an effect the tier's row lists in the tier table (`tiers.rs`,
+a row a tier: its bars, its rung, its colours, glow, sounds and sticker;
+the effects are `gui::fx`), and a row can have an effect
 move with the music (its beat and bars, the stems' levels, the pitches)
 or show at a rung of the multiplier; more effects are made and wait for
 a row (the screen's edges on fire, marquee bulbs round the lane, the

@@ -232,6 +232,42 @@ impl Schema {
     }
 }
 
+/// FNV-1a, 64 bits, of `text`: what the caches name their files by
+/// ([`name`]).
+pub fn hash(text: &str) -> u64 {
+    text.bytes().fold(0xcbf2_9ce4_8422_2325, |h, b| {
+        (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3)
+    })
+}
+
+/// What `text` is named by in a cache: its [`hash`] in 16 hex figures.
+pub fn name(text: &str) -> String {
+    format!("{:016x}", hash(text))
+}
+
+/// A file as the caches know it, `PATH SIZE NANOS`: its path, size and
+/// modification time (nanoseconds since 1970); the start of its
+/// analysis's key (`crate::rhythm::cache_key`) and what its lyrics and
+/// stems are kept by (`crate::lyrics::store::key_of`,
+/// `crate::stems_cache::file_of`). None when it cannot be read.
+pub fn identity(path: &std::path::Path) -> Option<String> {
+    let meta = std::fs::metadata(path).ok()?;
+    let modified = meta
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map_or(0, |d| d.as_nanos());
+    Some(format!("{} {} {modified}", path.display(), meta.len()))
+}
+
+/// An [`identity`]'s parts: the path, the size and the modification time.
+pub fn identity_parts(identity: &str) -> Option<(&std::path::Path, u64, u128)> {
+    let mut parts = identity.rsplitn(3, ' ');
+    let modified = parts.next()?.parse().ok()?;
+    let size = parts.next()?.parse().ok()?;
+    Some((std::path::Path::new(parts.next()?), size, modified))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

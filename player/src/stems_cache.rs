@@ -11,7 +11,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Condvar, Mutex};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::SystemTime;
 
 use jodel_playback::stem_file::{self, StemFile, StemStore};
 
@@ -32,19 +32,15 @@ pub fn beside(analyses: &Path) -> PathBuf {
 /// The stems file of `path` in `dir` (whether or not it is there); `None`
 /// when the file cannot be read.
 pub fn file_for(dir: &Path, path: &Path) -> Option<PathBuf> {
-    let meta = fs::metadata(path).ok()?;
-    let modified = meta
-        .modified()
-        .ok()
-        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-        .map_or(0, |d| d.as_nanos());
-    let key = format!(
-        "{} {} {modified} stems v{}",
-        path.display(),
-        meta.len(),
-        stem_file::FORMAT
-    );
-    Some(dir.join(format!("{:016x}.stems", crate::rhythm::hash(&key))))
+    Some(file_of(dir, &crate::cache::identity(path)?))
+}
+
+/// The stems file in `dir` of the file `identity` names (its path, size
+/// and modification time: [`crate::cache::identity`]), whether or not it
+/// is there.
+pub fn file_of(dir: &Path, identity: &str) -> PathBuf {
+    let key = format!("{identity} stems v{}", stem_file::FORMAT);
+    dir.join(format!("{}.stems", crate::cache::name(&key)))
 }
 
 /// Whether the stems of `path` are kept in `dir` (whole).

@@ -20,17 +20,16 @@ pub fn cache_dir() -> Option<PathBuf> {
     crate::dirs::Data::current().map(|d| d.lyrics())
 }
 
-/// The cache's name for `path`'s lyrics: a hash of its path, size and
-/// modification time (a file retagged is looked up afresh).
+/// The cache's name for `path`'s lyrics ([`key_of`]; a file retagged is
+/// looked up afresh).
 pub fn cache_key(path: &Path) -> Option<String> {
-    let meta = fs::metadata(path).ok()?;
-    let modified = meta
-        .modified()
-        .ok()
-        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-        .map_or(0, |d| d.as_nanos());
-    let key = format!("{} {} {modified}", path.display(), meta.len());
-    Some(format!("{:016x}", crate::rhythm::hash(&key)))
+    Some(key_of(&crate::cache::identity(path)?))
+}
+
+/// The cache's name for the lyrics of the file `identity` names (its
+/// path, size and modification time: [`crate::cache::identity`]).
+pub fn key_of(identity: &str) -> String {
+    crate::cache::name(identity)
 }
 
 /// Seconds since 1970.

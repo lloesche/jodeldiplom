@@ -46,7 +46,7 @@ fn tiers_up(was: Option<Tier>, now: Option<Tier>) -> u32 {
 /// A frame of the glow: the tier it is at and the glow, the end of the
 /// word just scored hit (the last, once), the phrase just decided (the
 /// last, once), the tiers the glow went up with it (a step up each), the
-/// multiplier's rung (0: ×1) and its change this frame (from, to), once.
+/// multiplier's rung (none: ×1) and its change this frame (from, to), once.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Step {
     /// The tier the glow is at (or going to).
@@ -60,9 +60,9 @@ pub struct Step {
     /// The steps up with it.
     pub ups: u32,
     /// The multiplier's rung.
-    pub at_rung: u32,
+    pub at_rung: Option<Tier>,
     /// The rung reached or lost this frame: from, to.
-    pub rung: Option<(u32, u32)>,
+    pub rung: Option<(Option<Tier>, Option<Tier>)>,
 }
 
 impl Step {
@@ -85,7 +85,7 @@ impl Step {
 pub struct Streak {
     tier: Option<Tier>,
     glow: Glow,
-    rung: u32,
+    rung: Option<Tier>,
 }
 
 impl Streak {
@@ -102,7 +102,7 @@ impl Streak {
         let t = clock as f32;
         let was = self.tier;
         self.tier = tier;
-        let at_rung = if game { singing.multiplier() - 1 } else { 0 };
+        let at_rung = if game { singing.rung() } else { None };
         let from = std::mem::replace(&mut self.rung, at_rung);
         if since.sought {
             self.glow = Glow {
@@ -144,7 +144,7 @@ impl Streak {
         });
         let climbed = new
             .clone()
-            .any(|m| matches!(m.cue, Cue::StreakUp(_) | Cue::StreakLost));
+            .any(|m| matches!(m.cue, Cue::StreakUp(_) | Cue::StreakLost(_)));
         Step {
             tier,
             glow: self.glow,
@@ -278,20 +278,23 @@ mod tests {
     fn a_rung_reached_comes_with_its_moment_and_a_seek_snaps_it() {
         let mut singing = Singing::default();
         let mut s = Streak::default();
-        singing.tally.streak = 5;
+        let first = Tier::ALL[0];
+        singing.tally.streak = first.spec().streak;
         let up = [Moment {
             at: 1.0,
             decided: 1.0,
-            cue: Cue::StreakUp(1),
+            cue: Cue::StreakUp(first),
         }];
         let step = s.step(&singing, true, &since(&up, false), 1.0);
-        assert_eq!((step.at_rung, step.rung), (1, Some((0, 1))));
+        let reached = Some((None, Some(first)));
+        assert_eq!((step.at_rung, step.rung), (Some(first), reached));
         let held = s.step(&singing, true, &since(&[], false), 1.1);
-        assert_eq!((held.at_rung, held.rung), (1, None));
+        assert_eq!((held.at_rung, held.rung), (Some(first), None));
         singing.tally.streak = 0;
         let sought = s.step(&singing, true, &since(&up, true), 1.2);
-        assert_eq!((sought.at_rung, sought.rung), (0, None));
-        singing.tally.streak = 12;
-        assert_eq!(s.step(&singing, false, &since(&up, false), 1.3).at_rung, 0);
+        assert_eq!((sought.at_rung, sought.rung), (None, None));
+        singing.tally.streak = Tier::TOP.spec().streak;
+        let off = s.step(&singing, false, &since(&up, false), 1.3);
+        assert_eq!(off.at_rung, None);
     }
 }

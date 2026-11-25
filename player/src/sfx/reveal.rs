@@ -17,7 +17,7 @@
 
 use super::diploma::{Diploma, Entry};
 use super::moments::{Cued, STALE};
-use super::sounds::{Sound, LEVELS};
+use super::sounds::Sound;
 use crate::core::shine::Tier;
 use crate::core::singing::{Beat, Shown, Side, Verdict};
 
@@ -71,9 +71,11 @@ pub fn sounds_of(beat: Beat, shown: &Shown) -> impl Iterator<Item = Heard> {
         Beat::Words => one(paper(Diploma::Written(Entry::Words), 0.0)),
         Beat::Streak if r.streak == 0 => one(paper(Diploma::Scribbled(Entry::Streak), 0.0)),
         Beat::Streak => {
-            let level = crate::core::singing::multiplier(r.streak) - 1;
-            let up = (Sound::StepUp(level.clamp(1, LEVELS)), 0.55, 0.0);
-            [Some(up), paper(Diploma::Written(Entry::Streak), 0.0), None]
+            // The step up to the rung it reached (under the first, only
+            // the pen).
+            let rung = crate::core::singing::rung(r.streak);
+            let up = rung.map(|t| (Sound::StepUp(t), 0.55, 0.0));
+            [up, paper(Diploma::Written(Entry::Streak), 0.0), None]
         }
         Beat::Gem(i, _) => one(gem(i, shown)),
         Beat::Verdict(Verdict::Medal(m)) => one(Some((Sound::Medal(m), 1.0, 0.5 * SEAL))),
@@ -279,7 +281,10 @@ mod tests {
         assert_eq!(sounds(Beat::Words, &s), [d(Diploma::Written(Entry::Words))]);
         assert_eq!(
             sounds(Beat::Streak, &s),
-            [Sound::StepUp(3), d(Diploma::Written(Entry::Streak))]
+            [
+                Sound::StepUp(Tier::named("Awesome")),
+                d(Diploma::Written(Entry::Streak))
+            ]
         );
         let seal = heard(Beat::Verdict(Verdict::Medal(Medal::Gold)), &s);
         assert_eq!(seal[0].0, Sound::Medal(Medal::Gold));

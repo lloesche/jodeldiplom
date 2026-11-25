@@ -22,10 +22,11 @@
 use std::collections::HashMap;
 
 use super::big_text::{Face, Faces, COVER_PAD};
-use super::fx::{self, At, Text};
+use super::fx::{self, At};
 
 mod arrow;
 mod atlas;
+mod badge;
 mod comet;
 mod lines;
 mod meter;
@@ -112,9 +113,8 @@ pub struct Stage {
     streak: super::streak::Streak,
     /// Where it is in the singing's moments.
     cursor: crate::core::singing::Cursor,
-    /// The multiplier shown, how much it shows, and how long since it
-    /// went up.
-    badge: (u32, f32, f32),
+    /// The multiplier's badge ([`badge`]).
+    badge: badge::Badge,
     /// Where the capitals' middle is in text of a face and size
     /// ([`Stage::cap_middle`]).
     caps: HashMap<(Face, u32), f32>,
@@ -707,80 +707,18 @@ impl Stage {
             self.board.shapes(&arrow, &effects, &mut out);
         }
 
-        // The multiplier, over the playhead: popping (in rainbow) as it goes
-        // up; the streak beside it, over the light (Amazing's flames blaze
-        // up there).
+        // The multiplier, over the playhead ([`badge`]).
         let mut top = Vec::new();
         if song.demo {
             self.demo_tag(&mut top, area);
         }
-        let m = if game { singing.multiplier() } else { 1 };
-        let shown_target = if m > 1 { 1.0 } else { 0.0 };
-        if m > 1 {
-            if m != self.badge.0 {
-                self.badge.2 = 0.0;
-            }
-            self.badge.0 = m;
-        }
-        self.badge.1 += (shown_target - self.badge.1) * (1.0 - (-dt / 0.12).exp());
-        self.badge.2 += dt;
-        if self.badge.1 > 0.01 && self.badge.0 > 1 {
-            let pop = 1.0 + 0.45 * (-self.badge.2 * 7.0).exp();
-            let a = self.badge.1;
-            let px = (p * 1.05).round();
-            let label = format!("×{}", self.badge.0);
-            let tw = self.measure(Face::SHOUT, &label, px) * pop;
-            let cy = lane.band.0 - p * 1.55;
-            out.push(disc(
-                (lane.head, cy),
-                0.0,
-                [0.0; 4],
-                rgba(GOLD, (0.25 + 0.1 * self.badge.0 as f32) * a * pop),
-                p * 1.4 * pop,
-            ));
-            let number = self.text(
-                &mut out,
-                Face::SHOUT,
-                &label,
-                (px, pop),
-                (lane.head - tw / 2.0, cy - px * 0.62 * pop),
-                f32::NEG_INFINITY,
-                (rgba(GOLD_TOP, a), rgba(GOLD_TOP, a)),
-            );
-            // In what the shouts are in (the rainbow while the singing
-            // shines).
-            if let (Some(n), Some(t)) = (number, fx::treatment(Text::Shout, &effects)) {
-                t.apply(n);
-            }
-            if game && singing.tally.streak > 0 {
-                let small = (p * 0.36).round().max(9.0);
-                let streak = format!("{} in a row", singing.tally.streak);
-                let ty = cy - self.cap_middle(Face::NUMBER, small) + COVER_PAD as f32;
-                let (sx, sw) = (
-                    lane.head + tw / pop / 2.0 + p * 0.4,
-                    self.measure(Face::NUMBER, &streak, small),
-                );
-                // On a dark pill of its own, to read over the flames.
-                top.push(pill(
-                    (sx + sw / 2.0, cy),
-                    (sw / 2.0 + small * 0.45, small * 0.7),
-                    [0.04, 0.03, 0.09, 0.6 * a],
-                    [0.0; 4],
-                    0.0,
-                    0.0,
-                    0.0,
-                ));
-                self.text(
-                    &mut top,
-                    Face::NUMBER,
-                    &streak,
-                    (small, 1.0),
-                    (sx, ty),
-                    f32::NEG_INFINITY,
-                    (rgba(WHITE, 0.8 * a), rgba(WHITE, 0.8 * a)),
-                );
-            }
-        }
+        self.draw_badge(
+            (&mut out, &mut top),
+            (singing, game),
+            (&lane, area.0),
+            (p, dt),
+            &effects,
+        );
 
         // The line sung and the next ([`lines`]).
         self.lines(&mut out, picture, area, &effects);

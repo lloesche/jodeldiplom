@@ -163,7 +163,7 @@ impl Singing {
     }
 
     /// The word waiting, if any, rescued by its shooter if it has one yet
-    /// (seen at `t`): scored as if sung (a level up of the streak with it a
+    /// (seen at `t`): scored as if sung (a rung up of the streak with it a
     /// moment too, as the shot is fired), the shot a moment, fired as the
     /// shooter bursts or now, whichever is later.
     pub(super) fn rescue_waiting(&mut self, t: f64) {
@@ -176,7 +176,7 @@ impl Singing {
             return;
         };
         let fired = at.max(t);
-        let before = self.multiplier();
+        let before = self.rung();
         self.tally.rescue();
         let shot = Cue::Shot {
             from: (from.line, from.word),
@@ -184,9 +184,8 @@ impl Singing {
             across: from.across,
         };
         self.log.push(fired, t, shot);
-        if self.multiplier() > before {
-            self.log
-                .push(fired, t, Cue::StreakUp(self.multiplier() - 1));
+        if let Some(up) = self.rung().filter(|&now| Some(now) > before) {
+            self.log.push(fired, t, Cue::StreakUp(up));
         }
     }
 }

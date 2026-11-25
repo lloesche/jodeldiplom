@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use jodel_rhythm::Analysis;
 
-use super::{write_whole, Listened};
+use super::Listened;
 use crate::core::RhythmRecipe;
 
 /// How long the parts of hearing a file took.
@@ -64,7 +64,7 @@ pub fn remember(dir: &Path, entry: &str) -> std::io::Result<()> {
     entries.truncate(RECENT_KEPT);
     let dir = &crate::mover::current(dir);
     fs::create_dir_all(dir)?;
-    write_whole(&dir.join(RECENT), entries.join(RECENT_BREAK).as_bytes())
+    durable::write_atomic(&dir.join(RECENT), entries.join(RECENT_BREAK).as_bytes())
 }
 
 /// Seconds as `1.23 s`.

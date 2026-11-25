@@ -148,8 +148,12 @@ mod tests {
         assert_eq!(popped, (0..6).map(|w| (0, w)).collect::<Vec<_>>());
         let t = singing.tally;
         assert_eq!((t.hit_words, t.scored_words, t.streak), (6, 6, 6));
-        assert_eq!(singing.multiplier(), 2);
-        assert!(singing.moments().iter().any(|m| m.cue == Cue::StreakUp(1)));
+        let good = crate::tiers::Tier::ALL[0];
+        assert_eq!(singing.rung(), Some(good));
+        assert!(singing
+            .moments()
+            .iter()
+            .any(|m| m.cue == Cue::StreakUp(good)));
         assert!(t.demo, "the song is marked as the demo's");
         // On its notes, a few cents off at most (from the key it is heard
         // in, its own wobble in it): the arrow alive on them.

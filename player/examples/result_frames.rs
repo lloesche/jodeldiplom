@@ -1,7 +1,7 @@
 //! Frames of Karaoke mode's result screen (the diploma headed
 //! "Jodeldiplom") on the GPU, to look at its reveal: a Silver run short
 //! of its best, a Bronze one with a long Japanese title, a Gold run with
-//! a new best, long numbers and several Diva phrases (each over a made-up
+//! a new best, long numbers and several phrases at the top tier (each over a made-up
 //! cover, tinted by its palette), a run without a medal (over the plain
 //! backdrop), a run not sung from its start (over another cover) and a
 //! silent one (nothing scored), each at moments of its reveal; in Karaoke
@@ -34,8 +34,8 @@ include!(concat!(env!("OUT_DIR"), "/fonts.rs"));
 /// reveal); and well after its end.
 const LOOKS: [f64; 9] = [0.3, 1.2, 2.0, 2.9, 3.6, 4.4, 4.7, 5.6, 30.0];
 
-/// A run's phrases, by tier: `D` Diva, `A` Amazing, `G` Great, `g` Good,
-/// `.` none.
+/// A run's phrases, by tier: its row's place among the tiers (`0` the
+/// first), `.` none; a digit past the top's is the top.
 fn phrases(tiers: &str) -> Vec<Shone> {
     tiers
         .chars()
@@ -45,13 +45,9 @@ fn phrases(tiers: &str) -> Vec<Shone> {
             end: line as f64 * 4.0,
             value: 0.8,
             top: 0.9,
-            tier: match c {
-                'D' => Some(Tier::TOP),
-                'A' => Some(Tier::named("Amazing")),
-                'G' => Some(Tier::named("Great")),
-                'g' => Some(Tier::named("Good")),
-                _ => None,
-            },
+            tier: c
+                .to_digit(10)
+                .map(|i| Tier::ALL[(i as usize).min(Tier::COUNT - 1)]),
         })
         .collect()
 }
@@ -76,13 +72,13 @@ fn cover(a: [u8; 3], b: [u8; 3], c: [u8; 3]) -> Art {
 fn runs() -> Vec<(&'static str, SongResult, Option<Art>, Vec<Swatch>)> {
     let gold = SongResult {
         title: "Dancing in the Moonlight".into(),
-        points: 124_850,
+        points: 486_350,
         hit: 187,
         words: 243,
         streak: 112,
-        phrases: phrases("DGAgDDGA.gDAGGDgA"),
+        phrases: phrases("413042413.0432114032"),
         medal: Some(Medal::Gold),
-        best: Some(9_850),
+        best: Some(98_500),
         whole: true,
         demo: false,
     };
@@ -92,7 +88,7 @@ fn runs() -> Vec<(&'static str, SongResult, Option<Art>, Vec<Swatch>)> {
         hit: 17,
         words: 52,
         streak: 6,
-        phrases: phrases("..g...g..g.."),
+        phrases: phrases("..0...0..0.."),
         medal: None,
         best: Some(3_400),
         whole: true,
@@ -104,7 +100,7 @@ fn runs() -> Vec<(&'static str, SongResult, Option<Art>, Vec<Swatch>)> {
         hit: 22,
         words: 26,
         streak: 14,
-        phrases: phrases("GAgG"),
+        phrases: phrases("1301"),
         medal: None,
         best: None,
         whole: false,
@@ -116,7 +112,7 @@ fn runs() -> Vec<(&'static str, SongResult, Option<Art>, Vec<Swatch>)> {
         hit: 34,
         words: 45,
         streak: 11,
-        phrases: phrases("GgAG.gGgA"),
+        phrases: phrases("10321.0103"),
         medal: Some(Medal::Silver),
         best: Some(8_400),
         whole: true,
@@ -128,7 +124,7 @@ fn runs() -> Vec<(&'static str, SongResult, Option<Art>, Vec<Swatch>)> {
         hit: 25,
         words: 45,
         streak: 9,
-        phrases: phrases("gG.gAg"),
+        phrases: phrases("01.030"),
         medal: Some(Medal::Bronze),
         best: None,
         whole: true,

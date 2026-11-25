@@ -4,6 +4,7 @@
 use std::path::Path;
 
 use super::*;
+use crate::tiers::Tier;
 
 /// A melody sure at `cents` over the frames `runs` give.
 fn melody(frames: usize, runs: &[(usize, usize, u16)]) -> Melody {
@@ -242,22 +243,41 @@ fn medals_go_by_the_words() {
 
 #[test]
 fn a_streak_multiplies_the_points_and_two_misses_end_it() {
-    assert_eq!(
-        [0, 4, 5, 9, 10, 19, 20, 99].map(multiplier),
-        [1, 1, 2, 2, 3, 3, 4, 4]
-    );
+    // A rung a tier's row, at its streak, ×2 the first's, doubling a rung;
+    // none under the first, the top's beyond the top.
+    assert_eq!(multiplier(0), 1);
+    for t in Tier::ALL {
+        let s = t.spec().streak;
+        assert_eq!((rung(s), multiplier(s)), (Some(t), 2 << t.index()));
+        assert_eq!(multiplier(s - 1), multiplier(s) / 2);
+    }
+    assert_eq!(rung(u32::MAX), Some(Tier::TOP));
+    assert_eq!(multiplier(u32::MAX), 1 << Tier::COUNT);
     // A song of 14 words, a second each on C4: the 12th and 13th missed,
     // the others sung.
     let s = fourteen(&[11, 12]);
-    // Words 1-4 at ×1, 5-9 at ×2, 10-11 at ×3; the 12th waits for a
+    // Words 1-11 each at their streak's multiplier; the 12th waits for a
     // rescue, the 13th missed too ends the streak; the 14th at ×1 again.
-    assert_eq!(s.tally.score, 4 * 100 + 5 * 200 + 2 * 300 + 100);
+    let sung: u32 = (1..=11).map(|k| 100 * multiplier(k)).sum();
+    assert_eq!(s.tally.score, sung + 100);
     assert_eq!((s.tally.streak, s.tally.best_streak), (1, 11));
     assert_eq!((s.tally.hit_words, s.tally.rescued), (12, 0));
     let last = s.tally.last_scored.unwrap();
     assert_eq!((last.hit, last.points, last.streak), (true, 100, 1));
-    let lost = s.moments().iter().filter(|m| m.cue == Cue::StreakLost);
-    assert_eq!(lost.count(), 1);
+    let lost: Vec<_> = (s.moments().iter())
+        .filter(|m| matches!(m.cue, Cue::StreakLost(_)))
+        .map(|m| m.cue)
+        .collect();
+    assert_eq!(lost, [Cue::StreakLost(rung(11).unwrap())]);
+    let ups: Vec<_> = (s.moments().iter())
+        .filter(|m| matches!(m.cue, Cue::StreakUp(_)))
+        .map(|m| m.cue)
+        .collect();
+    let climbed: Vec<Cue> = (1..=11)
+        .filter(|&k| rung(k) != rung(k - 1))
+        .filter_map(|k| rung(k).map(Cue::StreakUp))
+        .collect();
+    assert_eq!(ups, climbed);
     assert!(!s
         .moments()
         .iter()
@@ -270,11 +290,12 @@ fn a_streak_multiplies_the_points_and_two_misses_end_it() {
 #[test]
 fn a_single_word_missed_is_rescued_by_the_next_to_burst() {
     let s = fourteen(&[12]);
-    // Words 1-4 at ×1, 5-9 at ×2, 10-14 at ×3 (the 13th rescued).
-    assert_eq!(s.tally.score, 4 * 100 + 5 * 200 + 5 * 300);
+    // Each word at its streak's multiplier (the 13th rescued).
+    let sung: u32 = (1..=14).map(|k| 100 * multiplier(k)).sum();
+    assert_eq!(s.tally.score, sung);
     assert_eq!((s.tally.streak, s.tally.best_streak), (14, 14));
     assert_eq!((s.tally.hit_words, s.tally.rescued), (14, 1));
-    assert!(!s.moments().iter().any(|m| m.cue == Cue::StreakLost));
+    assert!(!(s.moments().iter()).any(|m| matches!(m.cue, Cue::StreakLost(_))));
     // The shot: from the 14th's bubble as it bursts, at the 13th.
     let shots: Vec<_> = (s.moments().iter())
         .filter_map(|m| match m.cue {

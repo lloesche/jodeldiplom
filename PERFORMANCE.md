@@ -238,5 +238,7 @@ tests that need no GPU (`gui::stage_gpu::groups`, `gui::particles`):
       --budget 4 --step-budget 2.5
   ```
 
-  (any cover's `.layers` file from the player's data folder; the RTX 5080
-  takes 1.8–3.1 ms at worst over the four scenes).
+  (any cover's `.layers` file from the player's data folder; its scenes
+  are the normal one, a tier's each at its rung, every effect at once and
+  the diploma: the RTX 5080 takes 1.5–3.4 ms at worst over the singing
+  ones).

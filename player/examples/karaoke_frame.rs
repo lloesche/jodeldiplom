@@ -153,7 +153,6 @@ fn main() {
         moved: 1.0,
         score: sing.map(|_| Score {
             points: singing.tally.score,
-            tier: singing.last_phrase().and_then(|p| p.tier),
             streak: singing.tally.streak,
         }),
         result: None,
@@ -252,7 +251,6 @@ fn gpu_frames(
             moved,
             score: sing.map(|_| Score {
                 points: singing.tally.score,
-                tier: singing.last_phrase().and_then(|p| p.tier),
                 streak: singing.tally.streak,
             }),
             result: None,

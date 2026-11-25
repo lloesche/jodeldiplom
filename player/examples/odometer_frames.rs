@@ -46,11 +46,7 @@ fn picture(points: u32) -> KaraokePicture {
         start: None,
         before: Vec::new(),
         moved: 1.0,
-        score: Some(Score {
-            points,
-            tier: None,
-            streak: 25,
-        }),
+        score: Some(Score { points, streak: 25 }),
         result: None,
     }
 }

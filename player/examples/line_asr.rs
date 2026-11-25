@@ -99,7 +99,7 @@ fn main() {
             .or_else(|| {
                 cached
                     .iter()
-                    .find(|(s, _, _)| format!("{:016x}", jodeldiplom::rhythm::hash(s)) == id)
+                    .find(|(s, _, _)| jodeldiplom::cache::name(s) == id)
                     .map(|(s, _, _)| PathBuf::from(s.rsplitn(3, ' ').nth(2).unwrap_or(s)))
             });
         let Some(song) = song else {

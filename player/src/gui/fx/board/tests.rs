@@ -45,11 +45,13 @@ fn a_held_strength_is_its_row_s_at_the_row_and_eases_between() {
 }
 
 /// The lane's glow and its flames, as the glow eases through and between
-/// the rows, bit for bit what they were when each row held them itself
-/// (Great's glow round the lane, Amazing's flames).
+/// the rows, bit for bit the straight lines through each row's own
+/// (Great's glow round the lane on, Amazing's flames on).
 #[test]
-fn the_lane_glow_and_flames_ramp_as_before() {
-    let before = |k: f32, values: [f32; 4]| {
+fn the_lane_glow_and_flames_ramp_between_the_rows_that_list_them() {
+    // Full from the row named `from` on, none below it.
+    let from = |name: &str| Tier::ALL.map(|t| if t >= Tier::named(name) { 1.0 } else { 0.0 });
+    let before = |k: f32, values: [f32; Tier::COUNT]| {
         let mut a = (0.0f32, 0.0f32);
         for (row, v) in TIERS.iter().zip(values) {
             let b = (row.glow, v);
@@ -64,8 +66,8 @@ fn the_lane_glow_and_flames_ramp_as_before() {
     for i in 0..=2000 {
         let k = i as f32 / 1600.0;
         let f = board.frame(&step(None, held_at(k)), &Music::NEUTRAL, 1.0);
-        let glow = before(k, [0.0, 1.0, 1.0, 1.0]);
-        let flames = before(k, [0.0, 0.0, 1.0, 1.0]);
+        let glow = before(k, from("Great"));
+        let flames = before(k, from("Amazing"));
         assert_eq!(f.live(Fx::Glow).strength.to_bits(), glow.to_bits(), "{k}");
         let got = f.live(Fx::Flames).strength;
         assert_eq!(got.to_bits(), flames.to_bits(), "{k}");
@@ -154,30 +156,32 @@ static RUNGS: Effects = Effects {
 fn rung_effects_are_held_and_fired_by_rung() {
     let rows = [(0.5, &Effects::NONE), (1.0, &RUNGS)];
     let mut board = Board::default();
-    let at = |rung: u32, change: Option<(u32, u32)>| Step {
+    type Rung = Option<Tier>;
+    let at = |rung: Rung, change: Option<(Rung, Rung)>| Step {
         at_rung: rung,
         rung: change,
         ..Step::default()
     };
+    let (first, second) = (Some(Tier::ALL[0]), Some(Tier::ALL[1]));
     let m = &Music::NEUTRAL;
     let mut frame = |s: &Step, clock: f64| board.frame_of(rows.into_iter(), s, m, clock);
-    let f = frame(&at(1, Some((0, 1))), 1.0);
+    let f = frame(&at(first, Some((None, first))), 1.0);
     let fire = f.live(Fx::EdgeFire).strength;
     assert_eq!(fire, 0.0, "the first rung has none");
-    let up = frame(&at(2, Some((1, 2))), 2.0);
+    let up = frame(&at(second, Some((first, second))), 2.0);
     assert!(up.live(Fx::Rain).fired);
     assert_eq!(up.live(Fx::EdgeFire).aim, 0.6);
     assert_eq!(up.live(Fx::EdgeFire).strength, 0.0, "easing in");
-    let held = frame(&at(2, None), 3.0);
+    let held = frame(&at(second, None), 3.0);
     assert_eq!(held.live(Fx::EdgeFire).strength, 0.6);
     assert!(!held.live(Fx::Rain).fired);
-    let lost = frame(&at(0, Some((2, 0))), 4.0);
+    let lost = frame(&at(None, Some((second, None))), 4.0);
     assert!(!lost.live(Fx::Rain).fired, "nothing fires going down");
     assert_eq!(lost.live(Fx::EdgeFire).aim, 0.0);
     let collapse = f64::from(crate::gui::rainbow::COLLAPSE);
-    let half = frame(&at(0, None), 4.0 + collapse / 2.0);
+    let half = frame(&at(None, None), 4.0 + collapse / 2.0);
     assert!((half.live(Fx::EdgeFire).strength - 0.3).abs() < 1e-6);
-    let sought = frame(&at(2, None), 9.0);
+    let sought = frame(&at(second, None), 9.0);
     assert_eq!(sought.live(Fx::EdgeFire).strength, 0.6, "snapped");
     assert!(!sought.live(Fx::Rain).fired);
     assert_eq!(sought.live(Fx::Bulbs).strength, 0.0);

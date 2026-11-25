@@ -12,7 +12,7 @@
 //! was taken back.
 
 use super::bursts::Index;
-use crate::core::shine::Shone;
+use crate::core::shine::{Shone, Tier};
 
 /// What happened.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -49,10 +49,11 @@ pub enum Cue {
         /// Where the bubble firing it is along its line.
         across: f32,
     },
-    /// The streak up to a level (1: ×2, up to 3: ×4).
-    StreakUp(u32),
-    /// The streak lost, from a level of 1 or more.
-    StreakLost,
+    /// The streak up to a rung of the multiplier, the rung named after its
+    /// tier ([`crate::core::singing::rung`]).
+    StreakUp(Tier),
+    /// The streak lost, from the rung it was at.
+    StreakLost(Tier),
     /// A phrase's shine and tier decided.
     Phrase(Shone),
 }

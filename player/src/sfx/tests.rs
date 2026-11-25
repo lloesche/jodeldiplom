@@ -137,18 +137,19 @@ fn write_the_sounds() {
         1.0,
         0.0,
     ));
-    let streak = [
-        (0.0, Sound::StepUp(1), 1.0, 0.0),
-        (1.0, Sound::StepUp(2), 1.0, 0.0),
-        (2.0, Sound::StepUp(3), 1.0, 0.0),
-        (3.2, Sound::Break, 1.0, 0.0),
-    ];
-    let tiers = [
-        (0.0, Sound::Tier(Tier::named("Good")), 1.0, 0.0),
-        (1.2, Sound::Tier(Tier::named("Great")), 1.0, 0.0),
-        (2.6, Sound::Tier(Tier::named("Amazing")), 1.0, 0.0),
-        (4.4, Sound::Tier(Tier::TOP), 1.0, 0.0),
-    ];
+    // Up every rung, then lost.
+    let mut streak: Vec<_> = (Tier::ALL.into_iter().enumerate())
+        .map(|(k, t)| (k as f64, Sound::StepUp(t), 1.0, 0.0))
+        .collect();
+    streak.push((Tier::COUNT as f64 + 0.2, Sound::Break, 1.0, 0.0));
+    // Every tier's chime, each as the one before rings out.
+    let mut tiers = Vec::new();
+    let mut at = 0.0;
+    for t in Tier::ALL {
+        let chime = Sound::Tier(t);
+        tiers.push((at, chime, 1.0, 0.0));
+        at += 0.8 * chime.render(rate).l.len() as f64 / f64::from(rate);
+    }
     // Diplomas revealed, as the screen plays them: a Gold one with a new
     // best, a Silver one short of its best, one without a medal, one not
     // sung from its start, one with nothing scored, and one the demo key
@@ -185,8 +186,8 @@ fn write_the_sounds() {
     };
     let runs = [
         ("run-ripple", ripple),
-        ("run-streak", streak.to_vec()),
-        ("run-tiers", tiers.to_vec()),
+        ("run-streak", streak),
+        ("run-tiers", tiers),
         ("run-diploma-gold-new-best", revealed(gold)),
         ("run-diploma-silver", revealed(silver)),
         ("run-diploma-cheer", revealed(cheer)),

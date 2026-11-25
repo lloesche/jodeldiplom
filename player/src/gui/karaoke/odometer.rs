@@ -497,11 +497,7 @@ mod tests {
             start: None,
             before: Vec::new(),
             moved: 1.0,
-            score: Some(Score {
-                points,
-                tier: None,
-                streak: 0,
-            }),
+            score: Some(Score { points, streak: 0 }),
             result: None,
         }
     }

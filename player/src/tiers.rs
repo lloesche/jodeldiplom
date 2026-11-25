@@ -6,13 +6,16 @@
 //! colour on the stage and the diploma, the meter's fill, how strongly the
 //! singing glows while at it and what that lights (the streak's rainbow,
 //! the lane, the backdrop), its mark on the song's progress, its sticker,
-//! its chime and its gem.
+//! its chime and its gem. Each row is a rung of the multiplier too, named
+//! after it: reached at so many words hit in a row ([`TierSpec::streak`]),
+//! ×2 the first's, doubling a rung ([`crate::core::singing::rung`],
+//! [`Tier::multiplier`]).
 //!
 //! A look held while the singing glows is a value a row: between two rows
 //! (the glow easing from one to the other) it is the straight line between
 //! their values ([`held`]), below the first from none.
 //!
-//! The rows are in order: each bar and each glow above the one before,
+//! The rows are in order: each bar, streak and glow above the one before,
 //! and each row looks and sounds other than the one before (a test holds
 //! them to it).
 
@@ -50,6 +53,9 @@ pub struct TierSpec {
     pub bar: f64,
     /// The share of the original's pitch it takes too, if it asks one.
     pub pitch_bar: Option<f64>,
+    /// The words hit in a row its rung of the multiplier takes (the rung,
+    /// named after it: [`Tier::multiplier`]).
+    pub streak: u32,
     /// Its colour (sRGB): its name's badge, its stretch on the song's
     /// progress and its mark there, its sticker on the diploma.
     pub color: [f32; 3],
@@ -84,11 +90,12 @@ pub struct TierSpec {
 }
 
 /// The tiers, Good first.
-pub static TIERS: [TierSpec; 4] = [
+pub static TIERS: [TierSpec; 5] = [
     TierSpec {
         name: "Good",
         bar: 0.60,
         pitch_bar: None,
+        streak: 5,
         color: [0.35, 0.92, 0.62],
         fill: Paint::Rainbow,
         glow: 0.25,
@@ -118,8 +125,9 @@ pub static TIERS: [TierSpec; 4] = [
     },
     TierSpec {
         name: "Great",
-        bar: 0.75,
+        bar: 0.72,
         pitch_bar: None,
+        streak: 10,
         color: [1.0, 0.78, 0.22],
         fill: Paint::Rgb([1.0, 0.72, 0.16]),
         glow: 0.5,
@@ -148,9 +156,42 @@ pub static TIERS: [TierSpec; 4] = [
         },
     },
     TierSpec {
+        name: "Awesome",
+        bar: 0.80,
+        pitch_bar: None,
+        streak: 20,
+        color: [1.0, 0.56, 0.3],
+        fill: Paint::Rgb([1.0, 0.5, 0.22]),
+        glow: 0.625,
+        bands: 16.0,
+        lane_light: 0.5,
+        fx: Effects {
+            held: &[Use::of(Fx::Rainbow, 1.0), Use::of(Fx::Glow, 1.0)],
+            on_phrase: &[Use::of(Fx::StepUp, 1.0)],
+            ..Effects::NONE
+        },
+        backdrop_glow: 0.5,
+        backdrop_rays: 0.1,
+        mark: 1.8,
+        sticker: Sticker {
+            glints: true,
+            prismatic: false,
+            halo: 0.0,
+        },
+        chime: Recipe {
+            make: recipes::awesome,
+            peak_db: -14.5,
+        },
+        gem: Recipe {
+            make: recipes::gem_awesome,
+            peak_db: -19.75,
+        },
+    },
+    TierSpec {
         name: "Amazing",
         bar: 0.87,
         pitch_bar: None,
+        streak: 35,
         color: [1.0, 0.35, 0.6],
         fill: Paint::Rgb([1.0, 0.3, 0.58]),
         glow: 0.75,
@@ -184,8 +225,9 @@ pub static TIERS: [TierSpec; 4] = [
     },
     TierSpec {
         name: "Diva",
-        bar: 0.90,
-        pitch_bar: Some(0.90),
+        bar: 0.94,
+        pitch_bar: Some(0.92),
+        streak: 55,
         color: [0.96, 0.93, 1.0],
         fill: Paint::Rgb([1.0, 0.95, 0.85]),
         glow: 1.0,
@@ -302,6 +344,11 @@ impl Tier {
             .find(|t| t.name() == name)
             .unwrap_or_else(|| panic!("no tier named {name:?}"))
     }
+
+    /// The multiplier at its rung: ×2 the first's, doubling a rung.
+    pub fn multiplier(self) -> u32 {
+        2 << self.0
+    }
 }
 
 #[cfg(test)]
@@ -334,17 +381,25 @@ mod tests {
         .collect()
     }
 
-    /// Every row in order: each bar, glow, band count, backdrop glow and
-    /// peak above the one before, the held looks never less, each row
-    /// looking other than the one before (a row that copies another's
-    /// looks fails here); the top's glow 1; each named apart, its chime
-    /// and its gem in the bank under its name, and a mark on the meter.
+    /// Every row in order: each bar, streak, glow, band count, backdrop
+    /// glow and peak above the one before, the step up to its rung never
+    /// quieter and other than the one before, the held looks never less,
+    /// each row looking other than the one before (a row that copies
+    /// another's looks fails here); the top's glow 1, its step up under
+    /// its jackpot; each named apart, its chime, its gem and the step up to
+    /// its rung in the bank under its name, a mark on the meter, and its
+    /// rung reached at its streak, the one before a word short of it.
     #[test]
     fn every_row_is_in_order_and_in_the_bank() {
         for w in TIERS.windows(2) {
             let (a, b) = (&w[0], &w[1]);
             let pair = format!("{} {}", a.name, b.name);
             assert!(b.bar > a.bar, "{pair}");
+            assert!(b.streak > a.streak, "{pair}");
+            let (ta, tb) = (Tier::named(a.name), Tier::named(b.name));
+            let (up_a, up_b) = (Sound::StepUp(ta), Sound::StepUp(tb));
+            assert!(up_b.peak_db() >= up_a.peak_db(), "{pair}");
+            assert_ne!(up_a.render(8_000).l, up_b.render(8_000).l, "{pair}");
             assert!(b.glow > a.glow, "{pair}");
             assert!(b.bands > a.bands, "{pair}");
             assert!(b.backdrop_glow > a.backdrop_glow, "{pair}");
@@ -356,16 +411,24 @@ mod tests {
             assert_ne!(looks(a), looks(b), "{pair}");
         }
         assert_eq!(Tier::TOP.spec().glow, 1.0);
-        assert!(TIERS[0].glow > 0.0);
+        assert!(TIERS[0].glow > 0.0 && TIERS[0].streak > 0);
+        let top = Sound::StepUp(Tier::TOP).peak_db();
+        assert!(top < Sound::Tier(Tier::TOP).peak_db());
+        assert_eq!(crate::core::singing::rung(0), None);
         let all = Sound::all();
         let marks = crate::gui::glory::MARKS;
         for t in Tier::ALL {
             assert_eq!(Tier::named(t.name()), t);
             assert_eq!(t.spec().bands.fract(), 0.0, "{}", t.name());
             let lower = t.name().to_lowercase();
+            let streak = t.spec().streak;
+            let below = t.index().checked_sub(1).map(|i| Tier::ALL[i]);
+            assert_eq!(crate::core::singing::rung(streak), Some(t));
+            assert_eq!(crate::core::singing::rung(streak - 1), below);
             for (sound, name) in [
                 (Sound::Tier(t), format!("tier-{lower}")),
                 (Sound::Gem(Some(t)), format!("gem-{lower}")),
+                (Sound::StepUp(t), format!("step-up-{lower}")),
             ] {
                 assert_eq!(all[sound.index()], sound);
                 assert_eq!(sound.name(), name);

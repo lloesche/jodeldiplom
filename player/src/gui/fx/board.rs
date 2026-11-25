@@ -15,7 +15,7 @@ use crate::gui::particles::Spray;
 use crate::gui::rainbow::Glow;
 use crate::gui::stage_gpu::Instance;
 use crate::gui::streak::Step;
-use crate::tiers::{held_through, TIERS};
+use crate::tiers::{held_through, Tier, TIERS};
 
 /// Every effect's strength in a frame, and what goes with it: the
 /// singing's clock and glow, each effect's strength now (eased, or as it
@@ -93,7 +93,7 @@ impl Frame {
 pub struct Board {
     slots: [Slot; Fx::COUNT],
     rungs: [Glow; Fx::COUNT],
-    rung: u32,
+    rung: Option<Tier>,
 }
 
 impl Board {
@@ -121,10 +121,9 @@ impl Board {
                 s.last = f32::NEG_INFINITY;
             }
         }
-        let row = |i: usize| rows.clone().nth(i).map(|(_, e)| e);
-        let rung_row = |rung: u32| (rung as usize).checked_sub(1).and_then(row);
+        let row = |t: Option<Tier>| t.and_then(|t| rows.clone().nth(t.index()).map(|(_, e)| e));
         if step.at_rung != self.rung {
-            let to = rung_row(step.at_rung);
+            let to = row(step.at_rung);
             for fx in Fx::ALL {
                 let g = &mut self.rungs[fx.index()];
                 let level = to.map_or(0.0, |r| strength(r.at_rung, fx));
@@ -167,16 +166,12 @@ impl Board {
             frame.listed[i] = held(peak).max(rung.level.max(rung.from));
         }
         let mut fired: Vec<&Use> = Vec::new();
-        if let Some(r) = step
-            .phrase
-            .and_then(|p| p.tier)
-            .and_then(|t| row(t.index()))
-        {
+        if let Some(r) = row(step.phrase.and_then(|p| p.tier)) {
             fired.extend(r.on_phrase);
             frame.rose = step.ups;
         }
-        let up = step.rung.filter(|(a, b)| b > a).map(|(_, b)| b);
-        if let Some(r) = up.and_then(rung_row) {
+        let up = step.rung.filter(|(a, b)| b > a).and_then(|(_, b)| b);
+        if let Some(r) = row(up) {
             fired.extend(r.on_rung);
         }
         for u in &fired {
@@ -184,9 +179,8 @@ impl Board {
             frame.fired[i] = true;
             frame.now[i] = frame.now[i].max(u.strength);
         }
-        let tier_row = step.tier.and_then(|t| row(t.index()));
-        let held = tier_row.map(|r| r.held).into_iter();
-        for u in held.chain(rung_row(self.rung).map(|r| r.at_rung)).flatten() {
+        let held = row(step.tier).map(|r| r.held).into_iter();
+        for u in held.chain(row(self.rung).map(|r| r.at_rung)).flatten() {
             modulate(&mut frame, u, false);
         }
         for u in fired {

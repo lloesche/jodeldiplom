@@ -1,5 +1,7 @@
 //! The shine held to real songs and real singing ([`jodeldiplom::core::shine`]),
-//! read only (the data folder and the songs are only read, nothing kept).
+//! read only (the data folder is only read, nothing kept; the songs are
+//! never touched, each known by its analysis's record of it, but with
+//! `--separate`).
 //!
 //! ```text
 //! cargo run --release -p jodeldiplom --example shine -- --songs [FILTER]
@@ -85,9 +87,16 @@ fn data() -> PathBuf {
     jodeldiplom::dirs::Data::current().expect("a data folder").0
 }
 
-/// The analyses' waveforms by song path: the newest analysis version.
-fn analyses(dir: &Path) -> BTreeMap<PathBuf, (u32, PathBuf)> {
-    let mut out: BTreeMap<PathBuf, (u32, PathBuf)> = BTreeMap::new();
+/// The analyses' waveforms by song path: the newest analysis version (of
+/// those, the song as it was last changed), its waveform, and the song as
+/// it was then (its path, size and time: [`jodeldiplom::cache::identity`]),
+/// read from the record alone.
+fn analyses(dir: &Path) -> BTreeMap<PathBuf, (u32, PathBuf, String)> {
+    let mut out: BTreeMap<PathBuf, (u32, PathBuf, String)> = BTreeMap::new();
+    let newer = |(v, id): (u32, &str), (old_v, old_id): (u32, &str)| {
+        let changed = |id| jodeldiplom::cache::identity_parts(id).map(|p| p.2);
+        (v, changed(id)) > (old_v, changed(old_id))
+    };
     for e in std::fs::read_dir(dir).expect("the analyses").flatten() {
         let file = e.path();
         if file.extension().is_none_or(|x| x != "txt") {
@@ -99,23 +108,25 @@ fn analyses(dir: &Path) -> BTreeMap<PathBuf, (u32, PathBuf)> {
         let Some(key) = text.lines().find_map(|l| l.strip_prefix("key ")) else {
             continue;
         };
-        // path size mtime vN methods
-        let parts: Vec<&str> = key.rsplitn(5, ' ').collect();
         let wave = file.with_extension("wave");
-        let version = parts.get(1).and_then(|v| v.strip_prefix('v')?.parse().ok());
-        let (Some(v), Some(path)) = (version, parts.get(4)) else {
+        let Some((id, v)) = jodeldiplom::rhythm::key_parts(key) else {
             continue;
         };
-        if wave.is_file() && out.get(Path::new(path)).is_none_or(|(old, _)| v > *old) {
-            out.insert(PathBuf::from(path), (v, wave));
+        let Some((path, ..)) = jodeldiplom::cache::identity_parts(id) else {
+            continue;
+        };
+        let newest = (out.get(path)).is_none_or(|(old_v, _, old)| newer((v, id), (*old_v, old)));
+        if wave.is_file() && newest {
+            out.insert(path.to_owned(), (v, wave, id.to_owned()));
         }
     }
     out
 }
 
-/// Our timed words of `path` as the game shows them, read only.
-fn shown_lyrics(data: &Path, path: &Path) -> Option<Lyrics> {
-    let key = jodeldiplom::lyrics::store::cache_key(path)?;
+/// Our timed words of the song `id` names as the game shows them, read
+/// only.
+fn shown_lyrics(data: &Path, id: &str) -> Option<Lyrics> {
+    let key = jodeldiplom::lyrics::store::key_of(id);
     let text = std::fs::read(data.join("lyrics").join(format!("{key}.timed.lrc"))).ok()?;
     let text = String::from_utf8_lossy(&text).into_owned();
     let lyrics = Lyrics::parse(
@@ -131,11 +142,11 @@ fn shown_lyrics(data: &Path, path: &Path) -> Option<Lyrics> {
     Some(lyrics)
 }
 
-/// The vocals of `path`'s kept stems, mono at their rate, read without
-/// marking the file used.
-fn kept_voice(data: &Path, path: &Path) -> Option<(Vec<f32>, u32)> {
+/// The vocals of the kept stems of the song `id` names, mono at their
+/// rate, read without marking the file used.
+fn kept_voice(data: &Path, id: &str) -> Option<(Vec<f32>, u32)> {
     use jodel_playback::stems::{Stem, RATE};
-    let file = jodeldiplom::stems_cache::file_for(&data.join("stems"), path)?;
+    let file = jodeldiplom::stems_cache::file_of(&data.join("stems"), id);
     let mut kept = jodel_playback::StemFile::open(&file).ok()?;
     let vocals = Stem::ALL.iter().position(|&s| s == Stem::Vocals)?;
     let mut voice = Vec::new();
@@ -185,7 +196,7 @@ fn songs(filter: Option<&str>) {
     let (mut all, mut divas, mut songs_ok, mut songs) = (0, 0, 0, 0);
     let (mut weak_all, mut weak_divas, mut weak_most) = (0, 0, 0.0f64);
     let (mut rough, mut heard_enough) = (0, 0);
-    for (path, (_, wave)) in analyses(&data.join("analyses")) {
+    for (path, (_, wave, id)) in analyses(&data.join("analyses")) {
         if filter.is_some_and(|f| !path.display().to_string().contains(f)) {
             continue;
         }
@@ -193,10 +204,10 @@ fn songs(filter: Option<&str>) {
             .ok()
             .and_then(|b| Waveform::from_bytes(&b))
             .and_then(|w| w.melody);
-        let (Some(melody), Some(lyrics)) = (melody, shown_lyrics(&data, &path)) else {
+        let (Some(melody), Some(lyrics)) = (melody, shown_lyrics(&data, &id)) else {
             continue;
         };
-        let Some((voice, rate)) = kept_voice(&data, &path) else {
+        let Some((voice, rate)) = kept_voice(&data, &id) else {
             continue;
         };
         let started = std::time::Instant::now();
@@ -401,7 +412,9 @@ fn take(folder: &Path, song: Option<PathBuf>, separate: bool, show: bool) {
             16_000,
         )
     } else {
-        kept_voice(&data(), &path).expect("the song's stems kept")
+        let analysed = analyses(&data().join("analyses"));
+        let (_, _, id) = analysed.get(&path).expect("the song analysed");
+        kept_voice(&data(), id).expect("the song's stems kept")
     };
     let r = Arc::new(Original::new(&singing.notes, &original, orate).reference());
     let all = r.shining();

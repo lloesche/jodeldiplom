@@ -1,7 +1,8 @@
-//! The stage's frames through a scripted singing, held to a digest: Good,
-//! Great, Amazing and Diva in turn, the streak lost, Diva again, a seek
-//! back (the scoring started over) and Diva once more, at 60 frames a
-//! second for half a minute, the multiplier climbing all along. Every
+//! The stage's frames through a scripted singing, held to a digest: every
+//! tier in turn, Good to Diva, the streak lost, Diva again, a seek back
+//! (the scoring started over) and Diva once more, at 60 frames a second
+//! for half a minute, the streak climbing through every rung of the
+//! multiplier and starting over, again and again. Every
 //! frame's shapes (over the stage, over everything, the light), its tubes'
 //! lines and its bursts go into the digest; a shape's kind by its name and
 //! text by the rainbow it shows in ([`shine_of`], only while it shows), so
@@ -23,21 +24,27 @@ use jodeldiplom::gui::stage_gpu::{kind, Instance, StageFrame};
 mod sung;
 use sung::{picture_at, song, FPS, LENGTH};
 
-/// The frames: how many in all, the one the song is sought back at (by
-/// [`SEEK`] seconds), and the phrases decided, by frame.
+/// The frames: how many in all, and the one the song is sought back at
+/// (by [`SEEK`] seconds).
 const FRAMES: u32 = 1800;
 const SOUGHT: u32 = 1320;
 const SEEK: f64 = 10.0;
-const PHRASES: [(u32, Option<&str>); 8] = [
-    (120, Some("Good")),
-    (360, Some("Great")),
-    (600, Some("Amazing")),
-    (840, Some("Diva")),
-    (1080, None),
-    (1200, Some("Diva")),
-    (1500, Some("Diva")),
-    (1620, Some("Great")),
-];
+
+/// The phrases decided, by frame: every tier in turn from frame 120 to
+/// 840, none, the top twice, then the second tier.
+fn decisions() -> Vec<(u32, Option<Tier>)> {
+    let last = (Tier::COUNT - 1).max(1) as u32;
+    let mut all: Vec<(u32, Option<Tier>)> = (Tier::ALL.into_iter().zip(0..))
+        .map(|(t, i)| (120 + 720 * i / last, Some(t)))
+        .collect();
+    all.extend([
+        (1080, None),
+        (1200, Some(Tier::TOP)),
+        (1500, Some(Tier::TOP)),
+        (1620, Some(Tier::ALL[1])),
+    ]);
+    all
+}
 
 /// A 64-bit FNV-1a digest.
 struct Digest(u64);
@@ -127,6 +134,9 @@ fn digest() -> (u64, std::collections::BTreeMap<String, usize>) {
     let mut d = Digest(0xcbf2_9ce4_8422_2325);
     let mut counts = std::collections::BTreeMap::new();
     let mut heard = 0usize;
+    let decided = decisions();
+    // The streak climbing past the top's rung, then over again.
+    let climb = Tier::TOP.spec().streak + 15;
     for f in 0..FRAMES {
         let mut now = f64::from(f) / FPS;
         if f >= SOUGHT {
@@ -141,17 +151,17 @@ fn digest() -> (u64, std::collections::BTreeMap<String, usize>) {
             singing.hear(t, c);
             heard += 1;
         }
-        if let Some((_, tier)) = PHRASES.iter().find(|(at, _)| *at == f) {
+        if let Some(&(_, tier)) = decided.iter().find(|(at, _)| *at == f) {
             let shone = Shone {
                 line: (f / 240) as usize,
                 end: now,
                 value: 1.0,
                 top: 0.9,
-                tier: tier.map(Tier::named),
+                tier,
             };
             singing.decided(now, shone);
         }
-        singing.tally.streak = (f / 20) % 40;
+        singing.tally.streak = (f / 12) % climb;
         let picture = picture_at(&sung, now, &singing);
         let song = Song::new(&singing, sung.clone(), Some(LENGTH));
         let frame = stage.frame(&song, &picture, (0.0, 0.0, 1600.0, 900.0), now, 1.0 / 60.0);
@@ -188,5 +198,5 @@ fn the_stage_draws_the_same_frames() {
             "{name}: {counts:?}"
         );
     }
-    assert_eq!(digest, 2_598_784_996_170_726_432, "{counts:?}");
+    assert_eq!(digest, 11_953_424_288_785_215_725, "{counts:?}");
 }

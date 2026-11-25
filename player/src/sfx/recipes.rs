@@ -3,15 +3,20 @@
 //! made at the desk's rate like the game's others ([`super::sounds`]):
 //!
 //! - A phrase's chime ([`super::Sound::Tier`]): a two-note chime
-//!   ([`good`]), a bright arpeggio with glitter ([`great`]), a "ta-daa" in
-//!   brass with a shimmer ([`amazing`]), a jackpot (a cascade of coins
-//!   over bells, a whoosh, and a big chord: [`diva`]).
+//!   ([`good`]), a bright arpeggio with glitter ([`great`]), a brass hit
+//!   with a crash and plucks running up out of it ([`awesome`]), a
+//!   "ta-daa" in brass with a shimmer ([`amazing`]), a jackpot (a cascade
+//!   of coins over bells, a whoosh, and a big chord: [`diva`]).
 //! - Its gem popping in on the diploma ([`super::Sound::Gem`]): a glassy
-//!   plink, higher and richer up the tiers (a chime, two bells, a bright
-//!   pair with a shimmer, a sparkling run).
+//!   plink, higher and richer up the tiers (a chime, two bells, two bells
+//!   and a plink, a bright pair with a shimmer, a sparkling run).
+//!
+//! And the step up to each rung of the multiplier (a rung a tier), bigger
+//! up the rungs ([`step_up`], [`super::Sound::StepUp`]).
 
 use super::sounds::{brass, env, penta, pluck, BELL, GLASS};
 use super::synth::{scatter, Buf, Noise, Partial, Tone};
+use crate::tiers::Tier;
 
 /// A sound of a tier's: how it is made at a rate (stereo), and the peak
 /// it is set to, dBFS.
@@ -94,6 +99,34 @@ pub fn amazing(rate: u32) -> Buf {
     b
 }
 
+/// Awesome's: a brass hit (a short F major, punchy, a crash of bright
+/// noise on it) and plucks running up out of it.
+pub fn awesome(rate: u32) -> Buf {
+    let mut b = Buf::new(rate, 1.3);
+    for (i, f) in [349.2, 440.0, 523.3, 698.5].into_iter().enumerate() {
+        b.tone(0.0, -0.45 + 0.3 * i as f64, &brass(f, 0.06, 0.4).amp(0.45));
+    }
+    b.noise(
+        0.0,
+        0.0,
+        &Noise {
+            from: 6_000.0,
+            to: 3_000.0,
+            q: 0.8,
+            envelope: env(0.002, 0.0, 0.12, 0.35),
+            amp: 0.25,
+            length: 0.35,
+            seed: 0xA3E5,
+        },
+    );
+    for (i, s) in [5, 7, 8, 10].into_iter().enumerate() {
+        let pl = Tone::new(penta(s), env(0.002, 0.0, 0.2, 0.45), &pluck(0.65)).amp(0.4);
+        b.tone(0.18 + 0.05 * i as f64, -0.3 + 0.2 * i as f64, &pl);
+    }
+    b.room(0.3, 0.9);
+    b
+}
+
 /// A coin: a quick blip on `f`, then a fourth up, ringing a little.
 fn coin(b: &mut Buf, at: f64, f: f64, pan: f64, amp: f64) {
     let square: Vec<Partial> = [1.0, 3.0, 5.0, 7.0]
@@ -161,6 +194,74 @@ pub fn diva(rate: u32) -> Buf {
     b
 }
 
+/// The notes of the step up's arpeggio over its root: a major chord up
+/// two octaves.
+const ARPEGGIO: [f64; 7] = [1.0, 1.25, 1.5, 2.0, 2.5, 3.0, 4.0];
+
+/// How far up the multiplier's rungs rung `rung` is (1: the first's, ×2):
+/// 0 at the first, 1 at the top's ([`Tier::COUNT`]).
+fn up_the_rungs(rung: usize) -> f64 {
+    let top = Tier::COUNT.max(2) - 1;
+    (rung.saturating_sub(1) as f64 / top as f64).min(1.0)
+}
+
+/// The step up to rung `rung` of the multiplier (1: ×2): a quick rising
+/// major arpeggio, plucked, a swish rising under it, glitter scattered
+/// over its end. Each grows from the first rung to the top's
+/// ([`up_the_rungs`]): its root (up a minor sixth), its notes (four to
+/// the whole arpeggio), its brightness, its glitter, its swish and its
+/// length; so does its loudness ([`step_up_peak_db`]).
+pub fn step_up(rate: u32, rung: usize) -> Buf {
+    let x = up_the_rungs(rung);
+    let root = 523.251 * 2f64.powf(8.0 * x / 12.0);
+    let notes = 4 + (3.0 * x).round() as usize;
+    let bright = 0.5 + 0.45 * x;
+    let glitter = (8.0 * x).round() as usize;
+    let (swish_to, swish_amp) = (6_500.0 + 6_000.0 * x, 0.12 + 0.16 * x);
+    let mut b = Buf::new(rate, 0.75 + 0.3 * x + 0.03 * glitter as f64);
+    let gap = 0.042;
+    for (i, r) in ARPEGGIO.iter().take(notes).enumerate() {
+        let last = i + 1 == notes;
+        let decay = if last { 0.22 } else { 0.07 };
+        let length = if last { 0.45 } else { 0.18 };
+        let mut tone = Tone::new(root * r, env(0.002, 0.0, decay, length), &pluck(bright));
+        if last {
+            tone = tone.vibrato(6.0, 12.0, 0.15);
+        }
+        let pan = -0.3 + 0.6 * i as f64 / (notes - 1) as f64;
+        b.tone(gap * i as f64, pan, &tone);
+    }
+    let mut seed = 0x5EED_u64 + rung as u64;
+    for g in 0..glitter {
+        let at = gap * (notes - 1) as f64 + 0.03 * g as f64;
+        let step = 10 + (g % 6) as i32;
+        let grain = Tone::new(penta(step), env(0.001, 0.0, 0.08, 0.25), &GLASS)
+            .amp(0.3 * (1.0 - 0.04 * g as f64));
+        b.tone(at, 1.6 * scatter(&mut seed) - 0.8, &grain);
+    }
+    b.noise(
+        0.0,
+        0.0,
+        &Noise {
+            from: 1_200.0,
+            to: swish_to,
+            q: 2.0,
+            envelope: env(0.12, 0.0, 0.05, 0.25),
+            amp: swish_amp,
+            length: 0.25,
+            seed: 0xC0FFEE + rung as u64,
+        },
+    );
+    b.room(0.2, 0.6);
+    b
+}
+
+/// The peak of the step up to rung `rung`, dBFS: from -15.5 at the first
+/// to -12.5 at the top's ([`up_the_rungs`]), under the top's jackpot.
+pub fn step_up_peak_db(rung: usize) -> f64 {
+    -15.5 + 3.0 * up_the_rungs(rung)
+}
+
 /// A gem popping in: `body` played into its 0.7 seconds, in a small room.
 pub(super) fn gem(rate: u32, body: impl FnOnce(&mut Buf)) -> Buf {
     let mut b = Buf::new(rate, 0.7);
@@ -191,6 +292,17 @@ pub fn gem_great(rate: u32) -> Buf {
             let bell = Tone::new(penta(s), env(0.0015, 0.0, 0.15, 0.4), &BELL);
             b.tone(0.035 * i as f64, -0.2 + 0.4 * i as f64, &bell);
         }
+    })
+}
+
+/// Awesome's: two bells and a plink over them.
+pub fn gem_awesome(rate: u32) -> Buf {
+    gem(rate, |b| {
+        for (i, s) in [7, 9].into_iter().enumerate() {
+            let bell = Tone::new(penta(s), env(0.0015, 0.0, 0.15, 0.4), &BELL);
+            b.tone(0.035 * i as f64, -0.2 + 0.4 * i as f64, &bell);
+        }
+        plink(b, 0.07, 11, 0.0, 0.7);
     })
 }
 
