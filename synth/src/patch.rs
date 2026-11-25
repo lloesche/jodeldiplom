@@ -14,7 +14,7 @@
 //! let coin = Patch {
 //!     adsr: Adsr { decay: 0.4, sustain: 0.0, ..Adsr::default() },
 //!     reverb: 0.2,
-//!     ..Patch::new(lofi::Params::default())
+//!     ..Patch::new(lofi::Params::default().into())
 //! };
 //! # let _ = coin;
 //! ```
@@ -39,11 +39,38 @@ pub struct Adsr {
 
 impl Default for Adsr {
     fn default() -> Adsr {
+        Adsr::GATE
+    }
+}
+
+impl Adsr {
+    /// A plain gate: full at once, held, released over 0.1 s.
+    pub const GATE: Adsr = Adsr {
+        attack: 0.0,
+        decay: 0.0,
+        sustain: 1.0,
+        release: 0.1,
+    };
+
+    /// Struck: no attack, a decay of `decay` seconds to silence (a short
+    /// release, should it be let go first).
+    pub const fn hit(decay: f32) -> Adsr {
         Adsr {
             attack: 0.0,
+            decay,
+            sustain: 0.0,
+            release: 0.05,
+        }
+    }
+
+    /// Held: a rise of `attack` seconds to full, held there until let go,
+    /// a release of `release`.
+    pub const fn held(attack: f32, release: f32) -> Adsr {
+        Adsr {
+            attack,
             decay: 0.0,
             sustain: 1.0,
-            release: 0.1,
+            release,
         }
     }
 }
@@ -66,15 +93,18 @@ pub struct Glide {
 
 impl Default for Glide {
     fn default() -> Glide {
-        Glide {
-            from: 0.0,
-            time: 0.0,
-            curve: 1.0,
-        }
+        Glide::NONE
     }
 }
 
 impl Glide {
+    /// None: the note starts where it sits.
+    pub const NONE: Glide = Glide {
+        from: 0.0,
+        time: 0.0,
+        curve: 1.0,
+    };
+
     /// The offset `t` seconds into the note.
     pub fn at(&self, t: f32) -> f32 {
         if self.from == 0.0 || self.time <= 0.0 {
@@ -117,22 +147,27 @@ pub struct Lfo {
 
 impl Default for Lfo {
     fn default() -> Lfo {
-        Lfo {
-            rate: LfoRate::Hz(5.0),
-            pitch: 0.0,
-            bright: 0.0,
-            amp: 0.0,
-            shape: 0.0,
-            delay: 0.0,
-            fade: 0.0,
-        }
+        Lfo::NONE
     }
+}
+
+impl Lfo {
+    /// None: at 5 Hz, moving nothing.
+    pub const NONE: Lfo = Lfo {
+        rate: LfoRate::Hz(5.0),
+        pitch: 0.0,
+        bright: 0.0,
+        amp: 0.0,
+        shape: 0.0,
+        delay: 0.0,
+        fade: 0.0,
+    };
 }
 
 /// How much each note of a patch differs from the next, drawn from its
 /// seed (so the same seed, the same note): each up to the amount either
 /// way, the start only later.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Spread {
     /// Detune, cents either way.
     pub detune: f32,
@@ -143,6 +178,22 @@ pub struct Spread {
     /// Where in its cycle the LFO starts, up to this share of a cycle (1:
     /// anywhere; voices of a chord then wobble apart).
     pub lfo_phase: f32,
+}
+
+impl Default for Spread {
+    fn default() -> Spread {
+        Spread::NONE
+    }
+}
+
+impl Spread {
+    /// None: every note the same.
+    pub const NONE: Spread = Spread {
+        detune: 0.0,
+        level: 0.0,
+        start: 0.0,
+        lfo_phase: 0.0,
+    };
 }
 
 /// What a note on it sounds like.
@@ -184,20 +235,20 @@ pub struct Patch {
 impl Patch {
     /// A patch of `engine`: no envelopes beyond a plain gate (held 0.25 s,
     /// released over 0.1 s), no LFO, no sends, no spreads, at 0 dB.
-    pub fn new(engine: impl Into<AnyParams>) -> Patch {
+    pub const fn new(engine: AnyParams) -> Patch {
         Patch {
-            engine: engine.into(),
-            adsr: Adsr::default(),
+            engine,
+            adsr: Adsr::GATE,
             filter_env: 0.0,
-            pitch: Glide::default(),
-            shape: Glide::default(),
-            lfo: Lfo::default(),
+            pitch: Glide::NONE,
+            shape: Glide::NONE,
+            lfo: Lfo::NONE,
             level: 0.0,
             gate: 0.25,
             reverb: 0.0,
             delay: 0.0,
             chorus: 0.0,
-            spread: Spread::default(),
+            spread: Spread::NONE,
             mono: false,
         }
     }

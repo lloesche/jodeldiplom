@@ -107,13 +107,25 @@ pub const SHAPE: &str = "stiffness";
 /// its range an octave.
 pub const BRIGHT: &str = "brightness";
 
+/// A line of the pool, lent to one voice at a time: it cannot be copied,
+/// so no two voices ever hold it, and it goes back to the pool at most
+/// once.
+#[derive(Debug)]
+struct Line(u16);
+
+impl Line {
+    fn index(&self) -> usize {
+        usize::from(self.0)
+    }
+}
+
 /// One voice: where its string is (the line it borrowed) and its loop
-/// filters. A clone shares the line: the host never plays two of them.
-#[derive(Clone, Copy, Debug, Default)]
+/// filters. It owns its line, so it is never copied.
+#[derive(Debug, Default)]
 pub struct Voice {
     /// The line borrowed from the pool (none: not plucked yet, or none was
     /// free).
-    line: Option<u16>,
+    line: Option<Line>,
     /// Where the next sample is written.
     write: usize,
     /// The tuning all-pass's last input and output.
@@ -130,10 +142,29 @@ pub struct Voice {
     quiet: Quiet,
 }
 
-/// The delay lines, and those free.
+/// The delay lines, and those free: a stack of fixed size, as the lines
+/// lent are owned (each comes back once, so it never overflows).
 struct Pool {
     lines: Box<[[f32; LINE]]>,
-    free: Vec<u16>,
+    free: [u16; LINES],
+    count: usize,
+}
+
+impl Pool {
+    /// A line to lend, if one is free.
+    fn take(&mut self) -> Option<Line> {
+        self.count = self.count.checked_sub(1)?;
+        Some(Line(self.free[self.count]))
+    }
+
+    /// `line` given back.
+    fn give(&mut self, line: Line) {
+        debug_assert!(self.count < LINES, "a line given back twice");
+        if let Some(slot) = self.free.get_mut(self.count) {
+            *slot = line.0;
+            self.count += 1;
+        }
+    }
 }
 
 impl std::fmt::Debug for Pool {
@@ -141,7 +172,7 @@ impl std::fmt::Debug for Pool {
         write!(
             f,
             "Pool {{ {} of {} lines free }}",
-            self.free.len(),
+            self.count,
             self.lines.len()
         )
     }
@@ -189,14 +220,17 @@ impl Engine for KarplusString {
     type Voice = Voice;
 
     fn new(rate: Rate) -> KarplusString {
-        let mut free = Vec::with_capacity(LINES);
-        free.extend((0..LINES as u16).rev());
+        let mut free = [0; LINES];
+        for (k, f) in free.iter_mut().enumerate() {
+            *f = (LINES - 1 - k) as u16;
+        }
         KarplusString {
             rate,
             dc_pole: 1.0 - TAU * 10.0 / rate.hz(),
             pool: RefCell::new(Pool {
                 lines: vec![[0.0; LINE]; LINES].into_boxed_slice(),
                 free,
+                count: LINES,
             }),
         }
     }
@@ -206,13 +240,18 @@ impl Engine for KarplusString {
     /// again).
     fn note_on(&self, p: &Params, v: &mut Voice, n: &NoteOn) {
         let mut pool = self.pool.borrow_mut();
-        if v.line.is_none() {
-            v.line = pool.free.pop();
-            let Some(k) = v.line else { return };
-            pool.lines[usize::from(k)] = [0.0; LINE];
-        }
-        let Some(k) = v.line else { return };
-        let line = &mut pool.lines[usize::from(k)];
+        let k = match &v.line {
+            Some(line) => line.index(),
+            None => {
+                // The first pluck: a line taken, and cleared.
+                let Some(line) = pool.take() else { return };
+                let k = line.index();
+                pool.lines[k] = [0.0; LINE];
+                v.line = Some(line);
+                k
+            }
+        };
+        let line = &mut pool.lines[k];
         let velocity = n.velocity.clamp(0.0, 1.0);
         let f0 = dsp::hz(n.note) / self.rate.hz();
         let period = (1.0 / f0).clamp(8.0, (LINE - 8) as f32).round() as usize;
@@ -252,12 +291,14 @@ impl Engine for KarplusString {
 
     fn render(&self, p: &Params, v: &mut Voice, m: &VoiceMod, out: &mut [f32]) {
         let n = out.len().min(BLOCK);
-        let Some(k) = v.line else { return };
+        let Some(k) = v.line.as_ref().map(Line::index) else {
+            return;
+        };
         if v.quiet.done() {
             return;
         }
         let mut pool = self.pool.borrow_mut();
-        let line = &mut pool.lines[usize::from(k)];
+        let line = &mut pool.lines[k];
         let lowest = 1.0 / (LINE - 8) as f32;
         let f0 = (m.phase_inc as f32 * (1.0 / 4_294_967_296.0)).clamp(lowest, 1.0 / 6.0);
         let w = TAU * f0;
@@ -338,7 +379,49 @@ impl Engine for KarplusString {
 
     fn free(&self, v: &mut Voice) {
         if let Some(k) = v.line.take() {
-            self.pool.borrow_mut().free.push(k);
+            self.pool.borrow_mut().give(k);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every voice plucked, more than there are lines: each line lent to
+    /// one voice only, the rest silent; each given back once however often
+    /// its voice is let go, and all of them lent again after.
+    #[test]
+    fn a_line_is_lent_to_one_voice_and_comes_back_once() {
+        let e = KarplusString::new(Rate::new(48_000));
+        let n = NoteOn {
+            note: 60.0,
+            velocity: 1.0,
+            seed: 1,
+            pan: 0.0,
+        };
+        let mut voices: Vec<Voice> = (0..LINES + 3).map(|_| Voice::default()).collect();
+        for v in &mut voices {
+            e.note_on(&PLUCK, v, &n);
+        }
+        let mut lent: Vec<usize> = voices
+            .iter()
+            .filter_map(|v| v.line.as_ref().map(Line::index))
+            .collect();
+        assert_eq!(lent.len(), LINES, "the rest silent");
+        lent.sort_unstable();
+        lent.dedup();
+        assert_eq!(lent.len(), LINES, "no line lent twice");
+        assert_eq!(e.pool.borrow().count, 0);
+        for v in &mut voices {
+            e.free(v);
+            e.free(v);
+        }
+        assert_eq!(e.pool.borrow().count, LINES);
+        for v in &mut voices[..LINES] {
+            e.note_on(&PLUCK, v, &n);
+        }
+        assert!(voices[..LINES].iter().all(|v| v.line.is_some()));
+        assert_eq!(e.pool.borrow().count, 0);
     }
 }

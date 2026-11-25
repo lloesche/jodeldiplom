@@ -62,6 +62,7 @@ pub mod activation;
 pub mod cues;
 mod fft;
 pub mod frontend;
+pub mod grid;
 pub mod key;
 pub mod meter;
 pub mod metrics;

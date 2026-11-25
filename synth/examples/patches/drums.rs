@@ -25,7 +25,7 @@ fn one_shot(engine: impl Into<AnyParams>, level: f32) -> Patch {
         },
         gate: 10.0,
         level,
-        ..Patch::new(engine)
+        ..Patch::new(engine.into())
     }
 }
 

@@ -20,7 +20,7 @@ fn coin(b: &mut Bank) -> Vec<Cue> {
         mono: true,
         level: -6.0,
         reverb: 0.1,
-        ..Patch::new(lofi::COIN)
+        ..Patch::new(lofi::COIN.into())
     });
     vec![(0.0, p, 83.0, 1.0, 0.0), (0.08, p, 88.0, 1.0, 0.0)]
 }
@@ -41,7 +41,7 @@ fn drawer(b: &mut Bank) -> Vec<Cue> {
         },
         gate: 0.24,
         level: 2.0,
-        ..Patch::new(noise::DRAWER)
+        ..Patch::new(noise::DRAWER.into())
     });
     let rollers = b.add(Patch {
         gate: 0.26,
@@ -50,27 +50,33 @@ fn drawer(b: &mut Bank) -> Vec<Cue> {
             ..Adsr::default()
         },
         level: -6.0,
-        ..Patch::new(noise::Params {
-            density: 90.0,
-            cutoff: 4_500.0,
-            ..noise::CRACKLE
-        })
+        ..Patch::new(
+            noise::Params {
+                density: 90.0,
+                cutoff: 4_500.0,
+                ..noise::CRACKLE
+            }
+            .into(),
+        )
     });
     let clack = b.add(Patch {
         adsr: hit(0.04),
         level: -2.0,
-        ..Patch::new(noise::Params {
-            cutoff: 1_200.0,
-            res: 0.6,
-            ..noise::TICK
-        })
+        ..Patch::new(
+            noise::Params {
+                cutoff: 1_200.0,
+                res: 0.6,
+                ..noise::TICK
+            }
+            .into(),
+        )
     });
     let ching = b.add(Patch {
         adsr: hit(1.2),
         level: -4.0,
         reverb: 0.35,
         filter_env: 0.4,
-        ..Patch::new(SOFT_BELL)
+        ..Patch::new(SOFT_BELL.into())
     });
     vec![
         (0.0, slide, 60.0, 1.0, -0.2),
@@ -96,7 +102,7 @@ fn riser(b: &mut Bank) -> Vec<Cue> {
         gate: 1.5,
         level: -3.0,
         reverb: 0.3,
-        ..Patch::new(noise::WHOOSH)
+        ..Patch::new(noise::WHOOSH.into())
     });
     vec![(0.0, p, 72.0, 1.0, 0.0)]
 }
@@ -105,7 +111,7 @@ fn tick(b: &mut Bank) -> Vec<Cue> {
     let p = b.add(Patch {
         adsr: hit(0.015),
         level: 6.0,
-        ..Patch::new(noise::TICK)
+        ..Patch::new(noise::TICK.into())
     });
     (0..4)
         .map(|k| (k as f32 * 0.12, p, 60.0, 1.0, 0.0))
@@ -124,7 +130,7 @@ fn pew(b: &mut Bank) -> Vec<Cue> {
         },
         level: 0.0,
         delay: 0.35,
-        ..Patch::new(analog::ZAP)
+        ..Patch::new(analog::ZAP.into())
     });
     vec![(0.0, p, 52.0, 1.0, 0.0)]
 }
@@ -149,7 +155,7 @@ fn brass(b: &mut Bank) -> Vec<Cue> {
         level: -12.0,
         reverb: 0.25,
         spread,
-        ..Patch::new(analog::BRASS)
+        ..Patch::new(analog::BRASS.into())
     });
     let pd = b.add(Patch {
         adsr,
@@ -158,7 +164,7 @@ fn brass(b: &mut Bank) -> Vec<Cue> {
         reverb: 0.25,
         spread,
         filter_env: 2.6,
-        ..Patch::new(phase::BRASS)
+        ..Patch::new(phase::BRASS.into())
     });
     let mut cues = Vec::new();
     for (k, note) in [60.0, 64.0, 67.0, 72.0].into_iter().enumerate() {
@@ -178,7 +184,7 @@ fn arpeggio(b: &mut Bank) -> Vec<Cue> {
         level: -2.0,
         delay: 0.3,
         reverb: 0.15,
-        ..Patch::new(analog::PLUCK)
+        ..Patch::new(analog::PLUCK.into())
     });
     let notes = [
         60, 62, 64, 67, 69, 72, 74, 76, 79, 76, 74, 72, 69, 67, 64, 62,
@@ -209,7 +215,7 @@ fn slot_bell(b: &mut Bank) -> Vec<Cue> {
             ..Spread::default()
         },
         filter_env: 0.4,
-        ..Patch::new(SOFT_BELL)
+        ..Patch::new(SOFT_BELL.into())
     });
     (0..14)
         .map(|k| {
@@ -242,14 +248,14 @@ fn drone(b: &mut Bank) -> Vec<Cue> {
         gate: 2.5,
         level: -14.0,
         reverb: 0.5,
-        ..Patch::new(phase::DRONE)
+        ..Patch::new(phase::DRONE.into())
     });
     let wind = b.add(Patch {
         adsr: swell,
         gate: 2.5,
         level: -16.0,
         reverb: 0.5,
-        ..Patch::new(noise::WIND)
+        ..Patch::new(noise::WIND.into())
     });
     vec![
         (0.0, p, 45.0, 1.0, -0.3),
@@ -268,7 +274,7 @@ fn chip_arp(b: &mut Bank) -> Vec<Cue> {
         gate: 0.35,
         level: -10.0,
         delay: 0.2,
-        ..Patch::new(lofi::ARP)
+        ..Patch::new(lofi::ARP.into())
     });
     [72.0, 77.0, 79.0, 84.0]
         .into_iter()
@@ -300,7 +306,7 @@ fn aww(b: &mut Bank) -> Vec<Cue> {
             fade: 0.3,
             ..Lfo::default()
         },
-        ..Patch::new(lofi::VOX_A)
+        ..Patch::new(lofi::VOX_A.into())
     });
     let o = b.add(Patch {
         adsr: Adsr {
@@ -318,7 +324,7 @@ fn aww(b: &mut Bank) -> Vec<Cue> {
             fade: 0.3,
             ..Lfo::default()
         },
-        ..Patch::new(lofi::VOX_O)
+        ..Patch::new(lofi::VOX_O.into())
     });
     vec![(0.0, a, 62.0, 1.0, 0.0), (0.0, o, 62.0, 1.0, 0.0)]
 }

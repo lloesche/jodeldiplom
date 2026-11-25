@@ -585,7 +585,7 @@ mod tests {
         let tracks: Vec<PathBuf> = (1..=3)
             .map(|i| {
                 let p = album.join(format!("0{i}.wav"));
-                durable::write_atomic(&p, &crate::keep::wav(&vec![0i16; 4410 * i], 44_100))
+                durable::write_atomic(&p, &crate::keep::wav(&vec![0i16; 4410 * i], 44_100, 1))
                     .unwrap();
                 p
             })

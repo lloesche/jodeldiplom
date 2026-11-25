@@ -165,7 +165,7 @@ fn through_the_host_a_drum_ends_its_own_voice() {
         .map(|(_, p)| {
             bank.add(Patch {
                 gate: 10.0,
-                ..Patch::new(p)
+                ..Patch::new(p.into())
             })
         })
         .collect();

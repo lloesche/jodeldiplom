@@ -1706,6 +1706,7 @@ dependencies = [
  "jodel-output",
  "jodel-playback",
  "jodel-rhythm",
+ "jodel-synth",
  "libc",
  "objc2",
  "objc2-app-kit",

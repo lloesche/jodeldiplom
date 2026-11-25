@@ -12,6 +12,8 @@ jodel-playback = { path = "../playback" }
 jodel-gpu = { path = "../gpu" }
 jodel-rhythm = { path = "../rhythm" }
 jodel-lyrics = { path = "../lyrics" }
+# The game's live sounds: the conductor plays them on our own synthesizer.
+jodel-synth = { path = "../synth" }
 # Every file written: whole or not at all, made durable.
 durable = { path = "../durable" }
 # The widgets and their cell buffer, for the screens the window still

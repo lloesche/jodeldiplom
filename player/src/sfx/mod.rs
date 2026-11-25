@@ -28,6 +28,7 @@
 
 pub mod banks;
 pub mod cheers;
+pub mod conductor;
 pub mod diploma;
 pub mod moments;
 pub mod pen;

@@ -50,7 +50,7 @@ macro_rules! engines {
         /// The state of a voice of an engine, as large as the largest (a
         /// modal voice's modes, about 0.6 KB): the pool holds one a voice,
         /// made once, where a voice boxed apart would allocate as it starts.
-        #[derive(Clone, Debug)]
+        #[derive(Debug)]
         #[allow(clippy::large_enum_variant)]
         pub enum AnyVoice {
             $($(#[$doc])* $name($module::Voice),)*

@@ -32,7 +32,7 @@ fn struck(engine: fm::Params, gate: f32, release: f32, level: f32) -> Patch {
         level,
         reverb: 0.25,
         chorus: 1.0,
-        ..Patch::new(engine)
+        ..Patch::new(engine.into())
     }
 }
 
@@ -53,7 +53,7 @@ fn pad(engine: supersaw::Params, attack: f32, gate: f32, level: f32) -> Patch {
             detune: 4.0,
             ..Spread::default()
         },
-        ..Patch::new(engine)
+        ..Patch::new(engine.into())
     }
 }
 

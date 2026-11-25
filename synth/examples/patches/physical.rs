@@ -23,7 +23,7 @@ fn ringing(
         gate,
         level,
         reverb: 0.25,
-        ..Patch::new(engine)
+        ..Patch::new(engine.into())
     }
 }
 
@@ -146,7 +146,7 @@ fn aww(b: &mut Bank) -> Vec<Cue> {
             fade: 0.3,
             ..Lfo::default()
         },
-        ..Patch::new(formant::AWW)
+        ..Patch::new(formant::AWW.into())
     });
     vec![(0.0, p, 62.0, 1.0, 0.0)]
 }
@@ -172,7 +172,7 @@ fn choir(b: &mut Bank) -> Vec<Cue> {
             fade: 0.3,
             ..Lfo::default()
         },
-        ..Patch::new(formant::OOH)
+        ..Patch::new(formant::OOH.into())
     });
     vec![
         (0.0, p, 60.0, 1.0, -0.4),
@@ -196,7 +196,7 @@ fn whisper(b: &mut Bank) -> Vec<Cue> {
         },
         gate: 2.5,
         reverb: 0.4,
-        ..Patch::new(formant::WHISPER)
+        ..Patch::new(formant::WHISPER.into())
     });
     vec![(0.0, p, 43.0, 1.0, 0.0)]
 }

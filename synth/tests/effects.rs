@@ -69,7 +69,7 @@ fn burst(reverb: f32, delay: f32, wet: f32) -> Vec<f32> {
         reverb,
         delay,
         chorus: delay,
-        ..Patch::new(noise::TICK)
+        ..Patch::new(noise::TICK.into())
     });
     let mut s = Synth::new(48_000, bank, 8);
     s.set_reverb(HallSettings {

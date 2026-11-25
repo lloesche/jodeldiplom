@@ -68,58 +68,58 @@ fn rendering_allocates_nothing() {
     let ids = [
         bank.add(Patch {
             reverb: 0.5,
-            ..Patch::new(noise::WHOOSH)
+            ..Patch::new(noise::WHOOSH.into())
         }),
         bank.add(Patch {
             delay: 0.5,
             lfo,
-            ..Patch::new(analog::ZAP)
+            ..Patch::new(analog::ZAP.into())
         }),
         bank.add(Patch {
             mono: true,
-            ..Patch::new(lofi::BLIP)
+            ..Patch::new(lofi::BLIP.into())
         }),
         bank.add(Patch {
             reverb: 0.3,
             delay: 0.3,
-            ..Patch::new(phase::BELL)
+            ..Patch::new(phase::BELL.into())
         }),
         bank.add(Patch {
             mono: true,
             reverb: 0.2,
-            ..Patch::new(modal::SLOT_BELL)
+            ..Patch::new(modal::SLOT_BELL.into())
         }),
         bank.add(Patch {
             gate: 2.0,
-            ..Patch::new(string::HARP)
+            ..Patch::new(string::HARP.into())
         }),
         bank.add(Patch {
             delay: 0.2,
-            ..Patch::new(formant::AWW)
+            ..Patch::new(formant::AWW.into())
         }),
         bank.add(Patch {
             mono: true,
             lfo,
             chorus: 0.5,
-            ..Patch::new(fm::BRASS)
+            ..Patch::new(fm::BRASS.into())
         }),
         bank.add(Patch {
             reverb: 0.3,
-            ..Patch::new(fm::GLASS_BELL)
+            ..Patch::new(fm::GLASS_BELL.into())
         }),
         bank.add(Patch {
             lfo,
             chorus: 1.0,
-            ..Patch::new(supersaw::BIG_CHORD)
+            ..Patch::new(supersaw::BIG_CHORD.into())
         }),
         bank.add(Patch {
             gate: 10.0,
-            ..Patch::new(drum::CLAP)
+            ..Patch::new(drum::CLAP.into())
         }),
         bank.add(Patch {
             gate: 10.0,
             mono: true,
-            ..Patch::new(drum::OPEN_HAT)
+            ..Patch::new(drum::OPEN_HAT.into())
         }),
     ];
     let mut synth = Synth::new(48_000, bank, 24);

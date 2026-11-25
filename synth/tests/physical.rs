@@ -440,7 +440,7 @@ fn strings_borrow_their_lines_and_give_them_back() {
         e.render(&STRING, v, &m, &mut out);
         out.iter().any(|s| *s != 0.0)
     };
-    let mut voices = vec![string::Voice::default(); string::LINES];
+    let mut voices: Vec<string::Voice> = (0..string::LINES).map(|_| Default::default()).collect();
     for v in &mut voices {
         assert!(pluck(v) && !e.done(v));
     }

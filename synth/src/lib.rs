@@ -41,7 +41,7 @@ pub mod hall;
 mod host;
 pub mod patch;
 
-pub use host::{Bank, PatchId, Synth, VoiceView, CUES, GENTLE};
+pub use host::{Bank, Command, Commands, PatchId, Synth, Tag, VoiceView, CUES, GENTLE};
 pub use patch::Patch;
 
 use dsp::Rate;
@@ -89,8 +89,10 @@ pub struct NoteOn {
 pub trait Engine: Sized {
     /// Its parameters (one patch's sound).
     type Params: Copy;
-    /// The state of one voice. `Default` is a voice from silence.
-    type Voice: Default + Clone;
+    /// The state of one voice. `Default` is a voice from silence. It is
+    /// never copied: a voice may own what it borrowed from its engine's
+    /// pool.
+    type Voice: Default;
 
     /// The engine at `rate`.
     fn new(rate: Rate) -> Self;

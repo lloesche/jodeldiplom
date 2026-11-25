@@ -12,7 +12,7 @@ use common::measure::{biggest_jump, centroid, cents, pitch, rms};
 use common::{left, on, render, RATE};
 use jodel_synth::engines::analog;
 use jodel_synth::patch::{Adsr, Glide, Lfo, LfoRate, Spread};
-use jodel_synth::{Bank, NoteOn, Patch, PatchId, Synth, CUES};
+use jodel_synth::{Bank, Command, NoteOn, Patch, PatchId, Synth, Tag, CUES};
 
 /// A plain sine held `gate` seconds, released over `release`.
 fn sine(gate: f32, release: f32) -> Patch {
@@ -22,7 +22,7 @@ fn sine(gate: f32, release: f32) -> Patch {
             ..Adsr::default()
         },
         gate,
-        ..Patch::new(analog::SINE)
+        ..Patch::new(analog::SINE.into())
     }
 }
 
@@ -159,6 +159,97 @@ fn a_mono_retrigger_does_not_click() {
         assert!(jump < 1.5 * steady_jump(to), "{to}: {jump}");
         assert_eq!(s.voices().count(), 1);
     }
+}
+
+/// A held sine retriggered on its own note twice in one block sounds as if
+/// it was not: no sample between the two is left out.
+#[test]
+fn mono_retriggers_in_one_block_leave_no_gap() {
+    let mono = Patch {
+        mono: true,
+        ..sine(10.0, 0.05)
+    };
+    let play = |retrigger: bool| {
+        let (mut s, ids) = synth(&[mono], 4);
+        s.note(0, ids[0], on(69.0, 1), None);
+        if retrigger {
+            // Both in the block from frame 3_200.
+            s.note(3_205, ids[0], on(69.0, 2), None);
+            s.note(3_220, ids[0], on(69.0, 3), None);
+        }
+        left(&render(&mut s, 6_000))
+    };
+    let (plain, twice) = (play(false), play(true));
+    let worst = plain
+        .iter()
+        .zip(&twice)
+        .map(|(a, b)| (a - b).abs())
+        .fold(0.0f32, f32::max);
+    assert!(worst < 1e-3, "{worst}");
+}
+
+/// A note held until it is let go: it sounds on, and from its release's
+/// frame it falls to silence and ends; a release before it changes
+/// nothing.
+#[test]
+fn a_held_note_is_let_go_on_its_frame() {
+    let held = Patch {
+        mono: true,
+        adsr: Adsr::held(0.0, 0.05),
+        gate: 3_600.0,
+        ..Patch::new(analog::SINE.into())
+    };
+    let (mut s, ids) = synth(&[held], 4);
+    let release = |frame| Command::Release {
+        frame,
+        patch: ids[0],
+        tag: Tag::NONE,
+    };
+    assert!(s.command(release(10)), "let go before it starts: nothing");
+    s.note(100, ids[0], on(69.0, 1), None);
+    let out = left(&render(&mut s, 24_000));
+    assert!(rms(&out[20_000..]) > 0.1, "held on");
+    assert!(s.voices().all(|v| v.held));
+    assert!(s.command(release(30_000)));
+    let out = left(&render(&mut s, 24_000));
+    assert!(rms(&out[..5_000]) > 0.1, "until its frame");
+    assert!(rms(&out[12_000..]) < 1e-4, "silent after");
+    assert_eq!(s.voices().count(), 0, "ended");
+}
+
+/// What waits can be called off by its tag, or all of it; a synth's room
+/// for cues is what it was made with.
+#[test]
+fn waiting_cues_are_called_off_by_tag() {
+    // Notes of a hundredth of a second, so each is heard alone.
+    let (_, ids) = synth(&[sine(0.01, 0.005)], 1);
+    let mut bank = Bank::new();
+    bank.add(sine(0.01, 0.005));
+    let mut s = Synth::with_cues(RATE, bank, 8, 3);
+    let note = |frame, tag| Command::Note {
+        frame,
+        patch: ids[0],
+        note: on(69.0, 1),
+        length: None,
+        tag: Tag(tag),
+    };
+    assert!(s.command(note(1_000, 1)));
+    assert!(s.command(note(2_000, 2)));
+    assert!(s.command(note(3_000, 1)));
+    assert!(!s.command(note(4_000, 2)), "room for three");
+    assert_eq!(s.dropped(), 1);
+    assert!(s.command(Command::Cancel { tag: Some(Tag(1)) }));
+    // Untagged: not called off by its tag.
+    assert!(s.command(note(5_000, 0)));
+    assert!(s.command(Command::Cancel {
+        tag: Some(Tag::NONE)
+    }));
+    let out = left(&render(&mut s, 6_000));
+    let heard = |from: usize| rms(&out[from..from + 900]) > 0.01;
+    assert!(!heard(1_100) && heard(2_100) && !heard(3_100) && heard(5_000));
+    s.note(7_000, ids[0], on(69.0, 2), None);
+    s.command(Command::Cancel { tag: None });
+    assert!(rms(&left(&render(&mut s, 3_000))) == 0.0);
 }
 
 #[test]
@@ -368,7 +459,7 @@ fn a_pile_of_sounds_never_passes_the_ceiling() {
     let loud = Patch {
         level: 12.0,
         reverb: 1.0,
-        ..Patch::new(analog::Params::default())
+        ..Patch::new(analog::Params::default().into())
     };
     let (mut s, ids) = synth(&[loud], 64);
     for k in 0..64u64 {
