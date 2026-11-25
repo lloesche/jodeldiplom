@@ -1,13 +1,13 @@
 name: Build and test
 
 # Every push builds and tests the workspace and bundles the player on each
-# platform: Linux and macOS natively, Windows cross-built on Linux (and
-# its bundles run on Windows); the workspace is also tested on Windows.
-# Every test binary runs, a failing one or not, so that a run shows every
-# failure. A pushed tag starting with "v" (v0.0.1, v1.2.0-rc1) also
-# publishes a GitHub release with the bundles for all six platforms (the
-# jodeldiplom player, as "Jodeldiplom.app" on macOS); a tag with a hyphen
-# is marked as a pre-release.
+# platform: Linux and macOS (Apple silicon only) natively, Windows
+# cross-built on Linux (and its bundles run on Windows); the workspace is
+# also tested on Windows. Every test binary runs, a failing one or not, so
+# that a run shows every failure. A pushed tag starting with "v" (v0.0.1,
+# v1.2.0-rc1) also publishes a GitHub release with the bundles for all five
+# platforms (the jodeldiplom player, as "Jodeldiplom.app" on macOS); a tag
+# with a hyphen is marked as a pre-release.
 on:
   push:
   pull_request:
@@ -66,9 +66,6 @@ jobs:
           - name: linux-arm64
             runner: ubuntu-24.04-arm
             platform: linux
-          - name: macos-x64
-            runner: macos-15-intel
-            platform: macos
           - name: macos-arm64
             runner: macos-15
             platform: macos
@@ -274,7 +271,7 @@ jobs:
           # Each bundle unpacks into one folder named after the release and
           # platform: a zip for Windows and macOS (where it holds the app),
           # a gzipped tar for Linux.
-          for platform in linux-x64 linux-arm64 macos-x64 macos-arm64 windows-x64 windows-arm64; do
+          for platform in linux-x64 linux-arm64 macos-arm64 windows-x64 windows-arm64; do
             name=jodeldiplom-$TAG-$platform
             mkdir "$staging/$name"
             tar -xzf "$artifacts/jodeldiplom-$platform/jodeldiplom-$platform.tar.gz" -C "$staging/$name"
