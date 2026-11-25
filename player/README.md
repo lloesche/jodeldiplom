@@ -840,6 +840,12 @@ aside, over the last 3 s) and wants the melody's shape, within 3
 semitones. A word counts when a tenth of its note time is hit (a pitch
 is heard on only about half of a word sung well, its consonants and
 breaths having none): 100 points, times the multiplier, shown top right.
+The points roll up there as on an odometer: each figure that changes
+turns to its new one, the one going out sliding up as the next slides
+in, in about a third of a second (a big jump a little longer, never
+more than 0.6 s behind); on a jackpot the low columns spin whole laps
+in a blur, and the number glows and swells while it counts. A lower
+score (a seek back, another song) shows at once.
 Words hit in a row are a streak: 5 make the multiplier ×2, 10 ×3, 20 ×4
 (shown over the playhead, the streak beside it); a word missed ends it. Your
 line snaps onto the note where it hits; off the notes it is drawn as you

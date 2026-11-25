@@ -165,6 +165,12 @@ impl Embed {
         self.lock().canvas.has_layer()
     }
 
+    /// Whether the canvas's pictures move by themselves
+    /// ([`super::Canvas::moving`]).
+    pub fn moving(&self) -> bool {
+        self.lock().canvas.moving()
+    }
+
     /// Whether the frame before the last was late on the GPU, and how
     /// long the last took to hand over.
     pub fn late(&self) -> (bool, Duration) {

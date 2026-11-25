@@ -1,9 +1,11 @@
 //! Karaoke mode in pixels: the cover blurred over the whole screen under a
 //! dark layer, the lyrics in large type over it, filling as they are sung,
-//! and the count-in's numbers shrinking and fading on their beats. The
+//! and the count-in's numbers shrinking and fading on their beats; the
+//! score top right, rolling up as an odometer does ([`odometer`]). The
 //! ground under them is [`ground`]'s.
 
 pub mod ground;
+pub mod odometer;
 
 use super::big_text::{BigText, Face, Faces};
 use super::notes::SungOp;
@@ -140,6 +142,9 @@ struct TextOp {
     alpha: f32,
     /// The notes under it and the singing on them, where it has notes.
     sung: Option<SungOp>,
+    /// The pixels it is kept to, where it is (a figure of the score in its
+    /// cell).
+    clip: Option<PixelRect>,
 }
 
 impl TextOp {
@@ -163,7 +168,11 @@ impl TextOp {
             return (0, 0, 0, 0);
         }
         let (x0, y0) = (x0.floor() as usize, y0.floor() as usize);
-        (x0, y0, x1.ceil() as usize - x0, y1.ceil() as usize - y0)
+        let rect = (x0, y0, x1.ceil() as usize - x0, y1.ceil() as usize - y0);
+        match self.clip {
+            Some(clip) => intersect(rect, clip).unwrap_or((0, 0, 0, 0)),
+            None => rect,
+        }
     }
 }
 
@@ -171,13 +180,32 @@ impl TextOp {
 /// pixels it may cover. A frame redraws only the pieces that changed (a
 /// line filling as it is sung), with the backdrop put back under them.
 /// And what of its bubbles the GPU draws over it ([`Layer::over`]: their
-/// liquid, with a GPU, and their bursts), as last painted.
+/// liquid, with a GPU, and their bursts), as last painted; the score's
+/// counter ([`Layer::odometer`]), stepped as each frame is painted by the
+/// time since the last ([`Layer::at`]).
 #[derive(Default)]
 pub struct Layer {
     drawn: Vec<(TextOp, PixelRect)>,
     /// What the GPU draws over the picture; whether there is one to (set
     /// it before painting: the bars' fill is painted only without).
     pub over: super::notes::Over,
+    /// The score as it rolls up.
+    pub odometer: odometer::Odometer,
+    /// When the frame painted next is, and the seconds since the one
+    /// before (none set: none).
+    at: Option<std::time::Instant>,
+    dt: f32,
+}
+
+impl Layer {
+    /// The frame painted next is at `now`: the score's counter steps by the
+    /// time since the last.
+    pub fn at(&mut self, now: std::time::Instant) {
+        self.dt = self.at.map_or(0.0, |then| {
+            now.saturating_duration_since(then).as_secs_f32()
+        });
+        self.at = Some(now);
+    }
 }
 
 /// Where `a` and `b` meet, if they do.
@@ -221,7 +249,9 @@ pub fn paint(
     // them.
     let room = bar.map_or(ah, |(_, by, _, _)| by.saturating_sub(ay));
     let lyrics = (ax, ay, aw, room);
-    let (ops, over) = text_ops(faces, picture, (area, ah), layer.over.gpu);
+    let points = picture.score.map(|s| s.points);
+    layer.odometer.step(points, std::mem::take(&mut layer.dt));
+    let (ops, over) = text_ops(faces, picture, (area, ah), layer);
     layer.over = over;
     let now: Vec<(TextOp, PixelRect)> = ops
         .into_iter()
@@ -314,14 +344,16 @@ pub fn paint(
 }
 
 /// The pieces of text of `picture`: its lines (moving into their places
-/// while they scroll) and the count-in's number; what the GPU draws over
-/// them (with one, `gpu`).
+/// while they scroll), the count-in's number and the score (as `layer`'s
+/// counter shows it); what the GPU draws over them (where `layer` has
+/// one).
 fn text_ops(
     faces: &mut Faces,
     picture: &KaraokePicture,
     (area, room): (PixelRect, usize),
-    gpu: bool,
+    layer: &Layer,
 ) -> (Vec<TextOp>, super::notes::Over) {
+    let gpu = layer.over.gpu;
     let (ax, ay, aw, ah) = area;
     let big = big_of(ah);
     let accent = rgb(colors::ACCENT);
@@ -362,6 +394,7 @@ fn text_ops(
                 colors: (sung_color, rest),
                 alpha,
                 sung,
+                clip: None,
             });
         };
     let faded = |kind: LineKind| match kind {
@@ -455,47 +488,6 @@ fn text_ops(
             }
         }
     }
-    // The score, top right: the points, the level under them.
-    if let Some(score) = picture.score {
-        let px = (big * 0.42).round().max(12.0);
-        let points = crate::view::karaoke::points_text(score.points);
-        let w = faces.get(Face::NUMBER).measure_from(&points, px, px);
-        let margin = px * 0.8;
-        ops.push(TextOp {
-            text: points,
-            face: Face::NUMBER,
-            base: px,
-            px,
-            at: (ax as f32 + aw as f32 - margin - w, ay as f32 + margin * 0.6),
-            fill_x: f32::MAX,
-            colors: (rgb(HIT), rgb(HIT)),
-            alpha: 1.0,
-            sung: None,
-        });
-        let small = (px * 0.45).round().max(10.0);
-        // Under it the tier the last phrase reached, and the multiplier.
-        let tier = score.tier.map(|t| t.name().to_owned());
-        let times = (score.multiplier() > 1).then(|| format!("×{}", score.multiplier()));
-        let under: Vec<String> = tier.into_iter().chain(times).collect();
-        if !under.is_empty() {
-            let times = under.join(" · ");
-            let lw = faces.get(Face::SHOUT).measure_from(&times, small, small);
-            ops.push(TextOp {
-                text: times,
-                face: Face::SHOUT,
-                base: small,
-                px: small,
-                at: (
-                    ax as f32 + aw as f32 - margin - lw,
-                    ay as f32 + margin * 0.6 + px * 1.25,
-                ),
-                fill_x: f32::MAX,
-                colors: (rgb(colors::DIM), rgb(colors::DIM)),
-                alpha: 1.0,
-                sung: None,
-            });
-        }
-    }
     // The count-in: its number in the lane behind the playhead, where the
     // singing starts and no bubble is yet (clear of the meter and badges
     // above the lane and of the lines below it; it never moves with
@@ -530,7 +522,47 @@ fn text_ops(
             colors: (accent, accent),
             alpha: 1.0 - t * t * t,
             sung: None,
+            clip: None,
         });
+    }
+    // The score, top right: the level under it, and the points rolling
+    // up, last (however many pieces they are, those before keep their
+    // places in the list: they are not drawn again for it).
+    if let Some(score) = picture.score {
+        let px = (big * 0.42).round().max(12.0);
+        let margin = px * 0.8;
+        let small = (px * 0.45).round().max(10.0);
+        // Under it the tier the last phrase reached, and the multiplier.
+        let tier = score.tier.map(|t| t.name().to_owned());
+        let times = (score.multiplier() > 1).then(|| format!("×{}", score.multiplier()));
+        let under: Vec<String> = tier.into_iter().chain(times).collect();
+        if !under.is_empty() {
+            let times = under.join(" · ");
+            let lw = faces.get(Face::SHOUT).measure_from(&times, small, small);
+            ops.push(TextOp {
+                text: times,
+                face: Face::SHOUT,
+                base: small,
+                px: small,
+                at: (
+                    ax as f32 + aw as f32 - margin - lw,
+                    ay as f32 + margin * 0.6 + px * 1.25,
+                ),
+                fill_x: f32::MAX,
+                colors: (rgb(colors::DIM), rgb(colors::DIM)),
+                alpha: 1.0,
+                sung: None,
+                clip: None,
+            });
+        }
+        odometer::ops(
+            faces.get(Face::NUMBER),
+            &layer.odometer.reading(),
+            (ax as f32 + aw as f32 - margin, ay as f32 + margin * 0.6),
+            px,
+            rgb(HIT),
+            &mut ops,
+        );
     }
     (ops, over)
 }
@@ -651,7 +683,7 @@ mod tests {
             line: 1,
         });
         let digit_at = |text: &mut Faces, p: KaraokePicture| {
-            let ops = text_ops(text, &p, ((0, 0, 640, 360), 360), false).0;
+            let ops = text_ops(text, &p, ((0, 0, 640, 360), 360), &Layer::default()).0;
             let digit: Vec<&TextOp> = ops.iter().filter(|o| o.text == "3").collect();
             assert_eq!(digit.len(), 1);
             let at = digit[0].at;

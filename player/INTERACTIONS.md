@@ -607,8 +607,13 @@ stem keys are their mutes.
   hit) and springs to the shine reached, its tier's name popping over it
   on a badge (popping and fading as the shader times it, drawn over the
   light); the top right shows the points, the tier and the
-  multiplier. Along the bottom the song's progress shows each phrase in
-  its tier's colour, a mark a phrase popping as its tier is decided (a
+  multiplier, the points rolling up as on an odometer (only the figures
+  that change turning, the low ones spinning laps on a big jump; each
+  change in its own 0.35 s to 0.6 s, eased, alongside those still
+  rolling: never past the score, never more than 0.6 s behind it, each
+  column turning only forward; a lower score or one just come shown at
+  once). Along the bottom the song's progress shows each phrase in its
+  tier's colour, a mark a phrase popping as its tier is decided (a
   little jackpot on Diva), and the time left in a ring that drains, in
   the rainbow while the singing shines. Each word scored, the streak up
   a multiplier or broken, and each phrase's tier decided are kept as the
@@ -624,6 +629,16 @@ stem keys are their mutes.
   - `short_seeks_back_in_a_row_are_as_heard_straight` (`core::singing`:
     the moments, the phrases' shine among them, as heard straight)
   - `shine_files_are_pinned` (schemas)
+  - `a_jump_rolls_up_to_the_score_and_never_past_it`,
+    `a_word_turns_only_the_figures_that_change`,
+    `its_lag_is_bounded_while_points_keep_coming`,
+    `a_seek_back_or_a_new_song_snaps`,
+    `it_draws_the_points_at_rest_and_rolls_inside_its_cells`
+    (`gui::karaoke::odometer`)
+  - `the_picture_is_painted_again_while_its_score_rolls_and_then_not`,
+    `a_score_come_while_the_mode_was_left_shows_at_once`
+    (`gui::canvas::karaoke`),
+    `pictures_moving_by_themselves_bring_calm_frames` (`gui::paint`)
 - **K23.** `p` held in Karaoke mode, the demo sings: the game hears a
   perfect singer in place of the microphone (with one open or none), for
   showing the game off. Its frames are the notes the bubbles are made of,

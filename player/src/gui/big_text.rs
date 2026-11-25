@@ -225,6 +225,23 @@ impl BigText {
         glyph
     }
 
+    /// The rows the ink of `chars` at `px` covers, from its glyphs as
+    /// made: its top and bottom, down from the line's top (no ink: the
+    /// line's, 0 to `px`).
+    pub fn ink_band(&mut self, chars: &str, px: f32) -> (f32, f32) {
+        let inked: Vec<Arc<Glyph>> = chars
+            .chars()
+            .filter_map(|c| self.glyph(c, px))
+            .filter(|g| g.height > 0)
+            .collect();
+        let top = inked.iter().map(|g| g.top).min();
+        let bottom = inked.iter().map(|g| g.top + g.height as i32).max();
+        match (top, bottom) {
+            (Some(top), Some(bottom)) => (top as f32, bottom as f32),
+            _ => (0.0, px),
+        }
+    }
+
     /// The width of `text` at `px`.
     pub fn measure(&mut self, text: &str, px: f32) -> f32 {
         self.measure_from(text, px, px)

@@ -418,6 +418,7 @@ impl Gui {
             layer: self.embed.gpu() && self.embed.has_layer(),
             gliding: self.caps.moving(),
             stage: self.embed.gpu(),
+            pictures_moving: self.embed.moving(),
         }
     }
 

@@ -70,6 +70,24 @@ pub struct Seen {
     pub gliding: bool,
     /// Karaoke mode's stage is drawn (iced draws on the GPU).
     pub stage: bool,
+    /// The canvas's pictures move by themselves
+    /// ([`super::Canvas::moving`]), whatever else does.
+    pub pictures_moving: bool,
+}
+
+/// What moves at a tick, for [`Paint::plan`]'s decision.
+#[derive(Clone, Copy, Debug, Default)]
+struct Moves {
+    /// Something moves smoothly: a frame every refresh.
+    smooth: bool,
+    /// Something moves: a frame at the calm rate at least.
+    moving: bool,
+    /// A lane follows the playhead.
+    layer: bool,
+    /// The Mixer tab's meters and caps (iced's): every refresh.
+    mixer: bool,
+    /// Something is due within the rest's tick.
+    due_soon: bool,
 }
 
 /// Where a frame is drawn: the window's size in pixels, its scale factor,
@@ -124,21 +142,34 @@ impl Paint {
         let state = &app.state;
         // A song's result moves only where the stage draws it.
         let result = crate::core::karaoke::result_motion(state).filter(|_| seen.stage);
-        let smooth = app.smooth() || result == Some(Motion::Revealing);
         // The backdrop settles only in frames drawn: not while minimised.
         let settling = seen.visible && self.backdrop.moving();
-        let moving = app.animating() || result == Some(Motion::Twinkling) || settling;
-        let layer = app.layer_moves();
-        // The Mixer tab's meters and caps are iced's: every refresh.
-        let mixer = crate::core::desk::on_tab(state) || seen.gliding;
+        let moves = Moves {
+            smooth: app.smooth() || result == Some(Motion::Revealing),
+            moving: app.animating() || result == Some(Motion::Twinkling) || settling,
+            layer: app.layer_moves(),
+            mixer: crate::core::desk::on_tab(state) || seen.gliding,
+            due_soon: state
+                .due()
+                .is_some_and(|due| due.saturating_sub(app.now_ms()) < REST.as_millis() as u64),
+        };
+        self.decide(moves, seen, at)
+    }
+
+    /// [`Paint::plan`]'s decision for what `moves` at the tick `at`.
+    fn decide(&self, moves: Moves, seen: Seen, at: Instant) -> Plan {
+        let Moves {
+            smooth,
+            layer,
+            mixer,
+            ..
+        } = moves;
+        let moving = moves.moving || seen.pictures_moving;
         let pace = if self.dirty || smooth || layer || mixer {
             Pace::Refresh
         } else if moving {
             Pace::Every(CALM)
-        } else if state
-            .due()
-            .is_some_and(|due| due.saturating_sub(app.now_ms()) < REST.as_millis() as u64)
-        {
+        } else if moves.due_soon {
             // What is due soon (changed settings, a count-in, a preview)
             // on time.
             Pace::Every(FRAME)
@@ -314,6 +345,41 @@ fn stage(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The canvas's pictures moving by themselves with nothing else moving
+    /// (a score rolling up in a paused song) bring calm frames, each drawn
+    /// whole; once they stop, the window rests.
+    #[test]
+    fn pictures_moving_by_themselves_bring_calm_frames() {
+        let mut paint = Paint::new();
+        paint.dirty = false;
+        let t0 = Instant::now();
+        paint.last_whole = Some(t0);
+        let seen = |pictures_moving| Seen {
+            visible: true,
+            layer: false,
+            gliding: false,
+            stage: true,
+            pictures_moving,
+        };
+        let at = t0 + CALM;
+        let plan = paint.decide(Moves::default(), seen(true), at);
+        assert_eq!(
+            plan,
+            Plan {
+                pace: Pace::Every(CALM),
+                draw: Draw::Whole
+            }
+        );
+        let plan = paint.decide(Moves::default(), seen(false), at);
+        assert_eq!(
+            plan,
+            Plan {
+                pace: Pace::Every(REST),
+                draw: Draw::Nothing
+            }
+        );
+    }
 
     /// Ticks every [`CALM`] (or a little early) draw a whole frame each,
     /// at 60 ticks a second every other one: the gate is on the ticks'
