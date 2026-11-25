@@ -178,70 +178,126 @@ fn picture_at(sung: &[&jodel_lyrics::Line], now: f64, singing: &Singing) -> Kara
     }
 }
 
-/// The light drawn whole, then each part of it alone: every timed frame
-/// is timed once for each, to tell what of the light costs.
-const PARTS: [&str; 3] = ["all of it", "its shapes alone", "its bursts alone"];
+/// The stage's shapes by kind ([`jodeldiplom::gui::stage_gpu::kind`]),
+/// as the tool names them.
+const KINDS: [&str; 25] = [
+    "pill",
+    "fill",
+    "segment",
+    "spark",
+    "disc",
+    "arrow",
+    "text",
+    "tube",
+    "liquid",
+    "bands",
+    "swirl",
+    "rim",
+    "meter",
+    "ring",
+    "mark",
+    "glow",
+    "blaze",
+    "badge",
+    "tube liquid",
+    "rays",
+    "star",
+    "seal",
+    "paper",
+    "stamp",
+    "signature",
+];
 
-/// What the timed frames' light held: the shapes, how many screens
-/// their quads cover in all, and the bursts.
+/// What the stage drew of each kind, in the frames looked at kind by
+/// kind: how many in all, the screens their quads covered in all, and
+/// the stage's step drawn with that kind alone, frame by frame.
 #[derive(Default)]
-struct Light {
+struct Kinds {
     frames: usize,
-    shapes: usize,
-    screens: f64,
-    bursts: usize,
+    each: std::collections::BTreeMap<u32, (usize, f64, Vec<f64>)>,
 }
 
-impl Light {
-    /// The light's step in each of [`PARTS`] (`frames`: the timed frames,
-    /// a part after the other), and what it held on average.
-    fn print(&self, frames: &[Vec<(&'static str, f64)>], (w, h): (u32, u32)) {
+impl Kinds {
+    /// Each kind's shapes and the screens they covered a frame, and the
+    /// stage with it alone (median, ms), the dearest first.
+    fn print(&self) {
         let n = self.frames.max(1) as f64;
-        println!(
-            "  light held {:.1} shapes covering {:.2} screens of {w}x{h}, {:.1} bursts",
-            self.shapes as f64 / n,
-            self.screens / n,
-            self.bursts as f64 / n
-        );
-        for (k, part) in PARTS.iter().enumerate() {
-            let mut v: Vec<f64> = (frames.iter().skip(k).step_by(PARTS.len()))
-                .flat_map(|f| f.iter().filter(|s| s.0 == "light").map(|s| s.1))
-                .collect();
-            v.sort_by(f64::total_cmp);
-            let median = v.get(v.len() / 2).copied().unwrap_or(0.0);
-            println!("  light, {part:<17} {median:7.3}");
+        let mut rows: Vec<(f64, String)> = (self.each.iter())
+            .map(|(&k, (count, screens, ms))| {
+                let mut ms = ms.clone();
+                ms.sort_by(f64::total_cmp);
+                let median = ms.get(ms.len() / 2).copied().unwrap_or(0.0);
+                let name = KINDS.get(k as usize).copied().unwrap_or("?");
+                let row = format!(
+                    "  {name:<12} alone {median:7.3}  ({:.1} a frame, {:.2} screens)",
+                    *count as f64 / n,
+                    screens / n
+                );
+                (median, row)
+            })
+            .collect();
+        rows.sort_by(|a, b| b.0.total_cmp(&a.0));
+        println!("  the stage, kind by kind ({} frames):", self.frames);
+        for (_, row) in rows {
+            println!("{row}");
         }
     }
 }
 
-/// `frame` over `backdrop` timed once for each of [`PARTS`], its light
-/// counted into `light`.
-fn time_parts(
+/// `frame` over `backdrop` timed, read back: its steps. With `kinds`, the
+/// frame drawn again with each kind of the stage's shapes alone, the
+/// stage's step of each counted there.
+fn time(
     gpu: &mut Offscreen,
     backdrop: &BackdropFrame,
     frame: &StageFrame,
     (w, h): (u32, u32),
-    light: &mut Light,
-) {
-    light.frames += 1;
-    light.shapes += frame.lights.len();
-    light.bursts += frame.light_sprays.len();
-    light.screens += (frame.lights.iter())
-        .map(|i| f64::from((i.quad[2] - i.quad[0]) * (i.quad[3] - i.quad[1])))
-        .sum::<f64>()
-        / f64::from(w * h);
-    let shapes = StageFrame {
-        light_sprays: Vec::new(),
-        ..frame.clone()
+    kinds: Option<&mut Kinds>,
+) -> Vec<(&'static str, f64)> {
+    gpu.time_frame(Some(backdrop), Some(frame), w, h)
+        .expect("timed");
+    let Some(kinds) = kinds else {
+        return gpu.costs().expect("the times").remove(0);
     };
-    let bursts = StageFrame {
-        lights: Vec::new(),
-        ..frame.clone()
-    };
-    for f in [frame, &shapes, &bursts] {
-        gpu.time_frame(Some(backdrop), Some(f), w, h)
+    let kind = |i: &jodeldiplom::gui::stage_gpu::Instance| i.params[0].round() as u32;
+    let mut present: Vec<u32> = frame.instances.iter().chain(&frame.top).map(kind).collect();
+    present.sort_unstable();
+    present.dedup();
+    for &k in &present {
+        let only = StageFrame {
+            instances: frame
+                .instances
+                .iter()
+                .filter(|i| kind(i) == k)
+                .copied()
+                .collect(),
+            top: frame.top.iter().filter(|i| kind(i) == k).copied().collect(),
+            ..frame.clone()
+        };
+        gpu.time_frame(Some(backdrop), Some(&only), w, h)
             .expect("timed");
     }
+    let mut costs = gpu.costs().expect("the times").into_iter();
+    let whole = costs.next().expect("the frame");
+    kinds.frames += 1;
+    for (&k, steps) in present.iter().zip(costs) {
+        let shapes: Vec<_> = frame
+            .instances
+            .iter()
+            .chain(&frame.top)
+            .filter(|i| kind(i) == k)
+            .collect();
+        let screens: f64 = (shapes.iter())
+            .map(|i| f64::from((i.quad[2] - i.quad[0]) * (i.quad[3] - i.quad[1])))
+            .sum::<f64>()
+            / f64::from(w * h);
+        let stage = steps.iter().find(|s| s.0 == "stage").map_or(0.0, |s| s.1);
+        let e = kinds.each.entry(k).or_default();
+        e.0 += shapes.len();
+        e.1 += screens;
+        e.2.push(stage);
+    }
+    whole
 }
 
 /// What makes a scene's frames in one size: the stage, the backdrop and
@@ -417,7 +473,7 @@ fn main() {
                 made: 0,
             };
             let (mut cpu_ms, mut frames) = (Vec::new(), Vec::new());
-            let mut light = Light::default();
+            let mut kinds = Kinds::default();
             let mut heard = 0usize;
             for f in 0.. {
                 let now = f as f64 / FPS;
@@ -448,7 +504,7 @@ fn main() {
                     gpu.show_pixels(&rig.pixels, w, h).expect("a frame");
                 }
                 if !scene.diploma && now > scene.at - TIMED {
-                    time_parts(&mut gpu, &backdrop, &frame, (w, h), &mut light);
+                    frames.push(time(&mut gpu, &backdrop, &frame, (w, h), Some(&mut kinds)));
                     cpu_ms.push(cpu);
                 } else {
                     gpu.set_backdrop(Some(&backdrop), w, h);
@@ -474,19 +530,14 @@ fn main() {
                         again: false,
                     };
                     let (backdrop, frame, cpu) = rig.frame(&singing, scene.at, Some(result));
-                    time_parts(&mut gpu, &backdrop, &frame, (w, h), &mut light);
+                    // Kind by kind every tenth frame: the reveal is long.
+                    let by_kind = (f % 10 == 0).then_some(&mut kinds);
+                    frames.push(time(&mut gpu, &backdrop, &frame, (w, h), by_kind));
                     cpu_ms.push(cpu);
-                    // Read back as it goes: the reveal has more marks than
-                    // are held at once.
-                    if f % 40 == 39 {
-                        frames.extend(gpu.costs().expect("the times"));
-                    }
                 }
             }
-            frames.extend(gpu.costs().expect("the times"));
-            let all: Vec<_> = frames.iter().step_by(PARTS.len()).cloned().collect();
-            print(&format!("{} {w}x{h}", scene.name), &all, &cpu_ms);
-            light.print(&frames, (w, h));
+            print(&format!("{} {w}x{h}", scene.name), &frames, &cpu_ms);
+            kinds.print();
             if let Some(dir) = &png {
                 let shown = gpu.show_pixels(&rig.pixels, w, h).expect("a frame");
                 let mut img = image::RgbImage::new(w, h);
