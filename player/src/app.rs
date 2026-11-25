@@ -458,9 +458,6 @@ impl App {
         if let Some(selected) = restored.as_ref().and_then(|s| s.selected.clone()) {
             state.browser.last_child.insert(dir.clone(), selected);
         }
-        if let Some(queues) = &options.queues {
-            let _ = std::fs::create_dir_all(queues);
-        }
         state.queues_dir = options.queues.clone();
         // There is always a lyrics worker (one without the web or a cache
         // where the options give none): the queue waits for it too.
@@ -849,7 +846,7 @@ impl App {
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |d| d.as_secs());
         let path = dir.join(format!("echo-{stamp}.wav"));
-        let started = std::fs::create_dir_all(&dir)
+        let started = durable::create_dir_all(&dir)
             .map_err(|e| e.to_string())
             .and_then(|()| mic.record_echo(&path, 30.0));
         match started {

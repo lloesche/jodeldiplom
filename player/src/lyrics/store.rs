@@ -75,9 +75,6 @@ impl Cache {
     fn write(&self, file: &Path, text: &str) -> io::Result<()> {
         // Where it goes now: while the data folder moves, into the new one.
         let file = &crate::mover::current(file);
-        if let Some(dir) = file.parent() {
-            fs::create_dir_all(dir)?;
-        }
         durable::write_atomic(file, text.as_bytes())
     }
 

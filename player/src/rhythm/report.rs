@@ -63,7 +63,6 @@ pub fn remember(dir: &Path, entry: &str) -> std::io::Result<()> {
     entries.insert(0, entry.trim().to_owned());
     entries.truncate(RECENT_KEPT);
     let dir = &crate::mover::current(dir);
-    fs::create_dir_all(dir)?;
     durable::write_atomic(&dir.join(RECENT), entries.join(RECENT_BREAK).as_bytes())
 }
 

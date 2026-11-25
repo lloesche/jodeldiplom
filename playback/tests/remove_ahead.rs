@@ -247,7 +247,7 @@ fn held_at_the_end_the_track_after_the_removed_one_waits() {
 /// (and waited for), removing the second during the first's run-in when
 /// `remove`; returns the lane stream.
 fn wide(name: &str, names: &[&str], remove: bool) -> Wide {
-    let r = run(name, names, RATE, true, options(false, true, quarter));
+    let r = run(name, names, RATE, true, options(true, quarter));
     wait_held(&r.hold, PLAYED, ROOM);
     if remove {
         remove_second(&r);

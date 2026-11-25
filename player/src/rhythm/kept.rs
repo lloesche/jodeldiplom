@@ -238,7 +238,6 @@ pub fn store(
     };
     // Where it goes now: while the data folder moves, into the new one.
     let dir = &crate::mover::current(dir);
-    fs::create_dir_all(dir)?;
     let file = cache_file(dir, &key);
     durable::write_atomic(&file.with_extension("wave"), &waveform.to_bytes())?;
     durable::write_atomic(&file, to_text(&key, analysis).as_bytes())
@@ -257,6 +256,10 @@ pub fn is_stored(dir: &Path, path: &Path, recipe: &RhythmRecipe) -> bool {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "tests: tracks that change under their analysis"
+)]
 mod tests {
     use jodel_rhythm::waveform::Lane;
 

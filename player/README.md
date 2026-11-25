@@ -1251,7 +1251,9 @@ The contract:
   adds the new version's sample and never touches an old one.
 - While a version stays, every player reads the files of it, whoever
   wrote them.
-- Files from before there were headers count as version 1.
+- Files from before there were headers count as version 1 for the
+  user's own files (beat grids, scores, delays); a cache without a header
+  counts as missing and is made again.
 - Grids are the user's work, so a new grid version still reads all the
   older ones.
 
