@@ -76,7 +76,7 @@ fn set(singing: &mut Singing, (tier, end): At) {
         line: 0,
         end,
         value: 0.8,
-        diva: 0.9,
+        top: 0.9,
         tier,
     };
     singing.decided(singing.last_heard().unwrap_or(0.0), shone);
@@ -117,12 +117,13 @@ fn gpu() -> Option<Offscreen> {
 fn the_bands_shine_by_the_tier() {
     let mut lights = Vec::new();
     let mut gpu = gpu();
-    for (tier, level, name) in [
-        (None, 0.0, ""),
-        (Some(Tier::Good), 1.0, "good"),
-        (Some(Tier::Great), 2.0, ""),
-        (Some(Tier::Amazing), 3.0, "amazing"),
+    for (tier, name) in [
+        (None, ""),
+        (Some(Tier::named("Good")), "good"),
+        (Some(Tier::named("Great")), ""),
+        (Some(Tier::named("Amazing")), "amazing"),
     ] {
+        let level = tier.map_or(0.0, |t| t.spec().glow);
         let frames = stage_frames(|_| (tier, 0.1), 0.6);
         let (_, frame) = frames.last().unwrap();
         let shines = level > 0.0;
@@ -165,13 +166,14 @@ fn the_bands_shine_by_the_tier() {
 /// phrase that keeps the tier).
 #[test]
 fn a_step_up_bursts_once_a_tier() {
-    // None to 0.2 s; Good at 0.2 s; Good again at 0.4 s; Amazing at 0.6 s
-    // (two up).
+    // None to 0.2 s; Good at 0.2 s (one up); Good again at 0.4 s (none);
+    // Amazing at 0.6 s (up from Good to it): one a tier up to Amazing.
+    let (good, amazing) = (Tier::named("Good"), Tier::named("Amazing"));
     let at = |t: f64| match t {
         t if t < 0.2 => (None, 0.1),
-        t if t < 0.4 => (Some(Tier::Good), 0.2),
-        t if t < 0.6 => (Some(Tier::Good), 0.4),
-        _ => (Some(Tier::Amazing), 0.6),
+        t if t < 0.4 => (Some(good), 0.2),
+        t if t < 0.6 => (Some(good), 0.4),
+        _ => (Some(amazing), 0.6),
     };
     let frames = stage_frames(at, 1.1);
     let mut ups: Vec<(u32, u32)> = Vec::new();
@@ -191,7 +193,7 @@ fn a_step_up_bursts_once_a_tier() {
             here.iter().map(|s| (s.start.to_bits(), s.seed)).collect();
         assert_eq!(keys.len(), here.len(), "once in a frame at {t}");
     }
-    assert_eq!(ups.len(), 3, "three steps up: {ups:?}");
+    assert_eq!(ups.len(), amazing.index() + 1, "a step a tier: {ups:?}");
     if let Some(mut gpu) = gpu() {
         let (_, frame) = frames.iter().find(|(t, _)| *t > 0.6 + 0.25).unwrap();
         let (_, pixels) = light_of(&mut gpu, frame, -1.0);
@@ -204,13 +206,8 @@ fn a_step_up_bursts_once_a_tier() {
 /// [`jodeldiplom::gui::rainbow::COLLAPSE`].
 #[test]
 fn a_phrase_without_a_tier_collapses_the_shine() {
-    let at = |t: f64| {
-        if t < 0.6 {
-            (Some(Tier::Amazing), 0.1)
-        } else {
-            (None, 0.6)
-        }
-    };
+    let amazing = Some(Tier::named("Amazing"));
+    let at = |t: f64| if t < 0.6 { (amazing, 0.1) } else { (None, 0.6) };
     let frames = stage_frames(at, 1.3);
     let at = |t: f64| &frames.iter().find(|(f, _)| *f >= t).unwrap().1;
     let bands = at(0.7)
@@ -218,7 +215,8 @@ fn a_phrase_without_a_tier_collapses_the_shine() {
         .iter()
         .find(|i| i.params[0] == kind::BANDS);
     let shine = bands.and_then(shine_of).expect("the bands");
-    assert_eq!((shine.level, shine.from), (0.0, 3.0));
+    let was = amazing.map(|t| t.spec().glow);
+    assert_eq!((shine.level, Some(shine.from)), (0.0, was));
     let Some(mut gpu) = gpu() else {
         return;
     };
@@ -284,7 +282,7 @@ fn the_picture_s_bar_gets_a_rainbow_edge() {
             if t < 0.5 {
                 (None, 0.2)
             } else {
-                (Some(Tier::Good), 0.5)
+                (Some(Tier::named("Good")), 0.5)
             },
         );
         let picture = common::bubble_picture(&singing, &lyrics, (t, 0.0), Rect::new(0, 0, 80, 24));

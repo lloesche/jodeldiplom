@@ -56,6 +56,7 @@ pub mod single;
 pub mod spectrum;
 pub mod stems_cache;
 pub mod sync;
+pub mod tiers;
 pub mod trace;
 pub mod view;
 

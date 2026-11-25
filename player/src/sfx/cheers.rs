@@ -6,8 +6,8 @@
 //!   higher as the count goes (the ticks coming faster and faster, the
 //!   tune runs up).
 //! - [`Sound::Gem`]: a phrase's gem popping in: a glassy plink, higher and
-//!   richer by its tier (none a soft tink, Good a chime, Great two bells,
-//!   Amazing a bright pair with a shimmer, Diva a sparkling run).
+//!   richer by its tier (none a soft tink, a tier's its own recipe:
+//!   [`super::recipes`]).
 //! - [`Sound::Medal`]: the medal's wax seal pressed down: a thump, the
 //!   wax's soft squelch and a crack, then its stinger: Bronze a warm
 //!   plucked chord, Silver bells ringing up to a chord, Gold a
@@ -22,6 +22,7 @@
 //! [`Sound::Medal`]: super::Sound::Medal
 //! [`Sound::NewBest`]: super::Sound::NewBest
 
+use super::recipes;
 use super::sounds::{brass, env, penta, pluck, BELL, GLASS};
 use super::synth::{scatter, Buf, Noise, Partial, Tone};
 use crate::core::shine::Tier;
@@ -67,49 +68,12 @@ pub fn tick(rate: u32, step: usize) -> Buf {
     b
 }
 
-/// A gem of `tier` popping in.
+/// A gem of `tier` popping in: its tier's own (none: a soft tink).
 pub fn gem(rate: u32, tier: Option<Tier>) -> Buf {
-    let mut b = Buf::new(rate, 0.7);
-    let plink = |b: &mut Buf, at: f64, s: i32, pan: f64, amp: f64| {
-        let t = Tone::new(penta(s), env(0.001, 0.0, 0.12, 0.4), &GLASS).amp(amp);
-        b.tone(at, pan, &t);
-    };
     match tier {
-        None => plink(&mut b, 0.0, 3, 0.0, 0.6),
-        Some(Tier::Good) => {
-            let chime = Tone::new(penta(6), env(0.0015, 0.0, 0.16, 0.45), &BELL);
-            b.tone(0.0, 0.0, &chime);
-        }
-        Some(Tier::Great) => {
-            for (i, s) in [7, 9].into_iter().enumerate() {
-                let bell = Tone::new(penta(s), env(0.0015, 0.0, 0.15, 0.4), &BELL);
-                b.tone(0.035 * i as f64, -0.2 + 0.4 * i as f64, &bell);
-            }
-        }
-        Some(Tier::Amazing) => {
-            plink(&mut b, 0.0, 9, -0.2, 1.0);
-            plink(&mut b, 0.03, 11, 0.2, 0.8);
-            let bell = Tone::new(penta(4), env(0.001, 0.0, 0.2, 0.5), &BELL).amp(0.4);
-            b.tone(0.0, 0.0, &bell);
-        }
-        Some(Tier::Diva) => {
-            let mut seed = 0xD1A_u64;
-            for g in 0..5 {
-                let pan = 1.2 * scatter(&mut seed) - 0.6;
-                plink(
-                    &mut b,
-                    0.028 * f64::from(g),
-                    10 + g,
-                    pan,
-                    1.0 - 0.12 * f64::from(g),
-                );
-            }
-            let bell = Tone::new(penta(5), env(0.001, 0.0, 0.3, 0.6), &BELL).amp(0.5);
-            b.tone(0.0, 0.0, &bell);
-        }
+        Some(t) => (t.spec().gem.make)(rate),
+        None => recipes::gem(rate, |b| recipes::plink(b, 0.0, 3, 0.0, 0.6)),
     }
-    b.room(0.25, 0.5);
-    b
 }
 
 /// The wax seal pressed down under a medal: a thump sliding down, the

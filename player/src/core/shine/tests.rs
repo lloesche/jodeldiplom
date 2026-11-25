@@ -107,7 +107,7 @@ fn the_original_shines_as_itself_and_silence_not_at_all() {
     assert!(shines(y[0].as_ref().unwrap()));
     let same = shines_of(&n, &original, &y)[0];
     assert!((same.value - 1.0).abs() < 1e-9, "{same:?}");
-    assert_eq!(Tier::of(&same, Par::default()), Some(Tier::Diva));
+    assert_eq!(Tier::of(&same, Par::default()), Some(Tier::TOP));
     // Silence: nothing hit, out of time, no tier.
     let quiet = shines_of(&n, &sung(&n, |_| 0.0, 0.0, always), &y)[0];
     assert!(quiet.value < 0.1, "{quiet:?}");
@@ -144,23 +144,29 @@ fn the_bars_are_a_share_of_what_the_original_reaches() {
     };
     let par = Par::default();
     assert_eq!(Tier::of(&at(0.59, None), par), None);
-    assert_eq!(Tier::of(&at(0.60, None), par), Some(Tier::Good));
-    assert_eq!(Tier::of(&at(0.80, None), par), Some(Tier::Great));
-    assert_eq!(Tier::of(&at(0.88, None), par), Some(Tier::Amazing));
-    assert_eq!(Tier::of(&at(0.95, Some(0.95)), par), Some(Tier::Diva));
+    assert_eq!(Tier::of(&at(0.60, None), par), Some(Tier::named("Good")));
+    assert_eq!(Tier::of(&at(0.80, None), par), Some(Tier::named("Great")));
+    assert_eq!(Tier::of(&at(0.88, None), par), Some(Tier::named("Amazing")));
+    assert_eq!(Tier::of(&at(0.95, Some(0.95)), par), Some(Tier::TOP));
     // Diva asks the pitch too.
-    assert_eq!(Tier::of(&at(0.95, Some(0.85)), par), Some(Tier::Amazing));
+    assert_eq!(
+        Tier::of(&at(0.95, Some(0.85)), par),
+        Some(Tier::named("Amazing"))
+    );
     // An original that reaches only 0.8 (its everyday hearings): 90 % of
     // that is Diva, the others as much lower.
     let rough = Par {
         shine: 0.8,
         pitch: 0.8,
     };
-    assert_eq!(Tier::of(&at(0.73, Some(0.73)), rough), Some(Tier::Diva));
-    assert_eq!(Tier::of(&at(0.73, Some(0.70)), rough), Some(Tier::Amazing));
-    assert_eq!(Tier::of(&at(0.48, None), rough), Some(Tier::Good));
+    assert_eq!(Tier::of(&at(0.73, Some(0.73)), rough), Some(Tier::TOP));
+    assert_eq!(
+        Tier::of(&at(0.73, Some(0.70)), rough),
+        Some(Tier::named("Amazing"))
+    );
+    assert_eq!(Tier::of(&at(0.48, None), rough), Some(Tier::named("Good")));
     let shone = Shone::new(0, 1.0, &at(0.72, None), rough);
-    assert!((shone.of_diva() - 1.0).abs() < 1e-6);
+    assert!((shone.of_top() - 1.0).abs() < 1e-6);
 }
 
 /// On a phrase whose original reaches as little of itself as a phrase may
@@ -181,7 +187,7 @@ fn weak_singing_is_never_diva_however_low_the_par() {
         ("half the words", sung(&n, |_| 0.0, 0.6, half_words)),
     ] {
         for s in shines_of(&n, &frames, &y) {
-            assert_ne!(Tier::of(&s, low), Some(Tier::Diva), "{name}: {s:?}");
+            assert_ne!(Tier::of(&s, low), Some(Tier::TOP), "{name}: {s:?}");
         }
     }
     let reference = Reference {
@@ -274,7 +280,7 @@ fn the_singing_scores_each_phrase_as_it_ends() {
     // The first phrase (1 to 3 s) scored once its frames are in.
     assert_eq!(s.shone().count(), 1);
     let last = *s.last_phrase().unwrap();
-    assert_eq!((last.line, last.tier), (0, Some(Tier::Diva)));
+    assert_eq!((last.line, last.tier), (0, Some(Tier::TOP)));
     // The second (4 to 6 s), its frames stopping as it ends: scored as
     // the song is finished.
     for &(t, c) in &frames[400..605] {
@@ -283,5 +289,5 @@ fn the_singing_scores_each_phrase_as_it_ends() {
     assert_eq!(s.shone().count(), 1);
     s.finish();
     let tiers: Vec<_> = s.shone().map(|p| p.tier).collect();
-    assert_eq!(tiers, [Some(Tier::Diva), Some(Tier::Diva)]);
+    assert_eq!(tiers, [Some(Tier::TOP), Some(Tier::TOP)]);
 }

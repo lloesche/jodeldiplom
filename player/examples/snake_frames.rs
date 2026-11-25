@@ -242,8 +242,8 @@ fn amazing() -> Shone {
         line: 1,
         end: 9.6,
         value: 0.85,
-        diva: 0.9,
-        tier: Some(Tier::Amazing),
+        top: 0.9,
+        tier: Some(Tier::named("Amazing")),
     }
 }
 

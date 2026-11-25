@@ -14,6 +14,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use jodeldiplom::core::shine::reference::Original;
+use jodeldiplom::core::shine::Tier;
 use jodeldiplom::core::singing::{Cue, Singing};
 use jodeldiplom::gui::big_text::Faces;
 use jodeldiplom::gui::karaoke::{paint, Backdrop, Layer};
@@ -143,9 +144,10 @@ fn main() {
             if let Some(Cue::Phrase(p)) = singing.moments().last().map(|m| m.cue) {
                 if singing.moments().last().is_some_and(|m| m.at == t) {
                     println!(
-                        "phrase {} at {t:.2}: {:.2} of Diva, {:?}",
+                        "phrase {} at {t:.2}: {:.2} of {}, {:?}",
                         p.line,
-                        p.of_diva(),
+                        p.of_top(),
+                        Tier::TOP.name(),
                         p.tier
                     );
                 }

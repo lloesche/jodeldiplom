@@ -335,7 +335,7 @@ impl Rig<'_> {
             art: Some(self.art.clone()),
             layers: Some(self.layers.clone()),
             levels: music(),
-            tier: jodeldiplom::gui::streak::level(singing, true),
+            glow: jodeldiplom::gui::streak::level(singing, true),
             section: false,
         };
         let backdrop = self.visualiser.step(&cue, (w, h), (1.0 / FPS) as f32);
@@ -495,8 +495,8 @@ fn main() {
                             line: 0,
                             end: now,
                             value: 1.0,
-                            diva: 0.9,
-                            tier: Some(Tier::Diva),
+                            top: 0.9,
+                            tier: Some(Tier::TOP),
                         },
                     );
                 }

@@ -14,6 +14,8 @@ use std::sync::Arc;
 
 use jodel_rhythm::waveform::{Lane, Waveform, FPS};
 
+use crate::tiers::held;
+
 /// A value following a target smoothly: rising over `attack` seconds,
 /// falling over `release` (each the time to get about two thirds of the
 /// way), alike at any frame rate.
@@ -247,9 +249,9 @@ pub struct Felt {
     pub vocals: f32,
     /// The plate's colour and sweeping light: everything else.
     pub other: f32,
-    /// The subject's glow: the singer's shine (Great and up).
+    /// The subject's glow: the singer's tier's (its row's).
     pub glow: f32,
-    /// The rays behind the subject: Amazing and Diva, and the sections.
+    /// The rays behind the subject: the singer's tier's, and the sections.
     pub rays: f32,
     /// A section just begun: the whole lifting, fading.
     pub section: f32,
@@ -289,33 +291,32 @@ impl Default for Feel {
     }
 }
 
-/// The glow and the rays a shine tier gives (0 none, 1 Good to 4 Diva).
-fn tier_light(tier: u32) -> (f32, f32) {
-    match tier {
-        0 | 1 => (0.0, 0.0),
-        2 => (0.35, 0.0),
-        3 => (0.65, 0.25),
-        _ => (1.0, 0.7),
-    }
+/// The glow on the subject and the rays behind it at the singer's `glow`
+/// (0 none, up to the top tier's 1): each held by the tiers' rows.
+fn tier_light(glow: f32) -> (f32, f32) {
+    (
+        held(glow, |t| t.backdrop_glow),
+        held(glow, |t| t.backdrop_rays),
+    )
 }
 
 impl Feel {
-    /// `dt` seconds on: the stems at `levels`, the singer's shine at
-    /// `tier`, a section begun (`section`).
-    pub fn step(&mut self, levels: Levels, tier: u32, section: bool, dt: f32) -> Felt {
+    /// `dt` seconds on: the stems at `levels`, the singer's glow at
+    /// `glow`, a section begun (`section`).
+    pub fn step(&mut self, levels: Levels, glow: f32, section: bool, dt: f32) -> Felt {
         if section {
             self.hold = SECTION_HOLD;
         }
         self.hold = (self.hold - dt).max(0.0);
         let held = if self.hold > 0.0 { 1.0 } else { 0.0 };
         let swell = self.section.step(held, dt);
-        let (glow, rays) = tier_light(tier);
+        let (lit, rays) = tier_light(glow);
         let rays = rays.max(swell * 0.6);
         let felt = Felt {
             bass: self.bass.step(levels.bass, dt),
             vocals: self.vocals.step(levels.vocals, dt),
             other: self.other.step(levels.other, dt),
-            glow: self.glow.step(glow, dt),
+            glow: self.glow.step(lit, dt),
             rays: self.rays.step(rays, dt),
             section: swell,
         };
@@ -323,7 +324,7 @@ impl Feel {
             (felt.bass, levels.bass),
             (felt.vocals, levels.vocals),
             (felt.other, levels.other),
-            (felt.glow, glow),
+            (felt.glow, lit),
             (felt.rays, rays),
             (swell, held),
         ];
@@ -417,25 +418,25 @@ mod tests {
     fn a_section_swells_and_fades_and_diva_brings_the_rays() {
         let mut feel = Feel::default();
         let dt = 1.0 / 60.0;
-        let mut felt = feel.step(Levels::default(), 0, true, dt);
+        let mut felt = feel.step(Levels::default(), 0.0, true, dt);
         for _ in 0..40 {
-            felt = feel.step(Levels::default(), 0, false, dt);
+            felt = feel.step(Levels::default(), 0.0, false, dt);
         }
         assert!(felt.section > 0.6 && felt.rays > 0.1, "{felt:?}");
         for _ in 0..900 {
-            felt = feel.step(Levels::default(), 0, false, dt);
+            felt = feel.step(Levels::default(), 0.0, false, dt);
         }
         assert!(felt.section < 0.01 && felt.rays < 0.01, "{felt:?}");
         for _ in 0..300 {
-            felt = feel.step(Levels::default(), 4, false, dt);
+            felt = feel.step(Levels::default(), 1.0, false, dt);
         }
         assert!(felt.glow > 0.95 && felt.rays > 0.65, "{felt:?}");
         // Held there long enough, nothing moves.
         for _ in 0..600 {
-            feel.step(Levels::default(), 4, false, dt);
+            feel.step(Levels::default(), 1.0, false, dt);
         }
         assert!(feel.settled());
-        feel.step(Levels::default(), 0, false, dt);
+        feel.step(Levels::default(), 0.0, false, dt);
         assert!(!feel.settled());
     }
 }

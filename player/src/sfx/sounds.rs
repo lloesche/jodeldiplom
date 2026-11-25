@@ -17,18 +17,21 @@
 //!   bright buzzy tone diving three octaves in a tenth of a second, a
 //!   sparkle of noise on its start, an echo of it an octave down. The
 //!   word rescued pops as any ([`Sound::Pop`]) as the shot lands.
-//! - [`Sound::Tier`]: a phrase's rating: Good a two-note chime, Great a
-//!   bright arpeggio with glitter, Amazing a "ta-daa" in brass with a
-//!   shimmer, Diva a jackpot (a cascade of coins over bells, a whoosh, and
-//!   a big chord).
-//! - The result screen's: the count-up's ticks, the gems' plinks, the
-//!   medal's seal pressed down and its stinger, a new best's stamp and
-//!   fanfare ([`super::cheers`]); and the diploma's own, from its paper
-//!   unrolling to the examiner's signature ([`Sound::Diploma`],
-//!   [`super::diploma`]).
+//! - [`Sound::Tier`]: a phrase's rating, its tier's own chime (each a
+//!   recipe its row names: [`super::recipes`]).
+//! - The result screen's: the count-up's ticks, the gems' plinks (a
+//!   tier's its own recipe), the medal's seal pressed down and its
+//!   stinger, a new best's stamp and fanfare ([`super::cheers`]); and the
+//!   diploma's own, from its paper unrolling to the examiner's signature
+//!   ([`Sound::Diploma`], [`super::diploma`]).
 //!
 //! Each is set to its own peak ([`Sound::peak_db`]), well under the
-//! song's; the Effects strip on the desk turns them all up or down.
+//! song's; the Effects strip on the desk turns them all up or down. The
+//! bank holds them in one list, kind by kind, a tier's in the tiers'
+//! order ([`Sound::all`]); a sound's place is where it is in it.
+
+use std::collections::HashMap;
+use std::sync::LazyLock;
 
 use super::cheers::{self, MEDALS, TICK_STEPS};
 use super::diploma::Diploma;
@@ -71,52 +74,53 @@ pub enum Sound {
     Diploma(Diploma),
 }
 
+/// The bank: every sound, in its order.
+static BANK: LazyLock<Vec<Sound>> = LazyLock::new(|| {
+    let mut all: Vec<Sound> = (0..STEPS).map(Sound::Pop).collect();
+    all.extend((0..STEPS).map(Sound::Sparkle));
+    all.extend((1..=LEVELS).map(Sound::StepUp));
+    all.push(Sound::Break);
+    all.push(Sound::Zap);
+    all.extend(Tier::ALL.map(Sound::Tier));
+    all.extend((0..TICK_STEPS).map(Sound::Tick));
+    all.push(Sound::Gem(None));
+    all.extend(Tier::ALL.map(|t| Sound::Gem(Some(t))));
+    all.extend(MEDALS.map(Sound::Medal));
+    all.push(Sound::NewBest);
+    all.extend(Diploma::ALL.map(Sound::Diploma));
+    all
+});
+
+/// Each sound's place in the bank.
+static PLACES: LazyLock<HashMap<Sound, usize>> =
+    LazyLock::new(|| BANK.iter().enumerate().map(|(k, &s)| (s, k)).collect());
+
 impl Sound {
     /// How many there are.
-    pub const COUNT: usize = Self::DIPLOMA + Diploma::ALL.len();
-    /// Where the result screen's start in the bank.
-    const RESULT: usize = 2 * STEPS + LEVELS as usize + 2 + Tier::ALL.len();
-    /// Where the diploma's start.
-    const DIPLOMA: usize = Self::RESULT + TICK_STEPS + 1 + Tier::ALL.len() + MEDALS.len() + 1;
+    pub fn count() -> usize {
+        BANK.len()
+    }
 
     /// Every one, in the order of [`Sound::index`].
     pub fn all() -> Vec<Sound> {
-        let mut all: Vec<Sound> = (0..STEPS).map(Sound::Pop).collect();
-        all.extend((0..STEPS).map(Sound::Sparkle));
-        all.extend((1..=LEVELS).map(Sound::StepUp));
-        all.push(Sound::Break);
-        all.push(Sound::Zap);
-        all.extend(Tier::ALL.map(Sound::Tier));
-        all.extend((0..TICK_STEPS).map(Sound::Tick));
-        all.push(Sound::Gem(None));
-        all.extend(Tier::ALL.map(|t| Sound::Gem(Some(t))));
-        all.extend(MEDALS.map(Sound::Medal));
-        all.push(Sound::NewBest);
-        all.extend(Diploma::ALL.map(Sound::Diploma));
-        all
+        BANK.clone()
+    }
+
+    /// It, a step or a level out of range the nearest there is.
+    fn in_range(self) -> Sound {
+        match self {
+            Sound::Pop(k) => Sound::Pop(k.min(STEPS - 1)),
+            Sound::Sparkle(k) => Sound::Sparkle(k.min(STEPS - 1)),
+            Sound::StepUp(l) => Sound::StepUp(l.clamp(1, LEVELS)),
+            Sound::Tick(k) => Sound::Tick(k.min(TICK_STEPS - 1)),
+            other => other,
+        }
     }
 
     /// Where it is in the bank ([`Sound::all`]'s order). A step or a level
     /// out of range is the nearest there is.
     pub fn index(self) -> usize {
-        let levels = LEVELS as usize;
-        match self {
-            Sound::Pop(k) => k.min(STEPS - 1),
-            Sound::Sparkle(k) => STEPS + k.min(STEPS - 1),
-            Sound::StepUp(l) => 2 * STEPS + (l.clamp(1, LEVELS) as usize - 1),
-            Sound::Break => 2 * STEPS + levels,
-            Sound::Zap => 2 * STEPS + levels + 1,
-            Sound::Tier(t) => 2 * STEPS + levels + 2 + tier_index(t),
-            Sound::Tick(k) => Self::RESULT + k.min(TICK_STEPS - 1),
-            Sound::Gem(None) => Self::RESULT + TICK_STEPS,
-            Sound::Gem(Some(t)) => Self::RESULT + TICK_STEPS + 1 + tier_index(t),
-            Sound::Medal(m) => {
-                let k = MEDALS.iter().position(|&x| x == m).unwrap_or(0);
-                Self::RESULT + TICK_STEPS + 1 + Tier::ALL.len() + k
-            }
-            Sound::NewBest => Self::DIPLOMA - 1,
-            Sound::Diploma(d) => Self::DIPLOMA + d.index(),
-        }
+        PLACES[&self.in_range()]
     }
 
     /// Its name, for its file when the sounds are written out to listen
@@ -147,13 +151,10 @@ impl Sound {
             Sound::StepUp(l) => -16.5 + f64::from(l.clamp(1, LEVELS)),
             Sound::Break => -22.0,
             Sound::Zap => -17.0,
-            Sound::Tier(Tier::Good) => -18.0,
-            Sound::Tier(Tier::Great) => -15.5,
-            Sound::Tier(Tier::Amazing) => -13.5,
-            Sound::Tier(Tier::Diva) => -12.0,
+            Sound::Tier(t) => t.spec().chime.peak_db,
             Sound::Tick(_) => -24.0,
             Sound::Gem(None) => -26.0,
-            Sound::Gem(Some(t)) => -22.0 + 1.5 * tier_index(t) as f64,
+            Sound::Gem(Some(t)) => t.spec().gem.peak_db,
             Sound::Medal(Medal::Bronze) => -14.0,
             Sound::Medal(Medal::Silver) => -13.0,
             Sound::Medal(Medal::Gold) => -12.0,
@@ -170,10 +171,7 @@ impl Sound {
             Sound::StepUp(l) => step_up(rate, l.clamp(1, LEVELS)),
             Sound::Break => aww(rate),
             Sound::Zap => zap(rate),
-            Sound::Tier(Tier::Good) => good(rate),
-            Sound::Tier(Tier::Great) => great(rate),
-            Sound::Tier(Tier::Amazing) => amazing(rate),
-            Sound::Tier(Tier::Diva) => diva(rate),
+            Sound::Tier(t) => (t.spec().chime.make)(rate),
             Sound::Tick(k) => cheers::tick(rate, k.min(TICK_STEPS - 1)),
             Sound::Gem(t) => cheers::gem(rate, t),
             Sound::Medal(m) => cheers::medal(rate, m),
@@ -184,11 +182,6 @@ impl Sound {
         b.peak_at(self.peak_db());
         b
     }
-}
-
-/// Where `t` is among the tiers, Good first.
-fn tier_index(t: Tier) -> usize {
-    Tier::ALL.iter().position(|&x| x == t).unwrap_or(0)
 }
 
 /// Step `s` of the major pentatonic scale on C5 (0: C5; 5: C6; below 0
@@ -395,37 +388,6 @@ fn aww(rate: u32) -> Buf {
     b
 }
 
-fn good(rate: u32) -> Buf {
-    let mut b = Buf::new(rate, 0.8);
-    for (i, s) in [3, 5].into_iter().enumerate() {
-        let chime = Tone::new(penta(s), env(0.0015, 0.0, 0.3, 0.6), &BELL);
-        b.tone(0.09 * i as f64, -0.2 + 0.4 * i as f64, &chime);
-    }
-    b.room(0.25, 0.7);
-    b
-}
-
-fn great(rate: u32) -> Buf {
-    let mut b = Buf::new(rate, 1.1);
-    for (i, s) in [0, 2, 3, 5].into_iter().enumerate() {
-        let t = 0.06 * i as f64;
-        let pan = -0.4 + 0.8 * i as f64 / 3.0;
-        let pl = Tone::new(penta(s), env(0.002, 0.0, 0.25, 0.55), &pluck(0.6));
-        b.tone(t, pan, &pl);
-        let bell = Tone::new(2.0 * penta(s), env(0.0015, 0.0, 0.2, 0.4), &BELL).amp(0.3);
-        b.tone(t, pan, &bell);
-    }
-    let mut seed = 0x6EA7_u64;
-    for g in 0..5 {
-        let at = 0.26 + 0.035 * f64::from(g);
-        let f = penta(10 + g);
-        let grain = Tone::new(f, env(0.001, 0.0, 0.08, 0.25), &GLASS).amp(0.35);
-        b.tone(at, 1.6 * scatter(&mut seed) - 0.8, &grain);
-    }
-    b.room(0.3, 0.9);
-    b
-}
-
 /// A brass-ish note: a saw's partials, its brightness swelling in.
 pub(super) fn brass(freq: f64, hold: f64, length: f64) -> Tone {
     let partials: Vec<Partial> = (1..=10)
@@ -434,108 +396,6 @@ pub(super) fn brass(freq: f64, hold: f64, length: f64) -> Tone {
     Tone::new(freq, env(0.015, hold, 0.25, length), &partials)
         .bright(700.0, 3_500.0, 0.04)
         .vibrato(5.5, 8.0, 0.25)
-}
-
-fn amazing(rate: u32) -> Buf {
-    let mut b = Buf::new(rate, 1.6);
-    // "Ta": G major, short; "daa": C major, held.
-    for (i, f) in [392.0, 493.9, 587.3].into_iter().enumerate() {
-        b.tone(0.0, -0.3 + 0.3 * i as f64, &brass(f, 0.04, 0.14).amp(0.5));
-    }
-    for (i, f) in [523.3, 659.3, 784.0, 1046.5].into_iter().enumerate() {
-        b.tone(
-            0.16,
-            -0.45 + 0.3 * i as f64,
-            &brass(f, 0.35, 0.95).amp(0.45),
-        );
-    }
-    // A shimmer going up over the held chord.
-    let mut seed = 0xA3A3_u64;
-    for g in 0..8 {
-        let at = 0.2 + 0.05 * f64::from(g);
-        let grain = Tone::new(penta(8 + g), env(0.001, 0.0, 0.1, 0.3), &GLASS).amp(0.25);
-        b.tone(at, 1.6 * scatter(&mut seed) - 0.8, &grain);
-    }
-    b.noise(
-        0.1,
-        0.0,
-        &Noise {
-            from: 800.0,
-            to: 7_000.0,
-            q: 1.5,
-            envelope: env(0.05, 0.02, 0.06, 0.2),
-            amp: 0.12,
-            length: 0.2,
-            seed: 0xBEEF,
-        },
-    );
-    b.room(0.3, 1.0);
-    b
-}
-
-/// A coin: a quick blip on `f`, then a fourth up, ringing a little.
-fn coin(b: &mut Buf, at: f64, f: f64, pan: f64, amp: f64) {
-    let square: Vec<Partial> = [1.0, 3.0, 5.0, 7.0]
-        .into_iter()
-        .map(|n| Partial::new(n, 1.0 / n, 0.4 / n))
-        .collect();
-    b.tone(
-        at,
-        pan,
-        &Tone::new(f, env(0.0015, 0.035, 0.01, 0.05), &square).amp(0.5 * amp),
-    );
-    b.tone(
-        at + 0.05,
-        pan,
-        &Tone::new(f * 4.0 / 3.0, env(0.0015, 0.03, 0.09, 0.25), &square).amp(0.5 * amp),
-    );
-}
-
-fn diva(rate: u32) -> Buf {
-    let mut b = Buf::new(rate, 2.9);
-    // A whoosh up into it.
-    b.noise(
-        0.0,
-        0.0,
-        &Noise {
-            from: 500.0,
-            to: 8_000.0,
-            q: 1.2,
-            envelope: env(0.2, 0.02, 0.06, 0.32),
-            amp: 0.2,
-            length: 0.32,
-            seed: 0xD1FA,
-        },
-    );
-    // Bells, one a beat.
-    for (i, s) in [5, 7, 8].into_iter().enumerate() {
-        let bell = Tone::new(penta(s), env(0.0015, 0.0, 0.5, 1.4), &BELL).amp(0.55);
-        b.tone(0.25 + 0.32 * i as f64, -0.35 + 0.35 * i as f64, &bell);
-    }
-    // The coins: a cascade quickening, then thinning out.
-    let mut seed = 0x00C0_1A5E_u64;
-    let mut at = 0.25;
-    for c in 0..18 {
-        let s = 7 + (scatter(&mut seed) * 8.0) as i32;
-        let pan = 1.4 * scatter(&mut seed) - 0.7;
-        let amp = 0.5 + 0.5 * scatter(&mut seed);
-        coin(&mut b, at, penta(s), pan, amp);
-        let pace = if c < 10 {
-            0.11 - 0.006 * f64::from(c)
-        } else {
-            0.05 + 0.012 * f64::from(c - 10)
-        };
-        at += pace;
-    }
-    // The win: a big major chord, spread wide.
-    for (i, s) in [0, 3, 5, 7, 8].into_iter().enumerate() {
-        let pl = Tone::new(penta(s), env(0.002, 0.05, 0.45, 1.1), &pluck(0.7)).amp(0.45);
-        b.tone(1.6, -0.6 + 0.3 * i as f64, &pl);
-        let bell = Tone::new(2.0 * penta(s), env(0.0015, 0.0, 0.35, 0.9), &BELL).amp(0.18);
-        b.tone(1.6, 0.6 - 0.3 * i as f64, &bell);
-    }
-    b.room(0.35, 1.2);
-    b
 }
 
 #[cfg(test)]
@@ -548,7 +408,7 @@ mod tests {
     #[test]
     fn every_sound_has_its_place_and_its_peak() {
         let all = Sound::all();
-        assert_eq!(all.len(), Sound::COUNT);
+        assert_eq!(all.len(), Sound::count());
         let mut names = std::collections::HashSet::new();
         for (k, s) in all.iter().enumerate() {
             assert_eq!(s.index(), k, "{s:?}");

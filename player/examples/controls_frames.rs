@@ -270,7 +270,7 @@ fn main() {
                 art: Some(art.clone()),
                 layers: None,
                 levels: Default::default(),
-                tier: 0,
+                glow: 0.0,
                 section: false,
             };
             let ground = Visualiser::default().step(&cue, (pw, ph), 1.0 / 60.0);

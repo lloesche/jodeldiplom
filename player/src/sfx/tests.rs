@@ -5,7 +5,7 @@ use crate::core::shine::Tier;
 #[test]
 fn the_bank_has_every_sound_ending_in_silence() {
     let b = bank(44_100);
-    assert_eq!((b.len(), b.rate()), (Sound::COUNT, 44_100));
+    assert_eq!((b.len(), b.rate()), (Sound::count(), 44_100));
     for s in Sound::all() {
         let x = b.sound(s.index()).unwrap();
         assert!(x.len() > 2_000, "{s:?}");
@@ -75,7 +75,7 @@ fn result(
                 line: 0,
                 end: 1.0,
                 value: 0.9,
-                diva: 0.9,
+                top: 0.9,
                 tier,
             })
             .collect(),
@@ -144,19 +144,24 @@ fn write_the_sounds() {
         (3.2, Sound::Break, 1.0, 0.0),
     ];
     let tiers = [
-        (0.0, Sound::Tier(Tier::Good), 1.0, 0.0),
-        (1.2, Sound::Tier(Tier::Great), 1.0, 0.0),
-        (2.6, Sound::Tier(Tier::Amazing), 1.0, 0.0),
-        (4.4, Sound::Tier(Tier::Diva), 1.0, 0.0),
+        (0.0, Sound::Tier(Tier::named("Good")), 1.0, 0.0),
+        (1.2, Sound::Tier(Tier::named("Great")), 1.0, 0.0),
+        (2.6, Sound::Tier(Tier::named("Amazing")), 1.0, 0.0),
+        (4.4, Sound::Tier(Tier::TOP), 1.0, 0.0),
     ];
     // Diplomas revealed, as the screen plays them: a Gold one with a new
     // best, a Silver one short of its best, one without a medal, one not
     // sung from its start, one with nothing scored, and one the demo key
     // sang (its best line no best, a tap).
-    let six = [Some(Tier::Diva), None, Some(Tier::Good), Some(Tier::Great)]
-        .into_iter()
-        .chain([Some(Tier::Amazing), Some(Tier::Diva)])
-        .collect::<Vec<_>>();
+    let six = [
+        Some(Tier::TOP),
+        None,
+        Some(Tier::named("Good")),
+        Some(Tier::named("Great")),
+    ]
+    .into_iter()
+    .chain([Some(Tier::named("Amazing")), Some(Tier::TOP)])
+    .collect::<Vec<_>>();
     let gold = result(
         (12_400, 41, 23),
         &six,
@@ -169,7 +174,7 @@ fn write_the_sounds() {
     );
     let cheer = result(
         (2_100, 14, 5),
-        &[None, Some(Tier::Good), None],
+        &[None, Some(Tier::named("Good")), None],
         (None, None, true),
     );
     let whole = result((5_600, 30, 9), &six[..3], (None, Some(4_000), false));

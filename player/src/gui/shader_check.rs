@@ -348,14 +348,14 @@ fn the_stage_shader_s_shine_is_its_reference() {
         return;
     };
     let shines = [
-        (1.0, 0.0),
-        (2.0, 1.0),
-        (3.0, 2.0),
-        (3.0, 3.0),
-        (2.0, 3.0),
-        (1.0, 2.4),
-        (0.0, 1.0),
-        (0.0, 3.0),
+        (0.25, 0.0),
+        (0.5, 0.25),
+        (0.75, 0.5),
+        (0.75, 0.75),
+        (0.5, 0.75),
+        (0.25, 0.6),
+        (0.0, 0.25),
+        (0.0, 0.75),
     ];
     let mut samples = Vec::new();
     for k in 0..480 {
@@ -492,7 +492,7 @@ fn the_stage_shader_s_glory_is_its_reference() {
                 fr(0.43) * 1.1,
                 time,
             ],
-            [fr(0.17), fr(0.53), time - fr(0.71) * 1.5, fr(0.23) * 3.0],
+            [fr(0.17), fr(0.53), time - fr(0.71) * 1.5, fr(0.23) * 0.75],
             // Off the ring's centre and its level line, whose angles (atan2
             // of 0, 0, and ±π, where the fill's edge may be) a GPU may give
             // either way (Apple's did).
@@ -509,7 +509,7 @@ fn the_stage_shader_s_glory_is_its_reference() {
     let a = ins[i * 3u];
     let b = ins[i * 3u + 1u];
     let c = ins[i * 3u + 2u];
-    let s = vec3<f32>(b.w, 1.0, 3.0);
+    let s = vec3<f32>(b.w, 0.25, 3.0);
     outs[i * 6u] = vec4<f32>(meter_fill(b.x, b.y, b.z, a.w), mark_pop(a.w - b.z), glow_at(c.z, 20.0, a.w, 0.7));
     outs[i * 6u + 1u] = vec4<f32>(fill_color(a.z, a.x, a.w), 0.0);
     outs[i * 6u + 2u] = meter_at(a.x, a.y, a.z, a.w);
@@ -529,7 +529,7 @@ fn the_stage_shader_s_glory_is_its_reference() {
         let what = format!("sample {k}: {a:?} {b:?} {c:?}");
         let shine = Glow {
             level: b[3],
-            from: 1.0,
+            from: 0.25,
             since: 3.0,
         };
         let pop = glory::mark_pop(a[3] - b[2]);

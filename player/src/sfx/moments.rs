@@ -239,7 +239,7 @@ mod tests {
                 line: 0,
                 end: 2.9,
                 value: 0.9,
-                diva: 0.9,
+                top: 0.9,
                 tier,
             })
         };
@@ -251,7 +251,7 @@ mod tests {
             }),
             at(Cue::StreakUp(1)),
             at(Cue::StreakLost),
-            at(phrase(Some(Tier::Diva))),
+            at(phrase(Some(Tier::TOP))),
             at(phrase(None)),
         ];
         let c: Vec<(Sound, Option<f64>)> = cues(&m, 3.0).iter().map(|c| (c.sound, c.at)).collect();
@@ -260,7 +260,7 @@ mod tests {
             [
                 (Sound::StepUp(1), None),
                 (Sound::Break, None),
-                (Sound::Tier(Tier::Diva), None),
+                (Sound::Tier(Tier::TOP), None),
             ]
         );
     }
@@ -280,13 +280,13 @@ mod tests {
                 line: 9,
                 end: 59.8,
                 value: 0.8,
-                diva: 0.9,
-                tier: Some(Tier::Amazing),
+                top: 0.9,
+                tier: Some(Tier::named("Amazing")),
             },
         );
         let f = moments.frame(&singing, 60.2);
         assert!(!f.sought);
         let c: Vec<(Sound, Option<f64>)> = f.cues.iter().map(|c| (c.sound, c.at)).collect();
-        assert_eq!(c, [(Sound::Tier(Tier::Amazing), None)]);
+        assert_eq!(c, [(Sound::Tier(Tier::named("Amazing")), None)]);
     }
 }

@@ -348,7 +348,7 @@ mod tests {
             line: 0,
             end: 1.0,
             value: 0.8,
-            diva: 0.9,
+            top: 0.9,
             tier,
         }
     }
@@ -380,7 +380,12 @@ mod tests {
     /// ticks coming faster and faster; the medal a fall after the gems.
     #[test]
     fn the_beats_come_in_order() {
-        let tiers = [Some(Tier::Diva), None, Some(Tier::Good), Some(Tier::Diva)];
+        let tiers = [
+            Some(Tier::TOP),
+            None,
+            Some(Tier::named("Good")),
+            Some(Tier::TOP),
+        ];
         let r = Reveal::of(&result(12_400, &tiers, Some(9_000), true));
         let times: Vec<f64> = r.beats().iter().map(|(at, _)| *at).collect();
         assert!(times.windows(2).all(|w| w[0] <= w[1]), "{times:?}");
@@ -408,8 +413,8 @@ mod tests {
             })
             .collect();
         assert_eq!(gems, tiers.iter().copied().enumerate().collect::<Vec<_>>());
-        assert!(at(Beat::Streak) < at(Beat::Gem(0, Some(Tier::Diva))));
-        let last_gem = r.when(Beat::Gem(3, Some(Tier::Diva))).unwrap();
+        assert!(at(Beat::Streak) < at(Beat::Gem(0, Some(Tier::TOP))));
+        let last_gem = r.when(Beat::Gem(3, Some(Tier::TOP))).unwrap();
         assert!(r.when(GOLD).unwrap() - last_gem >= DROP + 0.4);
         assert!(at(GOLD) < at(Beat::NewBest));
         assert_eq!(*b.last().unwrap(), Beat::End);
@@ -459,7 +464,7 @@ mod tests {
         assert!(b.contains(&Beat::Verdict(Verdict::Cheer)) && b.contains(&Beat::Best(2_000)));
         assert!(!b.contains(&Beat::NewBest));
 
-        let part = result(9_999, &[Some(Tier::Great)], Some(100), false);
+        let part = result(9_999, &[Some(Tier::named("Great"))], Some(100), false);
         let b = kinds(&Reveal::of(&part));
         assert!(b.contains(&Beat::Verdict(Verdict::Whole)) && b.contains(&Beat::Best(100)));
         assert!(!b.contains(&Beat::NewBest));
@@ -476,7 +481,11 @@ mod tests {
     /// nothing lands after it; it twinkles a while, then its time stops.
     #[test]
     fn a_skip_completes_the_reveal_and_it_goes_still() {
-        let mut s = Shown::new(result(1_000, &[Some(Tier::Good)], None, true), 1, 5_000);
+        let mut s = Shown::new(
+            result(1_000, &[Some(Tier::named("Good"))], None, true),
+            1,
+            5_000,
+        );
         assert_eq!(s.time(5_000), 0.0);
         assert!(s.revealing(6_000));
         assert_eq!(s.motion(6_000), Motion::Revealing);

@@ -107,8 +107,8 @@ impl Written {
         let tally = Tier::ALL
             .iter()
             .rev()
-            .filter(|&&tier| counts[tier as usize] > 0)
-            .map(|&tier| (tier, format!("{} {}", counts[tier as usize], tier.name())))
+            .filter(|tier| counts[tier.index()] > 0)
+            .map(|&tier| (tier, format!("{} {}", counts[tier.index()], tier.name())))
             .collect();
         Written {
             id: shown.id,
@@ -503,7 +503,7 @@ mod tests {
             line: 0,
             end: 1.0,
             value: 0.9,
-            diva: 0.9,
+            top: 0.9,
             tier,
         };
         SongResult {
@@ -513,10 +513,10 @@ mod tests {
             words: 45,
             streak: 17,
             phrases: [
-                Some(Tier::Diva),
+                Some(Tier::TOP),
                 None,
-                Some(Tier::Good),
-                Some(Tier::Amazing),
+                Some(Tier::named("Good")),
+                Some(Tier::named("Amazing")),
             ]
             .map(phrase)
             .to_vec(),

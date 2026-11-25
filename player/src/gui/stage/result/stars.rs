@@ -1,8 +1,10 @@
 //! The diploma's star stickers: one a phrase, popping on in song order in
 //! a row near its foot, each a little askew, in its tier's colour (a plain
-//! grey one for a phrase that reached none; Amazing and Diva glinting now
-//! and then while the screen twinkles, Diva's prismatic, twinkling and
-//! glowing too); once all are on, how many reached each tier under them.
+//! grey one for a phrase that reached none) and looking as its tier's row
+//! says ([`crate::tiers::Sticker`]: glinting now and then while the screen
+//! twinkles, prismatic, glowing in a halo); once all are on, how many
+//! reached each tier under them, in a row (two, should one not fit across
+//! the sheet).
 
 use super::super::super::rainbow::hue;
 use super::super::super::sparks::noise;
@@ -18,6 +20,9 @@ use crate::gui::particles::Kind;
 const ROW_Y: f32 = 0.655;
 const ROW_WIDE: f32 = 0.56;
 const ROW_BAND: f32 = 0.075;
+/// How much of the sheet's width the tally may take in a row (inside its
+/// border); wider, it takes two.
+const TALLY_WIDE: f32 = 0.9;
 /// A sticker for a phrase that reached no tier.
 const PLAIN: Rgb = [0.74, 0.72, 0.68];
 
@@ -76,14 +81,14 @@ impl Places {
     }
 }
 
-/// A tier's sticker colour at `t` (Diva's running through the rainbow a
-/// little, `i` its phase).
+/// A tier's sticker colour at `t` (a prismatic one's running through the
+/// rainbow a little, `i` its phase).
 fn star_color(tier: Option<Tier>, t: f64, i: usize) -> Rgb {
     let Some(tier) = tier else {
         return PLAIN;
     };
     let base = tier_color(Some(tier));
-    if tier == Tier::Diva {
+    if tier.spec().sticker.prismatic {
         let h = hue(t as f32 * 0.25 + i as f32 * 0.13);
         return [0, 1, 2].map(|k| base[k] + (h[k] - base[k]) * 0.35);
     }
@@ -92,9 +97,10 @@ fn star_color(tier: Option<Tier>, t: f64, i: usize) -> Rgb {
 
 impl Stage {
     /// The phrases' stickers, popping on one by one in song order (each
-    /// glinting as it lands, Amazing and Diva glinting now and then while
-    /// the screen twinkles, Diva twinkling and glowing too), and, once all
-    /// are on, how many reached each tier under them (`words`' tally).
+    /// glinting as it lands, and as its tier's row says: glinting now and
+    /// then while the screen twinkles, prismatic, a halo with its light,
+    /// twinkles and a burst), and, once all are on, how many reached each
+    /// tier under them (`words`' tally).
     pub(super) fn stars(
         &mut self,
         d: &mut Drawn,
@@ -112,7 +118,9 @@ impl Stage {
                 continue;
             };
             let c = places.at(i);
-            let rich = matches!(p.tier, Some(Tier::Amazing | Tier::Diva));
+            let look = p.tier.map(|t| t.spec().sticker);
+            let rich = look.is_some_and(|l| l.glints);
+            let halo = look.map_or(0.0, |l| l.halo);
             let again = (a + i as f32 * 0.37) % 2.4;
             let glint = match (a < 0.7, rich && room.calm > 0.5) {
                 (true, _) => -1.6 + a * 5.0,
@@ -125,11 +133,10 @@ impl Stage {
             };
             let turn = (noise(i as u32 * 7 + 3) - 0.5) * 0.6;
             let col = star_color(p.tier, t, i);
-            let halo = if p.tier == Some(Tier::Diva) { 0.5 } else { 0.0 };
             let glow = (s * 0.7, rgba(col, halo * shows));
             let ink = rgba(col, plain * shows);
             d.out.push(sticker(c, (s * scale, turn), ink, glow, glint));
-            if p.tier == Some(Tier::Diva) {
+            if halo > 0.0 {
                 let light = rgba(col, 0.12 * shows);
                 d.lights.push(disc(c, 0.0, [0.0; 4], light, s * 1.6));
                 for (k, (ox, oy)) in [(0.85, -0.6), (-0.8, 0.45)].into_iter().enumerate() {
@@ -151,7 +158,8 @@ impl Stage {
 
     /// How many phrases reached each tier (`words`' tally, the best
     /// first), under the stickers (the last row's bottom at `below`), once
-    /// all are on.
+    /// all are on: in a row across the sheet's middle, or two where one
+    /// would not fit ([`tally_rows`]).
     fn tally(
         &mut self,
         d: &mut Drawn,
@@ -172,24 +180,37 @@ impl Stage {
         let px = (2.4 * s).round().max(8.0);
         let chip = 1.05 * s;
         let each = chip * 2.6 + px * 1.2;
-        let mut total = 0.0;
-        for (_, text) in &words.tally {
-            total += self.measure(PRINT, text, px) + each;
-        }
+        let wide: Vec<f32> = (words.tally.iter())
+            .map(|(_, text)| self.measure(PRINT, text, px) + each)
+            .collect();
         let cy = below + 2.2 * s;
-        let mut left = room.at(0.5, 0.0).0 - total / 2.0;
         let ink = rgba(room.inks.ink, 0.8 * shows);
-        for (tier, text) in &words.tally {
-            let col = star_color(Some(*tier), t, 0);
-            let none = (0.0, [0.0; 4]);
-            let chip_at = (left + chip, cy);
-            d.out
-                .push(sticker(chip_at, (chip, 0.0), rgba(col, shows), none, 9.0));
-            let at = ((left + chip * 2.6, cy), 0.0);
-            let tw = self.written(&mut d.out, (PRINT, text), (px, 1.0), at, ink, Pen::FLAT);
-            left += tw + each;
+        for (row, items) in tally_rows(&wide, room.across(TALLY_WIDE)).enumerate() {
+            let total = wide[items.clone()].iter().fold(0.0, |a, w| a + w);
+            let cy = cy + row as f32 * px * 1.6;
+            let mut left = room.at(0.5, 0.0).0 - total / 2.0;
+            for (tier, text) in &words.tally[items] {
+                let col = star_color(Some(*tier), t, 0);
+                let none = (0.0, [0.0; 4]);
+                let chip_at = (left + chip, cy);
+                d.out
+                    .push(sticker(chip_at, (chip, 0.0), rgba(col, shows), none, 9.0));
+                let at = ((left + chip * 2.6, cy), 0.0);
+                let tw = self.written(&mut d.out, (PRINT, text), (px, 1.0), at, ink, Pen::FLAT);
+                left += tw + each;
+            }
         }
     }
+}
+
+/// The tally's rows: its entries `wide` across each, in one row if they
+/// fit in `room`, else in two (the first the longer by one where they are
+/// odd).
+fn tally_rows(wide: &[f32], room: f32) -> impl Iterator<Item = std::ops::Range<usize>> {
+    let n = wide.len();
+    let fits = wide.iter().sum::<f32>() <= room;
+    let split = if fits || n < 2 { n } else { n.div_ceil(2) };
+    [0..split, split..n].into_iter().filter(|r| !r.is_empty())
 }
 
 #[cfg(test)]
@@ -201,6 +222,38 @@ mod tests {
         let look = super::super::seal::look(crate::core::singing::Verdict::Cheer, tint);
         let area = (0.0, 0.0, w, h);
         Room::new(area, super::super::Line::above(area, h * 0.9), tint, look)
+    }
+
+    /// The tally in a row while it fits, else in two, the first the
+    /// longer; none without entries.
+    #[test]
+    fn the_tally_wraps_only_when_too_wide() {
+        let rows = |wide: &[f32], room| -> Vec<(usize, usize)> {
+            tally_rows(wide, room).map(|r| (r.start, r.end)).collect()
+        };
+        assert_eq!(rows(&[10.0; 4], 40.0), [(0, 4)]);
+        assert_eq!(rows(&[10.0; 4], 39.0), [(0, 2), (2, 4)]);
+        assert_eq!(rows(&[10.0; 5], 30.0), [(0, 3), (3, 5)]);
+        assert_eq!(rows(&[50.0], 30.0), [(0, 1)]);
+        assert!(rows(&[], 30.0).is_empty());
+    }
+
+    /// The tally of every tier fits in a row on the sheets the diploma is
+    /// drawn on (it wraps only past that).
+    #[test]
+    fn every_tier_s_tally_fits_in_a_row() {
+        let mut stage = Stage::default();
+        for (w, h) in [(1600.0, 900.0), (900.0, 1400.0), (500.0, 900.0)] {
+            let room = room(w, h);
+            let px = (2.4 * room.s).round().max(8.0);
+            let each = 1.05 * room.s * 2.6 + px * 1.2;
+            let wide: Vec<f32> = Tier::ALL
+                .iter()
+                .rev()
+                .map(|t| stage.measure(PRINT, &format!("99 {}", t.name()), px) + each)
+                .collect();
+            assert_eq!(tally_rows(&wide, room.across(TALLY_WIDE)).count(), 1);
+        }
     }
 
     /// Many phrases fit in at most three rows, inside the sheet's middle;

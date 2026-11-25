@@ -31,6 +31,7 @@ pub mod cheers;
 pub mod diploma;
 pub mod moments;
 pub mod pen;
+pub mod recipes;
 pub mod reveal;
 pub mod sounds;
 pub mod store;

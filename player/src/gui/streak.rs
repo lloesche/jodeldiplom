@@ -1,9 +1,9 @@
-//! The singing's glow followed frame by frame ([`super::rainbow`]): its
-//! level (0 off, then the tier the last phrase reached, 1 Good up to
-//! [`TOP`], Diva; [`crate::core::shine::Tier`]), when it last changed and
-//! how strong it showed then ([`Glow`]); read from the singing's moments
+//! The singing's glow followed frame by frame ([`super::rainbow`]): the
+//! tier the last phrase reached and its glow (0 off, up to the top's 1:
+//! [`crate::tiers::TierSpec::glow`]), when it last changed and how strong
+//! it showed then ([`Glow`]); read from the singing's moments
 //! ([`crate::core::singing::Singing::moments_since`]): each word scored
-//! hit (its sparks) and each phrase decided, with the levels the glow went
+//! hit (its sparks) and each phrase decided, with the tiers the glow went
 //! up with it (a step up each: a burst from the playhead). The stage has
 //! one; the window has another for its picture ([`PictureShine`]), whose
 //! bar under the word sung gets a rainbow edge and a smaller burst a step
@@ -13,20 +13,30 @@ use super::notes::Over;
 use super::particles::{Kind, Spray};
 use super::rainbow::{rim_of, Glow};
 use super::stage_gpu::Instance;
-use crate::core::shine::Shone;
+use crate::core::shine::{Shone, Tier};
 use crate::core::singing::{Cue, Cursor, Since, Singing};
 
-/// The highest level: Diva.
-pub const TOP: u32 = 4;
+/// The tier `singing` glows at (none with the game off): the one its last
+/// phrase reached.
+pub fn tier(singing: &Singing, game: bool) -> Option<Tier> {
+    singing.last_phrase().and_then(|p| p.tier).filter(|_| game)
+}
 
-/// The level `singing` glows at (none with the game off): the tier its
-/// last phrase reached (1 Good to [`TOP`] Diva), 0 for none.
-pub fn level(singing: &Singing, game: bool) -> u32 {
-    let tier = singing.last_phrase().and_then(|p| p.tier);
-    match tier {
-        Some(t) if game => t as u32 + 1,
-        _ => 0,
-    }
+/// The level `singing` glows at (none with the game off): the glow of the
+/// tier its last phrase reached (the top's 1), 0 for none.
+pub fn level(singing: &Singing, game: bool) -> f32 {
+    glow_of(tier(singing, game))
+}
+
+/// `tier`'s glow, 0 for none.
+fn glow_of(tier: Option<Tier>) -> f32 {
+    tier.map_or(0.0, |t| t.spec().glow)
+}
+
+/// How many tiers up from `was` `now` is (none down or the same).
+fn tiers_up(was: Option<Tier>, now: Option<Tier>) -> u32 {
+    let rank = |t: Option<Tier>| t.map_or(0, |t| t.index() as u32 + 1);
+    rank(now).saturating_sub(rank(was))
 }
 
 /// A step up's burst from `at` (the playhead), `size` its pieces' scale,
@@ -45,11 +55,13 @@ pub fn step_up(at: (f32, f32), size: f32, clock: f64, pps: f32, seed: u32) -> Sp
     }
 }
 
-/// A frame of the glow: the glow, the end of the word just scored hit (the
-/// last, once), the phrase just decided (the last, once), and the levels
-/// the glow went up with it (a step up each).
+/// A frame of the glow: the tier it is at and the glow, the end of the
+/// word just scored hit (the last, once), the phrase just decided (the
+/// last, once), and the tiers the glow went up with it (a step up each).
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Step {
+    /// The tier the glow is at (or going to).
+    pub tier: Option<Tier>,
     /// The glow.
     pub glow: Glow,
     /// When the word just scored hit ended, if one was.
@@ -80,43 +92,48 @@ impl Step {
     }
 }
 
-/// The glow followed frame by frame.
+/// The glow followed frame by frame: the tier it is at, and the glow.
 #[derive(Debug, Default)]
 pub struct Streak {
+    tier: Option<Tier>,
     glow: Glow,
 }
 
 impl Streak {
     /// The frame of `singing`'s glow (the game on, `game`) at `clock` (the
     /// singing's time), its moments new since the frame before `since`. A
-    /// new level eases in from how strong the glow showed (or, lost,
+    /// new tier's glow eases in from how strong the glow showed (or, lost,
     /// collapses); the moments taken back (a seek, the song begun again)
-    /// snap it to its level, and what came with them throws nothing.
+    /// snap it to its tier's, and what came with them throws nothing.
     pub fn step(&mut self, singing: &Singing, game: bool, since: &Since, clock: f64) -> Step {
-        let level = level(singing, game);
+        let tier = tier(singing, game);
+        let level = glow_of(tier);
         let t = clock as f32;
-        let was = self.glow.level;
+        let was = self.tier;
+        self.tier = tier;
         if since.sought {
             self.glow = Glow {
-                level: level as f32,
-                from: level as f32,
+                level,
+                from: level,
                 since: t - 10.0,
             };
             return Step {
+                tier,
                 glow: self.glow,
                 ..Step::default()
             };
         }
-        if level as f32 != self.glow.level {
+        if tier != was {
             let from = self.glow.at(t).0;
             self.glow = Glow {
-                level: level as f32,
+                level,
                 from,
                 since: t,
             };
         }
         if !game {
             return Step {
+                tier,
                 glow: self.glow,
                 ..Step::default()
             };
@@ -131,11 +148,12 @@ impl Streak {
             _ => None,
         });
         Step {
+            tier,
             glow: self.glow,
             word,
             phrase,
             ups: if phrase.is_some() {
-                level.saturating_sub(was as u32)
+                tiers_up(was, tier)
             } else {
                 0
             },
@@ -204,7 +222,7 @@ mod tests {
                 line: 0,
                 end,
                 value: 0.8,
-                diva: 0.9,
+                top: 0.9,
                 tier,
             }),
         }
@@ -220,7 +238,7 @@ mod tests {
             s.step(&singing, true, &since(&[], false), 1.0).glow.level,
             0.0
         );
-        assert_eq!(level(&singing, false), 0);
+        assert_eq!(level(&singing, false), 0.0);
         let snapped = s.step(&singing, true, &since(&[], true), 2.0).glow;
         assert_eq!((snapped.level, snapped.from), (0.0, 0.0));
         assert!(!snapped.shows(2.0));
@@ -232,12 +250,25 @@ mod tests {
     fn a_step_up_for_each_level_with_the_phrase_only() {
         let singing = Singing::default();
         let mut s = Streak::default();
-        let m = [phrase(1.0, Some(crate::core::shine::Tier::Great))];
+        let m = [phrase(1.0, Some(Tier::named("Great")))];
         // Its level as the singing has it (none here): no step up.
         let step = s.step(&singing, true, &since(&m, false), 1.1);
         assert_eq!(step.phrase.map(|p| p.end), Some(1.0));
         assert_eq!(step.ups, 0);
         let sought = s.step(&singing, true, &since(&m, true), 1.2);
         assert_eq!((sought.phrase, sought.ups), (None, 0));
+    }
+
+    /// A step up for each tier the glow goes up, none going down or
+    /// staying.
+    #[test]
+    fn a_step_up_for_each_tier_passed() {
+        let t = |i: usize| Some(Tier::ALL[i]);
+        assert_eq!(tiers_up(None, t(0)), 1);
+        assert_eq!(tiers_up(None, t(2)), 3);
+        assert_eq!(tiers_up(t(0), t(2)), 2);
+        assert_eq!(tiers_up(t(1), t(1)), 0);
+        assert_eq!(tiers_up(t(2), t(0)), 0);
+        assert_eq!(tiers_up(t(0), None), 0);
     }
 }

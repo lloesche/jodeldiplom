@@ -4,29 +4,60 @@
 //! the time left round the countdown (draining as the song goes, in the
 //! rainbow while the singing shines), the marks of the phrases along the
 //! progress bar (each popping as its tier is decided), and the tiers'
-//! light, drawn where it blooms ([`super::bloom`]): Great's glow round the
-//! lane, Amazing's flames blazing off its edges.
+//! light, drawn where it blooms ([`super::bloom`]): the glow round the
+//! lane and the flames blazing off its edges, as strong as the tiers' rows
+//! hold them.
 //!
 //! The processor gives each a few numbers (where, its fill and when it
 //! changed, the tier's shine); everything that moves moves by the time in
 //! the shader. These functions are the shader's reference ([`wgsl`]), held
-//! to it on the GPU (`super::shader_check`).
+//! to it on the GPU (`super::shader_check`). The meter's marks and fills
+//! come from the tier table ([`crate::tiers::TIERS`]), the shader's
+//! written from the same arrays ([`MARKS`], [`FILLS`]).
 
-use super::rainbow::{hue, shine_at, Glow};
+use super::rainbow::{hue, shine_at, Glow, WHOLE};
 use super::sparks::noise;
-use crate::core::shine::{Tier, DIVA};
+use crate::core::shine::Tier;
+use crate::tiers::{wgsl_array, Paint, TIERS};
 
-/// Where along the meter each tier's mark is (Good, Great, Amazing,
-/// Diva): evenly, whatever the shine each takes.
-pub const MARKS: [f32; 4] = [0.4, 0.6, 0.8, 1.0];
+/// Where along the meter each tier's mark is, Good first: evenly,
+/// whatever the shine each takes, the top's at its end and the stretch
+/// below the first two steps long.
+pub const MARKS: [f32; Tier::COUNT] = {
+    let mut marks = [0.0; Tier::COUNT];
+    let mut i = 0;
+    while i < Tier::COUNT {
+        marks[i] = (i + 2) as f32 / (Tier::COUNT + 1) as f32;
+        i += 1;
+    }
+    marks
+};
 /// How far below its mark the fill takes on a tier's colour: all of it
 /// at the mark.
 const EDGE: f32 = 0.02;
+/// The fill below the first mark: cool.
+const COOL: [f32; 3] = [0.35, 0.6, 1.0];
 
-/// Each tier's bar as a share of Diva's ([`Tier::bar`]), Good first.
-fn bars() -> [f32; 4] {
-    Tier::ALL.map(|t| (t.bar() / DIVA) as f32)
+/// Each tier's bar as a share of the top's ([`Tier::bar`]), Good first.
+fn bars() -> [f32; Tier::COUNT] {
+    Tier::ALL.map(|t| (t.bar() / Tier::TOP.bar()) as f32)
 }
+
+/// Each tier's fill ([`crate::tiers::TierSpec::fill`]) as the shader
+/// takes it, Good first: its colour, and last 1 for the rainbow (its
+/// colour then unused), else 0.
+pub const FILLS: [[f32; 4]; Tier::COUNT] = {
+    let mut fills = [[0.0; 4]; Tier::COUNT];
+    let mut i = 0;
+    while i < Tier::COUNT {
+        fills[i] = match TIERS[i].fill {
+            Paint::Rgb([r, g, b]) => [r, g, b, 0.0],
+            Paint::Rainbow => [0.0, 0.0, 0.0, 1.0],
+        };
+        i += 1;
+    }
+    fills
+};
 
 fn clamp01(x: f32) -> f32 {
     x.clamp(0.0, 1.0)
@@ -41,14 +72,14 @@ fn mix3(a: [f32; 3], b: [f32; 3], t: f32) -> [f32; 3] {
     [0, 1, 2].map(|i| a[i] + (b[i] - a[i]) * t)
 }
 
-/// Where along the meter a shine of `of_diva` (its share of its Diva bar)
-/// shows: through the tiers' marks ([`MARKS`]) at their bars (a share of
-/// Diva's, [`bars`]), linear between, full at Diva.
-pub fn position(of_diva: f32) -> f32 {
+/// Where along the meter a shine of `of_top` (its share of its bar for
+/// the top tier) shows: through the tiers' marks ([`MARKS`]) at their bars
+/// (a share of the top's, [`bars`]), linear between, full at the top.
+pub fn position(of_top: f32) -> f32 {
     let mut from = (0.0, 0.0);
     for (b, m) in bars().into_iter().zip(MARKS) {
-        if of_diva <= b {
-            return from.1 + (m - from.1) * clamp01((of_diva - from.0) / (b - from.0));
+        if of_top <= b {
+            return from.1 + (m - from.1) * clamp01((of_top - from.0) / (b - from.0));
         }
         from = (b, m);
     }
@@ -64,20 +95,15 @@ pub fn meter_fill(from: f32, to: f32, since: f32, time: f32) -> f32 {
 
 /// The colour of the meter's fill at `u` along it (0 to 1), the fill at
 /// `level`, at `time`: all of it in the tier the level reaches (cool below
-/// Good, the rainbow running along it at Good, gold at Great, hot pink at
-/// Amazing, white gold at Diva: each from [`EDGE`] below its mark),
-/// deeper at its start.
+/// the first, then each tier's fill, its colour or the rainbow running
+/// along it, from [`EDGE`] below its mark), deeper at its start.
 pub fn fill_color(level: f32, u: f32, time: f32) -> [f32; 3] {
-    let cool = [0.35, 0.6, 1.0];
     let rainbow = hue(u * 1.5 - time * 0.4);
-    let gold = [1.0, 0.72, 0.16];
-    let hot = [1.0, 0.3, 0.58];
-    let white = [1.0, 0.95, 0.85];
-    let edge = |i: usize| smoothstep(MARKS[i] - EDGE, MARKS[i], level);
-    let c = mix3(cool, rainbow, edge(0));
-    let c = mix3(c, gold, edge(1));
-    let c = mix3(c, hot, edge(2));
-    let c = mix3(c, white, edge(3));
+    let mut c = COOL;
+    for (m, [r, g, b, bow]) in MARKS.into_iter().zip(FILLS) {
+        let fill = if bow > 0.5 { rainbow } else { [r, g, b] };
+        c = mix3(c, fill, smoothstep(m - EDGE, m, level));
+    }
     let deep = 0.7 + 0.3 * clamp01(u / level.max(0.05));
     c.map(|v| v * deep)
 }
@@ -136,7 +162,7 @@ pub fn ring_at(
     let (k, _) = shine_at(shine, time);
     let warm = mix3([1.0, 0.82, 0.3], [1.0, 0.42, 0.38], u);
     let bow = hue(u - time * 0.25);
-    let arc = mix3(warm, bow, clamp01(k));
+    let arc = mix3(warm, bow, clamp01(k / WHOLE));
     let track = [1.0, 1.0, 1.0];
     let rgb = mix3(track, arc, on);
     let a = band * (0.14 + 0.81 * on);
@@ -179,7 +205,7 @@ pub fn label_pop(age: f32, life: f32) -> (f32, f32) {
 /// How long a tier's name fades out, in seconds.
 const LABEL_FADE: f32 = 0.4;
 
-/// How bright Great's glow is `d` pixels outside the lane (negative
+/// How bright the glow round the lane is `d` pixels outside it (negative
 /// inside), `wide` its reach, at `time`, `k` its strength: soft, breathing.
 pub fn glow_at(d: f32, wide: f32, time: f32, k: f32) -> f32 {
     let t = d.max(0.0) / wide.max(1.0);
@@ -202,7 +228,7 @@ pub(super) fn vnoise(x: f32, y: f32) -> f32 {
     top + (bottom - top) * sy
 }
 
-/// Amazing's flames `d` pixels off the lane's edge (outwards; negative:
+/// The flames `d` pixels off the lane's edge (outwards; negative:
 /// into the lane) at `x` along it, `high` their height, at `time`, `k`
 /// their strength: their light (bright, for the bloom), licking up and
 /// flickering, white at their root to red at their tips.
@@ -228,11 +254,25 @@ pub fn blaze(x: f32, d: f32, high: f32, time: f32, k: f32) -> [f32; 3] {
 
 /// The functions above in WGSL, and the stage's shapes drawn with them:
 /// for the stage's shader (which gives them `hue`, `shine_at`, `glow`,
-/// `round_box` and `over_plus`).
+/// `round_box`, `over_plus` and `TIERS`). The tiers' marks and fills are
+/// written in from [`MARKS`] and [`FILLS`].
 pub fn wgsl() -> String {
+    let marks = wgsl_array(MARKS);
+    let fills: Vec<String> = FILLS
+        .iter()
+        .map(|[r, g, b, a]| format!("vec4<f32>({r:?}, {g:?}, {b:?}, {a:?})"))
+        .collect();
     format!(
-        "const MARKS: vec4<f32> = vec4<f32>({:?}, {:?}, {:?}, {:?});\nconst EDGE: f32 = {EDGE:?};\nconst LABEL_FADE: f32 = {LABEL_FADE:?};\n{SHADER}",
-        MARKS[0], MARKS[1], MARKS[2], MARKS[3]
+        "const MARKS: array<f32, TIERS> = {marks};
+const FILLS: array<vec4<f32>, TIERS> = array<vec4<f32>, TIERS>({});
+const COOL: vec3<f32> = vec3<f32>({:?}, {:?}, {:?});
+const EDGE: f32 = {EDGE:?};
+const LABEL_FADE: f32 = {LABEL_FADE:?};
+{SHADER}",
+        fills.join(", "),
+        COOL[0],
+        COOL[1],
+        COOL[2]
     )
 }
 
@@ -242,15 +282,17 @@ fn meter_fill(a: f32, b: f32, since: f32, time: f32) -> f32 {
     return b + (a - b) * exp(-5.0 * t) * cos(11.0 * t);
 }
 
-fn tier_edge(i: i32, level: f32) -> f32 {
-    return smoothstep(MARKS[i] - EDGE, MARKS[i], level);
-}
-
 fn fill_color(level: f32, u: f32, time: f32) -> vec3<f32> {
-    var c = mix(vec3<f32>(0.35, 0.6, 1.0), hue(u * 1.5 - time * 0.4), tier_edge(0, level));
-    c = mix(c, vec3<f32>(1.0, 0.72, 0.16), tier_edge(1, level));
-    c = mix(c, vec3<f32>(1.0, 0.3, 0.58), tier_edge(2, level));
-    c = mix(c, vec3<f32>(1.0, 0.95, 0.85), tier_edge(3, level));
+    let rainbow = hue(u * 1.5 - time * 0.4);
+    var c = COOL;
+    for (var i = 0u; i < TIERS; i = i + 1u) {
+        let f = FILLS[i];
+        var fill = f.rgb;
+        if f.w > 0.5 {
+            fill = rainbow;
+        }
+        c = mix(c, fill, smoothstep(MARKS[i] - EDGE, MARKS[i], level));
+    }
     return c * (0.7 + 0.3 * clamp(u / max(level, 0.05), 0.0, 1.0));
 }
 
@@ -270,7 +312,7 @@ fn meter_at(u: f32, v: f32, fill: f32, time: f32) -> vec4<f32> {
     }
     let front = exp(-pow((u - fill) * 60.0, 2.0)) * clamp(fill * 8.0, 0.0, 1.0);
     rgb = mix(rgb, vec3<f32>(1.0), front * 0.8);
-    for (var i = 0; i < 4; i = i + 1) {
+    for (var i = 0u; i < TIERS; i = i + 1u) {
         let m = MARKS[i];
         let line = exp(-pow((u - m) * 160.0, 2.0)) * (1.0 - abs(v) * 0.3);
         var passed = 0.35;
@@ -293,7 +335,7 @@ fn ring_at(p: vec2<f32>, c: vec2<f32>, size: vec2<f32>, left: f32, s: vec3<f32>,
     let on = 1.0 - smoothstep(left - 0.003, left + 0.003, u);
     let k = shine_at(s, time).x;
     let warm = mix(vec3<f32>(1.0, 0.82, 0.3), vec3<f32>(1.0, 0.42, 0.38), u);
-    let arc = mix(warm, hue(u - time * 0.25), clamp(k, 0.0, 1.0));
+    let arc = mix(warm, hue(u - time * 0.25), clamp(k / WHOLE, 0.0, 1.0));
     var rgb = mix(vec3<f32>(1.0), arc, on);
     let a = band * (0.14 + 0.81 * on);
     let h = c + radius * vec2<f32>(sin(left * TAU), -cos(left * TAU));
@@ -369,9 +411,9 @@ fn blaze(x: f32, d: f32, high: f32, time: f32, k: f32) -> vec3<f32> {
 // `params.yzw` its fill from, to and since), the ring (`shape.xy` its
 // middle, `shape.zw` its radius and thickness, `params.y` the share left,
 // `strain.xyz` the shine), a phrase's mark (a disc at `shape.xy`,
-// `shape.z` across, in `color`, `params.y` when its tier came), Great's
-// glow (round a lane `shape` in `color`, `params.y` its reach, `params.z`
-// its strength) and Amazing's flames (along `shape.x` to `shape.z` at
+// `shape.z` across, in `color`, `params.y` when its tier came), the
+// glow round a lane (`shape`, in `color`, `params.y` its reach, `params.z`
+// its strength) and the flames (along `shape.x` to `shape.z` at
 // `shape.y`, outward `shape.w` (1 down, -1 up), `params.y` high,
 // `params.z` strong).
 fn glory(o: Out, p: vec2<f32>, k: u32) -> vec4<f32> {

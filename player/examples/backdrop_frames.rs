@@ -455,8 +455,8 @@ fn main() {
                         line: 0,
                         end: now,
                         value: 1.0,
-                        diva: 0.9,
-                        tier: Some(Tier::Diva),
+                        top: 0.9,
+                        tier: Some(Tier::TOP),
                     },
                 );
             }
@@ -466,7 +466,7 @@ fn main() {
                 art: Some(arts[showing].clone()),
                 layers,
                 levels: (scene.music)(now),
-                tier: jodeldiplom::gui::streak::level(&singing, true),
+                glow: jodeldiplom::gui::streak::level(&singing, true),
                 section: scene.section.is_some_and(|s| (now - s).abs() < 0.5 / FPS),
             };
             frame = Some(visualiser.step(&cue, (w as u32, h as u32), (1.0 / FPS) as f32));

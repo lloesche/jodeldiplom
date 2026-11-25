@@ -16,9 +16,9 @@
 //! light across the plate and lights the blur round the card; the drums
 //! light nothing. A cover without a clear subject has its nearest parts
 //! lit so. The big moments are kept for a section starting (the whole
-//! lifts, rays from behind the subject) and for the singer's shine: Great
-//! lights the subject, Amazing more with faint rays, Diva brightest, the
-//! rays golden.
+//! lifts, rays from behind the subject) and for the singer's glow: each
+//! tier's row lights the subject and the rays as much as it says, the top
+//! brightest, the rays golden.
 //!
 //! [`Visualiser`] is the processor's side, frame by frame: the ground (the
 //! blurred cover, [`super::karaoke::ground`]: what shows while the layers
@@ -142,8 +142,9 @@ pub struct Cue {
     pub layers: Option<Layers>,
     /// The stems' levels heard now.
     pub levels: Levels,
-    /// The singer's shine (0 none, 1 Good to 4 Diva).
-    pub tier: u32,
+    /// The singer's glow (0 none, up to the top tier's 1:
+    /// [`crate::tiers::TierSpec::glow`]).
+    pub glow: f32,
     /// A section began since the last frame.
     pub section: bool,
 }
@@ -229,7 +230,7 @@ impl Visualiser {
             art: app.art().cloned(),
             layers: app.cover_layers(),
             levels,
-            tier: super::streak::level(&state.karaoke.singing, state.config.karaoke_game),
+            glow: super::streak::level(&state.karaoke.singing, state.config.karaoke_game),
             section,
         };
         Some(self.step(&cue, window, dt))
@@ -281,7 +282,7 @@ impl Visualiser {
             };
         }
         self.slots.retain(|s| s.wanted || s.shown > 0.0);
-        let felt = self.feel.step(cue.levels, cue.tier, cue.section, dt);
+        let felt = self.feel.step(cue.levels, cue.glow, cue.section, dt);
         self.clock += dt;
         // Each cover's share of the frame (eased); the ground has the rest.
         let shares: Vec<f32> = self

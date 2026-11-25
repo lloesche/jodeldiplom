@@ -17,8 +17,9 @@
 //!
 //! The score is the original's own: its everyday hearings (another rate,
 //! the delay off, octave errors, the pitch lost now and then) reach the
-//! [`Tier::Diva`] bar on every phrase, since each phrase's bars are set
-//! from the least they reach ([`Par`], [`Tier::of`]).
+//! top tier's bar ([`Tier::TOP`], Diva) on every phrase, since each
+//! phrase's bars are set from the least they reach ([`Par`],
+//! [`Tier::of`]).
 
 pub mod measure;
 pub mod reference;
@@ -26,6 +27,8 @@ mod text;
 
 pub use measure::{Measured, Yardstick};
 pub use reference::{Par, Phrase, Reference};
+
+pub use crate::tiers::Tier;
 
 /// How late the frames come against the song's notes, the frame clock's
 /// own (one frame): taken off the frames the shine measures, the
@@ -137,67 +140,29 @@ pub fn shine(p: &Measured, y: &Yardstick) -> Shine {
     out
 }
 
-/// How well a phrase shone, from Good up: each a share of what the
-/// original reaches ([`Tier::of`]).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum Tier {
-    /// 60 % of the original.
-    Good,
-    /// 75 %.
-    Great,
-    /// 87 %.
-    Amazing,
-    /// 90 %, the pitch's share at 90 % too.
-    Diva,
-}
-
+/// The tiers a phrase may reach ([`crate::tiers::TIERS`]), each bar a
+/// share of what the original reaches.
 impl Tier {
-    /// All, Good first.
-    pub const ALL: [Tier; 4] = [Tier::Good, Tier::Great, Tier::Amazing, Tier::Diva];
-
-    /// The shine it takes, where the original reaches 1.
-    pub fn bar(self) -> f64 {
-        match self {
-            Tier::Good => 0.60,
-            Tier::Great => 0.75,
-            Tier::Amazing => 0.87,
-            Tier::Diva => DIVA,
-        }
-    }
-
-    /// Its name, as shown.
-    pub fn name(self) -> &'static str {
-        match self {
-            Tier::Good => "Good",
-            Tier::Great => "Great",
-            Tier::Amazing => "Amazing",
-            Tier::Diva => "Diva",
-        }
-    }
-
     /// The tier `shine` reaches on a phrase whose original reaches `par`
-    /// (its everyday hearings' least): each bar times the original's
-    /// shine where it is under 1, Diva's pitch bar times its pitch's.
+    /// (its everyday hearings' least): the highest whose bars it clears,
+    /// each bar times the original's shine where it is under 1, a tier's
+    /// pitch bar (where it has one) times the original's pitch.
     pub fn of(shine: &Shine, par: Par) -> Option<Tier> {
         let scale = par.scale();
-        let pitch_ok = shine
-            .pitch
-            .is_none_or(|p| p >= DIVA_PITCH * par.pitch_scale());
-        Tier::ALL
-            .into_iter()
-            .rev()
-            .find(|&t| shine.value >= t.bar() * scale - 1e-9 && (t != Tier::Diva || pitch_ok))
+        let clears = |t: Tier| {
+            let pitch_ok = t
+                .spec()
+                .pitch_bar
+                .is_none_or(|bar| shine.pitch.is_none_or(|p| p >= bar * par.pitch_scale()));
+            shine.value >= t.bar() * scale - 1e-9 && pitch_ok
+        };
+        Tier::ALL.into_iter().rev().find(|&t| clears(t))
     }
 }
 
-/// Diva's bar: 90 % of the original.
-pub const DIVA: f64 = 0.90;
-/// Diva's bar for the pitch's share.
-pub const DIVA_PITCH: f64 = 0.90;
-
 /// A phrase as it shone, scored when it ended: its line, when it ended
-/// (seconds into the song), its shine (each against its own Diva bar, 1:
-/// Diva's) and the tier it reached.
+/// (seconds into the song), its shine (each against its own bar for the
+/// top tier, 1: the top's) and the tier it reached.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Shone {
     /// Its line (among the sung lines).
@@ -206,8 +171,9 @@ pub struct Shone {
     pub end: f64,
     /// Its shine.
     pub value: f32,
-    /// Diva's bar for it (its shine at which it is Diva, the pitch aside).
-    pub diva: f32,
+    /// The top tier's bar for it (its shine at which it is the top, the
+    /// pitch aside).
+    pub top: f32,
     /// The tier reached, if any.
     pub tier: Option<Tier>,
 }
@@ -219,14 +185,15 @@ impl Shone {
             line,
             end,
             value: shine.value as f32,
-            diva: (DIVA * par.scale()) as f32,
+            top: (Tier::TOP.bar() * par.scale()) as f32,
             tier: Tier::of(shine, par),
         }
     }
 
-    /// Its shine against its Diva bar (1: Diva's; the meter's fill).
-    pub fn of_diva(&self) -> f32 {
-        self.value / self.diva.max(1e-3)
+    /// Its shine against the top tier's bar (1: the top's; the meter's
+    /// fill).
+    pub fn of_top(&self) -> f32 {
+        self.value / self.top.max(1e-3)
     }
 }
 

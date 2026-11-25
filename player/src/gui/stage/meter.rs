@@ -1,16 +1,17 @@
 //! The shine on the stage ([`super::Stage::shine`]): the meter at the top
 //! (filling as the phrase is sung, its words hit, then springing to the
 //! shine the phrase reached, its tier's name popping under it), the
-//! tiers' looks over the lane (Good the rainbow streak itself, Great a
-//! glow round the lane, Amazing flames blazing off its edges, Diva angels
-//! descending and a jackpot of coins from the meter), and the song's
-//! progress along the bottom: its sung stretches, the part sung coloured
-//! phrase by phrase by the tier each reached, a mark a phrase popping as
-//! its tier is decided (a little jackpot on Diva), and the time left in a
-//! ring that drains as the song goes, in the rainbow while the singing
-//! shines; sinking away before the controls' bar fades in where it is (its
-//! seek bar and times stand for it then), so the two never show at once.
-//! The processor gives the GPU only where each is and when it changed
+//! tiers' looks over the lane (each row's glow round the lane and flames
+//! off its edges, held as the glow eases between tiers:
+//! [`crate::tiers::held`]; at the top angels descending and a jackpot of
+//! coins from the meter), and the song's progress along the bottom: its
+//! sung stretches, the part sung coloured phrase by phrase by the tier
+//! each reached, a mark a phrase (its tier's size) popping as its tier is
+//! decided (a little jackpot at the top), and the time left in a ring that
+//! drains as the song goes, in the rainbow while the singing shines;
+//! sinking away before the controls' bar fades in where it is (its seek
+//! bar and times stand for it then), so the two never show at once. The
+//! processor gives the GPU only where each is and when it changed
 //! ([`crate::gui::glory`], [`crate::gui::fanfare`]).
 
 use super::{rgba, Face, Lane, Stage, BREAK, GOLD, PROGRESS, WHITE};
@@ -22,24 +23,25 @@ use crate::gui::particles::Spray;
 use crate::gui::rainbow::Glow;
 use crate::gui::stage_gpu::{kind, Instance};
 use crate::gui::streak::Step;
+use crate::tiers::held;
 
 /// How long a tier's name shows under the meter, in seconds.
 const VERDICT: f32 = 1.8;
-/// How often a new flight of angels comes while the singing is Diva.
+/// How often a new flight of angels comes while the singing is at the
+/// top tier.
 const ANGELS_EVERY: f32 = 2.2;
 /// How far the progress sinks as the controls come up, a share of the
 /// height.
 const SINK: f32 = 0.03;
+/// A phrase with no tier's colour: a cool grey.
+const NONE: [f32; 3] = [0.55, 0.6, 0.7];
+/// How large the mark of a phrase with no tier is, in the bar's heights.
+const NONE_MARK: f32 = 1.8;
 
-/// A tier's colour (sRGB); none's a cool grey.
+/// A tier's colour (sRGB; [`crate::tiers::TierSpec::color`]); none's a
+/// cool grey.
 pub fn tier_color(tier: Option<Tier>) -> [f32; 3] {
-    match tier {
-        None => [0.55, 0.6, 0.7],
-        Some(Tier::Good) => [0.35, 0.92, 0.62],
-        Some(Tier::Great) => [1.0, 0.78, 0.22],
-        Some(Tier::Amazing) => [1.0, 0.35, 0.6],
-        Some(Tier::Diva) => [0.96, 0.93, 1.0],
-    }
+    tier.map_or(NONE, |t| t.spec().color)
 }
 
 /// The meter between frames: where its fill springs from and to, and
@@ -147,14 +149,14 @@ impl Stage {
         let clock = at.clock as f32;
         let p = at.lane.pill;
         let (k, _) = step.glow.at(clock);
-        let level = step.glow.level;
         if game && singing.reference().is_some() {
             self.meter_and_verdict(d, singing, at, step);
         }
-        // Great: a glow round the lane; Amazing: flames off its edges.
+        // The rows' glow round the lane and flames off its edges, as strong
+        // as the glow now holds them.
         let ((cx, cy), (hx, hy)) = at.lane_box;
-        let great = (k - 1.0).clamp(0.0, 1.0);
-        if great > 0.01 {
+        let glow = held(k, |t| t.lane_glow);
+        if glow > 0.01 {
             let reach = p * 1.6;
             d.lights.push(shape(
                 kind::GLOW,
@@ -166,11 +168,11 @@ impl Stage {
                 ],
                 [cx, cy, hx, hy],
                 rgba([1.0, 0.74, 0.3], 1.0),
-                [reach, 0.12 * great, 0.0],
+                [reach, 0.12 * glow, 0.0],
             ));
         }
-        let amazing = (k - 2.0).clamp(0.0, 1.0);
-        if amazing > 0.01 {
+        let flames = held(k, |t| t.flames);
+        if flames > 0.01 {
             let high = p * 1.5;
             for (edge, out) in [(cy - hy, -1.0), (cy + hy, 1.0)] {
                 let (y0, y1) = if out < 0.0 {
@@ -183,16 +185,18 @@ impl Stage {
                     [cx - hx, y0, cx + hx, y1],
                     [cx - hx, edge, cx + hx, out],
                     [1.0; 4],
-                    [high, amazing, 0.0],
+                    [high, flames, 0.0],
                 ));
             }
         }
-        // Diva: a flight of angels every while (sought back before the
-        // last, as if it came a while ago).
+        // At the top: a flight of angels every while (sought back before
+        // the last, as if it came a while ago). Stage 2 makes it an effect
+        // the top row lists.
         if clock < self.meter.angels {
             self.meter.angels = clock - ANGELS_EVERY;
         }
-        if level >= 4.0 && clock - self.meter.angels >= ANGELS_EVERY {
+        let top = step.tier == Some(Tier::TOP);
+        if top && clock - self.meter.angels >= ANGELS_EVERY {
             self.meter.angels = clock;
             let seed = (at.clock * 1000.0) as u32 ^ 0x5EED;
             d.light_sprays
@@ -202,7 +206,7 @@ impl Stage {
     }
 
     /// The meter, its fill, and the tier's name under it as a phrase is
-    /// decided (a jackpot from it on Diva).
+    /// decided (a jackpot from it at the top tier).
     fn meter_and_verdict(&mut self, d: &mut Drawn, singing: &Singing, at: &Where, step: &Step) {
         let (x, y, w, h) = at.area;
         let clock = at.clock as f32;
@@ -211,11 +215,12 @@ impl Stage {
         if let Some(p) = step.phrase {
             self.meter.shown = Some((p, clock));
             // Within the tier reached (a shine past a bar with the pitch short
-            // of Diva's shows short of it).
-            let next = p.tier.map_or(0, |t| t as usize + 1);
+            // of the next's shows short of it).
+            let next = p.tier.map_or(0, |t| t.index() + 1);
             let cap = MARKS.get(next).map_or(1.0, |m| m - 0.025);
-            self.meter.aim(position(p.of_diva()).min(cap), clock);
-            if p.tier == Some(Tier::Diva) {
+            self.meter.aim(position(p.of_top()).min(cap), clock);
+            // At the top, a jackpot (an effect the top row lists, in stage 2).
+            if p.tier == Some(Tier::TOP) {
                 let seed = (at.clock * 997.0) as u32;
                 d.light_sprays.push(fanfare::jackpot(
                     (mx + half.0, my),
@@ -376,7 +381,7 @@ impl Stage {
                 (((xb - xa) / 2.0).max(bh), bh * 1.15),
                 rgba(c, 0.95),
             ));
-            let r = bh * if p.tier == Some(Tier::Diva) { 2.4 } else { 1.8 };
+            let r = bh * p.tier.map_or(NONE_MARK, |t| t.spec().mark);
             let m = r * 6.0;
             d.out.push(shape(
                 kind::MARK,
@@ -386,9 +391,10 @@ impl Stage {
                 [*when as f32, 0.0, 0.0],
             ));
         }
-        // A little jackpot from a phrase's mark the moment it is Diva.
+        // A little jackpot from a phrase's mark the moment it is the top
+        // (an effect the top row lists, in stage 2).
         let fresh = fresh.filter(|_| at.gone < 0.5);
-        if let Some(p) = fresh.filter(|p| p.tier == Some(Tier::Diva)) {
+        if let Some(p) = fresh.filter(|p| p.tier == Some(Tier::TOP)) {
             d.light_sprays.push(fanfare::jackpot(
                 (bx(p.end), by),
                 bh * 3.0,

@@ -178,10 +178,10 @@ impl SongResult {
     }
 
     /// How many phrases reached each tier (as [`Tier::ALL`]: Good first).
-    pub fn tier_counts(&self) -> [u32; Tier::ALL.len()] {
-        let mut out = [0; Tier::ALL.len()];
+    pub fn tier_counts(&self) -> [u32; Tier::COUNT] {
+        let mut out = [0; Tier::COUNT];
         for t in self.phrases.iter().filter_map(|p| p.tier) {
-            out[t as usize] += 1;
+            out[t.index()] += 1;
         }
         out
     }

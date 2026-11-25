@@ -197,7 +197,7 @@ mod tests {
     /// A bank of every sound, sound `k` four samples of `k`.
     fn full(rate: u32) -> SoundBank {
         let mut b = SoundBank::new(rate);
-        for k in 0..Sound::COUNT {
+        for k in 0..Sound::count() {
             b.add(vec![k as f32; 4]);
         }
         b

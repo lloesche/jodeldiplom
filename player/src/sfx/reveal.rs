@@ -179,7 +179,7 @@ mod tests {
             line: 0,
             end: 1.0,
             value: 0.9,
-            diva: 0.9,
+            top: 0.9,
             tier,
         };
         SongResult {
@@ -197,7 +197,12 @@ mod tests {
     }
 
     fn shown() -> Shown {
-        let tiers = [Some(Tier::Diva), None, Some(Tier::Great), Some(Tier::Diva)];
+        let tiers = [
+            Some(Tier::TOP),
+            None,
+            Some(Tier::named("Great")),
+            Some(Tier::TOP),
+        ];
         Shown::new(result(&tiers), 1, 1_000)
     }
 
@@ -236,7 +241,7 @@ mod tests {
         }
         let has = |x: Sound| heard.iter().any(|(_, s)| *s == x);
         assert!(has(Sound::Medal(Medal::Gold)) && has(Sound::NewBest));
-        assert!(has(Sound::Gem(Some(Tier::Diva))) && has(Sound::Gem(None)));
+        assert!(has(Sound::Gem(Some(Tier::TOP))) && has(Sound::Gem(None)));
         assert!(heard.iter().any(|(_, s)| matches!(s, Sound::Tick(_))));
     }
 
@@ -343,7 +348,7 @@ mod tests {
     #[test]
     fn dense_gems_plink_fewer() {
         let mut tiers = vec![None; 200];
-        tiers[7] = Some(Tier::Diva);
+        tiers[7] = Some(Tier::TOP);
         let s = Shown::new(result(&tiers), 1, 0);
         let plinks: Vec<(f64, Sound)> = s
             .reveal
@@ -358,7 +363,7 @@ mod tests {
             .all(|w| w[1].0 - w[0].0 >= PLINK_EVERY - 1e-9));
         assert!(plinks
             .iter()
-            .any(|(_, s)| *s == Sound::Gem(Some(Tier::Diva))));
+            .any(|(_, s)| *s == Sound::Gem(Some(Tier::TOP))));
     }
 
     /// Skipped halfway: nothing it jumped over sounds, then or after; a

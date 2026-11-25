@@ -1,8 +1,9 @@
-//! A streak's shine on the GPU: while the singing keeps up (a [`Glow`]
-//! level above 0: the multiplier above ×1 for now, a shine meter's tier
-//! later), rainbow bands fan out from the playhead behind the pills, more
-//! of them, brighter and faster a level up, the whole lane glowing at the
-//! top ([`bands`]); a swirl turns around the singer's arrow ([`swirl`]); in
+//! A streak's shine on the GPU: while the singing shines (a [`Glow`]
+//! level above 0: the glow of the tier the last phrase reached, 0 to 1,
+//! [`crate::tiers::TierSpec::glow`]), rainbow bands fan out from the
+//! playhead behind the pills, as many as the tier's row has, brighter and
+//! faster the higher, lighting the whole lane as much as the row says
+//! ([`bands`]); a swirl turns around the singer's arrow ([`swirl`]); in
 //! the picture, a rainbow edge on the bar under the word sung ([`rim`]);
 //! the multiplier's number in rainbow. Each step up throws a burst from
 //! the playhead: stars, notes and rainbow bits that spin, arc down and fade
@@ -17,6 +18,8 @@
 use super::particles::{Look, Spray, Sprite};
 use super::sparks::{rand, TAU};
 use super::stage_gpu::{flags, kind, Instance};
+use crate::core::shine::Tier;
+use crate::tiers::{held, TIERS};
 
 /// How long a level takes to come in, in seconds.
 pub const RISE: f32 = 0.25;
@@ -24,11 +27,18 @@ pub const RISE: f32 = 0.25;
 pub const COLLAPSE: f32 = 0.5;
 /// How long a step up's burst lasts, at most, in seconds.
 pub const STEP_LIFE: f32 = 1.4;
+/// The least strength that shows.
+const SHOWS: f32 = 0.00025;
+/// How strong the shine is once the swirl, the rim, the text's tint and
+/// the time left's ring are whole in the rainbow (they come in as it
+/// grows to it): the first tier's glow.
+pub const WHOLE: f32 = TIERS[0].glow;
+/// How many bands fan out with no tier (as the shine collapses).
+const NO_BANDS: f32 = 6.0;
 
-/// A streak's shine as the shaders take it: its level (0: none, 1 the
-/// first, up to the top), how strong it showed when it changed (its level
-/// before, or part way there) and when that was (seconds, the singing's
-/// clock).
+/// A streak's shine as the shaders take it: its level (0: none, up to the
+/// top's 1), how strong it showed when it changed (its level before, or
+/// part way there) and when that was (seconds, the singing's clock).
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Glow {
     /// Its level.
@@ -48,7 +58,7 @@ impl Glow {
 
     /// Whether anything of it shows at `time`.
     pub fn shows(&self, time: f32) -> bool {
-        self.at(time).0 > 0.001
+        self.at(time).0 > SHOWS
     }
 }
 
@@ -96,10 +106,21 @@ pub fn shine_at(s: &Glow, time: f32) -> (f32, f32) {
     }
 }
 
-/// How many bands `s` fans out: a whole number (no seam where the angle
-/// turns), more a level up.
+/// How many bands `s` fans out: those of the tier whose glow is nearest
+/// its level (or how strong it showed as it changed, the more; the higher
+/// tier's halfway between), [`NO_BANDS`] nearer none. A whole number: no
+/// seam where the angle turns.
 fn count(s: &Glow) -> f32 {
-    6.0 + 4.0 * (s.level.max(s.from) + 0.5).floor()
+    let x = s.level.max(s.from);
+    let mut n = NO_BANDS;
+    let mut below = 0.0;
+    for t in &TIERS {
+        if x >= (below + t.glow) * 0.5 {
+            n = t.bands;
+        }
+        below = t.glow;
+    }
+    n
 }
 
 fn mix3(a: [f32; 3], b: [f32; 3], t: f32) -> [f32; 3] {
@@ -116,22 +137,22 @@ fn scale(c: [f32; 3], k: f32) -> [f32; 3] {
 /// glowing at the top; collapsing into the playhead, drained, when lost.
 pub fn bands(p: (f32, f32), origin: (f32, f32), size: (f32, f32), s: &Glow, time: f32) -> [f32; 3] {
     let (k, c) = shine_at(s, time);
-    if k <= 0.001 {
+    if k <= SHOWS {
         return [0.0; 3];
     }
     let (dx, dy) = (p.0 - origin.0, p.1 - origin.1);
     let (r, a) = ((dx * dx + dy * dy).sqrt(), dy.atan2(dx));
     let n = count(s);
-    let speed = 0.35 + 0.3 * k;
+    let speed = 0.35 + 1.2 * k;
     let w = 0.5 + 0.5 * (n * a - time * speed * TAU).cos();
     let ray = (w * w) * (w * w) * (w * w);
-    let reach = (size.0 * (0.1 + 0.15 * k) * (1.0 - c)).max(1.0);
+    let reach = (size.0 * (0.1 + 0.6 * k) * (1.0 - c)).max(1.0);
     let fall = (-r / reach).exp();
     let col = mix3(hue(a / TAU + time * 0.12 + r * 0.0015), [0.85; 3], c);
-    let lane = 0.16 * (k - 2.0).clamp(0.0, 1.0);
+    let lane = 0.16 * held(k, |t| t.lane_light);
     let glow = hue(p.0 * 0.0015 - time * 0.2);
     let fade = 1.0 - c * c;
-    let light = scale(col, ray * fall * (0.1 + 0.12 * k));
+    let light = scale(col, ray * fall * (0.1 + 0.48 * k));
     [0, 1, 2].map(|i| (light[i] + glow[i] * lane) * fade)
 }
 
@@ -139,7 +160,7 @@ pub fn bands(p: (f32, f32), origin: (f32, f32), size: (f32, f32), s: &Glow, time
 /// out, `s` at `time`: three arms turning, faster as it is higher.
 pub fn swirl(p: (f32, f32), centre: (f32, f32), radius: f32, s: &Glow, time: f32) -> [f32; 3] {
     let (k, c) = shine_at(s, time);
-    if k <= 0.001 {
+    if k <= SHOWS {
         return [0.0; 3];
     }
     let (dx, dy) = (p.0 - centre.0, p.1 - centre.1);
@@ -147,12 +168,12 @@ pub fn swirl(p: (f32, f32), centre: (f32, f32), radius: f32, s: &Glow, time: f32
     let radius = radius.max(1.0);
     let off = (r - radius * (1.0 - 0.5 * c)) / (radius * 0.3);
     let ring = (-off * off).exp();
-    let spin = 1.2 + 0.8 * k;
+    let spin = 1.2 + 3.2 * k;
     let w = 0.5 + 0.5 * (3.0 * a - time * spin * TAU + r / radius * 2.0).sin();
     let col = mix3(hue(a / TAU + time * 0.25), [0.85; 3], c);
     scale(
         col,
-        ring * w * w * w * (0.25 + 0.2 * k) * k.min(1.0) * (1.0 - c),
+        ring * w * w * w * (0.25 + 0.8 * k) * (k / WHOLE).min(1.0) * (1.0 - c),
     )
 }
 
@@ -160,13 +181,13 @@ pub fn swirl(p: (f32, f32), centre: (f32, f32), radius: f32, s: &Glow, time: f32
 /// (negative inside), `x` across, `s` at `time`: colours running along it.
 pub fn rim(d: f32, x: f32, half_y: f32, s: &Glow, time: f32) -> [f32; 3] {
     let (k, c) = shine_at(s, time);
-    if k <= 0.001 {
+    if k <= SHOWS {
         return [0.0; 3];
     }
     let w = (half_y * 0.9).max(1.5);
     let e = (-(d / w) * (d / w)).exp();
     let col = mix3(hue(x * 0.012 - time * 0.6), [0.85; 3], c);
-    scale(col, e * (0.45 + 0.2 * k) * k.min(1.0) * (1.0 - c))
+    scale(col, e * (0.45 + 0.8 * k) * (k / WHOLE).min(1.0) * (1.0 - c))
 }
 
 /// The rainbow edge's light at `p` round a bar at `c`, `half` its size
@@ -187,7 +208,7 @@ pub fn lane_mask(p: (f32, f32), c: (f32, f32), half: (f32, f32)) -> f32 {
 /// the rainbow running along it as strongly as `s` shows.
 pub fn text_tint(col: [f32; 3], x: f32, s: &Glow, time: f32) -> [f32; 3] {
     let k = shine_at(s, time).0;
-    mix3(col, hue(x * 0.01 - time * 0.6), 0.85 * k.min(1.0))
+    mix3(col, hue(x * 0.01 - time * 0.6), 0.85 * (k / WHOLE).min(1.0))
 }
 
 /// The bands fanning out from `origin` over a lane at `centre`, `half`
@@ -296,16 +317,31 @@ pub fn step_up(s: &Spray, q: u32, age: f32) -> Option<Sprite> {
 
 /// [`hue`], [`shine_at`], [`bands`], [`swirl`], [`rim`], [`rim_at`],
 /// [`lane_mask`] and [`text_tint`] in WGSL (and `TAU`, which the stage's
-/// shader has not otherwise): for the stage's shader, which gives them
-/// `round_box`.
+/// shader has not otherwise), with [`held`] and the rows' values they
+/// read (and `TIERS`, how many there are, for the rest of the shader):
+/// for the stage's shader, which gives them `round_box`.
 pub fn stage_wgsl() -> String {
+    let row = |value: fn(&crate::tiers::TierSpec) -> f32| {
+        crate::tiers::wgsl_array(TIERS.iter().map(value))
+    };
     format!(
         "
 const TAU: f32 = {TAU:?};
 const RISE: f32 = {RISE:?};
 const COLLAPSE: f32 = {COLLAPSE:?};
+const SHOWS: f32 = {SHOWS:?};
+const WHOLE: f32 = {WHOLE:?};
+const NO_BANDS: f32 = {NO_BANDS:?};
+const TIERS: u32 = {}u;
+const GLOWS: array<f32, TIERS> = {};
+const BANDS: array<f32, TIERS> = {};
+const LANE_LIGHTS: array<f32, TIERS> = {};
 const RAINBOW: u32 = {}u;
 {HUE}{SHINE}",
+        Tier::COUNT,
+        row(|t| t.glow),
+        row(|t| t.bands),
+        row(|t| t.lane_light),
         flags::RAINBOW
     )
 }
@@ -346,6 +382,33 @@ fn shine_at(s: vec3<f32>, time: f32) -> vec2<f32> {
     return vec2<f32>(s.y + (s.x - s.y) * smoothstep(0.0, 1.0, t / RISE), 0.0);
 }
 
+// A held look at glow `k`: the straight line through none at 0 and each
+// row's value at its glow, the top's from there on.
+fn held(k: f32, values: array<f32, TIERS>) -> f32 {
+    var a = vec2<f32>(0.0, 0.0);
+    for (var i = 0u; i < TIERS; i = i + 1u) {
+        let b = vec2<f32>(GLOWS[i], values[i]);
+        if k < b.x {
+            return a.y + (b.y - a.y) * ((k - a.x) / (b.x - a.x));
+        }
+        a = b;
+    }
+    return a.y;
+}
+
+// The bands of the tier whose glow is nearest `x` (the higher halfway).
+fn band_count(x: f32) -> f32 {
+    var n = NO_BANDS;
+    var below = 0.0;
+    for (var i = 0u; i < TIERS; i = i + 1u) {
+        if x >= (below + GLOWS[i]) * 0.5 {
+            n = BANDS[i];
+        }
+        below = GLOWS[i];
+    }
+    return n;
+}
+
 fn rim_at(p: vec2<f32>, c: vec2<f32>, half: vec2<f32>, s: vec3<f32>, time: f32) -> vec3<f32> {
     let d = round_box(p - c, half, min(half.x, half.y) * 0.3);
     return rim(d, p.x, half.y, s, time);
@@ -358,37 +421,37 @@ fn lane_mask(p: vec2<f32>, c: vec2<f32>, half: vec2<f32>) -> f32 {
 
 fn text_tint(col: vec3<f32>, x: f32, s: vec3<f32>, time: f32) -> vec3<f32> {
     let k = shine_at(s, time).x;
-    return mix(col, hue(x * 0.01 - time * 0.6), 0.85 * min(k, 1.0));
+    return mix(col, hue(x * 0.01 - time * 0.6), 0.85 * min(k / WHOLE, 1.0));
 }
 
 fn bands(p: vec2<f32>, origin: vec2<f32>, size: vec2<f32>, s: vec3<f32>, time: f32) -> vec3<f32> {
     let sc = shine_at(s, time);
     let k = sc.x;
     let c = sc.y;
-    if k <= 0.001 {
+    if k <= SHOWS {
         return vec3<f32>(0.0);
     }
     let d = p - origin;
     let r = length(d);
     let a = atan2(d.y, d.x);
-    let n = 6.0 + 4.0 * floor(max(s.x, s.y) + 0.5);
-    let speed = 0.35 + 0.3 * k;
+    let n = band_count(max(s.x, s.y));
+    let speed = 0.35 + 1.2 * k;
     let w = 0.5 + 0.5 * cos(n * a - time * speed * TAU);
     let ray = (w * w) * (w * w) * (w * w);
-    let reach = max(size.x * (0.1 + 0.15 * k) * (1.0 - c), 1.0);
+    let reach = max(size.x * (0.1 + 0.6 * k) * (1.0 - c), 1.0);
     let fall = exp(-r / reach);
     let col = mix(hue(a / TAU + time * 0.12 + r * 0.0015), vec3<f32>(0.85), c);
-    let lane = 0.16 * clamp(k - 2.0, 0.0, 1.0);
+    let lane = 0.16 * held(k, LANE_LIGHTS);
     let glow = hue(p.x * 0.0015 - time * 0.2);
     let fade = 1.0 - c * c;
-    return (col * ray * fall * (0.1 + 0.12 * k) + glow * lane) * fade;
+    return (col * ray * fall * (0.1 + 0.48 * k) + glow * lane) * fade;
 }
 
 fn swirl(p: vec2<f32>, centre: vec2<f32>, radius0: f32, s: vec3<f32>, time: f32) -> vec3<f32> {
     let sc = shine_at(s, time);
     let k = sc.x;
     let c = sc.y;
-    if k <= 0.001 {
+    if k <= SHOWS {
         return vec3<f32>(0.0);
     }
     let d = p - centre;
@@ -397,23 +460,23 @@ fn swirl(p: vec2<f32>, centre: vec2<f32>, radius0: f32, s: vec3<f32>, time: f32)
     let radius = max(radius0, 1.0);
     let off = (r - radius * (1.0 - 0.5 * c)) / (radius * 0.3);
     let ring = exp(-off * off);
-    let spin = 1.2 + 0.8 * k;
+    let spin = 1.2 + 3.2 * k;
     let w = 0.5 + 0.5 * sin(3.0 * a - time * spin * TAU + r / radius * 2.0);
     let col = mix(hue(a / TAU + time * 0.25), vec3<f32>(0.85), c);
-    return col * ring * w * w * w * (0.25 + 0.2 * k) * min(k, 1.0) * (1.0 - c);
+    return col * ring * w * w * w * (0.25 + 0.8 * k) * min(k / WHOLE, 1.0) * (1.0 - c);
 }
 
 fn rim(d: f32, x: f32, half_y: f32, s: vec3<f32>, time: f32) -> vec3<f32> {
     let sc = shine_at(s, time);
     let k = sc.x;
     let c = sc.y;
-    if k <= 0.001 {
+    if k <= SHOWS {
         return vec3<f32>(0.0);
     }
     let w = max(half_y * 0.9, 1.5);
     let e = exp(-(d / w) * (d / w));
     let col = mix(hue(x * 0.012 - time * 0.6), vec3<f32>(0.85), c);
-    return col * e * (0.45 + 0.2 * k) * min(k, 1.0) * (1.0 - c);
+    return col * e * (0.45 + 0.8 * k) * min(k / WHOLE, 1.0) * (1.0 - c);
 }
 ";
 
@@ -501,9 +564,9 @@ mod tests {
         }
     }
 
-    /// The first level a soft shimmer, the top the whole lane alight: more
-    /// light the higher, more bands round the playhead, reaching further,
-    /// turning faster; none at level 0.
+    /// The first tier's shine a soft shimmer, Amazing's the whole lane
+    /// alight: more light the higher, more bands round the playhead,
+    /// reaching further, turning faster; none at 0.
     #[test]
     fn the_bands_grow_with_the_level() {
         let origin = (300.0, 200.0);
@@ -529,19 +592,19 @@ mod tests {
             (sum, peaks)
         };
         assert_eq!(ring(0.0, 60.0).0, 0.0);
-        let (one, three) = (ring(1.0, 60.0), ring(3.0, 60.0));
+        let (one, three) = (ring(0.25, 60.0), ring(0.75, 60.0));
         assert!(three.0 > 2.0 * one.0, "{one:?} {three:?}");
         assert!(three.1 > one.1, "more bands: {one:?} {three:?}");
         // Further out at the top, relatively.
         let reach = |level: f32| ring(level, 300.0).0 / ring(level, 60.0).0;
-        assert!(reach(3.0) > reach(1.0));
+        assert!(reach(0.75) > reach(0.25));
         // The top lights the whole lane; the first not.
         let far = (origin.0 + 700.0, origin.1 + 50.0);
-        assert!(light(3.0, far, 1.0) > 0.1 && light(1.0, far, 1.0) < 0.02);
+        assert!(light(0.75, far, 1.0) > 0.1 && light(0.25, far, 1.0) < 0.02);
         // They turn: the light at a point changes, faster at the top.
         let p = (origin.0 + 60.0, origin.1);
         let change = |level: f32| (light(level, p, 1.0) - light(level, p, 1.03)).abs();
-        assert!(change(1.0) > 0.0 && change(3.0) > 0.0);
+        assert!(change(0.25) > 0.0 && change(0.75) > 0.0);
     }
 
     /// A new level comes in over [`RISE`]; lost, the shine collapses into
@@ -549,13 +612,13 @@ mod tests {
     /// and is gone.
     #[test]
     fn a_lost_streak_collapses_into_the_playhead() {
-        let rise = shine(2.0, 1.0);
-        assert_eq!(shine_at(&rise, 10.0).0, 1.0);
-        assert!((shine_at(&rise, 10.0 + RISE).0 - 2.0).abs() < 1e-6);
-        assert_eq!(shine_at(&rise, 99.0), (2.0, 0.0));
-        let lost = shine(0.0, 3.0);
+        let rise = shine(0.5, 0.25);
+        assert_eq!(shine_at(&rise, 10.0).0, 0.25);
+        assert!((shine_at(&rise, 10.0 + RISE).0 - 0.5).abs() < 1e-6);
+        assert_eq!(shine_at(&rise, 99.0), (0.5, 0.0));
+        let lost = shine(0.0, 0.75);
         let (k, c) = shine_at(&lost, 10.25);
-        assert!((c - 0.5).abs() < 1e-6 && (k - 1.5).abs() < 1e-6);
+        assert!((c - 0.5).abs() < 1e-6 && (k - 0.375).abs() < 1e-6);
         assert_eq!(shine_at(&lost, 10.0 + COLLAPSE), (0.0, 1.0));
         let origin = (300.0, 200.0);
         let at = |p: (f32, f32), t: f32| {
@@ -640,15 +703,16 @@ mod tests {
         );
     }
 
-    /// Down a level (3 to 2) it eases down over [`RISE`] and shines on at
-    /// 2: no collapse, its bands, swirl and rim all there.
+    /// Down a tier (Amazing's shine to Great's) it eases down over [`RISE`]
+    /// and shines on at Great's: no collapse, its bands, swirl and rim all
+    /// there.
     #[test]
     fn a_drop_of_a_level_still_shines() {
-        let drop = shine(2.0, 3.0);
-        assert_eq!(drop.at(10.0), (3.0, 0.0));
+        let drop = shine(0.5, 0.75);
+        assert_eq!(drop.at(10.0), (0.75, 0.0));
         let half = drop.at(10.0 + RISE / 2.0);
-        assert!(half.0 < 3.0 && half.0 > 2.0 && half.1 == 0.0, "{half:?}");
-        assert_eq!(drop.at(99.0), (2.0, 0.0));
+        assert!(half.0 < 0.75 && half.0 > 0.5 && half.1 == 0.0, "{half:?}");
+        assert_eq!(drop.at(99.0), (0.5, 0.0));
         let p = (360.0, 200.0);
         let sum = |c: [f32; 3]| c.iter().sum::<f32>();
         let lit = (0..40).map(|i| {

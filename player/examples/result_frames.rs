@@ -44,12 +44,12 @@ fn phrases(tiers: &str) -> Vec<Shone> {
             line,
             end: line as f64 * 4.0,
             value: 0.8,
-            diva: 0.9,
+            top: 0.9,
             tier: match c {
-                'D' => Some(Tier::Diva),
-                'A' => Some(Tier::Amazing),
-                'G' => Some(Tier::Great),
-                'g' => Some(Tier::Good),
+                'D' => Some(Tier::TOP),
+                'A' => Some(Tier::named("Amazing")),
+                'G' => Some(Tier::named("Great")),
+                'g' => Some(Tier::named("Good")),
                 _ => None,
             },
         })

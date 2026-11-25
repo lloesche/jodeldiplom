@@ -170,7 +170,7 @@ mod tests {
     fn full(rate: u32) -> SoundBank {
         MADE_FULL.fetch_add(1, Ordering::SeqCst);
         let mut b = SoundBank::new(rate);
-        for k in 0..crate::sfx::Sound::COUNT {
+        for k in 0..crate::sfx::Sound::count() {
             b.add(vec![k as f32 / 64.0, -(k as f32) / 64.0]);
         }
         b

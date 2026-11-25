@@ -170,10 +170,11 @@ fn tiers(heard: &[Option<Measured>], r: &Reference) -> Vec<(usize, Option<Tier>,
             continue;
         };
         let par = original.par;
-        let bar = shine::DIVA * par.scale();
-        let pitch = s.pitch.map_or(f64::INFINITY, |p| {
-            p / (shine::DIVA_PITCH * par.pitch_scale())
-        });
+        let bar = Tier::TOP.bar() * par.scale();
+        let pitch = match (s.pitch, Tier::TOP.spec().pitch_bar) {
+            (Some(p), Some(top)) => p / (top * par.pitch_scale()),
+            _ => f64::INFINITY,
+        };
         out.push((l, Tier::of(&s, par), s.value / bar, pitch));
     }
     out
@@ -212,7 +213,7 @@ fn songs(filter: Option<&str>) {
             for (l, tier, over, pitch) in tiers(&heard, &r) {
                 n += 1;
                 worst = (worst.0.min(over), worst.1.min(pitch));
-                if tier != Some(Tier::Diva) {
+                if tier != Some(Tier::TOP) {
                     fails.push(format!(
                         "{:?} at {} Hz {:+.0} ms: phrase {l} {tier:?} ({over:.2} {pitch:.2})",
                         how.seed,
@@ -242,7 +243,7 @@ fn songs(filter: Option<&str>) {
             for (l, tier, over, _) in tiers(&heard, &r) {
                 weak_all += 1;
                 weak_most = weak_most.max(over);
-                if tier == Some(Tier::Diva) {
+                if tier == Some(Tier::TOP) {
                     weak_divas += 1;
                     weak_fails.push(format!("sung weakly, {name}: phrase {l} Diva ({over:.2})"));
                 }
@@ -352,21 +353,19 @@ fn sung(
 
 /// The phrases of `shone` by tier: a line.
 fn spread(label: &str, shone: &BTreeMap<usize, Shone>, all: usize) -> f64 {
-    let mut by = [0usize; 5];
-    for p in shone.values() {
-        by[p.tier.map_or(0, |t| t as usize + 1)] += 1;
-    }
-    let mut v: Vec<f32> = shone.values().map(Shone::of_diva).collect();
+    let count = |tier: Option<Tier>| shone.values().filter(|p| p.tier == tier).count();
+    let tiers: Vec<String> = (Tier::ALL.iter().rev())
+        .map(|&t| format!("{} {}", t.name(), count(Some(t))))
+        .chain([format!("none {}", count(None))])
+        .collect();
+    let mut v: Vec<f32> = shone.values().map(Shone::of_top).collect();
     v.sort_by(f32::total_cmp);
     let median = v.get(v.len() / 2).copied().unwrap_or(0.0);
     println!(
-        "  {label:<34} {} of {all} phrases: Diva {} · Amazing {} · Great {} · Good {} · none {}; median {median:.2} of Diva's bar",
+        "  {label:<34} {} of {all} phrases: {}; median {median:.2} of {}'s bar",
         shone.len(),
-        by[4],
-        by[3],
-        by[2],
-        by[1],
-        by[0]
+        tiers.join(" · "),
+        Tier::TOP.name()
     );
     f64::from(median)
 }
@@ -432,7 +431,7 @@ fn take(folder: &Path, song: Option<PathBuf>, separate: bool, show: bool) {
     for ms in (0..=400).step_by(20) {
         let late = f64::from(ms) / 1000.0;
         let got = sung(&singing, &r, frames.iter().map(|&(_, t, c)| (t - late, c)));
-        let mut v: Vec<f32> = got.values().map(Shone::of_diva).collect();
+        let mut v: Vec<f32> = got.values().map(Shone::of_top).collect();
         v.sort_by(f32::total_cmp);
         let median = f64::from(v.get(v.len() / 2).copied().unwrap_or(0.0));
         if median > best.1 {
@@ -447,9 +446,10 @@ fn take(folder: &Path, song: Option<PathBuf>, separate: bool, show: bool) {
     if show {
         for (l, p) in &game {
             println!(
-                "    phrase {l:>3} at {:>6.1} s: {:.2} of Diva's bar, {:?}",
+                "    phrase {l:>3} at {:>6.1} s: {:.2} of {}'s bar, {:?}",
                 p.end,
-                p.of_diva(),
+                p.of_top(),
+                Tier::TOP.name(),
                 p.tier
             );
         }
