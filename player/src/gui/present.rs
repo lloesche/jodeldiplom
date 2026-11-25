@@ -13,7 +13,9 @@
 //! ([`super::raster::SEE_THROUGH`]); its stage and its bursts are drawn
 //! over it all.
 
-use jodel_gpu::Turned;
+mod offscreen;
+
+pub use offscreen::Offscreen;
 
 use super::backdrop::BackdropFrame;
 use super::canvas::{Canvas, Changes, LayerFrame, MOST_SLOTS};
@@ -168,14 +170,22 @@ pub(super) struct Painter {
     backdrop: super::backdrop::gpu::BackdropPass,
     soft: wgpu::Sampler,
     bound: u64,
+    /// The GPU's time after each step of a frame, where it is measured
+    /// ([`Offscreen::timed`]).
+    stamps: Option<super::stamps::Stamps>,
+    /// The window's pixels to a point (its scale).
+    density: f32,
 }
+
+/// A step of the window's pass: what it is called and what it draws.
+type Part = (&'static str, fn(&Painter, &mut wgpu::RenderPass<'_>));
 
 /// An adapter and a device opened on it.
 type Opened = (wgpu::Adapter, wgpu::Device, wgpu::Queue);
 
 /// A device on `adapter` (not a software renderer), with limits for a
-/// texture the size of any window.
-pub(super) fn open(adapter: wgpu::Adapter) -> Result<Opened, String> {
+/// texture the size of any window, and `features`.
+pub(super) fn open(adapter: wgpu::Adapter, features: wgpu::Features) -> Result<Opened, String> {
     let info = adapter.get_info();
     if info.device_type == wgpu::DeviceType::Cpu {
         return Err(format!("{}: a software renderer", info.name));
@@ -183,6 +193,7 @@ pub(super) fn open(adapter: wgpu::Adapter) -> Result<Opened, String> {
     let limits = wgpu::Limits::downlevel_defaults().using_resolution(adapter.limits());
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         label: Some("jodeldiplom window"),
+        required_features: features,
         required_limits: limits,
         ..Default::default()
     }))
@@ -329,16 +340,38 @@ impl Painter {
             backdrop,
             soft,
             bound: 0,
+            stamps: None,
+            density: 1.0,
+        }
+    }
+
+    /// Marks the end of step `name` where a frame's steps are timed.
+    fn mark(&mut self, name: &'static str) {
+        if let Some(stamps) = &mut self.stamps {
+            stamps.mark((&self.device, &self.queue), name);
         }
     }
 
     /// Karaoke mode's backdrop for the next frame (`None`: none, its
-    /// textures dropped), in a frame of `size`: drawn now.
+    /// textures dropped), in a frame of `size`: drawn now, at its share of
+    /// the window ([`backdrop_share`]).
     fn set_backdrop(&mut self, frame: Option<&BackdropFrame>, size: (u32, u32)) {
+        let share = frame.map_or(1.0, |f| {
+            backdrop_share(f.slots.iter().map(|s| {
+                let (w, h) = (size.0 as f32, size.1 as f32);
+                let card = (2.0 * s.look.card[2] * w, 2.0 * s.look.card[3] * h);
+                let layers = s.layers.layers.size();
+                let art = s.art.as_ref().map_or((0, 0), |a| a.image.dimensions());
+                (card, (layers.0.max(art.0), layers.1.max(art.1)))
+            }))
+        });
+        let drawn = |side: u32| ((side as f32 * share).round() as u32).max(1);
+        let size = (drawn(size.0), drawn(size.1));
         self.backdrop.set((&self.device, &self.queue), frame, size);
         if self.backdrop.generation() != self.bound {
             self.bind = None;
         }
+        self.mark("backdrop");
     }
 
     /// Karaoke mode's stage for the next frame (`None`: none), in a frame
@@ -348,22 +381,27 @@ impl Painter {
         self.stage.set(gpu, frame.map(StageFrame::feed), size);
         let (sprays, time) = frame.map_or((&[][..], 0.0), |f| (&f.sprays[..], f.clock));
         self.particles.set(gpu, sprays, time, size);
-        self.light.set(gpu, frame, size);
+        self.light.set(gpu, frame, (size, self.density));
+        self.mark("light");
+        self.light.blur((&self.device, &self.queue));
+        self.mark("bloom");
     }
 
-    /// The next frame, of `size` pixels: the pixels in `changes` sent over
-    /// (all of them where the size or the pixmap's changed), Karaoke mode's
-    /// `backdrop` drawn under it, `layer` and `stage` over it.
+    /// The next frame, of `size` pixels (`density` to a point): the pixels
+    /// in `changes` sent over (all of them where the size or the pixmap's
+    /// changed), Karaoke mode's `backdrop` drawn under it, `layer` and
+    /// `stage` over it.
     pub(super) fn prepare(
         &mut self,
         canvas: &Canvas,
         changes: &Changes,
-        size: (u32, u32),
+        (size, density): ((u32, u32), f32),
         layer: Option<LayerFrame>,
         stage: Option<&StageFrame>,
         backdrop: Option<&BackdropFrame>,
     ) {
         let size = (size.0.max(1), size.1.max(1));
+        self.density = density;
         self.upload(canvas, changes, size.0, size.1);
         self.set_layer(layer);
         self.set_backdrop(backdrop, size);
@@ -374,20 +412,32 @@ impl Painter {
     /// The frame prepared, into `pass` (its viewport the window's): the
     /// pixels over the backdrop, the stage and its bursts, the light and its bloom added over
     /// them (drawn and blurred as the frame was prepared), and the stage's
-    /// shapes over everything; false where there is none yet.
+    /// shapes over everything ([`Self::PARTS`]); false where there is none
+    /// yet.
     pub(super) fn draw(&self, pass: &mut wgpu::RenderPass<'_>) -> bool {
-        let Some(bind) = &self.bind else {
+        if self.bind.is_none() {
             return false;
-        };
-        pass.set_pipeline(&self.pipeline);
-        pass.set_bind_group(0, bind, &[]);
-        pass.draw(0..3, 0..1);
-        self.stage.draw(pass);
-        self.particles.draw(pass);
-        self.light.composite(pass);
-        self.stage.draw_top(pass);
+        }
+        for (_, part) in Self::PARTS {
+            part(self, pass);
+        }
         true
     }
+
+    /// The window's pass, step by step.
+    const PARTS: [Part; 5] = [
+        ("pixmap", |p, pass| {
+            if let Some(bind) = &p.bind {
+                pass.set_pipeline(&p.pipeline);
+                pass.set_bind_group(0, bind, &[]);
+                pass.draw(0..3, 0..1);
+            }
+        }),
+        ("stage", |p, pass| p.stage.draw(pass)),
+        ("bursts", |p, pass| p.particles.draw(pass)),
+        ("composite", |p, pass| p.light.composite(pass)),
+        ("top", |p, pass| p.stage.draw_top(pass)),
+    ];
 
     /// The device and the queue it draws with.
     pub(super) fn queue(&self) -> &wgpu::Queue {
@@ -602,9 +652,9 @@ impl Painter {
         }
     }
 
-    /// The texture onto `target` in a pass of its own, with whatever else
-    /// `then` adds to the commands; submitted. False where there is no
-    /// texture yet.
+    /// The texture onto `target` in a pass of its own (a pass a step where
+    /// the steps are timed), with whatever else `then` adds to the
+    /// commands; submitted. False where there is no texture yet.
     fn paint(
         &mut self,
         target: &wgpu::Texture,
@@ -614,34 +664,57 @@ impl Painter {
             return false;
         }
         let view = target.create_view(&wgpu::TextureViewDescriptor::default());
-        let mut encoder = self
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        let device = self.device.clone();
+        let encoder = || {
+            device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("jodeldiplom window"),
-            });
-        {
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("jodeldiplom window"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
-                    depth_slice: None,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
-                multiview_mask: None,
-            });
-            self.draw(&mut pass);
+            })
+        };
+        let mut commands = encoder();
+        if self.stamps.is_some() {
+            for (k, (name, part)) in Self::PARTS.into_iter().enumerate() {
+                part(self, &mut begin(&mut commands, &view, k == 0));
+                self.queue
+                    .submit([std::mem::replace(&mut commands, encoder()).finish()]);
+                self.mark(name);
+            }
+        } else {
+            self.draw(&mut begin(&mut commands, &view, true));
         }
-        then(&mut encoder);
-        self.queue.submit([encoder.finish()]);
+        then(&mut commands);
+        self.queue.submit([commands.finish()]);
         true
     }
+}
+
+/// A pass into `view`, cleared to black first (`clear`) or over what is
+/// there.
+fn begin<'e>(
+    encoder: &'e mut wgpu::CommandEncoder,
+    view: &wgpu::TextureView,
+    clear: bool,
+) -> wgpu::RenderPass<'e> {
+    let load = if clear {
+        wgpu::LoadOp::Clear(wgpu::Color::BLACK)
+    } else {
+        wgpu::LoadOp::Load
+    };
+    encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        label: Some("jodeldiplom window"),
+        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+            view,
+            depth_slice: None,
+            resolve_target: None,
+            ops: wgpu::Operations {
+                load,
+                store: wgpu::StoreOp::Store,
+            },
+        })],
+        depth_stencil_attachment: None,
+        timestamp_writes: None,
+        occlusion_query_set: None,
+        multiview_mask: None,
+    })
 }
 
 /// The tiles' texture array of `(width, height, slots)`, and its view.
@@ -685,171 +758,51 @@ fn srgb_to_linear(c: f32) -> f32 {
     }
 }
 
-/// The window's frames drawn into a texture off screen and read back:
-/// for the tests, the same uploads and pass as the window's.
-pub struct Offscreen {
-    painter: Turned<Painter>,
-    format: wgpu::TextureFormat,
-    /// What draws: the adapter's name and backend.
-    pub name: String,
+/// The least share of the window's width and height the backdrop is drawn
+/// at.
+const LEAST_SHARE: f32 = 0.5;
+/// The steps the share goes in: its texture is made again only when the
+/// card's size or the cover changes by one.
+const SHARE_STEP: f32 = 1.0 / 16.0;
+
+/// The share of the window's width and height Karaoke mode's backdrop is
+/// drawn at (the window's pass reads it smoothly over the whole window),
+/// its covers' cards (each its size in window pixels, and the texels of
+/// its pictures, the larger of the layers' and the cover's): as few pixels
+/// as still give each texel on a card one of its own, so a card enlarging
+/// its cover (a 1000-pixel one on a Retina screen) is drawn with every
+/// detail it has, a quarter to a half of the pixels; the rest of the
+/// backdrop is blur and soft light. The whole window where a card shows
+/// its pictures at their size or smaller.
+fn backdrop_share(cards: impl Iterator<Item = ((f32, f32), (u32, u32))>) -> f32 {
+    let needed = cards
+        .map(|((w, h), (tw, th))| (tw as f32 / w.max(1.0)).max(th as f32 / h.max(1.0)))
+        .fold(LEAST_SHARE, f32::max);
+    ((needed / SHARE_STEP).ceil() * SHARE_STEP).min(1.0)
 }
 
-impl Offscreen {
-    /// On the process's GPU ([`jodel_gpu::chosen`]), into frames that take
-    /// the bytes as they are (`srgb`: that encode them as sRGB, as some
-    /// windows do); an error where there is no GPU.
-    pub fn new(srgb: bool) -> Result<Offscreen, String> {
-        let _turn = jodel_gpu::setting_up();
-        let (adapter, device, queue) = open(jodel_gpu::chosen().adapter.clone()?)?;
-        let info = adapter.get_info();
-        let format = if srgb {
-            wgpu::TextureFormat::Bgra8UnormSrgb
-        } else {
-            TEXTURE_FORMAT
-        };
-        Ok(Offscreen {
-            painter: Turned::new(Painter::new(device, queue, format)),
-            format,
-            name: format!("{} ({:?})", info.name, info.backend),
-        })
-    }
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-    /// Karaoke mode's stage over the next frame, as the window's.
-    pub fn set_stage(
-        &mut self,
-        frame: Option<&super::stage_gpu::StageFrame>,
-        width: u32,
-        height: u32,
-    ) {
-        self.painter.set_stage(frame, (width.max(1), height.max(1)));
-    }
-
-    /// Karaoke mode's backdrop under the next frame, as the window's
-    /// (none: its textures dropped).
-    pub fn set_backdrop(&mut self, frame: Option<&BackdropFrame>, width: u32, height: u32) {
-        self.painter
-            .set_backdrop(frame, (width.max(1), height.max(1)));
-    }
-
-    /// How many covers the backdrop holds on the GPU.
-    pub fn backdrop_held(&self) -> usize {
-        self.painter.backdrop.held()
-    }
-
-    /// Draws a frame of `pixels` (`width` × `height` pixmap words row by
-    /// row, premultiplied over the backdrop: [`super::raster::SEE_THROUGH`])
-    /// with the backdrop and the stage set, and reads it back.
-    pub fn show_pixels(
-        &mut self,
-        pixels: &[u32],
-        width: u32,
-        height: u32,
-    ) -> Result<Vec<u32>, String> {
-        if self
-            .painter
-            .kept
-            .as_ref()
-            .is_none_or(|k| k.window != (width, height))
-        {
-            self.painter.kept = Some(self.painter.texture(width, height));
-            self.painter.bind = None;
-        }
-        let (w, h) = (width as usize, height as usize);
-        self.painter.write(pixels, w, (0, 0, w, h));
-        self.painter.set_layer(None);
-        self.read_back(width, height)
-    }
-
-    /// Sends over `changes` and `layer` as the window does, draws a frame
-    /// of `width` × `height` and reads it back, as `0x00RRGGBB` words row
-    /// by row.
-    pub fn show(
-        &mut self,
-        canvas: &Canvas,
-        changes: &Changes,
-        width: u32,
-        height: u32,
-        layer: Option<LayerFrame>,
-    ) -> Result<Vec<u32>, String> {
-        self.painter.upload(canvas, changes, width, height);
-        self.painter.set_layer(layer);
-        self.read_back(width, height)
-    }
-
-    /// The frame drawn from what was sent over, read back.
-    fn read_back(&mut self, width: u32, height: u32) -> Result<Vec<u32>, String> {
-        let device = self.painter.device.clone();
-        let frame = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("jodeldiplom offscreen"),
-            size: wgpu::Extent3d {
-                width,
-                height,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: self.format,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
-            view_formats: &[],
-        });
-        // Rows padded to the copy's alignment.
-        let row = (width * 4).div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT)
-            * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
-        let buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("jodeldiplom offscreen"),
-            size: u64::from(row) * u64::from(height),
-            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-            mapped_at_creation: false,
-        });
-        let painted = self.painter.paint(&frame, |encoder| {
-            encoder.copy_texture_to_buffer(
-                wgpu::TexelCopyTextureInfo {
-                    texture: &frame,
-                    mip_level: 0,
-                    origin: wgpu::Origin3d::ZERO,
-                    aspect: wgpu::TextureAspect::All,
-                },
-                wgpu::TexelCopyBufferInfo {
-                    buffer: &buffer,
-                    layout: wgpu::TexelCopyBufferLayout {
-                        offset: 0,
-                        bytes_per_row: Some(row),
-                        rows_per_image: Some(height),
-                    },
-                },
-                wgpu::Extent3d {
-                    width,
-                    height,
-                    depth_or_array_layers: 1,
-                },
-            );
-        });
-        if !painted {
-            return Err("nothing to draw".into());
-        }
-        let slice = buffer.slice(..);
-        let (tx, rx) = std::sync::mpsc::channel();
-        slice.map_async(wgpu::MapMode::Read, move |r| {
-            let _ = tx.send(r);
-        });
-        device
-            .poll(wgpu::PollType::wait_indefinitely())
-            .map_err(|e| e.to_string())?;
-        rx.recv()
-            .map_err(|e| e.to_string())?
-            .map_err(|e| e.to_string())?;
-        let mapped = slice.get_mapped_range().map_err(|e| e.to_string())?;
-        let mut words = Vec::with_capacity(width as usize * height as usize);
-        for line in mapped.chunks_exact(row as usize) {
-            words.extend(
-                line[..width as usize * 4]
-                    .as_chunks::<4>()
-                    .0
-                    .iter()
-                    .map(|b| u32::from_le_bytes([b[0], b[1], b[2], 0])),
-            );
-        }
-        Ok(words)
+    #[test]
+    fn a_card_enlarging_its_cover_is_drawn_at_the_cover_s_texels() {
+        // A 1024 cover on a 16-inch MacBook Pro's card (1650 pixels).
+        let card = (1650.0, 1650.0);
+        let share = backdrop_share([(card, (1024, 1024))].into_iter());
+        assert_eq!(share, 0.625);
+        assert!(card.0 * share >= 1024.0);
+        // Its 3000-pixel picture: every pixel.
+        assert_eq!(backdrop_share([(card, (3000, 3000))].into_iter()), 1.0);
+        // A 5K screen's card, a small cover: half, no less.
+        assert_eq!(
+            backdrop_share([((2400.0, 2400.0), (600, 600))].into_iter()),
+            0.5
+        );
+        // Two covers crossing: the one with more texels.
+        let two = [(card, (1024, 1024)), (card, (1400, 1400))];
+        assert_eq!(backdrop_share(two.into_iter()), 0.875);
+        // No cover: the ground, blurred.
+        assert_eq!(backdrop_share(std::iter::empty()), LEAST_SHARE);
     }
 }

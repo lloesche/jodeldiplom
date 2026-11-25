@@ -78,7 +78,7 @@ impl shader::Primitive for Frame {
         pipeline.painter.prepare(
             &shared.canvas,
             &changes,
-            (size.width, size.height),
+            ((size.width, size.height), viewport.scale_factor()),
             layer,
             shared.stage.as_ref(),
             shared.backdrop.as_ref(),

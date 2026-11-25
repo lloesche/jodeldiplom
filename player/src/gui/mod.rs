@@ -38,6 +38,7 @@ pub mod snake;
 pub mod sparks;
 pub mod stage;
 pub mod stage_gpu;
+mod stamps;
 pub mod streak;
 pub(crate) mod style;
 mod wake;

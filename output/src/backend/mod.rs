@@ -5,6 +5,9 @@
 //! elsewhere the system's volume keys reach an exclusive stream's device,
 //! and these say there is no control to use.
 
+mod priority;
+pub(crate) use priority::AudioPriority;
+
 #[cfg(any(windows, target_os = "linux"))]
 mod thread;
 
@@ -28,10 +31,6 @@ pub(crate) fn set_volume(
 
 #[cfg(windows)]
 mod wasapi;
-/// Raises the thread that holds it for audio work (the mixer's), for as
-/// long as it is held: MMCSS "Pro Audio" on Windows; elsewhere nothing.
-#[cfg(windows)]
-pub(crate) use wasapi::Mmcss as AudioPriority;
 #[cfg(windows)]
 mod wasapi_input;
 #[cfg(windows)]
@@ -96,14 +95,3 @@ mod none {
 pub(crate) use none::{
     capabilities, devices, input_devices, open, open_input, BACKEND, INPUT_BACKEND,
 };
-
-/// Raises nothing here (MMCSS on Windows).
-#[cfg(not(windows))]
-pub(crate) struct AudioPriority;
-
-#[cfg(not(windows))]
-impl AudioPriority {
-    pub(crate) fn enter() -> AudioPriority {
-        AudioPriority
-    }
-}

@@ -1,12 +1,14 @@
 //! The light that blooms, on the GPU: the stage's shapes and bursts that
 //! are light ([`super::stage_gpu::StageFrame::lights`], `light_sprays`:
 //! the tiers' glow and flames, the angels, the jackpot) are drawn apart,
-//! added up in linear light at high range ([`LIGHT`]); that light is
-//! blurred down a chain of halved textures and back up (a dual filter:
-//! each step down reads five taps, each up eight, so the glow spreads far
-//! for little work), and the light and its bloom are tone mapped
-//! ([`tone`]: bright light rolls off to white, never clips) and added
-//! over the frame.
+//! added up in linear light at high range ([`LIGHT`]) a texel a point
+//! ([`light_size`]: on a Retina screen a quarter of the pixels to draw,
+//! blur and read, as sharp as on any other); that light is blurred down a
+//! chain of halved textures and back up, its last step up into a bloom
+//! half the frame's size (a dual filter: each step down reads five taps,
+//! each up eight, so the glow spreads far for little work), and the light
+//! and its bloom are tone mapped ([`tone`]: bright light rolls off to
+//! white, never clips) and added over the frame, two reads a pixel.
 
 use super::stage_gpu::{Blend, StageFrame};
 
@@ -14,8 +16,20 @@ use super::stage_gpu::{Blend, StageFrame};
 pub const LIGHT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 /// The steps down the chain (each half the size of the one before).
 const STEPS: usize = 5;
+/// Where the bloom is among the textures: after the light and the chain.
+const BLOOM: usize = STEPS + 1;
 /// How strongly the bloom adds to the light itself.
 pub const STRENGTH: f32 = 0.3;
+
+/// The light's texels for a frame of `size` pixels, `density` of them to
+/// a point (the window's scale): a texel a point, so as sharp as on a
+/// screen of a pixel a point, and never fewer than half the pixels each
+/// way (the chain's first step).
+pub fn light_size(size: (u32, u32), density: f32) -> (u32, u32) {
+    let d = density.clamp(1.0, 2.0);
+    let side = |s: u32| ((s as f32 / d).round() as u32).max(s / 2).max(1);
+    (side(size.0), side(size.1))
+}
 
 /// Light `x` (linear, any brightness) as the frame shows it, 0 to 1: as
 /// written to a frame that takes linear light (`linear`), else encoded
@@ -80,25 +94,23 @@ fn down(o: Out) -> @location(0) vec4<f32> {
     return vec4<f32>(c / 8.0, 1.0);
 }
 
-// Up a step: a tent of eight taps, added to what is there.
-fn up_at(uv: vec2<f32>) -> vec3<f32> {
+// Up a step: a tent of eight taps, by the pass's strength, added to what
+// is there (the last step's into the bloom alone).
+@fragment
+fn up(o: Out) -> @location(0) vec4<f32> {
+    let uv = o.uv;
     let h = pass_.texel * 0.5;
     var c = at(uv + vec2<f32>(-h.x * 2.0, 0.0)) + at(uv + vec2<f32>(h.x * 2.0, 0.0))
         + at(uv + vec2<f32>(0.0, -h.y * 2.0)) + at(uv + vec2<f32>(0.0, h.y * 2.0));
     c = c + 2.0 * (at(uv + vec2<f32>(-h.x, h.y)) + at(uv + vec2<f32>(h.x, h.y))
         + at(uv + vec2<f32>(-h.x, -h.y)) + at(uv + vec2<f32>(h.x, -h.y)));
-    return c / 12.0;
+    return vec4<f32>(c / 12.0 * pass_.strength, 1.0);
 }
 
-@fragment
-fn up(o: Out) -> @location(0) vec4<f32> {
-    return vec4<f32>(up_at(o.uv), 1.0);
-}
-
-// The light and its bloom, tone mapped, added over the frame.
+// The light and its bloom, tone mapped, added over the frame: two reads.
 @fragment
 fn composite(o: Out) -> @location(0) vec4<f32> {
-    let l = textureSampleLevel(light, soft, o.uv, 0.0).rgb + up_at(o.uv) * pass_.strength;
+    let l = textureSampleLevel(light, soft, o.uv, 0.0).rgb + at(o.uv);
     return vec4<f32>(tone(l, pass_.linear), 0.0);
 }
 ";
@@ -118,7 +130,9 @@ pub struct Bloom {
     composite: wgpu::RenderPipeline,
     sampler: wgpu::Sampler,
     linear: bool,
-    /// The light (the window's size), then the chain.
+    /// The frame's size and the light's they are for; the light, then the
+    /// chain, then the bloom (as large as the chain's first step).
+    frame: ((u32, u32), (u32, u32)),
     levels: Vec<Level>,
     /// Each pass's numbers and what it reads: down each step, up each
     /// step, onto the frame.
@@ -220,30 +234,41 @@ impl Bloom {
             layout,
             sampler,
             linear: super::stage_gpu::takes_linear(format),
+            frame: ((0, 0), (0, 0)),
             levels: Vec::new(),
             passes: Vec::new(),
         }
     }
 
-    /// The light's texture for a frame of `size`, made (with its chain)
-    /// where the size changed.
+    /// The light's texture for a frame of `size` with `density` pixels to
+    /// a point ([`light_size`]), made (with its chain) where either
+    /// changed.
     pub fn light(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         size: (u32, u32),
+        density: f32,
     ) -> &wgpu::TextureView {
         let size = (size.0.max(1), size.1.max(1));
-        if self.levels.first().is_none_or(|l| l.size != size) {
-            self.make(device, queue, size);
+        let light = light_size(size, density);
+        if self.levels.is_empty() || self.frame != (size, light) {
+            self.make(device, queue, size, light);
+            self.frame = (size, light);
         }
         &self.levels[0].view
     }
 
-    fn make(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, size: (u32, u32)) {
-        self.levels.clear();
-        let mut s = size;
-        for k in 0..=STEPS {
+    /// The light (`light` texels), the chain from it (its first step half
+    /// the frame's `size`, each after half the one before) and the bloom.
+    fn make(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        size: (u32, u32),
+        light: (u32, u32),
+    ) {
+        let level = |s: (u32, u32)| {
             let texture = device.create_texture(&wgpu::TextureDescriptor {
                 label: Some("jodeldiplom bloom"),
                 size: wgpu::Extent3d {
@@ -260,17 +285,23 @@ impl Bloom {
                 view_formats: &[],
             });
             let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-            self.levels.push(Level {
+            Level {
                 _texture: texture,
                 view,
                 size: s,
-            });
-            if k < STEPS {
-                s = ((s.0 / 2).max(1), (s.1 / 2).max(1));
             }
+        };
+        let half = |s: (u32, u32)| ((s.0 / 2).max(1), (s.1 / 2).max(1));
+        self.levels = vec![level(light)];
+        let mut s = size;
+        for _ in 0..STEPS {
+            s = half(s);
+            self.levels.push(level(s));
         }
+        self.levels.push(level(half(size)));
         // Down: level k into k + 1, reading k; up: k + 1 into k, reading
-        // k + 1; onto the frame: reading level 1 (its bloom) and the light.
+        // k + 1, and the last from the first step into the bloom, by its
+        // strength; onto the frame: reading the bloom and the light.
         let mut passes = Vec::new();
         let mut pass = |src: usize, strength: f32| {
             let (w, h) = self.levels[src].size;
@@ -317,6 +348,7 @@ impl Bloom {
             pass(k + 1, 1.0);
         }
         pass(1, STRENGTH);
+        pass(BLOOM, 1.0);
         self.passes = passes;
     }
 
@@ -359,6 +391,7 @@ impl Bloom {
         for (i, k) in (1..STEPS).rev().enumerate() {
             run(k, &self.up, &self.passes[STEPS + i].1, false);
         }
+        run(BLOOM, &self.up, &self.passes[2 * STEPS - 1].1, true);
     }
 
     /// The light and its bloom added over the frame being drawn in `pass`.
@@ -394,14 +427,15 @@ impl Light {
     }
 
     /// The next frame's light (`frame`'s; none: none), in a frame of
-    /// `size`: drawn and blurred now, in a submission of its own ahead of
-    /// the frame's (iced's shader widget gives the frame only a render
-    /// pass, which then adds it over: [`Light::composite`]).
+    /// `size` pixels, `density` to a point: drawn now (blurred by
+    /// [`Light::blur`]), in a submission of its own ahead of the frame's
+    /// (iced's shader widget gives the frame only a render pass, which then
+    /// adds it over: [`Light::composite`]).
     pub fn set(
         &mut self,
         (device, queue): (&wgpu::Device, &wgpu::Queue),
         frame: Option<&StageFrame>,
-        size: (u32, u32),
+        (size, density): ((u32, u32), f32),
     ) {
         self.shapes
             .set((device, queue), frame.map(StageFrame::light_feed), size);
@@ -414,7 +448,7 @@ impl Light {
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("jodeldiplom light"),
         });
-        let view = self.bloom.light(device, queue, size);
+        let view = self.bloom.light(device, queue, size, density);
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("jodeldiplom light"),
@@ -435,6 +469,18 @@ impl Light {
             self.shapes.draw(&mut pass);
             self.bursts.draw(&mut pass);
         }
+        queue.submit([encoder.finish()]);
+    }
+
+    /// The light drawn ([`Light::set`]) blurred down its chain and back up,
+    /// in a submission of its own (nothing where the frame has none).
+    pub fn blur(&self, (device, queue): (&wgpu::Device, &wgpu::Queue)) {
+        if !self.lit {
+            return;
+        }
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("jodeldiplom bloom"),
+        });
         self.bloom.blur(&mut encoder);
         queue.submit([encoder.finish()]);
     }
@@ -459,5 +505,18 @@ mod tests {
         assert!(tone(8.0, true) > 0.999 && tone(8.0, true) < 1.0);
         assert_eq!(tone(-1.0, true), 0.0);
         assert!((tone(1.0, false) - 0.632f32.powf(1.0 / 2.2)).abs() < 1e-3);
+    }
+
+    #[test]
+    fn the_light_is_a_texel_a_point() {
+        // A Retina MacBook Pro's screen: half each way.
+        assert_eq!(light_size((3024, 1964), 2.0), (1512, 982));
+        // A screen of a pixel a point: every pixel.
+        assert_eq!(light_size((1920, 1080), 1.0), (1920, 1080));
+        assert_eq!(light_size((1920, 1080), 1.5), (1280, 720));
+        // Denser still: no less than half; nor more than all.
+        assert_eq!(light_size((3000, 2000), 3.0), (1500, 1000));
+        assert_eq!(light_size((3000, 2000), 0.5), (3000, 2000));
+        assert_eq!(light_size((1, 1), 2.0), (1, 1));
     }
 }

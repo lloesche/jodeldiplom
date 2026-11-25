@@ -23,7 +23,7 @@ use super::{glory, liquid, paper, seal};
 fn gpu() -> Option<(wgpu::Device, wgpu::Queue)> {
     let _turn = jodel_gpu::setting_up();
     let adapter = jodel_gpu::chosen().adapter.clone();
-    match adapter.and_then(super::present::open) {
+    match adapter.and_then(|a| super::present::open(a, wgpu::Features::empty())) {
         Ok((_, device, queue)) => Some((device, queue)),
         Err(e) => {
             eprintln!("no GPU ({e}): skipped");

@@ -121,7 +121,7 @@ impl Run {
     }
 
     pub(super) fn run(mut self, rx: Receiver<Msg>) {
-        let _priority = AudioPriority::enter();
+        let _priority = AudioPriority::enter(self.options.period);
         let mut busy = false;
         loop {
             // Nothing running: nothing to do until word comes (a cue pushed
