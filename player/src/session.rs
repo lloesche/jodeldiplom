@@ -80,9 +80,6 @@ impl Session {
 /// lines after its header; through a file beside it, so a crash leaves
 /// the old one.
 pub fn write_playlist(path: &Path, tracks: &[PathBuf], extra: &[String]) -> io::Result<()> {
-    if let Some(dir) = path.parent() {
-        fs::create_dir_all(dir)?;
-    }
     let mut text = String::from("#EXTM3U\n");
     for line in extra {
         text.push_str(line);

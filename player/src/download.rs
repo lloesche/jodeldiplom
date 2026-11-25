@@ -20,7 +20,7 @@ pub fn download(
 ) -> Result<(), String> {
     use std::io::{Read, Write};
     if let Some(dir) = to.parent() {
-        fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+        durable::create_dir_all(dir).map_err(|e| e.to_string())?;
     }
     let mut name = to.file_name().unwrap_or_default().to_os_string();
     name.push(".partial");

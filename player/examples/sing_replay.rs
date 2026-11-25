@@ -36,6 +36,11 @@ type Frame = (f64, Option<f32>);
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let folder = Path::new(args.first().expect("a sing-* folder"));
+    assert!(
+        keep::is_take(folder),
+        "{} is no kept song (a save cut short leaves only a temporary)",
+        folder.display()
+    );
     let read =
         |name: &str| std::fs::read(folder.join(name)).unwrap_or_else(|e| panic!("{name}: {e}"));
     let (voice, rate) = keep::read_wav(&read(keep::VOICE)).expect("the voice");

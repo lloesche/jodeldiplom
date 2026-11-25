@@ -9,7 +9,6 @@ use crate::lanes::lane_format;
 use crate::output::{delegate_output, Core, Driver, OpenRequest, StreamInfo};
 use crate::shared::Shared;
 use std::io::{self, Write};
-use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
@@ -245,8 +244,7 @@ impl Driver for SimDriver {
         }
         let mut sink = self.device.sink.lock().unwrap_or_else(|e| e.into_inner());
         sink.flush().map_err(Error::from)?;
-        // The stream is over: the sink is let go of (a file takes its name
-        // then, [`FileOutput::to_file`]).
+        // The stream is over: the sink is let go of.
         drop(std::mem::replace(&mut *sink, Box::new(io::sink())));
         Ok(())
     }
@@ -323,18 +321,6 @@ impl FileOutput {
                 channels: request.channels,
             })?;
         Ok(Self::build(Box::new(sink), format, request, clock))
-    }
-
-    /// An output writing to a new file at `path`, under a temporary name
-    /// that becomes `path` when the output is done with it (dropped): a
-    /// file at `path` is always a whole stream ([`durable::AtomicFile`]).
-    pub fn to_file(
-        path: impl AsRef<Path>,
-        format: StreamFormat,
-        clock: SimClock,
-    ) -> Result<FileOutput, Error> {
-        let file = CommittedOnDrop(Some(durable::AtomicFile::create(path.as_ref())?));
-        Ok(Self::new(file, format, clock))
     }
 
     /// An output writing to memory, and the handle to read it.
@@ -431,31 +417,3 @@ impl NullOutput {
 }
 
 delegate_output!(NullOutput, inner);
-
-/// A file the output writes into, taking its name when the output lets go
-/// of it (a crash leaves only its temporary).
-struct CommittedOnDrop(Option<durable::AtomicFile>);
-
-impl Write for CommittedOnDrop {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.0
-            .as_mut()
-            .expect("written before it is dropped")
-            .write(buf)
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        self.0
-            .as_mut()
-            .expect("written before it is dropped")
-            .flush()
-    }
-}
-
-impl Drop for CommittedOnDrop {
-    fn drop(&mut self) {
-        if let Some(file) = self.0.take() {
-            let _ = file.commit();
-        }
-    }
-}

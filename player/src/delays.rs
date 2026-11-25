@@ -80,9 +80,6 @@ pub fn load(path: &Path) -> Delays {
 
 /// Writes `kept` to `path`, durably.
 pub fn save(path: &Path, kept: &Delays) -> std::io::Result<()> {
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)?;
-    }
     durable::write_atomic(path, to_text(kept).as_bytes())
 }
 

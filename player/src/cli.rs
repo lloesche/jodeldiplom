@@ -220,7 +220,6 @@ pub fn app_options(args: &Args) -> Result<AppOptions, String> {
     // read) goes, in the background, once a day old.
     let swept = data.clone();
     std::thread::spawn(move || {
-        let day = std::time::Duration::from_secs(24 * 3600);
         let mut dirs = vec![
             swept.analyses(),
             swept.stems(),
@@ -231,7 +230,7 @@ pub fn app_options(args: &Args) -> Result<AppOptions, String> {
         dirs.extend(crate::cover::CoverStore::dirs_in(&swept.covers()));
         dirs.extend(crate::dirs::settings_dir());
         for dir in dirs {
-            durable::sweep(&dir, day);
+            durable::sweep(&dir, durable::STALE);
         }
     });
     options.rhythm_cache = Some(data.analyses());

@@ -261,7 +261,7 @@ impl Engine {
                             .retain(|c| !matches!(c.event, CueEvent::QueueEnded));
                         self.finishing = false;
                         let end = self.head.out.as_ref().map_or(0, |o| o.output.written());
-                        if let Err(error) = self.advance(last + 1, end) {
+                        if let Err(error) = self.after_end(last + 1, end) {
                             self.fail(None, error);
                         }
                     }
@@ -450,10 +450,16 @@ impl Engine {
     fn clear_timeline(&mut self) {
         self.abandon_transition("playback moved elsewhere");
         self.cues.clear();
-        self.head.playing = None;
-        self.next = None;
+        self.drop_underway();
         self.finishing = false;
         self.tail = None;
+    }
+
+    /// Drops the tracks decoded (the one playing, the one waiting) and
+    /// everything under way for them, cues and output aside.
+    fn drop_underway(&mut self) {
+        self.head.playing = None;
+        self.next = None;
         self.cancel_switch();
         self.head.reroute_later = false;
         self.head.along_at = None;

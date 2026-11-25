@@ -236,9 +236,6 @@ impl CoverStore {
     }
 
     fn write(&self, path: &Path, bytes: &[u8]) -> Result<(), String> {
-        if let Some(dir) = path.parent() {
-            std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-        }
         durable::write_atomic(path, bytes).map_err(|e| format!("{}: {e}", path.display()))
     }
 

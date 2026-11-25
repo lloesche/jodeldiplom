@@ -72,7 +72,7 @@ fn pinned(schema: &Schema, extension: &str, written: &[u8]) -> Vec<u8> {
     }
 }
 
-/// The text of a sample with the header taken off: as files were written
+/// The text of a file with the header taken off: as files were written
 /// before there were headers (version 1).
 fn headerless(text: &[u8]) -> String {
     let text = String::from_utf8(text.to_vec()).unwrap();
@@ -126,13 +126,7 @@ fn analysis_files_are_pinned() {
     let kept = String::from_utf8(kept)
         .unwrap()
         .replace("\njodel-rhythm x\n", &analysed);
-    assert_eq!(rhythm::from_text(key, &kept), Some(a.clone()));
-    if cache::ANALYSIS.version == 1 {
-        assert_eq!(
-            rhythm::from_text(key, &headerless(kept.as_bytes())),
-            Some(a)
-        );
-    }
+    assert_eq!(rhythm::from_text(key, &kept), Some(a));
 }
 
 #[test]
@@ -203,10 +197,6 @@ fn lyrics_files_are_pinned() {
     assert_eq!(back.to_lrc(), timed.to_lrc());
     assert_eq!(back.lines[0].words[1].letters.len(), 4);
     assert_eq!(back.lines[0].synced, None);
-    if cache::LYRICS_TEXT.version == 1 {
-        std::fs::write(dir.join("k.lrc"), headerless(&read("k.lrc"))).unwrap();
-        assert_eq!(lines(&text(&c)), ["One line", "Two"]);
-    }
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -288,6 +278,51 @@ fn delay_files_are_pinned_and_every_version_is_read() {
         let text = std::fs::read_to_string(sample(&cache::DELAYS, version, "txt")).unwrap();
         assert!(!from_text(&text).is_empty(), "version {version}");
     }
+}
+
+#[test]
+fn a_file_without_a_header_is_the_users_first_version_or_no_cache() {
+    // The user's own work: version 1, as written before there were headers.
+    let grid = Grid {
+        beats: vec![0.25, 0.75, 1.25],
+        downbeats: vec![0],
+    };
+    let kept = grids::to_text("k", &grid);
+    assert_eq!(
+        grids::from_text("k", &headerless(kept.as_bytes())),
+        Some(grid)
+    );
+    for schema in [cache::SCORES, cache::DELAYS] {
+        let first = std::fs::read(sample(&schema, 1, "txt")).unwrap();
+        let text = headerless(&first);
+        let read = match schema.name {
+            "scores" => jodeldiplom::scores::from_text(&text).len(),
+            _ => jodeldiplom::delays::from_text(&text).len(),
+        };
+        assert!(read > 0, "{}", schema.name);
+    }
+    // A cache's: as if there were none, made again (never an error).
+    let key = "/music/a.flac 1 2 v1";
+    let analysis = rhythm::to_text(key, &Analysis::default());
+    assert!(rhythm::from_text(key, &analysis).is_some());
+    assert_eq!(
+        rhythm::from_text(key, &headerless(analysis.as_bytes())),
+        None
+    );
+    let dir = temp_dir("headerless");
+    let c = Cache::new(&dir);
+    let found = Lyrics::parse_text("One line\n", Source::Lrclib);
+    c.store_text("k", &found).unwrap();
+    c.store_timed("k", &found).unwrap();
+    for name in ["k.lrc", "k.timed.lrc"] {
+        let file = dir.join(name);
+        let text = headerless(&std::fs::read(&file).unwrap());
+        durable::write_atomic(&file, text.as_bytes()).unwrap();
+    }
+    let text = c.text("k");
+    assert!(matches!(text, Kept::Outdated), "{text:?}");
+    assert_eq!(c.timed("k"), None);
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 fn small_layers() -> jodeldiplom::cover::CoverLayers {

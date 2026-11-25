@@ -79,9 +79,6 @@ pub fn load(path: &Path) -> Bests {
 
 /// Writes `bests` to `path`, durably.
 pub fn save(path: &Path, bests: &Bests) -> std::io::Result<()> {
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)?;
-    }
     durable::write_atomic(path, to_text(bests).as_bytes())
 }
 

@@ -392,20 +392,7 @@ impl Engine {
             at: end,
             event: CueEvent::Ended { index: track.index },
         });
-        // Holding: the next track waits to be started; playback stops
-        // once this one is heard to its end.
-        if self.hold && track.index + 1 < self.queue.len() {
-            self.cues.push_back(Cue {
-                at: end,
-                event: CueEvent::Held {
-                    index: track.index + 1,
-                },
-            });
-            self.tail = None;
-            self.finishing = true;
-            return Ok(());
-        }
-        self.advance(track.index + 1, end)
+        self.after_end(track.index + 1, end)
     }
 
     /// Goes on with the first track from `index` that opens, at output

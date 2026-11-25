@@ -19,8 +19,10 @@
 //!
 //! A text file starts with a header naming its schema and the version of
 //! it the file was written in, and the player that wrote it (for the
-//! record only: [`Schema::header`]). A file without a header was written before
-//! there were headers, in version 1.
+//! record only: [`Schema::header`]). A cache file without a header is not
+//! read: it is as if there were none, and is made again. One of the user's
+//! own ([`Schema::user_data`]) was written before there were headers, in
+//! version 1.
 //!
 //! The contract:
 //!
@@ -34,8 +36,10 @@
 //! - **The same version, the same files.** While a schema's version stays,
 //!   every player reads the files of it that any player wrote.
 //! - **The user's work is kept.** Grids fixed by hand and the best scores
-//!   sung and the delays measured are not a cache: a new version of
-//!   [`GRID`], [`SCORES`] or [`DELAYS`] still reads every older one.
+//!   sung and the delays measured are not a cache
+//!   ([`Schema::user_data`]): a new version of [`GRID`], [`SCORES`] or
+//!   [`DELAYS`] still reads every older one, a file without a header (from
+//!   before there were headers) as version 1.
 //!
 //! What a file says may also depend on how it was made: an analysis on
 //! [`jodel_rhythm::VERSION`] (in the name of its file, so another one is
@@ -55,6 +59,10 @@ pub struct Schema {
     pub name: &'static str,
     /// The version this player writes (and reads).
     pub version: u32,
+    /// The user's own work, not a cache: a file of it without a header
+    /// was written before there were headers, and is read as version 1
+    /// (a cache's is not read: it is made again).
+    pub user_data: bool,
 }
 
 /// A track's analysis: beats, bars, groupings, regions and candidates,
@@ -62,12 +70,14 @@ pub struct Schema {
 pub const ANALYSIS: Schema = Schema {
     name: "analysis",
     version: 2,
+    user_data: false,
 };
 
 /// A track's waveforms (binary, versioned by its own byte).
 pub const WAVEFORM: Schema = Schema {
     name: "waveform",
     version: jodel_rhythm::waveform::FORMAT as u32,
+    user_data: false,
 };
 
 /// Lyrics as found: their words, a line each, the source in a
@@ -78,12 +88,14 @@ pub const WAVEFORM: Schema = Schema {
 pub const LYRICS_TEXT: Schema = Schema {
     name: "lyrics",
     version: 3,
+    user_data: false,
 };
 
 /// That no lyrics were found (or the track has no words), and when.
 pub const LYRICS_NONE: Schema = Schema {
     name: "lyrics-none",
     version: 1,
+    user_data: false,
 };
 
 /// Lyrics timed word by word by us: Enhanced LRC. Version 1 was held to
@@ -93,12 +105,14 @@ pub const LYRICS_NONE: Schema = Schema {
 pub const LYRICS_TIMED: Schema = Schema {
     name: "lyrics-timed",
     version: 5,
+    user_data: false,
 };
 
 /// A beat grid fixed by hand.
 pub const GRID: Schema = Schema {
     name: "grid",
     version: 1,
+    user_data: true,
 };
 
 /// The best scores sung ([`crate::scores`]). Version 1 kept one a level
@@ -106,6 +120,7 @@ pub const GRID: Schema = Schema {
 pub const SCORES: Schema = Schema {
     name: "scores",
     version: 2,
+    user_data: true,
 };
 
 /// The original singer's phrases as the shine holds a singer to them
@@ -114,12 +129,14 @@ pub const SCORES: Schema = Schema {
 pub const SHINE: Schema = Schema {
     name: "shine",
     version: 1,
+    user_data: false,
 };
 
 /// The singer's delays measured and nudged ([`crate::delays`]).
 pub const DELAYS: Schema = Schema {
     name: "delays",
     version: 2,
+    user_data: true,
 };
 
 /// A cover taken apart: what made it and its palette, then its plate,
@@ -128,12 +145,14 @@ pub const DELAYS: Schema = Schema {
 pub const COVER_LAYERS: Schema = Schema {
     name: "cover-layers",
     version: 1,
+    user_data: false,
 };
 
 /// A song's cover: which cover taken apart is its (or none).
 pub const COVER_SONG: Schema = Schema {
     name: "cover-song",
     version: 1,
+    user_data: false,
 };
 
 /// An album's covers taken apart: each one's pixels' hash and perceptual
@@ -141,6 +160,7 @@ pub const COVER_SONG: Schema = Schema {
 pub const COVER_ALBUM: Schema = Schema {
     name: "cover-album",
     version: 1,
+    user_data: false,
 };
 
 /// The karaoke game's sounds made at a rate ([`crate::sfx::store`]): their
@@ -149,6 +169,7 @@ pub const COVER_ALBUM: Schema = Schema {
 pub const SFX_BANK: Schema = Schema {
     name: "sfx-bank",
     version: 1,
+    user_data: false,
 };
 
 /// Every schema.
@@ -186,12 +207,13 @@ impl Schema {
         format!("{}\n{body}", self.header())
     }
 
-    /// The version of this schema a file's `text` was written in (1 for a
-    /// file without a header), and the rest of it; `None` for a file of
-    /// another schema.
+    /// The version of this schema a file's `text` was written in, and the
+    /// rest of it; `None` for a file of another schema. A file without a
+    /// header is version 1 of the user's own work, and not read as a cache
+    /// ([`Schema::user_data`]).
     pub fn open<'a>(&self, text: &'a str) -> Option<(u32, &'a str)> {
         let Some(after) = text.strip_prefix(MARK) else {
-            return Some((1, text));
+            return self.user_data.then_some((1, text));
         };
         let (first, rest) = after.split_once('\n').unwrap_or((after, ""));
         let mut words = first.split_whitespace();
@@ -220,6 +242,7 @@ mod tests {
         let first = Schema {
             name: "analysis",
             version: 1,
+            user_data: false,
         };
         let text = first.wrap("body\n");
         assert!(text.starts_with("jodeldiplom-cache analysis 1 by jodeldiplom "));
@@ -229,12 +252,17 @@ mod tests {
         let later = Schema {
             name: "analysis",
             version: 2,
+            user_data: false,
         };
         assert_eq!(later.body(&text), None);
         assert_eq!(later.open(&text), Some((1, "body\n")));
-        // No header: version 1, as written before there were headers.
-        assert_eq!(first.body("jodel-rhythm 9\n"), Some("jodel-rhythm 9\n"));
-        assert_eq!(later.body("jodel-rhythm 9\n"), None);
+        // No header: a cache's is not read; the user's own is version 1,
+        // as written before there were headers.
+        assert_eq!(first.open("jodel-rhythm 9\n"), None);
+        assert_eq!(first.body("jodel-rhythm 9\n"), None);
+        assert_eq!(GRID.open("jodel-grid 1\n"), Some((1, "jodel-grid 1\n")));
+        let users: Vec<&str> = ALL.iter().filter(|s| s.user_data).map(|s| s.name).collect();
+        assert_eq!(users, ["grid", "scores", "delays"]);
         // Another player wrote it: read all the same.
         let other = "jodeldiplom-cache analysis 1 by jodeldiplom 9.9.9\nbody\n";
         assert_eq!(first.body(other), Some("body\n"));

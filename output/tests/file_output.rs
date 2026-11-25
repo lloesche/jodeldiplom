@@ -54,19 +54,6 @@ fn instant_clock_captures_exactly_what_was_written() {
 }
 
 #[test]
-fn to_file_writes_raw_bytes() {
-    let path = std::env::temp_dir().join(format!("jodel-output-test-{}.raw", std::process::id()));
-    let format = StreamFormat::new(44_100, 2, SampleFormat::S24Packed);
-    let mut out = FileOutput::to_file(&path, format, SimClock::Instant).unwrap();
-    let input = ramp(5000, 2, 3);
-    out.write(&input, None).unwrap();
-    out.close().unwrap();
-    let bytes = std::fs::read(&path).unwrap();
-    std::fs::remove_file(&path).unwrap();
-    assert_eq!(bytes, packed(&input, SampleFormat::S24Packed));
-}
-
-#[test]
 fn the_device_starts_at_the_prefill() {
     let (mut out, sink) = manual(SampleFormat::S24In32);
     out.write(&ramp(10, 2, 0), None).unwrap();

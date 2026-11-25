@@ -86,7 +86,6 @@ pub fn load(dir: &Path, key: &str) -> Option<Reference> {
 /// `reference` kept for `key` in `dir`, durably.
 pub fn store(dir: &Path, key: &str, reference: &Reference) -> std::io::Result<()> {
     let dir = crate::mover::current(dir);
-    std::fs::create_dir_all(&dir)?;
     durable::write_atomic(
         &dir.join(format!("{key}.txt")),
         to_text(reference).as_bytes(),

@@ -4,10 +4,13 @@
 //! game held it against them. Kept while Karaoke mode sings a song with
 //! `karaoke_keep` on, saved when the song ends or the mode is left: a
 //! folder `recordings/sing-<seconds>` beside the settings file, its files
-//! ([`VOICE`], [`TIMES`], [`LYRICS`], [`MELODY`], [`ABOUT`]) each written
-//! durably. The `sing_replay` example reads one back. A song the demo key
-//! sang in ([`crate::core::singing::Demo`]) is not saved: it was not all
-//! sung.
+//! ([`VOICE`], [`TIMES`], [`LYRICS`], [`MELODY`], [`ABOUT`]) written into
+//! it under a temporary name and the folder named whole, durably
+//! ([`durable::AtomicDir`]): a save cut short leaves at most a temporary,
+//! which is no take ([`is_take`]) and is swept once a day old
+//! ([`durable::STALE`]). The `sing_replay`
+//! example reads one back. A song the demo key sang in
+//! ([`crate::core::singing::Demo`]) is not saved: it was not all sung.
 
 use std::fmt::Write as _;
 use std::io;
@@ -145,18 +148,28 @@ impl Kept {
         !self.samples.is_empty() && !self.demo
     }
 
-    /// Saves it into a new folder in `dir`, durably; its path.
+    /// Saves it into a new folder in `dir`, whole or not at all, durably;
+    /// its path. What an earlier save cut short left goes first, once old.
     pub fn save(&self, dir: &Path) -> io::Result<PathBuf> {
+        durable::sweep(dir, durable::STALE);
         let stamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |d| d.as_secs());
-        let mut folder = dir.join(format!("sing-{stamp}"));
+        let mut folder = dir.join(format!("{TAKE}{stamp}"));
         let mut k = 1;
         while folder.exists() {
-            folder = dir.join(format!("sing-{stamp}-{k}"));
+            folder = dir.join(format!("{TAKE}{stamp}-{k}"));
             k += 1;
         }
-        std::fs::create_dir_all(&folder)?;
+        // Cut short (an error, a panic), the take goes with what is in it.
+        let take = durable::AtomicDir::create(&folder)?;
+        self.write_into(take.temporary_path())?;
+        take.commit()?;
+        Ok(folder)
+    }
+
+    /// Writes its files into `folder`.
+    fn write_into(&self, folder: &Path) -> io::Result<()> {
         durable::write_atomic(&folder.join(VOICE), &wav(&self.samples, self.rate))?;
         let mut times = String::new();
         for (k, t) in &self.marks {
@@ -174,9 +187,20 @@ impl Kept {
         for (k, key) in &self.keys {
             let _ = writeln!(about, "key {k} {key}");
         }
-        durable::write_atomic(&folder.join(ABOUT), about.as_bytes())?;
-        Ok(folder)
+        durable::write_atomic(&folder.join(ABOUT), about.as_bytes())
     }
+}
+
+/// How a kept song's folder is named: `sing-<seconds>`.
+const TAKE: &str = "sing-";
+
+/// Whether `folder` is a kept song, saved whole: named as one, not a
+/// temporary a save cut short left.
+pub fn is_take(folder: &Path) -> bool {
+    folder
+        .file_name()
+        .and_then(|n| n.to_str())
+        .is_some_and(|n| n.starts_with(TAKE) && !durable::is_temporary(n))
 }
 
 /// `samples` at `rate` as a mono 16-bit WAV file.
@@ -244,14 +268,19 @@ pub fn read_times(text: &str) -> Vec<(usize, f64)> {
 mod tests {
     use super::*;
 
-    #[test]
-    fn the_voice_goes_to_wav_and_back_with_its_times() {
+    /// A song's singing as kept, against `la la`.
+    fn kept() -> Kept {
         let lyrics = Arc::new(jodel_lyrics::Lyrics::parse(
             "la la",
             jodel_lyrics::Source::Unknown,
         ));
         let waveform = Arc::new(jodel_rhythm::waveform::Waveform::default());
-        let mut kept = Kept::new("/a.flac".into(), lyrics, waveform);
+        Kept::new("/a.flac".into(), lyrics, waveform)
+    }
+
+    #[test]
+    fn the_voice_goes_to_wav_and_back_with_its_times() {
+        let mut kept = kept();
         kept.push(&[0.5; 100], 1000, 2.0, false, Sung::new(0.15, "default", 0));
         kept.push(&[-0.5; 100], 1000, 2.1, true, Sung::new(0.15, "default", 2));
         kept.push(
@@ -278,13 +307,45 @@ mod tests {
     }
 
     #[test]
+    fn a_save_cut_short_leaves_no_take() {
+        let mut kept = kept();
+        kept.push(&[0.5; 100], 1000, 2.0, false, Sung::new(0.15, "default", 0));
+        let dir = std::env::temp_dir().join(format!("keep-cut-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let takes = || -> Vec<PathBuf> {
+            std::fs::read_dir(&dir)
+                .unwrap()
+                .flatten()
+                .map(|e| e.path())
+                .filter(|p| is_take(p))
+                .collect()
+        };
+        // Cut short by an error: nothing left.
+        let take = durable::AtomicDir::create(&dir.join("sing-1")).unwrap();
+        kept.write_into(take.temporary_path()).unwrap();
+        drop(take);
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 0);
+        // Cut short by a crash (nothing dropped): its temporary is no take.
+        let take = durable::AtomicDir::create(&dir.join("sing-2")).unwrap();
+        kept.write_into(take.temporary_path()).unwrap();
+        let part = take.temporary_path().to_path_buf();
+        std::mem::forget(take);
+        assert!(!is_take(&part));
+        assert_eq!(takes(), Vec::<PathBuf>::new());
+        // The next save is a take, whole; the one cut short goes once old.
+        let folder = kept.save(&dir).unwrap();
+        assert_eq!(takes(), [folder.clone()]);
+        for name in [VOICE, TIMES, LYRICS, MELODY, ABOUT] {
+            assert!(folder.join(name).is_file(), "{name}");
+        }
+        assert_eq!(durable::sweep(&dir, std::time::Duration::ZERO), 1);
+        assert!(!part.exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn a_song_the_demo_sang_in_is_not_kept() {
-        let lyrics = Arc::new(jodel_lyrics::Lyrics::parse(
-            "la la",
-            jodel_lyrics::Source::Unknown,
-        ));
-        let waveform = Arc::new(jodel_rhythm::waveform::Waveform::default());
-        let mut kept = Kept::new("/a.flac".into(), lyrics, waveform);
+        let mut kept = kept();
         assert!(!kept.worth_saving(), "nothing heard");
         kept.push(&[0.5; 100], 1000, 2.0, false, Sung::new(0.15, "default", 0));
         assert!(kept.worth_saving());

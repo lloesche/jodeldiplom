@@ -34,7 +34,7 @@ pub enum Start {
     reason = "the one-player lock file: opened to be locked, never written"
 )]
 pub fn take(dir: &Path) -> Start {
-    let file = std::fs::create_dir_all(dir).and_then(|()| {
+    let file = durable::create_dir_all(dir).and_then(|()| {
         OpenOptions::new()
             .read(true)
             .write(true)

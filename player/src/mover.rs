@@ -333,7 +333,7 @@ fn move_one(item: &Item, progress: &mut dyn FnMut(u64)) -> Moved {
             Err(_) => Moved::Later,
         };
     }
-    if let Err(e) = fs::create_dir_all(to_dir) {
+    if let Err(e) = durable::create_dir_all(to_dir) {
         return Moved::Stop(format!("{}: {e}", to_dir.display()));
     }
     // One disk: renamed (atomic), the new name then the old one's going

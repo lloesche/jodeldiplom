@@ -148,7 +148,6 @@ impl BankStore {
     /// place), in place of the one at its rate (whole or not at all).
     pub fn save(&self, bank: &SoundBank) -> Result<(), String> {
         let fail = |p: &Path, e: std::io::Error| format!("{}: {e}", p.display());
-        std::fs::create_dir_all(&self.dir).map_err(|e| fail(&self.dir, e))?;
         let file = self.file(bank.rate());
         let sounds: Vec<(String, &[f32])> = Sound::all()
             .into_iter()
