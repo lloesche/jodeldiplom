@@ -83,7 +83,7 @@ type Key = (Face, String, u32);
 /// is.
 #[derive(Default)]
 struct Atlas {
-    places: HashMap<Key, (u32, u32, u32, u32)>,
+    places: HashMap<Key, Placed>,
     /// Where the next goes: across, the shelf's top, the shelf's height.
     pen: (u32, u32, u32),
     uploads: Vec<AtlasUpload>,
@@ -91,14 +91,20 @@ struct Atlas {
 
 impl Atlas {
     /// Where `text` at `px` in `big`'s face is in the atlas (put there now
-    /// if it is not), its quad's size; none where it does not fit even in
-    /// an empty one.
-    fn place(&mut self, big: &mut BigText, text: &str, px: f32) -> Option<(u32, u32, u32, u32)> {
+    /// if it is not): its place, and the size it was made at as a share of
+    /// `px`. Text wider than the atlas (a long lyric line on a large
+    /// screen) is made smaller to fit, its quad drawn larger by as much.
+    fn place(&mut self, big: &mut BigText, text: &str, px: f32) -> Option<Placed> {
         let key = (big.face(), text.to_owned(), (px * 4.0).round() as u32);
         if let Some(&place) = self.places.get(&key) {
             return Some(place);
         }
-        let (w, h, coverage) = big.coverage(text, px);
+        let (mut w, mut h, mut coverage) = big.coverage(text, px);
+        let mut made = 1.0;
+        if w.max(h) > ATLAS as usize {
+            made = (ATLAS - 8) as f32 / w.max(h) as f32;
+            (w, h, coverage) = big.coverage(text, px * made);
+        }
         let (w, h) = (w as u32, h as u32);
         if w > ATLAS || h > ATLAS {
             return None;
@@ -112,16 +118,22 @@ impl Atlas {
             self.places.clear();
             self.pen = (0, 0, 0);
         }
-        let place = (self.pen.0, self.pen.1, w, h);
+        let rect = (self.pen.0, self.pen.1, w, h);
         self.pen.0 += w + 2;
         self.pen.2 = self.pen.2.max(h);
+        let place = Placed { rect, made };
         self.places.insert(key, place);
-        self.uploads.push(AtlasUpload {
-            rect: place,
-            coverage,
-        });
+        self.uploads.push(AtlasUpload { rect, coverage });
         Some(place)
     }
+}
+
+/// Text's place in the atlas: across, down, wide, high (atlas pixels), and
+/// the size it was made at as a share of the size asked for.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Placed {
+    rect: (u32, u32, u32, u32),
+    made: f32,
 }
 
 /// A spark flying off the arrow.
@@ -495,7 +507,9 @@ impl Stage {
         if text.trim().is_empty() {
             return None;
         }
-        let (u, v, w, h) = self.atlas.place(self.faces.get(face), text, px)?;
+        let placed = self.atlas.place(self.faces.get(face), text, px)?;
+        let (u, v, w, h) = placed.rect;
+        let scale = scale / placed.made;
         let pad = COVER_PAD as f32 * scale;
         let (x0, y0) = (at.0 - pad, at.1 - pad);
         out.push(Instance {
@@ -957,13 +971,26 @@ mod tests {
         let a = atlas.place(&mut big, "hello", 40.0).unwrap();
         assert_eq!(atlas.place(&mut big, "hello", 40.0), Some(a));
         assert_eq!(atlas.uploads.len(), 1);
-        let b = atlas.place(&mut big, "world", 40.0).unwrap();
-        assert!(b.0 >= a.0 + a.2);
+        assert_eq!(a.made, 1.0);
+        let b = atlas.place(&mut big, "world", 40.0).unwrap().rect;
+        assert!(b.0 >= a.rect.0 + a.rect.2);
         // Full: started again from the top.
         atlas.pen = (0, ATLAS - 2, 0);
-        let c = atlas.place(&mut big, "again", 40.0).unwrap();
+        let c = atlas.place(&mut big, "again", 40.0).unwrap().rect;
         assert_eq!((c.0, c.1), (0, 0));
         let gone = (Face::Main, "hello".to_owned(), 160);
         assert!(!atlas.places.contains_key(&gone));
+    }
+
+    /// A lyric line wider than the atlas at its size (a large screen's)
+    /// is made smaller to fit, not left out.
+    #[test]
+    fn text_wider_than_the_atlas_is_made_smaller() {
+        let mut big = BigText::default();
+        let mut atlas = Atlas::default();
+        let line = "Makes you feel like every corner is black and white tonight";
+        let p = atlas.place(&mut big, line, 120.0).unwrap();
+        assert!(p.made < 1.0, "{p:?}");
+        assert!(p.rect.2 <= ATLAS && p.rect.2 > ATLAS / 2, "{p:?}");
     }
 }
