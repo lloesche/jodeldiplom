@@ -1,6 +1,7 @@
 //! The canceller's tests: the echo of made-up music through made-up rooms.
 
 mod laptop;
+mod singing;
 mod stereo;
 
 use laptop::kept;

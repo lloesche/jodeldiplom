@@ -25,6 +25,8 @@ pub(super) struct History {
     spectra: Vec<Frame>,
     /// The newest.
     head: usize,
+    /// Blocks pushed since it was cleared (at most its length).
+    filled: usize,
 }
 
 impl History {
@@ -32,6 +34,7 @@ impl History {
         History {
             spectra: vec![SILENT; len],
             head: 0,
+            filled: 0,
         }
     }
 
@@ -43,6 +46,12 @@ impl History {
     pub(super) fn push(&mut self, x: Frame) {
         self.head = (self.head + 1) % self.spectra.len();
         self.spectra[self.head] = x;
+        self.filled = (self.filled + 1).min(self.spectra.len());
+    }
+
+    /// Blocks pushed since it was cleared (at most its length).
+    pub(super) fn filled(&self) -> usize {
+        self.filled
     }
 
     /// The bins `age` blocks back (0: the newest).
@@ -53,6 +62,7 @@ impl History {
 
     pub(super) fn clear(&mut self) {
         self.spectra.fill(SILENT);
+        self.filled = 0;
     }
 }
 

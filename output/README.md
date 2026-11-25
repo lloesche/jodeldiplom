@@ -367,18 +367,41 @@ it was sung.
     on two channels of what plays, what left and right play alike and what
     they play apart, normalised per frequency by the inverse of their 2 × 2
     power: a laptop's microphone sits nearer one speaker, and from the mean
-    of the two the best linear filter took only 6 dB of a MacBook's echo
-    out, however long, whatever model of its speakers' distortion (a song
-    in mono leaves the second channel silent, and the canceller works as
-    one on the mean would, but for a little regularisation, the gain below
-    and the finder). The estimate of the filter in use takes a gain that
+    of the two the best linear filter took only 6 to 7 dB of a MacBook's
+    echo out, however long, whatever model of its speakers' distortion,
+    from left and right apart 13 dB (a song in mono leaves the second
+    channel silent, and the canceller works as one on the mean would, but
+    for a little regularisation, the gain below and the finder). Each step
+    is divided by how many channels a frequency has (one to two: a step
+    along both takes out twice what one along one does, and lets twice as
+    much in of a voice the detector missed), what the two play apart
+    learns only where it holds more than 3 % of a frequency's power (30 %
+    under about 400 Hz, where left and right play nearly alike: weaker, it
+    learns mostly chance, and the bass kept 6 of its 10 dB), and until the
+    filter's window has filled (the canceller started with the music
+    already playing) its steps are taken as if it had (by the few blocks
+    held alone they overshot the echo by up to 10 dB for a second). The
+    estimate of the filter in use takes a gain that
     follows what of it the microphone holds (a speaker's limiter riding the
     music's loudness: as a passage 7 dB louder began, a MacBook played it 2
     dB louder, and the filter learnt before overshot by 8 dB), only ever
-    down, its chance wobble shrunk away. Two filters: a shadow that learns while
-    nobody sings, and the filter in use, which copies the shadow only once
-    it leaves clearly less. Neither learns from singing (a held note would
-    draw them towards taking the note out). A room that changes while the
+    down, its chance wobble shrunk away. Two filters: a shadow that learns,
+    and the filter in use, which copies the shadow only once it leaves
+    clearly less, and not while someone sings. While someone sings the
+    shadow learns at a tenth of its pace (a held note would draw it towards
+    taking the note out; held still, with a voice sung all through it never
+    learnt the echo between the notes it missed). Singing is told by its
+    pitch (`aec::singing`):
+    every 6 ms the leftover and the estimate, low-passed and taken down to
+    about 11 kHz, are looked at for the lag where each is most like itself;
+    where the leftover is clearly pitched (0.8) and the estimate is not at
+    that lag (under 0.4; the music's own notes, in the leftover too, are as
+    clear there), over the leftover's own floor (a hum is pitched, but
+    steady), in three of the last eight looks, someone sings, held for
+    0.2 s; or where the leftover is 7 times what the filter usually leaves.
+    By its level alone (ten times, as before) a singer 8 dB under a
+    MacBook's echo was never told apart, and the filters learnt from them.
+    A room that changes while the
     detector takes it for singing (the volume turned up: the leftover jumps
     as a voice's would) is learnt by a trial filter apart, which takes over
     only once it has left a quarter of what the filter in use leaves for a
@@ -584,9 +607,9 @@ right, with a `fact` chunk). The cleaner's own tests: a click comes out in
 the block stamped as the one it was heard in, at its sample, the canceller
 on or off; at a gap the block held is dropped and the next run's first
 given only with its successor. `aec`'s own
-tests: a room's echo (45 ms, a 40 ms tail) down 27 dB, a voice over it
-kept within 0.1 dB and 35 dB over what is left; a moved speaker learnt again; the volume turned up 12 dB
-learnt again (29 dB down after; 2.5 without the trial filter); a note held
+tests: a room's echo (45 ms, a 40 ms tail) down 25 dB, a voice over it
+kept within 0.1 dB and 33 dB over what is left; a moved speaker learnt again; the volume turned up 12 dB
+learnt again (28 dB down after; 2.5 without the trial filter); a note held
 for four seconds kept whole, the filter still learnt after it; no
 reference, the voice as it is; and a laptop's speakers (a limiter, soft
 clipping, no bass) in rooms with a 0.15 to 0.4 s reverberation, the echo
@@ -597,12 +620,23 @@ echo is kept within 0.5 dB, 20 to 41 dB over the rest. A singer as a singer
 sounds (syllables of harmonics, consonants, soft ones) through such a room,
 from twice as loud as the echo to 24 dB under it: no syllable loses
 anything (each within 1 dB, the soft ones and the onsets too). Two
-speakers heard apart (the microphone by the left one): 31 dB out from left
-and right, 12.5 dB from their mean; music whose loudness repeats every 250
+speakers heard apart (the microphone by the left one): 28 dB out from left
+and right, 12.4 dB from their mean; music whose loudness repeats every 250
 ms, its echo 300 ms late: found within 15 ms; a loud passage through a
-limiter (the gain pulled down 8 dB): never started over, 43 dB out after;
+limiter (the gain pulled down 8 dB): never started over, 35 dB out after;
 the suppressor: 9.5 dB more of a laptop's leftover out, the singer kept
-within 0.1 dB, and without an echo the voice exactly as it came. `isolate`'s
+within 0.1 dB, and without an echo the voice exactly as it came. Singing
+(`aec::tests::singing`): a singer 8 dB under a stereo song's echo through
+a laptop's two speakers, for 14 s once learnt: the echo under them still
+goes as before they sang (17 dB, 19 at the end; told apart by its level
+alone, 8 at the end), the singer kept whole; the laptop moved under such a
+singer (the echo 25 ms later, another way): 11 dB of the new echo out 5 s
+on (before, 7); a steady hum 20 dB under the echo, pitched and nothing of
+the music's: learnt as without it; two speakers each its own way to the
+microphone: 14.5 dB out in the third second, 24 once learnt (before 17.7
+and 27: a step along both channels at once was twice what it is now,
+which on an echo without noise or a voice learns faster, and lets a voice
+the detector misses in twice as much). `isolate`'s
 own tests: the network streamed matches the trained one (PyTorch, the same
 f16 weights) on a made-up signal within 1e-5 in its gains and presence, fed
 in any pieces; a steady hiss goes (75 dB); the downsampler keeps 200 Hz to
@@ -658,6 +692,31 @@ dropped, the shadow learning on (test: both filters made 200 times too
 loud). At 6 dB a working filter was started over too often (a singer's
 sound against the echo's runs up to 9 dB over in a block): a song through a
 laptop lost a third of what was taken out.
+
+One of five channels from a MacBook's own speakers (left and right
+recorded apart; the user singing 8 dB under the echo for most of its
+30 s): the best linear filter from left and right took 13.1 dB of the echo
+out (11.7 fitted on one half and tested on the other), from their mean 7.
+The canceller replayed (`aec_replay`; the echo removed where nobody sang,
+0.3 to 3.1 s and 17 to 20.4 s, then under 300 Hz; a second pass after the
+first, as warm): before these changes 3.9 dB (1.5 under 300 Hz) fresh and
+6.0 (0.9) warm, the suppressed voice 5.0 and 15.4; now 8.6 (7.9) fresh and
+13.7 (10.0) warm, suppressed 9.1 and 16.2. Of the 581 moments where the
+best filter's leftover has the user's pitch, the suppressed voice has it
+on 2.8 % before (2.9 warm), now on 75 % (85 % warm). The 6.2 s without
+singing looped five times: 6.4, 11.2, 11.9, 12.0, 11.4 dB a pass before
+(the bass 3 to 6.5), now 8.6, 13.7, 14.0, 14.1, 14.3 (the bass 8 to 10);
+10 dB of it went after 5.5 s before, now after about 3 s. With a
+separated voice mixed in (16 voices, the pitch the game hears scored where
+the user does not sing), 5 and 10 dB under the echo: the pitch found on
+5.3 and 1.9 % of the voice's frames fresh before, 5.2 and 2.2 % warm; now
+22 and 12 % fresh, 44 and 22 % warm (the best filter's leftover: 51 and
+23 %, fitted on the other half 37 and 12 %). On the two older mono
+recordings, mixed the same way and scored from 2 s: 12.7 and 5.2 % fresh,
+13.9 and 5.6 % warm on one before, now 13.9, 5.0, 19.6 and 6.7 %; 6.4 and
+1.4, 6.9 and 1.7 % on the other, now 6.6, 1.4, 7.6 and 1.6 %. The
+detector costs about 1.4 % of a core (the canceller replays 30 s in 0.4 s
+more).
 
 The device paths need a device:
 

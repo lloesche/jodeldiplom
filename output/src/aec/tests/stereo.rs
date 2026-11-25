@@ -6,7 +6,7 @@ use super::*;
 
 /// A stereo song: what both sides play (music), and what each plays of
 /// its own (wide guitars, reverb: music of its own, `wide` as loud).
-fn stereo(n: usize, wide: f32) -> (Vec<f32>, Vec<f32>) {
+pub(super) fn stereo(n: usize, wide: f32) -> (Vec<f32>, Vec<f32>) {
     let common = music(n, 31);
     let a = music(n, 32);
     let b = music(n, 33);

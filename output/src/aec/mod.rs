@@ -24,19 +24,22 @@
 //!    the reference, what both speakers play alike and what they play apart
 //!    ([`reference::CHANNELS`]): a laptop's microphone sits nearer one
 //!    speaker, and from the mean of the two alone the best linear filter
-//!    took only 6 dB of a MacBook's echo out, however long, whatever its
-//!    model of the speakers' distortion (recordings of left and right
-//!    apart are to show how much the two channels take). Each bin is
-//!    normalised by the reference's power ([`filter::adapt`]). The
-//!    estimate of the filter in use is scaled by a gain that follows what
-//!    of it the microphone holds ([`gain`]: a speaker's limiter riding the
-//!    music's loudness). Two filters: a shadow that learns while nobody
-//!    sings, and the filter in use, which takes the shadow over only once
-//!    it leaves clearly less. Singing never teaches either (a held note
-//!    would draw them towards taking the note out). A room that changes
-//!    while someone seems to sing (the volume turned up: the leftover jumps
-//!    as a voice's would) is learnt by a trial filter apart, which takes
-//!    over only once it has left far less for a second running. The
+//!    took only 6 to 7 dB of a MacBook's echo out, however long, whatever
+//!    its model of the speakers' distortion (from left and right apart,
+//!    13 dB). Each bin is normalised by the reference's power across both
+//!    channels, what they play apart regularised where it is weak, the
+//!    bass above all ([`filter::adapt`]). The estimate of the filter in
+//!    use is scaled by a gain that follows what of it the microphone holds
+//!    ([`gain`]: a speaker's limiter riding the music's loudness). Two
+//!    filters: a shadow that learns, and the filter in use, which takes the
+//!    shadow over only once it leaves clearly less. While someone sings
+//!    ([`singing`]: the leftover holds a pitch the estimate does not, or is
+//!    far louder than the filter usually leaves) the shadow learns at a
+//!    tenth of its pace ([`WHILE_SINGING`]; a held note would draw it
+//!    towards taking the note out) and the filter in use takes nothing of
+//!    it. A room that changes while someone seems to sing is learnt by a
+//!    trial filter apart too, which takes over only once it has left far
+//!    less for a second running. The
 //!    filters learn along the reference prewhitened (each frequency's
 //!    steady part, a held tone, taken out): learnt along a tone, the path
 //!    is right for that note only. A filter that went beyond numbers, or
@@ -72,6 +75,7 @@ mod fft;
 mod filter;
 mod gain;
 mod reference;
+mod singing;
 mod suppress;
 #[cfg(test)]
 mod tests;
@@ -82,6 +86,7 @@ use fft::Fft;
 use filter::{Along, Filter};
 use gain::Gain;
 use reference::{Frame, History, Whitener, CHANNELS};
+use singing::Singing;
 pub use suppress::Suppressor;
 pub use whole::{Cleaned, Whole};
 
@@ -94,12 +99,13 @@ pub const TAIL: f32 = 0.2;
 /// in seconds.
 pub const MAX_DELAY: f32 = 1.0;
 
-/// Blocks after the last one sung over before the meter measures again
-/// (about 100 ms).
-const HOLD: u32 = 40;
-/// A block leaving this many times the echo the filter in use usually
-/// leaves is sung over.
-const SINGING: f32 = 10.0;
+/// The shadow's pace while someone sings (a share of its step). With a
+/// voice 5 dB under a MacBook's echo all through a recording, the pitch was
+/// found on 19 % of its frames with the shadow held still, on 22 % at a
+/// tenth (it learns the echo between the notes the detector misses, and a
+/// room that changed under a singer it learns at all, held still only
+/// through the trial filter); once warm, on 45 and 46 %.
+const WHILE_SINGING: f32 = 0.1;
 /// While someone sings, the trial filter takes over only after leaving this
 /// share of what the filter in use leaves (−6 dB) for this many blocks
 /// running (about a second): a room that changed (the volume turned up)
@@ -202,12 +208,14 @@ impl InUse {
 }
 
 /// The trial filter, while someone seems to sing: its partitions, what it
-/// leaves (smoothed), and the blocks running it has left [`CLEARLY`] less
-/// than the filter in use.
+/// leaves (smoothed), the blocks running it has left [`CLEARLY`] less than
+/// the filter in use, and its own turn of the constraint.
 struct Trial {
     filter: Filter,
     level: f32,
     better_for: u32,
+    /// The partition whose gradient it constrains next.
+    turn: usize,
 }
 
 /// One block's signals and powers, as the filters left them
@@ -217,9 +225,11 @@ struct Step {
     /// The reference's bins (for the delay finder) and the microphone's.
     reference: Frame,
     mic_bins: fft::Bins,
-    /// What the filter in use subtracts (at its gain), and what that leaves.
+    /// What the filter in use subtracts (at its gain), and what that leaves;
+    /// what it leaves as it predicts (no gain).
     estimate: [f32; BLOCK],
     error: [f32; BLOCK],
+    plain_error: [f32; BLOCK],
     /// What the shadow leaves.
     shadow_error: [f32; BLOCK],
     /// Powers: the microphone's, the error's, what the filter in use
@@ -263,6 +273,8 @@ pub struct EchoCanceller {
     whiteners: [Whitener; CHANNELS],
     white_history: History,
 
+    /// Tells singing from the echo left.
+    detector: Singing,
     /// Finds where the window should start.
     finder: DelayFinder,
     /// Blocks with the reference playing since the window last moved;
@@ -275,8 +287,10 @@ pub struct EchoCanceller {
     /// transforms take two).
     last_reference: [[f32; BLOCK]; CHANNELS],
     last_mic: [f32; BLOCK],
-    /// The partition whose gradient is constrained next.
+    /// The partition of the shadow whose gradient is constrained next.
     turn: usize,
+    /// The bins of the bass (under [`filter::BASS_HZ`]) at its rate.
+    bass: usize,
 
     /// Smoothed block powers: microphone, echo estimate, reference.
     mic_level: f32,
@@ -284,9 +298,7 @@ pub struct EchoCanceller {
     reference_level: f32,
     /// What is left, smoothed.
     out_level: f32,
-    /// Blocks since the last one sung over; blocks running the filter in use
-    /// has been worse than nothing.
-    since_singing: u32,
+    /// Blocks running the filter in use has been worse than nothing.
     worse_for: u32,
     /// The last block had only the echo in it ([`Echo::echo_only`]).
     echo_only: bool,
@@ -320,6 +332,7 @@ impl EchoCanceller {
             whiteners: [Whitener::new(), Whitener::new()],
             white_history: History::new(lags + partitions),
 
+            detector: Singing::new(rate),
             finder: DelayFinder::new(lags),
             placed: 0,
             since_place: 0,
@@ -327,12 +340,12 @@ impl EchoCanceller {
             last_reference: [[0.0; BLOCK]; CHANNELS],
             last_mic: [0.0; BLOCK],
             turn: 0,
+            bass: filter::bass(rate),
 
             mic_level: 0.0,
             echo_level: 0.0,
             reference_level: 0.0,
             out_level: 0.0,
-            since_singing: u32::MAX,
             worse_for: 0,
             echo_only: false,
             removed_db: 0.0,
@@ -341,9 +354,15 @@ impl EchoCanceller {
         }
     }
 
-    /// The rate it runs at (only the delay it reports changes).
+    /// The rate it runs at: the delay it reports, the bins of the bass, and
+    /// the detector (which starts over: its filters and lags are the rate's)
+    /// change; the filters' window, in blocks, stays.
     pub fn set_rate(&mut self, rate: u32) {
-        self.rate = rate;
+        if rate != self.rate {
+            self.rate = rate;
+            self.bass = filter::bass(rate);
+            self.detector = Singing::new(rate);
+        }
     }
 
     /// How it is doing.
@@ -365,6 +384,7 @@ impl EchoCanceller {
         self.history.clear();
         self.white_history.clear();
         self.finder.clear();
+        self.detector.clear();
         self.offset = 0;
         self.placed = 0;
     }
@@ -411,30 +431,35 @@ impl EchoCanceller {
             self.finder.push(&step.reference[0], &step.mic_bins);
             self.placed = self.placed.saturating_add(1);
         }
-        // Double talk: once learnt, the filter in use leaves about the
-        // share of the echo its own cut says (of the echo as it predicts
-        // it, which singing does not change); a block leaving several
-        // times that is something else in the microphone (someone
-        // singing).
+        // Double talk ([`singing`]). Once learnt, the filter in use leaves
+        // about the share of the echo its own cut says (of the echo as it
+        // predicts it, which singing does not change).
         let cut = 10f32.powf(self.filter_db / 10.0);
         let usual = self.echo_level.max(step.py) / cut;
-        let singing = self.learnt && step.pe > SINGING * usual + 10.0 * QUIET;
+        self.detector.hear(
+            &step.error,
+            &step.estimate,
+            step.pe,
+            self.learnt.then_some(usual),
+        );
+        let singing = reference_on && self.detector.singing();
         self.since_swap = self.since_swap.saturating_add(1);
         if self.since_swap > SWAP_EVERY && reference_on && !singing {
             self.swap();
         }
-        if singing && reference_on {
+        if singing {
             self.try_while_singing(&step.mic);
         } else {
             self.trial = None;
         }
         self.drop_if_worse(step.pm);
         self.measure(&step, reference_on, singing, usual);
-        if reference_on && !singing {
+        if reference_on {
             let along = Along {
                 plain: &self.history,
                 white: &self.white_history,
                 offset: self.offset,
+                bass: self.bass,
             };
             filter::adapt(
                 &self.fft,
@@ -442,6 +467,7 @@ impl EchoCanceller {
                 &step.shadow_error,
                 &along,
                 &mut self.turn,
+                if singing { WHILE_SINGING } else { 1.0 },
             );
         }
         self.since_place = self.since_place.saturating_add(1);
@@ -487,19 +513,14 @@ impl EchoCanceller {
         let predicted = &predicted[BLOCK..];
         let mean = |s: &[f32]| s.iter().map(|v| v * v).sum::<f32>() / s.len() as f32;
         let cross = mic.iter().zip(predicted).map(|(m, y)| m * y).sum::<f32>() / BLOCK as f32;
-        let sung = self.since_singing <= HOLD;
+        let sung = self.detector.singing();
         let gain = self
             .in_use
             .gain
             .follow(cross, mean(predicted), sung, self.in_use.error_level);
         let estimate: [f32; BLOCK] = std::array::from_fn(|i| gain * predicted[i]);
         let error: [f32; BLOCK] = std::array::from_fn(|i| mic[i] - estimate[i]);
-        let plain = mic
-            .iter()
-            .zip(predicted)
-            .map(|(m, y)| (m - y) * (m - y))
-            .sum::<f32>()
-            / BLOCK as f32;
+        let plain_error: [f32; BLOCK] = std::array::from_fn(|i| mic[i] - predicted[i]);
         let shadow = filter::predict(&self.fft, &self.shadow, &self.history, self.offset);
         let shadow_error: [f32; BLOCK] = std::array::from_fn(|i| mic[i] - shadow[BLOCK + i]);
         let pm = mean(&mic);
@@ -510,10 +531,11 @@ impl EchoCanceller {
             mic_bins,
             estimate,
             error,
+            plain_error,
             shadow_error,
             pm,
             pe: mean(&error),
-            plain,
+            plain: mean(&plain_error),
             ps: mean(&shadow_error),
             py: mean(predicted),
             px: mean(&reference[0]) + mean(&reference[1]),
@@ -530,11 +552,13 @@ impl EchoCanceller {
     /// shadow from the filter in use, the trial dropped, the filter in use
     /// (and everything learnt) forgotten. What the shadow left this block
     /// goes with it (it is then the filter in use's), or its next step
-    /// would spoil it again at once. Then the levels of the detector and
+    /// would spoil it again at once (as the filter in use predicts, without
+    /// its gain, as the shadow is held). Then the levels of the detector and
     /// the meter (an estimate gone astray counts for nothing).
     fn guard(&mut self, step: &mut Step) {
         if step.in_use_astray {
             step.error = step.mic;
+            step.plain_error = step.mic;
             step.estimate = [0.0; BLOCK];
             step.pe = step.pm;
             step.plain = step.pm;
@@ -553,24 +577,28 @@ impl EchoCanceller {
             step.shadow_error = step.mic;
         } else if step.shadow_astray || !self.shadow_level.is_finite() {
             self.take_in_use();
-            step.shadow_error = step.error;
+            step.shadow_error = step.plain_error;
         }
         if self.trial.as_ref().is_some_and(|t| !t.level.is_finite()) {
             self.trial = None;
         }
     }
 
-    /// The shadow learns while the music plays and nobody sings (a held
-    /// note would draw it towards taking the note out: the music has the
-    /// note's frequency in it too). The filter in use takes it over once
-    /// it leaves clearly less, and gives it back what it has when it has
-    /// gone astray. The shadow is held against the filter in use as it
-    /// predicts, without the gain (which would hold the shadow back the
-    /// longer it does well).
+    /// The shadow learns while the music plays (while someone sings, at a
+    /// tenth of its pace: a held note would draw it towards taking the note
+    /// out, the music has the note's frequency in it too). The filter in
+    /// use takes it over once it leaves clearly less (not while someone
+    /// sings), and gives it back what it has when it has gone astray. The
+    /// shadow is held against the filter in use as it predicts, without the
+    /// gain, both ways: against its gain, a shadow learning the echo a
+    /// speaker's limiter had pulled down (the gain mending that for the
+    /// filter in use) was given the filter in use back every few blocks,
+    /// and never learnt it; and the gain would hold the shadow back the
+    /// longer it does well.
     fn swap(&mut self) {
         if self.shadow_level < 0.7 * self.in_use.plain_level && self.shadow_level < self.mic_level {
             self.take_shadow();
-        } else if self.shadow_level > 4.0 * self.in_use.error_level + QUIET {
+        } else if self.shadow_level > 4.0 * self.in_use.plain_level + QUIET {
             self.take_in_use();
         }
     }
@@ -621,7 +649,7 @@ impl EchoCanceller {
     /// Then what is left against the microphone's level, the echo removed.
     fn measure(&mut self, step: &Step, reference_on: bool, singing: bool, usual: f32) {
         let echo_only = !self.learnt || step.pe < 4.0 * usual;
-        let settled = !self.learnt || self.since_singing > HOLD;
+        let settled = !self.learnt || self.detector.settled();
         let heard = self.mic_level > QUIET;
         if reference_on && !singing && echo_only && settled && heard {
             let db = 10.0 * (self.mic_level / self.in_use.error_level.max(1e-12)).log10();
@@ -631,12 +659,7 @@ impl EchoCanceller {
             }
         }
         self.out_level += (step.pe - self.out_level) * SMOOTH;
-        self.since_singing = if singing {
-            0
-        } else {
-            self.since_singing.saturating_add(1)
-        };
-        let settled = self.since_singing > HOLD;
+        let settled = self.detector.settled();
         self.echo_only = self.learnt && reference_on && settled && echo_only && heard;
         if reference_on && settled && echo_only && heard {
             let db = 10.0 * (self.mic_level / self.out_level.max(1e-12)).log10();
@@ -691,6 +714,7 @@ impl EchoCanceller {
                 filter,
                 level: in_use.error_level,
                 better_for: 0,
+                turn: 0,
             }
         });
         let predicted = filter::predict(&self.fft, &trial.filter, &self.history, self.offset);
@@ -709,8 +733,16 @@ impl EchoCanceller {
                 plain: &self.history,
                 white: &self.white_history,
                 offset: self.offset,
+                bass: self.bass,
             };
-            filter::adapt(&self.fft, &mut trial.filter, &error, &along, &mut self.turn);
+            filter::adapt(
+                &self.fft,
+                &mut trial.filter,
+                &error,
+                &along,
+                &mut trial.turn,
+                1.0,
+            );
         }
     }
 
