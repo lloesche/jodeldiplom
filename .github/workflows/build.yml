@@ -17,6 +17,17 @@ permissions:
   contents: read
 
 jobs:
+  # The project's rules over the tracked files (scripts/check-rules.sh): a
+  # word that stays out, LF line endings; big files are only listed. That
+  # every file is written through durable, the lints hold (clippy.toml).
+  rules:
+    name: Project rules
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - name: Check the rules
+        run: bash scripts/check-rules.sh
+
   msrv:
     name: Minimum Rust versions
     runs-on: ubuntu-24.04
@@ -26,18 +37,26 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends libasound2-dev pkg-config
-      # Each crate is tested with the rust-version its own Cargo.toml declares:
-      # durable, jodel-output, jodel-playback, jodel-rhythm and jodel-lyrics
-      # keep an older one than jodel-gpu and the player. A crate failing
-      # does not stop the others.
+      # Each crate (every folder with a Cargo.toml, so a new one is not
+      # missed) is tested with the rust-version its own Cargo.toml declares.
+      # A crate failing, or declaring none, does not stop the others.
       - name: Test each crate with its rust-version
         run: |
           set -euo pipefail
           failed=()
-          for manifest in durable/Cargo.toml output/Cargo.toml playback/Cargo.toml rhythm/Cargo.toml lyrics/Cargo.toml gpu/Cargo.toml player/Cargo.toml; do
+          for manifest in */Cargo.toml; do
             package=$(sed -n 's/^name = "\(.*\)"$/\1/p' "$manifest" | head -n 1)
-            version=$(sed -n 's/^rust-version = "\(.*\)"$/\1/p' "$manifest")
-            rustup toolchain install "$version" --profile minimal
+            version=$(sed -n 's/^rust-version = "\(.*\)"$/\1/p' "$manifest" | head -n 1)
+            if [[ -z $version ]]; then
+              echo "::error file=$manifest::$manifest declares no rust-version"
+              failed+=("${package:-$manifest}")
+              continue
+            fi
+            if ! rustup toolchain install "$version" --profile minimal; then
+              echo "::error file=$manifest::Rust $version would not install"
+              failed+=("$package")
+              continue
+            fi
             echo "::group::$package on Rust $version"
             cargo "+$version" test -p "$package" --locked --no-fail-fast || failed+=("$package")
             echo "::endgroup::"
@@ -218,7 +237,7 @@ jobs:
   release:
     name: Publish the release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [msrv, build, windows-build, windows-test, windows-smoke]
+    needs: [rules, msrv, build, windows-build, windows-test, windows-smoke]
     runs-on: ubuntu-24.04
     permissions:
       contents: write

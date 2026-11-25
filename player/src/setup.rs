@@ -1087,6 +1087,10 @@ mod system {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "tests: the stand-in downloader and packer, and model files where an older player left them"
+)]
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};

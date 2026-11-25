@@ -703,8 +703,7 @@ fn the_speech_model_is_found_where_the_build_put_it() {
     let root = std::env::temp_dir().join(format!("jodel-model-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     let put = |dir: &std::path::Path| {
-        std::fs::create_dir_all(dir.join(MODEL_DIR)).unwrap();
-        std::fs::write(dir.join(MODEL_DIR).join(MODEL_FILE), b"x").unwrap();
+        durable::write_atomic(&dir.join(MODEL_DIR).join(MODEL_FILE), b"x").unwrap();
         dir.join(MODEL_DIR).join(MODEL_FILE)
     };
     let exe = root.join("release");
@@ -846,8 +845,7 @@ fn the_speech_recogniser_is_found_beside_the_speech_model() {
     std::fs::create_dir_all(&exe).unwrap();
     assert_eq!(asr_model_in(Some(&exe), Some(&settings)), None);
     let resources = root.join("Contents").join("Resources").join(MODEL_DIR);
-    std::fs::create_dir_all(&resources).unwrap();
-    std::fs::write(resources.join(ASR_FILE), b"x").unwrap();
+    durable::write_atomic(&resources.join(ASR_FILE), b"x").unwrap();
     let found = asr_model_in(Some(&exe), Some(&settings)).unwrap();
     assert!(found.ends_with(ASR_FILE), "{found:?}");
     let _ = std::fs::remove_dir_all(&root);

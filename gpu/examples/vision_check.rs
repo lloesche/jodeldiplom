@@ -26,6 +26,7 @@ fn f32s(path: &Path) -> Vec<f32> {
         .collect()
 }
 
+#[expect(clippy::disallowed_methods, reason = "debt (P6): its comparison dumps")]
 fn write_f32s(path: &Path, values: &[f32]) {
     let bytes: Vec<u8> = values.iter().flat_map(|v| v.to_le_bytes()).collect();
     std::fs::write(path, bytes).unwrap();
@@ -39,6 +40,7 @@ fn model(var: &str, file: &str) -> PathBuf {
     })
 }
 
+#[expect(clippy::disallowed_methods, reason = "debt (P6): its comparison dumps")]
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {

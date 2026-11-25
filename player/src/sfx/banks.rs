@@ -116,6 +116,10 @@ pub fn load_or_make(rate: u32, make: fn(u32) -> SoundBank, store: Option<&BankSt
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "tests: sound banks cut short or altered, to be refused"
+)]
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};

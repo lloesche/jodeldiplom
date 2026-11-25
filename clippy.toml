@@ -1,0 +1,19 @@
+# Every file is written through the durable crate (whole or not at all,
+# made durable): clippy refuses the calls that write one otherwise. The
+# durable crate itself allows them; an exception elsewhere says why, in an
+# `#[expect(clippy::disallowed_methods, reason = "...")]` on the narrowest
+# item (one on code that no longer writes fails, so none goes stale). A
+# path a crate does not depend on (image, hound) is fine there.
+disallowed-methods = [
+    { path = "std::fs::write", reason = "write through durable (write_atomic)" },
+    { path = "std::fs::File::create", reason = "write through durable (AtomicFile)" },
+    { path = "std::fs::File::create_new", reason = "write through durable (AtomicFile)" },
+    { path = "std::fs::OpenOptions::write", reason = "write through durable (AtomicFile)" },
+    { path = "std::fs::OpenOptions::append", reason = "write through durable (write_atomic the whole file)" },
+    { path = "std::fs::rename", reason = "write through durable (rename_durable)" },
+    { path = "std::fs::copy", reason = "write through durable (AtomicFile)" },
+    { path = "image::ImageBuffer::save", reason = "write through durable (write_to an AtomicFile)", allow-invalid = true },
+    { path = "image::DynamicImage::save", reason = "write through durable (write_to an AtomicFile)", allow-invalid = true },
+    { path = "image::save_buffer", reason = "write through durable (write_to an AtomicFile)", allow-invalid = true },
+    { path = "hound::WavWriter::create", reason = "write through durable (hound::WavWriter::new on an AtomicFile)", allow-invalid = true },
+]

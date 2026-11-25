@@ -2,6 +2,10 @@
 //! frames as the test allows (to place commands at exact output frames),
 //! event collection and reference resamples.
 
+#![allow(
+    clippy::disallowed_methods,
+    reason = "tests: WAV tracks in a temporary folder"
+)]
 #![allow(dead_code)]
 
 pub mod lanes;

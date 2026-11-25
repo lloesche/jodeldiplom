@@ -24,6 +24,14 @@ use jodeldiplom::gui::raster::Target;
 use jodeldiplom::view::karaoke::{sung_on, timed_lines, KaraokePicture, LineKind, Score};
 use ratatui::layout::Rect;
 
+/// `img` as a PNG in `file`, written whole.
+fn save_png(img: &image::RgbImage, file: &Path) {
+    let mut png = durable::AtomicFile::create(file).expect("a PNG file");
+    img.write_to(&mut png, image::ImageFormat::Png)
+        .expect("a PNG");
+    png.commit().expect("written");
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let data = Path::new(&args[0]);
@@ -177,7 +185,7 @@ fn main() {
             image::Rgb([(p >> 16) as u8, (p >> 8) as u8, *p as u8]),
         );
     }
-    img.save(&args[4]).unwrap();
+    save_png(&img, Path::new(&args[4]));
     // The lines, and how far each is sung.
     for line in &picture.lines {
         println!("{:>4.0} %  {}", line.fill * 100.0, line.text);
@@ -297,7 +305,7 @@ fn gpu_frames(
             );
         }
         let name = out.replace(".png", &format!("{f:03}.png"));
-        img.save(&name).unwrap();
+        save_png(&img, Path::new(&name));
     }
     println!(
         "score {} ({} of {} words, streak {})",

@@ -201,6 +201,10 @@ pub fn queue_name(dir: &Path, tracks: &[PathBuf]) -> PathBuf {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "tests: session and playlist files as written by hand"
+)]
 mod tests {
     use super::*;
 

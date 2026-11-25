@@ -84,7 +84,7 @@ fn the_result_is_heard_after_the_song() {
     let dir = common::temp_dir("reveal-heard");
     let song = dir.join("a.wav");
     common::write_wav(&song, RATE, 3.0);
-    std::fs::write(dir.join("a.lrc"), "la la la\nla la\n").unwrap();
+    durable::write_atomic(&dir.join("a.lrc"), b"la la la\nla la\n").unwrap();
     let mut caps = Capabilities::new();
     caps.insert(StreamFormat::new(RATE, 2, SampleFormat::S24In32Low));
     let memory = MemoryOutput::new(caps, SimClock::Realtime);

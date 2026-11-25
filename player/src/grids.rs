@@ -160,6 +160,10 @@ impl GridStore {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "tests: a track whose size and bytes change under its grid"
+)]
 mod tests {
     use super::*;
 

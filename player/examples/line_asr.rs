@@ -67,7 +67,6 @@ fn main() {
     let data = Path::new(&args[0]);
     let list = fs::read_to_string(&args[1]).unwrap();
     let out = Path::new(&args[2]);
-    fs::create_dir_all(out).unwrap();
     let models = data.join("models");
     let asr = jodel_lyrics::asr::packed::PackedModel::open(
         &models.join(jodeldiplom::lyrics::models::ASR_FILE),
@@ -154,17 +153,14 @@ fn main() {
                     .collect::<Vec<_>>(),
             )
         });
-        fs::write(
-            &target,
-            format!(
-                "{{\"words\":[{}],\"first\":[{}],\"beats\":[{}],\"downbeats\":[{}]}}\n",
-                words.join(","),
-                first.join(","),
-                beats.join(","),
-                downbeats.join(",")
-            ),
-        )
-        .unwrap();
+        let json = format!(
+            "{{\"words\":[{}],\"first\":[{}],\"beats\":[{}],\"downbeats\":[{}]}}\n",
+            words.join(","),
+            first.join(","),
+            beats.join(","),
+            downbeats.join(",")
+        );
+        durable::write_atomic(&target, json.as_bytes()).unwrap();
         println!("{id}: {} words, {} beats", words.len(), beats.len());
     }
 }

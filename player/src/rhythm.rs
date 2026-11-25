@@ -1018,6 +1018,10 @@ impl Drop for RhythmWorker {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "tests: tracks that change under their analysis"
+)]
 mod tests {
     use super::*;
 

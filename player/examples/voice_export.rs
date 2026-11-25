@@ -33,6 +33,11 @@ fn wav_f32(samples: &[f32], rate: u32) -> Vec<u8> {
     out
 }
 
+/// `bytes` as `dir/name`, written whole.
+fn put(dir: &Path, name: &str, bytes: impl AsRef<[u8]>) {
+    durable::write_atomic(&dir.join(name), bytes.as_ref()).unwrap();
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let data = Path::new(&args[0]);
@@ -47,19 +52,18 @@ fn main() {
         let voice = jodeldiplom::lyrics::timer::voice_16k(file).unwrap();
         let key = jodeldiplom::lyrics::store::cache_key(path).unwrap();
         let dir = out.join(&key);
-        fs::create_dir_all(&dir).unwrap();
         let lines: Vec<&str> = text
             .lines()
             .map(str::trim)
             .filter(|l| !l.is_empty() && !l.starts_with('[') && !l.starts_with('('))
             .collect();
-        fs::write(dir.join("lyrics.txt"), lines.join("\n") + "\n").unwrap();
+        put(&dir, "lyrics.txt", lines.join("\n") + "\n");
         let name = path
             .file_stem()
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_default();
-        fs::write(dir.join("name.txt"), &name).unwrap();
-        fs::write(dir.join("voice.wav"), wav_f32(&voice, 16_000)).unwrap();
+        put(&dir, "name.txt", &name);
+        put(&dir, "voice.wav", wav_f32(&voice, 16_000));
         println!("{key}  {name}  {:.0} s", voice.len() as f64 / 16_000.0);
         return;
     }
@@ -99,20 +103,20 @@ fn main() {
         let Ok(voice) = jodeldiplom::lyrics::timer::voice_16k(file) else {
             continue;
         };
-        fs::create_dir_all(&dir).unwrap();
         let lines: Vec<String> = lyrics
             .lines
             .iter()
             .filter(|l| !l.words.is_empty())
             .map(|l| l.text())
             .collect();
-        fs::write(dir.join("lyrics.txt"), lines.join("\n") + "\n").unwrap();
+        put(&dir, "lyrics.txt", lines.join("\n") + "\n");
         let name = path
             .file_stem()
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_default();
-        fs::write(dir.join("name.txt"), &name).unwrap();
-        fs::write(dir.join("voice.wav"), wav_f32(&voice, 16_000)).unwrap();
+        put(&dir, "name.txt", &name);
+        // Last: a song with its voice.wav is done (passed over above).
+        put(&dir, "voice.wav", wav_f32(&voice, 16_000));
         println!(
             "{lyrics_key}  {name}  {:.0} s",
             voice.len() as f64 / 16_000.0

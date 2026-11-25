@@ -3,6 +3,11 @@
 //! The fixtures in `tests/fixtures/formats` are made by its `make.py` from
 //! the two signals recomputed here ([`lossless`], [`lossy`]).
 
+#![allow(
+    clippy::disallowed_methods,
+    reason = "tests: tracks in each format, a tagged one and junk"
+)]
+
 mod common;
 
 use std::path::{Path, PathBuf};

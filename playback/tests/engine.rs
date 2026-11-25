@@ -1,6 +1,11 @@
 //! The engine end to end, without a device: what reaches the output, byte
 //! for byte, against the file's own samples.
 
+#![allow(
+    clippy::disallowed_methods,
+    reason = "tests: a cover file that is not an image"
+)]
+
 mod common;
 
 use std::path::PathBuf;

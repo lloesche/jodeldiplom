@@ -178,7 +178,7 @@ fn main() {
             beats.join(","),
             downbeats.join(",")
         );
-        fs::write(out.join(format!("{lyrics_key}.json")), json).unwrap();
+        durable::write_atomic(&out.join(format!("{lyrics_key}.json")), json.as_bytes()).unwrap();
         written += 1;
     }
     println!("{written} songs");

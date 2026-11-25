@@ -1,14 +1,15 @@
 //! Training material for a voice cleaner: for each song listed, its voice
 //! and its band (the mix less the voice), separated on the GPU, mono at
 //! 16 kHz, 16-bit, as `OUT/{id}-voice.wav` and `OUT/{id}-band.wav`, and a
-//! line `ID<TAB>SECONDS<TAB>FILE` in `OUT/index.tsv`. Songs already there
-//! are passed over, so a run stopped goes on where it was.
+//! line `ID<TAB>SECONDS<TAB>FILE` in `OUT/index.tsv`. Songs already in the
+//! index are passed over, so a run stopped goes on where it was.
 //!
 //! ```text
 //! cargo run --release -p jodeldiplom --example voice_set -- LIST OUT
 //! ```
 
-use std::io::Write;
+use std::collections::HashSet;
+use std::fmt::Write;
 use std::path::Path;
 use std::time::Instant;
 
@@ -30,9 +31,7 @@ fn wav16(path: &Path, x: &[f32]) -> std::io::Result<()> {
     for v in x {
         b.extend_from_slice(&((v.clamp(-1.0, 1.0) * 32767.0).round() as i16).to_le_bytes());
     }
-    let tmp = path.with_extension("tmp");
-    std::fs::write(&tmp, b)?;
-    std::fs::rename(tmp, path)
+    durable::write_atomic(path, &b)
 }
 
 /// A short id for `path`: 12 hex digits of FNV-1a.
@@ -48,7 +47,6 @@ fn id(path: &str) -> String {
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let (list, out) = (&args[0], Path::new(&args[1]));
-    std::fs::create_dir_all(out).unwrap();
     let paths: Vec<String> = std::fs::read_to_string(list)
         .unwrap()
         .lines()
@@ -56,21 +54,29 @@ fn main() {
         .filter(|l| !l.is_empty())
         .map(str::to_owned)
         .collect();
-    let mut index = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(out.join("index.tsv"))
-        .unwrap();
+    // The index so far, written whole again after each song (one that
+    // cannot be read stops the run: rewritten, its songs would be lost).
+    // A song is done once it is in it, its two files written before.
+    let index_file = out.join("index.tsv");
+    let mut index = match std::fs::read_to_string(&index_file) {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(e) => panic!("{}: {e}", index_file.display()),
+    };
+    let done: HashSet<String> = index
+        .lines()
+        .filter_map(|l| l.split('\t').next().map(str::to_owned))
+        .collect();
     let started = Instant::now();
     for (k, path) in paths.iter().enumerate() {
         let id = id(path);
+        if done.contains(&id) {
+            continue;
+        }
         let (voice_file, band_file) = (
             out.join(format!("{id}-voice.wav")),
             out.join(format!("{id}-band.wav")),
         );
-        if voice_file.exists() && band_file.exists() {
-            continue;
-        }
         let t = Instant::now();
         match jodeldiplom::lyrics::timer::separate_16k(Path::new(path), true) {
             Ok((voice, mix)) => {
@@ -79,6 +85,7 @@ fn main() {
                 wav16(&voice_file, &voice[..n]).unwrap();
                 wav16(&band_file, &band).unwrap();
                 writeln!(index, "{id}\t{:.1}\t{path}", n as f64 / 16_000.0).unwrap();
+                durable::write_atomic(&index_file, index.as_bytes()).unwrap();
                 eprintln!(
                     "{}/{} {id} {:.0} s in {:.1} s ({:.0} min so far)",
                     k + 1,

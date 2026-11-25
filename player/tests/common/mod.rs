@@ -2,6 +2,10 @@
 //! generated WAV, a generated cover, and states with a track
 //! "playing" for the view tests.
 
+#![allow(
+    clippy::disallowed_methods,
+    reason = "tests: a music folder of fixture tracks, a cover and a stray file"
+)]
 #![allow(dead_code)]
 
 use std::fs;

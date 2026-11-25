@@ -1,5 +1,6 @@
-# The player (terminal and window) is in player/, its playback engine in
-# playback/, the bit-perfect device output in output/, its beat and tempo
+# The player (its window) is in player/, its playback engine in
+# playback/, the device output (shared, through the system's mixer), the
+# mixer and the microphone in output/, its beat and tempo
 # analysis and stem separation in rhythm/ (on the GPU in gpu/), its lyrics
 # for karaoke in lyrics/, the checkpoints the speech, depth and cut-out
 # models are read from in tensors/, the synthesizer of the game's sound

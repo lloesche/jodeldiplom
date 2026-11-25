@@ -577,19 +577,22 @@ mod tests {
         let dir = temp("album");
         let album = dir.join("Album");
         std::fs::create_dir_all(&album).unwrap();
+        let mut cover = durable::AtomicFile::create(&album.join("cover.png")).unwrap();
         crate::art::sample_cover(128)
-            .save(album.join("cover.png"))
+            .write_to(&mut cover, image::ImageFormat::Png)
             .unwrap();
+        cover.commit().unwrap();
         let tracks: Vec<PathBuf> = (1..=3)
             .map(|i| {
                 let p = album.join(format!("0{i}.wav"));
-                std::fs::write(&p, crate::keep::wav(&vec![0i16; 4410 * i], 44_100)).unwrap();
+                durable::write_atomic(&p, &crate::keep::wav(&vec![0i16; 4410 * i], 44_100))
+                    .unwrap();
                 p
             })
             .collect();
         // And a file that cannot be read: told, not kept as "no cover".
         let broken = album.join("04.wav");
-        std::fs::write(&broken, b"not audio").unwrap();
+        durable::write_atomic(&broken, b"not audio").unwrap();
         let counting = Arc::new(Counting::default());
         let (tx, rx) = std::sync::mpsc::channel();
         let worker = CoverWorker::start_with(

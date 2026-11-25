@@ -55,6 +55,10 @@ const SOUND_SOURCES: [&str; 9] = [
     "src/core/singing/signature.rs",
 ];
 
+#[expect(
+    clippy::disallowed_methods,
+    reason = "build output in cargo's OUT_DIR, which cargo owns and rewrites"
+)]
 fn sounds_key() {
     let manifest = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
     // FNV-1a, 64 bits, over the files as text (line endings as LF).
@@ -75,6 +79,10 @@ fn sounds_key() {
     std::fs::write(out, code).expect("write sfx_key.rs");
 }
 
+#[expect(
+    clippy::disallowed_methods,
+    reason = "build output in cargo's OUT_DIR, which cargo owns and rewrites"
+)]
 fn embed_fonts() {
     println!("cargo:rerun-if-env-changed=JODELDIPLOM_FONTS");
     let manifest = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());

@@ -143,6 +143,15 @@ fn sheet(cover: &RgbImage, l: &CoverLayers) -> RgbImage {
     out
 }
 
+const PNG: image::ImageFormat = image::ImageFormat::Png;
+
+/// A PNG written whole into `file` by `encode`.
+fn save_png(file: &Path, encode: impl FnOnce(&mut durable::AtomicFile) -> image::ImageResult<()>) {
+    let mut png = durable::AtomicFile::create(file).expect("a PNG file");
+    encode(&mut png).expect("a PNG");
+    png.commit().expect("written");
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let Some((out, covers)) = args.split_first() else {
@@ -183,20 +192,26 @@ fn main() {
             apart.as_millis(),
             if l.subject.is_some() { "yes" } else { "no" }
         );
-        sheet(&image, &l)
-            .save(out.join(format!("{name}.sheet.png")))
-            .unwrap();
-        l.plate.save(out.join(format!("{name}.plate.png"))).unwrap();
-        image.save(out.join(format!("{name}.cover.png"))).unwrap();
+        let sheet_image = sheet(&image, &l);
+        save_png(&out.join(format!("{name}.sheet.png")), |f| {
+            sheet_image.write_to(f, PNG)
+        });
+        save_png(&out.join(format!("{name}.plate.png")), |f| {
+            l.plate.write_to(f, PNG)
+        });
+        save_png(&out.join(format!("{name}.cover.png")), |f| {
+            image.write_to(f, PNG)
+        });
         if let Some(s) = &l.subject {
             let (w, h) = (s.width() as usize, s.height() as usize);
             let alpha: Vec<f32> = s.pixels().map(|p| f32::from(p[3]) / 255.0).collect();
             let hole = cover::hole(&alpha, w, h);
-            GrayImage::from_fn(w as u32, h as u32, |x, y| {
+            let hole_image = GrayImage::from_fn(w as u32, h as u32, |x, y| {
                 image::Luma([(hole[y as usize * w + x as usize] * 255.0) as u8])
-            })
-            .save(out.join(format!("{name}.hole.png")))
-            .unwrap();
+            });
+            save_png(&out.join(format!("{name}.hole.png")), |f| {
+                hole_image.write_to(f, PNG)
+            });
         }
     }
 }

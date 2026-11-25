@@ -24,7 +24,7 @@
 //!   them into FILE every ten songs and at the end.
 
 use std::collections::{HashMap, HashSet};
-use std::io::Write;
+use std::fmt::Write;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
@@ -156,10 +156,7 @@ fn voice(path: &Path, voices: Option<&Path>) -> Result<Vec<f32>, String> {
         for s in &v {
             out.extend_from_slice(&((s.clamp(-1.0, 1.0) * 32767.0) as i16).to_le_bytes());
         }
-        if let Some(dir) = file.parent() {
-            let _ = std::fs::create_dir_all(dir);
-        }
-        let _ = std::fs::write(&file, out);
+        let _ = durable::write_atomic(&file, &out);
     }
     Ok(v)
 }
@@ -207,10 +204,17 @@ fn save_stats(gpu: &GpuAsr, file: &Path) {
         matrices: gpu.statistics().unwrap(),
     };
     kept.add(&new);
-    let partial = file.with_extension("partial");
-    std::fs::write(&partial, kept.to_bytes()).unwrap();
-    std::fs::rename(&partial, file).unwrap();
+    durable::write_atomic(file, &kept.to_bytes()).unwrap();
     gpu.calibrate(true).unwrap();
+}
+
+/// `file`'s text, nothing if there is no such file yet.
+fn so_far(file: &Path) -> String {
+    match std::fs::read_to_string(file) {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(e) => panic!("{}: {e}", file.display()),
+    }
 }
 
 fn main() {
@@ -247,16 +251,13 @@ fn main() {
     if stats.is_some() {
         gpu.calibrate(true).unwrap();
     }
-    let done: HashSet<String> = std::fs::read_to_string(&out)
-        .unwrap_or_default()
+    // The table so far, written whole again after each song (one that
+    // cannot be read stops the run: rewritten, its songs would be lost).
+    let mut tsv = so_far(&out);
+    let done: HashSet<String> = tsv
         .lines()
         .filter_map(|l| l.split('\t').next().map(str::to_owned))
         .collect();
-    let mut tsv = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&out)
-        .unwrap();
     let songs = lines(list);
     let (mut heard, mut since_save) = (0, 0);
     for (i, song) in songs.iter().enumerate() {
@@ -295,7 +296,7 @@ fn main() {
             got.text.replace(['\t', '\n'], " ")
         )
         .unwrap();
-        tsv.flush().unwrap();
+        durable::write_atomic(&out, tsv.as_bytes()).unwrap();
         heard += 1;
         since_save += 1;
         eprintln!(

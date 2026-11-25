@@ -160,6 +160,10 @@ impl BankStore {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "tests: sound banks cut short or altered, to be refused"
+)]
 mod tests {
     use super::*;
 

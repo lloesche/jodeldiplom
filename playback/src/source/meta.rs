@@ -177,6 +177,10 @@ fn sniff_mime(data: &[u8]) -> &'static str {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "tests: cover image files beside a track, in a temporary folder"
+)]
 mod tests {
     use super::*;
 

@@ -7,6 +7,10 @@ use std::path::Path;
 /// Downloads `url` to `to` (through a file beside it, checked against its
 /// length `bytes` and its SHA-256 `sha256` before it takes its name),
 /// telling `progress` the bytes so far and in all.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "debt (W-B): the download goes into its own .partial file, renamed into place once its hash checks; to move onto durable::AtomicFile"
+)]
 pub fn download(
     url: &str,
     to: &Path,

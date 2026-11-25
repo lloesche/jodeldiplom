@@ -14,8 +14,7 @@
 //! rendered fall from FROM's beats in the window (from an analysis of the
 //! file).
 
-use std::fs::File;
-use std::io::{BufWriter, Write};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::{Duration, Instant};
@@ -333,7 +332,7 @@ fn report(what: &str, offsets: &[f64], of: usize) {
 
 /// A 24-bit stereo WAV of `samples` (24-bit, interleaved).
 fn write_wav(path: &Path, rate: u32, samples: &[i32]) -> Result<(), String> {
-    let mut out = BufWriter::new(File::create(path).map_err(|e| e.to_string())?);
+    let mut out = durable::AtomicFile::create(path).map_err(|e| e.to_string())?;
     let data = (samples.len() * 3) as u32;
     let mut header = Vec::with_capacity(44);
     header.extend_from_slice(b"RIFF");
@@ -353,6 +352,5 @@ fn write_wav(path: &Path, rate: u32, samples: &[i32]) -> Result<(), String> {
         out.write_all(&s.to_le_bytes()[..3])
             .map_err(|e| e.to_string())?;
     }
-    out.flush().map_err(|e| e.to_string())?;
-    Ok(())
+    out.commit().map_err(|e| e.to_string())
 }

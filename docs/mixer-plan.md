@@ -1,11 +1,15 @@
 # The mixer: where it goes from here
 
 A plan; its first three steps are built ("Step 1, as built" to "Step 3,
-as built", below). It starts from the mixer as it was (one device, any
-number of players on it, gain ramps on one shared clock, bit-perfect
-passthrough when one player plays alone at full gain) and grows it into a
-desk: devices plugged in as ports, channel strips with filters, buses, a
-routing matrix to one or more outputs, and taps.
+as built", below), and so are "One device, one rate" and "The key shift".
+It grows the mixer (one device, any number of players on it, gain ramps
+on one shared clock) into a desk: devices plugged in as ports, channel
+strips with filters, buses, a routing matrix to one or more outputs, and
+taps. As built, the desk opens its one device once, shared, through the
+system's mixer at the system's rate, and every input is resampled to that
+rate: a song at it reaches the system's mixer bit for bit, one at another
+is resampled, and the player calls nothing bit-perfect, since the
+system's mixer comes after it ("One device, one rate, as built").
 
 ## The one rule: what runs in real time, and what runs ahead
 
@@ -191,8 +195,8 @@ an auto-DJ that owns two decks and makes the transitions, the UI.
 4. **Headphones**: the cue bus to a second output through a clock bridge.
 5. **Maybe**: the routing kept as data, shown and edited.
 
-Every step keeps bit-perfect the default and proves it with the same
-bit-exact tests, run through the desk.
+Every step keeps the bit-exact tests passing, run through the desk: a
+song at the desk's rate, alone at unity, still comes out bit for bit.
 
 ### Step 1, as built
 

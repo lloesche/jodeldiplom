@@ -802,4 +802,8 @@ fn hear<D: FnMut(PathBuf, Answer)>(
 /// Why a transcription gave nothing: the voice sings too few words.
 pub const TOO_LITTLE_HEARD: &str = "too little was heard";
 #[cfg(test)]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "tests: stand-in tracks, sidecar and kept lyrics files in a temporary folder"
+)]
 mod tests;

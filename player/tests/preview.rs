@@ -50,7 +50,7 @@ fn wav(path: &Path, rate: u32, frames: u32, f: impl Fn(u32) -> i32) {
         out.extend_from_slice(&f(n).to_le_bytes()[..3]);
         out.extend_from_slice(&[0, 0, 0]);
     }
-    std::fs::write(path, out).unwrap();
+    durable::write_atomic(path, &out).unwrap();
 }
 
 /// The left channel of every frame the device gets, in order.

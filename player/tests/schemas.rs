@@ -8,6 +8,11 @@
 //! `UPDATE_SCHEMAS=1`, which adds the new version's sample (it never
 //! changes the sample of a version already there).
 
+#![allow(
+    clippy::disallowed_methods,
+    reason = "tests: kept files as each schema version wrote them, and a new sample under tests/ when UPDATE_SCHEMAS asks"
+)]
+
 use std::path::{Path, PathBuf};
 
 use jodel_lyrics::{Found, Lyrics, Source};

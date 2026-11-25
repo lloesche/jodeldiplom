@@ -229,7 +229,8 @@ fn main() {
                     );
                 }
             }
-            let _ = std::fs::write(dir.join(format!("words-{}.tsv", v.tag)), tsv);
+            let _ =
+                durable::write_atomic(&dir.join(format!("words-{}.tsv", v.tag)), tsv.as_bytes());
             let _ = write!(row, "  {} {trusted}", v.tag);
         }
         println!("{row}");

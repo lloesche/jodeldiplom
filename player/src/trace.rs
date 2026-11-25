@@ -18,6 +18,10 @@ struct Trace {
     started: Instant,
 }
 
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the debug trace (JODELDIPLOM_TRACE) is a log written as it happens, not a file replaced whole"
+)]
 fn trace() -> Option<&'static Trace> {
     static TRACE: OnceLock<Option<Trace>> = OnceLock::new();
     TRACE

@@ -187,7 +187,7 @@ fn main() {
             .unwrap_or_default(),
             (None, Some(asr)) => match asr.glimpses(&voice) {
                 Ok(g) => {
-                    let _ = std::fs::write(&kept, parts_text(&g));
+                    let _ = durable::write_atomic(&kept, parts_text(&g).as_bytes());
                     g
                 }
                 Err(e) => {
@@ -248,7 +248,7 @@ fn main() {
                 overrun += usize::from(next.is_some_and(|n| end > n + OVERRUN));
                 first_err.get_or_insert(start - at);
             }
-            let _ = std::fs::write(dir.join(format!("ours-{}.tsv", v.tag)), tsv);
+            let _ = durable::write_atomic(&dir.join(format!("ours-{}.tsv", v.tag)), tsv.as_bytes());
             total.lines += timed.lines.len();
             total.within += within;
             total.songs += 1;

@@ -63,9 +63,10 @@ does the same and, on macOS, puts the player into the app
 `make diag` runs the player's `--diag`, `make clean-cache` forgets its
 analyses, stems and lyrics.
 
-- **Rust**: the player needs Rust 1.90 or newer (`jodel-gpu` 1.87;
-  `durable`, `jodel-output`, `jodel-playback`, `jodel-rhythm` and
-  `jodel-lyrics` build with 1.85). The CI builds with Rust 1.100.0.
+- **Rust**: the player needs Rust 1.93 or newer (`jodel-gpu` 1.87;
+  `durable`, `jodel-output`, `jodel-playback`, `jodel-rhythm`,
+  `jodel-lyrics`, `jodel-tensors` and `jodel-synth` build with 1.85). The
+  CI builds with Rust 1.100.0, and tests each crate with its own.
 - **Windows**: the GNU toolchain (`x86_64-pc-windows-gnu`) with MSYS2's
   UCRT64 environment on `PATH` (`C:\msys64\ucrt64\bin`: the linker, and
   `windres`, which builds the player's icon into its executable;
@@ -87,8 +88,9 @@ builds the bundle for one platform in `BUILD_DIRECTORY/jodeldiplom-PLATFORM`:
 licence. From Linux it
 cross-builds for Windows: `windows-x64` with MinGW-w64 GCC and the Rust
 target `x86_64-pc-windows-gnu`. The CI workflow
-(`.github/workflows/build.yml`) checks formatting and lints, runs the tests
-(on Linux, macOS and Windows) and builds the bundles for Linux on x64 and
+(`.github/workflows/build.yml`) checks the project's rules, formatting
+and lints, runs the tests (on Linux, macOS and Windows, and each crate
+with its own minimum Rust) and builds the bundles for Linux on x64 and
 ARM64, macOS on Apple silicon and Windows on x64; a tag starting with `v`
 publishes them as a release.
 
@@ -98,7 +100,16 @@ publishes them as a release.
 cargo fmt --all --check
 cargo clippy --workspace --all-targets
 cargo test --workspace
+bash scripts/check-rules.sh
 ```
+
+`scripts/check-rules.sh` checks the project's rules over the tracked
+files: a word that stays out of the project, and LF line endings. It also
+lists the source files over 1000 lines of code: a big file is a question
+for review, split by concern where that helps, not to hit a number. That
+every file is written through `durable` is clippy's to check
+(`clippy.toml`): a call that writes a file any other way fails, unless an
+`#[expect(clippy::disallowed_methods, reason = "…")]` on it says why.
 
 No test needs an audio device. The shared fixtures are in
 [tests/fixtures](tests/fixtures): small format files (`formats`, made by
@@ -116,6 +127,7 @@ its `make.py` with FFmpeg) and two PCM FLAC files (`pcm`, made by its
 | `jodel-tensors` | [tensors](tensors) | a `.safetensors` checkpoint's tensors as f32, for the speech, depth and cut-out models |
 | `jodel-gpu` | [gpu](gpu) | the stem separator, the beat network, the speech recogniser and the covers' depth and cut-out models on the GPU, through `wgpu` |
 | `jodel-lyrics` | [lyrics](lyrics) | lyrics for karaoke: LRC in and out, tokens for a speech model, forced alignment of words, the speech recogniser and its 4-bit packing |
+| `jodel-synth` | [synth](synth) | a small real-time synthesizer for the karaoke game's sound effects: engines of our own, a voice host, a bus of chorus, delay, hall and dynamics |
 | `jodeldiplom` | [player](player) | the player: the window on its UI core and widgets, the browser, queue, Transition tab, karaoke, setup |
 
 ## Licences

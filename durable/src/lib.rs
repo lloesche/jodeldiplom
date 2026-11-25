@@ -17,6 +17,10 @@
 //! - [`is_temporary`], [`sweep`]: the temporaries a crash left behind
 //!   (never a file's name, so nothing reads them), removed once old.
 
+// The one place the writing calls clippy refuses elsewhere (clippy.toml)
+// are made.
+#![allow(clippy::disallowed_methods)]
+
 use std::fs;
 use std::io::{self, BufWriter, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};

@@ -307,6 +307,10 @@ fn full(e: &io::Error) -> bool {
 
 /// Moves one file (see the module's steps), telling `progress` the bytes
 /// copied so far.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "debt (W-B): the data move's rename on one disk, and across two its copy (fsync, then rename); to move onto durable"
+)]
 fn move_one(item: &Item, progress: &mut dyn FnMut(u64)) -> Moved {
     if gone(&item.from) {
         return Moved::Done;
@@ -493,6 +497,10 @@ fn run(settings: &Path, shared: &Shared) {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "tests: the folders to move, and a journal and part-moved files as a crash left them"
+)]
 mod tests {
     use super::*;
 

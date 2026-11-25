@@ -422,7 +422,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("jodeldiplom-cli-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let file = dir.join("c.toml");
-        std::fs::write(&file, "headroom = 1\n").unwrap();
+        durable::write_atomic(&file, b"headroom = 1\n").unwrap();
         let a = args(&["--config", file.to_str().unwrap()]).unwrap();
         let s = settings(&a).unwrap();
         assert_eq!(s.effective.headroom, Headroom(10));
@@ -439,7 +439,7 @@ mod tests {
         assert!(!s.effective.resample);
         // A file starts playing with the browser on its folder.
         let track = dir.join("t.flac");
-        std::fs::write(&track, b"").unwrap();
+        durable::write_atomic(&track, b"").unwrap();
         let (start_dir, autoplay) = start(Some(&track)).unwrap();
         assert_eq!(start_dir, dir);
         assert_eq!(autoplay, Some(track));

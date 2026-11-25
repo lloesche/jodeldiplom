@@ -206,7 +206,9 @@ fn main() {
             );
         }
         let name = out.replace(".png", &format!("{now:05.2}.png"));
-        img.save(&name).unwrap();
+        let mut png = durable::AtomicFile::create(Path::new(&name)).unwrap();
+        img.write_to(&mut png, image::ImageFormat::Png).unwrap();
+        png.commit().unwrap();
         println!(
             "{name}: tier {:?}, {} lights, {} light bursts",
             singing.last_phrase().and_then(|p| p.tier),

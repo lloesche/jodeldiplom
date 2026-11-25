@@ -108,6 +108,10 @@ fn found(text: Option<&str>, source: Source) -> Found {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "tests: sidecar lyrics files in a temporary folder"
+)]
 mod tests {
     use super::*;
 

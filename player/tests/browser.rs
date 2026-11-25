@@ -2,6 +2,11 @@
 //! rows on screen, the filter, the recursive search and queueing a folder.
 //! The app plays into a null output; no device is opened.
 
+#![allow(
+    clippy::disallowed_methods,
+    reason = "tests: a fixture track copied into a temporary folder"
+)]
+
 mod common;
 
 use std::path::PathBuf;

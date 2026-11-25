@@ -127,7 +127,7 @@ fn write_wav(path: &Path, samples: &[f32]) {
     for s in samples {
         out.extend_from_slice(&s.to_le_bytes());
     }
-    std::fs::write(path, out).expect("the WAV file");
+    durable::write_atomic(path, &out).expect("the WAV file");
 }
 
 /// `--lrc`'s options.

@@ -4,7 +4,7 @@
 //! `icon-preview.png` (the Windows sizes, enlarged, side by side) and
 //! `icon-preview-macos.png` (the macOS style at 1024 and 128 pixels) there.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use image::{imageops, RgbaImage};
 use jodeldiplom::icon::{self, Style};
@@ -16,13 +16,12 @@ fn main() {
         ("jodeldiplom.icns", icon::icns()),
     ] {
         let path = assets.join(name);
-        std::fs::write(&path, data).expect("write the icon");
+        durable::write_atomic(&path, &data).expect("write the icon");
         println!("wrote {}", path.display());
     }
     let Some(dir) = std::env::args_os().nth(1).map(PathBuf::from) else {
         return;
     };
-    std::fs::create_dir_all(&dir).expect("create the folder");
     let light = image::Rgba([235, 235, 235, 255]);
     let scale = 4;
     let width: u32 = icon::ICO_SIZES.iter().map(|s| s * scale + 16).sum::<u32>() + 16;
@@ -40,7 +39,7 @@ fn main() {
         x += size * scale + 16;
     }
     let path = dir.join("icon-preview.png");
-    preview.save(&path).expect("write the preview");
+    save(&preview, &path);
     println!("wrote {}", path.display());
     // The macOS style on a light and a dark backdrop, as the Dock shows it.
     let mut mac = RgbaImage::from_pixel(2 * 1024 + 3 * 32 + 2 * 128, 1024 + 64, light);
@@ -62,6 +61,14 @@ fn main() {
         imageops::overlay(&mut mac, &small, i64::from(x0 + 1024), 32 + 1024 - 128);
     }
     let path = dir.join("icon-preview-macos.png");
-    mac.save(&path).expect("write the preview");
+    save(&mac, &path);
     println!("wrote {}", path.display());
+}
+
+/// `img` as a PNG in `file`, written whole.
+fn save(img: &RgbaImage, file: &Path) {
+    let mut png = durable::AtomicFile::create(file).expect("write the preview");
+    img.write_to(&mut png, image::ImageFormat::Png)
+        .expect("a PNG");
+    png.commit().expect("write the preview");
 }

@@ -653,6 +653,10 @@ impl Drop for DetailsWorker {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "tests: tracks and files in a temporary folder to browse"
+)]
 mod tests {
     use super::*;
 

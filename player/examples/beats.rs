@@ -35,8 +35,7 @@
 //! stem's candidate did.
 
 use std::f64::consts::PI;
-use std::fs::File;
-use std::io::{BufWriter, Write};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::Instant;
@@ -658,15 +657,15 @@ fn write_clicks(file: &Path, a: &Analysis, out: &Path) -> Result<(), String> {
 }
 
 /// A 16-bit WAV file written as the samples come; the sizes go into the
-/// header at the end.
+/// header at the end, and it takes its name only then.
 struct WavWriter {
-    out: BufWriter<File>,
+    out: durable::AtomicFile,
     bytes: u32,
 }
 
 impl WavWriter {
     fn create(path: &Path, rate: u32, channels: u16) -> Result<WavWriter, String> {
-        let mut out = BufWriter::new(File::create(path).map_err(|e| e.to_string())?);
+        let mut out = durable::AtomicFile::create(path).map_err(|e| e.to_string())?;
         let block_align = channels * 2;
         let mut header = Vec::with_capacity(44);
         header.extend_from_slice(b"RIFF");
@@ -697,16 +696,17 @@ impl WavWriter {
         Ok(())
     }
 
-    /// Puts the sizes into the header and closes the file.
+    /// Puts the sizes into the header and gives the file its name.
     fn finish(self) -> Result<(), String> {
         use std::io::{Seek, SeekFrom};
-        let mut file = self.out.into_inner().map_err(|e| e.to_string())?;
+        let mut file = self.out;
         file.seek(SeekFrom::Start(4)).map_err(|e| e.to_string())?;
         file.write_all(&(36 + self.bytes).to_le_bytes())
             .map_err(|e| e.to_string())?;
         file.seek(SeekFrom::Start(40)).map_err(|e| e.to_string())?;
         file.write_all(&self.bytes.to_le_bytes())
-            .map_err(|e| e.to_string())
+            .map_err(|e| e.to_string())?;
+        file.commit().map_err(|e| e.to_string())
     }
 }
 

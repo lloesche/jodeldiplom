@@ -138,6 +138,10 @@ pub fn open_waiting(dir: &Path, path: &Path) -> Option<StemFile> {
 }
 
 /// The stems of `path` kept in `dir`, opened (and marked as used).
+#[expect(
+    clippy::disallowed_methods,
+    reason = "marks the kept stems as used: their modified time only, no bytes written"
+)]
 pub fn open(dir: &Path, path: &Path) -> Option<StemFile> {
     // Where it is now: while the data folder moves, not yet moved is where
     // it was.
@@ -195,6 +199,10 @@ impl StemStore for Store {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "tests: stem files and tracks in a temporary folder, their times set"
+)]
 mod tests {
     use super::*;
 

@@ -92,8 +92,17 @@ fn shot(
     };
     canvas.draw(&scene, app.art());
     let path = out.join(format!("gui-{name}.png"));
-    canvas.image().save(&path).expect("write the PNG");
-    std::fs::write(out.join(format!("gui-{name}.txt")), canvas.text()).expect("write the text");
+    let mut png = durable::AtomicFile::create(&path).expect("write the PNG");
+    canvas
+        .image()
+        .write_to(&mut png, image::ImageFormat::Png)
+        .expect("a PNG");
+    png.commit().expect("write the PNG");
+    durable::write_atomic(
+        &out.join(format!("gui-{name}.txt")),
+        canvas.text().as_bytes(),
+    )
+    .expect("write the text");
     println!("{} ({grid:?} cells)", path.display());
 }
 

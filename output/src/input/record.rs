@@ -137,6 +137,10 @@ pub(super) fn write_recording(shared: &MicShared, path: &Path, seconds: f64) -> 
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "tests: a sample WAV, only where JODEL_WAV_SAMPLE asks for one"
+)]
 mod tests {
     use super::*;
 

@@ -177,7 +177,7 @@ fn a_song_picked_while_paused_plays() {
     let dir = common::temp_dir("paused-pick");
     for name in ["a", "b"] {
         common::write_wav(&dir.join(format!("{name}.wav")), 44_100, 8.0);
-        std::fs::write(dir.join(format!("{name}.lrc")), "la la la\nla la\n").unwrap();
+        durable::write_atomic(&dir.join(format!("{name}.lrc")), b"la la la\nla la\n").unwrap();
     }
     let mut options = AppOptions::new(dir.clone());
     options.output = Output::Null(SimClock::Realtime);
@@ -277,7 +277,7 @@ fn the_demo_sings_with_no_microphone() {
     let _guard = common::real_time();
     let dir = common::temp_dir("demo-no-mic");
     common::write_wav(&dir.join("a.wav"), 44_100, 30.0);
-    std::fs::write(dir.join("a.lrc"), "la la la la\n").unwrap();
+    durable::write_atomic(&dir.join("a.lrc"), b"la la la la\n").unwrap();
     let mut options = AppOptions::new(dir.clone());
     options.output = Output::Null(SimClock::Realtime);
     options.size = (120, 36);
@@ -383,8 +383,7 @@ fn a_file_argument_plays_at_once_and_settings_are_saved() {
     let _guard = common::real_time();
     let tree = common::music_tree("autoplay");
     let config_file = tree.root.join("settings").join("config.toml");
-    std::fs::create_dir_all(config_file.parent().unwrap()).unwrap();
-    std::fs::write(&config_file, "resample = true\n").unwrap();
+    durable::write_atomic(&config_file, b"resample = true\n").unwrap();
     let mut options = options(&tree);
     options.autoplay = Some(tree.album.join("02 Ramp 48.flac"));
     options.config_file = Some(config_file.clone());

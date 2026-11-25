@@ -60,8 +60,7 @@ fn snapshot(name: &str, text: &str) {
         .join("tests/snapshots")
         .join(format!("{name}.txt"));
     if std::env::var_os("UPDATE_SNAPSHOTS").is_some() {
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        std::fs::write(&path, text).unwrap();
+        durable::write_atomic(&path, text.as_bytes()).unwrap();
         return;
     }
     let expected = std::fs::read_to_string(&path)

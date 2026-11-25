@@ -554,6 +554,10 @@ impl<'a> BitReader<'a> {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "tests: stem files cut short or changed, to be refused"
+)]
 mod tests {
     use super::*;
     use std::fs;

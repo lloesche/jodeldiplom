@@ -44,7 +44,9 @@ fn save_frame(name: &str, pixels: &[u32], w: usize) {
         let rgb = image::Rgb([(p >> 16) as u8, (p >> 8) as u8, *p as u8]);
         img.put_pixel((i % w) as u32, (i / w) as u32, rgb);
     }
-    img.save(std::path::Path::new(&dir).join(name)).unwrap();
+    let mut png = durable::AtomicFile::create(&std::path::Path::new(&dir).join(name)).unwrap();
+    img.write_to(&mut png, image::ImageFormat::Png).unwrap();
+    png.commit().unwrap();
 }
 
 /// The user's delay: how late the voice comes.

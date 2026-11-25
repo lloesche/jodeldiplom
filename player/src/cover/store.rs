@@ -413,4 +413,8 @@ pub fn from_bytes(bytes: &[u8]) -> Option<Kept> {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "tests: a kept result, written as an older player left it"
+)]
 pub(crate) mod tests;

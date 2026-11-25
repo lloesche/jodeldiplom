@@ -3,6 +3,11 @@
 //! file is turned into 24 bits) that keeps overs from clipping, and that
 //! never touches a lossless route.
 
+#![allow(
+    clippy::disallowed_methods,
+    reason = "tests: a WAV track in a temporary folder"
+)]
+
 mod common;
 
 use std::path::Path;

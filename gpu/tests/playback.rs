@@ -2,6 +2,11 @@
 //! chord played on an output of lanes, the drums' part and the other
 //! stem's beside the file. Skipped without a GPU.
 
+#![allow(
+    clippy::disallowed_methods,
+    reason = "tests: a WAV track in a temporary folder"
+)]
+
 use std::f64::consts::PI;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
