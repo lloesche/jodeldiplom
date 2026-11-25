@@ -74,25 +74,23 @@ WAV, AIFF, CAF and ALAC files to a device's shared output (the system's mixer), 
   (PNS) bands the same noise, though not the noise a decode from the start
   has there). Seeks are
   sample-accurate on every format.
-- `rate`: `choose_route(file, capabilities, settings)` is a pure function
-  from the file, the device's capabilities (shared: its mix format) and the settings
-  (rate cap, resampling, headroom) to a `Route` (output
-  rate, channels, format preference, resample step) or a `NoRoute` with a
-  sentence saying why nothing fits.
+- `rate`: a target plays at one format (a desk's, or a device's mix
+  format, the system's; the engine asks for it anew for each track).
+  `choose_route(file, format, settings)` is a pure function from the
+  file, that format and the settings (headroom) to a `Route` (output
+  rate, channels, format, resample step) or a `NoRoute` with a sentence
+  saying why nothing fits; `Route::with_headroom` gives a route chosen
+  already the headroom of new settings.
 
   | File | Route |
   |---|---|
-  | lossless PCM (FLAC, WAV, AIFF, CAF, ALAC) | its own rate and channels, untouched |
-  | lossy (MP3, AAC, Vorbis, ...) | decoded to 24 bits, its own rate and channels; never lossless |
+  | lossless PCM (FLAC, WAV, AIFF, CAF, ALAC) at the target's rate | untouched, a straight copy |
+  | at another rate | resampled to the target's (`Resample`), not lossless |
+  | lossy (MP3, AAC, Vorbis, ...) | decoded to 24 bits, resampled where its rate is another; never lossless |
+  | other channels than the target's (stereo) | made stereo: mono doubled, more channels folded down |
 
-  The route fits when its rate is within the cap and the device takes it
-  in a format holding every bit of the file (24-bit formats for lossy and
-  floating-point files). Such a lossless route always wins.
-
-  When none fits and `Settings::resample` is on (the default), the route
-  gains a `Resample` step to a rate the device takes in a 24-bit format
-  within the cap, and is no longer lossless: the lowest such rate above
-  the file's own, else the highest one below.
+  A target whose format holds fewer bits than the stream (the file's at
+  its own rate, else 24) has no route for it.
 
   A route that is not lossless carries the headroom setting
   (`Settings::headroom`, none, 0.5, 1, 2 or 3 dB; `Route::headroom`) at
@@ -105,15 +103,6 @@ WAV, AIFF, CAF and ALAC files to a device's shared output (the system's mixer), 
   loud master decodes up to about 1 dB over full scale. The path says so:
   `44.1 kHz decoded from MP3 (-1.5 dB)`. Lossless routes never carry
   any.
-
-  | Device | File | Route |
-  |---|---|---|
-  | GC7: 48/96/192 kHz, S16/S24_3 | PCM 44.1 / 88.2 / 176.4 kHz | → 48 / 96 / 192 kHz (160/147) |
-  | GC7 | PCM 176.4 kHz, capped at 96 kHz | → 96 kHz (80/147) |
-  | GC7 | PCM 352.8 / 384 kHz | → 192 kHz (80/147, 1/2) |
-  | GC7 | PCM 8 channels, 44.1 / 192 kHz | → 48 / 96 kHz (8 channels exist at 48 and 96 kHz only) |
-  | HDMI: 44.1/48 kHz | PCM 88.2 / 96 kHz | → 48 kHz (80/147, 1/2) |
-  | 16-bit only | anything 24-bit | no route (nothing to resample to in 24 bits) |
 
 - `resample`: `Resampler`, a synchronous rational polyphase FIR (our own
   code), for any pair of rates, up or down. The ratio `up/down` is the
@@ -244,7 +233,7 @@ Events (`Event`), track events in the order they are heard:
 | `Clipped { index, samples, output_frame }` | the resampler or the source's requantization clipped (the count since the track or the seek started; at most four a second of output) |
 | `TrackEnded { index, finished }` | played to its end, or left |
 | `Error { index, error, skipped }` | `skipped`: only that track is lost (unreadable, `NoRoute`) |
-| `Notice { index, message }` | new settings the track being heard keeps playing through (no route with them, or their output did not open) |
+| `Notice { index, message }` | new settings the track being heard keeps playing through (its new route did not open) |
 | `PartsStopped { index, reason }` | the track's stems as parts of the output failed: it has none until they are asked for again |
 | `Transition(Armed \| Started { head, output_frame, origin } \| Finished \| Cancelled { reason })` | a transition was taken, its window began to be heard (at that output frame of that head; the next track's head's frame 0 is that head's `origin`), the next track is back at its own tempo, or it was called off and why |
 | `Jumped { index, seconds }` | a `Jump` is heard: the track plays on from there |
@@ -262,10 +251,10 @@ lengths are exact); otherwise the samples go to the output as read.
 
 - **Seek**: the source moves to the exact frame and the output is
   flushed.
-- **Gapless**: at the end of a track the next one is opened at once. If its
-  route plays at the open output's rate, channels and a format of its route,
-  it is written into the same output with no gap; otherwise the output plays
-  out, closes and reopens at the new format.
+- **Gapless**: at the end of a track the next one is opened at once, routed
+  to the target's format as it is then, and written into the same output
+  with no gap. When that format changed (the system runs the device at
+  another rate) the output plays out, closes and reopens at the new one.
 - **Pause** pauses the output and stops writing; the bytes are unchanged.
 - **Settings** (`SetSettings`): when the track being played takes another
   route with them, it moves to that route without a break. The new route
@@ -276,21 +265,17 @@ lengths are exact); otherwise the samples go to the output as read.
   up, the two meet at the first frame after what is written where both
   are exact: a track frame that both routes' rate ratios turn into whole
   output frames, so the old route's output ends at frame `S` and the new
-  one's begins there with track frame `F`, nothing lost or repeated. At
-  the same output format they share the output, crossfaded over
-  `PlayerOptions::switch_fade` (20 ms; zero meets at one frame), and
-  nothing is flushed. At another format the old route fades out over the
-  same time up to `S`, the output plays out and opens at the new format,
-  and the new route plays from `F`, faded in, with 200 ms of it decoded
-  already, so the only break is the device's own reopen. `TrackStarted`
-  says where (`output_frame`, `from_frame`), and the position goes on from
-  there. Settings never stop playback or skip the track: if it has no
-  route with them, or the new route's output does not open, it keeps the
-  route it has (back on it at the same frame, in the second case) and a
-  `Notice` says so; a new route that fails before they meet decodes once
-  more from the start of the track, then the track keeps its route. One
-  that never catches up (a machine too slow for both) leaves the track on
-  its route to its end. The new settings apply to the tracks that start later;
+  one's begins there with track frame `F`, nothing lost or repeated. The
+  new route plays at the open output's format: they share the output,
+  crossfaded over `PlayerOptions::switch_fade` (20 ms; zero meets at one
+  frame), and nothing is flushed. `TrackStarted` says where
+  (`output_frame`, `from_frame`), and the position goes on from there.
+  Settings never stop playback or skip the track: they change only the
+  headroom, so the track has a route with them; if the new route's file
+  does not open, it keeps the route it has and a `Notice` says so; a new
+  route that fails before they meet decodes once more from its start,
+  then the track keeps its route. One that never catches up (a machine
+  too slow for both) leaves the track on its route to its end. The new settings apply to the tracks that start later;
   a later track that has no route is skipped as any file without one.
 - **Transitions** (`Transition(plan)`, `engine/transition.rs`): the
   playing track (A) crossfades into the next (B) over the plan's window,
@@ -362,8 +347,8 @@ lengths are exact); otherwise the samples go to the output as read.
   A playing track called off while it glides goes on from where the
   glide has it, at its own speed (it meets its own route where its map
   puts it). A seek while B settles is a plain seek of B.
-- **Read along a map** (`engine/along.rs`, the engine's own
-  `Command::Along`): on an output of lanes, a head's stems are read along
+- **Read along a map** (`engine/along.rs`; for this crate's tests
+  `Command::Along`, behind the `test-support` feature): on an output of lanes, a head's stems are read along
   a time map at the separator's 44.1 kHz (8 channels, before the parts'
   resampler) as its parts, and its main is their sum, so main and the
   parts stay on the same frames for a mixer's switch and the control
@@ -499,10 +484,8 @@ lengths are exact); otherwise the samples go to the output as read.
   and at a track's end they run to its last frame (main decoded to its
   end first, to know where that is) when the next track's (separated from
   its start once the playing file is read, or its parts made to its end)
-  are ready, or nothing follows; else they end before it. A route switch
-  to another format ends them before main fades out, and they come back
-  only after the new route's rise. Offline the writing waits for them
-  (and for the next track's). A failing separator (`PartsStopped`, for
+  are ready, or nothing follows; else they end before it. Offline the
+  writing waits for them (and for the next track's). A failing separator (`PartsStopped`, for
   that track) leaves none. A head read along a map (**Read along a
   map**) has parts throughout, its main their sum, and goes back onto its
   file as any route switch does, so a mixer playing the parts at other
@@ -532,22 +515,23 @@ cargo run --release -p jodel-playback --example play -- FILE... --null --seconds
 cargo run --release -p jodel-playback --example play -- FILE... --device "USB DAC"
 ```
 
-`--null` plays into a null output in real time (every rate and format
-accepted), so no device is touched. Other options: `--max-rate HZ`,
-`--no-resample`.
+The player plays on an input of a mixer, which opens the device once,
+shared, at the system's mix format; `--null` puts a null output in real
+time at 48 kHz in the device's place, so no device is touched.
 
 ## Testing
 
 `cargo test -p jodel-playback` needs no device. The engine tests play the
 PCM fixtures (`tests/fixtures/pcm`, 44.1 kHz 16-bit and 48 kHz 24-bit
 FLAC, made by its `make.py`) into memory outputs and compare the bytes
-with the files' own samples: gapless concatenation, a reopen at a format
-change, seeks, pause and resume, `NoRoute` on a packed-24-only
-48 kHz-family device, skipped files, settings changes, the spectrum
+with the files' own samples: gapless concatenation, a reopen when the
+target's format changes between tracks (new settings during its play-out
+reach the next track), seeks, pause and resume, `NoRoute`
+on a 16-bit target, skipped files, settings changes, the spectrum
 tap on a mixer, and event order. A gated test output lets each test place
 its command at an exact output frame. `tests/mixer.rs` plays the same
 routes through a mixer's Lead input, on its one mix path (FLAC, packed
-24-bit, gapless, a reopen at a format change, plain and
+24-bit, gapless, plain and
 resampled PCM, pause and resume, seeks and a jump), and gets the bytes it
 gets without one, and `PlayAt` starts at the frame a third in.
 `tests/lanes.rs` and `tests/lanes_control.rs` (the control word; helpers in
@@ -610,13 +594,11 @@ the microphone hearing throughout, a next track whose stems are late
 playing whole, stems muted on the desk at any point of a mix, the rules
 the player's `INTERACTIONS.md` names, a failing separator, and a
 transition at 192 kHz ending on the playing track's last frame; with no
-second head a transition is called off. `tests/switch.rs` switches routes mid-track: at one
-rate, a chain of four routes (one made while paused) is one stream equal
-to each route's own output from the frame it took over at; a crossfade is
-exact outside its window; at another format the old route fades out at
-the frame the new one, in the next stream, fades in from; a seek during a
-switch plays the new route from there; and on a device that plays in real
-time nothing is padded.
+second head a transition is called off. `tests/switch.rs` switches routes mid-track: a
+chain of four routes (one made while paused) is one stream equal to each
+route's own output from the frame it took over at; a crossfade is exact
+outside its window; a seek during a switch plays the new route from
+there; and on a device that plays in real time nothing is padded.
 
 `tests/resample.rs` checks the resampler over a matrix of rate pairs (44.1
 to 48 and back, 88.2 to 96 and back, 176.4 to 192, 44.1 to 192, 192 to 96,
@@ -644,6 +626,6 @@ variants, the iTunSMPB tag and the edit-list rules); 32-bit integer and float WA
 where they fit, dithered otherwise, clips counted); lossy tracks play
 gaplessly into one stream, never lossless, and a resampled lossy track
 equals a fresh resample of the unquantized decode.
-`tests/resampled.rs` plays through the engine on the GC7's matrix:
-44.1 kHz PCM and FLAC at 48 kHz (bytes equal a fresh resample), a seek,
-gapless lengths, clip events, and turning resampling off.
+`tests/resampled.rs` plays through the engine on a 48 kHz target in packed
+24 and 16 bit: 44.1 kHz PCM and FLAC at 48 kHz (bytes equal a fresh
+resample), a seek, gapless lengths, and clip events.

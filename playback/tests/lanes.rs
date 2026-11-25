@@ -82,35 +82,30 @@ fn to_the_end(files: Vec<PathBuf>) -> impl Fn(&Player, &Receiver<Event>, &Gate, 
 
 #[test]
 fn main_through_a_lane_input_is_bit_exact_with_stems_made() {
-    let exact = options(false, true, quarter);
-    let resampled = options(true, true, quarter);
     let cases = [
-        (caps(&[44_100], &[S24In32Low]), vec![F44], &exact),
-        (caps(&[48_000], &[S16, S24Packed]), vec![F48], &exact),
-        (caps(&[44_100], &[S24In32Low]), vec![F44, F44], &exact),
-        (caps(&[48_000], &[S24In32Low]), vec![F44, F44], &resampled),
-        (
-            caps(&[44_100, 48_000], &[S24In32Low]),
-            vec![F44, F48],
-            &exact,
-        ),
+        (caps(&[44_100], &[S24In32Low]), vec![F44]),
+        (caps(&[48_000], &[S24Packed]), vec![F48]),
+        (caps(&[44_100], &[S24In32Low]), vec![F44, F44]),
+        (caps(&[48_000], &[S24In32Low]), vec![F44, F44]),
+        // As it is, then resampled, gapless.
+        (caps(&[44_100], &[S24In32Low]), vec![F44, F48]),
     ];
-    for (caps, files, options) in cases {
+    for (caps, files) in cases {
         let files = files.into_iter().map(fixture).collect();
-        same_through_lanes(caps, options.clone(), &to_the_end(files));
+        same_through_lanes(caps, options(true, quarter), &to_the_end(files));
     }
     let dir = temp_dir("lanes-pcm");
     let (w48, w44) = (dir.join("48.wav"), dir.join("44.wav"));
     ramp_wav(&w48, 48_000, 30_000);
     ramp_wav(&w44, 44_100, 30_000);
     same_through_lanes(
-        caps(&[48_000], &[S16, S24In32Low]),
-        options(false, true, quarter),
+        caps(&[48_000], &[S24In32Low]),
+        options(true, quarter),
         &to_the_end(vec![w48]),
     );
     same_through_lanes(
         caps(&[48_000], &[S24In32]),
-        options(true, true, quarter),
+        options(true, quarter),
         &to_the_end(vec![w44]),
     );
     // A share of the length in.
@@ -125,7 +120,7 @@ fn main_through_a_lane_input_is_bit_exact_with_stems_made() {
     };
     same_through_lanes(
         caps(&[44_100], &[S24In32Low]),
-        options(false, true, quarter),
+        options(true, quarter),
         &play_at,
     );
 }
@@ -137,7 +132,7 @@ fn main_through_a_lane_input_is_bit_exact_with_stems_made() {
 fn with_no_separator_the_lanes_carry_main_alone() {
     let none = PlayerOptions {
         separator: None,
-        ..options(false, true, quarter)
+        ..options(true, quarter)
     };
     let files = || vec![fixture(F44), fixture(F44)];
     same_through_lanes(
@@ -190,7 +185,7 @@ fn seek_pause_and_jump_through_a_lane_input_are_bit_exact() {
     };
     same_through_lanes(
         caps(&[44_100], &[S24In32Low]),
-        options(false, true, quarter),
+        options(true, quarter),
         &script,
     );
     let script = |player: &Player, events: &Receiver<Event>, gate: &Gate, captures: &Captures| {
@@ -205,7 +200,7 @@ fn seek_pause_and_jump_through_a_lane_input_are_bit_exact() {
     };
     same_through_lanes(
         caps(&[44_100], &[S24In32Low]),
-        options(false, true, quarter),
+        options(true, quarter),
         &script,
     );
 }
@@ -218,7 +213,7 @@ fn the_parts_add_up_to_main_at_every_rate() {
         let (wide, _) = play_wide(
             caps(&[out], &[S24In32Low]),
             vec![file.clone()],
-            options(true, true, quarter),
+            options(true, quarter),
         );
         let n = wide.frames();
         assert_eq!(n as u64, output_frames(RATE, out, 2 * u64::from(RATE)));
@@ -241,7 +236,7 @@ fn after_a_seek_the_parts_start_from_its_frame() {
     let file = tone_file(&dir, "tones.wav", RATE, 3 * RATE as usize);
     for (out, window) in [(44_100, true), (48_000, true), (48_000, false)] {
         let (target, captures, gate) = wide_target(caps(&[out], &[S24In32Low]));
-        let (player, events) = Player::new(Box::new(target), options(true, true, quarter));
+        let (player, events) = Player::new(Box::new(target), options(true, quarter));
         player.make_stems(MakeStems::Separate).unwrap();
         if window {
             player.jump_window(4.0, 4.0).unwrap();
@@ -283,7 +278,7 @@ fn after_a_jump_the_parts_are_crossfaded_and_in_step() {
     let runs = (0..12).map(|k| (44_100, k)).chain([(48_000, 0)]);
     for (out, k) in runs {
         let (target, captures, gate) = wide_target(caps(&[out], &[S24In32Low]));
-        let (player, events) = Player::new(Box::new(target), options(true, true, quarter));
+        let (player, events) = Player::new(Box::new(target), options(true, quarter));
         player.make_stems(MakeStems::Separate).unwrap();
         player.jump_window(4.0, 4.0).unwrap();
         player.load(vec![file.clone()]).unwrap();
@@ -316,7 +311,7 @@ fn a_jump_on_a_96_khz_file_played_at_48_keeps_the_parts_in_step() {
     let dir = temp_dir("lanes-jump-96");
     let file = tone_file(&dir, "tones.wav", 96_000, 3 * 96_000);
     let (target, captures, gate) = wide_target(caps(&[48_000], &[S24In32Low]));
-    let (player, events) = Player::new(Box::new(target), options(true, true, quarter));
+    let (player, events) = Player::new(Box::new(target), options(true, quarter));
     player.make_stems(MakeStems::Separate).unwrap();
     player.jump_window(4.0, 4.0).unwrap();
     player.load(vec![file]).unwrap();
@@ -348,7 +343,7 @@ fn the_next_track_follows_with_its_parts() {
     let (wide, seen) = play_wide(
         caps(&[48_000], &[S24In32Low]),
         vec![one, two],
-        options(true, true, quarter),
+        options(true, quarter),
     );
     let starts = seen
         .iter()
@@ -382,7 +377,7 @@ fn mono_and_six_channel_files_have_parts_in_their_channels() {
         let (wide, _) = play_wide(
             caps_of(&[RATE], channels),
             vec![path],
-            options(false, true, quarter),
+            options(true, quarter),
         );
         assert_eq!(wide.channels, ch);
         assert!(wide.control.iter().all(|&c| c == 1));
@@ -415,7 +410,7 @@ fn the_parts_end_with_the_track() {
         let (wide, _) = play_wide(
             caps(&[out], &[S24In32Low]),
             vec![file],
-            options(true, true, quarter),
+            options(true, quarter),
         );
         let n = output_frames(RATE, out, frames as u64) as usize;
         assert_eq!(wide.frames(), n);
@@ -434,7 +429,7 @@ fn a_part_touched_on_the_mixer_is_heard_and_untouched_is_main_again() {
     let file = dir.join("tones.wav");
     write_wav(&file, RATE, 2, &samples);
     let (target, captures, gate, lanes) = gated_mixer_lanes(caps(&[RATE], &[S24In32Low]));
-    let (player, events) = Player::new(Box::new(target), options(false, true, quarter));
+    let (player, events) = Player::new(Box::new(target), options(true, quarter));
     player.make_stems(MakeStems::Separate).unwrap();
     // The drums muted, then not after a second.
     lanes.parts[0].set_mute(true);

@@ -590,12 +590,8 @@ fn a_lossy_track_says_what_it_was_decoded_from() {
     info.bitrate = Some(320_000);
     let facts = jodel_playback::FileFacts::from(&info);
     assert_eq!(facts.decoded_from, Some("MP3"));
-    let route = jodel_playback::choose_route(
-        &facts,
-        &jodel_playback::any_capabilities(info.rate),
-        &state.config.settings(),
-    )
-    .unwrap();
+    let format = jodel_output::StreamFormat::new(info.rate, 2, jodel_output::SampleFormat::S24In32);
+    let route = jodel_playback::choose_route(&facts, format, &state.config.settings()).unwrap();
     assert!(!route.lossless);
     update(
         &mut state,
@@ -622,23 +618,18 @@ fn a_lossy_track_says_what_it_was_decoded_from() {
     );
 }
 
-/// A device that takes only 48, 96 and 192 kHz plays a 44.1 kHz file
-/// resampled: the path shows the step and says so in the warning colour,
-/// with the clip count when there is one.
+/// A device at 48 kHz plays a 44.1 kHz file resampled: the path shows the
+/// step and says so in the warning colour, with the clip count when there
+/// is one.
 #[test]
 fn a_resampled_route_shows_its_step_and_its_clips() {
-    use jodel_output::{Capabilities, SampleFormat, StreamFormat};
+    use jodel_output::{SampleFormat, StreamFormat};
     use jodeldiplom::core::text::{signal_path, Tone};
     let mut state = listed();
     let mut track = common::now_track(44_100, state.config.settings(), 0);
-    let mut gc7 = Capabilities::new();
-    for rate in [48_000, 96_000, 192_000] {
-        for f in [SampleFormat::S16, SampleFormat::S24Packed] {
-            gc7.insert(StreamFormat::new(rate, 2, f));
-        }
-    }
+    let device = StreamFormat::new(48_000, 2, SampleFormat::S24Packed);
     let facts = jodel_playback::FileFacts::from(&*track.info);
-    track.route = jodel_playback::choose_route(&facts, &gc7, &state.config.settings()).unwrap();
+    track.route = jodel_playback::choose_route(&facts, device, &state.config.settings()).unwrap();
     track.output.format = track.route.format;
     update(
         &mut state,
@@ -701,20 +692,18 @@ fn settings_change_the_engine_and_the_file() {
     let fx = op(&mut state, Op::Settings);
     assert_eq!(state.screen, Screen::Settings);
     assert_eq!(fx, vec![Effect::ListDevices]);
-    // Resample when needed: on by default, toggles, reaches the engine.
-    assert!(state.config.resample);
+    // The headroom: none by default, steps, reaches the engine.
+    assert_eq!(state.config.headroom, jodel_playback::Headroom::NONE);
     op(&mut state, Op::Down);
     let fx = op(&mut state, Op::ValueUp);
-    assert!(!state.config.resample);
-    assert!(!state.config.settings().resample);
+    assert_ne!(state.config.headroom, jodel_playback::Headroom::NONE);
+    assert_eq!(state.config.settings().headroom, state.config.headroom);
     assert_eq!(fx, vec![Effect::SaveConfig]);
     let due = state.settings_due.unwrap();
     assert_eq!(
         engine(&update(&mut state, Action::Tick(due))),
         vec![Command::SetSettings(state.engine_settings())]
     );
-    op(&mut state, Op::Open);
-    assert!(state.config.resample);
     // The device list.
     update(
         &mut state,
@@ -1430,7 +1419,7 @@ fn settings_reach_the_engine_after_a_pause() {
     let mut state = listed();
     update(&mut state, Action::Tick(1_000));
     op(&mut state, Op::Settings);
-    state.settings.row = 2;
+    state.settings.row = 1;
     // Three steps of the headroom, 100 ms apart: shown at once, not sent.
     for (i, at) in [1_000u64, 1_100, 1_200].into_iter().enumerate() {
         update(&mut state, Action::Tick(at));
@@ -1498,7 +1487,7 @@ fn the_headroom_setting_steps_and_reaches_the_engine() {
     use jodel_playback::Headroom;
     let mut state = listed();
     op(&mut state, Op::Settings);
-    state.settings.row = 2;
+    state.settings.row = 1;
     assert_eq!(
         state.settings_row(),
         jodeldiplom::core::SettingsRow::Headroom

@@ -35,8 +35,9 @@ use std::time::Duration;
 use jodel_output::mixer::{Automation, Fader, GainCurve, Role};
 
 use super::api::{Event, TrackStart};
+use super::drop::drop_later;
 use super::track::{
-    drop_later, frames_of, rescale, AlongMap, Back, Cue, CueEvent, HeardFrom, HeardWarp, Track,
+    frames_of, rescale, AlongMap, Back, Cue, CueEvent, HeardFrom, HeardWarp, Track,
 };
 use super::Engine;
 use crate::error::Error;

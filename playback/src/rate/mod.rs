@@ -1,23 +1,21 @@
-//! The rate policy: from what a file is, what the device takes
-//! and the user's settings to the [`Route`] a track plays through, or the
-//! reason none fits ([`NoRoute`]).
+//! The rate policy: from what a file is, the one format its target plays
+//! at and the user's settings to the [`Route`] a track plays through, or
+//! the reason none fits ([`NoRoute`]).
 //!
-//! [`choose_route`] is a pure function:
+//! A target plays at one format: on a desk the desk's, on a bare device
+//! the system's mix format. [`choose_route`] is a pure function (a route
+//! without headroom, then [`Route::with_headroom`]):
 //!
-//! - **Lossless PCM** plays at the file's own rate and channels, untouched.
+//! - **At the target's rate** a file plays as it is: lossless (a straight
+//!   copy) when it is PCM of at most 24 bits in the target's channels.
+//! - **At another rate** the route gains a [`Resample`] step
+//!   ([`crate::resample`]) to the target's rate, and is not lossless.
 //! - **Lossy files** (MP3, Vorbis, ...) are decoded to 24-bit PCM and
 //!   routed as plain PCM, never lossless (the route says what it was
 //!   decoded from, [`Route::decoded_from`]).
-//!
-//! A route fits when its output rate is within `max_rate` and the device
-//! takes the file's channel count at that rate in a format that holds every
-//! bit of the stream: at least the file's bits (24 for lossy and
-//! floating-point files). Such a lossless route always wins.
-//!
-//! When none fits and [`Settings::resample`] is on, the route gains a
-//! [`Resample`] step ([`crate::resample`]) to a rate the device takes in a
-//! 24-bit format within the cap, and is no longer lossless: the lowest such
-//! rate above the file's rate, else the highest one below it.
+//! - A file whose channels are not the target's, where it takes stereo,
+//!   is made stereo on its way ([`crate::remix::Remix`]: mono doubled,
+//!   more channels folded down), and is not lossless then.
 //!
 //! A route that is not lossless carries the [`Settings::headroom`] at
 //! its one requantization to 24 bits: inside the resampler, or where a
@@ -26,15 +24,13 @@
 //! over full scale where the master was near it). A lossless route never
 //! has any.
 //!
-//! A file whose channels the device does not take, where it takes
-//! stereo, is made stereo on its way ([`crate::remix::Remix`]: mono
-//! doubled, more channels folded down), and is not lossless then.
-//!
-//! When nothing fits either way the answer is a [`NoRoute`] that says why.
+//! A target whose format holds fewer bits than the stream (24 for a route
+//! that is not lossless), or whose channels the file cannot be made into,
+//! has no route for it: a [`NoRoute`] says why.
 
 use std::fmt;
 
-use jodel_output::{Capabilities, OpenRequest, SampleFormat, StreamFormat};
+use jodel_output::{OpenRequest, StreamFormat};
 
 use crate::remix::Remix;
 use crate::source::TrackInfo;
@@ -112,38 +108,13 @@ impl fmt::Display for Headroom {
 /// decoded from MP3 or AAC peaks up to about 1 dB over full scale.
 pub const LOSSY_HEADROOM: Headroom = Headroom(15);
 
-/// The headroom of `file`'s route when it is not lossless.
-fn headroom_for(file: &FileFacts, settings: &Settings) -> Headroom {
-    if file.decoded_from.is_some() {
-        settings.headroom.max(LOSSY_HEADROOM)
-    } else {
-        settings.headroom
-    }
-}
-
 /// The user's choices that shape a route.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Settings {
-    /// The highest output rate to use, if capped: on a plain device only (a
-    /// desk runs at its one rate, and offers no other).
-    pub max_rate: Option<u32>,
-    /// Resample when no rate the device takes carries the stream
-    /// lossless. Off: such files have no route.
-    pub resample: bool,
     /// The headroom of routes that are not lossless ([`Headroom`]; a
     /// lossy file's is at least [`LOSSY_HEADROOM`]); lossless routes
     /// never have any.
     pub headroom: Headroom,
-}
-
-impl Default for Settings {
-    fn default() -> Self {
-        Settings {
-            max_rate: None,
-            resample: true,
-            headroom: Headroom::NONE,
-        }
-    }
 }
 
 /// What the policy needs to know about a file.
@@ -164,13 +135,12 @@ pub struct FileFacts {
 
 impl From<&TrackInfo> for FileFacts {
     fn from(info: &TrackInfo) -> Self {
-        let lossy = info.is_lossy();
         FileFacts {
             rate: info.rate,
             channels: info.channels,
             bits: info.bits,
-            float: info.float || lossy,
-            decoded_from: lossy.then(|| info.codec.name()),
+            float: info.float,
+            decoded_from: info.is_lossy().then(|| info.codec.name()),
         }
     }
 }
@@ -231,22 +201,18 @@ pub struct Route {
     /// The file's channels ([`Route::channels`] where it is not made
     /// stereo on its way).
     pub input_channels: u16,
-    /// The rate the device is opened at.
+    /// The rate the output plays at (the target's).
     pub output_rate: u32,
-    /// The channels the device is opened with.
+    /// The channels the output plays (the target's).
     pub channels: u16,
-    /// The format the device is expected to accept (from its
-    /// capabilities).
+    /// The target's one format, which the output opens at.
     pub format: StreamFormat,
-    /// The formats to open with, `format.sample` first: every format the
-    /// device takes at this rate that holds the stream's bits.
-    pub formats: Vec<SampleFormat>,
-    /// The sample-rate conversion after the source, when no rate the
-    /// device takes carries the stream losslessly.
+    /// The sample-rate conversion after the source, when the file is not
+    /// at the target's rate.
     pub resample: Option<Resample>,
-    /// Whether the samples reach the device unchanged: false for resampled
+    /// Whether the samples reach the output unchanged: false for resampled
     /// routes, for files with more than 24 bits or floating-point samples,
-    /// and for lossy files.
+    /// for files made stereo, and for lossy files.
     pub lossless: bool,
     /// For a lossy file, the codec its PCM is decoded from (`MP3`,
     /// `Vorbis`, ...).
@@ -255,18 +221,9 @@ pub struct Route {
     /// [`Resample::headroom`] when it is resampled; else the source's, for
     /// a lossy or floating-point file). None on a lossless route.
     pub headroom: Headroom,
-    /// The better choice that was passed over, and why (a resampled route:
-    /// why it is not lossless).
-    pub passed_over: Option<String>,
 }
 
 impl Route {
-    /// The rate out of the source (or the stem mix): the output rate, or
-    /// the rate going into the resampler.
-    pub fn decoded_rate(&self) -> u32 {
-        self.resample.map_or(self.output_rate, |r| r.from)
-    }
-
     /// How the file is made stereo on its way, where it is.
     pub fn remix(&self) -> Option<Remix> {
         (self.channels != self.input_channels)
@@ -274,18 +231,30 @@ impl Route {
             .flatten()
     }
 
-    /// Whether an output already open at `format` can play this route
-    /// without reopening: same rate and channels, and a sample format of
-    /// [`Route::formats`].
-    pub fn fits(&self, format: &StreamFormat) -> bool {
-        format.rate == self.output_rate
-            && format.channels == self.channels
-            && self.formats.contains(&format.sample)
+    /// The same route with the headroom `setting` asks for at its one
+    /// requantization: none on a lossless route, at least
+    /// [`LOSSY_HEADROOM`] on a lossy file's.
+    pub fn with_headroom(self, setting: Headroom) -> Route {
+        let headroom = match (self.lossless, self.decoded_from) {
+            (true, _) => Headroom::NONE,
+            (false, Some(_)) => setting.max(LOSSY_HEADROOM),
+            (false, None) => setting,
+        };
+        Route {
+            resample: self.resample.map(|r| r.with_headroom(headroom)),
+            headroom,
+            ..self
+        }
     }
 
-    /// The request to open the device with.
+    /// Whether an output already open at `format` plays this route.
+    pub fn fits(&self, format: &StreamFormat) -> bool {
+        self.format == *format
+    }
+
+    /// The request to open the output with.
     pub fn open_request(&self) -> OpenRequest {
-        OpenRequest::new(self.output_rate, self.channels).formats(&self.formats)
+        OpenRequest::new(self.output_rate, self.channels).formats(&[self.format.sample])
     }
 
     /// The signal path, for example `96 kHz`, or `44.1 kHz → stems
@@ -318,7 +287,7 @@ impl Route {
     }
 }
 
-/// Why no route fits a file on a device.
+/// Why no route fits a file on a target.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NoRoute {
     /// A sentence for the user.
@@ -341,178 +310,61 @@ fn khz(rate: u32) -> String {
     }
 }
 
-/// The lossless formats for a stream with `bits` valid bits, in the
-/// default preference order.
-fn lossless_formats(bits: u32) -> Vec<SampleFormat> {
-    SampleFormat::PREFERENCE
-        .iter()
-        .copied()
-        .filter(|f| f.valid_bits() >= bits)
-        .collect()
-}
-
-/// What the device takes, for a reason text.
-fn takes(caps: &Capabilities, channels: u16) -> String {
-    let rates = caps.rates(channels);
-    if rates.is_empty() {
-        if caps.is_empty() {
-            return "the device reported no formats".into();
-        }
-        return format!("the device takes no {channels}-channel stream");
-    }
-    let list: Vec<String> = rates.iter().map(|&r| khz(r)).collect();
-    format!(
-        "the device takes {} with {channels} channels",
-        list.join(", ")
-    )
-}
-
-/// Checks one rate against the cap and the device. `Ok` holds the format
-/// the device would open and the open preference; `Err` says why not.
-fn fit(
-    rate: u32,
-    channels: u16,
-    wanted: &[SampleFormat],
-    caps: &Capabilities,
-    settings: &Settings,
-) -> Result<(StreamFormat, Vec<SampleFormat>), String> {
-    if let Some(cap) = settings.max_rate {
-        if rate > cap {
-            return Err(format!("{} is above the {} cap", khz(rate), khz(cap)));
-        }
-    }
-    let accepted: Vec<SampleFormat> = wanted
-        .iter()
-        .copied()
-        .filter(|&f| caps.supports(&StreamFormat::new(rate, channels, f)))
-        .collect();
-    match accepted.first() {
-        Some(&first) => Ok((StreamFormat::new(rate, channels, first), accepted)),
-        None if !caps.formats(rate, channels).is_empty() => Err(format!(
-            "the device takes {} only in formats that would lose bits",
-            khz(rate)
-        )),
-        None => Err(format!("the device does not take {}", khz(rate))),
-    }
-}
-
-/// Where a stream at `rate` would be resampled to: the lowest rate the
-/// device takes with `channels` channels in a 24-bit format within the cap
-/// above `rate`, else the highest one below it. `None` when the device has
-/// no such rate (other than `rate` itself).
-fn resample_target(
-    rate: u32,
-    channels: u16,
-    caps: &Capabilities,
-    settings: &Settings,
-) -> Option<(StreamFormat, Vec<SampleFormat>)> {
-    let wanted = lossless_formats(24);
-    let mut fits: Vec<(StreamFormat, Vec<SampleFormat>)> = caps
-        .rates(channels)
-        .into_iter()
-        .filter(|&r| r != rate)
-        .filter_map(|r| fit(r, channels, &wanted, caps, settings).ok())
-        .collect();
-    match fits.iter().position(|(f, _)| f.rate > rate) {
-        Some(at) => Some(fits.swap_remove(at)),
-        None => fits.pop(),
-    }
-}
-
-/// The end of a reason when nothing fits lossless.
-fn resample_note(settings: &Settings) -> &'static str {
-    if settings.resample {
-        "; nor any rate to resample to in a 24-bit format"
-    } else {
-        " (resampling is off)"
-    }
-}
-
-/// Picks how `file` plays on a device that accepts `caps`, with
+/// Picks how `file` plays at `format` (its target's one), with
 /// `settings`. Pure: it opens nothing.
 pub fn choose_route(
     file: &FileFacts,
-    caps: &Capabilities,
+    format: StreamFormat,
     settings: &Settings,
 ) -> Result<Route, NoRoute> {
+    route(file, format).map(|r| r.with_headroom(settings.headroom))
+}
+
+/// How `file` plays at `format`, without headroom.
+fn route(file: &FileFacts, format: StreamFormat) -> Result<Route, NoRoute> {
+    let refuse = |why: String| NoRoute {
+        reason: format!(
+            "no route for this {} {} file: {why}",
+            khz(file.rate),
+            file.decoded_from.unwrap_or("PCM")
+        ),
+    };
     if file.rate == 0 || file.channels == 0 {
         return Err(NoRoute {
             reason: "the file has no sample rate or channels".into(),
         });
     }
-    pcm_route(file, caps, settings)
-}
-
-/// The channels `file` plays in on a device that takes `caps`: its own,
-/// where the device takes them at some rate; else stereo, where it takes
-/// that.
-fn route_channels(file: &FileFacts, caps: &Capabilities) -> u16 {
-    let takes = |channels: u16| !caps.rates(channels).is_empty();
-    if file.channels != 2 && !takes(file.channels) && takes(2) {
-        2
-    } else {
-        file.channels
+    let channels = format.channels;
+    if file.channels != channels && channels != 2 {
+        let why = format!("the device takes {channels} channels only");
+        return Err(refuse(why));
     }
-}
-
-/// The file's PCM.
-fn pcm_route(file: &FileFacts, caps: &Capabilities, settings: &Settings) -> Result<Route, NoRoute> {
-    let channels = route_channels(file, caps);
-    let lossless =
-        !file.float && file.bits <= 24 && file.decoded_from.is_none() && channels == file.channels;
-    let bits = if !lossless || file.bits == 0 {
-        24
-    } else {
+    let resampled = file.rate != format.rate;
+    let lossless = !resampled
+        && !file.float
+        && file.bits <= 24
+        && file.decoded_from.is_none()
+        && channels == file.channels;
+    let bits = if lossless && file.bits > 0 {
         file.bits
+    } else {
+        24
     };
-    let wanted = lossless_formats(bits);
-    let headroom = headroom_for(file, settings);
-    match fit(file.rate, channels, &wanted, caps, settings) {
-        Ok((format, formats)) => Ok(Route {
-            input_rate: file.rate,
-            input_channels: file.channels,
-            output_rate: file.rate,
-            channels,
-            format,
-            formats,
-            resample: None,
-            lossless,
-            decoded_from: file.decoded_from,
-            // The source's requantization.
-            headroom: if lossless { Headroom::NONE } else { headroom },
-            passed_over: None,
-        }),
-        Err(why) => {
-            let target = settings
-                .resample
-                .then(|| resample_target(file.rate, channels, caps, settings))
-                .flatten();
-            match target {
-                Some((format, formats)) => Ok(Route {
-                    input_rate: file.rate,
-                    input_channels: file.channels,
-                    output_rate: format.rate,
-                    channels,
-                    format,
-                    formats,
-                    resample: Some(Resample::new(file.rate, format.rate).with_headroom(headroom)),
-                    lossless: false,
-                    decoded_from: file.decoded_from,
-                    headroom,
-                    passed_over: Some(format!("PCM: {why}")),
-                }),
-                None => Err(NoRoute {
-                    reason: format!(
-                        "no lossless route for this {} {} file: {why}; {}{}",
-                        khz(file.rate),
-                        file.decoded_from.unwrap_or("PCM"),
-                        takes(caps, channels),
-                        resample_note(settings)
-                    ),
-                }),
-            }
-        }
+    if format.sample.valid_bits() < bits {
+        let why = format!("the device takes {} bits only", format.sample.valid_bits());
+        return Err(refuse(why));
     }
+    Ok(Route {
+        input_rate: file.rate,
+        input_channels: file.channels,
+        output_rate: format.rate,
+        channels,
+        format,
+        resample: resampled.then(|| Resample::new(file.rate, format.rate)),
+        lossless,
+        decoded_from: file.decoded_from,
+        headroom: Headroom::NONE,
+    })
 }
 
 #[cfg(test)]

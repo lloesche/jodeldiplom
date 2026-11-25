@@ -662,11 +662,11 @@ mod tests {
         let Layout::Settings(l) = layout::compute(&s) else {
             panic!()
         };
-        // The second row: resampling.
+        // The second row: the headroom.
         let more = l.lines[1].more;
         let a = action(&s, down(more.x, more.y)).unwrap();
         let fx = update(&mut s, a);
-        assert!(!s.config.resample);
+        assert_ne!(s.config.headroom, jodel_playback::Headroom::NONE);
         assert!(fx.contains(&crate::core::Effect::SaveConfig));
     }
 }

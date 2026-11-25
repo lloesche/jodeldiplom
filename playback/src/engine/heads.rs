@@ -20,9 +20,10 @@ use std::time::{Duration, Instant};
 use jodel_output::mixer::Fader;
 
 use super::along::PendingAlong;
+use super::drop::drop_later;
 use super::jump::{JumpFill, PendingJump};
 use super::lanes::StemLanes;
-use super::track::{drop_later, OpenOutput, Progress, Switch, Track};
+use super::track::{OpenOutput, Progress, Switch, Track};
 use super::Engine;
 use crate::error::Error;
 use crate::target::OutputTarget;
@@ -72,7 +73,7 @@ pub(super) struct HeadState {
     /// The settings changed while a switch was being handed over: route
     /// the track again once it has been.
     pub(super) reroute_later: bool,
-    /// A [`super::Command::Along`] waiting for its frame.
+    /// A move onto a map waiting for its frame.
     pub(super) along_at: Option<PendingAlong>,
     /// A [`super::Command::Jump`] waiting for its time.
     pub(super) pending_jump: Option<PendingJump>,

@@ -1343,7 +1343,6 @@ fn settings_step(state: &mut State, step: i32, fx: &mut Vec<Effect>) {
             }
             return;
         }
-        SettingsRow::Resample => config.resample = !config.resample,
         SettingsRow::Headroom => config.headroom = cycle(&Headroom::CHOICES, config.headroom, step),
         // The tempo rows are not the engine's: saved, not sent.
         SettingsRow::Tempo => {

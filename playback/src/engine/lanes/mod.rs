@@ -22,11 +22,10 @@
 //! over a mixer's switch's length ([`ending_frames`]) while still valid, so
 //! a mixer hearing them fades back to main. Offline the writing waits for
 //! them. At a track's end they run to its last frame when the next track's
-//! are ready to follow (or nothing follows), else they end before it. They
-//! end before a route fades out for another format, and are there again
-//! only after the new route's rise. Parts that start while the output holds
-//! frames written without them start on the frame heard, and those frames
-//! are written again with them once they are made ([`catch_up`]).
+//! are ready to follow (or nothing follows), else they end before it. Parts
+//! that start while the output holds frames written without them start on
+//! the frame heard, and those frames are written again with them once they
+//! are made ([`catch_up`]).
 //!
 //! A new segment ([`SegStart::Cold`]: a new track, a seek) has its parts
 //! start from silence on the segment's first frame, as main's resampler
@@ -129,10 +128,6 @@ pub(super) struct Want<'a> {
     pub(super) margin: u64,
     /// The output frame after main's last, once all of it is made.
     pub(super) main_end: Option<u64>,
-    /// No parts before this output frame (a route's rise after a reopen),
-    /// nor from this one on (its fade out for another format).
-    pub(super) rise: u64,
-    pub(super) cut: Option<u64>,
     /// The first output frame the track may write again once its parts are
     /// made ([`Engine::rewrite_floor`]; `from` when none may be).
     pub(super) floor: u64,
@@ -430,14 +425,9 @@ impl StemLanes {
 
     /// The parts there from `want.from` on, for the control word.
     fn supply(&self, want: &Want, through: bool) -> Supply {
-        let from = want.from;
-        let mut there = self.buffer.there(from);
-        if let Some(cut) = want.cut {
-            there = there.min(cut.max(from));
-        }
         Supply {
-            there,
-            coming: self.stream.is_some() && from >= want.rise,
+            there: self.buffer.there(want.from),
+            coming: self.stream.is_some() && want.from >= want.track.seg_out,
             hold: if self.offline {
                 0
             } else {
@@ -688,8 +678,6 @@ impl Ask {
             able: self.able,
             margin: self.margin,
             main_end: track.made_all().then_some(track.seg_out + track.emitted),
-            rise: track.seg_out + track.parts_rise,
-            cut: track.parts_cut,
             floor: self.floor,
         }
     }
@@ -786,11 +774,10 @@ impl Engine {
         let from = out.output.written();
         let full = !self.offline && ring > 0 && from - out.clock.position().min(from) >= ring;
         let mut frames = ((limit - track.out_at) / channels).min(LANE_CHUNK);
-        // A route's rise ends a write, so the parts may be there from its
-        // very end.
-        let rise = track.seg_out + track.parts_rise;
-        if from < rise {
-            frames = frames.min((rise - from) as usize);
+        // The segment's start ends a write, so the parts may be there from
+        // its very first frame.
+        if from < track.seg_out {
+            frames = frames.min((track.seg_out - from) as usize);
         }
         let ask = self.lane_ask(track, from, frames);
         let (able, margin) = (ask.able, ask.margin);

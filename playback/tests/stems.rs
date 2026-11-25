@@ -73,7 +73,7 @@ fn held_desk(caps: Capabilities) -> Held {
     let (desk, head) = StemDesk::new(&mixer, "Player", Role::Lead, 1.0);
     let (input, engine) = GatedTarget::around(head.target);
     engine.allow_all();
-    let (player, events) = Player::new(Box::new(input), options(false, true, quarter));
+    let (player, events) = Player::new(Box::new(input), options(true, quarter));
     player.make_stems(MakeStems::Separate).unwrap();
     let lanes = MixerLanes {
         parts: desk.stems,
@@ -166,7 +166,7 @@ fn a_seek_with_a_stem_muted_plays_its_stems_from_there() {
     let (path, file) = tones_of(&dir, "tones.wav", frames);
     for out in [RATE, 192_000] {
         let (target, captures, gate, lanes) = gated_mixer_lanes(caps(&[out], &[S24In32Low]));
-        let (player, events) = Player::new(Box::new(target), options(true, true, quarter));
+        let (player, events) = Player::new(Box::new(target), options(true, quarter));
         player.make_stems(MakeStems::Separate).unwrap();
         part(&lanes, Stem::Drums).set_mute(true);
         player.load(vec![path.clone()]).unwrap();
@@ -215,7 +215,7 @@ fn the_next_track_plays_its_stems_gaplessly() {
     let (one, first) = tones_of(&dir, "one.wav", frames);
     let (two, second) = tones_of(&dir, "two.wav", frames);
     let (target, captures, gate, lanes) = gated_mixer_lanes(caps(&[RATE], &[S24In32Low]));
-    let (player, events) = Player::new(Box::new(target), options(false, true, quarter));
+    let (player, events) = Player::new(Box::new(target), options(true, quarter));
     player.make_stems(MakeStems::Separate).unwrap();
     part(&lanes, Stem::Other).set_solo(true);
     gate.allow_all();
@@ -243,7 +243,7 @@ fn failing_stems_stop_the_parts_and_the_file_plays_as_it_is() {
     let dir = temp_dir("stems-broken");
     let (path, file) = tones_of(&dir, "tones.wav", 2 * RATE as usize);
     let (target, captures, gate, lanes) = gated_mixer_lanes(caps(&[RATE], &[S24In32Low]));
-    let (player, events) = Player::new(Box::new(target), options(false, true, broken));
+    let (player, events) = Player::new(Box::new(target), options(true, broken));
     player.make_stems(MakeStems::Separate).unwrap();
     part(&lanes, Stem::Bass).set_mute(true);
     gate.allow_all();
@@ -325,7 +325,7 @@ fn kept_stems_play_without_a_separation() {
         let (target, captures, gate, lanes) = gated_mixer_lanes(caps(&[RATE], &[S24In32Low]));
         let options = PlayerOptions {
             stem_store: Some(store.clone()),
-            ..options(false, true, broken)
+            ..options(true, broken)
         };
         let (player, events) = Player::new(Box::new(target), options);
         player.make_stems(MakeStems::Kept).unwrap();

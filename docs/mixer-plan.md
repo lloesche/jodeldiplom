@@ -455,8 +455,9 @@ song at the desk's rate, alone at unity, still comes out bit for bit.
   negotiation (the roles now only say whose frames the microphone's tap
   tells); the format the engine held after a mix (`pinned`, the D7
   policy); the effects' keeping the device open, the reopening for them
-  and its linger; the player's rate cap (`max_rate`, its setting and
-  `--max-rate`; the playback crate keeps its cap for plain targets).
+  and its linger; the rate cap (`max_rate`, its setting and
+  `--max-rate`), in the player and in the playback crate, and the setting
+  that skipped files at another rate (`--no-resample`).
 - **The only reopening** is the user's: another device starts a new mixer
   with the queue and the place carried over. The per-device rate setting
   (`rate."<id>"`, its settings row, `--rate`) is gone: the system sets the

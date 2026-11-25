@@ -332,18 +332,32 @@ enum Covers {
     Embedded,
 }
 
-fn open_reader(path: &Path, covers: Covers) -> Result<Opened, Error> {
-    let failed = |message: String| Error::Source {
+/// A file's reader, its container, and its audio track and parameters.
+struct Probed {
+    reader: Box<dyn FormatReader>,
+    container: Container,
+    track: Track,
+    params: AudioCodecParameters,
+}
+
+/// The error of the file at `path` that does not open, saying why.
+fn failed_at(path: &Path) -> impl Fn(String) -> Error + Copy + '_ {
+    move |message| Error::Source {
         path: path.to_path_buf(),
         message,
-    };
+    }
+}
+
+/// Opens the file at `path` and finds its audio track.
+fn probe_reader(path: &Path) -> Result<Probed, Error> {
+    let failed = failed_at(path);
     let file = File::open(path).map_err(|e| failed(e.to_string()))?;
     let stream = MediaSourceStream::new(Box::new(file), MediaSourceStreamOptions::default());
     let mut hint = Hint::new();
     if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
         hint.with_extension(ext);
     }
-    let mut reader = symphonia::default::get_probe()
+    let reader = symphonia::default::get_probe()
         .probe(
             &hint,
             stream,
@@ -380,6 +394,22 @@ fn open_reader(path: &Path, covers: Covers) -> Result<Opened, Error> {
         return Err(failed("the track has no audio parameters".into()));
     };
     let params = params.clone();
+    Ok(Probed {
+        reader,
+        container,
+        track,
+        params,
+    })
+}
+
+fn open_reader(path: &Path, covers: Covers) -> Result<Opened, Error> {
+    let failed = failed_at(path);
+    let Probed {
+        mut reader,
+        container,
+        track,
+        params,
+    } = probe_reader(path)?;
     let codec = codec_of(&params).map_err(failed)?;
     let (tags, embedded) = read_metadata(reader.as_mut());
     let aac = (codec == Codec::Aac)
@@ -791,14 +821,15 @@ impl Source {
         Ok(None)
     }
 
-    /// Opens the file again, to decode it from the start (the frames up
-    /// to `skip_to` are then dropped).
+    /// Opens the file's reader again, to decode it from its start (the
+    /// frames up to `skip_to` are then dropped): its tags and cover are
+    /// known already.
     fn rewind(&mut self) -> Result<(), Error> {
-        let opened = open_reader(&self.info.path, Covers::Embedded)?;
-        self.decoder = make_decoder(&self.info.path, &opened.params, &self.info)?;
-        self.params = opened.params;
-        self.reader = opened.reader;
-        self.track_id = opened.track.id;
+        let probed = probe_reader(&self.info.path)?;
+        self.decoder = make_decoder(&self.info.path, &probed.params, &self.info)?;
+        self.params = probed.params;
+        self.reader = probed.reader;
+        self.track_id = probed.track.id;
         self.ended = false;
         Ok(())
     }
@@ -850,10 +881,7 @@ impl Source {
     }
 
     fn failed(&self, message: String) -> Error {
-        Error::Source {
-            path: self.info.path.clone(),
-            message,
-        }
+        failed_at(&self.info.path)(message)
     }
 }
 

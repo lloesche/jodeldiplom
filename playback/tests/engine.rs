@@ -9,35 +9,37 @@
 mod common;
 
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 use common::*;
-use jodel_output::{SampleFormat, SimClock, StreamFormat};
+use jodel_output::{Capabilities, OpenRequest, Output, SampleFormat, SimClock, StreamFormat};
 use jodel_playback::{
-    Error, Event, MemoryTarget, PlayState, Player, PlayerOptions, Settings, Source, TapMiss,
+    Captures, Error, Event, Headroom, MemoryTarget, OutputTarget, PlayState, Player, PlayerOptions,
+    Settings, Source, TapMiss,
 };
 use SampleFormat::*;
 
-/// Lossless routes only.
 fn options() -> PlayerOptions {
     PlayerOptions {
-        settings: Settings {
-            max_rate: None,
-            resample: false,
-            ..Settings::default()
-        },
         position_interval: Duration::from_millis(1),
         ..PlayerOptions::default()
     }
 }
 
-fn play_all(
-    caps: jodel_output::Capabilities,
-    files: &[&str],
-) -> (Vec<(StreamFormat, Vec<u8>)>, Vec<Event>) {
+fn play_all(caps: Capabilities, files: &[&str]) -> (Vec<(StreamFormat, Vec<u8>)>, Vec<Event>) {
     let target = MemoryTarget::new(caps, SimClock::Instant);
     let captures = target.captures();
-    let (player, events) = Player::new(Box::new(target), options());
+    play_on(Box::new(target), &captures, files)
+}
+
+fn play_on(
+    target: Box<dyn OutputTarget>,
+    captures: &Captures,
+    files: &[&str],
+) -> (Vec<(StreamFormat, Vec<u8>)>, Vec<Event>) {
+    let (player, events) = Player::new(target, options());
     player
         .load(files.iter().map(|f| fixture(f)).collect())
         .unwrap();
@@ -47,7 +49,53 @@ fn play_all(
     drop(player);
     let mut all = seen;
     all.extend(stopped);
-    (captured(&captures), all)
+    (captured(captures), all)
+}
+
+/// A target whose one format is at rate `from` until its first output
+/// opens, and at `to` from then on: a device the system moved to another
+/// rate. `asked` is set once it is asked for its format after that.
+struct Moving {
+    inner: MemoryTarget,
+    rates: (u32, u32),
+    opened: bool,
+    asked: Arc<AtomicBool>,
+}
+
+impl Moving {
+    /// The target, its streams and its `asked`.
+    fn new(rates: (u32, u32), clock: SimClock) -> (Moving, Captures, Arc<AtomicBool>) {
+        let inner = MemoryTarget::new(caps(&[rates.0, rates.1], &[S24In32Low]), clock);
+        let (captures, asked) = (inner.captures(), Arc::new(AtomicBool::new(false)));
+        let target = Moving {
+            inner,
+            rates,
+            opened: false,
+            asked: asked.clone(),
+        };
+        (target, captures, asked)
+    }
+}
+
+impl OutputTarget for Moving {
+    fn name(&self) -> String {
+        self.inner.name()
+    }
+
+    fn capabilities(&mut self) -> Result<Capabilities, jodel_output::Error> {
+        self.asked.store(self.opened, Ordering::SeqCst);
+        let rate = if self.opened {
+            self.rates.1
+        } else {
+            self.rates.0
+        };
+        Ok(caps(&[rate], &[S24In32Low]))
+    }
+
+    fn open(&mut self, request: &OpenRequest) -> Result<Box<dyn Output>, jodel_output::Error> {
+        self.opened = true;
+        self.inner.open(request)
+    }
 }
 
 fn started(events: &[Event]) -> Vec<&jodel_playback::TrackStart> {
@@ -93,7 +141,7 @@ fn engine_output_equals_the_file() {
 /// The same samples in the device's own container (packed 24-bit here).
 #[test]
 fn packed_device_gets_the_same_samples() {
-    let (streams, _) = play_all(caps(&[48_000], &[S16, S24Packed]), &[F48]);
+    let (streams, _) = play_all(caps(&[48_000], &[S24Packed]), &[F48]);
     assert_eq!(streams[0].0.sample, S24Packed);
     assert!(streams[0].1 == device_bytes(&read_all(&fixture(F48)), S24Packed));
 }
@@ -139,9 +187,12 @@ fn two_tracks_at_one_format_play_gaplessly_into_one_stream() {
     assert_eq!(ended_at, [FIXTURE_FRAMES as u64, 2 * FIXTURE_FRAMES as u64]);
 }
 
+/// The next track routes to the target's format as it is then: at
+/// another, the output plays out and opens again at it.
 #[test]
 fn a_format_change_between_tracks_reopens_the_output() {
-    let (streams, events) = play_all(caps(&[44_100, 48_000], &[S24In32Low]), &[F44, F48]);
+    let (target, captures, _) = Moving::new((44_100, 48_000), SimClock::Instant);
+    let (streams, events) = play_on(Box::new(target), &captures, &[F44, F48]);
     assert_eq!(streams.len(), 2);
     assert_eq!(streams[0].0.rate, 44_100);
     assert_eq!(streams[1].0.rate, 48_000);
@@ -152,12 +203,51 @@ fn a_format_change_between_tracks_reopens_the_output() {
     assert_eq!(starts[1].output.format.rate, 48_000);
 }
 
-/// With resampling off.
+/// New settings while the output plays out before it opens again at the
+/// target's new format: the next track takes them, there.
+#[test]
+fn new_settings_during_the_play_out_reach_the_next_track() {
+    let _guard = real_time();
+    let dir = temp_dir("engine-play-out");
+    let path = dir.join("ramp.wav");
+    // A second, so the play-out lasts the output's ring.
+    ramp_wav(&path, 48_000, 48_000);
+    let (target, captures, asked) = Moving::new((48_000, 44_100), SimClock::Realtime);
+    let (player, events) = Player::new(Box::new(target), options());
+    player.load(vec![path.clone(), path]).unwrap();
+    player.play(0).unwrap();
+    // The next track is routed (to 44.1 kHz) as the first one is all
+    // written: the output plays out from then.
+    let deadline = std::time::Instant::now() + TIMEOUT;
+    while !asked.load(Ordering::SeqCst) {
+        assert!(std::time::Instant::now() < deadline, "never asked again");
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    let headroom = Headroom(10);
+    player.set_settings(Settings { headroom }).unwrap();
+    let seen = until_queue_end(&events);
+    drop(player);
+    assert!(
+        !seen
+            .iter()
+            .any(|e| matches!(e, Event::Error { .. } | Event::Notice { .. })),
+        "{seen:#?}"
+    );
+    let next = started(&seen)
+        .into_iter()
+        .find(|s| s.index == 1)
+        .expect("the next track");
+    assert_eq!(next.route.output_rate, 44_100);
+    assert_eq!(next.route.resample.map(|r| r.headroom), Some(headroom));
+    let streams = captured(&captures);
+    let rates: Vec<u32> = streams.iter().map(|s| s.0.rate).collect();
+    assert_eq!(rates, [48_000, 44_100]);
+}
+
+/// A 16-bit target: a 24-bit file has no route.
 #[test]
 fn no_route_is_reported_and_skipped() {
-    // A device of 48/96/192 kHz, packed 24 and 16 bit.
-    let device = caps(&[48_000, 96_000, 192_000], &[S16, S24Packed]);
-    let (streams, events) = play_all(device, &[F44, F48]);
+    let (streams, events) = play_all(caps(&[44_100], &[S16]), &[F48, F44]);
     let errors: Vec<(Option<usize>, &Error, bool)> = events
         .iter()
         .filter_map(|e| match e {
@@ -174,8 +264,8 @@ fn no_route_is_reported_and_skipped() {
     assert!(errors[0].2);
     match errors[0].1 {
         Error::NoRoute(none) => {
-            assert!(none.reason.contains("44.1 kHz"), "{none}");
-            assert!(none.reason.contains("resampling is off"), "{none}");
+            assert!(none.reason.contains("48 kHz"), "{none}");
+            assert!(none.reason.contains("16 bits only"), "{none}");
         }
         other => panic!("{other}"),
     }
@@ -187,7 +277,7 @@ fn no_route_is_reported_and_skipped() {
     assert!(error_at < start_at);
     assert_eq!(started(&events)[0].index, 1);
     assert_eq!(streams.len(), 1);
-    assert!(streams[0].1 == device_bytes(&read_all(&fixture(F48)), S24Packed));
+    assert!(streams[0].1 == device_bytes(&read_all(&fixture(F44)), S16));
 }
 
 #[test]
@@ -331,7 +421,7 @@ fn plain_pcm_plays_untouched_and_seeks_exactly() {
     let cover = info.cover.unwrap();
     assert_eq!(cover.mime, "image/png");
 
-    let (target, captures, gate) = GatedTarget::new(caps(&[48_000], &[S16, S24In32Low]));
+    let (target, captures, gate) = GatedTarget::new(caps(&[48_000], &[S24In32Low]));
     let (player, events) = Player::new(Box::new(target), options());
     player.load(vec![wav.clone()]).unwrap();
     gate.allow(7_777);
@@ -423,33 +513,28 @@ fn enqueue_after_the_end_continues_and_unreadable_files_are_skipped() {
     assert_eq!(streams[0].1.len(), 2 * FIXTURE_FRAMES * 2 * 4);
 }
 
+/// New headroom moves a resampled track to its new route in the same
+/// output.
 #[test]
 fn settings_change_reroutes_the_track_being_heard() {
-    let (target, captures, gate) = GatedTarget::new(caps(&[44_100, 48_000], &[S24In32Low]));
+    let (target, captures, gate) = GatedTarget::new(caps(&[44_100], &[S24In32Low]));
     let (player, events) = Player::new(Box::new(target), options());
     player.load(vec![fixture(F48)]).unwrap();
     gate.allow(3_000);
     player.play(0).unwrap();
     gate.wait_written(3_000);
     let first = collect_until(&events, |e| matches!(e, Event::TrackStarted(_)));
-    assert_eq!(started(&first)[0].route.output_rate, 48_000);
-    player
-        .set_settings(Settings {
-            max_rate: Some(44_100),
-            resample: true,
-            ..Settings::default()
-        })
-        .unwrap();
+    assert_eq!(started(&first)[0].route.headroom, Headroom::NONE);
+    let headroom = Headroom(10);
+    player.set_settings(Settings { headroom }).unwrap();
     let seen = trickle_until_started(&gate, &events);
     let start = started(&seen)[0];
     assert_eq!(start.route.output_rate, 44_100);
-    assert_eq!(start.route.resample.map(|r| r.from), Some(48_000));
+    assert_eq!(start.route.resample.map(|r| r.headroom), Some(headroom));
     gate.allow_all();
     until_queue_end(&events);
     drop(player);
-    let streams = captured(&captures);
-    assert_eq!(streams.len(), 2);
-    assert_eq!((streams[0].0.rate, streams[1].0.rate), (48_000, 44_100));
+    assert_eq!(captured(&captures).len(), 1);
 }
 
 /// A spectrum tap as a mixer's monitor holds what the device plays,

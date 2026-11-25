@@ -1,28 +1,26 @@
 //! Moving the playing track to a new route without a break (new
-//! settings, a head back off its map): the new route
-//! reads ahead while the old one plays, and the two meet at an exact frame,
-//! crossfaded at the same output format or through a reopened output at
-//! another.
+//! settings, a head back off its map): the new route, at the open
+//! output's format, reads ahead while the old one plays, and the two meet
+//! at an exact frame, crossfaded.
 
 use std::collections::VecDeque;
 use std::time::Duration;
 
-use jodel_output::lanes::ending_frames;
-
 use crate::error::Error;
 use crate::rate::Route;
 
+use super::drop::drop_later;
 use super::track::{
-    crossfade, drop_later, fade, frames_of, gcd, grid, preroll, rescale, Cue, CueEvent, Progress,
-    SegStart, Splice, Switch, Track,
+    crossfade, frames_of, gcd, grid, preroll, rescale, Cue, CueEvent, Progress, SegStart, Splice,
+    StartAt, Switch, Track,
 };
-use super::{Engine, SWITCH_PREFILL, SWITCH_TURN, WRITE_WAIT};
+use super::{Engine, SWITCH_TURN, WRITE_WAIT};
 
 impl Engine {
-    /// Moves the track being played to the route the settings choose for
-    /// it: a [`Switch`], decoded ahead and met at an exact frame. The track
-    /// waiting for the output to play out takes its new route at once (it
-    /// is not heard yet).
+    /// Moves the track being played to its route with the settings' headroom
+    /// (at the format it plays at): a [`Switch`], decoded ahead and met at
+    /// an exact frame. The track waiting for the output to play out takes
+    /// its new route at once (it is not heard yet).
     pub(super) fn reroute(&mut self) {
         // A head read along a map (or waiting to be: a transition's too)
         // holds its route: its end routes it again. While a transition is
@@ -45,19 +43,15 @@ impl Engine {
         let Some(track) = &self.head.playing else {
             return self.reroute_next();
         };
-        let (index, info, current) = (track.index, track.info.clone(), track.route.clone());
+        if self.head.out.is_none() {
+            return;
+        }
+        let (index, current) = (track.index, track.route.clone());
         // A track read along a map (a head's, a transition's) is not on its
         // route as the settings make it once that is over, though the route
         // is the same: it moves to a fresh one.
         let leftover = !track.plain_route();
-        let keeping = |why: String| format!("{why}; keeping {} for this track", current.describe());
-        let route = match self.route_for(&info) {
-            Ok(route) => route,
-            Err(why) => {
-                self.cancel_switch();
-                return self.notice(Some(index), keeping(why));
-            }
-        };
+        let route = current.clone().with_headroom(self.settings.headroom);
         if route == current && !leftover {
             self.cancel_switch();
             return;
@@ -72,59 +66,25 @@ impl Engine {
         }
         self.cancel_switch();
         if let Err(error) = self.begin_switch(route) {
-            let message = keeping(format!("Could not reopen this track: {error}"));
-            self.notice(Some(index), message);
+            self.notice(Some(index), not_reopened(&error, &current));
         }
     }
 
     /// [`Engine::reroute`] for the track waiting for the output to play
-    /// out: it takes its new route now, and when that fits the open output,
-    /// it follows what was written without a break.
+    /// out (to open again at the target's format): it takes its new route
+    /// now, opened again where it waits.
     fn reroute_next(&mut self) {
         let Some(next) = &self.next else {
             return;
         };
-        let (index, frame, info, current, fallback) = (
-            next.index,
-            next.seg_frame,
-            next.info.clone(),
-            next.route.clone(),
-            next.fallback.clone(),
-        );
-        let keeping = |why: String| format!("{why}; keeping {} for this track", current.describe());
-        let route = match self.route_for(&info) {
-            Ok(route) if route == current => return,
-            Ok(route) => route,
-            Err(why) => return self.notice(Some(index), keeping(why)),
-        };
-        let mut track = match self.prepare_at(index, frame, Some(route)) {
-            Ok(track) => track,
-            Err(error) => {
-                let message = keeping(format!("Could not reopen this track: {error}"));
-                return self.notice(Some(index), message);
-            }
-        };
-        // A switch's new route waits for the old one, faded out, to play
-        // out: it opens the output again rather than start unfaded after
-        // it, and can go back to the old route.
-        let switched = fallback.is_some();
-        track.fallback = fallback;
-        let open = self
-            .head
-            .out
-            .as_ref()
-            .map(|o| (o.info.format, o.output.written()));
-        match open {
-            Some((format, end)) if !switched && track.route.fits(&format) => {
-                // Nothing was written after the end the track waits at.
-                track.begin_segment(end, track.seg_frame, SegStart::Cold);
-                let cue = self.started(&track);
-                self.cues.push_back(cue);
-                self.next = None;
-                self.finishing = false;
-                self.head.playing = Some(track);
-            }
-            _ => self.next = Some(track),
+        let (index, frame, current) = (next.index, next.seg_frame, next.route.clone());
+        let route = current.clone().with_headroom(self.settings.headroom);
+        if route == current {
+            return;
+        }
+        match self.open_track(index, StartAt::Frame(frame), Some(route)) {
+            Ok(track) => self.next = Some(track),
+            Err(error) => self.notice(Some(index), not_reopened(&error, &current)),
         }
     }
 
@@ -134,7 +94,6 @@ impl Engine {
     pub(super) fn begin_switch(&mut self, route: Route) -> Result<(), Error> {
         let out = self.head.out.as_ref().ok_or(Error::Stopped)?;
         let written = out.output.written();
-        let fits = route.fits(&out.info.format);
         let old = self.head.playing.as_ref().ok_or(Error::Stopped)?;
         let (a_old, _) = grid(&old.route);
         let (a_new, _) = grid(&route);
@@ -159,12 +118,11 @@ impl Engine {
             first
         };
         let index = old.index;
-        let mut track = self.prepare_at(index, start, Some(route))?;
+        let mut track = self.open_track(index, StartAt::Frame(start), Some(route))?;
         track.pending = true;
         self.head.switch = Some(Switch {
             track,
             grid: step,
-            fits,
             retried: false,
             done: false,
             spliced: false,
@@ -232,8 +190,8 @@ impl Engine {
     }
 
     /// The switch's new route failed before it was heard (`why`): it
-    /// decodes once more from the start of the track (a decoder may refuse
-    /// to start mid-stream), or else the track keeps its route.
+    /// decodes once more from its start (a decoder may refuse to start
+    /// mid-stream), or else the track keeps its route.
     fn switch_failed(&mut self, switch: Switch, why: &str) {
         let index = switch.track.index;
         let route = switch.track.route.clone();
@@ -241,7 +199,9 @@ impl Engine {
         let first = start % switch.grid;
         drop_later(switch.track);
         if !switch.retried && start > first {
-            if let Ok(mut track) = self.prepare_at(index, first, Some(route.clone())) {
+            if let Ok(mut track) =
+                self.open_track(index, StartAt::Frame(first), Some(route.clone()))
+            {
                 track.pending = true;
                 self.head.switch = Some(Switch {
                     track,
@@ -291,13 +251,10 @@ impl Engine {
 
     /// Where the old route and the new one meet: at the first track frame
     /// on the grid ([`Switch::grid`]) heard at or after the frame being
-    /// written (and, at another format, a fade's length after it), so that
-    /// output frame `at` on the old route and frame `j` of the new one are
-    /// the same track frame exactly. Once the new route has its output
-    /// from there (a crossfade's worth, or at another format enough to
-    /// start the new output), the old one is cut at `at`; at the same
-    /// format the two crossfade from there, at another the old one fades
-    /// out before it and the new one fades in.
+    /// written, so that output frame `at` on the old route and frame `j` of
+    /// the new one are the same track frame exactly. Once the new route has
+    /// a crossfade's worth of output from there, the old one is cut at
+    /// `at` and the two crossfade from there.
     fn splice(&mut self, old: &mut Track, switch: &mut Switch) -> Result<Splice, Error> {
         /// Output frames a pending track keeps before what it may still
         /// meet the old route at, before it drops them.
@@ -306,9 +263,7 @@ impl Engine {
             return Ok(Splice::Wait);
         };
         let written = out.output.written();
-        let new_rate = switch.track.route.output_rate;
-        let fade_old = frames_of(self.switch_fade, old.route.output_rate);
-        let fade_new = frames_of(self.switch_fade, new_rate);
+        let fade = frames_of(self.switch_fade, old.route.output_rate);
         let (a_old, b_old) = grid(&old.route);
         let (a_new, b_new) = grid(&switch.track.route);
         let step_out = switch.grid / a_old * b_old;
@@ -343,33 +298,18 @@ impl Engine {
             let j = frame.saturating_sub(start) / a_new * b_new;
             (frame, old.seg_out + n * step_out, j)
         };
-        // At another format the old route fades out before it; on an
-        // output of lanes its stem parts end before that, a mixer's
-        // switch's length more.
-        let lanes = out.output.lanes() > 1;
-        let guard = match (switch.fits, lanes) {
-            (true, _) => 0,
-            (false, false) => fade_old,
-            (false, true) => fade_old + ending_frames(old.route.output_rate),
-        };
-        let (frame, at, j) = meet(written + guard);
+        let (frame, at, j) = meet(written);
         if old.info.frames.is_some_and(|total| frame >= total) {
             return Ok(Splice::Cancel);
         }
         let new = &mut switch.track;
         let channels = usize::from(new.route.channels);
         let base = new.emitted - (new.out_buf.len() / channels) as u64;
-        let lead = if switch.fits {
-            fade_new
-        } else {
-            frames_of(SWITCH_PREFILL, new_rate).max(fade_new)
-        };
-        if (new.emitted < j + lead || new.emitted <= j) && !switch.done {
+        if (new.emitted < j + fade || new.emitted <= j) && !switch.done {
             // Not caught up: drop what is before the earliest frame it can
-            // still meet the old route at.
-            // (It may not have made that much yet.)
-            let (_, _, earliest) = meet(written);
-            let drop = earliest.min(new.emitted);
+            // still meet the old route at (it may not have made that much
+            // yet).
+            let drop = j.min(new.emitted);
             if drop > base + KEEP {
                 new.out_buf.drain(..(drop - base) as usize * channels);
             }
@@ -379,8 +319,7 @@ impl Engine {
             // The new route ends before it.
             return Ok(Splice::Cancel);
         }
-        let ahead = new.emitted - j;
-        let cross = if switch.fits { fade_old.min(ahead) } else { 0 };
+        let cross = fade.min(new.emitted - j);
         // The old route's output up to there (and through the crossfade).
         while old.seg_out + old.emitted < at + cross {
             if old.failure.is_some() {
@@ -401,12 +340,6 @@ impl Engine {
         let keep = old.out_at + (at - written) as usize * old_channels;
         let tail = old.out_buf[keep..keep + cross as usize * old_channels].to_vec();
         old.out_buf.truncate(keep);
-        if !switch.fits {
-            let from = keep - fade_old as usize * old_channels;
-            fade(&mut old.out_buf[from..], old_channels, false);
-            // No parts over the fade.
-            old.parts_cut = Some(at - fade_old);
-        }
         let index = old.index;
         self.cues.retain(|c| {
             c.at < at
@@ -415,18 +348,11 @@ impl Engine {
                     CueEvent::Clipped { index: i, .. } if *i == index
                 ) && !matches!(&c.event, CueEvent::Started(s, _) if s.index == index)
         });
-        // The new one starts there.
+        // The new one starts there, crossfaded from the old one.
         let new = &mut switch.track;
         new.out_buf.drain(..(j - base) as usize * channels);
         new.out_at = 0;
-        if switch.fits {
-            crossfade(&tail, &mut new.out_buf[..tail.len()], channels);
-        } else {
-            let rise = fade_new.min(ahead) as usize;
-            fade(&mut new.out_buf[..rise * channels], channels, true);
-            // No parts over the rise either.
-            new.parts_rise = rise as u64;
-        }
+        crossfade(&tail, &mut new.out_buf[..tail.len()], channels);
         new.emitted -= j;
         new.pending = false;
         new.clip_base = new.clipped();
@@ -443,27 +369,21 @@ impl Engine {
             }
         }
         new.held = held;
-        if switch.fits {
-            // The same segment, met on its line: the stem parts go on, or
-            // (at another gain) start again crossfaded as main is.
-            let joined = SegStart::Joined {
-                fade: cross as usize,
-            };
-            new.continue_segment(old.segment, at, frame, joined);
-            let cue = self.started(new);
-            self.cues.push_back(cue);
-            self.release(new);
-        } else {
-            new.begin_segment(0, frame, SegStart::Cold);
-            new.fallback = Some(old.route.clone());
-        }
+        // The same segment, met on its line: the stem parts go on, or (at
+        // another gain) start again crossfaded as main is.
+        let joined = SegStart::Joined {
+            fade: cross as usize,
+        };
+        new.continue_segment(old.segment, at, frame, joined);
+        let cue = self.started(new);
+        self.cues.push_back(cue);
+        self.release(new);
         switch.spliced = true;
         Ok(Splice::Done)
     }
 
     /// The old route is written up to where the new one begins: the new
-    /// one plays on (or, at another format, waits for the output to play
-    /// out and open again).
+    /// one plays on.
     fn hand_over(&mut self) {
         let Some(switch) = self.head.switch.take() else {
             return;
@@ -472,14 +392,18 @@ impl Engine {
         if let Some(old) = self.head.playing.take() {
             drop_later(old);
         }
-        if switch.fits {
-            self.head.playing = Some(switch.track);
-        } else {
-            self.next = Some(switch.track);
-            self.finishing = true;
-        }
+        self.head.playing = Some(switch.track);
         if std::mem::take(&mut self.head.reroute_later) {
             self.reroute();
         }
     }
+}
+
+/// The notice for a track whose new route did not open (`error`): it
+/// keeps `current`.
+fn not_reopened(error: &Error, current: &Route) -> String {
+    format!(
+        "Could not reopen this track: {error}; keeping {} for this track",
+        current.describe()
+    )
 }

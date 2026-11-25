@@ -47,7 +47,6 @@ without one).
 | Option | |
 |---|---|
 | `--device ID\|NAME` | the output device (an id or a unique part of a name from `--list-devices`); default: the system default |
-| `--no-resample` | never resample (for this run): files at another rate than the device's are skipped |
 | `--headroom DB` | routes that change the samples play this many dB below full scale (`0`, `0.5`, `1`, `2`, `3`; default `0`), so overs need not clip: resampled routes (inter-sample overs) and floating-point files; lossy files (MP3, AAC, Vorbis) always at least 1.5 dB, as their decoded signal goes over full scale where the master was near it; files played as they are are never touched |
 | `--config FILE` | the settings file (default: `config.toml` in the settings folder, see Folders and setup) |
 | `--list-devices` | list the devices and what each takes (its rate and format, as the system mixes it) |
@@ -57,7 +56,7 @@ without one).
 
 Options override the settings file for one run; settings changed in the
 player are saved to it (only what was changed there, not the options).
-The file holds `device`, `resample`, `headroom`, `bpm`, `beat_voting`, `beat_methods = "flux, network"`
+The file holds `device`, `headroom`, `bpm`, `beat_voting`, `beat_methods = "flux, network"`
 `beat_method = "network"`, `stems`, `stem_switch = "bar"|"instant"`, `skip_mix = "cut"|"mix"`, `skip_preset = "transition-tab"|"fade"|"drums-first"|"bass-swap"|"vocals-last"`
 (what the next track key does), `transition_preset` and `transition_tempo =
 "varispeed"|"stretch"` (the Transition tab's transition preset and tempo mode,
@@ -138,7 +137,7 @@ songs, and the echo canceller keeps what it has learnt of the room. When
 the system starts running the device at another rate (its format changed
 in the sound settings), the song playing stops and the next one played
 is routed to the new rate. A file at that rate plays as it is; any other
-is resampled (unless that is off) and the path shows the step in the
+is resampled and the path shows the step in the
 warning colour, for example `file 44.1 → resample 48 (160/147) → DAC`
 (with headroom: `resample 48 (160/147, -1 dB)`); samples the resampler had
 to clip are counted there too. The path says nothing of bit-perfection:
@@ -164,13 +163,13 @@ Clicking the cover (or `f`) opens Now playing: the cover filling the
 screen with the title, artist, album and status light over its bottom
 left; `esc`, a click or `f` returns. Clicking the device name
 opens its setting. `,` (or the button) opens the settings: device (with
-what it takes: the rate the system runs it at and its format), resample
-when needed (on by default; saved as `resample` in the settings file) and
+what it takes: the rate the system runs it at and its format) and
 the headroom (for what is resampled). The device's rate is not a
-setting of the player's: the system's sound settings set it. A settings
-file from before, with a `rate."<id>"` line, says it is an unknown
-setting. Another device chosen opens it, the queue and the place carried
-over. The changes show at once and are saved at once; the engine gets them 400 ms after the last one, so stepping through
+setting of the player's: the system's sound settings set it, and a file
+at another rate is resampled to it. A settings file from before, with a
+`rate."<id>"` or a `resample` line, says once that it is an unknown
+setting, and is written again without it.
+Another device chosen opens it, the queue and the place carried over. The changes show at once and are saved at once; the engine gets them 400 ms after the last one, so stepping through
 values reroutes the track once, without a break. A change never
 stops playback: when the track has no route with the new settings, or its
 new output does not open, it keeps playing as it was and a message says

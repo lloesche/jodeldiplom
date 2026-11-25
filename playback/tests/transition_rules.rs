@@ -349,8 +349,7 @@ fn other_settings_during_a_mix_wait_for_its_end() {
     });
     desk.player
         .set_settings(Settings {
-            resample: true,
-            ..options().settings
+            headroom: jodel_playback::Headroom(10),
         })
         .unwrap();
     seen.extend(step_to_end(&desk.gate, &desk.events));

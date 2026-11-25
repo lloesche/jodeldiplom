@@ -71,7 +71,7 @@ fn kept_options(dir: &std::path::Path, samples: &[i32]) -> (std::path::PathBuf, 
     write_wav(&file, RATE, 2, samples);
     let options = PlayerOptions {
         stem_store: Some(kept(dir, &file, samples)),
-        ..options(false, false, broken)
+        ..options(false, broken)
     };
     (file, options)
 }
@@ -130,7 +130,7 @@ fn separated_stems_are_there_once_the_first_chunk_is() {
     let dir = temp_dir("catch-up-separated");
     let file = tone_file(&dir, "tones.wav", RATE, 10 * RATE as usize);
     FIRST_CHUNK.allow(0);
-    let options = options(false, false, first_chunk);
+    let options = options(false, first_chunk);
     let (player, events, captures, hold) = held_player(&file, options);
     player.make_stems(MakeStems::Separate).unwrap();
     // The separation held up: a quarter of a second more plays, and what

@@ -21,8 +21,14 @@ impl Engine {
         // An output of lanes gets silence on every lane, and no parts.
         let width = lane_width(out.info.format.channels, out.output.lanes());
         let frames = self.head.lead.min(SILENCE_FRAMES as u64) as usize;
-        let silence = vec![0i32; frames * width];
-        let took = out.output.write(&silence, Some(WRITE_WAIT))?;
+        // One zeroed buffer, grown to the widest write once.
+        let samples = frames * width;
+        if self.silence.len() < samples {
+            self.silence.resize(samples, 0);
+        }
+        let took = out
+            .output
+            .write(&self.silence[..samples], Some(WRITE_WAIT))?;
         self.head.lead -= took as u64;
         if let Some(track) = self.head.playing.take() {
             self.lanes_ahead(&track);

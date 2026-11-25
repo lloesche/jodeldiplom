@@ -27,7 +27,7 @@
 
 use std::time::{Duration, Instant};
 
-use super::track::{crossfade, frames_of, grid, Cue, CueEvent, Progress, SegStart, Track};
+use super::track::{crossfade, frames_of, grid, Cue, CueEvent, Progress, SegStart, StartAt, Track};
 use super::{Engine, WRITE_WAIT};
 use crate::error::Error;
 use crate::stems::RATE as STEM_RATE;
@@ -496,7 +496,7 @@ impl Engine {
         let (a, b) = grid(&route);
         let back = super::preroll(&route, rate).div_ceil(a).min(to / a);
         let fade = frames_of(self.switch_fade, route.output_rate);
-        match self.prepare_at(index, to - back * a, Some(route)) {
+        match self.open_track(index, StartAt::Frame(to - back * a), Some(route)) {
             Ok(mut track) => {
                 track.pending = true;
                 self.head.jump_fill = Some(Box::new(JumpFill {

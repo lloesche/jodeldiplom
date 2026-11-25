@@ -116,11 +116,6 @@ impl Run {
 
     fn options(&self) -> PlayerOptions {
         PlayerOptions {
-            settings: Settings {
-                max_rate: None,
-                resample: self.out != RATE,
-                ..Settings::default()
-            },
             position_interval: Duration::from_millis(1),
             separator: self.separator,
             offline: !self.device,
@@ -483,8 +478,7 @@ fn new_settings_wait_for_the_map() {
     let (wide, seen) = run.play_with(vec![path], &mut |player, e| {
         if !sent && past(e, 2.0) {
             let settings = Settings {
-                max_rate: None,
-                ..Settings::default()
+                headroom: jodel_playback::Headroom(10),
             };
             player.send(Command::SetSettings(settings)).unwrap();
             sent = true;
@@ -534,38 +528,31 @@ fn a_transition_while_read_along_a_map_is_refused() {
     clicks_on_the_map(&wide, 0.001);
 }
 
-/// A switch back onto the file that does not come about (no route with
-/// the settings then) is asked again a second later, and comes about once
-/// it can.
+/// A switch back onto the file that does not come about (the file cannot
+/// be opened again then) is asked again a second later, and comes about
+/// once it can.
 #[test]
 fn a_switch_back_that_fails_is_asked_again() {
     let dir = temp_dir("along-retry");
     let path = file(&dir, "chord.wav", 2, 8.0, chord);
+    let away = dir.join("chord.away");
     let samples = read_all(&path);
     let run = Run::new();
-    let (good, bad) = (
-        run.options().settings,
-        Settings {
-            max_rate: Some(22_050),
-            resample: false,
-            ..Settings::default()
-        },
-    );
-    let (mut sent, mut noticed, mut heard) = (false, None, 0);
-    let (wide, seen) = run.play_with(vec![path], &mut |player, e| {
+    let (mut moved, mut noticed, mut heard) = (false, None, 0);
+    let (wide, seen) = run.play_with(vec![path.clone()], &mut |_, e| {
         if let Event::Position(p) = e {
             heard = p.output_frame;
         }
-        if !sent && past(e, 2.0) {
-            player.send(Command::SetSettings(bad)).unwrap();
-            sent = true;
+        if !moved && past(e, 2.0) {
+            durable::rename_durable(&path, &away).unwrap();
+            moved = true;
         }
         if noticed.is_none() && matches!(e, Event::Notice { .. }) {
             noticed = Some(heard);
-            player.send(Command::SetSettings(good)).unwrap();
+            durable::rename_durable(&away, &path).unwrap();
         }
     });
-    let noticed = noticed.expect("a notice that the switch back has no route");
+    let noticed = noticed.expect("a notice that the switch back did not open");
     let (back, frame) = back_at(&seen);
     assert!(
         back > noticed + u64::from(RATE) / 2,

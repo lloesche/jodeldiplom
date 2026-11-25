@@ -13,5 +13,12 @@ jodel-output = { path = "../output" }
 jodel-rhythm = { path = "../rhythm" }
 symphonia = { version = "0.6", default-features = false, features = ["flac", "wav", "pcm", "aiff", "caf", "alac", "isomp4", "aac", "mp1", "mp2", "mp3", "ogg", "vorbis", "id3v1", "id3v2"] }
 
+[features]
+# `Command::Along`: the playing track read along a time map, as a
+# transition reads its tracks, for this crate's tests.
+test-support = []
+
 [dev-dependencies]
 hound = "3.5"
+# The tests use `test-support`.
+jodel-playback = { path = ".", features = ["test-support"] }

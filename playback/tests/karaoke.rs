@@ -13,9 +13,7 @@ use common::*;
 use jodel_output::mixer::{Mixer, MixerOptions, Role};
 use jodel_output::{SampleFormat, SimClock};
 use jodel_playback::stems::Stem;
-use jodel_playback::{
-    Event, MakeStems, MemoryTarget, PlayState, Player, PlayerOptions, Settings, StemDesk,
-};
+use jodel_playback::{Event, MakeStems, MemoryTarget, PlayState, Player, PlayerOptions, StemDesk};
 
 const RATE: u32 = 44_100;
 
@@ -108,10 +106,6 @@ fn a_count_in_into_the_voice_muted_on_the_desk_plays_the_band_after_it() {
     let (target, captures, gate, lanes) =
         gated_mixer_lanes(caps(&[RATE], &[SampleFormat::S24In32Low]));
     let options = PlayerOptions {
-        settings: Settings {
-            resample: false,
-            ..Settings::default()
-        },
         separator: Some(quarter),
         // The parts waited for: there from the track's first frame.
         offline: true,
@@ -179,10 +173,6 @@ fn in_real_time_a_count_in_has_the_band_ready_at_its_end() {
     let (desk, head) = StemDesk::new(&mixer, "Player", Role::Lead, 1.0);
     desk.stem(Stem::Vocals).set_mute(true);
     let options = PlayerOptions {
-        settings: Settings {
-            resample: false,
-            ..Settings::default()
-        },
         separator: Some(quarter),
         ..options()
     };

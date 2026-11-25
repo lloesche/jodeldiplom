@@ -5,10 +5,9 @@
 //! receiver. Commands are queued and run in order. The thread:
 //!
 //! - opens each track ([`crate::source::Source`]), chooses its route
-//!   ([`crate::rate::choose_route`]) against the target's capabilities, and
-//!   opens an output at the route's format (on a desk, its one format:
-//!   every route goes to it, so what follows of formats changing is a
-//!   plain device's);
+//!   ([`crate::rate::choose_route`]) to the target's one format, asked anew
+//!   for each track (on a desk the desk's, which follows the device), and
+//!   opens an output at it;
 //! - reads the source and resamples what it reads when the route has a
 //!   [`crate::rate::Resample`] step
 //!   ([`crate::Resampler`], one stream per track and per seek, so each
@@ -16,22 +15,20 @@
 //!   yet, from lossy and floating-point files, go into it unquantized and
 //!   are requantized once), and hands the output to
 //!   [`jodel_output::Output::write`];
-//! - at the end of a track opens the next one at once and, when its route
-//!   plays at the same output format, keeps writing into the same output
-//!   (gapless); otherwise it lets the output play out, closes it and opens
-//!   one at the new format;
+//! - at the end of a track opens the next one at once and keeps writing
+//!   into the same output (gapless); when the target's format changed (a
+//!   device back at another rate) it lets the output play out, closes it
+//!   and opens one at the new format;
 //! - seeks by moving the source to the exact frame and flushing the
 //!   output;
 //! - on new settings ([`Command::SetSettings`]) moves the track being
 //!   played to its new route without a break: the new route reads ahead,
 //!   from a little before the frame being written, while the old one goes
 //!   on playing; once it has caught up, the two meet at an exact frame
-//!   after what is written. At the same output format they crossfade over
+//!   after what is written, and crossfade over
 //!   [`PlayerOptions::switch_fade`] (nothing flushed, the output stays
-//!   open); at another format the old route fades out at that frame, the
-//!   output plays out and opens at the new format, and the new route
-//!   starts there, faded in, from the frame after it. Settings never stop
-//!   playback: when the track has no route with them, or its new route
+//!   open: the new route plays at the open output's format, with the new
+//!   headroom). Settings never stop playback: when the track's new route
 //!   cannot be opened, it keeps playing as it was and a [`Event::Notice`]
 //!   says so; the new settings apply to the tracks that start after it.
 //!
@@ -50,15 +47,16 @@
 //! `transition` (a transition compiled onto a desk), `heads` (a second
 //! output on the desk, for a transition's next track), `warping`, `along`
 //! (a head read along a time map), `key` and `shift` (the head on air in
-//! another key, on such a map), and `lanes` (the stems as parts of an
-//! output of lanes).
+//! another key, on such a map), `lanes` (the stems as parts of an output
+//! of lanes), and `drop` (what is done with, dropped off this thread).
 
 use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
 use std::time::{Duration, Instant};
 
-use jodel_output::{Capabilities, StreamFormat};
+use jodel_output::mixer::desk_format;
+use jodel_output::StreamFormat;
 
 use crate::error::Error;
 use crate::rate::{choose_route, FileFacts, NoRoute, Route, Settings};
@@ -67,6 +65,7 @@ use crate::target::OutputTarget;
 
 mod along;
 mod api;
+mod drop;
 mod heads;
 mod jump;
 mod key;
@@ -86,7 +85,8 @@ pub use jump::JumpAt;
 pub use lanes::MakeStems;
 pub use shift::{ratio_of, KEY_RANGE};
 
-use track::{drop_later, preroll, Cue, CueEvent, Heard, Progress, StartAt, Track};
+use drop::drop_later;
+use track::{preroll, Cue, CueEvent, Heard, Progress, StartAt, Track};
 
 /// How long one output write may block, so commands stay responsive.
 const WRITE_WAIT: Duration = Duration::from_millis(10);
@@ -101,10 +101,6 @@ const SILENCE_FRAMES: usize = 4096;
 /// that it has settled by the time it is heard: a resampler's filter is
 /// full.
 const PREROLL_RESAMPLE: f64 = 0.1;
-
-/// How much of a switch's new route is decoded before the old one fades
-/// out for an output at another format, so the new output starts at once.
-const SWITCH_PREFILL: Duration = Duration::from_millis(200);
 
 /// How long the new route has the thread after a write the output did not
 /// take (it is full, paused or held back).
@@ -150,6 +146,8 @@ struct Engine {
     /// picked resets it; none: it is for the one picked next).
     key: i8,
     key_song: Option<PathBuf>,
+    /// Zeros for a count-in's writes (never written into).
+    silence: Vec<i32>,
 }
 
 impl Engine {
@@ -178,6 +176,7 @@ impl Engine {
             segments: track::Segments::default(),
             key: 0,
             key_song: None,
+            silence: Vec::new(),
         }
     }
 
@@ -315,6 +314,7 @@ impl Engine {
             Command::JumpWindow { back, ahead } => self.jump_window = (back, ahead),
             Command::MakeStems(make) => self.every_lanes().for_each(|l| l.set_make(make)),
             Command::Key { semitones } => self.set_key(semitones),
+            #[cfg(feature = "test-support")]
             Command::Along { map, from, tempo } => self.read_along(map, from, tempo),
         }
     }
@@ -376,30 +376,27 @@ impl Engine {
         self.reroute();
     }
 
-    /// The route the settings choose for `info` from what the target takes
-    /// (on a desk, its one format), or why there is none (a sentence).
-    fn route_for(&mut self, info: &TrackInfo) -> Result<Route, String> {
-        let name = self.head.target.name();
-        let caps = self
-            .target_caps()
-            .map_err(|e| format!("Could not ask {name} what it takes: {e}"))?;
-        choose_route(&FileFacts::from(info), &caps, &self.settings).map_err(|none| {
-            format!("No route for this track with these settings on {name} ({none})")
-        })
-    }
-
-    /// The route the settings choose for `info` at `format` alone.
+    /// The route the settings choose for `info` at `format`.
     fn route_at(&self, info: &TrackInfo, format: StreamFormat) -> Result<Route, NoRoute> {
-        let mut caps = Capabilities::new();
-        caps.insert(format);
-        choose_route(&FileFacts::from(info), &caps, &self.settings)
+        choose_route(&FileFacts::from(info), format, &self.settings)
     }
 
-    /// What the target takes, asked anew for each route: on a desk its one
-    /// format, which is the device's, and changes when the device comes back
-    /// at another rate (one round trip to the mixer's thread).
-    fn target_caps(&mut self) -> Result<Capabilities, Error> {
-        Ok(self.head.target.capabilities()?)
+    /// The target's one format, asked anew for each track: on a desk the
+    /// desk's, which is the device's, and changes when the device comes
+    /// back at another rate (one round trip to the mixer's thread). A
+    /// stand-in that lists several is taken as a desk takes it
+    /// ([`desk_format`]).
+    fn target_format(&mut self) -> Result<StreamFormat, Error> {
+        let caps = self.head.target.capabilities()?;
+        let mut all = caps.iter().copied();
+        let one = match (all.next(), all.next()) {
+            (Some(format), None) => Some(format),
+            _ => desk_format(&caps),
+        };
+        one.ok_or_else(|| {
+            let reason = format!("{} offers no format to play at", self.head.target.name());
+            NoRoute { reason }.into()
+        })
     }
 
     /// How `track` is heard when it is read along a map (a head along its
@@ -600,7 +597,7 @@ impl Engine {
             match self.next.take() {
                 Some(track) => {
                     self.close_output();
-                    self.install_next(track)?;
+                    self.install(track)?;
                     self.fire_cues();
                 }
                 None => {

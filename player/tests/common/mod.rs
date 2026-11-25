@@ -16,8 +16,8 @@ use std::time::{Duration, Instant};
 
 use jodel_output::{SampleFormat, StreamFormat, StreamInfo};
 use jodel_playback::{
-    any_capabilities, choose_route, Codec, Container, Cover, CoverOrigin, FileFacts, PlayState,
-    Settings, Tags, TrackInfo,
+    choose_route, Codec, Container, Cover, CoverOrigin, FileFacts, PlayState, Settings, Tags,
+    TrackInfo,
 };
 use jodeldiplom::app::App;
 use jodeldiplom::config::Config;
@@ -169,14 +169,10 @@ pub fn now_track(rate: u32, settings: Settings, index: usize) -> NowTrack {
             origin: CoverOrigin::Embedded,
         }),
     };
-    let route = choose_route(
-        &FileFacts::from(&info),
-        &any_capabilities(info.rate),
-        &settings,
-    )
-    .unwrap();
+    let format = StreamFormat::new(info.rate, 2, SampleFormat::S24In32);
+    let route = choose_route(&FileFacts::from(&info), format, &settings).unwrap();
     let output = StreamInfo {
-        format: StreamFormat::new(route.output_rate, 2, SampleFormat::S24In32),
+        format,
         backend: "null",
         device_buffer_frames: 4_096,
         ring_frames: 65_536,

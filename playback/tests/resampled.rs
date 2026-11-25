@@ -1,7 +1,6 @@
-//! The engine with resampling, without a device: a device that takes only
-//! 48, 96 and 192 kHz in packed 24 and 16 bit (the GC7 of the phase A
-//! probe) plays 44.1 kHz-family files through the resampler, and the bytes
-//! equal a fresh resample of the same stream, per track and per seek.
+//! The engine with resampling, without a device: a target at 48 kHz in
+//! packed 24 bit plays 44.1 kHz files through the resampler, and the
+//! bytes equal a fresh resample of the same stream, per track and per seek.
 
 mod common;
 
@@ -12,19 +11,15 @@ use common::*;
 use jodel_output::{Capabilities, SampleFormat, SimClock, StreamFormat};
 use jodel_playback::rate::Resample;
 use jodel_playback::resample::output_frames;
-use jodel_playback::{Error, Event, MemoryTarget, PlayState, Player, PlayerOptions, Settings};
+use jodel_playback::{Event, MemoryTarget, PlayState, Player, PlayerOptions};
 use SampleFormat::*;
 
-fn gc7() -> Capabilities {
-    caps(&[48_000, 96_000, 192_000], &[S16, S24Packed])
+fn at_48k() -> Capabilities {
+    caps(&[48_000], &[S24Packed])
 }
 
-fn options(max_rate: Option<u32>) -> PlayerOptions {
+fn options() -> PlayerOptions {
     PlayerOptions {
-        settings: Settings {
-            max_rate,
-            ..Settings::default()
-        },
         position_interval: Duration::from_millis(1),
         ..PlayerOptions::default()
     }
@@ -33,7 +28,7 @@ fn options(max_rate: Option<u32>) -> PlayerOptions {
 fn play_all(caps: Capabilities, files: Vec<PathBuf>) -> (Vec<(StreamFormat, Vec<u8>)>, Vec<Event>) {
     let target = MemoryTarget::new(caps, SimClock::Instant);
     let captures = target.captures();
-    let (player, events) = Player::new(Box::new(target), options(None));
+    let (player, events) = Player::new(Box::new(target), options());
     player.load(files).unwrap();
     player.play(0).unwrap();
     let mut all = until_queue_end(&events);
@@ -76,7 +71,7 @@ fn pcm_at_44k_plays_resampled_to_48k() {
     let frames = 20_000;
     let samples = tones(44_100, frames);
     write_wav(&wav, 44_100, 2, &samples);
-    let (streams, events) = play_all(gc7(), vec![wav]);
+    let (streams, events) = play_all(at_48k(), vec![wav]);
     assert_eq!(streams.len(), 1);
     assert_eq!(streams[0].0, StreamFormat::new(48_000, 2, S24Packed));
     let want = reference_resample(44_100, 48_000, 2, &samples);
@@ -108,7 +103,7 @@ fn pcm_at_44k_plays_resampled_to_48k() {
 
 #[test]
 fn a_flac_file_at_44k_plays_resampled_to_48k() {
-    let (streams, events) = play_all(gc7(), vec![fixture(F44)]);
+    let (streams, events) = play_all(at_48k(), vec![fixture(F44)]);
     assert_eq!(streams.len(), 1);
     assert_eq!(streams[0].0, StreamFormat::new(48_000, 2, S24Packed));
     let want = reference_resample(44_100, 48_000, 2, &read_all(&fixture(F44)));
@@ -134,8 +129,8 @@ fn seek_equals_a_fresh_resample_from_the_target() {
     let wav = dir.join("tones.wav");
     let samples = tones(44_100, 30_000);
     write_wav(&wav, 44_100, 2, &samples);
-    let (target, captures, gate) = GatedTarget::new(gc7());
-    let (player, events) = Player::new(Box::new(target), options(None));
+    let (target, captures, gate) = GatedTarget::new(at_48k());
+    let (player, events) = Player::new(Box::new(target), options());
     player.load(vec![wav]).unwrap();
     let before = 7_000u64;
     gate.allow(before);
@@ -180,7 +175,7 @@ fn gapless_resampled_tracks_keep_their_exact_lengths() {
     let (sa, sb) = (tones(44_100, 10_001), tones(44_100, 7_777));
     write_wav(&a, 44_100, 2, &sa);
     write_wav(&b, 44_100, 2, &sb);
-    let (streams, events) = play_all(gc7(), vec![a, b]);
+    let (streams, events) = play_all(at_48k(), vec![a, b]);
     assert_eq!(streams.len(), 1, "the output was reopened");
     let mut want = reference_resample(44_100, 48_000, 2, &sa);
     let first = want.len() as u64 / 2;
@@ -218,7 +213,7 @@ fn clipping_is_counted_and_reported() {
         })
         .collect();
     write_wav(&wav, 44_100, 2, &samples);
-    let (streams, events) = play_all(gc7(), vec![wav]);
+    let (streams, events) = play_all(at_48k(), vec![wav]);
     let want = reference_resample(44_100, 48_000, 2, &samples);
     assert!(streams[0].1 == device_bytes(&want, S24Packed));
     let clips: Vec<(u64, u64)> = events
@@ -238,56 +233,4 @@ fn clipping_is_counted_and_reported() {
     assert!(clips.windows(2).all(|w| w[1].1 - w[0].1 >= 12_000));
     assert!(clips.len() <= 5, "{clips:?}");
     std::fs::remove_dir_all(dir).unwrap();
-}
-
-/// Turning resampling off while a resampled track plays leaves it without
-/// a route: it keeps playing as it was (a notice says so), to its end. The
-/// next track, which has no route either, is skipped.
-#[test]
-fn turning_resampling_off_keeps_the_track_playing() {
-    let (target, captures, gate) = GatedTarget::new(gc7());
-    let (player, events) = Player::new(Box::new(target), options(None));
-    player.load(vec![fixture(F44), fixture(F44)]).unwrap();
-    gate.allow(3_000);
-    player.play(0).unwrap();
-    gate.wait_written(3_000);
-    collect_until(&events, |e| matches!(e, Event::TrackStarted(_)));
-    player
-        .set_settings(Settings {
-            resample: false,
-            ..Settings::default()
-        })
-        .unwrap();
-    let seen = collect_until(&events, |e| matches!(e, Event::Notice { .. }));
-    match seen.last() {
-        Some(Event::Notice {
-            index: Some(0),
-            message,
-        }) => {
-            assert!(message.contains("resampling is off"), "{message}");
-            assert!(message.contains("keeping 44.1 kHz"), "{message}");
-        }
-        other => panic!("{other:?}"),
-    }
-    gate.allow_all();
-    let seen = until_queue_end(&events);
-    let mut order = Vec::new();
-    for event in &seen {
-        match event {
-            Event::TrackEnded { index, finished } => order.push(format!("end {index} {finished}")),
-            Event::Error {
-                index,
-                error: Error::NoRoute(_),
-                skipped,
-            } => order.push(format!("error {index:?} {skipped}")),
-            Event::TrackStarted(s) => order.push(format!("start {}", s.index)),
-            _ => {}
-        }
-    }
-    assert_eq!(order, ["end 0 true", "error Some(1) true"]);
-    drop(player);
-    // One stream, the whole track, as it started.
-    let streams = captured(&captures);
-    assert_eq!(streams.len(), 1);
-    assert_eq!(streams[0].0.rate, 48_000);
 }

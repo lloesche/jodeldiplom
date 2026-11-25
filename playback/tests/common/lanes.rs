@@ -11,8 +11,8 @@ use jodel_output::lanes::ending_frames;
 use jodel_output::{Capabilities, SampleFormat, SimClock, StreamFormat};
 use jodel_playback::stems::Separator;
 use jodel_playback::{
-    Captures, Event, MakeStems, MemoryTarget, Player, PlayerOptions, SeparatorSource, Settings,
-    StemFile, StemStore, StemWriter,
+    Captures, Event, MakeStems, MemoryTarget, Player, PlayerOptions, SeparatorSource, StemFile,
+    StemStore, StemWriter,
 };
 
 use super::*;
@@ -129,13 +129,8 @@ pub fn broken() -> Option<&'static dyn Separator> {
     Some(&BROKEN)
 }
 
-pub fn options(resample: bool, offline: bool, separator: SeparatorSource) -> PlayerOptions {
+pub fn options(offline: bool, separator: SeparatorSource) -> PlayerOptions {
     PlayerOptions {
-        settings: Settings {
-            max_rate: None,
-            resample,
-            ..Settings::default()
-        },
         position_interval: Duration::from_millis(1),
         separator: Some(separator),
         offline,

@@ -1640,7 +1640,6 @@ impl App {
                 }
                 carry!(
                     device,
-                    resample,
                     headroom,
                     bpm,
                     beat_voting,

@@ -1,8 +1,9 @@
 //! Where the engine plays to: a device, memory, nowhere, or a mixer's input
 //! ([`jodel_output::mixer::InputTarget`], several players on one device).
 //!
-//! The engine asks an [`OutputTarget`] for its [`Capabilities`] (once, for
-//! the rate policy) and opens one [`Output`] per stream format it needs.
+//! The engine asks an [`OutputTarget`] for its one format (its
+//! [`Capabilities`], anew for each track: a device's is the system's mix
+//! format) and opens an [`Output`] at it.
 
 use std::sync::{Arc, Mutex};
 

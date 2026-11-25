@@ -15,9 +15,7 @@ use std::time::Duration;
 use common::*;
 use jodel_output::mixer::desk_format;
 use jodel_output::{Capabilities, SampleFormat, StreamFormat};
-use jodel_playback::{
-    Captures, Command, Event, JumpAt, PlayState, Player, PlayerOptions, Settings,
-};
+use jodel_playback::{Captures, Command, Event, JumpAt, PlayState, Player, PlayerOptions};
 use SampleFormat::*;
 
 #[derive(Clone, Copy, Debug)]
@@ -28,13 +26,8 @@ enum Via {
     Desk,
 }
 
-fn options(resample: bool) -> PlayerOptions {
+fn options() -> PlayerOptions {
     PlayerOptions {
-        settings: Settings {
-            max_rate: None,
-            resample,
-            ..Settings::default()
-        },
         position_interval: Duration::from_millis(1),
         ..PlayerOptions::default()
     }
@@ -109,22 +102,17 @@ fn to_the_end(files: Vec<PathBuf>) -> impl Fn(&Player, &Receiver<Event>, &Gate, 
 
 #[test]
 fn flac_gapless_and_resampled_are_bit_exact() {
-    let exact = options(false);
-    let resampled = options(true);
     let cases = [
-        (caps(&[44_100], &[S24In32Low]), vec![F44], &exact),
-        (caps(&[48_000], &[S16, S24Packed]), vec![F48], &exact),
-        (caps(&[44_100], &[S24In32Low]), vec![F44, F44], &exact),
-        (caps(&[48_000], &[S24In32Low]), vec![F44, F44], &resampled),
-        (
-            caps(&[44_100, 48_000], &[S24In32Low]),
-            vec![F44, F48],
-            &resampled,
-        ),
+        (caps(&[44_100], &[S24In32Low]), vec![F44]),
+        (caps(&[48_000], &[S24Packed]), vec![F48]),
+        (caps(&[44_100], &[S24In32Low]), vec![F44, F44]),
+        (caps(&[48_000], &[S24In32Low]), vec![F44, F44]),
+        // As it is, then resampled, gapless.
+        (caps(&[44_100], &[S24In32Low]), vec![F44, F48]),
     ];
-    for (caps, files, options) in cases {
+    for (caps, files) in cases {
         let files = files.into_iter().map(fixture).collect();
-        same_through_the_mixer(caps, options.clone(), &to_the_end(files));
+        same_through_the_mixer(caps, options(), &to_the_end(files));
     }
 }
 
@@ -134,16 +122,14 @@ fn plain_and_resampled_pcm_are_bit_exact() {
     let (w48, w44) = (dir.join("48.wav"), dir.join("44.wav"));
     ramp_wav(&w48, 48_000, 30_000);
     ramp_wav(&w44, 44_100, 30_000);
-    let plain = options(false);
     same_through_the_mixer(
-        caps(&[48_000], &[S16, S24In32Low]),
-        plain,
+        caps(&[48_000], &[S24In32Low]),
+        options(),
         &to_the_end(vec![w48]),
     );
-    let resampled = options(true);
     same_through_the_mixer(
         caps(&[48_000], &[S24In32]),
-        resampled,
+        options(),
         &to_the_end(vec![w44]),
     );
 }
@@ -182,7 +168,7 @@ fn seek_pause_and_jump_are_bit_exact() {
         gate.allow_all();
         until_queue_end(events);
     };
-    same_through_the_mixer(caps(&[44_100], &[S24In32Low]), options(false), &script);
+    same_through_the_mixer(caps(&[44_100], &[S24In32Low]), options(), &script);
     // A FLAC file's seek, too.
     let script = |player: &Player, events: &Receiver<Event>, gate: &Gate, captures: &Captures| {
         player.load(vec![fixture(F44)]).unwrap();
@@ -194,7 +180,7 @@ fn seek_pause_and_jump_are_bit_exact() {
         gate.allow_all();
         until_queue_end(events);
     };
-    same_through_the_mixer(caps(&[44_100], &[S24In32Low]), options(false), &script);
+    same_through_the_mixer(caps(&[44_100], &[S24In32Low]), options(), &script);
 }
 
 #[test]
@@ -204,7 +190,7 @@ fn play_at_starts_a_share_of_the_length_in() {
     let frames = 44_101u64;
     let samples = ramp_wav(&wav, 44_100, frames as u32);
     let (lead, captures, mixer) = mixer_lead(caps(&[44_100], &[S24In32Low]));
-    let (player, events) = Player::new(Box::new(lead), options(false));
+    let (player, events) = Player::new(Box::new(lead), options());
     player.load(vec![wav]).unwrap();
     player
         .send(Command::PlayAt {
@@ -242,7 +228,7 @@ fn mono_and_5_1_files_play_as_stereo() {
     write_wav(&m, 48_000, 1, &mono);
     write_wav(&s, 48_000, 6, &surround);
     let (lead, captures, mixer) = mixer_lead(caps(&[48_000], &[S24In32Low]));
-    let (player, events) = Player::new(Box::new(lead), options(false));
+    let (player, events) = Player::new(Box::new(lead), options());
     player.load(vec![m, s]).unwrap();
     player.play(0).unwrap();
     let seen = until_queue_end(&events);

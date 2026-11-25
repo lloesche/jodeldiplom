@@ -157,7 +157,7 @@ fn calls_in_a_second(make: MakeStems, present: bool) -> u64 {
         inner: head.target,
         calls: calls.clone(),
     };
-    let (player, events) = Player::new(Box::new(target), options(false, false, quarter));
+    let (player, events) = Player::new(Box::new(target), options(false, quarter));
     player.make_stems(make).unwrap();
     player.load(vec![file]).unwrap();
     player.play(0).unwrap();

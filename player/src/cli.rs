@@ -25,8 +25,6 @@ gapless, decoded to 24 bits.
                        default: the current folder
   --device ID|NAME     the output device: an id or a unique part of a name
                        from --list-devices; default: the system default
-  --no-resample        never resample: files at another rate than the
-                       device's are skipped
   --headroom DB        routes that change the samples (resampled, floating-point
                        files) play this many dB below full scale
                        (0, 0.5, 1, 2, 3; default 0), so inter-sample overs
@@ -55,8 +53,6 @@ pub struct Args {
     pub path: Option<PathBuf>,
     /// `--device`.
     pub device: Option<String>,
-    /// `--no-resample`.
-    pub no_resample: bool,
     /// `--headroom`.
     pub headroom: Option<Headroom>,
     /// `--config`.
@@ -89,7 +85,6 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
         match arg.as_str() {
             "-h" | "--help" => out.help = true,
             "--device" => out.device = Some(value("--device")?),
-            "--no-resample" => out.no_resample = true,
             "--headroom" => {
                 let text = value("--headroom")?;
                 out.headroom = Some(Headroom::parse(&text).ok_or_else(|| {
@@ -142,19 +137,24 @@ pub struct Settings {
     pub warnings: Vec<String>,
 }
 
-/// Reads the settings file and applies the command line's overrides.
+/// Reads the settings file and applies the command line's overrides. A
+/// file with settings the player does not know (any longer) says so once:
+/// it is written again without them.
 pub fn settings(args: &Args) -> Result<Settings, String> {
     let file = args.config.clone().or_else(config::default_path);
-    let (saved, warnings) = match &file {
+    let (saved, mut warnings) = match &file {
         Some(path) => Config::load(path)?,
         None => (Config::default(), Vec::new()),
     };
+    if let (Some(path), false) = (&file, warnings.is_empty()) {
+        match saved.save(path) {
+            Ok(()) => warnings.push(format!("{}: written again without them", path.display())),
+            Err(e) => warnings.push(format!("{}: could not write it again: {e}", path.display())),
+        }
+    }
     let mut effective = saved.clone();
     if let Some(device) = &args.device {
         effective.device = (device != "default").then(|| device.clone());
-    }
-    if args.no_resample {
-        effective.resample = false;
     }
     if let Some(headroom) = args.headroom {
         effective.headroom = headroom;
@@ -382,7 +382,6 @@ mod tests {
         let a = args(&[
             "--device",
             "USB",
-            "--no-resample",
             "--headroom",
             "0.5",
             "--config",
@@ -391,12 +390,13 @@ mod tests {
         ])
         .unwrap();
         assert_eq!(a.device.as_deref(), Some("USB"));
-        assert!(a.no_resample);
         assert_eq!(a.headroom, Some(Headroom(5)));
         assert!(args(&["--headroom", "lots"])
             .unwrap_err()
             .contains("--headroom"));
-        assert!(!args(&[]).unwrap().no_resample);
+        assert!(args(&["--no-resample"])
+            .unwrap_err()
+            .contains("--no-resample"));
         assert_eq!(a.config, Some("c.toml".into()));
         assert_eq!(a.path, Some("music".into()));
         assert!(args(&["--list-devices"]).unwrap().list_devices);
@@ -425,17 +425,11 @@ mod tests {
         let a = args(&["--config", file.to_str().unwrap()]).unwrap();
         let s = settings(&a).unwrap();
         assert_eq!(s.effective.headroom, Headroom(10));
-        assert!(s.effective.resample);
         // --headroom for this run only.
         let a = args(&["--config", file.to_str().unwrap(), "--headroom", "2"]).unwrap();
         let s = settings(&a).unwrap();
         assert_eq!(s.saved.headroom, Headroom(10));
         assert_eq!(s.effective.headroom, Headroom(20));
-        // --no-resample turns it off for this run only.
-        let a = args(&["--config", file.to_str().unwrap(), "--no-resample"]).unwrap();
-        let s = settings(&a).unwrap();
-        assert!(s.saved.resample);
-        assert!(!s.effective.resample);
         // A file starts playing with the browser on its folder.
         let track = dir.join("t.flac");
         durable::write_atomic(&track, b"").unwrap();
@@ -443,6 +437,28 @@ mod tests {
         assert_eq!(start_dir, dir);
         assert_eq!(autoplay, Some(track));
         assert!(start(Some(&dir.join("missing"))).is_err());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A setting the player does not know is said once: the file is written
+    /// again without it, the rest kept, and the next start is clean.
+    #[test]
+    fn settings_not_known_are_said_once() {
+        let dir = std::env::temp_dir().join(format!("jodeldiplom-unknown-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("c.toml");
+        durable::write_atomic(&file, b"resample = false\nheadroom = 1\n").unwrap();
+        let a = args(&["--config", file.to_str().unwrap()]).unwrap();
+        let s = settings(&a).unwrap();
+        assert_eq!(s.warnings.len(), 2, "{:?}", s.warnings);
+        assert!(s.warnings[0].contains("unknown setting \"resample\""));
+        assert!(s.warnings[1].contains("written again without them"));
+        assert_eq!(s.saved.headroom, Headroom(10));
+        let text = std::fs::read_to_string(&file).unwrap();
+        assert!(!text.contains("resample") && text.contains("headroom = 1"));
+        let again = settings(&a).unwrap();
+        assert!(again.warnings.is_empty(), "{:?}", again.warnings);
+        assert_eq!(again.saved, s.saved);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

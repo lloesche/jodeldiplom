@@ -52,10 +52,10 @@ impl StemLanes {
 impl Engine {
     /// The first output frame `track` may write again, when there is one
     /// before what is written: the next one heard, within what its buffer
-    /// holds as written, after a route's rise. `None` offline (the writing
-    /// waits for the parts there), with a route switch, a transition or a
-    /// jump under way (they count on the frames written), off the plain
-    /// route, and with nothing to write again.
+    /// holds as written, in its segment. `None` offline (the writing waits
+    /// for the parts there), with a route switch, a transition or a jump
+    /// under way (they count on the frames written), off the plain route,
+    /// and with nothing to write again.
     pub(super) fn rewrite_floor(&self, track: &Track) -> Option<u64> {
         let busy = self.head.switch.is_some()
             || self.transition.is_some()
@@ -73,7 +73,7 @@ impl Engine {
             .position()
             .max(written.saturating_sub(held))
             .max(track.rewritable_from)
-            .max(track.seg_out + track.parts_rise);
+            .max(track.seg_out);
         (floor < written).then_some(floor)
     }
 

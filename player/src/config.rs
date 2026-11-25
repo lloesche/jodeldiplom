@@ -1,13 +1,11 @@
-//! The optional config file: defaults for the output device and whether to
-//! resample files at another rate than the device's (the system's sound
-//! settings set the rate the device runs at), and the player's other
-//! settings.
+//! The optional config file: defaults for the output device (the system's
+//! sound settings set the rate it runs at; a file at another rate is
+//! resampled to it), and the player's other settings.
 //!
 //! The file holds `key = value` lines (a small subset of TOML):
 //!
 //! ```toml
 //! device = "{0.0.0.00000000}.{...}"   # an id from --list-devices; absent: the system default
-//! resample = true                    # false: skip files at another rate than the device's
 //! headroom = 0                        # dB below full scale where the samples change (resampled, float files): 0, 0.5, 1, 2, 3 (lossy files at least 1.5)
 //! bpm = true                          # false: no tempo, no beat pulse, no beat analysis
 //! beat_voting = true                  # true: the beat_methods vote; false: beat_method decides
@@ -54,9 +52,6 @@ use crate::core::transition::Preset;
 pub struct Config {
     /// The output device id; `None`: the system default.
     pub device: Option<String>,
-    /// Resample a file at another rate than the device's (`false`: such
-    /// files are skipped).
-    pub resample: bool,
     /// The gain below full scale on resampled routes.
     pub headroom: Headroom,
     /// Analyse the beats of the playing tracks and show the tempo and a
@@ -126,7 +121,6 @@ impl Default for Config {
     fn default() -> Self {
         Config {
             device: None,
-            resample: true,
             headroom: Headroom::NONE,
             bpm: true,
             beat_voting: true,
@@ -157,9 +151,7 @@ impl Config {
     /// The engine's rate policy settings.
     pub fn settings(&self) -> Settings {
         Settings {
-            resample: self.resample,
             headroom: self.headroom,
-            ..Settings::default()
         }
     }
 
@@ -190,13 +182,6 @@ impl Config {
                 "device" => {
                     let id = parse_string(value).ok_or_else(|| at("device takes a string"))?;
                     config.device = (!id.is_empty() && id != "default").then_some(id);
-                }
-                "resample" => {
-                    config.resample = match value {
-                        "true" => true,
-                        "false" => false,
-                        _ => return Err(at("resample takes true or false")),
-                    }
                 }
                 "headroom" => {
                     let text = parse_string(value).unwrap_or_else(|| value.to_owned());
@@ -392,7 +377,6 @@ impl Config {
                 "# device = \"...\"   (an id from --list-devices; absent: the system default)\n",
             ),
         }
-        let _ = writeln!(text, "resample = {}", self.resample);
         let _ = writeln!(text, "headroom = {}", self.headroom.value());
         let _ = writeln!(text, "bpm = {}", self.bpm);
         let _ = writeln!(text, "beat_voting = {}", self.beat_voting);
@@ -535,7 +519,6 @@ mod tests {
     fn settings_round_trip() {
         let config = Config {
             device: Some(r#"{0.0.0}.{a"b\c}"#.into()),
-            resample: false,
             headroom: Headroom(5),
             bpm: false,
             beat_voting: false,
@@ -605,21 +588,23 @@ mod tests {
     #[test]
     fn comments_unknown_keys_and_errors() {
         let (config, warnings) = Config::parse(
-            "# hi\nresample = false # trailing\nvolume = 3\nrate.\"default\" = 44100\n[section]\n",
+            "# hi\nbpm = false # trailing\nvolume = 3\nrate.\"default\" = 44100\n[section]\nresample = false\n",
         )
         .unwrap();
-        assert!(!config.resample);
-        // A device's rate was a setting once; the system sets it now.
+        assert!(!config.bpm);
+        // A device's rate was a setting once, and resampling could be off;
+        // the system sets the rate now, and a file at another is resampled.
         assert_eq!(
             warnings,
             vec![
                 "line 3: unknown setting \"volume\"",
-                "line 4: unknown setting \"rate.\\\"default\\\"\""
+                "line 4: unknown setting \"rate.\\\"default\\\"\"",
+                "line 6: unknown setting \"resample\""
             ]
         );
         assert!(!config.to_text().contains("rate."));
-        assert!(Config::parse("resample = maybe").is_err());
-        assert!(!Config::parse("resample = false").unwrap().0.resample);
+        assert!(!config.to_text().contains("resample"));
+        assert!(Config::parse("bpm = maybe").is_err());
         assert!(Config::parse("just words").is_err());
     }
 

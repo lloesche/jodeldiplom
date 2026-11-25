@@ -441,8 +441,6 @@ pub struct DeviceChoice {
 pub enum SettingsRow {
     /// The output device.
     Device,
-    /// Resample files at another rate than the device's.
-    Resample,
     /// The gain below full scale on resampled routes.
     Headroom,
     /// Tempo, beat pulse and beat analysis on or off.
@@ -465,9 +463,8 @@ pub enum SettingsRow {
 
 impl SettingsRow {
     /// Every row, top to bottom.
-    pub const ALL: [SettingsRow; 12] = [
+    pub const ALL: [SettingsRow; 11] = [
         SettingsRow::Device,
-        SettingsRow::Resample,
         SettingsRow::Headroom,
         SettingsRow::Tempo,
         SettingsRow::Voting,
@@ -484,7 +481,6 @@ impl SettingsRow {
     pub fn label(self) -> &'static str {
         match self {
             SettingsRow::Device => "Output device",
-            SettingsRow::Resample => "Resample when needed",
             SettingsRow::Headroom => "Headroom",
             SettingsRow::Tempo => "Tempo and beats",
             SettingsRow::Voting => "Beat voting",

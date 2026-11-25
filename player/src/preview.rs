@@ -97,10 +97,7 @@ impl Previews {
         Previews {
             song,
             strip,
-            settings: Settings {
-                resample: true,
-                ..settings
-            },
+            settings,
             voices: Vec::new(),
             waiting: None,
             ended: false,

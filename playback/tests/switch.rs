@@ -1,8 +1,6 @@
 //! Switches of route while a track plays, without a break: the new route
-//! reads ahead and meets the old one at an exact frame. At one output
-//! format they share one stream (at one frame with no fade, or
-//! crossfaded); at another the old route fades out at that frame and the
-//! new one, in the next stream, fades in from it.
+//! reads ahead and meets the old one at an exact frame, and they share one
+//! stream (at one frame with no fade, or crossfaded).
 //!
 //! The switches here meet early in the track, within every route's
 //! run-up, so each new route reads from the start of the track and each
@@ -19,17 +17,12 @@ use jodel_playback::{
 };
 use SampleFormat::*;
 
-fn settings(max_rate: Option<u32>, headroom: Headroom) -> Settings {
-    Settings {
-        max_rate,
-        resample: true,
-        headroom,
-    }
+fn settings(headroom: Headroom) -> Settings {
+    Settings { headroom }
 }
 
-fn options(max_rate: Option<u32>, fade: Duration) -> PlayerOptions {
+fn options(fade: Duration) -> PlayerOptions {
     PlayerOptions {
-        settings: settings(max_rate, Headroom::NONE),
         position_interval: Duration::from_millis(1),
         switch_fade: fade,
         ..PlayerOptions::default()
@@ -105,7 +98,7 @@ fn assert_unbroken(events: &[Event]) {
 fn switches_at_one_rate_are_one_exact_stream() {
     let all = read_all(&fixture(F44));
     let (target, captures, gate) = GatedTarget::new(caps(&[48_000], &[S24In32Low]));
-    let (player, events) = Player::new(Box::new(target), options(None, Duration::ZERO));
+    let (player, events) = Player::new(Box::new(target), options(Duration::ZERO));
     player.load(vec![fixture(F44)]).unwrap();
     gate.allow(1_000);
     player.play(0).unwrap();
@@ -119,7 +112,7 @@ fn switches_at_one_rate_are_one_exact_stream() {
         if paused {
             player.pause().unwrap();
         }
-        player.set_settings(settings(None, headroom)).unwrap();
+        player.set_settings(settings(headroom)).unwrap();
         if paused {
             player.resume().unwrap();
         }
@@ -196,14 +189,14 @@ fn pieces(legs: &[&TrackStart], all: &[i32]) -> Vec<i32> {
 fn a_second_change_replaces_or_follows_the_first() {
     let all = read_all(&fixture(F44));
     let (target, captures, gate) = GatedTarget::new(caps(&[48_000], &[S24In32Low]));
-    let (player, events) = Player::new(Box::new(target), options(None, Duration::ZERO));
+    let (player, events) = Player::new(Box::new(target), options(Duration::ZERO));
     player.load(vec![fixture(F44)]).unwrap();
     gate.allow(1_000);
     player.play(0).unwrap();
     gate.wait_written(1_000);
     let mut seen = collect_until(&events, |e| matches!(e, Event::TrackStarted(_)));
-    player.set_settings(settings(None, Headroom(20))).unwrap();
-    player.set_settings(settings(None, Headroom(10))).unwrap();
+    player.set_settings(settings(Headroom(20))).unwrap();
+    player.set_settings(settings(Headroom(10))).unwrap();
     let last = |s: &TrackStart| s.route.resample.map(|r| r.headroom) == Some(Headroom(10));
     loop {
         let more = trickle_until_started(&gate, &events);
@@ -230,13 +223,13 @@ fn a_second_change_replaces_or_follows_the_first() {
 fn a_crossfade_is_exact_outside_its_window() {
     let all = read_all(&fixture(F44));
     let (target, captures, gate) = GatedTarget::new(caps(&[48_000], &[S24In32Low]));
-    let (player, events) = Player::new(Box::new(target), options(None, FADE));
+    let (player, events) = Player::new(Box::new(target), options(FADE));
     player.load(vec![fixture(F44)]).unwrap();
     gate.allow(2_000);
     player.play(0).unwrap();
     gate.wait_written(2_000);
     let mut seen = collect_until(&events, |e| matches!(e, Event::TrackStarted(_)));
-    player.set_settings(settings(None, Headroom(30))).unwrap();
+    player.set_settings(settings(Headroom(30))).unwrap();
     seen.extend(trickle_until_started(&gate, &events));
     gate.allow_all();
     seen.extend(until_queue_end(&events));
@@ -266,83 +259,36 @@ fn a_crossfade_is_exact_outside_its_window() {
     }
 }
 
-/// From a resampled route to the file as it is, on a device that takes
-/// both rates: the resampled route fades out at the frame they meet at,
-/// the output opens again at the file's rate, and the file plays from that
-/// frame, faded in.
-#[test]
-fn another_format_fades_out_and_in_at_one_frame() {
-    let all = read_all(&fixture(F48));
-    let total = all.len() / 2;
-    let (target, captures, gate) = GatedTarget::new(caps(&[44_100, 48_000], &[S24In32Low]));
-    let (player, events) = Player::new(Box::new(target), options(Some(44_100), FADE));
-    player.load(vec![fixture(F48)]).unwrap();
-    gate.allow(1_500);
-    player.play(0).unwrap();
-    gate.wait_written(1_500);
-    let mut seen = collect_until(&events, |e| matches!(e, Event::TrackStarted(_)));
-    player.set_settings(settings(None, Headroom::NONE)).unwrap();
-    seen.extend(trickle_until_started(&gate, &events));
-    gate.allow_all();
-    seen.extend(until_queue_end(&events));
-    drop(player);
-    assert_unbroken(&seen);
-    let legs = starts(&seen);
-    assert_eq!(legs[0].route.output_rate, 44_100);
-    let down = resampled(48_000, 44_100, &all, Headroom::NONE);
-    let exact = &legs[1];
-    assert_eq!(exact.route.resample, None);
-    assert_eq!(exact.output_frame, 0, "a new stream");
-    let from = exact.from_frame as usize;
-    let streams = captured(&captures);
-    assert_eq!(streams.len(), 2);
-    assert_eq!((streams[0].0.rate, streams[1].0.rate), (44_100, 48_000));
-    let first = samples(&streams[0].1);
-    let second = samples(&streams[1].1);
-    // The resampled track up to that frame, the last 20 ms faded out.
-    let (out, rise) = (2 * 882, 2 * 960);
-    assert_eq!(147 * from % 160, 0, "{from}");
-    assert_eq!(first.len(), 2 * 147 * from / 160);
-    assert!(first[..first.len() - out] == down[..first.len() - out]);
-    for i in first.len() - out..first.len() {
-        assert!(first[i].abs() <= down[i].abs() + 1, "{i}");
-    }
-    // The file from there, the first 20 ms faded in.
-    assert_eq!(second.len(), 2 * (total - from));
-    assert!(second[rise..] == all[2 * from + rise..]);
-    for i in 0..rise {
-        assert!(second[i].abs() <= all[2 * from + i].abs() + 1, "{i}");
-    }
-}
-
 /// A seek while a switch is under way plays the new route from the frame
-/// sought.
+/// sought: a fresh resample at the new gain from there.
 #[test]
 fn a_seek_during_a_switch_plays_the_new_route_from_there() {
     let all = read_all(&fixture(F48));
-    let (target, captures, gate) = GatedTarget::new(caps(&[44_100, 48_000], &[S24In32Low]));
-    let (player, events) = Player::new(Box::new(target), options(Some(44_100), FADE));
+    let (target, captures, gate) = GatedTarget::new(caps(&[44_100], &[S24In32Low]));
+    let (player, events) = Player::new(Box::new(target), options(FADE));
     player.load(vec![fixture(F48)]).unwrap();
     gate.allow(2_000);
     player.play(0).unwrap();
     gate.wait_written(2_000);
     collect_until(&events, |e| matches!(e, Event::TrackStarted(_)));
-    // The gate stays shut: the resampled route cannot reach where the two
-    // meet (a fade after what is written) before the seek.
-    player.set_settings(settings(None, Headroom::NONE)).unwrap();
+    // The gate stays shut: the old route cannot reach where the two meet
+    // (a fade after what is written) before the seek.
+    player.set_settings(settings(Headroom(30))).unwrap();
     player.seek(0.1).unwrap();
     let seen = collect_until(&events, |e| matches!(e, Event::Seeked { .. }));
     let last = starts(&seen).last().copied().cloned().expect("a start");
-    assert_eq!(last.route.resample, None);
+    assert_eq!(last.route.resample.map(|r| r.headroom), Some(Headroom(30)));
     assert_eq!(last.from_frame, 4_800);
     gate.allow_all();
     let rest = until_queue_end(&events);
     assert!(!rest.iter().any(|e| matches!(e, Event::Error { .. })));
     drop(player);
     let streams = captured(&captures);
-    assert_eq!(streams.len(), 2);
-    assert_eq!(streams[0].1.len() / 8, 2_000);
-    assert!(samples(&streams[1].1) == all[2 * 4_800..]);
+    assert_eq!(streams.len(), 1, "the same output");
+    let want = resampled(48_000, 44_100, &all[2 * 4_800..], Headroom(30));
+    let got = samples(&streams[0].1);
+    assert!(got.len() >= want.len());
+    assert!(got[got.len() - want.len()..] == want[..]);
 }
 
 /// A switch on a device that plays in real time: the old route plays on
@@ -372,7 +318,6 @@ fn a_switch_in_real_time_leaves_no_gap() {
     player
         .set_settings(Settings {
             headroom: Headroom(20),
-            ..Settings::default()
         })
         .unwrap();
     let seen = until_queue_end(&events);

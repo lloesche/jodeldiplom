@@ -20,10 +20,7 @@ use SampleFormat::*;
 
 fn options(headroom: Headroom) -> PlayerOptions {
     PlayerOptions {
-        settings: Settings {
-            headroom,
-            ..Settings::default()
-        },
+        settings: Settings { headroom },
         position_interval: Duration::from_millis(1),
         ..PlayerOptions::default()
     }
@@ -97,7 +94,7 @@ fn headroom_keeps_inter_sample_overs_from_clipping() {
     let wav = dir.join("overs.wav");
     let samples = overs(20_000);
     write_wav(&wav, 44_100, 2, &samples);
-    let gc7 = caps(&[48_000, 96_000, 192_000], &[S24Packed]);
+    let device = caps(&[48_000], &[S24Packed]);
     let clipped = |events: &[Event]| {
         events
             .iter()
@@ -111,13 +108,13 @@ fn headroom_keeps_inter_sample_overs_from_clipping() {
     // The resampler alone: the overs clip at full scale.
     let (_, clips) = resample(&samples, 1.0);
     assert!(clips > 1_000, "{clips}");
-    let (bytes, events) = play(gc7.clone(), &wav, Headroom::NONE);
+    let (bytes, events) = play(device.clone(), &wav, Headroom::NONE);
     // Counted as heard (at most four reports a second of output).
     assert!(clipped(&events) > 0 && clipped(&events) <= clips);
     assert!(bytes == device_bytes(&resample(&samples, 1.0).0, S24Packed));
     // 1 dB: no clip, and the bytes are the scaled resample.
     let one = Headroom(10);
-    let (bytes, events) = play(gc7, &wav, one);
+    let (bytes, events) = play(device, &wav, one);
     assert_eq!(clipped(&events), 0);
     let (want, clips) = resample(&samples, one.gain());
     assert_eq!(clips, 0);
@@ -230,7 +227,6 @@ fn a_headroom_change_reroutes_resampled_tracks_only() {
         player
             .set_settings(Settings {
                 headroom: Headroom(20),
-                ..Settings::default()
             })
             .unwrap();
         // The new gain is decoded ahead and crossfaded in after what was

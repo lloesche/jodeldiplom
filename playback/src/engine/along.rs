@@ -1,7 +1,7 @@
-//! A head read along a time map ([`crate::Command::Along`]): its stems are
-//! read along the map as its parts ([`super::lanes`]), and its main is
-//! their sum, so the two stay on the same frames for a mixer's switch
-//! between them.
+//! A head read along a time map (a transition's tracks; `Command::Along`
+//! in tests): its stems are read along the map as its parts
+//! ([`super::lanes`]), and its main is their sum, so the two stay on the
+//! same frames for a mixer's switch between them.
 //!
 //! Asked for, the move waits for the head to be written up to its frame
 //! (it writes no further), and the run of its stems there starts at once
@@ -29,6 +29,7 @@ use std::time::Duration;
 
 use crate::error::Error;
 use crate::transition::TempoMode;
+#[cfg(feature = "test-support")]
 use crate::warp::TimeMap;
 
 use super::api::Event;
@@ -51,34 +52,13 @@ const RETRY: f64 = 1.0;
 /// separated in time give way to the whole mix.
 const SOON: f64 = 0.25;
 
-/// A [`crate::Command::Along`] waiting for the playing head to be written
-/// up to its frame.
+/// A move onto a map waiting for the playing head to be written up to its
+/// frame.
 pub(super) struct PendingAlong {
     /// The head's segment it was given in (another one drops it).
     segment: u64,
     map: AlongMap,
     from: u64,
-}
-
-/// Why a track cannot be read along a map at all now, if it cannot.
-fn refusal(engine: &Engine, track: &Track) -> Option<String> {
-    let Some(out) = engine.head.out.as_ref() else {
-        return Some("no output is open".into());
-    };
-    if track.route.channels > 2 {
-        Some(format!(
-            "it has {} channels, and stems are made of two at most",
-            track.route.channels
-        ))
-    } else if !track.plain() && track.along.is_none() {
-        Some("it is not on its own route".into())
-    } else if out.output.lanes() <= 1 {
-        Some("the output takes no stems beside it".into())
-    } else if engine.head.switch.as_ref().is_some_and(|s| s.spliced) {
-        Some("its move to another route is meeting it".into())
-    } else {
-        None
-    }
 }
 
 impl Engine {
@@ -96,11 +76,13 @@ impl Engine {
         self.head.along_at.is_some() || on_map.is_some_and(|a| a.back != Back::Asked)
     }
 
-    /// [`crate::Command::Along`]: the playing track is read along `map`
-    /// (the output's seconds to the track's) from output frame `from` (the
-    /// frame written next, if that is later), by `tempo`; it writes no
-    /// further until it is. Refused (with a notice) with nothing playing,
-    /// while a transition is set up, and where [`Engine::read_along_at`] refuses.
+    /// `Command::Along` (feature `test-support`): the playing track is read
+    /// along `map` (the output's seconds to the track's) from output frame
+    /// `from` (the frame written next, if that is later), by `tempo`; it
+    /// writes no further until it is. Refused (with a notice) with nothing
+    /// playing, while a transition is set up, and where
+    /// [`Engine::read_along_at`] refuses.
+    #[cfg(feature = "test-support")]
     pub(super) fn read_along(&mut self, map: Arc<TimeMap>, from: u64, tempo: TempoMode) {
         let refuse = |why: &str| format!("This track cannot be read along a time map: {why}");
         let (Some(track), Some(out)) = (self.head.playing.as_ref(), self.head.out.as_ref()) else {
@@ -136,7 +118,23 @@ impl Engine {
     /// Why `track` cannot be read along a map at all now, if it cannot (a
     /// track not heard yet behind a count-in can: from its first frame).
     pub(super) fn map_refusal(&self, track: &Track) -> Option<String> {
-        refusal(self, track)
+        let Some(out) = self.head.out.as_ref() else {
+            return Some("no output is open".into());
+        };
+        if track.route.channels > 2 {
+            Some(format!(
+                "it has {} channels, and stems are made of two at most",
+                track.route.channels
+            ))
+        } else if !track.plain() && track.along.is_none() {
+            Some("it is not on its own route".into())
+        } else if out.output.lanes() <= 1 {
+            Some("the output takes no stems beside it".into())
+        } else if self.head.switch.as_ref().is_some_and(|s| s.spliced) {
+            Some("its move to another route is meeting it".into())
+        } else {
+            None
+        }
     }
 
     /// A move onto a map waiting for its frame takes `key` there; whether

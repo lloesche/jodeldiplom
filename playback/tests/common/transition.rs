@@ -13,7 +13,7 @@ use jodel_output::mixer::Mixer;
 use jodel_output::{Capabilities, SimClock, StreamFormat};
 use jodel_playback::stems::{Separator, STEMS};
 use jodel_playback::{
-    Captures, Envelope, Event, HeadFaders, Player, PlayerOptions, Settings, StemDesk, TrackStart,
+    Captures, Envelope, Event, HeadFaders, Player, PlayerOptions, StemDesk, TrackStart,
     TransitionState, NEXT_LEAD,
 };
 
@@ -54,10 +54,6 @@ pub fn quarter() -> Option<&'static dyn Separator> {
 
 pub fn options() -> PlayerOptions {
     PlayerOptions {
-        settings: Settings {
-            resample: false,
-            ..Settings::default()
-        },
         position_interval: Duration::from_millis(5),
         separator: Some(quarter),
         // The gated output runs faster than real time: the stems are

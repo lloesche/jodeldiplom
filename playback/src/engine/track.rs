@@ -28,7 +28,7 @@ pub(super) enum SegStart {
     /// starts there too).
     Cold,
     /// Out of what played before, main crossfaded from it over `fade`
-    /// frames: a jump, a route met at the same format, a move onto a map
+    /// frames: a jump, a route met in a switch, a move onto a map
     /// (over none for a transition's next track, read along its map from
     /// its first frame).
     Joined { fade: usize },
@@ -55,6 +55,8 @@ impl Segments {
 /// Where in a track playback starts.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(super) enum StartAt {
+    /// A track frame.
+    Frame(u64),
     /// Seconds in.
     Seconds(f64),
     /// A share of its length (its start when the length is not known).
@@ -97,7 +99,7 @@ pub(super) struct AlongMap {
     pub(super) key: i8,
 }
 
-/// A head read along a time map ([`crate::Command::Along`]) on an output
+/// A head read along a time map (a transition's, a key's) on an output
 /// of lanes: its stems are read along the map as its parts, and its main
 /// is their sum ([`super::along`]), from output frame `seg_out` of its
 /// segment.
@@ -216,16 +218,6 @@ pub(super) fn preroll(route: &Route, rate: u32) -> u64 {
     (seconds * f64::from(rate)).round() as u64
 }
 
-/// Drops `value` on a thread of its own: a track's file closes there (on a
-/// network share that can take a while) and its buffers are freed, while
-/// the playback thread goes on writing.
-pub(super) fn drop_later<T: Send + 'static>(value: T) {
-    // If no thread starts, it is dropped here after all.
-    let _ = std::thread::Builder::new()
-        .name("jodel-drop".into())
-        .spawn(move || drop(value));
-}
-
 /// The weight of the new side `i` frames into a fade of `frames`: a raised
 /// cosine from 0 to 1 (the two sides sum to one).
 pub(super) fn fade_weight(i: usize, frames: usize) -> f64 {
@@ -243,18 +235,6 @@ pub(super) fn crossfade(old: &[i32], new: &mut [i32], channels: usize) {
         let w = fade_weight(i, frames);
         for (a, b) in from.iter().zip(to) {
             *b = (f64::from(*a) * (1.0 - w) + f64::from(*b) * w).round() as i32;
-        }
-    }
-}
-
-/// Fades `samples` (interleaved) in, or out.
-pub(super) fn fade(samples: &mut [i32], channels: usize, rising: bool) {
-    let frames = samples.len() / channels;
-    for (i, frame) in samples.chunks_exact_mut(channels).enumerate() {
-        let w = fade_weight(i, frames);
-        let w = if rising { w } else { 1.0 - w };
-        for s in frame {
-            *s = (f64::from(*s) * w).round() as i32;
         }
     }
 }
@@ -381,11 +361,6 @@ pub(super) struct Track {
     /// The segment's id and how it began, and where ids come from.
     pub(super) segment: Segment,
     segments: Segments,
-    /// On an output of lanes: the output frame from which the track has no
-    /// stem parts (its route fades out there for another format), and the
-    /// frames after `seg_out` before it may have any (its route fades in).
-    pub(super) parts_cut: Option<u64>,
-    pub(super) parts_rise: u64,
     /// The clip count last queued, and the output frame it was queued at.
     pub(super) clips: Option<(u64, u64)>,
     /// The error that ended the track early, reported once what was
@@ -400,9 +375,6 @@ pub(super) struct Track {
     pub(super) held: VecDeque<Cue>,
     /// Clips made before the segment heard (in a switch's run-up).
     pub(super) clip_base: u64,
-    /// The route it switched from, to go back to if its output does not
-    /// open.
-    pub(super) fallback: Option<Route>,
     /// Read along a time map as stem parts, main their sum.
     pub(super) along: Option<Along>,
     /// Samples clipped where a head read along a map summed its parts
@@ -427,9 +399,7 @@ pub(super) struct Switch {
     /// The track frames from the old segment's start that the two routes
     /// can meet at are multiples of this.
     pub(super) grid: u64,
-    /// The new route plays at the open output's format.
-    pub(super) fits: bool,
-    /// Decoded from the start once already.
+    /// Decoded from its start once already.
     pub(super) retried: bool,
     /// The new route has played up to the end; it can meet the old one
     /// with what it has.
@@ -490,8 +460,6 @@ impl Track {
                 begun: SegStart::Cold,
             },
             segments,
-            parts_cut: None,
-            parts_rise: 0,
             clips: None,
             failure: None,
             pending: false,
@@ -499,7 +467,6 @@ impl Track {
             along: None,
             mix_clips: 0,
             clip_base: 0,
-            fallback: None,
             restore: None,
             rewritable_from: 0,
             ahead_done: false,
@@ -613,7 +580,6 @@ impl Track {
         self.ahead_done = false;
         self.restore = None;
         self.rewritable_from = at;
-        (self.parts_cut, self.parts_rise) = (None, 0);
         self.clip_base = self.clipped();
         self.clips = None;
         self.along = Some(Along {
@@ -637,14 +603,6 @@ impl Track {
             warp: self.heard_warp(),
             key: self.key(),
         }
-    }
-
-    /// Moves a track just opened to `frame` (nothing to do at 0).
-    pub(super) fn start_at(&mut self, frame: u64) -> Result<(), Error> {
-        if frame > 0 {
-            self.restart_at(frame)?;
-        }
-        Ok(())
     }
 }
 

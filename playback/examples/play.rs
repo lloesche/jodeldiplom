@@ -5,22 +5,20 @@
 //!   --device X       the output device: default, an id or part of a name
 //!   --null           play into a null output on a real-time clock (no device)
 //!   --seconds N      stop after N seconds
-//!   --max-rate HZ    highest output rate
-//!   --no-resample    files at another rate than the output's are skipped
 //! ```
 //!
-//! With `--null` the target is a stand-in for a device at 48 kHz, in every
-//! format. Without it the device is opened shared, at the system's mix
-//! rate.
+//! The player plays on an input of a mixer, which opens the device once,
+//! shared, at the system's mix format (with `--null`, a stand-in for a
+//! device at 48 kHz); a file at another rate is resampled to it.
 
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
+use jodel_output::mixer::{Mixer, MixerOptions, Role};
 use jodel_output::SimClock;
 use jodel_playback::{
     any_capabilities, DeviceTarget, Event, NullTarget, OutputTarget, Player, PlayerOptions,
-    Settings,
 };
 
 struct Arguments {
@@ -28,7 +26,6 @@ struct Arguments {
     device: String,
     null: bool,
     seconds: Option<f64>,
-    settings: Settings,
 }
 
 fn parse() -> Result<Arguments, String> {
@@ -37,7 +34,6 @@ fn parse() -> Result<Arguments, String> {
         device: "default".into(),
         null: false,
         seconds: None,
-        settings: Settings::default(),
     };
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
@@ -52,14 +48,6 @@ fn parse() -> Result<Arguments, String> {
                         .map_err(|_| "--seconds takes a number")?,
                 )
             }
-            "--max-rate" => {
-                arguments.settings.max_rate = Some(
-                    value("--max-rate")?
-                        .parse()
-                        .map_err(|_| "--max-rate takes a rate in Hz")?,
-                )
-            }
-            "--no-resample" => arguments.settings.resample = false,
             "-h" | "--help" => return Err(String::new()),
             flag if flag.starts_with("--") => return Err(format!("unknown option {flag}")),
             file => arguments.files.push(file.into()),
@@ -78,10 +66,7 @@ fn main() -> ExitCode {
             if !message.is_empty() {
                 eprintln!("play: {message}");
             }
-            eprintln!(
-                "usage: play FILE... [--device X] [--null] [--seconds N] \
-                 [--max-rate HZ] [--no-resample]"
-            );
+            eprintln!("usage: play FILE... [--device X] [--null] [--seconds N]");
             return ExitCode::from(2);
         }
     };
@@ -100,12 +85,13 @@ fn main() -> ExitCode {
         }
     };
     println!("output: {}", target.name());
+    let mixer = Mixer::open(target, MixerOptions::default());
+    let (input, _fader) = mixer.input(&mixer.strip("Player"), Role::Lead, 1.0);
     let options = PlayerOptions {
-        settings: arguments.settings,
         position_interval: Duration::from_millis(500),
         ..PlayerOptions::default()
     };
-    let (player, events) = Player::new(target, options);
+    let (player, events) = Player::new(Box::new(input), options);
     if player.load(arguments.files).is_err() || player.play(0).is_err() {
         eprintln!("play: the engine stopped");
         return ExitCode::FAILURE;
@@ -149,9 +135,6 @@ fn main() -> ExitCode {
                 );
                 let route = &start.route;
                 println!("  route: {}", route.describe());
-                if let Some(why) = &route.passed_over {
-                    println!("  passed over: {why}");
-                }
                 println!(
                     "  output: {} on {} ({})",
                     start.output.format, start.device, start.output.backend,

@@ -114,11 +114,6 @@ fn key(at: f64, semitones: i8) -> (f64, Command) {
 impl Run {
     fn options(&self) -> PlayerOptions {
         PlayerOptions {
-            settings: Settings {
-                max_rate: None,
-                resample: false,
-                ..Settings::default()
-            },
             position_interval: Duration::from_millis(1),
             separator: self.separator,
             offline: true,
@@ -731,8 +726,7 @@ fn shifted_a_jump_is_refused_and_new_settings_wait_saying_so() {
     };
     assert!(said(&seen, "No jumps while the key is shifted"), "{seen:?}");
     let settings = Settings {
-        max_rate: Some(96_000),
-        ..Settings::default()
+        headroom: jodel_playback::Headroom(10),
     };
     player.set_settings(settings).unwrap();
     let seen = collect_until(&events, |e| matches!(e, Event::Notice { .. }));

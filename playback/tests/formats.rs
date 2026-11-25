@@ -334,7 +334,12 @@ fn lossy_files_route_as_pcm_and_read_user_tags() {
     let facts = FileFacts::from(&info);
     assert!(facts.float);
     assert_eq!(facts.decoded_from, Some("MP3"));
-    let route = choose_route(&facts, &caps(&[44_100], &[S24In32]), &Settings::default()).unwrap();
+    let route = choose_route(
+        &facts,
+        StreamFormat::new(44_100, 2, S24In32),
+        &Settings::default(),
+    )
+    .unwrap();
     assert!(!route.lossless);
     assert_eq!(route.headroom, LOSSY_HEADROOM);
     assert_eq!(route.describe(), "44.1 kHz decoded from MP3 (-1.5 dB)");
@@ -428,7 +433,7 @@ fn wide_pcm_is_requantized_once_and_exact_where_it_fits() {
     assert!(got == values, "24-bit audio in 32 bits passes exactly");
     let route = choose_route(
         &FileFacts::from(&**source.info()),
-        &caps(&[48_000], &[S32]),
+        StreamFormat::new(48_000, 2, S32),
         &Settings::default(),
     )
     .unwrap();
@@ -477,12 +482,8 @@ fn wide_pcm_is_requantized_once_and_exact_where_it_fits() {
     std::fs::remove_dir_all(dir).unwrap();
 }
 
-fn lossy_options(resample: bool) -> PlayerOptions {
+fn lossy_options() -> PlayerOptions {
     PlayerOptions {
-        settings: Settings {
-            resample,
-            ..Settings::default()
-        },
         position_interval: Duration::from_millis(1),
         ..PlayerOptions::default()
     }
@@ -505,7 +506,7 @@ fn lossy_tracks_play_gaplessly_and_never_lossless() {
     let aac = format_fixture("aac.m4a");
     let target = MemoryTarget::new(caps(&[44_100], &[S24In32]), SimClock::Instant);
     let captures = target.captures();
-    let (player, events) = Player::new(Box::new(target), lossy_options(false));
+    let (player, events) = Player::new(Box::new(target), lossy_options());
     player
         .load(vec![
             mp3.clone(),
@@ -552,7 +553,7 @@ fn a_lossy_track_seeks_exactly_while_playing() {
     for name in ["lossy.mp3", "aac.m4a"] {
         let path = format_fixture(name);
         let (target, captures, gate) = GatedTarget::new(caps(&[44_100], &[S24In32]));
-        let (player, events) = Player::new(Box::new(target), lossy_options(false));
+        let (player, events) = Player::new(Box::new(target), lossy_options());
         player.load(vec![path.clone()]).unwrap();
         gate.allow(3_333);
         player.play(0).unwrap();
@@ -577,7 +578,7 @@ fn a_resampled_lossy_track_is_quantized_once() {
     let ogg = format_fixture("lossy.ogg");
     let target = MemoryTarget::new(caps(&[48_000], &[S24In32]), SimClock::Instant);
     let captures = target.captures();
-    let (player, events) = Player::new(Box::new(target), lossy_options(true));
+    let (player, events) = Player::new(Box::new(target), lossy_options());
     player.load(vec![ogg.clone()]).unwrap();
     player.play(0).unwrap();
     let seen = until_queue_end(&events);

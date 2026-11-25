@@ -1,10 +1,10 @@
 //! Opening and starting tracks: the output opened at a route's format, a
 //! track installed as the one played, jumps to a track and seeks within
-//! it, the next track run into gaplessly or through a reopen, stopping,
-//! and the end of the queue.
+//! it, the next track run into gaplessly (or through a reopen, when the
+//! target's format changed), stopping, and the end of the queue.
 
 use crate::error::Error;
-use crate::rate::{choose_route, FileFacts, Route};
+use crate::rate::Route;
 use crate::source::Source;
 
 use super::api::{Event, PlayState, TrackStart};
@@ -12,59 +12,33 @@ use super::track::{Cue, CueEvent, OpenOutput, SegStart, StartAt, Track};
 use super::Engine;
 
 impl Engine {
-    /// Opens track `index` at `seconds` and chooses its route.
-    pub(super) fn prepare(&mut self, index: usize, seconds: f64) -> Result<Track, Error> {
-        self.prepare_with(index, StartAt::Seconds(seconds), None)
-    }
-
     /// Opens track `index` at `start` on `route`, or on the route the
-    /// settings choose for it.
-    fn prepare_with(
+    /// settings choose for it at the target's format.
+    pub(super) fn open_track(
         &mut self,
         index: usize,
         start: StartAt,
         route: Option<Route>,
     ) -> Result<Track, Error> {
-        let mut track = self.open_track(index, route)?;
-        let frame = match start {
-            StartAt::Seconds(seconds) => {
-                (seconds.max(0.0) * f64::from(track.info.rate)).round() as u64
-            }
-            StartAt::Share(share) => track
-                .info
-                .frames
-                .map_or(0, |n| (n as f64 * share).round() as u64),
-        };
-        track.start_at(frame)?;
-        Ok(track)
-    }
-
-    /// [`Engine::prepare_with`] at track frame `frame`.
-    pub(super) fn prepare_at(
-        &mut self,
-        index: usize,
-        frame: u64,
-        route: Option<Route>,
-    ) -> Result<Track, Error> {
-        let mut track = self.open_track(index, route)?;
-        track.start_at(frame)?;
-        Ok(track)
-    }
-
-    /// Opens track `index` at its start on `route`, or on the route the
-    /// settings choose for it.
-    fn open_track(&mut self, index: usize, route: Option<Route>) -> Result<Track, Error> {
-        let path = self.queue[index].clone();
-        let source = Source::open(&path)?;
+        let source = Source::open(&self.queue[index])?;
         let info = source.info().clone();
         let route = match route {
             Some(route) => route,
             None => {
-                let caps = self.target_caps()?;
-                choose_route(&FileFacts::from(&*info), &caps, &self.settings)?
+                let format = self.target_format()?;
+                self.route_at(&info, format)?
             }
         };
-        Track::new(index, info, route, source, self.segments.clone())
+        let frame = match start {
+            StartAt::Frame(frame) => frame,
+            StartAt::Seconds(seconds) => (seconds.max(0.0) * f64::from(info.rate)).round() as u64,
+            StartAt::Share(share) => info.frames.map_or(0, |n| (n as f64 * share).round() as u64),
+        };
+        let mut track = Track::new(index, info, route, source, self.segments.clone())?;
+        if frame > 0 {
+            track.restart_at(frame)?;
+        }
+        Ok(track)
     }
 
     /// Opens an output at `route`'s format (with lanes where the target
@@ -122,7 +96,7 @@ impl Engine {
     /// Makes `track` the one being played now: reuses the output when it
     /// fits (flushing what it holds; paused, it plays again unless the
     /// player stays paused), otherwise opens one.
-    fn install(&mut self, mut track: Track) -> Result<(), Error> {
+    pub(super) fn install(&mut self, mut track: Track) -> Result<(), Error> {
         let fits = self
             .head
             .out
@@ -195,7 +169,7 @@ impl Engine {
                 self.emit(Event::State(PlayState::Stopped));
                 return;
             }
-            match self.prepare_with(index, start, route.take()) {
+            match self.open_track(index, start, route.take()) {
                 Ok(track) => {
                     if let Err(error) = self.install(track) {
                         return self.fail(Some(index), error);
@@ -249,28 +223,17 @@ impl Engine {
             .playing
             .as_ref()
             .is_some_and(|t| t.along.is_some());
-        if transitioned {
-            self.jump_on(heard.index, StartAt::Seconds(seconds), None);
-            if let Some(h) = &self.heard {
-                let at = h.seconds_at(h.seg_out);
-                self.emit(Event::Seeked {
-                    index: h.index,
-                    seconds: at,
-                });
-            }
-            return;
-        }
         let in_place = switching.is_none()
             && self
                 .head
                 .playing
                 .as_ref()
                 .is_some_and(|t| t.index == heard.index);
-        if !in_place {
+        if transitioned || !in_place {
             // The track keeps the route it is heard on, or goes on to the
-            // one it is switching to.
-            let route = switching.unwrap_or_else(|| heard.route.clone());
-            self.jump_on(heard.index, StartAt::Seconds(seconds), Some(route));
+            // one it is switching to (one read along a map, its own).
+            let route = (!transitioned).then(|| switching.unwrap_or_else(|| heard.route.clone()));
+            self.jump_on(heard.index, StartAt::Seconds(seconds), route);
             if let Some(h) = &self.heard {
                 let at = h.seconds_at(h.seg_out);
                 self.emit(Event::Seeked {
@@ -345,35 +308,6 @@ impl Engine {
         self.stop(true);
     }
 
-    /// Installs the track that waited for the output to play out. One that
-    /// switched to another format goes back to its old route, at the same
-    /// frame, when its output does not open (a notice says so).
-    pub(super) fn install_next(&mut self, mut track: Track) -> Result<(), Error> {
-        let fallback = track.fallback.take();
-        let (index, frame, route) = (track.index, track.seg_frame, track.route.clone());
-        let Err(error) = self.install(track) else {
-            return Ok(());
-        };
-        let Some(back) = fallback else {
-            return Err(error);
-        };
-        let again = self
-            .prepare_at(index, frame, Some(back.clone()))
-            .and_then(|track| self.install(track));
-        if again.is_err() {
-            return Err(error);
-        }
-        self.fire_cues();
-        let message = format!(
-            "{} did not open for {}: {error}; keeping {} for this track",
-            self.head.target.name(),
-            route.describe(),
-            back.describe()
-        );
-        self.notice(Some(index), message);
-        Ok(())
-    }
-
     /// `track` is fully written: queue its end and go on with the next.
     pub(super) fn finish(&mut self, track: Track) -> Result<(), Error> {
         // Inside a transition's window the next track takes over.
@@ -396,7 +330,8 @@ impl Engine {
     }
 
     /// Goes on with the first track from `index` that opens, at output
-    /// frame `end`: gaplessly when it fits the open output.
+    /// frame `end`: gaplessly when it fits the open output (the target's
+    /// format is the same).
     pub(super) fn advance(&mut self, mut index: usize, end: u64) -> Result<(), Error> {
         loop {
             if index >= self.queue.len() {
@@ -408,7 +343,7 @@ impl Engine {
                 self.finishing = true;
                 return Ok(());
             }
-            match self.prepare(index, 0.0) {
+            match self.open_track(index, StartAt::Frame(0), None) {
                 Ok(mut track) => {
                     let fits = self
                         .head

@@ -867,12 +867,6 @@ fn draw_settings(frame: &mut Frame, scene: &Scene, s: &SettingsLayout) {
                 }
                 headroom => format!("{headroom} where the samples change"),
             },
-            SettingsRow::Resample => if state.config.resample {
-                "on: files at another rate than the device's"
-            } else {
-                "off: such files are skipped"
-            }
-            .to_owned(),
             SettingsRow::Tempo => if state.config.bpm {
                 "on: tempo, beat pulse and beat analysis"
             } else {

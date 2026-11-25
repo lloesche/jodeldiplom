@@ -16,8 +16,9 @@ use crate::source::TrackInfo;
 use crate::stem_file::StemStore;
 use crate::stems::SeparatorSource;
 use crate::target::OutputTarget;
-use crate::transition::{TempoMode, TransitionPlan, TransitionState};
-use crate::warp::TimeMap;
+use crate::transition::{TransitionPlan, TransitionState};
+#[cfg(feature = "test-support")]
+use crate::{transition::TempoMode, warp::TimeMap};
 
 use super::heads::Head;
 use super::jump::JumpAt;
@@ -167,12 +168,13 @@ pub enum Command {
         /// Semitones up (down when negative).
         semitones: i8,
     },
-    /// The engine's own: the playing track read along a time map from an
-    /// output frame on (on an output of lanes, its stems read along it as
-    /// its parts, its main their sum), back on its own route once the map
-    /// runs straight. A track of more than two channels is not (an
-    /// [`Event::Notice`] says why).
-    #[doc(hidden)]
+    /// For tests (feature `test-support`): the playing track read along a
+    /// time map from an output frame on (on an output of lanes, its stems
+    /// read along it as its parts, its main their sum), back on its own
+    /// route once the map runs straight, as a transition reads its tracks.
+    /// A track of more than two channels is not (an [`Event::Notice`] says
+    /// why).
+    #[cfg(feature = "test-support")]
     Along {
         /// The track's seconds at each second of the output (its frames
         /// over its rate).
@@ -361,8 +363,8 @@ pub struct PlayerOptions {
     /// Where tracks' stems are kept ([`crate::stem_file`]): a track found
     /// there plays its kept stems, and only one that is not is separated.
     pub stem_store: Option<Arc<dyn StemStore>>,
-    /// How long a switch of route crossfades at the same output format
-    /// (and fades out and in at another); zero: they meet at one frame.
+    /// How long a switch of route crossfades; zero: they meet at one
+    /// frame.
     pub switch_fade: Duration,
     /// The output is not a device playing in real time (a file being
     /// rendered, a test's output): stems are waited for rather than gone
@@ -455,6 +457,11 @@ impl Player {
         self.send(Command::PlayIn { index, lead })
     }
 
+    /// [`Command::PlayAt`].
+    pub fn play_at(&self, index: usize, share: f64) -> Result<(), Error> {
+        self.send(Command::PlayAt { index, share })
+    }
+
     /// [`Command::HoldAtEnd`].
     pub fn hold_at_end(&self, hold: bool) -> Result<(), Error> {
         self.send(Command::HoldAtEnd(hold))
@@ -533,6 +540,11 @@ impl Player {
     /// [`Command::MakeStems`].
     pub fn make_stems(&self, make: MakeStems) -> Result<(), Error> {
         self.send(Command::MakeStems(make))
+    }
+
+    /// [`Command::Key`].
+    pub fn key(&self, semitones: i8) -> Result<(), Error> {
+        self.send(Command::Key { semitones })
     }
 }
 

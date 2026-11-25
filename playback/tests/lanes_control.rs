@@ -15,7 +15,7 @@ use common::*;
 use jodel_output::lanes::ending_frames;
 use jodel_output::{SampleFormat, SimClock};
 use jodel_playback::{
-    Event, JumpAt, MakeStems, MemoryTarget, Player, PlayerOptions, Settings, Source, StemStore,
+    Event, JumpAt, MakeStems, MemoryTarget, Player, PlayerOptions, Source, StemStore,
 };
 use SampleFormat::*;
 
@@ -24,7 +24,7 @@ fn the_parts_are_there_once_separated() {
     let dir = temp_dir("lanes-control");
     let file = tone_file(&dir, "tones.wav", RATE, 10 * RATE as usize);
     let (target, captures, gate) = wide_target(caps(&[RATE], &[S24In32Low]));
-    let (player, events) = Player::new(Box::new(target), options(false, false, quarter));
+    let (player, events) = Player::new(Box::new(target), options(false, quarter));
     player.make_stems(MakeStems::Separate).unwrap();
     player.load(vec![file]).unwrap();
     player.play(0).unwrap();
@@ -48,7 +48,7 @@ fn kept_stems_are_there_from_the_first_frame() {
     // Offline: there from the first frame.
     let options = |offline| PlayerOptions {
         stem_store: Some(store.clone()),
-        ..options(false, offline, broken)
+        ..options(offline, broken)
     };
     let (target, captures, gate) = wide_target(caps(&[RATE], &[S24In32Low]));
     let (player, events) = Player::new(Box::new(target), options(true));
@@ -87,7 +87,7 @@ fn a_track_not_kept_has_no_parts_and_nothing_is_said() {
     let file = tone_file(&dir, "tones.wav", RATE, RATE as usize);
     let options = PlayerOptions {
         stem_store: Some(kept(&dir, &dir.join("other.wav"), &tones(RATE, 100))),
-        ..options(false, true, quarter)
+        ..options(true, quarter)
     };
     let (target, captures, gate) = wide_target(caps(&[RATE], &[S24In32Low]));
     let (player, events) = Player::new(Box::new(target), options);
@@ -110,7 +110,7 @@ fn parts_that_run_out_end_and_come_back() {
     let file = tone_file(&dir, "tones.wav", RATE, 16 * RATE as usize);
     RUN_OUT.allow(1);
     let (target, captures, gate) = wide_target(caps(&[RATE], &[S24In32Low]));
-    let (player, events) = Player::new(Box::new(target), options(false, false, run_out));
+    let (player, events) = Player::new(Box::new(target), options(false, run_out));
     player.make_stems(MakeStems::Separate).unwrap();
     player.jump_window(4.0, 0.0).unwrap();
     player.load(vec![file]).unwrap();
@@ -158,7 +158,7 @@ fn a_next_track_without_stems_has_this_ones_end_before_it() {
     let (wide, seen) = play_wide(
         caps(&[RATE], &[S24In32Low]),
         vec![one, two],
-        options(false, true, fails_on_silence),
+        options(true, fails_on_silence),
     );
     let end = 2 * RATE as usize;
     let e = ending_frames(RATE) as usize;
@@ -181,7 +181,7 @@ fn a_file_of_no_stated_length_plays_to_its_end_offline() {
     let (wide, _) = play_wide(
         caps_of(&[info.rate], info.channels),
         vec![path.clone()],
-        options(true, true, quarter),
+        options(true, quarter),
     );
     let frames = read_all(&path).len() / usize::from(info.channels);
     assert_eq!(wide.frames(), frames, "the whole file");
@@ -195,7 +195,7 @@ fn a_failing_separator_stops_the_parts_and_says_so() {
     let (wide, seen) = play_wide(
         caps(&[RATE], &[S24In32Low]),
         vec![file.clone()],
-        options(false, true, broken),
+        options(true, broken),
     );
     assert!(wide.control.iter().all(|&c| c == 0));
     assert!(seen.iter().any(|e| matches!(
@@ -221,7 +221,7 @@ fn stems_kept_longer_than_the_track_do_not_hold_the_next_one_up() {
     let store: std::sync::Arc<dyn StemStore> = std::sync::Arc::new(Both(longer, next));
     let options = PlayerOptions {
         stem_store: Some(store),
-        ..options(false, true, broken)
+        ..options(true, broken)
     };
     let (target, captures, gate) = wide_target(caps(&[RATE], &[S24In32Low]));
     let (player, events) = Player::new(Box::new(target), options);
@@ -248,7 +248,7 @@ fn a_jump_taking_back_an_end_of_the_parts_keeps_the_promise() {
     let device = MemoryTarget::with_lanes(caps(&[RATE], &[S24In32Low]), SimClock::Instant, 5);
     let captures = device.captures();
     let (target, hold) = HoldingTarget::around(Box::new(device), u64::from(RATE) / 2);
-    let (player, events) = Player::new(Box::new(target), options(false, false, taken_back));
+    let (player, events) = Player::new(Box::new(target), options(false, taken_back));
     player.make_stems(MakeStems::Separate).unwrap();
     player.jump_window(4.0, 0.0).unwrap();
     player.load(vec![file]).unwrap();
@@ -299,79 +299,4 @@ fn a_jump_taking_back_an_end_of_the_parts_keeps_the_promise() {
     let (worst, _) = wide.worst(0..wide.frames());
     assert!(worst <= CLOSE, "{worst} steps off");
     assert!(!seen.iter().any(|e| matches!(e, Event::PartsStopped { .. })));
-}
-
-/// A slow 48 kHz signal (100 Hz left, 150 Hz right, half scale), `frames`
-/// long: a level step in it stands out from its own steps.
-fn slow_tones(frames: usize) -> Vec<i32> {
-    let w = |f: f64, n: usize| {
-        ((2.0 * std::f64::consts::PI * f * n as f64 / 48_000.0).sin() * 4_194_304.0) as i32
-    };
-    (0..frames)
-        .flat_map(|n| [w(100.0, n), w(150.0, n)])
-        .collect()
-}
-
-/// Plays a 48 kHz file resampled to 44.1 kHz, then (new settings, half a
-/// second in) on its own route at 48 kHz: the output opens again at the
-/// other format, the old route fading out and the new one in.
-fn switch_format(target: GatedTarget, gate: &Gate, path: &Path) -> Vec<Event> {
-    let settings = |max_rate| Settings {
-        max_rate,
-        resample: true,
-        ..Settings::default()
-    };
-    let options = PlayerOptions {
-        settings: settings(Some(44_100)),
-        ..options(true, true, quarter)
-    };
-    let (player, events) = Player::new(Box::new(target), options);
-    player.make_stems(MakeStems::Separate).unwrap();
-    player.load(vec![path.to_path_buf()]).unwrap();
-    gate.allow(22_050);
-    player.play(0).unwrap();
-    gate.wait_written(22_050);
-    let mut seen = collect_until(&events, |e| matches!(e, Event::TrackStarted(_)));
-    player.set_settings(settings(None)).unwrap();
-    seen.extend(trickle_until_started(gate, &events));
-    gate.allow_all();
-    seen.extend(until_queue_end(&events));
-    drop(player);
-    seen
-}
-
-/// A route moved to another format mid-track (on a device of its own: a
-/// desk runs at one format): the parts end over a mixer's switch's length
-/// before the old route fades out, are none over the fade and over the new
-/// route's rise, and only then there again.
-#[test]
-fn a_switch_to_another_format_ends_the_parts_before_its_fades() {
-    let dir = temp_dir("lanes-format");
-    let path = dir.join("slow.wav");
-    write_wav(&path, 48_000, 2, &slow_tones(2 * 48_000));
-    let caps = caps(&[44_100, 48_000], &[S24In32Low]);
-    // The lane streams as written.
-    let device = MemoryTarget::with_lanes(caps.clone(), SimClock::Instant, 5);
-    let captures = device.captures();
-    let (target, gate) = GatedTarget::around(Box::new(device));
-    switch_format(target, &gate, &path);
-    assert_eq!(captures.list().len(), 2, "two streams");
-    let (old, new) = (Wide::nth(&captures, 0), Wide::nth(&captures, 1));
-    assert_eq!((old.rate, new.rate), (44_100, 48_000));
-    old.keeps_the_promise(&[]).unwrap();
-    new.keeps_the_promise(&[]).unwrap();
-    // The old route: there, ending, then none over its 20 ms fade.
-    let (n, fade, e) = (old.frames(), 882, ending_frames(44_100) as usize);
-    assert!(old.control[..n - fade - e].contains(&1));
-    assert!(old.control[n - fade - e..n - fade].iter().all(|&c| c == 2));
-    assert!(old.control[n - fade..].iter().all(|&c| c == 0));
-    // The new one: none over its rise, then there.
-    let rise = 960;
-    assert!(new.control[..rise].iter().all(|&c| c == 0));
-    let back = new.saying(1);
-    assert_eq!(back.first(), Some(&rise), "there from the end of the rise");
-    // (A 48 kHz file's stems go through two filters: where the file cuts
-    // out, its last 5 ms, they ring apart from main.)
-    let (worst, _) = new.worst(back[0]..new.frames() - 240);
-    assert!(worst <= CLOSE, "{worst} steps off after the switch");
 }

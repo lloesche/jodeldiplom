@@ -17,7 +17,7 @@ use std::sync::Arc;
 
 use jodel_output::{SampleFormat, StreamFormat, StreamInfo};
 use jodel_playback::{
-    any_capabilities, choose_route, Codec, Container, Event, FileFacts, PlayState, Tags, TrackInfo,
+    choose_route, Codec, Container, Event, FileFacts, PlayState, Tags, TrackInfo,
 };
 use jodeldiplom::art::Art;
 use jodeldiplom::config::Config;
@@ -105,14 +105,10 @@ fn now_track(state: &State, path: PathBuf, index: usize) -> NowTrack {
         cover: None,
     };
     let settings = state.engine_settings();
-    let route = choose_route(
-        &FileFacts::from(&info),
-        &any_capabilities(info.rate),
-        &settings,
-    )
-    .unwrap();
+    let format = StreamFormat::new(info.rate, 2, SampleFormat::S24In32);
+    let route = choose_route(&FileFacts::from(&info), format, &settings).unwrap();
     let output = StreamInfo {
-        format: StreamFormat::new(route.output_rate, 2, SampleFormat::S24In32),
+        format,
         backend: "null",
         device_buffer_frames: 4_096,
         ring_frames: 65_536,
