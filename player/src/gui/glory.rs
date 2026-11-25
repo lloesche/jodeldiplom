@@ -3,10 +3,9 @@
 //! the tiers' marks along it lighting up as it passes them), the ring of
 //! the time left round the countdown (draining as the song goes, in the
 //! rainbow while the singing shines), the marks of the phrases along the
-//! progress bar (each popping as its tier is decided), and the tiers'
-//! light, drawn where it blooms ([`super::bloom`]): the glow round the
-//! lane and the flames blazing off its edges, as strong as the tiers' rows
-//! hold them.
+//! progress bar (each popping as its tier is decided), and a tier's name
+//! over the meter popping. The tiers' effects (the lane's glow, the
+//! flames, the rainbow) are the effects library's ([`super::fx`]).
 //!
 //! The processor gives each a few numbers (where, its fill and when it
 //! changed, the tier's shine); everything that moves moves by the time in
@@ -15,7 +14,7 @@
 //! come from the tier table ([`crate::tiers::TIERS`]), the shader's
 //! written from the same arrays ([`MARKS`], [`FILLS`]).
 
-use super::rainbow::{hue, shine_at, Glow, WHOLE};
+use super::rainbow::{clamp01, hue, mix3, shine_at, smoothstep, Glow, WHOLE};
 use super::sparks::noise;
 use crate::core::shine::Tier;
 use crate::tiers::{wgsl_array, Paint, TIERS};
@@ -58,19 +57,6 @@ pub const FILLS: [[f32; 4]; Tier::COUNT] = {
     }
     fills
 };
-
-fn clamp01(x: f32) -> f32 {
-    x.clamp(0.0, 1.0)
-}
-
-fn smoothstep(e0: f32, e1: f32, x: f32) -> f32 {
-    let t = clamp01((x - e0) / (e1 - e0));
-    t * t * (3.0 - 2.0 * t)
-}
-
-fn mix3(a: [f32; 3], b: [f32; 3], t: f32) -> [f32; 3] {
-    [0, 1, 2].map(|i| a[i] + (b[i] - a[i]) * t)
-}
 
 /// Where along the meter a shine of `of_top` (its share of its bar for
 /// the top tier) shows: through the tiers' marks ([`MARKS`]) at their bars
@@ -205,51 +191,24 @@ pub fn label_pop(age: f32, life: f32) -> (f32, f32) {
 /// How long a tier's name fades out, in seconds.
 const LABEL_FADE: f32 = 0.4;
 
-/// How bright the glow round the lane is `d` pixels outside it (negative
-/// inside), `wide` its reach, at `time`, `k` its strength: soft, breathing.
-pub fn glow_at(d: f32, wide: f32, time: f32, k: f32) -> f32 {
-    let t = d.max(0.0) / wide.max(1.0);
-    let inside = (d.min(0.0) / (wide * 0.5).max(1.0)).exp();
-    (-t * t * 2.5).exp() * inside * (0.78 + 0.22 * (time * 2.6).sin()) * k
+/// A number that looks random for the lattice point `i`, `j` (whole
+/// numbers), 0 to 1: the shaders' `lattice`, which the effects share.
+pub(crate) fn lattice(i: f32, j: f32) -> f32 {
+    let (i, j) = (i as i32 as u32, j as i32 as u32);
+    noise(i.wrapping_mul(73_856_093) ^ j.wrapping_mul(19_349_663))
 }
 
 /// A smooth number that looks random over the plane, 0 to 1: value noise
-/// on a lattice of [`noise`].
-pub(super) fn vnoise(x: f32, y: f32) -> f32 {
+/// on a lattice of [`noise`] (the shaders' `vnoise`, which the flames and
+/// the paper share).
+pub(crate) fn vnoise(x: f32, y: f32) -> f32 {
     let (ix, iy) = (x.floor(), y.floor());
     let (fx, fy) = (x - ix, y - iy);
     let (sx, sy) = (fx * fx * (3.0 - 2.0 * fx), fy * fy * (3.0 - 2.0 * fy));
-    let at = |i: f32, j: f32| {
-        let (i, j) = (i as i32 as u32, j as i32 as u32);
-        noise(i.wrapping_mul(73_856_093) ^ j.wrapping_mul(19_349_663))
-    };
+    let at = lattice;
     let top = at(ix, iy) + (at(ix + 1.0, iy) - at(ix, iy)) * sx;
     let bottom = at(ix, iy + 1.0) + (at(ix + 1.0, iy + 1.0) - at(ix, iy + 1.0)) * sx;
     top + (bottom - top) * sy
-}
-
-/// The flames `d` pixels off the lane's edge (outwards; negative:
-/// into the lane) at `x` along it, `high` their height, at `time`, `k`
-/// their strength: their light (bright, for the bloom), licking up and
-/// flickering, white at their root to red at their tips.
-pub fn blaze(x: f32, d: f32, high: f32, time: f32, k: f32) -> [f32; 3] {
-    let h = high.max(1.0);
-    let n = 0.65 * vnoise(x / h * 4.0, d / h * 1.2 + time * 2.6)
-        + 0.35 * vnoise(x / h * 9.0 + 7.0, d / h * 2.4 + time * 4.1);
-    let reach = h * (0.08 + 1.4 * n * n);
-    let flame = if d >= 0.0 {
-        clamp01(1.0 - d / reach).powf(1.3)
-    } else {
-        0.5 * (d / (h * 0.06)).exp()
-    };
-    let heat = flame * (0.45 + 0.85 * n);
-    let red = [1.0, 0.18, 0.04];
-    let orange = [1.0, 0.55, 0.1];
-    let yellow = [1.0, 0.9, 0.45];
-    let c = mix3(red, orange, smoothstep(0.15, 0.5, heat));
-    let c = mix3(c, yellow, smoothstep(0.5, 0.85, heat));
-    let c = mix3(c, [1.0; 3], smoothstep(0.85, 1.1, heat));
-    c.map(|v| v * heat * 1.1 * k)
 }
 
 /// The functions above in WGSL, and the stage's shapes drawn with them:
@@ -361,12 +320,6 @@ fn label_pop(age: f32, life: f32) -> vec2<f32> {
     );
 }
 
-fn glow_at(d: f32, wide: f32, time: f32, k: f32) -> f32 {
-    let t = max(d, 0.0) / max(wide, 1.0);
-    let inside = exp(min(d, 0.0) / max(wide * 0.5, 1.0));
-    return exp(-t * t * 2.5) * inside * (0.78 + 0.22 * sin(time * 2.6)) * k;
-}
-
 fn lattice(i: f32, j: f32) -> f32 {
     let a = bitcast<u32>(i32(i)) * 73856093u;
     let b = bitcast<u32>(i32(j)) * 19349663u;
@@ -391,31 +344,11 @@ fn vnoise(x: f32, y: f32) -> f32 {
     return top + (bottom - top) * sy;
 }
 
-fn blaze(x: f32, d: f32, high: f32, time: f32, k: f32) -> vec3<f32> {
-    let h = max(high, 1.0);
-    let n = 0.65 * vnoise(x / h * 4.0, d / h * 1.2 + time * 2.6)
-        + 0.35 * vnoise(x / h * 9.0 + 7.0, d / h * 2.4 + time * 4.1);
-    let reach = h * (0.08 + 1.4 * n * n);
-    var flame = 0.5 * exp(d / (h * 0.06));
-    if d >= 0.0 {
-        flame = pow(clamp(1.0 - d / reach, 0.0, 1.0), 1.3);
-    }
-    let heat = flame * (0.45 + 0.85 * n);
-    var c = mix(vec3<f32>(1.0, 0.18, 0.04), vec3<f32>(1.0, 0.55, 0.1), smoothstep(0.15, 0.5, heat));
-    c = mix(c, vec3<f32>(1.0, 0.9, 0.45), smoothstep(0.5, 0.85, heat));
-    c = mix(c, vec3<f32>(1.0), smoothstep(0.85, 1.1, heat));
-    return c * heat * 1.1 * k;
-}
-
 // The shine's shapes: the meter (`shape` its middle and half size,
 // `params.yzw` its fill from, to and since), the ring (`shape.xy` its
 // middle, `shape.zw` its radius and thickness, `params.y` the share left,
 // `strain.xyz` the shine), a phrase's mark (a disc at `shape.xy`,
-// `shape.z` across, in `color`, `params.y` when its tier came), the
-// glow round a lane (`shape`, in `color`, `params.y` its reach, `params.z`
-// its strength) and the flames (along `shape.x` to `shape.z` at
-// `shape.y`, outward `shape.w` (1 down, -1 up), `params.y` high,
-// `params.z` strong).
+// `shape.z` across, in `color`, `params.y` when its tier came).
 fn glory(o: Out, p: vec2<f32>, k: u32) -> vec4<f32> {
     if k == K_METER {
         let c = o.shape.xy;
@@ -433,25 +366,13 @@ fn glory(o: Out, p: vec2<f32>, k: u32) -> vec4<f32> {
         let m = ring_at(p, o.shape.xy, o.shape.zw, o.params.y, o.strain.xyz, screen.time);
         return over_plus(m.rgb, m.a * o.color.a, vec3<f32>(0.0));
     }
-    if k == K_MARK {
-        let pop = mark_pop(screen.time - o.params.y);
-        let r = o.shape.z * pop.x;
-        let d = length(p - o.shape.xy) - r;
-        let cover = clamp(0.5 - d, 0.0, 1.0);
-        let col = mix(o.color.rgb, vec3<f32>(1.0), pop.y * 0.7);
-        let g = glow(d, r * (2.0 + 3.0 * pop.y)) * (0.35 + 0.65 * pop.y);
-        return over_plus(col, cover * o.color.a, o.color.rgb * g * o.color.a);
-    }
-    if k == K_GLOW {
-        let d = round_box(p - o.shape.xy, o.shape.zw, o.shape.w);
-        let l = glow_at(d, o.params.y, screen.time, o.params.z);
-        return vec4<f32>(out_rgb(o.color.rgb) * l, 0.0);
-    }
-    // The flames.
-    let d = (p.y - o.shape.y) * o.shape.w;
-    let along = smoothstep(o.shape.x, o.shape.x + o.params.y, p.x)
-        * (1.0 - smoothstep(o.shape.z - o.params.y, o.shape.z, p.x));
-    let l = blaze(p.x, d, o.params.y, screen.time, o.params.z) * along;
-    return vec4<f32>(out_rgb(l), 0.0);
+    // A phrase's mark.
+    let pop = mark_pop(screen.time - o.params.y);
+    let r = o.shape.z * pop.x;
+    let d = length(p - o.shape.xy) - r;
+    let cover = clamp(0.5 - d, 0.0, 1.0);
+    let col = mix(o.color.rgb, vec3<f32>(1.0), pop.y * 0.7);
+    let g = glow(d, r * (2.0 + 3.0 * pop.y)) * (0.35 + 0.65 * pop.y);
+    return over_plus(col, cover * o.color.a, o.color.rgb * g * o.color.a);
 }
 ";

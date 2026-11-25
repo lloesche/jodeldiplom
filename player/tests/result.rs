@@ -170,7 +170,7 @@ fn drawn(state: &mut State) -> (Canvas, Option<StageFrame>) {
     };
     canvas.draw(&scene, None);
     let tint = jodeldiplom::gui::stage::Tint::STAGE;
-    let frame = canvas.stage_frame(state, 0.0, 0.0, &tint);
+    let frame = canvas.stage_frame((state, None), 0.0, 0.0, &tint);
     (canvas, frame)
 }
 

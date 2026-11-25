@@ -21,7 +21,7 @@ pub struct Tint {
 }
 
 fn hsv(h: f32, s: f32, v: f32) -> Rgb {
-    let c = super::super::rainbow::hue(h);
+    let c = crate::gui::rainbow::hue(h);
     c.map(|k| v * (1.0 - s + s * k))
 }
 

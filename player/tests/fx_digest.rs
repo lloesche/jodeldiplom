@@ -1,0 +1,192 @@
+//! The stage's frames through a scripted singing, held to a digest: Good,
+//! Great, Amazing and Diva in turn, the streak lost, Diva again, a seek
+//! back (the scoring started over) and Diva once more, at 60 frames a
+//! second for half a minute, the multiplier climbing all along. Every
+//! frame's shapes (over the stage, over everything, the light), its tubes'
+//! lines and its bursts go into the digest; a shape's kind by its name and
+//! text by the rainbow it shows in ([`shine_of`], only while it shows), so
+//! moving an effect's code or renumbering its kinds changes nothing here
+//! unless what is drawn changes. The song is the one the GPU's timings
+//! sing (`common/sung.rs`).
+
+use std::path::Path;
+use std::sync::Arc;
+
+use jodeldiplom::core::shine::{Reference, Shone, Tier};
+use jodeldiplom::core::singing::Singing;
+use jodeldiplom::gui::fx::rainbow::shine_of;
+use jodeldiplom::gui::particles::Spray;
+use jodeldiplom::gui::stage::{Song, Stage};
+use jodeldiplom::gui::stage_gpu::{kind, Instance, StageFrame};
+
+#[path = "common/sung.rs"]
+mod sung;
+use sung::{picture_at, song, FPS, LENGTH};
+
+/// The frames: how many in all, the one the song is sought back at (by
+/// [`SEEK`] seconds), and the phrases decided, by frame.
+const FRAMES: u32 = 1800;
+const SOUGHT: u32 = 1320;
+const SEEK: f64 = 10.0;
+const PHRASES: [(u32, Option<&str>); 8] = [
+    (120, Some("Good")),
+    (360, Some("Great")),
+    (600, Some("Amazing")),
+    (840, Some("Diva")),
+    (1080, None),
+    (1200, Some("Diva")),
+    (1500, Some("Diva")),
+    (1620, Some("Great")),
+];
+
+/// A 64-bit FNV-1a digest.
+struct Digest(u64);
+
+impl Digest {
+    fn word(&mut self, w: u32) {
+        for b in w.to_le_bytes() {
+            self.0 ^= u64::from(b);
+            self.0 = self.0.wrapping_mul(0x0100_0000_01b3);
+        }
+    }
+
+    fn floats(&mut self, v: &[f32]) {
+        for x in v {
+            self.word(x.to_bits());
+        }
+    }
+
+    fn text(&mut self, s: &str) {
+        for b in s.bytes() {
+            self.word(u32::from(b));
+        }
+        self.word(0xFFFF_FFFF);
+    }
+
+    /// A shape: its kind by name, text by the rainbow it shows in.
+    fn instance(&mut self, i: &Instance, clock: f32) {
+        let mut i = *i;
+        self.text(kind::name(i.params[0]));
+        if i.params[0] == kind::TEXT {
+            let shown = shine_of(&i).filter(|g| g.shows(clock));
+            match shown {
+                Some(g) => self.floats(&[1.0, g.level, g.from, g.since]),
+                None => self.floats(&[0.0]),
+            }
+            i.params[3] = 0.0;
+            i.strain = [0.0; 4];
+        }
+        i.params[0] = 0.0;
+        for v in [i.quad, i.shape, i.color, i.color2, i.params, i.uv, i.strain] {
+            self.floats(&v);
+        }
+    }
+
+    fn spray(&mut self, s: &Spray) {
+        self.text(&format!("{:?}", s.kind));
+        self.floats(&[s.at.0, s.at.1, s.half.0, s.half.1, s.start, s.drift]);
+        self.floats(&[s.size, s.rgb[0], s.rgb[1], s.rgb[2]]);
+        self.word(s.seed);
+    }
+
+    fn frame(&mut self, f: &StageFrame) {
+        self.floats(&[f.clock]);
+        for (list, mark) in [(&f.instances, 1), (&f.top, 2), (&f.lights, 3)] {
+            self.word(mark);
+            for i in list {
+                self.instance(i, f.clock);
+            }
+        }
+        self.word(4);
+        for p in &f.paths {
+            self.floats(p);
+        }
+        for (list, mark) in [(&f.sprays, 5), (&f.light_sprays, 6)] {
+            self.word(mark);
+            for s in list {
+                self.spray(s);
+            }
+        }
+    }
+}
+
+/// The digest of the scripted singing's frames (see the module's docs),
+/// with each kind of shape's count over all of them.
+fn digest() -> (u64, std::collections::BTreeMap<String, usize>) {
+    let (lyrics, melody) = song();
+    let sung: Vec<&jodel_lyrics::Line> = lyrics.lines.iter().collect();
+    let mut singing = Singing::default();
+    singing.prepare(
+        Path::new("song"),
+        &lyrics,
+        &jodeldiplom::core::singing::melodic(&melody),
+    );
+    let phrases = vec![None; singing.notes.lines.len()];
+    singing.set_reference(Some(Arc::new(Reference { phrases })));
+    let mut stage = Stage::default();
+    let mut d = Digest(0xcbf2_9ce4_8422_2325);
+    let mut counts = std::collections::BTreeMap::new();
+    let mut heard = 0usize;
+    for f in 0..FRAMES {
+        let mut now = f64::from(f) / FPS;
+        if f >= SOUGHT {
+            now -= SEEK;
+            if f == SOUGHT {
+                heard = (now * 100.0) as usize;
+            }
+        }
+        while (heard as f64) / 100.0 <= now {
+            let t = heard as f64 / 100.0;
+            let c = singing.word_at(t).map(|(_, c)| c as f32);
+            singing.hear(t, c);
+            heard += 1;
+        }
+        if let Some((_, tier)) = PHRASES.iter().find(|(at, _)| *at == f) {
+            let shone = Shone {
+                line: (f / 240) as usize,
+                end: now,
+                value: 1.0,
+                top: 0.9,
+                tier: tier.map(Tier::named),
+            };
+            singing.decided(now, shone);
+        }
+        singing.tally.streak = (f / 20) % 40;
+        let picture = picture_at(&sung, now, &singing);
+        let song = Song::new(&singing, sung.clone(), Some(LENGTH));
+        let frame = stage.frame(&song, &picture, (0.0, 0.0, 1600.0, 900.0), now, 1.0 / 60.0);
+        d.frame(&frame);
+        for i in frame
+            .instances
+            .iter()
+            .chain(&frame.top)
+            .chain(&frame.lights)
+        {
+            *counts
+                .entry(kind::name(i.params[0]).to_owned())
+                .or_insert(0) += 1;
+        }
+        for s in frame.sprays.iter().chain(&frame.light_sprays) {
+            *counts.entry(format!("{:?}", s.kind)).or_insert(0) += 1;
+        }
+    }
+    (d.0, counts)
+}
+
+/// The scripted singing draws the frames it drew when the digest was
+/// taken: the tiers' looks, the rainbow, the bursts and the light all as
+/// they were, and every tier's look in it (the lane's glow, the flames,
+/// the bands, the swirl).
+#[test]
+fn the_stage_draws_the_same_frames() {
+    let (digest, counts) = digest();
+    for name in [
+        "bands", "swirl", "glow", "blaze", "meter", "badge", "StepUp", "Angels", "Jackpot",
+    ] {
+        assert!(
+            counts.get(name).is_some_and(|&n| n > 0),
+            "{name}: {counts:?}"
+        );
+    }
+    assert_eq!(digest, 3_089_316_830_870_633_551, "{counts:?}");
+}

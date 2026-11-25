@@ -177,3 +177,66 @@ the first frame given back. Before, the touch was heard only after the
 ring (0.5 s) and the parts made ahead (0.5 s) more. While a jump's
 crossfade is held, a route switch or a transition is under way or a jump
 waits, nothing is written again, and the touch lands as before.
+
+**Karaoke mode's stage on the GPU.** The stage draws its shapes with a
+pipeline a group of them (`gui::stage_gpu::Group`), each pipeline's
+shader carrying only its own group's code, as Apple's GPUs run a shader
+at the pace its dearest code sets, for every pixel: split so, the stage
+pass on an M-series Mac went from 4.0 / 5.7 / 10.9 ms a frame (normal,
+Diva, the diploma) to 0.28 / 0.34 / 1.85 ms. The effects library
+(`gui::fx`) adds a group for each effect's shapes and each lyric
+treatment, each with only that effect's code (and the helpers the
+effects share, `fx_heat` and the rest, once in it). The window makes the
+pipelines of the groups the tiers' rows use as it opens (`Group::used`:
+9, the stage's own and the rainbow's, the glow's, the flames' and the
+angels'), another effect's the first time it draws; the light (what
+blooms) only the groups light can be (the plain shapes, the lane's glow
+and its flames): 3. On the RTX 5080 (Vulkan, the driver's cache warm)
+the stage's pipelines take about 50 ms (35 ms for the 6 before the
+library, 70 ms for all 13), the light's 16 ms, the bursts' 4 ms, the
+window's device and all its pipelines about 105–115 ms (110 ms before
+the library); the first time the driver compiles the shaders, about
+0.6 s for the stage's. `frame_cost` prints the time the device and the
+window's pipelines take. Each frame the effects cost the processor a few
+slices walked (well under a millisecond); the effects' screen passes are
+a step of the window's pass of their own (`fx`), nothing where none
+shows: drawn at 3024 × 1964 the edges on fire add 0.04–0.08 ms, the
+marquee bulbs 0.05 ms, the lyric treatments and the coins next to
+nothing (`examples/fx_frames.rs`). Every registered effect at full
+strength at once over the Diva peak (`frame_cost`'s `all` scene) costs
+the RTX 5080 1.8 ms a frame (worst 2.3 ms; the Diva peak alone 1.5 ms,
+worst 2.8 ms; the `fx` step 0.21 ms, worst 0.43 ms). The bursts are one
+pipeline for every look (`gui::particles::LOOKS`): a burst's quads are
+small and few, their step 0.07–0.13 ms a frame at the Diva peak and with
+every effect, and a quad's look is the same over its pixels (one branch
+taken by the whole quad).
+
+**What keeps the stage fast (the rules for its GPU code).** Held by
+tests that need no GPU (`gui::stage_gpu::groups`, `gui::particles`):
+
+- One pipeline a group: the stage's shader picks what it draws by its
+  group's constant alone (`GROUP ==`), never by what a shape carries
+  (`each_pipeline_carries_only_its_own_effect_and_picks_by_its_group`).
+- An effect's code only in its own pipeline (its shapes', its lyric
+  treatment's), the shared helpers only where an effect's code is, and an
+  effect's look only read (`looks[FX_<IDENT>]`), never chosen among.
+- A screen pass draws only strips (round the edges, round the lane), none
+  over another, never the whole screen
+  (`the_screen_passes_draw_only_strips`).
+- The bursts' fragment shader picks a drawing by the quad's look alone,
+  one branch a line of `LOOKS`
+  (`the_particles_pick_a_drawing_by_its_look_alone`); a look that costs
+  much more than the others gets a pipeline of its own.
+- Before a new effect lands, `frame_cost --budget` on the Mac: every
+  scene's worst frame under 4 ms of GPU in all at 3024 × 1964 at density 2
+  (the plan's target, the Diva peak at × 32 included), no step's worst
+  over 2.5 ms; it exits with 1 and names what went over:
+
+  ```text
+  cargo run --release -p jodeldiplom --example frame_cost -- \
+      "$HOME/Library/Application Support/Jodeldiplom Data/covers/<HASH>.layers" \
+      --budget 4 --step-budget 2.5
+  ```
+
+  (any cover's `.layers` file from the player's data folder; the RTX 5080
+  takes 1.8–3.1 ms at worst over the four scenes).

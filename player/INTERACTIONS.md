@@ -559,23 +559,63 @@ stem keys are their mutes.
   (no stage) the bar under the word being sung gets a rainbow edge while
   it shines, and a smaller burst from it a step up. Great adds a glow
   round the lane, Amazing flames blazing off its edges, Diva angels
-  descending (a flight every 2.2 s while it holds) and a jackpot of coins
-  and stars from the meter as a phrase is Diva. The glow, the flames, the
-  angels and the jackpot are light: drawn apart at high range, blurred
-  down a chain of halved textures and back up, tone mapped and added over
-  the frame (they bloom). Each frame the processor gives only the time,
-  the tier (when it changed and how strong it showed then), where the
-  lane is and a record a burst; the shaders move it all, their maths held
-  to the processor's on the GPU. The software window draws none of it.
-  - `the_shine_follows_the_tier`, `a_step_up_for_each_tier_once_a_phrase`
+  descending (a flight every 2.2 s while it holds, the first as soon as
+  it is to hold) and a jackpot of coins and stars from the meter as a
+  phrase is Diva. Each of these is an effect its tier's row lists (held
+  while the singing is at it, eased between the rows as its glow eases;
+  or fired by a phrase reaching it), drawn at its point of the stage; a
+  row lists nothing at its rung of the multiplier yet, and no row lists
+  the edges on fire, the marquee bulbs, the lyrics on fire or frosted or
+  the coins. The glow, the flames, the angels and the jackpot are light:
+  drawn apart at high range, blurred down a chain of halved textures and
+  back up, tone mapped and added over the frame (they bloom). Each frame
+  the processor gives only the time, the tier (when it changed and how
+  strong it showed then), where the lane is, a record a burst and the
+  music (the beat and the bar, the levels, the pitches); the shaders move
+  it all, their maths held to the processor's on the GPU. The software
+  window draws none of it.
+  - `the_glow_eases_in_and_a_seek_snaps_it`,
+    `a_step_up_for_each_level_with_the_phrase_only`,
+    `a_step_up_for_each_tier_passed`,
+    `a_rung_reached_comes_with_its_moment_and_a_seek_snaps_it`
     (`gui::streak`)
+  - `a_new_level_rises_and_a_lost_one_collapses`,
+    `a_drop_of_a_level_eases_down_and_shines_on`, `the_rainbow_goes_round`
+    (`gui::rainbow`)
   - `the_bands_grow_with_the_level`, `a_lost_streak_collapses_into_the_playhead`,
     `a_drop_of_a_level_still_shines`,
-    `a_step_up_bursts_and_its_pieces_arc_and_fade`, `the_rainbow_goes_round`
-    (`gui::rainbow`)
-  - `the_stage_shader_s_shine_is_its_reference`,
+    `the_shine_an_instance_was_made_with_is_read_back` (`gui::fx::rainbow`),
+    `a_step_up_bursts_and_its_pieces_arc_and_fade` (`gui::fx::step_up`),
+    `a_flight_comes_every_while_at_the_top_and_at_once_after_a_seek`
+    (`gui::fx::angels`)
+  - `a_held_strength_is_its_row_s_at_the_row_and_eases_between`,
+    `the_lane_glow_and_flames_ramp_as_before`,
+    `the_rainbow_is_as_strong_as_the_row_its_glow_eases_by`,
+    `a_phrase_fires_its_row_s_effects_once`, `no_row_moves_what_it_fires`,
+    `rung_effects_are_held_and_fired_by_rung`,
+    `the_music_moves_what_a_row_lists` (`gui::fx::board`)
+  - `the_beat_and_the_bar_run_between_the_grid_s_beats`,
+    `off_the_grid_the_beat_runs_freely`,
+    `the_pulses_fall_away_and_fade_where_the_grid_is_unsure`,
+    `the_levels_the_melody_and_the_sections_come_from_the_waveform`,
+    `the_song_heard_is_made_once_an_analysis` (`gui::fx::music`),
+    `the_phase_runs_between_two_beats` (`jodel_rhythm`)
+  - `the_registry_is_whole_and_its_names_unique`,
+    `no_two_effects_define_the_same_wgsl_name`,
+    `the_line_sung_takes_the_strongest_treatment` (`gui::fx`),
+    `nothing_of_the_library_shows_at_no_tier` (`gui::stage::meter`),
+    `the_screen_passes_get_the_lyric_band` (`gui::stage`),
+    `runs_split_by_group_and_treatment` (`gui::stage_gpu::groups`)
+  - what keeps the stage fast on Apple's GPUs (PERFORMANCE.md):
+    `each_pipeline_carries_only_its_own_effect_and_picks_by_its_group`,
+    `the_screen_passes_draw_only_strips` (`gui::stage_gpu::groups`),
+    `every_kind_moves_and_every_look_is_drawn_by_its_own_line`,
+    `the_particles_pick_a_drawing_by_its_look_alone` (`gui::particles`)
+  - `every_effect_s_shader_is_its_reference`, `every_group_compiles`,
     `the_stage_shader_s_glory_is_its_reference`,
     `the_particles_shader_draws_what_sprite_says` (`gui::shader_check`)
+  - `the_stage_draws_the_same_frames` (fx_digest),
+    `a_look_moved_by_the_music_reaches_the_lyric_treatment` (fx_looks)
   - `light_rolls_off_to_white` (`gui::bloom`),
     `the_bloom_s_tone_map_is_its_reference` (`gui::shader_check`)
   - `the_bands_shine_by_the_tier`, `a_step_up_bursts_once_a_tier`,

@@ -4,7 +4,7 @@
 //! cosine of its flip), in the rainbow's colours tinted by the screen's.
 //! One record ([`Spray`]) a shower; every bit is worked out in the
 //! particles' vertex shader in closed form from its seed and age, drawn as
-//! a rainbow bit is ([`super::rainbow::step_up`]'s).
+//! a rainbow bit is ([`super::fx::step_up`]'s).
 //!
 //! [`piece`] is the shader's maths on the processor, held to it on the GPU
 //! (`super::shader_check`).

@@ -181,8 +181,7 @@ pub struct Visualiser {
     feel: Feel,
     /// The seconds the drift has run.
     clock: f32,
-    /// The song heard (its stems' lanes), and where it was heard last.
-    song: Option<Song>,
+    /// Where the song was heard last.
     heard: Option<f64>,
 }
 
@@ -200,13 +199,13 @@ impl Visualiser {
         !self.slots.is_empty() && (self.slots.iter().any(fading) || !self.feel.settled())
     }
 
-    /// The frame for `app` at `heard` seconds into the song, `dt` seconds
-    /// after the last, in a `window` of pixels. None (and nothing held)
-    /// outside Karaoke mode or without the GPU (`gpu`): the pixmap has its
-    /// own ground then.
+    /// The frame for `app` at `heard` seconds into the `song` heard (none:
+    /// not analysed yet), `dt` seconds after the last, in a `window` of
+    /// pixels. None (and nothing held) outside Karaoke mode or without the
+    /// GPU (`gpu`): the pixmap has its own ground then.
     pub fn frame(
         &mut self,
-        app: &App,
+        (app, song): (&App, Option<&Song>),
         gpu: bool,
         heard: f64,
         window: (u32, u32),
@@ -217,10 +216,9 @@ impl Visualiser {
             *self = Visualiser::default();
             return None;
         }
-        self.follow_song(app);
         let playing = state.playing.state == PlayState::Playing;
         let gains = StripKind::PARTS.map(|k| state.desk.heard_gain(k).min(1.0) as f32);
-        let song = self.song.as_ref().filter(|_| playing);
+        let song = song.filter(|_| playing);
         let levels = song.map_or(Levels::default(), |s| s.levels(heard).times(gains));
         let section = song.zip(self.heard).is_some_and(|(s, was)| {
             heard > was && heard - was < 0.5 && s.section_between(was, heard)
@@ -234,30 +232,6 @@ impl Visualiser {
             section,
         };
         Some(self.step(&cue, window, dt))
-    }
-
-    /// The song heard's stems' lanes, read again when its analysis is new.
-    fn follow_song(&mut self, app: &App) {
-        let state = &app.state;
-        let rhythm = crate::core::karaoke::song_index(state)
-            .and_then(|i| state.queue.paths.get(i))
-            .and_then(|p| state.rhythm.get(p));
-        let ready = match rhythm {
-            Some(crate::core::Rhythm::Ready(r)) => r.waveform.as_ref().map(|w| (w, &r.analysis)),
-            _ => None,
-        };
-        match ready {
-            Some((w, a)) if !self.song.as_ref().is_some_and(|s| s.is_of(w)) => {
-                let bars: Vec<f64> = a
-                    .downbeats
-                    .iter()
-                    .filter_map(|&i| a.beats.get(i).copied())
-                    .collect();
-                self.song = Some(Song::of(Arc::clone(w), &bars));
-            }
-            Some(_) => {}
-            None => self.song = None,
-        }
     }
 
     /// `dt` seconds on with `cue`, in a `window` of pixels: the frame.

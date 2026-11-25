@@ -7,7 +7,11 @@
 //! behind it and sparks flying off it; the streak's multiplier over the
 //! playhead; the line sung and the next at the bottom; and the song's
 //! progress, its breaks apart, along the bottom edge; "AUTO" in a corner
-//! while the demo sings ([`tag`]). Its text is in
+//! while the demo sings ([`tag`]). The tiers' effects draw at their
+//! points of it ([`super::fx`]: the rainbow behind the tubes, the bursts
+//! from the playhead, the light round the lane, the screen passes over
+//! it all), as strong as the board eases them from the singing and the
+//! music. Its text is in
 //! Karaoke mode's own faces ([`Face`]). While a song's result shows, the
 //! stage is the result screen instead ([`result`]).
 //!
@@ -17,9 +21,11 @@
 
 use std::collections::HashMap;
 
-use super::big_text::{BigText, Face, Faces, COVER_PAD};
-use super::rainbow;
+use super::big_text::{Face, Faces, COVER_PAD};
+use super::fx::{self, At, Text};
 
+mod arrow;
+mod atlas;
 mod comet;
 mod lines;
 mod meter;
@@ -30,9 +36,11 @@ mod shots;
 mod start;
 mod tag;
 mod words;
+use self::arrow::Arrow;
+use self::atlas::Atlas;
 use self::shade::Shade;
 use super::sparks::noise;
-use super::stage_gpu::{kind, AtlasUpload, Instance, StageFrame, ATLAS};
+use super::stage_gpu::{kind, Instance, StageFrame};
 pub use result::Tint;
 
 use crate::core::State;
@@ -52,14 +60,6 @@ const PROGRESS: f32 = 0.935;
 const BREAK: f64 = 4.0;
 /// How soon after its last pitch the arrow fades, in seconds.
 const ARROW_HOLD: f64 = 0.25;
-/// How fast the arrow follows the pitch: a weight on a rubber band, its
-/// natural frequency (radians a second), damped just enough never to swing
-/// past (critically). Most of the way to a new pitch in about a tenth of a
-/// second.
-const SPRING: f32 = 45.0;
-/// What the arrow goes for: the middle (median) of the pitches heard this
-/// long back, so a stray one never pulls it.
-const STEADY: f32 = 0.035;
 /// The most sparks at once.
 const MOST_SPARKS: usize = 700;
 
@@ -78,66 +78,6 @@ fn rgba(c: Rgb, a: f32) -> [f32; 4] {
     [c[0], c[1], c[2], a]
 }
 
-/// Text in a face at a size (a quarter pixel's steps).
-type Key = (Face, String, u32);
-
-/// Text kept in the atlas, shelf by shelf: where each (face, text, size)
-/// is.
-#[derive(Default)]
-struct Atlas {
-    places: HashMap<Key, Placed>,
-    /// Where the next goes: across, the shelf's top, the shelf's height.
-    pen: (u32, u32, u32),
-    uploads: Vec<AtlasUpload>,
-}
-
-impl Atlas {
-    /// Where `text` at `px` in `big`'s face is in the atlas (put there now
-    /// if it is not): its place, and the size it was made at as a share of
-    /// `px`. Text wider than the atlas (a long lyric line on a large
-    /// screen) is made smaller to fit, its quad drawn larger by as much.
-    fn place(&mut self, big: &mut BigText, text: &str, px: f32) -> Option<Placed> {
-        let key = (big.face(), text.to_owned(), (px * 4.0).round() as u32);
-        if let Some(&place) = self.places.get(&key) {
-            return Some(place);
-        }
-        let (mut w, mut h, mut coverage) = big.coverage(text, px);
-        let mut made = 1.0;
-        if w.max(h) > ATLAS as usize {
-            made = (ATLAS - 8) as f32 / w.max(h) as f32;
-            (w, h, coverage) = big.coverage(text, px * made);
-        }
-        let (w, h) = (w as u32, h as u32);
-        if w > ATLAS || h > ATLAS {
-            return None;
-        }
-        if self.pen.0 + w > ATLAS {
-            self.pen = (0, self.pen.1 + self.pen.2 + 2, 0);
-        }
-        if self.pen.1 + h > ATLAS {
-            // Full: started again (what shows is put back as it is asked
-            // for).
-            self.places.clear();
-            self.pen = (0, 0, 0);
-        }
-        let rect = (self.pen.0, self.pen.1, w, h);
-        self.pen.0 += w + 2;
-        self.pen.2 = self.pen.2.max(h);
-        let place = Placed { rect, made };
-        self.places.insert(key, place);
-        self.uploads.push(AtlasUpload { rect, coverage });
-        Some(place)
-    }
-}
-
-/// Text's place in the atlas: across, down, wide, high (atlas pixels), and
-/// the size it was made at as a share of the size asked for.
-#[derive(Clone, Copy, Debug, PartialEq)]
-struct Placed {
-    rect: (u32, u32, u32, u32),
-    made: f32,
-}
-
 /// A spark flying off the arrow.
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Spark {
@@ -152,74 +92,6 @@ struct Spark {
     spin: f32,
     color: Rgb,
     phase: f32,
-}
-
-/// The singer's arrow: where it is (pixels down) and how fast it moves,
-/// and how much it shows; the pitches it was given lately (how long ago,
-/// where), to go for their middle.
-#[derive(Clone, Debug, Default, PartialEq)]
-struct Arrow {
-    y: f32,
-    speed: f32,
-    shown: f32,
-    placed: bool,
-    lately: std::collections::VecDeque<(f32, f32)>,
-}
-
-impl Arrow {
-    /// `dt` seconds on, gliding to `to` (none: fading).
-    fn step(&mut self, to: Option<f32>, dt: f32) {
-        for heard in &mut self.lately {
-            heard.0 += dt;
-        }
-        self.lately.retain(|&(ago, _)| ago <= STEADY);
-        match to {
-            Some(to) => {
-                self.lately.push_back((0.0, to));
-                let to = self.steady();
-                if !self.placed {
-                    self.y = to;
-                    self.speed = 0.0;
-                    self.placed = true;
-                }
-                // A critically damped spring, in steps short enough to move
-                // alike at any frame rate.
-                let steps = (dt / 0.004).ceil().max(1.0) as usize;
-                let h = dt / steps as f32;
-                for _ in 0..steps {
-                    let pull = -2.0 * SPRING * self.speed - SPRING * SPRING * (self.y - to);
-                    self.speed += pull * h;
-                    self.y += self.speed * h;
-                }
-                self.shown = (self.shown + dt / 0.08).min(1.0);
-            }
-            None => {
-                self.shown = (self.shown - dt / 0.15).max(0.0);
-                if self.shown == 0.0 {
-                    self.placed = false;
-                    self.lately.clear();
-                }
-            }
-        }
-    }
-
-    /// The middle of the pitches given lately; where they are even, of the
-    /// two middle ones the nearer to where the arrow is (a new pitch moves
-    /// it only once it is most of those heard).
-    fn steady(&self) -> f32 {
-        let mut ys: Vec<f32> = self.lately.iter().map(|&(_, y)| y).collect();
-        ys.sort_by(f32::total_cmp);
-        let upper = ys[ys.len() / 2];
-        if ys.len() % 2 == 1 || !self.placed {
-            return upper;
-        }
-        let lower = ys[ys.len() / 2 - 1];
-        if (lower - self.y).abs() < (upper - self.y).abs() {
-            lower
-        } else {
-            upper
-        }
-    }
 }
 
 /// Karaoke mode's stage between frames.
@@ -252,6 +124,8 @@ pub struct Stage {
     sprays: Vec<super::particles::Spray>,
     /// The shine's meter ([`meter`]).
     meter: meter::Meter,
+    /// The effects' strengths and what they keep ([`fx::Board`]).
+    board: fx::Board,
     /// The bursts that are light (the angels, the jackpots) showing.
     lights: Vec<super::particles::Spray>,
     /// What the result screen keeps between frames ([`result::Kept`]).
@@ -274,11 +148,14 @@ pub struct Song<'a> {
     pub late: f64,
     /// Whether the demo key is held ([`crate::core::singing::Demo`]).
     pub demo: bool,
+    /// The song as it is heard, once analysed (the effects' music).
+    pub heard: Option<&'a super::backdrop::music::Song>,
 }
 
 impl<'a> Song<'a> {
-    /// The song in Karaoke mode in `state`.
-    pub fn of(state: &'a State) -> Song<'a> {
+    /// The song in Karaoke mode in `state`, `heard` as it is heard (once
+    /// analysed).
+    pub fn of(state: &'a State, heard: Option<&'a super::backdrop::music::Song>) -> Song<'a> {
         let sung = crate::core::karaoke::song_index(state)
             .and_then(|i| crate::core::karaoke::lyrics_of(state, i))
             .and_then(|l| match l {
@@ -301,6 +178,7 @@ impl<'a> Song<'a> {
                 .filter(|&d| d > 0.0),
             late: state.karaoke.lag.late,
             demo: state.karaoke.demo.held(),
+            heard,
         }
     }
 }
@@ -385,6 +263,45 @@ impl Lane {
     /// The seconds of song behind the playhead that show.
     pub fn behind(&self) -> f64 {
         f64::from((self.head / self.pps).max(0.0))
+    }
+
+    /// The lane's glass in the window's `area` (round the band, a little
+    /// more than a pill over).
+    pub fn glass(&self, (x, _, w, _): (f32, f32, f32, f32)) -> LaneBox {
+        let middle = (x + w * 0.5, (self.band.0 + self.band.1) / 2.0);
+        let half_high = (self.band.1 - self.band.0) / 2.0 + self.pill * 0.55;
+        LaneBox {
+            middle,
+            half: (w * 0.4875, half_high),
+        }
+    }
+}
+
+/// The lane's glass: its middle and half its width and height.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LaneBox {
+    /// Its middle.
+    pub middle: (f32, f32),
+    /// Half its width and height.
+    pub half: (f32, f32),
+}
+
+impl LaneBox {
+    /// Its left, top, right and bottom.
+    pub fn rect(&self) -> [f32; 4] {
+        let ((cx, cy), (hx, hy)) = (self.middle, self.half);
+        [cx - hx, cy - hy, cx + hx, cy + hy]
+    }
+}
+
+/// Where the effects' screen passes draw over a stage in the window's
+/// `area` round its `lane`: the area, the lyric band they keep mostly
+/// clear, the lane.
+pub fn screen_at(area: (f32, f32, f32, f32), lane: LaneBox) -> At {
+    At::Screen {
+        area,
+        band: lines::band(area),
+        lane,
     }
 }
 
@@ -530,7 +447,7 @@ impl Stage {
     }
 
     /// How far down from the top of text in `face` made at `px` for the
-    /// atlas ([`BigText::coverage`]) the middle of its capitals is, between
+    /// atlas ([`super::big_text::BigText::coverage`]) the middle of its capitals is, between
     /// their top and the baseline: kept by face and size.
     fn cap_middle(&mut self, face: Face, px: f32) -> f32 {
         let key = (face, (px * 4.0).round() as u32);
@@ -620,11 +537,10 @@ impl Stage {
 
         // The lane: a band of smoked glass (the bubbles read over any
         // cover), the playhead across it.
-        let lane_half = ((lane.band.1 - lane.band.0) / 2.0 + p * 0.55, w * 0.4875);
-        let lane_mid = ((x + w * 0.5), (lane.band.0 + lane.band.1) / 2.0);
+        let lane_box = lane.glass(area);
         out.push(pill(
-            lane_mid,
-            (lane_half.1, lane_half.0),
+            lane_box.middle,
+            lane_box.half,
             rgba(SMOKE, 0.34),
             rgba(WHITE, 0.09),
             0.0,
@@ -640,12 +556,23 @@ impl Stage {
             rgba(WHITE, 0.18),
             p * 0.25,
         ));
-        // The streak's rainbow bands from the playhead, behind the tubes.
+        // The effects as strong as the singing and the music hold them;
+        // those behind the tubes (the streak's rainbow bands).
         let since = singing.moments_since(&mut self.cursor);
         let step = self.streak.step(singing, game, &since, clock);
-        let lane_box = (lane_mid, (lane_half.1, lane_half.0));
-        let bands = rainbow::bands_of((lane.head, lane_mid.1), lane_box, &step.glow, clock);
-        out.extend(bands);
+        let music = fx::music::read(&fx::music::Heard {
+            song: song.heard,
+            singing,
+            now,
+            clock,
+            length: song.length,
+        });
+        let effects = self.board.frame(&step, &music, clock);
+        let under = At::Under {
+            head: (lane.head, lane_box.middle.1),
+            lane: lane_box,
+        };
+        self.board.shapes(&under, &effects, &mut out);
 
         // The words, each a tube through its notes, its bubble filling as it
         // was hit; the shots rescuing those missed.
@@ -703,11 +630,20 @@ impl Stage {
         } else {
             (self.owed, self.dust) = (0.0, 0.0);
         }
-        // A word scored (once): a burst where it hit; each level it took the
-        // streak up, a rainbow burst from the playhead, the multiplier popping.
+        // A word scored (once): a burst where it hit; then the effects'
+        // bursts from the playhead (each tier the streak went up, a rainbow
+        // burst), the multiplier popping.
         let at = |end: f64| (lane.x(end).max(x), self.arrow.y);
         self.sprays
-            .extend(step.sprays(at, tip, (p, clock, lane.pps)));
+            .extend(step.word_spray(at, (p, clock, lane.pps)));
+        let playhead = At::Playhead {
+            tip,
+            pill: p,
+            pps: lane.pps,
+            word: step.word.map(at),
+            area,
+        };
+        self.board.sprays(&playhead, &effects, &mut self.sprays);
         for s in &mut self.sparks {
             s.age += song_dt;
             // Their own way, and by with the lane.
@@ -764,8 +700,11 @@ impl Stage {
                 uv: [0.0; 4],
                 strain: [0.0; 4],
             });
-            let swirl = rainbow::swirl_of((lane.head, self.arrow.y), p * 0.9, &step.glow, clock);
-            out.extend(swirl);
+            let arrow = At::Arrow {
+                at: (lane.head, self.arrow.y),
+                radius: p * 0.9,
+            };
+            self.board.shapes(&arrow, &effects, &mut out);
         }
 
         // The multiplier, over the playhead: popping (in rainbow) as it goes
@@ -808,11 +747,11 @@ impl Stage {
                 f32::NEG_INFINITY,
                 (rgba(GOLD_TOP, a), rgba(GOLD_TOP, a)),
             );
-            // In rainbow while the singing shines.
-            number
-                .filter(|_| step.glow.shows(clock as f32))
-                .into_iter()
-                .for_each(|t| rainbow::in_rainbow(t, &step.glow));
+            // In what the shouts are in (the rainbow while the singing
+            // shines).
+            if let (Some(n), Some(t)) = (number, fx::treatment(Text::Shout, &effects)) {
+                t.apply(n);
+            }
             if game && singing.tally.streak > 0 {
                 let small = (p * 0.36).round().max(9.0);
                 let streak = format!("{} in a row", singing.tally.streak);
@@ -844,7 +783,7 @@ impl Stage {
         }
 
         // The line sung and the next ([`lines`]).
-        self.lines(&mut out, picture, area);
+        self.lines(&mut out, picture, area, &effects);
 
         // The shine: the meter, the tiers' looks, the song's progress.
         let mut drawn = meter::Drawn {
@@ -862,9 +801,18 @@ impl Stage {
                 crate::core::karaoke::controls::handover(fade).0 as f32
             }),
         };
-        self.shine(&mut drawn, (singing, game, song.length), &at, &step);
+        self.shine(
+            &mut drawn,
+            (singing, game, song.length),
+            &at,
+            (&step, &effects),
+        );
         let (out, top, mut lights, mut light_sprays) =
             (drawn.out, drawn.top, drawn.lights, drawn.light_sprays);
+        // The screen passes over it all, clear of the lyric band.
+        let mut screen = Vec::new();
+        self.board
+            .shapes(&screen_at(area, lane_box), &effects, &mut screen);
         lights.append(&mut shots.lights);
         self.lights.retain(|s| s.alive(clock));
         self.lights.append(&mut light_sprays);
@@ -880,6 +828,9 @@ impl Stage {
             clock: clock as f32,
             lights,
             light_sprays: self.lights.clone(),
+            screen,
+            music,
+            looks: effects.looks(),
         }
     }
 }
@@ -897,54 +848,6 @@ mod tests {
         // Higher up the higher, the middle in the band's.
         assert!(lane.y(1.0) < lane.y(0.0) && lane.y(0.0) < lane.y(-1.0));
         assert_eq!(lane.y(0.0), (lane.band.0 + lane.band.1) / 2.0);
-    }
-
-    #[test]
-    fn the_arrow_glides_to_the_pitch_alike_at_any_frame_rate() {
-        let mut ends = Vec::new();
-        for fps in [60.0f32, 144.0] {
-            let mut arrow = Arrow::default();
-            arrow.step(Some(100.0), 1.0 / fps);
-            let mut ys = Vec::new();
-            for _ in 0..(0.5 * fps).round() as usize {
-                arrow.step(Some(200.0), 1.0 / fps);
-                ys.push(arrow.y);
-            }
-            let at = |s: f32| ys[(s * fps).round() as usize - 1];
-            // Put for its first moments (the new pitch not yet the middle
-            // of those heard), most of the way within 0.3 s, never past it,
-            // and still by half a second.
-            assert!(at(0.01) < 110.0, "{fps}: {}", at(0.01));
-            assert!(at(0.3) > 190.0, "{fps}: {}", at(0.3));
-            let most = ys.iter().copied().fold(0.0, f32::max);
-            assert!(most <= 200.01, "{fps}: {most}");
-            assert!((at(0.5) - 200.0).abs() < 0.5, "{fps}: {}", at(0.5));
-            ends.push(at(0.3));
-        }
-        assert!((ends[0] - ends[1]).abs() < 3.0, "{ends:?}");
-        // Stray pitches, a few in a row, do not move it at all.
-        let mut arrow = Arrow::default();
-        for _ in 0..20 {
-            arrow.step(Some(100.0), 0.004);
-        }
-        for _ in 0..3 {
-            arrow.step(Some(300.0), 0.004);
-        }
-        let mut most: f32 = 0.0;
-        for _ in 0..50 {
-            arrow.step(Some(100.0), 0.004);
-            most = most.max((arrow.y - 100.0).abs());
-        }
-        assert!(most < 0.01, "{most}");
-        // Without a pitch it fades, and starts afresh where the next is.
-        let mut arrow = Arrow::default();
-        arrow.step(Some(100.0), 0.016);
-        for _ in 0..20 {
-            arrow.step(None, 0.016);
-        }
-        assert_eq!(arrow.shown, 0.0);
-        arrow.step(Some(300.0), 0.016);
-        assert_eq!(arrow.y, 300.0);
     }
 
     #[test]
@@ -972,33 +875,43 @@ mod tests {
         );
     }
 
+    /// The screen passes get the lyric band (from the line sung's top to
+    /// the next's bottom, under the lane) and the lane's glass, and an
+    /// effect drawing there carries them.
     #[test]
-    fn the_atlas_keeps_text_once_and_starts_again_when_full() {
-        let mut big = BigText::default();
-        let mut atlas = Atlas::default();
-        let a = atlas.place(&mut big, "hello", 40.0).unwrap();
-        assert_eq!(atlas.place(&mut big, "hello", 40.0), Some(a));
-        assert_eq!(atlas.uploads.len(), 1);
-        assert_eq!(a.made, 1.0);
-        let b = atlas.place(&mut big, "world", 40.0).unwrap().rect;
-        assert!(b.0 >= a.rect.0 + a.rect.2);
-        // Full: started again from the top.
-        atlas.pen = (0, ATLAS - 2, 0);
-        let c = atlas.place(&mut big, "again", 40.0).unwrap().rect;
-        assert_eq!((c.0, c.1), (0, 0));
-        let gone = (Face::Main, "hello".to_owned(), 160);
-        assert!(!atlas.places.contains_key(&gone));
-    }
-
-    /// A lyric line wider than the atlas at its size (a large screen's)
-    /// is made smaller to fit, not left out.
-    #[test]
-    fn text_wider_than_the_atlas_is_made_smaller() {
-        let mut big = BigText::default();
-        let mut atlas = Atlas::default();
-        let line = "Makes you feel like every corner is black and white tonight";
-        let p = atlas.place(&mut big, line, 120.0).unwrap();
-        assert!(p.made < 1.0, "{p:?}");
-        assert!(p.rect.2 <= ATLAS && p.rect.2 > ATLAS / 2, "{p:?}");
+    fn the_screen_passes_get_the_lyric_band() {
+        use crate::gui::fx::{Board, Effects, Fx, Music, Use};
+        let area = (0.0, 0.0, 1600.0, 900.0);
+        let glass = Lane::new(area, 0.0).glass(area);
+        let at = screen_at(area, glass);
+        let At::Screen { band, lane, .. } = at else {
+            panic!("{at:?}");
+        };
+        assert_eq!(band.0, 900.0 * 0.68);
+        assert!(band.1 > 900.0 * 0.78 && band.1 < 900.0, "{band:?}");
+        assert!(lane.rect()[3] < band.0, "the lane over the band: {lane:?}");
+        static FIRE: [Use; 1] = [Use::of(Fx::EdgeFire, 0.8)];
+        let row = Effects {
+            held: &FIRE,
+            ..Effects::NONE
+        };
+        let step = crate::gui::streak::Step {
+            tier: Some(crate::tiers::Tier::ALL[0]),
+            glow: crate::gui::rainbow::Glow {
+                level: 1.0,
+                from: 1.0,
+                since: 0.0,
+            },
+            ..Default::default()
+        };
+        let mut board = Board::default();
+        let frame = board.frame_of([(1.0, &row)].into_iter(), &step, &Music::NEUTRAL, 3.0);
+        let mut screen = Vec::new();
+        board.shapes(&at, &frame, &mut screen);
+        assert!(!screen.is_empty());
+        for i in &screen {
+            assert_eq!((i.shape[0], i.shape[1]), band);
+            assert_eq!(i.params[1], 0.8);
+        }
     }
 }

@@ -3,15 +3,19 @@
 //! [`crate::tiers::TierSpec::glow`]), when it last changed and how strong
 //! it showed then ([`Glow`]); read from the singing's moments
 //! ([`crate::core::singing::Singing::moments_since`]): each word scored
-//! hit (its sparks) and each phrase decided, with the tiers the glow went
-//! up with it (a step up each: a burst from the playhead). The stage has
+//! hit (its sparks), each phrase decided, with the tiers the glow went up
+//! with it (a step up each: a burst from the playhead,
+//! [`super::fx::step_up`]), and the multiplier's rung reached or lost. The
+//! effects ease and fire from it ([`super::fx::Board`]). The stage has
 //! one; the window has another for its picture ([`PictureShine`]), whose
 //! bar under the word sung gets a rainbow edge and a smaller burst a step
 //! up. Only the level, its change and a record a step up go to the GPU.
 
+use super::fx::rainbow::rim_of;
+use super::fx::step_up::burst;
 use super::notes::Over;
-use super::particles::{Kind, Spray};
-use super::rainbow::{rim_of, Glow};
+use super::particles::Spray;
+use super::rainbow::Glow;
 use super::stage_gpu::Instance;
 use crate::core::shine::{Shone, Tier};
 use crate::core::singing::{Cue, Cursor, Since, Singing};
@@ -39,25 +43,10 @@ fn tiers_up(was: Option<Tier>, now: Option<Tier>) -> u32 {
     rank(now).saturating_sub(rank(was))
 }
 
-/// A step up's burst from `at` (the playhead), `size` its pieces' scale,
-/// at `clock` (the singing's time), going by at `pps` (a lane's), its
-/// pieces scattered by `seed`.
-pub fn step_up(at: (f32, f32), size: f32, clock: f64, pps: f32, seed: u32) -> Spray {
-    Spray {
-        at,
-        half: (0.0, 0.0),
-        start: clock as f32,
-        drift: -pps,
-        size,
-        seed,
-        rgb: [1.0; 3],
-        kind: Kind::StepUp,
-    }
-}
-
 /// A frame of the glow: the tier it is at and the glow, the end of the
 /// word just scored hit (the last, once), the phrase just decided (the
-/// last, once), and the tiers the glow went up with it (a step up each).
+/// last, once), the tiers the glow went up with it (a step up each), the
+/// multiplier's rung (0: ×1) and its change this frame (from, to), once.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Step {
     /// The tier the glow is at (or going to).
@@ -70,33 +59,33 @@ pub struct Step {
     pub phrase: Option<Shone>,
     /// The steps up with it.
     pub ups: u32,
+    /// The multiplier's rung.
+    pub at_rung: u32,
+    /// The rung reached or lost this frame: from, to.
+    pub rung: Option<(u32, u32)>,
 }
 
 impl Step {
-    /// Its bursts on the stage: the word's sparks from where it hit
-    /// (`at` its end), a step up's from `tip` (the playhead) each step; the
-    /// pills `px` high at `clock` (the singing's time), the lane going
-    /// across at `pps`.
-    pub fn sprays(
+    /// The word's sparks, where one was just scored hit, from where it
+    /// ended (`at` its end): the pills `px` high at `clock` (the singing's
+    /// time), the lane going across at `pps`.
+    pub fn word_spray(
         &self,
         at: impl Fn(f64) -> (f32, f32),
-        tip: (f32, f32),
         (px, clock, pps): (f32, f64, f32),
-    ) -> Vec<Spray> {
-        let word = self
-            .word
-            .map(|end| super::pop::scored(at(end), px, clock, pps, end));
-        let seed = |k: u32| (clock * 1000.0) as u32 + 7919 * k;
-        let ups = (0..self.ups).map(|k| step_up(tip, px, clock, pps, seed(k)));
-        word.into_iter().chain(ups).collect()
+    ) -> Option<Spray> {
+        self.word
+            .map(|end| super::pop::scored(at(end), px, clock, pps, end))
     }
 }
 
-/// The glow followed frame by frame: the tier it is at, and the glow.
+/// The glow followed frame by frame: the tier it is at, the glow, and the
+/// multiplier's rung.
 #[derive(Debug, Default)]
 pub struct Streak {
     tier: Option<Tier>,
     glow: Glow,
+    rung: u32,
 }
 
 impl Streak {
@@ -104,13 +93,17 @@ impl Streak {
     /// singing's time), its moments new since the frame before `since`. A
     /// new tier's glow eases in from how strong the glow showed (or, lost,
     /// collapses); the moments taken back (a seek, the song begun again)
-    /// snap it to its tier's, and what came with them throws nothing.
+    /// snap it to its tier's, and what came with them throws nothing. The
+    /// rung is the multiplier's (none with the game off), changed with
+    /// the streak's moments (a rung reached or lost) or without (a seek).
     pub fn step(&mut self, singing: &Singing, game: bool, since: &Since, clock: f64) -> Step {
         let tier = tier(singing, game);
         let level = glow_of(tier);
         let t = clock as f32;
         let was = self.tier;
         self.tier = tier;
+        let at_rung = if game { singing.multiplier() - 1 } else { 0 };
+        let from = std::mem::replace(&mut self.rung, at_rung);
         if since.sought {
             self.glow = Glow {
                 level,
@@ -120,6 +113,7 @@ impl Streak {
             return Step {
                 tier,
                 glow: self.glow,
+                at_rung,
                 ..Step::default()
             };
         }
@@ -135,6 +129,7 @@ impl Streak {
             return Step {
                 tier,
                 glow: self.glow,
+                at_rung,
                 ..Step::default()
             };
         }
@@ -147,6 +142,9 @@ impl Streak {
             Cue::Word { end, hit: true, .. } => Some(end),
             _ => None,
         });
+        let climbed = new
+            .clone()
+            .any(|m| matches!(m.cue, Cue::StreakUp(_) | Cue::StreakLost));
         Step {
             tier,
             glow: self.glow,
@@ -157,6 +155,8 @@ impl Streak {
             } else {
                 0
             },
+            at_rung,
+            rung: (climbed && from != at_rung).then_some((from, at_rung)),
         }
     }
 }
@@ -196,11 +196,11 @@ impl PictureShine {
         let rim = over.and_then(|o| o.rim);
         if let Some((c, half)) = rim {
             let seed = |k: u32| (clock * 1000.0) as u32 + 7919 * k;
-            let ups = (0..step.ups).map(|k| step_up(c, half.1 * 6.0, clock, 0.0, seed(k)));
+            let ups = (0..step.ups).map(|k| burst(c, half.1 * 6.0, clock, 0.0, seed(k)));
             self.ups.extend(ups);
         }
         self.ups.retain(|s| s.alive(clock));
-        let edge = rim.and_then(|(c, half)| rim_of(c, half, &step.glow, clock));
+        let edge = rim.and_then(|(c, half)| rim_of(c, half, (step.glow, 1.0), clock));
         (edge, &self.ups)
     }
 }
@@ -270,5 +270,28 @@ mod tests {
         assert_eq!(tiers_up(t(1), t(1)), 0);
         assert_eq!(tiers_up(t(2), t(0)), 0);
         assert_eq!(tiers_up(t(0), None), 0);
+    }
+
+    /// A rung reached with its moment: the change, once; held after; a
+    /// seek to another rung snaps there with no change; the game off, none.
+    #[test]
+    fn a_rung_reached_comes_with_its_moment_and_a_seek_snaps_it() {
+        let mut singing = Singing::default();
+        let mut s = Streak::default();
+        singing.tally.streak = 5;
+        let up = [Moment {
+            at: 1.0,
+            decided: 1.0,
+            cue: Cue::StreakUp(1),
+        }];
+        let step = s.step(&singing, true, &since(&up, false), 1.0);
+        assert_eq!((step.at_rung, step.rung), (1, Some((0, 1))));
+        let held = s.step(&singing, true, &since(&[], false), 1.1);
+        assert_eq!((held.at_rung, held.rung), (1, None));
+        singing.tally.streak = 0;
+        let sought = s.step(&singing, true, &since(&up, true), 1.2);
+        assert_eq!((sought.at_rung, sought.rung), (0, None));
+        singing.tally.streak = 12;
+        assert_eq!(s.step(&singing, false, &since(&up, false), 1.3).at_rung, 0);
     }
 }

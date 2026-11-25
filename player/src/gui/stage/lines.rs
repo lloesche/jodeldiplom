@@ -1,26 +1,43 @@
 //! The line sung and the next at the bottom of the stage, in Karaoke
 //! mode's words' face ([`Face::LINE`]): the line sung filling as it is
 //! sung, the next smaller and dimmer under it, both moving up as the
-//! lines change (the one sung leaving upwards as it fades).
+//! lines change (the one sung leaving upwards as it fades); the line sung
+//! in its lyric treatment, if the effects have one on it
+//! ([`crate::gui::fx::Text::Sung`]). Where they are is the lyric band
+//! ([`band`]), which the screen passes keep mostly clear.
 
 use super::super::stage_gpu::Instance;
 use super::{rgba, Face, Shade, Stage, GOLD, WHITE};
+use crate::gui::fx::{self, Frame, Text};
 use crate::view::karaoke::{KaraokePicture, LineKind, LyricLine};
 
 /// The line sung and the next: their tops, shares of the height.
 const LINES: (f32, f32) = (0.68, 0.78);
 
+/// The lines' size in the window's `h` (pixels high): the line sung's.
+fn big(h: f32) -> f32 {
+    (h / 15.0).clamp(18.0, 120.0).round()
+}
+
+/// The lyric band in the window's `area`: from the line sung's top to the
+/// next's bottom (the next a little smaller: [`LINES`]).
+pub(super) fn band((_, y, _, h): (f32, f32, f32, f32)) -> (f32, f32) {
+    (y + h * LINES.0, y + h * LINES.1 + big(h) * 0.66 * 1.3)
+}
+
 impl Stage {
     /// Draws `picture`'s line sung and the next into `out`, in the window's
-    /// `area`.
+    /// `area`, the line sung in the lyric treatment `effects` have on it.
     pub(super) fn lines(
         &mut self,
         out: &mut Vec<Instance>,
         picture: &KaraokePicture,
         (x, y, w, h): (f32, f32, f32, f32),
+        effects: &Frame,
     ) {
         // The line sung and the next, moving up as the lines change.
-        let big = (h / 15.0).clamp(18.0, 120.0).round();
+        let big = big(h);
+        let treat = fx::treatment(Text::Sung, effects);
         let slot = |kind: LineKind| -> Option<(f32, f32, f32)> {
             let (cur, next) = (y + h * LINES.0, y + h * LINES.1);
             match kind {
@@ -108,7 +125,7 @@ impl Stage {
             let rim = (Shade::OUTLINE, alpha);
             let whole = ((lx, ty), f32::INFINITY);
             self.shade(out, (Face::LINE, &line.text), (big, scale), whole, rim);
-            self.text(
+            let run = self.text(
                 out,
                 Face::LINE,
                 &line.text,
@@ -117,6 +134,10 @@ impl Stage {
                 split,
                 (rgba(WHITE, 0.95 * alpha), rgba(GOLD, alpha)),
             );
+            let sung = run.filter(|_| line.kind == LineKind::Current);
+            if let (Some(run), Some(t)) = (sung, treat) {
+                t.apply(run);
+            }
         }
     }
 }

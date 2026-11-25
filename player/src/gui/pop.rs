@@ -229,6 +229,7 @@ impl<'a> super::stage::Song<'a> {
             length,
             late: 0.0,
             demo: false,
+            heard: None,
         }
     }
 }

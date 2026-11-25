@@ -1,22 +1,31 @@
 //! Bursts on the GPU: a bubble bursting (once it has overfilled it tears,
 //! its liquid splashing out, [`super::shards`]) and its sparkles flying
-//! off, a word scored throwing sparks. The bubbles themselves, their
-//! liquid and their overfilling are the stage's ([`super::stage_gpu`]).
-//! The processor hands the GPU one small record a burst ([`Spray`],
-//! [`Packed`]: where, when on the singing's clock, a seed, a [`Kind`]),
-//! and the time each frame; the vertex shader works out every particle
-//! from (seed, its index, its age) in closed form (out, falling, slowing,
-//! shrinking, fading), drawn as instanced quads, [`QUADS`] a burst.
-//! Nothing of it is stepped or rasterised on the processor.
+//! off, a word scored throwing sparks, and the effects' bursts (a step up,
+//! the jackpot, the angels, the coins: [`super::fx`]). The bubbles
+//! themselves, their liquid and their overfilling are the stage's
+//! ([`super::stage_gpu`]). The processor hands the GPU one small record a
+//! burst ([`Spray`], [`Packed`]: where, when on the singing's clock, a
+//! seed, a [`Kind`]), and the time each frame; the vertex shader works out
+//! every particle from (seed, its index, its age) in closed form (out,
+//! falling, slowing, shrinking, fading), drawn as instanced quads,
+//! [`QUADS`] a burst. Nothing of it is stepped or rasterised on the
+//! processor.
 //!
-//! [`sprite`] is the same maths on the processor: the shader's reference,
-//! held to it on the GPU (`super::shader_check`); the shader is given its
-//! numbers ([`shader`]). Where there is no GPU (the software window, the
-//! tests' pixmaps) the bursts are not drawn: a bubble burst is simply gone.
+//! Each kind moves as its line of [`MOTIONS`] says: how long it lasts, its
+//! maths on the processor ([`sprite`], the shader's reference, held to it
+//! on the GPU from the line's probes: `super::shader_check`) and its call
+//! in the shader ([`shader`], which is given their numbers); each quad is
+//! drawn as its look's line of [`LOOKS`] says. Where there is no GPU (the
+//! software window, the tests' pixmaps) the bursts are not drawn: a
+//! bubble burst is simply gone.
 
+mod motions;
+
+pub use motions::{Drawing, Motion, LOOKS, MOTIONS};
+
+use super::fx::Music;
 use super::shards::{self, DROPS, FIRST_DROP, FIRST_SHARD};
 use super::sparks::{mix, rand, TAU, WHITE};
-use super::{confetti, fanfare, rainbow};
 use crate::view::bubbles::BURST;
 
 /// The sparkles a bubble throws.
@@ -30,7 +39,7 @@ pub const SCORED_LIFE: f32 = 1.1;
 /// How far a word scored's sparks fly.
 const SPREAD: f32 = 1.4;
 
-/// What a burst is.
+/// What a burst is: its line in [`MOTIONS`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
     /// A bubble bursting: tearing, its liquid splashing out, a sheen
@@ -39,29 +48,33 @@ pub enum Kind {
     /// A word scored: sparks out every way.
     Scored,
     /// The streak a level up: stars, notes and rainbow bits shot out from
-    /// the playhead ([`super::rainbow::step_up`]).
+    /// the playhead ([`super::fx::step_up`]).
     StepUp,
     /// A flight of angels descending, the singing Diva
-    /// ([`super::fanfare::angel`]).
+    /// ([`super::fx::angels`]).
     Angels,
     /// A jackpot of coins and stars, a phrase Diva
-    /// ([`super::fanfare::coin`]).
+    /// ([`super::fx::jackpot`]).
     Jackpot,
     /// A shower of confetti, a new best ([`super::confetti::piece`]).
     Confetti,
+    /// A fountain of gold coins out of the playhead
+    /// ([`super::fx::coins::fountain`]).
+    CoinFountain,
+    /// Gold coins raining down the screen ([`super::fx::coins::rain`]).
+    CoinRain,
+    /// A coin or two flicked up out of a word hit
+    /// ([`super::fx::coins::flick`]).
+    CoinFlick,
 }
 
 impl Kind {
-    /// As the shader takes it.
+    /// How many there are: a line of [`MOTIONS`] each.
+    pub const COUNT: usize = MOTIONS.len();
+
+    /// As the shader takes it: its line in [`MOTIONS`].
     pub fn code(self) -> u32 {
-        match self {
-            Kind::Burst => 0,
-            Kind::Scored => 1,
-            Kind::StepUp => 2,
-            Kind::Angels => 3,
-            Kind::Jackpot => 4,
-            Kind::Confetti => 5,
-        }
+        self as u32
     }
 }
 
@@ -139,14 +152,7 @@ impl Spray {
 
     /// How long it lasts, in seconds.
     pub fn life(&self) -> f32 {
-        match self.kind {
-            Kind::Scored => SCORED_LIFE,
-            Kind::Burst => BURST as f32,
-            Kind::StepUp => rainbow::STEP_LIFE,
-            Kind::Angels => fanfare::ANGELS_LIFE,
-            Kind::Jackpot => fanfare::JACKPOT_LIFE,
-            Kind::Confetti => confetti::CONFETTI_LIFE,
-        }
+        MOTIONS[self.kind.code() as usize].life
     }
 
     /// Whether it shows at `time` (none before its start: sought back), as
@@ -157,7 +163,7 @@ impl Spray {
     }
 }
 
-/// How a quad of a burst is drawn.
+/// How a quad of a burst is drawn: its line in [`LOOKS`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Look {
     /// A four-pointed sparkle, light.
@@ -176,21 +182,14 @@ pub enum Look {
     Angel,
     /// A gold coin, spinning: light.
     Coin,
+    /// A solid gold coin spinning on its edge, glinting: over.
+    Gold,
 }
 
 impl Look {
     /// As the shader takes it.
     pub fn code(self) -> u32 {
-        match self {
-            Look::Sparkle => 0,
-            Look::Sheen => 1,
-            Look::Shard => 2,
-            Look::Drop => 3,
-            Look::Note => 4,
-            Look::Bit => 5,
-            Look::Angel => 6,
-            Look::Coin => 7,
-        }
+        self as u32
     }
 }
 
@@ -221,24 +220,33 @@ pub fn sprite(s: &Spray, q: u32, time: f32) -> Option<Sprite> {
     if age < 0.0 || age >= s.life() || q >= QUADS {
         return None;
     }
-    match (s.kind, q) {
-        (Kind::Burst, 0) => shards::sheen(s, age),
-        (Kind::Burst, q) if q < FIRST_SHARD => sparkle(s, q, age),
-        (Kind::Burst, q) if q < FIRST_DROP => shards::shard(s, q, age),
-        (Kind::Burst, q) if q < FIRST_DROP + DROPS => shards::drop(s, q, age),
-        (Kind::Scored, q) if q > 0 && q < SCORED_SPARKS => spark(s, q, age),
-        (Kind::StepUp, q) => rainbow::step_up(s, q, age),
-        (Kind::Angels, q) => fanfare::angel(s, q, age),
-        (Kind::Jackpot, q) => fanfare::coin(s, q, age),
-        (Kind::Confetti, q) => confetti::piece(s, q, age),
-        _ => None,
-    }
+    (MOTIONS[s.kind.code() as usize].quad)(s, q, age)
 }
 
 /// The sparks of a word scored (and a quad none).
 const SCORED_SPARKS: u32 = 24;
 
 const _: () = assert!(FIRST_DROP + DROPS <= QUADS && SCORED_SPARKS <= QUADS);
+
+/// Quad `q` of bubble `s` `age` seconds into its burst: its sheen, a
+/// sparkle, a bit of its skin or a drop of its liquid.
+fn burst(s: &Spray, q: u32, age: f32) -> Option<Sprite> {
+    match q {
+        0 => shards::sheen(s, age),
+        q if q < FIRST_SHARD => sparkle(s, q, age),
+        q if q < FIRST_DROP => shards::shard(s, q, age),
+        q if q < FIRST_DROP + DROPS => shards::drop(s, q, age),
+        _ => None,
+    }
+}
+
+/// Quad `q` of word scored `s` `age` seconds on: a spark (the first and
+/// those past [`SCORED_SPARKS`] none).
+fn scored(s: &Spray, q: u32, age: f32) -> Option<Sprite> {
+    (q > 0 && q < SCORED_SPARKS)
+        .then(|| spark(s, q, age))
+        .flatten()
+}
 
 /// Sparkle `q` of bubble `s` `age` seconds into its burst: up and out
 /// off it, slowing, shrinking, twinkling and fading.
@@ -289,48 +297,77 @@ fn spark(s: &Spray, q: u32, age: f32) -> Option<Sprite> {
     })
 }
 
-/// The particles' shader: [`SHADER`] given [`sprite`]'s numbers, a
-/// bubble's sheen, bits and drops ([`shards::wgsl`]), a step up's pieces
-/// ([`rainbow::particles_wgsl`]), the fanfare's ([`fanfare::wgsl`]) and
-/// confetti ([`confetti::wgsl`]).
+/// The particles' shader: [`SHADER`] given [`sprite`]'s numbers, each
+/// kind's life, call and maths from its line of [`MOTIONS`] (`life_of`,
+/// `motion_of`), and each look's reach, drawing and code from its line of
+/// [`LOOKS`] (`LOOK_` and its name, `reach_of`, `draw_of`). One pipeline
+/// draws every look: a quad's look is the same over its pixels, so the
+/// fragment shader's choice of drawing is one branch (PERFORMANCE.md).
 pub fn shader() -> String {
+    let each = |what: &dyn Fn(&Motion) -> String| -> String {
+        (MOTIONS.iter().enumerate())
+            .map(|(k, m)| format!("    if k == {k}u {{\n        return {};\n    }}\n", what(m)))
+            .collect()
+    };
+    let lives = each(&|m| format!("{:?}", m.life));
+    let calls = each(&|m| m.call.to_owned());
+    let motions: String = MOTIONS.iter().filter_map(|m| m.wgsl).map(|w| w()).collect();
+    let look = |d: &Drawing| format!("LOOK_{}", format!("{:?}", d.look).to_uppercase());
+    let codes: String = (LOOKS.iter())
+        .map(|d| format!("const {}: u32 = {}u;\n", look(d), d.look.code()))
+        .collect();
+    let looks = |what: &dyn Fn(&Drawing) -> String| -> String {
+        (LOOKS.iter())
+            .map(|d| {
+                format!(
+                    "    if look == {} {{\n        return {};\n    }}\n",
+                    look(d),
+                    what(d)
+                )
+            })
+            .collect()
+    };
+    let reaches = looks(&|d| d.reach.to_owned());
+    let draws = looks(&|d| format!("{}(p, c, half, turn, color)", d.draw));
+    let drawings: String = LOOKS.iter().map(|d| d.wgsl).collect();
     format!(
         "const QUADS: u32 = {QUADS}u;
 const BUBBLE_SPARKS: u32 = {BUBBLE_SPARKS}u;
 const DROPS: u32 = {DROPS}u;
 const SCORED_SPARKS: u32 = {SCORED_SPARKS}u;
-const SCORED_LIFE: f32 = {SCORED_LIFE:?};
-const K_BURST: u32 = {}u;
-const K_SCORED: u32 = {}u;
-const K_STEP_UP: u32 = {}u;
-const K_ANGELS: u32 = {}u;
-const K_JACKPOT: u32 = {}u;
-const K_CONFETTI: u32 = {}u;
 const SPREAD: f32 = {SPREAD:?};
-const LOOK_SPARKLE: u32 = {}u;
-const LOOK_SHEEN: u32 = {}u;
-const LOOK_SHARD: u32 = {}u;
-const LOOK_DROP: u32 = {}u;
-{SHADER}{}{}{}{}",
-        Kind::Burst.code(),
-        Kind::Scored.code(),
-        Kind::StepUp.code(),
-        Kind::Angels.code(),
-        Kind::Jackpot.code(),
-        Kind::Confetti.code(),
-        Look::Sparkle.code(),
-        Look::Sheen.code(),
-        Look::Shard.code(),
-        Look::Drop.code(),
-        shards::wgsl(),
-        rainbow::particles_wgsl(),
-        fanfare::wgsl(),
-        confetti::wgsl()
+{codes}{}{}{SHADER}
+// How long a burst of kind `k` lasts.
+fn life_of(k: u32) -> f32 {{
+{lives}    return 0.0;
+}}
+
+// Quad `q` of a burst of kind `k`, `age` seconds on.
+fn motion_of(k: u32, at: vec4<f32>, rgb: vec3<f32>, size: f32, seed: u32, q: u32, age: f32, drift: f32) -> Sp {{
+{calls}    var o: Sp;
+    return o;
+}}
+
+// How far a quad of `look` reaches each way from its middle, `half` half
+// its size.
+fn reach_of(look: u32, half: vec2<f32>) -> vec2<f32> {{
+{reaches}    return half;
+}}
+
+// A quad of `look` at pixel `p`: its middle `c`, `half` half its size,
+// turned by `turn`, `color` its colour and how much it shows.
+fn draw_of(look: u32, p: vec2<f32>, c: vec2<f32>, half: vec2<f32>, turn: f32, color: vec4<f32>) -> vec4<f32> {{
+{draws}    return vec4<f32>(0.0);
+}}
+{motions}{drawings}",
+        super::fx::music::WGSL,
+        super::rainbow::HUE,
     )
 }
 
-/// The particles' shader: [`sprite`] in WGSL (`sprite_of`), and each
-/// sprite drawn (its numbers given it by [`shader`]).
+/// The particles' shader: [`sprite`] in WGSL (`sprite_of`), a bubble's
+/// and a word scored's quads, and each sprite drawn (its numbers, its
+/// kinds' lives and calls given it by [`shader`]).
 const SHADER: &str = r"
 struct Screen {
     size: vec2<f32>,
@@ -339,6 +376,7 @@ struct Screen {
 };
 
 @group(0) @binding(0) var<uniform> screen: Screen;
+@group(0) @binding(1) var<uniform> music: Music;
 
 struct In {
     @location(0) at: vec4<f32>,
@@ -426,62 +464,44 @@ fn spark(at: vec4<f32>, rgb: vec3<f32>, size: f32, seed: u32, q: u32, age: f32, 
     return o;
 }
 
+// Quad `q` of a bubble bursting: its sheen, a sparkle, a bit of its skin
+// or a drop of its liquid.
+fn burst(at: vec4<f32>, rgb: vec3<f32>, size: f32, seed: u32, q: u32, age: f32, drift: f32) -> Sp {
+    if q == 0u {
+        return sheen(at, rgb, age, drift);
+    }
+    if q < FIRST_SHARD {
+        return sparkle(at, rgb, size, seed, q, age, drift);
+    }
+    if q < FIRST_DROP {
+        return shard(at, rgb, size, seed, q, age, drift);
+    }
+    if q < FIRST_DROP + DROPS {
+        return drop(at, rgb, size, seed, q, age, drift);
+    }
+    var o: Sp;
+    return o;
+}
+
+// Quad `q` of a word scored: a spark.
+fn scored(at: vec4<f32>, rgb: vec3<f32>, size: f32, seed: u32, q: u32, age: f32, drift: f32) -> Sp {
+    if q > 0u && q < SCORED_SPARKS {
+        return spark(at, rgb, size, seed, q, age, drift, SPREAD);
+    }
+    var o: Sp;
+    return o;
+}
+
 // Quad `q` of a burst (as `In`) at `time`: `sprite`.
 fn sprite_of(at: vec4<f32>, motion: vec4<f32>, color: vec4<f32>, q: u32, time: f32) -> Sp {
     var o: Sp;
     let k = u32(color.w);
-    let size = motion.z;
-    let seed = u32(motion.w);
     let age = time - motion.x;
-    var life = SCORED_LIFE;
-    if k == K_BURST {
-        life = BURST;
-    } else if k == K_ANGELS {
-        life = ANGELS_LIFE;
-    } else if k == K_JACKPOT {
-        life = JACKPOT_LIFE;
-    } else if k == K_STEP_UP {
-        life = STEP_LIFE;
-    } else if k == K_CONFETTI {
-        life = CONFETTI_LIFE;
-    }
-    if age < 0.0 || age >= life || q >= QUADS {
+    if age < 0.0 || age >= life_of(k) || q >= QUADS {
         return o;
     }
-    let drift = motion.y * age;
-    if k == K_BURST {
-        if q == 0u {
-            return sheen(at, color.rgb, age, drift);
-        }
-        if q < FIRST_SHARD {
-            return sparkle(at, color.rgb, size, seed, q, age, drift);
-        }
-        if q < FIRST_DROP {
-            return shard(at, color.rgb, size, seed, q, age, drift);
-        }
-        if q < FIRST_DROP + DROPS {
-            return drop(at, color.rgb, size, seed, q, age, drift);
-        }
-        return o;
-    }
-    if k == K_ANGELS {
-        return angel(at, color.rgb, size, seed, q, age);
-    }
-    if k == K_JACKPOT {
-        return coin(at, color.rgb, size, seed, q, age);
-    }
-    if k == K_STEP_UP {
-        return step_up(at, size, seed, q, age, drift);
-    }
-    if k == K_CONFETTI {
-        return confetti(at, color.rgb, size, seed, q, age);
-    }
-    if k == K_SCORED && q > 0u && q < SCORED_SPARKS {
-        return spark(at, color.rgb, size, seed, q, age, drift, SPREAD);
-    }
-    return o;
+    return motion_of(k, at, color.rgb, motion.z, u32(motion.w), q, age, motion.y * age);
 }
-
 @vertex
 fn vs(@builtin(vertex_index) v: u32, i: In) -> Out {
     var o: Out;
@@ -497,21 +517,7 @@ fn vs(@builtin(vertex_index) v: u32, i: In) -> Out {
     }
     // The quad: the sprite and its glow.
     let half = sp.half;
-    var reach = half + vec2<f32>(1.0);
-    if sp.look == LOOK_SHEEN {
-        reach = half + vec2<f32>(half.y + 2.0);
-    } else if sp.look == LOOK_SHARD {
-        reach = vec2<f32>(half.x + half.y * 3.0 + 2.0);
-    } else if sp.look == LOOK_DROP {
-        reach = vec2<f32>(half.x + 2.0);
-    } else if sp.look == LOOK_ANGEL {
-        reach = half * 1.9 + vec2<f32>(4.0);
-    } else if sp.look == LOOK_COIN {
-        reach = half * 1.5 + vec2<f32>(2.0);
-    } else if sp.look == LOOK_NOTE || sp.look == LOOK_BIT {
-        reach = vec2<f32>(length(half) * 1.5 + 2.0);
-    }
-    let p = sp.at + corner * reach;
+    let p = sp.at + corner * reach_of(sp.look, half);
     o.pos = vec4<f32>(p.x / screen.size.x * 2.0 - 1.0, 1.0 - p.y / screen.size.y * 2.0, 0.0, 1.0);
     o.p = p;
     o.shape = vec4<f32>(sp.at, half);
@@ -534,33 +540,16 @@ fn round_box(p: vec2<f32>, half: vec2<f32>, r: f32) -> f32 {
 
 @fragment
 fn fs(o: Out) -> @location(0) vec4<f32> {
-    let half = o.shape.zw;
-    let look = u32(o.what.x);
-    if look == LOOK_DROP {
-        return draw_drop(o.p, o.shape.xy, half, o.what.y, o.look);
-    }
-    if look == LOOK_SHARD {
-        return draw_shard(o.p, o.shape.xy, half, o.what.y, o.look);
-    }
-    if look == LOOK_SHEEN {
-        return draw_sheen(o.p, o.shape.xy, half, o.look);
-    }
-    if look == LOOK_NOTE {
-        return draw_note(o.p, o.shape.xy, half, o.what.y, o.look);
-    }
-    if look == LOOK_ANGEL {
-        return draw_angel(o.p, o.shape.xy, half, o.what.y, o.look);
-    }
-    if look == LOOK_COIN {
-        return draw_coin(o.p, o.shape.xy, half, o.what.y, o.look);
-    }
-    if look == LOOK_BIT {
-        return draw_bit(o.p, o.shape.xy, half, o.what.y, o.look);
-    }
-    // A sparkle: a core and two crossed rays, turned.
-    let s = sin(o.what.y);
-    let co = cos(o.what.y);
-    let q0 = o.p - o.shape.xy;
+    return draw_of(u32(o.what.x), o.p, o.shape.xy, o.shape.zw, o.what.y, o.look);
+}";
+
+/// How a sparkle is drawn, in WGSL: a core and two crossed rays, turned,
+/// light (its look's line, [`LOOKS`]).
+pub const DRAW_SPARKLE: &str = r"
+fn draw_sparkle(p: vec2<f32>, c: vec2<f32>, half: vec2<f32>, turn: f32, look: vec4<f32>) -> vec4<f32> {
+    let s = sin(turn);
+    let co = cos(turn);
+    let q0 = p - c;
     let q = abs(vec2<f32>(co * q0.x - s * q0.y, s * q0.x + co * q0.y));
     let size = max(half.x, 0.5);
     let core = exp(-dot(q, q) / (size * size * 0.05));
@@ -568,8 +557,8 @@ fn fs(o: Out) -> @location(0) vec4<f32> {
     let ray_x = exp(-q.y * q.y / (thin * thin)) * pow(clamp(1.0 - q.x / size, 0.0, 1.0), 1.6);
     let ray_y = exp(-q.x * q.x / (thin * thin)) * pow(clamp(1.0 - q.y / size, 0.0, 1.0), 1.6);
     let halo = exp(-dot(q, q) / (size * size * 0.18)) * 0.35;
-    let light = (core + max(ray_x, ray_y) * 0.9 + halo) * o.look.a;
-    return vec4<f32>(out_rgb(o.look.rgb) * light, 0.0);
+    let light = (core + max(ray_x, ray_y) * 0.9 + halo) * look.a;
+    return vec4<f32>(out_rgb(look.rgb) * light, 0.0);
 }
 ";
 
@@ -580,6 +569,8 @@ pub struct ParticlePass {
     pipeline: wgpu::RenderPipeline,
     bind: wgpu::BindGroup,
     uniforms: wgpu::Buffer,
+    /// The music this frame ([`super::fx::music::Music::uniform`]).
+    music: wgpu::Buffer,
     sprays: Option<wgpu::Buffer>,
     /// The bursts in the buffer.
     kept: Vec<Spray>,
@@ -595,16 +586,7 @@ impl ParticlePass {
     ) -> ParticlePass {
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("jodeldiplom particles"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: wgpu::BufferSize::new(16),
-                },
-                count: None,
-            }],
+            entries: &[uniform_entry(0, 16), uniform_entry(1, MUSIC_BYTES)],
         });
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("jodeldiplom particles"),
@@ -648,36 +630,47 @@ impl ParticlePass {
             multiview_mask: None,
             cache: None,
         });
-        let uniforms = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("jodeldiplom particles"),
-            size: 16,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        let buffer = |size: u64| {
+            device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("jodeldiplom particles"),
+                size,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            })
+        };
+        let (uniforms, music) = (buffer(16), buffer(MUSIC_BYTES));
         let bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("jodeldiplom particles"),
             layout: &layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: uniforms.as_entire_binding(),
-            }],
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: uniforms.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: music.as_entire_binding(),
+                },
+            ],
         });
         ParticlePass {
             pipeline,
             bind,
             uniforms,
+            music,
             sprays: None,
             kept: Vec::new(),
             linear: super::stage_gpu::takes_linear(format),
         }
     }
 
-    /// The next frame's bursts at `time` (the singing's), in a window of
-    /// `size`: the time, and the bursts where they changed.
+    /// The next frame's bursts at `time` (the singing's) with `music`, in
+    /// a window of `size`: the time and the music, and the bursts where
+    /// they changed.
     pub fn set(
         &mut self,
         (device, queue): (&wgpu::Device, &wgpu::Queue),
-        sprays: &[Spray],
+        (sprays, music): (&[Spray], &Music),
         time: f32,
         size: (u32, u32),
     ) {
@@ -707,7 +700,9 @@ impl ParticlePass {
         uniforms[8..12].copy_from_slice(&(if self.linear { 1f32 } else { 0.0 }).to_le_bytes());
         uniforms[12..16].copy_from_slice(&time.to_le_bytes());
         queue.write_buffer(&self.uniforms, 0, &uniforms);
+        queue.write_buffer(&self.music, 0, bytemuck::cast_slice(&music.uniform()));
     }
+
     /// Draws the bursts into `pass` (nothing without any).
     pub fn draw(&self, pass: &mut wgpu::RenderPass) {
         let (Some(buffer), false) = (&self.sprays, self.kept.is_empty()) else {
@@ -720,9 +715,76 @@ impl ParticlePass {
     }
 }
 
+/// How many bytes the music's uniform is ([`super::fx::music::Music::uniform`]).
+pub const MUSIC_BYTES: u64 = 64;
+
+/// A uniform at `binding`, `size` bytes, both stages reading it.
+pub fn uniform_entry(binding: u32, size: u64) -> wgpu::BindGroupLayoutEntry {
+    wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+        ty: wgpu::BindingType::Buffer {
+            ty: wgpu::BufferBindingType::Uniform,
+            has_dynamic_offset: false,
+            min_binding_size: wgpu::BufferSize::new(size),
+        },
+        count: None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::gui::fx::step_up;
+
+    /// Each kind's motion is its line, by its code; each look's drawing
+    /// its line, its function in its code.
+    #[test]
+    fn every_kind_moves_and_every_look_is_drawn_by_its_own_line() {
+        for (i, m) in MOTIONS.iter().enumerate() {
+            assert_eq!(m.kind.code() as usize, i, "{:?}", m.kind);
+            assert!(m.life > 0.0 && !m.probes.is_empty(), "{:?}", m.kind);
+            assert!(m.probes.iter().all(|p| p.kind == m.kind), "{:?}", m.kind);
+        }
+        for (i, d) in LOOKS.iter().enumerate() {
+            assert_eq!(d.look.code() as usize, i, "{:?}", d.look);
+            assert!(d.wgsl.contains(&format!("fn {}(", d.draw)), "{:?}", d.look);
+        }
+    }
+
+    /// The particles' fragment shader picks a quad's drawing by its look
+    /// alone (flat over the quad), one branch a line of [`LOOKS`]: every
+    /// look in the one pipeline, as a burst's quads are small and few
+    /// (their step about 0.1 ms a frame at the Diva peak, PERFORMANCE.md),
+    /// and nothing else chosen there. A look that costs more is a pipeline
+    /// of its own.
+    #[test]
+    fn the_particles_pick_a_drawing_by_its_look_alone() {
+        let why = "the particles' shader picks a drawing by its look alone \
+                   (PERFORMANCE.md, the particles' pipeline)";
+        let src = shader();
+        let body = |name: &str| -> &str {
+            let from = src.find(&format!("fn {name}(")).expect(name);
+            let end = src[from..].find("\n}\n").expect("its end");
+            &src[from..from + end]
+        };
+        let fs = body("fs");
+        assert_eq!(fs.matches("return").count(), 1, "{why}: {fs}");
+        assert!(
+            fs.contains("return draw_of(u32(o.what.x),") && !fs.contains("if "),
+            "{why}"
+        );
+        assert!(src.contains("@interpolate(flat) what"), "{why}");
+        let draw_of = body("draw_of");
+        let picks: Vec<&str> = (draw_of.lines().map(str::trim))
+            .filter(|l| l.starts_with("if "))
+            .collect();
+        assert_eq!(picks.len(), LOOKS.len(), "{why}");
+        assert!(
+            picks.iter().all(|l| l.starts_with("if look == LOOK_")),
+            "{why}: {picks:?}"
+        );
+    }
 
     fn bubble(kind: Kind) -> Spray {
         Spray {
@@ -807,6 +869,6 @@ mod tests {
                 .count(),
             32
         );
-        assert!(up.alive(11.0) && !up.alive(10.01 + rainbow::STEP_LIFE as f64));
+        assert!(up.alive(11.0) && !up.alive(10.01 + step_up::STEP_LIFE as f64));
     }
 }

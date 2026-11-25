@@ -12,8 +12,11 @@
 
 use std::sync::Arc;
 
+use jodel_rhythm::stems::Stem;
 use jodel_rhythm::waveform::{Lane, Waveform, FPS};
+use jodel_rhythm::Analysis;
 
+use crate::core::Rhythmed;
 use crate::tiers::held;
 
 /// A value following a target smoothly: rising over `attack` seconds,
@@ -117,63 +120,109 @@ impl Range {
 /// How far back a level is taken from what is heard, in seconds.
 const WINDOW: f64 = 0.04;
 
-/// A song as the backdrop hears it: its waveform's lanes, how loud each
-/// gets, and where its sections start.
+/// A song as it is heard, for the backdrop and the effects alike: its
+/// analysis (its beats and bars), and where there is one its waveform's
+/// lanes and how loud each gets, and where its sections start. Made once
+/// for an analysis ([`Song::follow`]), shared.
 #[derive(Clone, Debug)]
 pub struct Song {
-    waveform: Arc<Waveform>,
-    /// The mix's and the stems' ranges (bass, other, vocals: of
-    /// [`Waveform::stems`], the drums left out).
-    mix: Range,
-    stems: Option<[Range; 3]>,
+    analysis: Arc<Analysis>,
+    lanes: Option<Lanes>,
     /// Where the sections start, in seconds.
     pub sections: Vec<f64>,
 }
 
+/// A waveform's lanes and how loud each gets: the mix's and the stems'
+/// (as [`Waveform::stems`], in [`Stem::ALL`]'s order).
+#[derive(Clone, Debug)]
+struct Lanes {
+    waveform: Arc<Waveform>,
+    mix: Range,
+    stems: Option<[Range; 4]>,
+}
+
 impl Song {
-    /// The song of `waveform`, its sections on its bars (`downbeats`, in
-    /// seconds; none: where the music lifts).
-    pub fn of(waveform: Arc<Waveform>, downbeats: &[f64]) -> Song {
-        let mix = Range::of(&waveform.mix.rms);
-        let stems = waveform.stems.as_ref().map(|s| {
-            [
-                Range::of(&s[0].rms),
-                Range::of(&s[2].rms),
-                Range::of(&s[3].rms),
-            ]
+    /// The song `rhythm` is the analysis of, its sections on its bars
+    /// (none without its waveform: where the music lifts is not known).
+    pub fn of(rhythm: &Rhythmed) -> Song {
+        let a = &rhythm.analysis;
+        let bars: Vec<f64> = (a.downbeats.iter())
+            .filter_map(|&i| a.beats.get(i).copied())
+            .collect();
+        let lanes = rhythm.waveform.as_ref().map(|w| Lanes {
+            waveform: Arc::clone(w),
+            mix: Range::of(&w.mix.rms),
+            stems: (w.stems.as_ref()).map(|s| s.each_ref().map(|l| Range::of(&l.rms))),
         });
-        let sections = sections(&waveform.mix, downbeats);
+        let sections = (lanes.as_ref()).map_or(Vec::new(), |l| sections(&l.waveform.mix, &bars));
         Song {
-            waveform,
-            mix,
-            stems,
+            analysis: Arc::clone(a),
+            lanes,
             sections,
         }
     }
 
-    /// Whether it is of `waveform`.
-    pub fn is_of(&self, waveform: &Arc<Waveform>) -> bool {
-        Arc::ptr_eq(&self.waveform, waveform)
+    /// `kept` as the song `rhythm` is the analysis of (none: none), made
+    /// again only where the analysis or its waveform is new.
+    pub fn follow(kept: &mut Option<Arc<Song>>, rhythm: Option<&Rhythmed>) {
+        let Some(r) = rhythm else {
+            *kept = None;
+            return;
+        };
+        let same = |s: &Song| {
+            let waveform = s.lanes.as_ref().map(|l| &l.waveform);
+            Arc::ptr_eq(&s.analysis, &r.analysis)
+                && match (waveform, &r.waveform) {
+                    (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+                    (a, b) => a.is_none() && b.is_none(),
+                }
+        };
+        if !kept.as_deref().is_some_and(same) {
+            *kept = Some(Arc::new(Song::of(r)));
+        }
+    }
+
+    /// Its analysis.
+    pub fn analysis(&self) -> &Analysis {
+        &self.analysis
+    }
+
+    /// Its waveform, where there is one.
+    pub fn waveform(&self) -> Option<&Waveform> {
+        self.lanes.as_ref().map(|l| &*l.waveform)
+    }
+
+    /// How loud the mix is at `t` seconds, and each stem (in
+    /// [`Stem::ALL`]'s order) where there are stems, each against how loud
+    /// it gets in this song (0 to 1); none without a waveform.
+    pub fn loudness(&self, t: f64) -> Option<(f32, Option<[f32; 4]>)> {
+        let l = self.lanes.as_ref()?;
+        let from = t - WINDOW;
+        let mix = l.mix.share(l.waveform.mix.rms_between(from, t));
+        let stems = match (&l.waveform.stems, &l.stems) {
+            (Some(lanes), Some(r)) => {
+                Some(Stem::ALL.map(|s| r[s as usize].share(lanes[s as usize].rms_between(from, t))))
+            }
+            _ => None,
+        };
+        Some((mix, stems))
     }
 
     /// The levels heard at `t` seconds; without stems, the mix's for each
-    /// (the vocals not: a mix lights no subject).
+    /// (the vocals not: a mix lights no subject); none without a waveform.
     pub fn levels(&self, t: f64) -> Levels {
-        let from = t - WINDOW;
-        match (&self.waveform.stems, &self.stems) {
-            (Some(lanes), Some(r)) => Levels {
-                bass: r[0].share(lanes[0].rms_between(from, t)),
-                other: r[1].share(lanes[2].rms_between(from, t)),
-                vocals: r[2].share(lanes[3].rms_between(from, t)),
+        match self.loudness(t) {
+            Some((_, Some(s))) => Levels {
+                bass: s[Stem::Bass as usize],
+                other: s[Stem::Other as usize],
+                vocals: s[Stem::Vocals as usize],
             },
-            _ => {
-                let mix = self.mix.share(self.waveform.mix.rms_between(from, t));
-                Levels {
-                    bass: mix,
-                    vocals: 0.0,
-                    other: mix,
-                }
-            }
+            Some((mix, None)) => Levels {
+                bass: mix,
+                vocals: 0.0,
+                other: mix,
+            },
+            None => Levels::default(),
         }
     }
 
@@ -183,7 +232,6 @@ impl Song {
         self.sections.get(i).is_some_and(|&s| s <= to)
     }
 }
-
 /// How long either side of a moment the music is compared, in seconds.
 const SPAN: f64 = 4.0;
 /// How much louder after than before a section starts, in dB.
@@ -396,7 +444,8 @@ mod tests {
             stems: None,
             melody: None,
         };
-        let song = Song::of(Arc::new(w.clone()), &[]);
+        let heard = |w: &Waveform| Song::of(&Rhythmed::new(Analysis::default(), Some(w.clone())));
+        let song = heard(&w);
         let loud = song.levels(10.9);
         assert!(loud.bass > 0.9 && loud.vocals == 0.0, "{loud:?}");
         assert!(song.levels(10.3).bass < 0.1);
@@ -407,7 +456,7 @@ mod tests {
             lane(30.0, |_| 100),
             lane(30.0, quietish),
         ]);
-        let song = Song::of(Arc::new(w), &[]);
+        let song = heard(&w);
         assert!(song.levels(10.9).vocals > 0.9);
         assert!(song.levels(10.3).vocals < 0.1);
         let muted = song.levels(10.9).times([1.0, 1.0, 0.0, 1.0]);

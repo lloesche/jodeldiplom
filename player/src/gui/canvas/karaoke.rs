@@ -14,11 +14,15 @@ use crate::view::karaoke::KaraokePicture;
 
 impl Canvas {
     /// Karaoke mode's stage for the frame just drawn, at `heard` seconds
-    /// into the song, `dt` seconds after the last; the result screen in
-    /// `tint` while one shows; none where the stage does not show.
+    /// into the song (as `song` has it heard, once analysed), `dt` seconds
+    /// after the last; the result screen in `tint` while one shows; none
+    /// where the stage does not show.
     pub fn stage_frame(
         &mut self,
-        state: &crate::core::State,
+        (state, song): (
+            &crate::core::State,
+            Option<&crate::gui::backdrop::music::Song>,
+        ),
         heard: f64,
         dt: f32,
         tint: &stage::Tint,
@@ -26,7 +30,7 @@ impl Canvas {
         let (picture, rect) = self.staged.as_ref()?;
         let (x, y, w, h) = *rect;
         let area = (x as f32, y as f32, w as f32, h as f32);
-        let song = (&stage::Song::of(state), stage::wanted(state));
+        let song = (&stage::Song::of(state, song), stage::wanted(state));
         self.stage.scene(song, picture, area, (heard, dt), tint)
     }
 

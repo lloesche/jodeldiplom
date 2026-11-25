@@ -11,7 +11,8 @@
 //! backdrop ([`super::backdrop`]) is under the pixmap: its words are
 //! premultiplied over it, their top byte how much of it shows through
 //! ([`super::raster::SEE_THROUGH`]); its stage and its bursts are drawn
-//! over it all.
+//! over it all, the light that blooms over them, the effects' screen
+//! passes over that ([`super::fx`]), and the shapes over everything last.
 
 mod offscreen;
 
@@ -19,6 +20,7 @@ pub use offscreen::Offscreen;
 
 use super::backdrop::BackdropFrame;
 use super::canvas::{Canvas, Changes, LayerFrame, MOST_SLOTS};
+use super::fx::Music;
 use super::raster::PixelRect;
 use super::stage_gpu::StageFrame;
 
@@ -381,8 +383,10 @@ impl Painter {
         self.stage.set(gpu, frame.map(StageFrame::feed), size);
         self.mark("uploads");
         let gpu = (&self.device, &self.queue);
-        let (sprays, time) = frame.map_or((&[][..], 0.0), |f| (&f.sprays[..], f.clock));
-        self.particles.set(gpu, sprays, time, size);
+        let (sprays, music, time) = frame.map_or((&[][..], Music::NEUTRAL, 0.0), |f| {
+            (&f.sprays[..], f.music, f.clock)
+        });
+        self.particles.set(gpu, (sprays, &music), time, size);
         self.mark("sprays");
         let gpu = (&self.device, &self.queue);
         self.light.set(gpu, frame, (size, self.density));
@@ -414,10 +418,10 @@ impl Painter {
     }
 
     /// The frame prepared, into `pass` (its viewport the window's): the
-    /// pixels over the backdrop, the stage and its bursts, the light and its bloom added over
-    /// them (drawn and blurred as the frame was prepared), and the stage's
-    /// shapes over everything ([`Self::PARTS`]); false where there is none
-    /// yet.
+    /// pixels over the backdrop, the stage and its bursts, the light and
+    /// its bloom added over them (drawn and blurred as the frame was
+    /// prepared), the effects' screen passes, and the stage's shapes over
+    /// everything ([`Self::PARTS`]); false where there is none yet.
     pub(super) fn draw(&self, pass: &mut wgpu::RenderPass<'_>) -> bool {
         if self.bind.is_none() {
             return false;
@@ -429,7 +433,7 @@ impl Painter {
     }
 
     /// The window's pass, step by step.
-    const PARTS: [Part; 5] = [
+    const PARTS: [Part; 6] = [
         ("pixmap", |p, pass| {
             if let Some(bind) = &p.bind {
                 pass.set_pipeline(&p.pipeline);
@@ -440,6 +444,7 @@ impl Painter {
         ("stage", |p, pass| p.stage.draw(pass)),
         ("bursts", |p, pass| p.particles.draw(pass)),
         ("composite", |p, pass| p.light.composite(pass)),
+        ("fx", |p, pass| p.stage.draw_screen(pass)),
         ("top", |p, pass| p.stage.draw_top(pass)),
     ];
 

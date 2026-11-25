@@ -1,7 +1,8 @@
 //! The light that blooms, on the GPU: the stage's shapes and bursts that
 //! are light ([`super::stage_gpu::StageFrame::lights`], `light_sprays`:
-//! the tiers' glow and flames, the angels, the jackpot) are drawn apart,
-//! added up in linear light at high range ([`LIGHT`]) a texel a point
+//! the lane's glow and flames, the angels, the jackpot, [`super::fx`]) are
+//! drawn apart, added up in linear light at high range ([`LIGHT`]) a texel
+//! a point
 //! ([`light_size`]: on a Retina screen a quarter of the pixels to draw,
 //! blur and read, as sharp as on any other); that light is blurred down a
 //! chain of halved textures and back up, its last step up into a bloom
@@ -10,7 +11,8 @@
 //! and its bloom are tone mapped ([`tone`]: bright light rolls off to
 //! white, never clips) and added over the frame, two reads a pixel.
 
-use super::stage_gpu::{Blend, StageFrame};
+use super::fx::Music;
+use super::stage_gpu::{Blend, Group, StageFrame, StagePass};
 
 /// The light's format: half floats, light brighter than white kept.
 pub const LIGHT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
@@ -419,7 +421,7 @@ impl Light {
     /// For frames of `format`.
     pub fn new(device: &wgpu::Device, format: wgpu::TextureFormat) -> Light {
         Light {
-            shapes: super::stage_gpu::StagePass::new(device, LIGHT, Blend::Add),
+            shapes: StagePass::with(device, (LIGHT, Blend::Add), &Group::light()),
             bursts: super::particles::ParticlePass::new(device, LIGHT, Blend::Add),
             bloom: Bloom::new(device, format),
             lit: false,
@@ -439,8 +441,11 @@ impl Light {
     ) {
         self.shapes
             .set((device, queue), frame.map(StageFrame::light_feed), size);
-        let (sprays, time) = frame.map_or((&[][..], 0.0), |f| (&f.light_sprays[..], f.clock));
-        self.bursts.set((device, queue), sprays, time, size);
+        let (sprays, music, time) = frame.map_or((&[][..], Music::NEUTRAL, 0.0), |f| {
+            (&f.light_sprays[..], f.music, f.clock)
+        });
+        self.bursts
+            .set((device, queue), (sprays, &music), time, size);
         self.lit = frame.is_some_and(|f| !f.lights.is_empty() || !f.light_sprays.is_empty());
         if !self.lit {
             return;

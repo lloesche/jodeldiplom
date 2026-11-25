@@ -6,6 +6,7 @@
 
 use std::time::{Duration, Instant};
 
+use super::backdrop::music::Song;
 use super::backdrop::Visualiser;
 use super::embed::{Drawn, Embed};
 use super::stage::Tint;
@@ -115,8 +116,10 @@ pub struct Paint {
     last_paced: Option<Instant>,
     /// The singing's streak as the picture shines with it.
     shine: streak::PictureShine,
-    /// Karaoke mode's backdrop on the GPU, and when its last frame was.
+    /// Karaoke mode's backdrop on the GPU, and when its last frame was;
+    /// the song heard, which it and the stage's effects share.
     backdrop: Visualiser,
+    heard: Option<std::sync::Arc<Song>>,
     last_backdrop: Option<Instant>,
     frames: crate::trace::Frames,
 }
@@ -131,6 +134,7 @@ impl Paint {
             last_paced: None,
             shine: streak::PictureShine::default(),
             backdrop: Visualiser::default(),
+            heard: None,
             last_backdrop: None,
             frames: crate::trace::Frames::default(),
         }
@@ -277,6 +281,8 @@ impl Paint {
         let dt = since(self.last_stage);
         let backdrop_dt = since(self.last_backdrop);
         let visualiser = &mut self.backdrop;
+        Song::follow(&mut self.heard, crate::core::karaoke::rhythm_of(&app.state));
+        let song = self.heard.as_deref();
         let (mut staged, mut drawn) = (false, false);
         embed.draw(place.scale, |canvas, gpu| {
             let grid = canvas.fit(place.size.0, place.size.1);
@@ -292,9 +298,11 @@ impl Paint {
             };
             canvas.draw(&scene, app.art());
             let layer = canvas.layer_frame(heard);
-            let stage = gpu.then(|| stage(canvas, app, shine, heard, dt)).flatten();
+            let stage = gpu
+                .then(|| stage(canvas, (app, song), shine, heard, dt))
+                .flatten();
             staged = stage.is_some();
-            let backdrop = visualiser.frame(app, gpu, heard, place.size, backdrop_dt);
+            let backdrop = visualiser.frame((app, song), gpu, heard, place.size, backdrop_dt);
             drawn = backdrop.is_some();
             Drawn {
                 layer,
@@ -316,14 +324,14 @@ impl Paint {
 /// palette where its layers are ready.
 fn stage(
     canvas: &mut super::Canvas,
-    app: &App,
+    (app, song): (&App, Option<&Song>),
     shine: &mut streak::PictureShine,
     heard: f64,
     dt: f32,
 ) -> Option<StageFrame> {
     let layers = app.cover_layers();
     let tint = Tint::of(layers.as_ref().map_or(&[][..], |l| &l.layers.palette[..]));
-    let stage = canvas.stage_frame(&app.state, heard, dt, &tint);
+    let stage = canvas.stage_frame((&app.state, song), heard, dt, &tint);
     if crate::core::karaoke::result_shown(&app.state).is_some() {
         return stage;
     }

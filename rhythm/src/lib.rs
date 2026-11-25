@@ -192,6 +192,14 @@ impl Analysis {
         self.beats.partition_point(|&b| b <= time).checked_sub(1)
     }
 
+    /// How far `time` is from the beat at or before it to the next, 0 to
+    /// 1; none before the first beat or from the last on.
+    pub fn phase_at(&self, time: f64) -> Option<f64> {
+        let i = self.beat_at(time)?;
+        let (from, to) = (self.beats[i], *self.beats.get(i + 1)?);
+        Some(((time - from) / (to - from).max(1e-9)).clamp(0.0, 1.0))
+    }
+
     /// The local tempo at `time`: that of the beat at or before it (the
     /// first beat before the first).
     pub fn bpm_at(&self, time: f64) -> Option<f64> {
@@ -542,4 +550,24 @@ pub fn analyze_with(samples: &[f32], methods: &[Method]) -> Analysis {
     let mut analyzer = Analyzer::with_methods(methods);
     analyzer.push(samples);
     analyzer.finish()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Between two beats as far as the time is; none before the first
+    /// beat or from the last on.
+    #[test]
+    fn the_phase_runs_between_two_beats() {
+        let a = Analysis {
+            beats: vec![1.0, 1.5, 2.5],
+            ..Analysis::default()
+        };
+        assert_eq!(a.phase_at(0.9), None);
+        assert_eq!(a.phase_at(1.0), Some(0.0));
+        assert_eq!(a.phase_at(1.25), Some(0.5));
+        assert_eq!(a.phase_at(2.0), Some(0.5));
+        assert_eq!(a.phase_at(2.5), None);
+    }
 }

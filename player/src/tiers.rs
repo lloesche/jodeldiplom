@@ -16,6 +16,7 @@
 //! and each row looks and sounds other than the one before (a test holds
 //! them to it).
 
+use crate::gui::fx::{Effects, Fx, Use};
 use crate::sfx::recipes::{self, Recipe};
 
 /// How a tier fills the meter.
@@ -64,10 +65,9 @@ pub struct TierSpec {
     pub bands: f32,
     /// How much the rainbow lights the whole lane, 0 to 1 (held).
     pub lane_light: f32,
-    /// How strong the glow round the lane is, 0 to 1 (held).
-    pub lane_glow: f32,
-    /// How strong the flames off the lane's edges are, 0 to 1 (held).
-    pub flames: f32,
+    /// The effects it shows: while the singing is at it, when a phrase
+    /// reaches it, at its rung of the multiplier.
+    pub fx: Effects,
     /// How brightly the backdrop's subject is lit, 0 to 1 (held).
     pub backdrop_glow: f32,
     /// How strong the rays from behind it are, 0 to 1 (held).
@@ -94,8 +94,11 @@ pub static TIERS: [TierSpec; 4] = [
         glow: 0.25,
         bands: 10.0,
         lane_light: 0.0,
-        lane_glow: 0.0,
-        flames: 0.0,
+        fx: Effects {
+            held: &[Use::of(Fx::Rainbow, 1.0)],
+            on_phrase: &[Use::of(Fx::StepUp, 1.0)],
+            ..Effects::NONE
+        },
         backdrop_glow: 0.0,
         backdrop_rays: 0.0,
         mark: 1.8,
@@ -122,8 +125,11 @@ pub static TIERS: [TierSpec; 4] = [
         glow: 0.5,
         bands: 14.0,
         lane_light: 0.0,
-        lane_glow: 1.0,
-        flames: 0.0,
+        fx: Effects {
+            held: &[Use::of(Fx::Rainbow, 1.0), Use::of(Fx::Glow, 1.0)],
+            on_phrase: &[Use::of(Fx::StepUp, 1.0)],
+            ..Effects::NONE
+        },
         backdrop_glow: 0.35,
         backdrop_rays: 0.0,
         mark: 1.8,
@@ -150,8 +156,15 @@ pub static TIERS: [TierSpec; 4] = [
         glow: 0.75,
         bands: 18.0,
         lane_light: 1.0,
-        lane_glow: 1.0,
-        flames: 1.0,
+        fx: Effects {
+            held: &[
+                Use::of(Fx::Rainbow, 1.0),
+                Use::of(Fx::Glow, 1.0),
+                Use::of(Fx::Flames, 1.0),
+            ],
+            on_phrase: &[Use::of(Fx::StepUp, 1.0)],
+            ..Effects::NONE
+        },
         backdrop_glow: 0.65,
         backdrop_rays: 0.25,
         mark: 1.8,
@@ -178,8 +191,16 @@ pub static TIERS: [TierSpec; 4] = [
         glow: 1.0,
         bands: 22.0,
         lane_light: 1.0,
-        lane_glow: 1.0,
-        flames: 1.0,
+        fx: Effects {
+            held: &[
+                Use::of(Fx::Rainbow, 1.0),
+                Use::of(Fx::Glow, 1.0),
+                Use::of(Fx::Flames, 1.0),
+                Use::of(Fx::Angels, 1.0),
+            ],
+            on_phrase: &[Use::of(Fx::StepUp, 1.0), Use::of(Fx::Jackpot, 1.0)],
+            ..Effects::NONE
+        },
         backdrop_glow: 1.0,
         backdrop_rays: 0.7,
         mark: 2.4,
@@ -203,9 +224,16 @@ pub static TIERS: [TierSpec; 4] = [
 /// row's `value` at its glow, the top's from there on. At a row's glow it
 /// is that row's value exactly.
 pub fn held(k: f32, value: impl Fn(&TierSpec) -> f32) -> f32 {
+    held_through(k, TIERS.iter().map(|row| (row.glow, value(row))))
+}
+
+/// A held value at glow `k` through `points` (each a row's glow and its
+/// value there, the glows rising): the straight line through none at 0
+/// and each point, the last's from there on; at a point's glow its value
+/// exactly.
+pub fn held_through(k: f32, points: impl IntoIterator<Item = (f32, f32)>) -> f32 {
     let mut a = (0.0, 0.0);
-    for row in &TIERS {
-        let b = (row.glow, value(row));
+    for b in points {
         if k < b.0 {
             return a.1 + (b.1 - a.1) * ((k - a.0) / (b.0 - a.0));
         }
@@ -281,15 +309,16 @@ mod tests {
     use super::*;
     use crate::sfx::Sound;
 
-    /// A row's looks and sounds, to tell two rows apart by.
+    /// A row's looks and sounds, to tell two rows apart by: its numbers,
+    /// and how strong it holds and fires each effect.
     fn looks(t: &TierSpec) -> Vec<f64> {
         let s = t.sticker;
+        let effects = (t.fx.lists().into_iter())
+            .flat_map(|list| Fx::ALL.map(|fx| f64::from(crate::gui::fx::strength(list, fx))));
         [
             t.glow,
             t.bands,
             t.lane_light,
-            t.lane_glow,
-            t.flames,
             t.backdrop_glow,
             t.backdrop_rays,
             t.mark,
@@ -301,6 +330,7 @@ mod tests {
             f64::from(u8::from(s.glints)),
             f64::from(u8::from(s.prismatic)),
         ])
+        .chain(effects)
         .collect()
     }
 

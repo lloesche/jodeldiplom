@@ -380,6 +380,7 @@ impl Stage {
             clock: t as f32,
             lights: d.lights,
             light_sprays: d.light_sprays,
+            ..StageFrame::default()
         })
     }
 

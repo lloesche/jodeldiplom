@@ -12,11 +12,11 @@ mod common;
 use jodeldiplom::core::shine::{Shone, Tier};
 use jodeldiplom::core::singing::Singing;
 use jodeldiplom::gui::big_text::Faces;
+use jodeldiplom::gui::fx::rainbow::{shine_of, BANDS, RIM, SWIRL};
 use jodeldiplom::gui::karaoke::{paint, Backdrop, Layer};
 use jodeldiplom::gui::notes::Over;
 use jodeldiplom::gui::particles::Kind;
 use jodeldiplom::gui::present::Offscreen;
-use jodeldiplom::gui::rainbow::shine_of;
 use jodeldiplom::gui::raster::Target;
 use jodeldiplom::gui::stage::{Song, Stage};
 use jodeldiplom::gui::stage_gpu::{kind, with_picture, StageFrame};
@@ -127,15 +127,12 @@ fn the_bands_shine_by_the_tier() {
         let frames = stage_frames(|_| (tier, 0.1), 0.6);
         let (_, frame) = frames.last().unwrap();
         let shines = level > 0.0;
-        let bands = frame.instances.iter().find(|i| i.params[0] == kind::BANDS);
+        let bands = frame.instances.iter().find(|i| i.params[0] == BANDS);
         assert_eq!(bands.is_some(), shines, "bands while it shines");
         if let Some(shine) = bands.and_then(shine_of) {
             assert_eq!(shine.level, level);
         }
-        let swirls = frame
-            .instances
-            .iter()
-            .filter(|i| i.params[0] == kind::SWIRL);
+        let swirls = frame.instances.iter().filter(|i| i.params[0] == SWIRL);
         assert_eq!(swirls.count(), usize::from(shines), "round the arrow");
         let rainbow = frame
             .instances
@@ -147,7 +144,7 @@ fn the_bands_shine_by_the_tier() {
             "the multiplier in rainbow"
         );
         if let Some(gpu) = gpu.as_mut() {
-            let (light, pixels) = light_of(gpu, frame, kind::BANDS);
+            let (light, pixels) = light_of(gpu, frame, BANDS);
             lights.push(light);
             if !name.is_empty() {
                 save_frame(&format!("streak_{name}.png"), &pixels, 800);
@@ -210,10 +207,7 @@ fn a_phrase_without_a_tier_collapses_the_shine() {
     let at = |t: f64| if t < 0.6 { (amazing, 0.1) } else { (None, 0.6) };
     let frames = stage_frames(at, 1.3);
     let at = |t: f64| &frames.iter().find(|(f, _)| *f >= t).unwrap().1;
-    let bands = at(0.7)
-        .instances
-        .iter()
-        .find(|i| i.params[0] == kind::BANDS);
+    let bands = at(0.7).instances.iter().find(|i| i.params[0] == BANDS);
     let shine = bands.and_then(shine_of).expect("the bands");
     let was = amazing.map(|t| t.spec().glow);
     assert_eq!((shine.level, Some(shine.from)), (0.0, was));
@@ -222,13 +216,13 @@ fn a_phrase_without_a_tier_collapses_the_shine() {
     };
     let lights: Vec<u64> = [0.55, 0.65, 0.8, 0.95, 1.25]
         .iter()
-        .map(|&t| light_of(&mut gpu, at(t), kind::BANDS).0)
+        .map(|&t| light_of(&mut gpu, at(t), BANDS).0)
         .collect();
     assert!(lights.windows(2).all(|w| w[1] < w[0]), "{lights:?}");
     assert_eq!(lights[4], 0, "gone: {lights:?}");
     save_frame(
         "streak_collapse.png",
-        &light_of(&mut gpu, at(0.75), kind::BANDS).1,
+        &light_of(&mut gpu, at(0.75), BANDS).1,
         800,
     );
 }
@@ -317,7 +311,7 @@ fn the_picture_s_bar_gets_a_rainbow_edge() {
     };
     let (lit, plain) = (show(&bubbles, &sprays), show(&[], &[]));
     save_frame("picture_rim.png", &lit, w);
-    let rim = bubbles.iter().find(|i| i.params[0] == kind::RIM).unwrap();
+    let rim = bubbles.iter().find(|i| i.params[0] == RIM).unwrap();
     let (c, half) = ((rim.shape[0], rim.shape[1]), (rim.shape[2], rim.shape[3]));
     // Lit along the bar's top edge, its colours not all one.
     let row = (c.1 - half.1).round() as usize;

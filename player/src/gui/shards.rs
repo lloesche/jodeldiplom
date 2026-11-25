@@ -114,8 +114,8 @@ pub fn drop(s: &Spray, q: u32, age: f32) -> Option<Sprite> {
     })
 }
 
-/// [`sheen`], [`shard`] and [`drop`] in WGSL, and how each is drawn: for
-/// the particles' shader.
+/// [`sheen`], [`shard`] and [`drop`] in WGSL: for the particles' shader
+/// (a bubble's burst, [`super::particles::MOTIONS`]).
 pub fn wgsl() -> String {
     format!(
         "
@@ -126,12 +126,12 @@ const AFTERGLOW: f32 = {AFTERGLOW:?};
 const SHARDS: f32 = {:?};
 const FIRST_SHARD: u32 = {FIRST_SHARD}u;
 const FIRST_DROP: u32 = {FIRST_DROP}u;
-{SHADER}",
+{MOTION}",
         SWELL as f32, BURST as f32, SHARDS as f32
     )
 }
 
-const SHADER: &str = r"
+const MOTION: &str = r"
 fn sheen(at: vec4<f32>, rgb: vec3<f32>, age: f32, drift: f32) -> Sp {
     var o: Sp;
     let g = (age - SWELL) / AFTERGLOW;
@@ -209,15 +209,23 @@ fn drop(at: vec4<f32>, rgb: vec3<f32>, size: f32, seed: u32, q: u32, age: f32, d
     return o;
 }
 
+";
+
+/// How a sheen, a bit of skin and a drop are drawn, in WGSL (their looks'
+/// lines, [`super::particles::LOOKS`]).
+pub const DRAW_SHEEN: &str = r"
 // The wet sheen a bubble leaves: a soft light where it was, added.
-fn draw_sheen(p: vec2<f32>, c: vec2<f32>, half: vec2<f32>, look: vec4<f32>) -> vec4<f32> {
+fn draw_sheen(p: vec2<f32>, c: vec2<f32>, half: vec2<f32>, turn: f32, look: vec4<f32>) -> vec4<f32> {
     let d = round_box(p - c, half, min(half.x, half.y));
     let inside = clamp(0.5 - d, 0.0, 1.0);
     let s = max(d, 0.0) / (half.y * 0.8 + 1.0);
     let soft = exp(-s * s * 3.0) * (1.0 - smoothstep(0.75, 1.0, s));
     return vec4<f32>(out_rgb(look.rgb) * (inside * 0.6 + soft * 0.4) * look.a, 0.0);
 }
+";
 
+/// [`DRAW_SHEEN`]'s for a bit of skin.
+pub const DRAW_SHARD: &str = r"
 // A bit of skin: an arc (bulging out, -y turned), half.x half its length,
 // half.y half its thickness, over what is under it, a little glow.
 fn draw_shard(p: vec2<f32>, c: vec2<f32>, half: vec2<f32>, turn: f32, look: vec4<f32>) -> vec4<f32> {
@@ -235,7 +243,10 @@ fn draw_shard(p: vec2<f32>, c: vec2<f32>, half: vec2<f32>, turn: f32, look: vec4
     let rgb = out_rgb(look.rgb);
     return vec4<f32>(rgb * (cover + glow) * look.a, cover * look.a);
 }
+";
 
+/// [`DRAW_SHEEN`]'s for a drop.
+pub const DRAW_DROP: &str = r"
 // A drop: an ellipse along its way (`turn`), lit at its front, over what
 // is under it.
 fn draw_drop(p: vec2<f32>, c: vec2<f32>, half: vec2<f32>, turn: f32, look: vec4<f32>) -> vec4<f32> {

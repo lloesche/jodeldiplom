@@ -251,6 +251,15 @@ pub fn song_index(state: &State) -> Option<usize> {
         .filter(|&i| i < state.queue.paths.len())
 }
 
+/// The analysis (and waveform) of the song the mode is about, once in.
+pub fn rhythm_of(state: &State) -> Option<&super::Rhythmed> {
+    let path = state.queue.paths.get(song_index(state)?)?;
+    match state.rhythm.get(path)? {
+        super::Rhythm::Ready(r) => Some(r),
+        _ => None,
+    }
+}
+
 /// Asks for the lyrics wanted that are not known yet, when what is wanted
 /// changed; forgets those no longer wanted.
 pub(crate) fn want_lyrics(state: &mut State, fx: &mut Vec<Effect>) {

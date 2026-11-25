@@ -1,26 +1,29 @@
 //! The shaders held to their processor's references, on the GPU: the
-//! particles' (every quad of a burst, of a word scored and of a step up:
-//! where, how large, how turned, its colour and how much it shows,
+//! particles' (every quad of every kind of burst, from its motion's
+//! probes: where, how large, how turned, its colour and how much it shows,
 //! [`sprite`]), the stage's liquid (its bulge and wobble, its overfilling,
 //! the front's waves and slosh, the shimmer, [`super::liquid`]), a tube's
-//! nearest point (how far, where along, which side, [`super::snake`]) and
-//! a streak's shine (its rise and collapse, the bands, the swirl, the rim,
-//! the rainbow, [`super::rainbow`]), the diploma's shapes (a star sticker,
-//! a wax seal, the rays, [`super::seal`]; its paper, a rubber stamp, a
-//! signature, [`super::paper`]), the backdrop's maths
+//! nearest point (how far, where along, which side, [`super::snake`]),
+//! every effect's maths ([`super::fx::Spec::reference`]), the glory (the
+//! meter, the ring, the marks, [`super::glory`]), the diploma's shapes (a
+//! star sticker, a wax seal, the rays, [`super::seal`]; its paper, a
+//! rubber stamp, a signature, [`super::paper`]), the backdrop's maths
 //! ([`super::backdrop::look`]) and its smooth read of a texture (a cubic
 //! B-spline of its texels), each worked out by the shader's own
 //! functions in a compute pass over the shader as the window composes it,
-//! at sample points, against the processor's. Skipped (with a note)
+//! at sample points, against the processor's; and every pipeline the
+//! stage, its light and the bursts make, made. Skipped (with a note)
 //! without a GPU.
 
-use super::particles::{self, sprite, Kind, Spray, QUADS};
-use super::rainbow::{self, Glow};
+use super::fx::Fx;
+use super::particles::{self, sprite, Spray, MOTIONS, QUADS};
+use super::rainbow::Glow;
 use super::sparks::TAU;
+use super::stage_gpu::{Blend, Group, StagePass};
 use super::{glory, liquid, paper, seal};
 
 /// A device on the window's GPU, none without one.
-fn gpu() -> Option<(wgpu::Device, wgpu::Queue)> {
+pub(in crate::gui) fn gpu() -> Option<(wgpu::Device, wgpu::Queue)> {
     let _turn = jodel_gpu::setting_up();
     let adapter = jodel_gpu::chosen().adapter.clone();
     match adapter.and_then(|a| super::present::open(a, wgpu::Features::empty())) {
@@ -34,7 +37,7 @@ fn gpu() -> Option<(wgpu::Device, wgpu::Queue)> {
 
 /// `body` (WGSL over `i`, the sample, reading `ins` and writing `outs`)
 /// after `source`, run on the GPU for `n` samples, `per` vec4s out each.
-fn run(
+pub(in crate::gui) fn run(
     gpu: &(wgpu::Device, wgpu::Queue),
     source: &str,
     body: &str,
@@ -152,63 +155,85 @@ fn check(@builtin(global_invocation_id) id: vec3<u32>) {{
 }
 
 /// Whether `a` is `b` within `abs` (and a share `rel` of it).
-fn near(a: f32, b: f32, abs: f32, rel: f32) -> bool {
+pub(in crate::gui) fn near(a: f32, b: f32, abs: f32, rel: f32) -> bool {
     (a - b).abs() <= abs + rel * b.abs()
 }
 
-/// Every quad of a few bursts (a bubble's, small and large, drifting or
-/// not; a word scored's and its multiplier's) at times through their lives
-/// and past them: the shader's [`sprite`] as the processor's.
+/// Every pipeline made as the window makes them (the stage's, a group
+/// each, over the frame and added into the light; the bursts' likewise)
+/// without a fault.
+#[test]
+fn every_group_compiles() {
+    let Some((device, _queue)) = gpu() else {
+        return;
+    };
+    let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
+    for (format, blend) in [
+        (wgpu::TextureFormat::Bgra8Unorm, Blend::Over),
+        (super::bloom::LIGHT, Blend::Add),
+    ] {
+        let _stage = StagePass::with(&device, (format, blend), &Group::all());
+        let _bursts = particles::ParticlePass::new(&device, format, blend);
+    }
+    let _light = StagePass::with(&device, (super::bloom::LIGHT, Blend::Add), &Group::light());
+    let fault = pollster::block_on(scope.pop());
+    assert!(fault.is_none(), "{fault:?}");
+    assert!(Group::all().len() > 5 + 3, "the effects' groups too");
+}
+
+/// Every effect's shader as its processor's ([`super::fx::Reference`]),
+/// at its samples, in the stage's shader.
+#[test]
+fn every_effect_s_shader_is_its_reference() {
+    let Some(gpu) = gpu() else {
+        return;
+    };
+    let source = super::stage_gpu::every_effect_shader();
+    let mut held = 0;
+    for fx in Fx::ALL {
+        let Some(r) = fx.spec().reference else {
+            continue;
+        };
+        held += 1;
+        let ins = (r.samples)();
+        let n = ins.len() / r.ins;
+        let outs = run(&gpu, &source, r.body, &ins, (n, r.outs));
+        let mut shown = 0;
+        for k in 0..n {
+            let sample = &ins[k * r.ins..(k + 1) * r.ins];
+            let want = (r.cpu)(sample);
+            let got = &outs[k * r.outs..(k + 1) * r.outs];
+            for (g, w) in got.iter().zip(&want) {
+                for c in 0..4 {
+                    assert!(
+                        near(g[c], w[c], r.near.0, r.near.1),
+                        "{fx:?} sample {k} ({sample:?}): GPU {got:?}, processor {want:?}"
+                    );
+                }
+            }
+            shown += usize::from((r.shows)(&want));
+        }
+        assert!(shown >= r.least, "{fx:?}: {shown} of {n} show");
+    }
+    assert!(held >= 7, "{held}");
+}
+
+/// Every quad of every kind's probes ([`particles::Motion::probes`]: a
+/// bubble's, small and large, drifting or not; a word scored's, a step
+/// up's, the angels', a jackpot's, confetti, the coins') at times through
+/// their lives and past them: the shader's [`sprite`] as the processor's.
 #[test]
 fn the_particles_shader_draws_what_sprite_says() {
     let Some(gpu) = gpu() else {
         return;
     };
-    let gold = [1.0, 0.75, 0.24];
-    let spray = |at, half, size, seed, drift, kind| Spray {
-        at,
-        half,
-        start: 10.0,
-        drift,
-        size,
-        seed,
-        rgb: gold,
-        kind,
-    };
-    let sprays = [
-        spray((400.0, 300.0), (30.0, 4.0), 41.0, 7, 0.0, Kind::Burst),
-        spray(
-            (180.0, 160.0),
-            (84.0, 23.0),
-            94.0,
-            104_729,
-            -150.0,
-            Kind::Burst,
-        ),
-        spray((200.0, 330.0), (0.0, 0.0), 20.0, 4242, -150.0, Kind::Scored),
-        spray((600.0, 330.0), (0.0, 0.0), 20.0, 99, -150.0, Kind::StepUp),
-        spray((220.0, 200.0), (0.0, 0.0), 47.0, 31_337, 0.0, Kind::StepUp),
-        spray(
-            (800.0, -90.0),
-            (720.0, 675.0),
-            90.0,
-            4242,
-            0.0,
-            Kind::Angels,
-        ),
-        spray((900.0, 70.0), (0.0, 0.0), 30.0, 777, 0.0, Kind::Jackpot),
-        spray(
-            (800.0, 0.0),
-            (800.0, 900.0),
-            20.0,
-            5150,
-            0.0,
-            Kind::Confetti,
-        ),
-    ];
+    let sprays: Vec<Spray> = MOTIONS
+        .iter()
+        .flat_map(|m| m.probes.iter().copied())
+        .collect();
     let ages = [
-        -0.01, 0.0, 0.03, 0.079, 0.081, 0.12, 0.25, 0.4, 0.49, 0.6, 0.9, 1.2, 1.7, 2.3, 3.1, 4.4,
-        5.9,
+        -0.01, 0.0, 0.02, 0.03, 0.05, 0.079, 0.081, 0.1, 0.12, 0.21, 0.25, 0.35, 0.4, 0.44, 0.49,
+        0.59, 0.6, 0.8, 0.9, 1.1, 1.2, 1.45, 1.7, 2.0, 2.3, 2.5, 3.1, 3.39, 4.4, 5.9,
     ];
     let mut samples = Vec::new();
     for s in &sprays {
@@ -336,115 +361,6 @@ fn the_stage_shader_s_liquid_is_its_reference() {
     }
 }
 
-/// A streak's shine at points across the lane, round the arrow and along
-/// a bar, at levels coming in, held, eased down a level and lost, through
-/// its rise and collapse: the shader's [`rainbow::shine_at`],
-/// [`rainbow::bands`], [`rainbow::swirl`], [`rainbow::rim`],
-/// [`rainbow::rim_at`], [`rainbow::lane_mask`], [`rainbow::text_tint`] and
-/// [`rainbow::hue`] as the processor's (all three of each colour).
-#[test]
-fn the_stage_shader_s_shine_is_its_reference() {
-    let Some(gpu) = gpu() else {
-        return;
-    };
-    let shines = [
-        (0.25, 0.0),
-        (0.5, 0.25),
-        (0.75, 0.5),
-        (0.75, 0.75),
-        (0.5, 0.75),
-        (0.25, 0.6),
-        (0.0, 0.25),
-        (0.0, 0.75),
-    ];
-    let mut samples = Vec::new();
-    for k in 0..480 {
-        let f = k as f32;
-        let (level, from) = shines[k % shines.len()];
-        let since = 5.0;
-        let time = since + (f * 0.37).fract() * 0.9 - 0.05;
-        let p = (
-            100.0 + (f * 0.61).fract() * 700.0,
-            60.0 + (f * 0.29).fract() * 200.0,
-        );
-        let d = (f * 0.43).fract() * 12.0 - 4.0;
-        let tint = [(f * 0.11).fract(), (f * 0.23).fract(), (f * 0.31).fract()];
-        samples.push([
-            [level, from, since, time],
-            [p.0, p.1, 300.0, 160.0],
-            [700.0, 90.0, 24.0, d],
-            [(f * 0.17).fract() * 3.0 - 1.0, tint[0], tint[1], tint[2]],
-        ]);
-    }
-    let ins: Vec<[f32; 4]> = samples.iter().flatten().copied().collect();
-    let body = "
-    let a = ins[i * 4u];
-    let b = ins[i * 4u + 1u];
-    let c = ins[i * 4u + 2u];
-    let h = ins[i * 4u + 3u];
-    let s = a.xyz;
-    let bar = vec2<f32>(c.z * 3.0, c.z * 0.2);
-    outs[i * 7u] = vec4<f32>(shine_at(s, a.w), lane_mask(b.xy, b.zw, c.xy), 0.0);
-    outs[i * 7u + 1u] = vec4<f32>(hue(h.x), 0.0);
-    outs[i * 7u + 2u] = vec4<f32>(bands(b.xy, b.zw, c.xy, s, a.w), 0.0);
-    outs[i * 7u + 3u] = vec4<f32>(swirl(b.xy, b.zw, c.z, s, a.w), 0.0);
-    outs[i * 7u + 4u] = vec4<f32>(rim(c.w, b.x, c.z * 0.2, s, a.w), 0.0);
-    outs[i * 7u + 5u] = vec4<f32>(rim_at(b.xy, b.zw, bar, s, a.w), 0.0);
-    outs[i * 7u + 6u] = vec4<f32>(text_tint(h.yzw, b.x, s, a.w), 0.0);";
-    let source = super::stage_gpu::shader(super::stage_gpu::Group::Plain);
-    let outs = run(&gpu, &source, body, &ins, (samples.len(), 7));
-    let close = |g: &[f32; 4], c: [f32; 3], what: &str| {
-        for i in 0..3 {
-            assert!(near(g[i], c[i], 2e-3, 2e-3), "{what}: {g:?} {c:?}");
-        }
-    };
-    let (mut lit, mut masked) = (0, 0);
-    for (k, [a, b, c, h]) in samples.iter().enumerate() {
-        let what = format!("sample {k}: {a:?} {b:?} {c:?}");
-        let s = Glow {
-            level: a[0],
-            from: a[1],
-            since: a[2],
-        };
-        let (t, p, o) = (a[3], (b[0], b[1]), (b[2], b[3]));
-        let g = &outs[k * 7..k * 7 + 7];
-        let (strength, collapse) = rainbow::shine_at(&s, t);
-        assert!(
-            near(g[0][0], strength, 1e-4, 0.0),
-            "{what}: strength {:?}",
-            g[0]
-        );
-        assert!(
-            near(g[0][1], collapse, 1e-4, 0.0),
-            "{what}: collapse {:?}",
-            g[0]
-        );
-        let mask = rainbow::lane_mask(p, o, (c[0], c[1]));
-        assert!(
-            near(g[0][2], mask, 1e-3, 0.0),
-            "{what}: lane mask {:?} {mask}",
-            g[0]
-        );
-        close(&g[1], rainbow::hue(h[0]), &format!("{what}: hue"));
-        let bands = rainbow::bands(p, o, (c[0], c[1]), &s, t);
-        close(&g[2], bands, &format!("{what}: bands"));
-        close(
-            &g[3],
-            rainbow::swirl(p, o, c[2], &s, t),
-            &format!("{what}: swirl"),
-        );
-        let rim = rainbow::rim(c[3], b[0], c[2] * 0.2, &s, t);
-        close(&g[4], rim, &format!("{what}: rim"));
-        let rim_at = rainbow::rim_at(p, o, (c[2] * 3.0, c[2] * 0.2), &s, t);
-        close(&g[5], rim_at, &format!("{what}: rim at"));
-        let tint = rainbow::text_tint([h[1], h[2], h[3]], b[0], &s, t);
-        close(&g[6], tint, &format!("{what}: text"));
-        lit += usize::from(bands.iter().sum::<f32>() > 0.01);
-        masked += usize::from(mask > 0.01 && mask < 0.99);
-    }
-    assert!(lit > 100 && masked > 10, "{lit} {masked}");
-}
-
 /// The light's tone map at brightnesses from none to far past white, into
 /// a frame that takes linear light and one that does not: the shader's
 /// [`super::bloom::TONE`] as the processor's [`super::bloom::tone`].
@@ -473,8 +389,8 @@ fn the_bloom_s_tone_map_is_its_reference() {
 
 /// The shine's looks at points across their ranges: the shader's
 /// [`glory::meter_fill`], [`glory::fill_color`], [`glory::meter_at`],
-/// [`glory::ring_at`], [`glory::mark_pop`], [`glory::label_pop`],
-/// [`glory::glow_at`] and [`glory::blaze`] as the processor's.
+/// [`glory::ring_at`], [`glory::mark_pop`] and [`glory::label_pop`] as the
+/// processor's.
 #[test]
 fn the_stage_shader_s_glory_is_its_reference() {
     let Some(gpu) = gpu() else {
@@ -510,14 +426,13 @@ fn the_stage_shader_s_glory_is_its_reference() {
     let b = ins[i * 3u + 1u];
     let c = ins[i * 3u + 2u];
     let s = vec3<f32>(b.w, 0.25, 3.0);
-    outs[i * 6u] = vec4<f32>(meter_fill(b.x, b.y, b.z, a.w), mark_pop(a.w - b.z), glow_at(c.z, 20.0, a.w, 0.7));
-    outs[i * 6u + 1u] = vec4<f32>(fill_color(a.z, a.x, a.w), 0.0);
-    outs[i * 6u + 2u] = meter_at(a.x, a.y, a.z, a.w);
-    outs[i * 6u + 3u] = ring_at(c.xy, vec2<f32>(200.0, 300.0), vec2<f32>(30.0, 6.0), b.x, s, a.w);
-    outs[i * 6u + 4u] = vec4<f32>(blaze(c.x * 3.0, c.z, 40.0, a.w, 0.8), 0.0);
-    outs[i * 6u + 5u] = vec4<f32>(label_pop(a.w - b.z, 1.8), 0.0, 0.0);";
+    outs[i * 5u] = vec4<f32>(meter_fill(b.x, b.y, b.z, a.w), mark_pop(a.w - b.z), 0.0);
+    outs[i * 5u + 1u] = vec4<f32>(fill_color(a.z, a.x, a.w), 0.0);
+    outs[i * 5u + 2u] = meter_at(a.x, a.y, a.z, a.w);
+    outs[i * 5u + 3u] = ring_at(c.xy, vec2<f32>(200.0, 300.0), vec2<f32>(30.0, 6.0), b.x, s, a.w);
+    outs[i * 5u + 4u] = vec4<f32>(label_pop(a.w - b.z, 1.8), 0.0, 0.0);";
     let source = super::stage_gpu::shader(super::stage_gpu::Group::Plain);
-    let outs = run(&gpu, &source, body, &ins, (samples.len(), 6));
+    let outs = run(&gpu, &source, body, &ins, (samples.len(), 5));
     let close = |g: &[f32], c: &[f32], what: &str| {
         for (x, y) in g.iter().zip(c) {
             assert!(near(*x, *y, 3e-3, 3e-3), "{what}: {g:?} {c:?}");
@@ -525,7 +440,7 @@ fn the_stage_shader_s_glory_is_its_reference() {
     };
     let (mut lit, mut shown) = (0, 0);
     for (k, [a, b, c]) in samples.iter().enumerate() {
-        let g = &outs[k * 6..k * 6 + 6];
+        let g = &outs[k * 5..k * 5 + 5];
         let what = format!("sample {k}: {a:?} {b:?} {c:?}");
         let shine = Glow {
             level: b[3],
@@ -535,13 +450,8 @@ fn the_stage_shader_s_glory_is_its_reference() {
         let pop = glory::mark_pop(a[3] - b[2]);
         close(
             &g[0],
-            &[
-                glory::meter_fill(b[0], b[1], b[2], a[3]),
-                pop.0,
-                pop.1,
-                glory::glow_at(c[2], 20.0, a[3], 0.7),
-            ],
-            &format!("{what}: fill, pop, glow"),
+            &[glory::meter_fill(b[0], b[1], b[2], a[3]), pop.0, pop.1, 0.0],
+            &format!("{what}: fill, pop"),
         );
         close(
             &g[1][..3],
@@ -562,11 +472,9 @@ fn the_stage_shader_s_glory_is_its_reference() {
             a[3],
         );
         close(&g[3], &ring, &format!("{what}: ring"));
-        let blaze = glory::blaze(c[0] * 3.0, c[2], 40.0, a[3], 0.8);
-        close(&g[4][..3], &blaze, &format!("{what}: blaze"));
-        lit += usize::from(blaze.iter().sum::<f32>() > 0.05);
+        lit += usize::from(ring[3] > 0.05);
         let label = glory::label_pop(a[3] - b[2], 1.8);
-        close(&g[5][..2], &[label.0, label.1], &format!("{what}: label"));
+        close(&g[4][..2], &[label.0, label.1], &format!("{what}: label"));
         shown += usize::from(label.1 > 0.0 && label.1 < 1.0);
     }
     assert!(lit > 50 && shown > 10, "{lit} {shown}");

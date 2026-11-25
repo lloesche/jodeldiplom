@@ -880,8 +880,13 @@ rainbow; each tier up throws stars, notes and rainbow bits from the
 playhead; a phrase with no tier collapses it into the playhead), Great
 adds a glow round the lane, Amazing flames blazing off its edges, and
 Diva angels descending and a jackpot of coins and stars from the meter.
-The light blooms (the GPU draws it apart, at high range, blurs it and
-tone maps it over the frame). Along the bottom the song's progress shows
+Each of these is an effect the tier's row lists in the tier table
+(`tiers.rs`; the effects are `gui::fx`), and a row can have an effect
+move with the music (its beat and bars, the stems' levels, the pitches)
+or show at a rung of the multiplier; more effects are made and wait for
+a row (the screen's edges on fire, marquee bulbs round the lane, the
+line sung on fire or frosted, coins). The light blooms (the GPU draws it
+apart, at high range, blurs it and tone maps it over the frame). Along the bottom the song's progress shows
 each phrase sung in its tier's colour, a mark a phrase popping as its
 tier is decided (a little jackpot on Diva), and the time left in a ring
 that drains as the song goes, in the rainbow while you shine. In the
@@ -1123,7 +1128,8 @@ The capitals keep their commands here (`M` the beat pulse, `S` stop);
 | `grids` | the beat grids fixed by hand, kept per track in the settings folder |
 | `cache` | the schemas of what is kept on disk between runs, and their versions |
 | `stems_cache` | the tracks' stems kept (`stems/`): their files' names, the store the engine reads them from, pruning to 30 GB |
-| `gui` | the window, an iced application (`gui::window`); the Mixer tab in iced's widgets (`gui::mixer`); every other screen the old canvas in one widget under them (`gui::embed`, on the GPU through `gui::embed_gpu` and `gui::present`): `gui::raster::PixelBackend` draws the cells into pixels with the embedded font, `gui::Canvas` paints covers, the spectrum and the Transition lanes at their cell rects |
+| `gui` | the window, an iced application (`gui::window`); the Mixer tab in iced's widgets (`gui::mixer`); every other screen the old canvas in one widget under them (`gui::embed`, on the GPU through `gui::embed_gpu` and `gui::present`): `gui::raster::PixelBackend` draws the cells into pixels with the embedded font, `gui::Canvas` paints covers, the spectrum and the Transition lanes at their cell rects; Karaoke mode's stage on the GPU (`gui::stage`, `gui::stage_gpu`, a pipeline a group of shapes; what keeps it fast, held by tests, in PERFORMANCE.md) and its effects (`gui::fx`: an effect a module, registered by one line, its strength eased from the singing and moved by the music on a board, drawing at its points of the stage, its shaders held to its maths) |
+| `tiers` | the phrase tiers, one table: a row a tier, all it takes and shows (its bars, colours, glow, sounds, sticker and the effects it lists) |
 
 The window's font is Sarasa Fixed J (Iosevka's Latin with Source Han Sans
 for Japanese, Chinese and Korean, each of those exactly two cells wide),

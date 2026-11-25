@@ -1,7 +1,8 @@
 // Karaoke mode's stage on the GPU (`stage_gpu.rs`): its shapes, each a
 // signed distance, and its text from the atlas. Its kinds come before it;
-// the liquid's maths, the tubes, a streak's shine, the glory and the
-// diploma's shapes after it (`stage_gpu::shader`).
+// the liquid's maths, the tubes, the shine's clock, the glory, the
+// diploma's shapes, the effects and the music after it
+// (`stage_gpu::shader`).
 struct Screen {
     size: vec2<f32>,
     srgb: f32,
@@ -17,6 +18,9 @@ struct Screen {
 @group(0) @binding(2) var soft: sampler;
 // The tubes' middle lines, point by point (`snake.rs`).
 @group(0) @binding(3) var<storage, read> paths: array<vec4<f32>>;
+// The effects' looks (`fx::Spec::params`), and the music this frame.
+@group(0) @binding(4) var<uniform> looks: array<vec4<f32>, FX_COUNT>;
+@group(0) @binding(5) var<uniform> music: Music;
 
 fn path_point(i: u32) -> vec4<f32> {
     return paths[i];
@@ -233,12 +237,34 @@ fn tube(o: Out, p: vec2<f32>, k: u32) -> vec4<f32> {
     return shade_skin(o, d, down, s.w);
 }
 
+// Text: its coverage from the atlas, filled left of the split, in its
+// pipeline's lyric treatment (`treat`; plain text as it is).
+fn text(o: Out, p: vec2<f32>) -> vec4<f32> {
+    let t = (p - o.quad.xy) / max(o.quad.zw - o.quad.xy, vec2<f32>(1.0));
+    // Kept inside its own texels (their centres): never a column of the
+    // text beside it in the atlas.
+    let texel = clamp(mix(o.uv.xy, o.uv.zw, t), o.uv.xy + vec2<f32>(0.5), o.uv.zw - vec2<f32>(0.5));
+    let uv = texel / screen.atlas;
+    let a = textureSampleLevel(atlas, soft, uv, 0.0).r;
+    let filled = smoothstep(o.params.y - 0.75, o.params.y + 0.75, p.x);
+    let col = mix(o.color2.rgb, o.color.rgb, filled);
+    let alpha = mix(o.color2.a, o.color.a, filled) * a;
+    let c = treat(col, alpha, o, p);
+    return over_plus(c.rgb, c.a, vec3<f32>(0.0));
+}
+
 // A shape of this pipeline's group (`GROUP`: `stage_gpu::Group`; the
 // other groups' code is left out where it is compiled).
 @fragment
 fn fs(o: Out) -> @location(0) vec4<f32> {
     let k = u32(round(o.params.x));
     let p = o.p;
+    if GROUP >= G_LYRIC {
+        return text(o, p);
+    }
+    if GROUP >= G_SHAPES {
+        return fx_shape(o, p, k);
+    }
     if GROUP == G_BUBBLE {
         if k == K_LIQUID {
             return pill(o, p, k, true);
@@ -248,9 +274,7 @@ fn fs(o: Out) -> @location(0) vec4<f32> {
     if GROUP == G_GLORY {
         return glory(o, p, k);
     }
-    if GROUP == G_SHINE {
-        return shine(o, p, k);
-    }
+
     if GROUP == G_SEAL {
         return seal_shape(o, p, k);
     }
@@ -304,34 +328,5 @@ fn fs(o: Out) -> @location(0) vec4<f32> {
         let g = glow(d, o.params.y) * o.color2.a;
         return over_plus(col, cover * o.color.a, o.color2.rgb * g);
     }
-    // Text: its coverage from the atlas, filled left of the split.
-    let t = (p - o.quad.xy) / max(o.quad.zw - o.quad.xy, vec2<f32>(1.0));
-    // Kept inside its own texels (their centres): never a column of the
-    // text beside it in the atlas.
-    let texel = clamp(mix(o.uv.xy, o.uv.zw, t), o.uv.xy + vec2<f32>(0.5), o.uv.zw - vec2<f32>(0.5));
-    let uv = texel / screen.atlas;
-    let a = textureSampleLevel(atlas, soft, uv, 0.0).r;
-    let filled = smoothstep(o.params.y - 0.75, o.params.y + 0.75, p.x);
-    var col = mix(o.color2.rgb, o.color.rgb, filled);
-    if (u32(o.strain.w) & RAINBOW) != 0u {
-        // In a streak's rainbow, running along it.
-        col = text_tint(col, p.x, o.strain.xyz, screen.time);
-    }
-    let alpha = mix(o.color2.a, o.color.a, filled) * a;
-    return over_plus(col, alpha, vec3<f32>(0.0));
-}
-
-// A streak's shine: its bands (within the lane, softly), a swirl, a
-// rainbow edge; light, added.
-fn shine(o: Out, p: vec2<f32>, k: u32) -> vec4<f32> {
-    let s = o.params.yzw;
-    if k == K_BANDS {
-        let inside = lane_mask(p, o.uv.xy, o.uv.zw);
-        let l = bands(p, o.shape.xy, o.shape.zw, s, screen.time);
-        return vec4<f32>(out_rgb(l) * inside, 0.0);
-    }
-    if k == K_SWIRL {
-        return vec4<f32>(out_rgb(swirl(p, o.shape.xy, o.shape.z, s, screen.time)), 0.0);
-    }
-    return vec4<f32>(out_rgb(rim_at(p, o.shape.xy, o.shape.zw, s, screen.time)), 0.0);
+    return text(o, p);
 }

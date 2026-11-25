@@ -263,7 +263,7 @@ fn main() {
                 heard,
             };
             canvas.draw(&scene, Some(&art));
-            let stage = canvas.stage_frame(&state, heard, 1.0 / 60.0, &Tint::STAGE);
+            let stage = canvas.stage_frame((&state, None), heard, 1.0 / 60.0, &Tint::STAGE);
             let (pixels, pw, ph) = canvas.pixels();
             let (pw, ph) = (pw as u32, ph as u32);
             let cue = Cue {

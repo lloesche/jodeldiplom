@@ -1,10 +1,10 @@
 //! The shine on the stage ([`super::Stage::shine`]): the meter at the top
 //! (filling as the phrase is sung, its words hit, then springing to the
-//! shine the phrase reached, its tier's name popping under it), the
-//! tiers' looks over the lane (each row's glow round the lane and flames
-//! off its edges, held as the glow eases between tiers:
-//! [`crate::tiers::held`]; at the top angels descending and a jackpot of
-//! coins from the meter), and the song's progress along the bottom: its
+//! shine the phrase reached, its tier's name popping under it, in what the
+//! shouts are in), the tiers' effects round the lane and over the screen
+//! (each row's glow round the lane and flames off its edges, the angels,
+//! the jackpot from the meter as a phrase reaches the top: their slots,
+//! [`crate::gui::fx::At`]), and the song's progress along the bottom: its
 //! sung stretches, the part sung coloured phrase by phrase by the tier
 //! each reached, a mark a phrase (its tier's size) popping as its tier is
 //! decided (a little jackpot at the top), and the time left in a ring that
@@ -12,24 +12,20 @@
 //! sinking away before the controls' bar fades in where it is (its seek
 //! bar and times stand for it then), so the two never show at once. The
 //! processor gives the GPU only where each is and when it changed
-//! ([`crate::gui::glory`], [`crate::gui::fanfare`]).
+//! ([`crate::gui::glory`], [`crate::gui::fx`]).
 
 use super::{rgba, Face, Lane, Stage, BREAK, GOLD, PROGRESS, WHITE};
 use crate::core::shine::{Shone, Tier};
 use crate::core::singing::{Cue, Singing};
-use crate::gui::fanfare;
+use crate::gui::fx::{self, At, Frame, Text};
 use crate::gui::glory::{meter_fill, position, MARKS};
 use crate::gui::particles::Spray;
 use crate::gui::rainbow::Glow;
 use crate::gui::stage_gpu::{kind, Instance};
 use crate::gui::streak::Step;
-use crate::tiers::held;
 
 /// How long a tier's name shows under the meter, in seconds.
 const VERDICT: f32 = 1.8;
-/// How often a new flight of angels comes while the singing is at the
-/// top tier.
-const ANGELS_EVERY: f32 = 2.2;
 /// How far the progress sinks as the controls come up, a share of the
 /// height.
 const SINK: f32 = 0.03;
@@ -45,15 +41,13 @@ pub fn tier_color(tier: Option<Tier>) -> [f32; 3] {
 }
 
 /// The meter between frames: where its fill springs from and to, and
-/// since when (the singing's clock); the last phrase shown, and when;
-/// when the last flight of angels came.
+/// since when (the singing's clock); the last phrase shown, and when.
 #[derive(Debug, Default)]
 pub struct Meter {
     from: f32,
     to: f32,
     since: f32,
     shown: Option<(Shone, f32)>,
-    angels: f32,
 }
 
 impl Meter {
@@ -106,7 +100,7 @@ fn sung_so_far(singing: &Singing, clock: f64) -> Option<f32> {
 pub struct Where {
     pub area: (f32, f32, f32, f32),
     pub lane: Lane,
-    pub lane_box: ((f32, f32), (f32, f32)),
+    pub lane_box: super::LaneBox,
     pub now: f64,
     pub clock: f64,
     pub gone: f32,
@@ -137,77 +131,38 @@ fn shape(k: f32, quad: [f32; 4], shape: [f32; 4], color: [f32; 4], params: [f32;
 
 impl Stage {
     /// The shine for `singing` (the game on: `game`) at `at`, its streak's
-    /// `step` this frame, into `d`; the song `length` seconds long.
+    /// `step` this frame and the `effects` as strong as it holds them, into
+    /// `d`; the song `length` seconds long.
     pub(super) fn shine(
         &mut self,
         d: &mut Drawn,
         (singing, game, length): (&Singing, bool, Option<f64>),
         at: &Where,
-        step: &Step,
+        (step, effects): (&Step, &Frame),
     ) {
-        let (_, _, w, h) = at.area;
-        let clock = at.clock as f32;
-        let p = at.lane.pill;
-        let (k, _) = step.glow.at(clock);
         if game && singing.reference().is_some() {
-            self.meter_and_verdict(d, singing, at, step);
+            self.meter_and_verdict(d, singing, at, (step, effects));
         }
-        // The rows' glow round the lane and flames off its edges, as strong
-        // as the glow now holds them.
-        let ((cx, cy), (hx, hy)) = at.lane_box;
-        let glow = held(k, |t| t.lane_glow);
-        if glow > 0.01 {
-            let reach = p * 1.6;
-            d.lights.push(shape(
-                kind::GLOW,
-                [
-                    cx - hx - reach,
-                    cy - hy - reach,
-                    cx + hx + reach,
-                    cy + hy + reach,
-                ],
-                [cx, cy, hx, hy],
-                rgba([1.0, 0.74, 0.3], 1.0),
-                [reach, 0.12 * glow, 0.0],
-            ));
-        }
-        let flames = held(k, |t| t.flames);
-        if flames > 0.01 {
-            let high = p * 1.5;
-            for (edge, out) in [(cy - hy, -1.0), (cy + hy, 1.0)] {
-                let (y0, y1) = if out < 0.0 {
-                    (edge - high * 1.4, edge + high * 0.3)
-                } else {
-                    (edge - high * 0.3, edge + high * 1.4)
-                };
-                d.lights.push(shape(
-                    kind::BLAZE,
-                    [cx - hx, y0, cx + hx, y1],
-                    [cx - hx, edge, cx + hx, out],
-                    [1.0; 4],
-                    [high, flames, 0.0],
-                ));
-            }
-        }
-        // At the top: a flight of angels every while (sought back before
-        // the last, as if it came a while ago). Stage 2 makes it an effect
-        // the top row lists.
-        if clock < self.meter.angels {
-            self.meter.angels = clock - ANGELS_EVERY;
-        }
-        let top = step.tier == Some(Tier::TOP);
-        if top && clock - self.meter.angels >= ANGELS_EVERY {
-            self.meter.angels = clock;
-            let seed = (at.clock * 1000.0) as u32 ^ 0x5EED;
-            d.light_sprays
-                .push(fanfare::angels(w, h * 0.75, h * 0.12, at.clock, seed));
-        }
-        self.progress(d, (singing, length), at, (&step.glow, step.phrase));
+        // The effects' light round the lane (the rows' glow and flames),
+        // then over the screen (the angels).
+        let lane = At::Lane {
+            lane: at.lane_box,
+            pill: at.lane.pill,
+        };
+        self.board.shapes(&lane, effects, &mut d.lights);
+        let sky = At::Sky { area: at.area };
+        self.board.sprays(&sky, effects, &mut d.light_sprays);
+        self.progress(d, (singing, length), at, (&step.glow, step.phrase), effects);
     }
-
     /// The meter, its fill, and the tier's name under it as a phrase is
-    /// decided (a jackpot from it at the top tier).
-    fn meter_and_verdict(&mut self, d: &mut Drawn, singing: &Singing, at: &Where, step: &Step) {
+    /// decided (the effects' bursts from it: a jackpot at the top tier).
+    fn meter_and_verdict(
+        &mut self,
+        d: &mut Drawn,
+        singing: &Singing,
+        at: &Where,
+        (step, effects): (&Step, &Frame),
+    ) {
         let (x, y, w, h) = at.area;
         let clock = at.clock as f32;
         let (mx, my) = (x + w * 0.5, y + h * 0.075);
@@ -219,16 +174,11 @@ impl Stage {
             let next = p.tier.map_or(0, |t| t.index() + 1);
             let cap = MARKS.get(next).map_or(1.0, |m| m - 0.025);
             self.meter.aim(position(p.of_top()).min(cap), clock);
-            // At the top, a jackpot (an effect the top row lists, in stage 2).
-            if p.tier == Some(Tier::TOP) {
-                let seed = (at.clock * 997.0) as u32;
-                d.light_sprays.push(fanfare::jackpot(
-                    (mx + half.0, my),
-                    half.1 * 2.2,
-                    at.clock,
-                    seed,
-                ));
-            }
+            let meter = At::Meter {
+                at: (mx + half.0, my),
+                size: half.1 * 2.2,
+            };
+            self.board.sprays(&meter, effects, &mut d.light_sprays);
         }
         let verdict_on = self.meter.shown.is_some_and(|(_, t)| clock - t < VERDICT);
         if !verdict_on {
@@ -293,20 +243,24 @@ impl Stage {
         );
         if let Some(text) = text {
             text.shape = [mx, my, t, VERDICT];
-            crate::gui::rainbow::in_rainbow(text, &step.glow);
+            if let Some(treat) = fx::treatment(Text::Shout, effects) {
+                treat.apply(text);
+            }
         }
     }
 
     /// The song's progress along the bottom: its sung stretches, the part
     /// sung coloured by the tiers its phrases reached, a mark a phrase, the
     /// time left in its ring; sunk and faded as far as it has gone for the
-    /// controls (none once gone).
+    /// controls (none once gone); the effects' bursts from a phrase's mark
+    /// the moment it is decided (a little jackpot at the top).
     fn progress(
         &mut self,
         d: &mut Drawn,
         (singing, length): (&Singing, Option<f64>),
         at: &Where,
         (shine, fresh): (&Glow, Option<Shone>),
+        effects: &Frame,
     ) {
         let Some(length) = length.filter(|_| at.gone < 1.0) else {
             return;
@@ -391,16 +345,15 @@ impl Stage {
                 [*when as f32, 0.0, 0.0],
             ));
         }
-        // A little jackpot from a phrase's mark the moment it is the top
-        // (an effect the top row lists, in stage 2).
-        let fresh = fresh.filter(|_| at.gone < 0.5);
-        if let Some(p) = fresh.filter(|p| p.tier == Some(Tier::TOP)) {
-            d.light_sprays.push(fanfare::jackpot(
-                (bx(p.end), by),
-                bh * 3.0,
-                at.clock,
-                p.line as u32,
-            ));
+        // The effects' bursts from a phrase's mark the moment it is
+        // decided.
+        if let Some(p) = fresh.filter(|_| at.gone < 0.5) {
+            let mark = At::Mark {
+                at: (bx(p.end), by),
+                size: bh * 3.0,
+                line: p.line as u32,
+            };
+            self.board.sprays(&mark, effects, &mut d.light_sprays);
         }
         // The playhead's point on it.
         d.out.push(super::disc(
@@ -490,8 +443,16 @@ mod tests {
     }
 
     /// The stage at 1.2 s into the song in a window `w` × `h` (24 rows),
+    /// the controls faded in as far as `fade`: its shapes and those over
+    /// everything.
+    fn frame(song: &Song, size: (f32, f32), fade: Option<f64>) -> Vec<Instance> {
+        let f = stage_frame(song, size, fade);
+        f.instances.iter().chain(&f.top).copied().collect()
+    }
+
+    /// The stage at 1.2 s into the song in a window `w` × `h` (24 rows),
     /// the controls faded in as far as `fade`.
-    fn frame(song: &Song, (w, h): (f32, f32), fade: Option<f64>) -> Vec<Instance> {
+    fn stage_frame(song: &Song, (w, h): (f32, f32), fade: Option<f64>) -> StageFrame {
         let area = Rect::new(0, 0, 80, 24);
         let picture = KaraokePicture {
             area,
@@ -506,9 +467,21 @@ mod tests {
             score: None,
             result: None,
         };
-        let f: StageFrame =
-            Stage::default().frame(song, &picture, (0.0, 0.0, w, h), 1.2, 1.0 / 60.0);
-        f.instances.iter().chain(&f.top).copied().collect()
+        Stage::default().frame(song, &picture, (0.0, 0.0, w, h), 1.2, 1.0 / 60.0)
+    }
+
+    /// With no tier, nothing of the effects library shows: none of its
+    /// shapes, no screen pass, no text in a treatment, none of its bursts.
+    #[test]
+    fn nothing_of_the_library_shows_at_no_tier() {
+        use crate::gui::fx::{Fx, Treat};
+        let (singing, lyrics) = singing();
+        let song = Song::new(&singing, lyrics.lines.iter().collect(), Some(60.0));
+        let f = stage_frame(&song, (800.0, 450.0), None);
+        let mut all = f.instances.iter().chain(&f.top).chain(&f.lights);
+        assert!(all.all(|i| Fx::of_kind(i.params[0]).is_none() && Treat::of(i).is_none()));
+        assert!(f.screen.is_empty() && f.light_sprays.is_empty());
+        assert!(f.instances.iter().any(|i| i.params[0] == kind::TEXT));
     }
 
     /// The song's progress along the stage's bottom and the controls' bar

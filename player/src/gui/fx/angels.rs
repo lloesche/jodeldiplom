@@ -1,29 +1,56 @@
-//! The top tier's fanfare on the GPU: angels descending while the singing
-//! is Diva ([`Kind::Angels`]: a flight of them drifting down the screen,
-//! swaying, wings beating, star dust trailing), and a jackpot when a
-//! phrase is Diva ([`Kind::Jackpot`]: a fountain of spinning gold coins
-//! and stars shot up from the meter, arcing and raining down). Each is one
-//! record ([`Spray`]); every quad is worked out in the particles' vertex
-//! shader in closed form from its seed and age, drawn into the light that
-//! blooms ([`super::bloom`]).
+//! Angels descending while the singing is at the top: every while a
+//! flight of them drifts down the screen, swaying, wings beating, star
+//! dust trailing ([`Kind::Angels`], one record a flight, worked out in the
+//! particles' vertex shader, drawn into the light that blooms:
+//! [`crate::gui::bloom`]). A flight comes as soon as the singing is to be
+//! at the top (its glow's aim, not yet its eased strength), then one every
+//! [`ANGELS_EVERY`]; sought back before the last, the next comes at once.
 //!
-//! [`angel`] and [`coin`] are the shader's maths on the processor, held
-//! to it on the GPU (`super::shader_check`).
+//! [`angel`] is the shader's maths on the processor ([`wgsl`]), held to it
+//! on the GPU (`crate::gui::shader_check`).
 
-use super::particles::{Kind, Look, Spray, Sprite};
-use super::rainbow::hue;
-use super::sparks::{mix, rand, TAU};
+use super::{At, Layer, Live, Out, Slot, Spec};
+use crate::gui::particles::{Kind, Look, Spray, Sprite};
+use crate::gui::rainbow::hue;
+use crate::gui::sparks::{mix, rand, TAU};
 
 /// How long a flight of angels takes to come down, in seconds.
 pub const ANGELS_LIFE: f32 = 6.0;
 /// The angels in a flight (its first quads; the rest are their dust).
 pub const ANGELS: u32 = 5;
-/// How long a jackpot lasts, in seconds.
-pub const JACKPOT_LIFE: f32 = 2.4;
+/// How often a new flight comes while the singing is at the top.
+const ANGELS_EVERY: f32 = 2.2;
+
+/// A flight of angels every while at the top.
+pub const SPEC: Spec = Spec {
+    name: "angels",
+    ident: "angels",
+    at: &[Layer::Sky],
+    draw,
+    ..Spec::NONE
+};
+
+fn draw(at: &At, live: &Live, slot: &mut Slot, out: &mut Out) {
+    let &At::Sky { area: (_, _, w, h) } = at else {
+        return;
+    };
+    let clock = live.clock as f32;
+    if live.aim > 0.0 && clock - slot.last >= ANGELS_EVERY {
+        slot.last = clock;
+        let seed = (live.clock * 1000.0) as u32 ^ 0x5EED;
+        out.sprays.push(flight(
+            w,
+            h * 0.75,
+            h * 0.12 * live.listed,
+            live.clock,
+            seed,
+        ));
+    }
+}
 
 /// A flight of angels over a screen `width` × `height` from `clock` (the
 /// singing's time), scattered by `seed`, each `size` tall.
-pub fn angels(width: f32, height: f32, size: f32, clock: f64, seed: u32) -> Spray {
+pub fn flight(width: f32, height: f32, size: f32, clock: f64, seed: u32) -> Spray {
     Spray {
         at: (width / 2.0, -size),
         half: (width * 0.45, height),
@@ -33,20 +60,6 @@ pub fn angels(width: f32, height: f32, size: f32, clock: f64, seed: u32) -> Spra
         seed,
         rgb: [1.0, 0.95, 0.8],
         kind: Kind::Angels,
-    }
-}
-
-/// A jackpot from `at` (the meter), its coins `size` across, at `clock`.
-pub fn jackpot(at: (f32, f32), size: f32, clock: f64, seed: u32) -> Spray {
-    Spray {
-        at,
-        half: (0.0, 0.0),
-        start: clock as f32,
-        drift: 0.0,
-        size,
-        seed,
-        rgb: [1.0, 0.8, 0.3],
-        kind: Kind::Jackpot,
     }
 }
 
@@ -103,63 +116,13 @@ pub fn angel(s: &Spray, q: u32, age: f32) -> Option<Sprite> {
     })
 }
 
-/// Quad `q` of a jackpot `s`, `age` seconds on: shot up and out from the
-/// meter, arcing down under gravity, slowing a little; coins spinning
-/// (`turn`: the spin, their width its cosine), every fourth quad a star.
-pub fn coin(s: &Spray, q: u32, age: f32) -> Option<Sprite> {
-    let r = |j: u32| rand(s.seed, q, j);
-    let delay = r(0) * 0.25;
-    let t = age - delay;
-    let life = JACKPOT_LIFE - 0.25 - 0.5 * r(1);
-    if t < 0.0 || t >= life {
-        return None;
-    }
-    let a = -TAU / 4.0 + (r(2) - 0.5) * TAU * 0.55;
-    let speed = s.size * (9.0 + 9.0 * r(3));
-    let g = s.size * 22.0;
-    let drag = (1.0 - (-0.8 * t).exp()) / 0.8;
-    let star = q % 4 == 3;
-    let size = s.size
-        * if star {
-            0.45 + 0.3 * r(4)
-        } else {
-            0.35 + 0.2 * r(4)
-        };
-    let u = t / life;
-    Some(Sprite {
-        at: (
-            s.at.0 + a.cos() * speed * drag,
-            s.at.1 + a.sin() * speed * drag + 0.5 * g * t * t,
-        ),
-        half: (size, size),
-        alpha: ((1.0 - u) * 4.0).min(1.0),
-        rgb: if star {
-            mix(s.rgb, [1.0; 3], 0.6)
-        } else {
-            s.rgb
-        },
-        look: if star { Look::Sparkle } else { Look::Coin },
-        turn: r(5) * TAU + (6.0 + 8.0 * r(6)) * t,
-    })
-}
-
-/// [`angel`] and [`coin`] in WGSL, and how an angel and a coin are drawn:
-/// for the particles' shader (which gives them `r`, `hue`, `Sp`).
+/// [`angel`] in WGSL: for the particles' shader (which gives it `r`,
+/// `hue`, `Sp` and the looks' numbers).
 pub fn wgsl() -> String {
-    format!(
-        "
-const ANGELS_LIFE: f32 = {ANGELS_LIFE:?};
-const ANGELS: u32 = {ANGELS}u;
-const JACKPOT_LIFE: f32 = {JACKPOT_LIFE:?};
-const LOOK_ANGEL: u32 = {}u;
-const LOOK_COIN: u32 = {}u;
-{SHADER}",
-        Look::Angel.code(),
-        Look::Coin.code()
-    )
+    format!("\nconst ANGELS_LIFE: f32 = {ANGELS_LIFE:?};\nconst ANGELS: u32 = {ANGELS}u;\n{MOTION}")
 }
 
-const SHADER: &str = r"
+const MOTION: &str = r"
 fn angel(at: vec4<f32>, rgb: vec3<f32>, size: f32, seed: u32, q: u32, age: f32) -> Sp {
     var o: Sp;
     let k = q % ANGELS;
@@ -204,36 +167,11 @@ fn angel(at: vec4<f32>, rgb: vec3<f32>, size: f32, seed: u32, q: u32, age: f32) 
     return o;
 }
 
-fn coin(at: vec4<f32>, rgb: vec3<f32>, size0: f32, seed: u32, q: u32, age: f32) -> Sp {
-    var o: Sp;
-    let delay = r(seed, q, 0u) * 0.25;
-    let t = age - delay;
-    let life = JACKPOT_LIFE - 0.25 - 0.5 * r(seed, q, 1u);
-    if t < 0.0 || t >= life {
-        return o;
-    }
-    let a = -TAU / 4.0 + (r(seed, q, 2u) - 0.5) * TAU * 0.55;
-    let speed = size0 * (9.0 + 9.0 * r(seed, q, 3u));
-    let g = size0 * 22.0;
-    let drag = (1.0 - exp(-0.8 * t)) / 0.8;
-    let star = q % 4u == 3u;
-    var size = size0 * (0.35 + 0.2 * r(seed, q, 4u));
-    o.rgb = rgb;
-    o.look = LOOK_COIN;
-    if star {
-        size = size0 * (0.45 + 0.3 * r(seed, q, 4u));
-        o.rgb = mix(rgb, vec3<f32>(1.0), 0.6);
-        o.look = LOOK_SPARKLE;
-    }
-    let u = t / life;
-    o.at = vec2<f32>(at.x + cos(a) * speed * drag, at.y + sin(a) * speed * drag + 0.5 * g * t * t);
-    o.half = vec2<f32>(size);
-    o.alpha = min((1.0 - u) * 4.0, 1.0);
-    o.turn = r(seed, q, 5u) * TAU + (6.0 + 8.0 * r(seed, q, 6u)) * t;
-    o.shows = 1u;
-    return o;
-}
+";
 
+/// How an angel is drawn, in WGSL (its look's line,
+/// [`crate::gui::particles::LOOKS`]).
+pub const DRAW_ANGEL: &str = r"
 // An angel: a halo over its head, a robe below, two wings beating
 // (`turn` their phase), glowing; light.
 fn draw_angel(p: vec2<f32>, c: vec2<f32>, half: vec2<f32>, turn: f32, look: vec4<f32>) -> vec4<f32> {
@@ -266,24 +204,55 @@ fn draw_angel(p: vec2<f32>, c: vec2<f32>, half: vec2<f32>, turn: f32, look: vec4
     let light = look.rgb * (min(parts, 0.9) + glow) + gold * ring * 1.3;
     return vec4<f32>(out_rgb(light) * look.a, 0.0);
 }
-
-// A coin, spinning (`turn`): its width the spin's cosine, gold with a
-// bright rim and a star struck on it, its face lit as it turns; light.
-fn draw_coin(p: vec2<f32>, c: vec2<f32>, half: vec2<f32>, turn: f32, look: vec4<f32>) -> vec4<f32> {
-    let s = max(half.x, 1.0);
-    let squash = max(abs(cos(turn)), 0.08);
-    let l = (p - c) / s;
-    let e = vec2<f32>(l.x / squash, l.y);
-    let d = (length(e) - 1.0) * s * squash;
-    let cover = clamp(0.5 - d, 0.0, 1.0);
-    let rim = clamp(1.0 - abs(length(e) - 0.82) * 8.0, 0.0, 1.0);
-    // A five-pointed star on its face.
-    let an = atan2(e.y, e.x);
-    let star_r = 0.38 + 0.18 * cos(5.0 * an);
-    let star = clamp((star_r - length(e)) * 10.0, 0.0, 1.0);
-    let face = 0.75 + 0.5 * sin(turn * 2.0);
-    let col = look.rgb * (face + 0.6 * rim + 0.5 * star) * vec3<f32>(1.0, 0.92, 0.7);
-    let glow = exp(-max(d, 0.0) / (s * 0.3)) * 0.15;
-    return vec4<f32>(out_rgb(col * (cover * 0.9 + glow)) * look.a, 0.0);
-}
 ";
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::gui::fx::{Board, Fx, Music};
+    use crate::gui::rainbow::Glow;
+    use crate::gui::streak::Step;
+    use crate::tiers::Tier;
+
+    /// At the top a flight comes at once, then one every while (none in
+    /// between); below it none; sought back, the next at once.
+    #[test]
+    fn a_flight_comes_every_while_at_the_top_and_at_once_after_a_seek() {
+        let mut board = Board::default();
+        let top = Step {
+            tier: Some(Tier::TOP),
+            glow: Glow {
+                level: 1.0,
+                from: 1.0,
+                since: 0.0,
+            },
+            ..Step::default()
+        };
+        let below = Step {
+            tier: Some(Tier::ALL[0]),
+            glow: Glow {
+                level: Tier::ALL[0].spec().glow,
+                from: 0.0,
+                since: 0.0,
+            },
+            ..Step::default()
+        };
+        let mut flights = |step: &Step, clock: f64| {
+            let frame = board.frame(step, &Music::NEUTRAL, clock);
+            let mut sprays = Vec::new();
+            let sky = At::Sky {
+                area: (0.0, 0.0, 1600.0, 900.0),
+            };
+            board.sprays(&sky, &frame, &mut sprays);
+            assert!(sprays.iter().all(|s| s.kind == Kind::Angels));
+            sprays.len()
+        };
+        assert_eq!(flights(&below, 3.0), 0, "below the top");
+        assert_eq!(flights(&top, 3.0), 1, "at once");
+        assert_eq!(flights(&top, 4.0), 0);
+        assert_eq!(flights(&top, 3.0 + f64::from(ANGELS_EVERY) + 0.05), 1);
+        assert_eq!(flights(&top, 6.0), 0);
+        assert_eq!(flights(&top, 2.0), 1, "sought back: at once");
+        assert!(Fx::Angels.spec().at.contains(&Layer::Sky));
+    }
+}

@@ -339,9 +339,12 @@ fn the_gpu_draws_the_bubbles_over_the_picture() {
                 let (x, y) = (sp.at.0.floor() as usize, sp.at.1.floor() as usize);
                 let what = format!("{name}: {:?} {q} at {x},{y}", sp.look);
                 let count = match sp.look {
-                    Look::Sparkle | Look::Note | Look::Bit | Look::Angel | Look::Coin => {
-                        &mut sparkles
-                    }
+                    Look::Sparkle
+                    | Look::Note
+                    | Look::Bit
+                    | Look::Angel
+                    | Look::Coin
+                    | Look::Gold => &mut sparkles,
                     Look::Shard => &mut bits,
                     Look::Drop => &mut drops,
                     Look::Sheen => continue,
