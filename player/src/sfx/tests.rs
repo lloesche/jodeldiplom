@@ -1,5 +1,4 @@
 use super::*;
-use crate::core::bubbles::SWELL;
 use crate::core::shine::Tier;
 
 #[test]
@@ -86,26 +85,28 @@ fn result(
     }
 }
 
-/// The sounds of `result`'s reveal as the screen plays them, frame by
-/// frame at 60 a second: each at the frame it is cued on.
+/// The bank's sounds of `result`'s reveal as the screen plays them, frame
+/// by frame at 60 a second: each at the frame it is cued on (the synth's
+/// are the conductor's: the `conductor` example plays them).
 fn revealed(result: crate::core::singing::SongResult) -> Vec<(f64, Sound, f32, f32)> {
     let shown = crate::core::singing::Shown::new(result, 1, 0);
     let mut sounds = reveal::RevealSounds::default();
     let mut heard = Vec::new();
     for f in 0..(60.0 * (shown.reveal.settled() + 1.0)) as u64 {
         let t = shown.time(f * 1000 / 60);
-        for c in sounds.frame(Some((&shown, t))) {
-            heard.push((t, c.sound, c.gain, c.pan));
+        for h in sounds.frame(Some((&shown, t))) {
+            if let Heard::Bank(sound, gain, pan) = h {
+                heard.push((t, sound, gain, pan));
+            }
         }
     }
     heard
 }
 
-/// Writes every sound, and a few runs of them as the game plays them
-/// (a whole diploma revealed among them, for each kind of verdict), as
-/// WAV files into the folder `JODEL_SFX_WAVS` names, to listen to and to
-/// look at: `cargo test -p jodeldiplom sfx::tests::write_the_sounds --
-/// --ignored`.
+/// Writes every sound of the bank, and the bank's of a whole diploma
+/// revealed for each kind of verdict, as WAV files into the folder
+/// `JODEL_SFX_WAVS` names, to listen to and to look at: `cargo test -p
+/// jodeldiplom sfx::tests::write_the_sounds -- --ignored`.
 #[test]
 #[ignore]
 fn write_the_sounds() {
@@ -118,37 +119,6 @@ fn write_the_sounds() {
     for s in Sound::all() {
         let path = dir.join(format!("{}.wav", s.name()));
         durable::write_atomic(&path, &wav(&s.render(rate).interleaved(), rate)).unwrap();
-    }
-    // A run of pops up and down a line, each splashing as it tears.
-    let mut ripple = Vec::new();
-    for (k, step) in [0, 2, 4, 6, 8, 7, 5, 3, 1, 4].into_iter().enumerate() {
-        let t = 0.16 * k as f64;
-        ripple.push((t, Sound::Pop(step), 1.0, 0.0));
-        ripple.push((t + SWELL, Sound::Sparkle(step), 1.0, 0.0));
-    }
-    // A word's bubbles bursting together: a ripple.
-    for j in 0..4 {
-        let t = 2.0 + moments::RIPPLE * j as f64;
-        ripple.push((t, Sound::Pop(3 + j), 1.0, 0.0));
-    }
-    ripple.push((
-        2.0 + 3.0 * moments::RIPPLE + SWELL,
-        Sound::Sparkle(6),
-        1.0,
-        0.0,
-    ));
-    // Up every rung, then lost.
-    let mut streak: Vec<_> = (Tier::ALL.into_iter().enumerate())
-        .map(|(k, t)| (k as f64, Sound::StepUp(t), 1.0, 0.0))
-        .collect();
-    streak.push((Tier::COUNT as f64 + 0.2, Sound::Break, 1.0, 0.0));
-    // Every tier's chime, each as the one before rings out.
-    let mut tiers = Vec::new();
-    let mut at = 0.0;
-    for t in Tier::ALL {
-        let chime = Sound::Tier(t);
-        tiers.push((at, chime, 1.0, 0.0));
-        at += 0.8 * chime.render(rate).l.len() as f64 / f64::from(rate);
     }
     // Diplomas revealed, as the screen plays them: a Gold one with a new
     // best, a Silver one short of its best, one without a medal, one not
@@ -185,9 +155,6 @@ fn write_the_sounds() {
         ..result((9_100, 40, 30), &six, (Some(Medal::Gold), None, true))
     };
     let runs = [
-        ("run-ripple", ripple),
-        ("run-streak", streak),
-        ("run-tiers", tiers),
         ("run-diploma-gold-new-best", revealed(gold)),
         ("run-diploma-silver", revealed(silver)),
         ("run-diploma-cheer", revealed(cheer)),

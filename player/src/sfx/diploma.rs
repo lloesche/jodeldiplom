@@ -11,8 +11,6 @@
 //!   ping, the right one higher.
 //! - [`Diploma::Title`]: the song's title landing: a bright "ta-da" in
 //!   bells and plucks, glitter off its ends as they sparkle.
-//! - [`Diploma::Ding`]: the points all counted: a coin's "ka-ching" and a
-//!   bell's "ding!" ringing out, glitter rising over it.
 //! - [`Diploma::Written`]: an entry written in by hand (the words hit, the
 //!   best streak): the pen scratching over its writing time, lifted between
 //!   words, then a round "pop" as its value lands, higher for each entry
@@ -34,7 +32,9 @@
 //!   its end.
 //! - [`Diploma::Tap`]: the best line shown calmly: a soft tap of the pen.
 //!
-//! The pen on paper is [`super::pen`]'s.
+//! The pen on paper is [`super::pen`]'s. The count-up's ticks, the points
+//! all counted, the gems and the best streak's rung are the game's synth's,
+//! as its other sounds are ([`super::conductor::Diploma`]).
 
 use super::pen::{burst, handwriting, scratch, tap, DATE_SAMPLE};
 use super::sounds::{env, penta, pluck, BELL, GLASS};
@@ -75,8 +75,6 @@ pub enum Diploma {
     Star(Side),
     /// The song's title landing.
     Title,
-    /// The points all counted.
-    Ding,
     /// An entry written in, its value landing.
     Written(Entry),
     /// An entry written in, nothing to cheer for.
@@ -101,12 +99,11 @@ pub enum Diploma {
 
 impl Diploma {
     /// Every one, in the bank's order ([`Diploma::index`]).
-    pub const ALL: [Diploma; 17] = [
+    pub const ALL: [Diploma; 16] = [
         Diploma::Unroll,
         Diploma::Star(Side::Left),
         Diploma::Star(Side::Right),
         Diploma::Title,
-        Diploma::Ding,
         Diploma::Written(Entry::Words),
         Diploma::Written(Entry::Streak),
         Diploma::Scribbled(Entry::Words),
@@ -140,7 +137,6 @@ impl Diploma {
             Diploma::Star(Side::Left) => "diploma-star-left".into(),
             Diploma::Star(Side::Right) => "diploma-star-right".into(),
             Diploma::Title => "diploma-title".into(),
-            Diploma::Ding => "diploma-ding".into(),
             Diploma::Written(e) => format!("diploma-written-{}", entry(e)),
             Diploma::Scribbled(e) => format!("diploma-scribbled-{}", entry(e)),
             Diploma::Sticker => "diploma-sticker".into(),
@@ -161,7 +157,6 @@ impl Diploma {
         match self {
             Diploma::Unroll | Diploma::Star(_) => -25.0,
             Diploma::Title => -19.0,
-            Diploma::Ding => -17.0,
             Diploma::Written(_) => -20.0,
             Diploma::Scribbled(_) => -29.0,
             Diploma::Sticker => -21.0,
@@ -181,7 +176,6 @@ impl Diploma {
             Diploma::Unroll => unroll(rate),
             Diploma::Star(side) => star(rate, side),
             Diploma::Title => title(rate),
-            Diploma::Ding => ding(rate),
             Diploma::Written(e) => written(rate, e, true),
             Diploma::Scribbled(e) => written(rate, e, false),
             Diploma::Sticker => sticker(rate),
@@ -297,37 +291,6 @@ fn title(rate: u32) -> Buf {
         b.tone(at, side, &grain);
     }
     b.room(0.3, 0.8);
-    b
-}
-
-/// A coin's blip on `f`, a fourth up after it.
-fn coin(b: &mut Buf, at: f64, f: f64, amp: f64) {
-    let square: Vec<Partial> = [1.0, 3.0, 5.0]
-        .into_iter()
-        .map(|n| Partial::new(n, 1.0 / n, 0.3 / n))
-        .collect();
-    let first = Tone::new(f, env(0.001, 0.03, 0.01, 0.045), &square).amp(amp);
-    b.tone(at, 0.0, &first);
-    let second = Tone::new(f * 4.0 / 3.0, env(0.001, 0.03, 0.12, 0.3), &square).amp(amp);
-    b.tone(at + 0.045, 0.0, &second);
-}
-
-fn ding(rate: u32) -> Buf {
-    let mut b = Buf::new(rate, 1.4);
-    coin(&mut b, 0.0, penta(7), 0.35);
-    // "Ding!": a bright bell with its octave under it.
-    let bell = Tone::new(penta(8), env(0.0012, 0.0, 0.45, 1.1), &BELL);
-    b.tone(0.05, 0.0, &bell);
-    let body = Tone::new(penta(3), env(0.002, 0.0, 0.3, 0.8), &BELL).amp(0.3);
-    b.tone(0.05, 0.0, &body);
-    // Glitter rising over it, as the sparks fly.
-    let mut seed = 0xD1_u64;
-    for g in 0..6 {
-        let at = 0.08 + 0.04 * f64::from(g);
-        let grain = Tone::new(penta(11 + g), env(0.001, 0.0, 0.08, 0.25), &GLASS).amp(0.28);
-        b.tone(at, 1.4 * scatter(&mut seed) - 0.7, &grain);
-    }
-    b.room(0.3, 0.9);
     b
 }
 

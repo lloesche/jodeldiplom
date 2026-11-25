@@ -505,6 +505,12 @@ impl Synth {
         true
     }
 
+    /// Whether nothing sounds and nothing waits: from here on it renders
+    /// only what is left in its bus (the hall's and the delay's tails).
+    pub fn idle(&self) -> bool {
+        self.waiting == 0 && self.voices.iter().all(Option::is_none)
+    }
+
     /// The notes dropped because the queue was full.
     pub fn dropped(&self) -> u64 {
         self.dropped

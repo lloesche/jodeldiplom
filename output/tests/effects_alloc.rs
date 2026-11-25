@@ -2,14 +2,17 @@
 //! nothing, from the very first sound after the device opens, at each
 //! rate a desk runs at (here 48 and 96 kHz). A
 //! counting allocator (this binary's alone) counts every call on the
-//! thread named `jodel-mixer` while sounds are cued on stream frames, wait
-//! for them, start (more at once than there are voices, so one takes
-//! another's place) and are summed with the input; the simulated device's
+//! thread named `jodel-mixer` while sounds are cued, start (more at once
+//! than there are voices, so one takes another's place) and are summed
+//! with the input; the simulated device's
 //! own memory, which grows as it plays on that thread, is left out. The
 //! bank and the effects input are messages (freed and reserved as the
 //! mixer thread takes them), the cues are not: they
 //! come through a queue of fixed size. The song plays a little before the
-//! sounds, so its own stream's buffers are at their sizes.
+//! sounds, so its own stream's buffers are at their sizes. The same for its
+//! live synth: notes sent on stream frames and on the desk's, waiting,
+//! starting (more than its voices), let go, called off, too late, and the
+//! synth replaced as it plays (the one before let go of elsewhere).
 
 mod common;
 
@@ -23,6 +26,7 @@ use jodel_output::mixer::{EffectCue, Mixer, MixerOptions, Role, SoundBank, VOICE
 use jodel_output::{
     Capabilities, Clock, Error, OpenRequest, Output, OutputTarget, Stats, StreamInfo,
 };
+use jodel_synth::{Command, Commands, Tag};
 
 /// Counts what the mixer thread allocates and frees while counting is on.
 struct Counting;
@@ -192,7 +196,7 @@ fn playing_effects_allocates_nothing_on_the_mixer_thread() {
         let strip = mixer.strip("Effects");
         let effects = mixer.effects(&strip);
         strip.set_level(0.5);
-        let (mut target, fader) = mixer.input(&player, Role::Lead, 1.0);
+        let (mut target, _) = mixer.input(&player, Role::Lead, 1.0);
         effects.load(bank(rate));
         let request = OpenRequest::new(rate, 2)
             .formats(&[device.format()])
@@ -205,21 +209,103 @@ fn playing_effects_allocates_nothing_on_the_mixer_thread() {
         MIXER_ALLOCATIONS.store(0, Ordering::Relaxed);
         COUNTING.store(true, Ordering::Relaxed);
         // The first sound; then more at once than there are voices; then
-        // one every 1 000 frames.
-        effects.play_at(EffectCue::new(0), &fader, 2_000);
+        // one every 960 frames.
+        let mut at = 1_920;
+        let mut mix = |out: &mut Box<dyn Output>, n: u64| {
+            out.write(&wide(at, n, 2), None).unwrap();
+            at += n;
+            wait_until("mixed", || mixer.timebase().frame == at);
+        };
+        effects.play(EffectCue::new(0));
+        mix(&mut out, 1_920);
         for _ in 0..VOICES + 4 {
-            effects.play_at(EffectCue::new(0), &fader, 5_000);
+            effects.play(EffectCue::new(0));
         }
-        for k in 0..18 {
-            effects.play_at(EffectCue::new(0), &fader, 6_000 + 1_000 * k);
+        mix(&mut out, 1_920);
+        for _ in 0..18 {
+            effects.play(EffectCue::new(0));
+            mix(&mut out, 960);
         }
-        out.write(&wide(1_920, 22_080, 2), None).unwrap();
-        wait_until("mixed", || mixer.timebase().frame == 24_000);
+        mix(&mut out, 2_880);
         COUNTING.store(false, Ordering::Relaxed);
         assert_eq!(MIXER_ALLOCATIONS.load(Ordering::Relaxed), 0, "{rate}");
         let view = effects.view();
         assert_eq!(view.played, 1 + VOICES as u64 + 4 + 18, "{rate}: {view:?}");
         assert_eq!(view.rate, rate);
+        out.drain(None).unwrap();
+    }
+}
+
+#[test]
+fn playing_live_allocates_nothing_on_the_mixer_thread() {
+    let _one = ONE.lock().unwrap_or_else(|e| e.into_inner());
+    for rate in [RATE, 96_000] {
+        let device = Device {
+            instant: true,
+            rate: Some(rate),
+            ..Device::default()
+        };
+        let options = MixerOptions {
+            buffer: Duration::from_millis(200),
+            ..MixerOptions::default()
+        };
+        let mixer = Mixer::open(Box::new(QuietDevice(device.clone())), options);
+        let player = mixer.strip("Player");
+        let strip = mixer.strip("Effects");
+        let effects = mixer.effects(&strip);
+        let (mut target, fader) = mixer.input(&player, Role::Lead, 1.0);
+        let (synth, patch) = tone_synth(rate, 0.01);
+        effects.live(synth, 0.5);
+        let request = OpenRequest::new(rate, 2)
+            .formats(&[device.format()])
+            .prefill(Duration::ZERO);
+        let mut out = target.open(&request).unwrap();
+        taken(&mut target);
+        out.write(&wide(0, 9_600, 2), None).unwrap();
+        wait_until("mixed", || mixer.timebase().frame == 9_600);
+        MIXER_ALLOCATIONS.store(0, Ordering::Relaxed);
+        COUNTING.store(true, Ordering::Relaxed);
+        let release = Command::Release {
+            frame: 17_000,
+            patch,
+            tag: Tag(3),
+        };
+        {
+            let mut song = effects.commands(Some(&fader));
+            // The first note; then more at once than the synth has voices;
+            // then one every 1 000 frames; one far too late; a release.
+            song.send(tone(patch, 10_000, 0.0));
+            for _ in 0..12 {
+                song.send(tone(patch, 13_000, -0.5));
+            }
+            for k in 0..18 {
+                song.send(tone(patch, 14_000 + 1_000 * k, 0.5));
+            }
+            song.send(tone(patch, 0, 0.0));
+            song.send(release);
+            song.send(Command::Tempo { bpm: 97.0 });
+        }
+        let desk = mixer.timebase().frame;
+        effects.commands(None).send(tone(patch, desk + 3_000, 0.0));
+        out.write(&wide(9_600, 10_560, 2), None).unwrap();
+        wait_until("mixed", || mixer.timebase().frame == 20_160);
+        // Everything waiting called off; a synth in its place.
+        effects
+            .commands(Some(&fader))
+            .send(Command::Cancel { tag: None });
+        let (synth, patch) = tone_synth(rate, 0.01);
+        effects.live(synth, 0.5);
+        effects
+            .commands(Some(&fader))
+            .send(tone(patch, 22_000, 0.0));
+        out.write(&wide(20_160, 20_160, 2), None).unwrap();
+        wait_until("mixed", || mixer.timebase().frame == 40_320);
+        COUNTING.store(false, Ordering::Relaxed);
+        assert_eq!(MIXER_ALLOCATIONS.load(Ordering::Relaxed), 0, "{rate}");
+        let view = effects.view();
+        assert_eq!(view.live, rate);
+        assert!(view.commands >= 30, "{rate}: {view:?}");
+        assert_eq!(view.missed, 1, "{rate}: the one too late");
         out.drain(None).unwrap();
     }
 }

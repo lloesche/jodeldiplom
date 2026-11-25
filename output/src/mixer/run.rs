@@ -267,10 +267,15 @@ impl Run {
                 self.port.set(&mut self.aside, input);
                 self.fit_mic();
             }
-            Msg::Effects(strip, queue) => {
+            Msg::Effects(strip, queue, live) => {
                 // One made before goes with this message (its handle, if it
-                // lives, still holds its bank).
-                self.effects = Some(EffectsRun::new(strip, queue));
+                // lives, still holds its bank; its synth goes aside).
+                let run = EffectsRun::new(strip, queue, live);
+                if let Some(mut old) = self.effects.replace(run) {
+                    if let Some(synth) = old.take_live() {
+                        self.aside.drop_later(Gone::Synth(synth));
+                    }
+                }
                 self.fit_effects();
             }
             Msg::EffectsGone { queue, done } => {
@@ -284,6 +289,16 @@ impl Run {
             Msg::EffectsBank(bank) => {
                 if let Some(fx) = &mut self.effects {
                     fx.load(bank);
+                }
+                self.fit_effects();
+            }
+            Msg::EffectsLive(synth, gain) => {
+                let old = match &mut self.effects {
+                    Some(fx) => fx.set_live(Some(synth), gain),
+                    None => Some(synth),
+                };
+                if let Some(old) = old {
+                    self.aside.drop_later(Gone::Synth(old));
                 }
                 self.fit_effects();
             }
@@ -305,9 +320,10 @@ impl Run {
     }
 
     /// Room for the effects' sounds, so the first of them allocates
-    /// nothing: their sum and gains, the mix, the device's frames and their
-    /// strip's meter, for a period at the device's rate or their bank's
-    /// (the higher), of up to [`RESERVED_CHANNELS`] channels.
+    /// nothing: their sum and gains, the synth's frames, the mix, the
+    /// device's frames and their strip's meter, for a period at the
+    /// device's rate or their bank's or synth's (the highest), of up to
+    /// [`RESERVED_CHANNELS`] channels.
     fn fit_effects(&mut self) {
         let Some(fx) = &mut self.effects else {
             return;
@@ -581,6 +597,11 @@ impl Run {
             taps,
             paused: false,
         });
+        // The desk's frames start over: what its synth waits to play on
+        // them is called off.
+        if let Some(fx) = &mut self.effects {
+            fx.opened();
+        }
         self.fit_effects();
         Ok(())
     }

@@ -8,7 +8,8 @@ use std::cell::Cell;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use jodel_rhythm::Analysis;
-use jodeldiplom::sfx::conductor::{Clock, Conductor, Diploma, Event, Layout};
+use jodeldiplom::sfx::conductor::{Clock, Conductor, Diploma, Event};
+use jodeldiplom::tiers::Tier;
 
 struct Counting;
 
@@ -60,7 +61,7 @@ fn conducting_allocates_nothing() {
         beats,
         ..Analysis::default()
     };
-    let (mut c, mut synth) = Conductor::new(RATE, Layout::new(5, &[5, 10, 20, 35, 55]));
+    let (mut c, mut synth) = Conductor::new(RATE);
     let mut out = vec![0.0f32; 2 * 480];
     COUNTING.with(|on| on.set(true));
     // The count counts.
@@ -73,19 +74,21 @@ fn conducting_allocates_nothing() {
             let mut lines = [None; Clock::LINES];
             lines[0] = Some((now + 10_000, now + 100_000));
             let t = now as f64 / f64::from(RATE);
-            c.set_clock(&mut synth, Clock::from_analysis(&a, t, now, RATE, lines));
+            let clock = Clock::from_analysis(&a, t, now, f64::from(RATE), lines);
+            c.set_clock(&mut synth, clock);
         }
         if block % 20 == 0 {
             streak += 1;
             c.event(&mut synth, now, Event::Word { streak, pan: 0.3 });
             if streak == 60 {
-                c.event(&mut synth, now, Event::Lost);
+                c.event(&mut synth, now, Event::Lost(Tier::TOP));
                 streak = 0;
             }
         }
         match block % 400 {
             100 => {
-                c.event(&mut synth, now, Event::Phrase((block / 400) as usize % 5));
+                let tier = Tier::ALL[(block / 400) as usize % Tier::COUNT];
+                c.event(&mut synth, now, Event::Phrase(tier));
             }
             150 => {
                 c.event(&mut synth, now, Event::Jackpot);
@@ -93,18 +96,25 @@ fn conducting_allocates_nothing() {
             200 => {
                 c.event(&mut synth, now, Event::Zap { pan: -0.4 });
             }
-            250 => {
-                c.event(
-                    &mut synth,
-                    now,
-                    Event::Diploma(Diploma::Count { ticks: 24 }),
-                );
+            250..=273 => {
+                let k = (block % 400 - 250) as u32;
+                let tick = Diploma::Tick { k, of: 24 };
+                c.event(&mut synth, now, Event::Diploma(tick));
             }
-            260 => {
-                c.event(&mut synth, now, Event::Diploma(Diploma::Gem(3)));
+            275 => {
+                let gem = Diploma::Gem {
+                    tier: Some(Tier::ALL[3]),
+                    pan: -0.2,
+                };
+                c.event(&mut synth, now, Event::Diploma(gem));
             }
-            270 => {
-                c.event(&mut synth, now, Event::Diploma(Diploma::Points(Some(4))));
+            280 => {
+                let points = Diploma::Points(Some(Tier::TOP));
+                c.event(&mut synth, now, Event::Diploma(points));
+            }
+            285 => {
+                let rung = Diploma::Rung(Tier::TOP);
+                c.event(&mut synth, now, Event::Diploma(rung));
             }
             300 => {
                 let key = jodel_rhythm::key::Key::on((block % 12) as u8, true);

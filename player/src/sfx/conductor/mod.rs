@@ -3,38 +3,44 @@
 //! ([`jodel_synth::Synth`], made with the conductor: [`Conductor::new`]).
 //!
 //! The conductor plans on the thread that reads the game (where the
-//! moments are, [`super::moments`]), in the song's stream frames, the
-//! frames a sound effect is cued on. It is told the game's events with
-//! their frames ([`Conductor::event`], which says where its hit lands, so
-//! a look can land with it) and the music clock ([`Conductor::set_clock`]:
-//! the song's beat grid from the analysis and the sung lines, [`Clock`]);
-//! it sends the notes, the releases of the held ones and the calls to
-//! call some off ([`jodel_synth::Command`]) to wherever they go
+//! moments are, [`super::moments`]), in the frames its sounds are cued on:
+//! the song's stream frames while it is sung, the desk's own after it (the
+//! diploma). It is told the game's events with their frames
+//! ([`Conductor::event`], which says where its hit lands, so a look can
+//! land with it) and the music clock ([`Conductor::set_clock`]: the song's
+//! beat grid from the analysis and the sung lines, [`Clock`]); it sends the
+//! notes, the releases of the held ones and the calls to call some off
+//! ([`jodel_synth::Command`]) to wherever they go
 //! ([`jodel_synth::Commands`]): the synth itself when rendering offline,
-//! else a queue to it on the effects path, which puts the stream's frames
-//! on the synth's as it hands them over.
+//! else a queue to it on the effects path
+//! ([`jodel_output::mixer::Effects::commands`]), which puts those frames on
+//! the synth's as it hands them over.
 //!
 //! - At once: a word's pop on the pitch ladder (the song's pentatonic, a
 //!   step higher for each word in a row, the tonic on each rung), its
-//!   clink from the high rungs on (round-robin, a little different each
-//!   time, softer when they come thick, none while a stinger rings), the
-//!   rescue shot's zap, the wind-down of a streak lost.
+//!   clink at the rungs that have them (round-robin, a little different
+//!   each time, softer when they come thick, none while a stinger rings),
+//!   the rescue shot's zap, the wind-down of a streak lost.
 //! - On the next beat (a pickup at once): a rung's stinger, a phrase's
-//!   chime, the diploma's points.
+//!   chime, the diploma's points and its best streak's rung.
 //! - On a downbeat with room before the next sung line: the top rung's
 //!   payout, the top tier's jackpot.
-//! - Held: a riser into a high rung from the word before it, a shimmer
-//!   pad while the streak is high, glitter after each word at the top; a
-//!   streak lost lets them go (and calls off a payout still to come).
+//! - Held: a riser into a rung from the word before it, a shimmer pad
+//!   while the streak is at a rung that holds one, glitter after each word
+//!   at one that has it; a streak lost lets them go (and calls off a payout
+//!   still to come).
+//! - The diploma's as it draws them: each tick of its count-up (a pip a
+//!   step higher as the count goes) and its gems.
 //!
 //! Where a hit lands is the song's grid's one rule
 //! ([`jodel_rhythm::grid::Grid::land`]), the one the looks land by too.
 //! The rungs are reached by the words: a [`Event::Word`] whose run reaches
 //! a rung higher than the last reached plays that rung's stinger after its
 //! pop, so a word and its rung are one event and a jump in the run misses
-//! none. Tiers and rungs are plain indices into a [`Layout`] (how many
-//! tiers, at how many words in a row each rung is): what a sound is follows
-//! from its share of the way to the top.
+//! none. The tiers and their rungs are the tier table's rows
+//! ([`crate::tiers::TIERS`]: how many, at how many words in a row each
+//! rung is reached): what a sound is made of is its row's layers
+//! ([`Layers`]), how big it is its share of the way to the top.
 //!
 //! The key is the song's as the analysis found it, shifted as it is heard;
 //! with none, the sounds stay unpitched or high over the song. Telling it
@@ -43,6 +49,7 @@
 mod clock;
 mod key;
 mod ladder;
+mod layers;
 mod palette;
 mod sounds;
 
@@ -56,88 +63,48 @@ use jodel_synth::hall::HallSettings;
 use jodel_synth::{Command, Commands, Synth};
 
 pub use clock::Clock;
+pub use layers::{Chime, Layers, Streak};
 pub(crate) use sounds::JACKPOT_BEATS;
 
+use crate::tiers::Tier;
 use key::Pentatonic;
+use layers::{rung_has, rung_of, rung_share, tier_share};
 use palette::Palette;
-use sounds::{Score, HIGH, HIGHER, PAYOUT, PAYOUT_LEAD, STREAK};
+use sounds::{Score, PAYOUT, PAYOUT_LEAD, STREAK};
 
 /// The synth's voices, and the notes that can wait in it.
 const VOICES: usize = 96;
 const CUES: usize = 1_024;
-/// The most ticks a count-up plays.
-const MAX_TICKS: u32 = 64;
-/// The most rungs a layout has.
-const MAX_RUNGS: usize = 16;
 /// Clinks closer than this, seconds, come softer.
 const CLINK_GAP: f64 = 0.2;
 
 /// The most commands one event (or a clock or a cancel) sends: what a
-/// queue to the synth must hold at least for one at a time (the longest
-/// count-up, two notes a tick, is the most).
+/// queue to the synth must hold at least for one at a time (the top
+/// rung's stinger with its payout is the most).
 pub const MOST_COMMANDS: usize = 160;
-
-/// How many tiers there are and at how many words in a row each rung is
-/// reached.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Layout {
-    tiers: usize,
-    rungs: [u32; MAX_RUNGS],
-    count: usize,
-}
-
-impl Layout {
-    /// `tiers` tiers, rungs at `rungs` words in a row.
-    ///
-    /// # Panics
-    ///
-    /// With no tier, no rung or more than 16, or rungs not strictly
-    /// increasing from 1 up.
-    pub fn new(tiers: usize, rungs: &[u32]) -> Layout {
-        assert!(tiers > 0, "a layout needs a tier");
-        assert!(
-            !rungs.is_empty() && rungs.len() <= MAX_RUNGS,
-            "1 to {MAX_RUNGS} rungs"
-        );
-        assert!(rungs[0] >= 1, "a rung needs a word");
-        assert!(rungs.windows(2).all(|w| w[0] < w[1]), "rungs increasing");
-        let mut r = [0; MAX_RUNGS];
-        r[..rungs.len()].copy_from_slice(rungs);
-        Layout {
-            tiers,
-            rungs: r,
-            count: rungs.len(),
-        }
-    }
-
-    /// The rungs' words in a row.
-    fn rungs(&self) -> &[u32] {
-        &self.rungs[..self.count]
-    }
-
-    /// Rung `r`'s share of the way to the top (1 up to the rungs).
-    fn rung_share(&self, r: u32) -> f32 {
-        (r as f32 / self.count as f32).clamp(0.0, 1.0)
-    }
-
-    /// Tier `t`'s (0 up).
-    fn tier_share(&self, t: usize) -> f32 {
-        ((t + 1) as f32 / self.tiers as f32).clamp(0.0, 1.0)
-    }
-}
 
 /// A moment of the diploma.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Diploma {
-    /// The points counting up in `ticks` ticks, in tempo (at most 64).
-    Count {
-        /// Its ticks.
-        ticks: u32,
+    /// Tick `k` (from 0) of the points counting up in `of`.
+    Tick {
+        /// Its place.
+        k: u32,
+        /// The ticks in all.
+        of: u32,
     },
-    /// A gem popping in, of a tier.
-    Gem(usize),
+    /// A gem popping in, of a tier (none: a plain one), where across the
+    /// sheet (-1 to 1).
+    Gem {
+        /// Its tier.
+        tier: Option<Tier>,
+        /// Its pan.
+        pan: f32,
+    },
     /// The points all counted: the tier's chime (none: the smallest).
-    Points(Option<usize>),
+    Points(Option<Tier>),
+    /// The best streak written in: the stinger of the rung it reached.
+    Rung(Tier),
 }
 
 /// A game event.
@@ -157,10 +124,10 @@ pub enum Event {
         /// Its pan.
         pan: f32,
     },
-    /// The streak lost (from the rung last reached).
-    Lost,
-    /// A phrase rated, its tier (0 the first).
-    Phrase(usize),
+    /// The streak lost from the rung of a tier.
+    Lost(Tier),
+    /// A phrase rated, its tier.
+    Phrase(Tier),
     /// The top tier's jackpot.
     Jackpot,
     /// A moment of the diploma.
@@ -170,7 +137,8 @@ pub enum Event {
 /// The sound conductor: the planner.
 pub struct Conductor {
     palette: Palette,
-    layout: Layout,
+    /// The words in a row each rung is reached at.
+    rungs: [u32; Tier::COUNT],
     clock: Clock,
     rate: u32,
     key: Option<Pentatonic>,
@@ -191,15 +159,15 @@ pub struct Conductor {
 }
 
 impl Conductor {
-    /// A conductor planning at `rate` Hz for `layout`'s tiers and rungs (at
-    /// the free tempo, no key known), and the synth its notes are for, its
-    /// bus set (to be moved to where it renders: a synth on the effects
-    /// path, at the device's rate).
+    /// A conductor planning at `rate` Hz for the tiers' rows (at the free
+    /// tempo, no key known), and the synth its notes are for, its bus set
+    /// (to be moved to where it renders: a synth on the effects path, at
+    /// the device's rate).
     ///
     /// # Panics
     ///
     /// If the synth takes no such rate (32 to 192 kHz).
-    pub fn new(rate: u32, layout: Layout) -> (Conductor, Synth) {
+    pub fn new(rate: u32) -> (Conductor, Synth) {
         let (bank, palette) = Palette::bank();
         let mut synth = Synth::with_cues(rate, bank, VOICES, CUES);
         synth.set_reverb(HallSettings {
@@ -217,7 +185,7 @@ impl Conductor {
         synth.set_tempo(clock.tempo() as f32);
         let conductor = Conductor {
             palette,
-            layout,
+            rungs: layers::rungs(),
             tempo: clock.tempo(),
             clock,
             rate,
@@ -231,6 +199,11 @@ impl Conductor {
             riser: false,
         };
         (conductor, synth)
+    }
+
+    /// The rate it plans at, Hz.
+    pub fn rate(&self) -> u32 {
+        self.rate
     }
 
     /// The music clock from now on; the synth told its tempo when it
@@ -277,46 +250,43 @@ impl Conductor {
                 sounds::zap(&mut self.score(out), at, pan);
                 at
             }
-            Event::Lost => {
-                let share = self.layout.rung_share(self.rung);
+            Event::Lost(from) => {
                 self.lose(out, at);
-                sounds::wind_down(&mut self.score(out), at, share);
+                let reels = layers::reach(rung_of(from), Streak::Reels);
+                sounds::wind_down(&mut self.score(out), at, reels);
                 at
             }
-            Event::Phrase(tier) => self.chime(out, at, self.layout.tier_share(tier)),
+            Event::Phrase(tier) => self.chime(out, at, Some(tier)),
             Event::Jackpot => {
                 let length = JACKPOT_BEATS * self.clock.beat_len();
                 let d = self.clock.land(at, When::Downbeat { length });
                 sounds::jackpot(&mut self.score(out), d);
                 d
             }
-            Event::Diploma(Diploma::Count { ticks }) => {
-                let ticks = ticks.min(MAX_TICKS);
-                let start = self.clock.land(at, When::Beat);
-                let clock = self.clock;
-                let mut s = self.score(out);
-                for k in 0..ticks {
-                    sounds::tick(&mut s, clock.tick(start, k, ticks), k, ticks);
-                }
-                clock.tick(start, ticks.saturating_sub(1), ticks)
-            }
-            Event::Diploma(Diploma::Gem(tier)) => {
-                let share = self.layout.tier_share(tier);
-                sounds::gem(&mut self.score(out), at, share);
+            Event::Diploma(Diploma::Tick { k, of }) => {
+                sounds::tick(&mut self.score(out), at, k, of);
                 at
             }
-            Event::Diploma(Diploma::Points(tier)) => {
-                let share = tier.map_or(0.0, |t| self.layout.tier_share(t));
-                self.chime(out, at, share)
+            Event::Diploma(Diploma::Gem { tier, pan }) => {
+                sounds::gem(&mut self.score(out), at, tier_share(tier), pan);
+                at
+            }
+            Event::Diploma(Diploma::Points(tier)) => self.chime(out, at, tier),
+            Event::Diploma(Diploma::Rung(tier)) => {
+                let r = rung_of(tier);
+                let hit = self.clock.land(at, When::Beat);
+                let layers = layers::at_rung(r);
+                sounds::stinger(&mut self.score(out), at, hit, rung_share(r), layers);
+                hit
             }
         }
     }
 
-    /// A chime `share` of the tiers up from `at`, on the next beat; where
-    /// its hit lands.
-    fn chime(&mut self, out: &mut impl Commands, at: u64, share: f32) -> u64 {
+    /// A chime of `tier` (none: under the first) from `at`, on the next
+    /// beat; where its hit lands.
+    fn chime(&mut self, out: &mut impl Commands, at: u64, tier: Option<Tier>) -> u64 {
         let hit = self.clock.land(at, When::Beat);
-        sounds::chime(&mut self.score(out), at, hit, share);
+        sounds::chime(&mut self.score(out), at, hit, tier);
         hit
     }
 
@@ -337,15 +307,15 @@ impl Conductor {
         if streak == 0 {
             return at;
         }
-        let step = ladder::step(streak, self.layout.rungs());
-        if step.rung < self.rung {
-            // A new run the game did not say the last was lost before.
-            self.lose(out, at);
-        }
-        let share = self.layout.rung_share(step.rung);
-        sounds::pop(&mut self.score(out), at, step, share, pan);
+        // Only the streak lost lets go of the rung reached ([`Event::Lost`]):
+        // a word a step lower (told late, or a word rescued after those past
+        // it) climbs on from there.
+        let step = ladder::step(streak, &self.rungs);
+        let share = rung_share(step.rung);
+        let glint = rung_has(step.rung, Streak::Glint);
+        sounds::pop(&mut self.score(out), at, step, share, glint, pan);
         let second = f64::from(self.rate);
-        if share >= HIGH && at >= self.quiet_until {
+        if rung_has(step.rung, Streak::Clinks) && at >= self.quiet_until {
             let thick = self
                 .last_clink
                 .is_some_and(|t| at.saturating_sub(t) < (CLINK_GAP * second) as u64);
@@ -359,41 +329,41 @@ impl Conductor {
         if step.rung > self.rung {
             lands = self.rung_up(out, at, step.rung);
         } else {
-            // The word before a high rung: the riser, until the rung comes.
-            let rungs = self.layout.rungs();
-            let next = rungs.iter().position(|&r| r == streak + 1);
-            let high = next.is_some_and(|k| self.layout.rung_share(k as u32 + 1) >= HIGHER);
-            if high && !self.riser {
+            // The word before a rung a riser leads into: the riser, until
+            // the rung comes.
+            let next = self.rungs.iter().position(|&r| r == streak + 1);
+            let rises = next.is_some_and(|k| rung_has(k as u32 + 1, Streak::Riser));
+            if rises && !self.riser {
                 sounds::riser(&mut self.score(out), at);
                 self.riser = true;
             }
-            if step.rung as usize == self.layout.count {
+            if rung_has(step.rung, Streak::Glitter) {
                 let first = self.clock.next_step(at + 1, 4);
                 let sixteenth = (self.clock.beat_len() / 4.0) as u64;
                 let steps = [first, first + sixteenth];
                 sounds::glitter_after(&mut self.score(out), steps);
             }
         }
-        if share >= HIGHER {
+        if rung_has(step.rung, Streak::Shimmer) {
             // Started on the rung's hit; each word after holds it on.
             sounds::shimmer(&mut self.score(out), lands);
         }
         lands
     }
 
-    /// Rung `r` reached on `at`, above the last: its stinger, and at the
-    /// top the payout; the frame its hit lands on.
+    /// Rung `r` reached on `at`, above the last: its stinger, and its
+    /// payout where it has one; the frame its hit lands on.
     fn rung_up(&mut self, out: &mut impl Commands, at: u64, r: u32) -> u64 {
         self.rung = r;
-        let share = self.layout.rung_share(r);
         let hit = self.clock.land(at, When::Beat);
         if self.riser {
             sounds::riser_lands(&mut self.score(out), hit);
             self.riser = false;
         }
-        let end = sounds::stinger(&mut self.score(out), at, hit, share);
+        let layers = layers::at_rung(r);
+        let end = sounds::stinger(&mut self.score(out), at, hit, rung_share(r), layers);
         self.quiet_until = self.quiet_until.max(end);
-        if r as usize >= self.layout.count {
+        if layers.contains(&Streak::Payout) {
             let bar = self.clock.bar();
             let beat = self.clock.beat_len();
             let length = sounds::payout_beats(bar) * beat;

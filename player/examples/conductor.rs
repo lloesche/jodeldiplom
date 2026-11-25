@@ -26,15 +26,17 @@ use jodel_rhythm::{Analysis, Region};
 use jodel_synth::engines::{analog, drum, formant, supersaw};
 use jodel_synth::patch::{Adsr, Lfo, LfoRate};
 use jodel_synth::{Bank, NoteOn, Patch, PatchId, Synth};
-use jodeldiplom::sfx::conductor::{Clock, Conductor, Diploma, Event, Layout};
+use jodeldiplom::core::singing::rung;
+use jodeldiplom::sfx::conductor::{Clock, Conductor, Diploma, Event};
+use jodeldiplom::tiers::Tier;
 
 const RATE: u32 = 48_000;
 const TEMPO: f64 = 112.0;
 const SECONDS: f64 = 66.0;
 /// A device period.
 const PERIOD: usize = 480;
+/// The tier table's rungs.
 const RUNGS: [u32; 5] = [5, 10, 20, 35, 55];
-const TIERS: usize = 5;
 /// The song: two bars before the first line, lines of two bars sung and
 /// a bar's gap, nine of them; the words' places in a line, in beats.
 const INTRO: f64 = 8.0;
@@ -108,7 +110,7 @@ fn clock_at(a: &Analysis, now: u64, sung: bool) -> Clock {
         }
     }
     let t = now as f64 / f64::from(RATE);
-    Clock::from_analysis(a, t, now, RATE, ahead)
+    Clock::from_analysis(a, t, now, f64::from(RATE), ahead)
 }
 
 /// The game's events, in order: their frames and what.
@@ -125,7 +127,9 @@ fn script() -> Vec<(u64, Event)> {
                 events.push((f.saturating_sub(frame(0.25)), Event::Zap { pan }));
             }
             if word == MISSED {
-                events.push((f, Event::Lost));
+                if let Some(from) = rung(streak) {
+                    events.push((f, Event::Lost(from)));
+                }
                 streak = 0;
             } else {
                 streak += 1;
@@ -134,22 +138,39 @@ fn script() -> Vec<(u64, Event)> {
             word += 1;
         }
         let end = frame(start + SUNG + 0.25);
+        let tier = Tier::ALL[tier];
         events.push((end, Event::Phrase(tier)));
-        if tier == TIERS - 1 {
+        if tier == Tier::TOP {
             events.push((end, Event::Jackpot));
         }
     }
     // The diploma, after the last line.
     let after = INTRO + LINE * LINE_COUNT as f64;
-    let count = Event::Diploma(Diploma::Count { ticks: 24 });
-    events.push((frame(after + 0.5), count));
+    events.extend(count_up(frame(after + 0.5), 24));
     for (k, tier) in [1, 2, 3, 4].into_iter().enumerate() {
-        let gem = Event::Diploma(Diploma::Gem(tier));
+        let pan = -0.3 + 0.2 * k as f32;
+        let gem = Event::Diploma(Diploma::Gem {
+            tier: Some(Tier::ALL[tier]),
+            pan,
+        });
         events.push((frame(after + 4.0 + 0.5 * k as f64), gem));
     }
-    events.push((frame(after + 6.5), Event::Diploma(Diploma::Points(Some(4)))));
+    let points = Diploma::Points(Some(Tier::TOP));
+    events.push((frame(after + 6.5), Event::Diploma(points)));
     events.sort_by_key(|&(f, _)| f);
     events
+}
+
+/// The diploma's count-up of `of` ticks from `at`, faster and faster as
+/// the reveal draws it (two seconds in all).
+fn count_up(at: u64, of: u32) -> Vec<(u64, Event)> {
+    (0..of)
+        .map(|k| {
+            let share = (f64::from(k) / f64::from(of)).powf(0.6);
+            let t = at + (2.0 * share * f64::from(RATE)) as u64;
+            (t, Event::Diploma(Diploma::Tick { k, of }))
+        })
+        .collect()
 }
 
 /// What playing cost: the wall seconds in all, each period's (sorted:
@@ -168,7 +189,7 @@ fn play(
     seconds: f64,
     clock_of: &dyn Fn(u64) -> Clock,
 ) -> (Vec<f32>, Cost) {
-    let (mut c, mut synth) = Conductor::new(RATE, Layout::new(TIERS, &RUNGS));
+    let (mut c, mut synth) = Conductor::new(RATE);
     c.set_key(Some(key), 0);
     let frames = (seconds * f64::from(RATE)) as usize / PERIOD * PERIOD;
     let mut out = vec![0.0f32; 2 * frames];
@@ -348,7 +369,7 @@ fn sounds(dir: &Path, key: &jodel_rhythm::key::Key, a: &Analysis) {
     let mut ladder: Vec<(u64, Event)> = (1..=60u32)
         .map(|streak| (frame(0.5 * f64::from(streak)), word(streak, 0.0)))
         .collect();
-    ladder.push((frame(31.0), Event::Lost));
+    ladder.push((frame(31.0), Event::Lost(Tier::TOP)));
     one("ladder_to_the_top", ladder, 36.0);
     for (r, &streak) in (1u32..).zip(&RUNGS) {
         one(
@@ -357,11 +378,13 @@ fn sounds(dir: &Path, key: &jodel_rhythm::key::Key, a: &Analysis) {
             8.0,
         );
         // The rung reached (its stinger), then lost two bars on.
-        let lost = vec![(0, word(streak, 0.0)), (frame(8.0), Event::Lost)];
+        let from = Event::Lost(Tier::ALL[r as usize - 1]);
+        let lost = vec![(0, word(streak, 0.0)), (frame(8.0), from)];
         one(&format!("lost_from_rung{r}"), lost, 10.0);
     }
-    for t in 0..TIERS {
-        one(&format!("chime_tier{t}"), vec![(at, Event::Phrase(t))], 4.0);
+    for t in Tier::ALL {
+        let name = format!("chime_{}", t.name().to_lowercase());
+        one(&name, vec![(at, Event::Phrase(t))], 4.0);
     }
     one("jackpot", vec![(at, Event::Jackpot)], 6.0);
     let clinks = (0..16)
@@ -375,16 +398,15 @@ fn sounds(dir: &Path, key: &jodel_rhythm::key::Key, a: &Analysis) {
     one("words_with_clinks", clinks, 9.0);
     one("zap", vec![(at, Event::Zap { pan: 0.3 })], 1.5);
     one("pop", vec![(at, word(1, 0.0))], 1.0);
-    let count = vec![
-        (at, Event::Diploma(Diploma::Count { ticks: 24 })),
-        (frame(7.0), Event::Diploma(Diploma::Points(Some(4)))),
-    ];
+    let mut count = count_up(at, 24);
+    let points = Diploma::Points(Some(Tier::TOP));
+    count.push((frame(7.0), Event::Diploma(points)));
     one("count_up", count, 11.0);
     // Held on by a word every half beat, then lost.
     let mut shimmer: Vec<(u64, Event)> = (0..18u32)
         .map(|k| (at + frame(0.5 * f64::from(k)), word(35 + k, 0.0)))
         .collect();
-    shimmer.push((frame(9.0), Event::Lost));
+    shimmer.push((frame(9.0), Event::Lost(Tier::named("Amazing"))));
     one("shimmer_held_then_lost", shimmer, 12.0);
 }
 

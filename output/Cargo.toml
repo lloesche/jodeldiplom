@@ -9,6 +9,7 @@ description = "PCM output to audio devices through the system mixer, shared (WAS
 [dependencies]
 # Every file written: whole or not at all, made durable.
 durable = { path = "../durable" }
+jodel-synth = { path = "../synth" }
 
 [target.'cfg(windows)'.dependencies.windows]
 version = "0.62.2"

@@ -355,7 +355,7 @@ impl Run {
         // The effects: their cues due start, the voices sounding summed, at
         // their strip's path.
         if let Some(fx) = &mut self.effects {
-            fx.chunk(n, ch, format.rate, &self.slots);
+            fx.chunk((self.epoch, first, n), ch, format.rate, &self.slots);
             fx.take_gains(&self.strips);
         }
         let effects = self.effects.as_ref().and_then(EffectsRun::lane);

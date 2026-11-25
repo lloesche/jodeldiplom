@@ -3,7 +3,7 @@
 //! microphone's tap on the device (waiting there for the device thread to
 //! take it, see `mic.rs`) and drops what the mixer thread lets go of (a
 //! microphone, whose last handle waits for its cleaner; an output's
-//! stream, whose ring is freed).
+//! stream, whose ring is freed; the effects' synth replaced).
 //!
 //! Jobs go over a queue made at the start. One that finds it full waits in
 //! a list of the mixer thread's, also made at the start, and goes on a
@@ -35,6 +35,8 @@ pub(super) enum Gone {
     Stream(Stream),
     /// A device's stream, once tapped.
     Device(Arc<Shared>),
+    /// The effects input's live synth, replaced.
+    Synth(Box<jodel_synth::Synth>),
     #[cfg(test)]
     Probe(tests::Probe),
 }
@@ -157,6 +159,7 @@ fn run(jobs: Receiver<Job>, shared: &MixShared) {
                 Gone::Input(input) => drop(input),
                 Gone::Stream(stream) => drop(stream),
                 Gone::Device(device) => drop(device),
+                Gone::Synth(synth) => drop(synth),
                 #[cfg(test)]
                 Gone::Probe(probe) => drop(probe),
             },

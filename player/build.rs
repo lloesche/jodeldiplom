@@ -7,14 +7,14 @@
 //!   `include_bytes!` as `EMBEDDED_FONTS`; the binary includes that file
 //!   and hands the fonts to the library. Without them the window uses the
 //!   embedded Cascadia Mono.
-//! - The key of its game sounds kept on disk: `$OUT_DIR/sfx_key.rs`, a
-//!   hash of the code that makes them (`src/sfx/`'s `synth.rs`,
-//!   `sounds.rs`, `cheers.rs`, `recipes.rs`, `diploma.rs` and `pen.rs`,
-//!   the tier table that names the tiers' recipes and peaks,
-//!   `src/tiers.rs`, and what the diploma's are timed to: the reveal's
-//!   times and the signature's stroke, `src/core/singing/`'s `reveal.rs`
-//!   and `signature.rs`; not how they are played), so a bank kept by
-//!   another build of them is made again (`src/sfx/store.rs`).
+//! - The key of the result screen's sounds kept on disk (the bank; the
+//!   game's own are played live, made of nothing kept):
+//!   `$OUT_DIR/sfx_key.rs`, a hash of the code that makes them
+//!   (`src/sfx/`'s `synth.rs`, `sounds.rs`, `cheers.rs`, `diploma.rs` and
+//!   `pen.rs`, and what the diploma's are timed to: the reveal's times and
+//!   the signature's stroke, `src/core/singing/`'s `reveal.rs` and
+//!   `signature.rs`; not how they are played), so a bank kept by another
+//!   build of them is made again (`src/sfx/store.rs`).
 //! - Its icon on Windows (GNU and GNU-LLVM targets): `windres` compiles
 //!   `assets/jodeldiplom.rc` into an object linked into the executable.
 //!   `WINDRES` names another resource compiler; without one the
@@ -42,13 +42,11 @@ fn main() {
     windows_icon();
 }
 
-/// The files whose code makes the game's sounds.
-const SOUND_SOURCES: [&str; 9] = [
+/// The files whose code makes the bank's sounds.
+const SOUND_SOURCES: [&str; 7] = [
     "src/sfx/synth.rs",
     "src/sfx/sounds.rs",
     "src/sfx/cheers.rs",
-    "src/sfx/recipes.rs",
-    "src/tiers.rs",
     "src/sfx/diploma.rs",
     "src/sfx/pen.rs",
     "src/core/singing/reveal.rs",

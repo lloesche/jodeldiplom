@@ -1,22 +1,26 @@
-//! The result's reveal as the sounds take it: each beat of it
+//! The result's reveal as the sounds take them: each beat of it
 //! ([`Beat`], the same beats the stage draws, at the same clock:
 //! [`crate::core::karaoke::result_now`]) made the sounds it lands with
-//! ([`sounds_of`]), played at once on the frame that reaches it; what the
-//! stage draws a while from a beat (the sheet unrolling, an entry written
-//! in, a stamp coming down, the signature) its sound follows inside
-//! ([`super::diploma`]). A frame reads the beats since the frame before;
-//! one long gone ([`STALE`]: the first frame after a stall) stays silent,
-//! and so does everything a skip jumped over (the reveal completed at
-//! once plays nothing again). Gems coming closer together than
+//! ([`sounds_of`]), played at once on the frame that reaches it: the
+//! diploma's paper, pen, stamps and tunes from the bank ([`Heard::Bank`];
+//! what the stage draws a while from a beat, the sheet unrolling, an entry
+//! written in, a stamp coming down, the signature, its sound follows
+//! inside: [`super::diploma`]), its music by the game's synth
+//! ([`Heard::Live`]: the count-up's ticks, the points all counted, the
+//! gems, the best streak's rung). A frame reads the beats since the frame
+//! before; one long gone ([`STALE`]: the first frame after a stall) stays
+//! silent, and so does everything a skip jumped over (the reveal completed
+//! at once plays nothing again). Gems coming closer together than
 //! [`PLINK_EVERY`] plink fewer than one each: one for a few, in the best
 //! tier among them.
 //!
-//! Each sound is panned to where it lands on the sheet: the heading's
-//! stars either side, the seal, the stamps and the date right of the
-//! middle, the signature left of it.
+//! The sounds are panned to where they land on the sheet: the heading's
+//! stars either side, the gems across it, the seal, the stamps and the
+//! date right of the middle, the signature left of it.
 
+use super::conductor::Diploma as Live;
 use super::diploma::{Diploma, Entry};
-use super::moments::{Cued, STALE};
+use super::moments::STALE;
 use super::sounds::Sound;
 use crate::core::shine::Tier;
 use crate::core::singing::{Beat, Shown, Side, Verdict};
@@ -32,8 +36,14 @@ const SEAL: f32 = 0.35;
 const SIGNATURE: f32 = -0.3;
 const DATE: f32 = 0.05;
 
-/// A sound a beat lands with: which, its gain and its pan.
-pub type Heard = (Sound, f32, f32);
+/// A sound a beat lands with.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Heard {
+    /// One of the bank's: which, its gain and its pan.
+    Bank(Sound, f32, f32),
+    /// The game's synth's.
+    Live(Live),
+}
 
 /// How many gems share a plink in `shown`'s reveal (1: each its own).
 fn plink_stride(shown: &Shown) -> usize {
@@ -42,12 +52,11 @@ fn plink_stride(shown: &Shown) -> usize {
         .max(1.0) as usize
 }
 
-/// The sounds `beat` of `shown`'s reveal lands with (three at most), each
-/// with its gain and pan; none for what lands silently.
+/// The sounds `beat` of `shown`'s reveal lands with (three at most); none
+/// for what lands silently.
 pub fn sounds_of(beat: Beat, shown: &Shown) -> impl Iterator<Item = Heard> {
-    let steps = super::cheers::TICK_STEPS;
     let r = &shown.result;
-    let paper = |d: Diploma, pan: f32| Some((Sound::Diploma(d), 1.0, pan));
+    let paper = |d: Diploma, pan: f32| Some(Heard::Bank(Sound::Diploma(d), 1.0, pan));
     let one = |h: Option<Heard>| [h, None, None];
     let heard: [Option<Heard>; 3] = match beat {
         Beat::Paper => one(paper(Diploma::Unroll, 0.0)),
@@ -60,25 +69,30 @@ pub fn sounds_of(beat: Beat, shown: &Shown) -> impl Iterator<Item = Heard> {
         }
         Beat::Title => one(paper(Diploma::Title, 0.0)),
         Beat::Tick(k) => {
-            let step = (k as usize * steps) / (shown.reveal.ticks() as usize).max(1);
-            one(Some((Sound::Tick(step.min(steps - 1)), 1.0, 0.0)))
+            let of = shown.reveal.ticks();
+            one(Some(Heard::Live(Live::Tick { k, of })))
         }
         // Nothing counted: the nought is just written.
         Beat::Points if r.points == 0 => one(None),
-        Beat::Points => one(paper(Diploma::Ding, 0.0)),
+        Beat::Points => {
+            let best = r.phrases.iter().filter_map(|p| p.tier).max();
+            one(Some(Heard::Live(Live::Points(best))))
+        }
         // No word hit: the pen writes it in, nothing pops.
         Beat::Words if r.hit == 0 => one(paper(Diploma::Scribbled(Entry::Words), 0.0)),
         Beat::Words => one(paper(Diploma::Written(Entry::Words), 0.0)),
         Beat::Streak if r.streak == 0 => one(paper(Diploma::Scribbled(Entry::Streak), 0.0)),
         Beat::Streak => {
-            // The step up to the rung it reached (under the first, only
+            // The stinger of the rung it reached (under the first, only
             // the pen).
             let rung = crate::core::singing::rung(r.streak);
-            let up = rung.map(|t| (Sound::StepUp(t), 0.55, 0.0));
+            let up = rung.map(|t| Heard::Live(Live::Rung(t)));
             [up, paper(Diploma::Written(Entry::Streak), 0.0), None]
         }
         Beat::Gem(i, _) => one(gem(i, shown)),
-        Beat::Verdict(Verdict::Medal(m)) => one(Some((Sound::Medal(m), 1.0, 0.5 * SEAL))),
+        Beat::Verdict(Verdict::Medal(m)) => {
+            one(Some(Heard::Bank(Sound::Medal(m), 1.0, 0.5 * SEAL)))
+        }
         // A star sticker pressed on where the seal goes, and the verdict's
         // own little tune: kind, whatever it is.
         Beat::Verdict(Verdict::Cheer) => [
@@ -93,11 +107,11 @@ pub fn sounds_of(beat: Beat, shown: &Shown) -> impl Iterator<Item = Heard> {
         ],
         // A sleepy star, a "Zzz" stamped beside it, a lullaby.
         Beat::Verdict(Verdict::Silent) => [
-            Some((Sound::Diploma(Diploma::Sticker), 0.7, SEAL)),
-            Some((Sound::Diploma(Diploma::Stamp), 0.6, SEAL)),
+            Some(Heard::Bank(Sound::Diploma(Diploma::Sticker), 0.7, SEAL)),
+            Some(Heard::Bank(Sound::Diploma(Diploma::Stamp), 0.6, SEAL)),
             paper(Diploma::Snooze, 0.0),
         ],
-        Beat::NewBest => one(Some((Sound::NewBest, 1.0, 0.5 * SEAL))),
+        Beat::NewBest => one(Some(Heard::Bank(Sound::NewBest, 1.0, 0.5 * SEAL))),
         // The best before shown calmly, or the word that the demo key's
         // singing is no best: a soft tap of the pen, never a stamp.
         Beat::Best(_) => one(paper(Diploma::Tap, SEAL)),
@@ -124,7 +138,8 @@ fn gem(i: usize, shown: &Shown) -> Option<Heard> {
         .max();
     let n = r.phrases.len().max(2) - 1;
     let across = i.min(n) as f32 / n as f32;
-    Some((Sound::Gem(tier), 1.0, (across - 0.5) * 0.8))
+    let pan = (across - 0.5) * 0.8;
+    Some(Heard::Live(Live::Gem { tier, pan }))
 }
 
 /// The reveal's sounds followed frame by frame: the result read (its id,
@@ -138,7 +153,7 @@ pub struct RevealSounds {
 impl RevealSounds {
     /// The sounds of a frame with `now` (the result shown and its reveal's
     /// time; none: none shows, and the next one is read from its start).
-    pub fn frame(&mut self, now: Option<(&Shown, f64)>) -> Vec<Cued> {
+    pub fn frame(&mut self, now: Option<(&Shown, f64)>) -> Vec<Heard> {
         let Some((shown, t)) = now else {
             self.seen = None;
             return Vec::new();
@@ -153,20 +168,19 @@ impl RevealSounds {
             Some(_) => {}
         }
         self.seen = Some(key);
-        let cues = shown
+        let heard = shown
             .reveal
             .between(self.last, t)
             .filter(|&(at, _)| at >= t - STALE)
             .flat_map(|(_, beat)| sounds_of(beat, shown))
-            .map(|(sound, gain, pan)| Cued {
-                sound,
-                gain,
-                pan,
-                at: None,
-            })
             .collect();
         self.last = self.last.max(t);
-        cues
+        heard
+    }
+
+    /// Whether a result is being revealed (since the last frame).
+    pub fn showing(&self) -> bool {
+        self.seen.is_some()
     }
 }
 
@@ -208,12 +222,34 @@ mod tests {
         Shown::new(result(&tiers), 1, 1_000)
     }
 
+    /// The bank's sounds of `beat`.
     fn sounds(beat: Beat, shown: &Shown) -> Vec<Sound> {
-        sounds_of(beat, shown).map(|h| h.0).collect()
+        sounds_of(beat, shown)
+            .filter_map(|h| match h {
+                Heard::Bank(s, ..) => Some(s),
+                Heard::Live(_) => None,
+            })
+            .collect()
     }
 
-    fn heard(beat: Beat, shown: &Shown) -> Vec<Heard> {
-        sounds_of(beat, shown).collect()
+    /// The synth's of `beat`.
+    fn live(beat: Beat, shown: &Shown) -> Vec<Live> {
+        sounds_of(beat, shown)
+            .filter_map(|h| match h {
+                Heard::Live(d) => Some(d),
+                Heard::Bank(..) => None,
+            })
+            .collect()
+    }
+
+    /// The pans of the bank's sounds of `beat`.
+    fn pans(beat: Beat, shown: &Shown) -> Vec<f32> {
+        sounds_of(beat, shown)
+            .filter_map(|h| match h {
+                Heard::Bank(_, _, pan) => Some(pan),
+                Heard::Live(_) => None,
+            })
+            .collect()
     }
 
     /// Frames at 60 a second from when the result shows to past its end:
@@ -222,16 +258,17 @@ mod tests {
     fn each_beat_sounds_once_on_its_frame() {
         let s = shown();
         let mut reveal = RevealSounds::default();
-        let mut heard: Vec<(f64, Sound)> = Vec::new();
+        let mut heard: Vec<(f64, Heard)> = Vec::new();
         for f in 0..(60.0 * (s.reveal.end() + 2.0)) as u64 {
             let t = s.time(1_000 + f * 1000 / 60);
-            heard.extend(reveal.frame(Some((&s, t))).iter().map(|c| (t, c.sound)));
+            heard.extend(reveal.frame(Some((&s, t))).iter().map(|&h| (t, h)));
         }
-        let due: Vec<(f64, Sound)> = s
+        assert!(reveal.showing());
+        let due: Vec<(f64, Heard)> = s
             .reveal
             .beats()
             .iter()
-            .flat_map(|&(at, b)| sounds(b, &s).into_iter().map(move |x| (at, x)))
+            .flat_map(|&(at, b)| sounds_of(b, &s).map(move |x| (at, x)))
             .collect();
         assert_eq!(heard.len(), due.len(), "{heard:?}");
         for ((t, sound), (at, want)) in heard.iter().zip(&due) {
@@ -241,62 +278,72 @@ mod tests {
                 "{want:?} at {at}: {t}"
             );
         }
-        let has = |x: Sound| heard.iter().any(|(_, s)| *s == x);
-        assert!(has(Sound::Medal(Medal::Gold)) && has(Sound::NewBest));
-        assert!(has(Sound::Gem(Some(Tier::TOP))) && has(Sound::Gem(None)));
-        assert!(heard.iter().any(|(_, s)| matches!(s, Sound::Tick(_))));
+        let has = |x: Heard| heard.iter().any(|(_, h)| *h == x);
+        assert!(has(Heard::Bank(Sound::Medal(Medal::Gold), 1.0, 0.5 * SEAL)));
+        assert!(has(Heard::Bank(Sound::NewBest, 1.0, 0.5 * SEAL)));
+        let gem = |t: Option<Tier>| {
+            heard
+                .iter()
+                .any(|(_, h)| matches!(h, Heard::Live(Live::Gem { tier, .. }) if *tier == t))
+        };
+        assert!(gem(Some(Tier::TOP)) && gem(None));
+        // Across the sheet, the first on the left, the last on the right.
+        let pans: Vec<f32> = (heard.iter())
+            .filter_map(|(_, h)| match h {
+                Heard::Live(Live::Gem { pan, .. }) => Some(*pan),
+                _ => None,
+            })
+            .collect();
+        assert!(pans[0] < 0.0 && *pans.last().unwrap() > 0.0, "{pans:?}");
+        assert!(heard
+            .iter()
+            .any(|(_, h)| matches!(h, Heard::Live(Live::Tick { .. }))));
+        assert!(reveal.frame(None).is_empty() && !reveal.showing());
     }
 
     /// Every moment of the diploma has its sound, in the order drawn: the
     /// paper unrolling, the heading's stars (left, then right), the title,
-    /// the ticks climbing the scale to the points' ding, each entry
-    /// written in and landing, the seal, the stamp, the signature and the
-    /// date.
+    /// the ticks climbing to the points' chime in the best tier reached,
+    /// each entry written in and landing (the streak's with its rung), the
+    /// seal, the stamp, the signature and the date.
     #[test]
     fn each_diploma_moment_has_its_sound() {
         let s = shown();
         let d = Sound::Diploma;
         assert_eq!(sounds(Beat::Paper, &s), [d(Diploma::Unroll)]);
-        let stars: Vec<Heard> = [Side::Left, Side::Right]
+        let stars: Vec<Sound> = [Side::Left, Side::Right]
             .into_iter()
-            .flat_map(|side| heard(Beat::Heading(side), &s))
+            .flat_map(|side| sounds(Beat::Heading(side), &s))
             .collect();
         assert_eq!(
-            (stars[0].0, stars[1].0),
-            (d(Diploma::Star(Side::Left)), d(Diploma::Star(Side::Right)))
+            stars,
+            [d(Diploma::Star(Side::Left)), d(Diploma::Star(Side::Right))]
         );
-        assert!(stars[0].2 < 0.0 && stars[1].2 > 0.0, "{stars:?}");
+        assert!(pans(Beat::Heading(Side::Left), &s)[0] < 0.0);
+        assert!(pans(Beat::Heading(Side::Right), &s)[0] > 0.0);
         assert_eq!(sounds(Beat::Title, &s), [d(Diploma::Title)]);
-        let steps: Vec<usize> = (0..s.reveal.ticks())
-            .flat_map(|k| sounds(Beat::Tick(k), &s))
-            .map(|x| match x {
-                Sound::Tick(step) => step,
-                other => panic!("{other:?}"),
-            })
-            .collect();
-        assert!(steps.windows(2).all(|w| w[0] <= w[1]), "{steps:?}");
-        let top = super::super::cheers::TICK_STEPS - 1;
-        assert_eq!((steps[0], *steps.last().unwrap()), (0, top));
-        assert_eq!(sounds(Beat::Points, &s), [d(Diploma::Ding)]);
+        let of = s.reveal.ticks();
+        let ticks: Vec<Live> = (0..of).flat_map(|k| live(Beat::Tick(k), &s)).collect();
+        let want: Vec<Live> = (0..of).map(|k| Live::Tick { k, of }).collect();
+        assert_eq!(ticks, want);
+        assert_eq!(live(Beat::Points, &s), [Live::Points(Some(Tier::TOP))]);
         assert_eq!(sounds(Beat::Words, &s), [d(Diploma::Written(Entry::Words))]);
+        assert_eq!(live(Beat::Streak, &s), [Live::Rung(Tier::named("Awesome"))]);
         assert_eq!(
             sounds(Beat::Streak, &s),
-            [
-                Sound::StepUp(Tier::named("Awesome")),
-                d(Diploma::Written(Entry::Streak))
-            ]
+            [d(Diploma::Written(Entry::Streak))]
         );
-        let seal = heard(Beat::Verdict(Verdict::Medal(Medal::Gold)), &s);
-        assert_eq!(seal[0].0, Sound::Medal(Medal::Gold));
-        assert!(seal[0].2 > 0.0, "the seal's on the right");
+        let seal = Beat::Verdict(Verdict::Medal(Medal::Gold));
+        assert_eq!(sounds(seal, &s), [Sound::Medal(Medal::Gold)]);
+        assert!(pans(seal, &s)[0] > 0.0, "the seal's on the right");
         assert_eq!(sounds(Beat::NewBest, &s), [Sound::NewBest]);
         assert_eq!(sounds(Beat::Best(9), &s), [d(Diploma::Tap)]);
-        let end = heard(Beat::End, &s);
         assert_eq!(
-            (end[0].0, end[1].0),
-            (d(Diploma::Signature), d(Diploma::Date))
+            sounds(Beat::End, &s),
+            [d(Diploma::Signature), d(Diploma::Date)]
         );
-        assert!(end[0].2 < end[1].2, "signed left of the date");
+        let end = pans(Beat::End, &s);
+        assert!(end[0] < end[1], "signed left of the date");
         // Each verdict without a medal: a sticker and its own tune; where
         // nothing was scored, a stamp too, and the pen alone for entries
         // with nothing to cheer.
@@ -312,12 +359,13 @@ mod tests {
             [d(Diploma::Sticker), d(Diploma::Whole)]
         );
         (r.points, r.hit, r.streak) = (0, 0, 0);
+        r.phrases.clear();
         let silent = Shown::new(r, 3, 0);
         assert_eq!(
             sounds(Beat::Verdict(Verdict::Silent), &silent),
             [d(Diploma::Sticker), d(Diploma::Stamp), d(Diploma::Snooze)]
         );
-        assert!(sounds(Beat::Points, &silent).is_empty());
+        assert_eq!(sounds_of(Beat::Points, &silent).count(), 0);
         assert_eq!(
             sounds(Beat::Words, &silent),
             [d(Diploma::Scribbled(Entry::Words))]
@@ -326,6 +374,7 @@ mod tests {
             sounds(Beat::Streak, &silent),
             [d(Diploma::Scribbled(Entry::Streak))]
         );
+        assert!(live(Beat::Streak, &silent).is_empty());
         // The demo key sang it: no new best, no stamp, its best line (that
         // it is none) a soft tap.
         let demo = Shown::new(
@@ -355,20 +404,24 @@ mod tests {
         let mut tiers = vec![None; 200];
         tiers[7] = Some(Tier::TOP);
         let s = Shown::new(result(&tiers), 1, 0);
-        let plinks: Vec<(f64, Sound)> = s
+        let plinks: Vec<(f64, Live)> = s
             .reveal
             .beats()
             .iter()
             .filter(|(_, b)| matches!(b, Beat::Gem(..)))
-            .flat_map(|&(at, b)| sounds(b, &s).into_iter().map(move |x| (at, x)))
+            .flat_map(|&(at, b)| live(b, &s).into_iter().map(move |x| (at, x)))
             .collect();
         assert!(plinks.len() < 60 && plinks.len() > 20, "{}", plinks.len());
         assert!(plinks
             .windows(2)
             .all(|w| w[1].0 - w[0].0 >= PLINK_EVERY - 1e-9));
-        assert!(plinks
-            .iter()
-            .any(|(_, s)| *s == Sound::Gem(Some(Tier::TOP))));
+        assert!(plinks.iter().any(|(_, g)| matches!(
+            g,
+            Live::Gem {
+                tier: Some(Tier::TOP),
+                ..
+            }
+        )));
     }
 
     /// Skipped halfway: nothing it jumped over sounds, then or after; a

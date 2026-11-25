@@ -1,13 +1,6 @@
-//! The result screen's sounds, made here at the desk's rate like the
-//! game's others ([`super::sounds`]):
+//! The result screen's verdicts, made here at the desk's rate like its
+//! others ([`super::sounds`]):
 //!
-//! - [`Sound::Tick`]: the points counting up, as a coin counter's: the
-//!   click of its wheel, a coin's metallic blip on it, a step of the scale
-//!   higher as the count goes (the ticks coming faster and faster, the
-//!   tune runs up).
-//! - [`Sound::Gem`]: a phrase's gem popping in: a glassy plink, higher and
-//!   richer by its tier (none a soft tink, a tier's its own recipe:
-//!   [`super::recipes`]).
 //! - [`Sound::Medal`]: the medal's wax seal pressed down: a thump, the
 //!   wax's soft squelch and a crack, then its stinger: Bronze a warm
 //!   plucked chord, Silver bells ringing up to a chord, Gold a
@@ -17,64 +10,15 @@
 //!   rising to a held chord, a roll of noise under them and a shimmer over
 //!   it.
 //!
-//! [`Sound::Tick`]: super::Sound::Tick
-//! [`Sound::Gem`]: super::Sound::Gem
 //! [`Sound::Medal`]: super::Sound::Medal
 //! [`Sound::NewBest`]: super::Sound::NewBest
 
-use super::recipes;
 use super::sounds::{brass, env, penta, pluck, BELL, GLASS};
 use super::synth::{scatter, Buf, Noise, Partial, Tone};
-use crate::core::shine::Tier;
 use crate::core::singing::{Medal, STAMP_DOWN};
 
-/// The steps of the scale the count-up's ticks climb.
-pub const TICK_STEPS: usize = 12;
 /// The medals, in the bank's order.
 pub const MEDALS: [Medal; 3] = [Medal::Bronze, Medal::Silver, Medal::Gold];
-
-/// A coin's partials: a square-ish tone, short, and the ring of a metal
-/// disc over it.
-fn coin() -> Vec<Partial> {
-    vec![
-        Partial::new(1.0, 1.0, 0.04),
-        Partial::new(3.0, 0.3, 0.012),
-        Partial::new(2.76, 0.25, 0.03),
-        Partial::new(5.4, 0.12, 0.015),
-    ]
-}
-
-/// Tick `step` of the count-up.
-pub fn tick(rate: u32, step: usize) -> Buf {
-    let mut b = Buf::new(rate, 0.09);
-    // The counter's wheel clicking on.
-    b.noise(
-        0.0,
-        0.0,
-        &Noise {
-            from: 3_800.0,
-            to: 3_000.0,
-            q: 2.2,
-            envelope: env(0.0002, 0.0, 0.0015, 0.006),
-            amp: 0.9,
-            length: 0.006,
-            seed: 0x71C + step as u64,
-        },
-    );
-    // A coin's blip on it, up the scale as the count goes.
-    let f = penta(step as i32);
-    let blip = Tone::new(f, env(0.0006, 0.004, 0.02, 0.075), &coin()).glide(1.02, 0.01);
-    b.tone(0.002, 0.0, &blip);
-    b
-}
-
-/// A gem of `tier` popping in: its tier's own (none: a soft tink).
-pub fn gem(rate: u32, tier: Option<Tier>) -> Buf {
-    match tier {
-        Some(t) => (t.spec().gem.make)(rate),
-        None => recipes::gem(rate, |b| recipes::plink(b, 0.0, 3, 0.0, 0.6)),
-    }
-}
 
 /// The wax seal pressed down under a medal: a thump sliding down, the
 /// soft squelch of the wax giving under it, and a crack of noise.

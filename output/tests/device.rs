@@ -199,3 +199,49 @@ fn a_device_that_fails_is_opened_again_by_the_next_output() {
     let half = f64::from(level) * 0.5;
     assert!(left.iter().all(|&v| (f64::from(v) - half).abs() < 1.5));
 }
+
+/// The device fails and opens again (another epoch, its frames from 0):
+/// notes on the desk's frames sent before (one taken into the synth, one
+/// sent while it was away) never play, and the synth comes to rest: what
+/// goes to the device is the song as written.
+#[test]
+fn notes_on_the_desks_frames_from_before_a_reopening_never_play() {
+    use jodel_synth::Commands;
+    let flaky = Flaky::new(true);
+    let mixer = flaky.mixer();
+    let group = mixer.strip("Player");
+    let effects = mixer.effects(&mixer.strip("Effects"));
+    let (synth, patch) = tone_synth(RATE, 0.05);
+    effects.live(synth, 1.0);
+    let (mut lead, _fader) = mixer.input(&group, Role::Lead, 1.0);
+    let level = 1_000;
+    let mut out = open_started(&mut lead, RATE, level);
+    out.write(&frames(1, 4_799, |_| level), None).unwrap();
+    wait_until("mixed", || mixer.timebase().frame == 4_800);
+    let at = mixer.timebase().frame + 2_400;
+    assert!(effects.commands(None).send(tone(patch, at, 1.0)));
+    flaky.fail.store(true, Ordering::SeqCst);
+    let failed = (0..1_000)
+        .map(|_| {
+            std::thread::sleep(Duration::from_millis(1));
+            out.write(&frames(0, 480, |_| level), None)
+        })
+        .find_map(Result::err);
+    assert_eq!(failed, Some(Error::DeviceLost));
+    wait_until("closed", || mixer.desk().master.stream.is_none());
+    // Sent while it is away: of the opening before.
+    assert!(effects.commands(None).send(tone(patch, at, 1.0)));
+    flaky.fail.store(false, Ordering::SeqCst);
+    let mut out = open_started(&mut lead, RATE, level);
+    let tail = (jodel_output::mixer::LIVE_TAIL * f64::from(RATE)) as u64;
+    let n = 4_800 + tail + 9_600;
+    out.write(&frames(1, n - 1, |_| level), None).unwrap();
+    out.drain(None).unwrap();
+    assert_eq!(mixer.timebase().epoch, 2);
+    assert!(mixer.passthrough(), "at rest");
+    let (sink, _) = flaky.device.streams.lock().unwrap()[1].clone();
+    let played = jodel_output::pack::unpack(&sink.bytes(), flaky.device.format());
+    assert_eq!(played.len(), 2 * n as usize);
+    assert!(played.chunks_exact(2).all(|f| f == [level, 0]));
+    assert!(effects.view().missed >= 1, "{:?}", effects.view());
+}

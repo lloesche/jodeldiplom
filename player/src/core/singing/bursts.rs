@@ -86,6 +86,7 @@ impl Singing {
                     let at = full + SWEEP;
                     let b = Burst {
                         burst: (j, together),
+                        run: self.run_with((b.line, b.word)),
                         ..b
                     };
                     self.log.push(at, t, Cue::Pop(b));
@@ -126,6 +127,7 @@ impl Singing {
                     height: ln.word_height(b.notes.clone()),
                     across: self.across(l, b.notes),
                     burst: (0, 1),
+                    run: 0,
                 };
                 new.push((full, burst));
             }
@@ -136,6 +138,19 @@ impl Singing {
                 .then(a.1.word.cmp(&b.1.word))
         });
         new
+    }
+
+    /// The words hit in a row with word `at` (line, word) as it bursts
+    /// now: the streak as scored, and the words burst and not scored yet,
+    /// it among them (a word missed alone counts once a shot rescues it:
+    /// the streak has it then).
+    fn run_with(&self, at: (usize, usize)) -> u32 {
+        let popped = &self.log.index().popped;
+        let words = self.notes.words();
+        let ahead = (words.get(self.tally.next_word..).unwrap_or(&[]).iter())
+            .filter(|&&(l, w, _)| (l, w) == at || popped.contains_key(&(l, w)))
+            .count();
+        self.tally.streak + ahead as u32
     }
 
     /// Where the notes `notes` of line `l` are along it: 0 its start, 1 its

@@ -1,16 +1,16 @@
-//! The desk's effects input, on a simulated device: a sound cued on a
-//! stream frame starts on that very frame; one late by a little starts at
-//! once, one late by more, cancelled or of an output flushed never does;
-//! with nothing sounding, or its strip down, the device gets the input
-//! bit for bit; and the microphone's tap hears the effects with the rest
-//! of what plays, so its echo canceller takes them out of the voice.
+//! The desk's effects input, on a simulated device: a sound cued starts
+//! on the next period mixed, one the bank has not never does; with
+//! nothing sounding, or its strip down, the device gets the input bit for
+//! bit; and the microphone's tap hears the effects with the rest of what
+//! plays, so its echo canceller takes them out of the voice. (Its live
+//! synth's notes on a stream's frames: `live.rs`.)
 
 mod common;
 
 use std::time::Duration;
 
 use common::*;
-use jodel_output::mixer::{EffectCue, Effects, Fader, InputTarget, Mixer, Role, SoundBank};
+use jodel_output::mixer::{EffectCue, Effects, InputTarget, Mixer, Role, SoundBank};
 use jodel_output::pack::unpack;
 use jodel_output::{Output, OutputTarget};
 
@@ -53,7 +53,6 @@ struct Desk {
     mixer: Mixer,
     device: Device,
     lead: InputTarget,
-    fader: Fader,
     effects: Effects,
     strip: jodel_output::mixer::Strip,
     rate: u32,
@@ -71,12 +70,11 @@ fn desk_at(sound: Vec<f32>, rate: u32) -> Desk {
     let mut bank = SoundBank::new(rate);
     assert_eq!(bank.add(sound), 0);
     effects.load(bank);
-    let (lead, fader) = mixer.input(&player, Role::Lead, 1.0);
+    let (lead, _) = mixer.input(&player, Role::Lead, 1.0);
     Desk {
         mixer,
         device,
         lead,
-        fader,
         effects,
         strip,
         rate,
@@ -95,87 +93,39 @@ impl Desk {
 }
 
 #[test]
-fn a_sound_starts_on_the_stream_frame_it_was_cued_on() {
+fn a_sound_starts_on_the_next_period_mixed() {
     // At the device's rates: the bank at each.
     for rate in [RATE, 96_000] {
         let mut d = desk_at(right_only(480, 0.4), rate);
         let mut out = d.open();
-        let cue = EffectCue::new(0);
-        for frame in [12_345, 30_000, 30_100] {
-            assert!(d.effects.play_at(cue, &d.fader, frame));
-        }
+        assert!(d.effects.play(EffectCue::new(0)));
         out.write(&frames(0, 48_000, |k| k as i32), None).unwrap();
         out.drain(None).unwrap();
         let played = both(&d.device, 0);
-        // The left side is the stream frame playing: each sound starts on
-        // its own (the last two overlap: one run, louder where both sound).
-        let runs = loud_runs(&played);
-        assert_eq!(runs.len(), 2, "{rate}: {runs:?}");
-        for (&(from, len), (want, long)) in runs.iter().zip([(12_345, 480), (30_000, 580)]) {
-            let at = played[from].0;
-            assert!(at.abs_diff(want) <= 2, "{rate}: {at} for {want}");
-            assert!(played[from - 1].1.abs() < 1_000, "nothing just before");
-            assert_eq!(len, long);
-        }
-        let (r1, r2) = (played[30_050].1, played[30_150].1);
-        assert!(r2 > r1 + r1 / 2, "{r1} {r2}");
-        assert!(played[12_345 + 100].1.abs_diff(3_355_443) <= 2);
-        // Where no sound is, the input as written.
-        let off = |from: usize, to: usize| (from..to).find(|&k| played[k] != (k as i32, 0));
-        // (The periods a sound sounds in are summed, dithered, whole.)
-        let off = off(0, 11_000).or(off(40_000, 48_000));
+        // On the right alone, from the first frame mixed, whole.
+        assert_eq!(loud_runs(&played), [(0, 480)], "{rate}");
+        assert!(played[100].1.abs_diff(3_355_443) <= 2);
+        // Where no sound is, the input as written (the periods a sound
+        // sounds in are summed, dithered, whole).
+        let off = (9_600..48_000).find(|&k| played[k] != (k as i32, 0));
         assert_eq!(off, None, "{rate}: {:?}", off.map(|k| played[k]));
         assert!(d.mixer.passthrough(), "bit for bit again after");
         let view = d.effects.view();
-        assert_eq!((view.played, view.missed, view.sounding), (3, 0, 0));
+        assert_eq!((view.played, view.missed, view.sounding), (1, 0, 0));
         assert_eq!(view.rate, rate);
     }
 }
 
 #[test]
-fn a_late_cue_starts_at_once_or_is_missed() {
+fn a_sound_the_bank_has_not_is_missed() {
     let mut d = desk(right_only(480, 0.5));
     let mut out = d.open();
-    out.write(&frames(0, 24_000, |k| k as i32), None).unwrap();
-    wait_until("mixed", || d.mixer.timebase().frame == 24_000);
-    let cue = EffectCue::new(0);
-    // Far behind: never; a little: at once; cancelled: never.
-    d.effects.play_at(cue, &d.fader, 0);
-    d.effects.play_at(cue, &d.fader, 23_000);
-    d.effects.play_at(cue, &d.fader, 40_000);
-    out.write(&frames(24_000, 4_800, |k| k as i32), None)
-        .unwrap();
-    wait_until("mixed", || d.mixer.timebase().frame == 28_800);
-    d.effects.cancel();
-    // A sound the bank has not, never.
-    d.effects.play(EffectCue::new(7));
-    out.write(&frames(28_800, 19_200, |k| k as i32), None)
-        .unwrap();
-    out.drain(None).unwrap();
-    let played = both(&d.device, 0);
-    let runs = loud_runs(&played);
-    assert_eq!(runs.len(), 1, "{runs:?}");
-    assert!(played[runs[0].0].0.abs_diff(24_000) <= 2);
-    let view = d.effects.view();
-    assert_eq!((view.played, view.missed), (1, 3));
-}
-
-#[test]
-fn a_cue_of_an_output_flushed_never_comes() {
-    let mut d = desk(right_only(480, 0.5));
-    let mut out = d.open();
+    assert!(d.effects.play(EffectCue::new(7)));
     out.write(&frames(0, 9_600, |k| k as i32), None).unwrap();
-    wait_until("mixed", || d.mixer.timebase().frame == 9_600);
-    d.effects.play_at(EffectCue::new(0), &d.fader, 20_000);
-    out.write(&frames(9_600, 480, |k| k as i32), None).unwrap();
-    wait_until("taken", || d.mixer.timebase().frame == 10_080);
-    // A seek: the stream's frames go on, but they are of another place.
-    out.flush().unwrap();
-    out.write(&frames(0, 24_000, |_| 0), None).unwrap();
     out.drain(None).unwrap();
-    let played = both(&d.device, 0);
-    assert!(loud_runs(&played).is_empty());
-    assert_eq!(d.effects.view().missed, 1);
+    assert!(loud_runs(&both(&d.device, 0)).is_empty());
+    let view = d.effects.view();
+    assert_eq!((view.played, view.missed), (0, 1));
 }
 
 #[test]
@@ -191,7 +141,7 @@ fn with_nothing_sounding_or_its_strip_down_the_input_is_bit_for_bit() {
         }
         let mut out = d.open();
         if case > 0 {
-            d.effects.play_at(EffectCue::new(0), &d.fader, 1_000);
+            assert!(d.effects.play(EffectCue::new(0)));
         }
         let data = frames(0, 24_000, input);
         out.write(&data, None).unwrap();
@@ -211,7 +161,7 @@ fn with_nothing_sounding_or_its_strip_down_the_input_is_bit_for_bit() {
 fn a_sound_is_metered_on_its_strip() {
     let mut d = desk(right_only(4_800, 0.5));
     let mut out = d.open();
-    d.effects.play_at(EffectCue::new(0), &d.fader, 100);
+    assert!(d.effects.play(EffectCue::new(0)));
     out.write(&frames(0, 9_600, |_| 0), None).unwrap();
     out.drain(None).unwrap();
     let meters = d.mixer.meters();
@@ -247,7 +197,7 @@ fn the_microphone_hears_the_effects_as_what_plays() {
     effects.load(bank);
     let singer = Singer::new(|_| 0.0);
     mixer.set_mic(Some(singer.input.clone()));
-    let (mut lead, fader) = mixer.input(&player, Role::Lead, 1.0);
+    let (mut lead, _) = mixer.input(&player, Role::Lead, 1.0);
     let mut out = lead.open(&request(RATE)).unwrap();
     let total = 3 * u64::from(RATE);
     let writer = std::thread::spawn(move || {
@@ -262,9 +212,7 @@ fn the_microphone_hears_the_effects_as_what_plays() {
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("echo.wav");
     let mut recording = singer.input.record_echo(&path, 2.0).unwrap();
-    // Cued half a second on from what is mixed now.
-    let at = fader.mixed_to().unwrap() + 24_000;
-    assert!(effects.play_at(EffectCue::new(0), &fader, at));
+    assert!(effects.play(EffectCue::new(0)));
     let _out = writer.join().unwrap();
     let file = loop {
         if let Some(done) = recording.done() {
@@ -403,7 +351,7 @@ fn dropping_an_older_effects_input_leaves_the_newer() {
     let older = std::mem::replace(&mut d.effects, newer);
     drop(older);
     let mut out = d.open();
-    assert!(d.effects.play_at(EffectCue::new(0), &d.fader, 1_000));
+    assert!(d.effects.play(EffectCue::new(0)));
     out.write(&frames(0, 9_600, |k| k as i32), None).unwrap();
     out.drain(None).unwrap();
     assert_eq!(loud_runs(&both(&d.device, 0)).len(), 1);

@@ -71,6 +71,10 @@ pub struct Burst {
     pub across: f32,
     /// Its place among the bubbles bursting together, and their count.
     pub burst: (usize, usize),
+    /// The words hit in a row with it as it bursts: the streak as scored,
+    /// and the words burst and not scored yet, it among them (what a pop
+    /// climbs a ladder by).
+    pub run: u32,
 }
 
 /// A moment: when it happens (the singing's time, seconds), the frame

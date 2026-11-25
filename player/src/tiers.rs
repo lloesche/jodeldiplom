@@ -6,7 +6,8 @@
 //! colour on the stage and the diploma, the meter's fill, how strongly the
 //! singing glows while at it and what that lights (the streak's rainbow,
 //! the lane, the backdrop), its mark on the song's progress, its sticker,
-//! its chime and its gem. Each row is a rung of the multiplier too, named
+//! the layers of its sounds (the streak's at its rung, a phrase's chime:
+//! [`TierSpec::layers`]). Each row is a rung of the multiplier too, named
 //! after it: reached at so many words hit in a row ([`TierSpec::streak`]),
 //! ×2 the first's, doubling a rung ([`crate::core::singing::rung`],
 //! [`Tier::multiplier`]).
@@ -24,7 +25,7 @@
 //! them to it).
 
 use crate::gui::fx::{Effects, Fx, Use};
-use crate::sfx::recipes::{self, Recipe};
+use crate::sfx::conductor::{Chime, Layers, Streak};
 
 /// How a tier fills the meter.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -91,10 +92,10 @@ pub struct TierSpec {
     pub mark: f32,
     /// How its sticker looks on the diploma.
     pub sticker: Sticker,
-    /// The sound of a phrase reaching it.
-    pub chime: Recipe,
-    /// The sound of its gem popping in on the diploma.
-    pub gem: Recipe,
+    /// What its sounds are made of: the streak's at its rung, a phrase's
+    /// chime reaching it (the game's synth plays them:
+    /// [`crate::sfx::conductor`]).
+    pub layers: Layers,
 }
 
 /// The tiers, Good first.
@@ -123,13 +124,9 @@ pub static TIERS: [TierSpec; 5] = [
             prismatic: false,
             halo: 0.0,
         },
-        chime: Recipe {
-            make: recipes::good,
-            peak_db: -18.0,
-        },
-        gem: Recipe {
-            make: recipes::gem_good,
-            peak_db: -22.0,
+        layers: Layers {
+            streak: &[],
+            chime: &[],
         },
     },
     TierSpec {
@@ -156,13 +153,9 @@ pub static TIERS: [TierSpec; 5] = [
             prismatic: false,
             halo: 0.0,
         },
-        chime: Recipe {
-            make: recipes::great,
-            peak_db: -15.5,
-        },
-        gem: Recipe {
-            make: recipes::gem_great,
-            peak_db: -20.5,
+        layers: Layers {
+            streak: &[Streak::Glint, Streak::Octave],
+            chime: &[Chime::Plucks],
         },
     },
     TierSpec {
@@ -194,13 +187,15 @@ pub static TIERS: [TierSpec; 5] = [
             prismatic: false,
             halo: 0.0,
         },
-        chime: Recipe {
-            make: recipes::awesome,
-            peak_db: -14.5,
-        },
-        gem: Recipe {
-            make: recipes::gem_awesome,
-            peak_db: -19.75,
+        layers: Layers {
+            streak: &[
+                Streak::Glint,
+                Streak::Octave,
+                Streak::Register,
+                Streak::Clinks,
+                Streak::Reels,
+            ],
+            chime: &[Chime::Plucks, Chime::BrassHit],
         },
     },
     TierSpec {
@@ -234,13 +229,18 @@ pub static TIERS: [TierSpec; 5] = [
             prismatic: false,
             halo: 0.0,
         },
-        chime: Recipe {
-            make: recipes::amazing,
-            peak_db: -13.5,
-        },
-        gem: Recipe {
-            make: recipes::gem_amazing,
-            peak_db: -19.0,
+        layers: Layers {
+            streak: &[
+                Streak::Glint,
+                Streak::Octave,
+                Streak::Register,
+                Streak::Clinks,
+                Streak::Reels,
+                Streak::Brass,
+                Streak::Riser,
+                Streak::Shimmer,
+            ],
+            chime: &[Chime::Plucks, Chime::TaDaa],
         },
     },
     TierSpec {
@@ -283,13 +283,20 @@ pub static TIERS: [TierSpec; 5] = [
             prismatic: true,
             halo: 0.5,
         },
-        chime: Recipe {
-            make: recipes::diva,
-            peak_db: -12.0,
-        },
-        gem: Recipe {
-            make: recipes::gem_diva,
-            peak_db: -17.5,
+        layers: Layers {
+            streak: &[
+                Streak::Glint,
+                Streak::Octave,
+                Streak::Register,
+                Streak::Clinks,
+                Streak::Reels,
+                Streak::Brass,
+                Streak::Riser,
+                Streak::Shimmer,
+                Streak::Glitter,
+                Streak::Payout,
+            ],
+            chime: &[Chime::Plucks, Chime::TaDaa, Chime::Choir],
         },
     },
 ];
@@ -386,7 +393,6 @@ impl Tier {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sfx::Sound;
 
     /// A row's looks and sounds, to tell two rows apart by: its numbers,
     /// and how strong it holds and fires each effect.
@@ -413,58 +419,51 @@ mod tests {
         .collect()
     }
 
-    /// Every row in order: each bar, streak, glow, band count, backdrop
-    /// glow and peak above the one before, the step up to its rung never
-    /// quieter and other than the one before, the held looks never less,
-    /// each row looking other than the one before (a row that copies
-    /// another's looks fails here); the top's glow 1, its step up under
-    /// its jackpot; each named apart, its chime, its gem and the step up to
-    /// its rung in the bank under its name, a mark on the meter, and its
-    /// rung reached at its streak, the one before a word short of it.
+    /// Every row in order: each bar, streak, glow, band count and
+    /// backdrop glow above the one before, the held looks never less, each
+    /// row looking other than the one before (a row that copies another's
+    /// looks fails here), and sounding more: its streak's layers all the
+    /// row before's and more, its chime's the row before's (a "ta-daa" in
+    /// place of a short brass hit) and other; the top's glow 1, its rung
+    /// paying out, its phrase's chime a choir; each named apart, a mark on
+    /// the meter, and its rung reached at its streak, the one before a word
+    /// short of it.
     #[test]
-    fn every_row_is_in_order_and_in_the_bank() {
+    fn every_row_is_in_order() {
         for w in TIERS.windows(2) {
             let (a, b) = (&w[0], &w[1]);
             let pair = format!("{} {}", a.name, b.name);
             assert!(b.bar > a.bar, "{pair}");
             assert!(b.streak > a.streak, "{pair}");
-            let (ta, tb) = (Tier::named(a.name), Tier::named(b.name));
-            let (up_a, up_b) = (Sound::StepUp(ta), Sound::StepUp(tb));
-            assert!(up_b.peak_db() >= up_a.peak_db(), "{pair}");
-            assert_ne!(up_a.render(8_000).l, up_b.render(8_000).l, "{pair}");
             assert!(b.glow > a.glow, "{pair}");
             assert!(b.bands > a.bands, "{pair}");
             assert!(b.backdrop_glow > a.backdrop_glow, "{pair}");
-            assert!(b.chime.peak_db > a.chime.peak_db, "{pair}");
-            assert!(b.gem.peak_db > a.gem.peak_db, "{pair}");
             for (x, y) in looks(a).iter().zip(looks(b)) {
                 assert!(y >= *x, "{pair}");
             }
             assert_ne!(looks(a), looks(b), "{pair}");
+            let (la, lb) = (a.layers, b.layers);
+            assert!(la.streak.iter().all(|l| lb.streak.contains(l)), "{pair}");
+            assert!(lb.streak.len() > la.streak.len(), "{pair}");
+            let kept = |l: &Chime| {
+                lb.chime.contains(l) || (*l == Chime::BrassHit && lb.chime.contains(&Chime::TaDaa))
+            };
+            assert!(la.chime.iter().all(kept), "{pair}");
+            assert_ne!(la.chime, lb.chime, "{pair}");
         }
         assert_eq!(Tier::TOP.spec().glow, 1.0);
         assert!(TIERS[0].glow > 0.0 && TIERS[0].streak > 0);
-        let top = Sound::StepUp(Tier::TOP).peak_db();
-        assert!(top < Sound::Tier(Tier::TOP).peak_db());
+        let top = Tier::TOP.spec().layers;
+        assert!(top.streak.contains(&Streak::Payout) && top.chime.contains(&Chime::Choir));
         assert_eq!(crate::core::singing::rung(0), None);
-        let all = Sound::all();
         let marks = crate::gui::glory::MARKS;
         for t in Tier::ALL {
             assert_eq!(Tier::named(t.name()), t);
             assert_eq!(t.spec().bands.fract(), 0.0, "{}", t.name());
-            let lower = t.name().to_lowercase();
             let streak = t.spec().streak;
             let below = t.index().checked_sub(1).map(|i| Tier::ALL[i]);
             assert_eq!(crate::core::singing::rung(streak), Some(t));
             assert_eq!(crate::core::singing::rung(streak - 1), below);
-            for (sound, name) in [
-                (Sound::Tier(t), format!("tier-{lower}")),
-                (Sound::Gem(Some(t)), format!("gem-{lower}")),
-                (Sound::StepUp(t), format!("step-up-{lower}")),
-            ] {
-                assert_eq!(all[sound.index()], sound);
-                assert_eq!(sound.name(), name);
-            }
             assert!(marks[t.index()] > 0.0 && marks[t.index()] <= 1.0);
         }
         assert!(marks.windows(2).all(|w| w[1] > w[0]));

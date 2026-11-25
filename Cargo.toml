@@ -23,6 +23,11 @@ opt-level = 3
 [profile.dev.package.jodel-output]
 opt-level = 3
 
+# The game's synth renders on the mixer thread in real time, the effects
+# input's live sounds: unoptimized, a debug build's periods would run late.
+[profile.dev.package.jodel-synth]
+opt-level = 3
+
 # The playback engine's tests decode, resample and separate whole tracks,
 # some of them on a device in real time: unoptimized, a loaded machine
 # could not keep up.

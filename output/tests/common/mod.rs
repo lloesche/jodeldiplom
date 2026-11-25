@@ -328,3 +328,31 @@ pub fn real_time() -> std::sync::RwLockWriteGuard<'static, ()> {
 }
 
 static REAL_TIME: std::sync::RwLock<()> = std::sync::RwLock::new(());
+
+/// A synth at `rate` of one patch (its id): a sine, at once full, held
+/// `gate` seconds, let go over a tenth of a second; no sends, no spreads.
+pub fn tone_synth(rate: u32, gate: f32) -> (jodel_synth::Synth, jodel_synth::PatchId) {
+    let mut bank = jodel_synth::Bank::new();
+    let patch = bank.add(jodel_synth::Patch {
+        gate,
+        ..jodel_synth::Patch::new(jodel_synth::engines::analog::SINE.into())
+    });
+    (jodel_synth::Synth::new(rate, bank, 8), patch)
+}
+
+/// A note of `patch` on `frame`, panned `pan` (1: the right side alone),
+/// as the patch holds it.
+pub fn tone(patch: jodel_synth::PatchId, frame: u64, pan: f32) -> jodel_synth::Command {
+    jodel_synth::Command::Note {
+        frame,
+        patch,
+        note: jodel_synth::NoteOn {
+            note: 69.0,
+            velocity: 0.8,
+            seed: 1,
+            pan,
+        },
+        length: None,
+        tag: jodel_synth::Tag::NONE,
+    }
+}

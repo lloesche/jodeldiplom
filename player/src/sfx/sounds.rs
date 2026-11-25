@@ -1,68 +1,30 @@
-//! The game's sounds, each made here ([`super::synth`]) at the desk's rate:
+//! The result screen's own sounds, made ahead here ([`super::synth`]) at
+//! the desk's rate and kept in its bank: what the game's synth does not
+//! play live ([`super::conductor`]), the diploma's paper and pen, its
+//! stamps and its tunes:
 //!
-//! - [`Sound::Pop`]: a bubble bursting. A wet "bloop": a sine whose pitch
-//!   jumps up as it sounds (as a bubble's ring does as it closes), a
-//!   droplet after it two steps up, a tick of bright noise for the snap
-//!   and a soft thump under it. One for each step of a major pentatonic scale
-//!   ([`STEPS`]), so pops of notes going up and down play a little tune.
-//! - [`Sound::Sparkle`]: the splash's glitter, on the same step two
-//!   octaves up: four glassy grains scattered over 90 ms, across the
-//!   sides, in a small room.
-//! - [`Sound::StepUp`]: the streak up a rung of the multiplier, by the
-//!   tier the rung is named after ([`super::recipes::step_up`]).
-//! - [`Sound::Break`]: the streak lost: a soft "aww", a mellow voice-like
-//!   tone sliding down a fourth, darkening as it goes; quiet.
-//! - [`Sound::Zap`]: a shot fired to rescue a word missed: a "pew", a
-//!   bright buzzy tone diving three octaves in a tenth of a second, a
-//!   sparkle of noise on its start, an echo of it an octave down. The
-//!   word rescued pops as any ([`Sound::Pop`]) as the shot lands.
-//! - [`Sound::Tier`]: a phrase's rating, its tier's own chime (each a
-//!   recipe its row names: [`super::recipes`]).
-//! - The result screen's: the count-up's ticks, the gems' plinks (a
-//!   tier's its own recipe), the medal's seal pressed down and its
-//!   stinger, a new best's stamp and fanfare ([`super::cheers`]); and the
-//!   diploma's own, from its paper unrolling to the examiner's signature
-//!   ([`Sound::Diploma`], [`super::diploma`]).
+//! - [`Sound::Medal`]: the medal's seal pressed down and its stinger, and
+//!   [`Sound::NewBest`]: a new best's stamp and fanfare
+//!   ([`super::cheers`]).
+//! - [`Sound::Diploma`]: the diploma's own, from its paper unrolling to
+//!   the examiner's signature ([`super::diploma`]).
 //!
 //! Each is set to its own peak ([`Sound::peak_db`]), well under the
 //! song's; the Effects strip on the desk turns them all up or down. The
-//! bank holds them in one list, kind by kind, a tier's in the tiers'
-//! order ([`Sound::all`]); a sound's place is where it is in it.
+//! bank holds them in one list, kind by kind ([`Sound::all`]); a sound's
+//! place is where it is in it.
 
 use std::collections::HashMap;
 use std::sync::LazyLock;
 
-use super::cheers::{self, MEDALS, TICK_STEPS};
+use super::cheers::{self, MEDALS};
 use super::diploma::Diploma;
-use super::recipes;
-use super::synth::{scatter, Buf, Envelope, Noise, Partial, Tone};
-use crate::core::shine::Tier;
+use super::synth::{Buf, Envelope, Partial, Tone};
 use crate::core::singing::Medal;
 
-/// The steps of the scale the pops and sparkles are on.
-pub const STEPS: usize = 9;
-
-/// A sound of the game.
+/// A sound of the result screen.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Sound {
-    /// A bubble bursting, on step k of the scale (0, lowest, to
-    /// [`STEPS`] - 1).
-    Pop(usize),
-    /// Its splash's glitter, on step k.
-    Sparkle(usize),
-    /// The streak up to the rung named after a tier.
-    StepUp(Tier),
-    /// The streak lost.
-    Break,
-    /// A shot fired to rescue a word missed.
-    Zap,
-    /// A phrase rated.
-    Tier(Tier),
-    /// The result's points counting up a tick, on step k (0 to
-    /// [`TICK_STEPS`] - 1).
-    Tick(usize),
-    /// A phrase's gem popping in, by its tier (none: a plain one).
-    Gem(Option<Tier>),
     /// The medal stamped down, and its stinger.
     Medal(Medal),
     /// A new best.
@@ -73,16 +35,7 @@ pub enum Sound {
 
 /// The bank: every sound, in its order.
 static BANK: LazyLock<Vec<Sound>> = LazyLock::new(|| {
-    let mut all: Vec<Sound> = (0..STEPS).map(Sound::Pop).collect();
-    all.extend((0..STEPS).map(Sound::Sparkle));
-    all.extend(Tier::ALL.map(Sound::StepUp));
-    all.push(Sound::Break);
-    all.push(Sound::Zap);
-    all.extend(Tier::ALL.map(Sound::Tier));
-    all.extend((0..TICK_STEPS).map(Sound::Tick));
-    all.push(Sound::Gem(None));
-    all.extend(Tier::ALL.map(|t| Sound::Gem(Some(t))));
-    all.extend(MEDALS.map(Sound::Medal));
+    let mut all: Vec<Sound> = MEDALS.map(Sound::Medal).to_vec();
     all.push(Sound::NewBest);
     all.extend(Diploma::ALL.map(Sound::Diploma));
     all
@@ -103,35 +56,15 @@ impl Sound {
         BANK.clone()
     }
 
-    /// It, a step out of range the nearest there is.
-    fn in_range(self) -> Sound {
-        match self {
-            Sound::Pop(k) => Sound::Pop(k.min(STEPS - 1)),
-            Sound::Sparkle(k) => Sound::Sparkle(k.min(STEPS - 1)),
-            Sound::Tick(k) => Sound::Tick(k.min(TICK_STEPS - 1)),
-            other => other,
-        }
-    }
-
-    /// Where it is in the bank ([`Sound::all`]'s order). A step out of
-    /// range is the nearest there is.
+    /// Where it is in the bank ([`Sound::all`]'s order).
     pub fn index(self) -> usize {
-        PLACES[&self.in_range()]
+        PLACES[&self]
     }
 
     /// Its name, for its file when the sounds are written out to listen
     /// to.
     pub fn name(self) -> String {
         match self {
-            Sound::Pop(k) => format!("pop-{k}"),
-            Sound::Sparkle(k) => format!("sparkle-{k}"),
-            Sound::StepUp(t) => format!("step-up-{}", t.name().to_lowercase()),
-            Sound::Break => "break".into(),
-            Sound::Zap => "zap".into(),
-            Sound::Tier(t) => format!("tier-{}", t.name().to_lowercase()),
-            Sound::Tick(k) => format!("tick-{k}"),
-            Sound::Gem(None) => "gem".into(),
-            Sound::Gem(Some(t)) => format!("gem-{}", t.name().to_lowercase()),
             Sound::Medal(m) => format!("medal-{}", m.name().to_lowercase()),
             Sound::NewBest => "new-best".into(),
             Sound::Diploma(d) => d.name(),
@@ -142,15 +75,6 @@ impl Sound {
     /// little louder.
     pub fn peak_db(self) -> f64 {
         match self {
-            Sound::Pop(_) => -13.0,
-            Sound::Sparkle(_) => -25.0,
-            Sound::StepUp(t) => recipes::step_up_peak_db(t.index() + 1),
-            Sound::Break => -22.0,
-            Sound::Zap => -17.0,
-            Sound::Tier(t) => t.spec().chime.peak_db,
-            Sound::Tick(_) => -24.0,
-            Sound::Gem(None) => -26.0,
-            Sound::Gem(Some(t)) => t.spec().gem.peak_db,
             Sound::Medal(Medal::Bronze) => -14.0,
             Sound::Medal(Medal::Silver) => -13.0,
             Sound::Medal(Medal::Gold) => -12.0,
@@ -162,14 +86,6 @@ impl Sound {
     /// It, made at `rate`: stereo.
     pub fn render(self, rate: u32) -> Buf {
         let mut b = match self {
-            Sound::Pop(k) => pop(rate, k),
-            Sound::Sparkle(k) => sparkle(rate, k),
-            Sound::StepUp(t) => recipes::step_up(rate, t.index() + 1),
-            Sound::Break => aww(rate),
-            Sound::Zap => zap(rate),
-            Sound::Tier(t) => (t.spec().chime.make)(rate),
-            Sound::Tick(k) => cheers::tick(rate, k.min(TICK_STEPS - 1)),
-            Sound::Gem(t) => cheers::gem(rate, t),
             Sound::Medal(m) => cheers::medal(rate, m),
             Sound::NewBest => cheers::new_best(rate),
             Sound::Diploma(d) => d.render(rate),
@@ -197,12 +113,6 @@ pub(super) fn env(attack: f64, hold: f64, decay: f64, length: f64) -> Envelope {
     }
 }
 
-/// A sine, and a little of its second harmonic.
-const ROUND: [Partial; 2] = [
-    Partial::new(1.0, 1.0, f64::INFINITY),
-    Partial::new(2.0, 0.12, 0.02),
-];
-
 /// A plucked tone's partials: the higher ones die first, `bright` (0 to 1)
 /// how much of them there is.
 pub(super) fn pluck(bright: f64) -> Vec<Partial> {
@@ -227,123 +137,6 @@ pub(super) const GLASS: [Partial; 2] = [
     Partial::new(1.0, 1.0, f64::INFINITY),
     Partial::new(4.07, 0.18, 0.03),
 ];
-
-fn pop(rate: u32, k: usize) -> Buf {
-    // It rings on its step of the scale, jumping up a fifth to it.
-    let note = penta(k as i32);
-    let f0 = note / 1.5;
-    let mut b = Buf::new(rate, 0.16);
-    // The ring: up to its note within its first 12 ms.
-    let ring = Tone::new(f0, env(0.0008, 0.004, 0.03, 0.12), &ROUND).glide(1.5, 0.012);
-    b.tone(0.0, 0.0, &ring);
-    // A droplet after it, two steps up, rising onto its own.
-    let drop = Tone::new(
-        penta(k as i32 + 2) / 1.3,
-        env(0.0008, 0.002, 0.018, 0.07),
-        &ROUND,
-    )
-    .glide(1.3, 0.01)
-    .amp(0.35);
-    b.tone(0.022, 0.0, &drop);
-    // The snap: a tick of bright noise.
-    b.noise(
-        0.0,
-        0.0,
-        &Noise {
-            from: 4_500.0,
-            to: 3_000.0,
-            q: 1.2,
-            envelope: env(0.0002, 0.0, 0.0015, 0.008),
-            amp: 2.5,
-            length: 0.008,
-            seed: 0x9E37_79B9 + k as u64,
-        },
-    );
-    // A soft thump under it: juice.
-    let thump = Tone::new(0.5 * f0, env(0.001, 0.0, 0.012, 0.05), &ROUND[..1])
-        .glide(0.8, 0.02)
-        .amp(0.45);
-    b.tone(0.0, 0.0, &thump);
-    b
-}
-
-/// A buzzy tone's partials: odd ones, as a square wave's, the higher
-/// dying first.
-fn buzz() -> Vec<Partial> {
-    [1.0, 3.0, 5.0, 7.0, 9.0]
-        .map(|n: f64| Partial::new(n, 1.0 / n, 0.12 / n))
-        .to_vec()
-}
-
-fn zap(rate: u32) -> Buf {
-    let mut b = Buf::new(rate, 0.24);
-    // The "pew": diving from high, its brightness closing as it goes.
-    let pew = Tone::new(2_400.0, env(0.0015, 0.01, 0.05, 0.14), &buzz())
-        .glide(0.12, 0.035)
-        .bright(9_000.0, 1_800.0, 0.05);
-    b.tone(0.0, 0.0, &pew);
-    // An echo an octave down, a moment later, softer.
-    let echo = Tone::new(1_200.0, env(0.002, 0.0, 0.05, 0.12), &buzz())
-        .glide(0.15, 0.04)
-        .bright(5_000.0, 1_200.0, 0.05)
-        .amp(0.35);
-    b.tone(0.03, 0.0, &echo);
-    // A sparkle of noise on its start.
-    b.noise(
-        0.0,
-        0.0,
-        &Noise {
-            from: 7_000.0,
-            to: 3_500.0,
-            q: 1.5,
-            envelope: env(0.0005, 0.0, 0.01, 0.03),
-            amp: 0.6,
-            length: 0.03,
-            seed: 0x2A9_u64,
-        },
-    );
-    b.room(0.2, 0.2);
-    b
-}
-
-fn sparkle(rate: u32, k: usize) -> Buf {
-    let mut b = Buf::new(rate, 0.48);
-    let base = k as i32 + 5;
-    let mut seed = 0x5151_u64 + k as u64;
-    for (g, (at, step)) in [(0.0, 5), (0.022, 7), (0.05, 8), (0.088, 10)]
-        .into_iter()
-        .enumerate()
-    {
-        let f = penta(base + step - 5);
-        let pan = if g % 2 == 0 { -0.5 } else { 0.5 } * (0.6 + 0.4 * scatter(&mut seed));
-        let grain = Tone::new(f, env(0.001, 0.0, 0.09, 0.3), &GLASS).amp(1.0 - 0.15 * g as f64);
-        b.tone(at, pan, &grain);
-    }
-    b.room(0.35, 0.5);
-    b
-}
-
-fn aww(rate: u32) -> Buf {
-    let mut b = Buf::new(rate, 0.75);
-    // A soft voice: a saw's partials, rounded off, sliding down a fourth
-    // from G4 and darkening as it goes (an "ah" closing to an "oo").
-    let partials: Vec<Partial> = (1..=8)
-        .map(|n| Partial::new(f64::from(n), 1.0 / f64::from(n), f64::INFINITY))
-        .collect();
-    let voice = Tone::new(392.0, env(0.04, 0.12, 0.25, 0.65), &partials)
-        .glide(0.75, 0.18)
-        .vibrato(5.0, 18.0, 0.3)
-        .bright(1_500.0, 550.0, 0.25);
-    b.tone(0.0, 0.0, &voice);
-    // A third under it, quieter, for warmth.
-    let under = Tone::new(311.1, env(0.06, 0.1, 0.25, 0.6), &partials)
-        .glide(0.75, 0.2)
-        .bright(1_000.0, 450.0, 0.25)
-        .amp(0.4);
-    b.tone(0.02, 0.0, &under);
-    b.room(0.15, 0.4);
-    b
-}
 
 /// A brass-ish note: a saw's partials, its brightness swelling in.
 pub(super) fn brass(freq: f64, hold: f64, length: f64) -> Tone {
@@ -383,7 +176,7 @@ mod tests {
     }
 
     #[test]
-    fn pops_go_up_the_scale() {
+    fn the_scale_goes_up() {
         assert!((penta(0) - 523.251).abs() < 1e-3);
         assert!((penta(5) - 2.0 * 523.251).abs() < 1e-3);
         assert!((penta(-5) - 523.251 / 2.0).abs() < 1e-3);

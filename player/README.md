@@ -50,7 +50,7 @@ without one).
 | `--headroom DB` | routes that change the samples play this many dB below full scale (`0`, `0.5`, `1`, `2`, `3`; default `0`), so overs need not clip: resampled routes (inter-sample overs) and floating-point files; lossy files (MP3, AAC, Vorbis) always at least 1.5 dB, as their decoded signal goes over full scale where the master was near it; files played as they are are never touched |
 | `--config FILE` | the settings file (default: `config.toml` in the settings folder, see Folders and setup) |
 | `--list-devices` | list the devices and what each takes (its rate and format, as the system mixes it) |
-| `--clean-cache` | forget the beat analyses, the stems kept, the lyrics and the karaoke game's sounds in the data folder (each made again when wanted); the models stay (`make clean-cache`) |
+| `--clean-cache` | forget the beat analyses, the stems kept, the lyrics and the karaoke result's sounds in the data folder (each made again when wanted); the models stay (`make clean-cache`) |
 | `--clean-diag` | forget the record of the last analyses `--diag` shows (`make clean-diag`) |
 | `--diag` | print what the player finds on this system, for a bug report: the build, the OS and processor, the settings in force, the cache folders, every output device with what it takes, and the GPU side (every adapter on every backend with the limits the separator needs, whether the separator sets up on the one it picks or the error, a 6 s chunk's time and how it splits between the kernels, the upload and the readback, and whether the beat analysis will listen to stems), then the last three beat analyses the player made (`recent-analyses.txt` in the analysis cache: when, the file's name without its folders, what the cues heard, the tempo found, and how long decoding, the stems, listening and deciding took; analyses taken from the cache are not counted). Plays nothing. The Windows window binary has no console: run it with `jodeldiplom` |
 
@@ -74,7 +74,7 @@ The player keeps two folders (`dirs.rs`):
 | Folder | What | Where |
 |---|---|---|
 | Settings | `config.toml`, the session and the saved queues, the beat grids fixed by hand, the karaoke recordings, the record of a data move under way | fixed: `%APPDATA%\Jodeldiplom`, `~/Library/Application Support/Jodeldiplom`, `~/.config/Jodeldiplom` (`$XDG_CONFIG_HOME`) |
-| Data | what the player makes or gets and could make again: `models` (the speech models), `analyses` (beat analyses and waveforms), `stems` (the stems kept), `lyrics` (the words found and our timings), `sounds` (the karaoke game's sounds made, a file per output rate, made again when the code that makes them changes) | `Jodeldiplom Data` in a folder of your choice (the settings row Data folder, `data_folder` in the file); by default in `%LOCALAPPDATA%`, `~/Library/Application Support`, `~/.local/share` (`$XDG_DATA_HOME`) |
+| Data | what the player makes or gets and could make again: `models` (the speech models), `analyses` (beat analyses and waveforms), `stems` (the stems kept), `lyrics` (the words found and our timings), `sounds` (the karaoke result's sounds made ahead, a file per output rate, made again when the code that makes them changes) | `Jodeldiplom Data` in a folder of your choice (the settings row Data folder, `data_folder` in the file); by default in `%LOCALAPPDATA%`, `~/Library/Application Support`, `~/.local/share` (`$XDG_DATA_HOME`) |
 
 **Data folder** (the settings' last row) opens a folder list: `enter` or
 `→` opens a folder, `backspace` or `←` goes up (to the drives on Windows),
@@ -1052,12 +1052,16 @@ its own), then the microphone's strip goes first, then the preview's,
 then the stems'; at 80 columns all but the microphone's show. The arrow
 keys go through the strips drawn.
 
-- **EFFECTS**: the karaoke game's sounds (a bubble's pop and splash,
-  the streak going up or lost, a phrase's tier), made by the player
-  itself and each started on the frame of the song its moment is seen
-  on. Its fader and mute are kept in the settings (`karaoke_effects`,
-  `karaoke_effects_mute`); down to −∞ or muted, none is played. While
-  one sounds, the output is mixed; the microphone's
+- **EFFECTS**: the karaoke game's sounds (a bubble's pop climbing a
+  ladder in the song's key, the streak up a rung or lost, the rescue
+  shot, a phrase's tier and the top's jackpot), played live by the
+  player's own synth in the song's tempo and key, each started on the
+  frame of the song its moment is seen on (a rung's, a phrase's on the
+  next beat, the jackpot on a downbeat clear of the singing); and the
+  result's (its paper, pen and stamps made ahead, its count-up, gems and
+  points by the synth). Its fader and mute are kept in the settings
+  (`karaoke_effects`, `karaoke_effects_mute`); down to −∞ or muted, none
+  is played. While one sounds, the output is mixed; the microphone's
   echo canceller hears them as it hears the song.
 - **PLAYER** and **PREVIEW**: the name on a scribble strip (lit when
   selected), what the strip carries (the format; the player's LEAD row,

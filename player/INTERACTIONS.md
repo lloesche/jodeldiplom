@@ -599,9 +599,10 @@ stem keys are their mutes.
   music (the beat and the bar, the levels, the pitches); the shaders move
   it all, their maths held to the processor's on the GPU. The software
   window draws none of it.
-  - `every_row_is_in_order_and_in_the_bank` (`tiers`: a row a tier,
-    each looking and sounding other than the one before, its sounds in
-    the bank, its mark on the meter, its rung above the one before)
+  - `every_row_is_in_order` (`tiers`: a row a tier, each looking and
+    sounding other than the one before, its sounds' layers all the row
+    before's and more, its mark on the meter, its rung above the one
+    before)
   - `the_glow_eases_in_and_a_seek_snaps_it`,
     `a_step_up_for_each_level_with_the_phrase_only`,
     `a_step_up_for_each_tier_passed`,
@@ -722,6 +723,12 @@ stem keys are their mutes.
     `a_single_word_missed_is_rescued_by_the_next_to_burst`
     (`core::singing`: the rungs and their points)
   - `shine_files_are_pinned` (schemas)
+  - `the_game_is_heard_where_it_lands`,
+    `a_seek_calls_off_what_the_game_planned` (sfx: the moments' sounds
+    played live by the desk's synth, on the song's grid, in its key),
+    `a_note_is_heard_from_the_stream_frame_it_was_sent_on`,
+    `a_late_note_starts_at_once_or_is_dropped_and_a_seek_calls_off_what_waits`
+    (output's `live`), `the_pops_climb_the_game_s_streak` (`sfx::moments`)
   - `a_jump_rolls_up_to_the_score_and_never_past_it`,
     `a_word_turns_only_the_figures_that_change`,
     `its_lag_is_bounded_while_points_keep_coming`,

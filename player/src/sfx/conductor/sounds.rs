@@ -1,28 +1,30 @@
 //! The game's sounds put together from the palette's atoms, in the song's
 //! key and tempo, as timed notes sent to the synth ([`Score`], [`Note`]).
-//! Each sound's size follows what it celebrates (a `share` of the way to
-//! the top, 0 to 1: a rung's of the rungs, a tier's of the tiers): more
-//! notes, more layers and longer, never only louder. The timing comes from
-//! the conductor (the grid's landing rule): `now` is the event's frame,
-//! `hit` the frame its main hit lands on, `at` a sound's start.
+//! Each sound's layers are its tier's row's ([`super::Layers`]); its size
+//! beyond them follows what it celebrates (a `share` of the way to the
+//! top, 0 to 1: a rung's of the rungs, a tier's of the tiers): more notes
+//! and longer, never only louder. The timing comes from the conductor (the
+//! grid's landing rule): `now` is the event's frame, `hit` the frame its
+//! main hit lands on, `at` a sound's start.
 //!
 //! With no key known the pitched layers (plucks, brass, choir, pads, the
 //! low tonic, pips and the horn) stay out, and what rings (bells, glitter,
 //! coins) sits on fixed notes high over the song; the ladder becomes the
 //! pop growing brighter, not higher.
 //!
-//! - [`pop`]: a word's bubble on the ladder's step; a glint over it once
-//!   the streak is high. [`clink`]: a coin dropped, a tiny bounce after it.
+//! - [`pop`]: a word's bubble on the ladder's step; a glint over it at the
+//!   rungs that have one. [`clink`]: a coin dropped, a tiny bounce after
+//!   it.
 //! - [`zap`]: the rescue shot.
-//! - [`wind_down`]: the streak lost: from a high rung the reels running
-//!   down (ticks slowing, pips falling, a whirr sinking, a muted "wah"),
-//!   longer the higher it was; below that two soft notes falling.
+//! - [`wind_down`]: the streak lost: from a rung with the reels, the reels
+//!   running down (ticks slowing, pips falling, a whirr sinking, a muted
+//!   "wah"), longer the higher it was; else two soft notes falling.
 //! - [`stinger`]: a rung reached: a pickup, the hit on the tonic, then an
-//!   arpeggio up the chord in sixteenths; a bell from the middle rungs, a
-//!   bell's tremolo in thirty-seconds, the register's ka-ching, a held
-//!   brass chord and glitter as the rungs go up.
-//! - [`chime`]: a phrase rated: bells struck in a quick roll, then plucks,
-//!   a brass hit, a "ta-daa", and at the top a choir and glitter.
+//!   arpeggio up the chord in sixteenths; by its layers the hit an octave
+//!   down with a bell, a bell's tremolo in thirty-seconds and the
+//!   register's ka-ching, a held brass chord, glitter.
+//! - [`chime`]: a phrase rated: bells struck in a quick roll, then by its
+//!   tier's layers plucks, a brass hit or a "ta-daa", a choir and glitter.
 //! - [`payout`]: the top rung's encore on a downbeat: bells climbing, then
 //!   quickening, coins pouring so many a beat, the win on the next bar's
 //!   first beat, coins thinning a bar after it.
@@ -39,16 +41,9 @@ use jodel_synth::{Command, Commands, NoteOn, Tag};
 
 use super::key::{Pentatonic, DEGREES};
 use super::ladder::Step;
+use super::layers::{chime_has, tier_share, Chime, Streak};
 use super::palette::{Atom, Palette, BRASS, COINS, PADS, SLAM};
-
-/// The share of the rungs from which the wind-down is the reels running
-/// down (×8 of five rungs and up), a clink follows each word and the
-/// register rings on a rung.
-pub(super) const HIGH: f32 = 0.6;
-
-/// The share of the rungs from which the brass chord holds under a rung's
-/// stinger, the riser leads into it and the shimmer holds (×16 of five).
-pub(super) const HIGHER: f32 = 0.75;
+use crate::tiers::Tier;
 
 /// The tags the notes go with besides none (a sound playing out): the
 /// payout, and the glitter over the top, both called off with the streak.
@@ -241,14 +236,14 @@ fn unit(seed: u32) -> f32 {
 }
 
 /// A word's bubble at `at`, on the ladder's `step`, `share` of the rungs
-/// reached, at `pan`.
-pub(super) fn pop(s: &mut Score, at: u64, step: Step, share: f32, pan: f32) {
+/// reached (a glint over it where `glinted`), at `pan`.
+pub(super) fn pop(s: &mut Score, at: u64, step: Step, share: f32, glinted: bool, pan: f32) {
     let glint = 0.3 + 0.5 * share;
     match s.deg(step.degree, POP_HOME) {
         Some(note) => {
             s.play(Note::new(at, Atom::Pop, note).vel(0.8).pan(pan));
             s.play(Note::new(at, Atom::PopBody, note).vel(0.7).pan(pan));
-            if share >= 0.4 {
+            if glinted {
                 let over = Note::new(at, Atom::Glint, note + 12.0);
                 s.play(over.vel(glint).pan(pan));
             }
@@ -278,9 +273,11 @@ pub(super) fn zap(s: &mut Score, at: u64, pan: f32) {
     s.play(Note::new(at, Atom::Zap, 52.0).pan(pan));
 }
 
-/// The streak lost at `at`, from `share` of the rungs.
-pub(super) fn wind_down(s: &mut Score, at: u64, share: f32) {
-    if share < HIGH {
+/// The streak lost at `at`: from a rung with the reels, `reels` of the way
+/// from the first such rung to the top (0 to 1), the reels running down,
+/// the longer the higher it was; else two soft notes falling.
+pub(super) fn wind_down(s: &mut Score, at: u64, reels: Option<f32>) {
+    let Some(q) = reels else {
         for (k, d) in [2, 0].into_iter().enumerate() {
             let t = at + s.secs(0.09 * k as f64);
             match s.deg(d, POP_HOME) {
@@ -289,8 +286,8 @@ pub(super) fn wind_down(s: &mut Score, at: u64, share: f32) {
             }
         }
         return;
-    }
-    let q = f64::from((share - HIGH) / (1.0 - HIGH)).clamp(0.0, 1.0);
+    };
+    let q = f64::from(q).clamp(0.0, 1.0);
     let length = 0.4 + 0.5 * q;
     let ticks = 6 + (6.0 * q).round() as i32;
     let (mut t, mut pace) = (0.0, 0.025);
@@ -436,17 +433,18 @@ fn ka_ching(s: &mut Score, at: u64) {
 }
 
 /// A rung's stinger: from `now`, its hit at `hit`, `share` of the rungs
-/// up (1: the top); where it ends.
-pub(super) fn stinger(s: &mut Score, now: u64, hit: u64, share: f32) -> u64 {
+/// up (1: the top), with the rung's `layers`; where it ends.
+pub(super) fn stinger(s: &mut Score, now: u64, hit: u64, share: f32, layers: &[Streak]) -> u64 {
     let v = 0.6 + 0.4 * share;
+    let octave = layers.contains(&Streak::Octave);
     pickup(s, now, hit, Atom::Pluck, STING_HOME);
     if let Some(tonic) = s.tonal(0, STING_HOME) {
         s.play(Note::new(hit, Atom::Pluck, tonic).vel(v));
-        if share >= 0.4 {
+        if octave {
             s.play(Note::new(hit, Atom::Pluck, tonic - 12.0).vel(0.7 * v));
         }
     }
-    if share >= 0.4 {
+    if octave {
         let bell = s.bright(3, STING_HOME);
         s.play(
             Note::new(hit, Atom::Chime, bell)
@@ -456,24 +454,27 @@ pub(super) fn stinger(s: &mut Score, now: u64, hit: u64, share: f32) -> u64 {
     }
     let n = 1 + (5.0 * share).round() as i32;
     let end = arpeggio(s, hit, n, Atom::Pluck, STING_HOME, v).max(hit + s.beats(0.5));
-    if share >= HIGH {
+    if layers.contains(&Streak::Register) {
         let bells = (8.0 * share).round() as i32;
         tremolo(s, hit + s.beats(0.25), bells, 0.35);
         ka_ching(s, hit + s.secs(0.06));
     }
-    if share >= HIGHER {
+    if layers.contains(&Streak::Brass) {
         let held = s.beats(1.0);
         brass(s, horn(hit, 0.55, held), 3);
     }
-    if share >= 1.0 {
+    if layers.contains(&Streak::Glitter) {
         glitter(s, hit + s.beats(0.5), 6, 0.5, Tag::NONE);
     }
     end + s.beats(0.5)
 }
 
-/// A phrase's chime (or the diploma's points): from `now`, its hit at
-/// `hit`, `share` of the tiers up (1: the top); where it ends.
-pub(super) fn chime(s: &mut Score, now: u64, hit: u64, share: f32) -> u64 {
+/// A phrase's chime (or the diploma's points) at `tier` (none: under the
+/// first): from `now`, its hit at `hit`, with the tier's layers, bigger
+/// the higher it is; where it ends.
+pub(super) fn chime(s: &mut Score, now: u64, hit: u64, tier: Option<Tier>) -> u64 {
+    let share = tier_share(tier);
+    let has = |layer| chime_has(tier, layer);
     let v = 0.5 + 0.4 * share;
     pickup(s, now, hit, Atom::Chime, BELL_HOME);
     let bells = 2 + (2.0 * share).round() as i32;
@@ -484,11 +485,11 @@ pub(super) fn chime(s: &mut Score, now: u64, hit: u64, share: f32) -> u64 {
         s.play(Note::new(t, Atom::Chime, note).vel(v).pan(pan));
     }
     let mut end = hit + s.beats(1.0);
-    if share >= 0.4 {
+    if has(Chime::Plucks) {
         let n = (5.0 * share).round() as i32;
         end = end.max(arpeggio(s, hit, n, Atom::Pluck, STING_HOME, 0.8 * v));
     }
-    if share >= 0.8 {
+    if has(Chime::TaDaa) {
         // "Ta-daa": a short brass hit a sixteenth before, the long one on
         // the beat.
         let ta = hit.saturating_sub(s.beats(0.25));
@@ -499,11 +500,11 @@ pub(super) fn chime(s: &mut Score, now: u64, hit: u64, share: f32) -> u64 {
         let long = s.beats(1.5);
         brass(s, horn(hit, 0.65, long), 4);
         end = end.max(hit + long);
-    } else if share >= 0.6 {
+    } else if has(Chime::BrassHit) {
         let short = s.beats(0.5);
         brass(s, horn(hit, 0.55, short), 3);
     }
-    if share >= 1.0 {
+    if has(Chime::Choir) {
         let long = s.beats(2.0);
         let choir = Note::new(hit, Atom::Choir, 0.0).vel(0.7).hold(long);
         chord(s, choir, 4, STING_HOME);
@@ -662,12 +663,12 @@ pub(super) fn tick(s: &mut Score, at: u64, k: u32, of: u32) {
     }
 }
 
-/// A diploma's gem popping in at `at`, `share` of the tiers up: a bell
-/// higher for a higher tier, a sparkle over it.
-pub(super) fn gem(s: &mut Score, at: u64, share: f32) {
+/// A diploma's gem popping in at `at`, `share` of the tiers up, at
+/// `pan`: a bell higher for a higher tier, a sparkle over it.
+pub(super) fn gem(s: &mut Score, at: u64, share: f32, pan: f32) {
     let k = 3 + (3.0 * share).round() as i32;
     let bell = s.bright(k, BELL_HOME - 12);
-    s.play(Note::new(at, Atom::Chime, bell).vel(0.6));
+    s.play(Note::new(at, Atom::Chime, bell).vel(0.6).pan(pan));
     let sparkle = s.bright(k + 3, BELL_HOME - 12);
-    s.play(Note::new(at, Atom::Glitter, sparkle).vel(0.4));
+    s.play(Note::new(at, Atom::Glitter, sparkle).vel(0.4).pan(pan));
 }

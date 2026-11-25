@@ -355,7 +355,7 @@ fn a_seek_forward_past_a_word_missed_rescues_nothing() {
 
 /// A song of 14 words, a second each on C4, sung on all but those
 /// `missed` (by their place): heard to its end.
-fn fourteen(missed: &[usize]) -> Singing {
+pub(crate) fn fourteen(missed: &[usize]) -> Singing {
     let (lyrics, m) = fourteen_song();
     let mut s = Singing::default();
     s.prepare(Path::new("a"), &lyrics, &crate::core::singing::melodic(&m));

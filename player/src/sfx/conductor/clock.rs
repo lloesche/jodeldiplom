@@ -21,9 +21,9 @@ impl Clock {
     /// The sung lines a clock knows, from the one sung now (or next) on.
     pub const LINES: usize = 4;
 
-    /// No music: the grid's free tempo at `rate` frames a second, unsure,
-    /// nothing sung.
-    pub(crate) fn free(rate: u32) -> Clock {
+    /// No music: the grid's free tempo at `rate` frames a second, unsure
+    /// (every hit at once), nothing sung.
+    pub fn free(rate: u32) -> Clock {
         Clock {
             grid: Grid::free().on(0.0, 0.0, f64::from(rate)),
             lines: [None; Clock::LINES],
@@ -31,18 +31,19 @@ impl Clock {
     }
 
     /// The grid of `a` at `t` seconds into the song ([`Analysis::grid_at`]),
-    /// heard on stream frame `frame` at `rate` frames a second (the song's
+    /// heard on stream frame `frame`, `per_second` frames a second of the
+    /// song (the stream's rate, or its speed through the song: the song's
     /// seconds and the stream's frames going on together), the sung lines
     /// from then on `lines`.
     pub fn from_analysis(
         a: &Analysis,
         t: f64,
         frame: u64,
-        rate: u32,
+        per_second: f64,
         lines: [Option<(u64, u64)>; Clock::LINES],
     ) -> Clock {
         Clock {
-            grid: a.grid_at(t).on(t, frame as f64, f64::from(rate)),
+            grid: a.grid_at(t).on(t, frame as f64, per_second),
             lines,
         }
     }
@@ -86,21 +87,5 @@ impl Clock {
             .iter()
             .flatten()
             .any(|&(start, end)| start < to && end > from)
-    }
-
-    /// The frame of tick `k` (from 0) of a count-up of `of` ticks from
-    /// `start`, in the grid's tempo: the first third on eighths, the next
-    /// on sixteenths, the last on thirty-seconds, so it speeds up as it
-    /// nears the total.
-    pub(crate) fn tick(&self, start: u64, k: u32, of: u32) -> u64 {
-        let third = of.div_ceil(3).max(1);
-        let beats: f64 = (0..k.min(of))
-            .map(|i| match i / third {
-                0 => 0.5,
-                1 => 0.25,
-                _ => 0.125,
-            })
-            .sum();
-        start + (beats * self.beat_len()).round() as u64
     }
 }

@@ -257,7 +257,7 @@ impl Engine {
         let desk = crate::sfx::Desk {
             effects: &self.effects,
             heads: [&self.heads[0].input, &self.heads[1].input],
-            rate: self.mixer.timebase().rate,
+            timebase: self.mixer.timebase(),
             data: state.data_dir.as_deref(),
         };
         self.sfx.frame(state, desk);

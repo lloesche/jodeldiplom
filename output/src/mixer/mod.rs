@@ -126,12 +126,13 @@
 //!   strip and is no input: nothing of it can reach the device. The
 //!   outputs on inputs run no taps of their own.
 //! - **Effects:** [`Mixer::effects`] gives the desk an effects input on a
-//!   strip of its own: short sounds (a game's) from a bank at the
-//!   device's rate, each started on a frame of an input's stream, summed
-//!   with the inputs after the strip's gain; while none sounds, nothing
-//!   of it reaches the device (see `effects.rs`); one for now sounds on
-//!   the next period, a song playing or not. It is in what the
-//!   microphone's tap hears, as everything summed is.
+//!   strip of its own, summed with the inputs after the strip's gain: a
+//!   game's sounds, from a bank at the device's rate (each on the next
+//!   period, a song playing or not), and from a synth played live, its
+//!   timed notes each started on a frame of an input's stream or of the
+//!   desk (see `live.rs`); while none sounds, nothing of it reaches the
+//!   device (see `effects.rs`). It is in what the microphone's tap hears,
+//!   as everything summed is.
 //! - **Monitor:** a [`Monitor`] sees every frame as it goes to the device
 //!   (a spectrum of what is heard).
 
@@ -144,6 +145,7 @@ mod envelope;
 mod fader;
 mod follow;
 mod input;
+mod live;
 mod mic;
 mod mix;
 mod parts;
@@ -159,8 +161,11 @@ pub use automation::{Automation, AutomationView, GainCurve, CUT_FADE};
 pub use desk::{
     DeskView, InputView, LaneView, MasterView, Meters, MicPort, MicView, PartsView, StripView,
 };
-pub use effects::{EffectCue, Effects, EffectsView, SoundBank, LATE as EFFECT_LATE, VOICES};
+pub use effects::{
+    EffectCue, Effects, EffectsView, LiveCommands, SoundBank, LATE as EFFECT_LATE, VOICES,
+};
 pub use fader::{Fader, InputTarget};
+pub use live::{AHEAD as LIVE_AHEAD, COMMANDS as LIVE_COMMANDS, TAIL as LIVE_TAIL};
 pub use ramp::{equal_power, Curve, Ramp, Start};
 pub use rate::{desk_format, DESK_CHANNELS};
 pub use strip::{Strip, METER_CHANNELS, STRIP_RAMP};
@@ -349,9 +354,13 @@ pub(crate) enum Msg {
         over: Duration,
     },
     Mic(Option<Input>),
-    /// The effects input on strip `.0`, its cues through `.1`, in place of
-    /// any before.
-    Effects(u64, Arc<effects::CueQueue>),
+    /// The effects input on strip `.0`, its cues through `.1` and its live
+    /// synth's commands through `.2`, in place of any before.
+    Effects(
+        u64,
+        Arc<effects::CueQueue>,
+        crate::spsc::Consumer<live::Sent>,
+    ),
     /// The effects input of `queue` gone: what the mixer thread ran of it
     /// goes back in `done` (`None`: another one runs now).
     EffectsGone {
@@ -360,6 +369,8 @@ pub(crate) enum Msg {
     },
     /// The effects input's sounds from now on.
     EffectsBank(Arc<effects::SoundBank>),
+    /// The effects input's live synth from now on, at a gain.
+    EffectsLive(Box<jodel_synth::Synth>, f32),
     Monitor(Option<Box<dyn Monitor>>),
     /// An output started or paused: something to mix, or to settle.
     Wake,
