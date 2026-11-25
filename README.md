@@ -81,17 +81,16 @@ the folder `JODELDIPLOM_FONTS` names. The speech models are not part of a
 build: the player gets them on its first start (its setup screen) and
 checks them against the checksums built into it.
 
-`bash scripts/bundle.sh BUILD_DIRECTORY [linux|macos|windows-x64|windows-arm64]`
+`bash scripts/bundle.sh BUILD_DIRECTORY [linux|macos|windows-x64]`
 builds the bundle for one platform in `BUILD_DIRECTORY/jodeldiplom-PLATFORM`:
 `bin/jodeldiplom` (on macOS the app `Jodeldiplom.app` instead) and every
 licence. From Linux it
 cross-builds for Windows: `windows-x64` with MinGW-w64 GCC and the Rust
-target `x86_64-pc-windows-gnu`, `windows-arm64` with LLVM-MinGW and
-`aarch64-pc-windows-gnullvm`. The CI workflow
+target `x86_64-pc-windows-gnu`. The CI workflow
 (`.github/workflows/build.yml`) checks formatting and lints, runs the tests
-(on Linux, macOS and Windows) and builds the bundles for Linux, macOS and
-Windows on x64 and ARM64; a tag starting with `v` publishes them as a
-release.
+(on Linux, macOS and Windows) and builds the bundles for Linux on x64 and
+ARM64, macOS on Apple silicon and Windows on x64; a tag starting with `v`
+publishes them as a release.
 
 ## Testing
 

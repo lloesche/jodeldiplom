@@ -5,14 +5,14 @@
 # on macOS it is the app "Jodeldiplom.app" instead of a binary in bin. The
 # fonts come from player/fonts, or from the folder JODELDIPLOM_FONTS names.
 #
-#   bash scripts/bundle.sh BUILD_DIRECTORY [linux|macos|windows-x64|windows-arm64]
+#   bash scripts/bundle.sh BUILD_DIRECTORY [linux|macos|windows-x64]
 #
 # The bundle lands in BUILD_DIRECTORY/jodeldiplom-PLATFORM: bin/ with the
 # executable (the app instead on macOS), and the licences.
 set -euo pipefail
 
 if [[ $# -lt 1 || $# -gt 2 ]]; then
-    printf 'Usage: bash %s BUILD_DIRECTORY [linux|macos|windows-x64|windows-arm64]\n' "$0" >&2
+    printf 'Usage: bash %s BUILD_DIRECTORY [linux|macos|windows-x64]\n' "$0" >&2
     exit 2
 fi
 
@@ -27,22 +27,10 @@ case "$platform" in
         cargo_target=()
         rust_output=$work/rust/release
         ;;
-    windows-x64|windows-arm64)
+    windows-x64)
         player=jodeldiplom.exe
-        if [[ $platform == windows-x64 ]]; then
-            target=x86_64-pc-windows-gnu
-            compiler=x86_64-w64-mingw32-gcc
-            export CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER=$compiler
-        else
-            target=aarch64-pc-windows-gnullvm
-            compiler=aarch64-w64-mingw32-clang
-            export CARGO_TARGET_AARCH64_PC_WINDOWS_GNULLVM_LINKER=$compiler
-            # Resolve the Rust target's unwind library to the static archive.
-            unwind_dir=$work/arm64-unwind
-            mkdir -p -- "$unwind_dir"
-            cp -- "$("$compiler" -print-file-name=libunwind.a)" "$unwind_dir/"
-            export CARGO_TARGET_AARCH64_PC_WINDOWS_GNULLVM_RUSTFLAGS="-L native=$unwind_dir"
-        fi
+        target=x86_64-pc-windows-gnu
+        export CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER=x86_64-w64-mingw32-gcc
         cargo_target=(--target "$target")
         rust_output=$work/rust/$target/release
         ;;

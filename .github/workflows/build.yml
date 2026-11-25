@@ -1,11 +1,11 @@
 name: Build and test
 
 # Every push builds and tests the workspace and bundles the player on each
-# platform: Linux and macOS (Apple silicon only) natively, Windows
+# platform: Linux and macOS (Apple silicon only) natively, Windows (x64)
 # cross-built on Linux (and its bundles run on Windows); the workspace is
 # also tested on Windows. Every test binary runs, a failing one or not, so
 # that a run shows every failure. A pushed tag starting with "v" (v0.0.1,
-# v1.2.0-rc1) also publishes a GitHub release with the bundles for all five
+# v1.2.0-rc1) also publishes a GitHub release with the bundles for all four
 # platforms (the jodeldiplom player, as "Jodeldiplom.app" on macOS); a tag
 # with a hyphen is marked as a pre-release.
 on:
@@ -126,53 +126,30 @@ jobs:
           path: ${{ runner.temp }}/jodeldiplom-${{ matrix.name }}.tar.gz
           if-no-files-found: error
 
-  # The Windows bundles, cross-built on Linux; their tests run on Windows
-  # (windows-test), the bundles themselves too (windows-smoke).
+  # The Windows x64 bundle, cross-built on Linux; its tests run on Windows
+  # (windows-test), the bundle itself too (windows-smoke).
   windows-build:
-    name: Build ${{ matrix.name }}
+    name: Build windows-x64
     runs-on: ubuntu-24.04
     env:
       RUSTUP_TOOLCHAIN: '1.100.0'
-      BUILD_PLATFORM: ${{ matrix.platform }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: windows-x64
-            platform: windows-x64
-          - name: windows-arm64
-            platform: windows-arm64
     steps:
       - uses: actions/checkout@v6
       - name: Install Rust
         run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
-      - name: Install Windows x64 cross compiler
-        if: matrix.platform == 'windows-x64'
+      - name: Install the Windows x64 cross compiler
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends gcc-mingw-w64-x86-64 binutils-mingw-w64-x86-64
           rustup target add x86_64-pc-windows-gnu
-      - name: Install Windows ARM64 cross compiler
-        if: matrix.platform == 'windows-arm64'
-        run: |
-          asset=llvm-mingw-20260616-ucrt-ubuntu-22.04-x86_64.tar.xz
-          checksum=534b92e067b22a6b4441f48ae9240a3341b17825d04d577eab0cf85c44b4deda
-          cd "$RUNNER_TEMP"
-          curl -fsSL --retry 3 -o "$asset" "https://github.com/mstorsjo/llvm-mingw/releases/download/20260616/$asset"
-          printf '%s  %s\n' "$checksum" "$asset" | sha256sum --check
-          tar -xf "$asset"
-          printf '%s\n' "$RUNNER_TEMP/${asset%.tar.xz}/bin" >> "$GITHUB_PATH"
-          rustup target add aarch64-pc-windows-gnullvm
       - name: Build and stage the bundle
-        run: bash scripts/bundle.sh "$RUNNER_TEMP/build" "$BUILD_PLATFORM"
+        run: bash scripts/bundle.sh "$RUNNER_TEMP/build" windows-x64
       - name: Package the bundle
-        env:
-          ARTIFACT: jodeldiplom-${{ matrix.name }}.tar.gz
-        run: tar -C "$RUNNER_TEMP/build/jodeldiplom-$BUILD_PLATFORM" -czf "$RUNNER_TEMP/$ARTIFACT" .
+        run: tar -C "$RUNNER_TEMP/build/jodeldiplom-windows-x64" -czf "$RUNNER_TEMP/jodeldiplom-windows-x64.tar.gz" .
       - uses: actions/upload-artifact@v6
         with:
-          name: jodeldiplom-${{ matrix.name }}
-          path: ${{ runner.temp }}/jodeldiplom-${{ matrix.name }}.tar.gz
+          name: jodeldiplom-windows-x64
+          path: ${{ runner.temp }}/jodeldiplom-windows-x64.tar.gz
           if-no-files-found: error
 
   # The workspace's checks and tests on Windows, with the toolchain the
@@ -207,26 +184,18 @@ jobs:
         run: cargo test --workspace --locked --no-fail-fast
 
   windows-smoke:
-    name: Run Windows ${{ matrix.arch }} bundle
+    name: Run Windows x64 bundle
     needs: windows-build
-    runs-on: ${{ matrix.runner }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - arch: x64
-            runner: windows-2025
-          - arch: arm64
-            runner: windows-11-arm
+    runs-on: windows-2025
     steps:
       - uses: actions/download-artifact@v7
         with:
-          name: jodeldiplom-windows-${{ matrix.arch }}
+          name: jodeldiplom-windows-x64
           path: ${{ runner.temp }}/downloads
       - name: Run the Windows executables
         shell: pwsh
         env:
-          ARTIFACT: jodeldiplom-windows-${{ matrix.arch }}.tar.gz
+          ARTIFACT: jodeldiplom-windows-x64.tar.gz
         run: |
           $bundle = New-Item -ItemType Directory -Path "$env:RUNNER_TEMP/bundle"
           tar -xf "$env:RUNNER_TEMP/downloads/$env:ARTIFACT" -C $bundle.FullName
@@ -271,7 +240,7 @@ jobs:
           # Each bundle unpacks into one folder named after the release and
           # platform: a zip for Windows and macOS (where it holds the app),
           # a gzipped tar for Linux.
-          for platform in linux-x64 linux-arm64 macos-arm64 windows-x64 windows-arm64; do
+          for platform in linux-x64 linux-arm64 macos-arm64 windows-x64; do
             name=jodeldiplom-$TAG-$platform
             mkdir "$staging/$name"
             tar -xzf "$artifacts/jodeldiplom-$platform/jodeldiplom-$platform.tar.gz" -C "$staging/$name"
