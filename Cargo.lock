@@ -1669,6 +1669,13 @@ name = "jodel-rhythm"
 version = "0.1.0"
 
 [[package]]
+name = "jodel-synth"
+version = "0.1.0"
+dependencies = [
+ "durable",
+]
+
+[[package]]
 name = "jodel-tensors"
 version = "0.1.0"
 

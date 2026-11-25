@@ -1,0 +1,13 @@
+[package]
+name = "jodel-synth"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+license = "MIT"
+description = "A small real-time synthesizer for the karaoke game's sound effects: our own engines, a voice host, a bus of chorus, delay, hall and dynamics"
+
+[dependencies]
+
+[dev-dependencies]
+# The listening example writes its WAVs whole or not at all.
+durable = { path = "../durable" }
