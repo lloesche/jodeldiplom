@@ -277,6 +277,8 @@ fn time(
         gpu.time_frame(Some(backdrop), Some(&only), w, h)
             .expect("timed");
     }
+    // The whole frame again over the next (and in the picture saved).
+    gpu.set_stage(Some(frame), w, h);
     let mut costs = gpu.costs().expect("the times").into_iter();
     let whole = costs.next().expect("the frame");
     kinds.frames += 1;

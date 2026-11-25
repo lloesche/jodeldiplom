@@ -307,7 +307,7 @@ fn the_stage_shader_s_liquid_is_its_reference() {
     let c = ins[i * 3u + 2u];
     outs[i * 2u] = vec4<f32>(bulge(a.x, a.y, a.z), swell(a.w), slosh(b.x));
     outs[i * 2u + 1u] = vec4<f32>(front(b.y, a.y, b.z, b.w), shimmer(c.x, c.y, a.y), amplitude(c.z), 0.0);";
-    let source = super::stage_gpu::shader();
+    let source = super::stage_gpu::shader(super::stage_gpu::Group::Plain);
     let outs = run(&gpu, &source, body, &ins, (samples.len(), 2));
     for (k, [a, b, c]) in samples.iter().enumerate() {
         let (g, h) = (outs[k * 2], outs[k * 2 + 1]);
@@ -391,7 +391,7 @@ fn the_stage_shader_s_shine_is_its_reference() {
     outs[i * 7u + 4u] = vec4<f32>(rim(c.w, b.x, c.z * 0.2, s, a.w), 0.0);
     outs[i * 7u + 5u] = vec4<f32>(rim_at(b.xy, b.zw, bar, s, a.w), 0.0);
     outs[i * 7u + 6u] = vec4<f32>(text_tint(h.yzw, b.x, s, a.w), 0.0);";
-    let source = super::stage_gpu::shader();
+    let source = super::stage_gpu::shader(super::stage_gpu::Group::Plain);
     let outs = run(&gpu, &source, body, &ins, (samples.len(), 7));
     let close = |g: &[f32; 4], c: [f32; 3], what: &str| {
         for i in 0..3 {
@@ -516,7 +516,7 @@ fn the_stage_shader_s_glory_is_its_reference() {
     outs[i * 6u + 3u] = ring_at(c.xy, vec2<f32>(200.0, 300.0), vec2<f32>(30.0, 6.0), b.x, s, a.w);
     outs[i * 6u + 4u] = vec4<f32>(blaze(c.x * 3.0, c.z, 40.0, a.w, 0.8), 0.0);
     outs[i * 6u + 5u] = vec4<f32>(label_pop(a.w - b.z, 1.8), 0.0, 0.0);";
-    let source = super::stage_gpu::shader();
+    let source = super::stage_gpu::shader(super::stage_gpu::Group::Plain);
     let outs = run(&gpu, &source, body, &ins, (samples.len(), 6));
     let close = |g: &[f32], c: &[f32], what: &str| {
         for (x, y) in g.iter().zip(c) {
@@ -599,7 +599,7 @@ fn the_stage_shader_s_seal_and_stars_are_their_reference() {
     outs[i * 3u] = vec4<f32>(sticker_at(s.x, s.y, s.z), star(s.x, s.y, 0.56, 0.45));
     outs[i * 3u + 1u] = vec4<f32>(seal_at(s.x, s.y, s.z), wax_edge(s.w));
     outs[i * 3u + 2u] = vec4<f32>(rays_at(s.x * 200.0, s.y * 200.0, 150.0, 14.0, s.w), 0.0, 0.0, 0.0);";
-    let source = super::stage_gpu::shader();
+    let source = super::stage_gpu::shader(super::stage_gpu::Group::Plain);
     let outs = run(&gpu, &source, body, &samples, (samples.len(), 3));
     let close = |g: &[f32], c: &[f32], what: &str| {
         for (x, y) in g.iter().zip(c) {
@@ -676,7 +676,7 @@ fn the_stage_shader_s_paper_is_its_reference() {
     let sig = vec2<f32>(signature_at(s.x / 300.0, s.y / 300.0, s.w), signature_at(s.x / 300.0, s.y / 300.0, 1.0));
     outs[i * 3u + 1u] = vec4<f32>(stamp_at(s.x * 0.4, s.y * 0.4, vec2<f32>(140.0, 45.0), 6.5), sig);
     outs[i * 3u + 2u] = vec4<f32>(turn_about(s.xy, vec2<f32>(30.0, -20.0), s.w * 6.0), 0.0, 0.0);";
-    let source = super::stage_gpu::shader();
+    let source = super::stage_gpu::shader(super::stage_gpu::Group::Plain);
     let outs = run(&gpu, &source, body, &samples, (samples.len(), 3));
     let close = |g: &[f32], c: &[f32], what: &str| {
         for (x, y) in g.iter().zip(c) {

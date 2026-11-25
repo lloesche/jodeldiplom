@@ -351,6 +351,74 @@ pub fn with_picture(
     }
 }
 
+/// Which of the stage's pipelines draws a kind ([`kind`]): each is the
+/// shader with only its group's code (the rest left out where it is
+/// compiled), as Apple's GPUs run a shader at the pace its dearest code
+/// sets, for every pixel; a frame's shapes are drawn in runs of a group,
+/// in their order.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Group {
+    /// Pills, fills, capsules, sparks, discs, arrows, text and badges.
+    Plain,
+    /// The words' bubbles and the liquid in them.
+    Bubble,
+    /// The meter, the ring of the time left, the phrases' marks, Great's
+    /// glow and Amazing's flames.
+    Glory,
+    /// A streak's bands, swirl and rainbow edge.
+    Shine,
+    /// The diploma's rays, stars and seal.
+    Seal,
+    /// The diploma's paper, stamps and signature.
+    Paper,
+}
+
+impl Group {
+    /// Every group, in the order of their pipelines.
+    pub const ALL: [Group; 6] = [
+        Group::Plain,
+        Group::Bubble,
+        Group::Glory,
+        Group::Shine,
+        Group::Seal,
+        Group::Paper,
+    ];
+
+    /// The group that draws a shape of kind `k`.
+    pub fn of(k: f32) -> Group {
+        match k {
+            kind::TUBE | kind::TUBE_LIQUID | kind::LIQUID => Group::Bubble,
+            kind::METER | kind::RING | kind::MARK | kind::GLOW | kind::BLAZE => Group::Glory,
+            kind::BANDS | kind::SWIRL | kind::RIM => Group::Shine,
+            kind::RAYS | kind::STAR | kind::SEAL => Group::Seal,
+            kind::PAPER | kind::STAMP | kind::SIGNATURE => Group::Paper,
+            _ => Group::Plain,
+        }
+    }
+
+    /// As the shader takes it (`GROUP`, and its `G_` constants).
+    fn code(self) -> u32 {
+        self as u32
+    }
+}
+
+/// `instances` in runs of a [`Group`] each, in their order, `from` the
+/// first's index in the buffer.
+fn runs(instances: &[Instance], from: u32) -> Runs {
+    let mut runs = Runs::new();
+    for (i, s) in (from..).zip(instances) {
+        let g = Group::of(s.params[0]);
+        match runs.last_mut() {
+            Some((last, range)) if *last == g => range.end = i + 1,
+            _ => runs.push((g, i..i + 1)),
+        }
+    }
+    runs
+}
+
+/// Runs of a frame's instances, a [`Group`] each ([`runs`]).
+type Runs = Vec<(Group, std::ops::Range<u32>)>;
+
 /// The kinds and flags as the shader takes them.
 fn kinds_wgsl() -> String {
     let k = |f: f32| f as u32;
@@ -409,14 +477,29 @@ const K_SIGNATURE: u32 = {}u;
     )
 }
 
-/// The stage's shader: `stage.wgsl`, its kinds ([`kind`]), the liquid's
-/// maths ([`super::liquid::wgsl`]), a tube's nearest point
-/// ([`super::snake::wgsl`]), a streak's shine ([`super::rainbow::stage_wgsl`]),
-/// the glory ([`super::glory::wgsl`]) and the diploma's shapes
-/// ([`super::seal::wgsl`], [`super::paper::wgsl`]).
-pub fn shader() -> String {
+/// The groups as the shader takes them ([`Group`]): `G_` and its name.
+fn groups_wgsl() -> String {
+    (Group::ALL.iter())
+        .map(|g| {
+            format!(
+                "const G_{}: u32 = {}u;\n",
+                format!("{g:?}").to_uppercase(),
+                g.code()
+            )
+        })
+        .collect()
+}
+
+/// The stage's shader drawing `group`: `stage.wgsl`, its kinds
+/// ([`kind`]), the liquid's maths ([`super::liquid::wgsl`]), a tube's
+/// nearest point ([`super::snake::wgsl`]), a streak's shine
+/// ([`super::rainbow::stage_wgsl`]), the glory ([`super::glory::wgsl`])
+/// and the diploma's shapes ([`super::seal::wgsl`], [`super::paper::wgsl`]).
+pub fn shader(group: Group) -> String {
     format!(
-        "{}{}{}{}{}{}{}{}",
+        "const GROUP: u32 = {}u;\n{}{}{}{}{}{}{}{}{}",
+        group.code(),
+        groups_wgsl(),
         kinds_wgsl(),
         include_str!("stage.wgsl"),
         super::liquid::wgsl(),
@@ -506,9 +589,9 @@ impl StageFrame {
     }
 }
 
-/// The stage's pipeline and what it reads.
+/// The stage's pipelines (one a [`Group`]) and what they read.
 pub struct StagePass {
-    pipeline: wgpu::RenderPipeline,
+    pipelines: Vec<wgpu::RenderPipeline>,
     layout: wgpu::BindGroupLayout,
     bind: wgpu::BindGroup,
     uniforms: wgpu::Buffer,
@@ -520,9 +603,9 @@ pub struct StagePass {
     /// The tubes' middle lines (a point at least).
     paths: wgpu::Buffer,
     instances: Option<wgpu::Buffer>,
-    /// The instances in the buffer for the next frame: the shapes, then
-    /// those over everything.
-    count: (u32, u32),
+    /// The instances in the buffer for the next frame, in runs of a
+    /// group: the shapes, then those over everything.
+    runs: (Runs, Runs),
     linear: bool,
 }
 
@@ -605,46 +688,49 @@ impl StagePass {
             bind_group_layouts: &[Some(&layout)],
             ..Default::default()
         });
-        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("jodeldiplom stage"),
-            source: wgpu::ShaderSource::Wgsl(shader().into()),
-        });
         let attributes = wgpu::vertex_attr_array![
             0 => Float32x4, 1 => Float32x4, 2 => Float32x4,
             3 => Float32x4, 4 => Float32x4, 5 => Float32x4, 6 => Float32x4
         ];
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("jodeldiplom stage"),
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &module,
-                entry_point: Some("vs"),
-                compilation_options: Default::default(),
-                buffers: &[Some(wgpu::VertexBufferLayout {
-                    array_stride: std::mem::size_of::<Instance>() as u64,
-                    step_mode: wgpu::VertexStepMode::Instance,
-                    attributes: &attributes,
-                })],
-            },
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleStrip,
-                ..Default::default()
-            },
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
-            fragment: Some(wgpu::FragmentState {
-                module: &module,
-                entry_point: Some("fs"),
-                compilation_options: Default::default(),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format,
-                    blend: Some(blend.state()),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            multiview_mask: None,
-            cache: None,
-        });
+        let pipeline = |group: Group| {
+            let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("jodeldiplom stage"),
+                source: wgpu::ShaderSource::Wgsl(shader(group).into()),
+            });
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("jodeldiplom stage"),
+                layout: Some(&pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &module,
+                    entry_point: Some("vs"),
+                    compilation_options: Default::default(),
+                    buffers: &[Some(wgpu::VertexBufferLayout {
+                        array_stride: std::mem::size_of::<Instance>() as u64,
+                        step_mode: wgpu::VertexStepMode::Instance,
+                        attributes: &attributes,
+                    })],
+                },
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleStrip,
+                    ..Default::default()
+                },
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState::default(),
+                fragment: Some(wgpu::FragmentState {
+                    module: &module,
+                    entry_point: Some("fs"),
+                    compilation_options: Default::default(),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format,
+                        blend: Some(blend.state()),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                }),
+                multiview_mask: None,
+                cache: None,
+            })
+        };
+        let pipelines = Group::ALL.map(pipeline).to_vec();
         let uniforms = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("jodeldiplom stage"),
             size: 32,
@@ -661,7 +747,7 @@ impl StagePass {
         let paths = paths_buffer(device, 16);
         let bind = StagePass::bind(device, (&layout, &uniforms, &sampler), &atlas_view, &paths);
         StagePass {
-            pipeline,
+            pipelines,
             layout,
             bind,
             uniforms,
@@ -670,7 +756,7 @@ impl StagePass {
             atlas_view,
             paths,
             instances: None,
-            count: (0, 0),
+            runs: Default::default(),
             linear: takes_linear(format),
         }
     }
@@ -715,7 +801,7 @@ impl StagePass {
         feed: Option<Feed>,
         size: (u32, u32),
     ) {
-        self.count = (0, 0);
+        self.runs = Default::default();
         let Some(feed) = feed else {
             return;
         };
@@ -790,26 +876,29 @@ impl StagePass {
         uniforms[12..16].copy_from_slice(&(ATLAS as f32).to_le_bytes());
         uniforms[16..20].copy_from_slice(&feed.clock.to_le_bytes());
         queue.write_buffer(&self.uniforms, 0, &uniforms);
-        self.count = (feed.instances.len() as u32, feed.top.len() as u32);
+        let under = feed.instances.len() as u32;
+        self.runs = (runs(feed.instances, 0), runs(feed.top, under));
     }
 
     /// Draws its shapes into `pass` (nothing without any).
     pub fn draw(&self, pass: &mut wgpu::RenderPass) {
-        self.draw_range(pass, 0..self.count.0);
+        self.draw_runs(pass, &self.runs.0);
     }
 
     /// Draws its shapes over everything into `pass`.
     pub fn draw_top(&self, pass: &mut wgpu::RenderPass) {
-        self.draw_range(pass, self.count.0..self.count.0 + self.count.1);
+        self.draw_runs(pass, &self.runs.1);
     }
 
-    fn draw_range(&self, pass: &mut wgpu::RenderPass, range: std::ops::Range<u32>) {
-        let Some(buffer) = self.instances.as_ref().filter(|_| !range.is_empty()) else {
+    fn draw_runs(&self, pass: &mut wgpu::RenderPass, runs: &Runs) {
+        let Some(buffer) = self.instances.as_ref().filter(|_| !runs.is_empty()) else {
             return;
         };
-        pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, &self.bind, &[]);
         pass.set_vertex_buffer(0, buffer.slice(..));
-        pass.draw(0..4, range);
+        for (group, range) in runs {
+            pass.set_pipeline(&self.pipelines[group.code() as usize]);
+            pass.draw(0..4, range.clone());
+        }
     }
 }

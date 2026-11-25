@@ -171,10 +171,9 @@ fn shade_skin(o: Out, d: f32, down: f32, flash: f32) -> vec4<f32> {
     return over_plus(col, a, o.color2.rgb * g);
 }
 
-// A pill, a fill, or a picture's bubble's liquid (straining with it), at
-// `p`.
-fn pill(o: Out, p: vec2<f32>, k: u32) -> vec4<f32> {
-    let bubble = k == K_LIQUID;
+// A pill, a fill, or (`bubble`) a picture's bubble's liquid (straining
+// with it), at `p`.
+fn pill(o: Out, p: vec2<f32>, k: u32, bubble: bool) -> vec4<f32> {
     var s = vec4<f32>(1.0, 1.0, 1.0, 0.0);
     if bubble {
         s = bulged(o);
@@ -234,27 +233,32 @@ fn tube(o: Out, p: vec2<f32>, k: u32) -> vec4<f32> {
     return shade_skin(o, d, down, s.w);
 }
 
+// A shape of this pipeline's group (`GROUP`: `stage_gpu::Group`; the
+// other groups' code is left out where it is compiled).
 @fragment
 fn fs(o: Out) -> @location(0) vec4<f32> {
     let k = u32(round(o.params.x));
     let p = o.p;
-    if k == K_PILL || k == K_FILL || k == K_LIQUID {
-        return pill(o, p, k);
-    }
-    if k == K_TUBE || k == K_TUBE_LIQUID {
+    if GROUP == G_BUBBLE {
+        if k == K_LIQUID {
+            return pill(o, p, k, true);
+        }
         return tube(o, p, k);
     }
-    if k >= K_METER && k <= K_BLAZE {
+    if GROUP == G_GLORY {
         return glory(o, p, k);
     }
-    if k == K_BANDS || k == K_SWIRL || k == K_RIM {
+    if GROUP == G_SHINE {
         return shine(o, p, k);
     }
-    if k == K_RAYS || k == K_STAR || k == K_SEAL {
+    if GROUP == G_SEAL {
         return seal_shape(o, p, k);
     }
-    if k == K_PAPER || k == K_STAMP || k == K_SIGNATURE {
+    if GROUP == G_PAPER {
         return paper_shape(o, p, k);
+    }
+    if k == K_PILL || k == K_FILL {
+        return pill(o, p, k, false);
     }
     if k == K_SEGMENT {
         let d = segment(p, o.shape.xy, o.shape.zw) - o.params.y;
