@@ -22,6 +22,9 @@ pub struct Fit {
     /// along them, a cell wide each (0: none shown): what fits the
     /// lyrics' words.
     pub lane_letters: u16,
+    /// The width of the lyrics editor's lane in the same letters (0: none
+    /// shown): what its words are fitted to.
+    pub lyric_letters: u16,
     /// The least share of the height, from the bottom, where the pointer
     /// brings Karaoke mode's controls up: the controls' bar and two lines.
     pub controls_reach: f32,

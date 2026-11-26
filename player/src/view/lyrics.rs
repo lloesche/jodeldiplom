@@ -165,6 +165,8 @@ fn keys(writing: bool) -> Vec<Hint> {
             "end",
         ),
         hint(&[Op::LyricsPlay], "play"),
+        hint(&[Op::FitLyrics], super::transition::FIT_LYRICS),
+        hint(&[Op::Follow], "follow"),
         hint(&[Op::LyricsNotSung], "not sung"),
         hint(&[Op::LyricsLouder, Op::LyricsQuieter], "voice"),
         hint(&[Op::LyricsWrite], "text"),

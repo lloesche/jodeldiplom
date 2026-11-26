@@ -293,7 +293,7 @@ pub(crate) fn apply(state: &mut State, op: Op, fx: &mut Vec<Effect>) -> bool {
         Op::PageDown => viewport::step(state, PAGE_BARS, 0, false, heard),
         Op::TransitionZoomIn => viewport::zoom(state, -1, heard),
         Op::TransitionZoomOut => viewport::zoom(state, 1, heard),
-        Op::TransitionFitLyrics => viewport::fit_lyrics(state, heard),
+        Op::FitLyrics => viewport::fit_lyrics(state, heard),
         Op::TransitionLyrics => {
             state.config.transition_lyrics = !state.config.transition_lyrics;
             fx.push(Effect::SaveConfig);
@@ -304,7 +304,7 @@ pub(crate) fn apply(state: &mut State, op: Op, fx: &mut Vec<Effect>) -> bool {
             };
             state.info(format!("Lyrics on the vocals lane: {now}"));
         }
-        Op::TransitionFollow => {
+        Op::Follow => {
             let b = block_mut(state, Block::Now);
             b.start = None;
             b.cursor = None;

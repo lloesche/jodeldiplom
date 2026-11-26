@@ -181,7 +181,7 @@ pub(super) fn footer<'a>(state: &State, width: f32) -> Element<'a, Message> {
     let fit = widgets::secondary(what)
         .key(key)
         .small()
-        .on_press(Message::Act(Action::Op(Op::TransitionFitLyrics)));
+        .on_press(Message::Act(Action::Op(Op::FitLyrics)));
     let lead_w = wide(&f.zoom) + if f.editing { 70.0 } else { TAG_PAD };
     let room = width - lead_w - 130.0 - space::L;
     // The keys in order, the last going first.

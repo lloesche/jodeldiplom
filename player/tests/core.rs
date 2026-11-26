@@ -3542,7 +3542,7 @@ fn z_zooms_the_selected_track_to_fit_its_lyrics() {
     let mut state = common::transition_state(120, 40);
     let span = |state: &State, b| viewport::span(state, b);
     let (now_before, next_before) = (span(&state, Block::Now), span(&state, Block::Next));
-    op(&mut state, Op::TransitionFitLyrics);
+    op(&mut state, Op::FitLyrics);
     assert_eq!(span(&state, Block::Now), now_before, "nothing to fit");
     assert!(state
         .message
@@ -3550,7 +3550,7 @@ fn z_zooms_the_selected_track_to_fit_its_lyrics() {
         .is_some_and(|m| m.text.contains("No timed lyrics")));
     common::sung_every(&mut state, 1.2);
     // The playing track, following the playhead: it still follows.
-    op(&mut state, Op::TransitionFitLyrics);
+    op(&mut state, Op::FitLyrics);
     assert_eq!(
         tab::block(&state, Block::Now).start,
         None,
@@ -3564,7 +3564,7 @@ fn z_zooms_the_selected_track_to_fit_its_lyrics() {
     // The next track selected: it alone is zoomed.
     let now_before = span(&state, Block::Now);
     op(&mut state, Op::Down);
-    op(&mut state, Op::TransitionFitLyrics);
+    op(&mut state, Op::FitLyrics);
     assert_eq!(
         span(&state, Block::Now),
         now_before,

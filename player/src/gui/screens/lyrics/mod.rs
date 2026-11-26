@@ -123,12 +123,30 @@ pub struct Plan {
     pub footer: Rectangle,
 }
 
+/// The width of the screen's rows (the lane's among them) in a window
+/// `width` points wide.
+fn across(width: f32) -> f32 {
+    (width - 2.0 * space::XL).max(0.0)
+}
+
+/// The width of the lane in a window `width` points wide, in letters
+/// `letter` points wide: what `z` fits its words to
+/// ([`crate::core::Fit::lyric_letters`]).
+pub fn lane_letters(width: f32, letter: f32) -> u16 {
+    if letter <= 0.0 {
+        return 0;
+    }
+    (across(width) / letter)
+        .floor()
+        .clamp(0.0, f32::from(u16::MAX)) as u16
+}
+
 /// The screen in `room`: the header at the top, the keys at the foot, the
 /// lane as high as there is room for (up to [`MOST_LANE`]) between the
 /// time over it and the levels and the panel under it.
 pub fn plan(room: &Room) -> Plan {
     let p = room.page;
-    let (x, w) = (p.x + space::XL, (p.width - 2.0 * space::XL).max(0.0));
+    let (x, w) = (p.x + space::XL, across(p.width));
     let top = p.y + space::L;
     let header = room.rect(x, top, w, HEADER);
     let ruler_y = top + HEADER + space::M;

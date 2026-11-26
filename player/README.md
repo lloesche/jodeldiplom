@@ -781,8 +781,9 @@ stem's waveform (the whole song's where it has no stems), where they are
 sung, the time across the top and the voice's level over each word under
 it; the word selected, its line, and the bottom bar under it all. A word
 set by hand carries a pin; one not to be sung is dimmed. The song plays
-from the word under it (`space`), the view paging after the playhead, so
-the timing is heard while it is set; the song timed again with each
+from the word under it (`space`), the view paging after the playhead
+(until it is moved by hand; `.` follows again), so the timing is heard
+while it is set; the song timed again with each
 change comes back to the open editor. Revert (asked first) forgets every
 edit: the text as found, timed again.
 
@@ -794,6 +795,8 @@ edit: the text as found, timed again.
 | `alt+←` `alt+→` / drag the right edge | its end 20 ms earlier, later |
 | `ctrl+←` `ctrl+→` / drag the middle | the whole word 20 ms earlier, later |
 | `space` | play from just before the word, again: pause |
+| `z` | zoom the song to fit its lyrics: the widest view at which every word shows its text whole, round the word (or the playhead followed) |
+| `.` | follow the playhead again (moving the view by hand stops it) |
 | `n` | not to be sung, or to be sung again |
 | `+` `-` `0` | the voice over it in Karaoke mode 3 dB louder, quieter, as the Voice slider |
 | `enter` / a double click, `shift+enter` | write the word, its line (enter keeps it, `esc` leaves it) |

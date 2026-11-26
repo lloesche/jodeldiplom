@@ -637,13 +637,14 @@ fn edit_keys() -> Vec<Hint> {
     ]
 }
 
+/// What `z` is called where it is named: the button here, the lyrics
+/// editor's foot.
+pub const FIT_LYRICS: &str = "fit lyrics";
+
 /// What the button that zooms to fit the lyrics says, and its key (from
 /// the keymap).
 pub fn fit_lyrics() -> Hint {
-    (
-        keymap::hint(Context::Transition, Op::TransitionFitLyrics),
-        "fit lyrics",
-    )
+    (keymap::hint(Context::Transition, Op::FitLyrics), FIT_LYRICS)
 }
 
 impl Footer {

@@ -312,16 +312,12 @@ pub(super) fn fit_lyrics(state: &mut State, heard: f64) {
         .map(lanes::fitted_words)
         .unwrap_or_default();
     if words.is_empty() {
-        state.info("No timed lyrics to fit the zoom to");
+        state.info(lanes::NOTHING_TO_FIT);
         return;
     }
-    let least = lanes::words_left_out(&words, lanes::LYRICS_MOST_PER, 1);
-    let fits = |z: usize| {
-        let per = f64::from(width) / span_at(state, z).max(1e-3);
-        lanes::words_left_out(&words, per, 1) <= least
-    };
-    let fitting = (0..ZOOMS.len()).rev().find(|&z| fits(z));
-    let z = fitting.unwrap_or(0);
+    let spans: Vec<f64> = (0..ZOOMS.len()).map(|z| span_at(state, z)).collect();
+    let left_out = |per| lanes::words_left_out(&words, per, 1);
+    let (z, fits) = lanes::widest_fit(&spans, width, lanes::LYRICS_MOST_PER, &left_out);
     let from = zoom_of(state, which);
     // A view following the playhead (or, the next track's, at its first
     // bar) goes on doing so; one moved by hand stays around its middle.
@@ -339,12 +335,7 @@ pub(super) fn fit_lyrics(state: &mut State, heard: f64) {
         Block::Next => "the next track",
         _ => "the playing track",
     };
-    let said = if fitting.is_some() {
-        format!("Zoomed {track} to fit its lyrics: {shown}")
-    } else {
-        format!("Zoomed {track} in all the way ({shown}); some words still do not fit")
-    };
-    state.info(said);
+    state.info(lanes::fit_said(track, &shown, fits));
 }
 
 /// Zooms one block (the wheel over it), keeping `at` (seconds into its

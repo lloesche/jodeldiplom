@@ -442,7 +442,7 @@ fn transition_steps(size: Size) -> Vec<(String, State)> {
     steps.push(("a selection".into(), state.clone()));
     op(&mut state, Op::TransitionPreset);
     steps.push(("a transition's curves".into(), state.clone()));
-    op(&mut state, Op::TransitionFollow);
+    op(&mut state, Op::Follow);
     at(&mut state, 12.9);
     steps.push(("following again".into(), state.clone()));
     op(&mut state, Op::TransitionZoomOut);

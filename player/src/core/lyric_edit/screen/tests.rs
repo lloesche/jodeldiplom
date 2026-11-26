@@ -233,6 +233,48 @@ fn the_keys_nudge_mark_level_write_and_undo() {
     assert_eq!(editor(&s).lyrics.lines[0].text(), "too three");
 }
 
+/// `z` zooms the view to the widest span at which no word's box cuts its
+/// text short, as the Transition tab's `z` fits its lanes: a step of the
+/// wheel wider would cut one. The word selected stays where it was across
+/// the view; it is said.
+#[test]
+fn z_zooms_the_editor_to_fit_its_lyrics() {
+    const LETTERS: u16 = 120;
+    let mut s = state();
+    s.fit.lyric_letters = LETTERS;
+    op(&mut s, Op::LyricsEditor);
+    let (a, b) = window(&s).unwrap();
+    let share = |(a, b): (f64, f64)| (10.25 - a) / (b - a);
+    let before = share((a, b));
+    op(&mut s, Op::FitLyrics);
+    let cut = |s: &State| {
+        let (a, b) = window(s).unwrap();
+        let words = lanes::fitted_words(&editor(s).lyrics);
+        lanes::words_cut(&words, f64::from(LETTERS) / (b - a), BOX_PAD)
+    };
+    let fitted = window(&s).unwrap();
+    assert_eq!(cut(&s), 0, "{fitted:?}");
+    assert!(fitted.1 - fitted.0 < SPAN, "{fitted:?}");
+    assert!((share(fitted) - before).abs() < 1e-9, "{fitted:?}");
+    assert!(s
+        .message
+        .as_ref()
+        .is_some_and(|m| m.text.starts_with("Zoomed the song to fit its lyrics")));
+    // A step of the wheel wider: a word cut short.
+    input(
+        &mut s,
+        Input::Zoom {
+            steps: -1,
+            at: 10.25,
+        },
+    );
+    assert!(cut(&s) > 0, "{:?}", window(&s));
+    // Again from there: the same span.
+    op(&mut s, Op::FitLyrics);
+    let again = window(&s).unwrap();
+    assert!(((again.1 - again.0) - (fitted.1 - fitted.0)).abs() < 1e-9);
+}
+
 /// The wheel zooms round the time under the pointer; the secondary button
 /// drags the view by the span over the lane's width a point.
 #[test]

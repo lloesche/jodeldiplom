@@ -147,8 +147,9 @@ pub fn page(height: f32) -> f32 {
 /// core ([`crate::core::Action::Fit`]), whichever screen and side show
 /// (the list keeps its page behind the other tabs, the keys go round the
 /// desk's strips from any tab): the list's page and the help's, the
-/// desk's width, the Transition tab's lanes in letters `letter` points
-/// wide each (the lanes' words take a letter each), Karaoke mode's
+/// desk's width, the Transition tab's lanes and the lyrics editor's in
+/// letters `letter` points wide each (the lanes' words take a letter
+/// each), Karaoke mode's
 /// controls' reach, and whether a spectrum shows.
 pub fn fit(size: Size, state: &State, letter: f32) -> Fit {
     let list = main(size, Side::Browser);
@@ -159,6 +160,7 @@ pub fn fit(size: Size, state: &State, letter: f32) -> Fit {
         help_rows: crate::view::help::rows(page(size.height), state),
         desk_width: wide.pane.width,
         lane_letters: crate::view::transition::lane_letters(wide.pane.width, letter),
+        lyric_letters: super::screens::lyrics::lane_letters(size.width, letter),
         controls_reach: super::screens::karaoke::mode::reach(size.height),
         spectrum: state.screen == Screen::Main && shown.spectrum > 0.0,
     }

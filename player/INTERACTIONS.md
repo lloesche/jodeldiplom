@@ -952,7 +952,11 @@ stem keys are their mutes.
   below (the word brought into view), shift+← → its start and alt+← →
   its end 20 ms, ctrl+← → the whole word; `space` plays the song from
   just before the word, the view paging after the playhead until it is
-  moved by hand (again: pause); `n` not to be sung, `+` `-` the voice's
+  moved by hand (again: pause), `.` following it again (the playhead a
+  third in); `z` zooms the view, as the Transition tab's `z` its lanes,
+  to the widest at which every word's box shows its text whole (but
+  those none does), round the word (or the playhead followed), a step of
+  the wheel wider cutting one short; `n` not to be sung, `+` `-` the voice's
   level over it 3 dB, `0` back to the slider's; enter writes the word
   and shift+enter its line in a field that takes every key but enter
   (kept) and `esc` (left as it was); `del` takes it out; ctrl+z ctrl+y
@@ -962,12 +966,14 @@ stem keys are their mutes.
     `dragging_a_words_end_moves_it_and_sets_it_by_hand`,
     `the_lyrics_editors_keys_nudge_mark_and_undo`,
     `a_word_is_written_in_the_lyrics_editors_field`,
-    `space_plays_from_the_word_and_the_view_follows` (screens)
+    `space_plays_from_the_word_and_the_view_follows`,
+    `dot_follows_the_playhead_again_after_the_wheel` (screens)
   - `the_editor_opens_on_its_screen_and_esc_closes_it`,
     `a_word_dragged_by_its_end_is_set_by_hand_in_one_step`,
     `a_click_selects_and_a_second_writes_the_word`,
     `the_keys_nudge_mark_level_write_and_undo`,
-    `the_view_zooms_round_the_pointer_and_pans`
+    `the_view_zooms_round_the_pointer_and_pans`,
+    `z_zooms_the_editor_to_fit_its_lyrics`
     (`core::lyric_edit::screen`)
   - `the_rows_go_down_the_page_and_stay_on_its_pixels` (`gui::lyrics`)
 ## Mixer

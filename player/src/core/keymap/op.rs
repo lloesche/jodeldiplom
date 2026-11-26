@@ -118,11 +118,12 @@ pub enum Op {
     TransitionZoomIn,
     /// Transition: more bars shown.
     TransitionZoomOut,
-    /// Transition: the track selected to the widest zoom that leaves out
-    /// no word of its lyrics.
-    TransitionFitLyrics,
-    /// Transition: follow the playhead again.
-    TransitionFollow,
+    /// The widest zoom that leaves out no word of the lyrics: the
+    /// Transition tab's track selected, the lyrics editor's song.
+    FitLyrics,
+    /// The view follows the playhead again: the Transition tab's, the
+    /// lyrics editor's.
+    Follow,
     /// Transition: the lyrics on the vocals lane, on or off.
     TransitionLyrics,
     /// Grid: every bar starts a beat earlier.
@@ -336,8 +337,8 @@ impl Op {
             Op::TransitionSelectForward => "Transition: select on",
             Op::TransitionZoomIn => "Transition: zoom in",
             Op::TransitionZoomOut => "Transition: zoom out",
-            Op::TransitionFitLyrics => "Transition: zoom the track selected to fit its lyrics",
-            Op::TransitionFollow => "Transition: follow the playhead",
+            Op::FitLyrics => "Transition: zoom the track selected to fit its lyrics",
+            Op::Follow => "Transition: follow the playhead",
             Op::TransitionLyrics => "Transition: lyrics on the vocals lane on/off",
             Op::GridEarlier => "Grid: bars a beat earlier",
             Op::GridLater => "Grid: bars a beat later",
@@ -498,8 +499,8 @@ impl Op {
             | Op::TransitionSelectForward => (Transition, Move),
             Op::TransitionZoomIn
             | Op::TransitionZoomOut
-            | Op::TransitionFitLyrics
-            | Op::TransitionFollow
+            | Op::FitLyrics
+            | Op::Follow
             | Op::TransitionLyrics
             | Op::GridEarlier
             | Op::GridLater
@@ -558,7 +559,9 @@ impl Op {
     /// The tab or screen whose own operation it is: done only where that
     /// shows, and from anywhere else answered with where it is done.
     /// [`Context::Global`]: done anywhere, or by whatever shows (the moves,
-    /// `enter`, `esc`).
+    /// `enter`, `esc`). The lyrics editor, which takes every key first,
+    /// shares the Transition tab's view keys ([`Op::FitLyrics`],
+    /// [`Op::Follow`]).
     pub fn home(self) -> Context {
         self.meta().0
     }

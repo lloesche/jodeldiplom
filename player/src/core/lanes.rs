@@ -1,7 +1,8 @@
 //! The lanes a track is drawn in (its waveform tracks), as the Transition
 //! and Karaoke tabs show
 //! them: which track a block of lanes shows, the lanes in it, its analysis
-//! and its lyrics, and how the lyrics' words are laid out along a lane.
+//! and its lyrics, and how the lyrics' words are laid out along a lane
+//! (and the zoom `z` fits them to, there and in the lyrics editor).
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -270,4 +271,50 @@ pub fn lyrics_per_second(words: &[&jodel_lyrics::Word], rows: usize) -> Option<f
     }
     let roomy = (hi * 1.1).min(LYRICS_MOST_PER);
     Some(if fits(roomy) { roomy } else { hi })
+}
+
+/// How many of `words` a view at `per` letters a second shows cut short:
+/// each a box as long as it is sung, which shows its text whole where its
+/// letters and `pad` more fit in it (the lyrics editor's boxes).
+pub fn words_cut(words: &[&jodel_lyrics::Word], per: f64, pad: f64) -> usize {
+    words
+        .iter()
+        .filter(|w| match (w.start, w.end) {
+            (Some(start), Some(end)) => (end - start) * per < w.text.chars().count() as f64 + pad,
+            _ => false,
+        })
+        .count()
+}
+
+/// What `z` zooms to: of `spans` (the seconds across a view `letters`
+/// letters wide, the narrowest first), the widest at which `cut(per)` (how
+/// many words a view at `per` letters a second does not show whole) is no
+/// more than at `most_per` letters a second (the words no zoom shows
+/// whole). Its index, and whether one is; else the narrowest's, 0.
+pub fn widest_fit(
+    spans: &[f64],
+    letters: u16,
+    most_per: f64,
+    cut: &dyn Fn(f64) -> usize,
+) -> (usize, bool) {
+    let least = cut(most_per);
+    let fits = |span: f64| cut(f64::from(letters) / span.max(1e-3)) <= least;
+    match (0..spans.len()).rev().find(|&k| fits(spans[k])) {
+        Some(k) => (k, true),
+        None => (0, false),
+    }
+}
+
+/// What `z` says without timed words to fit the zoom to.
+pub const NOTHING_TO_FIT: &str = "No timed lyrics to fit the zoom to";
+
+/// What `z` says once it has zoomed `what` (`the playing track`) to show
+/// `shown` (`16 bars`): fitted to its lyrics, or (`fits` false) in all
+/// the way with words still too tight.
+pub fn fit_said(what: &str, shown: &str, fits: bool) -> String {
+    if fits {
+        format!("Zoomed {what} to fit its lyrics: {shown}")
+    } else {
+        format!("Zoomed {what} in all the way ({shown}); some words still do not fit")
+    }
 }

@@ -6,7 +6,9 @@
 //!   round the time under the pointer, the secondary button drags it, and
 //!   the word the keys select is brought into it. While the song plays from
 //!   a word (`space`) it pages after the playhead ([`window`]) until it is
-//!   moved by hand.
+//!   moved by hand; `.` has it follow again. `z` zooms it to the widest
+//!   span at which every word shows its text whole, as the Transition
+//!   tab's `z` does its lanes ([`fit_lyrics`]).
 //! - **The pointer:** a press on a word selects it and holds it ([`Held`]):
 //!   dragged by its middle it moves, by an edge that end moves, set by hand
 //!   (a tremble within [`Input::Hold`]'s slop changes nothing); let go of,
@@ -17,8 +19,9 @@
 //!   `enter`, left as it was with `esc`; a press on the lane keeps it too.
 //! - **The keys** ([`apply`]): the word before or after, the line above or
 //!   below, its start, end or whole a step ([`NUDGE`]) earlier or later,
-//!   the song played from it, not to be sung, the voice's level over it,
-//!   its text, taken out, undo and redo, `esc` closing; quitting, the
+//!   the song played from it, the view fitted to the lyrics or following
+//!   the playhead again, not to be sung, the voice's level over it, its
+//!   text, taken out, undo and redo, `esc` closing; quitting, the
 //!   volume, the stems and playback as anywhere; nothing that leaves the
 //!   screen (the palette, the settings, the help, the tabs).
 
@@ -27,7 +30,7 @@ use jodel_playback::{Command, PlayState};
 
 use super::{act as edit_act, kept, Edit, LyricEditor, LyricsEdit, WordAt};
 use crate::core::keymap::Op;
-use crate::core::{sliders, voice_curve, DoubleClick, Effect, Screen, State};
+use crate::core::{lanes, sliders, text, voice_curve, DoubleClick, Effect, Screen, State};
 
 /// How far the keys move a word's start or end, or the whole word, in
 /// seconds.
@@ -53,6 +56,10 @@ pub const PAGE: f64 = 0.9;
 /// How long before a word the song plays from it, in seconds: its onset is
 /// heard.
 pub const PREROLL: f64 = 0.3;
+/// The letters a word's box takes beyond its text (its insets and the gaps
+/// between boxes): a box shows its text whole where it is its letters and
+/// these long ([`lanes::words_cut`]).
+pub const BOX_PAD: f64 = 2.0;
 
 /// What a press on a word holds: its start, its middle (all of it) or its
 /// end.
@@ -109,7 +116,8 @@ pub struct EditorScreen {
     pub start: f64,
     /// The seconds across it.
     pub span: f64,
-    /// It pages after the playhead ([`window`]).
+    /// It pages after the playhead ([`window`]): from `space` or `.` until
+    /// it is moved by hand.
     pub follow: bool,
     /// The word the pointer holds.
     pub held: Option<Held>,
@@ -305,6 +313,94 @@ pub(super) fn reveal(state: &mut State) {
     s.follow = false;
 }
 
+/// The view `span` seconds across, `at` (seconds into the song) where it
+/// was across it (a third of the way in where it was not in view). A view
+/// following the playhead goes on following it.
+fn zoom_round(state: &mut State, span: f64, at: f64) {
+    let Some((start, end)) = window(state) else {
+        return;
+    };
+    let Some(editor) = &mut state.karaoke.editor else {
+        return;
+    };
+    let share = if end > start && (start..=end).contains(&at) {
+        (at - start) / (end - start)
+    } else {
+        1.0 / 3.0
+    };
+    let s = &mut editor.screen;
+    s.start = (at - share * span).max(0.0);
+    s.span = span;
+}
+
+/// The spans `z` picks from, the narrowest first: [`LEAST_SPAN`], then a
+/// step of the wheel wider each, up to `most` (the song's length).
+fn fit_spans(most: f64) -> Vec<f64> {
+    let mut spans: Vec<f64> = std::iter::successors(Some(LEAST_SPAN), |s| Some(s * ZOOM))
+        .take_while(|&s| s < most)
+        .collect();
+    spans.push(most);
+    spans
+}
+
+/// `z`: the view zoomed to the widest span (of [`fit_spans`]) at which every
+/// word's box shows its text whole, but those no span shows so
+/// ([`lanes::widest_fit`], as the Transition tab's lanes fit theirs), round
+/// the playhead while the view follows it, else round the word selected;
+/// and said.
+fn fit_lyrics(state: &mut State) {
+    let letters = state.fit.lyric_letters;
+    let Some(editor) = &state.karaoke.editor else {
+        return;
+    };
+    if letters == 0 {
+        return;
+    }
+    let most = duration(state).unwrap_or(MOST_SPAN).max(LEAST_SPAN);
+    let words = lanes::fitted_words(&editor.lyrics);
+    let fit = (!words.is_empty()).then(|| {
+        let spans = fit_spans(most);
+        let cut = |per| lanes::words_cut(&words, per, BOX_PAD);
+        let (k, fits) = lanes::widest_fit(&spans, letters, f64::from(letters) / LEAST_SPAN, &cut);
+        (spans[k], fits)
+    });
+    let word = editor.word().and_then(|w| w.start.zip(w.end));
+    let following = editor.screen.follow;
+    let Some((span, fits)) = fit else {
+        state.info(lanes::NOTHING_TO_FIT);
+        return;
+    };
+    let Some((start, end)) = window(state) else {
+        return;
+    };
+    let at = match (playhead(state).filter(|_| following), word) {
+        (Some(p), _) => p,
+        (None, Some((a, b))) => 0.5 * (a + b),
+        (None, None) => 0.5 * (start + end),
+    };
+    zoom_round(state, span, at);
+    let shown = if span < 60.0 {
+        format!("{span:.1} s")
+    } else {
+        text::clock(span)
+    };
+    state.info(lanes::fit_said("the song", &shown, fits));
+}
+
+/// `.`: the view follows the playhead again, the playhead (where the song
+/// is played) a third of the way in.
+fn follow(state: &mut State) {
+    let heard = playhead(state);
+    let Some(editor) = &mut state.karaoke.editor else {
+        return;
+    };
+    let s = &mut editor.screen;
+    if let Some(p) = heard {
+        s.start = (p - s.span / 3.0).max(0.0);
+    }
+    s.follow = true;
+}
+
 /// The first word of the line `by` lines above (negative) or below the one
 /// selected that has words, if any.
 fn line_word(editor: &LyricEditor, by: isize) -> Option<WordAt> {
@@ -386,6 +482,14 @@ pub(crate) fn apply(state: &mut State, op: Op, fx: &mut Vec<Effect>) -> bool {
         Op::LyricsRedo => edit(Edit::Redo),
         Op::LyricsPlay => {
             play(state, fx);
+            return true;
+        }
+        Op::FitLyrics => {
+            fit_lyrics(state);
+            return true;
+        }
+        Op::Follow => {
+            follow(state);
             return true;
         }
         // As anywhere: they leave the screen as it is.
@@ -524,14 +628,11 @@ pub(super) fn act(state: &mut State, what: Input, fx: &mut Vec<Effect>) {
         }
         Input::Zoom { steps, at } => {
             settle(state);
-            let Some(editor) = &mut state.karaoke.editor else {
+            let Some(editor) = &state.karaoke.editor else {
                 return;
             };
-            let s = &mut editor.screen;
-            let span = (s.span * ZOOM.powi(-steps)).clamp(LEAST_SPAN, most);
-            let share = ((at - s.start) / s.span).clamp(0.0, 1.0);
-            s.start = (at - share * span).max(0.0);
-            s.span = span;
+            let span = (editor.screen.span * ZOOM.powi(-steps)).clamp(LEAST_SPAN, most);
+            zoom_round(state, span, at);
         }
         Input::PanStart { at, width } => {
             settle(state);

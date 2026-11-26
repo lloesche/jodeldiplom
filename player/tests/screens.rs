@@ -1285,7 +1285,7 @@ fn the_fit_lyrics_button_is_z() {
     let gui = window(common::transition_state(160, 42));
     let clicked = acts(&click(&gui, "fit lyrics").unwrap());
     assert!(
-        matches!(clicked[..], [Action::Op(Op::TransitionFitLyrics)]),
+        matches!(clicked[..], [Action::Op(Op::FitLyrics)]),
         "{clicked:?}"
     );
 }
@@ -1755,6 +1755,44 @@ fn space_plays_from_the_word_and_the_view_follows() {
     assert!(heard >= a && heard < a + PAGE * span && (b - a - span).abs() < 1e-9);
     let fx = update(&mut state, Action::Op(Op::LyricsPlay));
     assert!(fx.contains(&Effect::Engine(Command::Pause)));
+}
+
+/// In the lyrics editor the wheel stops the view following the playhead:
+/// it stays where it was put as the song goes on out of it. `.` brings the
+/// playhead back, a third of the way in, and the view follows it on as the
+/// song plays.
+#[test]
+fn dot_follows_the_playhead_again_after_the_wheel() {
+    use jodel_playback::PlayState;
+    use jodeldiplom::core::lyric_edit::screen::{window as shown_span, Input};
+    use jodeldiplom::core::lyric_edit::LyricsEdit;
+    let mut state = lyrics_state();
+    state.playing.state = PlayState::Paused;
+    update(&mut state, Action::Op(Op::LyricsEditor));
+    update(&mut state, Action::Op(Op::LyricsPlay));
+    state.playing.state = PlayState::Playing;
+    let in_view = |state: &State| {
+        let (a, b) = shown_span(state).unwrap();
+        (a..b).contains(&state.heard())
+    };
+    let following = |state: &State| state.karaoke.editor.as_ref().unwrap().screen.follow;
+    assert!(in_view(&state) && following(&state));
+    let (a, b) = shown_span(&state).unwrap();
+    let zoom = Input::Zoom { steps: 1, at: b };
+    update(&mut state, Action::LyricsEdit(LyricsEdit::Screen(zoom)));
+    assert!(!following(&state), "the wheel stops it");
+    let span = b - a;
+    state.drawn_heard = Some(state.heard() + 2.0 * span);
+    assert!(!in_view(&state), "{:?}", shown_span(&state));
+    update(&mut state, Action::Op(Op::Follow));
+    assert!(following(&state));
+    let (c, d) = shown_span(&state).unwrap();
+    assert!(((state.heard() - c) / (d - c) - 1.0 / 3.0).abs() < 1e-9);
+    // On as it plays: still in view.
+    for _ in 0..5 {
+        state.drawn_heard = Some(state.heard() + 0.7 * (d - c));
+        assert!(in_view(&state), "{:?}", shown_span(&state));
+    }
 }
 /// A player with no output, no devices and no microphone, timing by
 /// `clock`.

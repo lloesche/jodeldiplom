@@ -142,8 +142,8 @@ pub const KEYMAP: &[Binding] = &[
     b(Transition, &[PGDN], Op::PageDown, "eight bars on"),
     b(Transition, &[ch('+'), ch('=')], Op::TransitionZoomIn, "zoom in (fewer bars)"),
     b(Transition, &[ch('-')], Op::TransitionZoomOut, "zoom out (more bars, then whole tracks)"),
-    b(Transition, &[ch('z')], Op::TransitionFitLyrics, "zoom the track selected to fit its lyrics"),
-    b(Transition, &[ch('.')], Op::TransitionFollow, "follow the playhead again"),
+    b(Transition, &[ch('z')], Op::FitLyrics, "zoom the track selected to fit its lyrics"),
+    b(Transition, &[ch('.')], Op::Follow, "follow the playhead again"),
     b(Transition, &[ch('L')], Op::TransitionLyrics, "the lyrics on the vocals lane on/off"),
     // The bar jumps: 5 the bar heard, 6 the next, 4 the one before, when
     // the bar heard ends; with shift at once.
@@ -251,6 +251,8 @@ pub const KEYMAP: &[Binding] = &[
     b(LyricsEditor, &[CTRL_LEFT], Op::LyricsMoveEarlier, "the whole word 20 ms earlier (or drag its middle)"),
     b(LyricsEditor, &[CTRL_RIGHT], Op::LyricsMoveLater, "the whole word 20 ms later"),
     b(LyricsEditor, &[ch(' ')], Op::LyricsPlay, "play the song from just before the word, the view following (again: pause)"),
+    b(LyricsEditor, &[ch('z')], Op::FitLyrics, "zoom the song to fit its lyrics, round the word (or the playhead followed)"),
+    b(LyricsEditor, &[ch('.')], Op::Follow, "follow the playhead again (moving the view by hand stops it)"),
     b(LyricsEditor, &[ch('n')], Op::LyricsNotSung, "not to be sung (a backing vocal: no bubble, the voice up over it in Karaoke mode), or to be sung again"),
     b(LyricsEditor, &[ch('+'), ch('=')], Op::LyricsLouder, "the voice 3 dB louder over the word in Karaoke mode"),
     b(LyricsEditor, &[ch('-')], Op::LyricsQuieter, "the voice 3 dB quieter over the word"),
