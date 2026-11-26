@@ -167,6 +167,11 @@ stem keys are their mutes.
   off.
   - the jump tests
 
+- **J3.** The folder's path over the browser's list links each folder
+  above the one shown: a click on it shows that folder, the one it was in
+  selected.
+  - `each_part_of_the_path_names_its_folder` (player)
+
 ## Queue
 
 - **Q1.** Removing or moving tracks never interrupts what plays. The one

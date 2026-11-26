@@ -14,6 +14,8 @@
 //! is over. With Ctrl held for a preview, the pointer over a browser row
 //! selects it. The wheel scrolls the list ([`Message::Wheel`]).
 
+use std::path::PathBuf;
+
 use iced::widget::{
     column, container, mouse_area, rich_text, row, span, stack, text, Column, Row, Space,
 };
@@ -156,10 +158,10 @@ fn busy<'a>(state: &State, tone: Color, size: f32) -> Element<'a, Message> {
         .into()
 }
 
-/// `crumbs` that fit `room` points, the first ones going first (an `…`
-/// in their place); measured by an average letter of the line's size
-/// (iced's rich text does not shorten).
-fn fitted(crumbs: &[String], room: f32) -> Vec<String> {
+/// How many of `crumbs`' first parts go so the rest fit `room` points
+/// (an `…` in their place); measured by an average letter of the line's
+/// size (iced's rich text does not shorten).
+fn dropped(crumbs: &[String], room: f32) -> usize {
     const LETTER: f32 = 7.4;
     const BETWEEN: f32 = 22.0;
     let width = |parts: &[String]| -> f32 {
@@ -174,38 +176,44 @@ fn fitted(crumbs: &[String], room: f32) -> Vec<String> {
     {
         from += 1;
     }
-    let mut out = Vec::with_capacity(crumbs.len() - from + 1);
-    if from > 0 {
-        out.push("…".to_owned());
-    }
-    out.extend(crumbs[from..].iter().cloned());
-    out
+    from
 }
 
 /// Where the browser is, `width` points across: its folder's parts, the
-/// last bright; how many a search found, and whether it is still listing
-/// or searching.
+/// last bright and each before it a link to its folder (shown with the
+/// folder it was in selected); how many a search found, and whether it is
+/// still listing or searching.
 fn place_line<'a>(state: &State, place: &Place, width: f32) -> Element<'a, Message> {
-    let mut spans = Vec::<text::Span<'a, ()>>::new();
+    // A crumb's link: its folder, and the folder below it to select.
+    type Link = (PathBuf, Option<PathBuf>);
+    let mut spans = Vec::<text::Span<'a, Link>>::new();
     let busy_room = if place.found.is_some() || place.listing {
         150.0
     } else {
         0.0
     };
-    let crumbs = fitted(&place.crumbs, width - 60.0 - busy_room);
-    let last = crumbs.len().saturating_sub(1);
-    for (i, crumb) in crumbs.into_iter().enumerate() {
+    let from = dropped(&place.crumbs, width - 60.0 - busy_room);
+    if from > 0 {
+        spans.push(span("…").color(look::TEXT_DIM));
+    }
+    let last = place.crumbs.len().saturating_sub(1);
+    for (i, crumb) in place.crumbs.iter().enumerate().skip(from) {
         if i > 0 {
             spans.push(span("  ›  ").color(look::TEXT_FAINT));
         }
-        let crumb = span(crumb);
+        let crumb = span(crumb.clone());
         spans.push(if i == last {
             crumb.color(look::TEXT).font(look::font::label())
         } else {
-            crumb.color(look::TEXT_DIM)
+            let link = place
+                .dirs
+                .get(i)
+                .map(|dir| (dir.clone(), place.dirs.get(i + 1).cloned()));
+            crumb.color(look::TEXT_DIM).link_maybe(link)
         });
     }
     let crumbs = rich_text(spans)
+        .on_link_click(|(dir, select)| Message::Act(Action::JumpTo { dir, select }))
         .size(size::LABEL)
         .font(look::font::body())
         .wrapping(text::Wrapping::None)
@@ -617,12 +625,11 @@ mod tests {
         let crumbs: Vec<String> = ["F:", "Music", "A very long folder name", "Album"]
             .map(str::to_owned)
             .into();
-        assert_eq!(fitted(&crumbs, 1000.0), crumbs);
-        assert_eq!(fitted(&crumbs, 200.0), ["…", "Album"]);
-        let kept = fitted(&crumbs, 320.0);
-        assert_eq!(kept.first().map(String::as_str), Some("…"));
-        assert_eq!(kept.last(), crumbs.last());
-        assert_eq!(fitted(&crumbs, 10.0), ["…", "Album"]);
+        assert_eq!(dropped(&crumbs, 1000.0), 0);
+        assert_eq!(dropped(&crumbs, 200.0), 3);
+        let kept = dropped(&crumbs, 320.0);
+        assert!((1..3).contains(&kept), "{kept}");
+        assert_eq!(dropped(&crumbs, 10.0), 3);
     }
 
     /// The page is the whole rows that fit under the path line, above

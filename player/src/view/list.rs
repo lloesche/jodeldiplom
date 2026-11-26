@@ -9,7 +9,7 @@
 //! folder of ten does.
 
 use std::fmt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use jodel_playback::PlayState;
 
@@ -85,6 +85,8 @@ pub struct Place {
     pub path: String,
     /// Its parts, from the root.
     pub crumbs: Vec<String>,
+    /// The folder each part names (none for the drives).
+    pub dirs: Vec<PathBuf>,
     /// While a search below it lists what it found: how many, and
     /// whether it is still at it.
     pub found: Option<(usize, bool)>,
@@ -421,14 +423,15 @@ impl Place {
         } else {
             b.dir.to_string_lossy().into_owned()
         };
-        let crumbs = if drives {
-            vec![path.clone()]
+        let (crumbs, dirs) = if drives {
+            (vec![path.clone()], Vec::new())
         } else {
-            crumbs(&b.dir)
+            crumbs(&b.dir).into_iter().unzip()
         };
         Place {
             path,
             crumbs,
+            dirs,
             found: b.search.as_ref().map(|s| (s.hits.len(), !s.done)),
             listing: b.loading,
         }
@@ -436,17 +439,24 @@ impl Place {
 }
 
 /// `dir`'s parts, from its root (a drive's root as `C:`, the root as
-/// `/`).
-fn crumbs(dir: &Path) -> Vec<String> {
+/// `/`), each with the folder it names.
+fn crumbs(dir: &Path) -> Vec<(String, PathBuf)> {
     use std::path::Component;
-    let mut out: Vec<String> = Vec::new();
+    let mut out: Vec<(String, PathBuf)> = Vec::new();
+    let mut at = PathBuf::new();
     for part in dir.components() {
+        at.push(part);
         match part {
             Component::Prefix(prefix) => {
-                out.push(prefix.as_os_str().to_string_lossy().into_owned());
+                // A drive's part names its root, not its current folder.
+                at.push(std::path::MAIN_SEPARATOR_STR);
+                let name = prefix.as_os_str().to_string_lossy().into_owned();
+                out.push((name, at.clone()));
             }
-            Component::RootDir if out.is_empty() => out.push("/".to_owned()),
-            Component::Normal(name) => out.push(name.to_string_lossy().into_owned()),
+            Component::RootDir if out.is_empty() => out.push(("/".to_owned(), at.clone())),
+            Component::Normal(name) => {
+                out.push((name.to_string_lossy().into_owned(), at.clone()));
+            }
             _ => {}
         }
     }
@@ -685,5 +695,24 @@ impl fmt::Display for Queue {
             )?;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Each part of the path names its own folder: the first a root, each
+    /// the one above the next, the last the folder shown.
+    #[test]
+    fn each_part_of_the_path_names_its_folder() {
+        let dir = std::env::temp_dir().join("Artist").join("Album");
+        let (names, dirs): (Vec<String>, Vec<PathBuf>) = crumbs(&dir).into_iter().unzip();
+        assert_eq!(names.last().map(String::as_str), Some("Album"));
+        assert_eq!(dirs.last(), Some(&dir));
+        assert_eq!(dirs[0].parent(), None, "{:?}", dirs[0]);
+        for pair in dirs.windows(2) {
+            assert_eq!(pair[1].parent(), Some(pair[0].as_path()));
+        }
     }
 }
