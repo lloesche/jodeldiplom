@@ -1,5 +1,7 @@
 //! Karaoke mode's stage as a widget of its own, filling the window
-//! ([`StageView`]): on iced's GPU through its shader widget, its backdrop
+//! ([`StageView`]; on the Shader tab, the tab's picture: the stage drawn
+//! at the widget's place and size), on iced's GPU through its shader
+//! widget, its backdrop
 //! the ground and the stage over it ([`super::present::Painter`]): the
 //! lyrics, the lane, the count-in, the score, START, the result. The
 //! frames step the stage ([`StageView::frame`]); iced draws the last one
@@ -55,6 +57,9 @@ struct Shared {
     behind: bool,
     /// How long the last frame took to hand over to the GPU.
     handed: Duration,
+    /// Where the widget was last drawn, in the window's pixels (none: not
+    /// yet).
+    bounds: Option<(u32, u32, u32, u32)>,
 }
 
 /// Karaoke mode's stage, shared with the frames iced draws.
@@ -81,6 +86,7 @@ impl Default for StageView {
             size: Size::ZERO,
             behind: false,
             handed: Duration::ZERO,
+            bounds: None,
         })))
     }
 }
@@ -142,6 +148,12 @@ impl StageView {
     /// The window's size in points, as the last frame of the mode had it.
     pub fn size(&self) -> Size {
         self.lock().size
+    }
+
+    /// The widget's size in pixels where it was last drawn (none: not
+    /// drawn yet): the Shader tab's picture steps the stage at it.
+    pub fn drawn_size(&self) -> Option<(u32, u32)> {
+        self.lock().bounds.map(|(_, _, w, h)| (w, h))
     }
 
     /// Whether what the stage draws moves by itself (its score rolling
@@ -358,16 +370,23 @@ impl shader::Primitive for Frame {
         bounds: &Rectangle,
         viewport: &Viewport,
     ) {
-        debug_assert!(
-            bounds.x == 0.0 && bounds.y == 0.0,
-            "the stage fills the window from its top left: {bounds:?}"
-        );
         let started = Instant::now();
         // The callbacks of work done run here, without waiting.
         let _ = device.poll(wgpu::PollType::Poll);
-        let size = viewport.physical_size();
+        // The widget's place in the window's pixels: the whole window in
+        // Karaoke mode, the tab's picture on the Shader tab.
+        let s = viewport.scale_factor();
+        let px = |v: f32| (v * s).round().max(0.0) as u32;
+        let at = (
+            px(bounds.x),
+            px(bounds.y),
+            px(bounds.width).max(1),
+            px(bounds.height).max(1),
+        );
+        let size = iced::Size::new(at.2, at.3);
         let mut shared = self.0.lock();
         let shared = &mut *shared;
+        shared.bounds = Some(at);
         // Late: what was submitted before the last frame had not got
         // through the GPU by now, kept from it by other work.
         shared.behind = pipeline.done.load(Ordering::Acquire) < pipeline.handed;
@@ -392,6 +411,9 @@ impl shader::Primitive for Frame {
     }
 
     fn draw(&self, pipeline: &Pipeline, pass: &mut wgpu::RenderPass<'_>) -> bool {
+        if let Some((x, y, w, h)) = self.0.lock().bounds {
+            pass.set_viewport(x as f32, y as f32, w as f32, h as f32, 0.0, 1.0);
+        }
         pipeline.painter.draw(pass);
         true
     }

@@ -1,4 +1,4 @@
-[tabs] Browser │ Queue (5) │ Transition │ Karaoke │ Mixer │ Synth
+[tabs] Browser │ Queue (5) │ Transition │ Karaoke │ Mixer │ Synth │ Shader
 [shown] Transition
 [block] ▸ Now · Morning Light · 128 BPM · bar 1 / 130 · transition fade, varispeed · enter sets the cues · next -21.9 % · tempo 128 → 100 across the window
 [lanes] song drums bass other vocals

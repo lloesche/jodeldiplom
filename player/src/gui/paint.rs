@@ -126,6 +126,8 @@ pub struct Paint {
     /// The spectrum heard, as the last whole frame took it (the bottom
     /// bar draws it).
     pub spectrum: SpectrumFrame,
+    /// What the guards measure on the Shader tab's picture.
+    readout: super::backdrop::looks::Readout,
 }
 
 impl Paint {
@@ -141,6 +143,7 @@ impl Paint {
             last_backdrop: None,
             frames: crate::trace::Frames::default(),
             spectrum: SpectrumFrame::default(),
+            readout: Default::default(),
         }
     }
 
@@ -296,17 +299,36 @@ impl Paint {
         }
         self.spectrum = app.spectrum();
         let gpu = stage.gpu();
+        // The Shader tab's picture: the mode's stage at the widget's size
+        // (half the window's before it is first drawn).
+        let tab = crate::core::shader_tab::shows(&app.state);
+        let size = if tab {
+            (stage.drawn_size()).unwrap_or((place.size.0 / 2, place.size.1 / 2))
+        } else {
+            place.size
+        };
         let backdrop = self
             .backdrop
-            .frame((app, song), gpu, heard, place.size, backdrop_dt);
+            .frame((app, song), gpu, heard, size, backdrop_dt);
+        if tab {
+            if let Some(r) = self.readout.step(app, backdrop.as_ref(), drawing) {
+                app.dispatch(Action::Shader(
+                    crate::core::shader_tab::ShaderAction::Readout(r),
+                ));
+            }
+        }
         self.last_backdrop = backdrop.is_some().then_some(drawing);
         let spots =
             super::screens::lane_spots(&app.state, place.points, place.scale, metrics, heard);
         let lanes_gpu = lanes.gpu();
         lanes.show(spots, place.scale, lanes_gpu);
         lanes.frame(heard);
-        if crate::core::karaoke::in_mode(&app.state) {
-            let bar = super::screens::karaoke::mode::bar_share(height);
+        if crate::core::karaoke::in_mode(&app.state) || tab {
+            let bar = if tab {
+                0.0
+            } else {
+                super::screens::karaoke::mode::bar_share(height)
+            };
             let picture = crate::view::karaoke::picture(&app.state, bar, heard);
             // The result screen tinted by the cover's palette where its
             // layers are ready.
@@ -315,7 +337,7 @@ impl Paint {
             stage.frame(
                 (&app.state, song),
                 &picture,
-                (place.size, place.scale),
+                (size, place.scale),
                 (heard, dt),
                 &tint,
                 backdrop,

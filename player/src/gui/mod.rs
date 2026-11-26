@@ -42,7 +42,7 @@ use std::sync::{Arc, Mutex};
 use crate::cli::Args;
 
 pub use keys::key;
-pub use screens::{lane_spots, lyrics, synth, transition};
+pub use screens::{lane_spots, lyrics, shader, synth, transition};
 
 /// The Dock icon: macOS has no window icons, and a bare executable (not
 /// in the app bundle, whose `Info.plist` names the icon) would show a

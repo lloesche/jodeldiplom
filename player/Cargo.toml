@@ -31,6 +31,9 @@ iced = { git = "https://github.com/iced-rs/iced.git", rev = "98bd48fe011efc0ec58
 wgpu = { version = "30.0.2", default-features = false, features = ["std", "parking_lot", "dx12", "metal", "vulkan", "wgsl"] }
 pollster = "1.0.1"
 bytemuck = { version = "1.25.2", features = ["derive"] }
+# The looks Karaoke mode draws over its backdrop: their passes, presets,
+# drivers and guards.
+jodel-looks = { path = "../looks" }
 # Text from the clipboard, for ctrl+v (no image support).
 arboard = { version = "3.7.0", default-features = false }
 # Lyrics from LRCLIB (and, later, the speech model's download), over

@@ -38,7 +38,7 @@ mod comet;
 pub mod count;
 mod effects;
 pub mod gpu;
-mod lines;
+pub(crate) mod lines;
 pub mod lyrics;
 mod meter;
 pub mod palette;

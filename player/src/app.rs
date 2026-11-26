@@ -173,6 +173,8 @@ pub struct App {
     grids: Option<crate::store::grids::GridStore>,
     /// Keeps the Synth tab's patches, in the data folder.
     patches: Option<crate::store::patches::PatchStore>,
+    /// Keeps the Shader tab's looks, in the data folder.
+    looks: Option<crate::store::looks::LookStore>,
     /// When the last position event arrived, for [`App::heard`].
     position_at: Instant,
     /// Where the engine separates stems.
@@ -291,6 +293,8 @@ impl App {
             .map(|dir| crate::store::grids::GridStore::new(dir, outbox.clone()));
         let patches = (options.data.as_ref())
             .map(|d| crate::store::patches::PatchStore::new(d.patches(), outbox.clone()));
+        let looks = (options.data.as_ref())
+            .map(|d| crate::store::looks::LookStore::new(d.looks(), outbox.clone()));
         // The session: the browser where it was (when no folder was
         // given), the queue as it was (when nothing plays at once).
         let restored = options.session.as_deref().and_then(Session::load);
@@ -353,6 +357,7 @@ impl App {
             lyrics,
             grids,
             patches,
+            looks,
             position_at: options.clock.now(),
             separator: options.separator,
             last_drawn: None,
@@ -382,6 +387,8 @@ impl App {
             app.state.karaoke.bests = crate::store::scores::load(&data.scores());
             // The Synth tab's patches kept, over the built-in ones.
             app.state.synth.patches = crate::store::patches::load_all(&data.patches());
+            // The Shader tab's looks kept.
+            app.state.shader.kept = crate::store::looks::load_all(&data.looks());
         }
         crate::trace::took("app: the session read", began, true);
         begins(Starting::Device);

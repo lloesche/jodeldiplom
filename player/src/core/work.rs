@@ -51,7 +51,7 @@ pub fn visible_missing(state: &State) -> Vec<PathBuf> {
             .take(height)
             .cloned()
             .collect(),
-        Side::Transition | Side::Karaoke | Side::Mixer | Side::Synth => Vec::new(),
+        Side::Transition | Side::Karaoke | Side::Mixer | Side::Synth | Side::Shader => Vec::new(),
     };
     paths
         .into_iter()

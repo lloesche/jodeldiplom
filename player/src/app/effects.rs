@@ -70,6 +70,17 @@ impl App {
                     store.keep(theme, atom, patch);
                 }
             }
+            Effect::KeepLook(look) => {
+                if let Some(store) = &self.looks {
+                    store.keep(look);
+                }
+            }
+            Effect::CopyText(text) => {
+                let copied = arboard::Clipboard::new().and_then(|mut c| c.set_text(text));
+                if let Err(e) = copied {
+                    self.dispatch(Action::Failed(format!("Not copied: {e}")));
+                }
+            }
             Effect::Search { id, root, query } => {
                 self.cancel_search();
                 let cancel = Arc::new(AtomicBool::new(false));

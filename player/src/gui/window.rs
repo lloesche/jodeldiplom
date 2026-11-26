@@ -286,14 +286,16 @@ impl Gui {
     }
 
     /// What keeps the row or the entry the keys are on in view, on a
-    /// screen that scrolls them (the settings, the Synth tab's sounds):
-    /// run after each key.
+    /// screen that scrolls them (the settings, the Synth tab's sounds, the
+    /// Shader tab's presets): run after each key.
     pub fn in_view(&self) -> Option<super::widgets::Reveal> {
         let state = self.state()?;
         if state.screen == crate::core::Screen::Settings {
             Some(super::screens::settings::reveal(state))
         } else if state.keys_on(crate::core::Side::Synth) {
             Some(super::screens::synth::reveal(state))
+        } else if state.keys_on(crate::core::Side::Shader) {
+            Some(super::screens::shader::reveal(state))
         } else {
             None
         }

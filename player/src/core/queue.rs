@@ -197,7 +197,7 @@ pub(crate) fn engine_changed(state: &mut State, queue: Vec<PathBuf>, current: Op
 /// whole folder (playing from the file).
 pub(crate) fn activate(state: &mut State, how: Placing, fx: &mut Vec<Effect>) {
     match state.side {
-        Side::Transition | Side::Karaoke | Side::Mixer | Side::Synth => {}
+        Side::Transition | Side::Karaoke | Side::Mixer | Side::Synth | Side::Shader => {}
         Side::Queue => {
             if state.queue.cursor < state.queue.paths.len() {
                 fx.push(Effect::Engine(Command::Play(state.queue.cursor)));

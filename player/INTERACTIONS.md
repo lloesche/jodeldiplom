@@ -1215,3 +1215,56 @@ really found, as its workers tell it: never a progress they did not tell.
   command, through the effects' queue of fixed size.
   - `rendering_allocates_nothing` (synth)
   - `playing_live_allocates_nothing_on_the_mixer_thread` (output)
+
+## Shader
+
+- **L1.** The Shader tab is the seventh tab, after the Synth tab (`tab`
+  goes round to it). It shows the song's pictures (its cover) as Karaoke
+  mode draws them, its stage over them, with the tab's look in force
+  while it shows; elsewhere the look in force is the song's own, else
+  the theme's (none in classic and spooky: their frames as before). Its
+  keys: `↑` `↓` the presets (drawn at once), `pgup` `pgdn` the families,
+  `/` searches them as it is typed (`enter` keeps the search, `esc`
+  clears it), `[` `]` the stack's passes, `,` `.` move the selected one,
+  `del` takes it out, `C` copies the stack as JSON, `K` keeps it.
+  - `the_shader_tab_is_in_the_tab_cycle_and_its_keys_edit_the_stack`
+  - `every_theme_overrides_what_there_is_once` (`theme`)
+- **L2.** A knob's slider takes a press and follows the pointer from
+  anywhere until it is let go of; its range, unit and meaning are the
+  pass's. Each knob's driver steps round (still, then every driver), its
+  amount on a slider of its own from -1 to 1; with none chosen the pass
+  moves as it moves itself. A pass added goes after the one selected.
+  - `a_shader_slider_moves_its_knob`
+  - `a_knob_s_driver_is_chosen_and_a_pass_added`
+- **L3.** Whatever the stack asks is made safe before it draws: every
+  number held to its range, the music's swing to its limits, the light
+  the fast and the slow drivers move under the flash limits, at most six
+  passes within the budget (the dearest optional one dropped, always the
+  same); what the guards measure on the frames drawn shows under the
+  picture (flashes a second, the lyrics' contrast, the cost).
+  - `every_number_is_held_to_its_range` (looks)
+  - `over_the_budget_the_dearest_optional_pass_goes` (looks)
+  - `the_music_moves_the_light_only_so_far` (looks)
+  - `the_lyric_band_stays_readable_under_every_pass` (looks)
+  - `every_knob_moves_no_more_light_than_it_says` (looks)
+- **L4.** The look draws over the backdrop and under the stage: the same
+  look, song and time give the same bytes, and no look leaves the
+  backdrop as it was, byte for byte. Each pass's shader is its maths on
+  the processor (the shader check).
+  - `a_look_draws_over_the_backdrop_and_none_leaves_it_as_it_was`
+  - `a_look_goes_to_json_and_back_and_draws_the_same` (looks)
+  - `every_look_pass_is_its_reference` (`gui::shader_check`)
+  - `every_look_pass_s_pipeline_compiles` (`gui::shader_check`)
+- **L5.** The music is read at the song's time as heard, the same time
+  the stage and the lyrics draw at: the song's curves worked out once
+  before it plays, a moment's pulse peaking on it; the singing's live
+  signals on its own clock (the voice's lag taken off).
+  - `a_pulse_peaks_on_its_moment` (looks)
+  - `the_same_time_reads_the_same` (looks)
+  - `the_curves_find_what_the_song_has` (looks)
+- **L6.** `C` puts the stack on the clipboard as JSON; `K` keeps it in the
+  data folder as a preset of the user's own (a preset's gets an id of
+  its own), whole or not at all, where the folder is while it moves; the
+  ones kept are listed first at the start.
+  - `the_shader_tab_is_in_the_tab_cycle_and_its_keys_edit_the_stack`
+  - `looks_are_kept_and_found_while_the_data_folder_moves` (`store::looks`)

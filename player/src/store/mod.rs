@@ -8,7 +8,8 @@
 //! - The user's own, beside the settings file or in the data folder: the
 //!   session and the queues saved ([`session`]), the beat grids fixed by
 //!   hand ([`grids`]), the singer's delays ([`delays`]), the best scores
-//!   ([`scores`]), the singing kept ([`keep`]) and the game's sounds'
+//!   ([`scores`]), the singing kept ([`keep`]), the Shader tab's looks
+//!   ([`looks`]) and the game's sounds'
 //!   patches ([`patches`]).
 //! - What could be made again: the stems kept ([`stems`]). The workers
 //!   keep the rest of it ([`crate::work`]).
@@ -18,6 +19,7 @@ pub mod delays;
 pub mod dirs;
 pub mod grids;
 pub mod keep;
+pub mod looks;
 pub mod mover;
 pub mod patches;
 pub mod scores;

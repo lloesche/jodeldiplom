@@ -1,0 +1,22 @@
+[package]
+name = "jodel-looks"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+license = "MIT"
+description = "Karaoke mode's looks: shader passes as data, each with its maths on the processor, stacked by presets or a model, moved by the music, kept safe by guards"
+
+[dependencies]
+# The music the looks move with: the song's beats, waveforms and key.
+jodel-rhythm = { path = "../rhythm" }
+# The looks as data (what the model writes, the presets, the catalogue).
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1"
+# A pass's numbers as the GPU reads them.
+bytemuck = { version = "1.25.2", features = ["derive"] }
+
+[dev-dependencies]
+# The catalogue example writes the docs whole.
+durable = { path = "../durable" }
+# The contact sheets read the images and write PNGs.
+image = { version = "0.25.10", default-features = false, features = ["jpeg", "png"] }

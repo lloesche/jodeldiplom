@@ -38,6 +38,12 @@
 //! sheet has unrolled, its paper baked (the paper alone is its bake read).
 //! First, how long the device and the window's pipelines take to make.
 //!
+//! `--look ID`: every scene with that look over its backdrop (a preset's
+//! id, [`jodel_looks::presets`]; `--look heaviest`: each of the presets
+//! that cost the most in turn, a scene each over the normal scene's
+//! singing), moving with a made-up song at the steady grid's tempo
+//! ([`jodel_looks::demo`]); its passes are the `look` step.
+//!
 //! `--theme NAME`: the game in that theme ([`jodeldiplom::theme`]: its
 //! colours, its effects' looks, what it holds throughout and its grade
 //! over the backdrop; classic by default). The `all` scene's effects
@@ -53,7 +59,7 @@
 //! ```text
 //! cargo run --release -p jodeldiplom --example frame_cost --
 //!     COVER.layers [--size WxH ...] [--density D] [--png OUT_DIR]
-//!     [--budget MS] [--step-budget MS] [--theme NAME]
+//!     [--budget MS] [--step-budget MS] [--theme NAME] [--look ID]
 //! ```
 
 use std::path::Path;
@@ -63,6 +69,7 @@ use std::time::Instant;
 use jodeldiplom::core::karaoke::result::{Reveal, Shown, SongResult, UNROLL};
 use jodeldiplom::core::shine::{Reference, Shone, Tier};
 use jodeldiplom::core::singing::Singing;
+use jodeldiplom::gui::backdrop::looks::LookCue;
 use jodeldiplom::gui::backdrop::music::Hearing;
 use jodeldiplom::gui::backdrop::{BackdropFrame, Cue, Visualiser};
 use jodeldiplom::gui::fx::{By, Effects, Fx, Music, Treat, Use};
@@ -100,7 +107,8 @@ const CLIMBS: f64 = AT - TIMED;
 /// reveal) rather than the singing up to it, whether every effect is in
 /// its frames at once ([`every_effect`]), and how its frames are judged
 /// against the budgets; whether the stage draws the song's lane (else the
-/// lyrics set in the middle, as with the notes off).
+/// lyrics set in the middle, as with the notes off); the look over its
+/// backdrop (none: none).
 struct Scene {
     name: String,
     tier: Option<Tier>,
@@ -108,6 +116,27 @@ struct Scene {
     every: bool,
     judge: Judge,
     lane: bool,
+    look: Option<Arc<jodel_looks::Checked>>,
+}
+
+/// How many of the dearest presets `--look heaviest` times.
+const HEAVIEST: usize = 4;
+
+/// The looks `--look` asks for (none: none): a preset by its id, or the
+/// [`HEAVIEST`] presets that cost the most (`heaviest`), each made safe
+/// as the player makes it.
+fn looks_asked(asked: Option<&str>) -> Option<Vec<Arc<jodel_looks::Checked>>> {
+    let asked = asked?;
+    if asked == "heaviest" {
+        let mut all: Vec<jodel_looks::Checked> = jodel_looks::presets::all()
+            .iter()
+            .map(|l| l.check())
+            .collect();
+        all.sort_by(|a, b| b.cost().total_cmp(&a.cost()).then(a.id.cmp(&b.id)));
+        return Some(all.into_iter().take(HEAVIEST).map(Arc::new).collect());
+    }
+    let look = jodel_looks::presets::named(asked).unwrap_or_else(|| panic!("no preset {asked:?}"));
+    Some(vec![Arc::new(look.check())])
 }
 
 /// The scenes: the normal one, the lyrics set in the middle (no lane), a
@@ -121,6 +150,7 @@ fn scenes() -> Vec<Scene> {
         every,
         judge: Judge::Worst,
         lane: true,
+        look: None,
     };
     let lyrics = Scene {
         lane: false,
@@ -362,6 +392,8 @@ struct Rig<'a> {
     made: usize,
     /// When the last phrase seen ended.
     phrase: Option<f64>,
+    /// The look over the backdrop, and the made-up song it moves with.
+    look: Option<(Arc<jodel_looks::Checked>, Arc<jodel_looks::Curves>)>,
 }
 
 impl Rig<'_> {
@@ -392,6 +424,14 @@ impl Rig<'_> {
                 music: steady(now),
             },
             grade: self.theme.grade,
+            look: self.look.as_ref().map(|(look, curves)| LookCue {
+                look: Arc::clone(look),
+                t: now,
+                signals: curves.at(now),
+                curves: Some(Arc::clone(curves)),
+                seed: jodel_looks::seed(&look.id, "frame_cost"),
+                band: Some((0.68, 0.86)),
+            }),
         };
         let backdrop = self.visualiser.step(&cue, (w, h), (1.0 / FPS) as f32);
         let picture = KaraokePicture {
@@ -673,9 +713,29 @@ fn main() {
     );
     println!("the device and the window's pipelines made in {made:.1} ms");
     let rest = the_rest(theme);
+    let curves = Arc::new(jodel_looks::demo::Song::new(LENGTH, 120.0).curves());
+    let looks = looks_asked(after("--look").map(String::as_str));
+    let scenes: Vec<Scene> = match &looks {
+        None => scenes(),
+        Some(looks) if looks.len() == 1 => scenes()
+            .into_iter()
+            .map(|s| Scene {
+                look: Some(Arc::clone(&looks[0])),
+                ..s
+            })
+            .collect(),
+        Some(looks) => looks
+            .iter()
+            .map(|l| Scene {
+                name: format!("look {}", l.id),
+                look: Some(Arc::clone(l)),
+                ..scenes().remove(0)
+            })
+            .collect(),
+    };
     let mut worsts = Vec::new();
     for &(w, h) in &sizes {
-        for scene in &scenes() {
+        for scene in &scenes {
             let mut singing = Singing::default();
             singing.prepare(
                 Path::new("song"),
@@ -696,6 +756,7 @@ fn main() {
                 theme,
                 made: 0,
                 phrase: None,
+                look: scene.look.clone().map(|l| (l, Arc::clone(&curves))),
             };
             let mut frames = Vec::new();
             let (mut kinds, mut effects) = (Alone::default(), Alone::default());

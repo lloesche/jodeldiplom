@@ -126,6 +126,12 @@ impl Data {
         self.0.join("patches")
     }
 
+    /// The looks kept on the Shader tab ([`crate::store::looks`]): the
+    /// user's own presets.
+    pub fn looks(&self) -> PathBuf {
+        self.0.join("looks")
+    }
+
     /// The covers taken apart, and which is each song's
     /// ([`crate::work::cover::CoverStore`]).
     pub fn covers(&self) -> PathBuf {
@@ -166,12 +172,13 @@ impl Data {
 
     /// The folders a crash may have left a file half written in (never
     /// under a file's name, so never read): the caches', the covers', the
-    /// models', the lyrics edited, the patches kept.
+    /// models', the lyrics edited, the patches and looks kept.
     pub fn swept(&self) -> Vec<PathBuf> {
         let mut dirs: Vec<PathBuf> = self.caches().into_iter().map(|(d, _)| d).collect();
         dirs.push(self.models());
         dirs.push(self.lyric_edits());
         dirs.push(self.patches());
+        dirs.push(self.looks());
         dirs.extend(crate::work::cover::CoverStore::dirs_in(&self.covers()));
         dirs
     }

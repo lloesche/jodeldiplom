@@ -34,6 +34,7 @@ pub mod prep;
 pub mod preview;
 mod queue;
 mod settings;
+pub mod shader_tab;
 pub mod shine;
 pub mod singing;
 pub mod sliders;
@@ -199,24 +200,29 @@ pub enum Side {
     /// The game's sounds as a workbench: each played, its patch shown and
     /// edited, a keyboard ([`synth_tab`]); the whole width too.
     Synth,
+    /// Karaoke mode's looks as a workbench: the song's pictures drawn
+    /// through a look, its presets, passes, knobs and drivers
+    /// ([`shader_tab`]); the whole width too.
+    Shader,
 }
 
 impl Side {
     /// The tabs, in the order `tab` goes through them.
-    pub const ALL: [Side; 6] = [
+    pub const ALL: [Side; 7] = [
         Side::Browser,
         Side::Queue,
         Side::Transition,
         Side::Karaoke,
         Side::Mixer,
         Side::Synth,
+        Side::Shader,
     ];
 
     /// Whether it takes the whole width (no right column).
     pub fn wide(self) -> bool {
         matches!(
             self,
-            Side::Transition | Side::Karaoke | Side::Mixer | Side::Synth
+            Side::Transition | Side::Karaoke | Side::Mixer | Side::Synth | Side::Shader
         )
     }
 }
@@ -784,6 +790,8 @@ pub struct State {
     pub desk: desk::DeskState,
     /// The Synth tab: the sound selected, the patches edited and kept.
     pub synth: synth_tab::SynthTab,
+    /// The Shader tab: the look edited, the presets kept.
+    pub shader: shader_tab::ShaderTab,
     /// The microphone as last read (once a drawn frame), while one is
     /// open.
     pub mic: Option<mic::MicReading>,
@@ -870,6 +878,7 @@ impl State {
             karaoke: karaoke::KaraokeState::default(),
             desk,
             synth: synth_tab::SynthTab::default(),
+            shader: shader_tab::ShaderTab::default(),
             mic: None,
             drawn_heard: None,
             drawn_ms: None,
@@ -918,6 +927,18 @@ impl State {
     /// compares one of its own: [`crate::core::synth_tab::theme`]).
     pub fn theme(&self) -> &'static crate::theme::Theme {
         self.config.karaoke_theme
+    }
+
+    /// The look drawn over Karaoke mode's backdrop now: the Shader tab's
+    /// while it shows, else the song's own
+    /// ([`karaoke::KaraokeState::look`]), else the theme's preset
+    /// ([`crate::theme::Theme::look`]), else none.
+    pub fn look(&self) -> Option<&jodel_looks::Look> {
+        if shader_tab::shows(self) {
+            return Some(shader_tab::look(self));
+        }
+        (self.karaoke.look.as_deref())
+            .or_else(|| self.theme().look.and_then(jodel_looks::presets::named))
     }
 
     /// The selected settings row.

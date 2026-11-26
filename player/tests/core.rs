@@ -2064,6 +2064,8 @@ fn tab_cycles_through_browser_queue_transition_karaoke_mixer_and_synth() {
     op(&mut state, Op::ToggleSide);
     assert_eq!(state.side, Side::Synth);
     op(&mut state, Op::ToggleSide);
+    assert_eq!(state.side, Side::Shader);
+    op(&mut state, Op::ToggleSide);
     assert_eq!(state.side, Side::Browser);
 }
 

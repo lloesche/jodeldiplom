@@ -1,0 +1,157 @@
+{
+  "family": "examples",
+  "about": "The hand-made examples: a look each for a kind of song, to start from.",
+  "looks": [
+    {
+      "id": "35mm-night-drive",
+      "name": "35mm night drive",
+      "about": "night film: teal shadows, warm lights glowing red round the edges, coarse grain breathing with the bass",
+      "tags": ["synth-pop", "rock", "night and city", "freedom and road trips", "70s film stock"],
+      "layers": [
+        {"pass": "split_tone", "knobs": {"shadows": 0.53, "lights": 0.07, "amount": 0.6}},
+        {"pass": "curve", "knobs": {"contrast": 0.35, "fade": 0.2}},
+        {"pass": "halation", "knobs": {"amount": 0.6, "radius": 16}},
+        {"pass": "grain", "knobs": {"amount": 0.45, "size": 1.4}},
+        {"pass": "vignette", "knobs": {"amount": 0.45}}
+      ]
+    },
+    {
+      "id": "psychedelic-60s",
+      "name": "Psychedelic 60s",
+      "about": "the colours turning round the wheel each section, the picture flowing, folded into a kaleidoscope in the breaks",
+      "tags": ["rock", "60s psychedelic", "drugs and psychedelia", "dreams and the surreal"],
+      "layers": [
+        {"pass": "saturation", "knobs": {"saturation": 1.5, "vibrance": 0.4}},
+        {"pass": "liquid", "knobs": {"amount": 0.5}},
+        {"pass": "hue", "knobs": {"spread": 0.35, "speed": 0.2}},
+        {"pass": "kaleidoscope", "knobs": {"segments": 6}, "mix": 0.0, "drive": [{"knob": "mix", "by": "instrumental", "amount": 0.8}, {"knob": "turn", "by": "bar_phase", "amount": 0.25}]}
+      ]
+    },
+    {
+      "id": "oil-painting",
+      "name": "Oil painting",
+      "about": "flat painterly patches, strokes catching the light, canvas showing through",
+      "tags": ["classical and orchestral", "folk", "ballads", "love"],
+      "layers": [
+        {"pass": "kuwahara", "knobs": {"radius": 5}},
+        {"pass": "oil_paint", "knobs": {"brush": 6, "relief": 0.6}},
+        {"pass": "canvas", "knobs": {"amount": 0.5}}
+      ]
+    },
+    {
+      "id": "comic-ink",
+      "name": "Comic ink",
+      "about": "cel shading in four tones with bold ink lines, a halftone in the shadows",
+      "tags": ["punk", "pop", "humour", "children's songs", "80s"],
+      "layers": [
+        {"pass": "posterize_ink", "knobs": {"steps": 4, "ink": 0.85, "width": 1.8, "vivid": 1.4}},
+        {"pass": "halftone", "knobs": {"dot": 7, "ink": 1.0, "amount": 0.35}}
+      ]
+    },
+    {
+      "id": "pop-art-halftone",
+      "name": "Pop-art halftone",
+      "about": "four-colour process dots a little off register, bold flat colour",
+      "tags": ["pop", "disco", "60s", "party", "empowerment"],
+      "layers": [
+        {"pass": "saturation", "knobs": {"saturation": 1.6}},
+        {"pass": "halftone_cmyk", "knobs": {"dot": 9, "registration": 0.35}},
+        {"pass": "curve", "knobs": {"contrast": 0.2}}
+      ]
+    },
+    {
+      "id": "noir",
+      "name": "Noir",
+      "about": "black and white, hard contrast, deep vignette, grain: the 1940s detective's city",
+      "tags": ["jazz", "blues", "chanson", "night and city", "1920s sepia and silent film"],
+      "layers": [
+        {"pass": "saturation", "knobs": {"saturation": 0}},
+        {"pass": "curve", "knobs": {"contrast": 0.6, "pivot": 0.45}},
+        {"pass": "grain", "knobs": {"amount": 0.5, "size": 1.3}},
+        {"pass": "vignette", "knobs": {"amount": 0.65, "softness": 0.4}}
+      ]
+    },
+    {
+      "id": "watercolour",
+      "name": "Watercolour",
+      "about": "soft washes bleeding at wobbly edges on paper, lifted and gentle",
+      "tags": ["folk", "celtic", "childhood", "nature", "love"],
+      "layers": [
+        {"pass": "watercolor", "knobs": {"wash": 0.7, "bleed": 0.55}},
+        {"pass": "lift_gamma_gain", "knobs": {"lift": 0.35, "gamma": 0.2}},
+        {"pass": "canvas", "knobs": {"kind": 1.0, "amount": 0.45}}
+      ]
+    },
+    {
+      "id": "synthwave",
+      "name": "Synthwave",
+      "about": "neon edges over a dark violet picture, a tube's scan lines, a spectrum's bars on the beat",
+      "tags": ["synth-pop", "80s neon and VHS", "night and city", "space and stars"],
+      "layers": [
+        {"pass": "tritone", "knobs": {"dark": 0.72, "middle": 0.88, "light": 0.12, "amount": 0.8}},
+        {"pass": "neon_edges", "knobs": {"hue": 0.85, "glow": 0.7, "dark": 0.5}},
+        {"pass": "bars", "knobs": {"height": 0.35, "hue": 0.85}},
+        {"pass": "crt", "knobs": {"scanlines": 0.45, "mask": 0.25, "curve": 0.15}}
+      ]
+    },
+    {
+      "id": "dreamy",
+      "name": "Dreamy",
+      "about": "glow and lifted blacks, soft focus, pastel colour",
+      "tags": ["indie or shoegaze", "dreams and the surreal", "longing", "love"],
+      "layers": [
+        {"pass": "diffusion", "knobs": {"amount": 0.6, "radius": 12}},
+        {"pass": "glow", "knobs": {"amount": 0.5, "threshold": 0.55, "tint": 0.3, "hue": 0.9}},
+        {"pass": "lift_gamma_gain", "knobs": {"lift": 0.5, "gain": -0.1}},
+        {"pass": "saturation", "knobs": {"saturation": 0.75}}
+      ]
+    },
+    {
+      "id": "golden-hour",
+      "name": "Golden hour",
+      "about": "the low sun: warm, soft, a light leak from the side, haze in the distance",
+      "tags": ["country and Americana", "summer", "nostalgia and childhood", "freedom and road trips"],
+      "layers": [
+        {"pass": "white_balance", "knobs": {"warmth": 0.7, "tint": 0.1}},
+        {"pass": "haze", "knobs": {"amount": 0.35, "hue": 0.09}},
+        {"pass": "light_leak", "knobs": {"amount": 0.5, "hue": 0.07, "place": 0.0}},
+        {"pass": "grain", "knobs": {"amount": 0.25}}
+      ]
+    },
+    {
+      "id": "night",
+      "name": "Night",
+      "about": "blue shift and low key, stars in the dark parts",
+      "tags": ["ambient", "night and city", "space and stars", "lullabies"],
+      "layers": [
+        {"pass": "white_balance", "knobs": {"warmth": -0.8}},
+        {"pass": "lift_gamma_gain", "knobs": {"gamma": -0.5, "gain": -0.3}},
+        {"pass": "starfield", "knobs": {"amount": 0.5}},
+        {"pass": "vignette", "knobs": {"amount": 0.5}}
+      ]
+    },
+    {
+      "id": "camcorder-90s",
+      "name": "90s camcorder",
+      "about": "a home video tape: wobble, colour bleeding, bad tracking on the snares",
+      "tags": ["grunge", "indie", "90s camcorder and MTV", "nostalgia and childhood", "family"],
+      "layers": [
+        {"pass": "cross_process", "knobs": {"amount": 0.35}},
+        {"pass": "vhs", "knobs": {"wobble": 0.5, "bleed": 0.6, "noise": 0.35}},
+        {"pass": "crt", "knobs": {"scanlines": 0.3, "mask": 0.15, "curve": 0.1}}
+      ]
+    },
+    {
+      "id": "tunnel-visualizer",
+      "name": "Tunnel visualizer",
+      "about": "the picture fed back into itself, zooming with the bass and turning on the snares, a spectrum ring round the middle",
+      "tags": ["house", "techno", "trance", "instrumental breaks"],
+      "layers": [
+        {"pass": "feedback", "knobs": {"trail": 0.7, "zoom": 0.4, "scene": 0.6}},
+        {"pass": "spectrum_ring", "knobs": {"radius": 0.22, "length": 0.6}},
+        {"pass": "beat_rings", "knobs": {"amount": 0.5}},
+        {"pass": "hue", "knobs": {"speed": 0.15}}
+      ]
+    }
+  ]
+}

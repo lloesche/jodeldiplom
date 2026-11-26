@@ -59,6 +59,7 @@ pub static SPOOKY: Theme = Theme {
     ],
     always: &[Use::of(Fx::Fog, 0.8)],
     grade: [0.5, 0.66, 0.95, 0.8],
+    look: None,
 };
 
 /// A word's pop: a bubble of a cauldron, a sine welling up an octave into

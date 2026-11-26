@@ -201,6 +201,10 @@ pub enum Context {
     LyricsText,
     /// The Synth tab.
     Synth,
+    /// The Shader tab.
+    Shader,
+    /// Typing a search of the Shader tab's presets (after `/`).
+    ShaderSearch,
 }
 
 impl Context {
@@ -227,6 +231,8 @@ impl Context {
             Context::LyricsEditor => "Lyrics editor (e on the Karaoke tab)",
             Context::LyricsText => "Lyrics editor, writing (after enter)",
             Context::Synth => "Synth tab",
+            Context::Shader => "Shader tab",
+            Context::ShaderSearch => "Shader tab, searching the presets (after /)",
         }
     }
 
@@ -234,7 +240,7 @@ impl Context {
     pub fn types(self) -> bool {
         matches!(
             self,
-            Context::Filter | Context::Palette | Context::HelpSearch
+            Context::Filter | Context::Palette | Context::HelpSearch | Context::ShaderSearch
         )
     }
 }
@@ -294,6 +300,10 @@ pub fn contexts(state: &State) -> Vec<Context> {
                 vec![Context::Desk, Context::Global]
             } else if state.side == Side::Synth {
                 vec![Context::Synth, Context::Global]
+            } else if crate::core::shader_tab::searching(state) {
+                vec![Context::ShaderSearch]
+            } else if state.side == Side::Shader {
+                vec![Context::Shader, Context::Global]
             } else if state.side == Side::Queue {
                 vec![Context::Queue, Context::List, Context::Global]
             } else {

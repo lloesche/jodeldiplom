@@ -219,6 +219,70 @@ fn every_effect_s_shader_is_its_reference() {
     assert!(held >= 7, "{held}");
 }
 
+/// Every look pass's shader as its processor's maths
+/// ([`jodel_looks::Pass::cpu`]), finished as its pipeline finishes it (its
+/// mix, the lyric band's guard), over the check's made-up picture, at
+/// samples with every knob anywhere in its range: within a few
+/// thousandths, a pass made of cells allowed two samples in its 48 that
+/// fall in another cell on the GPU (a sample right on a cell's edge).
+#[test]
+fn every_look_pass_is_its_reference() {
+    use jodel_looks::wgsl;
+    let Some(gpu) = gpu() else {
+        return;
+    };
+    const EACH: usize = 48;
+    let samples = wgsl::check_samples(EACH);
+    let ins: Vec<[f32; 4]> = (samples.iter())
+        .flat_map(|(p, uv, c)| wgsl::sample_vec4s(*p, *uv, c))
+        .collect();
+    let outs = run(
+        &gpu,
+        &wgsl::check_shader(),
+        &wgsl::check_body(),
+        &ins,
+        (samples.len(), 1),
+    );
+    let mut off = vec![Vec::new(); jodel_looks::passes::PASSES.len()];
+    for ((p, uv, ctx), got) in samples.iter().zip(&outs) {
+        let want = wgsl::check_cpu(*p, *uv, ctx);
+        let close = [want.x, want.y, want.z]
+            .iter()
+            .zip(got)
+            .all(|(w, g)| near(*g, *w, 4e-3, 2e-3));
+        if !close {
+            off[*p].push(format!("at {uv:?} GPU {got:?}, processor {want:?}"));
+        }
+    }
+    for (p, off) in off.iter().enumerate() {
+        let pass = jodel_looks::passes::PASSES[p];
+        let allowed = if pass.cells { 2 } else { 0 };
+        assert!(off.len() <= allowed, "{}: {off:#?}", pass.name);
+    }
+}
+
+/// Every look pass's own pipeline's shader compiles, for a target of
+/// linear light and not.
+#[test]
+fn every_look_pass_s_pipeline_compiles() {
+    let Some((device, _queue)) = gpu() else {
+        return;
+    };
+    let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
+    for pass in jodel_looks::passes::PASSES {
+        for linear in [false, true] {
+            let _module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some(pass.name),
+                source: wgpu::ShaderSource::Wgsl(
+                    jodel_looks::wgsl::pass_shader(pass, linear).into(),
+                ),
+            });
+        }
+    }
+    let fault = pollster::block_on(scope.pop());
+    assert!(fault.is_none(), "{fault:?}");
+}
+
 /// The music's uniform as the shaders read it, field by field by the
 /// names the effects use (`music.beat.w` the bar's pulse, `music.tempo.y`
 /// how sure the grid is, `music.count.x` the beats counted, a stem at its

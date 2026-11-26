@@ -44,7 +44,9 @@ pub fn update(state: &mut State, action: Action) -> Vec<Effect> {
         Action::DemoLetGo => state.karaoke.demo.let_go(),
         Action::Op(op) => apply_op(state, op, &mut fx),
         Action::Type(c) => {
-            if !help::typed(state, c.encode_utf8(&mut [0; 4])) {
+            if !help::typed(state, c.encode_utf8(&mut [0; 4]))
+                && !super::shader_tab::typed(state, c)
+            {
                 browse::typed(state, c);
             }
         }
@@ -91,6 +93,7 @@ pub fn update(state: &mut State, action: Action) -> Vec<Effect> {
         Action::Sync(event) => super::sync::event(state, event),
         Action::Desk(what) => desk::act(state, what, &mut fx),
         Action::Synth(what) => super::synth_tab::act(state, what, &mut fx),
+        Action::Shader(what) => super::shader_tab::act(state, what, &mut fx),
         Action::PointerMoved { from_bottom } => {
             karaoke::controls::pointer_moved(state, from_bottom);
         }
@@ -219,6 +222,7 @@ pub fn update(state: &mut State, action: Action) -> Vec<Effect> {
     super::sync::follow(state, &mut fx);
     desk::settle(state, &mut fx);
     super::synth_tab::settle(state, &mut fx);
+    super::shader_tab::settle(state);
     work::prepare(state, &mut fx);
     karaoke::start_when_ready(state, &mut fx);
     if check_details {
@@ -253,6 +257,7 @@ fn is_input(action: &Action) -> bool {
         | Action::KaraokeStep { .. }
         | Action::Desk(_)
         | Action::Synth(_)
+        | Action::Shader(_)
         | Action::LyricsEdit(_)
         | Action::SeekTo(_)
         | Action::SeekDrag(_)
@@ -358,6 +363,7 @@ fn shown_takes(state: &mut State, op: Op, fx: &mut Vec<Effect>) -> bool {
             Side::Karaoke => karaoke::apply(state, op, fx),
             Side::Mixer => desk::apply(state, op, fx),
             Side::Synth => super::synth_tab::apply(state, op, fx),
+            Side::Shader => super::shader_tab::apply(state, op, fx),
             Side::Browser | Side::Queue => false,
         },
         Screen::NowPlaying | Screen::Settings | Screen::Help => false,

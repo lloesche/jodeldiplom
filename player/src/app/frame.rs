@@ -145,6 +145,8 @@ impl App {
             // Karaoke mode: the lyrics fill and the count-in's numbers
             // shrink as they are sung.
             || (core::karaoke::in_mode(state) && state.playing.state == PlayState::Playing)
+            // The Shader tab's picture: its look moves by itself.
+            || core::shader_tab::shows(state)
             // A paused song's count-in.
             || state.karaoke.resume_at.is_some()
             // Karaoke mode's controls fading in or out.

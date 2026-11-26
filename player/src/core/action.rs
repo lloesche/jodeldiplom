@@ -254,6 +254,8 @@ pub enum Action {
     Desk(crate::core::desk::DeskAction),
     /// The pointer and the window on the Synth tab.
     Synth(crate::core::synth_tab::SynthAction),
+    /// The pointer and the window on the Shader tab.
+    Shader(crate::core::shader_tab::ShaderAction),
     /// The pointer moved (Karaoke mode shows its pointer, and its controls
     /// while it is near the bottom).
     PointerMoved {
@@ -481,6 +483,11 @@ pub enum Effect {
         /// The patch.
         patch: Option<jodel_synth::Patch>,
     },
+    /// Keep a look as a preset of the user's own, in the data folder (the
+    /// Shader tab's).
+    KeepLook(jodel_looks::Look),
+    /// Put this text on the clipboard.
+    CopyText(String),
     /// List the output devices (answered with [`Action::Devices`]).
     ListDevices,
     /// Play on this device from now on (`None`: the system default),

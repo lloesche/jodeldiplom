@@ -56,6 +56,11 @@ pub struct Theme {
     /// The backdrop's grade: what its colours are tinted to once
     /// desaturated (sRGB), and how much (0: none).
     pub grade: [f32; 4],
+    /// The look over the backdrop, a preset by its id
+    /// ([`jodel_looks::presets`]; none: none, the backdrop as it is). A
+    /// song's own look, where it has one, is drawn instead
+    /// ([`crate::core::State::look`]).
+    pub look: Option<&'static str>,
 }
 
 /// The game as it is made: nothing overridden.
@@ -69,6 +74,7 @@ pub static CLASSIC: Theme = Theme {
     sounds: &[],
     always: &[],
     grade: [1.0, 1.0, 1.0, 0.0],
+    look: None,
 };
 
 /// The themes, the first the default.
@@ -169,6 +175,13 @@ mod tests {
                 );
             }
             assert!((0.0..=1.0).contains(&t.grade[3]), "{}", t.name);
+            if let Some(id) = t.look {
+                assert!(
+                    jodel_looks::presets::named(id).is_some(),
+                    "{}: {id}",
+                    t.name
+                );
+            }
         }
         assert_eq!(Theme::named("fabulous"), None);
     }
@@ -188,7 +201,7 @@ mod tests {
             assert_eq!(c.patch(a), conductor::patch(a));
         }
         assert_eq!(c.accent(), crate::view::palette::ACCENT);
-        assert!(c.always.is_empty() && c.grade[3] == 0.0);
+        assert!(c.always.is_empty() && c.grade[3] == 0.0 && c.look.is_none());
     }
 
     /// Every atom's patch in every theme is within its parameters' ranges

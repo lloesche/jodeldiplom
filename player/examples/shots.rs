@@ -148,6 +148,7 @@ fn main_outline(state: &State, size: Size) -> String {
         Side::Transition => out.push_str(&transition::Tab::of(state, state.heard()).to_string()),
         Side::Karaoke => out.push_str(&karaoke::Tab::of(state).to_string()),
         Side::Synth => out.push_str(&jodeldiplom::gui::synth::outline(state)),
+        Side::Shader => out.push_str(&jodeldiplom::gui::shader::outline(state)),
         Side::Browser | Side::Queue | Side::Mixer => {}
     }
     // The right column: a song's preparation while it shows, else the
@@ -681,6 +682,14 @@ fn main() {
                     .iter()
                     .position(|x| x.what == What::Rung(top))
                     .unwrap_or(0);
+                s
+            }),
+            ("shader", {
+                // The Shader tab on the night drive, its halation selected.
+                let mut s = state.clone();
+                s.side = Side::Shader;
+                s.shader.look = jodel_looks::presets::named("35mm-night-drive").cloned();
+                s.shader.layer = 2;
                 s
             }),
             ("synth-edited", {

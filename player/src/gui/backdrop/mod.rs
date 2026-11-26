@@ -41,6 +41,7 @@
 pub mod gpu;
 pub mod ground;
 pub mod look;
+pub mod looks;
 pub mod music;
 pub mod pulse;
 mod subject;
@@ -193,6 +194,8 @@ pub struct Cue {
     /// The theme's grade ([`crate::theme::Theme::grade`]; all 0, the
     /// default: none), the covers graded by it this frame.
     pub grade: [f32; 4],
+    /// The song's look and its music this frame (none: no look).
+    pub look: Option<looks::LookCue>,
 }
 
 /// A cover of a frame, for the shader: its layers, the picture they were
@@ -207,15 +210,17 @@ pub struct SlotFrame {
     pub look: Look,
 }
 
-/// A frame of the backdrop: the ground, and the covers showing over it,
+/// A frame of the backdrop: the ground, the covers showing over it,
 /// back to front, each over what is under it by its share
-/// ([`Look::cam`]).
+/// ([`Look::cam`]), and the song's look over them all (none: none).
 #[derive(Clone, Debug)]
 pub struct BackdropFrame {
     /// The ground.
     pub ground: Ground,
     /// The covers.
     pub slots: Vec<SlotFrame>,
+    /// The look.
+    pub look: Option<looks::LookFrame>,
 }
 
 /// The backdrop frame by frame: the ground, the covers showing, the music
@@ -231,6 +236,8 @@ pub struct Visualiser {
     heard: Option<f64>,
     /// When the last phrase seen ended (none: none yet).
     phrase: Option<f64>,
+    /// The look as it is drawn: what it was made safe from, its curves.
+    looks: looks::Looks,
 }
 
 impl Visualiser {
@@ -249,8 +256,8 @@ impl Visualiser {
 
     /// The frame for `app` at `heard` seconds into the `song` heard (none:
     /// not analysed yet), `dt` seconds after the last, in a `window` of
-    /// pixels. None (and nothing held) outside Karaoke mode or without the
-    /// GPU (`gpu`).
+    /// pixels. None (and nothing held) outside Karaoke mode and the Shader
+    /// tab, or without the GPU (`gpu`).
     pub fn frame(
         &mut self,
         (app, song): (&App, Option<&Song>),
@@ -260,11 +267,14 @@ impl Visualiser {
         dt: f32,
     ) -> Option<BackdropFrame> {
         let state = &app.state;
-        if !gpu || !crate::core::karaoke::in_mode(state) {
+        let shown = crate::core::karaoke::in_mode(state) || crate::core::shader_tab::shows(state);
+        if !gpu || !shown {
             *self = Visualiser::default();
             return None;
         }
         let playing = state.playing.state == PlayState::Playing;
+        // The look reads the song where it is, playing or not.
+        let look = self.looks.cue(state, song, heard, window);
         let gains = StripKind::PARTS.map(|k| state.desk.heard_gain(k).min(1.0) as f32);
         let song = song.filter(|_| playing);
         let levels = song.map_or(Levels::default(), |s| s.levels(heard).times(gains));
@@ -303,6 +313,7 @@ impl Visualiser {
                 music,
             },
             grade: state.theme().grade,
+            look,
         };
         Some(self.step(&cue, window, dt))
     }
@@ -358,7 +369,15 @@ impl Visualiser {
             })
             .collect();
         self.ground = Some(ground.clone());
-        BackdropFrame { ground, slots }
+        let palette = (self.slots.last()).map_or(looks::PALETTE, |s| {
+            looks::palette_of(&s.layers.layers.palette)
+        });
+        let look = (cue.look.as_ref()).map(|l| self.looks.frame(l, window, (dt, palette)));
+        BackdropFrame {
+            ground,
+            slots,
+            look,
+        }
     }
 
     /// `layers` wanted now (none: nothing): in front, fading in (back from

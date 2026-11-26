@@ -278,6 +278,17 @@ pub enum Op {
     SynthKeep,
     /// Synth: the patch shown back to its built-in one.
     SynthRevert,
+    /// Shader: the stack's pass so many on selected (back, when
+    /// negative).
+    ShaderLayer(i8),
+    /// Shader: the selected pass moved so many places on.
+    ShaderMove(i8),
+    /// Shader: the selected pass taken out.
+    ShaderRemove,
+    /// Shader: the stack copied as JSON.
+    ShaderCopy,
+    /// Shader: the stack kept as a preset of the user's own.
+    ShaderKeep,
 }
 
 impl Op {
@@ -290,7 +301,7 @@ impl Op {
             Op::Next => "Next track",
             Op::Previous => "Previous track",
             Op::Stop => "Stop",
-            Op::ToggleSide => "Browser / queue / transition / karaoke / mixer / synth",
+            Op::ToggleSide => "Browser / queue / transition / karaoke / mixer / synth / shader",
             Op::NowPlaying => "Now playing",
             Op::Settings => "Settings",
             Op::Help => "Help",
@@ -416,6 +427,11 @@ impl Op {
             Op::SynthTempo(_) => "Synth: the sounds' tempo",
             Op::SynthKeep => "Synth: keep the patch",
             Op::SynthRevert => "Synth: the patch as built",
+            Op::ShaderLayer(_) => "Shader: the stack's next pass",
+            Op::ShaderMove(_) => "Shader: move the pass",
+            Op::ShaderRemove => "Shader: take the pass out",
+            Op::ShaderCopy => "Shader: copy the stack as JSON",
+            Op::ShaderKeep => "Shader: keep the stack as a preset",
         }
     }
 
@@ -553,6 +569,8 @@ impl Op {
             }
             Op::SynthNote(_) => (Synth, Key),
             Op::SynthTheme | Op::SynthKeep | Op::SynthRevert => (Synth, Command),
+            Op::ShaderLayer(_) | Op::ShaderMove(_) => (Shader, Move),
+            Op::ShaderRemove | Op::ShaderCopy | Op::ShaderKeep => (Shader, Command),
         }
     }
 

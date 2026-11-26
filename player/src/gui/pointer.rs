@@ -15,6 +15,7 @@ use crate::core::desk::Channel;
 use crate::core::lanes::{self, Block};
 use crate::core::lyric_edit::screen::{self, Input, Part};
 use crate::core::lyric_edit::{LyricsEdit, WordAt};
+use crate::core::shader_tab::ShaderAction;
 use crate::core::sliders::Slider;
 use crate::core::synth_tab::{self, SynthAction};
 use crate::core::transition::viewport;
@@ -94,6 +95,10 @@ pub enum Grab {
     /// parameters), its track: set to the share across it under the
     /// pointer, as pressed and as it moves.
     SynthKnob(usize, Rectangle),
+    /// A knob's slider on the Shader tab (its place in the selected
+    /// pass's knobs, or the mix's; its driver's amount, or the knob
+    /// itself), its track: set to the share across it under the pointer.
+    ShaderKnob(usize, bool, Rectangle),
     /// The Synth tab's keyboard (its bounds): the key under the pointer
     /// sounds while it is held, the pointer sliding from key to key.
     Piano(Rectangle),
@@ -109,6 +114,7 @@ impl Grab {
             | Grab::Slider(..)
             | Grab::LyricWord { .. }
             | Grab::SynthKnob(..)
+            | Grab::ShaderKnob(..)
             | Grab::Piano(_) => MouseButton::Left,
             Grab::Pan { .. } | Grab::LyricView(_) => MouseButton::Right,
         }
@@ -118,9 +124,11 @@ impl Grab {
     /// row itself).
     fn pressed(self, at: Point, state: &State) -> Option<Action> {
         match self {
-            Grab::Seek(_) | Grab::Slider(..) | Grab::SynthKnob(..) | Grab::Piano(_) => {
-                self.moved(at, state)
-            }
+            Grab::Seek(_)
+            | Grab::Slider(..)
+            | Grab::SynthKnob(..)
+            | Grab::ShaderKnob(..)
+            | Grab::Piano(_) => self.moved(at, state),
             Grab::QueueRow { .. } => None,
             Grab::Lanes { block, bounds } => Some(Action::TransitionPoint {
                 block,
@@ -189,6 +197,14 @@ impl Grab {
                 knob,
                 share: share_across(track, at) as f32,
             })),
+            Grab::ShaderKnob(knob, amount, track) => {
+                let share = share_across(track, at) as f32;
+                Some(Action::Shader(if amount {
+                    ShaderAction::Amount { knob, share }
+                } else {
+                    ShaderAction::Slide { knob, share }
+                }))
+            }
             Grab::Piano(keys) => {
                 let key = piano::key_at(keys, synth_tab::KEYS / 12, at);
                 let note = key.map(|k| synth_tab::LOW + f32::from(k));
@@ -208,6 +224,7 @@ impl Grab {
             Grab::LyricWord { .. } => Some(lyrics(Input::Drop)),
             Grab::LyricView(_) => Some(lyrics(Input::PanEnd)),
             Grab::SynthKnob(..) => Some(Action::Synth(SynthAction::SlideEnd)),
+            Grab::ShaderKnob(..) => Some(Action::Shader(ShaderAction::SlideEnd)),
             Grab::Piano(_) => Some(Action::Synth(SynthAction::Press(None))),
         }
     }
@@ -224,6 +241,7 @@ impl Grab {
             Grab::LyricWord { .. } => editing(state).is_some_and(|s| s.held.is_some()),
             Grab::LyricView(_) => editing(state).is_some_and(|s| s.pan.is_some()),
             Grab::SynthKnob(..) => state.synth.dragging.is_some(),
+            Grab::ShaderKnob(..) => state.shader.dragging.is_some(),
             Grab::Piano(_) => state.synth.mouse.is_some(),
         }
     }

@@ -1,4 +1,4 @@
-[tabs] Browser │ Queue (5) │ Transition │ Karaoke │ Mixer │ Synth
+[tabs] Browser │ Queue (5) │ Transition │ Karaoke │ Mixer │ Synth │ Shader
 [shown] Queue
 [summary] playing 2 of 5
 [row selected waiting] 1 Opening  ♯ ▥ ♩ ¶  [chip] FLAC 44.1  3:00

@@ -63,6 +63,7 @@ are no cycles.
 | `jodel-testkit` | `testkit/` | what the tests share: `real_time`/`heavy`, `fixture`, `TempDir`, the counting allocator (a dev-dependency only) | nothing |
 | `jodel-synth` | `synth/` | the real-time synthesizer: ten engines, a voice host, chorus, delay, hall and dynamics; nothing allocates after construction | `jodel-dsp` |
 | `jodel-rhythm` | `rhythm/` | the music analysis on the CPU: the beat grid voted on by several trackers, the meter and bars, the key, a voice's pitch (YIN live, a network for whole songs), the stem separator, waveforms, loudness | `jodel-tensors`, `jodel-dsp` |
+| `jodel-looks` | `looks/` | Karaoke mode's looks: shader passes as data (each its WGSL and its maths on the processor), the presets, the catalogue a model chooses from, the music's curves that move them, the guards (ranges, flashes, the lyric band, the budget) | `jodel-rhythm` |
 | `jodel-rhythm-tools` | `rhythm/tools/` | the tools that pack and measure the pitch network's built-in weights | `jodel-rhythm`, `jodel-tensors`, `jodel-dsp`, `durable` |
 | `jodel-lyrics` | `lyrics/` | lyrics as data, LRC in and out, the speech model and the recogniser on the CPU, forced alignment, whether a text fits a recording | `durable`, `jodel-tensors`, `jodel-dsp` |
 | `jodel-gpu` | `gpu/` | every network on the GPU through `wgpu`: stems, beats, speech, the recogniser, the covers' depth and cut-out; the GPU shared with the window in short submissions | `jodel-rhythm`, `jodel-lyrics`, `jodel-tensors` |

@@ -1333,7 +1333,7 @@ The capitals keep their commands here (`M` the beat pulse, `S` stop);
 
 ### The Synth tab
 
-The Synth tab (`tab` to it, the last of the six) is a workbench for the
+The Synth tab (`tab` to it, after the Mixer) is a workbench for the
 karaoke game's sounds. On the left every sound the game makes, by moment:
 a word's pop, a run of words up to the first rung, each rung reached (its
 stinger, its call, its payout), the rescue shot, a streak lost, each
@@ -1377,6 +1377,37 @@ letters written on the keys they play.
 | `K` | keep the patch shown |
 | `del` (or `backspace`) | the patch shown as built |
 
+### The Shader tab
+
+The Shader tab (`tab` to it, after the Synth tab, the last of the seven)
+is a workbench for Karaoke mode's looks ([`jodel-looks`](../looks),
+`docs/looks.md`). On the right the playing song's pictures (its cover)
+are drawn as Karaoke mode draws them, the stage and its lyrics over
+them, through the tab's look, moved by the song as in the game. On the
+left the presets by family (yours first), searched as `/` is typed; one
+picked is the stack edited in the middle: its passes (a click selects
+one; `↑` `↓` `✕` beside it), the selected pass's knobs on sliders (their
+ranges, units and meanings from the pass) and under each its driver
+(`‹ ›` round the drivers, or still) and how far it moves it, and the
+passes to add, by family. Under the picture what the guards measure:
+the most flashes in a second lately, the lyrics' contrast, the stack's
+cost against the budget (and what it dropped). Copy puts the stack on
+the clipboard as JSON; Keep writes it to `looks` in the data folder as a
+preset of your own.
+
+| Key | Shader tab |
+|---|---|
+| `↑` `↓` | the preset above, below (drawn at once) |
+| `pgup` `pgdn` | the family before, after |
+| `home` `end` | the first, the last preset |
+| `enter` | the selected preset again, as made |
+| `/` | search the presets (`enter` keeps it, `esc` clears it) |
+| `[` `]` | the stack's pass before, after |
+| `,` `.` | move the pass earlier, later |
+| `del` (or `backspace`) | take the pass out |
+| `C` | copy the stack as JSON |
+| `K` | keep the stack as a preset of your own |
+
 ## Code
 
 | Module | |
@@ -1401,6 +1432,7 @@ letters written on the keys they play.
 | `store::cache` | the schemas of what is kept on disk between runs, and their versions |
 | `store::grids` | the beat grids fixed by hand, kept per track in the settings folder |
 | `store::patches` | the game's sounds' patches kept on the Synth tab (`patches/` in the data folder), a file a theme's atom, each parameter by its name (`core::synth_tab` the tab, `sfx::bench` its sounds by moment, `gui::screens::synth` its widgets) |
+| `store::looks` | the looks kept on the Shader tab (`looks/` in the data folder), a JSON file each (`core::shader_tab` the tab, `gui::screens::shader` its widgets, `gui::backdrop::looks` the look over the backdrop on the GPU) |
 | `store::stems` | the tracks' stems kept (`stems/`): their files' names, the store the engine reads them from, pruning to 30 GB |
 | `gui` | the window, an iced application (`gui::window`); every screen but Karaoke mode in iced's widgets (`gui::screens`, the main screen laid out from the measures in `gui::metrics`; the Mixer tab `gui::mixer`; the covers `gui::widgets::cover`, the lanes `gui::lanes`); Karaoke mode in the window's own widgets too (`gui::screens::karaoke::mode`), its stage a widget of its own on the GPU (`gui::stage_view`, `gui::present`, `gui::stage`, `gui::stage::gpu`, a pipeline a group of shapes, `gui::stage::shapes` the shapes of its shader; what keeps it fast, held by tests, in PERFORMANCE.md) and its effects (`gui::fx`: an effect a module, registered by one line, its strength eased from the singing and moved by the music on a board, drawing at its points of the stage, its shaders held to its maths) |
 | `tiers` | the phrase tiers, one table: a row a tier, all it takes and shows (its bars, colours, glow, sounds, sticker and the effects it lists) |

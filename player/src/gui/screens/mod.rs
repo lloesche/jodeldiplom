@@ -7,7 +7,7 @@
 //! along the top ([`list::tabs`]), under it the side pane (the browser
 //! or the queue, [`list`]; the Transition tab, [`transition`]; the
 //! Karaoke tab, [`karaoke`]; the Mixer tab, [`super::mixer`]; the Synth
-//! tab, [`synth`]) with the
+//! tab, [`synth`]; the Shader tab, [`shader`]) with the
 //! right column beside it (the cover and the text under it, [`right`];
 //! the queue's selected song's preparation while it is got ready,
 //! [`prep`]) or
@@ -50,6 +50,7 @@ pub mod prep;
 pub mod right;
 pub mod settings;
 pub mod setup;
+pub mod shader;
 pub mod synth;
 pub mod transition;
 
@@ -197,7 +198,7 @@ fn main<'a>(state: &'a State, parts: &Parts<'a>) -> Element<'a, Message> {
     let shown = match state.side {
         Side::Transition => true,
         Side::Karaoke => m.voice.is_some() && tab.as_ref().is_some_and(|t| t.voice.is_none()),
-        Side::Browser | Side::Queue | Side::Mixer | Side::Synth => false,
+        Side::Browser | Side::Queue | Side::Mixer | Side::Synth | Side::Shader => false,
     };
     let lanes = if shown {
         space().boxed()
@@ -232,6 +233,7 @@ fn pane<'a>(
         }
         (Side::Mixer, _) => desk(state, parts.caps, size),
         (Side::Synth, _) => synth::view(state, size),
+        (Side::Shader, _) => shader::view(state, size, parts.stage),
         _ => list::view(state, size.width),
     }
 }
@@ -313,7 +315,7 @@ pub(super) fn covers(state: &State, size: Size, scale: f32) -> Vec<(u32, u32)> {
             match state.side {
                 Side::Karaoke => Some(karaoke::tab::cover(m.pane.size()).size()),
                 Side::Browser | Side::Queue => m.cover.map(|c| c.size()),
-                Side::Transition | Side::Mixer | Side::Synth => None,
+                Side::Transition | Side::Mixer | Side::Synth | Side::Shader => None,
             }
         }
         Screen::Settings | Screen::Help | Screen::Karaoke | Screen::Lyrics => None,

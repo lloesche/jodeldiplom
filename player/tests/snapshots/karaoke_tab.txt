@@ -1,4 +1,4 @@
-[tabs] Browser │ Queue (5) │ Transition │ Karaoke │ Mixer │ Synth
+[tabs] Browser │ Queue (5) │ Transition │ Karaoke │ Mixer │ Synth │ Shader
 [shown] Karaoke
 [title] Morning Light
 [dim] The Ramps

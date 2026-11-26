@@ -64,8 +64,11 @@ pub(super) struct Painter {
     ///
     /// [`BackdropPass::generation`]: super::backdrop::gpu::BackdropPass::generation
     backdrop: super::backdrop::gpu::BackdropPass,
+    /// The song's look over the backdrop, where one draws: the ground
+    /// reads its output instead.
+    looks: super::backdrop::looks::LookPass,
     soft: wgpu::Sampler,
-    bound: u64,
+    bound: (u64, u64),
     /// The GPU's time after each step of a frame, where it is measured
     /// ([`Offscreen::timed`]).
     stamps: Option<crate::gui::present::stamps::Stamps>,
@@ -118,6 +121,7 @@ impl Painter {
         let light = super::bloom::Light::new(&device, format);
         // The backdrop made in linear light where the frame takes it so.
         let backdrop = super::backdrop::gpu::BackdropPass::new(&device, &queue, format.is_srgb());
+        let looks = super::backdrop::looks::LookPass::new(&device, format.is_srgb());
         let soft = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("jodeldiplom ground"),
             mag_filter: wgpu::FilterMode::Linear,
@@ -135,8 +139,9 @@ impl Painter {
             particles,
             light,
             backdrop,
+            looks,
             soft,
-            bound: 0,
+            bound: (0, 0),
             stamps: None,
             density: 1.0,
         }
@@ -167,6 +172,10 @@ impl Painter {
         let size = (drawn(size.0), drawn(size.1));
         self.backdrop.set((&self.device, &self.queue), frame, size);
         self.mark("backdrop");
+        let look = frame.and_then(|f| f.look.as_ref());
+        let gpu = (&self.device, &self.queue);
+        self.looks.set(gpu, look, self.backdrop.under(), self.size);
+        self.mark("look");
     }
 
     /// The stage for the next frame (`None`: none), in a frame of `size`.
@@ -236,11 +245,14 @@ impl Painter {
         &self.queue
     }
 
-    /// What the ground reads, made where the backdrop's texture is new.
+    /// What the ground reads, made where the backdrop's texture or the
+    /// look's output is new: the look's, while one draws, else the
+    /// backdrop's.
     fn bind(&mut self) {
-        if self.backdrop.generation() != self.bound {
+        let now = (self.backdrop.generation(), self.looks.generation());
+        if now != self.bound {
             self.ground_bind = None;
-            self.bound = self.backdrop.generation();
+            self.bound = now;
         }
         if self.ground_bind.is_none() {
             self.ground_bind = Some(self.device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -249,7 +261,9 @@ impl Painter {
                 entries: &[
                     wgpu::BindGroupEntry {
                         binding: 0,
-                        resource: wgpu::BindingResource::TextureView(self.backdrop.under()),
+                        resource: wgpu::BindingResource::TextureView(
+                            self.looks.out().unwrap_or(self.backdrop.under()),
+                        ),
                     },
                     wgpu::BindGroupEntry {
                         binding: 1,

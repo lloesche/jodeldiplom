@@ -21,7 +21,7 @@ fn big(h: f32) -> f32 {
 
 /// The lyric band in the window's `area`: from the line sung's top to the
 /// next's bottom (the next a little smaller: [`LINES`]).
-pub(super) fn band((_, y, _, h): (f32, f32, f32, f32)) -> (f32, f32) {
+pub(crate) fn band((_, y, _, h): (f32, f32, f32, f32)) -> (f32, f32) {
     (y + h * LINES.0, y + h * LINES.1 + big(h) * 0.66 * 1.3)
 }
 

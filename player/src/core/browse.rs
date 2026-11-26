@@ -84,7 +84,7 @@ fn view_mut(state: &mut State, side: Side) -> Option<(&mut usize, &mut usize)> {
     match side {
         Side::Browser => Some((&mut state.browser.cursor, &mut state.browser.scroll)),
         Side::Queue => Some((&mut state.queue.cursor, &mut state.queue.scroll)),
-        Side::Transition | Side::Karaoke | Side::Mixer | Side::Synth => None,
+        Side::Transition | Side::Karaoke | Side::Mixer | Side::Synth | Side::Shader => None,
     }
 }
 
@@ -93,7 +93,7 @@ pub fn list_len(state: &State, side: Side) -> usize {
     match side {
         Side::Browser => browser_rows(state).len(),
         Side::Queue => state.queue.paths.len(),
-        Side::Transition | Side::Karaoke | Side::Mixer | Side::Synth => 0,
+        Side::Transition | Side::Karaoke | Side::Mixer | Side::Synth | Side::Shader => 0,
     }
 }
 
@@ -103,7 +103,7 @@ pub fn list_cursor(state: &State, side: Side) -> (usize, usize) {
     match side {
         Side::Browser => (state.browser.cursor, state.browser.scroll),
         Side::Queue => (state.queue.cursor, state.queue.scroll),
-        Side::Transition | Side::Karaoke | Side::Mixer | Side::Synth => (0, 0),
+        Side::Transition | Side::Karaoke | Side::Mixer | Side::Synth | Side::Shader => (0, 0),
     }
 }
 
@@ -319,7 +319,7 @@ fn type_ahead(state: &mut State, c: char) {
             .iter()
             .map(|path| Some(shown_title(state, path).to_lowercase()))
             .collect(),
-        Side::Transition | Side::Karaoke | Side::Mixer | Side::Synth => Vec::new(),
+        Side::Transition | Side::Karaoke | Side::Mixer | Side::Synth | Side::Shader => Vec::new(),
     };
     if names.is_empty() {
         return;

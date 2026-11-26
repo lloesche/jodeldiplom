@@ -167,6 +167,10 @@ pub struct KaraokeState {
     pub editor: Option<super::lyric_edit::LyricEditor>,
     /// Whether the best scores changed since they were last saved.
     pub bests_changed: bool,
+    /// The song's own look over the backdrop (owned data, with its own
+    /// id: one made for the song, or given with `--look`), drawn instead
+    /// of the theme's; none: the theme's.
+    pub look: Option<Arc<jodel_looks::Look>>,
 }
 
 /// Whether the Karaoke tab is what keys act on.

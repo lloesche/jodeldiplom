@@ -282,7 +282,7 @@ fn the_synth_tab_is_in_the_tab_cycle_and_its_keys_step() {
     );
     update(&mut state, Action::Op(Op::SynthOctave(1)));
     let fx = update(&mut state, Action::Op(Op::ToggleSide));
-    assert_eq!(state.side, Side::Browser);
+    assert_eq!(state.side, Side::Shader);
     assert!(
         fx.contains(&Effect::Bench(Bench::Up { atom, note: 60.0 })),
         "{fx:?}"
