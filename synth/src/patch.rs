@@ -21,6 +21,7 @@
 //! ```
 
 use crate::engines::AnyParams;
+use crate::params::{self, field, on, switch, when, Knobs, Param, Scale, Spec};
 
 /// An ADSR: a linear attack, an exponential decay to the sustain level,
 /// an exponential release; times in seconds.
@@ -261,9 +262,166 @@ impl Patch {
     }
 }
 
+/// An LFO's rate in cycles a second (one in beats as at the synth's
+/// starting tempo, 120 a minute).
+fn lfo_hz(r: LfoRate) -> f32 {
+    match r {
+        LfoRate::Hz(hz) => hz,
+        LfoRate::Beats(beats) => 2.0 / beats.max(1e-3),
+    }
+}
+
+/// An LFO's rate in beats a cycle (one in hertz as at 120 a minute).
+fn lfo_beats(r: LfoRate) -> f32 {
+    match r {
+        LfoRate::Hz(hz) => 2.0 / hz.max(1e-3),
+        LfoRate::Beats(beats) => beats,
+    }
+}
+
+/// A patch's own parameters as data, with their ranges (its engine's are
+/// the engine's: [`AnyParams`] as [`Knobs`]).
+pub const PARAMS: &[Param<Patch>] = &[
+    field!("envelope", "attack", adsr.attack, 0.0, 4.0, "s", Fine),
+    field!("envelope", "decay", adsr.decay, 0.0, 8.0, "s", Fine),
+    field!("envelope", "sustain", adsr.sustain, 0.0, 1.0, "", Linear),
+    field!("envelope", "release", adsr.release, 0.0, 8.0, "s", Fine),
+    field!("voice", "level", level, -48.0, 12.0, "dB", Linear),
+    field!("voice", "gate", gate, 0.0, 8.0, "s", Fine),
+    field!("voice", "brighten", filter_env, -6.0, 8.0, "oct", Linear),
+    switch!("voice", "mono", mono),
+    when(field!("voice", "slide", slide, 0.0, 1.0, "s", Fine), |p| {
+        p.mono
+    }),
+    field!("pitch", "from", pitch.from, -48.0, 48.0, "st", Linear),
+    field!("pitch", "time", pitch.time, 0.0, 4.0, "s", Fine),
+    field!("pitch", "curve", pitch.curve, 0.1, 8.0, "", Log),
+    field!("shape", "from", shape.from, -2.0, 2.0, "", Linear),
+    field!("shape", "time", shape.time, 0.0, 4.0, "s", Fine),
+    field!("shape", "curve", shape.curve, 0.1, 8.0, "", Log),
+    Param::toggle(
+        ("lfo", "synced"),
+        |p| on(matches!(p.lfo.rate, LfoRate::Beats(_))),
+        |p, v| {
+            let r = p.lfo.rate;
+            p.lfo.rate = if v >= 0.5 {
+                LfoRate::Beats(lfo_beats(r))
+            } else {
+                LfoRate::Hz(lfo_hz(r))
+            };
+        },
+    ),
+    when(
+        Param::range(
+            ("lfo", "rate"),
+            (0.05, 40.0, "Hz", Scale::Log),
+            |p| lfo_hz(p.lfo.rate),
+            |p, v| p.lfo.rate = LfoRate::Hz(v),
+        ),
+        |p| matches!(p.lfo.rate, LfoRate::Hz(_)),
+    ),
+    when(
+        Param::range(
+            ("lfo", "beats"),
+            (0.0625, 32.0, "beats", Scale::Log),
+            |p| lfo_beats(p.lfo.rate),
+            |p, v| p.lfo.rate = LfoRate::Beats(v),
+        ),
+        |p| matches!(p.lfo.rate, LfoRate::Beats(_)),
+    ),
+    field!("lfo", "pitch", lfo.pitch, 0.0, 12.0, "st", Fine),
+    field!("lfo", "bright", lfo.bright, 0.0, 4.0, "oct", Linear),
+    field!("lfo", "amp", lfo.amp, 0.0, 1.0, "", Linear),
+    field!("lfo", "shape", lfo.shape, 0.0, 2.0, "", Linear),
+    field!("lfo", "delay", lfo.delay, 0.0, 4.0, "s", Fine),
+    field!("lfo", "fade", lfo.fade, 0.0, 4.0, "s", Fine),
+    field!("sends", "reverb", reverb, 0.0, 1.0, "", Linear),
+    field!("sends", "delay", delay, 0.0, 1.0, "", Linear),
+    field!("sends", "chorus", chorus, 0.0, 1.0, "", Linear),
+    field!("spread", "detune", spread.detune, 0.0, 100.0, "ct", Fine),
+    field!("spread", "level", spread.level, 0.0, 12.0, "dB", Linear),
+    field!("spread", "start", spread.start, 0.0, 0.2, "s", Fine),
+    field!(
+        "spread",
+        "lfo phase",
+        spread.lfo_phase,
+        0.0,
+        1.0,
+        "",
+        Linear
+    ),
+];
+
+/// A patch's parameters: its own ([`PARAMS`]) first, then its engine's.
+impl Knobs for Patch {
+    fn count(&self) -> usize {
+        PARAMS.len() + self.engine.count()
+    }
+
+    fn spec(&self, k: usize) -> Option<Spec> {
+        match k.checked_sub(PARAMS.len()) {
+            None => params::spec_of(PARAMS, k),
+            Some(e) => self.engine.spec(e),
+        }
+    }
+
+    fn applies(&self, k: usize) -> bool {
+        match k.checked_sub(PARAMS.len()) {
+            None => params::applies_to(PARAMS, self, k),
+            Some(e) => self.engine.applies(e),
+        }
+    }
+
+    fn get(&self, k: usize) -> Option<f32> {
+        match k.checked_sub(PARAMS.len()) {
+            None => params::get_in(PARAMS, self, k),
+            Some(e) => self.engine.get(e),
+        }
+    }
+
+    fn set(&mut self, k: usize, v: f32) -> bool {
+        match k.checked_sub(PARAMS.len()) {
+            None => params::set_in(PARAMS, self, k, v),
+            Some(e) => self.engine.set(e, v),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every parameter of every engine's default, set to its value, is as
+    /// it was; read back after a set, it is what was set (clamped); each
+    /// key is a patch's once.
+    #[test]
+    fn every_parameter_reads_back_what_it_is_set_to() {
+        for name in AnyParams::ENGINES {
+            let mut p = Patch::new(AnyParams::of_engine(name).unwrap());
+            let mut keys: Vec<String> = (0..p.count()).map(|k| p.spec(k).unwrap().key()).collect();
+            let n = keys.len();
+            keys.sort();
+            keys.dedup();
+            assert_eq!(keys.len(), n, "{name}: a key twice");
+            for k in 0..p.count() {
+                if !p.applies(k) {
+                    continue;
+                }
+                let before = p;
+                let v = p.get(k).unwrap();
+                assert!(p.set(k, v));
+                assert_eq!(p, before, "{name} {:?}", p.spec(k));
+                let to = p.spec(k).unwrap().kind.at(0.3);
+                p.set(k, to);
+                if p.applies(k) {
+                    let got = p.get(k).unwrap();
+                    assert!((got - to).abs() <= 1e-3 * to.abs().max(1.0), "{name} {k}");
+                }
+                p = before;
+            }
+            assert!(!p.set(p.count(), 0.0));
+        }
+    }
 
     #[test]
     fn a_glide_arrives() {

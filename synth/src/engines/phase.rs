@@ -21,6 +21,7 @@
 //! u32 phases as in [`crate::dsp`].
 
 use crate::dsp::{self, Rate};
+use crate::params::{field, pick, when, Param};
 use crate::{Engine, NoteOn, VoiceMod};
 
 /// A wave.
@@ -75,6 +76,62 @@ impl Default for Params {
         SINE
     }
 }
+
+/// The waves and the lines in their order, and their names; the second
+/// wave the same with "the same" first.
+const WAVES: [Wave; 7] = [
+    Wave::Saw,
+    Wave::Square,
+    Wave::Pulse,
+    Wave::SawPulse,
+    Wave::ResoSaw,
+    Wave::ResoTriangle,
+    Wave::ResoTrapezoid,
+];
+const WAVE_NAMES: [&str; 7] = [
+    "saw",
+    "square",
+    "pulse",
+    "saw pulse",
+    "reso saw",
+    "reso triangle",
+    "reso trapezoid",
+];
+const SECOND: [Option<Wave>; 8] = [
+    None,
+    Some(Wave::Saw),
+    Some(Wave::Square),
+    Some(Wave::Pulse),
+    Some(Wave::SawPulse),
+    Some(Wave::ResoSaw),
+    Some(Wave::ResoTriangle),
+    Some(Wave::ResoTrapezoid),
+];
+const SECOND_NAMES: [&str; 8] = [
+    "the same",
+    "saw",
+    "square",
+    "pulse",
+    "saw pulse",
+    "reso saw",
+    "reso triangle",
+    "reso trapezoid",
+];
+const LINES: [Line; 3] = [Line::Single, Line::Mix, Line::Ring];
+const LINE_NAMES: [&str; 3] = ["single", "mix", "ring"];
+
+/// PHASE's parameters as data, with their ranges.
+pub const PARAMS: &[Param<Params>] = &[
+    pick!("phase", "wave", wave, WAVES, WAVE_NAMES),
+    pick!("phase", "every other", wave2, SECOND, SECOND_NAMES),
+    field!("phase", "bend", dcw, 0.0, 1.0, "", Linear),
+    field!("phase", "sub", sub, 0.0, 1.0, "", Linear),
+    pick!("line 2", "line", line, LINES, LINE_NAMES),
+    when(
+        field!("line 2", "detune", detune, -1_200.0, 2_400.0, "ct", Linear),
+        |p| p.line != Line::Single,
+    ),
+];
 
 /// [`Params::default`]: an unbent sine.
 const SINE: Params = Params {

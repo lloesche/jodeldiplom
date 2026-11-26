@@ -287,6 +287,22 @@ impl Engine {
         self.sfx.frame(state, desk);
     }
 
+    /// What the effects input took and dropped.
+    pub(crate) fn effects(&self) -> jodel_output::mixer::EffectsView {
+        self.effects.view()
+    }
+
+    /// What the Synth tab asks played on the effects input
+    /// ([`crate::sfx::Sfx::bench`]).
+    pub(crate) fn bench(&mut self, state: &State, ask: crate::core::synth_tab::Bench) {
+        let desk = crate::sfx::Desk {
+            effects: &self.effects,
+            heads: [&self.heads[0].input, &self.heads[1].input],
+            timebase: self.mixer.timebase(),
+        };
+        self.sfx.bench(state, desk, ask);
+    }
+
     /// The Mixer tab's look for a frame: the desk and the meters since the
     /// last look (the one place they are taken), each fader strip found by
     /// its id.

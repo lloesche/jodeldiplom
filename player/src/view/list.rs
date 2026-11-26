@@ -263,6 +263,7 @@ impl Pane {
             (Side::Transition, "Transition"),
             (Side::Karaoke, "Karaoke"),
             (Side::Mixer, "Mixer"),
+            (Side::Synth, "Synth"),
         ]
         .into_iter()
         .map(|(side, label)| Tab {
@@ -275,7 +276,7 @@ impl Pane {
         let body = match state.side {
             Side::Browser => Body::Browser(Browser::of(state)),
             Side::Queue => Body::Queue(Queue::of(state, width)),
-            Side::Transition | Side::Karaoke | Side::Mixer => Body::Tab,
+            Side::Transition | Side::Karaoke | Side::Mixer | Side::Synth => Body::Tab,
         };
         Pane { tabs, body }
     }

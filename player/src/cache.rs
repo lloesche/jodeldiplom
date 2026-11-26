@@ -18,6 +18,7 @@
 //! | [`COVER_LAYERS`] | a cover taken apart (`covers/*.layers`, binary: `JDLC` and the version byte) |
 //! | [`COVER_SONG`] | which cover taken apart is a song's (`covers/songs/*.txt`) |
 //! | [`COVER_ALBUM`] | an album's covers taken apart, with their perceptual hashes (`covers/albums/*.txt`) |
+//! | [`PATCH`] | a game sound's patch kept on the Synth tab (`patches/*.txt`) |
 //!
 //! A text file starts with a header naming its schema and the version of
 //! it the file was written in, and the player that wrote it (for the
@@ -38,10 +39,11 @@
 //! - **The same version, the same files.** While a schema's version stays,
 //!   every player reads the files of it that any player wrote.
 //! - **The user's work is kept.** Grids fixed by hand, the best scores
-//!   sung, the delays measured and the lyrics edited are not a cache
-//!   ([`Schema::user_data`]): a new version of [`GRID`], [`SCORES`],
-//!   [`DELAYS`] or [`LYRIC_EDITS`] still reads every older one, a file
-//!   without a header (from before there were headers) as version 1.
+//!   sung, the delays measured, the lyrics edited and the patches kept are
+//!   not a cache ([`Schema::user_data`]): a new version of [`GRID`],
+//!   [`SCORES`], [`DELAYS`], [`LYRIC_EDITS`] or [`PATCH`] still reads every
+//!   older one, a file without a header (from before there were headers)
+//!   as version 1.
 //!
 //! What a file says may also depend on how it was made: an analysis on
 //! [`jodel_rhythm::VERSION`] (in the name of its file, so another one is
@@ -191,8 +193,17 @@ pub const COVER_ALBUM: Schema = Schema {
     user_data: false,
 };
 
+/// A game sound's patch as kept on the Synth tab ([`crate::patches`]):
+/// its theme and atom, its engine, then each parameter that applies by
+/// its name.
+pub const PATCH: Schema = Schema {
+    name: "patch",
+    version: 1,
+    user_data: true,
+};
+
 /// Every schema.
-pub const ALL: [Schema; 15] = [
+pub const ALL: [Schema; 16] = [
     ANALYSIS,
     WAVEFORM,
     LYRICS_TEXT,
@@ -208,6 +219,7 @@ pub const ALL: [Schema; 15] = [
     COVER_LAYERS,
     COVER_SONG,
     COVER_ALBUM,
+    PATCH,
 ];
 
 /// The first word of a header.
@@ -319,7 +331,7 @@ mod tests {
         assert_eq!(first.body("jodel-rhythm 9\n"), None);
         assert_eq!(GRID.open("jodel-grid 1\n"), Some((1, "jodel-grid 1\n")));
         let users: Vec<&str> = ALL.iter().filter(|s| s.user_data).map(|s| s.name).collect();
-        assert_eq!(users, ["lyric-edits", "grid", "scores", "delays"]);
+        assert_eq!(users, ["lyric-edits", "grid", "scores", "delays", "patch"]);
         // Another player wrote it: read all the same.
         let other = "jodeldiplom-cache analysis 1 by jodeldiplom 9.9.9\nbody\n";
         assert_eq!(first.body(other), Some("body\n"));

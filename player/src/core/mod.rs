@@ -34,6 +34,7 @@ pub mod singing;
 pub mod sliders;
 pub mod stems;
 pub mod sync;
+pub mod synth_tab;
 pub mod text;
 pub mod transition;
 mod update;
@@ -188,21 +189,28 @@ pub enum Side {
     /// The mixer as a desk: the strips with their faders and meters, the
     /// microphone's strip and the master ([`desk`]); the whole width too.
     Mixer,
+    /// The game's sounds as a workbench: each played, its patch shown and
+    /// edited, a keyboard ([`synth_tab`]); the whole width too.
+    Synth,
 }
 
 impl Side {
     /// The tabs, in the order `tab` goes through them.
-    pub const ALL: [Side; 5] = [
+    pub const ALL: [Side; 6] = [
         Side::Browser,
         Side::Queue,
         Side::Transition,
         Side::Karaoke,
         Side::Mixer,
+        Side::Synth,
     ];
 
     /// Whether it takes the whole width (no right column).
     pub fn wide(self) -> bool {
-        matches!(self, Side::Transition | Side::Karaoke | Side::Mixer)
+        matches!(
+            self,
+            Side::Transition | Side::Karaoke | Side::Mixer | Side::Synth
+        )
     }
 }
 
@@ -730,6 +738,8 @@ pub struct State {
     pub karaoke: karaoke::KaraokeState,
     /// The Mixer tab: the desk's settings and what it shows.
     pub desk: desk::DeskState,
+    /// The Synth tab: the sound selected, the patches edited and kept.
+    pub synth: synth_tab::SynthTab,
     /// The microphone as last read (once a drawn frame), while one is
     /// open.
     pub mic: Option<mic::MicReading>,
@@ -811,6 +821,7 @@ impl State {
             transition,
             karaoke: karaoke::KaraokeState::default(),
             desk,
+            synth: synth_tab::SynthTab::default(),
             mic: None,
             drawn_heard: None,
             drawn_ms: None,

@@ -39,6 +39,11 @@
 //!   step higher as the count goes), its gems, and its sheet's own, its
 //!   paper, pen, stamps and tunes, at once ([`Sheet`]: each on fixed notes,
 //!   the same every time).
+//! - The Synth tab's ([`crate::sfx::bench`]): any of the sounds above on
+//!   a click, a key of its keyboard held on an atom's patch
+//!   ([`Conductor::key_down`]), and an atom's patch edited, told the
+//!   synth as a command ([`Conductor::set_patch`]: it mirrors what its
+//!   synth has, so only a change is sent).
 //!
 //! Where a hit lands is the song's grid's one rule
 //! ([`jodel_rhythm::grid::Grid::land`]), the one the looks land by too.
@@ -75,7 +80,7 @@ use jodel_synth::chorus::ChorusSettings;
 use jodel_synth::delay::DelaySettings;
 use jodel_synth::dynamics::CompressorSettings;
 use jodel_synth::hall::HallSettings;
-use jodel_synth::{Command, Commands, Synth, GENTLE};
+use jodel_synth::{Bank, Command, Commands, NoteOn, Patch, PatchId, Synth, Tag, GENTLE};
 
 pub use clock::Clock;
 pub use layers::{Chime, Layers, Streak};
@@ -154,6 +159,21 @@ pub enum Called {
     Times(Tier),
 }
 
+impl Called {
+    /// Whether the announcer has a word for it.
+    pub fn sung(self) -> bool {
+        self.word().is_some()
+    }
+
+    /// Its word, if the announcer has one.
+    fn word(self) -> Option<call::Word> {
+        match self {
+            Called::Name(tier) => call::name(tier),
+            Called::Times(tier) => call::times(tier.multiplier()),
+        }
+    }
+}
+
 /// A game event.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Event {
@@ -184,9 +204,19 @@ pub enum Event {
     Diploma(Diploma),
 }
 
+/// The tag of the keyboard's notes (the Synth tab's): a cancel of all
+/// calls them off, nothing else does.
+const KEYS: Tag = Tag(3);
+
+/// How long a key held on the Synth tab's keyboard holds its note at
+/// most, seconds (it is let go of with the key).
+const KEY_HOLD: f64 = 10.0;
+
 /// The sound conductor: the planner.
 pub struct Conductor {
     palette: Palette,
+    /// Each atom's patch as its synth has it ([`Conductor::set_patch`]).
+    patches: [Patch; Atom::ALL.len()],
     /// The words in a row each rung is reached at.
     rungs: [u32; Tier::COUNT],
     clock: Clock,
@@ -223,7 +253,7 @@ impl Conductor {
     ///
     /// If the synth takes no such rate (32 to 192 kHz).
     pub fn new(rate: u32, theme: &Theme) -> (Conductor, Synth) {
-        let (bank, palette) = Palette::bank(theme);
+        let (conductor, bank) = Conductor::planner(rate, theme);
         let mut synth = Synth::with_cues(rate, bank, VOICES, CUES);
         synth.set_reverb(HallSettings {
             size: 0.5,
@@ -240,10 +270,20 @@ impl Conductor {
             makeup: LEVEL,
             ..GENTLE
         });
+        synth.set_tempo(conductor.clock.tempo() as f32);
+        (conductor, synth)
+    }
+
+    /// The conductor alone, as [`Conductor::new`] makes it, and the bank
+    /// of patches its synth is to play (what it plans can be written down
+    /// without one: which atoms a sound plays).
+    pub fn planner(rate: u32, theme: &Theme) -> (Conductor, Bank) {
+        let patches = Atom::ALL.map(|a| theme.patch(a));
+        let (bank, palette) = Palette::bank(&patches);
         let clock = Clock::free(rate);
-        synth.set_tempo(clock.tempo() as f32);
         let conductor = Conductor {
             palette,
+            patches,
             rungs: layers::rungs(),
             tempo: clock.tempo(),
             clock,
@@ -258,7 +298,78 @@ impl Conductor {
             riser: false,
             trim: 0.0,
         };
-        (conductor, synth)
+        (conductor, bank)
+    }
+
+    /// `atom`'s patch from now on (an edit on the Synth tab, or one kept),
+    /// told its synth when it is not what the synth has already; one not
+    /// taken (a full queue) is told again on the next call.
+    pub fn set_patch(&mut self, out: &mut impl Commands, atom: Atom, patch: Patch) {
+        let k = atom as usize;
+        if self.patches[k] == patch {
+            return;
+        }
+        let to = Command::Patch {
+            patch: self.palette[atom],
+            to: patch,
+        };
+        if out.send(to) {
+            self.patches[k] = patch;
+        } else {
+            self.dropped += 1;
+        }
+    }
+
+    /// The atom whose patch the synth plays as `id`, if one is.
+    pub fn atom_of(&self, id: PatchId) -> Option<Atom> {
+        self.palette.atom_of(id)
+    }
+
+    /// The streak as at a song's start, nothing told the synth: the Synth
+    /// tab plays a rung or a run of words from none.
+    pub fn start_over(&mut self) {
+        self.rung = 0;
+        self.riser = false;
+        self.quiet_until = 0;
+        self.last_clink = None;
+    }
+
+    /// A key of the Synth tab's keyboard pressed on `at`: `note` on
+    /// `atom`'s patch, held until its key is let go of
+    /// ([`Conductor::key_up`]).
+    pub fn key_down(&mut self, out: &mut impl Commands, at: u64, atom: Atom, note: f32) {
+        let seed = self.seed;
+        self.seed = self.seed.wrapping_mul(0x9E37_79B9).wrapping_add(1);
+        let c = Command::Note {
+            frame: at,
+            patch: self.palette[atom],
+            note: NoteOn {
+                note,
+                velocity: 0.85,
+                seed,
+                pan: 0.0,
+                shape: 0.0,
+            },
+            length: Some((KEY_HOLD * f64::from(self.rate)) as u64),
+            tag: KEYS,
+        };
+        if !out.send(c) {
+            self.dropped += 1;
+        }
+    }
+
+    /// The key of `note` let go of on `at`: its note on `atom`'s patch let
+    /// go.
+    pub fn key_up(&mut self, out: &mut impl Commands, at: u64, atom: Atom, note: f32) {
+        let c = Command::Release {
+            frame: at,
+            patch: self.palette[atom],
+            note: Some(note),
+            tag: KEYS,
+        };
+        if !out.send(c) {
+            self.dropped += 1;
+        }
     }
 
     /// The rate it plans at, Hz.
@@ -473,15 +584,21 @@ impl Conductor {
             self.announce(out, at, hit, Called::Times(Tier::ALL[r as usize - 1]));
         }
         if layers.contains(&Streak::Payout) {
-            let bar = self.clock.bar();
-            let beat = self.clock.beat_len();
-            let length = sounds::payout_beats(bar) * beat;
-            let d = self.clock.land(end, When::Downbeat { length });
-            let lead = (PAYOUT_LEAD * beat) as u64;
-            let room = d >= end + lead && self.clock.clear(d - lead, lead);
-            sounds::payout(&mut self.score(out), end, d, bar, room);
+            self.payout(out, end);
         }
         hit
+    }
+
+    /// The top rung's payout from `at` (its stinger's end), on a downbeat
+    /// with room for it, its lead-in where there is room for that too.
+    pub fn payout(&mut self, out: &mut impl Commands, at: u64) {
+        let bar = self.clock.bar();
+        let beat = self.clock.beat_len();
+        let length = sounds::payout_beats(bar) * beat;
+        let d = self.clock.land(at, When::Downbeat { length });
+        let lead = (PAYOUT_LEAD * beat) as u64;
+        let room = d >= at + lead && self.clock.clear(d - lead, lead);
+        sounds::payout(&mut self.score(out), at, d, bar, room);
     }
 
     /// The announcer calling `called` out from `now`, its first vowel on
@@ -489,11 +606,7 @@ impl Conductor {
     /// and a rung's [`Event::Word`] at the rows that call), softer where it
     /// would be sung over a line; a word it has none for, nothing.
     pub fn announce(&mut self, out: &mut impl Commands, now: u64, at: u64, called: Called) {
-        let word = match called {
-            Called::Name(tier) => call::name(tier),
-            Called::Times(tier) => call::times(tier.multiplier()),
-        };
-        let Some(word) = word else {
+        let Some(word) = called.word() else {
             return;
         };
         let span = call::span(word, self.clock.beat_len(), f64::from(self.rate));

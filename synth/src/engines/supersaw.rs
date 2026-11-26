@@ -31,6 +31,7 @@
 //! curve and the mix law are our own.
 
 use crate::dsp::{self, Rate, Svf, SvfState};
+use crate::params::{field, Param, Scale};
 use crate::{Engine, NoteOn, VoiceMod};
 
 /// The saws of a voice, at the most.
@@ -70,6 +71,22 @@ impl Default for Params {
         PLAIN
     }
 }
+
+/// SUPERSAW's parameters as data, with their ranges.
+pub const PARAMS: &[Param<Params>] = &[
+    Param::range(
+        ("saws", "pairs"),
+        (0.0, 3.0, "", Scale::Whole),
+        |p| f32::from(p.pairs),
+        |p, v| p.pairs = v as u8,
+    ),
+    field!("saws", "detune", detune, 0.0, 100.0, "ct", Linear),
+    field!("saws", "mix", mix, 0.0, 1.0, "", Linear),
+    field!("saws", "sub", sub, 0.0, 1.0, "", Linear),
+    field!("filter", "cutoff", cutoff, 20.0, 20_000.0, "Hz", Log),
+    field!("filter", "res", res, 0.0, 1.0, "", Linear),
+    field!("filter", "key track", key_track, 0.0, 2.0, "", Linear),
+];
 
 /// [`Params::default`]: seven saws, an open filter.
 const PLAIN: Params = Params {

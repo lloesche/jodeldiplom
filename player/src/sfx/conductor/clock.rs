@@ -30,6 +30,15 @@ impl Clock {
         }
     }
 
+    /// A steady beat at `bpm` in four, at `rate` frames a second, a bar's
+    /// first beat on `frame`, sure, nothing sung (the Synth tab's tempo).
+    pub fn steady(rate: u32, bpm: f64, frame: u64) -> Clock {
+        Clock {
+            grid: Grid::steady(bpm, 4).on(0.0, frame as f64, f64::from(rate)),
+            lines: [None; Clock::LINES],
+        }
+    }
+
     /// The grid of `a` at `t` seconds into the song ([`Analysis::grid_at`]),
     /// heard on stream frame `frame`, `per_second` frames a second of the
     /// song (the stream's rate, or its speed through the song: the song's

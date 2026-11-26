@@ -25,6 +25,7 @@
 //! the Vowels" (JASA, 1952); the pulse by polyBLEP (Välimäki et al.).
 
 use crate::dsp::{self, Rate};
+use crate::params::{field, pick, when, Param, Scale};
 use crate::{Engine, NoteOn, VoiceMod, BLOCK};
 
 /// The wave.
@@ -129,6 +130,95 @@ impl Default for Params {
         CHIP
     }
 }
+
+/// The waves, the duties and the arpeggios in their order, and their
+/// names.
+const WAVES: [Wave; 12] = [
+    Wave::Pulse,
+    Wave::Triangle,
+    Wave::Noise { short: false },
+    Wave::Noise { short: true },
+    Wave::Table(Table::Sine),
+    Wave::Table(Table::Saw),
+    Wave::Table(Table::Hollow),
+    Wave::Table(Table::Organ),
+    Wave::Table(Table::Buzz),
+    Wave::Table(Table::VoxA),
+    Wave::Table(Table::VoxO),
+    Wave::Table(Table::VoxE),
+];
+const WAVE_NAMES: [&str; 12] = [
+    "pulse",
+    "triangle",
+    "noise",
+    "short noise",
+    "sine",
+    "saw",
+    "hollow",
+    "organ",
+    "buzz",
+    "ah",
+    "aw",
+    "ee",
+];
+const DUTIES: [Duty; 4] = [Duty::Eighth, Duty::Quarter, Duty::Half, Duty::ThreeQuarters];
+const DUTY_NAMES: [&str; 4] = ["12.5 %", "25 %", "50 %", "75 %"];
+const ARPS: [Arp; 4] = [Arp::Off, Arp::Octave, Arp::Major, Arp::Minor];
+const ARP_NAMES: [&str; 4] = ["off", "octave", "major", "minor"];
+
+/// LOFI's parameters as data, with their ranges.
+pub const PARAMS: &[Param<Params>] = &[
+    pick!("chip", "wave", wave, WAVES, WAVE_NAMES),
+    when(pick!("chip", "duty", duty, DUTIES, DUTY_NAMES), |p| {
+        p.wave == Wave::Pulse
+    }),
+    Param::choice(
+        ("steps", "envelope"),
+        &["off", "decay", "loop"],
+        |p| match p.step_env {
+            StepEnv::Off => 0.0,
+            StepEnv::Decay(_) => 1.0,
+            StepEnv::Loop(_) => 2.0,
+        },
+        |p, v| {
+            let k = period(p.step_env);
+            p.step_env = match v as u8 {
+                0 => StepEnv::Off,
+                1 => StepEnv::Decay(k),
+                _ => StepEnv::Loop(k),
+            };
+        },
+    ),
+    when(
+        Param::range(
+            ("steps", "period"),
+            (0.0, 15.0, "", Scale::Whole),
+            |p| f32::from(period(p.step_env)),
+            |p, v| {
+                let k = v as u8;
+                p.step_env = match p.step_env {
+                    StepEnv::Off => StepEnv::Off,
+                    StepEnv::Decay(_) => StepEnv::Decay(k),
+                    StepEnv::Loop(_) => StepEnv::Loop(k),
+                };
+            },
+        ),
+        |p| p.step_env != StepEnv::Off,
+    ),
+    pick!("arp", "arp", arp, ARPS, ARP_NAMES),
+    when(
+        field!("arp", "rate", arp_rate, 1.0, 200.0, "/s", Log),
+        |p| p.arp != Arp::Off,
+    ),
+    field!("crush", "rate", crush, 0.0, 48_000.0, "Hz", Fine),
+    Param::range(
+        ("crush", "bits"),
+        (0.0, 16.0, "", Scale::Whole),
+        |p| f32::from(p.bits),
+        |p, v| p.bits = v as u8,
+    ),
+    field!("crush", "tone", tone, 0.0, 16_000.0, "Hz", Fine),
+];
 
 /// [`Params::default`]: a plain square.
 const CHIP: Params = Params {

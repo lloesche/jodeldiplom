@@ -198,6 +198,8 @@ pub enum Context {
     /// Writing a word's or a line's text in the lyrics editor (the text
     /// field takes the rest of the keys).
     LyricsText,
+    /// The Synth tab.
+    Synth,
 }
 
 impl Context {
@@ -223,6 +225,7 @@ impl Context {
             Context::Desk => "Mixer tab",
             Context::LyricsEditor => "Lyrics editor (e on the Karaoke tab)",
             Context::LyricsText => "Lyrics editor, writing (after enter)",
+            Context::Synth => "Synth tab",
         }
     }
 
@@ -288,6 +291,8 @@ pub fn contexts(state: &State) -> Vec<Context> {
                 vec![Context::Karaoke, Context::Global]
             } else if state.side == Side::Mixer {
                 vec![Context::Desk, Context::Global]
+            } else if state.side == Side::Synth {
+                vec![Context::Synth, Context::Global]
             } else if state.side == Side::Queue {
                 vec![Context::Queue, Context::List, Context::Global]
             } else {

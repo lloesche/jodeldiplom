@@ -281,6 +281,33 @@ fn grid_files_are_pinned_and_every_version_is_read() {
 }
 
 #[test]
+fn patch_files_are_pinned_and_every_version_is_read() {
+    use jodeldiplom::patches::{from_text, to_text};
+    use jodeldiplom::sfx::conductor::Atom;
+    use jodeldiplom::theme::CLASSIC;
+    // The bubble's pop edited: a longer decay, more reverb, mono.
+    let mut pop = CLASSIC.patch(Atom::Pop);
+    pop.adsr.decay = 0.25;
+    pop.reverb = 0.3;
+    pop.mono = true;
+    let kept = pinned(
+        &cache::PATCH,
+        "txt",
+        to_text("classic", Atom::Pop, &pop).as_bytes(),
+    );
+    let kept = String::from_utf8(kept).unwrap();
+    assert_eq!(from_text(&kept), Some((&CLASSIC, Atom::Pop, pop)));
+    for version in 1..=cache::PATCH.version {
+        let text = std::fs::read_to_string(sample(&cache::PATCH, version, "txt")).unwrap();
+        assert!(from_text(&text).is_some(), "version {version}");
+    }
+    assert_eq!(
+        from_text(&headerless(kept.as_bytes())).map(|k| k.2),
+        Some(pop)
+    );
+}
+
+#[test]
 fn score_files_are_pinned_and_every_version_is_read() {
     use jodeldiplom::scores::{from_text, to_text, Best, Bests};
     let mut bests = Bests::new();

@@ -70,6 +70,22 @@ pub fn lets_go_of_demo(state: &State, key: &IcedKey) -> bool {
     state.karaoke.demo.held() && self::key(key, Modifiers::empty()).is_some_and(demo)
 }
 
+/// The Synth tab's keyboard key `key` let go of is, while one is held
+/// there: its place ([`Op::SynthNote`]), whatever is held with it now.
+pub fn lets_go_of_synth_note(state: &State, key: &IcedKey) -> Option<i8> {
+    if state.synth.held.is_empty() {
+        return None;
+    }
+    let key = self::key(key, Modifiers::empty())?;
+    keymap::KEYMAP
+        .iter()
+        .filter(|b| b.context == keymap::Context::Synth && b.keys.contains(&key))
+        .find_map(|b| match b.op {
+            Op::SynthNote(k) => Some(k),
+            _ => None,
+        })
+}
+
 /// The key's name as the setup screen takes it: one character, `"enter"`
 /// or `"esc"` ([`crate::view::setup::choice`]).
 pub fn setup_name(key: &IcedKey) -> String {

@@ -32,16 +32,10 @@ Work agreed on but not started, roughly in the order it was raised.
   builds up follows the multiplier. If they should come in order with
   the rest for every singer, they move to the rungs too.
 
-- **A Synth tab**, a workbench like the Transition tab:
-  - every sound the game makes, listed by moment (word pops, rung
-    stingers, chimes, the payout, the diploma's sounds), each played
-    on a click, in the current song's key and tempo or a chosen one;
-  - its patch shown and editable: the engine, the envelope, the
-    parameters, the layers a tier or rung switches on;
-  - the synth's engines played freely (a keyboard on screen and the
-    computer's keys), to try sounds out;
-  - a patch kept once it sounds right. The patches stay plain data so
-    the tab can show them.
+- **The Synth tab's layers:** the layers a tier or rung switches on are
+  shown over the sound, not edited there (they are the tier table's
+  rows); if they should be tried out on the tab too, a row's layers
+  become user data the way the patches are.
 - **AAC/M4A:** refused only because the decoder's `aac` feature is off;
   turn it on once checked (gapless, seeks, HE-AAC refused).
 

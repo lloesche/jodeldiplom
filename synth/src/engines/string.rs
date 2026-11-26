@@ -33,6 +33,7 @@
 //! stiffness in strings and plates", ICMC) for the stiffness all-passes.
 
 use crate::dsp::{self, Quiet, Rate};
+use crate::params::{field, Param};
 use crate::{Engine, NoteOn, VoiceMod, BLOCK};
 use std::cell::RefCell;
 use std::f32::consts::{PI, TAU};
@@ -80,6 +81,14 @@ impl Default for Params {
         PLUCK
     }
 }
+
+/// STRING's parameters as data, with their ranges.
+pub const PARAMS: &[Param<Params>] = &[
+    field!("string", "decay", decay, 0.0, 1.0, "", Linear),
+    field!("string", "brightness", brightness, 0.0, 1.0, "", Linear),
+    field!("string", "position", position, 0.0, 1.0, "", Linear),
+    field!("string", "stiffness", stiffness, 0.0, 1.0, "", Linear),
+];
 
 /// A bright pluck, a second's ring.
 pub const PLUCK: Params = Params {

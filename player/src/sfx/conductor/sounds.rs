@@ -184,6 +184,7 @@ impl Score<'_> {
         self.send(Command::Release {
             frame: at,
             patch,
+            note: None,
             tag: Tag::NONE,
         });
     }

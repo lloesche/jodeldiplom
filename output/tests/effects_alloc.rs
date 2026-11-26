@@ -4,7 +4,8 @@
 //! binary's alone) counts every call on the thread named `jodel-mixer`
 //! while its live synth plays: notes sent on stream frames and on the
 //! desk's, waiting, starting (more than its voices), let go, called off,
-//! too late, its level glided, and the synth replaced as it plays (the one
+//! too late, its level glided, its patch edited as it sounds (to another
+//! engine too), and the synth replaced as it plays (the one
 //! before let go of elsewhere); the simulated device's own memory, which
 //! grows as it plays on that thread, is left out. The synth and the
 //! effects input are messages (freed and reserved as the mixer thread
@@ -197,7 +198,19 @@ fn playing_live_allocates_nothing_on_the_mixer_thread() {
         let release = Command::Release {
             frame: 17_000,
             patch,
+            note: None,
             tag: Tag(3),
+        };
+        // The patch edited as it sounds (a Synth tab's edit): quieter, then
+        // another engine's.
+        let quieter = jodel_synth::Patch {
+            level: -6.0,
+            gate: 0.01,
+            ..jodel_synth::Patch::new(jodel_synth::engines::analog::SINE.into())
+        };
+        let bell = jodel_synth::Patch {
+            gate: 0.01,
+            ..jodel_synth::Patch::new(jodel_synth::engines::fm::GLASS_BELL.into())
         };
         {
             let mut song = effects.commands(Some(&fader));
@@ -207,7 +220,11 @@ fn playing_live_allocates_nothing_on_the_mixer_thread() {
             for _ in 0..12 {
                 song.send(tone(patch, 13_000, -0.5));
             }
+            song.send(Command::Patch { patch, to: quieter });
             for k in 0..18 {
+                if k == 9 {
+                    song.send(Command::Patch { patch, to: bell });
+                }
                 song.send(tone(patch, 14_000 + 1_000 * k, 0.5));
             }
             song.send(tone(patch, 0, 0.0));

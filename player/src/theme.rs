@@ -181,6 +181,30 @@ mod tests {
         assert!(c.always.is_empty() && c.grade[3] == 0.0);
     }
 
+    /// Every atom's patch in every theme is within its parameters' ranges
+    /// (the Synth tab's sliders reach every value built in, and a patch
+    /// kept as built reads back as built).
+    #[test]
+    fn every_patch_is_within_its_parameters_ranges() {
+        use jodel_synth::params::Knobs;
+        for t in THEMES {
+            for a in Atom::ALL {
+                let p = t.patch(a);
+                for k in (0..p.count()).filter(|&k| p.applies(k)) {
+                    let (spec, v) = (p.spec(k).unwrap(), p.get(k).unwrap());
+                    let to = spec.kind.clamp(v);
+                    assert!(
+                        (to - v).abs() <= 1e-6 * v.abs().max(1.0),
+                        "{} {a:?}: {} is {v}, out of {:?}",
+                        t.name,
+                        spec.key(),
+                        spec.kind
+                    );
+                }
+            }
+        }
+    }
+
     /// Spooky looks and sounds other than classic: every tier its own
     /// colour, its own accent, the fire green, a cold grade, the fog held.
     #[test]

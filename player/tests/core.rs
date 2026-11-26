@@ -982,6 +982,12 @@ fn help_and_palette_come_from_the_keymap() {
             assert!(section.lines.iter().any(|(keys, _)| keys == line), "{line}");
             continue;
         }
+        if let Op::SynthNote(_) = binding.op {
+            // Eighteen keys in one line.
+            let section = help.iter().find(|s| s.title == "Synth tab").unwrap();
+            assert!(section.lines.iter().any(|(keys, _)| keys == "a … '"));
+            continue;
+        }
         let section = help
             .iter()
             .find(|s| s.title == binding.context.title())
@@ -1968,7 +1974,7 @@ fn digits_on_the_transition_tab_jump_to_bars_around_the_one_heard() {
 }
 
 #[test]
-fn tab_cycles_through_browser_queue_transition_karaoke_and_mixer() {
+fn tab_cycles_through_browser_queue_transition_karaoke_mixer_and_synth() {
     let mut state = common::transition_state(120, 40);
     state.side = Side::Browser;
     op(&mut state, Op::ToggleSide);
@@ -1993,6 +1999,8 @@ fn tab_cycles_through_browser_queue_transition_karaoke_and_mixer() {
     assert_eq!(state.side, Side::Karaoke);
     op(&mut state, Op::ToggleSide);
     assert_eq!(state.side, Side::Mixer);
+    op(&mut state, Op::ToggleSide);
+    assert_eq!(state.side, Side::Synth);
     op(&mut state, Op::ToggleSide);
     assert_eq!(state.side, Side::Browser);
 }

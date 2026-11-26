@@ -31,10 +31,11 @@
 //!
 //! A planner tells it what to play in [`Command`]s ([`Synth::command`]):
 //! notes, a patch's held voices let go on a frame of their own (every
-//! voice of the patch still held, from the block that frame falls in),
-//! the notes and releases waiting of a [`Tag`] (or all of them) called off
-//! before they sound, the tempo, the bus's level. The queue's size is set as the synth is
-//! made ([`Synth::with_cues`]).
+//! voice of the patch still held, or those of one note, from the block
+//! that frame falls in), the notes and releases waiting of a [`Tag`] (or
+//! all of them) called off before they sound, the tempo, the bus's level,
+//! a patch changed (an edit on the Synth tab: [`Synth::set_patch`]). The
+//! queue's size is set as the synth is made ([`Synth::with_cues`]).
 //!
 //! The synth is driven from one thread: cue notes and render on the same
 //! one. A planner on another thread hands it its commands through a
@@ -140,6 +141,10 @@ impl Tag {
 /// A timed instruction to a synth: what a planner sends it. Its frames are
 /// the synth's own.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "a patch goes whole, in one command in order with the notes, through queues whose room is fixed from the start"
+)]
 pub enum Command {
     /// [`Synth::note`], tagged.
     Note {
@@ -154,15 +159,26 @@ pub enum Command {
         /// Its tag.
         tag: Tag,
     },
-    /// Every voice of `patch` still held let go on `frame`, from the block
-    /// it falls in (one already rendered: as soon as it can).
+    /// Every voice of `patch` still held (of one note only, with `note`)
+    /// let go on `frame`, from the block it falls in (one already
+    /// rendered: as soon as it can).
     Release {
         /// The frame it lets go on.
         frame: u64,
         /// The patch whose held voices it lets go.
         patch: PatchId,
+        /// The note whose voices alone it lets go (none: all of them): a
+        /// key let go of while others are held.
+        note: Option<f32>,
         /// Its tag.
         tag: Tag,
+    },
+    /// [`Synth::set_patch`], from now on.
+    Patch {
+        /// The patch changed.
+        patch: PatchId,
+        /// What it is now.
+        to: Patch,
     },
     /// The notes and releases waiting of `tag` called off (none: all of
     /// them, [`Tag::NONE`]'s too); those sounding sound on.
@@ -210,11 +226,12 @@ struct Start {
     lfo: u32,
 }
 
-/// What waits for a frame: a note to start, or a release.
+/// What waits for a frame: a note to start, or a release (of one note
+/// only, or all).
 #[derive(Clone, Copy, Debug)]
 enum CueKind {
     Note(Start),
-    Release,
+    Release(Option<f32>),
 }
 
 /// A cue waiting for its frame, of a patch, tagged.
@@ -231,7 +248,7 @@ const EMPTY: Cue = Cue {
     frame: 0,
     patch: 0,
     tag: Tag::NONE,
-    kind: CueKind::Release,
+    kind: CueKind::Release(None),
 };
 
 /// A voice sounding.
@@ -340,6 +357,9 @@ pub struct Synth {
     /// The last block rendered, and how much of it is still to hand out.
     block: [[f32; BLOCK]; 2],
     pending: usize,
+    /// What the next block starts from: the voices let go by a patch
+    /// changed to another engine, fading out ([`Synth::set_patch`]).
+    carry: Bus,
     /// The frame of the next block's first sample.
     next: u64,
 }
@@ -398,6 +418,7 @@ impl Synth {
             limiter: Limiter::new(rate),
             block: [[0.0; BLOCK]; 2],
             pending: 0,
+            carry: Bus::new(),
             next: 0,
         }
     }
@@ -448,7 +469,13 @@ impl Synth {
                 length,
                 tag,
             } => self.cue_note(frame, patch, note, length, tag),
-            Command::Release { frame, patch, tag } => self.cue_release(frame, patch, tag),
+            Command::Release {
+                frame,
+                patch,
+                note,
+                tag,
+            } => self.cue_release(frame, patch, note, tag),
+            Command::Patch { patch, to } => self.set_patch(patch, to),
             Command::Cancel { tag } => {
                 self.cancel_waiting(tag);
                 true
@@ -469,8 +496,9 @@ impl Synth {
         }
     }
 
-    /// A release of `patch` on `frame`, tagged `tag`, queued.
-    fn cue_release(&mut self, frame: u64, patch: PatchId, tag: Tag) -> bool {
+    /// A release of `patch` (of `note` only, with one) on `frame`, tagged
+    /// `tag`, queued.
+    fn cue_release(&mut self, frame: u64, patch: PatchId, note: Option<f32>, tag: Tag) -> bool {
         if usize::from(patch.0) >= self.patches.len() {
             return false;
         }
@@ -478,8 +506,43 @@ impl Synth {
             frame,
             patch: patch.0,
             tag,
-            kind: CueKind::Release,
+            kind: CueKind::Release(note),
         })
+    }
+
+    /// `patch` (one of the bank's) is `to` from now on: its next notes, and
+    /// those sounding on it as they go on (their spreads, drawn as they
+    /// were cued, stay). A patch changed to another engine lets its
+    /// sounding voices go first, fading out over the next block (they are
+    /// the old engine's voices); one of the same engine plays on in the new
+    /// sound. Whether it is one of the bank's. Nothing allocates.
+    pub fn set_patch(&mut self, patch: PatchId, to: Patch) -> bool {
+        let k = usize::from(patch.0);
+        let Some(old) = self.patches.get(k).copied() else {
+            return false;
+        };
+        if std::mem::discriminant(&old.engine) != std::mem::discriminant(&to.engine) {
+            let play = Play {
+                rate: self.rate,
+                tempo: self.tempo,
+                patches: &self.patches,
+                engines: &self.engines,
+            };
+            for slot in self.voices.iter_mut() {
+                if let Some(v) = slot.as_mut().filter(|v| v.patch == patch.0) {
+                    play.fade(v, &mut self.carry);
+                    play.engines.free(&mut v.voice);
+                    *slot = None;
+                }
+            }
+        }
+        self.patches[k] = to;
+        true
+    }
+
+    /// The patch `patch` is now, if it is one of the bank's.
+    pub fn patch(&self, patch: PatchId) -> Option<&Patch> {
+        self.patches.get(usize::from(patch.0))
     }
 
     /// [`Synth::note`], tagged `tag`.
@@ -619,15 +682,15 @@ impl Synth {
     }
 
     fn render_block(&mut self) {
-        let mut bus = Bus::new();
+        let mut bus = std::mem::replace(&mut self.carry, Bus::new());
         let end = self.next + BLOCK as u64;
         let due = self.cues[..self.waiting].partition_point(|c| c.frame < end);
         for k in 0..due {
             let cue = self.cues[k];
             match cue.kind {
-                CueKind::Release => {
+                CueKind::Release(note) => {
                     for v in self.voices.iter_mut().flatten() {
-                        if v.patch == cue.patch {
+                        if v.patch == cue.patch && note.is_none_or(|n| n == v.note) {
                             v.env.release();
                         }
                     }

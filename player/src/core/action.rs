@@ -242,6 +242,8 @@ pub enum Action {
     Sync(crate::core::sync::SyncEvent),
     /// The mouse on the Mixer tab's desk.
     Desk(crate::core::desk::DeskAction),
+    /// The pointer and the window on the Synth tab.
+    Synth(crate::core::synth_tab::SynthAction),
     /// The pointer moved (Karaoke mode shows its pointer, and its controls
     /// while it is near the bottom).
     PointerMoved {
@@ -459,6 +461,18 @@ pub enum Effect {
     Sync(crate::core::sync::SyncCommand),
     /// Set a strip of the mixer as the Mixer tab has it.
     Desk(crate::core::desk::DeskChange),
+    /// Play what the Synth tab asks on the effects input.
+    Bench(crate::core::synth_tab::Bench),
+    /// Keep a theme's atom's patch as edited on the Synth tab, in the data
+    /// folder (`None`: forget what was kept, the built-in one again).
+    KeepPatch {
+        /// The theme's name.
+        theme: &'static str,
+        /// The atom.
+        atom: crate::sfx::conductor::Atom,
+        /// The patch.
+        patch: Option<jodel_synth::Patch>,
+    },
     /// List the output devices (answered with [`Action::Devices`]).
     ListDevices,
     /// Play on this device from now on (`None`: the system default),

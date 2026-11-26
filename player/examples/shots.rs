@@ -140,6 +140,7 @@ fn main_outline(state: &State, size: Size) -> String {
     match state.side {
         Side::Transition => out.push_str(&transition::Tab::of(state, state.heard()).to_string()),
         Side::Karaoke => out.push_str(&karaoke::Tab::of(state).to_string()),
+        Side::Synth => out.push_str(&jodeldiplom::gui::synth::outline(state)),
         Side::Browser | Side::Queue | Side::Mixer => {}
     }
     if m.right.is_some() {
@@ -632,6 +633,53 @@ fn main() {
                 d.desk.selected = jodeldiplom::core::desk::Channel::Mic;
                 common::fill_desk(&mut d, 96_000);
                 d
+            }),
+            ("synth", {
+                // The Synth tab on the top rung's stinger (its layers, its
+                // many patches), the song's key and tempo.
+                use jodeldiplom::sfx::bench::{What, SOUNDS};
+                let mut s = state.clone();
+                s.side = Side::Synth;
+                let top = jodeldiplom::tiers::Tier::TOP;
+                s.synth.sound = SOUNDS
+                    .iter()
+                    .position(|x| x.what == What::Rung(top))
+                    .unwrap_or(0);
+                s
+            }),
+            ("synth-edited", {
+                // A word's pop edited (a longer decay, more reverb) and not
+                // kept yet, in A minor a little slower, a chord held on the
+                // keyboard.
+                use jodel_synth::params::Knobs;
+                use jodeldiplom::core::synth_tab::SynthAction;
+                let mut s = state.clone();
+                s.side = Side::Synth;
+                let pop = jodeldiplom::theme::CLASSIC.patch(jodeldiplom::sfx::conductor::Atom::Pop);
+                let knob = |key: &str| {
+                    (0..pop.count())
+                        .find(|&k| pop.spec(k).is_some_and(|s| s.key() == key))
+                        .unwrap()
+                };
+                for a in [
+                    SynthAction::KeyStep(22),
+                    SynthAction::TempoStep(-5),
+                    SynthAction::Slide {
+                        knob: knob("envelope decay"),
+                        share: 0.4,
+                    },
+                    SynthAction::Slide {
+                        knob: knob("sends reverb"),
+                        share: 0.5,
+                    },
+                    SynthAction::SlideEnd,
+                ] {
+                    jodeldiplom::core::update(&mut s, Action::Synth(a));
+                }
+                for k in [0, 4, 7] {
+                    jodeldiplom::core::update(&mut s, Action::Op(Op::SynthNote(k)));
+                }
+                s
             }),
             ("karaoke-tab", {
                 let mut k = state.clone();

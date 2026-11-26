@@ -8,7 +8,7 @@
 [keys] P / shift+←  previous track
 [keys] X  what N does: cut, or mix in (by the Transition tab's preset, or the one set in the settings)
 [keys] S  stop
-[keys] tab  browser / queue / transition / karaoke / mixer
+[keys] tab  browser / queue / transition / karaoke / mixer / synth
 [keys] F  now playing, full screen
 [keys] T  go to the playing track
 [keys] B  go to its album folder

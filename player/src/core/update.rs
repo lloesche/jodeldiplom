@@ -68,7 +68,7 @@ pub fn list_len(state: &State) -> usize {
     match state.side {
         Side::Browser => browser_rows(state).len(),
         Side::Queue => state.queue.paths.len(),
-        Side::Transition | Side::Karaoke | Side::Mixer => 0,
+        Side::Transition | Side::Karaoke | Side::Mixer | Side::Synth => 0,
     }
 }
 
@@ -77,7 +77,7 @@ pub fn list_cursor(state: &State) -> (usize, usize) {
     match state.side {
         Side::Browser => (state.browser.cursor, state.browser.scroll),
         Side::Queue => (state.queue.cursor, state.queue.scroll),
-        Side::Transition | Side::Karaoke | Side::Mixer => (0, 0),
+        Side::Transition | Side::Karaoke | Side::Mixer | Side::Synth => (0, 0),
     }
 }
 
@@ -111,7 +111,7 @@ fn set_cursor(state: &mut State, cursor: usize) {
     match state.side {
         Side::Browser => state.browser.cursor = cursor,
         Side::Queue => state.queue.cursor = cursor,
-        Side::Transition | Side::Karaoke | Side::Mixer => {}
+        Side::Transition | Side::Karaoke | Side::Mixer | Side::Synth => {}
     }
     fix_scroll(state);
 }
@@ -145,7 +145,7 @@ fn fix_scroll(state: &mut State) {
     match state.side {
         Side::Browser => state.browser.scroll = scroll,
         Side::Queue => state.queue.scroll = scroll,
-        Side::Transition | Side::Karaoke | Side::Mixer => {}
+        Side::Transition | Side::Karaoke | Side::Mixer | Side::Synth => {}
     }
 }
 
@@ -191,7 +191,7 @@ pub fn visible_missing(state: &State) -> Vec<PathBuf> {
             .take(height)
             .cloned()
             .collect(),
-        Side::Transition | Side::Karaoke | Side::Mixer => Vec::new(),
+        Side::Transition | Side::Karaoke | Side::Mixer | Side::Synth => Vec::new(),
     };
     paths
         .into_iter()
@@ -429,6 +429,7 @@ pub fn update(state: &mut State, action: Action) -> Vec<Effect> {
         Action::KaraokeStep { slider, by } => karaoke::step(state, slider, by, &mut fx),
         Action::Sync(event) => super::sync::event(state, event),
         Action::Desk(what) => desk::act(state, what, &mut fx),
+        Action::Synth(what) => super::synth_tab::act(state, what, &mut fx),
         Action::PointerMoved { from_bottom } => {
             karaoke::controls::pointer_moved(state, from_bottom);
         }
@@ -732,6 +733,7 @@ pub fn update(state: &mut State, action: Action) -> Vec<Effect> {
     super::stems::follow(state, &mut fx);
     super::sync::follow(state, &mut fx);
     desk::settle(state, &mut fx);
+    super::synth_tab::settle(state, &mut fx);
     prepare(state, &mut fx);
     if check_details {
         // Everything on screen still unknown, including what is already
@@ -920,6 +922,7 @@ fn is_input(action: &Action) -> bool {
             | Action::KaraokeSlideEnd
             | Action::KaraokeStep { .. }
             | Action::Desk(_)
+            | Action::Synth(_)
             | Action::LyricsEdit(_)
             | Action::SeekTo(_)
             | Action::SeekDrag(_)
@@ -964,14 +967,16 @@ fn type_ahead(state: &mut State, c: char) {
             .iter()
             .map(|path| Some(shown_title(state, path).to_lowercase()))
             .collect(),
-        Side::Transition | Side::Karaoke | Side::Mixer => Vec::new(),
+        Side::Transition | Side::Karaoke | Side::Mixer | Side::Synth => Vec::new(),
     };
     if names.is_empty() {
         return;
     }
     let cursor = match state.side {
         Side::Browser => state.browser.cursor,
-        Side::Queue | Side::Transition | Side::Karaoke | Side::Mixer => state.queue.cursor,
+        Side::Queue | Side::Transition | Side::Karaoke | Side::Mixer | Side::Synth => {
+            state.queue.cursor
+        }
     }
     .min(names.len() - 1);
     // Cycling starts after the current row; a longer prefix may stay on it.
@@ -1167,7 +1172,7 @@ fn open(state: &mut State, fx: &mut Vec<Effect>) {
 /// the file).
 fn activate(state: &mut State, how: Placing, fx: &mut Vec<Effect>) {
     match state.side {
-        Side::Transition | Side::Karaoke | Side::Mixer => {}
+        Side::Transition | Side::Karaoke | Side::Mixer | Side::Synth => {}
         Side::Queue => {
             if state.queue.cursor < state.queue.paths.len() {
                 fx.push(Effect::Engine(Command::Play(state.queue.cursor)));
@@ -1717,6 +1722,7 @@ fn apply_op(state: &mut State, op: Op, fx: &mut Vec<Effect>) {
         || karaoke::apply(state, op, fx)
         || tab::apply(state, op, fx)
         || desk::apply(state, op, fx)
+        || super::synth_tab::apply(state, op, fx)
     {
         return;
     }
@@ -2030,6 +2036,14 @@ fn apply_op(state: &mut State, op: Op, fx: &mut Vec<Effect>) {
         Op::DeskPrevStrip | Op::DeskNextStrip | Op::DeskMute | Op::DeskSolo => {
             desk::elsewhere(state)
         }
+        Op::SynthAtom(_)
+        | Op::SynthNote(_)
+        | Op::SynthOctave(_)
+        | Op::SynthTheme
+        | Op::SynthKey(_)
+        | Op::SynthTempo(_)
+        | Op::SynthKeep
+        | Op::SynthRevert => say(state, Level::Info, "That is for the Synth tab (tab)"),
         Op::ValueDown => settings_step(state, -1, fx),
         Op::ValueUp => settings_step(state, 1, fx),
         Op::LyricsEditor => {

@@ -1,4 +1,4 @@
-[tabs] Browser │ Queue (5) │ Transition │ Karaoke │ Mixer
+[tabs] Browser │ Queue (5) │ Transition │ Karaoke │ Mixer │ Synth
 [shown] Browser
 [path] /music/Album
 [row] ..  up

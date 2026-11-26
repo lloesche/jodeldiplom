@@ -18,7 +18,8 @@ pub enum Op {
     Previous,
     /// Stop playback.
     Stop,
-    /// Switch the list pane: browser, queue, transition, karaoke, mixer.
+    /// Switch the list pane: browser, queue, transition, karaoke, mixer,
+    /// synth.
     ToggleSide,
     /// Open or close Now playing.
     NowPlaying,
@@ -260,6 +261,23 @@ pub enum Op {
     LyricsUndo,
     /// Lyrics editor: redo a change undone.
     LyricsRedo,
+    /// Synth: the selected sound's atom so many on (back, when negative).
+    SynthAtom(i8),
+    /// Synth: the keyboard's key so many semitones over its lowest C,
+    /// pressed (held while the key is).
+    SynthNote(i8),
+    /// Synth: the computer's keys an octave down or up.
+    SynthOctave(i8),
+    /// Synth: the next theme compared.
+    SynthTheme,
+    /// Synth: the sounds' key a step round (0: the song's).
+    SynthKey(i8),
+    /// Synth: the sounds' tempo a step down or up (0: the song's).
+    SynthTempo(i8),
+    /// Synth: keep the patch shown.
+    SynthKeep,
+    /// Synth: the patch shown back to its built-in one.
+    SynthRevert,
 }
 
 impl Op {
@@ -272,7 +290,7 @@ impl Op {
             Op::Next => "Next track",
             Op::Previous => "Previous track",
             Op::Stop => "Stop",
-            Op::ToggleSide => "Browser / queue / transition / karaoke / mixer",
+            Op::ToggleSide => "Browser / queue / transition / karaoke / mixer / synth",
             Op::NowPlaying => "Now playing",
             Op::Settings => "Settings",
             Op::Help => "Help",
@@ -392,6 +410,14 @@ impl Op {
             Op::LyricsDelete => "Lyrics: take the word out",
             Op::LyricsUndo => "Lyrics: undo",
             Op::LyricsRedo => "Lyrics: redo",
+            Op::SynthAtom(_) => "Synth: the sound's next atom",
+            Op::SynthNote(_) => "Synth: play a key",
+            Op::SynthOctave(_) => "Synth: the keys an octave down or up",
+            Op::SynthTheme => "Synth: the next theme",
+            Op::SynthKey(_) => "Synth: the sounds' key",
+            Op::SynthTempo(_) => "Synth: the sounds' tempo",
+            Op::SynthKeep => "Synth: keep the patch",
+            Op::SynthRevert => "Synth: the patch as built",
         }
     }
 
@@ -476,6 +502,11 @@ impl Op {
                 | Op::LyricsDelete
                 | Op::LyricsUndo
                 | Op::LyricsRedo
+                | Op::SynthAtom(_)
+                | Op::SynthNote(_)
+                | Op::SynthOctave(_)
+                | Op::SynthKey(_)
+                | Op::SynthTempo(_)
         )
     }
 }

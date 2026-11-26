@@ -192,11 +192,13 @@ fn the_keys_of_the_mixer_tab_leave_the_global_capitals_alone() {
     ] {
         assert_eq!(op(key), Some(want), "{key:?}");
     }
-    // Tab goes round all five, the Mixer tab last.
+    // Tab goes round all six, the Mixer tab before the Synth tab.
     let mut s = tab();
     s.side = Side::Karaoke;
     update(&mut s, Action::Op(Op::ToggleSide));
     assert_eq!(s.side, Side::Mixer);
+    update(&mut s, Action::Op(Op::ToggleSide));
+    assert_eq!(s.side, Side::Synth);
     update(&mut s, Action::Op(Op::ToggleSide));
     assert_eq!(s.side, Side::Browser);
 }

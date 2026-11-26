@@ -29,6 +29,13 @@
 //!
 //! With the Effects strip down (−∞ or muted) nothing is played.
 //!
+//! The Synth tab's sounds and keys are played at once on the desk's
+//! frames ([`Sfx::bench`], [`bench`]), in the theme it compares while it
+//! shows. Each frame every atom's patch as the tab has it (edited, kept,
+//! or built in: [`crate::core::synth_tab::patch`]) is told the conductor,
+//! which sends its synth only what changed: with nothing edited or kept,
+//! nothing is sent.
+//!
 //! A song's result revealed after it ([`reveal`]) sounds its beats at once,
 //! each on the frame that reaches it, its paper and its music alike,
 //! planned on the desk's own frames (the song is over then and its output
@@ -37,6 +44,7 @@
 //! plays; the diploma shows all the same (the game scored the song), and
 //! sounds.
 
+pub mod bench;
 pub mod conductor;
 pub mod moments;
 pub mod reveal;
@@ -109,7 +117,8 @@ impl Sfx {
     /// new moments played on `desk`, then the result's reveal's (after what
     /// the moments call off, so it never calls them off).
     pub fn frame(&mut self, state: &State, desk: Desk<'_>) {
-        self.conductor_at(&desk, state.config.karaoke_theme);
+        self.conductor_at(&desk, crate::core::synth_tab::theme(state));
+        self.patches(state, &desk);
         self.loudness(state, &desk);
         self.moments(state, &desk);
         self.reveal(state, &desk);
@@ -131,6 +140,45 @@ impl Sfx {
         self.conductor = Some(conductor);
         self.on_song = false;
         self.told = None;
+    }
+
+    /// Each atom's patch as the Synth tab has it (edited, kept, or built
+    /// in) told the conductor, which tells its synth what changed.
+    fn patches(&mut self, state: &State, desk: &Desk<'_>) {
+        let theme = self.theme;
+        if let Some((c, mut out)) = self.conduct(desk, None) {
+            for atom in conductor::Atom::ALL {
+                c.set_patch(
+                    &mut out,
+                    atom,
+                    crate::core::synth_tab::patch(state, theme, atom),
+                );
+            }
+        }
+    }
+
+    /// What the Synth tab asks played now, on the desk's frames: a sound
+    /// in its key on a steady beat at its tempo, or a key of its keyboard
+    /// pressed or let go of; the patches as the tab has them first. The
+    /// song's key and clock are told the conductor again after it.
+    pub fn bench(&mut self, state: &State, desk: Desk<'_>, ask: crate::core::synth_tab::Bench) {
+        use crate::core::synth_tab::Bench;
+        self.conductor_at(&desk, crate::core::synth_tab::theme(state));
+        self.patches(state, &desk);
+        let at = desk.timebase.frame;
+        self.told = None;
+        let Some((c, mut out)) = self.conduct(&desk, None) else {
+            return;
+        };
+        match ask {
+            Bench::Play { what, key, bpm } => {
+                c.set_key(key.as_ref(), 0);
+                c.set_clock(&mut out, Clock::steady(c.rate(), bpm, at));
+                bench::play(c, &mut out, at, what);
+            }
+            Bench::Down { atom, note } => c.key_down(&mut out, at, atom, note),
+            Bench::Up { atom, note } => c.key_up(&mut out, at, atom, note),
+        }
     }
 
     /// The sung song's loudness told the conductor, so its synth's level

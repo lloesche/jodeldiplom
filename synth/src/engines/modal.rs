@@ -40,6 +40,7 @@
 //! veritas: A study of wineglass acoustics", Am. J. Phys. 51) describes.
 
 use crate::dsp::{self, Quiet, Rate};
+use crate::params::{field, Param};
 use crate::{Engine, NoteOn, VoiceMod, BLOCK};
 use std::f32::consts::{PI, TAU};
 
@@ -149,6 +150,17 @@ impl Default for Params {
         STRUCK
     }
 }
+
+/// MODAL's parameters as data, with their ranges.
+pub const PARAMS: &[Param<Params>] = &[
+    field!("body", "body", body, 0.0, 1.0, "", Linear),
+    field!("body", "decay", decay, 0.0, 1.0, "", Linear),
+    field!("body", "brightness", brightness, 0.0, 1.0, "", Linear),
+    field!("body", "split", split, 0.0, 20.0, "Hz", Fine),
+    field!("strike", "position", position, 0.0, 1.0, "", Linear),
+    field!("strike", "hardness", hardness, 0.0, 1.0, "", Linear),
+    field!("strike", "noise", noise, 0.0, 1.0, "", Linear),
+];
 
 /// [`Params::default`]: a harmonic body, struck plainly.
 const STRUCK: Params = Params {

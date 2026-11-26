@@ -50,6 +50,7 @@
 //! Modulation" (Proc. IRE 10, 1922). The sine is [`dsp::sine`].
 
 use crate::dsp::{self, Rate};
+use crate::params::{field, on, pick, when, Param, Scale};
 use crate::{Engine, NoteOn, VoiceMod};
 use std::f32::consts::TAU;
 
@@ -183,6 +184,119 @@ impl Default for Params {
         SINE
     }
 }
+
+/// The algorithms' names, in [`ALGORITHMS`]' order.
+const ALGORITHM_NAMES: [&str; 9] = [
+    "4>3>2>1",
+    "3+4>2>1",
+    "3>2>1, 4>1",
+    "4>3>1, 2>1",
+    "2+3+4>1",
+    "2>1, 4>3",
+    "4>1+2+3",
+    "4>3, 1, 2",
+    "1, 2, 3, 4",
+];
+
+/// Middle C, Hz: where an operator's ratio and its fixed frequency meet,
+/// as it is switched from one to the other.
+const MIDDLE_C: f32 = 261.625_57;
+
+/// An operator's frequency as a ratio (a fixed one as at middle C).
+fn ratio(f: Freq) -> f32 {
+    match f {
+        Freq::Ratio(r) => r,
+        Freq::Hz(hz) => hz / MIDDLE_C,
+    }
+}
+
+/// An operator's frequency in hertz (a ratio as at middle C).
+fn hz(f: Freq) -> f32 {
+    match f {
+        Freq::Ratio(r) => r * MIDDLE_C,
+        Freq::Hz(hz) => hz,
+    }
+}
+
+/// Operator `$k`'s parameters (0 is operator 1), in group `$group`.
+macro_rules! op {
+    ($group:expr, $k:expr) => {
+        [
+            Param::toggle(
+                ($group, "fixed"),
+                |p| on(matches!(p.ops[$k].freq, Freq::Hz(_))),
+                |p, v| {
+                    let f = p.ops[$k].freq;
+                    p.ops[$k].freq = if v >= 0.5 {
+                        Freq::Hz(hz(f))
+                    } else {
+                        Freq::Ratio(ratio(f))
+                    };
+                },
+            ),
+            when(
+                Param::range(
+                    ($group, "ratio"),
+                    (0.0, 32.0, "", Scale::Fine),
+                    |p| ratio(p.ops[$k].freq),
+                    |p, v| p.ops[$k].freq = Freq::Ratio(v),
+                ),
+                |p| matches!(p.ops[$k].freq, Freq::Ratio(_)),
+            ),
+            when(
+                Param::range(
+                    ($group, "hz"),
+                    (1.0, 20_000.0, "Hz", Scale::Log),
+                    |p| hz(p.ops[$k].freq),
+                    |p, v| p.ops[$k].freq = Freq::Hz(v),
+                ),
+                |p| matches!(p.ops[$k].freq, Freq::Hz(_)),
+            ),
+            op_field!($group, "detune", $k, detune, -100.0, 100.0, "ct", Linear),
+            op_field!($group, "level", $k, level, 0.0, 8.0, "", Fine),
+            op_field!($group, "attack", $k, attack, 0.0, 4.0, "s", Fine),
+            op_field!($group, "decay", $k, decay, 0.0, 12.0, "s", Fine),
+            op_field!($group, "sustain", $k, sustain, 0.0, 1.0, "", Linear),
+            op_field!($group, "release", $k, release, 0.0, 2.0, "", Linear),
+            op_field!($group, "velocity", $k, velocity, 0.0, 1.0, "", Linear),
+        ]
+    };
+}
+
+/// A number of operator `$k`'s.
+macro_rules! op_field {
+    ($group:expr, $name:expr, $k:expr, $f:ident, $min:expr, $max:expr, $unit:expr, $scale:ident) => {
+        Param::range(
+            ($group, $name),
+            ($min, $max, $unit, Scale::$scale),
+            |p| p.ops[$k].$f,
+            |p, v| p.ops[$k].$f = v,
+        )
+    };
+}
+
+/// The parameters of each operator.
+const OP_PARAMS: [[Param<Params>; 10]; OPERATORS] = [
+    op!("op 1", 0),
+    op!("op 2", 1),
+    op!("op 3", 2),
+    op!("op 4", 3),
+];
+
+/// FM's parameters as data, with their ranges: the routing, the feedback
+/// and the key scaling, then each operator's.
+pub const PARAMS: &[Param<Params>] = &{
+    let mut all = [OP_PARAMS[0][0]; 3 + 10 * OPERATORS];
+    all[0] = pick!("fm", "algorithm", algorithm, ALGORITHMS, ALGORITHM_NAMES);
+    all[1] = field!("fm", "feedback", feedback, 0.0, 3.0, "rad", Linear);
+    all[2] = field!("fm", "key scale", key_scale, 0.0, 2.0, "", Linear);
+    let mut k = 0;
+    while k < 10 * OPERATORS {
+        all[3 + k] = OP_PARAMS[k / 10][k % 10];
+        k += 1;
+    }
+    all
+};
 
 /// An operator at the note's frequency, silent, held at full.
 const OP: Operator = Operator {

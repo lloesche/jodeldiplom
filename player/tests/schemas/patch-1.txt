@@ -1,0 +1,46 @@
+jodeldiplom-cache patch 1 by jodeldiplom x
+theme classic
+atom Pop
+engine analog
+envelope attack = 0
+envelope decay = 0.25
+envelope sustain = 0
+envelope release = 0.05
+voice level = -5
+voice gate = 0.25
+voice brighten = 0
+voice mono = on
+voice slide = 0
+pitch from = -7
+pitch time = 0.025
+pitch curve = 2
+shape from = 0
+shape time = 0
+shape curve = 1
+lfo synced = off
+lfo rate = 5
+lfo pitch = 0
+lfo bright = 0
+lfo amp = 0
+lfo shape = 0
+lfo delay = 0
+lfo fade = 0
+sends reverb = 0.3
+sends delay = 0
+sends chorus = 0
+spread detune = 0
+spread level = 0
+spread start = 0
+spread lfo phase = 0
+osc wave = sine
+osc 2 interval = 0
+osc 2 detune = 0
+osc 2 mix = 0
+osc 2 sync = off
+mix sub = 0
+mix noise = 0
+mix drive = 0
+filter type = low-pass
+filter cutoff = 12000
+filter res = 0
+filter key track = 0

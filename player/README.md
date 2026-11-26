@@ -1159,7 +1159,7 @@ holding HE-AAC is listed with `?` and the reason (only AAC-LC plays).
 
 ### The Mixer tab
 
-The Mixer tab (`tab` to it, the last of the five) shows the mixer as a desk,
+The Mixer tab (`tab` to it, the fifth of the six) shows the mixer as a desk,
 the whole width: a channel strip for the player, a narrower one for each
 of its stems beside it (DRUMS, BASS, VOCALS, OTHER), one for the preview,
 one for the karaoke game's sound effects (EFFECTS, where the window is
@@ -1293,6 +1293,52 @@ are buttons.
 The capitals keep their commands here (`M` the beat pulse, `S` stop);
 `esc` does nothing on the tab.
 
+### The Synth tab
+
+The Synth tab (`tab` to it, the last of the six) is a workbench for the
+karaoke game's sounds. On the left every sound the game makes, by moment:
+a word's pop, a run of words up to the first rung, each rung reached (its
+stinger, its call, its payout), the rescue shot, a streak lost, each
+tier's chime, the payout and the jackpot alone, the announcer's calls,
+the diploma's count-up, gems, points and best streaks, and its sheet's
+own (the paper, the pen, the stamps, the medals). A click plays one at
+once on the Effects strip, as the game plays it, in the key and at the
+tempo the header shows: chosen there (a step either way, or a click on
+the value for the song's again), else the song's, else no key and 120.
+The theme compared (Classic or Spooky) is the header's too.
+
+In the middle, the sound's patches (the atoms it is made of, one shown,
+an edited one marked) and the one shown: its engine (a segmented
+choice of the synth's ten), its envelope (its curve beside its four
+sliders) and its parameters in their groups, each a slider over its
+range, a choice or a switch, a value off the built-in one in the accent.
+The next play is heard with the edit (the game's sounds too, in that
+theme). Keep writes the patch to `patches` in the data folder, loaded
+over the built-in one at every start; As built brings the built-in one
+back and forgets what was kept. The layers a tier switches on for the
+sound are shown over it.
+
+At the foot a keyboard of two octaves from C4 plays the patch shown: a
+press holds the key under the pointer (sliding from key to key), and the
+computer's keys play it too, each note held as long as its key, the
+letters written on the keys they play.
+
+| Key | Synth tab |
+|---|---|
+| `↑` `↓` | the sound above, below |
+| `pgup` `pgdn` | the moment before, after |
+| `home` `end` | the first, the last sound |
+| `enter` | play the sound |
+| `←` `→` | the sound's patch before, after |
+| `a` `s` `d` `f` `g` `h` `j` `k` `l` `;` `'` | the keyboard's white keys (held as long as the key) |
+| `w` `e` `t` `y` `u` `o` `p` | its black keys |
+| `z` `x` | the computer's keys an octave down, up |
+| `c` | the theme compared: Classic or Spooky |
+| `[` `]` `\` | the sounds' key a step down, up, the song's |
+| `-` `+` (or `=`) `0` | the sounds' tempo 5 down, up, the song's |
+| `K` | keep the patch shown |
+| `del` (or `backspace`) | the patch shown as built |
+
 ## Code
 
 | Module | |
@@ -1307,6 +1353,7 @@ The capitals keep their commands here (`M` the beat pulse, `S` stop);
 | `spectrum`, `art` | FFT of the tapped output, cover decoding and fitting |
 | `rhythm` | the beat analysis in the background (decode, mono, resample to 22.05 kHz, [`jodel-rhythm`](../rhythm)), the waveforms, and their cache |
 | `grids` | the beat grids fixed by hand, kept per track in the settings folder |
+| `patches` | the game's sounds' patches kept on the Synth tab (`patches/` in the data folder), a file a theme's atom, each parameter by its name (`core::synth_tab` the tab, `sfx::bench` its sounds by moment, `gui::screens::synth` its widgets) |
 | `cache` | the schemas of what is kept on disk between runs, and their versions |
 | `stems_cache` | the tracks' stems kept (`stems/`): their files' names, the store the engine reads them from, pruning to 30 GB |
 | `loudness` | each song's loudness as the karaoke plays it (ITU-R BS.1770, `jodel_rhythm::loudness`), measured once on a thread of its own and kept (`loudness/`), for the game's sounds to follow (`sfx::conductor::calibration`) |

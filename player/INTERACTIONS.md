@@ -1048,3 +1048,57 @@ stem keys are their mutes.
   - `a_preview_ducks_both_heads_of_the_song`
   - `voice_blocks_are_timed_through_their_head_around_a_hand_over`
   - `two_hand_overs_in_a_row_swap_the_heads_roles` (engine)
+
+## Synth
+
+- **Y1.** The Synth tab is the sixth tab, after the Mixer (`tab` goes
+  round to it), the window drawing it whole: the game's sounds by
+  moment, the selected one's patch, a keyboard. Its keys: `↑` `↓` the
+  sounds, `pgup` `pgdn` the moments, `enter` plays the sound, `←` `→` its
+  patches, `a` to `'` the keyboard (`z` `x` an octave down and up), `c`
+  the theme compared, `[` `]` the key (`\` the song's), `-` `+` the tempo
+  (`0` the song's), `K` keeps the patch, `del` reverts it.
+  - `the_synth_tab_is_in_the_tab_cycle_and_its_keys_step`
+  - `the_synth_tab_opens_and_a_click_plays_its_sound`
+- **Y2.** A click on a sound plays it at once, through the conductor as
+  the game plays it, on the effects input (the Effects strip's), on the
+  desk's frames: in the key shown and on a steady beat at the tempo
+  shown (each chosen, else the song's, else no key and 120 a minute),
+  in the theme compared while the tab shows; the song's key and clock
+  are told the conductor again after it. Every sound of the game is
+  listed: words, rungs, chimes, the payout and the jackpot, the
+  announcer's calls, the diploma's and its sheet's.
+  - `the_synth_tab_opens_and_a_click_plays_its_sound`
+  - `every_sound_plays_and_is_named_apart` (`sfx::bench`)
+- **Y3.** The patch shown is edited by its sliders, choices and switches,
+  each parameter's range from the patch's tables, and the next play is
+  heard with it: the effects tell the synth each patch as the tab has
+  it, a command for each change only (with nothing edited nothing is
+  sent: the game sounds as it is made, bit for bit); a patch moved to
+  another engine fades its sounding voices out first.
+  - `a_synth_slider_edits_the_patch_kept_then_reverted`
+  - `a_patch_is_told_the_synth_once_when_it_changes` (conductor)
+  - `a_patch_set_anew_plays_from_then_on` (synth)
+  - `every_parameter_reads_back_what_it_is_set_to` (synth)
+  - `every_patch_is_within_its_parameters_ranges` (`theme`)
+- **Y4.** Keep writes the patch shown to the data folder, whole or not
+  at all, where the folder is while it moves; at the start the patches
+  kept are loaded over the built-in ones. Revert brings the built-in
+  patch back and forgets what was kept.
+  - `a_patch_reads_back_as_it_was_written` (`patches`)
+  - `patches_are_kept_and_found_while_the_data_folder_moves` (`patches`)
+  - `a_synth_slider_edits_the_patch_kept_then_reverted`
+- **Y5.** The keyboard plays the patch shown: a press holds the key under
+  the pointer, sliding from key to key as it moves; a computer key holds
+  its note as long as it is held, the other notes holding on; every note
+  held is let go of as the tab is left or the window loses the keys.
+  - `the_synth_keyboard_plays_a_note`
+  - `the_synth_tab_is_in_the_tab_cycle_and_its_keys_step`
+  - `a_key_holds_its_note_until_it_is_let_go_of` (conductor)
+  - `a_note_is_let_go_alone` (synth)
+  - `a_point_is_on_the_key_drawn_there` (`gui::widgets::piano`)
+- **Y6.** Nothing allocates or locks on the mixer thread as the patches
+  are edited and the keys played: a patch goes to the synth whole, by
+  command, through the effects' queue of fixed size.
+  - `rendering_allocates_nothing` (synth)
+  - `playing_live_allocates_nothing_on_the_mixer_thread` (output)

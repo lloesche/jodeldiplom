@@ -22,6 +22,7 @@
 //! (Cytomic, 2013).
 
 use crate::dsp::{self, Rate, Svf, SvfState};
+use crate::params::{field, pick, when, Param, Scale};
 use crate::{Engine, NoteOn, VoiceMod, BLOCK};
 
 /// Where the noise comes from.
@@ -90,6 +91,44 @@ impl Default for Params {
         QUIET
     }
 }
+
+/// The sources and the filter's outputs in their order, and their names.
+const SOURCES: [Source; 4] = [
+    Source::White,
+    Source::Dust,
+    Source::Register { short: false },
+    Source::Register { short: true },
+];
+const SOURCE_NAMES: [&str; 4] = ["white", "dust", "register", "short register"];
+const FILTERS: [Filter; 3] = [Filter::LowPass, Filter::BandPass, Filter::HighPass];
+const FILTER_NAMES: [&str; 3] = ["low-pass", "band-pass", "high-pass"];
+
+/// NOISE's parameters as data, with their ranges.
+pub const PARAMS: &[Param<Params>] = &[
+    pick!("noise", "source", source, SOURCES, SOURCE_NAMES),
+    field!("noise", "colour", color, 0.0, 1.0, "", Linear),
+    when(
+        field!("noise", "density", density, 0.0, 10_000.0, "/s", Fine),
+        |p| p.source == Source::Dust,
+    ),
+    when(
+        field!("noise", "clock", clock, -48.0, 96.0, "st", Linear),
+        |p| matches!(p.source, Source::Register { .. }),
+    ),
+    pick!("filter", "type", filter, FILTERS, FILTER_NAMES),
+    field!("filter", "cutoff", cutoff, 20.0, 20_000.0, "Hz", Log),
+    field!("filter", "res", res, 0.0, 1.0, "", Linear),
+    field!("filter", "key track", key_track, 0.0, 2.0, "", Linear),
+    field!("drift", "depth", drift, 0.0, 24.0, "st", Linear),
+    field!("drift", "rate", drift_rate, 0.05, 100.0, "/s", Log),
+    field!("crush", "rate", crush, 0.0, 48_000.0, "Hz", Fine),
+    Param::range(
+        ("crush", "bits"),
+        (0.0, 16.0, "", Scale::Whole),
+        |p| f32::from(p.bits),
+        |p, v| p.bits = v as u8,
+    ),
+];
 
 /// [`Params::default`]: white noise through an open low-pass.
 const QUIET: Params = Params {

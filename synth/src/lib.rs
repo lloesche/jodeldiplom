@@ -20,6 +20,11 @@
 //! a limiter ([`dynamics`]), so a pile of sounds never clips. Notes are cued on the frame they are to start on
 //! ([`Synth::note`]), so a conductor can land them exactly on beat frames.
 //!
+//! A patch's numbers and each engine's are data as well ([`params`]):
+//! named, with their ranges, read and set through tables, so a patch can
+//! be shown, edited and written out (the player's Synth tab), and changed
+//! as the synth plays ([`Command::Patch`]).
+//!
 //! Everything runs in blocks of [`BLOCK`] samples: the engines take their
 //! modulation once a block ([`VoiceMod`]) and render at unity level; the
 //! host ramps each voice's amplitude linearly across the block, so nothing
@@ -39,6 +44,7 @@ pub mod engines;
 mod env;
 pub mod hall;
 mod host;
+pub mod params;
 pub mod patch;
 
 pub use host::{Bank, Command, Commands, PatchId, Synth, Tag, VoiceView, CUES, GENTLE};

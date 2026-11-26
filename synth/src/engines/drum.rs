@@ -59,6 +59,7 @@
 //! polyBLEP pulse and the filters by Simper's SVF, as [`dsp`] cites them.
 
 use crate::dsp::{self, Rate, Svf, SvfState};
+use crate::params::{field, pick, Param};
 use crate::{Engine, NoteOn, VoiceMod};
 
 /// What a voice plays.
@@ -115,6 +116,42 @@ impl Default for Params {
         KICK_808
     }
 }
+
+/// The kinds, in their order, and their names.
+const KINDS: [Kind; 8] = [
+    Kind::Kick,
+    Kind::Snare,
+    Kind::Clap,
+    Kind::ClosedHat,
+    Kind::OpenHat,
+    Kind::Tom,
+    Kind::Rim,
+    Kind::Cymbal,
+];
+const KIND_NAMES: [&str; 8] = [
+    "kick",
+    "snare",
+    "clap",
+    "closed hat",
+    "open hat",
+    "tom",
+    "rim",
+    "cymbal",
+];
+
+/// DRUM's parameters as data, with their ranges.
+pub const PARAMS: &[Param<Params>] = &[
+    pick!("drum", "kind", kind, KINDS, KIND_NAMES),
+    field!("drum", "tune", tune, 20.0, 5_000.0, "Hz", Log),
+    field!("drum", "decay", decay, 0.0, 6.0, "s", Fine),
+    field!("drum", "level", level, 0.0, 1.0, "", Linear),
+    field!("body", "bend", bend, 0.0, 48.0, "st", Linear),
+    field!("body", "bend time", bend_time, 0.0, 0.2, "s", Fine),
+    field!("noise", "tone", tone, 0.0, 1.0, "", Linear),
+    field!("noise", "snappy", snappy, 0.0, 1.0, "", Linear),
+    field!("noise", "snap decay", snap_decay, 0.0, 2.0, "s", Fine),
+    field!("noise", "drive", drive, 0.0, 1.0, "", Linear),
+];
 
 /// The parts a kind is made of, against its tune.
 struct Recipe {

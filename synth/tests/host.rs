@@ -206,6 +206,7 @@ fn a_held_note_is_let_go_on_its_frame() {
     let release = |frame| Command::Release {
         frame,
         patch: ids[0],
+        note: None,
         tag: Tag::NONE,
     };
     assert!(s.command(release(10)), "let go before it starts: nothing");
@@ -218,6 +219,66 @@ fn a_held_note_is_let_go_on_its_frame() {
     assert!(rms(&out[..5_000]) > 0.1, "until its frame");
     assert!(rms(&out[12_000..]) < 1e-4, "silent after");
     assert_eq!(s.voices().count(), 0, "ended");
+}
+
+/// A release of one note lets that note's voices go, the others held on.
+#[test]
+fn a_note_is_let_go_alone() {
+    let held = Patch {
+        adsr: Adsr::held(0.0, 0.02),
+        gate: 3_600.0,
+        ..Patch::new(analog::SINE.into())
+    };
+    let (mut s, ids) = synth(&[held], 4);
+    s.note(0, ids[0], on(60.0, 1), None);
+    s.note(0, ids[0], on(67.0, 2), None);
+    render(&mut s, 4_800);
+    assert!(s.command(Command::Release {
+        frame: s.frame(),
+        patch: ids[0],
+        note: Some(60.0),
+        tag: Tag::NONE,
+    }));
+    render(&mut s, 9_600);
+    let notes: Vec<f32> = s.voices().map(|v| v.note).collect();
+    assert_eq!(notes, [67.0]);
+    assert!(s.voices().all(|v| v.held));
+}
+
+/// A patch set anew is what its next notes play, and its sounding voices
+/// of the same engine play on in the new sound; set to another engine,
+/// its sounding voices fade out over a block, no click, and the next
+/// notes are the new engine's.
+#[test]
+fn a_patch_set_anew_plays_from_then_on() {
+    let (mut s, ids) = synth(&[soft()], 4);
+    s.note(0, ids[0], on(69.0, 1), None);
+    render(&mut s, 9_600);
+    let quieter = Patch {
+        level: -12.0,
+        ..soft()
+    };
+    assert!(s.command(Command::Patch {
+        patch: ids[0],
+        to: quieter,
+    }));
+    assert_eq!(s.patch(ids[0]), Some(&quieter));
+    s.note(s.frame(), ids[0], on(76.0, 2), None);
+    let after = left(&render(&mut s, 9_600));
+    assert_eq!(s.voices().count(), 2, "the note sounding plays on");
+    let step = biggest_jump(&after[after.len() - 2_400..]);
+    let other = Patch::new(jodel_synth::engines::fm::GLASS_BELL.into());
+    assert!(s.command(Command::Patch {
+        patch: ids[0],
+        to: other,
+    }));
+    assert_eq!(s.voices().count(), 0, "the old engine's voices let go");
+    let faded = left(&render(&mut s, 4_800));
+    assert!(biggest_jump(&faded) <= step * 1.5, "no click");
+    assert!(rms(&faded[faded.len() - 2_400..]) < 1e-3, "faded out");
+    s.note(s.frame(), ids[0], on(69.0, 3), None);
+    render(&mut s, 480);
+    assert_eq!(s.voices().count(), 1);
 }
 
 /// What waits can be called off by its tag, or all of it; a synth's room

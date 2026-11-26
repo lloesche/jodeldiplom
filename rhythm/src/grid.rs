@@ -124,6 +124,13 @@ impl Grid {
         Grid::new(0.0, FREE_TEMPO, 0, BAR, 0.0)
     }
 
+    /// A steady grid at `tempo` beats a minute in bars of `bar` beats, a
+    /// bar's first beat at 0, sure (a tempo chosen by hand: the Synth
+    /// tab's).
+    pub fn steady(tempo: f64, bar: u32) -> Grid {
+        Grid::new(0.0, tempo, 0, bar, 1.0)
+    }
+
     /// The same grid on another clock, where `t` seconds is `at` and a
     /// second is `per_second` of its units (a stream at its rate).
     pub fn on(&self, t: f64, at: f64, per_second: f64) -> Grid {

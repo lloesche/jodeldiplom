@@ -6,7 +6,8 @@
 //! the window's measures ([`crate::gui::metrics`]): the tabs' header
 //! along the top ([`list::tabs`]), under it the side pane (the browser
 //! or the queue, [`list`]; the Transition tab, [`transition`]; the
-//! Karaoke tab, [`karaoke`]; the Mixer tab, [`super::mixer`]) with the
+//! Karaoke tab, [`karaoke`]; the Mixer tab, [`super::mixer`]; the Synth
+//! tab, [`synth`]) with the
 //! right column beside it (the cover and the text under it, [`right`]) or
 //! the track's summary under it, the Karaoke tab's voice lane under it,
 //! and the bottom bar along the foot. The lanes are drawn in their part
@@ -46,6 +47,7 @@ pub mod palette;
 pub mod right;
 pub mod settings;
 pub mod setup;
+pub mod synth;
 pub mod transition;
 
 /// What the window has to show.
@@ -192,7 +194,7 @@ fn main<'a>(state: &'a State, parts: &Parts<'a>) -> Element<'a, Message> {
     let shown = match state.side {
         Side::Transition => true,
         Side::Karaoke => m.voice.is_some() && tab.as_ref().is_some_and(|t| t.voice.is_none()),
-        Side::Browser | Side::Queue | Side::Mixer => false,
+        Side::Browser | Side::Queue | Side::Mixer | Side::Synth => false,
     };
     let lanes = if shown {
         space().boxed()
@@ -226,6 +228,7 @@ fn pane<'a>(
             karaoke::tab::view(tab, list::turn(state), size, parts.covers.art(0))
         }
         (Side::Mixer, _) => desk(state, parts.caps, size),
+        (Side::Synth, _) => synth::view(state, size),
         _ => list::view(state, size.width),
     }
 }
@@ -299,7 +302,7 @@ pub(super) fn covers(state: &State, size: Size, scale: f32) -> Vec<(u32, u32)> {
             match state.side {
                 Side::Karaoke => Some(karaoke::tab::cover(m.pane.size()).size()),
                 Side::Browser | Side::Queue => m.cover.map(|c| c.size()),
-                Side::Transition | Side::Mixer => None,
+                Side::Transition | Side::Mixer | Side::Synth => None,
             }
         }
         Screen::Settings | Screen::Help | Screen::Karaoke | Screen::Lyrics => None,

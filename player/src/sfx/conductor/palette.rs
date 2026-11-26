@@ -26,7 +26,6 @@ use jodel_synth::patch::{Adsr, Glide, Lfo, LfoRate, Spread};
 use jodel_synth::{Bank, Patch, PatchId};
 
 use crate::core::singing::{STAMP_DOWN, UNROLL};
-use crate::theme::Theme;
 
 /// The atoms, and all of them in their order.
 macro_rules! atoms {
@@ -40,6 +39,19 @@ macro_rules! atoms {
         impl Atom {
             /// Every atom, in its order.
             pub const ALL: [Atom; [$(Atom::$name),*].len()] = [$(Atom::$name),*];
+
+            /// Its name, as written in the code (`PopBody`): what a patch
+            /// kept for it is filed under.
+            pub fn name(self) -> &'static str {
+                match self {
+                    $(Atom::$name => stringify!($name),)*
+                }
+            }
+
+            /// The atom named `name` ([`Atom::name`]).
+            pub fn named(name: &str) -> Option<Atom> {
+                Atom::ALL.into_iter().find(|a| a.name() == name)
+            }
         }
     };
 }
@@ -675,11 +687,17 @@ pub const fn patch(a: Atom) -> Patch {
 pub(super) struct Palette([PatchId; Atom::ALL.len()]);
 
 impl Palette {
-    /// The bank of every atom's patch in `theme`, and where each is in it.
-    pub(super) fn bank(theme: &Theme) -> (Bank, Palette) {
+    /// The bank of the atoms' `patches` (in [`Atom::ALL`]'s order), and
+    /// where each is in it.
+    pub(super) fn bank(patches: &[Patch; Atom::ALL.len()]) -> (Bank, Palette) {
         let mut bank = Bank::new();
-        let ids = Atom::ALL.map(|a| bank.add(theme.patch(a)));
+        let ids = patches.map(|p| bank.add(p));
         (bank, Palette(ids))
+    }
+
+    /// The atom whose patch `id` is.
+    pub(super) fn atom_of(&self, id: PatchId) -> Option<Atom> {
+        Atom::ALL.into_iter().find(|&a| self[a] == id)
     }
 }
 

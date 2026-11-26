@@ -27,6 +27,7 @@
 //! [`crate::dsp`].
 
 use crate::dsp::{self, Rate};
+use crate::params::{field, Param};
 use crate::{Engine, NoteOn, VoiceMod, BLOCK};
 use std::f32::consts::{PI, TAU};
 
@@ -99,6 +100,15 @@ impl Default for Params {
         SUNG
     }
 }
+
+/// FORMANT's parameters as data, with their ranges.
+pub const PARAMS: &[Param<Params>] = &[
+    field!("voice", "vowel", vowel, 0.0, 1.0, "", Linear),
+    field!("voice", "breath", breath, 0.0, 1.0, "", Linear),
+    field!("voice", "size", size, 0.0, 1.0, "", Linear),
+    field!("voice", "soft", soft, 0.0, 1.0, "", Linear),
+    field!("voice", "width", width, 0.25, 6.0, "", Log),
+];
 
 /// [`Params::default`]: a man's clear "a".
 const SUNG: Params = Params {

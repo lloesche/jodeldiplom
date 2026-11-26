@@ -8,8 +8,8 @@
 //! - **Data** ([`Data`]): what the player makes or fetches and could make
 //!   again: the speech models, the beat analyses and waveforms, the stems
 //!   kept, the lyrics found and our timings, the covers taken apart; and
-//!   the user's own: the lyrics edited by hand and the best scores sung.
-//!   Large. It is the folder [`DATA`] inside a parent
+//!   the user's own: the lyrics edited by hand, the best scores sung and
+//!   the game's sounds' patches kept. Large. It is the folder [`DATA`] inside a parent
 //!   the settings name (`data_folder`), by default the system's place for
 //!   an app's own data ([`default_data_parent`]): `%LOCALAPPDATA%`,
 //!   `~/Library/Application Support`, `~/.local/share`.
@@ -120,6 +120,12 @@ impl Data {
         self.0.join("lyric-edits")
     }
 
+    /// The game's sounds' patches kept on the Synth tab
+    /// ([`crate::patches`]): the user's work.
+    pub fn patches(&self) -> PathBuf {
+        self.0.join("patches")
+    }
+
     /// The covers taken apart, and which is each song's
     /// ([`crate::cover::CoverStore`]).
     pub fn covers(&self) -> PathBuf {
@@ -160,11 +166,12 @@ impl Data {
 
     /// The folders a crash may have left a file half written in (never
     /// under a file's name, so never read): the caches', the covers', the
-    /// models', the lyrics edited.
+    /// models', the lyrics edited, the patches kept.
     pub fn swept(&self) -> Vec<PathBuf> {
         let mut dirs: Vec<PathBuf> = self.caches().into_iter().map(|(d, _)| d).collect();
         dirs.push(self.models());
         dirs.push(self.lyric_edits());
+        dirs.push(self.patches());
         dirs.extend(crate::cover::CoverStore::dirs_in(&self.covers()));
         dirs
     }

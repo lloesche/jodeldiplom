@@ -48,6 +48,7 @@ pub mod keep;
 pub mod loudness;
 pub mod lyrics;
 pub mod mover;
+pub mod patches;
 pub mod preview;
 pub mod rhythm;
 pub mod scores;

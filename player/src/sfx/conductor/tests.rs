@@ -79,6 +79,15 @@ impl Commands for Lossy<'_> {
     }
 }
 
+/// A queue that is full: it takes nothing.
+struct Full;
+
+impl Commands for Full {
+    fn send(&mut self, _: Command) -> bool {
+        false
+    }
+}
+
 /// A song at 120 in 4/4 from 0 s, as sure as `sure` (its region's
 /// confidence).
 fn song(sure: f64) -> Analysis {
@@ -534,6 +543,7 @@ fn a_seek_calls_everything_off_and_lets_go() {
         out.0.contains(&Command::Release {
             frame: 3_000,
             patch: c.palette[a],
+            note: None,
             tag: Tag::NONE,
         })
     };
@@ -950,4 +960,62 @@ fn a_theme_s_announcer_calls_the_same_in_its_own_voice() {
     let spooky = &crate::theme::SPOOKY;
     assert_eq!(calls(spooky), calls(&crate::theme::CLASSIC));
     assert_ne!(spooky.patch(Atom::Singer), palette::patch(Atom::Singer));
+}
+
+/// A palette as built is told the synth nothing (so the game sounds as it
+/// is made, bit for bit, while nothing is edited); a patch edited is told
+/// once, as a command, its next notes the new patch's, and set back it is
+/// told again; one not taken is told on the next call.
+#[test]
+fn a_patch_is_told_the_synth_once_when_it_changes() {
+    for theme in crate::theme::THEMES {
+        let (mut c, _) = Conductor::new(RATE, theme);
+        let mut out = Sent::default();
+        for atom in Atom::ALL {
+            c.set_patch(&mut out, atom, theme.patch(atom));
+        }
+        assert!(out.0.is_empty(), "{}", theme.name);
+    }
+    let (mut c, mut synth) = Conductor::new(RATE, &crate::theme::CLASSIC);
+    let built = palette::patch(Atom::Pop);
+    let louder = jodel_synth::Patch {
+        level: built.level + 6.0,
+        ..built
+    };
+    c.set_patch(&mut Full, Atom::Pop, louder);
+    assert_eq!(c.dropped(), 1);
+    let mut out = Sent::default();
+    c.set_patch(&mut out, Atom::Pop, louder);
+    c.set_patch(&mut out, Atom::Pop, louder);
+    let pop = c.palette[Atom::Pop];
+    assert_eq!(
+        out.0,
+        [Command::Patch {
+            patch: pop,
+            to: louder
+        }]
+    );
+    synth.command(out.0[0]);
+    assert_eq!(synth.patch(pop), Some(&louder));
+    out.0.clear();
+    c.set_patch(&mut out, Atom::Pop, built);
+    assert_eq!(out.0.len(), 1);
+}
+
+/// A key of the Synth tab's keyboard holds its note on the atom's patch
+/// until it is let go of, alone: the other keys held hold on.
+#[test]
+fn a_key_holds_its_note_until_it_is_let_go_of() {
+    let (mut c, mut synth) = Conductor::new(RATE, &crate::theme::CLASSIC);
+    c.key_down(&mut synth, 0, Atom::Choir, 60.0);
+    c.key_down(&mut synth, 0, Atom::Choir, 64.0);
+    let mut out = vec![0.0f32; 2 * 24_000];
+    synth.render_to(&mut out);
+    assert_eq!(synth.voices().filter(|v| v.held).count(), 2);
+    let at = synth.frame();
+    c.key_up(&mut synth, at, Atom::Choir, 60.0);
+    synth.render_to(&mut out);
+    let held: Vec<f32> = synth.voices().filter(|v| v.held).map(|v| v.note).collect();
+    assert_eq!(held, [64.0]);
+    assert_eq!(c.dropped(), 0);
 }

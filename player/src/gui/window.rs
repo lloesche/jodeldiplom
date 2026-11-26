@@ -35,6 +35,7 @@ use crate::app::{App, AppOptions};
 use crate::core::desk::{Channel, DeskAction};
 use crate::core::keymap;
 use crate::core::preview::Ctrl;
+use crate::core::synth_tab::SynthAction;
 use crate::core::{Action, Screen, State};
 use crate::setup::{Setup, Status};
 use crate::view::setup::Choice;
@@ -248,11 +249,17 @@ impl Gui {
     }
 
     /// What keeps the row or the entry the keys are on in view, on a
-    /// screen that scrolls them (the settings): run after each key.
+    /// screen that scrolls them (the settings, the Synth tab's sounds):
+    /// run after each key.
     pub fn in_view(&self) -> Option<super::widgets::Reveal> {
-        self.state()
-            .filter(|state| state.screen == crate::core::Screen::Settings)
-            .map(super::screens::settings::reveal)
+        let state = self.state()?;
+        if state.screen == crate::core::Screen::Settings {
+            Some(super::screens::settings::reveal(state))
+        } else if crate::core::synth_tab::on_tab(state) {
+            Some(super::screens::synth::reveal(state))
+        } else {
+            None
+        }
     }
 
     pub(super) fn title(&self) -> String {
@@ -260,7 +267,7 @@ impl Gui {
     }
 
     /// The app, while there is one to show.
-    fn app(&self) -> Option<&App> {
+    pub fn app(&self) -> Option<&App> {
         match &self.phase {
             Phase::Running(app) | Phase::Leaving(Last::App(app)) => Some(app),
             _ => None,
@@ -399,6 +406,12 @@ impl Gui {
                         if self.app().is_some_and(|app| app.state.karaoke.demo.held()) {
                             self.act(Action::DemoLetGo);
                         }
+                        if self
+                            .app()
+                            .is_some_and(|app| !app.state.synth.held.is_empty())
+                        {
+                            self.act(Action::Synth(SynthAction::LetGo));
+                        }
                     }
                     _ => {}
                 }
@@ -448,6 +461,11 @@ impl Gui {
                     .is_some_and(|app| super::keys::lets_go_of_demo(&app.state, &key))
                 {
                     self.act(Action::DemoLetGo);
+                }
+                let note = (self.app())
+                    .and_then(|app| super::keys::lets_go_of_synth_note(&app.state, &key));
+                if let Some(k) = note {
+                    self.act(Action::Synth(SynthAction::KeyUp(k)));
                 }
             }
             iced::Event::Keyboard(keyboard::Event::KeyPressed {

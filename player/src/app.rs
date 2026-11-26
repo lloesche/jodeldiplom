@@ -233,6 +233,8 @@ pub struct App {
     mic_rx: Receiver<(u64, Result<jodel_output::input::Input, String>)>,
     /// Keeps the beat grids fixed by hand, where they are kept.
     grids: Option<crate::grids::GridStore>,
+    /// Keeps the Synth tab's patches, in the data folder.
+    patches: Option<crate::patches::PatchStore>,
     /// When the last position event arrived, for [`App::heard`].
     position_at: Instant,
     /// Where the engine separates stems.
@@ -405,6 +407,9 @@ impl App {
             .grids
             .clone()
             .map(|dir| crate::grids::GridStore::new(dir, tx.clone(), options.notify.clone()));
+        let patches = (options.data.as_ref()).map(|d| {
+            crate::patches::PatchStore::new(d.patches(), tx.clone(), options.notify.clone())
+        });
         // The session: the browser where it was (when no folder was
         // given), the queue as it was (when nothing plays at once).
         let restored = options.session.as_deref().and_then(Session::load);
@@ -487,6 +492,7 @@ impl App {
             mic_tx,
             mic_rx,
             grids,
+            patches,
             position_at: options.clock.now(),
             separator: options.separator,
             last_drawn: None,
@@ -527,6 +533,8 @@ impl App {
         // where the file is: [`crate::scores::load`]).
         if let Some(data) = &options.data {
             app.state.karaoke.bests = crate::scores::load(&data.scores());
+            // The Synth tab's patches kept, over the built-in ones.
+            app.state.synth.patches = crate::patches::load_all(&data.patches());
         }
         let output = app.output.clone();
         let started = Instant::now();
@@ -873,6 +881,13 @@ impl App {
     /// player itself looks once a frame ([`App::heard_for_frame`]).
     pub fn desk(&self) -> Option<DeskView> {
         self.engine.as_ref().map(|e| e.mixer.desk())
+    }
+
+    /// What the desk's effects input took and dropped (none without an
+    /// engine), for tests to see the game's sounds and the Synth tab's
+    /// reach it.
+    pub fn effects(&self) -> Option<jodel_output::mixer::EffectsView> {
+        self.engine.as_ref().map(|e| e.effects())
     }
 
     /// The Mixer tab's look for a frame: the desk and the meters since the
@@ -1516,6 +1531,16 @@ impl App {
                 }
             }
             Effect::Desk(change) => self.desk_change(change),
+            Effect::Bench(ask) => {
+                if let Some(engine) = &mut self.engine {
+                    engine.bench(&self.state, ask);
+                }
+            }
+            Effect::KeepPatch { theme, atom, patch } => {
+                if let Some(store) = &self.patches {
+                    store.keep(theme, atom, patch);
+                }
+            }
             Effect::Search { id, root, query } => {
                 if let Some(cancel) = self.search.take() {
                     cancel.store(true, Ordering::Relaxed);

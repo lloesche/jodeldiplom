@@ -16,6 +16,7 @@ use crate::core::lanes::{self, Block};
 use crate::core::lyric_edit::screen::{self, Input, Part};
 use crate::core::lyric_edit::{LyricsEdit, WordAt};
 use crate::core::sliders::Slider;
+use crate::core::synth_tab::{self, SynthAction};
 use crate::core::transition::viewport;
 use crate::core::{Action, State};
 
@@ -29,6 +30,7 @@ pub enum MouseButton {
     /// The wheel button.
     Middle,
 }
+use crate::gui::widgets::piano;
 
 /// What a widget's press holds until its button is let go of: the
 /// pointer's moves anywhere in the window go to it, and its release lands
@@ -88,6 +90,13 @@ pub enum Grab {
     /// The lyrics editor's view held with the secondary button over its
     /// lane (`lane`): it moves with the pointer.
     LyricView(Rectangle),
+    /// A parameter's slider on the Synth tab (its place in the patch's
+    /// parameters), its track: set to the share across it under the
+    /// pointer, as pressed and as it moves.
+    SynthKnob(usize, Rectangle),
+    /// The Synth tab's keyboard (its bounds): the key under the pointer
+    /// sounds while it is held, the pointer sliding from key to key.
+    Piano(Rectangle),
 }
 
 impl Grab {
@@ -98,7 +107,9 @@ impl Grab {
             | Grab::QueueRow { .. }
             | Grab::Lanes { .. }
             | Grab::Slider(..)
-            | Grab::LyricWord { .. } => MouseButton::Left,
+            | Grab::LyricWord { .. }
+            | Grab::SynthKnob(..)
+            | Grab::Piano(_) => MouseButton::Left,
             Grab::Pan { .. } | Grab::LyricView(_) => MouseButton::Right,
         }
     }
@@ -107,7 +118,9 @@ impl Grab {
     /// row itself).
     fn pressed(self, at: Point, state: &State) -> Option<Action> {
         match self {
-            Grab::Seek(_) | Grab::Slider(..) => self.moved(at, state),
+            Grab::Seek(_) | Grab::Slider(..) | Grab::SynthKnob(..) | Grab::Piano(_) => {
+                self.moved(at, state)
+            }
             Grab::QueueRow { .. } => None,
             Grab::Lanes { block, bounds } => Some(Action::TransitionPoint {
                 block,
@@ -172,6 +185,15 @@ impl Grab {
             }),
             Grab::LyricWord { lane, .. } => Some(lyrics(Input::Drag(lyric_time(state, lane, at)?))),
             Grab::LyricView(_) => Some(lyrics(Input::Pan(at.x))),
+            Grab::SynthKnob(knob, track) => Some(Action::Synth(SynthAction::Slide {
+                knob,
+                share: share_across(track, at) as f32,
+            })),
+            Grab::Piano(keys) => {
+                let key = piano::key_at(keys, synth_tab::KEYS / 12, at);
+                let note = key.map(|k| synth_tab::LOW + f32::from(k));
+                (note != state.synth.mouse).then_some(Action::Synth(SynthAction::Press(note)))
+            }
         }
     }
 
@@ -185,6 +207,8 @@ impl Grab {
             Grab::Slider(..) => Some(Action::KaraokeSlideEnd),
             Grab::LyricWord { .. } => Some(lyrics(Input::Drop)),
             Grab::LyricView(_) => Some(lyrics(Input::PanEnd)),
+            Grab::SynthKnob(..) => Some(Action::Synth(SynthAction::SlideEnd)),
+            Grab::Piano(_) => Some(Action::Synth(SynthAction::Press(None))),
         }
     }
 
@@ -199,6 +223,8 @@ impl Grab {
             Grab::Slider(..) => state.karaoke.dragging.is_some(),
             Grab::LyricWord { .. } => editing(state).is_some_and(|s| s.held.is_some()),
             Grab::LyricView(_) => editing(state).is_some_and(|s| s.pan.is_some()),
+            Grab::SynthKnob(..) => state.synth.dragging.is_some(),
+            Grab::Piano(_) => state.synth.mouse.is_some(),
         }
     }
 }

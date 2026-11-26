@@ -17,6 +17,7 @@
 //! tanh.
 
 use crate::dsp::{self, Rate, Svf, SvfState};
+use crate::params::{field, pick, switch, when, Param};
 use crate::{Engine, NoteOn, VoiceMod};
 
 /// The oscillators' wave.
@@ -85,6 +86,42 @@ impl Default for Params {
         PLAIN
     }
 }
+
+/// The waves and the filter's outputs, in their order, and their names.
+const WAVES: [Wave; 5] = [
+    Wave::Saw,
+    Wave::Square,
+    Wave::Pulse,
+    Wave::Triangle,
+    Wave::Sine,
+];
+const WAVE_NAMES: [&str; 5] = ["saw", "square", "pulse", "triangle", "sine"];
+const FILTERS: [Filter; 4] = [
+    Filter::LowPass,
+    Filter::BandPass,
+    Filter::HighPass,
+    Filter::Notch,
+];
+const FILTER_NAMES: [&str; 4] = ["low-pass", "band-pass", "high-pass", "notch"];
+
+/// ANALOG's parameters as data, with their ranges.
+pub const PARAMS: &[Param<Params>] = &[
+    pick!("osc", "wave", wave, WAVES, WAVE_NAMES),
+    when(field!("osc", "width", width, 0.05, 0.95, "", Linear), |p| {
+        p.wave == Wave::Pulse
+    }),
+    field!("osc 2", "interval", interval, -24.0, 24.0, "st", Linear),
+    field!("osc 2", "detune", detune, -100.0, 100.0, "ct", Linear),
+    field!("osc 2", "mix", mix, 0.0, 1.0, "", Linear),
+    switch!("osc 2", "sync", sync),
+    field!("mix", "sub", sub, 0.0, 1.0, "", Linear),
+    field!("mix", "noise", noise, 0.0, 1.0, "", Linear),
+    field!("mix", "drive", drive, 0.0, 1.0, "", Linear),
+    pick!("filter", "type", filter, FILTERS, FILTER_NAMES),
+    field!("filter", "cutoff", cutoff, 20.0, 20_000.0, "Hz", Log),
+    field!("filter", "res", res, 0.0, 1.0, "", Linear),
+    field!("filter", "key track", key_track, 0.0, 2.0, "", Linear),
+];
 
 /// [`Params::default`]: one saw through an open low-pass.
 const PLAIN: Params = Params {

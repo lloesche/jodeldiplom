@@ -1,12 +1,15 @@
 //! Nothing allocates after the synth is made: cueing notes on every
-//! engine, retriggering and stealing voices, and rendering through the
-//! bus (the chorus, the delay, the hall, the compressor, the level gliding
-//! and the limiter), counted by a global allocator that counts.
+//! engine, retriggering and stealing voices, a note let go of alone,
+//! patches edited as they sound (to another engine too), and rendering
+//! through the bus (the chorus, the delay, the hall, the compressor, the
+//! level gliding and the limiter), counted by a global allocator that
+//! counts.
 
 use jodel_synth::chorus::{ChorusSettings, Wave};
 use jodel_synth::engines::{
-    analog, drum, fm, formant, lofi, modal, noise, phase, string, supersaw,
+    analog, drum, fm, formant, lofi, modal, noise, phase, string, supersaw, AnyParams,
 };
+use jodel_synth::params::Knobs;
 use jodel_synth::patch::{Lfo, LfoRate};
 use jodel_synth::{Bank, Command, NoteOn, Patch, Synth};
 use std::alloc::{GlobalAlloc, Layout, System};
@@ -154,6 +157,23 @@ fn rendering_allocates_nothing() {
             taps: 1 + k as usize % 3,
             ..ChorusSettings::default()
         });
+        // A patch edited as it sounds: a parameter of the same engine, or
+        // another engine (its voices fading out); a held note let go.
+        if k % 5 == 0 {
+            let mut to = *synth.patch(id).expect("in the bank");
+            to.set(k as usize % to.count(), (k % 11) as f32 / 10.0);
+            if k % 10 == 0 {
+                let name = AnyParams::ENGINES[k as usize / 10 % AnyParams::ENGINES.len()];
+                to.engine = AnyParams::of_engine(name).expect("an engine");
+            }
+            synth.command(Command::Patch { patch: id, to });
+            synth.command(Command::Release {
+                frame: synth.frame(),
+                patch: id,
+                note: Some(note.note),
+                tag: jodel_synth::Tag::NONE,
+            });
+        }
         synth.render_to(&mut out[..2 * 300]);
     }
     let _ = synth.voices().count();
