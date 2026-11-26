@@ -1,7 +1,8 @@
 //! What each tier's row of the tier table ([`crate::tiers::TIERS`]) plays
 //! on top of the conductor's sounds: a small list of layers for the
 //! streak at its rung ([`Streak`]) and one for a phrase's chime reaching
-//! it ([`Chime`]), together a row's [`Layers`]. How big a sound is beyond
+//! it ([`Chime`], its brass the chords each layer names: [`Hit`]),
+//! together a row's [`Layers`]. How big a sound is beyond
 //! that (how many notes, how loud, how long) follows from where its tier
 //! is among the rows, its share of the way to the top
 //! ([`rung_share`], [`tier_share`]); so a new tier is one row more.
@@ -48,6 +49,58 @@ pub enum Chime {
     Choir,
 }
 
+/// A brass chord of a chime's layer ([`Chime::brass`]): where it starts
+/// against the chime's hit, how long it holds, how loud, on how many of
+/// the chord's tones.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) struct Hit {
+    /// Beats before the chime's hit it starts (left out where that is
+    /// before the moment it celebrates: no room for it).
+    pub(super) before: f64,
+    /// Beats held.
+    pub(super) length: f64,
+    /// Its velocity.
+    pub(super) velocity: f32,
+    /// The chord's tones it plays, from the tonic up.
+    pub(super) tones: i32,
+}
+
+/// The short brass hit: on the beat, half a beat long.
+const BRASS_HIT: [Hit; 1] = [Hit {
+    before: 0.0,
+    length: 0.5,
+    velocity: 0.55,
+    tones: 3,
+}];
+
+/// The "ta-daa": a short hit a sixteenth before the beat, the long one on
+/// it, a fuller chord held a beat and a half.
+const TA_DAA: [Hit; 2] = [
+    Hit {
+        before: 0.25,
+        length: 0.2,
+        velocity: 0.5,
+        tones: 3,
+    },
+    Hit {
+        before: 0.0,
+        length: 1.5,
+        velocity: 0.65,
+        tones: 4,
+    },
+];
+
+impl Chime {
+    /// Its brass chords (none: it plays no brass).
+    pub(super) fn brass(self) -> &'static [Hit] {
+        match self {
+            Chime::BrassHit => &BRASS_HIT,
+            Chime::TaDaa => &TA_DAA,
+            Chime::Plucks | Chime::Choir => &[],
+        }
+    }
+}
+
 /// A tier's layers.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Layers {
@@ -80,6 +133,13 @@ pub(super) fn rung_has(r: u32, layer: Streak) -> bool {
 /// `layer`.
 pub(super) fn chime_has(tier: Option<Tier>, layer: Chime) -> bool {
     tier.is_some_and(|t| t.spec().layers.chime.contains(&layer))
+}
+
+/// The brass chords of a phrase's chime at `tier` (none: under the
+/// first), its layers' in their order.
+pub(super) fn chime_brass(tier: Option<Tier>) -> impl Iterator<Item = &'static Hit> {
+    let layers = tier.map_or(&[][..], |t| t.spec().layers.chime);
+    layers.iter().flat_map(|c| c.brass())
 }
 
 /// How far rung `r` is from the first rung playing `layer` to the top, 0

@@ -41,7 +41,7 @@ use jodel_synth::{Command, Commands, NoteOn, Tag};
 
 use super::key::{Pentatonic, DEGREES};
 use super::ladder::Step;
-use super::layers::{chime_has, tier_share, Chime, Streak};
+use super::layers::{chime_brass, chime_has, tier_share, Chime, Streak};
 use super::palette::{Atom, Palette, BRASS, COINS, PADS, SLAM};
 use crate::tiers::Tier;
 
@@ -505,20 +505,15 @@ pub(super) fn chime(s: &mut Score, now: u64, hit: u64, tier: Option<Tier>) -> u6
         let n = (5.0 * share).round() as i32;
         end = end.max(arpeggio(s, hit, n, Atom::Pluck, STING_HOME, 0.8 * v));
     }
-    if has(Chime::TaDaa) {
-        // "Ta-daa": a short brass hit a sixteenth before, the long one on
-        // the beat.
-        let ta = hit.saturating_sub(s.beats(0.25));
-        if ta >= now {
-            let short = s.beats(0.2);
-            brass(s, horn(ta, 0.5, short), 3);
+    // Its brass, as its layers have it: the short hit, or a "ta-daa".
+    for b in chime_brass(tier) {
+        let at = hit.saturating_sub(s.beats(b.before));
+        if at < now {
+            continue;
         }
-        let long = s.beats(1.5);
-        brass(s, horn(hit, 0.65, long), 4);
-        end = end.max(hit + long);
-    } else if has(Chime::BrassHit) {
-        let short = s.beats(0.5);
-        brass(s, horn(hit, 0.55, short), 3);
+        let held = s.beats(b.length);
+        brass(s, horn(at, b.velocity, held), b.tones);
+        end = end.max(at + held);
     }
     if has(Chime::Choir) {
         let long = s.beats(2.0);

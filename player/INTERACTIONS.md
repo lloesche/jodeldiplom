@@ -791,7 +791,10 @@ stem keys are their mutes.
   "AUTO" shows in the stage's top left corner while it is held. A song
   the demo sang in (since its scoring last started) shows its result and
   diploma as any, never as a best ("Sung by the demo key: not a best"
-  where the best goes), and its singing is not kept (`karaoke_keep`).
+  where the best goes), and its singing is not kept (`karaoke_keep`);
+  nor is a song's without a voice in it (under a second of the pitch
+  tracker's frames with a pitch: the microphone muted or silent, nothing
+  sung).
   - `held_through_a_phrase_every_word_bursts_and_the_multiplier_goes_up`,
     `let_go_it_stops_at_once`,
     `nothing_is_sung_off_the_notes_and_nothing_without_the_key`
@@ -799,7 +802,8 @@ stem keys are their mutes.
   - `a_song_the_demo_sang_shows_its_result_and_sets_no_best`
   - `the_demo_key_is_held_in_the_mode_only`
   - `the_demo_sings_with_no_microphone` (app)
-  - `a_song_the_demo_sang_in_is_not_kept` (`keep`)
+  - `a_song_the_demo_sang_in_is_not_kept`,
+    `a_take_without_a_voice_is_not_kept` (`keep`)
 - **K18.** `s` on the Karaoke tab (or the palette) syncs, with a
   microphone open (else it says one is needed) and the player's strip
   heard on the Mixer tab (not muted or far down, nor another strip soloed:

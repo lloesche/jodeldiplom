@@ -10,7 +10,10 @@
 //! which is no take ([`is_take`]) and is swept once a day old
 //! ([`durable::STALE`]). The `sing_replay`
 //! example reads one back. A song the demo key sang in
-//! ([`crate::core::singing::Demo`]) is not saved: it was not all sung.
+//! ([`crate::core::singing::Demo`]) is not saved: it was not all sung. Nor
+//! is one without a voice in it (the microphone muted or silent, nothing
+//! sung): under [`VOICED_ENOUGH`] of the pitch tracker's frames had a
+//! pitch.
 
 use std::fmt::Write as _;
 use std::io;
@@ -60,6 +63,11 @@ const MOST_SECONDS: usize = 3600;
 const MARK_EVERY: f64 = 1.0;
 /// How far the delay moves before it is written down again, in seconds.
 const LATE_STEP: f64 = 0.0005;
+/// The least singing a song kept is saved with: seconds of the pitch
+/// tracker's frames that had a pitch ([`jodel_rhythm::yin`]: a frame under
+/// its quiet level has none). About two words sung; a room's noise or a
+/// muted microphone gives a stray frame at most.
+pub const VOICED_ENOUGH: f64 = 1.0;
 
 /// A song's singing as it is kept.
 pub struct Kept {
@@ -76,6 +84,8 @@ pub struct Kept {
     /// The key the song was heard in, each time it changed: the sample,
     /// the semitones from its own.
     keys: Vec<(usize, i8)>,
+    /// The pitch tracker's frames of the voice that had a pitch.
+    voiced: usize,
     /// The demo key sang in the song.
     demo: bool,
 }
@@ -96,6 +106,7 @@ impl Kept {
             waveform,
             late: Vec::new(),
             keys: Vec::new(),
+            voiced: 0,
             demo: false,
         }
     }
@@ -137,15 +148,22 @@ impl Kept {
         );
     }
 
+    /// `frames` more of the pitch tracker's frames of the voice had a pitch.
+    pub fn voiced(&mut self, frames: usize) {
+        self.voiced += frames;
+    }
+
     /// The demo key sang in the song: it is not saved.
     pub fn sung_by_demo(&mut self) {
         self.demo = true;
     }
 
-    /// Whether it is to be saved: something was heard, and the demo key
-    /// sang none of the song.
+    /// Whether it is to be saved: a voice was heard in it (at least
+    /// [`VOICED_ENOUGH`] of frames with a pitch), and the demo key sang
+    /// none of the song.
     pub fn worth_saving(&self) -> bool {
-        !self.samples.is_empty() && !self.demo
+        let voiced = self.voiced as f64 * jodel_rhythm::yin::HOP;
+        !self.samples.is_empty() && voiced >= VOICED_ENOUGH && !self.demo
     }
 
     /// Saves it into a new folder in `dir`, whole or not at all, durably;
@@ -344,11 +362,37 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// The pitch tracker's frames in `seconds`.
+    fn frames(seconds: f64) -> usize {
+        (seconds / jodel_rhythm::yin::HOP).round() as usize
+    }
+
+    #[test]
+    fn a_take_without_a_voice_is_not_kept() {
+        // The microphone muted: a second heard, silence, no pitch.
+        let mut kept = kept();
+        kept.push(
+            &[0.0; 16_000],
+            16_000,
+            2.0,
+            false,
+            Sung::new(0.15, "default", 0),
+        );
+        assert!(!kept.worth_saving(), "nothing sung");
+        // A stray frame or two of the room's noise is no singing.
+        kept.voiced(3);
+        assert!(!kept.worth_saving(), "a stray pitch");
+        // Sung: kept.
+        kept.voiced(frames(VOICED_ENOUGH));
+        assert!(kept.worth_saving());
+    }
+
     #[test]
     fn a_song_the_demo_sang_in_is_not_kept() {
         let mut kept = kept();
         assert!(!kept.worth_saving(), "nothing heard");
         kept.push(&[0.5; 100], 1000, 2.0, false, Sung::new(0.15, "default", 0));
+        kept.voiced(frames(VOICED_ENOUGH));
         assert!(kept.worth_saving());
         kept.sung_by_demo();
         kept.push(&[0.5; 100], 1000, 9.0, false, Sung::new(0.15, "default", 0));

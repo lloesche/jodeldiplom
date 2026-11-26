@@ -263,7 +263,7 @@ pub(super) fn sheet(s: &mut Score, at: u64, sound: Sheet, gain: f32, pan: f32) {
         Sheet::Whole => whole(p),
         Sheet::Snooze => snooze(p),
         Sheet::Medal(m) => medal(p, m),
-        Sheet::Stamp => rubber_stamp(p, 0.0),
+        Sheet::Stamp => rubber_stamp(p, 1.0),
         Sheet::NewBest => new_best(p),
         Sheet::Signature => signature(p),
         Sheet::Date => {
@@ -419,13 +419,13 @@ fn snooze(p: &mut Paper) {
     pad(p, from + 0.7, &[-5, -3], 1.3, 0.12);
 }
 
-/// A rubber stamp from `t` seconds: a rush of air as it comes down
-/// ([`STAMP_DOWN`]), then the thunk of it landing, the rubber's slap and
+/// A rubber stamp: a rush of air as it comes down ([`STAMP_DOWN`]), then
+/// the thunk of it landing (its thump at `thump`), the rubber's slap and
 /// the paper flapping under it.
-fn rubber_stamp(p: &mut Paper, t: f64) {
-    let hit = t + STAMP_DOWN;
-    p.play(t, Atom::Rush, midi(2_400.0), 0.25, 0.0, STAMP_DOWN);
-    p.play(hit, Atom::Thump, midi(55.0), 1.0, 0.0, 0.25);
+fn rubber_stamp(p: &mut Paper, thump: f32) {
+    let hit = STAMP_DOWN;
+    p.play(0.0, Atom::Rush, midi(2_400.0), 0.25, 0.0, STAMP_DOWN);
+    p.play(hit, Atom::Thump, midi(55.0), thump, 0.0, 0.25);
     p.play(hit, Atom::Crack, midi(700.0), 0.5, 0.0, 0.06);
     p.play(hit, Atom::Crack, midi(1_100.0), 0.35, 0.0, 0.08);
     for (k, (dt, pan)) in [(0.03, -0.3), (0.075, 0.3), (0.12, 0.0)]
@@ -489,9 +489,13 @@ fn brass(p: &mut Paper, t: f64, note: f32, velocity: f32, pan: f32, hold: f64) {
     }
 }
 
-/// A new best: its stamp slapped on, then its fanfare.
+/// How hard a new best's stamp thumps: under the stamp's own, so the
+/// fanfare after it keeps its weight over the low end.
+const NEW_BEST_THUMP: f32 = 0.5;
+
+/// A new best: its stamp slapped on (its thump softer), then its fanfare.
 fn new_best(p: &mut Paper) {
-    rubber_stamp(p, 0.0);
+    rubber_stamp(p, NEW_BEST_THUMP);
     let from = STAMP_DOWN + 0.12;
     // A roll of noise under it, swelling.
     p.play(from, Atom::Roll, midi(1_200.0), 0.25, 0.0, 0.5);

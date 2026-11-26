@@ -800,7 +800,8 @@ player's strip: with it muted, far down or another soloed on the Mixer tab,
 there is no sync, and the tab says why.
 
 With **Keep** on, each song sung in the mode is saved when it ends (or
-the mode is left): a folder `recordings/sing-<seconds>` beside the
+the mode is left), unless there is no voice in it (under a second with a
+pitch: the microphone muted or silent, nothing sung): a folder `recordings/sing-<seconds>` beside the
 settings file with the voice as the game heard it, the echo cancelled and
 its leftover turned down (`voice.wav`), where in the song each part was
 sung (`times.txt`), the

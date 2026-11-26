@@ -1175,12 +1175,15 @@ impl App {
         // A frame's pitch is that of the window before it: its middle.
         let centre = jodel_rhythm::yin::WINDOW / 2.0;
         let placed = clock.place(&self.sung);
-        if let Some(kept) = self.kept.as_mut().filter(|_| state.config.karaoke_keep) {
+        let mut kept = self.kept.as_mut().filter(|_| state.config.karaoke_keep);
+        if let Some(kept) = kept.as_mut() {
             for &(block, at, continues) in &placed {
                 let how = crate::keep::Sung::new(late, source.key(), singing.shift());
                 kept.push(&block.samples, block.rate, at, continues, how);
             }
         }
+        // The frames with a pitch: a take without a voice is not saved.
+        let mut voiced = 0;
         for &(block, at, continues) in &placed {
             let fresh = match &self.yin {
                 Some((rate, _)) => *rate != block.rate || !continues,
@@ -1195,11 +1198,15 @@ impl App {
             let rate = f64::from(block.rate.max(1));
             for (i, &x) in block.samples.iter().enumerate() {
                 yin.push(&[x], |cents| {
+                    voiced += usize::from(cents.is_some());
                     let t = at + i as f64 / rate - centre;
                     singing.hear(t - late, cents);
                     estimate.hear(singing, t, cents);
                 });
             }
+        }
+        if let Some(kept) = kept {
+            kept.voiced(voiced);
         }
     }
 

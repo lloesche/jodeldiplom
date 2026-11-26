@@ -23,8 +23,6 @@ Work agreed on but not started, roughly in the order it was raised.
   multiplier over the playhead crowd each other below a certain width.
 - **The HUD a little smaller** (about 7 %), and maybe the lane lower,
   for more room between the marquee and the top of the window.
-- **Empty takes are not saved.** A take with no voice in it (the mic
-  muted, nothing sung) should not be kept.
 - **Themes** (stage 6 of the tiers plan): the theme hook, and a
   "Spooky" demo theme to prove it (green fire, candy coins, a cold
   grade, fog at the edges).
@@ -35,8 +33,6 @@ Work agreed on but not started, roughly in the order it was raised.
   builds up follows the multiplier. If they should come in order with
   the rest for every singer, they move to the rungs too.
 
-- **The conductor's follow-ups:** one clock per sound, its cue queue on
-  the shared queue type, the Ta-Daa chime as data.
 - **A Synth tab**, a workbench like the Transition tab:
   - every sound the game makes, listed by moment (word pops, rung
     stingers, chimes, the payout, the diploma's sounds), each played
