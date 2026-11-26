@@ -36,6 +36,8 @@
 //!   of them is held for a bounded time of its own, so a release that
 //!   never arrives costs seconds, not the song.
 //! - [`tick`], [`gem`]: the diploma's count-up and its gems.
+//! - [`found`]: a step of a song's preparation found something: a soft
+//!   pluck, a glint an octave over it.
 
 use jodel_synth::{Command, Commands, NoteOn, Tag};
 
@@ -670,6 +672,17 @@ pub(super) fn tick(s: &mut Score, at: u64, k: u32, of: u32) {
     if let Some(pip) = s.deg(d as i32, POP_HOME) {
         s.play(Note::new(at, Atom::Pip, pip).vel(0.4));
     }
+}
+
+/// A step of a song's preparation found something at `at`, the `step`th
+/// (0 to 4): a soft pluck up the pentatonic for each later step, a glint
+/// an octave over it a moment after.
+pub(super) fn found(s: &mut Score, at: u64, step: u32) {
+    let k = 2 + step.min(4) as i32;
+    let note = s.bright(k, BELL_HOME - 12);
+    s.play(Note::new(at, Atom::Pluck, note).vel(0.45));
+    let glint = Note::new(at + s.secs(0.05), Atom::Glint, note + 12.0);
+    s.play(glint.vel(0.25));
 }
 
 /// A diploma's gem popping in at `at`, `share` of the tiers up, at

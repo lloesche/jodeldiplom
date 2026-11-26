@@ -275,6 +275,13 @@ impl App {
                     facts: Some(core::Facts::Lyrics(facts)),
                 });
             }));
+            let told = outbox.clone();
+            lyrics_options.told = Some(Arc::new(move |path: &Path, words| {
+                told.send(Action::Heard {
+                    path: path.to_owned(),
+                    part: core::Heard::Lyrics(words),
+                });
+            }));
             let answers = outbox.clone();
             crate::work::lyrics::LyricsWorker::new(lyrics_options, move |path, answer| {
                 answers.send(Action::Lyrics(path, answer));

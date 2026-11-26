@@ -4,8 +4,8 @@
 //! climbing to the first rung, a rung reached (its stinger, its call and
 //! its payout where it has them), the rescue shot, a streak lost, a
 //! phrase's chime, the payout and the jackpot alone, the announcer's
-//! calls, and the diploma's count-up, gems, points, rungs and its sheet's
-//! own sounds. Which atoms a sound plays is found by writing it down once
+//! calls, the diploma's count-up, gems, points, rungs and its sheet's
+//! own sounds, and a result of a song's preparation found. Which atoms a sound plays is found by writing it down once
 //! ([`Sound::atoms`]): what it sends the synth, its patches named.
 
 use std::sync::LazyLock;
@@ -33,6 +33,8 @@ pub enum Moment {
     Diploma,
     /// The diploma's sheet: its paper, pen, stamps and tunes.
     Sheet,
+    /// A song got ready: a result found.
+    Preparation,
 }
 
 impl Moment {
@@ -46,6 +48,7 @@ impl Moment {
             Moment::Announcer => "Announcer",
             Moment::Diploma => "Diploma",
             Moment::Sheet => "Diploma sheet",
+            Moment::Preparation => "Getting ready",
         }
     }
 }
@@ -251,6 +254,13 @@ fn catalogue() -> Vec<Sound> {
             Vec::new(),
         );
     }
+    add(
+        Moment::Preparation,
+        "A result found".into(),
+        What::Event(Event::Found { step: 0 }),
+        None,
+        Vec::new(),
+    );
     sounds
 }
 
@@ -429,7 +439,8 @@ mod tests {
                 Moment::Wins,
                 Moment::Announcer,
                 Moment::Diploma,
-                Moment::Sheet
+                Moment::Sheet,
+                Moment::Preparation
             ]
         );
         let top = sounds.iter().find(|s| s.what == What::Rung(Tier::TOP));

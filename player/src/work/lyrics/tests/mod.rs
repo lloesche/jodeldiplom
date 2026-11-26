@@ -102,6 +102,7 @@ fn a_track_with_no_lyrics_found_is_heard_instead() {
             told.lock().unwrap().push(facts)
         })),
         edits: None,
+        told: None,
     };
     let (tx, rx) = mpsc::channel();
     let worker = LyricsWorker::new(options, move |path, answer| {
@@ -191,6 +192,7 @@ fn a_track_with_no_lyrics_found_is_heard_once_a_run() {
             let _ = done_tx.lock().unwrap().send(facts);
         })),
         edits: None,
+        told: None,
     };
     let (tx, rx) = mpsc::channel();
     let worker = LyricsWorker::new(options, move |path, answer| {
@@ -276,6 +278,7 @@ fn a_track_heard_and_kept_is_not_heard_again_after_a_restart() {
                 let _ = done_tx.lock().unwrap().send(facts);
             })),
             edits: None,
+            told: None,
         };
         let (tx, rx) = mpsc::channel();
         let worker = LyricsWorker::new(options, move |path, answer| {
@@ -329,6 +332,7 @@ fn lyrics_found_come_again_with_their_words_timed_and_kept() {
         working: None,
         done: None,
         edits: None,
+        told: None,
     };
     let (tx, rx) = mpsc::channel();
     let worker = LyricsWorker::new(options, move |path, answer| {
@@ -577,6 +581,7 @@ fn a_fetched_text_that_does_not_fit_is_swapped_for_one_that_does() {
         working: None,
         done: None,
         edits: None,
+        told: None,
     };
     let (tx, rx) = mpsc::channel();
     let worker = LyricsWorker::new(options, move |path, answer| {
@@ -663,6 +668,7 @@ fn a_fitting_text_timed_with_repeats_put_in_is_kept_as_found() {
         working: None,
         done: None,
         edits: None,
+        told: None,
     };
     let (tx, rx) = mpsc::channel();
     let worker = LyricsWorker::new(options, move |path, answer| {
@@ -730,6 +736,7 @@ fn songs_got_ready_ahead_are_timed_into_the_cache_quietly() {
             let _ = done_tx.lock().unwrap().send((path.to_owned(), facts));
         })),
         edits: None,
+        told: None,
     };
     let (tx, rx) = mpsc::channel();
     let worker = LyricsWorker::new(options, move |path, answer| {

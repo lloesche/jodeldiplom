@@ -67,6 +67,7 @@ use edits::EditStore;
 use store::{cache_key, now, Cache, Kept};
 use web::{Http, Lrclib, Web};
 
+use crate::core::prep::{Origin, Preview, Words};
 use crate::work::{Lane as Ask, Lanes, Queue};
 
 /// How long a track whose look-up failed (the network, the service) is
@@ -312,6 +313,10 @@ pub struct Options {
     /// The folder of the lyrics edited by hand (`lyric-edits` in the data
     /// folder: [`crate::store::dirs::Data::lyric_edits`]), if any.
     pub edits: Option<PathBuf>,
+    /// Told of each step of a file's work as it begins and what it finds
+    /// ([`crate::core::prep::Words`]): a look-up on LRCLIB, the words found
+    /// (fetched now, or to be timed), heard, timed.
+    pub told: Option<Arc<Told>>,
 }
 
 /// Told when a file's lyrics are settled, and how (for the queue's icons).
@@ -319,6 +324,9 @@ pub type Done = dyn Fn(&Path, crate::core::LyricsFacts) + Send + Sync;
 
 /// Told when work on a file starts (`true`) and ends.
 pub type Working = dyn Fn(&Path, bool) + Send + Sync;
+
+/// Told of a step of a file's work and what it finds.
+pub type Told = dyn Fn(&Path, Words) + Send + Sync;
 
 impl Options {
     /// The player's own, without a cache (the player gives its own):
@@ -334,6 +342,7 @@ impl Options {
             working: None,
             done: None,
             edits: None,
+            told: None,
         }
     }
 }
@@ -401,6 +410,7 @@ impl LyricsWorker {
             .clone()
             .unwrap_or_else(|| Arc::new(|_, _| {}));
         let done: Arc<Done> = options.done.clone().unwrap_or_else(|| Arc::new(|_, _| {}));
+        let told: Arc<Told> = options.told.clone().unwrap_or_else(|| Arc::new(|_, _| {}));
         // One LRCLIB for both threads, so they keep to its spacing together.
         let lrclib = Lrclib::new(Arc::clone(&options.http), options.base.clone());
         if let Some(timer) = options.timer.clone() {
@@ -408,6 +418,7 @@ impl LyricsWorker {
             let (queue, deliver) = (Arc::clone(&queue), Arc::clone(&deliver));
             let cache = options.cache.clone().map(Cache::new);
             let (working, done) = (Arc::clone(&working), Arc::clone(&done));
+            let told = Arc::clone(&told);
             let lrclib = lrclib.clone();
             let probe = Arc::clone(&options.probe);
             thread::spawn(move || {
@@ -419,7 +430,7 @@ impl LyricsWorker {
                     cache.as_ref(),
                     (&lrclib, &*probe),
                     &deliver,
-                    &*working,
+                    (&*working, &*told),
                     &*done,
                 );
             });
@@ -486,7 +497,16 @@ impl LyricsWorker {
                     .is_some_and(|at| at.elapsed() < FAILED_PAUSE);
                 let mut asked = finder.clone();
                 asked.online &= !resting;
-                let (answer, is_edits) = asked.look(&track, now(), &wait, &|on| working(&path, on));
+                // A look-up on LRCLIB told as it begins; whether one was.
+                let fetched = std::cell::Cell::new(false);
+                let fetching = |on: bool| {
+                    if on {
+                        fetched.set(true);
+                        told(&path, Words::Looking);
+                    }
+                    working(&path, on);
+                };
+                let (answer, is_edits) = asked.look(&track, now(), &wait, &fetching);
                 if matches!(answer, Answer::Failed(_)) {
                     failed.insert(path.clone(), Instant::now());
                 } else if !resting {
@@ -495,10 +515,10 @@ impl LyricsWorker {
                 if queue.stopped() {
                     return;
                 }
+                let mut to_time = false;
                 let then = queue.change(|wanted| {
                     // Found without our times: timed next, when it can be;
                     // else settled.
-                    let mut to_time = false;
                     if let (
                         Answer::Found {
                             lyrics,
@@ -546,6 +566,12 @@ impl LyricsWorker {
                     }
                     Then::Deliver
                 });
+                // Found by work now (fetched, or to be timed): told where.
+                if let Answer::Found { lyrics, .. } = &answer {
+                    if fetched.get() || to_time {
+                        told(&path, Words::Found(Origin::of(&lyrics.source)));
+                    }
+                }
                 if matches!(then, Then::Deliver) && !ahead {
                     deliver(path, answer);
                 }
@@ -665,7 +691,7 @@ fn time_words<D: FnMut(PathBuf, Answer)>(
     cache: Option<&Cache>,
     (lrclib, probe): (&Lrclib, &Probe),
     deliver: &Mutex<D>,
-    working: &Working,
+    (working, told): (&Working, &Told),
     done_with: &Done,
 ) {
     loop {
@@ -677,7 +703,15 @@ fn time_words<D: FnMut(PathBuf, Answer)>(
         let (path, lyrics, is_edits) = match next {
             Some(Ok(job)) => job,
             Some(Err(path)) => {
-                hear(queue, timer, cache, deliver, working, done_with, path);
+                hear(
+                    queue,
+                    timer,
+                    cache,
+                    deliver,
+                    (working, told),
+                    done_with,
+                    path,
+                );
                 continue;
             }
             None => return,
@@ -707,6 +741,7 @@ fn time_words<D: FnMut(PathBuf, Answer)>(
             continue;
         }
         working(&path, true);
+        told(&path, Words::Timing);
         // LRCLIB's other texts of the song, asked for only when this one
         // does not fit (and only of LRCLIB's: the file's own are kept).
         let others = || -> Vec<Lyrics> {
@@ -756,6 +791,9 @@ fn time_words<D: FnMut(PathBuf, Answer)>(
                 let _ = cache.store_timed(&key, &timed);
             }
         }
+        if let Some(preview) = Preview::of(&timed) {
+            told(&path, Words::Timed(Arc::new(preview)));
+        }
         done_with(&path, crate::core::LyricsFacts::Timed);
         let still = !queue.stopped() && queue.lock().wanted.contains(&path);
         if still {
@@ -779,11 +817,12 @@ fn hear<D: FnMut(PathBuf, Answer)>(
     timer: &dyn WordTimer,
     cache: Option<&Cache>,
     deliver: &Mutex<D>,
-    working: &Working,
+    (working, told): (&Working, &Told),
     done_with: &Done,
     path: PathBuf,
 ) {
     working(&path, true);
+    told(&path, Words::Hearing);
     let heard = timer.transcribe(&path);
     working(&path, false);
     let key = cache_key(&path);
@@ -792,6 +831,10 @@ fn hear<D: FnMut(PathBuf, Answer)>(
             if let (Some(cache), Some(key)) = (cache, key.as_deref()) {
                 let _ = cache.store_text(key, &text);
                 let _ = cache.store_timed(key, &timed);
+            }
+            told(&path, Words::Found(Origin::Heard));
+            if let Some(preview) = Preview::of(&timed) {
+                told(&path, Words::Timed(Arc::new(preview)));
             }
             Answer::Found {
                 lyrics: text,

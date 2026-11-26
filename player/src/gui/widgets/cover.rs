@@ -9,6 +9,12 @@
 //! The art is scaled on the processor to the pixels it shows at (finer
 //! than the GPU's scaling of a large image, which keeps no smaller copies),
 //! once for each art and size: [`Covers`] keeps it by art id.
+//!
+//! A cover taken apart, as a song's preparation shows it
+//! ([`crate::view::prep::CoverView`]), is its plate with its subject over
+//! it ([`Covers::cut`]): the subject lifted off a little and swaying, the
+//! plate still. Both are scaled the same way, once for each cover and
+//! place ([`Covers::show_cut`]).
 
 use std::f32::consts::PI;
 use std::sync::{Arc, OnceLock};
@@ -24,8 +30,10 @@ use iced::{
     Size, Theme, Vector, Widget as _,
 };
 
+use crate::core::prep::CoverCut;
 use crate::gui::look::{self, radius};
 use crate::work::art::{self, Art};
+use image::imageops::FilterType;
 
 /// How dark the cover gets at its bottom under text: 80 % (as the eye
 /// sees it).
@@ -107,11 +115,46 @@ impl<M> Widget<M, Theme, Renderer> for Loaded<'_> {
     }
 }
 
+/// A cover taken apart fitted to a place: which cover result and place,
+/// its plate and its subject, and their size (pixels).
+#[derive(Clone, Debug)]
+struct Cut {
+    key: String,
+    place: (u32, u32),
+    plate: Handle,
+    subject: Option<Handle>,
+    size: (u32, u32),
+}
+
+impl Cut {
+    fn new(cut: &CoverCut, place: (u32, u32)) -> Cut {
+        let layers = &cut.0.layers;
+        let (plate, _, _) = art::fit(&layers.plate, place.0.max(1), place.1.max(1));
+        let size = plate.dimensions();
+        let plate = image::DynamicImage::ImageRgb8(plate).into_rgba8();
+        let subject = layers.subject.as_ref().map(|s| {
+            let scaled = image::imageops::resize(s, size.0, size.1, FilterType::CatmullRom);
+            Handle::from_rgba(size.0, size.1, scaled.into_raw())
+        });
+        Cut {
+            key: cut.0.key.clone(),
+            place,
+            plate: Handle::from_rgba(size.0, size.1, plate.into_raw()),
+            subject,
+            size,
+        }
+    }
+}
+
 /// The covers that show, each with the art fitted to its place, at the
-/// window's scale.
+/// window's scale; and a cover taken apart, fitted to the place of the
+/// first.
 #[derive(Debug)]
 pub struct Covers {
     shown: Vec<Fitted>,
+    cut: Option<Cut>,
+    /// A story's scenes as drawn so far, each by its picture's address.
+    scenes: Vec<(usize, Handle)>,
     /// Pixels a point.
     scale: f32,
 }
@@ -120,6 +163,8 @@ impl Default for Covers {
     fn default() -> Covers {
         Covers {
             shown: Vec::new(),
+            cut: None,
+            scenes: Vec::new(),
             scale: 1.0,
         }
     }
@@ -145,6 +190,73 @@ impl Covers {
         }
     }
 
+    /// `cut` (none: no cover taken apart shows) fitted to `place` (in
+    /// pixels): kept as it was for the same cover and place.
+    pub fn show_cut(&mut self, cut: Option<&CoverCut>, place: Option<(u32, u32)>) {
+        let (Some(cut), Some(place)) = (cut, place) else {
+            self.cut = None;
+            return;
+        };
+        if (self.cut.as_ref()).is_some_and(|c| c.key == cut.0.key && c.place == place) {
+            return;
+        }
+        self.cut = Some(Cut::new(cut, place));
+    }
+
+    /// The cover taken apart, its subject `lift`ed off (0 to 1) and swayed
+    /// across by `sway` (-1 to 1); `None` while none is fitted.
+    pub fn cut<'a, M: 'a>(&'a self, sway: f32, lift: f32) -> Option<Element<'a, M>> {
+        let cut = self.cut.as_ref()?;
+        let size = Size::new(
+            cut.size.0 as f32 / self.scale,
+            cut.size.1 as f32 / self.scale,
+        );
+        let lifted = Lifted {
+            plate: cut.plate.clone(),
+            subject: cut.subject.clone(),
+            sway,
+            lift,
+        };
+        Some(
+            iced::widget::canvas::Canvas::new(lifted)
+                .width(size.width)
+                .height(size.height)
+                .boxed(),
+        )
+    }
+
+    /// A story's `scenes` as drawn so far, in order: the pictures seen
+    /// before kept as they were.
+    pub fn show_scenes(&mut self, scenes: &[Arc<image::RgbaImage>]) {
+        let before = std::mem::take(&mut self.scenes);
+        for picture in scenes {
+            let id = Arc::as_ptr(picture) as usize;
+            let handle = (before.iter().find(|(k, _)| *k == id))
+                .map(|(_, h)| h.clone())
+                .unwrap_or_else(|| {
+                    let (w, h) = picture.dimensions();
+                    Handle::from_rgba(w, h, picture.as_raw().clone())
+                });
+            self.scenes.push((id, handle));
+        }
+    }
+
+    /// Scene `index`'s picture, `side` points across at `opacity`.
+    pub fn scene<'a, M: 'a>(
+        &'a self,
+        index: usize,
+        opacity: f32,
+        side: f32,
+    ) -> Option<Element<'a, M>> {
+        let (_, handle) = self.scenes.get(index)?;
+        let picture: Image<Handle> = Image::new(handle.clone())
+            .width(side)
+            .height(side)
+            .opacity(opacity)
+            .border_radius(radius::CONTROL);
+        Some(picture.boxed())
+    }
+
     /// The images of the covers shown, in order.
     pub fn images(&self) -> impl Iterator<Item = &Handle> {
         self.shown.iter().map(|f| &f.image)
@@ -163,6 +275,52 @@ impl Covers {
             fitted.size.0 as f32 / self.scale,
             fitted.size.1 as f32 / self.scale,
         )
+    }
+}
+
+/// How far the subject sways across, in points.
+const SWAY: f32 = 4.0;
+/// How far it lifts up off the plate, in points.
+const LIFT: f32 = 7.0;
+/// How much larger the subject grows as it lifts.
+const GROW: f32 = 0.04;
+
+/// A cover taken apart: its plate still, its subject over it lifted off
+/// and swaying, drawn on a canvas.
+struct Lifted {
+    plate: Handle,
+    subject: Option<Handle>,
+    sway: f32,
+    lift: f32,
+}
+
+impl<M> iced::widget::canvas::Program<M> for Lifted {
+    type State = ();
+
+    fn draw(
+        &self,
+        _state: &(),
+        renderer: &Renderer,
+        _theme: &Theme,
+        bounds: Rectangle,
+        _cursor: mouse::Cursor,
+    ) -> Vec<iced::widget::canvas::Geometry> {
+        use iced::advanced::image::Image as Picture;
+        let mut frame = iced::widget::canvas::Frame::new(renderer, bounds.size());
+        let whole = Rectangle::new(iced::Point::ORIGIN, bounds.size());
+        let mut plate = Picture::new(self.plate.clone());
+        plate.border_radius = radius::PANEL.into();
+        frame.draw_image(whole, plate);
+        if let Some(subject) = &self.subject {
+            let grow = 1.0 + GROW * self.lift;
+            let size = Size::new(bounds.width * grow, bounds.height * grow);
+            let at = iced::Point::new(
+                (bounds.width - size.width) / 2.0 + SWAY * self.sway,
+                (bounds.height - size.height) / 2.0 - LIFT * self.lift,
+            );
+            frame.draw_image(Rectangle::new(at, size), Picture::new(subject.clone()));
+        }
+        vec![frame.into_geometry()]
     }
 }
 

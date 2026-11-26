@@ -10,6 +10,12 @@
 //! column (`gui-main-long`), with tags in Japanese (`gui-main-cjk`),
 //! narrow (`gui-main-narrow`, `gui-main-narrow-long`), and last without
 //! a cover (`gui-main-noart`, the Japanese tags).
+//! The queue with a song being got ready, its preparation in the right
+//! column at each step: the stems being separated (`gui-prep-stems`), the
+//! key found (`gui-prep-key`), the beat found (`gui-prep-beat`), the words
+//! timed (`gui-prep-words`), the cover cut out (`gui-prep-cover`), and a
+//! story told (`gui-prep-story`, the seam for what is to come); made-up
+//! results, as the workers would tell them.
 //! The setup screen comes first, on a made-up web: under way
 //! (`gui-setup`) and stopped by a failure (`gui-setup-failed`), each with
 //! its outline as the text. The fonts are the player's own, as built in.
@@ -25,6 +31,7 @@
 #[path = "../tests/common/mod.rs"]
 mod common;
 mod headless;
+mod prep;
 #[path = "../tests/common/setup.rs"]
 mod setup_web;
 
@@ -143,8 +150,12 @@ fn main_outline(state: &State, size: Size) -> String {
         Side::Synth => out.push_str(&jodeldiplom::gui::synth::outline(state)),
         Side::Browser | Side::Queue | Side::Mixer => {}
     }
-    if m.right.is_some() {
-        out.push_str(&info::Info::of(state).to_string());
+    // The right column: a song's preparation while it shows, else the
+    // track's text.
+    match (&m.right, jodeldiplom::view::prep::PrepView::of(state)) {
+        (Some(_), Some(prep)) => out.push_str(&prep.to_string()),
+        (Some(_), None) => out.push_str(&info::Info::of(state).to_string()),
+        (None, _) => {}
     }
     if m.summary.is_some() {
         out.push_str(&info::Info::of(state).summary());
@@ -581,6 +592,12 @@ fn main() {
             ("main-long", retagged(&state, LONG, Some(LONG_DEVICE))),
             ("main-cjk", retagged(&state, CJK, None)),
             ("queue", queue),
+            ("prep-stems", prep::preparing(&state, "stems")),
+            ("prep-key", prep::preparing(&state, "key")),
+            ("prep-beat", prep::preparing(&state, "beat")),
+            ("prep-words", prep::preparing(&state, "words")),
+            ("prep-cover", prep::preparing(&state, "cover")),
+            ("prep-story", prep::preparing(&state, "story")),
             ("nowplaying", now),
             ("settings", settings),
             ("settings-rows", settings_rows),

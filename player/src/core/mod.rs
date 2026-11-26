@@ -30,6 +30,7 @@ pub mod lag;
 pub mod lanes;
 pub mod lyric_edit;
 pub mod mic;
+pub mod prep;
 pub mod preview;
 mod queue;
 mod settings;
@@ -795,6 +796,9 @@ pub struct State {
     pub drawn_ms: Option<u64>,
     /// The preview while Ctrl is held in the browser ([`preview`]).
     pub preview: preview::PreviewState,
+    /// What the songs' work found as it went, for the queue's captions
+    /// and the preparation view ([`prep`]).
+    pub prep: prep::Prep,
 }
 
 impl State {
@@ -809,6 +813,7 @@ impl State {
             self.preview.due,
             karaoke::controls::due(self),
             karaoke::pointer::due(self),
+            prep::due(self),
         ]
         .into_iter()
         .flatten()
@@ -869,6 +874,7 @@ impl State {
             drawn_heard: None,
             drawn_ms: None,
             preview: preview::PreviewState::default(),
+            prep: prep::Prep::default(),
         }
     }
 

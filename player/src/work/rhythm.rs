@@ -156,8 +156,9 @@ pub fn listen_keeping(
 /// Told of each part of an analysis as it is done ([`Heard`]).
 pub type Report = Arc<dyn Fn(Heard) + Send + Sync>;
 
-/// [`listen_keeping`], telling `report` of the key once the file is decoded
-/// and of the stems once separated.
+/// [`listen_keeping`], telling `report` of the key once the file is
+/// decoded, of the stems so far as each chunk is separated (where the
+/// file says how long it is) and once all are.
 pub fn listen_reporting(
     path: &Path,
     recipe: &RhythmRecipe,
@@ -166,14 +167,18 @@ pub fn listen_reporting(
 ) -> Result<Listened, String> {
     let started = Instant::now();
     let mut source = Source::open(path).map_err(|e| e.to_string())?;
-    let (rate, channels, tagged) = {
+    let (rate, channels, tagged, frames) = {
         let info = source.info();
         (
             info.rate,
             usize::from(info.channels).max(1),
             key_tag(&info.tags),
+            info.frames,
         )
     };
+    // The song's length in the waveform's frames, for the stems so far.
+    let lane_frames =
+        frames.map(|f| (f as f64 * jodel_rhythm::waveform::FPS / f64::from(rate)) as usize);
     let mut resampler = (rate != SAMPLE_RATE).then(|| Resampler::new(rate, SAMPLE_RATE, 1));
     // The same mono at the key's rate, its first KEY_SECONDS.
     let key_rate = jodel_rhythm::key::RATE;
@@ -229,6 +234,11 @@ pub fn listen_reporting(
                     if w.push(b.stems).is_err() {
                         writer = None;
                     }
+                }
+                // Each chunk: the stems' waveforms so far, as they are.
+                if let (Some(report), Some(frames)) = (&stems_report, lane_frames) {
+                    let so_far = crate::core::prep::Separating::of(parts.lanes(), frames);
+                    report(Heard::Separating(Arc::new(so_far)));
                 }
             };
             for (left, right) in rx {
@@ -323,7 +333,7 @@ pub fn listen_reporting(
     let key = tagged.or_else(|| jodel_rhythm::key::key_of(&for_key));
     drop(for_key);
     if let Some(report) = &report {
-        report(Heard::Key(key.is_some()));
+        report(Heard::Key(key));
     }
     let decode = started.elapsed();
     let listening = Instant::now();
@@ -609,6 +619,13 @@ fn analyse(
             if let Some(dir) = cache {
                 let _ = store(dir, path, &analysis, &listened.waveform);
                 let _ = remember(dir, &entry);
+            }
+            let beats = crate::core::prep::BeatsFound::of(&analysis, &listened.waveform.mix);
+            if !outbox.send(Action::Heard {
+                path: path.to_owned(),
+                part: Heard::Beats(Arc::new(beats)),
+            }) {
+                return None;
             }
             if let Some(dir) = &stems_dir {
                 crate::store::stems::prune(dir, crate::store::stems::BUDGET);

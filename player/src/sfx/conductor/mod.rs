@@ -202,6 +202,12 @@ pub enum Event {
     Jackpot,
     /// A moment of the diploma.
     Diploma(Diploma),
+    /// A step of a song's preparation found something: its place among
+    /// the steps (the beat 0 … the cover 4, [`crate::core::prep::Found::step`]).
+    Found {
+        /// The step.
+        step: u32,
+    },
 }
 
 /// The tag of the keyboard's notes (the Synth tab's): a cancel of all
@@ -488,6 +494,10 @@ impl Conductor {
                     ..self.score(out)
                 };
                 sheet::sheet(&mut s, at, sound, gain, pan);
+                at
+            }
+            Event::Found { step } => {
+                sounds::found(&mut self.score(out), at, step);
                 at
             }
         }

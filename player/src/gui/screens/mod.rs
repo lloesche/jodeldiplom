@@ -8,7 +8,9 @@
 //! or the queue, [`list`]; the Transition tab, [`transition`]; the
 //! Karaoke tab, [`karaoke`]; the Mixer tab, [`super::mixer`]; the Synth
 //! tab, [`synth`]) with the
-//! right column beside it (the cover and the text under it, [`right`]) or
+//! right column beside it (the cover and the text under it, [`right`];
+//! the queue's selected song's preparation while it is got ready,
+//! [`prep`]) or
 //! the track's summary under it, the Karaoke tab's voice lane under it,
 //! and the bottom bar along the foot. The lanes are drawn in their part
 //! of the screen ([`super::lanes`], taking no pointer), the covers in
@@ -44,6 +46,7 @@ pub mod list;
 pub mod lyrics;
 pub mod now;
 pub mod palette;
+pub mod prep;
 pub mod right;
 pub mod settings;
 pub mod setup;
@@ -250,10 +253,18 @@ fn desk<'a>(state: &'a State, caps: &'a mixer::Caps, size: Size) -> Element<'a, 
 }
 
 /// The right column: the cover at its top (its click opens Now playing;
-/// a card in its place without art), the track's text under it. The
-/// wheel over it scrolls the list.
+/// a card in its place without art), the track's text under it; while the
+/// queue's selected song is being got ready, its preparation
+/// ([`prep`]). The wheel over it scrolls the list.
 fn right_column<'a>(state: &State, m: &Main, covers: &'a Covers) -> Element<'a, Message> {
     let width = m.right.map_or(0.0, |r| r.width);
+    // The queue's selected song being got ready: its preparation instead.
+    if let Some(view) = crate::view::prep::PrepView::of(state) {
+        let shown = prep::view(&view, state, prep::card_place(m), covers, width);
+        return mouse_area(container(shown).width(Fill).height(Fill).clip(true))
+            .on_scroll(Message::Wheel)
+            .boxed();
+    }
     let mut parts = iced::widget::Column::<Element<'a, Message>>::new();
     if let Some(place) = m.cover {
         let side = place.width.min(place.height);
@@ -312,6 +323,17 @@ pub(super) fn covers(state: &State, size: Size, scale: f32) -> Vec<(u32, u32)> {
         .map(|p| cover::pixels(p, scale))
         .into_iter()
         .collect()
+}
+
+/// The place of the preparation view's card in a window of `size`, in
+/// pixels at `scale` pixels a point, while the view shows: a cover taken
+/// apart is fitted to it.
+pub(super) fn prep_card(state: &State, size: Size, scale: f32) -> Option<(u32, u32)> {
+    if state.screen != Screen::Main {
+        return None;
+    }
+    let card = prep::card_place(&metrics::main(size, state.side))?;
+    Some(cover::pixels(card.size(), scale))
 }
 
 /// The lanes `state`'s screen shows in a window of `size` at `scale`

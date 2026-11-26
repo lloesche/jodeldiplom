@@ -255,6 +255,9 @@ pub struct QueueRow {
     pub current: Option<PlayState>,
     /// How far it is got ready.
     pub readiness: Readiness,
+    /// What its preparation is doing, or found just now
+    /// ([`crate::view::prep::caption`]).
+    pub caption: Option<crate::view::prep::Caption>,
     /// What is known of it, where the pane is wide enough (empty
     /// otherwise), in the order the work finds it.
     pub facts: Vec<Status>,
@@ -550,6 +553,7 @@ impl Queue {
                     }),
                 current: (q.current == Some(i)).then_some(state.playing.state),
                 readiness: readiness(state, path),
+                caption: crate::view::prep::caption(state, path),
                 facts: if width >= FACTS_WIDTH {
                     facts(state, path)
                 } else {
@@ -694,9 +698,13 @@ impl fmt::Display for Queue {
             } else {
                 format!("  {}", facts.join(" "))
             };
+            let caption = match &row.caption {
+                Some(c) => format!("  ‹{}›", c.text),
+                None => String::new(),
+            };
             writeln!(
                 f,
-                "[row{selected}{readiness}] {symbol}{} {}{facts}{}",
+                "[row{selected}{readiness}] {symbol}{} {}{caption}{facts}{}",
                 row.index + 1,
                 row.title,
                 known_text(&row.known)

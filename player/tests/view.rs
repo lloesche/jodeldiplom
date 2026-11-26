@@ -79,8 +79,12 @@ fn draw_heard(state: &State, cells: (u16, u16), heard: f64) -> String {
     let main = (state.screen == Screen::Main).then(|| metrics::main(size, state.side));
     if let Some(m) = &main {
         text.push_str(&Pane::of(state, m.pane.width).to_string());
-        if m.right.is_some() {
-            text.push_str(&Info::of(state).to_string());
+        // The right column: a song's preparation while it shows, else the
+        // track's text.
+        match (&m.right, view::prep::PrepView::of(state)) {
+            (Some(_), Some(prep)) => text.push_str(&prep.to_string()),
+            (Some(_), None) => text.push_str(&Info::of(state).to_string()),
+            (None, _) => {}
         }
         if m.summary.is_some() {
             text.push_str(&Info::of(state).summary());
@@ -979,7 +983,7 @@ fn the_queue_is_got_ready_ahead_and_its_icons_light_up_in_turn() {
         &mut state,
         Action::Heard {
             path: busy.clone(),
-            part: Heard::Key(true),
+            part: Heard::Key(Some(jodel_rhythm::key::Key::on(9, false))),
         },
     );
     assert_eq!(colors(&state), [ACCENT, DIM, DIM, DIM]);
@@ -1087,7 +1091,10 @@ fn a_queue_rows_icons_are_all_lit_only_when_nothing_is_left_for_it() {
         let mut state = done(Some(job));
         match job {
             Job::Rhythm => {
-                for part in [Heard::Key(true), Heard::Stems] {
+                for part in [
+                    Heard::Key(Some(jodel_rhythm::key::Key::on(9, false))),
+                    Heard::Stems,
+                ] {
                     update(
                         &mut state,
                         Action::Heard {

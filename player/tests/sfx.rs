@@ -838,6 +838,87 @@ fn the_game_is_silent_with_its_notes_hidden() {
     until(&|| effects.view().commands > 0, "the phrase played");
 }
 
+/// A result of a song's preparation found sounds a soft pluck on the
+/// desk while no music plays (the track stopped or paused); with a track
+/// playing, or a preview on, none at all.
+#[test]
+fn a_found_result_sounds_only_with_no_music() {
+    use jodeldiplom::core::{update, Heard};
+    let _guard = jodel_testkit::real_time();
+    let mut caps = Capabilities::new();
+    caps.insert(StreamFormat::new(RATE, 2, FORMAT));
+    let target = MemoryTarget::new(caps.clone(), SimClock::Realtime);
+    let options = MixerOptions {
+        capabilities: Some(caps),
+        ..MixerOptions::default()
+    };
+    let mixer = Mixer::open(Box::new(target), options);
+    let effects = mixer.effects(&mixer.strip("Effects"));
+    let (_lead, fader) = mixer.input(&mixer.strip("Player"), Role::Lead, 1.0);
+    let until = |done: &dyn Fn() -> bool, what: &str| {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !done() {
+            assert!(Instant::now() < deadline, "{what}");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    };
+    until(&|| mixer.timebase().rate == RATE, "the device open");
+    let mut state = common::playing_state(120, 36);
+    let song = state.queue.paths[1].clone();
+    let mut sfx = Sfx::default();
+    let mut frame = |state: &State| {
+        let desk = Desk {
+            effects: &effects,
+            heads: [&fader, &fader],
+            timebase: mixer.timebase(),
+        };
+        sfx.frame(state, desk);
+    };
+    // A key found now, as its worker tells it.
+    let found = |state: &mut State| {
+        update(
+            state,
+            Action::Heard {
+                path: song.clone(),
+                part: Heard::Key(Some(jodel_rhythm::key::Key::on(9, true))),
+            },
+        );
+    };
+    // Frames for a fifth of a second: what the effects took by then.
+    let frames = |frame: &mut dyn FnMut(&State), state: &State| {
+        let start = mixer.timebase().frame;
+        for _ in 0..12 {
+            frame(state);
+            std::thread::sleep(Duration::from_millis(16));
+        }
+        until(
+            &|| mixer.timebase().frame > start + u64::from(RATE) / 5,
+            "mixed on",
+        );
+        effects.view().commands
+    };
+    // A track playing: none.
+    assert_eq!(state.playing.state, PlayState::Playing);
+    frame(&state);
+    found(&mut state);
+    assert_eq!(frames(&mut frame, &state), 0, "a track playing");
+    // A preview on, the track stopped: none.
+    state.playing.state = PlayState::Stopped;
+    state.preview.on = Some(jodeldiplom::core::preview::On { path: None });
+    found(&mut state);
+    assert_eq!(frames(&mut frame, &state), 0, "a preview on");
+    // No music: the pluck.
+    state.preview.on = None;
+    found(&mut state);
+    frame(&state);
+    until(&|| effects.view().commands > 0, "the found sound played");
+    // Paused counts as no music too.
+    let before = effects.view().commands;
+    state.playing.state = PlayState::Paused;
+    found(&mut state);
+    assert!(frames(&mut frame, &state) > before, "paused");
+}
+
 #[test]
 fn a_time_lands_on_the_frame_it_is_heard_on() {
     let mut state = common::playing_state(120, 36);

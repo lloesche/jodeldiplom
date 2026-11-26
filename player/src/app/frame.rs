@@ -103,6 +103,8 @@ impl App {
             || self.state.karaoke.resume_at.is_some()
             // The sync's dots light up with its clicks.
             || self.clicks.is_some()
+            // A song's preparation shown, while it goes or comes in.
+            || crate::view::prep::moving(&self.state)
             || (self.state.playing.state != PlayState::Paused && self.spectrum.moving())
     }
 

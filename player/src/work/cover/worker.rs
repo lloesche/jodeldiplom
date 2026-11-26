@@ -301,10 +301,10 @@ impl CoverWorker {
 }
 
 /// A song's cover's step done: its layers (when asked for and it has a
-/// cover), whether it has them, and how long taking it apart took when it
-/// was taken apart now (not found kept); or why not, when its file could
-/// not be read or its cover not taken apart (nothing is kept then: it is
-/// tried again).
+/// cover, or taken apart now), whether it has them, and how long taking it
+/// apart took when it was taken apart now (not found kept); or why not,
+/// when its file could not be read or its cover not taken apart (nothing
+/// is kept then: it is tried again).
 enum Taken {
     Done {
         layers: Option<Layers>,
@@ -406,11 +406,12 @@ fn take_apart(
     };
     let made = store.layers(&song, &timed);
     working(false);
+    let split = timed.took.into_inner().unwrap_or_else(|e| e.into_inner());
     match made {
         Ok(found) => Taken::Done {
             has: found.is_some(),
-            layers: found.filter(|_| layers),
-            split: timed.took.into_inner().unwrap_or_else(|e| e.into_inner()),
+            layers: found.filter(|_| layers || split.is_some()),
+            split,
         },
         Err(why) => Taken::Failed(why),
     }
@@ -469,6 +470,16 @@ fn work(shared: &Shared, store: &CoverStore, splitter: &dyn Splitter, outbox: &O
                         path.file_name().unwrap_or_default().to_string_lossy(),
                         took.as_secs_f64()
                     ));
+                    // Taken apart now: its layers, as they were made.
+                    if let Some(made) = &layers {
+                        let cut = crate::core::prep::CoverCut(Arc::clone(made));
+                        if !outbox.send(Action::Heard {
+                            path: path.clone(),
+                            part: crate::core::Heard::Cover(cut),
+                        }) {
+                            return;
+                        }
+                    }
                 }
                 if playing {
                     // Still the song playing (no other wanted since).

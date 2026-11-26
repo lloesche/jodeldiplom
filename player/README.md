@@ -293,6 +293,20 @@ spinner turns while work on the track is on (its analysis, its lyrics
 looked up or timed) and a dot shows while some is still to come. What is in the cache is handed over at once
 when it is wanted, even while another track is being analysed.
 
+Getting a song ready takes a while, so the queue shows what the work is
+really doing, never more than it found. Beside a row's spinner a short
+caption says the step under way ("finding the beat…", "taking the song
+apart…", "looking up the words…") and, for a moment, what it found
+("123 BPM ✓"). With that song selected, the right column becomes its
+preparation: each step with what it does or found, and the latest result
+big: the beat's ticks coming in over a stretch of the song's waveform and
+pulsing as a play head passes them, the key's chord on a keyboard, the
+four stems' lanes filling chunk by chunk as they are separated, the words
+lit in time as they will be sung, the cover's subject lifting off it. With
+no music playing, each result found sounds a soft pluck from the game's
+synth; while a track or a preview plays, nothing. The view rests when
+nothing changes, and goes 12 s after the song is ready.
+
 The settings (`,`) choose how beats are found, below the engine's rows:
 
 | Row | What it does |
@@ -1367,8 +1381,8 @@ letters written on the keys they play.
 
 | Module | |
 |---|---|
-| `core` | state, `Action`, `update(state, action) -> effects` (its concerns in `core::browse`, `core::queue`, `core::settings`, `core::work` and `core::help`), keymap; no geometry: what the window's size does to the keys and the pointer comes in as `core::Fit`; the Transition tab (`core::transition::tab`, the lanes it shares with Karaoke in `core::lanes`), the grid fixes (`core::grid`), the transitions' presets and plans (`core::transition`), the Karaoke tab and mode (`core::karaoke`, its sliders in `core::sliders`), the key the song plays in (`core::key`), the Mixer tab's desk (`core::desk`: its strips, settings, the fader's taper, the meters' ballistics, the actions its widgets send) and the stems on it (`core::stems`: the stem keys as strip mutes on a bar of the head on air, when the engine makes stems, the Karaoke voice's lanes on both heads). Pure. |
-| `view` | the presentation models the window draws (the list, the info, the bottom bar with the spectrum's plot, the Transition tab with `view::lanes`, which the Karaoke tab shares, the Karaoke tab and Karaoke mode's picture, the settings, the help, Now playing) |
+| `core` | state, `Action`, `update(state, action) -> effects` (its concerns in `core::browse`, `core::queue`, `core::settings`, `core::work` and `core::help`), keymap; no geometry: what the window's size does to the keys and the pointer comes in as `core::Fit`; the Transition tab (`core::transition::tab`, the lanes it shares with Karaoke in `core::lanes`), the grid fixes (`core::grid`), the transitions' presets and plans (`core::transition`), the Karaoke tab and mode (`core::karaoke`, its sliders in `core::sliders`), the key the song plays in (`core::key`), the Mixer tab's desk (`core::desk`: its strips, settings, the fader's taper, the meters' ballistics, the actions its widgets send) and the stems on it (`core::stems`: the stem keys as strip mutes on a bar of the head on air, when the engine makes stems, the Karaoke voice's lanes on both heads), a song's preparation as its workers tell it (`core::prep`: the key, the stems so far, the beat, the words, the cover; `Heard::Story` the seam for a story written and drawn as it goes). Pure. |
+| `view` | the presentation models the window draws (the list, the info, a song's preparation (`view::prep`: the queue's captions, the right column's view, its story slot), the bottom bar with the spectrum's plot, the Transition tab with `view::lanes`, which the Karaoke tab shares, the Karaoke tab and Karaoke mode's picture, the settings, the help, Now playing) |
 | `app` | the running player: the engine and its desk, background workers, the spectrum (the mixer's monitor), cover; carries out the effects (`app::effects`), answers the window's frames (`app::frame`); the microphone and the singing heard through it (`app::mic`) |
 | `desk_wiring` | the desk the engine plays on: a mixer that holds the device (`jodel_output::mixer`), the player's strip with its stems' strips inside it, the preview's, the engine on two lane inputs of them (its two heads: a transition's next track plays on the other); the Mixer tab's settings made on it, its look for a frame |
 | `preview` | the preview's players, guests on the mixer (one per file, two at most): only the latest file loaded, crossfades on the mixer's clock, the song ducked and back |

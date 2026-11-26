@@ -12,7 +12,9 @@
 //! click), its right press queues it; a queue row's press holds the
 //! pointer too ([`Grab::QueueRow`]): the track follows it to the row it
 //! is over. With Ctrl held for a preview, the pointer over a browser row
-//! selects it. The wheel scrolls the list ([`Message::Wheel`]).
+//! selects it. A queue row being got ready says what its preparation
+//! does, then for a moment what it found, before its spinner. The wheel
+//! scrolls the list ([`Message::Wheel`]).
 
 use std::path::PathBuf;
 
@@ -583,9 +585,24 @@ fn queue_row<'a>(state: &State, r: &QueueRow, slot: usize, shown: usize) -> Elem
         };
         facts = facts.push(widgets::icon(icon).size(FACT).color(color).into());
     }
+    // What its preparation does, or found just now (with its tick).
+    let caption: Element<'a, Message> = match &r.caption {
+        Some(c) => text(c.text.clone())
+            .size(size::CAPTION)
+            .font(look::font::body())
+            .color(if c.found {
+                look::ACCENT
+            } else {
+                look::TEXT_FAINT
+            })
+            .wrapping(text::Wrapping::None)
+            .boxed(),
+        None => Space::new().width(0).boxed(),
+    };
     let content = row![
         lead,
         title(r.title.clone(), tone, r.current.is_some()),
+        caption,
         container(ready).width(FACT).center_x(FACT),
         facts,
         known(&r.known),

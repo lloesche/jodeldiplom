@@ -208,6 +208,55 @@ stem keys are their mutes.
   - `the_queue_is_got_ready_ahead_and_its_icons_light_up_in_turn`
   - `a_track_with_no_lyrics_found_is_heard_once_a_run`
 
+## Preparation
+
+What the queue shows of a song being got ready is only what its work
+really found, as its workers tell it: never a progress they did not tell.
+
+- **P1.** Each step's results are kept for the song as they are told (the
+  key once the file is decoded, the stems as each chunk is separated and
+  once they all are, the beat once decided, the words looked up, heard,
+  timed, the cover taken apart), for the last six songs worked on (the
+  covers' layers for the last two), and only for work done now: a song
+  whose results were all in the caches has none. Telling them costs no
+  work of its own: what the workers have is sent as it is.
+  - `partial_results_fill_the_songs_preparation_and_its_view`
+- **P2.** A queue row being got ready says the step under way (the key
+  listened for, the song taken apart, the beat found, the words looked
+  up, heard or timed, the cover cut out; of the work started last), and
+  each result found instead for 2.5 s, with a tick; nothing once no work
+  is on it.
+  - `a_rows_caption_follows_the_step_running`
+- **P3.** While the queue's selected song is being got ready, and for 12 s
+  after nothing is left to do for it, the right column shows its
+  preparation in place of the cover and the track's text: its steps, each
+  what it does or found, and the latest result big (held 3 s, then the
+  stems as they are separated, else the cover cut out, else the last
+  result): the beat's stretch of waveform with its ticks coming in and a
+  pulse on each beat the play head passes, the key's chord on a keyboard,
+  the stems' lanes filling, the words lit in time, the cover's subject
+  lifting off it. A story's slot shows a story of the song as it is
+  written and its scenes as they are drawn, once anything tells them
+  (nothing does yet: `Heard::Story` is the seam).
+  - `partial_results_fill_the_songs_preparation_and_its_view`
+  - `an_idle_preparation_view_rests`
+- **P4.** The preparation view moves only while it shows and something
+  changes: a worker at its song, a result coming in or held, its song
+  just ready. Waiting for the rest of its work with nothing new, it rests
+  (the window draws nothing for it), as it does once it goes; each change
+  that comes by itself (a hold over, the view going) is due once, so it is
+  drawn.
+  - `an_idle_preparation_view_rests`
+  - `an_idle_preparation_view_asks_the_app_for_no_frames`
+- **P5.** A result found sounds a soft pluck from the game's synth (a glint
+  over it, higher for each later step), at once on the desk, only while no
+  music plays: with a track playing or a preview on, no sound at all. One a
+  frame at most, and only for a result found within a second (a window
+  not drawn for a while plays none of what it missed); the Effects strip
+  down, none.
+  - `a_found_result_sounds_only_with_no_music`
+  - `every_sound_plays_and_is_named_apart` (`sfx::bench`)
+
 ## Karaoke
 
 - **K1.** Karaoke mode exists only fullscreen. On the Karaoke tab, as in

@@ -186,9 +186,20 @@ pub fn update(state: &mut State, action: Action) -> Vec<Effect> {
         }
         Action::Lyrics(path, answer) => karaoke::lyrics_arrived(state, path, answer),
         Action::LyricsEdit(what) => super::lyric_edit::act(state, what, &mut fx),
-        Action::Working { path, job, on } => work::working(state, path, job, on),
-        Action::Heard { path, part } => work::heard(state, path, part),
-        Action::Ready { path, job, facts } => work::ready(state, path, job, facts),
+        Action::Working { path, job, on } => {
+            super::prep::working(state, &path, on);
+            work::working(state, path.clone(), job, on);
+            super::prep::follow(state, &path);
+        }
+        Action::Heard { path, part } => {
+            super::prep::heard(state, &path, &part);
+            work::heard(state, path.clone(), &part);
+            super::prep::follow(state, &path);
+        }
+        Action::Ready { path, job, facts } => {
+            work::ready(state, path.clone(), job, facts);
+            super::prep::follow(state, &path);
+        }
         Action::Failed(text) => state.error(text),
         Action::Info(text) => state.info(text),
         Action::QueueSaved(result) => queue::saved(state, result),

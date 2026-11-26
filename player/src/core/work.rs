@@ -214,11 +214,15 @@ pub(crate) fn working(state: &mut State, path: PathBuf, job: Job, on: bool) {
 }
 
 /// [`crate::core::Action::Heard`]: part of what a file's work finds out.
-pub(crate) fn heard(state: &mut State, path: PathBuf, part: Heard) {
-    let facts = state.facts.entry(path).or_default();
+pub(crate) fn heard(state: &mut State, path: PathBuf, part: &Heard) {
     match part {
-        Heard::Key(found) => facts.key = Some(found),
-        Heard::Stems => facts.stems = Some(true),
+        Heard::Key(found) => state.facts.entry(path).or_default().key = Some(found.is_some()),
+        Heard::Stems => state.facts.entry(path).or_default().stems = Some(true),
+        Heard::Separating(_)
+        | Heard::Beats(_)
+        | Heard::Lyrics(_)
+        | Heard::Cover(_)
+        | Heard::Story(_) => {}
     }
 }
 

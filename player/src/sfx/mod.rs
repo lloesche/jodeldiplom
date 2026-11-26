@@ -45,6 +45,12 @@
 //! The game's live sounds go with its bubbles: with the notes hidden none
 //! plays; the diploma shows all the same (the game scored the song), and
 //! sounds.
+//!
+//! A result of a song's preparation found ([`crate::core::prep`]) sounds a
+//! soft pluck at once on the desk's frames ([`Sfx::found`]), only while no
+//! music plays: with a track playing or a preview on, none; one a frame
+//! at most, and only for a result just found (a window that was not drawn
+//! for a while plays none of what it missed).
 
 pub mod bench;
 pub mod conductor;
@@ -80,6 +86,10 @@ pub struct Desk<'a> {
 /// time them by.
 const PENDING: usize = 64;
 
+/// How long after a result of a song's preparation is found it may still
+/// sound, ms (a frame comes within this while the window is drawn).
+const FOUND_FRESH_MS: u64 = 1_000;
+
 /// What the conductor was told of the song: which it is, its key as the
 /// analysis found it and how far it is shifted, and whether its grid was
 /// known (with none: no key and the free clock, so nothing of the song
@@ -110,6 +120,9 @@ pub struct Sfx {
     pending: Vec<(Event, f64)>,
     /// The result's reveal as last heard.
     reveal: reveal::RevealSounds,
+    /// The preparation's results found as last seen
+    /// ([`crate::core::prep::Prep::found`]); none before the first frame.
+    found: Option<u64>,
 }
 
 impl Sfx {
@@ -122,6 +135,33 @@ impl Sfx {
         self.loudness(state, &desk);
         self.moments(state, &desk);
         self.reveal(state, &desk);
+        self.found(state, &desk);
+    }
+
+    /// A result of a song's preparation found since the last frame: its
+    /// sound on `desk`, at once, while no music plays (no track playing,
+    /// no preview), the result just found and the Effects strip up.
+    fn found(&mut self, state: &State, desk: &Desk<'_>) {
+        let prep = &state.prep;
+        let Some(seen) = self.found.replace(prep.found) else {
+            return;
+        };
+        let music =
+            state.playing.state == PlayState::Playing || crate::core::preview::active(state);
+        let fresh =
+            (prep.found_at).is_some_and(|at| state.now_ms.saturating_sub(at) <= FOUND_FRESH_MS);
+        if prep.found == seen
+            || music
+            || !fresh
+            || state.desk.setting(StripKind::Effects).gain() == 0.0
+        {
+            return;
+        }
+        let step = (prep.songs())
+            .filter_map(|(_, s)| s.found.as_ref())
+            .max_by_key(|(_, at)| *at)
+            .map_or(0, |(found, _)| found.step());
+        self.on_desk(desk, Event::Found { step });
     }
 
     /// The conductor at the device's rate, its synth sent to the desk, made

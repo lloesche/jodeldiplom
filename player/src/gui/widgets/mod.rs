@@ -4,9 +4,10 @@
 //! list's rows and the tabs; a card's items that take a click and
 //! segmented controls, switches and checks, key hints, links, a text
 //! field; keeping what the keys are on in view; an area that takes the
-//! pointer over what something else draws; an envelope's curve and a
-//! piano keyboard. A screen that needs one that is not here adds it here,
-//! made generically, and never makes its own.
+//! pointer over what something else draws; an envelope's curve, a
+//! piano keyboard and a waveform with its beats. A screen that needs one
+//! that is not here adds it here, made generically, and never makes its
+//! own.
 
 pub mod area;
 pub mod button;
@@ -27,6 +28,7 @@ pub mod spectrum;
 pub mod switch;
 pub mod tabs;
 pub mod track;
+pub mod wave;
 
 pub use area::area;
 pub use button::{chip, ghost, primary, round, secondary};
@@ -46,3 +48,4 @@ pub use spectrum::spectrum;
 pub use switch::{check, switch};
 pub use tabs::{tabs, Tab};
 pub use track::track;
+pub use wave::wave;

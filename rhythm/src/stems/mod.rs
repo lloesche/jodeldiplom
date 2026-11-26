@@ -623,6 +623,12 @@ impl PartsBuilder {
         self.tonal.push(&tonal);
     }
 
+    /// Each stem's waveform so far ([`Stem::ALL`]' order): the frames
+    /// closed of the blocks taken in.
+    pub fn lanes(&self) -> [&crate::waveform::Lane; STEMS] {
+        std::array::from_fn(|s| self.lanes[s].so_far())
+    }
+
     /// Ends the energy frame being filled.
     fn close_level(&mut self) {
         let n = self.filled.max(1) as f64;

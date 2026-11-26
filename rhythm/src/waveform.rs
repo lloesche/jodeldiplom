@@ -111,6 +111,11 @@ impl LaneBuilder {
         (((k + 1) as f64) * self.rate / FPS).round() as u64
     }
 
+    /// The frames closed so far.
+    pub fn so_far(&self) -> &Lane {
+        &self.lane
+    }
+
     /// Takes one sample (full scale ±1).
     pub fn push_one(&mut self, x: f32) {
         self.peak = self.peak.max(x.abs());

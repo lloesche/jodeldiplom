@@ -2,9 +2,10 @@
 //! the list pane with its tabs ([`list`]), the Transition tab
 //! ([`transition`]), the Karaoke tab and Karaoke mode ([`karaoke`], the
 //! sync's panel [`sync`]), the right column's text under the cover or the
-//! summary under the list ([`info`]), the command palette over everything
-//! ([`command_palette`]) and the bottom bar ([`bottom`], the spectrum's
-//! [`plot`]); and whole screens: Now playing ([`now::NowPlaying`]), the
+//! summary under the list ([`info`]), a song's preparation as the queue's
+//! captions and the right column's view say it ([`prep`]), the command
+//! palette over everything ([`command_palette`]) and the bottom bar
+//! ([`bottom`], the spectrum's [`plot`]); and whole screens: Now playing ([`now::NowPlaying`]), the
 //! settings ([`settings`]), the keys ([`help`]) and the lyrics editor
 //! ([`lyrics`]), in the player's colours ([`palette`]).
 
@@ -20,6 +21,7 @@ pub mod lyrics;
 pub mod now;
 pub mod palette;
 pub mod plot;
+pub mod prep;
 pub mod settings;
 pub mod setup;
 pub mod sync;

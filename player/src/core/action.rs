@@ -80,15 +80,27 @@ impl LyricsFacts {
     }
 }
 
-/// A part of a file's analysis heard while it goes on, in the order they
-/// come ([`Action::Heard`]): the key once the file is decoded, the stems
-/// once separated (the tempo comes with the whole analysis).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// A part of a song's preparation told while it goes on, in the order
+/// they come ([`Action::Heard`]): the key once the file is decoded, the
+/// stems as they are separated and once they all are, the beat once
+/// decided; the lyrics' steps and what they find; the cover taken apart;
+/// a story of the song as it is written ([`crate::core::prep`]).
+#[derive(Clone, Debug, PartialEq)]
 pub enum Heard {
-    /// The key was looked for: whether one was found.
-    Key(bool),
+    /// The key was looked for: the one found.
+    Key(Option<jodel_rhythm::key::Key>),
+    /// A chunk of the stems separated: the stems so far.
+    Separating(Arc<crate::core::prep::Separating>),
     /// The stems are separated and kept.
     Stems,
+    /// The beat decided.
+    Beats(Arc<crate::core::prep::BeatsFound>),
+    /// A step of the lyrics begun, or what it found.
+    Lyrics(crate::core::prep::Words),
+    /// The cover taken apart.
+    Cover(crate::core::prep::CoverCut),
+    /// A story of the song, as it is written and drawn.
+    Story(crate::core::prep::Story),
 }
 
 /// What a finished job found ([`Action::Ready`]).
@@ -339,8 +351,9 @@ pub enum Action {
         /// What it found, for the queue's icons (none when it failed).
         facts: Option<Facts>,
     },
-    /// A part of a file's analysis is done, the rest still going on (the
-    /// queue's icons light up one after the other).
+    /// A part of a song's preparation is done or begun, the rest still
+    /// going on (the queue's icons light up one after the other, its
+    /// captions and the preparation view follow it).
     Heard {
         /// The file.
         path: PathBuf,
