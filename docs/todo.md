@@ -21,7 +21,12 @@ Work agreed on but not started, roughly in the order it was raised.
   the song), taken apart into depth layers and played as parallax (or
   3D) cut on the downbeats. Heavy to prepare, cheap to play. The song's
   look (palette, style, motifs, the effects' flavours) chosen the same
-  way. A Python prototype first (kept outside the repository), then our own
+  way. The language model is Gemma 4 E4B at 4 bits (3.4 GB resident;
+  E2B wrote half the scenes and made things up), its audio input of no
+  use for music. The story comes from the lyrics alone; the look is a
+  separate question, from the file's tags, what the model knows of the
+  artist and album (and how sure it is), the genre, the era and the
+  mood. A Python prototype first (kept outside the repository), then our own
   inference if it is worth it. Also to measure there: the image model at
   fp16, Q8 and Q4; Gemma 4 E2B against E4B.
 - **The theme in the window**: Spooky is chosen in the settings file
@@ -35,6 +40,17 @@ Work agreed on but not started, roughly in the order it was raised.
   shown over the sound, not edited there (they are the tier table's
   rows); if they should be tried out on the tab too, a row's layers
   become user data the way the patches are.
+
+- **Preparing by model, not by song.** The big models don't fit beside
+  each other and take about a minute to load, so the work for the songs
+  in the queue goes by stage: one queue per model (the language model's
+  questions and plans, then the image model's scenes and sprites, then
+  depth and the cut), and one GPU scheduler keeping one big model at a
+  time, draining its queue for every song before it swaps. The song to
+  play next jumps ahead when it would otherwise wait too long; singing
+  takes the GPU first. The existing workers (stems, the speech model,
+  word timing, the cover's vision) under the same scheduler; each stage
+  its icon in the queue, lit only when done.
 
 ## The player
 
