@@ -61,7 +61,6 @@
 
 pub mod activation;
 pub mod cues;
-mod fft;
 pub mod frontend;
 pub mod grid;
 pub mod key;
@@ -373,15 +372,13 @@ fn stem_candidates(parts: &Parts, cues: &Cues) -> Vec<vote::Candidate> {
     }]
 }
 
-/// The logistic function.
-fn sigmoid(x: f32) -> f32 {
-    1.0 / (1.0 + (-x).exp())
-}
-
 /// A curve of the network's probabilities; all zero when it found no
 /// beat anywhere, so the trackers find none either.
 fn probabilities(logits: &[f32]) -> Curve {
-    let mut values: Vec<f32> = logits.iter().map(|&x| sigmoid(x)).collect();
+    let mut values: Vec<f32> = logits
+        .iter()
+        .map(|&x| jodel_tensors::kernels::sigmoid(x))
+        .collect();
     if values.iter().all(|&v| v < 0.5) {
         values.fill(0.0);
     }

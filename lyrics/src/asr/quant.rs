@@ -10,48 +10,13 @@
 //! −8 scales) and rounding to the group's range (the offset its minimum)
 //! both fit; a GPU's kernel reads them the same way.
 
-use jodel_tensors::f16_to_f32;
+use jodel_tensors::half::{f16_to_f32, f32_to_f16};
+use jodel_tensors::kernels::processors;
 
 /// Values a group.
 pub const GROUP: usize = 32;
 /// u32s a group.
 pub const GROUP_WORDS: usize = 5;
-
-/// f32 to the nearest IEEE half (ties to even), as its bits.
-pub fn f16_bits(x: f32) -> u16 {
-    let bits = x.to_bits();
-    let sign = ((bits >> 16) & 0x8000) as u16;
-    let exp = ((bits >> 23) & 0xff) as i32;
-    let frac = bits & 0x7f_ffff;
-    if exp == 0xff {
-        return sign | 0x7c00 | if frac != 0 { 0x200 } else { 0 };
-    }
-    let e = exp - 127 + 15;
-    if e >= 0x1f {
-        return sign | 0x7c00;
-    }
-    if e <= 0 {
-        // Subnormal or zero.
-        if e < -10 {
-            return sign;
-        }
-        let m = frac | 0x80_0000;
-        let shift = (14 - e) as u32;
-        let half = 1u32 << (shift - 1);
-        let rest = m & ((1u32 << shift) - 1);
-        let mut v = m >> shift;
-        if rest > half || (rest == half && v & 1 == 1) {
-            v += 1;
-        }
-        return sign | v as u16;
-    }
-    let mut v = ((e as u32) << 10) | (frac >> 13);
-    let rest = frac & 0x1fff;
-    if rest > 0x1000 || (rest == 0x1000 && v & 1 == 1) {
-        v += 1;
-    }
-    sign | v as u16
-}
 
 /// `values` (`rows × cols`, `cols` a multiple of [`GROUP`]) at 4 bits:
 /// `rows × cols / GROUP` groups.
@@ -80,10 +45,7 @@ fn quantize_with(
     importance: Option<&[f32]>,
 ) -> Vec<u32> {
     let groups = values.len() / GROUP;
-    let threads = std::thread::available_parallelism()
-        .map_or(4, |n| n.get())
-        .min(groups.div_ceil(4096))
-        .max(1);
+    let threads = processors().min(groups.div_ceil(4096)).max(1);
     let per = groups.div_ceil(threads) * GROUP;
     let parts: Vec<Vec<u32>> = std::thread::scope(|s| {
         let handles: Vec<_> = values
@@ -116,7 +78,7 @@ fn quantize_groups(
         col = (col + GROUP) % cols;
         let (scale, offset) = if symmetric {
             let peak = g.iter().fold(0.0f32, |m, v| m.max(v.abs()));
-            let scale = f16_to_f32(f16_bits(peak / 7.0));
+            let scale = f16_to_f32(f32_to_f16(peak / 7.0));
             (scale, -8.0 * scale)
         } else {
             fit(g, w)
@@ -130,7 +92,7 @@ fn quantize_groups(
             };
             words[j / 8] |= q << (4 * (j % 8));
         }
-        words[4] = u32::from(f16_bits(scale)) | (u32::from(f16_bits(offset)) << 16);
+        words[4] = u32::from(f32_to_f16(scale)) | (u32::from(f32_to_f16(offset)) << 16);
         out.extend_from_slice(&words);
     }
     out
@@ -157,7 +119,7 @@ fn error_of(g: &[f32], w: &[f32], scale: f32, offset: f32) -> f64 {
 /// scales around it, the nibbles it gives and the scale and offset fitted
 /// to them by weighted least squares.
 fn fit(g: &[f32], w: &[f32]) -> (f32, f32) {
-    let half = |x: f32| f16_to_f32(f16_bits(x));
+    let half = |x: f32| f16_to_f32(f32_to_f16(x));
     let lo = g.iter().copied().fold(f32::MAX, f32::min);
     let hi = g.iter().copied().fold(f32::MIN, f32::max);
     let offset = half(lo);
@@ -207,7 +169,7 @@ pub const GROUP_WORDS_8: usize = 9;
 pub fn quantize8(values: &[f32], rows: usize, cols: usize) -> Vec<u32> {
     assert_eq!(values.len(), rows * cols);
     assert_eq!(cols % GROUP, 0, "{cols} inputs are not whole groups");
-    let half = |x: f32| f16_to_f32(f16_bits(x));
+    let half = |x: f32| f16_to_f32(f32_to_f16(x));
     let mut out = Vec::with_capacity(rows * cols / GROUP * GROUP_WORDS_8);
     for g in values.chunks_exact(GROUP) {
         let lo = g.iter().copied().fold(f32::MAX, f32::min);
@@ -223,7 +185,7 @@ pub fn quantize8(values: &[f32], rows: usize, cols: usize) -> Vec<u32> {
             };
             words[j / 4] |= q << (8 * (j % 4));
         }
-        words[8] = u32::from(f16_bits(scale)) | (u32::from(f16_bits(offset)) << 16);
+        words[8] = u32::from(f32_to_f16(scale)) | (u32::from(f32_to_f16(offset)) << 16);
         out.extend_from_slice(&words);
     }
     out
@@ -240,7 +202,7 @@ pub fn to_halves(values: &[f32], rows: usize, cols: usize) -> Vec<u32> {
     assert_eq!(cols % GROUP, 0, "{cols} inputs are not whole groups");
     values
         .chunks_exact(2)
-        .map(|p| u32::from(f16_bits(p[0])) | (u32::from(f16_bits(p[1])) << 16))
+        .map(|p| u32::from(f32_to_f16(p[0])) | (u32::from(f32_to_f16(p[1])) << 16))
         .collect()
 }
 
@@ -433,12 +395,7 @@ mod tests {
         let (rows, cols) = (96, 256);
         let mut state = 0x2545_f491u32;
         let values: Vec<f32> = (0..rows * cols)
-            .map(|_| {
-                state ^= state << 13;
-                state ^= state >> 17;
-                state ^= state << 5;
-                (state >> 8) as f32 / 16_777_216.0 - 0.5
-            })
+            .map(|_| (jodel_dsp::xorshift32(&mut state) >> 8) as f32 / 16_777_216.0 - 0.5)
             .collect();
         let importance: Vec<f32> = (0..cols).map(|c| 0.1 + (c % 7) as f32).collect();
         for imp in [None, Some(&importance[..])] {
@@ -487,11 +444,11 @@ mod tests {
     #[test]
     fn halves_round_trip() {
         for x in [0.0f32, 1.0, -2.5, 0.1, 65504.0, 6.1e-5, 3.0e-7, -1e-3] {
-            let back = f16_to_f32(f16_bits(x));
+            let back = f16_to_f32(f32_to_f16(x));
             assert!((back - x).abs() <= x.abs() * 1e-3 + 6e-8, "{x} -> {back}");
         }
-        assert_eq!(f16_bits(1.0), 0x3c00);
-        assert_eq!(f16_bits(-2.0), 0xc000);
+        assert_eq!(f32_to_f16(1.0), 0x3c00);
+        assert_eq!(f32_to_f16(-2.0), 0xc000);
         assert_eq!(f16_to_f32(0x3555), 0.333_251_95);
     }
 
@@ -508,8 +465,8 @@ mod tests {
         let range = error_of(
             &g,
             &ones,
-            f16_to_f32(f16_bits((hi - lo) / 15.0)),
-            f16_to_f32(f16_bits(lo)),
+            f16_to_f32(f32_to_f16((hi - lo) / 15.0)),
+            f16_to_f32(f32_to_f16(lo)),
         );
         let (s, o) = fit(&g, &ones);
         assert!(error_of(&g, &ones, s, o) <= range);

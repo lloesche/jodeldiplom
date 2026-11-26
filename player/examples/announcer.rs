@@ -274,7 +274,7 @@ fn save(dir: &Path, name: &str, out: &[f32], rate: u32) {
         .iter()
         .map(|s| (s.clamp(-1.0, 1.0) * 32_767.0).round() as i16)
         .collect();
-    let bytes = jodeldiplom::keep::wav(&words, rate, 2);
+    let bytes = jodel_dsp::wav::pcm16(rate, 2, &words);
     durable::write_atomic(&dir.join(format!("{name}.wav")), &bytes).expect("the WAV written");
 }
 
@@ -428,11 +428,11 @@ fn over_song(dir: &Path, path: &Path, from: f64) -> Result<(), String> {
     }
     let mut music = vec![0.0f32; 2 * frames];
     let mut take = |b: &jodel_rhythm::stems::StemBlock| {
-        for (s, stem) in Stem::ALL.iter().enumerate() {
-            if *stem == Stem::Vocals {
+        for (stem, [left, right]) in b.stems.iter() {
+            if stem == Stem::Vocals {
                 continue;
             }
-            for (i, (l, r)) in b.stems[s][0].iter().zip(b.stems[s][1]).enumerate() {
+            for (i, (l, r)) in left.iter().zip(*right).enumerate() {
                 if let Some(f) = music.get_mut(2 * (b.start + i)..2 * (b.start + i) + 2) {
                     f[0] += l;
                     f[1] += r;

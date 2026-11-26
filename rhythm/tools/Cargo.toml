@@ -9,6 +9,9 @@ description = "The tools that make and measure jodel-rhythm's built-in pitch wei
 
 [dependencies]
 jodel-rhythm = { path = ".." }
+# Half floats, and the WAV files of the voices measured on.
+jodel-dsp = { path = "../../dsp" }
+jodel-tensors = { path = "../../tensors" }
 # Every file written (the built-in pitch weights among them): whole or not
 # at all, made durable.
 durable = { path = "../../durable" }

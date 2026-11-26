@@ -6,11 +6,12 @@
 
 use crate::error::Error;
 use crate::rate::Route;
+use crate::resample::gcd;
 
 use super::cues::CueEvent;
 use super::drop::drop_later;
 use super::moving::Ahead;
-use super::segment::{gcd, SegStart, SegmentLine};
+use super::segment::{SegStart, SegmentLine};
 use super::track::{crossfade, frames_of, preroll, Progress, Splice, StartAt, Switch, Track};
 use super::{Engine, WRITE_WAIT};
 

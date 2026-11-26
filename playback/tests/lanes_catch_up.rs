@@ -21,6 +21,7 @@ use jodel_playback::stems::Stem;
 use jodel_playback::{
     Captures, Event, JumpAt, MakeStems, MemoryTarget, Player, PlayerOptions, StemDesk,
 };
+use jodel_testkit::{heavy, real_time, TempDir};
 use SampleFormat::*;
 
 /// Frames a held device lets the engine write ahead of what it played.
@@ -84,7 +85,7 @@ fn kept_options(dir: &std::path::Path, samples: &[i32]) -> (std::path::PathBuf, 
 fn kept_stems_asked_for_mid_track_are_there_from_the_first_frame_given_back() {
     let _heavy = heavy();
     for keep in [0, 3 * 1_024] {
-        let dir = temp_dir(&format!("catch-up-kept-{keep}"));
+        let dir = TempDir::new(&format!("catch-up-kept-{keep}"));
         let samples = tones(RATE, 4 * RATE as usize);
         let (file, options) = kept_options(&dir, &samples);
         let (player, events, captures, hold) = held_player(&file, options);
@@ -127,7 +128,7 @@ fn kept_stems_asked_for_mid_track_are_there_from_the_first_frame_given_back() {
 #[test]
 fn separated_stems_are_there_once_the_first_chunk_is() {
     let _heavy = heavy();
-    let dir = temp_dir("catch-up-separated");
+    let dir = TempDir::new("catch-up-separated");
     let file = tone_file(&dir, "tones.wav", RATE, 10 * RATE as usize);
     FIRST_CHUNK.allow(0);
     let options = options(false, first_chunk);
@@ -169,7 +170,7 @@ fn separated_stems_are_there_once_the_first_chunk_is() {
 #[test]
 fn what_a_jump_crossfaded_is_not_written_again() {
     let _heavy = heavy();
-    let dir = temp_dir("catch-up-crossfade");
+    let dir = TempDir::new("catch-up-crossfade");
     let samples = tones(RATE, 3 * RATE as usize);
     let (file, options) = kept_options(&dir, &samples);
     let run = |ask: bool| {
@@ -205,7 +206,7 @@ fn what_a_jump_crossfaded_is_not_written_again() {
 #[test]
 fn a_first_touch_is_heard_on_its_frame_through_a_mixer() {
     let _guard = real_time();
-    let dir = temp_dir("catch-up-mixer");
+    let dir = TempDir::new("catch-up-mixer");
     let samples = tones(RATE, 3 * RATE as usize);
     let (file, options) = kept_options(&dir, &samples);
     let device = MemoryTarget::new(caps(&[RATE], &[S24In32Low]), SimClock::Paced);
@@ -262,7 +263,7 @@ fn a_first_touch_is_heard_on_its_frame_through_a_mixer() {
 #[test]
 fn a_jump_back_into_what_is_kept_for_the_lanes_plays_the_same() {
     let _heavy = heavy();
-    let dir = temp_dir("catch-up-jumps");
+    let dir = TempDir::new("catch-up-jumps");
     let samples = tones(RATE, 3 * RATE as usize);
     let (file, options) = kept_options(&dir, &samples);
     let run = |target: GatedTarget, gate: &Gate| {

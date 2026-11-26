@@ -627,7 +627,7 @@ fn lyrics_are_asked_for_on_the_tab_and_follow_the_song() {
 
 #[test]
 fn the_microphone_is_open_while_karaoke_shows() {
-    let _guard = common::real_time();
+    let _guard = jodel_testkit::real_time();
     use jodel_output::input::Input;
     use jodel_output::SimClock;
     use jodeldiplom::app::{App, AppOptions, Output};

@@ -106,17 +106,13 @@ pub fn voice_of(stems: Option<&Path>, path: &Path) -> Result<(Vec<f32>, u32), St
     let Some(mut file) = kept else {
         return Ok((crate::lyrics::timer::separate_16k(path, false)?.0, 16_000));
     };
-    let vocals = Stem::ALL
-        .iter()
-        .position(|&s| s == Stem::Vocals)
-        .unwrap_or(2);
     let mut voice = Vec::with_capacity(file.frames() as usize);
     let mut at = 0;
     while at < file.frames() {
         let stems = file
             .read(at, RATE as usize * 10)
             .map_err(|e| e.to_string())?;
-        let [l, r] = &stems[vocals];
+        let [l, r] = &stems[Stem::Vocals];
         if l.is_empty() {
             break;
         }

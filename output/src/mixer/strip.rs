@@ -10,6 +10,8 @@ use std::sync::mpsc::Sender;
 use std::sync::Arc;
 use std::time::Duration;
 
+use jodel_dsp::FULL_SCALE;
+
 use super::{MixShared, Msg, SlotState, Start};
 
 /// How long a strip's level, mute or solo takes to be heard: a linear ramp,
@@ -18,10 +20,6 @@ pub const STRIP_RAMP: Duration = Duration::from_millis(20);
 
 /// The most channels metered; a device's channels past these are not.
 pub const METER_CHANNELS: usize = 8;
-
-/// Digital full scale of the 24-bit samples the mixer works in (the device's
-/// full scale, whatever its bits).
-const FULL_SCALE: f64 = 8_388_608.0;
 
 /// The peak of each channel of `samples` (`channels` per frame), each
 /// sample's size given by `magnitude`.

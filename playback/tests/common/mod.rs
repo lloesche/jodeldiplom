@@ -29,12 +29,6 @@ use jodel_playback::{
 
 pub const TIMEOUT: Duration = Duration::from_secs(30);
 
-pub fn fixture(name: &str) -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../tests/fixtures/pcm")
-        .join(name)
-}
-
 /// 44.1 kHz, 16 bits, 8,193 stereo frames.
 pub const F44: &str = "ramp-44100-16bit.flac";
 /// 48 kHz, 24 bits, 8,193 stereo frames.
@@ -767,56 +761,4 @@ pub fn reference_resample(from: u32, to: u32, channels: usize, samples: &[i32]) 
     resampler.process(samples, &mut out);
     resampler.finish(&mut out);
     out
-}
-
-/// A fresh directory under the system temp dir for this test, removed
-/// when it goes out of scope (with the test's audio files in it: left
-/// behind, they filled a small temp file system run after run).
-pub fn temp_dir(name: &str) -> TempDir {
-    let dir = std::env::temp_dir().join(format!("jodel-playback-{name}-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
-    TempDir(dir)
-}
-
-/// A directory removed when dropped ([`temp_dir`]).
-pub struct TempDir(PathBuf);
-
-impl std::ops::Deref for TempDir {
-    type Target = Path;
-
-    fn deref(&self) -> &Path {
-        &self.0
-    }
-}
-
-impl AsRef<Path> for TempDir {
-    fn as_ref(&self) -> &Path {
-        &self.0
-    }
-}
-
-impl Drop for TempDir {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
-    }
-}
-
-/// Held by a test that plays on a device in real time (a simulated clock
-/// that plays a period every period of wall-clock time) for as long as it
-/// runs: one such test of a binary at a time, and none beside one that
-/// holds [`heavy`]. Side by side on a small, loaded machine (a debug
-/// build, every test of a binary at once), their threads would starve each
-/// other of the periods they must keep.
-pub fn real_time() -> std::sync::RwLockWriteGuard<'static, ()> {
-    REAL_TIME.write().unwrap_or_else(|e| e.into_inner())
-}
-
-static REAL_TIME: std::sync::RwLock<()> = std::sync::RwLock::new(());
-
-/// Held by a test that keeps the processor busy (separating stems, say) in
-/// a binary with [`real_time`] tests: any number of them at once, but none
-/// while one of those runs.
-pub fn heavy() -> std::sync::RwLockReadGuard<'static, ()> {
-    REAL_TIME.read().unwrap_or_else(|e| e.into_inner())
 }

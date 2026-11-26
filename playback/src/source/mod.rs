@@ -36,6 +36,7 @@ use std::fs::File;
 use std::path::Path;
 use std::sync::Arc;
 
+use jodel_dsp::FULL_SCALE;
 use symphonia::core::audio::sample::SampleFormat as SymphoniaSampleFormat;
 use symphonia::core::codecs::audio::well_known as codec_ids;
 use symphonia::core::codecs::audio::{AudioCodecParameters, AudioDecoder, AudioDecoderOptions};
@@ -65,9 +66,6 @@ pub use info::{Codec, Container, Cover, CoverOrigin, Tags, TrackInfo};
 /// built up again before the target. What is decoded before the target is
 /// dropped.
 pub const SEEK_PREROLL: u64 = 8_192;
-
-/// One 24-bit LSB in the `[-1, 1)` floating-point scale.
-pub(crate) const SCALE_24: f64 = 8_388_608.0;
 
 /// An open file, read packet by packet.
 pub struct Source {
@@ -578,7 +576,7 @@ impl Source {
             } else {
                 decoded.copy_to_vec_interleaved(&mut self.wide);
                 for y in &mut self.wide {
-                    *y *= SCALE_24;
+                    *y *= FULL_SCALE;
                 }
             }
             if self.after_seek {
@@ -690,7 +688,7 @@ impl Source {
 
 /// Whether `y` (in 24-bit units) is a 24-bit integer.
 fn on_grid(y: f64) -> bool {
-    y == y.trunc() && (-SCALE_24..SCALE_24).contains(&y)
+    y == y.trunc() && (-FULL_SCALE..FULL_SCALE).contains(&y)
 }
 
 /// Frames per timestamp tick as a ratio `(num, den)`, when a tick is not a

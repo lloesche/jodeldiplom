@@ -362,7 +362,7 @@ fn save(dir: &Path, name: &str, out: &[f32]) {
         .iter()
         .map(|s| (s.clamp(-1.0, 1.0) * 32_767.0).round() as i16)
         .collect();
-    let bytes = jodeldiplom::keep::wav(&words, RATE, 2);
+    let bytes = jodel_dsp::wav::pcm16(RATE, 2, &words);
     durable::write_atomic(&path, &bytes).expect("the WAV written");
     let db = |x: f32| 20.0 * x.max(1e-9).log10();
     let peak = out.iter().fold(0.0f32, |m, s| m.max(s.abs()));

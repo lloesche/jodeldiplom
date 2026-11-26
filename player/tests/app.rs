@@ -52,7 +52,7 @@ fn path_text(app: &App) -> String {
 
 #[test]
 fn alt_enter_plays_the_folder_through_the_null_output() {
-    let _guard = common::real_time();
+    let _guard = jodel_testkit::real_time();
     let tree = common::music_tree("play");
     let mut app = common::fitted_app(options(&tree), 120, 36);
     assert!(common::wait_for(&mut app, WAIT, |a| !a
@@ -132,7 +132,7 @@ fn alt_enter_plays_the_folder_through_the_null_output() {
 /// moves.
 #[test]
 fn paused_the_window_has_nothing_to_redraw() {
-    let _guard = common::real_time();
+    let _guard = jodel_testkit::real_time();
     let tree = common::music_tree("pause");
     let mut app = common::fitted_app(options(&tree), 120, 36);
     assert!(common::wait_for(&mut app, WAIT, |a| !a
@@ -172,7 +172,7 @@ fn paused_the_window_has_nothing_to_redraw() {
 fn a_song_picked_while_paused_plays() {
     use jodeldiplom::core::karaoke;
     use jodeldiplom::core::Side;
-    let _guard = common::real_time();
+    let _guard = jodel_testkit::real_time();
     let dir = common::temp_dir("paused-pick");
     for name in ["a", "b"] {
         common::write_wav(&dir.join(format!("{name}.wav")), 44_100, 8.0);
@@ -272,7 +272,7 @@ fn the_demo_sings_with_no_microphone() {
     use jodeldiplom::core::karaoke::{self, SongLyrics};
     use jodeldiplom::core::{Rhythm, Rhythmed, Side};
     use std::time::Instant;
-    let _guard = common::real_time();
+    let _guard = jodel_testkit::real_time();
     let dir = common::temp_dir("demo-no-mic");
     common::write_wav(&dir.join("a.wav"), 44_100, 30.0);
     durable::write_atomic(&dir.join("a.lrc"), b"la la la la\n").unwrap();
@@ -380,7 +380,7 @@ fn the_demo_sings_with_no_microphone() {
 
 #[test]
 fn a_file_argument_plays_at_once_and_settings_are_saved() {
-    let _guard = common::real_time();
+    let _guard = jodel_testkit::real_time();
     let tree = common::music_tree("autoplay");
     let config_file = tree.root.join("settings").join("config.toml");
     durable::write_atomic(&config_file, b"bpm = true\n").unwrap();
@@ -462,7 +462,7 @@ fn a_file_argument_plays_at_once_and_settings_are_saved() {
 /// queues, and alt+enter on one plays it in place of the queue.
 #[test]
 fn the_session_and_saved_queues_come_back() {
-    let _guard = common::real_time();
+    let _guard = jodel_testkit::real_time();
     let tree = common::music_tree("session");
     let keep = tree.album.parent().unwrap().join("kept");
     let session = keep.join("session.m3u8");
@@ -644,7 +644,7 @@ fn on_b(app: &App) -> bool {
 /// from the positions told of it), not at once.
 #[test]
 fn a_transition_plays_on_the_desk_and_a_mute_after_it_lands_on_the_new_heads_frame() {
-    let _guard = common::real_time();
+    let _guard = jodel_testkit::real_time();
     use jodeldiplom::core::desk::{DeskChange, StripKind};
     let (mut app, dir) = armed_transition("app-transition", no_separator);
     assert!(
@@ -731,7 +731,7 @@ fn heads_and_voice(app: &App) -> (usize, Option<f64>) {
 /// over from has played out and closed after the mix.
 #[test]
 fn the_voice_and_the_mixer_tab_follow_a_transition_on_the_desk() {
-    let _guard = common::real_time();
+    let _guard = jodel_testkit::real_time();
     use jodeldiplom::core::desk::{DeskChange, StripKind};
     use jodeldiplom::core::transition::Status;
     let (mut app, dir) = armed_transition("app-transition-voice", quarter);

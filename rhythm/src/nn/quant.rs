@@ -24,6 +24,8 @@
 
 use std::ops::Range;
 
+use jodel_tensors::half::f16_to_f32;
+
 /// Values a K block holds.
 pub const BLOCK: usize = 256;
 /// Bytes a Q4_K block takes.
@@ -100,30 +102,6 @@ fn half_at(bytes: &[u8], at: Range<usize>) -> f32 {
     f16_to_f32(u16::from_le_bytes([bytes[at.start], bytes[at.start + 1]]))
 }
 
-/// Half precision to single.
-pub fn f16_to_f32(h: u16) -> f32 {
-    let sign = u32::from(h >> 15) << 31;
-    let exp = u32::from((h >> 10) & 0x1f);
-    let mant = u32::from(h & 0x3ff);
-    let bits = match (exp, mant) {
-        (0, 0) => sign,
-        (0, _) => {
-            // Subnormal: normalise.
-            let mut e = 127 - 15 + 1;
-            let mut m = mant;
-            while m & 0x400 == 0 {
-                m <<= 1;
-                e -= 1;
-            }
-            sign | (e << 23) | ((m & 0x3ff) << 13)
-        }
-        (0x1f, 0) => sign | 0x7f80_0000,
-        (0x1f, _) => sign | 0x7fc0_0000,
-        _ => sign | ((exp + 127 - 15) << 23) | (mant << 13),
-    };
-    f32::from_bits(bits)
-}
-
 /// The scale and minimum of run `j` from the 12 packed bytes ([`SCALES`]).
 fn scale_min(j: usize, q: &[u8]) -> (u8, u8) {
     if j < 4 {
@@ -185,16 +163,6 @@ pub fn dequantize_q8(packed: &[u8]) -> Vec<f32> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn half_precision_values() {
-        assert_eq!(f16_to_f32(0x3c00), 1.0);
-        assert_eq!(f16_to_f32(0xc000), -2.0);
-        assert_eq!(f16_to_f32(0x3555), 0.333_251_95);
-        assert_eq!(f16_to_f32(0x0001), 5.960_464_5e-8);
-        assert_eq!(f16_to_f32(0x7bff), 65504.0);
-        assert_eq!(f16_to_f32(0x8000), -0.0);
-    }
 
     /// A block written by hand: `d` 1, `dmin` ½; run `j`'s scale `j + 1`
     /// and minimum `2j + 1` (the last four runs' sixth bits too); value

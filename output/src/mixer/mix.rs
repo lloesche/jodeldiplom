@@ -7,9 +7,8 @@
 
 use crate::dither::Requantizer;
 use crate::format::StreamFormat;
+use jodel_dsp::PEAK;
 
-/// Full scale of the 24-bit samples mixed.
-const FULL: f64 = 8_388_607.0;
 /// How far the limiter looks ahead: the time its gain takes to come down
 /// to a peak (linearly).
 const ATTACK_SECONDS: f64 = 0.002;
@@ -96,7 +95,7 @@ impl Mix {
             channels: usize::from(format.channels).max(1),
             requantizer: Requantizer::new(),
             bits,
-            ceiling: FULL - f64::from(1u32 << (24 - bits)),
+            ceiling: PEAK - f64::from(1u32 << (24 - bits)),
             ahead,
             attack_step: 1.0 / ahead as f64,
             release_step: 1.0 / (RELEASE_SECONDS * rate),

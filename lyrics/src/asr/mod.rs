@@ -39,7 +39,8 @@ pub use parts::{
 use std::convert::Infallible;
 use std::path::Path;
 
-use crate::nn::{attend, dot, gelu, halved, par_rows, rms_norm, Conv, Heads, LayerNorm, Linear};
+use crate::nn::{attend, dot, gelu, halved, rms_norm, Conv, Heads, LayerNorm, Linear};
+use jodel_tensors::kernels::{par_rows, processors};
 use jodel_tensors::SafeTensors;
 
 /// Channels of the encoder's convolutions.
@@ -256,7 +257,7 @@ impl Qwen3Asr {
             norm: t.get(&format!("{m}.norm.weight"), &[DIM])?,
             head: t.get("thinker.lm_head.weight", &[VOCAB, DIM])?,
             vocab,
-            threads: std::thread::available_parallelism().map_or(4, |n| n.get()),
+            threads: processors(),
         })
     }
 

@@ -1,0 +1,9 @@
+[package]
+name = "jodel-dsp"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+license = "MIT"
+description = "The audio crates' shared signal tools: FFTs, windows, the mel scale, xorshift, FNV-1a, WAV files and the 24-bit full scale"
+
+[dependencies]

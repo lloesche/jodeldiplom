@@ -193,7 +193,7 @@ impl Engine for Supersaw {
         if !v.seeded {
             let mut s = dsp::seed(n.seed);
             for ph in &mut v.ph {
-                *ph = dsp::xorshift(&mut s);
+                *ph = jodel_dsp::xorshift32(&mut s);
             }
             v.seeded = true;
         }

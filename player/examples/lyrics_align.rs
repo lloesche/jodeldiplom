@@ -110,24 +110,8 @@ fn summary(errors: &[f64]) -> String {
 
 /// `samples` (16 kHz mono) as a 32-bit float WAV file.
 fn write_wav(path: &Path, samples: &[f32]) {
-    let data = (samples.len() * 4) as u32;
-    let mut out = Vec::with_capacity(44 + samples.len() * 4);
-    out.extend_from_slice(b"RIFF");
-    out.extend_from_slice(&(36 + data).to_le_bytes());
-    out.extend_from_slice(b"WAVEfmt ");
-    out.extend_from_slice(&16u32.to_le_bytes());
-    out.extend_from_slice(&3u16.to_le_bytes());
-    out.extend_from_slice(&1u16.to_le_bytes());
-    out.extend_from_slice(&16_000u32.to_le_bytes());
-    out.extend_from_slice(&64_000u32.to_le_bytes());
-    out.extend_from_slice(&4u16.to_le_bytes());
-    out.extend_from_slice(&32u16.to_le_bytes());
-    out.extend_from_slice(b"data");
-    out.extend_from_slice(&data.to_le_bytes());
-    for s in samples {
-        out.extend_from_slice(&s.to_le_bytes());
-    }
-    durable::write_atomic(path, &out).expect("the WAV file");
+    durable::write_atomic(path, &jodel_dsp::wav::float32(16_000, 1, samples))
+        .expect("the WAV file");
 }
 
 /// `--lrc`'s options.

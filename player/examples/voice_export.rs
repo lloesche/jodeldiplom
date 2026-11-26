@@ -12,27 +12,6 @@
 use std::fs;
 use std::path::Path;
 
-fn wav_f32(samples: &[f32], rate: u32) -> Vec<u8> {
-    let data = (samples.len() * 4) as u32;
-    let mut out = Vec::with_capacity(44 + data as usize);
-    out.extend_from_slice(b"RIFF");
-    out.extend_from_slice(&(36 + data).to_le_bytes());
-    out.extend_from_slice(b"WAVEfmt ");
-    out.extend_from_slice(&16u32.to_le_bytes());
-    out.extend_from_slice(&3u16.to_le_bytes()); // IEEE float
-    out.extend_from_slice(&1u16.to_le_bytes());
-    out.extend_from_slice(&rate.to_le_bytes());
-    out.extend_from_slice(&(rate * 4).to_le_bytes());
-    out.extend_from_slice(&4u16.to_le_bytes());
-    out.extend_from_slice(&32u16.to_le_bytes());
-    out.extend_from_slice(b"data");
-    out.extend_from_slice(&data.to_le_bytes());
-    for s in samples {
-        out.extend_from_slice(&s.to_le_bytes());
-    }
-    out
-}
-
 /// `bytes` as `dir/name`, written whole.
 fn put(dir: &Path, name: &str, bytes: impl AsRef<[u8]>) {
     durable::write_atomic(&dir.join(name), bytes.as_ref()).unwrap();
@@ -63,7 +42,11 @@ fn main() {
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_default();
         put(&dir, "name.txt", &name);
-        put(&dir, "voice.wav", wav_f32(&voice, 16_000));
+        put(
+            &dir,
+            "voice.wav",
+            jodel_dsp::wav::float32(16_000, 1, &voice),
+        );
         println!("{key}  {name}  {:.0} s", voice.len() as f64 / 16_000.0);
         return;
     }
@@ -116,7 +99,11 @@ fn main() {
             .unwrap_or_default();
         put(&dir, "name.txt", &name);
         // Last: a song with its voice.wav is done (passed over above).
-        put(&dir, "voice.wav", wav_f32(&voice, 16_000));
+        put(
+            &dir,
+            "voice.wav",
+            jodel_dsp::wav::float32(16_000, 1, &voice),
+        );
         println!(
             "{lyrics_key}  {name}  {:.0} s",
             voice.len() as f64 / 16_000.0

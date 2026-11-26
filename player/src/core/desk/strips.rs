@@ -2,7 +2,7 @@
 //! its four stems inside it, the preview's strip, the karaoke game's
 //! effects' strip, the microphone's and the master.
 
-use jodel_playback::stems::{Stem, LANES};
+use jodel_playback::stems::{lane, Stem};
 
 /// A channel strip with a fader.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -38,7 +38,8 @@ impl StripKind {
         StripKind::Effects,
     ];
 
-    /// The player's stems, in the order of their lanes ([`LANES`]).
+    /// The player's stems, in the order of their lanes
+    /// ([`jodel_playback::stems::LANES`]).
     pub const PARTS: [StripKind; 4] = [
         StripKind::Drums,
         StripKind::Bass,
@@ -131,10 +132,10 @@ impl StripKind {
         }
     }
 
-    /// Where a stem's strip is among the lanes ([`LANES`], [`StripKind::PARTS`]).
+    /// Where a stem's strip is among the lanes
+    /// ([`jodel_playback::stems::LANES`], [`StripKind::PARTS`]).
     pub fn lane(self) -> Option<usize> {
-        let stem = self.stem()?;
-        LANES.iter().position(|&s| s == stem)
+        self.stem().map(lane)
     }
 }
 
@@ -189,6 +190,8 @@ pub enum DeskButton {
 
 #[cfg(test)]
 mod tests {
+    use jodel_playback::stems::LANES;
+
     use super::*;
 
     #[test]

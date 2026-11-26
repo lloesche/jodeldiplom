@@ -17,16 +17,18 @@ use common::lanes::{broken, device_samples, options, quarter, tone_file, CLOSE, 
 use common::*;
 use jodel_output::mixer::{Mixer, MixerOptions, Role, Strip};
 use jodel_output::{Capabilities, SampleFormat, SimClock};
-use jodel_playback::stems::{Stem, LANES, STEMS};
+use jodel_playback::stems::{lane, PerStem, Stem};
 use jodel_playback::{
     Captures, Event, MakeStems, MemoryTarget, Player, PlayerOptions, StemDesk, StemFile, StemStore,
     StemWriter,
 };
+use jodel_testkit::TempDir;
 use SampleFormat::*;
 
-/// The part strip of `stem` among the desk's (in [`LANES`]' order).
+/// The part strip of `stem` among the desk's (in
+/// [`jodel_playback::stems::LANES`]' order).
 fn part(lanes: &MixerLanes, stem: Stem) -> &Strip {
-    &lanes.parts[LANES.iter().position(|&s| s == stem).expect("a lane")]
+    &lanes.parts[lane(stem)]
 }
 
 /// The largest step between `n` frames of `got` from its frame `at` and
@@ -113,7 +115,7 @@ impl Held {
 /// ring); every strip back as it was, the file again bit for bit.
 #[test]
 fn a_stem_level_on_the_desk_is_heard_at_once_and_untouched_is_the_file_again() {
-    let dir = temp_dir("stems-desk");
+    let dir = TempDir::new("stems-desk");
     let frames = 3 * RATE as usize;
     let (path, file) = tones_of(&dir, "tones.wav", frames);
     let desk = held_desk(caps(&[RATE], &[S24In32Low]));
@@ -161,7 +163,7 @@ fn a_stem_level_on_the_desk_is_heard_at_once_and_untouched_is_the_file_again() {
 /// main is).
 #[test]
 fn a_seek_with_a_stem_muted_plays_its_stems_from_there() {
-    let dir = temp_dir("stems-seek");
+    let dir = TempDir::new("stems-seek");
     let frames = 4 * RATE as usize;
     let (path, file) = tones_of(&dir, "tones.wav", frames);
     for out in [RATE, 192_000] {
@@ -210,7 +212,7 @@ fn a_seek_with_a_stem_muted_plays_its_stems_from_there() {
 /// quarter of each track throughout.
 #[test]
 fn the_next_track_plays_its_stems_gaplessly() {
-    let dir = temp_dir("stems-next");
+    let dir = TempDir::new("stems-next");
     let frames = 2 * RATE as usize;
     let (one, first) = tones_of(&dir, "one.wav", frames);
     let (two, second) = tones_of(&dir, "two.wav", frames);
@@ -240,7 +242,7 @@ fn the_next_track_plays_its_stems_gaplessly() {
 /// plays main, the file as it is, though a stem is muted.
 #[test]
 fn failing_stems_stop_the_parts_and_the_file_plays_as_it_is() {
-    let dir = temp_dir("stems-broken");
+    let dir = TempDir::new("stems-broken");
     let (path, file) = tones_of(&dir, "tones.wav", 2 * RATE as usize);
     let (target, captures, gate, lanes) = gated_mixer_lanes(caps(&[RATE], &[S24In32Low]));
     let (player, events) = Player::new(Box::new(target), options(true, broken));
@@ -297,8 +299,8 @@ fn kept(dir: &Path, track: &Path, file: &[i32], stems: &[Stem], gain: f32) -> Ar
     };
     let (left, right) = (side(0), side(1));
     let silent = vec![0.0f32; left.len()];
-    let parts: [[&[f32]; 2]; STEMS] = std::array::from_fn(|s| {
-        if stems.contains(&Stem::ALL[s]) {
+    let parts = PerStem::from_fn(|s| {
+        if stems.contains(&s) {
             [&left[..], &right[..]]
         } else {
             [&silent[..], &silent[..]]
@@ -317,7 +319,7 @@ fn kept(dir: &Path, track: &Path, file: &[i32], stems: &[Stem], gain: f32) -> Ar
 /// the file; muted: nothing).
 #[test]
 fn kept_stems_play_without_a_separation() {
-    let dir = temp_dir("stems-kept");
+    let dir = TempDir::new("stems-kept");
     let frames = 2 * RATE as usize;
     let (path, file) = tones_of(&dir, "tones.wav", frames);
     let store = kept(&dir, &path, &file, &[Stem::Vocals], 1.0);

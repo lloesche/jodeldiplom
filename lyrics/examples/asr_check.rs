@@ -18,7 +18,7 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use jodel_lyrics::asr::{argmax, mel, text, Qwen3Asr};
-use jodel_lyrics::json::Json;
+use jodel_tensors::json::Json;
 
 fn read(path: &Path) -> Vec<f32> {
     std::fs::read(path)

@@ -18,7 +18,6 @@
 
 mod common;
 
-use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
@@ -30,8 +29,7 @@ use jodel_output::{
     Capabilities, Clock, Error, FileOutput, OpenRequest, Output, OutputTarget, SimClock,
     StreamFormat, StreamInfo, Tap,
 };
-
-struct Counting;
+use jodel_testkit::{real_time, Call, Counting};
 
 static COUNTING: AtomicBool = AtomicBool::new(false);
 static DEVICE_ALLOCATIONS: AtomicU64 = AtomicU64::new(0);
@@ -53,7 +51,8 @@ fn mark(kind: u8) {
     THREAD.with(|t| t.set(kind));
 }
 
-fn count(free: bool) {
+fn count(call: Call) {
+    let free = call == Call::Free;
     if !COUNTING.load(Ordering::Relaxed) {
         return;
     }
@@ -68,31 +67,8 @@ fn count(free: bool) {
     counter.fetch_add(1, Ordering::Relaxed);
 }
 
-// SAFETY: every call goes to the system allocator as it came.
-unsafe impl GlobalAlloc for Counting {
-    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        count(false);
-        System.alloc(layout)
-    }
-
-    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        count(true);
-        System.dealloc(ptr, layout)
-    }
-
-    unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
-        count(false);
-        System.alloc_zeroed(layout)
-    }
-
-    unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-        count(false);
-        System.realloc(ptr, layout, new_size)
-    }
-}
-
 #[global_allocator]
-static ALLOCATOR: Counting = Counting;
+static ALLOCATOR: Counting = Counting(count);
 
 /// The counts of `f`: the device thread's allocations and frees, the
 /// mixer thread's.

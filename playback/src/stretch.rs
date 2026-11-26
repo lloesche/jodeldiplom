@@ -43,6 +43,9 @@
 use std::collections::VecDeque;
 use std::f64::consts::PI;
 
+use jodel_dsp::fft::{Complex, Fft};
+use jodel_dsp::window::hann;
+
 /// The slowest speed accepted (input seconds per output second).
 pub const MIN_SPEED: f64 = 0.25;
 /// The fastest speed accepted.
@@ -73,7 +76,7 @@ pub struct Stretcher {
     /// The synthesis hop, a quarter of the frame.
     hop: usize,
     /// The transform for `size` points.
-    fft: Fft,
+    fft: Fft<f64>,
     /// The periodic Hann window, used for analysis and synthesis.
     window: Vec<f64>,
     /// The speed the stretcher glides to.
@@ -119,7 +122,7 @@ pub struct Stretcher {
     done: bool,
 
     /// Scratch: the frame's spectrum.
-    spectrum: Vec<Complex>,
+    spectrum: Vec<Complex<f64>>,
     /// Scratch: the frame's magnitudes.
     mag: Vec<f64>,
     /// Scratch: the frame's phases.
@@ -148,9 +151,7 @@ impl Stretcher {
             size,
             hop,
             fft: Fft::new(size),
-            window: (0..size)
-                .map(|i| 0.5 - 0.5 * (2.0 * PI * i as f64 / size as f64).cos())
-                .collect(),
+            window: hann(size),
             target: 1.0,
             speed: 1.0,
             detect: true,
@@ -538,114 +539,10 @@ fn wrap(x: f64) -> f64 {
     x - 2.0 * PI * (x / (2.0 * PI)).round()
 }
 
-/// A complex number.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
-struct Complex {
-    re: f64,
-    im: f64,
-}
-
-impl Complex {
-    fn add(self, o: Complex) -> Complex {
-        Complex {
-            re: self.re + o.re,
-            im: self.im + o.im,
-        }
-    }
-
-    fn sub(self, o: Complex) -> Complex {
-        Complex {
-            re: self.re - o.re,
-            im: self.im - o.im,
-        }
-    }
-
-    fn mul(self, o: Complex) -> Complex {
-        Complex {
-            re: self.re * o.re - self.im * o.im,
-            im: self.re * o.im + self.im * o.re,
-        }
-    }
-
-    fn conj(self) -> Complex {
-        Complex {
-            re: self.re,
-            im: -self.im,
-        }
-    }
-}
-
-/// An in-place radix-2 complex FFT of one power-of-two length.
-#[derive(Clone, Debug)]
-struct Fft {
-    /// `e^(-2πik/n)` for `k` in `0..n/2`.
-    twiddles: Vec<Complex>,
-    /// The bit-reversed index of each index.
-    reversed: Vec<usize>,
-}
-
-impl Fft {
-    /// Tables for length `n`, a power of two of at least 2.
-    fn new(n: usize) -> Fft {
-        assert!(n.is_power_of_two() && n >= 2, "FFT length {n}");
-        let bits = n.trailing_zeros();
-        Fft {
-            twiddles: (0..n / 2)
-                .map(|k| {
-                    let (sin, cos) = (-2.0 * PI * k as f64 / n as f64).sin_cos();
-                    Complex { re: cos, im: sin }
-                })
-                .collect(),
-            reversed: (0..n)
-                .map(|i| i.reverse_bits() >> (usize::BITS - bits))
-                .collect(),
-        }
-    }
-
-    /// `X[k] = Σ x[j]·e^(-2πijk/n)`, in place.
-    fn forward(&self, data: &mut [Complex]) {
-        let n = data.len();
-        debug_assert_eq!(n, self.reversed.len());
-        for (i, &r) in self.reversed.iter().enumerate() {
-            if i < r {
-                data.swap(i, r);
-            }
-        }
-        let mut len = 2;
-        while len <= n {
-            let half = len / 2;
-            let stride = n / len;
-            for block in data.chunks_exact_mut(len) {
-                let (low, high) = block.split_at_mut(half);
-                for (k, (a, b)) in low.iter_mut().zip(high.iter_mut()).enumerate() {
-                    let t = b.mul(self.twiddles[k * stride]);
-                    let u = *a;
-                    *a = u.add(t);
-                    *b = u.sub(t);
-                }
-            }
-            len *= 2;
-        }
-    }
-
-    /// `x[j] = (1/n)·Σ X[k]·e^(2πijk/n)`, in place.
-    fn inverse(&self, data: &mut [Complex]) {
-        for z in data.iter_mut() {
-            *z = z.conj();
-        }
-        self.forward(data);
-        let scale = 1.0 / data.len() as f64;
-        for z in data.iter_mut() {
-            *z = Complex {
-                re: z.re * scale,
-                im: -z.im * scale,
-            };
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
+    use jodel_dsp::window::hann_at;
+
     use super::*;
 
     const RATE: u32 = 44_100;
@@ -678,13 +575,10 @@ mod tests {
     fn peak_bin(x: &[f64]) -> usize {
         let n = x.len();
         let fft = Fft::new(n);
-        let mut data: Vec<Complex> = x
+        let mut data: Vec<Complex<f64>> = x
             .iter()
             .enumerate()
-            .map(|(i, &v)| Complex {
-                re: v * (0.5 - 0.5 * (2.0 * PI * i as f64 / n as f64).cos()),
-                im: 0.0,
-            })
+            .map(|(i, &v)| Complex::new(v * hann_at(i, n), 0.0))
             .collect();
         fft.forward(&mut data);
         (1..n / 2)
@@ -695,7 +589,6 @@ mod tests {
             })
             .unwrap()
     }
-
     fn rms(x: &[f64]) -> f64 {
         (x.iter().map(|v| v * v).sum::<f64>() / x.len() as f64).sqrt()
     }
@@ -710,31 +603,6 @@ mod tests {
                 (seed >> 11) as f64 / (1u64 << 52) as f64 - 1.0
             })
             .collect()
-    }
-
-    #[test]
-    fn fft_matches_a_direct_transform() {
-        let n = 64;
-        let x = noise(n, 7);
-        let fft = Fft::new(n);
-        let mut data: Vec<Complex> = x.iter().map(|&re| Complex { re, im: 0.0 }).collect();
-        fft.forward(&mut data);
-        for (k, z) in data.iter().enumerate() {
-            let (mut re, mut im) = (0.0, 0.0);
-            for (j, &v) in x.iter().enumerate() {
-                let a = -2.0 * PI * (j * k) as f64 / n as f64;
-                re += v * a.cos();
-                im += v * a.sin();
-            }
-            assert!(
-                (z.re - re).abs() < 1e-9 && (z.im - im).abs() < 1e-9,
-                "bin {k}"
-            );
-        }
-        fft.inverse(&mut data);
-        for (z, &v) in data.iter().zip(&x) {
-            assert!((z.re - v).abs() < 1e-12 && z.im.abs() < 1e-12);
-        }
     }
 
     #[test]

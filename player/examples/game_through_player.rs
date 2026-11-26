@@ -219,7 +219,7 @@ fn save(path: &Path, samples: &[f32]) {
         .iter()
         .map(|s| (s.clamp(-1.0, 1.0) * 32_767.0).round() as i16)
         .collect();
-    durable::write_atomic(path, &jodeldiplom::keep::wav(&words, RATE, 2)).expect("written");
+    durable::write_atomic(path, &jodel_dsp::wav::pcm16(RATE, 2, &words)).expect("written");
     let db = |x: f32| 20.0 * x.max(1e-9).log10();
     let peak = samples.iter().fold(0.0f32, |m, s| m.max(s.abs()));
     println!(

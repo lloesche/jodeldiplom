@@ -591,7 +591,7 @@ fn until_outcome(app: &mut App, mut each: impl FnMut(&Clock)) -> Outcome {
 /// it). After the sync, the microphone's tap is back on the song's output.
 #[test]
 fn the_app_plays_the_clicks_and_hears_a_ta_after_each() {
-    let _guard = common::real_time();
+    let _guard = jodel_testkit::real_time();
     let tree = common::music_tree("sync-app");
     let singer = Singer::new();
     let mut app = app_with(&tree, &singer);
@@ -661,7 +661,7 @@ fn the_app_plays_the_clicks_and_hears_a_ta_after_each() {
 /// play: the sync ends, saying why, rather than listen on.
 #[test]
 fn the_output_changing_mid_sync_ends_it() {
-    let _guard = common::real_time();
+    let _guard = jodel_testkit::real_time();
     let tree = common::music_tree("sync-restart");
     let singer = Singer::new();
     let mut app = app_with(&tree, &singer);

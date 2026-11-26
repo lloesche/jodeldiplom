@@ -1,67 +1,9 @@
 //! The networks' layers, on token-major `f32` buffers.
 
-use std::sync::Mutex;
+use jodel_tensors::fast;
+use jodel_tensors::kernels::{par_chunks, transposed};
 
 use super::weights::Weights;
-
-/// Runs `work` on every `chunk`-sized piece of `data` (the last may be
-/// shorter) on up to `threads` threads; `work` gets the piece's index.
-pub fn par_chunks<T: Send>(
-    data: &mut [T],
-    chunk: usize,
-    threads: usize,
-    work: impl Fn(usize, &mut [T]) + Sync,
-) {
-    let pieces = data.len().div_ceil(chunk.max(1));
-    let threads = threads.min(pieces).max(1);
-    if threads == 1 {
-        for (i, piece) in data.chunks_mut(chunk.max(1)).enumerate() {
-            work(i, piece);
-        }
-        return;
-    }
-    let queue = Mutex::new(data.chunks_mut(chunk.max(1)).enumerate());
-    std::thread::scope(|s| {
-        for _ in 0..threads {
-            s.spawn(|| loop {
-                let next = queue.lock().unwrap().next();
-                match next {
-                    Some((i, piece)) => work(i, piece),
-                    None => break,
-                }
-            });
-        }
-    });
-}
-
-/// Defines `$name` to run `$body` compiled for AVX2 when the processor
-/// has it (twice the lanes of the baseline x86-64 build), else as built.
-/// The arithmetic is the same either way, so are the results.
-macro_rules! fast {
-    ($(#[$doc:meta])* $vis:vis fn $name:ident($($arg:ident: $ty:ty),* $(,)?) $body:block) => {
-        $(#[$doc])*
-        $vis fn $name($($arg: $ty),*) {
-            #[inline(always)]
-            #[allow(clippy::too_many_arguments)]
-            fn imp($($arg: $ty),*) $body
-            #[cfg(target_arch = "x86_64")]
-            {
-                #[target_feature(enable = "avx2")]
-                #[allow(clippy::too_many_arguments)]
-                unsafe fn avx2($($arg: $ty),*) {
-                    imp($($arg),*)
-                }
-                if std::arch::is_x86_feature_detected!("avx2") {
-                    // SAFETY: the processor has AVX2.
-                    return unsafe { avx2($($arg),*) };
-                }
-            }
-            imp($($arg),*)
-        }
-    };
-}
-
-pub(crate) use fast;
 
 /// The dot product, in eight lanes the compiler can vectorise.
 #[inline(always)]
@@ -232,17 +174,10 @@ impl Linear {
 
     /// A layer from its weights, a row of `inputs` per output.
     pub fn new(weight: Vec<f32>, bias: Option<Vec<f32>>, inputs: usize, outputs: usize) -> Linear {
-        debug_assert_eq!(weight.len(), inputs * outputs);
-        let mut t = vec![0.0f32; weight.len()];
-        for o in 0..outputs {
-            for i in 0..inputs {
-                t[i * outputs + o] = weight[o * inputs + i];
-            }
-        }
         Linear {
             inputs,
             outputs,
-            weight: t,
+            weight: transposed(&weight, outputs, inputs),
             bias,
         }
     }
@@ -701,16 +636,5 @@ mod tests {
         let b: Vec<f32> = (0..37).map(|i| 1.0 - i as f32 * 0.01).collect();
         let want: f32 = a.iter().zip(&b).map(|(x, y)| x * y).sum();
         assert!((dot(&a, &b) - want).abs() < 1e-3);
-    }
-
-    #[test]
-    fn chunks_run_on_threads_cover_everything() {
-        let mut v = vec![0usize; 1000];
-        par_chunks(&mut v, 7, 4, |i, piece| {
-            for x in piece {
-                *x = i;
-            }
-        });
-        assert!(v.iter().enumerate().all(|(j, &i)| i == j / 7));
     }
 }

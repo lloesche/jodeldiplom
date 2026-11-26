@@ -13,6 +13,7 @@
 
 use std::path::Path;
 
+use jodel_dsp::fnv1a;
 use jodel_tensors::SafeTensors;
 
 use super::{quant, text, weights};
@@ -76,15 +77,6 @@ fn importance(statistics: &quant::Statistics, name: &str, cols: usize) -> Option
     let ms = statistics.mean_squares(name).filter(|m| m.len() == cols)?;
     let mean = ms.iter().sum::<f32>() / cols as f32;
     (mean > 0.0).then(|| ms.iter().map(|&m| m.max(mean * 1e-3)).collect())
-}
-
-fn fnv(data: &[u8]) -> u64 {
-    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-    for &b in data {
-        h ^= u64::from(b);
-        h = h.wrapping_mul(0x100_0000_01b3);
-    }
-    h
 }
 
 /// The tensor `name` of the packed model, from its `values` and its shape
@@ -196,7 +188,7 @@ impl PackedModel {
         }
         let v = self.vocab.to_bytes();
         entry("vocab", 3, 0, 0, &v, v.len());
-        let hash = fnv(&out);
+        let hash = fnv1a(&out);
         out.extend_from_slice(&hash.to_le_bytes());
         out
     }
@@ -236,7 +228,7 @@ impl PackedModel {
             return Err(format!("a packed recogniser of version {}", data[6]));
         }
         let (body, tail) = data.split_at(data.len() - 8);
-        if fnv(body) != u64::from_le_bytes(tail.try_into().unwrap()) {
+        if fnv1a(body) != u64::from_le_bytes(tail.try_into().unwrap()) {
             return Err("the packed recogniser is damaged".into());
         }
         let mut at = 8;

@@ -18,6 +18,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
+use jodel_dsp::PEAK;
 use jodel_output::mixer::{Fader, InputTarget, Mixer, Role, Strip};
 use jodel_output::{
     Clock, OpenRequest, Output, OutputTarget, SampleFormat, StreamFormat, VoiceBlock,
@@ -34,8 +35,6 @@ pub const CLICK_HZ: f64 = 1000.0;
 pub const CLICK_LEVEL: f64 = 12.0;
 /// Its edges, each, in seconds.
 const EDGE: f64 = 0.003;
-/// Full scale of the engine's samples (24 bits).
-const FULL: f64 = 8_388_607.0;
 /// How long the writer waits on the output at a time, to see a stop.
 const WAIT: Duration = Duration::from_millis(50);
 
@@ -47,7 +46,7 @@ pub fn click_track(rate: u32, channels: u16) -> Vec<i32> {
     let frames = (sync::length() * r).round() as usize;
     let ch = usize::from(channels);
     let mut out = vec![0i32; frames * ch];
-    let amplitude = FULL * 10f64.powf(-CLICK_LEVEL / 20.0);
+    let amplitude = PEAK * 10f64.powf(-CLICK_LEVEL / 20.0);
     let length = (CLICK_LENGTH * r).round() as usize;
     let edge = EDGE * r;
     for start in sync::click_frames(rate) {
@@ -333,7 +332,7 @@ mod tests {
         );
         let left: Vec<i32> = track.iter().step_by(2).copied().collect();
         let peak = left.iter().map(|v| v.unsigned_abs()).max().unwrap();
-        let want = FULL * 10f64.powf(-0.6);
+        let want = PEAK * 10f64.powf(-0.6);
         assert!((f64::from(peak) - want).abs() < want * 0.01, "{peak}");
         for (k, &c) in sync::click_frames(rate).iter().enumerate() {
             let c = c as usize;

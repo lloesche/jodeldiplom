@@ -15,7 +15,7 @@ use std::time::Instant;
 use jodel_gpu::GpuAsr;
 use jodel_lyrics::asr::packed::PackedModel;
 use jodel_lyrics::asr::{text, Qwen3Asr};
-use jodel_lyrics::json::Json;
+use jodel_tensors::json::Json;
 
 fn read(path: &Path) -> Vec<f32> {
     std::fs::read(path)

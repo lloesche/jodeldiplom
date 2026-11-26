@@ -564,7 +564,7 @@ impl Synth {
         let lfo = (dsp::unit(&mut r) * p.spread.lfo_phase.clamp(0.0, 1.0) * 4_294_967_296.0) as u32;
         let start = Start {
             note: NoteOn {
-                seed: dsp::xorshift(&mut r),
+                seed: jodel_dsp::xorshift32(&mut r),
                 ..note
             },
             gate: length.map_or(p.gate, |n| n as f32 / self.rate.hz()),

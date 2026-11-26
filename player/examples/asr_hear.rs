@@ -129,33 +129,18 @@ fn voice(path: &Path, voices: Option<&Path>) -> Result<Vec<f32>, String> {
     });
     if let Some(file) = kept.as_ref().filter(|f| f.is_file()) {
         let bytes = std::fs::read(file).map_err(|e| e.to_string())?;
-        let pcm = &bytes[44..];
-        return Ok((0..pcm.len() / 2)
-            .map(|i| f32::from(i16::from_le_bytes([pcm[2 * i], pcm[2 * i + 1]])) / 32768.0)
-            .collect());
+        let pcm = jodel_dsp::wav::parse(&bytes)
+            .and_then(|w| w.pcm16())
+            .ok_or("not a 16-bit WAV file")?;
+        return Ok(pcm.iter().map(|&s| f32::from(s) / 32768.0).collect());
     }
     let (v, _) = jodeldiplom::lyrics::timer::separate_16k(path, false)?;
     if let Some(file) = kept {
-        let data = (v.len() * 2) as u32;
-        let mut out = Vec::with_capacity(44 + v.len() * 2);
-        out.extend_from_slice(b"RIFF");
-        out.extend_from_slice(&(36 + data).to_le_bytes());
-        out.extend_from_slice(b"WAVEfmt ");
-        for x in [
-            16u32.to_le_bytes(),
-            [1, 0, 1, 0],
-            16_000u32.to_le_bytes(),
-            32_000u32.to_le_bytes(),
-            [2, 0, 16, 0],
-        ] {
-            out.extend_from_slice(&x);
-        }
-        out.extend_from_slice(b"data");
-        out.extend_from_slice(&data.to_le_bytes());
-        for s in &v {
-            out.extend_from_slice(&((s.clamp(-1.0, 1.0) * 32767.0) as i16).to_le_bytes());
-        }
-        let _ = durable::write_atomic(&file, &out);
+        let pcm: Vec<i16> = v
+            .iter()
+            .map(|s| (s.clamp(-1.0, 1.0) * 32767.0) as i16)
+            .collect();
+        let _ = durable::write_atomic(&file, &jodel_dsp::wav::pcm16(16_000, 1, &pcm));
     }
     Ok(v)
 }

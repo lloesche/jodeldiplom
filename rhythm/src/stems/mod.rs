@@ -20,13 +20,13 @@ pub(crate) mod stft;
 
 use std::sync::OnceLock;
 
-use crate::fft::Complex;
 use crate::frontend::{Frontend, FrontendConfig};
-use crate::nn::layers::par_chunks;
 use crate::nn::weights::Weights;
 use crate::parts::Parts;
 use crate::presence::Levels;
 use crate::waveform::LaneBuilder;
+use jodel_dsp::fft::Complex;
+use jodel_tensors::kernels::{par_chunks, threads};
 use model::Model;
 pub use model::{BAND_BINS, DEPTH, DIM, FRAME, HEADS, HIDDEN, KV_HEADS, REGISTERS};
 use stft::{Stft, BINS};
@@ -60,6 +60,12 @@ impl Stem {
     /// The stems, in the network's order.
     pub const ALL: [Stem; STEMS] = [Stem::Bass, Stem::Drums, Stem::Other, Stem::Vocals];
 
+    /// Its place in [`Stem::ALL`]: the network's order, which stem files
+    /// and [`PerStem`] keep too.
+    pub const fn index(self) -> usize {
+        self as usize
+    }
+
     /// Its name in files.
     pub fn id(self) -> &'static str {
         match self {
@@ -68,6 +74,42 @@ impl Stem {
             Stem::Other => "other",
             Stem::Vocals => "vocals",
         }
+    }
+}
+
+/// One `T` for each stem, looked up by the stem; held in the network's
+/// order ([`Stem::ALL`]), the order the array is in.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PerStem<T>(pub [T; STEMS]);
+
+impl<T> PerStem<T> {
+    /// `f` of each stem.
+    pub fn from_fn(f: impl FnMut(Stem) -> T) -> PerStem<T> {
+        PerStem(Stem::ALL.map(f))
+    }
+
+    /// Each stem and its `T`, in the network's order.
+    pub fn iter(&self) -> impl Iterator<Item = (Stem, &T)> {
+        Stem::ALL.into_iter().zip(&self.0)
+    }
+
+    /// Each stem's `T` through `f`.
+    pub fn map<U>(self, f: impl FnMut(T) -> U) -> PerStem<U> {
+        PerStem(self.0.map(f))
+    }
+}
+
+impl<T> std::ops::Index<Stem> for PerStem<T> {
+    type Output = T;
+
+    fn index(&self, stem: Stem) -> &T {
+        &self.0[stem.index()]
+    }
+}
+
+impl<T> std::ops::IndexMut<Stem> for PerStem<T> {
+    fn index_mut(&mut self, stem: Stem) -> &mut T {
+        &mut self.0[stem.index()]
     }
 }
 
@@ -129,7 +171,7 @@ impl Separator for CpuSeparator {
     }
 
     fn masks(&self, frames: usize, stft: &[f32]) -> Result<Vec<f32>, String> {
-        Ok(self.model.masks(frames, stft, crate::nn::threads()))
+        Ok(self.model.masks(frames, stft, threads()))
     }
 }
 
@@ -150,7 +192,7 @@ fn fade() -> Vec<f32> {
 }
 
 /// The two channels' STFTs packed for [`Separator::masks`].
-fn pack(channels: &[Vec<Complex>; 2]) -> (usize, Vec<f32>) {
+fn pack(channels: &[Vec<Complex<f32>>; 2]) -> (usize, Vec<f32>) {
     let frames = channels[0].len() / BINS;
     let mut packed = vec![0.0f32; frames * FRAME];
     for t in 0..frames {
@@ -175,7 +217,7 @@ pub fn packed_stft(left: &[f32], right: &[f32]) -> (usize, Vec<f32>) {
 /// A chunk transformed, waiting for its masks.
 struct Forward {
     /// Each channel's STFT.
-    channels: [Vec<Complex>; 2],
+    channels: [Vec<Complex<f32>>; 2],
     /// Its frames.
     frames: usize,
     /// The samples per channel.
@@ -186,12 +228,12 @@ struct Forward {
 /// side on the analysis's threads), and the values packed for
 /// [`Separator::masks`].
 fn forward(left: &[f32], right: &[f32]) -> (Forward, Vec<f32>) {
-    let threads = crate::nn::threads();
-    let mut spectra: Vec<Vec<Complex>> = vec![Vec::new(); 2];
+    let threads = threads();
+    let mut spectra: Vec<Vec<Complex<f32>>> = vec![Vec::new(); 2];
     par_chunks(&mut spectra, 1, threads, |c, slot| {
         slot[0] = Stft::new().forward(if c == 0 { left } else { right });
     });
-    let channels: [Vec<Complex>; 2] = [
+    let channels: [Vec<Complex<f32>>; 2] = [
         std::mem::take(&mut spectra[0]),
         std::mem::take(&mut spectra[1]),
     ];
@@ -214,15 +256,15 @@ fn inverse(chunk: &Forward, masks: &[f32]) -> Result<Vec<[Vec<f32>; 2]>, String>
     if masks.len() != STEMS * frames * FRAME {
         return Err(format!("{} masks for {frames} frames", masks.len()));
     }
-    let threads = crate::nn::threads();
+    let threads = threads();
     let inverse = |s: usize, c: usize| {
         let mask = &masks[s * frames * FRAME..][..frames * FRAME];
         let spectrum = &channels[c];
-        let masked: Vec<Complex> = (0..frames * BINS)
+        let masked: Vec<Complex<f32>> = (0..frames * BINS)
             .map(|i| {
                 let (t, f) = (i / BINS, i % BINS);
                 let at = t * FRAME + (f * 2 + c) * 2;
-                spectrum[i].mul(Complex::new(mask[at], mask[at + 1]))
+                spectrum[i] * Complex::new(mask[at], mask[at + 1])
             })
             .collect();
         Stft::new().inverse(&masked, len)
@@ -247,8 +289,8 @@ fn inverse(chunk: &Forward, masks: &[f32]) -> Result<Vec<[Vec<f32>; 2]>, String>
 pub struct StemBlock<'a> {
     /// The first sample's place in the track.
     pub start: usize,
-    /// `[stem][channel]` samples.
-    pub stems: [[&'a [f32]; 2]; STEMS],
+    /// Each stem's left and right samples.
+    pub stems: PerStem<[&'a [f32]; 2]>,
 }
 
 /// A thread running a separator on chunks sent to it, in order, so the
@@ -469,8 +511,9 @@ impl<'a> Splitter<'a> {
                     .collect()
             }));
         }
-        let stems: [[&[f32]; 2]; STEMS] =
-            std::array::from_fn(|s| [done[s][0].as_slice(), done[s][1].as_slice()]);
+        let stems = PerStem(std::array::from_fn(|s| {
+            [done[s][0].as_slice(), done[s][1].as_slice()]
+        }));
         sink(&StemBlock {
             start: self.base,
             stems,
@@ -555,12 +598,12 @@ impl PartsBuilder {
 
     /// Takes in a block of finished stems.
     pub fn take(&mut self, block: &StemBlock) {
-        let n = block.stems[0][0].len();
+        let n = block.stems[Stem::Bass][0].len();
         let mut tonal = Vec::with_capacity(n);
         self.mono.clear();
         for i in 0..n {
             let mono: [f32; STEMS] =
-                std::array::from_fn(|s| 0.5 * (block.stems[s][0][i] + block.stems[s][1][i]));
+                std::array::from_fn(|s| 0.5 * (block.stems.0[s][0][i] + block.stems.0[s][1][i]));
             for (lane, &x) in self.lanes.iter_mut().zip(&mono) {
                 lane.push_one(x);
             }
@@ -646,8 +689,11 @@ mod tests {
 
     use std::f64::consts::PI;
 
+    /// A channel's STFT.
+    type Spectrum = Vec<Complex<f32>>;
+
     /// The clip's STFT, packed for the network, and its masks.
-    fn masks_of_clip() -> (usize, Vec<Complex>, Vec<Complex>, Vec<f32>) {
+    fn masks_of_clip() -> (usize, Spectrum, Spectrum, Vec<f32>) {
         let [left, right] = clip();
         let mut stft = Stft::new();
         let (l, r) = (stft.forward(&left), stft.forward(&right));
@@ -669,8 +715,8 @@ mod tests {
     /// the fixture.
     fn summary(
         frames: usize,
-        l: &[Complex],
-        r: &[Complex],
+        l: &[Complex<f32>],
+        r: &[Complex<f32>],
         masks: &[f32],
     ) -> Vec<(Vec<f64>, Vec<f64>)> {
         (0..STEMS)
@@ -683,7 +729,7 @@ mod tests {
                         for (c, x) in [l[t * BINS + f], r[t * BINS + f]].into_iter().enumerate() {
                             let at = t * FRAME + (f * 2 + c) * 2;
                             let m = Complex::new(mask[at], mask[at + 1]);
-                            let v = f64::from(x.mul(m).norm());
+                            let v = f64::from((x * m).norm());
                             per_frame[t] += v;
                             per_bin[f] += v;
                         }
@@ -792,10 +838,10 @@ mod tests {
         let mut next = 0;
         let mut sink = |b: &StemBlock| {
             assert_eq!(b.start, next);
-            next += b.stems[0][0].len();
+            next += b.stems[Stem::Bass][0].len();
             for s in 0..STEMS {
                 for c in 0..2 {
-                    got[2 * s + c].extend_from_slice(b.stems[s][c]);
+                    got[2 * s + c].extend_from_slice(b.stems.0[s][c]);
                 }
             }
         };
@@ -864,10 +910,10 @@ mod tests {
             let mut next = 0;
             let mut sink = |b: &StemBlock| {
                 assert_eq!(b.start, next, "every sample once, in order");
-                next += b.stems[0][0].len();
+                next += b.stems[Stem::Bass][0].len();
                 for s in 0..STEMS {
                     for c in 0..2 {
-                        got[2 * s + c].extend_from_slice(b.stems[s][c]);
+                        got[2 * s + c].extend_from_slice(b.stems.0[s][c]);
                     }
                 }
             };

@@ -11,12 +11,14 @@ use std::time::Duration;
 
 use common::transition::*;
 use common::*;
+use jodel_dsp::FULL_SCALE;
 use jodel_output::{SampleFormat, SimClock};
 use jodel_playback::stems::STEMS;
 use jodel_playback::warp::TimeMap;
 use jodel_playback::{
     Envelope, Event, MakeStems, MemoryTarget, Player, TempoMode, TransitionPlan, TransitionState,
 };
+use jodel_testkit::{real_time, TempDir};
 use SampleFormat::*;
 
 /// From 5 s of A over 2 s into B at 1 s (B's time is A's less 4 s), by
@@ -67,7 +69,7 @@ fn off_in_window(plan: &TransitionPlan, got: &[i32], a: &[i32], b: &[i32]) -> (f
 #[test]
 fn a_fade_at_one_tempo_mixes_the_two_and_hands_over() {
     let _serial = serial();
-    let dir = temp_dir("transition-fade");
+    let dir = TempDir::new("transition-fade");
     let (a_path, a) = wav(&dir, "a.wav", 12.0, tone([1_000.0, 5_000.0]));
     let (b_path, b) = wav(&dir, "b.wav", 12.0, tone([2_000.0, 3_000.0]));
     let desk = Desk::new(caps(&[RATE], &[S24In32Low]), options());
@@ -103,7 +105,7 @@ fn a_fade_at_one_tempo_mixes_the_two_and_hands_over() {
     // desk's automation.
     let (worst, at) = off_in_window(&plan, &got, &a, &b);
     assert!(
-        worst < 0.005 * FULL,
+        worst < 0.005 * FULL_SCALE,
         "off by {worst} in the window at {:.4} s",
         (at / 2) as f64 / f64::from(RATE)
     );
@@ -136,7 +138,7 @@ fn stretched_the_next_tracks_beats_fall_on_the_playing_ones_too() {
 /// B's clicks on A's beats (within `within` seconds) in the window, and
 /// back at B's own tempo at the end, with `tempo`.
 fn beats_meet(tempo: TempoMode, within: f64) {
-    let dir = temp_dir(&format!("transition-beats-{tempo:?}"));
+    let dir = TempDir::new(&format!("transition-beats-{tempo:?}"));
     // A at 120 BPM, B at 125: B plays 4 % slower in the window.
     let (a_path, _) = wav(&dir, "a.wav", 12.0, clicks(0.5, 0.0, 3_000.0));
     let (b_path, _) = wav(&dir, "b.wav", 12.0, clicks(0.48, 0.0, 5_000.0));
@@ -186,7 +188,7 @@ fn beats_meet(tempo: TempoMode, within: f64) {
 fn a_next_track_whose_map_starts_before_it_lands_on_the_beats_from_the_first() {
     let _serial = serial();
     for tempo in [TempoMode::Varispeed, TempoMode::Stretch] {
-        let dir = temp_dir(&format!("transition-early-{tempo:?}"));
+        let dir = TempDir::new(&format!("transition-early-{tempo:?}"));
         // A at 120 BPM, B at 130 from 0.2 s in.
         let b_period = 60.0 / 130.0;
         let (a_path, _) = wav(&dir, "a.wav", 14.0, clicks(0.5, 0.0, 3_000.0));
@@ -277,7 +279,7 @@ fn glide_plan(tempo: TempoMode, b_period: f64) -> TransitionPlan {
 /// plan comes once the next track is prepared for a plan without the
 /// glide.
 fn glide_meets(tempo: TempoMode, within: f64, mask: [f64; STEMS], replan: bool) {
-    let dir = temp_dir(&format!(
+    let dir = TempDir::new(&format!(
         "transition-glide-{tempo:?}-{}-{replan}",
         mask == ALL
     ));
@@ -378,7 +380,7 @@ fn glide_meets(tempo: TempoMode, within: f64, mask: [f64; STEMS], replan: bool) 
 #[test]
 fn a_glide_called_off_in_its_window_goes_on_without_a_jump() {
     let _serial = serial();
-    let dir = temp_dir("transition-glide-off");
+    let dir = TempDir::new("transition-glide-off");
     let b_period = 60.0 / 126.0;
     let (a_path, _) = wav(&dir, "a.wav", 14.0, clicks(0.5, 0.0, 3_000.0));
     let (b_path, _) = wav(&dir, "b.wav", 14.0, clicks(b_period, 0.0, 5_000.0));
@@ -434,7 +436,7 @@ fn a_glide_called_off_in_its_window_goes_on_without_a_jump() {
 #[test]
 fn a_transition_is_called_off_by_a_seek_and_when_it_does_not_fit() {
     let _serial = serial();
-    let dir = temp_dir("transition-off");
+    let dir = TempDir::new("transition-off");
     let tone = |t: f64, _c: usize| 0.3 * (2.0 * std::f64::consts::PI * 440.0 * t).sin();
     let (a_path, _) = wav(&dir, "a.wav", 12.0, tone);
     let (b_path, _) = wav(&dir, "b.wav", 12.0, tone);
@@ -482,7 +484,7 @@ fn a_transition_is_called_off_by_a_seek_and_when_it_does_not_fit() {
 /// off, as it needs one.
 #[test]
 fn a_transition_without_a_second_head_is_called_off() {
-    let dir = temp_dir("transition-one-head");
+    let dir = TempDir::new("transition-one-head");
     let (a_path, _) = wav(&dir, "a.wav", 3.0, tone([440.0, 440.0]));
     let (b_path, _) = wav(&dir, "b.wav", 3.0, tone([440.0, 440.0]));
     let target = MemoryTarget::new(caps(&[RATE], &[S24In32Low]), SimClock::Instant);
@@ -501,7 +503,7 @@ fn a_transition_without_a_second_head_is_called_off() {
 #[test]
 fn without_a_separator_the_tracks_fade_whole() {
     let _serial = serial();
-    let dir = temp_dir("transition-whole");
+    let dir = TempDir::new("transition-whole");
     let (a_path, a) = wav(&dir, "a.wav", 10.0, tone([1_000.0, 5_000.0]));
     let (b_path, b) = wav(&dir, "b.wav", 10.0, tone([2_000.0, 3_000.0]));
     let options = jodel_playback::PlayerOptions {
@@ -517,13 +519,13 @@ fn without_a_separator_the_tracks_fade_whole() {
     assert!(transitions(&seen).contains(&&TransitionState::Finished));
     let got = samples(&streams[0].1);
     let (worst, _) = off_in_window(&plan, &got, &a, &b);
-    assert!(worst < 0.005 * FULL, "off by {worst}");
+    assert!(worst < 0.005 * FULL_SCALE, "off by {worst}");
 }
 
 #[test]
 fn the_next_track_is_heard_where_the_map_puts_it() {
     let _serial = serial();
-    let dir = temp_dir("transition-heard");
+    let dir = TempDir::new("transition-heard");
     let (a_path, _) = wav(&dir, "a.wav", 12.0, clicks(0.5, 0.0, 3_000.0));
     let (b_path, _) = wav(&dir, "b.wav", 12.0, clicks(0.48, 0.0, 5_000.0));
     let desk = Desk::new(caps(&[RATE], &[S24In32Low]), options());
@@ -566,7 +568,7 @@ fn the_next_track_is_heard_where_the_map_puts_it() {
 #[test]
 fn next_while_a_transition_mixes_cuts_into_the_next_track_where_it_is() {
     let _serial = serial();
-    let dir = temp_dir("transition-cut");
+    let dir = TempDir::new("transition-cut");
     let (a_path, _) = wav(&dir, "a.wav", 14.0, clicks(0.5, 0.0, 3_000.0));
     let (b_path, _) = wav(&dir, "b.wav", 14.0, clicks(0.48, 0.0, 5_000.0));
     let desk = Desk::new(caps(&[RATE], &[S24In32Low]), options());
@@ -627,7 +629,7 @@ fn next_while_a_transition_mixes_cuts_into_the_next_track_where_it_is() {
 #[test]
 fn next_mid_mix_does_not_click() {
     let _serial = serial();
-    let dir = temp_dir("transition-cut-click");
+    let dir = TempDir::new("transition-cut-click");
     let (a_path, _) = wav(&dir, "a.wav", 12.0, tone([200.0, 230.0]));
     let (b_path, _) = wav(&dir, "b.wav", 12.0, tone([170.0, 190.0]));
     let desk = Desk::new(caps(&[RATE], &[S24In32Low]), options());
@@ -648,7 +650,7 @@ fn next_mid_mix_does_not_click() {
     let rate = RATE as usize;
     // Two tones of 0.4 move by 0.4 · 2π · 230 / 44100 of full scale a
     // sample at most, each.
-    let most = 2.0 * 0.4 * 2.0 * std::f64::consts::PI * 230.0 / f64::from(RATE) * FULL;
+    let most = 2.0 * 0.4 * 2.0 * std::f64::consts::PI * 230.0 / f64::from(RATE) * FULL_SCALE;
     let steepest = (4 * rate..8 * rate)
         .flat_map(|f| (0..2).map(move |c| (f, c)))
         .map(|(f, c)| (f64::from(got[2 * (f + 1) + c]) - f64::from(got[2 * f + c])).abs())
@@ -662,7 +664,7 @@ fn next_mid_mix_does_not_click() {
 #[test]
 fn a_transition_called_off_while_it_prepares_leaves_the_track_as_it_was() {
     let _serial = serial();
-    let dir = temp_dir("transition-cancel");
+    let dir = TempDir::new("transition-cancel");
     let tone = |t: f64, _c: usize| 0.3 * (2.0 * std::f64::consts::PI * 440.0 * t).sin();
     let (a_path, a) = wav(&dir, "a.wav", 12.0, tone);
     let (b_path, _) = wav(&dir, "b.wav", 12.0, tone);
@@ -719,7 +721,7 @@ fn a_transition_called_off_while_it_prepares_leaves_the_track_as_it_was() {
 #[test]
 fn every_track_plays_at_the_desks_one_rate() {
     let _serial = serial();
-    let dir = temp_dir("transition-rate");
+    let dir = TempDir::new("transition-rate");
     let (a_path, _) = wav(&dir, "a.wav", 8.0, tone([1_000.0, 5_000.0]));
     let tone48 = |seconds: f64, name: &str| {
         let path = dir.join(name);
@@ -772,7 +774,7 @@ fn every_track_plays_at_the_desks_one_rate() {
 fn in_real_time_a_stem_muted_on_its_bar_and_a_pause_keep_the_mix_in_place() {
     let _serial = serial();
     let _real_time = real_time();
-    let dir = temp_dir("transition-paced");
+    let dir = TempDir::new("transition-paced");
     let (a_path, a) = wav(&dir, "a.wav", 10.0, tone([1_000.0, 5_000.0]));
     let (b_path, b) = wav(&dir, "b.wav", 10.0, tone([2_000.0, 3_000.0]));
     let options = jodel_playback::PlayerOptions {
@@ -836,17 +838,20 @@ fn in_real_time_a_stem_muted_on_its_bar_and_a_pause_keep_the_mix_in_place() {
     // Where the device has A's frames before the pause, and after it.
     let found = |at: usize, share: f64| {
         (0..2 * rate)
-            .find(|&d| off(at..at + 64, d, share) < 0.002 * FULL)
+            .find(|&d| off(at..at + 64, d, share) < 0.002 * FULL_SCALE)
             .unwrap_or_else(|| panic!("the mix at {at} not found"))
     };
     let before = found(5 * rate + rate / 10, 1.0);
     let bar = bar as usize;
     let unmuted = off(5 * rate + rate / 20..bar - 600, before, 1.0);
     let muted = off(bar + rate / 40..6 * rate - rate / 20, before, 0.75);
-    assert!(unmuted < 0.01 * FULL, "before the bar, off by {unmuted}");
-    assert!(muted < 0.01 * FULL, "after the bar, off by {muted}");
+    assert!(
+        unmuted < 0.01 * FULL_SCALE,
+        "before the bar, off by {unmuted}"
+    );
+    assert!(muted < 0.01 * FULL_SCALE, "after the bar, off by {muted}");
     // After the pause, both still where the window has them.
     let after = found(6 * rate + rate / 2, 0.75);
     let held = off(6 * rate + rate / 2..7 * rate - 200, after, 0.75);
-    assert!(held < 0.01 * FULL, "after the pause, off by {held}");
+    assert!(held < 0.01 * FULL_SCALE, "after the pause, off by {held}");
 }

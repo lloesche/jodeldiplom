@@ -31,6 +31,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::Instant;
 
+use jodel_dsp::wav;
 use jodel_rhythm::nn::weights::{Kind, Weights};
 use jodel_rhythm::pitch::{spectrogram, Pitch, PitchNet, RATE};
 use jodel_rhythm::waveform::Melody;
@@ -84,40 +85,22 @@ impl Args {
 /// The samples of a 16-bit PCM mono WAV file at [`RATE`], as -1 to 1.
 fn read_wav(path: &Path) -> Vec<f32> {
     let bytes = std::fs::read(path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+    let file = wav::parse(&bytes).unwrap_or_else(|| panic!("{}: not a WAV file", path.display()));
+    let format = wav::Format {
+        rate: RATE,
+        channels: 1,
+        encoding: wav::Encoding::Pcm16,
+    };
     assert!(
-        bytes.len() >= 12 && &bytes[..4] == b"RIFF" && &bytes[8..12] == b"WAVE",
-        "{}: not a WAV file",
+        file.format == format,
+        "{}: not 16-bit PCM mono at {RATE} Hz",
         path.display()
     );
-    let u16_at = |i: usize| u16::from_le_bytes([bytes[i], bytes[i + 1]]);
-    let u32_at = |i: usize| u32::from_le_bytes(bytes[i..i + 4].try_into().unwrap());
-    let mut at = 12;
-    while at + 8 <= bytes.len() {
-        let id = &bytes[at..at + 4];
-        let len = u32_at(at + 4) as usize;
-        let body = at + 8;
-        if id == b"fmt " {
-            let (format, channels, rate, bits) = (
-                u16_at(body),
-                u16_at(body + 2),
-                u32_at(body + 4),
-                u16_at(body + 14),
-            );
-            assert!(
-                format == 1 && channels == 1 && rate == RATE && bits == 16,
-                "{}: not 16-bit PCM mono at {RATE} Hz",
-                path.display()
-            );
-        } else if id == b"data" {
-            let end = (body + len).min(bytes.len());
-            return bytes[body..end]
-                .chunks_exact(2)
-                .map(|b| f32::from(i16::from_le_bytes([b[0], b[1]])) / 32768.0)
-                .collect();
-        }
-        at = body + len + (len & 1);
-    }
-    panic!("{}: no data", path.display());
+    file.pcm16()
+        .unwrap_or_default()
+        .iter()
+        .map(|&s| f32::from(s) / 32768.0)
+        .collect()
 }
 
 fn load_net(path: &str) -> PitchNet {

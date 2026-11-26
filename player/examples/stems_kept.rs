@@ -60,8 +60,8 @@ fn main() -> Result<(), String> {
         let part = kept
             .read(at, RATE as usize * 10)
             .map_err(|e| e.to_string())?;
-        at += part[0][0].len() as u64;
-        for (s, [l, r]) in part.into_iter().enumerate() {
+        at += part.0[0][0].len() as u64;
+        for (s, [l, r]) in part.0.into_iter().enumerate() {
             all[s][0].extend(l);
             all[s][1].extend(r);
         }
@@ -82,7 +82,7 @@ fn main() -> Result<(), String> {
     let mut failed = None;
     {
         let mut take = |b: &jodel_rhythm::stems::StemBlock| {
-            for (s, [l, r]) in b.stems.iter().enumerate() {
+            for (s, [l, r]) in b.stems.0.iter().enumerate() {
                 live[s][0].extend_from_slice(l);
                 live[s][1].extend_from_slice(r);
             }
@@ -111,7 +111,7 @@ fn main() -> Result<(), String> {
     }
     {
         let mut take = |b: &jodel_rhythm::stems::StemBlock| {
-            for (s, [l, r]) in b.stems.iter().enumerate() {
+            for (s, [l, r]) in b.stems.0.iter().enumerate() {
                 live[s][0].extend_from_slice(l);
                 live[s][1].extend_from_slice(r);
             }

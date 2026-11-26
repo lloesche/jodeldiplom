@@ -1549,6 +1549,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "jodel-dsp"
+version = "0.1.0"
+
+[[package]]
 name = "jodel-gpu"
 version = "0.1.0"
 dependencies = [
@@ -1569,6 +1573,7 @@ name = "jodel-lyrics"
 version = "0.1.0"
 dependencies = [
  "durable",
+ "jodel-dsp",
  "jodel-tensors",
 ]
 
@@ -1580,7 +1585,10 @@ dependencies = [
  "block2",
  "dispatch2",
  "durable",
+ "jodel-dsp",
  "jodel-synth",
+ "jodel-tensors",
+ "jodel-testkit",
  "objc2-core-audio",
  "objc2-core-audio-types",
  "objc2-core-foundation",
@@ -1593,22 +1601,30 @@ version = "0.1.0"
 dependencies = [
  "durable",
  "hound",
+ "jodel-dsp",
  "jodel-output",
  "jodel-playback",
  "jodel-rhythm",
+ "jodel-testkit",
  "symphonia",
 ]
 
 [[package]]
 name = "jodel-rhythm"
 version = "0.1.0"
+dependencies = [
+ "jodel-dsp",
+ "jodel-tensors",
+]
 
 [[package]]
 name = "jodel-rhythm-tools"
 version = "0.1.0"
 dependencies = [
  "durable",
+ "jodel-dsp",
  "jodel-rhythm",
+ "jodel-tensors",
 ]
 
 [[package]]
@@ -1616,10 +1632,16 @@ name = "jodel-synth"
 version = "0.1.0"
 dependencies = [
  "durable",
+ "jodel-dsp",
+ "jodel-testkit",
 ]
 
 [[package]]
 name = "jodel-tensors"
+version = "0.1.0"
+
+[[package]]
+name = "jodel-testkit"
 version = "0.1.0"
 
 [[package]]
@@ -1633,12 +1655,15 @@ dependencies = [
  "iced",
  "iced_test",
  "image",
+ "jodel-dsp",
  "jodel-gpu",
  "jodel-lyrics",
  "jodel-output",
  "jodel-playback",
  "jodel-rhythm",
  "jodel-synth",
+ "jodel-tensors",
+ "jodel-testkit",
  "libc",
  "objc2",
  "objc2-app-kit",

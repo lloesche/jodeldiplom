@@ -19,16 +19,10 @@ use jodel_playback::{
     choose_route, Codec, Container, Cover, CoverOrigin, FileFacts, PlayState, Settings, Tags,
     TrackInfo,
 };
+use jodel_testkit::fixture;
 use jodeldiplom::app::App;
 use jodeldiplom::config::Config;
 use jodeldiplom::core::{NowTrack, State};
-
-/// A fixture from the repository's PCM fixtures (`tests/fixtures/pcm`).
-pub fn fixture(name: &str) -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../tests/fixtures/pcm")
-        .join(name)
-}
 
 /// The 44.1 kHz, 16-bit ramp (8,193 frames).
 pub const F44: &str = "ramp-44100-16bit.flac";
@@ -53,33 +47,19 @@ pub fn temp_dir(tag: &str) -> PathBuf {
 /// Writes a 24-bit stereo WAV of `seconds` at `rate`: a quiet chord.
 pub fn write_wav(path: &Path, rate: u32, seconds: f64) {
     let frames = (f64::from(rate) * seconds) as u32;
-    let data_len = frames * 6;
-    let mut out = Vec::with_capacity(44 + data_len as usize);
-    out.extend_from_slice(b"RIFF");
-    out.extend_from_slice(&(36 + data_len).to_le_bytes());
-    out.extend_from_slice(b"WAVEfmt ");
-    out.extend_from_slice(&16u32.to_le_bytes());
-    out.extend_from_slice(&1u16.to_le_bytes());
-    out.extend_from_slice(&2u16.to_le_bytes());
-    out.extend_from_slice(&rate.to_le_bytes());
-    out.extend_from_slice(&(rate * 6).to_le_bytes());
-    out.extend_from_slice(&6u16.to_le_bytes());
-    out.extend_from_slice(&24u16.to_le_bytes());
-    out.extend_from_slice(b"data");
-    out.extend_from_slice(&data_len.to_le_bytes());
-    for i in 0..frames {
-        let t = f64::from(i) / f64::from(rate);
-        let x = [220.0, 277.18, 329.63, 3_000.0]
-            .iter()
-            .zip([0.20, 0.15, 0.12, 0.02])
-            .map(|(hz, a)| a * (std::f64::consts::TAU * hz * t).sin())
-            .sum::<f64>();
-        let v = (x * 8_388_607.0 * 0.5) as i32;
-        let b = v.to_le_bytes();
-        out.extend_from_slice(&b[..3]);
-        out.extend_from_slice(&b[..3]);
-    }
-    fs::write(path, out).unwrap();
+    let samples: Vec<i32> = (0..frames)
+        .flat_map(|i| {
+            let t = f64::from(i) / f64::from(rate);
+            let x = [220.0, 277.18, 329.63, 3_000.0]
+                .iter()
+                .zip([0.20, 0.15, 0.12, 0.02])
+                .map(|(hz, a)| a * (std::f64::consts::TAU * hz * t).sin())
+                .sum::<f64>();
+            let v = (x * jodel_dsp::PEAK * 0.5) as i32;
+            [v, v]
+        })
+        .collect();
+    fs::write(path, jodel_dsp::wav::pcm24(rate, 2, &samples)).unwrap();
 }
 
 /// A generated cover as PNG bytes.
@@ -655,17 +635,6 @@ pub fn desk_state(cols: u16, rows: u16) -> State {
     state.stems_sent.make = jodeldiplom::core::stems::make_wanted(&state);
     state
 }
-
-/// Held by a test that plays on a device in real time (a simulated clock
-/// that plays a period every period of wall-clock time) for as long as it
-/// runs: one such test of a binary at a time. Side by side on a small,
-/// loaded machine (a debug build, every test of a binary at once), their
-/// threads would starve each other of the periods they must keep.
-pub fn real_time() -> std::sync::RwLockWriteGuard<'static, ()> {
-    REAL_TIME.write().unwrap_or_else(|e| e.into_inner())
-}
-
-static REAL_TIME: std::sync::RwLock<()> = std::sync::RwLock::new(());
 
 /// A line "la lo" to sing in Karaoke mode: "la" a second on C4, "lo" the
 /// next on G4, and its notes.

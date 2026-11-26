@@ -161,7 +161,7 @@ impl Score<'_> {
 
     /// `n` sent, its seed the next.
     pub(super) fn play(&mut self, n: Note) {
-        let seed = next(self.seed);
+        let seed = jodel_dsp::xorshift32(self.seed);
         let patch = self.p[n.atom];
         self.send(Command::Note {
             frame: n.at,
@@ -219,23 +219,13 @@ impl Score<'_> {
 
     /// A number from the seed, 0 to 1.
     pub(super) fn unit(&mut self) -> f32 {
-        unit(next(self.seed))
+        unit(jodel_dsp::xorshift32(self.seed))
     }
 
     /// A pan anywhere in `-width` to `width`.
     fn scatter(&mut self, width: f32) -> f32 {
         (2.0 * self.unit() - 1.0) * width
     }
-}
-
-/// `seed` moved on (a xorshift), and its new value.
-fn next(seed: &mut u32) -> u32 {
-    let mut x = *seed;
-    x ^= x << 13;
-    x ^= x >> 17;
-    x ^= x << 5;
-    *seed = x;
-    x
 }
 
 /// A seed as a number from 0 to 1.

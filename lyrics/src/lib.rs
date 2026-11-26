@@ -30,8 +30,8 @@
 //!   is heard; and the filling-in of words whose times were not trusted.
 //! - [`sources`]: the text from a file's tags or a `.lrc` file beside it;
 //!   [`lrclib`]: the LRCLIB web service's addresses and answers (the
-//!   request itself is the caller's).
-//! - [`json`]: a small JSON reader for those answers.
+//!   request itself is the caller's; the answers read with
+//!   `jodel_tensors::json`).
 //! - [`words`]: words as they are compared, the lyrics' and a
 //!   recogniser's, and the words two texts have in common, in order.
 //! - [`fit`]: whether a text fits a recording, its words against what the
@@ -65,7 +65,6 @@ pub mod asr;
 pub mod ctc;
 pub mod fit;
 pub mod glimpses;
-pub mod json;
 pub mod lines;
 pub mod lrc;
 pub mod lrclib;

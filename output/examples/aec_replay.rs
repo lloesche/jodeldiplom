@@ -51,44 +51,21 @@ fn main() {
 
 /// A mono 32-bit float WAV.
 fn write_wav(path: &str, rate: u32, x: &[f32]) {
-    let data = (4 * x.len()) as u32;
-    let mut b = Vec::with_capacity(44 + 4 * x.len());
-    b.extend_from_slice(b"RIFF");
-    b.extend_from_slice(&(36 + data).to_le_bytes());
-    b.extend_from_slice(b"WAVEfmt ");
-    b.extend_from_slice(&16u32.to_le_bytes());
-    b.extend_from_slice(&3u16.to_le_bytes());
-    b.extend_from_slice(&1u16.to_le_bytes());
-    b.extend_from_slice(&rate.to_le_bytes());
-    b.extend_from_slice(&(4 * rate).to_le_bytes());
-    b.extend_from_slice(&4u16.to_le_bytes());
-    b.extend_from_slice(&32u16.to_le_bytes());
-    b.extend_from_slice(b"data");
-    b.extend_from_slice(&data.to_le_bytes());
-    for v in x {
-        b.extend_from_slice(&v.to_le_bytes());
-    }
-    durable::write_atomic(Path::new(path), &b).unwrap_or_else(|e| panic!("{path}: {e}"));
+    durable::write_atomic(Path::new(path), &jodel_dsp::wav::float32(rate, 1, x))
+        .unwrap_or_else(|e| panic!("{path}: {e}"));
 }
 
 fn replay(path: &str, kept: &mut Option<Whole>) {
     let b = std::fs::read(path).unwrap_or_else(|e| panic!("{path}: {e}"));
-    let u16_at = |i: usize| u16::from_le_bytes([b[i], b[i + 1]]);
-    let channels = usize::from(u16_at(22));
-    let rate = u32::from_le_bytes([b[24], b[25], b[26], b[27]]);
+    let wav = jodel_dsp::wav::parse(&b).unwrap_or_else(|| panic!("{path}: not a WAV file"));
+    let (channels, rate) = (usize::from(wav.format.channels), wav.format.rate);
     assert!(
         matches!(channels, 2 | 3 | 5),
         "{path}: {channels} channels, not a recording of the canceller"
     );
-    let at = b
-        .windows(4)
-        .position(|w| w == b"data")
-        .expect("a data chunk")
-        + 8;
-    let x: Vec<f32> = b[at..]
-        .chunks_exact(4)
-        .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
-        .collect();
+    let x = wav
+        .float32()
+        .unwrap_or_else(|| panic!("{path}: not floats"));
     let channel = |c: usize| -> Vec<f32> { x.iter().skip(c).step_by(channels).copied().collect() };
     let mic = channel(0);
     let (left, right) = if channels == 5 {

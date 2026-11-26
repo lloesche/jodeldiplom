@@ -8,11 +8,13 @@ mod common;
 use common::lanes::fails_on_silence;
 use common::transition::*;
 use common::*;
+use jodel_dsp::FULL_SCALE;
 use jodel_output::{SampleFormat, SimClock};
 use jodel_playback::stems::STEMS;
 use jodel_playback::{
     Event, MakeStems, Player, PlayerOptions, TempoMode, TransitionPlan, TransitionState,
 };
+use jodel_testkit::TempDir;
 use SampleFormat::*;
 
 /// From `start` s of track `from` over 2 s into the next at 1 s, faded,
@@ -68,7 +70,7 @@ fn stopped_and_finished(seen: &[Event]) -> (Vec<usize>, bool) {
 #[test]
 fn a_separator_that_fails_leaves_the_transitions_as_planned() {
     let _serial = serial();
-    let dir = temp_dir("transition-stems-failed");
+    let dir = TempDir::new("transition-stems-failed");
     let sine = |t: f64, _c: usize| 0.3 * (2.0 * std::f64::consts::PI * 440.0 * t).sin();
     // Silent through the separator's first chunk (6 s), then a tone.
     let (a, a_samples) = wav(
@@ -114,7 +116,7 @@ fn a_separator_that_fails_leaves_the_transitions_as_planned() {
             (f64::from(got[2 * f + c]) - mean * f64::from(a_samples[2 * f + c])).abs()
         })
         .fold(0.0, f64::max);
-    assert!(off < 0.005 * FULL, "A off its lanes' mean by {off}");
+    assert!(off < 0.005 * FULL_SCALE, "A off its lanes' mean by {off}");
 }
 
 /// The output's rate.
@@ -127,7 +129,7 @@ const HIGH: u32 = 192_000;
 #[test]
 fn at_a_high_rate_the_playing_track_ends_on_its_last_frame() {
     let _serial = serial();
-    let dir = temp_dir("transition-stems-high");
+    let dir = TempDir::new("transition-stems-high");
     for frames in [
         4 * HIGH as usize,
         4 * HIGH as usize - 512,

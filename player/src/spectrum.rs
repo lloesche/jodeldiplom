@@ -14,10 +14,11 @@
 
 use std::sync::Arc;
 
+use jodel_dsp::fft::{Complex, Fft};
+use jodel_dsp::window::hann;
+use jodel_dsp::FULL_SCALE;
 use jodel_playback::{SpectrumTap, TapFrame, TapMiss};
 
-/// Full scale of a 24-bit sample.
-const FULL_SCALE: f64 = 8_388_608.0;
 /// Hertz per analysis bin, about the same for every rate.
 const BIN_HZ: f64 = 22.0;
 /// The fine spectrum's block is this many times longer than the main one.
@@ -129,10 +130,10 @@ pub struct Analyzer {
     size: usize,
     window: Vec<f64>,
     window_sum: f64,
-    fft: Option<Fft>,
+    fft: Option<Fft<f64>>,
     fine_window: Vec<f64>,
     fine_window_sum: f64,
-    fine_fft: Option<Fft>,
+    fine_fft: Option<Fft<f64>>,
     frames: Vec<TapFrame>,
     db: Vec<f32>,
     fine: Vec<f32>,
@@ -174,11 +175,6 @@ impl Analyzer {
         let size = Analyzer::block_for(rate);
         self.rate = rate;
         self.size = size;
-        let hann = |size: usize| -> Vec<f64> {
-            (0..size)
-                .map(|i| 0.5 - 0.5 * (std::f64::consts::TAU * i as f64 / size as f64).cos())
-                .collect()
-        };
         self.window = hann(size);
         self.window_sum = self.window.iter().sum();
         self.fft = Some(Fft::new(size));
@@ -286,91 +282,37 @@ fn spectrum_into(
     frames: &[TapFrame],
     window: &[f64],
     window_sum: f64,
-    fft: &Fft,
+    fft: &Fft<f64>,
     levels: &mut [f32],
     drop: f32,
 ) {
-    // The transform's buffers are kept between calls (up to 2 MB each at
-    // the highest rates).
+    // The transform's buffer is kept between calls (up to 4 MB at the
+    // highest rates).
     thread_local! {
-        static SCRATCH: std::cell::RefCell<(Vec<f64>, Vec<f64>)> =
-            const { std::cell::RefCell::new((Vec::new(), Vec::new())) };
+        static SCRATCH: std::cell::RefCell<Vec<Complex<f64>>> =
+            const { std::cell::RefCell::new(Vec::new()) };
     }
     SCRATCH.with(|scratch| {
-        let (re, im) = &mut *scratch.borrow_mut();
+        let bins = &mut *scratch.borrow_mut();
         let size = window.len();
-        re.clear();
-        re.resize(size, 0.0);
-        im.clear();
-        im.resize(size, 0.0);
+        bins.clear();
+        bins.resize(size, Complex::default());
         let start = frames.len().saturating_sub(size);
         let offset = size - (frames.len() - start);
         for (i, &[l, r]) in frames[start..].iter().enumerate() {
             let x = (f64::from(l) + f64::from(r)) / (2.0 * FULL_SCALE);
-            re[offset + i] = x * window[offset + i];
+            bins[offset + i].re = x * window[offset + i];
         }
-        fft.run(re, im);
+        fft.forward(bins);
         let scale = 2.0 / window_sum;
         for (bin, level) in levels.iter_mut().enumerate() {
-            let power = (re[bin] * re[bin] + im[bin] * im[bin]) * scale * scale;
+            let z = bins[bin];
+            let power = (z.re * z.re + z.im * z.im) * scale * scale;
             let db = (10.0 * power.max(1e-30).log10()) as f32;
             let db = db.clamp(RANGE_DB.0, RANGE_DB.1 + 6.0);
             *level = db.max(*level - drop);
         }
     });
-}
-
-/// An iterative radix-2 FFT of a fixed power-of-two size.
-struct Fft {
-    size: usize,
-    cos: Vec<f64>,
-    sin: Vec<f64>,
-}
-
-impl Fft {
-    fn new(size: usize) -> Self {
-        assert!(size.is_power_of_two());
-        let angle = |k: usize| -std::f64::consts::TAU * k as f64 / size as f64;
-        Self {
-            size,
-            cos: (0..size / 2).map(|k| angle(k).cos()).collect(),
-            sin: (0..size / 2).map(|k| angle(k).sin()).collect(),
-        }
-    }
-
-    fn run(&self, re: &mut [f64], im: &mut [f64]) {
-        let n = self.size;
-        let mut j = 0;
-        for i in 1..n {
-            let mut bit = n >> 1;
-            while j & bit != 0 {
-                j ^= bit;
-                bit >>= 1;
-            }
-            j |= bit;
-            if i < j {
-                re.swap(i, j);
-                im.swap(i, j);
-            }
-        }
-        let mut length = 2;
-        while length <= n {
-            let stride = n / length;
-            for start in (0..n).step_by(length) {
-                for k in 0..length / 2 {
-                    let (c, s) = (self.cos[k * stride], self.sin[k * stride]);
-                    let (a, b) = (start + k, start + k + length / 2);
-                    let tr = re[b] * c - im[b] * s;
-                    let ti = re[b] * s + im[b] * c;
-                    re[b] = re[a] - tr;
-                    im[b] = im[a] - ti;
-                    re[a] += tr;
-                    im[a] += ti;
-                }
-            }
-            length <<= 1;
-        }
-    }
 }
 
 /// A test signal: a sine at `hz` and `amplitude` (of full scale).
@@ -388,7 +330,6 @@ pub fn sine(rate: u32, hz: f64, amplitude: f64, frames: usize) -> Vec<TapFrame> 
 #[cfg(test)]
 mod tests {
     use super::*;
-
     #[test]
     fn a_sine_peaks_at_its_frequency() {
         let mut analyzer = Analyzer::new();
@@ -446,10 +387,7 @@ mod tests {
         let mut seed = 1u32;
         let frames: Vec<TapFrame> = (0..tap_frames_for(rate))
             .map(|_| {
-                seed ^= seed << 13;
-                seed ^= seed >> 17;
-                seed ^= seed << 5;
-                let x = (seed as i32) >> 10;
+                let x = (jodel_dsp::xorshift32(&mut seed) as i32) >> 10;
                 [x, x]
             })
             .collect();

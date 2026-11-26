@@ -29,13 +29,14 @@
 //! song goes through in windows of [`WINDOW`] frames with [`HALO`] more at
 //! each side: the same values as at once, in a few megabytes.
 
-use std::f64::consts::PI;
+use jodel_dsp::mel::{hz_to_mel, mel_to_hz};
+use jodel_dsp::window::hann;
+use jodel_tensors::kernels::{par_chunks, sigmoid, threads};
 use std::sync::OnceLock;
 
-use crate::fft::{Complex, RealFft};
-use crate::nn::layers::{par_chunks, Linear};
-use crate::nn::threads;
+use crate::nn::layers::Linear;
 use crate::nn::weights::Weights;
+use jodel_dsp::fft::{Complex, RealFft};
 
 /// The weights, built in (made by the `pitch_pack` tool, `rhythm/tools`).
 static WEIGHTS: &[u8] = include_bytes!("../models/pitch.bin");
@@ -88,25 +89,6 @@ impl Pitch {
     }
 }
 
-/// Hertz to mel, on the Slaney scale.
-fn hz_to_mel(hz: f64) -> f64 {
-    let step = 6.4f64.ln() / 27.0;
-    if hz >= 1000.0 {
-        15.0 + (hz / 1000.0).ln() / step
-    } else {
-        hz * 3.0 / 200.0
-    }
-}
-
-fn mel_to_hz(mel: f64) -> f64 {
-    let step = 6.4f64.ln() / 27.0;
-    if mel >= 15.0 {
-        1000.0 * (step * (mel - 15.0)).exp()
-    } else {
-        mel * 200.0 / 3.0
-    }
-}
-
 /// librosa's mel filters for 16 kHz, 1024-point frames, 128 bands from 0
 /// to 8 kHz, Slaney-normalised: `(bin, weight)` pairs a band.
 fn bank() -> Vec<Vec<(usize, f32)>> {
@@ -151,9 +133,7 @@ pub fn spectrogram(samples: &[f32]) -> (Vec<f32>, usize) {
             samples[(2 * (n - 1) - i) as usize]
         }
     };
-    let window: Vec<f32> = (0..FRAME)
-        .map(|i| (0.5 - 0.5 * (2.0 * PI * i as f64 / FRAME as f64).cos()) as f32)
-        .collect();
+    let window: Vec<f32> = hann(FRAME).into_iter().map(|w| w as f32).collect();
     let bank = bank();
     let mut out = vec![0.0f32; frames * BANDS];
     par_chunks(&mut out, 64 * BANDS, threads(), |c, rows| {
@@ -191,10 +171,6 @@ fn layer_norm(x: &mut [f32], gamma: &[f32], beta: &[f32]) {
             *v = (*v - mean) * inv * g + b;
         }
     }
-}
-
-fn sigmoid(x: f32) -> f32 {
-    1.0 / (1.0 + (-x).exp())
 }
 
 /// What [`PitchNet::run_seeing`] shows the rows a weight matrix multiplies

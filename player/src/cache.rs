@@ -268,9 +268,7 @@ impl Schema {
 /// FNV-1a, 64 bits, of `text`: what the caches name their files by
 /// ([`name`]).
 pub fn hash(text: &str) -> u64 {
-    text.bytes().fold(0xcbf2_9ce4_8422_2325, |h, b| {
-        (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3)
-    })
+    jodel_dsp::fnv1a(text.as_bytes())
 }
 
 /// What `text` is named by in a cache: its [`hash`] in 16 hex figures.

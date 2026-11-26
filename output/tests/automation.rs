@@ -27,6 +27,7 @@ use jodel_output::mixer::{
 };
 use jodel_output::pack::unpack;
 use jodel_output::{Error, OpenRequest, Output, OutputTarget};
+use jodel_testkit::real_time;
 
 /// A level that reads back exactly and leaves room under full scale.
 const L: i32 = 2_000_000;

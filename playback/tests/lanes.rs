@@ -19,6 +19,7 @@ use jodel_output::{Capabilities, SampleFormat};
 use jodel_playback::{
     Captures, Command, Event, JumpAt, MakeStems, PlayState, Player, PlayerOptions,
 };
+use jodel_testkit::{fixture, TempDir};
 use SampleFormat::*;
 
 // ---- 1. The lossless proof -------------------------------------------
@@ -94,7 +95,7 @@ fn main_through_a_lane_input_is_bit_exact_with_stems_made() {
         let files = files.into_iter().map(fixture).collect();
         same_through_lanes(caps, options(true, quarter), &to_the_end(files));
     }
-    let dir = temp_dir("lanes-pcm");
+    let dir = TempDir::new("lanes-pcm");
     let (w48, w44) = (dir.join("48.wav"), dir.join("44.wav"));
     ramp_wav(&w48, 48_000, 30_000);
     ramp_wav(&w44, 44_100, 30_000);
@@ -155,7 +156,7 @@ fn with_no_separator_the_lanes_carry_main_alone() {
 
 #[test]
 fn seek_pause_and_jump_through_a_lane_input_are_bit_exact() {
-    let dir = temp_dir("lanes-moves");
+    let dir = TempDir::new("lanes-moves");
     let wav = dir.join("ramp.wav");
     ramp_wav(&wav, 44_100, 3 * 44_100);
     let up_to = |gate: &Gate, captures: &Captures, frames: u64| {
@@ -207,7 +208,7 @@ fn seek_pause_and_jump_through_a_lane_input_are_bit_exact() {
 
 #[test]
 fn the_parts_add_up_to_main_at_every_rate() {
-    let dir = temp_dir("lanes-sum");
+    let dir = TempDir::new("lanes-sum");
     let file = tone_file(&dir, "tones.wav", RATE, 2 * RATE as usize);
     for out in [44_100, 48_000, 96_000, 192_000] {
         let (wide, _) = play_wide(
@@ -232,7 +233,7 @@ fn the_parts_add_up_to_main_at_every_rate() {
 
 #[test]
 fn after_a_seek_the_parts_start_from_its_frame() {
-    let dir = temp_dir("lanes-seek");
+    let dir = TempDir::new("lanes-seek");
     let file = tone_file(&dir, "tones.wav", RATE, 3 * RATE as usize);
     for (out, window) in [(44_100, true), (48_000, true), (48_000, false)] {
         let (target, captures, gate) = wide_target(caps(&[out], &[S24In32Low]));
@@ -268,7 +269,7 @@ fn after_a_seek_the_parts_start_from_its_frame() {
 
 #[test]
 fn after_a_jump_the_parts_are_crossfaded_and_in_step() {
-    let dir = temp_dir("lanes-jump");
+    let dir = TempDir::new("lanes-jump");
     let file = tone_file(&dir, "tones.wav", RATE, 2 * RATE as usize);
     // At a frame every 397 (less than a crossfade's 882 less a switch's
     // 441) over more than a piece of parts (4,096): wherever the parts
@@ -308,7 +309,7 @@ fn after_a_jump_the_parts_are_crossfaded_and_in_step() {
 
 #[test]
 fn a_jump_on_a_96_khz_file_played_at_48_keeps_the_parts_in_step() {
-    let dir = temp_dir("lanes-jump-96");
+    let dir = TempDir::new("lanes-jump-96");
     let file = tone_file(&dir, "tones.wav", 96_000, 3 * 96_000);
     let (target, captures, gate) = wide_target(caps(&[48_000], &[S24In32Low]));
     let (player, events) = Player::new(Box::new(target), options(true, quarter));
@@ -337,7 +338,7 @@ fn a_jump_on_a_96_khz_file_played_at_48_keeps_the_parts_in_step() {
 
 #[test]
 fn the_next_track_follows_with_its_parts() {
-    let dir = temp_dir("lanes-next");
+    let dir = TempDir::new("lanes-next");
     let one = tone_file(&dir, "one.wav", RATE, 2 * RATE as usize);
     let two = tone_file(&dir, "two.wav", RATE, 2 * RATE as usize);
     let (wide, seen) = play_wide(
@@ -364,7 +365,7 @@ fn the_next_track_follows_with_its_parts() {
 
 #[test]
 fn mono_and_six_channel_files_have_parts_in_their_channels() {
-    let dir = temp_dir("lanes-channels");
+    let dir = TempDir::new("lanes-channels");
     let stereo = tones(RATE, RATE as usize);
     for channels in [1u16, 6] {
         let ch = usize::from(channels);
@@ -404,7 +405,7 @@ fn mono_and_six_channel_files_have_parts_in_their_channels() {
 
 #[test]
 fn the_parts_end_with_the_track() {
-    let dir = temp_dir("lanes-end");
+    let dir = TempDir::new("lanes-end");
     for (frames, out) in [(RATE as usize + 7, 192_000), (RATE as usize + 3, 48_000)] {
         let file = tone_file(&dir, &format!("{frames}-{out}.wav"), RATE, frames);
         let (wide, _) = play_wide(
@@ -424,7 +425,7 @@ fn the_parts_end_with_the_track() {
 
 #[test]
 fn a_part_touched_on_the_mixer_is_heard_and_untouched_is_main_again() {
-    let dir = temp_dir("lanes-mixer");
+    let dir = TempDir::new("lanes-mixer");
     let samples = tones(RATE, 3 * RATE as usize);
     let file = dir.join("tones.wav");
     write_wav(&file, RATE, 2, &samples);

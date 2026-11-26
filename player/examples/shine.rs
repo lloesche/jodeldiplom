@@ -153,11 +153,10 @@ fn kept_voice(data: &Path, id: &str) -> Option<(Vec<f32>, u32)> {
     use jodel_playback::stems::{Stem, RATE};
     let file = jodeldiplom::stems_cache::file_of(&data.join("stems"), id);
     let mut kept = jodel_playback::StemFile::open(&file).ok()?;
-    let vocals = Stem::ALL.iter().position(|&s| s == Stem::Vocals)?;
     let mut voice = Vec::new();
     while (voice.len() as u64) < kept.frames() {
         let part = kept.read(voice.len() as u64, RATE as usize * 10).ok()?;
-        let [l, r] = &part[vocals];
+        let [l, r] = &part[Stem::Vocals];
         if l.is_empty() {
             break;
         }

@@ -17,7 +17,7 @@ use std::time::Instant;
 
 use jodel_gpu::vision::check::{scene, stats};
 use jodel_gpu::{GpuDepth, GpuMatte};
-use jodel_lyrics::json::Json;
+use jodel_tensors::json::Json;
 
 fn f32s(path: &Path) -> Vec<f32> {
     std::fs::read(path)

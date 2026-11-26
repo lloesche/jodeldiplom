@@ -61,10 +61,13 @@ fn song(path: &Path, seconds: f64) -> Vec<f32> {
 /// A mono 16-bit WAV.
 fn wav(path: &Path) -> Vec<f32> {
     let bytes = std::fs::read(path).unwrap();
-    let rate = u32::from_le_bytes([bytes[24], bytes[25], bytes[26], bytes[27]]);
-    let pcm = &bytes[44..];
-    let mono: Vec<f64> = (0..pcm.len() / 2)
-        .map(|i| f64::from(i16::from_le_bytes([pcm[2 * i], pcm[2 * i + 1]])) / 32_768.0)
+    let wav = jodel_dsp::wav::parse(&bytes).expect("a WAV file");
+    let rate = wav.format.rate;
+    let mono: Vec<f64> = wav
+        .pcm16()
+        .expect("16-bit samples")
+        .iter()
+        .map(|&s| f64::from(s) / 32_768.0)
         .collect();
     resample(&mono, rate)
 }

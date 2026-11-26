@@ -4,18 +4,7 @@
 
 use std::collections::HashMap;
 
-/// A linear layer's weight (`[out][in]`, as PyTorch keeps it) as
-/// `[in][out]`, as the matrix multiplies read it.
-pub(crate) fn transposed(w: &[f32], outs: usize, ins: usize) -> Vec<f32> {
-    assert_eq!(w.len(), outs * ins);
-    let mut t = vec![0.0; w.len()];
-    for o in 0..outs {
-        for i in 0..ins {
-            t[i * outs + o] = w[o * ins + i];
-        }
-    }
-    t
-}
+use jodel_tensors::kernels::transposed;
 
 /// Values packed one after another, each push's offset (in f32s) given
 /// back; offsets count from `origin` (a packer for the part of a buffer

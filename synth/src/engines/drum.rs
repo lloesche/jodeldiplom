@@ -636,7 +636,7 @@ impl Engine for Drum {
         v.rng = dsp::seed(n.seed);
         if v.t == 0 {
             for ph in &mut v.squares {
-                *ph = dsp::xorshift(&mut v.rng);
+                *ph = jodel_dsp::xorshift32(&mut v.rng);
             }
         }
         v.t = 0;

@@ -239,7 +239,7 @@ fn system() -> Vec<String> {
     let cores = std::thread::available_parallelism().map_or(0, |n| n.get());
     lines.push(format!(
         "{cores} processors; the beat network uses {} threads where it runs on the processor",
-        jodel_rhythm::nn::threads()
+        jodel_tensors::kernels::threads()
     ));
     lines
 }
@@ -377,7 +377,7 @@ fn gpu(config: &crate::config::Config) -> Vec<String> {
     } else {
         format!(
             "beat network: on the processor ({} threads)",
-            jodel_rhythm::nn::threads()
+            jodel_tensors::kernels::threads()
         )
     });
     lines

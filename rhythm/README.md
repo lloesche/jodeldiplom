@@ -1,7 +1,8 @@
 # jodel-rhythm
 
 The player's ([`jodeldiplom`](../player)) analysis of music, in plain Rust
-with no dependencies. It began as beat, downbeat and tempo analysis and is
+with no third-party dependencies (the workspace's `jodel-tensors` and
+`jodel-dsp` only). It began as beat, downbeat and tempo analysis and is
 still mostly that: two methods analyse the track, each through several
 trackers, and a vote among them picks one beat grid and says how sure it
 is. A meter then listens for what a listener hears (the backbeat, accents,
@@ -134,8 +135,8 @@ the four stems' and is kept as bytes (`to_bytes`, `from_bytes`), about
 1. **Front end** (`frontend`): 1,024-sample Hann frames every 220
    samples at 22.05 kHz (about 100 frames per second), centred on their
    time; magnitudes through 128 triangular mel bands from 30 Hz to 10 kHz;
-   `ln(1 + 1000·x)`. The FFT is our own (`fft`, a real FFT through a
-   half-length complex one).
+   `ln(1 + 1000·x)`. The FFT is our own (`jodel_dsp::fft`, a real
+   FFT through a half-length complex one).
 2. **Activations** (`activation`): curves in `0..=1` that rise where a beat
    is likely. `Flux::FULL` (all bands) and `Flux::LOW` (below 250 Hz: kick
    drums and bass) measure how much each band rose against the loudest of
@@ -187,7 +188,7 @@ licence ([models/LICENSE-beat-this](models/LICENSE-beat-this)).
    The layers (`nn::layers`, shared with the other networks) are plain
    loops written so the compiler vectorises them, with an AVX2 build of the
    hot ones picked at run time. The work is spread over half the
-   processors (`nn::threads`). A four-minute track takes about 6.5 s.
+   processors (`jodel_tensors::kernels::threads`). A four-minute track takes about 6.5 s.
    A `net::NetRunner` runs the pieces elsewhere (`jodel-gpu`'s `GpuNetwork`,
    the player's analysis wherever there is a GPU):
    `Analyzer::run_network_on` hands it each piece's spectrogram and takes
@@ -326,7 +327,7 @@ Sommer, after Korzeniowski and Widmer, ISMIR 2018; MIT, see
   magnitude through `log1p`. With these settings librosa's
   octave-by-octave downsampling scales out exactly, so each bin is one
   Hann-windowed DFT at its frequency over its own length, at the full
-  rate, on half the processors (`nn::threads`). The spectrum of a
+  rate, on half the processors (`jodel_tensors::kernels::threads`). The spectrum of a
   four-minute song takes about 0.07 s, the key about 0.17 s.
 - **The network.** Nine convolutions with batch norm (folded into a scale
   and a shift) and ELU, three 2×2 max pools, the average over the whole
@@ -364,7 +365,7 @@ of [FCPE](https://github.com/CNChTu/FCPE) (CNChTu, MIT, see
   the rest reaches 92 frames either way. So the statistics come first, from
   the first convolution alone, and the song goes through in windows of 30 s
   with 96 frames more each side: the same values as at once, without the
-  song's activations in memory, on half the processors (`nn::threads`): a
+  song's activations in memory, on half the processors (`jodel_tensors::kernels::threads`): a
   2:21 song in about 3.2 s.
 - **The weights** are built in at about 6 bits a weight: Q5_K (`nn::quant`,
   the block layout of GGML's files: blocks of 256 with eight 6-bit scales

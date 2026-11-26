@@ -16,6 +16,7 @@ use jodel_output::{
     StreamInfo,
 };
 use jodel_playback::{Event, MemoryTarget, Player, PlayerOptions};
+use jodel_testkit::{fixture, real_time};
 
 const FORMAT: SampleFormat = SampleFormat::S24In32Low;
 

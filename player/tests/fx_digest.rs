@@ -21,6 +21,7 @@
 use std::path::Path;
 use std::sync::Arc;
 
+use jodel_dsp::Fnv1a;
 use jodeldiplom::core::shine::{Reference, Shone, Tier};
 use jodeldiplom::core::singing::Singing;
 use jodeldiplom::gui::fx::rainbow::shine_of;
@@ -55,14 +56,11 @@ fn decisions() -> Vec<(u32, Option<Tier>)> {
 }
 
 /// A 64-bit FNV-1a digest.
-struct Digest(u64);
+struct Digest(Fnv1a);
 
 impl Digest {
     fn word(&mut self, w: u32) {
-        for b in w.to_le_bytes() {
-            self.0 ^= u64::from(b);
-            self.0 = self.0.wrapping_mul(0x0100_0000_01b3);
-        }
+        self.0.write(&w.to_le_bytes());
     }
 
     fn floats(&mut self, v: &[f32]) {
@@ -146,7 +144,7 @@ fn digest(lane: bool) -> (u64, std::collections::BTreeMap<String, usize>) {
     let phrases = vec![None; singing.notes.lines.len()];
     singing.set_reference(Some(Arc::new(Reference { phrases })));
     let mut stage = Stage::default();
-    let mut d = Digest(0xcbf2_9ce4_8422_2325);
+    let mut d = Digest(Fnv1a::new());
     let mut counts = std::collections::BTreeMap::new();
     let mut heard = 0usize;
     let decided = decisions();
@@ -199,7 +197,7 @@ fn digest(lane: bool) -> (u64, std::collections::BTreeMap<String, usize>) {
             *counts.entry(format!("{:?}", s.kind)).or_insert(0) += 1;
         }
     }
-    (d.0, counts)
+    (d.0.finish(), counts)
 }
 
 /// The scripted singing draws the frames it drew when the digest was

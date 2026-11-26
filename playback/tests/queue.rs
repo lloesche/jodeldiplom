@@ -8,6 +8,7 @@ use std::path::PathBuf;
 use common::*;
 use jodel_output::SampleFormat;
 use jodel_playback::{Event, Player, PlayerOptions};
+use jodel_testkit::TempDir;
 
 const RATE: u32 = 44_100;
 
@@ -22,7 +23,7 @@ fn setup(
     std::sync::mpsc::Receiver<Event>,
     std::sync::Arc<Gate>,
 ) {
-    let dir = temp_dir(name);
+    let dir = TempDir::new(name);
     let paths: Vec<PathBuf> = ["a", "b", "c"]
         .iter()
         .map(|n| {

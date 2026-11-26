@@ -5,6 +5,7 @@
 use super::capture::MicShared;
 use crate::aec::BLOCK;
 use crate::spsc;
+use jodel_dsp::wav::{float_header, FLOAT_HEADER};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
@@ -43,48 +44,6 @@ impl EchoRecording {
     }
 }
 
-/// The bytes of [`wav_header`].
-const WAV_HEADER: usize = 80;
-
-/// A WAV header for `frames` of `channels` channels of 32-bit float at
-/// `rate`, as players everywhere read one (macOS's Quick Look among them):
-/// WAVE_FORMAT_EXTENSIBLE, saying which speaker each channel is for (the
-/// mask `speakers`), and a `fact` chunk with the frame count, which a WAV
-/// file of floats should have. The plain 16-byte header of float data on
-/// three channels was refused by some.
-fn wav_header(channels: u16, speakers: u32, rate: u32, frames: u64) -> Vec<u8> {
-    /// KSDATAFORMAT_SUBTYPE_IEEE_FLOAT.
-    const FLOAT: [u8; 16] = [
-        0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00, 0x80, 0x00, 0x00, 0xAA, 0x00, 0x38, 0x9B,
-        0x71,
-    ];
-    let block = u32::from(channels) * 4;
-    let data = (frames * u64::from(block)).min(u64::from(u32::MAX - WAV_HEADER as u32)) as u32;
-    let mut h = Vec::with_capacity(WAV_HEADER);
-    h.extend_from_slice(b"RIFF");
-    h.extend_from_slice(&(WAV_HEADER as u32 - 8 + data).to_le_bytes());
-    h.extend_from_slice(b"WAVE");
-    h.extend_from_slice(b"fmt ");
-    h.extend_from_slice(&40u32.to_le_bytes());
-    h.extend_from_slice(&0xFFFEu16.to_le_bytes());
-    h.extend_from_slice(&channels.to_le_bytes());
-    h.extend_from_slice(&rate.to_le_bytes());
-    h.extend_from_slice(&(rate * block).to_le_bytes());
-    h.extend_from_slice(&(block as u16).to_le_bytes());
-    h.extend_from_slice(&32u16.to_le_bytes());
-    h.extend_from_slice(&22u16.to_le_bytes());
-    h.extend_from_slice(&32u16.to_le_bytes());
-    h.extend_from_slice(&speakers.to_le_bytes());
-    h.extend_from_slice(&FLOAT);
-    h.extend_from_slice(b"fact");
-    h.extend_from_slice(&4u32.to_le_bytes());
-    h.extend_from_slice(&(frames.min(u64::from(u32::MAX)) as u32).to_le_bytes());
-    h.extend_from_slice(b"data");
-    h.extend_from_slice(&data.to_le_bytes());
-    debug_assert_eq!(h.len(), WAV_HEADER);
-    h
-}
-
 /// Writes the canceller's blocks queued on `record` to `path` as they come,
 /// for `seconds` of them (or until none comes for three seconds), under a
 /// temporary name that becomes `path` only once the recording is whole
@@ -100,7 +59,7 @@ pub(super) fn write_recording(
     // What was queued before is not this recording's.
     record.skip(record.len());
     let mut file = durable::AtomicFile::create(path).map_err(fail)?;
-    file.write_all(&[0u8; WAV_HEADER]).map_err(fail)?;
+    file.write_all(&[0u8; FLOAT_HEADER]).map_err(fail)?;
     let mut bytes = Vec::with_capacity(RECORD_CHANNELS * BLOCK * 4);
     let mut frames = 0u64;
     let mut rate = 0u32;
@@ -133,7 +92,7 @@ pub(super) fn write_recording(
     }
     // The header, now the length is known; then the name.
     file.seek(SeekFrom::Start(0)).map_err(fail)?;
-    file.write_all(&wav_header(
+    file.write_all(&float_header(
         RECORD_CHANNELS as u16,
         RECORD_SPEAKERS,
         rate,
@@ -153,8 +112,8 @@ mod tests {
 
     #[test]
     fn a_recording_has_the_header_players_read() {
-        let h = wav_header(RECORD_CHANNELS as u16, RECORD_SPEAKERS, 44_100, 1000);
-        assert_eq!(h.len(), WAV_HEADER);
+        let h = float_header(RECORD_CHANNELS as u16, RECORD_SPEAKERS, 44_100, 1000);
+        assert_eq!(h.len(), FLOAT_HEADER);
         let u16_at = |i: usize| u16::from_le_bytes([h[i], h[i + 1]]);
         let u32_at = |i: usize| u32::from_le_bytes([h[i], h[i + 1], h[i + 2], h[i + 3]]);
         assert_eq!(&h[0..4], b"RIFF");

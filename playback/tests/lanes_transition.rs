@@ -11,10 +11,12 @@ mod common;
 
 use common::transition::*;
 use common::*;
+use jodel_dsp::FULL_SCALE;
 use jodel_output::lanes::Parts;
 use jodel_output::SampleFormat::S24In32Low;
 use jodel_playback::stems::STEMS;
 use jodel_playback::{Envelope, Event, MakeStems, TempoMode, TransitionPlan, TransitionState};
+use jodel_testkit::TempDir;
 
 fn plan() -> TransitionPlan {
     TransitionPlan {
@@ -71,7 +73,7 @@ struct Ran {
 
 /// Plays the transition with the stems as `stems` has them.
 fn run(stems: Stems) -> Ran {
-    let dir = temp_dir(&format!("lanes-transition-{stems:?}"));
+    let dir = TempDir::new(&format!("lanes-transition-{stems:?}"));
     let (a_path, a) = wav(&dir, "a.wav", 12.0, tone([1_000.0, 5_000.0]));
     let (b_path, b) = wav(&dir, "b.wav", 12.0, tone([2_000.0, 3_000.0]));
     let desk = Desk::new(caps(&[RATE], &[S24In32Low]), options());
@@ -154,9 +156,9 @@ fn never_jumps(stems: Stems) {
     let frames = (200..ran.got.len() / 2 - 200).filter(|&f| !edge(f));
     let (worst, at) = worst(&ran, stems, frames);
     assert!(
-        worst < 0.005 * FULL,
+        worst < 0.005 * FULL_SCALE,
         "{stems:?}: off by {:.4} of full scale at {:.4} s",
-        worst / FULL,
+        worst / FULL_SCALE,
         at as f64 / f64::from(RATE)
     );
 }
@@ -200,8 +202,8 @@ fn the_next_tracks_return_to_its_file_is_not_heard() {
     assert!(at > 7 * rate, "B back on its file at {at}");
     let (worst, _) = worst(&ran, Stems::DrumsMuted, at - rate / 5..at + rate / 5);
     assert!(
-        worst < 0.002 * FULL,
+        worst < 0.002 * FULL_SCALE,
         "off by {:.5} around {at}",
-        worst / FULL
+        worst / FULL_SCALE
     );
 }

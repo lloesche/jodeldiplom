@@ -16,8 +16,10 @@
 
 use super::stft::BINS;
 use super::STEMS;
-use crate::nn::layers::{dot, exp_shifted, fast, gelu, par_chunks, Linear, Rotary, HEAD};
+use crate::nn::layers::{dot, exp_shifted, gelu, Linear, Rotary, HEAD};
 use crate::nn::weights::Weights;
+use jodel_tensors::fast;
+use jodel_tensors::kernels::par_chunks;
 
 /// Bins per band, low to high.
 pub const BAND_BINS: [usize; 62] = [

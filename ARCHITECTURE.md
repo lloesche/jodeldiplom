@@ -38,29 +38,36 @@ the documentation:
 
 ```text
 jodeldiplom ─────► jodel-playback, jodel-gpu, jodel-rhythm, jodel-lyrics,
-                   jodel-output, jodel-synth, durable
+                   jodel-output, jodel-synth, jodel-tensors, jodel-dsp,
+                   durable
 jodel-gpu ───────► jodel-rhythm, jodel-lyrics, jodel-tensors
-jodel-playback ──► jodel-output, jodel-rhythm, durable
-jodel-output ────► jodel-synth, durable
-jodel-lyrics ────► jodel-tensors, durable
-jodel-rhythm-tools ► jodel-rhythm, durable
-jodel-rhythm, jodel-tensors, jodel-synth, durable: leaves
+jodel-playback ──► jodel-output, jodel-rhythm, jodel-dsp, durable
+jodel-output ────► jodel-synth, jodel-tensors, jodel-dsp, durable
+jodel-lyrics ────► jodel-tensors, jodel-dsp, durable
+jodel-rhythm ────► jodel-tensors, jodel-dsp
+jodel-synth ─────► jodel-dsp
+jodel-rhythm-tools ► jodel-rhythm, jodel-tensors, jodel-dsp, durable
+jodel-tensors, jodel-dsp, durable: leaves
 ```
 
 Each line is a crate and what it depends on. The synth uses `durable` only
-in its tests and examples; there are no cycles.
+in its tests and examples, and `jodel-testkit` (what the tests share) is
+a dev-dependency only, of the output, playback, synth and player; there
+are no cycles.
 
 | Crate | Folder | Holds | Depends on |
 |---|---|---|---|
 | `durable` | `durable/` | every file write: whole or not at all, made durable; journals and atomic folders | nothing |
-| `jodel-tensors` | `tensors/` | a `.safetensors` checkpoint's tensors as `f32` | nothing |
-| `jodel-synth` | `synth/` | the real-time synthesizer: ten engines, a voice host, chorus, delay, hall and dynamics; nothing allocates after construction | nothing |
-| `jodel-rhythm` | `rhythm/` | the music analysis on the CPU: the beat grid voted on by several trackers, the meter and bars, the key, a voice's pitch (YIN live, a network for whole songs), the stem separator, waveforms, loudness | nothing |
-| `jodel-rhythm-tools` | `rhythm/tools/` | the tools that pack and measure the pitch network's built-in weights | `jodel-rhythm`, `durable` |
-| `jodel-lyrics` | `lyrics/` | lyrics as data, LRC in and out, the speech model and the recogniser on the CPU, forced alignment, whether a text fits a recording | `durable`, `jodel-tensors` |
+| `jodel-tensors` | `tensors/` | the networks' numeric base: a `.safetensors` checkpoint's tensors as `f32`, half floats, the JSON reader, what the CPU kernels share (`par_chunks`, `threads`, `fast!`) | nothing |
+| `jodel-dsp` | `dsp/` | the signal tools: the FFTs (complex and real, `f32` or `f64`), the Hann window and the windowed sinc's parts, the Slaney mel scale, xorshift, FNV-1a, WAV files as bytes, the 24-bit `FULL_SCALE` and `PEAK` | nothing |
+| `jodel-testkit` | `testkit/` | what the tests share: `real_time`/`heavy`, `fixture`, `TempDir`, the counting allocator (a dev-dependency only) | nothing |
+| `jodel-synth` | `synth/` | the real-time synthesizer: ten engines, a voice host, chorus, delay, hall and dynamics; nothing allocates after construction | `jodel-dsp` |
+| `jodel-rhythm` | `rhythm/` | the music analysis on the CPU: the beat grid voted on by several trackers, the meter and bars, the key, a voice's pitch (YIN live, a network for whole songs), the stem separator, waveforms, loudness | `jodel-tensors`, `jodel-dsp` |
+| `jodel-rhythm-tools` | `rhythm/tools/` | the tools that pack and measure the pitch network's built-in weights | `jodel-rhythm`, `jodel-tensors`, `jodel-dsp`, `durable` |
+| `jodel-lyrics` | `lyrics/` | lyrics as data, LRC in and out, the speech model and the recogniser on the CPU, forced alignment, whether a text fits a recording | `durable`, `jodel-tensors`, `jodel-dsp` |
 | `jodel-gpu` | `gpu/` | every network on the GPU through `wgpu`: stems, beats, speech, the recogniser, the covers' depth and cut-out; the GPU shared with the window in short submissions | `jodel-rhythm`, `jodel-lyrics`, `jodel-tensors` |
-| `jodel-output` | `output/` | the device, shared through the system's mixer (WASAPI, Core Audio HAL, ALSA); the mixer (the desk); microphone capture, the echo canceller and the singer's isolation | `durable`, `jodel-synth` |
-| `jodel-playback` | `playback/` | the engine: files decoded, routed, resampled, gapless; seeks, bar jumps, stems as parts of the output, transitions on two heads, the key shift | `durable`, `jodel-output`, `jodel-rhythm` |
+| `jodel-output` | `output/` | the device, shared through the system's mixer (WASAPI, Core Audio HAL, ALSA); the mixer (the desk); microphone capture, the echo canceller and the singer's isolation | `durable`, `jodel-synth`, `jodel-tensors`, `jodel-dsp` |
+| `jodel-playback` | `playback/` | the engine: files decoded, routed, resampled, gapless; seeks, bar jumps, stems as parts of the output, transitions on two heads, the key shift | `durable`, `jodel-output`, `jodel-rhythm`, `jodel-dsp` |
 | `jodeldiplom` | `player/` | the application: the pure core, the window, the workers, the stores, the game | all of the above |
 
 Two choices hold the graph in shape. `jodel-gpu` sits above the domain

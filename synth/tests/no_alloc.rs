@@ -12,11 +12,9 @@ use jodel_synth::engines::{
 use jodel_synth::params::Knobs;
 use jodel_synth::patch::{Lfo, LfoRate};
 use jodel_synth::{Bank, Command, NoteOn, Patch, Synth};
-use std::alloc::{GlobalAlloc, Layout, System};
+use jodel_testkit::{Call, Counting};
 use std::cell::Cell;
 use std::sync::atomic::{AtomicUsize, Ordering};
-
-struct Counting;
 
 static ALLOCATIONS: AtomicUsize = AtomicUsize::new(0);
 
@@ -26,35 +24,14 @@ thread_local! {
     static COUNTING: Cell<bool> = const { Cell::new(false) };
 }
 
-fn count() {
-    if COUNTING.with(Cell::get) {
+fn count(call: Call) {
+    if call == Call::Alloc && COUNTING.with(Cell::get) {
         ALLOCATIONS.fetch_add(1, Ordering::Relaxed);
     }
 }
 
-// SAFETY: every call goes straight to the system allocator, with the same
-// layout and pointer; it only counts on the way.
-unsafe impl GlobalAlloc for Counting {
-    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        count();
-        // SAFETY: the caller's contract is passed on as it is.
-        unsafe { System.alloc(layout) }
-    }
-
-    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        // SAFETY: as above.
-        unsafe { System.dealloc(ptr, layout) }
-    }
-
-    unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-        count();
-        // SAFETY: as above.
-        unsafe { System.realloc(ptr, layout, new_size) }
-    }
-}
-
 #[global_allocator]
-static GLOBAL: Counting = Counting;
+static GLOBAL: Counting = Counting(count);
 
 #[test]
 fn rendering_allocates_nothing() {

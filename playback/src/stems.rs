@@ -15,12 +15,13 @@ use std::sync::mpsc::{self, Receiver, RecvTimeoutError, SyncSender, TryRecvError
 use std::sync::Arc;
 use std::time::Duration;
 
-pub use jodel_rhythm::stems::{Separator, Stem, RATE, STEMS};
+pub use jodel_rhythm::stems::{PerStem, Separator, Stem, RATE, STEMS};
 use jodel_rhythm::stems::{Splitter, StemBlock};
 
 use crate::resample::Resampler;
-use crate::source::{Source, SCALE_24 as FULL_SCALE};
-use crate::stem_file::{StemFile, StemStore};
+use crate::source::Source;
+use crate::stem_file::{StemFile, StemStore, Stems};
+use jodel_dsp::FULL_SCALE;
 
 /// The stems in the order a player hands them on as parts of its output
 /// (lanes 1 to 4, after main), the order people name them in: drums, bass,
@@ -49,9 +50,15 @@ impl From<Option<SeparatorSource>> for Unkept {
     }
 }
 
-/// `stem`'s place in [`Stem::ALL`], the order a run keeps the stems in.
-fn slot(stem: Stem) -> usize {
-    Stem::ALL.iter().position(|&s| s == stem).unwrap_or(0)
+/// `stem`'s place in [`LANES`] (its part's lane is one more: main is lane
+/// 0).
+pub const fn lane(stem: Stem) -> usize {
+    match stem {
+        Stem::Drums => 0,
+        Stem::Bass => 1,
+        Stem::Vocals => 2,
+        Stem::Other => 3,
+    }
 }
 
 /// Decoded blocks as stereo at the separator's rate ([`RATE`]), handed on
@@ -136,10 +143,9 @@ impl StereoFeed {
 /// separates ahead of what the engine has taken.
 const AHEAD: usize = 4;
 
-/// A stretch of finished stems: `[stem][channel]` samples, in the order of
-/// [`Stem::ALL`].
+/// A stretch of finished stems: each stem's left and right samples.
 struct Separated {
-    stems: Vec<[Vec<f32>; 2]>,
+    stems: Stems,
     /// Where they come from.
     served: Served,
 }
@@ -158,11 +164,7 @@ pub(crate) enum Served {
 impl Separated {
     fn of(block: &StemBlock) -> Separated {
         Separated {
-            stems: block
-                .stems
-                .iter()
-                .map(|[l, r]| [l.to_vec(), r.to_vec()])
-                .collect(),
+            stems: block.stems.map(|[l, r]| [l.to_vec(), r.to_vec()]),
             served: Served::Separated,
         }
     }
@@ -211,9 +213,9 @@ pub(crate) struct StemRun {
     read: Arc<AtomicBool>,
     /// Set when the run is dropped: its thread stops before the next chunk.
     cancel: Arc<AtomicBool>,
-    /// The stems kept, `[stem][channel]` in the order of [`Stem::ALL`],
-    /// from run frame `kept_from` (frames at [`RATE`] from `start`).
-    kept: Vec<[Vec<f32>; 2]>,
+    /// The stems kept, each stem's left and right channel, from run frame
+    /// `kept_from` (frames at [`RATE`] from `start`).
+    kept: Stems,
     kept_from: u64,
     /// Every stem has come from the thread (or it failed: `failed`).
     received: bool,
@@ -280,7 +282,7 @@ impl StemRun {
             stems,
             read,
             cancel,
-            kept: (0..STEMS).map(|_| [Vec::new(), Vec::new()]).collect(),
+            kept: Stems::default(),
             kept_from: 0,
             received: false,
             failed: None,
@@ -310,7 +312,7 @@ impl StemRun {
 
     /// The run frame after the last one kept.
     pub(crate) fn kept_end(&self) -> u64 {
-        self.kept_from + self.kept[0][0].len() as u64
+        self.kept_from + self.kept[Stem::Bass][0].len() as u64
     }
 
     /// Every stem has come from the thread: nothing past
@@ -390,7 +392,7 @@ impl StemRun {
             match message {
                 Message::Stems(s) => {
                     self.served = Some(s.served);
-                    for (kept, [l, r]) in self.kept.iter_mut().zip(s.stems) {
+                    for (kept, [l, r]) in self.kept.0.iter_mut().zip(s.stems.0) {
                         kept[0].extend_from_slice(&l);
                         kept[1].extend_from_slice(&r);
                     }
@@ -412,13 +414,13 @@ impl StemRun {
     /// next (a second at a time).
     fn trim(&mut self) {
         let from = self.mixed.saturating_sub(self.keep.0);
-        let len = self.kept[0][0].len() as u64;
+        let len = self.kept[Stem::Bass][0].len() as u64;
         let drop = from.saturating_sub(self.kept_from).min(len);
         // In steps of a quarter of what is kept behind (a second at
         // least): each moves all that is kept.
         let step = (self.keep.0 / 4).max(u64::from(RATE));
         if drop >= step || (drop == len && drop > 0) {
-            for kept in &mut self.kept {
+            for kept in &mut self.kept.0 {
                 for channel in kept {
                     channel.drain(..drop as usize);
                 }
@@ -458,11 +460,10 @@ impl StemRun {
             Ok(span) => span,
             Err(pull) => return pull,
         };
-        let slots = LANES.map(slot);
         out.reserve(2 * STEMS * n);
         for i in first..first + n {
-            for &s in &slots {
-                let [l, r] = &self.kept[s];
+            for stem in LANES {
+                let [l, r] = &self.kept[stem];
                 out.extend([f64::from(l[i]) * FULL_SCALE, f64::from(r[i]) * FULL_SCALE]);
             }
         }
@@ -497,13 +498,13 @@ fn read_kept(
             return Ok(());
         }
         let stems = file.read(at, KEPT_PIECE).map_err(|e| e.to_string())?;
-        let n = stems[0][0].len() as u64;
+        let n = stems[Stem::Bass][0].len() as u64;
         if n == 0 {
             break;
         }
         at += n;
         let piece = Separated {
-            stems: Vec::from(stems),
+            stems,
             served: Served::Kept,
         };
         if tx.send(Message::Stems(piece)).is_err() {
@@ -560,7 +561,6 @@ fn whole(
     read: &AtomicBool,
     cancel: &AtomicBool,
 ) -> Result<(), String> {
-    let other = slot(Stem::Other);
     let gone = Cell::new(false);
     let stopped = || gone.get() || cancel.load(Ordering::Relaxed);
     let mut put = |left: Vec<f32>, right: Vec<f32>| {
@@ -568,9 +568,8 @@ fn whole(
             return;
         }
         let n = left.len();
-        let mut stems: Vec<[Vec<f32>; 2]> =
-            (0..STEMS).map(|_| [vec![0.0; n], vec![0.0; n]]).collect();
-        stems[other] = [left, right];
+        let mut stems = Stems::from_fn(|_| [vec![0.0; n], vec![0.0; n]]);
+        stems[Stem::Other] = [left, right];
         let piece = Separated {
             stems,
             served: Served::Whole,
@@ -626,10 +625,10 @@ mod tests {
 
     #[test]
     fn the_lanes_are_every_stem_once() {
-        let mut slots = LANES.map(slot);
-        slots.sort_unstable();
-        assert_eq!(slots, [0, 1, 2, 3]);
-        assert_eq!(Stem::ALL[slot(Stem::Vocals)], Stem::Vocals);
+        for stem in Stem::ALL {
+            assert_eq!(LANES[lane(stem)], stem);
+            assert_eq!(Stem::ALL[stem.index()], stem);
+        }
     }
 
     #[test]

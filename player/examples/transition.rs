@@ -14,7 +14,6 @@
 //! rendered fall from FROM's beats in the window (from an analysis of the
 //! file).
 
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::{Duration, Instant};
@@ -332,25 +331,5 @@ fn report(what: &str, offsets: &[f64], of: usize) {
 
 /// A 24-bit stereo WAV of `samples` (24-bit, interleaved).
 fn write_wav(path: &Path, rate: u32, samples: &[i32]) -> Result<(), String> {
-    let mut out = durable::AtomicFile::create(path).map_err(|e| e.to_string())?;
-    let data = (samples.len() * 3) as u32;
-    let mut header = Vec::with_capacity(44);
-    header.extend_from_slice(b"RIFF");
-    header.extend_from_slice(&(36 + data).to_le_bytes());
-    header.extend_from_slice(b"WAVEfmt ");
-    header.extend_from_slice(&16u32.to_le_bytes());
-    header.extend_from_slice(&1u16.to_le_bytes());
-    header.extend_from_slice(&2u16.to_le_bytes());
-    header.extend_from_slice(&rate.to_le_bytes());
-    header.extend_from_slice(&(rate * 6).to_le_bytes());
-    header.extend_from_slice(&6u16.to_le_bytes());
-    header.extend_from_slice(&24u16.to_le_bytes());
-    header.extend_from_slice(b"data");
-    header.extend_from_slice(&data.to_le_bytes());
-    out.write_all(&header).map_err(|e| e.to_string())?;
-    for s in samples {
-        out.write_all(&s.to_le_bytes()[..3])
-            .map_err(|e| e.to_string())?;
-    }
-    out.commit().map_err(|e| e.to_string())
+    durable::write_atomic(path, &jodel_dsp::wav::pcm24(rate, 2, samples)).map_err(|e| e.to_string())
 }

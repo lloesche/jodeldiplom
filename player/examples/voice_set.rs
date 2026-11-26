@@ -14,34 +14,19 @@ use std::path::Path;
 use std::time::Instant;
 
 fn wav16(path: &Path, x: &[f32]) -> std::io::Result<()> {
-    let data = (2 * x.len()) as u32;
-    let mut b = Vec::with_capacity(44 + 2 * x.len());
-    b.extend_from_slice(b"RIFF");
-    b.extend_from_slice(&(36 + data).to_le_bytes());
-    b.extend_from_slice(b"WAVEfmt ");
-    b.extend_from_slice(&16u32.to_le_bytes());
-    b.extend_from_slice(&1u16.to_le_bytes());
-    b.extend_from_slice(&1u16.to_le_bytes());
-    b.extend_from_slice(&16_000u32.to_le_bytes());
-    b.extend_from_slice(&32_000u32.to_le_bytes());
-    b.extend_from_slice(&2u16.to_le_bytes());
-    b.extend_from_slice(&16u16.to_le_bytes());
-    b.extend_from_slice(b"data");
-    b.extend_from_slice(&data.to_le_bytes());
-    for v in x {
-        b.extend_from_slice(&((v.clamp(-1.0, 1.0) * 32767.0).round() as i16).to_le_bytes());
-    }
-    durable::write_atomic(path, &b)
+    let pcm: Vec<i16> = x
+        .iter()
+        .map(|v| (v.clamp(-1.0, 1.0) * 32767.0).round() as i16)
+        .collect();
+    durable::write_atomic(path, &jodel_dsp::wav::pcm16(16_000, 1, &pcm))
 }
 
 /// A short id for `path`: 12 hex digits of FNV-1a.
 fn id(path: &str) -> String {
-    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-    for b in path.bytes() {
-        h ^= u64::from(b);
-        h = h.wrapping_mul(0x0100_0000_01b3);
-    }
-    format!("{:012x}", h & 0xffff_ffff_ffff)
+    format!(
+        "{:012x}",
+        jodel_dsp::fnv1a(path.as_bytes()) & 0xffff_ffff_ffff
+    )
 }
 
 fn main() {

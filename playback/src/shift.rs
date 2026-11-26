@@ -153,7 +153,7 @@ mod tests {
     /// placed between its bins), at `rate`.
     pub(crate) fn peak_hz(x: &[f64], rate: u32) -> f64 {
         let n = x.len();
-        let w = |i: usize| 0.5 - 0.5 * (2.0 * std::f64::consts::PI * i as f64 / n as f64).cos();
+        let w = |i: usize| jodel_dsp::window::hann_at(i, n);
         let bin = |k: f64| {
             let (mut re, mut im) = (0.0, 0.0);
             for (i, &v) in x.iter().enumerate() {

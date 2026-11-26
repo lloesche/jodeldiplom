@@ -21,6 +21,8 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use jodel_dsp::wav;
+
 /// The voice: mono, 16-bit WAV at the rate it was heard at.
 pub const VOICE: &str = "voice.wav";
 /// Where in the song the voice was sung: a line a mark, the sample (of
@@ -189,7 +191,10 @@ impl Kept {
 
     /// Writes its files into `folder`.
     fn write_into(&self, folder: &Path) -> io::Result<()> {
-        durable::write_atomic(&folder.join(VOICE), &wav(&self.samples, self.rate, 1))?;
+        durable::write_atomic(
+            &folder.join(VOICE),
+            &wav::pcm16(self.rate, 1, &self.samples),
+        )?;
         let mut times = String::new();
         for (k, t) in &self.marks {
             let _ = writeln!(times, "{k} {t:.6}");
@@ -222,43 +227,14 @@ pub fn is_take(folder: &Path) -> bool {
         .is_some_and(|n| n.starts_with(TAKE) && !durable::is_temporary(n))
 }
 
-/// `samples` at `rate`, `channels` interleaved, as a 16-bit WAV file.
-pub fn wav(samples: &[i16], rate: u32, channels: u16) -> Vec<u8> {
-    let data = (samples.len() * 2) as u32;
-    let frame = 2 * channels;
-    let mut out = Vec::with_capacity(44 + samples.len() * 2);
-    out.extend_from_slice(b"RIFF");
-    out.extend_from_slice(&(36 + data).to_le_bytes());
-    out.extend_from_slice(b"WAVEfmt ");
-    out.extend_from_slice(&16u32.to_le_bytes());
-    out.extend_from_slice(&1u16.to_le_bytes());
-    out.extend_from_slice(&channels.to_le_bytes());
-    out.extend_from_slice(&rate.to_le_bytes());
-    out.extend_from_slice(&(rate * u32::from(frame)).to_le_bytes());
-    out.extend_from_slice(&frame.to_le_bytes());
-    out.extend_from_slice(&16u16.to_le_bytes());
-    out.extend_from_slice(b"data");
-    out.extend_from_slice(&data.to_le_bytes());
-    for s in samples {
-        out.extend_from_slice(&s.to_le_bytes());
-    }
-    out
-}
-
-/// A mono 16-bit WAV file's samples (±1) and rate, as [`wav`] writes them.
+/// A mono 16-bit WAV file's samples (±1) and rate, as a take's voice is
+/// kept ([`jodel_dsp::wav::pcm16`]).
 pub fn read_wav(bytes: &[u8]) -> Option<(Vec<f32>, u32)> {
-    if bytes.len() < 44 || &bytes[0..4] != b"RIFF" || &bytes[8..12] != b"WAVE" {
-        return None;
-    }
-    let rate = u32::from_le_bytes(bytes[24..28].try_into().ok()?);
-    let data = bytes.get(44..)?;
+    let file = wav::parse(bytes)?;
+    let samples = file.pcm16()?;
     Some((
-        data.as_chunks::<2>()
-            .0
-            .iter()
-            .map(|b| f32::from(i16::from_le_bytes(*b)) / 32767.0)
-            .collect(),
-        rate,
+        samples.iter().map(|&s| f32::from(s) / 32767.0).collect(),
+        file.format.rate,
     ))
 }
 
@@ -320,7 +296,7 @@ mod tests {
         let about = std::fs::read_to_string(folder.join(ABOUT)).unwrap();
         assert_eq!(read_keys(&about), [(100, 2)]);
         let _ = std::fs::remove_dir_all(&dir);
-        let (back, rate) = read_wav(&wav(&kept.samples, kept.rate, 1)).unwrap();
+        let (back, rate) = read_wav(&wav::pcm16(kept.rate, 1, &kept.samples)).unwrap();
         assert_eq!((back.len(), rate), (300, 1000));
         assert!((back[0] - 0.5).abs() < 1e-3 && (back[150] + 0.5).abs() < 1e-3);
         assert_eq!(read_times("0 2.000000\n200 5.000000\n"), kept.marks);

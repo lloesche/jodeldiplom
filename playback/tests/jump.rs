@@ -10,6 +10,7 @@ use std::time::{Duration, Instant};
 use common::*;
 use jodel_output::{SampleFormat, SimClock};
 use jodel_playback::{Event, JumpAt, MemoryTarget, Player, PlayerOptions};
+use jodel_testkit::{real_time, TempDir};
 
 const RATE: u32 = 44_100;
 /// The ramp's period: its values go round every this many frames.
@@ -41,7 +42,7 @@ fn setup(
     jodel_playback::Captures,
     std::sync::Arc<Gate>,
 ) {
-    let dir = temp_dir(name);
+    let dir = TempDir::new(name);
     let path = dir.join("ramp.wav");
     ramp_wav(&path, RATE, RATE * seconds);
     let (target, captures, gate) = GatedTarget::new(caps(&[RATE], &[SampleFormat::S24In32Low]));
@@ -330,7 +331,7 @@ fn without_a_window_a_jump_at_a_time_is_heard_at_that_frame() {
 #[test]
 fn a_jump_now_in_real_time_is_heard_at_once() {
     let _guard = real_time();
-    let dir = temp_dir("realtime");
+    let dir = TempDir::new("realtime");
     let path = dir.join("ramp.wav");
     ramp_wav(&path, RATE, RATE * 3);
     let target = MemoryTarget::new(

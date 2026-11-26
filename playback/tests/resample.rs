@@ -10,6 +10,8 @@
 use std::f64::consts::PI;
 use std::time::Instant;
 
+use jodel_dsp::fft::{Complex, Fft};
+use jodel_dsp::window::bessel_i0;
 use jodel_playback::resample::{output_frames, FilterDesign, Resampler, STOPBAND_DB};
 
 /// The rate pairs every test runs over.
@@ -34,54 +36,8 @@ const MATRIX: [(u32, u32); 15] = [
 /// The passband ripple allowed, in dB.
 const RIPPLE_DB: f64 = 0.001;
 
-/// In-place radix-2 FFT (forward).
-fn fft(re: &mut [f64], im: &mut [f64]) {
-    let n = re.len();
-    assert!(n.is_power_of_two() && im.len() == n);
-    let bits = n.trailing_zeros();
-    for i in 0..n {
-        let j = i.reverse_bits() >> (usize::BITS - bits);
-        if j > i {
-            re.swap(i, j);
-            im.swap(i, j);
-        }
-    }
-    let twiddles: Vec<(f64, f64)> = (0..n / 2)
-        .map(|k| {
-            let (s, c) = (-2.0 * PI * k as f64 / n as f64).sin_cos();
-            (c, s)
-        })
-        .collect();
-    let mut len = 2;
-    while len <= n {
-        let step = n / len;
-        for start in (0..n).step_by(len) {
-            for k in 0..len / 2 {
-                let (wr, wi) = twiddles[k * step];
-                let (a, b) = (start + k, start + k + len / 2);
-                let (xr, xi) = (re[b] * wr - im[b] * wi, re[b] * wi + im[b] * wr);
-                re[b] = re[a] - xr;
-                im[b] = im[a] - xi;
-                re[a] += xr;
-                im[a] += xi;
-            }
-        }
-        len *= 2;
-    }
-}
-
 fn db(x: f64) -> f64 {
     20.0 * x.max(1e-300).log10()
-}
-
-fn bessel_i0(x: f64) -> f64 {
-    let (mut term, mut sum, mut k) = (1.0, 1.0, 1.0);
-    while term > sum * 1e-18 {
-        term *= x * x / 4.0 / (k * k);
-        sum += term;
-        k += 1.0;
-    }
-    sum
 }
 
 fn kaiser(n: usize, beta: f64) -> Vec<f64> {
@@ -105,18 +61,19 @@ fn measure_design(d: &FilterDesign) -> Response {
     let h = d.prototype();
     let (up, _) = d.ratio();
     let size = (8 * h.len()).next_power_of_two().max(1 << 16);
-    let mut re = vec![0.0; size];
-    let mut im = vec![0.0; size];
-    re[..h.len()].copy_from_slice(&h);
-    fft(&mut re, &mut im);
+    let mut x = vec![Complex::default(); size];
+    for (z, &v) in x.iter_mut().zip(&h) {
+        z.re = v;
+    }
+    Fft::new(size).forward(&mut x);
     let proto_rate = f64::from(up) * f64::from(d.from_rate());
     let bin = proto_rate / size as f64;
     let gain = f64::from(up);
     let mut ripple: f64 = 0.0;
     let mut stop: f64 = f64::NEG_INFINITY;
-    for k in 0..=size / 2 {
+    for (k, z) in x.iter().enumerate().take(size / 2 + 1) {
         let f = k as f64 * bin;
-        let mag = re[k].hypot(im[k]) / gain;
+        let mag = z.re.hypot(z.im) / gain;
         if f <= d.passband_hz() {
             ripple = ripple.max(db(mag).abs());
         } else if f >= d.stopband_hz() {
@@ -214,17 +171,20 @@ fn tone_through(from: u32, to: u32, freq: f64, expect_tone: bool) -> ToneResult 
     } else {
         0.0
     };
-    let mut re: Vec<f64> = y.iter().zip(&w).map(|(v, wk)| v * wk).collect();
-    let mut im = vec![0.0; ANALYSIS];
-    fft(&mut re, &mut im);
+    let mut x: Vec<Complex<f64>> = y
+        .iter()
+        .zip(&w)
+        .map(|(v, wk)| Complex::new(v * wk, 0.0))
+        .collect();
+    Fft::new(ANALYSIS).forward(&mut x);
     let bin = f64::from(to) / ANALYSIS as f64;
     let tone_bin = freq / bin;
     let mut spur: f64 = 0.0;
-    for k in 0..=ANALYSIS / 2 {
+    for (k, z) in x.iter().enumerate().take(ANALYSIS / 2 + 1) {
         if expect_tone && (k as f64 - tone_bin).abs() < 24.0 {
             continue;
         }
-        spur = spur.max(2.0 * re[k].hypot(im[k]) / gain);
+        spur = spur.max(2.0 * z.re.hypot(z.im) / gain);
     }
     ToneResult {
         level_db: db(level),

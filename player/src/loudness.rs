@@ -124,10 +124,6 @@ fn of_stems(
     file: &mut jodel_playback::stem_file::StemFile,
     voice: f32,
 ) -> Result<Measured, String> {
-    let vocals = Stem::ALL
-        .iter()
-        .position(|&s| s == Stem::Vocals)
-        .unwrap_or(2);
     let mut meter = Meter::new(RATE);
     let (mut left, mut right) = (Vec::new(), Vec::new());
     let mut at = 0;
@@ -135,7 +131,7 @@ fn of_stems(
         let stems = file
             .read(at, RATE as usize * 10)
             .map_err(|e| e.to_string())?;
-        let n = stems[0][0].len();
+        let n = stems[Stem::Bass][0].len();
         if n == 0 {
             break;
         }
@@ -143,8 +139,8 @@ fn of_stems(
         for (side, out) in [&mut left, &mut right].into_iter().enumerate() {
             out.clear();
             out.resize(n, 0.0);
-            for (k, stem) in stems.iter().enumerate() {
-                let gain = if k == vocals { voice } else { 1.0 };
+            for (s, stem) in stems.iter() {
+                let gain = if s == Stem::Vocals { voice } else { 1.0 };
                 for (o, x) in out.iter_mut().zip(&stem[side]) {
                     *o += gain * x;
                 }
@@ -166,7 +162,7 @@ fn of_file(path: &Path) -> Result<Measured, String> {
     source.make_stereo();
     let mut meter = Meter::new(source.info().rate);
     // The decoder's samples are in 24-bit units.
-    let scale = 1.0 / 8_388_608.0;
+    let scale = 1.0 / jodel_dsp::FULL_SCALE;
     let (mut block, mut left, mut right) = (Vec::new(), Vec::new(), Vec::new());
     loop {
         block.clear();
@@ -363,26 +359,14 @@ mod tests {
         // Five seconds of a stereo sine at 1 kHz peaking at -20 dBFS, as
         // 16-bit WAV.
         let frames: u32 = 5 * 48_000;
-        let mut wav = Vec::new();
-        for (tag, value) in [(&b"RIFF"[..], 36 + 4 * frames), (&b"WAVEfmt "[..], 16)] {
-            wav.extend(tag);
-            wav.extend(value.to_le_bytes());
-        }
-        wav.extend(1u16.to_le_bytes());
-        wav.extend(2u16.to_le_bytes());
-        wav.extend(48_000u32.to_le_bytes());
-        wav.extend((4 * 48_000u32).to_le_bytes());
-        wav.extend(4u16.to_le_bytes());
-        wav.extend(16u16.to_le_bytes());
-        wav.extend(b"data");
-        wav.extend((4 * frames).to_le_bytes());
-        for i in 0..frames {
-            let x = 0.1 * (std::f64::consts::TAU * 1_000.0 * f64::from(i) / 48_000.0).sin();
-            let s = ((x * 32_767.0).round() as i16).to_le_bytes();
-            wav.extend(s);
-            wav.extend(s);
-        }
-        durable::write_atomic(&song, &wav).unwrap();
+        let samples: Vec<i16> = (0..frames)
+            .flat_map(|i| {
+                let x = 0.1 * (std::f64::consts::TAU * 1_000.0 * f64::from(i) / 48_000.0).sin();
+                let s = (x * 32_767.0).round() as i16;
+                [s, s]
+            })
+            .collect();
+        durable::write_atomic(&song, &jodel_dsp::wav::pcm16(48_000, 2, &samples)).unwrap();
         let folders = Folders {
             loudness: Some(dir.join("loudness")),
             stems: None,

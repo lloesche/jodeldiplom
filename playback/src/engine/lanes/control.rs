@@ -376,12 +376,7 @@ mod tests {
     #[test]
     fn the_promise_holds_whatever_comes() {
         let mut seed = 0x2545_f491_4f6c_dd1du64;
-        let mut next = |m: u64| {
-            seed ^= seed << 13;
-            seed ^= seed >> 7;
-            seed ^= seed << 17;
-            seed % m.max(1)
-        };
+        let mut next = |m: u64| jodel_dsp::xorshift64(&mut seed) % m.max(1);
         let (mut present, mut ended) = (0, 0);
         for _ in 0..200 {
             let mut t = Timeline::new(E);

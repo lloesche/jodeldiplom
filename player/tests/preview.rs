@@ -32,25 +32,8 @@ const FADE: usize = 9_600;
 /// A 24-bit stereo WAV at `rate` of `frames`, the left sample of frame `n`
 /// `f(n)`.
 fn wav(path: &Path, rate: u32, frames: u32, f: impl Fn(u32) -> i32) {
-    let data_len = frames * 6;
-    let mut out = Vec::new();
-    out.extend_from_slice(b"RIFF");
-    out.extend_from_slice(&(36 + data_len).to_le_bytes());
-    out.extend_from_slice(b"WAVEfmt ");
-    out.extend_from_slice(&16u32.to_le_bytes());
-    out.extend_from_slice(&1u16.to_le_bytes());
-    out.extend_from_slice(&2u16.to_le_bytes());
-    out.extend_from_slice(&rate.to_le_bytes());
-    out.extend_from_slice(&(rate * 6).to_le_bytes());
-    out.extend_from_slice(&6u16.to_le_bytes());
-    out.extend_from_slice(&24u16.to_le_bytes());
-    out.extend_from_slice(b"data");
-    out.extend_from_slice(&data_len.to_le_bytes());
-    for n in 0..frames {
-        out.extend_from_slice(&f(n).to_le_bytes()[..3]);
-        out.extend_from_slice(&[0, 0, 0]);
-    }
-    durable::write_atomic(path, &out).unwrap();
+    let samples: Vec<i32> = (0..frames).flat_map(|n| [f(n), 0]).collect();
+    durable::write_atomic(path, &jodel_dsp::wav::pcm24(rate, 2, &samples)).unwrap();
 }
 
 /// The left channel of every frame the device gets, in order.
@@ -343,7 +326,7 @@ fn a_preview_crossfades_on_one_frame_over_the_song_running_on() {
 
 #[test]
 fn a_file_played_to_its_end_makes_room_and_another_rate_is_resampled() {
-    let _guard = common::real_time();
+    let _guard = jodel_testkit::real_time();
     let dir = common::temp_dir("preview-end");
     let (short, one, other) = (
         dir.join("short.wav"),
@@ -514,7 +497,7 @@ fn every_move_is_a_crossfade_and_the_players_crossfaded_out_go() {
 
 #[test]
 fn quick_moves_across_rates_with_nothing_playing_fail_nothing() {
-    let _guard = common::real_time();
+    let _guard = jodel_testkit::real_time();
     let dir = common::temp_dir("preview-rates");
     let specs = [
         (44_100, 1_000_000),

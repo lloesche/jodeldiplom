@@ -24,6 +24,7 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use jodel_dsp::FULL_SCALE;
 use jodel_gpu::GpuSeparator;
 use jodel_playback::{Resampler, Source, StereoFeed};
 use jodel_rhythm::stems::{PartsBuilder, Separator, Splitter};
@@ -39,9 +40,6 @@ mod kept;
 use kept::load_analysis;
 pub(crate) use kept::{beats_text, parse_beats};
 pub use kept::{cache_key, from_text, is_stored, key_parts, load, store, to_text};
-
-/// Full scale of the decoder's 24-bit units.
-const FULL_SCALE: f64 = 8_388_608.0;
 
 /// The seconds of a track the key is found from (a long mix is not held
 /// whole: ten minutes is about 100 MB).
@@ -95,7 +93,6 @@ pub fn key_tag(tags: &jodel_playback::Tags) -> Option<jodel_rhythm::key::Key> {
 /// The vocals stem as it is separated, mono at the pitch network's rate
 /// (the blocks come in order, each sample once), for its melody.
 struct VoiceFeed {
-    vocals: usize,
     resampler: Resampler,
     mono: Vec<f64>,
     out: Vec<f64>,
@@ -104,12 +101,7 @@ struct VoiceFeed {
 
 impl VoiceFeed {
     fn new() -> VoiceFeed {
-        use jodel_playback::stems::Stem;
         VoiceFeed {
-            vocals: Stem::ALL
-                .iter()
-                .position(|&s| s == Stem::Vocals)
-                .unwrap_or(3),
             resampler: Resampler::new(jodel_playback::stems::RATE, jodel_rhythm::pitch::RATE, 1),
             mono: Vec::new(),
             out: Vec::new(),
@@ -118,7 +110,7 @@ impl VoiceFeed {
     }
 
     fn take(&mut self, b: &jodel_rhythm::stems::StemBlock) {
-        let [l, r] = b.stems[self.vocals];
+        let [l, r] = b.stems[jodel_playback::stems::Stem::Vocals];
         self.mono.clear();
         self.mono.extend(
             l.iter()
@@ -805,26 +797,10 @@ mod tests {
     fn clicks_wav(path: &Path, seconds: usize) {
         let rate = 44_100usize;
         let n = rate * seconds;
-        let mut data = Vec::with_capacity(n * 2);
-        for i in 0..n {
-            let v: i16 = if i % (rate / 2) < 200 { 12_000 } else { 0 };
-            data.extend_from_slice(&v.to_le_bytes());
-        }
-        let mut wav = Vec::new();
-        wav.extend_from_slice(b"RIFF");
-        wav.extend_from_slice(&(36 + data.len() as u32).to_le_bytes());
-        wav.extend_from_slice(b"WAVEfmt ");
-        wav.extend_from_slice(&16u32.to_le_bytes());
-        wav.extend_from_slice(&1u16.to_le_bytes());
-        wav.extend_from_slice(&1u16.to_le_bytes());
-        wav.extend_from_slice(&(rate as u32).to_le_bytes());
-        wav.extend_from_slice(&(rate as u32 * 2).to_le_bytes());
-        wav.extend_from_slice(&2u16.to_le_bytes());
-        wav.extend_from_slice(&16u16.to_le_bytes());
-        wav.extend_from_slice(b"data");
-        wav.extend_from_slice(&(data.len() as u32).to_le_bytes());
-        wav.extend_from_slice(&data);
-        fs::write(path, wav).unwrap();
+        let samples: Vec<i16> = (0..n)
+            .map(|i| if i % (rate / 2) < 200 { 12_000 } else { 0 })
+            .collect();
+        fs::write(path, jodel_dsp::wav::pcm16(rate as u32, 1, &samples)).unwrap();
     }
 
     /// A file in the cache is answered at once, even while another is

@@ -15,6 +15,7 @@ use jodel_output::{SampleFormat, SimClock};
 use jodel_playback::{
     Event, Headroom, MemoryTarget, Player, PlayerOptions, Resampler, Settings, TrackStart,
 };
+use jodel_testkit::{fixture, TempDir};
 use SampleFormat::*;
 
 fn settings(headroom: Headroom) -> Settings {
@@ -279,7 +280,7 @@ fn a_seek_during_a_switch_plays_the_new_route_from_there() {
 /// resampler started a little earlier, so its filter is full when heard).
 #[test]
 fn a_switch_in_real_time_leaves_no_gap() {
-    let dir = temp_dir("switch-realtime");
+    let dir = TempDir::new("switch-realtime");
     let wav = dir.join("tones.wav");
     let frames = 3 * 44_100;
     let file = tones(44_100, frames);

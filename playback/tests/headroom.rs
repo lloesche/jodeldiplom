@@ -15,6 +15,7 @@ use std::path::Path;
 use common::*;
 use jodel_output::{Capabilities, SampleFormat, SimClock};
 use jodel_playback::{Event, Headroom, MemoryTarget, Player, PlayerOptions, Resampler, Settings};
+use jodel_testkit::{fixture, TempDir};
 use SampleFormat::*;
 
 fn options(headroom: Headroom) -> PlayerOptions {
@@ -88,7 +89,7 @@ fn the_gain_is_applied_exactly() {
 /// with 1 dB; the bytes are the resample of the file scaled by the gain.
 #[test]
 fn headroom_keeps_inter_sample_overs_from_clipping() {
-    let dir = temp_dir("headroom-overs");
+    let dir = TempDir::new("headroom-overs");
     let wav = dir.join("overs.wav");
     let samples = overs(20_000);
     write_wav(&wav, 44_100, 2, &samples);
@@ -133,7 +134,7 @@ fn headroom_keeps_inter_sample_overs_from_clipping() {
 /// without headroom, and not with 2 dB, which its route says.
 #[test]
 fn headroom_keeps_a_floating_point_file_from_clipping() {
-    let dir = temp_dir("headroom-float");
+    let dir = TempDir::new("headroom-float");
     let wav = dir.join("loud.wav");
     let spec = hound::WavSpec {
         channels: 2,
@@ -179,7 +180,7 @@ fn headroom_keeps_a_floating_point_file_from_clipping() {
 /// A lossless route plays the file's samples whatever the headroom.
 #[test]
 fn lossless_routes_have_no_headroom() {
-    let dir = temp_dir("headroom-exact");
+    let dir = TempDir::new("headroom-exact");
     let wav = dir.join("overs.wav");
     let samples = overs(10_000);
     write_wav(&wav, 44_100, 2, &samples);
@@ -211,7 +212,7 @@ fn lossless_routes_have_no_headroom() {
 /// gain without a break, and leaves a lossless one alone.
 #[test]
 fn a_headroom_change_reroutes_resampled_tracks_only() {
-    let dir = temp_dir("headroom-change");
+    let dir = TempDir::new("headroom-change");
     let wav = dir.join("tones.wav");
     write_wav(&wav, 44_100, 2, &tones(44_100, 30_000));
     for (rates, rerouted) in [(&[48_000u32][..], true), (&[44_100][..], false)] {

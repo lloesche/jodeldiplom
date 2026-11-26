@@ -66,8 +66,9 @@ does the same and, on macOS, puts the player into the app
 analyses, stems and lyrics.
 
 - **Rust**: the player needs Rust 1.93 or newer (`jodel-gpu` 1.87;
-  `durable`, `jodel-output`, `jodel-playback`, `jodel-rhythm`,
-  `jodel-lyrics`, `jodel-tensors` and `jodel-synth` build with 1.85). The
+  `durable`, `jodel-dsp`, `jodel-output`, `jodel-playback`,
+  `jodel-rhythm`, `jodel-lyrics`, `jodel-tensors`, `jodel-synth` and
+  `jodel-testkit` build with 1.85). The
   CI builds with Rust 1.100.0, and tests each crate with its own.
 - **Windows**: the GNU toolchain (`x86_64-pc-windows-gnu`) with MSYS2's
   UCRT64 environment on `PATH` (`C:\msys64\ucrt64\bin`: the linker, and
@@ -126,7 +127,9 @@ its `make.py` with FFmpeg) and two PCM FLAC files (`pcm`, made by its
 | `jodel-output` | [output](output) | shared PCM output through the system's mixer (WASAPI, Core Audio HAL, ALSA default), the mixer, microphone input with echo cancellation and singer isolation |
 | `jodel-playback` | [playback](playback) | the playback engine: files to the device, the rate policy, the resampler, gapless track changes, seeks, jumps, stems, transitions, events timed to what is heard |
 | `jodel-rhythm` | [rhythm](rhythm) | beat, downbeat, tempo, key and pitch analysis, and the stem separator on the CPU, in plain Rust |
-| `jodel-tensors` | [tensors](tensors) | a `.safetensors` checkpoint's tensors as f32, for the speech, depth and cut-out models |
+| `jodel-tensors` | [tensors](tensors) | the networks' numeric base: a `.safetensors` checkpoint's tensors as f32 (for the speech, depth and cut-out models), half floats, a small JSON reader, and what the CPU kernels share (threads, the AVX2 builds) |
+| `jodel-dsp` | [dsp](dsp) | the signal tools the audio crates share: the FFTs, the windows, the mel scale, xorshift, FNV-1a, WAV files and the 24-bit full scale |
+| `jodel-testkit` | [testkit](testkit) | what the tests share (a dev-dependency only): one real-time test at a time, the PCM fixtures, a temporary folder that goes, an allocator that counts |
 | `jodel-gpu` | [gpu](gpu) | the stem separator, the beat network, the speech recogniser and the covers' depth and cut-out models on the GPU, through `wgpu` |
 | `jodel-lyrics` | [lyrics](lyrics) | lyrics for karaoke: LRC in and out, tokens for a speech model, forced alignment of words, the speech recogniser and its 4-bit packing |
 | `jodel-synth` | [synth](synth) | a small real-time synthesizer for the karaoke game's sound effects: engines of our own, a voice host, a bus of chorus, delay, hall and dynamics |

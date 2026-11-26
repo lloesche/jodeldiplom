@@ -67,7 +67,7 @@ pub const TAIL: f64 = 2.5;
 /// game plans (a payout of two slow bars after its stinger).
 pub const AHEAD: f64 = 15.0;
 /// A sample this small is silence (under half a 24-bit step).
-const SILENT: f32 = 0.5 / 8_388_607.0;
+const SILENT: f32 = 0.5 / jodel_dsp::PEAK as f32;
 
 /// The clock a command's frames are on.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

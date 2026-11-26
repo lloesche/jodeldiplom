@@ -5,23 +5,14 @@
 
 use std::ops::Range;
 
+use jodel_tensors::fast;
+use jodel_tensors::kernels::{par_rows, transposed};
 use jodel_tensors::SafeTensors;
 
 /// The LayerNorm's epsilon (both models').
 const LN_EPS: f32 = 1e-5;
 /// The RMS norm's epsilon (the recogniser's).
 const RMS_EPS: f32 = 1e-6;
-
-/// `m` (`rows × columns`) transposed: `columns × rows`.
-pub(crate) fn transposed(m: &[f32], rows: usize, columns: usize) -> Vec<f32> {
-    let mut out = vec![0.0f32; m.len()];
-    for r in 0..rows {
-        for c in 0..columns {
-            out[c * rows + r] = m[r * columns + c];
-        }
-    }
-    out
-}
 
 /// A linear layer, its weight transposed to `[input][output]`.
 pub(crate) struct Linear {
@@ -291,29 +282,6 @@ pub(crate) fn attend(
     attended
 }
 
-/// Runs `work` on each `width`-sized row of `data` on up to `threads`
-/// threads; `work` gets the row's index.
-pub(crate) fn par_rows(
-    data: &mut [f32],
-    width: usize,
-    threads: usize,
-    work: impl Fn(usize, &mut [f32]) + Sync,
-) {
-    let rows = data.len() / width.max(1);
-    let threads = threads.min(rows).max(1);
-    let per = rows.div_ceil(threads);
-    std::thread::scope(|s| {
-        for (c, chunk) in data.chunks_mut(per * width).enumerate() {
-            let work = &work;
-            s.spawn(move || {
-                for (r, row) in chunk.chunks_exact_mut(width).enumerate() {
-                    work(c * per + r, row);
-                }
-            });
-        }
-    });
-}
-
 /// The dot product of `a` and `b`, in eight lanes.
 #[inline(always)]
 pub(crate) fn dot(a: &[f32], b: &[f32]) -> f32 {
@@ -359,33 +327,6 @@ pub(crate) fn matmul(w: &[f32], k: usize, n: usize, x: &[f32], out: &mut [f32], 
             });
         }
     });
-}
-
-/// Defines `$name` to run its body compiled for AVX2 and FMA when the
-/// processor has them, else as built (the same sums either way, though
-/// fused multiply-adds round once).
-macro_rules! fast {
-    ($(#[$doc:meta])* fn $name:ident($($arg:ident: $ty:ty),* $(,)?) $body:block) => {
-        $(#[$doc])*
-        fn $name($($arg: $ty),*) {
-            #[inline(always)]
-            fn imp($($arg: $ty),*) $body
-            #[cfg(target_arch = "x86_64")]
-            {
-                #[target_feature(enable = "avx2,fma")]
-                unsafe fn avx2($($arg: $ty),*) {
-                    imp($($arg),*)
-                }
-                if std::arch::is_x86_feature_detected!("avx2")
-                    && std::arch::is_x86_feature_detected!("fma")
-                {
-                    // SAFETY: the processor has AVX2 and FMA.
-                    return unsafe { avx2($($arg),*) };
-                }
-            }
-            imp($($arg),*)
-        }
-    };
 }
 
 fast! {

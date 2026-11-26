@@ -73,7 +73,7 @@ impl Keeping {
     /// The next frames ([`jodel_playback::StemWriter::push`]).
     pub fn push(
         &mut self,
-        stems: [[&[f32]; 2]; jodel_playback::stems::STEMS],
+        stems: jodel_playback::stems::PerStem<[&[f32]; 2]>,
     ) -> std::io::Result<()> {
         self.writer.push(stems)
     }

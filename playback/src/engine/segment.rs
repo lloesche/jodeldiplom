@@ -7,6 +7,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use crate::rate::Route;
+use crate::resample::gcd;
 
 /// How a track's segment begins on the output (what its stem parts start
 /// like, [`super::lanes`]).
@@ -43,13 +44,6 @@ impl Segments {
 /// `frames` at `from` Hz in frames at `to` Hz, rounded down.
 pub(super) fn rescale(frames: u64, from: u32, to: u32) -> u64 {
     (u128::from(frames) * u128::from(to) / u128::from(from.max(1))) as u64
-}
-
-pub(super) fn gcd(mut a: u64, mut b: u64) -> u64 {
-    while b != 0 {
-        (a, b) = (b, a % b);
-    }
-    a.max(1)
 }
 
 /// The line a track's segment follows on its output: output frame

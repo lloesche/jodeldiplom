@@ -29,6 +29,7 @@
 //! in the format's layout.
 
 use crate::format::SampleFormat;
+use jodel_dsp::FULL_SCALE;
 use std::fmt;
 
 /// The smallest 24-bit value.
@@ -221,15 +222,12 @@ pub fn pack(
         }
         SampleFormat::F32 => {
             for (s, o) in samples.iter().zip(out.chunks_exact_mut(4)) {
-                o.copy_from_slice(&(clamp(*s) as f32 / FLOAT_SCALE).to_le_bytes());
+                o.copy_from_slice(&(clamp(*s) as f32 / FULL_SCALE as f32).to_le_bytes());
             }
         }
     }
     Ok(report)
 }
-
-/// The float of full scale: 2²³, the 24-bit value that is 1.0.
-const FLOAT_SCALE: f32 = 8_388_608.0;
 
 /// Reads one packed sample back as a 24-bit value: the inverse of [`pack`]
 /// for every value that fits. `bytes` must be `format.bytes()` long.
@@ -243,7 +241,7 @@ pub fn unpack_sample(bytes: &[u8], format: SampleFormat) -> i32 {
         SampleFormat::F32 => {
             let f = f32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
             // `as` saturates (and maps NaN to 0) before the clamp.
-            ((f * FLOAT_SCALE).round() as i32).clamp(SAMPLE_MIN, SAMPLE_MAX)
+            ((f * FULL_SCALE as f32).round() as i32).clamp(SAMPLE_MIN, SAMPLE_MAX)
         }
         SampleFormat::S16 => i32::from(i16::from_le_bytes([bytes[0], bytes[1]])) << 8,
         SampleFormat::S24Packed => i32::from_le_bytes([0, bytes[0], bytes[1], bytes[2]]) >> 8,

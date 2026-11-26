@@ -18,8 +18,9 @@
 use std::f64::consts::PI;
 use std::sync::OnceLock;
 
-use crate::nn::layers::par_chunks;
-use crate::nn::threads;
+use jodel_dsp::window::hann;
+use jodel_tensors::kernels::{par_chunks, threads};
+
 use crate::nn::weights::Weights;
 
 /// The weights, built in (`tools/convert_keynet.py`).
@@ -191,9 +192,7 @@ pub fn spectrum(samples: &[f32]) -> (Vec<f32>, usize) {
         // window over them, normalised to sum to one.
         let first = (-length / 2.0).floor() as i64;
         let count = ((length / 2.0).floor() as i64 - first) as usize;
-        let w: Vec<f64> = (0..count)
-            .map(|i| 0.5 - 0.5 * (2.0 * PI * i as f64 / count as f64).cos())
-            .collect();
+        let w = hann(count);
         let sum: f64 = w.iter().sum();
         let omega = 2.0 * PI * f / f64::from(RATE);
         let (re, im): (Vec<f32>, Vec<f32>) = w

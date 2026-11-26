@@ -176,7 +176,7 @@ impl TransitionPlan {
 
     /// The lane of `stem` on `side`.
     pub fn lane(&self, side: Side, stem: Stem) -> &Envelope {
-        let s = Stem::ALL.iter().position(|&x| x == stem).unwrap_or(0);
+        let s = stem.index();
         match side {
             Side::From => &self.lanes[s],
             Side::Into => &self.lanes[STEMS + s],

@@ -350,7 +350,7 @@ impl Engine for Noise {
             let w = match p.source {
                 Source::White => dsp::white(&mut rng),
                 Source::Dust => {
-                    if dsp::xorshift(&mut rng) < dust {
+                    if jodel_dsp::xorshift32(&mut rng) < dust {
                         let size = 0.75 + 0.25 * dsp::white(&mut rng);
                         size.copysign(dsp::white(&mut rng))
                     } else {

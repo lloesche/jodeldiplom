@@ -15,7 +15,8 @@ use std::f64::consts::PI;
 
 use super::{refine, Tracker};
 use crate::activation::{sliding_max, Curve};
-use crate::fft::Complex;
+use jodel_dsp::fft::Complex;
+use jodel_dsp::window::hann;
 
 /// The PLP tracker's settings.
 #[derive(Clone, Copy, Debug)]
@@ -63,9 +64,7 @@ impl Tracker for Plp {
         let size = ((self.window * fps).round() as usize).max(4) & !1;
         let half = size / 2;
         let hop = ((self.hop * fps).round() as usize).max(1);
-        let window: Vec<f64> = (0..size)
-            .map(|i| 0.5 - 0.5 * (2.0 * PI * i as f64 / size as f64).cos())
-            .collect();
+        let window = hann(size);
         let count = self.tempi.max(2);
         let tempi: Vec<f64> = (0..count)
             .map(|i| {
@@ -75,7 +74,7 @@ impl Tracker for Plp {
         // Cycles per frame of each tempo.
         let omegas: Vec<f64> = tempi.iter().map(|bpm| bpm / 60.0 / fps).collect();
         // The window times the conjugate phasor, relative to the centre.
-        let kernels: Vec<Vec<Complex>> = omegas
+        let kernels: Vec<Vec<Complex<f32>>> = omegas
             .iter()
             .map(|&w| {
                 (0..size)
@@ -97,7 +96,7 @@ impl Tracker for Plp {
                 for m in lo..hi {
                     let v = values[m];
                     if v != 0.0 {
-                        sum = sum.add(kernel[m + half - c].scale(v));
+                        sum = sum + kernel[m + half - c].scale(v);
                     }
                 }
                 coefficients[h * count + ti] = sum;

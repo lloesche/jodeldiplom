@@ -23,7 +23,8 @@ mod model;
 
 use std::sync::OnceLock;
 
-use crate::nn::{threads, weights::Weights};
+use crate::nn::weights::Weights;
+use jodel_tensors::kernels::threads;
 pub use mel::{NetFrontend, NetMel};
 use model::{Model, MAX_FRAMES};
 pub use model::{BLOCKS, DIM, LAYERS, STEM};

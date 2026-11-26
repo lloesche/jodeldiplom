@@ -19,6 +19,7 @@ use jodel_output::mixer::{
     Fader, InputTarget, MicPort, Mixer, PartsView, Ramp, Role, Start, Strip, SWITCH_FADE,
 };
 use jodel_output::{OpenRequest, Output, OutputTarget, SampleFormat};
+use jodel_testkit::real_time;
 
 const PARTS: usize = 4;
 const LANES: u16 = 1 + PARTS as u16;

@@ -7,9 +7,8 @@
 //! spaced evenly on the mel scale, and compressed with `ln(1 + 1000·x)`,
 //! which keeps silence at 0.
 
-use std::f64::consts::PI;
-
-use crate::fft::RealFft;
+use jodel_dsp::fft::RealFft;
+use jodel_dsp::window::hann;
 
 /// The gain of the compression: a magnitude `x` is `ln(1 + GAIN·x)`.
 ///
@@ -115,7 +114,7 @@ pub struct Frontend {
     window: Vec<f32>,
     filters: Vec<Filter>,
     centers: Vec<f64>,
-    fft: RealFft,
+    fft: RealFft<f32>,
     /// Samples not yet framed, from `start` on.
     pending: Vec<f32>,
     start: usize,
@@ -136,9 +135,7 @@ impl Frontend {
     /// A front end with `config`.
     pub fn new(config: FrontendConfig) -> Frontend {
         let n = config.frame;
-        let window: Vec<f32> = (0..n)
-            .map(|i| (0.5 - 0.5 * (2.0 * PI * i as f64 / n as f64).cos()) as f32)
-            .collect();
+        let window: Vec<f32> = hann(n).into_iter().map(|w| w as f32).collect();
         let gain = 2.0 / window.iter().sum::<f32>();
         let window = window.iter().map(|w| w * gain).collect();
         let (filters, centers) = filterbank(&config);
@@ -252,6 +249,8 @@ fn filterbank(config: &FrontendConfig) -> (Vec<Filter>, Vec<f64>) {
 
 #[cfg(test)]
 mod tests {
+    use std::f64::consts::PI;
+
     use super::*;
 
     #[test]

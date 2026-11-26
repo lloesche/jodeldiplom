@@ -17,11 +17,12 @@ use jodel_output::{SampleFormat, SimClock};
 use jodel_playback::{
     Event, JumpAt, MakeStems, MemoryTarget, Player, PlayerOptions, Source, StemStore,
 };
+use jodel_testkit::TempDir;
 use SampleFormat::*;
 
 #[test]
 fn the_parts_are_there_once_separated() {
-    let dir = temp_dir("lanes-control");
+    let dir = TempDir::new("lanes-control");
     let file = tone_file(&dir, "tones.wav", RATE, 10 * RATE as usize);
     let (target, captures, gate) = wide_target(caps(&[RATE], &[S24In32Low]));
     let (player, events) = Player::new(Box::new(target), options(false, quarter));
@@ -40,7 +41,7 @@ fn the_parts_are_there_once_separated() {
 
 #[test]
 fn kept_stems_are_there_from_the_first_frame() {
-    let dir = temp_dir("lanes-kept");
+    let dir = TempDir::new("lanes-kept");
     let samples = tones(RATE, 3 * RATE as usize);
     let file = dir.join("tones.wav");
     write_wav(&file, RATE, 2, &samples);
@@ -83,7 +84,7 @@ fn kept_stems_are_there_from_the_first_frame() {
 /// Kept only: a track whose stems are not kept has none, quietly.
 #[test]
 fn a_track_not_kept_has_no_parts_and_nothing_is_said() {
-    let dir = temp_dir("lanes-not-kept");
+    let dir = TempDir::new("lanes-not-kept");
     let file = tone_file(&dir, "tones.wav", RATE, RATE as usize);
     let options = PlayerOptions {
         stem_store: Some(kept(&dir, &dir.join("other.wav"), &tones(RATE, 100))),
@@ -106,7 +107,7 @@ fn a_track_not_kept_has_no_parts_and_nothing_is_said() {
 /// a jump back after they ran out finds them kept.
 #[test]
 fn parts_that_run_out_end_and_come_back() {
-    let dir = temp_dir("lanes-run-out");
+    let dir = TempDir::new("lanes-run-out");
     let file = tone_file(&dir, "tones.wav", RATE, 16 * RATE as usize);
     RUN_OUT.allow(1);
     let (target, captures, gate) = wide_target(caps(&[RATE], &[S24In32Low]));
@@ -151,7 +152,7 @@ fn parts_that_run_out_end_and_come_back() {
 /// before its last frame, and the next has none.
 #[test]
 fn a_next_track_without_stems_has_this_ones_end_before_it() {
-    let dir = temp_dir("lanes-next-fails");
+    let dir = TempDir::new("lanes-next-fails");
     let one = tone_file(&dir, "one.wav", RATE, 2 * RATE as usize);
     let two = dir.join("two.wav");
     write_wav(&two, RATE, 2, &vec![0; 4 * RATE as usize]);
@@ -190,7 +191,7 @@ fn a_file_of_no_stated_length_plays_to_its_end_offline() {
 
 #[test]
 fn a_failing_separator_stops_the_parts_and_says_so() {
-    let dir = temp_dir("lanes-broken");
+    let dir = TempDir::new("lanes-broken");
     let file = tone_file(&dir, "tones.wav", RATE, 2 * RATE as usize);
     let (wide, seen) = play_wide(
         caps(&[RATE], &[S24In32Low]),
@@ -210,7 +211,7 @@ fn a_failing_separator_stops_the_parts_and_says_so() {
 /// without the first run ever being read to its end.
 #[test]
 fn stems_kept_longer_than_the_track_do_not_hold_the_next_one_up() {
-    let dir = temp_dir("lanes-kept-longer");
+    let dir = TempDir::new("lanes-kept-longer");
     let one = dir.join("one.wav");
     write_wav(&one, RATE, 2, &tones(RATE, RATE as usize));
     let two = tone_file(&dir, "two.wav", RATE, RATE as usize);
@@ -242,7 +243,7 @@ fn stems_kept_longer_than_the_track_do_not_hold_the_next_one_up() {
 /// stems kept, crossfaded, the promise kept.
 #[test]
 fn a_jump_taking_back_an_end_of_the_parts_keeps_the_promise() {
-    let dir = temp_dir("lanes-take-back");
+    let dir = TempDir::new("lanes-take-back");
     let file = tone_file(&dir, "tones.wav", RATE, 12 * RATE as usize);
     TAKEN_BACK.allow(1);
     let device = MemoryTarget::with_lanes(caps(&[RATE], &[S24In32Low]), SimClock::Instant, 5);

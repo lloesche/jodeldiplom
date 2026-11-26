@@ -13,6 +13,7 @@ use jodel_output::mixer::{Mixer, MixerOptions, Role};
 use jodel_output::{SampleFormat, SimClock};
 use jodel_playback::stems::Stem;
 use jodel_playback::{Event, MakeStems, MemoryTarget, PlayState, Player, PlayerOptions, StemDesk};
+use jodel_testkit::{heavy, real_time, TempDir};
 
 const RATE: u32 = 44_100;
 
@@ -29,7 +30,7 @@ fn tracks(dir: &TempDir, n: usize) -> (Vec<PathBuf>, Vec<Vec<i32>>) {
 
 #[test]
 fn a_count_in_is_silence_then_the_track_heard_from_its_end() {
-    let dir = temp_dir("karaoke-lead");
+    let dir = TempDir::new("karaoke-lead");
     let (paths, files) = tracks(&dir, 1);
     let (target, captures, gate) = GatedTarget::new(caps(&[RATE], &[SampleFormat::S24In32Low]));
     let (player, events) = Player::new(Box::new(target), player_options());
@@ -83,7 +84,7 @@ fn a_count_in_is_silence_then_the_track_heard_from_its_end() {
 fn a_count_in_into_the_voice_muted_on_the_desk_plays_the_band_after_it() {
     // It separates stems: not beside the test in real time.
     let _guard = heavy();
-    let dir = temp_dir("karaoke-lead-stems");
+    let dir = TempDir::new("karaoke-lead-stems");
     let path = dir.join("tones.wav");
     let file = tones(RATE, 3 * RATE as usize);
     write_wav(&path, RATE, 2, &file);
@@ -138,7 +139,7 @@ fn a_count_in_into_the_voice_muted_on_the_desk_plays_the_band_after_it() {
 #[test]
 fn in_real_time_a_count_in_has_the_band_ready_at_its_end() {
     let _guard = real_time();
-    let dir = temp_dir("karaoke-lead-stems-real");
+    let dir = TempDir::new("karaoke-lead-stems-real");
     let path = dir.join("tones.wav");
     // The tones, the left a little off zero: no frame of it is silent (the
     // tones alone are, every 10 ms, where they could not be told from the
@@ -216,7 +217,7 @@ fn in_real_time_a_count_in_has_the_band_ready_at_its_end() {
 
 #[test]
 fn holding_stops_after_a_track_and_names_the_next() {
-    let dir = temp_dir("karaoke-hold");
+    let dir = TempDir::new("karaoke-hold");
     let (paths, files) = tracks(&dir, 3);
     let (target, captures, gate) = GatedTarget::new(caps(&[RATE], &[SampleFormat::S24In32Low]));
     let (player, events) = Player::new(Box::new(target), player_options());

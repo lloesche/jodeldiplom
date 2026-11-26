@@ -62,7 +62,7 @@ impl Lane {
     pub fn stem_index(self) -> Option<usize> {
         match self {
             Lane::Song => None,
-            Lane::Stem(stem) => Stem::ALL.iter().position(|&s| s == stem),
+            Lane::Stem(stem) => Some(stem.index()),
         }
     }
 }

@@ -144,7 +144,7 @@ impl FaceNet {
 
     /// The faces on `image`, the surest first.
     pub fn find(&self, image: &RgbImage) -> Vec<Face> {
-        let threads = jodel_rhythm::nn::threads();
+        let threads = jodel_tensors::kernels::threads();
         let small = image::imageops::resize(
             image,
             SIDE as u32,

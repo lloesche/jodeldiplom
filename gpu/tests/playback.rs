@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 
 use jodel_gpu::GpuSeparator;
 use jodel_output::{Capabilities, SampleFormat, SimClock, StreamFormat};
-use jodel_playback::stems::{Separator, Stem, LANES, STEMS};
+use jodel_playback::stems::{lane, Separator, Stem, STEMS};
 use jodel_playback::{Event, MakeStems, MemoryTarget, Player, PlayerOptions};
 
 const RATE: u32 = 44_100;
@@ -65,7 +65,7 @@ fn kicks_and_chord() -> Track {
 }
 
 /// The left channel of each stem's part as played beside the file, full
-/// scale ±1, in [`LANES`]' order.
+/// scale ±1, in [`jodel_playback::stems::LANES`]' order.
 fn played(path: &Path) -> Vec<Vec<f64>> {
     let mut caps = Capabilities::new();
     caps.insert(StreamFormat::new(RATE, 2, SampleFormat::S24In32Low));
@@ -134,7 +134,7 @@ fn the_drums_keep_the_kicks_and_the_other_stem_the_chord() {
     let started = Instant::now();
     let parts = played(&track.0);
     let took = started.elapsed();
-    let part = |stem: Stem| &parts[LANES.iter().position(|&s| s == stem).unwrap()];
+    let part = |stem: Stem| &parts[lane(stem)];
     let (drums, other) = (part(Stem::Drums), part(Stem::Other));
     assert_eq!(drums.len(), SECONDS * RATE as usize);
     assert_eq!(other.len(), drums.len());

@@ -12,11 +12,9 @@
 //! minimum near the fitted ones, and fits `d` and `dmin` to the levels by
 //! least squares, while the weighted error falls.
 
-use jodel_rhythm::nn::quant::{
-    f16_to_f32, fifth_bit, Bits, BLOCK, D, DMIN, FIFTH_BITS, RUN, SCALES,
-};
+use jodel_rhythm::nn::quant::{fifth_bit, Bits, BLOCK, D, DMIN, FIFTH_BITS, RUN, SCALES};
 
-use super::f32_to_f16;
+use jodel_tensors::half::{f16_to_f32, f32_to_f16};
 
 /// Runs a block holds.
 const RUNS: usize = BLOCK / RUN;

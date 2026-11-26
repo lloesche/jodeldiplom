@@ -1,0 +1,10 @@
+[package]
+name = "jodel-testkit"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+license = "MIT"
+publish = false
+description = "What the workspace's tests share: one real-time test at a time, the PCM fixtures, a temporary folder that goes, an allocator that counts"
+
+[dependencies]

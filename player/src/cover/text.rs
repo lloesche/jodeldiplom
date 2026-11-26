@@ -180,7 +180,7 @@ impl TextNet {
 
     /// Where `image`'s lettering is, at [`SIDE`].
     pub fn find(&self, image: &RgbImage) -> TextMap {
-        let threads = jodel_rhythm::nn::threads();
+        let threads = jodel_tensors::kernels::threads();
         let small = image::imageops::resize(
             image,
             SIDE as u32,

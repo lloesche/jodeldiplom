@@ -19,6 +19,7 @@ use jodel_playback::{
     Captures, Error, Event, Headroom, MemoryTarget, OutputTarget, PlayState, Player, Settings,
     Source, TapMiss,
 };
+use jodel_testkit::{fixture, real_time, TempDir};
 use SampleFormat::*;
 
 fn play_all(caps: Capabilities, files: &[&str]) -> (Vec<(StreamFormat, Vec<u8>)>, Vec<Event>) {
@@ -191,7 +192,7 @@ fn a_format_change_between_tracks_reopens_the_output() {
 #[test]
 fn new_settings_during_the_play_out_reach_the_next_track() {
     let _guard = real_time();
-    let dir = temp_dir("engine-play-out");
+    let dir = TempDir::new("engine-play-out");
     let path = dir.join("ramp.wav");
     // A second, so the play-out lasts the output's ring.
     ramp_wav(&path, 48_000, 48_000);
@@ -392,7 +393,7 @@ fn another_track_played_while_paused_plays() {
 /// Plain PCM plays untouched, and its seek is sample-accurate.
 #[test]
 fn plain_pcm_plays_untouched_and_seeks_exactly() {
-    let dir = temp_dir("wav");
+    let dir = TempDir::new("wav");
     let wav = dir.join("ramp.wav");
     let samples = ramp_wav(&wav, 48_000, 50_000);
     std::fs::write(dir.join("cover.png"), b"\x89PNG not really").unwrap();

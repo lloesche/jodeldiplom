@@ -11,6 +11,7 @@ use jodel_output::{Capabilities, SampleFormat, SimClock, StreamFormat};
 use jodel_playback::rate::Resample;
 use jodel_playback::resample::output_frames;
 use jodel_playback::{Event, MemoryTarget, PlayState, Player};
+use jodel_testkit::{fixture, TempDir};
 use SampleFormat::*;
 
 fn at_48k() -> Capabilities {
@@ -48,7 +49,7 @@ fn ends(events: &[Event]) -> Vec<(u64, u64, f64)> {
 
 #[test]
 fn pcm_at_44k_plays_resampled_to_48k() {
-    let dir = temp_dir("resample-pcm");
+    let dir = TempDir::new("resample-pcm");
     let wav = dir.join("tones.wav");
     let frames = 20_000;
     let samples = tones(44_100, frames);
@@ -107,7 +108,7 @@ fn a_flac_file_at_44k_plays_resampled_to_48k() {
 /// track from the target frame.
 #[test]
 fn seek_equals_a_fresh_resample_from_the_target() {
-    let dir = temp_dir("resample-seek");
+    let dir = TempDir::new("resample-seek");
     let wav = dir.join("tones.wav");
     let samples = tones(44_100, 30_000);
     write_wav(&wav, 44_100, 2, &samples);
@@ -152,7 +153,7 @@ fn seek_equals_a_fresh_resample_from_the_target() {
 /// on its own: the lengths add up exactly.
 #[test]
 fn gapless_resampled_tracks_keep_their_exact_lengths() {
-    let dir = temp_dir("resample-gapless");
+    let dir = TempDir::new("resample-gapless");
     let (a, b) = (dir.join("a.wav"), dir.join("b.wav"));
     let (sa, sb) = (tones(44_100, 10_001), tones(44_100, 7_777));
     write_wav(&a, 44_100, 2, &sa);
@@ -182,7 +183,7 @@ fn gapless_resampled_tracks_keep_their_exact_lengths() {
 /// and the clip count arrives as events, rising, timed to the output.
 #[test]
 fn clipping_is_counted_and_reported() {
-    let dir = temp_dir("resample-clip");
+    let dir = TempDir::new("resample-clip");
     let wav = dir.join("square.wav");
     let samples: Vec<i32> = (0..44_100)
         .flat_map(|n| {

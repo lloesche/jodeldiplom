@@ -23,8 +23,8 @@ use std::sync::Arc;
 
 use crate::engine::segment::SegStart;
 use crate::engine::track::{AlongMap, Track};
-use crate::resample::{output_frames, Requantizer, Resampler};
-use crate::stems::{Pull, Stem, StemRun, LANES, RATE as STEM_RATE, STEMS};
+use crate::resample::{gcd, output_frames, Requantizer, Resampler};
+use crate::stems::{lane, Pull, Stem, StemRun, RATE as STEM_RATE, STEMS};
 use crate::warping::{Reading, Warping};
 
 /// Frames of stems taken from a run at a time.
@@ -130,13 +130,6 @@ pub(super) struct Grid {
     step: i128,
 }
 
-fn gcd(mut a: i128, mut b: i128) -> i128 {
-    while b != 0 {
-        (a, b) = (b, a % b);
-    }
-    a.abs().max(1)
-}
-
 /// `a` to the power −1 modulo `m` (`a` and `m` coprime).
 fn inverse(a: i128, m: i128) -> i128 {
     let (mut r0, mut r1) = (a.rem_euclid(m), m);
@@ -166,7 +159,7 @@ impl Grid {
             i128::from(line.out),
         );
         let delta = i128::from(line.seg_frame) - i128::from(start);
-        let h = gcd(r, out);
+        let h = i128::from(gcd(u64::from(STEM_RATE), u64::from(line.out)));
         let g = rate * h;
         let c = delta * r * out;
         if c % g != 0 {
@@ -206,7 +199,7 @@ impl Grid {
 /// track frame (so its frames fall on output frames, [`Grid::of`]), and
 /// not before the track's start.
 pub(super) fn run_start(line: &Line, want: u64) -> u64 {
-    let step = i128::from(line.rate) / gcd(i128::from(line.rate), i128::from(STEM_RATE));
+    let step = i128::from(line.rate) / i128::from(gcd(u64::from(line.rate), u64::from(STEM_RATE)));
     let seg = i128::from(line.seg_frame);
     let mut start = seg + (i128::from(want) - seg).div_euclid(step) * step;
     if start < 0 {
@@ -275,10 +268,11 @@ const OTHER: usize = STEMS - 1;
 /// The channels of the drums' lane (they keep their key) among those made
 /// from lane `from` on, `pairs` a lane: none when they are not made.
 fn drums(from: usize, pairs: usize) -> Vec<usize> {
-    let lane = LANES.iter().position(|&s| s == Stem::Drums);
-    lane.filter(|&l| l >= from).map_or(Vec::new(), |l| {
-        ((l - from) * pairs..(l - from + 1) * pairs).collect()
-    })
+    let l = lane(Stem::Drums);
+    if l < from {
+        return Vec::new();
+    }
+    ((l - from) * pairs..(l - from + 1) * pairs).collect()
 }
 
 impl Stream {

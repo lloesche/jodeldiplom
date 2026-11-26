@@ -30,7 +30,7 @@ use std::fs::File;
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::Path;
 
-use crate::stems::{RATE, STEMS};
+use crate::stems::{PerStem, RATE, STEMS};
 
 /// What a stems file starts with.
 pub const MAGIC: &[u8; 8] = b"JDLSTEMS";
@@ -51,12 +51,11 @@ const ESCAPE: u32 = 32;
 /// Bits of a raw value after an escape (enough for any residual).
 const RAW_BITS: u32 = 24;
 
-/// The stems of a track, `[stem][channel]` in [`Stem::ALL`](crate::Stem::ALL)
-/// order.
-pub type Stems = [[Vec<f32>; 2]; STEMS];
+/// The stems of a track: each stem's left and right channel.
+pub type Stems = PerStem<[Vec<f32>; 2]>;
 
 fn empty() -> Stems {
-    std::array::from_fn(|_| [Vec::new(), Vec::new()])
+    PerStem::default()
 }
 
 /// Where the stems of tracks are kept: the engine asks it for a track's
@@ -111,15 +110,16 @@ impl StemWriter {
         })
     }
 
-    /// Adds the next frames: `[stem][channel]`, all the same length.
-    pub fn push(&mut self, stems: [[&[f32]; 2]; STEMS]) -> io::Result<()> {
-        let n = stems[0][0].len();
+    /// Adds the next frames: each stem's left and right channel, all the
+    /// same length.
+    pub fn push(&mut self, stems: PerStem<[&[f32]; 2]>) -> io::Result<()> {
+        let n = stems.0[0][0].len();
         let mut done = 0;
         while done < n {
             let room = BLOCK - self.pending[0].len();
             let take = room.min(n - done);
             for (c, pending) in self.pending.iter_mut().enumerate() {
-                pending.extend_from_slice(&stems[c / 2][c % 2][done..done + take]);
+                pending.extend_from_slice(&stems.0[c / 2][c % 2][done..done + take]);
             }
             done += take;
             if self.pending[0].len() == BLOCK {
@@ -275,7 +275,7 @@ impl StemFile {
                 return Err(bad("a short block"));
             }
             for (c, channel) in channels.iter().enumerate() {
-                out[c / 2][c % 2].extend_from_slice(&channel[first..first + take]);
+                out.0[c / 2][c % 2].extend_from_slice(&channel[first..first + take]);
             }
             at += take as u64;
         }
@@ -591,8 +591,8 @@ mod tests {
                 1.7 * (t * 900.0).sin(),
             ];
             for (stem, &v) in values.iter().enumerate() {
-                s[stem][0].push(v);
-                s[stem][1].push(-v * 0.5);
+                s.0[stem][0].push(v);
+                s.0[stem][1].push(-v * 0.5);
             }
         }
         s
@@ -600,12 +600,13 @@ mod tests {
 
     fn write(path: &Path, s: &Stems, piece: usize) {
         let mut w = StemWriter::create(path, 96_000, "test").unwrap();
-        let n = s[0][0].len();
+        let n = s.0[0][0].len();
         let mut at = 0;
         while at < n {
             let end = (at + piece).min(n);
-            let part: [[&[f32]; 2]; STEMS] =
-                std::array::from_fn(|st| [&s[st][0][at..end], &s[st][1][at..end]]);
+            let part = PerStem(std::array::from_fn(|st| {
+                [&s.0[st][0][at..end], &s.0[st][1][at..end]]
+            }));
             w.push(part).unwrap();
             at = end;
         }
@@ -633,13 +634,13 @@ mod tests {
             (frames as u64 - 5, 100),
         ] {
             let back = f.read(from, len).unwrap();
-            let n = back[0][0].len();
+            let n = back.0[0][0].len();
             assert_eq!(n as u64, (from + len as u64).min(frames as u64) - from);
             for stem in 0..STEMS {
                 for ch in 0..2 {
                     for i in 0..n {
-                        let want = s[stem][ch][from as usize + i];
-                        let got = back[stem][ch][i];
+                        let want = s.0[stem][ch][from as usize + i];
+                        let got = back.0[stem][ch][i];
                         // Half a step of the loudest stem's scale (2^1 for
                         // 1.7) at most.
                         assert!(
@@ -652,9 +653,9 @@ mod tests {
         }
         // The quiet half of the third stem: exact silence, then fine detail.
         let back = f.read(0, frames).unwrap();
-        assert!(back[2][0][..frames / 2 - BLOCK].iter().all(|&v| v == 0.0));
+        assert!(back.0[2][0][..frames / 2 - BLOCK].iter().all(|&v| v == 0.0));
         let quiet_error = (frames / 2 + BLOCK..frames)
-            .map(|i| (s[2][0][i] - back[2][0][i]).abs())
+            .map(|i| (s.0[2][0][i] - back.0[2][0][i]).abs())
             .fold(0.0f32, f32::max);
         assert!(quiet_error < 0.001 / 30_000.0, "{quiet_error}");
         let raw = frames as u64 * CHANNELS as u64 * 2;
@@ -672,8 +673,7 @@ mod tests {
         {
             let mut w = StemWriter::create(&path, 44_100, "test").unwrap();
             let s = stems(BLOCK * 2);
-            let part: [[&[f32]; 2]; STEMS] =
-                std::array::from_fn(|st| [&s[st][0][..], &s[st][1][..]]);
+            let part = PerStem(std::array::from_fn(|st| [&s.0[st][0][..], &s.0[st][1][..]]));
             w.push(part).unwrap();
             // Dropped without finish.
         }

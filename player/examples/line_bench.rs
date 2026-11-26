@@ -35,7 +35,7 @@ fn json_text(s: &str) -> String {
 /// `--score SONGS_DIR`: how close `jodel_lyrics::lines::breaks` comes to the
 /// songs' real breaks (precision, recall, F1; exactly and within a word).
 fn score(dir: &Path) {
-    use jodel_lyrics::json::Json;
+    use jodel_tensors::json::Json;
     let mut sums = [[0.0f64; 3]; 2];
     let mut n = 0.0;
     for entry in fs::read_dir(dir).unwrap().flatten() {

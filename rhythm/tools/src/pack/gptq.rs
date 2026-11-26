@@ -115,7 +115,7 @@ pub fn quantize_gptq(
     let rows = values.len() / cols;
     let mut out = vec![0u8; rows * per_row];
     // A tool run on its own: every processor.
-    let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
+    let threads = jodel_tensors::kernels::processors();
     let chunk = rows.div_ceil(threads).max(1);
     std::thread::scope(|s| {
         for (c, part) in out.chunks_mut(chunk * per_row).enumerate() {

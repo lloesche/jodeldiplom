@@ -417,7 +417,7 @@ fn the_game_is_heard_where_it_lands() {
 /// song's output is flushed; what the player plans after it does.
 #[test]
 fn a_seek_calls_off_what_the_game_planned() {
-    let _guard = common::real_time();
+    let _guard = jodel_testkit::real_time();
     let (mut c, synth) = conductor();
     // In real time on the wall clock's: the seek's flush gives the device
     // what is mixed first, which a device on the test's time would take
@@ -590,7 +590,7 @@ fn the_result_is_heard_after_the_song() {
 /// notes shown again, it sounds.
 #[test]
 fn the_game_is_silent_with_its_notes_hidden() {
-    let _guard = common::real_time();
+    let _guard = jodel_testkit::real_time();
     let mut caps = Capabilities::new();
     caps.insert(StreamFormat::new(RATE, 2, FORMAT));
     let target = MemoryTarget::new(caps.clone(), SimClock::Realtime);

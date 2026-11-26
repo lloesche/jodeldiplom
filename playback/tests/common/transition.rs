@@ -9,6 +9,7 @@ use std::sync::mpsc::Receiver;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
+use jodel_dsp::FULL_SCALE;
 use jodel_output::mixer::Mixer;
 use jodel_output::{Capabilities, SimClock, StreamFormat};
 use jodel_playback::stems::{Separator, STEMS};
@@ -20,7 +21,6 @@ use jodel_playback::{
 use super::*;
 
 pub const RATE: u32 = 44_100;
-pub const FULL: f64 = 8_388_608.0;
 
 /// Each stem a quarter of the mix.
 pub struct Quarter;
@@ -174,7 +174,7 @@ pub fn wav(
     let samples: Vec<i32> = (0..frames)
         .flat_map(|n| {
             let t = n as f64 / f64::from(RATE);
-            [0, 1].map(|c| (f(t, c) * FULL).round() as i32)
+            [0, 1].map(|c| (f(t, c) * FULL_SCALE).round() as i32)
         })
         .collect();
     write_wav(&path, RATE, 2, &samples);
@@ -208,7 +208,7 @@ pub fn onsets(got: &[i32]) -> Vec<f64> {
     let mut out: Vec<f64> = Vec::new();
     for f in 0..got.len() / 2 {
         let t = f as f64 / rate;
-        let v = f64::from(got[2 * f]).abs() / FULL;
+        let v = f64::from(got[2 * f]).abs() / FULL_SCALE;
         if v > 0.15 && out.last().is_none_or(|&last| t - last > 0.2) {
             out.push(t);
         }

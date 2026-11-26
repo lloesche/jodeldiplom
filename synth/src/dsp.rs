@@ -20,6 +20,7 @@
 //! clip a Padé approximant of tanh.
 
 use crate::BLOCK;
+use jodel_dsp::xorshift32;
 use std::f64::consts::PI;
 
 /// The lowest cutoff a filter takes, Hz.
@@ -150,19 +151,7 @@ pub fn soft_knee(y: f32, k: f32) -> f32 {
     (k + (1.0 - k) * softclip((a - k) / (1.0 - k))).copysign(y)
 }
 
-/// The next number of xorshift32 state `s` (never 0 from a state not 0;
-/// shifts 13, 17, 5).
-#[inline]
-pub fn xorshift(s: &mut u32) -> u32 {
-    let mut x = *s;
-    x ^= x << 13;
-    x ^= x >> 17;
-    x ^= x << 5;
-    *s = x;
-    x
-}
-
-/// A xorshift state from `seed`: mixed first (MurmurHash3's finaliser), so
+/// A [`xorshift32`] state from `seed`: mixed first (MurmurHash3's finaliser), so
 /// small or neighbouring seeds start unalike; never 0, which xorshift
 /// cannot leave.
 pub fn seed(seed: u32) -> u32 {
@@ -177,10 +166,10 @@ pub fn seed(seed: u32) -> u32 {
     }
 }
 
-/// 0 to 1 from xorshift state `s`.
+/// 0 to 1 from [`xorshift32`] state `s`.
 #[inline]
 pub fn unit(s: &mut u32) -> f32 {
-    (xorshift(s) >> 8) as f32 * (1.0 / 16_777_216.0)
+    (xorshift32(s) >> 8) as f32 * (1.0 / 16_777_216.0)
 }
 
 /// `x`, or 0 once it has decayed below 1e-15 (-300 dB): a state left to
@@ -228,10 +217,10 @@ impl Quiet {
     }
 }
 
-/// A white noise sample, -1 to 1, from xorshift state `s`.
+/// A white noise sample, -1 to 1, from [`xorshift32`] state `s`.
 #[inline]
 pub fn white(s: &mut u32) -> f32 {
-    (xorshift(s) >> 8) as f32 * (2.0 / 16_777_216.0) - 1.0
+    (xorshift32(s) >> 8) as f32 * (2.0 / 16_777_216.0) - 1.0
 }
 
 /// The 15-bit noise register a step on: bit 0 fed back with bit 1 (the

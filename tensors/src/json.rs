@@ -1,6 +1,6 @@
-//! A small JSON reader, enough for a web service's answers: objects,
-//! arrays, strings (with `\u` escapes and surrogate pairs), numbers,
-//! `true`, `false` and `null`.
+//! A small JSON reader, enough for a web service's answers and a
+//! checkpoint's header: objects, arrays, strings (with `\u` escapes and
+//! surrogate pairs), numbers, `true`, `false` and `null`.
 
 /// A JSON value.
 #[derive(Clone, Debug, PartialEq)]

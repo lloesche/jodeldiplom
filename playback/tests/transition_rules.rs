@@ -11,17 +11,19 @@ use std::time::Duration;
 
 use common::transition::*;
 use common::*;
+use jodel_dsp::FULL_SCALE;
 use jodel_output::SampleFormat;
 use jodel_playback::stems::STEMS;
 use jodel_playback::{
     Envelope, Event, MakeStems, Settings, TempoMode, TransitionPlan, TransitionState,
 };
+use jodel_testkit::TempDir;
 use SampleFormat::*;
 
 /// Two tone tracks (10 s) on a desk, the first playing, its stems made and
 /// their strips muted where `mask` has 0; and the second's samples.
 fn rules_setup(name: &str, mask: [f64; STEMS]) -> (TempDir, Vec<i32>, Desk) {
-    let dir = temp_dir(name);
+    let dir = TempDir::new(name);
     let (a_path, _) = wav(&dir, "a.wav", 10.0, tone([1_000.0, 5_000.0]));
     let (b_path, b) = wav(&dir, "b.wav", 10.0, tone([2_000.0, 3_000.0]));
     let desk = Desk::new(caps(&[RATE], &[S24In32Low]), options());
@@ -154,7 +156,7 @@ fn stems_muted_during_a_transition_are_heard_on_both_tracks() {
         })
         .fold(0.0, f64::max);
     assert!(
-        window < 0.005 * FULL,
+        window < 0.005 * FULL_SCALE,
         "in the window, {window} off the drums of both"
     );
     // Settling (to 8.3 s), and on its own route after: a quarter of B.
@@ -233,8 +235,8 @@ fn stems_switched_at_a_bar_in_the_window_change_there() {
     // (past the strip's 20 ms ramp).
     let before = off_b(&got, &b, 5 * rate + rate / 20..6 * rate - 64, offset, 0.5);
     let after = off_b(&got, &b, 6 * rate + rate / 40..7 * rate - 64, offset, 0.25);
-    assert!(before < 0.01 * FULL, "before the change {before}");
-    assert!(after < 0.01 * FULL, "after the change {after}");
+    assert!(before < 0.01 * FULL_SCALE, "before the change {before}");
+    assert!(after < 0.01 * FULL_SCALE, "after the change {after}");
 }
 
 /// S1, S4: a stem muted while the next track settles after the window is

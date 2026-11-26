@@ -11,6 +11,7 @@ use jodel_output::{
     Capabilities, Error as OutputError, OpenRequest, Output, SampleFormat, SimClock, StreamFormat,
 };
 use jodel_playback::{Error, Event, MemoryTarget, OutputTarget, Player};
+use jodel_testkit::fixture;
 use SampleFormat::*;
 
 /// A file at the target's rate plays as it is, a straight copy.

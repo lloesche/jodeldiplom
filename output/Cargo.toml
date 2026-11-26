@@ -9,6 +9,10 @@ description = "PCM output to audio devices through the system mixer, shared (WAS
 [dependencies]
 # Every file written: whole or not at all, made durable.
 durable = { path = "../durable" }
+# The signal tools: the window, the full scale, the WAV header.
+jodel-dsp = { path = "../dsp" }
+# The singer's isolation: its weights' half floats, the logistic function.
+jodel-tensors = { path = "../tensors" }
 jodel-synth = { path = "../synth" }
 
 [target.'cfg(windows)'.dependencies.windows]
@@ -37,3 +41,6 @@ objc2-core-foundation = { version = "0.3.2", default-features = false, features 
 
 [target.'cfg(target_os = "linux")'.dependencies]
 alsa = "0.12.1"
+
+[dev-dependencies]
+jodel-testkit = { path = "../testkit" }

@@ -50,12 +50,7 @@ fn make(b: &mut Buffer, stream: &mut Option<i64>, to: u64, stalled: bool) {
 #[test]
 fn the_parts_promised_are_always_there() {
     let mut seed = 0x9e37_79b9_7f4a_7c15u64;
-    let mut next = |m: u64| {
-        seed ^= seed << 13;
-        seed ^= seed >> 7;
-        seed ^= seed << 17;
-        seed % m.max(1)
-    };
+    let mut next = |m: u64| jodel_dsp::xorshift64(&mut seed) % m.max(1);
     let (mut seams, mut ends) = (0, 0);
     for _ in 0..100 {
         let mut t = Timeline::new(E);

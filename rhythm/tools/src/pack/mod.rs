@@ -6,8 +6,9 @@
 mod fit;
 mod gptq;
 
-use jodel_rhythm::nn::quant::{f16_to_f32, BLOCK, Q8_BLOCK, Q8_BLOCK_BYTES, Q8_D};
+use jodel_rhythm::nn::quant::{BLOCK, Q8_BLOCK, Q8_BLOCK_BYTES, Q8_D};
 use jodel_rhythm::nn::weights::Kind;
+use jodel_tensors::half::{f16_to_f32, f32_to_f16};
 
 use fit::Fit;
 
@@ -95,42 +96,6 @@ pub fn pack(tensors: &[PackedTensor]) -> Result<Vec<u8>, String> {
         out.extend(data);
     }
     Ok(out)
-}
-
-/// Single precision to half, rounding to the nearest (ties to even).
-fn f32_to_f16(x: f32) -> u16 {
-    let bits = x.to_bits();
-    let sign = ((bits >> 16) & 0x8000) as u16;
-    let exp = ((bits >> 23) & 0xff) as i32;
-    let mant = bits & 0x7f_ffff;
-    if exp == 0xff {
-        return sign | 0x7c00 | if mant != 0 { 0x200 } else { 0 };
-    }
-    let e = exp - 127 + 15;
-    if e >= 0x1f {
-        return sign | 0x7c00;
-    }
-    if e <= 0 {
-        // Subnormal (or zero): the mantissa with its leading one, shifted.
-        if e < -10 {
-            return sign;
-        }
-        let m = mant | 0x80_0000;
-        let shift = (14 - e) as u32;
-        let half = 1u32 << (shift - 1);
-        let rest = m & ((1 << shift) - 1);
-        let mut v = m >> shift;
-        if rest > half || (rest == half && v & 1 == 1) {
-            v += 1;
-        }
-        return sign | v as u16;
-    }
-    let mut v = ((e as u32) << 10) | (mant >> 13);
-    let rest = mant & 0x1fff;
-    if rest > 0x1000 || (rest == 0x1000 && v & 1 == 1) {
-        v += 1; // may carry into the exponent, as it should
-    }
-    sign | v as u16
 }
 
 /// `values` (a multiple of [`Q8_BLOCK`]) packed as Q8_0 blocks: each

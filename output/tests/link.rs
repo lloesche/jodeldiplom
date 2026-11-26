@@ -25,6 +25,7 @@ use jodel_output::lanes::{lane_width, Parts};
 use jodel_output::mixer::{Curve, Fader, InputTarget, Mixer, Ramp, Role, Start};
 use jodel_output::pack::unpack;
 use jodel_output::{Error, Output, OutputTarget};
+use jodel_testkit::real_time;
 
 /// The leader's frames `from..from + n`.
 fn lead(from: u64, n: u64) -> Vec<i32> {

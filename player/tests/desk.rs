@@ -210,7 +210,7 @@ const WAIT: Duration = Duration::from_secs(30);
 
 #[test]
 fn the_faders_are_set_on_the_mixer_and_again_on_a_new_one() {
-    let _guard = common::real_time();
+    let _guard = jodel_testkit::real_time();
     let tree = common::music_tree("desk");
     let mut options = AppOptions::new(tree.album.clone());
     options.output = Output::Null(SimClock::Realtime);
@@ -349,7 +349,7 @@ fn chord(i: usize, rate: u32) -> i32 {
 /// late, never a gap of silence in what is checked bit for bit.
 #[test]
 fn a_stem_muted_on_its_frame_is_heard_and_unmuted_the_file_is_again() {
-    let _guard = common::real_time();
+    let _guard = jodel_testkit::real_time();
     use jodel_output::lanes::Parts;
     use jodel_output::{Capabilities, SampleFormat, StreamFormat};
     use jodeldiplom::app::MemoryOutput;
@@ -543,7 +543,7 @@ fn a_stem_muted_on_its_frame_is_heard_and_unmuted_the_file_is_again() {
 /// again.
 #[test]
 fn the_device_opens_once_for_songs_at_any_rate() {
-    let _guard = common::real_time();
+    let _guard = jodel_testkit::real_time();
     use jodel_output::{Capabilities, SampleFormat, StreamFormat};
     use jodeldiplom::app::MemoryOutput;
     let dir = common::temp_dir("one-rate");

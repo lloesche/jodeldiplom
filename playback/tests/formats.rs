@@ -20,6 +20,7 @@ use jodel_playback::{
     choose_route, probe, probe_header, Codec, Container, CoverOrigin, Event, FileFacts,
     MemoryTarget, PlayState, Player, PlayerOptions, Resampler, Settings, Source, LOSSY_HEADROOM,
 };
+use jodel_testkit::TempDir;
 
 const RATE: u32 = 44_100;
 const LOSSLESS_FRAMES: usize = 3_000;
@@ -150,7 +151,7 @@ fn best_lag(decoded: &[i32], want: impl Fn(usize) -> f64, range: i64) -> (i64, f
 #[test]
 fn lossless_formats_decode_exactly() {
     let want = lossless_samples();
-    let dir = temp_dir("aiff");
+    let dir = TempDir::new("aiff");
     let aiff = dir.join("lossless.aiff");
     write_aiff(&aiff, RATE, 2, 24, &want);
     let cases = [
@@ -316,7 +317,7 @@ fn id3_txxx(description: &str, value: &str) -> Vec<u8> {
 
 #[test]
 fn lossy_files_route_as_pcm_and_read_user_tags() {
-    let dir = temp_dir("lossy-tags");
+    let dir = TempDir::new("lossy-tags");
     // A user-defined ID3v2 frame in front of an MP3 stream is read.
     let tagged = dir.join("tagged.mp3");
     let mut bytes = id3_txxx("ORIGINALSAMPLERATE", "96000");
@@ -382,7 +383,7 @@ fn unsupported_codecs_say_so() {
             assert!(error.contains("only AAC-LC plays"), "{name}: {error}");
         }
     }
-    let dir = temp_dir("not-audio");
+    let dir = TempDir::new("not-audio");
     let junk = dir.join("junk.mp3");
     std::fs::write(&junk, vec![0x55u8; 4096]).unwrap();
     let error = probe(&junk).unwrap_err().to_string();
@@ -414,7 +415,7 @@ fn wav(path: &Path, bits: u16, float: bool, samples: impl Iterator<Item = f64>) 
 
 #[test]
 fn wide_pcm_is_requantized_once_and_exact_where_it_fits() {
-    let dir = temp_dir("wide");
+    let dir = TempDir::new("wide");
     let frames = 6_000usize;
     // 32-bit integers holding 24-bit audio (low byte zero): exact.
     let padded = dir.join("padded.wav");

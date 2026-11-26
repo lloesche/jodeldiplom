@@ -5,7 +5,7 @@ use std::f64::consts::PI;
 
 const SR: f64 = crate::SAMPLE_RATE as f64;
 
-/// A small deterministic noise source (xorshift).
+/// A small deterministic noise source (xorshift64).
 pub struct Noise(u64);
 
 impl Noise {
@@ -16,11 +16,7 @@ impl Noise {
 
     /// The next value in `-1..1`.
     pub fn sample(&mut self) -> f64 {
-        let mut x = self.0;
-        x ^= x << 13;
-        x ^= x >> 7;
-        x ^= x << 17;
-        self.0 = x;
+        let x = jodel_dsp::xorshift64(&mut self.0);
         (x >> 11) as f64 / (1u64 << 52) as f64 - 1.0
     }
 }

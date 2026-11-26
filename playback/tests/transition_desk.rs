@@ -14,6 +14,7 @@ use std::time::Duration;
 use common::lanes::Gated;
 use common::transition::*;
 use common::*;
+use jodel_dsp::FULL_SCALE;
 use jodel_output::mixer::{MicPort, Role};
 use jodel_output::{Input, SampleFormat};
 use jodel_playback::stems::{Separator, STEMS};
@@ -22,6 +23,7 @@ use jodel_playback::{
     Command, Envelope, Event, MakeStems, PlayState, PlayerOptions, TempoMode, TransitionPlan,
     TransitionState,
 };
+use jodel_testkit::{real_time, TempDir};
 use SampleFormat::*;
 
 /// From `start` s of track `from` over 2 s into the next at 1 s (beats at
@@ -46,7 +48,7 @@ fn plan(from: usize, start: f64, settle: f64) -> TransitionPlan {
 
 /// Three tone tracks of `seconds`, on a desk, the first playing.
 fn three(name: &str, seconds: f64, options: PlayerOptions) -> (TempDir, Vec<Vec<i32>>, Desk) {
-    let dir = temp_dir(name);
+    let dir = TempDir::new(name);
     let mut files = Vec::new();
     let mut samples = Vec::new();
     for (k, hz) in [[200.0, 230.0], [170.0, 190.0], [260.0, 290.0]]
@@ -221,7 +223,7 @@ fn the_next_track_moved_away_in_the_window_fades_out() {
         .flat_map(|f| (0..2).map(move |c| (f, c)))
         .map(|(f, c)| (f64::from(got[2 * f + c]) - f64::from(a[2 * f + c])).abs())
         .fold(0.0, f64::max);
-    assert!(whole < 0.002 * FULL, "A off by {whole} once back");
+    assert!(whole < 0.002 * FULL_SCALE, "A off by {whole} once back");
     assert!(
         steepest(&got, 5 * rate..7 * rate) < 1.2 * most_step(),
         "a click"
@@ -239,7 +241,7 @@ fn samples_of(streams: &[(jodel_output::StreamFormat, Vec<u8>)]) -> Vec<i32> {
 
 /// The most two low tones of 0.4 move from one sample to the next, each.
 fn most_step() -> f64 {
-    2.0 * 0.4 * 2.0 * std::f64::consts::PI * 290.0 / f64::from(RATE) * FULL
+    2.0 * 0.4 * 2.0 * std::f64::consts::PI * 290.0 / f64::from(RATE) * FULL_SCALE
 }
 
 /// The largest step from one sample to the next over `frames`.
@@ -336,7 +338,7 @@ fn late() -> Option<&'static dyn Separator> {
 fn a_next_track_whose_stems_are_late_waits_then_plays_whole() {
     let _serial = serial();
     let _real_time = real_time();
-    let dir = temp_dir("desk-late-stems");
+    let dir = TempDir::new("desk-late-stems");
     let (a, _) = wav(&dir, "a.wav", 9.0, tone([1_000.0, 5_000.0]));
     let (b, b_samples) = wav(&dir, "b.wav", 9.0, tone([2_000.0, 3_000.0]));
     let options = PlayerOptions {
@@ -383,7 +385,7 @@ fn a_next_track_whose_stems_are_late_waits_then_plays_whole() {
             (f64::from(got[2 * f + c]) - f64::from(b_samples[2 * (f - offset) + c])).abs()
         })
         .fold(0.0, f64::max);
-    assert!(off < 0.01 * FULL, "B off its whole mix by {off}");
+    assert!(off < 0.01 * FULL_SCALE, "B off its whole mix by {off}");
     let _ = STEMS;
 }
 
@@ -394,7 +396,7 @@ fn a_next_track_whose_stems_are_late_waits_then_plays_whole() {
 fn in_real_time_next_mid_mix_does_not_click() {
     let _serial = serial();
     let _real_time = real_time();
-    let dir = temp_dir("desk-next-paced");
+    let dir = TempDir::new("desk-next-paced");
     let (a, _) = wav(&dir, "a.wav", 9.0, tone([200.0, 230.0]));
     let (b, _) = wav(&dir, "b.wav", 9.0, tone([170.0, 190.0]));
     let options = PlayerOptions {

@@ -17,7 +17,8 @@
 
 use std::collections::HashMap;
 
-use super::quant::{self, f16_to_f32, Bits};
+use super::quant::{self, Bits};
+use jodel_tensors::half::f16_to_f32;
 
 /// Named tensors, in single precision.
 pub struct Weights {

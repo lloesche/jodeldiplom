@@ -19,8 +19,9 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use common::lanes::{caps_of, quarter, wide_target, wide_target_on, Gated, Wide, CLOSE};
-use common::transition::{beats, clicks, lanes, FULL};
+use common::transition::{beats, clicks, lanes};
 use common::*;
+use jodel_dsp::FULL_SCALE;
 use jodel_output::SimClock;
 use jodel_playback::stems::Separator;
 use jodel_playback::warp::TimeMap;
@@ -28,6 +29,7 @@ use jodel_playback::{
     Command, Envelope, Event, MakeStems, Player, PlayerOptions, SeparatorSource, Settings,
     TempoMode, TransitionPlan, TransitionState,
 };
+use jodel_testkit::TempDir;
 
 /// The files' rate (the stems').
 const RATE: u32 = 44_100;
@@ -53,7 +55,7 @@ fn file(dir: &Path, name: &str, channels: u16, seconds: f64, f: impl Fn(f64) -> 
     let frames = (seconds * f64::from(RATE)) as usize;
     let samples: Vec<i32> = (0..frames)
         .flat_map(|n| {
-            let v = (f(n as f64 / f64::from(RATE)) * FULL).round() as i32;
+            let v = (f(n as f64 / f64::from(RATE)) * FULL_SCALE).round() as i32;
             std::iter::repeat_n(v, usize::from(channels))
         })
         .collect();
@@ -217,7 +219,8 @@ fn onsets(wide: &Wide) -> Vec<f64> {
     let mut out: Vec<f64> = Vec::new();
     for (f, frame) in wide.main.chunks_exact(wide.channels).enumerate() {
         let t = f as f64 / f64::from(wide.rate);
-        if f64::from(frame[0]).abs() / FULL > 0.15 && out.last().is_none_or(|&l| t - l > 0.1) {
+        if f64::from(frame[0]).abs() / FULL_SCALE > 0.15 && out.last().is_none_or(|&l| t - l > 0.1)
+        {
             out.push(t);
         }
     }
@@ -254,7 +257,7 @@ fn main_is_the_sum(wide: &Wide, run: &Run, back: u64) {
 /// the map puts them on, main the parts' sum, the parts there all through,
 /// and the positions the map's.
 fn clicks_land(run: Run, within: f64) {
-    let dir = temp_dir(&format!("along-clicks-{:?}-{}", run.tempo, run.out));
+    let dir = TempDir::new(&format!("along-clicks-{:?}-{}", run.tempo, run.out));
     let path = file(&dir, "clicks.wav", 2, 7.0, click);
     let (wide, seen) = run.play(vec![path]);
     clicks_on_the_map(&wide, within);
@@ -312,7 +315,7 @@ fn resampled_to_another_rate_the_clicks_land_too() {
 /// switch's crossfade, main is `reference` (a plain play from the frame
 /// the map put it on) to within `dither` steps (none at the file's rate).
 fn back_bit_for_bit(run: Run, dither: i32, reference: impl Fn(&Path, u64) -> Vec<i32>) {
-    let dir = temp_dir(&format!("along-back-{:?}-{}", run.tempo, run.out));
+    let dir = TempDir::new(&format!("along-back-{:?}-{}", run.tempo, run.out));
     let path = file(&dir, "chord.wav", 2, 7.0, chord);
     let (wide, seen) = run.play(vec![path.clone()]);
     let (back, frame) = back_at(&seen);
@@ -391,7 +394,7 @@ fn resampled_back_on_its_route_to_within_dither() {
 /// add up to the song (crossfaded twice, the new side would come in late).
 #[test]
 fn the_move_onto_the_map_crossfades_once() {
-    let dir = temp_dir("along-fade");
+    let dir = TempDir::new("along-fade");
     let path = file(&dir, "chord.wav", 2, 3.0, chord);
     // Half a second further into the track from the move on.
     let run = Run {
@@ -407,8 +410,9 @@ fn the_move_onto_the_map_crossfades_once() {
     // Past it, the track half a second on.
     let o = run.from() as usize + 2 * run.fade() as usize;
     let at = (map.at(o as f64 / f64::from(RATE)) * f64::from(RATE)).round() as usize;
-    let off =
-        (i64::from(wide.main[2 * o]) - (chord(at as f64 / f64::from(RATE)) * FULL) as i64).abs();
+    let off = (i64::from(wide.main[2 * o])
+        - (chord(at as f64 / f64::from(RATE)) * FULL_SCALE) as i64)
+        .abs();
     assert!(off <= CLOSE, "{off} steps off the track half a second on");
 }
 
@@ -416,7 +420,7 @@ fn the_move_onto_the_map_crossfades_once() {
 /// stems' pair, and their pairs averaged back into its parts.
 #[test]
 fn a_mono_file_reads_along_the_map() {
-    let dir = temp_dir("along-mono");
+    let dir = TempDir::new("along-mono");
     let path = file(&dir, "mono.wav", 1, 7.0, click);
     let run = Run {
         channels: 1,
@@ -434,7 +438,7 @@ fn a_mono_file_reads_along_the_map() {
 /// the rest exactly silent; the parts are there only then.
 #[test]
 fn with_no_separator_the_whole_mix_is_the_other_part() {
-    let dir = temp_dir("along-whole");
+    let dir = TempDir::new("along-whole");
     let path = file(&dir, "clicks.wav", 2, 7.0, click);
     let run = Run {
         separator: None,
@@ -471,7 +475,7 @@ fn past(e: &Event, seconds: f64) -> bool {
 /// it: they apply once it is back on its file.
 #[test]
 fn new_settings_wait_for_the_map() {
-    let dir = temp_dir("along-settings");
+    let dir = TempDir::new("along-settings");
     let path = file(&dir, "clicks.wav", 2, 7.0, click);
     let run = Run::new();
     let mut sent = false;
@@ -493,7 +497,7 @@ fn new_settings_wait_for_the_map() {
 /// A transition set up while the head is read along the map is refused.
 #[test]
 fn a_transition_while_read_along_a_map_is_refused() {
-    let dir = temp_dir("along-transition");
+    let dir = TempDir::new("along-transition");
     let path = file(&dir, "clicks.wav", 2, 7.0, click);
     let next = file(&dir, "next.wav", 2, 1.0, click);
     let run = Run::new();
@@ -533,7 +537,7 @@ fn a_transition_while_read_along_a_map_is_refused() {
 /// once it can.
 #[test]
 fn a_switch_back_that_fails_is_asked_again() {
-    let dir = temp_dir("along-retry");
+    let dir = TempDir::new("along-retry");
     let path = file(&dir, "chord.wav", 2, 8.0, chord);
     let away = dir.join("chord.away");
     let samples = read_all(&path);
@@ -583,7 +587,7 @@ fn never() -> Option<&'static dyn Separator> {
 /// device holds enough.
 #[test]
 fn on_a_device_stems_that_fall_behind_give_way_to_the_whole_mix() {
-    let dir = temp_dir("along-device");
+    let dir = TempDir::new("along-device");
     let path = file(&dir, "clicks.wav", 2, 7.0, click);
     let run = Run {
         separator: Some(never),
@@ -612,7 +616,7 @@ fn on_a_device_stems_that_fall_behind_give_way_to_the_whole_mix() {
 /// says why, and it plays on as it was.
 #[test]
 fn more_than_two_channels_are_refused() {
-    let dir = temp_dir("along-six");
+    let dir = TempDir::new("along-six");
     let path = file(&dir, "six.wav", 6, 1.0, |t| {
         0.3 * (2.0 * std::f64::consts::PI * 300.0 * t).sin()
     });

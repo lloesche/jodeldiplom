@@ -7,7 +7,8 @@ use jodel_tensors::SafeTensors;
 
 use super::{band_major, quant, Qwen3Asr, BANDS, CONV, DIM, ENC_DIM, ENC_FF, ENC_LAYERS};
 use super::{FF, HEAD, HEADS, KV_HEADS, LAYERS, VOCAB};
-use crate::nn::{tap_major, transposed, Linear};
+use crate::nn::{tap_major, Linear};
+use jodel_tensors::kernels::transposed;
 
 /// How a tensor of [`checkpoint_tensors`] is read from the checkpoint.
 pub(super) enum Read {

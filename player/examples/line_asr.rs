@@ -94,7 +94,7 @@ fn main() {
         // the folder's lyrics key names.
         let song: Option<PathBuf> = fs::read_to_string(dir.join("meta.json"))
             .ok()
-            .and_then(|m| jodel_lyrics::json::Json::parse(m.trim_start_matches('\u{feff}')))
+            .and_then(|m| jodel_tensors::json::Json::parse(m.trim_start_matches('\u{feff}')))
             .and_then(|j| j.get("path").and_then(|p| p.as_str()).map(PathBuf::from))
             .or_else(|| {
                 cached

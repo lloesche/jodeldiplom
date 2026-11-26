@@ -5,13 +5,21 @@
 # that make its pitch weights in rhythm/tools/), its lyrics
 # for karaoke in lyrics/, the checkpoints the speech, depth and cut-out
 # models are read from in tensors/, the synthesizer of the game's sound
-# effects in synth/. Every file written goes through
+# effects in synth/, the signal tools they share (FFTs, windows, WAV
+# files) in dsp/, what the tests share in testkit/ (a dev-dependency
+# only); half floats and the CPU kernels' common parts are in tensors/.
+# Every file written goes through
 # durable/ (whole or not at all, made durable).
 # Resolver 3 picks dependency versions that build on each member's
 # rust-version.
 [workspace]
-members = ["durable", "gpu", "lyrics", "output", "playback", "player", "rhythm", "rhythm/tools", "synth", "tensors"]
+members = ["dsp", "durable", "gpu", "lyrics", "output", "playback", "player", "rhythm", "rhythm/tools", "synth", "tensors", "testkit"]
 resolver = "3"
+
+# The signal tools run in the loops of every crate below (the FFTs, the
+# windows and the resampler's kernel): as quick as their callers.
+[profile.dev.package.jodel-dsp]
+opt-level = 3
 
 # The beat analysis runs long loops over whole tracks; its tests would take
 # minutes unoptimized.

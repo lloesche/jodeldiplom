@@ -14,9 +14,9 @@
 //!   the beat as beat plus downbeat.
 
 use super::mel::BANDS;
-use crate::nn::layers::{
-    gelu, par_chunks, Affine, Attention, Conv, FeedForward, Linear, RmsNorm, Rotary,
-};
+use jodel_tensors::kernels::par_chunks;
+
+use crate::nn::layers::{gelu, Affine, Attention, Conv, FeedForward, Linear, RmsNorm, Rotary};
 use crate::nn::weights::Weights;
 
 /// The widest sequence the rotary tables cover (frames per chunk).

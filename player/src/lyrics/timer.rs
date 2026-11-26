@@ -322,10 +322,6 @@ fn track_voice(stems: Option<&Path>, path: &Path) -> Result<(Vec<f32>, bool), St
 /// channels averaged and resampled. Nothing is separated.
 pub fn voice_16k(mut file: jodel_playback::StemFile) -> Result<Vec<f32>, String> {
     use jodel_playback::stems::Stem;
-    let vocals = Stem::ALL
-        .iter()
-        .position(|&s| s == Stem::Vocals)
-        .unwrap_or(2);
     let mut r = jodel_playback::Resampler::new(jodel_playback::stems::RATE, 16_000, 1);
     let (mut voice, mut out) = (Vec::new(), Vec::new());
     let mut at = 0;
@@ -333,7 +329,7 @@ pub fn voice_16k(mut file: jodel_playback::StemFile) -> Result<Vec<f32>, String>
         let stems = file
             .read(at, jodel_playback::stems::RATE as usize * 10)
             .map_err(|e| e.to_string())?;
-        let [l, rt] = &stems[vocals];
+        let [l, rt] = &stems[Stem::Vocals];
         if l.is_empty() {
             break;
         }
@@ -357,10 +353,6 @@ pub fn separate_16k(path: &Path, mix: bool) -> Result<(Vec<f32>, Vec<f32>), Stri
     use jodel_playback::stems::{Stem, StereoFeed};
     use jodel_rhythm::stems::{Splitter, StemBlock};
     let gpu = jodel_gpu::GpuSeparator::for_this_thread().ok_or("no GPU for the stems")?;
-    let vocals = Stem::ALL
-        .iter()
-        .position(|&s| s == Stem::Vocals)
-        .unwrap_or(2);
     let mut source = jodel_playback::Source::open(path).map_err(|e| e.to_string())?;
     let (rate, channels) = (
         source.info().rate,
@@ -371,7 +363,7 @@ pub fn separate_16k(path: &Path, mix: bool) -> Result<(Vec<f32>, Vec<f32>), Stri
     let mut voice: Vec<f64> = Vec::new();
     let mut whole: Vec<f64> = Vec::new();
     let mut take = |b: &StemBlock| {
-        let [l, r] = b.stems[vocals];
+        let [l, r] = b.stems[Stem::Vocals];
         if voice.len() < b.start + l.len() {
             voice.resize(b.start + l.len(), 0.0);
         }

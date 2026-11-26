@@ -7,7 +7,10 @@ license = "MIT"
 description = "A small real-time synthesizer for the karaoke game's sound effects: our own engines, a voice host, a bus of chorus, delay, hall and dynamics"
 
 [dependencies]
+# xorshift32, shared with the other audio crates.
+jodel-dsp = { path = "../dsp" }
 
 [dev-dependencies]
+jodel-testkit = { path = "../testkit" }
 # The listening example writes its WAVs whole or not at all.
 durable = { path = "../durable" }

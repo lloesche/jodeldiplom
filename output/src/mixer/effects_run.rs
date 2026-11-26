@@ -18,9 +18,7 @@ use super::envelope::Envelope;
 use super::live::{LiveRun, Sent};
 use super::strips::Strips;
 use crate::spsc::Consumer;
-
-/// Full scale of the 24-bit samples mixed.
-const FULL: f32 = 8_388_607.0;
+use jodel_dsp::PEAK;
 
 /// The channels the effects' buffers have room for from the start.
 pub(super) const RESERVED_CHANNELS: usize = 8;
@@ -141,5 +139,5 @@ impl EffectsRun {
 
 /// A sample at full scale 1.0 as a 24-bit word.
 pub(super) fn to_word(x: f32) -> i32 {
-    (x.clamp(-1.0, 1.0) * FULL).round() as i32
+    (x.clamp(-1.0, 1.0) * PEAK as f32).round() as i32
 }

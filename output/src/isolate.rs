@@ -40,6 +40,9 @@
 
 use std::sync::OnceLock;
 
+use jodel_tensors::half::f16_to_f32;
+use jodel_tensors::kernels::sigmoid;
+
 /// The network's rate.
 pub const RATE: u32 = 16_000;
 /// Frequency bins of a frame.
@@ -72,23 +75,6 @@ struct Weights {
     voice_b: f32,
 }
 
-/// An IEEE half as `f32`.
-fn half(bits: u16) -> f32 {
-    let exp = u32::from((bits >> 10) & 0x1f);
-    let man = u32::from(bits & 0x3ff);
-    let magnitude = match exp {
-        0 => man as f32 * (1.0 / 16_777_216.0),
-        31 if man == 0 => f32::INFINITY,
-        31 => f32::NAN,
-        _ => f32::from_bits(((exp + 112) << 23) | (man << 13)),
-    };
-    if bits & 0x8000 != 0 {
-        -magnitude
-    } else {
-        magnitude
-    }
-}
-
 impl Weights {
     /// The model file: `b"JDLVOICE"`, then little-endian u32 version (2),
     /// bins, hidden, layers, inputs (1: the microphone alone), f32 level
@@ -117,7 +103,7 @@ impl Weights {
             let n: usize = shape.iter().product();
             let v = bytes[at..at + 2 * n]
                 .chunks_exact(2)
-                .map(|b| half(u16::from_le_bytes([b[0], b[1]])))
+                .map(|b| f16_to_f32(u16::from_le_bytes([b[0], b[1]])))
                 .collect();
             at += 2 * n;
             v
@@ -171,8 +157,7 @@ impl Tables {
         TABLES.get_or_init(|| {
             let mut window = [0.0f32; N_FFT];
             for (n, w) in window.iter_mut().enumerate() {
-                // Periodic Hann.
-                *w = (0.5 - 0.5 * (std::f64::consts::TAU * n as f64 / N_FFT as f64).cos()) as f32;
+                *w = jodel_dsp::window::hann_at(n, N_FFT) as f32;
             }
             let mut envelope = [0.0f32; HOP];
             for (n, e) in envelope.iter_mut().enumerate() {
@@ -219,10 +204,6 @@ fn affine(w: &[f32], b: &[f32], x: &[f32], out: &mut [f32]) {
     for ((o, row), bias) in out.iter_mut().zip(w.chunks_exact(x.len())).zip(b) {
         *o = dot(row, x) + bias;
     }
-}
-
-fn sigmoid(x: f32) -> f32 {
-    1.0 / (1.0 + (-x).exp())
 }
 
 /// The isolating network, streaming at 16 kHz.
@@ -510,9 +491,7 @@ mod tests {
                 if i < 400 {
                     return 0.0;
                 }
-                state ^= state << 13;
-                state ^= state >> 17;
-                state ^= state << 5;
+                jodel_dsp::xorshift32(&mut state);
                 let noise = f64::from(state >> 8) / 16_777_216.0 - 0.5;
                 let t = f64::from(i) / 16_000.0;
                 let a = if i < 32_000 { 0.1 } else { 0.4 };
@@ -529,16 +508,6 @@ mod tests {
             .chunks_exact(4)
             .map(|b| f32::from_le_bytes(b.try_into().unwrap()))
             .collect()
-    }
-
-    #[test]
-    fn halves_convert() {
-        assert_eq!(half(0x3c00), 1.0);
-        assert_eq!(half(0xc000), -2.0);
-        assert_eq!(half(0x7bff), 65504.0);
-        assert_eq!(half(0x0001), 2f32.powi(-24));
-        assert_eq!(half(0x0000), 0.0);
-        assert!(half(0x7c00).is_infinite() && half(0x7e00).is_nan());
     }
 
     #[test]
@@ -605,9 +574,7 @@ mod tests {
         let mut state: u32 = 0x9e37_79b9;
         let x: Vec<f32> = (0..6 * 16_000)
             .map(|_| {
-                state ^= state << 13;
-                state ^= state >> 17;
-                state ^= state << 5;
+                jodel_dsp::xorshift32(&mut state);
                 (f64::from(state >> 8) / 16_777_216.0 - 0.5) as f32 * 0.11
             })
             .collect();

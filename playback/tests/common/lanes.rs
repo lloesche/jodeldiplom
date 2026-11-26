@@ -404,7 +404,10 @@ pub fn kept(dir: &Path, track: &Path, samples: &[i32]) -> std::sync::Arc<dyn Ste
             .collect()
     };
     let (l, r) = (side(0), side(1));
-    w.push(std::array::from_fn(|_| [&l[..], &r[..]])).unwrap();
+    w.push(jodel_playback::stems::PerStem::from_fn(|_| {
+        [&l[..], &r[..]]
+    }))
+    .unwrap();
     w.finish().unwrap();
     std::sync::Arc::new(Kept {
         track: track.to_path_buf(),

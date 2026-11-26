@@ -20,6 +20,7 @@ use std::time::{Duration, Instant};
 use common::lanes::{caps_of, quarter, wide_target_on, Gated, Wide};
 use common::transition::{beats, lanes as plan_lanes, Desk};
 use common::*;
+use jodel_dsp::PEAK;
 use jodel_output::{SampleFormat, SimClock};
 use jodel_playback::stems::Separator;
 use jodel_playback::warp::TimeMap;
@@ -27,11 +28,9 @@ use jodel_playback::{
     Command, Envelope, Event, MakeStems, Player, PlayerOptions, SeparatorSource, Settings,
     TempoMode, TransitionPlan, TransitionState,
 };
+use jodel_testkit::{real_time, TempDir};
 
 const RATE: u32 = 44_100;
-
-/// Full scale, 24 bits.
-const FULL: f64 = 8_388_607.0;
 
 /// The sine's level: half of full scale.
 const LEVEL: f64 = 0.5;
@@ -49,7 +48,7 @@ fn sine(dir: &Path, name: &str, seconds: f64) -> (PathBuf, Vec<i32>) {
     let samples: Vec<i32> = (0..frames)
         .flat_map(|n| {
             let t = n as f64 / f64::from(RATE);
-            let v = (LEVEL * FULL * (2.0 * std::f64::consts::PI * 440.0 * t).sin()).round() as i32;
+            let v = (LEVEL * PEAK * (2.0 * std::f64::consts::PI * 440.0 * t).sin()).round() as i32;
             [v, v]
         })
         .collect();
@@ -63,7 +62,7 @@ fn peak_hz(samples: &[i32], channels: usize, from: usize) -> f64 {
     const N: usize = 16_384;
     let x: Vec<f64> = (0..N)
         .map(|i| {
-            let w = 0.5 - 0.5 * (2.0 * std::f64::consts::PI * i as f64 / N as f64).cos();
+            let w = jodel_dsp::window::hann_at(i, N);
             f64::from(samples[(from + i) * channels]) * w
         })
         .collect();
@@ -193,7 +192,7 @@ fn heard_in(seen: &[Event], key: i8) -> usize {
 /// in a row), 0.47 over 5 ms, so windows shorter than 10 ms would take the
 /// crossfade itself for a hole.
 fn no_click(samples: &[i32], channels: usize, at: usize, level: f64, hz: f64) {
-    let steepest = level * FULL * 2.0 * std::f64::consts::PI * hz / f64::from(RATE);
+    let steepest = level * PEAK * 2.0 * std::f64::consts::PI * hz / f64::from(RATE);
     let from = at - RATE as usize / 10;
     let to = at + RATE as usize / 5;
     let x: Vec<f64> = (from..to)
@@ -207,7 +206,7 @@ fn no_click(samples: &[i32], channels: usize, at: usize, level: f64, hz: f64) {
         worst < 1.3 * steepest,
         "a step of {worst} (the sine's steepest {steepest})"
     );
-    let rms = level * FULL / 2f64.sqrt();
+    let rms = level * PEAK / 2f64.sqrt();
     let (window, step) = (RATE as usize / 100, RATE as usize / 1000);
     for k in (0..x.len() - window).step_by(step) {
         let piece = &x[k..k + window];
@@ -224,7 +223,7 @@ fn no_click(samples: &[i32], channels: usize, at: usize, level: f64, hz: f64) {
 /// comes out at 493.9 Hz, the file's length, with no click at the change.
 #[test]
 fn a_sine_two_up_comes_out_at_its_new_frequency_as_long_and_without_a_click() {
-    let dir = temp_dir("key-sine");
+    let dir = TempDir::new("key-sine");
     let (path, samples) = sine(&dir, "sine.wav", 4.0);
     let run = Run {
         separator: None,
@@ -259,7 +258,7 @@ fn a_sine_two_up_comes_out_at_its_new_frequency_as_long_and_without_a_click() {
 /// is their sum.
 #[test]
 fn the_drums_keep_their_key_and_the_other_stems_are_shifted() {
-    let dir = temp_dir("key-stems");
+    let dir = TempDir::new("key-stems");
     let (path, _) = sine(&dir, "sine.wav", 4.0);
     let run = Run {
         separator: Some(quarter),
@@ -290,7 +289,7 @@ fn the_drums_keep_their_key_and_the_other_stems_are_shifted() {
 /// it is the file, bit for bit.
 #[test]
 fn back_at_0_the_file_plays_bit_for_bit() {
-    let dir = temp_dir("key-back");
+    let dir = TempDir::new("key-back");
     let (path, samples) = sine(&dir, "sine.wav", 5.0);
     let run = Run {
         separator: Some(quarter),
@@ -324,7 +323,7 @@ fn back_at_0_the_file_plays_bit_for_bit() {
 /// long as the files), and goes back to 0 when a track is picked.
 #[test]
 fn the_key_carries_into_the_next_track_and_goes_at_a_track_picked() {
-    let dir = temp_dir("key-next");
+    let dir = TempDir::new("key-next");
     let (a, a_samples) = sine(&dir, "a.wav", 2.0);
     let (b, b_samples) = sine(&dir, "b.wav", 2.0);
     let run = Run {
@@ -374,7 +373,7 @@ fn the_key_carries_into_the_next_track_and_goes_at_a_track_picked() {
 #[test]
 fn on_a_device_a_key_change_is_heard_within_a_tenth_of_a_second() {
     let _real_time = real_time();
-    let dir = temp_dir("key-device");
+    let dir = TempDir::new("key-device");
     let (path, _) = sine(&dir, "sine.wav", 6.0);
     let run = Run {
         separator: Some(quarter),
@@ -422,7 +421,7 @@ fn on_a_device_a_key_change_is_heard_within_a_tenth_of_a_second() {
 /// set up: each refused, saying why.
 #[test]
 fn no_transition_in_a_key_and_no_key_in_a_transition() {
-    let dir = temp_dir("key-transition");
+    let dir = TempDir::new("key-transition");
     let (a, _) = sine(&dir, "a.wav", 10.0);
     let (b, _) = sine(&dir, "b.wav", 10.0);
     let caps = common::caps(&[RATE], &[SampleFormat::S24In32Low]);
@@ -473,7 +472,7 @@ fn no_transition_in_a_key_and_no_key_in_a_transition() {
 /// main nor on any part.
 #[test]
 fn two_keys_in_a_row_crossfade_as_one_does() {
-    let dir = temp_dir("key-two");
+    let dir = TempDir::new("key-two");
     let (path, _) = sine(&dir, "sine.wav", 3.0);
     let run = Run {
         separator: Some(quarter),
@@ -531,7 +530,7 @@ fn offline_player(
 /// (a count-in, then the song) plays it in that key from its first frame.
 #[test]
 fn a_key_asked_while_nothing_plays_is_the_next_songs() {
-    let dir = temp_dir("key-stopped");
+    let dir = TempDir::new("key-stopped");
     let (a, _) = sine(&dir, "a.wav", 2.0);
     let (b, _) = sine(&dir, "b.wav", 2.0);
     let (player, events, captures, gate) = offline_player(vec![a, b]);
@@ -556,7 +555,7 @@ fn a_key_asked_while_nothing_plays_is_the_next_songs() {
 /// A key asked during a count-in is heard from the song's first frame.
 #[test]
 fn a_key_asked_during_a_count_in_is_heard_from_the_songs_first_frame() {
-    let dir = temp_dir("key-count-in");
+    let dir = TempDir::new("key-count-in");
     let (a, _) = sine(&dir, "a.wav", 2.0);
     let (player, events, captures, gate) = offline_player(vec![a]);
     player.play_in(0, 1.0).unwrap();
@@ -581,7 +580,7 @@ fn a_key_asked_during_a_count_in_is_heard_from_the_songs_first_frame() {
 /// A seek keeps the key: the song plays on from there in it.
 #[test]
 fn a_seek_keeps_the_key() {
-    let dir = temp_dir("key-seek");
+    let dir = TempDir::new("key-seek");
     let (path, _) = sine(&dir, "sine.wav", 5.0);
     let run = Run {
         separator: Some(quarter),
@@ -611,7 +610,7 @@ fn a_seek_keeps_the_key() {
 /// stay the map's, and its pitch is the map's speed times the key's.
 #[test]
 fn a_head_on_a_time_map_takes_the_key_on_it() {
-    let dir = temp_dir("key-map");
+    let dir = TempDir::new("key-map");
     let (path, _) = sine(&dir, "sine.wav", 7.0);
     // Straight to 1 s, 5 % faster by 2 s and on at that to 4 s.
     let map = std::sync::Arc::new(TimeMap::from_knots(
@@ -665,7 +664,7 @@ fn never() -> Option<&'static dyn Separator> {
 #[test]
 fn on_a_device_stems_that_do_not_come_give_way_to_the_whole_mix_in_the_key() {
     let _real_time = real_time();
-    let dir = temp_dir("key-whole");
+    let dir = TempDir::new("key-whole");
     let (path, _) = sine(&dir, "sine.wav", 6.0);
     let run = Run {
         separator: Some(never),
@@ -711,7 +710,7 @@ fn on_a_device_stems_that_do_not_come_give_way_to_the_whole_mix_in_the_key() {
 /// saying why.
 #[test]
 fn shifted_a_jump_is_refused_and_new_settings_wait_saying_so() {
-    let dir = temp_dir("key-refusals");
+    let dir = TempDir::new("key-refusals");
     let (path, _) = sine(&dir, "sine.wav", 3.0);
     let (player, events, _captures, gate) = offline_player(vec![path]);
     player.play(0).unwrap();
@@ -740,7 +739,7 @@ fn shifted_a_jump_is_refused_and_new_settings_wait_saying_so() {
 /// the count-in ends, its positions as they were.
 #[test]
 fn two_keys_during_a_count_in_are_heard_from_the_songs_first_frame() {
-    let dir = temp_dir("key-count-in-two");
+    let dir = TempDir::new("key-count-in-two");
     let (a, _) = sine(&dir, "a.wav", 2.0);
     let (player, events, captures, gate) = offline_player(vec![a]);
     player.play_in(0, 1.0).unwrap();

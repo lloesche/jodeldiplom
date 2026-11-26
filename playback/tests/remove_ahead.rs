@@ -17,6 +17,7 @@ use common::lanes::{options, quarter, Wide};
 use common::*;
 use jodel_output::{SampleFormat, SimClock};
 use jodel_playback::{Captures, Command, Event, MakeStems, MemoryTarget, Player, PlayerOptions};
+use jodel_testkit::{heavy, TempDir};
 
 const RATE: u32 = 44_100;
 
@@ -62,7 +63,7 @@ struct Run {
 /// long at `b_rate`, another level half a second long) queued on a held
 /// device, the first playing, its first `PLAYED` frames let through.
 fn run(name: &str, names: &[&str], b_rate: u32, lanes: bool, options: PlayerOptions) -> Run {
-    let dir = temp_dir(name);
+    let dir = TempDir::new(name);
     let paths: Vec<PathBuf> = names.iter().map(|n| dir.join(format!("{n}.wav"))).collect();
     let samples = names
         .iter()

@@ -6,7 +6,8 @@
 //! repeated), no normalisation. The inverse adds the windowed inverse
 //! frames back together and divides by the summed squared window.
 
-use crate::fft::{Complex, RealFft};
+use jodel_dsp::fft::{Complex, RealFft};
+use jodel_dsp::window::hann;
 
 /// Samples per frame.
 pub const N_FFT: usize = 2048;
@@ -18,7 +19,7 @@ pub const BINS: usize = N_FFT / 2 + 1;
 /// Transforms with their tables and buffers.
 pub struct Stft {
     window: Vec<f32>,
-    fft: RealFft,
+    fft: RealFft<f32>,
     frame: Vec<f32>,
 }
 
@@ -46,12 +47,7 @@ impl Stft {
     /// The tables.
     pub fn new() -> Stft {
         Stft {
-            window: (0..N_FFT)
-                .map(|i| {
-                    let phase = 2.0 * std::f64::consts::PI * i as f64 / N_FFT as f64;
-                    (0.5 - 0.5 * phase.cos()) as f32
-                })
-                .collect(),
+            window: hann(N_FFT).into_iter().map(|w| w as f32).collect(),
             fft: RealFft::new(N_FFT),
             frame: vec![0.0; N_FFT],
         }
@@ -64,7 +60,7 @@ impl Stft {
 
     /// The transform of `x` (more than half a frame long): frame after
     /// frame, [`BINS`] bins each.
-    pub fn forward(&mut self, x: &[f32]) -> Vec<Complex> {
+    pub fn forward(&mut self, x: &[f32]) -> Vec<Complex<f32>> {
         let frames = Stft::frames(x.len());
         let mut out = vec![Complex::default(); frames * BINS];
         for (t, bins) in out.chunks_mut(BINS).enumerate() {
@@ -78,7 +74,7 @@ impl Stft {
 
     /// The signal of `len` samples whose transform is `spectrum` (frames
     /// of [`BINS`] bins).
-    pub fn inverse(&mut self, spectrum: &[Complex], len: usize) -> Vec<f32> {
+    pub fn inverse(&mut self, spectrum: &[Complex<f32>], len: usize) -> Vec<f32> {
         let frames = spectrum.len() / BINS;
         let padded = (frames - 1) * HOP + N_FFT;
         let mut sum = vec![0.0f32; padded];

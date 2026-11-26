@@ -19,6 +19,7 @@ use jodel_output::{
     StreamInfo,
 };
 use jodel_playback::{MakeStems, MemoryTarget, OutputTarget, Player, StemDesk};
+use jodel_testkit::{real_time, TempDir};
 use SampleFormat::*;
 
 /// What the engine did on a [`Counted`] target's outputs.
@@ -147,7 +148,7 @@ const CALLS: u64 = 20_000;
 /// takes a quarter of the mix each, and returns the calls of the output in
 /// a second of steady playback (from `present`: once the stems are there).
 fn calls_in_a_second(make: MakeStems, present: bool) -> u64 {
-    let dir = temp_dir(&format!("idle-{make:?}"));
+    let dir = TempDir::new(&format!("idle-{make:?}"));
     let file = tone_file(&dir, "tones.wav", OUT, 10 * OUT as usize);
     let device = MemoryTarget::new(caps(&[OUT], &[S24In32Low]), SimClock::Realtime);
     let mixer = Mixer::open(Box::new(device), MixerOptions::default());

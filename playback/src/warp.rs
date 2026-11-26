@@ -19,7 +19,7 @@
 
 use std::collections::VecDeque;
 
-use crate::resample::{bessel_i0, sinc};
+use jodel_dsp::window::{bessel_i0, sinc};
 
 /// Beats on each side whose straight line a beat is moved onto.
 const SMOOTH_BEATS: usize = 4;

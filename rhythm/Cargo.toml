@@ -7,3 +7,7 @@ license = "MIT"
 description = "The player's music analysis: a beat grid voted on by several trackers, stems, the key, a voice's pitch (networks of our own inference, their weights built in)"
 
 [dependencies]
+# The FFTs, the windows and the mel scale.
+jodel-dsp = { path = "../dsp" }
+# Half floats and what the CPU kernels share (threads, the AVX2 builds).
+jodel-tensors = { path = "../tensors" }

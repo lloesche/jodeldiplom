@@ -6,10 +6,11 @@
 //! 30 Hz to 11 kHz on the Slaney mel scale, not area-normalised; then
 //! ln(1 + 1000·x). This is the spectrogram the network was trained on.
 
-use std::f64::consts::PI;
+use jodel_dsp::mel::{hz_to_mel, mel_to_hz};
+use jodel_dsp::window::hann;
 
-use crate::fft::RealFft;
 use crate::SAMPLE_RATE;
+use jodel_dsp::fft::RealFft;
 
 /// Samples per frame.
 pub const FRAME: usize = 1024;
@@ -34,7 +35,7 @@ pub struct NetMel {
 /// Takes the samples as they come and keeps only what the frames still
 /// to be computed need.
 pub struct NetFrontend {
-    fft: RealFft,
+    fft: RealFft<f32>,
     window: Vec<f32>,
     /// `(bin, weight)` per band.
     filters: Vec<Vec<(usize, f32)>>,
@@ -52,26 +53,6 @@ pub struct NetFrontend {
 impl Default for NetFrontend {
     fn default() -> NetFrontend {
         NetFrontend::new()
-    }
-}
-
-/// Hertz to mel on the Slaney scale: linear below 1 kHz, logarithmic
-/// above.
-fn hz_to_mel(hz: f64) -> f64 {
-    let step = 6.4f64.ln() / 27.0;
-    if hz >= 1000.0 {
-        15.0 + (hz / 1000.0).ln() / step
-    } else {
-        hz * 3.0 / 200.0
-    }
-}
-
-fn mel_to_hz(mel: f64) -> f64 {
-    let step = 6.4f64.ln() / 27.0;
-    if mel >= 15.0 {
-        1000.0 * (step * (mel - 15.0)).exp()
-    } else {
-        mel * 200.0 / 3.0
     }
 }
 
@@ -103,9 +84,7 @@ impl NetFrontend {
     pub fn new() -> NetFrontend {
         NetFrontend {
             fft: RealFft::new(FRAME),
-            window: (0..FRAME)
-                .map(|i| (0.5 - 0.5 * (2.0 * PI * i as f64 / FRAME as f64).cos()) as f32)
-                .collect(),
+            window: hann(FRAME).into_iter().map(|w| w as f32).collect(),
             filters: filters(),
             head: Vec::with_capacity(FRAME / 2 + 1),
             buffer: Vec::new(),

@@ -165,7 +165,7 @@ impl Wav2Vec2 {
             encoder_norm,
             layers,
             head,
-            threads: std::thread::available_parallelism().map_or(4, |n| n.get()),
+            threads: jodel_tensors::kernels::processors(),
         })
     }
 

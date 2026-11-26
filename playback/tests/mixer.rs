@@ -15,6 +15,7 @@ use common::*;
 use jodel_output::mixer::desk_format;
 use jodel_output::{Capabilities, SampleFormat, StreamFormat};
 use jodel_playback::{Captures, Command, Event, JumpAt, PlayState, Player, PlayerOptions};
+use jodel_testkit::{fixture, TempDir};
 use SampleFormat::*;
 
 #[derive(Clone, Copy, Debug)]
@@ -110,7 +111,7 @@ fn flac_gapless_and_resampled_are_bit_exact() {
 
 #[test]
 fn plain_and_resampled_pcm_are_bit_exact() {
-    let dir = temp_dir("mixer-pcm");
+    let dir = TempDir::new("mixer-pcm");
     let (w48, w44) = (dir.join("48.wav"), dir.join("44.wav"));
     ramp_wav(&w48, 48_000, 30_000);
     ramp_wav(&w44, 44_100, 30_000);
@@ -128,7 +129,7 @@ fn plain_and_resampled_pcm_are_bit_exact() {
 
 #[test]
 fn seek_pause_and_jump_are_bit_exact() {
-    let dir = temp_dir("mixer-moves");
+    let dir = TempDir::new("mixer-moves");
     let wav = dir.join("ramp.wav");
     ramp_wav(&wav, 44_100, 3 * 44_100);
     // Each move is made once the device has every frame written (whole
@@ -177,7 +178,7 @@ fn seek_pause_and_jump_are_bit_exact() {
 
 #[test]
 fn play_at_starts_a_share_of_the_length_in() {
-    let dir = temp_dir("mixer-play-at");
+    let dir = TempDir::new("mixer-play-at");
     let wav = dir.join("ramp.wav");
     let frames = 44_101u64;
     let samples = ramp_wav(&wav, 44_100, frames as u32);
@@ -210,7 +211,7 @@ fn play_at_starts_a_share_of_the_length_in() {
 #[test]
 fn mono_and_5_1_files_play_as_stereo() {
     use jodel_playback::remix::Remix;
-    let dir = temp_dir("mixer-channels");
+    let dir = TempDir::new("mixer-channels");
     let frames = 4_800usize;
     let mono: Vec<i32> = (0..frames).map(|k| k as i32 * 37 - 90_000).collect();
     let surround: Vec<i32> = (0..frames * 6)

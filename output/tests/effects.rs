@@ -14,6 +14,7 @@ use jodel_output::mixer::{Effects, Fader, InputTarget, Mixer, Role};
 use jodel_output::pack::unpack;
 use jodel_output::{Output, OutputTarget};
 use jodel_synth::{Commands, PatchId};
+use jodel_testkit::real_time;
 
 /// Every frame of stream `i`, (left, right).
 fn both(device: &Device, i: usize) -> Vec<(i32, i32)> {

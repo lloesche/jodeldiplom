@@ -5,7 +5,7 @@
 
 use std::path::Path;
 
-use crate::json::Json;
+use jodel_tensors::json::Json;
 
 /// `<|endoftext|>`.
 pub const END_OF_TEXT: u32 = 151_643;

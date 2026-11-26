@@ -11,7 +11,7 @@
 use jodel_output::mixer::{Mixer, Role, Strip};
 
 use crate::engine::{Head, HeadFaders};
-use crate::stems::{Stem, LANES};
+use crate::stems::{lane, Stem, LANES};
 
 /// A player's strips: its group, and a strip in it for each stem.
 pub struct StemDesk {
@@ -75,7 +75,6 @@ impl StemDesk {
 
     /// The strip of `stem`.
     pub fn stem(&self, stem: Stem) -> &Strip {
-        let k = LANES.iter().position(|&s| s == stem).unwrap_or(0);
-        &self.stems[k]
+        &self.stems[lane(stem)]
     }
 }

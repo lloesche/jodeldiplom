@@ -169,7 +169,7 @@ impl MicTap {
     /// both sides play). Their mean is the frame's mean in each case.
     fn sides(frame: &[i32]) -> (f32, f32) {
         let ch = frame.len().max(1);
-        let unit = 1.0 / 8_388_608.0;
+        let unit = 1.0 / jodel_dsp::FULL_SCALE as f32;
         match frame {
             [] => (0.0, 0.0),
             [one] => (*one as f32 * unit, *one as f32 * unit),

@@ -40,6 +40,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::Instant;
 
+use jodel_dsp::wav;
 use jodel_gpu::GpuSeparator;
 use jodel_playback::Source;
 use jodel_playback::StereoFeed;
@@ -660,28 +661,25 @@ fn write_clicks(file: &Path, a: &Analysis, out: &Path) -> Result<(), String> {
 /// header at the end, and it takes its name only then.
 struct WavWriter {
     out: durable::AtomicFile,
-    bytes: u32,
+    format: wav::Format,
+    samples: usize,
 }
 
 impl WavWriter {
     fn create(path: &Path, rate: u32, channels: u16) -> Result<WavWriter, String> {
         let mut out = durable::AtomicFile::create(path).map_err(|e| e.to_string())?;
-        let block_align = channels * 2;
-        let mut header = Vec::with_capacity(44);
-        header.extend_from_slice(b"RIFF");
-        header.extend_from_slice(&36u32.to_le_bytes());
-        header.extend_from_slice(b"WAVEfmt ");
-        header.extend_from_slice(&16u32.to_le_bytes());
-        header.extend_from_slice(&1u16.to_le_bytes());
-        header.extend_from_slice(&channels.to_le_bytes());
-        header.extend_from_slice(&rate.to_le_bytes());
-        header.extend_from_slice(&(rate * u32::from(block_align)).to_le_bytes());
-        header.extend_from_slice(&block_align.to_le_bytes());
-        header.extend_from_slice(&16u16.to_le_bytes());
-        header.extend_from_slice(b"data");
-        header.extend_from_slice(&0u32.to_le_bytes());
-        out.write_all(&header).map_err(|e| e.to_string())?;
-        Ok(WavWriter { out, bytes: 0 })
+        let format = wav::Format {
+            rate,
+            channels,
+            encoding: wav::Encoding::Pcm16,
+        };
+        out.write_all(&wav::header(format, 0))
+            .map_err(|e| e.to_string())?;
+        Ok(WavWriter {
+            out,
+            format,
+            samples: 0,
+        })
     }
 
     /// Writes interleaved samples (full scale ±1).
@@ -691,7 +689,7 @@ impl WavWriter {
             self.out
                 .write_all(&v.to_le_bytes())
                 .map_err(|e| e.to_string())?;
-            self.bytes += 2;
+            self.samples += 1;
         }
         Ok(())
     }
@@ -700,11 +698,8 @@ impl WavWriter {
     fn finish(self) -> Result<(), String> {
         use std::io::{Seek, SeekFrom};
         let mut file = self.out;
-        file.seek(SeekFrom::Start(4)).map_err(|e| e.to_string())?;
-        file.write_all(&(36 + self.bytes).to_le_bytes())
-            .map_err(|e| e.to_string())?;
-        file.seek(SeekFrom::Start(40)).map_err(|e| e.to_string())?;
-        file.write_all(&self.bytes.to_le_bytes())
+        file.seek(SeekFrom::Start(0)).map_err(|e| e.to_string())?;
+        file.write_all(&wav::header(self.format, self.samples))
             .map_err(|e| e.to_string())?;
         file.commit().map_err(|e| e.to_string())
     }
@@ -741,7 +736,7 @@ fn write_stems(file: &Path, dir: &Path) -> Result<String, String> {
         .collect::<Result<Vec<_>, _>>()?;
     let mut failed = None;
     let mut sink = |b: &stems::StemBlock| {
-        for (w, stem) in writers.iter_mut().zip(&b.stems) {
+        for (w, stem) in writers.iter_mut().zip(&b.stems.0) {
             let frames = stem[0].iter().zip(stem[1]);
             let samples = frames.flat_map(|(l, r)| [f64::from(*l), f64::from(*r)]);
             if let Err(e) = w.write(samples) {

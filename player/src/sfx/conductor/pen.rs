@@ -92,11 +92,8 @@ impl<'a> Hand<'a> {
 
     /// How long the next letter takes.
     fn pace(&mut self) -> f64 {
-        let x = &mut self.seed;
-        *x ^= *x << 13;
-        *x ^= *x >> 17;
-        *x ^= *x << 5;
-        0.055 + 0.035 * f64::from(*x >> 8) / f64::from(1u32 << 24)
+        let x = jodel_dsp::xorshift32(&mut self.seed);
+        0.055 + 0.035 * f64::from(x >> 8) / f64::from(1u32 << 24)
     }
 
     /// Whether the pen is lifted at `t`, between two words.

@@ -559,8 +559,8 @@ mod tests {
             glide: false,
         };
         // Bass swaps on bar 4 of 8, vocals on bar 7.
-        let bass = Stem::ALL.iter().position(|&s| s == Stem::Bass).unwrap();
-        let vocals = Stem::ALL.iter().position(|&s| s == Stem::Vocals).unwrap();
+        let bass = Stem::Bass.index();
+        let vocals = Stem::Vocals.index();
         assert_eq!(p.gains(Side::From, 0.49)[bass], 1.0);
         assert_eq!(p.gains(Side::From, 0.5)[bass], 0.0);
         assert_eq!(p.gains(Side::Into, 0.5)[bass], 1.0);

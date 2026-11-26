@@ -5,8 +5,9 @@
 //! loops the compiler vectorises, each spread over jodel-rhythm's share of
 //! the threads.
 
-use jodel_rhythm::nn::layers::{par_chunks, Linear};
+use jodel_rhythm::nn::layers::Linear;
 use jodel_rhythm::nn::weights::Weights;
+use jodel_tensors::kernels::par_chunks;
 
 /// A feature map: `h` rows of `w` pixels of `c` channels.
 #[derive(Clone, Debug, PartialEq)]

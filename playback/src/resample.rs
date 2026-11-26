@@ -36,6 +36,7 @@
 
 use std::sync::{Arc, Mutex};
 
+use jodel_dsp::window::{bessel_i0, sinc};
 pub use jodel_output::Requantizer;
 
 /// The highest passband edge, in Hz.
@@ -54,11 +55,12 @@ pub const DESIGN_DB: f64 = 166.0;
 const LANES: usize = 8;
 /// Designs kept for reuse (a seek reopens the resampler).
 const CACHED_DESIGNS: usize = 4;
-fn gcd(mut a: u64, mut b: u64) -> u64 {
+/// The greatest common divisor of `a` and `b`, at least 1.
+pub(crate) fn gcd(mut a: u64, mut b: u64) -> u64 {
     while b != 0 {
         (a, b) = (b, a % b);
     }
-    a
+    a.max(1)
 }
 
 /// The ratio `to / from` in lowest terms, as `(up, down)`.
@@ -82,29 +84,6 @@ pub fn output_frames(from: u32, to: u32, input: u64) -> u64 {
 fn rounded(input: u64, up: u32, down: u32) -> u64 {
     let (up, down) = (u128::from(up), u128::from(down));
     ((2 * u128::from(input) * up + down) / (2 * down)) as u64
-}
-
-/// The zeroth-order modified Bessel function of the first kind.
-pub(crate) fn bessel_i0(x: f64) -> f64 {
-    let quarter = x * x / 4.0;
-    let mut term = 1.0;
-    let mut sum = 1.0;
-    let mut k = 1.0;
-    while term > sum * 1e-18 {
-        term *= quarter / (k * k);
-        sum += term;
-        k += 1.0;
-    }
-    sum
-}
-
-pub(crate) fn sinc(x: f64) -> f64 {
-    if x == 0.0 {
-        1.0
-    } else {
-        let px = std::f64::consts::PI * x;
-        px.sin() / px
-    }
 }
 
 /// The polyphase filter for one pair of rates.
@@ -573,14 +552,6 @@ mod tests {
         assert_eq!(output_frames(44_100, 48_000, 1), 1);
         assert_eq!(output_frames(384_000, 48_000, 4), 1); // 0.5 rounds up
         assert_eq!(output_frames(384_000, 48_000, 3), 0);
-    }
-
-    #[test]
-    fn bessel_matches_known_values() {
-        assert!((bessel_i0(0.0) - 1.0).abs() < 1e-15);
-        assert!((bessel_i0(1.0) - 1.266_065_877_752_008_4).abs() < 1e-14);
-        let i10 = 2_815.716_628_466_254;
-        assert!((bessel_i0(10.0) - i10).abs() / i10 < 1e-14);
     }
 
     #[test]

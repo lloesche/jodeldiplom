@@ -9,10 +9,10 @@
 //!   before untimed.
 //! - A record marked `instrumental` has no words.
 
-use crate::json::Json;
 use crate::sources::{found_from, Texts};
 use crate::tokens::normalize;
 use crate::{Found, Source, Track};
+use jodel_tensors::json::Json;
 
 /// The service's address.
 pub const BASE: &str = "https://lrclib.net";
