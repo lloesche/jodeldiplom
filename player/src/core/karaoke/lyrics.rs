@@ -1,6 +1,6 @@
 //! The lyrics of the songs Karaoke is about: which are wanted, what is
-//! known of each ([`SongLyrics`]), the speech model that times their words
-//! ([`ModelState`]), and whether a song can be sung yet ([`not_singable`]).
+//! known of each ([`SongLyrics`]), and the speech model that times their
+//! words ([`ModelState`]).
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -187,28 +187,4 @@ pub enum ModelState {
     Coming,
     /// There.
     Ready,
-}
-
-/// Why track `index` cannot be sung yet, if it cannot: its lyrics still
-/// looked for, or their words still being timed (a big folder queued is
-/// got ready a track at a time), or known to be missing (none found, an
-/// instrumental, the look-up failed). Words that cannot be timed (no speech
-/// model, or the timing failed) are sung as they are.
-pub fn not_singable(state: &State, index: usize) -> Option<&'static str> {
-    let path = state.queue.paths.get(index)?;
-    let settled = state
-        .ready
-        .get(path)
-        .is_some_and(|jobs| jobs.contains(&crate::core::Job::Lyrics));
-    match lyrics_of(state, index) {
-        None | Some(SongLyrics::Pending) => Some("still looking for its lyrics"),
-        Some(SongLyrics::NotFound) => Some("no lyrics were found for it"),
-        Some(SongLyrics::Instrumental) => Some("it is an instrumental"),
-        Some(SongLyrics::Failed(_)) => Some("its lyrics could not be looked up"),
-        Some(SongLyrics::Found { shown, .. }) => {
-            let timed = shown.timing.detail == jodel_lyrics::Detail::Words;
-            (!timed && !settled && state.karaoke.model != ModelState::Missing)
-                .then_some("its words are still being timed")
-        }
-    }
 }

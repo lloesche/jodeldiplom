@@ -129,11 +129,20 @@ fn choose() -> Chosen {
         });
         let mut adapters = adapters.into_iter();
         let Some(best) = adapters.next() else {
-            return (Err("no GPU: no adapter on any backend".to_string()), None);
+            return (
+                Err(
+                    "no graphics card on any backend (Vulkan, Metal, DirectX 12, OpenGL)"
+                        .to_string(),
+                ),
+                None,
+            );
         };
         let info = best.get_info();
         if info.device_type == wgpu::DeviceType::Cpu {
-            return (Err(format!("{} is a software renderer", info.name)), None);
+            return (
+                Err(format!("only {}, a software renderer", info.name)),
+                None,
+            );
         }
         let sibling = (info.backend != wgpu::Backend::Dx12)
             .then(|| {
@@ -145,7 +154,7 @@ fn choose() -> Chosen {
             .flatten();
         (Ok(best), sibling)
     }))
-    .unwrap_or_else(|_| (Err("no GPU: looking for one panicked".into()), None));
+    .unwrap_or_else(|_| (Err("looking for a graphics card panicked".into()), None));
     Chosen {
         instance,
         adapter,
@@ -187,10 +196,13 @@ pub(crate) fn open<T>(
 }
 
 /// The name of the GPU the separator would use, without setting it up;
-/// `None` without a usable one. Once the GPU is chosen ([`chosen`]), it
-/// waits for no setup.
-pub fn gpu_name() -> Option<String> {
-    chosen().adapter.as_ref().ok().map(|a| a.get_info().name)
+/// without a usable one, why there is none. Once the GPU is chosen
+/// ([`chosen`]), it waits for no setup.
+pub fn gpu_name() -> Result<String, String> {
+    match &chosen().adapter {
+        Ok(adapter) => Ok(adapter.get_info().name),
+        Err(why) => Err(why.clone()),
+    }
 }
 
 /// The adapters' lines of the diagnostic report ([`crate::report`]): every

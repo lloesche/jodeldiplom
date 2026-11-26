@@ -194,7 +194,7 @@ pub fn playing_state(cols: u16, rows: u16) -> State {
     use jodeldiplom::browser::{Details, Entry, EntryKind};
     let mut state = State::new("/music/Album".into(), Config::default());
     // No GPU here: the cues listen to the mix.
-    state.gpu = jodeldiplom::core::Gpu::Absent;
+    state.gpu = jodeldiplom::core::Gpu::Absent("none here".into());
     state.browser.loading = false;
     let mut entries = vec![Entry {
         name: "..".into(),
@@ -729,13 +729,18 @@ pub fn karaoke_tab() -> State {
     state
 }
 
-/// Every song in the queue has its lyrics: found, as they are (kept for
-/// whichever karaoke comes to want).
+/// Every song in the queue can be sung: there is a GPU, each song is
+/// fully prepared (every job it is got ready by done) and has its lyrics:
+/// found, as they are (kept for whichever karaoke comes to want).
 pub fn singable(state: &mut State) {
     use jodel_lyrics::{Lyrics, Source};
     use jodeldiplom::core::karaoke::SongLyrics;
     use jodeldiplom::work::lyrics::Answer;
+    if !matches!(state.gpu, jodeldiplom::core::Gpu::Present(_)) {
+        state.gpu = jodeldiplom::core::Gpu::Present("Test GPU".into());
+    }
     for path in state.queue.paths.clone() {
+        state.ready.insert(path.clone(), state.preparing.clone());
         let lyrics = Lyrics::parse_text("la la la\nla la", Source::Lrclib);
         state.karaoke.lyrics.insert(
             path,

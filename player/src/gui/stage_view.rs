@@ -8,9 +8,8 @@
 //! ([`super::stage::Stage::targets`]).
 //!
 //! With iced's CPU renderer (no GPU) it draws nothing and says so
-//! ([`StageView::gpu`]): the window shows the mode's lyrics in its own
-//! widgets instead, over the small blur of the cover
-//! ([`StageView::ground`]).
+//! ([`StageView::gpu`]): karaoke needs a GPU, and the window says that
+//! instead.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -20,7 +19,6 @@ use iced::advanced::layout::{self, Layout};
 use iced::advanced::renderer;
 use iced::advanced::widget::{self, tree, Tree, Widget};
 use iced::advanced::{mouse, Shell};
-use iced::widget::image;
 use iced::widget::shader::{self, Shader, Viewport};
 use iced::{wgpu, Element, Event, Fill, Point, Rectangle, Size, Theme, Widget as _};
 
@@ -33,7 +31,6 @@ use crate::core::keymap::Op;
 use crate::core::{Action, State};
 use crate::gui::stage::gpu::StageFrame;
 use crate::view::karaoke::KaraokePicture;
-use crate::work::art::Art;
 
 /// What the stage keeps between frames, and what waits for the next one
 /// on screen.
@@ -53,9 +50,6 @@ struct Shared {
     /// size in points.
     scale: f32,
     size: Size,
-    /// Without a GPU: the small blur of the cover under the lyrics, for
-    /// which cover (0: none) and window it was made.
-    ground: Option<(u64, (u32, u32), image::Handle)>,
     /// When the frame before the last on the GPU had not got through by
     /// the time the last began: background GPU work gives way then.
     behind: bool,
@@ -85,7 +79,6 @@ impl Default for StageView {
             gpu: None,
             scale: 1.0,
             size: Size::ZERO,
-            ground: None,
             behind: false,
             handed: Duration::ZERO,
         })))
@@ -107,9 +100,7 @@ impl StageView {
     /// it heard, once analysed), `dt` seconds after the last; the result
     /// screen in `tint` while one shows. With a GPU the stage is stepped
     /// and waits for the next frame on screen, over `backdrop`; without
-    /// one only the cover's blur (`art`) is kept fitted to the window. The
-    /// mode just come, its score shows at once.
-    #[allow(clippy::too_many_arguments)]
+    /// one nothing is. The mode just come, its score shows at once.
     pub fn frame(
         &self,
         (state, song): (&State, Option<&Song>),
@@ -118,7 +109,6 @@ impl StageView {
         (heard, dt): (f64, f32),
         tint: &Tint,
         backdrop: Option<BackdropFrame>,
-        art: Option<&Art>,
     ) {
         let mut shared = self.lock();
         let shared = &mut *shared;
@@ -137,35 +127,6 @@ impl StageView {
             );
             let frame = shared.stage.scene(song, picture, area, (heard, dt), tint);
             shared.frame = merge(shared.frame.take(), frame);
-        } else {
-            let id = art.map_or(0, |a| a.id);
-            if shared
-                .ground
-                .as_ref()
-                .is_none_or(|(a, s, _)| (*a, *s) != (id, size))
-            {
-                // Scaled up smoothly here to a quarter of the window (the
-                // renderer's own scaling of so few pixels shows their
-                // steps), the rest of the way by the renderer.
-                let small = super::backdrop::ground::small(art, size);
-                let (w, h) = ((size.0 / 4).max(1), (size.1 / 4).max(1));
-                let small = ::image::imageops::resize(
-                    &small,
-                    w,
-                    h,
-                    ::image::imageops::FilterType::Triangle,
-                );
-                let rgba = image::Handle::from_rgba(
-                    w,
-                    h,
-                    ::image::RgbaImage::from_fn(w, h, |x, y| {
-                        let [r, g, b] = small.get_pixel(x, y).0;
-                        ::image::Rgba([r, g, b, 255])
-                    })
-                    .into_raw(),
-                );
-                shared.ground = Some((id, size, rgba));
-            }
         }
     }
 
@@ -195,11 +156,6 @@ impl StageView {
     pub fn late(&self) -> (bool, Duration) {
         let shared = self.lock();
         (shared.behind, shared.handed)
-    }
-
-    /// Without a GPU: the cover's small blur to fill the window with.
-    pub fn ground(&self) -> Option<image::Handle> {
-        self.lock().ground.as_ref().map(|(_, _, h)| h.clone())
     }
 
     /// What a press of the main button at `at` (the window's points) does:
@@ -475,7 +431,6 @@ mod tests {
             at,
             &Tint::STAGE,
             None,
-            None,
         );
     }
 
@@ -515,17 +470,13 @@ mod tests {
         assert!(!view.moving());
     }
 
-    /// Without a GPU nothing is stepped and nothing is pressed: the cover's
-    /// blur is kept for the window's size instead, made again for another.
+    /// Without a GPU nothing is stepped and nothing is pressed.
     #[test]
-    fn without_a_gpu_only_the_ground_is_kept() {
+    fn without_a_gpu_nothing_is_stepped_or_pressed() {
         let view = StageView::default();
         view.lock().gpu = Some(false);
         frame(&view, 12_400);
         assert!(view.lock().frame.is_none() && !view.moving());
-        let ground = view.ground().expect("the ground");
-        frame(&view, 12_400);
-        assert_eq!(view.ground().map(|g| g.id()), Some(ground.id()));
         assert!(view.pressed(Point::new(320.0, 300.0)).is_none());
     }
 }

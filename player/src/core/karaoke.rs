@@ -11,6 +11,10 @@
 //! the tab puts the lane back at 1. The mode ([`Screen::Karaoke`], fullscreen in the
 //! window) is where karaoke happens:
 //!
+//! - no song is sung until it can be ([`not_singable`]): karaoke needs a
+//!   GPU, and a song every job the queue gets it ready by done (START on a
+//!   song held while it is still being prepared waits for it:
+//!   [`KaraokeState::start_when_ready`]) and lyrics to sing;
 //! - entering it stops the song and holds it at its start (entering it
 //!   with shift, [`Op::KaraokeEnterHere`], leaves the song where it is),
 //!   and a song's end holds the next one there: only [`Op::KaraokeStart`]
@@ -37,12 +41,13 @@ use jodel_playback::{Command, PlayState};
 use crate::core::keymap::{self, Context, Op};
 use crate::core::sliders::Slider;
 use crate::core::transition::Status;
-use crate::core::{Effect, Gpu, Screen, Side, State};
+use crate::core::{Effect, Screen, Side, State};
 
 pub mod controls;
 mod countdown;
 mod lyrics;
 pub mod pointer;
+mod ready;
 pub mod result;
 pub use countdown::{
     countdown_for, counts_from, first_sung, resume_count, title_shown, Countdown, COUNT,
@@ -50,7 +55,9 @@ pub use countdown::{
 };
 use countdown::{in_lead, note_heard};
 pub(crate) use lyrics::{lyrics_arrived, want_lyrics};
-pub use lyrics::{lyrics_of, lyrics_wanted, not_singable, ModelState, SongLyrics, HEARD_WARNING};
+pub use lyrics::{lyrics_of, lyrics_wanted, ModelState, SongLyrics, HEARD_WARNING};
+pub(crate) use ready::start_when_ready;
+pub use ready::{no_karaoke, not_singable, NotSingable};
 pub(crate) use result::ended;
 pub use result::{clock_ms, result_motion, result_now, result_shown};
 
@@ -115,6 +122,10 @@ pub struct KaraokeState {
     pub held: Option<usize>,
     /// The count-in under way.
     pub countdown: Option<Countdown>,
+    /// START pressed in the mode on this song (the queue's index) while it
+    /// was still being prepared: it starts, with its count-in, as soon as
+    /// it is ([`start_when_ready`]).
+    pub start_when_ready: Option<usize>,
     /// A paused song goes on at this time ([`State::now_ms`]), after the
     /// count-in that shows until then.
     pub resume_at: Option<u64>,
@@ -290,6 +301,7 @@ pub(crate) fn apply_mode(state: &mut State, op: Op, fx: &mut Vec<Effect>) -> boo
             if index < state.queue.paths.len() {
                 state.karaoke.countdown = None;
                 state.karaoke.resume_at = None;
+                state.karaoke.start_when_ready = None;
                 state.karaoke.held = Some(index);
                 state.queue.cursor = index;
                 fx.push(Effect::Engine(Command::Stop));
@@ -318,11 +330,22 @@ pub fn pausable(state: &State) -> bool {
     in_mode(state) && state.playing.state == PlayState::Playing && k.held.is_none() && !counting
 }
 
-/// Whether track `index` (if any) cannot be sung yet ([`not_singable`]),
-/// said in the status line.
+/// Whether track `index` cannot be sung now ([`not_singable`]; with no
+/// track, whether there is no karaoke at all: [`no_karaoke`]), said in
+/// the status line.
 fn refused(state: &mut State, index: Option<usize>) -> bool {
-    let Some((index, why)) = index.and_then(|i| not_singable(state, i).map(|why| (i, why))) else {
+    let not = match index {
+        Some(i) => not_singable(state, i),
+        None => no_karaoke(state),
+    };
+    let Some(not) = not else {
         return false;
+    };
+    let why = not.why();
+    // No graphics card: no karaoke for any song.
+    let (NotSingable::Preparing(_) | NotSingable::Nothing(_), Some(index)) = (&not, index) else {
+        state.info(format!("No karaoke: {why}"));
+        return true;
     };
     let title = super::shown_title(state, &state.queue.paths[index]);
     let next = if in_mode(state) {
@@ -341,8 +364,8 @@ fn refused(state: &mut State, index: Option<usize>) -> bool {
 /// it goes on where it is instead (nothing stopped, no count-in). A
 /// transition armed is called off (one already mixing plays out: the
 /// engine cuts no mix it is heard in). A result from before is gone. Not
-/// for a song without its lyrics ready ([`not_singable`]): it says why
-/// instead.
+/// for a song that cannot be sung now ([`not_singable`]: no graphics card,
+/// the song still being prepared, nothing to sing): it says why instead.
 pub(crate) fn enter(state: &mut State, fx: &mut Vec<Effect>, here: bool) {
     let song = song_index(state);
     if refused(state, song) {
@@ -357,6 +380,7 @@ pub(crate) fn enter(state: &mut State, fx: &mut Vec<Effect>, here: bool) {
     state.karaoke.pointer_moved = clock_ms(state);
     state.karaoke.countdown = None;
     state.karaoke.resume_at = None;
+    state.karaoke.start_when_ready = None;
     if state.transition.draft.status == Status::Armed {
         fx.push(Effect::Engine(Command::CancelTransition));
         state.transition.draft.status = Status::Draft;
@@ -375,12 +399,6 @@ pub(crate) fn enter(state: &mut State, fx: &mut Vec<Effect>, here: bool) {
     // Where the song goes on, nothing is held (unless nothing plays).
     state.karaoke.held = if here && !stopped { None } else { song };
     fx.push(Effect::Engine(Command::HoldAtEnd(true)));
-    match state.gpu {
-        Gpu::Present(_) => {}
-        Gpu::Looking => state.info("Still looking for a GPU: the voice stays in for now"),
-        Gpu::Absent => state
-            .info("No GPU for the stems: the voice is turned down only where its stems are kept"),
-    }
 }
 
 /// Out of the mode, back to the tab (the voice still at its level), songs
@@ -390,6 +408,7 @@ pub(crate) fn leave(state: &mut State, fx: &mut Vec<Effect>) {
     state.screen = Screen::Main;
     state.side = Side::Karaoke;
     state.karaoke.resume_at = None;
+    state.karaoke.start_when_ready = None;
     if let Some(countdown) = state.karaoke.countdown.take() {
         let heard = state.playing.track.as_ref().map(|t| t.index);
         // Negative times: the silence before the track.
@@ -406,7 +425,8 @@ pub(crate) fn leave(state: &mut State, fx: &mut Vec<Effect>) {
 
 /// START: the song the mode is about ([`song_index`]: the one held, else
 /// the queue's current one) plays from its start after its count-in; a
-/// paused song goes on after the same count-in.
+/// paused song goes on after the same count-in. A song still being
+/// prepared waits: it starts as soon as it is ([`start_when_ready`]).
 fn start(state: &mut State, fx: &mut Vec<Effect>) {
     if state.karaoke.countdown.is_some() || state.karaoke.resume_at.is_some() {
         return;
@@ -434,6 +454,14 @@ fn start(state: &mut State, fx: &mut Vec<Effect>) {
                 state.info("Nothing to sing: queue some songs first");
                 return;
             };
+            if let Some(NotSingable::Preparing(what)) = not_singable(state, index) {
+                let title = super::shown_title(state, &state.queue.paths[index]);
+                state.info(format!(
+                    "{title} starts as soon as it is prepared (still to come: {what})"
+                ));
+                state.karaoke.start_when_ready = Some(index);
+                return;
+            }
             if refused(state, Some(index)) {
                 return;
             }

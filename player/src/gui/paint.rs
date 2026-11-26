@@ -319,7 +319,6 @@ impl Paint {
                 (heard, dt),
                 &tint,
                 backdrop,
-                app.art(),
             );
             self.last_stage = gpu.then_some(drawing);
         } else {

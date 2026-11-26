@@ -219,14 +219,35 @@ stem keys are their mutes.
   down. `esc` on the tab does nothing.
   - `the_tab_plays_the_voice_at_its_level_and_esc_does_nothing_there`
   - `without_a_gpu_the_voice_turns_down_the_kept_stems`
-- **K1b.** A song is sung only once its lyrics are ready: found and their
-  words timed (or found where they cannot be timed: no speech model, or
-  the timing failed). Until then, and for a song with none (none found, an
-  instrumental, the look-up failed), the tab's button is greyed out with
-  why beside it, entering the mode is refused, and in the mode START is
-  greyed out and refused (`N` goes on to the next song); the status line
-  says why.
+- **K1b.** Karaoke needs a GPU: without one no song is sung by any way in
+  (the tab's button and its keys, the palette, START), and the tab says
+  why in one line: karaoke needs a graphics card, and why none was found
+  (none on any backend, only a software renderer); while one is still
+  looked for at the start, it says that. With one, a song is sung only
+  once it is fully prepared: every job the queue's icons show for it done
+  (Q5: its analysis and waveforms, and its stems where they are separated;
+  its lyrics, found or heard from the voice, and timed, or found where
+  they cannot be timed: no speech model, or the timing failed; its cover
+  taken apart, where covers are), and it has lyrics to sing (not none
+  found, an instrumental, or the look-up failed). What cannot be done on
+  the machine counts as done, as for the icons, so no song waits for it
+  for ever. Until then the tab's button is disabled, with why beside it
+  as its hint (what is still being done for the song, job by job in the
+  icons' words), entering the mode by any way is refused with the same on
+  the status line, and in the mode START is greyed out. Plain playback is
+  never held up by any of it.
+  - `no_karaoke_without_a_gpu`
+  - `no_karaoke_for_a_song_until_it_is_fully_prepared`
   - `no_karaoke_for_a_song_until_its_lyrics_are_ready`
+  - `what_cannot_be_done_here_holds_no_song_up`
+- **K1c.** In the mode, a song held for START while it is still being
+  prepared (a song's end held it, or `N`) is not started: the stage says
+  what is still to come for it, and START (`enter`, `space`, its pill)
+  plays nothing then but waits for it: the song starts, with its
+  count-in, as soon as its last job is done. `N`, `P` or `esc` call the
+  wait off; a song that turns out to have nothing to sing is refused, as
+  at START.
+  - `in_the_mode_the_next_song_waits_until_it_is_prepared`
 - **K2.** `esc` is the only way out of the mode (`tab`, the screens and the
   palette's tabs are not reached from it). Going in stops the song playing
   (or paused) and holds it at its start, START showing at once; going out
@@ -299,12 +320,9 @@ stem keys are their mutes.
   completes it, the next starts the song); greyed while that song cannot
   be sung yet. The pointer shows a hand over it. The controls have no
   START (their play button is greyed while nothing plays; while a song
-  plays it pauses it, as `space` does). Without a GPU there is no stage:
-  the lines are the window's own text in the middle, and a small "enter:
-  START" under them says it (a result's own lines end with START).
+  plays it pauses it, as `space` does).
   - `the_start_pill_is_start_by_click_during_and_after_the_reveal`
   - `start_shows_alone_above_the_bar_and_is_its_target` (unit)
-  - `without_a_gpu_the_lines_say_start_in_words` (unit)
 - **K4.** A change of the voice's level never moves playback and never
   touches a transition (as S1). In the mode it is heard at once. The
   Voice slider is a position along its travel (`karaoke_voice`, 0 to

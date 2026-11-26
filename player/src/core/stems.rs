@@ -120,7 +120,7 @@ pub fn make_wanted(state: &State) -> MakeStems {
     }
     match state.gpu {
         Gpu::Present(_) => MakeStems::Separate,
-        Gpu::Looking | Gpu::Absent => MakeStems::Kept,
+        Gpu::Looking | Gpu::Absent(_) => MakeStems::Kept,
     }
 }
 
@@ -299,7 +299,7 @@ fn told(state: &mut State, bar: Option<Bar>) {
     match state.gpu {
         Gpu::Present(_) => {}
         Gpu::Looking => what.push_str("; still looking for a GPU: kept stems only"),
-        Gpu::Absent => what.push_str("; no GPU: kept stems only"),
+        Gpu::Absent(_) => what.push_str("; no GPU: kept stems only"),
     }
     state.info(what);
 }

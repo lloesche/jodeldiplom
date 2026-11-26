@@ -36,8 +36,7 @@
 //! ([`BackdropFrame`]). [`gpu`] draws it at the window's size, the
 //! textures sent over once a cover and dropped once it no longer shows.
 //! The stage's widget ([`super::stage_view`]) draws it as Karaoke mode's
-//! ground, under the stage. Without a GPU the mode shows the small blur
-//! alone, scaled up ([`ground`]).
+//! ground, under the stage.
 
 pub mod gpu;
 pub mod ground;
@@ -251,7 +250,7 @@ impl Visualiser {
     /// The frame for `app` at `heard` seconds into the `song` heard (none:
     /// not analysed yet), `dt` seconds after the last, in a `window` of
     /// pixels. None (and nothing held) outside Karaoke mode or without the
-    /// GPU (`gpu`): the mode shows the small blur alone then.
+    /// GPU (`gpu`).
     pub fn frame(
         &mut self,
         (app, song): (&App, Option<&Song>),

@@ -45,7 +45,7 @@ fn worst(a: &[f32], b: &[f32]) -> (usize, f32) {
 fn gpu() -> Option<&'static GpuNetwork> {
     let found = GpuNetwork::shared();
     if found.is_none() {
-        if let (Some(name), Err(e)) = (jodel_gpu::gpu_name(), GpuNetwork::new()) {
+        if let (Ok(name), Err(e)) = (jodel_gpu::gpu_name(), GpuNetwork::new()) {
             panic!("{name} is there, but the network did not set up on it: {e}");
         }
         eprintln!("no usable GPU: skipped");

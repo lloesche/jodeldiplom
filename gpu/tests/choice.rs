@@ -43,17 +43,17 @@ fn the_gpu_is_chosen_once() {
     match (&chosen.adapter, &network) {
         (Ok(adapter), Ok(_)) => {
             let info = adapter.get_info();
-            assert_eq!(first.as_deref(), Some(info.name.as_str()));
+            assert_eq!(first.as_deref().ok(), Some(info.name.as_str()));
             eprintln!("chosen: {} ({:?})", info.name, info.backend);
         }
         (Ok(adapter), Err(e)) => {
             // A GPU too small for the network: not this test's concern.
             eprintln!("chosen: {}; the network: {e}", adapter.get_info().name);
-            assert!(first.is_some());
+            assert!(first.is_ok());
         }
         (Err(why), Err(e)) => {
             assert_eq!(e, why, "the failure is the choice's, kept");
-            assert!(first.is_none());
+            assert_eq!(first.as_ref(), Err(why), "the name says why there is none");
             eprintln!("no GPU: {why}");
         }
         (Err(why), Ok(_)) => panic!("a network set up without a GPU ({why})"),

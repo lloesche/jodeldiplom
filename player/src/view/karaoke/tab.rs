@@ -1,6 +1,6 @@
 //! The Karaoke tab's model ([`Tab`]): the song (its title, its artist and
-//! the key it is in), the button into the mode (greyed with why until the
-//! song can be sung), the sliders with the sync's row under the delay, the
+//! the key it is in), the button into the mode (disabled with why beside
+//! it until the song can be sung), the sliders with the sync's row under the delay, the
 //! game's switches, what is known of the lyrics of the song and the next
 //! two, the microphone (its meter, or why it is not open), the echo
 //! canceller and the word timing, a few notes on the mode, what the
@@ -86,9 +86,11 @@ pub struct Enter {
     pub op: Op,
     /// What a press with shift held does: in where the song is.
     pub shifted: Op,
-    /// Why the song cannot be sung yet (the button greyed, a press
-    /// refused with the same said on the status line).
-    pub why: Option<&'static str>,
+    /// Why the song cannot be sung now (no graphics card, what is still
+    /// being prepared for it, nothing to sing): the button disabled with
+    /// this as its hint beside it; its key is refused with the same said
+    /// on the status line.
+    pub why: Option<String>,
 }
 
 /// A slider's row.
@@ -235,7 +237,11 @@ impl Tab {
             }
             artist.push_str(&text::key_text(&key));
         }
-        let why = karaoke::song_index(state).and_then(|i| karaoke::not_singable(state, i));
+        let why = match karaoke::song_index(state) {
+            Some(index) => karaoke::not_singable(state, index),
+            None => karaoke::no_karaoke(state),
+        }
+        .map(|n| n.why());
         let sync = Panel::of(state);
         Tab {
             title,
@@ -396,7 +402,7 @@ fn notes(state: &State) -> Vec<&'static str> {
     let gpu = match state.gpu {
         Gpu::Present(_) => "Here and in the mode the voice plays at its level, the rest as it is.",
         Gpu::Looking => "Still looking for a GPU for the stems.",
-        Gpu::Absent => "No GPU: the voice is turned down only where its stems are kept.",
+        Gpu::Absent(_) => "No GPU: the voice is turned down only where its stems are kept.",
     };
     vec![
         gpu,
@@ -438,9 +444,9 @@ impl fmt::Display for Tab {
             writeln!(f, "[dim] {}", self.artist)?;
         }
         let key = keymap::hint(Context::Karaoke, self.enter.op);
-        match self.enter.why {
+        match &self.enter.why {
             None => writeln!(f, "[primary] {ENTER} ({key})")?,
-            Some(why) => writeln!(f, "[greyed] {ENTER} ({key})  [dim] {why}")?,
+            Some(why) => writeln!(f, "[disabled] {ENTER} ({key})  [dim] {why}")?,
         }
         let key = keymap::hint(Context::Karaoke, Op::LyricsEditor);
         let tone = if self.edit { "button" } else { "greyed" };

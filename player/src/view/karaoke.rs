@@ -43,7 +43,7 @@ pub fn voice_note(state: &State) -> Option<&'static str> {
     }
     Some(match (&state.playing.track, &state.gpu) {
         (None, _) => "The voice and its words show here while a song plays.",
-        (_, Gpu::Absent) => "No GPU for the stems: the voice cannot be shown.",
+        (_, Gpu::Absent(_)) => "No GPU for the stems: the voice cannot be shown.",
         _ => "The voice and its words show here once the song's stems are in.",
     })
 }

@@ -310,7 +310,7 @@ fn set(state: &State, row: SettingsRow) -> (Option<String>, Control) {
                     true,
                 ),
                 Gpu::Present(_) => ("the cues listen to the mix".to_owned(), false, true),
-                Gpu::Absent => (
+                Gpu::Absent(_) => (
                     "unavailable: no GPU, the cues listen to the mix".to_owned(),
                     false,
                     false,

@@ -1724,7 +1724,7 @@ fn stems_need_a_gpu_and_change_the_recipe() {
     let fx = update(&mut looking, Action::Tick(1));
     assert!(!fx.iter().any(|e| matches!(e, Effect::WantRhythm(..))));
     // Found: asked for again with stems.
-    let fx = update(&mut looking, Action::Gpu(Some("GPU".into())));
+    let fx = update(&mut looking, Action::Gpu(Ok("GPU".into())));
     assert!(fx.iter().any(|e| *e
         == Effect::WantRhythm(
             paths[1..4].to_vec(),
@@ -1820,7 +1820,7 @@ fn stems_switch_from_keys_and_buttons_with_a_gpu() {
     use jodel_playback::Stem;
     use jodeldiplom::core::desk::{DeskChange, StripKind};
     let mut state = listed();
-    state.gpu = Gpu::Absent;
+    state.gpu = Gpu::Absent("none here".into());
     let alt = |c| Key {
         code: KeyCode::Char(c),
         ctrl: false,
@@ -3053,7 +3053,7 @@ fn a_first_touch_lands_on_a_bar_its_stems_will_meet() {
     state.desk.parts_failed.clear();
     assert_eq!(bar(&state).unwrap().seconds, bars[k + 1]);
     // Not kept and no GPU: they never come either, and the key says so.
-    state.gpu = Gpu::Absent;
+    state.gpu = Gpu::Absent("none here".into());
     assert_eq!(bar(&state).unwrap().seconds, bars[k]);
     op(&mut state, Op::ToggleBass);
     let said = &state.message.as_ref().unwrap().text;
@@ -3079,7 +3079,7 @@ fn the_stems_are_made_while_touched_or_a_tab_shows_them() {
     state.side = Side::Browser;
     state.desk.strips[StripKind::Vocals.index()].db = -3.0;
     assert_eq!(make_wanted(&state), MakeStems::Separate);
-    state.gpu = Gpu::Absent;
+    state.gpu = Gpu::Absent("none here".into());
     assert_eq!(make_wanted(&state), MakeStems::Kept);
     state.desk.strips[StripKind::Vocals.index()].db = 0.0;
     assert_eq!(make_wanted(&state), MakeStems::Never);

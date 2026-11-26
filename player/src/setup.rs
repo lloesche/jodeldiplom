@@ -93,7 +93,7 @@ pub struct Need {
 /// the speech models, and the covers' models where this machine has a
 /// usable GPU (they run nowhere else).
 pub fn manifest() -> Vec<Need> {
-    manifest_for(jodel_gpu::gpu_name().is_some())
+    manifest_for(jodel_gpu::gpu_name().is_ok())
 }
 
 /// The models the player has found, by what they are ([`Found::of`] the

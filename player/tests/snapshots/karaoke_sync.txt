@@ -2,7 +2,7 @@
 [shown] Karaoke
 [title] Morning Light
 [dim] The Ramps
-[greyed] Enter Karaoke Mode (enter)  [dim] still looking for its lyrics
+[disabled] Enter Karaoke Mode (enter)  [dim] still being prepared: its lyrics, found or heard, and timed
 [greyed] Edit lyrics (e)
 [slider focused] Voice 0 % −∞ dB
 [slider] Delay 25 % 150 ms

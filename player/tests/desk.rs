@@ -380,7 +380,7 @@ fn a_stem_muted_on_its_frame_is_heard_and_unmuted_the_file_is_again() {
     app.dispatch(Action::ShowSide(Side::Mixer));
     assert!(common::wait_for(&mut app, WAIT, |a| a.state.gpu
         != jodeldiplom::core::Gpu::Looking));
-    app.dispatch(Action::Gpu(Some("the quarter".into())));
+    app.dispatch(Action::Gpu(Ok("the quarter".into())));
     app.run(Effect::Engine(jodel_playback::Command::Resume));
     let heard = |a: &App| a.state.playing.anchor.map_or(0, |p| p.at.frame);
     // Once the stems are there: muted half a second on (the mixer is a

@@ -166,7 +166,7 @@ fn drawn(state: &State) -> (StageView, Option<StageFrame>) {
     let view = StageView::default();
     let size = ((1600, 900), 1.0);
     let tint = Tint::STAGE;
-    view.frame((state, None), &picture, size, (0.0, 0.0), &tint, None, None);
+    view.frame((state, None), &picture, size, (0.0, 0.0), &tint, None);
     let song = (
         &Song::of(state, None),
         jodeldiplom::gui::stage::wanted(state),

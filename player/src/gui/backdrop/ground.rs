@@ -1,9 +1,7 @@
 //! Karaoke mode's ground under everything: the cover cropped to the
 //! screen's shape, shrunk, blurred and shaded (a plain dark gradient
 //! without one), made small ([`small`]): the GPU scales it up to the
-//! window under the cover's layers ([`super::Visualiser`]), and without a
-//! GPU it is the image under the lyrics ([`crate::gui::screens`]'s Karaoke
-//! mode).
+//! window under the cover's layers ([`super::Visualiser`]).
 
 use image::imageops::{self, FilterType};
 use image::RgbImage;

@@ -312,8 +312,8 @@ pub enum Action {
         super::RhythmRecipe,
         Result<Arc<super::Rhythmed>, String>,
     ),
-    /// The GPU for stems, by name, or that there is none.
-    Gpu(Option<String>),
+    /// The GPU for stems, by name, or why there is none.
+    Gpu(Result<String, String>),
     /// What was found of a file's lyrics.
     Lyrics(PathBuf, crate::work::lyrics::Answer),
     /// The lyrics editor: opened, closed, an action of its, or the song's

@@ -100,7 +100,7 @@ fn rhythm_recipe(state: &State) -> Option<RhythmRecipe> {
     let stems = match state.gpu {
         _ if !state.config.stems => false,
         Gpu::Looking => return None,
-        Gpu::Absent => false,
+        Gpu::Absent(_) => false,
         Gpu::Present(_) => true,
     };
     Some(RhythmRecipe {
@@ -255,14 +255,33 @@ pub fn readiness(state: &State, path: &Path) -> Readiness {
     if state.working.contains_key(path) {
         return Readiness::Working;
     }
-    if state
-        .preparing
-        .iter()
-        .all(|&job| job_done(state, path, job))
-    {
+    if still_to_do(state, path).is_empty() {
         Readiness::Done
     } else {
         Readiness::Waiting
+    }
+}
+
+/// The jobs the queue is got ready by ([`State::preparing`]) not done for
+/// `path` yet ([`job_done`]), in the order the queue's icons show them:
+/// none once it is fully prepared.
+pub fn still_to_do(state: &State, path: &Path) -> Vec<Job> {
+    (state.preparing.iter().copied())
+        .filter(|&job| !job_done(state, path, job))
+        .collect()
+}
+
+/// What `job` gets ready, in the words the queue's icons are told by:
+/// its analysis and waveforms (and its stems, where they are separated),
+/// its lyrics, its cover taken apart.
+pub fn job_words(state: &State, job: Job) -> &'static str {
+    match job {
+        Job::Rhythm if state.prepared.recipe.as_ref().is_some_and(|r| r.stems) => {
+            "its analysis, waveforms and stems"
+        }
+        Job::Rhythm => "its analysis and waveforms",
+        Job::Lyrics => "its lyrics, found or heard, and timed",
+        Job::Cover => "its cover taken apart",
     }
 }
 

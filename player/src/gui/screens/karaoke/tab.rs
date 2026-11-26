@@ -181,17 +181,17 @@ pub(in crate::gui::screens) fn placeholder<'a>(width: f32, height: f32) -> Eleme
 }
 
 /// The song: its title, its artist (and key), and the button into the
-/// mode, greyed with why while the song cannot be sung (a press still
-/// says why on the status line).
+/// mode, disabled with why beside it as its hint while the song cannot be
+/// sung (its key still says why on the status line).
 fn head<'a>(tab: &Tab) -> Element<'a, Message> {
-    let press = Message::OpShifted(tab.enter.op, tab.enter.shifted);
     let enter = match tab.enter.why {
-        None => widgets::primary(ENTER),
+        None => {
+            widgets::primary(ENTER).on_press(Message::OpShifted(tab.enter.op, tab.enter.shifted))
+        }
         Some(_) => widgets::secondary(ENTER),
     }
     .leading(Icon::Play)
-    .key(keymap::hint(Context::Karaoke, tab.enter.op))
-    .on_press(press);
+    .key(keymap::hint(Context::Karaoke, tab.enter.op));
     let edit = match tab.edit {
         true => widgets::secondary(EDIT),
         false => widgets::ghost(EDIT),
@@ -204,8 +204,8 @@ fn head<'a>(tab: &Tab) -> Element<'a, Message> {
         .align_y(Alignment::Center)
         .push(enter.into())
         .push(edit.into());
-    if let Some(why) = tab.enter.why {
-        button = button.push(dim(why, look::TEXT_DIM));
+    if let Some(why) = &tab.enter.why {
+        button = button.push(dim(why.clone(), look::TEXT_DIM));
     }
     let mut lines = Column::<Element<'a, Message>>::new()
         .spacing(space::XS)

@@ -180,10 +180,10 @@ while, as in a video player (`core::karaoke::pointer`). Karaoke mode makes
 the window fullscreen; on macOS the window covers the screen itself
 ([macos-window.md](macos-window.md)).
 
-Without a GPU, Karaoke mode is iced's widgets
-(`gui::screens::karaoke::mode::fallback`): the mode's lines over the
-cover's blur, the line being sung filling in as it is sung, the count-in
-and the score. No backdrop's layers, no notes and no effects.
+Karaoke needs a GPU: without one the core refuses it
+(`core::karaoke::not_singable`), and a window drawn on the CPU renderer
+shows only a line saying so in its place
+(`gui::screens::karaoke::mode::NO_STAGE`).
 
 ## Checking a change to the window
 

@@ -588,7 +588,7 @@ fn armed_transition(
     if separator().is_some() {
         assert!(common::wait_for(&mut app, WAIT, |a| a.state.gpu
             != jodeldiplom::core::Gpu::Looking));
-        app.dispatch(Action::Gpu(Some("the quarter".into())));
+        app.dispatch(Action::Gpu(Ok("the quarter".into())));
     }
     app.run(Effect::Engine(Command::Load(vec![a, b])));
     app.run(Effect::Engine(Command::Play(0)));

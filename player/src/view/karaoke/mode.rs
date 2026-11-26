@@ -353,6 +353,18 @@ pub fn lines_now(state: &State, t: f64) -> Vec<LyricLine> {
         }
         lines
     };
+    // Waiting for START while still being prepared: what is still to come
+    // for it (and, START pressed, that it starts once that is done).
+    if let (true, Some(karaoke::NotSingable::Preparing(what))) =
+        (karaoke::waiting(state), karaoke::not_singable(state, index))
+    {
+        let said = if state.karaoke.start_when_ready == Some(index) {
+            "Starts as soon as it is prepared"
+        } else {
+            "Being prepared"
+        };
+        return heading(&format!("{} {said}: {what}", text::spinner(state)));
+    }
     match karaoke::lyrics_of(state, index) {
         Some(karaoke::SongLyrics::Found { shown, .. }) => {
             let sung: Vec<&jodel_lyrics::Line> =

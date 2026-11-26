@@ -197,7 +197,7 @@ pub(crate) fn step_row(state: &mut State, step: i32, fx: &mut Vec<Effect>) {
                     state.config.stems = !state.config.stems;
                     fx.push(Effect::SaveConfig);
                 }
-                Gpu::Absent => state.info("Stems need a GPU"),
+                Gpu::Absent(_) => state.info("Stems need a GPU"),
                 Gpu::Looking => state.info("Still looking for a GPU"),
             }
             return;

@@ -61,7 +61,7 @@ pub use fit::Fit;
 pub use help::{help_line_count, help_shown, palette_window};
 pub use settings::{device_window, folder_window};
 pub use update::update;
-pub use work::{job_done, readiness, visible_missing, Readiness};
+pub use work::{job_done, job_words, readiness, still_to_do, visible_missing, Readiness};
 
 use crate::browser::{Details, Entry};
 use crate::config::Config;
@@ -550,14 +550,14 @@ pub struct Prepared {
     pub recipe: Option<RhythmRecipe>,
 }
 
-/// The GPU for stems.
+/// The GPU: for stems, and for karaoke (none without one).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub enum Gpu {
     /// Still being looked for.
     #[default]
     Looking,
-    /// There is none (or none that works).
-    Absent,
+    /// There is none (or none that works), and why.
+    Absent(String),
     /// This one.
     Present(String),
 }

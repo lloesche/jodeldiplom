@@ -180,8 +180,8 @@ pub fn update(state: &mut State, action: Action) -> Vec<Effect> {
         Action::Rhythm(path, recipe, result) => work::rhythm(state, path, recipe, result),
         Action::Gpu(name) => {
             state.gpu = match name {
-                Some(name) => Gpu::Present(name),
-                None => Gpu::Absent,
+                Ok(name) => Gpu::Present(name),
+                Err(why) => Gpu::Absent(why),
             };
         }
         Action::Lyrics(path, answer) => karaoke::lyrics_arrived(state, path, answer),
@@ -209,6 +209,7 @@ pub fn update(state: &mut State, action: Action) -> Vec<Effect> {
     desk::settle(state, &mut fx);
     super::synth_tab::settle(state, &mut fx);
     work::prepare(state, &mut fx);
+    karaoke::start_when_ready(state, &mut fx);
     if check_details {
         work::want_details(state, &mut fx);
     }

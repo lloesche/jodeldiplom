@@ -59,6 +59,8 @@ mod tests {
     #[test]
     fn the_pointer_hides_when_still_and_shows_when_moved_or_out() {
         let mut state = State::new("/m".into(), Config::default());
+        // Karaoke needs a GPU: the mode is entered again below.
+        state.gpu = crate::core::Gpu::Present("a GPU".into());
         state.screen = Screen::Karaoke;
         state.now_ms = 10_000;
         // Still since a move in the middle.

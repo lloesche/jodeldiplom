@@ -110,7 +110,7 @@ fn without_a_gpu_the_voice_turns_down_the_kept_stems() {
     use jodel_playback::MakeStems;
     use jodeldiplom::core::stems::make_wanted;
     let mut state = tab();
-    state.gpu = jodeldiplom::core::Gpu::Absent;
+    state.gpu = jodeldiplom::core::Gpu::Absent("none here".into());
     let fx = op(&mut state, Op::SliderUp);
     assert_eq!(state.config.karaoke_voice, 21);
     assert_eq!(voice_sent(&fx), Some(voice_gain(21)), "{fx:?}");
@@ -803,15 +803,15 @@ fn no_karaoke_for_a_song_until_its_lyrics_are_ready() {
     // Still looked for (a big folder queued, not got to yet): not yet.
     use jodeldiplom::core::karaoke::{ModelState, SongLyrics};
     let mut state = tab();
+    state.preparing.push(jodeldiplom::core::Job::Lyrics);
     let path = state.queue.paths[playing].clone();
     state
         .karaoke
         .lyrics
         .insert(path.clone(), SongLyrics::Pending);
-    assert_eq!(
-        karaoke::not_singable(&state, playing),
-        Some("still looking for its lyrics")
-    );
+    let why = |state: &State| karaoke::not_singable(state, playing).map(|n| n.why());
+    let timing = "still being prepared: its lyrics, found or heard, and timed";
+    assert_eq!(why(&state).as_deref(), Some(timing));
     op(&mut state, Op::KaraokeEnter);
     assert_eq!(state.screen, Screen::Main);
     // Found, the speech model there to time them: not until they are.
@@ -824,10 +824,7 @@ fn no_karaoke_for_a_song_until_its_lyrics_are_ready() {
         }),
     );
     state.karaoke.model = ModelState::Ready;
-    assert_eq!(
-        karaoke::not_singable(&state, playing),
-        Some("its words are still being timed")
-    );
+    assert_eq!(why(&state).as_deref(), Some(timing));
     // The timing over (it failed: sung as they are), or no model: in.
     update(
         &mut state,

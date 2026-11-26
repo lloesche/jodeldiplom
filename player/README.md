@@ -603,7 +603,8 @@ level (a gain on the vocals' lane on the desk, over the VOCALS strip,
 which stays as you set it; heard at once), so what you hear, the meter
 and a recording there are as in the mode; on other tabs that lane is at
 full again. Without a GPU only songs whose stems are kept have their
-voice turned down.
+voice turned down on the tab (and there is no Karaoke mode: it needs a
+GPU, below).
 `esc` on the tab does nothing. The tab also shows what was found of the
 lyrics of the song and the next two, and the microphone with a meter of
 the singer. Under it, where the other tabs have the spectrum, is the
@@ -915,8 +916,6 @@ its sung stretches apart from the breaks and instrumental parts (4 s or
 more without singing). All of it is drawn by the GPU each frame (shapes
 as signed distances in one shader, the text from an atlas), over the
 blurred cover; nothing of it is painted by the processor frame by frame.
-Without a GPU there are no notes: the lines show as text in the middle,
-the one being sung filling in the accent.
 
 As you sing, the microphone's pitch (YIN, 100 frames a second, at the
 time in the song it was sung: the output frame playing as it was caught,
@@ -1081,16 +1080,30 @@ best). START during the reveal shows it all at once; the next START
 sings the next song (after the last, the same one again: "Again"). The
 screen takes its light from the cover's colours where the cover was
 taken apart; it twinkles a few seconds once settled, then holds still
-(drawing nothing) until START. Without a GPU the result shows as plain lines. The best
+(drawing nothing) until START. The best
 score of each song is kept (`scores.txt` in the data folder).
 
-A song is sung only once its lyrics are ready (found, and their words
-timed where they can be): until then, and for a song with none, the
-button into the mode (and START's pill in it) is greyed out, with why
-beside it (still looking for its lyrics, its words still being timed,
-none found, an instrumental), and does nothing but say so. A big folder
-just queued is got ready a track at a time, so its songs come singable
-one by one.
+Karaoke needs a GPU (a graphics card on Vulkan, Metal, DirectX 12 or
+OpenGL, not a software renderer): without one there is no karaoke, and the tab says so and
+why none was found (none on any backend, only a software renderer); at
+the start, while one is still looked for, it says that. Everything else
+plays without one. A song is sung only once it is fully prepared: all
+of what the queue's icons show for it done (its analysis and waveforms,
+and its stems where they are separated; its lyrics, found or heard from
+the voice, and timed, or found where they cannot be timed; its cover
+taken apart, where covers are), and only if it has lyrics to sing. What
+cannot be done on the machine (no speech model to time the words, no
+covers taken apart) counts as done, as for the icons, so no song waits
+for it for ever. Until then the button into the mode is disabled, with
+what is still being done for the song beside it, job by job in the
+icons' words (or why it has nothing to sing: none found, an
+instrumental), its key does nothing but say so, and START's pill in the
+mode is greyed out. A big folder just queued is got ready a track at a
+time, so its songs come singable one by one. In the mode, a song held
+for START (the one after a song's end, or `N`'s) while it is still being
+prepared shows what is still to come for it; START then waits for it,
+and the song starts, after its count-in, as soon as it is prepared
+(`N`, `P` or `esc` call that off).
 
 Karaoke mode fills the window (fullscreen): the song's cover blurred
 under a dark layer, its title and, once they are known, its lyrics. With
@@ -1107,8 +1120,7 @@ holds it at its start (with shift, it goes on where it is). Each song
 waits for START (`enter`, `space`, or a click on START's gold pill low
 in the middle, there whenever a song waits, from the moment the mode
 opens, and under a song's result with the song it plays named before it;
-the only START there is to click; without a GPU a small "enter: START"
-says it): "3", "2", "1" are counted a second each, numbers over the
+the only START there is to click): "3", "2", "1" are counted a second each, numbers over the
 lines that shrink and fade, and "1" ends as the first word is sung.
 While a song waits, and for 2 s after START, its title and artist show
 alone, then fade out over a second; the first line then shows alone
@@ -1427,8 +1439,8 @@ Karaoke mode is the window's own too (`gui::screens::karaoke::mode`): a
 widget of its own fills the window (`gui::stage_view`, iced's shader
 widget: the backdrop as the ground and the stage over it, `gui::stage`:
 the lane, the lyrics, the count-in, the score, START, the result; START's
-pill takes the press), the controls' bar in iced's widgets over it; on the
-processor the lines as text over the cover's blur.
+pill takes the press), the controls' bar in iced's widgets over it; drawn
+on the processor (no GPU) the mode only says that karaoke needs one.
 
 The lanes draw on the processor only what they must: their columns sit on
 a grid of whole pixels from the track's start (the view's start snapped to

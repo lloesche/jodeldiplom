@@ -1,7 +1,7 @@
 //! Karaoke mode in the window's own widgets: the stage over the whole
 //! window ([`StageView`]: the lyrics, the lane, the count-in, the score,
-//! START, the result), or without a GPU the mode's lines as text over the
-//! cover's blur ([`fallback`]); and its controls' bar over the bottom while
+//! START, the result; karaoke needs a GPU, so a window drawn without one
+//! only says so: [`NO_STAGE`]); and its controls' bar over the bottom while
 //! the pointer is near it ([`crate::core::karaoke::controls`]): the
 //! transport, the time heard, the seek bar and the length, the voice
 //! slider, the way out, and the keys under them. The bar is a translucent
@@ -17,26 +17,22 @@
 use std::f32::consts::PI;
 
 use iced::gradient::Linear;
-use iced::widget::text::{Rich, Span};
-use iced::widget::{
-    column, container, image, mouse_area, opaque, row, span, stack, text, Column, Space,
-};
-use iced::{Alignment, Background, Color, Element, Fill, Length, Padding, Size, Widget as _};
+use iced::widget::{column, container, mouse_area, opaque, row, stack, text, Space};
+use iced::{Alignment, Background, Color, Element, Fill, Padding, Widget as _};
 
 use crate::core::karaoke::{self, controls};
 use crate::core::keymap::Op;
 use crate::core::sliders::Slider;
-use crate::core::{Action, Gpu, State};
+use crate::core::{Action, State};
 use crate::gui::look::{self, size, space};
 use crate::gui::pointer::{Grab, WheelOn};
 use crate::gui::stage_view::StageView;
 use crate::gui::widgets::{self, Icon};
 use crate::gui::window::Message;
 use crate::view::bottom::Seek;
-use crate::view::karaoke::{line_color, points_text, KaraokePicture, LineKind};
 
 /// The controls' bar's height in points: what the stage keeps START clear
-/// above ([`KaraokePicture::bar`]).
+/// above ([`crate::view::karaoke::KaraokePicture::bar`]).
 pub const BAR: f32 = 96.0;
 /// How far its gradient rises over the stage above it, in points.
 const RISE: f32 = 56.0;
@@ -63,15 +59,31 @@ pub fn reach(height: f32) -> f32 {
     ((BAR + TWO_LINES) / height.max(1.0)).min(1.0)
 }
 
-/// Karaoke mode for `state`: the stage (or, without a GPU, the lines over
-/// the cover's blur), the controls' bar over its bottom while they show,
+/// What the mode says in a window drawn without a GPU (iced's CPU
+/// renderer), where the stage cannot draw: karaoke needs one.
+pub const NO_STAGE: &str =
+    "Karaoke needs a graphics card, and this window is drawn without one. esc leaves.";
+
+/// Karaoke mode for `state`: the stage (in a window drawn without a GPU,
+/// [`NO_STAGE`] alone), the controls' bar over its bottom while they show,
 /// the pointer heard everywhere over it.
 pub fn view<'a>(state: &'a State, stage: &StageView) -> Element<'a, Message> {
     let size = stage.size();
     let picture: Element<'a, Message> = if stage.gpu() {
         stage.view()
     } else {
-        fallback(state, stage.ground(), size)
+        container(
+            text(NO_STAGE)
+                .size(size::BODY)
+                .font(look::font::body())
+                .color(look::TEXT_DIM),
+        )
+        .center(Fill)
+        .style(|_| container::Style {
+            background: Some(Background::Color(look::BG)),
+            ..container::Style::default()
+        })
+        .boxed()
     };
     let bar: Element<'a, Message> = if controls::shown(state) {
         let shown = controls::handover(controls::fade(state)).1 as f32;
@@ -197,17 +209,11 @@ fn transport<'a>(state: &State, shown: f32) -> Element<'a, Message> {
 }
 
 /// The voice slider: its label, its track (a press grabs it, the wheel
-/// steps it) and its level; faint where the voice cannot be turned down
-/// (no GPU to separate it).
+/// steps it) and its level.
 fn voice<'a>(state: &State, shown: f32) -> Element<'a, Message> {
     let slider = Slider::Voice;
-    let live = matches!(state.gpu, Gpu::Present(_));
     let tone = |c: Color| look::alpha(c, c.a * shown);
-    let (label, value) = if live {
-        (look::TEXT_DIM, look::TEXT)
-    } else {
-        (look::TEXT_FAINT, look::TEXT_FAINT)
-    };
+    let (label, value) = (look::TEXT_DIM, look::TEXT);
     let track = widgets::track(slider.share(state))
         .held(state.karaoke.dragging == Some(slider))
         .opacity(shown)
@@ -251,180 +257,4 @@ fn hint<'a>(shown: f32) -> Element<'a, Message> {
         .width(Fill)
         .align_x(Alignment::Center)
         .boxed()
-}
-
-/// Karaoke mode without a GPU, in a window of `size` points: the mode's
-/// lines in the middle over the cover's blur (`ground`), the line being
-/// sung filling in the accent as it is sung, the count-in large at the
-/// left, the score top right; and while the mode waits for START a small
-/// "enter: START" under the lines (a result's own lines end with START).
-pub fn fallback<'a>(
-    state: &State,
-    ground: Option<image::Handle>,
-    size: Size,
-) -> Element<'a, Message> {
-    let picture = crate::view::karaoke::picture(state, bar_share(size.height), state.heard());
-    let big = (size.height / 11.0).clamp(20.0, 120.0).round();
-    let ground: Element<'a, Message> = match ground {
-        Some(handle) => image(handle)
-            .width(Fill)
-            .height(Fill)
-            .content_fit(iced::ContentFit::Fill)
-            .filter_method(image::FilterMethod::Linear)
-            .boxed(),
-        None => container(Space::new())
-            .width(Fill)
-            .height(Fill)
-            .style(|_| container::Style {
-                background: Some(Background::Color(look::BG)),
-                ..container::Style::default()
-            })
-            .boxed(),
-    };
-    let lines = container(lines(&picture, big))
-        .width(Fill)
-        .height(Fill)
-        .center_x(Fill)
-        .center_y(Fill)
-        .padding(Padding::from([0.0, space::XXL]));
-    let count: Element<'a, Message> =
-        match picture.count.or(picture.cue.map(|c| (c.number, c.through))) {
-            Some((n, through)) => container(
-                text(n.to_string())
-                    .size(big * 2.4)
-                    .font(look::font::title())
-                    .color(look::alpha(
-                        rgb(state.theme().accent()),
-                        1.0 - (through as f32).powi(3),
-                    )),
-            )
-            .width(Fill)
-            .height(Fill)
-            .center_y(Fill)
-            .padding(Padding::from([0.0, size.width * 0.1]))
-            .boxed(),
-            None => Space::new().boxed(),
-        };
-    let score: Element<'a, Message> = match picture.score {
-        Some(score) => {
-            let points = text(points_text(score.points))
-                .size(big * 0.4)
-                .font(look::font::numbers())
-                .color(look::ACCENT);
-            let mut figures = Column::new().push(points.boxed()).align_x(Alignment::End);
-            if let Some(rung) = score.rung_label() {
-                figures = figures.push(
-                    text(rung)
-                        .size(big * 0.25)
-                        .font(look::font::label())
-                        .color(look::TEXT_DIM)
-                        .boxed(),
-                );
-            }
-            container(figures)
-                .width(Fill)
-                .align_x(Alignment::End)
-                .padding(space::XL)
-                .boxed()
-        }
-        None => Space::new().boxed(),
-    };
-    stack![ground, lines, count, score].boxed()
-}
-
-/// `picture`'s lines, stacked and centred, the line sung `big` points
-/// high and the rest smaller; "enter: START" under them while the mode
-/// waits for it (not under a result: its lines end with START).
-fn lines<'a>(picture: &KaraokePicture, big: f32) -> Element<'a, Message> {
-    let mut lines = Column::new().spacing(big * 0.45).align_x(Alignment::Center);
-    for line in &picture.lines {
-        let share = match line.kind {
-            LineKind::Current => 1.0,
-            LineKind::Next | LineKind::Previous => 0.62,
-            LineKind::Info => 0.42,
-            LineKind::Warning => 0.36,
-        };
-        let faded = if line.kind == LineKind::Previous {
-            0.5
-        } else {
-            1.0
-        };
-        let alpha = faded * line.alpha.clamp(0.0, 1.0) as f32;
-        let rest = look::alpha(rgb(line_color(line.kind)), alpha);
-        // The line sung fills in the accent as it is sung.
-        let chars = line.text.chars().count();
-        let sung = if line.kind == LineKind::Current {
-            (chars as f64 * line.fill.clamp(0.0, 1.0)).round() as usize
-        } else {
-            0
-        };
-        let at = line
-            .text
-            .char_indices()
-            .nth(sung)
-            .map_or(line.text.len(), |(i, _)| i);
-        let (done, ahead) = line.text.split_at(at);
-        let spans: Vec<Span<'a, ()>> = [(done, look::alpha(look::ACCENT, alpha)), (ahead, rest)]
-            .into_iter()
-            .filter(|(part, _)| !part.is_empty())
-            .map(|(part, color)| span(part.to_owned()).color(color))
-            .collect();
-        let rich: Rich<'a, (), Message> = Rich::with_spans(spans);
-        lines = lines.push(
-            rich.size((big * share).round())
-                .font(look::font::title())
-                .align_x(Alignment::Center)
-                .boxed(),
-        );
-    }
-    if picture.start.is_some() && picture.result.is_none() {
-        lines = lines.push(
-            text("enter: START")
-                .size((big * 0.42).round())
-                .font(look::font::title())
-                .color(rgb(line_color(LineKind::Info)))
-                .boxed(),
-        );
-    }
-    lines.width(Length::Shrink).boxed()
-}
-
-/// A colour of the window's (sRGB bytes) as iced takes it.
-fn rgb([r, g, b]: [u8; 3]) -> Color {
-    Color::from_rgb8(r, g, b)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::config::Config;
-    use crate::core::Screen;
-
-    /// Without a GPU the mode's lines are text in the middle: while the
-    /// mode waits for START, "enter: START" under them says it (no pill to
-    /// click); a count-in's number large beside them, and then no START.
-    #[test]
-    fn without_a_gpu_the_lines_say_start_in_words() {
-        let mut state = State::new("/m".into(), Config::default());
-        state.screen = Screen::Karaoke;
-        state.now_ms = 10_000;
-        let size = Size::new(1280.0, 800.0);
-        let shows = |state: &State, words: &str| {
-            // A renderer of its own: a turn at the GPU's setup, as every
-            // device the tests make takes.
-            let _turn = jodel_gpu::setting_up();
-            let mut sim = iced_test::simulator::Simulator::with_size(
-                crate::gui::iced_settings(),
-                size,
-                fallback(state, None, size),
-            );
-            sim.find(words).is_ok()
-        };
-        assert!(shows(&state, "Queue some songs, then START"));
-        assert!(shows(&state, "enter: START"));
-        // A paused song going on: its count-in, START not asked for.
-        state.karaoke.resume_at = Some(state.now_ms + 1_500);
-        assert!(shows(&state, "2"));
-        assert!(!shows(&state, "enter: START"));
-    }
 }
