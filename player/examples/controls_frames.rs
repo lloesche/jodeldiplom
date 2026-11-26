@@ -265,9 +265,7 @@ fn main() {
             let cue = Cue {
                 art: Some(art.clone()),
                 layers: None,
-                levels: Default::default(),
-                glow: 0.0,
-                section: false,
+                heard: Default::default(),
             };
             let ground = Visualiser::default().step(&cue, (pw, ph), 1.0 / 60.0);
             gpu.set_backdrop(Some(&ground), pw, ph);

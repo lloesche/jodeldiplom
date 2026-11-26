@@ -11,7 +11,7 @@ use std::sync::Arc;
 use image::{Rgb, RgbImage};
 use jodel_gpu::vision::{Depth, Matte};
 
-use super::music::Levels;
+use super::music::{Hearing, Levels};
 use super::*;
 use crate::cover::{split, Apart, Parts};
 
@@ -216,11 +216,15 @@ fn the_same_cover_read_again_is_the_same_and_two_at_most_show() {
 }
 
 #[test]
-fn the_subject_is_found_and_its_light_is_behind_it_on_the_card() {
+fn the_subject_is_found_and_its_rays_fan_from_its_middle_on_the_card() {
     let a = disc_layers(100, [200, 40, 40], (0.75, 0.4));
     let s = Subject::of(&a.layers);
     assert!((s.focus.0 - 0.75).abs() < 0.03, "{:?}", s.focus);
-    assert!(s.light.1 < 0.4 && s.light.1 > 0.2, "{:?}", s.light);
+    assert!(s.focus.1 < 0.4 && s.focus.1 > 0.2, "{:?}", s.focus);
+    let (dx, dy) = (s.centre.0 - 0.75, s.centre.1 - 0.4);
+    assert!(dx.abs() < 0.02 && dy.abs() < 0.02, "{:?}", s.centre);
+    // The disc is the nearest: what is in focus.
+    assert!(s.near > 0.9, "{}", s.near);
     // On the card: right of its middle, above it.
     let mut v = Visualiser::default();
     let f = run(&mut v, &cue(Some(&a)), 2);
@@ -232,10 +236,174 @@ fn the_subject_is_found_and_its_light_is_behind_it_on_the_card() {
         "{look:?}"
     );
     assert!(look.light[1] < 0.5 && look.read[3] == 1.0, "{look:?}");
-    // A cover without one: its middle.
+    // What is round it blurred, the disc in focus; the beat pushing it out
+    // round its middle.
+    assert!(look.defocus[3] == 1.0 && look.defocus[0] > 0.9, "{look:?}");
+    assert!(look.defocus[1] > 0.0 && look.focus[2] > 0.7, "{look:?}");
+    // A cover without one: its middle, nothing in front, nothing blurred.
     let mut plain = a.layers.clone();
     plain.subject = None;
-    assert_eq!(Subject::of(&plain).focus, (0.5, 0.45));
+    let none = Subject::of(&plain);
+    assert_eq!((none.focus, none.near), ((0.5, 0.45), 1.0));
+}
+
+/// The cue for a cover heard as `heard` (its music, the singer's glow, a
+/// phrase landing).
+fn heard(layers: &Layers, heard: Hearing) -> Cue {
+    Cue {
+        heard,
+        ..cue(Some(layers))
+    }
+}
+
+/// The subject pushed out on the beat (none off it, none with the grid
+/// unsure), more on a bar's first, its rim lit and the rays swelling then;
+/// all of it harder at the top tier's glow, and a phrase landing flaring it.
+#[test]
+fn the_beat_and_the_tiers_move_the_subject() {
+    let a = disc_layers(64, [200, 40, 40], (0.5, 0.5));
+    let pulse_at = |beats: f64, confidence: f64, glow: f32| {
+        let mut v = Visualiser::default();
+        let at = |music| Hearing {
+            glow,
+            music,
+            ..Hearing::default()
+        };
+        // The glow eased to its row's first.
+        run(&mut v, &heard(&a, at(crate::gui::fx::Music::NEUTRAL)), 400);
+        let music = crate::gui::fx::Music::steady(beats, 120.0, 4, confidence, 0.0);
+        run(&mut v, &heard(&a, at(music)), 1).slots[0].look.pulse
+    };
+    let bar = pulse_at(8.04, 0.9, 0.0);
+    let beat = pulse_at(9.04, 0.9, 0.0);
+    let off = pulse_at(8.95, 0.9, 0.0);
+    assert!(
+        bar[0] > 1.3 * beat[0] && beat[0] > 4.0 * off[0],
+        "{bar:?} {beat:?} {off:?}"
+    );
+    assert!(
+        bar[1] > 4.0 * beat[1] && bar[2] > 1.5 && off[2] < 1.2,
+        "{bar:?} {beat:?}"
+    );
+    assert!(pulse_at(8.04, 0.1, 0.0)[0] < 1e-4);
+    let top = pulse_at(8.04, 0.9, 1.0);
+    assert!(
+        top[0] > 1.9 * bar[0] && top[1] > 2.5 * bar[1],
+        "{top:?} {bar:?}"
+    );
+    // A phrase landing: the subject flares for a moment.
+    let mut v = Visualiser::default();
+    run(&mut v, &cue(Some(&a)), 2);
+    let landed = Hearing {
+        phrase: true,
+        ..Hearing::default()
+    };
+    run(&mut v, &heard(&a, landed), 1);
+    let flared = run(&mut v, &cue(Some(&a)), 8).slots[0].look.pulse;
+    assert!(flared[3] > 0.2 && flared[0] > 0.0, "{flared:?}");
+    assert!(v.moving());
+}
+
+/// A cover `side` square: a red disc (its subject, nearer) in the middle
+/// over fine grey stripes two texels wide.
+fn striped_layers(side: usize) -> Layers {
+    let n = side as f32;
+    let inside = |x: usize, y: usize| {
+        let (dx, dy) = (x as f32 - n / 2.0, y as f32 - n / 2.0);
+        (dx * dx + dy * dy).sqrt() < n / 5.0
+    };
+    let image = RgbImage::from_fn(side as u32, side as u32, |x, y| {
+        if inside(x as usize, y as usize) {
+            Rgb([220, 40, 40])
+        } else if (x / 2) % 2 == 0 {
+            Rgb([200, 200, 200])
+        } else {
+            Rgb([60, 60, 60])
+        }
+    });
+    let at =
+        |f: &dyn Fn(usize, usize) -> f32| (0..side * side).map(|i| f(i % side, i / side)).collect();
+    let parts = Parts {
+        depth: Depth {
+            width: side,
+            height: side,
+            values: at(&|x, y| if inside(x, y) { 1.0 } else { 4.0 }),
+        },
+        matte: Matte {
+            width: side,
+            height: side,
+            values: at(&|x, y| if inside(x, y) { 1.0 } else { 0.0 }),
+        },
+    };
+    Arc::new(Apart::new(format!("stripes-{side}"), split(&image, &parts)))
+}
+
+/// On the GPU: the stripes round the subject blurred away (the subject cut
+/// out), the disc kept sharp and red to its edge (no halo of the plate's
+/// fill, no grey ring), and wider on the bar's first beat than off it.
+#[test]
+fn round_the_subject_is_blurred_and_it_grows_on_the_beat() {
+    let Ok(mut gpu) = crate::gui::present::Offscreen::new(false) else {
+        eprintln!("no GPU: skipped");
+        return;
+    };
+    let (w, h) = (1024u32, 1024u32);
+    let a = striped_layers(256);
+    let see = vec![crate::gui::raster::SEE_THROUGH; (w * h) as usize];
+    let mut shown = |beats: Option<f64>| {
+        let mut v = Visualiser::default();
+        let music = beats.map_or(crate::gui::fx::Music::NEUTRAL, |b| {
+            crate::gui::fx::Music::steady(b, 120.0, 4, 0.9, 0.0)
+        });
+        let cue = heard(
+            &a,
+            Hearing {
+                music,
+                ..Hearing::default()
+            },
+        );
+        let mut f = None;
+        for _ in 0..frames(FADE * 2.0) {
+            f = Some(v.step(&cue, (w, h), DT));
+        }
+        let f = f.expect("a frame");
+        gpu.set_backdrop(Some(&f), w, h);
+        (
+            gpu.show_pixels(&see, w, h).expect("a frame"),
+            f.slots[0].look,
+        )
+    };
+    let (off, look) = shown(None);
+    let (on, _) = shown(Some(8.04));
+    let rgb = |p: u32| [(p >> 16) & 255, (p >> 8) & 255, p & 255].map(|c| c as i32);
+    // The card's pixel at the cover's (u, v).
+    let at = |u: f32, v: f32| {
+        let x = (look.card[0] - look.card[2] + 2.0 * look.card[2] * u) * w as f32;
+        let y = (look.card[1] - look.card[3] + 2.0 * look.card[3] * v) * h as f32;
+        (y as u32 * w + x as u32) as usize
+    };
+    // Stripes four texels a period, over three window pixels a texel:
+    // across a row of the plate, next to no difference left.
+    let row: Vec<i32> = (0..40)
+        .map(|k| rgb(off[at(0.1 + k as f32 / 512.0, 0.15)])[1])
+        .collect();
+    let swing = row.iter().max().unwrap_or(&0) - row.iter().min().unwrap_or(&0);
+    assert!(swing < 25, "{row:?}");
+    // The disc red to its edge: just inside it, red, not grey.
+    let inner = rgb(off[at(0.5 + 0.19, 0.5)]);
+    assert!(inner[0] > 2 * inner[1] && inner[0] > 60, "{inner:?}");
+    // Along its middle row, red further out on the bar's first beat (a
+    // pixel and a half each side).
+    let red = |px: &[u32]| {
+        (0..w)
+            .filter(|&x| {
+                let c = rgb(px[(h / 2 * w + x) as usize]);
+                c[0] > c[1] + 60
+            })
+            .count()
+    };
+    let (wide, narrow) = (red(&on), red(&off));
+    assert!(wide >= narrow + 3, "{wide} {narrow}");
 }
 
 #[test]
@@ -299,7 +467,10 @@ fn the_backdrop_draws_on_the_gpu_and_drops_its_textures() {
         let mut v = Visualiser::default();
         let cue = Cue {
             layers: layers.cloned(),
-            levels,
+            heard: Hearing {
+                levels,
+                ..Hearing::default()
+            },
             ..Cue::default()
         };
         let mut f = None;

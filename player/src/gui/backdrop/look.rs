@@ -5,11 +5,14 @@
 //! round it ([`falloff`]), the smooth cubic sampling's taps ([`bspline`]),
 //! how a layer moves with its depth ([`shift`]), the corners' shade
 //! ([`vignette`]), the light sweeping across the plate ([`sweep`]), the
-//! palette's slow drift ([`drift`]) and the rays from behind the subject
-//! ([`ray_fan`]). And where the card and
+//! palette's slow drift ([`drift`]), the spotlight rays from behind the
+//! subject ([`ray_fan`]), the subject pushed out by the beat round its
+//! middle ([`kicked`]) and how blurred the plate round it is for its depth
+//! ([`defocus`]). And where the card and
 //! the blur under it sit in the window ([`card`], [`fill`]), how softly
 //! the card is read for its size ([`softness`]) and the levels the cover is
-//! read blurred at ([`blurs`]), which only the processor works out.
+//! read blurred at ([`blurs`], [`defocus_level`]), which only the processor
+//! works out.
 
 /// The card's side at most, a share of the window's height (and, for a
 /// tall window, of its width).
@@ -38,6 +41,17 @@ pub const SWEEP_PERIOD: f32 = 17.0;
 pub const SWEEP_WIDTH: f32 = 0.22;
 /// How long the palette takes to drift through its colours, in seconds.
 pub const DRIFT_PERIOD: f32 = 45.0;
+/// How fast the spotlight rays turn, radians a second: slowly.
+pub const RAYS_TURN: f32 = 0.05;
+/// The most the plate round the subject is blurred, a share of the cover's
+/// longer side (about the blur's width).
+pub const DEFOCUS: f32 = 0.035;
+/// The share of the most blur the plate has where it is as near as the
+/// subject (everything round the subject is blurred; more farther back).
+pub const DEFOCUS_BASE: f32 = 0.5;
+/// How much farther back than the subject (the depth's nearness) the plate
+/// is blurred the most.
+pub const DEFOCUS_SPAN: f32 = 0.3;
 
 /// `x` from 0 below `a` to 1 above `b`, smoothly (as WGSL's `smoothstep`).
 pub fn smoothstep(a: f32, b: f32, x: f32) -> f32 {
@@ -123,16 +137,39 @@ pub fn drift(t: f32) -> [f32; 3] {
     w.map(|x| x / sum)
 }
 
-/// The rays fanning out from the light behind the subject, at (`dx`, `dy`)
-/// from it (shares of the height) at time `t`, reaching about `reach`:
-/// two sets of beams turning slowly against each other, fading out with
-/// the distance (0 to 1).
+/// The spotlight rays fanning out from behind the subject, at (`dx`, `dy`)
+/// from its middle (shares of the height) at time `t`, reaching about
+/// `reach`: two sets of broad, soft beams turning slowly against each
+/// other ([`RAYS_TURN`]), fading out with the distance (0 to 1).
 pub fn ray_fan(dx: f32, dy: f32, t: f32, reach: f32) -> f32 {
     let d = (dx * dx + dy * dy).sqrt();
     let angle = dy.atan2(dx);
-    let beam = |n: f32, turn: f32| (0.5 + 0.5 * (angle * n + turn).sin()).powi(8);
-    let beams = beam(9.0, t * 0.15).max(0.7 * beam(14.0, 1.7 - t * 0.11));
-    beams * (-d / (reach.max(0.01) * 2.5)).exp()
+    let beam = |n: f32, turn: f32| (0.5 + 0.5 * (angle * n + turn).sin()).powi(4);
+    let beams = 0.65 * beam(6.0, t * RAYS_TURN) + 0.35 * beam(9.0, 1.7 - t * 1.6 * RAYS_TURN);
+    beams * (-d / (reach.max(0.01) * 3.0)).exp()
+}
+
+/// Where the subject is read for the cover's point `uv` grown by `grow` (a
+/// share of its size) round its `centre`: as a speaker's cone pushes out.
+pub fn kicked(uv: [f32; 2], centre: [f32; 2], grow: f32) -> [f32; 2] {
+    [0, 1].map(|i| centre[i] + (uv[i] - centre[i]) / (1.0 + grow))
+}
+
+/// How blurred the plate is where its nearness is `near`, the subject's
+/// `focus` (a share of the most blur, [`DEFOCUS`]): everything round the
+/// subject [`DEFOCUS_BASE`] of it, the farther back the more, all of it
+/// [`DEFOCUS_SPAN`] behind.
+pub fn defocus(near: f32, focus: f32) -> f32 {
+    DEFOCUS_BASE + (1.0 - DEFOCUS_BASE) * smoothstep(0.0, DEFOCUS_SPAN, focus - near)
+}
+
+/// The level a `cover` (pixels) with `levels` of them is read at blurred
+/// the most ([`DEFOCUS`]; a level between two is read from both).
+pub fn defocus_level(cover: (u32, u32), levels: u32) -> f32 {
+    let long = cover.0.max(cover.1).max(1) as f32;
+    (DEFOCUS * long)
+        .log2()
+        .clamp(0.0, levels.max(1) as f32 - 1.0)
 }
 
 /// Where the card is in a `window` (pixels) for a `cover` of pixels: its
@@ -194,6 +231,9 @@ const VIGNETTE: f32 = {VIGNETTE:?};
 const SWEEP_PERIOD: f32 = {SWEEP_PERIOD:?};
 const SWEEP_WIDTH: f32 = {SWEEP_WIDTH:?};
 const DRIFT_PERIOD: f32 = {DRIFT_PERIOD:?};
+const RAYS_TURN: f32 = {RAYS_TURN:?};
+const DEFOCUS_BASE: f32 = {DEFOCUS_BASE:?};
+const DEFOCUS_SPAN: f32 = {DEFOCUS_SPAN:?};
 const TAU_: f32 = 6.2831855;
 {WGSL}"
     )
@@ -253,15 +293,23 @@ fn drift(t: f32) -> vec3<f32> {
 fn ray_beam(angle: f32, n: f32, turn: f32) -> f32 {
     let b = 0.5 + 0.5 * sin(angle * n + turn);
     let b2 = b * b;
-    let b4 = b2 * b2;
-    return b4 * b4;
+    return b2 * b2;
 }
 
 fn ray_fan(dx: f32, dy: f32, t: f32, reach: f32) -> f32 {
     let d = sqrt(dx * dx + dy * dy);
     let angle = atan2(dy, dx);
-    let beams = max(ray_beam(angle, 9.0, t * 0.15), 0.7 * ray_beam(angle, 14.0, 1.7 - t * 0.11));
-    return beams * exp(-d / (max(reach, 0.01) * 2.5));
+    let beams = 0.65 * ray_beam(angle, 6.0, t * RAYS_TURN)
+        + 0.35 * ray_beam(angle, 9.0, 1.7 - t * 1.6 * RAYS_TURN);
+    return beams * exp(-d / (max(reach, 0.01) * 3.0));
+}
+
+fn kicked(uv: vec2<f32>, centre: vec2<f32>, grow: f32) -> vec2<f32> {
+    return centre + (uv - centre) / (1.0 + grow);
+}
+
+fn defocus(near: f32, focus: f32) -> f32 {
+    return DEFOCUS_BASE + (1.0 - DEFOCUS_BASE) * smoothstep(0.0, DEFOCUS_SPAN, focus - near);
 }
 ";
 
@@ -303,6 +351,40 @@ mod tests {
         // A tiny cover: its own pixels; never past its last level.
         assert_eq!(blurs((8, 8), 4), [0.0, 0.0]);
         assert_eq!(blurs((4096, 4096), 9), [8.0, 6.0]);
+    }
+
+    /// Everything round the subject blurred, as near as it is half the most,
+    /// the farther back the more, all of it a span behind; nearer than it,
+    /// no less than half (only the subject is sharp).
+    #[test]
+    fn the_plate_is_blurred_the_more_the_farther_back_it_is() {
+        assert_eq!(defocus(0.8, 0.8), DEFOCUS_BASE);
+        assert_eq!(defocus(0.95, 0.8), DEFOCUS_BASE);
+        assert_eq!(defocus(0.8 - DEFOCUS_SPAN, 0.8), 1.0);
+        let mut last = 0.0;
+        for k in 0..=10 {
+            let d = defocus(0.8 - k as f32 * 0.04, 0.8);
+            assert!(d >= last && (DEFOCUS_BASE..=1.0).contains(&d), "{k}: {d}");
+            last = d;
+        }
+        // The most blur about a thirtieth of the cover across, whatever its
+        // size; never past its last level.
+        assert!((defocus_level((1000, 1000), 9) - 35f32.log2()).abs() < 1e-5);
+        assert!((defocus_level((600, 300), 9) - 21f32.log2()).abs() < 1e-5);
+        assert_eq!(defocus_level((100_000, 100_000), 9), 8.0);
+        assert_eq!(defocus_level((20, 20), 5), 0.0);
+    }
+
+    /// The beat grows the subject round its middle: the middle stays, a
+    /// point off it is read nearer it (so shows farther out), by the share.
+    #[test]
+    fn the_subject_grows_round_its_middle() {
+        let c = [0.6, 0.4];
+        assert_eq!(kicked(c, c, 0.03), c);
+        let k = kicked([0.9, 0.4], c, 0.03);
+        assert!((k[0] - (0.6 + 0.3 / 1.03)).abs() < 1e-6 && k[1] == 0.4);
+        let still = kicked([0.1, 0.2], c, 0.0);
+        assert!((still[0] - 0.1).abs() < 1e-6 && (still[1] - 0.2).abs() < 1e-6);
     }
 
     #[test]
@@ -377,17 +459,38 @@ mod tests {
     }
 
     #[test]
-    fn the_rays_are_beams_fading_out() {
-        let round: Vec<f32> = (0..360)
-            .map(|k| {
-                let a = (k as f32).to_radians();
-                ray_fan(a.cos() * 0.1, a.sin() * 0.1, 3.0, 0.2)
-            })
-            .collect();
-        let most = round.iter().copied().fold(0.0, f32::max);
-        let least = round.iter().copied().fold(1.0, f32::min);
-        assert!(most > 0.6 && least < 0.01, "{most} {least}");
-        assert!(ray_fan(0.0, 0.9, 3.0, 0.2) < 0.2 * ray_fan(0.0, 0.05, 3.0, 0.2));
+    fn the_rays_are_soft_beams_fading_out_and_turning_slowly() {
+        let round = |t: f32| -> Vec<f32> {
+            (0..360)
+                .map(|k| {
+                    let a = (k as f32).to_radians();
+                    ray_fan(a.cos() * 0.1, a.sin() * 0.1, t, 0.2)
+                })
+                .collect()
+        };
+        let now = round(3.0);
+        let most = now.iter().copied().fold(0.0, f32::max);
+        let least = now.iter().copied().fold(1.0, f32::min);
+        assert!(most > 0.6 && least < 0.15 * most, "{most} {least}");
+        // Soft: a beam is broad, a good share of the way round lit.
+        let lit = now.iter().filter(|&&r| r > 0.3 * most).count();
+        assert!(lit > 60 && lit < 240, "{lit}");
+        // Turning: a second on, a little; half a minute on, a lot.
+        let moved = |t: f32| -> f32 {
+            let then = round(t);
+            now.iter()
+                .zip(&then)
+                .map(|(a, b)| (a - b).abs())
+                .sum::<f32>()
+                / 360.0
+        };
+        assert!(
+            moved(4.0) < 0.05 && moved(33.0) > 0.08,
+            "{} {}",
+            moved(4.0),
+            moved(33.0)
+        );
+        assert!(ray_fan(0.0, 1.2, 3.0, 0.2) < 0.2 * ray_fan(0.0, 0.05, 3.0, 0.2));
     }
 
     #[test]

@@ -5,7 +5,11 @@
 // middle, its edge fading into the same cover blurred heavily under it; at
 // rest the card is the cover itself (`original`, the plate's again where it
 // is not at hand), the plate showing only where the subject, moving,
-// uncovers it.
+// uncovers it. With a subject cut out, the subject stays sharp and what is
+// round it is blurred (the farther back the more), the plate's blur where
+// the cover's would carry the subject's colours; the subject pushes out
+// with the beat round its middle, its rim lit on the bar's first, the
+// spotlight rays fanning out from behind it.
 // Colours are linear light until they are shown (`tone`); `LINEAR` (set
 // as the pipeline is made) says whether the texture takes them so.
 
@@ -29,15 +33,22 @@ struct Look {
     moments: vec4<f32>,
     // The window's shares to the blur's cover units: scale, then offset.
     fill: vec4<f32>,
-    // The light behind the subject (window shares), its reach (a share of
+    // The subject's middle (window shares), the rays' reach (a share of
     // the height), unused.
     light: vec4<f32>,
-    // What the subject grows round (the cover's units), unused.
+    // What the subject grows round with the bass, its middle (the cover's
+    // units).
     focus: vec4<f32>,
     // The palette's lights: the vivid, the next, the largest.
     accent: vec4<f32>,
     second: vec4<f32>,
     ground: vec4<f32>,
+    // The beat: how far the subject is pushed out, its rim's light, the
+    // rays' swell, a phrase's flare.
+    pulse: vec4<f32>,
+    // The subject's nearness (in focus), the level blurred the most;
+    // unused; 1 where what is round the subject is blurred.
+    defocus: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> look: Look;
@@ -46,6 +57,7 @@ struct Look {
 @group(0) @binding(3) var depth: texture_2d<f32>;
 @group(0) @binding(4) var soft: sampler;
 @group(0) @binding(5) var original: texture_2d<f32>;
+@group(0) @binding(6) var rim: texture_2d<f32>;
 
 struct Out {
     @builtin(position) pos: vec4<f32>,
@@ -65,8 +77,16 @@ fn vs(@builtin(vertex_index) i: u32) -> Out {
 const GOLD: vec3<f32> = vec3<f32>(1.0, 0.6, 0.16);
 // The card's light (its white shows a little under white).
 const CARD_LIGHT: f32 = 0.62;
-// The blur's light under the card: dark.
+// The blur under the card's light: dark.
 const UNDER: f32 = 0.13;
+// The rays' light over the card, and round it.
+const RAYS_ON: f32 = 1.0;
+const RAYS_ROUND: f32 = 1.3;
+// The rim's light at its brightest.
+const RIM_LIGHT: f32 = 0.7;
+// How much more of the plate's blur than the cover's is read for each
+// share of the subject's colours the cover's blur would carry.
+const BLEED: f32 = 3.0;
 
 fn luma(c: vec3<f32>) -> f32 {
     return dot(c, vec3<f32>(0.2126, 0.7152, 0.0722));
@@ -94,6 +114,18 @@ fn card_at(t: texture_2d<f32>, uv: vec2<f32>) -> vec4<f32> {
         c = mix(c, smooth_at(t, uv, 1u), look.read.z);
     }
     return c;
+}
+
+// `t` at `uv` blurred to the level `lv`: smoothly, a level between two read
+// from both.
+fn blurred(t: texture_2d<f32>, uv: vec2<f32>, lv: f32) -> vec3<f32> {
+    let l0 = floor(lv);
+    let f = lv - l0;
+    let below = smooth_at(t, uv, u32(l0)).rgb;
+    if f < 0.02 {
+        return below;
+    }
+    return mix(below, smooth_at(t, uv, u32(l0) + 1u).rgb, f);
 }
 
 @fragment
@@ -148,14 +180,32 @@ fn fs(o: Out) -> @location(0) vec4<f32> {
         let cam = look.cam.xy;
         let focus = look.focus.xy;
         let up = shift(uv, near.g, cam, 0.0, focus);
-        let us = shift(uv, near.r, cam, look.cam.z, focus);
+        // The subject, grown with the bass, pushed out by the beat round
+        // its middle.
+        let us = kicked(shift(uv, near.r, cam, look.cam.z, focus), look.focus.zw, look.pulse.x);
         let s = card_at(subject, us);
         a = s.a;
-        // Under the subject: the cover itself, the plate where the subject
-        // moved off it.
-        let rest = textureSampleLevel(subject, soft, up, look.read.x).a;
-        let uncovered = clamp(4.0 * (rest - a), 0.0, 1.0);
-        var plate_c = mix(card_at(original, up).rgb, card_at(plate, up).rgb, uncovered);
+        var plate_c = vec3<f32>(0.0);
+        if look.defocus.w > 0.5 {
+            // Round the subject, blurred the more the farther back: the
+            // cover's blur, the plate's where the cover's would carry the
+            // subject's colours (no halo, no hole as it grows).
+            let lv = max(defocus(near.g, look.defocus.x) * look.defocus.y, look.read.x);
+            let bleed = textureSampleLevel(subject, soft, up, lv + 1.0).a;
+            let k = clamp(BLEED * bleed, 0.0, 1.0);
+            if k < 1.0 {
+                plate_c = blurred(original, up, lv);
+            }
+            if k > 0.0 {
+                plate_c = mix(plate_c, blurred(plate, up, lv), k);
+            }
+        } else {
+            // Under the subject: the cover itself, the plate where the
+            // subject moved off it.
+            let rest = textureSampleLevel(subject, soft, up, look.read.x).a;
+            let uncovered = clamp(4.0 * (rest - a), 0.0, 1.0);
+            plate_c = mix(card_at(original, up).rgb, card_at(plate, up).rgb, uncovered);
+        }
         // Lit where the cut is sure of it. Without a cut-out its nearest
         // parts stand for it.
         var presence = smoothstep(0.5, 0.95, a);
@@ -173,18 +223,26 @@ fn fs(o: Out) -> @location(0) vec4<f32> {
         let swept = sweep(uv.x, uv.y, t) * (0.12 + 1.1 * other);
         plate_c = plate_c + (plate_c + vec3<f32>(0.04)) * sweep_c * swept;
         var card_c = plate_c * (1.0 - a) + s.rgb * a;
-        // The voice lights the subject.
-        card_c = card_c * (1.0 + presence * (0.55 * vocals + 0.45 * glow + 0.3 * section));
+        // The voice lights the subject; a phrase landing flares it.
+        let lit = 0.55 * vocals + 0.45 * glow + 0.3 * section + 0.35 * look.pulse.w;
+        card_c = card_c * (1.0 + presence * lit);
+        // Its rim lit on the bar's first beat, as the rays' light.
+        if look.pulse.y > 0.002 && a > 0.004 {
+            let edge = textureSampleLevel(rim, soft, us, look.read.x).r;
+            card_c = card_c + warm * (edge * a * look.pulse.y * RIM_LIGHT);
+        }
         col = mix(col, card_c * CARD_LIGHT, shown);
     }
 
-    // The rays from behind the subject: Amazing, Diva and the sections.
-    let ray = look.moments.z;
+    // The spotlight rays from behind the subject, in front of what is round
+    // it: as the tiers' rows and the sections hold them, swelling on the
+    // bar's first beat.
+    let ray = look.moments.z * look.pulse.z;
     if ray > 0.002 {
         let aspect = px.x / max(px.y, 1.0);
         let dl = (p - look.light.xy) * vec2<f32>(aspect, 1.0);
-        let beams = ray_fan(dl.x, dl.y, t, 0.6 * look.light.z);
-        col = col + warm * beams * ray * (1.0 - a) * (0.5 - 0.3 * shown);
+        let beams = ray_fan(dl.x, dl.y, t, look.light.z);
+        col = col + warm * beams * ray * (1.0 - a) * mix(RAYS_ROUND, RAYS_ON, shown);
     }
 
     col = col * (1.0 + look.moments.w);

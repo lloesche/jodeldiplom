@@ -16,10 +16,16 @@
 //! (larger, its shadow on the plate deeper); the rest sweeps the palette's
 //! light across the plate and lights the blur round the card; the drums
 //! light nothing. A cover without a clear subject has its nearest parts
-//! lit so. The big moments are kept for a section starting (the whole
-//! lifts, rays from behind the subject) and for the singer's glow: each
-//! tier's row lights the subject and the rays as much as it says, the top
-//! brightest, the rays golden.
+//! lit so. A subject cut out stays sharp, what is round it blurred, the
+//! more the farther back (as a lens's depth of field: [`look::defocus`],
+//! read from the levels its textures are sent over with); it pushes out
+//! with the beat round its middle, more on a bar's first, its rim lit
+//! then ([`pulse`], from the music's clock the effects share). The big
+//! moments are kept for a section starting (the whole lifts, rays from
+//! behind the subject), a phrase landing (the subject flares) and for the
+//! singer's glow: each tier's row lights the subject and the spotlight
+//! rays and moves it with the beat as much as it says, the top brightest
+//! and hardest, the rays golden and swelling on the bar's first.
 //!
 //! [`Visualiser`] is the processor's side, frame by frame: the ground (the
 //! blurred cover, [`super::karaoke::ground`]: what shows while the layers
@@ -36,6 +42,7 @@
 pub mod gpu;
 pub mod look;
 pub mod music;
+pub mod pulse;
 mod subject;
 
 use std::sync::Arc;
@@ -43,7 +50,8 @@ use std::sync::Arc;
 use image::RgbImage;
 use jodel_playback::PlayState;
 
-use self::music::{Feel, Felt, Levels, Song};
+use self::music::{Feel, Felt, Hearing, Levels, Song};
+use self::pulse::Pulse;
 pub use self::subject::{lights, Subject};
 use crate::app::App;
 use crate::art::Art;
@@ -122,10 +130,11 @@ pub struct Look {
     /// The window's shares to the blur's cover units: scale, then offset
     /// (drifting; [`look::fill`]).
     pub fill: [f32; 4],
-    /// The light behind the subject (the window's shares), its reach (a
-    /// share of the height), unused.
+    /// The subject's middle, where the rays fan out from behind it (the
+    /// window's shares), their reach (a share of the height), unused.
     pub light: [f32; 4],
-    /// What the subject grows round (the cover's units), unused.
+    /// What the subject grows round with the bass, then its middle, what
+    /// the beat pushes it out round (the cover's units).
     pub focus: [f32; 4],
     /// The palette's vivid light.
     pub accent: [f32; 4],
@@ -133,6 +142,13 @@ pub struct Look {
     pub second: [f32; 4],
     /// Its largest.
     pub ground: [f32; 4],
+    /// The beat ([`pulse::Pulse`]): how far the subject is pushed out, its
+    /// rim's light, the rays' swell, a phrase's flare.
+    pub pulse: [f32; 4],
+    /// What is round the subject blurred: the subject's nearness (in
+    /// focus), the level blurred the most ([`look::defocus_level`]),
+    /// unused, and 1 where it is (a subject cut out).
+    pub defocus: [f32; 4],
 }
 
 // SAFETY: plain f32s in a `repr(C)` struct, no padding: any bytes are one.
@@ -172,13 +188,10 @@ pub struct Cue {
     pub art: Option<Art>,
     /// The cover taken apart, once ready, as the [`Mode`] shows it.
     pub layers: Option<Layers>,
-    /// The stems' levels heard now.
-    pub levels: Levels,
-    /// The singer's glow (0 none, up to the top tier's 1:
-    /// [`crate::tiers::TierSpec::glow`]).
-    pub glow: f32,
-    /// A section began since the last frame.
-    pub section: bool,
+    /// What is heard: the stems, the singer's glow (0 none, up to the top
+    /// tier's 1: [`crate::tiers::TierSpec::glow`]), a section begun or a
+    /// phrase landed since the last frame, the music's clock.
+    pub heard: Hearing,
 }
 
 /// A cover of a frame, for the shader: its layers, the picture they were
@@ -215,6 +228,8 @@ pub struct Visualiser {
     clock: f32,
     /// Where the song was heard last.
     heard: Option<f64>,
+    /// When the last phrase seen ended (none: none yet).
+    phrase: Option<f64>,
 }
 
 impl Visualiser {
@@ -255,13 +270,37 @@ impl Visualiser {
         let section = song.zip(self.heard).is_some_and(|(s, was)| {
             heard > was && heard - was < 0.5 && s.section_between(was, heard)
         });
+        let singing = &state.karaoke.singing;
+        let game = state.config.karaoke_game;
+        // A phrase landed on a tier: the last one ended elsewhere than the
+        // last seen (none on the first frame: it was there before).
+        let last = singing.last_phrase().filter(|_| game);
+        let end = last.map(|p| p.end);
+        let phrase =
+            self.heard.is_some() && end != self.phrase && last.is_some_and(|p| p.tier.is_some());
+        self.phrase = end;
         self.heard = Some(heard);
+        // The beat as the effects have it, from the same grid; none while
+        // the song is not playing.
+        let music = song.map_or(crate::gui::fx::Music::NEUTRAL, |song| {
+            crate::gui::fx::music::read(&crate::gui::fx::music::Heard {
+                song: Some(song),
+                singing,
+                now: heard,
+                clock: state.karaoke.lag.sung_clock(heard),
+                length: None,
+            })
+        });
         let cue = Cue {
             art: app.art().cloned(),
             layers: Mode::of(&state.config).cover(app.cover_layers()),
-            levels,
-            glow: super::streak::level(&state.karaoke.singing, state.config.karaoke_game),
-            section,
+            heard: Hearing {
+                levels,
+                glow: super::streak::level(singing, game),
+                section,
+                phrase,
+                music,
+            },
         };
         Some(self.step(&cue, window, dt))
     }
@@ -288,7 +327,7 @@ impl Visualiser {
             };
         }
         self.slots.retain(|s| s.wanted || s.shown > 0.0);
-        let felt = self.feel.step(cue.levels, cue.glow, cue.section, dt);
+        let felt = self.feel.step(&cue.heard, dt);
         self.clock += dt;
         // Each cover's share of the frame (eased); the ground has the rest.
         let shares: Vec<f32> = self
@@ -387,10 +426,11 @@ impl Visualiser {
         let mut fill = look::fill((w, h), cover, FILL_ZOOM);
         fill[2] += FILL_DRIFT * fill[0] * wave.1;
         fill[3] += 0.6 * FILL_DRIFT * fill[1] * wave.0;
-        // The light behind the subject, in the window's shares.
+        // The subject's middle, in the window's shares: the rays fan out
+        // from behind it.
         let light = (
-            card[0] + (2.0 * sub.light.0 - 1.0) * card[2],
-            card[1] + (2.0 * sub.light.1 - 1.0) * card[3],
+            card[0] + (2.0 * sub.centre.0 - 1.0) * card[2],
+            card[1] + (2.0 * sub.centre.1 - 1.0) * card[3],
         );
         let lift = 0.35 * felt.section + 0.12 * felt.glow;
         let [accent, second, ground] = slot.lights.map(|c| [c[0], c[1], c[2], 0.0]);
@@ -399,6 +439,8 @@ impl Visualiser {
         } else {
             0.0
         };
+        let pulse = Pulse::of(felt.beat, felt.tier, felt.flare);
+        let most = look::defocus_level((cw, ch), gpu::levels((cw, ch)));
         Look {
             size: [w, h, t, 0.0],
             card,
@@ -409,10 +451,12 @@ impl Visualiser {
             moments: [felt.section, felt.glow, felt.rays, lift],
             fill,
             light: [light.0, light.1, sub.reach * 2.0 * card[3], 0.0],
-            focus: [sub.focus.0, sub.focus.1, 0.0, 0.0],
+            focus: [sub.focus.0, sub.focus.1, sub.centre.0, sub.centre.1],
             accent,
             second,
             ground,
+            pulse: [pulse.grow, pulse.rim, pulse.swell, pulse.flare],
+            defocus: [sub.near, most, 0.0, cut],
         }
     }
 }

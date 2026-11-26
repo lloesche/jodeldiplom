@@ -16,7 +16,9 @@ use jodel_rhythm::stems::Stem;
 use jodel_rhythm::waveform::{Lane, Waveform, FPS};
 use jodel_rhythm::Analysis;
 
+use super::pulse::Beat;
 use crate::core::Rhythmed;
+use crate::gui::fx::Music;
 use crate::tiers::held;
 
 /// A value following a target smoothly: rising over `attack` seconds,
@@ -288,7 +290,7 @@ pub fn sections(mix: &Lane, downbeats: &[f64]) -> Vec<f64> {
     found
 }
 
-/// The pieces' light as felt now (each 0 to 1).
+/// The pieces' light as felt now (each 0 to 1), and the beat.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Felt {
     /// The depth's breathing: the bass.
@@ -303,10 +305,48 @@ pub struct Felt {
     pub rays: f32,
     /// A section just begun: the whole lifting, fading.
     pub section: f32,
+    /// How much harder the subject moves with the beat: the singer's
+    /// tier's (its row's).
+    pub tier: f32,
+    /// A phrase just landed: the subject flaring, fading.
+    pub flare: f32,
+    /// The beat's pushes now (as the grid has them: not smoothed).
+    pub beat: Beat,
 }
 
 /// How long a section's swell holds before it fades, in seconds.
 const SECTION_HOLD: f32 = 0.6;
+/// How long a phrase's flare holds before it fades, in seconds.
+const FLARE_HOLD: f32 = 0.15;
+
+/// A moment's swell: held a while once it comes, then rising and fading
+/// as its follower does.
+#[derive(Clone, Debug, PartialEq)]
+struct Swell {
+    follower: Follower,
+    /// How long it holds once it comes, and still holds now, in seconds.
+    hold: (f32, f32),
+}
+
+impl Swell {
+    const fn new(hold: f32, attack: f32, release: f32) -> Swell {
+        Swell {
+            follower: Follower::new(attack, release),
+            hold: (hold, 0.0),
+        }
+    }
+
+    /// `dt` seconds on, the moment come (`now`) or not: the swell and
+    /// where it is going.
+    fn step(&mut self, now: bool, dt: f32) -> (f32, f32) {
+        if now {
+            self.hold.1 = self.hold.0;
+        }
+        self.hold.1 = (self.hold.1 - dt).max(0.0);
+        let aim = if self.hold.1 > 0.0 { 1.0 } else { 0.0 };
+        (self.follower.step(aim, dt), aim)
+    }
+}
 
 /// The levels and moments smoothed: each with its own attack and release.
 #[derive(Clone, Debug, PartialEq)]
@@ -316,9 +356,9 @@ pub struct Feel {
     other: Follower,
     glow: Follower,
     rays: Follower,
-    section: Follower,
-    /// How long the section's swell still holds.
-    hold: f32,
+    tier: Follower,
+    section: Swell,
+    flare: Swell,
     /// Whether every value is where it is going (nothing moves till the
     /// music does).
     settled: bool,
@@ -332,34 +372,51 @@ impl Default for Feel {
             other: Follower::new(0.6, 1.6),
             glow: Follower::new(0.6, 1.5),
             rays: Follower::new(0.8, 1.8),
-            section: Follower::new(0.35, 2.2),
-            hold: 0.0,
+            tier: Follower::new(0.6, 1.5),
+            section: Swell::new(SECTION_HOLD, 0.35, 2.2),
+            flare: Swell::new(FLARE_HOLD, 0.05, 0.8),
             settled: true,
         }
     }
 }
 
-/// The glow on the subject and the rays behind it at the singer's `glow`
-/// (0 none, up to the top tier's 1): each held by the tiers' rows.
-fn tier_light(glow: f32) -> (f32, f32) {
-    (
+/// The glow on the subject, the rays behind it and how much harder it moves
+/// with the beat at the singer's `glow` (0 none, up to the top tier's 1):
+/// each held by the tiers' rows.
+fn tier_light(glow: f32) -> [f32; 3] {
+    [
         held(glow, |t| t.backdrop_glow),
         held(glow, |t| t.backdrop_rays),
-    )
+        held(glow, |t| t.backdrop_beat),
+    ]
+}
+
+/// What the backdrop hears in a frame: the stems' levels, the singer's
+/// glow (0 none, up to the top tier's 1), whether a section began and a
+/// phrase landed since the last frame, and the music (its beat: [`Beat::of`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Hearing {
+    /// The stems' levels.
+    pub levels: Levels,
+    /// The singer's glow.
+    pub glow: f32,
+    /// A section began.
+    pub section: bool,
+    /// A phrase landed.
+    pub phrase: bool,
+    /// The music, as its clock has it.
+    pub music: Music,
 }
 
 impl Feel {
-    /// `dt` seconds on: the stems at `levels`, the singer's glow at
-    /// `glow`, a section begun (`section`).
-    pub fn step(&mut self, levels: Levels, glow: f32, section: bool, dt: f32) -> Felt {
-        if section {
-            self.hold = SECTION_HOLD;
-        }
-        self.hold = (self.hold - dt).max(0.0);
-        let held = if self.hold > 0.0 { 1.0 } else { 0.0 };
-        let swell = self.section.step(held, dt);
-        let (lit, rays) = tier_light(glow);
+    /// `dt` seconds on with what is `heard`.
+    pub fn step(&mut self, heard: &Hearing, dt: f32) -> Felt {
+        let levels = heard.levels;
+        let (swell, swelling) = self.section.step(heard.section, dt);
+        let (flare, flaring) = self.flare.step(heard.phrase, dt);
+        let [lit, rays, tier] = tier_light(heard.glow);
         let rays = rays.max(swell * 0.6);
+        let beat = Beat::of(&heard.music);
         let felt = Felt {
             bass: self.bass.step(levels.bass, dt),
             vocals: self.vocals.step(levels.vocals, dt),
@@ -367,6 +424,9 @@ impl Feel {
             glow: self.glow.step(lit, dt),
             rays: self.rays.step(rays, dt),
             section: swell,
+            tier: self.tier.step(tier, dt),
+            flare,
+            beat,
         };
         let aims = [
             (felt.bass, levels.bass),
@@ -374,9 +434,11 @@ impl Feel {
             (felt.other, levels.other),
             (felt.glow, lit),
             (felt.rays, rays),
-            (swell, held),
+            (felt.tier, tier),
+            (swell, swelling),
+            (flare, flaring),
         ];
-        self.settled = aims.iter().all(|(at, aim)| (at - aim).abs() < 0.003);
+        self.settled = !beat.moving() && aims.iter().all(|(at, aim)| (at - aim).abs() < 0.003);
         felt
     }
 
@@ -467,25 +529,64 @@ mod tests {
     fn a_section_swells_and_fades_and_diva_brings_the_rays() {
         let mut feel = Feel::default();
         let dt = 1.0 / 60.0;
-        let mut felt = feel.step(Levels::default(), 0.0, true, dt);
+        let at = |glow: f32, section: bool| Hearing {
+            glow,
+            section,
+            ..Hearing::default()
+        };
+        let mut felt = feel.step(&at(0.0, true), dt);
         for _ in 0..40 {
-            felt = feel.step(Levels::default(), 0.0, false, dt);
+            felt = feel.step(&at(0.0, false), dt);
         }
         assert!(felt.section > 0.6 && felt.rays > 0.1, "{felt:?}");
         for _ in 0..900 {
-            felt = feel.step(Levels::default(), 0.0, false, dt);
+            felt = feel.step(&at(0.0, false), dt);
         }
         assert!(felt.section < 0.01 && felt.rays < 0.01, "{felt:?}");
         for _ in 0..300 {
-            felt = feel.step(Levels::default(), 1.0, false, dt);
+            felt = feel.step(&at(1.0, false), dt);
         }
-        assert!(felt.glow > 0.95 && felt.rays > 0.65, "{felt:?}");
+        assert!(
+            felt.glow > 0.95 && felt.rays > 0.95 && felt.tier > 0.95,
+            "{felt:?}"
+        );
         // Held there long enough, nothing moves.
         for _ in 0..600 {
-            feel.step(Levels::default(), 1.0, false, dt);
+            feel.step(&at(1.0, false), dt);
         }
         assert!(feel.settled());
-        feel.step(Levels::default(), 0.0, false, dt);
+        feel.step(&at(0.0, false), dt);
         assert!(!feel.settled());
+    }
+
+    /// A phrase landing flares at once and fades within a second or two;
+    /// the beat passes through as the grid has it, and moves the frames on.
+    #[test]
+    fn a_phrase_flares_and_the_beat_moves_the_frames() {
+        let mut feel = Feel::default();
+        let dt = 1.0 / 60.0;
+        let landed = Hearing {
+            phrase: true,
+            ..Hearing::default()
+        };
+        let mut felt = feel.step(&landed, dt);
+        for _ in 0..8 {
+            felt = feel.step(&Hearing::default(), dt);
+        }
+        assert!(felt.flare > 0.85, "{felt:?}");
+        for _ in 0..300 {
+            felt = feel.step(&Hearing::default(), dt);
+        }
+        assert!(felt.flare < 0.01 && feel.settled(), "{felt:?}");
+        let music = Music::steady(8.04, 120.0, 4, 0.9, 0.0);
+        let felt = feel.step(
+            &Hearing {
+                music,
+                ..Hearing::default()
+            },
+            dt,
+        );
+        assert_eq!(felt.beat, Beat::of(&music));
+        assert!(felt.beat.downbeat > 0.9 && !feel.settled(), "{felt:?}");
     }
 }

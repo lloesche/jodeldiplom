@@ -1,5 +1,6 @@
 //! What a frame of Karaoke mode costs, step by step: the backdrop (a cover
-//! taken apart, its `.layers` file from the player's data folder) and the
+//! taken apart, its `.layers` file from the player's data folder, moving
+//! with a steady beat) and the
 //! stage over it, stepped at 60 frames a second through a made-up song
 //! sung on the notes (`tests/common/sung.rs`), drawn offscreen as the
 //! window draws them, and each step's GPU time read from timestamps (the
@@ -56,6 +57,7 @@ use jodeldiplom::art::Art;
 use jodeldiplom::core::shine::{Reference, Shone, Tier};
 use jodeldiplom::core::singing::{Reveal, Shown, Singing, SongResult, UNROLL};
 use jodeldiplom::cover::{Apart, Layers};
+use jodeldiplom::gui::backdrop::music::Hearing;
 use jodeldiplom::gui::backdrop::{BackdropFrame, Cue, Visualiser};
 use jodeldiplom::gui::big_text::Faces;
 use jodeldiplom::gui::fx::{By, Effects, Fx, Music, Treat, Use};
@@ -343,6 +345,8 @@ struct Rig<'a> {
     size: (u32, u32),
     /// Frames made so far.
     made: usize,
+    /// When the last phrase seen ended.
+    phrase: Option<f64>,
 }
 
 impl Rig<'_> {
@@ -357,12 +361,21 @@ impl Rig<'_> {
         let (w, h) = self.size;
         self.made += 1;
         let started = Instant::now();
+        // A phrase landing flares the subject; the backdrop moves with the
+        // steady grid's beat.
+        let last = singing.last_phrase().map(|p| p.end);
+        let phrase = self.made > 1 && last.is_some() && last != self.phrase;
+        self.phrase = last;
         let cue = Cue {
             art: Some(self.art.clone()),
             layers: Some(self.layers.clone()),
-            levels: levels(),
-            glow: jodeldiplom::gui::streak::level(singing, true),
-            section: false,
+            heard: Hearing {
+                levels: levels(),
+                glow: jodeldiplom::gui::streak::level(singing, true),
+                section: false,
+                phrase,
+                music: steady(now),
+            },
         };
         let backdrop = self.visualiser.step(&cue, (w, h), (1.0 / FPS) as f32);
         let picture = KaraokePicture {
@@ -682,6 +695,7 @@ fn main() {
                 sung: &sung,
                 size: (w, h),
                 made: 0,
+                phrase: None,
             };
             let mut frames = Vec::new();
             let (mut kinds, mut effects) = (Alone::default(), Alone::default());

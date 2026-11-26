@@ -238,6 +238,20 @@ small and few, their step 0.07–0.13 ms a frame at the Diva peak and with
 every effect, and a quad's look is the same over its pixels (one branch
 taken by the whole quad).
 
+**The backdrop's depth of field and beat.** Round a subject cut out,
+the card reads the cover's levels (made once, as the cover is sent over)
+blurred by its depth: two smooth reads of two levels (8 taps) where it
+read the cover and the plate sharp before (9), the plate's only where
+the cover's blur would carry the subject's colours. The beat's push,
+the rim and the spotlight rays are a few numbers in the cover's uniform
+and one tap of the subject's rim. `frame_cost` on the RTX 5080 (two runs
+of each, the unchanged backdrop and this one in turn, the machine shared
+with other agents' builds and tests): the backdrop step's medians over
+the scenes 0.18–0.25 ms before, 0.19–0.44 after at 3024 × 1964, and
+0.22–0.79 before, 0.25–0.49 after at 3840 × 2160: within the machine's
+noise; the worst frames (to 9–20 ms in either build) fell where every
+step spiked at once.
+
 **The diploma's paper, baked.** `frame_cost` on the M4 Max (Metal,
 3024 × 1964, two runs) had every scene within its budget but the
 diploma: 1016 frames, the GPU's total median 4.0 ms, mean 4.0, worst

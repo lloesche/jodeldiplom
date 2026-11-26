@@ -6,7 +6,10 @@
 //! into the next, each combination of the game and the notes on or off
 //! (the notes off: the lyrics in large type without the stage; neither:
 //! the blurred cover alone, [`Mode`]) and the switch to neither mid-song,
-//! and tall and wide windows. The music is made up (each stem's level a
+//! and tall and wide windows; and with a steady beat (`beat-…`), the
+//! singer at no tier, the lowest, Amazing and Diva, each on a bar's first
+//! beat and off the beat, and Diva's phrase just landed. The music is made
+//! up (each stem's level a
 //! function of time), the backdrop and the stage stepped at 60 frames a
 //! second up to the moment looked at, drawn offscreen as the window draws
 //! them, and saved as PNGs into `OUT_DIR` (`<scene>.png`,
@@ -38,9 +41,10 @@ use jodeldiplom::config::Config;
 use jodeldiplom::core::shine::{Shone, Tier};
 use jodeldiplom::core::singing::Singing;
 use jodeldiplom::cover::{Apart, CoverLayers, Layers, Parts};
-use jodeldiplom::gui::backdrop::music::Levels;
+use jodeldiplom::gui::backdrop::music::{Hearing, Levels};
 use jodeldiplom::gui::backdrop::{Cue, Mode, Visualiser};
 use jodeldiplom::gui::big_text::Faces;
+use jodeldiplom::gui::fx::Music;
 use jodeldiplom::gui::karaoke::{paint, Backdrop, Layer};
 use jodeldiplom::gui::present::Offscreen;
 use jodeldiplom::gui::raster::Target;
@@ -110,8 +114,10 @@ fn song() -> (Arc<jodel_lyrics::Lyrics>, jodel_rhythm::waveform::Melody) {
     (Arc::new(lyrics), m)
 }
 
-/// A scene: its name, the window, the music at a time, the shine tier
-/// from when, a section starting when, which cover shows from when (the
+/// A scene: its name, the window, the music at a time (and whether it
+/// has a steady beat, a bar's first every two seconds), the shine tier
+/// its phrase reached and when
+/// it was decided, a section starting when, which cover shows from when (the
 /// second from `next`, if any), whether the game and the notes are on
 /// (from `switched`, if any: both on before), and when it is looked at.
 #[derive(Clone, Copy)]
@@ -119,7 +125,8 @@ struct Scene {
     name: &'static str,
     size: (usize, usize),
     music: fn(f64) -> Levels,
-    diva: Option<f64>,
+    beat: bool,
+    tier: Option<(Tier, f64)>,
     section: Option<f64>,
     arrives: f64,
     next: Option<f64>,
@@ -186,12 +193,15 @@ fn middling(_: f64) -> Levels {
     }
 }
 
-fn scenes() -> Vec<Scene> {
-    let base = Scene {
+/// What every scene is but for what it says: wide, quiet, no beat, the
+/// game and the notes on, looked at 10 s in.
+fn base_scene() -> Scene {
+    Scene {
         name: "",
         size: (1600, 900),
         music: quiet,
-        diva: None,
+        beat: false,
+        tier: None,
         section: None,
         arrives: 0.0,
         next: None,
@@ -199,7 +209,11 @@ fn scenes() -> Vec<Scene> {
         notes: true,
         switched: None,
         at: 10.0,
-    };
+    }
+}
+
+fn scenes() -> Vec<Scene> {
+    let base = base_scene();
     let s = |name, music, at| Scene {
         name,
         music,
@@ -218,7 +232,7 @@ fn scenes() -> Vec<Scene> {
             ..s("section", middling, 10.0)
         },
         Scene {
-            diva: Some(4.0),
+            tier: Some((Tier::TOP, 4.0)),
             ..s("diva", middling, 10.03)
         },
         Scene {
@@ -256,7 +270,38 @@ fn scenes() -> Vec<Scene> {
             switched: Some(9.4),
             ..s("to-plain", loud, 10.0)
         },
+        // With the beat: no tier, and the lowest, Amazing and the top,
+        // each on a bar's first beat and just before the next beat; the
+        // top's phrase just landed on one.
+        Scene {
+            beat: true,
+            ..s("beat-none-on", middling, 10.02)
+        },
+        tiered("beat-good-on", "Good", 10.02),
+        tiered("beat-good-off", "Good", 10.45),
+        tiered("beat-amazing-on", "Amazing", 10.02),
+        tiered("beat-amazing-off", "Amazing", 10.45),
+        tiered("beat-diva-on", "Diva", 10.02),
+        tiered("beat-diva-off", "Diva", 10.45),
+        Scene {
+            tier: Some((Tier::TOP, 9.85)),
+            ..tiered("beat-diva-landed", "Diva", 10.02)
+        },
     ]
+}
+
+/// A scene with the beat, its phrase reaching the tier `named` 4 s in,
+/// looked at `at`.
+fn tiered(name: &'static str, named: &str, at: f64) -> Scene {
+    let base = base_scene();
+    Scene {
+        name,
+        at,
+        beat: true,
+        tier: Some((Tier::named(named), 4.0)),
+        music: middling,
+        ..base
+    }
 }
 
 /// The cover as it was: the subject over the plate.
@@ -488,7 +533,8 @@ fn main() {
                 singing.hear(t, c);
                 heard += 1;
             }
-            if scene.diva.is_some_and(|d| (now - d).abs() < 0.5 / FPS) {
+            let landed = scene.tier.filter(|&(_, d)| (now - d).abs() < 0.5 / FPS);
+            if let Some((tier, _)) = landed {
                 singing.decided(
                     now,
                     Shone {
@@ -496,19 +542,28 @@ fn main() {
                         end: now,
                         value: 1.0,
                         top: 0.9,
-                        tier: Some(Tier::TOP),
+                        tier: Some(tier),
                     },
                 );
             }
             let showing = usize::from(scene.next.is_some_and(|n| now >= n));
             let config = scene.config(now);
             let layers = (now >= scene.arrives).then(|| [&first, &next][showing].clone());
+            let music = if scene.beat {
+                Music::steady(now * 2.0, 120.0, 4, 0.9, now)
+            } else {
+                Music::NEUTRAL
+            };
             let cue = Cue {
                 art: Some(arts[showing].clone()),
                 layers: Mode::of(&config).cover(layers),
-                levels: (scene.music)(now),
-                glow: jodeldiplom::gui::streak::level(&singing, config.karaoke_game),
-                section: scene.section.is_some_and(|s| (now - s).abs() < 0.5 / FPS),
+                heard: Hearing {
+                    levels: (scene.music)(now),
+                    glow: jodeldiplom::gui::streak::level(&singing, config.karaoke_game),
+                    section: scene.section.is_some_and(|s| (now - s).abs() < 0.5 / FPS),
+                    phrase: landed.is_some() && config.karaoke_game,
+                    music,
+                },
             };
             frame = Some(visualiser.step(&cue, (w as u32, h as u32), (1.0 / FPS) as f32));
             let p = picture_at(&sung, now, &singing, config.karaoke_game);

@@ -822,7 +822,8 @@ fn the_stage_shader_s_tube_is_its_reference() {
 /// The backdrop's maths at points across the window and through time: the
 /// shader's [`look::rounded_box`], [`look::card_edge`], [`look::falloff`],
 /// [`look::bspline`], [`look::shift`], [`look::vignette`],
-/// [`look::sweep`], [`look::drift`] and [`look::ray_fan`] as the
+/// [`look::sweep`], [`look::drift`], [`look::ray_fan`], [`look::defocus`]
+/// and [`look::kicked`] as the
 /// processor's.
 #[test]
 fn the_backdrop_shader_s_maths_is_its_reference() {
@@ -841,21 +842,23 @@ fn the_backdrop_shader_s_maths_is_its_reference() {
     let s = ins[i];
     let sh = shift(s.xy, s.z, vec2<f32>(0.01, -0.006), 0.008, vec2<f32>(0.45, 0.4));
     let d = rounded_box((s.x - 0.5) * 400.0, (s.y - 0.5) * 300.0, 120.0, 100.0, 9.0);
-    outs[i * 4u] = vec4<f32>(d, card_edge(d, 2000.0), sh);
+    outs[i * 5u] = vec4<f32>(d, card_edge(d, 2000.0), sh);
     let rays = ray_fan(s.x - 0.5, s.y - 0.4, s.w, 0.2);
-    outs[i * 4u + 1u] = vec4<f32>(vignette(s.x, s.y), 0.0, sweep(s.x, s.y, s.w), rays);
-    outs[i * 4u + 2u] = vec4<f32>(drift(s.w), falloff(d, 30.0));
-    outs[i * 4u + 3u] = bspline(s.z);";
+    let blur = defocus(s.z, s.x);
+    outs[i * 5u + 1u] = vec4<f32>(vignette(s.x, s.y), blur, sweep(s.x, s.y, s.w), rays);
+    outs[i * 5u + 2u] = vec4<f32>(drift(s.w), falloff(d, 30.0));
+    outs[i * 5u + 3u] = bspline(s.z);
+    outs[i * 5u + 4u] = vec4<f32>(kicked(s.xy, vec2<f32>(0.45, 0.4), s.z * 0.05), 0.0, 0.0);";
     let source = super::backdrop::gpu::shader(false);
-    let outs = run(&gpu, &source, body, &samples, (samples.len(), 4));
+    let outs = run(&gpu, &source, body, &samples, (samples.len(), 5));
     let close = |g: &[f32], c: &[f32], what: &str| {
         for (x, y) in g.iter().zip(c) {
             assert!(near(*x, *y, 3e-3, 2e-3), "{what}: {g:?} {c:?}");
         }
     };
-    let (mut edged, mut swept) = (0, 0);
+    let (mut edged, mut swept, mut blurred) = (0, 0, 0);
     for (k, s) in samples.iter().enumerate() {
-        let g = &outs[k * 4..k * 4 + 4];
+        let g = &outs[k * 5..k * 5 + 5];
         let what = format!("sample {k}: {s:?}");
         let sh = look::shift([s[0], s[1]], s[2], [0.01, -0.006], 0.008, [0.45, 0.4]);
         let d = look::rounded_box(
@@ -876,11 +879,11 @@ fn the_backdrop_shader_s_maths_is_its_reference() {
             &g[1],
             &[
                 look::vignette(s[0], s[1]),
-                0.0,
+                look::defocus(s[2], s[0]),
                 sweep,
                 look::ray_fan(s[0] - 0.5, s[1] - 0.4, s[3], 0.2),
             ],
-            &format!("{what}: vignette, sweep, rays"),
+            &format!("{what}: vignette, defocus, sweep, rays"),
         );
         let w = look::drift(s[3]);
         close(
@@ -889,10 +892,16 @@ fn the_backdrop_shader_s_maths_is_its_reference() {
             &format!("{what}: drift, falloff"),
         );
         close(&g[3], &look::bspline(s[2]), &format!("{what}: bspline"));
+        let kicked = look::kicked([s[0], s[1]], [0.45, 0.4], s[2] * 0.05);
+        close(&g[4], &[kicked[0], kicked[1]], &format!("{what}: kicked"));
+        blurred += usize::from(g[1][1] > look::DEFOCUS_BASE && g[1][1] < 1.0);
         edged += usize::from(edge > 0.0 && edge < 1.0);
         swept += usize::from(sweep > 0.3);
     }
-    assert!(edged > 20 && swept > 20, "{edged} {swept}");
+    assert!(
+        edged > 20 && swept > 20 && blurred > 20,
+        "{edged} {swept} {blurred}"
+    );
 }
 
 /// The backdrop's smooth read ([`super::backdrop::gpu::SMOOTH`], the

@@ -85,8 +85,12 @@ pub struct TierSpec {
     pub fx: Effects,
     /// How brightly the backdrop's subject is lit, 0 to 1 (held).
     pub backdrop_glow: f32,
-    /// How strong the rays from behind it are, 0 to 1 (held).
+    /// How strong the spotlight rays from behind it are, 0 to 1 (held).
     pub backdrop_rays: f32,
+    /// How much harder the subject moves with the beat (its push, its
+    /// rim's light, a phrase landing's flare), 0 to 1 over none (held:
+    /// [`crate::gui::backdrop::pulse`]).
+    pub backdrop_beat: f32,
     /// How large its phrases' marks on the song's progress are, in the
     /// bar's heights.
     pub mark: f32,
@@ -118,6 +122,7 @@ pub static TIERS: [TierSpec; 5] = [
         },
         backdrop_glow: 0.0,
         backdrop_rays: 0.0,
+        backdrop_beat: 0.1,
         mark: 1.8,
         sticker: Sticker {
             glints: false,
@@ -147,6 +152,7 @@ pub static TIERS: [TierSpec; 5] = [
         },
         backdrop_glow: 0.35,
         backdrop_rays: 0.0,
+        backdrop_beat: 0.25,
         mark: 1.8,
         sticker: Sticker {
             glints: false,
@@ -180,7 +186,8 @@ pub static TIERS: [TierSpec; 5] = [
             at_rung: &[Use::of(Fx::Flick, 1.0)],
         },
         backdrop_glow: 0.5,
-        backdrop_rays: 0.1,
+        backdrop_rays: 0.08,
+        backdrop_beat: 0.45,
         mark: 1.8,
         sticker: Sticker {
             glints: true,
@@ -222,7 +229,8 @@ pub static TIERS: [TierSpec; 5] = [
             at_rung: &[Use::of(Fx::Flick, 1.0), Use::of(Fx::Bulbs, 0.6)],
         },
         backdrop_glow: 0.65,
-        backdrop_rays: 0.25,
+        backdrop_rays: 0.5,
+        backdrop_beat: 0.7,
         mark: 1.8,
         sticker: Sticker {
             glints: true,
@@ -276,7 +284,8 @@ pub static TIERS: [TierSpec; 5] = [
             at_rung: &[Use::of(Fx::Flick, 1.0), Use::of(Fx::Bulbs, 1.0)],
         },
         backdrop_glow: 1.0,
-        backdrop_rays: 0.7,
+        backdrop_rays: 1.0,
+        backdrop_beat: 1.0,
         mark: 2.4,
         sticker: Sticker {
             glints: true,
@@ -406,6 +415,7 @@ mod tests {
             t.lane_light,
             t.backdrop_glow,
             t.backdrop_rays,
+            t.backdrop_beat,
             t.mark,
             s.halo,
         ]
@@ -419,8 +429,8 @@ mod tests {
         .collect()
     }
 
-    /// Every row in order: each bar, streak, glow, band count and
-    /// backdrop glow above the one before, the held looks never less, each
+    /// Every row in order: each bar, streak, glow, band count, backdrop
+    /// glow and beat above the one before, the held looks never less, each
     /// row looking other than the one before (a row that copies another's
     /// looks fails here), and sounding more: its streak's layers all the
     /// row before's and more, its chime's the row before's (a "ta-daa" in
@@ -438,6 +448,7 @@ mod tests {
             assert!(b.glow > a.glow, "{pair}");
             assert!(b.bands > a.bands, "{pair}");
             assert!(b.backdrop_glow > a.backdrop_glow, "{pair}");
+            assert!(b.backdrop_beat > a.backdrop_beat, "{pair}");
             for (x, y) in looks(a).iter().zip(looks(b)) {
                 assert!(y >= *x, "{pair}");
             }

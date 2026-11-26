@@ -28,6 +28,7 @@ use jodeldiplom::art::Art;
 use jodeldiplom::core::shine::{Reference, Tier};
 use jodeldiplom::core::singing::Singing;
 use jodeldiplom::cover::{Apart, Layers};
+use jodeldiplom::gui::backdrop::music::Hearing;
 use jodeldiplom::gui::backdrop::{BackdropFrame, Cue, Visualiser};
 use jodeldiplom::gui::big_text::Faces;
 use jodeldiplom::gui::fx::{By, Effects, Fx, Layer, Music, Use};
@@ -91,9 +92,11 @@ fn frame_at(
         let cue = Cue {
             art: Some(art.clone()),
             layers: Some(layers.clone()),
-            levels: levels(),
-            glow: jodeldiplom::gui::streak::level(&singing, true),
-            section: false,
+            heard: Hearing {
+                levels: levels(),
+                glow: jodeldiplom::gui::streak::level(&singing, true),
+                ..Hearing::default()
+            },
         };
         let backdrop = visualiser.step(&cue, (w, h), (1.0 / FPS) as f32);
         let picture = picture_at(&sung, now, &singing);

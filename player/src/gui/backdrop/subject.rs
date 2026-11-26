@@ -8,16 +8,20 @@ use image::RgbImage;
 use crate::cover::{CoverLayers, Swatch};
 
 /// Where a cover's subject is, in the cover's units (0 to 1 across and
-/// down): where the cut is centred (its upper part, where a face is), the
-/// light behind it and that light's reach.
+/// down): where the cut is centred (its upper part, where a face is), its
+/// middle (what it pulses round and the rays fan out from behind), the
+/// rays' reach, and how near it is (what is in focus).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Subject {
     /// What the cut is centred on.
     pub focus: (f32, f32),
-    /// The light behind it.
-    pub light: (f32, f32),
-    /// The light's reach, a share of the cover's height.
+    /// Its middle: the matte's own.
+    pub centre: (f32, f32),
+    /// The rays' reach, a share of the cover's height.
     pub reach: f32,
+    /// How near it is, 0 to 1 (the depth's nearness where the matte is
+    /// sure of it, on the average; 1 without one: nothing is in front).
+    pub near: f32,
 }
 
 impl Subject {
@@ -25,36 +29,43 @@ impl Subject {
     pub fn of(layers: &CoverLayers) -> Subject {
         let none = Subject {
             focus: (0.5, 0.45),
-            light: (0.5, 0.4),
+            centre: (0.5, 0.45),
             reach: 0.35,
+            near: 1.0,
         };
         let Some(s) = &layers.subject else {
             return none;
         };
         let (w, h) = s.dimensions();
         let step = (w.max(h) / 256).max(1);
-        let (mut sum, mut sx, mut top, mut bottom) = (0.0f64, 0.0f64, h, 0);
+        let (mut sum, mut sx, mut sy, mut top, mut bottom) = (0.0f64, 0.0f64, 0.0f64, h, 0);
+        let (mut near, mut sure) = (0.0f64, 0.0f64);
+        let (fw, fh) = (w as f32, h as f32);
         for y in (0..h).step_by(step as usize) {
             for x in (0..w).step_by(step as usize) {
                 let a = f64::from(s.get_pixel(x, y).0[3]) / 255.0;
                 sum += a;
                 sx += a * f64::from(x);
+                sy += a * f64::from(y);
                 if a > 0.5 {
                     top = top.min(y);
                     bottom = bottom.max(y);
+                    let (u, v) = ((x as f32 + 0.5) / fw, (y as f32 + 0.5) / fh);
+                    near += f64::from(layers.depth.at(u, v));
+                    sure += 1.0;
                 }
             }
         }
         if sum <= 0.0 || bottom < top {
             return none;
         }
-        let (fw, fh) = (w as f32, h as f32);
-        let cx = (sx / sum) as f32 / fw;
+        let (cx, cy) = ((sx / sum) as f32 / fw, (sy / sum) as f32 / fh);
         let (t, b) = (top as f32 / fh, bottom as f32 / fh);
         Subject {
             focus: (cx, t + 0.4 * (b - t)),
-            light: (cx, t + 0.35 * (b - t)),
+            centre: (cx, cy),
             reach: (0.35 * (b - t)).max(0.1),
+            near: (near / sure.max(1.0)) as f32,
         }
     }
 }
