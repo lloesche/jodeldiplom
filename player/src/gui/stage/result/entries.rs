@@ -7,13 +7,13 @@
 //! The rubber stamp ([`Stage::rubber_stamp`]) goes right of the longest
 //! value where there is room for it, else by the heading's right corner.
 
-use super::super::super::confetti::shower;
-use super::super::super::stage_gpu::{Instance, Shape, StageFrame};
 use super::super::{disc, rgba, Face, Rgb, Stage, GOLD, WHITE};
 use super::sheet::{ENTRIES, LINE_FROM, LINE_TO};
 use super::{bump, burst, clamp01, fade, Pen, ResultShown, Room, Written, PRINT};
 use crate::core::karaoke::result::{Beat, STAMP_DOWN, STREAK_WRITE, WORDS_FILL};
+use crate::gui::particles::confetti::shower;
 use crate::gui::particles::Kind;
+use crate::gui::stage::gpu::{Instance, Shape, StageFrame};
 use crate::view::karaoke::points_text;
 
 /// How long a new best's words take to write, after its stamp.

@@ -11,7 +11,7 @@
 
 use super::super::fx::{self, At, Clear, Letters};
 use super::super::particles::Spray;
-use super::super::stage_gpu::{Instance, StageFrame};
+use super::gpu::{Instance, StageFrame};
 use super::{lines, Lane, Stage};
 
 impl Stage {
@@ -177,7 +177,7 @@ mod tests {
     use crate::gui::big_text::Face;
     use crate::gui::fx::{Effects, Fx, Music, Use};
     use crate::gui::particles::Kind;
-    use crate::gui::stage_gpu::ATLAS;
+    use crate::gui::stage::gpu::ATLAS;
 
     /// A word to letter, `px` large, scaled by `scale`.
     fn word(text: &str, px: f32, scale: (f32, f32)) -> Letters {

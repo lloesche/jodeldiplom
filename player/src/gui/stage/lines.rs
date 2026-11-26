@@ -6,7 +6,7 @@
 //! ([`crate::gui::fx::Text::Sung`]). Where they are is the lyric band
 //! ([`band`]), which the screen passes keep mostly clear.
 
-use super::super::stage_gpu::Instance;
+use super::gpu::Instance;
 use super::{rgba, Face, Shade, Stage, GOLD, WHITE};
 use crate::gui::fx::{self, Frame, Text};
 use crate::view::karaoke::{KaraokePicture, LineKind, LyricLine};

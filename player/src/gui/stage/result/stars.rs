@@ -8,13 +8,13 @@
 
 use super::super::super::shine::hue;
 use super::super::super::sparks::noise;
-use super::super::super::stage_gpu::StageFrame;
 use super::super::meter::tier_color;
 use super::super::{disc, rgba, Rgb, Stage, WHITE};
 use super::{burst, fade, land, sparkle, sticker, Pen, ResultShown, Room, Written, PRINT};
 use crate::core::karaoke::result::Beat;
 use crate::core::shine::Tier;
 use crate::gui::particles::Kind;
+use crate::gui::stage::gpu::StageFrame;
 use crate::theme::Theme;
 
 /// How far down the sheet the stickers' rows are centred, how much of

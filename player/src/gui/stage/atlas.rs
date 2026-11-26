@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 
 use super::super::big_text::{BigText, Face};
-use super::super::stage_gpu::{AtlasUpload, ATLAS};
+use super::gpu::{AtlasUpload, ATLAS};
 
 /// Text in a face at a size (a quarter pixel's steps).
 type Key = (Face, String, u32);

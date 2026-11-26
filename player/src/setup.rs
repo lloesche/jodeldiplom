@@ -3,10 +3,10 @@
 //! Most of what the player needs is inside its executable (the beat and key
 //! networks, the stem separator, the singer's isolator, the fonts). Four
 //! models are too big for it: the speech model that times karaoke's words
-//! ([`crate::lyrics::models::MODEL_FILE`]), the speech recogniser that checks
-//! fetched lyrics belong to the song ([`crate::lyrics::models::ASR_FILE`]), and the
+//! ([`crate::work::lyrics::models::MODEL_FILE`]), the speech recogniser that checks
+//! fetched lyrics belong to the song ([`crate::work::lyrics::models::ASR_FILE`]), and the
 //! depth and cut-out models that take covers apart for karaoke's background
-//! ([`crate::cover::DEPTH_FILE`], [`crate::cover::MATTE_FILE`]). Their
+//! ([`crate::work::cover::DEPTH_FILE`], [`crate::work::cover::MATTE_FILE`]). Their
 //! names, lengths and SHA-256s are built in ([`manifest`]).
 //!
 //! At every start [`Setup`], on a thread of its own, chooses the graphics
@@ -33,9 +33,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant, UNIX_EPOCH};
 
-use crate::download::Sha256;
-use crate::lyrics::models;
-use crate::outbox::Notify;
+use crate::work::download::Sha256;
+use crate::work::lyrics::models;
+use crate::work::outbox::Notify;
 use crate::work::{Job, Teller};
 
 /// A file downloaded as it is, checked against its length and SHA-256.
@@ -105,7 +105,7 @@ pub struct Found {
     /// The speech recogniser ([`models::ASR_FILE`]).
     pub asr: PathBuf,
     /// The covers' depth and cut-out models, where the machine needs them.
-    pub covers: Option<crate::cover::CoverModels>,
+    pub covers: Option<crate::work::cover::CoverModels>,
 }
 
 impl Found {
@@ -119,10 +119,10 @@ impl Found {
                 .cloned()
         };
         let covers = match (
-            named(crate::cover::DEPTH_FILE),
-            named(crate::cover::MATTE_FILE),
+            named(crate::work::cover::DEPTH_FILE),
+            named(crate::work::cover::MATTE_FILE),
         ) {
-            (Some(depth), Some(matte)) => Some(crate::cover::CoverModels { depth, matte }),
+            (Some(depth), Some(matte)) => Some(crate::work::cover::CoverModels { depth, matte }),
             _ => None,
         };
         Some(Found {
@@ -186,29 +186,29 @@ pub fn manifest_for(gpu: bool) -> Vec<Need> {
     }
     needs.extend([
         Need {
-            file: crate::cover::DEPTH_FILE.to_owned(),
-            bytes: crate::cover::DEPTH_BYTES,
-            sha256: crate::cover::DEPTH_SHA256.to_owned(),
+            file: crate::work::cover::DEPTH_FILE.to_owned(),
+            bytes: crate::work::cover::DEPTH_BYTES,
+            sha256: crate::work::cover::DEPTH_SHA256.to_owned(),
             title: "the depth model".to_owned(),
             credit: "Depth Anything 3 Small by ByteDance Seed".to_owned(),
             why: "It sees how near each part of a cover is, so karaoke's background can move \
                   it in depth."
                 .to_owned(),
             source: Source::Download {
-                url: crate::cover::DEPTH_URL.to_owned(),
+                url: crate::work::cover::DEPTH_URL.to_owned(),
             },
         },
         Need {
-            file: crate::cover::MATTE_FILE.to_owned(),
-            bytes: crate::cover::MATTE_BYTES,
-            sha256: crate::cover::MATTE_SHA256.to_owned(),
+            file: crate::work::cover::MATTE_FILE.to_owned(),
+            bytes: crate::work::cover::MATTE_BYTES,
+            sha256: crate::work::cover::MATTE_SHA256.to_owned(),
             title: "the cover's cut-out model".to_owned(),
             credit: "BEN2 by Prama".to_owned(),
             why: "It cuts the singer (or whatever stands out) off a cover, so karaoke's \
                   background can light and move them on their own."
                 .to_owned(),
             source: Source::Download {
-                url: crate::cover::MATTE_URL.to_owned(),
+                url: crate::work::cover::MATTE_URL.to_owned(),
             },
         },
     ]);
@@ -229,7 +229,7 @@ impl Places {
     /// The player's: `models` beside the executable and in a macOS app's
     /// `Resources` (where models sent along with the player sit), then
     /// `models` in the data folder `data`.
-    pub fn player(data: &crate::dirs::Data) -> Places {
+    pub fn player(data: &crate::store::dirs::Data) -> Places {
         let store = data.models();
         let mut look = Vec::new();
         if let Some(dir) = std::env::current_exe()
@@ -313,7 +313,7 @@ pub fn look(need: &Need, places: &Places) -> Lookup {
     let candidates: Vec<PathBuf> = places
         .look
         .iter()
-        .map(|d| crate::mover::locate(&d.join(&need.file)))
+        .map(|d| crate::store::mover::locate(&d.join(&need.file)))
         .filter(|p| fs::metadata(p).is_ok_and(|m| m.is_file() && m.len() == need.bytes))
         .collect();
     if let Some(p) = candidates
@@ -363,7 +363,7 @@ impl Work for Real {
         to: &Path,
         progress: &mut dyn FnMut(u64),
     ) -> Result<(), String> {
-        crate::download::download(&part.url, to, part.bytes, &part.sha256, |done, _| {
+        crate::work::download::download(&part.url, to, part.bytes, &part.sha256, |done, _| {
             progress(done)
         })
     }
@@ -881,7 +881,7 @@ fn attempt(
             Task::Check(i, path) => {
                 // Where it is as it is opened: the data folder may have
                 // moved it since it was found.
-                let path = &crate::mover::locate(path);
+                let path = &crate::store::mover::locate(path);
                 let need = &manifest[*i];
                 teller.set(true, |s| {
                     s.total = need.bytes;
@@ -892,7 +892,7 @@ fn attempt(
                 if digest == need.sha256 {
                     // Where it is now: the data folder may have moved it
                     // while it was hashed (the same file, renamed).
-                    let at = crate::mover::locate(path);
+                    let at = crate::store::mover::locate(path);
                     stamp(&places.store, &need.sha256, &at)
                         .map_err(|e| failure(e, "Check that the data folder can be written to."))?;
                     paths[*i] = Some(at);
@@ -1075,7 +1075,7 @@ mod tests {
             })
             .collect()
     }
-    use crate::told::Told;
+    use crate::work::told::Told;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     fn sha(data: &[u8]) -> String {
@@ -1230,8 +1230,8 @@ mod tests {
         assert_eq!(m.len(), 4);
         assert_eq!(m[0].file, models::MODEL_FILE);
         assert_eq!(m[1].file, models::ASR_FILE);
-        assert_eq!(m[2].file, crate::cover::DEPTH_FILE);
-        assert_eq!(m[3].file, crate::cover::MATTE_FILE);
+        assert_eq!(m[2].file, crate::work::cover::DEPTH_FILE);
+        assert_eq!(m[3].file, crate::work::cover::MATTE_FILE);
         for need in &m {
             assert_eq!(need.sha256.len(), 64);
             assert!(need.sha256.chars().all(|c| c.is_ascii_hexdigit()));
@@ -1366,7 +1366,7 @@ mod tests {
         fs::write(old.join("speech.bin"), b"the speech model").unwrap();
         fs::write(old.join("asr.bin"), b"part a, part b").unwrap();
         let places = places(&dir);
-        crate::mover::begin(
+        crate::store::mover::begin(
             &dir.join("settings"),
             &[(old.clone(), places.store.clone())],
         )

@@ -12,12 +12,12 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use jodeldiplom::art::{sample_cover, Art};
 use jodeldiplom::gui::backdrop::{Cue, Visualiser};
 use jodeldiplom::gui::pixels::unpack;
 use jodeldiplom::gui::present::Offscreen;
 use jodeldiplom::gui::stage::{Song, Stage, Tint};
 use jodeldiplom::view::karaoke::{KaraokePicture, Score};
+use jodeldiplom::work::art::{sample_cover, Art};
 
 // The fonts build.rs found: `EMBEDDED_FONTS`.
 include!(concat!(env!("OUT_DIR"), "/fonts.rs"));

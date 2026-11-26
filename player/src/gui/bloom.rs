@@ -1,5 +1,5 @@
 //! The light that blooms, on the GPU: the stage's shapes and bursts that
-//! are light ([`super::stage_gpu::StageFrame::lights`], `light_sprays`:
+//! are light ([`crate::gui::stage::gpu::StageFrame::lights`], `light_sprays`:
 //! the lane's glow and flames, the angels, the jackpot, [`super::fx`]) are
 //! drawn apart, added up in linear light at high range ([`LIGHT`]) a texel
 //! a point
@@ -12,7 +12,7 @@
 //! white, never clips) and added over the frame, two reads a pixel.
 
 use super::fx::Music;
-use super::stage_gpu::{Blend, Group, StageFrame, StagePass};
+use crate::gui::stage::gpu::{Blend, Group, StageFrame, StagePass};
 
 /// The light's format: half floats, light brighter than white kept.
 pub const LIGHT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
@@ -246,7 +246,7 @@ impl Bloom {
             composite: pipeline("composite", format, true),
             layout,
             sampler,
-            linear: super::stage_gpu::takes_linear(format),
+            linear: crate::gui::stage::gpu::takes_linear(format),
             frame: ((0, 0), (0, 0)),
             levels: Vec::new(),
             passes: Vec::new(),
@@ -421,7 +421,7 @@ impl Bloom {
 /// The light of a frame: its shapes and bursts, drawn apart, and their
 /// bloom.
 pub struct Light {
-    shapes: super::stage_gpu::StagePass,
+    shapes: crate::gui::stage::gpu::StagePass,
     bursts: super::particles::ParticlePass,
     bloom: Bloom,
     /// Whether the next frame has any.

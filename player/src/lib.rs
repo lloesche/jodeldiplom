@@ -9,64 +9,53 @@
 //!   drawing.
 //! - [`view`]: the presentation models, what each screen says.
 //! - [`app`]: the running player: the engine ([`jodel_playback::Player`]) on
-//!   a mixer that owns the device, the background workers, the spectrum
-//!   and the cover; [`preview`]: the players of a preview, on the mixer
-//!   too; [`sfx`]: the karaoke game's sound effects, made in code, played
-//!   through the mixer's effects input on the frames of their moments;
-//!   [`clock`]: what the app times by (the wall clock, or one a test
-//!   steps).
+//!   a mixer that owns the device ([`desk_wiring`]), the background
+//!   workers, the spectrum ([`spectrum`]) and the cover; [`preview`]: the
+//!   players of a preview, on the mixer too; [`sync`]: the sync's clicks
+//!   played and its answers heard; [`sfx`]: the karaoke game's sound
+//!   effects, made in code, played through the mixer's effects input on
+//!   the frames of their moments; [`clock`]: what the app times by (the
+//!   wall clock, or one a test steps).
 //! - [`browser`]: folder listing, lazy file details, recursive search.
-//! - [`work`], [`outbox`]: what the background workers are built of, and
-//!   the way their results come back to the app.
-//! - [`config`], [`cli`]: the settings file and the command line.
-//! - [`cache`]: what is kept on disk between runs, and its schemas;
-//!   [`loudness`]: each song's loudness as the karaoke plays it, measured
-//!   once and kept, for the game's sounds to follow.
-//! - [`spectrum`], [`art`]: the spectrum of what is heard, cover images.
+//! - [`work`]: the background workers (the beats and tempo, the lyrics,
+//!   the covers taken apart, the cover art, the songs' loudness, the
+//!   original singer's phrases, the files fetched for the setup), what
+//!   they are built of, and the way their results come back to the app.
+//! - [`store`]: what is kept on disk between runs, and the schema of each
+//!   kind of file: the two folders and a move between them, the session,
+//!   the user's own records (the grids, the delays, the scores, the takes,
+//!   the patches) and the stems kept.
+//! - [`config`], [`cli`], [`setup`], [`diag`]: the settings file, the
+//!   command line, the self-check (and the setup when it fails), and
+//!   `--diag`.
+//! - [`tiers`], [`theme`]: the game's tiers, and the themes over them.
+//! - [`single`], [`icon`], [`calendar`], [`trace`]: one player at a time,
+//!   its icon, the day, a timing trace.
 //! - [`gui`]: the iced window; every screen in iced's widgets, the lanes
 //!   and Karaoke mode's stage on the GPU through iced's shader widget.
 
 #![warn(missing_docs)]
 
 pub mod app;
-pub mod art;
 pub mod browser;
-pub mod cache;
 pub mod calendar;
 pub mod cli;
 pub mod clock;
 pub mod config;
 pub mod core;
-pub mod cover;
-pub mod delays;
 pub mod desk_wiring;
 pub mod diag;
-pub mod dirs;
-pub mod download;
-pub mod grids;
 pub mod gui;
 pub mod icon;
-pub mod keep;
-pub mod loudness;
-pub mod lyrics;
-pub mod mover;
-pub mod outbox;
-pub mod patches;
 pub mod preview;
-pub mod rhythm;
-pub mod scores;
-pub mod session;
 pub mod setup;
 pub mod sfx;
-pub mod shine_cache;
 pub mod single;
 pub mod spectrum;
-pub mod stems_cache;
+pub mod store;
 pub mod sync;
 pub mod theme;
 pub mod tiers;
-#[cfg(test)]
-mod told;
 pub mod trace;
 pub mod view;
 pub mod work;
@@ -123,12 +112,12 @@ pub fn main() -> ExitCode {
             }
         };
         if args.clean_cache {
-            for line in dirs::forget_cache(&folders) {
+            for line in store::dirs::forget_cache(&folders) {
                 println!("{line}");
             }
         }
         if args.clean_diag {
-            for line in dirs::forget_diag(&folders) {
+            for line in store::dirs::forget_diag(&folders) {
                 println!("{line}");
             }
         }
@@ -147,7 +136,7 @@ pub fn main() -> ExitCode {
         };
     }
     // One player at a time: held until the player ends.
-    let _only = match dirs::settings_dir().map(|dir| single::take(&dir)) {
+    let _only = match store::dirs::settings_dir().map(|dir| single::take(&dir)) {
         Some(single::Start::Running) => {
             single::say_running(BIN);
             return ExitCode::FAILURE;

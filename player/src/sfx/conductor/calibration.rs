@@ -3,7 +3,7 @@
 //! the same over each.
 //!
 //! The song's loudness is what the karaoke plays of it, integrated over
-//! the whole song (ITU-R BS.1770, LUFS: [`crate::loudness`]). The bus's
+//! the whole song (ITU-R BS.1770, LUFS: [`crate::work::loudness`]). The bus's
 //! level is [`super::LEVEL`] at [`REFERENCE`], and moves by [`SLOPE`] dB
 //! for each LU the song is louder or quieter, at most [`MOST`] dB either
 //! way; a song not measured yet (or silent) is taken as at the reference.

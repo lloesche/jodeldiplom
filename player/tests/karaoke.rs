@@ -236,7 +236,7 @@ fn space_never_plays_a_song_without_its_count_in() {
 /// Track `index`'s words timed by us, lines starting at `starts` seconds.
 fn timed(state: &mut State, index: usize, starts: &[f64]) {
     use jodel_lyrics::{Lyrics, Source};
-    use jodeldiplom::lyrics::Answer;
+    use jodeldiplom::work::lyrics::Answer;
     let lrc: String = starts
         .iter()
         .enumerate()
@@ -385,8 +385,8 @@ fn the_title_and_artist_show_while_the_song_waits_and_stay_as_it_starts() {
 fn the_title_shows_once_and_not_again_after_the_count_in() {
     use jodel_lyrics::{Lyrics, Maker, Source};
     use jodeldiplom::core::karaoke::SongLyrics;
-    use jodeldiplom::lyrics::Answer;
     use jodeldiplom::view::karaoke::{lines_now, LineKind};
+    use jodeldiplom::work::lyrics::Answer;
     let mut state = tab();
     let lrc = "[00:00.42]<00:00.42>Ja,<00:00.70> <00:01.50>Dynamite<00:02.08>\n\
                [00:05.54]<00:05.54>null<00:05.78> <00:05.94>null<00:06.16>\n";
@@ -523,8 +523,8 @@ fn next_in_the_mode_holds_the_next_song_for_start() {
 #[test]
 fn lyrics_are_asked_for_on_the_tab_and_follow_the_song() {
     use jodel_lyrics::{Lyrics, Source};
-    use jodeldiplom::lyrics::Answer;
     use jodeldiplom::view::karaoke::{lines_now, LineKind};
+    use jodeldiplom::work::lyrics::Answer;
     let mut state = common::transition_state(120, 40);
     state.side = Side::Browser;
     // Not asked for away from Karaoke.
@@ -691,7 +691,7 @@ fn the_microphone_is_open_while_karaoke_shows() {
 
 #[test]
 fn the_speech_model_is_found_where_the_build_put_it() {
-    use jodeldiplom::lyrics::models::{model_in, MODEL_DIR, MODEL_FILE};
+    use jodeldiplom::work::lyrics::models::{model_in, MODEL_DIR, MODEL_FILE};
     let root = std::env::temp_dir().join(format!("jodel-model-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     let put = |dir: &std::path::Path| {
@@ -726,7 +726,7 @@ fn the_speech_model_is_found_where_the_build_put_it() {
 
 #[test]
 fn the_speech_recogniser_is_found_beside_the_speech_model() {
-    use jodeldiplom::lyrics::models::{asr_model_in, ASR_FILE, MODEL_DIR};
+    use jodeldiplom::work::lyrics::models::{asr_model_in, ASR_FILE, MODEL_DIR};
     let root = std::env::temp_dir().join(format!("jodel-asr-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     let exe = root.join("Contents").join("MacOS");
@@ -779,7 +779,7 @@ fn start_is_the_stages_pill_and_the_game_is_set_on_the_tab() {
 /// and the status line (and the greyed button, the greyed START) says why.
 #[test]
 fn no_karaoke_for_a_song_until_its_lyrics_are_ready() {
-    use jodeldiplom::lyrics::Answer;
+    use jodeldiplom::work::lyrics::Answer;
     let none = |state: &mut State, index: usize, answer: Answer| {
         let path = state.queue.paths[index].clone();
         if !state.karaoke.lyrics_wanted.contains(&path) {
@@ -866,7 +866,7 @@ fn no_karaoke_for_a_song_until_its_lyrics_are_ready() {
 fn the_tab_says_how_well_the_text_fits_the_song() {
     use jodel_lyrics::{Fit, Lyrics, Source};
     use jodeldiplom::core::karaoke::SongLyrics;
-    use jodeldiplom::lyrics::Answer;
+    use jodeldiplom::work::lyrics::Answer;
     let said = |fit: Option<Fit>| {
         let lyrics = Lyrics::parse_text("One line\nTwo lines", Source::Lrclib);
         let mut timed = lyrics.clone();

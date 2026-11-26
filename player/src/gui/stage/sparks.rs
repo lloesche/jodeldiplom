@@ -8,8 +8,8 @@
 use std::collections::VecDeque;
 
 use super::super::sparks::noise;
-use super::super::stage_gpu::{Instance, Shape};
 use super::comet::DUST;
+use super::gpu::{Instance, Shape};
 use super::palette::{rgba, Rgb};
 
 /// The most sparks at once.

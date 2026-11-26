@@ -1,4 +1,4 @@
-//! A reference as text, as the cache keeps it ([`crate::cache::SHINE`]):
+//! A reference as text, as the cache keeps it ([`crate::store::cache::SHINE`]):
 //! `version N` (the measuring's [`super::reference::VERSION`]), then a line
 //! a sung line: `none`, or its yardstick and par tab apart: the share of it
 //! voiced, the pitch off, the spread, the range (`-`: none), the par's

@@ -6,13 +6,14 @@
 //! everything last ([`Painter::PARTS`]).
 
 mod offscreen;
+mod stamps;
 
 pub(crate) use offscreen::read_back;
 pub use offscreen::Offscreen;
 
 use super::backdrop::BackdropFrame;
 use super::fx::Music;
-use super::stage_gpu::StageFrame;
+use crate::gui::stage::gpu::StageFrame;
 
 /// Karaoke mode's ground: its backdrop over the whole window, read
 /// smoothly (it is drawn at a share of the window's size).
@@ -54,7 +55,7 @@ pub(super) struct Painter {
     ground_bind: Option<wgpu::BindGroup>,
     size: (u32, u32),
     /// The stage, drawn over the ground, and its bursts over that.
-    stage: super::stage_gpu::StagePass,
+    stage: crate::gui::stage::gpu::StagePass,
     particles: super::particles::ParticlePass,
     /// The light that blooms ([`super::bloom`]).
     light: super::bloom::Light,
@@ -67,7 +68,7 @@ pub(super) struct Painter {
     bound: u64,
     /// The GPU's time after each step of a frame, where it is measured
     /// ([`Offscreen::timed`]).
-    stamps: Option<super::stamps::Stamps>,
+    stamps: Option<crate::gui::present::stamps::Stamps>,
     /// The window's pixels to a point (its scale).
     density: f32,
 }
@@ -104,10 +105,16 @@ impl Painter {
         format: wgpu::TextureFormat,
     ) -> Painter {
         let (ground, ground_layout) = ground_pipeline(&device, format);
-        let stage =
-            super::stage_gpu::StagePass::new(&device, format, super::stage_gpu::Blend::Over);
-        let particles =
-            super::particles::ParticlePass::new(&device, format, super::stage_gpu::Blend::Over);
+        let stage = crate::gui::stage::gpu::StagePass::new(
+            &device,
+            format,
+            crate::gui::stage::gpu::Blend::Over,
+        );
+        let particles = super::particles::ParticlePass::new(
+            &device,
+            format,
+            crate::gui::stage::gpu::Blend::Over,
+        );
         let light = super::bloom::Light::new(&device, format);
         // The backdrop made in linear light where the frame takes it so.
         let backdrop = super::backdrop::gpu::BackdropPass::new(&device, &queue, format.is_srgb());

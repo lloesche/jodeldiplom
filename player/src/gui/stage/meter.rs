@@ -17,15 +17,15 @@
 //! sinking away before the controls' bar fades in where it is (its seek
 //! bar and times stand for it then), so the two never show at once. The
 //! processor gives the GPU only where each is and when it changed
-//! ([`crate::gui::glory`], [`crate::gui::fx`]).
+//! ([`super::shapes::glory`], [`crate::gui::fx`]).
 
+use super::gpu::{Instance, Shape, StageFrame};
+use super::shapes::glory::{meter_fill, position, MARKS};
 use super::{rgba, Face, Lane, Stage, BREAK, GOLD, PROGRESS, WHITE};
 use crate::core::shine::{Shone, Tier};
 use crate::core::singing::{Cue, Singing};
 use crate::gui::fx::{self, At, Frame, Text};
-use crate::gui::glory::{meter_fill, position, MARKS};
 use crate::gui::shine::Glow;
-use crate::gui::stage_gpu::{Instance, Shape, StageFrame};
 use crate::gui::streak::Step;
 use crate::theme::Theme;
 
@@ -297,7 +297,7 @@ impl Stage {
         // On a badge of its own over the meter, ringed in the tier's colour,
         // over the light (its bloom would wash it out); both popping round
         // the meter's middle and fading as the shader times them
-        // ([`crate::gui::glory::label_pop`]).
+        // ([`super::shapes::glory::label_pop`]).
         let half = verdict_half(tw, px);
         let m = half.0.max(half.1) * 2.0;
         let quad = [mx - m, my - m, mx + m, my + m];
@@ -478,8 +478,8 @@ mod tests {
     use super::*;
     use crate::core::karaoke::controls::handover;
     use crate::core::singing::Singing;
+    use crate::gui::stage::gpu::StageFrame;
     use crate::gui::stage::Song;
-    use crate::gui::stage_gpu::StageFrame;
     use crate::view::karaoke::KaraokePicture;
 
     /// A song of two words a second each from 1 s, its singing ready.

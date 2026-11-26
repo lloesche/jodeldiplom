@@ -1,18 +1,18 @@
 //! The diploma's sheet: cream paper unrolling from its top (a roll lying
-//! across under its front, [`crate::gui::paper::paper_at`]), its ornate
-//! border in the tint's colours; printed on it as it shows, the heading
+//! across under its front, [`crate::gui::stage::shapes::paper::paper_at`]), its
+//! ornate border in the tint's colours; printed on it as it shows, the heading
 //! (flanked by two gold stars popping on), the lines round the song's
 //! title (which lands on its beat, a sparkle off each end), its entries'
 //! names and ruled lines to write on (a form waiting to be filled in), and
 //! under the signature's and the date's lines what they are; at the end
 //! the examiner signs it in one stroke and writes the day.
 
-use super::super::super::stage_gpu::{Instance, Shape, StageFrame};
 use super::super::{disc, rgba, segment, Face, Rgb, Stage, GOLD, GOLD_TOP};
 use super::{burst, clamp01, fade, land, sticker, Pen, ResultShown, Room, Tint, Written, PRINT};
 use crate::core::karaoke::result::signature::signature_point;
 use crate::core::karaoke::result::{signed, unrolled, Beat, Side, DATE_FROM, DATING};
 use crate::gui::particles::Kind;
+use crate::gui::stage::gpu::{Instance, Shape, StageFrame};
 use crate::gui::wgsl_math::mix3;
 use crate::view::karaoke::DIPLOMA;
 /// Where the entries' lines are down the sheet, and where they run across

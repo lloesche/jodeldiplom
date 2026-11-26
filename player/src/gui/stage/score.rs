@@ -17,7 +17,7 @@
 
 use super::super::big_text::{BigText, Face, Faces};
 use super::super::pixels::{mix, PixelRect};
-use super::super::stage_gpu::Instance;
+use super::gpu::Instance;
 use super::{clip, Stage};
 use crate::view::karaoke::{KaraokePicture, Score, HIT};
 use crate::view::palette;
@@ -463,7 +463,7 @@ impl Stage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::gui::stage_gpu::Shape;
+    use crate::gui::stage::gpu::Shape;
 
     const FRAME: f32 = 1.0 / 60.0;
 

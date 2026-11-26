@@ -22,8 +22,8 @@ use std::path::Path;
 
 use jodeldiplom::core::singing::Singing;
 use jodeldiplom::gui::present::Offscreen;
+use jodeldiplom::gui::stage::gpu::StageFrame;
 use jodeldiplom::gui::stage::{Song, Stage, Tint};
-use jodeldiplom::gui::stage_gpu::StageFrame;
 use jodeldiplom::view::karaoke::{sung_on, timed_lines, KaraokePicture, LineKind, Score};
 
 /// A GPU drawing Karaoke mode offscreen at `w` × `h`, over the plain
@@ -58,7 +58,7 @@ fn main() {
     let data = Path::new(&args[0]);
     let text = std::fs::read_to_string(data.join("lyrics").join(format!("{}.timed.lrc", args[1])))
         .expect("the song's timed lyrics");
-    let body = jodeldiplom::cache::LYRICS_TIMED
+    let body = jodeldiplom::store::cache::LYRICS_TIMED
         .body(&text)
         .unwrap_or(&text);
     let lyrics = jodel_lyrics::Lyrics::parse(body, jodel_lyrics::Source::Unknown);

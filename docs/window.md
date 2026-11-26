@@ -33,7 +33,7 @@ machine without a GPU would.
 | `gui::pacer`, `gui::paint`, `gui::wake` | when the frames come and what each draws; the player's threads waking the window |
 | `gui::mixer` | the Mixer tab: the strips laid out in points, the faders and meters as canvases |
 | `gui::lanes` | the Transition and Karaoke tabs' lanes, painted in tiles and scrolled on the GPU |
-| `gui::stage`, `gui::stage_gpu`, `gui::fx`, `gui::backdrop`, `gui::bloom`, `gui::particles`, `gui::present` | Karaoke mode on the GPU |
+| `gui::stage`, `gui::stage::gpu`, `gui::stage::shapes`, `gui::fx`, `gui::backdrop`, `gui::bloom`, `gui::particles`, `gui::present` | Karaoke mode on the GPU |
 | `gui::cover` | macOS: Karaoke mode covering the screen ([macos-window.md](macos-window.md)) |
 
 ## Messages
@@ -155,7 +155,7 @@ this order (`gui::present::Painter::PARTS`):
 
 1. **ground:** the backdrop (`gui::backdrop`): the cover taken apart and
    lit by the music, a triangle over the window reading it;
-2. **stage:** the stage's shapes (`gui::stage`, `gui::stage_gpu`): the lane,
+2. **stage:** the stage's shapes (`gui::stage`, `gui::stage::gpu`): the lane,
    the bubbles as tubes with their liquid, the arrow, the lyrics, the
    count-in, the score, the meter, the badge, START, the result's
    diploma;
@@ -167,7 +167,7 @@ this order (`gui::present::Painter::PARTS`):
 
 The stage is instances of a few shapes, each a signed distance in the
 fragment shader, or text from a glyph atlas. It is drawn by one pipeline
-a group of shapes (`gui::stage_gpu::groups`), each compiled with only its
+a group of shapes (`gui::stage::gpu::groups`), each compiled with only its
 group's code: Apple's GPUs run a shader at the pace of its dearest code
 for every pixel, so one shader for all of them made a plain pill as dear
 as the diploma's paper. The paper, once it holds still, is baked into a

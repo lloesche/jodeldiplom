@@ -12,8 +12,8 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use jodeldiplom::dirs::Data;
 use jodeldiplom::setup::{manifest, Places, Real, Setup, StepState};
+use jodeldiplom::store::dirs::Data;
 
 fn main() {
     let Some(parent) = std::env::args().nth(1) else {

@@ -7,7 +7,7 @@
 //! [`jodel_synth::params`]), in the theme compared (Classic or Spooky), and
 //! an edit is heard on the next play: the effects play each atom's patch
 //! as this tab has it ([`patch`]), a change told the synth as a command.
-//! A patch kept is written to the data folder ([`crate::patches`]) and
+//! A patch kept is written to the data folder ([`crate::store::patches`]) and
 //! loaded over the built-in one at the start; reverted, the built-in one
 //! comes back. The keyboard plays the selected atom's patch: two octaves
 //! on screen, and the computer's keys (`a` to `'` the white keys, `w e t y

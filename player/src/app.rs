@@ -13,7 +13,7 @@
 //!
 //! The app is a composition of subsystems, each owning its own fields:
 //! the microphone and the singing ([`mic::MicSession`]), the cover heard
-//! ([`crate::art::ArtWorker`]), the spectrum ([`SpectrumGate`]), the
+//! ([`crate::work::art::ArtWorker`]), the spectrum ([`SpectrumGate`]), the
 //! session kept ([`SessionKeeper`]) and a data folder's move
 //! ([`MoveView`]). The workers send their results through an [`Outbox`].
 
@@ -28,18 +28,18 @@ use image::RgbImage;
 use jodel_output::mixer::DeskView;
 use jodel_playback::{Command, Event, PlayState, PlayerOptions, SeparatorSource, SpectrumTap};
 
-use crate::art::{Art, ArtWorker};
 use crate::browser::DetailsWorker;
 pub use crate::clock::AppClock;
 use crate::config::Config;
 use crate::core::{self, Action, DeviceChoice, Effect, State};
 use crate::desk_wiring::Engine;
 pub use crate::desk_wiring::{MemoryOutput, Output};
-use crate::mover::MoveView;
-use crate::outbox::{Notify, Outbox};
-use crate::rhythm::RhythmWorker;
-use crate::session::{Session, SessionKeeper};
 use crate::spectrum::SpectrumGate;
+use crate::store::mover::MoveView;
+use crate::store::session::{Session, SessionKeeper};
+use crate::work::art::{Art, ArtWorker};
+use crate::work::outbox::{Notify, Outbox};
+use crate::work::rhythm::RhythmWorker;
 
 mod effects;
 mod frame;
@@ -75,40 +75,42 @@ pub struct AppOptions {
     pub devices: DeviceLister,
     /// Messages to show at the start (config warnings).
     pub notes: Vec<String>,
-    /// Where beat analyses are kept ([`crate::dirs::Data::analyses`]); `None`: not
-    /// kept.
-    pub rhythm_cache: Option<PathBuf>,
-    /// Where beat grids fixed by hand are kept ([`crate::dirs::Folders::grids`]);
+    /// Where beat analyses are kept ([`crate::store::dirs::Data::analyses`]);
     /// `None`: not kept.
+    pub rhythm_cache: Option<PathBuf>,
+    /// Where beat grids fixed by hand are kept
+    /// ([`crate::store::dirs::Folders::grids`]); `None`: not kept.
     pub grids: Option<PathBuf>,
-    /// Where the session is kept ([`crate::dirs::Folders::session`]): the queue and
-    /// the browser's place come back from it and are saved to it; `None`:
-    /// not kept.
+    /// Where the session is kept ([`crate::store::dirs::Folders::session`]):
+    /// the queue and the browser's place come back from it and are saved to it;
+    /// `None`: not kept.
     pub session: Option<PathBuf>,
     /// The browser starts where the session left it (no folder was given).
     pub restore_browser: bool,
-    /// Where queues are saved as playlists ([`crate::dirs::Folders::queues`]).
+    /// Where queues are saved as playlists
+    /// ([`crate::store::dirs::Folders::queues`]).
     pub queues: Option<PathBuf>,
-    /// How lyrics are looked up ([`crate::lyrics::Options`]); `None`: in
+    /// How lyrics are looked up ([`crate::work::lyrics::Options`]); `None`: in
     /// the files' tags and `.lrc` files only, nothing cached or fetched.
-    pub lyrics: Option<crate::lyrics::Options>,
+    pub lyrics: Option<crate::work::lyrics::Options>,
     /// The speech model for the word timing, where it is or is fetched to
-    /// ([`crate::lyrics::models::Models`]); `None`: nowhere, the words shown untimed.
+    /// ([`crate::work::lyrics::models::Models`]); `None`: nowhere, the words
+    /// shown untimed.
     pub model: Option<PathBuf>,
     /// How the microphone is opened (the real ones: [`mic::open_mic`]).
     pub mic: MicOpener,
     /// How the microphones are listed (the real ones: [`mic::list_mics`]).
     pub mics: MicLister,
-    /// The data folder ([`crate::dirs::Data`]); `None`: none (tests).
-    pub data: Option<crate::dirs::Data>,
-    /// A move of the data folder under way ([`crate::mover`]), shown on the
-    /// settings page.
-    pub mover: Option<Arc<crate::mover::Mover>>,
+    /// The data folder ([`crate::store::dirs::Data`]); `None`: none (tests).
+    pub data: Option<crate::store::dirs::Data>,
+    /// A move of the data folder under way ([`crate::store::mover`]), shown on
+    /// the settings page.
+    pub mover: Option<Arc<crate::store::mover::Mover>>,
     /// Where the engine separates stems (the real one: the GPU's).
     pub separator: SeparatorSource,
     /// The covers' models, as setup found them ([`crate::setup::Found`]);
     /// `None`: covers are not taken apart.
-    pub covers: Option<crate::cover::CoverModels>,
+    pub covers: Option<crate::work::cover::CoverModels>,
     /// What the app times by ([`AppClock`]): the wall clock but in tests
     /// that step it.
     pub clock: AppClock,
@@ -163,14 +165,14 @@ pub struct App {
     baseline: Config,
     details: DetailsWorker,
     rhythm: RhythmWorker,
-    lyrics: crate::lyrics::LyricsWorker,
+    lyrics: crate::work::lyrics::LyricsWorker,
     /// The microphone, open while Karaoke shows, and the singing heard
     /// through it.
     mic: MicSession,
     /// Keeps the beat grids fixed by hand, where they are kept.
-    grids: Option<crate::grids::GridStore>,
+    grids: Option<crate::store::grids::GridStore>,
     /// Keeps the Synth tab's patches, in the data folder.
-    patches: Option<crate::patches::PatchStore>,
+    patches: Option<crate::store::patches::PatchStore>,
     /// When the last position event arrived, for [`App::heard`].
     position_at: Instant,
     /// Where the engine separates stems.
@@ -186,10 +188,10 @@ pub struct App {
     spectrum: SpectrumGate,
     /// The cover of the track heard.
     art: ArtWorker,
-    /// The covers' step of the preparation ([`crate::cover`]), holding
+    /// The covers' step of the preparation ([`crate::work::cover`]), holding
     /// the song playing's layers: none without a data folder or the
     /// covers' models.
-    covers: Option<crate::cover::CoverWorker>,
+    covers: Option<crate::work::cover::CoverWorker>,
     /// When the app started, on its clock ([`AppClock`]): every time it
     /// keeps but the trace's is on that clock.
     started: Instant,
@@ -255,7 +257,7 @@ impl App {
             let mut lyrics_options = options
                 .lyrics
                 .clone()
-                .unwrap_or_else(|| crate::lyrics::Options::new(false));
+                .unwrap_or_else(|| crate::work::lyrics::Options::new(false));
             lyrics_options.online &= options.config.karaoke_online;
             let working = outbox.clone();
             lyrics_options.working = Some(Arc::new(move |path: &Path, on: bool| {
@@ -274,14 +276,14 @@ impl App {
                 });
             }));
             let answers = outbox.clone();
-            crate::lyrics::LyricsWorker::new(lyrics_options, move |path, answer| {
+            crate::work::lyrics::LyricsWorker::new(lyrics_options, move |path, answer| {
                 answers.send(Action::Lyrics(path, answer));
             })
         };
-        let grids =
-            (options.grids.clone()).map(|dir| crate::grids::GridStore::new(dir, outbox.clone()));
+        let grids = (options.grids.clone())
+            .map(|dir| crate::store::grids::GridStore::new(dir, outbox.clone()));
         let patches = (options.data.as_ref())
-            .map(|d| crate::patches::PatchStore::new(d.patches(), outbox.clone()));
+            .map(|d| crate::store::patches::PatchStore::new(d.patches(), outbox.clone()));
         // The session: the browser where it was (when no folder was
         // given), the queue as it was (when nothing plays at once).
         let restored = options.session.as_deref().and_then(Session::load);
@@ -308,7 +310,7 @@ impl App {
             .as_ref()
             .zip(options.covers.clone())
             .map(|(data, models)| {
-                crate::cover::CoverWorker::start(data.covers(), models, outbox.clone())
+                crate::work::cover::CoverWorker::start(data.covers(), models, outbox.clone())
             });
         if covers.is_some() {
             state.preparing.push(core::Job::Cover);
@@ -351,7 +353,7 @@ impl App {
             stem_store: options
                 .rhythm_cache
                 .as_deref()
-                .map(|dir| crate::stems_cache::Store::shared(crate::stems_cache::beside(dir))),
+                .map(|dir| crate::store::stems::Store::shared(crate::store::stems::beside(dir))),
             search: None,
             spectrum: SpectrumGate::new(),
             covers,
@@ -365,13 +367,14 @@ impl App {
         };
         app.state.data_dir = options.data.as_ref().map(|d| d.0.clone());
         // The delays kept, from beside the settings.
-        app.state.karaoke.lag.kept = crate::delays::load_beside(options.config_file.as_deref());
+        app.state.karaoke.lag.kept =
+            crate::store::delays::load_beside(options.config_file.as_deref());
         // The best scores sung, from the data folder (while it moves, from
-        // where the file is: [`crate::scores::load`]).
+        // where the file is: [`crate::store::scores::load`]).
         if let Some(data) = &options.data {
-            app.state.karaoke.bests = crate::scores::load(&data.scores());
+            app.state.karaoke.bests = crate::store::scores::load(&data.scores());
             // The Synth tab's patches kept, over the built-in ones.
-            app.state.synth.patches = crate::patches::load_all(&data.patches());
+            app.state.synth.patches = crate::store::patches::load_all(&data.patches());
         }
         crate::trace::took("app: the session read", began, true);
         begins(Starting::Device);
@@ -520,7 +523,7 @@ impl App {
         if std::mem::take(&mut self.state.karaoke.lag.changed) {
             let lag = &self.state.karaoke.lag;
             if let Some(why) =
-                crate::delays::save_beside(self.state.config_file.as_deref(), &lag.kept)
+                crate::store::delays::save_beside(self.state.config_file.as_deref(), &lag.kept)
             {
                 self.dispatch(Action::Failed(why));
             }
@@ -528,8 +531,8 @@ impl App {
         // A best score beaten: kept in the data folder at once.
         if std::mem::take(&mut self.state.karaoke.bests_changed) {
             if let Some(dir) = &self.state.data_dir {
-                let file = crate::dirs::Data(dir.clone()).scores();
-                if let Err(e) = crate::scores::save(&file, &self.state.karaoke.bests) {
+                let file = crate::store::dirs::Data(dir.clone()).scores();
+                if let Err(e) = crate::store::scores::save(&file, &self.state.karaoke.bests) {
                     self.dispatch(Action::Failed(format!(
                         "The best scores were not saved: {e}"
                     )));
@@ -652,10 +655,10 @@ impl App {
     /// The cover of the track heard taken apart (subject, plate, depth,
     /// rim, palette), once ready; `None` where it has no cover or this
     /// machine cannot take covers apart.
-    pub fn cover_layers(&self) -> Option<crate::cover::Layers> {
+    pub fn cover_layers(&self) -> Option<crate::work::cover::Layers> {
         self.covers
             .as_ref()
-            .and_then(crate::cover::CoverWorker::current)
+            .and_then(crate::work::cover::CoverWorker::current)
     }
 
     /// Sets the cover directly, or none (tests and screenshots).

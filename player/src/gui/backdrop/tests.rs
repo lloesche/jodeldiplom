@@ -13,7 +13,7 @@ use jodel_gpu::vision::{Depth, Matte};
 
 use super::music::{Hearing, Levels};
 use super::*;
-use crate::cover::{split, Apart, Parts, TextMap};
+use crate::work::cover::{split, Apart, Parts, TextMap};
 
 /// A cover `side` square: a grey ground with a disc of `colour` round
 /// (`cx`, `cy`) (shares), the disc its subject, nearer; its key in the
@@ -409,7 +409,7 @@ fn round_the_subject_is_blurred_and_it_grows_on_the_beat() {
 #[test]
 fn the_song_s_cover_is_kept_once_it_is_seen_to_be_theirs() {
     let (picture, a) = disc_cover(96, [200, 40, 40], (0.5, 0.5), true);
-    let art = |id: u64, image: RgbImage| crate::art::Art {
+    let art = |id: u64, image: RgbImage| crate::work::art::Art {
         id,
         image: Arc::new(image),
     };
@@ -422,7 +422,7 @@ fn the_song_s_cover_is_kept_once_it_is_seen_to_be_theirs() {
     let wide = RgbImage::from_pixel(120, 60, Rgb([120, 110, 100]));
     assert!(!subject::is_of(&other, &a.layers) && !subject::is_of(&wide, &a.layers));
     let mut v = Visualiser::default();
-    let with = |art: Option<crate::art::Art>| Cue {
+    let with = |art: Option<crate::work::art::Art>| Cue {
         art,
         ..cue(Some(&a))
     };
@@ -438,7 +438,7 @@ fn the_song_s_cover_is_kept_once_it_is_seen_to_be_theirs() {
 
 #[test]
 fn the_palette_lights_are_its_vivid_colours_at_full_strength() {
-    let swatch = |rgb, share| crate::cover::Swatch { rgb, share };
+    let swatch = |rgb, share| crate::work::cover::Swatch { rgb, share };
     let palette = [
         swatch([60, 60, 64], 0.6),
         swatch([220, 40, 120], 0.2),
@@ -540,7 +540,7 @@ fn the_card_at_rest_is_the_cover_itself() {
     let mut bright = |art: Option<RgbImage>| {
         let mut v = Visualiser::default();
         let cue = Cue {
-            art: art.map(|image| crate::art::Art {
+            art: art.map(|image| crate::work::art::Art {
                 id: 1,
                 image: Arc::new(image),
             }),

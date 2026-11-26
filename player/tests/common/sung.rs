@@ -11,16 +11,16 @@ use std::sync::Arc;
 
 use jodeldiplom::core::shine::{Shone, Tier};
 use jodeldiplom::core::singing::Singing;
-use jodeldiplom::cover::CoverLayers;
 use jodeldiplom::gui::backdrop::music::Levels;
 use jodeldiplom::gui::fx::{self, At, Board, By, Effects, Music, Out, Text};
 use jodeldiplom::gui::particles::Spray;
 use jodeldiplom::gui::shine::Glow;
+use jodeldiplom::gui::stage::gpu::{Instance, Shape, StageFrame};
 use jodeldiplom::gui::stage::{Lane, Stage};
-use jodeldiplom::gui::stage_gpu::{Instance, Shape, StageFrame};
 use jodeldiplom::gui::streak::Step;
 use jodeldiplom::tiers::TIERS;
 use jodeldiplom::view::karaoke::{timed_lines, KaraokePicture, Score};
+use jodeldiplom::work::cover::CoverLayers;
 
 /// Frames a second.
 pub const FPS: f64 = 60.0;

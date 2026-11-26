@@ -36,7 +36,7 @@ use jodeldiplom::core::karaoke::controls::FADE_MS;
 use jodeldiplom::core::karaoke::SongLyrics;
 use jodeldiplom::core::{update, Action, NowTrack, Screen, State};
 use jodeldiplom::gui::window::{Gui, Message};
-use jodeldiplom::lyrics::Answer;
+use jodeldiplom::work::lyrics::Answer;
 
 use headless::Headless;
 

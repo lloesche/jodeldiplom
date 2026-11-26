@@ -8,7 +8,7 @@
 //! target for the window's pointer ([`Stage::targets`]): one place says
 //! where it is, for the eye and the click alike.
 
-use super::super::stage_gpu::Instance;
+use super::gpu::Instance;
 use super::result::Pen;
 use super::{pill, rgba, Face, Stage, GOLD_DEEP, GOLD_TOP, WHITE};
 use crate::core::keymap::Op;

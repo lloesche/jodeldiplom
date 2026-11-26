@@ -2,8 +2,8 @@
 //! [`App`](super::App): the microphone opened in the background while
 //! Karaoke shows and closed after, the next one chosen, its reading for
 //! each frame, the singer's pitch held against the song's notes, the
-//! singing kept ([`crate::keep`]), a recording for the echo canceller, and
-//! the workers the game's singing needs (the original singer's phrases,
+//! singing kept ([`crate::store::keep`]), a recording for the echo canceller,
+//! and the workers the game's singing needs (the original singer's phrases,
 //! the song's loudness).
 //!
 //! The microphone is only listened to: nothing of it is played.
@@ -18,7 +18,7 @@ use jodel_output::input::Input;
 use jodel_output::mixer::Mixer;
 
 use crate::core::{self, Action, State};
-use crate::outbox::Notify;
+use crate::work::outbox::Notify;
 
 /// Opens a microphone: the input with this id, or the system's default.
 pub type MicOpener = Arc<dyn Fn(Option<&str>) -> Result<Input, String> + Send + Sync>;
@@ -79,14 +79,14 @@ pub(crate) struct MicSession {
     sung: Vec<jodel_output::VoiceBlock>,
     /// The singer's pitch, tracked at the voice's rate.
     yin: Option<(u32, jodel_rhythm::yin::Yin)>,
-    /// The singing of the song in Karaoke mode, kept ([`crate::keep`]).
-    kept: Option<crate::keep::Kept>,
+    /// The singing of the song in Karaoke mode, kept ([`crate::store::keep`]).
+    kept: Option<crate::store::keep::Kept>,
     /// A recording of the echo canceller under way.
     echo_recording: Option<jodel_output::EchoRecording>,
     /// The original singer's phrases, worked out for the shine.
-    shine: crate::shine_cache::ShineWorker,
+    shine: crate::work::shine::ShineWorker,
     /// The songs' loudness as played, measured for the game's sounds.
-    loudness: crate::loudness::LoudnessWorker,
+    loudness: crate::work::loudness::LoudnessWorker,
 }
 
 impl MicSession {
@@ -115,12 +115,12 @@ impl MicSession {
             yin: None,
             kept: None,
             echo_recording: None,
-            shine: crate::shine_cache::ShineWorker::new(
-                analyses.map_or_else(Default::default, crate::shine_cache::Folders::beside),
+            shine: crate::work::shine::ShineWorker::new(
+                analyses.map_or_else(Default::default, crate::work::shine::Folders::beside),
                 Arc::clone(&notify),
             ),
-            loudness: crate::loudness::LoudnessWorker::new(
-                analyses.map_or_else(Default::default, crate::loudness::Folders::beside),
+            loudness: crate::work::loudness::LoudnessWorker::new(
+                analyses.map_or_else(Default::default, crate::work::loudness::Folders::beside),
                 notify,
             ),
         }
@@ -397,7 +397,7 @@ impl MicSession {
         }
         // Kept as it is heard, where that is on.
         if state.config.karaoke_keep && self.kept.as_ref().is_none_or(|k| k.song != path) {
-            self.kept = Some(crate::keep::Kept::new(
+            self.kept = Some(crate::store::keep::Kept::new(
                 path.clone(),
                 Arc::clone(&lyrics),
                 Arc::clone(&waveform),
@@ -422,7 +422,7 @@ impl MicSession {
         let mut kept = self.kept.as_mut().filter(|_| state.config.karaoke_keep);
         if let Some(kept) = kept.as_mut() {
             for &(block, at, continues) in &placed {
-                let how = crate::keep::Sung::new(late, source.key(), singing.shift());
+                let how = crate::store::keep::Sung::new(late, source.key(), singing.shift());
                 kept.push(&block.samples, block.rate, at, continues, how);
             }
         }

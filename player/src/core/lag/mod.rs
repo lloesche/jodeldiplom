@@ -24,8 +24,8 @@
 //! correction: a delay nudged (even to 0) is not corrected ([`target`]).
 //! [`Lag::settle`] is the one step of all this. What is kept of it, a pair
 //! of an output and a microphone each ([`Delays`]: the delay measured and
-//! the nudge), is here too; `crate::delays` keeps it on disk. Another pair
-//! starts the echo's wait and the estimate over: they were of the other.
+//! the nudge), is here too; `crate::store::delays` keeps it on disk. Another
+//! pair starts the echo's wait and the estimate over: they were of the other.
 //!
 //! Mid-song the value in force moves at most [`SLEW`] a second towards a
 //! new one, so the scoring never jumps; a nudge or a sync is taken at once,

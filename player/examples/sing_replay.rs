@@ -28,7 +28,7 @@ use jodeldiplom::core::bubbles;
 use jodeldiplom::core::lag::estimate::{self, Estimator};
 use jodeldiplom::core::lag::{self, Lag, Source};
 use jodeldiplom::core::singing::Singing;
-use jodeldiplom::keep;
+use jodeldiplom::store::keep;
 
 /// A frame heard: when in the song, its pitch (none: not sung).
 type Frame = (f64, Option<f32>);

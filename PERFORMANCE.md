@@ -46,8 +46,8 @@ per-frame transition preview.
 
 All five steps are in (each with its tests):
 
-1. Stems kept: `jodel_playback::stem_file`, `player/src/stems_cache.rs`,
-   the analysis writing them (`rhythm::listen_keeping`), the engine's runs
+1. Stems kept: `jodel_playback::stem_file`, `player/src/store/stems.rs`,
+   the analysis writing them (`work::rhythm::listen_keeping`), the engine's runs
    reading them, the lyrics timing reading the voice. Two real songs on an
    RTX 5080 (`cargo run --release -p jodeldiplom --example stems_kept --
    FILE`): 26–28 MB a minute, read back about 155 times faster than they
@@ -336,7 +336,7 @@ crossfade is held, a route switch or a transition is under way or a jump
 waits, nothing is written again, and the touch lands as before.
 
 **Karaoke mode's stage on the GPU.** The stage draws its shapes with a
-pipeline a group of them (`gui::stage_gpu::Group`), each pipeline's
+pipeline a group of them (`gui::stage::gpu::Group`), each pipeline's
 shader carrying only its own group's code, as Apple's GPUs run a shader
 at the pace its dearest code sets, for every pixel: split so, the stage
 pass on an M-series Mac went from 4.0 / 5.7 / 10.9 ms a frame (normal,
@@ -461,7 +461,7 @@ worst in the same frame). Kind by kind the sheet's paper was the dearest:
 took 0.52–0.8 ms alone, the floor of a pass timed apart. Yet the paper
 does not change once it has unrolled: its shader has no clock, and what
 moves on it (the stamps, the signature, the stars, the words) are shapes
-of their own. So the stage pass bakes it (`gui::stage_gpu::bake`): once a
+of their own. So the stage pass bakes it (`gui::stage::gpu::bake`): once a
 frame's paper has been the same three frames in a row (a window being
 resized is not baked frame by frame), it is drawn into a texture of its
 own (in four strips, below; its quad's pixels, half floats, premultiplied, linear where the
@@ -551,7 +551,7 @@ was the worst and what was on screen then (its time, the beats that had
 just landed, how much it drew).
 
 **What keeps the stage fast (the rules for its GPU code).** Held by
-tests that need no GPU (`gui::stage_gpu::groups`, `gui::particles`):
+tests that need no GPU (`gui::stage::gpu::groups`, `gui::particles`):
 
 - One pipeline a group: the stage's shader picks what it draws by its
   group's constant alone (`GROUP ==`), never by what a shape carries

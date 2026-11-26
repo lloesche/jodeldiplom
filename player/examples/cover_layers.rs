@@ -1,6 +1,6 @@
 //! Covers taken apart, to look at: `cover_layers OUT COVER...` takes each
 //! cover image apart on the GPU as the player does (decoded and shrunk to
-//! 1024 at most, the depth and cut-out models, then `jodeldiplom::cover`)
+//! 1024 at most, the depth and cut-out models, then `jodeldiplom::work::cover`)
 //! and writes to `OUT`:
 //!
 //! - `NAME.sheet.png`: the cover, its depth (near bright), the subject over
@@ -19,7 +19,7 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use image::{GrayImage, Rgb, RgbImage, RgbaImage};
-use jodeldiplom::cover::{self, CoverLayers, GpuSplitter, NearMap};
+use jodeldiplom::work::cover::{self, CoverLayers, GpuSplitter, NearMap};
 
 /// Nearness as a heat colour (dark far, bright near).
 fn heat(n: &NearMap, w: u32, h: u32) -> RgbImage {
@@ -171,7 +171,7 @@ fn main() {
     for path in covers {
         let path = Path::new(path);
         let name = path.file_stem().unwrap().to_string_lossy().into_owned();
-        let Some(image) = jodeldiplom::art::decode(&std::fs::read(path).unwrap()) else {
+        let Some(image) = jodeldiplom::work::art::decode(&std::fs::read(path).unwrap()) else {
             eprintln!("{name}: not an image");
             continue;
         };

@@ -33,7 +33,7 @@ use jodel_rhythm::stems::Stem;
 
 use super::helpers::{fire, fire_light, heat, lattice, mix3, smoothstep, speed, TALLEST_FLAME};
 use super::{At, Clear, Fx, Layer, Live, Music, Out, Reference, Slot, Spec};
-use crate::gui::stage_gpu::Instance;
+use crate::gui::stage::gpu::Instance;
 
 /// The fire: a strip along an edge (`quad`), the lyric band's top and
 /// bottom in `shape[0..2]`, what it keeps clear as [`Clear::on`] puts it,

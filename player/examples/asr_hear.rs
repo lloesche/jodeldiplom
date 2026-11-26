@@ -125,7 +125,7 @@ fn pick(n: usize, from: &str, seed: u64, not: &[String]) {
 /// A song's voice, kept in `voices` (16-bit WAV), else separated (and kept).
 fn voice(path: &Path, voices: Option<&Path>) -> Result<Vec<f32>, String> {
     let kept = voices.and_then(|dir| {
-        jodeldiplom::lyrics::store::cache_key(path).map(|k| dir.join(format!("{k}.wav")))
+        jodeldiplom::work::lyrics::store::cache_key(path).map(|k| dir.join(format!("{k}.wav")))
     });
     if let Some(file) = kept.as_ref().filter(|f| f.is_file()) {
         let bytes = std::fs::read(file).map_err(|e| e.to_string())?;
@@ -134,7 +134,7 @@ fn voice(path: &Path, voices: Option<&Path>) -> Result<Vec<f32>, String> {
             .ok_or("not a 16-bit WAV file")?;
         return Ok(pcm.iter().map(|&s| f32::from(s) / 32768.0).collect());
     }
-    let (v, _) = jodeldiplom::lyrics::timer::separate_16k(path, false)?;
+    let (v, _) = jodeldiplom::work::lyrics::timer::separate_16k(path, false)?;
     if let Some(file) = kept {
         let pcm: Vec<i16> = v
             .iter()

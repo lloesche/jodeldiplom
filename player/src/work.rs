@@ -1,14 +1,36 @@
-//! What the background workers are built of: a [`Queue`] of work their
-//! threads wait on, the two [`Lanes`] a worker is asked in (wanted now,
-//! and to get ready ahead), and a [`Job`] that runs once on a thread of
-//! its own, tells how it stands, and waits for a retry after a failure.
+//! The player's background work: the workers, each on threads of its own
+//! (never the audio's, never holding up play), and what they are built
+//! of.
+//!
+//! - The workers: the beats and tempo of the tracks ([`rhythm`]), their
+//!   lyrics ([`lyrics`]), the covers taken apart for the karaoke
+//!   background ([`cover`]) and the cover art decoded ([`art`]), each
+//!   song's loudness ([`loudness`]) and the original singer's phrases
+//!   ([`shine`]) as the karaoke sings it, and the files the setup fetches
+//!   ([`download`]). Each keeps what it makes in the data folder.
+//! - What they are built of: a [`Queue`] of work their threads wait on,
+//!   the two [`Lanes`] a worker is asked in (wanted now, and to get ready
+//!   ahead), and a [`Job`] that runs once on a thread of its own, tells
+//!   how it stands, and waits for a retry after a failure; their results
+//!   come back to the app through the [`outbox`].
+
+pub mod art;
+pub mod cover;
+pub mod download;
+pub mod loudness;
+pub mod lyrics;
+pub mod outbox;
+pub mod rhythm;
+pub mod shine;
+#[cfg(test)]
+pub(crate) mod told;
 
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
-use crate::outbox::Notify;
+use outbox::Notify;
 
 /// Work for background threads to wait on: what is to be done (`W`), under
 /// a lock, and a stop. Every change wakes every thread waiting, and a stop

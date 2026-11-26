@@ -200,17 +200,19 @@ pub fn start(path: Option<&Path>) -> Result<(PathBuf, Option<PathBuf>), String> 
 
 /// Where the player keeps things by its settings ([`settings`]): the
 /// settings file's folder, and the data folder those settings choose.
-pub fn folders(settings: &Settings) -> Result<crate::dirs::Folders, String> {
+pub fn folders(settings: &Settings) -> Result<crate::store::dirs::Folders, String> {
     settings
         .file
         .as_deref()
-        .and_then(|file| crate::dirs::Folders::new(file, settings.effective.data_folder.as_deref()))
+        .and_then(|file| {
+            crate::store::dirs::Folders::new(file, settings.effective.data_folder.as_deref())
+        })
         .ok_or_else(|| "no folder for the player's settings or data (no home folder?)".into())
 }
 
 /// [`folders`] of the usual settings, for a program started without the
 /// player's command line (the examples).
-pub fn usual_folders() -> Result<crate::dirs::Folders, String> {
+pub fn usual_folders() -> Result<crate::store::dirs::Folders, String> {
     folders(&settings(&Args::default())?)
 }
 
@@ -225,7 +227,7 @@ pub fn app_options(args: &Args) -> Result<AppOptions, String> {
     // A move of the data folder written down and not finished goes on in
     // the background ([`start_mover`]): until it has, what is not moved yet
     // is read where it is.
-    crate::mover::resume(&folders.settings);
+    crate::store::mover::resume(&folders.settings);
     // What a crash left half written (never under a file's name, so never
     // read) goes, in the background, once a day old.
     let mut swept = folders.data.swept();
@@ -244,7 +246,7 @@ pub fn app_options(args: &Args) -> Result<AppOptions, String> {
     // Lyrics: cached in the data folder, edited by hand beside the cache,
     // LRCLIB asked unless turned off. The speech models come once setup
     // has found them ([`set_models`]).
-    let mut lyrics = crate::lyrics::Options::new(true);
+    let mut lyrics = crate::work::lyrics::Options::new(true);
     lyrics.cache = Some(data.lyrics());
     lyrics.edits = Some(data.lyric_edits());
     options.lyrics = Some(lyrics);
@@ -270,7 +272,8 @@ pub fn start_mover(options: &mut AppOptions) {
     // The journal beside the settings file in use.
     if let Some(dir) = options.config_file.as_deref().and_then(Path::parent) {
         options.mover =
-            crate::mover::Mover::start(dir.to_path_buf(), options.notify.clone()).map(Arc::new);
+            crate::store::mover::Mover::start(dir.to_path_buf(), options.notify.clone())
+                .map(Arc::new);
     }
 }
 
@@ -289,7 +292,7 @@ pub fn start_setup(
     let data = options
         .data
         .clone()
-        .unwrap_or_else(|| crate::dirs::Data::in_parent(Path::new(".")));
+        .unwrap_or_else(|| crate::store::dirs::Data::in_parent(Path::new(".")));
     let places = Places::player(&data);
     let notify = options.notify.clone();
     let then = Then {
@@ -316,13 +319,13 @@ pub fn set_models(options: &mut AppOptions, paths: &[PathBuf]) {
     };
     options.covers = found.covers.clone();
     let (speech, asr) = (found.speech, found.asr);
-    let models = crate::lyrics::models::Models::new(speech.clone(), asr);
+    let models = crate::work::lyrics::models::Models::new(speech.clone(), asr);
     options.model = Some(speech);
-    let stems = options.data.as_ref().map(crate::dirs::Data::stems);
+    let stems = options.data.as_ref().map(crate::store::dirs::Data::stems);
     if let Some(lyrics) = &mut options.lyrics {
         lyrics.timer = Some(
-            Arc::new(crate::lyrics::timer::SpeechTimer::new(models, stems))
-                as Arc<dyn crate::lyrics::WordTimer>,
+            Arc::new(crate::work::lyrics::timer::SpeechTimer::new(models, stems))
+                as Arc<dyn crate::work::lyrics::WordTimer>,
         );
     }
 }
@@ -393,18 +396,18 @@ mod tests {
         let path = |p: &Path| p.to_string_lossy().into_owned();
         let a = args(&["--config", &path(&file), &path(&music)]).unwrap();
         let options = app_options(&a).unwrap();
-        let data = dir.join("parent").join(crate::dirs::DATA);
+        let data = dir.join("parent").join(crate::store::dirs::DATA);
         assert_eq!(options.session, Some(settings.join("session.m3u8")));
         assert_eq!(options.queues, Some(settings.join("queues")));
         assert_eq!(options.grids, Some(settings.join("grids")));
-        assert_eq!(options.data, Some(crate::dirs::Data(data.clone())));
+        assert_eq!(options.data, Some(crate::store::dirs::Data(data.clone())));
         assert_eq!(options.rhythm_cache, Some(data.join("analyses")));
         assert_eq!(
             options.lyrics.as_ref().and_then(|l| l.cache.clone()),
             Some(data.join("lyrics"))
         );
         // Everything under its own folder, nothing in the usual settings.
-        let usual = crate::dirs::settings_dir();
+        let usual = crate::store::dirs::settings_dir();
         for p in [&options.session, &options.queues, &options.grids] {
             let p = p.as_deref().unwrap();
             assert!(p.starts_with(&dir), "{}", p.display());
@@ -426,16 +429,16 @@ mod tests {
                 .map(|n| dir.join(&n.file))
                 .collect();
             let mut options = AppOptions::new(PathBuf::from("."));
-            options.lyrics = Some(crate::lyrics::Options::new(false));
+            options.lyrics = Some(crate::work::lyrics::Options::new(false));
             set_models(&mut options, &paths);
             assert_eq!(
                 options.model,
-                Some(dir.join(crate::lyrics::models::MODEL_FILE))
+                Some(dir.join(crate::work::lyrics::models::MODEL_FILE))
             );
             assert!(options.lyrics.as_ref().unwrap().timer.is_some());
             assert_eq!(options.covers.is_some(), gpu);
             let found = Found::of(&paths).unwrap();
-            assert_eq!(found.asr, dir.join(crate::lyrics::models::ASR_FILE));
+            assert_eq!(found.asr, dir.join(crate::work::lyrics::models::ASR_FILE));
         }
     }
 

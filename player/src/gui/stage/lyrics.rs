@@ -24,7 +24,7 @@ use super::super::fx::step_up::burst;
 use super::super::particles::{Kind, Spray};
 use super::super::pixels::mix;
 use super::super::sparks::noise;
-use super::super::stage_gpu::{Instance, Pour, Shape, Tint, ATLAS};
+use super::gpu::{Instance, Pour, Shape, Tint, ATLAS};
 use super::score::rgba8;
 use super::{disc, pill, segment, Song, Stage};
 use crate::view::karaoke::{
@@ -524,7 +524,7 @@ impl Stage {
                     half: ((right - left) / 2.0, pump * (bottom - top) / 2.0),
                     start: b.pops_at.unwrap_or_default() as f32,
                     drift: 0.0,
-                    size: px * (1.0 + super::super::pop::BIGGER * b.size() as f32),
+                    size: px * (1.0 + super::shapes::pop::BIGGER * b.size() as f32),
                     seed: b.seed,
                     rgb: [top_color[0], top_color[1], top_color[2]],
                     kind: Kind::Burst,
@@ -534,7 +534,7 @@ impl Stage {
                 continue;
             }
             // Its ends as square as its bars'.
-            let strain = super::super::pop::strain(b);
+            let strain = super::shapes::pop::strain(b);
             for (p, &((x0, x1), (y, thick))) in b.parts.iter().zip(&bars) {
                 let (c, half) = (
                     ((x0 + x1) / 2.0, y + thick / 2.0),

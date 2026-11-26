@@ -26,8 +26,8 @@ use jodeldiplom::core::shine::{Reference, Shone, Tier};
 use jodeldiplom::core::singing::Singing;
 use jodeldiplom::gui::fx::rainbow::shine_of;
 use jodeldiplom::gui::particles::Spray;
+use jodeldiplom::gui::stage::gpu::{Instance, Shape, StageFrame};
 use jodeldiplom::gui::stage::{Song, Stage, Tint};
-use jodeldiplom::gui::stage_gpu::{Instance, Shape, StageFrame};
 
 #[path = "common/sung.rs"]
 mod sung;

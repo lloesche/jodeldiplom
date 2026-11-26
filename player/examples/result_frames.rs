@@ -15,14 +15,14 @@
 
 use std::sync::Arc;
 
-use jodeldiplom::art::Art;
 use jodeldiplom::core::karaoke::result::{Medal, Shown, SongResult};
 use jodeldiplom::core::shine::{Shone, Tier};
-use jodeldiplom::cover::Swatch;
 use jodeldiplom::gui::backdrop::{Cue, Visualiser};
 use jodeldiplom::gui::present::Offscreen;
 use jodeldiplom::gui::stage::{Stage, Tint};
 use jodeldiplom::view::karaoke::{plain_lines, KaraokePicture, ResultShown, Start};
+use jodeldiplom::work::art::Art;
+use jodeldiplom::work::cover::Swatch;
 
 // The fonts build.rs found: `EMBEDDED_FONTS`.
 include!(concat!(env!("OUT_DIR"), "/fonts.rs"));

@@ -28,7 +28,7 @@
 use super::bulbs::{self, Row};
 use super::helpers::{fire, fire_light, smoothstep};
 use super::{At, Fx, Layer, Live, Music, Out, Reference, Slot, Spec};
-use crate::gui::stage_gpu::Instance;
+use crate::gui::stage::gpu::Instance;
 
 /// The flames along an edge: `shape` the span (from `x`, to `z`), its root
 /// line (`y`) and outward (`w`: 1 down, -1 up), `params[1]` their height,

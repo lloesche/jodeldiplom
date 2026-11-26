@@ -3,7 +3,7 @@
 //! dark outline round the lyrics and a soft rim round a lit bubble's
 //! letters.
 
-use super::super::stage_gpu::Instance;
+use super::gpu::Instance;
 use super::{Face, Stage};
 
 /// Dark copies of text under it, so it reads over whatever is behind:

@@ -1,11 +1,11 @@
 //! The files kept on disk, pinned per schema version (see
-//! `player/src/cache.rs`): what this player writes of each schema must be
-//! exactly the sample of that version in `tests/schemas/`, and it must
-//! read that sample back.
+//! `player/src/store/cache.rs`): what this player writes of each schema
+//! must be exactly the sample of that version in `tests/schemas/`, and it
+//! must read that sample back.
 //!
 //! A change to what a schema's files hold, or how, fails here. Then raise
-//! the schema's version in `player/src/cache.rs` and run the tests with
-//! `UPDATE_SCHEMAS=1`, which adds the new version's sample (it never
+//! the schema's version in `player/src/store/cache.rs` and run the tests
+//! with `UPDATE_SCHEMAS=1`, which adds the new version's sample (it never
 //! changes the sample of a version already there).
 
 #![allow(
@@ -19,11 +19,12 @@ use jodel_lyrics::{Found, Lyrics, Source};
 use jodel_rhythm::meter::{Grouping, Span};
 use jodel_rhythm::waveform::{Lane, Waveform};
 use jodel_rhythm::{Analysis, CandidateReport, Method, Region};
-use jodeldiplom::cache::{self, Schema};
 use jodeldiplom::core::grid::Grid;
-use jodeldiplom::lyrics::edits::{edits_of, from_text, to_text};
-use jodeldiplom::lyrics::store::{Cache, Kept};
-use jodeldiplom::{grids, rhythm};
+use jodeldiplom::store::cache::{self, Schema};
+use jodeldiplom::store::grids;
+use jodeldiplom::work::lyrics::edits::{edits_of, from_text, to_text};
+use jodeldiplom::work::lyrics::store::{Cache, Kept};
+use jodeldiplom::work::rhythm;
 
 /// The sample of `schema`'s version `version`.
 fn sample(schema: &Schema, version: u32, extension: &str) -> PathBuf {
@@ -50,7 +51,7 @@ fn pinned(schema: &Schema, extension: &str, written: &[u8]) -> Vec<u8> {
             assert!(
                 kept == written,
                 "The {} files this player writes changed ({} differs).\n\
-                 Raise its version in player/src/cache.rs, then run the tests \
+                 Raise its version in player/src/store/cache.rs, then run the tests \
                  with UPDATE_SCHEMAS=1 to add the new version's sample.\n\
                  Written now:\n{}",
                 schema.name,
@@ -282,8 +283,8 @@ fn grid_files_are_pinned_and_every_version_is_read() {
 
 #[test]
 fn patch_files_are_pinned_and_every_version_is_read() {
-    use jodeldiplom::patches::{from_text, to_text};
     use jodeldiplom::sfx::conductor::Atom;
+    use jodeldiplom::store::patches::{from_text, to_text};
     use jodeldiplom::theme::CLASSIC;
     // The bubble's pop edited: a longer decay, more reverb, mono.
     let mut pop = CLASSIC.patch(Atom::Pop);
@@ -309,7 +310,7 @@ fn patch_files_are_pinned_and_every_version_is_read() {
 
 #[test]
 fn score_files_are_pinned_and_every_version_is_read() {
-    use jodeldiplom::scores::{from_text, to_text, Best, Bests};
+    use jodeldiplom::store::scores::{from_text, to_text, Best, Bests};
     let mut bests = Bests::new();
     bests.insert(
         "/music/a song.flac".into(),
@@ -331,7 +332,7 @@ fn score_files_are_pinned_and_every_version_is_read() {
 #[test]
 fn delay_files_are_pinned_and_every_version_is_read() {
     use jodeldiplom::core::lag::{Delay, Delays};
-    use jodeldiplom::delays::{from_text, to_text};
+    use jodeldiplom::store::delays::{from_text, to_text};
     let mut kept = Delays::new();
     kept.insert(
         (
@@ -382,8 +383,8 @@ fn a_file_without_a_header_is_the_users_first_version_or_no_cache() {
         let first = std::fs::read(sample(&schema, 1, "txt")).unwrap();
         let text = headerless(&first);
         let read = match schema.name {
-            "scores" => jodeldiplom::scores::from_text(&text).len(),
-            _ => jodeldiplom::delays::from_text(&text).len(),
+            "scores" => jodeldiplom::store::scores::from_text(&text).len(),
+            _ => jodeldiplom::store::delays::from_text(&text).len(),
         };
         assert!(read > 0, "{}", schema.name);
     }
@@ -411,8 +412,8 @@ fn a_file_without_a_header_is_the_users_first_version_or_no_cache() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-fn small_layers() -> jodeldiplom::cover::CoverLayers {
-    use jodeldiplom::cover::{CoverLayers, NearMap, Swatch};
+fn small_layers() -> jodeldiplom::work::cover::CoverLayers {
+    use jodeldiplom::work::cover::{CoverLayers, NearMap, Swatch};
     let near = |v: u16| NearMap {
         width: 2,
         height: 2,
@@ -441,9 +442,9 @@ fn small_layers() -> jodeldiplom::cover::CoverLayers {
 
 #[test]
 fn cover_files_are_pinned() {
-    use jodeldiplom::cover::{from_bytes, to_bytes, CoverStore, Perceptual};
+    use jodeldiplom::work::cover::{from_bytes, to_bytes, CoverStore, Perceptual};
     // The layout pinned, whatever made it: a fixed maker here.
-    let layers = jodeldiplom::cover::Kept {
+    let layers = jodeldiplom::work::cover::Kept {
         made: "a-maker".into(),
         thumb: image::RgbImage::from_fn(2, 2, |x, y| image::Rgb([x as u8, y as u8, 7])),
         layers: small_layers(),
@@ -492,7 +493,7 @@ fn cover_files_are_pinned() {
 #[test]
 fn shine_files_are_pinned() {
     use jodeldiplom::core::shine::{Par, Phrase, Reference, Yardstick};
-    use jodeldiplom::shine_cache;
+    use jodeldiplom::work::shine;
     let reference = Reference {
         phrases: vec![
             None,
@@ -518,20 +519,20 @@ fn shine_files_are_pinned() {
         "\nversion {}\n",
         jodeldiplom::core::shine::reference::VERSION
     );
-    let text = shine_cache::to_text(&reference).replace(&measured, "\nversion x\n");
+    let text = shine::to_text(&reference).replace(&measured, "\nversion x\n");
     let kept = pinned(&cache::SHINE, "txt", text.as_bytes());
     let kept = String::from_utf8(kept)
         .unwrap()
         .replace("\nversion x\n", &measured);
-    assert_eq!(shine_cache::from_text(&kept), Some(reference));
+    assert_eq!(shine::from_text(&kept), Some(reference));
     let other = kept.replace("\nversion ", "\nversion 9");
-    assert_eq!(shine_cache::from_text(&other), None);
+    assert_eq!(shine::from_text(&other), None);
 }
 
 /// A song's loudness kept: pinned, read back the same.
 #[test]
 fn loudness_files_are_pinned() {
-    use jodeldiplom::loudness::{self, Measured, Played};
+    use jodeldiplom::work::loudness::{self, Measured, Played};
     let measured = Measured {
         lufs: Some(-14.96),
         from: Played::Stems {

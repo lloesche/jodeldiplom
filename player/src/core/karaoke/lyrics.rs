@@ -9,7 +9,7 @@ use jodel_lyrics::{Detail, Lyrics, Source};
 
 use super::{in_mode, song_index};
 use crate::core::{Effect, Side, State};
-use crate::lyrics::Answer;
+use crate::work::lyrics::Answer;
 
 /// The warning shown with lyrics a speech recogniser heard ([`SongLyrics::heard`]).
 pub const HEARD_WARNING: &str =

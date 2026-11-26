@@ -30,7 +30,7 @@ pub fn run(args: &Args) -> Result<(), String> {
     let folders = cli::folders(&settings)?;
     // While the data folder moves, what has not moved yet is found where
     // it is.
-    crate::mover::resume(&folders.settings);
+    crate::store::mover::resume(&folders.settings);
     let data = &folders.data;
     section("Settings", settings_lines(&settings));
     section("Caches", caches(&folders));
@@ -48,21 +48,21 @@ pub fn run(args: &Args) -> Result<(), String> {
     );
     section(
         "Speech model (karaoke's word timing)",
-        vec![match crate::lyrics::models::model_path(&data.0) {
+        vec![match crate::work::lyrics::models::model_path(&data.0) {
             Some(path) => format!("found: {}", path.display()),
             None => format!(
                 "not found (looked beside the binary, in the app's Resources, and in the data folder) for {}",
-                crate::lyrics::models::MODEL_FILE
+                crate::work::lyrics::models::MODEL_FILE
             ),
         }],
     );
     section(
         "Speech recogniser (whether fetched lyrics fit the song)",
-        vec![match crate::lyrics::models::asr_model_path(&data.0) {
+        vec![match crate::work::lyrics::models::asr_model_path(&data.0) {
             Some(path) => format!("found: {}", path.display()),
             None => format!(
                 "not found (looked beside the binary, in the app's Resources, and in the data folder) for {}",
-                crate::lyrics::models::ASR_FILE
+                crate::work::lyrics::models::ASR_FILE
             ),
         }],
     );
@@ -71,18 +71,18 @@ pub fn run(args: &Args) -> Result<(), String> {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_secs());
-    let recent = crate::rhythm::recent(&data.analyses());
+    let recent = crate::work::rhythm::recent(&data.analyses());
     section(
         &format!(
             "Last analyses (newest first, up to {})",
-            crate::rhythm::RECENT_KEPT
+            crate::work::rhythm::RECENT_KEPT
         ),
         recent_lines(&recent, now),
     );
     Ok(())
 }
 
-/// The kept analyses ([`crate::rhythm::recent`]) for the report: each
+/// The kept analyses ([`crate::work::rhythm::recent`]) for the report: each
 /// one's lines, its time as how long ago.
 pub fn recent_lines(entries: &[String], now: u64) -> Vec<String> {
     if entries.is_empty() {
@@ -106,9 +106,9 @@ pub fn recent_lines(entries: &[String], now: u64) -> Vec<String> {
 /// Whether covers are taken apart on this machine: the two models'
 /// weights, whether they set up on the GPU, how long a cover of 1024 × 1024
 /// takes (the models, then the taking apart), the GPU memory they hold.
-fn covers(data: &crate::dirs::Data) -> Vec<String> {
-    use crate::cover::{self, GpuSplitter};
+fn covers(data: &crate::store::dirs::Data) -> Vec<String> {
     use crate::setup::Lookup;
+    use crate::work::cover::{self, GpuSplitter};
     let places = crate::setup::Places::player(data);
     let found: Vec<std::path::PathBuf> = crate::setup::manifest()
         .iter()
@@ -129,7 +129,7 @@ fn covers(data: &crate::dirs::Data) -> Vec<String> {
         format!("found: {}", models.matte.display()),
     ];
     let splitter = GpuSplitter::new(models);
-    let image = crate::art::sample_cover(1024);
+    let image = crate::work::art::sample_cover(1024);
     let started = std::time::Instant::now();
     match splitter.parts(&image) {
         Err(e) => lines.push(format!(
@@ -263,7 +263,7 @@ fn settings_lines(settings: &cli::Settings) -> Vec<String> {
     lines
 }
 
-fn caches(folders: &crate::dirs::Folders) -> Vec<String> {
+fn caches(folders: &crate::store::dirs::Folders) -> Vec<String> {
     vec![
         format!("beat analyses: {}", folders.data.analyses().display()),
         format!("beat grids fixed by hand: {}", folders.grids().display()),

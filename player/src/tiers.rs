@@ -470,7 +470,7 @@ mod tests {
         let top = Tier::TOP.spec().layers;
         assert!(top.streak.contains(&Streak::Payout) && top.chime.contains(&Chime::Choir));
         assert_eq!(crate::core::singing::rung(0), None);
-        let marks = crate::gui::glory::MARKS;
+        let marks = crate::gui::stage::shapes::glory::MARKS;
         for t in Tier::ALL {
             assert_eq!(Tier::named(t.name()), t);
             assert_eq!(t.spec().bands.fract(), 0.0, "{}", t.name());

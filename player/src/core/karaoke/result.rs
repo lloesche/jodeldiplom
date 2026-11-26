@@ -104,7 +104,7 @@ pub(crate) fn ended(state: &mut State, index: usize) {
         state
             .karaoke
             .bests
-            .insert(key, crate::scores::Best { points, hit, words });
+            .insert(key, crate::store::scores::Best { points, hit, words });
         state.karaoke.bests_changed = true;
     }
     state.karaoke.results += 1;

@@ -42,7 +42,7 @@ use crate::gui::big_text::{Face, COVER_PAD, LINE};
 use crate::gui::particles::{Kind, Look, Spray, Sprite};
 use crate::gui::shine::hue;
 use crate::gui::sparks::{rand, TAU, WHITE};
-use crate::gui::stage_gpu::Instance;
+use crate::gui::stage::gpu::Instance;
 use crate::theme::Theme;
 use crate::tiers::{Tier, TIERS};
 

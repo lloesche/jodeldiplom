@@ -27,9 +27,9 @@ fn main() {
     if args.get(2).is_some_and(|a| a == "--song") {
         let path = Path::new(&args[3]);
         let text = fs::read_to_string(&args[4]).unwrap();
-        let file = jodeldiplom::stems_cache::open(&stems, path).expect("its stems kept");
-        let voice = jodeldiplom::lyrics::timer::voice_16k(file).unwrap();
-        let key = jodeldiplom::lyrics::store::cache_key(path).unwrap();
+        let file = jodeldiplom::store::stems::open(&stems, path).expect("its stems kept");
+        let voice = jodeldiplom::work::lyrics::timer::voice_16k(file).unwrap();
+        let key = jodeldiplom::work::lyrics::store::cache_key(path).unwrap();
         let dir = out.join(&key);
         let lines: Vec<&str> = text
             .lines()
@@ -64,7 +64,7 @@ fn main() {
         }
         let song = parts[2];
         let path = Path::new(song.rsplitn(3, ' ').nth(2).unwrap_or(song));
-        let lyrics_key = jodeldiplom::cache::name(song);
+        let lyrics_key = jodeldiplom::store::cache::name(song);
         let dir = out.join(&lyrics_key);
         if dir.join("voice.wav").is_file() {
             continue;
@@ -73,17 +73,17 @@ fn main() {
         else {
             continue;
         };
-        let Some(body) = jodeldiplom::cache::LYRICS_TEXT.body(&found) else {
+        let Some(body) = jodeldiplom::store::cache::LYRICS_TEXT.body(&found) else {
             continue;
         };
         let lyrics = jodel_lyrics::Lyrics::parse(body, jodel_lyrics::Source::Unknown);
         if lyrics.source != jodel_lyrics::Source::Lrclib || lyrics.lines.len() < 8 {
             continue;
         }
-        let Some(file) = jodeldiplom::stems_cache::open(&stems, path) else {
+        let Some(file) = jodeldiplom::store::stems::open(&stems, path) else {
             continue;
         };
-        let Ok(voice) = jodeldiplom::lyrics::timer::voice_16k(file) else {
+        let Ok(voice) = jodeldiplom::work::lyrics::timer::voice_16k(file) else {
             continue;
         };
         let lines: Vec<String> = lyrics

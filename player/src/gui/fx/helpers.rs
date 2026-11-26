@@ -5,9 +5,9 @@
 //! a line's letters sit in their quad, how fast a look moves; on the
 //! processor here, and in WGSL ([`wgsl`]: `fx_heat`, `fx_fire`,
 //! `fx_fire_light`, `fx_letter_up`, `fx_speed`) once in a shader that
-//! carries any effect's code ([`crate::gui::stage_gpu::shader`]).
+//! carries any effect's code ([`crate::gui::stage::gpu::shader`]).
 
-pub(super) use crate::gui::glory::{lattice, vnoise};
+pub(super) use crate::gui::stage::shapes::glory::{lattice, vnoise};
 pub(super) use crate::gui::wgsl_math::{clamp01, mix3, smoothstep};
 
 /// Fire's colour at `heat` (0 to 1): deep red, red, orange, yellow, white

@@ -14,13 +14,13 @@ use iced::Size;
 use image::{Rgb, RgbaImage};
 use jodel_output::SimClock;
 use jodeldiplom::app::{App, AppOptions, Output};
-use jodeldiplom::art::{sample_cover, Art};
 use jodeldiplom::core::{Screen, Side, State};
 use jodeldiplom::gui::lanes::{Lanes, Metrics, Offscreen as LaneOffscreen};
 use jodeldiplom::gui::widgets::cover::Covers;
 use jodeldiplom::gui::window::{Gui, Message};
 use jodeldiplom::gui::{lane_spots, metrics, transition};
 use jodeldiplom::icon::Style;
+use jodeldiplom::work::art::{sample_cover, Art};
 
 use jodeldiplom::view::palette;
 

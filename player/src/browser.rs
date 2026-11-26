@@ -30,7 +30,7 @@ use jodel_playback::TrackInfo;
 
 use crate::core::text::khz_short;
 use crate::core::Action;
-use crate::outbox::Outbox;
+use crate::work::outbox::Outbox;
 use crate::work::Queue;
 
 /// What a row is.
@@ -355,7 +355,7 @@ pub fn list_dir(dir: &Path) -> io::Result<Vec<Entry>> {
             entries.push(Entry::new(path, EntryKind::Dir));
         } else if kind.is_file() && is_playable(&path) {
             entries.push(Entry::new(path, EntryKind::File));
-        } else if kind.is_file() && crate::session::is_playlist(&path) {
+        } else if kind.is_file() && crate::store::session::is_playlist(&path) {
             entries.push(Entry::new(path, EntryKind::Playlist));
         }
     }

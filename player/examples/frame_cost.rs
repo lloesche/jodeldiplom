@@ -60,19 +60,19 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
 
-use jodeldiplom::art::Art;
 use jodeldiplom::core::karaoke::result::{Reveal, Shown, SongResult, UNROLL};
 use jodeldiplom::core::shine::{Reference, Shone, Tier};
 use jodeldiplom::core::singing::Singing;
-use jodeldiplom::cover::{Apart, Layers};
 use jodeldiplom::gui::backdrop::music::Hearing;
 use jodeldiplom::gui::backdrop::{BackdropFrame, Cue, Visualiser};
 use jodeldiplom::gui::fx::{By, Effects, Fx, Music, Treat, Use};
 use jodeldiplom::gui::present::Offscreen;
+use jodeldiplom::gui::stage::gpu::{Instance, Shape, StageFrame};
 use jodeldiplom::gui::stage::{Song, Stage, Tint};
-use jodeldiplom::gui::stage_gpu::{Instance, Shape, StageFrame};
 use jodeldiplom::theme::Theme;
 use jodeldiplom::view::karaoke::{KaraokePicture, ResultShown};
+use jodeldiplom::work::art::Art;
+use jodeldiplom::work::cover::{Apart, Layers};
 
 #[path = "../tests/common/sung.rs"]
 mod sung;
@@ -647,7 +647,7 @@ fn main() {
         Theme::named(name).unwrap_or_else(|| panic!("no theme named {name:?}"))
     });
     let bytes = std::fs::read(cover).expect("the layers");
-    let layers = jodeldiplom::cover::from_bytes(&bytes)
+    let layers = jodeldiplom::work::cover::from_bytes(&bytes)
         .expect("layers")
         .layers;
     let art = Art {

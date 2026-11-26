@@ -19,7 +19,7 @@
 //! written: each key, the [`Config`] field it sets (whose doc says what it
 //! means) and the kind of value it takes.
 //!
-//! The file is in the settings folder ([`crate::dirs`]).
+//! The file is in the settings folder ([`crate::store::dirs`]).
 //!
 //! Command-line options override it for one run. Settings changed in the
 //! UI are written back to it ([`Config::merge_changes`]).
@@ -335,7 +335,7 @@ pub struct Config {
     pub karaoke_game: bool,
     /// Karaoke: the song's notes show under the line being sung.
     pub karaoke_notes: bool,
-    /// Karaoke: each song's singing is kept ([`crate::keep`]).
+    /// Karaoke: each song's singing is kept ([`crate::store::keep`]).
     pub karaoke_keep: bool,
     /// Karaoke: the game's sound effects ([`crate::sfx`]): the Effects
     /// strip's fader (to a tenth of a dB, −∞ off) and mute (its solo is
@@ -344,8 +344,8 @@ pub struct Config {
     /// Karaoke: the game's theme, how its tiers, effects and sounds look
     /// and sound ([`crate::theme`]).
     pub karaoke_theme: &'static crate::theme::Theme,
-    /// The folder the data folder ([`crate::dirs::DATA`]) is in; `None`:
-    /// the system's place for it ([`crate::dirs::default_data_parent`]).
+    /// The folder the data folder ([`crate::store::dirs::DATA`]) is in; `None`:
+    /// the system's place for it ([`crate::store::dirs::default_data_parent`]).
     pub data_folder: Option<PathBuf>,
 }
 
@@ -540,9 +540,9 @@ fn quote(text: &str) -> String {
 }
 
 /// Where the config file lives when `--config` is not given: in the
-/// settings folder ([`crate::dirs::settings_dir`]).
+/// settings folder ([`crate::store::dirs::settings_dir`]).
 pub fn default_path() -> Option<PathBuf> {
-    crate::dirs::settings_file()
+    crate::store::dirs::settings_file()
 }
 
 #[cfg(test)]

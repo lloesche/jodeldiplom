@@ -15,11 +15,11 @@
 //! landing in the lane under it). It is drawn over everything, the bursts
 //! too, so it always reads.
 
+use super::gpu::Instance;
 use super::{disc, pill, rgba, Lane, Stage, GOLD, GOLD_TOP, WHITE};
 use crate::core::singing::{multiplier, Singing};
 use crate::gui::big_text::{Face, COVER_PAD};
 use crate::gui::fx::{self, Text};
-use crate::gui::stage_gpu::Instance;
 use crate::tiers::Tier;
 
 /// The widest streak the pill makes room for.

@@ -30,7 +30,7 @@ use jodel_playback::{
 use jodel_rhythm::{Analysis, Method};
 use jodeldiplom::core::transition::{self, Preset};
 use jodeldiplom::core::RhythmRecipe;
-use jodeldiplom::rhythm::analyze_file;
+use jodeldiplom::work::rhythm::analyze_file;
 
 /// Seconds of FROM before the window that the file starts at.
 const BEFORE: f64 = 12.0;

@@ -31,7 +31,7 @@ fn main() -> Result<(), String> {
         stems: true,
     };
     let started = Instant::now();
-    let listened = jodeldiplom::rhythm::listen_keeping(&file, &recipe, Some(out.clone()))?;
+    let listened = jodeldiplom::work::rhythm::listen_keeping(&file, &recipe, Some(out.clone()))?;
     println!(
         "analysed with stems in {:.1} s (stems {:.1} s){}",
         started.elapsed().as_secs_f64(),

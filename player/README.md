@@ -68,7 +68,7 @@ window also takes `--save-frame FILE.png`.
 
 ## Folders and setup
 
-The player keeps two folders (`dirs.rs`):
+The player keeps two folders (`store/dirs.rs`):
 
 | Folder | What | Where |
 |---|---|---|
@@ -84,7 +84,7 @@ file says, and touches nothing of the usual player's.
 `→` opens a folder, `backspace` or `←` goes up (to the drives on Windows),
 and the first row, **move the data folder here**, chooses the folder shown;
 the data folder is made in it (or taken, if it is there already). Then
-everything in the old one moves there (`mover.rs`), with a bar on the row:
+everything in the old one moves there (`store/mover.rs`), with a bar on the row:
 
 - The move is written down first (`moving.txt` in the settings folder),
   then each file goes over alone: renamed where both are on one disk, else
@@ -766,7 +766,7 @@ editor's screen: `e` or Edit lyrics on the Karaoke tab): a word moved, made long
 not to be sung (a backing vocal, an ad-lib), the voice's level set over
 it, a word or a line replaced, put in or taken out, every change undone
 and redone. The edits are the user's own (`lyric-edits` in the data
-folder, `lyrics::edits`): their text is the song's from then on, and the
+folder, `work::lyrics::edits`): their text is the song's from then on, and the
 song is timed again with them, the words moved by hand held exactly where
 they were set and the rest aligned around them (`jodel_lyrics::ctc`); a
 new aligner keeps them so. A word not to be sung gets no bubble and is
@@ -1352,19 +1352,25 @@ letters written on the keys they play.
 | `core` | state, `Action`, `update(state, action) -> effects` (its concerns in `core::browse`, `core::queue`, `core::settings`, `core::work` and `core::help`), keymap; no geometry: what the window's size does to the keys and the pointer comes in as `core::Fit`; the Transition tab (`core::transition::tab`, the lanes it shares with Karaoke in `core::lanes`), the grid fixes (`core::grid`), the transitions' presets and plans (`core::transition`), the Karaoke tab and mode (`core::karaoke`, its sliders in `core::sliders`), the key the song plays in (`core::key`), the Mixer tab's desk (`core::desk`: its strips, settings, the fader's taper, the meters' ballistics, the actions its widgets send) and the stems on it (`core::stems`: the stem keys as strip mutes on a bar of the head on air, when the engine makes stems, the Karaoke voice's lanes on both heads). Pure. |
 | `view` | the presentation models the window draws (the list, the info, the bottom bar with the spectrum's plot, the Transition tab with `view::lanes`, which the Karaoke tab shares, the Karaoke tab and Karaoke mode's picture, the settings, the help, Now playing) |
 | `app` | the running player: the engine and its desk, background workers, the spectrum (the mixer's monitor), cover; carries out the effects (`app::effects`), answers the window's frames (`app::frame`); the microphone and the singing heard through it (`app::mic`) |
-| `work`, `outbox` | what the background workers are built of (a queue their threads wait on, the lanes of what is wanted now and ahead, a job with a retry), and the way their results come back to the app |
 | `desk_wiring` | the desk the engine plays on: a mixer that holds the device (`jodel_output::mixer`), the player's strip with its stems' strips inside it, the preview's, the engine on two lane inputs of them (its two heads: a transition's next track plays on the other); the Mixer tab's settings made on it, its look for a frame |
 | `preview` | the preview's players, guests on the mixer (one per file, two at most): only the latest file loaded, crossfades on the mixer's clock, the song ducked and back |
 | `browser` | folder listing, file details read lazily for the rows on screen (cached for the session), recursive search, folder walk |
 | `config`, `cli` | the settings file and the command line |
-| `spectrum`, `art` | FFT of the tapped output, cover decoding and fitting |
-| `rhythm` | the beat analysis in the background (decode, mono, resample to 22.05 kHz, [`jodel-rhythm`](../rhythm)), the waveforms, and their cache |
-| `grids` | the beat grids fixed by hand, kept per track in the settings folder |
-| `patches` | the game's sounds' patches kept on the Synth tab (`patches/` in the data folder), a file a theme's atom, each parameter by its name (`core::synth_tab` the tab, `sfx::bench` its sounds by moment, `gui::screens::synth` its widgets) |
-| `cache` | the schemas of what is kept on disk between runs, and their versions |
-| `stems_cache` | the tracks' stems kept (`stems/`): their files' names, the store the engine reads them from, pruning to 30 GB |
-| `loudness` | each song's loudness as the karaoke plays it (ITU-R BS.1770, `jodel_rhythm::loudness`), measured once on a thread of its own and kept (`loudness/`), for the game's sounds to follow (`sfx::conductor::calibration`) |
-| `gui` | the window, an iced application (`gui::window`); every screen but Karaoke mode in iced's widgets (`gui::screens`, the main screen laid out from the measures in `gui::metrics`; the Mixer tab `gui::mixer`; the covers `gui::widgets::cover`, the lanes `gui::lanes`); Karaoke mode in the window's own widgets too (`gui::screens::karaoke::mode`), its stage a widget of its own on the GPU (`gui::stage_view`, `gui::present`, `gui::stage`, `gui::stage_gpu`, a pipeline a group of shapes; what keeps it fast, held by tests, in PERFORMANCE.md) and its effects (`gui::fx`: an effect a module, registered by one line, its strength eased from the singing and moved by the music on a board, drawing at its points of the stage, its shaders held to its maths) |
+| `spectrum` | FFT of the tapped output |
+| `work` | the background workers and what they are built of (a queue their threads wait on, the lanes of what is wanted now and ahead, a job with a retry), their results coming back to the app through `work::outbox` |
+| `work::rhythm` | the beat analysis in the background (decode, mono, resample to 22.05 kHz, [`jodel-rhythm`](../rhythm)), the waveforms, and their cache |
+| `work::lyrics` | the tracks' lyrics in the background: from the file's tag, an `.lrc` beside it, the cache or LRCLIB, timed word by word, and kept (`lyrics/`; the edits by hand in `lyric-edits/`) |
+| `work::cover` | a cover taken apart once for the karaoke background (its subject, the plate behind it, their depth, its palette), kept (`covers/`) |
+| `work::art` | cover decoding and fitting |
+| `work::loudness` | each song's loudness as the karaoke plays it (ITU-R BS.1770, `jodel_rhythm::loudness`), measured once on a thread of its own and kept (`loudness/`), for the game's sounds to follow (`sfx::conductor::calibration`) |
+| `work::shine` | the original singer's phrases for the song in Karaoke mode, measured on a thread of their own and kept (`shine/`) |
+| `work::download` | the files the setup fetches, checked against their length and SHA-256 before they are put in place |
+| `store` | what is kept on disk between runs: the two folders (`store::dirs`), a move of the data folder (`store::mover`), the session and the queues saved (`store::session`), the singer's delays (`store::delays`), the best scores (`store::scores`), the singing kept (`store::keep`) |
+| `store::cache` | the schemas of what is kept on disk between runs, and their versions |
+| `store::grids` | the beat grids fixed by hand, kept per track in the settings folder |
+| `store::patches` | the game's sounds' patches kept on the Synth tab (`patches/` in the data folder), a file a theme's atom, each parameter by its name (`core::synth_tab` the tab, `sfx::bench` its sounds by moment, `gui::screens::synth` its widgets) |
+| `store::stems` | the tracks' stems kept (`stems/`): their files' names, the store the engine reads them from, pruning to 30 GB |
+| `gui` | the window, an iced application (`gui::window`); every screen but Karaoke mode in iced's widgets (`gui::screens`, the main screen laid out from the measures in `gui::metrics`; the Mixer tab `gui::mixer`; the covers `gui::widgets::cover`, the lanes `gui::lanes`); Karaoke mode in the window's own widgets too (`gui::screens::karaoke::mode`), its stage a widget of its own on the GPU (`gui::stage_view`, `gui::present`, `gui::stage`, `gui::stage::gpu`, a pipeline a group of shapes, `gui::stage::shapes` the shapes of its shader; what keeps it fast, held by tests, in PERFORMANCE.md) and its effects (`gui::fx`: an effect a module, registered by one line, its strength eased from the singing and moved by the music on a board, drawing at its points of the stage, its shaders held to its maths) |
 | `tiers` | the phrase tiers, one table: a row a tier, all it takes and shows (its bars, colours, glow, sounds, sticker and the effects it lists) |
 
 The window's font is Sarasa Fixed J (Iosevka's Latin with Source Han Sans
@@ -1453,7 +1459,7 @@ allow it under System Settings, Privacy & Security (Open Anyway).
 ### What is kept on disk
 
 Each kind of file the player keeps between runs has a schema with a
-version, in `src/cache.rs`:
+version, in `src/store/cache.rs`:
 
 - analyses and waveforms (`rhythm/`);
 - the tracks' stems (`stems/`, beside `rhythm/`), written by the analysis

@@ -69,13 +69,14 @@ fn main() {
     let out = Path::new(&args[2]);
     let models = data.join("models");
     let asr = jodel_lyrics::asr::packed::PackedModel::open(
-        &models.join(jodeldiplom::lyrics::models::ASR_FILE),
+        &models.join(jodeldiplom::work::lyrics::models::ASR_FILE),
     )
     .and_then(|p| jodel_gpu::GpuAsr::new(&p))
     .expect("the speech recogniser on the GPU");
-    let cpu =
-        jodel_lyrics::speech::Wav2Vec2::open(&models.join(jodeldiplom::lyrics::models::MODEL_FILE))
-            .unwrap();
+    let cpu = jodel_lyrics::speech::Wav2Vec2::open(
+        &models.join(jodeldiplom::work::lyrics::models::MODEL_FILE),
+    )
+    .unwrap();
     let speech: Arc<dyn jodel_lyrics::aligner::Acoustic + Send + Sync> =
         Arc::new(jodel_gpu::GpuSpeech::new(&cpu).expect("the speech model on the GPU"));
     let cached = analyses(data);
@@ -99,7 +100,7 @@ fn main() {
             .or_else(|| {
                 cached
                     .iter()
-                    .find(|(s, _, _)| jodeldiplom::cache::name(s) == id)
+                    .find(|(s, _, _)| jodeldiplom::store::cache::name(s) == id)
                     .map(|(s, _, _)| PathBuf::from(s.rsplitn(3, ' ').nth(2).unwrap_or(s)))
             });
         let Some(song) = song else {
@@ -110,8 +111,8 @@ fn main() {
         let analysis = cached
             .iter()
             .filter(|(s, _, _)| s.starts_with(&song_text))
-            .find_map(|(_, key, text)| jodeldiplom::rhythm::from_text(key, text))
-            .or_else(|| jodeldiplom::rhythm::analyze_file(&song, &recipe).ok());
+            .find_map(|(_, key, text)| jodeldiplom::work::rhythm::from_text(key, text))
+            .or_else(|| jodeldiplom::work::rhythm::analyze_file(&song, &recipe).ok());
         let voice = wav::read_wav(&dir.join("voice.wav")).expect("the voice");
         let heard = match asr.transcribe(&voice) {
             Ok(h) => h,
@@ -120,8 +121,10 @@ fn main() {
                 continue;
             }
         };
-        let text =
-            jodel_lyrics::lines::transcript_lyrics(&heard, jodeldiplom::lyrics::timer::asr_maker());
+        let text = jodel_lyrics::lines::transcript_lyrics(
+            &heard,
+            jodeldiplom::work::lyrics::timer::asr_maker(),
+        );
         let glimpses = asr.glimpses(&voice).unwrap_or_default();
         let timed = jodel_lyrics::aligner::CtcAligner::new(Arc::clone(&speech)).align(
             &voice,

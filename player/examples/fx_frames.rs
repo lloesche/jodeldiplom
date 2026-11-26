@@ -27,16 +27,16 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use jodeldiplom::art::Art;
 use jodeldiplom::core::shine::{Reference, Tier};
 use jodeldiplom::core::singing::Singing;
-use jodeldiplom::cover::{Apart, Layers};
 use jodeldiplom::gui::backdrop::music::Hearing;
 use jodeldiplom::gui::backdrop::{BackdropFrame, Cue, Visualiser};
 use jodeldiplom::gui::fx::{By, Effects, Fx, Layer, Music, Use};
 use jodeldiplom::gui::present::Offscreen;
+use jodeldiplom::gui::stage::gpu::StageFrame;
 use jodeldiplom::gui::stage::{Song, Stage, Tint};
-use jodeldiplom::gui::stage_gpu::StageFrame;
+use jodeldiplom::work::art::Art;
+use jodeldiplom::work::cover::{Apart, Layers};
 
 #[path = "../tests/common/sung.rs"]
 mod sung;
@@ -361,7 +361,7 @@ fn main() {
     let png = after("--png").map(std::path::PathBuf::from);
     let density: f32 = after("--density").map_or(2.0, |d| d.parse().expect("D"));
     let bytes = std::fs::read(cover).expect("the layers");
-    let layers = jodeldiplom::cover::from_bytes(&bytes)
+    let layers = jodeldiplom::work::cover::from_bytes(&bytes)
         .expect("layers")
         .layers;
     let art = Art {

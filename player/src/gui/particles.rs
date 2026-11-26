@@ -1,9 +1,9 @@
 //! Bursts on the GPU: a bubble bursting (once it has overfilled it tears,
-//! its liquid splashing out, [`super::shards`]) and its sparkles flying
-//! off, a word scored throwing sparks, and the effects' bursts (a step up,
-//! the jackpot, the angels, the coins: [`super::fx`]). The bubbles
+//! its liquid splashing out, [`shards`]) and its
+//! sparkles flying off, a word scored throwing sparks, and the effects' bursts
+//! (a step up, the jackpot, the angels, the coins: [`super::fx`]). The bubbles
 //! themselves, their liquid and their overfilling are the stage's
-//! ([`super::stage_gpu`]). The processor hands the GPU one small record a
+//! ([`crate::gui::stage::gpu`]). The processor hands the GPU one small record a
 //! burst ([`Spray`], [`Packed`]: where, when on the singing's clock, a
 //! seed, a [`Kind`]), and the time each frame; the vertex shader works out
 //! every particle from (seed, its index, its age) in closed form (out,
@@ -19,16 +19,18 @@
 //! software window, the tests' pixmaps) the bursts are not drawn: a
 //! bubble burst is simply gone.
 
+pub mod confetti;
 mod motions;
+pub mod shards;
 
 pub use motions::{Drawing, Motion, LOOKS, MOTIONS};
 
 use super::fx::Music;
-use super::shards::{self, DROPS, FIRST_DROP, FIRST_SHARD};
 use super::sparks::{rand, TAU, WHITE};
-use super::stage_gpu::{Screen, SCREEN_BYTES};
 use super::wgsl_math::mix3;
+use crate::gui::stage::gpu::{Screen, SCREEN_BYTES};
 use crate::view::bubbles::BURST;
+use shards::{DROPS, FIRST_DROP, FIRST_SHARD};
 
 /// The sparkles a bubble throws.
 pub const BUBBLE_SPARKS: u32 = 5;
@@ -58,7 +60,8 @@ pub enum Kind {
     /// A jackpot of coins and stars, a phrase Diva
     /// ([`super::fx::jackpot`]).
     Jackpot,
-    /// A shower of confetti, a new best ([`super::confetti::piece`]).
+    /// A shower of confetti, a new best
+    /// ([`confetti::piece`]).
     Confetti,
     /// A fountain of gold coins out of the playhead
     /// ([`super::fx::coins::fountain`]).
@@ -370,7 +373,7 @@ fn draw_of(look: u32, p: vec2<f32>, c: vec2<f32>, half: vec2<f32>, turn: f32, co
 {draws}    return vec4<f32>(0.0);
 }}
 {motions}{drawings}",
-        super::stage_gpu::SCREEN_WGSL,
+        crate::gui::stage::gpu::SCREEN_WGSL,
         super::fx::music::wgsl(),
         super::shine::HUE,
     )
@@ -569,7 +572,7 @@ fn draw_sparkle(p: vec2<f32>, c: vec2<f32>, half: vec2<f32>, turn: f32, look: ve
 ";
 
 /// The particles' pipeline, and the bursts it draws (the stage's and the
-/// picture's: [`super::stage_gpu::StageFrame::sprays`]), uploaded only
+/// picture's: [`crate::gui::stage::gpu::StageFrame::sprays`]), uploaded only
 /// when they change.
 pub struct ParticlePass {
     pipeline: wgpu::RenderPipeline,
@@ -588,7 +591,7 @@ impl ParticlePass {
     pub fn new(
         device: &wgpu::Device,
         format: wgpu::TextureFormat,
-        blend: super::stage_gpu::Blend,
+        blend: crate::gui::stage::gpu::Blend,
     ) -> ParticlePass {
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("jodeldiplom particles"),
@@ -669,7 +672,7 @@ impl ParticlePass {
             music,
             sprays: None,
             kept: Vec::new(),
-            linear: super::stage_gpu::takes_linear(format),
+            linear: crate::gui::stage::gpu::takes_linear(format),
         }
     }
 

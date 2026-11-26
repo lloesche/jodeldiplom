@@ -30,7 +30,7 @@ use jodel_playback::stems::{Separator, Stem};
 use jodel_playback::{Event, MakeStems, MemoryTarget, Player, PlayerOptions, Position, StemDesk};
 use jodel_rhythm::{Analysis, Method};
 use jodeldiplom::core::RhythmRecipe;
-use jodeldiplom::rhythm::analyze_file;
+use jodeldiplom::work::rhythm::analyze_file;
 
 fn gpu() -> Option<&'static dyn Separator> {
     GpuSeparator::shared().map(|g| g as &dyn Separator)

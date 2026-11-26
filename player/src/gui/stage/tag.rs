@@ -2,7 +2,7 @@
 //! demo key is held ([`super::Song::demo`]), so a demo never passes for
 //! singing.
 
-use super::super::stage_gpu::Instance;
+use super::gpu::Instance;
 use super::result::Pen;
 use super::{pill, rgba, Face, Stage, GOLD_TOP, WHITE};
 

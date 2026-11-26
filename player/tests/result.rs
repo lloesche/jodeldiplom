@@ -11,8 +11,8 @@ use jodel_playback::{Command, Event};
 use jodeldiplom::core::karaoke::result::Motion;
 use jodeldiplom::core::keymap::Op;
 use jodeldiplom::core::{karaoke, update, Action, Effect, State};
+use jodeldiplom::gui::stage::gpu::{Instance, StageFrame};
 use jodeldiplom::gui::stage::{Song, Stage, Tint};
-use jodeldiplom::gui::stage_gpu::{Instance, StageFrame};
 use jodeldiplom::gui::stage_view::StageView;
 
 fn op(state: &mut State, op: Op) -> Vec<Effect> {
@@ -507,7 +507,7 @@ fn a_song_played_out_with_nothing_scored_shows_its_result() {
         let mut state = started(0);
         let key = state.queue.paths[0].display().to_string();
         if let Some(points) = best {
-            let kept = jodeldiplom::scores::Best {
+            let kept = jodeldiplom::store::scores::Best {
                 points,
                 hit: 4,
                 words: 8,
@@ -668,7 +668,7 @@ fn a_song_the_demo_sang_shows_its_result_and_sets_no_best() {
         four_words(&mut state);
         let key = state.queue.paths[0].display().to_string();
         if let Some(points) = before {
-            let best = jodeldiplom::scores::Best {
+            let best = jodeldiplom::store::scores::Best {
                 points,
                 hit: 1,
                 words: 4,

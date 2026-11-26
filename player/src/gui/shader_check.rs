@@ -2,25 +2,26 @@
 //! particles' (every quad of every kind of burst, from its motion's
 //! probes: where, how large, how turned, its colour and how much it shows,
 //! [`sprite`]), the stage's liquid (its bulge and wobble, its overfilling,
-//! the front's waves and slosh, the shimmer, [`super::liquid`]), a tube's
-//! nearest point (how far, where along, which side, [`super::snake`]),
-//! every effect's maths ([`super::fx::Spec::reference`]), the glory (the
-//! meter, the ring, the marks, [`super::glory`]), the diploma's shapes (a
-//! star sticker, a wax seal, the rays, [`super::seal`]; its paper, a
-//! rubber stamp, a signature, [`super::paper`]), the backdrop's maths
+//! the front's waves and slosh, the shimmer,
+//! [`crate::gui::stage::shapes::liquid`]), a tube's nearest point (how far,
+//! where along, which side, [`crate::gui::stage::shapes::snake`]), every
+//! effect's maths ([`super::fx::Spec::reference`]), the glory (the meter, the
+//! ring, the marks, [`crate::gui::stage::shapes::glory`]), the diploma's shapes
+//! (a star sticker, a wax seal, the rays, [`crate::gui::stage::shapes::seal`];
+//! its paper, a rubber stamp, a signature,
+//! [`crate::gui::stage::shapes::paper`]), the backdrop's maths
 //! ([`super::backdrop::look`]) and its smooth read of a texture (a cubic
-//! B-spline of its texels), each worked out by the shader's own
-//! functions in a compute pass over the shader as the window composes it,
-//! at sample points, against the processor's; and every pipeline the
-//! stage, its light and the bursts make, made. Skipped (with a note)
-//! without a GPU.
+//! B-spline of its texels), each worked out by the shader's own functions in a
+//! compute pass over the shader as the window composes it, at sample points,
+//! against the processor's; and every pipeline the stage, its light and the
+//! bursts make, made. Skipped (with a note) without a GPU.
 
 use super::fx::Fx;
 use super::particles::{self, sprite, Spray, MOTIONS, QUADS};
 use super::shine::Glow;
 use super::sparks::TAU;
-use super::stage_gpu::{Blend, Group, StagePass};
-use super::{glory, liquid, paper, seal};
+use super::stage::shapes::{glory, liquid, paper, seal};
+use crate::gui::stage::gpu::{Blend, Group, StagePass};
 
 /// A device on the window's GPU, none without one.
 pub(in crate::gui) fn gpu() -> Option<(wgpu::Device, wgpu::Queue)> {
@@ -188,7 +189,7 @@ fn every_effect_s_shader_is_its_reference() {
     let Some(gpu) = gpu() else {
         return;
     };
-    let source = super::stage_gpu::every_effect_shader();
+    let source = crate::gui::stage::gpu::every_effect_shader();
     let mut held = 0;
     for fx in Fx::ALL {
         let Some(r) = fx.spec().reference else {
@@ -476,7 +477,7 @@ fn the_stage_shader_s_liquid_is_its_reference() {
     let c = ins[i * 3u + 2u];
     outs[i * 2u] = vec4<f32>(bulge(a.x, a.y, a.z), swell(a.w), slosh(b.x));
     outs[i * 2u + 1u] = vec4<f32>(front(b.y, a.y, b.z, b.w), shimmer(c.x, c.y, a.y), amplitude(c.z), 0.0);";
-    let source = super::stage_gpu::shader(super::stage_gpu::Group::Plain);
+    let source = crate::gui::stage::gpu::shader(crate::gui::stage::gpu::Group::Plain);
     let outs = run(&gpu, &source, body, &ins, (samples.len(), 2));
     for (k, [a, b, c]) in samples.iter().enumerate() {
         let (g, h) = (outs[k * 2], outs[k * 2 + 1]);
@@ -575,7 +576,7 @@ fn the_stage_shader_s_glory_is_its_reference() {
     outs[i * 5u + 2u] = meter_at(a.x, a.y, a.z, a.w);
     outs[i * 5u + 3u] = ring_at(c.xy, vec2<f32>(200.0, 300.0), vec2<f32>(30.0, 6.0), b.x, s, a.w);
     outs[i * 5u + 4u] = vec4<f32>(label_pop(a.w - b.z, 1.8), 0.0, 0.0);";
-    let source = super::stage_gpu::shader(super::stage_gpu::Group::Plain);
+    let source = crate::gui::stage::gpu::shader(crate::gui::stage::gpu::Group::Plain);
     let outs = run(&gpu, &source, body, &ins, (samples.len(), 5));
     let close = |g: &[f32], c: &[f32], what: &str| {
         for (x, y) in g.iter().zip(c) {
@@ -651,7 +652,7 @@ fn the_stage_shader_s_seal_and_stars_are_their_reference() {
     outs[i * 3u] = vec4<f32>(sticker_at(s.x, s.y, s.z), star(s.x, s.y, 0.56, 0.45));
     outs[i * 3u + 1u] = vec4<f32>(seal_at(s.x, s.y, s.z), wax_edge(s.w));
     outs[i * 3u + 2u] = vec4<f32>(rays_at(s.x * 200.0, s.y * 200.0, 150.0, 14.0, s.w), 0.0, 0.0, 0.0);";
-    let source = super::stage_gpu::shader(super::stage_gpu::Group::Plain);
+    let source = crate::gui::stage::gpu::shader(crate::gui::stage::gpu::Group::Plain);
     let outs = run(&gpu, &source, body, &samples, (samples.len(), 3));
     let close = |g: &[f32], c: &[f32], what: &str| {
         for (x, y) in g.iter().zip(c) {
@@ -728,7 +729,7 @@ fn the_stage_shader_s_paper_is_its_reference() {
     let sig = vec2<f32>(signature_at(s.x / 300.0, s.y / 300.0, s.w), signature_at(s.x / 300.0, s.y / 300.0, 1.0));
     outs[i * 3u + 1u] = vec4<f32>(stamp_at(s.x * 0.4, s.y * 0.4, vec2<f32>(140.0, 45.0), 6.5), sig);
     outs[i * 3u + 2u] = vec4<f32>(turn_about(s.xy, vec2<f32>(30.0, -20.0), s.w * 6.0), 0.0, 0.0);";
-    let source = super::stage_gpu::shader(super::stage_gpu::Group::Plain);
+    let source = crate::gui::stage::gpu::shader(crate::gui::stage::gpu::Group::Plain);
     let outs = run(&gpu, &source, body, &samples, (samples.len(), 3));
     let close = |g: &[f32], c: &[f32], what: &str| {
         for (x, y) in g.iter().zip(c) {
@@ -769,7 +770,8 @@ fn the_stage_shader_s_paper_is_its_reference() {
 
 /// A tube's nearest points at pixels round and along it, past its ends
 /// and out of reach: the shader's `tube_near` as the processor's
-/// [`super::snake::nearest`] (how far, where along, which side).
+/// [`crate::gui::stage::shapes::snake::nearest`] (how far, where along, which
+/// side).
 #[test]
 fn the_stage_shader_s_tube_is_its_reference() {
     let Some(gpu) = gpu() else {
@@ -781,7 +783,7 @@ fn the_stage_shader_s_tube_is_its_reference() {
         (300.0, 330.0, 260.0),
         (330.0, 520.0, 180.0),
     ];
-    let snake = super::snake::Snake::through(&notes, (100.0, 520.0), 22.0);
+    let snake = crate::gui::stage::shapes::snake::Snake::through(&notes, (100.0, 520.0), 22.0);
     let points = snake.points.iter().map(|&(x, y)| [x, y, 0.0, 0.0]);
     let n = snake.points.len();
     let samples: Vec<[f32; 4]> = (0..400)
@@ -795,7 +797,7 @@ fn the_stage_shader_s_tube_is_its_reference() {
     let ins: Vec<[f32; 4]> = points.chain(samples.iter().copied()).collect();
     let source = format!(
         "fn path_point(i: u32) -> vec4<f32> {{\n    return ins[i];\n}}\n{}",
-        super::snake::NEAR_WGSL
+        crate::gui::stage::shapes::snake::NEAR_WGSL
     );
     let body = format!(
         "
@@ -805,7 +807,8 @@ fn the_stage_shader_s_tube_is_its_reference() {
     let outs = run(&gpu, &source, &body, &ins, (samples.len(), 1));
     let mut close_by = 0;
     for (s, g) in samples.iter().zip(&outs) {
-        let (d, along, side) = super::snake::nearest(&snake.points, (s[0], s[1]), s[2]);
+        let (d, along, side) =
+            crate::gui::stage::shapes::snake::nearest(&snake.points, (s[0], s[1]), s[2]);
         let what = format!("{s:?}: {g:?} against {:?}", (d, along, side));
         if d > 1e8 {
             assert!(g[0] > 1e8, "{what}");

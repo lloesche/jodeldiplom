@@ -50,7 +50,7 @@ use jodel_rhythm::stems::{self, Separator, Splitter, Stem};
 use jodel_rhythm::vote::Candidate;
 use jodel_rhythm::{vote, Analysis, Evidence, Method};
 use jodeldiplom::core::RhythmRecipe;
-use jodeldiplom::rhythm::listen_file;
+use jodeldiplom::work::rhythm::listen_file;
 
 fn main() -> ExitCode {
     let mut files = Vec::new();

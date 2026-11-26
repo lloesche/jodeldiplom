@@ -10,8 +10,8 @@
 //! An effect draws in one or more ways:
 //!
 //! - **Stage shapes,** instances of its own kinds ([`Fx::kind`]), drawn by
-//!   a pipeline of its own ([`super::stage_gpu::Group::Shapes`]) with only
-//!   its WGSL (`<ident>_shape`): the rainbow's bands, the lane's glow, the
+//!   a pipeline of its own ([`crate::gui::stage::gpu::Group::Shapes`]) with
+//!   only its WGSL (`<ident>_shape`): the rainbow's bands, the lane's glow, the
 //!   flames.
 //! - **Screen passes,** shapes over the finished frame (in the window
 //!   pass's "fx" step), given the lyric band to keep mostly clear and the
@@ -19,7 +19,7 @@
 //!   ([`Clear`]): the edges on fire, the marquee bulbs, the fog.
 //! - **Lyric treatments,** a function of a lyric's colour and coverage at
 //!   a pixel of its text (`lyric_<ident>`), each its own pipeline
-//!   ([`super::stage_gpu::Group::Lyric`]), on the shouts (the multiplier,
+//!   ([`crate::gui::stage::gpu::Group::Lyric`]), on the shouts (the multiplier,
 //!   the verdict) or the line sung ([`Text`]): the rainbow, the lyrics on
 //!   fire and frosted.
 //! - **Bursts,** records the particles' pass works out
@@ -62,7 +62,7 @@ pub use music::{Music, Signal};
 
 use super::particles::Spray;
 use super::stage::LaneBox;
-use super::stage_gpu::Instance;
+use crate::gui::stage::gpu::Instance;
 
 macro_rules! registry {
     ($($fx:ident => $spec:path,)*) => {
@@ -700,7 +700,7 @@ impl Spec {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::gui::stage_gpu::{Group, Shape};
+    use crate::gui::stage::gpu::{Group, Shape};
     use std::collections::HashSet;
 
     /// Every effect named apart, its WGSL prefix apart, its kinds within

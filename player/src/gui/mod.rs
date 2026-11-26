@@ -8,38 +8,28 @@
 pub mod backdrop;
 pub mod big_text;
 pub mod bloom;
-pub mod confetti;
 #[cfg(target_os = "macos")]
 mod cover;
 pub mod fonts;
 pub mod fx;
-pub mod glory;
 pub mod keys;
 pub mod lanes;
-pub mod liquid;
 pub mod look;
 pub mod metrics;
 pub mod mixer;
 mod pacer;
 mod paint;
-pub mod paper;
 pub mod particles;
 pub mod pixels;
 pub mod pointer;
-pub mod pop;
 pub mod present;
 mod screens;
-pub mod seal;
 #[cfg(test)]
 mod shader_check;
-pub mod shards;
 pub mod shine;
-pub mod snake;
 pub mod sparks;
 pub mod stage;
-pub mod stage_gpu;
 pub mod stage_view;
-mod stamps;
 pub mod streak;
 pub(crate) mod style;
 mod wake;

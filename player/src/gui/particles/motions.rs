@@ -3,10 +3,10 @@
 //! the shader, and bursts of it to hold the shader to; and how each look
 //! of a quad is drawn ([`LOOKS`]).
 
+use super::confetti;
+use super::shards;
 use super::{burst, scored, Kind, Look, Spray, Sprite, DRAW_SPARKLE, SCORED_LIFE};
-use crate::gui::confetti;
 use crate::gui::fx::{angels, coins, jackpot, slam, step_up};
-use crate::gui::shards;
 use crate::view::bubbles::BURST;
 
 /// How a kind of burst moves: how long it lasts, quad `q` of a burst

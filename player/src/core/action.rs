@@ -17,7 +17,7 @@ pub enum Job {
     /// Its lyrics looked up, or their words timed.
     Lyrics,
     /// Its cover taken apart (subject, plate, depth) for the karaoke
-    /// background ([`crate::cover`]).
+    /// background ([`crate::work::cover`]).
     Cover,
 }
 
@@ -63,8 +63,8 @@ pub enum LyricsFacts {
 
 impl LyricsFacts {
     /// How `answer` settles them.
-    pub fn of(answer: &crate::lyrics::Answer) -> LyricsFacts {
-        use crate::lyrics::Answer;
+    pub fn of(answer: &crate::work::lyrics::Answer) -> LyricsFacts {
+        use crate::work::lyrics::Answer;
         match answer {
             Answer::Found { lyrics, .. }
                 if matches!(lyrics.source, jodel_lyrics::Source::Transcribed(_)) =>
@@ -315,7 +315,7 @@ pub enum Action {
     /// The GPU for stems, by name, or that there is none.
     Gpu(Option<String>),
     /// What was found of a file's lyrics.
-    Lyrics(PathBuf, crate::lyrics::Answer),
+    Lyrics(PathBuf, crate::work::lyrics::Answer),
     /// The lyrics editor: opened, closed, an action of its, or the song's
     /// edits forgotten ([`crate::core::lyric_edit`]).
     LyricsEdit(crate::core::lyric_edit::LyricsEdit),

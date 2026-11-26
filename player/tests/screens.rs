@@ -319,7 +319,7 @@ fn the_first_view_comes_before_the_slow_start() {
     options.devices = Arc::new(|| Ok(Vec::new()));
     options.mic = Arc::new(|_| Err("no microphone".into()));
     options.mics = Arc::new(|| Ok(Vec::new()));
-    options.data = Some(jodeldiplom::dirs::Data::in_parent(&dir));
+    options.data = Some(jodeldiplom::store::dirs::Data::in_parent(&dir));
     let (go, slow) = std::sync::mpsc::channel::<()>();
     let manifest = move || {
         let _ = slow.recv();

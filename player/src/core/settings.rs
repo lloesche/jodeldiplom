@@ -389,12 +389,15 @@ pub(crate) fn folders_listed(state: &mut State, dir: Option<PathBuf>, folders: V
 /// The data folder is to be made in `dir` (or is `dir`, when that is a data
 /// folder already): the app moves it there.
 fn choose_data_folder(state: &mut State, dir: PathBuf, fx: &mut Vec<Effect>) {
-    let parent = if dir.file_name().is_some_and(|n| n == crate::dirs::DATA) {
+    let parent = if dir
+        .file_name()
+        .is_some_and(|n| n == crate::store::dirs::DATA)
+    {
         dir.parent().map(Path::to_path_buf).unwrap_or(dir)
     } else {
         dir
     };
-    let to = parent.join(crate::dirs::DATA);
+    let to = parent.join(crate::store::dirs::DATA);
     if let Some(from) = &state.data_dir {
         if &to == from {
             return state.info("The data folder is there already");

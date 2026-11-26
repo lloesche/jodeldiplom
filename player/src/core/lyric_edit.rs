@@ -36,7 +36,7 @@ use jodel_lyrics::{Line, Lyrics, Word, GIVEN};
 
 use super::karaoke::{self, SongLyrics};
 use super::{Effect, Screen, State};
-use crate::lyrics::edits::edits_of;
+use crate::work::lyrics::edits::edits_of;
 
 pub mod screen;
 

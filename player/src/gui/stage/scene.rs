@@ -6,7 +6,7 @@
 //! nothing where none of those shows. What takes clicks in it is kept as
 //! drawn ([`Stage::targets`]).
 
-use super::super::stage_gpu::StageFrame;
+use super::gpu::StageFrame;
 use super::lyrics::Which;
 use super::start::{Line, Look};
 use super::{clip, Song, Stage, Tint};

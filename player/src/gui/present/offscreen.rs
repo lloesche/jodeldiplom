@@ -16,7 +16,7 @@ pub struct Offscreen {
     pub name: String,
     /// The timestamps of [`Offscreen::time_frame`], where it times, and
     /// the texture it draws into.
-    stamps: Option<crate::gui::stamps::Stamps>,
+    stamps: Option<crate::gui::present::stamps::Stamps>,
     target: Option<wgpu::Texture>,
 }
 
@@ -32,9 +32,9 @@ impl Offscreen {
     /// timing each step of a frame ([`Offscreen::time_frame`]); an error where
     /// the GPU cannot.
     pub fn timed() -> Result<Offscreen, String> {
-        let mut gpu = Offscreen::opened(false, crate::gui::stamps::FEATURES)?;
+        let mut gpu = Offscreen::opened(false, crate::gui::present::stamps::FEATURES)?;
         let painter = &gpu.painter;
-        gpu.stamps = Some(crate::gui::stamps::Stamps::new(
+        gpu.stamps = Some(crate::gui::present::stamps::Stamps::new(
             &painter.device,
             &painter.queue,
         ));
@@ -71,14 +71,14 @@ impl Offscreen {
     pub fn time_frame(
         &mut self,
         backdrop: Option<&BackdropFrame>,
-        stage: Option<&crate::gui::stage_gpu::StageFrame>,
+        stage: Option<&crate::gui::stage::gpu::StageFrame>,
         width: u32,
         height: u32,
     ) -> Result<(), String> {
         let stamps = self.stamps.take().ok_or("not timed")?;
         let painter = &mut *self.painter;
         painter.stamps = Some(stamps);
-        painter.mark(crate::gui::stamps::START);
+        painter.mark(crate::gui::present::stamps::START);
         painter.set_backdrop(backdrop, (width, height));
         painter.set_stage(stage, (width, height));
         if self
@@ -118,7 +118,7 @@ impl Offscreen {
     /// Karaoke mode's stage over the next frame, as the window's.
     pub fn set_stage(
         &mut self,
-        frame: Option<&crate::gui::stage_gpu::StageFrame>,
+        frame: Option<&crate::gui::stage::gpu::StageFrame>,
         width: u32,
         height: u32,
     ) {

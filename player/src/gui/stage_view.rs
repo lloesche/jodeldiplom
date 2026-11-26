@@ -28,12 +28,12 @@ use super::backdrop::music::Song;
 use super::backdrop::BackdropFrame;
 use super::present::Painter;
 use super::stage::{Stage, Tint};
-use super::stage_gpu::StageFrame;
 use super::window::Message;
-use crate::art::Art;
 use crate::core::keymap::Op;
 use crate::core::{Action, State};
+use crate::gui::stage::gpu::StageFrame;
 use crate::view::karaoke::KaraokePicture;
+use crate::work::art::Art;
 
 /// What the stage keeps between frames, and what waits for the next one
 /// on screen.

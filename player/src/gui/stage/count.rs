@@ -6,7 +6,7 @@
 //! same place ([`placed`]).
 
 use super::super::big_text::{BigText, Face};
-use super::super::stage_gpu::Instance;
+use super::gpu::Instance;
 use super::score::rgba8;
 use super::{Lane, Stage};
 use crate::view::karaoke::KaraokePicture;

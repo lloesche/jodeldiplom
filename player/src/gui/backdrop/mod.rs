@@ -1,5 +1,5 @@
 //! Karaoke mode's backdrop on the GPU: the song's cover taken apart
-//! ([`crate::cover::Apart`]: the plate, the subject cut out, their depth,
+//! ([`crate::work::cover::Apart`]: the plate, the subject cut out, their depth,
 //! the palette) drawn live as a calm visualiser of the music, with the
 //! game or the notes on ([`Mode`]: plain lyrics karaoke has the blurred
 //! cover alone, filling the window). The whole cover sits in the middle as a card, as large as it looks good
@@ -55,10 +55,10 @@ use self::music::{Feel, Felt, Hearing, Levels, Song};
 use self::pulse::Pulse;
 pub use self::subject::{lights, Subject};
 use crate::app::App;
-use crate::art::Art;
 use crate::config::Config;
 use crate::core::desk::StripKind;
-use crate::cover::Layers;
+use crate::work::art::Art;
+use crate::work::cover::Layers;
 
 /// How long a cover takes to fade in or out, in seconds.
 pub const FADE: f32 = 1.2;
@@ -370,10 +370,11 @@ impl Visualiser {
 
     /// `layers` wanted now (none: nothing): in front, fading in (back from
     /// fading out where it still shows); the rest fading out. The same
-    /// cover is the same however it was read ([`crate::cover::Apart::key`]).
-    /// Two at most: a third coming drops the one of the others showing
-    /// least. The song's cover `art` is kept with them once it is seen to be
-    /// what they were taken apart from (it may come before or after them).
+    /// cover is the same however it was read
+    /// ([`crate::work::cover::Apart::key`]). Two at most: a third coming drops
+    /// the one of the others showing least. The song's cover `art` is kept with
+    /// them once it is seen to be what they were taken apart from (it may come
+    /// before or after them).
     fn want(&mut self, layers: Option<&Layers>, art: Option<&Art>) {
         let Some(layers) = layers else {
             self.slots.iter_mut().for_each(|s| s.wanted = false);

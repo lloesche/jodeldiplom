@@ -3,8 +3,8 @@ use crate::core::shine::{Shone, Tier};
 use crate::gui::fx::{Board, Effects, Music, Use};
 use crate::gui::particles::sprite;
 use crate::gui::shine::Glow;
+use crate::gui::stage::gpu::StageFrame;
 use crate::gui::stage::{Lane, Stage};
-use crate::gui::stage_gpu::StageFrame;
 use crate::gui::streak::Step;
 
 /// The stage the tests draw over.

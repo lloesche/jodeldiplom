@@ -347,7 +347,7 @@ fn the_demo_sings_with_no_microphone() {
     for (k, w) in lyrics.lines[0].words.iter_mut().enumerate() {
         (w.start, w.end) = (Some(from + k as f64), Some(from + k as f64 + 1.0));
     }
-    let found = jodeldiplom::lyrics::Answer::Found {
+    let found = jodeldiplom::work::lyrics::Answer::Found {
         lyrics,
         timed: None,
     };

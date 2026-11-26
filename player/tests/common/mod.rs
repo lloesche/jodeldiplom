@@ -65,7 +65,7 @@ pub fn write_wav(path: &Path, rate: u32, seconds: f64) {
 /// A generated cover as PNG bytes.
 pub fn cover_png(size: u32) -> Vec<u8> {
     let mut bytes = Vec::new();
-    image::DynamicImage::ImageRgb8(jodeldiplom::art::sample_cover(size))
+    image::DynamicImage::ImageRgb8(jodeldiplom::work::art::sample_cover(size))
         .write_to(
             &mut std::io::Cursor::new(&mut bytes),
             image::ImageFormat::Png,
@@ -734,7 +734,7 @@ pub fn karaoke_tab() -> State {
 pub fn singable(state: &mut State) {
     use jodel_lyrics::{Lyrics, Source};
     use jodeldiplom::core::karaoke::SongLyrics;
-    use jodeldiplom::lyrics::Answer;
+    use jodeldiplom::work::lyrics::Answer;
     for path in state.queue.paths.clone() {
         let lyrics = Lyrics::parse_text("la la la\nla la", Source::Lrclib);
         state.karaoke.lyrics.insert(

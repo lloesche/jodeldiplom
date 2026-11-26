@@ -434,7 +434,7 @@ fn folders(state: &State) -> Option<List> {
                     Mark::Here,
                     format!(
                         "move the data folder here: {}",
-                        dir.join(crate::dirs::DATA).display()
+                        dir.join(crate::store::dirs::DATA).display()
                     ),
                 ),
                 FolderRow::Up => (Mark::Up, "..".to_owned()),

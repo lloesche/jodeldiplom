@@ -9,8 +9,8 @@ use std::path::Path;
 use jodeldiplom::core::singing::Singing;
 use jodeldiplom::gui::fx::{Effects, Fx, Mod, Param, Signal, Use};
 use jodeldiplom::gui::present::Offscreen;
+use jodeldiplom::gui::stage::gpu::{Shape, StageFrame};
 use jodeldiplom::gui::stage::{Song, Stage};
-use jodeldiplom::gui::stage_gpu::{Shape, StageFrame};
 
 #[path = "common/sung.rs"]
 mod sung;

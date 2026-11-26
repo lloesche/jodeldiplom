@@ -20,7 +20,7 @@ use jodel_rhythm::yin::{Yin, WINDOW};
 
 /// The version of what a reference holds and how it is measured: raised
 /// with any change to the measures, the hearings or the par, so a kept
-/// one is measured again ([`crate::cache::SHINE`] is the file's layout).
+/// one is measured again ([`crate::store::cache::SHINE`] is the file's layout).
 /// 4: the live tracker hears the voice's band only
 /// ([`jodel_rhythm::yin::BAND_LOW`]).
 pub const VERSION: u32 = 4;

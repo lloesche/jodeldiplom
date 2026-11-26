@@ -37,7 +37,7 @@ use jodel_rhythm::yin::{Yin, WINDOW};
 use jodeldiplom::core::shine::reference::{measure_all, Hearing, Original};
 use jodeldiplom::core::shine::{self, Frame, Measured, Reference, Shone, Tier, Yardstick};
 use jodeldiplom::core::singing::{melodic, Cue, Cursor, Notes, Singing};
-use jodeldiplom::keep;
+use jodeldiplom::store::keep;
 
 /// The everyday hearings the original must be Diva in: none of them as
 /// the reference or the par were made.
@@ -94,12 +94,12 @@ fn data() -> PathBuf {
 
 /// The analyses' waveforms by song path: the newest analysis version (of
 /// those, the song as it was last changed), its waveform, and the song as
-/// it was then (its path, size and time: [`jodeldiplom::cache::identity`]),
-/// read from the record alone.
+/// it was then (its path, size and time:
+/// [`jodeldiplom::store::cache::identity`]), read from the record alone.
 fn analyses(dir: &Path) -> BTreeMap<PathBuf, (u32, PathBuf, String)> {
     let mut out: BTreeMap<PathBuf, (u32, PathBuf, String)> = BTreeMap::new();
     let newer = |(v, id): (u32, &str), (old_v, old_id): (u32, &str)| {
-        let changed = |id| jodeldiplom::cache::identity_parts(id).map(|p| p.2);
+        let changed = |id| jodeldiplom::store::cache::identity_parts(id).map(|p| p.2);
         (v, changed(id)) > (old_v, changed(old_id))
     };
     for e in std::fs::read_dir(dir).expect("the analyses").flatten() {
@@ -114,10 +114,10 @@ fn analyses(dir: &Path) -> BTreeMap<PathBuf, (u32, PathBuf, String)> {
             continue;
         };
         let wave = file.with_extension("wave");
-        let Some((id, v)) = jodeldiplom::rhythm::key_parts(key) else {
+        let Some((id, v)) = jodeldiplom::work::rhythm::key_parts(key) else {
             continue;
         };
-        let Some((path, ..)) = jodeldiplom::cache::identity_parts(id) else {
+        let Some((path, ..)) = jodeldiplom::store::cache::identity_parts(id) else {
             continue;
         };
         let newest = (out.get(path)).is_none_or(|(old_v, _, old)| newer((v, id), (*old_v, old)));
@@ -131,18 +131,18 @@ fn analyses(dir: &Path) -> BTreeMap<PathBuf, (u32, PathBuf, String)> {
 /// Our timed words of the song `id` names as the game shows them, read
 /// only.
 fn shown_lyrics(data: &Path, id: &str) -> Option<Lyrics> {
-    let key = jodeldiplom::lyrics::store::key_of(id);
+    let key = jodeldiplom::work::lyrics::store::key_of(id);
     let text = std::fs::read(data.join("lyrics").join(format!("{key}.timed.lrc"))).ok()?;
     let text = String::from_utf8_lossy(&text).into_owned();
     let lyrics = Lyrics::parse(
-        jodeldiplom::cache::LYRICS_TIMED.body(&text)?,
+        jodeldiplom::store::cache::LYRICS_TIMED.body(&text)?,
         jodel_lyrics::Source::Unknown,
     );
     if lyrics.is_empty() {
         return None;
     }
     if matches!(lyrics.source, jodel_lyrics::Source::Transcribed(_)) {
-        return Some(jodeldiplom::lyrics::relined(&lyrics).1);
+        return Some(jodeldiplom::work::lyrics::relined(&lyrics).1);
     }
     Some(lyrics)
 }
@@ -151,7 +151,7 @@ fn shown_lyrics(data: &Path, id: &str) -> Option<Lyrics> {
 /// rate, read without marking the file used.
 fn kept_voice(data: &Path, id: &str) -> Option<(Vec<f32>, u32)> {
     use jodel_playback::stems::{Stem, RATE};
-    let file = jodeldiplom::stems_cache::file_of(&data.join("stems"), id);
+    let file = jodeldiplom::store::stems::file_of(&data.join("stems"), id);
     let mut kept = jodel_playback::StemFile::open(&file).ok()?;
     let mut voice = Vec::new();
     while (voice.len() as u64) < kept.frames() {
@@ -447,7 +447,7 @@ fn take(folder: &Path, song: Option<PathBuf>, separate: bool, show: bool) {
     let singing = singing(lyrics, &melody);
     let (original, orate) = if separate {
         (
-            jodeldiplom::lyrics::timer::separate_16k(&path, false)
+            jodeldiplom::work::lyrics::timer::separate_16k(&path, false)
                 .expect("separated")
                 .0,
             16_000,

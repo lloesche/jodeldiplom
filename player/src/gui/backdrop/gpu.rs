@@ -2,9 +2,9 @@
 //! small) in a texture of its own, sent over when the cover or the window
 //! changes; each cover showing has its pieces in textures (the plate, the
 //! subject with its matte, their depth, the subject's rim), their texels
-//! made on the covers' thread ([`crate::cover::Texels`]) and sent over once when it
-//! first shows, with the picture they were taken apart from (the song's
-//! cover, where it is at hand: the card at rest is the real cover, the
+//! made on the covers' thread ([`crate::work::cover::Texels`]) and sent over
+//! once when it first shows, with the picture they were taken apart from (the
+//! song's cover, where it is at hand: the card at rest is the real cover, the
 //! plate only where the moving subject uncovers it or the blur round a
 //! subject cut out would carry its colours), their smaller levels
 //! made here (the blur under the card and round the subject,
@@ -19,7 +19,7 @@
 use std::sync::Arc;
 
 use super::{BackdropFrame, Ground, Look, SlotFrame};
-use crate::cover::Layers;
+use crate::work::cover::Layers;
 
 /// The most levels a cover's textures have (a 1024 cover's down to 4).
 const LEVELS: u32 = 9;
@@ -361,7 +361,7 @@ fn texture(
 /// (nearness of the cover and of the plate, a byte each), the subject's
 /// rim (a byte; one dark texel without a subject); all as the covers'
 /// thread made them.
-fn pieces(apart: &crate::cover::Apart) -> [Upload<'_>; 4] {
+fn pieces(apart: &crate::work::cover::Apart) -> [Upload<'_>; 4] {
     use wgpu::TextureFormat as F;
     let l = &apart.layers;
     let none: &[u8] = &[0; 4];

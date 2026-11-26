@@ -14,8 +14,8 @@ use jodeldiplom::core::singing::Singing;
 use jodeldiplom::gui::fx::rainbow::{shine_of, BANDS, RIM, SWIRL};
 use jodeldiplom::gui::particles::Kind;
 use jodeldiplom::gui::present::Offscreen;
+use jodeldiplom::gui::stage::gpu::{Shape, StageFrame};
 use jodeldiplom::gui::stage::{Song, Stage};
-use jodeldiplom::gui::stage_gpu::{Shape, StageFrame};
 
 /// `pixels` (`0x00RRGGBB`, `w` wide) as a PNG at `name` in the folder
 /// `JODEL_FRAMES` names, where it is set.

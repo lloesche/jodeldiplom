@@ -14,8 +14,8 @@ mod common;
 
 use jodeldiplom::core::singing::Singing;
 use jodeldiplom::gui::particles::{Kind, Spray};
+use jodeldiplom::gui::stage::gpu::{Instance, Shape, StageFrame};
 use jodeldiplom::gui::stage::{Song, Stage};
-use jodeldiplom::gui::stage_gpu::{Instance, Shape, StageFrame};
 use jodeldiplom::view::bubbles::{BURST, SWELL};
 use jodeldiplom::view::karaoke::KaraokePicture;
 

@@ -11,9 +11,9 @@
 
 use std::path::Path;
 
-use jodeldiplom::lyrics::models::Models;
-use jodeldiplom::lyrics::timer::SpeechTimer;
-use jodeldiplom::lyrics::WordTimer;
+use jodeldiplom::work::lyrics::models::Models;
+use jodeldiplom::work::lyrics::timer::SpeechTimer;
+use jodeldiplom::work::lyrics::WordTimer;
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -26,7 +26,7 @@ fn main() {
             other => panic!("no lyrics in the record: {other:?}"),
         }
     } else {
-        let body = jodeldiplom::cache::LYRICS_TEXT
+        let body = jodeldiplom::store::cache::LYRICS_TEXT
             .body(&found)
             .unwrap_or(&found);
         jodel_lyrics::Lyrics::parse_text(body, jodel_lyrics::Source::Lrclib)
@@ -39,9 +39,9 @@ fn main() {
     let words = args.iter().any(|a| a == "--words");
     let models = Models::new(
         data.join("models")
-            .join(jodeldiplom::lyrics::models::MODEL_FILE),
+            .join(jodeldiplom::work::lyrics::models::MODEL_FILE),
         data.join("models")
-            .join(jodeldiplom::lyrics::models::ASR_FILE),
+            .join(jodeldiplom::work::lyrics::models::ASR_FILE),
     );
     let timer = SpeechTimer::new(models, Some(data.join("stems")));
     let timed = timer.time(song, &lyrics, &|| Vec::new()).unwrap();

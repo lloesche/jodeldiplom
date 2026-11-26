@@ -1,5 +1,5 @@
 //! Karaoke mode's stage, made frame by frame for the GPU
-//! ([`super::stage_gpu`]): the song's words as tubes through their notes
+//! ([`gpu`]): the song's words as tubes through their notes
 //! on a lane that runs by a playhead (by time: [`AHEAD`] seconds of the
 //! song ahead of it), their text riding in them, filled where the singer
 //! hit them ([`words`]); the shots rescuing a word missed ([`shots`]); the
@@ -37,6 +37,7 @@ mod badge;
 mod comet;
 pub mod count;
 mod effects;
+pub mod gpu;
 mod lines;
 pub mod lyrics;
 mod meter;
@@ -45,6 +46,7 @@ mod result;
 mod scene;
 pub mod score;
 mod shade;
+pub mod shapes;
 mod shots;
 mod sparks;
 mod start;
@@ -52,9 +54,9 @@ mod tag;
 mod words;
 use self::arrow::Arrow;
 use self::atlas::Atlas;
+use self::gpu::{Instance, Shape, StageFrame};
 use self::palette::{rgba, Rgb, ACTIVE, CORAL, GOLD, GOLD_DEEP, GOLD_TOP, SMOKE, WHITE};
 use self::shade::Shade;
-use super::stage_gpu::{Instance, Shape, StageFrame};
 pub use result::Tint;
 
 use crate::core::State;

@@ -36,7 +36,7 @@
 
 use super::helpers::{clamp01, mix3, smoothstep};
 use super::{At, Fx, Layer, Live, Music, Out, Reference, Slot, Spec};
-use crate::gui::stage_gpu::Instance;
+use crate::gui::stage::gpu::Instance;
 
 /// The bulbs: a strip along the row (`quad`), round the lane `shape`
 /// (left, top, right, bottom), `params[1]` their strength (their look the

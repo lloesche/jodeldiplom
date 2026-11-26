@@ -29,7 +29,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use super::super::particles::{Kind, Spray};
-use super::super::stage_gpu::{Instance, Shape, StageFrame};
+use super::gpu::{Instance, Shape, StageFrame};
 use super::start::{self, Line};
 use super::{disc, pill, rgba, Face, Rgb, Stage, COVER_PAD};
 use crate::core::karaoke::result::{Beat, Shown};

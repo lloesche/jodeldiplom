@@ -469,7 +469,7 @@ stem keys are their mutes.
   - `the_mixer_tab_changes_the_key_and_its_player_strip_shows_it`
   - `the_notes_and_the_scoring_follow_the_key_heard`
   - `a_new_engine_is_told_the_key_after_the_queue`
-  - `the_voice_goes_to_wav_and_back_with_its_times` (`keep`)
+  - `the_voice_goes_to_wav_and_back_with_its_times` (`store::keep`)
   - `in_another_key_the_notes_move_and_the_singing_is_held_to_them` (`core::singing`)
   - `a_sine_two_up_comes_out_at_its_new_frequency_as_long_and_without_a_click` (engine)
   - `the_drums_keep_their_key_and_the_other_stems_are_shifted` (engine)
@@ -589,10 +589,10 @@ stem keys are their mutes.
   - `a_long_word_won_early_bursts_only_at_its_end` (`core::singing`)
   - `a_bubble_held_full_pumps_then_bursts_the_bigger_the_longer`
     (`view::bubbles`)
-  - `a_tube_held_full_long_pumps_and_bursts_bigger` (`gui::pop`)
+  - `a_tube_held_full_long_pumps_and_bursts_bigger` (`gui::stage::shapes::pop`)
   - `a_word_longer_than_the_lane_behind_is_seen_to_its_end`
     (`gui::stage::words`), `a_tube_cut_starts_where_it_is_cut`
-    (`gui::snake`)
+    (`gui::stage::shapes::snake`)
   - `a_word_held_full_pops_as_it_ends_and_bigger`,
     `a_rescue_across_a_rung_never_takes_the_ladder_back` (`sfx::moments`),
     `a_word_held_full_long_pops_bigger` (`sfx::conductor`)
@@ -605,16 +605,16 @@ stem keys are their mutes.
     `a_delay_nudged_mid_song_is_as_heard_straight` (`core::singing::undo`)
   - `a_word_fills_part_by_part_sweeps_full_then_bursts` (`view::bubbles`)
   - `a_bubble_under_pressure_bulges_and_wobbles`,
-    `the_front_ripples_and_sloshes_after_a_jump` (`gui::liquid`)
+    `the_front_ripples_and_sloshes_after_a_jump` (`gui::stage::shapes::liquid`)
   - `a_bubble_leaves_a_fading_sheen`,
     `the_bits_of_skin_fly_out_and_fade`, `the_drops_arc_out_fall_and_fade`
-    (`gui::shards`)
+    (`gui::particles::shards`)
   - `the_sparkles_fly_up_and_fade`, `a_burst_on_a_lane_goes_by_with_it`
     (`gui::particles`)
   - `the_particles_shader_draws_what_sprite_says`,
     `the_stage_shader_s_liquid_is_its_reference` (`gui::shader_check`)
   - `a_word_s_bubble_bursts_once_however_late_the_voice`,
-    `a_bubble_partly_filled_never_pops` (`gui::pop`)
+    `a_bubble_partly_filled_never_pops` (`gui::stage::shapes::pop`)
   - `the_arrow_shows_while_singing_however_late_the_voice` (bubbles)
   - `a_seek_back_brings_no_ghost_bursts_on_the_stage` (bubbles)
   - `a_bubble_bursts_over_the_picture_and_is_gone_from_it` (bubbles)
@@ -735,10 +735,10 @@ stem keys are their mutes.
     `the_score_s_corner_is_kept_clear`
     (`gui::fx::edge_fire`),
     `the_score_lies_in_its_corner` (`gui::stage::score`),
-    `runs_split_by_group_and_treatment` (`gui::stage_gpu::groups`)
+    `runs_split_by_group_and_treatment` (`gui::stage::gpu::groups`)
   - what keeps the stage fast on Apple's GPUs (PERFORMANCE.md):
     `each_pipeline_carries_only_its_own_effect_and_picks_by_its_group`,
-    `the_screen_passes_draw_only_strips` (`gui::stage_gpu::groups`),
+    `the_screen_passes_draw_only_strips` (`gui::stage::gpu::groups`),
     `every_kind_moves_and_every_look_is_drawn_by_its_own_line`,
     `the_particles_pick_a_drawing_by_its_look_alone` (`gui::particles`)
   - `every_effect_s_shader_is_its_reference`, `every_group_compiles`,
@@ -861,7 +861,7 @@ stem keys are their mutes.
   - `the_demo_key_is_held_in_the_mode_only`
   - `the_demo_sings_with_no_microphone` (app)
   - `a_song_the_demo_sang_in_is_not_kept`,
-    `a_take_without_a_voice_is_not_kept` (`keep`)
+    `a_take_without_a_voice_is_not_kept` (`store::keep`)
 - **K18.** `s` on the Karaoke tab (or the palette) syncs, with a
   microphone open (else it says one is needed) and the player's strip
   heard on the Mixer tab (not muted or far down, nor another strip soloed:
@@ -915,7 +915,7 @@ stem keys are their mutes.
     `a_stamp_lands_on_the_sheet_when_drawn` (`sfx::conductor`)
   - `the_bus_level_comes_before_the_limiter`,
     `the_bus_level_glides_while_a_sound_plays` (synth)
-  - `a_song_is_measured_once_and_kept` (`loudness`)
+  - `a_song_is_measured_once_and_kept` (`work::loudness`)
 - **K26.** A song's lyrics edited by hand (the editor's actions, its
   screen K27) are the user's own, kept beside the lyrics' cache and
   never forgotten with it, read where they are while the data folder
@@ -927,8 +927,8 @@ stem keys are their mutes.
   over it (6 dB over the slider's level, to at least -6 dB), smoothed over
   50 ms, or played at the level set over a word. Every change is undone
   and redone.
-  - `edits_are_kept_and_found_while_the_data_folder_moves` (`lyrics::edits`)
-  - `clean_cache_forgets_every_cache_in_both_places` (`dirs`)
+  - `edits_are_kept_and_found_while_the_data_folder_moves` (`work::lyrics::edits`)
+  - `clean_cache_forgets_every_cache_in_both_places` (`store::dirs`)
   - `a_word_set_by_hand_stays_and_its_neighbours_fit_around_it` (lyrics)
   - `a_word_not_to_be_sung_gets_no_bubble_and_no_score` (`core::singing`)
   - `a_word_not_sung_turns_the_voice_up_smoothly` (`core::voice_curve`)
@@ -1112,8 +1112,8 @@ stem keys are their mutes.
   at all, where the folder is while it moves; at the start the patches
   kept are loaded over the built-in ones. Revert brings the built-in
   patch back and forgets what was kept.
-  - `a_patch_reads_back_as_it_was_written` (`patches`)
-  - `patches_are_kept_and_found_while_the_data_folder_moves` (`patches`)
+  - `a_patch_reads_back_as_it_was_written` (`store::patches`)
+  - `patches_are_kept_and_found_while_the_data_folder_moves` (`store::patches`)
   - `a_synth_slider_edits_the_patch_kept_then_reverted`
 - **Y5.** The keyboard plays the patch shown: a press holds the key under
   the pointer, sliding from key to key as it moves; a computer key holds

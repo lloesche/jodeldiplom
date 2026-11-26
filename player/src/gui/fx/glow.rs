@@ -13,7 +13,7 @@
 
 use super::helpers::smoothstep;
 use super::{At, Fx, Layer, Live, Music, Out, Reference, Slot, Spec};
-use crate::gui::stage_gpu::Instance;
+use crate::gui::stage::gpu::Instance;
 
 /// The glow round a lane (`shape` its middle and half size) in `color`,
 /// `params[1]` its reach, `params[2]` its strength, `color2` how sure the

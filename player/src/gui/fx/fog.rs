@@ -26,7 +26,7 @@ use jodel_rhythm::stems::Stem;
 
 use super::helpers::{clamp01, lattice, smoothstep, speed, vnoise};
 use super::{At, Clear, Fx, Layer, Live, Music, Out, Reference, Slot, Spec};
-use crate::gui::stage_gpu::Instance;
+use crate::gui::stage::gpu::Instance;
 
 /// The fog: a strip along an edge (`quad`), the lyric band's top and
 /// bottom in `shape[0..2]`, what it keeps clear as [`Clear::on`] puts it,

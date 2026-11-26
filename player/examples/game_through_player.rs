@@ -323,7 +323,7 @@ fn main() {
         let word = &mut lyrics.lines[l].words[w];
         (word.start, word.end) = (Some(from), Some(to));
     }
-    let found = jodeldiplom::lyrics::Answer::Found {
+    let found = jodeldiplom::work::lyrics::Answer::Found {
         lyrics,
         timed: None,
     };

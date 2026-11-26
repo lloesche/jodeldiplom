@@ -575,7 +575,7 @@ pub struct SettingsState {
 
 /// The folder list the data folder is chosen in: a folder's subfolders,
 /// or (above a Windows drive) the drives. The data folder is made inside
-/// the folder chosen ([`crate::dirs::DATA`]).
+/// the folder chosen ([`crate::store::dirs::DATA`]).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct FolderPick {
     /// The folder shown; `None`: the drives.
@@ -721,7 +721,7 @@ pub struct State {
     pub config: Config,
     /// Where settings changed in the UI are saved, if anywhere.
     pub config_file: Option<PathBuf>,
-    /// The data folder in use ([`crate::dirs::Data`]), if there is one.
+    /// The data folder in use ([`crate::store::dirs::Data`]), if there is one.
     pub data_dir: Option<PathBuf>,
     /// A move of the data folder, while one is under way (and once it has
     /// ended this run).

@@ -1,4 +1,4 @@
-// Karaoke mode's stage on the GPU (`stage_gpu.rs`): its shapes, each a
+// Karaoke mode's stage on the GPU (`stage/gpu.rs`): its shapes, each a
 // signed distance, and its text from the atlas. Its kinds come before it;
 // the liquid's maths, the tubes, the shine's clock, the glory, the
 // diploma's shapes, the effects and the music after it

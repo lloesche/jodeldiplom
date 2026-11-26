@@ -5,7 +5,7 @@
 //! [`RISE`] from how strong it showed; lost, it collapses over
 //! [`COLLAPSE`] ([`shine_at`]). The rainbow's bands, swirl, rim and text
 //! ([`super::fx::rainbow`]), the ring of the time left
-//! ([`super::glory::ring_at`]) and the tiers' held looks
+//! ([`crate::gui::stage::shapes::glory::ring_at`]) and the tiers' held looks
 //! ([`crate::tiers::held`]) all go by it; the rainbow's colours are
 //! [`hue`].
 //!

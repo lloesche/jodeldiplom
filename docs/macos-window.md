@@ -106,13 +106,13 @@ Learnt on the same Macs, and kept in the code:
   pixel.** One stage shader for every shape cost about 4 ms a screen
   whatever was drawn (11 ms on the diploma, on an M4 Max, against 0.1 to
   0.3 ms on an RTX 5080). The stage is now a pipeline a group of shapes,
-  each compiled with only its own code (`gui/stage_gpu/groups.rs`), with
+  each compiled with only its own code (`gui/stage/gpu/groups.rs`), with
   the same frames to the byte.
 - **Metal writes timestamps only at a pass's start and end,** and Apple's
   GPUs start a pass that needs nothing before it early, beside what is
   still drawing. `frame_cost` marks each step with a pass of its own,
   clearing one pixel, once the GPU has done the step
-  (`gui/stamps.rs`).
+  (`gui/present/stamps.rs`).
 - **A sample on a seam can fall either side.** Apple's GPUs put the meter
   ring's sample on its level line and the sticker's at its middle, the
   other side from the Rust reference; the shader checks hold a point

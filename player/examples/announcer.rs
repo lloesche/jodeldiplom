@@ -29,10 +29,10 @@ use jodel_rhythm::stems::{Splitter, Stem};
 use jodel_rhythm::{Analysis, Method, Region};
 use jodel_synth::Synth;
 use jodeldiplom::core::RhythmRecipe;
-use jodeldiplom::rhythm::analyze_file;
 use jodeldiplom::sfx::conductor::{Called, Clock, Conductor, Diploma, Event};
 use jodeldiplom::theme::{Theme, CLASSIC, SPOOKY};
 use jodeldiplom::tiers::Tier;
+use jodeldiplom::work::rhythm::analyze_file;
 
 /// A device period, frames.
 const PERIOD: usize = 480;

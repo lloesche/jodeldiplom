@@ -1,6 +1,6 @@
 //! The core's effects carried out by the [`App`]: the engine told, the
 //! workers asked, the background jobs started (each sends its answer
-//! through the [`crate::outbox::Outbox`]), the files written.
+//! through the [`crate::work::outbox::Outbox`]), the files written.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -122,8 +122,8 @@ impl App {
             Effect::SaveQueue(tracks) => {
                 let result = match &self.state.queues_dir {
                     Some(dir) => {
-                        let path = crate::session::queue_name(dir, &tracks);
-                        crate::session::write_playlist(&path, &tracks, &[])
+                        let path = crate::store::session::queue_name(dir, &tracks);
+                        crate::store::session::write_playlist(&path, &tracks, &[])
                             .map(|()| path)
                             .map_err(|e| e.to_string())
                     }
@@ -132,7 +132,7 @@ impl App {
                 self.dispatch(Action::QueueSaved(result));
             }
             Effect::ReadPlaylist { path, how } => {
-                let tracks = crate::session::read_playlist(&path).map_err(|e| e.to_string());
+                let tracks = crate::store::session::read_playlist(&path).map_err(|e| e.to_string());
                 self.dispatch(Action::PlaylistRead { path, tracks, how });
             }
             Effect::SaveConfig => {
@@ -168,7 +168,7 @@ impl App {
 
     /// The data folder goes into `parent`: the move written down (from now
     /// on what is written goes there), the settings saved, the files moved
-    /// in the background ([`crate::mover`]).
+    /// in the background ([`crate::store::mover`]).
     fn move_data(&mut self, parent: PathBuf) {
         if self.moving.busy() {
             return self.dispatch(Action::Failed(
@@ -178,8 +178,8 @@ impl App {
         let Some(from) = self.state.data_dir.clone() else {
             return;
         };
-        let to = crate::dirs::Data::in_parent(&parent).0;
-        // The journal beside the settings file in use ([`crate::dirs::Folders`]).
+        let to = crate::store::dirs::Data::in_parent(&parent).0;
+        // The journal beside the settings file in use ([`crate::store::dirs::Folders`]).
         let settings = self
             .state
             .config_file
@@ -200,7 +200,7 @@ impl App {
             return self.dispatch(Action::Failed(why));
         }
         // The system's place is kept as none, so it follows the system.
-        let default = crate::dirs::default_data_parent();
+        let default = crate::store::dirs::default_data_parent();
         self.state.config.data_folder = (default.as_ref() != Some(&parent)).then_some(parent);
         self.run(Effect::SaveConfig);
         self.state.data_dir = Some(to.clone());

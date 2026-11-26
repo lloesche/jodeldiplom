@@ -96,11 +96,11 @@ side effects is outside it and driven by what it returns.
 | Core | `core` | `State` (what the player shows and knows), `Action` (every input: keys, widgets, the engine, the workers), `update` (pure), `Effect` (what to do), the keymap table, `Fit` (the window's size as facts). Sub-cores per feature: `core::desk`, `core::transition`, `core::karaoke`, `core::singing`, `core::shine`, `core::lag`, `core::sync`, `core::preview`, `core::stems`, `core::key`. |
 | The game's data | `tiers`, `theme` | the tier table: everything a tier takes, looks like and sounds like, a row each; the themes that override its colours, the effects' looks and the sounds' patches by key. |
 | Presentation models | `view` | what each screen says, as plain data (rows, labels, tones, the Karaoke picture, the bubbles' fill). |
-| The running player | `app`, `desk_wiring`, `preview`, `sync`, `clock` | `App` holds the `State`, carries out the effects (`app::effects`), pumps the channels, answers the window's frames (`app::frame`); its subsystems own their parts: the microphone and the singing (`app::mic`), the cover heard (`art`), the spectrum (`spectrum`), the session kept (`session`), a data folder's move (`mover`); `desk_wiring` builds the desk and the engine on it; `preview` and `sync` play on it beside the engine. |
-| Workers | `browser` (details, search), `rhythm`, `lyrics`, `cover`, `shine_cache`, `loudness`, `setup`, `download`, `mover`, `grids` | background threads, each with its queue (`work`: a `Queue` its threads wait on, the `Lanes` of what is wanted now and ahead, a `Job` that tells how it stands and waits for a retry); results come back as `Action`s through an `Outbox` (`outbox`). |
-| Stores | `cache`, `dirs`, `session`, `grids`, `scores`, `delays`, `stems_cache`, `shine_cache`, `keep`, `mover`, `config` | what is kept on disk, where, and in which schema. |
+| The running player | `app`, `desk_wiring`, `preview`, `sync`, `clock` | `App` holds the `State`, carries out the effects (`app::effects`), pumps the channels, answers the window's frames (`app::frame`); its subsystems own their parts: the microphone and the singing (`app::mic`), the cover heard (`work::art`), the spectrum (`spectrum`), the session kept (`store::session`), a data folder's move (`store::mover`); `desk_wiring` builds the desk and the engine on it; `preview` and `sync` play on it beside the engine. |
+| Workers | `work` (`work::rhythm`, `work::lyrics`, `work::cover`, `work::art`, `work::shine`, `work::loudness`, `work::download`), `browser` (details, search), `setup`, `store::mover`, `store::grids` | background threads, each with its queue (`work`: a `Queue` its threads wait on, the `Lanes` of what is wanted now and ahead, a `Job` that tells how it stands and waits for a retry); results come back as `Action`s through an `Outbox` (`work::outbox`). |
+| Stores | `store` (`store::cache`, `store::dirs`, `store::mover`, `store::session`, `store::grids`, `store::delays`, `store::scores`, `store::keep`, `store::patches`, `store::stems`), `config`; the workers keep their own (`work::rhythm`, `work::lyrics`, `work::cover`, `work::shine`, `work::loudness`) | what is kept on disk, where, and in which schema. |
 | Sounds | `sfx` | the game's moments as sounds: the conductor plans notes on the song's grid and key for the synth on the desk's effects input. |
-| The window | `gui` | the iced application (`gui::window`), its screens (`gui::screens`) built from the look's tokens and shared widgets (`gui::look`, `gui::widgets`), the Mixer tab (`gui::mixer`), the lanes (`gui::lanes`), and Karaoke mode on the GPU: the stage (`gui::stage`, `gui::stage_gpu`), the effects (`gui::fx`), the backdrop (`gui::backdrop`), the light (`gui::bloom`), the bursts (`gui::particles`). |
+| The window | `gui` | the iced application (`gui::window`), its screens (`gui::screens`) built from the look's tokens and shared widgets (`gui::look`, `gui::widgets`), the Mixer tab (`gui::mixer`), the lanes (`gui::lanes`), and Karaoke mode on the GPU: the stage (`gui::stage`, its GPU side `gui::stage::gpu` and its shader's shapes `gui::stage::shapes`), the effects (`gui::fx`), the backdrop (`gui::backdrop`), the light (`gui::bloom`), the bursts (`gui::particles`). |
 | Platform | `cli`, `diag`, `single`, `icon`, `calendar`, `trace` | the command line, `--diag`, one player at a time, the icon, the date, the timing trace. |
 
 The core never reads a file, the clock or a thread. Time comes in as
@@ -171,8 +171,8 @@ wakes the window. The GPU work of all three is background work: it gives
 way while the window draws something moving (`jodel_gpu::pace`).
 
 In Karaoke mode two more are asked for as a song is sung: the original
-singer's phrases measured from the vocal stem (`shine_cache`, the shine's
-yardstick) and the song's loudness as played (`loudness`, which the game's
+singer's phrases measured from the vocal stem (`work::shine`, the shine's
+yardstick) and the song's loudness as played (`work::loudness`, which the game's
 sounds follow).
 
 ### The game loop
@@ -256,21 +256,21 @@ Real-time rules, and what holds them:
 | The engine, the mixer and the game's sounds | `desk_wiring::Engine` (inside `App`), with `sfx::Sfx` and its conductor | `App`, as effects come |
 | The settings | `config.toml` in the settings folder, read into `Config` (in `State`) | the Settings screen and the keys, saved by `Effect::SaveConfig` |
 | The user's own records | the settings folder: the session and saved queues, grids fixed by hand, the singer's delays, kept singing (`recordings/`), the data move's journal | their stores; every older version of them is still read |
-| What can be made again | the data folder: the models, analyses and waveforms, stems, lyrics, shine, loudness, covers, and the best scores | the workers, through `durable`; read only in the schema version written (`cache.rs`) |
+| What can be made again | the data folder: the models, analyses and waveforms, stems, lyrics, shine, loudness, covers, and the best scores | the workers, through `durable`; read only in the schema version written (`store/cache.rs`) |
 
-Two folders, decided once at the start (`dirs::Folders`) and handed to
+Two folders, decided once at the start (`store::dirs::Folders`) and handed to
 everything that reads or writes there:
 
 - **Settings**: small, the user's, where the system keeps an app's
   settings, never moved.
 - **Data**: large, could be made again, its parent chosen in the
   settings. Moving it is a journal of folders to move and a file at a
-  time (`mover`); while it moves, every store writes where things go and
+  time (`store::mover`); while it moves, every store writes where things go and
   reads from wherever a file still is.
 
 Every file is written through `durable` (a temporary beside it, fsync,
 rename, the folder fsynced); clippy refuses any other write
-(`clippy.toml`). The cache contract is in `player/src/cache.rs`: a schema
+(`clippy.toml`). The cache contract is in `player/src/store/cache.rs`: a schema
 version per kind of file, a sample of each version pinned byte for byte
 in `player/tests/schemas/`, content versions (the analysis's, the
 aligner's, the covers') apart from the schemas.
@@ -337,10 +337,10 @@ the keys goes into `core::Fit`. Its interactions are rules in
 `INTERACTIONS.md` with simulator tests in `player/tests/screens.rs`. See
 `docs/window.md`.
 
-**A kind of file kept.** A `cache::Schema` in `cache.rs` (in `ALL`), its
+**A kind of file kept.** A `store::cache::Schema` in `store/cache.rs` (in `ALL`), its
 sample pinned by `tests/schemas.rs` (`UPDATE_SCHEMAS=1` adds a new
 version's), written through `durable`, read and written through the mover
-(`mover::locate`, `mover::current`) if it is in the data folder.
+(`store::mover::locate`, `store::mover::current`) if it is in the data folder.
 
 **A network.** Its CPU version in the crate of its domain (`jodel-rhythm`,
 `jodel-lyrics`), checked against the published model's outputs; its GPU
@@ -359,7 +359,7 @@ name means in the standard words, and where it is.
 | backdrop | the karaoke background visualiser: the cover in depth layers, lit by the stems | `player/src/gui/backdrop` |
 | badge | the combo multiplier's display ("Amazing 82 in a row ×16") | `player/src/gui/stage/badge.rs` |
 | board | the effects' strength envelopes, eased frame by frame | `player/src/gui/fx/board.rs` |
-| bubble | a word's note target: the capsule under a sung word that fills as it is hit | `player/src/core/bubbles.rs`, `player/src/gui/pop.rs` |
+| bubble | a word's note target: the capsule under a sung word that fills as it is hit | `player/src/core/bubbles.rs`, `player/src/gui/stage/shapes/pop.rs` |
 | burst | a particle effect drawn on the GPU from one record | `player/src/gui/particles.rs` |
 | conductor | the adaptive sound-effect scheduler: plans the game's sounds on the song's beat grid and key | `player/src/sfx/conductor` |
 | cues (rhythm) | onset detection curves: kick, snare, hats, bass and chord changes | `rhythm/src/cues.rs` |
@@ -372,7 +372,7 @@ name means in the standard words, and where it is.
 | fit (lyrics) | whether a lyrics text matches a recording, by speech recognition | `lyrics/src/fit.rs` |
 | `Fit` (core) | layout metrics the window reports to the core: page sizes, which strips show | `player/src/core/fit.rs` |
 | glimpses | sliding-window speech recognition over the voice | `lyrics/src/glimpses.rs` |
-| glory | the score meter's shader, with the countdown ring and the progress marks | `player/src/gui/glory.rs` |
+| glory | the score meter's shader, with the countdown ring and the progress marks | `player/src/gui/stage/shapes/glory.rs` |
 | glow | the combo glow's level, 0 to 1, from the tier the singing is at | `player/src/gui/shine.rs`, `player/src/tiers.rs` |
 | grab | pointer capture: a press that holds the pointer until release | `player/src/gui/pointer.rs` |
 | guest | a secondary mixer input (a preview), against the Lead | `output/src/mixer/mod.rs` |
@@ -384,7 +384,7 @@ name means in the standard words, and where it is.
 | lanes (tabs) | the Transition and Karaoke tabs' waveform tracks | `player/src/core/lanes.rs`, `player/src/gui/lanes` |
 | Lead | the primary mixer input, whose frames the microphone is timed in | `output/src/mixer/mod.rs` |
 | link (follow) | sample-accurate sync of one input to another's stream | `output/src/mixer/follow.rs` |
-| liquid | the fill shader of a bubble | `player/src/gui/liquid.rs` |
+| liquid | the fill shader of a bubble | `player/src/gui/stage/shapes/liquid.rs` |
 | marquee | the chasing light bulbs round the lane | `player/src/gui/fx/bulbs.rs` |
 | moment | a game event (a word scored, a bubble bursting, a rung reached, a phrase rated) in one ordered stream | `player/src/core/singing/moments.rs` |
 | music clock | audio-reactive modulation signals: beat and bar phase, pulses, levels, pitch | `player/src/gui/fx/music.rs` |
@@ -392,22 +392,22 @@ name means in the standard words, and where it is.
 | pacer | frame pacing: one tick per display refresh, sent from inside the redraw | `player/src/gui/pacer.rs` |
 | par | the score the original singer's everyday hearings reach on a phrase, the bars' scale | `player/src/core/shine/reference.rs` |
 | part | a stem carried beside main in a lane stream | `output/src/lanes.rs`, `playback/src/engine/lanes` |
-| pop | a bubble bursting, and its sound; `gui::pop` draws the bubbles on the stage | `player/src/gui/pop.rs`, `player/src/sfx/conductor/sounds.rs` |
+| pop | a bubble bursting, and its sound; `gui::stage::shapes::pop` draws the bubbles on the stage | `player/src/gui/stage/shapes/pop.rs`, `player/src/sfx/conductor/sounds.rs` |
 | reveal | the results screen's animation timeline | `player/src/core/karaoke/result/reveal.rs` |
 | rescue shot | forgiveness for one missed word: the next word hit shoots it and keeps the combo | `player/src/core/singing/bursts.rs` |
 | rung | a combo multiplier level (×2 to ×32), reached at so many words in a row, named after a tier | `player/src/core/singing/mod.rs` (`rung`), `player/src/tiers.rs` |
 | scaffold | the line times of synced lyrics used as soft anchors for the word alignment | `lyrics/src/scaffold.rs` |
-| seal | the results screen's sticker and wax-seal shaders | `player/src/gui/seal.rs` |
+| seal | the results screen's sticker and wax-seal shaders | `player/src/gui/stage/shapes/seal.rs` |
 | shine | a phrase's vocal similarity score against the original singer's | `player/src/core/shine` |
 | slam | a big title word hitting the screen ("DIVA!", "×32") | `player/src/gui/fx/slam.rs` |
-| snake | a bubble's tube geometry: a capsule following a word's notes | `player/src/gui/snake.rs` |
+| snake | a bubble's tube geometry: a capsule following a word's notes | `player/src/gui/stage/shapes/snake.rs` |
 | spread | timing words without a model: line times split by syllables | `lyrics/src/spread.rs` |
-| stage | Karaoke mode's GPU renderer: SDF shapes and text from an atlas, a pipeline per group | `player/src/gui/stage.rs`, `player/src/gui/stage_gpu.rs` |
+| stage | Karaoke mode's GPU renderer: SDF shapes and text from an atlas, a pipeline per group | `player/src/gui/stage.rs`, `player/src/gui/stage/gpu.rs` |
 | stinger | the short musical hit when a rung is reached | `player/src/sfx/conductor/sounds.rs` |
 | streak | the combo: words hit in a row | `player/src/core/singing/tally.rs`, `player/src/gui/streak.rs` |
 | strip | a mixer channel strip (fader, mute, solo, meters); a group is a strip with strips inside it | `output/src/mixer/strip.rs`, `player/src/core/desk` |
 | sync | latency calibration: clicks played, the singer's answers timed | `player/src/core/sync`, `player/src/sync.rs` |
-| take | a recording of a song sung, kept for tuning the game | `player/src/keep.rs` |
+| take | a recording of a song sung, kept for tuning the game | `player/src/store/keep.rs` |
 | tap | a read-only hook on each buffer the device takes | `output/src/tap.rs` |
 | theme | a skin: tier colours, effect looks and sound patches overridden by key (Classic, Spooky) | `player/src/theme.rs` |
 | tier | a phrase's rating grade (Good, Great, Awesome, Amazing, Diva) | `player/src/tiers.rs` |

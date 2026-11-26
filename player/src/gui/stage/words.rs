@@ -1,7 +1,7 @@
 //! The words on the stage's lane: each a tube through its notes
-//! ([`super::super::snake::Snake`], its bubble with the game on:
-//! [`super::super::pop`]), laid out in time one after another (no two
-//! meet: each starts when it is sung, or just after the one before ends
+//! ([`super::shapes::snake::Snake`], its bubble with the game on:
+//! [`super::shapes::pop`]), laid out in time one after another (no
+//! two meet: each starts when it is sung, or just after the one before ends
 //! where that is later, and lasts as long as it is sung, or as its text,
 //! made smaller to fit before the next word down to [`SMALLEST_TEXT`] of
 //! its size, or a circle, whichever is longest), its text inside it on
@@ -10,9 +10,9 @@
 use std::collections::HashMap;
 
 use super::super::big_text::Face;
-use super::super::pop::{self, Laid};
-use super::super::snake::Snake;
-use super::super::stage_gpu::{Instance, Skin, Tint};
+use super::gpu::{Instance, Skin, Tint};
+use super::shapes::pop::{self, Laid};
+use super::shapes::snake::Snake;
 use super::{
     edge_fade, rgba, Lane, Song, Stage, ACTIVE, EDGE, GOLD, GOLD_DEEP, GOLD_TOP, SMOKE, WHITE,
 };
@@ -388,8 +388,8 @@ fn word_text<'a>(song: &Song<'a>, l: usize, w: usize) -> &'a str {
 #[cfg(test)]
 mod tests {
     use crate::core::singing::Singing;
+    use crate::gui::stage::gpu::{Shape, StageFrame};
     use crate::gui::stage::{Song, Stage};
-    use crate::gui::stage_gpu::{Shape, StageFrame};
     use crate::view::karaoke::KaraokePicture;
 
     /// A song of one short word, "my", gliding up from one note to

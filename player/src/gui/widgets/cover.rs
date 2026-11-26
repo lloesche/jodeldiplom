@@ -24,8 +24,8 @@ use iced::{
     Size, Theme, Vector, Widget as _,
 };
 
-use crate::art::{self, Art};
 use crate::gui::look::{self, radius};
+use crate::work::art::{self, Art};
 
 /// How dark the cover gets at its bottom under text: 80 % (as the eye
 /// sees it).

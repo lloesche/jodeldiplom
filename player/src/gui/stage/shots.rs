@@ -2,13 +2,13 @@
 //! glowing star flying from the bubble that fired it to the word missed
 //! before it, in an arc, a tail of light behind it and sparkles off it;
 //! where it lands, a flash and a burst of sparks (the word then fills and
-//! bursts as any bubble, [`super::super::pop`]). A word missed long gone
-//! off the lane's left: the shot flies off the edge after it. Both words
-//! go by with the lane, the shot's way with them. Made afresh each frame
+//! bursts as any bubble, [`super::shapes::pop`]). A word missed
+//! long gone off the lane's left: the shot flies off the edge after it. Both
+//! words go by with the lane, the shot's way with them. Made afresh each frame
 //! from the singing's rescues, by the singing's clock.
 
 use super::super::particles::{Kind, Spray};
-use super::super::stage_gpu::{Instance, Shape};
+use super::gpu::{Instance, Shape};
 use super::words::Words;
 use super::{disc, rgba, segment, Lane, Song, GOLD, GOLD_TOP};
 use crate::core::bubbles::FLIGHT;

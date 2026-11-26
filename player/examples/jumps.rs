@@ -28,7 +28,7 @@ use jodel_playback::{Event, JumpAt, MakeStems, MemoryTarget, Player, PlayerOptio
 use jodel_rhythm::{Analysis, Method};
 use jodeldiplom::core::transition::jump::bar_jump;
 use jodeldiplom::core::RhythmRecipe;
-use jodeldiplom::rhythm::analyze_file;
+use jodeldiplom::work::rhythm::analyze_file;
 
 fn gpu() -> Option<&'static dyn Separator> {
     GpuSeparator::shared().map(|g| g as &dyn Separator)

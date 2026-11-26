@@ -674,7 +674,7 @@ fn the_words_go_on_the_voice_lane_where_they_are_sung() {
     use jodeldiplom::core::lanes::Lane;
     use jodeldiplom::core::transition::viewport;
     use jodeldiplom::core::Effect;
-    use jodeldiplom::lyrics::Answer;
+    use jodeldiplom::work::lyrics::Answer;
     let mut state = common::transition_state(120, 40);
     state.karaoke.lyrics_wanted.clear();
     let fx = update(&mut state, Action::Tick(1));

@@ -73,7 +73,7 @@ impl Step {
         (px, clock, pps): (f32, f64, f32),
     ) -> Option<Spray> {
         self.word
-            .map(|end| super::pop::scored(at(end), px, clock, pps, end))
+            .map(|end| crate::gui::stage::shapes::pop::scored(at(end), px, clock, pps, end))
     }
 }
 

@@ -8,8 +8,8 @@
 use image::imageops::{self, FilterType};
 use image::RgbImage;
 
-use crate::art::Art;
 use crate::view::palette;
+use crate::work::art::Art;
 
 /// How dark the layer over the blurred cover is (0 clear, 1 black).
 const SHADE: f32 = 0.55;
@@ -120,7 +120,7 @@ mod tests {
     fn the_ground_fills_the_screen_shaded_and_blurred() {
         let art = Art {
             id: 7,
-            image: Arc::new(crate::art::sample_cover(64)),
+            image: Arc::new(crate::work::art::sample_cover(64)),
         };
         let s = small(Some(&art), (320, 180));
         assert_eq!(s.dimensions(), (48, 27));

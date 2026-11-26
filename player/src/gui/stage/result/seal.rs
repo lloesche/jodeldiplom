@@ -11,7 +11,6 @@
 //! with a "Zzz" rubber stamp, where nothing was scored). Until then the
 //! seal's place is marked, faintly.
 
-use super::super::super::stage_gpu::{Shape, StageFrame};
 use super::super::{disc, pill, rgba, segment, Face, Rgb, Stage, GOLD, GOLD_TOP, WHITE};
 use super::{
     burst, clamp01, fade, land, shape, sparkle, sticker, Pen, ResultShown, Room, Tint, Written,
@@ -19,6 +18,7 @@ use super::{
 };
 use crate::core::karaoke::result::{ease_out, verdict_words, Medal, Verdict, DROP, GRADE_WRITE};
 use crate::gui::particles::Kind;
+use crate::gui::stage::gpu::{Shape, StageFrame};
 use crate::view::karaoke::DIPLOMA;
 
 /// How long a seal falls, as the scene takes it.

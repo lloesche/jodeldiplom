@@ -16,8 +16,8 @@
 use super::{At, Fx, Layer, Live, Lyric, Out, Reference, Slot, Spec, Text, Treat};
 use crate::gui::shine::{hue, shine_at, Glow, SHOWS, WHOLE};
 use crate::gui::sparks::TAU;
+use crate::gui::stage::gpu::{Instance, Shape};
 use crate::gui::stage::LaneBox;
-use crate::gui::stage_gpu::{Instance, Shape};
 use crate::gui::wgsl_math::{mix3, round_box, smoothstep};
 use crate::tiers::{held, wgsl_array, TIERS};
 

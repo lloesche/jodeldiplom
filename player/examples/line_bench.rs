@@ -98,9 +98,9 @@ fn main() {
     // made again.
     if args[0] == "--reline" {
         let text = fs::read_to_string(&args[1]).unwrap();
-        let body = jodeldiplom::cache::LYRICS_TIMED.body(&text).unwrap();
+        let body = jodeldiplom::store::cache::LYRICS_TIMED.body(&text).unwrap();
         let lyrics = jodel_lyrics::Lyrics::parse(body, jodel_lyrics::Source::Unknown);
-        let (_, timed) = jodeldiplom::lyrics::relined(&lyrics);
+        let (_, timed) = jodeldiplom::work::lyrics::relined(&lyrics);
         for (name, l) in [("as kept", &lyrics), ("made again", &timed)] {
             println!("--- {name}: {} lines", l.lines.len());
             for line in l.lines.iter().take(24) {
@@ -133,7 +133,7 @@ fn main() {
         }
         let song = parts[2];
         let path = song.rsplitn(3, ' ').nth(2).unwrap_or(song);
-        let lyrics_key = jodeldiplom::cache::name(song);
+        let lyrics_key = jodeldiplom::store::cache::name(song);
         let Ok(timed) = fs::read_to_string(lyrics_dir.join(format!("{lyrics_key}.timed.lrc")))
         else {
             continue;
@@ -141,11 +141,11 @@ fn main() {
         if !timed.contains("[source:lrclib]") {
             continue;
         }
-        let Some(body) = jodeldiplom::cache::LYRICS_TIMED.body(&timed) else {
+        let Some(body) = jodeldiplom::store::cache::LYRICS_TIMED.body(&timed) else {
             continue;
         };
         let lyrics = jodel_lyrics::Lyrics::parse(body, jodel_lyrics::Source::Lrclib);
-        let Some(analysis) = jodeldiplom::rhythm::from_text(key, &text) else {
+        let Some(analysis) = jodeldiplom::work::rhythm::from_text(key, &text) else {
             continue;
         };
         let mut words = Vec::new();

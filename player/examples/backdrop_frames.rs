@@ -36,17 +36,17 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use jodel_gpu::vision::{Depth, Matte};
-use jodeldiplom::art::Art;
 use jodeldiplom::config::Config;
 use jodeldiplom::core::shine::{Shone, Tier};
 use jodeldiplom::core::singing::Singing;
-use jodeldiplom::cover::{Apart, CoverLayers, Layers, Parts, TextMap};
 use jodeldiplom::gui::backdrop::music::{Hearing, Levels};
 use jodeldiplom::gui::backdrop::{Cue, Mode, Visualiser};
 use jodeldiplom::gui::fx::Music;
 use jodeldiplom::gui::present::Offscreen;
 use jodeldiplom::gui::stage::{Song, Stage, Tint};
 use jodeldiplom::view::karaoke::{timed_lines, KaraokePicture, Score};
+use jodeldiplom::work::art::Art;
+use jodeldiplom::work::cover::{Apart, CoverLayers, Layers, Parts, TextMap};
 
 // The fonts build.rs found: `EMBEDDED_FONTS`.
 include!(concat!(env!("OUT_DIR"), "/fonts.rs"));
@@ -357,7 +357,7 @@ fn picture_apart(image: &image::RgbImage) -> CoverLayers {
         text: TextMap::none(),
         faces: Vec::new(),
     };
-    jodeldiplom::cover::split(image, &parts)
+    jodeldiplom::work::cover::split(image, &parts)
 }
 
 /// The layers in `path` (its file name the key; made `shrink` pixels
@@ -370,9 +370,9 @@ fn load(path: &Path, shrunk: Option<u32>) -> Layers {
         .iter()
         .any(|e| path.extension().is_some_and(|x| x.eq_ignore_ascii_case(e)));
     let layers = if picture {
-        picture_apart(&jodeldiplom::art::decode(&bytes).expect("a JPEG or PNG"))
+        picture_apart(&jodeldiplom::work::art::decode(&bytes).expect("a JPEG or PNG"))
     } else {
-        jodeldiplom::cover::from_bytes(&bytes)
+        jodeldiplom::work::cover::from_bytes(&bytes)
             .expect("layers")
             .layers
     };
@@ -477,7 +477,7 @@ fn main() {
     let shrunk: Option<u32> = after("--shrink").map(|s| s.parse().expect("SIDE"));
     let picture = after("--art").map(|f| {
         let bytes = std::fs::read(&f).expect("the picture");
-        jodeldiplom::art::decode(&bytes).expect("a JPEG or PNG")
+        jodeldiplom::work::art::decode(&bytes).expect("a JPEG or PNG")
     });
     let files: Vec<&String> = args[1..]
         .iter()

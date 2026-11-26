@@ -74,7 +74,7 @@ row's glow it is that row's value exactly.
 The meter's marks and fills, the rainbow's bands, the backdrop's light,
 the badge, the diploma's stickers and tally, the sounds' layers. The
 shaders get the table as generated constants (`const TIERS`, the marks,
-the fills: `tiers::wgsl_array`, `gui::glory`); no tier number is written
+the fills: `tiers::wgsl_array`, `gui::stage::shapes::glory`); no tier number is written
 in WGSL.
 
 `every_row_is_in_order` holds the rows to their order: each bar, streak,
@@ -111,13 +111,13 @@ phrase's mark, as a screen pass, and over everything. An effect draws in
 one or more ways:
 
 - **stage shapes:** instances of its own kinds, drawn by a pipeline of
-  its own (`stage_gpu::Group::Shapes`) with only its WGSL: the rainbow's
+  its own (`stage::gpu::Group::Shapes`) with only its WGSL: the rainbow's
   bands, the lane's glow, the flames;
 - **screen passes:** shapes over the finished frame, given the lyric band
   and the score, badge and meter to keep clear (`fx::Clear`): the edges
   on fire, the marquee bulbs;
 - **lyric treatments:** a function of a letter's colour and coverage, a
-  pipeline each (`stage_gpu::Group::Lyric`), on the shouts or the line
+  pipeline each (`stage::gpu::Group::Lyric`), on the shouts or the line
   sung: the rainbow, the lyrics on fire, frosted;
 - **bursts:** a record for the particles' pass, worked out in its vertex
   shader: the step-up, the jackpot, the angels, the coins;

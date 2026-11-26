@@ -9,7 +9,7 @@
 //! effect's code: a GPU compiles and runs only that.
 
 use super::Fx;
-use crate::gui::stage_gpu::{wgsl_name as name, Group};
+use crate::gui::stage::gpu::{wgsl_name as name, Group};
 
 /// The effects' WGSL for the stage's shader, with `effects`' code (each
 /// group's pipeline its own effect's; the shaders' checks every one).

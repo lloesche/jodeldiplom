@@ -1,7 +1,7 @@
 //! The stage's own colours (sRGB, 0 to 1, as [`super::Instance`] takes
 //! them): what its lane, its arrow, its text and its diploma are drawn in,
 //! and the gold of the words scored that the bubbles' bursts take too
-//! ([`crate::gui::pop`]).
+//! ([`super::shapes::pop`]).
 
 /// sRGB colours, 0 to 1.
 pub type Rgb = [f32; 3];
