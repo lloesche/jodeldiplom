@@ -14,9 +14,6 @@
 //! seek back, another song) or one just come is shown at once. The counter
 //! is stepped by the frames' own time, apart from the core's state: what
 //! it counts to is the core's score.
-//!
-//! Where it goes ([`placed`]) is the same for the stage and for the window
-//! without a GPU, which paints it into its pixmap.
 
 use super::super::big_text::{BigText, Face, Faces};
 use super::super::pixels::{mix, PixelRect};
@@ -112,7 +109,7 @@ fn bigness(points: u32) -> f32 {
 /// The counter: the points at rest under the changes still rolling in
 /// (none while no score shows), those changes, and its glow.
 #[derive(Clone, Debug, Default)]
-pub struct Odometer {
+pub(super) struct Odometer {
     base: Option<u32>,
     changes: Vec<Change>,
     /// How much the number glows, 0 to 1, and how big the jumps it glows
@@ -207,7 +204,7 @@ impl Odometer {
 /// it turns, a second; how much the number glows and how big its jump is,
 /// 0 to 1.
 #[derive(Clone, Debug, PartialEq)]
-pub struct Reading {
+pub(super) struct Reading {
     columns: Vec<(f64, f64)>,
     glow: f32,
     big: f32,
@@ -215,7 +212,7 @@ pub struct Reading {
 
 /// A figure of the counter as it is drawn.
 #[derive(Clone, Debug, PartialEq)]
-pub struct Figure {
+struct Figure {
     /// The figure.
     pub text: String,
     /// The size its glyphs are made at.
@@ -233,7 +230,7 @@ pub struct Figure {
 
 /// The score as it is set top right.
 #[derive(Clone, Debug, PartialEq)]
-pub struct Placed {
+struct Placed {
     /// The rung's name under the points: its text, size and line's
     /// top-left (none at ×1).
     pub rung: Option<(String, f32, (f32, f32))>,
@@ -281,7 +278,7 @@ pub fn corner((x, y, w, h): (f32, f32, f32, f32)) -> [f32; 4] {
 /// `score` as `reading` shows it, set top right in the window's `area`
 /// (left, top, width, height), in `faces` (its figures in
 /// [`Face::NUMBER`], its rung in [`Face::SHOUT`]).
-pub fn placed(
+fn placed(
     faces: &mut Faces,
     score: Score,
     reading: &Reading,
@@ -494,6 +491,42 @@ mod tests {
                 .enumerate()
                 .map(|(k, &(at, _))| (at.floor() as u64 % 10) * 10u64.pow(k as u32))
                 .sum()
+        }
+    }
+
+    /// The score and its rung (a long score, the top rung's name) lie in
+    /// the score's corner, which the effects over the frame keep clear.
+    #[test]
+    fn the_score_lies_in_its_corner() {
+        let area = (0.0, 0.0, 1600.0, 900.0);
+        let picture = KaraokePicture {
+            bar: 0.1,
+            lines: Vec::new(),
+            count: None,
+            cue: None,
+            controls: None,
+            start: None,
+            before: Vec::new(),
+            moved: 1.0,
+            score: Some(Score {
+                points: 987_654_321,
+                streak: 60,
+            }),
+            result: None,
+        };
+        let mut stage = Stage::default();
+        let mut out = Vec::new();
+        // At rest on it.
+        for _ in 0..200 {
+            out.clear();
+            stage.score(&mut out, &picture, area, 0.05);
+        }
+        let corner = corner(area);
+        assert!(out.len() > 9, "{}", out.len());
+        for i in &out {
+            let [x0, y0, x1, y1] = i.quad;
+            assert!(x0 >= corner[0] && x1 <= corner[2], "{:?}", i.quad);
+            assert!(y0 >= corner[1] && y1 <= corner[3], "{:?}", i.quad);
         }
     }
 

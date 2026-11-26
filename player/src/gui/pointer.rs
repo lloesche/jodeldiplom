@@ -1,9 +1,7 @@
 //! The pointer: what a widget's press holds ([`Grab`]), followed wherever
 //! the pointer goes; the pointer over the old canvas ([`super::embed`]) as
 //! the cell renderer's mouse ([`crate::view::mouse`]): its cell on the
-//! canvas's grid, the button drawn in pixels under it (the stage's START
-//! pill: [`crate::view::mouse::action_at`]'s `over`), the button held,
-//! and it going out of the window; and the wheel, for the canvas and the
+//! canvas's grid and the button held; and the wheel, for the canvas and the
 //! widgets alike, by whole steps ([`Wheel`]).
 //!
 //! The widgets only say what the pointer does over them; this is the one
@@ -17,7 +15,6 @@ use iced::{Point, Rectangle};
 
 use crate::app::App;
 use crate::core::desk::Channel;
-use crate::core::keymap::Op;
 use crate::core::lanes::{self, Block};
 use crate::core::sliders::Slider;
 use crate::core::transition::viewport;
@@ -64,9 +61,9 @@ pub enum Grab {
         /// Over the whole track.
         overview: bool,
     },
-    /// A slider of the Karaoke tab, its track: set to the share across it
-    /// under the pointer, as pressed and as it moves (landing on its
-    /// finest step, [`crate::core::sliders::Slider::unit`]).
+    /// A slider of the Karaoke tab or of Karaoke mode's controls, its
+    /// track: set to the share across it under the pointer, as pressed and
+    /// as it moves (landing on its finest step, [`crate::core::sliders::Slider::unit`]).
     Slider(Slider, Rectangle),
 }
 
@@ -182,7 +179,7 @@ fn share_across(bounds: Rectangle, at: Point) -> f64 {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum PointerKind {
     /// It moved (or left the canvas, or went under something iced draws
-    /// over it: `over` false).
+    /// over it).
     Moved,
     /// A button went down over it.
     Down(MouseButton),
@@ -190,8 +187,8 @@ pub enum PointerKind {
     Wheel(ScrollDelta),
 }
 
-/// The pointer over the old canvas: what, where in cells from its top left
-/// (with the share of one), and whether it is over it.
+/// The pointer over the old canvas: what, and where in cells from its top
+/// left (with the share of one).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Pointer {
     /// What.
@@ -200,11 +197,6 @@ pub struct Pointer {
     pub x: f64,
     /// Rows.
     pub y: f64,
-    /// Over the canvas (not off it, nor under the window's own widgets).
-    pub over: bool,
-    /// What the button drawn in pixels under it does (Karaoke mode's START
-    /// pill), as the stage drew it last.
-    pub on: Option<Op>,
 }
 
 impl Pointer {
@@ -225,13 +217,6 @@ pub struct PointerState {
     grab: Option<(Grab, Point)>,
     /// Its cell.
     cell: (u16, u16),
-    /// Its column, with the share of the cell (a Karaoke slider follows it
-    /// to the pixel).
-    x: f64,
-    /// It is over the canvas (leaving it is Karaoke mode's pointer going).
-    over: bool,
-    /// What the button drawn in pixels under it does.
-    on: Option<Op>,
     held: Option<MouseButton>,
 }
 
@@ -278,44 +263,20 @@ impl PointerState {
     /// whether the frame is to be drawn again.
     pub fn take(&mut self, app: &mut App, grid: Grid, pointer: Pointer) -> bool {
         let cell = pointer.cell(grid);
-        let x = pointer.x.min(f64::from(grid.cols));
-        self.on = pointer.on;
         match pointer.kind {
             PointerKind::Moved => {
-                let moved = x != self.x;
-                self.x = x;
-                let out = !pointer.over && self.over;
-                self.over = pointer.over;
-                let mut dirty = out && self.mouse(app, grid, MouseKind::Out);
-                // A Karaoke slider held follows the pointer within a cell.
-                let sliding =
-                    self.held == Some(MouseButton::Left) && app.state.karaoke.dragging.is_some();
-                let karaoke = pointer.over && crate::core::karaoke::in_mode(&app.state);
                 if cell == self.cell {
-                    if moved && sliding {
-                        dirty |= self.mouse(app, grid, MouseKind::Drag(MouseButton::Left));
-                    } else if karaoke && self.held.is_none() {
-                        // Karaoke mode's pointer shows again for a move
-                        // within a cell too; nothing on the canvas changes.
-                        self.mouse(app, grid, MouseKind::Moved);
-                    }
-                    return dirty;
+                    return false;
                 }
                 self.cell = cell;
-                if let Some(button) = self.held {
-                    // A held button drags wherever the pointer is.
-                    dirty |= self.mouse(app, grid, MouseKind::Drag(button));
-                } else if karaoke {
-                    // Karaoke mode shows its pointer, and its controls near
-                    // the bottom, while it moves.
-                    dirty |= self.mouse(app, grid, MouseKind::Moved);
-                }
-                dirty
+                // A held button drags wherever the pointer is.
+                self.held
+                    .is_some_and(|button| self.mouse(app, grid, MouseKind::Drag(button)))
             }
             // A grab owns the pointer until it is let go of.
             PointerKind::Down(_) if self.grab.is_some() => false,
             PointerKind::Down(button) => {
-                (self.cell, self.x) = (cell, x);
+                self.cell = cell;
                 self.held = Some(button);
                 self.mouse(app, grid, MouseKind::Down(button))
             }
@@ -352,8 +313,7 @@ impl PointerState {
 
     /// The wheel `steps` whole lines up (negative: down) at `pointer`.
     pub fn scroll(&mut self, app: &mut App, grid: Grid, pointer: Pointer, steps: i32) -> bool {
-        (self.cell, self.x) = (pointer.cell(grid), pointer.x);
-        self.on = pointer.on;
+        self.cell = pointer.cell(grid);
         let kind = if steps > 0 {
             MouseKind::ScrollUp
         } else {
@@ -370,7 +330,7 @@ impl PointerState {
             col: self.cell.0,
             row: self.cell.1,
         };
-        let action = mouse::action_at(&app.state, grid, input, self.x, self.on);
+        let action = mouse::action(&app.state, grid, input);
         let Some(action) = action else {
             return false;
         };
@@ -396,7 +356,8 @@ pub enum WheelOn {
     /// A Transition block's lanes, or its whole track (`true`): zoomed or
     /// scrolled, a step a line.
     Lanes(Block, bool),
-    /// A slider of the Karaoke tab: a step of its own a line.
+    /// A slider of the Karaoke tab or of Karaoke mode's controls: a step
+    /// of its own a line.
     Slider(Slider),
 }
 
@@ -461,6 +422,41 @@ mod tests {
         assert!(matches!(moved(at(20.0, 0.0)), Some(Action::SeekDrag(f)) if f == 0.0));
         assert!(matches!(moved(at(900.0, 900.0)), Some(Action::SeekDrag(f)) if f == 1.0));
         assert!(matches!(grab.released(at(200.0, 10.0)), Some(Action::SeekTo(f)) if f == 0.25));
+        assert_eq!(grab.button(), MouseButton::Left);
+    }
+
+    /// A Karaoke slider's grab sets the slider to the share across its
+    /// track wherever the pointer is, from its press on; the release lets
+    /// go of it; it holds on only while the core holds the slider.
+    #[test]
+    fn a_slider_grab_follows_the_pointer_anywhere() {
+        let track = Rectangle::new(Point::new(600.0, 700.0), iced::Size::new(160.0, 16.0));
+        let grab = Grab::Slider(Slider::Voice, track);
+        let mut state = State::new("/m".into(), crate::config::Config::default());
+        let at = |x, y| Point::new(x, y);
+        let slide = |a: Option<Action>| match a {
+            Some(Action::KaraokeSlide { slider, share }) => Some((slider, share)),
+            _ => None,
+        };
+        assert_eq!(
+            slide(grab.pressed(at(640.0, 708.0), &state)),
+            Some((Slider::Voice, 0.25))
+        );
+        assert_eq!(
+            slide(grab.moved(at(10.0, 0.0), &state)),
+            Some((Slider::Voice, 0.0))
+        );
+        assert_eq!(
+            slide(grab.moved(at(2000.0, 900.0), &state)),
+            Some((Slider::Voice, 1.0))
+        );
+        assert!(matches!(
+            grab.released(at(0.0, 0.0)),
+            Some(Action::KaraokeSlideEnd)
+        ));
+        assert!(!grab.taken(&state));
+        state.karaoke.dragging = Some(Slider::Voice);
+        assert!(grab.taken(&state));
         assert_eq!(grab.button(), MouseButton::Left);
     }
 

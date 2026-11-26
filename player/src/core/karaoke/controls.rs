@@ -156,21 +156,16 @@ mod tests {
     use crate::config::Config;
     use crate::core::Screen;
 
-    /// The rows of the window the tests have.
-    const WINDOW_ROWS: u16 = 40;
+    /// How far up the window the controls reach in the tests, as the
+    /// window says (their bar and two lines).
+    const BAR_REACH: f32 = 0.2;
 
     fn mode() -> State {
-        use crate::view::layout::{fit, Grid};
         let mut state = State::new("/m".into(), Config::default());
-        state.fit = fit(&state, Grid::new(100, WINDOW_ROWS));
+        state.fit.controls_reach = BAR_REACH;
         state.screen = Screen::Karaoke;
         state.now_ms = 10_000;
         state
-    }
-
-    /// The pointer in `row` of the window, as the window says where it is.
-    fn row(row: u16) -> f32 {
-        crate::view::mouse::from_bottom(WINDOW_ROWS, row)
     }
 
     fn at(state: &mut State, ms: u64) -> f64 {
@@ -178,34 +173,34 @@ mod tests {
         fade(state)
     }
 
-    /// Near the bottom they fade in and stay however long the pointer
+    /// Near the bottom (the last 15 % of the window, never less than the
+    /// bar and two lines) they fade in and stay however long the pointer
     /// rests; off it they linger, then fade out; back before they are
     /// gone, they fade in again from where they were, never popping. Laid
     /// out exactly while they show at all.
     #[test]
     fn the_controls_fade_in_stay_linger_and_fade_out() {
-        use crate::view::layout::CONTROLS_ROWS as ROWS;
         let mut state = mode();
-        let rows = WINDOW_ROWS;
-        assert!(
-            !in_reach(&state, row(rows - (ROWS + 3))) && in_reach(&state, row(rows - (ROWS + 2)))
-        );
-        pointer_moved(&mut state, row(rows / 2));
+        assert!(in_reach(&state, BAR_REACH - 0.001) && !in_reach(&state, BAR_REACH));
+        state.fit.controls_reach = 0.05;
+        assert!(in_reach(&state, REACH - 0.001) && !in_reach(&state, REACH));
+        state.fit.controls_reach = BAR_REACH;
+        pointer_moved(&mut state, 0.5);
         assert_eq!(state.karaoke.controls, Controls::Hidden);
-        pointer_moved(&mut state, row(rows - 1));
+        pointer_moved(&mut state, 0.0);
         assert!(!shown(&state) && fading(&state));
         assert_eq!(at(&mut state, 10_000), 0.0);
         assert!((at(&mut state, 10_100) - 0.5).abs() < 1e-9 && shown(&state));
         assert_eq!(at(&mut state, 60_000), 1.0);
         assert!(!fading(&state) && due(&state).is_none());
         // Off the bottom: 1.5 s more, then out over 0.2 s.
-        pointer_moved(&mut state, row(0));
+        pointer_moved(&mut state, 0.97);
         assert_eq!(due(&state), Some(61_500));
         assert_eq!(at(&mut state, 61_499), 1.0);
         assert!((at(&mut state, 61_600) - 0.5).abs() < 1e-9);
         assert!(fading(&state));
         // Back half way out: in again from a half.
-        pointer_moved(&mut state, row(rows - 2));
+        pointer_moved(&mut state, 0.03);
         assert!((at(&mut state, 61_600) - 0.5).abs() < 1e-9);
         assert!((at(&mut state, 61_650) - 0.75).abs() < 1e-9);
         // Off the window: they go as well, and once gone take no clicks.

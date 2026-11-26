@@ -1,26 +1,22 @@
 //! The window's drawing surface without the window: the shared ratatui
 //! widgets rasterised into an RGB pixmap ([`PixelBackend`]), and the
-//! pictures painted into it at their cell rects ([`pictures`]): Karaoke
-//! mode's picture without a GPU, its stage and the controls' bar with one
-//! ([`karaoke`]). The covers and the Karaoke tab's voice lane are the
+//! pictures placed at their cell rects ([`pictures`]). The covers and the
+//! Karaoke tab's voice lane are the
 //! window's own widgets over the cells left for them ([`Canvas::covers`],
 //! [`Canvas::take_lanes`]). Used by the window and, headless, by the tests
 //! and the screenshots.
 
-mod karaoke;
 mod pictures;
 
 use image::RgbImage;
 use ratatui::layout::Rect;
 use ratatui::Terminal;
 
-use super::big_text::Faces;
 use super::lanes::{LaneSpot, LaneSpots, Metrics, Part, Rows};
 use super::pixels::{pack, unpack, PixelRect};
 use super::raster::PixelBackend;
 use super::widgets::cover::{Align, Spot};
 use crate::art::Art;
-use crate::view::karaoke::KaraokePicture;
 use crate::view::layout::Grid;
 use crate::view::{self, palette, Scene};
 use pictures::{Paint, PixelPictures};
@@ -54,24 +50,6 @@ pub struct Canvas {
     /// The lanes as last drawn, for the window to draw over the cells
     /// left for them.
     lanes: Vec<LaneSpot>,
-    /// Karaoke mode as last drawn: its cells and how far its controls'
-    /// bar shows, taken as each frame starts (none: the mode not shown).
-    shown: Option<(Rect, Option<f64>)>,
-    /// Karaoke mode without a GPU: its backdrop (with one, the see-through
-    /// ground under the controls' bar), the text drawn large (by face), the
-    /// picture painted last and what it drew.
-    backdrop: Option<super::karaoke::Backdrop>,
-    faces: Faces,
-    karaoke: Option<KaraokePicture>,
-    karaoke_layer: super::karaoke::Layer,
-    /// Karaoke mode's stage, drawn by the GPU over its backdrop
-    /// ([`Canvas::stage_frame`]: all of the mode but the controls' bar),
-    /// and the picture it draws from with where, while the mode shows on
-    /// the GPU; the rows of the bar's strip the pixmap shows in
-    /// ([`Canvas::strip`]).
-    stage: super::stage::Stage,
-    staged: Option<(KaraokePicture, PixelRect)>,
-    strip: Option<(u32, u32)>,
     /// How long the last frame took.
     pub last_draw: DrawTimes,
     /// Whether the last [`Canvas::draw`] changed a pixel: a window that
@@ -79,10 +57,6 @@ pub struct Canvas {
     pub changed: bool,
     /// The pixels changed since [`Canvas::take_changes`].
     changes: Changes,
-    /// The window shows the pixmap on the GPU ([`Canvas::set_gpu`]):
-    /// Karaoke mode's stage, its bubbles' liquid and its ground are its,
-    /// rather than in the pixmap.
-    gpu: bool,
 }
 
 /// The pixels of the pixmap that changed, for a window that keeps a copy
@@ -145,15 +119,6 @@ impl Canvas {
             painted: Vec::new(),
             covers: Vec::new(),
             lanes: Vec::new(),
-            shown: None,
-            backdrop: None,
-            faces: Faces::default(),
-            karaoke: None,
-            karaoke_layer: super::karaoke::Layer::default(),
-            stage: super::stage::Stage::default(),
-            staged: None,
-            strip: None,
-            gpu: false,
             last_draw: DrawTimes::default(),
             changed: true,
             changes: Changes {
@@ -199,23 +164,6 @@ impl Canvas {
         grid
     }
 
-    /// Whether the window shows the pixmap on the GPU: Karaoke mode's
-    /// stage and ground are drawn there; otherwise all of it is painted
-    /// into the pixmap each frame.
-    pub fn set_gpu(&mut self, on: bool) {
-        if on != self.gpu {
-            self.gpu = on;
-            self.changes.all = true;
-        }
-    }
-
-    /// Whether the pixmap's pictures move by themselves, so frames must
-    /// keep coming while nothing else moves: Karaoke mode's score rolling
-    /// up.
-    pub fn moving(&self) -> bool {
-        self.karaoke_moving()
-    }
-
     /// The pixels changed since the last call (all of them at first).
     pub fn take_changes(&mut self) -> Changes {
         std::mem::take(&mut self.changes)
@@ -253,7 +201,6 @@ impl Canvas {
     pub fn draw(&mut self, scene: &Scene, art: Option<&Art>) {
         let started = std::time::Instant::now();
         self.terminal.backend_mut().reset_damage();
-        self.staged = None;
         let mut pictures = PixelPictures {
             has_art: art.is_some(),
             paints: Vec::new(),
@@ -273,8 +220,6 @@ impl Canvas {
         self.cells_changed(&mut frame);
         self.covers.clear();
         self.lanes.clear();
-        let last = self.shown.take();
-        self.strip = None;
         for paint in pictures.paints {
             match paint {
                 Paint::Cover(rect, below_line) => {
@@ -290,14 +235,6 @@ impl Canvas {
                     };
                     let part = Part::Wave(plot, rows);
                     self.lanes.push(LaneSpot { rect, part });
-                }
-                Paint::Karaoke(area, picture) => {
-                    let controls = picture.controls;
-                    let now = (area, *picture);
-                    for rect in self.karaoke_picture(now, last.as_ref(), art, started) {
-                        frame.add(rect);
-                    }
-                    self.shown = Some((area, controls));
                 }
             }
         }

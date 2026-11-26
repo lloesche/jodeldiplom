@@ -155,12 +155,36 @@ every frame), within the 1.0 / 2.0 budget.
 ## The Karaoke tab native (the iced port's S9, November 2026)
 
 The tab's text, buttons, sliders, switches and the sync's panel are the
-window's own widgets (`gui::screens::karaoke`); the canvas draws only its
+window's own widgets (`gui::screens::karaoke::tab`); the canvas draws only its
 pictures' places there. `examples/view_cost.rs` (1512 × 982 at scale 2,
 headless wgpu, median / worst ms, the RTX 5080 machine shared with other
 agents' builds): the Karaoke tab 0.041 / 0.088 before, 0.098 / 0.234
 after (some 40 widgets more a frame), within CK-C's 1.0 / 2.0; the other
 screens unchanged within the machine's noise.
+
+
+## Karaoke mode's own widgets (the iced port's K3, November 2026)
+
+Karaoke mode no longer goes through the old canvas: its stage is a
+shader widget of its own filling the window (`gui::stage_view`, the
+painter of `gui/present.rs`: the ground, then the stage and what goes
+over it), and its controls' bar is iced's widgets over it. The pixmap's
+strip under the bar is gone with the bar's cells: the first step,
+`ground`, is one full-screen pipeline reading the backdrop and nothing
+else, and the pixmap pass (`gui/present/pixmap.rs`, outside the mode
+only) no longer reads the backdrop under see-through words. Without a
+GPU the mode is iced's text over the cover's blur (scaled up once a
+cover and window size), no longer painted into the pixmap.
+
+`frame_cost` on the RTX 5080 (the machine shared with other agents'
+builds), median ms of the `ground` step at 3024 × 1964: 0.13–0.17 before,
+0.09–0.17 after; at 3840 × 2160: 0.14–0.21 before, 0.12–0.16 after; the
+GPU's total median 1.39–2.13 before, 0.93–1.84 after. Both runs had
+single frames over the budgets in a few scenes, each in another scene
+and step (5–14 ms in a second run after, every step slower at once): the
+machine's. `view_cost` (1512 × 982 at scale 2, median / worst ms in all):
+Karaoke mode 0.001 / 0.008 (one widget), its controls shown 0.021 /
+0.151.
 
 
 ## The stems as parts of the output (November 2026)

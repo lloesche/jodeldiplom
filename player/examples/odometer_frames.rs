@@ -1,5 +1,5 @@
-//! Karaoke mode's score rolling up, frame by frame, as the window paints
-//! it without a GPU (over a sample cover's blur): a word's points at ×4
+//! Karaoke mode's score rolling up, frame by frame, as the GPU draws it
+//! (the stage over a sample cover's blur): a word's points at ×4
 //! (12 400 to 12 800) and at ×32 (to 15 600), and a jackpot (to 186 000),
 //! each at several moments into its roll. Saved as PNGs into `OUT_DIR`: the top right
 //! corner five times as large (`<roll>-<ms>.png`) and the whole frame
@@ -11,12 +11,12 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
 
 use jodeldiplom::art::{sample_cover, Art};
-use jodeldiplom::gui::big_text::Faces;
-use jodeldiplom::gui::karaoke::{paint, Backdrop, Layer};
-use jodeldiplom::gui::pixels::{unpack, Target};
+use jodeldiplom::gui::backdrop::{Cue, Visualiser};
+use jodeldiplom::gui::pixels::unpack;
+use jodeldiplom::gui::present::Offscreen;
+use jodeldiplom::gui::stage::{Song, Stage, Tint};
 use jodeldiplom::view::karaoke::{KaraokePicture, Score};
 
 // The fonts build.rs found: `EMBEDDED_FONTS`.
@@ -64,46 +64,46 @@ fn main() {
         id: 1,
         image: Arc::new(sample_cover(256)),
     };
-    let backdrop = Backdrop::new(Some(&art), W, H);
+    let (w, h) = (W as u32, H as u32);
+    let mut gpu = Offscreen::new(false).expect("a GPU");
+    let cue = Cue {
+        art: Some(art),
+        layers: None,
+        heard: Default::default(),
+    };
+    let ground = Visualiser::default().step(&cue, (w, h), 0.0);
+    gpu.set_backdrop(Some(&ground), w, h);
+    let singing = jodeldiplom::core::singing::Singing::default();
+    let song = Song::new(&singing, Vec::new(), None);
+    let area = (0.0, 0.0, W as f32, H as f32);
     let rolls = [
         ("word", 12_400, 12_800),
         ("x32", 12_400, 15_600),
         ("jackpot", 12_400, 186_000),
     ];
     for (roll, from, to) in rolls {
-        let mut faces = Faces::default();
-        let mut layer = Layer::default();
-        let mut pixels = vec![0u32; W * H];
-        // Each frame painted as the window paints it, at its time.
-        let t0 = Instant::now();
-        let mut frame = |layer: &mut Layer, pixels: &mut [u32], f: usize, points: u32| {
-            layer.at(t0 + Duration::from_secs_f32(f as f32 * FRAME));
-            let mut target = Target {
-                pixels,
-                width: W,
-                height: H,
-            };
-            let area = (0, 0, W, H);
-            paint(
-                &mut target,
-                &mut faces,
-                layer,
-                &backdrop,
+        let mut stage = Stage::default();
+        // Each frame stepped as the window steps it, a frame apart.
+        let frame = |stage: &mut Stage, points: u32| {
+            stage.scene(
+                (&song, false),
                 &picture(points),
                 area,
-                None,
-                true,
-            );
+                (0.0, FRAME),
+                &Tint::STAGE,
+            )
         };
         // The points before, then frame by frame from the one they came in.
-        frame(&mut layer, &mut pixels, 0, from);
+        let mut last = frame(&mut stage, from);
         let mut f = 0;
         for &moment in &MOMENTS {
             let due = 1 + (moment as f32 / 1000.0 / FRAME).round() as usize;
             while f < due {
                 f += 1;
-                frame(&mut layer, &mut pixels, f, to);
+                last = frame(&mut stage, to);
             }
+            gpu.set_stage(last.as_ref(), w, h);
+            let pixels = gpu.show_frame(w, h).expect("a frame");
             let (cw, ch) = CORNER;
             let x0 = W - cw;
             let corner =

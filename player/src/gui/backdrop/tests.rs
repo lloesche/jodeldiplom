@@ -353,7 +353,6 @@ fn round_the_subject_is_blurred_and_it_grows_on_the_beat() {
     };
     let (w, h) = (1024u32, 1024u32);
     let a = striped_layers(256);
-    let see = vec![crate::gui::pixels::SEE_THROUGH; (w * h) as usize];
     let mut shown = |beats: Option<f64>| {
         let mut v = Visualiser::default();
         let music = beats.map_or(crate::gui::fx::Music::NEUTRAL, |b| {
@@ -372,10 +371,7 @@ fn round_the_subject_is_blurred_and_it_grows_on_the_beat() {
         }
         let f = f.expect("a frame");
         gpu.set_backdrop(Some(&f), w, h);
-        (
-            gpu.show_pixels(&see, w, h).expect("a frame"),
-            f.slots[0].look,
-        )
+        (gpu.show_frame(w, h).expect("a frame"), f.slots[0].look)
     };
     let (off, look) = shown(None);
     let (on, _) = shown(Some(8.04));
@@ -455,9 +451,9 @@ fn the_palette_lights_are_its_vivid_colours_at_full_strength() {
     assert_eq!(lights(&[])[0], [1.0, 0.85, 0.65]);
 }
 
-/// The GPU's frames of a red disc cover: the ground and the cover under the
-/// pixmap where its words let them through, the card brighter than the blur
-/// round it, lit by the vocals; its textures dropped when it is gone.
+/// The GPU's frames of a red disc cover: the ground and the cover, the card
+/// brighter than the blur round it, lit by the vocals; its textures
+/// dropped when it is gone.
 #[test]
 fn the_backdrop_draws_on_the_gpu_and_drops_its_textures() {
     let Ok(mut gpu) = crate::gui::present::Offscreen::new(false) else {
@@ -466,7 +462,6 @@ fn the_backdrop_draws_on_the_gpu_and_drops_its_textures() {
     };
     let (w, h) = (256u32, 256u32);
     let a = disc_layers(128, [220, 40, 40], (0.5, 0.5));
-    let see = vec![crate::gui::pixels::SEE_THROUGH; (w * h) as usize];
     let frame_of = |layers: Option<&Layers>, levels: Levels| {
         let mut v = Visualiser::default();
         let cue = Cue {
@@ -485,7 +480,7 @@ fn the_backdrop_draws_on_the_gpu_and_drops_its_textures() {
     };
     let shown = |gpu: &mut crate::gui::present::Offscreen, f: Option<&BackdropFrame>| {
         gpu.set_backdrop(f, w, h);
-        gpu.show_pixels(&see, w, h).expect("a frame")
+        gpu.show_frame(w, h).expect("a frame")
     };
     let mean = |px: &[u32], rows: std::ops::Range<u32>, cols: std::ops::Range<u32>| {
         let mut sum = 0.0;
@@ -525,23 +520,7 @@ fn the_backdrop_draws_on_the_gpu_and_drops_its_textures() {
         disc(&lit),
         disc(&quiet)
     );
-    // A pixmap word over it where its strip shows (the controls' bar; here
-    // the whole frame): its own colour with as much of the backdrop as its
-    // top byte lets through.
-    let half: Vec<u32> = (0..w * h).map(|_| 0x8000_0000 | 0x0020_2020).collect();
-    gpu.set_backdrop(Some(&frame_of(Some(&a), Levels::default())), w, h);
-    gpu.set_strip(Some((0, h)));
-    let over = gpu.show_pixels(&half, w, h).expect("a frame");
-    gpu.set_strip(None);
-    for at in [(128u32, 128u32), (20, 20)] {
-        let i = (at.1 * w + at.0) as usize;
-        for shift in [16, 8, 0] {
-            let (o, q) = ((over[i] >> shift) & 255, (quiet[i] >> shift) & 255);
-            let want = 0x20 as f32 + q as f32 * 128.0 / 255.0;
-            assert!((o as f32 - want).abs() <= 3.0, "{at:?}: {o} {want}");
-        }
-    }
-    // Gone: the pixmap alone, nothing held.
+    // Gone: black, nothing held.
     let gone = shown(&mut gpu, None);
     assert_eq!(gpu.backdrop_held(), 0);
     assert_eq!(gone[(10 * w + 10) as usize] & 0x00ff_ffff, 0);
@@ -558,7 +537,6 @@ fn the_card_at_rest_is_the_cover_itself() {
     };
     let (w, h) = (256u32, 256u32);
     let (picture, a) = disc_cover(128, [220, 40, 40], (0.6, 0.4), true);
-    let see = vec![crate::gui::pixels::SEE_THROUGH; (w * h) as usize];
     let mut bright = |art: Option<RgbImage>| {
         let mut v = Visualiser::default();
         let cue = Cue {
@@ -573,7 +551,7 @@ fn the_card_at_rest_is_the_cover_itself() {
             f = Some(v.step(&cue, (w, h), DT));
         }
         gpu.set_backdrop(f.as_ref(), w, h);
-        let px = gpu.show_pixels(&see, w, h).expect("a frame");
+        let px = gpu.show_frame(w, h).expect("a frame");
         // The bar's middle on the card (its cover units 0.25, 0.78).
         let card = f.expect("a frame").slots[0].look.card;
         let at = |c: usize, u: f32| {

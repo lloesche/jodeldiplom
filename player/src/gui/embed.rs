@@ -4,21 +4,15 @@
 //! widget shows it under everything iced draws itself.
 //!
 //! On the GPU the pixmap goes through iced's shader widget
-//! ([`super::embed_gpu`]): only the pixels that changed are sent over. In
-//! Karaoke mode the GPU draws its backdrop and its stage instead, and of
-//! the pixmap only the controls' bar's strip ([`Canvas::strip`]). With iced's CPU renderer (no
-//! GPU) the pixmap is an image, and no stage. The lanes are the window's
-//! own widget over it ([`super::lanes`]).
+//! ([`super::embed_gpu`]): only the pixels that changed are sent over.
+//! With iced's CPU renderer (no GPU) the pixmap is an image. The lanes are
+//! the window's own widget over it ([`super::lanes`]). Karaoke mode is not
+//! drawn here: it has a widget of its own ([`super::stage_view`]).
 //!
 //! The widget fills the window from its top left corner (the GPU's pass
 //! draws in window pixels). The pointer over it goes to the window as it
 //! is ([`Pointer`]), in cells with the share of one (a slider follows it
-//! to the pixel), and the target drawn in pixels under it (Karaoke mode's
-//! START pill, which the stage draws in pixels, not cells:
-//! [`Canvas::target_at`]; the hand shows over a button there); the window
-//! keeps what is held ([`super::pointer`]). Over it the pointer hides
-//! where the window says (Karaoke mode, still a while:
-//! [`crate::core::karaoke::pointer`]).
+//! to the pixel); the window keeps what is held ([`super::pointer`]).
 //!
 //! With the CPU renderer the whole pixmap goes over as a new image each
 //! time a pixel changed: iced's images cannot be updated in part.
@@ -34,40 +28,19 @@ use iced::advanced::{mouse, Shell};
 use iced::widget::shader::{self, Shader};
 use iced::{Element, Event, Fill, Rectangle, Size, Theme, Widget as _};
 
-use super::backdrop::BackdropFrame;
 use super::canvas::{Canvas, Changes};
 use super::embed_gpu::Frame;
 use super::pointer::{Pointer, PointerKind};
-use super::stage_gpu::StageFrame;
 use super::widgets::cover::Spot;
 use super::window::Message;
-use crate::core::keymap::Op;
 use crate::view::layout::Grid;
 use crate::view::mouse::MouseButton;
-
-/// What a frame of the old canvas hands the GPU beside its pixels.
-#[derive(Default)]
-pub struct Drawn {
-    /// Karaoke mode's stage, where it shows.
-    pub stage: Option<StageFrame>,
-    /// Karaoke mode's backdrop, where it shows.
-    pub backdrop: Option<BackdropFrame>,
-    /// The rows of window pixels where the pixmap shows over Karaoke
-    /// mode's backdrop: the controls' bar's ([`Canvas::strip`]).
-    pub strip: Option<(u32, u32)>,
-}
 
 /// The canvas and what is waiting for the next frame on screen.
 pub(super) struct Shared {
     pub(super) canvas: Canvas,
     /// The pixels changed since the GPU last took them.
     pub(super) changes: Changes,
-    /// The stage as it is now; its uploads not sent yet.
-    pub(super) stage: Option<StageFrame>,
-    /// The backdrop as it is now (its textures sent over as it first shows).
-    pub(super) backdrop: Option<BackdropFrame>,
-    /// The rows of the pixmap shown over the backdrop, where there is one.
-    pub(super) strip: Option<(u32, u32)>,
     /// Whether iced draws on the GPU (its shader widget works); `None`
     /// until the first frame was drawn.
     pub(super) gpu: Option<bool>,
@@ -102,9 +75,6 @@ impl Default for Embed {
         Embed(Arc::new(Mutex::new(Shared {
             canvas: Canvas::new(80, 24, super::font_px(1.0)),
             changes: Changes::default(),
-            stage: None,
-            backdrop: None,
-            strip: None,
             gpu: None,
             scale: 1.0,
             image: None,
@@ -120,37 +90,36 @@ impl Embed {
     }
 
     /// Draws a frame with `draw` (on the canvas, at `scale`; whether the
-    /// GPU shows it): the pixels it changed, and its stage, wait for the
-    /// next frame on screen.
-    pub fn draw(&self, scale: f32, draw: impl FnOnce(&mut Canvas, bool) -> Drawn) {
+    /// GPU shows it): the pixels it changed wait for the next frame on
+    /// screen.
+    pub fn draw(&self, scale: f32, draw: impl FnOnce(&mut Canvas, bool)) {
         let mut shared = self.lock();
         let shared = &mut *shared;
         shared.scale = scale;
         shared.canvas.set_font_px(super::font_px(f64::from(scale)));
-        // What the GPU draws itself (Karaoke mode's ground and stage), where
-        // it shows the canvas (and until iced says which renderer it has).
+        // Until iced says which renderer it has: as if on the GPU.
         let gpu = shared.gpu.unwrap_or(true);
-        shared.canvas.set_gpu(gpu);
-        let drawn = draw(&mut shared.canvas, gpu);
+        draw(&mut shared.canvas, gpu);
         let changes = shared.canvas.take_changes();
         if !changes.is_empty() {
             shared.image = None;
         }
         shared.changes.merge(changes);
-        shared.stage = merge_stage(shared.stage.take(), drawn.stage);
-        shared.backdrop = drawn.backdrop;
-        shared.strip = drawn.strip;
+    }
+
+    /// Fits the canvas to a window of `size` pixels at `scale` without
+    /// drawing it: its grid of cells there, and a cell's size in pixels.
+    pub fn fit(&self, size: (u32, u32), scale: f32) -> (Grid, (usize, usize)) {
+        let mut shared = self.lock();
+        shared.scale = scale;
+        shared.canvas.set_font_px(super::font_px(f64::from(scale)));
+        let grid = shared.canvas.fit(size.0, size.1);
+        (grid, shared.canvas.cell())
     }
 
     /// Whether iced draws on the GPU (until it has drawn: as if it did).
     pub fn gpu(&self) -> bool {
         self.lock().gpu.unwrap_or(true)
-    }
-
-    /// Whether the canvas's pictures move by themselves
-    /// ([`super::Canvas::moving`]).
-    pub fn moving(&self) -> bool {
-        self.lock().canvas.moving()
     }
 
     /// Whether the frame before the last was late on the GPU, and how
@@ -189,15 +158,13 @@ impl Embed {
         (cw as f32 / shared.scale, ch as f32 / shared.scale)
     }
 
-    /// The widget showing it, filling the window; the pointer hidden over
-    /// it if `hide_pointer`.
-    pub fn view(&self, hide_pointer: bool) -> Element<'static, Message> {
+    /// The widget showing it, filling the window.
+    pub fn view(&self) -> Element<'static, Message> {
         Embedded {
             shader: iced::widget::shader(Input(self.clone()))
                 .width(Fill)
                 .height(Fill),
             embed: self.clone(),
-            hide_pointer,
         }
         .boxed()
     }
@@ -217,28 +184,11 @@ impl Embed {
     }
 }
 
-/// `new` stage after `old`'s, not yet on the GPU: the text `old` put into
-/// the atlas is still to be sent over first (the stage counts on it), even
-/// where no stage shows now.
-fn merge_stage(old: Option<StageFrame>, new: Option<StageFrame>) -> Option<StageFrame> {
-    let pending = old.map(|o| o.uploads).unwrap_or_default();
-    if pending.is_empty() {
-        return new;
-    }
-    let mut new = new.unwrap_or_default();
-    let mut uploads = pending;
-    uploads.append(&mut new.uploads);
-    new.uploads = uploads;
-    Some(new)
-}
-
 /// The widget: iced's shader widget on the GPU, an image on the CPU
 /// renderer; the shader widget's program takes the pointer either way.
 struct Embedded {
     shader: Shader<Message, Input>,
     embed: Embed,
-    /// The pointer hidden over it (over a button too).
-    hide_pointer: bool,
 }
 
 impl widget::Meta for Embedded {}
@@ -339,11 +289,6 @@ impl Widget<Message, Theme, iced::Renderer> for Embedded {
         viewport: &Rectangle,
         renderer: &iced::Renderer,
     ) -> mouse::Interaction {
-        // Only over it: iced shows the pointer again wherever else it is,
-        // and as soon as it is not to be hidden.
-        if self.hide_pointer && cursor.is_over(layout.bounds()) {
-            return mouse::Interaction::Hidden;
-        }
         self.inner()
             .mouse_interaction(tree, layout, cursor, viewport, renderer)
     }
@@ -363,14 +308,6 @@ impl Input {
             f64::from(at.x) * s / cw.max(1) as f64,
             f64::from(at.y) * s / ch.max(1) as f64,
         )
-    }
-
-    /// What the button drawn in pixels at `at` (in the widget) in the
-    /// frame shown does, if there is one.
-    fn target(&self, at: iced::Point) -> Option<Op> {
-        let shared = self.0.lock();
-        let s = shared.scale;
-        shared.canvas.target_at(at.x * s, at.y * s)
     }
 }
 
@@ -411,13 +348,7 @@ impl shader::Program<Message> for Input {
                 iced::Point::new(p.x - bounds.x, p.y - bounds.y)
             });
         let (x, y) = self.cells(at);
-        let pointer = Pointer {
-            kind,
-            x,
-            y,
-            over,
-            on: self.target(at).filter(|_| over),
-        };
+        let pointer = Pointer { kind, x, y };
         let action = shader::Action::publish(Message::Pointer(pointer));
         Some(if over && kind != PointerKind::Moved {
             action.and_capture()
@@ -428,23 +359,5 @@ impl shader::Program<Message> for Input {
 
     fn draw(&self, _state: &(), _cursor: mouse::Cursor, _bounds: Rectangle) -> Frame {
         Frame::new(self.0.clone())
-    }
-
-    /// The hand over a button drawn in pixels (START's pill).
-    fn mouse_interaction(
-        &self,
-        _state: &(),
-        bounds: Rectangle,
-        cursor: mouse::Cursor,
-    ) -> mouse::Interaction {
-        if cursor
-            .position_in(bounds)
-            .and_then(|at| self.target(at))
-            .is_some()
-        {
-            mouse::Interaction::Pointer
-        } else {
-            mouse::Interaction::default()
-        }
     }
 }

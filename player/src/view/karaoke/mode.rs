@@ -2,27 +2,18 @@
 //! ([`KaraokePicture`], made by [`picture`]: the lyrics as they are sung
 //! ([`lines_now`]), the count-in, the score, the song's result, START)
 //! that the window draws over the cover's ground (its stage on the GPU,
-//! else painted in pixels), and the
-//! controls' cells over it ([`draw_mode`]): the voice slider, the seek bar
-//! and the keys, fading in and out over their bar. START is no cell but
-//! the stage's pill ([`KaraokePicture::start`]).
+//! else the lines in its own widgets), and its controls' bar over it
+//! while it shows ([`KaraokePicture::controls`]): the voice slider, the
+//! seek bar, the transport and the keys ([`hint`]). START is no control
+//! but the stage's pill ([`KaraokePicture::start`]).
 
-use ratatui::layout::{HorizontalAlignment, Rect};
-use ratatui::style::Style;
-use ratatui::text::Span;
-use ratatui::widgets::Paragraph;
-use ratatui::Frame;
-
-use super::super::colors::*;
-use super::super::{keep_start, palette, Pictures, Scene};
-use super::{plain_lines, result_now, slider, ResultShown};
+use super::super::palette;
+use super::{plain_lines, result_now, ResultShown};
 use crate::core::karaoke;
 use crate::core::keymap::{self, Context, Op};
 use crate::core::singing::{notes_of, LineNotes, Note, Singing};
 use crate::core::text;
 use crate::core::State;
-use crate::view::bottom::Seek;
-use crate::view::layout::KaraokeLayout;
 
 /// START's pill on the stage, while the mode waits for it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -31,8 +22,26 @@ pub struct Start {
     pub ready: bool,
 }
 
-/// The mode's picture now (`heard`: seconds into the track as heard).
-pub fn picture(state: &State, layout: &KaraokeLayout, heard: f64) -> KaraokePicture {
+/// The keys of the mode, as its controls' bar says them, from the keymap
+/// (↑ ↓ do nothing there).
+pub fn hint() -> String {
+    let key = |op| keymap::hint(Context::KaraokeMode, op);
+    format!(
+        "{} leaves  ·  {} {} level  ·  {} / {} START  ·  {} next song  ·  hold {} demo",
+        key(Op::Back),
+        key(Op::SliderDown),
+        key(Op::SliderUp),
+        key(Op::KaraokeStart),
+        key(Op::PlayPause),
+        key(Op::Next),
+        key(Op::KaraokeDemo),
+    )
+}
+
+/// The mode's picture now (`heard`: seconds into the track as heard), its
+/// controls' bar taking `bar` of the screen's height from the bottom (the
+/// window lays it out).
+pub fn picture(state: &State, bar: f32, heard: f64) -> KaraokePicture {
     let count = match state.karaoke.resume_at {
         // A paused song's count-in, on the clock.
         Some(_) => karaoke::resume_count(state, state.drawn_ms.unwrap_or(state.now_ms)),
@@ -62,103 +71,17 @@ pub fn picture(state: &State, layout: &KaraokeLayout, heard: f64) -> KaraokePict
         ready: karaoke::song_index(state).is_none_or(|i| karaoke::not_singable(state, i).is_none()),
     });
     KaraokePicture {
-        bar: crate::view::layout::controls_share(layout.screen),
+        bar,
         lines,
         count,
         cue,
-        controls: layout
-            .controls
-            .as_ref()
-            .map(|_| karaoke::controls::fade(state)),
+        controls: karaoke::controls::shown(state).then(|| karaoke::controls::fade(state)),
         start,
         before,
         moved,
         // The result's own points instead.
         score: score_now(state).filter(|_| result.is_none()),
         result,
-    }
-}
-
-/// `picture` for a window that draws no stage (no GPU), so no START pill:
-/// while it waits for START, a small "enter: START" under its lines (a
-/// result's own lines end with START already).
-pub fn with_start_cue(picture: &KaraokePicture) -> KaraokePicture {
-    let mut picture = picture.clone();
-    if picture.start.is_some() && picture.result.is_none() {
-        picture
-            .lines
-            .push(line("enter: START", 0.0, LineKind::Info));
-    }
-    picture
-}
-
-/// Draws the mode: its picture, then its controls over it.
-pub fn draw_mode(
-    frame: &mut Frame,
-    scene: &Scene,
-    layout: &KaraokeLayout,
-    pictures: &mut dyn Pictures,
-) {
-    let state = scene.state;
-    let picture = picture(state, layout, scene.heard);
-    pictures.karaoke(frame, layout.screen, &picture);
-    let Some(c) = &layout.controls else {
-        return;
-    };
-    draw_seek(frame, &Seek::of(state), (c.elapsed, c.seek, c.total));
-    let buf = frame.buffer_mut();
-    for s in &c.sliders {
-        slider(buf, state, s);
-    }
-    // The mode's keys, from the keymap (↑ ↓ do nothing there).
-    let key = |op| keymap::hint(Context::KaraokeMode, op);
-    let hint = format!(
-        "{} leaves  ·  {} {} level  ·  {} / {} START  ·  {} next song  ·  hold {} demo",
-        key(Op::Back),
-        key(Op::SliderDown),
-        key(Op::SliderUp),
-        key(Op::KaraokeStart),
-        key(Op::PlayPause),
-        key(Op::Next),
-        key(Op::KaraokeDemo),
-    );
-    let max = usize::from(c.hint.width);
-    buf.set_string(
-        c.hint.x,
-        c.hint.y,
-        keep_start(&hint, max),
-        Style::new().fg(DIM),
-    );
-}
-
-/// The time heard (right-aligned in `elapsed`), the seek bar filling in
-/// the accent with its head, and the length, in cells.
-fn draw_seek(frame: &mut Frame, seek: &Seek, (elapsed, bar, total): (Rect, Rect, Rect)) {
-    let time_style = Style::new().fg(if seek.track { TEXT } else { BORDER });
-    frame.render_widget(
-        Paragraph::new(Span::styled(seek.elapsed.clone(), time_style))
-            .alignment(HorizontalAlignment::Right),
-        elapsed,
-    );
-    frame.render_widget(
-        Paragraph::new(Span::styled(seek.total.clone(), time_style)),
-        total,
-    );
-    let filled = (seek.share * f64::from(bar.width)).round() as u16;
-    let buf = frame.buffer_mut();
-    for i in 0..bar.width {
-        let (symbol, style) = if i < filled {
-            ("━", Style::new().fg(ACCENT))
-        } else {
-            ("─", Style::new().fg(TRACK))
-        };
-        buf[(bar.x + i, bar.y)].set_symbol(symbol).set_style(style);
-    }
-    if seek.track && bar.width > 0 {
-        let head = filled.min(bar.width - 1);
-        buf[(bar.x + head, bar.y)]
-            .set_symbol("●")
-            .set_style(Style::new().fg(ACCENT));
     }
 }
 
@@ -335,8 +258,9 @@ pub struct KaraokePicture {
     /// ([`break_cue`]), shown at the top as the count-in is, apart from
     /// the lines.
     pub cue: Option<Cue>,
-    /// How much the controls' bar shows while it is laid out (its cells
-    /// are text over the picture), 0 to 1 ([`karaoke::controls::fade`]).
+    /// How much the controls' bar shows while it is laid out (the
+    /// window's widgets over the picture), 0 to 1
+    /// ([`karaoke::controls::fade`]).
     pub controls: Option<f64>,
     /// START's pill (the stage's), while the mode waits for it.
     pub start: Option<Start>,
@@ -933,32 +857,5 @@ mod tests {
         };
         let (before, moved) = scrolling(&filling(11.0), 11.0, filling);
         assert!(before.is_empty() && moved == 1.0);
-    }
-
-    /// Without a stage START is said in words under the lines while the
-    /// mode waits for it, and only then.
-    #[test]
-    fn without_a_stage_start_is_said_in_words() {
-        let waiting = KaraokePicture {
-            bar: 5.0 / 24.0,
-            lines: lines(&[0]),
-            count: None,
-            cue: None,
-            controls: None,
-            start: Some(Start { ready: true }),
-            before: Vec::new(),
-            moved: 1.0,
-            score: None,
-            result: None,
-        };
-        let said = with_start_cue(&waiting);
-        let last = said.lines.last().map(|l| (l.text.as_str(), l.kind));
-        assert_eq!(last, Some(("enter: START", LineKind::Info)));
-        assert_eq!(said.lines.len(), 2);
-        let playing = KaraokePicture {
-            start: None,
-            ..waiting
-        };
-        assert_eq!(with_start_cue(&playing), playing);
     }
 }

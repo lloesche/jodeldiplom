@@ -1,36 +1,44 @@
-//! Frames of Karaoke mode as the window draws it on the GPU (the cover's
-//! ground, the canvas's controls' bar over it, the stage over that), to
-//! look at START's pill and the controls' bar: the mode just entered
+//! Frames of Karaoke mode as the window draws it ([`Gui::view`] with
+//! iced's headless renderer: the stage over the cover's ground on the GPU,
+//! the controls' bar in the window's own widgets over it; without a GPU,
+//! `ICED_TEST_BACKEND=vello-cpu`, the lines as text), to look at START's
+//! pill and the controls' bar: the mode just entered
 //! (START alone), a song being sung (its lane, its progress along the
 //! bottom) and a song's result (the diploma, START under it), each with
 //! the controls hidden, fading in a quarter, half and three quarters of
 //! the way (the stage's progress going in the first half, the bar coming
 //! in the second) and shown (the pointer near the bottom). Saved as PNGs
-//! into `OUT_DIR` (`<scene>-<controls>.png`, written whole).
+//! into `OUT_DIR` (`<scene>-<controls>.png`, written whole). `W H`: the
+//! window in pixels (1600 × 900 by default), at `SCALE` pixels to a point
+//! (2 by default).
 //!
 //! ```text
-//! cargo run --release -p jodeldiplom --example controls_frames -- OUT_DIR [W H]
+//! cargo run --release -p jodeldiplom --example controls_frames -- OUT_DIR [W H [SCALE]] [--theme NAME]
 //! ```
+//!
+//! `--theme NAME`: the game in that theme (`classic`, the default, or
+//! `spooky`).
+
+mod headless;
 
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Instant;
 
-use jodel_output::{SampleFormat, StreamFormat, StreamInfo};
+use iced::{window, Size};
+use jodel_output::{SampleFormat, SimClock, StreamFormat, StreamInfo};
 use jodel_playback::{
     choose_route, Codec, Container, Event, FileFacts, PlayState, Tags, TrackInfo,
 };
-use jodeldiplom::art::Art;
+use jodeldiplom::app::{App, AppClock, AppOptions, Output};
 use jodeldiplom::config::Config;
 use jodeldiplom::core::karaoke::controls::FADE_MS;
 use jodeldiplom::core::karaoke::SongLyrics;
 use jodeldiplom::core::{update, Action, NowTrack, Screen, State};
-use jodeldiplom::gui::backdrop::{Cue, Visualiser};
-use jodeldiplom::gui::present::Offscreen;
-use jodeldiplom::gui::stage::Tint;
-use jodeldiplom::gui::{font_px, Canvas};
+use jodeldiplom::gui::window::{Gui, Message};
 use jodeldiplom::lyrics::Answer;
-use jodeldiplom::view::layout::{self, Grid};
-use jodeldiplom::view::{mouse, Scene};
+
+use headless::Headless;
 
 // The fonts build.rs found: `EMBEDDED_FONTS`.
 include!(concat!(env!("OUT_DIR"), "/fonts.rs"));
@@ -124,8 +132,8 @@ fn now_track(state: &State, path: PathBuf, index: usize) -> NowTrack {
 }
 
 /// A made-up cover: a gradient of two colours with a disc of a third.
-fn cover() -> Art {
-    let image = image::RgbImage::from_fn(256, 256, |x, y| {
+fn cover() -> image::RgbImage {
+    image::RgbImage::from_fn(256, 256, |x, y| {
         let t = (x + y) as f32 / 510.0;
         let (dx, dy) = (x as f32 - 150.0, y as f32 - 110.0);
         if dx * dx + dy * dy < 60.0 * 60.0 {
@@ -133,18 +141,15 @@ fn cover() -> Art {
         }
         let (a, b) = ([120.0, 30.0, 30.0], [200.0, 120.0, 40.0]);
         image::Rgb([0, 1, 2].map(|k| (a[k] * (1.0 - t) + b[k] * t) as u8))
-    });
-    Art {
-        id: 7,
-        image: Arc::new(image),
-    }
+    })
 }
 
-/// Karaoke mode on `grid`, two songs queued, the first held for START
+/// Karaoke mode, two songs queued, the first held for START
 /// (just entered), its lyrics and its notes ready.
-fn entered(grid: Grid) -> State {
+fn entered() -> State {
     let mut state = State::new("/music".into(), Config::default());
-    state.fit = layout::fit(&state, grid);
+    // Stems separated: the voice slider takes effect.
+    state.gpu = jodeldiplom::core::Gpu::Present("a GPU".into());
     state.browser.loading = false;
     state.queue.paths = ["Take On Me.flac", "The Sun Always Shines on TV.flac"]
         .map(|f| PathBuf::from("/music").join(f))
@@ -174,8 +179,8 @@ fn entered(grid: Grid) -> State {
 }
 
 /// The first song sung at [`HEARD`] seconds, its singer on the notes.
-fn singing(grid: Grid) -> State {
-    let mut state = entered(grid);
+fn singing() -> State {
+    let mut state = entered();
     let path = state.queue.paths[0].clone();
     state.playing.track = Some(now_track(&state, path, 0));
     state.playing.state = PlayState::Playing;
@@ -191,8 +196,8 @@ fn singing(grid: Grid) -> State {
 
 /// The first song played to its end (sung as [`singing`]), the next held:
 /// its result, its reveal settled (a minute on).
-fn result(grid: Grid) -> State {
-    let mut state = singing(grid);
+fn result() -> State {
+    let mut state = singing();
     let ended = Event::TrackEnded {
         index: 0,
         finished: true,
@@ -206,39 +211,56 @@ fn result(grid: Grid) -> State {
 }
 
 /// The controls in `state` faded in `quarters` quarters of the way (none:
-/// not brought up), the pointer having come near the bottom.
-fn controls(state: &mut State, grid: Grid, quarters: Option<u64>) {
+/// not brought up), the pointer having come to the bottom.
+fn controls(state: &mut State, quarters: Option<u64>) {
     let Some(quarters) = quarters else {
         return;
     };
-    let from_bottom = mouse::from_bottom(grid.rows, grid.rows - 1);
-    update(state, Action::PointerMoved { from_bottom });
+    update(state, Action::PointerMoved { from_bottom: 0.0 });
     let at = state.now_ms + FADE_MS * quarters / 4;
     update(state, Action::Tick(at));
 }
 
-/// A scene's state, made for a grid of cells.
-type Make = fn(Grid) -> State;
+/// A scene's state.
+type Make = fn() -> State;
+
+/// A player with no output, no devices and no microphone, its files in
+/// `dir`, timing by `clock`.
+fn player(dir: PathBuf, clock: &AppClock) -> App {
+    let mut options = AppOptions::new(dir);
+    options.output = Output::Null(SimClock::Realtime);
+    options.devices = Arc::new(|| Ok(Vec::new()));
+    options.mic = Arc::new(|_| Err("no microphone".into()));
+    options.mics = Arc::new(|| Ok(Vec::new()));
+    options.clock = clock.clone();
+    App::new(options)
+}
 
 fn main() {
     jodeldiplom::gui::fonts::use_fonts(EMBEDDED_FONTS);
     let args: Vec<String> = std::env::args().skip(1).collect();
     let out = PathBuf::from(args.first().expect("OUT_DIR"));
-    let (w, h) = match (
-        args.get(1).and_then(|a| a.parse().ok()),
-        args.get(2).and_then(|a| a.parse().ok()),
-    ) {
-        (Some(w), Some(h)) => (w, h),
-        _ => (1600u32, 900u32),
-    };
-    let mut gpu = Offscreen::new(false).expect("a GPU");
-    let art = cover();
-    let scenes: [(&str, Make, f64); 3] = [
-        ("entered", entered, 0.0),
-        ("singing", singing, HEARD),
-        ("result", result, HEARD),
+    let number = |k: usize| args.get(k).and_then(|a| a.parse::<f32>().ok());
+    let (w, h) = (number(1).unwrap_or(1600.0), number(2).unwrap_or(900.0));
+    let scale = number(3).unwrap_or(2.0);
+    let theme = args
+        .iter()
+        .position(|a| a == "--theme")
+        .and_then(|k| args.get(k + 1))
+        .map(|name| jodeldiplom::theme::Theme::named(name).expect("a theme"));
+    let size = Size::new(w / scale, h / scale);
+    let dir = std::env::temp_dir().join(format!("jodeldiplom-controls-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("a folder for the player");
+    let mut headless = Headless::new();
+    println!("drawn by {}", headless.name());
+    let id = window::Id::unique();
+    let event = |e| Message::Event(iced::Event::Window(e), id);
+    let scenes: [(&str, Make); 3] = [
+        ("entered", entered),
+        ("singing", singing),
+        ("result", result),
     ];
-    for (name, make, heard) in scenes {
+    for (name, make) in scenes {
         let fades = [
             ("hidden", None),
             ("quarter", Some(1)),
@@ -247,39 +269,40 @@ fn main() {
             ("shown", Some(4)),
         ];
         for (how, quarters) in fades {
-            let mut canvas = Canvas::new(80, 24, font_px(1.0));
-            canvas.set_gpu(true);
-            let grid = canvas.fit(w, h);
-            let mut state = make(grid);
-            controls(&mut state, grid, quarters);
-            let scene = Scene {
-                state: &state,
-                grid,
-                heard,
-            };
-            canvas.draw(&scene, Some(&art));
-            let stage = canvas.stage_frame((&state, None), heard, 1.0 / 60.0, &Tint::STAGE);
-            let (pixels, pw, ph) = canvas.pixels();
-            let (pw, ph) = (pw as u32, ph as u32);
-            let cue = Cue {
-                art: Some(art.clone()),
-                layers: None,
-                heard: Default::default(),
-            };
-            let ground = Visualiser::default().step(&cue, (pw, ph), 1.0 / 60.0);
-            gpu.set_backdrop(Some(&ground), pw, ph);
-            gpu.set_stage(stage.as_ref(), pw, ph);
-            gpu.set_strip(canvas.strip());
-            let shown = gpu.show_pixels(pixels, pw, ph).expect("a frame");
-            let img = image::RgbImage::from_fn(pw, ph, |x, y| {
-                let p = shown[(y * pw + x) as usize];
-                image::Rgb([(p >> 16) as u8, (p >> 8) as u8, p as u8])
-            });
+            // A window of its own each: the mode just come in it, as when
+            // the window first shows it (its score at once, no bursts
+            // from another scene); its clock at the scene's time.
+            let mut state = make();
+            if let Some(theme) = theme {
+                state.config.karaoke_theme = theme;
+            }
+            controls(&mut state, quarters);
+            // Playing, the app hears the song up to a quarter second on
+            // from the position last told (no engine tells it again): told
+            // that much before, so it is heard where the scene is.
+            if state.playing.state == PlayState::Playing {
+                state.playing.position -= 0.25;
+            }
+            let clock = AppClock::stepped();
+            let mut gui = Gui::headless(player(dir.clone(), &clock));
+            clock.step(std::time::Duration::from_millis(state.now_ms));
+            gui.set_art(Some(cover()));
+            let _ = gui.update(event(window::Event::Resized(size)));
+            let _ = gui.update(event(window::Event::Rescaled(scale)));
+            gui.show(state);
+            // Two frames: the first tells the renderer it has, the second
+            // draws what it draws.
+            for _ in 0..2 {
+                let _ = gui.update(Message::Frame(Instant::now()));
+                headless.frame(&gui, size);
+            }
+            let shot = headless.screenshot(scale);
             let file = out.join(format!("{name}-{how}.png"));
             let mut png = std::io::Cursor::new(Vec::new());
-            img.write_to(&mut png, image::ImageFormat::Png).unwrap();
+            shot.write_to(&mut png, image::ImageFormat::Png).unwrap();
             durable::write_atomic(&file, png.get_ref()).unwrap();
             println!("{}", file.display());
         }
     }
+    let _ = std::fs::remove_dir_all(&dir);
 }

@@ -1,39 +1,11 @@
 //! The window's pixels as words: a colour packed into `0x00RRGGBB` (the
-//! window buffer's own layout), what shows through it in the top byte, the
-//! mixing of colours over them, rects of pixels, and the targets painted
-//! into ([`Target`], and a rect of one, [`Pixels`]).
+//! window buffer's own layout), the mixing of colours over them, rects of
+//! pixels, and the targets painted into ([`Target`], and a rect of one,
+//! [`Pixels`]).
 
-/// A pixmap word is premultiplied over what the GPU draws under the
-/// pixmap (Karaoke mode's backdrop, [`super::backdrop`]): its colour is
-/// the pixmap's own share, its top byte how much of what is under still
-/// shows (255: all of it, the colour then black). A colour packed
-/// ([`pack`]) covers what is under; drawing over a word goes through
-/// [`over`] and [`dim`], which keep the two together. This is a word
-/// that is all see-through.
-pub const SEE_THROUGH: u32 = 0xff00_0000;
-
-/// `word` with `colour` over it by `a` (0 to 1): the colour mixed into its
-/// own as [`mix`] does, and what shows through it less by as much.
+/// `word` with `colour` over it by `a` (0 to 1), as [`mix`] does.
 pub fn over(word: u32, colour: [u8; 3], a: f32) -> u32 {
-    let a = a.clamp(0.0, 1.0);
-    let through = ((word >> 24) as f32 * (1.0 - a)).round() as u32;
-    pack(mix(unpack(word), colour, a)) | through << 24
-}
-
-/// `word` darkened to `keep` (0 to 1) of itself: its own colour and what
-/// shows through it alike.
-pub fn dim(word: u32, keep: f32) -> u32 {
-    let keep = keep.clamp(0.0, 1.0);
-    let scale = |v: u32| (v as f32 * keep).round() as u32;
-    let [r, g, b] = unpack(word).map(|v| scale(u32::from(v)) as u8);
-    pack([r, g, b]) | scale(word >> 24) << 24
-}
-
-/// Word `a` towards word `b` by `t` (0 to 1): their colours and what shows
-/// through them alike (so `b` drawn over the ground faded in by `t`).
-pub fn between(a: u32, b: u32, t: f32) -> u32 {
-    let through = |w: u32| [(w >> 24) as u8; 3];
-    pack(mix(unpack(a), unpack(b), t)) | u32::from(mix(through(a), through(b), t)[0]) << 24
+    pack(mix(unpack(word), colour, a))
 }
 
 /// A colour as a pixmap word, `0x00RRGGBB`.

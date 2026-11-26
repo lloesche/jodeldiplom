@@ -576,25 +576,19 @@ fn the_beat_pulse_lights_on_each_beat() {
 fn a_frame_of_another_size_than_the_state_is_drawn_blank() {
     // The window was resized and the state has not heard of it yet: the
     // layout (for 120 x 36) would not fit, so nothing is drawn until it has.
-    for screen in [Screen::Main, Screen::Karaoke] {
-        let mut state = common::playing_state(120, 36);
-        state.screen = screen;
-        for (cols, rows) in [(118, 35), (60, 20), (160, 50)] {
-            let mut terminal = Terminal::new(TestBackend::new(cols, rows)).unwrap();
-            let scene = Scene {
-                state: &state,
-                grid: Grid::new(120, 36),
-                heard: 0.0,
-            };
-            terminal
-                .draw(|frame| view::draw(frame, &scene, &mut CellPictures))
-                .unwrap();
-            let text = view::buffer_text(terminal.backend().buffer());
-            assert!(
-                text.trim().is_empty(),
-                "{screen:?} at {cols}x{rows}:\n{text}"
-            );
-        }
+    let state = common::playing_state(120, 36);
+    for (cols, rows) in [(118, 35), (60, 20), (160, 50)] {
+        let mut terminal = Terminal::new(TestBackend::new(cols, rows)).unwrap();
+        let scene = Scene {
+            state: &state,
+            grid: Grid::new(120, 36),
+            heard: 0.0,
+        };
+        terminal
+            .draw(|frame| view::draw(frame, &scene, &mut CellPictures))
+            .unwrap();
+        let text = view::buffer_text(terminal.backend().buffer());
+        assert!(text.trim().is_empty(), "at {cols}x{rows}:\n{text}");
     }
 }
 
@@ -866,10 +860,6 @@ impl Pictures for Lanes {
     fn wave(&mut self, frame: &mut Frame, plot: &WavePlot) {
         self.0.push(plot.clone());
         CellPictures.wave(frame, plot);
-    }
-
-    fn karaoke(&mut self, frame: &mut Frame, area: Rect, picture: &view::karaoke::KaraokePicture) {
-        CellPictures.karaoke(frame, area, picture);
     }
 }
 

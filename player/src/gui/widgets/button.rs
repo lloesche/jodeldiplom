@@ -6,7 +6,8 @@
 //! can have an icon before it ([`Button::leading`]) and the key that does
 //! the same after it ([`Button::key`]). A toggle is lit in a tone while
 //! it is on ([`Button::lit`]); a dense panel takes small ones
-//! ([`Button::small`]).
+//! ([`Button::small`]). A button over a picture fades in and out with
+//! what it is on ([`Button::opacity`]).
 //!
 //! Each has its states: under the pointer (eased in over
 //! [`look::motion::HOVER`]), pressed, focused (a ring in the accent round
@@ -107,6 +108,7 @@ pub struct Button<'a, Message> {
     id: Option<Id>,
     lit: Option<Color>,
     small: bool,
+    opacity: f32,
 }
 
 impl<'a, Message> Button<'a, Message> {
@@ -124,6 +126,7 @@ impl<'a, Message> Button<'a, Message> {
             id: None,
             lit: None,
             small: false,
+            opacity: 1.0,
         }
     }
 
@@ -184,6 +187,13 @@ impl<'a, Message> Button<'a, Message> {
         self
     }
 
+    /// Drawn at `opacity` (0 to 1, all of it by default): what it is on
+    /// shows through it, as it fades in or out with it.
+    pub fn opacity(mut self, opacity: f32) -> Self {
+        self.opacity = opacity.clamp(0.0, 1.0);
+        self
+    }
+
     /// Its width (it fits its label otherwise).
     pub fn width(mut self, width: impl Into<Length>) -> Self {
         self.width = width.into();
@@ -220,6 +230,7 @@ impl<'a, Message: Clone + 'a> From<Button<'a, Message>> for Element<'a, Message>
             id,
             lit,
             small,
+            opacity,
         } = button;
         let mut parts = Row::new().spacing(space::S).align_y(Alignment::Center);
         if let Some(icon) = icon {
@@ -275,6 +286,7 @@ impl<'a, Message: Clone + 'a> From<Button<'a, Message>> for Element<'a, Message>
             padding,
             id,
             lit,
+            opacity,
         }
         .boxed()
     }
@@ -286,6 +298,22 @@ struct Paint {
     ink: Color,
     edge: Color,
     glow: Color,
+}
+
+impl Paint {
+    /// Its colours at `opacity` (0 to 1) of themselves.
+    fn faded(self, opacity: f32) -> Paint {
+        let fade = |c: Color| Color {
+            a: c.a * opacity,
+            ..c
+        };
+        Paint {
+            fill: fade(self.fill),
+            ink: fade(self.ink),
+            edge: fade(self.edge),
+            glow: fade(self.glow),
+        }
+    }
 }
 
 /// What `kind` looks like in `look` (`muted`: what it switches is off),
@@ -421,6 +449,8 @@ struct Pressable<'a, Message> {
     id: Option<Id>,
     small: bool,
     lit: Option<Color>,
+    /// How much of it shows (0 to 1).
+    opacity: f32,
 }
 
 impl<Message> Pressable<'_, Message> {
@@ -600,7 +630,7 @@ impl<'a, Message: Clone + 'a> Widget<Message, Theme, Renderer> for Pressable<'a,
         let bounds = layout.bounds();
         let state = tree.state.downcast_ref::<State>();
         let look = self.look(state);
-        let paint = paint(self.kind, look, self.muted, self.lit);
+        let paint = paint(self.kind, look, self.muted, self.lit).faded(self.opacity);
         let corner = self.radius();
         if look.focused {
             let gap = look::line::FOCUS;
@@ -609,7 +639,7 @@ impl<'a, Message: Clone + 'a> Widget<Message, Theme, Renderer> for Pressable<'a,
                 Quad {
                     bounds: ring,
                     border: Border {
-                        color: look::ACCENT,
+                        color: look::alpha(look::ACCENT, self.opacity),
                         width: look::line::FOCUS,
                         radius: (corner + gap + look::line::FOCUS).into(),
                     },

@@ -17,9 +17,6 @@
 //! overfilling and bursting as the stage's bubbles do), and a rainbow edge
 //! on the bar under the word sung while the singing shines, a burst from
 //! it a step up.
-//!
-//! Where the lines go ([`set`]) is the same for the stage and for the
-//! window without a GPU, which paints them into its pixmap.
 
 use super::super::big_text::{BigText, Face};
 use super::super::fx::rainbow::rim_of;
@@ -41,14 +38,14 @@ const NOTES_ROOM: f32 = 1.45;
 /// Where the notes go in it: their highest's top, from the text's top...
 const NOTES_TOP: f32 = 1.3;
 /// ... and their lowest's bottom.
-pub const NOTES_BOTTOM: f32 = 2.5;
+const NOTES_BOTTOM: f32 = 2.5;
 /// A note's thickness, a share of the size.
 const NOTE_THICK: f32 = 0.09;
 
 /// The singer's last frames that shed sparkles behind them (0.5 s).
-pub const SPARKLE_FRAMES: usize = 50;
+const SPARKLE_FRAMES: usize = 50;
 /// The share of those frames that shed one.
-pub const SPARKLE_SHARE: f32 = 0.4;
+const SPARKLE_SHARE: f32 = 0.4;
 
 /// The widest run of text put into the atlas at once, pixels: a line
 /// wider than that goes in word by word, so a long line on a large screen
@@ -131,7 +128,7 @@ fn slots(
 
 /// How far into `line` (at `px`, glyphs made at `base`) character `at` is,
 /// in pixels (a fraction through one, through its width).
-pub fn x_of_char(text: &mut BigText, line: &str, base: f32, px: f32, at: f32) -> f32 {
+fn x_of_char(text: &mut BigText, line: &str, base: f32, px: f32, at: f32) -> f32 {
     let at = at.max(0.0);
     let whole = at.floor() as usize;
     let before: String = line.chars().take(whole).collect();
@@ -144,14 +141,14 @@ pub fn x_of_char(text: &mut BigText, line: &str, base: f32, px: f32, at: f32) ->
 
 /// A note's bar from `x0` to `x1` under text `px` high: a hair apart from
 /// the next.
-pub fn span(px: f32, (x0, x1): (f32, f32)) -> (f32, f32) {
+fn span(px: f32, (x0, x1): (f32, f32)) -> (f32, f32) {
     let gap = (px * 0.04).min((x1 - x0) * 0.2);
     (x0 + gap, x1 - gap)
 }
 
 /// A note's bar under text `px` high whose top is at `y`, `height` high
 /// (-1 to 1): its top, and how thick it is.
-pub fn bar(px: f32, y: f32, height: f32) -> (f32, f32) {
+fn bar(px: f32, y: f32, height: f32) -> (f32, f32) {
     let thick = (px * NOTE_THICK).max(3.0);
     let (top, bottom) = (px * NOTES_TOP, px * NOTES_BOTTOM - thick);
     (y + bottom - (height + 1.0) / 2.0 * (bottom - top), thick)
@@ -173,7 +170,7 @@ pub(super) fn moved(now: &[&LyricLine], before: &[&LyricLine]) -> (Vec<Option<us
 }
 
 /// A line as it is set.
-pub struct Set<'a> {
+struct Set<'a> {
     /// The line.
     pub line: &'a LyricLine,
     /// The size its glyphs are made at.
@@ -202,7 +199,7 @@ impl Set<'_> {
 /// the window's `area` (left, top, width, height), their glyphs in `text`
 /// (the lines' face): centred, moving into their places while they
 /// scroll; none that does not show.
-pub fn set<'a>(
+fn set<'a>(
     text: &mut BigText,
     picture: &'a KaraokePicture,
     keep: impl Fn(&LyricLine) -> bool,

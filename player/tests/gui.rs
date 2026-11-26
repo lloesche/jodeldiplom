@@ -970,9 +970,10 @@ fn after_a_track_change_the_next_block_is_blank_until_its_analysis_is_in() {
 
 /// Karaoke mode's stage on the GPU: a word ahead of the playhead shows as
 /// its pill, one sung and hit as gold, the singer's arrow at the playhead,
-/// over the pixmap as it is elsewhere. Skipped (with a note) without a GPU.
+/// over its ground (black, without a backdrop). Skipped (with a note)
+/// without a GPU.
 #[test]
-fn the_stage_draws_the_lane_over_the_pixmap() {
+fn the_stage_draws_the_lane_over_its_ground() {
     use jodeldiplom::core::singing::Singing;
     use jodeldiplom::gui::present::Offscreen;
     use jodeldiplom::gui::stage::{Lane, Song, Stage};
@@ -1038,9 +1039,7 @@ fn the_stage_draws_the_lane_over_the_pixmap() {
     let mut stage = Stage::default();
     let frame = stage.frame(&song, &picture, area, now, 1.0 / 60.0);
     gpu.set_stage(Some(&frame), w, h);
-    let shown = gpu
-        .show_pixels(&vec![0u32; (w * h) as usize], w, h)
-        .expect("a frame");
+    let shown = gpu.show_frame(w, h).expect("a frame");
     let at = |x: f32, y: f32| shown[y as usize * w as usize + x as usize];
     let rgb = |c: u32| ((c >> 16) & 255, (c >> 8) & 255, c & 255);
     let lane = Lane::new(area, now);

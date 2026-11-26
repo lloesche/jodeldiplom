@@ -252,8 +252,9 @@ stem keys are their mutes.
   - `a_song_sought_on_and_played_out_shows_its_result`
   - `a_song_played_out_with_nothing_scored_shows_its_result`
 - **K3b.** The mode's lines never move for its controls: those come up
-  over the picture's bottom (the voice slider, the seek bar, the keys)
-  only while the pointer is near the bottom (the bottom 15 % of the
+  over the picture's bottom (a translucent bar: previous, pause, next, the
+  time heard, the seek bar and the length, the voice slider, the way out,
+  and the keys under them) only while the pointer is near the bottom (the bottom 15 % of the
   window's height, never less than the bar and two lines) and while a
   slider or the seek bar is held; no key brings them up. They fade in and
   out over 0.2 s, and out 1.5 s after the pointer leaves the bottom (or
@@ -265,7 +266,7 @@ stem keys are their mutes.
   over the window once it has
   been still for 2.5 s (since its last move, or since the mode came),
   whether the controls show or not; any move anywhere on the screen shows
-  it at once (a button held too, within a cell too), and leaving the mode
+  it at once (a button held too, however small the move), and leaving the mode
   shows it, whenever. Keys and clicks do what they did, the pointer hidden
   or not, and leave it as it is.
   - `the_controls_come_up_near_the_bottom_over_the_lines_with_a_seek_bar`
@@ -282,10 +283,13 @@ stem keys are their mutes.
   press on it is START, as `enter` is (during a result's reveal it
   completes it, the next starts the song); greyed while that song cannot
   be sung yet. The pointer shows a hand over it. The controls have no
-  START. Without a GPU there is no stage: a small "enter: START" under
-  the lines says it (a result's own lines end with START).
+  START (their play button is greyed while nothing plays; while a song
+  plays it pauses it, as `space` does). Without a GPU there is no stage:
+  the lines are the window's own text in the middle, and a small "enter:
+  START" under them says it (a result's own lines end with START).
   - `the_start_pill_is_start_by_click_during_and_after_the_reveal`
   - `start_shows_alone_above_the_bar_and_is_its_target` (unit)
+  - `without_a_gpu_the_lines_say_start_in_words` (unit)
 - **K4.** A change of the voice's level never moves playback and never
   touches a transition (as S1). In the mode it is heard at once. The
   Voice slider is a position along its travel (`karaoke_voice`, 0 to
@@ -379,11 +383,8 @@ stem keys are their mutes.
   - `the_speech_model_is_found_where_the_build_put_it`
 - **K9.** In the mode, lines that change move: for 0.3 s each goes from
   where it was to where it goes (its size and colour too), a new one rises
-  in fading in, one that leaves rises away fading out. A frame redraws only
-  the text that changed.
+  in fading in, one that leaves rises away fading out.
   - `the_lines_scroll_from_where_they_were`
-  - `a_frame_drawn_where_it_changed_is_the_frame_drawn_afresh`
-  - `a_line_filling_redraws_only_itself`
 - **K12.** The music's echo is taken out of what the microphone hears
   (`karaoke_echo`, on by default), and the singer never is: the voice it
   gives is the microphone less the echo the music predicts, nothing more.
@@ -699,8 +700,8 @@ stem keys are their mutes.
     `nothing_of_the_library_shows_at_no_tier` (`gui::stage::meter`),
     `the_screen_passes_get_the_lyric_band` (`gui::stage`),
     `the_score_s_corner_is_kept_clear`
-    (`gui::fx::edge_fire`), `the_score_lies_in_its_corner`
-    (`gui::karaoke`),
+    (`gui::fx::edge_fire`),
+    `the_score_lies_in_its_corner` (`gui::stage::score`),
     `runs_split_by_group_and_treatment` (`gui::stage_gpu::groups`)
   - what keeps the stage fast on Apple's GPUs (PERFORMANCE.md):
     `each_pipeline_carries_only_its_own_effect_and_picks_by_its_group`,
@@ -798,10 +799,9 @@ stem keys are their mutes.
     `it_draws_the_points_at_rest_and_rolls_inside_its_slots`
     (`gui::stage::score`), `the_score_names_the_rung`
     (`view::karaoke::mode`)
-  - `the_picture_is_painted_again_while_its_score_rolls_and_then_not`,
-    `the_stage_asks_for_frames_while_its_score_rolls`,
+  - `the_stage_asks_for_frames_while_its_score_rolls`,
     `a_score_come_while_the_mode_was_left_shows_at_once`
-    (`gui::canvas::karaoke`),
+    (`gui::stage_view`),
     `pictures_moving_by_themselves_bring_calm_frames` (`gui::paint`)
 - **K23.** `p` held in Karaoke mode, the demo sings: the game hears a
   perfect singer in place of the microphone (with one open or none), for

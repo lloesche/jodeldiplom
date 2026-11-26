@@ -19,7 +19,7 @@ use jodeldiplom::art::Art;
 use jodeldiplom::core::shine::{Shone, Tier};
 use jodeldiplom::core::singing::{Medal, Shown, SongResult};
 use jodeldiplom::cover::Swatch;
-use jodeldiplom::gui::karaoke::Backdrop;
+use jodeldiplom::gui::backdrop::{Cue, Visualiser};
 use jodeldiplom::gui::present::Offscreen;
 use jodeldiplom::gui::stage::{Stage, Tint};
 use jodeldiplom::view::karaoke::{plain_lines, KaraokePicture, ResultShown, Start};
@@ -205,7 +205,14 @@ fn main() {
         let lines = plain_lines(&result, next);
         let shown = Arc::new(Shown::new(result, id, 0));
         let mut stage = Stage::default();
-        let backdrop = Backdrop::new(art.as_ref(), w, h);
+        // Over the cover's blur, as the window's ground.
+        let cue = Cue {
+            art: art.clone(),
+            layers: None,
+            heard: Default::default(),
+        };
+        let ground = Visualiser::default().step(&cue, (w as u32, h as u32), 0.0);
+        gpu.set_backdrop(Some(&ground), w as u32, h as u32);
         let end = shown.reveal.end();
         println!(
             "{name}: ends at {end:.2} s, beats {:?}",
@@ -232,10 +239,7 @@ fn main() {
             let area = (0.0, 0.0, w as f32, h as f32);
             let frame = stage.result(&picture, &tint, area).expect("a result");
             gpu.set_stage(Some(&frame), w as u32, h as u32);
-            // Over the cover's blur, as a pixmap of its own.
-            let shown_px = gpu
-                .show_pixels(&backdrop.pixels, w as u32, h as u32)
-                .expect("a frame");
+            let shown_px = gpu.show_frame(w as u32, h as u32).expect("a frame");
             let mut img = image::RgbImage::new(w as u32, h as u32);
             for (i, p) in shown_px.iter().enumerate() {
                 img.put_pixel(

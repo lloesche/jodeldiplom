@@ -6,7 +6,8 @@
 //! widget under them ([`embed`]), on iced's GPU through its shader
 //! widget, or as an image with iced's CPU renderer where there is no GPU.
 //! The covers and the lanes ([`lanes`]) are drawn over the cells it leaves
-//! for them.
+//! for them. Karaoke mode is the window's own: its stage a widget of its
+//! own ([`stage_view`]), its controls iced's widgets over it.
 
 pub mod backdrop;
 pub mod big_text;
@@ -20,13 +21,11 @@ mod embed_gpu;
 pub mod fonts;
 pub mod fx;
 pub mod glory;
-pub mod karaoke;
 pub mod keys;
 pub mod lanes;
 pub mod liquid;
 pub mod look;
 pub mod mixer;
-pub mod notes;
 mod pacer;
 mod paint;
 pub mod paper;
@@ -46,6 +45,7 @@ pub mod snake;
 pub mod sparks;
 pub mod stage;
 pub mod stage_gpu;
+pub mod stage_view;
 mod stamps;
 pub mod streak;
 pub(crate) mod style;

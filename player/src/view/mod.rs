@@ -1,9 +1,8 @@
 //! The ratatui widgets that draw the [`State`] into cells, which the window
 //! rasterises, in the player's colours ([`palette`]).
 //!
-//! Pictures (the cover, the lanes' waveforms, the bar numbers, Karaoke
-//! mode's picture) go through [`Pictures`]: the window leaves their cells
-//! empty and paints pixels there after the frame is drawn.
+//! Pictures (the cover, the Karaoke tab's voice lane) go through
+//! [`Pictures`]: the window leaves their cells empty and draws them there.
 //!
 //! Each part of the screen has its widgets: the box of the Mixer's place,
 //! the Karaoke tab's pictures. They are laid out on a grid of cells
@@ -60,11 +59,9 @@ mod colors {
     }
 
     pub const BG: Color = cell(palette::BG);
-    pub const ACCENT: Color = cell(palette::ACCENT);
     pub const DIM: Color = cell(palette::DIM);
     pub const TEXT: Color = cell(palette::TEXT);
     pub const BORDER: Color = cell(palette::BORDER);
-    pub const TRACK: Color = cell(palette::TRACK);
 }
 
 use colors::*;
@@ -80,9 +77,6 @@ pub trait Pictures {
     /// A lane's waveform ([`lanes::WavePlot`]): the Karaoke tab's voice
     /// lane.
     fn wave(&mut self, frame: &mut Frame, plot: &lanes::WavePlot);
-    /// Karaoke mode's picture ([`karaoke::KaraokePicture`]) over the
-    /// cells of `area`.
-    fn karaoke(&mut self, frame: &mut Frame, area: Rect, picture: &karaoke::KaraokePicture);
 }
 
 /// Everything a frame shows.
@@ -92,7 +86,7 @@ pub struct Scene<'a> {
     /// The grid it is laid out on.
     pub grid: Grid,
     /// Seconds into the playing track as heard now ([`crate::app::App::heard`]),
-    /// for what follows it (the Transition tab, Karaoke mode's picture).
+    /// for what follows it (the Transition tab).
     pub heard: f64,
 }
 
@@ -132,7 +126,6 @@ pub fn draw(frame: &mut Frame, scene: &Scene, pictures: &mut dyn Pictures) {
         }
         // Drawn by the window in iced's widgets.
         Layout::Native => {}
-        Layout::Karaoke(k) => karaoke::draw_mode(frame, scene, k, pictures),
     }
 }
 
@@ -191,26 +184,6 @@ fn bordered(title: Line<'static>) -> Block<'static> {
         .title(title)
 }
 
-/// Shortens `text` to `max` cells, keeping its start (a space before the
-/// `…` stays).
-fn keep_start(text: &str, max: usize) -> String {
-    if width(text) <= max {
-        return text.to_owned();
-    }
-    let mut out = String::new();
-    let mut used = 1;
-    for c in text.chars() {
-        let w = width(c.encode_utf8(&mut [0; 4]));
-        if used + w > max {
-            break;
-        }
-        used += w;
-        out.push(c);
-    }
-    out.push('…');
-    out
-}
-
 /// The pictures' cells as the window leaves them, without painting them:
 /// for the tests and the text dumps of the widgets. The cover is the
 /// placeholder (as the window shows it without art); the other pictures'
@@ -232,10 +205,6 @@ impl Pictures for CellPictures {
 
     fn wave(&mut self, frame: &mut Frame, plot: &lanes::WavePlot) {
         blank(frame, plot.area);
-    }
-
-    fn karaoke(&mut self, frame: &mut Frame, area: Rect, _picture: &karaoke::KaraokePicture) {
-        blank(frame, area);
     }
 }
 

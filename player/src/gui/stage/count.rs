@@ -3,8 +3,7 @@
 //! (clear of the meter and badges above the lane and of the lines below
 //! it; it never moves with them), shrinking and fading over its beat; the
 //! cue before the singing comes back after a break half as large, in the
-//! same place. Where it goes ([`placed`]) is the same for the stage and for
-//! the window without a GPU, which paints it into its pixmap.
+//! same place ([`placed`]).
 
 use super::super::big_text::{BigText, Face};
 use super::super::stage_gpu::Instance;
@@ -19,29 +18,27 @@ const CUE: f32 = 0.13;
 
 /// The count-in's number as it is drawn.
 #[derive(Clone, Debug, PartialEq)]
-pub struct Count {
+struct Count {
     /// The number.
-    pub text: String,
+    text: String,
     /// The size its glyphs are made at.
-    pub base: f32,
+    base: f32,
     /// The size it is drawn at.
-    pub px: f32,
+    px: f32,
     /// Its line's top-left.
-    pub at: (f32, f32),
+    at: (f32, f32),
     /// How much of it shows.
-    pub alpha: f32,
+    alpha: f32,
 }
 
 /// `picture`'s count-in (or its cue), none without one, in the window's
-/// `area` (left, top, width, height) `room` pixels high, its glyphs in
-/// `text` (the shouts' face) made at the size `base` gives for the size it
-/// is drawn at and the largest it is drawn at.
-pub fn placed(
+/// `area` (left, top, width, height), its glyphs in `text` (the shouts'
+/// face) made once at the largest it is drawn at (the atlas holds a number
+/// a size).
+fn placed(
     text: &mut BigText,
     picture: &KaraokePicture,
     (x, y, w, h): (f32, f32, f32, f32),
-    room: f32,
-    base: impl Fn(f32, f32) -> f32,
 ) -> Option<Count> {
     let count = picture.count.map(|c| (c, COUNT));
     let ((n, through), size) = count.or(picture.cue.map(|c| ((c.number, c.through), CUE)))?;
@@ -51,9 +48,9 @@ pub fn placed(
     // its beat.
     let t = through.clamp(0.0, 1.0) as f32;
     let shrink = 1.0 - (1.0 - t).powi(3);
-    let most = (room * size).min(behind * 0.9);
+    let most = (h * size).min(behind * 0.9);
     let px = most * (1.0 - 0.4 * shrink);
-    let base = base(px, most);
+    let base = most.round();
     let digit = n.to_string();
     let wide = text.measure_from(&digit, base, px);
     Some(Count {
@@ -69,9 +66,7 @@ pub fn placed(
 }
 
 impl Stage {
-    /// `picture`'s count-in into `out`, in the window's `area`: its glyphs
-    /// made once at the largest it is drawn (the atlas holds a number a
-    /// size), drawn smaller from there.
+    /// `picture`'s count-in into `out`, in the window's `area`.
     pub(super) fn count(
         &mut self,
         out: &mut Vec<Instance>,
@@ -79,7 +74,7 @@ impl Stage {
         area: (f32, f32, f32, f32),
     ) {
         let shout = self.faces.get(Face::SHOUT);
-        let Some(c) = placed(shout, picture, area, area.3, |_, most| most.round()) else {
+        let Some(c) = placed(shout, picture, area) else {
             return;
         };
         let accent = rgba8(self.theme.accent(), c.alpha);

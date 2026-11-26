@@ -1,16 +1,13 @@
 //! The cell renderer's mouse: the named rects of its layout ([`layout`])
-//! and what a click, drag or wheel on each does, as the core's
-//! [`Action`]s. The window reports the pointer in cells (and within its
-//! cell, [`action_at`]). The bottom bar, the list pane with its tabs, the
-//! right column's text under the cover (or the summary under the list),
-//! the Transition and Karaoke tabs and the command palette are the
-//! window's own: their cells take no clicks here.
+//! and what a click or wheel on each does, as the core's [`Action`]s. The
+//! window reports the pointer in cells. The bottom bar, the list pane
+//! with its tabs, the right column's text under the cover (or the summary
+//! under the list), the Transition and Karaoke tabs, Karaoke mode and the
+//! command palette are the window's own: their cells take no clicks here.
 
 use ratatui::layout::{Position, Rect};
 
-use crate::core::karaoke;
 use crate::core::keymap::Op;
-use crate::core::sliders::Slider;
 use crate::core::{Action, Screen, State};
 use crate::view::layout::{self, Grid, Layout};
 
@@ -34,14 +31,10 @@ pub enum MouseKind {
     Up(MouseButton),
     /// The pointer moved with a button held.
     Drag(MouseButton),
-    /// The pointer moved.
-    Moved,
     /// The wheel turned up.
     ScrollUp,
     /// The wheel turned down.
     ScrollDown,
-    /// The pointer went out of the window.
-    Out,
 }
 
 /// A mouse event at a cell.
@@ -60,20 +53,6 @@ pub struct MouseInput {
 pub enum Target {
     /// The cover (on Now playing, the whole screen).
     Cover,
-    /// Karaoke mode's seek bar.
-    Bar,
-    /// A button.
-    Button(Op),
-    /// A slider's row of Karaoke mode's controls.
-    KaraokeSlider(Slider),
-}
-
-/// The share of the window's height below the pointer in `row` of
-/// `rows`, as the core hears where the pointer is
-/// ([`Action::PointerMoved`]): under the row's bottom edge, so a row is in
-/// a share from the bottom where any of it is.
-pub fn from_bottom(rows: u16, row: u16) -> f32 {
-    f32::from(rows.saturating_sub(row + 1)) / f32::from(rows.max(1))
 }
 
 /// Every hit region of the screen shown on `grid`, most specific first.
@@ -88,14 +67,6 @@ pub fn regions(state: &State, grid: Grid) -> Vec<(Rect, Target)> {
         }
         // The window's own widgets take the pointer there.
         Layout::Native => {}
-        Layout::Karaoke(k) => {
-            if let Some(c) = &k.controls {
-                for s in &c.sliders {
-                    out.push((s.row, Target::KaraokeSlider(s.slider)));
-                }
-                out.push((c.seek, Target::Bar));
-            }
-        }
     }
     out
 }
@@ -109,103 +80,14 @@ pub fn hit(state: &State, grid: Grid, col: u16, row: u16) -> Option<Target> {
         .map(|(_, target)| target)
 }
 
-/// The share of Karaoke mode's seek bar at column `col`.
-fn bar_fraction(state: &State, grid: Grid, col: u16) -> Option<f64> {
-    let Layout::Karaoke(k) = layout::compute(state, grid) else {
-        return None;
-    };
-    let bar = k.controls?.seek;
-    if bar.width < 2 {
-        return None;
-    }
-    let x = col.clamp(bar.x, bar.right() - 1) - bar.x;
-    Some(f64::from(x) / f64::from(bar.width - 1))
-}
-
-/// The share of `slider`'s range in Karaoke mode's controls with the
-/// pointer at `x` cells from the left edge. The middle of the track's
-/// first cell is 0 and of its last cell 1, where the knob is drawn for
-/// those shares.
-fn slider_share(state: &State, grid: Grid, slider: Slider, x: f64) -> Option<f64> {
-    let Layout::Karaoke(k) = layout::compute(state, grid) else {
-        return None;
-    };
-    let sliders = k.controls?.sliders;
-    let track = sliders.into_iter().find(|s| s.slider == slider)?.track;
-    layout::Track::columns(track).share_at(x)
-}
-
-/// What a mouse event on `grid` does, if anything. The pointer is taken
-/// to be in the middle of its cell, over the cells alone.
+/// What a mouse event on `grid` does, if anything.
 pub fn action(state: &State, grid: Grid, input: MouseInput) -> Option<Action> {
-    action_at(state, grid, input, f64::from(input.col) + 0.5, None)
-}
-
-/// [`action`] with the pointer known within its cell and over what the
-/// window draws in pixels: `x` is in cells from the left edge (the GUI
-/// knows it to the pixel), and `over` what the button drawn in pixels
-/// under the pointer does, if there is one (Karaoke mode's START pill, on
-/// the stage), which is hit before the cells under it. Only a Karaoke
-/// slider uses `x`: cell by cell, a 40-cell track moves 2.6 % a step
-/// (5.1 % for the microphone's 200 %); pixel by pixel, every whole percent
-/// is in reach.
-pub fn action_at(
-    state: &State,
-    grid: Grid,
-    input: MouseInput,
-    x: f64,
-    over: Option<Op>,
-) -> Option<Action> {
     use MouseButton::Left;
     use MouseKind::*;
-    // A drag on Karaoke mode's seek bar follows the pointer anywhere.
-    if state.seek_drag.is_some() {
-        return match input.kind {
-            Drag(Left) | Moved => bar_fraction(state, grid, input.col).map(Action::SeekDrag),
-            Up(Left) => bar_fraction(state, grid, input.col).map(Action::SeekTo),
-            _ => None,
-        };
-    }
-    // So does a Karaoke slider held.
-    if state.karaoke.dragging.is_some() {
-        return match input.kind {
-            Drag(Left) | Moved => state
-                .karaoke
-                .dragging
-                .and_then(|s| slider_share(state, grid, s, x).map(|share| (s, share)))
-                .map(|(slider, share)| Action::KaraokeSlide { slider, share }),
-            Up(Left) => Some(Action::KaraokeSlideEnd),
-            _ => None,
-        };
-    }
-    // Moving over Karaoke mode (a button held or not) shows the pointer,
-    // and over its bottom its controls; off the window they go.
-    if karaoke::in_mode(state) {
-        match input.kind {
-            Moved | Drag(_) => {
-                return Some(Action::PointerMoved {
-                    from_bottom: from_bottom(grid.rows, input.row),
-                })
-            }
-            Out => return Some(Action::PointerLeft),
-            _ => {}
-        }
-    }
-    let target = over
-        .map(Target::Button)
-        .or_else(|| hit(state, grid, input.col, input.row))?;
+    let target = hit(state, grid, input.col, input.row)?;
     match (input.kind, target) {
-        (Down(Left), Target::KaraokeSlider(slider)) => {
-            slider_share(state, grid, slider, x).map(|share| Action::KaraokeSlide { slider, share })
-        }
-        (ScrollUp | ScrollDown, Target::KaraokeSlider(slider)) => Some(Action::KaraokeStep {
-            slider,
-            by: if input.kind == ScrollUp { 1 } else { -1 },
-        }),
         (ScrollUp | ScrollDown, _) => scrolled(state, input.kind == ScrollUp),
-        (Down(Left), Target::Bar) => bar_fraction(state, grid, input.col).map(Action::SeekDrag),
         (Down(Left), Target::Cover) => Some(Action::Op(Op::NowPlaying)),
-        (Down(Left), Target::Button(op)) => Some(Action::Op(op)),
         _ => None,
     }
 }

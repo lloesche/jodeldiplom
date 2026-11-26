@@ -1,8 +1,10 @@
-//! One frame of Karaoke mode for a song in the caches, as a window
-//! without a GPU paints it (a PNG, on a plain backdrop; the lines and how
-//! far each is sung printed): its lines at `SECONDS`, with the notes of the
-//! line being sung from its melody. Only the caches are read, never the
-//! song. `--size WxH`: the window's size (1600 × 900 by default).
+//! One frame of Karaoke mode for a song in the caches, as the GPU draws it
+//! without the lane (the notes off, or a song without notes of its own: a
+//! PNG of the stage's lyrics set in the middle over the plain backdrop; the
+//! lines and how far each is sung printed): its lines at `SECONDS`, with
+//! the notes of the line being sung from its melody. Only the caches are
+//! read, never the song. `--size WxH`: the window's size (1600 × 900 by
+//! default).
 //!
 //! ```text
 //! cargo run --release -p jodeldiplom --example karaoke_frame -- DATA_DIR LYRICS_KEY ANALYSIS_KEY SECONDS OUT.png
@@ -10,10 +12,6 @@
 //!
 //! `LYRICS_KEY` names `lyrics/KEY.timed.lrc`, `ANALYSIS_KEY` names
 //! `analyses/KEY.wave`.
-//!
-//! `--stage`: the same frame as the GPU draws it without the lane (the
-//! notes off, or a song without notes of its own): the stage's lyrics set
-//! in the middle over the plain backdrop.
 //!
 //! `--gpu FRAMES`: instead, the last `FRAMES` frames up to `SECONDS` at 60
 //! a second as the GPU draws the mode with its lane (the stage over the
@@ -23,9 +21,6 @@
 use std::path::Path;
 
 use jodeldiplom::core::singing::Singing;
-use jodeldiplom::gui::big_text::Faces;
-use jodeldiplom::gui::karaoke::{paint, Backdrop, Layer};
-use jodeldiplom::gui::pixels::Target;
 use jodeldiplom::gui::present::Offscreen;
 use jodeldiplom::gui::stage::{Song, Stage, Tint};
 use jodeldiplom::gui::stage_gpu::StageFrame;
@@ -199,47 +194,17 @@ fn main() {
         }),
         result: None,
     };
-    if args.iter().any(|a| a == "--stage") {
-        let mut gpu = plain_gpu(size);
-        let song = Song::new(&singing, Vec::new(), None);
-        let area = (0.0, 0.0, size.0 as f32, size.1 as f32);
-        let mut stage = Stage::default();
-        let frame = stage.scene((&song, false), &picture, area, (t, 0.0), &Tint::STAGE);
-        save_stage(
-            &mut gpu,
-            &frame.expect("the lyrics"),
-            size,
-            Path::new(&args[4]),
-        );
-        return;
-    }
-    let (w, h) = (size.0 as usize, size.1 as usize);
-    let mut pixels = vec![0u32; w * h];
-    let backdrop = Backdrop::new(None, w, h);
-    let mut target = Target {
-        pixels: &mut pixels,
-        width: w,
-        height: h,
-    };
-    paint(
-        &mut target,
-        &mut Faces::default(),
-        &mut Layer::default(),
-        &backdrop,
-        &picture,
-        (0, 0, w, h),
-        None,
-        true,
+    let mut gpu = plain_gpu(size);
+    let song = Song::new(&singing, Vec::new(), None);
+    let area = (0.0, 0.0, size.0 as f32, size.1 as f32);
+    let mut stage = Stage::default();
+    let frame = stage.scene((&song, false), &picture, area, (t, 0.0), &Tint::STAGE);
+    save_stage(
+        &mut gpu,
+        &frame.expect("the lyrics"),
+        size,
+        Path::new(&args[4]),
     );
-    let mut img = image::RgbImage::new(w as u32, h as u32);
-    for (i, p) in pixels.iter().enumerate() {
-        img.put_pixel(
-            (i % w) as u32,
-            (i / w) as u32,
-            image::Rgb([(p >> 16) as u8, (p >> 8) as u8, *p as u8]),
-        );
-    }
-    save_png(&img, Path::new(&args[4]));
     // The lines, and how far each is sung.
     for line in &picture.lines {
         println!("{:>4.0} %  {}", line.fill * 100.0, line.text);

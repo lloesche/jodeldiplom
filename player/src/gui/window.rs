@@ -30,6 +30,7 @@ use super::pacer::Pacer;
 use super::paint::{Pace, Paint, Place, Seen, REST};
 use super::pointer::{Grab, Pointer, PointerKind, PointerState, Wheel, WheelOn};
 use super::screens::Shown;
+use super::stage_view::StageView;
 use super::wake::{Wake, Wakes};
 use super::widgets::cover::Covers;
 use crate::app::{App, AppOptions};
@@ -118,6 +119,8 @@ enum Last {
 pub struct Gui {
     phase: Phase,
     embed: Embed,
+    /// Karaoke mode's stage.
+    stage: StageView,
     paint: Paint,
     pacer: Pacer,
     pointer: PointerState,
@@ -205,6 +208,7 @@ impl Gui {
         Gui {
             phase,
             embed: Embed::default(),
+            stage: StageView::default(),
             paint: Paint::new(),
             pacer: Pacer::default(),
             pointer: PointerState::default(),
@@ -547,8 +551,8 @@ impl Gui {
             visible: self.visible(),
             following: self.lanes.following(),
             gliding: self.caps.moving(),
-            stage: self.embed.gpu(),
-            pictures_moving: self.embed.moving(),
+            stage: self.stage.gpu(),
+            pictures_moving: self.stage.moving(),
         }
     }
 
@@ -594,7 +598,7 @@ impl Gui {
                     self.occluded = true;
                     plan.draw = super::paint::Draw::Nothing;
                 }
-                let canvas = (&self.embed, &mut self.lanes);
+                let canvas = (&self.embed, &self.stage, &mut self.lanes);
                 self.paint.draw(plan, canvas, app, place, (heard, at));
                 // Now playing makes room for its cover itself; elsewhere
                 // the covers go where the canvas left them.
@@ -725,6 +729,7 @@ impl Gui {
         self.pacer.view(super::screens::view(
             shown,
             &self.embed,
+            &self.stage,
             &self.caps,
             &self.covers,
             &self.lanes,

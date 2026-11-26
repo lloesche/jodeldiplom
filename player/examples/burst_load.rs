@@ -1,9 +1,9 @@
 //! What bursting bubbles cost the processor (and the GPU, where there is
-//! one): Karaoke mode's picture painted frame by frame at 1600 × 900 with
-//! 20 bubbles holding liquid and with 20 bursting at once (and as the
-//! GPU draws it, the stage setting the lyrics in the middle), and the GPU's
-//! stage made frame by frame (and shown, offscreen) with none and with 20
-//! words filling and bursting together.
+//! one): Karaoke mode's picture made by the stage frame by frame at
+//! 1600 × 900 (its lyrics set in the middle) with 20 bubbles holding liquid
+//! and with 20 bursting at once, and the stage's lane made frame by frame
+//! with none and with 20 words filling and bursting together; each shown
+//! offscreen too.
 //!
 //! ```text
 //! cargo run --release -p jodeldiplom --example burst_load
@@ -14,9 +14,6 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use jodeldiplom::core::singing::{Note, Singing};
-use jodeldiplom::gui::big_text::Faces;
-use jodeldiplom::gui::karaoke::{paint, Backdrop, Layer};
-use jodeldiplom::gui::pixels::Target;
 use jodeldiplom::gui::stage::{Song, Stage, Tint};
 use jodeldiplom::view::bubbles::{Liquid, Part};
 use jodeldiplom::view::karaoke::{KaraokePicture, LineKind, LyricLine};
@@ -61,7 +58,7 @@ fn quantiles(mut v: Vec<f64>) -> (f64, f64) {
 }
 
 /// The picture's line of 20 words, each on a note, all bursting (or none)
-/// as the frames go by; each frame painted where it changed.
+/// as the frames go by, set in the middle by the stage.
 fn picture(w: usize, h: usize, bursting: bool) -> ((f64, f64), Option<(f64, f64)>) {
     let text = vec!["la"; WORDS].join(" ");
     let notes: Vec<Note> = (0..WORDS)
@@ -75,12 +72,9 @@ fn picture(w: usize, h: usize, bursting: bool) -> ((f64, f64), Option<(f64, f64)
             word: k,
         })
         .collect();
-    let backdrop = Backdrop::new(None, w, h);
-    let (mut text_big, mut layer) = (Faces::default(), Layer::default());
-    let mut pixels = vec![0u32; w * h];
     let (mut took, mut shown) = (Vec::new(), Vec::new());
     let mut gpu = jodeldiplom::gui::present::Offscreen::new(false).ok();
-    let (mut staged, nobody, blank) = (Stage::default(), Singing::default(), vec![0u32; w * h]);
+    let (mut staged, nobody) = (Stage::default(), Singing::default());
     for f in 0..FRAMES {
         let age = (f as f32 / 60.0 / 0.5).fract();
         let line = LyricLine {
@@ -134,35 +128,20 @@ fn picture(w: usize, h: usize, bursting: bool) -> ((f64, f64), Option<(f64, f64)
             score: None,
             result: None,
         };
-        let mut target = Target {
-            pixels: &mut pixels,
-            width: w,
-            height: h,
-        };
+        // The stage's lyrics set in the middle, its bubbles' liquid and
+        // bursts over their bars.
+        let song = Song::new(&nobody, Vec::new(), None);
+        let area = (0.0, 0.0, w as f32, h as f32);
+        let at = (f as f64 / 60.0, 1.0 / 60.0);
         let started = Instant::now();
-        paint(
-            &mut target,
-            &mut text_big,
-            &mut layer,
-            &backdrop,
-            &picture,
-            (0, 0, w, h),
-            None,
-            f == 0,
-        );
+        let frame = staged.scene((&song, false), &picture, area, at, &Tint::STAGE);
         if f > 0 {
             took.push(started.elapsed().as_secs_f64() * 1000.0);
         }
-        // As the GPU draws it: the stage's lyrics set in the middle, its
-        // bubbles' liquid and bursts over their bars.
         if let Some(gpu) = gpu.as_mut() {
-            let song = Song::new(&nobody, Vec::new(), None);
-            let area = (0.0, 0.0, w as f32, h as f32);
-            let at = (f as f64 / 60.0, 1.0 / 60.0);
-            let frame = staged.scene((&song, false), &picture, area, at, &Tint::STAGE);
             let started = Instant::now();
             gpu.set_stage(frame.as_ref(), w as u32, h as u32);
-            let _ = gpu.show_pixels(&blank, w as u32, h as u32);
+            let _ = gpu.show_frame(w as u32, h as u32);
             shown.push(started.elapsed().as_secs_f64() * 1000.0);
         }
     }
@@ -206,7 +185,6 @@ fn stage(w: usize, h: usize, bursting: bool, shine: bool) -> ((f64, f64), Option
         &jodeldiplom::core::singing::melodic(&melody),
     );
     let mut gpu = jodeldiplom::gui::present::Offscreen::new(false).ok();
-    let blank = vec![0u32; w * h];
     let mut stage = Stage::default();
     let (mut cpu, mut shown) = (Vec::new(), Vec::new());
     let mut heard = 0usize;
@@ -257,7 +235,7 @@ fn stage(w: usize, h: usize, bursting: bool, shine: bool) -> ((f64, f64), Option
         if let Some(gpu) = gpu.as_mut() {
             let started = Instant::now();
             gpu.set_stage(Some(&frame), w as u32, h as u32);
-            let _ = gpu.show_pixels(&blank, w as u32, h as u32);
+            let _ = gpu.show_frame(w as u32, h as u32);
             shown.push(started.elapsed().as_secs_f64() * 1000.0);
         }
     }

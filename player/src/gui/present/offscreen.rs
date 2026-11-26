@@ -3,14 +3,18 @@
 
 use jodel_gpu::Turned;
 
-use super::{open, Painter, TEXTURE_FORMAT};
+use super::pixmap::{Pixmap, TEXTURE_FORMAT};
+use super::{open, Painter};
 use crate::gui::backdrop::BackdropFrame;
 use crate::gui::canvas::{Canvas, Changes};
 
 /// The window's frames drawn into a texture off screen and read back:
-/// for the tests, the same uploads and pass as the window's.
+/// for the tests, the same uploads and passes as the window's (Karaoke
+/// mode's, and the old canvas's pixmap, [`Offscreen::show`]).
 pub struct Offscreen {
     painter: Turned<Painter>,
+    /// The old canvas's pixmap, made as it is first shown.
+    pixmap: Option<Pixmap>,
     format: wgpu::TextureFormat,
     /// What draws: the adapter's name and backend.
     pub name: String,
@@ -56,6 +60,7 @@ impl Offscreen {
         };
         Ok(Offscreen {
             painter: Turned::new(Painter::new(device, queue, format)),
+            pixmap: None,
             format,
             name: format!("{} ({:?})", info.name, info.backend),
             stamps: None,
@@ -63,13 +68,11 @@ impl Offscreen {
         })
     }
 
-    /// A frame of `width` × `height` drawn as the window draws it (Karaoke
-    /// mode's ground, or the pixmap [`Offscreen::show_pixels`] last sent, of
-    /// that size), with
-    /// `backdrop` and `stage` set for it, timed step by step (a step of the
-    /// window's pass drawn in a pass of its own), not read back: the times
-    /// are read with [`Offscreen::costs`]. An error where it does not time
-    /// ([`Offscreen::timed`]) or nothing was sent.
+    /// A frame of `width` × `height` drawn as the window draws Karaoke
+    /// mode, with `backdrop` and `stage` set for it, timed step by step (a
+    /// step of the window's pass drawn in a pass of its own), not read
+    /// back: the times are read with [`Offscreen::costs`]. An error where
+    /// it does not time ([`Offscreen::timed`]).
     pub fn time_frame(
         &mut self,
         backdrop: Option<&BackdropFrame>,
@@ -103,16 +106,11 @@ impl Offscreen {
                 view_formats: &[],
             }));
         }
-        let painted = self
-            .target
-            .as_ref()
-            .is_some_and(|t| painter.paint(t, |_| ()));
-        self.stamps = painter.stamps.take();
-        if painted {
-            Ok(())
-        } else {
-            Err("nothing to draw".into())
+        if let Some(target) = &self.target {
+            painter.paint(target, |_| ());
         }
+        self.stamps = painter.stamps.take();
+        Ok(())
     }
 
     /// The frames timed since the last look ([`Offscreen::time_frame`]),
@@ -133,7 +131,7 @@ impl Offscreen {
     }
 
     /// Karaoke mode's backdrop under the next frame, as the window's
-    /// (none: its textures dropped).
+    /// (none: its textures dropped, the ground black).
     pub fn set_backdrop(&mut self, frame: Option<&BackdropFrame>, width: u32, height: u32) {
         self.painter
             .set_backdrop(frame, (width.max(1), height.max(1)));
@@ -162,46 +160,25 @@ impl Offscreen {
         self.painter.backdrop.held()
     }
 
-    /// Draws a frame of `pixels` (`width` × `height` pixmap words row by
-    /// row, premultiplied over the backdrop: [`crate::gui::pixels::SEE_THROUGH`])
-    /// with the backdrop and the stage set, and reads it back.
-    pub fn show_pixels(
-        &mut self,
-        pixels: &[u32],
-        width: u32,
-        height: u32,
-    ) -> Result<Vec<u32>, String> {
-        if self
-            .painter
-            .kept
-            .as_ref()
-            .is_none_or(|k| k.window != (width, height))
-        {
-            self.painter.kept = Some(self.painter.texture(width, height));
-            self.painter.bind = None;
-        }
-        let (w, h) = (width as usize, height as usize);
-        self.painter.write(pixels, w, (0, 0, w, h));
-        self.painter.size = (width, height);
-        self.read_back(width, height)
-    }
-
-    /// The rows (from, to) of the pixmap shown over Karaoke mode's
-    /// backdrop from now on, as the window's ([`crate::gui::Canvas::strip`]):
-    /// none, none of it.
-    pub fn set_strip(&mut self, strip: Option<(u32, u32)>) {
-        self.painter.strip = strip;
-    }
-
     /// Draws a frame of `width` × `height` of what was set (Karaoke mode:
-    /// its backdrop and its stage, the pixmap last sent over in its strip)
-    /// and reads it back.
+    /// its backdrop, black without one, and its stage) and reads it back,
+    /// as `0x00RRGGBB` words row by row.
     pub fn show_frame(&mut self, width: u32, height: u32) -> Result<Vec<u32>, String> {
-        self.read_back(width, height)
+        let painter = &mut *self.painter;
+        painter.bind();
+        let gpu = (&painter.device, &painter.queue);
+        read_back(
+            gpu,
+            self.format,
+            (width, height),
+            wgpu::Color::BLACK,
+            |pass| painter.draw(pass),
+        )
     }
 
-    /// Sends over `changes` as the window does, draws a frame of `width` ×
-    /// `height` and reads it back, as `0x00RRGGBB` words row by row.
+    /// The old canvas's pixmap: sends over `changes` as the window does,
+    /// draws a frame of `width` × `height` and reads it back, as
+    /// `0x00RRGGBB` words row by row.
     pub fn show(
         &mut self,
         canvas: &Canvas,
@@ -209,17 +186,11 @@ impl Offscreen {
         width: u32,
         height: u32,
     ) -> Result<Vec<u32>, String> {
-        self.painter.upload(canvas, changes, width, height);
-        self.read_back(width, height)
-    }
-
-    /// The frame drawn from what was sent over, read back.
-    fn read_back(&mut self, width: u32, height: u32) -> Result<Vec<u32>, String> {
-        let painter = &mut *self.painter;
-        painter.bind();
-        if !painter.ready() {
-            return Err("nothing to draw".into());
-        }
+        let painter = &*self.painter;
+        let pixmap = self.pixmap.get_or_insert_with(|| {
+            Pixmap::new(painter.device.clone(), painter.queue.clone(), self.format)
+        });
+        pixmap.upload(canvas, changes, width, height);
         let gpu = (&painter.device, &painter.queue);
         read_back(
             gpu,
@@ -227,7 +198,7 @@ impl Offscreen {
             (width, height),
             wgpu::Color::BLACK,
             |pass| {
-                painter.draw(pass);
+                pixmap.draw(pass);
             },
         )
     }

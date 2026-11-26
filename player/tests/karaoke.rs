@@ -11,11 +11,6 @@ use jodeldiplom::core::keymap::Op;
 use jodeldiplom::core::sliders::{self, Slider};
 use jodeldiplom::core::{karaoke, update, Action, Effect, Rhythm, Rhythmed, Screen, Side, State};
 use jodeldiplom::view::karaoke::Tab;
-use jodeldiplom::view::layout::{self, Grid, Layout};
-use jodeldiplom::view::mouse::{self, MouseButton, MouseInput, MouseKind};
-
-/// The window of [`tab`] and [`common::transition_state`]`(120, 40)`.
-const GRID: Grid = Grid::new(120, 40);
 
 fn op(state: &mut State, op: Op) -> Vec<Effect> {
     update(state, Action::Op(op))
@@ -621,10 +616,7 @@ fn lyrics_are_asked_for_on_the_tab_and_follow_the_song() {
     assert_eq!(state.config.karaoke_lead, 200);
     let mut shown = state.clone();
     shown.screen = Screen::Karaoke;
-    let Layout::Karaoke(k) = layout::compute(&shown, GRID) else {
-        panic!("the mode's layout")
-    };
-    let p = jodeldiplom::view::karaoke::picture(&shown, &k, 10.3);
+    let p = jodeldiplom::view::karaoke::picture(&shown, 0.1, 10.3);
     let ahead = lines_now(&shown, 10.5);
     assert_eq!(p.lines, ahead);
     assert_ne!(p.lines, lines_now(&shown, 10.3), "not where the voice is");
@@ -755,35 +747,17 @@ fn the_speech_recogniser_is_found_beside_the_speech_model() {
 fn start_is_the_stages_pill_and_the_game_is_set_on_the_tab() {
     let mut state = tab();
     // In the mode, waiting: START is the stage's pill, from the moment the
-    // mode opens, never a cell of the controls (which wait for the
-    // pointer near the bottom). A press on the pill is START.
+    // mode opens, never among the controls (which wait for the pointer
+    // near the bottom; a press on the pill is START:
+    // `the_start_pill_is_start_by_click_during_and_after_the_reveal`).
     op(&mut state, Op::KaraokeEnter);
     stopped(&mut state);
-    let Layout::Karaoke(km) = layout::compute(&state, GRID) else {
-        panic!()
-    };
-    assert!(km.controls.is_none());
-    let shown = jodeldiplom::view::karaoke::picture(&state, &km, 0.0);
+    assert!(!karaoke::controls::shown(&state));
+    let shown = jodeldiplom::view::karaoke::picture(&state, 0.1, 0.0);
     assert_eq!(
         shown.start,
         Some(jodeldiplom::view::karaoke::Start { ready: true })
     );
-    // A press where the window drew START in pixels is START; the cells
-    // under it take none.
-    let press = |kind| MouseInput {
-        kind,
-        col: 40,
-        row: GRID.rows - 8,
-    };
-    let start = Some(Op::KaraokeStart);
-    let left = press(MouseKind::Down(MouseButton::Left));
-    assert!(matches!(
-        mouse::action_at(&state, GRID, left, 40.5, start),
-        Some(Action::Op(Op::KaraokeStart))
-    ));
-    assert!(mouse::action_at(&state, GRID, left, 40.5, None).is_none());
-    let right = press(MouseKind::Down(MouseButton::Right));
-    assert!(mouse::action_at(&state, GRID, right, 40.5, start).is_none());
     // The game is set on the tab, not here: it stays as it is from a
     // song's start to its end. No keys for it, and the ops do nothing.
     use jodeldiplom::core::keymap::{lookup, Key, Meaning};

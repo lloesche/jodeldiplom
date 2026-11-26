@@ -12,8 +12,9 @@
 //! right column's text under the cover native: links, tags, the pulse), the
 //! same on a folder of 2,000 files (the cost must not grow with the
 //! folder), the queue, the Mixer tab, the Transition and Karaoke tabs
-//! (their lanes native) on generated tracks with stems, and the screens
-//! drawn whole in iced's widgets: Now playing, the settings (the device
+//! (their lanes native) on generated tracks with stems, Karaoke mode on
+//! them (its stage and its controls' bar), and the screens drawn whole in
+//! iced's widgets: Now playing, the settings (the device
 //! list open) and the help; the rest of each screen is the old canvas, one
 //! widget, until it is ported.
 //!
@@ -136,6 +137,23 @@ fn main() {
         ("karaoke tab", {
             let mut k = common::transition_state(120, 36);
             k.side = Side::Karaoke;
+            k
+        }),
+        // Karaoke mode on it: its stage (a widget of its own), and its
+        // controls' bar faded in over it.
+        ("karaoke mode", {
+            let mut k = common::transition_state(120, 36);
+            k.side = Side::Karaoke;
+            k.screen = Screen::Karaoke;
+            k
+        }),
+        ("karaoke mode, controls", {
+            let mut k = common::transition_state(120, 36);
+            k.side = Side::Karaoke;
+            k.screen = Screen::Karaoke;
+            jodeldiplom::core::update(&mut k, Action::PointerMoved { from_bottom: 0.0 });
+            let shown = k.now_ms + jodeldiplom::core::karaoke::controls::FADE_MS;
+            jodeldiplom::core::update(&mut k, Action::Tick(shown));
             k
         }),
         ("nowplaying", {

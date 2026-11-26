@@ -1,8 +1,8 @@
 //! The old canvas on iced's GPU ([`super::embed`]): a primitive of iced's
-//! shader widget that hands each frame's changed pixels and Karaoke mode's
-//! stage and backdrop to the [`Painter`], and draws it
-//! into iced's render pass, under what iced draws over it. The pass draws
-//! in window pixels, so the widget is at the window's top left corner.
+//! shader widget that hands each frame's changed pixels to the
+//! [`Pixmap`], and draws it into iced's render pass, under what iced draws
+//! over it. The pass draws in window pixels, so the widget is at the
+//! window's top left corner.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -12,7 +12,7 @@ use iced::widget::shader::{self, Viewport};
 use iced::{wgpu, Rectangle};
 
 use super::embed::Embed;
-use super::present::Painter;
+use super::present::pixmap::Pixmap;
 
 /// A frame of the old canvas, for the GPU.
 #[derive(Debug)]
@@ -24,9 +24,9 @@ impl Frame {
     }
 }
 
-/// The painter on iced's device, and how far the GPU has got.
+/// The pixmap on iced's device, and how far the GPU has got.
 pub struct Pipeline {
-    painter: Painter,
+    pixmap: Pixmap,
     /// Frames handed over so far.
     handed: u64,
     /// The last frame whose work before it the GPU has done (set from
@@ -37,7 +37,7 @@ pub struct Pipeline {
 impl shader::Pipeline for Pipeline {
     fn new(device: &wgpu::Device, queue: &wgpu::Queue, format: wgpu::TextureFormat) -> Pipeline {
         Pipeline {
-            painter: Painter::new(device.clone(), queue.clone(), format),
+            pixmap: Pixmap::new(device.clone(), queue.clone(), format),
             handed: 0,
             done: Arc::new(AtomicU64::new(0)),
         }
@@ -69,29 +69,20 @@ impl shader::Primitive for Frame {
         // through the GPU by now, kept from it by other work.
         shared.behind = pipeline.done.load(Ordering::Acquire) < pipeline.handed;
         let changes = std::mem::take(&mut shared.changes);
-        // The stage stays as it is until the next frame drawn; what it had
-        // to send is sent once.
-        pipeline.painter.prepare(
-            &shared.canvas,
-            &changes,
-            ((size.width, size.height), viewport.scale_factor()),
-            shared.stage.as_ref(),
-            (shared.backdrop.as_ref(), shared.strip),
-        );
-        if let Some(stage) = &mut shared.stage {
-            stage.uploads.clear();
-        }
+        pipeline
+            .pixmap
+            .upload(&shared.canvas, &changes, size.width, size.height);
         // Called once what was submitted before now is done.
         pipeline.handed += 1;
         let (frame, done) = (pipeline.handed, Arc::clone(&pipeline.done));
         pipeline
-            .painter
+            .pixmap
             .queue()
             .on_submitted_work_done(move || done.store(frame, Ordering::Release));
         shared.handed = started.elapsed();
     }
 
     fn draw(&self, pipeline: &Pipeline, pass: &mut wgpu::RenderPass<'_>) -> bool {
-        pipeline.painter.draw(pass)
+        pipeline.pixmap.draw(pass)
     }
 }

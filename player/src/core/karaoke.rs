@@ -276,14 +276,9 @@ fn apply_mode(state: &mut State, op: Op, fx: &mut Vec<Effect>) -> bool {
         // Space pauses a song playing; anything else is START (never a
         // song going on without its count-in).
         Op::PlayPause => {
-            let k = &state.karaoke;
-            // The silence before a song is no song to pause (its intro,
-            // with the count-in to come, is).
-            let leading = k.countdown.is_some() && in_lead(state);
-            let counting = leading || k.resume_at.is_some();
-            if state.playing.state == PlayState::Playing && k.held.is_none() && !counting {
+            if pausable(state) {
                 fx.push(Effect::Engine(Command::Pause));
-            } else if k.resume_at.is_some() {
+            } else if state.karaoke.resume_at.is_some() {
                 // Space again during a resume's count-in: it stays paused.
                 state.karaoke.resume_at = None;
             } else {
@@ -318,6 +313,16 @@ fn apply_mode(state: &mut State, op: Op, fx: &mut Vec<Effect>) -> bool {
         _ => {}
     }
     true
+}
+
+/// Whether a song is heard in the mode that `space` pauses: playing, not
+/// held for START, not counting in (the silence before a song is no song
+/// to pause; its intro, with the count-in to come, is).
+pub fn pausable(state: &State) -> bool {
+    let k = &state.karaoke;
+    let leading = k.countdown.is_some() && in_lead(state);
+    let counting = leading || k.resume_at.is_some();
+    in_mode(state) && state.playing.state == PlayState::Playing && k.held.is_none() && !counting
 }
 
 /// Whether track `index` (if any) cannot be sung yet ([`not_singable`]),

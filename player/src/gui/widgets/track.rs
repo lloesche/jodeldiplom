@@ -3,7 +3,8 @@
 //! thumb there under the pointer or while it is held (easing in over
 //! [`look::motion::HOVER`]). A press on it hands the window a grab with
 //! the track's bounds ([`crate::gui::pointer::Grab`]): the pointer then
-//! moves it from anywhere in the window, and the release lands it.
+//! moves it from anywhere in the window, and the release lands it. Over a
+//! picture it fades in and out with what it is on ([`Track::opacity`]).
 
 use std::time::Instant;
 
@@ -34,6 +35,7 @@ pub fn track<'a, Message>(share: f64) -> Track<'a, Message> {
         on_press: None,
         width: Length::Fill,
         id: None,
+        opacity: 1.0,
     }
 }
 
@@ -44,6 +46,7 @@ pub struct Track<'a, Message> {
     on_press: Option<Box<dyn Fn(Rectangle, Point) -> Message + 'a>>,
     width: Length,
     id: Option<Id>,
+    opacity: f32,
 }
 
 impl<'a, Message> Track<'a, Message> {
@@ -58,6 +61,12 @@ impl<'a, Message> Track<'a, Message> {
     /// Held: its thumb shows wherever the pointer is.
     pub fn held(mut self, held: bool) -> Self {
         self.held = held;
+        self
+    }
+
+    /// Drawn at `opacity` (0 to 1, all of it by default).
+    pub fn opacity(mut self, opacity: f32) -> Self {
+        self.opacity = opacity.clamp(0.0, 1.0);
         self
     }
 
@@ -188,10 +197,11 @@ impl<Message> Widget<Message, Theme, Renderer> for Track<'_, Message> {
                 Background::Color(color),
             );
         };
-        pill(bounds.x, bounds.width, look::EDGE, renderer);
+        let shown = |c: Color| look::alpha(c, c.a * self.opacity);
+        pill(bounds.x, bounds.width, shown(look::EDGE), renderer);
         let head = bounds.x + bounds.width * self.share;
         if self.share > 0.0 {
-            pill(bounds.x, head - bounds.x, look::ACCENT, renderer);
+            pill(bounds.x, head - bounds.x, shown(look::ACCENT), renderer);
         }
         if thumb > 0.0 {
             let d = THUMB * (0.5 + 0.5 * thumb);
@@ -204,11 +214,11 @@ impl<Message> Widget<Message, Theme, Renderer> for Track<'_, Message> {
                     border: Border {
                         radius: radius::PILL.into(),
                         width: 2.0,
-                        color: look::alpha(look::BG, 0.6 * thumb),
+                        color: look::alpha(look::BG, 0.6 * thumb * self.opacity),
                     },
                     ..Quad::default()
                 },
-                Background::Color(look::alpha(look::ACCENT, thumb)),
+                Background::Color(look::alpha(look::ACCENT, thumb * self.opacity)),
             );
         }
     }

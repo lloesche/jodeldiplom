@@ -3,31 +3,26 @@
 //! The tab is [`tab`]'s model, which the window draws in its own widgets;
 //! here are only its pictures: the cover, and the voice's lane under the
 //! pane ([`tab_pictures`]). The mode is [`mode`]'s: one picture over the
-//! whole screen ([`KaraokePicture`]: the lyrics, the count-in) that the
-//! window paints in pixels over the cover's ground, its controls cells
-//! over it ([`slider`]); a song's result is [`result`]'s.
+//! whole screen ([`KaraokePicture`]: the lyrics, the count-in, the score)
+//! that the window draws over the cover's ground, its controls over it;
+//! a song's result is [`result`]'s.
 
 use std::sync::Arc;
 
-use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::style::{Modifier, Style};
 use ratatui::Frame;
 
-use super::colors::*;
 use super::{Pictures, Scene};
 use crate::core::lanes::{self, Block, WordLines};
-use crate::core::sliders::Slider;
 use crate::core::{Gpu, Rhythmed, State};
-use crate::view::layout::{KaraokeTabLayout, SliderLayout};
+use crate::view::layout::KaraokeTabLayout;
 
 mod mode;
 mod result;
 mod tab;
 pub use mode::{
-    break_cue, draw_mode, fill_at, line_color, lines_now, picture, points_text, scrolling, sung_on,
-    timed_lines, with_start_cue, Cue, KaraokePicture, LineKind, LyricLine, Score, Start, BREAK,
-    SCROLL,
+    break_cue, fill_at, hint, line_color, lines_now, picture, points_text, scrolling, sung_on,
+    timed_lines, Cue, KaraokePicture, LineKind, LyricLine, Score, Start, BREAK, SCROLL,
 };
 pub use result::{
     best_words, date_words, plain_lines, result_now, DiplomaWords, ResultShown, DIPLOMA,
@@ -153,44 +148,6 @@ fn voice_lane(
             key: a.key,
         },
     );
-}
-
-/// A slider of the mode's controls: its label (in the accent colour when
-/// the arrow keys move it), the track with its knob, and the value.
-fn slider(buf: &mut Buffer, state: &State, s: &SliderLayout) {
-    let focused = state.karaoke.focus == s.slider;
-    let label_style = if focused {
-        Style::new().fg(ACCENT).add_modifier(Modifier::BOLD)
-    } else {
-        Style::new().fg(TEXT)
-    };
-    buf.set_string(s.row.x, s.row.y, s.slider.label(), label_style);
-    let n = usize::from(s.track.width);
-    if n >= 2 {
-        let knob = usize::from(
-            crate::view::layout::Track::columns(s.track).cell(s.slider.share(state)) - s.track.x,
-        );
-        let on = Style::new().fg(ACCENT);
-        let off = Style::new().fg(TRACK);
-        for i in 0..n {
-            let (symbol, style) = match i.cmp(&knob) {
-                std::cmp::Ordering::Less => ("━", on),
-                std::cmp::Ordering::Equal => ("●", on.add_modifier(Modifier::BOLD)),
-                std::cmp::Ordering::Greater => ("─", off),
-            };
-            buf.set_string(s.track.x + i as u16, s.track.y, symbol, style);
-        }
-    }
-    buf.set_string(
-        s.value.x,
-        s.value.y,
-        s.slider.text(state),
-        Style::new().fg(TEXT),
-    );
-    // The voice's level means nothing without stems.
-    if s.slider == Slider::Voice && !matches!(state.gpu, Gpu::Present(_)) {
-        buf.set_style(s.row, Style::new().fg(DIM));
-    }
 }
 
 /// The notes' colour: those sung ([`NOTE`]) and those to come.

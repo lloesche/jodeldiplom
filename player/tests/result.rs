@@ -11,9 +11,9 @@ use jodel_playback::{Command, Event};
 use jodeldiplom::core::keymap::Op;
 use jodeldiplom::core::singing::Motion;
 use jodeldiplom::core::{karaoke, update, Action, Effect, State};
+use jodeldiplom::gui::stage::{Song, Stage, Tint};
 use jodeldiplom::gui::stage_gpu::{Instance, StageFrame};
-use jodeldiplom::gui::{font_px, Canvas};
-use jodeldiplom::view::mouse::{self, MouseButton, MouseInput, MouseKind};
+use jodeldiplom::gui::stage_view::StageView;
 
 fn op(state: &mut State, op: Op) -> Vec<Effect> {
     update(state, Action::Op(op))
@@ -155,44 +155,39 @@ fn start_during_the_reveal_completes_it_and_the_next_starts_the_song() {
     assert!(starts(&op(&mut state, Op::KaraokeStart)));
 }
 
-/// The window at 1600 × 900 on the GPU's path, its frame of `state` drawn:
-/// the canvas (what the pointer hits) and the stage drawn, if any.
-fn drawn(state: &mut State) -> (Canvas, Option<StageFrame>) {
-    let mut canvas = Canvas::new(80, 24, font_px(1.0));
-    canvas.set_gpu(true);
-    let grid = canvas.fit(1600, 900);
-    state.fit = jodeldiplom::view::layout::fit(state, grid);
-    let scene = jodeldiplom::view::Scene {
-        state,
-        grid,
-        heard: 0.0,
-    };
-    canvas.draw(&scene, None);
-    let tint = jodeldiplom::gui::stage::Tint::STAGE;
-    let frame = canvas.stage_frame((state, None), 0.0, 0.0, &tint);
-    (canvas, frame)
+/// The share of the window's height the controls' bar takes in the tests.
+const BAR: f32 = 0.1;
+
+/// The window at 1600 × 900 (scale 1) on the GPU's path, its frame of
+/// `state` drawn: the stage's widget (what the pointer hits) and the stage
+/// it draws.
+fn drawn(state: &State) -> (StageView, Option<StageFrame>) {
+    let picture = jodeldiplom::view::karaoke::picture(state, BAR, 0.0);
+    let view = StageView::default();
+    let size = ((1600, 900), 1.0);
+    let tint = Tint::STAGE;
+    view.frame((state, None), &picture, size, (0.0, 0.0), &tint, None, None);
+    let song = (
+        &Song::of(state, None),
+        jodeldiplom::gui::stage::wanted(state),
+    );
+    let area = (0.0, 0.0, 1600.0, 900.0);
+    let frame = Stage::default().scene(song, &picture, area, (0.0, 0.0), &tint);
+    (view, frame)
 }
 
-/// What a press of the main button at (`x`, `y`) (window pixels) does in
-/// `canvas`: the target drawn there in pixels, over the cells.
-fn press_at(canvas: &Canvas, state: &State, (x, y): (f32, f32)) -> Option<Action> {
-    let (cw, ch) = canvas.cell();
-    let input = MouseInput {
-        kind: MouseKind::Down(MouseButton::Left),
-        col: (x / cw as f32) as u16,
-        row: (y / ch as f32) as u16,
-    };
-    let over = canvas.target_at(x, y);
-    mouse::action_at(state, canvas.grid(), input, f64::from(x) / cw as f64, over)
+/// What a press of the main button at (`x`, `y`) (window points) does on
+/// the stage's widget: the button the stage drew there, if any.
+fn press_at(view: &StageView, (x, y): (f32, f32)) -> Option<Action> {
+    view.pressed(iced::Point::new(x, y))
 }
 
-/// Where the stage drew START's pill in `canvas` (window pixels).
-fn start_box(canvas: &Canvas) -> [f32; 4] {
-    let start = Op::KaraokeStart;
+/// Where the stage drew START's pill (window points).
+fn start_box(view: &StageView) -> [f32; 4] {
     let mut found = None;
     for y in (0..900).step_by(2) {
         for x in (0..1600).step_by(2) {
-            if canvas.target_at(x as f32, y as f32) == Some(start) {
+            if press_at(view, (x as f32, y as f32)).is_some() {
                 let (x, y) = (x as f32, y as f32);
                 let b: [f32; 4] = found.unwrap_or([x, y, x, y]);
                 found = Some([b[0].min(x), b[1].min(y), b[2].max(x), b[3].max(y)]);
@@ -211,8 +206,8 @@ fn start_box(canvas: &Canvas) -> [f32; 4] {
 #[test]
 fn the_start_pill_is_start_by_click_during_and_after_the_reveal() {
     let press = |state: &mut State, at: (f32, f32)| {
-        let (canvas, _) = drawn(state);
-        let action = press_at(&canvas, state, at).expect("START");
+        let (view, _) = drawn(state);
+        let action = press_at(&view, at).expect("START");
         assert!(matches!(action, Action::Op(Op::KaraokeStart)), "{action:?}");
         update(state, action)
     };
@@ -231,8 +226,8 @@ fn the_start_pill_is_start_by_click_during_and_after_the_reveal() {
     };
     let mut state = sung();
     state.now_ms += 500;
-    let (canvas, frame) = drawn(&mut state);
-    let [x0, y0, x1, y1] = start_box(&canvas);
+    let (view, frame) = drawn(&state);
+    let [x0, y0, x1, y1] = start_box(&view);
     assert!(x0 > 0.0 && x1 < 1600.0 && y0 > 450.0 && y1 < 900.0 && x1 - x0 > 40.0);
     let middle = ((x0 + x1) / 2.0, (y0 + y1) / 2.0);
     // The pill drawn is round that box.
@@ -248,16 +243,14 @@ fn the_start_pill_is_start_by_click_during_and_after_the_reveal() {
         (x1 + 4.0, middle.1),
         (middle.0, y0 - 4.0),
     ] {
-        assert!(press_at(&canvas, &state, outside).is_none(), "{outside:?}");
+        assert!(press_at(&view, outside).is_none(), "{outside:?}");
     }
     // The controls up: START stays where it was.
-    let rows = canvas.grid().rows;
-    let from_bottom = mouse::from_bottom(rows, rows - 1);
-    update(&mut state, Action::PointerMoved { from_bottom });
+    update(&mut state, Action::PointerMoved { from_bottom: 0.0 });
     let now = state.now_ms + karaoke::controls::FADE_MS;
     update(&mut state, Action::Tick(now));
     assert!(karaoke::controls::shown(&state));
-    assert_eq!(start_box(&drawn(&mut state).0), [x0, y0, x1, y1]);
+    assert_eq!(start_box(&drawn(&state).0), [x0, y0, x1, y1]);
     // Pressed during the reveal: the reveal completed, nothing played.
     let fx = press(&mut state, middle);
     assert!(engine(&fx).is_empty() && state.karaoke.countdown.is_none());
@@ -265,8 +258,8 @@ fn the_start_pill_is_start_by_click_during_and_after_the_reveal() {
     // Pressed again: the song; then no START to press.
     assert!(starts(&press(&mut state, middle)));
     assert!(karaoke::result_shown(&state).is_none());
-    let (canvas, _) = drawn(&mut state);
-    assert!(press_at(&canvas, &state, middle).is_none());
+    let (view, _) = drawn(&state);
+    assert!(press_at(&view, middle).is_none());
 
     // After the reveal: the first press starts it.
     let mut state = sung();
@@ -278,8 +271,8 @@ fn the_start_pill_is_start_by_click_during_and_after_the_reveal() {
     let mut state = tab();
     op(&mut state, Op::KaraokeEnter);
     let held = state.karaoke.held.expect("a song held");
-    let (canvas, _) = drawn(&mut state);
-    let [x0, y0, x1, y1] = start_box(&canvas);
+    let (view, _) = drawn(&state);
+    let [x0, y0, x1, y1] = start_box(&view);
     let fx = press(&mut state, ((x0 + x1) / 2.0, (y0 + y1) / 2.0));
     assert!(engine(&fx)
         .iter()

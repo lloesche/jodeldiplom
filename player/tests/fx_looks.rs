@@ -75,10 +75,9 @@ fn a_look_moved_by_the_music_reaches_the_lyric_treatment() {
         .map(|i| i.quad)
         .collect();
     assert!(!on_fire.is_empty(), "the line sung on fire");
-    let pixmap = vec![0u32; (w * h) as usize];
     let mut show = |f: &StageFrame| {
         gpu.set_stage(Some(f), w, h);
-        gpu.show_pixels(&pixmap, w, h).expect("a frame")
+        gpu.show_frame(w, h).expect("a frame")
     };
     let (orange, green) = (show(&a), show(&b));
     let mut changed = 0;

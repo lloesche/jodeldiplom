@@ -69,7 +69,6 @@ fn main() {
     ];
     for (screen, gpu) in screens {
         let mut canvas = Canvas::new(80, 24, font_px(scale));
-        canvas.set_gpu(gpu);
         let mut lanes = Lanes::default();
         let grid = canvas.fit(width as u32, height as u32);
         let mut buffer = vec![0u32; width * height];

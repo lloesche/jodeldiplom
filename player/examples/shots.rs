@@ -509,6 +509,18 @@ fn main() {
                         });
                 k
             }),
+            ("karaoke-controls", {
+                // The song playing, the pointer come to the bottom: the
+                // controls' bar faded in over the stage.
+                let mut k = state.clone();
+                k.side = Side::Karaoke;
+                k.screen = Screen::Karaoke;
+                k.config.karaoke_voice = 44;
+                jodeldiplom::core::update(&mut k, Action::PointerMoved { from_bottom: 0.0 });
+                let shown = k.now_ms + jodeldiplom::core::karaoke::controls::FADE_MS;
+                jodeldiplom::core::update(&mut k, Action::Tick(shown));
+                k
+            }),
         ]
     };
     let mut shots = Shots {

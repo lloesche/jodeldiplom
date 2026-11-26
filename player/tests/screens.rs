@@ -1417,3 +1417,254 @@ fn the_panels_buttons_take_clicks_and_nothing_else_does() {
     // Kept (for the pair the sync measured: `sync.rs`), the panel gone.
     assert!(shown(&gui).karaoke.sync.is_none());
 }
+
+/// A player with no output, no devices and no microphone, timing by
+/// `clock`.
+fn mode_player(clock: &jodeldiplom::app::AppClock) -> App {
+    let dir = common::temp_dir("controls-window");
+    let mut options = AppOptions::new(dir);
+    options.output = Output::Null(SimClock::Realtime);
+    options.devices = Arc::new(|| Ok(Vec::new()));
+    options.mic = Arc::new(|_| Err("no microphone".into()));
+    options.mics = Arc::new(|| Ok(Vec::new()));
+    options.clock = clock.clone();
+    App::new(options)
+}
+
+/// A window of [`SIZE`] at scale 1 showing `state`, a frame drawn; its
+/// player's clock stepped by hand.
+fn mode_window(state: State) -> (Gui, jodeldiplom::app::AppClock) {
+    let clock = jodeldiplom::app::AppClock::stepped();
+    let mut gui = Gui::headless(mode_player(&clock));
+    hear(&mut gui, iced::Event::Window(window::Event::Resized(SIZE)));
+    hear(&mut gui, iced::Event::Window(window::Event::Rescaled(1.0)));
+    mode_shown((&mut gui, &clock), state);
+    (gui, clock)
+}
+
+/// `gui` showing `state`, a frame drawn, its player's `clock` moved on to
+/// the state's time (the core's clock is the player's).
+fn mode_shown((gui, clock): (&mut Gui, &jodeldiplom::app::AppClock), state: State) {
+    let at = gui.state().map_or(0, |s| s.drawn_ms.unwrap_or(0));
+    clock.step(std::time::Duration::from_millis(
+        state.now_ms.saturating_sub(at),
+    ));
+    gui.show(state);
+    let _ = gui.update(Message::Frame(Instant::now()));
+}
+
+/// The messages `events` send with the pointer at `at` in `gui`'s view.
+fn mode_sent(gui: &Gui, at: Point, events: Vec<iced::Event>) -> Vec<Message> {
+    let mut sim = simulator(gui);
+    sim.point_at(at);
+    sim.simulate(events);
+    sim.into_messages().collect()
+}
+
+/// The pointer moving to `at`.
+fn mode_moved(at: Point) -> Vec<iced::Event> {
+    vec![iced::Event::Mouse(mouse::Event::CursorMoved {
+        position: at,
+    })]
+}
+
+/// Where the widget `id` is in `gui`'s view, if it shows.
+fn mode_bounds(gui: &Gui, id: &'static str) -> Option<iced::Rectangle> {
+    simulator(gui).find(Id::new(id)).ok().map(|f| f.bounds())
+}
+
+/// The core's actions among `messages`, the pointer's moves left out.
+fn mode_acts(messages: &[Message]) -> Vec<Action> {
+    messages
+        .iter()
+        .filter_map(|m| match m {
+            Message::Act(Action::PointerMoved { .. }) => None,
+            Message::Act(action) => Some(action.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Where the pointer is heard to be among `messages`: its share of the
+/// window's height from the bottom.
+fn heard_at(messages: &[Message]) -> Option<f32> {
+    messages.iter().find_map(|m| match m {
+        Message::Act(Action::PointerMoved { from_bottom }) => Some(*from_bottom),
+        _ => None,
+    })
+}
+
+/// In the mode the controls come up only with the pointer near the bottom
+/// (staying while it is there; going 1.5 s after it leaves, the window
+/// too), fading in and out, over the picture: the lines stay where they
+/// are. The window hears every move of the pointer over the mode, a
+/// button held or not, as a share of its height. In the bar the seek bar
+/// seeks, except while the song is held for START; the transport, the
+/// voice slider and the way out do what their keys do. They have no
+/// START: that is the stage's pill.
+#[test]
+fn the_controls_come_up_near_the_bottom_over_the_lines_with_a_seek_bar() {
+    use jodeldiplom::view::karaoke::picture;
+    let _gpu = gpu();
+    use jodel_playback::PlayState;
+    use jodeldiplom::core::karaoke::controls::{self, FADE_MS, LINGER_MS};
+    let mut state = common::karaoke_tab();
+    update(&mut state, Action::Op(Op::KaraokeEnter));
+    // A song playing (nothing waits for START), the controls gone.
+    state.karaoke.held = None;
+    state.karaoke.countdown = None;
+    state.playing.track = Some(common::now_track(44_100, state.engine_settings(), 2));
+    state.playing.state = PlayState::Playing;
+    state.playing.position = 30.0;
+    let later = state.now_ms + 10_000;
+    update(&mut state, Action::Tick(later));
+    assert!(!controls::shown(&state));
+    let (mut gui, clock) = mode_window(state.clone());
+    assert_eq!(mode_bounds(&gui, "karaoke-seek"), None);
+    // The controls reach as far up as the window says: their bar and two
+    // lines, more than the least share.
+    let reach = gui.state().unwrap().fit.controls_reach;
+    assert!(reach > 0.15 && reach < 0.25, "{reach}");
+    state.fit.controls_reach = reach;
+    let hidden = picture(&state, 0.12, 30.0);
+    // Above the bottom: heard there, nothing comes up.
+    let middle = mode_sent(
+        &gui,
+        Point::new(640.0, 400.0),
+        mode_moved(Point::new(640.0, 400.0)),
+    );
+    let at = heard_at(&middle).expect("a move heard");
+    assert!((at - 0.5).abs() < 0.01, "{at}");
+    update(&mut state, Action::PointerMoved { from_bottom: at });
+    assert!(!controls::shown(&state) && !controls::fading(&state));
+    // A button held, the move is heard all the same.
+    let mut sim = simulator(&gui);
+    sim.point_at(Point::new(640.0, 400.0));
+    sim.simulate([iced::Event::Mouse(mouse::Event::ButtonPressed(
+        mouse::Button::Right,
+    ))]);
+    let to = Point::new(10.0, 300.0);
+    sim.point_at(to);
+    sim.simulate(mode_moved(to));
+    let dragged: Vec<Message> = sim.into_messages().collect();
+    let last = dragged.iter().rev().find_map(|m| match m {
+        Message::Act(Action::PointerMoved { from_bottom }) => Some(*from_bottom),
+        _ => None,
+    });
+    assert!(
+        last.is_some_and(|f| (f - 0.625).abs() < 0.01),
+        "{dragged:?}"
+    );
+    // Near it: the controls fading in over the bottom (laid out, and taking
+    // clicks, as soon as they show at all); the lines where they were.
+    let low = Point::new(640.0, SIZE.height - 10.0);
+    let near = heard_at(&mode_sent(&gui, low, mode_moved(low))).expect("a move heard");
+    update(&mut state, Action::PointerMoved { from_bottom: near });
+    assert!(!controls::shown(&state) && controls::fading(&state));
+    let at = state.now_ms + FADE_MS / 2;
+    update(&mut state, Action::Tick(at));
+    let shown_now = picture(&state, 0.12, 30.0);
+    assert_eq!(shown_now.controls, Some(0.5));
+    assert_eq!(shown_now.start, None);
+    assert_eq!(hidden.lines, shown_now.lines);
+    let faded_in = state.now_ms + FADE_MS / 2;
+    update(&mut state, Action::Tick(faded_in));
+    assert_eq!(picture(&state, 0.12, 30.0).controls, Some(1.0));
+    // They stay while the pointer rests there.
+    update(&mut state, Action::Tick(faded_in + 60_000));
+    assert!(controls::shown(&state) && !controls::fading(&state));
+    mode_shown((&mut gui, &clock), state.clone());
+    // The bar over the window's bottom: the seek bar and the voice beside
+    // it, the transport and the way out.
+    let seek = mode_bounds(&gui, "karaoke-seek").expect("the seek bar");
+    let voice = mode_bounds(&gui, "karaoke-voice").expect("the voice slider");
+    let bottom = SIZE.height * (1.0 - reach);
+    assert!(seek.y > bottom && voice.y > bottom, "{seek:?} {voice:?}");
+    assert!(
+        seek.width > 200.0 && voice.x > seek.x + seek.width,
+        "{seek:?} {voice:?}"
+    );
+    for (id, op) in [
+        ("previous", Op::Previous),
+        ("pause", Op::PlayPause),
+        ("next", Op::Next),
+        ("karaoke-leave", Op::Back),
+    ] {
+        let mut sim = simulator(&gui);
+        sim.click(Id::new(id)).unwrap();
+        let messages: Vec<Message> = sim.into_messages().collect();
+        assert!(
+            matches!(mode_acts(&messages)[..], [Action::Op(o)] if o == op),
+            "{id}: {messages:?}"
+        );
+    }
+    // No START among them (the hint names its keys, no button).
+    assert!(mode_bounds(&gui, "start").is_none() && mode_bounds(&gui, "play").is_none());
+    // The voice: a press grabs its track, the wheel steps it.
+    let press = vec![iced::Event::Mouse(mouse::Event::ButtonPressed(
+        mouse::Button::Left,
+    ))];
+    let grabbed = mode_sent(&gui, voice.center(), press.clone());
+    assert!(
+        grabbed.iter().any(
+            |m| matches!(m, Message::Grab(Grab::Slider(Slider::Voice, b), _) if b.width > 100.0)
+        ),
+        "{grabbed:?}"
+    );
+    let wheel = vec![iced::Event::Mouse(mouse::Event::WheelScrolled {
+        delta: ScrollDelta::Lines { x: 0.0, y: 1.0 },
+    })];
+    let wheeled = mode_sent(&gui, voice.center(), wheel);
+    assert!(wheeled
+        .iter()
+        .any(|m| matches!(m, Message::Steps(WheelOn::Slider(Slider::Voice), ..))));
+    // The seek bar: a press grabs it, the release seeks there.
+    let length = state.playing.duration().unwrap();
+    let pressed = mode_sent(&gui, seek.center(), press.clone());
+    let grab = pressed
+        .into_iter()
+        .find(|m| matches!(m, Message::Grab(Grab::Seek(b), _) if *b == seek))
+        .expect("the seek bar grabbed");
+    let _ = gui.update(grab);
+    assert!(gui.state().unwrap().seek_drag.is_some());
+    hear(
+        &mut gui,
+        iced::Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)),
+    );
+    let after = gui.state().unwrap();
+    assert_eq!(after.seek_drag, None);
+    assert!((after.playing.position - length / 2.0).abs() < length / 50.0);
+    // Held for START: the bar takes no press.
+    let mut waiting = state.clone();
+    waiting.karaoke.held = Some(2);
+    mode_shown((&mut gui, &clock), waiting);
+    let pressed = mode_sent(&gui, seek.center(), press);
+    assert!(!pressed.iter().any(|m| matches!(m, Message::Grab(..))));
+    // Back up above the bottom: they stay a while, then fade out; gone,
+    // they are no longer in the view.
+    update(&mut state, Action::PointerMoved { from_bottom: 0.9 });
+    let left = state.now_ms;
+    assert_eq!(state.due(), Some(left + LINGER_MS));
+    update(&mut state, Action::Tick(left + LINGER_MS - 1));
+    assert!(controls::shown(&state) && !controls::fading(&state));
+    update(&mut state, Action::Tick(left + LINGER_MS + 100));
+    assert!(controls::fading(&state));
+    update(&mut state, Action::Tick(left + LINGER_MS + FADE_MS));
+    assert!(!controls::shown(&state) && controls::due(&state).is_none());
+    mode_shown((&mut gui, &clock), state.clone());
+    assert_eq!(mode_bounds(&gui, "karaoke-seek"), None);
+    // Off the window: heard as the pointer leaving it.
+    let mut sim = simulator(&gui);
+    sim.point_at(low);
+    sim.simulate(mode_moved(low));
+    let outside = Point::new(-20.0, -20.0);
+    sim.point_at(outside);
+    sim.simulate(mode_moved(outside));
+    let messages: Vec<Message> = sim.into_messages().collect();
+    assert!(
+        messages
+            .iter()
+            .any(|m| matches!(m, Message::Act(Action::PointerLeft))),
+        "{messages:?}"
+    );
+}

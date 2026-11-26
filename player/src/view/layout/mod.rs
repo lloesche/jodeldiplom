@@ -28,13 +28,8 @@
 //! - below 40 × 12 only a "too small" note is shown.
 
 mod karaoke;
-mod track;
 
-pub use karaoke::{
-    controls_bar, controls_share, KaraokeControls, KaraokeLayout, KaraokeTabLayout, SliderLayout,
-    CONTROLS_ROWS,
-};
-pub use track::Track;
+pub use karaoke::KaraokeTabLayout;
 
 use ratatui::layout::Rect;
 
@@ -119,11 +114,9 @@ pub enum Layout {
     TooSmall(Rect),
     /// The main screen.
     Main(Box<MainLayout>),
-    /// A screen the window lays out in iced's widgets (Now playing, the
-    /// settings, the keys): nothing on the cells.
+    /// A screen the window lays out in its own widgets (Now playing, the
+    /// settings, the keys, Karaoke mode): nothing on the cells.
     Native,
-    /// Karaoke mode.
-    Karaoke(KaraokeLayout),
 }
 
 impl Layout {
@@ -132,7 +125,7 @@ impl Layout {
     pub fn bottom(&self) -> Option<&Bottom> {
         match self {
             Layout::Main(m) => Some(&m.bottom),
-            Layout::TooSmall(_) | Layout::Native | Layout::Karaoke(_) => None,
+            Layout::TooSmall(_) | Layout::Native => None,
         }
     }
 }
@@ -141,10 +134,9 @@ impl Layout {
 pub fn compute(state: &State, grid: Grid) -> Layout {
     let area = grid.area();
     match state.screen {
-        Screen::NowPlaying | Screen::Settings | Screen::Help => Layout::Native,
+        Screen::NowPlaying | Screen::Settings | Screen::Help | Screen::Karaoke => Layout::Native,
         _ if grid.too_small() => Layout::TooSmall(area),
         Screen::Main => Layout::Main(Box::new(main(state, grid))),
-        Screen::Karaoke => Layout::Karaoke(karaoke::mode(state, area)),
     }
 }
 
@@ -172,7 +164,9 @@ pub fn fit(state: &State, grid: Grid) -> Fit {
             f32::from(grid.cols) * CELL_WIDTH,
             CELL_WIDTH,
         ),
-        controls_reach: f32::from(CONTROLS_ROWS + 2) / f32::from(grid.rows),
+        // Karaoke mode's controls are the window's: it says how far they
+        // reach.
+        controls_reach: 0.0,
         spectrum: compute(state, grid)
             .bottom()
             .is_some_and(|b| b.spectrum > 0),

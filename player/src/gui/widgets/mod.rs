@@ -10,6 +10,7 @@
 pub mod area;
 pub mod button;
 pub mod cover;
+pub mod hide;
 pub mod hints;
 pub mod icons;
 pub mod item;
@@ -25,6 +26,7 @@ pub mod track;
 
 pub use area::area;
 pub use button::{chip, ghost, primary, round, secondary};
+pub use hide::hide_pointer;
 pub use hints::hints;
 pub use icons::{icon, Icon};
 pub use item::{item, segment, segmented};

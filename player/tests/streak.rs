@@ -81,10 +81,9 @@ fn set(singing: &mut Singing, (tier, end): At) {
 /// The light a stage frame's instances of `k` add (summed over its
 /// pixels), drawn on the GPU against the same frame without them.
 fn light_of(gpu: &mut Offscreen, frame: &StageFrame, k: f32) -> (u64, Vec<u32>) {
-    let blank = vec![0u32; 800 * 450];
     let mut show = |f: &StageFrame| {
         gpu.set_stage(Some(f), 800, 450);
-        gpu.show_pixels(&blank, 800, 450).expect("a frame")
+        gpu.show_frame(800, 450).expect("a frame")
     };
     let lit = show(frame);
     let mut without = frame.clone();
@@ -279,11 +278,9 @@ fn the_picture_s_bar_gets_a_rainbow_edge() {
     let Some(mut gpu) = gpu() else {
         return;
     };
-    let blank = vec![0u32; w * h];
     let mut show = |f: &StageFrame| {
         gpu.set_stage(Some(f), w as u32, h as u32);
-        gpu.show_pixels(&blank, w as u32, h as u32)
-            .expect("a frame")
+        gpu.show_frame(w as u32, h as u32).expect("a frame")
     };
     let mut plain = frame.clone();
     plain.instances.retain(|i| i.params[0] != RIM);

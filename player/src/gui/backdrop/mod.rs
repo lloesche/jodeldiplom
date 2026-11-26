@@ -28,18 +28,19 @@
 //! and hardest, the rays golden and swelling on the bar's first.
 //!
 //! [`Visualiser`] is the processor's side, frame by frame: the ground (the
-//! blurred cover, [`super::karaoke::ground`]: what shows while the layers
+//! blurred cover, [`ground`]: what shows while the layers
 //! are still being prepared, and all there is in [`Mode::Blur`]), which
 //! covers show over it and how much (one fading in, a song's cover
 //! cross-fading into the next's, fading out to the ground: a setting
 //! switched mid-song too), the music felt, and each cover's numbers for the shader
 //! ([`BackdropFrame`]). [`gpu`] draws it at the window's size, the
 //! textures sent over once a cover and dropped once it no longer shows.
-//! The window's pass ([`super::present`]) adds it under the pixmap as far
-//! as the pixmap's words let it through ([`super::pixels::SEE_THROUGH`]).
-//! Without a GPU the pixmap has the blurred cover itself.
+//! The stage's widget ([`super::stage_view`]) draws it as Karaoke mode's
+//! ground, under the stage. Without a GPU the mode shows the small blur
+//! alone, scaled up ([`ground`]).
 
 pub mod gpu;
+pub mod ground;
 pub mod look;
 pub mod music;
 pub mod pulse;
@@ -261,7 +262,7 @@ impl Visualiser {
     /// The frame for `app` at `heard` seconds into the `song` heard (none:
     /// not analysed yet), `dt` seconds after the last, in a `window` of
     /// pixels. None (and nothing held) outside Karaoke mode or without the
-    /// GPU (`gpu`): the pixmap has its own ground then.
+    /// GPU (`gpu`): the mode shows the small blur alone then.
     pub fn frame(
         &mut self,
         (app, song): (&App, Option<&Song>),
@@ -326,7 +327,7 @@ impl Visualiser {
             Some(g) if g.of == of => g,
             _ => Ground {
                 of,
-                image: Arc::new(super::karaoke::ground::small(cue.art.as_ref(), window)),
+                image: Arc::new(ground::small(cue.art.as_ref(), window)),
             },
         };
         self.want(cue.layers.as_ref(), cue.art.as_ref());

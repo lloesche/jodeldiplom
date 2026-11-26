@@ -12,8 +12,8 @@
 //! centred in their one or two cells.
 //!
 //! Like a terminal, it redraws only the cells ratatui reports as changed,
-//! and keeps which ones it redrew ([`PixelBackend::damage`]) so pictures
-//! over unchanged cells need not be painted again.
+//! and keeps which ones it redrew ([`PixelBackend::damage`]) so only those
+//! are sent over again.
 
 use std::collections::HashMap;
 use std::convert::Infallible;
@@ -44,17 +44,6 @@ pub struct Damage {
     pub all: bool,
     /// The cells redrawn, when not all.
     pub cells: Vec<(u16, u16)>,
-}
-
-impl Damage {
-    /// Whether any cell in `area` was redrawn.
-    pub fn touches(&self, area: Rect) -> bool {
-        self.all
-            || self
-                .cells
-                .iter()
-                .any(|&(x, y)| area.contains(Position::new(x, y)))
-    }
 }
 
 /// The cells' font at the cells' size: the cell it makes, and its glyphs,
@@ -467,22 +456,7 @@ impl PixelBackend {
         }
     }
 
-    /// Draws the text of the cells in `area` again over the pixels there,
-    /// without their background (text over a picture).
-    pub fn overlay(&mut self, area: Rect) {
-        let area = area.intersection(self.buffer.area);
-        for y in area.top()..area.bottom() {
-            for x in area.left()..area.right() {
-                self.paint_cell(x, y, false);
-            }
-        }
-    }
-
     fn draw_cell(&mut self, x: u16, y: u16) {
-        self.paint_cell(x, y, true);
-    }
-
-    fn paint_cell(&mut self, x: u16, y: u16, background: bool) {
         let cell = self.buffer[(x, y)].clone();
         let symbol = cell.symbol();
         let (fg, bg) = self.colors(&cell);
@@ -496,9 +470,7 @@ impl PixelBackend {
             return;
         }
         let wide = unicode_width::UnicodeWidthStr::width(symbol).clamp(1, 2);
-        if background {
-            self.fill(ox, oy, ox + w * wide, oy + h, bg);
-        }
+        self.fill(ox, oy, ox + w * wide, oy + h, bg);
         let c = symbol.chars().next().unwrap_or(' ');
         if let Some((lines, rounded)) = box_lines(c) {
             self.draw_box(ox, oy, lines, rounded, fg);
