@@ -94,8 +94,9 @@ pub trait Pictures {
     /// A Transition block's bar numbers ([`transition::RulerPlot`]), where
     /// the bars are, to the pixel.
     fn ruler(&mut self, frame: &mut Frame, plot: &transition::RulerPlot);
-    /// Karaoke mode's picture ([`karaoke::KaraokePicture`]).
-    fn karaoke(&mut self, frame: &mut Frame, picture: &karaoke::KaraokePicture);
+    /// Karaoke mode's picture ([`karaoke::KaraokePicture`]) over the
+    /// cells of `area`.
+    fn karaoke(&mut self, frame: &mut Frame, area: Rect, picture: &karaoke::KaraokePicture);
 }
 
 /// Everything a frame shows.
@@ -319,8 +320,8 @@ impl Pictures for CellPictures {
         blank(frame, plot.area);
     }
 
-    fn karaoke(&mut self, frame: &mut Frame, picture: &karaoke::KaraokePicture) {
-        blank(frame, picture.area);
+    fn karaoke(&mut self, frame: &mut Frame, area: Rect, _picture: &karaoke::KaraokePicture) {
+        blank(frame, area);
     }
 }
 

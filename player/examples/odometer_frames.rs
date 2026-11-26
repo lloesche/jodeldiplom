@@ -18,7 +18,6 @@ use jodeldiplom::gui::big_text::Faces;
 use jodeldiplom::gui::karaoke::{paint, Backdrop, Layer};
 use jodeldiplom::gui::pixels::{unpack, Target};
 use jodeldiplom::view::karaoke::{KaraokePicture, Score};
-use ratatui::layout::Rect;
 
 // The fonts build.rs found: `EMBEDDED_FONTS`.
 include!(concat!(env!("OUT_DIR"), "/fonts.rs"));
@@ -37,8 +36,7 @@ const ZOOM: usize = 5;
 /// lines.
 fn picture(points: u32) -> KaraokePicture {
     KaraokePicture {
-        area: Rect::new(0, 0, 100, 30),
-        bar: Rect::new(0, 27, 100, 3),
+        bar: 3.0 / 30.0,
         lines: Vec::new(),
         count: None,
         cue: None,

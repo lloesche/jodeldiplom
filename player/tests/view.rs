@@ -768,8 +768,8 @@ impl Pictures for Lanes {
         CellPictures.ruler(frame, plot);
     }
 
-    fn karaoke(&mut self, frame: &mut Frame, picture: &view::karaoke::KaraokePicture) {
-        CellPictures.karaoke(frame, picture);
+    fn karaoke(&mut self, frame: &mut Frame, area: Rect, picture: &view::karaoke::KaraokePicture) {
+        CellPictures.karaoke(frame, area, picture);
     }
 }
 

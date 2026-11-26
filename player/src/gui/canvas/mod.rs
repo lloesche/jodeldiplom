@@ -55,10 +55,11 @@ pub struct Canvas {
     /// The lanes as last drawn, for the window to draw over the cells
     /// left for them.
     lanes: Vec<LaneSpot>,
-    /// Karaoke mode's backdrop, the text drawn large (by face), the picture now.
+    /// Karaoke mode's backdrop, the text drawn large (by face), the picture
+    /// now and its cells.
     backdrop: Option<super::karaoke::Backdrop>,
     faces: Faces,
-    karaoke: Option<KaraokePicture>,
+    karaoke: Option<(Rect, KaraokePicture)>,
     /// What the picture in the pixmap drew over the backdrop.
     karaoke_layer: super::karaoke::Layer,
     /// Karaoke mode's stage, drawn by the GPU over the pixmap
@@ -311,10 +312,11 @@ impl Canvas {
                     let part = Part::Ruler(plot.clone());
                     self.lanes.push(LaneSpot { rect, part });
                 }
-                Paint::Karaoke(picture) => {
+                Paint::Karaoke(area, picture) => {
                     let wanted = super::stage::wanted(scene.state);
                     let last = karaoke.as_ref();
-                    for rect in self.karaoke_picture(picture, last, wanted, art, started) {
+                    let now = (*area, &**picture);
+                    for rect in self.karaoke_picture(now, last, wanted, art, started) {
                         frame.add(rect);
                     }
                 }

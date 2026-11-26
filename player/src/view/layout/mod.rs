@@ -32,8 +32,8 @@ mod track;
 mod transition;
 
 pub use karaoke::{
-    KaraokeControls, KaraokeLayout, KaraokeTabLayout, SliderLayout, KARAOKE_ENTER, SLIDER_LABEL,
-    SWITCH, SYNC_BUTTON,
+    controls_bar, controls_share, KaraokeControls, KaraokeLayout, KaraokeTabLayout, SliderLayout,
+    CONTROLS_ROWS, KARAOKE_ENTER, SLIDER_LABEL, SWITCH, SYNC_BUTTON,
 };
 pub use track::Track;
 pub use transition::{
@@ -266,7 +266,7 @@ pub fn fit(state: &State, grid: Grid) -> Fit {
         help_rows: help.text.height + u16::from(help.search.is_some()),
         desk_width: desk_width(grid, CELL_WIDTH),
         lane_letters: transition::lane_width(wide),
-        controls_reach: f32::from(crate::core::karaoke::controls::ROWS + 2) / f32::from(grid.rows),
+        controls_reach: f32::from(CONTROLS_ROWS + 2) / f32::from(grid.rows),
         spectrum: compute(state, grid)
             .bottom()
             .is_some_and(|b| b.spectrum > 0),

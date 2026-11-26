@@ -5,12 +5,15 @@
 
 use std::time::Instant;
 
+use ratatui::layout::Rect;
+
 use super::Canvas;
 use crate::art::Art;
 use crate::gui::karaoke::{self, Backdrop};
 use crate::gui::pixels::{PixelRect, Target};
 use crate::gui::{notes, stage, stage_gpu};
 use crate::view::karaoke::KaraokePicture;
+use crate::view::layout::controls_bar;
 
 impl Canvas {
     /// Karaoke mode's stage for the frame just drawn, at `heard` seconds
@@ -55,23 +58,24 @@ impl Canvas {
         self.karaoke.is_some() && self.karaoke_layer.odometer.moving()
     }
 
-    /// Karaoke mode's picture `full` in the frame at `now` (`last`: the
-    /// one in the frame before, if there was one; `wanted`: the stage draws
-    /// the song's lane, so its lyrics are not in the pixmap). On the GPU
+    /// Karaoke mode's picture `full` over the cells of `area` in the frame
+    /// at `now` (`last`: the one in the frame before and its cells, if
+    /// there was one; `wanted`: the stage draws the song's lane, so its
+    /// lyrics are not in the pixmap). On the GPU
     /// the stage is drawn over it, from all of it. Painted again only
     /// where it changed, the cells under it were redrawn, or it moves by
     /// itself; the mode just come, its score shows at once. Returns the
     /// pixels it changed.
     pub(super) fn karaoke_picture(
         &mut self,
-        full: &KaraokePicture,
-        last: Option<&KaraokePicture>,
+        (area, full): (Rect, &KaraokePicture),
+        last: Option<&(Rect, KaraokePicture)>,
         wanted: bool,
         art: Option<&Art>,
         now: Instant,
     ) -> Vec<PixelRect> {
         if self.gpu {
-            let rect = self.pixel_rect(full.area);
+            let rect = self.pixel_rect(area);
             self.staged = Some((full.clone(), rect));
         }
         let picture = if !self.gpu {
@@ -85,20 +89,22 @@ impl Canvas {
         if last.is_none() {
             self.karaoke_layer.odometer.step(None, 0.0);
         }
-        let damaged = self.terminal.backend().damage.touches(picture.area);
-        let kept = last == Some(&picture) && !damaged && !self.karaoke_layer.odometer.moving();
+        let damaged = self.terminal.backend().damage.touches(area);
+        let kept = last.is_some_and(|(a, k)| (*a, k) == (area, &picture))
+            && !damaged
+            && !self.karaoke_layer.odometer.moving();
         let changed = if kept {
             Vec::new()
         } else {
             // Afresh where the cells under it were redrawn or its frame
             // (the area, the controls) changed; else only where its text
             // was and is.
-            let afresh = damaged
-                || last.is_none_or(|k| (k.area, k.controls) != (picture.area, picture.controls));
+            let afresh =
+                damaged || last.is_none_or(|(a, k)| (*a, k.controls) != (area, picture.controls));
             self.karaoke_layer.at(now);
-            self.paint_karaoke(&picture, art, afresh)
+            self.paint_karaoke((area, &picture), art, afresh)
         };
-        self.karaoke = Some(picture);
+        self.karaoke = Some((area, picture));
         changed
     }
 
@@ -109,12 +115,14 @@ impl Canvas {
     /// Returns the pixels it changed.
     fn paint_karaoke(
         &mut self,
-        picture: &KaraokePicture,
+        (cells, picture): (Rect, &KaraokePicture),
         art: Option<&Art>,
         full: bool,
     ) -> Vec<PixelRect> {
-        let area = self.pixel_rect(picture.area);
-        let bar = picture.controls.map(|_| self.pixel_rect(picture.bar));
+        let area = self.pixel_rect(cells);
+        let bar = picture
+            .controls
+            .map(|_| self.pixel_rect(controls_bar(cells)));
         // On the GPU the ground is its: all see-through here.
         let art_id = (!self.gpu).then(|| art.map_or(0, |a| a.id));
         let fits = self
@@ -151,7 +159,7 @@ impl Canvas {
             full,
         );
         if full {
-            self.overlay_controls(picture);
+            self.overlay_controls(cells, picture);
         }
         changed
     }
@@ -159,13 +167,14 @@ impl Canvas {
     /// Karaoke mode's controls over its picture, where they are laid out:
     /// their cells' text and their bar, faded in as far as the bar shows
     /// ([`crate::core::karaoke::controls::handover`]).
-    fn overlay_controls(&mut self, picture: &KaraokePicture) {
+    fn overlay_controls(&mut self, cells: Rect, picture: &KaraokePicture) {
         let (Some(fade), Some(backdrop)) = (picture.controls, &self.backdrop) else {
             return;
         };
-        let (area, bar) = (self.pixel_rect(picture.area), self.pixel_rect(picture.bar));
+        let bar_cells = controls_bar(cells);
+        let (area, bar) = (self.pixel_rect(cells), self.pixel_rect(bar_cells));
         let backend = self.terminal.backend_mut();
-        backend.overlay(picture.bar);
+        backend.overlay(bar_cells);
         let (width, height) = (backend.width, backend.height);
         let mut target = Target {
             pixels: &mut backend.pixmap,
@@ -181,14 +190,15 @@ impl Canvas {
 mod tests {
     use super::*;
     use crate::view::karaoke::Score;
-    use ratatui::layout::Rect;
     use std::time::Duration;
+
+    /// The screen's cells.
+    const AREA: Rect = Rect::new(0, 0, 80, 24);
 
     /// The picture with the score `points` and nothing else.
     fn scored(points: u32) -> KaraokePicture {
         KaraokePicture {
-            area: Rect::new(0, 0, 80, 24),
-            bar: Rect::new(0, 21, 80, 3),
+            bar: 5.0 / 24.0,
             lines: Vec::new(),
             count: None,
             cue: None,
@@ -222,7 +232,8 @@ mod tests {
             // As each frame starts: no cells drawn under it yet.
             canvas.terminal.backend_mut().reset_damage();
             let picture = scored(points);
-            let changed = canvas.karaoke_picture(&picture, last.as_ref(), false, None, at(f));
+            let changed =
+                canvas.karaoke_picture((AREA, &picture), last.as_ref(), false, None, at(f));
             last = canvas.karaoke.clone();
             !changed.is_empty()
         };
@@ -248,14 +259,20 @@ mod tests {
     #[test]
     fn a_score_come_while_the_mode_was_left_shows_at_once() {
         let (mut canvas, at) = canvas();
-        canvas.karaoke_picture(&scored(20_000), None, false, None, at(0));
+        canvas.karaoke_picture((AREA, &scored(20_000)), None, false, None, at(0));
         // Left: a frame without the picture, the layer kept.
         canvas.karaoke = None;
-        canvas.karaoke_picture(&scored(30_000), None, false, None, at(600));
+        canvas.karaoke_picture((AREA, &scored(30_000)), None, false, None, at(600));
         assert!(!canvas.moving());
         let again = canvas.karaoke.clone();
         canvas.terminal.backend_mut().reset_damage();
-        let changed = canvas.karaoke_picture(&scored(30_000), again.as_ref(), false, None, at(601));
+        let changed = canvas.karaoke_picture(
+            (AREA, &scored(30_000)),
+            again.as_ref(),
+            false,
+            None,
+            at(601),
+        );
         assert!(changed.is_empty());
     }
 }

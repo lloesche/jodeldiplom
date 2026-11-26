@@ -497,12 +497,11 @@ impl Stage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::karaoke::controls::{self, handover};
+    use crate::core::karaoke::controls::handover;
     use crate::core::singing::Singing;
     use crate::gui::stage::Song;
     use crate::gui::stage_gpu::StageFrame;
     use crate::view::karaoke::KaraokePicture;
-    use ratatui::layout::Rect;
 
     /// A song of two words a second each from 1 s, its singing ready.
     fn singing() -> (Singing, std::sync::Arc<jodel_lyrics::Lyrics>) {
@@ -546,10 +545,8 @@ mod tests {
     /// The stage at 1.2 s into the song in a window `w` × `h` (24 rows),
     /// the controls faded in as far as `fade`.
     fn stage_frame(song: &Song, (w, h): (f32, f32), fade: Option<f64>) -> StageFrame {
-        let area = Rect::new(0, 0, 80, 24);
         let picture = KaraokePicture {
-            area,
-            bar: controls::bar(area),
+            bar: 5.0 / 24.0,
             lines: Vec::new(),
             count: None,
             cue: None,

@@ -22,7 +22,6 @@ use jodeldiplom::gui::stage::{Song, Stage};
 use jodeldiplom::gui::stage_gpu::{kind, Instance, StageFrame};
 use jodeldiplom::view::bubbles::{BURST, SWELL};
 use jodeldiplom::view::karaoke::KaraokePicture;
-use ratatui::layout::Rect;
 
 /// When "la" of [`common::bubble_song`] bursts: as it ends (it counts at
 /// 0.10 s, its 11th frame hit, a tenth of the 100 it has and one more;
@@ -123,7 +122,7 @@ fn la_bar(picture: &KaraokePicture) -> bool {
 /// A stage of [`common::bubble_song`] at `now` (the voice `late`), made
 /// afresh (its pills are as the bubbles are each frame).
 fn stage_at(singing: &Singing, lyrics: &jodel_lyrics::Lyrics, now: f64, late: f64) -> StageFrame {
-    let picture = common::bubble_picture(singing, lyrics, (now, late), Rect::new(0, 0, 80, 24));
+    let picture = common::bubble_picture(singing, lyrics, (now, late));
     let mut song = Song::new(singing, lyrics.lines.iter().collect(), Some(3.0));
     song.late = late;
     Stage::default().frame(&song, &picture, (0.0, 0.0, 800.0, 450.0), now, 1.0 / 60.0)
@@ -168,7 +167,6 @@ fn a_bubble_bursts_over_the_picture_and_is_gone_from_it() {
         let (mut singing, lyrics) = common::bubble_song();
         let (w, h) = (640usize, 360usize);
         let backdrop = Backdrop::new(None, w, h);
-        let area = Rect::new(0, 0, 80, 24);
         let (mut kept, mut text, mut layer) =
             (vec![0u32; w * h], Faces::default(), Layer::default());
         layer.over.gpu = gpu;
@@ -177,7 +175,7 @@ fn a_bubble_bursts_over_the_picture_and_is_gone_from_it() {
         while heard < POPPED + BURST + 0.15 + LATE {
             heard += 0.015;
             next = hear_to(&mut singing, next, heard, LATE);
-            let picture = common::bubble_picture(&singing, &lyrics, (heard, LATE), area);
+            let picture = common::bubble_picture(&singing, &lyrics, (heard, LATE));
             let mut target = Target {
                 pixels: &mut kept,
                 width: w,
@@ -254,7 +252,7 @@ fn a_bubble_bursts_over_the_picture_and_is_gone_from_it() {
 fn picture_at(until: f64, at: f64, size: (usize, usize)) -> (Vec<u32>, Over) {
     let (mut singing, lyrics) = common::bubble_song();
     hear_until(&mut singing, (0.0, at), until);
-    let picture = common::bubble_picture(&singing, &lyrics, (at, 0.0), Rect::new(0, 0, 80, 24));
+    let picture = common::bubble_picture(&singing, &lyrics, (at, 0.0));
     painted(&picture, size, true)
 }
 
@@ -434,8 +432,7 @@ fn the_stage_bursts_a_word_counted() {
     let mut frame_at = |until: f64, now: f64| {
         let (mut singing, lyrics) = common::bubble_song();
         let mut stage = Stage::default();
-        let picture =
-            common::bubble_picture(&singing, &lyrics, (now, LATE), Rect::new(0, 0, 80, 24));
+        let picture = common::bubble_picture(&singing, &lyrics, (now, LATE));
         // Frames at 60 a second up to now, as the window draws them.
         let (mut t, mut next, mut frame) = (0.0, 0.0, None);
         while t <= now + 1e-9 {
@@ -529,8 +526,7 @@ fn a_bubble_partly_filled_never_pops() {
     for heard in [0.8, 1.1, 1.3] {
         // The picture: its bar painted, its liquid at its level for the
         // GPU, unstrained, no burst.
-        let picture =
-            common::bubble_picture(&singing, &lyrics, (heard, 0.0), Rect::new(0, 0, 80, 24));
+        let picture = common::bubble_picture(&singing, &lyrics, (heard, 0.0));
         let liquid = picture.lines[0].liquid.first().expect("its liquid");
         assert_eq!(
             (liquid.pops_at, liquid.begun(), liquid.pressure()),
@@ -570,7 +566,7 @@ fn a_bubble_unpopped_by_a_seek_back_shows_again() {
     // paints its bar (and its bursts for the GPU), the stage's word pills
     // and bursts of bubbles, and when its burst started.
     let shows = |singing: &Singing| {
-        let picture = common::bubble_picture(singing, &lyrics, (now, 0.0), Rect::new(0, 0, 80, 24));
+        let picture = common::bubble_picture(singing, &lyrics, (now, 0.0));
         let over = painted(&picture, (640, 360), true).1;
         let frame = stage_at(singing, &lyrics, now, 0.0);
         let mut starts: Vec<u32> = bubble_sprays(&frame)
@@ -612,7 +608,7 @@ fn the_arrow_shows_while_singing_however_late_the_voice() {
     let (mut singing, lyrics) = common::bubble_song();
     let mut stage = Stage::default();
     let area = (0.0, 0.0, 800.0, 450.0);
-    let picture = common::bubble_picture(&singing, &lyrics, (0.0, LATE), Rect::new(0, 0, 80, 24));
+    let picture = common::bubble_picture(&singing, &lyrics, (0.0, LATE));
     let (mut t, mut next, mut shown) = (0.0, 0.0, Vec::new());
     while t <= LATE + 0.4 {
         next = hear_to(&mut singing, next, t, LATE);
@@ -639,7 +635,7 @@ fn a_seek_back_brings_no_ghost_bursts_on_the_stage() {
     let (mut singing, lyrics) = common::bubble_song();
     let mut stage = Stage::default();
     let area = (0.0, 0.0, 800.0, 450.0);
-    let picture = common::bubble_picture(&singing, &lyrics, (0.0, 0.0), Rect::new(0, 0, 80, 24));
+    let picture = common::bubble_picture(&singing, &lyrics, (0.0, 0.0));
     // On to 1.6 s ("la" scored at 1.3 s), back to 1.0 s, on to 2.2 s.
     let times = (0..=96).chain(60..=132).map(|f| f as f64 / 60.0);
     let (mut next, mut bubble, mut scored) = (0.0, Vec::new(), Vec::new());

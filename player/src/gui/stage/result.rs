@@ -497,7 +497,6 @@ mod tests {
     use super::*;
     use crate::core::shine::Shone;
     use crate::core::singing::{Medal, SongResult};
-    use ratatui::layout::Rect;
 
     pub(super) fn result(medal: Option<Medal>, whole: bool, best: Option<u32>) -> SongResult {
         let phrase = |tier| Shone {
@@ -538,8 +537,7 @@ mod tests {
     /// The picture of a result `id` at `t`, waiting for START.
     fn picture(r: &SongResult, id: u64, t: f64) -> KaraokePicture {
         KaraokePicture {
-            area: Rect::new(0, 0, 100, 30),
-            bar: Rect::new(0, 25, 100, 5),
+            bar: 5.0 / 30.0,
             lines: Vec::new(),
             count: None,
             cue: None,

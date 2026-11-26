@@ -32,9 +32,7 @@ impl Line {
     /// START's line for `picture` in the window's `area` (pixels): low,
     /// but clear above its controls' bar (shown now or not).
     pub(super) fn of(picture: &KaraokePicture, area: (f32, f32, f32, f32)) -> Line {
-        let rows = f32::from(picture.area.height.max(1));
-        let above = f32::from(picture.bar.y.saturating_sub(picture.area.y));
-        Line::above(area, area.1 + area.3 * above / rows)
+        Line::above(area, area.1 + (area.3 - area.3 * picture.bar))
     }
 
     /// START's line in the window's area (pixels), clear above `bottom`.

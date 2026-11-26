@@ -22,7 +22,6 @@ use jodeldiplom::gui::big_text::Faces;
 use jodeldiplom::gui::karaoke::{paint, Backdrop, Layer};
 use jodeldiplom::gui::pixels::Target;
 use jodeldiplom::view::karaoke::{sung_on, timed_lines, KaraokePicture, LineKind, Score};
-use ratatui::layout::Rect;
 
 /// `img` as a PNG in `file`, written whole.
 fn save_png(img: &image::RgbImage, file: &Path) {
@@ -142,8 +141,7 @@ fn main() {
         }
     }
     let picture = KaraokePicture {
-        area: Rect::new(0, 0, 100, 24),
-        bar: jodeldiplom::core::karaoke::controls::bar(Rect::new(0, 0, 100, 24)),
+        bar: 5.0 / 24.0,
         lines,
         count: None,
         cue: None,
@@ -236,8 +234,7 @@ fn gpu_frames(
         }
         let moved = ((now - changed_at) / 0.3).clamp(0.0, 1.0);
         let picture = KaraokePicture {
-            area: Rect::new(0, 0, 100, 24),
-            bar: jodeldiplom::core::karaoke::controls::bar(Rect::new(0, 0, 100, 24)),
+            bar: 5.0 / 24.0,
             lines: lines.clone(),
             count: None,
             cue: None,

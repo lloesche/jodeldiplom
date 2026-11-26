@@ -69,7 +69,7 @@ pub struct KaraokeLayout {
 /// Karaoke mode's controls.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct KaraokeControls {
-    /// The bar they are in ([`karaoke::controls::bar`]).
+    /// The bar they are in ([`controls_bar`]).
     pub bar: Rect,
     /// The sliders.
     pub sliders: Vec<SliderLayout>,
@@ -81,6 +81,22 @@ pub struct KaraokeControls {
     pub total: Rect,
     /// The keys, in a line.
     pub hint: Rect,
+}
+
+/// How many rows Karaoke mode's controls' bar takes at the bottom.
+pub const CONTROLS_ROWS: u16 = 5;
+
+/// Karaoke mode's controls' bar on its `screen`: the bottom
+/// [`CONTROLS_ROWS`] rows, whether it shows or not.
+pub fn controls_bar(screen: Rect) -> Rect {
+    let rows = CONTROLS_ROWS.min(screen.height);
+    Rect::new(screen.x, screen.bottom() - rows, screen.width, rows)
+}
+
+/// How much of the `screen`'s height the controls' bar takes, 0 to 1
+/// ([`crate::view::karaoke::KaraokePicture::bar`]).
+pub fn controls_share(screen: Rect) -> f32 {
+    f32::from(controls_bar(screen).height) / f32::from(screen.height.max(1))
 }
 
 /// The label of the button into Karaoke mode.
@@ -192,7 +208,7 @@ pub(super) fn tab(inner: Rect, session: Option<&crate::core::sync::Session>) -> 
 /// the tab: they stay as they are from a song's start to its end.
 pub(super) fn mode(state: &State, area: Rect) -> KaraokeLayout {
     let controls = karaoke::controls::shown(state).then(|| {
-        let bar = karaoke::controls::bar(area);
+        let bar = controls_bar(area);
         let room = bar.width.saturating_sub(4);
         let sliders = Slider::MODE
             .iter()
@@ -228,5 +244,23 @@ pub(super) fn mode(state: &State, area: Rect) -> KaraokeLayout {
     KaraokeLayout {
         screen: area,
         controls,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The controls' bar is the bottom rows of the screen, however small,
+    /// and its share of the height is theirs.
+    #[test]
+    fn the_bar_is_the_bottom_rows() {
+        assert_eq!(
+            controls_bar(Rect::new(0, 0, 80, 24)),
+            Rect::new(0, 19, 80, 5)
+        );
+        assert_eq!(controls_bar(Rect::new(0, 0, 80, 3)), Rect::new(0, 0, 80, 3));
+        assert_eq!(controls_share(Rect::new(0, 0, 80, 24)), 5.0 / 24.0);
+        assert_eq!(controls_share(Rect::new(0, 0, 80, 3)), 1.0);
     }
 }

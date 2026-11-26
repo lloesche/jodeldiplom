@@ -391,7 +391,6 @@ mod tests {
     use crate::gui::stage::{Song, Stage};
     use crate::gui::stage_gpu::{kind, StageFrame};
     use crate::view::karaoke::KaraokePicture;
-    use ratatui::layout::Rect;
 
     /// A song of one short word, "my", gliding up from one note to
     /// another as long, its singing ready.
@@ -454,10 +453,8 @@ mod tests {
     fn a_word_s_text_stays_put_in_its_tube_as_it_scrolls() {
         let (singing, lyrics) = glide();
         let song = Song::new(&singing, lyrics.lines.iter().collect(), Some(3.0));
-        let area = Rect::new(0, 0, 100, 24);
         let picture = KaraokePicture {
-            area,
-            bar: crate::core::karaoke::controls::bar(area),
+            bar: 5.0 / 24.0,
             lines: Vec::new(),
             count: None,
             cue: None,
@@ -524,10 +521,8 @@ mod tests {
         let notes = crate::core::singing::melodic(&melody);
         singing.prepare(std::path::Path::new("a"), &lyrics, &notes);
         let song = Song::new(&singing, lyrics.lines.iter().collect(), Some(10.0));
-        let area = Rect::new(0, 0, 100, 24);
         let picture = KaraokePicture {
-            area,
-            bar: crate::core::karaoke::controls::bar(area),
+            bar: 5.0 / 24.0,
             lines: Vec::new(),
             count: None,
             cue: None,

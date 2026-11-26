@@ -712,13 +712,12 @@ pub fn sing_bubbles(singing: &mut jodeldiplom::core::singing::Singing, from: f64
 }
 
 /// Karaoke mode's picture of [`bubble_song`] at `heard` (the game on, the
-/// voice coming `late`) in `area`: its line being sung with its bubbles as
-/// `singing` filled them.
+/// voice coming `late`) on a 24-row screen: its line being sung with its
+/// bubbles as `singing` filled them.
 pub fn bubble_picture(
     singing: &jodeldiplom::core::singing::Singing,
     lyrics: &jodel_lyrics::Lyrics,
     (heard, late): (f64, f64),
-    area: ratatui::layout::Rect,
 ) -> jodeldiplom::view::karaoke::KaraokePicture {
     use jodeldiplom::view::karaoke::{sung_on, timed_lines, KaraokePicture, LineKind};
     let sung: Vec<&jodel_lyrics::Line> = lyrics.lines.iter().collect();
@@ -729,8 +728,7 @@ pub fn bubble_picture(
         l.notes = notes.notes;
     }
     KaraokePicture {
-        area,
-        bar: jodeldiplom::core::karaoke::controls::bar(area),
+        bar: 5.0 / 24.0,
         lines,
         count: None,
         cue: None,

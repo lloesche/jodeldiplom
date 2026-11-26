@@ -6,11 +6,11 @@ mod common;
 
 use common::karaoke_tab as tab;
 use jodel_playback::{Command, PlayState};
-use jodeldiplom::core::karaoke::controls::{self, FADE_MS, LINGER_MS, ROWS};
+use jodeldiplom::core::karaoke::controls::{self, FADE_MS, LINGER_MS};
 use jodeldiplom::core::karaoke::pointer;
 use jodeldiplom::core::keymap::Op;
 use jodeldiplom::core::{update, Action, Effect, State};
-use jodeldiplom::view::layout::{self, Grid, Layout};
+use jodeldiplom::view::layout::{self, Grid, Layout, CONTROLS_ROWS as ROWS};
 use jodeldiplom::view::mouse::{self, MouseButton, MouseInput, MouseKind, Target};
 
 /// The window of [`tab`].
@@ -81,7 +81,7 @@ fn the_controls_come_up_near_the_bottom_over_the_lines_with_a_seek_bar() {
     update(&mut state, Action::Tick(at));
     let (shown, bar) = pictured(&state);
     assert_eq!(bar, Some(rows - ROWS));
-    assert_eq!(shown.bar.y, rows - ROWS);
+    assert_eq!(shown.bar, f32::from(ROWS) / f32::from(rows));
     assert_eq!(shown.controls, Some(0.5));
     assert_eq!(shown.start, None);
     let faded_in = state.now_ms + FADE_MS / 2;
@@ -92,7 +92,7 @@ fn the_controls_come_up_near_the_bottom_over_the_lines_with_a_seek_bar() {
     assert!(controls::shown(&state) && !controls::fading(&state));
     // The same lines in the same picture: the window lays them out on the
     // whole screen, the controls never move them.
-    assert_eq!((hidden.area, &hidden.lines), (shown.area, &shown.lines));
+    assert_eq!((hidden.bar, &hidden.lines), (shown.bar, &shown.lines));
     // The seek bar under the slider: a click and release seeks there.
     let Layout::Karaoke(k) = layout::compute(&state, GRID) else {
         panic!()

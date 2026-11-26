@@ -21,7 +21,6 @@ use jodeldiplom::gui::present::Offscreen;
 use jodeldiplom::gui::stage::{Song, Stage};
 use jodeldiplom::gui::stage_gpu::{kind, with_picture, StageFrame};
 use jodeldiplom::gui::streak::{PictureShine, Sung};
-use ratatui::layout::Rect;
 
 /// `pixels` (`0x00RRGGBB`, `w` wide) as a PNG at `name` in the folder
 /// `JODEL_FRAMES` names, where it is set.
@@ -50,7 +49,7 @@ type At = (Option<Tier>, f64);
 /// rung (×2): the stage's frames.
 fn stage_frames(at: impl Fn(f64) -> At, until: f64) -> Vec<(f64, StageFrame)> {
     let (mut singing, lyrics) = common::bubble_song();
-    let picture = common::bubble_picture(&singing, &lyrics, (0.0, 0.0), Rect::new(0, 0, 80, 24));
+    let picture = common::bubble_picture(&singing, &lyrics, (0.0, 0.0));
     let mut stage = Stage::default();
     let (mut t, mut heard, mut out) = (0.0, 0u32, Vec::new());
     while t <= until + 1e-9 {
@@ -280,7 +279,7 @@ fn the_picture_s_bar_gets_a_rainbow_edge() {
                 (Some(Tier::named("Good")), 0.5)
             },
         );
-        let picture = common::bubble_picture(&singing, &lyrics, (t, 0.0), Rect::new(0, 0, 80, 24));
+        let picture = common::bubble_picture(&singing, &lyrics, (t, 0.0));
         let (pixels, over) = painted(&picture, (w, h));
         let rim = over.rim.expect("the bar under the word sung");
         let song = Sung {

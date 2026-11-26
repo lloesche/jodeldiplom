@@ -21,7 +21,6 @@ use jodeldiplom::gui::stage_gpu::{kind, Instance, StageFrame};
 use jodeldiplom::gui::streak::Step;
 use jodeldiplom::tiers::TIERS;
 use jodeldiplom::view::karaoke::{timed_lines, KaraokePicture, Score};
-use ratatui::layout::Rect;
 
 /// Frames a second.
 pub const FPS: f64 = 60.0;
@@ -89,8 +88,7 @@ pub fn song() -> (Arc<jodel_lyrics::Lyrics>, jodel_rhythm::waveform::Melody) {
 /// `singing` has it.
 pub fn picture_at(sung: &[&jodel_lyrics::Line], now: f64, singing: &Singing) -> KaraokePicture {
     KaraokePicture {
-        area: Rect::new(0, 0, 100, 24),
-        bar: jodeldiplom::core::karaoke::controls::bar(Rect::new(0, 0, 100, 24)),
+        bar: 5.0 / 24.0,
         lines: timed_lines(sung, now).unwrap_or_default(),
         count: None,
         cue: None,

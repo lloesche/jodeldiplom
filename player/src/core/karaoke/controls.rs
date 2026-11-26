@@ -1,20 +1,17 @@
 //! Karaoke mode's controls: the voice slider, the seek bar and the keys,
-//! a bar over the picture's bottom ([`bar`]; the picture never moves for
-//! them). They come up while the pointer is near the bottom ([`in_reach`])
-//! and stay while it is there, go [`LINGER_MS`] after it leaves (off the
-//! window too), and fade in and out over [`FADE_MS`]; while a slider or the
-//! seek bar is held they show whatever the pointer does. Nothing else
-//! brings them up (no key): START is the stage's own pill, never in the
-//! bar. One clock for all of it, the frame's ([`clock_ms`]): they are laid
-//! out (and take clicks) exactly while they show at all.
-
-use ratatui::layout::Rect;
+//! a bar over the picture's bottom (the window lays it out; the picture
+//! never moves for them). They come up while the pointer is near the
+//! bottom ([`in_reach`]) and stay while it is there, go [`LINGER_MS`] after
+//! it leaves (off the window too), and fade in and out over [`FADE_MS`];
+//! while a slider or the seek bar is held they show whatever the pointer
+//! does. Nothing else brings them up (no key): START is the stage's own
+//! pill, never in the bar. One clock for all of it, the frame's
+//! ([`clock_ms`]): they are laid out (and take clicks) exactly while they
+//! show at all.
 
 use super::{clock_ms, in_mode};
 use crate::core::State;
 
-/// How many rows the controls' bar takes at the bottom.
-pub const ROWS: u16 = 5;
 /// The share of the window's height, from the bottom, where the pointer
 /// brings the controls up (never less than the bar and two lines:
 /// [`crate::core::Fit::controls_reach`]).
@@ -42,13 +39,6 @@ pub enum Controls {
         /// When they start to go.
         until: u64,
     },
-}
-
-/// The controls' bar in the mode's `area`: its bottom [`ROWS`] rows,
-/// whether it shows or not.
-pub fn bar(area: Rect) -> Rect {
-    let rows = ROWS.min(area.height);
-    Rect::new(area.x, area.bottom() - rows, area.width, rows)
 }
 
 /// Whether the pointer, `from_bottom` of the window's height above its
@@ -194,6 +184,7 @@ mod tests {
     /// out exactly while they show at all.
     #[test]
     fn the_controls_fade_in_stay_linger_and_fade_out() {
+        use crate::view::layout::CONTROLS_ROWS as ROWS;
         let mut state = mode();
         let rows = WINDOW_ROWS;
         assert!(
@@ -246,12 +237,5 @@ mod tests {
             let (gone, bar) = handover(f64::from(k) / 100.0);
             assert!(gone == 1.0 || bar == 0.0, "{k}");
         }
-    }
-
-    /// The bar is the bottom rows of the screen, however small.
-    #[test]
-    fn the_bar_is_the_bottom_rows() {
-        assert_eq!(bar(Rect::new(0, 0, 80, 24)), Rect::new(0, 19, 80, 5));
-        assert_eq!(bar(Rect::new(0, 0, 80, 3)), Rect::new(0, 0, 80, 3));
     }
 }

@@ -60,8 +60,7 @@ pub fn picture(state: &State, layout: &KaraokeLayout, heard: f64) -> KaraokePict
         ready: karaoke::song_index(state).is_none_or(|i| karaoke::not_singable(state, i).is_none()),
     });
     KaraokePicture {
-        area: layout.screen,
-        bar: karaoke::controls::bar(layout.screen),
+        bar: crate::view::layout::controls_share(layout.screen),
         lines,
         count,
         cue,
@@ -100,7 +99,7 @@ pub fn draw_mode(
 ) {
     let state = scene.state;
     let picture = picture(state, layout, scene.heard);
-    pictures.karaoke(frame, &picture);
+    pictures.karaoke(frame, layout.screen, &picture);
     let Some(c) = &layout.controls else {
         return;
     };
@@ -308,14 +307,13 @@ pub fn sung_on(
     }
 }
 
-/// Karaoke mode's picture: the whole screen.
+/// Karaoke mode's picture: the whole screen, wherever the window shows it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct KaraokePicture {
-    /// The screen.
-    pub area: Rect,
-    /// Where the controls' bar is ([`karaoke::controls::bar`]), shown or
-    /// not: what START stays clear above.
-    pub bar: Rect,
+    /// How much of the screen's height, from its bottom, the controls' bar
+    /// takes, 0 to 1, shown or not: what START stays clear above. The
+    /// window says, as it lays the bar out.
+    pub bar: f32,
     /// The lines, top to bottom, centred.
     pub lines: Vec<LyricLine>,
     /// The count-in's number and how far through its beat, 0 to 1.
@@ -928,10 +926,8 @@ mod tests {
     /// mode waits for it, and only then.
     #[test]
     fn without_a_stage_start_is_said_in_words() {
-        let area = Rect::new(0, 0, 80, 24);
         let waiting = KaraokePicture {
-            area,
-            bar: karaoke::controls::bar(area),
+            bar: 5.0 / 24.0,
             lines: lines(&[0]),
             count: None,
             cue: None,

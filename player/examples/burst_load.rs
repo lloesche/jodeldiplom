@@ -19,7 +19,6 @@ use jodeldiplom::gui::pixels::Target;
 use jodeldiplom::gui::stage::{Song, Stage};
 use jodeldiplom::view::bubbles::{Liquid, Part};
 use jodeldiplom::view::karaoke::{KaraokePicture, LineKind, LyricLine};
-use ratatui::layout::Rect;
 
 const FRAMES: usize = 120;
 const WORDS: usize = 20;
@@ -124,8 +123,7 @@ fn picture(w: usize, h: usize, bursting: bool) -> ((f64, f64), Option<(f64, f64)
             voice: None,
         };
         let picture = KaraokePicture {
-            area: Rect::new(0, 0, 100, 24),
-            bar: jodeldiplom::core::karaoke::controls::bar(Rect::new(0, 0, 100, 24)),
+            bar: 5.0 / 24.0,
             lines: vec![line],
             count: None,
             cue: None,
@@ -234,8 +232,7 @@ fn stage(w: usize, h: usize, bursting: bool, shine: bool) -> ((f64, f64), Option
         }
         let song = Song::new(&singing, lyrics.lines.iter().collect(), Some(4.0));
         let picture = KaraokePicture {
-            area: Rect::new(0, 0, 100, 24),
-            bar: jodeldiplom::core::karaoke::controls::bar(Rect::new(0, 0, 100, 24)),
+            bar: 5.0 / 24.0,
             lines: Vec::new(),
             count: None,
             cue: None,

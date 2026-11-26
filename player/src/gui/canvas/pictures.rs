@@ -22,8 +22,8 @@ pub(super) enum Paint {
     Wave(Box<WavePlot>),
     /// A Transition block's bar numbers.
     Ruler(Box<RulerPlot>),
-    /// Karaoke mode's picture.
-    Karaoke(Box<KaraokePicture>),
+    /// Karaoke mode's picture, over its cells.
+    Karaoke(Rect, Box<KaraokePicture>),
 }
 
 impl Paint {
@@ -33,7 +33,7 @@ impl Paint {
             Paint::Cover(r, _) | Paint::Caption(_, r) => *r,
             Paint::Wave(plot) => plot.area,
             Paint::Ruler(plot) => plot.area,
-            Paint::Karaoke(picture) => picture.area,
+            Paint::Karaoke(area, _) => *area,
         }
     }
 }
@@ -66,9 +66,10 @@ impl Pictures for PixelPictures {
         self.paints.push(Paint::Ruler(Box::new(plot.clone())));
     }
 
-    fn karaoke(&mut self, frame: &mut Frame, picture: &KaraokePicture) {
-        view::blank(frame, picture.area);
-        self.paints.push(Paint::Karaoke(Box::new(picture.clone())));
+    fn karaoke(&mut self, frame: &mut Frame, area: Rect, picture: &KaraokePicture) {
+        view::blank(frame, area);
+        self.paints
+            .push(Paint::Karaoke(area, Box::new(picture.clone())));
     }
 
     fn text_over_cover(&self) -> bool {

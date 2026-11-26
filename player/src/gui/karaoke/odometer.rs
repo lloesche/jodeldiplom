@@ -488,8 +488,7 @@ mod tests {
     /// The picture with the score `points` and nothing else.
     fn scored(points: u32) -> KaraokePicture {
         KaraokePicture {
-            area: ratatui::layout::Rect::new(0, 0, 80, 24),
-            bar: ratatui::layout::Rect::new(0, 21, 80, 3),
+            bar: 3.0 / 24.0,
             lines: Vec::new(),
             count: None,
             cue: None,

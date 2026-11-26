@@ -22,7 +22,6 @@ use jodeldiplom::gui::pixels::Target;
 use jodeldiplom::gui::present::Offscreen;
 use jodeldiplom::gui::stage::{without_lyrics, Song, Stage};
 use jodeldiplom::view::karaoke::{timed_lines, KaraokePicture};
-use ratatui::layout::Rect;
 
 /// How far off its notes each line is sung, the pitch wobbling (cents;
 /// none: not sung at all).
@@ -220,8 +219,7 @@ fn main() {
 
 fn picture_at(sung: &[&jodel_lyrics::Line], now: f64, singing: &Singing) -> KaraokePicture {
     KaraokePicture {
-        area: Rect::new(0, 0, 100, 24),
-        bar: jodeldiplom::core::karaoke::controls::bar(Rect::new(0, 0, 100, 24)),
+        bar: 5.0 / 24.0,
         lines: timed_lines(sung, now).unwrap_or_default(),
         count: None,
         cue: None,

@@ -58,13 +58,10 @@ mod tests {
     use super::*;
     use crate::core::singing::Singing;
     use crate::view::karaoke::Start;
-    use ratatui::layout::Rect;
 
     fn waiting(rows: u16, ready: bool) -> KaraokePicture {
-        let area = Rect::new(0, 0, 100, rows);
         KaraokePicture {
-            area,
-            bar: crate::core::karaoke::controls::bar(area),
+            bar: 5.0 / f32::from(rows),
             lines: Vec::new(),
             count: None,
             cue: None,
