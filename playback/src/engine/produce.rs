@@ -8,7 +8,8 @@ use jodel_output::lanes::lane_width;
 
 use crate::error::Error;
 
-use super::track::{Cue, CueEvent, Progress, Track};
+use super::cues::CueEvent;
+use super::track::{Progress, Track};
 use super::{Engine, SILENCE_FRAMES, WRITE_WAIT};
 
 impl Engine {
@@ -30,23 +31,19 @@ impl Engine {
             .output
             .write(&self.silence[..samples], Some(WRITE_WAIT))?;
         self.head.lead -= took as u64;
-        if let Some(track) = self.head.playing.take() {
-            self.lanes_ahead(&track);
-            self.head.playing = Some(track);
-        }
+        self.with_playing(|e, track| e.lanes_ahead(track));
         if took == 0 {
             self.head.stalled = Some(Instant::now());
-            if let Some(mut track) = self.head.playing.take() {
+            let ahead = self.with_playing(|e, track| {
                 // Ahead by a few seconds at most: the rest as it plays.
                 let ahead = u64::from(track.route.output_rate) * 3;
-                let result = if (track.unwritten() as u64) < ahead {
-                    self.produce(&mut track, Duration::ZERO).map(|_| ())
+                if (track.unwritten() as u64) < ahead {
+                    e.produce(track, Duration::ZERO).map(|_| ())
                 } else {
                     Ok(())
-                };
-                self.head.playing = Some(track);
-                result?;
-            }
+                }
+            });
+            ahead.unwrap_or(Ok(()))?;
         }
         Ok(())
     }
@@ -132,13 +129,8 @@ impl Engine {
         }
         if let Some(error) = track.failure.take() {
             let end = self.head.out.as_ref().map_or(0, |o| o.output.written());
-            self.cues.push_back(Cue {
-                at: end,
-                event: CueEvent::Skipped {
-                    index: track.index,
-                    error,
-                },
-            });
+            let index = track.index;
+            self.cues.push(end, CueEvent::Skipped { index, error });
             return Ok(Progress::Complete);
         }
         let wait = self.wait_for(track);
@@ -197,7 +189,7 @@ impl Engine {
     /// source's requantization or the resampler clipped (at most four a
     /// second of output).
     pub(super) fn after_output(&mut self, track: &mut Track, before: usize) {
-        let start = track.seg_out + track.emitted;
+        let start = track.line.seg_out + track.emitted;
         let made = (track.out_buf.len() - before) / usize::from(track.route.channels);
         track.emitted += made as u64;
         let clipped = track.clipped().saturating_sub(track.clip_base);

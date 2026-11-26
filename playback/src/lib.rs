@@ -72,6 +72,7 @@ mod headers;
 pub mod rate;
 pub mod remix;
 pub mod resample;
+mod shift;
 pub mod source;
 pub mod stem_file;
 pub mod stems;
@@ -80,17 +81,19 @@ mod tap;
 pub mod target;
 pub mod transition;
 pub mod warp;
+mod warping;
 
 pub use desk::StemDesk;
 pub use engine::{
-    ratio_of, Command, Event, Head, HeadFaders, JumpAt, MakeStems, PlayState, Player,
-    PlayerOptions, Position, TrackStart, KEY_RANGE,
+    Command, Event, Head, HeadFaders, JumpAt, MakeStems, PlayState, Player, PlayerOptions,
+    Position, TrackStart,
 };
 pub use error::Error;
 pub use rate::{
     choose_route, FileFacts, Headroom, NoRoute, Resample, Route, Settings, LOSSY_HEADROOM,
 };
 pub use resample::{FilterDesign, Requantizer, Resampler};
+pub use shift::{ratio_of, KEY_RANGE};
 pub use source::{
     probe, probe_header, Codec, Container, Cover, CoverOrigin, Source, Tags, TrackInfo,
 };

@@ -277,7 +277,7 @@ lengths are exact); otherwise the samples go to the output as read.
   then the track keeps its route. One that never catches up (a machine
   too slow for both) leaves the track on its route to its end. The new settings apply to the tracks that start later;
   a later track that has no route is skipped as any file without one.
-- **Transitions** (`Transition(plan)`, `engine/transition.rs`): the
+- **Transitions** (`Transition(plan)`, `engine/transition/`): the
   playing track (A) crossfades into the next (B) over the plan's window,
   each stem on its own envelope, with B's beats on A's. The engine does
   not mix them: the desk does, each on a head of the player's own
@@ -364,7 +364,7 @@ lengths are exact); otherwise the samples go to the output as read.
   transition is set up. A mono file's stems are doubled; a track of more
   than two channels is refused.
 - **Key shift** (`Key { semitones }`, −6 to +6, `KEY_RANGE`;
-  `engine/key.rs`, `engine/shift.rs`): the head on air plays its stems
+  `engine/key.rs`, `shift.rs`): the head on air plays its stems
   read along a map, as above, a key apart: on its own route along the
   identity map (its position where it was), along its map if it has one.
   Every stem but the drums is stretched by the pitch ratio r = 2^(n/12)
@@ -372,7 +372,7 @@ lengths are exact); otherwise the samples go to the output as read.
   is stretched to) and read r times faster through the map's reader, at
   the stretched frame whose input time the map has for each output
   frame: as long as before, every frequency ×r, on the same instants as
-  the drums read along the map alone (`engine/warping.rs` reads the
+  the drums read along the map alone (`warping.rs` reads the
   channels in groups, each its own way, and interleaves them back).
   Without stems (no separator, or
   they failed or come late on a device) the whole mix is shifted, as

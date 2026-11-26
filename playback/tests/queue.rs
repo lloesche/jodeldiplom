@@ -40,17 +40,6 @@ fn setup(
     (dir, paths, player, events, gate)
 }
 
-/// The tracks heard, in order: queue index and file.
-fn started(events: &[Event]) -> Vec<(usize, PathBuf)> {
-    events
-        .iter()
-        .filter_map(|e| match e {
-            Event::TrackStarted(s) => Some((s.index, s.info.path.clone())),
-            _ => None,
-        })
-        .collect()
-}
-
 /// The last queue reported.
 fn last_queue(events: &[Event]) -> (Vec<PathBuf>, Option<usize>) {
     events
@@ -75,7 +64,7 @@ fn a_track_moved_ahead_plays_next() {
         [p[0].clone(), p[2].clone(), p[1].clone()]
     );
     assert_eq!(
-        started(&seen),
+        started_paths(&seen),
         [(0, p[0].clone()), (1, p[2].clone()), (2, p[1].clone())]
     );
 }
@@ -91,7 +80,7 @@ fn a_track_removed_is_not_played() {
         last_queue(&seen),
         (vec![p[0].clone(), p[2].clone()], Some(0))
     );
-    assert_eq!(started(&seen), [(0, p[0].clone()), (1, p[2].clone())]);
+    assert_eq!(started_paths(&seen), [(0, p[0].clone()), (1, p[2].clone())]);
 }
 
 #[test]
@@ -109,7 +98,7 @@ fn the_track_heard_removed_gives_way_to_the_next() {
             finished: false
         }
     )));
-    assert_eq!(started(&seen), [(0, p[1].clone()), (1, p[2].clone())]);
+    assert_eq!(started_paths(&seen), [(0, p[1].clone()), (1, p[2].clone())]);
 }
 
 #[test]
@@ -126,7 +115,11 @@ fn the_track_heard_moved_plays_on_from_its_new_place() {
         last_queue(&seen),
         (vec![p[1].clone(), p[2].clone(), p[0].clone()], Some(2))
     );
-    assert!(started(&seen).is_empty(), "{:?}", started(&seen));
+    assert!(
+        started_paths(&seen).is_empty(),
+        "{:?}",
+        started_paths(&seen)
+    );
     assert!(seen.iter().any(|e| matches!(
         e,
         Event::TrackEnded {

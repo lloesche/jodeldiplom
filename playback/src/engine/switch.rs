@@ -1,20 +1,18 @@
 //! Moving the playing track to a new route without a break (new
 //! settings, a head back off its map): the new route, at the open
 //! output's format, reads ahead while the old one plays, and the two meet
-//! at an exact frame, crossfaded.
-
-use std::collections::VecDeque;
-use std::time::Duration;
+//! at an exact frame, crossfaded (the new route is a second reading of the
+//! track, [`super::moving`]).
 
 use crate::error::Error;
 use crate::rate::Route;
 
+use super::cues::CueEvent;
 use super::drop::drop_later;
-use super::track::{
-    crossfade, frames_of, gcd, grid, preroll, rescale, Cue, CueEvent, Progress, SegStart, Splice,
-    StartAt, Switch, Track,
-};
-use super::{Engine, SWITCH_TURN, WRITE_WAIT};
+use super::moving::Ahead;
+use super::segment::{gcd, SegStart, SegmentLine};
+use super::track::{crossfade, frames_of, preroll, Progress, Splice, StartAt, Switch, Track};
+use super::{Engine, WRITE_WAIT};
 
 impl Engine {
     /// Moves the track being played to its route with the settings' headroom
@@ -22,22 +20,15 @@ impl Engine {
     /// an exact frame. The track waiting for the output to play out takes
     /// its new route at once (it is not heard yet).
     pub(super) fn reroute(&mut self) {
-        // A head read along a map (or waiting to be: a transition's too)
-        // holds its route: its end routes it again. While a transition is
-        // prepared or mixed, its playing track is where the next one is
-        // linked to: only a way back off a map moves it.
-        let leaving = self
-            .head
-            .playing
-            .as_ref()
-            .is_some_and(|t| t.along.is_some());
-        if self.along_holds_route() || (self.transition_holds_route() && !leaving) {
+        // A head read along a map, or one a transition holds, keeps its
+        // route ([`Engine::route_held`]).
+        if self.route_held() {
             return;
         }
-        if self.head.switch.as_ref().is_some_and(|s| s.spliced) {
+        if let Some(switch) = self.head.switch.as_mut().filter(|s| s.spliced) {
             // The old route ends at the frame the new one begins: once
             // the new one is playing, it is routed again.
-            self.head.reroute_later = true;
+            switch.again = true;
             return;
         }
         let Some(track) = &self.head.playing else {
@@ -77,7 +68,7 @@ impl Engine {
         let Some(next) = &self.next else {
             return;
         };
-        let (index, frame, current) = (next.index, next.seg_frame, next.route.clone());
+        let (index, frame, current) = (next.index, next.line.seg_frame, next.route.clone());
         let route = current.clone().with_headroom(self.settings.headroom);
         if route == current {
             return;
@@ -95,37 +86,29 @@ impl Engine {
         let out = self.head.out.as_ref().ok_or(Error::Stopped)?;
         let written = out.output.written();
         let old = self.head.playing.as_ref().ok_or(Error::Stopped)?;
-        let (a_old, _) = grid(&old.route);
-        let (a_new, _) = grid(&route);
+        let (a_old, _) = old.line.grid();
+        let (a_new, _) = SegmentLine::new(&route, old.info.rate).grid();
         let step = a_old / gcd(a_old, a_new) * a_new;
         // A track read along a map (a head's, a transition's) is where its
         // map, as heard, puts it.
         let along = self.heard_along(old).map(|h| h.frame_at(written));
-        let at = along.unwrap_or_else(|| {
-            old.seg_frame
-                + rescale(
-                    written.saturating_sub(old.seg_out),
-                    old.route.output_rate,
-                    old.route.input_rate,
-                )
-        });
+        let at = along.unwrap_or_else(|| old.line.frame_at(written));
         let want = at.saturating_sub(preroll(&route, old.info.rate));
         // On the grid from the old segment's start.
-        let first = old.seg_frame % step;
+        let first = old.line.seg_frame % step;
         let start = if want >= first {
             first + (want - first) / step * step
         } else {
             first
         };
-        let index = old.index;
-        let mut track = self.open_track(index, StartAt::Frame(start), Some(route))?;
-        track.pending = true;
+        let track = self.open_reading(old.index, start, route)?;
         self.head.switch = Some(Switch {
             track,
             grid: step,
             retried: false,
             done: false,
             spliced: false,
+            again: false,
         });
         Ok(())
     }
@@ -155,33 +138,20 @@ impl Engine {
             self.hand_over();
             return Ok(true);
         }
-        let Some(out) = &self.head.out else {
-            return Ok(false);
-        };
-        let buffered = out.output.written().saturating_sub(out.clock.position());
-        let ring = out.info.ring_frames;
-        let turn = self.paused
-            || self.offline
-            || (ring > 0 && buffered.saturating_mul(2) >= ring)
-            || self
-                .head
-                .stalled
-                .is_some_and(|at| at.elapsed() < SWITCH_TURN);
-        if !turn {
+        if self.head.out.is_none() || !(self.offline || self.reading_turn()) {
             return Ok(false);
         }
         let mut switch = self.head.switch.take().expect("checked");
         if !switch.done {
-            match self.produce(&mut switch.track, Duration::ZERO) {
-                Ok(Progress::Busy) => {}
-                Ok(Progress::Complete) => switch.done = true,
-                Err(error) if error.is_skippable() => {
+            match self.read_ahead(&mut switch.track)? {
+                Ahead::Busy => {}
+                Ahead::Done => switch.done = true,
+                Ahead::Broke(error) => {
                     // What it decoded before the error plays, then the
                     // error, as on its own.
                     self.broke(&mut switch.track, error);
                     switch.done = true;
                 }
-                Err(error) => return Err(error),
             }
         }
         self.head.switch = Some(switch);
@@ -195,14 +165,11 @@ impl Engine {
     fn switch_failed(&mut self, switch: Switch, why: &str) {
         let index = switch.track.index;
         let route = switch.track.route.clone();
-        let start = switch.track.seg_frame;
+        let start = switch.track.line.seg_frame;
         let first = start % switch.grid;
         drop_later(switch.track);
         if !switch.retried && start > first {
-            if let Ok(mut track) =
-                self.open_track(index, StartAt::Frame(first), Some(route.clone()))
-            {
-                track.pending = true;
+            if let Ok(track) = self.open_reading(index, first, route.clone()) {
                 self.head.switch = Some(Switch {
                     track,
                     retried: true,
@@ -231,11 +198,9 @@ impl Engine {
         let Some(mut switch) = self.head.switch.take() else {
             return Ok(());
         };
-        let Some(mut old) = self.head.playing.take() else {
+        let Some(result) = self.with_playing(|e, old| e.splice(old, &mut switch)) else {
             return Ok(());
         };
-        let result = self.splice(&mut old, &mut switch);
-        self.head.playing = Some(old);
         match result? {
             Splice::Wait | Splice::Done => self.head.switch = Some(switch),
             Splice::Cancel => {
@@ -264,10 +229,10 @@ impl Engine {
         };
         let written = out.output.written();
         let fade = frames_of(self.switch_fade, old.route.output_rate);
-        let (a_old, b_old) = grid(&old.route);
-        let (a_new, b_new) = grid(&switch.track.route);
+        let (a_old, b_old) = old.line.grid();
+        let (a_new, b_new) = switch.track.line.grid();
         let step_out = switch.grid / a_old * b_old;
-        let start = switch.track.seg_frame;
+        let start = switch.track.line.seg_frame;
         // An old track read along a map (a head along its own, or along a
         // transition's map) has no grid with the
         // output: it meets the new one on the first frame of the new
@@ -284,7 +249,7 @@ impl Engine {
                 let at = |frame: u64| warp.output_frame_at(frame as f64 / rate);
                 // The first grid frame the map puts at or after `from` (one
                 // a hair before it is the frame before it, played already).
-                let from = from.max(old.seg_out);
+                let from = from.max(old.line.seg_out);
                 let mut frame =
                     start + h.frame_at(from).saturating_sub(start).div_ceil(a_new) * a_new;
                 while at(frame) < from {
@@ -293,10 +258,10 @@ impl Engine {
                 let j = (frame - start) / a_new * b_new;
                 return (frame, at(frame), j);
             }
-            let n = from.saturating_sub(old.seg_out).div_ceil(step_out);
-            let frame = old.seg_frame + n * switch.grid;
+            let n = from.saturating_sub(old.line.seg_out).div_ceil(step_out);
+            let frame = old.line.seg_frame + n * switch.grid;
             let j = frame.saturating_sub(start) / a_new * b_new;
-            (frame, old.seg_out + n * step_out, j)
+            (frame, old.line.seg_out + n * step_out, j)
         };
         let (frame, at, j) = meet(written);
         if old.info.frames.is_some_and(|total| frame >= total) {
@@ -321,7 +286,7 @@ impl Engine {
         }
         let cross = fade.min(new.emitted - j);
         // The old route's output up to there (and through the crossfade).
-        while old.seg_out + old.emitted < at + cross {
+        while old.line.seg_out + old.emitted < at + cross {
             if old.failure.is_some() {
                 return Ok(Splice::Cancel);
             }
@@ -341,12 +306,9 @@ impl Engine {
         let tail = old.out_buf[keep..keep + cross as usize * old_channels].to_vec();
         old.out_buf.truncate(keep);
         let index = old.index;
-        self.cues.retain(|c| {
-            c.at < at
-                || !matches!(
-                    &c.event,
-                    CueEvent::Clipped { index: i, .. } if *i == index
-                ) && !matches!(&c.event, CueEvent::Started(s, _) if s.index == index)
+        self.cues.retract(at, |e| match e {
+            CueEvent::Started(s, _) => s.index == index,
+            e => e.clipped_of(index),
         });
         // The new one starts there, crossfaded from the old one.
         let new = &mut switch.track;
@@ -358,25 +320,17 @@ impl Engine {
         new.clip_base = new.clipped();
         new.clips = None;
         // Its cues from there.
-        let mut held = VecDeque::new();
-        for cue in std::mem::take(&mut new.held) {
-            match cue.event {
-                CueEvent::Clipped { .. } => {}
-                event => held.push_back(Cue {
-                    at: cue.at.saturating_sub(j),
-                    event,
-                }),
-            }
-        }
-        new.held = held;
+        new.held
+            .retract(0, |e| matches!(e, CueEvent::Clipped { .. }));
+        new.held.rebase(j);
         // The same segment, met on its line: the stem parts go on, or (at
         // another gain) start again crossfaded as main is.
         let joined = SegStart::Joined {
             fade: cross as usize,
         };
         new.continue_segment(old.segment, at, frame, joined);
-        let cue = self.started(new);
-        self.cues.push_back(cue);
+        let started = self.started(new);
+        self.cues.push(at, started);
         self.release(new);
         switch.spliced = true;
         Ok(Splice::Done)
@@ -393,7 +347,7 @@ impl Engine {
             drop_later(old);
         }
         self.head.playing = Some(switch.track);
-        if std::mem::take(&mut self.head.reroute_later) {
+        if switch.again {
             self.reroute();
         }
     }

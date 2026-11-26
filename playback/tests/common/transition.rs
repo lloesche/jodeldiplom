@@ -13,8 +13,8 @@ use jodel_output::mixer::Mixer;
 use jodel_output::{Capabilities, SimClock, StreamFormat};
 use jodel_playback::stems::{Separator, STEMS};
 use jodel_playback::{
-    Captures, Envelope, Event, HeadFaders, Player, PlayerOptions, StemDesk, TrackStart,
-    TransitionState, NEXT_LEAD,
+    Captures, Envelope, Event, HeadFaders, Player, PlayerOptions, StemDesk, TransitionState,
+    NEXT_LEAD,
 };
 
 use super::*;
@@ -200,14 +200,6 @@ pub fn clicks(period: f64, first: f64, hz: f64) -> impl Fn(f64, usize) -> f64 {
     }
 }
 
-/// The 24-bit samples of a stream the device took as `S24In32Low`.
-pub fn samples(bytes: &[u8]) -> Vec<i32> {
-    bytes
-        .chunks_exact(4)
-        .map(|b| (i32::from_le_bytes([b[0], b[1], b[2], b[3]]) << 8) >> 8)
-        .collect()
-}
-
 /// Where clicks start in `got` (stereo), in seconds: the left channel's
 /// first sample past 15 % of full scale at least 0.2 s after the last
 /// click's.
@@ -222,16 +214,6 @@ pub fn onsets(got: &[i32]) -> Vec<f64> {
         }
     }
     out
-}
-
-pub fn starts(events: &[Event]) -> Vec<&TrackStart> {
-    events
-        .iter()
-        .filter_map(|e| match e {
-            Event::TrackStarted(s) => Some(&**s),
-            _ => None,
-        })
-        .collect()
 }
 
 pub fn transitions(events: &[Event]) -> Vec<&TransitionState> {

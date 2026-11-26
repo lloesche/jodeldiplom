@@ -8,10 +8,11 @@ use std::time::Duration;
 
 use crate::stems::{StemRun, Unkept, RATE as STEM_RATE};
 
-use super::super::track::{HeardWarp, SegStart, Track};
+use super::super::segment::SegStart;
+use super::super::track::{HeardWarp, Track};
 use super::super::PREROLL_RESAMPLE;
 use super::stream::{Line, Stream};
-use super::{Making, StemLanes, Stopped, Want};
+use super::{Ask, Making, StemLanes, Stopped, Want};
 
 /// Seconds of stems before the map's first read position (the reader's
 /// interpolation reaches back into them).
@@ -46,12 +47,12 @@ impl StemLanes {
     /// from a new one that gets those not kept as `unkept` says.
     pub(super) fn start_along(&mut self, line: Line, want: &Want, unkept: Unkept) {
         let track = want.track;
-        let from = want.from.max(line.seg_out);
+        let from = want.ask.from.max(line.seg_out);
         let fade = match line.begun {
             SegStart::Joined { fade } => fade,
             _ => 0,
         };
-        let promised = self.timeline.promised(want.from);
+        let promised = self.timeline.promised(want.ask.from);
         self.buffer
             .restart(from, promised.max(from + fade as u64), fade);
         let first = first_of(from, line.out);
@@ -59,13 +60,13 @@ impl StemLanes {
         let read = (read - MARGIN).max(0.0);
         let rate = f64::from(line.rate);
         let path = &track.info.path;
-        let found = self.take_run(usable(path, read, rate, want.keep.1));
+        let found = self.take_run(usable(path, read, rate, want.ask.keep.1));
         let (mut run, r) = found.unwrap_or_else(|| {
             let start = (read * rate).floor() as u64;
             (self.run_for(track, start, unkept), 0)
         });
         run.seek(r);
-        run.set_keep(want.keep.0, want.keep.1);
+        run.set_keep(want.ask.keep.0, want.ask.keep.1);
         let read_from = run.start as f64 / rate + r as f64 / f64::from(STEM_RATE);
         let channels = usize::from(track.route.channels);
         self.stream = Some(Stream::along(line, first, channels, read_from));
@@ -121,7 +122,7 @@ impl StemLanes {
         match self.make_to(want, target, (wait, usize::MAX)) {
             Ok(making) => Ok(making),
             Err(stopped) => {
-                self.give_up(want.track, want.from);
+                self.give_up(want.track, want.ask.from);
                 match stopped {
                     Stopped::Failed(why) => Err(why),
                     Stopped::Missing => Ok(Making::default()),
@@ -131,22 +132,29 @@ impl StemLanes {
     }
 
     /// The head's stems are separated too slowly to be heard on time: it
-    /// takes the whole mix from the frame written next (`want.from`; the
+    /// takes the whole mix from the frame written next (`want.ask.from`; the
     /// parts made stay as far as they are promised), or from output frame
     /// `from` when that is later and none are promised (the parts start
     /// there, none before it).
     pub(in crate::engine) fn along_whole(&mut self, want: &Want, from: u64) {
-        self.give_up(want.track, want.from);
-        let promised = self.timeline.promised(want.from) > want.from;
+        self.give_up(want.track, want.ask.from);
+        let promised = self.timeline.promised(want.ask.from) > want.ask.from;
         let from = if promised {
-            want.from
+            want.ask.from
         } else {
-            from.max(want.from)
+            from.max(want.ask.from)
         };
-        if from > want.from {
+        if from > want.ask.from {
             self.buffer.clear(from);
         }
-        self.start_along(Line::of(want.track), &Want { from, ..*want }, Unkept::Whole);
+        self.start_along(
+            Line::of(want.track),
+            &Want {
+                ask: Ask { from, ..want.ask },
+                ..*want
+            },
+            Unkept::Whole,
+        );
     }
 
     /// Where the head's parts made end, and whether they are all its own

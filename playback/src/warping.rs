@@ -2,7 +2,8 @@
 //! (varispeed), or stretched in time with the pitch kept; and a key apart
 //! ([`Shift`]): every frequency times a ratio, the time the map's. Any
 //! number of interleaved channels at the stems' rate (a head's four stereo
-//! stems read along its map, [`super::lanes`]), in groups each read its
+//! stems read along its map, as the engine's stem lanes read them), in
+//! groups each read its
 //! own way and interleaved back: all of them alike without a key; with
 //! one, the drums' read along the map alone and the rest shifted.
 
@@ -13,7 +14,7 @@ use crate::stretch::Stretcher;
 use crate::transition::TempoMode;
 use crate::warp::{TimeMap, VarResampler};
 
-use super::shift::{frames_before, Shift};
+use crate::shift::{frames_before, Shift};
 
 /// How the frames follow the time map.
 enum Reader {
@@ -68,18 +69,18 @@ struct Group {
 /// from its time `a0`, their input starting at the map's read time
 /// `b_origin`, by `tempo`; `key` semitones apart (none at 0) but for the
 /// channels `kept`, read along the map alone (the drums').
-pub(super) struct Reading {
-    pub(super) map: Arc<TimeMap>,
-    pub(super) a0: f64,
-    pub(super) b_origin: f64,
-    pub(super) tempo: TempoMode,
-    pub(super) channels: usize,
-    pub(super) key: i8,
-    pub(super) kept: Vec<usize>,
+pub(crate) struct Reading {
+    pub(crate) map: Arc<TimeMap>,
+    pub(crate) a0: f64,
+    pub(crate) b_origin: f64,
+    pub(crate) tempo: TempoMode,
+    pub(crate) channels: usize,
+    pub(crate) key: i8,
+    pub(crate) kept: Vec<usize>,
 }
 
 /// Frames read along a time map.
-pub(super) struct Warping {
+pub(crate) struct Warping {
     map: Arc<TimeMap>,
     /// The map's time at the first frame read.
     a0: f64,
@@ -198,7 +199,7 @@ impl Reader {
 }
 
 impl Warping {
-    pub(super) fn new(reading: Reading) -> Warping {
+    pub(crate) fn new(reading: Reading) -> Warping {
         let Reading {
             map,
             a0,
@@ -241,7 +242,7 @@ impl Warping {
 
     /// Reads `frames` (interleaved, at the stems' rate) along the map and
     /// replaces them with what was read.
-    pub(super) fn read(&mut self, frames: &mut Vec<f64>) {
+    pub(crate) fn read(&mut self, frames: &mut Vec<f64>) {
         let Warping {
             map,
             a0,
@@ -293,7 +294,7 @@ impl Warping {
     /// How far (in input frames) what it reads is off the map: what the
     /// stretchers' steering has yet to take back (none at a changing speed,
     /// which reads on the map, nor where a key shifts, read on it too).
-    pub(super) fn offset(&self) -> f64 {
+    pub(crate) fn offset(&self) -> f64 {
         self.groups
             .iter()
             .find_map(|g| match &g.reader {
@@ -304,7 +305,7 @@ impl Warping {
     }
 
     /// The input has ended.
-    pub(super) fn end(&mut self) {
+    pub(crate) fn end(&mut self) {
         self.ended = true;
         for g in &mut self.groups {
             if let Reader::Speed(reader) = &mut g.reader {

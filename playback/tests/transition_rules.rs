@@ -115,7 +115,7 @@ fn after_a_transition_the_next_track_plays_its_own_route_again() {
         got[last..] == b[last - 2 * 4 * rate..],
         "B's end is not the file"
     );
-    let back = starts(&seen).last().copied().expect("B's return");
+    let back = started(&seen).last().copied().expect("B's return");
     assert_eq!((back.index, back.route.resample), (1, None));
 }
 

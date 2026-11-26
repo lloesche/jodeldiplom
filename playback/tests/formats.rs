@@ -489,16 +489,6 @@ fn lossy_options() -> PlayerOptions {
     }
 }
 
-fn started(events: &[Event]) -> Vec<&jodel_playback::TrackStart> {
-    events
-        .iter()
-        .filter_map(|e| match e {
-            Event::TrackStarted(s) => Some(&**s),
-            _ => None,
-        })
-        .collect()
-}
-
 #[test]
 fn lossy_tracks_play_gaplessly_and_never_lossless() {
     let mp3 = format_fixture("lossy.mp3");

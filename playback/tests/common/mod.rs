@@ -23,7 +23,8 @@ use jodel_output::{
     StreamFormat, StreamInfo,
 };
 use jodel_playback::{
-    Captures, Event, Head, MemoryTarget, OutputTarget, Resampler, Source, StemDesk,
+    Captures, Event, Head, MemoryTarget, OutputTarget, PlayerOptions, Resampler, Source, StemDesk,
+    TrackStart,
 };
 
 pub const TIMEOUT: Duration = Duration::from_secs(30);
@@ -54,6 +55,41 @@ pub fn read_all(path: &Path) -> Vec<i32> {
     let mut all = Vec::new();
     while source.read(&mut all).unwrap() > 0 {}
     all
+}
+
+/// The 24-bit samples of a stream the device took as `S24In32Low`.
+pub fn samples(bytes: &[u8]) -> Vec<i32> {
+    bytes
+        .chunks_exact(4)
+        .map(|b| (i32::from_le_bytes([b[0], b[1], b[2], b[3]]) << 8) >> 8)
+        .collect()
+}
+
+/// The tracks started, in order.
+pub fn started(events: &[Event]) -> Vec<&TrackStart> {
+    events
+        .iter()
+        .filter_map(|e| match e {
+            Event::TrackStarted(s) => Some(&**s),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The tracks heard, in order: queue index and file.
+pub fn started_paths(events: &[Event]) -> Vec<(usize, PathBuf)> {
+    started(events)
+        .into_iter()
+        .map(|s| (s.index, s.info.path.clone()))
+        .collect()
+}
+
+/// A player's options with a position every millisecond.
+pub fn player_options() -> PlayerOptions {
+    PlayerOptions {
+        position_interval: Duration::from_millis(1),
+        ..PlayerOptions::default()
+    }
 }
 
 pub fn caps(rates: &[u32], formats: &[SampleFormat]) -> Capabilities {

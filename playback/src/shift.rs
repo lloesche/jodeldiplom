@@ -22,7 +22,7 @@ pub fn ratio_of(semitones: i8) -> f64 {
 }
 
 /// Channels read along a time map a key apart: see the module.
-pub(super) struct Shift {
+pub(crate) struct Shift {
     ratio: f64,
     stretchers: Vec<Stretcher>,
     reader: VarResampler,
@@ -39,7 +39,7 @@ pub(super) struct Shift {
 
 impl Shift {
     /// `channels` channels at `rate` Hz shifted by `semitones`.
-    pub(super) fn new(semitones: i8, channels: usize, rate: u32) -> Shift {
+    pub(crate) fn new(semitones: i8, channels: usize, rate: u32) -> Shift {
         let ratio = ratio_of(semitones);
         let stretchers = (0..channels)
             .map(|_| {
@@ -61,7 +61,7 @@ impl Shift {
     }
 
     /// Output frames made so far.
-    pub(super) fn made(&self) -> u64 {
+    pub(crate) fn made(&self) -> u64 {
         self.reader.made()
     }
 
@@ -70,7 +70,7 @@ impl Shift {
     /// `out` the frames it can make, frame `k` at input frame `position(k)`
     /// (from the first pushed): to where the input reaches, all of them
     /// once it has ended (up to the first frame the map puts past it).
-    pub(super) fn read(
+    pub(crate) fn read(
         &mut self,
         input: &[f64],
         ended: bool,
@@ -132,7 +132,7 @@ impl Shift {
 
 /// How many frames from frame `made` on the map puts before input frame
 /// `taken` (`position(k)` the input frame of frame `k`).
-pub(super) fn frames_before(made: u64, taken: u64, position: impl Fn(u64) -> f64) -> usize {
+pub(crate) fn frames_before(made: u64, taken: u64, position: impl Fn(u64) -> f64) -> usize {
     let taken = taken as f64;
     let mut n = 0usize;
     while position(made + n as u64) < taken && n < 1 << 20 {
@@ -145,9 +145,9 @@ pub(super) fn frames_before(made: u64, taken: u64, position: impl Fn(u64) -> f64
 mod tests {
     use std::time::Instant;
 
-    use super::super::warping::{Reading, Warping};
     use super::*;
     use crate::stems::RATE;
+    use crate::warping::{Reading, Warping};
 
     /// The frequency of the strongest bin of `x` (a Hann window, the peak
     /// placed between its bins), at `rate`.

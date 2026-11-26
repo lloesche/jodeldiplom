@@ -10,7 +10,6 @@ mod common;
 
 use std::path::PathBuf;
 use std::sync::mpsc::Receiver;
-use std::time::Duration;
 
 use common::*;
 use jodel_output::mixer::desk_format;
@@ -24,13 +23,6 @@ enum Via {
     Mixer,
     /// A player's two heads on the desk (`StemDesk::two_heads`).
     Desk,
-}
-
-fn options() -> PlayerOptions {
-    PlayerOptions {
-        position_interval: Duration::from_millis(1),
-        ..PlayerOptions::default()
-    }
 }
 
 type Script<'a> = &'a dyn Fn(&Player, &Receiver<Event>, &Gate, &Captures);
@@ -112,7 +104,7 @@ fn flac_gapless_and_resampled_are_bit_exact() {
     ];
     for (caps, files) in cases {
         let files = files.into_iter().map(fixture).collect();
-        same_through_the_mixer(caps, options(), &to_the_end(files));
+        same_through_the_mixer(caps, player_options(), &to_the_end(files));
     }
 }
 
@@ -124,12 +116,12 @@ fn plain_and_resampled_pcm_are_bit_exact() {
     ramp_wav(&w44, 44_100, 30_000);
     same_through_the_mixer(
         caps(&[48_000], &[S24In32Low]),
-        options(),
+        player_options(),
         &to_the_end(vec![w48]),
     );
     same_through_the_mixer(
         caps(&[48_000], &[S24In32]),
-        options(),
+        player_options(),
         &to_the_end(vec![w44]),
     );
 }
@@ -168,7 +160,7 @@ fn seek_pause_and_jump_are_bit_exact() {
         gate.allow_all();
         until_queue_end(events);
     };
-    same_through_the_mixer(caps(&[44_100], &[S24In32Low]), options(), &script);
+    same_through_the_mixer(caps(&[44_100], &[S24In32Low]), player_options(), &script);
     // A FLAC file's seek, too.
     let script = |player: &Player, events: &Receiver<Event>, gate: &Gate, captures: &Captures| {
         player.load(vec![fixture(F44)]).unwrap();
@@ -180,7 +172,7 @@ fn seek_pause_and_jump_are_bit_exact() {
         gate.allow_all();
         until_queue_end(events);
     };
-    same_through_the_mixer(caps(&[44_100], &[S24In32Low]), options(), &script);
+    same_through_the_mixer(caps(&[44_100], &[S24In32Low]), player_options(), &script);
 }
 
 #[test]
@@ -190,7 +182,7 @@ fn play_at_starts_a_share_of_the_length_in() {
     let frames = 44_101u64;
     let samples = ramp_wav(&wav, 44_100, frames as u32);
     let (lead, captures, mixer) = mixer_lead(caps(&[44_100], &[S24In32Low]));
-    let (player, events) = Player::new(Box::new(lead), options());
+    let (player, events) = Player::new(Box::new(lead), player_options());
     player.load(vec![wav]).unwrap();
     player
         .send(Command::PlayAt {
@@ -228,7 +220,7 @@ fn mono_and_5_1_files_play_as_stereo() {
     write_wav(&m, 48_000, 1, &mono);
     write_wav(&s, 48_000, 6, &surround);
     let (lead, captures, mixer) = mixer_lead(caps(&[48_000], &[S24In32Low]));
-    let (player, events) = Player::new(Box::new(lead), options());
+    let (player, events) = Player::new(Box::new(lead), player_options());
     player.load(vec![m, s]).unwrap();
     player.play(0).unwrap();
     let seen = until_queue_end(&events);

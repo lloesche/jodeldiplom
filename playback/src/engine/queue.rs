@@ -6,7 +6,7 @@
 //! track decoded ahead of it and not heard yet goes without a break in it.
 
 use super::api::Event;
-use super::track::{Cue, CueEvent};
+use super::cues::CueEvent;
 use super::Engine;
 use crate::error::Error;
 
@@ -68,8 +68,7 @@ impl Engine {
         let heard = self.heard.as_ref().map(|h| h.index);
         let start = self
             .cues
-            .iter()
-            .position(|c| matches!(&c.event, CueEvent::Started(s, _) if s.index == index));
+            .position(|e| matches!(e, CueEvent::Started(s, _) if s.index == index));
         let waiting = self.next.as_ref().is_some_and(|t| t.index == index);
         let other_heard = heard.is_some_and(|h| h != index);
         if other_heard && !self.transition_running() && (start.is_some() || waiting) {
@@ -97,11 +96,7 @@ impl Engine {
         self.reindex(&gone(index));
         self.emit_queue();
         // Every cue from its start on is its own or a later track's.
-        let from = start.map(|i| {
-            let at = self.cues[i].at;
-            self.cues.truncate(i);
-            at
-        });
+        let from = start.map(|i| self.cues.cut_at(i));
         let mut end = 0;
         if let Some(out) = self.head.out.as_mut() {
             let written = out.output.written();
@@ -126,10 +121,7 @@ impl Engine {
     /// otherwise playback goes on with it.
     pub(super) fn after_end(&mut self, next: usize, end: u64) -> Result<(), Error> {
         if self.hold && next < self.queue.len() {
-            self.cues.push_back(Cue {
-                at: end,
-                event: CueEvent::Held { index: next },
-            });
+            self.cues.push(end, CueEvent::Held { index: next });
             self.tail = None;
             self.finishing = true;
             return Ok(());
@@ -168,9 +160,7 @@ impl Engine {
             .flatten()
         {
             track.index = keep(track.index);
-            for cue in &mut track.held {
-                cue.event.reindex(map);
-            }
+            track.held.reindex(map);
         }
         if let Some(switch) = &mut self.head.switch {
             switch.track.index = keep(switch.track.index);
@@ -179,9 +169,7 @@ impl Engine {
             heard.index = keep(heard.index);
         }
         self.tail = self.tail.and_then(map);
-        for cue in &mut self.cues {
-            cue.event.reindex(map);
-        }
+        self.cues.reindex(map);
         self.reindex_jumps(map);
         self.reindex_transition(map);
     }
@@ -193,25 +181,5 @@ fn gone(index: usize) -> impl Fn(usize) -> Option<usize> {
         std::cmp::Ordering::Less => Some(i),
         std::cmp::Ordering::Equal => None,
         std::cmp::Ordering::Greater => Some(i - 1),
-    }
-}
-
-impl CueEvent {
-    /// Its track's index moved by `map` (kept where that track is gone).
-    pub(super) fn reindex(&mut self, map: &dyn Fn(usize) -> Option<usize>) {
-        let keep = |i: &mut usize| *i = map(*i).unwrap_or(*i);
-        match self {
-            CueEvent::Started(start, heard) => {
-                keep(&mut start.index);
-                keep(&mut heard.index);
-            }
-            CueEvent::Heard(heard) => keep(&mut heard.index),
-            CueEvent::Clipped { index, .. }
-            | CueEvent::Ended { index }
-            | CueEvent::Skipped { index, .. }
-            | CueEvent::Jumped { index, .. }
-            | CueEvent::Held { index } => keep(index),
-            CueEvent::QueueEnded | CueEvent::Transition(_) => {}
-        }
     }
 }

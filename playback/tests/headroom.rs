@@ -11,7 +11,6 @@
 mod common;
 
 use std::path::Path;
-use std::time::Duration;
 
 use common::*;
 use jodel_output::{Capabilities, SampleFormat, SimClock};
@@ -21,8 +20,7 @@ use SampleFormat::*;
 fn options(headroom: Headroom) -> PlayerOptions {
     PlayerOptions {
         settings: Settings { headroom },
-        position_interval: Duration::from_millis(1),
-        ..PlayerOptions::default()
+        ..player_options()
     }
 }
 

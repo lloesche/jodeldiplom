@@ -16,17 +16,10 @@ use std::time::Duration;
 use common::*;
 use jodel_output::{Capabilities, OpenRequest, Output, SampleFormat, SimClock, StreamFormat};
 use jodel_playback::{
-    Captures, Error, Event, Headroom, MemoryTarget, OutputTarget, PlayState, Player, PlayerOptions,
-    Settings, Source, TapMiss,
+    Captures, Error, Event, Headroom, MemoryTarget, OutputTarget, PlayState, Player, Settings,
+    Source, TapMiss,
 };
 use SampleFormat::*;
-
-fn options() -> PlayerOptions {
-    PlayerOptions {
-        position_interval: Duration::from_millis(1),
-        ..PlayerOptions::default()
-    }
-}
 
 fn play_all(caps: Capabilities, files: &[&str]) -> (Vec<(StreamFormat, Vec<u8>)>, Vec<Event>) {
     let target = MemoryTarget::new(caps, SimClock::Instant);
@@ -39,7 +32,7 @@ fn play_on(
     captures: &Captures,
     files: &[&str],
 ) -> (Vec<(StreamFormat, Vec<u8>)>, Vec<Event>) {
-    let (player, events) = Player::new(target, options());
+    let (player, events) = Player::new(target, player_options());
     player
         .load(files.iter().map(|f| fixture(f)).collect())
         .unwrap();
@@ -96,16 +89,6 @@ impl OutputTarget for Moving {
         self.opened = true;
         self.inner.open(request)
     }
-}
-
-fn started(events: &[Event]) -> Vec<&jodel_playback::TrackStart> {
-    events
-        .iter()
-        .filter_map(|e| match e {
-            Event::TrackStarted(s) => Some(&**s),
-            _ => None,
-        })
-        .collect()
 }
 
 #[test]
@@ -213,7 +196,7 @@ fn new_settings_during_the_play_out_reach_the_next_track() {
     // A second, so the play-out lasts the output's ring.
     ramp_wav(&path, 48_000, 48_000);
     let (target, captures, asked) = Moving::new((48_000, 44_100), SimClock::Realtime);
-    let (player, events) = Player::new(Box::new(target), options());
+    let (player, events) = Player::new(Box::new(target), player_options());
     player.load(vec![path.clone(), path]).unwrap();
     player.play(0).unwrap();
     // The next track is routed (to 44.1 kHz) as the first one is all
@@ -309,7 +292,7 @@ fn positions_follow_the_track_start() {
 fn seek_plays_on_from_the_target_frame() {
     for (name, rate) in [(F44, 44_100u32), (F48, 48_000)] {
         let (target, captures, gate) = GatedTarget::new(caps(&[rate], &[S24In32Low]));
-        let (player, events) = Player::new(Box::new(target), options());
+        let (player, events) = Player::new(Box::new(target), player_options());
         player.load(vec![fixture(name)]).unwrap();
         let before = 6_000u64;
         gate.allow(before);
@@ -343,7 +326,7 @@ fn seek_plays_on_from_the_target_frame() {
 #[test]
 fn pause_and_resume_do_not_change_the_bytes() {
     let (target, captures, gate) = GatedTarget::new(caps(&[44_100], &[S24In32Low]));
-    let (player, events) = Player::new(Box::new(target), options());
+    let (player, events) = Player::new(Box::new(target), player_options());
     player.load(vec![fixture(F44)]).unwrap();
     gate.allow(5_000);
     player.play(0).unwrap();
@@ -366,7 +349,7 @@ fn pause_and_resume_do_not_change_the_bytes() {
 #[test]
 fn another_track_played_while_paused_plays() {
     let (target, captures, gate) = GatedTarget::new(caps(&[44_100], &[S24In32Low]));
-    let (player, events) = Player::new(Box::new(target), options());
+    let (player, events) = Player::new(Box::new(target), player_options());
     player
         .load(vec![fixture(F44), fixture(F44), fixture(F44)])
         .unwrap();
@@ -422,7 +405,7 @@ fn plain_pcm_plays_untouched_and_seeks_exactly() {
     assert_eq!(cover.mime, "image/png");
 
     let (target, captures, gate) = GatedTarget::new(caps(&[48_000], &[S24In32Low]));
-    let (player, events) = Player::new(Box::new(target), options());
+    let (player, events) = Player::new(Box::new(target), player_options());
     player.load(vec![wav.clone()]).unwrap();
     gate.allow(7_777);
     player.play(0).unwrap();
@@ -443,7 +426,7 @@ fn plain_pcm_plays_untouched_and_seeks_exactly() {
 #[test]
 fn next_previous_and_stop() {
     let (target, _captures, gate) = GatedTarget::new(caps(&[44_100], &[S24In32Low]));
-    let (player, events) = Player::new(Box::new(target), options());
+    let (player, events) = Player::new(Box::new(target), player_options());
     player
         .load(vec![fixture(F44), fixture(F44), fixture(F44)])
         .unwrap();
@@ -485,7 +468,7 @@ fn next_previous_and_stop() {
 #[test]
 fn enqueue_after_the_end_continues_and_unreadable_files_are_skipped() {
     let (target, captures, gate) = GatedTarget::new(caps(&[44_100], &[S24In32Low]));
-    let (player, events) = Player::new(Box::new(target), options());
+    let (player, events) = Player::new(Box::new(target), player_options());
     player
         .load(vec![PathBuf::from("does-not-exist.flac"), fixture(F44)])
         .unwrap();
@@ -518,7 +501,7 @@ fn enqueue_after_the_end_continues_and_unreadable_files_are_skipped() {
 #[test]
 fn settings_change_reroutes_the_track_being_heard() {
     let (target, captures, gate) = GatedTarget::new(caps(&[44_100], &[S24In32Low]));
-    let (player, events) = Player::new(Box::new(target), options());
+    let (player, events) = Player::new(Box::new(target), player_options());
     player.load(vec![fixture(F48)]).unwrap();
     gate.allow(3_000);
     player.play(0).unwrap();
@@ -545,7 +528,7 @@ fn the_tap_holds_the_most_recent_output() {
     let (target, captures, gate, mixer) = gated_mixer(caps(&[44_100], &[S24In32Low]));
     let tap = jodel_playback::SpectrumTap::new(65_536);
     mixer.set_monitor(Some(Box::new(tap.clone())));
-    let (player, events) = Player::new(Box::new(target), options());
+    let (player, events) = Player::new(Box::new(target), player_options());
     player.load(vec![fixture(F44)]).unwrap();
     // Whole periods of the mixer (10 ms at 44.1 kHz), past the output's
     // prefill (100 ms), from which it plays.

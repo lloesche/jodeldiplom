@@ -8,7 +8,9 @@ use crate::rate::Route;
 use crate::source::Source;
 
 use super::api::{Event, PlayState, TrackStart};
-use super::track::{Cue, CueEvent, OpenOutput, SegStart, StartAt, Track};
+use super::cues::CueEvent;
+use super::segment::SegStart;
+use super::track::{OpenOutput, StartAt, Track};
 use super::Engine;
 
 impl Engine {
@@ -75,8 +77,16 @@ impl Engine {
         self.head.lanes.flushed(0);
     }
 
-    pub(super) fn started(&self, track: &Track) -> Cue {
+    /// The cue of `track`'s start, heard from its segment's first frame.
+    pub(super) fn started(&self, track: &Track) -> CueEvent {
+        self.started_from(track, track.line.seg_out)
+    }
+
+    /// The cue of `track`'s start, heard from output frame `at` on (a
+    /// transition's next track, from its hand-over).
+    pub(super) fn started_from(&self, track: &Track, at: u64) -> CueEvent {
         let out = self.head.out.as_ref().expect("an output is open");
+        let heard = track.heard();
         let start = TrackStart {
             index: track.index,
             head: self.head.id,
@@ -84,13 +94,10 @@ impl Engine {
             route: track.route.clone(),
             output: out.info.clone(),
             device: self.head.target.name(),
-            output_frame: track.seg_out,
-            from_frame: track.seg_frame,
+            output_frame: at,
+            from_frame: heard.frame_at(at),
         };
-        Cue {
-            at: track.seg_out,
-            event: CueEvent::Started(Box::new(start), track.heard()),
-        }
+        CueEvent::Started(Box::new(start), heard)
     }
 
     /// Makes `track` the one being played now: reuses the output when it
@@ -118,10 +125,13 @@ impl Engine {
         // starts to be as it begins.
         let rate = f64::from(out.info.format.rate);
         self.head.lead = (std::mem::take(&mut self.lead_in) * rate).round() as u64;
-        track.begin_segment(written + self.head.lead, track.seg_frame, SegStart::Cold);
-        let mut cue = self.started(&track);
-        cue.at = written;
-        self.cues.push_back(cue);
+        track.begin_segment(
+            written + self.head.lead,
+            track.line.seg_frame,
+            SegStart::Cold,
+        );
+        let started = self.started(&track);
+        self.cues.push(written, started);
         self.release(&mut track);
         self.head.playing = Some(track);
         self.track_installed();
@@ -130,10 +140,7 @@ impl Engine {
 
     /// Queues `track`'s held cues, from its `seg_out`.
     pub(super) fn release(&mut self, track: &mut Track) {
-        for mut cue in track.held.drain(..) {
-            cue.at = (cue.at + track.seg_out).max(self.cues.back().map_or(0, |c| c.at));
-            self.cues.push_back(cue);
-        }
+        self.cues.release(&mut track.held, track.line.seg_out);
     }
 
     /// Plays track `index` at `seconds` now, skipping tracks that fail to
@@ -195,8 +202,7 @@ impl Engine {
     pub(super) fn seek(&mut self, seconds: f64) {
         // A count-in under way ends: the track plays from where it went.
         self.head.lead = 0;
-        self.head.pending_jump = None;
-        self.drop_jump_fill();
+        self.head.moving.drop_jump();
         let Some(heard) = self.heard.clone() else {
             return;
         };
@@ -235,7 +241,7 @@ impl Engine {
             let route = (!transitioned).then(|| switching.unwrap_or_else(|| heard.route.clone()));
             self.jump_on(heard.index, StartAt::Seconds(seconds), route);
             if let Some(h) = &self.heard {
-                let at = h.seconds_at(h.seg_out);
+                let at = h.seconds_at(h.line.seg_out);
                 self.emit(Event::Seeked {
                     index: h.index,
                     seconds: at,
@@ -250,9 +256,9 @@ impl Engine {
             let written = out.output.written();
             let track = self.head.playing.as_mut().expect("checked");
             track.restart_at(frame)?;
-            track.begin_segment(written, track.seg_frame, SegStart::Cold);
+            track.begin_segment(written, track.line.seg_frame, SegStart::Cold);
             self.head.lanes.flushed(written);
-            Ok::<_, Error>((written, track.seg_frame))
+            Ok::<_, Error>((written, track.line.seg_frame))
         })();
         match result {
             Ok((seg_out, seg_frame)) => {
@@ -261,8 +267,7 @@ impl Engine {
                 self.finishing = false;
                 self.tail = None;
                 let heard = self.heard.as_mut().expect("checked");
-                heard.seg_out = seg_out;
-                heard.seg_frame = seg_frame;
+                heard.line = heard.line.at(seg_out, seg_frame);
                 let (index, at) = (heard.index, heard.seconds_at(seg_out));
                 self.emit(Event::Seeked { index, seconds: at });
                 self.report_position(true);
@@ -319,13 +324,8 @@ impl Engine {
         let end = self.head.out.as_ref().map_or(0, |o| o.output.written());
         // A cue mapped past the last output frame is never heard after the
         // end; it applies at the end at the latest.
-        for cue in self.cues.iter_mut() {
-            cue.at = cue.at.min(end);
-        }
-        self.cues.push_back(Cue {
-            at: end,
-            event: CueEvent::Ended { index: track.index },
-        });
+        self.cues.clamp_to(end);
+        self.cues.push(end, CueEvent::Ended { index: track.index });
         self.after_end(track.index + 1, end)
     }
 
@@ -335,10 +335,7 @@ impl Engine {
     pub(super) fn advance(&mut self, mut index: usize, end: u64) -> Result<(), Error> {
         loop {
             if index >= self.queue.len() {
-                self.cues.push_back(Cue {
-                    at: end,
-                    event: CueEvent::QueueEnded,
-                });
+                self.cues.push(end, CueEvent::QueueEnded);
                 self.tail = index.checked_sub(1);
                 self.finishing = true;
                 return Ok(());
@@ -351,9 +348,9 @@ impl Engine {
                         .as_ref()
                         .is_some_and(|o| track.route.fits(&o.info.format));
                     if fits {
-                        track.begin_segment(end, track.seg_frame, SegStart::Cold);
-                        let cue = self.started(&track);
-                        self.cues.push_back(cue);
+                        track.begin_segment(end, track.line.seg_frame, SegStart::Cold);
+                        let started = self.started(&track);
+                        self.cues.push(end, started);
                         self.head.playing = Some(track);
                         self.track_installed();
                     } else {
@@ -363,10 +360,7 @@ impl Engine {
                     return Ok(());
                 }
                 Err(error) if error.is_skippable() => {
-                    self.cues.push_back(Cue {
-                        at: end,
-                        event: CueEvent::Skipped { index, error },
-                    });
+                    self.cues.push(end, CueEvent::Skipped { index, error });
                     index += 1;
                 }
                 Err(error) => return Err(error),

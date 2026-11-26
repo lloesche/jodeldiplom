@@ -90,7 +90,7 @@ fn a_fade_at_one_tempo_mixes_the_two_and_hands_over() {
     assert!(states.contains(&&TransitionState::Finished), "{states:?}");
     // B heard from the window's end, its own output's frames counted from
     // its first (a second before the window).
-    let legs = starts(&seen);
+    let legs = started(&seen);
     let into = legs.iter().find(|s| s.index == 1).expect("B started");
     assert_eq!(into.output_frame + origin(5.0), 7 * u64::from(RATE));
     assert_eq!(into.from_frame, 3 * u64::from(RATE));
@@ -474,7 +474,7 @@ fn a_transition_is_called_off_by_a_seek_and_when_it_does_not_fit() {
     desk.gate.allow_all();
     let rest = until_queue_end(&desk.events);
     // Without it, the tracks follow each other as usual.
-    assert_eq!(starts(&rest).iter().filter(|s| s.index == 1).count(), 1);
+    assert_eq!(started(&rest).iter().filter(|s| s.index == 1).count(), 1);
     assert!(transitions(&rest).is_empty());
 }
 
@@ -745,7 +745,7 @@ fn every_track_plays_at_the_desks_one_rate() {
         |e| matches!(e, Event::TrackStarted(s) if s.index == 2),
     );
     assert!(transitions(&seen).contains(&&TransitionState::Finished));
-    let rates: Vec<(usize, u32)> = starts(&seen)
+    let rates: Vec<(usize, u32)> = started(&seen)
         .iter()
         .map(|s| (s.index, s.output.format.rate))
         .collect();
@@ -754,7 +754,10 @@ fn every_track_plays_at_the_desks_one_rate() {
     desk.player.play(2).unwrap();
     desk.gate.allow_all();
     let seen = until_queue_end(&desk.events);
-    let picked = starts(&seen).into_iter().find(|s| s.index == 2).expect("C");
+    let picked = started(&seen)
+        .into_iter()
+        .find(|s| s.index == 2)
+        .expect("C");
     assert_eq!(picked.output.format.rate, 48_000);
     let streams = desk.close();
     assert_eq!(streams.len(), 1, "one stream: {rates:?}");

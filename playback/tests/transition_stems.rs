@@ -163,7 +163,7 @@ fn at_a_high_rate_the_playing_track_ends_on_its_last_frame() {
         let (stopped, finished) = stopped_and_finished(&seen);
         assert!(stopped.is_empty() && finished, "{frames}: {seen:?}");
         assert!(!seen.iter().any(|e| matches!(e, Event::Error { .. })));
-        let next = starts(&seen)
+        let next = started(&seen)
             .into_iter()
             .find(|s| s.index == 1)
             .expect("the next track");

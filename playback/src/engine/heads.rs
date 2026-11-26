@@ -20,10 +20,9 @@ use std::time::{Duration, Instant};
 
 use jodel_output::mixer::Fader;
 
-use super::along::PendingAlong;
 use super::drop::drop_later;
-use super::jump::{JumpFill, PendingJump};
 use super::lanes::StemLanes;
+use super::moving::Move;
 use super::track::{OpenOutput, Progress, Switch, Track};
 use super::Engine;
 use crate::error::Error;
@@ -56,8 +55,8 @@ pub struct HeadFaders {
 
 /// What the engine keeps of one output: its target and what it offers (on
 /// a desk, its input's fader), the output open on it, its stems as parts,
-/// the track it plays and what moves it (a route switch, a move onto a map
-/// waiting for its frame, a jump), a count-in, its stalls.
+/// the track it plays and what moves it (a route switch, and a jump or a
+/// move onto a map: [`Move`]), a count-in, its stalls.
 pub(super) struct HeadState {
     /// Which head it is: 0 the first a player is given, 1 its second.
     pub(super) id: usize,
@@ -69,17 +68,13 @@ pub(super) struct HeadState {
     pub(super) lanes: StemLanes,
     /// The track being decoded.
     pub(super) playing: Option<Track>,
-    /// The playing track's move to another route, under way.
+    /// The playing track's move to another route, under way. It goes on
+    /// beside a [`Move`]: new settings reach the track while a jump waits
+    /// for its time (a jump that lands starts the switch again from there).
     pub(super) switch: Option<Switch>,
-    /// The settings changed while a switch was being handed over: route
-    /// the track again once it has been.
-    pub(super) reroute_later: bool,
-    /// A move onto a map waiting for its frame.
-    pub(super) along_at: Option<PendingAlong>,
-    /// A [`super::Command::Jump`] waiting for its time.
-    pub(super) pending_jump: Option<PendingJump>,
-    /// A reading of the playing track at a jump's target it does not hold.
-    pub(super) jump_fill: Option<Box<JumpFill>>,
+    /// The playing track's move to another place or onto a map: one at a
+    /// time.
+    pub(super) moving: Move,
     /// Output frames of a count-in's silence still to write, before the
     /// playing track's.
     pub(super) lead: u64,
@@ -97,10 +92,7 @@ impl HeadState {
             lanes,
             playing: None,
             switch: None,
-            reroute_later: false,
-            along_at: None,
-            pending_jump: None,
-            jump_fill: None,
+            moving: Move::Idle,
             lead: 0,
             stalled: None,
         }
@@ -158,6 +150,20 @@ impl Engine {
         Some(result)
     }
 
+    /// Runs `f` on the playing track of the head worked on, taken out of
+    /// the head meanwhile (`None` with none playing), and puts it back
+    /// whatever `f` returns. (`f` puts no other track there.)
+    pub(super) fn with_playing<R>(
+        &mut self,
+        f: impl FnOnce(&mut Engine, &mut Track) -> R,
+    ) -> Option<R> {
+        let mut track = self.head.playing.take()?;
+        let result = f(self, &mut track);
+        debug_assert!(self.head.playing.is_none(), "a track put in its place");
+        self.head.playing = Some(track);
+        Some(result)
+    }
+
     /// The parked head, on a desk.
     fn parked(&mut self) -> Option<&mut HeadState> {
         self.desk.as_deref_mut()
@@ -205,16 +211,18 @@ impl Engine {
             return Ok(false);
         }
         let turn = self.with_parked(|e| {
-            let mut track = e.head.playing.take().expect("checked");
-            let written = e.head.out.as_ref().map_or(0, |o| o.output.written());
-            let made = track.emitted;
-            let progress = e.step(&mut track);
-            let now = e.head.out.as_ref().map_or(0, |o| o.output.written());
-            let did = now != written || track.emitted != made;
-            e.head.playing = Some(track);
-            progress.map(|p| did && matches!(p, Progress::Busy))
+            e.with_playing(|e, track| {
+                let written = e.head.out.as_ref().map_or(0, |o| o.output.written());
+                let made = track.emitted;
+                let progress = e.step(track);
+                let now = e.head.out.as_ref().map_or(0, |o| o.output.written());
+                let did = now != written || track.emitted != made;
+                progress.map(|p| did && matches!(p, Progress::Busy))
+            })
         });
-        turn.unwrap_or(Ok(false)).map_err(|e| e.to_string())
+        turn.flatten()
+            .unwrap_or(Ok(false))
+            .map_err(|e| e.to_string())
     }
 
     /// The parked head's track goes (in the background), and its output
@@ -226,7 +234,7 @@ impl Engine {
         if let Some(track) = p.playing.take() {
             drop_later(track);
         }
-        p.along_at = None;
+        p.moving.set(Move::Idle);
         p.close();
     }
 
@@ -238,7 +246,7 @@ impl Engine {
             if let Some(track) = p.playing.take() {
                 drop_later(track);
             }
-            p.along_at = None;
+            p.moving.set(Move::Idle);
             if let Some(out) = p.out.as_mut() {
                 let _ = out.output.drain(Some(Duration::ZERO));
             }

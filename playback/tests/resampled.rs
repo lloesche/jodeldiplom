@@ -5,30 +5,22 @@
 mod common;
 
 use std::path::PathBuf;
-use std::time::Duration;
 
 use common::*;
 use jodel_output::{Capabilities, SampleFormat, SimClock, StreamFormat};
 use jodel_playback::rate::Resample;
 use jodel_playback::resample::output_frames;
-use jodel_playback::{Event, MemoryTarget, PlayState, Player, PlayerOptions};
+use jodel_playback::{Event, MemoryTarget, PlayState, Player};
 use SampleFormat::*;
 
 fn at_48k() -> Capabilities {
     caps(&[48_000], &[S24Packed])
 }
 
-fn options() -> PlayerOptions {
-    PlayerOptions {
-        position_interval: Duration::from_millis(1),
-        ..PlayerOptions::default()
-    }
-}
-
 fn play_all(caps: Capabilities, files: Vec<PathBuf>) -> (Vec<(StreamFormat, Vec<u8>)>, Vec<Event>) {
     let target = MemoryTarget::new(caps, SimClock::Instant);
     let captures = target.captures();
-    let (player, events) = Player::new(Box::new(target), options());
+    let (player, events) = Player::new(Box::new(target), player_options());
     player.load(files).unwrap();
     player.play(0).unwrap();
     let mut all = until_queue_end(&events);
@@ -37,16 +29,6 @@ fn play_all(caps: Capabilities, files: Vec<PathBuf>) -> (Vec<(StreamFormat, Vec<
     }));
     drop(player);
     (captured(&captures), all)
-}
-
-fn started(events: &[Event]) -> Vec<&jodel_playback::TrackStart> {
-    events
-        .iter()
-        .filter_map(|e| match e {
-            Event::TrackStarted(s) => Some(&**s),
-            _ => None,
-        })
-        .collect()
 }
 
 /// The position reported with each track end: (output frame, file frame,
@@ -130,7 +112,7 @@ fn seek_equals_a_fresh_resample_from_the_target() {
     let samples = tones(44_100, 30_000);
     write_wav(&wav, 44_100, 2, &samples);
     let (target, captures, gate) = GatedTarget::new(at_48k());
-    let (player, events) = Player::new(Box::new(target), options());
+    let (player, events) = Player::new(Box::new(target), player_options());
     player.load(vec![wav]).unwrap();
     let before = 7_000u64;
     gate.allow(before);

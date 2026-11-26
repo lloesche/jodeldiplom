@@ -23,32 +23,13 @@ fn settings(headroom: Headroom) -> Settings {
 
 fn options(fade: Duration) -> PlayerOptions {
     PlayerOptions {
-        position_interval: Duration::from_millis(1),
         switch_fade: fade,
-        ..PlayerOptions::default()
+        ..player_options()
     }
 }
 
 /// The default crossfade.
 const FADE: Duration = Duration::from_millis(20);
-
-/// The 24-bit samples of a stream the device took as `S24In32Low`.
-fn samples(bytes: &[u8]) -> Vec<i32> {
-    bytes
-        .chunks_exact(4)
-        .map(|b| (i32::from_le_bytes([b[0], b[1], b[2], b[3]]) << 8) >> 8)
-        .collect()
-}
-
-fn starts(events: &[Event]) -> Vec<&TrackStart> {
-    events
-        .iter()
-        .filter_map(|e| match e {
-            Event::TrackStarted(s) => Some(&**s),
-            _ => None,
-        })
-        .collect()
-}
 
 /// The whole of `all` (stereo) resampled from `from` to `to` Hz with
 /// `headroom`.
@@ -123,7 +104,7 @@ fn switches_at_one_rate_are_one_exact_stream() {
     drop(player);
     assert_unbroken(&seen);
 
-    let legs = starts(&seen);
+    let legs = started(&seen);
     let gains: Vec<Option<Headroom>> = legs
         .iter()
         .map(|s| s.route.resample.map(|r| r.headroom))
@@ -200,7 +181,7 @@ fn a_second_change_replaces_or_follows_the_first() {
     let last = |s: &TrackStart| s.route.resample.map(|r| r.headroom) == Some(Headroom(10));
     loop {
         let more = trickle_until_started(&gate, &events);
-        let done = starts(&more).last().is_some_and(|s| last(s));
+        let done = started(&more).last().is_some_and(|s| last(s));
         seen.extend(more);
         if done {
             break;
@@ -210,7 +191,7 @@ fn a_second_change_replaces_or_follows_the_first() {
     seen.extend(until_queue_end(&events));
     drop(player);
     assert_unbroken(&seen);
-    let legs = starts(&seen);
+    let legs = started(&seen);
     assert!(legs.last().is_some_and(|s| last(s)));
     let streams = captured(&captures);
     assert_eq!(streams.len(), 1);
@@ -235,7 +216,7 @@ fn a_crossfade_is_exact_outside_its_window() {
     seen.extend(until_queue_end(&events));
     drop(player);
     assert_unbroken(&seen);
-    let legs = starts(&seen);
+    let legs = started(&seen);
     assert_eq!(
         legs[1].route.resample.map(|r| r.headroom),
         Some(Headroom(30))
@@ -276,7 +257,7 @@ fn a_seek_during_a_switch_plays_the_new_route_from_there() {
     player.set_settings(settings(Headroom(30))).unwrap();
     player.seek(0.1).unwrap();
     let seen = collect_until(&events, |e| matches!(e, Event::Seeked { .. }));
-    let last = starts(&seen).last().copied().cloned().expect("a start");
+    let last = started(&seen).last().copied().cloned().expect("a start");
     assert_eq!(last.route.resample.map(|r| r.headroom), Some(Headroom(30)));
     assert_eq!(last.from_frame, 4_800);
     gate.allow_all();
@@ -323,7 +304,7 @@ fn a_switch_in_real_time_leaves_no_gap() {
     let seen = until_queue_end(&events);
     drop(player);
     assert!(!seen.iter().any(|e| matches!(e, Event::Error { .. })));
-    let legs = starts(&seen);
+    let legs = started(&seen);
     assert_eq!(legs.len(), 2);
     assert_eq!(
         legs[1].route.resample.map(|r| r.headroom),

@@ -21,10 +21,11 @@
 
 use std::sync::Arc;
 
-use crate::engine::track::{AlongMap, SegStart, Track};
-use crate::engine::warping::{Reading, Warping};
+use crate::engine::segment::SegStart;
+use crate::engine::track::{AlongMap, Track};
 use crate::resample::{output_frames, Requantizer, Resampler};
 use crate::stems::{Pull, Stem, StemRun, LANES, RATE as STEM_RATE, STEMS};
+use crate::warping::{Reading, Warping};
 
 /// Frames of stems taken from a run at a time.
 const PIECE: usize = 4096;
@@ -59,8 +60,8 @@ impl Line {
             .info
             .frames
             .filter(|_| along.is_none())
-            .and_then(|total| total.checked_sub(track.seg_frame))
-            .map(|left| track.seg_out + output_frames(rate, out, left));
+            .and_then(|total| total.checked_sub(track.line.seg_frame))
+            .map(|left| track.line.seg_out + output_frames(rate, out, left));
         let route = &track.route;
         let gain = route
             .resample
@@ -70,8 +71,8 @@ impl Line {
             begun: track.segment.begun,
             rate,
             out,
-            seg_out: track.seg_out,
-            seg_frame: track.seg_frame,
+            seg_out: track.line.seg_out,
+            seg_frame: track.line.seg_frame,
             end,
             gain,
             along,

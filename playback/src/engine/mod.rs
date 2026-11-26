@@ -40,17 +40,21 @@
 //!
 //! Here: the engine's state, its command loop and its turns of work, new
 //! settings, the cues and what is reported. Its other parts: `api` (the
-//! commands, events and the handle), `track` (a track as it plays, its
-//! cues and fades), `produce` (making a track's output and writing it),
-//! `switch` (moving a track to a new route), `play` (opening, starting,
-//! seeking, stopping and running into the next track), `jump`, `queue`,
+//! commands, events and the handle), `track` (a track as it plays and its
+//! fades), `segment` (where a track's segment is on the output: the one
+//! mapping of output frames to the track's), `cues` (what is said as it is
+//! heard, in order), `produce` (making a track's output and writing it),
+//! `moving` (what moves the playing track: a jump or a move onto a map,
+//! one at a time, and the second reading of it a move may need), `switch`
+//! (moving a track to a new route), `play` (opening, starting, seeking,
+//! stopping and running into the next track), `jump`, `queue`,
 //! `transition` (a transition compiled onto a desk), `heads` (a second
-//! output on the desk, for a transition's next track), `warping`, `along`
-//! (a head read along a time map), `key` and `shift` (the head on air in
-//! another key, on such a map), `lanes` (the stems as parts of an output
-//! of lanes), and `drop` (what is done with, dropped off this thread).
+//! output on the desk, for a transition's next track), `along` (a head
+//! read along a time map), `key` (the head on air in another key, on such
+//! a map), `policy` (which of these may start while another is under way,
+//! and why not), `lanes` (the stems as parts of an output of lanes), and
+//! `drop` (what is done with, dropped off this thread).
 
-use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
 use std::time::{Duration, Instant};
@@ -65,28 +69,31 @@ use crate::target::OutputTarget;
 
 mod along;
 mod api;
+mod cues;
 mod drop;
 mod heads;
 mod jump;
 mod key;
 mod lanes;
+mod moving;
 mod play;
+mod policy;
 mod produce;
 mod queue;
-mod shift;
+mod segment;
 mod switch;
 mod track;
 mod transition;
-mod warping;
 
 pub use api::{Command, Event, PlayState, Player, PlayerOptions, Position, TrackStart};
 pub use heads::{Head, HeadFaders};
 pub use jump::JumpAt;
 pub use lanes::MakeStems;
-pub use shift::{ratio_of, KEY_RANGE};
 
+use cues::{CueEvent, CueQueue};
 use drop::drop_later;
-use track::{preroll, Cue, CueEvent, Heard, Progress, StartAt, Track};
+use moving::Move;
+use track::{preroll, Heard, Progress, StartAt, Track};
 
 /// How long one output write may block, so commands stay responsive.
 const WRITE_WAIT: Duration = Duration::from_millis(10);
@@ -124,7 +131,7 @@ struct Engine {
     finishing: bool,
     /// The last track index played when the queue ran out.
     tail: Option<usize>,
-    cues: VecDeque<Cue>,
+    cues: CueQueue,
     heard: Option<Heard>,
     last_report: Option<(Instant, u64)>,
     /// [`PlayerOptions::switch_fade`].
@@ -141,7 +148,7 @@ struct Engine {
     /// [`Command::HoldAtEnd`].
     hold: bool,
     /// Where the tracks' segments get their ids.
-    segments: track::Segments,
+    segments: segment::Segments,
     /// [`Command::Key`]: the key asked for, and the file it is on (another
     /// picked resets it; none: it is for the one picked next).
     key: i8,
@@ -164,7 +171,7 @@ impl Engine {
             next: None,
             finishing: false,
             tail: None,
-            cues: VecDeque::new(),
+            cues: CueQueue::default(),
             heard: None,
             last_report: None,
             switch_fade: options.switch_fade,
@@ -173,7 +180,7 @@ impl Engine {
             jump_window: (0.0, 0.0),
             lead_in: 0.0,
             hold: false,
-            segments: track::Segments::default(),
+            segments: segment::Segments::default(),
             key: 0,
             key_song: None,
             silence: Vec::new(),
@@ -186,7 +193,7 @@ impl Engine {
     fn busy(&self) -> bool {
         let switching =
             self.head.playing.is_some() && self.head.switch.as_ref().is_some_and(|s| !s.spliced);
-        let reading = self.head.playing.is_some() && self.head.jump_fill.is_some();
+        let reading = self.head.playing.is_some() && self.head.moving.reading().is_some();
         switching || reading || (!self.paused && (self.head.playing.is_some() || self.finishing))
     }
 
@@ -256,8 +263,7 @@ impl Engine {
                 self.emit_queue();
                 if self.finishing && self.next.is_none() {
                     if let Some(last) = self.tail.take() {
-                        self.cues
-                            .retain(|c| !matches!(c.event, CueEvent::QueueEnded));
+                        self.cues.retract(0, |e| matches!(e, CueEvent::QueueEnded));
                         self.finishing = false;
                         let end = self.head.out.as_ref().map_or(0, |o| o.output.written());
                         if let Err(error) = self.after_end(last + 1, end) {
@@ -438,9 +444,7 @@ impl Engine {
         } else {
             &mut self.cues
         };
-        let at = at.max(queue.back().map_or(0, |c| c.at));
-        queue.push_back(Cue { at, event });
-        at
+        queue.push(at, event)
     }
 
     /// Drops everything decoded and queued, without closing the output.
@@ -458,10 +462,7 @@ impl Engine {
         self.head.playing = None;
         self.next = None;
         self.cancel_switch();
-        self.head.reroute_later = false;
-        self.head.along_at = None;
-        self.head.pending_jump = None;
-        self.drop_jump_fill();
+        self.head.moving.set(Move::Idle);
         self.head.lead = 0;
     }
 
@@ -471,8 +472,7 @@ impl Engine {
             Some(out) => out.clock.position(),
             None => return,
         };
-        while self.cues.front().is_some_and(|c| c.at <= position) {
-            let cue = self.cues.pop_front().expect("checked");
+        while let Some(cue) = self.cues.pop_due(position) {
             match cue.event {
                 CueEvent::Started(start, heard) => {
                     self.heard = Some(heard);

@@ -57,10 +57,8 @@ impl Engine {
     /// under way (they count on the frames written), off the plain route,
     /// and with nothing to write again.
     pub(super) fn rewrite_floor(&self, track: &Track) -> Option<u64> {
-        let busy = self.head.switch.is_some()
-            || self.transition.is_some()
-            || self.head.pending_jump.is_some()
-            || self.head.jump_fill.is_some();
+        let busy =
+            self.head.switch.is_some() || self.transition.is_some() || self.head.moving.jumping();
         if self.offline || busy || !track.plain() {
             return None;
         }
@@ -73,7 +71,7 @@ impl Engine {
             .position()
             .max(written.saturating_sub(held))
             .max(track.rewritable_from)
-            .max(track.seg_out);
+            .max(track.line.seg_out);
         (floor < written).then_some(floor)
     }
 

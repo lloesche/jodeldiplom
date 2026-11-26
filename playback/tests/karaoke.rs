@@ -6,7 +6,6 @@
 mod common;
 
 use std::path::PathBuf;
-use std::time::Duration;
 
 use common::lanes::quarter;
 use common::*;
@@ -16,21 +15,6 @@ use jodel_playback::stems::Stem;
 use jodel_playback::{Event, MakeStems, MemoryTarget, PlayState, Player, PlayerOptions, StemDesk};
 
 const RATE: u32 = 44_100;
-
-fn options() -> PlayerOptions {
-    PlayerOptions {
-        position_interval: Duration::from_millis(1),
-        ..PlayerOptions::default()
-    }
-}
-
-/// The 24-bit samples of a stream the device took as `S24In32Low`.
-fn samples(bytes: &[u8]) -> Vec<i32> {
-    bytes
-        .chunks_exact(4)
-        .map(|b| (i32::from_le_bytes([b[0], b[1], b[2], b[3]]) << 8) >> 8)
-        .collect()
-}
 
 /// `n` tracks of a second each, as WAV ramps.
 fn tracks(dir: &TempDir, n: usize) -> (Vec<PathBuf>, Vec<Vec<i32>>) {
@@ -48,7 +32,7 @@ fn a_count_in_is_silence_then_the_track_heard_from_its_end() {
     let dir = temp_dir("karaoke-lead");
     let (paths, files) = tracks(&dir, 1);
     let (target, captures, gate) = GatedTarget::new(caps(&[RATE], &[SampleFormat::S24In32Low]));
-    let (player, events) = Player::new(Box::new(target), options());
+    let (player, events) = Player::new(Box::new(target), player_options());
     player.load(paths).unwrap();
     // Three quarters of a second of silence, a quarter of it heard first.
     let lead = (0.75 * f64::from(RATE)) as u64;
@@ -109,7 +93,7 @@ fn a_count_in_into_the_voice_muted_on_the_desk_plays_the_band_after_it() {
         separator: Some(quarter),
         // The parts waited for: there from the track's first frame.
         offline: true,
-        ..options()
+        ..player_options()
     };
     let (player, events) = Player::new(Box::new(target), options);
     player.make_stems(MakeStems::Separate).unwrap();
@@ -174,7 +158,7 @@ fn in_real_time_a_count_in_has_the_band_ready_at_its_end() {
     desk.stem(Stem::Vocals).set_mute(true);
     let options = PlayerOptions {
         separator: Some(quarter),
-        ..options()
+        ..player_options()
     };
     let (player, events) = Player::new(head.target, options);
     player.make_stems(MakeStems::Separate).unwrap();
@@ -235,7 +219,7 @@ fn holding_stops_after_a_track_and_names_the_next() {
     let dir = temp_dir("karaoke-hold");
     let (paths, files) = tracks(&dir, 3);
     let (target, captures, gate) = GatedTarget::new(caps(&[RATE], &[SampleFormat::S24In32Low]));
-    let (player, events) = Player::new(Box::new(target), options());
+    let (player, events) = Player::new(Box::new(target), player_options());
     player.load(paths).unwrap();
     player.hold_at_end(true).unwrap();
     gate.allow_all();

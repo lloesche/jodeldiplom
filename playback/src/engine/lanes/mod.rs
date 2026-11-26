@@ -65,7 +65,8 @@ use crate::stem_file::StemStore;
 use crate::stems::{SeparatorSource, StemRun, Unkept, RATE as STEM_RATE, STEMS};
 
 use super::api::Event;
-use super::track::{frames_of, Progress, SegStart, Track};
+use super::segment::SegStart;
+use super::track::{frames_of, Progress, Track};
 use super::{Engine, PREROLL_RESAMPLE, WRITE_WAIT};
 use buffer::Buffer;
 use control::{Plan, State, Supply, Timeline};
@@ -107,9 +108,10 @@ pub(super) enum Next<'a> {
     Unable,
 }
 
-/// What the writer is about to write, for [`StemLanes::before`].
-pub(super) struct Want<'a> {
-    pub(super) track: &'a Track,
+/// What a write of lanes asks of the stem lanes, whatever track it writes
+/// ([`Engine::lane_ask`]).
+#[derive(Clone, Copy)]
+pub(super) struct Ask {
     /// The output frame written next, and the frames of main to go.
     pub(super) from: u64,
     pub(super) frames: usize,
@@ -119,18 +121,24 @@ pub(super) struct Want<'a> {
     /// What a run keeps behind the frame it hands on next, and takes ahead
     /// of it (at the separator's rate).
     pub(super) keep: (u64, u64),
-    pub(super) next: Next<'a>,
     /// The track may have parts now: its plain route, or along a map.
     pub(super) able: bool,
     /// Frames of parts made past what is written at the least: a mixer's
     /// switch's length, or the longest crossfade main makes at a seam, so
     /// a seam finds what would have played next.
     pub(super) margin: u64,
-    /// The output frame after main's last, once all of it is made.
-    pub(super) main_end: Option<u64>,
     /// The first output frame the track may write again once its parts are
     /// made ([`Engine::rewrite_floor`]; `from` when none may be).
     pub(super) floor: u64,
+}
+
+/// What the writer is about to write, for [`StemLanes::before`]: an
+/// [`Ask`] of `track`, which runs into `next`.
+#[derive(Clone, Copy)]
+pub(super) struct Want<'a> {
+    pub(super) ask: Ask,
+    pub(super) track: &'a Track,
+    pub(super) next: Next<'a>,
 }
 
 /// What [`StemLanes::before`] found.
@@ -311,7 +319,7 @@ impl StemLanes {
             return Some(self.unkept_along(want.track));
         }
         let off = self.is_off(want.track);
-        self.unkept().filter(|_| want.able && !off)
+        self.unkept().filter(|_| want.ask.able && !off)
     }
 
     /// Where a run for `track` read along a map gets the stems not kept.
@@ -329,11 +337,11 @@ impl StemLanes {
     /// and what the write needs of them made (waited for offline, for a
     /// moment).
     pub(super) fn before(&mut self, want: &Want) -> Followed {
-        let (track, from) = (want.track, want.from);
+        let (track, from) = (want.track, want.ask.from);
         if from < self.timeline.written() {
             self.timeline.given_back(from);
         }
-        let behind = from.saturating_sub(want.back);
+        let behind = from.saturating_sub(want.ask.back);
         self.timeline.trim(behind);
         self.buffer.trim(behind);
         let line = Line::of(track);
@@ -359,7 +367,7 @@ impl StemLanes {
         }
         // What this write needs; on a device nothing while there are none
         // (they could not be said to be there in it anyway).
-        let need = from + want.frames as u64 + want.margin;
+        let need = from + want.ask.frames as u64 + want.ask.margin;
         let absent = !self.offline && self.timeline.state(from) == State::Absent;
         let target = if absent { 0 } else { need };
         match self.make_to(want, target, self.budget()) {
@@ -381,8 +389,8 @@ impl StemLanes {
         } else if !done {
             // Made a seam's length past what is written, so the parts are
             // there with what follows them.
-            Some(there.saturating_sub(from + want.margin))
-        } else if following == Following::Coming && there >= from + want.frames as u64 {
+            Some(there.saturating_sub(from + want.ask.margin))
+        } else if following == Following::Coming && there >= from + want.ask.frames as u64 {
             Some(0)
         } else {
             None
@@ -423,22 +431,22 @@ impl StemLanes {
         (self.stream.as_ref().is_some_and(|s| s.done) && end <= to).then_some(end)
     }
 
-    /// The parts there from `want.from` on, for the control word.
+    /// The parts there from `want.ask.from` on, for the control word.
     fn supply(&self, want: &Want, through: bool) -> Supply {
         Supply {
-            there: self.buffer.there(want.from),
-            coming: self.stream.is_some() && want.from >= want.track.seg_out,
+            there: self.buffer.there(want.ask.from),
+            coming: self.stream.is_some() && want.ask.from >= want.track.line.seg_out,
             hold: if self.offline {
                 0
             } else {
                 (AHEAD * f64::from(self.rate)).round() as u64
             },
             through,
-            main_end: want.main_end,
+            main_end: want.track.main_end(),
         }
     }
 
-    /// Starts the parts on `line` from output frame `want.from`: from
+    /// Starts the parts on `line` from output frame `want.ask.from`: from
     /// silence on its first frame for a new segment, else a resampler's
     /// run-up before it, into what is there (crossfaded as main is, for a
     /// joined one); always on an output frame a run frame falls on. When
@@ -452,8 +460,10 @@ impl StemLanes {
         let track = want.track;
         let from = self
             .timeline
-            .quiet_since(want.from)
-            .map_or(want.from, |quiet| quiet.max(want.floor).min(want.from));
+            .quiet_since(want.ask.from)
+            .map_or(want.ask.from, |quiet| {
+                quiet.max(want.ask.floor).min(want.ask.from)
+            });
         let promised = self.timeline.promised(from);
         let cold = line.begun == SegStart::Cold && from <= line.seg_out;
         let fade = match line.begun {
@@ -472,7 +482,7 @@ impl StemLanes {
         // back: the new ones start no later than they ended, so the frames
         // kept stay one stretch (a jump back there finds them).
         let end = self.buffer.end();
-        if !self.buffer.is_empty() && end < from && end + want.back >= from {
+        if !self.buffer.is_empty() && end < from && end + want.ask.back >= from {
             x = x.min(i128::from(end));
         }
         let path = &track.info.path;
@@ -490,7 +500,7 @@ impl StemLanes {
             if r < low {
                 (o, r) = grid.first_at_run(low);
             }
-            let reach = i128::from(run.kept_end() + want.keep.1.max(u64::from(STEM_RATE)));
+            let reach = i128::from(run.kept_end() + want.ask.keep.1.max(u64::from(STEM_RATE)));
             (o <= here && r <= reach).then_some((o, r))
         };
         let (mut run, (o, r)) = self.take_run(usable).unwrap_or_else(|| {
@@ -501,7 +511,7 @@ impl StemLanes {
             (run, if r < 0 { grid.first_at_run(0) } else { (o, r) })
         });
         run.seek(r as u64);
-        run.set_keep(want.keep.0, want.keep.1);
+        run.set_keep(want.ask.keep.0, want.ask.keep.1);
         let channels = usize::from(track.route.channels);
         self.stream = Some(Stream::new(line, o as i64, channels));
         self.run = Some(run);
@@ -543,7 +553,7 @@ impl StemLanes {
         let (Some(stream), Some(run)) = (self.stream.as_mut(), self.run.as_mut()) else {
             return Ok(making);
         };
-        run.set_keep(want.keep.0, want.keep.1);
+        run.set_keep(want.ask.keep.0, want.ask.keep.1);
         let buffer = &mut self.buffer;
         let (mut wait, mut left) = (wait, pieces);
         while buffer.end() < target && left > 0 {
@@ -653,43 +663,18 @@ impl StemLanes {
     }
 }
 
-/// What a write of lanes knows besides the track and the next one, to make
-/// its [`Want`].
-#[derive(Clone, Copy)]
-pub(super) struct Ask {
-    from: u64,
-    frames: usize,
-    back: u64,
-    keep: (u64, u64),
-    able: bool,
-    margin: u64,
-    floor: u64,
-}
-
 impl Ask {
-    pub(super) fn want<'a>(&self, track: &'a Track, next: Next<'a>) -> Want<'a> {
+    /// The ask of `track`, which runs into `next`.
+    pub(super) fn want<'a>(self, track: &'a Track, next: Next<'a>) -> Want<'a> {
         Want {
+            ask: self,
             track,
-            from: self.from,
-            frames: self.frames,
-            back: self.back,
-            keep: self.keep,
             next,
-            able: self.able,
-            margin: self.margin,
-            main_end: track.made_all().then_some(track.seg_out + track.emitted),
-            floor: self.floor,
         }
     }
 }
 
 impl Engine {
-    /// Whether `track` may have parts now: on its plain route, or read
-    /// along a map (its main is its parts' sum).
-    pub(super) fn parts_able(&self, track: &Track) -> bool {
-        track.plain() || track.along.is_some()
-    }
-
     /// What a write of `frames` of `track` from output frame `from` asks
     /// of the stem lanes.
     pub(super) fn lane_ask(&self, track: &Track, from: u64, frames: usize) -> Ask {
@@ -714,7 +699,8 @@ impl Engine {
             frames,
             back: ring,
             keep,
-            able: self.parts_able(track),
+            // Read along a map, its main is its parts' sum.
+            able: track.as_heard(),
             margin: self.lane_margin(rate),
             floor,
         }
@@ -734,7 +720,7 @@ impl Engine {
         if self.head.out.as_ref().is_none_or(|o| o.output.lanes() <= 1) {
             return;
         }
-        let from = track.seg_out;
+        let from = track.line.seg_out;
         let ask = self.lane_ask(track, from, 0);
         let next = next_of(&self.queue, track, self.hold, self.transition.is_none());
         let failed = self.head.lanes.before(&ask.want(track, next)).failed;
@@ -776,8 +762,8 @@ impl Engine {
         let mut frames = ((limit - track.out_at) / channels).min(LANE_CHUNK);
         // The segment's start ends a write, so the parts may be there from
         // its very first frame.
-        if from < track.seg_out {
-            frames = frames.min((track.seg_out - from) as usize);
+        if from < track.line.seg_out {
+            frames = frames.min((track.line.seg_out - from) as usize);
         }
         let ask = self.lane_ask(track, from, frames);
         let (able, margin) = (ask.able, ask.margin);
@@ -804,14 +790,14 @@ impl Engine {
         // before it anyway), so the parts may run to it.
         let parts_end = self.head.lanes.near_end(from + frames as u64 + margin);
         while let Some(end) = parts_end.filter(|_| able && !track.made_all()) {
-            if track.seg_out + track.emitted > end + margin {
+            if track.line.seg_out + track.emitted > end + margin {
                 break;
             }
             if let Progress::Complete = self.produce(track, Duration::ZERO)? {
                 break;
             }
         }
-        followed.supply.main_end = ask.want(track, Next::Nothing).main_end;
+        followed.supply.main_end = track.main_end();
         let frames = followed.limit.map_or(frames, |l| frames.min(l as usize));
         if frames == 0 {
             return Ok(0);

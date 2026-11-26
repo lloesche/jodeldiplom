@@ -5,21 +5,13 @@ mod common;
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
 
 use common::*;
 use jodel_output::{
     Capabilities, Error as OutputError, OpenRequest, Output, SampleFormat, SimClock, StreamFormat,
 };
-use jodel_playback::{Error, Event, MemoryTarget, OutputTarget, Player, PlayerOptions};
+use jodel_playback::{Error, Event, MemoryTarget, OutputTarget, Player};
 use SampleFormat::*;
-
-fn options() -> PlayerOptions {
-    PlayerOptions {
-        position_interval: Duration::from_millis(1),
-        ..PlayerOptions::default()
-    }
-}
 
 /// A file at the target's rate plays as it is, a straight copy.
 #[test]
@@ -27,7 +19,7 @@ fn the_file_plays_as_it_is_at_the_targets_rate() {
     for (name, rate) in [(F44, 44_100u32), (F48, 48_000)] {
         let target = MemoryTarget::new(caps(&[rate], &[S24In32Low]), SimClock::Instant);
         let captures = target.captures();
-        let (player, events) = Player::new(Box::new(target), options());
+        let (player, events) = Player::new(Box::new(target), player_options());
         player.load(vec![fixture(name)]).unwrap();
         player.play(0).unwrap();
         let seen = until_queue_end(&events);
@@ -77,7 +69,7 @@ fn a_busy_device_fails_the_open() {
         inner: MemoryTarget::new(caps(&[44_100], &[S24In32Low]), SimClock::Instant),
         opens: opens.clone(),
     };
-    let (player, events) = Player::new(Box::new(target), options());
+    let (player, events) = Player::new(Box::new(target), player_options());
     player.load(vec![fixture(F44)]).unwrap();
     player.play(0).unwrap();
     let seen = collect_until(&events, |e| matches!(e, Event::Error { .. }));

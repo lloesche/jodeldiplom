@@ -34,17 +34,20 @@ use std::time::Duration;
 
 use jodel_output::mixer::{Automation, Fader, GainCurve, Role};
 
-use super::api::{Event, TrackStart};
+use super::api::Event;
+use super::cues::CueEvent;
 use super::drop::drop_later;
-use super::track::{
-    frames_of, rescale, AlongMap, Back, Cue, CueEvent, HeardFrom, HeardWarp, Track,
-};
+use super::moving::Move;
+use super::policy::{Action, Refusal};
+use super::track::{frames_of, AlongMap, Back, HeardFrom, HeardWarp, Track};
 use super::Engine;
 use crate::error::Error;
 use crate::source::Source;
-use crate::stems::{Stem, LANES};
-use crate::transition::{Envelope, Side, TransitionPlan, TransitionState, NEXT_LEAD};
+use crate::transition::{TransitionPlan, TransitionState, NEXT_LEAD};
 use crate::warp::{Glide, TimeMap};
+use curves::{compile, held, Curves};
+
+mod curves;
 
 /// Seconds before the window that the tracks start to be prepared.
 const LEAD: f64 = 4.0;
@@ -52,13 +55,6 @@ const LEAD: f64 = 4.0;
 /// How long a track takes to fade out when a mix is cut short (`Next`, or
 /// called off in its window).
 const CUT: Duration = Duration::from_millis(30);
-
-/// Seconds of output between the points of a curve that the plan's
-/// envelopes do not give exactly (through a glide, or a mean of lanes).
-const STEP: f64 = 0.01;
-
-/// A share of the window just before a point of an envelope.
-const EPSILON: f64 = 1e-12;
 
 /// Where a transition is.
 enum Phase {
@@ -85,33 +81,6 @@ struct Prepared {
     /// `Next` cut the mix short, A ending at this stream frame, its fade
     /// out's end: it hands over there.
     cut: Option<u64>,
-}
-
-/// A head's automation: main's curve and each part's, in [`LANES`]' order.
-struct Curves {
-    main: GainCurve,
-    parts: Vec<GainCurve>,
-}
-
-impl Curves {
-    /// The automation of these curves.
-    fn automation(&self) -> Automation {
-        self.with(Automation::new(), |c| c.clone())
-    }
-
-    /// Each curve made by `curve`, as an automation on top of `base`.
-    fn with(&self, base: Automation, curve: impl Fn(&GainCurve) -> GainCurve) -> Automation {
-        let main = base.main(curve(&self.main));
-        self.parts
-            .iter()
-            .enumerate()
-            .fold(main, |a, (k, c)| a.part(k, curve(c)))
-    }
-}
-
-/// A gain held from stream frame `frame` on.
-fn held(frame: u64, gain: f64) -> GainCurve {
-    GainCurve::new(&[(frame, gain)]).expect("one finite point")
 }
 
 /// A transition under way.
@@ -150,111 +119,7 @@ impl Transition {
 /// The output frame at which A's time `seconds` is heard, on its timeline.
 fn output_frame_of(track: &Track, seconds: f64) -> u64 {
     let frame = (seconds * f64::from(track.info.rate)).round().max(0.0) as u64;
-    let since = frame.saturating_sub(track.seg_frame);
-    track.seg_out + rescale(since, track.route.input_rate, track.route.output_rate)
-}
-
-/// A's time at the output frame being written.
-fn seconds_written(track: &Track, written: u64) -> f64 {
-    let since = written.saturating_sub(track.seg_out);
-    (track.seg_frame as f64
-        + since as f64 * f64::from(track.route.input_rate) / f64::from(track.route.output_rate))
-        / f64::from(track.info.rate.max(1))
-}
-
-/// The plan's lanes as each head's automation (A's, then B's), at `rate`:
-/// with the window from A's stream frame `w0`, and B's frame 0 on A's
-/// `origin`. Each part's curve is its stem's envelope at A's time heard on
-/// each frame (through the glide's inverse, A's time along the output's),
-/// main's their mean; before the window A is whole and B silent.
-fn compile(plan: &TransitionPlan, glide: &Glide, w0: u64, origin: u64, rate: u32) -> [Curves; 2] {
-    let rate = f64::from(rate);
-    // A's stream frame (fractional) where it is at its time `a`.
-    let frame_of = |a: f64| w0 as f64 + (glide.inverse(a) - plan.start) * rate;
-    let head = |side: Side, before: f64, shift: u64| {
-        let lanes = LANES.map(|s: Stem| plan.lane(side, s));
-        let lane_curve = |envelopes: &[&Envelope]| {
-            let differ = envelopes.windows(2).any(|w| w[0] != w[1]);
-            curve(
-                plan,
-                envelopes,
-                before,
-                !glide.is_identity() || differ,
-                |a| (frame_of(a) - shift as f64).round().max(0.0) as u64,
-            )
-        };
-        Curves {
-            main: lane_curve(&lanes),
-            parts: lanes.iter().map(|&e| lane_curve(&[e])).collect(),
-        }
-    };
-    [head(Side::From, 1.0, 0), head(Side::Into, 0.0, origin)]
-}
-
-/// The curve of the mean of `envelopes` over the window and after it (at
-/// `before` before it), on the frames `frame_of` puts A's times on: a point
-/// on each of theirs (two on a cut), and every [`STEP`] between when
-/// `dense`.
-fn curve(
-    plan: &TransitionPlan,
-    envelopes: &[&Envelope],
-    before: f64,
-    dense: bool,
-    frame_of: impl Fn(f64) -> u64,
-) -> GainCurve {
-    let mut shares: Vec<f64> = envelopes
-        .iter()
-        .flat_map(|e| e.points.iter().map(|p| p.at))
-        .filter(|&s| s > 0.0)
-        .collect();
-    let last = shares.iter().copied().fold(0.0, f64::max);
-    if dense && plan.length > 0.0 {
-        let step = STEP / plan.length;
-        shares.extend((1..).map(|k| k as f64 * step).take_while(|&s| s < last));
-    }
-    shares.sort_by(f64::total_cmp);
-    shares.dedup();
-    // The mean just before `share` and just after it.
-    let mean = |share: f64| {
-        let n = envelopes.len().max(1) as f64;
-        let (left, right) = envelopes
-            .iter()
-            .map(|e| around(e, share))
-            .fold((0.0, 0.0), |(l, r), (a, b)| (l + a, r + b));
-        (left / n, right / n)
-    };
-    let at = |share: f64| frame_of(plan.start + share * plan.length);
-    // Two points on a frame are a cut (smoothed): only where the gain cuts.
-    let near = |x: f64, y: f64| (x - y).abs() <= 1e-9;
-    let mut points = vec![(at(0.0), before)];
-    let (_, first) = mean(0.0);
-    if !near(first, before) {
-        points.push((at(0.0), first));
-    }
-    for share in shares {
-        let (left, right) = mean(share);
-        if !near(left, right) {
-            points.push((at(share), left));
-        }
-        points.push((at(share), right));
-    }
-    GainCurve::new(&points).expect("frames in order, gains finite")
-}
-
-/// `envelope`'s gain just before `share` and just after it: two on a cut
-/// there, else the same.
-fn around(envelope: &Envelope, share: f64) -> (f64, f64) {
-    let at = envelope.gain(share);
-    let points = &envelope.points;
-    if !points.iter().any(|p| p.at == share && p.cut) {
-        return (at, at);
-    }
-    let after = points
-        .iter()
-        .rev()
-        .find(|p| p.at == share)
-        .map_or(at, |p| p.gain);
-    (envelope.gain(share - EPSILON), after)
+    track.line.out_at(frame)
 }
 
 impl Engine {
@@ -272,24 +137,18 @@ impl Engine {
         }
         let playing = self.head.playing.as_ref().map(|t| t.index);
         let why = if self.desk.is_none() {
-            Some("needs a desk")
+            Some("needs a desk".into())
         } else if plan.into != plan.from + 1 || plan.into >= self.queue.len() {
-            Some("there is no next track to go into")
+            Some("there is no next track to go into".into())
         } else if plan.length.is_nan() || plan.length <= 0.0 {
-            Some("the window is empty")
+            Some("the window is empty".into())
         } else if playing != Some(plan.from) {
-            Some("that track is not the one playing")
-        } else if self.head_shifted() {
-            Some("the key is shifted")
-        } else if self.along_under_way() {
-            Some("a track is read along a time map")
+            Some("that track is not the one playing".into())
         } else {
-            None
+            self.allows(Action::Transition).err().map(Refusal::reason)
         };
-        if let Some(why) = why {
-            return self.emit(Event::Transition(TransitionState::Cancelled {
-                reason: why.into(),
-            }));
+        if let Some(reason) = why {
+            return self.emit(Event::Transition(TransitionState::Cancelled { reason }));
         }
         // B on A's beats as they are heard: along A's output's time, which
         // runs as A's up to the window and A along the glide in it.
@@ -323,7 +182,7 @@ impl Engine {
         let Some(t) = self.forget_transition(reason) else {
             return;
         };
-        let along = self.head.along_at.is_some()
+        let along = matches!(self.head.moving, Move::MapAt(_))
             || self
                 .head
                 .playing
@@ -382,7 +241,7 @@ impl Engine {
     /// The cues a transition queued to be said as they are heard go.
     fn drop_transition_cues(&mut self) {
         self.cues
-            .retain(|c| !matches!(c.event, CueEvent::Transition(_)));
+            .retract(0, |e| matches!(e, CueEvent::Transition(_)));
     }
 
     /// Where each head's input is mixed next, on its stream frames (where
@@ -498,12 +357,6 @@ impl Engine {
             .is_some_and(|t| t.prepared().is_some())
     }
 
-    /// Queues a cue at `at`, or after the last one queued.
-    fn queue_cue(&mut self, at: u64, event: CueEvent) {
-        let at = at.max(self.cues.back().map_or(0, |c| c.at));
-        self.cues.push_back(Cue { at, event });
-    }
-
     /// The sample index the playing `track` (A) writes no further than
     /// while its transition is prepared or mixed: its window's end.
     pub(super) fn transition_limit(&self, track: &Track) -> Option<usize> {
@@ -534,7 +387,9 @@ impl Engine {
                 let Some(a) = &self.head.playing else {
                     return Ok(false);
                 };
-                let now = seconds_written(a, written);
+                // A's time at the frame being written (its first's
+                // behind a count-in).
+                let now = a.line.seconds_at(written.max(a.line.seg_out));
                 if now > start + 0.05 {
                     self.drop_transition(Some("the window has already passed"));
                 } else if now >= start - LEAD {
@@ -559,7 +414,7 @@ impl Engine {
                         output_frame: w0,
                         origin,
                     };
-                    self.queue_cue(w0, CueEvent::Transition(started));
+                    self.cues.push(w0, CueEvent::Transition(started));
                     if let Some(p) = self.transition.as_mut().and_then(Transition::prepared_mut) {
                         p.mixing = true;
                     }
@@ -603,7 +458,8 @@ impl Engine {
             return Err("the next track's head takes no stems".into());
         }
         let a = self.head.playing.as_ref().ok_or("nothing is playing")?;
-        if let Some(why) = self.along_refusal(a).filter(|_| !glide.is_identity()) {
+        let why = self.allows(Action::Map).err().map(Refusal::reason);
+        if let Some(why) = why.filter(|_| !glide.is_identity()) {
             return Err(format!("the playing track cannot change its tempo: {why}"));
         }
         let w0 = output_frame_of(a, plan.start);
@@ -640,15 +496,15 @@ impl Engine {
             out_rate: rate,
         };
         self.with_parked(|e| {
-            let mut b = e.head.playing.take().expect("just opened");
-            // B starts in its own key (a key on it is the app's to ask).
-            let map = AlongMap {
-                heard: Arc::new(heard),
-                tempo: plan.tempo,
-                key: 0,
-            };
-            e.start_along(&mut b, map, 0, heard_from);
-            e.head.playing = Some(b);
+            e.with_playing(|e, b| {
+                // B starts in its own key (a key on it is the app's to ask).
+                let map = AlongMap {
+                    heard: Arc::new(heard),
+                    tempo: plan.tempo,
+                    key: 0,
+                };
+                e.start_along(b, map, 0, heard_from);
+            })
         });
         let (fa, fb) = self.faders().expect("on a desk");
         let (fa, fb) = (fa.clone(), fb.clone());
@@ -703,51 +559,36 @@ impl Engine {
         }
         // A's cues past the end are not heard; it ends there.
         self.cues
-            .retain(|c| c.at <= end || !matches!(c.event, CueEvent::Clipped { .. }));
-        self.queue_cue(end, CueEvent::Ended { index: from });
+            .retract(end + 1, |e| matches!(e, CueEvent::Clipped { .. }));
+        self.cues.push(end, CueEvent::Ended { index: from });
         self.cancel_switch();
-        self.head.along_at = None;
-        self.head.pending_jump = None;
-        self.drop_jump_fill();
+        self.head.moving.set(Move::Idle);
         drop_later(a);
         self.swap_heads();
         // B's clock from here: the cues, and what is heard until B is.
-        for cue in &mut self.cues {
-            cue.at = cue.at.saturating_sub(origin);
-        }
+        self.cues.rebase(origin);
         self.heard = self.heard.as_ref().map(|h| h.rebased(origin));
         self.last_report = None;
-        let Some(mut b) = self.head.playing.take() else {
-            return;
-        };
         let end = end.saturating_sub(origin);
-        b.pending = false;
-        b.held.retain(|c| c.at >= end);
-        // On air: its clock is its own now, A's no longer.
-        if let Some(along) = b.along.as_mut() {
-            along.heard_from = None;
-        }
-        let heard = b.heard();
-        let start = TrackStart {
-            index: b.index,
-            head: self.head.id,
-            info: b.info.clone(),
-            route: b.route.clone(),
-            output: self.head.out.as_ref().expect("B's output").info.clone(),
-            device: self.head.target.name(),
-            output_frame: end,
-            from_frame: heard.frame_at(end),
-        };
-        self.queue_cue(end, CueEvent::Started(Box::new(start), heard));
-        // Its way back onto its own route is asked for once it is written
-        // past where it starts (it may be written behind A's end): a switch
-        // met before then would take the place of that start.
-        let on_air = self.cues.back().map_or(end, |c| c.at);
-        if let Some(along) = b.along.as_mut() {
-            along.back = Back::Retry(on_air + 1);
-        }
-        self.release(&mut b);
-        self.head.playing = Some(b);
+        self.with_playing(|e, b| {
+            b.pending = false;
+            b.held.drop_before(end);
+            // On air: its clock is its own now, A's no longer.
+            if let Some(along) = b.along.as_mut() {
+                along.heard_from = None;
+            }
+            let started = e.started_from(b, end);
+            e.cues.push(end, started);
+            // Its way back onto its own route is asked for once it is
+            // written past where it starts (it may be written behind A's
+            // end): a switch met before then would take the place of that
+            // start.
+            let on_air = e.cues.last_at().unwrap_or(end);
+            if let Some(along) = b.along.as_mut() {
+                along.back = Back::Retry(on_air + 1);
+            }
+            e.release(b);
+        });
     }
 
     /// B is back on its own route (or ended): its automation goes (it is at
@@ -761,7 +602,8 @@ impl Engine {
             fader.clear_automation();
         }
         if matches!(t.phase, Phase::Settling { cut: false }) {
-            self.queue_cue(written, CueEvent::Transition(TransitionState::Finished));
+            self.cues
+                .push(written, CueEvent::Transition(TransitionState::Finished));
         }
         self.reroute();
     }
@@ -809,9 +651,7 @@ impl Engine {
             });
             if let Some(b) = self.parked_track() {
                 b.index = into;
-                for cue in &mut b.held {
-                    cue.event.reindex(map);
-                }
+                b.held.reindex(map);
             }
         }
     }

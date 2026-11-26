@@ -1,10 +1,7 @@
 //! A track as the engine plays it ([`Track`]): its source, route and
 //! buffers; what is heard of it ([`Heard`]); a route switch under way
-//! ([`Switch`]); the cues that wait for the output clock ([`Cue`]); and the
-//! small helpers on frames and fades they share.
+//! ([`Switch`]); and the small helpers on frames and fades they share.
 
-use std::collections::VecDeque;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -14,43 +11,12 @@ use crate::error::Error;
 use crate::rate::Route;
 use crate::resample::Resampler;
 use crate::source::{Source, TrackInfo};
-use crate::transition::{TempoMode, TransitionState};
+use crate::transition::TempoMode;
 use crate::warp::TimeMap;
 
-use super::api::TrackStart;
+use super::cues::CueQueue;
+use super::segment::{SegStart, Segment, SegmentLine, Segments};
 use super::PREROLL_RESAMPLE;
-
-/// How a track's segment begins on the output (what its stem parts start
-/// like, [`super::lanes`]).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum SegStart {
-    /// From silence at its frame: a new track, a seek (main's resampler
-    /// starts there too).
-    Cold,
-    /// Out of what played before, main crossfaded from it over `fade`
-    /// frames: a jump, a route met in a switch, a move onto a map
-    /// (over none for a transition's next track, read along its map from
-    /// its first frame).
-    Joined { fade: usize },
-}
-
-/// A segment of a track's output: output frame `seg_out` is track frame
-/// `seg_frame` (in [`Track`]), its id, and how it began.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub(super) struct Segment {
-    pub(super) id: u64,
-    pub(super) begun: SegStart,
-}
-
-/// An engine's count of the segments its tracks began, for their ids.
-#[derive(Clone, Debug, Default)]
-pub(super) struct Segments(Arc<AtomicU64>);
-
-impl Segments {
-    fn next(&self) -> u64 {
-        self.0.fetch_add(1, Ordering::Relaxed)
-    }
-}
 
 /// Where in a track playback starts.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -69,10 +35,8 @@ pub(super) struct Heard {
     pub(super) index: usize,
     pub(super) info: Arc<TrackInfo>,
     pub(super) route: Route,
-    /// The output frame of the segment's first frame.
-    pub(super) seg_out: u64,
-    /// The track frame at the segment's start.
-    pub(super) seg_frame: u64,
+    /// Where its segment is on the output.
+    pub(super) line: SegmentLine,
     /// The track is read along a time map (a head's, a transition's
     /// tracks'): its position comes from that, not from a straight line.
     pub(super) warp: Option<Arc<HeardWarp>>,
@@ -182,27 +146,6 @@ impl HeardWarp {
     }
 }
 
-/// `frames` at `from` Hz in frames at `to` Hz, rounded down.
-pub(super) fn rescale(frames: u64, from: u32, to: u32) -> u64 {
-    (u128::from(frames) * u128::from(to) / u128::from(from.max(1))) as u64
-}
-
-pub(super) fn gcd(mut a: u64, mut b: u64) -> u64 {
-    while b != 0 {
-        (a, b) = (b, a % b);
-    }
-    a.max(1)
-}
-
-/// A route's smallest exact step: `a` track frames are `b` output frames
-/// (a track frame that many from the segment's start is heard at an exact
-/// output frame).
-pub(super) fn grid(route: &Route) -> (u64, u64) {
-    let (input, output) = (u64::from(route.input_rate), u64::from(route.output_rate));
-    let g = gcd(input, output);
-    (input / g, output / g)
-}
-
 /// `duration` in frames at `rate`.
 pub(super) fn frames_of(duration: Duration, rate: u32) -> u64 {
     (duration.as_secs_f64() * f64::from(rate)).round() as u64
@@ -259,11 +202,8 @@ impl Heard {
     /// output whose frame 0 is this one's frame `by` (the head a
     /// transition hands over to).
     pub(super) fn rebased(&self, by: u64) -> Heard {
-        let back = self.seg_out.min(by);
-        let since = rescale(by - back, self.route.output_rate, self.route.input_rate);
         Heard {
-            seg_out: self.seg_out - back,
-            seg_frame: self.seg_frame + since,
+            line: self.line.rebased(by),
             warp: self.warp.as_ref().map(|w| Arc::new(w.rebased(by))),
             ..self.clone()
         }
@@ -275,8 +215,7 @@ impl Heard {
             let frame = (w.seconds_at(output_frame) * f64::from(self.info.rate)).round() as u64;
             return self.info.frames.map_or(frame, |total| frame.min(total));
         }
-        let since = output_frame.saturating_sub(self.seg_out);
-        let frame = self.seg_frame + rescale(since, self.route.output_rate, self.route.input_rate);
+        let frame = self.line.frame_at(output_frame);
         self.info.frames.map_or(frame, |total| frame.min(total))
     }
 
@@ -289,50 +228,12 @@ impl Heard {
             };
         }
         // Before the segment only in a count-in's silence: negative there.
-        let since = output_frame as f64 - self.seg_out as f64;
-        let seconds = self.seg_frame as f64 / f64::from(self.info.rate)
-            + since / f64::from(self.route.output_rate);
+        let seconds = self.line.seconds_at(output_frame);
         match self.info.duration() {
             Some(d) => seconds.min(d.as_secs_f64()),
             None => seconds,
         }
     }
-}
-
-/// Something to send when the output clock reaches a frame.
-pub(super) enum CueEvent {
-    Started(Box<TrackStart>, Heard),
-    Clipped {
-        index: usize,
-        samples: u64,
-    },
-    Ended {
-        index: usize,
-    },
-    Skipped {
-        index: usize,
-        error: Error,
-    },
-    QueueEnded,
-    /// Holding at the end: this track is the next one.
-    Held {
-        index: usize,
-    },
-    /// A transition's progress, as heard.
-    Transition(TransitionState),
-    /// The track heard is now mapped by this (it went onto a map, or it
-    /// jumped).
-    Heard(Heard),
-    /// A jump within the track is heard.
-    Jumped {
-        index: usize,
-        seconds: f64,
-    },
-}
-
-pub(super) struct Cue {
-    pub(super) at: u64,
-    pub(super) event: CueEvent,
 }
 
 /// A track being decoded and written.
@@ -353,9 +254,9 @@ pub(super) struct Track {
     pub(super) out_at: usize,
     /// The output frame of this segment's first frame, and the track frame
     /// it is: set by [`Track::begin_segment`] and
-    /// [`Track::continue_segment`] only.
-    pub(super) seg_out: u64,
-    pub(super) seg_frame: u64,
+    /// Where its segment is on the output: set by [`Track::begin_segment`]
+    /// and [`Track::continue_segment`] only.
+    pub(super) line: SegmentLine,
     /// Output frames made in this segment.
     pub(super) emitted: u64,
     /// The segment's id and how it began, and where ids come from.
@@ -372,7 +273,7 @@ pub(super) struct Track {
     /// Cues not queued yet: a pending track's, and once it has met the old
     /// route, those to queue when it is installed (counted from
     /// `seg_out`).
-    pub(super) held: VecDeque<Cue>,
+    pub(super) held: CueQueue,
     /// Clips made before the segment heard (in a switch's run-up).
     pub(super) clip_base: u64,
     /// Read along a time map as stem parts, main their sum.
@@ -407,6 +308,9 @@ pub(super) struct Switch {
     /// The routes have met: the old track's output ends where the new
     /// one's begins.
     pub(super) spliced: bool,
+    /// The settings changed while it was being handed over: the track is
+    /// routed again once it has been.
+    pub(super) again: bool,
 }
 
 /// What a switch is waiting for.
@@ -441,6 +345,7 @@ impl Track {
             // floating-point file): the headroom goes there.
             source.set_gain(route.headroom.gain());
         }
+        let line = SegmentLine::new(&route, info.rate);
         Ok(Track {
             index,
             info,
@@ -452,8 +357,7 @@ impl Track {
             wide_buf: Vec::new(),
             out_buf: Vec::new(),
             out_at: 0,
-            seg_out: 0,
-            seg_frame: 0,
+            line,
             emitted: 0,
             segment: Segment {
                 id: segments.next(),
@@ -463,7 +367,7 @@ impl Track {
             clips: None,
             failure: None,
             pending: false,
-            held: VecDeque::new(),
+            held: CueQueue::default(),
             along: None,
             mix_clips: 0,
             clip_base: 0,
@@ -504,8 +408,7 @@ impl Track {
     }
 
     fn set_segment(&mut self, seg_out: u64, seg_frame: u64, segment: Segment) {
-        self.seg_out = seg_out;
-        self.seg_frame = seg_frame;
+        self.line = self.line.at(seg_out, seg_frame);
         self.segment = segment;
     }
 
@@ -520,6 +423,13 @@ impl Track {
     /// not read along a map (decoded ahead for a switch or not).
     pub(super) fn plain_route(&self) -> bool {
         self.along.is_none()
+    }
+
+    /// Whether it plays as it is heard: its plain route, or along a map
+    /// (not a route decoded ahead for a switch). Such a track may have
+    /// stem parts, and be read along a map.
+    pub(super) fn as_heard(&self) -> bool {
+        !self.pending || self.along.is_some()
     }
 
     /// The key it plays in, in semitones (0 off a map).
@@ -539,6 +449,12 @@ impl Track {
         self.source_done && self.resampler.as_ref().is_none_or(Resampler::is_finished)
     }
 
+    /// The output frame after its output's last, once all of it is made
+    /// ([`Track::made_all`]).
+    pub(super) fn main_end(&self) -> Option<u64> {
+        self.made_all().then_some(self.line.seg_out + self.emitted)
+    }
+
     /// Restarts the track at `frame`: the source moves there and the
     /// segment starts again.
     pub(super) fn restart_at(&mut self, frame: u64) -> Result<(), Error> {
@@ -555,7 +471,7 @@ impl Track {
         self.out_buf.clear();
         self.out_at = 0;
         self.rewritable_from = 0;
-        self.begin_segment(self.seg_out, frame, SegStart::Cold);
+        self.begin_segment(self.line.seg_out, frame, SegStart::Cold);
         self.emitted = 0;
         self.clips = None;
         self.failure = None;
@@ -598,8 +514,7 @@ impl Track {
             index: self.index,
             info: self.info.clone(),
             route: self.route.clone(),
-            seg_out: self.seg_out,
-            seg_frame: self.seg_frame,
+            line: self.line,
             warp: self.heard_warp(),
             key: self.key(),
         }
@@ -621,26 +536,6 @@ pub(super) enum Progress {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn grid_steps_are_the_smallest_exact_ones() {
-        assert_eq!(gcd(44_100, 48_000), 300);
-        for (input, output, want) in [
-            (44_100u64, 88_200u64, (1, 2)),
-            (44_100, 48_000, (147, 160)),
-            (96_000, 44_100, (320, 147)),
-            (48_000, 48_000, (1, 1)),
-        ] {
-            let g = gcd(input, output);
-            let (a, b) = (input / g, output / g);
-            assert_eq!((a, b), want);
-            // `a` track frames are exactly `b` output frames, and no fewer.
-            assert_eq!(a * output, b * input);
-            for n in 1..a {
-                assert_ne!(n * output % input, 0);
-            }
-        }
-    }
 
     #[test]
     fn fades_sum_to_one_and_end_where_they_should() {

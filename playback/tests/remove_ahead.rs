@@ -127,15 +127,6 @@ fn remove_second(r: &Run) -> Vec<Event> {
     })
 }
 
-fn started(seen: &[Event]) -> Vec<(usize, PathBuf)> {
-    seen.iter()
-        .filter_map(|e| match e {
-            Event::TrackStarted(s) => Some((s.index, s.info.path.clone())),
-            _ => None,
-        })
-        .collect()
-}
-
 fn ended(seen: &[Event]) -> Vec<(usize, bool)> {
     seen.iter()
         .filter_map(|e| match e {
@@ -176,7 +167,7 @@ fn remove_second_and_check(r: Run, kept: usize) {
     seen.extend(until_queue_end(&r.events));
     drop(r.player);
     assert_eq!(
-        started(&seen),
+        started_paths(&seen),
         [(0, r.paths[0].clone()), (1, r.paths[2].clone())],
         "the removed track never starts"
     );
@@ -238,7 +229,7 @@ fn held_at_the_end_the_track_after_the_removed_one_waits() {
         "{:?}",
         seen.last()
     );
-    assert_eq!(started(&seen), [(0, r.paths[0].clone())]);
+    assert_eq!(started_paths(&seen), [(0, r.paths[0].clone())]);
     assert_eq!(ended(&seen), [(0, true)]);
     heard_exactly(&r.captures, &r.samples[0]);
 }

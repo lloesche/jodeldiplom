@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 
 use common::*;
 use jodel_output::{SampleFormat, SimClock};
-use jodel_playback::{Event, JumpAt, MemoryTarget, Player, PlayerOptions, Settings};
+use jodel_playback::{Event, JumpAt, MemoryTarget, Player, PlayerOptions};
 
 const RATE: u32 = 44_100;
 /// The ramp's period: its values go round every this many frames.
@@ -17,19 +17,9 @@ const PERIOD: u64 = 30_000;
 
 fn options(fade: Duration) -> PlayerOptions {
     PlayerOptions {
-        settings: Settings::default(),
-        position_interval: Duration::from_millis(1),
         switch_fade: fade,
-        ..PlayerOptions::default()
+        ..player_options()
     }
-}
-
-/// The 24-bit samples of a stream the device took as `S24In32Low`.
-fn samples(bytes: &[u8]) -> Vec<i32> {
-    bytes
-        .chunks_exact(4)
-        .map(|b| (i32::from_le_bytes([b[0], b[1], b[2], b[3]]) << 8) >> 8)
-        .collect()
 }
 
 /// The left channel's ramp value for track frame `frame`.

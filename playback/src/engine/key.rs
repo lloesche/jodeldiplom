@@ -4,7 +4,7 @@
 //! nothing of which is written yet starts on its map in the key
 //! ([`Engine::start_along`]); one being heard gives back what the output
 //! has not played of it ([`Engine::take_back`]) and joins its map there
-//! ([`Engine::join_along`]). The pass itself is [`super::shift`]'s.
+//! ([`Engine::join_along`]). The pass itself is [`crate::shift`]'s.
 
 use std::sync::Arc;
 
@@ -13,9 +13,11 @@ use crate::transition::TempoMode;
 use crate::warp::TimeMap;
 
 use super::api::Event;
-use super::shift::KEY_RANGE;
-use super::track::{AlongMap, HeardFrom, HeardWarp, SegStart, Track};
+use super::policy::Action;
+use super::segment::SegStart;
+use super::track::{AlongMap, HeardFrom, HeardWarp, Track};
 use super::Engine;
+use crate::shift::KEY_RANGE;
 
 /// Said when new settings wait for the key.
 pub(super) const SETTINGS_WAIT: &str =
@@ -34,12 +36,8 @@ impl Engine {
             return self.emit(Event::Key { semitones: key });
         }
         let index = self.head.playing.as_ref().map(|t| t.index);
-        let why = if self.transition.is_some() {
-            Some("a transition is set up".to_owned())
-        } else {
-            self.head.playing.as_ref().and_then(|t| self.map_refusal(t))
-        };
-        if let Some(why) = why {
+        if let Err(why) = self.allows(Action::Key) {
+            let why = why.reason();
             self.notice(index, format!("The key stays as it is: {why}"));
             return self.emit(Event::Key {
                 semitones: self.key,
@@ -76,8 +74,8 @@ impl Engine {
         if self.key == 0 {
             return;
         }
-        if let Some(why) = self.map_refusal(track) {
-            let message = format!("This track plays in its own key: {why}");
+        if let Err(why) = self.allows(Action::KeyOnTrack) {
+            let message = format!("This track plays in its own key: {}", why.reason());
             return self.notice(Some(track.index), message);
         }
         if let Err(error) = self.key_now() {
@@ -100,7 +98,7 @@ impl Engine {
         if track.key() == key {
             return Ok(());
         }
-        let (written, seg_out, index) = (out.output.written(), track.seg_out, track.index);
+        let (written, seg_out, index) = (out.output.written(), track.line.seg_out, track.index);
         let (plain, begun) = (track.plain_route(), track.segment.begun);
         let clock = out.clock.clone();
         // What else would move the head goes: a move to new settings under
@@ -109,8 +107,7 @@ impl Engine {
             self.notice(Some(index), SETTINGS_WAIT.into());
         }
         self.cancel_switch();
-        self.drop_jump_fill();
-        if self.head.pending_jump.take().is_some() {
+        if self.head.moving.drop_jump() {
             let message = "The jump waiting for its time is dropped: the key changed";
             self.notice(Some(index), message.into());
         }
@@ -122,33 +119,25 @@ impl Engine {
                 origin: None,
                 at: seg_out,
             };
-            let Some(mut track) = self.head.playing.take() else {
-                return Ok(());
-            };
-            let map = self.key_map(&track, seg_out);
-            self.start_along(&mut track, map, seg_out, heard_from);
-            self.requeue_heard(&track, seg_out);
-            self.head.playing = Some(track);
+            self.with_playing(|e, track| {
+                let map = e.key_map(track, seg_out);
+                e.start_along(track, map, seg_out, heard_from);
+                e.requeue_heard(track, seg_out);
+            });
             return Ok(());
         }
         if !self.offline {
             self.take_back(written.saturating_sub(seg_out))?;
         }
-        let (Some(mut track), Some(out)) = (self.head.playing.take(), self.head.out.as_ref())
-        else {
+        let Some(at) = self.head.out.as_ref().map(|o| o.output.written()) else {
             return Ok(());
         };
-        let at = out.output.written();
-        let map = self.key_map(&track, at);
-        self.head.lanes.prepare_along(&track, &map.heard, at);
-        let result = self.join_along(&mut track, map);
-        self.head.playing = Some(track);
-        result
-    }
-
-    /// Whether the head on air plays in a key not its own.
-    pub(super) fn head_shifted(&self) -> bool {
-        self.head.playing.as_ref().is_some_and(|t| t.key() != 0)
+        let joined = self.with_playing(|e, track| {
+            let map = e.key_map(track, at);
+            e.head.lanes.prepare_along(track, &map.heard, at);
+            e.join_along(track, map)
+        });
+        joined.unwrap_or(Ok(()))
     }
 
     /// The map `track` takes the key on: its own, or (on its own route)

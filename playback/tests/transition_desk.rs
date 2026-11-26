@@ -121,7 +121,7 @@ fn next_while_prepared_plays_the_next_track_and_while_settling_the_one_after() {
         Some("playback moved elsewhere"),
         "{seen:?}"
     );
-    let start = starts(&seen).into_iter().find(|s| s.index == 1).unwrap();
+    let start = started(&seen).into_iter().find(|s| s.index == 1).unwrap();
     assert_eq!(start.from_frame, 0);
     assert!(!transitions(&seen)
         .iter()
@@ -142,7 +142,7 @@ fn next_while_prepared_plays_the_next_track_and_while_settling_the_one_after() {
     ));
     drop(desk);
     assert!(transitions(&seen).contains(&&TransitionState::Finished));
-    let third = starts(&seen).into_iter().find(|s| s.index == 2).unwrap();
+    let third = started(&seen).into_iter().find(|s| s.index == 2).unwrap();
     assert_eq!(third.from_frame, 0);
 }
 
@@ -227,7 +227,7 @@ fn the_next_track_moved_away_in_the_window_fades_out() {
         "a click"
     );
     // The track after A now (the third file) follows it.
-    let next = starts(&seen).into_iter().find(|s| s.index == 1).unwrap();
+    let next = started(&seen).into_iter().find(|s| s.index == 1).unwrap();
     assert!(next.info.path.ends_with("2.wav"), "{:?}", next.info.path);
 }
 
@@ -296,7 +296,7 @@ fn two_hand_overs_in_a_row_swap_the_heads_roles() {
     assert_eq!(desk.mixer.mic().port, MicPort::Hearing);
     assert_eq!(desk.mixer.mic().refused, 0);
     drop(desk);
-    let heads: Vec<(usize, usize)> = starts(&seen).iter().map(|s| (s.index, s.head)).collect();
+    let heads: Vec<(usize, usize)> = started(&seen).iter().map(|s| (s.index, s.head)).collect();
     assert!(
         heads.contains(&(1, 1)) && heads.contains(&(2, 0)),
         "{heads:?}"

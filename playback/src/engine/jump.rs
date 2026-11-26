@@ -27,7 +27,11 @@
 
 use std::time::{Duration, Instant};
 
-use super::track::{crossfade, frames_of, grid, Cue, CueEvent, Progress, SegStart, StartAt, Track};
+use super::cues::{CueEvent, CueQueue};
+use super::moving::{Ahead, Move};
+use super::policy::Action;
+use super::segment::SegStart;
+use super::track::{crossfade, frames_of, Progress, Track};
 use super::{Engine, WRITE_WAIT};
 use crate::error::Error;
 use crate::stems::RATE as STEM_RATE;
@@ -42,7 +46,8 @@ pub enum JumpAt {
     At(f64),
 }
 
-/// A jump waiting for its time.
+/// A jump waiting for its time, its target in what the track holds (else
+/// it is a [`JumpFill`]'s).
 #[derive(Clone, Copy, Debug)]
 pub(super) struct PendingJump {
     index: usize,
@@ -50,8 +55,6 @@ pub(super) struct PendingJump {
     at: u64,
     /// The track frame it goes to.
     to: u64,
-    /// The target is read again ([`JumpFill`]): it is met once ready.
-    read: bool,
 }
 
 /// A reading of the playing track at a jump's target, for a target the
@@ -61,11 +64,11 @@ pub(super) struct PendingJump {
 /// the jump's time, or as late after the target as it is late), without a
 /// gap: a jump outside the window is later, never broken.
 pub(super) struct JumpFill {
-    track: Track,
+    pub(super) track: Track,
     /// The track frame it goes to.
     to: u64,
     /// When it is heard: at once, or at this track frame.
-    at: Option<u64>,
+    pub(super) at: Option<u64>,
     /// Output frames before `to` still to drop.
     skip: u64,
     /// Its output from `to` on, in `track.out_buf`, and how many frames
@@ -182,12 +185,13 @@ impl Engine {
     /// for its time, if one is (and, read again, has its target ready: one
     /// that is not lets the track play on, and lands late).
     pub(super) fn jump_limit(&self, track: &Track) -> Option<usize> {
-        let pending = self.head.pending_jump.filter(|p| p.index == track.index)?;
-        if pending.read && !self.head.jump_fill.as_ref().is_some_and(|f| f.ready(0)) {
-            return None;
-        }
+        let at = match &self.head.moving {
+            Move::JumpAt(p) if p.index == track.index => p.at,
+            Move::JumpRead(f) if f.track.index == track.index && f.ready(0) => f.at?,
+            _ => return None,
+        };
         let ch = usize::from(track.route.channels);
-        let at = stream_index(track, pending.at);
+        let at = stream_index(track, at);
         Some(at.max(0) as usize * ch).filter(|&limit| limit >= track.out_at)
     }
 
@@ -198,7 +202,7 @@ impl Engine {
             return false;
         };
         let (_, ahead) = self.window_frames(track);
-        let z = stream_frame(track, to);
+        let z = track.line.stream_frame(to);
         z >= buffer_start(track) && z < track.emitted as i64 + ahead as i64
     }
 
@@ -208,20 +212,12 @@ impl Engine {
         let Some(track) = self.head.playing.as_ref().filter(|t| t.index == index) else {
             return;
         };
-        if self.transition.is_some() {
-            return self.notice(Some(index), "No jumps while a transition is set up".into());
-        }
-        if track.along.is_some() {
-            let message = if track.key() != 0 {
-                "No jumps while the key is shifted"
-            } else {
-                "No jumps while the track is read along a time map"
-            };
-            return self.notice(Some(index), message.into());
+        if let Err(why) = self.allows(Action::Jump) {
+            return self.notice(Some(index), format!("No jumps while {}", why.reason()));
         }
         let rate = track.info.rate;
-        let (a, _) = grid(&track.route);
-        let (a, seg) = (a as i64, track.seg_frame as i64);
+        let (a, _) = track.line.grid();
+        let (a, seg) = (a as i64, track.line.seg_frame as i64);
         // On the route's grid from the segment's track frame.
         let snap = |seconds: f64| {
             let frame = (seconds.max(0.0) * f64::from(rate)).round() as i64;
@@ -236,24 +232,14 @@ impl Engine {
             JumpAt::At(seconds) => Some(snap(seconds)),
             JumpAt::Now => None,
         };
-        self.drop_jump_fill();
+        self.head.moving.set(Move::Idle);
         match at_frame {
-            None => {
-                self.head.pending_jump = None;
-                self.jump_now(to_frame);
-            }
+            None => self.jump_now(to_frame),
+            // Not in what the track holds: read there now, met then.
+            Some(at) if !self.holds(to_frame) => self.start_jump_fill(to_frame, Some(at)),
             Some(at) => {
-                // Not in what the track holds: read there now, met then.
-                let read = !self.holds(to_frame);
-                self.head.pending_jump = Some(PendingJump {
-                    index,
-                    at,
-                    to: to_frame,
-                    read,
-                });
-                if read {
-                    self.start_jump_fill(to_frame, Some(at));
-                }
+                let to = to_frame;
+                self.head.moving = Move::JumpAt(PendingJump { index, at, to });
             }
         }
     }
@@ -262,26 +248,22 @@ impl Engine {
     /// (or past it: taken back, or landing as late after the target).
     /// Returns whether it took the turn.
     pub(super) fn jump_turn(&mut self) -> Result<bool, Error> {
-        let Some(pending) = self.head.pending_jump else {
+        let Move::JumpAt(pending) = self.head.moving else {
             return Ok(false);
         };
         let Some(track) = self.head.playing.as_ref() else {
             return Ok(false);
         };
         if track.index != pending.index {
-            self.head.pending_jump = None;
-            return Ok(false);
-        }
-        if pending.read {
-            // Its reading meets the track ([`Engine::jump_fill_turn`]).
+            self.head.moving = Move::Idle;
             return Ok(false);
         }
         let ch = usize::from(track.route.channels);
-        let (a, b) = grid(&track.route);
+        let (a, b) = track.line.grid();
         let at = stream_index(track, pending.at);
         if at < 0 {
             // Before what the track holds: too late to place; at once.
-            self.head.pending_jump = None;
+            self.head.moving = Move::Idle;
             self.jump_now(pending.to);
             return Ok(true);
         }
@@ -291,14 +273,10 @@ impl Engine {
         }
         if !self.reach(pending.to)? {
             // Not there after all: read there, met as late as it lands.
-            self.head.pending_jump = Some(PendingJump {
-                read: true,
-                ..pending
-            });
             self.start_jump_fill(pending.to, Some(pending.at));
             return Ok(true);
         }
-        self.head.pending_jump = None;
+        self.head.moving = Move::Idle;
         let late = (done - at) as u64;
         // Written past it: what the output has not played goes back.
         let back = self.take_back(late)?;
@@ -331,32 +309,30 @@ impl Engine {
     /// Decodes the playing track until it holds `to` and a seam after it
     /// (for at most [`REACH`]); whether it does.
     fn reach(&mut self, to: u64) -> Result<bool, Error> {
-        let Some(mut track) = self.head.playing.take() else {
-            return Ok(false);
-        };
-        let fade = frames_of(self.switch_fade, track.route.output_rate);
-        let started = Instant::now();
-        let z = stream_frame(&track, to);
-        let result = loop {
-            if track.emitted as i64 > z + fade as i64 || started.elapsed() > REACH {
-                break Ok(track.emitted as i64 > z);
-            }
-            match self.produce(&mut track, WRITE_WAIT) {
-                Ok(Progress::Busy) => {}
-                Ok(Progress::Complete) => {
-                    track.ahead_done = true;
+        let reached = self.with_playing(|e, track| {
+            let fade = frames_of(e.switch_fade, track.route.output_rate);
+            let started = Instant::now();
+            let z = track.line.stream_frame(to);
+            let result = loop {
+                if track.emitted as i64 > z + fade as i64 || started.elapsed() > REACH {
                     break Ok(track.emitted as i64 > z);
                 }
-                Err(error) if error.is_skippable() => break Ok(false),
-                Err(error) => break Err(error),
-            }
-            if track.failure.is_some() {
-                break Ok(false);
-            }
-        };
-        let held = z >= buffer_start(&track);
-        self.head.playing = Some(track);
-        Ok(result? && held)
+                match e.produce(track, WRITE_WAIT) {
+                    Ok(Progress::Busy) => {}
+                    Ok(Progress::Complete) => {
+                        track.ahead_done = true;
+                        break Ok(track.emitted as i64 > z);
+                    }
+                    Err(error) if error.is_skippable() => break Ok(false),
+                    Err(error) => break Err(error),
+                }
+                if track.failure.is_some() {
+                    break Ok(false);
+                }
+            };
+            Ok(result? && z >= buffer_start(track))
+        });
+        reached.unwrap_or(Ok(false))
     }
 
     /// Takes back up to `frames` of what the output has not played (as
@@ -372,13 +348,7 @@ impl Engine {
         let written = out.output.written();
         let index = track.index;
         // What was queued for the frames given back is not heard.
-        self.cues.retain(|c| {
-            c.at < written
-                || !matches!(
-                    &c.event,
-                    CueEvent::Clipped { index: i, .. } if *i == index
-                )
-        });
+        self.cues.retract(written, |e| e.clipped_of(index));
         Ok(n)
     }
 
@@ -398,7 +368,7 @@ impl Engine {
         let ch = usize::from(track.route.channels);
         let frames = track.out_buf.len() / ch;
         let start = buffer_start(track);
-        let z = stream_frame(track, to);
+        let z = track.line.stream_frame(to);
         if z < start || z + extra as i64 >= track.emitted as i64 {
             return Ok(false);
         }
@@ -442,35 +412,13 @@ impl Engine {
 
 /// Queues what a jump of `track` heard from output frame `written` says:
 /// the clock's new map of the track, and the jump.
-fn jumped(cues: &mut std::collections::VecDeque<Cue>, track: &Track, written: u64) {
-    let heard = super::Heard {
-        index: track.index,
-        info: track.info.clone(),
-        route: track.route.clone(),
-        seg_out: track.seg_out,
-        seg_frame: track.seg_frame,
-        warp: None,
-        key: track.key(),
-    };
+fn jumped(cues: &mut CueQueue, track: &Track, written: u64) {
+    // (Off a map: a jump on one is refused.)
+    let heard = track.heard();
     let seconds = heard.seconds_at(written);
     let index = track.index;
-    let last = cues.back().map_or(0, |c| c.at);
-    cues.push_back(Cue {
-        at: written.max(last),
-        event: CueEvent::Heard(heard),
-    });
-    cues.push_back(Cue {
-        at: written.max(last),
-        event: CueEvent::Jumped { index, seconds },
-    });
-}
-
-/// The stream frame of track frame `frame`: output frames from the
-/// segment's track frame (negative before it: what the buffer kept from
-/// before a jump).
-fn stream_frame(track: &Track, frame: u64) -> i64 {
-    let (a, b) = grid(&track.route);
-    (frame as i64 - track.seg_frame as i64).div_euclid(a as i64) * b as i64
+    cues.push(written, CueEvent::Heard(heard));
+    cues.push(written, CueEvent::Jumped { index, seconds });
 }
 
 /// The stream frame of the buffer's first frame.
@@ -482,7 +430,7 @@ fn buffer_start(track: &Track) -> i64 {
 /// The frame index in `track`'s buffer of track frame `frame` (negative:
 /// before it).
 fn stream_index(track: &Track, frame: u64) -> i64 {
-    stream_frame(track, frame) - buffer_start(track)
+    track.line.stream_frame(frame) - buffer_start(track)
 }
 
 impl Engine {
@@ -493,13 +441,12 @@ impl Engine {
             return;
         };
         let (index, route, rate) = (live.index, live.route.clone(), live.info.rate);
-        let (a, b) = grid(&route);
+        let (a, b) = live.line.grid();
         let back = super::preroll(&route, rate).div_ceil(a).min(to / a);
         let fade = frames_of(self.switch_fade, route.output_rate);
-        match self.open_track(index, StartAt::Frame(to - back * a), Some(route)) {
-            Ok(mut track) => {
-                track.pending = true;
-                self.head.jump_fill = Some(Box::new(JumpFill {
+        match self.open_reading(index, to - back * a, route) {
+            Ok(track) => {
+                self.head.moving = Move::JumpRead(Box::new(JumpFill {
                     track,
                     to,
                     at,
@@ -509,7 +456,7 @@ impl Engine {
                 }));
             }
             Err(error) => {
-                self.head.pending_jump = None;
+                self.head.moving = Move::Idle;
                 self.notice(
                     Some(index),
                     format!("The jump did not happen: the track did not open again ({error})"),
@@ -518,21 +465,11 @@ impl Engine {
         }
     }
 
-    /// Drops a reading for a jump (and the jump waiting on it).
-    pub(super) fn drop_jump_fill(&mut self) {
-        if let Some(fill) = self.head.jump_fill.take() {
-            super::drop_later(fill.track);
-            if self.head.pending_jump.is_some_and(|p| p.read) {
-                self.head.pending_jump = None;
-            }
-        }
-    }
-
     /// The reading's turn: it decodes on the turns a switch's new route
     /// has, and takes over once it is ready and the jump's time has come.
     /// Returns whether it took the turn.
     pub(super) fn jump_fill_turn(&mut self) -> Result<bool, Error> {
-        let Some(fill) = self.head.jump_fill.as_ref() else {
+        let Some(fill) = self.head.moving.reading() else {
             return Ok(false);
         };
         let Some(live) = self
@@ -541,7 +478,7 @@ impl Engine {
             .as_ref()
             .filter(|t| t.index == fill.track.index)
         else {
-            self.drop_jump_fill();
+            self.head.moving.set(Move::Idle);
             return Ok(false);
         };
         let ch = usize::from(live.route.channels);
@@ -561,64 +498,51 @@ impl Engine {
         if !fill.ready(late) {
             // Its turns: those a switch's new route would have, and every
             // other one besides (a jump is waited for).
-            let mut fill = self.head.jump_fill.take().expect("checked");
+            let Move::JumpRead(mut fill) = std::mem::replace(&mut self.head.moving, Move::Idle)
+            else {
+                return Ok(false);
+            };
             fill.other = !fill.other;
             if !fill.other && !self.reading_turn() {
-                self.head.jump_fill = Some(fill);
+                self.head.moving = Move::JumpRead(fill);
                 return Ok(false);
             }
-            match self.produce(&mut fill.track, Duration::ZERO) {
-                Ok(Progress::Busy) => {}
-                Ok(Progress::Complete) => fill.track.ahead_done = true,
-                Err(error) if error.is_skippable() => {
+            match self.read_ahead(&mut fill.track)? {
+                Ahead::Busy => {}
+                Ahead::Done => fill.track.ahead_done = true,
+                Ahead::Broke(error) => {
                     let index = fill.track.index;
                     super::drop_later(fill.track);
-                    self.head.pending_jump = None;
                     self.notice(Some(index), format!("The jump did not happen: {error}"));
                     return Ok(true);
                 }
-                Err(error) => return Err(error),
             }
             fill.track.held.clear();
             let made = fill.frames();
             let drop = fill.skip.min(made);
             fill.track.out_buf.drain(..drop as usize * ch);
             fill.skip -= drop;
-            self.head.jump_fill = Some(fill);
+            self.head.moving = Move::JumpRead(fill);
             return Ok(true);
         }
         // Ready: the output gives back what it has not played (as late as
         // the jump is, or all it can), and the reading takes over.
-        let back = self.take_back(if fill_at_once(self) { u64::MAX } else { late })?;
+        let at_once = fill.at.is_none();
+        let back = self.take_back(if at_once { u64::MAX } else { late })?;
         let late = late.saturating_sub(back);
         self.meet_jump_fill(late)?;
         Ok(true)
     }
 
-    /// Whether a reading has the thread: paused, the output holding at
-    /// least half its buffer, or it took nothing of the last write.
-    fn reading_turn(&self) -> bool {
-        let Some(out) = &self.head.out else {
-            return false;
-        };
-        let buffered = out.output.written().saturating_sub(out.clock.position());
-        let ring = out.info.ring_frames;
-        self.paused
-            || (ring > 0 && buffered.saturating_mul(2) >= ring)
-            || self
-                .head
-                .stalled
-                .is_some_and(|at| at.elapsed() < super::SWITCH_TURN)
-    }
-
     /// The reading takes over at the frame being written, `late` frames
     /// after its target, crossfaded from what the track would have played.
     fn meet_jump_fill(&mut self, late: u64) -> Result<(), Error> {
-        let (Some(fill), Some(mut live)) = (self.head.jump_fill.take(), self.head.playing.take())
-        else {
+        let Move::JumpRead(fill) = std::mem::replace(&mut self.head.moving, Move::Idle) else {
             return Ok(());
         };
-        self.head.pending_jump = None;
+        let Some(mut live) = self.head.playing.take() else {
+            return Ok(());
+        };
         let written = self.head.out.as_ref().map_or(0, |o| o.output.written());
         let ch = usize::from(live.route.channels);
         let fade = frames_of(self.switch_fade, live.route.output_rate) as usize;
@@ -664,26 +588,16 @@ impl Engine {
     /// The queue was reordered ([`super::queue`]): a jump waiting, and a
     /// reading for one, follow their track (gone, they go).
     pub(super) fn reindex_jumps(&mut self, map: &dyn Fn(usize) -> Option<usize>) {
-        if let Some(p) = &mut self.head.pending_jump {
-            match map(p.index) {
-                Some(i) => p.index = i,
-                None => self.head.pending_jump = None,
-            }
-        }
-        if let Some(fill) = &mut self.head.jump_fill {
-            match map(fill.track.index) {
-                Some(i) => fill.track.index = i,
-                None => self.drop_jump_fill(),
+        let index = match &mut self.head.moving {
+            Move::JumpAt(p) => &mut p.index,
+            Move::JumpRead(fill) => &mut fill.track.index,
+            Move::Idle | Move::MapAt(_) => return,
+        };
+        match map(*index) {
+            Some(i) => *index = i,
+            None => {
+                self.head.moving.set(Move::Idle);
             }
         }
     }
-}
-
-/// Whether the reading under way is for a jump heard at once.
-fn fill_at_once(engine: &Engine) -> bool {
-    engine
-        .head
-        .jump_fill
-        .as_ref()
-        .is_some_and(|f| f.at.is_none())
 }
