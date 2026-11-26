@@ -128,6 +128,47 @@ fn a_cover_fades_in_over_the_ground_and_back_out_to_it() {
     assert_eq!(v.holds(), 0);
 }
 
+/// The game or the notes on: the cover over its blur; neither (plain
+/// lyrics karaoke): the blur alone. Switched mid-song, the card fades out
+/// to the blur and back in, as a cover comes and goes.
+#[test]
+fn plain_karaoke_has_the_blur_alone_and_a_switch_fades() {
+    let mode = |game, notes| {
+        Mode::of(&crate::config::Config {
+            karaoke_game: game,
+            karaoke_notes: notes,
+            ..crate::config::Config::default()
+        })
+    };
+    assert_eq!(mode(true, true), Mode::Cover);
+    assert_eq!(mode(true, false), Mode::Cover);
+    assert_eq!(mode(false, true), Mode::Cover);
+    assert_eq!(mode(false, false), Mode::Blur);
+    let a = disc_layers(64, [200, 40, 40], (0.5, 0.5));
+    let shown = |m: Mode| cue(m.cover(Some(Arc::clone(&a))).as_ref());
+    assert!(Mode::Blur.cover(Some(Arc::clone(&a))).is_none());
+    let mut v = Visualiser::default();
+    // Plain from the start: the blur alone, still.
+    assert!(run(&mut v, &shown(Mode::Blur), frames(FADE))
+        .slots
+        .is_empty());
+    assert!(!v.moving());
+    let whole = run(&mut v, &shown(Mode::Cover), frames(FADE) + 1);
+    assert_eq!(shares(&whole), vec![1.0]);
+    // Both off mid-song: halfway out to the blur, then gone.
+    let half = run(&mut v, &shown(Mode::Blur), frames(FADE / 2.0));
+    let left = shares(&half)[0];
+    assert!(left > 0.4 && left < 0.6, "{left}");
+    assert!(v.moving());
+    assert!(run(&mut v, &shown(Mode::Blur), frames(FADE))
+        .slots
+        .is_empty());
+    // One on again: the card fades back in.
+    let back = run(&mut v, &shown(Mode::Cover), frames(FADE / 2.0));
+    let s = shares(&back)[0];
+    assert!(s > 0.4 && s < 0.6, "{s}");
+}
+
 #[test]
 fn a_song_change_cross_fades_one_cover_into_the_next() {
     let a = disc_layers(64, [200, 40, 40], (0.5, 0.5));

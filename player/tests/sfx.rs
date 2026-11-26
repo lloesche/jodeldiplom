@@ -3,7 +3,8 @@
 //! the singing, plus how late the voice comes) and a stem's change on a
 //! bar, through the last position told and the output's speed through the
 //! track; the conductor's game played live by the desk's synth, heard on
-//! the device where it landed and called off by a seek; and the result's
+//! the device where it landed, called off by a seek and silent with the
+//! notes hidden; and the result's
 //! reveal heard after the song on the device kept open, through the whole
 //! player on a memory device.
 
@@ -18,12 +19,13 @@ use jodel_playback::{Captures, MemoryTarget, PlayState};
 use jodel_synth::Synth;
 use jodeldiplom::app::{App, AppOptions, MemoryOutput, Output};
 use jodeldiplom::core::keymap::Op;
+use jodeldiplom::core::shine::Shone;
 use jodeldiplom::core::singing::Beat;
-use jodeldiplom::core::{karaoke, Action, Rhythm, Side};
+use jodeldiplom::core::{karaoke, Action, Rhythm, Screen, Side, State};
 use jodeldiplom::core::{Anchor, HeadFrame, Playing};
 use jodeldiplom::sfx::conductor::{Clock, Conductor, Event};
 use jodeldiplom::sfx::diploma::Diploma;
-use jodeldiplom::sfx::Sound;
+use jodeldiplom::sfx::{Desk, Sfx, Sound};
 use jodeldiplom::tiers::Tier;
 
 /// Runs `app` as the window does (its events taken, a frame drawn every
@@ -439,6 +441,82 @@ fn the_result_is_heard_after_the_song() {
         "the signature: {pen:?}"
     );
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// With the notes hidden the game's bubbles are not shown, so its sounds
+/// are not played: a phrase sung to the top tier (its chime and its
+/// jackpot) sends nothing to the desk's synth and plays nothing of the
+/// bank, the device mixing on; the notes shown again, it sounds.
+#[test]
+fn the_game_is_silent_with_its_notes_hidden() {
+    let _guard = common::real_time();
+    let mut caps = Capabilities::new();
+    caps.insert(StreamFormat::new(RATE, 2, FORMAT));
+    let target = MemoryTarget::new(caps.clone(), SimClock::Realtime);
+    let options = MixerOptions {
+        capabilities: Some(caps),
+        ..MixerOptions::default()
+    };
+    let mixer = Mixer::open(Box::new(target), options);
+    let effects = mixer.effects(&mixer.strip("Effects"));
+    let (_lead, fader) = mixer.input(&mixer.strip("Player"), Role::Lead, 1.0);
+    let until = |done: &dyn Fn() -> bool, what: &str| {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !done() {
+            assert!(Instant::now() < deadline, "{what}");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    };
+    until(&|| mixer.timebase().rate == RATE, "the device open");
+    let mut state = common::playing_state(120, 36);
+    state.screen = Screen::Karaoke;
+    state.config.karaoke_game = true;
+    state.config.karaoke_notes = false;
+    state.karaoke.singing = common::bubble_song().0;
+    // A phrase sung now, to the top tier.
+    let sung = |state: &mut State| {
+        let at = state.karaoke.lag.sung_clock(state.heard());
+        let shone = Shone {
+            line: 0,
+            end: at,
+            value: 1.0,
+            top: 0.9,
+            tier: Some(Tier::TOP),
+        };
+        state.karaoke.singing.decided(at, shone);
+    };
+    let mut sfx = Sfx::default();
+    let mut frame = |state: &State| {
+        let desk = Desk {
+            effects: &effects,
+            heads: [&fader, &fader],
+            timebase: mixer.timebase(),
+            data: None,
+        };
+        sfx.frame(state, desk);
+    };
+    // A frame drawn (the game's moments read from now on), the phrase
+    // sung, then frames for a fifth of a second, the desk mixing them.
+    frame(&state);
+    sung(&mut state);
+    let start = mixer.timebase().frame;
+    for _ in 0..12 {
+        frame(&state);
+        std::thread::sleep(Duration::from_millis(16));
+    }
+    until(
+        &|| mixer.timebase().frame > start + u64::from(RATE) / 5,
+        "mixed on",
+    );
+    let view = effects.view();
+    assert_eq!((view.commands, view.played), (0, 0), "{view:?}");
+    assert_eq!(view.live, RATE, "the synth there to play: {view:?}");
+    // The notes shown: the next phrase's chime and its jackpot.
+    state.config.karaoke_notes = true;
+    frame(&state);
+    sung(&mut state);
+    frame(&state);
+    until(&|| effects.view().commands > 0, "the phrase played");
 }
 
 #[test]

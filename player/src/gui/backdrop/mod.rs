@@ -1,7 +1,8 @@
 //! Karaoke mode's backdrop on the GPU: the song's cover taken apart
 //! ([`crate::cover::Apart`]: the plate, the subject cut out, their depth,
-//! the palette) drawn live as a calm visualiser of the music. The
-//! whole cover sits in the middle as a card, as large as it looks good
+//! the palette) drawn live as a calm visualiser of the music, with the
+//! game or the notes on ([`Mode`]: plain lyrics karaoke has the blurred
+//! cover alone, filling the window). The whole cover sits in the middle as a card, as large as it looks good
 //! ([`look::card`]: never a cover's pixel more than [`look::CAP`] window
 //! pixels, read smoothly where it is much enlarged, so no pixel nor block
 //! of its coding shows), its edge fading into the same cover blurred
@@ -22,9 +23,10 @@
 //!
 //! [`Visualiser`] is the processor's side, frame by frame: the ground (the
 //! blurred cover, [`super::karaoke::ground`]: what shows while the layers
-//! are still being prepared), which covers show over it and how much (one
-//! fading in, a song's cover cross-fading into the next's, fading out to
-//! the ground), the music felt, and each cover's numbers for the shader
+//! are still being prepared, and all there is in [`Mode::Blur`]), which
+//! covers show over it and how much (one fading in, a song's cover
+//! cross-fading into the next's, fading out to the ground: a setting
+//! switched mid-song too), the music felt, and each cover's numbers for the shader
 //! ([`BackdropFrame`]). [`gpu`] draws it at the window's size, the
 //! textures sent over once a cover and dropped once it no longer shows.
 //! The window's pass ([`super::present`]) adds it under the pixmap as far
@@ -45,6 +47,7 @@ use self::music::{Feel, Felt, Levels, Song};
 pub use self::subject::{lights, Subject};
 use crate::app::App;
 use crate::art::Art;
+use crate::config::Config;
 use crate::core::desk::StripKind;
 use crate::cover::Layers;
 
@@ -62,6 +65,35 @@ const DRIFT: f32 = 0.004;
 const DRIFT_PERIODS: (f32, f32) = (37.0, 29.0);
 /// How much larger the subject grows with the bass, a share.
 const BREATH: f32 = 0.022;
+
+/// What the backdrop shows, by Karaoke mode's settings.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Mode {
+    /// The cover taken apart, its card over its blur, lit by the music.
+    Cover,
+    /// The blurred cover alone, filling the window (the ground).
+    Blur,
+}
+
+impl Mode {
+    /// The mode for `config`'s settings: with the game (`karaoke_game`) or
+    /// the notes (`karaoke_notes`) on, the cover; with neither (plain
+    /// lyrics karaoke), the blur alone.
+    pub fn of(config: &Config) -> Mode {
+        if config.karaoke_game || config.karaoke_notes {
+            Mode::Cover
+        } else {
+            Mode::Blur
+        }
+    }
+
+    /// The cover's `layers` as the mode shows them: none for the blur
+    /// alone (a card showing fades out to it, and in again as the cover
+    /// comes back).
+    pub fn cover(self, layers: Option<Layers>) -> Option<Layers> {
+        layers.filter(|_| self == Mode::Cover)
+    }
+}
 
 /// A cover's numbers as its shader reads them (`backdrop.wgsl`'s `Look`).
 #[repr(C)]
@@ -138,7 +170,7 @@ struct Slot {
 pub struct Cue {
     /// The song's cover (none: the gradient).
     pub art: Option<Art>,
-    /// The cover taken apart, once ready.
+    /// The cover taken apart, once ready, as the [`Mode`] shows it.
     pub layers: Option<Layers>,
     /// The stems' levels heard now.
     pub levels: Levels,
@@ -226,7 +258,7 @@ impl Visualiser {
         self.heard = Some(heard);
         let cue = Cue {
             art: app.art().cloned(),
-            layers: app.cover_layers(),
+            layers: Mode::of(&state.config).cover(app.cover_layers()),
             levels,
             glow: super::streak::level(&state.karaoke.singing, state.config.karaoke_game),
             section,

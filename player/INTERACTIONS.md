@@ -783,6 +783,20 @@ stem keys are their mutes.
   - `the_app_plays_the_clicks_and_hears_a_ta_after_each`
   - `the_output_changing_mid_sync_ends_it`
   - `the_songs_blocks_left_at_the_start_are_left_out` (`sync`)
+- **K24.** The game (`g`, `karaoke_game`) and the notes (`p` on the tab,
+  `karaoke_notes`) set the mode's backdrop and its sounds. With either
+  on, the backdrop is the cover taken apart, its card over its blur;
+  with neither (plain lyrics karaoke), the blurred cover alone fills the
+  window. Switched mid-song, the card fades out to the blur, or in from
+  it, over 1.2 s. The game's live sounds (the pops, the clinks, the
+  stingers, the chimes, the jackpot, the payout) go with its bubbles:
+  with the game on and the notes hidden, none plays, and switched
+  mid-song what was planned and not heard yet is called off. A song's
+  diploma still shows after it with the game on, notes or not (the game
+  scored it), and its sounds play.
+  - `plain_karaoke_has_the_blur_alone_and_a_switch_fades`
+    (`gui::backdrop`)
+  - `the_game_is_silent_with_its_notes_hidden` (sfx)
 
 ## Mixer
 

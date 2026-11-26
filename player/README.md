@@ -728,7 +728,7 @@ seven times over where its text has it once.
 | `i` | the next microphone |
 | `r` | record 30 s of what the echo canceller works with (also in the mode) |
 | `g` / a click on Game | the game on or off: the singing scored, or just sung |
-| `p` / a click on Notes | the song's notes shown or hidden |
+| `p` / a click on Notes | the song's notes shown or hidden (hidden, the game's bubbles and their sounds go too; its diploma stays) |
 | a click on Keep | your singing of each song kept, or not |
 
 The **key** (the tab's Key row, −6 to +6 semitones, `0` the song's own)
@@ -976,7 +976,11 @@ just queued is got ready a track at a time, so its songs come singable
 one by one.
 
 Karaoke mode fills the window (fullscreen): the song's cover blurred
-under a dark layer, its title and, once they are known, its lyrics. The
+under a dark layer, its title and, once they are known, its lyrics. With
+the game or the notes on, the whole cover sits sharp in the middle over
+that blur, lit by the music (on the GPU, once it is taken apart); with
+neither (plain lyrics karaoke) the blur alone fills the window, and
+switching either mid-song fades the cover out or in. The
 voice plays at its level (as on the tab). Going in stops the song and
 holds it at its start (with shift, it goes on where it is). Each song
 waits for START (`enter`, `space`, or a click on START's gold pill low
@@ -1059,9 +1063,10 @@ keys go through the strips drawn.
   frame of the song its moment is seen on (a rung's, a phrase's on the
   next beat, the jackpot on a downbeat clear of the singing); and the
   result's (its paper, pen and stamps made ahead, its count-up, gems and
-  points by the synth). Its fader and mute are kept in the settings
-  (`karaoke_effects`, `karaoke_effects_mute`); down to −∞ or muted, none
-  is played. While one sounds, the output is mixed; the microphone's
+  points by the synth). With the notes hidden (no bubbles shown) the
+  game's own are not played, the result's are. Its fader and mute are
+  kept in the settings (`karaoke_effects`, `karaoke_effects_mute`); down
+  to −∞ or muted, none is played. While one sounds, the output is mixed; the microphone's
   echo canceller hears them as it hears the song.
 - **PLAYER** and **PREVIEW**: the name on a scribble strip (lit when
   selected), what the strip carries (the format; the player's LEAD row,

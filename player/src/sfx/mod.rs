@@ -36,7 +36,9 @@
 //! each on the frame that reaches it: the bank's for its paper, the
 //! conductor's for its music, planned on the desk's own frames (the song
 //! is over then and its output closed: the desk's device plays all along,
-//! so they sound all the same).
+//! so they sound all the same). The game's live sounds go with its
+//! bubbles: with the notes hidden none plays; the diploma shows all the
+//! same (the game scored the song), and sounds.
 
 pub mod banks;
 pub mod cheers;
@@ -198,11 +200,14 @@ impl Sfx {
         // phrase's tier is decided as the next track comes.
         let sung = karaoke.singing.song().is_some() && !karaoke.singing.notes.lines.is_empty();
         // What is planned on the song's frames is called off when the game
-        // is left (off, the mode left, nothing to sing), the song moved (a
-        // seek or a jump: its anchor forgotten, its frames of another place
-        // now), halted (paused or stopped, by hand or at its end), or its
-        // singing went back (sought back, sung again).
-        let left = !(sung && crate::core::karaoke::in_mode(state) && state.config.karaoke_game);
+        // is left (off, the mode left, nothing to sing, or its bubbles not
+        // shown: the notes hidden), the song moved (a seek or a jump: its
+        // anchor forgotten, its frames of another place now), halted
+        // (paused or stopped, by hand or at its end), or its singing went
+        // back (sought back, sung again).
+        let config = &state.config;
+        let shown = config.karaoke_game && config.karaoke_notes;
+        let left = !(sung && crate::core::karaoke::in_mode(state) && shown);
         if left {
             self.moments.reset();
             self.call_off(desk);

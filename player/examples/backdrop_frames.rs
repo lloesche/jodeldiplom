@@ -3,11 +3,13 @@
 //! player's data folder) or pictures (a JPEG or PNG, taken apart without
 //! the models: no subject), each stem quiet and loud, a section starting,
 //! the singer at Diva, a cover fading in over its blur and one cross-fading
-//! into the next, the lyrics in large type without the stage, and tall and
-//! wide windows. The music is made up (each stem's level a function of
-//! time), the backdrop and the stage stepped
-//! at 60 frames a second up to the moment looked at, drawn offscreen as the
-//! window draws them, and saved as PNGs into `OUT_DIR` (`<scene>.png`,
+//! into the next, each combination of the game and the notes on or off
+//! (the notes off: the lyrics in large type without the stage; neither:
+//! the blurred cover alone, [`Mode`]) and the switch to neither mid-song,
+//! and tall and wide windows. The music is made up (each stem's level a
+//! function of time), the backdrop and the stage stepped at 60 frames a
+//! second up to the moment looked at, drawn offscreen as the window draws
+//! them, and saved as PNGs into `OUT_DIR` (`<scene>.png`,
 //! written whole). `--bare`: the backdrop alone, no stage and no text
 //! (`<scene>-bare.png`), to tell what the music does to it. `--size WxH`:
 //! every wide scene in a window of that size (the tall one `H` × 9 / 16
@@ -32,11 +34,12 @@ use std::time::Instant;
 
 use jodel_gpu::vision::{Depth, Matte};
 use jodeldiplom::art::Art;
+use jodeldiplom::config::Config;
 use jodeldiplom::core::shine::{Shone, Tier};
 use jodeldiplom::core::singing::Singing;
 use jodeldiplom::cover::{Apart, CoverLayers, Layers, Parts};
 use jodeldiplom::gui::backdrop::music::Levels;
-use jodeldiplom::gui::backdrop::{Cue, Visualiser};
+use jodeldiplom::gui::backdrop::{Cue, Mode, Visualiser};
 use jodeldiplom::gui::big_text::Faces;
 use jodeldiplom::gui::karaoke::{paint, Backdrop, Layer};
 use jodeldiplom::gui::present::Offscreen;
@@ -109,8 +112,8 @@ fn song() -> (Arc<jodel_lyrics::Lyrics>, jodel_rhythm::waveform::Melody) {
 
 /// A scene: its name, the window, the music at a time, the shine tier
 /// from when, a section starting when, which cover shows from when (the
-/// second from `next`, if any), whether the stage shows, and when it is
-/// looked at.
+/// second from `next`, if any), whether the game and the notes are on
+/// (from `switched`, if any: both on before), and when it is looked at.
 #[derive(Clone, Copy)]
 struct Scene {
     name: &'static str,
@@ -120,8 +123,22 @@ struct Scene {
     section: Option<f64>,
     arrives: f64,
     next: Option<f64>,
-    staged: bool,
+    game: bool,
+    notes: bool,
+    switched: Option<f64>,
     at: f64,
+}
+
+impl Scene {
+    /// Karaoke mode's settings at `now`.
+    fn config(&self, now: f64) -> Config {
+        let on = self.switched.is_none_or(|s| now >= s);
+        Config {
+            karaoke_game: self.game || !on,
+            karaoke_notes: self.notes || !on,
+            ..Config::default()
+        }
+    }
 }
 
 fn quiet(_: f64) -> Levels {
@@ -178,7 +195,9 @@ fn scenes() -> Vec<Scene> {
         section: None,
         arrives: 0.0,
         next: None,
-        staged: true,
+        game: true,
+        notes: true,
+        switched: None,
         at: 10.0,
     };
     let s = |name, music, at| Scene {
@@ -219,8 +238,23 @@ fn scenes() -> Vec<Scene> {
             ..s("cross-fade", middling, 10.0)
         },
         Scene {
-            staged: false,
-            ..s("lyrics-no-stage", loud, 10.03)
+            game: false,
+            ..s("notes-no-game", loud, 10.03)
+        },
+        Scene {
+            notes: false,
+            ..s("game-no-notes", loud, 10.03)
+        },
+        Scene {
+            game: false,
+            notes: false,
+            ..s("plain", loud, 10.03)
+        },
+        Scene {
+            game: false,
+            notes: false,
+            switched: Some(9.4),
+            ..s("to-plain", loud, 10.0)
         },
     ]
 }
@@ -315,7 +349,14 @@ fn load(path: &Path, shrunk: Option<u32>) -> Layers {
     Arc::new(Apart::new(key, layers))
 }
 
-fn picture_at(sung: &[&jodel_lyrics::Line], now: f64, singing: &Singing) -> KaraokePicture {
+/// The picture at `now` of the lines `sung`, scored as `singing` has it
+/// with the `game` on (off: no score).
+fn picture_at(
+    sung: &[&jodel_lyrics::Line],
+    now: f64,
+    singing: &Singing,
+    game: bool,
+) -> KaraokePicture {
     KaraokePicture {
         area: Rect::new(0, 0, 100, 24),
         bar: jodeldiplom::core::karaoke::controls::bar(Rect::new(0, 0, 100, 24)),
@@ -326,7 +367,7 @@ fn picture_at(sung: &[&jodel_lyrics::Line], now: f64, singing: &Singing) -> Kara
         start: None,
         before: Vec::new(),
         moved: 1.0,
-        score: Some(Score {
+        score: game.then_some(Score {
             points: singing.tally.score,
             streak: singing.tally.streak,
         }),
@@ -433,7 +474,7 @@ fn main() {
         let mut visualiser = Visualiser::default();
         let mut faces = Faces::default();
         let (mut heard, mut f) = (0usize, 0usize);
-        let (mut frame, mut picture) = (None, None);
+        let (mut frame, mut picture, mut staged) = (None, None, true);
         loop {
             let now = f as f64 / FPS;
             if now > scene.at + 1e-9 {
@@ -460,18 +501,21 @@ fn main() {
                 );
             }
             let showing = usize::from(scene.next.is_some_and(|n| now >= n));
+            let config = scene.config(now);
             let layers = (now >= scene.arrives).then(|| [&first, &next][showing].clone());
             let cue = Cue {
                 art: Some(arts[showing].clone()),
-                layers,
+                layers: Mode::of(&config).cover(layers),
                 levels: (scene.music)(now),
-                glow: jodeldiplom::gui::streak::level(&singing, true),
+                glow: jodeldiplom::gui::streak::level(&singing, config.karaoke_game),
                 section: scene.section.is_some_and(|s| (now - s).abs() < 0.5 / FPS),
             };
             frame = Some(visualiser.step(&cue, (w as u32, h as u32), (1.0 / FPS) as f32));
-            let p = picture_at(&sung, now, &singing);
-            if scene.staged && !bare {
-                let song = Song::new(&singing, sung.clone(), Some(LENGTH));
+            let p = picture_at(&sung, now, &singing, config.karaoke_game);
+            staged = config.karaoke_notes;
+            if staged && !bare {
+                let mut song = Song::new(&singing, sung.clone(), Some(LENGTH));
+                song.game = config.karaoke_game;
                 let area = (0.0, 0.0, w as f32, h as f32);
                 let frame = stage.frame(&song, &p, area, now, (1.0 / FPS) as f32);
                 // Every frame: the text it puts into the atlas is sent once.
@@ -484,7 +528,7 @@ fn main() {
             time(&mut gpu, frame.as_ref().expect("a frame"), (w, h));
         }
         gpu.set_backdrop(frame.as_ref(), w as u32, h as u32);
-        if !scene.staged || bare {
+        if !staged || bare {
             gpu.set_stage(None, w as u32, h as u32);
         }
         let backdrop = Backdrop::through(w, h);
@@ -500,7 +544,7 @@ fn main() {
                 score: None,
                 ..picture
             }
-        } else if scene.staged {
+        } else if staged {
             without_lyrics(&picture)
         } else {
             picture
