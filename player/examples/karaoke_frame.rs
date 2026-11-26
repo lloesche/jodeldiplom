@@ -1,7 +1,8 @@
-//! One frame of Karaoke mode for a song in the caches, as the window draws
-//! it (a PNG, on a plain backdrop; the lines and how far each is sung
-//! printed): its lines at `SECONDS`, with the notes of the line being sung from its
-//! melody. Only the caches are read, never the song.
+//! One frame of Karaoke mode for a song in the caches, as a window
+//! without a GPU paints it (a PNG, on a plain backdrop; the lines and how
+//! far each is sung printed): its lines at `SECONDS`, with the notes of the
+//! line being sung from its melody. Only the caches are read, never the
+//! song. `--size WxH`: the window's size (1600 × 900 by default).
 //!
 //! ```text
 //! cargo run --release -p jodeldiplom --example karaoke_frame -- DATA_DIR LYRICS_KEY ANALYSIS_KEY SECONDS OUT.png
@@ -10,10 +11,14 @@
 //! `LYRICS_KEY` names `lyrics/KEY.timed.lrc`, `ANALYSIS_KEY` names
 //! `analyses/KEY.wave`.
 //!
+//! `--stage`: the same frame as the GPU draws it without the lane (the
+//! notes off, or a song without notes of its own): the stage's lyrics set
+//! in the middle over the plain backdrop.
+//!
 //! `--gpu FRAMES`: instead, the last `FRAMES` frames up to `SECONDS` at 60
-//! a second as the GPU draws the mode (its stage over the pixmap), each a
-//! PNG (`OUT` with the frame's number before `.png`); the singer of
-//! `--sing` heard as they go.
+//! a second as the GPU draws the mode with its lane (the stage over the
+//! plain backdrop), each a PNG (`OUT` with the frame's number before
+//! `.png`); the singer of `--sing` heard as they go.
 
 use std::path::Path;
 
@@ -21,7 +26,29 @@ use jodeldiplom::core::singing::Singing;
 use jodeldiplom::gui::big_text::Faces;
 use jodeldiplom::gui::karaoke::{paint, Backdrop, Layer};
 use jodeldiplom::gui::pixels::Target;
+use jodeldiplom::gui::present::Offscreen;
+use jodeldiplom::gui::stage::{Song, Stage, Tint};
+use jodeldiplom::gui::stage_gpu::StageFrame;
 use jodeldiplom::view::karaoke::{sung_on, timed_lines, KaraokePicture, LineKind, Score};
+
+/// A GPU drawing Karaoke mode offscreen at `w` × `h`, over the plain
+/// backdrop (no cover).
+fn plain_gpu((w, h): (u32, u32)) -> Offscreen {
+    let mut gpu = Offscreen::new(false).expect("a GPU");
+    gpu.set_plain_ground(w, h);
+    gpu
+}
+
+/// `frame` drawn by `gpu` at `w` × `h` into the PNG `file`.
+fn save_stage(gpu: &mut Offscreen, frame: &StageFrame, (w, h): (u32, u32), file: &Path) {
+    gpu.set_stage(Some(frame), w, h);
+    let shown = gpu.show_frame(w, h).expect("a frame");
+    let img = image::RgbImage::from_fn(w, h, |x, y| {
+        let p = shown[(y * w + x) as usize];
+        image::Rgb([(p >> 16) as u8, (p >> 8) as u8, p as u8])
+    });
+    save_png(&img, file);
+}
 
 /// `img` as a PNG in `file`, written whole.
 fn save_png(img: &image::RgbImage, file: &Path) {
@@ -45,6 +72,15 @@ fn main() {
     let waveform = jodel_rhythm::waveform::Waveform::from_bytes(&wave).expect("a waveform");
     let melody = waveform.melody.expect("a melody");
     let t: f64 = args[3].parse().unwrap();
+    // `--size WxH`: the window's size (1600 × 900 by default).
+    let size = args
+        .iter()
+        .position(|a| a == "--size")
+        .and_then(|k| args.get(k + 1))
+        .and_then(|s| s.split_once('x'))
+        .map_or((1600, 900), |(w, h)| {
+            (w.parse().expect("W"), h.parse().expect("H"))
+        });
     let sung: Vec<&jodel_lyrics::Line> = lyrics
         .lines
         .iter()
@@ -71,7 +107,15 @@ fn main() {
         .and_then(|k| args.get(k + 1))
         .and_then(|v| v.parse().ok());
     if let Some(frames) = gpu {
-        gpu_frames(&args[4], &sung, &melody, &mut singing, sing, t, frames);
+        gpu_frames(
+            &args[4],
+            &sung,
+            &melody,
+            &mut singing,
+            (sing, size),
+            t,
+            frames,
+        );
         return;
     }
     if let Some(off) = sing {
@@ -155,8 +199,21 @@ fn main() {
         }),
         result: None,
     };
-    // The window, at 1600 × 900.
-    let (w, h) = (1600usize, 900usize);
+    if args.iter().any(|a| a == "--stage") {
+        let mut gpu = plain_gpu(size);
+        let song = Song::new(&singing, Vec::new(), None);
+        let area = (0.0, 0.0, size.0 as f32, size.1 as f32);
+        let mut stage = Stage::default();
+        let frame = stage.scene((&song, false), &picture, area, (t, 0.0), &Tint::STAGE);
+        save_stage(
+            &mut gpu,
+            &frame.expect("the lyrics"),
+            size,
+            Path::new(&args[4]),
+        );
+        return;
+    }
+    let (w, h) = (size.0 as usize, size.1 as usize);
     let mut pixels = vec![0u32; w * h];
     let backdrop = Backdrop::new(None, w, h);
     let mut target = Target {
@@ -197,17 +254,12 @@ fn gpu_frames(
     sung: &[&jodel_lyrics::Line],
     melody: &jodel_rhythm::waveform::Melody,
     singing: &mut Singing,
-    sing: Option<f32>,
+    (sing, size): (Option<f32>, (u32, u32)),
     t: f64,
     frames: usize,
 ) {
-    use jodeldiplom::gui::present::Offscreen;
-    use jodeldiplom::gui::stage::{without_lyrics, Song, Stage};
-    let (w, h) = (1600usize, 900usize);
-    let mut gpu = Offscreen::new(false).expect("a GPU");
+    let mut gpu = plain_gpu(size);
     let mut stage = Stage::default();
-    let mut big = Faces::default();
-    let backdrop = Backdrop::new(None, w, h);
     let mut heard_to = 0usize;
     let mut before: Option<Vec<jodeldiplom::view::karaoke::LyricLine>> = None;
     let mut changed_at = f64::NEG_INFINITY;
@@ -255,52 +307,16 @@ fn gpu_frames(
         if moved >= 1.0 {
             before = Some(lines);
         }
-        let mut pixels = vec![0u32; w * h];
-        let mut target = Target {
-            pixels: &mut pixels,
-            width: w,
-            height: h,
-        };
-        paint(
-            &mut target,
-            &mut big,
-            &mut Layer::default(),
-            &backdrop,
-            &without_lyrics(&picture),
-            (0, 0, w, h),
-            None,
-            true,
-        );
-        let song = Song {
+        let song = Song::new(
             singing,
-            sung: sung.to_vec(),
-            game: true,
-            length: Some(melody.cents.len() as f64 / 100.0),
-            late: 0.0,
-            demo: false,
-            heard: None,
-        };
-        let frame = stage.frame(
-            &song,
-            &picture,
-            (0.0, 0.0, w as f32, h as f32),
-            now,
-            1.0 / 60.0,
+            sung.to_vec(),
+            Some(melody.cents.len() as f64 / 100.0),
         );
-        gpu.set_stage(Some(&frame), w as u32, h as u32);
-        let shown = gpu
-            .show_pixels(&pixels, w as u32, h as u32)
-            .expect("a frame");
-        let mut img = image::RgbImage::new(w as u32, h as u32);
-        for (i, p) in shown.iter().enumerate() {
-            img.put_pixel(
-                (i % w) as u32,
-                (i / w) as u32,
-                image::Rgb([(p >> 16) as u8, (p >> 8) as u8, *p as u8]),
-            );
-        }
+        let area = (0.0, 0.0, size.0 as f32, size.1 as f32);
+        let step = (now, 1.0 / 60.0);
+        let frame = stage.scene((&song, true), &picture, area, step, &Tint::STAGE);
         let name = out.replace(".png", &format!("{f:03}.png"));
-        save_png(&img, Path::new(&name));
+        save_stage(&mut gpu, &frame.expect("a stage"), size, Path::new(&name));
     }
     println!(
         "score {} ({} of {} words, streak {})",

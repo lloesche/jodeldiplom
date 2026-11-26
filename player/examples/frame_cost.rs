@@ -4,8 +4,10 @@
 //! stage over it, stepped at 60 frames a second through a made-up song
 //! sung on the notes (`tests/common/sung.rs`), drawn offscreen as the
 //! window draws them, and each step's GPU time read from timestamps (the
-//! window's pass drawn a step a pass): a normal frame (the singing at no
-//! tier), each tier's peak (a scene a tier, named after it: two phrases
+//! window's pass drawn a step a pass; the first, `ground`, the backdrop
+//! over the window): a normal frame (the singing at no tier), the lyrics
+//! set in the middle (`lyrics`: no lane, as with the notes off), each
+//! tier's peak (a scene a tier, named after it: two phrases
 //! at it, the second just decided, the streak just reaching its rung of
 //! the multiplier; each with every effect its row lists, held, fired by
 //! the phrase and by the rung; at Diva's its jackpot flying, angels coming
@@ -59,12 +61,9 @@ use jodeldiplom::core::singing::{Reveal, Shown, Singing, SongResult, UNROLL};
 use jodeldiplom::cover::{Apart, Layers};
 use jodeldiplom::gui::backdrop::music::Hearing;
 use jodeldiplom::gui::backdrop::{BackdropFrame, Cue, Visualiser};
-use jodeldiplom::gui::big_text::Faces;
 use jodeldiplom::gui::fx::{By, Effects, Fx, Music, Treat, Use};
-use jodeldiplom::gui::karaoke::{paint, Backdrop, Layer};
-use jodeldiplom::gui::pixels::Target;
 use jodeldiplom::gui::present::Offscreen;
-use jodeldiplom::gui::stage::{without_lyrics, Song, Stage, Tint};
+use jodeldiplom::gui::stage::{Song, Stage, Tint};
 use jodeldiplom::gui::stage_gpu::{kind, Instance, StageFrame};
 use jodeldiplom::view::karaoke::{KaraokePicture, ResultShown};
 
@@ -93,17 +92,20 @@ const CLIMBS: f64 = AT - TIMED;
 /// the song's diploma is timed from the moment looked at (its whole
 /// reveal) rather than the singing up to it, whether every effect is in
 /// its frames at once ([`every_effect`]), and how its frames are judged
-/// against the budgets.
+/// against the budgets; whether the stage draws the song's lane (else the
+/// lyrics set in the middle, as with the notes off).
 struct Scene {
     name: String,
     tier: Option<Tier>,
     diploma: bool,
     every: bool,
     judge: Judge,
+    lane: bool,
 }
 
-/// The scenes: the normal one, a tier's each, every effect at once and
-/// the diploma (at the top, judged by the lesser of two runs).
+/// The scenes: the normal one, the lyrics set in the middle (no lane), a
+/// tier's each, every effect at once and the diploma (at the top, judged by
+/// the lesser of two runs).
 fn scenes() -> Vec<Scene> {
     let scene = |name: &str, tier, diploma, every| Scene {
         name: name.to_owned(),
@@ -111,6 +113,11 @@ fn scenes() -> Vec<Scene> {
         diploma,
         every,
         judge: Judge::Worst,
+        lane: true,
+    };
+    let lyrics = Scene {
+        lane: false,
+        ..scene("lyrics", None, false, false)
     };
     let tiers =
         (Tier::ALL.into_iter()).map(|t| scene(&t.name().to_lowercase(), Some(t), false, false));
@@ -118,7 +125,7 @@ fn scenes() -> Vec<Scene> {
         judge: Judge::MinOfTwo,
         ..scene("diploma", Some(Tier::TOP), true, false)
     };
-    [scene("normal", None, false, false)]
+    [scene("normal", None, false, false), lyrics]
         .into_iter()
         .chain(tiers)
         .chain([scene("all", Some(Tier::TOP), false, true), diploma])
@@ -330,19 +337,17 @@ fn time(
     effects.frames += 1;
     whole
 }
-/// What makes a scene's frames in one size: the stage, the backdrop and
-/// the pixmap under them, as the window keeps them.
+/// What makes a scene's frames in one size: the stage and the backdrop
+/// under it, as the window keeps them.
 struct Rig<'a> {
     stage: Stage,
     visualiser: Visualiser,
-    pixels: Vec<u32>,
-    faces: Faces,
-    layer: Layer,
-    under: Backdrop,
     art: &'a Art,
     layers: &'a Layers,
     sung: &'a [&'a jodel_lyrics::Line],
     size: (u32, u32),
+    /// Whether the stage draws the song's lane.
+    lane: bool,
     /// Frames made so far.
     made: usize,
     /// When the last phrase seen ended.
@@ -351,13 +356,13 @@ struct Rig<'a> {
 
 impl Rig<'_> {
     /// The frame at `now` (`result`: the diploma shown over it), and what
-    /// the processor took for its stage and its pixmap, ms.
+    /// the processor took for its stage, ms.
     fn frame(
         &mut self,
         singing: &Singing,
         now: f64,
         result: Option<ResultShown>,
-    ) -> (BackdropFrame, StageFrame, [f64; 2]) {
+    ) -> (BackdropFrame, StageFrame, f64) {
         let (w, h) = self.size;
         self.made += 1;
         let started = Instant::now();
@@ -385,11 +390,11 @@ impl Rig<'_> {
         let song = Song::new(singing, self.sung.to_vec(), Some(LENGTH));
         let area = (0.0, 0.0, w as f32, h as f32);
         // As the window has it: the result screen while one shows, else
-        // the lane.
+        // the lane (or the lyrics set in the middle) and the score.
         let frame = self
             .stage
             .scene(
-                (&song, true),
+                (&song, self.lane),
                 &picture,
                 area,
                 (now, (1.0 / FPS) as f32),
@@ -397,25 +402,7 @@ impl Rig<'_> {
             )
             .expect("a stage");
         let stage_ms = started.elapsed().as_secs_f64() * 1000.0;
-        // The pixmap as the window paints it: only what changed.
-        let started = Instant::now();
-        let mut target = Target {
-            pixels: &mut self.pixels,
-            width: w as usize,
-            height: h as usize,
-        };
-        paint(
-            &mut target,
-            &mut self.faces,
-            &mut self.layer,
-            &self.under,
-            &without_lyrics(&picture),
-            (0, 0, w as usize, h as usize),
-            None,
-            self.made == 1,
-        );
-        let pixmap_ms = started.elapsed().as_secs_f64() * 1000.0;
-        (backdrop, frame, [stage_ms, pixmap_ms])
+        (backdrop, frame, stage_ms)
     }
 }
 
@@ -462,11 +449,10 @@ impl Drew {
 }
 
 /// A frame timed: its steps' GPU times and what the processor took for
-/// its stage and its pixmap (ms), its time in the scene (s) and what it
-/// drew.
+/// its stage (ms), its time in the scene (s) and what it drew.
 struct Timed {
     steps: Vec<(&'static str, f64)>,
-    cpu: [f64; 2],
+    cpu: f64,
     at: f64,
     drew: Drew,
 }
@@ -485,7 +471,7 @@ fn lesser(a: Vec<Timed>, b: &[Timed]) -> Vec<Timed> {
             for (s, t) in a.steps.iter_mut().zip(&b.steps) {
                 s.1 = s.1.min(t.1);
             }
-            a.cpu = [0, 1].map(|k| a.cpu[k].min(b.cpu[k]));
+            a.cpu = a.cpu.min(b.cpu);
             a
         })
         .collect()
@@ -545,10 +531,8 @@ fn print(
         "GPU total",
         stats(frames.iter().map(Timed::total).collect()),
     ));
-    for (k, name) in ["CPU stage", "CPU pixmap"].into_iter().enumerate() {
-        print!("  {name:<10} ");
-        stats(frames.iter().map(|f| f.cpu[k]).collect());
-    }
+    print!("  {:<10} ", "CPU stage");
+    stats(frames.iter().map(|f| f.cpu).collect());
     let worst = (frames.iter().enumerate()).max_by(|a, b| a.1.total().total_cmp(&b.1.total()));
     if let Some((n, f)) = worst {
         let d = f.drew;
@@ -684,16 +668,11 @@ fn main() {
             let mut rig = Rig {
                 stage: Stage::default(),
                 visualiser: Visualiser::default(),
-                // The pixmap under it all (the picture without its lyrics:
-                // the stage draws them), sent over once.
-                pixels: vec![0u32; (w * h) as usize],
-                faces: Faces::default(),
-                layer: Layer::default(),
-                under: Backdrop::through(w as usize, h as usize),
                 art: &art,
                 layers: &layers,
                 sung: &sung,
                 size: (w, h),
+                lane: scene.lane,
                 made: 0,
                 phrase: None,
             };
@@ -739,10 +718,6 @@ fn main() {
                     let area = (0.0, 0.0, w as f32, h as f32);
                     let fired = (&rest, AT - TIMED);
                     frame = every_effect(&mut rig.stage, &frame, area, fired);
-                }
-                if rig.made == 1 {
-                    gpu.set_backdrop(Some(&backdrop), w, h);
-                    gpu.show_pixels(&rig.pixels, w, h).expect("a frame");
                 }
                 if !scene.diploma && now > AT - TIMED {
                     let alone = Some((&mut kinds, &mut effects));
@@ -825,7 +800,7 @@ fn main() {
             kinds.print("the stage, kind by kind");
             effects.print("the effects, one by one");
             if let Some(dir) = &png {
-                let shown = gpu.show_pixels(&rig.pixels, w, h).expect("a frame");
+                let shown = gpu.show_frame(w, h).expect("a frame");
                 let mut img = image::RgbImage::new(w, h);
                 for (i, p) in shown.iter().enumerate() {
                     img.put_pixel(

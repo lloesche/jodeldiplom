@@ -1,5 +1,5 @@
-//! Frames of Karaoke mode as the window draws it on the GPU (the canvas
-//! with its cells, the stage over it, the cover's ground under it), to
+//! Frames of Karaoke mode as the window draws it on the GPU (the cover's
+//! ground, the canvas's controls' bar over it, the stage over that), to
 //! look at START's pill and the controls' bar: the mode just entered
 //! (START alone), a song being sung (its lane, its progress along the
 //! bottom) and a song's result (the diploma, START under it), each with
@@ -269,6 +269,7 @@ fn main() {
             let ground = Visualiser::default().step(&cue, (pw, ph), 1.0 / 60.0);
             gpu.set_backdrop(Some(&ground), pw, ph);
             gpu.set_stage(stage.as_ref(), pw, ph);
+            gpu.set_strip(canvas.strip());
             let shown = gpu.show_pixels(pixels, pw, ph).expect("a frame");
             let img = image::RgbImage::from_fn(pw, ph, |x, y| {
                 let p = shown[(y * pw + x) as usize];

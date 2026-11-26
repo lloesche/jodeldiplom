@@ -17,11 +17,8 @@ use std::sync::Arc;
 
 use jodeldiplom::core::shine::{Shone, Tier};
 use jodeldiplom::core::singing::{Cue, Singing};
-use jodeldiplom::gui::big_text::Faces;
-use jodeldiplom::gui::karaoke::{paint, Backdrop, Layer};
-use jodeldiplom::gui::pixels::Target;
 use jodeldiplom::gui::present::Offscreen;
-use jodeldiplom::gui::stage::{without_lyrics, Song, Stage};
+use jodeldiplom::gui::stage::{Song, Stage, Tint};
 use jodeldiplom::view::karaoke::{timed_lines, KaraokePicture, Score};
 
 // The fonts build.rs found: `EMBEDDED_FONTS`.
@@ -152,8 +149,7 @@ fn main() {
     let sung: Vec<&jodel_lyrics::Line> = lyrics.lines.iter().collect();
     let mut gpu = Offscreen::new(false).expect("a GPU");
     let mut stage = Stage::default();
-    let mut faces = Faces::default();
-    let backdrop = Backdrop::new(None, w, h);
+    gpu.set_plain_ground(w as u32, h as u32);
     let last = wanted.iter().copied().fold(0.0, f64::max);
     let (mut heard, mut f, mut told) = (0usize, 0usize, 0usize);
     loop {
@@ -195,36 +191,19 @@ fn main() {
         told = singing.moments().len();
         let picture = picture_at(&sung, now, &singing);
         let song = Song::new(&singing, sung.clone(), Some(26.0));
-        let frame = stage.frame(
-            &song,
+        let area = (0.0, 0.0, w as f32, h as f32);
+        let frame = stage.scene(
+            (&song, true),
             &picture,
-            (0.0, 0.0, w as f32, h as f32),
-            now,
-            1.0 / 60.0,
+            area,
+            (now, 1.0 / 60.0),
+            &Tint::STAGE,
         );
-        gpu.set_stage(Some(&frame), w as u32, h as u32);
+        gpu.set_stage(frame.as_ref(), w as u32, h as u32);
         if !wanted.iter().any(|&t| (t - now).abs() < 0.5 / 60.0) {
             continue;
         }
-        let mut pixels = vec![0u32; w * h];
-        let mut target = Target {
-            pixels: &mut pixels,
-            width: w,
-            height: h,
-        };
-        paint(
-            &mut target,
-            &mut faces,
-            &mut Layer::default(),
-            &backdrop,
-            &without_lyrics(&picture),
-            (0, 0, w, h),
-            None,
-            true,
-        );
-        let shown = gpu
-            .show_pixels(&pixels, w as u32, h as u32)
-            .expect("a frame");
+        let shown = gpu.show_frame(w as u32, h as u32).expect("a frame");
         let mut img = image::RgbImage::new(w as u32, h as u32);
         for (i, p) in shown.iter().enumerate() {
             img.put_pixel(

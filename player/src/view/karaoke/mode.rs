@@ -1,7 +1,8 @@
 //! Karaoke mode on the screen: one picture over the whole screen
 //! ([`KaraokePicture`], made by [`picture`]: the lyrics as they are sung
 //! ([`lines_now`]), the count-in, the score, the song's result, START)
-//! that the window paints in pixels over the cover's ground, and the
+//! that the window draws over the cover's ground (its stage on the GPU,
+//! else painted in pixels), and the
 //! controls' cells over it ([`draw_mode`]): the voice slider, the seek bar
 //! and the keys, fading in and out over their bar. START is no cell but
 //! the stage's pill ([`KaraokePicture::start`]).

@@ -181,7 +181,7 @@ impl Stage {
         let (top, bottom) = lane.hud(area);
         let tall = bottom - top;
         let badge = self.badge_box(lane, area);
-        let score = crate::gui::karaoke::score_corner(area);
+        let score = super::score::corner(area);
         let air = h * super::AIR;
         let hy = (h * 0.016).max(5.0).min(tall / (2.0 * (1.0 + PAD)));
         let pad = hy * PAD;

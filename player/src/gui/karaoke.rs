@@ -1,16 +1,19 @@
-//! Karaoke mode in pixels: the cover blurred over the whole screen under a
-//! dark layer, the lyrics in large type over it, filling as they are sung,
-//! and the count-in's numbers shrinking and fading on their beats; the
-//! score top right, rolling up as an odometer does ([`odometer`]). The
+//! Karaoke mode in pixels, for a window without a GPU (with one, the
+//! stage draws it all: [`super::stage`]): the cover blurred over the whole
+//! screen under a dark layer, the lyrics in large type over it, filling as
+//! they are sung, the notes under the line sung ([`super::notes`]), and
+//! the count-in's numbers shrinking and fading on their beats; the score
+//! top right, rolling up as an odometer does. Where each goes is the
+//! stage's ([`lyrics::set`], [`count::placed`], [`score::placed`]). The
 //! ground under them is [`ground`]'s.
 
 pub mod ground;
-pub mod odometer;
 
-use super::big_text::{BigText, Face, Faces};
+use super::big_text::{Face, Faces};
 use super::notes::SungOp;
-use super::pixels::{dim, mix, union, PixelRect, Target};
-use crate::view::karaoke::{line_color, KaraokePicture, LineKind, LyricLine, HIT};
+use super::pixels::{dim, union, PixelRect, Target};
+use super::stage::{count, lyrics, score};
+use crate::view::karaoke::KaraokePicture;
 use crate::view::palette;
 
 pub use ground::Backdrop;
@@ -24,141 +27,6 @@ fn base_size(px: f32) -> f32 {
     }
     let step = 1.25f32;
     step.powf((px.ln() / step.ln()).ceil())
-}
-
-/// Where a line goes: its size and the top of its text.
-#[derive(Clone, Copy)]
-struct Slot {
-    px: f32,
-    y: f32,
-}
-
-/// How far down a line's text is from the next one's: its size and more.
-fn gap(px: f32) -> f32 {
-    px * 1.45
-}
-
-/// The room under the line being sung for its notes, as a share of its
-/// size; where the notes go in it (their highest's top and lowest's
-/// bottom, from the text's top), and a note's thickness.
-const NOTES_ROOM: f32 = 1.45;
-pub(super) const NOTES_TOP: f32 = 1.3;
-pub(super) const NOTES_BOTTOM: f32 = 2.5;
-pub(super) const NOTE_THICK: f32 = 0.09;
-
-/// Whether `line` gets room for notes under it: a lyric being sung.
-fn noted(line: &LyricLine) -> bool {
-    line.kind == LineKind::Current && line.id.is_some()
-}
-
-/// The lines' sizes (by what they are, smaller where too wide) and places,
-/// stacked and centred in `room` rows of pixels from `top`.
-fn slots(
-    text: &mut BigText,
-    lines: &[LyricLine],
-    width: usize,
-    top: usize,
-    room: usize,
-    big: f32,
-) -> Vec<Slot> {
-    let widest = width as f32 * 0.92;
-    let sizes: Vec<f32> = lines
-        .iter()
-        .map(|l| {
-            let px = match l.kind {
-                LineKind::Current => big,
-                LineKind::Next | LineKind::Previous => big * 0.62,
-                LineKind::Info => big * 0.42,
-                LineKind::Warning => big * 0.36,
-            };
-            let w = text.measure(&l.text, px);
-            if w > widest && w > 0.0 {
-                (px * widest / w).max(10.0).round()
-            } else {
-                px.round()
-            }
-        })
-        .collect();
-    let below = |l: &LyricLine, px: f32| if noted(l) { px * NOTES_ROOM } else { 0.0 };
-    let total: f32 = lines
-        .iter()
-        .zip(&sizes)
-        .map(|(l, &px)| gap(px) + below(l, px))
-        .sum();
-    let mut y = top as f32 + (room as f32 - total).max(0.0) / 2.0;
-    lines
-        .iter()
-        .zip(sizes)
-        .map(|(l, px)| {
-            let slot = Slot {
-                px,
-                y: y + (gap(px) - px) / 2.0,
-            };
-            y += gap(px) + below(l, px);
-            slot
-        })
-        .collect()
-}
-
-/// The line sung's size in a picture `height` pixels high.
-fn big_of(height: usize) -> f32 {
-    (height as f32 / 11.0).clamp(20.0, 160.0).round()
-}
-
-/// The score's sizes in the window's `area` (left, top, width, height):
-/// its figures', the margin it keeps from the corner, and its rung's
-/// under it. Its figures a share of the line sung's, smaller where the
-/// corner would come down past the HUD's band over the lane
-/// ([`super::stage::Lane::hud`]: over the marquee bulbs).
-fn score_sizes((x, y, w, h): (f32, f32, f32, f32)) -> (f32, f32, f32) {
-    let sizes = |px: f32| (px, px * 0.8, (px * 0.45).round().max(10.0));
-    let (_, bottom) = super::stage::Lane::new((x, y, w, h), 0.0).hud((x, y, w, h));
-    let mut px = (big_of(h as usize) * 0.42).round().max(12.0);
-    while px > 12.0 && score_bottom(y, sizes(px)) > bottom {
-        px -= 1.0;
-    }
-    sizes(px)
-}
-
-/// The score's corner's bottom under the window's top `y`, at its sizes.
-fn score_bottom(y: f32, (px, margin, small): (f32, f32, f32)) -> f32 {
-    y + margin * 0.6 + px * 1.25 + small * 1.5
-}
-
-/// How many of its figures' sizes wide the score's corner is: room for a
-/// score of nine figures and for its rung's name under it.
-const SCORE_WIDE: f32 = 6.5;
-
-/// The corner the score takes top right in the window's `area` (left,
-/// top, width, height), its rung under it: left, top, right, bottom. The
-/// effects over the frame keep it clear (the edges on fire), as they do
-/// the lyric band.
-pub fn score_corner((x, y, w, h): (f32, f32, f32, f32)) -> [f32; 4] {
-    let sizes = score_sizes((x, y, w, h));
-    let (px, margin, _) = sizes;
-    [
-        x + w - margin - px * SCORE_WIDE,
-        y,
-        x + w,
-        score_bottom(y, sizes),
-    ]
-}
-
-/// How far into `line` (at `px`, glyphs made at `base`) character `at` is,
-/// in pixels (a fraction through one, through its width).
-fn x_of_char(text: &mut BigText, line: &str, base: f32, px: f32, at: f32) -> f32 {
-    let at = at.max(0.0);
-    let whole = at.floor() as usize;
-    let before: String = line.chars().take(whole).collect();
-    let x = text.measure_from(&before, base, px);
-    match line.chars().nth(whole) {
-        Some(c) => x + (at - whole as f32) * text.measure_from(&c.to_string(), base, px),
-        None => x,
-    }
-}
-
-fn lerp(a: f32, b: f32, t: f32) -> f32 {
-    a + (b - a) * t
 }
 
 /// One piece of text the picture draws, and where.
@@ -175,7 +43,7 @@ struct TextOp {
     /// The notes under it and the singing on them, where it has notes.
     sung: Option<SungOp>,
     /// The pixels it is kept to, where it is (a figure of the score in its
-    /// cell).
+    /// slot).
     clip: Option<PixelRect>,
 }
 
@@ -192,7 +60,7 @@ impl TextOp {
                 * if self.sung.is_none() {
                     1.5
                 } else {
-                    NOTES_BOTTOM
+                    lyrics::NOTES_BOTTOM
                 }
             + pad)
             .min((bounds.1 + bounds.3) as f32);
@@ -211,18 +79,13 @@ impl TextOp {
 /// What Karaoke mode's picture drew last: each piece of text and the
 /// pixels it may cover. A frame redraws only the pieces that changed (a
 /// line filling as it is sung), with the backdrop put back under them.
-/// And what of its bubbles the GPU draws over it ([`Layer::over`]: their
-/// liquid, with a GPU, and their bursts), as last painted; the score's
-/// counter ([`Layer::odometer`]), stepped as each frame is painted by the
-/// time since the last ([`Layer::at`]).
+/// And the score's counter ([`Layer::odometer`]), stepped as each frame is
+/// painted by the time since the last ([`Layer::at`]).
 #[derive(Default)]
 pub struct Layer {
     drawn: Vec<(TextOp, PixelRect)>,
-    /// What the GPU draws over the picture; whether there is one to (set
-    /// it before painting: the bars' fill is painted only without).
-    pub over: super::notes::Over,
     /// The score as it rolls up.
-    pub odometer: odometer::Odometer,
+    pub odometer: score::Odometer,
     /// When the frame painted next is, and the seconds since the one
     /// before (none set: none).
     at: Option<std::time::Instant>,
@@ -283,8 +146,7 @@ pub fn paint(
     let lyrics = (ax, ay, aw, room);
     let points = picture.score.map(|s| s.points);
     layer.odometer.step(points, std::mem::take(&mut layer.dt));
-    let (ops, over) = text_ops(faces, picture, (area, ah), layer);
-    layer.over = over;
+    let ops = text_ops(faces, picture, area, layer);
     let now: Vec<(TextOp, PixelRect)> = ops
         .into_iter()
         .map(|op| {
@@ -375,184 +237,46 @@ pub fn paint(
     changed
 }
 
-/// The pieces of text of `picture`: its lines (moving into their places
-/// while they scroll), the count-in's number and the score (as `layer`'s
-/// counter shows it); what the GPU draws over them (where `layer` has
-/// one).
+/// The pieces of text of `picture` in `area` (pixels): its lines (moving
+/// into their places while they scroll), the count-in's number and the
+/// score (as `layer`'s counter shows it), each where the stage sets it.
 fn text_ops(
     faces: &mut Faces,
     picture: &KaraokePicture,
-    (area, room): (PixelRect, usize),
+    (ax, ay, aw, ah): PixelRect,
     layer: &Layer,
-) -> (Vec<TextOp>, super::notes::Over) {
-    let gpu = layer.over.gpu;
-    let (ax, ay, aw, ah) = area;
-    let big = big_of(ah);
-    let accent = palette::ACCENT;
-    let (mut ops, mut over) = (Vec::new(), super::notes::Over::new(gpu));
-    let mut line_op =
-        |text: &mut BigText, line: &LyricLine, base: f32, slot: Slot, rest: [u8; 3], alpha: f32| {
-            let alpha = alpha * line.alpha.clamp(0.0, 1.0) as f32;
-            if alpha <= 0.004 {
-                return;
-            }
-            let w = text.measure_from(&line.text, base, slot.px);
-            let x = ax as f32 + (aw as f32 - w) / 2.0;
-            // The fill to the character sung, measured (the font's letters
-            // are not all as wide).
-            let chars = line.text.chars().count() as f32;
-            let fill_x = x + x_of_char(
-                text,
-                &line.text,
-                base,
-                slot.px,
-                chars * line.fill.clamp(0.0, 1.0) as f32,
-            );
-            let sung_color = match line.kind {
-                LineKind::Current => accent,
-                _ => rest,
-            };
-            let x_of = |text: &mut BigText, at| x_of_char(text, &line.text, base, slot.px, at);
-            let at = (x, slot.y);
-            over.add(line, at, slot.px, |c| x_of(text, c));
-            let sung = SungOp::of(line, slot.px, gpu, |c| x_of(text, c));
-            ops.push(TextOp {
-                text: line.text.clone(),
-                face: text.face(),
-                base,
-                px: slot.px,
-                at: (x, slot.y),
-                fill_x,
-                colors: (sung_color, rest),
-                alpha,
-                sung,
-                clip: None,
-            });
-        };
-    let faded = |kind: LineKind| match kind {
-        LineKind::Previous => 0.5,
-        _ => 1.0,
-    };
-    let now = slots(faces.get(Face::LINE), &picture.lines, aw, ay, room, big);
-    let moving = picture.moved < 1.0 && !picture.before.is_empty();
-    let then = if moving {
-        slots(faces.get(Face::LINE), &picture.before, aw, ay, room, big)
-    } else {
-        Vec::new()
-    };
-    let m = picture.moved.clamp(0.0, 1.0) as f32;
-    for (k, line) in picture.lines.iter().enumerate() {
-        let slot = now[k];
-        let rest = line_color(line.kind);
-        let was = moving
-            .then(|| {
-                picture
-                    .before
-                    .iter()
-                    .position(|b| b.id.is_some() && b.id == line.id)
-            })
-            .flatten();
-        match (moving, was) {
-            (false, _) => line_op(
-                faces.get(Face::LINE),
-                line,
-                slot.px,
-                slot,
-                rest,
-                faded(line.kind),
-            ),
-            // From where it was to where it goes, its size and colour too;
-            // its glyphs made at the larger size, scaled down.
-            (true, Some(j)) => {
-                let old = then[j];
-                let at = Slot {
-                    px: lerp(old.px, slot.px, m),
-                    y: lerp(old.y, slot.y, m),
-                };
-                let kind = picture.before[j].kind;
-                let color = mix(line_color(kind), rest, m);
-                let alpha = lerp(faded(kind), faded(line.kind), m);
-                line_op(
-                    faces.get(Face::LINE),
-                    line,
-                    old.px.max(slot.px),
-                    at,
-                    color,
-                    alpha,
-                );
-            }
-            // New: rising into its place as it fades in.
-            (true, None) => {
-                let at = Slot {
-                    y: slot.y + (1.0 - m) * gap(slot.px) * 0.5,
-                    ..slot
-                };
-                line_op(
-                    faces.get(Face::LINE),
-                    line,
-                    slot.px,
-                    at,
-                    rest,
-                    faded(line.kind) * m,
-                );
-            }
-        }
-    }
-    // Lines that went: rising away as they fade out.
-    if moving {
-        for (j, gone) in picture.before.iter().enumerate() {
-            let stays = gone.id.is_some() && picture.lines.iter().any(|l| l.id == gone.id);
-            if !stays {
-                let old = then[j];
-                let at = Slot {
-                    y: old.y - m * gap(old.px) * 0.5,
-                    ..old
-                };
-                let rest = line_color(gone.kind);
-                line_op(
-                    faces.get(Face::LINE),
-                    gone,
-                    old.px,
-                    at,
-                    rest,
-                    faded(gone.kind) * (1.0 - m),
-                );
-            }
-        }
-    }
-    // The count-in: its number in the lane behind the playhead, where the
-    // singing starts and no bubble is yet (clear of the meter and badges
-    // above the lane and of the lines below it; it never moves with
-    // them), shrinking and fading over its beat; the one before the
-    // singing comes back after a break half as large.
-    let count = picture
-        .count
-        .map(|c| (c, 0.26))
-        .or(picture.cue.map(|c| ((c.number, c.through), 0.13)));
-    if let Some(((n, through), size)) = count {
-        let lane = super::stage::Lane::new((ax as f32, ay as f32, aw as f32, ah as f32), 0.0);
-        let behind = lane.head - ax as f32;
-        // Smaller at once (ease-out), fading late, so it reads through
-        // most of its beat.
-        let t = through.clamp(0.0, 1.0) as f32;
-        let shrink = 1.0 - (1.0 - t).powi(3);
-        let most = (room as f32 * size).min(behind * 0.9);
-        let px = most * (1.0 - 0.4 * shrink);
-        let base = base_size(px);
-        let digit = n.to_string();
-        let w = faces.get(Face::SHOUT).measure_from(&digit, base, px);
+) -> Vec<TextOp> {
+    let area = (ax as f32, ay as f32, aw as f32, ah as f32);
+    let mut ops = Vec::new();
+    let text = faces.get(Face::LINE);
+    for s in lyrics::set(text, picture, |_| true, area) {
+        let sung = SungOp::of(s.line, s.px, |c| s.x_of(text, c));
         ops.push(TextOp {
-            text: digit,
+            text: s.line.text.clone(),
+            face: Face::LINE,
+            base: s.base,
+            px: s.px,
+            at: s.at,
+            fill_x: s.fill_x,
+            colors: s.colors,
+            alpha: s.alpha,
+            sung,
+            clip: None,
+        });
+    }
+    let accent = palette::ACCENT;
+    let shout = faces.get(Face::SHOUT);
+    let base = |px: f32, _: f32| base_size(px);
+    if let Some(c) = count::placed(shout, picture, area, area.3, base) {
+        ops.push(TextOp {
+            text: c.text,
             face: Face::SHOUT,
-            base,
-            px,
-            at: (
-                ax as f32 + (behind - w) / 2.0,
-                (lane.band.0 + lane.band.1 - px) / 2.0,
-            ),
+            base: c.base,
+            px: c.px,
+            at: c.at,
             fill_x: f32::MAX,
             colors: (accent, accent),
-            alpha: 1.0 - t * t * t,
+            alpha: c.alpha,
             sung: None,
             clip: None,
         });
@@ -560,20 +284,15 @@ fn text_ops(
     // The score, top right: the level under it, and the points rolling
     // up, last (however many pieces they are, those before keep their
     // places in the list: they are not drawn again for it).
-    if let Some(score) = picture.score {
-        let (px, margin, small) = score_sizes((ax as f32, ay as f32, aw as f32, ah as f32));
-        // Under it the multiplier's rung, named as the badge names it.
-        if let Some(times) = score.rung_label() {
-            let lw = faces.get(Face::SHOUT).measure_from(&times, small, small);
+    if let Some(points) = picture.score {
+        let placed = score::placed(faces, points, &layer.odometer.reading(), area);
+        if let Some((label, px, at)) = placed.rung {
             ops.push(TextOp {
-                text: times,
+                text: label,
                 face: Face::SHOUT,
-                base: small,
-                px: small,
-                at: (
-                    ax as f32 + aw as f32 - margin - lw,
-                    ay as f32 + margin * 0.6 + px * 1.25,
-                ),
+                base: px,
+                px,
+                at,
                 fill_x: f32::MAX,
                 colors: (palette::DIM, palette::DIM),
                 alpha: 1.0,
@@ -581,22 +300,30 @@ fn text_ops(
                 clip: None,
             });
         }
-        odometer::ops(
-            faces.get(Face::NUMBER),
-            &layer.odometer.reading(),
-            (ax as f32 + aw as f32 - margin, ay as f32 + margin * 0.6),
-            px,
-            HIT,
-            &mut ops,
-        );
+        let color = placed.color;
+        ops.extend(placed.figures.into_iter().map(|f| TextOp {
+            text: f.text,
+            face: Face::NUMBER,
+            base: f.base,
+            px: f.px,
+            at: f.at,
+            fill_x: f32::MAX,
+            colors: (color, color),
+            alpha: f.alpha,
+            sung: None,
+            clip: Some(f.slot),
+        }));
     }
-    (ops, over)
+    ops
 }
+
 #[cfg(test)]
 mod tests {
+    use super::super::big_text::BigText;
     use super::super::pixels::{pack, unpack};
     use super::*;
     use crate::art::Art;
+    use crate::view::karaoke::{LineKind, LyricLine};
     use std::sync::Arc;
 
     /// Over the GPU's ground, a frame's words are premultiplied: each
@@ -713,8 +440,8 @@ mod tests {
             }),
             ..picture(Vec::new(), Vec::new(), 1.0)
         };
-        let ops = text_ops(&mut faces, &p, ((0, 0, w, h), h), &layer).0;
-        let corner = score_corner((0.0, 0.0, w as f32, h as f32));
+        let ops = text_ops(&mut faces, &p, (0, 0, w, h), &layer);
+        let corner = score::corner((0.0, 0.0, w as f32, h as f32));
         assert!(ops.len() > 9, "{}", ops.len());
         for op in &ops {
             let width = faces.get(op.face).measure_from(&op.text, op.base, op.px);
@@ -722,76 +449,6 @@ mod tests {
             assert!(x >= corner[0] && x + width <= corner[2], "{}: {x}", op.text);
             assert!(y >= corner[1] && y + op.px <= corner[3], "{}: {y}", op.text);
         }
-    }
-
-    /// The count before the singing comes back sits at the top, the same
-    /// whatever lines show or how they move: never part of them.
-    #[test]
-    fn the_break_count_stays_put_while_the_lines_move() {
-        use crate::view::karaoke::Cue;
-        let mut text = Faces::default();
-        let cue = Some(Cue {
-            number: 3,
-            through: 0.2,
-            line: 1,
-        });
-        let digit_at = |text: &mut Faces, p: KaraokePicture| {
-            let ops = text_ops(text, &p, ((0, 0, 640, 360), 360), &Layer::default()).0;
-            let digit: Vec<&TextOp> = ops.iter().filter(|o| o.text == "3").collect();
-            assert_eq!(digit.len(), 1);
-            let at = digit[0].at;
-            // In the lane, behind the playhead.
-            let lane = crate::gui::stage::Lane::new((0.0, 0.0, 640.0, 360.0), 0.0);
-            assert!(at.0 < lane.head, "behind the playhead: {at:?}");
-            assert!(
-                at.1 > lane.band.0 && at.1 < lane.band.1,
-                "in the lane: {at:?}"
-            );
-            at
-        };
-        let pausing = vec![
-            lyric("sung before", 1.0, LineKind::Previous, 0),
-            LyricLine {
-                text: "♪".into(),
-                fill: 0.0,
-                kind: LineKind::Info,
-                id: None,
-                alpha: 1.0,
-                notes: Vec::new(),
-                hits: Vec::new(),
-                liquid: Vec::new(),
-                trail: Vec::new(),
-                voice: None,
-            },
-            lyric("coming back", 0.0, LineKind::Next, 1),
-        ];
-        let coming = vec![
-            lyric("sung before", 1.0, LineKind::Previous, 0),
-            lyric("coming back", 0.0, LineKind::Current, 1),
-            lyric("after it", 0.0, LineKind::Next, 2),
-        ];
-        let a = digit_at(
-            &mut text,
-            KaraokePicture {
-                cue,
-                ..picture(pausing.clone(), Vec::new(), 1.0)
-            },
-        );
-        let b = digit_at(
-            &mut text,
-            KaraokePicture {
-                cue,
-                ..picture(coming.clone(), pausing, 0.5)
-            },
-        );
-        let c = digit_at(
-            &mut text,
-            KaraokePicture {
-                cue,
-                ..picture(coming, Vec::new(), 1.0)
-            },
-        );
-        assert_eq!((a, b), (c, c));
     }
 
     /// A frame drawn over the last one, only where its text changed, is the

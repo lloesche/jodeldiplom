@@ -1,15 +1,16 @@
 //! Karaoke mode's stage on the GPU: the note lane, the singer's arrow, its
-//! trail and sparks, the lyrics at the bottom and the song's progress,
-//! drawn over the pixmap each frame as instances of a few shapes, each a
-//! signed distance in the fragment shader (a pill, a capsule, a star, a
-//! disc, an arrow, a tube and its liquid) or a run of text from a glyph
+//! trail and sparks, the lyrics, the count-in, the score and the song's
+//! progress, drawn over the backdrop each frame as instances of a few
+//! shapes, each a signed distance in the fragment shader (a pill, a
+//! capsule, a star, a disc, an arrow, a tube and its liquid) or a run of text from a glyph
 //! atlas, and the effects' shapes ([`super::fx`]). Premultiplied: a
 //! shape's light that is to add up (a glow, a spark) comes with no
 //! coverage, so it adds; the rest goes over. Each group of kinds is drawn
 //! by a pipeline of its own ([`Group`]); the diploma's paper, once it holds
 //! still, is drawn once and read back after (`bake`). The bubbles' liquid,
 //! strain and overfilling are drawn here for the stage's bubbles (tubes,
-//! [`super::snake`]) and the picture's alike ([`Instance::liquid`],
+//! [`super::snake`]) and the lyrics' set in the middle alike
+//! ([`Instance::liquid`],
 //! [`super::liquid`]).
 //!
 //! [`StageFrame`] is what the window gets each frame: the instances, the
@@ -432,29 +433,6 @@ impl StageFrame {
             clock,
             ..StageFrame::default()
         }
-    }
-}
-
-/// `stage` (none: none) with the picture's bubbles' liquid (`bubbles`)
-/// and bursts (`sprays`) drawn over it too, at `clock` (the singing's
-/// time) where there is no stage.
-pub fn with_picture(
-    stage: Option<StageFrame>,
-    bubbles: &[Instance],
-    sprays: &[super::particles::Spray],
-    clock: f32,
-) -> Option<StageFrame> {
-    match stage {
-        Some(mut f) => {
-            f.instances.extend_from_slice(bubbles);
-            f.sprays.extend_from_slice(sprays);
-            Some(f)
-        }
-        None => (!bubbles.is_empty() || !sprays.is_empty()).then(|| StageFrame {
-            instances: bubbles.to_vec(),
-            sprays: sprays.to_vec(),
-            ..StageFrame::bare(clock)
-        }),
     }
 }
 

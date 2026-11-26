@@ -772,10 +772,11 @@ stem keys are their mutes.
     `a_word_turns_only_the_figures_that_change`,
     `its_lag_is_bounded_while_points_keep_coming`,
     `a_seek_back_or_a_new_song_snaps`,
-    `it_draws_the_points_at_rest_and_rolls_inside_its_cells`
-    (`gui::karaoke::odometer`), `the_score_names_the_rung`
+    `it_draws_the_points_at_rest_and_rolls_inside_its_slots`
+    (`gui::stage::score`), `the_score_names_the_rung`
     (`view::karaoke::mode`)
   - `the_picture_is_painted_again_while_its_score_rolls_and_then_not`,
+    `the_stage_asks_for_frames_while_its_score_rolls`,
     `a_score_come_while_the_mode_was_left_shows_at_once`
     (`gui::canvas::karaoke`),
     `pictures_moving_by_themselves_bring_calm_frames` (`gui::paint`)

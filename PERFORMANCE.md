@@ -104,6 +104,34 @@ total median 1.12–1.75 ms before, 0.96–1.73 after (the diploma's 1.43 and
 1.35, its worst 2.31 and 1.73); the one frame over the budget in both, the
 normal scene's first frame timed (3.3 ms in its pixmap step), as before.
 
+## Karaoke mode on one surface (the iced port's K2, November 2026)
+
+Karaoke mode is the GPU's alone: its backdrop is the ground (a triangle
+over the window reading it, `ground`, where the pixmap pass was), the
+stage draws all the rest over it (the lyrics set in the middle without
+the lane, the title and notes with it, the count-in, the score's
+odometer, as text from its atlas), and of the pixmap only the controls'
+bar shows, a strip of rows (a scissor), while it is laid out. The
+processor no longer paints the lyrics, the count-in or the score into
+the pixmap, nor sends them over: in Karaoke mode the pixmap changes only
+where the controls' bar does. Two pipelines in the first step (the
+ground, the pixmap's strip), each the same for every pixel; outside
+Karaoke mode the pixmap pass is as it was.
+
+`frame_cost` on the RTX 5080 (two runs after, one before, the machine
+shared with other agents' builds and tests), median ms of the first step
+(`pixmap` before, `ground` after) at 3024 × 1964: 0.10–0.22 before,
+0.15–0.28 and 0.14–0.18 after (the other steps 1.2–2.0× slower in the
+first run after: the machine's); at 3840 × 2160: 0.16–0.22 before,
+0.16–0.28 and 0.15–0.19 after. The new `lyrics` scene (no lane, the
+lyrics set in the middle): its stage step 0.12–0.25 ms, the processor's
+stage 0.03–0.05 ms a frame; the processor's pixmap step (0.004–0.013 ms
+a frame before, the picture painted only where it changed) is gone.
+Every run, before and after, had single frames over the budgets in a
+few scenes, each in another scene and step (in the run before, the Diva
+peak at 11.8 ms, every step slower at once): the machine's, as the
+diploma's spike below.
+
 
 ## The stems as parts of the output (November 2026)
 
@@ -258,7 +286,7 @@ the atlas a pixel for its letters and outline, 1 inside a letter), in
 the `top` step, and a copy of it in the light, which blooms into its
 glow; its dust is a burst; it draws nothing while it shows under 2 %.
 The screen's shake is two numbers in the window's uniform the stage and
-the bursts share (the backdrop and the pixmap under the stage never
+the bursts share (the backdrop and the controls' bar under the stage never
 shake, nor the screen passes that keep still). Every registered effect at full
 strength at once over the Diva peak (`frame_cost`'s `all` scene) costs
 the RTX 5080 1.8 ms a frame (worst 2.3 ms; the Diva peak alone 1.5 ms,
@@ -440,8 +468,10 @@ tests that need no GPU (`gui::stage_gpu::groups`, `gui::particles`):
   ```
 
   (any cover's `.layers` file from the player's data folder; its scenes
-  are the normal one, a tier's each at its rung, every effect at once and
+  are the normal one, the lyrics set in the middle (no lane), a tier's
+  each at its rung, every effect at once and
   the diploma: the RTX 5080 takes 1.3–3.4 ms at worst over the singing
   ones, the diploma 1.6–3.1 ms, each frame the lesser of its two runs;
-  the normal scene's first frame timed has gone over, 4.0–4.7 ms, its
-  pixmap step 3.1–3.3 ms, with the rows wired or not).
+  before the ground (the iced port's K2) the normal scene's first frame timed went
+  over, 4.0–4.7 ms, its pixmap step 3.1–3.3 ms, the whole pixmap sent
+  over; the ground sends nothing).

@@ -1,6 +1,7 @@
 //! What bursting bubbles cost the processor (and the GPU, where there is
 //! one): Karaoke mode's picture painted frame by frame at 1600 × 900 with
-//! 20 bubbles holding liquid and with 20 bursting at once, and the GPU's
+//! 20 bubbles holding liquid and with 20 bursting at once (and as the
+//! GPU draws it, the stage setting the lyrics in the middle), and the GPU's
 //! stage made frame by frame (and shown, offscreen) with none and with 20
 //! words filling and bursting together.
 //!
@@ -16,7 +17,7 @@ use jodeldiplom::core::singing::{Note, Singing};
 use jodeldiplom::gui::big_text::Faces;
 use jodeldiplom::gui::karaoke::{paint, Backdrop, Layer};
 use jodeldiplom::gui::pixels::Target;
-use jodeldiplom::gui::stage::{Song, Stage};
+use jodeldiplom::gui::stage::{Song, Stage, Tint};
 use jodeldiplom::view::bubbles::{Liquid, Part};
 use jodeldiplom::view::karaoke::{KaraokePicture, LineKind, LyricLine};
 
@@ -79,8 +80,7 @@ fn picture(w: usize, h: usize, bursting: bool) -> ((f64, f64), Option<(f64, f64)
     let mut pixels = vec![0u32; w * h];
     let (mut took, mut shown) = (Vec::new(), Vec::new());
     let mut gpu = jodeldiplom::gui::present::Offscreen::new(false).ok();
-    // As the window paints it: its liquid drawn by the GPU where there is one.
-    layer.over.gpu = gpu.is_some();
+    let (mut staged, nobody, blank) = (Stage::default(), Singing::default(), vec![0u32; w * h]);
     for f in 0..FRAMES {
         let age = (f as f32 / 60.0 / 0.5).fract();
         let line = LyricLine {
@@ -153,14 +153,16 @@ fn picture(w: usize, h: usize, bursting: bool) -> ((f64, f64), Option<(f64, f64)
         if f > 0 {
             took.push(started.elapsed().as_secs_f64() * 1000.0);
         }
-        // Its bubbles' liquid and bursts drawn by the GPU over it.
+        // As the GPU draws it: the stage's lyrics set in the middle, its
+        // bubbles' liquid and bursts over their bars.
         if let Some(gpu) = gpu.as_mut() {
-            let clock = (f as f64 / 60.0) as f32;
-            let (bubbles, sprays) = (&layer.over.bubbles, &layer.over.sprays);
-            let frame = jodeldiplom::gui::stage_gpu::with_picture(None, bubbles, sprays, clock);
+            let song = Song::new(&nobody, Vec::new(), None);
+            let area = (0.0, 0.0, w as f32, h as f32);
+            let at = (f as f64 / 60.0, 1.0 / 60.0);
+            let frame = staged.scene((&song, false), &picture, area, at, &Tint::STAGE);
             let started = Instant::now();
             gpu.set_stage(frame.as_ref(), w as u32, h as u32);
-            let _ = gpu.show_pixels(&pixels, w as u32, h as u32);
+            let _ = gpu.show_pixels(&blank, w as u32, h as u32);
             shown.push(started.elapsed().as_secs_f64() * 1000.0);
         }
     }

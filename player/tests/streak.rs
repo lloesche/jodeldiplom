@@ -2,7 +2,7 @@
 //! bands from the playhead (more and brighter a tier up, the whole lane
 //! at the top), a swirl round the arrow, the multiplier in rainbow; a
 //! burst from the playhead each tier up, once; the bands collapsing into
-//! the playhead when a phrase reaches no tier; in the picture, a rainbow
+//! the playhead when a phrase reaches no tier; without the lane, a rainbow
 //! edge on the bar under the word sung, and a smaller burst a step up. The
 //! tier is set on the singing's tally as the scoring would. With
 //! `JODEL_FRAMES` set to a folder, the frames are saved there as PNGs.
@@ -11,16 +11,11 @@ mod common;
 
 use jodeldiplom::core::shine::{Shone, Tier};
 use jodeldiplom::core::singing::Singing;
-use jodeldiplom::gui::big_text::Faces;
 use jodeldiplom::gui::fx::rainbow::{shine_of, BANDS, RIM, SWIRL};
-use jodeldiplom::gui::karaoke::{paint, Backdrop, Layer};
-use jodeldiplom::gui::notes::Over;
 use jodeldiplom::gui::particles::Kind;
-use jodeldiplom::gui::pixels::Target;
 use jodeldiplom::gui::present::Offscreen;
 use jodeldiplom::gui::stage::{Song, Stage};
-use jodeldiplom::gui::stage_gpu::{kind, with_picture, StageFrame};
-use jodeldiplom::gui::streak::{PictureShine, Sung};
+use jodeldiplom::gui::stage_gpu::{kind, StageFrame};
 
 /// `pixels` (`0x00RRGGBB`, `w` wide) as a PNG at `name` in the folder
 /// `JODEL_FRAMES` names, where it is set.
@@ -227,44 +222,17 @@ fn a_phrase_without_a_tier_collapses_the_shine() {
     );
 }
 
-/// `picture` painted for a window with a GPU, and what the GPU draws over
-/// it.
-fn painted(
-    picture: &jodeldiplom::view::karaoke::KaraokePicture,
-    (w, h): (usize, usize),
-) -> (Vec<u32>, Over) {
-    let backdrop = Backdrop::new(None, w, h);
-    let mut pixels = vec![0u32; w * h];
-    let mut target = Target {
-        pixels: &mut pixels,
-        width: w,
-        height: h,
-    };
-    let mut layer = Layer::default();
-    layer.over.gpu = true;
-    let mut text = Faces::default();
-    paint(
-        &mut target,
-        &mut text,
-        &mut layer,
-        &backdrop,
-        picture,
-        (0, 0, w, h),
-        None,
-        true,
-    );
-    (pixels, layer.over)
-}
-
-/// The picture while the singing shines: a rainbow edge on the bar under
-/// the word sung (none without a tier), a step up's burst from it, smaller
-/// than the stage's, once; drawn round the bar on the GPU.
+/// The lyrics set in the middle (the notes shown without the lane) while
+/// the singing shines: a rainbow edge on the bar under the word sung (none
+/// without a tier), a step up's burst from it, smaller than the stage's,
+/// once; drawn round the bar on the GPU.
 #[test]
 fn the_picture_s_bar_gets_a_rainbow_edge() {
     let (mut singing, lyrics) = common::bubble_song();
-    let mut shine = PictureShine::default();
+    let mut stage = Stage::default();
     let (w, h) = (800usize, 450usize);
-    let mut ups = std::collections::HashSet::new();
+    let area = (0.0, 0.0, w as f32, h as f32);
+    let mut ups = Vec::new();
     let mut last = None;
     for f in 0..40 {
         let t = 0.3 + f64::from(f) / 60.0;
@@ -280,51 +248,58 @@ fn the_picture_s_bar_gets_a_rainbow_edge() {
             },
         );
         let picture = common::bubble_picture(&singing, &lyrics, (t, 0.0));
-        let (pixels, over) = painted(&picture, (w, h));
-        let rim = over.rim.expect("the bar under the word sung");
-        let song = Sung {
-            singing: &singing,
-            game: true,
-        };
-        let (edge, sprays) = shine.frame(Some(&over), song, t);
-        let (bubbles, sprays): (Vec<_>, Vec<_>) = (edge.into_iter().collect(), sprays.to_vec());
+        let song = Song::new(&singing, lyrics.lines.iter().collect(), Some(3.0));
+        let tint = &jodeldiplom::gui::stage::Tint::STAGE;
+        let frame = stage.scene((&song, false), &picture, area, (t, 1.0 / 60.0), tint);
+        let frame = frame.expect("the lyrics");
+        let rims = frame
+            .instances
+            .iter()
+            .filter(|i| i.params[0] == RIM)
+            .count();
         if (t - 0.5).abs() > 0.02 {
-            assert_eq!(bubbles.len(), usize::from(t > 0.5), "{t}");
+            assert_eq!(rims, usize::from(t > 0.5), "{t}");
         }
-        for s in sprays.iter().filter(|s| s.kind == Kind::StepUp) {
-            assert_eq!(s.at, rim.0, "from the bar");
+        for s in frame.sprays.iter().filter(|s| s.kind == Kind::StepUp) {
             assert!(s.size < 47.0, "smaller than the stage's");
-            ups.insert(s.start.to_bits());
+            if !ups
+                .iter()
+                .any(|u: &(u32, (f32, f32))| u.0 == s.start.to_bits())
+            {
+                ups.push((s.start.to_bits(), s.at));
+            }
         }
-        last = Some((pixels, bubbles, sprays, t));
+        last = Some(frame);
     }
     assert_eq!(ups.len(), 1, "one step up");
-    let (pixels, bubbles, sprays, t) = last.unwrap();
+    let frame = last.unwrap();
+    let rim = *frame.instances.iter().find(|i| i.params[0] == RIM).unwrap();
+    let (c, half) = ((rim.shape[0], rim.shape[1]), (rim.shape[2], rim.shape[3]));
+    assert_eq!(ups[0].1, c, "from the bar");
     let Some(mut gpu) = gpu() else {
         return;
     };
-    let mut show = |b: &[_], s: &[_]| {
-        let frame = with_picture(None, b, s, t as f32);
-        gpu.set_stage(frame.as_ref(), w as u32, h as u32);
-        gpu.show_pixels(&pixels, w as u32, h as u32)
+    let blank = vec![0u32; w * h];
+    let mut show = |f: &StageFrame| {
+        gpu.set_stage(Some(f), w as u32, h as u32);
+        gpu.show_pixels(&blank, w as u32, h as u32)
             .expect("a frame")
     };
-    let (lit, plain) = (show(&bubbles, &sprays), show(&[], &[]));
+    let mut plain = frame.clone();
+    plain.instances.retain(|i| i.params[0] != RIM);
+    plain.sprays.clear();
+    let (lit, plain) = (show(&frame), show(&plain));
     save_frame("picture_rim.png", &lit, w);
-    let rim = bubbles.iter().find(|i| i.params[0] == RIM).unwrap();
-    let (c, half) = ((rim.shape[0], rim.shape[1]), (rim.shape[2], rim.shape[3]));
     // Lit along the bar's top edge, its colours not all one.
     let row = (c.1 - half.1).round() as usize;
-    let along: Vec<u32> = (0..10)
+    let xs: Vec<usize> = (0..10)
         .map(|k| (c.0 - half.0 * 0.8 + half.0 * 1.6 * k as f32 / 9.0) as usize)
-        .map(|x| lit[row * w + x])
         .collect();
+    let along: Vec<u32> = xs.iter().map(|&x| lit[row * w + x]).collect();
     let lum = |p: u32| ((p >> 16) & 255) + ((p >> 8) & 255) + (p & 255);
     let brighter = along
         .iter()
-        .zip((0..10).map(|k| {
-            plain[row * w + (c.0 - half.0 * 0.8 + half.0 * 1.6 * k as f32 / 9.0) as usize]
-        }))
+        .zip(xs.iter().map(|&x| plain[row * w + x]))
         .filter(|(a, b)| lum(**a) > lum(*b) + 30)
         .count();
     assert!(brighter >= 8, "{brighter}");

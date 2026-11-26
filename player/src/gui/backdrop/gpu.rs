@@ -560,6 +560,11 @@ impl BackdropPass {
         self.generation
     }
 
+    /// Whether there is a backdrop to read ([`BackdropPass::under`]).
+    pub fn shows(&self) -> bool {
+        self.target.is_some()
+    }
+
     /// How many covers are on the GPU.
     pub fn held(&self) -> usize {
         self.covers.len()

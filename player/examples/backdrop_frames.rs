@@ -4,7 +4,7 @@
 //! the models: no subject), each stem quiet and loud, a section starting,
 //! the singer at Diva, a cover fading in over its blur and one cross-fading
 //! into the next, each combination of the game and the notes on or off
-//! (the notes off: the lyrics in large type without the stage; neither:
+//! (the notes off: the lyrics set in the middle, no lane; neither:
 //! the blurred cover alone, [`Mode`]) and the switch to neither mid-song,
 //! and tall and wide windows; and with a steady beat (`beat-…`), the
 //! singer at no tier, the lowest, Amazing and Diva, each on a bar's first
@@ -43,12 +43,9 @@ use jodeldiplom::core::singing::Singing;
 use jodeldiplom::cover::{Apart, CoverLayers, Layers, Parts, TextMap};
 use jodeldiplom::gui::backdrop::music::{Hearing, Levels};
 use jodeldiplom::gui::backdrop::{Cue, Mode, Visualiser};
-use jodeldiplom::gui::big_text::Faces;
 use jodeldiplom::gui::fx::Music;
-use jodeldiplom::gui::karaoke::{paint, Backdrop, Layer};
-use jodeldiplom::gui::pixels::Target;
 use jodeldiplom::gui::present::Offscreen;
-use jodeldiplom::gui::stage::{without_lyrics, Song, Stage};
+use jodeldiplom::gui::stage::{Song, Stage, Tint};
 use jodeldiplom::view::karaoke::{timed_lines, KaraokePicture, Score};
 
 // The fonts build.rs found: `EMBEDDED_FONTS`.
@@ -441,7 +438,6 @@ fn time(
     size: (usize, usize),
 ) {
     let (w, h) = (size.0 as u32, size.1 as u32);
-    let pixels = vec![jodeldiplom::gui::pixels::SEE_THROUGH; size.0 * size.1];
     let mut later = frame.clone();
     let mut run = |gpu: &mut Offscreen, n: usize| {
         let start = Instant::now();
@@ -451,7 +447,7 @@ fn time(
             }
             gpu.set_backdrop(Some(&later), w, h);
         }
-        gpu.show_pixels(&pixels, w, h).expect("a frame");
+        gpu.show_frame(w, h).expect("a frame");
         start.elapsed().as_secs_f64()
     };
     run(gpu, 3);
@@ -521,9 +517,8 @@ fn main() {
         );
         let mut stage = Stage::default();
         let mut visualiser = Visualiser::default();
-        let mut faces = Faces::default();
         let (mut heard, mut f) = (0usize, 0usize);
-        let (mut frame, mut picture, mut staged) = (None, None, true);
+        let mut frame = None;
         loop {
             let now = f as f64 / FPS;
             if now > scene.at + 1e-9 {
@@ -571,56 +566,27 @@ fn main() {
             };
             frame = Some(visualiser.step(&cue, (w as u32, h as u32), (1.0 / FPS) as f32));
             let p = picture_at(&sung, now, &singing, config.karaoke_game);
-            staged = config.karaoke_notes;
-            if staged && !bare {
+            if !bare {
+                // The lane with the notes shown, else the lyrics set in
+                // the middle.
                 let mut song = Song::new(&singing, sung.clone(), Some(LENGTH));
                 song.game = config.karaoke_game;
                 let area = (0.0, 0.0, w as f32, h as f32);
-                let frame = stage.frame(&song, &p, area, now, (1.0 / FPS) as f32);
+                let at = (now, (1.0 / FPS) as f32);
+                let lane = config.karaoke_notes;
+                let frame = stage.scene((&song, lane), &p, area, at, &Tint::STAGE);
                 // Every frame: the text it puts into the atlas is sent once.
-                gpu.set_stage(Some(&frame), w as u32, h as u32);
+                gpu.set_stage(frame.as_ref(), w as u32, h as u32);
             }
-            picture = Some(p);
         }
-        let picture = picture.expect("a frame");
         if timed {
             time(&mut gpu, frame.as_ref().expect("a frame"), (w, h));
         }
         gpu.set_backdrop(frame.as_ref(), w as u32, h as u32);
-        if !staged || bare {
+        if bare {
             gpu.set_stage(None, w as u32, h as u32);
         }
-        let backdrop = Backdrop::through(w, h);
-        let mut pixels = vec![0u32; w * h];
-        let mut target = Target {
-            pixels: &mut pixels,
-            width: w,
-            height: h,
-        };
-        let drawn = if bare {
-            KaraokePicture {
-                lines: Vec::new(),
-                score: None,
-                ..picture
-            }
-        } else if staged {
-            without_lyrics(&picture)
-        } else {
-            picture
-        };
-        paint(
-            &mut target,
-            &mut faces,
-            &mut Layer::default(),
-            &backdrop,
-            &drawn,
-            (0, 0, w, h),
-            None,
-            true,
-        );
-        let shown = gpu
-            .show_pixels(&pixels, w as u32, h as u32)
-            .expect("a frame");
+        let shown = gpu.show_frame(w as u32, h as u32).expect("a frame");
         let mut img = image::RgbImage::new(w as u32, h as u32);
         for (i, p) in shown.iter().enumerate() {
             img.put_pixel(

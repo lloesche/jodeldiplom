@@ -2,7 +2,7 @@
 //! ticks come and what is drawn now: the old canvas ([`super::embed`]) and
 //! the lanes over it ([`super::lanes`]), only the lanes (where one follows
 //! the playhead: no new tiles in most frames), or nothing; Karaoke mode's
-//! stage with the picture's shine over it; the spectrum heard, for the
+//! stage over its backdrop (all of the mode but the controls' bar); the spectrum heard, for the
 //! bottom bar; and the frames' line in the trace.
 
 use std::time::{Duration, Instant};
@@ -12,8 +12,7 @@ use super::backdrop::Visualiser;
 use super::embed::{Drawn, Embed};
 use super::lanes::Lanes;
 use super::stage::Tint;
-use super::stage_gpu::{self, StageFrame};
-use super::streak;
+use super::stage_gpu::StageFrame;
 use crate::app::App;
 use crate::core::singing::Motion;
 use crate::core::{Action, Fit};
@@ -115,8 +114,6 @@ pub struct Paint {
     last_stage: Option<Instant>,
     /// When the last frame of what moves began (for the trace).
     last_paced: Option<Instant>,
-    /// The singing's streak as the picture shines with it.
-    shine: streak::PictureShine,
     /// Karaoke mode's backdrop on the GPU, and when its last frame was;
     /// the song heard, which it and the stage's effects share.
     backdrop: Visualiser,
@@ -136,7 +133,6 @@ impl Paint {
             last_whole: None,
             last_stage: None,
             last_paced: None,
-            shine: streak::PictureShine::default(),
             backdrop: Visualiser::default(),
             heard: None,
             last_backdrop: None,
@@ -273,7 +269,6 @@ impl Paint {
         heard: f64,
     ) {
         let drawing = Instant::now();
-        let shine = &mut self.shine;
         let since = |last: Option<Instant>| last.map_or(0.0, |at| (drawing - at).as_secs_f32());
         let dt = since(self.last_stage);
         let backdrop_dt = since(self.last_backdrop);
@@ -307,13 +302,15 @@ impl Paint {
             // The lanes over the cells left for them.
             lanes.show(canvas.take_lanes(), place.scale, gpu);
             lanes.frame(heard);
-            let stage = gpu
-                .then(|| stage(canvas, (app, song), shine, heard, dt))
-                .flatten();
+            let stage = gpu.then(|| stage(canvas, (app, song), heard, dt)).flatten();
             staged = stage.is_some();
             let backdrop = visualiser.frame((app, song), gpu, heard, place.size, backdrop_dt);
             drawn = backdrop.is_some();
-            Drawn { stage, backdrop }
+            Drawn {
+                stage,
+                backdrop,
+                strip: canvas.strip(),
+            }
         });
         crate::trace::took("frame: drawn", drawing, false);
         self.last_stage = staged.then_some(drawing);
@@ -323,36 +320,18 @@ impl Paint {
     }
 }
 
-/// Karaoke mode's stage, stepped by `dt` seconds, with the picture's
-/// bubbles' liquid and bursts and its streak's shine over it; or the
-/// result screen alone (on its reveal's clock), tinted by the cover's
-/// palette where its layers are ready.
+/// Karaoke mode's stage, stepped by `dt` seconds: all of the mode but the
+/// controls' bar; or the result screen (on its reveal's clock), tinted by
+/// the cover's palette where its layers are ready.
 fn stage(
     canvas: &mut super::Canvas,
     (app, song): (&App, Option<&Song>),
-    shine: &mut streak::PictureShine,
     heard: f64,
     dt: f32,
 ) -> Option<StageFrame> {
     let layers = app.cover_layers();
     let tint = Tint::of(layers.as_ref().map_or(&[][..], |l| &l.layers.palette[..]));
-    let stage = canvas.stage_frame((&app.state, song), heard, dt, &tint);
-    if crate::core::karaoke::result_shown(&app.state).is_some() {
-        return stage;
-    }
-    let clock = app.state.karaoke.lag.sung_clock(heard);
-    let over = canvas.picture_over();
-    let song = streak::Sung {
-        singing: &app.state.karaoke.singing,
-        game: app.state.config.karaoke_game,
-    };
-    let (edge, ups) = shine.frame(over, song, clock);
-    let ours = over.into_iter();
-    let bubbles = ours.clone().flat_map(|o| o.bubbles.iter().copied());
-    let bubbles: Vec<_> = bubbles.chain(edge).collect();
-    let sprays = ours.flat_map(|o| o.sprays.iter()).chain(ups);
-    let sprays: Vec<_> = sprays.copied().collect();
-    stage_gpu::with_picture(stage, &bubbles, &sprays, clock as f32)
+    canvas.stage_frame((&app.state, song), heard, dt, &tint)
 }
 
 #[cfg(test)]

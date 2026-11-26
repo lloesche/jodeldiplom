@@ -1,4 +1,5 @@
-//! The stage's frames through a scripted singing, held to a digest: every
+//! The stage's frames through a scripted singing, held to a digest (with
+//! its lane, and without it: the lyrics set in the middle): every
 //! tier in turn, Good to Diva, the streak lost, Diva again, a seek back
 //! (the scoring started over) and Diva once more, at 60 frames a second
 //! for half a minute, the streak climbing through every rung of the
@@ -24,7 +25,7 @@ use jodeldiplom::core::shine::{Reference, Shone, Tier};
 use jodeldiplom::core::singing::Singing;
 use jodeldiplom::gui::fx::rainbow::shine_of;
 use jodeldiplom::gui::particles::Spray;
-use jodeldiplom::gui::stage::{Song, Stage};
+use jodeldiplom::gui::stage::{Song, Stage, Tint};
 use jodeldiplom::gui::stage_gpu::{kind, Instance, StageFrame};
 
 #[path = "common/sung.rs"]
@@ -130,9 +131,10 @@ impl Digest {
     }
 }
 
-/// The digest of the scripted singing's frames (see the module's docs),
-/// with each kind of shape's count over all of them.
-fn digest() -> (u64, std::collections::BTreeMap<String, usize>) {
+/// The digest of the scripted singing's frames as the window's stage draws
+/// them (see the module's docs; with its `lane`, else the lyrics set in
+/// the middle), with each kind of shape's count over all of them.
+fn digest(lane: bool) -> (u64, std::collections::BTreeMap<String, usize>) {
     let (lyrics, melody) = song();
     let sung: Vec<&jodel_lyrics::Line> = lyrics.lines.iter().collect();
     let mut singing = Singing::default();
@@ -177,7 +179,10 @@ fn digest() -> (u64, std::collections::BTreeMap<String, usize>) {
         singing.tally.streak = (f / 12) % climb;
         let picture = picture_at(&sung, now, &singing);
         let song = Song::new(&singing, sung.clone(), Some(LENGTH));
-        let frame = stage.frame(&song, &picture, (0.0, 0.0, 1600.0, 900.0), now, 1.0 / 60.0);
+        let area = (0.0, 0.0, 1600.0, 900.0);
+        let step = (now, 1.0 / 60.0);
+        let frame = stage.scene((&song, lane), &picture, area, step, &Tint::STAGE);
+        let frame = frame.expect("a stage");
         d.frame(&frame);
         for i in frame
             .instances
@@ -204,7 +209,7 @@ fn digest() -> (u64, std::collections::BTreeMap<String, usize>) {
 /// word slammed).
 #[test]
 fn the_stage_draws_the_same_frames() {
-    let (digest, counts) = digest();
+    let (digest, counts) = digest(true);
     for name in [
         "bands",
         "swirl",
@@ -226,5 +231,15 @@ fn the_stage_draws_the_same_frames() {
             "{name}: {counts:?}"
         );
     }
-    assert_eq!(digest, 7_303_034_992_931_530_666, "{counts:?}");
+    assert_eq!(digest, 4_099_498_354_651_262_909, "{counts:?}");
+}
+
+/// The same singing without the lane (the notes off): the lyrics set in
+/// the middle and the score draw the frames they drew when the digest was
+/// taken.
+#[test]
+fn the_lyrics_set_in_the_middle_draw_the_same_frames() {
+    let (digest, counts) = digest(false);
+    assert!(counts.get("text").is_some_and(|&n| n > 0), "{counts:?}");
+    assert_eq!(digest, 13_683_112_905_846_309_048, "{counts:?}");
 }

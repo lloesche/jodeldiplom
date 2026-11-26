@@ -1,7 +1,8 @@
 //! The window's drawing surface without the window: the shared ratatui
 //! widgets rasterised into an RGB pixmap ([`PixelBackend`]), and the
 //! pictures painted into it at their cell rects ([`pictures`]): Karaoke
-//! mode's picture ([`karaoke`]). The covers and the lanes (the Transition
+//! mode's picture without a GPU, its stage and the controls' bar with one
+//! ([`karaoke`]). The covers and the lanes (the Transition
 //! tab's waveforms and bar numbers, the Karaoke tab's voice lane) are the
 //! window's own widgets over the cells left for them ([`Canvas::covers`],
 //! [`Canvas::take_lanes`]). Used by the window and, headless, by the tests
@@ -54,19 +55,24 @@ pub struct Canvas {
     /// The lanes as last drawn, for the window to draw over the cells
     /// left for them.
     lanes: Vec<LaneSpot>,
-    /// Karaoke mode's backdrop, the text drawn large (by face), the picture
-    /// now and its cells.
+    /// Karaoke mode as last drawn: its cells and how far its controls'
+    /// bar shows, taken as each frame starts (none: the mode not shown).
+    shown: Option<(Rect, Option<f64>)>,
+    /// Karaoke mode without a GPU: its backdrop (with one, the see-through
+    /// ground under the controls' bar), the text drawn large (by face), the
+    /// picture painted last and what it drew.
     backdrop: Option<super::karaoke::Backdrop>,
     faces: Faces,
-    karaoke: Option<(Rect, KaraokePicture)>,
-    /// What the picture in the pixmap drew over the backdrop.
+    karaoke: Option<KaraokePicture>,
     karaoke_layer: super::karaoke::Layer,
-    /// Karaoke mode's stage, drawn by the GPU over the pixmap
-    /// ([`Canvas::stage_frame`]: START's pill, the result, the song's
-    /// lane), and the picture it draws from (all its lines) with where,
-    /// while the mode shows on the GPU.
+    /// Karaoke mode's stage, drawn by the GPU over its backdrop
+    /// ([`Canvas::stage_frame`]: all of the mode but the controls' bar),
+    /// and the picture it draws from with where, while the mode shows on
+    /// the GPU; the rows of the bar's strip the pixmap shows in
+    /// ([`Canvas::strip`]).
     stage: super::stage::Stage,
     staged: Option<(KaraokePicture, PixelRect)>,
+    strip: Option<(u32, u32)>,
     /// How long the last frame took.
     pub last_draw: DrawTimes,
     /// Whether the last [`Canvas::draw`] changed a pixel: a window that
@@ -140,12 +146,14 @@ impl Canvas {
             painted: Vec::new(),
             covers: Vec::new(),
             lanes: Vec::new(),
+            shown: None,
             backdrop: None,
             faces: Faces::default(),
             karaoke: None,
             karaoke_layer: super::karaoke::Layer::default(),
             stage: super::stage::Stage::default(),
             staged: None,
+            strip: None,
             gpu: false,
             last_draw: DrawTimes::default(),
             changed: true,
@@ -266,11 +274,12 @@ impl Canvas {
         self.cells_changed(&mut frame);
         self.covers.clear();
         self.lanes.clear();
-        let karaoke = self.karaoke.take();
-        for paint in &pictures.paints {
+        let last = self.shown.take();
+        self.strip = None;
+        for paint in pictures.paints {
             match paint {
                 Paint::Cover(rect, below_line) => {
-                    self.covers.push(self.cover_spot(*rect, *below_line))
+                    self.covers.push(self.cover_spot(rect, below_line))
                 }
                 Paint::Wave(plot) => {
                     let rect = self.pixel_rect(plot.area);
@@ -280,21 +289,21 @@ impl Canvas {
                         above,
                         full: (usize::from(plot.rows.1) * ch).max(rect.3 + above),
                     };
-                    let part = Part::Wave(plot.clone(), rows);
+                    let part = Part::Wave(plot, rows);
                     self.lanes.push(LaneSpot { rect, part });
                 }
                 Paint::Ruler(plot) => {
                     let rect = self.pixel_rect(plot.area);
-                    let part = Part::Ruler(plot.clone());
+                    let part = Part::Ruler(plot);
                     self.lanes.push(LaneSpot { rect, part });
                 }
                 Paint::Karaoke(area, picture) => {
-                    let wanted = super::stage::wanted(scene.state);
-                    let last = karaoke.as_ref();
-                    let now = (*area, &**picture);
-                    for rect in self.karaoke_picture(now, last, wanted, art, started) {
+                    let controls = picture.controls;
+                    let now = (area, *picture);
+                    for rect in self.karaoke_picture(now, last.as_ref(), art, started) {
                         frame.add(rect);
                     }
+                    self.shown = Some((area, controls));
                 }
             }
         }

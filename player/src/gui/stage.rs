@@ -13,8 +13,14 @@
 //! it all, a word slammed down over everything, the screen shaken with
 //! it), as strong as the board eases them from the singing and the music.
 //! Its text is in
-//! Karaoke mode's own faces ([`Face`]). While a song's result shows, the
-//! stage is the result screen instead ([`result`]).
+//! Karaoke mode's own faces ([`Face`]). Where it draws no lane (the notes
+//! off, a song without notes), the lyrics are set in the middle instead
+//! ([`lyrics`]); with the lane, only the lines that are no lyric (the
+//! song's title as it starts, a note in a pause). Under it all the
+//! count-in ([`count`]) and the score ([`score`]). While a song's result
+//! shows, the stage is the result screen instead ([`result`]). The stage
+//! is all of Karaoke mode the window draws over its backdrop, but the
+//! controls' bar.
 //!
 //! What moves by itself (the arrow, the sparks, the multiplier's pop) is
 //! stepped by the time between frames, so it moves the same at any frame
@@ -29,11 +35,14 @@ mod arrow;
 mod atlas;
 mod badge;
 mod comet;
+pub mod count;
 mod effects;
 mod lines;
+pub mod lyrics;
 mod meter;
 mod result;
 mod scene;
+pub mod score;
 mod shade;
 mod shots;
 mod start;
@@ -47,7 +56,7 @@ use super::stage_gpu::{kind, Instance, StageFrame};
 pub use result::Tint;
 
 use crate::core::State;
-use crate::view::karaoke::{KaraokePicture, LyricLine};
+use crate::view::karaoke::KaraokePicture;
 
 /// Where the playhead is, a share of the width from the left.
 pub const HEAD: f32 = 0.28;
@@ -138,6 +147,11 @@ pub struct Stage {
     kept: result::Kept,
     /// What takes clicks as drawn last ([`Stage::targets`]).
     targets: Vec<([f32; 4], crate::core::keymap::Op)>,
+    /// The score's counter ([`score`]).
+    odometer: score::Odometer,
+    /// The bursts a step up throws from the bar under the word sung,
+    /// while the lyrics are set without the lane ([`lyrics`]).
+    ups: Vec<super::particles::Spray>,
 }
 
 /// What the stage is made from, besides the picture.
@@ -189,8 +203,10 @@ impl<'a> Song<'a> {
     }
 }
 
-/// Whether the stage shows for `state`: Karaoke mode, its notes shown, the
-/// song in it with notes made; or a song's result shown in it.
+/// Whether the stage draws the song's lane for `state`: Karaoke mode, its
+/// notes shown, the song in it with notes made; or a song's result shown
+/// in it (no lane then: the result screen). Otherwise it sets all the
+/// lyrics in the middle ([`lyrics`]).
 pub fn wanted(state: &State) -> bool {
     if !crate::core::karaoke::in_mode(state) {
         return false;
@@ -212,16 +228,34 @@ pub fn wanted(state: &State) -> bool {
         .is_some_and(|p| singing.is_of(p) && singing.words() > 0)
 }
 
-/// `picture` without what the stage draws instead: its lyric lines (and
-/// their notes); while a result shows, all its lines (the result's words)
-/// and the result.
-pub fn without_lyrics(picture: &KaraokePicture) -> KaraokePicture {
-    let keep = |l: &&LyricLine| l.id.is_none() && picture.result.is_none();
-    KaraokePicture {
-        lines: picture.lines.iter().filter(keep).cloned().collect(),
-        before: picture.before.iter().filter(keep).cloned().collect(),
-        result: None,
-        ..picture.clone()
+/// The shapes of `out` from `from` on kept to `rect` (left, top, right,
+/// bottom): their quads cut to it, a run of text's atlas texels with its
+/// quad; those left with nothing gone.
+fn clip(out: &mut Vec<Instance>, from: usize, [l, t, r, b]: [f32; 4]) {
+    let mut k = from;
+    while k < out.len() {
+        let i = &mut out[k];
+        let q = i.quad;
+        let cut = [q[0].max(l), q[1].max(t), q[2].min(r), q[3].min(b)];
+        if cut[2] <= cut[0] || cut[3] <= cut[1] {
+            out.remove(k);
+            continue;
+        }
+        if i.params[0] == kind::TEXT {
+            let along = |v: f32, (a, b): (f32, f32), (ua, ub): (f32, f32)| {
+                ua + (v - a) / (b - a).max(1e-6) * (ub - ua)
+            };
+            let (across, down) = ((q[0], q[2]), (q[1], q[3]));
+            let (u, v) = ((i.uv[0], i.uv[2]), (i.uv[1], i.uv[3]));
+            i.uv = [
+                along(cut[0], across, u),
+                along(cut[1], down, v),
+                along(cut[2], across, u),
+                along(cut[3], down, v),
+            ];
+        }
+        i.quad = cut;
+        k += 1;
     }
 }
 

@@ -63,8 +63,9 @@ impl Offscreen {
         })
     }
 
-    /// A frame of `width` × `height` drawn as the window draws it (over the
-    /// pixmap [`Offscreen::show_pixels`] last sent, of that size), with
+    /// A frame of `width` × `height` drawn as the window draws it (Karaoke
+    /// mode's ground, or the pixmap [`Offscreen::show_pixels`] last sent, of
+    /// that size), with
     /// `backdrop` and `stage` set for it, timed step by step (a step of the
     /// window's pass drawn in a pass of its own), not read back: the times
     /// are read with [`Offscreen::costs`]. An error where it does not time
@@ -138,6 +139,18 @@ impl Offscreen {
             .set_backdrop(frame, (width.max(1), height.max(1)));
     }
 
+    /// Karaoke mode's plain backdrop (no cover: the window's ground) under
+    /// the frames from now on, `width` × `height`.
+    pub fn set_plain_ground(&mut self, width: u32, height: u32) {
+        let cue = crate::gui::backdrop::Cue {
+            art: None,
+            layers: None,
+            heard: Default::default(),
+        };
+        let ground = crate::gui::backdrop::Visualiser::default().step(&cue, (width, height), 0.0);
+        self.set_backdrop(Some(&ground), width, height);
+    }
+
     /// The frames' pixels to a point from now on, as a window's scale (1
     /// to begin with; a Retina screen's 2).
     pub fn set_density(&mut self, density: f32) {
@@ -169,6 +182,21 @@ impl Offscreen {
         }
         let (w, h) = (width as usize, height as usize);
         self.painter.write(pixels, w, (0, 0, w, h));
+        self.painter.size = (width, height);
+        self.read_back(width, height)
+    }
+
+    /// The rows (from, to) of the pixmap shown over Karaoke mode's
+    /// backdrop from now on, as the window's ([`crate::gui::Canvas::strip`]):
+    /// none, none of it.
+    pub fn set_strip(&mut self, strip: Option<(u32, u32)>) {
+        self.painter.strip = strip;
+    }
+
+    /// Draws a frame of `width` × `height` of what was set (Karaoke mode:
+    /// its backdrop and its stage, the pixmap last sent over in its strip)
+    /// and reads it back.
+    pub fn show_frame(&mut self, width: u32, height: u32) -> Result<Vec<u32>, String> {
         self.read_back(width, height)
     }
 
@@ -188,7 +216,8 @@ impl Offscreen {
     /// The frame drawn from what was sent over, read back.
     fn read_back(&mut self, width: u32, height: u32) -> Result<Vec<u32>, String> {
         let painter = &mut *self.painter;
-        if painter.bind().is_none() {
+        painter.bind();
+        if !painter.ready() {
             return Err("nothing to draw".into());
         }
         let gpu = (&painter.device, &painter.queue);

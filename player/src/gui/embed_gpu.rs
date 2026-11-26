@@ -76,7 +76,7 @@ impl shader::Primitive for Frame {
             &changes,
             ((size.width, size.height), viewport.scale_factor()),
             shared.stage.as_ref(),
-            shared.backdrop.as_ref(),
+            (shared.backdrop.as_ref(), shared.strip),
         );
         if let Some(stage) = &mut shared.stage {
             stage.uploads.clear();

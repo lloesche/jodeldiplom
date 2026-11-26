@@ -33,12 +33,9 @@ use jodeldiplom::core::singing::Singing;
 use jodeldiplom::cover::{Apart, Layers};
 use jodeldiplom::gui::backdrop::music::Hearing;
 use jodeldiplom::gui::backdrop::{BackdropFrame, Cue, Visualiser};
-use jodeldiplom::gui::big_text::Faces;
 use jodeldiplom::gui::fx::{By, Effects, Fx, Layer, Music, Use};
-use jodeldiplom::gui::karaoke::{paint, Backdrop, Layer as Pixmap};
-use jodeldiplom::gui::pixels::Target;
 use jodeldiplom::gui::present::Offscreen;
-use jodeldiplom::gui::stage::{without_lyrics, Song, Stage, Tint};
+use jodeldiplom::gui::stage::{Song, Stage, Tint};
 use jodeldiplom::gui::stage_gpu::StageFrame;
 
 #[path = "../tests/common/sung.rs"]
@@ -56,13 +53,13 @@ const TIMES: usize = 15;
 const TEMPO: f64 = 120.0;
 
 /// The frame at [`AT`]: the song sung on its notes up to it, frame by
-/// frame as the window draws it (into `gpu`); its backdrop, its stage, the
-/// pixmap under them and the stage that made it.
+/// frame as the window draws it (into `gpu`); its backdrop, its stage and
+/// the stage that made it.
 fn frame_at(
     gpu: &mut Offscreen,
     (art, layers): (&Art, &Layers),
     (w, h): (u32, u32),
-) -> (BackdropFrame, StageFrame, Vec<u32>, Stage) {
+) -> (BackdropFrame, StageFrame, Stage) {
     let (lyrics, melody) = song();
     let sung: Vec<&jodel_lyrics::Line> = lyrics.lines.iter().collect();
     let mut singing = Singing::default();
@@ -76,9 +73,6 @@ fn frame_at(
     singing.set_reference(Some(Arc::new(Reference { phrases })));
     let mut stage = Stage::default();
     let mut visualiser = Visualiser::default();
-    let (mut faces, mut layer) = (Faces::default(), Pixmap::default());
-    let under = Backdrop::through(w as usize, h as usize);
-    let mut pixels = vec![0u32; (w * h) as usize];
     let mut heard = 0usize;
     let mut last = None;
     for f in 0.. {
@@ -114,30 +108,12 @@ fn frame_at(
                 &Tint::STAGE,
             )
             .expect("a stage");
-        let mut target = Target {
-            pixels: &mut pixels,
-            width: w as usize,
-            height: h as usize,
-        };
-        paint(
-            &mut target,
-            &mut faces,
-            &mut layer,
-            &under,
-            &without_lyrics(&picture),
-            (0, 0, w as usize, h as usize),
-            None,
-            f == 0,
-        );
         gpu.set_backdrop(Some(&backdrop), w, h);
-        if f == 0 {
-            gpu.show_pixels(&pixels, w, h).expect("a frame");
-        }
         gpu.set_stage(Some(&frame), w, h);
         last = Some((backdrop, frame));
     }
     let (backdrop, frame) = last.expect("a frame");
-    (backdrop, frame, pixels, stage)
+    (backdrop, frame, stage)
 }
 
 /// An effect put into a frame: its name as shown, the effect, a row
@@ -399,7 +375,7 @@ fn main() {
     let mut gpu = Offscreen::timed().expect("a GPU that times");
     gpu.set_density(density);
     println!("{}, {w}x{h}, {density} pixels to a point", gpu.name);
-    let (backdrop, base, pixmap, mut stage) = frame_at(&mut gpu, (&art, &layers), (w, h));
+    let (backdrop, base, mut stage) = frame_at(&mut gpu, (&art, &layers), (w, h));
     let area = (0.0, 0.0, w as f32, h as f32);
     println!("GPU ms, median: the window pass's step the effect draws in (what it adds)");
     for shot in &shots() {
@@ -409,7 +385,7 @@ fn main() {
         println!("  {:<26} {step:<7} {ms:7.3}  ({added:+.3})", shot.name);
         if let Some(dir) = &png {
             gpu.set_stage(Some(&frame), w, h);
-            let pixels = gpu.show_pixels(&pixmap, w, h).expect("a frame");
+            let pixels = gpu.show_frame(w, h).expect("a frame");
             write_png(&dir.join(format!("{}.png", shot.name)), &pixels, (w, h));
         }
     }

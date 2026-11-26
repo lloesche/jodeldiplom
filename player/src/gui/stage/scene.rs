@@ -1,12 +1,15 @@
 //! The stage's scene as the window draws it ([`Stage::scene`]): the result
-//! screen while one shows; else the song's lane where the stage draws it;
-//! and START's pill over either while Karaoke mode waits for it
-//! ([`super::start`]); nothing where none of those shows. What takes
-//! clicks in it is kept as drawn ([`Stage::targets`]).
+//! screen while one shows; else the song's lane where the stage draws it
+//! or the lyrics set in the middle where it does not, the count-in and the
+//! score under either (where the window's pixmap had them); and START's
+//! pill over it all while Karaoke mode waits for it ([`super::start`]);
+//! nothing where none of those shows. What takes clicks in it is kept as
+//! drawn ([`Stage::targets`]).
 
 use super::super::stage_gpu::StageFrame;
+use super::lyrics::Which;
 use super::start::{Line, Look};
-use super::{Song, Stage, Tint};
+use super::{clip, Song, Stage, Tint};
 use crate::core::keymap::Op;
 use crate::view::karaoke::KaraokePicture;
 
@@ -14,9 +17,10 @@ impl Stage {
     /// The stage for `picture` in the window's `area` (pixels): the result
     /// screen (in `tint`) while one shows; else `song`'s lane where the
     /// stage draws it (`lane`: [`super::wanted`]) at `heard` seconds into
-    /// it, `dt` after the frame before; and START's pill over either (on
-    /// the singing's clock alone without the lane) while the mode waits
-    /// for it. None where there is nothing to draw.
+    /// it, `dt` after the frame before, or the lyrics set in the middle
+    /// where it does not; the count-in and the score under it, kept above
+    /// the controls' bar while it shows; and START's pill over it all while
+    /// the mode waits for it. None where there is nothing to draw.
     pub fn scene(
         &mut self,
         (song, lane): (&Song, bool),
@@ -26,23 +30,39 @@ impl Stage {
         tint: &Tint,
     ) -> Option<StageFrame> {
         self.targets.clear();
+        // What lies under the lane (as the pixmap did): the lines set in
+        // the middle, the count-in, the score; over it, the bubbles of
+        // the lines set in the middle.
+        let (mut under, mut over, mut sprays) = (Vec::new(), Vec::new(), Vec::new());
+        let which = if lane { Which::Info } else { Which::All };
+        let into = (&mut under, &mut over, &mut sprays);
+        let rim = self.lyrics(into, picture, (area, which));
+        self.count(&mut under, picture, area);
+        self.score(&mut under, picture, area, dt);
+        if picture.controls.is_some() {
+            let (x, y, w, h) = area;
+            clip(&mut under, 0, [x, y, x + w, y + h * (1.0 - picture.bar)]);
+        }
         if let Some(frame) = self.result(picture, tint, area) {
             return Some(frame);
-        }
-        if !lane && picture.start.is_none() {
-            return None;
         }
         let mut frame = if lane {
             self.frame(song, picture, area, heard, dt)
         } else {
+            self.rim_shine((&mut over, &mut sprays), (song, heard), rim);
             StageFrame::bare(crate::core::lag::sung_clock(heard, song.late) as f32)
         };
+        under.append(&mut frame.instances);
+        under.append(&mut over);
+        frame.instances = under;
+        frame.sprays.append(&mut sprays);
         if let Some(start) = picture.start {
             let line = Line::of(picture, area);
             self.start_pill(&mut frame.top, &line, None, Look::still(start.ready));
-            frame.uploads.append(&mut self.atlas.uploads);
         }
-        Some(frame)
+        frame.uploads.append(&mut self.atlas.uploads);
+        let empty = frame.instances.is_empty() && frame.top.is_empty() && frame.sprays.is_empty();
+        (lane || !empty).then_some(frame)
     }
 
     /// What takes clicks on the stage as drawn last, where (left, top,

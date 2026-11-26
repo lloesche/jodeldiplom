@@ -525,11 +525,14 @@ fn the_backdrop_draws_on_the_gpu_and_drops_its_textures() {
         disc(&lit),
         disc(&quiet)
     );
-    // A pixmap word over it: its own colour with as much of the backdrop as
-    // its top byte lets through.
+    // A pixmap word over it where its strip shows (the controls' bar; here
+    // the whole frame): its own colour with as much of the backdrop as its
+    // top byte lets through.
     let half: Vec<u32> = (0..w * h).map(|_| 0x8000_0000 | 0x0020_2020).collect();
     gpu.set_backdrop(Some(&frame_of(Some(&a), Levels::default())), w, h);
+    gpu.set_strip(Some((0, h)));
     let over = gpu.show_pixels(&half, w, h).expect("a frame");
+    gpu.set_strip(None);
     for at in [(128u32, 128u32), (20, 20)] {
         let i = (at.1 * w + at.0) as usize;
         for shift in [16, 8, 0] {

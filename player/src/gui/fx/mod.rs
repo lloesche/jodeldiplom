@@ -383,7 +383,7 @@ pub enum At {
 
 /// What the effects over the stage keep clear, each a box (left, top,
 /// right, bottom; none where it is not wider than nothing): the score's
-/// corner ([`crate::gui::karaoke::score_corner`]), the multiplier's badge
+/// corner ([`crate::gui::stage::score::corner`]), the multiplier's badge
 /// and the meter with its verdict, where the stage places them
 /// ([`crate::gui::stage::Stage::clear`]). A screen pass's shape carries
 /// them as [`Clear::on`] puts them.

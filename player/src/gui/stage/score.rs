@@ -1,10 +1,11 @@
-//! The score's counter, top right: points added roll in as on an
-//! odometer. Each column of figures is a drum turning forward from the
-//! figure it showed to the one it shows next, the figure going out sliding
-//! up out of its cell as the one coming in slides up into it; a column
-//! whose figure stays stays still. On a big jump the columns under the
-//! jump's top spin whole laps more (up to [`LAPS`]), a blur, and the number
-//! glows (and swells a little, more for a big jump) while it counts.
+//! The score, top right ([`Stage::score`]): the points rolling in as on an
+//! odometer, the multiplier's rung under them. Each column of figures is
+//! a drum turning forward from the figure it showed to the one it shows
+//! next, the figure going out sliding up out of its slot as the one coming
+//! in slides up into it; a column whose figure stays stays still. On a big
+//! jump the columns under the jump's top spin whole laps more (up to
+//! [`LAPS`]), a blur of copies, and the number glows (mixed towards
+//! [`HOT`]) and swells a little, more for a big jump, while it counts.
 //!
 //! Each change rolls in on its own, eased out, over [`ROLL`] (longer for a
 //! bigger jump, up to [`ROLL_LONG`]), alongside those still rolling: so the
@@ -14,12 +15,15 @@
 //! is stepped by the frames' own time, apart from the core's state: what
 //! it counts to is the core's score.
 //!
-//! The glow is the figures' colour mixed towards [`HOT`] here, in the
-//! pixmap; it may later come from the effects library on the GPU instead.
+//! Where it goes ([`placed`]) is the same for the stage and for the window
+//! without a GPU, which paints it into its pixmap.
 
-use super::TextOp;
-use crate::gui::big_text::BigText;
-use crate::gui::pixels::{mix, PixelRect};
+use super::super::big_text::{BigText, Face, Faces};
+use super::super::pixels::{mix, PixelRect};
+use super::super::stage_gpu::Instance;
+use super::{clip, Stage};
+use crate::view::karaoke::{KaraokePicture, Score, HIT};
+use crate::view::palette;
 
 /// How long points added take to roll in, in seconds: a word's.
 const ROLL: f32 = 0.35;
@@ -42,8 +46,12 @@ const SHUTTER: f64 = 1.0 / 90.0;
 const COPIES: usize = 6;
 /// What the number glows towards.
 const HOT: [u8; 3] = [255, 248, 225];
-/// The figures, whose ink the cells are made round.
+/// The figures, whose ink the slots are made round.
 const FIGURES: &str = "0123456789";
+
+/// How many of its figures' sizes wide the score's corner is: room for a
+/// score of nine figures and for its rung's name under it.
+const SCORE_WIDE: f32 = 6.5;
 
 /// Points added: from what to what, how long ago and how long it rolls
 /// for, in seconds.
@@ -173,7 +181,7 @@ impl Odometer {
     }
 
     /// What it shows (nought where no score was stepped to).
-    pub(super) fn reading(&self) -> Reading {
+    pub fn reading(&self) -> Reading {
         let base = self.base.unwrap_or(0);
         let columns = (0..figures(self.target().unwrap_or(0)))
             .map(|k| {
@@ -199,28 +207,115 @@ impl Odometer {
 /// it turns, a second; how much the number glows and how big its jump is,
 /// 0 to 1.
 #[derive(Clone, Debug, PartialEq)]
-pub(super) struct Reading {
+pub struct Reading {
     columns: Vec<(f64, f64)>,
     glow: f32,
     big: f32,
 }
 
-/// The pieces of text `reading` is drawn as at `px` (its glyphs in `text`,
-/// the score's face), its right edge at `right` and its top at `top`, in
-/// `color`: in each column the figure going out and the one coming in (in
-/// several copies along its motion where it spins fast), each kept to its
-/// column's cell. At rest it is the points as [`points_text`] writes them,
-/// drawn as that text is.
+/// A figure of the counter as it is drawn.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Figure {
+    /// The figure.
+    pub text: String,
+    /// The size its glyphs are made at.
+    pub base: f32,
+    /// The size it is drawn at.
+    pub px: f32,
+    /// Its line's top-left.
+    pub at: (f32, f32),
+    /// How much of it shows.
+    pub alpha: f32,
+    /// The slot it is kept to (pixels): its column's, a turn of the drum
+    /// high.
+    pub slot: PixelRect,
+}
+
+/// The score as it is set top right.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Placed {
+    /// The rung's name under the points: its text, size and line's
+    /// top-left (none at ×1).
+    pub rung: Option<(String, f32, (f32, f32))>,
+    /// The counter's figures.
+    pub figures: Vec<Figure>,
+    /// Their colour, the glow mixed in.
+    pub color: [u8; 3],
+}
+
+/// The score's sizes in the window's `area` (left, top, width, height):
+/// its figures', the margin it keeps from the corner, and its rung's
+/// under it. Its figures a share of the line sung's, smaller where the
+/// corner would come down past the HUD's band over the lane
+/// ([`super::Lane::hud`]: over the marquee bulbs).
+pub fn sizes((x, y, w, h): (f32, f32, f32, f32)) -> (f32, f32, f32) {
+    let sizes = |px: f32| (px, px * 0.8, (px * 0.45).round().max(10.0));
+    let (_, bottom) = super::Lane::new((x, y, w, h), 0.0).hud((x, y, w, h));
+    let mut px = (super::lyrics::big_of(h) * 0.42).round().max(12.0);
+    while px > 12.0 && corner_bottom(y, sizes(px)) > bottom {
+        px -= 1.0;
+    }
+    sizes(px)
+}
+
+/// The score's corner's bottom under the window's top `y`, at its sizes.
+fn corner_bottom(y: f32, (px, margin, small): (f32, f32, f32)) -> f32 {
+    y + margin * 0.6 + px * 1.25 + small * 1.5
+}
+
+/// The corner the score takes top right in the window's `area` (left,
+/// top, width, height), its rung under it: left, top, right, bottom. The
+/// effects over the frame keep it clear (the edges on fire), as they do
+/// the lyric band.
+pub fn corner((x, y, w, h): (f32, f32, f32, f32)) -> [f32; 4] {
+    let sizes = sizes((x, y, w, h));
+    let (px, margin, _) = sizes;
+    [
+        x + w - margin - px * SCORE_WIDE,
+        y,
+        x + w,
+        corner_bottom(y, sizes),
+    ]
+}
+
+/// `score` as `reading` shows it, set top right in the window's `area`
+/// (left, top, width, height), in `faces` (its figures in
+/// [`Face::NUMBER`], its rung in [`Face::SHOUT`]).
+pub fn placed(
+    faces: &mut Faces,
+    score: Score,
+    reading: &Reading,
+    (x, y, w, h): (f32, f32, f32, f32),
+) -> Placed {
+    let (px, margin, small) = sizes((x, y, w, h));
+    // Under it the multiplier's rung, named as the badge names it.
+    let rung = score.rung_label().map(|label| {
+        let lw = faces.get(Face::SHOUT).measure(&label, small);
+        let at = (x + w - margin - lw, y + margin * 0.6 + px * 1.25);
+        (label, small, at)
+    });
+    let right_top = (x + w - margin, y + margin * 0.6);
+    Placed {
+        rung,
+        figures: figures_of(faces.get(Face::NUMBER), reading, right_top, px),
+        color: mix(HIT, HOT, 0.6 * reading.glow),
+    }
+}
+
+/// The figures `reading` is drawn as at `px` (its glyphs in `text`, the
+/// score's face), its right edge at `right` and its top at `top`: in each
+/// column the figure going out and the one coming in (in several copies
+/// along its motion where it spins fast), each kept to its column's slot.
+/// At rest it is the points as [`points_text`] writes them, set as that
+/// text is.
 ///
 /// [`points_text`]: crate::view::karaoke::points_text
-pub(super) fn ops(
+fn figures_of(
     text: &mut BigText,
     reading: &Reading,
     (right, top): (f32, f32),
     px: f32,
-    color: [u8; 3],
-    out: &mut Vec<TextOp>,
-) {
+) -> Vec<Figure> {
     let advance = text.measure("0", px);
     let apart = text.measure("\u{2009}", px);
     let n = reading.columns.len();
@@ -234,8 +329,8 @@ pub(super) fn ops(
             width += apart;
         }
     }
-    // The cells: from a little above the figures' ink to a little below,
-    // a turn as tall as a cell. The number swells from its right edge and
+    // The slots: from a little above the figures' ink to a little below,
+    // a turn as tall as a slot. The number swells from its right edge and
     // the middle of its ink.
     let (ink_top, ink_bottom) = text.ink_band(FIGURES, px);
     let room = 0.1 * px;
@@ -243,16 +338,16 @@ pub(super) fn ops(
     let pop = 1.0 + reading.glow * (0.04 + 0.1 * reading.big);
     let size = px * pop;
     let y = top + middle * (1.0 - pop);
-    let cell_top = y + (ink_top - room) * pop;
+    let slot_top = y + (ink_top - room) * pop;
     let pitch = (ink_bottom - ink_top + 2.0 * room) * pop;
-    let color = mix(color, HOT, 0.6 * reading.glow);
+    let mut out = Vec::new();
     let mut pen = right - width;
     for k in (0..n).rev() {
         let x = pen + (pen - right) * (pop - 1.0);
         let side = 0.06 * size;
-        let cell: PixelRect = (
+        let slot: PixelRect = (
             (x - side).max(0.0).floor() as usize,
-            cell_top.max(0.0).floor() as usize,
+            slot_top.max(0.0).floor() as usize,
             (advance * pop + 2.0 * side).ceil() as usize,
             pitch.ceil() as usize,
         );
@@ -278,19 +373,15 @@ pub(super) fn ops(
             let phase = (at - whole) as f32;
             let shown = whole as u64;
             let mut figure_at = |digit: u64, off: f32| {
-                out.push(TextOp {
+                out.push(Figure {
                     text: (digit % 10).to_string(),
-                    face: text.face(),
                     base: px,
                     px: size,
                     at: (x, y + off * pitch),
-                    fill_x: f32::MAX,
-                    colors: (color, color),
-                    // Fading away from the middle of its cell, as on a drum
-                    // curving away.
+                    // Fading away from the middle of its slot, as on a
+                    // drum curving away.
                     alpha: alpha * (1.0 - off * off),
-                    sung: None,
-                    clip: Some(cell),
+                    slot,
                 });
             };
             // The units always; a higher column's nought only under a
@@ -307,16 +398,75 @@ pub(super) fn ops(
             pen += apart;
         }
     }
+    out
+}
+
+/// A colour of the window's (sRGB bytes) at `alpha`, as the stage takes it.
+pub(super) fn rgba8(c: [u8; 3], alpha: f32) -> [f32; 4] {
+    [
+        f32::from(c[0]) / 255.0,
+        f32::from(c[1]) / 255.0,
+        f32::from(c[2]) / 255.0,
+        alpha,
+    ]
+}
+
+impl Stage {
+    /// Karaoke mode just come: its score shows at once, rolling from
+    /// nothing.
+    pub fn entered(&mut self) {
+        self.odometer.step(None, 0.0);
+    }
+
+    /// Whether what the stage draws moves by itself, so frames must keep
+    /// coming while nothing else moves: the score rolling up.
+    pub fn moving(&self) -> bool {
+        self.odometer.moving()
+    }
+
+    /// `picture`'s score into `out`, its counter stepped `dt` seconds on
+    /// (none: no score, the counter at rest on nothing), set top right in
+    /// the window's `area`.
+    pub(super) fn score(
+        &mut self,
+        out: &mut Vec<Instance>,
+        picture: &KaraokePicture,
+        area: (f32, f32, f32, f32),
+        dt: f32,
+    ) {
+        self.odometer.step(picture.score.map(|s| s.points), dt);
+        let Some(score) = picture.score else {
+            return;
+        };
+        let placed = placed(&mut self.faces, score, &self.odometer.reading(), area);
+        if let Some((label, px, at)) = &placed.rung {
+            let dim = rgba8(palette::DIM, 1.0);
+            let whole = (Face::SHOUT, label.as_str());
+            self.set_text(out, whole, (*px, *px), *at, f32::INFINITY, (dim, dim));
+        }
+        for f in &placed.figures {
+            let color = rgba8(placed.color, f.alpha);
+            let from = out.len();
+            let figure = (Face::NUMBER, f.text.as_str());
+            self.set_text(
+                out,
+                figure,
+                (f.base, f.px),
+                f.at,
+                f32::INFINITY,
+                (color, color),
+            );
+            let (sx, sy, sw, sh) = f.slot;
+            let slot = [sx as f32, sy as f32, (sx + sw) as f32, (sy + sh) as f32];
+            clip(out, from, slot);
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::super::{paint, Backdrop, Layer};
     use super::*;
-    use crate::gui::big_text::{Face, Faces};
-    use crate::gui::pixels::Target;
-    use crate::view::karaoke::{KaraokePicture, Score};
-    use std::time::{Duration, Instant};
+    use crate::gui::stage_gpu::kind;
 
     const FRAME: f32 = 1.0 / 60.0;
 
@@ -502,87 +652,58 @@ mod tests {
     }
 
     /// At rest the counter draws the points as the text `points_text`
-    /// writes, pixel for pixel; mid-roll it draws only inside its cells
-    /// (nothing above or below the figures' band), something different.
+    /// writes, laid where the score goes, on whole pixels and at its own
+    /// size; mid-roll it draws something else, each figure only inside its
+    /// slot (nothing above or below the figures' band).
     #[test]
-    fn it_draws_the_points_at_rest_and_rolls_inside_its_cells() {
-        let (w, h) = (640, 360);
-        let backdrop = Backdrop::new(None, w, h);
-        let frame = |layer: &mut Layer, points: u32| {
-            let mut pixels = vec![0u32; w * h];
-            let mut target = Target {
-                pixels: &mut pixels,
-                width: w,
-                height: h,
-            };
-            let area = (0, 0, w, h);
-            let mut faces = Faces::default();
-            paint(
-                &mut target,
-                &mut faces,
-                layer,
-                &backdrop,
-                &scored(points),
-                area,
-                None,
-                true,
-            );
-            pixels
+    fn it_draws_the_points_at_rest_and_rolls_inside_its_slots() {
+        let area = (0.0, 0.0, 640.0, 360.0);
+        let mut stage = Stage::default();
+        let frame = |stage: &mut Stage, points: u32| {
+            let mut out = Vec::new();
+            stage.score(&mut out, &scored(points), area, FRAME);
+            out
         };
-        let t0 = Instant::now();
-        let at = |f: usize| t0 + Duration::from_secs_f32(f as f32 * FRAME);
-        let mut layer = Layer::default();
-        layer.at(at(0));
-        let rest = frame(&mut layer, 12_400);
-        // The text itself, drawn where the score's is.
-        let mut faces = Faces::default();
-        let text = faces.get(Face::NUMBER);
-        let (px, margin, _) = super::super::score_sizes((0.0, 0.0, w as f32, h as f32));
+        let rest = frame(&mut stage, 12_400);
+        let (px, margin, _) = sizes(area);
+        let text = stage.faces.get(Face::NUMBER);
         let points = crate::view::karaoke::points_text(12_400);
-        let tw = text.measure_from(&points, px, px);
-        let mut plain = backdrop.pixels.clone();
-        let mut target = Target {
-            pixels: &mut plain,
-            width: w,
-            height: h,
-        };
-        let hit = crate::view::karaoke::HIT;
-        text.draw(
-            &mut target,
-            &points,
-            px,
-            px,
-            (w as f32 - margin - tw, margin * 0.6),
-            f32::MAX,
-            (hit, hit),
-            1.0,
-            (0, 0, w, h),
-        );
-        assert_eq!(rest, plain);
-        // Mid-roll, painted frame by frame.
-        let mut rolling = rest.clone();
-        for f in 1..10 {
-            layer.at(at(f));
-            rolling = frame(&mut layer, 186_000);
+        let tw = text.measure(&points, px);
+        // As many runs as figures, side by side from where the text
+        // starts to where it ends, each at its size, unturned and whole.
+        assert_eq!(rest.len(), 5, "{rest:?}");
+        let pad = crate::gui::big_text::COVER_PAD as f32;
+        let left = (640.0 - margin - tw).floor() - pad;
+        assert!((rest[0].quad[0] - left).abs() <= 1.0, "{:?}", rest[0].quad);
+        for i in &rest {
+            assert_eq!(i.params[0], kind::TEXT);
+            assert_eq!(i.quad[0], i.quad[0].round(), "on whole pixels");
+            let (w, h) = (i.quad[2] - i.quad[0], i.quad[3] - i.quad[1]);
+            assert!(
+                (w - (i.uv[2] - i.uv[0])).abs() < 1e-3 && (h - (i.uv[3] - i.uv[1])).abs() < 1e-3
+            );
         }
-        assert!(layer.odometer.moving());
+        assert!(rest.last().unwrap().quad[2] <= 640.0 - margin + pad + 1.0);
+        // Mid-roll, frame by frame.
+        let mut rolling = rest.clone();
+        for _ in 1..10 {
+            rolling = frame(&mut stage, 186_000);
+        }
+        assert!(stage.moving());
         assert_ne!(rolling, rest);
-        // The cells, swollen by the glow at most this much about the
+        // The slots, swollen by the glow at most this much about the
         // ink's middle.
+        let text = stage.faces.get(Face::NUMBER);
         let (ink_top, ink_bottom) = text.ink_band(FIGURES, px);
         let middle = margin * 0.6 + (ink_top + ink_bottom) / 2.0;
         let reach = ((ink_bottom - ink_top) / 2.0 + 0.1 * px) * 1.15;
         let (lo, hi) = (middle - reach - 1.0, middle + reach + 1.0);
-        for y in 0..h {
-            for x in 0..w {
-                let i = y * w + x;
-                if rolling[i] != backdrop.pixels[i] {
-                    assert!(
-                        (y as f32) >= lo.floor() && (y as f32) <= hi.ceil(),
-                        "a pixel at {x}, {y} outside {lo}..{hi}"
-                    );
-                }
-            }
+        for i in &rolling {
+            assert!(
+                i.quad[1] >= lo.floor() && i.quad[3] <= hi.ceil(),
+                "a figure at {:?} outside {lo}..{hi}",
+                i.quad
+            );
         }
     }
 }

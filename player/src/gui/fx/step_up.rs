@@ -1,8 +1,8 @@
 //! A step up: each tier a phrase takes the singing up, a burst from the
 //! playhead of stars, notes and rainbow bits that spin, arc down and fade
 //! (one record a burst, [`Kind::StepUp`], worked out in the particles'
-//! vertex shader); the picture's bar under the word sung throws a smaller
-//! one ([`crate::gui::streak::PictureShine`]).
+//! vertex shader); the bar under the word sung of the lyrics the stage
+//! sets in the middle throws a smaller one ([`crate::gui::stage::lyrics`]).
 //!
 //! [`step_up`] is the shader's maths on the processor ([`wgsl`]), held to
 //! it on the GPU (`crate::gui::shader_check`).

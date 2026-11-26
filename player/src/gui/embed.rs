@@ -4,8 +4,9 @@
 //! widget shows it under everything iced draws itself.
 //!
 //! On the GPU the pixmap goes through iced's shader widget
-//! ([`super::embed_gpu`]): only the pixels that changed are sent over,
-//! Karaoke mode's stage is drawn over it. With iced's CPU renderer (no
+//! ([`super::embed_gpu`]): only the pixels that changed are sent over. In
+//! Karaoke mode the GPU draws its backdrop and its stage instead, and of
+//! the pixmap only the controls' bar's strip ([`Canvas::strip`]). With iced's CPU renderer (no
 //! GPU) the pixmap is an image, and no stage. The lanes are the window's
 //! own widget over it ([`super::lanes`]).
 //!
@@ -51,6 +52,9 @@ pub struct Drawn {
     pub stage: Option<StageFrame>,
     /// Karaoke mode's backdrop, where it shows.
     pub backdrop: Option<BackdropFrame>,
+    /// The rows of window pixels where the pixmap shows over Karaoke
+    /// mode's backdrop: the controls' bar's ([`Canvas::strip`]).
+    pub strip: Option<(u32, u32)>,
 }
 
 /// The canvas and what is waiting for the next frame on screen.
@@ -62,6 +66,8 @@ pub(super) struct Shared {
     pub(super) stage: Option<StageFrame>,
     /// The backdrop as it is now (its textures sent over as it first shows).
     pub(super) backdrop: Option<BackdropFrame>,
+    /// The rows of the pixmap shown over the backdrop, where there is one.
+    pub(super) strip: Option<(u32, u32)>,
     /// Whether iced draws on the GPU (its shader widget works); `None`
     /// until the first frame was drawn.
     pub(super) gpu: Option<bool>,
@@ -98,6 +104,7 @@ impl Default for Embed {
             changes: Changes::default(),
             stage: None,
             backdrop: None,
+            strip: None,
             gpu: None,
             scale: 1.0,
             image: None,
@@ -132,6 +139,7 @@ impl Embed {
         shared.changes.merge(changes);
         shared.stage = merge_stage(shared.stage.take(), drawn.stage);
         shared.backdrop = drawn.backdrop;
+        shared.strip = drawn.strip;
     }
 
     /// Whether iced draws on the GPU (until it has drawn: as if it did).

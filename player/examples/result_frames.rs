@@ -19,11 +19,9 @@ use jodeldiplom::art::Art;
 use jodeldiplom::core::shine::{Shone, Tier};
 use jodeldiplom::core::singing::{Medal, Shown, SongResult};
 use jodeldiplom::cover::Swatch;
-use jodeldiplom::gui::big_text::Faces;
-use jodeldiplom::gui::karaoke::{paint, Backdrop, Layer};
-use jodeldiplom::gui::pixels::Target;
+use jodeldiplom::gui::karaoke::Backdrop;
 use jodeldiplom::gui::present::Offscreen;
-use jodeldiplom::gui::stage::{without_lyrics, Stage, Tint};
+use jodeldiplom::gui::stage::{Stage, Tint};
 use jodeldiplom::view::karaoke::{plain_lines, KaraokePicture, ResultShown, Start};
 
 // The fonts build.rs found: `EMBEDDED_FONTS`.
@@ -207,7 +205,6 @@ fn main() {
         let lines = plain_lines(&result, next);
         let shown = Arc::new(Shown::new(result, id, 0));
         let mut stage = Stage::default();
-        let mut faces = Faces::default();
         let backdrop = Backdrop::new(art.as_ref(), w, h);
         let end = shown.reveal.end();
         println!(
@@ -235,24 +232,9 @@ fn main() {
             let area = (0.0, 0.0, w as f32, h as f32);
             let frame = stage.result(&picture, &tint, area).expect("a result");
             gpu.set_stage(Some(&frame), w as u32, h as u32);
-            let mut pixels = vec![0u32; w * h];
-            let mut target = Target {
-                pixels: &mut pixels,
-                width: w,
-                height: h,
-            };
-            paint(
-                &mut target,
-                &mut faces,
-                &mut Layer::default(),
-                &backdrop,
-                &without_lyrics(&picture),
-                (0, 0, w, h),
-                None,
-                true,
-            );
+            // Over the cover's blur, as a pixmap of its own.
             let shown_px = gpu
-                .show_pixels(&pixels, w as u32, h as u32)
+                .show_pixels(&backdrop.pixels, w as u32, h as u32)
                 .expect("a frame");
             let mut img = image::RgbImage::new(w as u32, h as u32);
             for (i, p) in shown_px.iter().enumerate() {

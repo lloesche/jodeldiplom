@@ -20,7 +20,7 @@ impl Stage {
     /// meter and its verdict, each where it is placed.
     pub fn clear(&mut self, area: (f32, f32, f32, f32), lane: &Lane) -> Clear {
         Clear {
-            score: super::super::karaoke::score_corner(area),
+            score: super::score::corner(area),
             badge: self.badge_box(lane, area),
             meter: self.meter_spot(area, lane).rect,
         }

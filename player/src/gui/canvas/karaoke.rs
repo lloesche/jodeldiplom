@@ -1,7 +1,11 @@
-//! Karaoke mode in the canvas: its picture painted into the pixmap (the
-//! backdrop, the lyrics, the count-in and the score, the controls' bar
-//! over them) only where it changed, or moves by itself (the score rolling
-//! up); and the stage the GPU draws over it, from the same picture.
+//! Karaoke mode in the canvas. With a GPU the stage draws all of it but the
+//! controls' bar ([`Canvas::stage_frame`]: the lyrics, the count-in, the
+//! score, START, the result) over its backdrop, and the pixmap is only the
+//! bar's strip ([`Canvas::strip`]): the controls' text over the backdrop,
+//! made darker, painted again only where its cells were redrawn or the bar
+//! changed. Without one the whole picture is painted into the pixmap (the
+//! cover's ground, the lyrics, the count-in and the score, the bar over
+//! them) only where it changed, or moves by itself (the score rolling up).
 
 use std::time::Instant;
 
@@ -10,8 +14,8 @@ use ratatui::layout::Rect;
 use super::Canvas;
 use crate::art::Art;
 use crate::gui::karaoke::{self, Backdrop};
-use crate::gui::pixels::{PixelRect, Target};
-use crate::gui::{notes, stage, stage_gpu};
+use crate::gui::pixels::{dim, PixelRect, Target, SEE_THROUGH};
+use crate::gui::{stage, stage_gpu};
 use crate::view::karaoke::KaraokePicture;
 use crate::view::layout::controls_bar;
 
@@ -46,71 +50,109 @@ impl Canvas {
         targets.find(|(at, _)| inside(*at)).map(|&(_, op)| op)
     }
 
-    /// What the GPU draws over Karaoke mode's picture as last painted (none
-    /// without it): its bubbles' liquid and bursts.
-    pub fn picture_over(&self) -> Option<&notes::Over> {
-        self.karaoke.as_ref().map(|_| &self.karaoke_layer.over)
+    /// The rows of window pixels (from, to) where the pixmap shows over
+    /// Karaoke mode's stage's ground: the controls' bar while it is laid
+    /// out; none where there is none (the stage draws all the rest).
+    pub fn strip(&self) -> Option<(u32, u32)> {
+        self.strip
     }
 
     /// Whether Karaoke mode's picture, shown, moves by itself: its score
-    /// rolling up.
+    /// rolling up (the stage's, with a GPU).
     pub(super) fn karaoke_moving(&self) -> bool {
-        self.karaoke.is_some() && self.karaoke_layer.odometer.moving()
+        let moving = if self.gpu {
+            self.stage.moving()
+        } else {
+            self.karaoke_layer.odometer.moving()
+        };
+        self.shown.is_some() && moving
     }
 
     /// Karaoke mode's picture `full` over the cells of `area` in the frame
     /// at `now` (`last`: the one in the frame before and its cells, if
-    /// there was one; `wanted`: the stage draws the song's lane, so its
-    /// lyrics are not in the pixmap). On the GPU
-    /// the stage is drawn over it, from all of it. Painted again only
-    /// where it changed, the cells under it were redrawn, or it moves by
-    /// itself; the mode just come, its score shows at once. Returns the
-    /// pixels it changed.
+    /// there was one). With a GPU it is the stage's to draw, and only the
+    /// controls' bar is painted. Painted again only where it changed, the
+    /// cells under it were redrawn, or it moves by itself; the mode just
+    /// come, its score shows at once. Returns the pixels it changed.
     pub(super) fn karaoke_picture(
         &mut self,
-        (area, full): (Rect, &KaraokePicture),
-        last: Option<&(Rect, KaraokePicture)>,
-        wanted: bool,
+        (area, full): (Rect, KaraokePicture),
+        last: Option<&(Rect, Option<f64>)>,
         art: Option<&Art>,
         now: Instant,
     ) -> Vec<PixelRect> {
-        if self.gpu {
-            let rect = self.pixel_rect(area);
-            self.staged = Some((full.clone(), rect));
-        }
-        let picture = if !self.gpu {
-            // No stage, no pill: START said in words.
-            crate::view::karaoke::with_start_cue(full)
-        } else if wanted {
-            stage::without_lyrics(full)
-        } else {
-            full.clone()
-        };
         if last.is_none() {
             self.karaoke_layer.odometer.step(None, 0.0);
+            self.stage.entered();
         }
         let damaged = self.terminal.backend().damage.touches(area);
-        let kept = last.is_some_and(|(a, k)| (*a, k) == (area, &picture))
-            && !damaged
+        let controls = full.controls;
+        let afresh = damaged || last.is_none_or(|l| *l != (area, controls));
+        if self.gpu {
+            self.strip = controls.map(|_| {
+                let (_, y, _, h) = self.pixel_rect(controls_bar(area));
+                (y as u32, (y + h) as u32)
+            });
+            self.staged = Some((full, self.pixel_rect(area)));
+            self.karaoke = None;
+            return if afresh {
+                self.paint_bar(area, controls)
+            } else {
+                Vec::new()
+            };
+        }
+        // No stage, no pill: START said in words.
+        let picture = crate::view::karaoke::with_start_cue(&full);
+        let kept = self.karaoke.as_ref().is_some_and(|k| k == &picture)
+            && !afresh
             && !self.karaoke_layer.odometer.moving();
         let changed = if kept {
             Vec::new()
         } else {
-            // Afresh where the cells under it were redrawn or its frame
-            // (the area, the controls) changed; else only where its text
-            // was and is.
-            let afresh =
-                damaged || last.is_none_or(|(a, k)| (*a, k.controls) != (area, picture.controls));
             self.karaoke_layer.at(now);
             self.paint_karaoke((area, &picture), art, afresh)
         };
-        self.karaoke = Some((area, picture));
+        self.karaoke = Some(picture);
         changed
     }
 
-    /// Karaoke mode's picture: the backdrop (made again for another cover
-    /// or size), the lyrics, the count-in and the score, then the
-    /// controls' text over it. `full`: all of it; else only the text,
+    /// The ground the GPU draws Karaoke mode on (all see-through) over the
+    /// cells of `area`, the controls' bar darker over it where it is laid
+    /// out (`controls`: how far it shows) with its cells' text. Returns the
+    /// pixels it changed.
+    fn paint_bar(&mut self, cells: Rect, controls: Option<f64>) -> Vec<PixelRect> {
+        let area = self.pixel_rect(cells);
+        let (ax, ay, aw, ah) = area;
+        if self
+            .backdrop
+            .as_ref()
+            .is_none_or(|b| (b.art, b.size) != (None, (aw, ah)))
+        {
+            self.backdrop = Some(Backdrop::through(aw, ah));
+        }
+        let bar = controls.map(|_| self.pixel_rect(controls_bar(cells)));
+        let in_bar = |y: usize| bar.is_some_and(|(_, by, _, bh)| (by..by + bh).contains(&y));
+        let backend = self.terminal.backend_mut();
+        let width = backend.width;
+        let (x0, x1) = (ax.min(width), (ax + aw).min(width));
+        for y in ay..(ay + ah).min(backend.height) {
+            let row = &mut backend.pixmap[y * width + x0..y * width + x1];
+            let ground = if in_bar(y) {
+                dim(SEE_THROUGH, 0.4)
+            } else {
+                SEE_THROUGH
+            };
+            row.fill(ground);
+        }
+        if let Some(fade) = controls {
+            self.overlay_controls(cells, fade);
+        }
+        vec![area]
+    }
+
+    /// Karaoke mode's picture, without a GPU: the backdrop (made again for
+    /// another cover or size), the lyrics, the count-in and the score, then
+    /// the controls' text over it. `full`: all of it; else only the text,
     /// where it was and is (the backdrop put back under the last frame's).
     /// Returns the pixels it changed.
     fn paint_karaoke(
@@ -123,21 +165,15 @@ impl Canvas {
         let bar = picture
             .controls
             .map(|_| self.pixel_rect(controls_bar(cells)));
-        // On the GPU the ground is its: all see-through here.
-        let art_id = (!self.gpu).then(|| art.map_or(0, |a| a.id));
+        let art_id = Some(art.map_or(0, |a| a.id));
         let fits = self
             .backdrop
             .as_ref()
             .is_some_and(|b| (b.art, b.size) == (art_id, (area.2, area.3)));
         if !fits {
-            self.backdrop = Some(if self.gpu {
-                Backdrop::through(area.2, area.3)
-            } else {
-                Backdrop::new(art, area.2, area.3)
-            });
+            self.backdrop = Some(Backdrop::new(art, area.2, area.3));
         }
         let full = full || !fits;
-        self.karaoke_layer.over.gpu = self.gpu;
         let Some(backdrop) = &self.backdrop else {
             return Vec::new();
         };
@@ -158,17 +194,17 @@ impl Canvas {
             bar,
             full,
         );
-        if full {
-            self.overlay_controls(cells, picture);
+        if let (true, Some(fade)) = (full, picture.controls) {
+            self.overlay_controls(cells, fade);
         }
         changed
     }
 
     /// Karaoke mode's controls over its picture, where they are laid out:
-    /// their cells' text and their bar, faded in as far as the bar shows
-    /// ([`crate::core::karaoke::controls::handover`]).
-    fn overlay_controls(&mut self, cells: Rect, picture: &KaraokePicture) {
-        let (Some(fade), Some(backdrop)) = (picture.controls, &self.backdrop) else {
+    /// their cells' text and their bar, faded in to `fade` as far as the
+    /// bar shows ([`crate::core::karaoke::controls::handover`]).
+    fn overlay_controls(&mut self, cells: Rect, fade: f64) {
+        let Some(backdrop) = &self.backdrop else {
             return;
         };
         let bar_cells = controls_bar(cells);
@@ -211,9 +247,11 @@ mod tests {
         }
     }
 
-    /// A canvas of 640 × 384 pixels, and frames 1/60 s apart from now.
-    fn canvas() -> (Canvas, impl Fn(usize) -> Instant) {
+    /// A canvas of 640 × 384 pixels, on the GPU or not, and frames 1/60 s
+    /// apart from now.
+    fn canvas(gpu: bool) -> (Canvas, impl Fn(usize) -> Instant) {
         let mut canvas = Canvas::new(80, 24, crate::gui::font_px(1.0));
+        canvas.set_gpu(gpu);
         canvas.fit(640, 384);
         let t0 = Instant::now();
         (canvas, move |f| {
@@ -221,58 +259,88 @@ mod tests {
         })
     }
 
-    /// The same picture frame after frame is not painted again; points
-    /// added, it is painted every frame while they roll up (moving), and
-    /// no more once they are at rest.
+    /// One frame of `points` at frame `f`, as [`Canvas::draw`] makes it
+    /// (`last`: the frame before's area and controls): whether it changed
+    /// a pixel; and the stage's frame where there is a stage.
+    fn frame(
+        canvas: &mut Canvas,
+        last: &mut Option<(Rect, Option<f64>)>,
+        points: u32,
+        at: Instant,
+    ) -> (bool, Option<stage_gpu::StageFrame>) {
+        // As each frame starts: no cells drawn under it yet.
+        canvas.terminal.backend_mut().reset_damage();
+        canvas.staged = None;
+        let changed = canvas.karaoke_picture((AREA, scored(points)), last.as_ref(), None, at);
+        *last = Some((AREA, None));
+        canvas.shown = *last;
+        let state = crate::core::State::new("/m".into(), crate::config::Config::default());
+        let tint = stage::Tint::STAGE;
+        let stage = canvas.stage_frame((&state, None), 0.0, 1.0 / 60.0, &tint);
+        (!changed.is_empty(), stage)
+    }
+
+    /// Without a GPU: the same picture frame after frame is not painted
+    /// again; points added, it is painted every frame while they roll up
+    /// (moving), and no more once they are at rest.
     #[test]
     fn the_picture_is_painted_again_while_its_score_rolls_and_then_not() {
-        let (mut canvas, at) = canvas();
+        let (mut canvas, at) = canvas(false);
         let mut last = None;
-        let mut frame = |canvas: &mut Canvas, points: u32, f: usize| {
-            // As each frame starts: no cells drawn under it yet.
-            canvas.terminal.backend_mut().reset_damage();
-            let picture = scored(points);
-            let changed =
-                canvas.karaoke_picture((AREA, &picture), last.as_ref(), false, None, at(f));
-            last = canvas.karaoke.clone();
-            !changed.is_empty()
-        };
-        assert!(frame(&mut canvas, 12_400, 0));
-        assert!(!frame(&mut canvas, 12_400, 1));
+        assert!(frame(&mut canvas, &mut last, 12_400, at(0)).0);
+        assert!(!frame(&mut canvas, &mut last, 12_400, at(1)).0);
         assert!(!canvas.moving());
-        assert!(frame(&mut canvas, 13_200, 2));
+        assert!(frame(&mut canvas, &mut last, 13_200, at(2)).0);
         let mut painted = 1;
         let mut f = 3;
         while canvas.moving() {
-            assert!(frame(&mut canvas, 13_200, f), "frame {f}");
+            assert!(frame(&mut canvas, &mut last, 13_200, at(f)).0, "frame {f}");
             painted += 1;
             f += 1;
             assert!(f < 120, "still moving");
         }
         // Rolled in and its glow gone: about 0.4 s and 0.3 s of frames.
         assert!(painted > 30, "{painted}");
-        assert!(!frame(&mut canvas, 13_200, f));
+        assert!(!frame(&mut canvas, &mut last, 13_200, at(f)).0);
+    }
+
+    /// With a GPU the stage asks for frames while its score rolls up, and
+    /// no more once it is at rest; the pixmap is painted once, and never
+    /// for the score.
+    #[test]
+    fn the_stage_asks_for_frames_while_its_score_rolls() {
+        let (mut canvas, at) = canvas(true);
+        let mut last = None;
+        let (painted, stage) = frame(&mut canvas, &mut last, 12_400, at(0));
+        assert!(painted && stage.is_some_and(|s| !s.instances.is_empty()));
+        assert!(!frame(&mut canvas, &mut last, 12_400, at(1)).0);
+        assert!(!canvas.moving());
+        let (painted, _) = frame(&mut canvas, &mut last, 13_200, at(2));
+        assert!(!painted);
+        let mut f = 3;
+        while canvas.moving() {
+            assert!(!frame(&mut canvas, &mut last, 13_200, at(f)).0, "frame {f}");
+            f += 1;
+            assert!(f < 120, "still moving");
+        }
+        assert!(f > 30, "{f}");
+        assert_eq!(canvas.strip(), None, "no controls: no strip");
     }
 
     /// Points that came while the mode was left (20 000, then 30 000 on
-    /// coming back) show at once: nothing rolls up.
+    /// coming back) show at once: nothing rolls up, on the GPU or not.
     #[test]
     fn a_score_come_while_the_mode_was_left_shows_at_once() {
-        let (mut canvas, at) = canvas();
-        canvas.karaoke_picture((AREA, &scored(20_000)), None, false, None, at(0));
-        // Left: a frame without the picture, the layer kept.
-        canvas.karaoke = None;
-        canvas.karaoke_picture((AREA, &scored(30_000)), None, false, None, at(600));
-        assert!(!canvas.moving());
-        let again = canvas.karaoke.clone();
-        canvas.terminal.backend_mut().reset_damage();
-        let changed = canvas.karaoke_picture(
-            (AREA, &scored(30_000)),
-            again.as_ref(),
-            false,
-            None,
-            at(601),
-        );
-        assert!(changed.is_empty());
+        for gpu in [false, true] {
+            let (mut canvas, at) = canvas(gpu);
+            frame(&mut canvas, &mut None, 20_000, at(0));
+            // Left: a frame without the picture, what it keeps kept.
+            canvas.shown = None;
+            let mut last = None;
+            frame(&mut canvas, &mut last, 30_000, at(600));
+            assert!(!canvas.moving(), "gpu {gpu}");
+            let (changed, _) = frame(&mut canvas, &mut last, 30_000, at(601));
+            assert!(!changed, "gpu {gpu}");
+        }
     }
 }

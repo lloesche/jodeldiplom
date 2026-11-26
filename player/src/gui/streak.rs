@@ -7,18 +7,15 @@
 //! with it (a step up each: a burst from the playhead,
 //! [`super::fx::step_up`]), and the multiplier's rung reached or lost. The
 //! effects ease and fire from it ([`super::fx::Board`]). The stage has
-//! one; the window has another for its picture ([`PictureShine`]), whose
-//! bar under the word sung gets a rainbow edge and a smaller burst a step
-//! up. Only the level, its change and a record a step up go to the GPU.
+//! one: with its lane, for the lane's effects; without, for the bar under
+//! the word sung of the lyrics set in the middle, which gets a rainbow edge
+//! and a smaller burst a step up ([`super::stage::lyrics`]). Only the level,
+//! its change and a record a step up go to the GPU.
 
-use super::fx::rainbow::rim_of;
-use super::fx::step_up::burst;
-use super::notes::Over;
 use super::particles::Spray;
 use super::rainbow::Glow;
-use super::stage_gpu::Instance;
 use crate::core::shine::{Shone, Tier};
-use crate::core::singing::{Cue, Cursor, Since, Singing};
+use crate::core::singing::{Cue, Since, Singing};
 
 /// The tier `singing` glows at (none with the game off): the one its last
 /// phrase reached.
@@ -158,50 +155,6 @@ impl Streak {
             at_rung,
             rung: (climbed && from != at_rung).then_some((from, at_rung)),
         }
-    }
-}
-
-/// The song as the picture's glow takes it: its singing, and whether the
-/// game is on.
-#[derive(Clone, Copy)]
-pub struct Sung<'a> {
-    /// The singing.
-    pub singing: &'a Singing,
-    /// Whether the game is on.
-    pub game: bool,
-}
-
-/// The picture's glow: a rainbow edge on the bar under the word sung while
-/// it shows, and a step up's burst from it, smaller than the stage's.
-#[derive(Debug, Default)]
-pub struct PictureShine {
-    streak: Streak,
-    cursor: Cursor,
-    /// Its step ups' bursts showing.
-    ups: Vec<Spray>,
-}
-
-impl PictureShine {
-    /// What the GPU draws over the picture (`over`) for `song`'s glow at
-    /// `clock` (the singing's time): the bar's rainbow edge, while it
-    /// shows, and the bursts.
-    pub fn frame(
-        &mut self,
-        over: Option<&Over>,
-        song: Sung,
-        clock: f64,
-    ) -> (Option<Instance>, &[Spray]) {
-        let since = song.singing.moments_since(&mut self.cursor);
-        let step = self.streak.step(song.singing, song.game, &since, clock);
-        let rim = over.and_then(|o| o.rim);
-        if let Some((c, half)) = rim {
-            let seed = |k: u32| (clock * 1000.0) as u32 + 7919 * k;
-            let ups = (0..step.ups).map(|k| burst(c, half.1 * 6.0, clock, 0.0, seed(k)));
-            self.ups.extend(ups);
-        }
-        self.ups.retain(|s| s.alive(clock));
-        let edge = rim.and_then(|(c, half)| rim_of(c, half, (step.glow, 1.0), clock));
-        (edge, &self.ups)
     }
 }
 

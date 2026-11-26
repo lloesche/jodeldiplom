@@ -2,8 +2,9 @@
 //! with liquid as it is sung, a word counted swept full, held full to
 //! its end, straining, then bursting whole (it overfills, tears, its liquid
 //! splashing out, and is gone), in the picture painted on the processor
-//! (its liquid and its burst drawn by the GPU over it, the bubble gone from
-//! it once it bursts), and on the GPU's stage; the voice heard as it comes
+//! (no GPU: the bubble filled flat, gone once it bursts), in the lyrics the
+//! GPU's stage sets in the middle (no lane: its liquid and its burst over
+//! its bar), and on the stage's lane; the voice heard as it comes
 //! or 264 ms late (the bubbles go by the singing's own time, so the sweep
 //! and the burst are seen whole either way). A bubble only partly filled
 //! never strains or bursts; one no longer full after a seek back shows
@@ -15,7 +16,6 @@ mod common;
 use jodeldiplom::core::singing::Singing;
 use jodeldiplom::gui::big_text::Faces;
 use jodeldiplom::gui::karaoke::{paint, Backdrop, Layer};
-use jodeldiplom::gui::notes::Over;
 use jodeldiplom::gui::particles::{Kind, Spray};
 use jodeldiplom::gui::pixels::Target;
 use jodeldiplom::gui::stage::{Song, Stage};
@@ -72,9 +72,8 @@ fn hear_until(singing: &mut Singing, (from, to): (f64, f64), until: f64) {
     }
 }
 
-/// `picture` painted afresh at `w` × `h` (for a window with a GPU, `gpu`,
-/// or without), and what the GPU draws over it.
-fn painted(picture: &KaraokePicture, (w, h): (usize, usize), gpu: bool) -> (Vec<u32>, Over) {
+/// `picture` painted afresh at `w` × `h`, for a window without a GPU.
+fn painted(picture: &KaraokePicture, (w, h): (usize, usize)) -> Vec<u32> {
     let backdrop = Backdrop::new(None, w, h);
     let mut pixels = vec![0u32; w * h];
     let mut target = Target {
@@ -82,20 +81,47 @@ fn painted(picture: &KaraokePicture, (w, h): (usize, usize), gpu: bool) -> (Vec<
         width: w,
         height: h,
     };
-    let mut layer = Layer::default();
-    layer.over.gpu = gpu;
     let mut text = Faces::default();
     paint(
         &mut target,
         &mut text,
-        &mut layer,
+        &mut Layer::default(),
         &backdrop,
         picture,
         (0, 0, w, h),
         None,
         true,
     );
-    (pixels, layer.over)
+    pixels
+}
+
+/// What a window with a GPU draws of `picture` at `w` × `h`, `heard`
+/// seconds into the song: the stage with its lyrics set in the middle (no
+/// lane), and of it the bubbles' liquid and their bursts.
+struct Staged {
+    frame: StageFrame,
+    bubbles: Vec<Instance>,
+    sprays: Vec<Spray>,
+}
+
+fn staged(picture: &KaraokePicture, (w, h): (usize, usize), heard: f64) -> Staged {
+    let singing = Singing::default();
+    let song = Song::new(&singing, Vec::new(), None);
+    let area = (0.0, 0.0, w as f32, h as f32);
+    let tint = &jodeldiplom::gui::stage::Tint::STAGE;
+    let frame = Stage::default()
+        .scene((&song, false), picture, area, (heard, 0.0), tint)
+        .expect("the lyrics");
+    let bubbles = (frame.instances.iter())
+        .filter(|i| i.params[0] == kind::LIQUID)
+        .copied()
+        .collect();
+    let sprays = frame.sprays.clone();
+    Staged {
+        frame,
+        bubbles,
+        sprays,
+    }
 }
 
 /// `picture` with its line being sung's bubbles undrawn (`notes`) or
@@ -116,7 +142,7 @@ fn without(picture: &KaraokePicture, notes: bool) -> KaraokePicture {
 fn la_bar(picture: &KaraokePicture) -> bool {
     let mut no_la = without(picture, false);
     no_la.lines[0].notes.remove(0);
-    painted(picture, (640, 360), false).0 != painted(&no_la, (640, 360), false).0
+    painted(picture, (640, 360)) != painted(&no_la, (640, 360))
 }
 
 /// A stage of [`common::bubble_song`] at `now` (the voice `late`), made
@@ -153,48 +179,46 @@ fn bubble_sprays(frame: &StageFrame) -> Vec<&Spray> {
     frame.sprays.iter().filter(|s| !scored(s)).collect()
 }
 
-/// A word counted in the window's picture, the voice 264 ms late,
-/// with a GPU and without: the bubble's bar fills (seen part way: painted
-/// flat without a GPU, its liquid handed to the GPU with one, over the bar
-/// painted empty); from its burst on it is no longer painted (the picture
-/// changes once), its burst handed to the GPU
+/// A word counted in the window's picture, the voice 264 ms late, with a
+/// GPU and without: the bubble's bar fills (seen part way: painted flat
+/// without a GPU; with one, the stage's lyrics set in the middle, its
+/// liquid over the bar drawn empty); from its burst on it is no longer
+/// drawn (the picture changes once), its burst on the GPU
 /// ([`jodeldiplom::gui::particles`]) for as long as it lasts, nothing
-/// after. Frames drawn only where they changed are the frames drawn
+/// after. Frames painted only where they changed are the frames painted
 /// afresh all through.
 #[test]
 fn a_bubble_bursts_over_the_picture_and_is_gone_from_it() {
-    for gpu in [false, true] {
-        let (mut singing, lyrics) = common::bubble_song();
-        let (w, h) = (640usize, 360usize);
-        let backdrop = Backdrop::new(None, w, h);
-        let (mut kept, mut text, mut layer) =
-            (vec![0u32; w * h], Faces::default(), Layer::default());
-        layer.over.gpu = gpu;
-        let (mut heard, mut next, mut part_way, mut k) = (0.0, 0.0, false, 0);
-        let (mut seen, mut after, mut liquid) = (None, None, 0);
-        while heard < POPPED + BURST + 0.15 + LATE {
-            heard += 0.015;
-            next = hear_to(&mut singing, next, heard, LATE);
-            let picture = common::bubble_picture(&singing, &lyrics, (heard, LATE));
-            let mut target = Target {
-                pixels: &mut kept,
-                width: w,
-                height: h,
-            };
-            paint(
-                &mut target,
-                &mut text,
-                &mut layer,
-                &backdrop,
-                &picture,
-                (0, 0, w, h),
-                None,
-                k == 0,
-            );
-            let (afresh, over) = painted(&picture, (w, h), gpu);
-            let differ = kept.iter().zip(&afresh).filter(|(a, b)| a != b).count();
-            assert_eq!(differ, 0, "gpu {gpu} at {heard}");
-            assert_eq!(layer.over, over);
+    let (mut singing, lyrics) = common::bubble_song();
+    let (w, h) = (640usize, 360usize);
+    let backdrop = Backdrop::new(None, w, h);
+    let (mut kept, mut text, mut layer) = (vec![0u32; w * h], Faces::default(), Layer::default());
+    let (mut heard, mut next, mut part_way, mut k) = (0.0, 0.0, false, 0);
+    let (mut seen, mut after, mut liquid) = (None, None, 0);
+    while heard < POPPED + BURST + 0.15 + LATE {
+        heard += 0.015;
+        next = hear_to(&mut singing, next, heard, LATE);
+        let picture = common::bubble_picture(&singing, &lyrics, (heard, LATE));
+        let mut target = Target {
+            pixels: &mut kept,
+            width: w,
+            height: h,
+        };
+        paint(
+            &mut target,
+            &mut text,
+            &mut layer,
+            &backdrop,
+            &picture,
+            (0, 0, w, h),
+            None,
+            k == 0,
+        );
+        let afresh = painted(&picture, (w, h));
+        let differ = kept.iter().zip(&afresh).filter(|(a, b)| a != b).count();
+        assert_eq!(differ, 0, "at {heard}");
+        let over = staged(&picture, (w, h), heard);
+        {
             let line = &picture.lines[0];
             let filled: f32 = line.hits.iter().map(|h| h.1 - h.0).sum();
             part_way |= filled > 0.6 && filled < 1.9;
@@ -204,8 +228,8 @@ fn a_bubble_bursts_over_the_picture_and_is_gone_from_it() {
                     assert!(over.sprays.is_empty());
                     // Its liquid, with a GPU (once there is a pixel of it):
                     // as high as its level.
-                    assert!(over.bubbles.len() <= usize::from(gpu));
-                    if gpu && b.level > 0.1 {
+                    assert!(over.bubbles.len() <= 1);
+                    if b.level > 0.1 {
                         assert_eq!(over.bubbles.len(), 1, "{}", b.level);
                     }
                     if let Some(l) = over.bubbles.first() {
@@ -229,47 +253,66 @@ fn a_bubble_bursts_over_the_picture_and_is_gone_from_it() {
                 }
                 _ => {}
             }
-            k += 1;
         }
-        assert!(part_way, "the sweep seen part way");
-        assert!(liquid > 5, "its liquid while it fills: {liquid}");
-        for picture in [seen.expect("a burst"), after.expect("over")] {
-            let (a, _) = painted(&picture, (w, h), gpu);
-            let (b, none) = painted(&without(&picture, false), (w, h), gpu);
-            let (c, _) = painted(&without(&picture, true), (w, h), gpu);
-            // Its bar not painted: as with no bars at all but "lo"'s.
-            let gone = a.iter().zip(&b).filter(|(a, b)| a != b).count();
-            assert!(gone > 20, "the bar gone: {gone}");
-            assert!(none.sprays.is_empty() && none.bubbles.is_empty());
-            assert!(a != c, "\"lo\"'s bar still painted");
-        }
+        k += 1;
+    }
+    assert!(part_way, "the sweep seen part way");
+    assert!(liquid > 5, "its liquid while it fills: {liquid}");
+    // The bars the stage draws under the line sung.
+    let bars = |s: &Staged| {
+        (s.frame.instances.iter())
+            .filter(|i| i.params[0] == kind::PILL)
+            .count()
+    };
+    for picture in [seen.expect("a burst"), after.expect("over")] {
+        let a = painted(&picture, (w, h));
+        let b = painted(&without(&picture, false), (w, h));
+        let c = painted(&without(&picture, true), (w, h));
+        // Its bar not painted: as with no bars at all but "lo"'s.
+        let gone = a.iter().zip(&b).filter(|(a, b)| a != b).count();
+        assert!(gone > 20, "the bar gone: {gone}");
+        assert!(a != c, "\"lo\"'s bar still painted");
+        // Nor drawn on the stage.
+        let (a, b) = (
+            staged(&picture, (w, h), 0.0),
+            staged(&without(&picture, false), (w, h), 0.0),
+        );
+        let c = staged(&without(&picture, true), (w, h), 0.0);
+        assert!(
+            bars(&a) < bars(&b),
+            "the bar gone: {} {}",
+            bars(&a),
+            bars(&b)
+        );
+        assert!(b.sprays.is_empty() && b.bubbles.is_empty());
+        assert!(bars(&a) > 0 && bars(&c) == 0, "\"lo\"'s bar still drawn");
     }
 }
 
 /// A frame of the picture of [`common::bubble_song`] at `at` (the voice
-/// as it comes) sung on "la" until `until`, for a window with a
-/// GPU: painted, and what the GPU draws over it.
-fn picture_at(until: f64, at: f64, size: (usize, usize)) -> (Vec<u32>, Over) {
+/// as it comes) sung on "la" until `until`, for a window with a GPU: the
+/// stage with its lyrics set in the middle.
+fn picture_at(until: f64, at: f64, size: (usize, usize)) -> Staged {
     let (mut singing, lyrics) = common::bubble_song();
     hear_until(&mut singing, (0.0, at), until);
     let picture = common::bubble_picture(&singing, &lyrics, (at, 0.0));
-    painted(&picture, size, true)
+    staged(&picture, size, at)
 }
 
-/// The picture's bubble drawn by the GPU over it (offscreen): partly
-/// filled (its liquid gold to its level over its bar painted empty, the
-/// bar as painted past its front), straining just before full (larger than
-/// its bar), overfilling (larger still), splashing and after. Its liquid
-/// lights the picture where its instance says; each part of its burst (its
-/// drops, its bits of skin, its sparkles) where the processor's reference
-/// of the shader ([`jodeldiplom::gui::particles::sprite`]) puts it;
-/// nothing far from them changes, and after, nothing at all. Skipped (with
-/// a note) without a GPU.
+/// The bubble of the lyrics set in the middle, drawn by the GPU over its
+/// bar (offscreen): partly filled (its liquid gold to its level over its
+/// bar drawn empty, the bar as drawn past its front), straining just before
+/// full (larger than its bar), overfilling (larger still), splashing and
+/// after. Its liquid lights the frame where its instance says; each part of
+/// its burst (its drops, its bits of skin, its sparkles) where the
+/// processor's reference of the shader
+/// ([`jodeldiplom::gui::particles::sprite`]) puts it; nothing far from
+/// them changes, and after, nothing at all. Skipped (with a note) without
+/// a GPU.
 #[test]
 fn the_gpu_draws_the_bubbles_over_the_picture() {
     use jodeldiplom::gui::particles::{sprite, Look, QUADS};
     use jodeldiplom::gui::present::Offscreen;
-    use jodeldiplom::gui::stage_gpu::with_picture;
     let mut gpu = match Offscreen::new(false) {
         Ok(gpu) => gpu,
         Err(e) => {
@@ -286,7 +329,7 @@ fn the_gpu_draws_the_bubbles_over_the_picture() {
         ("splash", 0.15, POPPED + 0.29),
         ("after", 0.15, POPPED + BURST + 0.1),
     ] {
-        let (pixels, over) = picture_at(until, at, (w, h));
+        let over = picture_at(until, at, (w, h));
         let bursting = matches!(name, "bulge" | "splash");
         let liquid = matches!(name, "partial" | "pressure" | "bulge");
         assert_eq!(over.sprays.len(), usize::from(bursting), "{name}");
@@ -307,14 +350,21 @@ fn the_gpu_draws_the_bubbles_over_the_picture() {
                 });
             }
         }
-        let show = |gpu: &mut Offscreen, bubbles: &[Instance], sprays: &[Spray]| {
-            let frame = with_picture(None, bubbles, sprays, at as f32);
-            gpu.set_stage(frame.as_ref(), w as u32, h as u32);
-            gpu.show_pixels(&pixels, w as u32, h as u32)
+        // Over a black ground: the frame, and the same without the bubbles'
+        // liquid and their bursts.
+        let blank = vec![0u32; w * h];
+        let show = |gpu: &mut Offscreen, liquid: bool, sprays: &[Spray]| {
+            let mut frame = over.frame.clone();
+            frame
+                .instances
+                .retain(|i| liquid || i.params[0] != kind::LIQUID);
+            frame.sprays = sprays.to_vec();
+            gpu.set_stage(Some(&frame), w as u32, h as u32);
+            gpu.show_pixels(&blank, w as u32, h as u32)
                 .expect("a frame")
         };
-        let lit = show(&mut gpu, &over.bubbles, &sprays);
-        let plain = show(&mut gpu, &[], &[]);
+        let lit = show(&mut gpu, true, &sprays);
+        let plain = show(&mut gpu, false, &[]);
         save_frame(&format!("picture_{name}.png"), &lit, w);
         let mut near = vec![false; w * h];
         let mut mark = |(x, y): (f32, f32), reach: f32| {
@@ -533,7 +583,7 @@ fn a_bubble_partly_filled_never_pops() {
             (None, false, 0.0)
         );
         assert!((liquid.level - PARTLY).abs() < 0.01, "{}", liquid.level);
-        let over = painted(&picture, (640, 360), true).1;
+        let over = staged(&picture, (640, 360), heard);
         assert!(over.sprays.is_empty() && over.bubbles.len() == 1);
         let strain = over.bubbles[0].strained();
         assert_eq!((strain.pressure, strain.popping), (0.0, None));
@@ -567,7 +617,7 @@ fn a_bubble_unpopped_by_a_seek_back_shows_again() {
     // and bursts of bubbles, and when its burst started.
     let shows = |singing: &Singing| {
         let picture = common::bubble_picture(singing, &lyrics, (now, 0.0));
-        let over = painted(&picture, (640, 360), true).1;
+        let over = staged(&picture, (640, 360), now);
         let frame = stage_at(singing, &lyrics, now, 0.0);
         let mut starts: Vec<u32> = bubble_sprays(&frame)
             .iter()

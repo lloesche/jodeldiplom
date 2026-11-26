@@ -54,24 +54,21 @@ impl Stage {
             .lines
             .iter()
             .position(|l| l.kind == LineKind::Next && l.id.is_some());
-        for (i, line) in picture
-            .lines
-            .iter()
-            .enumerate()
-            .filter(|(_, l)| l.id.is_some())
-        {
+        let now: Vec<&LyricLine> = picture.lines.iter().collect();
+        let before: Vec<&LyricLine> = picture.before.iter().filter(|b| b.id.is_some()).collect();
+        let (was, gone) = super::lyrics::moved(&now, &before);
+        for (i, &line) in now.iter().enumerate().filter(|(_, l)| l.id.is_some()) {
             if line.kind == LineKind::Next && Some(i) != first_next {
                 continue;
             }
             let Some((ty, scale, alpha)) = slot(line.kind) else {
                 continue;
             };
-            let from = picture
-                .before
-                .iter()
-                .find(|b| b.id == line.id)
-                .and_then(|b| slot(b.kind))
-                .unwrap_or((ty + (y + h * LINES.1 - y - h * LINES.0), scale, 0.0));
+            let from = was[i].and_then(|j| slot(before[j].kind)).unwrap_or((
+                ty + (y + h * LINES.1 - y - h * LINES.0),
+                scale,
+                0.0,
+            ));
             let lerp = |a: f32, b: f32| a + (b - a) * moved;
             drawn.push((
                 line,
@@ -81,10 +78,7 @@ impl Stage {
             ));
         }
         if moved < 1.0 {
-            for b in picture.before.iter().filter(|b| b.id.is_some()) {
-                if picture.lines.iter().any(|l| l.id == b.id) {
-                    continue;
-                }
+            for b in gone.into_iter().map(|j| before[j]) {
                 let (Some(from), Some(to)) = (slot(b.kind), slot(LineKind::Previous)) else {
                     continue;
                 };

@@ -5,12 +5,14 @@
 //! onto it, pixel for pixel; a few rows a frame, not the whole window.
 //!
 //! The lanes are not in it: the window draws them over it
-//! ([`super::lanes`]). Karaoke mode's backdrop ([`super::backdrop`]) is
-//! under the pixmap: its words are premultiplied over it, their top byte
-//! how much of it shows through ([`super::pixels::SEE_THROUGH`]); its
-//! stage and its bursts are drawn over it all, the light that blooms over
-//! them, the effects' screen passes over that ([`super::fx`]), and the
-//! shapes over everything last.
+//! ([`super::lanes`]). Karaoke mode is the GPU's ([`Painter::PARTS`]): its
+//! backdrop ([`super::backdrop`]) is the ground, a triangle over the whole
+//! window reading it; of the pixmap only the controls' bar's strip shows
+//! over it (its words premultiplied over the backdrop, their top byte how
+//! much of it shows through: [`super::pixels::SEE_THROUGH`]); its stage and
+//! its bursts are drawn over that, the light that blooms over them, the
+//! effects' screen passes over that ([`super::fx`]), and the shapes over
+//! everything last.
 
 mod offscreen;
 
@@ -71,6 +73,34 @@ fn fs(@builtin(position) at: vec4<f32>) -> @location(0) vec4<f32> {
 }
 ";
 
+/// Karaoke mode's ground: its backdrop over the whole window, read
+/// smoothly (it is drawn at a share of the window's size).
+const GROUND: &str = r"
+@group(0) @binding(0) var backdrop: texture_2d<f32>;
+@group(0) @binding(1) var soft: sampler;
+
+struct Out {
+    @builtin(position) pos: vec4<f32>,
+    @location(0) uv: vec2<f32>,
+};
+
+// One triangle that covers the window, the backdrop's corners on its.
+@vertex
+fn vs(@builtin(vertex_index) i: u32) -> Out {
+    let x = f32((i << 1u) & 2u) * 2.0 - 1.0;
+    let y = f32(i & 2u) * 2.0 - 1.0;
+    var o: Out;
+    o.pos = vec4<f32>(x, y, 0.0, 1.0);
+    o.uv = vec2<f32>(x * 0.5 + 0.5, 0.5 - y * 0.5);
+    return o;
+}
+
+@fragment
+fn fs(o: Out) -> @location(0) vec4<f32> {
+    return vec4<f32>(textureSampleLevel(backdrop, soft, o.uv, 0.0).rgb, 1.0);
+}
+";
+
 /// The pixmap's words (`0x00RRGGBB`) as they lie in memory, B G R x.
 const TEXTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Bgra8Unorm;
 
@@ -96,6 +126,14 @@ pub(super) struct Painter {
     kept: Option<Kept>,
     /// What the pass reads: made again when a texture is.
     bind: Option<wgpu::BindGroup>,
+    /// Karaoke mode's ground ([`GROUND`]), what it reads (made again with
+    /// the backdrop's texture), and the rows of the pixmap shown over it
+    /// (the controls' bar's strip; none: none) in a frame of `size`.
+    ground: wgpu::RenderPipeline,
+    ground_layout: wgpu::BindGroupLayout,
+    ground_bind: Option<wgpu::BindGroup>,
+    strip: Option<(u32, u32)>,
+    size: (u32, u32),
     /// Karaoke mode's stage, drawn over it all, and its bursts over that.
     stage: super::stage_gpu::StagePass,
     particles: super::particles::ParticlePass,
@@ -221,6 +259,7 @@ impl Painter {
         } else {
             TEXTURE_FORMAT
         };
+        let (ground, ground_layout) = ground_pipeline(&device, format);
         let stage =
             super::stage_gpu::StagePass::new(&device, format, super::stage_gpu::Blend::Over);
         let particles =
@@ -241,6 +280,11 @@ impl Painter {
             view_format,
             kept: None,
             bind: None,
+            ground,
+            ground_layout,
+            ground_bind: None,
+            strip: None,
+            size: (1, 1),
             stage,
             particles,
             light,
@@ -272,12 +316,10 @@ impl Painter {
                 (card, (layers.0.max(art.0), layers.1.max(art.1)))
             }))
         });
+        self.size = size;
         let drawn = |side: u32| ((side as f32 * share).round() as u32).max(1);
         let size = (drawn(size.0), drawn(size.1));
         self.backdrop.set((&self.device, &self.queue), frame, size);
-        if self.backdrop.generation() != self.bound {
-            self.bind = None;
-        }
         self.mark("backdrop");
     }
 
@@ -303,31 +345,40 @@ impl Painter {
 
     /// The next frame, of `size` pixels (`density` to a point): the pixels
     /// in `changes` sent over (all of them where the size or the pixmap's
-    /// changed), Karaoke mode's `backdrop` drawn under it and `stage` over
-    /// it.
+    /// changed), Karaoke mode's `backdrop` drawn as its ground with the
+    /// pixmap's `strip` over it (its rows; none: none of it), and `stage`
+    /// over that.
     pub(super) fn prepare(
         &mut self,
         canvas: &Canvas,
         changes: &Changes,
         (size, density): ((u32, u32), f32),
         stage: Option<&StageFrame>,
-        backdrop: Option<&BackdropFrame>,
+        (backdrop, strip): (Option<&BackdropFrame>, Option<(u32, u32)>),
     ) {
         let size = (size.0.max(1), size.1.max(1));
         self.density = density;
+        self.strip = strip;
         self.upload(canvas, changes, size.0, size.1);
         self.set_backdrop(backdrop, size);
         self.set_stage(stage, size);
         self.bind();
     }
 
+    /// Whether there is a frame to draw: a pixmap sent over, or Karaoke
+    /// mode's backdrop.
+    fn ready(&self) -> bool {
+        self.bind.is_some() || (self.backdrop.shows() && self.ground_bind.is_some())
+    }
+
     /// The frame prepared, into `pass` (its viewport the window's): the
-    /// pixels over the backdrop, the stage and its bursts, the light and
-    /// its bloom added over them (drawn and blurred as the frame was
-    /// prepared), the effects' screen passes, and the stage's shapes over
-    /// everything ([`Self::PARTS`]); false where there is none yet.
+    /// pixels, or Karaoke mode's ground with the pixels' strip over it; the
+    /// stage and its bursts, the light and its bloom added over them (drawn
+    /// and blurred as the frame was prepared), the effects' screen passes,
+    /// and the stage's shapes over everything ([`Self::PARTS`]); false
+    /// where there is none yet.
     pub(super) fn draw(&self, pass: &mut wgpu::RenderPass<'_>) -> bool {
-        if self.bind.is_none() {
+        if !self.ready() {
             return false;
         }
         for (_, part) in Self::PARTS {
@@ -336,14 +387,37 @@ impl Painter {
         true
     }
 
-    /// The window's pass, step by step.
+    /// The pixmap over the frame where `rows` (from, to) says, the whole
+    /// of it for none.
+    fn pixels(&self, pass: &mut wgpu::RenderPass<'_>, rows: Option<(u32, u32)>) {
+        let Some(bind) = &self.bind else {
+            return;
+        };
+        let (w, h) = self.size;
+        let (from, to) = rows.map_or((0, h), |(a, b)| (a.min(h), b.min(h)));
+        if to <= from {
+            return;
+        }
+        pass.set_scissor_rect(0, from, w, to - from);
+        pass.set_pipeline(&self.pipeline);
+        pass.set_bind_group(0, bind, &[]);
+        pass.draw(0..3, 0..1);
+        pass.set_scissor_rect(0, 0, w, h);
+    }
+
+    /// The window's pass, step by step: in Karaoke mode the ground first
+    /// (its backdrop) and the pixmap's strip over it, else the pixmap.
     const PARTS: [Part; 6] = [
-        ("pixmap", |p, pass| {
-            if let Some(bind) = &p.bind {
-                pass.set_pipeline(&p.pipeline);
+        ("ground", |p, pass| match &p.ground_bind {
+            Some(bind) if p.backdrop.shows() => {
+                pass.set_pipeline(&p.ground);
                 pass.set_bind_group(0, bind, &[]);
                 pass.draw(0..3, 0..1);
+                if p.strip.is_some() {
+                    p.pixels(pass, p.strip);
+                }
             }
+            _ => p.pixels(pass, None),
         }),
         ("stage", |p, pass| p.stage.draw(pass)),
         ("bursts", |p, pass| p.particles.draw(pass)),
@@ -357,10 +431,16 @@ impl Painter {
         &self.queue
     }
 
-    /// What the pass reads, made where a texture is new.
-    fn bind(&mut self) -> Option<&wgpu::BindGroup> {
-        let kept = self.kept.as_ref()?;
-        if self.bind.is_none() {
+    /// What the passes read (the pixmap's and the ground's), made where a
+    /// texture is new.
+    fn bind(&mut self) {
+        if self.backdrop.generation() != self.bound {
+            (self.bind, self.ground_bind) = (None, None);
+            self.bound = self.backdrop.generation();
+        }
+        let under = wgpu::BindingResource::TextureView(self.backdrop.under());
+        let soft = wgpu::BindingResource::Sampler(&self.soft);
+        if let (None, Some(kept)) = (&self.bind, &self.kept) {
             self.bind = Some(self.device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("jodeldiplom window"),
                 layout: &self.layout,
@@ -371,22 +451,37 @@ impl Painter {
                     },
                     wgpu::BindGroupEntry {
                         binding: 1,
-                        resource: wgpu::BindingResource::TextureView(self.backdrop.under()),
+                        resource: under.clone(),
                     },
                     wgpu::BindGroupEntry {
                         binding: 2,
-                        resource: wgpu::BindingResource::Sampler(&self.soft),
+                        resource: soft.clone(),
                     },
                 ],
             }));
-            self.bound = self.backdrop.generation();
         }
-        self.bind.as_ref()
+        if self.ground_bind.is_none() {
+            self.ground_bind = Some(self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("jodeldiplom ground"),
+                layout: &self.ground_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: under,
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: soft,
+                    },
+                ],
+            }));
+        }
     }
 
     /// The changed pixels into the texture (a new one, filled whole, for a
     /// new window or pixmap size).
     fn upload(&mut self, canvas: &Canvas, changes: &Changes, width: u32, height: u32) {
+        self.size = (width, height);
         let (pixels, pw, ph) = canvas.pixels();
         let same = self
             .kept
@@ -485,15 +580,16 @@ impl Painter {
         }
     }
 
-    /// The texture onto `target` in a pass of its own (a pass a step where
+    /// The frame onto `target` in a pass of its own (a pass a step where
     /// the steps are timed), with whatever else `then` adds to the
-    /// commands; submitted. False where there is no texture yet.
+    /// commands; submitted. False where there is nothing to draw yet.
     fn paint(
         &mut self,
         target: &wgpu::Texture,
         then: impl FnOnce(&mut wgpu::CommandEncoder),
     ) -> bool {
-        if self.bind().is_none() {
+        self.bind();
+        if !self.ready() {
             return false;
         }
         let view = target.create_view(&wgpu::TextureViewDescriptor::default());
@@ -548,6 +644,70 @@ fn begin<'e>(
         occlusion_query_set: None,
         multiview_mask: None,
     })
+}
+
+/// Karaoke mode's ground's pipeline ([`GROUND`]) for frames of `format`,
+/// and the layout of what it reads.
+fn ground_pipeline(
+    device: &wgpu::Device,
+    format: wgpu::TextureFormat,
+) -> (wgpu::RenderPipeline, wgpu::BindGroupLayout) {
+    let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("jodeldiplom ground"),
+        entries: &[
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                count: None,
+            },
+        ],
+    });
+    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("jodeldiplom ground"),
+        bind_group_layouts: &[Some(&layout)],
+        ..Default::default()
+    });
+    let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("jodeldiplom ground"),
+        source: wgpu::ShaderSource::Wgsl(GROUND.into()),
+    });
+    let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("jodeldiplom ground"),
+        layout: Some(&pipeline_layout),
+        vertex: wgpu::VertexState {
+            module: &module,
+            entry_point: Some("vs"),
+            compilation_options: Default::default(),
+            buffers: &[],
+        },
+        primitive: wgpu::PrimitiveState::default(),
+        depth_stencil: None,
+        multisample: wgpu::MultisampleState::default(),
+        fragment: Some(wgpu::FragmentState {
+            module: &module,
+            entry_point: Some("fs"),
+            compilation_options: Default::default(),
+            targets: &[Some(wgpu::ColorTargetState {
+                format,
+                blend: None,
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+        }),
+        multiview_mask: None,
+        cache: None,
+    });
+    (pipeline, layout)
 }
 
 /// The least share of the window's width and height the backdrop is drawn

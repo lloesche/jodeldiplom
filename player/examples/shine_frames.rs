@@ -16,11 +16,8 @@ use std::sync::Arc;
 use jodeldiplom::core::shine::reference::Original;
 use jodeldiplom::core::shine::Tier;
 use jodeldiplom::core::singing::{Cue, Singing};
-use jodeldiplom::gui::big_text::Faces;
-use jodeldiplom::gui::karaoke::{paint, Backdrop, Layer};
-use jodeldiplom::gui::pixels::Target;
 use jodeldiplom::gui::present::Offscreen;
-use jodeldiplom::gui::stage::{without_lyrics, Song, Stage};
+use jodeldiplom::gui::stage::{Song, Stage, Tint};
 use jodeldiplom::view::karaoke::{timed_lines, KaraokePicture};
 
 /// How far off its notes each line is sung, the pitch wobbling (cents;
@@ -119,9 +116,8 @@ fn main() {
     singing.set_reference(Some(Arc::new(reference)));
     let sung: Vec<&jodel_lyrics::Line> = lyrics.lines.iter().collect();
     let mut gpu = Offscreen::new(false).expect("a GPU");
+    gpu.set_plain_ground(w as u32, h as u32);
     let mut stage = Stage::default();
-    let mut big = Faces::default();
-    let backdrop = Backdrop::new(None, w, h);
     let last = wanted.iter().copied().fold(0.0, f64::max);
     let mut heard = 0usize;
     let mut f = 0usize;
@@ -152,50 +148,24 @@ fn main() {
                 }
             }
         }
+        let song = Song::new(&singing, sung.clone(), Some(30.0));
+        let picture = picture_at(&sung, now, &singing);
+        let area = (0.0, 0.0, w as f32, h as f32);
+        let frame = stage.scene(
+            (&song, true),
+            &picture,
+            area,
+            (now, 1.0 / 60.0),
+            &Tint::STAGE,
+        );
+        let frame = frame.expect("a stage");
+        // Its text goes to the atlas each frame, as the window sends it.
+        gpu.set_stage(Some(&frame), w as u32, h as u32);
         if !wanted.iter().any(|&t| (t - now).abs() < 0.5 / 60.0) {
             // Only the stage moves between the frames looked at.
-            let song = Song::new(&singing, sung.clone(), Some(30.0));
-            let picture = picture_at(&sung, now, &singing);
-            // Its text still goes to the atlas, as the window sends every frame.
-            let frame = stage.frame(
-                &song,
-                &picture,
-                (0.0, 0.0, w as f32, h as f32),
-                now,
-                1.0 / 60.0,
-            );
-            gpu.set_stage(Some(&frame), w as u32, h as u32);
             continue;
         }
-        let picture = picture_at(&sung, now, &singing);
-        let mut pixels = vec![0u32; w * h];
-        let mut target = Target {
-            pixels: &mut pixels,
-            width: w,
-            height: h,
-        };
-        paint(
-            &mut target,
-            &mut big,
-            &mut Layer::default(),
-            &backdrop,
-            &without_lyrics(&picture),
-            (0, 0, w, h),
-            None,
-            true,
-        );
-        let song = Song::new(&singing, sung.clone(), Some(30.0));
-        let frame = stage.frame(
-            &song,
-            &picture,
-            (0.0, 0.0, w as f32, h as f32),
-            now,
-            1.0 / 60.0,
-        );
-        gpu.set_stage(Some(&frame), w as u32, h as u32);
-        let shown = gpu
-            .show_pixels(&pixels, w as u32, h as u32)
-            .expect("a frame");
+        let shown = gpu.show_frame(w as u32, h as u32).expect("a frame");
         let mut img = image::RgbImage::new(w as u32, h as u32);
         for (i, p) in shown.iter().enumerate() {
             img.put_pixel(
