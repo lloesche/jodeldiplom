@@ -301,8 +301,9 @@ impl Gui {
         }
     }
 
+    /// The window's title: the player's name, as people write it.
     pub(super) fn title(&self) -> String {
-        "jodeldiplom".to_owned()
+        crate::store::dirs::NAME.to_owned()
     }
 
     /// The app, while there is one to show.
