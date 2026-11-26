@@ -8,7 +8,8 @@
 //! - **Data** ([`Data`]): what the player makes or fetches and could make
 //!   again: the speech models, the beat analyses and waveforms, the stems
 //!   kept, the lyrics found and our timings, the covers taken apart; and
-//!   the best scores sung. Large. It is the folder [`DATA`] inside a parent
+//!   the user's own: the lyrics edited by hand and the best scores sung.
+//!   Large. It is the folder [`DATA`] inside a parent
 //!   the settings name (`data_folder`), by default the system's place for
 //!   an app's own data ([`default_data_parent`]): `%LOCALAPPDATA%`,
 //!   `~/Library/Application Support`, `~/.local/share`.
@@ -113,6 +114,12 @@ impl Data {
         self.0.join("lyrics")
     }
 
+    /// The lyrics edited by hand ([`crate::lyrics::edits`]): the user's
+    /// work, beside the lyrics' cache and never forgotten with it.
+    pub fn lyric_edits(&self) -> PathBuf {
+        self.0.join("lyric-edits")
+    }
+
     /// The covers taken apart, and which is each song's
     /// ([`crate::cover::CoverStore`]).
     pub fn covers(&self) -> PathBuf {
@@ -153,10 +160,11 @@ impl Data {
 
     /// The folders a crash may have left a file half written in (never
     /// under a file's name, so never read): the caches', the covers', the
-    /// models'.
+    /// models', the lyrics edited.
     pub fn swept(&self) -> Vec<PathBuf> {
         let mut dirs: Vec<PathBuf> = self.caches().into_iter().map(|(d, _)| d).collect();
         dirs.push(self.models());
+        dirs.push(self.lyric_edits());
         dirs.extend(crate::cover::CoverStore::dirs_in(&self.covers()));
         dirs
     }
@@ -286,7 +294,8 @@ mod tests {
 
     /// `--clean-cache` forgets every cache, the original singer's phrases
     /// too, in the data folder and in the one a move is still taking it
-    /// from; the models and the record `--diag` shows stay.
+    /// from; the models, the record `--diag` shows and the lyrics edited
+    /// by hand stay.
     #[test]
     fn clean_cache_forgets_every_cache_in_both_places() {
         let dir = std::env::temp_dir().join(format!("jodel-forget-{}", std::process::id()));
@@ -307,7 +316,13 @@ mod tests {
             std::fs::create_dir_all(data.models()).unwrap();
             std::fs::write(data.models().join("m.bin"), b"model").unwrap();
             std::fs::write(data.analyses().join(RECENT), b"record").unwrap();
-            kept.extend([data.models().join("m.bin"), data.analyses().join(RECENT)]);
+            std::fs::create_dir_all(data.lyric_edits()).unwrap();
+            std::fs::write(data.lyric_edits().join("e.txt"), b"edits").unwrap();
+            kept.extend([
+                data.models().join("m.bin"),
+                data.analyses().join(RECENT),
+                data.lyric_edits().join("e.txt"),
+            ]);
         }
         let shine = folders.data.shine().join("a.txt");
         assert!(shine.is_file());

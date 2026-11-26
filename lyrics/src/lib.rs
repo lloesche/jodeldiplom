@@ -128,6 +128,16 @@ pub struct Word {
     /// as punctuation, at the letter's before it); empty when not known
     /// (the word's times given or spread rather than heard).
     pub letters: Vec<f32>,
+    /// Whether its times were set by hand: the aligner keeps them, and
+    /// fits the other words around it ([`ctc`]).
+    pub pinned: bool,
+    /// Whether it is marked as not to be sung (a backing vocal, an ad-lib
+    /// the singer leaves to the record): shown, but given no notes, so the
+    /// game neither asks for it nor scores it.
+    pub not_sung: bool,
+    /// The voice stem's level over it as set by hand, in dB against the
+    /// voice as recorded; `None`: as the karaoke's voice level has it.
+    pub voice_db: Option<f32>,
 }
 
 impl Word {
@@ -140,7 +150,15 @@ impl Word {
             confidence: 0.0,
             backing: false,
             letters: Vec::new(),
+            pinned: false,
+            not_sung: false,
+            voice_db: None,
         }
+    }
+
+    /// Its times set by hand ([`Word::pinned`]), when it has them.
+    pub fn pin(&self) -> Option<(f64, f64)> {
+        self.start.zip(self.end).filter(|_| self.pinned)
     }
 
     /// When character `i` of the word is sung (seconds into the track):

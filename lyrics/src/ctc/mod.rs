@@ -9,7 +9,7 @@
 //! blank between two different tokens (the Viterbi algorithm). A token's
 //! frames are where the path is on it.
 //!
-//! Seven additions:
+//! Eight additions:
 //!
 //! - **Pauses inside a word** ([`CtcSettings::inside_word`]): a frame of
 //!   blank between two letters of a word costs where the voice pauses
@@ -40,6 +40,11 @@
 //!   start, and to be, outside the window around its time (the `lines`
 //!   [`align_heard`] is given, made by [`crate::scaffold`], which aligns
 //!   the song without them first to check them).
+//! - **Words set by hand** ([`crate::Word::pinned`]): a word moved by hand
+//!   is held to its times, all but hard ([`PINNED`] a frame off them), and
+//!   nothing else may be sung there, so the words around it fit around
+//!   it; it keeps its times exactly, and its letters are read from the
+//!   path within them.
 //!
 //! The work is linear in frames × tokens; a 4-minute song (about 12,000
 //! frames by 3,000 states) takes some tens of milliseconds and a byte of
@@ -55,7 +60,7 @@ use std::ops::Range;
 use crate::asr::Part;
 use crate::spread;
 use crate::tokens::{tokenize, TokenWord, Tokens, Vocab};
-use crate::{Detail, Lyrics, Timing, CONFIDENT};
+use crate::{Detail, Lyrics, Timing, CONFIDENT, GIVEN};
 
 mod path;
 
@@ -174,6 +179,12 @@ pub const ISLAND_HEARD: f32 = 0.5;
 /// are sung together.
 pub const ISLAND_GAP: f64 = 2.0;
 
+/// What a frame costs off a word's times set by hand
+/// ([`crate::Word::pinned`]): its letters on a frame outside them, or
+/// another word's on a frame inside them. Hard, in effect: a frame of the
+/// least likely letter costs some tens.
+pub const PINNED: f32 = 1000.0;
+
 /// What is known of the voice besides the model's emissions.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Hints {
@@ -236,6 +247,7 @@ pub fn align_heard(
     pin_costs(&job, &mut costs);
     unheard_costs(&job, &mut costs);
     scaffold_costs(&job, &mut costs, lines);
+    pinned_costs(&job, &mut costs);
     let skips = job.skips();
     let align = |costs: &Costs| force_align(emissions, &job.tokens.ids, vocab.blank, &skips, costs);
     let mut path = align(&costs)?;
@@ -405,11 +417,18 @@ impl<'a> Job<'a> {
         None
     }
 
-    /// The backing words the path may leave out.
+    /// The times word `w` was set to by hand, if it was
+    /// ([`crate::Word::pinned`]).
+    fn pin(&self, w: &TokenWord) -> Option<(f64, f64)> {
+        self.lyrics.lines[w.line].words[w.word].pin()
+    }
+
+    /// The backing words the path may leave out (not one set by hand).
     fn skips(&self) -> Vec<Skip> {
         self.tokens
             .words
             .iter()
+            .filter(|w| self.pin(w).is_none())
             .filter_map(|w| w.skip.clone())
             .map(|tokens| Skip {
                 tokens,
@@ -450,6 +469,9 @@ impl<'a> Job<'a> {
             word.start = Some(frames.start as f64 * fs);
             word.end = Some(frames.end as f64 * fs);
             word.confidence = sum / frames.len() as f32;
+            // Set by hand: its own times, its letters read from there.
+            let pin = self.pin(w);
+            let first = pin.map_or(frames.start, |(a, _)| (a / fs).round() as usize);
             word.letters = letter_times(
                 &word.text,
                 range.clone(),
@@ -457,8 +479,25 @@ impl<'a> Job<'a> {
                 &spans,
                 vocab,
                 fs,
-                frames.start,
+                first,
             );
+            if let Some((a, b)) = pin {
+                word.start = Some(a);
+                word.end = Some(b);
+                word.confidence = GIVEN;
+                let most = (b - a).max(0.0) as f32;
+                for t in &mut word.letters {
+                    *t = t.min(most);
+                }
+            }
+        }
+        // A word set by hand keeps its times where the path has none for
+        // it (unspelt, or left out).
+        for w in &tokens.words {
+            let word = &mut out.lines[w.line].words[w.word];
+            if let (Some((a, b)), None) = (self.pin(w), word.start) {
+                (word.start, word.end, word.confidence) = (Some(a), Some(b), GIVEN);
+            }
         }
         spread::interpolate(&mut out.lines, self.settings.confident);
         out.timing = Timing {
@@ -503,6 +542,36 @@ fn pause_costs(job: &Job, costs: &mut Costs) {
         by_state,
         frames: Some(job.hints.pauses.clone()),
     });
+}
+
+/// Each word set by hand ([`crate::Word::pinned`]) holds the path: its
+/// letters cost [`PINNED`] a frame outside its times, and on its frames
+/// every state but its own and the word breaks either side of it costs as
+/// much (a break may fall on its first or last frame, so two words set end
+/// to end still fit).
+fn pinned_costs(job: &Job, costs: &mut Costs) {
+    let mut letters = vec![None; job.states()];
+    let mut holds = vec![None; job.emissions.frames()];
+    let mut any = false;
+    for w in &job.tokens.words {
+        let (Some(range), Some((a, b))) = (&w.tokens, job.pin(w)) else {
+            continue;
+        };
+        let within = job.emissions.clock().outward(a, b);
+        let own = 2 * range.start + 1..2 * range.end;
+        for slot in &mut letters[own.clone()] {
+            *slot = Some((within.clone(), PINNED));
+        }
+        let around = own.start.saturating_sub(2)..(own.end + 2).min(job.states());
+        for hold in &mut holds[within] {
+            *hold = Some((around.clone(), PINNED));
+        }
+        any = true;
+    }
+    if any {
+        costs.stay.push(StayCost::Outside(letters));
+        costs.stay.push(StayCost::Held(holds));
+    }
 }
 
 /// A word a recogniser heard costs to start outside where it heard it

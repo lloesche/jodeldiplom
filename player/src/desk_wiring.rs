@@ -19,7 +19,7 @@ use std::sync::mpsc::Receiver;
 use std::sync::Arc;
 
 use jodel_output::mixer::{
-    Curve, Effects, Fader, MicView, Mixer, MixerOptions, Ramp, Start, Strip,
+    Automation, Curve, Effects, Fader, GainCurve, MicView, Mixer, MixerOptions, Ramp, Start, Strip,
 };
 use jodel_output::{Capabilities, SimClock};
 use jodel_playback::{
@@ -28,6 +28,7 @@ use jodel_playback::{
 };
 
 use crate::core::desk::{DeskChange, Look, StripKind};
+use crate::core::voice_curve::VoiceCurve;
 use crate::core::{HeadFrame, State};
 
 /// Where the engine plays.
@@ -228,6 +229,29 @@ impl Engine {
                         over: LANE_RAMP,
                         curve: Curve::Linear,
                     });
+                }
+            }
+        }
+    }
+
+    /// The voice's curve over the song's words on its head's input: the
+    /// vocals part's automation ([`crate::core::voice_curve`]), or its end.
+    /// The head's input carries no other automation then (no transition is
+    /// armed or mixing).
+    pub(crate) fn voice_curve(&self, curve: VoiceCurve) {
+        match curve {
+            VoiceCurve::Set { head, points } => {
+                let vocals = StripKind::Vocals.lane();
+                let (Some(h), Some(k), Ok(curve)) =
+                    (self.heads.get(head), vocals, GainCurve::new(&points))
+                else {
+                    return;
+                };
+                let _ = h.input.automate(Automation::new().part(k, curve));
+            }
+            VoiceCurve::Clear { head } => {
+                if let Some(h) = self.heads.get(head) {
+                    h.input.clear_automation();
                 }
             }
         }

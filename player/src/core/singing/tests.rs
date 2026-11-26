@@ -232,6 +232,26 @@ fn a_word_asks_a_tenth_of_its_note_time() {
     assert_eq!(hit_words(0.05), 0);
 }
 
+/// A word marked as not to be sung (the record sings it) gets no notes: no
+/// bubble, and it is not scored, sung or not; the words around it are.
+#[test]
+fn a_word_not_to_be_sung_gets_no_bubble_and_no_score() {
+    let (lyrics, m) = song();
+    let mut marked = (*lyrics).clone();
+    marked.lines[0].words[1].not_sung = true;
+    let marked = Arc::new(marked);
+    let mut s = Singing::default();
+    s.prepare(Path::new("a"), &marked, &crate::core::singing::melodic(&m));
+    sing(&mut s, |t| Some(melody_at(t)));
+    assert_eq!(
+        (s.tally.hit_words, s.tally.scored_words, s.tally.score),
+        (3, 3, 300)
+    );
+    let bubbles = crate::core::bubbles::line(&s, 0, 4.5);
+    assert!(bubbles.word(1).is_none());
+    assert!([0, 2, 3].iter().all(|&k| bubbles.word(k).is_some()));
+}
+
 #[test]
 fn medals_go_by_the_words() {
     assert_eq!(Medal::of(4, 4), Some(Medal::Gold));

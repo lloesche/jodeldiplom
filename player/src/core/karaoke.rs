@@ -154,6 +154,8 @@ pub struct KaraokeState {
     pub loudness: HashMap<PathBuf, Option<f64>>,
     /// The best scores sung, by song.
     pub bests: crate::scores::Bests,
+    /// The lyrics editor, while it is open on a song.
+    pub editor: Option<super::lyric_edit::LyricEditor>,
     /// Whether the best scores changed since they were last saved.
     pub bests_changed: bool,
 }

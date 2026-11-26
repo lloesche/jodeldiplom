@@ -33,7 +33,7 @@ track) and the lyrics (the words found and our timings of them), so each
 track is analysed, looked up and timed again when it is wanted. `make
 clean-diag` forgets the record of the last analyses that `--diag` shows
 (all it keeps of its own). Neither touches the settings, the beat grids
-fixed by hand or the speech model. `make clean` does both and removes the
+fixed by hand, the lyrics edited by hand or the speech model. `make clean` does both and removes the
 build output; `make CARGO="cargo +1.100.0"` picks another cargo.
 
 The player needs Rust 1.90 or newer (ratatui 0.30); `jodel-playback`, `jodel-output` and
@@ -50,7 +50,7 @@ without one).
 | `--headroom DB` | routes that change the samples play this many dB below full scale (`0`, `0.5`, `1`, `2`, `3`; default `0`), so overs need not clip: resampled routes (inter-sample overs) and floating-point files; lossy files (MP3, AAC, Vorbis) always at least 1.5 dB, as their decoded signal goes over full scale where the master was near it; files played as they are are never touched |
 | `--config FILE` | the settings file (default: `config.toml` in the settings folder, see Folders and setup) |
 | `--list-devices` | list the devices and what each takes (its rate and format, as the system mixes it) |
-| `--clean-cache` | forget the beat analyses, the stems kept, the lyrics, the songs' loudness, the original singer's phrases and the covers taken apart in the data folder, and in the one a move is still taking it from (each made again when wanted); the models and the best scores stay (`make clean-cache`) |
+| `--clean-cache` | forget the beat analyses, the stems kept, the lyrics, the songs' loudness, the original singer's phrases and the covers taken apart in the data folder, and in the one a move is still taking it from (each made again when wanted); the models, the lyrics edited by hand and the best scores stay (`make clean-cache`) |
 | `--clean-diag` | forget the record of the last analyses `--diag` shows (`make clean-diag`) |
 | `--diag` | print what the player finds on this system, for a bug report: the build, the OS and processor, the settings in force, the cache folders, every output device with what it takes, and the GPU side (every adapter on every backend with the limits the separator needs, whether the separator sets up on the one it picks or the error, a 6 s chunk's time and how it splits between the kernels, the upload and the readback, and whether the beat analysis will listen to stems), then the last three beat analyses the player made (`recent-analyses.txt` in the analysis cache: when, the file's name without its folders, what the cues heard, the tempo found, and how long decoding, the stems, listening and deciding took; analyses taken from the cache are not counted). Plays nothing. The Windows window binary has no console: run it with `jodeldiplom` |
 
@@ -74,7 +74,7 @@ The player keeps two folders (`dirs.rs`):
 | Folder | What | Where |
 |---|---|---|
 | Settings | `config.toml`, the session and the saved queues, the beat grids fixed by hand, the karaoke recordings, the record of a data move under way | fixed: `%APPDATA%\Jodeldiplom`, `~/Library/Application Support/Jodeldiplom`, `~/.config/Jodeldiplom` (`$XDG_CONFIG_HOME`); with `--config FILE`, that file's folder |
-| Data | what the player makes or gets and could make again: `models` (the speech models), `analyses` (beat analyses and waveforms), `stems` (the stems kept), `lyrics` (the words found and our timings), `loudness` (the songs' loudness), `shine` (the original singer's phrases), `covers` (the covers taken apart); and `scores.txt`, the best scores sung | `Jodeldiplom Data` in a folder of your choice (the settings row Data folder, `data_folder` in the file); by default in `%LOCALAPPDATA%`, `~/Library/Application Support`, `~/.local/share` (`$XDG_DATA_HOME`) |
+| Data | what the player makes or gets and could make again: `models` (the speech models), `analyses` (beat analyses and waveforms), `stems` (the stems kept), `lyrics` (the words found and our timings), `loudness` (the songs' loudness), `shine` (the original singer's phrases), `covers` (the covers taken apart); and the user's own: `lyric-edits` (the lyrics edited by hand: text, words moved, words not to be sung, the voice's level over them) and `scores.txt`, the best scores sung | `Jodeldiplom Data` in a folder of your choice (the settings row Data folder, `data_folder` in the file); by default in `%LOCALAPPDATA%`, `~/Library/Application Support`, `~/.local/share` (`$XDG_DATA_HOME`) |
 
 Both are decided once, when the player starts, and every part of it is
 given them: a player started with `--config FILE` keeps its session,
@@ -755,6 +755,21 @@ there again before the timing (`jodel_lyrics::repeats`), and are shown as
 sung. On 152 songs it filled in 22, DMX's "Ruff Ryders' Anthem" its hook
 seven times over where its text has it once.
 
+A song's lyrics can be edited by hand (`core::lyric_edit`; the editor's
+screen is still to come): a word moved, made longer or shorter, marked as
+not to be sung (a backing vocal, an ad-lib), the voice's level set over
+it, a word or a line replaced, put in or taken out, every change undone
+and redone. The edits are the user's own (`lyric-edits` in the data
+folder, `lyrics::edits`): their text is the song's from then on, and the
+song is timed again with them, the words moved by hand held exactly where
+they were set and the rest aligned around them (`jodel_lyrics::ctc`); a
+new aligner keeps them so. A word not to be sung gets no bubble and is
+not scored; in the mode the voice is turned up over it, 6 dB over the
+Voice slider's level and to at least −6 dB, so it is heard even with the
+voice all the way down (smoothed over 50 ms; a level set over a word
+takes its place): the vocals part's automation on the desk, timed on the
+playing head's frames (`core::voice_curve`).
+
 | Key | Karaoke tab |
 |---|---|
 | `enter` / the button | Karaoke mode |
@@ -1353,7 +1368,9 @@ version, in `src/cache.rs`:
   track without them is separated live. About 26–28 MB a minute of music (16 bits with a scale
   per block, coded losslessly; `jodel_playback::stem_file`), kept under
   30 GB, the least recently played going first;
-- lyrics as found, "none found" records and timed lyrics (`lyrics/`);
+- lyrics as found, "none found" records, timed lyrics and lyrics as
+  edited, timed (`lyrics/`);
+- lyrics edited by hand (`lyric-edits/`, beside `lyrics/`);
 - grids fixed by hand (`grids/`).
 
 A text file starts with a header naming its schema, its version and the
@@ -1373,16 +1390,18 @@ The contract:
 - While a version stays, every player reads the files of it, whoever
   wrote them.
 - Files from before there were headers count as version 1 for the
-  user's own files (beat grids, scores, delays); a cache without a header
-  counts as missing and is made again.
-- Grids are the user's work, so a new grid version still reads all the
-  older ones.
+  user's own files (beat grids, scores, delays, lyric edits); a cache
+  without a header counts as missing and is made again.
+- Grids and lyric edits are the user's work, so a new version of either
+  still reads all the older ones.
 
 How a file's contents were made is versioned apart from its schema:
 
 - an analysis by `jodel_rhythm::VERSION`, which is in its file's name, so a
   new analysis is made afresh;
-- timed lyrics by their aligner, which the file names.
+- timed lyrics by their aligner, which the file names; lyrics as edited,
+  timed, by their aligner too and by the edits they were made with (a
+  hash of their words and times set by hand).
 
 ## Finding what holds it up
 

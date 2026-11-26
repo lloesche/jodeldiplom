@@ -1,0 +1,12 @@
+jodeldiplom-cache lyric-edits 1 by jodeldiplom x
+key /music/a song.flac 31415926
+source lrclib
+line
+word - - - Hold
+word 12.340000 12.900000 - me
+word - - not-sung (close)
+break
+line
+word 20.000000 20.500000 not-sung,voice:-3.5 Never
+word - - - let
+word - - - go

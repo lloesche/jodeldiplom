@@ -240,10 +240,12 @@ pub fn app_options(args: &Args) -> Result<AppOptions, String> {
     options.session = Some(folders.session());
     options.restore_browser = args.path.is_none();
     options.queues = Some(folders.queues());
-    // Lyrics: cached in the data folder, LRCLIB asked unless turned off. The
-    // speech models come once setup has found them ([`set_models`]).
+    // Lyrics: cached in the data folder, edited by hand beside the cache,
+    // LRCLIB asked unless turned off. The speech models come once setup
+    // has found them ([`set_models`]).
     let mut lyrics = crate::lyrics::Options::new(true);
     lyrics.cache = Some(data.lyrics());
+    lyrics.edits = Some(data.lyric_edits());
     options.lyrics = Some(lyrics);
     options.data = Some(data);
     options.autoplay = autoplay;

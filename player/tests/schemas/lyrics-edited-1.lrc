@@ -1,0 +1,11 @@
+jodeldiplom-cache lyrics-edited 1 by jodeldiplom x
+edits ff8cddffc9145579
+[re:jodel-lyrics]
+[source:lrclib]
+[aligner:ctc:test 8]
+[00:00.00]<00:00.00>Hold<00:00.25> <00:12.34>me<00:12.90> <00:02.00>(close)<00:02.25>
+[#:confidence 0 100 0]
+♪
+[00:20.00]<00:20.00>Never<00:20.50> <00:04.00>let<00:04.25> <00:05.00>go<00:05.25>
+[#:confidence 100 0 0]
+[#:letters - 0,5,10 -]

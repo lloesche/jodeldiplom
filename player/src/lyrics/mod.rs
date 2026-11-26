@@ -28,11 +28,22 @@
 //!   again after [`store::ASK_AGAIN`];
 //! - `{key}.timed.lrc`: our own word times, as Enhanced LRC, with a header
 //!   naming the source and the aligner, kept by
-//!   [`store::Cache::store_timed`].
+//!   [`store::Cache::store_timed`];
+//! - `{key}.edited.lrc`: our word times of the lyrics as edited by hand,
+//!   named by the edits they were made with ([`store::Cache::store_edited`]).
+//!
+//! A song edited by hand ([`edits`], kept apart as the user's work) has its
+//! edits in place of all that: their text is its text (the one found only
+//! lays its source's line times on it as the scaffold,
+//! [`jodel_lyrics::scaffold::attach`]), timed as it is
+//! ([`WordTimer::time_edited`]: the words moved by hand held where they
+//! were set, the rest fitted around them), its words marked as edited.
+//! [`LyricsWorker::edited`] keeps new edits and times the song with them,
+//! delivering the song only once timed.
 //!
 //! The modules: [`web`] (the requests, LRCLIB), [`store`] (the cache),
-//! [`models`] (the models' files), [`timer`] (the speech model's timing
-//! and the voice it times against).
+//! [`edits`] (the edits kept), [`models`] (the models' files), [`timer`]
+//! (the speech model's timing and the voice it times against).
 
 use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
@@ -45,11 +56,13 @@ use jodel_lyrics::prepare::Others;
 use jodel_lyrics::sources::{SidecarSource, TagSource};
 use jodel_lyrics::{Found, Lyrics, LyricsSource, Maker, Source, Track};
 
+pub mod edits;
 pub mod models;
 pub mod store;
 pub mod timer;
 pub mod web;
 
+use edits::EditStore;
 use store::{cache_key, now, Cache, Kept};
 use web::{Http, Lrclib, Web};
 
@@ -94,6 +107,8 @@ pub struct Finder {
     /// What times the words, if anything: a kept timing it did not make is
     /// passed over (and the words timed again) while it can run.
     pub timer: Option<Arc<dyn WordTimer>>,
+    /// The lyrics edited by hand, if any.
+    pub edits: Option<EditStore>,
 }
 
 /// Whether `timed`, kept, still stands for `timer`: made by it, or made by
@@ -117,6 +132,63 @@ impl Finder {
     /// [`Finder::lookup`], saying to `fetching` when a web request starts
     /// (`true`) and ends.
     pub fn lookup_with(
+        &self,
+        track: &Track,
+        now: u64,
+        wait: &dyn Fn(Duration) -> bool,
+        fetching: &dyn Fn(bool),
+    ) -> Answer {
+        self.look(track, now, wait, fetching).0
+    }
+
+    /// [`Finder::lookup_with`], and whether the answer is the song's edits
+    /// ([`Finder::edited`]).
+    fn look(
+        &self,
+        track: &Track,
+        now: u64,
+        wait: &dyn Fn(Duration) -> bool,
+        fetching: &dyn Fn(bool),
+    ) -> (Answer, bool) {
+        if let Some(edits) = self.edits.as_ref().and_then(|e| e.load(&track.path)) {
+            return (self.edited(track, &edits), true);
+        }
+        let answer = self.found(track, now, wait, fetching);
+        (answer, false)
+    }
+
+    /// The lyrics of a song edited by hand as `edits`: their text, with the
+    /// line times of the text found here (its tags, a file beside it, the
+    /// cache; never fetched) as its scaffold, and our times of it when kept
+    /// for these edits by the timer in use.
+    fn edited(&self, track: &Track, edits: &Lyrics) -> Answer {
+        let cache = self.cache.as_ref().zip(cache_key(&track.path));
+        let local: [&dyn LyricsSource; 2] = [&TagSource, &SidecarSource];
+        let found = local
+            .iter()
+            .find_map(|s| match s.find(track) {
+                Ok(Found::Lyrics(l)) => Some(l),
+                _ => None,
+            })
+            .or_else(|| match cache.as_ref().map(|(c, k)| c.text(k)) {
+                Some(Kept::Current(l)) => Some(l),
+                _ => None,
+            });
+        let mut text = edits.clone();
+        if let Some(found) = &found {
+            jodel_lyrics::scaffold::attach(&mut text, found);
+        }
+        let timed = cache
+            .and_then(|(c, k)| c.edited(&k, edits))
+            .filter(|t| still_current(t, self.timer.as_deref()));
+        Answer::Found {
+            lyrics: text,
+            timed,
+        }
+    }
+
+    /// [`Finder::lookup_with`] for a song not edited.
+    fn found(
         &self,
         track: &Track,
         now: u64,
@@ -234,6 +306,9 @@ pub struct Options {
     /// by us (or found, with nothing to time them), none found, or the
     /// look-up failed (asked again later).
     pub done: Option<Arc<Done>>,
+    /// The folder of the lyrics edited by hand (`lyric-edits` in the data
+    /// folder: [`crate::dirs::Data::lyric_edits`]), if any.
+    pub edits: Option<PathBuf>,
 }
 
 /// Told when a file's lyrics are settled, and how (for the queue's icons).
@@ -255,20 +330,28 @@ impl Options {
             timer: None,
             working: None,
             done: None,
+            edits: None,
         }
     }
 }
+
+/// A song's words to time: the song, its text, and whether that is its
+/// edits ([`WordTimer::time_edited`]).
+type Job = (PathBuf, Lyrics, bool);
 
 struct Wanted {
     queue: VecDeque<PathBuf>,
     /// The tracks last wanted (a timing for another is dropped).
     wanted: Vec<PathBuf>,
     /// Lyrics found, to be timed, in order.
-    timing: VecDeque<(PathBuf, Lyrics)>,
+    timing: VecDeque<Job>,
     /// Tracks to get into the cache after those, and their lyrics found
     /// to be timed (neither delivered).
     ahead: VecDeque<PathBuf>,
-    timing_ahead: VecDeque<(PathBuf, Lyrics)>,
+    timing_ahead: VecDeque<Job>,
+    /// Songs edited by hand, their new edits to keep (`None`: forgotten),
+    /// then the song timed with them ([`LyricsWorker::edited`]).
+    edited: VecDeque<(PathBuf, Option<Lyrics>)>,
     /// Tracks no source has lyrics for, to be heard by the speech
     /// recogniser ([`WordTimer::transcribe`]), in order; and those to get
     /// into the cache after them (not delivered).
@@ -298,6 +381,7 @@ impl LyricsWorker {
                 timing: VecDeque::new(),
                 ahead: VecDeque::new(),
                 timing_ahead: VecDeque::new(),
+                edited: VecDeque::new(),
                 hearing: VecDeque::new(),
                 hearing_ahead: VecDeque::new(),
                 online: options.online,
@@ -346,6 +430,7 @@ impl LyricsWorker {
                 online: options.online,
                 lrclib,
                 timer: options.timer.clone(),
+                edits: options.edits.map(EditStore::new),
             };
             // Tracks the web failed for, and when.
             let mut failed: HashMap<PathBuf, Instant> = HashMap::new();
@@ -358,27 +443,41 @@ impl LyricsWorker {
                 !wanted.stop
             };
             loop {
-                // A track wanted, else one to get ready ahead.
-                let (path, ahead) = {
+                // A song edited (kept first), else a track wanted, else one
+                // to get ready ahead.
+                let (path, ahead, edited) = {
                     let mut wanted = lock.lock().unwrap_or_else(|e| e.into_inner());
                     loop {
                         if wanted.stop {
                             return;
                         }
+                        if let Some((path, edits)) = wanted.edited.pop_front() {
+                            break (path, false, Some(edits));
+                        }
                         if let Some(path) = wanted.queue.pop_front() {
                             finder.online = wanted.online;
-                            break (path, false);
+                            break (path, false, None);
                         }
                         if let Some(path) = wanted.ahead.pop_front() {
                             if wanted.wanted.contains(&path) {
                                 continue;
                             }
                             finder.online = wanted.online;
-                            break (path, true);
+                            break (path, true, None);
                         }
                         wanted = ready.wait(wanted).unwrap_or_else(|e| e.into_inner());
                     }
                 };
+                // New edits kept, whole or not at all, before the song is
+                // looked up (and so timed) with them.
+                if let (Some(edits), Some(store)) = (&edited, &finder.edits) {
+                    if let Err(e) = store.save(&path, edits.as_ref()) {
+                        crate::trace::note(format_args!(
+                            "lyrics: the edits of {} were not kept: {e}",
+                            path.display()
+                        ));
+                    }
+                }
                 let Some(track) = (options.probe)(&path) else {
                     if !ahead {
                         deliver(path, Answer::Failed("the file cannot be read".into()));
@@ -390,7 +489,7 @@ impl LyricsWorker {
                     .is_some_and(|at| at.elapsed() < FAILED_PAUSE);
                 let mut asked = finder.clone();
                 asked.online &= !resting;
-                let answer = asked.lookup_with(&track, now(), &wait, &|on| working(&path, on));
+                let (answer, is_edits) = asked.look(&track, now(), &wait, &|on| working(&path, on));
                 if matches!(answer, Answer::Failed(_)) {
                     failed.insert(path.clone(), Instant::now());
                 } else if !resting {
@@ -418,7 +517,13 @@ impl LyricsWorker {
                             } else {
                                 &mut wanted.timing
                             };
-                            timing.push_back((path.clone(), lyrics.clone()));
+                            let job = (path.clone(), lyrics.clone(), is_edits);
+                            // Edited by hand just now: timed first.
+                            if edited.is_some() {
+                                timing.push_front(job);
+                            } else {
+                                timing.push_back(job);
+                            }
                             ready.notify_all();
                             to_time = true;
                         }
@@ -440,6 +545,12 @@ impl LyricsWorker {
                     if !to_time {
                         done(&path, crate::core::LyricsFacts::of(&answer));
                     }
+                    // Edited just now, not timed with them (to be, or nothing
+                    // times the words): the song keeps the edits as applied
+                    // to its times until then.
+                    if edited.is_some() && matches!(answer, Answer::Found { timed: None, .. }) {
+                        continue;
+                    }
                 }
                 if !ahead {
                     deliver(path, answer);
@@ -458,7 +569,7 @@ impl LyricsWorker {
     pub fn want(&self, paths: Vec<PathBuf>) {
         let (lock, ready) = &*self.shared;
         let mut wanted = lock.lock().unwrap_or_else(|e| e.into_inner());
-        wanted.timing.retain(|(p, _)| paths.contains(p));
+        wanted.timing.retain(|(p, ..)| paths.contains(p));
         wanted.wanted = paths.clone();
         wanted.queue = paths.into();
         ready.notify_all();
@@ -470,8 +581,22 @@ impl LyricsWorker {
     pub fn prepare(&self, paths: Vec<PathBuf>) {
         let (lock, ready) = &*self.shared;
         let mut wanted = lock.lock().unwrap_or_else(|e| e.into_inner());
-        wanted.timing_ahead.retain(|(p, _)| paths.contains(p));
+        wanted.timing_ahead.retain(|(p, ..)| paths.contains(p));
         wanted.ahead = paths.into();
+        ready.notify_all();
+    }
+
+    /// Keeps `edits` as the song at `path`'s lyrics edited by hand (`None`:
+    /// forgets them, its text as found again), then times the song with
+    /// them, before anything else; delivered once timed (at once when a
+    /// timing of these edits is kept, or when nothing times the words),
+    /// for a track still wanted.
+    pub fn edited(&self, path: PathBuf, edits: Option<Lyrics>) {
+        let (lock, ready) = &*self.shared;
+        let mut wanted = lock.lock().unwrap_or_else(|e| e.into_inner());
+        wanted.edited.retain(|(p, _)| *p != path);
+        wanted.timing.retain(|(p, ..)| *p != path);
+        wanted.edited.push_back((path, edits));
         ready.notify_all();
     }
 
@@ -506,6 +631,16 @@ pub trait WordTimer: Send + Sync {
     /// they do not fit what is sung, the best fitting of `others` (LRCLIB's
     /// other texts of the song) instead ([`jodel_lyrics::prepare`]), timed.
     fn time(&self, path: &Path, lyrics: &Lyrics, others: &Others) -> Result<Lyrics, String>;
+
+    /// `lyrics`, a song's text as edited by hand, with each word timed
+    /// against the voice of `path` as it is: never another text in its
+    /// place, nor repeats put in; its words moved by hand
+    /// ([`jodel_lyrics::Word::pinned`]) held where they were set, the rest
+    /// fitted around them. By default as [`WordTimer::time`] times a text
+    /// with no others.
+    fn time_edited(&self, path: &Path, lyrics: &Lyrics) -> Result<Lyrics, String> {
+        self.time(path, lyrics, &Vec::new)
+    }
 
     /// The words sung in the voice of `path`, heard by a speech recogniser
     /// (for a track no source has lyrics for): the text, its lines cut
@@ -548,7 +683,7 @@ fn time_words<D: FnMut(PathBuf, Answer)>(
     let (lock, ready) = shared;
     loop {
         // A timing first, else a track to hear.
-        let (path, lyrics) = {
+        let (path, lyrics, is_edits) = {
             let mut wanted = lock.lock().unwrap_or_else(|e| e.into_inner());
             loop {
                 if wanted.stop {
@@ -579,8 +714,13 @@ fn time_words<D: FnMut(PathBuf, Answer)>(
         let key = cache_key(&path);
         let done = cache
             .zip(key.as_deref())
-            .and_then(|(c, k)| c.timed(k))
-            .filter(|t| t.source == lyrics.source)
+            .and_then(|(c, k)| {
+                if is_edits {
+                    c.edited(k, &lyrics)
+                } else {
+                    c.timed(k).filter(|t| t.source == lyrics.source)
+                }
+            })
             .filter(|t| still_current(t, Some(timer)));
         if let Some(timed) = done {
             done_with(&path, crate::core::LyricsFacts::Timed);
@@ -620,7 +760,11 @@ fn time_words<D: FnMut(PathBuf, Answer)>(
                 .and_then(|track| lrclib.candidates(&track, &wait).ok())
                 .unwrap_or_default()
         };
-        let timed = timer.time(&path, &lyrics, &others);
+        let timed = if is_edits {
+            timer.time_edited(&path, &lyrics)
+        } else {
+            timer.time(&path, &lyrics, &others)
+        };
         working(&path, false);
         let timed = match timed {
             Ok(timed) => timed,
@@ -634,7 +778,7 @@ fn time_words<D: FnMut(PathBuf, Answer)>(
         // on. Not a text that fits and was timed with the repeats heard put
         // in ([`jodel_lyrics::prepare::text`]): it stays as found, and the
         // repeats are put in again, as heard then, whenever it is timed.
-        let swapped = timed.timing.fit.is_some_and(|f| f.swapped);
+        let swapped = !is_edits && timed.timing.fit.is_some_and(|f| f.swapped);
         let lyrics = if swapped {
             let mut text = timed.clone();
             text.drop_times();
@@ -643,10 +787,14 @@ fn time_words<D: FnMut(PathBuf, Answer)>(
             lyrics
         };
         if let (Some(cache), Some(key)) = (cache, key) {
-            if swapped {
-                let _ = cache.store_text(&key, &lyrics);
+            if is_edits {
+                let _ = cache.store_edited(&key, &lyrics, &timed);
+            } else {
+                if swapped {
+                    let _ = cache.store_text(&key, &lyrics);
+                }
+                let _ = cache.store_timed(&key, &timed);
             }
-            let _ = cache.store_timed(&key, &timed);
         }
         done_with(&path, crate::core::LyricsFacts::Timed);
         let still = {

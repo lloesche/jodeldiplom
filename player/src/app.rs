@@ -1488,6 +1488,12 @@ impl App {
             Effect::WantDetails(paths) => self.details.want(paths),
             Effect::WantRhythm(paths, recipe) => self.rhythm.want(paths, recipe),
             Effect::WantLyrics(paths) => self.lyrics.want(paths),
+            Effect::SaveLyricEdits(path, edits) => self.lyrics.edited(path, edits),
+            Effect::VoiceCurve(curve) => {
+                if let Some(engine) = &self.engine {
+                    engine.voice_curve(curve);
+                }
+            }
             Effect::Prepare(paths, recipe) => {
                 if let Some(covers) = &self.covers {
                     covers.prepare(paths.clone());

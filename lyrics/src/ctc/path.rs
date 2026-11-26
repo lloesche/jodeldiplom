@@ -131,6 +131,9 @@ pub enum StayCost {
     /// A frame on state `s` outside the frames of the window `s` has
     /// costs that window's penalty.
     Outside(Vec<Option<(Range<usize>, f32)>>),
+    /// A frame `f` on a state outside the states frame `f` holds the path
+    /// to costs that hold's penalty.
+    Held(Vec<Option<(Range<usize>, f32)>>),
 }
 
 impl StayCost {
@@ -149,6 +152,10 @@ impl StayCost {
             }
             StayCost::Outside(windows) => match windows.get(s) {
                 Some(Some((frames, penalty))) if !frames.contains(&f) => *penalty,
+                _ => 0.0,
+            },
+            StayCost::Held(holds) => match holds.get(f) {
+                Some(Some((states, penalty))) if !states.contains(&s) => *penalty,
                 _ => 0.0,
             },
         }

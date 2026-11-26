@@ -158,7 +158,8 @@ pub(crate) fn lyrics_arrived(state: &mut State, path: PathBuf, answer: Answer) {
         state
             .karaoke
             .lyrics
-            .insert(path, SongLyrics::from_answer(answer));
+            .insert(path.clone(), SongLyrics::from_answer(answer));
+        crate::core::lyric_edit::arrived(state, &path);
     }
 }
 

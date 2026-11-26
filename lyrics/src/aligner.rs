@@ -47,7 +47,8 @@ pub fn aligner_maker(model: &Maker) -> Maker {
 
 /// The CTC aligner: a model's emissions, then [`crate::scaffold::align`].
 /// Without emissions, or with no path, the times come from
-/// [`spread::fallback`].
+/// [`spread::fallback`], but for the words set by hand
+/// ([`crate::Word::pinned`]), which keep theirs.
 pub struct CtcAligner<A> {
     /// The model.
     pub model: A,
@@ -72,8 +73,10 @@ impl<A: Acoustic> CtcAligner<A> {
     /// `lyrics` with word times, from the voice at [`crate::VOCALS_RATE`]
     /// (mono), with what a recogniser heard in it (its transcript's `parts`
     /// and its `glimpses`, none when it was not heard) pinning the words to
-    /// where it heard them ([`crate::anchors`], [`crate::glimpses`]). The
-    /// result's [`crate::Timing::by`] names this aligner.
+    /// where it heard them ([`crate::anchors`], [`crate::glimpses`]), and
+    /// the words set by hand held to their times, the others fitted around
+    /// them ([`crate::Word::pinned`]). The result's [`crate::Timing::by`]
+    /// names this aligner.
     pub fn align(
         &self,
         vocals_16k: &[f32],
@@ -94,7 +97,16 @@ impl<A: Acoustic> CtcAligner<A> {
                 out.timing.by = Some(self.maker());
                 out
             }
-            None => spread::fallback(vocals_16k, lyrics),
+            None => {
+                let mut out = spread::fallback(vocals_16k, lyrics);
+                let words = out.lines.iter_mut().flat_map(|l| &mut l.words);
+                for (w, given) in words.zip(lyrics.lines.iter().flat_map(|l| &l.words)) {
+                    if let Some((a, b)) = given.pin() {
+                        (w.start, w.end, w.confidence) = (Some(a), Some(b), crate::GIVEN);
+                    }
+                }
+                out
+            }
         }
     }
 }
@@ -123,5 +135,60 @@ mod tests {
         let out = aligner.align(&[], &lyrics(&["hi"]), &[], &[]);
         assert_eq!(out.timing.by, Some(Maker::new("ctc:planted@7", VERSION)));
         assert_eq!(out.lines[0].words[0].start, Some(20.0 * FS));
+    }
+
+    /// A word set by hand where the voice sings the next one: it stays
+    /// exactly where it was set, with its letters inside it, and the next
+    /// word fits in after it; the one before stays where it is heard.
+    /// Aligned again (a new version of the aligner), the same.
+    #[test]
+    fn a_word_set_by_hand_stays_and_its_neighbours_fit_around_it() {
+        let mut on = vec![WAV2VEC2_960H.blank; 300];
+        let one = plant(&mut on, "one", 20, 2);
+        plant(&mut on, "two", 60, 2);
+        plant(&mut on, "three", 150, 2);
+        let aligner = CtcAligner::new(Planted(emissions_of(&on, 0.9)));
+        let free = aligner.align(&[], &lyrics(&["one two three"]), &[], &[]);
+        let at = |l: &Lyrics, k: usize| {
+            let w = &l.lines[0].words[k];
+            (w.start.unwrap(), w.end.unwrap())
+        };
+        assert_eq!(at(&free, 2).0, 150.0 * FS);
+        // "two" moved by hand over where "three" is heard.
+        let mut moved = free.clone();
+        let two = &mut moved.lines[0].words[1];
+        (two.start, two.end, two.pinned) = (Some(140.0 * FS), Some(170.0 * FS), true);
+        for _ in 0..2 {
+            let out = aligner.align(&[], &moved, &[], &[]);
+            assert_eq!(at(&out, 1), (140.0 * FS, 170.0 * FS));
+            let two = &out.lines[0].words[1];
+            assert!(two.pinned && two.confidence == crate::GIVEN);
+            assert_eq!(two.letters.len(), 3);
+            assert!(two.letters.iter().all(|&t| (0.0..=0.6 + 1e-6).contains(&t)));
+            assert_eq!(at(&out, 0), (20.0 * FS, one as f64 * FS));
+            assert!(at(&out, 2).0 >= 170.0 * FS, "{:?}", at(&out, 2));
+            moved = out;
+        }
+    }
+
+    /// Without the model's emissions, a word set by hand keeps its times
+    /// all the same.
+    #[test]
+    fn a_word_set_by_hand_keeps_its_times_without_the_model() {
+        struct Deaf;
+        impl Acoustic for Deaf {
+            fn maker(&self) -> Maker {
+                Maker::new("deaf", 1)
+            }
+            fn emissions(&self, _: &[f32]) -> Option<Emissions> {
+                None
+            }
+        }
+        let mut text = lyrics(&["one two three"]);
+        let two = &mut text.lines[0].words[1];
+        (two.start, two.end, two.pinned) = (Some(3.0), Some(3.5), true);
+        let out = CtcAligner::new(Deaf).align(&[0.0; 16_000], &text, &[], &[]);
+        let two = &out.lines[0].words[1];
+        assert_eq!((two.start, two.end), (Some(3.0), Some(3.5)));
     }
 }

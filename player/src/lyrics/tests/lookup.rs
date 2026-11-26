@@ -114,6 +114,7 @@ fn a_text_kept_by_an_older_player_waits_for_the_web() {
         timer: Some(Arc::new(Counting(Arc::clone(&heard)))),
         working: None,
         done: None,
+        edits: None,
     };
     let (tx, rx) = mpsc::channel();
     let worker = LyricsWorker::new(options, move |path, answer| {
@@ -477,6 +478,7 @@ fn the_worker_answers_in_the_order_asked() {
         timer: None,
         working: None,
         done: None,
+        edits: None,
     };
     let (tx, rx) = mpsc::channel();
     let worker = LyricsWorker::new(options, move |path, answer| {

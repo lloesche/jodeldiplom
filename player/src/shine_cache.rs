@@ -37,8 +37,8 @@ pub fn from_text(text: &str) -> Option<Reference> {
 }
 
 /// What names a song's file: its path, its sung lines' words as timed
-/// (each word's text, times, letters and whether a backing one) and its
-/// melody, hashed.
+/// (each word's text, times, letters, whether a backing one and, when it
+/// is, that it is not to be sung) and its melody, hashed.
 pub fn key(path: &Path, lyrics: &Lyrics, waveform: &Waveform) -> String {
     use std::fmt::Write as _;
     let mut text = format!("{} shine\n", path.display());
@@ -53,6 +53,9 @@ pub fn key(path: &Path, lyrics: &Lyrics, waveform: &Waveform) -> String {
                 w.backing,
                 w.letters.iter().map(|l| l.to_bits()).collect::<Vec<_>>()
             );
+            if w.not_sung {
+                text.push_str("not sung;");
+            }
         }
         text.push('\n');
     }

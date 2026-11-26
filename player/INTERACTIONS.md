@@ -883,6 +883,25 @@ stem keys are their mutes.
   - `the_bus_level_comes_before_the_limiter`,
     `the_bus_level_glides_while_a_sound_plays` (synth)
   - `a_song_is_measured_once_and_kept` (`loudness`)
+- **K26.** A song's lyrics edited by hand (the editor's actions, its
+  screen to come) are the user's own, kept beside the lyrics' cache and
+  never forgotten with it, read where they are while the data folder
+  moves. Their text is the song's; a word moved or made longer or shorter
+  stays exactly where it was set whenever the song is timed again (a new
+  aligner too), the other words fitted around it, and the bubbles' notes
+  read from the melody over its new time. A word marked as not to be sung
+  gets no bubble and is not scored; in the mode the voice is turned up
+  over it (6 dB over the slider's level, to at least -6 dB), smoothed over
+  50 ms, or played at the level set over a word. Every change is undone
+  and redone.
+  - `edits_are_kept_and_found_while_the_data_folder_moves` (`lyrics::edits`)
+  - `clean_cache_forgets_every_cache_in_both_places` (`dirs`)
+  - `a_word_set_by_hand_stays_and_its_neighbours_fit_around_it` (lyrics)
+  - `a_word_not_to_be_sung_gets_no_bubble_and_no_score` (`core::singing`)
+  - `a_word_not_sung_turns_the_voice_up_smoothly` (`core::voice_curve`)
+  - `the_voice_rises_over_a_word_not_to_be_sung` (mixer)
+  - `a_word_moved_and_nudged_is_set_by_hand_and_its_neighbours_make_room`,
+    `every_change_is_undone_and_redone_until_a_new_one` (`core::lyric_edit`)
 
 ## Mixer
 

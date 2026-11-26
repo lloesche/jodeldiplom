@@ -21,6 +21,7 @@ use jodel_rhythm::waveform::{Lane, Waveform};
 use jodel_rhythm::{Analysis, CandidateReport, Method, Region};
 use jodeldiplom::cache::{self, Schema};
 use jodeldiplom::core::grid::Grid;
+use jodeldiplom::lyrics::edits::{edits_of, from_text, to_text};
 use jodeldiplom::lyrics::store::{Cache, Kept};
 use jodeldiplom::{grids, rhythm};
 
@@ -197,6 +198,64 @@ fn lyrics_files_are_pinned() {
     assert_eq!(back.to_lrc(), timed.to_lrc());
     assert_eq!(back.lines[0].words[1].letters.len(), 4);
     assert_eq!(back.lines[0].synced, None);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A song's lyrics as edited by hand: a word moved, one not to be sung,
+/// one with the voice set over it, a break.
+fn edits() -> Lyrics {
+    let mut l = Lyrics::parse_text("Hold me (close)\n♪\nNever let go\n", Source::Lrclib);
+    let w = &mut l.lines[0].words[1];
+    (w.start, w.end, w.pinned) = (Some(12.34), Some(12.9), true);
+    l.lines[0].words[2].not_sung = true;
+    let w = &mut l.lines[2].words[0];
+    (w.start, w.end, w.pinned) = (Some(20.0), Some(20.5), true);
+    (w.not_sung, w.voice_db) = (true, Some(-3.5));
+    edits_of(&l)
+}
+
+#[test]
+fn lyric_edit_files_are_pinned_and_every_version_is_read() {
+    let key = "/music/a song.flac 31415926";
+    let edits = edits();
+    let kept = pinned(&cache::LYRIC_EDITS, "txt", to_text(key, &edits).as_bytes());
+    let kept = String::from_utf8(kept).unwrap();
+    assert_eq!(from_text(key, &kept), Some(edits));
+    // The user's work: every version's sample is still read.
+    for version in 1..=cache::LYRIC_EDITS.version {
+        let text = std::fs::read_to_string(sample(&cache::LYRIC_EDITS, version, "txt")).unwrap();
+        assert!(from_text(key, &text).is_some(), "version {version}");
+    }
+}
+
+#[test]
+fn edited_lyrics_timed_are_pinned() {
+    let dir = temp_dir("edited");
+    let c = Cache::new(&dir);
+    let edits = edits();
+    // The edits timed: every word, the ones set by hand where they were set.
+    let mut timed = edits.clone();
+    let words = timed.lines.iter_mut().flat_map(|l| &mut l.words);
+    for (k, w) in words.enumerate() {
+        if !w.pinned {
+            (w.start, w.end) = (Some(k as f64), Some(k as f64 + 0.25));
+        }
+    }
+    timed.lines[2].words[1].letters = vec![0.0, 0.05, 0.1];
+    timed.timing.by = Some(jodel_lyrics::Maker::new("ctc:test", 8));
+    timed.timing.detail = jodel_lyrics::Detail::Words;
+    c.store_edited("e", &edits, &timed).unwrap();
+    let file = dir.join("e.edited.lrc");
+    let kept = pinned(&cache::LYRICS_EDITED, "lrc", &std::fs::read(&file).unwrap());
+    std::fs::write(&file, &kept).unwrap();
+    let back = c.edited("e", &edits).unwrap();
+    assert_eq!(back.to_lrc(), timed.to_lrc());
+    assert_eq!(edits_of(&back), edits);
+    assert_eq!(back.lines[2].words[1].letters.len(), 3);
+    // Made with other edits: not theirs.
+    let mut other = edits.clone();
+    other.lines[2].words[2].text = "go!".into();
+    assert_eq!(c.edited("e", &other), None);
     let _ = std::fs::remove_dir_all(&dir);
 }
 

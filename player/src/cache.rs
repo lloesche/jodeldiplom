@@ -8,6 +8,8 @@
 //! | [`LYRICS_TEXT`] | its lyrics as found (`lyrics/*.lrc`) |
 //! | [`LYRICS_NONE`] | that none were found, and when (`lyrics/*.none`) |
 //! | [`LYRICS_TIMED`] | its lyrics timed word by word (`lyrics/*.timed.lrc`) |
+//! | [`LYRIC_EDITS`] | its lyrics as edited by hand (`lyric-edits/*.txt`) |
+//! | [`LYRICS_EDITED`] | its lyrics as edited, timed word by word (`lyrics/*.edited.lrc`) |
 //! | [`GRID`] | a beat grid fixed by hand (`grids/*.txt`) |
 //! | [`SCORES`] | the best scores sung, a song each (`scores.txt`) |
 //! | [`SHINE`] | the original singer's phrases measured, the shine's yardstick (`shine/*.txt`) |
@@ -35,11 +37,11 @@
 //!   until the version is raised and a sample of the new version added.
 //! - **The same version, the same files.** While a schema's version stays,
 //!   every player reads the files of it that any player wrote.
-//! - **The user's work is kept.** Grids fixed by hand and the best scores
-//!   sung and the delays measured are not a cache
-//!   ([`Schema::user_data`]): a new version of [`GRID`], [`SCORES`] or
-//!   [`DELAYS`] still reads every older one, a file without a header (from
-//!   before there were headers) as version 1.
+//! - **The user's work is kept.** Grids fixed by hand, the best scores
+//!   sung, the delays measured and the lyrics edited are not a cache
+//!   ([`Schema::user_data`]): a new version of [`GRID`], [`SCORES`],
+//!   [`DELAYS`] or [`LYRIC_EDITS`] still reads every older one, a file
+//!   without a header (from before there were headers) as version 1.
 //!
 //! What a file says may also depend on how it was made: an analysis on
 //! [`jodel_rhythm::VERSION`] (in the name of its file, so another one is
@@ -104,6 +106,24 @@ pub const LYRICS_NONE: Schema = Schema {
 pub const LYRICS_TIMED: Schema = Schema {
     name: "lyrics-timed",
     version: 5,
+    user_data: false,
+};
+
+/// A song's lyrics as edited by hand ([`crate::lyrics::edits`]): its text
+/// and, word by word, the times set by hand and the marks.
+pub const LYRIC_EDITS: Schema = Schema {
+    name: "lyric-edits",
+    version: 1,
+    user_data: true,
+};
+
+/// A song's lyrics as edited, timed word by word by us with the words set
+/// by hand held (`crate::lyrics::edits`): the edits' stamp
+/// (`crate::lyrics::edits::stamp`), then Enhanced LRC as
+/// [`LYRICS_TIMED`] has it.
+pub const LYRICS_EDITED: Schema = Schema {
+    name: "lyrics-edited",
+    version: 1,
     user_data: false,
 };
 
@@ -172,12 +192,14 @@ pub const COVER_ALBUM: Schema = Schema {
 };
 
 /// Every schema.
-pub const ALL: [Schema; 13] = [
+pub const ALL: [Schema; 15] = [
     ANALYSIS,
     WAVEFORM,
     LYRICS_TEXT,
     LYRICS_NONE,
     LYRICS_TIMED,
+    LYRIC_EDITS,
+    LYRICS_EDITED,
     GRID,
     SCORES,
     SHINE,
@@ -297,7 +319,7 @@ mod tests {
         assert_eq!(first.body("jodel-rhythm 9\n"), None);
         assert_eq!(GRID.open("jodel-grid 1\n"), Some((1, "jodel-grid 1\n")));
         let users: Vec<&str> = ALL.iter().filter(|s| s.user_data).map(|s| s.name).collect();
-        assert_eq!(users, ["grid", "scores", "delays"]);
+        assert_eq!(users, ["lyric-edits", "grid", "scores", "delays"]);
         // Another player wrote it: read all the same.
         let other = "jodeldiplom-cache analysis 1 by jodeldiplom 9.9.9\nbody\n";
         assert_eq!(first.body(other), Some("body\n"));

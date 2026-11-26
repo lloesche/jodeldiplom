@@ -8,6 +8,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use jodel_lyrics::sources::read_text;
 use jodel_lyrics::{Found, Lyrics, Source};
 
+use super::edits::{marked, stamp};
 use crate::cache;
 
 /// How long "nothing found" is believed before LRCLIB is asked again.
@@ -163,13 +164,60 @@ impl Cache {
     /// words' times only, not when their source synced the lines (the
     /// text keeps that).
     pub fn store_timed(&self, key: &str, lyrics: &Lyrics) -> io::Result<()> {
-        let mut timed = lyrics.clone();
-        for line in &mut timed.lines {
-            line.synced = None;
-        }
         self.write(
             &self.file(key, "timed.lrc"),
-            &cache::LYRICS_TIMED.wrap(&timed.to_lrc()),
+            &cache::LYRICS_TIMED.wrap(&unsynced(lyrics).to_lrc()),
         )
     }
+
+    /// Our word times of the song edited as `edits` under `key`, when kept
+    /// in this player's version and made with these edits (their
+    /// [`stamp`]), the edits' marks on its words ([`marked`]); one of
+    /// another version is deleted (it is timed again).
+    pub fn edited(&self, key: &str, edits: &Lyrics) -> Option<Lyrics> {
+        let text = self.read(key, "edited.lrc")?;
+        let Some(body) = cache::LYRICS_EDITED.body(&text) else {
+            let _ = crate::mover::remove(&self.file(key, "edited.lrc"));
+            return None;
+        };
+        let (first, lrc) = body.split_once('\n')?;
+        if first.strip_prefix("edits ")? != stamp(edits) {
+            return None;
+        }
+        let mut timed = Lyrics::parse(lrc, Source::Unknown);
+        // Its lines as the edits have them (a break included), which the
+        // Enhanced LRC keeps but for the lines without words.
+        timed.lines.retain(|l| !l.words.is_empty());
+        let mut lines = Vec::with_capacity(edits.lines.len());
+        let mut timed_lines = timed.lines.into_iter();
+        for line in &edits.lines {
+            lines.push(if line.words.is_empty() {
+                line.clone()
+            } else {
+                timed_lines.next()?
+            });
+        }
+        timed.lines = lines;
+        marked(&timed, edits)
+    }
+
+    /// Keeps `timed` (the song edited as `edits`, timed by us) under `key`,
+    /// named by the edits ([`stamp`]).
+    pub fn store_edited(&self, key: &str, edits: &Lyrics, timed: &Lyrics) -> io::Result<()> {
+        let body = format!("edits {}\n{}", stamp(edits), unsynced(timed).to_lrc());
+        self.write(
+            &self.file(key, "edited.lrc"),
+            &cache::LYRICS_EDITED.wrap(&body),
+        )
+    }
+}
+
+/// `lyrics` without when their source synced the lines (the text keeps
+/// that).
+fn unsynced(lyrics: &Lyrics) -> Lyrics {
+    let mut timed = lyrics.clone();
+    for line in &mut timed.lines {
+        line.synced = None;
+    }
+    timed
 }

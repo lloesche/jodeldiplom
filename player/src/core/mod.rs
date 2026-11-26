@@ -26,6 +26,7 @@ pub mod key;
 pub mod keymap;
 pub mod lag;
 pub mod lanes;
+pub mod lyric_edit;
 pub mod mic;
 pub mod preview;
 pub mod shine;
@@ -36,6 +37,7 @@ pub mod sync;
 pub mod text;
 pub mod transition;
 mod update;
+pub mod voice_curve;
 pub mod voice_time;
 
 use std::collections::{HashMap, HashSet};

@@ -316,6 +316,9 @@ pub enum Action {
     Gpu(Option<String>),
     /// What was found of a file's lyrics.
     Lyrics(PathBuf, crate::lyrics::Answer),
+    /// The lyrics editor: opened, closed, an action of its, or the song's
+    /// edits forgotten ([`crate::core::lyric_edit`]).
+    LyricsEdit(crate::core::lyric_edit::LyricsEdit),
     /// A worker started (`on`) or ended work on a file: its analysis, or
     /// its lyrics looked up or timed.
     Working {
@@ -435,6 +438,13 @@ pub enum Effect {
     /// with [`Action::Lyrics`]); what was asked for before and not started
     /// is dropped.
     WantLyrics(Vec<PathBuf>),
+    /// Keep a song's lyrics as edited by hand (`None`: forget its edits),
+    /// and time it again with them (answered with [`Action::Lyrics`] once
+    /// timed).
+    SaveLyricEdits(PathBuf, Option<jodel_lyrics::Lyrics>),
+    /// Give the mixer the voice's curve over the song's words, or end it
+    /// ([`crate::core::voice_curve`]).
+    VoiceCurve(crate::core::voice_curve::VoiceCurve),
     /// Get these files ready ahead, in this order, after what is wanted:
     /// their analysis by the recipe (`None`: none) and their lyrics, into
     /// the caches; what was asked for before and not started is dropped.

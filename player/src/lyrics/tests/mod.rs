@@ -101,6 +101,7 @@ fn a_track_with_no_lyrics_found_is_heard_instead() {
         done: Some(Arc::new(move |_: &Path, facts| {
             told.lock().unwrap().push(facts)
         })),
+        edits: None,
     };
     let (tx, rx) = mpsc::channel();
     let worker = LyricsWorker::new(options, move |path, answer| {
@@ -153,6 +154,7 @@ fn lyrics_found_come_again_with_their_words_timed_and_kept() {
         timer: Some(Arc::new(Marker)),
         working: None,
         done: None,
+        edits: None,
     };
     let (tx, rx) = mpsc::channel();
     let worker = LyricsWorker::new(options, move |path, answer| {
@@ -189,6 +191,142 @@ fn lyrics_found_come_again_with_their_words_timed_and_kept() {
         cache.timed(&key).unwrap().timing.by,
         Some(Maker::new("marker", 1))
     );
+    drop(worker);
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// A timer that keeps the words set by hand where they were set (as the
+/// aligner does), and says when it was asked to time a text as edited.
+struct Keeper(Arc<Mutex<Vec<bool>>>);
+
+impl WordTimer for Keeper {
+    fn ready(&self) -> bool {
+        true
+    }
+
+    fn maker(&self) -> Maker {
+        Maker::new("marker", 1)
+    }
+
+    fn time(&self, _: &Path, lyrics: &Lyrics, _: &Others) -> Result<Lyrics, String> {
+        self.0.lock().unwrap().push(false);
+        Ok(timed_by(lyrics, "marker"))
+    }
+
+    fn time_edited(&self, _: &Path, lyrics: &Lyrics) -> Result<Lyrics, String> {
+        self.0.lock().unwrap().push(true);
+        let mut timed = timed_by(lyrics, "marker");
+        let given = lyrics.lines.iter().flat_map(|l| &l.words);
+        for (w, given) in timed.lines.iter_mut().flat_map(|l| &mut l.words).zip(given) {
+            if let Some((a, b)) = given.pin() {
+                (w.start, w.end) = (Some(a), Some(b));
+            }
+        }
+        Ok(timed)
+    }
+}
+
+/// A song edited by hand: its edits kept, the song timed again as edited
+/// (only then delivered), its words set by hand where they were set and
+/// its marks on; found so again at the next start without timing it; its
+/// edits forgotten, its text as found again.
+#[test]
+fn a_song_edited_by_hand_is_timed_with_its_edits_and_found_so_again() {
+    let dir = std::env::temp_dir().join(format!("jodel-lyrics-edited-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    let song = dir.join("song.flac");
+    fs::write(&song, b"not audio").unwrap();
+    fs::write(
+        dir.join("song.lrc"),
+        "[00:01.00]One line\n[00:03.00]Two here\n",
+    )
+    .unwrap();
+    let probe = |path: &Path| {
+        Some(Track {
+            path: path.to_owned(),
+            ..Track::default()
+        })
+    };
+    let asked = Arc::new(Mutex::new(Vec::new()));
+    let options = Options {
+        cache: Some(dir.join("cache")),
+        timer: Some(Arc::new(Keeper(Arc::clone(&asked)))),
+        edits: Some(dir.join("edits")),
+        probe: Arc::new(probe),
+        ..Options::new(false)
+    };
+    let start = || {
+        let (tx, rx) = mpsc::channel();
+        let worker = LyricsWorker::new(options.clone(), move |path, answer| {
+            let _ = tx.send((path, answer));
+        });
+        worker.want(vec![song.clone()]);
+        (worker, rx)
+    };
+    let wait = Duration::from_secs(10);
+    let (worker, rx) = start();
+    let _ = rx.recv_timeout(wait).unwrap();
+    let Answer::Found {
+        timed: Some(timed), ..
+    } = rx.recv_timeout(wait).unwrap().1
+    else {
+        panic!("not timed");
+    };
+    // "line" moved, "Two" not to be sung, "here" written "there".
+    let mut edited = timed.clone();
+    let line = &mut edited.lines[0].words[1];
+    (line.start, line.end, line.pinned) = (Some(2.2), Some(2.6), true);
+    edited.lines[1].words[0].not_sung = true;
+    edited.lines[1].words[1].text = "there".into();
+    let edits = edits::edits_of(&edited);
+    worker.edited(song.clone(), Some(edits.clone()));
+    let check = |answer: Answer| {
+        let Answer::Found {
+            lyrics,
+            timed: Some(timed),
+        } = answer
+        else {
+            panic!("not timed: {answer:?}");
+        };
+        let texts: Vec<String> = lyrics.lines.iter().map(|l| l.text()).collect();
+        assert_eq!(texts, ["One line", "Two there"]);
+        assert_eq!(edits::edits_of(&timed), edits);
+        assert_eq!(timed.lines[0].words[1].pin(), Some((2.2, 2.6)));
+        assert!(timed.lines[1].words[0].not_sung);
+        assert!(timed.lines[1].words[1].is_timed());
+    };
+    check(rx.recv_timeout(wait).unwrap().1);
+    assert_eq!(*asked.lock().unwrap(), [false, true]);
+    drop(worker);
+    // The next start: as edited, timed, at once (no timing).
+    let (worker, rx) = start();
+    check(rx.recv_timeout(wait).unwrap().1);
+    assert_eq!(asked.lock().unwrap().len(), 2);
+    // Forgotten: the text as found, with its timing as kept.
+    worker.edited(song.clone(), None);
+    let Answer::Found {
+        lyrics,
+        timed: Some(plain),
+    } = rx.recv_timeout(wait).unwrap().1
+    else {
+        panic!("not timed");
+    };
+    let texts: Vec<String> = lyrics.lines.iter().map(|l| l.text()).collect();
+    assert_eq!(texts, ["One line", "Two here"]);
+    let words = |l: &Lyrics| -> Vec<(String, Option<f64>)> {
+        let words = l.lines.iter().flat_map(|l| &l.words);
+        words.map(|w| (w.text.clone(), w.start)).collect()
+    };
+    assert_eq!(words(&plain), words(&timed));
+    assert!(plain
+        .lines
+        .iter()
+        .flat_map(|l| &l.words)
+        .all(|w| !w.pinned && !w.not_sung));
+    assert!(edits::EditStore::new(dir.join("edits"))
+        .load(&song)
+        .is_none());
     drop(worker);
     let _ = fs::remove_dir_all(&dir);
 }
@@ -264,6 +402,7 @@ fn a_fetched_text_that_does_not_fit_is_swapped_for_one_that_does() {
         timer: Some(Arc::new(Hearer)),
         working: None,
         done: None,
+        edits: None,
     };
     let (tx, rx) = mpsc::channel();
     let worker = LyricsWorker::new(options, move |path, answer| {
@@ -349,6 +488,7 @@ fn a_fitting_text_timed_with_repeats_put_in_is_kept_as_found() {
         timer: Some(Arc::new(Repeater)),
         working: None,
         done: None,
+        edits: None,
     };
     let (tx, rx) = mpsc::channel();
     let worker = LyricsWorker::new(options, move |path, answer| {
@@ -415,6 +555,7 @@ fn songs_got_ready_ahead_are_timed_into_the_cache_quietly() {
         done: Some(Arc::new(move |path: &Path, facts| {
             let _ = done_tx.lock().unwrap().send((path.to_owned(), facts));
         })),
+        edits: None,
     };
     let (tx, rx) = mpsc::channel();
     let worker = LyricsWorker::new(options, move |path, answer| {
@@ -520,6 +661,7 @@ fn finder(dir: &Path, http: Arc<dyn Http>) -> Finder {
         online: true,
         lrclib: Lrclib::new(http, "http://lrclib.test"),
         timer: None,
+        edits: None,
     }
 }
 

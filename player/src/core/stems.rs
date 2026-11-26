@@ -21,7 +21,9 @@
 //!   so the GPU and the processor rest.
 //! - The Karaoke tab's voice is the vocals lane's gain, a controller's on
 //!   top of the strip ([`lanes_due`]): while the tab or the mode shows, 1
-//!   elsewhere.
+//!   elsewhere. In the mode, a song with words whose voice has a level of
+//!   its own (a word not to be sung turns it up) has the voice as a curve
+//!   over its words instead, the lane at 1 ([`super::voice_curve`]).
 //! - A transition's two tracks play on the same strips, each on a head of
 //!   the player's own (`desk_wiring`): the stems' strips act on both, a
 //!   bar's change on its frame of the head the playing track is on (the
@@ -66,6 +68,9 @@ pub struct StemsSent {
     pub lanes: [f64; STEMS],
     /// When the stems are made ([`make_wanted`]).
     pub make: MakeStems,
+    /// The voice's curve over the song's words, when in force
+    /// ([`super::voice_curve`]).
+    pub voice: Option<super::voice_curve::VoiceSent>,
 }
 
 impl Default for StemsSent {
@@ -73,6 +78,7 @@ impl Default for StemsSent {
         StemsSent {
             lanes: [1.0; STEMS],
             make: MakeStems::Never,
+            voice: None,
         }
     }
 }
@@ -121,9 +127,12 @@ pub fn make_wanted(state: &State) -> MakeStems {
 
 /// The stems' lanes' gains (drums, bass, vocals, other): the Karaoke tab's
 /// voice on the vocals while the tab or the mode shows (its slider read on
-/// the fader's taper), else all 1.
+/// the fader's taper), else all 1; 1 too while the voice's curve over the
+/// song's words carries it ([`super::voice_curve::in_force`]).
 pub fn lanes_due(state: &State) -> [f64; STEMS] {
-    let voice = if karaoke::shown(state) {
+    let voice = if super::voice_curve::in_force(state) {
+        1.0
+    } else if karaoke::shown(state) {
         taper::gain(super::sliders::voice_db(state.config.karaoke_voice))
     } else {
         1.0
@@ -296,10 +305,10 @@ fn told(state: &mut State, bar: Option<Bar>) {
     say_info(state, what);
 }
 
-/// After any action: the mixer's lanes and when the engine makes stems
-/// follow the state when they changed (the Karaoke tab shown or left, its
-/// voice moved, a stem's strip touched, a tab shown, a transition armed or
-/// done).
+/// After any action: the mixer's lanes, the voice's curve over the song's
+/// words and when the engine makes stems follow the state when they changed
+/// (the Karaoke tab shown or left, its voice moved, a stem's strip touched,
+/// a tab shown, a transition armed or done, a song's words edited).
 pub(crate) fn follow(state: &mut State, fx: &mut Vec<Effect>) {
     let lanes = lanes_due(state);
     for (k, kind) in StripKind::PARTS.into_iter().enumerate() {
@@ -308,6 +317,7 @@ pub(crate) fn follow(state: &mut State, fx: &mut Vec<Effect>) {
         }
     }
     state.stems_sent.lanes = lanes;
+    super::voice_curve::follow(state, fx);
     let make = make_wanted(state);
     if make != state.stems_sent.make {
         state.stems_sent.make = make;

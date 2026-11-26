@@ -92,7 +92,8 @@ fn char_at(w: &jodel_lyrics::Word, t: f64) -> f32 {
 }
 
 /// The notes `melody` sings `line` on ([`Melody::notes_between`] of each
-/// lead word, not a backing one, what is not a note taken out), each under
+/// lead word, not a backing one nor one marked as not to be sung
+/// ([`jodel_lyrics::Word::not_sung`]), what is not a note taken out), each under
 /// the letters sung then; its height its pitch against the line's middle
 /// (the median over its notes' length), an octave off folded back (the
 /// pitch heard an octave wrong), spread over the line's own range
@@ -116,8 +117,9 @@ pub fn notes_of(line: &jodel_lyrics::Line, melody: &Melody) -> LineNotes {
         // Only the lead's words: a backing part in parentheses (an echo) is
         // quieter under it, its pitch unsure and its time squeezed between
         // the lead's. A lead word heard weakly is timed between its
-        // neighbours, close enough for the melody sung there.
-        let lead = w.start.is_some() && w.end.is_some() && !w.backing;
+        // neighbours, close enough for the melody sung there. Not a word
+        // marked as not to be sung: the record sings it.
+        let lead = w.start.is_some() && w.end.is_some() && !w.backing && !w.not_sung;
         let (ws, we) = (w.start.unwrap_or(0.0), w.end.unwrap_or(0.0));
         let mut own: Vec<(Note, f64)> = Vec::new();
         if lead {

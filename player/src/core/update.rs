@@ -649,6 +649,7 @@ pub fn update(state: &mut State, action: Action) -> Vec<Effect> {
             };
         }
         Action::Lyrics(path, answer) => karaoke::lyrics_arrived(state, path, answer),
+        Action::LyricsEdit(what) => super::lyric_edit::act(state, what, &mut fx),
         Action::Working { path, job, on } => {
             let jobs = state.working.entry(path.clone()).or_default();
             jobs.retain(|j| *j != job);
@@ -919,6 +920,7 @@ fn is_input(action: &Action) -> bool {
             | Action::KaraokeSlideEnd
             | Action::KaraokeStep { .. }
             | Action::Desk(_)
+            | Action::LyricsEdit(_)
             | Action::SeekTo(_)
             | Action::SeekDrag(_)
             | Action::OpenSettings(_)

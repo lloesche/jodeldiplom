@@ -119,6 +119,29 @@ impl WordTimer for SpeechTimer {
         Ok(timed)
     }
 
+    fn time_edited(&self, path: &Path, lyrics: &Lyrics) -> Result<Lyrics, String> {
+        let model = self.acoustic()?;
+        let mut steps = Steps::default();
+        let voice = steps.voice(self.stems.as_deref(), path)?;
+        // The text stays as edited; what was heard still pins its words to
+        // where they were sung.
+        let (parts, glimpses) = match self.recogniser() {
+            Some(asr) => match steps.hear(&asr, || asr.transcribe(&voice), |s| &mut s.heard) {
+                Ok(heard) => {
+                    let glimpses = steps.hear(&asr, || asr.glimpses(&voice), |s| &mut s.glimpsed);
+                    (heard.parts, glimpses.unwrap_or_default())
+                }
+                Err(_) => (Vec::new(), Vec::new()),
+            },
+            None => (Vec::new(), Vec::new()),
+        };
+        let started = Instant::now();
+        let timed = CtcAligner::new(model).align(&voice, lyrics, &parts, &glimpses);
+        steps.aligned = started.elapsed();
+        steps.note(path);
+        Ok(timed)
+    }
+
     fn transcribe(&self, path: &Path) -> Result<(Lyrics, Lyrics), String> {
         let asr = self.recogniser().ok_or("no speech recogniser here")?;
         let model = self.acoustic()?;
