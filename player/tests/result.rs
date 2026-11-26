@@ -508,9 +508,8 @@ fn a_song_sought_on_and_played_out_shows_its_result() {
 fn a_song_played_out_with_nothing_scored_shows_its_result() {
     use jodeldiplom::core::singing::verdict_words;
     use jodeldiplom::core::singing::{Beat, Verdict};
-    use jodeldiplom::sfx::diploma::{Diploma, Entry};
-    use jodeldiplom::sfx::reveal::{sounds_of, Heard};
-    use jodeldiplom::sfx::Sound;
+    use jodeldiplom::sfx::conductor::{Diploma, Entry, Sheet};
+    use jodeldiplom::sfx::reveal::sounds_of;
     for (notes, best) in [(true, None), (true, Some(1_200)), (false, None)] {
         let mut state = started(0);
         let key = state.queue.paths[0].display().to_string();
@@ -547,9 +546,13 @@ fn a_song_played_out_with_nothing_scored_shows_its_result() {
         // Nothing cheered: no ding, the pen alone for the words.
         assert!(reveal.when(Beat::Points).is_some() && reveal.when(Beat::Words).is_some());
         assert_eq!(sounds_of(Beat::Points, &shown).count(), 0);
-        let words: Vec<Heard> = sounds_of(Beat::Words, &shown).collect();
-        let pen = Sound::Diploma(Diploma::Scribbled(Entry::Words));
-        assert_eq!(words, [Heard::Bank(pen, 1.0, 0.0)]);
+        let words: Vec<Diploma> = sounds_of(Beat::Words, &shown).collect();
+        let pen = Diploma::Sheet {
+            sound: Sheet::Scribbled(Entry::Words),
+            gain: 1.0,
+            pan: 0.0,
+        };
+        assert_eq!(words, [pen]);
         assert!(sounds_of(Beat::Verdict(Verdict::Silent), &shown).count() > 0);
         let lines = jodeldiplom::view::karaoke::lines_now(&state, 0.0);
         assert!(

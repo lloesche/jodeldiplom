@@ -99,7 +99,7 @@ pub(super) struct Note {
 impl Note {
     /// `atom` on `pitch` at `at`: full, in the middle, as the patch holds
     /// it, a sound of its own.
-    fn new(at: u64, atom: Atom, pitch: f32) -> Note {
+    pub(super) fn new(at: u64, atom: Atom, pitch: f32) -> Note {
         Note {
             at,
             atom,
@@ -111,15 +111,15 @@ impl Note {
         }
     }
 
-    fn vel(self, velocity: f32) -> Note {
+    pub(super) fn vel(self, velocity: f32) -> Note {
         Note { velocity, ..self }
     }
 
-    fn pan(self, pan: f32) -> Note {
+    pub(super) fn pan(self, pan: f32) -> Note {
         Note { pan, ..self }
     }
 
-    fn hold(self, frames: u64) -> Note {
+    pub(super) fn hold(self, frames: u64) -> Note {
         Note {
             length: Some(frames),
             ..self
@@ -154,7 +154,7 @@ impl Score<'_> {
     }
 
     /// `n` sent, its seed the next.
-    fn play(&mut self, n: Note) {
+    pub(super) fn play(&mut self, n: Note) {
         let seed = next(self.seed);
         let patch = self.p[n.atom];
         self.send(Command::Note {
@@ -205,12 +205,12 @@ impl Score<'_> {
     }
 
     /// `seconds` seconds, in frames.
-    fn secs(&self, seconds: f64) -> u64 {
+    pub(super) fn secs(&self, seconds: f64) -> u64 {
         (seconds * self.rate).round().max(0.0) as u64
     }
 
     /// A number from the seed, 0 to 1.
-    fn unit(&mut self) -> f32 {
+    pub(super) fn unit(&mut self) -> f32 {
         unit(next(self.seed))
     }
 

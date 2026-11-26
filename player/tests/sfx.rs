@@ -23,9 +23,8 @@ use jodeldiplom::core::shine::Shone;
 use jodeldiplom::core::singing::Beat;
 use jodeldiplom::core::{karaoke, Action, Rhythm, Screen, Side, State};
 use jodeldiplom::core::{Anchor, HeadFrame, Playing};
-use jodeldiplom::sfx::conductor::{Clock, Conductor, Event};
-use jodeldiplom::sfx::diploma::Diploma;
-use jodeldiplom::sfx::{Desk, Sfx, Sound};
+use jodeldiplom::sfx::conductor::{Clock, Conductor, Diploma, Event, Sheet};
+use jodeldiplom::sfx::{Desk, Sfx};
 use jodeldiplom::tiers::Tier;
 
 /// Runs `app` as the window does (its events taken, a frame drawn every
@@ -43,18 +42,28 @@ fn frames(app: &mut App, timeout: Duration, mut done: impl FnMut(&App) -> bool) 
     done(app)
 }
 
+/// `sound` of the sheet alone, as the desk's synth makes it (on a
+/// conductor of its own, offline, cued on its first frame): its left side.
+fn made(sound: Sheet) -> Vec<f32> {
+    let (mut c, mut synth) = Conductor::new(RATE);
+    let sheet = Diploma::Sheet {
+        sound,
+        gain: 1.0,
+        pan: 0.0,
+    };
+    c.event(&mut synth, 0, Event::Diploma(sheet));
+    let mut out = vec![0.0f32; 2 * 3 * RATE as usize];
+    synth.render_to(&mut out);
+    out.into_iter().step_by(2).collect()
+}
+
 /// Where `sound` (its left side) is heard in `left` (the device's left
 /// channel, full scale 1) near the device frames `near` (from the first
 /// to the last, within 60 ms): the frame its first `span` frames line up
 /// best from, and how well (normalized correlation, 1: alone and whole),
 /// against how well at its best 200 ms after (where it is not).
-fn heard_near(left: &[f32], sound: Sound, near: (usize, usize), span: usize) -> (usize, f64, f64) {
-    let made: Vec<f32> = sound
-        .render(RATE)
-        .interleaved()
-        .into_iter()
-        .step_by(2)
-        .collect();
+fn heard_near(left: &[f32], sound: Sheet, near: (usize, usize), span: usize) -> (usize, f64, f64) {
+    let made = made(sound);
     let made = &made[..span];
     let made_energy: f64 = made.iter().map(|&v| f64::from(v) * f64::from(v)).sum();
     let at = |from: usize| {
@@ -369,8 +378,7 @@ fn the_result_is_heard_after_the_song() {
     let wait = Duration::from_secs(30);
     let playing = |a: &App| a.state.playing.state == PlayState::Playing;
     assert!(frames(&mut app, wait, playing));
-    // Its frames drawn as it plays: the sounds' bank made at the device's
-    // rate meanwhile, and the song analysed before it is sung.
+    // Its frames drawn as it plays, the song analysed before it is sung.
     app.dispatch(Action::ShowSide(Side::Karaoke));
     assert!(frames(&mut app, wait, |a| karaoke::not_singable(
         &a.state, 0
@@ -441,9 +449,9 @@ fn the_result_is_heard_after_the_song() {
     // The paper's rustle, alone before the title lands (its first 0.1 s),
     // and the pen's scratch (its first 0.3 s, a lullaby over it): each
     // heard where it was cued, and not elsewhere.
-    let rustle = heard_near(&left, Sound::Diploma(Diploma::Unroll), paper, 4_000);
+    let rustle = heard_near(&left, Sheet::Unroll, paper, 4_000);
     assert!(rustle.1 > 0.8 && rustle.2 < 0.3, "the paper: {rustle:?}");
-    let pen = heard_near(&left, Sound::Diploma(Diploma::Signature), signed, 14_400);
+    let pen = heard_near(&left, Sheet::Signature, signed, 14_400);
     assert!(
         pen.1 > 0.12 && pen.1 > 8.0 * pen.2,
         "the signature: {pen:?}"
@@ -453,8 +461,8 @@ fn the_result_is_heard_after_the_song() {
 
 /// With the notes hidden the game's bubbles are not shown, so its sounds
 /// are not played: a phrase sung to the top tier (its chime and its
-/// jackpot) sends nothing to the desk's synth and plays nothing of the
-/// bank, the device mixing on; the notes shown again, it sounds.
+/// jackpot) sends nothing to the desk's synth, the device mixing on; the
+/// notes shown again, it sounds.
 #[test]
 fn the_game_is_silent_with_its_notes_hidden() {
     let _guard = common::real_time();
@@ -499,7 +507,6 @@ fn the_game_is_silent_with_its_notes_hidden() {
             effects: &effects,
             heads: [&fader, &fader],
             timebase: mixer.timebase(),
-            data: None,
         };
         sfx.frame(state, desk);
     };
@@ -517,7 +524,7 @@ fn the_game_is_silent_with_its_notes_hidden() {
         "mixed on",
     );
     let view = effects.view();
-    assert_eq!((view.commands, view.played), (0, 0), "{view:?}");
+    assert_eq!(view.commands, 0, "{view:?}");
     assert_eq!(view.live, RATE, "the synth there to play: {view:?}");
     // The notes shown: the next phrase's chime and its jackpot.
     state.config.karaoke_notes = true;

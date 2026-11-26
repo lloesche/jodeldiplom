@@ -12,8 +12,13 @@
 //! lines, made on a synth of its own, so the beat and the key can be
 //! heard), and in `sounds/` each sound alone: the ladder up to the top,
 //! the five stingers, the five tier chimes, the jackpot, the streak lost
-//! from each rung, clinks, the zap, a pop, the count-up and the shimmer.
-//! Prints each file's length and levels, and what the game cost.
+//! from each rung, clinks, the zap, a pop, the count-up and the shimmer;
+//! in `diploma/` each of the sheet's own sounds alone, and whole diplomas
+//! revealed as the screen plays them (frame by frame at 60 a second) for
+//! each kind of verdict: a Gold one with a new best, a Silver one short of
+//! its best, one without a medal, one not sung from its start, one with
+//! nothing scored, and one the demo key sang. Prints each file's length
+//! and levels, and what the game cost.
 //!
 //! ```text
 //! cargo run --release -p jodeldiplom --example conductor -- OUT_DIR
@@ -26,8 +31,10 @@ use jodel_rhythm::{Analysis, Region};
 use jodel_synth::engines::{analog, drum, formant, supersaw};
 use jodel_synth::patch::{Adsr, Lfo, LfoRate};
 use jodel_synth::{Bank, NoteOn, Patch, PatchId, Synth};
-use jodeldiplom::core::singing::rung;
-use jodeldiplom::sfx::conductor::{Clock, Conductor, Diploma, Event};
+use jodeldiplom::core::shine::Shone;
+use jodeldiplom::core::singing::{rung, Medal, Shown, SongResult};
+use jodeldiplom::sfx::conductor::{Clock, Conductor, Diploma, Event, Sheet};
+use jodeldiplom::sfx::reveal::RevealSounds;
 use jodeldiplom::tiers::Tier;
 
 const RATE: u32 = 48_000;
@@ -421,6 +428,100 @@ fn sounds(dir: &Path, key: &jodel_rhythm::key::Key, a: &Analysis) {
     one("shimmer_held_then_lost", shimmer, 12.0);
 }
 
+/// A result of `points`, with `hit` words of 45 and a best streak of
+/// `streak`, its phrases in `tiers`, its `medal`, the `best` before, sung
+/// whole or not.
+fn result(
+    (points, hit, streak): (u32, u32, u32),
+    tiers: &[Option<Tier>],
+    (medal, best, whole): (Option<Medal>, Option<u32>, bool),
+) -> SongResult {
+    let phrase = |&tier: &Option<Tier>| Shone {
+        line: 0,
+        end: 1.0,
+        value: 0.9,
+        top: 0.9,
+        tier,
+    };
+    SongResult {
+        title: "Song".into(),
+        points,
+        hit,
+        words: 45,
+        streak,
+        phrases: tiers.iter().map(phrase).collect(),
+        medal,
+        best,
+        whole,
+        demo: false,
+    }
+}
+
+/// Each sound of the sheet alone into `dir`, and whole diplomas revealed.
+fn diploma(dir: &Path, key: &jodel_rhythm::key::Key) {
+    let free = |_| Clock::free(RATE);
+    for sound in Sheet::ALL {
+        let sheet = Diploma::Sheet {
+            sound,
+            gain: 1.0,
+            pan: 0.0,
+        };
+        let (out, _) = play(&[(0, Event::Diploma(sheet))], key, 4.0, &free);
+        save(dir, &sound.name(), &out);
+    }
+    let named = |t: &str| Some(Tier::named(t));
+    let six = [
+        Some(Tier::TOP),
+        None,
+        named("Good"),
+        named("Great"),
+        named("Amazing"),
+        Some(Tier::TOP),
+    ];
+    let gold = result(
+        (12_400, 41, 23),
+        &six,
+        (Some(Medal::Gold), Some(9_000), true),
+    );
+    let silver = result(
+        (7_300, 34, 12),
+        &six[..4],
+        (Some(Medal::Silver), Some(9_000), true),
+    );
+    let cheer = result(
+        (2_100, 14, 5),
+        &[None, named("Good"), None],
+        (None, None, true),
+    );
+    let whole = result((5_600, 30, 9), &six[..3], (None, Some(4_000), false));
+    let silent = result((0, 0, 0), &[], (None, None, false));
+    let demo = SongResult {
+        demo: true,
+        ..result((9_100, 40, 30), &six, (Some(Medal::Gold), None, true))
+    };
+    let runs = [
+        ("run-diploma-gold-new-best", gold),
+        ("run-diploma-silver", silver),
+        ("run-diploma-cheer", cheer),
+        ("run-diploma-whole", whole),
+        ("run-diploma-silent", silent),
+        ("run-diploma-demo", demo),
+    ];
+    for (name, result) in runs {
+        let shown = Shown::new(result, 1, 0);
+        let mut reveal = RevealSounds::default();
+        let mut events = Vec::new();
+        let settled = shown.reveal.settled();
+        for f in 0..(60.0 * (settled + 1.0)) as u64 {
+            let at = f * u64::from(RATE) / 60;
+            let heard = reveal.frame(Some((&shown, shown.time(f * 1000 / 60))));
+            events.extend(heard.into_iter().map(|d| (at, Event::Diploma(d))));
+        }
+        let (out, _) = play(&events, key, settled + 3.0, &free);
+        save(dir, name, &out);
+    }
+}
+
 fn main() {
     let Some(root) = std::env::args().nth(1).map(PathBuf::from) else {
         eprintln!("usage: conductor OUT_DIR");
@@ -461,4 +562,5 @@ fn main() {
     }
     save(&root, "game_with_backing", &mixed);
     sounds(&root.join("sounds"), &key, &a);
+    diploma(&root.join("diploma"), &key);
 }

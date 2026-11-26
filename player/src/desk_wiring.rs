@@ -258,7 +258,6 @@ impl Engine {
             effects: &self.effects,
             heads: [&self.heads[0].input, &self.heads[1].input],
             timebase: self.mixer.timebase(),
-            data: state.data_dir.as_deref(),
         };
         self.sfx.frame(state, desk);
     }

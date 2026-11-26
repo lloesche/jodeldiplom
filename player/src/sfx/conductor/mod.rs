@@ -31,7 +31,9 @@
 //!   at one that has it; a streak lost lets them go (and calls off a payout
 //!   still to come).
 //! - The diploma's as it draws them: each tick of its count-up (a pip a
-//!   step higher as the count goes) and its gems.
+//!   step higher as the count goes), its gems, and its sheet's own, its
+//!   paper, pen, stamps and tunes, at once ([`Sheet`]: each on fixed notes,
+//!   the same every time).
 //!
 //! Where a hit lands is the song's grid's one rule
 //! ([`jodel_rhythm::grid::Grid::land`]), the one the looks land by too.
@@ -55,6 +57,8 @@ mod key;
 mod ladder;
 mod layers;
 mod palette;
+mod pen;
+mod sheet;
 mod sounds;
 
 #[cfg(test)]
@@ -69,6 +73,7 @@ use jodel_synth::{Command, Commands, Synth, GENTLE};
 
 pub use clock::Clock;
 pub use layers::{Chime, Layers, Streak};
+pub use sheet::{Entry, Sheet};
 pub(crate) use sounds::JACKPOT_BEATS;
 
 use crate::tiers::Tier;
@@ -120,6 +125,16 @@ pub enum Diploma {
     Points(Option<Tier>),
     /// The best streak written in: the stinger of the rung it reached.
     Rung(Tier),
+    /// One of the sheet's own sounds, at `gain` (1: at its level) and
+    /// `pan` (-1 to 1, where on the sheet it lands).
+    Sheet {
+        /// Which.
+        sound: Sheet,
+        /// Its gain.
+        gain: f32,
+        /// Its pan.
+        pan: f32,
+    },
 }
 
 /// A game event.
@@ -327,6 +342,16 @@ impl Conductor {
                 let layers = layers::at_rung(r);
                 sounds::stinger(&mut self.score(out), at, hit, rung_share(r), layers);
                 hit
+            }
+            Event::Diploma(Diploma::Sheet { sound, gain, pan }) => {
+                // Its notes' seeds its own: the same every time.
+                let mut seed = sound.seed();
+                let mut s = Score {
+                    seed: &mut seed,
+                    ..self.score(out)
+                };
+                sheet::sheet(&mut s, at, sound, gain, pan);
+                at
             }
         }
     }

@@ -5,7 +5,11 @@
 //! the clinks, the zap, ticks and pips, a whirr and a muted horn for the
 //! wind-down, a pluck, a bar chime, brass, a choir's "aah", a shimmer pad,
 //! glitter, a riser and a whoosh, the register's clack, thud, bell and
-//! drawer, a low tonic, and the slam's drums.
+//! drawer, a low tonic, the slam's drums, and the diploma's sheet's own
+//! ([`super::sheet`]): its bells, glass, plucks and hum, its thumps and
+//! knocks, the paper's rustle and the air under it, snaps and cracks of
+//! paper, the air a stamp pushes down, a roll under a fanfare, and the
+//! pen's nib.
 //!
 //! Levels set the sounds against each other: the pops soft, the clinks
 //! quieter still, the big ones bigger; the synth's bus lifts them all
@@ -18,6 +22,8 @@ use std::ops::Index;
 use jodel_synth::engines::{analog, drum, fm, formant, modal, noise, phase, supersaw, AnyParams};
 use jodel_synth::patch::{Adsr, Glide, Lfo, LfoRate, Spread};
 use jodel_synth::{Bank, Patch, PatchId};
+
+use crate::core::singing::{STAMP_DOWN, UNROLL};
 
 /// The atoms, and all of them in their order.
 macro_rules! atoms {
@@ -65,6 +71,20 @@ atoms! {
     SlamKick,
     SlamClap,
     SlamCrash,
+    Ping,
+    Bell,
+    Glass,
+    Plucked,
+    Hum,
+    Thump,
+    Knock,
+    Rustle,
+    Air,
+    Snap,
+    Crack,
+    Rush,
+    Roll,
+    Nib,
 }
 
 /// The coins, taken in turn; the brass's two layers; the shimmer's two
@@ -156,6 +176,34 @@ const fn slam(d: drum::Params) -> Patch {
         gate: 4.0,
         reverb: 0.2,
         ..voice(AnyParams::Drum(d), Adsr::held(0.0, 0.3), -11.0)
+    }
+}
+
+/// Noise through a band on the note, `res` sharp, `color` from white (0)
+/// to brown (1): its cutoff on middle C, following the key a semitone a
+/// semitone, so a note's pitch is the band's.
+const fn band(res: f32, color: f32) -> noise::Params {
+    noise::Params {
+        color,
+        filter: noise::Filter::BandPass,
+        cutoff: MIDDLE_C,
+        res,
+        key_track: 1.0,
+        ..noise::TICK
+    }
+}
+
+/// Middle C, Hz.
+const MIDDLE_C: f32 = 261.625_57;
+
+/// Struck: a decay of `decay` seconds to silence (60 dB down), let go
+/// over `release` when the note is shorter.
+const fn struck(decay: f32, release: f32) -> Adsr {
+    Adsr {
+        attack: 0.001,
+        decay,
+        sustain: 0.0,
+        release,
     }
 }
 
@@ -410,6 +458,161 @@ pub(super) const fn patch(a: Atom) -> Patch {
         Atom::SlamKick => slam(drum::SLAM[0].1),
         Atom::SlamClap => slam(drum::SLAM[1].1),
         Atom::SlamCrash => slam(drum::SLAM[2].1),
+        // The sheet's bells: a chime's partials, a ping dying soon, a bell
+        // ringing on; each note as long as its sound holds it.
+        Atom::Ping => Patch {
+            reverb: 0.15,
+            ..voice(AnyParams::Fm(fm::CHIME), struck(0.6, 0.05), -6.0)
+        },
+        Atom::Bell => Patch {
+            reverb: 0.25,
+            ..voice(AnyParams::Fm(fm::CHIME), struck(2.5, 0.08), -6.0)
+        },
+        // A glassy grain: a sparkle without the glitter's echo.
+        Atom::Glass => Patch {
+            reverb: 0.15,
+            ..voice(AnyParams::Fm(fm::SPARKLE), struck(0.5, 0.04), -8.0)
+        },
+        // A pluck ringing as long as its note.
+        Atom::Plucked => Patch {
+            filter_env: 4.0,
+            reverb: 0.2,
+            ..voice(AnyParams::Analog(analog::PLUCK), struck(1.5, 0.08), -6.0)
+        },
+        // A soft chord's sines, swelling in, a slow vibrato coming in.
+        Atom::Hum => Patch {
+            lfo: Lfo {
+                rate: LfoRate::Hz(4.5),
+                pitch: 0.06,
+                fade: 0.3,
+                ..Lfo::NONE
+            },
+            reverb: 0.35,
+            ..voice(
+                AnyParams::Analog(analog::SINE),
+                Adsr {
+                    attack: 0.1,
+                    decay: 1.2,
+                    sustain: 0.4,
+                    release: 0.35,
+                },
+                -6.0,
+            )
+        },
+        // A sine sliding down an octave and more: a stamp's thunk, a
+        // seal's thump.
+        Atom::Thump => Patch {
+            pitch: Glide {
+                from: 14.0,
+                time: 0.08,
+                curve: 2.0,
+            },
+            reverb: 0.08,
+            ..voice(AnyParams::Analog(analog::SINE), Adsr::hit(0.35), 0.0)
+        },
+        // A small sine knock, sliding a little: the desk under a pen's
+        // tap, the paper under a value landing, the sheet lying flat.
+        Atom::Knock => Patch {
+            pitch: Glide {
+                from: 5.0,
+                time: 0.04,
+                curve: 2.0,
+            },
+            reverb: 0.05,
+            ..voice(AnyParams::Analog(analog::SINE), Adsr::hit(0.1), -6.0)
+        },
+        // The sheet unrolling: the paper's rustle, its band rising as the
+        // sheet goes and wandering (the crinkles in it), as loud as its
+        // front is fast; and the air under it.
+        Atom::Rustle => Patch {
+            pitch: Glide {
+                from: -19.0,
+                time: UNROLL as f32,
+                curve: 1.0,
+            },
+            reverb: 0.1,
+            ..voice(
+                AnyParams::Noise(noise::Params {
+                    drift: 2.0,
+                    drift_rate: 30.0,
+                    ..band(0.3, 0.2)
+                }),
+                struck(1.1, 0.05),
+                -6.0,
+            )
+        },
+        Atom::Air => Patch {
+            reverb: 0.1,
+            ..voice(AnyParams::Noise(band(0.17, 0.3)), struck(1.1, 0.05), -6.0)
+        },
+        // A tiny burst of paper: a crinkle, a nib's click, a flick.
+        Atom::Snap => Patch {
+            pitch: Glide {
+                from: 6.0,
+                time: 0.015,
+                curve: 1.0,
+            },
+            ..voice(AnyParams::Noise(band(0.75, 0.0)), Adsr::hit(0.03), -6.0)
+        },
+        // A short burst falling: a slap, a crack, the paper flapping.
+        Atom::Crack => Patch {
+            pitch: Glide {
+                from: 8.0,
+                time: 0.05,
+                curve: 1.5,
+            },
+            reverb: 0.05,
+            ..voice(AnyParams::Noise(band(0.5, 0.0)), Adsr::hit(0.25), -6.0)
+        },
+        // The air a stamp pushes as it comes down, rising and swelling.
+        Atom::Rush => Patch {
+            pitch: Glide {
+                from: -24.0,
+                time: STAMP_DOWN as f32,
+                curve: 1.0,
+            },
+            ..voice(
+                AnyParams::Noise(band(0.5, 0.3)),
+                Adsr {
+                    attack: 0.09,
+                    decay: 0.08,
+                    sustain: 0.0,
+                    release: 0.02,
+                },
+                -6.0,
+            )
+        },
+        // A roll of noise swelling under a fanfare.
+        Atom::Roll => Patch {
+            pitch: Glide {
+                from: -24.0,
+                time: 0.5,
+                curve: 1.0,
+            },
+            reverb: 0.3,
+            ..voice(
+                AnyParams::Noise(band(0.45, 0.0)),
+                Adsr {
+                    attack: 0.35,
+                    decay: 0.5,
+                    sustain: 0.0,
+                    release: 0.1,
+                },
+                -6.0,
+            )
+        },
+        // The pen's nib on paper: a grain of its scratch, rising over one
+        // grain, held as long as its note, let go over two.
+        Atom::Nib => voice(
+            AnyParams::Noise(band(0.6, 0.0)),
+            Adsr {
+                attack: super::pen::GRAIN as f32,
+                decay: 0.0,
+                sustain: 1.0,
+                release: 2.0 * super::pen::GRAIN as f32,
+            },
+            -16.0,
+        ),
     }
 }
 

@@ -1,9 +1,8 @@
 //! The karaoke game's sound effects, played through the desk's effects
-//! input on its Effects strip ([`jodel_output::mixer::Effects`]): the
-//! game's own played live by our synth in the song's tempo and key
-//! ([`conductor`]), each on the frame of the song where its moment is seen
-//! ([`moments`]); the result screen's paper, pen, stamps and tunes made
-//! ahead into a bank ([`sounds`], from [`synth`]).
+//! input on its Effects strip ([`jodel_output::mixer::Effects`]), all of
+//! them live by our synth ([`conductor`]): the game's own in the song's
+//! tempo and key, each on the frame of the song where its moment is seen
+//! ([`moments`]); the result screen's after it ([`reveal`]).
 //!
 //! The conductor is made for the device's rate (here, off the mixer
 //! thread) and its synth handed to the effects input
@@ -28,54 +27,33 @@
 //! music), the song paused or left call off what is planned and not heard
 //! yet, and let go of what is held.
 //!
-//! The bank is made for the device's rate on a thread of its own, and
-//! kept for when the device comes back to that rate ([`banks`]); until it
-//! is there, its sounds are silent. With the Effects strip down (−∞ or
-//! muted) nothing is played.
+//! With the Effects strip down (−∞ or muted) nothing is played.
 //!
 //! A song's result revealed after it ([`reveal`]) sounds its beats at once,
-//! each on the frame that reaches it: the bank's for its paper, the
-//! conductor's for its music, planned on the desk's own frames (the song
-//! is over then and its output closed: the desk's device plays all along,
-//! so they sound all the same). The game's live sounds go with its
-//! bubbles: with the notes hidden none plays; the diploma shows all the
-//! same (the game scored the song), and sounds.
+//! each on the frame that reaches it, its paper and its music alike,
+//! planned on the desk's own frames (the song is over then and its output
+//! closed: the desk's device plays all along, so they sound all the same).
+//! The game's live sounds go with its bubbles: with the notes hidden none
+//! plays; the diploma shows all the same (the game scored the song), and
+//! sounds.
 
-pub mod banks;
-pub mod cheers;
 pub mod conductor;
-pub mod diploma;
 pub mod moments;
-pub mod pen;
 pub mod reveal;
-pub mod sounds;
-pub mod store;
-pub mod synth;
 
-use jodel_output::mixer::{EffectCue, Effects, Fader, LiveCommands, SoundBank, Timebase};
+use jodel_output::mixer::{Effects, Fader, LiveCommands, Timebase};
 use jodel_playback::PlayState;
 
 pub use moments::{Cued, Frame, Moments};
-pub use sounds::Sound;
 
 use crate::core::desk::StripKind;
 use crate::core::{HeadFrame, State};
 use conductor::{Clock, Conductor, Event};
-use reveal::Heard;
 
 // The queue to the desk's synth takes a frame's worth of the most an
 // event sends, several times over (a ripple of pops, a rung and a phrase
 // on one frame).
 const _: () = assert!(jodel_output::mixer::LIVE_COMMANDS >= 8 * conductor::MOST_COMMANDS);
-
-/// Every sound of the bank, made at `rate`, in [`Sound::index`]'s order.
-pub fn bank(rate: u32) -> SoundBank {
-    let mut bank = SoundBank::new(rate);
-    for sound in Sound::all() {
-        bank.add(sound.render(rate).interleaved());
-    }
-    bank
-}
 
 /// The desk as the effects play on it.
 pub struct Desk<'a> {
@@ -86,9 +64,6 @@ pub struct Desk<'a> {
     pub heads: [&'a Fader; 2],
     /// The mixer's clock (its rate 0: the device closed).
     pub timebase: Timebase,
-    /// The data folder, where the banks made are kept (`None`: in memory
-    /// only).
-    pub data: Option<&'a std::path::Path>,
 }
 
 /// The most events with a time kept waiting for a position of the song to
@@ -111,10 +86,6 @@ struct Told {
 #[derive(Default)]
 pub struct Sfx {
     moments: Moments,
-    /// The banks made, by rate.
-    banks: banks::Banks,
-    /// The rate of the bank sent to the desk.
-    loaded: Option<u32>,
     /// The conductor at the device's rate, its synth on the desk.
     conductor: Option<Conductor>,
     /// Whether it planned on a song's frames since it was last called off,
@@ -132,12 +103,10 @@ pub struct Sfx {
 }
 
 impl Sfx {
-    /// A frame drawn: the bank and the conductor for the device's rate,
-    /// then the game's new moments played on `desk`, then the result's
-    /// reveal's (after what the moments call off, so it never calls them
-    /// off).
+    /// A frame drawn: the conductor for the device's rate, then the game's
+    /// new moments played on `desk`, then the result's reveal's (after what
+    /// the moments call off, so it never calls them off).
     pub fn frame(&mut self, state: &State, desk: Desk<'_>) {
-        self.load(&desk);
         self.conductor_at(&desk);
         self.loudness(state, &desk);
         self.moments(state, &desk);
@@ -339,51 +308,17 @@ impl Sfx {
         })
     }
 
-    /// The result's reveal's sounds of this frame played on `desk`: the
-    /// bank's for now (lifted as the conductor's synth is, by
-    /// [`conductor::LEVEL`] and the song's loudness, so its paper and
-    /// stamps keep their place among the result's music), the conductor's
-    /// on the desk's frames (on a clock of their own: every hit as the
-    /// reveal draws it).
+    /// The result's reveal's sounds of this frame played on `desk`, on the
+    /// desk's frames (on a clock of their own: every hit as the reveal
+    /// draws it).
     fn reveal(&mut self, state: &State, desk: &Desk<'_>) {
         let now = crate::core::karaoke::result_now(state).map(|(s, t)| (&**s, t));
         let heard = self.reveal.frame(now);
         if state.desk.setting(StripKind::Effects).gain() == 0.0 {
             return;
         }
-        let trim = self.conductor.as_ref().map_or(0.0, Conductor::trim);
-        let lift = 10f32.powf((conductor::LEVEL + trim) / 20.0);
-        for h in heard {
-            match h {
-                Heard::Bank(sound, gain, pan) => {
-                    desk.effects.play(EffectCue {
-                        sound: sound.index(),
-                        gain: lift * gain,
-                        pan,
-                    });
-                }
-                Heard::Live(d) => self.on_desk(desk, Event::Diploma(d)),
-            }
-        }
-    }
-
-    /// The bank at the device's rate, sent to the desk once it is made
-    /// (kept from before, or made now on a thread of its own: until then
-    /// the desk has none at its rate, and its sounds are silent).
-    fn load(&mut self, desk: &Desk<'_>) {
-        let rate = desk.timebase.rate;
-        if rate == 0 || self.loaded == Some(rate) {
-            return;
-        }
-        let data = desk.data.map(|d| crate::dirs::Data(d.to_path_buf()));
-        let store = data.map(|d| store::BankStore::new(d.sounds()));
-        self.banks.set_store(store);
-        if let Some(bank) = self.banks.at(rate) {
-            desk.effects.load(bank);
-            self.loaded = Some(rate);
+        for d in heard {
+            self.on_desk(desk, Event::Diploma(d));
         }
     }
 }
-
-#[cfg(test)]
-mod tests;

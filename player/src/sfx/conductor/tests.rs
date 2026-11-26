@@ -16,6 +16,7 @@ use jodel_synth::{Command, Commands, PatchId, Synth, Tag};
 
 use super::palette::{Atom, BRASS, COINS, PADS};
 use super::*;
+use crate::core::singing::{Medal, SIGNING, STAMP_DOWN, UNROLL};
 use crate::tiers::Tier;
 
 const RATE: u32 = 48_000;
@@ -414,7 +415,15 @@ fn no_event_sends_more_than_the_most_commands() {
         }),
         Event::Diploma(Diploma::Points(Some(Tier::TOP))),
         Event::Diploma(Diploma::Rung(Tier::TOP)),
-    ];
+    ]
+    .into_iter()
+    .chain(Sheet::ALL.map(|sound| {
+        Event::Diploma(Diploma::Sheet {
+            sound,
+            gain: 1.0,
+            pan: 0.0,
+        })
+    }));
     let mut most = 0;
     for e in events {
         let (mut c, mut out) = conductor();
@@ -673,4 +682,111 @@ fn a_word_held_full_long_pops_bigger() {
         .collect();
     assert_eq!(bodies.len(), 2);
     assert_eq!(bodies[1], bodies[0] - 12.0);
+}
+
+/// `sound` of the sheet alone at its level through a fresh synth for
+/// `seconds`: its left side from the frame it is cued on (the limiter's
+/// look-ahead taken off).
+fn sheet_alone(sound: Sheet, seconds: f64) -> Vec<f32> {
+    let (mut c, mut s) = playing();
+    let sheet = Diploma::Sheet {
+        sound,
+        gain: 1.0,
+        pan: 0.0,
+    };
+    c.event(&mut s, 0, Event::Diploma(sheet));
+    let mut out = vec![0.0; 2 * (seconds * SECOND) as usize];
+    s.render_to(&mut out);
+    out.iter().step_by(2).skip(s.latency()).copied().collect()
+}
+
+/// The loudness of `x` in windows of 10 ms from `from` to `to` seconds.
+fn loudness(x: &[f32], from: f64, to: f64) -> Vec<f64> {
+    let w = (0.01 * SECOND) as usize;
+    let (a, z) = ((from * SECOND) as usize, (to * SECOND) as usize);
+    x[a..z.min(x.len())]
+        .chunks(w)
+        .map(|c| (c.iter().map(|&v| f64::from(v * v)).sum::<f64>() / c.len() as f64).sqrt())
+        .collect()
+}
+
+/// Every sound of the sheet: heard, well under the ceiling (the softest
+/// paper under the medals, the bigger moments louder over their first
+/// second), the same every time, and over (its reverb's tail too) a few
+/// seconds after.
+#[test]
+fn every_sheet_sound_is_heard_and_ends() {
+    let mut louds = Vec::new();
+    for sound in Sheet::ALL {
+        let x = sheet_alone(sound, 7.0);
+        assert_eq!(x, sheet_alone(sound, 7.0), "{sound:?} the same every time");
+        let peak = x.iter().fold(0.0f32, |m, v| m.max(v.abs()));
+        assert!((0.01..0.6).contains(&peak), "{sound:?}: {peak}");
+        let end = &x[x.len() - SECOND as usize / 2..];
+        let tail = end.iter().fold(0.0f32, |m, v| m.max(v.abs()));
+        assert!(tail < 1e-3 * peak, "{sound:?} over: {tail} of {peak}");
+        let first = &x[..SECOND as usize];
+        let loud = first.iter().map(|&v| f64::from(v * v)).sum::<f64>();
+        louds.push((sound, loud));
+    }
+    let of = |s: Sheet| louds.iter().find(|p| p.0 == s).unwrap().1;
+    assert!(of(Sheet::Tap) < of(Sheet::Medal(Medal::Bronze)));
+    assert!(of(Sheet::Scribbled(Entry::Words)) < of(Sheet::Written(Entry::Words)));
+    assert!(of(Sheet::Medal(Medal::Bronze)) < of(Sheet::Medal(Medal::Gold)));
+}
+
+/// The sheet's rustle follows its front: loudest as it starts to unroll,
+/// quieter as it slows, the front's way
+/// ([`crate::core::singing::unrolled`]).
+#[test]
+fn the_rustle_follows_the_sheet() {
+    let x = sheet_alone(Sheet::Unroll, 1.0);
+    let heard = loudness(&x, 0.0, UNROLL * 0.8);
+    let early = heard[1..6].iter().sum::<f64>() / 5.0;
+    let late = heard[heard.len() - 5..].iter().sum::<f64>() / 5.0;
+    assert!(early > 3.0 * late, "{early} {late}");
+}
+
+/// The signature's scratch follows its stroke: loud where the pen goes
+/// fast, quiet where it slows (its loops' turns, its swash coming to a
+/// stop), silent once it is off but for the flick.
+#[test]
+fn the_signature_follows_its_stroke() {
+    let x = sheet_alone(Sheet::Signature, 1.5);
+    let heard = loudness(&x, 0.0, SIGNING - 0.03);
+    let most = super::pen::fastest();
+    let pace: Vec<f64> = (0..heard.len())
+        .map(|k| super::pen::signature_speed(0.01 * k as f64, most))
+        .collect();
+    let mean = |x: &[f64]| x.iter().sum::<f64>() / x.len() as f64;
+    let (mh, mp) = (mean(&heard), mean(&pace));
+    let cov: f64 = (heard.iter().zip(&pace))
+        .map(|(h, p)| (h - mh) * (p - mp))
+        .sum();
+    let var = |x: &[f64], m: f64| x.iter().map(|v| (v - m) * (v - m)).sum::<f64>();
+    let r = cov / (var(&heard, mh) * var(&pace, mp)).sqrt();
+    assert!(r > 0.7, "the scratch follows the pen's speed: {r}");
+    // Quick at first (its loops), slowing to a stop.
+    let early = mean(&heard[..20]);
+    let late = mean(&heard[heard.len() - 15..]);
+    assert!(early > 4.0 * late, "{early} {late}");
+    // The pen off with a flick: its glint rings out, then nothing.
+    let flick = loudness(&x, SIGNING - 0.02, SIGNING + 0.01);
+    let loudest = flick.iter().copied().fold(0.0, f64::max);
+    assert!(loudest > 2.0 * late, "{flick:?}");
+    let after = loudness(&x, SIGNING + 0.3, SIGNING + 0.5);
+    assert!(after.iter().all(|&v| v < 0.05 * early), "{after:?}");
+}
+
+/// A rubber stamp lands when the stage brings it down: its loudest moment
+/// just after [`STAMP_DOWN`].
+#[test]
+fn a_stamp_lands_on_the_sheet_when_drawn() {
+    let x = sheet_alone(Sheet::Stamp, 0.6);
+    let heard = loudness(&x, 0.0, 0.6);
+    let loudest = (0..heard.len())
+        .max_by(|&a, &z| heard[a].total_cmp(&heard[z]))
+        .unwrap();
+    let at = loudest as f64 * 0.01;
+    assert!((STAMP_DOWN..STAMP_DOWN + 0.04).contains(&at), "{at}");
 }

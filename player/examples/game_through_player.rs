@@ -10,8 +10,9 @@
 //! on the beat, a word missed alone is rescued by a shot, two missed lose
 //! the streak (from ×16), it builds up again to ×32 (the payout); each
 //! line's phrase is given a tier, rising to the top's jackpot; then the
-//! result's diploma is revealed on the device kept open, its paper from
-//! the bank, its ticks, gems, points and streak's rung by the synth.
+//! result's diploma is revealed on the device kept open, its paper, pen,
+//! stamps and tunes, its ticks, gems, points and streak's rung all by the
+//! synth.
 //!
 //! Writes `game_through_player.wav` into OUT_DIR (16-bit, the device's
 //! rate: what the device played, song and sounds; the song plays from

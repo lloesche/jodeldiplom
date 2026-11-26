@@ -16,7 +16,6 @@
 //! | [`COVER_LAYERS`] | a cover taken apart (`covers/*.layers`, binary: `JDLC` and the version byte) |
 //! | [`COVER_SONG`] | which cover taken apart is a song's (`covers/songs/*.txt`) |
 //! | [`COVER_ALBUM`] | an album's covers taken apart, with their perceptual hashes (`covers/albums/*.txt`) |
-//! | [`SFX_BANK`] | the karaoke result screen's sounds made at a rate (`sounds/*.bank`, binary: `JDLS` and the version byte) |
 //!
 //! A text file starts with a header naming its schema and the version of
 //! it the file was written in, and the player that wrote it (for the
@@ -48,10 +47,9 @@
 //! timing by another than the one the player times with now is timed
 //! again: `crate::lyrics::WordTimer::maker`), a cover taken apart on its
 //! models and the way it is taken apart (`crate::cover::VERSION`, in the
-//! file, compared when it is read), the result screen's sounds on the
-//! code that makes them (`crate::sfx::store::SOUNDS_KEY`, in the file). That is apart from the
-//! schema: a better aligner raises its own version
-//! (`jodel_lyrics::VERSION`, `jodel_lyrics::speech::maker`), not the schema's.
+//! file, compared when it is read). That is apart from the schema: a
+//! better aligner raises its own version (`jodel_lyrics::VERSION`,
+//! `jodel_lyrics::speech::maker`), not the schema's.
 
 /// A kind of file kept on disk, and the version of its layout.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -173,18 +171,8 @@ pub const COVER_ALBUM: Schema = Schema {
     user_data: false,
 };
 
-/// The karaoke result screen's sounds made at a rate
-/// ([`crate::sfx::store`]): their
-/// key, rate and lengths, then their samples (binary, versioned by its own
-/// byte); what they sound like is versioned apart, by the key.
-pub const SFX_BANK: Schema = Schema {
-    name: "sfx-bank",
-    version: 1,
-    user_data: false,
-};
-
 /// Every schema.
-pub const ALL: [Schema; 14] = [
+pub const ALL: [Schema; 13] = [
     ANALYSIS,
     WAVEFORM,
     LYRICS_TEXT,
@@ -198,7 +186,6 @@ pub const ALL: [Schema; 14] = [
     COVER_LAYERS,
     COVER_SONG,
     COVER_ALBUM,
-    SFX_BANK,
 ];
 
 /// The first word of a header.

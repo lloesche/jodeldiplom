@@ -125,12 +125,6 @@ impl Data {
         self.0.join("loudness")
     }
 
-    /// The karaoke game's sounds made, a rate each
-    /// ([`crate::sfx::store::BankStore`]).
-    pub fn sounds(&self) -> PathBuf {
-        self.0.join("sounds")
-    }
-
     /// The original singer's phrases worked out ([`crate::shine_cache`]).
     pub fn shine(&self) -> PathBuf {
         self.0.join("shine")
@@ -144,7 +138,7 @@ impl Data {
     /// The folders of what the player makes and can make again (but the
     /// covers', [`crate::cover::CoverStore::dirs_in`]), and what each
     /// holds: what [`forget_cache`] forgets.
-    fn caches(&self) -> [(PathBuf, &'static str); 6] {
+    fn caches(&self) -> [(PathBuf, &'static str); 5] {
         [
             (
                 self.analyses(),
@@ -153,7 +147,6 @@ impl Data {
             (self.stems(), "kept stems"),
             (self.lyrics(), "lyrics"),
             (self.loudness(), "songs' loudness"),
-            (self.sounds(), "game sounds (a rate each)"),
             (self.shine(), "original singer's phrases"),
         ]
     }
@@ -226,10 +219,10 @@ const RECENT: &str = "recent-analyses.txt";
 
 /// Forgets what the player made and can make again (`--clean-cache`): the
 /// beat analyses (not the record `--diag` shows), the stems kept, the
-/// lyrics, the songs' loudness, the game's sounds, the original singer's
-/// phrases, the covers taken apart; in the data folder, and in the one a
-/// move is still taking it from (left there, it would come over). The
-/// models stay. What it did, a line a folder.
+/// lyrics, the songs' loudness, the original singer's phrases, the covers
+/// taken apart; in the data folder, and in the one a move is still taking
+/// it from (left there, it would come over). The models stay. What it
+/// did, a line a folder.
 pub fn forget_cache(folders: &Folders) -> Vec<String> {
     let mut said = Vec::new();
     for data in folders.every_data() {

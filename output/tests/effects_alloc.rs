@@ -1,19 +1,16 @@
 //! What the mixer thread allocates and frees while the effects input plays:
 //! nothing, from the very first sound after the device opens, at each
-//! rate a desk runs at (here 48 and 96 kHz). A
-//! counting allocator (this binary's alone) counts every call on the
-//! thread named `jodel-mixer` while sounds are cued, start (more at once
-//! than there are voices, so one takes another's place) and are summed
-//! with the input; the simulated device's
-//! own memory, which grows as it plays on that thread, is left out. The
-//! bank and the effects input are messages (freed and reserved as the
-//! mixer thread takes them), the cues are not: they
-//! come through a queue of fixed size. The song plays a little before the
-//! sounds, so its own stream's buffers are at their sizes. The same for its
-//! live synth: notes sent on stream frames and on the desk's, waiting,
-//! starting (more than its voices), let go, called off, too late, its
-//! level glided, and the synth replaced as it plays (the one before let
-//! go of elsewhere).
+//! rate a desk runs at (here 48 and 96 kHz). A counting allocator (this
+//! binary's alone) counts every call on the thread named `jodel-mixer`
+//! while its live synth plays: notes sent on stream frames and on the
+//! desk's, waiting, starting (more than its voices), let go, called off,
+//! too late, its level glided, and the synth replaced as it plays (the one
+//! before let go of elsewhere); the simulated device's own memory, which
+//! grows as it plays on that thread, is left out. The synth and the
+//! effects input are messages (freed and reserved as the mixer thread
+//! takes them), the commands are not: they come through a queue of fixed
+//! size. The song plays a little before the sounds, so its own stream's
+//! buffers are at their sizes.
 
 mod common;
 
@@ -23,7 +20,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
 
 use common::*;
-use jodel_output::mixer::{EffectCue, Mixer, MixerOptions, Role, SoundBank, VOICES};
+use jodel_output::mixer::{Mixer, MixerOptions, Role};
 use jodel_output::{
     Capabilities, Clock, Error, OpenRequest, Output, OutputTarget, Stats, StreamInfo,
 };
@@ -165,77 +162,8 @@ fn wide(from: u64, n: u64, channels: usize) -> Vec<i32> {
         .collect()
 }
 
-/// A bank at `rate` of one sound, 2 400 frames.
-fn bank(rate: u32) -> SoundBank {
-    let mut bank = SoundBank::new(rate);
-    bank.add(
-        (0..2_400)
-            .flat_map(|k| [0.1 * (k as f32 * 0.05).sin(); 2])
-            .collect(),
-    );
-    bank
-}
-
 /// One counting test at a time (the count is the binary's).
 static ONE: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-#[test]
-fn playing_effects_allocates_nothing_on_the_mixer_thread() {
-    let _one = ONE.lock().unwrap_or_else(|e| e.into_inner());
-    for rate in [RATE, 96_000] {
-        let device = Device {
-            instant: true,
-            rate: Some(rate),
-            ..Device::default()
-        };
-        let options = MixerOptions {
-            buffer: Duration::from_millis(200),
-            ..MixerOptions::default()
-        };
-        let mixer = Mixer::open(Box::new(QuietDevice(device.clone())), options);
-        let player = mixer.strip("Player");
-        let strip = mixer.strip("Effects");
-        let effects = mixer.effects(&strip);
-        strip.set_level(0.5);
-        let (mut target, _) = mixer.input(&player, Role::Lead, 1.0);
-        effects.load(bank(rate));
-        let request = OpenRequest::new(rate, 2)
-            .formats(&[device.format()])
-            .prefill(Duration::ZERO);
-        let mut out = target.open(&request).unwrap();
-        taken(&mut target);
-        // The song alone first: its stream's buffers at their sizes.
-        out.write(&wide(0, 1_920, 2), None).unwrap();
-        wait_until("mixed", || mixer.timebase().frame == 1_920);
-        MIXER_ALLOCATIONS.store(0, Ordering::Relaxed);
-        COUNTING.store(true, Ordering::Relaxed);
-        // The first sound; then more at once than there are voices; then
-        // one every 960 frames.
-        let mut at = 1_920;
-        let mut mix = |out: &mut Box<dyn Output>, n: u64| {
-            out.write(&wide(at, n, 2), None).unwrap();
-            at += n;
-            wait_until("mixed", || mixer.timebase().frame == at);
-        };
-        effects.play(EffectCue::new(0));
-        mix(&mut out, 1_920);
-        for _ in 0..VOICES + 4 {
-            effects.play(EffectCue::new(0));
-        }
-        mix(&mut out, 1_920);
-        for _ in 0..18 {
-            effects.play(EffectCue::new(0));
-            mix(&mut out, 960);
-        }
-        mix(&mut out, 2_880);
-        COUNTING.store(false, Ordering::Relaxed);
-        assert_eq!(MIXER_ALLOCATIONS.load(Ordering::Relaxed), 0, "{rate}");
-        let view = effects.view();
-        assert_eq!(view.played, 1 + VOICES as u64 + 4 + 18, "{rate}: {view:?}");
-        assert_eq!(view.rate, rate);
-        out.drain(None).unwrap();
-    }
-}
 
 #[test]
 fn playing_live_allocates_nothing_on_the_mixer_thread() {
@@ -313,8 +241,8 @@ fn playing_live_allocates_nothing_on_the_mixer_thread() {
 }
 
 /// In real time with no output open at all, the device playing on
-/// (silence): nothing is allocated as the mixer goes on, nor as sounds
-/// for now are played on it.
+/// (silence): nothing is allocated as the mixer goes on, nor as sounds on
+/// the desk's frames are played on it.
 #[test]
 fn idle_in_real_time_allocates_nothing() {
     let _one = ONE.lock().unwrap_or_else(|e| e.into_inner());
@@ -326,23 +254,22 @@ fn idle_in_real_time_allocates_nothing() {
     let mixer = Mixer::open(Box::new(QuietDevice(Device::default())), options);
     let strip = mixer.strip("Effects");
     let effects = mixer.effects(&strip);
-    effects.load(bank(RATE));
+    let (synth, patch) = tone_synth(RATE, 0.02);
+    effects.live(synth);
+    wait_until("open", || mixer.timebase().rate == RATE);
     // A first sound: what it reserves is reserved.
-    assert!(effects.play(EffectCue::new(0)));
-    wait_until("heard", || {
-        let v = effects.view();
-        v.played == 1 && v.sounding == 0
-    });
+    let soon = || mixer.timebase().frame + 480;
+    assert!(effects.commands(None).send(tone(patch, soon(), 0.0)));
+    wait_until("heard", || effects.view().commands == 1);
     MIXER_ALLOCATIONS.store(0, Ordering::Relaxed);
     COUNTING.store(true, Ordering::Relaxed);
     let from = mixer.timebase().frame;
     for _ in 0..5 {
-        assert!(effects.play(EffectCue::new(0)));
+        assert!(effects.commands(None).send(tone(patch, soon(), 0.0)));
         std::thread::sleep(Duration::from_millis(60));
     }
     wait_until("idle a while, every sound heard", || {
-        let v = effects.view();
-        mixer.timebase().frame > from + u64::from(RATE) / 2 && v.played == 6 && v.sounding == 0
+        mixer.timebase().frame > from + u64::from(RATE) / 2 && effects.view().commands == 6
     });
     COUNTING.store(false, Ordering::Relaxed);
     assert_eq!(MIXER_ALLOCATIONS.load(Ordering::Relaxed), 0);

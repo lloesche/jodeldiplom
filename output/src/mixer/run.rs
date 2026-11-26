@@ -10,6 +10,7 @@ use std::time::Duration;
 use super::aside::{Aside, Gone};
 use super::chunk::Slot;
 use super::desk::pack_format;
+use super::effects_run::{EffectsRun, RESERVED_CHANNELS};
 use super::input::{Opened, Stream};
 use super::mic::Port;
 use super::mix::Mix;
@@ -17,7 +18,6 @@ use super::parts::LaneRun;
 use super::ramp::{GainId, Waiting, When};
 use super::strip::channel_peaks;
 use super::strips::Strips;
-use super::voices::{EffectsRun, RESERVED_CHANNELS};
 use super::{
     desk_format, Curve, MixShared, MixerOptions, Monitor, Msg, Ramp, Role, Start, Timebase,
 };
@@ -267,10 +267,10 @@ impl Run {
                 self.port.set(&mut self.aside, input);
                 self.fit_mic();
             }
-            Msg::Effects(strip, queue, live) => {
-                // One made before goes with this message (its handle, if it
-                // lives, still holds its bank; its synth goes aside).
-                let run = EffectsRun::new(strip, queue, live);
+            Msg::Effects(strip, counts, live) => {
+                // One made before goes with this message (its synth goes
+                // aside).
+                let run = EffectsRun::new(strip, counts, live);
                 if let Some(mut old) = self.effects.replace(run) {
                     if let Some(synth) = old.take_live() {
                         self.aside.drop_later(Gone::Synth(synth));
@@ -278,19 +278,13 @@ impl Run {
                 }
                 self.fit_effects();
             }
-            Msg::EffectsGone { queue, done } => {
+            Msg::EffectsGone { counts, done } => {
                 let ours = self
                     .effects
                     .as_ref()
-                    .is_some_and(|fx| Arc::ptr_eq(&fx.queue, &queue));
+                    .is_some_and(|fx| Arc::ptr_eq(&fx.counts, &counts));
                 let run = if ours { self.effects.take() } else { None };
                 let _ = done.send(run.map(Box::new));
-            }
-            Msg::EffectsBank(bank) => {
-                if let Some(fx) = &mut self.effects {
-                    fx.load(bank);
-                }
-                self.fit_effects();
             }
             Msg::EffectsLive(synth) => {
                 let old = match &mut self.effects {
@@ -322,7 +316,7 @@ impl Run {
     /// Room for the effects' sounds, so the first of them allocates
     /// nothing: their sum and gains, the synth's frames, the mix, the
     /// device's frames and their strip's meter, for a period at the
-    /// device's rate or their bank's or synth's (the highest), of up to
+    /// device's rate or their synth's (the higher), of up to
     /// [`RESERVED_CHANNELS`] channels.
     fn fit_effects(&mut self) {
         let Some(fx) = &mut self.effects else {

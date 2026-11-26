@@ -461,28 +461,6 @@ fn loudness_files_are_pinned() {
     assert_eq!(loudness::from_text(&kept), Some(measured));
 }
 
-/// A bank of the game's sounds kept: pinned, read back bit for bit; one
-/// of other sounds (another key) or at another rate not read.
-#[test]
-fn sfx_bank_files_are_pinned() {
-    use jodeldiplom::sfx::store;
-    let sounds: Vec<(String, Vec<f32>)> = vec![
-        ("pop-0".into(), vec![0.25, -0.5, 1.0, -1.0]),
-        ("break".into(), Vec::new()),
-        ("tier-diva".into(), vec![f32::MIN_POSITIVE, 0.125]),
-    ];
-    let refs: Vec<(String, &[f32])> = sounds.iter().map(|s| (s.0.clone(), &s.1[..])).collect();
-    let key = 0x0123_4567_89ab_cdef;
-    let kept = pinned(
-        &cache::SFX_BANK,
-        "bin",
-        &store::to_bytes(48_000, &refs, key),
-    );
-    assert_eq!(store::from_bytes(&kept, key, 48_000), Some(sounds));
-    assert_eq!(store::from_bytes(&kept, key + 1, 48_000), None);
-    assert_eq!(store::from_bytes(&kept, key, 44_100), None);
-}
-
 /// Every version of every schema keeps its sample.
 #[test]
 fn every_version_keeps_its_sample() {

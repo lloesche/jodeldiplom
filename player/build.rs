@@ -7,14 +7,6 @@
 //!   `include_bytes!` as `EMBEDDED_FONTS`; the binary includes that file
 //!   and hands the fonts to the library. Without them the window uses the
 //!   embedded Cascadia Mono.
-//! - The key of the result screen's sounds kept on disk (the bank; the
-//!   game's own are played live, made of nothing kept):
-//!   `$OUT_DIR/sfx_key.rs`, a hash of the code that makes them
-//!   (`src/sfx/`'s `synth.rs`, `sounds.rs`, `cheers.rs`, `diploma.rs` and
-//!   `pen.rs`, and what the diploma's are timed to: the reveal's times and
-//!   the signature's stroke, `src/core/singing/`'s `reveal.rs` and
-//!   `signature.rs`; not how they are played), so a bank kept by another
-//!   build of them is made again (`src/sfx/store.rs`).
 //! - Its icon on Windows (GNU and GNU-LLVM targets): `windres` compiles
 //!   `assets/jodeldiplom.rc` into an object linked into the executable.
 //!   `WINDRES` names another resource compiler; without one the
@@ -38,43 +30,7 @@ const FONTS: [(&str, &str); 6] = [
 
 fn main() {
     embed_fonts();
-    sounds_key();
     windows_icon();
-}
-
-/// The files whose code makes the bank's sounds.
-const SOUND_SOURCES: [&str; 7] = [
-    "src/sfx/synth.rs",
-    "src/sfx/sounds.rs",
-    "src/sfx/cheers.rs",
-    "src/sfx/diploma.rs",
-    "src/sfx/pen.rs",
-    "src/core/singing/reveal.rs",
-    "src/core/singing/signature.rs",
-];
-
-#[expect(
-    clippy::disallowed_methods,
-    reason = "build output in cargo's OUT_DIR, which cargo owns and rewrites"
-)]
-fn sounds_key() {
-    let manifest = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
-    // FNV-1a, 64 bits, over the files as text (line endings as LF).
-    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
-    for file in SOUND_SOURCES {
-        let path = manifest.join(file);
-        println!("cargo:rerun-if-changed={}", path.display());
-        let text = std::fs::read_to_string(&path).expect("read a sound's source");
-        for b in file.bytes().chain(text.replace("\r\n", "\n").bytes()) {
-            hash ^= u64::from(b);
-            hash = hash.wrapping_mul(0x0100_0000_01b3);
-        }
-    }
-    let code = format!(
-        "/// The key of the sounds this build makes (build.rs).\npub const SOUNDS_KEY: u64 = {hash:#018x};\n"
-    );
-    let out = PathBuf::from(env::var("OUT_DIR").unwrap()).join("sfx_key.rs");
-    std::fs::write(out, code).expect("write sfx_key.rs");
 }
 
 #[expect(

@@ -9,6 +9,7 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 use super::automation::AutomationRun;
+use super::effects_run::EffectsRun;
 use super::fader::Mapped;
 use super::input::{Span, Stream};
 use super::mic::Port;
@@ -17,7 +18,6 @@ use super::parts::{split, touch, LaneRun, Switch};
 use super::ramp::{resolve_starts, start_of, Audio, GainId};
 use super::run::Run;
 use super::strips::Strips;
-use super::voices::EffectsRun;
 use super::SlotState;
 use crate::lanes::Parts;
 
@@ -352,8 +352,8 @@ impl Run {
             slot.fill(first, n, format.rate, &self.strips, &self.starts);
         }
         self.strips.chunk_done();
-        // The effects: their cues due start, the voices sounding summed, at
-        // their strip's path.
+        // The effects: the commands come go to the synth, which is summed,
+        // at their strip's path.
         if let Some(fx) = &mut self.effects {
             fx.chunk((self.epoch, first, n), ch, format.rate, &self.slots);
             fx.take_gains(&self.strips);
