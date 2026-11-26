@@ -4,7 +4,8 @@
 //! the queue drops what it cannot hold; the spreads come from the seed; the
 //! glides, the filter envelope, the tremolo and an LFO in beats move what
 //! they should; a note's own length overrides the gate; the pool takes 128
-//! voices.
+//! voices; the bus's level comes before the limiter, gliding while a
+//! sound plays.
 
 mod common;
 
@@ -474,4 +475,50 @@ fn a_pile_of_sounds_never_passes_the_ceiling() {
     let ceiling = 10f32.powf(-1.0 / 20.0);
     let peak = out.iter().fold(0.0f32, |m, x| m.max(x.abs()));
     assert!(peak <= ceiling + 1e-4 && peak > 0.5 * ceiling, "{peak}");
+}
+
+/// A held sine at the bus's level `db` (set before it sounds), its left
+/// side over its second second.
+fn at_level(db: f32) -> Vec<f32> {
+    let (mut s, ids) = synth(&[soft()], 1);
+    assert!(s.command(Command::Level { db }));
+    s.note(0, ids[0], on(69.0, 1), None);
+    left(&render(&mut s, 2 * RATE as usize))[RATE as usize..].to_vec()
+}
+
+#[test]
+fn the_bus_level_comes_before_the_limiter() {
+    let plain = at_level(0.0);
+    // After the compressor: the same sound, only lower.
+    let down = at_level(-6.0);
+    let ratio = rms(&down) / rms(&plain);
+    assert!((ratio - 10f32.powf(-6.0 / 20.0)).abs() < 1e-3, "{ratio}");
+    // Before the limiter: lifted far, it is held under the ceiling.
+    let ceiling = 10f32.powf(-1.0 / 20.0);
+    let up = at_level(18.0);
+    let peak = up.iter().fold(0.0f32, |m, x| m.max(x.abs()));
+    assert!(peak <= ceiling + 1e-4 && peak > 0.8, "{peak}");
+    let (mut s, _) = synth(&[soft()], 1);
+    assert!(!s.command(Command::Level { db: f32::NAN }));
+    assert_eq!(s.level(), 0.0);
+}
+
+#[test]
+fn the_bus_level_glides_while_a_sound_plays() {
+    let (mut s, ids) = synth(&[soft()], 1);
+    s.note(0, ids[0], on(69.0, 1), None);
+    let before = left(&render(&mut s, RATE as usize / 2));
+    let step = biggest_jump(&before[RATE as usize / 4..]);
+    assert!(s.command(Command::Level { db: -12.0 }));
+    assert!((s.level() + 12.0).abs() < 1e-4);
+    let gliding = left(&render(&mut s, 3 * RATE as usize));
+    // No jump: the first 50 ms are still about where they were, and no
+    // step is bigger than the sine's own.
+    let tenth = RATE as usize / 20;
+    let start = rms(&gliding[..tenth]) / rms(&before[before.len() - tenth..]);
+    assert!(start > 0.97, "{start}");
+    assert!(biggest_jump(&gliding) <= step * 1.01);
+    // There after its glide.
+    let end = rms(&gliding[gliding.len() - tenth..]) / rms(&before[before.len() - tenth..]);
+    assert!((end - 10f32.powf(-12.0 / 20.0)).abs() < 0.01, "{end}");
 }

@@ -805,6 +805,19 @@ stem keys are their mutes.
   - `plain_karaoke_has_the_blur_alone_and_a_switch_fades`
     (`gui::backdrop`)
   - `the_game_is_silent_with_its_notes_hidden` (sfx)
+- **K25.** The game's sounds follow the sung song's loudness as the
+  karaoke plays it (measured once and kept): a louder song's higher, a
+  quieter one's lower, 0.27 dB a LU from −13.8 LUFS, 4 dB either way at
+  most, set before the synth's limiter (nothing clips) and gliding there
+  while a sound plays; a song not measured yet as at −13.8 LUFS. The
+  result after a song keeps its level, its paper and stamps too. The
+  Effects strip's fader is the user's own on top (0 dB: as calibrated).
+  - `the_bus_level_follows_the_song_s_loudness`,
+    `the_songs_set_by_ear_land_near_their_settings_in_order`
+    (`sfx::conductor`)
+  - `the_bus_level_comes_before_the_limiter`,
+    `the_bus_level_glides_while_a_sound_plays` (synth)
+  - `a_song_is_measured_once_and_kept` (`loudness`)
 
 ## Mixer
 

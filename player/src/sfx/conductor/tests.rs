@@ -6,8 +6,9 @@
 //! sounds up the tiers, the held sounds and the payout stopping with the
 //! streak, held sounds ending by themselves when their release is lost, no
 //! key meaning no pitched layer, the most commands an event sends, the
-//! bus never clipping, and the sounds' levels (over a loud song, under its
-//! ceiling).
+//! bus never clipping, the sounds' levels (over a song at the reference
+//! loudness, under its ceiling) and the bus's level following the song's
+//! loudness.
 
 use jodel_rhythm::grid::When;
 use jodel_rhythm::{Analysis, Region};
@@ -570,12 +571,13 @@ fn peak_db(events: &[Event]) -> f32 {
 }
 
 #[test]
-fn the_sounds_sit_on_top_of_a_loud_song_under_the_ceiling() {
-    // A word's pop clearly heard yet short; the big ones bold, a few dB
-    // under full scale; none over the limiter's ceiling.
+fn the_sounds_sit_on_top_of_a_song_under_the_ceiling() {
+    // Over a song at the reference loudness: a word's pop clearly heard
+    // yet short; the big ones bold, a few dB under full scale; none over
+    // the limiter's ceiling.
     for streak in 1..=4 {
         let pop = peak_db(&[word(streak)]);
-        assert!((-9.0..=-6.0).contains(&pop), "a pop at {pop:.1} dBFS");
+        assert!((-13.0..=-10.0).contains(&pop), "a pop at {pop:.1} dBFS");
     }
     let top = RUNGS[RUNGS.len() - 1];
     let big = [
@@ -589,8 +591,46 @@ fn the_sounds_sit_on_top_of_a_loud_song_under_the_ceiling() {
     for (what, events) in big {
         let peak = peak_db(&events);
         assert!(
-            (-6.0..=-1.0 + 1e-3).contains(&peak),
+            (-8.0..=-1.0 + 1e-3).contains(&peak),
             "{what} at {peak:.1} dBFS"
         );
     }
+}
+
+/// The song's loudness sets the synth's bus level, before its limiter: a
+/// loud song's higher than a quiet one's, told once each, none as at the
+/// reference; a pile-up at the highest level still under the ceiling.
+#[test]
+fn the_bus_level_follows_the_song_s_loudness() {
+    let (mut c, mut out) = conductor();
+    c.set_loudness(&mut out, None);
+    assert!(out.0.is_empty(), "as at the reference: nothing to tell");
+    c.set_loudness(&mut out, Some(-8.0));
+    c.set_loudness(&mut out, Some(-8.0));
+    let loud = calibration::trim(Some(-8.0));
+    assert_eq!(out.0, [Command::Level { db: loud }]);
+    assert_eq!(c.trim(), loud);
+    c.set_loudness(&mut out, Some(-22.0));
+    let quiet = calibration::trim(Some(-22.0));
+    assert_eq!(out.0[1], Command::Level { db: quiet });
+    assert!(quiet < 0.0 && 0.0 < loud);
+    // On the synth: a pile at the highest level held at the ceiling.
+    let (mut c, mut s) = playing();
+    c.set_loudness(&mut s, Some(10.0));
+    assert_eq!(s.level(), calibration::MOST as f32);
+    let ceiling = 10f32.powf(-1.0 / 20.0);
+    let mut out = vec![0.0; 2 * 960];
+    let mut peak = 0.0f32;
+    for block in 0..200u64 {
+        let now = s.frame();
+        if block % 25 == 0 {
+            for &r in &RUNGS {
+                c.event(&mut s, now, word(r));
+            }
+            c.event(&mut s, now, Event::Jackpot);
+        }
+        s.render_to(&mut out);
+        peak = out.iter().fold(peak, |m, x| m.max(x.abs()));
+    }
+    assert!(peak > 0.3 && peak <= ceiling + 1e-3, "{peak}");
 }

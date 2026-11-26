@@ -131,7 +131,7 @@ pub(crate) struct LiveRun {
 fn frame_of(c: &Command) -> Option<u64> {
     match *c {
         Command::Note { frame, .. } | Command::Release { frame, .. } => Some(frame),
-        Command::Cancel { .. } | Command::Tempo { .. } => None,
+        Command::Cancel { .. } | Command::Tempo { .. } | Command::Level { .. } => None,
     }
 }
 

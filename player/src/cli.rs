@@ -224,6 +224,7 @@ pub fn app_options(args: &Args) -> Result<AppOptions, String> {
             swept.analyses(),
             swept.stems(),
             swept.lyrics(),
+            swept.loudness(),
             swept.models(),
             swept.sounds(),
         ];

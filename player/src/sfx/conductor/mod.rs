@@ -43,9 +43,12 @@
 //! ([`Layers`]), how big it is its share of the way to the top.
 //!
 //! The key is the song's as the analysis found it, shifted as it is heard;
-//! with none, the sounds stay unpitched or high over the song. Telling it
-//! events and the clock allocates nothing.
+//! with none, the sounds stay unpitched or high over the song. The bus's
+//! level follows the song's loudness ([`Conductor::set_loudness`],
+//! [`calibration`]). Telling it events, the clock and the loudness
+//! allocates nothing.
 
+pub mod calibration;
 mod clock;
 mod key;
 mod ladder;
@@ -78,15 +81,16 @@ const VOICES: usize = 96;
 const CUES: usize = 1_024;
 /// Clinks closer than this, seconds, come softer.
 const CLINK_GAP: f64 = 0.2;
-/// How far the synth's bus lifts the sounds, dB: after its gentle
-/// compressor (which hears them as the patches set them, so it takes the
-/// same edge off), into its limiter at -1 dBFS. So the game sits on top of
-/// a loud song (a modern track's instrumental, about -11 LUFS) as a game's
-/// sounds do over its music, the Effects strip at 0 dB: a word's pop peaks
-/// about -7 dBFS, a clink -2, the top phrase's chime and the jackpot -2 to
-/// -3; the limiter takes only the biggest pile-ups (the high rungs'
-/// stingers, their plucks struck together).
-pub const LEVEL: f32 = 8.0;
+/// How far the synth's bus lifts the sounds over a song at the reference
+/// loudness ([`calibration::REFERENCE`], a pop track's instrumental), dB: after its gentle compressor (which hears them as the
+/// patches set them, so it takes the same edge off), into its limiter at
+/// -1 dBFS; a louder song lifts them more, a quieter one less
+/// ([`calibration::trim`]). So the game sits on top of the song as a
+/// game's sounds do over its music, the Effects strip at 0 dB: a word's
+/// pop peaks about -11.5 dBFS, the top phrase's chime and the jackpot
+/// about -6; the limiter takes only the biggest pile-ups (the top rung's
+/// stinger, its plucks struck together), and more of a loud song's.
+pub const LEVEL: f32 = 3.33;
 
 /// The most commands one event (or a clock or a cancel) sends: what a
 /// queue to the synth must hold at least for one at a time (the top
@@ -166,14 +170,17 @@ pub struct Conductor {
     /// the next one sounds.
     rung: u32,
     riser: bool,
+    /// The bus's level told the synth, dB from [`LEVEL`]
+    /// ([`calibration::trim`]).
+    trim: f32,
 }
 
 impl Conductor {
     /// A conductor planning at `rate` Hz for the tiers' rows (at the free
-    /// tempo, no key known), and the synth its notes are for, its bus set
-    /// (lifted by [`LEVEL`]: the effects path adds no gain of its own; to
-    /// be moved to where it renders: a synth on the effects path, at the
-    /// device's rate).
+    /// tempo, no key known, the song as at the reference loudness), and the
+    /// synth its notes are for, its bus set (lifted by [`LEVEL`]: the
+    /// effects path adds no gain of its own; to be moved to where it
+    /// renders: a synth on the effects path, at the device's rate).
     ///
     /// # Panics
     ///
@@ -212,6 +219,7 @@ impl Conductor {
             quiet_until: 0,
             rung: 0,
             riser: false,
+            trim: 0.0,
         };
         (conductor, synth)
     }
@@ -236,6 +244,28 @@ impl Conductor {
     /// heard `shift` semitones up (down when negative).
     pub fn set_key(&mut self, key: Option<&jodel_rhythm::key::Key>, shift: i8) {
         self.key = key.map(|k| Pentatonic::of(k, shift));
+    }
+
+    /// The song's loudness as played, LUFS (none: not measured yet, or
+    /// silent: as at the reference): the bus's level told the synth when it
+    /// changes ([`calibration::trim`]; the synth glides to it, before its
+    /// limiter). One not taken (a full queue) is told again on the next
+    /// call.
+    pub fn set_loudness(&mut self, out: &mut impl Commands, lufs: Option<f64>) {
+        let trim = calibration::trim(lufs);
+        if trim == self.trim {
+            return;
+        }
+        if out.send(Command::Level { db: trim }) {
+            self.trim = trim;
+        } else {
+            self.dropped += 1;
+        }
+    }
+
+    /// The bus's level told the synth, dB from [`LEVEL`].
+    pub fn trim(&self) -> f32 {
+        self.trim
     }
 
     /// The commands sent that were not taken (a full queue): what was

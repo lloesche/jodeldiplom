@@ -244,6 +244,8 @@ pub struct App {
     lyrics: crate::lyrics::LyricsWorker,
     /// The original singer's phrases, worked out for the shine.
     shine: crate::shine_cache::ShineWorker,
+    /// The songs' loudness as played, measured for the game's sounds.
+    loudness: crate::loudness::LoudnessWorker,
     /// The microphone, open while Karaoke shows; how it opens, how they
     /// are listed, and why it last did not open (not tried again until
     /// Karaoke shows anew).
@@ -506,6 +508,13 @@ impl App {
                     .rhythm_cache
                     .as_deref()
                     .map_or_else(Default::default, crate::shine_cache::Folders::beside),
+                options.notify.clone(),
+            ),
+            loudness: crate::loudness::LoudnessWorker::new(
+                options
+                    .rhythm_cache
+                    .as_deref()
+                    .map_or_else(Default::default, crate::loudness::Folders::beside),
                 options.notify.clone(),
             ),
             mic: None,
@@ -1019,6 +1028,11 @@ impl App {
                 any = true;
             }
         }
+        // The songs' loudness, for the game's sounds to follow.
+        while let Some(found) = self.loudness.take() {
+            self.state.karaoke.loudness.insert(found.path, found.lufs);
+            any = true;
+        }
         any |= self.pump_previews();
         // A device that refused the microphone's tap is told, each time.
         if let Some(engine) = &mut self.engine {
@@ -1123,6 +1137,12 @@ impl App {
         let (late, source) = (karaoke.lag.late, karaoke.lag.source);
         let demo = &mut karaoke.demo;
         singing.prepare(&path, &lyrics, &waveform);
+        // The song's loudness as played, for the game's sounds (the game
+        // on): read or measured off this thread, set as it comes
+        // ([`App::pump`]).
+        if game && !karaoke.loudness.contains_key(&path) {
+            self.loudness.want(&path);
+        }
         // Without a microphone (nor the demo) the notes are still made (the
         // lane shows them), nothing heard.
         if !heard && !demo.held() {

@@ -21,15 +21,17 @@
 //! The bus: each voice goes dry into the two sides and, by its patch's
 //! sends, into a chorus (stereo, its chorused return alone), a tempo-synced
 //! delay (stereo) and a hall (mono in, stereo out), whose returns are
-//! added. Last, a gentle compressor and a look-ahead limiter (ceiling
-//! -1 dBFS) keep stacked sounds from turning harsh or clipping; the
-//! limiter holds the output back by [`Synth::latency`] frames.
+//! added. Last, a gentle compressor, the bus's level (0 dB at the start,
+//! gliding to one a planner sets: [`Command::Level`]) and a look-ahead
+//! limiter (ceiling -1 dBFS) keep stacked sounds from turning harsh or
+//! clipping, however high the level; the limiter holds the output back by
+//! [`Synth::latency`] frames.
 //!
 //! A planner tells it what to play in [`Command`]s ([`Synth::command`]):
 //! notes, a patch's held voices let go on a frame of their own (every
 //! voice of the patch still held, from the block that frame falls in),
 //! the notes and releases waiting of a [`Tag`] (or all of them) called off
-//! before they sound, the tempo. The queue's size is set as the synth is
+//! before they sound, the tempo, the bus's level. The queue's size is set as the synth is
 //! made ([`Synth::with_cues`]).
 //!
 //! The synth is driven from one thread: cue notes and render on the same
@@ -43,7 +45,7 @@
 use crate::chorus::{Chorus, ChorusSettings};
 use crate::delay::{Delay, DelaySettings};
 use crate::dsp::{self, Rate};
-use crate::dynamics::{Compressor, CompressorSettings, Limiter, LimiterSettings};
+use crate::dynamics::{Compressor, CompressorSettings, Level, Limiter, LimiterSettings};
 use crate::engines::{AnyVoice, Engines};
 use crate::env::Envelope;
 use crate::hall::{Hall, HallSettings};
@@ -170,6 +172,13 @@ pub enum Command {
     Tempo {
         /// Beats a minute.
         bpm: f32,
+    },
+    /// The bus's level before its limiter, from now on: gliding there
+    /// over [`crate::dynamics::LEVEL_GLIDE`] while anything sounds or
+    /// waits, at once while nothing does. Not taken unless finite.
+    Level {
+        /// The level, dB.
+        db: f32,
     },
 }
 
@@ -319,6 +328,7 @@ pub struct Synth {
     /// The chorus's return level (its settings' mix).
     chorus_return: f32,
     compressor: Compressor,
+    level: Level,
     limiter: Limiter,
     /// The last block rendered, and how much of it is still to hand out.
     block: [[f32; BLOCK]; 2],
@@ -377,6 +387,7 @@ impl Synth {
                 c.set(GENTLE);
                 c
             },
+            level: Level::new(rate),
             limiter: Limiter::new(rate),
             block: [[0.0; BLOCK]; 2],
             pending: 0,
@@ -439,6 +450,15 @@ impl Synth {
                 self.set_tempo(bpm);
                 true
             }
+            Command::Level { db } if db.is_finite() => {
+                if self.idle() {
+                    self.level.set(db);
+                } else {
+                    self.level.glide(db);
+                }
+                true
+            }
+            Command::Level { .. } => false,
         }
     }
 
@@ -545,6 +565,12 @@ impl Synth {
         self.compressor.set(s);
     }
 
+    /// The bus's level, dB: the one it is at, or gliding to
+    /// ([`Command::Level`]).
+    pub fn level(&self) -> f32 {
+        self.level.db()
+    }
+
     /// The limiter's.
     pub fn set_limiter(&mut self, s: LimiterSettings) {
         self.limiter.set(s);
@@ -633,6 +659,7 @@ impl Synth {
         self.hall
             .process(&bus.reverb, &mut bus.left, &mut bus.right);
         self.compressor.process(&mut bus.left, &mut bus.right);
+        self.level.process(&mut bus.left, &mut bus.right);
         self.limiter.process(&mut bus.left, &mut bus.right);
         self.block = [bus.left, bus.right];
         self.next = end;

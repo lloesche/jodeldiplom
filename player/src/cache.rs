@@ -11,6 +11,7 @@
 //! | [`GRID`] | a beat grid fixed by hand (`grids/*.txt`) |
 //! | [`SCORES`] | the best scores sung, a song each (`scores.txt`) |
 //! | [`SHINE`] | the original singer's phrases measured, the shine's yardstick (`shine/*.txt`) |
+//! | [`LOUDNESS`] | a song's loudness as the karaoke plays it (`loudness/*.txt`) |
 //! | [`DELAYS`] | the singer's delays, an output and a microphone each (`delays.txt`, beside the settings) |
 //! | [`COVER_LAYERS`] | a cover taken apart (`covers/*.layers`, binary: `JDLC` and the version byte) |
 //! | [`COVER_SONG`] | which cover taken apart is a song's (`covers/songs/*.txt`) |
@@ -132,6 +133,15 @@ pub const SHINE: Schema = Schema {
     user_data: false,
 };
 
+/// A song's loudness as the karaoke plays it ([`crate::loudness`]): its
+/// integrated loudness, and what it was measured from (the stems and the
+/// voice's level, or the file).
+pub const LOUDNESS: Schema = Schema {
+    name: "loudness",
+    version: 1,
+    user_data: false,
+};
+
 /// The singer's delays measured and nudged ([`crate::delays`]).
 pub const DELAYS: Schema = Schema {
     name: "delays",
@@ -174,7 +184,7 @@ pub const SFX_BANK: Schema = Schema {
 };
 
 /// Every schema.
-pub const ALL: [Schema; 13] = [
+pub const ALL: [Schema; 14] = [
     ANALYSIS,
     WAVEFORM,
     LYRICS_TEXT,
@@ -183,6 +193,7 @@ pub const ALL: [Schema; 13] = [
     GRID,
     SCORES,
     SHINE,
+    LOUDNESS,
     DELAYS,
     COVER_LAYERS,
     COVER_SONG,

@@ -394,6 +394,11 @@ pub struct KaraokeState {
     pub result: Option<Arc<super::singing::Shown>>,
     /// How many results were shown (the last one's id).
     pub results: u64,
+    /// The songs' loudness as the karaoke plays them, LUFS, as measured
+    /// (none: silent, or not read): the game's sounds follow the sung
+    /// song's ([`crate::sfx::conductor::calibration`]); one not here yet is
+    /// taken as at the reference.
+    pub loudness: HashMap<PathBuf, Option<f64>>,
     /// The best scores sung, by song.
     pub bests: crate::scores::Bests,
     /// Whether the best scores changed since they were last saved.

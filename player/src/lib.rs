@@ -16,7 +16,9 @@
 //!   through the mixer's effects input on the frames of their moments.
 //! - [`browser`]: folder listing, lazy file details, recursive search.
 //! - [`config`], [`cli`]: the settings file and the command line.
-//! - [`cache`]: what is kept on disk between runs, and its schemas.
+//! - [`cache`]: what is kept on disk between runs, and its schemas;
+//!   [`loudness`]: each song's loudness as the karaoke plays it, measured
+//!   once and kept, for the game's sounds to follow.
 //! - [`spectrum`], [`art`]: the spectrum of what is heard, cover images.
 //! - [`gui`]: the iced window; the Mixer tab in iced's widgets, the other
 //!   screens' cells rasterised by a small ratatui pixel backend with an
@@ -43,6 +45,7 @@ pub mod grids;
 pub mod gui;
 pub mod icon;
 pub mod keep;
+pub mod loudness;
 pub mod lyrics;
 pub mod mover;
 pub mod preview;

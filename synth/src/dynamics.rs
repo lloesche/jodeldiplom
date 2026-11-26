@@ -1,6 +1,7 @@
 //! The effects bus's dynamics, so stacked hits never turn harsh or clip: a
-//! smooth feed-forward compressor ([`Compressor`]) and a look-ahead peak
-//! limiter ([`Limiter`]), both on a stereo block in place, both linked (one
+//! smooth feed-forward compressor ([`Compressor`]), the bus's level
+//! ([`Level`]: a gain gliding to the one set) and a look-ahead peak
+//! limiter ([`Limiter`]), all on a stereo block in place, all linked (one
 //! gain for the two sides, so the image stays where it is). Their state is
 //! fixed in size; nothing allocates, at their making or as they run.
 //!
@@ -147,6 +148,72 @@ impl Compressor {
             let gain = 10f32.powf((makeup - self.reduction) / 20.0);
             *l *= gain;
             *rr *= gain;
+        }
+    }
+}
+
+/// How long the bus's level takes to glide to a new one, seconds.
+pub const LEVEL_GLIDE: f32 = 2.0;
+
+/// The bus's level: a gain on both sides that glides to a new one over
+/// [`LEVEL_GLIDE`], straight in the gain, so a change never jumps (or is
+/// set at once, with nothing sounding to hear it).
+#[derive(Clone, Copy, Debug)]
+pub struct Level {
+    gain: f32,
+    to: f32,
+    /// What the gain moves by a sample while it glides.
+    step: f32,
+    rate: f32,
+}
+
+impl Level {
+    /// One at `rate`, at 0 dB.
+    pub fn new(rate: Rate) -> Level {
+        Level {
+            gain: 1.0,
+            to: 1.0,
+            step: 0.0,
+            rate: rate.hz(),
+        }
+    }
+
+    /// The level it is at or gliding to, dB.
+    pub fn db(&self) -> f32 {
+        20.0 * self.to.log10()
+    }
+
+    /// Glides to `db` from the next sample on.
+    pub fn glide(&mut self, db: f32) {
+        self.to = 10f32.powf(db / 20.0);
+        self.step = (self.to - self.gain).abs() / (LEVEL_GLIDE * self.rate);
+    }
+
+    /// At `db` from the next sample on.
+    pub fn set(&mut self, db: f32) {
+        self.glide(db);
+        self.gain = self.to;
+    }
+
+    /// The block `left` and `right` through, in place.
+    pub fn process(&mut self, left: &mut [f32; BLOCK], right: &mut [f32; BLOCK]) {
+        if self.gain == self.to {
+            if self.gain != 1.0 {
+                for (l, r) in left.iter_mut().zip(right.iter_mut()) {
+                    *l *= self.gain;
+                    *r *= self.gain;
+                }
+            }
+            return;
+        }
+        for (l, r) in left.iter_mut().zip(right.iter_mut()) {
+            self.gain = if self.gain < self.to {
+                (self.gain + self.step).min(self.to)
+            } else {
+                (self.gain - self.step).max(self.to)
+            };
+            *l *= self.gain;
+            *r *= self.gain;
         }
     }
 }

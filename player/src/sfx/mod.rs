@@ -8,15 +8,16 @@
 //! The conductor is made for the device's rate (here, off the mixer
 //! thread) and its synth handed to the effects input
 //! ([`jodel_output::mixer::Effects::live`]), heard there at the level its
-//! own bus sets ([`conductor::LEVEL`]); each frame drawn it is told
-//! the music clock (the song's beat grid about where it is heard, and the
-//! next sung lines, [`conductor::Clock`]) and, as a song comes, its key
-//! (the analysis's, shifted as the song is heard). A moment's time is the
-//! singing's own (the song as heard less how late the voice comes:
-//! [`crate::core::lag`]), so it is seen when the song as heard is that
-//! much later: its event is planned on that frame of the playing head's
-//! output ([`crate::core::Playing::frame_at`]), and the desk puts it on
-//! the synth's frames as it mixes. One with no frame to time it by yet (no
+//! own bus sets ([`conductor::LEVEL`], following the sung song's loudness
+//! as the karaoke plays it: [`conductor::calibration`]); each frame drawn
+//! it is told the music clock (the song's beat grid about where it is
+//! heard, and the next sung lines, [`conductor::Clock`]) and, as a song
+//! comes, its key (the analysis's, shifted as the song is heard). A
+//! moment's time is the singing's own (the song as heard less how late
+//! the voice comes: [`crate::core::lag`]), so it is seen when the song as
+//! heard is that much later: its event is planned on that frame of the
+//! playing head's output ([`crate::core::Playing::frame_at`]), and the
+//! desk puts it on the synth's frames as it mixes. One with no frame to time it by yet (no
 //! position told since a seek or a jump) waits here until there is, or it
 //! is too late. A moment for now (the streak lost, a phrase's tier) is
 //! planned on the frame of the song the desk mixes next, or with none (the
@@ -138,6 +139,7 @@ impl Sfx {
     pub fn frame(&mut self, state: &State, desk: Desk<'_>) {
         self.load(&desk);
         self.conductor_at(&desk);
+        self.loudness(state, &desk);
         self.moments(state, &desk);
         self.reveal(state, &desk);
     }
@@ -157,6 +159,24 @@ impl Sfx {
         self.conductor = Some(conductor);
         self.on_song = false;
         self.told = None;
+    }
+
+    /// The sung song's loudness told the conductor, so its synth's level
+    /// follows it ([`conductor::calibration`]): as measured, as at the
+    /// reference until it is; with no song sung the last one's stays (its
+    /// result sounds after it).
+    fn loudness(&mut self, state: &State, desk: &Desk<'_>) {
+        let Some(song) = state.karaoke.singing.song() else {
+            return;
+        };
+        let lufs = state.karaoke.loudness.get(song).copied().flatten();
+        let told = self.conductor.as_ref().map(Conductor::trim);
+        if told.is_none_or(|t| t == conductor::calibration::trim(lufs)) {
+            return;
+        }
+        if let Some((c, mut out)) = self.conduct(desk, None) {
+            c.set_loudness(&mut out, lufs);
+        }
     }
 
     /// The conductor, and where its commands go: on the frames of `fader`'s
@@ -320,17 +340,19 @@ impl Sfx {
     }
 
     /// The result's reveal's sounds of this frame played on `desk`: the
-    /// bank's for now (lifted as the conductor's synth is,
-    /// [`conductor::LEVEL`], so its paper and stamps keep their place among
-    /// the result's music), the conductor's on the desk's frames (on a
-    /// clock of their own: every hit as the reveal draws it).
+    /// bank's for now (lifted as the conductor's synth is, by
+    /// [`conductor::LEVEL`] and the song's loudness, so its paper and
+    /// stamps keep their place among the result's music), the conductor's
+    /// on the desk's frames (on a clock of their own: every hit as the
+    /// reveal draws it).
     fn reveal(&mut self, state: &State, desk: &Desk<'_>) {
         let now = crate::core::karaoke::result_now(state).map(|(s, t)| (&**s, t));
         let heard = self.reveal.frame(now);
         if state.desk.setting(StripKind::Effects).gain() == 0.0 {
             return;
         }
-        let lift = 10f32.powf(conductor::LEVEL / 20.0);
+        let trim = self.conductor.as_ref().map_or(0.0, Conductor::trim);
+        let lift = 10f32.powf((conductor::LEVEL + trim) / 20.0);
         for h in heard {
             match h {
                 Heard::Bank(sound, gain, pan) => {

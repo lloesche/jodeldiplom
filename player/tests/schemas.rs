@@ -442,6 +442,25 @@ fn shine_files_are_pinned() {
     assert_eq!(shine_cache::from_text(&other), None);
 }
 
+/// A song's loudness kept: pinned, read back the same.
+#[test]
+fn loudness_files_are_pinned() {
+    use jodeldiplom::loudness::{self, Measured, Played};
+    let measured = Measured {
+        lufs: Some(-14.96),
+        from: Played::Stems {
+            voice_db: f64::NEG_INFINITY,
+        },
+    };
+    let kept = pinned(
+        &cache::LOUDNESS,
+        "txt",
+        loudness::to_text(&measured).as_bytes(),
+    );
+    let kept = String::from_utf8(kept).unwrap();
+    assert_eq!(loudness::from_text(&kept), Some(measured));
+}
+
 /// A bank of the game's sounds kept: pinned, read back bit for bit; one
 /// of other sounds (another key) or at another rate not read.
 #[test]

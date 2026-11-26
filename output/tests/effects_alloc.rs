@@ -11,8 +11,9 @@
 //! come through a queue of fixed size. The song plays a little before the
 //! sounds, so its own stream's buffers are at their sizes. The same for its
 //! live synth: notes sent on stream frames and on the desk's, waiting,
-//! starting (more than its voices), let go, called off, too late, and the
-//! synth replaced as it plays (the one before let go of elsewhere).
+//! starting (more than its voices), let go, called off, too late, its
+//! level glided, and the synth replaced as it plays (the one before let
+//! go of elsewhere).
 
 mod common;
 
@@ -284,6 +285,7 @@ fn playing_live_allocates_nothing_on_the_mixer_thread() {
             song.send(tone(patch, 0, 0.0));
             song.send(release);
             song.send(Command::Tempo { bpm: 97.0 });
+            song.send(Command::Level { db: -2.5 });
         }
         let desk = mixer.timebase().frame;
         effects.commands(None).send(tone(patch, desk + 3_000, 0.0));

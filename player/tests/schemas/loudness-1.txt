@@ -1,0 +1,3 @@
+jodeldiplom-cache loudness 1 by jodeldiplom x
+lufs -14.960
+from stems voice -inf

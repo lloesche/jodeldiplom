@@ -7,6 +7,7 @@
 //!   whole song (two more networks, their weights built in);
 //! - [`yin`]: a voice's pitch live, as it is sung;
 //! - [`waveform`]: the stems' waveforms for display and the sung melody;
+//! - [`loudness`]: a track's integrated loudness (ITU-R BS.1770);
 //! - [`nn`]: what the networks share (layers, the weights file, threads);
 //! - [`synth`]: generated music, for tests.
 //!
@@ -64,6 +65,7 @@ mod fft;
 pub mod frontend;
 pub mod grid;
 pub mod key;
+pub mod loudness;
 pub mod meter;
 pub mod metrics;
 pub mod net;

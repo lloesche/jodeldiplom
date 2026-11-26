@@ -50,7 +50,7 @@ without one).
 | `--headroom DB` | routes that change the samples play this many dB below full scale (`0`, `0.5`, `1`, `2`, `3`; default `0`), so overs need not clip: resampled routes (inter-sample overs) and floating-point files; lossy files (MP3, AAC, Vorbis) always at least 1.5 dB, as their decoded signal goes over full scale where the master was near it; files played as they are are never touched |
 | `--config FILE` | the settings file (default: `config.toml` in the settings folder, see Folders and setup) |
 | `--list-devices` | list the devices and what each takes (its rate and format, as the system mixes it) |
-| `--clean-cache` | forget the beat analyses, the stems kept, the lyrics and the karaoke result's sounds in the data folder (each made again when wanted); the models stay (`make clean-cache`) |
+| `--clean-cache` | forget the beat analyses, the stems kept, the lyrics, the songs' loudness and the karaoke result's sounds in the data folder (each made again when wanted); the models stay (`make clean-cache`) |
 | `--clean-diag` | forget the record of the last analyses `--diag` shows (`make clean-diag`) |
 | `--diag` | print what the player finds on this system, for a bug report: the build, the OS and processor, the settings in force, the cache folders, every output device with what it takes, and the GPU side (every adapter on every backend with the limits the separator needs, whether the separator sets up on the one it picks or the error, a 6 s chunk's time and how it splits between the kernels, the upload and the readback, and whether the beat analysis will listen to stems), then the last three beat analyses the player made (`recent-analyses.txt` in the analysis cache: when, the file's name without its folders, what the cues heard, the tempo found, and how long decoding, the stems, listening and deciding took; analyses taken from the cache are not counted). Plays nothing. The Windows window binary has no console: run it with `jodeldiplom` |
 
@@ -1068,10 +1068,27 @@ keys go through the strips drawn.
   next beat, the jackpot on a downbeat clear of the singing); and the
   result's (its paper, pen and stamps made ahead, its count-up, gems and
   points by the synth). With the notes hidden (no bubbles shown) the
-  game's own are not played, the result's are. Its fader and mute are
-  kept in the settings (`karaoke_effects`, `karaoke_effects_mute`); down
-  to −∞ or muted, none is played. While one sounds, the output is mixed; the microphone's
-  echo canceller hears them as it hears the song.
+  game's own are not played, the result's are. They follow the song's
+  loudness: a loud song takes them a little higher, a quiet one a little
+  lower, so they sit the same over each (below). Its fader is the user's
+  own on top, 0 dB as calibrated; it and the mute are kept in the
+  settings (`karaoke_effects`, `karaoke_effects_mute`); down to −∞ or
+  muted, none is played. While one sounds, the output is mixed; the
+  microphone's echo canceller hears them as it hears the song.
+  - *The calibration*: the song's loudness is what the karaoke plays of
+    it (its stems with the voice at the Karaoke tab's default, the
+    instrumental; the file as it is where no stems are kept), integrated
+    over the whole song as ITU-R BS.1770 has it (K-weighted, gated at
+    −70 LUFS and 10 LU under the rest). It is measured once, on a thread
+    of its own, as a song is first sung with the game on, and kept in
+    `loudness` in the data folder (a small file a song; measured again
+    when its stems come, or the voice's default changes). The synth's
+    bus is set for −13.8 LUFS, and moves 0.27 dB for every LU the song is
+    louder or quieter, 4 dB either way at most, before the synth's
+    limiter (so nothing clips), gliding to a new one over 2 s while a
+    sound plays; a song not measured yet is taken as at −13.8 LUFS.
+    Fitted on six songs set by ear, from −22.2 to −9.4 LUFS as played:
+    each lands within 1 dB of its setting, five within 0.6.
 - **PLAYER** and **PREVIEW**: the name on a scribble strip (lit when
   selected), what the strip carries (the format; the player's LEAD row,
   lit while the track on air is heard, and while a transition mixes, or
@@ -1181,6 +1198,7 @@ The capitals keep their commands here (`M` the beat pulse, `S` stop);
 | `grids` | the beat grids fixed by hand, kept per track in the settings folder |
 | `cache` | the schemas of what is kept on disk between runs, and their versions |
 | `stems_cache` | the tracks' stems kept (`stems/`): their files' names, the store the engine reads them from, pruning to 30 GB |
+| `loudness` | each song's loudness as the karaoke plays it (ITU-R BS.1770, `jodel_rhythm::loudness`), measured once on a thread of its own and kept (`loudness/`), for the game's sounds to follow (`sfx::conductor::calibration`) |
 | `gui` | the window, an iced application (`gui::window`); the Mixer tab in iced's widgets (`gui::mixer`); every other screen the old canvas in one widget under them (`gui::embed`, on the GPU through `gui::embed_gpu` and `gui::present`): `gui::raster::PixelBackend` draws the cells into pixels with the embedded font, `gui::Canvas` paints covers, the spectrum and the Transition lanes at their cell rects; Karaoke mode's stage on the GPU (`gui::stage`, `gui::stage_gpu`, a pipeline a group of shapes; what keeps it fast, held by tests, in PERFORMANCE.md) and its effects (`gui::fx`: an effect a module, registered by one line, its strength eased from the singing and moved by the music on a board, drawing at its points of the stage, its shaders held to its maths) |
 | `tiers` | the phrase tiers, one table: a row a tier, all it takes and shows (its bars, colours, glow, sounds, sticker and the effects it lists) |
 

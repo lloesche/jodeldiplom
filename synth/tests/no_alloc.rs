@@ -1,14 +1,14 @@
 //! Nothing allocates after the synth is made: cueing notes on every
 //! engine, retriggering and stealing voices, and rendering through the
-//! bus (the chorus, the delay, the hall, the compressor and the limiter),
-//! counted by a global allocator that counts.
+//! bus (the chorus, the delay, the hall, the compressor, the level gliding
+//! and the limiter), counted by a global allocator that counts.
 
 use jodel_synth::chorus::{ChorusSettings, Wave};
 use jodel_synth::engines::{
     analog, drum, fm, formant, lofi, modal, noise, phase, string, supersaw,
 };
 use jodel_synth::patch::{Lfo, LfoRate};
-use jodel_synth::{Bank, NoteOn, Patch, Synth};
+use jodel_synth::{Bank, Command, NoteOn, Patch, Synth};
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -141,6 +141,9 @@ fn rendering_allocates_nothing() {
         let length = (k % 3 == 0).then_some(u64::from(k % 7) * 500);
         synth.note(u64::from(k) * 300, id, note, length);
         synth.set_tempo(100.0 + (k % 3) as f32);
+        synth.command(Command::Level {
+            db: -3.0 * (k % 4) as f32,
+        });
         synth.set_chorus(ChorusSettings {
             wave: if k % 2 == 0 {
                 Wave::Sine
