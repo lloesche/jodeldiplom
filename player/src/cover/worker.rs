@@ -18,7 +18,7 @@ use jodel_gpu::{GpuDepth, GpuMatte};
 use jodel_playback::{Cover, Tags, TrackInfo};
 
 use super::store::{CoverStore, SongCover, Splitter};
-use super::{album_keys, split, Apart, CoverLayers, CoverModels, Layers, Parts};
+use super::{album_keys, split, Apart, CoverLayers, CoverModels, FaceNet, Layers, Parts, TextNet};
 use crate::browser::Notify;
 use crate::core::{Action, Facts, Job};
 
@@ -98,8 +98,9 @@ impl GpuSplitter {
     }
 
     /// What the models find in `image`, setting them up first if need be.
-    /// Each model's working buffers go once it has run, so only one
-    /// model's are held at a time (their weights stay).
+    /// Each GPU model's working buffers go once it has run, so only one
+    /// model's are held at a time (their weights stay); the lettering and
+    /// the faces are found on the processor after them.
     pub fn parts(&self, image: &RgbImage) -> Result<Parts, String> {
         let mut models = self.lock();
         self.set_up(&mut models)?;
@@ -117,9 +118,13 @@ impl GpuSplitter {
         let found = found?;
         let cut = matte.matte(&rgb);
         matte.release();
+        let cut = cut?;
+        drop(models);
         Ok(Parts {
             depth: found,
-            matte: cut?,
+            matte: cut,
+            text: TextNet::built_in().find(image),
+            faces: FaceNet::built_in().find(image),
         })
     }
 

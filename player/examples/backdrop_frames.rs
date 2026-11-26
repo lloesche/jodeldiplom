@@ -40,7 +40,7 @@ use jodeldiplom::art::Art;
 use jodeldiplom::config::Config;
 use jodeldiplom::core::shine::{Shone, Tier};
 use jodeldiplom::core::singing::Singing;
-use jodeldiplom::cover::{Apart, CoverLayers, Layers, Parts};
+use jodeldiplom::cover::{Apart, CoverLayers, Layers, Parts, TextMap};
 use jodeldiplom::gui::backdrop::music::{Hearing, Levels};
 use jodeldiplom::gui::backdrop::{Cue, Mode, Visualiser};
 use jodeldiplom::gui::big_text::Faces;
@@ -355,7 +355,13 @@ fn picture_apart(image: &image::RgbImage) -> CoverLayers {
         height: 1,
         values: vec![0.0],
     };
-    jodeldiplom::cover::split(image, &Parts { depth, matte })
+    let parts = Parts {
+        depth,
+        matte,
+        text: TextMap::none(),
+        faces: Vec::new(),
+    };
+    jodeldiplom::cover::split(image, &parts)
 }
 
 /// The layers in `path` (its file name the key; made `shrink` pixels

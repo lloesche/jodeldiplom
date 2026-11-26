@@ -139,6 +139,10 @@ Built-in models and fonts keep their own licences, kept beside them:
 - the beat, stem, key and pitch networks' weights in
   [rhythm/models](rhythm/models): `LICENSE-beat-this`,
   `LICENSE-mini-bs-roformer`, `LICENSE-musical-key-cnn`, `LICENSE-fcpe`;
+- the covers' text and face detectors' weights in
+  [player/models](player/models) (PP-OCRv5 mobile det, Apache 2.0, and
+  YuNet, MIT, folded by `player/tools/convert_text_det.py` and
+  `player/tools/convert_yunet.py`): `LICENSE-pp-ocr`, `LICENSE-yunet`;
 - the player's fonts in [player/fonts](player/fonts):
   `LICENSE-SarasaGothic.txt`, `LICENSE-NotoEmoji.txt`,
   `LICENSE-AtkinsonHyperlegibleNext.txt`, `LICENSE-Nunito.txt`,

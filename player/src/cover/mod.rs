@@ -5,18 +5,27 @@
 //! both, the subject's rim, and the cover's palette ([`CoverLayers`]).
 //!
 //! The subject's matte is BEN2 Base's (MIT) and the depth Depth Anything 3
-//! Small's (Apache-2.0), both on the GPU (`jodel_gpu::vision`); the rest is
-//! here (`split.rs`, the fill in `fill.rs`). It is a step of a song's
+//! Small's (Apache-2.0), both on the GPU (`jodel_gpu::vision`). Two small
+//! detectors, built in and run on the processor (`nets.rs`), keep the
+//! cover's lettering out of the subject and let a face that fills the
+//! cover be one: PP-OCRv5 mobile det's text (Apache-2.0, `text.rs`) and
+//! YuNet's faces (MIT, `faces.rs`); the matte is cleaned with them in
+//! `clean.rs`. The rest is here (`split.rs`, the fill in `fill.rs`). It is
+//! a step of a song's
 //! preparation (`worker.rs`, beside the analysis and the lyrics), kept in
 //! two levels (`store.rs`): the cover's result once, keyed by its pixels
 //! (and an album's re-encoded copies found by a perceptual hash), and a
 //! small entry per song that links to it. A machine without a usable GPU
 //! or without the weights gets no layers (the background keeps its blur).
 
+mod clean;
+mod faces;
 mod fill;
 mod hash;
+mod nets;
 mod split;
 mod store;
+mod text;
 mod worker;
 
 use std::path::{Path, PathBuf};
@@ -24,14 +33,16 @@ use std::sync::Arc;
 
 use image::{GrayImage, RgbImage, RgbaImage};
 
+pub use faces::{Face, FaceNet};
 pub use hash::{album_keys, perceptual, pixel_hash, Perceptual};
 pub use split::{hole, split, Parts};
 pub use store::{from_bytes, to_bytes, CoverStore, Kept, SongCover, Splitter};
+pub use text::{TextMap, TextNet};
 pub use worker::{CoverWorker, GpuSplitter};
 
-/// What the shared results are made by: the two models and the way they
-/// are taken apart. A result made otherwise is made again.
-pub const VERSION: &str = "da3-small ben2-base split-1";
+/// What the shared results are made by: the models and the way they are
+/// taken apart. A result made otherwise is made again.
+pub const VERSION: &str = "da3-small ben2-base pp-ocrv5-det yunet split-2";
 
 /// The depth model's weights: Depth Anything 3 Small by ByteDance Seed
 /// (Apache-2.0), its checkpoint as published.

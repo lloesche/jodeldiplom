@@ -4,13 +4,14 @@ Work agreed on but not started, roughly in the order it was raised.
 
 ## Karaoke
 
-- **Cover separation picks up text.** The subject cut out of the cover
-  (the depth of field, the beat's push, the rays fanning out from behind
-  it) works well on faces, but the matte often takes some of the cover's
-  lettering as part of the subject: a person and half a word come out
-  sharp and pushed by the beat, the rest of the word blurred. The cut
-  should keep to people and objects, never text (and fall back to no
-  subject rather than a wrong one).
+- **The cover's subject, what is left.** A text and a face detector now
+  clean the cut (on 302 covers from the library, judged by eye: text in
+  the subject 72 to 46, subjects missed 37 to 25, no straight edges
+  bitten out of people). Left: lettering touching a face stays with it
+  (Evanescence's title); logos the text detector misses (Coldplay,
+  Bowie); a person turned away with lettering round her has no subject
+  (Lily Allen); busy collages pass as one subject (LSD, Les Babacools);
+  illustrations and text printed on objects are mostly missed.
 - **A lyrics editor.** The words still often miss the voice. An editor
   over the vocal stem's waveform where a word can be moved and made
   longer or shorter by hand; the pitch of the new span is read again by

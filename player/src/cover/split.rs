@@ -1,5 +1,6 @@
-//! A cover taken apart from its depth and its subject's matte (the models'
-//! outputs, [`Parts`]): the subject with its colours freed of the old
+//! A cover taken apart from what the models found in it ([`Parts`]: its
+//! depth, its subject's matte, its lettering and faces): the subject (the
+//! matte cleaned of lettering, `clean.rs`) with its colours freed of the old
 //! background at the edges, the plate with the subject removed (its matte
 //! grown a little first, so no outline of it stays) and filled, the depth
 //! of both, the subject's rim, the palette.
@@ -7,7 +8,9 @@
 use image::{GrayImage, Luma, RgbImage, Rgba, RgbaImage};
 use jodel_gpu::vision::{Depth, Matte};
 
+use super::faces::Face;
 use super::fill::{box_blur, dilate, fill, push_pull, resize, Planes};
+use super::text::TextMap;
 use super::{CoverLayers, NearMap, Swatch};
 
 /// What the models found in a cover.
@@ -17,15 +20,10 @@ pub struct Parts {
     pub depth: Depth,
     /// BEN2's matte of the subject.
     pub matte: Matte,
-}
-
-/// Whether the matte makes a clear subject: some of the cover but not
-/// nearly all of it, and mostly sure of itself (not a patchwork of halves).
-fn clear_subject(alpha: &[f32]) -> bool {
-    let n = alpha.len() as f32;
-    let cover = alpha.iter().sum::<f32>() / n;
-    let unsure = alpha.iter().filter(|&&a| a > 0.15 && a < 0.85).count() as f32 / n;
-    (0.01..=0.7).contains(&cover) && unsure < 0.12
+    /// PP-OCRv5's map of the lettering.
+    pub text: TextMap,
+    /// YuNet's faces.
+    pub faces: Vec<Face>,
 }
 
 /// The subject's colours freed of the background they were over (the blur
@@ -88,6 +86,27 @@ fn nearness(depth: &Depth) -> Planes {
             .map(|&d| ((d - lo) / span).clamp(0.0, 1.0))
             .collect(),
     }
+}
+
+/// Nearness as a straight share of the depth's range (0 farthest, 1
+/// nearest) at `w × h`: what a subject is grown through from a face.
+fn depth_near(depth: &Depth, w: usize, h: usize) -> Vec<f32> {
+    let (lo, hi) = depth
+        .values
+        .iter()
+        .fold((f32::MAX, f32::MIN), |(a, b), &v| (a.min(v), b.max(v)));
+    let span = (hi - lo).max(1e-9);
+    let p = Planes {
+        width: depth.width,
+        height: depth.height,
+        channels: 1,
+        data: depth
+            .values
+            .iter()
+            .map(|&d| 1.0 - (d - lo) / span)
+            .collect(),
+    };
+    resize(&p, w, h).data
 }
 
 fn near_map(p: &Planes) -> NearMap {
@@ -238,7 +257,14 @@ pub fn split(image: &RgbImage, parts: &Parts) -> CoverLayers {
     let near = nearness(&parts.depth);
     let depth = near_map(&near);
     let scale = w.max(h) as f32 / 1024.0;
-    if !clear_subject(&alpha) {
+    let Ok(alpha) = super::clean::subject(
+        &alpha,
+        &depth_near(&parts.depth, w, h),
+        w,
+        h,
+        &parts.text,
+        &parts.faces,
+    ) else {
         let rim = resize(&edges(&near), w, h);
         return CoverLayers {
             plate: image.clone(),
@@ -248,7 +274,7 @@ pub fn split(image: &RgbImage, parts: &Parts) -> CoverLayers {
             outline: gray(&rim),
             palette: palette(image),
         };
-    }
+    };
     // The subject: its matte, its colours freed of the old background.
     let colours = foreground(&pixels, &alpha);
     let subject = RgbaImage::from_fn(w as u32, h as u32, |x, y| {
@@ -355,6 +381,8 @@ mod tests {
                 height: side,
                 values,
             },
+            text: TextMap::none(),
+            faces: Vec::new(),
         };
         (image, parts)
     }

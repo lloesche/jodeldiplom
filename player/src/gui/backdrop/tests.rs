@@ -13,7 +13,7 @@ use jodel_gpu::vision::{Depth, Matte};
 
 use super::music::{Hearing, Levels};
 use super::*;
-use crate::cover::{split, Apart, Parts};
+use crate::cover::{split, Apart, Parts, TextMap};
 
 /// A cover `side` square: a grey ground with a disc of `colour` round
 /// (`cx`, `cy`) (shares), the disc its subject, nearer; its key in the
@@ -65,6 +65,8 @@ fn disc_cover(
                 _ => 0.0,
             }),
         },
+        text: TextMap::none(),
+        faces: Vec::new(),
     };
     let key = format!("{side}-{colour:?}-{cx}-{cy}-{lettering}");
     let layers = Arc::new(Apart::new(key, split(&image, &parts)));
@@ -334,6 +336,8 @@ fn striped_layers(side: usize) -> Layers {
             height: side,
             values: at(&|x, y| if inside(x, y) { 1.0 } else { 0.0 }),
         },
+        text: TextMap::none(),
+        faces: Vec::new(),
     };
     Arc::new(Apart::new(format!("stripes-{side}"), split(&image, &parts)))
 }

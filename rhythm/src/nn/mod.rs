@@ -5,9 +5,11 @@
 //!
 //! The beat network ([`crate::net`]), the stem separator
 //! ([`crate::stems`]), the key ([`crate::key`]) and the pitch
-//! ([`crate::pitch`]) all run on these.
+//! ([`crate::pitch`]) all run on these, and so do the player's small
+//! detectors for a cover's lettering and faces (through [`layers::Linear`]
+//! and [`layers::par_chunks`]).
 
-pub(crate) mod layers;
+pub mod layers;
 pub mod quant;
 pub mod weights;
 

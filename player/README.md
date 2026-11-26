@@ -995,7 +995,11 @@ one by one.
 Karaoke mode fills the window (fullscreen): the song's cover blurred
 under a dark layer, its title and, once they are known, its lyrics. With
 the game or the notes on, the whole cover sits sharp in the middle over
-that blur, lit by the music (on the GPU, once it is taken apart); with
+that blur, lit by the music (on the GPU, once it is taken apart: its
+subject cut out, the person or the thing that stands out, never its
+lettering, which two small built-in detectors of text and faces keep out;
+a close-up face the cut breaks up is grown from the depth instead; a
+cover whose cut is not sure of itself stays whole); with
 neither (plain lyrics karaoke) the blur alone fills the window, and
 switching either mid-song fades the cover out or in. The
 voice plays at its level (as on the tab). Going in stops the song and

@@ -6,7 +6,7 @@ use super::weights::Weights;
 
 /// Runs `work` on every `chunk`-sized piece of `data` (the last may be
 /// shorter) on up to `threads` threads; `work` gets the piece's index.
-pub(crate) fn par_chunks<T: Send>(
+pub fn par_chunks<T: Send>(
     data: &mut [T],
     chunk: usize,
     threads: usize,
@@ -144,8 +144,10 @@ fast! {
 }
 
 /// A fully connected layer: `out = W·x + b`.
-pub(crate) struct Linear {
+pub struct Linear {
+    /// The length of a row in.
     pub inputs: usize,
+    /// The length of a row out.
     pub outputs: usize,
     /// Transposed: a row of `outputs` per input.
     weight: Vec<f32>,
@@ -210,6 +212,8 @@ fast! {
 }
 
 impl Linear {
+    /// `NAME.weight` (`[outputs][inputs]`) of `w`, and `NAME.bias` if
+    /// `bias`.
     pub fn load(
         w: &mut Weights,
         name: &str,
