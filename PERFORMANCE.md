@@ -206,6 +206,25 @@ and 0.249 / 0.599; the Mixer 0.156 / 0.396 and 0.155 / 0.387; Transition
 0.093 / 0.333; all within CK-C's 1.0 / 2.0 but single worst frames of
 "Main, 50 entries" (3.9 before, 3.2 after: the machine's).
 
+## The old canvas deleted (the iced port's F, November 2026)
+
+The old canvas (the cells, their rasteriser, their widget and its pixmap
+pass) is gone with ratatui: nothing drew it any more. A whole frame
+measured the lanes' letters by its cells; it measures the main font's M
+now (`gui::lanes::Metrics::at`, 0.4 µs). Each measured twice in turn,
+before and after, on the RTX 5080 machine shared with other agents'
+builds; the second run, the quieter: `examples/view_cost.rs` (1512 × 982
+at scale 2, median / worst ms in all) Main 0.239 / 2.386 before, 0.238 /
+4.341 after (one frame: the first run's worst was 4.671 before); the
+queue 0.272 / 0.805 and 0.278 / 0.708; the Mixer 0.162 / 0.582 and
+0.170 / 0.591; Transition 0.096 / 0.262 and 0.100 / 0.262; the Karaoke
+tab 0.101 / 0.530 and 0.118 / 0.498; Karaoke mode with its controls
+0.021 / 0.043 and 0.020 / 0.160. `examples/frames.rs` (3024 × 1890 at
+scale 2, ms a frame) the Transition tab 0.17 before, 0.22 after (0.33
+both in the first run), held 0.05 and 0.07, the Karaoke tab 0.15 and
+0.18; without a GPU 2.50 and 2.45, 0.07 and 0.06, 1.48 and 1.53: the
+same within the machine's noise.
+
 ## The stems as parts of the output (November 2026)
 
 Measured on the development machine (Windows, an RTX 5080), release

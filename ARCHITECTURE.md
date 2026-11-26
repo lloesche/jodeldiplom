@@ -88,7 +88,7 @@ side effects is outside it and driven by what it returns.
 |---|---|---|
 | Core | `core` | `State` (what the player shows and knows), `Action` (every input: keys, widgets, the engine, the workers), `update` (pure), `Effect` (what to do), the keymap table, `Fit` (the window's size as facts). Sub-cores per feature: `core::desk`, `core::transition`, `core::karaoke`, `core::singing`, `core::shine`, `core::lag`, `core::sync`, `core::preview`, `core::stems`, `core::key`. |
 | The game's data | `tiers`, `theme` | the tier table: everything a tier takes, looks like and sounds like, a row each; the themes that override its colours, the effects' looks and the sounds' patches by key. |
-| Presentation models | `view` | what each screen says, as plain data (rows, labels, tones, the Karaoke picture, the bubbles' fill). The cell layout and cell mouse regions in `view::layout`, `view::mouse` and `view::cells` are the old canvas's, and go with it. |
+| Presentation models | `view` | what each screen says, as plain data (rows, labels, tones, the Karaoke picture, the bubbles' fill). |
 | The running player | `app`, `desk_wiring`, `preview`, `sync`, `clock` | `App` holds the `State`, carries out the effects, pumps the channels; `desk_wiring` builds the desk and the engine on it; `preview` and `sync` play on it beside the engine. |
 | Workers | `browser` (details, search), `rhythm`, `lyrics`, `cover`, `shine_cache`, `loudness`, `setup`, `download`, `mover`, `grids` | background threads, each with its queue; results come back as `Action`s. |
 | Stores | `cache`, `dirs`, `session`, `grids`, `scores`, `delays`, `stems_cache`, `shine_cache`, `keep`, `mover`, `config` | what is kept on disk, where, and in which schema. |
@@ -243,7 +243,7 @@ Real-time rules, and what holds them:
 | State | Where | Who changes it |
 |---|---|---|
 | Everything the screens show and every rule's memory | `core::State`, held by `app::App` | `core::update` only |
-| How the window looks frame to frame (pacing, the pointer held, the covers' images, the lanes' tiles, the faders' glide, the stage and its effects' board, the backdrop's visualiser) | `gui::window::Gui` and what it holds (`gui::paint::Paint`, the canvas's `gui::stage::Stage`) | the window; no rule of the core depends on it |
+| How the window looks frame to frame (pacing, the pointer held, the covers' images, the lanes' tiles, the faders' glide, the stage and its effects' board, the backdrop's visualiser) | `gui::window::Gui` and what it holds (`gui::paint::Paint`, Karaoke mode's `gui::stage_view::StageView`) | the window; no rule of the core depends on it |
 | The engine's tracks, heads and routes | the `jodel-playback` thread | its commands (`jodel_playback::Command`); it reports as `Event`s, turned into `Action`s |
 | The desk's strips, inputs, gains and rings | the `jodel-mixer` thread | handles (`Strip`, `Fader`, `Effects`); read back as `DeskView` and meters |
 | The engine, the mixer and the game's sounds | `desk_wiring::Engine` (inside `App`), with `sfx::Sfx` and its conductor | `App`, as effects come |
@@ -380,7 +380,6 @@ name means in the standard words, and where it is.
 | moment | a game event (a word scored, a bubble bursting, a rung reached, a phrase rated) in one ordered stream | `player/src/core/singing/moments.rs` |
 | music clock | audio-reactive modulation signals: beat and bar phase, pulses, levels, pitch | `player/src/gui/fx/music.rs` |
 | odometer | the rolling score counter | `player/src/gui/stage/score.rs` |
-| old canvas | the cell renderer left from the terminal UI, rasterised into a pixmap | `player/src/gui/canvas`, `player/src/gui/embed.rs` |
 | pacer | frame pacing: one tick per display refresh, sent from inside the redraw | `player/src/gui/pacer.rs` |
 | par | the score the original singer's everyday hearings reach on a phrase, the bars' scale | `player/src/core/shine/reference.rs` |
 | part | a stem carried beside main in a lane stream | `output/src/lanes.rs`, `playback/src/engine/lanes` |

@@ -1,6 +1,5 @@
-//! The window's drawing path without a window: the old canvas (Karaoke
-//! mode alone), the covers in the places the screens make for them, the
-//! lanes where the screens lay them out.
+//! The window's drawing path without a window: the covers in the places
+//! the screens make for them, the lanes where the screens lay them out.
 
 mod common;
 #[path = "../examples/headless/mod.rs"]
@@ -17,61 +16,16 @@ use jodel_output::SimClock;
 use jodeldiplom::app::{App, AppOptions, Output};
 use jodeldiplom::art::{sample_cover, Art};
 use jodeldiplom::core::{Screen, Side, State};
-use jodeldiplom::gui::lanes::{Lanes, Offscreen as LaneOffscreen};
+use jodeldiplom::gui::lanes::{Lanes, Metrics, Offscreen as LaneOffscreen};
 use jodeldiplom::gui::widgets::cover::Covers;
 use jodeldiplom::gui::window::{Gui, Message};
-use jodeldiplom::gui::{font_px, lane_spots, metrics, transition, Canvas};
+use jodeldiplom::gui::{lane_spots, metrics, transition};
 use jodeldiplom::icon::Style;
 
-use jodeldiplom::view::{palette, Scene};
+use jodeldiplom::view::palette;
 
 fn bg() -> Rgb<u8> {
     Rgb(palette::BG)
-}
-
-fn draw(canvas: &mut Canvas, state: &State) {
-    let scene = Scene {
-        state,
-        grid: canvas.grid(),
-        heard: 0.0,
-    };
-    canvas.draw(&scene);
-}
-
-fn sized(canvas: &mut Canvas, w: u32, h: u32) -> State {
-    let grid = canvas.fit(w, h);
-    common::playing_state(grid.cols, grid.rows)
-}
-
-/// The canvas draws no screen any more: on the main screen (every side),
-/// the screens the window lays out whole and Karaoke mode it leaves every
-/// pixel to the window's own widgets.
-#[test]
-fn the_canvas_draws_no_screen() {
-    let mut canvas = Canvas::new(80, 24, font_px(1.0));
-    let main = sized(&mut canvas, 1280, 800);
-    for side in [
-        Side::Browser,
-        Side::Queue,
-        Side::Transition,
-        Side::Karaoke,
-        Side::Mixer,
-    ] {
-        for screen in [
-            Screen::Main,
-            Screen::NowPlaying,
-            Screen::Settings,
-            Screen::Help,
-            Screen::Karaoke,
-        ] {
-            let mut state = main.clone();
-            (state.side, state.screen) = (side, screen);
-            draw(&mut canvas, &state);
-            let image = canvas.image();
-            assert!(image.pixels().all(|p| *p == bg()), "{side:?}, {screen:?}");
-            assert!(canvas.text().trim().is_empty(), "{side:?}, {screen:?}");
-        }
-    }
 }
 
 /// `words` (`0x00RRGGBB`, `width` × `height`) as an image.
@@ -264,12 +218,6 @@ fn transition_frames_in_a_row_are_as_drawn_afresh() {
     assert!(differ > 500, "the words: {differ} pixels");
 }
 
-/// The sizes the lanes are painted at in a window of `scale`: the
-/// canvas's cells'.
-fn lane_metrics(scale: f32) -> jodeldiplom::gui::lanes::Metrics {
-    Canvas::new(80, 24, font_px(f64::from(scale))).metrics()
-}
-
 /// The lanes `state` shows at what it says is heard, framed by `lanes` on
 /// the GPU (`gpu`) or the processor, in a window of
 /// `(width, height, scale)` pixels.
@@ -282,7 +230,7 @@ fn frame_lanes(
     let size = Size::new(width as f32 / scale, height as f32 / scale);
     let heard = state.heard();
     lanes.show(
-        lane_spots(state, size, scale, lane_metrics(scale), heard),
+        lane_spots(state, size, scale, Metrics::at(scale), heard),
         scale,
         gpu,
     );
@@ -295,86 +243,6 @@ fn frame_lanes(
 fn lanes_picture(lanes: &mut Lanes, state: &State, window: (u32, u32, f32)) -> Vec<u32> {
     frame_lanes(lanes, state, window, false);
     lanes.picture(window.0 as usize, window.1 as usize)
-}
-
-/// A frame of `state` at what it says is heard.
-fn draw_heard(canvas: &mut Canvas, state: &State) {
-    let scene = Scene {
-        state,
-        grid: canvas.grid(),
-        heard: state.heard(),
-    };
-    canvas.draw(&scene);
-}
-
-/// The window's frames through the GPU, off screen: the pixels that
-/// changed go over frame by frame (as [`Canvas::take_changes`] says), and
-/// each frame read back is the canvas, with the background beyond it,
-/// through the Transition tab's steps, the browser with a cover and a moving
-/// frame drawn again, Now playing, a window resized, and a skipped take; into a
-/// frame that takes the bytes as they are and into one that encodes them
-/// as sRGB. Skipped (with a note) without a GPU.
-#[test]
-fn the_gpu_window_shows_each_frame_as_the_canvas() {
-    for srgb in [false, true] {
-        gpu_frames(srgb);
-    }
-}
-
-fn gpu_frames(srgb: bool) {
-    use jodeldiplom::gui::present::Offscreen;
-    let mut gpu = match Offscreen::new(srgb) {
-        Ok(gpu) => gpu,
-        Err(e) => {
-            eprintln!("no GPU ({e}): skipped");
-            return;
-        }
-    };
-    gpu.name += if srgb { ", sRGB" } else { "" };
-    let scale = 2.0;
-    let mut canvas = Canvas::new(80, 24, font_px(scale));
-    // Not a whole number of cells: the background shows beyond them.
-    let (mut width, mut height) = (2411, 1507);
-    let grid = canvas.fit(width, height);
-    let main = common::playing_state(grid.cols, grid.rows);
-    let mut steps: Vec<(String, State)> = vec![
-        ("main".into(), main.clone()),
-        ("main, again".into(), main.clone()),
-        ("main, still".into(), main.clone()),
-    ];
-    let mut now_playing = main.clone();
-    now_playing.screen = Screen::NowPlaying;
-    steps.push(("now playing".into(), now_playing));
-    steps.extend(transition_steps(common::window(grid.cols, grid.rows)));
-    steps.push(("main after transition".into(), main.clone()));
-    for (i, (name, state)) in steps.iter().enumerate() {
-        if i == 5 {
-            // The window a little wider: the grid stays, the margin grows.
-            width += 7;
-        }
-        draw_heard(&mut canvas, state);
-        // One take skipped: what it held must come with the next.
-        if i == 8 {
-            continue;
-        }
-        let changes = canvas.take_changes();
-        let got = gpu.show(&canvas, &changes, width, height).unwrap();
-        let mut want = vec![0u32; (width * height) as usize];
-        canvas.write_xrgb(&mut want, width as usize, height as usize);
-        let differ = got.iter().zip(&want).filter(|(a, b)| a != b).count();
-        assert_eq!(differ, 0, "{name} on {}: {differ} pixels differ", gpu.name);
-    }
-    // A smaller window: a smaller grid.
-    (width, height) = (1900, 1200);
-    let grid = canvas.fit(width, height);
-    let mut small = main.clone();
-    common::fit(&mut small, grid.cols, grid.rows);
-    draw_heard(&mut canvas, &small);
-    let changes = canvas.take_changes();
-    let got = gpu.show(&canvas, &changes, width, height).unwrap();
-    let mut want = vec![0u32; (width * height) as usize];
-    canvas.write_xrgb(&mut want, width as usize, height as usize);
-    assert!(got == want, "smaller on {}: the pixels differ", gpu.name);
 }
 
 /// The Karaoke tab's voice lane on the GPU ([`Lanes`] through
@@ -637,22 +505,12 @@ fn sung(state: &mut State) {
     }
 }
 
+/// The lanes' cells at twice the scale are about twice as large.
 #[test]
 fn hidpi_doubles_the_cells() {
-    let small = Canvas::new(10, 10, font_px(1.0));
-    let large = Canvas::new(10, 10, font_px(2.0));
-    let (a, b) = (small.cell(), large.cell());
+    let (a, b) = (Metrics::at(1.0).cell, Metrics::at(2.0).cell);
     assert!(b.0 >= 2 * a.0 - 1 && b.0 <= 2 * a.0 + 1, "{a:?} {b:?}");
     assert!(b.1 >= 2 * a.1 - 1 && b.1 <= 2 * a.1 + 1, "{a:?} {b:?}");
-    // The same window at twice the scale has about the same grid.
-    let mut c1 = Canvas::new(10, 10, font_px(1.0));
-    let mut c2 = Canvas::new(10, 10, font_px(2.0));
-    let g1 = c1.fit(1280, 800);
-    let g2 = c2.fit(2560, 1600);
-    assert!(
-        g1.cols.abs_diff(g2.cols) <= 2 && g1.rows.abs_diff(g2.rows) <= 2,
-        "{g1:?} {g2:?}"
-    );
 }
 
 /// The icon file built into the window player is the one the code draws
@@ -795,7 +653,7 @@ fn the_bar_numbers_start_at_their_bars_to_the_pixel() {
         .unwrap()
         .analysis
         .clone();
-    let cw = lane_metrics(1.0).cell.0 as u32;
+    let cw = Metrics::at(1.0).cell.0 as u32;
     // On the panel's ground.
     let ground = Rgb(jodeldiplom::gui::look::bytes(
         jodeldiplom::gui::look::SURFACE,

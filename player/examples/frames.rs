@@ -5,7 +5,7 @@
 //! keys ([`metrics::fit`]) and the lanes ([`Lanes`]: their tiles painted
 //! and their frame, for the GPU or, without one ("cpu"), as the
 //! processor's images), and what that would cost at 30 frames a second.
-//! The old canvas is no longer drawn; Karaoke mode is `frame_cost`'s.
+//! Karaoke mode is `frame_cost`'s.
 //! "transition held" is the Transition tab with its view held (the cursor
 //! moved), the playhead going across it; "karaoke tab" has the voice's
 //! lane going by.
@@ -27,8 +27,8 @@ use jodel_output::SimClock;
 use jodeldiplom::app::{AppOptions, Output};
 use jodeldiplom::core::keymap::Op;
 use jodeldiplom::core::{Action, Screen, Side, State};
-use jodeldiplom::gui::lanes::Lanes;
-use jodeldiplom::gui::{font_px, lane_spots, metrics, Canvas};
+use jodeldiplom::gui::lanes::{Lanes, Metrics};
+use jodeldiplom::gui::{lane_spots, metrics};
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -42,7 +42,7 @@ fn main() {
     );
     let frames = number(3, 240.0) as usize;
     let size = Size::new(width / scale, height / scale);
-    let lane_metrics = Canvas::new(80, 24, font_px(f64::from(scale))).metrics();
+    let lane_metrics = Metrics::at(scale);
     let letter = lane_metrics.cell.0 as f32 / scale;
     let cells = ((size.width / 8.0) as u16, (size.height / 19.0) as u16);
 

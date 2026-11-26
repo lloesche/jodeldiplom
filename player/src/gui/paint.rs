@@ -11,8 +11,7 @@ use std::time::{Duration, Instant};
 
 use super::backdrop::music::Song;
 use super::backdrop::Visualiser;
-use super::embed::Embed;
-use super::lanes::Lanes;
+use super::lanes::{Lanes, Metrics};
 use super::stage::Tint;
 use super::stage_view::StageView;
 use crate::app::App;
@@ -24,8 +23,8 @@ use crate::spectrum::SpectrumFrame;
 /// what paces it: 60 a second.
 pub const FRAME: Duration = Duration::from_millis(16);
 
-/// How often the old canvas is drawn while only the spectrum and the
-/// clock move: 30 a second, half the work.
+/// How often a whole frame is drawn while only the spectrum and the clock
+/// move: 30 a second, half the work.
 pub const CALM: Duration = Duration::from_millis(33);
 
 /// The rest's tick: what the engine and the workers sent is taken in, and
@@ -49,8 +48,8 @@ pub enum Pace {
 pub enum Draw {
     /// Nothing: the window shows what it has.
     Nothing,
-    /// Only the lanes move (one follows the playhead): the canvas is not
-    /// drawn, the lanes stand where the playhead is now.
+    /// Only the lanes move (one follows the playhead): nothing else is
+    /// framed, the lanes stand where the playhead is now.
     LanesOnly,
     /// The whole frame.
     Whole,
@@ -221,7 +220,7 @@ impl Paint {
     pub fn draw(
         &mut self,
         plan: Plan,
-        (embed, stage, lanes): (&Embed, &StageView, &mut Lanes),
+        (stage, lanes): (&StageView, &mut Lanes),
         app: &mut App,
         place: Place,
         (heard, at): (f64, Instant),
@@ -247,14 +246,19 @@ impl Paint {
             "the lanes alone".to_owned()
         } else {
             self.last_whole = Some(at);
-            self.whole((embed, stage, lanes), app, place, heard);
+            self.whole((stage, lanes), app, place, heard);
             if mode {
                 "Karaoke mode".to_owned()
             } else {
                 format!("{:?}, {:?}", app.state.screen, app.state.side)
             }
         };
-        let (late, handed) = if mode { stage.late() } else { embed.late() };
+        // Only Karaoke mode's stage hears how far behind the GPU is.
+        let (late, handed) = if mode {
+            stage.late()
+        } else {
+            (false, Duration::ZERO)
+        };
         if paced && plan.pace == Pace::Refresh {
             jodel_gpu::pace::frame(late);
         }
@@ -267,7 +271,7 @@ impl Paint {
     /// spectrum heard now.
     fn whole(
         &mut self,
-        (embed, stage, lanes): (&Embed, &StageView, &mut Lanes),
+        (stage, lanes): (&StageView, &mut Lanes),
         app: &mut App,
         place: Place,
         heard: f64,
@@ -281,7 +285,7 @@ impl Paint {
         // The list's page, the help's, the desk and the Transition tab's
         // lanes as the window lays them out (the lanes' letters a cell of
         // theirs wide); how far up Karaoke mode's controls reach.
-        let metrics = embed.metrics(place.scale);
+        let metrics = Metrics::at(place.scale);
         let letter = metrics.cell.0 as f32 / place.scale;
         let height = place.points.height;
         let fit = super::metrics::fit(place.points, &app.state, letter);

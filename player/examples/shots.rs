@@ -1,10 +1,10 @@
 //! Renders the player's screens to files, with a fixture track playing
 //! through the null output (no device) and a generated cover: `gui-*.png`
 //! as the window draws them ([`Gui::view`], with iced's headless renderer:
-//! the widgets iced draws, Karaoke mode's old canvas and what the GPU
-//! draws itself, its stage among it), and for each a `gui-*.txt` with the
-//! outline of its models (none for Karaoke mode). Each screen at
-//! 1280 × 800 at scale 1, and as `gui-*-hidpi` at 1512 × 982 at scale 2.
+//! the widgets iced draws and what the GPU draws itself, Karaoke mode's
+//! stage among it), and for each a `gui-*.txt` with the outline of its
+//! models (none for Karaoke mode). Each screen at 1280 × 800 at scale 1,
+//! and as `gui-*-hidpi` at 1512 × 982 at scale 2.
 //! The main screen also with tags and a device name too long for any
 //! column (`gui-main-long`), with tags in Japanese (`gui-main-cjk`),
 //! narrow (`gui-main-narrow`, `gui-main-narrow-long`), and last without
@@ -548,7 +548,8 @@ fn main() {
         id: window::Id::unique(),
         out,
     };
-    // Which renderer draws is known to the canvas once a frame was drawn:
+    // Which renderer draws is known to the lanes and the stage once a frame
+    // was drawn:
     // the first shot paints what the GPU does not draw.
     shots.headless.frame(&shots.gui, Size::new(1280.0, 800.0));
     for (name, s) in screens.iter().filter(|(name, _)| wanted(name)) {

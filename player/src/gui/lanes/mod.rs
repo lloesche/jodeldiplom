@@ -32,6 +32,7 @@ pub use tiles::{LaneFrame, Part, TILE};
 
 use std::sync::{Arc, Mutex, MutexGuard};
 
+use ab_glyph::{Font, FontRef, PxScale, ScaleFont};
 use iced::advanced::image::{self as image, Renderer as _};
 use iced::advanced::layout::{self, Layout};
 use iced::advanced::mouse;
@@ -41,7 +42,6 @@ use iced::widget::shader::Shader;
 use iced::{Element, Length, Rectangle, Size, Theme, Widget as _};
 
 use super::big_text::{Face, Faces};
-use super::canvas::BASE_FONT_PX;
 use super::look;
 use super::pixels::PixelRect;
 use crate::view::palette;
@@ -57,9 +57,12 @@ const RULER: [u8; 3] = [0x17, 0x17, 0x1d];
 const BASE: [u8; 3] = palette::BG;
 /// The bar numbers' face: Nunito, semi-bold, as the interface's figures.
 const NUMBERS: Face = Face::Words(600);
+/// The cells' font size at a scale factor of 1, in pixels.
+const BASE_FONT_PX: f64 = 15.0;
 
 /// The sizes the lanes are painted at: a cell's (the words' letters take a
-/// cell's width each, as the layout counts them), and the font's.
+/// cell's width each, as the layout counts them), and the font's
+/// ([`Metrics::at`]).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Metrics {
     /// A cell's width and height, in pixels.
@@ -69,6 +72,24 @@ pub struct Metrics {
 }
 
 impl Metrics {
+    /// The sizes in a window of `scale` pixels a point: the main font
+    /// ([`super::fonts::main_font`]) at 15 pixels a point, a cell as wide
+    /// as its M and as high as its lines.
+    pub fn at(scale: f32) -> Metrics {
+        let font_px = (BASE_FONT_PX * f64::from(scale)).round().clamp(8.0, 96.0) as f32;
+        let font =
+            FontRef::try_from_slice(super::fonts::main_font()).expect("the main font parses");
+        let units = font.units_per_em().unwrap_or(1000.0);
+        let height = font.ascent_unscaled() - font.descent_unscaled();
+        let scaled = font.as_scaled(PxScale::from(font_px * height / units));
+        let width = scaled.h_advance(font.glyph_id('M')).round().max(1.0);
+        let line = (scaled.ascent() - scaled.descent() + scaled.line_gap()).ceil();
+        Metrics {
+            cell: (width as usize, line.max(1.0) as usize),
+            font_px,
+        }
+    }
+
     /// The pixels per point of the window's scale factor.
     fn scale(&self) -> f64 {
         f64::from(self.font_px) / BASE_FONT_PX

@@ -5,9 +5,8 @@ M4A/MP4), and for AAC-LC (in M4A/MP4), MP3 (MP2, MP1) and Ogg Vorbis, on top of
 [`jodel-playback`](../playback) and [`jodel-output`](../output): output
 through the system's mixer, beside every other application (a call's
 screen share hears it), a plain file browser instead of a library database, in
-a window: `jodeldiplom` (iced on wgpu, its CPU renderer without a GPU;
-the screens not ported to iced yet are ratatui widgets rasterised in
-pixels, shown inside it: see [The window](#the-window); on macOS the app
+a window: `jodeldiplom` (iced on wgpu, its CPU renderer without a GPU:
+see [The window](#the-window); on macOS the app
 `Jodeldiplom.app`). A Windows release build opens no console window;
 started from a terminal, it attaches to that one, so `--help`, `--diag`,
 `--list-devices`, `--clean-cache`, `--clean-diag` and errors print there
@@ -36,7 +35,7 @@ clean-diag` forgets the record of the last analyses that `--diag` shows
 fixed by hand, the lyrics edited by hand or the speech model. `make clean` does both and removes the
 build output; `make CARGO="cargo +1.100.0"` picks another cargo.
 
-The player needs Rust 1.90 or newer (ratatui 0.30); `jodel-playback`, `jodel-output` and
+The player needs Rust 1.93 or newer; `jodel-playback`, `jodel-output` and
 `jodel-rhythm` build with Rust 1.85.
 
 `path` is a folder to start the browser in, or a file to play at once
@@ -1274,7 +1273,7 @@ The capitals keep their commands here (`M` the beat pulse, `S` stop);
 | Module | |
 |---|---|
 | `core` | state, `Action`, `update(state, action) -> effects`, keymap; no geometry: what the window's size does to the keys and the pointer comes in as `core::Fit`; the Transition tab (`core::transition::tab`, the lanes it shares with Karaoke in `core::lanes`), the grid fixes (`core::grid`), the transitions' presets and plans (`core::transition`), the Karaoke tab and mode (`core::karaoke`, its sliders in `core::sliders`), the key the song plays in (`core::key`), the Mixer tab's desk (`core::desk`: its strips, settings, the fader's taper, the meters' ballistics, the actions its widgets send) and the stems on it (`core::stems`: the stem keys as strip mutes on a bar of the head on air, when the engine makes stems, the Karaoke voice's lanes on both heads). Pure. |
-| `view` | the presentation models the window draws (the list, the info, the bottom bar with the spectrum's plot, the Transition tab with `view::lanes`, which the Karaoke tab shares, the Karaoke tab and Karaoke mode's picture, the settings, the help, Now playing); and what is left of the old cell renderer, drawn nowhere any more (`view::layout`'s grid, `view::mouse`, `view::cells`) |
+| `view` | the presentation models the window draws (the list, the info, the bottom bar with the spectrum's plot, the Transition tab with `view::lanes`, which the Karaoke tab shares, the Karaoke tab and Karaoke mode's picture, the settings, the help, Now playing) |
 | `app` | the running player: the engine and its desk, background workers, the spectrum (the mixer's monitor), cover; carries out the effects |
 | `desk_wiring` | the desk the engine plays on: a mixer that holds the device (`jodel_output::mixer`), the player's strip with its stems' strips inside it, the preview's, the engine on two lane inputs of them (its two heads: a transition's next track plays on the other); the Mixer tab's settings made on it, its look for a frame |
 | `preview` | the preview's players, guests on the mixer (one per file, two at most): only the latest file loaded, crossfades on the mixer's clock, the song ducked and back |
@@ -1446,10 +1445,10 @@ speech model, the GPU, and the last analyses.
 ## Testing
 
 `cargo test -p jodeldiplom` needs no device and no window: the core
-(update, keymap, mouse, layout at several sizes), the screens drawn into a
-ratatui test buffer (the pictures' cells blank, as the window leaves them
-for its pixels) and compared with `tests/snapshots/` (rewrite them with
-`UPDATE_SNAPSHOTS=1` after an intended change), the browser on a temporary
+(update, keymap, the window's size as the core hears it at several
+sizes), the screens' models as text outlines compared with
+`tests/snapshots/` (rewrite them with `UPDATE_SNAPSHOTS=1` after an
+intended change), the screens in iced's simulator, the browser on a temporary
 folder tree, the whole app playing the PCM fixtures (`tests/fixtures/pcm`) into a null
 output, and the window's pixels drawn headless.
 

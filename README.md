@@ -1,10 +1,8 @@
 # Jodeldiplom
 
 A music player with a plain file browser instead of a library database, in
-a window: `jodeldiplom` (iced on wgpu, its CPU renderer without a GPU;
-the screens not ported to iced yet are ratatui widgets rasterised in
-pixels, shown inside it); on macOS the app
-`Jodeldiplom.app`. Its command-line jobs (`--help`, `--diag`,
+a window: `jodeldiplom` (iced on wgpu, its CPU renderer without a GPU);
+on macOS the app `Jodeldiplom.app`. Its command-line jobs (`--help`, `--diag`,
 `--list-devices`, `--clean-cache`, `--clean-diag`) print to the terminal
 it is started from.
 

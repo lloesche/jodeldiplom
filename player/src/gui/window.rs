@@ -2,13 +2,11 @@
 //! messages, what they do, what it shows and what it listens to.
 //!
 //! - Keys go through [`crate::core::keymap`] ([`super::keys`]); the
-//!   pointer over the old canvas (Karaoke mode) through
-//!   [`crate::view::mouse`] ([`super::pointer`]); the widgets iced draws
-//!   send the core's actions
-//!   ([`Message::Act`]), and a press that holds the pointer
-//!   ([`Message::Grab`]): its moves come here from anywhere while it is
-//!   held. Every button's release comes here, whichever widget it was
-//!   over, so nothing stays held.
+//!   widgets iced draws send the core's actions ([`Message::Act`]), and a
+//!   press that holds the pointer ([`Message::Grab`], [`super::pointer`]):
+//!   its moves come here from anywhere while it is held. Every button's
+//!   release comes here, whichever widget it was over, so nothing stays
+//!   held.
 //! - Ticks: one decision each ([`super::paint`]): every refresh of the
 //!   display while something moves smoothly (from inside each redraw,
 //!   [`super::pacer`]), 30 a second while only the spectrum and the clock
@@ -24,12 +22,11 @@ use iced::mouse::ScrollDelta;
 use iced::window;
 use iced::{event, keyboard, mouse, Element, Point, Size, Subscription, Task};
 
-use super::embed::Embed;
 use super::lanes::Lanes;
 use super::mixer;
 use super::pacer::Pacer;
 use super::paint::{Pace, Paint, Place, Seen, REST};
-use super::pointer::{Grab, Pointer, PointerKind, PointerState, Wheel, WheelOn};
+use super::pointer::{Grab, MouseButton, PointerState, Wheel, WheelOn};
 use super::screens::Shown;
 use super::stage_view::StageView;
 use super::wake::{Wake, Wakes};
@@ -38,9 +35,8 @@ use crate::app::{App, AppOptions};
 use crate::core::desk::{Channel, DeskAction};
 use crate::core::keymap;
 use crate::core::preview::Ctrl;
-use crate::core::{Action, State};
+use crate::core::{Action, Screen, State};
 use crate::setup::{Setup, Status};
-use crate::view::mouse::MouseButton;
 use crate::view::setup::Choice;
 
 /// What the window takes.
@@ -55,8 +51,6 @@ pub enum Message {
     /// A key, a button let go of, or the window opened, resized, rescaled,
     /// unfocused, closing.
     Event(iced::Event, window::Id),
-    /// The pointer over the old canvas.
-    Pointer(Pointer),
     /// A widget's action for the core.
     Act(Action),
     /// A widget's command for the core, and the one it is with shift held
@@ -119,7 +113,6 @@ enum Last {
 /// The window's state: the player, and what iced needs beside it.
 pub struct Gui {
     phase: Phase,
-    embed: Embed,
     /// Karaoke mode's stage.
     stage: StageView,
     paint: Paint,
@@ -208,7 +201,6 @@ impl Gui {
     fn around(phase: Phase, wake: Wake, started: Instant) -> Gui {
         Gui {
             phase,
-            embed: Embed::default(),
             stage: StageView::default(),
             paint: Paint::new(),
             pacer: Pacer::default(),
@@ -297,7 +289,6 @@ impl Gui {
                 Task::none()
             }
             Message::Event(event, id) => self.event(event, id),
-            Message::Pointer(pointer) => self.pointer(pointer),
             Message::Act(action) => {
                 self.act(action);
                 Task::none()
@@ -317,11 +308,9 @@ impl Gui {
                 // A step scrolls three rows: a touchpad's pixels move the
                 // list as far as they go.
                 let line = 3.0 * super::look::height::ROW;
-                let steps = self.wheel.turn(WheelOn::Canvas, delta, line);
+                let steps = self.wheel.turn(WheelOn::Screen, delta, line);
                 for _ in 0..steps.unsigned_abs() {
-                    let action = self
-                        .app()
-                        .and_then(|app| crate::view::mouse::scrolled(&app.state, steps > 0));
+                    let action = self.app().and_then(|app| scrolled(&app.state, steps > 0));
                     if let Some(action) = action {
                         self.act(action);
                     }
@@ -366,25 +355,6 @@ impl Gui {
     /// A wheel line in points.
     fn line_px(&self) -> f32 {
         super::metrics::LINE
-    }
-
-    fn pointer(&mut self, pointer: Pointer) -> Task<Message> {
-        match &mut self.phase {
-            Phase::Running(app) => {
-                let grid = self.embed.grid();
-                let dirty = match pointer.kind {
-                    PointerKind::Wheel(delta) => {
-                        let line = super::metrics::LINE;
-                        let steps = self.wheel.turn(WheelOn::Canvas, delta, line);
-                        steps != 0 && self.pointer.scroll(app, grid, pointer, steps)
-                    }
-                    _ => self.pointer.take(app, grid, pointer),
-                };
-                self.paint.dirty |= dirty;
-            }
-            Phase::Setup { .. } | Phase::Leaving(_) => {}
-        }
-        Task::none()
     }
 
     fn event(&mut self, event: iced::Event, id: window::Id) -> Task<Message> {
@@ -440,8 +410,7 @@ impl Gui {
                     self.act(Action::Desk(action));
                 }
                 if let Phase::Running(app) = &mut self.phase {
-                    let grid = self.embed.grid();
-                    self.paint.dirty |= self.pointer.up(app, grid, button);
+                    self.paint.dirty |= self.pointer.up(app, button);
                 }
             }
             iced::Event::Keyboard(keyboard::Event::ModifiersChanged(modifiers)) => {
@@ -594,8 +563,8 @@ impl Gui {
                     self.occluded = true;
                     plan.draw = super::paint::Draw::Nothing;
                 }
-                let canvas = (&self.embed, &self.stage, &mut self.lanes);
-                self.paint.draw(plan, canvas, app, place, (heard, at));
+                let parts = (&self.stage, &mut self.lanes);
+                self.paint.draw(plan, parts, app, place, (heard, at));
                 let places = super::screens::covers(&app.state, self.size, self.scale);
                 self.covers.show(app.art(), &places, self.scale);
                 // Karaoke mode is fullscreen; leaving it, the window comes
@@ -729,6 +698,18 @@ impl Gui {
             scale: self.scale,
         };
         self.pacer.view(super::screens::view(shown, &parts))
+    }
+}
+
+/// What a step of the wheel `up` (or down) over a widget that scrolls
+/// what the screen scrolls does: the help's text or the list scroll by
+/// three lines.
+fn scrolled(state: &State, up: bool) -> Option<Action> {
+    let step = if up { -3 } else { 3 };
+    match state.screen {
+        Screen::Help => Some(Action::HelpScroll(step)),
+        Screen::Main if state.palette.is_none() => Some(Action::Scroll(step)),
+        _ => None,
     }
 }
 

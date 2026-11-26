@@ -1,14 +1,11 @@
 //! The pointer: what a widget's press holds ([`Grab`]), followed wherever
-//! the pointer goes; the pointer over the old canvas ([`super::embed`]) as
-//! the cell renderer's mouse ([`crate::view::mouse`]): its cell on the
-//! canvas's grid and the button held; and the wheel, for the canvas and the
-//! widgets alike, by whole steps ([`Wheel`]).
+//! the pointer goes; and the wheel, for every widget alike, by whole steps
+//! ([`Wheel`]).
 //!
 //! The widgets only say what the pointer does over them; this is the one
-//! owner of what is held, a grab or the canvas's button, never both. A
-//! button is let go of wherever the pointer is (the window hears every
-//! release, whichever widget it was over), and a release with nothing held
-//! is dropped.
+//! owner of what is held. A button is let go of wherever the pointer is
+//! (the window hears every release, whichever widget it was over), and a
+//! release with nothing held is dropped.
 
 use iced::mouse::ScrollDelta;
 use iced::{Point, Rectangle};
@@ -19,8 +16,17 @@ use crate::core::lanes::{self, Block};
 use crate::core::sliders::Slider;
 use crate::core::transition::viewport;
 use crate::core::{Action, State};
-use crate::view::layout::Grid;
-use crate::view::mouse::{self, MouseButton, MouseInput, MouseKind};
+
+/// A mouse button.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MouseButton {
+    /// The main button.
+    Left,
+    /// The secondary button.
+    Right,
+    /// The wheel button.
+    Middle,
+}
 
 /// What a widget's press holds until its button is let go of: the
 /// pointer's moves anywhere in the window go to it, and its release lands
@@ -175,49 +181,12 @@ fn share_across(bounds: Rectangle, at: Point) -> f64 {
     f64::from(((at.x - bounds.x) / bounds.width).clamp(0.0, 1.0))
 }
 
-/// What the pointer did over the old canvas.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum PointerKind {
-    /// It moved (or left the canvas, or went under something iced draws
-    /// over it).
-    Moved,
-    /// A button went down over it.
-    Down(MouseButton),
-    /// The wheel turned over it.
-    Wheel(ScrollDelta),
-}
-
-/// The pointer over the old canvas: what, and where in cells from its top
-/// left (with the share of one).
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Pointer {
-    /// What.
-    pub kind: PointerKind,
-    /// Columns.
-    pub x: f64,
-    /// Rows.
-    pub y: f64,
-}
-
-impl Pointer {
-    /// Its cell on `grid`.
-    fn cell(&self, Grid { cols, rows, .. }: Grid) -> (u16, u16) {
-        (
-            (self.x.max(0.0) as u16).min(cols.saturating_sub(1)),
-            (self.y.max(0.0) as u16).min(rows.saturating_sub(1)),
-        )
-    }
-}
-
 /// Where the pointer was, and what it holds.
 #[derive(Debug, Default)]
 pub struct PointerState {
     /// What a widget's press holds, and where the pointer was last seen
     /// while it does (in the window's points).
     grab: Option<(Grab, Point)>,
-    /// Its cell.
-    cell: (u16, u16),
-    held: Option<MouseButton>,
 }
 
 impl PointerState {
@@ -226,11 +195,11 @@ impl PointerState {
         self.grab.is_some()
     }
 
-    /// A widget's press at `at` holds `grab` (unless the canvas holds a
-    /// button already): what it does there carried out, and held on to if
+    /// A widget's press at `at` holds `grab` (unless another holds the
+    /// pointer already): what it does there carried out, and held on to if
     /// the core took it. Whether it did anything.
     pub fn grab(&mut self, app: &mut App, grab: Grab, at: Point) -> bool {
-        if self.held.is_some() || self.grab.is_some() {
+        if self.grab.is_some() {
             return false;
         }
         if let Some(action) = grab.pressed(at, &app.state) {
@@ -259,36 +228,9 @@ impl PointerState {
         true
     }
 
-    /// The pointer moved, or went down over the canvas laid out on `grid`;
-    /// whether the frame is to be drawn again.
-    pub fn take(&mut self, app: &mut App, grid: Grid, pointer: Pointer) -> bool {
-        let cell = pointer.cell(grid);
-        match pointer.kind {
-            PointerKind::Moved => {
-                if cell == self.cell {
-                    return false;
-                }
-                self.cell = cell;
-                // A held button drags wherever the pointer is.
-                self.held
-                    .is_some_and(|button| self.mouse(app, grid, MouseKind::Drag(button)))
-            }
-            // A grab owns the pointer until it is let go of.
-            PointerKind::Down(_) if self.grab.is_some() => false,
-            PointerKind::Down(button) => {
-                self.cell = cell;
-                self.held = Some(button);
-                self.mouse(app, grid, MouseKind::Down(button))
-            }
-            // The window turns the wheel into steps ([`PointerState::scroll`]).
-            PointerKind::Wheel(_) => false,
-        }
-    }
-
     /// A button let go of, wherever the pointer is: the grab's lands
-    /// where the pointer was last seen; the canvas's goes to it; any other
-    /// is dropped.
-    pub fn up(&mut self, app: &mut App, grid: Grid, button: MouseButton) -> bool {
+    /// where the pointer was last seen; any other is dropped.
+    pub fn up(&mut self, app: &mut App, button: MouseButton) -> bool {
         match self.grab {
             Some((grab, at)) if grab.button() == button => {
                 self.grab = None;
@@ -297,45 +239,8 @@ impl PointerState {
                 }
                 true
             }
-            Some(_) => false,
-            None => self.release(button) && self.mouse(app, grid, MouseKind::Up(button)),
+            _ => false,
         }
-    }
-
-    /// `button` let go of: whether it was the one held.
-    fn release(&mut self, button: MouseButton) -> bool {
-        let held = self.held == Some(button);
-        if held {
-            self.held = None;
-        }
-        held
-    }
-
-    /// The wheel `steps` whole lines up (negative: down) at `pointer`.
-    pub fn scroll(&mut self, app: &mut App, grid: Grid, pointer: Pointer, steps: i32) -> bool {
-        self.cell = pointer.cell(grid);
-        let kind = if steps > 0 {
-            MouseKind::ScrollUp
-        } else {
-            MouseKind::ScrollDown
-        };
-        (0..steps.unsigned_abs()).fold(false, |dirty, _| self.mouse(app, grid, kind) | dirty)
-    }
-
-    /// What `kind` at the pointer does, carried out (the clock first);
-    /// whether it did anything.
-    fn mouse(&self, app: &mut App, grid: Grid, kind: MouseKind) -> bool {
-        let input = MouseInput {
-            kind,
-            col: self.cell.0,
-            row: self.cell.1,
-        };
-        let action = mouse::action(&app.state, grid, input);
-        let Some(action) = action else {
-            return false;
-        };
-        dispatch(app, action);
-        true
     }
 }
 
@@ -348,9 +253,9 @@ fn dispatch(app: &mut App, action: Action) {
 /// What the wheel turns.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WheelOn {
-    /// The old canvas, line by line, and the widgets over it that scroll
-    /// what it shows (the bottom bar).
-    Canvas,
+    /// What the screen scrolls (the list, the help), from the widgets that
+    /// scroll it (the list, the bottom bar), three rows a step.
+    Screen,
     /// A strip of the Mixer tab: its fader, a step a line.
     Strip(Channel),
     /// A Transition block's lanes, or its whole track (`true`): zoomed or
@@ -390,21 +295,6 @@ impl Wheel {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// The button held is let go of once, by its own release, wherever it
-    /// comes from; a release with nothing (or another button) held is
-    /// dropped.
-    #[test]
-    fn only_the_button_held_is_let_go_of_and_only_once() {
-        let mut pointer = PointerState::default();
-        assert!(!pointer.release(MouseButton::Left));
-        pointer.held = Some(MouseButton::Left);
-        assert!(!pointer.release(MouseButton::Right));
-        assert_eq!(pointer.held, Some(MouseButton::Left));
-        assert!(pointer.release(MouseButton::Left));
-        assert!(!pointer.release(MouseButton::Left));
-        assert_eq!(pointer.held, None);
-    }
 
     /// A seek grab reads the share across its track wherever the pointer
     /// is: before the track 0, past it 1; the drag as it moves, the seek
@@ -500,9 +390,9 @@ mod tests {
         // Five touchpad deltas of 4 pixels, a line being 18: one step.
         let steps: Vec<i32> = (0..5).map(|_| wheel.turn(strip, px(4.0), 18.0)).collect();
         assert_eq!(steps, [0, 0, 0, 0, 1]);
-        // What was left does not carry over to the canvas.
-        assert_eq!(wheel.turn(WheelOn::Canvas, px(15.0), 18.0), 0);
-        assert_eq!(wheel.turn(WheelOn::Canvas, px(4.0), 18.0), 1);
+        // What was left does not carry over to the screen.
+        assert_eq!(wheel.turn(WheelOn::Screen, px(15.0), 18.0), 0);
+        assert_eq!(wheel.turn(WheelOn::Screen, px(4.0), 18.0), 1);
         // A mouse's notches are lines; down is negative.
         let lines = ScrollDelta::Lines { x: 0.0, y: -2.0 };
         assert_eq!(wheel.turn(WheelOn::Strip(Channel::Mic), lines, 18.0), -2);

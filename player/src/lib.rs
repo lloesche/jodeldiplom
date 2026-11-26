@@ -4,11 +4,10 @@
 //!
 //! # Layers
 //!
-//! - [`core`]: the state, the actions, `update`, the layout, the keymap
-//!   and the mouse regions. Pure: no IO, no drawing.
-//! - [`view`]: the presentation models, what each screen says; and what is
-//!   left of the old cell renderer (no screen is drawn into cells any
-//!   more).
+//! - [`core`]: the state, the actions, `update`, the keymap, and what the
+//!   window's size does to the keys ([`core::Fit`]). Pure: no IO, no
+//!   drawing.
+//! - [`view`]: the presentation models, what each screen says.
 //! - [`app`]: the running player: the engine ([`jodel_playback::Player`]) on
 //!   a mixer that owns the device, the background workers, the spectrum
 //!   and the cover; [`preview`]: the players of a preview, on the mixer
@@ -22,10 +21,8 @@
 //!   [`loudness`]: each song's loudness as the karaoke plays it, measured
 //!   once and kept, for the game's sounds to follow.
 //! - [`spectrum`], [`art`]: the spectrum of what is heard, cover images.
-//! - [`gui`]: the iced window; the Mixer tab in iced's widgets, the other
-//!   screens' cells rasterised by a small ratatui pixel backend with an
-//!   embedded font, covers and spectra painted in pixels, shown in one
-//!   widget (on the GPU through iced's shader widget).
+//! - [`gui`]: the iced window; every screen in iced's widgets, the lanes
+//!   and Karaoke mode's stage on the GPU through iced's shader widget.
 
 #![warn(missing_docs)]
 

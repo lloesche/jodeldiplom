@@ -3,8 +3,7 @@
 //! and the right column's text (or the summary under the list) on the
 //! main screen, the Transition tab's and the Karaoke tab's while they
 //! show, the command palette's while it is open, and the bottom bar's
-//! where the screen has one (nothing is drawn into the old cells any more,
-//! [`no_cells`]); compared with the snapshots in
+//! where the screen has one; compared with the snapshots in
 //! `tests/snapshots/` (set `UPDATE_SNAPSHOTS=1` to rewrite them after an
 //! intended change). The spectrum's model in points: its labels and where
 //! a tone peaks.
@@ -21,19 +20,16 @@ use jodeldiplom::core::{update, Action, DeviceChoice, Screen, Side, State};
 use jodeldiplom::gui::metrics;
 use jodeldiplom::gui::mixer::{self, said};
 use jodeldiplom::spectrum::{sine, tap_frames_for, Analyzer, SpectrumFrame};
+use jodeldiplom::view;
 use jodeldiplom::view::bottom::Bar;
 use jodeldiplom::view::command_palette::Palette;
 use jodeldiplom::view::help::Page as HelpPage;
 use jodeldiplom::view::info::Info;
 use jodeldiplom::view::lanes::WavePlot;
-use jodeldiplom::view::layout::Grid;
 use jodeldiplom::view::list::Pane;
 use jodeldiplom::view::now::NowPlaying;
 use jodeldiplom::view::plot::{LabelTone, Plot};
 use jodeldiplom::view::settings::Settings;
-use jodeldiplom::view::{self, Scene};
-use ratatui::backend::TestBackend;
-use ratatui::Terminal;
 
 fn spectrum() -> SpectrumFrame {
     let mut analyzer = Analyzer::new();
@@ -49,9 +45,9 @@ fn spectrum() -> SpectrumFrame {
     analyzer.frame()
 }
 
-/// `state` drawn on `grid`.
-fn draw(state: &State, grid: Grid) -> String {
-    draw_heard(state, grid, 0.0)
+/// `state` drawn in a window of `cells` of the old cells.
+fn draw(state: &State, cells: (u16, u16)) -> String {
+    draw_heard(state, cells, 0.0)
 }
 
 /// A cell's size in points, as the window has it with its own font (the
@@ -75,11 +71,11 @@ fn bar_outline(state: &State, width: f32, heard: f32) -> String {
 }
 
 /// [`draw`] with `heard` seconds of the playing track heard: in a window
-/// of `grid`'s old cells ([`common::window`]) as the window lays it out
+/// of `cells` of the old cells ([`common::window`]) as the window lays it out
 /// ([`metrics::main`]).
-fn draw_heard(state: &State, grid: Grid, heard: f64) -> String {
+fn draw_heard(state: &State, cells: (u16, u16), heard: f64) -> String {
     let mut text = String::new();
-    let size = common::window(grid.cols, grid.rows);
+    let size = common::window(cells.0, cells.1);
     let main = (state.screen == Screen::Main).then(|| metrics::main(size, state.side));
     if let Some(m) = &main {
         text.push_str(&Pane::of(state, m.pane.width).to_string());
@@ -143,7 +139,7 @@ fn has(text: &str, parts: &[&str]) {
 #[test]
 fn main_screen() {
     let state = common::playing_state(120, 36);
-    let text = draw(&state, Grid::new(120, 36));
+    let text = draw(&state, (120, 36));
     has(
         &text,
         &[
@@ -177,28 +173,9 @@ fn queue_side() {
         .ready
         .insert(playing, vec![jodeldiplom::core::Job::Lyrics]);
     update(&mut state, Action::ShowSide(Side::Queue));
-    let text = draw(&state, Grid::new(120, 36));
+    let text = draw(&state, (120, 36));
     has(&text, &["▶ 2 Morning Light", "playing 2 of 5"]);
     snapshot("queue", &text);
-}
-
-/// A screen the window draws whole in iced's widgets: nothing on the
-/// cells.
-fn no_cells(state: &State) {
-    let grid = Grid::new(120, 36);
-    let mut terminal = Terminal::new(TestBackend::new(grid.cols, grid.rows)).unwrap();
-    let scene = Scene {
-        state,
-        grid,
-        heard: 0.0,
-    };
-    terminal.draw(|frame| view::draw(frame, &scene)).unwrap();
-    let text = view::buffer_text(terminal.backend().buffer());
-    assert!(
-        text.trim().is_empty(),
-        "{:?} on the cells:\n{text}",
-        state.screen
-    );
 }
 
 /// The bottom bar's outline under a screen the window lays out, as wide
@@ -211,7 +188,6 @@ fn bar_of(state: &State) -> String {
 fn now_playing() {
     let mut state = common::playing_state(120, 36);
     state.screen = Screen::NowPlaying;
-    no_cells(&state);
     let text = NowPlaying::of(&state, 0.0).to_string();
     // The caption: title, artist and album (links), the file's format and
     // rate, the status light's word, the tempo; no path, details,
@@ -254,7 +230,6 @@ fn settings() {
     );
     state.settings.picking = true;
     state.config_file = Some("/home/me/.config/jodeldiplom/config.toml".into());
-    no_cells(&state);
     let text = format!("{}{}", Settings::of(&state), bar_of(&state));
     has(
         &text,
@@ -334,7 +309,6 @@ fn settings_rows_show_their_controls() {
 fn help() {
     let mut state = common::playing_state(120, 50);
     state.screen = Screen::Help;
-    no_cells(&state);
     let text = format!("{}{}", HelpPage::of(&state), bar_of(&state));
     has(
         &text,
@@ -408,7 +382,7 @@ fn filter_and_palette() {
     for c in "light".chars() {
         update(&mut state, Action::Type(c));
     }
-    let text = draw(&state, Grid::new(120, 36));
+    let text = draw(&state, (120, 36));
     has(
         &text,
         &["/ light", "1 shown", "» search all subfolders for “light”"],
@@ -418,7 +392,7 @@ fn filter_and_palette() {
     update(&mut state, Action::Op(Op::Palette));
     update(&mut state, Action::Type('n'));
     update(&mut state, Action::Type('e'));
-    let text = draw(&state, Grid::new(120, 36));
+    let text = draw(&state, (120, 36));
     has(&text, &[": ne", "Next track", "n"]);
     snapshot("palette", &text);
 }
@@ -426,7 +400,7 @@ fn filter_and_palette() {
 #[test]
 fn narrow_and_tiny_screens() {
     let state = common::playing_state(64, 22);
-    let text = draw(&state, Grid::new(64, 22));
+    let text = draw(&state, (64, 22));
     has(&text, &["▶ Morning Light — The Ramps", "○ PCM"]);
     assert!(
         text.contains("[icon] Settings") && !text.contains("[button] Settings"),
@@ -570,7 +544,7 @@ fn the_beat_pulse_lights_on_each_beat() {
 #[test]
 fn transition_tab() {
     let state = common::transition_state(120, 40);
-    let text = draw(&state, Grid::new(120, 40));
+    let text = draw(&state, (120, 40));
     assert!(text.contains(" Transition "), "{text}");
     assert!(text.contains("drums") && text.contains("vocals"), "{text}");
     snapshot("transition", &text);
@@ -603,13 +577,13 @@ fn the_karaoke_tab_shows_the_voice_with_every_word() {
         "a wider view leaves some out"
     );
     let heard = 30.0;
-    let plot = voice_lane(&state, Grid::new(120, 40), heard).expect("the voice's lane");
+    let plot = voice_lane(&state, (120, 40), heard).expect("the voice's lane");
     let letters = (voice.width / cell().0) as u16;
     let scale = plot.text_scale;
     let (start, end) = view::karaoke::voice_window(&state, letters, heard, scale);
     assert_eq!((plot.start, plot.end), (start, end));
     assert!(((end - start) - f64::from(letters) / (per * f64::from(scale))).abs() < 1e-9);
-    let text = draw_heard(&state, Grid::new(120, 40), heard);
+    let text = draw_heard(&state, (120, 40), heard);
     // The lane's first line: every word sung in view (but the last, which
     // may run past its edge) is there, in order.
     let row: String = lane_words(&plot, letters)
@@ -646,7 +620,7 @@ fn the_sync_panel_shows_the_clicks_and_the_delay_measured() {
     state.side = Side::Karaoke;
     state.karaoke.mic.name = Some("Headset".into());
     jodeldiplom::core::lag::set_pair(&mut state, "out", "headset");
-    let text = draw(&state, Grid::new(120, 40));
+    let text = draw(&state, (120, 40));
     has(
         &text,
         &["Delay", "150 ms", "Sync", "Measure (s)", "default"],
@@ -657,7 +631,7 @@ fn the_sync_panel_shows_the_clicks_and_the_delay_measured() {
     session.answers[0] = Some(0.15);
     session.answers[2] = Some(0.16);
     state.karaoke.sync = Some(session);
-    let text = draw(&state, Grid::new(120, 40));
+    let text = draw(&state, (120, 40));
     has(
         &text,
         &[
@@ -675,7 +649,7 @@ fn the_sync_panel_shows_the_clicks_and_the_delay_measured() {
     session.played = CLICKS;
     session.answers = vec![Some(0.152); CLICKS];
     session.outcome = Some(outcome(&session.answers));
-    let text = draw(&state, Grid::new(120, 40));
+    let text = draw(&state, (120, 40));
     has(
         &text,
         &[
@@ -736,7 +710,7 @@ fn the_words_go_on_the_voice_lane_where_they_are_sung() {
     );
     // The words, on the voice's lane only.
     let worded = |state: &State| -> Vec<(Lane, String)> {
-        lanes(state, Grid::new(120, 40))
+        lanes(state, (120, 40))
             .iter()
             .flat_map(|p| {
                 lane_words(p, state.fit.lane_letters)
@@ -777,7 +751,7 @@ fn the_words_go_on_the_voice_lane_where_they_are_sung() {
 fn transition_tab_in_a_short_window() {
     // One row a lane, both tracks.
     let state = common::transition_state(100, 26);
-    let text = draw(&state, Grid::new(100, 26));
+    let text = draw(&state, (100, 26));
     assert!(text.contains("Next"), "{text}");
     snapshot("transition_short", &text);
 }
@@ -795,7 +769,7 @@ fn transition_tab_with_a_transition_being_edited() {
         update(&mut state, Action::Op(o));
     }
     update(&mut state, Action::Op(Op::TransitionEdit));
-    let text = draw(&state, Grid::new(120, 40));
+    let text = draw(&state, (120, 40));
     assert!(text.contains("transition drums first, varispeed"), "{text}");
     assert!(text.contains("editing now bass at bar 0"), "{text}");
     snapshot("transition_edit", &text);
@@ -808,34 +782,35 @@ fn the_transition_header_shows_the_pairing_and_the_glide() {
     let mut state = common::transition_state(190, 40);
     common::next_at(&mut state, 66.0);
     update(&mut state, Action::Op(Op::TransitionPreset));
-    let text = draw(&state, Grid::new(190, 40));
+    let text = draw(&state, (190, 40));
     assert!(
         text.contains("next 2:1 +3.1 % · tempo 128 → 132 across the window"),
         "{text}"
     );
     update(&mut state, Action::Op(Op::TransitionPairing));
-    let text = draw(&state, Grid::new(190, 40));
+    let text = draw(&state, (190, 40));
     assert!(
         text.contains("next 1:1 (set) -48.4 % · tempo 128 → 98 across the window, 66 after it"),
         "{text}"
     );
 }
 
-/// The Karaoke tab's voice lane in a window of `grid`'s old cells, with
+/// The Karaoke tab's voice lane in a window of `cells` of the old cells, with
 /// `heard` seconds of the playing track heard, as the window lays it out:
 /// its letters and its lines a cell each.
-fn voice_lane(state: &State, grid: Grid, heard: f64) -> Option<WavePlot> {
-    let voice = metrics::main(common::window(grid.cols, grid.rows), state.side).voice?;
+fn voice_lane(state: &State, cells: (u16, u16), heard: f64) -> Option<WavePlot> {
+    let voice = metrics::main(common::window(cells.0, cells.1), state.side).voice?;
     let (cw, ch) = cell();
     let (letters, rows) = ((voice.width / cw) as u16, (voice.height / ch) as u16);
     view::karaoke::voice_plot(state, letters, rows, heard)
 }
 
-/// The lanes' waveforms a frame of `state` on `grid` hands the window:
+/// The lanes' waveforms a frame of `state` in a window of `cells` hands
+/// the window:
 /// the Karaoke tab's voice lane, and the Transition tab's blocks', the
 /// playing track's and the next one's.
-fn lanes(state: &State, grid: Grid) -> Vec<WavePlot> {
-    let mut lanes: Vec<WavePlot> = voice_lane(state, grid, 0.0).into_iter().collect();
+fn lanes(state: &State, cells: (u16, u16)) -> Vec<WavePlot> {
+    let mut lanes: Vec<WavePlot> = voice_lane(state, cells, 0.0).into_iter().collect();
     if state.side == Side::Transition {
         use jodeldiplom::core::lanes::Block;
         for block in [Block::Now, Block::Next] {
@@ -879,7 +854,7 @@ fn stems_turned_off_are_grey_on_the_transition_tab() {
     use view::lanes::{dimmed, lane_color, OFF};
     let mut state = common::transition_state(120, 40);
     state.desk.strips[StripKind::for_stem(Stem::Drums).index()].mute = true;
-    let lanes = lanes(&state, Grid::new(120, 40));
+    let lanes = lanes(&state, (120, 40));
     let color = |lane: Lane| {
         lanes
             .iter()
@@ -904,7 +879,7 @@ fn stems_turned_off_are_grey_on_the_transition_tab() {
 fn the_fade_curves_go_to_the_lanes_of_a_transition() {
     // The lanes with a fade to draw over their transition.
     let curves = |state: &State| {
-        lanes(state, Grid::new(120, 40))
+        lanes(state, (120, 40))
             .iter()
             .filter(|p| p.transition.is_some() && !p.gain.is_empty())
             .count()
@@ -963,7 +938,7 @@ fn the_queue_is_got_ready_ahead_and_its_icons_light_up_in_turn() {
     state.side = Side::Queue;
     let title = state.details[&busy].title.clone().unwrap();
     let row = |state: &State| {
-        let text = draw(state, Grid::new(120, 40));
+        let text = draw(state, (120, 40));
         text.lines()
             .find(|l| l.contains(&format!("{} {title}", current + 2)))
             .map(str::to_owned)
@@ -1171,7 +1146,7 @@ fn a_queue_rows_icons_are_all_lit_only_when_nothing_is_left_for_it() {
 fn the_mixer_tab_is_a_desk() {
     use iced::Size;
     let state = common::desk_state(120, 36);
-    let text = draw(&state, Grid::new(120, 36));
+    let text = draw(&state, (120, 36));
     has(&text, &["[shown] Mixer"]);
     let wide = metrics::main(common::window(120, 36), Side::Mixer)
         .pane

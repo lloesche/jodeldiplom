@@ -3,18 +3,14 @@
 
 use jodel_gpu::Turned;
 
-use super::pixmap::{Pixmap, TEXTURE_FORMAT};
 use super::{open, Painter};
 use crate::gui::backdrop::BackdropFrame;
-use crate::gui::canvas::{Canvas, Changes};
 
 /// The window's frames drawn into a texture off screen and read back:
 /// for the tests, the same uploads and passes as the window's (Karaoke
-/// mode's, and the old canvas's pixmap, [`Offscreen::show`]).
+/// mode's).
 pub struct Offscreen {
     painter: Turned<Painter>,
-    /// The old canvas's pixmap, made as it is first shown.
-    pixmap: Option<Pixmap>,
     format: wgpu::TextureFormat,
     /// What draws: the adapter's name and backend.
     pub name: String,
@@ -56,11 +52,10 @@ impl Offscreen {
         let format = if srgb {
             wgpu::TextureFormat::Bgra8UnormSrgb
         } else {
-            TEXTURE_FORMAT
+            wgpu::TextureFormat::Bgra8Unorm
         };
         Ok(Offscreen {
             painter: Turned::new(Painter::new(device, queue, format)),
-            pixmap: None,
             format,
             name: format!("{} ({:?})", info.name, info.backend),
             stamps: None,
@@ -173,33 +168,6 @@ impl Offscreen {
             (width, height),
             wgpu::Color::BLACK,
             |pass| painter.draw(pass),
-        )
-    }
-
-    /// The old canvas's pixmap: sends over `changes` as the window does,
-    /// draws a frame of `width` × `height` and reads it back, as
-    /// `0x00RRGGBB` words row by row.
-    pub fn show(
-        &mut self,
-        canvas: &Canvas,
-        changes: &Changes,
-        width: u32,
-        height: u32,
-    ) -> Result<Vec<u32>, String> {
-        let painter = &*self.painter;
-        let pixmap = self.pixmap.get_or_insert_with(|| {
-            Pixmap::new(painter.device.clone(), painter.queue.clone(), self.format)
-        });
-        pixmap.upload(canvas, changes, width, height);
-        let gpu = (&painter.device, &painter.queue);
-        read_back(
-            gpu,
-            self.format,
-            (width, height),
-            wgpu::Color::BLACK,
-            |pass| {
-                pixmap.draw(pass);
-            },
         )
     }
 }

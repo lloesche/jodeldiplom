@@ -3,19 +3,14 @@
 //! [`widgets`]): the main screen laid out from the window's measures
 //! ([`metrics`]), the Mixer tab ([`mixer`]), the lanes ([`lanes`]) and the
 //! covers in their places; Karaoke mode's stage a widget of its own
-//! ([`stage_view`]), its controls iced's widgets over it. The old canvas
-//! (ratatui widgets in cells rasterised into a pixmap, [`canvas`], shown
-//! by [`embed`]) is drawn no more.
+//! ([`stage_view`]), its controls iced's widgets over it.
 
 pub mod backdrop;
 pub mod big_text;
 pub mod bloom;
-pub mod canvas;
 pub mod confetti;
 #[cfg(target_os = "macos")]
 mod cover;
-pub mod embed;
-mod embed_gpu;
 pub mod fonts;
 pub mod fx;
 pub mod glory;
@@ -34,7 +29,6 @@ pub mod pointer;
 pub mod pop;
 pub mod present;
 pub mod rainbow;
-pub mod raster;
 mod screens;
 pub mod seal;
 #[cfg(test)]
@@ -56,7 +50,6 @@ use std::sync::{Arc, Mutex};
 
 use crate::cli::Args;
 
-pub use canvas::{font_px, Canvas};
 pub use keys::key;
 pub use screens::{lane_spots, transition};
 

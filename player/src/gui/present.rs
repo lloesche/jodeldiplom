@@ -3,11 +3,9 @@
 //! the ground, a triangle over the whole window reading it; its stage and
 //! its bursts are drawn over that, the light that blooms over them, the
 //! effects' screen passes over that ([`super::fx`]), and the shapes over
-//! everything last ([`Painter::PARTS`]). The old canvas's pixmap is
-//! [`pixmap`]'s, under a widget of its own ([`super::embed`]).
+//! everything last ([`Painter::PARTS`]).
 
 mod offscreen;
-pub(crate) mod pixmap;
 
 pub(crate) use offscreen::read_back;
 pub use offscreen::Offscreen;

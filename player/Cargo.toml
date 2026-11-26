@@ -16,9 +16,6 @@ jodel-lyrics = { path = "../lyrics" }
 jodel-synth = { path = "../synth" }
 # Every file written: whole or not at all, made durable.
 durable = { path = "../durable" }
-# The widgets and their cell buffer, for the screens the window still
-# draws in cells; it rasterises the cells itself (no terminal backend).
-ratatui = { version = "0.30.2", default-features = false, features = ["std", "layout-cache"] }
 image = { version = "0.25.10", default-features = false, features = ["jpeg", "png"] }
 ab_glyph = "0.2.32"
 # The window: iced's development version, pinned to a commit on the same
@@ -27,12 +24,11 @@ ab_glyph = "0.2.32"
 # where there is no GPU, its canvas (the faders and meters), smol for its
 # timers.
 iced = { git = "https://github.com/iced-rs/iced.git", rev = "98bd48fe011efc0ec5819fee0fa7673a7169ff11", default-features = false, features = ["wgpu-bare", "vello-cpu", "advanced", "canvas", "smol", "image-without-codecs", "x11", "wayland", "wayland-dlopen", "wayland-decorations", "linux-theme-detection"] }
-# The old screens' frames and the pictures on the GPU, in iced's shader
-# widget; the same wgpu as jodel-gpu.
+# The lanes and Karaoke mode on the GPU, in iced's shader widget; the
+# same wgpu as jodel-gpu.
 wgpu = { version = "30.0.2", default-features = false, features = ["std", "parking_lot", "dx12", "metal", "vulkan", "wgsl"] }
 pollster = "1.0.1"
 bytemuck = "1.25.2"
-unicode-width = "0.2.3"
 # Text from the clipboard, for ctrl+v (no image support).
 arboard = { version = "3.7.0", default-features = false }
 # Lyrics from LRCLIB (and, later, the speech model's download), over

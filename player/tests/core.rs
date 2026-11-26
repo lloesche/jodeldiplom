@@ -15,7 +15,6 @@ use jodeldiplom::core::{
     browser_rows, update, Action, DeviceChoice, Effect, Gpu, Placing, Rhythm, RhythmRecipe, Row,
     Screen, SettingsRow, Side, State, WalkPurpose,
 };
-use jodeldiplom::view::layout::Grid;
 
 fn entry(path: &str, kind: EntryKind) -> Entry {
     let path = PathBuf::from(path);
@@ -31,14 +30,14 @@ fn entry(path: &str, kind: EntryKind) -> Entry {
     }
 }
 
-/// The window of [`listed`].
-const LISTED: Grid = Grid::new(100, 30);
+/// The window of [`listed`], in the old cells ([`common::fit`]).
+const LISTED: (u16, u16) = (100, 30);
 
 /// `/m/Album` listed in a window of 100 × 30 cells: a parent row, a folder,
 /// three files.
 fn listed() -> State {
     let mut state = State::new("/m/Album".into(), Config::default());
-    common::fit(&mut state, LISTED.cols, LISTED.rows);
+    common::fit(&mut state, LISTED.0, LISTED.1);
     let fx = update(
         &mut state,
         Action::Listed {

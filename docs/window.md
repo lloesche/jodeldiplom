@@ -4,8 +4,7 @@ How the player's window is built: an iced application around the pure
 core, its screens made of iced's widgets in the native look
 ([look.md](look.md)), and Karaoke mode drawn by a GPU stage of our own.
 The window began as a terminal's cells rasterised into pixels; the screens
-moved to iced one at a time, and what is left of the cells is said at the
-end.
+moved to iced one at a time, and the cells are gone.
 
 ## iced, pinned
 
@@ -72,7 +71,8 @@ reports the facts of its size that change what a key does, as a
 `core::Fit` (`Action::Fit`, sent when it changes): how many rows a page
 of the list or the help is, how wide the Mixer's desk is (which strips
 show, so the arrow keys go round the same ones), how many letters fit a
-Transition lane (the fit-lyrics zoom), how near the bottom the pointer
+Transition lane (the fit-lyrics zoom; a letter is as wide as the main
+font's M, `gui::lanes::Metrics::at`), how near the bottom the pointer
 brings Karaoke mode's controls up, whether a spectrum shows. The rules
 read the numbers.
 
@@ -176,27 +176,10 @@ while, as in a video player (`core::karaoke::pointer`). Karaoke mode makes
 the window fullscreen; on macOS the window covers the screen itself
 ([macos-window.md](macos-window.md)).
 
-Without a GPU, Karaoke mode is painted on the processor (`gui::karaoke`):
-the blurred cover, the lyrics filling as they are sung, the notes under
-the line, the count-in and the score. No backdrop's layers and no
-effects.
-
-## What is left of the old canvas
-
-The cell renderer from the terminal days still does a few things, and goes
-with the last steps of the port ([todo.md](todo.md)):
-
-- no screen is drawn into cells any more: the main screen is laid out by
-  iced from the measures in `gui::metrics` (which the `Fit` comes from
-  too), Karaoke mode has its own widgets;
-- the old canvas (`gui::canvas`, `gui::raster`, `gui::embed`,
-  `gui::embed_gpu`, `gui::present::pixmap`) is still built, but shown
-  nowhere: only its cells' size is read, as the lanes' letters' width;
-- the grid of cells (`view::layout::Grid`), the cell mouse
-  (`view::mouse`) and the pointer's cell path (`gui::pointer`) are left
-  with it.
-
-`ratatui` leaves the player with it.
+Without a GPU, Karaoke mode is iced's widgets
+(`gui::screens::karaoke::mode::fallback`): the mode's lines over the
+cover's blur, the line being sung filling in as it is sung, the count-in
+and the score. No backdrop's layers, no notes and no effects.
 
 ## Checking a change to the window
 

@@ -84,17 +84,3 @@ Refactors, roughly in the order they unblock each other.
   mixer's own tests in real time (`output/tests/mixer.rs`, `lanes.rs`,
   `link.rs`). A seek's flush first: it waits for the device to take what
   is mixed, which a device on the test's time does only as the test moves.
-
-## The player
-
-- **Get rid of the text UI:** the window still draws every screen but
-  the Mixer tab and the Karaoke stage as terminal-style text cells
-  rasterised on the CPU, and the core still measures space in cells.
-  Still cells: the tabs header, the bottom bar, the command palette, the
-  browser and its filter, the queue, the right column (info, links, the
-  mini summary), Now Playing, Settings, Help, the Transition and Karaoke
-  tabs, the setup screen, and the text and controls over the Karaoke
-  stage. Port it to iced screen by screen (the core off cells first,
-  then the bottom bar, then browser and queue), ending with the
-  terminal library (ratatui), the cell layout, `canvas.rs`, `raster.rs`
-  and `view/` deleted (planned as 17 steps).

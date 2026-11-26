@@ -1,14 +1,9 @@
 //! What the window's iced side takes beside the native look
-//! ([`super::look`]): the ground under the old canvas, the face iced
-//! draws in unless told, and mixing two colours.
+//! ([`super::look`]): the face iced draws in unless told, and mixing two
+//! colours.
 
 use iced::font::{Family, Weight};
 use iced::{Color, Font};
-
-use crate::view::palette;
-
-/// The window's ground under the old canvas.
-pub const BG: Color = Color::from_rgb8(palette::BG[0], palette::BG[1], palette::BG[2]);
 
 /// The labels and lines: a proportional face, the built-in Atkinson
 /// Hyperlegible Next (iced's own without it).

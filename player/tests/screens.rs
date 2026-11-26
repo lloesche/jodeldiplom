@@ -27,7 +27,7 @@ use jodeldiplom::core::lanes::Block;
 use jodeldiplom::core::sliders::Slider;
 use jodeldiplom::core::{lag, update, Action, Effect, Gpu, Screen, Side, State};
 use jodeldiplom::gui::metrics;
-use jodeldiplom::gui::pointer::{Grab, PointerKind, WheelOn};
+use jodeldiplom::gui::pointer::{Grab, WheelOn};
 use jodeldiplom::gui::window::{Gui, Message};
 use jodeldiplom::view::setup::Choice;
 use setup_web::{start, when, Made, Web};
@@ -513,7 +513,6 @@ fn ctrl_over_a_row_selects_it() {
         sim.simulate([iced::Event::Mouse(mouse::Event::CursorMoved {
             position: at,
         })]);
-        // The old canvas under the pane hears every move too (as off it).
         sim.into_messages()
             .filter_map(|m| match m {
                 Message::Act(action) => Some(action),
@@ -949,9 +948,6 @@ fn clicking_the_title_artist_or_album_jumps() {
         common::playing_state(160, 42),
         "Morning Light (Live)",
     ));
-    // Only the column takes a press or the wheel: the old canvas under it
-    // hears the pointer's moves alone.
-    let moved = |m: &&Message| matches!(m, Message::Pointer(p) if p.kind == PointerKind::Moved);
     for (words, op) in [
         ("Morning Light (Live)", Op::GoTrack),
         ("The Ramps", Op::GoArtist),
@@ -959,9 +955,8 @@ fn clicking_the_title_artist_or_album_jumps() {
     ] {
         let at = bounds_of(&gui, words).center();
         let sent = at_point(&gui, at, &a_click());
-        let taken: Vec<&Message> = sent.iter().filter(|m| !moved(m)).collect();
         assert!(
-            matches!(taken[..], [Message::Act(Action::Op(o))] if *o == op),
+            matches!(&sent[..], [Message::Act(Action::Op(o))] if *o == op),
             "{words}: {sent:?}"
         );
     }
@@ -982,8 +977,7 @@ fn clicking_the_title_artist_or_album_jumps() {
             delta: wheel,
         })],
     );
-    let taken: Vec<&Message> = scrolled.iter().filter(|m| !moved(m)).collect();
-    assert!(matches!(taken[..], [Message::Wheel(_)]), "{scrolled:?}");
+    assert!(matches!(scrolled[..], [Message::Wheel(_)]), "{scrolled:?}");
 }
 
 /// On a window too narrow for the right column, the summary under the
