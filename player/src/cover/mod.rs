@@ -211,3 +211,47 @@ pub fn song_key(path: &Path) -> String {
     crate::lyrics::store::cache_key(path)
         .unwrap_or_else(|| crate::cache::name(&path.display().to_string()))
 }
+
+/// Which cover a song brings, as the window's thread can tell cheaply: a
+/// hash of all its bytes (where they came from does not count, so the same
+/// picture embedded or beside the file is the same cover). The app decodes
+/// a cover again and the covers' worker lets the last song's layers go
+/// only where it changes.
+pub fn identity(cover: &jodel_playback::Cover) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    cover.data.hash(&mut h);
+    h.finish()
+}
+
+#[cfg(test)]
+mod tests {
+    use jodel_playback::{Cover, CoverOrigin};
+
+    use super::identity;
+
+    fn embedded(data: Vec<u8>) -> Cover {
+        Cover {
+            data: data.into(),
+            mime: "image/jpeg".into(),
+            origin: CoverOrigin::Embedded,
+        }
+    }
+
+    /// Two embedded covers of the same length that differ in one byte
+    /// (any byte: all of them count) are two covers.
+    #[test]
+    fn covers_of_one_length_and_other_bytes_are_told_apart() {
+        let a: Vec<u8> = (0..4096u32).map(|i| (i * 7) as u8).collect();
+        for at in [1, 63, 2000, 4095] {
+            let mut b = a.clone();
+            b[at] ^= 1;
+            assert_ne!(
+                identity(&embedded(a.clone())),
+                identity(&embedded(b)),
+                "{at}"
+            );
+        }
+        assert_eq!(identity(&embedded(a.clone())), identity(&embedded(a)));
+    }
+}

@@ -21,7 +21,7 @@ use std::time::{Duration, Instant};
 use image::RgbImage;
 use jodel_output::mixer::{DeskView, MicPort};
 use jodel_playback::{
-    Command, Cover, CoverOrigin, Event, PlayState, PlayerOptions, SeparatorSource, SpectrumTap,
+    Command, Cover, Event, PlayState, PlayerOptions, SeparatorSource, SpectrumTap,
 };
 
 use crate::art::{self, Art};
@@ -161,36 +161,6 @@ impl AppOptions {
     }
 }
 
-/// The subfolders of `dir`, by name (none hidden or the system's), for the
-/// data folder's list; `None`: the drives (on Windows; elsewhere `/`).
-pub fn list_folders(dir: Option<&Path>) -> Vec<PathBuf> {
-    let Some(dir) = dir else {
-        if cfg!(windows) {
-            return (b'A'..=b'Z')
-                .map(|letter| PathBuf::from(format!("{}:\\", letter as char)))
-                .filter(|drive| drive.is_dir())
-                .collect();
-        }
-        return vec![PathBuf::from("/")];
-    };
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return Vec::new();
-    };
-    let mut folders: Vec<PathBuf> = entries
-        .flatten()
-        .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
-        .map(|e| e.path())
-        .filter(|p| {
-            p.file_name().is_some_and(|n| {
-                let n = n.to_string_lossy();
-                !n.starts_with('.') && !n.starts_with('$') && n != "System Volume Information"
-            })
-        })
-        .collect();
-    folders.sort_by_key(|p| p.to_string_lossy().to_lowercase());
-    folders
-}
-
 /// The real devices, each with its mix format in a few words.
 pub fn list_devices() -> Result<Vec<DeviceChoice>, String> {
     let devices = jodel_output::devices().map_err(|e| e.to_string())?;
@@ -293,7 +263,8 @@ pub struct App {
     /// The spectrum [`App::spectrum`] gave last.
     last_spectrum: Option<SpectrumFrame>,
     art: Option<Art>,
-    art_key: Option<String>,
+    /// The [`crate::cover::identity`] of the cover `art` is decoded from.
+    art_key: Option<u64>,
     art_tx: Sender<(u64, Option<RgbImage>)>,
     art_rx: Receiver<(u64, Option<RgbImage>)>,
     next_art: u64,
@@ -380,20 +351,6 @@ fn note_mic(mic: &jodel_output::Input, cleaned: Option<f32>, echo: &jodel_output
         status.blocks_dropped,
         status.voice_dropped,
     ));
-}
-
-fn cover_key(cover: &Cover) -> String {
-    match &cover.origin {
-        CoverOrigin::Folder(path) => format!("file:{}", path.display()),
-        CoverOrigin::Embedded => {
-            let data = &cover.data;
-            let sample: u64 = data
-                .iter()
-                .step_by((data.len() / 64).max(1))
-                .fold(0u64, |h, &b| h.wrapping_mul(31).wrapping_add(u64::from(b)));
-            format!("embedded:{}:{sample}", data.len())
-        }
-    }
 }
 
 impl App {
@@ -1481,8 +1438,8 @@ impl App {
             self.next_art += 1;
             return;
         };
-        let key = cover_key(cover);
-        if self.art_key.as_ref() == Some(&key) {
+        let key = crate::cover::identity(cover);
+        if self.art_key == Some(key) {
             return;
         }
         self.art_key = Some(key);
@@ -1598,7 +1555,7 @@ impl App {
                 let tx = self.tx.clone();
                 let notify = self.notify.clone();
                 thread::spawn(move || {
-                    let folders = list_folders(dir.as_deref());
+                    let folders = browser::list_folders(dir.as_deref());
                     if tx.send(Action::FoldersListed(dir, folders)).is_ok() {
                         notify();
                     }
@@ -1652,44 +1609,7 @@ impl App {
                 // Only what was changed in the player is saved; the command
                 // line's overrides stay out of the file.
                 let now = self.state.config.clone();
-                let base = &self.baseline;
-                let mut file = self.saved.clone();
-                // Every setting, each taken over where it changed. The
-                // pattern names every field (it fails to build without one),
-                // so a new one cannot be left out of the file unnoticed.
-                macro_rules! carry {
-                    ($($field:ident),* $(,)?) => {{
-                        let Config { $($field: _),* } = &now;
-                        $(if now.$field != base.$field {
-                            file.$field = now.$field.clone();
-                        })*
-                    }};
-                }
-                carry!(
-                    device,
-                    headroom,
-                    bpm,
-                    beat_voting,
-                    beat_methods,
-                    beat_method,
-                    stems,
-                    skip_mix,
-                    skip_preset,
-                    transition_preset,
-                    transition_tempo,
-                    transition_lyrics,
-                    stems_on_bar,
-                    karaoke_voice,
-                    karaoke_mic_device,
-                    karaoke_online,
-                    karaoke_lead,
-                    karaoke_echo,
-                    karaoke_game,
-                    karaoke_notes,
-                    karaoke_keep,
-                    karaoke_effects,
-                    data_folder,
-                );
+                let file = self.saved.merge_changes(&self.baseline, &now);
                 self.saved = file.clone();
                 self.baseline = now;
                 if let Some(path) = self.state.config_file.clone() {

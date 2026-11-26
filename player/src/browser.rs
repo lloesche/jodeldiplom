@@ -13,6 +13,8 @@
 //! - [`search`] walks below a folder for names containing a text, streaming
 //!   what it finds; [`walk_playable`] collects every playable file below a
 //!   folder, for queueing it.
+//! - [`list_folders`] lists a folder's subfolders alone, for the data
+//!   folder's list on the Settings screen.
 
 use std::cmp::Ordering;
 use std::collections::VecDeque;
@@ -284,13 +286,39 @@ fn normalize(path: &Path) -> PathBuf {
     out
 }
 
-/// The drives that exist, `A:\` to `Z:\`, as folders.
-fn list_drives() -> Vec<Entry> {
+/// The tops of the file system: on Windows the drives that exist, `A:\`
+/// to `Z:\`; elsewhere `/`.
+fn drives() -> Vec<PathBuf> {
+    if !cfg!(windows) {
+        return vec![PathBuf::from("/")];
+    }
     (b'A'..=b'Z')
         .map(|letter| PathBuf::from(format!("{}:\\", letter as char)))
         .filter(|root| fs::metadata(root).is_ok_and(|m| m.is_dir()))
-        .map(|root| Entry::new(root, EntryKind::Dir))
         .collect()
+}
+
+/// The subfolders of `dir`, by name, for the data folder's list: none
+/// hidden or the system's (`$RECYCLE.BIN`, `System Volume Information`).
+/// `None`: the [`drives`]. A folder that cannot be listed has none.
+pub fn list_folders(dir: Option<&Path>) -> Vec<PathBuf> {
+    let Some(dir) = dir else {
+        return drives();
+    };
+    let Ok(entries) = fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut folders: Vec<PathBuf> = entries
+        .flatten()
+        .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
+        .filter(|e| {
+            let name = e.file_name().to_string_lossy().into_owned();
+            !is_hidden(&name) && !name.starts_with('$') && name != "System Volume Information"
+        })
+        .map(|e| e.path())
+        .collect();
+    folders.sort_by_key(|p| p.to_string_lossy().to_lowercase());
+    folders
 }
 
 /// The subfolders and playable files of `dir`, folders first, with a
@@ -298,7 +326,10 @@ fn list_drives() -> Vec<Entry> {
 /// left out. On Windows the empty path lists the drives.
 pub fn list_dir(dir: &Path) -> io::Result<Vec<Entry>> {
     if is_drives(dir) {
-        return Ok(list_drives());
+        return Ok(drives()
+            .into_iter()
+            .map(|root| Entry::new(root, EntryKind::Dir))
+            .collect());
     }
     let mut entries = Vec::new();
     if let Some(parent) = parent_of(dir) {
@@ -677,6 +708,35 @@ mod tests {
         let root = list_dir(Path::new("C:\\")).unwrap();
         assert_eq!(root[0].kind, EntryKind::Parent);
         assert!(is_drives(&root[0].path));
+    }
+
+    /// The data folder's list: the subfolders by name (case ignored),
+    /// without files or hidden and system folders; the tops without a
+    /// folder.
+    #[test]
+    fn folders_are_listed_for_the_data_folder() {
+        let root = std::env::temp_dir().join(format!("jodeldiplom-folders-{}", std::process::id()));
+        for name in [
+            "b",
+            "A",
+            ".hidden",
+            "$RECYCLE.BIN",
+            "System Volume Information",
+        ] {
+            fs::create_dir_all(root.join(name)).unwrap();
+        }
+        fs::write(root.join("a file"), b"x").unwrap();
+        assert_eq!(
+            list_folders(Some(&root)),
+            vec![root.join("A"), root.join("b")]
+        );
+        assert!(list_folders(Some(&root.join("none"))).is_empty());
+        let tops = list_folders(None);
+        assert!(
+            !tops.is_empty() && tops.iter().all(|p| p.is_dir()),
+            "{tops:?}"
+        );
+        let _ = fs::remove_dir_all(&root);
     }
 
     #[test]

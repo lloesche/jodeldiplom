@@ -2,50 +2,271 @@
 //! sound settings set the rate it runs at; a file at another rate is
 //! resampled to it), and the player's other settings.
 //!
-//! The file holds `key = value` lines (a small subset of TOML):
+//! The file holds `key = value` lines (a small subset of TOML), one per
+//! setting:
 //!
 //! ```toml
-//! device = "{0.0.0.00000000}.{...}"   # an id from --list-devices; absent: the system default
-//! headroom = 0                        # dB below full scale where the samples change (resampled, float files): 0, 0.5, 1, 2, 3 (lossy files at least 1.5)
-//! bpm = true                          # false: no tempo, no beat pulse, no beat analysis
-//! beat_voting = true                  # true: the beat_methods vote; false: beat_method decides
-//! beat_methods = "flux, network"      # the methods that vote (at least one)
-//! beat_method = "network"             # the one method without voting
-//! stems = true                        # true: the cues listen to stems separated on the GPU
-//! stem_switch = "bar"                 # stems switch on the next bar ("bar") or at once ("instant")
-//! skip_mix = "cut"                    # the next track key: "cut", or "mix" into it
-//! skip_preset = "transition-tab"      # the preset it mixes by: the Transition tab's, or one of its own
-//! transition_preset = "fade"          # the Transition tab's transition preset, as last chosen
-//! transition_tempo = "varispeed"      # how a transition's tempi meet: "varispeed" or "stretch"
-//!                                     # ("fade", "drums-first", "bass-swap", "vocals-last")
-//! karaoke_voice = 0                   # karaoke mode: the voice stem's slider, 0 to 100 % of its travel (100: 0 dB)
-//! karaoke_mic_device = "..."          # the microphone (an input id); absent: the system's default
-//! karaoke_online = true               # karaoke: look lyrics up on LRCLIB (false: tags and .lrc files only)
-//! karaoke_lead = 200                  # karaoke: the words light up this many ms before they are sung (0 to 1000)
-//! karaoke_echo = true                 # karaoke: take the music's echo (from the speakers) out of the singer the microphone hears
-//! karaoke_game = true                 # karaoke: score the singing (points, medals, high scores); false: just sing
-//! karaoke_notes = true                # karaoke: the song's notes under the line being sung
-//! karaoke_keep = false                # karaoke: keep your singing of each song (recordings, beside this file), to tune the game
-//! karaoke_effects = 0.0               # karaoke: the game's sound effects, the Effects strip's fader in dB ("off": none)
-//! karaoke_effects_mute = false        # karaoke: the Effects strip muted
-//! transition_lyrics = true            # the Transition tab: the lyrics on the vocals lane (L)
-//! data_folder = "D:\\Music data"      # the folder the data folder is made in; absent: the system's place
+//! headroom = 0.5
+//! bpm = true
+//! beat_methods = "flux, network"
+//! skip_mix = "mix"
+//! karaoke_effects = "off"
+//! data_folder = "D:\\Music data"
 //! ```
+//!
+//! The settings are the rows of [`SETTINGS`], in the order the file is
+//! written: each key, the [`Config`] field it sets (whose doc says what it
+//! means) and the kind of value it takes.
 //!
 //! The file is in the settings folder ([`crate::dirs`]).
 //!
 //! Command-line options override it for one run. Settings changed in the
-//! UI are written back to it.
+//! UI are written back to it ([`Config::merge_changes`]).
 
 use std::fmt::Write as _;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use jodel_playback::{Headroom, Settings};
+use jodel_playback::{Headroom, Settings, TempoMode};
 use jodel_rhythm::Method;
 
 use crate::core::transition::Preset;
+
+/// One setting of the file ([`SETTINGS`]): its key, how its value is read
+/// into a [`Config`] and written from it, and how a change made in the
+/// player is taken over ([`Config::merge_changes`]).
+pub struct Setting {
+    /// Its key in the file.
+    pub key: &'static str,
+    /// The note a file shows in a commented line where the setting is left
+    /// out; `None`: nothing is shown.
+    absent: Option<&'static str>,
+    /// Sets it from the text after `=`; `Err`: what is wrong.
+    read: fn(&mut Config, &str) -> Result<(), String>,
+    /// The text after `=`; `None`: left out.
+    write: fn(&Config) -> Option<String>,
+    /// Takes it from `now` (the third) into the file's settings (the
+    /// first) where `now` differs from `base` (the second).
+    take: fn(&mut Config, &Config, &Config),
+}
+
+/// How a kind of value is read from the file and written to it.
+struct Kind<T> {
+    /// The value of the text after `=`; `Err`: what it takes instead.
+    read: fn(&str) -> Result<T, String>,
+    /// The text after `=`; `None`: the setting is left out.
+    write: fn(&T) -> Option<String>,
+}
+
+/// [`SETTINGS`] from rows of `"key" => field as KIND`, with `, absent
+/// "note"` for one that may be left out.
+macro_rules! settings {
+    (@note) => { None };
+    (@note $note:literal) => { Some($note) };
+    ($($key:literal => $($field:ident).+ as $kind:ident $(, absent $note:literal)?;)*) => {
+        /// Every setting of the file, one row each, in the order the file
+        /// is written. A new setting is a field of [`Config`] and a row
+        /// here.
+        pub const SETTINGS: &[Setting] = &[$(Setting {
+            key: $key,
+            absent: settings!(@note $($note)?),
+            read: |config, text| {
+                config.$($field).+ =
+                    ($kind.read)(text).map_err(|takes| format!("{} takes {takes}", $key))?;
+                Ok(())
+            },
+            write: |config| ($kind.write)(&config.$($field).+),
+            take: |file, base, now| {
+                if now.$($field).+ != base.$($field).+ {
+                    file.$($field).+.clone_from(&now.$($field).+);
+                }
+            },
+        }),*];
+    };
+}
+
+settings! {
+    "device" => device as DEVICE, absent "an id from --list-devices; absent: the system default";
+    "headroom" => headroom as HEADROOM;
+    "bpm" => bpm as FLAG;
+    "beat_voting" => beat_voting as FLAG;
+    "beat_methods" => beat_methods as METHODS;
+    "beat_method" => beat_method as METHOD;
+    "stems" => stems as FLAG;
+    "stem_switch" => stems_on_bar as STEM_SWITCH;
+    "skip_mix" => skip_mix as SKIP_MIX;
+    "skip_preset" => skip_preset as SKIP_PRESET;
+    "transition_preset" => transition_preset as PRESET;
+    "transition_tempo" => transition_tempo as TEMPO;
+    "karaoke_voice" => karaoke_voice as PERCENT;
+    "karaoke_mic_device" => karaoke_mic_device as DEVICE, absent "an input id; absent: the system's default";
+    "karaoke_online" => karaoke_online as FLAG;
+    "karaoke_lead" => karaoke_lead as LEAD;
+    "karaoke_echo" => karaoke_echo as FLAG;
+    "karaoke_game" => karaoke_game as FLAG;
+    "karaoke_notes" => karaoke_notes as FLAG;
+    "karaoke_keep" => karaoke_keep as FLAG;
+    "karaoke_effects" => karaoke_effects.db as LEVEL;
+    "karaoke_effects_mute" => karaoke_effects.mute as FLAG;
+    "transition_lyrics" => transition_lyrics as FLAG;
+    "data_folder" => data_folder as FOLDER, absent "the folder the data folder is made in; absent: the system's place";
+}
+
+/// `true` or `false`.
+const FLAG: Kind<bool> = Kind {
+    read: |text| match text {
+        "true" => Ok(true),
+        "false" => Ok(false),
+        _ => Err("true or false".into()),
+    },
+    write: |on| Some(on.to_string()),
+};
+
+/// A device's id, in quotes; empty or `"default"`: the system's default
+/// (`None`, left out).
+const DEVICE: Kind<Option<String>> = Kind {
+    read: |text| {
+        let id = parse_string(text).ok_or("a string")?;
+        Ok((!id.is_empty() && id != "default").then_some(id))
+    },
+    write: |id| id.as_deref().map(quote),
+};
+
+/// dB below full scale ([`Headroom::parse`]).
+const HEADROOM: Kind<Headroom> = Kind {
+    read: |text| Headroom::parse(&word(text)).ok_or_else(|| "dB: 0, 0.5, 1, 2 or 3".to_owned()),
+    write: |headroom| Some(headroom.value().to_string()),
+};
+
+/// Beat methods between commas, at least one; kept in [`Method::ALL`]
+/// order, each once.
+const METHODS: Kind<Vec<Method>> = Kind {
+    read: |text| {
+        let mut methods = word(text)
+            .split(',')
+            .map(|id| Method::parse(id.trim()))
+            .collect::<Option<Vec<_>>>()
+            .filter(|m| !m.is_empty())
+            .ok_or_else(|| format!("{}, at least one, between commas", method_ids()))?;
+        methods.sort_unstable();
+        methods.dedup();
+        Ok(methods)
+    },
+    write: |methods| {
+        let ids: Vec<&str> = methods.iter().map(|m| m.id()).collect();
+        Some(quote(&ids.join(", ")))
+    },
+};
+
+/// One beat method.
+const METHOD: Kind<Method> = Kind {
+    read: |text| Method::parse(&word(text)).ok_or_else(method_ids),
+    write: |method| Some(quote(method.id())),
+};
+
+/// A value named by one of these words (in quotes or bare), written in
+/// quotes.
+macro_rules! words {
+    ($($word:literal => $value:expr),+ $(,)?) => {
+        Kind {
+            read: |text| match word(text).as_str() {
+                $($word => Ok($value),)+
+                _ => Err(one_of([$($word),+])),
+            },
+            write: |value| {
+                [$(($word, $value)),+]
+                    .into_iter()
+                    .find(|(_, v)| v == value)
+                    .map(|(w, _)| quote(w))
+            },
+        }
+    };
+}
+
+/// Stems switch on the next bar, or at once.
+const STEM_SWITCH: Kind<bool> = words!("bar" => true, "instant" => false);
+
+/// The next track key cuts to it, or mixes into it.
+const SKIP_MIX: Kind<bool> = words!("cut" => false, "mix" => true);
+
+/// How a transition's tempi meet.
+const TEMPO: Kind<TempoMode> = words!(
+    "varispeed" => TempoMode::Varispeed,
+    "stretch" => TempoMode::Stretch,
+);
+
+/// A transition preset ([`Preset::id`]).
+const PRESET: Kind<Preset> = Kind {
+    read: |text| Preset::from_id(&word(text)).ok_or_else(|| one_of(Preset::ALL.map(Preset::id))),
+    write: |preset| Some(quote(preset.id())),
+};
+
+/// The Transition tab's preset as it is set then (`"transition-tab"`,
+/// `None`), or a preset of its own.
+const SKIP_PRESET: Kind<Option<Preset>> = Kind {
+    read: |text| match word(text).as_str() {
+        "transition-tab" => Ok(None),
+        id => Preset::from_id(id).map(Some).ok_or_else(|| {
+            one_of(std::iter::once("transition-tab").chain(Preset::ALL.map(Preset::id)))
+        }),
+    },
+    write: |by| Some(quote(by.map_or("transition-tab", Preset::id))),
+};
+
+/// A percentage, 0 to 100.
+const PERCENT: Kind<u8> = Kind {
+    read: |text| {
+        text.parse()
+            .ok()
+            .filter(|&v| v <= 100)
+            .ok_or_else(|| "a percentage, 0 to 100".to_owned())
+    },
+    write: |percent| Some(percent.to_string()),
+};
+
+/// Milliseconds, 0 to [`LEAD_MOST`].
+const LEAD: Kind<u16> = Kind {
+    read: |text| {
+        text.parse()
+            .ok()
+            .filter(|&v| v <= LEAD_MOST)
+            .ok_or_else(|| format!("milliseconds, 0 to {LEAD_MOST}"))
+    },
+    write: |ms| Some(ms.to_string()),
+};
+
+/// A fader's level in dB, −100 to 6, to a tenth of a dB; `"off"`: −∞.
+const LEVEL: Kind<f64> = Kind {
+    read: |text| match word(text).as_str() {
+        "off" => Ok(f64::NEG_INFINITY),
+        db => db
+            .parse::<f64>()
+            .ok()
+            .filter(|d| (-100.0..=6.0).contains(d))
+            .map(|d| (d * 10.0).round() / 10.0)
+            .ok_or_else(|| "a level in dB, -100 to 6, or \"off\"".to_owned()),
+    },
+    write: |&db| {
+        Some(if db > f64::NEG_INFINITY {
+            format!("{db:.1}")
+        } else {
+            quote("off")
+        })
+    },
+};
+
+/// A folder's full path, in quotes (`None`, left out: none set).
+const FOLDER: Kind<Option<PathBuf>> = Kind {
+    read: |text| {
+        parse_string(text)
+            .map(PathBuf::from)
+            .filter(|p| p.is_absolute())
+            .map(Some)
+            .ok_or_else(|| "a folder's full path, in quotes".to_owned())
+    },
+    write: |path| path.as_ref().map(|p| quote(&p.display().to_string())),
+};
 
 /// The player's settings.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -178,255 +399,42 @@ impl Config {
                 .split_once('=')
                 .ok_or_else(|| at("expected key = value"))?;
             let (key, value) = (key.trim(), value.trim());
-            match key {
-                "device" => {
-                    let id = parse_string(value).ok_or_else(|| at("device takes a string"))?;
-                    config.device = (!id.is_empty() && id != "default").then_some(id);
-                }
-                "headroom" => {
-                    let text = parse_string(value).unwrap_or_else(|| value.to_owned());
-                    config.headroom = Headroom::parse(&text)
-                        .ok_or_else(|| at("headroom takes dB: 0, 0.5, 1, 2 or 3"))?;
-                }
-                "bpm" => {
-                    config.bpm = match value {
-                        "true" => true,
-                        "false" => false,
-                        _ => return Err(at("bpm takes true or false")),
-                    }
-                }
-                "stems" => {
-                    config.stems = match value {
-                        "true" => true,
-                        "false" => false,
-                        _ => return Err(at("stems takes true or false")),
-                    }
-                }
-                "beat_voting" => {
-                    config.beat_voting = match value {
-                        "true" => true,
-                        "false" => false,
-                        _ => return Err(at("beat_voting takes true or false")),
-                    }
-                }
-                "beat_methods" => {
-                    let text = parse_string(value).unwrap_or_else(|| value.to_owned());
-                    let mut methods = text
-                        .split(',')
-                        .map(|id| Method::parse(id.trim()))
-                        .collect::<Option<Vec<_>>>()
-                        .filter(|m| !m.is_empty())
-                        .ok_or_else(|| at(&methods_hint("beat_methods takes")))?;
-                    methods.sort_unstable();
-                    methods.dedup();
-                    config.beat_methods = methods;
-                }
-                "beat_method" => {
-                    let id = parse_string(value).unwrap_or_else(|| value.to_owned());
-                    config.beat_method = Method::parse(&id)
-                        .ok_or_else(|| at(&methods_hint("beat_method takes one of")))?;
-                }
-                "stem_switch" => {
-                    let id = parse_string(value).unwrap_or_else(|| value.to_owned());
-                    config.stems_on_bar = match id.as_str() {
-                        "bar" => true,
-                        "instant" => false,
-                        _ => return Err(at("stem_switch takes \"bar\" or \"instant\"")),
-                    };
-                }
-                "skip_mix" => {
-                    let id = parse_string(value).unwrap_or_else(|| value.to_owned());
-                    config.skip_mix = match id.as_str() {
-                        "cut" => false,
-                        "mix" => true,
-                        _ => return Err(at("skip_mix takes \"cut\" or \"mix\"")),
-                    };
-                }
-                "skip_preset" => {
-                    let id = parse_string(value).unwrap_or_else(|| value.to_owned());
-                    config.skip_preset = match id.as_str() {
-                        "transition-tab" => None,
-                        id => Some(Preset::from_id(id).ok_or_else(|| {
-                            at("skip_preset takes \"transition-tab\", \"fade\", \"drums-first\", \"bass-swap\" or \"vocals-last\"")
-                        })?),
-                    };
-                }
-                "transition_preset" => {
-                    let id = parse_string(value).unwrap_or_else(|| value.to_owned());
-                    config.transition_preset = Preset::from_id(&id).ok_or_else(|| {
-                        at("transition_preset takes \"fade\", \"drums-first\", \"bass-swap\" or \"vocals-last\"")
-                    })?;
-                }
-                "transition_tempo" => {
-                    let id = parse_string(value).unwrap_or_else(|| value.to_owned());
-                    config.transition_tempo = match id.as_str() {
-                        "varispeed" => jodel_playback::TempoMode::Varispeed,
-                        "stretch" => jodel_playback::TempoMode::Stretch,
-                        _ => return Err(at("transition_tempo takes \"varispeed\" or \"stretch\"")),
-                    };
-                }
-                "karaoke_voice" => {
-                    config.karaoke_voice = value
-                        .parse::<u8>()
-                        .ok()
-                        .filter(|&v| v <= 100)
-                        .ok_or_else(|| at("karaoke_voice takes a percentage, 0 to 100"))?;
-                }
-                "karaoke_mic_device" => {
-                    let id = parse_string(value)
-                        .ok_or_else(|| at("karaoke_mic_device takes a string"))?;
-                    config.karaoke_mic_device = (!id.is_empty() && id != "default").then_some(id);
-                }
-                // An older file's microphone level: the microphone is no
-                // longer played, so it has none.
-                "karaoke_mic" => {}
-                "karaoke_online" => {
-                    config.karaoke_online = match value {
-                        "true" => true,
-                        "false" => false,
-                        _ => return Err(at("karaoke_online takes true or false")),
-                    }
-                }
-                "transition_lyrics" => {
-                    config.transition_lyrics = match value {
-                        "true" => true,
-                        "false" => false,
-                        _ => return Err(at("transition_lyrics takes true or false")),
-                    }
-                }
-                "karaoke_echo" => {
-                    config.karaoke_echo = match value {
-                        "true" => true,
-                        "false" => false,
-                        _ => return Err(at("karaoke_echo takes true or false")),
-                    }
-                }
-                "data_folder" => {
-                    let path = parse_string(value)
-                        .map(PathBuf::from)
-                        .filter(|p| p.is_absolute())
-                        .ok_or_else(|| at("data_folder takes a folder's full path, in quotes"))?;
-                    config.data_folder = Some(path);
-                }
-                "karaoke_game" => {
-                    config.karaoke_game = match value {
-                        "true" => true,
-                        "false" => false,
-                        _ => return Err(at("karaoke_game takes true or false")),
-                    }
-                }
-                "karaoke_notes" => {
-                    config.karaoke_notes = match value {
-                        "true" => true,
-                        "false" => false,
-                        _ => return Err(at("karaoke_notes takes true or false")),
-                    }
-                }
-                "karaoke_keep" => {
-                    config.karaoke_keep = match value {
-                        "true" => true,
-                        "false" => false,
-                        _ => return Err(at("karaoke_keep takes true or false")),
-                    }
-                }
-                "karaoke_effects" => {
-                    let id = parse_string(value).unwrap_or_else(|| value.to_owned());
-                    config.karaoke_effects.db = match id.as_str() {
-                        "off" => f64::NEG_INFINITY,
-                        db => db
-                            .parse::<f64>()
-                            .ok()
-                            .filter(|d| (-100.0..=6.0).contains(d))
-                            .map(|d| (d * 10.0).round() / 10.0)
-                            .ok_or_else(|| {
-                                at("karaoke_effects takes a level in dB, -100 to 6, or \"off\"")
-                            })?,
-                    };
-                }
-                "karaoke_effects_mute" => {
-                    config.karaoke_effects.mute = match value {
-                        "true" => true,
-                        "false" => false,
-                        _ => return Err(at("karaoke_effects_mute takes true or false")),
-                    }
-                }
-                // An older file's level the singing was scored at: there is
-                // one way of scoring now.
-                "karaoke_level" => {}
-                "karaoke_lead" => {
-                    config.karaoke_lead = value
-                        .parse::<u16>()
-                        .ok()
-                        .filter(|&v| v <= LEAD_MOST)
-                        .ok_or_else(|| at("karaoke_lead takes milliseconds, 0 to 1000"))?;
-                }
-                other => warnings.push(at(&format!("unknown setting {other:?}"))),
+            match SETTINGS.iter().find(|s| s.key == key) {
+                Some(setting) => (setting.read)(&mut config, value).map_err(|e| at(&e))?,
+                None => warnings.push(at(&format!("unknown setting {key:?}"))),
             }
         }
         Ok((config, warnings))
     }
 
-    /// The file's text for these settings.
+    /// The file's text for these settings: the rows of [`SETTINGS`] in
+    /// order (one left out as its note, commented, where it has one).
     pub fn to_text(&self) -> String {
         let mut text = String::from("# jodeldiplom settings\n");
-        match &self.device {
-            Some(id) => {
-                let _ = writeln!(text, "device = {}", quote(id));
+        for setting in SETTINGS {
+            match ((setting.write)(self), setting.absent) {
+                (Some(value), _) => {
+                    let _ = writeln!(text, "{} = {value}", setting.key);
+                }
+                (None, Some(note)) => {
+                    let _ = writeln!(text, "# {} = \"...\"   ({note})", setting.key);
+                }
+                (None, None) => {}
             }
-            None => text.push_str(
-                "# device = \"...\"   (an id from --list-devices; absent: the system default)\n",
-            ),
-        }
-        let _ = writeln!(text, "headroom = {}", self.headroom.value());
-        let _ = writeln!(text, "bpm = {}", self.bpm);
-        let _ = writeln!(text, "beat_voting = {}", self.beat_voting);
-        let ids: Vec<&str> = self.beat_methods.iter().map(|m| m.id()).collect();
-        let _ = writeln!(text, "beat_methods = {}", quote(&ids.join(", ")));
-        let _ = writeln!(text, "beat_method = {}", quote(self.beat_method.id()));
-        let _ = writeln!(text, "stems = {}", self.stems);
-        let switch = if self.stems_on_bar { "bar" } else { "instant" };
-        let _ = writeln!(text, "stem_switch = {}", quote(switch));
-        let skip = if self.skip_mix { "mix" } else { "cut" };
-        let _ = writeln!(text, "skip_mix = {}", quote(skip));
-        let by = self.skip_preset.map_or("transition-tab", Preset::id);
-        let _ = writeln!(text, "skip_preset = {}", quote(by));
-        let _ = writeln!(
-            text,
-            "transition_preset = {}",
-            quote(self.transition_preset.id())
-        );
-        let tempo = match self.transition_tempo {
-            jodel_playback::TempoMode::Varispeed => "varispeed",
-            jodel_playback::TempoMode::Stretch => "stretch",
-        };
-        let _ = writeln!(text, "transition_tempo = {}", quote(tempo));
-        let _ = writeln!(text, "karaoke_voice = {}", self.karaoke_voice);
-        if let Some(id) = &self.karaoke_mic_device {
-            let _ = writeln!(text, "karaoke_mic_device = {}", quote(id));
-        }
-        let _ = writeln!(text, "karaoke_online = {}", self.karaoke_online);
-        let _ = writeln!(text, "karaoke_lead = {}", self.karaoke_lead);
-        let _ = writeln!(text, "karaoke_echo = {}", self.karaoke_echo);
-        let _ = writeln!(text, "karaoke_game = {}", self.karaoke_game);
-        let _ = writeln!(text, "karaoke_notes = {}", self.karaoke_notes);
-        let _ = writeln!(text, "karaoke_keep = {}", self.karaoke_keep);
-        let effects = self.karaoke_effects;
-        if effects.db > f64::NEG_INFINITY {
-            let _ = writeln!(text, "karaoke_effects = {:.1}", effects.db);
-        } else {
-            let _ = writeln!(text, "karaoke_effects = {}", quote("off"));
-        }
-        let _ = writeln!(text, "karaoke_effects_mute = {}", effects.mute);
-        let _ = writeln!(text, "transition_lyrics = {}", self.transition_lyrics);
-        match &self.data_folder {
-            Some(path) => {
-                let _ = writeln!(text, "data_folder = {}", quote(&path.display().to_string()));
-            }
-            None => text.push_str(
-                "# data_folder = \"...\"   (the folder the data folder is made in; absent: the system's place)\n",
-            ),
         }
         text
+    }
+
+    /// The file's settings (`self`) with what was changed in the player
+    /// taken over: each setting where `now` differs from `base` (what the
+    /// player started with, the command line's overrides in it) is
+    /// `now`'s. The overrides themselves stay out of the file.
+    pub fn merge_changes(&self, base: &Config, now: &Config) -> Config {
+        let mut file = self.clone();
+        for setting in SETTINGS {
+            (setting.take)(&mut file, base, now);
+        }
+        file
     }
 
     /// Reads `path`; a missing file gives the defaults.
@@ -446,13 +454,24 @@ impl Config {
     }
 }
 
-/// `what` and the method names.
-fn methods_hint(what: &str) -> String {
-    let ids: Vec<String> = Method::ALL
-        .iter()
-        .map(|m| format!("{:?}", m.id()))
-        .collect();
-    format!("{what} {}", ids.join(", "))
+/// The beat methods' ids, as [`one_of`] says them.
+fn method_ids() -> String {
+    one_of(Method::ALL.iter().map(|m| m.id()))
+}
+
+/// Ids in quotes, the last after "or": `"a", "b" or "c"`.
+fn one_of<'a>(ids: impl IntoIterator<Item = &'a str>) -> String {
+    let ids: Vec<String> = ids.into_iter().map(quote).collect();
+    match ids.split_last() {
+        Some((last, [])) => last.clone(),
+        Some((last, rest)) => format!("{} or {last}", rest.join(", ")),
+        None => String::new(),
+    }
+}
+
+/// A value in quotes, or bare.
+fn word(value: &str) -> String {
+    parse_string(value).unwrap_or_else(|| value.to_owned())
 }
 
 fn strip_comment(line: &str) -> &str {
@@ -515,9 +534,10 @@ pub fn default_path() -> Option<PathBuf> {
 mod tests {
     use super::*;
 
-    #[test]
-    fn settings_round_trip() {
-        let config = Config {
+    /// Every setting away from its default (its fields named one by one,
+    /// so a new one cannot be left out).
+    fn every_setting_changed() -> Config {
+        Config {
             device: Some(r#"{0.0.0}.{a"b\c}"#.into()),
             headroom: Headroom(5),
             bpm: false,
@@ -549,7 +569,12 @@ mod tests {
             } else {
                 "/srv/music data".into()
             }),
-        };
+        }
+    }
+
+    #[test]
+    fn settings_round_trip() {
+        let config = every_setting_changed();
         let (back, warnings) = Config::parse(&config.to_text()).unwrap();
         assert_eq!(back, config);
         assert!(warnings.is_empty());
@@ -570,19 +595,38 @@ mod tests {
         assert!(Config::parse("skip_preset = \"nope\"\n").is_err());
     }
 
-    /// An older file's microphone level (the microphone is no longer
-    /// played, so it has none) is read without a word and not written back.
+    /// Each key is one row's.
     #[test]
-    fn an_older_microphone_level_is_passed_over() {
-        let (config, warnings) = Config::parse("karaoke_mic = 150\nkaraoke_voice = 20\n").unwrap();
-        assert!(warnings.is_empty(), "{warnings:?}");
-        assert_eq!(config.karaoke_voice, 20);
-        assert!(!config.to_text().contains("karaoke_mic ="));
-        // The level the singing was scored at, from when there were three:
-        // read without a word, not written back.
-        let (config, warnings) = Config::parse("karaoke_level = \"hard\"\n").unwrap();
-        assert!(warnings.is_empty(), "{warnings:?}");
-        assert!(!config.to_text().contains("karaoke_level"));
+    fn every_key_has_one_row() {
+        let mut keys: Vec<&str> = SETTINGS.iter().map(|s| s.key).collect();
+        keys.sort_unstable();
+        keys.dedup();
+        assert_eq!(keys.len(), SETTINGS.len());
+    }
+
+    /// Only what was changed in the player reaches the file; an override
+    /// from the command line does not, and the file's own values stay.
+    #[test]
+    fn changes_made_in_the_player_are_merged_into_the_file() {
+        let (file, _) = Config::parse("bpm = true\nkaraoke_lead = 300\n").unwrap();
+        let base = Config {
+            headroom: Headroom(10),
+            ..file.clone()
+        };
+        let mut now = base.clone();
+        now.bpm = false;
+        now.karaoke_effects.db = -6.0;
+        let merged = file.merge_changes(&base, &now);
+        assert!(!merged.bpm);
+        assert_eq!(merged.karaoke_effects.db, -6.0);
+        assert!(!merged.karaoke_effects.mute);
+        assert_eq!(merged.headroom, Headroom::NONE);
+        assert_eq!(merged.karaoke_lead, 300);
+        // Every setting is taken over where it changed.
+        let every = every_setting_changed();
+        let default = Config::default();
+        assert_eq!(default.merge_changes(&default, &every), every);
+        assert_eq!(every.merge_changes(&every, &default), default);
     }
 
     #[test]

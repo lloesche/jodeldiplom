@@ -18,7 +18,9 @@ use jodel_gpu::{GpuDepth, GpuMatte};
 use jodel_playback::{Cover, Tags, TrackInfo};
 
 use super::store::{CoverStore, SongCover, Splitter};
-use super::{album_keys, split, Apart, CoverLayers, CoverModels, FaceNet, Layers, Parts, TextNet};
+use super::{
+    album_keys, identity, split, Apart, CoverLayers, CoverModels, FaceNet, Layers, Parts, TextNet,
+};
 use crate::browser::Notify;
 use crate::core::{Action, Facts, Job};
 
@@ -173,27 +175,16 @@ struct Wanted {
     path: PathBuf,
     cover: Option<Cover>,
     tags: Tags,
-    /// Its cover's bytes' hash.
+    /// Its cover's [`identity`].
     bytes: Option<u64>,
 }
 
-/// The song playing's layers, with the hash of its cover's bytes as the
-/// song brought them ([`bytes_hash`]): a song after it with the very same
-/// bytes (an album's) keeps them.
+/// The song playing's layers, with the [`identity`] of its cover as the
+/// song brought it: a song after it with the very same bytes (an album's)
+/// keeps them.
 struct Held {
     bytes: Option<u64>,
     layers: Layers,
-}
-
-/// The hash of a song's cover's bytes as its file has them (none without
-/// a cover): cheap enough for the window's thread.
-fn bytes_hash(cover: Option<&Cover>) -> Option<u64> {
-    use std::hash::{Hash, Hasher};
-    cover.map(|c| {
-        let mut h = std::collections::hash_map::DefaultHasher::new();
-        c.data.hash(&mut h);
-        h.finish()
-    })
 }
 
 struct Queue {
@@ -276,7 +267,7 @@ impl CoverWorker {
     /// worker keeps them too where the store gives the song the same cover
     /// result).
     pub fn want(&self, info: &TrackInfo) {
-        let bytes = bytes_hash(info.cover.as_ref());
+        let bytes = info.cover.as_ref().map(identity);
         {
             let mut current = self
                 .shared
