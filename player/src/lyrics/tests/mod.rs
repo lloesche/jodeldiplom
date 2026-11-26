@@ -131,6 +131,180 @@ fn a_track_with_no_lyrics_found_is_heard_instead() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// A hearer that takes a while and fails, counting its hearings.
+struct SlowFailing(Arc<std::sync::atomic::AtomicUsize>);
+
+impl WordTimer for SlowFailing {
+    fn ready(&self) -> bool {
+        true
+    }
+
+    fn maker(&self) -> Maker {
+        Maker::new("marker", 1)
+    }
+
+    fn time(&self, _: &Path, lyrics: &Lyrics, _: &Others) -> Result<Lyrics, String> {
+        Ok(timed_by(lyrics, "marker"))
+    }
+
+    fn transcribe(&self, _: &Path) -> Result<(Lyrics, Lyrics), String> {
+        self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        thread::sleep(Duration::from_millis(300));
+        Err("the GPU failed".into())
+    }
+}
+
+/// A track no source has lyrics for is heard once a run, however often the
+/// queue is got ready again (or the song wanted) while it is heard or
+/// after: a hearing that failed is not tried again, the song settled as
+/// none found.
+#[test]
+fn a_track_with_no_lyrics_found_is_heard_once_a_run() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let dir = std::env::temp_dir().join(format!("jodel-lyrics-once-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    let song = dir.join("song.flac");
+    fs::write(&song, b"not audio").unwrap();
+    let probe = |path: &Path| {
+        Some(Track {
+            path: path.to_owned(),
+            ..Track::default()
+        })
+    };
+    let hearings = Arc::new(AtomicUsize::new(0));
+    let (busy_tx, busy_rx) = mpsc::channel();
+    let busy_tx = Mutex::new(busy_tx);
+    let (done_tx, done_rx) = mpsc::channel();
+    let done_tx = Mutex::new(done_tx);
+    let options = Options {
+        cache: Some(dir.join("cache")),
+        online: false,
+        http: Arc::new(Web::new()),
+        base: "http://lrclib.test".into(),
+        probe: Arc::new(probe),
+        timer: Some(Arc::new(SlowFailing(Arc::clone(&hearings)))),
+        working: Some(Arc::new(move |_: &Path, on: bool| {
+            let _ = busy_tx.lock().unwrap().send(on);
+        })),
+        done: Some(Arc::new(move |_: &Path, facts| {
+            let _ = done_tx.lock().unwrap().send(facts);
+        })),
+        edits: None,
+    };
+    let (tx, rx) = mpsc::channel();
+    let worker = LyricsWorker::new(options, move |path, answer| {
+        let _ = tx.send((path, answer));
+    });
+    let wait = Duration::from_secs(10);
+    worker.prepare(vec![song.clone()]);
+    assert!(busy_rx.recv_timeout(wait).unwrap(), "heard");
+    // Got ready again, and wanted, while it is heard.
+    for _ in 0..3 {
+        worker.prepare(vec![song.clone()]);
+        thread::sleep(Duration::from_millis(20));
+    }
+    worker.want(vec![song.clone()]);
+    let (_, answer) = rx.recv_timeout(wait).unwrap();
+    assert_eq!(answer, Answer::NotFound);
+    let none = crate::core::LyricsFacts::NotFound;
+    assert_eq!(done_rx.recv_timeout(wait).unwrap(), none);
+    // And after: settled at once, not heard again.
+    worker.want(Vec::new());
+    worker.prepare(vec![song.clone()]);
+    assert_eq!(done_rx.recv_timeout(wait).unwrap(), none);
+    worker.want(vec![song.clone()]);
+    let (_, answer) = rx.recv_timeout(wait).unwrap();
+    assert_eq!(answer, Answer::NotFound);
+    thread::sleep(Duration::from_millis(500));
+    assert_eq!(hearings.load(Ordering::SeqCst), 1);
+    drop(worker);
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// A hearer that hears as [`Transcriber`] does, counting its hearings.
+struct CountingHearer(Arc<std::sync::atomic::AtomicUsize>);
+
+impl WordTimer for CountingHearer {
+    fn ready(&self) -> bool {
+        true
+    }
+
+    fn maker(&self) -> Maker {
+        Transcriber.maker()
+    }
+
+    fn time(&self, path: &Path, lyrics: &Lyrics, others: &Others) -> Result<Lyrics, String> {
+        Transcriber.time(path, lyrics, others)
+    }
+
+    fn transcribe(&self, path: &Path) -> Result<(Lyrics, Lyrics), String> {
+        self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Transcriber.transcribe(path)
+    }
+}
+
+/// A track heard and kept is not heard again after a restart: the next
+/// run's worker, on the same cache, finds its heard text and timing there,
+/// got ready ahead or wanted.
+#[test]
+fn a_track_heard_and_kept_is_not_heard_again_after_a_restart() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let dir = std::env::temp_dir().join(format!("jodel-lyrics-restart-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    let song = dir.join("song.flac");
+    fs::write(&song, b"not audio").unwrap();
+    let hearings = Arc::new(AtomicUsize::new(0));
+    let run = |hearings: &Arc<AtomicUsize>| {
+        let (done_tx, done_rx) = mpsc::channel();
+        let done_tx = Mutex::new(done_tx);
+        let options = Options {
+            cache: Some(dir.join("cache")),
+            online: false,
+            http: Arc::new(Web::new()),
+            base: "http://lrclib.test".into(),
+            probe: Arc::new(|path: &Path| {
+                Some(Track {
+                    path: path.to_owned(),
+                    ..Track::default()
+                })
+            }),
+            timer: Some(Arc::new(CountingHearer(Arc::clone(hearings)))),
+            working: None,
+            done: Some(Arc::new(move |_: &Path, facts| {
+                let _ = done_tx.lock().unwrap().send(facts);
+            })),
+            edits: None,
+        };
+        let (tx, rx) = mpsc::channel();
+        let worker = LyricsWorker::new(options, move |path, answer| {
+            let _ = tx.send((path, answer));
+        });
+        (worker, done_rx, rx)
+    };
+    let wait = Duration::from_secs(10);
+    let (worker, done, _) = run(&hearings);
+    worker.prepare(vec![song.clone()]);
+    let heard = crate::core::LyricsFacts::Heard;
+    assert_eq!(done.recv_timeout(wait).unwrap(), heard);
+    drop(worker);
+    assert_eq!(hearings.load(Ordering::SeqCst), 1);
+    // The next run.
+    let (worker, done, answers) = run(&hearings);
+    worker.prepare(vec![song.clone()]);
+    assert_eq!(done.recv_timeout(wait).unwrap(), heard);
+    worker.want(vec![song.clone()]);
+    let (_, answer) = answers.recv_timeout(wait).unwrap();
+    assert!(
+        matches!(&answer, Answer::Found { lyrics, timed: Some(_) } if matches!(lyrics.source, Source::Transcribed(_))),
+        "{answer:?}"
+    );
+    assert_eq!(hearings.load(Ordering::SeqCst), 1);
+    drop(worker);
+    let _ = fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn lyrics_found_come_again_with_their_words_timed_and_kept() {
     let dir = std::env::temp_dir().join(format!("jodel-lyrics-timer-{}", std::process::id()));

@@ -52,7 +52,7 @@ pub use action::{
 };
 pub use fit::Fit;
 pub use update::{
-    browser_rows, device_window, folder_window, help_line_count, help_shown, list_cursor,
+    browser_rows, device_window, folder_window, help_line_count, help_shown, job_done, list_cursor,
     list_height, list_len, palette_window, readiness, row_entry, shown_title, update,
     visible_missing, Readiness, Row,
 };

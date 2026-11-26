@@ -192,6 +192,14 @@ stem keys are their mutes.
   - `a_song_picked_while_paused_plays`
   - `a_double_click_on_a_queue_row_is_two_clicks_on_it` (the window)
   - `another_track_played_while_paused_plays` (engine)
+- **Q5.** A queue row's icons are all lit only when nothing is left to do
+  for its track: a step's last icon (the tempo, the lyrics, the cover)
+  lights once that step is done and no worker is at it. A song no source
+  has lyrics for is heard from its voice once a run, however often the
+  queue is got ready again, and its lyrics icon lights once it is.
+  - `a_queue_rows_icons_are_all_lit_only_when_nothing_is_left_for_it`
+  - `the_queue_is_got_ready_ahead_and_its_icons_light_up_in_turn`
+  - `a_track_with_no_lyrics_found_is_heard_once_a_run`
 
 ## Karaoke
 

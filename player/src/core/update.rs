@@ -1585,30 +1585,52 @@ pub fn readiness(state: &State, path: &Path) -> Readiness {
     if state.working.contains_key(path) {
         return Readiness::Working;
     }
-    let done = state.ready.get(path);
-    let has = |job: Job| done.is_some_and(|jobs| jobs.contains(&job));
-    // Told by the workers, or known here already.
-    let analysed = matches!(
-        state.rhythm.get(path),
-        Some(Rhythm::Ready(_) | Rhythm::Failed)
-    );
-    let settled = match state.karaoke.lyrics.get(path) {
-        Some(karaoke::SongLyrics::Found { shown, .. }) => {
-            shown.timing.detail == jodel_lyrics::Detail::Words
-                || state.karaoke.model == karaoke::ModelState::Missing
-        }
-        Some(karaoke::SongLyrics::Pending) | None => false,
-        Some(_) => true,
-    };
-    let done = |job: &Job| match job {
-        Job::Rhythm => state.prepared.1.is_none() || has(Job::Rhythm) || analysed,
-        Job::Lyrics => has(Job::Lyrics) || settled,
-        Job::Cover => has(Job::Cover),
-    };
-    if state.preparing.iter().all(done) {
+    if state
+        .preparing
+        .iter()
+        .all(|&job| job_done(state, path, job))
+    {
         Readiness::Done
     } else {
         Readiness::Waiting
+    }
+}
+
+/// Whether `job` is done for `path`: told by its worker, or known here
+/// already (an analysis wanted, lyrics shown with their words timed), and
+/// no worker at it now.
+pub fn job_done(state: &State, path: &Path, job: Job) -> bool {
+    if state
+        .working
+        .get(path)
+        .is_some_and(|jobs| jobs.contains(&job))
+    {
+        return false;
+    }
+    let told = state
+        .ready
+        .get(path)
+        .is_some_and(|jobs| jobs.contains(&job));
+    match job {
+        Job::Rhythm => {
+            state.prepared.1.is_none()
+                || told
+                || matches!(
+                    state.rhythm.get(path),
+                    Some(Rhythm::Ready(_) | Rhythm::Failed)
+                )
+        }
+        Job::Lyrics => {
+            told || match state.karaoke.lyrics.get(path) {
+                Some(karaoke::SongLyrics::Found { shown, .. }) => {
+                    shown.timing.detail == jodel_lyrics::Detail::Words
+                        || state.karaoke.model == karaoke::ModelState::Missing
+                }
+                Some(karaoke::SongLyrics::Pending) | None => false,
+                Some(_) => true,
+            }
+        }
+        Job::Cover => told,
     }
 }
 

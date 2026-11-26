@@ -275,13 +275,17 @@ track playing to the end and then from the start: each track analysed
 looked up and, with the speech model there, timed word by word, all into
 the caches, so the Transition and Karaoke tabs have them at once when it comes
 up, and playing it on stems separates nothing. In the queue, left of
-each track's format, four icons are grey until the track has that thing
+each track's format, five icons are grey until the track has that thing
 and light up once it has, in the order the work finds them, so they
 light one after the other as the queue is got ready: `♯` its key (found
 as soon as the file is decoded), `▥` its stems (separated alongside, on
-the GPU), `♩` its tempo (decided last, from the beats and the stems), and
-`¶` its lyrics (looked up and timed alongside, by another worker). They
-show where the row has room for its title too. Left of its number, a
+the GPU), `♩` its tempo (decided last, from the beats and the stems),
+`¶` its lyrics (looked up and timed alongside, by another worker; a song
+no source has lyrics for is heard from its voice instead, once a run, and
+the icon lights once it is) and `◐` its cover taken apart (for Karaoke
+mode's background). A step's last icon (the tempo, the lyrics, the cover)
+lights only once that step is done, so with every icon lit nothing is left
+to do for the track. They show where the row has room for its title too. Left of its number, a
 spinner turns while work on the track is on (its analysis, its lyrics
 looked up or timed) and a dot shows while some is still to come. What is in the cache is handed over at once
 when it is wanted, even while another track is being analysed.

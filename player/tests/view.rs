@@ -1050,6 +1050,118 @@ fn the_queue_is_got_ready_ahead_and_its_icons_light_up_in_turn() {
     assert_eq!(colors(&state)[3], DIM);
 }
 
+/// A queue row's icons are all lit only when nothing is left to do for
+/// its track: with every step done they are, and with any one step still
+/// to come, or under way again, they are not (nor is the track ready).
+#[test]
+fn a_queue_rows_icons_are_all_lit_only_when_nothing_is_left_for_it() {
+    use jodeldiplom::core::karaoke::{ModelState, SongLyrics};
+    use jodeldiplom::core::{readiness, Facts, Heard, Job, LyricsFacts, Readiness, RhythmFacts};
+    use jodeldiplom::view::list::Body;
+    use std::sync::Arc;
+    let mut base = common::playing_state(120, 40);
+    base.preparing.extend([Job::Lyrics, Job::Cover]);
+    base.side = Side::Queue;
+    base.karaoke.model = ModelState::Ready;
+    // Got ready with the tempo on, as the app.
+    base.prepared = (Vec::new(), None);
+    update(&mut base, Action::Tick(1));
+    assert!(base.prepared.1.is_some());
+    let current = base.playing.track.as_ref().unwrap().index;
+    let path = base.queue.paths[current + 1].clone();
+    let ready = |job| match job {
+        Job::Rhythm => Facts::Rhythm(RhythmFacts {
+            bpm: Some(124.4),
+            key: Some("10B".into()),
+            stems: true,
+        }),
+        Job::Lyrics => Facts::Lyrics(LyricsFacts::Timed),
+        Job::Cover => Facts::Cover(true),
+    };
+    // Every step done but `skip`'s.
+    let done = |skip: Option<Job>| {
+        let mut state = base.clone();
+        for job in [Job::Rhythm, Job::Lyrics, Job::Cover] {
+            if Some(job) == skip {
+                continue;
+            }
+            update(
+                &mut state,
+                Action::Ready {
+                    path: path.clone(),
+                    job,
+                    facts: Some(ready(job)),
+                },
+            );
+        }
+        state
+    };
+    let lit = |state: &State| {
+        let Body::Queue(q) = Pane::of(state, 960.0).body else {
+            panic!("the queue");
+        };
+        let row = q.rows.iter().find(|r| r.index == current + 1).unwrap();
+        assert_eq!(row.facts.len(), 5);
+        row.facts.iter().all(|s| s.lit)
+    };
+    let state = done(None);
+    assert!(lit(&state));
+    assert_eq!(readiness(&state, &path), Readiness::Done);
+    for job in [Job::Rhythm, Job::Lyrics, Job::Cover] {
+        // Still to come, what it found so far known.
+        let mut state = done(Some(job));
+        match job {
+            Job::Rhythm => {
+                for part in [Heard::Key(true), Heard::Stems] {
+                    update(
+                        &mut state,
+                        Action::Heard {
+                            path: path.clone(),
+                            part,
+                        },
+                    );
+                }
+            }
+            // Wanted, none found and the voice still to be heard (or being
+            // heard); then found and shown, their words still to be timed.
+            Job::Lyrics => {
+                state
+                    .karaoke
+                    .lyrics
+                    .insert(path.clone(), SongLyrics::Pending);
+                assert!(!lit(&state), "to be heard");
+                assert_eq!(readiness(&state, &path), Readiness::Waiting);
+                let text = Arc::new(jodel_lyrics::Lyrics::parse(
+                    "One line\n",
+                    jodel_lyrics::Source::Lrclib,
+                ));
+                state.karaoke.lyrics.insert(
+                    path.clone(),
+                    SongLyrics::Found {
+                        lyrics: Arc::clone(&text),
+                        shown: text,
+                    },
+                );
+            }
+            Job::Cover => {}
+        }
+        assert!(!lit(&state), "{job:?} to come");
+        assert_eq!(readiness(&state, &path), Readiness::Waiting, "{job:?}");
+        // Done, and under way again.
+        let mut state = done(None);
+        update(
+            &mut state,
+            Action::Working {
+                path: path.clone(),
+                job,
+                on: true,
+            },
+        );
+        assert!(!lit(&state), "{job:?} under way");
+        assert_eq!(readiness(&state, &path), Readiness::Working, "{job:?}");
+    }
+}
+
 /// The Mixer tab: the window's desk, which lays itself out in points with
 /// the core's rule (the keys go through the same strips), its keys under
 /// it: every strip at the old 120-column width, the microphone gone at

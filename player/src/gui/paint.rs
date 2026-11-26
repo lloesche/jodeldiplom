@@ -330,6 +330,77 @@ impl Paint {
 mod tests {
     use super::*;
 
+    /// A window in view where nothing moves by itself.
+    fn still() -> Seen {
+        Seen {
+            visible: true,
+            following: false,
+            gliding: false,
+            stage: true,
+            pictures_moving: false,
+        }
+    }
+
+    /// The queue shown, every track got ready, nothing playing: no frames
+    /// but the rest's ticks, and nothing drawn; a worker's news (an icon
+    /// lit) is drawn once, and the window rests again.
+    #[test]
+    fn an_idle_queue_rests() {
+        let mut paint = Paint::new();
+        paint.dirty = false;
+        let t0 = Instant::now();
+        paint.last_whole = Some(t0);
+        let rest = Plan {
+            pace: Pace::Every(REST),
+            draw: Draw::Nothing,
+        };
+        for k in 1..20 {
+            let at = t0 + REST * k;
+            assert_eq!(paint.decide(Moves::default(), still(), at), rest);
+        }
+        paint.news = true;
+        let at = t0 + REST * 20;
+        let plan = paint.decide(Moves::default(), still(), at);
+        assert_eq!(
+            plan,
+            Plan {
+                pace: Pace::Every(REST),
+                draw: Draw::Whole
+            }
+        );
+    }
+
+    /// A window nobody can see (its frames stopped coming) draws nothing,
+    /// whatever moves, so its frames make no background GPU work give way
+    /// ([`jodel_gpu::pace::frame`] is told only of frames drawn); its ticks
+    /// stay at the refresh, so the first that comes again shows it.
+    #[test]
+    fn a_window_nobody_can_see_draws_nothing() {
+        let mut paint = Paint::new();
+        paint.dirty = false;
+        let everything = Moves {
+            smooth: true,
+            moving: true,
+            layer: true,
+            mixer: true,
+            due_soon: true,
+        };
+        let at = Instant::now();
+        let covered = Seen {
+            visible: false,
+            pictures_moving: true,
+            ..still()
+        };
+        let plan = paint.decide(everything, covered, at);
+        assert_eq!(
+            plan,
+            Plan {
+                pace: Pace::Refresh,
+                draw: Draw::Nothing
+            }
+        );
+    }
+
     /// The stage's pictures moving by themselves with nothing else moving
     /// (a score rolling up in a paused song) bring calm frames, each drawn
     /// whole; once they stop, the window rests.
@@ -340,11 +411,8 @@ mod tests {
         let t0 = Instant::now();
         paint.last_whole = Some(t0);
         let seen = |pictures_moving| Seen {
-            visible: true,
-            following: false,
-            gliding: false,
-            stage: true,
             pictures_moving,
+            ..still()
         };
         let at = t0 + CALM;
         let plan = paint.decide(Moves::default(), seen(true), at);

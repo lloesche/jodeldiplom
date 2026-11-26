@@ -358,6 +358,10 @@ struct Wanted {
     /// into the cache after them (not delivered).
     hearing: VecDeque<PathBuf>,
     hearing_ahead: VecDeque<PathBuf>,
+    /// The tracks heard this run, each once: to be heard or being heard
+    /// (`false`), or heard (`true`; a hearing that failed kept nothing, and
+    /// the track stays without lyrics until the next run).
+    heard: HashMap<PathBuf, bool>,
     online: bool,
     stop: bool,
 }
@@ -385,6 +389,7 @@ impl LyricsWorker {
                 edited: VecDeque::new(),
                 hearing: VecDeque::new(),
                 hearing_ahead: VecDeque::new(),
+                heard: HashMap::new(),
                 online: options.online,
                 stop: false,
             }),
@@ -530,16 +535,24 @@ impl LyricsWorker {
                         }
                     }
                     // None found anywhere: heard from the voice instead, when
-                    // it can be (the answer comes from there).
+                    // it can be (the answer comes from there), once a run.
                     if answer == Answer::NotFound
                         && options.timer.as_ref().is_some_and(|t| t.ready())
+                        && wanted.heard.get(&path) != Some(&true)
                     {
-                        let hearing = if ahead {
-                            &mut wanted.hearing_ahead
-                        } else {
-                            &mut wanted.hearing
-                        };
-                        hearing.push_back(path.clone());
+                        let coming = wanted.heard.insert(path.clone(), false).is_some();
+                        if !coming {
+                            let hearing = if ahead {
+                                &mut wanted.hearing_ahead
+                            } else {
+                                &mut wanted.hearing
+                            };
+                            hearing.push_back(path.clone());
+                        } else if !ahead && wanted.hearing_ahead.contains(&path) {
+                            // Wanted now: heard before the songs ahead.
+                            wanted.hearing_ahead.retain(|p| *p != path);
+                            wanted.hearing.push_back(path.clone());
+                        }
                         ready.notify_all();
                         continue;
                     }
@@ -816,7 +829,8 @@ fn time_words<D: FnMut(PathBuf, Answer)>(
 /// no source has lyrics for: kept in the cache as the track's text (marked
 /// as heard, not from a trusted source) and timing, and delivered when the
 /// track is still wanted. Too little heard: kept as having no words. Else
-/// (no recogniser here): none found.
+/// (no recogniser here, or it failed): none found. Either way the track
+/// is heard once a run ([`Wanted::heard`]), however often it is asked for.
 fn hear<D: FnMut(PathBuf, Answer)>(
     shared: &(Mutex<Wanted>, Condvar),
     timer: &dyn WordTimer,
@@ -852,7 +866,8 @@ fn hear<D: FnMut(PathBuf, Answer)>(
     done_with(&path, crate::core::LyricsFacts::of(&answer));
     let still = {
         let (lock, _) = shared;
-        let wanted = lock.lock().unwrap_or_else(|e| e.into_inner());
+        let mut wanted = lock.lock().unwrap_or_else(|e| e.into_inner());
+        wanted.heard.insert(path.clone(), true);
         !wanted.stop && wanted.wanted.contains(&path)
     };
     if still {

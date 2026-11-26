@@ -479,6 +479,9 @@ fn facts(state: &State, path: &Path) -> Vec<Status> {
         lit: lit == Some(true),
         heard: false,
     };
+    // A job's last icon lights only once it is done (none of its work to
+    // come, none under way): all lit, nothing is left for the track.
+    let done = |job| crate::core::job_done(state, path, job);
     let mut out = Vec::new();
     for job in [Job::Rhythm, Job::Lyrics, Job::Cover] {
         if !state.preparing.contains(&job) {
@@ -488,14 +491,14 @@ fn facts(state: &State, path: &Path) -> Vec<Status> {
             Job::Rhythm => out.extend([
                 status(Fact::Key, key),
                 status(Fact::Stems, stems),
-                status(Fact::Tempo, tempo),
+                status(Fact::Tempo, tempo.filter(|_| done(job))),
             ]),
             Job::Lyrics => out.push(Status {
                 fact: Fact::Lyrics,
-                lit: lyrics,
+                lit: lyrics && done(job),
                 heard,
             }),
-            Job::Cover => out.push(status(Fact::Cover, cover)),
+            Job::Cover => out.push(status(Fact::Cover, cover.filter(|_| done(job)))),
         }
     }
     out
