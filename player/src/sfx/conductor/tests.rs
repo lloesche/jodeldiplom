@@ -23,8 +23,6 @@ const RATE: u32 = 48_000;
 const SECOND: f64 = 48_000.0;
 /// 120 beats a minute at 48 kHz.
 const BEAT: u64 = 24_000;
-/// The tier table's rungs.
-const RUNGS: [u32; 5] = [5, 10, 20, 35, 55];
 const NONE: [Option<(u64, u64)>; Clock::LINES] = [None; Clock::LINES];
 
 /// What was sent, kept.
@@ -128,6 +126,11 @@ fn playing() -> (Conductor, Synth) {
     (c, s)
 }
 
+/// The words in a row rung `r` (1 up) takes, the tier table's.
+fn rung(r: usize) -> u32 {
+    layers::rungs()[r - 1]
+}
+
 fn word(streak: u32) -> Event {
     Event::Word {
         streak,
@@ -180,7 +183,8 @@ fn the_key_is_the_analysis_s_shifted_as_heard() {
 
 #[test]
 fn the_ladder_climbs_and_lands_on_the_tonic_at_every_rung() {
-    for rungs in [&RUNGS[..], &[3, 7], &[4, 8, 12, 16, 20, 24, 30]] {
+    let table = layers::rungs();
+    for rungs in [&table[..], &[3, 7], &[4, 8, 12, 16, 20, 24, 30]] {
         let mut last = 0;
         for streak in 1..=rungs[rungs.len() - 1] + 40 {
             let step = ladder::step(streak, rungs);
@@ -194,8 +198,10 @@ fn the_ladder_climbs_and_lands_on_the_tonic_at_every_rung() {
             last = step.degree;
         }
     }
+    // Up to the first rung: the pops climbing, its word on the octave.
+    let first = rung(1);
     let (mut c, mut out) = conductor();
-    for streak in 1..=5 {
+    for streak in 1..=first {
         c.event(&mut out, u64::from(streak), word(streak));
     }
     let pop = c.palette[Atom::Pop];
@@ -205,9 +211,13 @@ fn the_ladder_climbs_and_lands_on_the_tonic_at_every_rung() {
         .filter(|n| n.1 == pop)
         .map(|n| n.2)
         .collect();
-    assert_eq!(pops.len(), 5);
-    assert_eq!(pops[4], 93.0, "A6, an octave over the climb's A5");
-    assert!(pops.windows(2).all(|w| w[1] > w[0]));
+    assert_eq!(pops.len(), first as usize);
+    assert_eq!(
+        pops[pops.len() - 1],
+        93.0,
+        "A6, an octave over the climb's A5"
+    );
+    assert!(pops.windows(2).all(|w| w[1] >= w[0]) && pops[0] < 93.0);
 }
 
 /// A word told a step lower than the rung reached (a word rescued after
@@ -216,11 +226,11 @@ fn the_ladder_climbs_and_lands_on_the_tonic_at_every_rung() {
 #[test]
 fn a_lower_step_keeps_the_rung_only_the_streak_lost_lets_it_go() {
     let (mut c, mut out) = conductor();
-    c.event(&mut out, 15_000, word(5));
+    c.event(&mut out, 15_000, word(rung(1)));
     assert_eq!(c.rung, 1);
     out.0.clear();
-    c.event(&mut out, 30_000, word(4));
-    c.event(&mut out, 36_000, word(6));
+    c.event(&mut out, 30_000, word(rung(1) - 1));
+    c.event(&mut out, 36_000, word(rung(1) + 1));
     assert_eq!(c.rung, 1);
     let called_off = out.0.iter().any(|c| matches!(c, Command::Cancel { .. }));
     assert!(!called_off, "{:?}", out.0);
@@ -233,7 +243,7 @@ fn a_lower_step_keeps_the_rung_only_the_streak_lost_lets_it_go() {
 #[test]
 fn a_stinger_picks_up_now_and_hits_on_the_beat_and_a_jump_misses_none() {
     let (mut c, mut out) = conductor();
-    assert_eq!(c.event(&mut out, 15_000, word(5)), BEAT);
+    assert_eq!(c.event(&mut out, 15_000, word(rung(1))), BEAT);
     let plucks = out.on(c.palette[Atom::Pluck]);
     assert_eq!(plucks[0], 15_000, "the pickup at once");
     assert!(plucks.contains(&BEAT), "the hit on the beat");
@@ -245,17 +255,17 @@ fn a_stinger_picks_up_now_and_hits_on_the_beat_and_a_jump_misses_none() {
     assert_eq!(tonic.2 as i32 % 12, 9);
     // The hit under 80 ms away: no pickup.
     let (mut c, mut out) = conductor();
-    c.event(&mut out, BEAT - 2_000, word(5));
+    c.event(&mut out, BEAT - 2_000, word(rung(1)));
     assert_eq!(out.on(c.palette[Atom::Pluck])[0], BEAT);
     // Unsure: the hit at once.
     let (mut c, mut out) = conductor();
     c.set_clock(&mut out, unsure(NONE));
-    assert_eq!(c.event(&mut out, 15_000, word(5)), 15_000);
+    assert_eq!(c.event(&mut out, 15_000, word(rung(1))), 15_000);
     // A run that jumps past two rungs: the higher one's stinger.
     let (mut c, mut out) = conductor();
-    c.event(&mut out, 1_000, word(3));
+    c.event(&mut out, 1_000, word(rung(1) - 1));
     assert!(out.on(c.palette[Atom::Chime]).is_empty());
-    c.event(&mut out, 15_000, word(12));
+    c.event(&mut out, 15_000, word(rung(2) + 1));
     assert_eq!(c.rung, 2);
     assert!(
         out.on(c.palette[Atom::Chime]).contains(&BEAT),
@@ -279,7 +289,7 @@ fn the_payout_and_the_jackpot_land_with_room_their_whole_length() {
     let lines = [line(0, 3), line(5, 7), line(14, 40), None];
     let (mut c, mut out) = conductor();
     c.set_clock(&mut out, grid(lines));
-    c.event(&mut out, BEAT / 2, word(55));
+    c.event(&mut out, BEAT / 2, word(rung(5)));
     assert!(out.on(c.palette[Atom::Whoosh]).is_empty());
     let payout: Vec<u64> = out
         .notes()
@@ -293,7 +303,7 @@ fn the_payout_and_the_jackpot_land_with_room_their_whole_length() {
     // With the beat before it clear: led into by the whoosh.
     let (mut c, mut out) = conductor();
     c.set_clock(&mut out, grid([line(0, 3), line(5, 7), line(14, 30), None]));
-    c.event(&mut out, BEAT / 2, word(55));
+    c.event(&mut out, BEAT / 2, word(rung(5)));
     assert_eq!(out.on(c.palette[Atom::Whoosh]), [32 * BEAT - BEAT]);
 }
 
@@ -313,8 +323,8 @@ fn render(s: &mut Synth, frames: usize) {
 fn a_streak_lost_lets_the_held_sounds_go_and_calls_off_the_payout() {
     let held = [Atom::Riser, PADS[0], PADS[1]];
     let (mut c, mut s) = playing();
-    c.event(&mut s, 1_000, word(35));
-    c.event(&mut s, 2_000, word(54));
+    c.event(&mut s, 1_000, word(rung(4)));
+    c.event(&mut s, 2_000, word(rung(5) - 1));
     render(&mut s, 24_000);
     assert_eq!(sounding(&c, &s, &held), 3, "the riser and the shimmer");
     let now = s.frame();
@@ -323,7 +333,7 @@ fn a_streak_lost_lets_the_held_sounds_go_and_calls_off_the_payout() {
     assert_eq!(sounding(&c, &s, &held), 0, "gone in 0.2 s");
     // ×32 reached, then lost before its payout: none of it sounds.
     let (mut c, mut s) = playing();
-    c.event(&mut s, 1_000, word(55));
+    c.event(&mut s, 1_000, word(rung(5)));
     c.event(&mut s, 2_000, Event::Lost(Tier::TOP));
     for _ in 0..80 {
         render(&mut s, 4_800);
@@ -334,8 +344,8 @@ fn a_streak_lost_lets_the_held_sounds_go_and_calls_off_the_payout() {
 #[test]
 fn the_riser_ends_by_itself_when_no_rung_comes() {
     let (mut c, mut s) = playing();
-    c.event(&mut s, 0, word(35));
-    c.event(&mut s, 1_000, word(54));
+    c.event(&mut s, 0, word(rung(4)));
+    c.event(&mut s, 1_000, word(rung(5) - 1));
     render(&mut s, (2 * BEAT) as usize);
     assert_eq!(sounding(&c, &s, &[Atom::Riser]), 1);
     render(&mut s, (BEAT + 9_600) as usize);
@@ -350,9 +360,9 @@ fn the_riser_ends_by_itself_when_no_rung_comes() {
 fn lost_releases_cost_only_the_held_sounds_own_time() {
     let (mut c, mut s) = playing();
     let mut lossy = Lossy(&mut s);
-    c.event(&mut lossy, 0, word(35));
+    c.event(&mut lossy, 0, word(rung(4)));
     for k in 1..=6 {
-        c.event(&mut lossy, k * BEAT / 2, word(35 + k as u32));
+        c.event(&mut lossy, k * BEAT / 2, word(rung(4) + k as u32));
     }
     c.event(
         &mut lossy,
@@ -381,9 +391,8 @@ fn the_rows_grow_their_sounds_up_the_tiers() {
     };
     let chimes: Vec<usize> = Tier::ALL.map(|t| count(Event::Phrase(t))).to_vec();
     assert!(chimes.windows(2).all(|w| w[1] > w[0]), "{chimes:?}");
-    let stings: Vec<usize> = RUNGS.map(|r| count(word(r))).to_vec();
+    let stings: Vec<usize> = layers::rungs().map(|r| count(word(r))).to_vec();
     assert!(stings.windows(2).all(|w| w[1] > w[0]), "{stings:?}");
-    assert_eq!(RUNGS, layers::rungs(), "the table's");
     // The points under the first tier: the smallest chime there is.
     let none = count(Event::Diploma(Diploma::Points(None)));
     assert!(none <= chimes[0], "{none} {chimes:?}");
@@ -392,8 +401,8 @@ fn the_rows_grow_their_sounds_up_the_tiers() {
 #[test]
 fn no_event_sends_more_than_the_most_commands() {
     let events = [
-        word(55),
-        word(35),
+        word(rung(5)),
+        word(rung(4)),
         Event::Lost(Tier::TOP),
         Event::Phrase(Tier::TOP),
         Event::Jackpot,
@@ -410,7 +419,7 @@ fn no_event_sends_more_than_the_most_commands() {
     for e in events {
         let (mut c, mut out) = conductor();
         // At the top already, the riser sounding: the most a word does.
-        c.event(&mut out, 0, word(54));
+        c.event(&mut out, 0, word(rung(5) - 1));
         out.0.clear();
         c.event(&mut out, 15_000, e);
         most = most.max(out.0.len());
@@ -438,20 +447,20 @@ fn clinks_come_on_high_rungs_softer_when_thick_and_never_over_a_stinger() {
             })
             .collect::<Vec<f32>>()
     };
-    c.event(&mut out, 0, word(12));
+    c.event(&mut out, 0, word(rung(2)));
     assert!(clinks(&c, &out).is_empty(), "×4: none");
     // ×8 reached (its stinger's ka-ching rattling coins of its own).
-    c.event(&mut out, BEAT, word(20));
+    c.event(&mut out, BEAT, word(rung(3)));
     out.0.clear();
-    c.event(&mut out, 10 * BEAT, word(22));
-    c.event(&mut out, 10 * BEAT + 2_400, word(23));
+    c.event(&mut out, 10 * BEAT, word(rung(3) + 2));
+    c.event(&mut out, 10 * BEAT + 2_400, word(rung(3) + 3));
     let v = clinks(&c, &out);
     assert_eq!(v.len(), 4, "two clinks and their bounces");
     assert!(v[2] < v[0], "the second, close after, softer");
     out.0.clear();
-    c.event(&mut out, 20 * BEAT, word(35));
+    c.event(&mut out, 20 * BEAT, word(rung(4)));
     let before = clinks(&c, &out).len();
-    c.event(&mut out, 20 * BEAT + 1_000, word(36));
+    c.event(&mut out, 20 * BEAT + 1_000, word(rung(4) + 1));
     assert_eq!(clinks(&c, &out).len(), before, "none over the stinger");
 }
 
@@ -460,19 +469,21 @@ fn with_no_key_nothing_pitched_low_plays_and_the_pops_sit_high() {
     let (mut c, _) = Conductor::new(RATE);
     let mut out = Sent::default();
     c.set_clock(&mut out, grid(NONE));
-    for streak in 1..=55 {
+    let top = rung(Tier::COUNT);
+    for streak in 1..=top {
         c.event(&mut out, u64::from(streak) * 6_000, word(streak));
     }
+    let after = u64::from(top + 10) * 6_000;
     for e in [
         Event::Phrase(Tier::TOP),
         Event::Jackpot,
         Event::Lost(Tier::TOP),
     ] {
-        c.event(&mut out, 400_000, e);
+        c.event(&mut out, after, e);
     }
     c.event(
         &mut out,
-        400_000,
+        after,
         Event::Diploma(Diploma::Tick { k: 3, of: 12 }),
     );
     let pitched = [
@@ -500,8 +511,8 @@ fn with_no_key_nothing_pitched_low_plays_and_the_pops_sit_high() {
 #[test]
 fn a_seek_calls_everything_off_and_lets_go() {
     let (mut c, mut out) = conductor();
-    c.event(&mut out, 1_000, word(35));
-    c.event(&mut out, 2_000, word(54));
+    c.event(&mut out, 1_000, word(rung(4)));
+    c.event(&mut out, 2_000, word(rung(5) - 1));
     out.0.clear();
     c.cancel(&mut out, 3_000);
     assert_eq!(out.0[0], Command::Cancel { tag: None });
@@ -540,7 +551,7 @@ fn a_pile_of_everything_never_clips_through_the_bus() {
     for block in 0..500u64 {
         let now = s.frame();
         if block % 25 == 0 {
-            for &r in &RUNGS {
+            for r in layers::rungs() {
                 c.event(&mut s, now, word(r));
             }
             for t in Tier::ALL {
@@ -583,7 +594,7 @@ fn the_sounds_sit_on_top_of_a_song_under_the_ceiling() {
         let pop = peak_db(&[word(streak)]);
         assert!((-13.0..=-10.0).contains(&pop), "a pop at {pop:.1} dBFS");
     }
-    let top = RUNGS[RUNGS.len() - 1];
+    let top = rung(Tier::COUNT);
     let big = [
         ("the top phrase's chime", vec![Event::Phrase(Tier::TOP)]),
         (
@@ -628,7 +639,7 @@ fn the_bus_level_follows_the_song_s_loudness() {
     for block in 0..200u64 {
         let now = s.frame();
         if block % 25 == 0 {
-            for &r in &RUNGS {
+            for r in layers::rungs() {
                 c.event(&mut s, now, word(r));
             }
             c.event(&mut s, now, Event::Jackpot);

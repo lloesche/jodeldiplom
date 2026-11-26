@@ -41,8 +41,8 @@ pub const SWEEP_PERIOD: f32 = 17.0;
 pub const SWEEP_WIDTH: f32 = 0.22;
 /// How long the palette takes to drift through its colours, in seconds.
 pub const DRIFT_PERIOD: f32 = 45.0;
-/// How fast the spotlight rays turn, radians a second: slowly.
-pub const RAYS_TURN: f32 = 0.05;
+/// How fast the spotlight rays turn, radians a second: sweeping round about every ten seconds.
+pub const RAYS_TURN: f32 = 0.6;
 /// The most the plate round the subject is blurred, a share of the cover's
 /// longer side (about the blur's width).
 pub const DEFOCUS: f32 = 0.035;
@@ -139,14 +139,14 @@ pub fn drift(t: f32) -> [f32; 3] {
 
 /// The spotlight rays fanning out from behind the subject, at (`dx`, `dy`)
 /// from its middle (shares of the height) at time `t`, reaching about
-/// `reach`: two sets of broad, soft beams turning slowly against each
+/// `reach`: two sets of broad, soft beams sweeping round against each
 /// other ([`RAYS_TURN`]), fading out with the distance (0 to 1).
 pub fn ray_fan(dx: f32, dy: f32, t: f32, reach: f32) -> f32 {
     let d = (dx * dx + dy * dy).sqrt();
     let angle = dy.atan2(dx);
     let beam = |n: f32, turn: f32| (0.5 + 0.5 * (angle * n + turn).sin()).powi(4);
     let beams = 0.65 * beam(6.0, t * RAYS_TURN) + 0.35 * beam(9.0, 1.7 - t * 1.6 * RAYS_TURN);
-    beams * (-d / (reach.max(0.01) * 3.0)).exp()
+    beams * (-d / (reach.max(0.01) * 7.0)).exp()
 }
 
 /// Where the subject is read for the cover's point `uv` grown by `grow` (a
@@ -301,7 +301,7 @@ fn ray_fan(dx: f32, dy: f32, t: f32, reach: f32) -> f32 {
     let angle = atan2(dy, dx);
     let beams = 0.65 * ray_beam(angle, 6.0, t * RAYS_TURN)
         + 0.35 * ray_beam(angle, 9.0, 1.7 - t * 1.6 * RAYS_TURN);
-    return beams * exp(-d / (max(reach, 0.01) * 3.0));
+    return beams * exp(-d / (max(reach, 0.01) * 7.0));
 }
 
 fn kicked(uv: vec2<f32>, centre: vec2<f32>, grow: f32) -> vec2<f32> {
@@ -459,7 +459,7 @@ mod tests {
     }
 
     #[test]
-    fn the_rays_are_soft_beams_fading_out_and_turning_slowly() {
+    fn the_rays_are_soft_beams_fading_out_and_sweeping_round() {
         let round = |t: f32| -> Vec<f32> {
             (0..360)
                 .map(|k| {
@@ -475,7 +475,8 @@ mod tests {
         // Soft: a beam is broad, a good share of the way round lit.
         let lit = now.iter().filter(|&&r| r > 0.3 * most).count();
         assert!(lit > 60 && lit < 240, "{lit}");
-        // Turning: a second on, a little; half a minute on, a lot.
+        // Sweeping: a twentieth of a second on, a little; a second on, a
+        // lot.
         let moved = |t: f32| -> f32 {
             let then = round(t);
             now.iter()
@@ -485,12 +486,12 @@ mod tests {
                 / 360.0
         };
         assert!(
-            moved(4.0) < 0.05 && moved(33.0) > 0.08,
+            moved(3.05) < 0.05 && moved(4.0) > 0.08,
             "{} {}",
-            moved(4.0),
-            moved(33.0)
+            moved(3.05),
+            moved(4.0)
         );
-        assert!(ray_fan(0.0, 1.2, 3.0, 0.2) < 0.2 * ray_fan(0.0, 0.05, 3.0, 0.2));
+        assert!(ray_fan(0.0, 3.0, 3.0, 0.2) < 0.2 * ray_fan(0.0, 0.05, 3.0, 0.2));
     }
 
     #[test]

@@ -738,8 +738,9 @@ stem keys are their mutes.
   little jackpot on Diva), and the time left in a ring that drains, in
   the rainbow while the singing shines. Words hit in a row climb the
   multiplier's rungs, a rung a tier (its row's), named after it: ×2 Good
-  at 5 in a row, ×4 Great at 10, ×8 Awesome at 20, ×16 Amazing at 35,
-  ×32 Diva at 55; a word is worth 100 points times the multiplier. Each
+  at 8 in a row, ×4 Great at 20, ×8 Awesome at 40, ×16 Amazing at 75,
+  ×32 Diva at 120 (a song has about 250 words, so a perfect singer
+  reaches ×32 about halfway); a word is worth 100 points times the multiplier. Each
   word scored, the streak up a rung (to which) or broken (from which),
   and each phrase's tier decided are kept as the
   singing's moments, plain data for what follows them (the sounds); a

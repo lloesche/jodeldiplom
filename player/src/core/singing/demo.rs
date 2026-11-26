@@ -90,18 +90,24 @@ mod tests {
     use super::*;
     use crate::core::singing::{melodic, Cue};
 
-    /// A song of one line of six words, a second each from 1 s, up and
-    /// down a third; its singing ready.
-    fn six_words() -> Singing {
+    /// How many words the demo song has: the first rung's.
+    fn words() -> u32 {
+        crate::tiers::Tier::ALL[0].spec().streak
+    }
+
+    /// A song of one line of [`words`] words, a second each from 1 s, up
+    /// and down a third; its singing ready.
+    fn a_line() -> Singing {
+        let frames = 100 * (words() as usize + 3);
         let mut m = Melody {
-            cents: vec![0; 900],
-            sure: vec![0; 900],
+            cents: vec![0; frames],
+            sure: vec![0; frames],
         };
-        for i in 100..700 {
-            m.cents[i] = [6000, 6200, 6400, 6200, 6000, 6400][(i - 100) / 100];
+        for i in 100..frames - 200 {
+            m.cents[i] = [6000, 6200, 6400, 6200, 6000, 6400][(i / 100 - 1) % 6];
             m.sure[i] = 255;
         }
-        let words = (0..6)
+        let words = (0..words())
             .map(|k| jodel_lyrics::Word {
                 start: Some(1.0 + f64::from(k)),
                 end: Some(2.0 + f64::from(k)),
@@ -133,10 +139,11 @@ mod tests {
 
     #[test]
     fn held_through_a_phrase_every_word_bursts_and_the_multiplier_goes_up() {
-        let mut singing = six_words();
+        let mut singing = a_line();
         let mut demo = Demo::default();
         demo.hold();
-        frames(&mut demo, &mut singing, 0.0, 8.0);
+        let n = words();
+        frames(&mut demo, &mut singing, 0.0, f64::from(n + 2));
         let popped: Vec<(usize, usize)> = singing
             .moments()
             .iter()
@@ -145,9 +152,9 @@ mod tests {
                 _ => None,
             })
             .collect();
-        assert_eq!(popped, (0..6).map(|w| (0, w)).collect::<Vec<_>>());
+        assert_eq!(popped, (0..n as usize).map(|w| (0, w)).collect::<Vec<_>>());
         let t = singing.tally;
-        assert_eq!((t.hit_words, t.scored_words, t.streak), (6, 6, 6));
+        assert_eq!((t.hit_words, t.scored_words, t.streak), (n, n, n));
         let good = crate::tiers::Tier::ALL[0];
         assert_eq!(singing.rung(), Some(good));
         assert!(singing
@@ -170,7 +177,7 @@ mod tests {
 
     #[test]
     fn let_go_it_stops_at_once() {
-        let mut singing = six_words();
+        let mut singing = a_line();
         let mut demo = Demo::default();
         demo.hold();
         frames(&mut demo, &mut singing, 0.0, 2.5);
@@ -190,7 +197,7 @@ mod tests {
 
     #[test]
     fn nothing_is_sung_off_the_notes_and_nothing_without_the_key() {
-        let mut singing = six_words();
+        let mut singing = a_line();
         let mut demo = Demo::default();
         frames(&mut demo, &mut singing, 0.0, 3.0);
         assert_eq!(singing.last_heard(), None);

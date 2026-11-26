@@ -36,7 +36,7 @@ const SECONDS: f64 = 66.0;
 /// A device period.
 const PERIOD: usize = 480;
 /// The tier table's rungs.
-const RUNGS: [u32; 5] = [5, 10, 20, 35, 55];
+const RUNGS: [u32; 5] = [8, 20, 40, 75, 120];
 /// The song: two bars before the first line, lines of two bars sung and
 /// a bar's gap, nine of them; the words' places in a line, in beats.
 const INTRO: f64 = 8.0;

@@ -80,8 +80,8 @@ const CARD_LIGHT: f32 = 0.62;
 // The blur under the card's light: dark.
 const UNDER: f32 = 0.13;
 // The rays' light over the card, and round it.
-const RAYS_ON: f32 = 1.0;
-const RAYS_ROUND: f32 = 1.3;
+const RAYS_ON: f32 = 3.0;
+const RAYS_ROUND: f32 = 4.0;
 // The rim's light at its brightest.
 const RIM_LIGHT: f32 = 0.7;
 // How much more of the plate's blur than the cover's is read for each
@@ -242,7 +242,10 @@ fn fs(o: Out) -> @location(0) vec4<f32> {
         let aspect = px.x / max(px.y, 1.0);
         let dl = (p - look.light.xy) * vec2<f32>(aspect, 1.0);
         let beams = ray_fan(dl.x, dl.y, t, look.light.z);
-        col = col + warm * beams * ray * (1.0 - a) * mix(RAYS_ROUND, RAYS_ON, shown);
+        // Gold from Amazing's strength (1) to Diva's (1.6).
+        let gold = clamp((look.moments.z - 1.0) / 0.6, 0.0, 1.0);
+        let tint = mix(warm, GOLD, gold);
+        col = col + tint * beams * ray * (1.0 - a) * mix(RAYS_ROUND, RAYS_ON, shown);
     }
 
     col = col * (1.0 + look.moments.w);

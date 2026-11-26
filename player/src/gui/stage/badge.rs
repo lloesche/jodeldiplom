@@ -3,7 +3,7 @@
 //! band is lower than it): its × (popping as it goes up a rung, in the
 //! shouts' treatment, the rainbow while the singing shines), and before it
 //! on a dark pill of their own (to read over the flames) the rung's name
-//! in its tier's colour and the streak: "Amazing 42 in a row ×16". Right
+//! in its tier's colour and the streak: "Amazing 82 in a row ×16". Right
 //! of it is the meter ([`Stage::meter_spot`]): the pill keeps left of the
 //! ×, made smaller where the screen's edge is near, never past it. It is
 //! laid out by the widest it can be (the top rung's ×, the longest name,

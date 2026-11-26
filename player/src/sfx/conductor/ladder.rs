@@ -3,10 +3,10 @@
 //! the tonic an octave over where the climb began, the resolution the
 //! rung is (Peggle's rising peg hits, a scale in key, as described in its
 //! patent US 8,128,476 and by its audio team). The climb from one rung to
-//! the next always spans that octave, however many words it takes: words
-//! far apart climb a step each, words many to a rung half a step (so the
-//! register never runs away); past the top rung it climbs on in octaves
-//! the length of the last.
+//! the next always spans that octave, however many words it takes: rungs
+//! a few words apart climb a step a word, rungs many words apart a step
+//! every few words (so the register never runs away); past the top rung
+//! it climbs on in octaves the length of the last.
 
 use super::key::DEGREES;
 

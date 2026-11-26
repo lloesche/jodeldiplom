@@ -203,7 +203,7 @@ mod tests {
             points: 8_800,
             hit: 44,
             words: 45,
-            streak: 30,
+            streak: Tier::named("Awesome").spec().streak,
             phrases: tiers.iter().map(phrase).collect(),
             medal: Some(Medal::Gold),
             best: Some(5_000),

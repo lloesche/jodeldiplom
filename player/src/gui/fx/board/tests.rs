@@ -37,20 +37,30 @@ fn a_held_strength_is_its_row_s_at_the_row_and_eases_between() {
         let none = board.frame(&step(None, held_at(0.0)), &Music::NEUTRAL, 1.0);
         assert_eq!(none.live(fx).strength, 0.0, "{fx:?}");
     }
-    let (a, b) = (&TIERS[1], &TIERS[2]);
-    let mid = (a.glow + b.glow) / 2.0;
-    let f = board.frame(&step(None, held_at(mid)), &Music::NEUTRAL, 1.0);
-    let want = (strength(a.fx.held, Fx::Flames) + strength(b.fx.held, Fx::Flames)) / 2.0;
-    assert!((f.live(Fx::Flames).strength - want).abs() < 1e-6);
+    for (a, b) in TIERS.iter().zip(&TIERS[1..]) {
+        let mid = (a.glow + b.glow) / 2.0;
+        let f = board.frame(&step(None, held_at(mid)), &Music::NEUTRAL, 1.0);
+        for fx in Fx::ALL {
+            let want = (strength(a.fx.held, fx) + strength(b.fx.held, fx)) / 2.0;
+            assert!(
+                (f.live(fx).strength - want).abs() < 1e-6,
+                "{fx:?} {}",
+                b.name
+            );
+        }
+    }
 }
 
-/// The lane's glow and its flames, as the glow eases through and between
-/// the rows, bit for bit the straight lines through each row's own
-/// (Great's glow round the lane on, Amazing's flames on).
+/// Full from the row named `name` on, none below it.
+fn from(name: &str) -> [f32; Tier::COUNT] {
+    Tier::ALL.map(|t| if t >= Tier::named(name) { 1.0 } else { 0.0 })
+}
+
+/// The lane's glow, as the glow eases through and between the rows, bit
+/// for bit the straight line through each row's own (Great's glow round
+/// the lane on); the flames and the edges on fire none however it glows.
 #[test]
-fn the_lane_glow_and_flames_ramp_between_the_rows_that_list_them() {
-    // Full from the row named `from` on, none below it.
-    let from = |name: &str| Tier::ALL.map(|t| if t >= Tier::named(name) { 1.0 } else { 0.0 });
+fn the_lane_glow_ramps_between_the_rows_that_list_it() {
     let before = |k: f32, values: [f32; Tier::COUNT]| {
         let mut a = (0.0f32, 0.0f32);
         for (row, v) in TIERS.iter().zip(values) {
@@ -67,10 +77,32 @@ fn the_lane_glow_and_flames_ramp_between_the_rows_that_list_them() {
         let k = i as f32 / 1600.0;
         let f = board.frame(&step(None, held_at(k)), &Music::NEUTRAL, 1.0);
         let glow = before(k, from("Great"));
-        let flames = before(k, from("Amazing"));
         assert_eq!(f.live(Fx::Glow).strength.to_bits(), glow.to_bits(), "{k}");
-        let got = f.live(Fx::Flames).strength;
-        assert_eq!(got.to_bits(), flames.to_bits(), "{k}");
+        for fx in [Fx::Flames, Fx::EdgeFire] {
+            assert_eq!(f.live(fx).strength, 0.0, "{fx:?} {k}");
+        }
+    }
+}
+
+/// The flames and the edges on fire come with the multiplier, not the
+/// glow: none under Amazing's rung, the flames from it on, the edges on
+/// fire at Diva's, held full while at the rung whatever the tier glows.
+#[test]
+fn the_fire_comes_with_the_rung_and_is_held_while_at_it() {
+    let mut board = Board::default();
+    let (flames, edges) = (from("Amazing"), from("Diva"));
+    let rungs = [None].into_iter().chain(Tier::ALL.map(Some));
+    for (r, rung) in rungs.enumerate() {
+        let want = |list: [f32; Tier::COUNT]| r.checked_sub(1).map_or(0.0, |i| list[i]);
+        for (i, k) in [0.0, TIERS[0].glow, 1.0].into_iter().enumerate() {
+            let at = Step {
+                at_rung: rung,
+                ..step(None, held_at(k))
+            };
+            let f = board.frame(&at, &Music::NEUTRAL, (3 * r + i) as f64);
+            assert_eq!(f.live(Fx::Flames).strength, want(flames), "{rung:?} {k}");
+            assert_eq!(f.live(Fx::EdgeFire).strength, want(edges), "{rung:?} {k}");
+        }
     }
 }
 

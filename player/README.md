@@ -846,9 +846,9 @@ more than 0.6 s behind); on a jackpot the low columns spin whole laps
 in a blur, and the number glows and swells while it counts. A lower
 score (a seek back, another song) shows at once.
 Words hit in a row are a streak, climbing the multiplier's rungs, each
-named after a tier: 5 make it ×2 (Good), 10 ×4 (Great), 20 ×8 (Awesome),
-35 ×16 (Amazing), 55 ×32 (Diva). It shows over the playhead as
-"Amazing 42 in a row ×16": the × over the playhead, popping as it goes
+named after a tier: 8 make it ×2 (Good), 20 ×4 (Great), 40 ×8 (Awesome),
+75 ×16 (Amazing), 120 ×32 (Diva). It shows over the playhead as
+"Amazing 82 in a row ×16": the × over the playhead, popping as it goes
 up a rung, and left of it a dark pill with the rung's name in its tier's
 colour and the streak (the meter is right of the playhead); the points
 top right have the rung under them ("Amazing ×16"). A word missed ends

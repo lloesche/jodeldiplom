@@ -26,7 +26,7 @@ pub const RIM: f32 = 0.9;
 /// The share of the rim's light without a tier (the row's adds the rest).
 pub const RIM_BASE: f32 = 0.35;
 /// How much the rays swell on a bar's first beat (a share of their light).
-pub const SWELL: f32 = 0.7;
+pub const SWELL: f32 = 1.5;
 /// A phrase landing: how far the subject grows more, how much the rim and
 /// the rays light more, at the flare's height.
 pub const FLARE: (f32, f32, f32) = (0.012, 0.8, 0.6);

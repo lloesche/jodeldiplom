@@ -46,8 +46,8 @@ type At = (Option<Tier>, f64);
 
 /// [`common::bubble_song`] sung on "la"'s note all along, frame by frame
 /// at 60 a second up to `until`, the last phrase as `at` says at each
-/// moment (the tally set as the scoring sets it), a streak of five words
-/// (×2): the stage's frames.
+/// moment (the tally set as the scoring sets it), a streak at the first
+/// rung (×2): the stage's frames.
 fn stage_frames(at: impl Fn(f64) -> At, until: f64) -> Vec<(f64, StageFrame)> {
     let (mut singing, lyrics) = common::bubble_song();
     let picture = common::bubble_picture(&singing, &lyrics, (0.0, 0.0), Rect::new(0, 0, 80, 24));
@@ -59,7 +59,7 @@ fn stage_frames(at: impl Fn(f64) -> At, until: f64) -> Vec<(f64, StageFrame)> {
             heard += 1;
         }
         set(&mut singing, at(t));
-        singing.tally.streak = 5;
+        singing.tally.streak = Tier::ALL[0].spec().streak;
         let song = Song::new(&singing, lyrics.lines.iter().collect(), Some(3.0));
         let frame = stage.frame(&song, &picture, (0.0, 0.0, 800.0, 450.0), t, 1.0 / 60.0);
         out.push((t, frame));

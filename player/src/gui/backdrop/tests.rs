@@ -282,7 +282,7 @@ fn the_beat_and_the_tiers_move_the_subject() {
         "{bar:?} {beat:?} {off:?}"
     );
     assert!(
-        bar[1] > 4.0 * beat[1] && bar[2] > 1.5 && off[2] < 1.2,
+        bar[1] > 4.0 * beat[1] && bar[2] > 2.0 && off[2] < 1.35,
         "{bar:?} {beat:?}"
     );
     assert!(pulse_at(8.04, 0.1, 0.0)[0] < 1e-4);

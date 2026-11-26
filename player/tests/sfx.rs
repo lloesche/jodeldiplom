@@ -188,8 +188,8 @@ fn found(got: &[f32], near: usize, want: &[f32], from: usize, span: usize) -> (u
 }
 
 /// The game as the conductor plays it live through the desk, on a memory
-/// device in real time: five words popping up the ladder (the fifth
-/// reaching the first rung, its stinger landing on the next beat), a
+/// device in real time: words popping up the ladder to the first rung
+/// (the last reaching it, its stinger landing on the next beat), a
 /// phrase of the top tier (its chime on the beat) and its jackpot (on the
 /// downbeat after). The same events played offline on a twin conductor
 /// are what each must sound like: each moment is heard on the device
@@ -202,11 +202,13 @@ fn the_game_is_heard_where_it_lands() {
     let latency = synth.latency();
     let (mixer, fader, mut lead, effects, captures) = live_desk(synth);
     let (mut twin, mut offline) = conductor();
-    let mut events: Vec<(u64, Event)> = (0..5u32)
+    // The words a sixteenth apart, the rung's on frame 66 000.
+    let n = Tier::ALL[0].spec().streak;
+    let mut events: Vec<(u64, Event)> = (0..n)
         .map(|k| {
-            let pan = -0.5 + 0.25 * k as f32;
+            let pan = -0.5 + k as f32 / n as f32;
             (
-                42_000 + 6_000 * u64::from(k),
+                66_000 - 6_000 * u64::from(n - 1 - k),
                 Event::Word {
                     streak: k + 1,
                     pan,
@@ -235,10 +237,11 @@ fn the_game_is_heard_where_it_lands() {
     // The pop at once, the rung's hit on the beat after its word, the
     // phrase's chime on the beat, the jackpot on the downbeat (bars of four
     // from frame 0).
-    assert_eq!(landed[0], 42_000);
-    assert_eq!(landed[4], 3 * BEAT);
-    assert_eq!(landed[5], 5 * BEAT);
-    assert_eq!(landed[6], 8 * BEAT);
+    let n = n as usize;
+    assert_eq!(landed[0], events[0].0);
+    assert_eq!(landed[n - 1], 3 * BEAT);
+    assert_eq!(landed[n], 5 * BEAT);
+    assert_eq!(landed[n + 1], 8 * BEAT);
     let total = 13 * BEAT;
     out.write(&counting(0, total), None).unwrap();
     out.drain(None).unwrap();
@@ -258,7 +261,7 @@ fn the_game_is_heard_where_it_lands() {
     // Each moment's first 50 ms, as it sounds where it landed (the synth's
     // look-ahead after).
     assert!(mixer.desk().master.stream.is_some(), "the device open");
-    for (k, &at) in landed.iter().enumerate().skip(4) {
+    for (k, &at) in landed.iter().enumerate().skip(n - 1) {
         let from = at as usize + latency;
         let (heard, how, away) = found(&right, zero + from, &want, from, 2_400);
         let late = heard as i64 - (zero + from) as i64;
