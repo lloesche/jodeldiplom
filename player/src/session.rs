@@ -1,5 +1,6 @@
 //! The session kept between runs (the queue, the track heard in it, and
-//! where the browser was), and queues saved as playlists.
+//! where the browser was), saved a little after the app changes it
+//! ([`SessionKeeper`]), and queues saved as playlists.
 //!
 //! Both are M3U8 files (UTF-8, one path a line), so other players read
 //! them too: the session adds its state in comment lines of its own.
@@ -10,6 +11,10 @@ use std::collections::HashSet;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
+
+use crate::clock::AppClock;
+use crate::core::State;
 
 /// The session kept between runs.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -185,6 +190,93 @@ pub fn queue_name(dir: &Path, tracks: &[PathBuf]) -> PathBuf {
         })
         .find(|p| !p.exists())
         .expect("a free name")
+}
+
+/// How long the session waits after a change before it is saved (a run of
+/// moves in the queue is one write).
+const SAVE_AFTER: Duration = Duration::from_secs(2);
+
+/// Keeps the session as the app's state has it: noted when it went out of
+/// date, saved a little after.
+pub struct SessionKeeper {
+    /// Where the session is kept (none: not kept), what was last saved
+    /// there, and since when it has been out of date.
+    path: Option<PathBuf>,
+    saved: Option<Session>,
+    stale: Option<Instant>,
+}
+
+impl SessionKeeper {
+    /// Keeping the session in `path` (none: not kept), last saved as
+    /// `saved`.
+    pub fn new(path: Option<PathBuf>, saved: Option<Session>) -> SessionKeeper {
+        SessionKeeper {
+            path,
+            saved,
+            stale: None,
+        }
+    }
+
+    /// Notes at `now` when the session went out of date (it is saved a
+    /// little after); compared in place, nothing copied.
+    pub fn note(&mut self, state: &State, now: Instant) {
+        if self.path.is_none() || self.stale.is_some() {
+            return;
+        }
+        let same = self.saved.as_ref().is_some_and(|saved| {
+            saved.queue == state.queue.paths
+                && saved.browser.as_deref() == Some(state.browser.dir.as_path())
+                && saved.current == current(state)
+                && saved.selected.as_ref() == selected(state)
+        });
+        if !same {
+            self.stale = Some(now);
+        }
+    }
+
+    /// Saves the session once it has been out of date a while, by `clock`.
+    pub fn save_when_due(&mut self, state: &State, clock: &AppClock) {
+        if self
+            .stale
+            .is_some_and(|since| clock.since(since) >= SAVE_AFTER)
+        {
+            self.save(state);
+        }
+    }
+
+    /// Saves the session where it is kept.
+    pub fn save(&mut self, state: &State) {
+        self.stale = None;
+        let Some(path) = &self.path else {
+            return;
+        };
+        let session = Session {
+            queue: state.queue.paths.clone(),
+            current: current(state),
+            browser: Some(state.browser.dir.clone()),
+            selected: selected(state).cloned(),
+        };
+        if self.saved.as_ref() == Some(&session) {
+            return;
+        }
+        // Saved or not, it is not tried again until it changes.
+        let _ = session.save(path);
+        self.saved = Some(session);
+    }
+}
+
+/// The session's track: the one heard, else the queue's row selected.
+fn current(state: &State) -> Option<usize> {
+    let q = &state.queue;
+    q.current.or((!q.paths.is_empty()).then_some(q.cursor))
+}
+
+/// The browser row selected, for the session.
+fn selected(state: &State) -> Option<&PathBuf> {
+    crate::core::browser_rows(state)
+        .get(state.browser.cursor)
+        .and_then(|&r| crate::core::row_entry(state, r))
+        .map(|e| &e.path)
 }
 
 #[cfg(test)]

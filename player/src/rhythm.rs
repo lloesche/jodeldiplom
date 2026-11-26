@@ -17,10 +17,8 @@
 //! the recipe ([`cache_key`]), so a changed file, a changed analysis or
 //! another recipe is analysed afresh.
 
-use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::Sender;
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -31,8 +29,9 @@ use jodel_rhythm::stems::{PartsBuilder, Separator, Splitter};
 use jodel_rhythm::waveform::{Lane, LaneBuilder, Melody, Waveform};
 use jodel_rhythm::{Analysis, Analyzer, Evidence, Method, SAMPLE_RATE};
 
-use crate::browser::Notify;
 use crate::core::{Action, Facts, Heard, Job, RhythmFacts, RhythmRecipe, Rhythmed};
+use crate::outbox::Outbox;
+use crate::work::{Lane as Ask, Lanes, Queue};
 
 mod report;
 pub use report::{describe, recent, remember, Timings, RECENT_KEPT};
@@ -380,23 +379,26 @@ pub fn listen_reporting(
     })
 }
 
+/// What the worker is asked for, in two steps: each file first looked for
+/// in the cache ([`load`]), then the files not there analysed. Both in two
+/// lanes: wanted now by `recipe`, and to get into the cache ahead by
+/// `ahead_recipe` (with a cache only). A file found missing for an earlier
+/// ask ([`Lanes::asked`]) is not analysed.
 struct Wanted {
-    /// Files wanted, to be taken from the cache at once ([`load`]).
-    load: VecDeque<PathBuf>,
-    /// Files wanted that are not in the cache, to be analysed.
-    queue: VecDeque<PathBuf>,
+    load: Lanes<PathBuf>,
+    analyse: Lanes<PathBuf>,
     recipe: RhythmRecipe,
-    /// Counts [`RhythmWorker::want`]s: what was found missing for an
-    /// earlier one is not analysed.
-    asked: u64,
-    /// Files to get into the cache after those, by `ahead_recipe`: to be
-    /// looked for in the cache, then those not there analysed.
-    check: VecDeque<PathBuf>,
-    ahead: VecDeque<PathBuf>,
     ahead_recipe: Option<RhythmRecipe>,
-    /// Counts [`RhythmWorker::prepare`]s, the same way.
-    prepared: u64,
-    stop: bool,
+}
+
+impl Wanted {
+    /// The recipe the files of `lane` are asked by.
+    fn recipe(&self, lane: Ask) -> Option<RhythmRecipe> {
+        match lane {
+            Ask::Now => Some(self.recipe.clone()),
+            Ask::Ahead => self.ahead_recipe.clone(),
+        }
+    }
 }
 
 /// Analyses files in the background, one at a time, and answers from the
@@ -407,80 +409,51 @@ struct Wanted {
 /// waits behind an analysis under way; the other analyses the rest, the
 /// files wanted first.
 pub struct RhythmWorker {
-    shared: Arc<(Mutex<Wanted>, Condvar)>,
+    queue: Arc<Queue<Wanted>>,
 }
 
 impl RhythmWorker {
     /// Starts the threads; the analysing one first looks for the GPU
-    /// (answered with [`Action::Gpu`]). Results go to `sender` as
+    /// (answered with [`Action::Gpu`]). Results go to `outbox` as
     /// [`Action::Rhythm`] and are kept in `cache` (if any); each file whose
     /// analysis is in the cache (or failed) is told with [`Action::Ready`].
-    pub fn new(
-        sender: Sender<Action>,
-        notify: Notify,
-        cache: Option<PathBuf>,
-        grids: Option<PathBuf>,
-    ) -> RhythmWorker {
-        let shared = Arc::new((
-            Mutex::new(Wanted {
-                load: VecDeque::new(),
-                queue: VecDeque::new(),
-                recipe: RhythmRecipe::default(),
-                asked: 0,
-                check: VecDeque::new(),
-                ahead: VecDeque::new(),
-                ahead_recipe: None,
-                prepared: 0,
-                stop: false,
-            }),
-            Condvar::new(),
-        ));
+    pub fn new(outbox: Outbox, cache: Option<PathBuf>, grids: Option<PathBuf>) -> RhythmWorker {
+        let queue = Arc::new(Queue::new(Wanted {
+            load: Lanes::default(),
+            analyse: Lanes::default(),
+            recipe: RhythmRecipe::default(),
+            ahead_recipe: None,
+        }));
         {
-            let worker = Arc::clone(&shared);
-            let (sender, notify) = (sender.clone(), Arc::clone(&notify));
+            let (queue, outbox) = (Arc::clone(&queue), outbox.clone());
             let (cache, grids) = (cache.clone(), grids.clone());
             thread::spawn(move || {
-                load_wanted(
-                    &worker,
-                    &sender,
-                    &notify,
-                    cache.as_deref(),
-                    grids.as_deref(),
-                );
+                load_wanted(&queue, &outbox, cache.as_deref(), grids.as_deref());
             });
         }
-        let worker = Arc::clone(&shared);
+        let worker = Arc::clone(&queue);
         thread::spawn(move || {
             // Its GPU work gives way to the window's frames.
             jodel_gpu::pace::background();
             // Only the GPU's name for now: the separator is set up when
             // stems are first used.
-            if sender.send(Action::Gpu(jodel_gpu::gpu_name())).is_err() {
+            if !outbox.send(Action::Gpu(jodel_gpu::gpu_name())) {
                 return;
             }
-            notify();
-            work(
-                &worker,
-                &sender,
-                &notify,
-                cache.as_deref(),
-                grids.as_deref(),
-            );
+            analyse_wanted(&worker, &outbox, cache.as_deref(), grids.as_deref());
         });
-        RhythmWorker { shared }
+        RhythmWorker { queue }
     }
 
     /// Answers exactly `paths`, in this order, by `recipe` from now on: at
     /// once those in the cache, then the others as they are analysed (what
     /// was asked for before and not started yet is dropped).
     pub fn want(&self, paths: Vec<PathBuf>, recipe: RhythmRecipe) {
-        let (lock, ready) = &*self.shared;
-        let mut wanted = lock.lock().unwrap_or_else(|e| e.into_inner());
-        wanted.load = paths.into();
-        wanted.queue.clear();
-        wanted.recipe = recipe;
-        wanted.asked += 1;
-        ready.notify_all();
+        self.queue.change(|wanted| {
+            wanted.load.want(paths);
+            wanted.analyse.want([]);
+            wanted.recipe = recipe;
+        });
     }
 
     /// Gets `paths` into the cache by `recipe`, in this order, after what
@@ -490,32 +463,23 @@ impl RhythmWorker {
     /// it is in the cache (at once for those there already), not with its
     /// analysis.
     pub fn prepare(&self, paths: Vec<PathBuf>, recipe: Option<RhythmRecipe>) {
-        let (lock, ready) = &*self.shared;
-        let mut wanted = lock.lock().unwrap_or_else(|e| e.into_inner());
-        wanted.check = paths.into();
-        wanted.ahead.clear();
-        wanted.ahead_recipe = recipe;
-        wanted.prepared += 1;
-        ready.notify_all();
+        self.queue.change(|wanted| {
+            wanted.load.prepare(paths);
+            wanted.analyse.prepare([]);
+            wanted.ahead_recipe = recipe;
+        });
     }
 }
 
 /// Tells the app that the analysis of `path` is in the cache (or failed):
 /// nothing is left to do for it; with what it found (`analysis`), for the
 /// queue's icons. False when the app is gone.
-fn tell_ready(
-    path: &Path,
-    analysis: Option<&Analysis>,
-    sender: &Sender<Action>,
-    notify: &Notify,
-) -> bool {
-    let sent = sender.send(Action::Ready {
+fn tell_ready(path: &Path, analysis: Option<&Analysis>, outbox: &Outbox) -> bool {
+    outbox.send(Action::Ready {
         path: path.to_owned(),
         job: Job::Rhythm,
         facts: analysis.map(|a| Facts::Rhythm(RhythmFacts::of(a))),
-    });
-    notify();
-    sent.is_ok()
+    })
 }
 
 /// A track's analysis as the app takes it: with its grid fixed by hand
@@ -537,87 +501,64 @@ fn rhythmed(
 /// The loading thread's loop: each file wanted from the cache, at once
 /// (one not there goes to be analysed), and each file to get ready looked
 /// for there (one not there goes to be analysed ahead).
-fn load_wanted(
-    shared: &(Mutex<Wanted>, Condvar),
-    sender: &Sender<Action>,
-    notify: &Notify,
-    cache: Option<&Path>,
-    grids: Option<&Path>,
-) {
-    let (lock, ready) = shared;
-    loop {
-        let (path, recipe, wanted_now, asked) = {
-            let mut wanted = lock.lock().unwrap_or_else(|e| e.into_inner());
-            loop {
-                if wanted.stop {
-                    return;
-                }
-                if let Some(path) = wanted.load.pop_front() {
-                    break (path, Some(wanted.recipe.clone()), true, wanted.asked);
-                }
-                if let Some(path) = wanted.check.pop_front() {
-                    break (path, wanted.ahead_recipe.clone(), false, wanted.prepared);
-                }
-                wanted = ready.wait(wanted).unwrap_or_else(|e| e.into_inner());
-            }
-        };
+fn load_wanted(queue: &Queue<Wanted>, outbox: &Outbox, cache: Option<&Path>, grids: Option<&Path>) {
+    let next = |wanted: &mut Wanted| {
+        let (path, lane) = wanted.load.pop()?;
+        Some((path, lane, wanted.recipe(lane), wanted.load.asked(lane)))
+    };
+    while let Some((path, lane, recipe, asked)) = queue.next(next) {
         let Some(recipe) = recipe else {
             continue;
         };
-        if wanted_now {
+        // Not there (and not asked anew since): analysed.
+        let to_analyse = |path: PathBuf| {
+            queue.change(|wanted| {
+                if wanted.load.asked(lane) == asked {
+                    wanted.analyse.lane(lane).push_back(path);
+                }
+            });
+        };
+        if lane == Ask::Now {
             if let Some((analysis, waveform)) = cache.and_then(|dir| load(dir, &path, &recipe)) {
                 // Ready once its stems are kept too (else getting it ready
                 // ahead separates them).
                 let whole = cache.is_some_and(|dir| is_stored(dir, &path, &recipe));
                 let facts = analysis.clone();
                 let found = rhythmed(&path, analysis, waveform, grids);
-                if sender
-                    .send(Action::Rhythm(path.clone(), recipe, Ok(found)))
-                    .is_err()
-                    || (whole && !tell_ready(&path, Some(&facts), sender, notify))
+                if !outbox.send(Action::Rhythm(path.clone(), recipe, Ok(found)))
+                    || (whole && !tell_ready(&path, Some(&facts), outbox))
                 {
                     return;
                 }
                 continue;
             }
-            let mut wanted = lock.lock().unwrap_or_else(|e| e.into_inner());
-            if wanted.asked == asked {
-                wanted.queue.push_back(path);
-                ready.notify_all();
-            }
+            to_analyse(path);
         } else if cache.is_some_and(|dir| is_stored(dir, &path, &recipe)) {
             let analysis = cache.and_then(|dir| load_analysis(dir, &path, &recipe));
-            if !tell_ready(&path, analysis.as_ref(), sender, notify) {
+            if !tell_ready(&path, analysis.as_ref(), outbox) {
                 return;
             }
         } else if cache.is_some() {
-            let mut wanted = lock.lock().unwrap_or_else(|e| e.into_inner());
-            if wanted.prepared == asked {
-                wanted.ahead.push_back(path);
-                ready.notify_all();
-            }
+            to_analyse(path);
         }
     }
 }
 
 /// Analyses `path` by `recipe` and keeps it in `cache` (if any), saying
-/// on `sender` that it is at work on it meanwhile. `None` when the app
+/// on `outbox` that it is at work on it meanwhile. `None` when the app
 /// is gone.
 fn analyse(
     path: &Path,
     recipe: &RhythmRecipe,
-    sender: &Sender<Action>,
-    notify: &Notify,
+    outbox: &Outbox,
     cache: Option<&Path>,
 ) -> Option<Result<(Analysis, Waveform), String>> {
     let working = |on: bool| {
-        let sent = sender.send(Action::Working {
+        outbox.send(Action::Working {
             path: path.to_owned(),
             job: Job::Rhythm,
             on,
-        });
-        notify();
-        sent.is_ok()
+        })
     };
     if !working(true) {
         return None;
@@ -632,17 +573,12 @@ fn analyse(
         .and_then(|dir| crate::stems_cache::file_for(dir, path))
         .map(|file| crate::mover::current(&file));
     let report: Report = {
-        let (sender, notify, path) = (sender.clone(), Arc::clone(notify), path.to_owned());
+        let (outbox, path) = (outbox.clone(), path.to_owned());
         Arc::new(move |part| {
-            if sender
-                .send(Action::Heard {
-                    path: path.clone(),
-                    part,
-                })
-                .is_ok()
-            {
-                notify();
-            }
+            outbox.send(Action::Heard {
+                path: path.clone(),
+                part,
+            });
         })
     };
     let result = match listen_reporting(path, recipe, keep, Some(report)) {
@@ -650,7 +586,7 @@ fn analyse(
             if let Some(e) = &listened.stems_failed {
                 let name = path.file_name().unwrap_or_default().to_string_lossy();
                 let note = format!("Stems failed for {name} ({e}): the mix's cues used");
-                if sender.send(Action::Failed(note)).is_err() {
+                if !outbox.send(Action::Failed(note)) {
                     return None;
                 }
             }
@@ -683,45 +619,34 @@ fn analyse(
     };
     // In the cache now (or it failed): ready, as far as it goes.
     let analysis = result.as_ref().ok().map(|(a, _)| a);
-    (working(false) && tell_ready(path, analysis, sender, notify)).then_some(result)
+    (working(false) && tell_ready(path, analysis, outbox)).then_some(result)
 }
 
 /// The analysing thread's loop: the next file wanted that the cache did
 /// not have (it may have since), else one to get ready ahead (with a
 /// cache only).
-fn work(
-    shared: &(Mutex<Wanted>, Condvar),
-    sender: &Sender<Action>,
-    notify: &Notify,
+fn analyse_wanted(
+    queue: &Queue<Wanted>,
+    outbox: &Outbox,
     cache: Option<&Path>,
     grids: Option<&Path>,
 ) {
-    loop {
-        let (path, recipe, ahead) = {
-            let (lock, ready) = shared;
-            let mut wanted = lock.lock().unwrap_or_else(|e| e.into_inner());
-            loop {
-                if wanted.stop {
-                    return;
-                }
-                if let Some(path) = wanted.queue.pop_front() {
-                    break (path, wanted.recipe.clone(), false);
-                }
-                if let (Some(recipe), Some(_)) = (wanted.ahead_recipe.clone(), cache) {
-                    if let Some(path) = wanted.ahead.pop_front() {
-                        break (path, recipe, true);
-                    }
-                }
-                wanted = ready.wait(wanted).unwrap_or_else(|e| e.into_inner());
-            }
-        };
-        if ahead {
+    let next = |wanted: &mut Wanted| {
+        if let Some(path) = wanted.analyse.lane(Ask::Now).pop_front() {
+            return Some((path, wanted.recipe.clone(), Ask::Now));
+        }
+        let recipe = wanted.ahead_recipe.clone().filter(|_| cache.is_some())?;
+        let path = wanted.analyse.lane(Ask::Ahead).pop_front()?;
+        Some((path, recipe, Ask::Ahead))
+    };
+    while let Some((path, recipe, lane)) = queue.next(next) {
+        if lane == Ask::Ahead {
             let stored = cache.is_some_and(|dir| is_stored(dir, &path, &recipe));
             let gone = if stored {
                 let analysis = cache.and_then(|dir| load_analysis(dir, &path, &recipe));
-                !tell_ready(&path, analysis.as_ref(), sender, notify)
+                !tell_ready(&path, analysis.as_ref(), outbox)
             } else {
-                analyse(&path, &recipe, sender, notify, cache).is_none()
+                analyse(&path, &recipe, outbox, cache).is_none()
             };
             if gone {
                 return;
@@ -730,21 +655,20 @@ fn work(
         }
         let result = match cache.and_then(|dir| load(dir, &path, &recipe)) {
             Some(found) => {
-                if !tell_ready(&path, Some(&found.0), sender, notify) {
+                if !tell_ready(&path, Some(&found.0), outbox) {
                     return;
                 }
                 Ok(found)
             }
-            None => match analyse(&path, &recipe, sender, notify, cache) {
+            None => match analyse(&path, &recipe, outbox, cache) {
                 Some(result) => result,
                 None => return,
             },
         };
         let result = result.map(|(analysis, waveform)| rhythmed(&path, analysis, waveform, grids));
-        if sender.send(Action::Rhythm(path, recipe, result)).is_err() {
+        if !outbox.send(Action::Rhythm(path, recipe, result)) {
             return;
         }
-        notify();
     }
 }
 
@@ -753,9 +677,7 @@ fn work(
 /// hold up the player's end.
 impl Drop for RhythmWorker {
     fn drop(&mut self) {
-        let (lock, ready) = &*self.shared;
-        lock.lock().unwrap_or_else(|e| e.into_inner()).stop = true;
-        ready.notify_all();
+        self.queue.stop();
     }
 }
 
@@ -837,7 +759,7 @@ mod tests {
         let b = dir.join("b.wav");
         clicks_wav(&b, 240);
         let (tx, rx) = std::sync::mpsc::channel();
-        let worker = RhythmWorker::new(tx, Arc::new(|| {}), Some(cache.clone()), None);
+        let worker = RhythmWorker::new(Outbox::new(tx, Arc::new(|| {})), Some(cache.clone()), None);
         worker.prepare(vec![b.clone()], Some(recipe.clone()));
         let wait = Duration::from_secs(120);
         let next = || loop {
@@ -896,13 +818,13 @@ mod tests {
     #[test]
     fn dropping_the_worker_ends_both_threads() {
         let (tx, rx) = std::sync::mpsc::channel();
-        let worker = RhythmWorker::new(tx, Arc::new(|| {}), None, None);
+        let worker = RhythmWorker::new(Outbox::new(tx, Arc::new(|| {})), None, None);
         // The analysing thread has told the GPU's name: it waits for work.
         assert!(matches!(
             rx.recv_timeout(Duration::from_secs(60)),
             Ok(Action::Gpu(_))
         ));
-        let shared = Arc::downgrade(&worker.shared);
+        let shared = Arc::downgrade(&worker.queue);
         drop(worker);
         let started = Instant::now();
         while shared.strong_count() > 0 {

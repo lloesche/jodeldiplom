@@ -4,7 +4,7 @@
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
-use crate::browser::Notify;
+use crate::outbox::Notify;
 
 /// How long a wait goes without a word from the worker before it is taken
 /// for a hang: far longer than any step takes on a loaded machine, so that

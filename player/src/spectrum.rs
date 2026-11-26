@@ -13,6 +13,7 @@
 //! as a level meter does.
 
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use jodel_dsp::fft::{Complex, Fft};
 use jodel_dsp::window::hann;
@@ -313,6 +314,82 @@ fn spectrum_into(
             *level = db.max(*level - drop);
         }
     });
+}
+
+/// The spectrum is analysed at most this often (30 a second), however fast
+/// frames come.
+const SPECTRUM_EVERY: Duration = Duration::from_millis(30);
+
+/// The spectrum the screen draws: analysed only while the screen shows
+/// one, at most [`SPECTRUM_EVERY`] apart (the last again otherwise).
+pub struct SpectrumGate {
+    analyzer: Analyzer,
+    analyzed: Option<Instant>,
+    /// The spectrum changed in the last [`SpectrumGate::frame`] (frozen
+    /// while paused, it does not).
+    moved: bool,
+    /// The spectrum [`SpectrumGate::frame`] gave last.
+    last: Option<SpectrumFrame>,
+}
+
+impl Default for SpectrumGate {
+    fn default() -> Self {
+        SpectrumGate::new()
+    }
+}
+
+impl SpectrumGate {
+    /// Nothing analysed yet.
+    pub fn new() -> SpectrumGate {
+        SpectrumGate {
+            analyzer: Analyzer::new(),
+            analyzed: None,
+            moved: true,
+            last: None,
+        }
+    }
+
+    /// The spectrum at `now` of what `heard` hears (none: nothing is
+    /// heard, back to the empty spectrum of the start, without the last
+    /// track's rate on the axis), analysed only when `shown`.
+    pub fn frame(
+        &mut self,
+        now: Instant,
+        shown: bool,
+        heard: Option<&SpectrumTap>,
+    ) -> SpectrumFrame {
+        let recent = self
+            .analyzed
+            .is_some_and(|then| now - then < SPECTRUM_EVERY);
+        if !shown || recent {
+            if !shown {
+                // Shown again later: it starts afresh, not from long ago.
+                self.analyzed = None;
+                self.moved = false;
+            }
+            if let Some(last) = &self.last {
+                return last.clone();
+            }
+        }
+        let seconds = self
+            .analyzed
+            .map_or(0.0, |then| (now - then).as_secs_f32().min(0.5));
+        self.analyzed = Some(now);
+        match heard {
+            Some(tap) => self.analyzer.update(tap, seconds),
+            None => self.analyzer.reset(),
+        }
+        let frame = self.analyzer.frame();
+        self.moved = self.last.as_ref() != Some(&frame);
+        self.last = Some(frame.clone());
+        frame
+    }
+
+    /// Whether it moves by itself: it changed in the last frame and still
+    /// falls.
+    pub fn moving(&self) -> bool {
+        self.moved && !self.analyzer.is_quiet()
+    }
 }
 
 /// A test signal: a sine at `hz` and `amplitude` (of full scale).

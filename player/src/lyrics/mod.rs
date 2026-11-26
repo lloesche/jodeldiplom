@@ -48,7 +48,7 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -66,6 +66,8 @@ pub mod web;
 use edits::EditStore;
 use store::{cache_key, now, Cache, Kept};
 use web::{Http, Lrclib, Web};
+
+use crate::work::{Lane as Ask, Lanes, Queue};
 
 /// How long a track whose look-up failed (the network, the service) is
 /// not looked up on the web again.
@@ -341,35 +343,40 @@ impl Options {
 type Job = (PathBuf, Lyrics, bool);
 
 struct Wanted {
-    queue: VecDeque<PathBuf>,
+    /// Tracks to look up: wanted now, and to get into the cache after those
+    /// (not delivered).
+    looking: Lanes<PathBuf>,
     /// The tracks last wanted (a timing for another is dropped).
     wanted: Vec<PathBuf>,
-    /// Lyrics found, to be timed, in order.
-    timing: VecDeque<Job>,
-    /// Tracks to get into the cache after those, and their lyrics found
-    /// to be timed (neither delivered).
-    ahead: VecDeque<PathBuf>,
-    timing_ahead: VecDeque<Job>,
+    /// Lyrics found, to be timed, in order: for the tracks wanted, and for
+    /// those ahead.
+    timing: Lanes<Job>,
     /// Songs edited by hand, their new edits to keep (`None`: forgotten),
     /// then the song timed with them ([`LyricsWorker::edited`]).
     edited: VecDeque<(PathBuf, Option<Lyrics>)>,
     /// Tracks no source has lyrics for, to be heard by the speech
-    /// recogniser ([`WordTimer::transcribe`]), in order; and those to get
-    /// into the cache after them (not delivered).
-    hearing: VecDeque<PathBuf>,
-    hearing_ahead: VecDeque<PathBuf>,
+    /// recogniser ([`WordTimer::transcribe`]), in order: wanted, and ahead.
+    hearing: Lanes<PathBuf>,
     /// The tracks heard this run, each once: to be heard or being heard
     /// (`false`), or heard (`true`; a hearing that failed kept nothing, and
     /// the track stays without lyrics until the next run).
     heard: HashMap<PathBuf, bool>,
     online: bool,
-    stop: bool,
 }
 
 /// Looks up lyrics in the background, one track at a time.
 pub struct LyricsWorker {
-    shared: Arc<(Mutex<Wanted>, Condvar)>,
+    queue: Arc<Queue<Wanted>>,
     timer: Option<Arc<dyn WordTimer>>,
+}
+
+/// What comes of a track's answer once it is looked up.
+enum Then {
+    /// Delivered (for a track wanted).
+    Deliver,
+    /// Not yet: its words heard first, or its edits waiting for their
+    /// timing.
+    Hold,
 }
 
 impl LyricsWorker {
@@ -379,22 +386,15 @@ impl LyricsWorker {
         options: Options,
         deliver: impl FnMut(PathBuf, Answer) + Send + 'static,
     ) -> LyricsWorker {
-        let shared = Arc::new((
-            Mutex::new(Wanted {
-                queue: VecDeque::new(),
-                wanted: Vec::new(),
-                timing: VecDeque::new(),
-                ahead: VecDeque::new(),
-                timing_ahead: VecDeque::new(),
-                edited: VecDeque::new(),
-                hearing: VecDeque::new(),
-                hearing_ahead: VecDeque::new(),
-                heard: HashMap::new(),
-                online: options.online,
-                stop: false,
-            }),
-            Condvar::new(),
-        ));
+        let queue = Arc::new(Queue::new(Wanted {
+            looking: Lanes::default(),
+            wanted: Vec::new(),
+            timing: Lanes::default(),
+            edited: VecDeque::new(),
+            hearing: Lanes::default(),
+            heard: HashMap::new(),
+            online: options.online,
+        }));
         let deliver = Arc::new(Mutex::new(deliver));
         let working: Arc<Working> = options
             .working
@@ -405,7 +405,7 @@ impl LyricsWorker {
         let lrclib = Lrclib::new(Arc::clone(&options.http), options.base.clone());
         if let Some(timer) = options.timer.clone() {
             timer.set_online(options.online);
-            let (shared, deliver) = (Arc::clone(&shared), Arc::clone(&deliver));
+            let (queue, deliver) = (Arc::clone(&queue), Arc::clone(&deliver));
             let cache = options.cache.clone().map(Cache::new);
             let (working, done) = (Arc::clone(&working), Arc::clone(&done));
             let lrclib = lrclib.clone();
@@ -414,7 +414,7 @@ impl LyricsWorker {
                 // Its GPU work gives way to the window's frames.
                 jodel_gpu::pace::background();
                 time_words(
-                    &shared,
+                    &queue,
                     &*timer,
                     cache.as_ref(),
                     (&lrclib, &*probe),
@@ -425,12 +425,12 @@ impl LyricsWorker {
             });
         }
         let kept_timer = options.timer.clone();
-        let worker = Arc::clone(&shared);
+        let worker = Arc::clone(&queue);
         let deliver = move |path: PathBuf, answer: Answer| {
             (deliver.lock().unwrap_or_else(|e| e.into_inner()))(path, answer);
         };
         thread::spawn(move || {
-            let (lock, ready) = &*worker;
+            let queue = &*worker;
             let mut finder = Finder {
                 cache: options.cache.map(Cache::new),
                 online: options.online,
@@ -441,39 +441,30 @@ impl LyricsWorker {
             // Tracks the web failed for, and when.
             let mut failed: HashMap<PathBuf, Instant> = HashMap::new();
             // Waits `pause` unless told to stop.
-            let wait = |pause: Duration| {
-                let wanted = lock.lock().unwrap_or_else(|e| e.into_inner());
-                let (wanted, _) = ready
-                    .wait_timeout_while(wanted, pause, |w| !w.stop)
-                    .unwrap_or_else(|e| e.into_inner());
-                !wanted.stop
-            };
+            let wait = |pause: Duration| queue.pause(pause);
             loop {
                 // A song edited (kept first), else a track wanted, else one
                 // to get ready ahead.
-                let (path, ahead, edited) = {
-                    let mut wanted = lock.lock().unwrap_or_else(|e| e.into_inner());
-                    loop {
-                        if wanted.stop {
-                            return;
-                        }
-                        if let Some((path, edits)) = wanted.edited.pop_front() {
-                            break (path, false, Some(edits));
-                        }
-                        if let Some(path) = wanted.queue.pop_front() {
-                            finder.online = wanted.online;
-                            break (path, false, None);
-                        }
-                        if let Some(path) = wanted.ahead.pop_front() {
-                            if wanted.wanted.contains(&path) {
-                                continue;
-                            }
-                            finder.online = wanted.online;
-                            break (path, true, None);
-                        }
-                        wanted = ready.wait(wanted).unwrap_or_else(|e| e.into_inner());
+                let next = queue.next(|wanted| {
+                    if let Some((path, edits)) = wanted.edited.pop_front() {
+                        return Some((path, Ask::Now, Some(edits)));
                     }
+                    if let Some(path) = wanted.looking.lane(Ask::Now).pop_front() {
+                        finder.online = wanted.online;
+                        return Some((path, Ask::Now, None));
+                    }
+                    while let Some(path) = wanted.looking.lane(Ask::Ahead).pop_front() {
+                        if !wanted.wanted.contains(&path) {
+                            finder.online = wanted.online;
+                            return Some((path, Ask::Ahead, None));
+                        }
+                    }
+                    None
+                });
+                let Some((path, lane, edited)) = next else {
+                    return;
                 };
+                let ahead = lane == Ask::Ahead;
                 // New edits kept, whole or not at all, before the song is
                 // looked up (and so timed) with them.
                 if let (Some(edits), Some(store)) = (&edited, &finder.edits) {
@@ -501,11 +492,10 @@ impl LyricsWorker {
                 } else if !resting {
                     failed.remove(&path);
                 }
-                {
-                    let mut wanted = lock.lock().unwrap_or_else(|e| e.into_inner());
-                    if wanted.stop {
-                        return;
-                    }
+                if queue.stopped() {
+                    return;
+                }
+                let then = queue.change(|wanted| {
                     // Found without our times: timed next, when it can be;
                     // else settled.
                     let mut to_time = false;
@@ -518,11 +508,7 @@ impl LyricsWorker {
                     ) = (&answer, &options.timer)
                     {
                         if !lyrics.is_empty() && timer.ready() {
-                            let timing = if ahead {
-                                &mut wanted.timing_ahead
-                            } else {
-                                &mut wanted.timing
-                            };
+                            let timing = wanted.timing.lane(lane);
                             let job = (path.clone(), lyrics.clone(), is_edits);
                             // Edited by hand just now: timed first.
                             if edited.is_some() {
@@ -530,7 +516,6 @@ impl LyricsWorker {
                             } else {
                                 timing.push_back(job);
                             }
-                            ready.notify_all();
                             to_time = true;
                         }
                     }
@@ -542,19 +527,13 @@ impl LyricsWorker {
                     {
                         let coming = wanted.heard.insert(path.clone(), false).is_some();
                         if !coming {
-                            let hearing = if ahead {
-                                &mut wanted.hearing_ahead
-                            } else {
-                                &mut wanted.hearing
-                            };
-                            hearing.push_back(path.clone());
-                        } else if !ahead && wanted.hearing_ahead.contains(&path) {
+                            wanted.hearing.lane(lane).push_back(path.clone());
+                        } else if !ahead && wanted.hearing.lane(Ask::Ahead).contains(&path) {
                             // Wanted now: heard before the songs ahead.
-                            wanted.hearing_ahead.retain(|p| *p != path);
-                            wanted.hearing.push_back(path.clone());
+                            wanted.hearing.lane(Ask::Ahead).retain(|p| *p != path);
+                            wanted.hearing.lane(Ask::Now).push_back(path.clone());
                         }
-                        ready.notify_all();
-                        continue;
+                        return Then::Hold;
                     }
                     if !to_time {
                         done(&path, crate::core::LyricsFacts::of(&answer));
@@ -563,16 +542,17 @@ impl LyricsWorker {
                     // times the words): the song keeps the edits as applied
                     // to its times until then.
                     if edited.is_some() && matches!(answer, Answer::Found { timed: None, .. }) {
-                        continue;
+                        return Then::Hold;
                     }
-                }
-                if !ahead {
+                    Then::Deliver
+                });
+                if matches!(then, Then::Deliver) && !ahead {
                     deliver(path, answer);
                 }
             }
         });
         LyricsWorker {
-            shared,
+            queue,
             timer: kept_timer,
         }
     }
@@ -581,23 +561,21 @@ impl LyricsWorker {
     /// and not started yet is dropped): the playing track, then the next
     /// ones in the queue.
     pub fn want(&self, paths: Vec<PathBuf>) {
-        let (lock, ready) = &*self.shared;
-        let mut wanted = lock.lock().unwrap_or_else(|e| e.into_inner());
-        wanted.timing.retain(|(p, ..)| paths.contains(p));
-        wanted.wanted = paths.clone();
-        wanted.queue = paths.into();
-        ready.notify_all();
+        self.queue.change(|wanted| {
+            (wanted.timing.lane(Ask::Now)).retain(|(p, ..)| paths.contains(p));
+            wanted.wanted = paths.clone();
+            wanted.looking.want(paths);
+        });
     }
 
     /// Looks up `paths` ahead, in this order, after what is wanted, and
     /// times the words of what is found, into the cache only (nothing is
     /// delivered; what was asked for before and not started is dropped).
     pub fn prepare(&self, paths: Vec<PathBuf>) {
-        let (lock, ready) = &*self.shared;
-        let mut wanted = lock.lock().unwrap_or_else(|e| e.into_inner());
-        wanted.timing_ahead.retain(|(p, ..)| paths.contains(p));
-        wanted.ahead = paths.into();
-        ready.notify_all();
+        self.queue.change(|wanted| {
+            (wanted.timing.lane(Ask::Ahead)).retain(|(p, ..)| paths.contains(p));
+            wanted.looking.prepare(paths);
+        });
     }
 
     /// Keeps `edits` as the song at `path`'s lyrics edited by hand (`None`:
@@ -606,18 +584,16 @@ impl LyricsWorker {
     /// timing of these edits is kept, or when nothing times the words),
     /// for a track still wanted.
     pub fn edited(&self, path: PathBuf, edits: Option<Lyrics>) {
-        let (lock, ready) = &*self.shared;
-        let mut wanted = lock.lock().unwrap_or_else(|e| e.into_inner());
-        wanted.edited.retain(|(p, _)| *p != path);
-        wanted.timing.retain(|(p, ..)| *p != path);
-        wanted.edited.push_back((path, edits));
-        ready.notify_all();
+        self.queue.change(|wanted| {
+            wanted.edited.retain(|(p, _)| *p != path);
+            (wanted.timing.lane(Ask::Now)).retain(|(p, ..)| *p != path);
+            wanted.edited.push_back((path, edits));
+        });
     }
 
     /// Turns the LRCLIB look-ups on or off, from the next track.
     pub fn set_online(&self, online: bool) {
-        let (lock, _) = &*self.shared;
-        lock.lock().unwrap_or_else(|e| e.into_inner()).online = online;
+        self.queue.lock().online = online;
         if let Some(timer) = &self.timer {
             timer.set_online(online);
         }
@@ -626,9 +602,7 @@ impl LyricsWorker {
 
 impl Drop for LyricsWorker {
     fn drop(&mut self) {
-        let (lock, ready) = &*self.shared;
-        lock.lock().unwrap_or_else(|e| e.into_inner()).stop = true;
-        ready.notify_all();
+        self.queue.stop();
     }
 }
 
@@ -686,7 +660,7 @@ pub fn relined(timed: &Lyrics) -> (Lyrics, Lyrics) {
 /// one of its others that does: [`jodel_lyrics::prepare::fitting`]), keeps
 /// them in the cache and sends them on (for a track still wanted).
 fn time_words<D: FnMut(PathBuf, Answer)>(
-    shared: &(Mutex<Wanted>, Condvar),
+    queue: &Queue<Wanted>,
     timer: &dyn WordTimer,
     cache: Option<&Cache>,
     (lrclib, probe): (&Lrclib, &Probe),
@@ -694,35 +668,19 @@ fn time_words<D: FnMut(PathBuf, Answer)>(
     working: &Working,
     done_with: &Done,
 ) {
-    let (lock, ready) = shared;
     loop {
         // A timing first, else a track to hear.
-        let (path, lyrics, is_edits) = {
-            let mut wanted = lock.lock().unwrap_or_else(|e| e.into_inner());
-            loop {
-                if wanted.stop {
-                    return;
-                }
-                if let Some(job) = wanted.timing.pop_front() {
-                    break job;
-                }
-                if let Some(job) = wanted.timing_ahead.pop_front() {
-                    break job;
-                }
-                if let Some(path) = wanted.hearing.pop_front() {
-                    drop(wanted);
-                    hear(shared, timer, cache, deliver, working, done_with, path);
-                    wanted = lock.lock().unwrap_or_else(|e| e.into_inner());
-                    continue;
-                }
-                if let Some(path) = wanted.hearing_ahead.pop_front() {
-                    drop(wanted);
-                    hear(shared, timer, cache, deliver, working, done_with, path);
-                    wanted = lock.lock().unwrap_or_else(|e| e.into_inner());
-                    continue;
-                }
-                wanted = ready.wait(wanted).unwrap_or_else(|e| e.into_inner());
+        let next = queue.next(|wanted| {
+            (wanted.timing.pop().map(|(job, _)| Ok(job)))
+                .or_else(|| wanted.hearing.pop().map(|(path, _)| Err(path)))
+        });
+        let (path, lyrics, is_edits) = match next {
+            Some(Ok(job)) => job,
+            Some(Err(path)) => {
+                hear(queue, timer, cache, deliver, working, done_with, path);
+                continue;
             }
+            None => return,
         };
         // Timed meanwhile (wanted and ahead both): not again.
         let key = cache_key(&path);
@@ -738,10 +696,7 @@ fn time_words<D: FnMut(PathBuf, Answer)>(
             .filter(|t| still_current(t, Some(timer)));
         if let Some(timed) = done {
             done_with(&path, crate::core::LyricsFacts::Timed);
-            let still = {
-                let wanted = lock.lock().unwrap_or_else(|e| e.into_inner());
-                !wanted.stop && wanted.wanted.contains(&path)
-            };
+            let still = !queue.stopped() && queue.lock().wanted.contains(&path);
             if still {
                 let answer = Answer::Found {
                     lyrics,
@@ -755,21 +710,12 @@ fn time_words<D: FnMut(PathBuf, Answer)>(
         // LRCLIB's other texts of the song, asked for only when this one
         // does not fit (and only of LRCLIB's: the file's own are kept).
         let others = || -> Vec<Lyrics> {
-            let online = {
-                let wanted = lock.lock().unwrap_or_else(|e| e.into_inner());
-                !wanted.stop && wanted.online
-            };
+            let online = !queue.stopped() && queue.lock().online;
             if lyrics.source != Source::Lrclib || !online {
                 return Vec::new();
             }
             // Waits `pause` unless told to stop.
-            let wait = |pause: Duration| {
-                let wanted = lock.lock().unwrap_or_else(|e| e.into_inner());
-                let (wanted, _) = ready
-                    .wait_timeout_while(wanted, pause, |w| !w.stop)
-                    .unwrap_or_else(|e| e.into_inner());
-                !wanted.stop
-            };
+            let wait = |pause: Duration| queue.pause(pause);
             probe(&path)
                 .and_then(|track| lrclib.candidates(&track, &wait).ok())
                 .unwrap_or_default()
@@ -811,10 +757,7 @@ fn time_words<D: FnMut(PathBuf, Answer)>(
             }
         }
         done_with(&path, crate::core::LyricsFacts::Timed);
-        let still = {
-            let wanted = lock.lock().unwrap_or_else(|e| e.into_inner());
-            !wanted.stop && wanted.wanted.contains(&path)
-        };
+        let still = !queue.stopped() && queue.lock().wanted.contains(&path);
         if still {
             let answer = Answer::Found {
                 lyrics,
@@ -832,7 +775,7 @@ fn time_words<D: FnMut(PathBuf, Answer)>(
 /// (no recogniser here, or it failed): none found. Either way the track
 /// is heard once a run ([`Wanted::heard`]), however often it is asked for.
 fn hear<D: FnMut(PathBuf, Answer)>(
-    shared: &(Mutex<Wanted>, Condvar),
+    queue: &Queue<Wanted>,
     timer: &dyn WordTimer,
     cache: Option<&Cache>,
     deliver: &Mutex<D>,
@@ -865,10 +808,9 @@ fn hear<D: FnMut(PathBuf, Answer)>(
     };
     done_with(&path, crate::core::LyricsFacts::of(&answer));
     let still = {
-        let (lock, _) = shared;
-        let mut wanted = lock.lock().unwrap_or_else(|e| e.into_inner());
+        let mut wanted = queue.lock();
         wanted.heard.insert(path.clone(), true);
-        !wanted.stop && wanted.wanted.contains(&path)
+        !queue.stopped() && wanted.wanted.contains(&path)
     };
     if still {
         (deliver.lock().unwrap_or_else(|e| e.into_inner()))(path, answer);

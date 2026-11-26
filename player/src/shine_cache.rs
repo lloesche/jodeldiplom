@@ -20,11 +20,11 @@ use std::thread;
 use jodel_lyrics::Lyrics;
 use jodel_rhythm::waveform::Waveform;
 
-use crate::browser::Notify;
 use crate::cache::SHINE;
 use crate::core::shine::reference::Original;
 use crate::core::shine::Reference;
 use crate::core::singing::Notes;
+use crate::outbox::Notify;
 
 /// A reference as the file holds it, its header in front.
 pub fn to_text(reference: &Reference) -> String {

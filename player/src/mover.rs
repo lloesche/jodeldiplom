@@ -37,10 +37,12 @@
 use std::fs;
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Condvar, Mutex, RwLock};
-use std::time::{Duration, Instant};
+use std::sync::{Arc, RwLock};
+use std::time::Duration;
 
-use crate::browser::Notify;
+use crate::core::DataMove;
+use crate::outbox::Notify;
+use crate::work::Job;
 
 /// The journal's file, in the settings folder.
 pub const JOURNAL: &str = "moving.txt";
@@ -223,16 +225,9 @@ impl Status {
     }
 }
 
-struct Shared {
-    status: Mutex<Status>,
-    again: Mutex<bool>,
-    told: Condvar,
-    notify: Notify,
-}
-
 /// The journal's moves under way, on a thread of their own.
 pub struct Mover {
-    shared: Arc<Shared>,
+    job: Arc<Job<Status>>,
 }
 
 impl Mover {
@@ -245,33 +240,103 @@ impl Mover {
         for (from, to) in &moves {
             register(from, to);
         }
-        let shared = Arc::new(Shared {
-            status: Mutex::new(Status::default()),
-            again: Mutex::new(false),
-            told: Condvar::new(),
-            notify,
-        });
-        let worker = Arc::clone(&shared);
+        let job = Job::new(Status::default(), notify);
+        let worker = Arc::clone(&job);
         std::thread::Builder::new()
             .name("mover".into())
             .spawn(move || run(&settings, &worker))
             .expect("a thread for the mover");
-        Some(Mover { shared })
+        Some(Mover { job })
     }
 
     /// Where it stands.
     pub fn status(&self) -> Status {
-        self.shared
-            .status
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .clone()
+        self.job.status()
     }
 
     /// After a failure (a full disk): goes on.
     pub fn retry(&self) {
-        *self.shared.again.lock().unwrap_or_else(|e| e.into_inner()) = true;
-        self.shared.told.notify_all();
+        self.job.retry();
+    }
+}
+
+/// A move of the data folder as the settings page shows it
+/// ([`DataMove`]): the move under way, where it goes, and where it stood
+/// when last shown.
+pub struct MoveView {
+    mover: Option<Arc<Mover>>,
+    to: Option<PathBuf>,
+    seen: Option<Status>,
+}
+
+impl MoveView {
+    /// Showing `mover` (one found under way at the start), going to `to`.
+    pub fn new(mover: Option<Arc<Mover>>, to: Option<PathBuf>) -> MoveView {
+        MoveView {
+            mover,
+            to,
+            seen: None,
+        }
+    }
+
+    /// Whether a move is still under way.
+    pub fn busy(&self) -> bool {
+        self.mover.as_ref().is_some_and(|m| !m.status().finished)
+    }
+
+    /// Moves the folder `from` to `to`: written down in the journal in
+    /// `settings` first (from now on what is written goes there), then the
+    /// files moved in the background, telling `notify`; shown in `shown`.
+    /// Why it could not be written down.
+    pub fn begin(
+        &mut self,
+        settings: &Path,
+        (from, to): (PathBuf, PathBuf),
+        notify: Notify,
+        shown: &mut Option<DataMove>,
+    ) -> Result<(), String> {
+        begin(settings, &[(from, to.clone())])
+            .map_err(|e| format!("Could not note the move in {}: {e}", settings.display()))?;
+        self.to = Some(to.clone());
+        self.seen = None;
+        self.mover = Mover::start(settings.to_owned(), notify).map(Arc::new);
+        *shown = Some(DataMove {
+            to,
+            // Nothing there to move: it is where it goes already.
+            share: if self.mover.is_none() { 1.0 } else { 0.0 },
+            finished: self.mover.is_none(),
+            ..Default::default()
+        });
+        Ok(())
+    }
+
+    /// Where the move stands, into `shown` when that changed: whether it
+    /// did.
+    pub fn pump(&mut self, shown: &mut Option<DataMove>) -> bool {
+        let Some(mover) = &self.mover else {
+            return false;
+        };
+        let status = mover.status();
+        if self.seen.as_ref() == Some(&status) {
+            return false;
+        }
+        *shown = Some(DataMove {
+            to: self.to.clone().unwrap_or_default(),
+            share: status.share(),
+            done: status.done,
+            total: status.total,
+            failure: status.failure.clone(),
+            finished: status.finished,
+        });
+        self.seen = Some(status);
+        true
+    }
+
+    /// After a failure (a full disk): goes on.
+    pub fn retry(&self) {
+        if let Some(mover) = &self.mover {
+            mover.retry();
+        }
     }
 }
 
@@ -458,35 +523,25 @@ fn move_one(item: &Item, progress: &mut dyn FnMut(u64)) -> Moved {
     }
 }
 
-fn run(settings: &Path, shared: &Shared) {
-    let tell = |f: &mut dyn FnMut(&mut Status), force: bool, last: &mut Instant| {
-        f(&mut shared.status.lock().unwrap_or_else(|e| e.into_inner()));
-        if force || last.elapsed() >= Duration::from_millis(100) {
-            *last = Instant::now();
-            (shared.notify)();
-        }
-    };
-    let mut last = Instant::now();
+fn run(settings: &Path, job: &Job<Status>) {
+    // Tells the settings page, at most every 100 ms between files' ends.
+    let mut teller = job.teller(Duration::from_millis(100));
     loop {
         let moves = journal(settings);
         if moves.is_empty() {
-            tell(&mut |s| s.finished = true, true, &mut last);
+            teller.set(true, |s| s.finished = true);
             return;
         }
         let mut all: Vec<Item> = moves.iter().flat_map(|(f, t)| items(f, t)).collect();
         let total: u64 = all.iter().map(|i| i.bytes).sum();
-        tell(
-            &mut |s| {
-                // Over several starts the share counts what is left.
-                *s = Status {
-                    total,
-                    files_left: all.len() as u64,
-                    ..Status::default()
-                }
-            },
-            true,
-            &mut last,
-        );
+        teller.set(true, |s| {
+            // Over several starts the share counts what is left.
+            *s = Status {
+                total,
+                files_left: all.len() as u64,
+                ..Status::default()
+            }
+        });
         let mut done_bytes = 0u64;
         let mut stopped = None;
         let mut passes = 0;
@@ -495,19 +550,15 @@ fn run(settings: &Path, shared: &Shared) {
             for item in all {
                 let before = done_bytes;
                 let moved = move_one(&item, &mut |bytes| {
-                    tell(&mut |s| s.done = before + bytes, false, &mut last)
+                    teller.set(false, |s| s.done = before + bytes);
                 });
                 match moved {
                     Moved::Done => {
                         done_bytes = before + item.bytes;
-                        tell(
-                            &mut |s| {
-                                s.done = done_bytes;
-                                s.files_left -= 1;
-                            },
-                            false,
-                            &mut last,
-                        );
+                        teller.set(false, |s| {
+                            s.done = done_bytes;
+                            s.files_left -= 1;
+                        });
                     }
                     Moved::Later => later.push(item),
                     Moved::Stop(why) => {
@@ -520,7 +571,7 @@ fn run(settings: &Path, shared: &Shared) {
             if !all.is_empty() && stopped.is_none() {
                 passes += 1;
                 let waiting = all.len() as u64;
-                tell(&mut |s| s.waiting = waiting, true, &mut last);
+                teller.set(true, |s| s.waiting = waiting);
                 // Files held open: a while, then again.
                 std::thread::sleep(Duration::from_secs(if passes < 5 { 1 } else { 5 }));
             }
@@ -535,12 +586,8 @@ fn run(settings: &Path, shared: &Shared) {
                 "{why} {} MB are still to move. Free some space there, then try again.",
                 left.div_ceil(1_000_000)
             );
-            tell(&mut |s| s.failure = Some(failure.clone()), true, &mut last);
-            let mut again = shared.again.lock().unwrap_or_else(|e| e.into_inner());
-            while !*again {
-                again = shared.told.wait(again).unwrap_or_else(|e| e.into_inner());
-            }
-            *again = false;
+            teller.set(true, |s| s.failure = Some(failure));
+            job.wait_for_retry();
             continue;
         }
         // Every file over: the folders go, the journal is done with.

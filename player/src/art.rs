@@ -1,8 +1,14 @@
-//! Cover art: decoding, fitting into a pixel rect, and a placeholder.
+//! Cover art: decoding (the track heard's on a thread: [`ArtWorker`]),
+//! fitting into a pixel rect, and a placeholder.
 
+use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::Arc;
+use std::thread;
 
 use image::{imageops::FilterType, Rgb, RgbImage};
+use jodel_playback::Cover;
+
+use crate::outbox::Notify;
 
 /// A decoded cover with an id that changes when the cover does.
 #[derive(Clone, Debug)]
@@ -11,6 +17,89 @@ pub struct Art {
     pub id: u64,
     /// The pixels.
     pub image: Arc<RgbImage>,
+}
+
+/// The cover of the track heard, decoded on a thread of its own: the one
+/// asked for last is the one shown.
+pub struct ArtWorker {
+    art: Option<Art>,
+    /// The [`crate::cover::identity`] of the cover `art` is decoded from.
+    key: Option<u64>,
+    tx: Sender<(u64, Option<RgbImage>)>,
+    rx: Receiver<(u64, Option<RgbImage>)>,
+    /// The id of the cover asked for last.
+    next: u64,
+    notify: Notify,
+}
+
+impl ArtWorker {
+    /// No cover yet; each one decoded told through `notify`.
+    pub fn new(notify: Notify) -> ArtWorker {
+        let (tx, rx) = mpsc::channel();
+        ArtWorker {
+            art: None,
+            key: None,
+            tx,
+            rx,
+            next: 0,
+            notify,
+        }
+    }
+
+    /// The cover of the track heard now is `cover`: decoded unless it is
+    /// the one shown already (none: none shown).
+    pub fn want(&mut self, cover: Option<&Cover>) {
+        let Some(cover) = cover else {
+            self.art = None;
+            self.key = None;
+            self.next += 1;
+            return;
+        };
+        let key = crate::cover::identity(cover);
+        if self.key == Some(key) {
+            return;
+        }
+        self.key = Some(key);
+        self.next += 1;
+        let id = self.next;
+        let data = cover.data.clone();
+        let (tx, notify) = (self.tx.clone(), Arc::clone(&self.notify));
+        thread::spawn(move || {
+            let image = decode(&data);
+            if tx.send((id, image)).is_ok() {
+                notify();
+            }
+        });
+    }
+
+    /// Takes in the covers decoded: whether the one asked for last came.
+    pub fn pump(&mut self) -> bool {
+        let mut any = false;
+        while let Ok((id, image)) = self.rx.try_recv() {
+            if id == self.next {
+                any = true;
+                self.art = image.map(|image| Art {
+                    id,
+                    image: Arc::new(image),
+                });
+            }
+        }
+        any
+    }
+
+    /// Sets the cover directly, or none (tests and screenshots).
+    pub fn set(&mut self, image: Option<RgbImage>) {
+        self.next += 1;
+        self.art = image.map(|image| Art {
+            id: self.next,
+            image: Arc::new(image),
+        });
+    }
+
+    /// The cover, once decoded.
+    pub fn art(&self) -> Option<&Art> {
+        self.art.as_ref()
+    }
 }
 
 /// Decodes an encoded cover (JPEG or PNG). Very large images are

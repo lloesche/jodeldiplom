@@ -20,7 +20,8 @@ use std::sync::mpsc::Receiver;
 use std::sync::Arc;
 
 use jodel_output::mixer::{
-    Automation, Curve, Effects, Fader, GainCurve, MicView, Mixer, MixerOptions, Ramp, Start, Strip,
+    Automation, Curve, Effects, Fader, GainCurve, MicPort, MicView, Mixer, MixerOptions, Ramp,
+    Start, Strip,
 };
 use jodel_output::{Capabilities, SimClock};
 use jodel_playback::{
@@ -30,7 +31,7 @@ use jodel_playback::{
 
 use crate::core::desk::{DeskChange, Look, StripKind};
 use crate::core::voice_curve::VoiceCurve;
-use crate::core::{HeadFrame, State};
+use crate::core::{DeviceChoice, HeadFrame, State};
 
 /// Where the engine plays.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -310,4 +311,53 @@ impl Engine {
         let ids = StripKind::ALL.map(|kind| self.strip(kind).id());
         Look::of(self.mixer.desk(), self.mixer.meters(), ids)
     }
+
+    /// Why the microphone cannot hear this output (its echo stays in),
+    /// once each time the device refuses the microphone's tap anew.
+    pub(crate) fn mic_refused(&mut self) -> Option<String> {
+        let mic = self.mixer.mic();
+        if mic == self.mic {
+            return None;
+        }
+        self.mic = mic.clone();
+        match mic.port {
+            MicPort::CannotHear(why) => Some(why),
+            _ => None,
+        }
+    }
+}
+
+/// The real devices, each with its mix format in a few words.
+pub fn list_devices() -> Result<Vec<DeviceChoice>, String> {
+    let devices = jodel_output::devices().map_err(|e| e.to_string())?;
+    Ok(devices
+        .into_iter()
+        .map(|device| {
+            let summary = match jodel_output::mix_format(&device.id) {
+                Ok(format) => format_summary(format),
+                Err(error) => format!("cannot be asked: {error}"),
+            };
+            let name = if device.is_default {
+                format!("{} (default)", device.name)
+            } else {
+                device.name.clone()
+            };
+            DeviceChoice {
+                id: Some(device.id),
+                name,
+                summary,
+            }
+        })
+        .collect())
+}
+
+/// `48 kHz · F32 · 2 ch`: a device's mix format, the rate the system runs
+/// it at first.
+pub fn format_summary(format: jodel_output::StreamFormat) -> String {
+    format!(
+        "{} kHz · {} · {} ch",
+        crate::core::text::khz_short(format.rate),
+        format.sample,
+        format.channels
+    )
 }

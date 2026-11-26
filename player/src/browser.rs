@@ -22,8 +22,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
-use std::sync::mpsc::Sender;
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -31,10 +30,8 @@ use jodel_playback::TrackInfo;
 
 use crate::core::text::khz_short;
 use crate::core::Action;
-
-/// Something to call after a result was sent, so a sleeping UI loop wakes
-/// up (the window frontend posts an event to its loop).
-pub type Notify = Arc<dyn Fn() + Send + Sync>;
+use crate::outbox::Outbox;
+use crate::work::Queue;
 
 /// What a row is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -588,95 +585,58 @@ pub fn quick_details(path: &Path) -> Details {
     }
 }
 
-struct Wanted {
-    /// Files whose rows are on screen, most wanted first.
-    queue: VecDeque<PathBuf>,
-    stop: bool,
-}
-
 /// Reads file details on background threads, most recently wanted first.
 ///
 /// [`DetailsWorker::want`] replaces what is wanted: files no longer wanted
 /// that were not read yet are dropped (and reported back as
 /// [`Action::DetailsDropped`], so they can be asked for again later).
 pub struct DetailsWorker {
-    shared: Arc<(Mutex<Wanted>, Condvar)>,
-    sender: Sender<Action>,
-    notify: Notify,
+    /// Files whose rows are on screen, most wanted first.
+    queue: Arc<Queue<VecDeque<PathBuf>>>,
+    outbox: Outbox,
     threads: Vec<thread::JoinHandle<()>>,
 }
 
 impl DetailsWorker {
-    /// Starts `threads` readers that send [`Action::Details`] to `sender`.
-    pub fn new(threads: usize, sender: Sender<Action>, notify: Notify) -> DetailsWorker {
-        let shared = Arc::new((
-            Mutex::new(Wanted {
-                queue: VecDeque::new(),
-                stop: false,
-            }),
-            Condvar::new(),
-        ));
+    /// Starts `threads` readers that send [`Action::Details`] to `outbox`.
+    pub fn new(threads: usize, outbox: Outbox) -> DetailsWorker {
+        let queue = Arc::new(Queue::new(VecDeque::<PathBuf>::new()));
         let threads = (0..threads.max(1))
             .map(|_| {
-                let shared = shared.clone();
-                let sender = sender.clone();
-                let notify = notify.clone();
-                thread::spawn(move || loop {
-                    let path = {
-                        let (lock, ready) = &*shared;
-                        let mut wanted = lock.lock().unwrap_or_else(|e| e.into_inner());
-                        loop {
-                            if wanted.stop {
-                                return;
-                            }
-                            if let Some(path) = wanted.queue.pop_front() {
-                                break path;
-                            }
-                            wanted = ready.wait(wanted).unwrap_or_else(|e| e.into_inner());
+                let (queue, outbox) = (Arc::clone(&queue), outbox.clone());
+                thread::spawn(move || {
+                    while let Some(path) = queue.next(VecDeque::pop_front) {
+                        let details = quick_details(&path);
+                        if !outbox.send(Action::Details(path, details)) {
+                            return;
                         }
-                    };
-                    let details = quick_details(&path);
-                    if sender.send(Action::Details(path, details)).is_err() {
-                        return;
                     }
-                    notify();
                 })
             })
             .collect();
         DetailsWorker {
-            shared,
-            sender,
-            notify,
+            queue,
+            outbox,
             threads,
         }
     }
 
     /// Wants exactly `paths` now, in this order.
     pub fn want(&self, paths: Vec<PathBuf>) {
-        let (lock, ready) = &*self.shared;
-        let mut wanted = lock.lock().unwrap_or_else(|e| e.into_inner());
-        let dropped: Vec<PathBuf> = wanted
-            .queue
-            .drain(..)
-            .filter(|p| !paths.contains(p))
-            .collect();
-        wanted.queue = paths.into();
-        ready.notify_all();
-        drop(wanted);
-        if !dropped.is_empty() && self.sender.send(Action::DetailsDropped(dropped)).is_ok() {
-            (self.notify)();
+        let dropped: Vec<PathBuf> = self.queue.change(|queue| {
+            let dropped = queue.drain(..).filter(|p| !paths.contains(p)).collect();
+            *queue = paths.into();
+            dropped
+        });
+        if !dropped.is_empty() {
+            self.outbox.send(Action::DetailsDropped(dropped));
         }
     }
 }
 
 impl Drop for DetailsWorker {
     fn drop(&mut self) {
-        {
-            let (lock, ready) = &*self.shared;
-            let mut wanted = lock.lock().unwrap_or_else(|e| e.into_inner());
-            wanted.stop = true;
-            ready.notify_all();
-        }
+        self.queue.stop();
         for thread in self.threads.drain(..) {
             let _ = thread.join();
         }

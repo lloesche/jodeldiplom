@@ -287,7 +287,7 @@ fn output() -> Vec<String> {
         ));
         lines.push(format!("  id: {}", device.id));
         lines.push(match jodel_output::mix_format(&device.id) {
-            Ok(format) => format!("  takes: {}", crate::app::format_summary(format)),
+            Ok(format) => format!("  takes: {}", crate::desk_wiring::format_summary(format)),
             Err(error) => format!("  takes: cannot be asked: {error}"),
         });
     }
@@ -315,7 +315,7 @@ fn microphones(chosen: Option<&str>) -> Vec<String> {
         }
         Err(error) => return vec![format!("listing them failed: {error}")],
     }
-    let input = match crate::app::open_mic(chosen) {
+    let input = match crate::app::mic::open_mic(chosen) {
         Ok(input) => input,
         Err(error) => {
             lines.push(format!("opening karaoke's one failed: {error}"));

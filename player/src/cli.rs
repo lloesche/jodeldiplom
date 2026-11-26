@@ -6,7 +6,7 @@ use std::sync::Arc;
 use jodel_output::SimClock;
 use jodel_playback::Headroom;
 
-use crate::app::{self, AppOptions, Output};
+use crate::app::{AppOptions, Output};
 use crate::config::{self, Config};
 
 /// The usage text (`{bin}` is replaced by the binary's name).
@@ -258,7 +258,7 @@ pub fn app_options(args: &Args) -> Result<AppOptions, String> {
     options.saved = settings.saved;
     options.config_file = settings.file;
     options.notes = settings.warnings;
-    options.devices = Arc::new(app::list_devices);
+    options.devices = Arc::new(crate::desk_wiring::list_devices);
     Ok(options)
 }
 
@@ -310,7 +310,7 @@ pub fn set_models(options: &mut AppOptions, paths: &[PathBuf]) {
 
 /// The `--list-devices` text.
 pub fn device_list() -> Result<String, String> {
-    let devices = app::list_devices()?;
+    let devices = crate::desk_wiring::list_devices()?;
     if devices.is_empty() {
         return Ok(format!("No output devices ({}).\n", jodel_output::BACKEND));
     }

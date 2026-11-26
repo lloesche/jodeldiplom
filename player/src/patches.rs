@@ -40,10 +40,10 @@ use jodel_synth::engines::AnyParams;
 use jodel_synth::params::{Kind, Knobs};
 use jodel_synth::Patch;
 
-use crate::browser::Notify;
 use crate::cache;
 use crate::core::synth_tab::Edited;
 use crate::core::Action;
+use crate::outbox::Outbox;
 use crate::sfx::conductor::Atom;
 use crate::theme::{Theme, THEMES};
 
@@ -166,18 +166,17 @@ pub struct PatchStore {
 }
 
 impl PatchStore {
-    /// A store in `dir`, saying failures to `sender`.
-    pub fn new(dir: PathBuf, sender: Sender<Action>, notify: Notify) -> PatchStore {
+    /// A store in `dir`, saying failures to `outbox`.
+    pub fn new(dir: PathBuf, outbox: Outbox) -> PatchStore {
         let (jobs, rx) = mpsc::channel::<Job>();
         thread::spawn(move || {
             for (theme, atom, patch) in rx {
                 if let Err(e) = save(&dir, theme, atom, patch.as_ref()) {
                     let what = if patch.is_some() { "kept" } else { "forgotten" };
                     let text = format!("The patch of {} was not {what}: {e}", atom.name());
-                    if sender.send(Action::Failed(text)).is_err() {
+                    if !outbox.send(Action::Failed(text)) {
                         return;
                     }
-                    notify();
                 }
             }
         });

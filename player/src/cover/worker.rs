@@ -8,8 +8,7 @@
 
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::Sender;
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use image::RgbImage;
@@ -21,8 +20,9 @@ use super::store::{CoverStore, SongCover, Splitter};
 use super::{
     album_keys, identity, split, Apart, CoverLayers, CoverModels, FaceNet, Layers, Parts, TextNet,
 };
-use crate::browser::Notify;
 use crate::core::{Action, Facts, Job};
+use crate::outbox::Outbox;
+use crate::work::{Next, Queue};
 
 /// How long the models stay set up after the last cover.
 const KEEP_MODELS: Duration = Duration::from_secs(30);
@@ -187,15 +187,22 @@ struct Held {
     layers: Layers,
 }
 
-struct Queue {
+/// What the worker is asked for: the song playing first, then the songs
+/// to get ready.
+#[derive(Default)]
+struct Asked {
     wanted: Option<Wanted>,
     prepare: VecDeque<PathBuf>,
-    stop: bool,
+}
+
+/// The next song to take apart: the one playing, or one to get ready.
+enum Ask {
+    Playing(Box<Wanted>),
+    Prepare(PathBuf),
 }
 
 struct Shared {
-    queue: Mutex<Queue>,
-    ready: Condvar,
+    queue: Queue<Asked>,
     /// The song playing's layers, once ready.
     current: Mutex<Option<Held>>,
 }
@@ -207,30 +214,19 @@ pub struct CoverWorker {
 
 impl Drop for CoverWorker {
     fn drop(&mut self) {
-        self.shared
-            .queue
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .stop = true;
-        self.shared.ready.notify_all();
+        self.shared.queue.stop();
     }
 }
 
 impl CoverWorker {
     /// Starts the thread: covers kept in `dir`, taken apart by the models
-    /// in `models`; each song prepared is told on `sender` (and `notify`
-    /// called, also when the song playing's layers arrive).
-    pub fn start(
-        dir: PathBuf,
-        models: CoverModels,
-        sender: Sender<Action>,
-        notify: Notify,
-    ) -> CoverWorker {
+    /// in `models`; each song prepared is told on `outbox` (which is also
+    /// woken when the song playing's layers arrive).
+    pub fn start(dir: PathBuf, models: CoverModels, outbox: Outbox) -> CoverWorker {
         CoverWorker::start_with(
             CoverStore::new(dir),
             Box::new(GpuSplitter::new(models)),
-            sender,
-            notify,
+            outbox,
         )
     }
 
@@ -238,16 +234,10 @@ impl CoverWorker {
     pub fn start_with(
         store: CoverStore,
         splitter: Box<dyn Splitter>,
-        sender: Sender<Action>,
-        notify: Notify,
+        outbox: Outbox,
     ) -> CoverWorker {
         let shared = Arc::new(Shared {
-            queue: Mutex::new(Queue {
-                wanted: None,
-                prepare: VecDeque::new(),
-                stop: false,
-            }),
-            ready: Condvar::new(),
+            queue: Queue::new(Asked::default()),
             current: Mutex::new(None),
         });
         let worker = Arc::clone(&shared);
@@ -255,7 +245,7 @@ impl CoverWorker {
             .name("covers".into())
             .spawn(move || {
                 jodel_gpu::pace::background();
-                work(&worker, &store, &*splitter, &sender, &notify);
+                work(&worker, &store, &*splitter, &outbox);
             })
             .expect("a thread");
         CoverWorker { shared }
@@ -281,17 +271,14 @@ impl CoverWorker {
                 *current = None;
             }
         }
-        self.shared
-            .queue
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .wanted = Some(Wanted {
-            path: info.path.clone(),
-            cover: info.cover.clone(),
-            tags: info.tags.clone(),
-            bytes,
+        self.shared.queue.change(|asked| {
+            asked.wanted = Some(Wanted {
+                path: info.path.clone(),
+                cover: info.cover.clone(),
+                tags: info.tags.clone(),
+                bytes,
+            });
         });
-        self.shared.ready.notify_all();
     }
 
     /// The song playing's layers, once ready.
@@ -309,10 +296,7 @@ impl CoverWorker {
     pub fn prepare(&self, paths: Vec<PathBuf>) {
         self.shared
             .queue
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .prepare = paths.into();
-        self.shared.ready.notify_all();
+            .change(|asked| asked.prepare = paths.into());
     }
 }
 
@@ -432,53 +416,27 @@ fn take_apart(
     }
 }
 
-fn work(
-    shared: &Shared,
-    store: &CoverStore,
-    splitter: &dyn Splitter,
-    sender: &Sender<Action>,
-    notify: &Notify,
-) {
+fn work(shared: &Shared, store: &CoverStore, splitter: &dyn Splitter, outbox: &Outbox) {
     let mut last_work: Option<Instant> = None;
     loop {
-        let (wanted, path) = {
-            let mut q = shared.queue.lock().unwrap_or_else(|e| e.into_inner());
-            loop {
-                if q.stop {
-                    return;
-                }
-                if let Some(w) = q.wanted.take() {
-                    break (Some(w), None);
-                }
-                if let Some(p) = q.prepare.pop_front() {
-                    break (None, Some(p));
-                }
-                // Nothing to do: the models go after a while.
-                let wait = match last_work {
-                    Some(at) if at.elapsed() < KEEP_MODELS => KEEP_MODELS - at.elapsed(),
-                    Some(_) => {
-                        splitter.rest();
-                        last_work = None;
-                        continue;
-                    }
-                    None => Duration::from_secs(3600),
-                };
-                q = shared
-                    .ready
-                    .wait_timeout(q, wait)
-                    .unwrap_or_else(|e| e.into_inner())
-                    .0;
+        // Nothing to do: the models go after a while.
+        let rest = last_work.map_or(Duration::MAX, |at| KEEP_MODELS.saturating_sub(at.elapsed()));
+        let next = shared.queue.next_within(rest, |asked| {
+            (asked.wanted.take().map(|w| Ask::Playing(Box::new(w))))
+                .or_else(|| asked.prepare.pop_front().map(Ask::Prepare))
+        });
+        let ask = match next {
+            Next::Do(ask) => ask,
+            Next::Idle => {
+                splitter.rest();
+                last_work = None;
+                continue;
             }
+            Next::Stop => return,
         };
-        let tell = |action: Action| {
-            let sent = sender.send(action).is_ok();
-            notify();
-            sent
-        };
-        let (path, given, bytes) = match (wanted, path) {
-            (Some(w), _) => (w.path, Some((w.cover, w.tags)), w.bytes),
-            (None, Some(p)) => (p, None, None),
-            (None, None) => continue,
+        let (path, given, bytes) = match ask {
+            Ask::Playing(w) => (w.path, Some((w.cover, w.tags)), w.bytes),
+            Ask::Prepare(p) => (p, None, None),
         };
         let playing = given.is_some();
         let held = shared
@@ -491,7 +449,7 @@ fn work(
             if on {
                 last_work = Some(Instant::now());
             }
-            tell(Action::Working {
+            outbox.send(Action::Working {
                 path: path.clone(),
                 job: Job::Cover,
                 on,
@@ -514,12 +472,7 @@ fn work(
                 }
                 if playing {
                     // Still the song playing (no other wanted since).
-                    let still = shared
-                        .queue
-                        .lock()
-                        .unwrap_or_else(|e| e.into_inner())
-                        .wanted
-                        .is_none();
+                    let still = shared.queue.lock().wanted.is_none();
                     if still {
                         *shared.current.lock().unwrap_or_else(|e| e.into_inner()) =
                             layers.map(|layers| Held { bytes, layers });
@@ -532,7 +485,7 @@ fn work(
                 false
             }
         };
-        if !tell(Action::Ready {
+        if !outbox.send(Action::Ready {
             path,
             job: Job::Cover,
             facts: Some(Facts::Cover(has)),
@@ -607,8 +560,7 @@ mod tests {
         let worker = CoverWorker::start_with(
             CoverStore::new(dir.join("covers")),
             Box::new(Shared2(Arc::clone(&counting))),
-            tx,
-            Arc::new(|| {}),
+            Outbox::new(tx, Arc::new(|| {})),
         );
         let mut all = tracks.clone();
         all.push(broken.clone());

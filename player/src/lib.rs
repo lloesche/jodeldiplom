@@ -16,6 +16,8 @@
 //!   [`clock`]: what the app times by (the wall clock, or one a test
 //!   steps).
 //! - [`browser`]: folder listing, lazy file details, recursive search.
+//! - [`work`], [`outbox`]: what the background workers are built of, and
+//!   the way their results come back to the app.
 //! - [`config`], [`cli`]: the settings file and the command line.
 //! - [`cache`]: what is kept on disk between runs, and its schemas;
 //!   [`loudness`]: each song's loudness as the karaoke plays it, measured
@@ -48,6 +50,7 @@ pub mod keep;
 pub mod loudness;
 pub mod lyrics;
 pub mod mover;
+pub mod outbox;
 pub mod patches;
 pub mod preview;
 pub mod rhythm;
@@ -66,6 +69,7 @@ pub mod tiers;
 mod told;
 pub mod trace;
 pub mod view;
+pub mod work;
 
 use std::process::ExitCode;
 

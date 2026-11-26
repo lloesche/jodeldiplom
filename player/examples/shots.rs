@@ -477,7 +477,7 @@ fn main() {
     options.output = Output::Null(SimClock::Realtime);
     options.saved = options.config.clone();
     options.devices = if real {
-        Arc::new(jodeldiplom::app::list_devices)
+        Arc::new(jodeldiplom::desk_wiring::list_devices)
     } else {
         Arc::new(fake_devices)
     };

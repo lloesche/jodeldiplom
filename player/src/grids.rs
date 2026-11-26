@@ -14,10 +14,10 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Sender};
 use std::thread;
 
-use crate::browser::Notify;
 use crate::cache;
 use crate::core::grid::Grid;
 use crate::core::Action;
+use crate::outbox::Outbox;
 use crate::rhythm::{beats_text, parse_beats};
 
 /// What finds a track's grid: its path and size.
@@ -118,8 +118,8 @@ pub struct GridStore {
 }
 
 impl GridStore {
-    /// A store in `dir`, saying failures to `sender`.
-    pub fn new(dir: PathBuf, sender: Sender<Action>, notify: Notify) -> GridStore {
+    /// A store in `dir`, saying failures to `outbox`.
+    pub fn new(dir: PathBuf, outbox: Outbox) -> GridStore {
         let (jobs, rx) = mpsc::channel();
         thread::spawn(move || {
             for job in rx {
@@ -132,10 +132,9 @@ impl GridStore {
                         .map(|e| format!("The fixed grid was not removed: {e}")),
                 };
                 if let Some(text) = failed {
-                    if sender.send(Action::Failed(text)).is_err() {
+                    if !outbox.send(Action::Failed(text)) {
                         return;
                     }
-                    notify();
                 }
             }
         });

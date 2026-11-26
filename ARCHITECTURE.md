@@ -96,8 +96,8 @@ side effects is outside it and driven by what it returns.
 | Core | `core` | `State` (what the player shows and knows), `Action` (every input: keys, widgets, the engine, the workers), `update` (pure), `Effect` (what to do), the keymap table, `Fit` (the window's size as facts). Sub-cores per feature: `core::desk`, `core::transition`, `core::karaoke`, `core::singing`, `core::shine`, `core::lag`, `core::sync`, `core::preview`, `core::stems`, `core::key`. |
 | The game's data | `tiers`, `theme` | the tier table: everything a tier takes, looks like and sounds like, a row each; the themes that override its colours, the effects' looks and the sounds' patches by key. |
 | Presentation models | `view` | what each screen says, as plain data (rows, labels, tones, the Karaoke picture, the bubbles' fill). |
-| The running player | `app`, `desk_wiring`, `preview`, `sync`, `clock` | `App` holds the `State`, carries out the effects, pumps the channels; `desk_wiring` builds the desk and the engine on it; `preview` and `sync` play on it beside the engine. |
-| Workers | `browser` (details, search), `rhythm`, `lyrics`, `cover`, `shine_cache`, `loudness`, `setup`, `download`, `mover`, `grids` | background threads, each with its queue; results come back as `Action`s. |
+| The running player | `app`, `desk_wiring`, `preview`, `sync`, `clock` | `App` holds the `State`, carries out the effects (`app::effects`), pumps the channels, answers the window's frames (`app::frame`); its subsystems own their parts: the microphone and the singing (`app::mic`), the cover heard (`art`), the spectrum (`spectrum`), the session kept (`session`), a data folder's move (`mover`); `desk_wiring` builds the desk and the engine on it; `preview` and `sync` play on it beside the engine. |
+| Workers | `browser` (details, search), `rhythm`, `lyrics`, `cover`, `shine_cache`, `loudness`, `setup`, `download`, `mover`, `grids` | background threads, each with its queue (`work`: a `Queue` its threads wait on, the `Lanes` of what is wanted now and ahead, a `Job` that tells how it stands and waits for a retry); results come back as `Action`s through an `Outbox` (`outbox`). |
 | Stores | `cache`, `dirs`, `session`, `grids`, `scores`, `delays`, `stems_cache`, `shine_cache`, `keep`, `mover`, `config` | what is kept on disk, where, and in which schema. |
 | Sounds | `sfx` | the game's moments as sounds: the conductor plans notes on the song's grid and key for the synth on the desk's effects input. |
 | The window | `gui` | the iced application (`gui::window`), its screens (`gui::screens`) built from the look's tokens and shared widgets (`gui::look`, `gui::widgets`), the Mixer tab (`gui::mixer`), the lanes (`gui::lanes`), and Karaoke mode on the GPU: the stage (`gui::stage`, `gui::stage_gpu`), the effects (`gui::fx`), the backdrop (`gui::backdrop`), the light (`gui::bloom`), the bursts (`gui::particles`). |
@@ -183,7 +183,7 @@ sounds follow).
                device's clock, lined up with what the device plays
             ─► "jodel-mic-clean": echo canceller, suppressor, singer isolated
             ─► voice blocks, each with the stream frame it was sung at
- ───────────────────────────────────────────── UI thread, each frame drawn (App::sing)
+ ───────────────────────────────────────────── UI thread, each frame drawn (MicSession::sing)
             ─► VoiceClock: where in the song each block was sung, less the
                singer's delay (core::lag)
             ─► YIN pitch frames (jodel_rhythm::yin)   [or the demo key's perfect singer]

@@ -28,12 +28,13 @@
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::Arc;
 use std::time::{Duration, Instant, UNIX_EPOCH};
 
-use crate::browser::Notify;
 use crate::download::Sha256;
 use crate::lyrics::models;
+use crate::outbox::Notify;
+use crate::work::{Job, Teller};
 
 /// A file downloaded as it is, checked against its length and SHA-256.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -663,17 +664,9 @@ fn hash_file(path: &Path, progress: &mut dyn FnMut(u64)) -> Result<String, Strin
     Ok(hash.hex())
 }
 
-struct Shared {
-    status: Mutex<Status>,
-    /// Set by [`Setup::retry`], taken by the worker waiting after a failure.
-    again: Mutex<bool>,
-    told: Condvar,
-    notify: Notify,
-}
-
 /// Setup under way, on a thread of its own.
 pub struct Setup {
-    shared: Arc<Shared>,
+    job: Arc<Job<Status>>,
 }
 
 impl Setup {
@@ -685,59 +678,30 @@ impl Setup {
         work: Arc<dyn Work>,
         notify: Notify,
     ) -> Setup {
-        let shared = Arc::new(Shared {
-            status: Mutex::new(Status::default()),
-            again: Mutex::new(false),
-            told: Condvar::new(),
-            notify,
-        });
-        let worker = Arc::clone(&shared);
+        let job = Job::new(Status::default(), notify);
+        let worker = Arc::clone(&job);
         std::thread::Builder::new()
             .name("setup".into())
             .spawn(move || run(&manifest, &places, &*work, &worker))
             .expect("a thread for setup");
-        Setup { shared }
+        Setup { job }
     }
 
     /// Where it stands now.
     pub fn status(&self) -> Status {
-        self.shared
-            .status
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .clone()
+        self.job.status()
     }
 
     /// After a failure: tries again from where it stopped.
     pub fn retry(&self) {
-        let mut again = self.shared.again.lock().unwrap_or_else(|e| e.into_inner());
-        *again = true;
-        self.shared.told.notify_all();
+        self.job.retry();
     }
 }
 
-/// Tells the screen, at most every 30 ms between steps' ends.
-struct Teller<'a> {
-    shared: &'a Shared,
-    last: Instant,
-}
-
-impl Teller<'_> {
-    fn set(&mut self, force: bool, f: impl FnOnce(&mut Status)) {
-        f(&mut self.shared.status.lock().unwrap_or_else(|e| e.into_inner()));
-        if force || self.last.elapsed() >= Duration::from_millis(30) {
-            self.last = Instant::now();
-            (self.shared.notify)();
-        }
-    }
-}
-
-fn run(manifest: &[Need], places: &Places, work: &dyn Work, shared: &Shared) {
+fn run(manifest: &[Need], places: &Places, work: &dyn Work, job: &Job<Status>) {
     loop {
-        let mut teller = Teller {
-            shared,
-            last: Instant::now(),
-        };
+        // Tells the screen, at most every 30 ms between steps' ends.
+        let mut teller = job.teller(Duration::from_millis(30));
         match attempt(manifest, places, work, &mut teller) {
             Ok(paths) => {
                 teller.set(true, |s| {
@@ -748,12 +712,7 @@ fn run(manifest: &[Need], places: &Places, work: &dyn Work, shared: &Shared) {
             }
             Err(failure) => {
                 teller.set(true, |s| s.failure = Some(failure));
-                let mut again = shared.again.lock().unwrap_or_else(|e| e.into_inner());
-                while !*again {
-                    again = shared.told.wait(again).unwrap_or_else(|e| e.into_inner());
-                }
-                *again = false;
-                drop(again);
+                job.wait_for_retry();
                 teller.set(true, |s| s.failure = None);
             }
         }
@@ -776,7 +735,7 @@ fn attempt(
     manifest: &[Need],
     places: &Places,
     work: &dyn Work,
-    teller: &mut Teller,
+    teller: &mut Teller<'_, Status>,
 ) -> Result<Vec<PathBuf>, Failure> {
     let mut paths: Vec<Option<PathBuf>> = vec![None; manifest.len()];
     let mut tasks = Vec::new();
@@ -980,7 +939,12 @@ fn attempt(
 }
 
 /// Downloads `part` to `to`, telling the screen the bytes and the speed.
-fn fetch(work: &dyn Work, part: &Part, to: &Path, teller: &mut Teller) -> Result<(), Failure> {
+fn fetch(
+    work: &dyn Work,
+    part: &Part,
+    to: &Path,
+    teller: &mut Teller<'_, Status>,
+) -> Result<(), Failure> {
     teller.set(true, |s| {
         s.total = part.bytes;
         s.unit = Some(Unit::Bytes);
@@ -1426,10 +1390,14 @@ mod tests {
         let places = places(&dir);
         let (setup, told) = start(manifest.clone(), places.clone(), Arc::new(work));
         settle(&setup, &told).finished.expect("finished");
-        // Rewritten, the same length: not taken without a check.
+        // Rewritten, the same length: not taken without a check. Its time
+        // set a second on, so that it differs on any file system's clock.
         let path = dir.join("store/speech.bin");
-        std::thread::sleep(Duration::from_millis(20));
+        let was = fs::metadata(&path).unwrap().modified().unwrap();
         fs::write(&path, b"the speech MODEL").unwrap();
+        let file = fs::OpenOptions::new().write(true).open(&path).unwrap();
+        file.set_modified(was + Duration::from_secs(1)).unwrap();
+        drop(file);
         assert_eq!(look(&manifest[0], &places), Lookup::Unchecked(path));
         assert_eq!(ready(&manifest, &places), None);
     }

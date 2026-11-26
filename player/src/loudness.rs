@@ -23,8 +23,8 @@ use std::thread;
 use jodel_playback::stems::{Stem, RATE};
 use jodel_rhythm::loudness::Meter;
 
-use crate::browser::Notify;
 use crate::cache::LOUDNESS;
+use crate::outbox::Notify;
 
 /// What a song's loudness was measured from.
 #[derive(Clone, Copy, Debug, PartialEq)]
