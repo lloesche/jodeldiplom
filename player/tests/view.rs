@@ -1,8 +1,9 @@
 //! The screens drawn into a ratatui test buffer, the pictures' cells blank
 //! as the window leaves them for its pixels ([`CellPictures`]), with the
 //! outlines of what the window draws from its models after them: the
-//! list pane's (its tabs, the browser's or the queue's rows) on the main
-//! screen, the command palette's while it is open, and the bottom bar's
+//! list pane's (its tabs, the browser's or the queue's rows) and the right
+//! column's text (or the summary under the list) on the main screen, the
+//! command palette's while it is open, and the bottom bar's
 //! where the screen has one; compared with the snapshots in
 //! `tests/snapshots/` (set `UPDATE_SNAPSHOTS=1` to rewrite them after an
 //! intended change). The spectrum's model in points: its labels and where
@@ -22,6 +23,7 @@ use jodeldiplom::spectrum::{sine, tap_frames_for, Analyzer, SpectrumFrame};
 use jodeldiplom::view::bottom::Bar;
 use jodeldiplom::view::command_palette::Palette;
 use jodeldiplom::view::help::Page as HelpPage;
+use jodeldiplom::view::info::Info;
 use jodeldiplom::view::lanes::WavePlot;
 use jodeldiplom::view::layout::{self, Bottom, Grid, Layout};
 use jodeldiplom::view::list::Pane;
@@ -76,12 +78,7 @@ fn bar_outline(state: &State, grid: Grid, place: Bottom) -> String {
 /// [`draw`] with `heard` seconds of the playing track heard.
 fn draw_heard(state: &State, grid: Grid, heard: f64) -> String {
     let mut terminal = Terminal::new(TestBackend::new(grid.cols, grid.rows)).unwrap();
-    let scene = Scene {
-        state,
-        grid,
-        pointer: None,
-        heard,
-    };
+    let scene = Scene { state, grid, heard };
     terminal
         .draw(|frame| view::draw(frame, &scene, &mut CellPictures))
         .unwrap();
@@ -90,6 +87,12 @@ fn draw_heard(state: &State, grid: Grid, heard: f64) -> String {
     if let Layout::Main(m) = &shown {
         let (cw, _) = cell();
         text.push_str(&Pane::of(state, f32::from(m.list.width) * cw).to_string());
+        if m.info.is_some() {
+            text.push_str(&Info::of(state).to_string());
+        }
+        if m.mini.is_some() {
+            text.push_str(&Info::of(state).summary());
+        }
     }
     if let Some(palette) = Palette::of(state, 8) {
         text.push_str(&palette.to_string());
@@ -524,24 +527,42 @@ fn an_empty_spectrum_draws_nothing() {
 #[test]
 fn the_right_column_keeps_its_width_between_tracks() {
     use jodel_playback::{Event, PlayState};
-    use jodeldiplom::view::layout::right_width_for;
+    let grid = Grid::new(160, 40);
+    let column = |state: &State| match layout::compute(state, grid) {
+        Layout::Main(m) => m.right.map(|r| r.width),
+        _ => None,
+    };
     let mut state = common::playing_state(160, 40);
-    let mut grid = Grid::new(160, 40);
-    // Each frame drawn holds what it showed.
-    update(&mut state, Action::Tick(1));
-    grid.hold(&state);
-    let playing = right_width_for(&state, grid);
+    let playing = column(&state);
+    assert_eq!(playing, Some(layout::right_width(160)));
+    // A device name as long as they come: the column stays, its text
+    // wraps.
+    let mut long = state.clone();
+    long.playing.track.as_mut().unwrap().device =
+        "Digital Output (High Definition Audio Device 2)".into();
+    assert_eq!(column(&long), playing);
     // Between two tracks nothing is shown for a moment; the column stays.
     update(&mut state, Action::Engine(Event::State(PlayState::Stopped)));
     assert!(state.playing.track.is_none());
-    grid.hold(&state);
-    assert_eq!(right_width_for(&state, grid), playing);
-    // A new window size measures again.
-    grid.resize(150, 40);
-    let fit = layout::fit(&state, grid);
-    update(&mut state, Action::Fit(fit));
-    grid.hold(&state);
-    assert!(right_width_for(&state, grid) <= playing);
+    assert_eq!(column(&state), playing);
+}
+
+/// The beat pulse is lit on each beat where the beat is clear (the bar's
+/// first one in the accent), fading over a moment; between beats and
+/// while paused it is dim.
+#[test]
+fn the_beat_pulse_lights_on_each_beat() {
+    use jodeldiplom::view::info::{pulse, PULSE_SECONDS};
+    let mut state = common::playing_state(160, 40);
+    // The fixture's beats: from 0.4 s, 128 a minute, a bar of four.
+    let beat = |i: f64| 0.4 + i * 60.0 / 128.0;
+    let on = pulse(&state, beat(4.0)).unwrap();
+    assert!(on.downbeat && on.lit > 0.99, "{on:?}");
+    let next = pulse(&state, beat(5.0) + PULSE_SECONDS / 2.0).unwrap();
+    assert!(!next.downbeat && (next.lit - 0.5).abs() < 0.01, "{next:?}");
+    assert_eq!(pulse(&state, beat(5.0) + PULSE_SECONDS * 1.5), None);
+    state.playing.state = jodel_playback::PlayState::Paused;
+    assert_eq!(pulse(&state, beat(4.0)), None);
 }
 
 #[test]
@@ -556,7 +577,6 @@ fn a_frame_of_another_size_than_the_state_is_drawn_blank() {
             let scene = Scene {
                 state: &state,
                 grid: Grid::new(120, 36),
-                pointer: None,
                 heard: 0.0,
             };
             terminal
@@ -857,12 +877,7 @@ fn lanes(state: &State, grid: Grid) -> Vec<WavePlot> {
 /// [`lanes`] with `heard` seconds of the playing track heard.
 fn lanes_heard(state: &State, grid: Grid, heard: f64) -> Vec<WavePlot> {
     let mut terminal = Terminal::new(TestBackend::new(grid.cols, grid.rows)).unwrap();
-    let scene = Scene {
-        state,
-        grid,
-        pointer: None,
-        heard,
-    };
+    let scene = Scene { state, grid, heard };
     let mut lanes = Lanes::default();
     terminal
         .draw(|frame| view::draw(frame, &scene, &mut lanes))

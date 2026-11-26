@@ -8,7 +8,8 @@
 //! median and worst, and the same of the frames' totals.
 //!
 //! The main screen (its list pane native: the tabs and the browser's rows;
-//! its bottom bar native: the spectrum, the seek bar and the buttons), the
+//! its bottom bar native: the spectrum, the seek bar and the buttons; the
+//! right column's text under the cover native: links, tags, the pulse), the
 //! same on a folder of 2,000 files (the cost must not grow with the
 //! folder), the queue, the Mixer tab, the Transition and Karaoke tabs
 //! (their lanes native) on generated tracks with stems, and the screens

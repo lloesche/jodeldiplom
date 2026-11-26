@@ -11,8 +11,8 @@
 
 
 
- ▶ Morning Light — The Ramps
- ○ PCM  file 44.1 → USB Audio DAC
+
+
 
 
 
@@ -30,6 +30,9 @@
 [row] ♪ Undertow  [chip] FLAC 44.1  4:14
 [row] ♪ Glass Rooms  [chip] FLAC 44.1  4:51
 [row] ♪ Coda  [chip] WAV 96  5:28
+[summary] ▶ Morning Light — The Ramps
+[status] ○ PCM
+[route] file 44.1 → USB Audio DAC
 [spectrum] 0 dB | 20 Hz · 50 · 100 · 200 · 500 · 1k · 2k · 5k · 10k · 20k · [source] 88k
 [time] 1:23
 [seek] 34 %

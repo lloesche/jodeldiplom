@@ -49,7 +49,6 @@ fn draw(state: &State) -> String {
     let scene = Scene {
         state,
         grid: GRID,
-        pointer: None,
         heard: 0.0,
     };
     terminal

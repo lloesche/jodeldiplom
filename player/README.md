@@ -138,8 +138,10 @@ five; the queue's tab carries its length); the browser shows where it
 is above its rows, and the filter line at their foot. The command
 palette (`:`) opens over everything, the window dimmed under it: a click
 on a command runs it, a click beside it closes it. The right column has
-the cover, the title, the status
-light and the signal path, for example `file 48 → DAC`.
+the cover and under it, in line with it, the title, the artist and the
+album; what the file is (the status light, `PCM`) beside the tempo and
+key, a metronome before them lit on each beat; and the signal path as
+tags joined by arrows, for example `file 48 → DAC`.
 The output device is opened once, as the player starts, shared, through
 the system's mixer: other applications play beside it, and a call's
 screen share or "share sound" hears the music and the karaoke. It runs at
@@ -164,10 +166,11 @@ path ends with what it was decoded from, for example `file 44.1 → DAC,
 decoded from MP3`, and the status light names the codec and its bit rate
 (`○ MP3 320 kbps · lossy`). Lossy files play gapless (encoder delay and
 padding trimmed).
-The right column is as wide as its longest line needs, up to half the
-screen (the list gives up the room); where the path still does not fit it
-wraps before a `→` step or before what follows the device (`decoded from
-MP3`), never inside a phrase. Long titles, artists and albums end in `…`. The title, artist
+The right column's width is set by the window's alone (a third of a wide
+one), so it stays put from track to track; where the path does not fit
+it wraps before a `→` step or before what follows the device (`decoded
+from MP3`), never inside a tag. Long titles, artists and albums end in
+`…`. The title, artist
 and album are links (underlined under the pointer): the title and the album show the track in its folder, the artist
 the folder above it with the album selected (`T`, `B`, `R`).
 At the bottom, the bar: the spectrum of what is heard (the mix the device plays,

@@ -107,7 +107,6 @@ fn main() {
             let scene = Scene {
                 state: &state,
                 grid,
-                pointer: None,
                 heard: state.heard(),
             };
             canvas.draw(&scene, app.art());

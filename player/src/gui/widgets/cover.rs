@@ -20,8 +20,8 @@ use iced::advanced::{mouse, renderer};
 use iced::gradient::Linear;
 use iced::widget::{container, pin, space, Container, Image, Stack};
 use iced::{
-    border, Background, Border, Color, ContentFit, Element, Length, Rectangle, Renderer, Shadow,
-    Size, Theme, Vector, Widget as _,
+    border, Background, Border, Color, ContentFit, Element, Length, Point, Rectangle, Renderer,
+    Shadow, Size, Theme, Vector, Widget as _,
 };
 
 use crate::art::{self, Art};
@@ -205,17 +205,32 @@ impl Covers {
         )
     }
 
-    /// One cover, pinned at its spot.
-    fn cover<'a, M: 'a>(&self, spot: &Spot, fitted: &'a Fitted) -> Element<'a, M> {
+    /// Where the first cover shows in the window, in points (what lines up
+    /// with it: the right column's text).
+    pub fn first(&self) -> Option<Rectangle> {
+        let (spot, fitted) = self.shown.first()?;
+        Some(self.bounds(spot, fitted))
+    }
+
+    /// Where `fitted` shows in `spot`, in points.
+    fn bounds(&self, spot: &Spot, fitted: &Fitted) -> Rectangle {
         let (px, py, _, _) = spot.place;
         let (ox, oy) = match spot.align {
             Align::TopLeft => (0, 0),
             Align::Center => (fitted.offset.0 as usize, fitted.offset.1 as usize),
         };
-        let size = self.size(fitted);
-        pin(picture(fitted, size))
-            .x(self.points(px + ox))
-            .y(self.points(py + oy))
+        Rectangle::new(
+            Point::new(self.points(px + ox), self.points(py + oy)),
+            self.size(fitted),
+        )
+    }
+
+    /// One cover, pinned at its spot.
+    fn cover<'a, M: 'a>(&self, spot: &Spot, fitted: &'a Fitted) -> Element<'a, M> {
+        let bounds = self.bounds(spot, fitted);
+        pin(picture(fitted, bounds.size()))
+            .x(bounds.x)
+            .y(bounds.y)
             .boxed()
     }
 }

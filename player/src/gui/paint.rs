@@ -94,14 +94,12 @@ struct Moves {
     due_soon: bool,
 }
 
-/// Where a frame is drawn: the window's size in pixels, its scale factor,
-/// and the pointer's cell while it is over the canvas (the links under it
-/// are underlined).
+/// Where a frame is drawn: the window's size in pixels and its scale
+/// factor.
 #[derive(Clone, Copy, Debug)]
 pub struct Place {
     pub size: (u32, u32),
     pub scale: f32,
-    pub pointer: Option<(u16, u16)>,
 }
 
 /// The frames' state.
@@ -286,7 +284,6 @@ impl Paint {
         let spectrum = &mut self.spectrum;
         embed.draw(place.scale, |canvas, gpu| {
             canvas.fit(place.size.0, place.size.1);
-            canvas.hold(&app.state);
             let grid = canvas.grid();
             // The list's page, the help's and the desk as the window
             // draws them, at its cells' size.
@@ -304,7 +301,6 @@ impl Paint {
             let scene = Scene {
                 state: &app.state,
                 grid,
-                pointer: place.pointer,
                 heard,
             };
             canvas.draw(&scene, app.art());

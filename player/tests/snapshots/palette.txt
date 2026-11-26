@@ -11,16 +11,16 @@
                                                                                 │                                      │
                                                                                 │                                      │
                                                                                 │                                      │
-                                                                                │                                      │
                                                                                 ╰──────────────────────────────────────╯
 
-                                                                                 Morning Light
-                                                                                 The Ramps
-                                                                                 Synthetic Sessions
 
-                                                                                 ○ PCM
-                                                                                 ♩ 128 BPM
-                                                                                 file 44.1 → USB Audio DAC
+
+
+
+
+
+
+
 
 
 
@@ -44,6 +44,13 @@
 [row] ♪ Undertow  [chip] FLAC 44.1  4:14
 [row] ♪ Glass Rooms  [chip] FLAC 44.1  4:51
 [row] ♪ Coda  [chip] WAV 96  5:28
+[title link] Morning Light
+[artist link] The Ramps
+[album link] Synthetic Sessions
+[status] ○ PCM
+[route] file 44.1 → USB Audio DAC
+[device link] USB Audio DAC
+[tempo] ♩ 128 BPM
 [palette] : ne▏
 [match selected] Next track  N / shift+→
 [match] Transition: lyrics on the vocals lane on/off  L

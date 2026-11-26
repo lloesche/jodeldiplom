@@ -24,7 +24,7 @@ use jodel_output::SimClock;
 use jodeldiplom::app::{App, AppOptions, Output};
 use jodeldiplom::core::keymap::Op;
 use jodeldiplom::core::{update, Action, Effect, Gpu, Screen, Side, State};
-use jodeldiplom::gui::pointer::Grab;
+use jodeldiplom::gui::pointer::{Grab, PointerKind};
 use jodeldiplom::gui::window::{Gui, Message};
 use jodeldiplom::view::setup::Choice;
 use setup_web::{start, when, Made, Web};
@@ -631,11 +631,11 @@ fn a_click_on_now_playing_returns_and_its_links_jump() {
     let mut state = common::playing_state(160, 42);
     state.screen = Screen::NowPlaying;
     let mut app = player();
-    app.set_art(image::RgbImage::from_pixel(
+    app.set_art(Some(image::RgbImage::from_pixel(
         64,
         64,
         image::Rgb([40, 60, 90]),
-    ));
+    )));
     let gui = window_of(app, state);
     let op = |messages: &[Message]| match acts(messages)[..] {
         [Action::Op(op)] => op,
@@ -673,7 +673,7 @@ fn now_playing_is_the_cover_with_the_caption_over_it() {
         info.tags.title = Some(title.into());
         track.info = Arc::new(info);
         let mut app = player();
-        app.set_art(light.clone());
+        app.set_art(Some(light.clone()));
         let gui = window_of(app, state);
         let mut headless = Headless::new();
         headless.frame(&gui, SIZE);
@@ -874,4 +874,75 @@ fn the_settings_keep_the_row_the_keys_are_on_in_view() {
     assert!(!whole(&mut sim, 0), "scrolled: the first row went up");
     run(&mut sim, Reveal::new("settings", "setting-0"));
     assert!(whole(&mut sim, 0), "the first row is out of view");
+}
+
+/// `state` with the playing track titled `title` (the browser's row keeps
+/// its own).
+fn titled(mut state: State, title: &str) -> State {
+    let track = state.playing.track.as_mut().unwrap();
+    let mut info = (*track.info).clone();
+    info.tags.title = Some(title.into());
+    track.info = Arc::new(info);
+    state
+}
+
+/// The right column under the cover: a click on the title, the artist or
+/// the album goes to where it is in the browser; a click on the device
+/// opens its setting; the wheel over the column scrolls the list.
+#[test]
+fn clicking_the_title_artist_or_album_jumps() {
+    let _gpu = gpu();
+    let gui = window(titled(
+        common::playing_state(160, 42),
+        "Morning Light (Live)",
+    ));
+    // Only the column takes a press or the wheel: the old canvas under it
+    // hears the pointer's moves alone.
+    let moved = |m: &&Message| matches!(m, Message::Pointer(p) if p.kind == PointerKind::Moved);
+    for (words, op) in [
+        ("Morning Light (Live)", Op::GoTrack),
+        ("The Ramps", Op::GoArtist),
+        ("Synthetic Sessions", Op::GoAlbum),
+    ] {
+        let at = bounds_of(&gui, words).center();
+        let sent = at_point(&gui, at, &a_click());
+        let taken: Vec<&Message> = sent.iter().filter(|m| !moved(m)).collect();
+        assert!(
+            matches!(taken[..], [Message::Act(Action::Op(o))] if *o == op),
+            "{words}: {sent:?}"
+        );
+    }
+    let device = acts(&click(&gui, "USB Audio DAC").unwrap());
+    assert!(
+        matches!(
+            device[..],
+            [Action::OpenSettings(jodeldiplom::core::SettingsRow::Device)]
+        ),
+        "{device:?}"
+    );
+    let wheel = ScrollDelta::Lines { x: 0.0, y: -1.0 };
+    let at = bounds_of(&gui, "PCM").center();
+    let scrolled = at_point(
+        &gui,
+        at,
+        &[iced::Event::Mouse(mouse::Event::WheelScrolled {
+            delta: wheel,
+        })],
+    );
+    let taken: Vec<&Message> = scrolled.iter().filter(|m| !moved(m)).collect();
+    assert!(matches!(taken[..], [Message::Wheel(_)]), "{scrolled:?}");
+}
+
+/// On a window too narrow for the right column, the summary under the
+/// list: a click on it opens Now playing.
+#[test]
+fn the_summary_opens_now_playing() {
+    let _gpu = gpu();
+    let narrow = Size::new(512.0, 418.0);
+    let state = titled(common::playing_state(64, 22), "Morning Light (Live)");
+    let gui = window_sized(player(), state, narrow);
+    let mut sim = Simulator::with_size(jodeldiplom::gui::iced_settings(), narrow, gui.view());
+    sim.click("Morning Light (Live) — The Ramps").unwrap();
+    let sent = acts(&sim.into_messages().collect::<Vec<_>>());
+    assert!(matches!(sent[..], [Action::Op(Op::NowPlaying)]), "{sent:?}");
 }

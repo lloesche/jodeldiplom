@@ -8,9 +8,9 @@
 //! ┌ the list pane ([`MainLayout::list`]): ┐╭─────────────╮
 //! │ its tabs on its top edge, the browser ││   cover     │
 //! │ or the queue, drawn by the window; a  │╰─────────────╯
-//! │ tab of its own (Transition, Karaoke,  │ title, artist
-//! │ the Mixer) in a box drawn here, the   │ ○ PCM
-//! │ tabs over its top border              │ signal path
+//! │ tab of its own (Transition, Karaoke,  │ the text under
+//! │ the Mixer) in a box drawn here, the   │ it ([`MainLayout::info`]),
+//! │ tabs over its top border              │ drawn by the window
 //! └───────────────────────────────────────┘
 //! ┌ the bottom bar ([`Bottom`]), drawn by the window ┐
 //! │ the spectrum and its labels                      │
@@ -44,51 +44,28 @@ pub use transition::{
 use ratatui::layout::Rect;
 
 use crate::core::{Fit, Screen, Side, State};
-use crate::view::cells;
 
 /// The smallest size anything but a note is drawn at.
 pub const MIN_SIZE: (u16, u16) = (40, 12);
 
-/// The window as the cell renderer has it: its size in cells, and the
-/// right column's width held while one track gives way to the next.
+/// The window as the cell renderer has it: its size in cells.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Grid {
     /// Columns.
     pub cols: u16,
     /// Rows.
     pub rows: u16,
-    /// The widest right-column text seen since the size changed, in cells
-    /// ([`Grid::hold`]): the column keeps this width, so it does not narrow
-    /// and widen again between tracks.
-    pub held: usize,
 }
 
 impl Grid {
-    /// A grid of `cols` × `rows` cells, nothing held yet.
+    /// A grid of `cols` × `rows` cells.
     pub const fn new(cols: u16, rows: u16) -> Grid {
-        Grid {
-            cols,
-            rows,
-            held: 0,
-        }
+        Grid { cols, rows }
     }
 
     /// The whole grid.
     pub fn area(self) -> Rect {
         Rect::new(0, 0, self.cols, self.rows)
-    }
-
-    /// The grid at `cols` × `rows`: what was held goes when the size
-    /// changes.
-    pub fn resize(&mut self, cols: u16, rows: u16) {
-        if (cols, rows) != (self.cols, self.rows) {
-            *self = Grid::new(cols, rows);
-        }
-    }
-
-    /// Holds the right column's width for what `state` shows now.
-    pub fn hold(&mut self, state: &State) {
-        self.held = self.held.max(cells::info_width(state));
     }
 
     /// Too small to draw anything but a note.
@@ -111,6 +88,11 @@ pub struct Bottom {
 /// The rows of the bar under the spectrum: the seek bar and the buttons.
 pub const BAR_ROWS: u16 = 3;
 
+/// The right column's rows for the track's text under the cover (after a
+/// free row), which the window draws: the way to the device may wrap. The
+/// cover gives way to them.
+const INFO_ROWS: u16 = 8;
+
 /// The main screen.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MainLayout {
@@ -123,9 +105,11 @@ pub struct MainLayout {
     pub right: Option<Rect>,
     /// The cover, in the right column.
     pub cover: Option<Rect>,
-    /// Title, status light and signal path, in the right column.
+    /// Under the cover in the right column: the track's text, which the
+    /// window draws ([`crate::view::info`]).
     pub info: Option<Rect>,
-    /// The two-row track summary when there is no right column.
+    /// The two-row track summary when there is no right column, which the
+    /// window draws.
     pub mini: Option<Rect>,
     /// The Transition tab, when it is the side shown (it then takes the
     /// whole width, with no right column and no spectrum).
@@ -186,7 +170,7 @@ pub fn fit(state: &State, grid: Grid) -> Fit {
         return Fit::default();
     }
     let area = grid.area();
-    let list = main_list(state, grid);
+    let list = main_list(grid);
     // The wide tabs' pane, inside its border.
     let wide = in_border(area);
     Fit {
@@ -226,8 +210,8 @@ pub fn desk_width(grid: Grid, cell: f32) -> f32 {
 
 /// The browser's and the queue's pane on `grid`, whichever side shows
 /// (the list keeps its page behind the other tabs).
-pub fn list_pane(state: &State, grid: Grid) -> Rect {
-    main_list(state, grid).list
+pub fn list_pane(grid: Grid) -> Rect {
+    main_list(grid).list
 }
 
 /// `rect` inside its border.
@@ -250,23 +234,9 @@ pub fn spectrum_rows(rows: u16) -> u16 {
     }
 }
 
-/// The right column's width on `grid` for the track shown: as wide as its
-/// widest line needs (so the signal path does not wrap), or the widest the
-/// grid holds ([`Grid::held`]), from [`right_width`] up to half the
-/// screen; 0 (none) where [`right_width`] has none.
-pub fn right_width_for(state: &State, grid: Grid) -> u16 {
-    let cols = grid.cols;
-    let base = right_width(cols);
-    if base == 0 {
-        return 0;
-    }
-    // The text is one cell in from the column's edge.
-    let widest = cells::info_width(state).max(grid.held);
-    let need = (widest + 1).min(usize::from(cols)) as u16;
-    need.clamp(base, base.max(cols / 2))
-}
-
-/// The right column's least width for a width (0: none).
+/// The right column's width for a width in columns (0: none): the same
+/// whatever plays, so it stays put from track to track; the text in it
+/// wraps.
 pub fn right_width(cols: u16) -> u16 {
     match cols {
         120.. => (cols * 34 / 100).min(60),
@@ -339,17 +309,17 @@ fn main(state: &State, grid: Grid) -> MainLayout {
     if state.side.wide() {
         main_wide(state, grid.area())
     } else {
-        main_list(state, grid)
+        main_list(grid)
     }
 }
 
 /// The main screen with the browser or the queue (laid out so whatever
 /// the side, for [`fit`]): the list pane, the right column (or the
 /// track's summary under the list where there is none) and the spectrum.
-fn main_list(state: &State, grid: Grid) -> MainLayout {
+fn main_list(grid: Grid) -> MainLayout {
     let area = grid.area();
     let (top, bottom) = bottom(area, spectrum_rows(area.height));
-    let rw = right_width_for(state, grid);
+    let rw = right_width(grid.cols);
     let (left, right) = if rw > 0 {
         (
             Rect {
@@ -380,11 +350,8 @@ fn main_list(state: &State, grid: Grid) -> MainLayout {
     };
     let (cover, info) = match right {
         Some(r) => {
-            // The cover, a free row, then the text (at least 7 rows).
-            let text_rows = cells::info_lines(state, usize::from(r.width.saturating_sub(1)))
-                .len()
-                .max(7) as u16;
-            let cover_h = (r.width / 2).min(r.height.saturating_sub(text_rows + 1));
+            // The cover, a free row, then the text.
+            let cover_h = (r.width / 2).min(r.height.saturating_sub(INFO_ROWS + 1));
             if cover_h >= 4 {
                 (
                     Some(Rect::new(r.x, r.y, r.width, cover_h)),
@@ -448,11 +415,11 @@ mod tests {
 
     #[test]
     fn wide_main_screen_has_every_pane_inside_the_area() {
-        let (s, grid) = state(160, 48);
+        let (s, grid) = state(160, 50);
         let Layout::Main(m) = compute(&s, grid) else {
             panic!()
         };
-        let area = Rect::new(0, 0, 160, 48);
+        let area = Rect::new(0, 0, 160, 50);
         let right = m.right.unwrap();
         let cover = m.cover.unwrap();
         assert!(inside(m.list, area) && inside(right, area) && inside(cover, right));
@@ -465,7 +432,7 @@ mod tests {
         // and its own.
         let b = m.bottom;
         assert_eq!(b.spectrum, 10);
-        assert_eq!(b.area, Rect::new(0, 48 - 10 - BAR_ROWS, 160, 10 + BAR_ROWS));
+        assert_eq!(b.area, Rect::new(0, 50 - 10 - BAR_ROWS, 160, 10 + BAR_ROWS));
         assert_eq!(m.list.bottom(), b.area.y);
     }
 
@@ -502,12 +469,12 @@ mod tests {
         assert_eq!(m.right.unwrap().width, 28);
         let cover = m.cover.unwrap();
         assert!(cover.height >= 4 && m.info.unwrap().height >= 7);
-        let (s, grid) = state(100, 19);
+        let (s, grid) = state(100, 20);
         let Layout::Main(m) = compute(&s, grid) else {
             panic!()
         };
-        // 19 rows: 4 of spectrum and 3 of bar leave 12; the cover gets 4,
-        // then a free row and 7 of text.
+        // 20 rows: 4 of spectrum and 3 of bar leave 13; the cover gets 4,
+        // then a free row and 8 of text.
         assert_eq!(m.cover.unwrap().height, 4);
         assert_eq!(m.info.unwrap().y, m.cover.unwrap().bottom() + 1);
     }

@@ -7,20 +7,22 @@
 //! left their cells ([`super::widgets::cover`], [`super::lanes`], neither
 //! taking the pointer), and slots over them: the Mixer tab
 //! ([`super::mixer`]) or nothing, the bottom bar ([`bottom`]) or nothing,
-//! the list pane with its tabs ([`list`]) or nothing, and the command
-//! palette over all of it, the lanes too ([`palette`]) or nothing; the
-//! same shape, so each widget keeps its place in iced's tree (the tabs'
-//! pill slides from one side to the next). The pointer over the canvas
-//! hides where the core says
+//! the list pane with its tabs ([`list`]) or nothing, the right column's
+//! text under the cover or the summary under the list ([`right`]) or
+//! nothing, and the command palette over all of it, the lanes too
+//! ([`palette`]) or nothing; the same shape, so each widget keeps its
+//! place in iced's tree (the tabs' pill slides from one side to the
+//! next). The pointer over the canvas hides where the core says
 //! ([`crate::core::karaoke::pointer::hidden`]); the view is built again
 //! after every message, so it shows again as soon as it moves or the mode
 //! ends.
 
 use iced::widget::{column, container, opaque, pin, space, stack};
-use iced::{Element, Fill, Size, Widget as _};
+use iced::{Element, Fill, Point, Rectangle, Size, Widget as _};
 
 use super::embed::Embed;
 use super::lanes::Lanes;
+use super::look;
 use super::mixer;
 use super::widgets::cover::Covers;
 use super::window::Message;
@@ -33,6 +35,7 @@ pub mod help;
 pub mod list;
 pub mod now;
 pub mod palette;
+pub mod right;
 pub mod settings;
 pub mod setup;
 
@@ -66,6 +69,7 @@ pub(super) fn view<'a>(
     let desk = state.and_then(|state| desk(state, embed, caps));
     let bar = state.and_then(|state| bar(state, embed, heard));
     let list = state.and_then(|state| list(state, embed));
+    let right = state.and_then(|state| right(state, embed, covers));
     let palette = state.and_then(palette::view);
     stack![
         embed.view(hide_pointer),
@@ -74,9 +78,81 @@ pub(super) fn view<'a>(
         desk.unwrap_or_else(|| space().boxed()),
         bar.unwrap_or_else(|| space().boxed()),
         list.unwrap_or_else(|| space().boxed()),
+        right.unwrap_or_else(|| space().boxed()),
         palette.unwrap_or_else(|| space().boxed())
     ]
     .boxed()
+}
+
+/// The right column's text under the cover, its edges in line with the
+/// cover's (with no art, the placeholder's; with art much narrower than
+/// the column, two thirds of it), from a gap under it to the column's
+/// foot; or the summary over its place under the list where the
+/// window is too narrow for the column. On the main screen's browser and
+/// queue sides.
+fn right<'a>(state: &State, embed: &Embed, covers: &Covers) -> Option<Element<'a, Message>> {
+    let Layout::Main(m) = layout::compute(state, embed.grid()) else {
+        return None;
+    };
+    let (cw, ch) = embed.cell();
+    let cells = |x: u16, y: u16, w: u16, h: u16| {
+        Rectangle::new(
+            Point::new(f32::from(x) * cw, f32::from(y) * ch),
+            Size::new(f32::from(w) * cw, f32::from(h) * ch),
+        )
+    };
+    let pinned = |content: Element<'a, Message>, at: Rectangle| {
+        pin(opaque(
+            container(content)
+                .width(at.width)
+                .height(at.height)
+                .clip(true),
+        ))
+        .x(at.x)
+        .y(at.y)
+        .boxed()
+    };
+    if let Some(mini) = m.mini {
+        let at = cells(mini.x, mini.y, mini.width, mini.height);
+        return Some(pinned(right::summary(state), at));
+    }
+    let (column, info) = (m.right?, m.info?);
+    let column = cells(column.x, column.y, column.width, column.height);
+    // The placeholder's edge runs through the middle of its border cells.
+    let placeholder = Rectangle {
+        x: column.x + cw / 2.0,
+        width: column.width - cw,
+        ..column
+    };
+    // The text starts a gap under the art as drawn (fitted, it can end
+    // above its cells), or under the placeholder's bottom edge.
+    let (x, width, top) = match (m.cover, covers.first()) {
+        (Some(_), Some(art)) => (
+            art.x,
+            art.width.max(placeholder.width * 2.0 / 3.0),
+            art.y + art.height + look::space::L,
+        ),
+        (Some(c), None) => (
+            placeholder.x,
+            placeholder.width,
+            (f32::from(c.y + c.height) - 0.5) * ch + look::space::L,
+        ),
+        (None, _) => (
+            placeholder.x,
+            placeholder.width,
+            f32::from(info.y) * ch + ch / 2.0,
+        ),
+    };
+    // The place goes on to the column's right edge, so the wheel scrolls
+    // the list beside the text too.
+    let at = Rectangle::new(
+        Point::new(x, top),
+        Size::new(
+            column.x + column.width - x,
+            (column.y + column.height - top).max(0.0),
+        ),
+    );
+    Some(pinned(right::view(state, width), at))
 }
 
 /// The list pane over its place on the old canvas, on the main screen:

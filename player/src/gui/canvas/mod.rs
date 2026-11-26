@@ -20,7 +20,6 @@ use super::pixels::{pack, unpack, PixelRect};
 use super::raster::PixelBackend;
 use super::widgets::cover::{Align, Spot};
 use crate::art::Art;
-use crate::core::State;
 use crate::view::karaoke::KaraokePicture;
 use crate::view::layout::Grid;
 use crate::view::{self, palette, Scene};
@@ -79,8 +78,6 @@ pub struct Canvas {
     /// Karaoke mode's stage, its bubbles' liquid and its ground are its,
     /// rather than in the pixmap.
     gpu: bool,
-    /// The right column's width held on the grid ([`Grid::held`]).
-    held: usize,
 }
 
 /// The pixels of the pixmap that changed, for a window that keeps a copy
@@ -150,7 +147,6 @@ impl Canvas {
             stage: super::stage::Stage::default(),
             staged: None,
             gpu: false,
-            held: 0,
             last_draw: DrawTimes::default(),
             changed: true,
             changes: Changes {
@@ -168,18 +164,7 @@ impl Canvas {
     /// The grid of cells.
     pub fn grid(&self) -> Grid {
         let area = self.terminal.backend().buffer().area;
-        Grid {
-            held: self.held,
-            ..Grid::new(area.width, area.height)
-        }
-    }
-
-    /// Holds the right column's width on the grid for what `state` shows
-    /// ([`Grid::hold`]).
-    pub fn hold(&mut self, state: &State) {
-        let mut grid = self.grid();
-        grid.hold(state);
-        self.held = grid.held;
+        Grid::new(area.width, area.height)
     }
 
     /// Changes the font size (a new scale factor).
@@ -192,20 +177,18 @@ impl Canvas {
         }
     }
 
-    /// Fits the grid to a window of `width` × `height` pixels (a new size
-    /// holds nothing yet); returns the grid.
+    /// Fits the grid to a window of `width` × `height` pixels; returns the
+    /// grid.
     pub fn fit(&mut self, width: u32, height: u32) -> Grid {
         let (cw, ch) = self.cell();
         let cols = (width as usize / cw).clamp(1, 1000) as u16;
         let rows = (height as usize / ch).clamp(1, 1000) as u16;
-        let mut grid = self.grid();
-        if (cols, rows) != (grid.cols, grid.rows) {
+        let grid = Grid::new(cols, rows);
+        if grid != self.grid() {
             self.terminal.backend_mut().resize(cols, rows);
-            let Ok(()) = self.terminal.resize(Rect::new(0, 0, cols, rows));
+            let Ok(()) = self.terminal.resize(grid.area());
             self.changes.all = true;
         }
-        grid.resize(cols, rows);
-        self.held = grid.held;
         grid
     }
 

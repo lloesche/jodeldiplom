@@ -1,18 +1,17 @@
 //! The cell renderer's mouse: the named rects of its layout ([`layout`])
 //! and what a click, drag or wheel on each does, as the core's
 //! [`Action`]s. The window reports the pointer in cells (and within its
-//! cell, [`action_at`]). The bottom bar, the list pane with its tabs and
-//! the command palette are the window's own: their cells take no clicks
-//! here.
+//! cell, [`action_at`]). The bottom bar, the list pane with its tabs, the
+//! right column's text under the cover (or the summary under the list)
+//! and the command palette are the window's own: their cells take no
+//! clicks here.
 
 use ratatui::layout::{Position, Rect};
 
 use crate::core::karaoke;
 use crate::core::keymap::Op;
 use crate::core::sliders::Slider;
-use crate::core::text::{self, Tone};
-use crate::core::{Action, Screen, SettingsRow, State};
-use crate::view::cells;
+use crate::core::{Action, Screen, State};
 use crate::view::layout::{self, Grid, Layout};
 
 /// A mouse button.
@@ -59,18 +58,12 @@ pub struct MouseInput {
 /// A named place on the screen.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Target {
-    /// The cover.
+    /// The cover (on Now playing, the whole screen).
     Cover,
-    /// The track text.
-    Info,
-    /// The device name in the signal path.
-    Device,
     /// Karaoke mode's seek bar.
     Bar,
     /// A button.
     Button(Op),
-    /// The title, artist or album of the playing track: where it goes.
-    Link(Op),
     /// A Transition block's lanes (or its ruler).
     TransitionLane(crate::core::lanes::Block),
     /// A Transition block's whole-track row.
@@ -87,54 +80,14 @@ pub fn from_bottom(rows: u16, row: u16) -> f32 {
     f32::from(rows.saturating_sub(row + 1)) / f32::from(rows.max(1))
 }
 
-fn tone_rects(lines: &[Vec<text::Seg>], tone: Tone, area: Rect) -> Vec<Rect> {
-    cells::locate(lines, tone)
-        .into_iter()
-        .filter(|(row, _, _)| *row < usize::from(area.height))
-        .map(|(row, x, w)| Rect::new(area.x + x as u16, area.y + row as u16, w as u16, 1))
-        .map(|r| r.intersection(area))
-        .collect()
-}
-
-fn info_device_rects(state: &State, info: Rect) -> Vec<Rect> {
-    let lines = cells::info_lines(state, usize::from(info.width));
-    tone_rects(&lines, Tone::Device, info)
-}
-
-/// Where the title, artist and album links are in `lines` drawn in
-/// `area`, and where each goes.
-pub fn link_rects(lines: &[Vec<text::Seg>], area: Rect) -> Vec<(Rect, Op)> {
-    text::LINKS
-        .iter()
-        .flat_map(|&(tone, op)| {
-            tone_rects(lines, tone, area)
-                .into_iter()
-                .map(move |r| (r, op))
-        })
-        .collect()
-}
-
 /// Every hit region of the screen shown on `grid`, most specific first.
 pub fn regions(state: &State, grid: Grid) -> Vec<(Rect, Target)> {
     let mut out = Vec::new();
     match layout::compute(state, grid) {
         Layout::TooSmall(_) => {}
         Layout::Main(m) => {
-            if let Some(info) = m.info {
-                for rect in info_device_rects(state, info) {
-                    out.push((rect, Target::Device));
-                }
-                let lines = cells::info_lines(state, usize::from(info.width));
-                for (rect, op) in link_rects(&lines, info) {
-                    out.push((rect, Target::Link(op)));
-                }
-                out.push((info, Target::Info));
-            }
             if let Some(cover) = m.cover {
                 out.push((cover, Target::Cover));
-            }
-            if let Some(mini) = m.mini {
-                out.push((mini, Target::Cover));
             }
             if let (Some(k), None) = (&m.karaoke, &state.palette) {
                 for &(rect, op) in &k.panel_buttons {
@@ -403,9 +356,8 @@ pub fn action_at(
         }
         (ScrollUp | ScrollDown, _) => scrolled(state, input.kind == ScrollUp),
         (Down(Left), Target::Bar) => bar_fraction(state, grid, input.col).map(Action::SeekDrag),
-        (Down(Left), Target::Device) => Some(Action::OpenSettings(SettingsRow::Device)),
         (Down(Left), Target::Cover) => Some(Action::Op(Op::NowPlaying)),
-        (Down(Left), Target::Button(op) | Target::Link(op)) => Some(Action::Op(op)),
+        (Down(Left), Target::Button(op)) => Some(Action::Op(op)),
         _ => None,
     }
 }

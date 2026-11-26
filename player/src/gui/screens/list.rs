@@ -84,7 +84,7 @@ fn top(head: f32) -> f32 {
 pub fn fit(state: &State, grid: Grid, cell: (f32, f32)) -> Fit {
     let mut fit = layout::fit(state, grid);
     if fit.list_rows > 0 {
-        let pane = layout::list_pane(state, grid);
+        let pane = layout::list_pane(grid);
         fit.list_rows = rows_in(f32::from(pane.height) * cell.1, cell.1);
     }
     fit

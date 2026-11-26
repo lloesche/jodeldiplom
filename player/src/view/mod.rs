@@ -6,21 +6,22 @@
 //! empty and paints pixels there after the frame is drawn.
 //!
 //! Each part of the screen has its widgets: the box of a tab of its own
-//! (Transition, Karaoke, the Mixer's place) and the right column
-//! ([`now`]). They are laid out on a grid of cells ([`layout`]), with text
-//! measured in cells ([`cells`]), and take the mouse there ([`mouse`]).
-//! The window draws the rest from their models, over the cells left to
-//! it: the list pane with its tabs ([`list`]), the command palette over
-//! everything ([`command_palette`]) and the bottom bar ([`bottom`], the
-//! spectrum's [`plot`]); and whole screens: Now playing
-//! ([`now::NowPlaying`]), the settings ([`settings`]) and the keys
-//! ([`help`]).
+//! (Transition, Karaoke, the Mixer's place). They are laid out on a grid
+//! of cells ([`layout`]), with text measured in cells ([`cells`]), and
+//! take the mouse there ([`mouse`]). The window draws the rest from their
+//! models, over the cells left to it: the list pane with its tabs
+//! ([`list`]), the right column's text under the cover or the summary
+//! under the list ([`info`]), the command palette over everything
+//! ([`command_palette`]) and the bottom bar ([`bottom`], the spectrum's
+//! [`plot`]); and whole screens: Now playing ([`now::NowPlaying`]), the
+//! settings ([`settings`]) and the keys ([`help`]).
 
 pub mod bottom;
 pub mod bubbles;
 pub mod cells;
 pub mod command_palette;
 pub mod help;
+pub mod info;
 pub mod karaoke;
 pub mod lanes;
 pub mod layout;
@@ -64,7 +65,6 @@ mod colors {
     pub const BUTTON: Color = cell(palette::BUTTON);
     pub const WARN: Color = cell(palette::WARN);
     pub const FAIL: Color = cell(palette::FAIL);
-    pub const SOURCE: Color = cell(palette::SOURCE);
     pub const TRACK: Color = cell(palette::TRACK);
 }
 
@@ -95,11 +95,8 @@ pub struct Scene<'a> {
     pub state: &'a State,
     /// The grid it is laid out on.
     pub grid: Grid,
-    /// The pointer's cell, if it is in the window: the title, artist and
-    /// album links are underlined while it is over them.
-    pub pointer: Option<(u16, u16)>,
     /// Seconds into the playing track as heard now ([`crate::app::App::heard`]),
-    /// for the beat pulse.
+    /// for what follows it (the Transition tab, Karaoke mode's picture).
     pub heard: f64,
 }
 
@@ -132,7 +129,10 @@ pub fn draw(frame: &mut Frame, scene: &Scene, pictures: &mut dyn Pictures) {
         }
         Layout::Main(m) => {
             draw_tab(frame, scene, m, pictures);
-            now::draw_column(frame, scene, m, pictures);
+            // The right column's cover; the window draws the text under it.
+            if let Some(cover) = m.cover {
+                pictures.cover(frame, cover, true);
+            }
         }
         // Drawn by the window in iced's widgets.
         Layout::Native => {}
@@ -206,8 +206,8 @@ fn bordered(title: Line<'static>) -> Block<'static> {
         .title(title)
 }
 
-/// Shortens `text` to `max` cells, keeping its start (unlike
-/// [`cells::shorten`], a space before the `…` stays).
+/// Shortens `text` to `max` cells, keeping its start (a space before the
+/// `…` stays).
 fn keep_start(text: &str, max: usize) -> String {
     if width(text) <= max {
         return text.to_owned();

@@ -7,6 +7,10 @@
 //! its model where the window draws it whole in iced's widgets (Now
 //! playing, the settings, the help). Each screen at
 //! 1280 × 800 at scale 1, and as `gui-*-hidpi` at 1512 × 982 at scale 2.
+//! The main screen also with tags and a device name too long for any
+//! column (`gui-main-long`), with tags in Japanese (`gui-main-cjk`),
+//! narrow (`gui-main-narrow`, `gui-main-narrow-long`), and last without
+//! a cover (`gui-main-noart`, the Japanese tags).
 //! The setup screen comes first, on a made-up web: under way
 //! (`gui-setup`) and stopped by a failure (`gui-setup-failed`), each with
 //! its outline as the text. The fonts are the player's own, as built in.
@@ -205,6 +209,38 @@ fn sung_words(state: &mut State) {
     );
 }
 
+/// `state` with the playing track's title, artist and album as given,
+/// and its device where one is given.
+fn retagged(state: &State, [title, artist, album]: [&str; 3], device: Option<&str>) -> State {
+    let mut state = state.clone();
+    if let Some(track) = state.playing.track.as_mut() {
+        let mut info = (*track.info).clone();
+        info.tags.title = Some(title.into());
+        info.tags.artist = Some(artist.into());
+        info.tags.album = Some(album.into());
+        track.info = Arc::new(info);
+        if let Some(device) = device {
+            track.device = device.into();
+        }
+    }
+    state
+}
+
+/// Tags too long for any column, and a device name as long as they come.
+const LONG: [&str; 3] = [
+    "Everything You Always Wanted to Hear (Extended Twelve-Inch Remix, Remastered 2026)",
+    "The Very Long Named Orchestra and Choir of Somewhere Far Away",
+    "Collected Recordings, Volume Seventeen: The Late Night Sessions",
+];
+const LONG_DEVICE: &str = "Digital Output (High Definition Audio Device 2)";
+
+/// Tags in Japanese.
+const CJK: [&str; 3] = [
+    "春の海辺で聴いた歌",
+    "山田花子と星の楽団",
+    "夏の終わりのメロディー 第二集",
+];
+
 fn main() {
     let mut args = std::env::args().skip(1);
     let out = PathBuf::from(args.next().expect("give an output folder"));
@@ -311,6 +347,8 @@ fn main() {
         }
         vec![
             ("main", state.clone()),
+            ("main-long", retagged(&state, LONG, Some(LONG_DEVICE))),
+            ("main-cjk", retagged(&state, CJK, None)),
             ("queue", queue),
             ("nowplaying", now),
             ("settings", settings),
@@ -448,6 +486,8 @@ fn main() {
     }
     if wanted("main-narrow") {
         shots.cells_shot("main-narrow", &screens[0].1, (64, 22));
+        let long = retagged(&screens[0].1, LONG, Some(LONG_DEVICE));
+        shots.cells_shot("main-narrow-long", &long, (64, 22));
     }
     // The Mixer tab in the narrowest usual window, 80 columns, and in a
     // window 800 wide.
@@ -457,6 +497,15 @@ fn main() {
         }
         if wanted("mixer-800") {
             shots.shot("mixer-800", mixer, Size::new(800.0, 600.0), 1.0);
+        }
+    }
+    // Last, as the cover stays gone: the main screen without art, the
+    // CJK tags.
+    if wanted("main-noart") {
+        shots.gui.set_art(None);
+        let cjk = retagged(&screens[0].1, CJK, None);
+        for (suffix, size, scale) in SIZES {
+            shots.shot(&format!("main-noart{suffix}"), &cjk, size, scale);
         }
     }
     // The player stops with the window's state.

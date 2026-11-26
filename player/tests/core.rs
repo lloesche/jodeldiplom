@@ -10,12 +10,11 @@ use jodel_rhythm::Method;
 use jodeldiplom::browser::{Details, Entry, EntryKind};
 use jodeldiplom::config::Config;
 use jodeldiplom::core::keymap::{self, Context, Key, KeyCode, Meaning, Op, KEYMAP};
-use jodeldiplom::core::text::{self, Seg, Tone};
+use jodeldiplom::core::text;
 use jodeldiplom::core::{
     browser_rows, update, Action, DeviceChoice, Effect, Gpu, Placing, Rhythm, RhythmRecipe, Row,
     Screen, SettingsRow, Side, State, WalkPurpose,
 };
-use jodeldiplom::view::cells::{self, width};
 use jodeldiplom::view::layout::{self, Grid, Layout};
 
 fn entry(path: &str, kind: EntryKind) -> Entry {
@@ -684,6 +683,33 @@ fn a_resampled_route_shows_its_step_and_its_clips() {
         }),
     );
     assert!(text(&state).ends_with("→ DAC, 12 samples clipped"));
+    // The right column has each of it as a tag: the status light, then
+    // the way, its steps after arrows, what follows the device apart.
+    {
+        use jodeldiplom::view::info::{Info, TagKind};
+        let info = Info::of(&state);
+        let tags: Vec<(&str, TagKind, bool)> = info
+            .track
+            .as_ref()
+            .unwrap()
+            .tags
+            .iter()
+            .map(|t| (t.text.as_str(), t.kind, t.step))
+            .collect();
+        assert_eq!(
+            tags,
+            [
+                ("PCM", TagKind::Status, false),
+                ("file 44.1", TagKind::Source, false),
+                ("resample 48 (160/147)", TagKind::Warn, true),
+                ("DAC", TagKind::Device, true),
+                ("12 samples clipped", TagKind::Warn, false),
+            ]
+        );
+        assert!(info
+            .to_string()
+            .contains("[route] file 44.1 → resample 48 (160/147) → DAC, 12 samples clipped"));
+    }
     // A seek starts the count again.
     update(
         &mut state,
@@ -1134,166 +1160,7 @@ fn the_help_searched_scrolls_within_the_matches() {
     assert_eq!(state.help_search, None);
 }
 
-fn line_text(line: &[Seg]) -> String {
-    line.iter().map(|s| s.text.as_str()).collect()
-}
-
-/// Checks wrapped signal path lines: within `max`, a new line only at a
-/// step's arrow or the device's tail (what it was decoded from), the tail
-/// in one piece, no lone word.
-fn check_path_lines(lines: &[Vec<Seg>], max: usize, device: &str) {
-    let texts: Vec<String> = lines.iter().map(|l| line_text(l)).collect();
-    // A device name wider than a line has to break between its words.
-    let fits = width(device) + 2 <= max;
-    for (i, text) in texts.iter().enumerate() {
-        assert!(width(text) <= max, "{text:?} wider than {max}");
-        assert!(
-            text.split_whitespace().count() >= 2,
-            "a lone word: {texts:?}"
-        );
-        if i > 0 && fits {
-            assert!(
-                text.starts_with("→ ") || text.starts_with("decoded from"),
-                "a break inside a step: {texts:?}"
-            );
-        }
-    }
-    if let Some(tail) = texts.iter().find(|t| t.contains("decoded")) {
-        assert!(tail.contains("decoded from MP3"), "{texts:?}");
-    }
-    if fits {
-        assert!(
-            texts.iter().any(|t| t.contains(device)),
-            "the device split: {texts:?}"
-        );
-    }
-}
-
-#[test]
-fn the_right_column_fits_the_signal_path() {
-    let names = [
-        "Speakers (Sound Blaster GC7)",
-        "Headset (Sound Blaster GC7)",
-        "Digital Output (High Definition Audio 2)",
-    ];
-    assert_eq!(names[2].len(), 40);
-    for name in names {
-        for cols in [72u16, 96, 120, 160, 200, 240] {
-            let mut state = common::playing_state(cols, 36);
-            state.playing.track.as_mut().unwrap().device = name.into();
-            let Layout::Main(m) = layout::compute(&state, Grid::new(cols, 36)) else {
-                panic!("not the main screen at {cols}")
-            };
-            let right = m.right.unwrap().width;
-            let need = cells::info_width(&state) as u16 + 1;
-            assert!(right >= layout::right_width(cols), "{cols}");
-            assert!(right <= (cols / 2).max(layout::right_width(cols)), "{cols}");
-            let info = m.info.unwrap();
-            let lines = cells::info_lines(&state, usize::from(info.width));
-            let path = &lines[lines
-                .iter()
-                .position(|l| line_text(l).starts_with("file"))
-                .unwrap()..];
-            if need <= cols / 2 {
-                // Room for every line: the path is one line.
-                assert_eq!(
-                    right,
-                    need.max(layout::right_width(cols)),
-                    "{name} at {cols}"
-                );
-                assert_eq!(path.len(), 1, "{name} at {cols}: {path:?}");
-            }
-            check_path_lines(path, usize::from(info.width), name);
-            // The list keeps the rest.
-            assert_eq!(m.list.width + right, cols);
-        }
-    }
-}
-
-#[test]
-fn the_signal_path_wraps_between_steps() {
-    let seg = |text: &str, tone: Tone| Seg {
-        text: text.into(),
-        tone,
-    };
-    let arrow = || seg(" → ", Tone::Dim);
-    let device = "Speakers (Sound Blaster GC7)";
-    let resampled = vec![
-        seg("file 44.1", Tone::Source),
-        arrow(),
-        seg("resample 48 (160/147)", Tone::Warn),
-        arrow(),
-        seg(device, Tone::Device),
-        seg(", decoded from MP3", Tone::Dim),
-    ];
-    let whole = line_text(&resampled);
-    let words = |t: &str| -> Vec<String> {
-        t.replace(',', "")
-            .split_whitespace()
-            .map(str::to_owned)
-            .collect()
-    };
-    for max in [30, 36, 45, 56, 60, 70, 80, width(&whole)] {
-        let lines = cells::wrap_path(&resampled, max);
-        check_path_lines(&lines, max, device);
-        let joined: String = lines
-            .iter()
-            .map(|l| line_text(l))
-            .collect::<Vec<_>>()
-            .join(" ");
-        assert_eq!(words(&joined), words(&whole), "nothing lost at {max}");
-    }
-    let texts = |max| -> Vec<String> {
-        cells::wrap_path(&resampled, max)
-            .iter()
-            .map(|l| line_text(l))
-            .collect()
-    };
-    assert_eq!(texts(width(&whole)), std::slice::from_ref(&whole));
-    // The device keeps its tail when both fit on a line.
-    assert_eq!(
-        texts(60),
-        [
-            "file 44.1 → resample 48 (160/147)",
-            "→ Speakers (Sound Blaster GC7), decoded from MP3",
-        ]
-    );
-    // Else the tail goes on its own line, whole.
-    assert_eq!(
-        texts(40),
-        [
-            "file 44.1 → resample 48 (160/147)",
-            "→ Speakers (Sound Blaster GC7)",
-            "decoded from MP3",
-        ]
-    );
-    // A file as it is, at the column's usual width.
-    let plain = vec![
-        seg("file 48", Tone::Source),
-        arrow(),
-        seg(device, Tone::Device),
-    ];
-    assert_eq!(
-        texts_of(&plain, 33),
-        ["file 48", "→ Speakers (Sound Blaster GC7)"]
-    );
-    assert_eq!(
-        texts_of(&plain, 63),
-        ["file 48 → Speakers (Sound Blaster GC7)"]
-    );
-}
-
-fn texts_of(path: &[Seg], max: usize) -> Vec<String> {
-    cells::wrap_path(path, max)
-        .iter()
-        .map(|l| line_text(l))
-        .collect()
-}
-
 /// A state playing `path`, on another screen and the queue side.
-/// The window of [`playing_at`].
-const PLAYING_AT: Grid = Grid::new(120, 36);
-
 fn playing_at(path: &str) -> State {
     let mut state = common::playing_state(120, 36);
     let track = state.playing.track.as_mut().unwrap();
@@ -1361,39 +1228,6 @@ fn title_artist_and_album_go_to_the_playing_track() {
     for name in ["Go to playing track", "Go to album", "Go to artist"] {
         assert_eq!(keymap::palette_matches(name).len(), 1, "{name}");
     }
-}
-
-#[test]
-fn clicking_the_title_artist_or_album_jumps() {
-    use jodeldiplom::view::mouse::{self, MouseButton, MouseInput, MouseKind, Target};
-    let track = "/music/Artist/Album/02 Song.flac";
-    let mut state = playing_at(track);
-    state.screen = Screen::Main;
-    let Layout::Main(m) = layout::compute(&state, PLAYING_AT) else {
-        panic!()
-    };
-    let info = m.info.unwrap();
-    // Title, artist, album: the first three lines of the panel.
-    for (row, op) in [(0, Op::GoTrack), (1, Op::GoArtist), (2, Op::GoAlbum)] {
-        assert_eq!(
-            mouse::hit(&state, PLAYING_AT, info.x + 1, info.y + row),
-            Some(Target::Link(op)),
-            "row {row}"
-        );
-    }
-    // Past the end of the title there is no link.
-    assert_eq!(
-        mouse::hit(&state, PLAYING_AT, info.x + info.width - 1, info.y),
-        Some(Target::Info)
-    );
-    let click = MouseInput {
-        kind: MouseKind::Down(MouseButton::Left),
-        col: info.x + 2,
-        row: info.y + 1,
-    };
-    let action = mouse::action(&state, PLAYING_AT, click).unwrap();
-    let fx = update(&mut state, action);
-    jumped(&state, &fx, "/music/Artist", "/music/Artist/Album");
 }
 
 /// Steps through settings reach the engine once, 400 ms after the last

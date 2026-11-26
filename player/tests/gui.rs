@@ -31,7 +31,6 @@ fn draw(canvas: &mut Canvas, state: &State, art: Option<&Art>) {
     let scene = Scene {
         state,
         grid: canvas.grid(),
-        pointer: None,
         heard: 0.0,
     };
     canvas.draw(&scene, art);
@@ -52,9 +51,9 @@ fn pixel_rect(canvas: &Canvas, rect: Rect) -> (u32, u32, u32, u32) {
     )
 }
 
-/// The cells are rasterised to the grid's size, text with ink; the
-/// bottom bar's cells are left to the window (background alone), as are
-/// the cover's.
+/// The cells are rasterised to the grid's size, with ink where they draw
+/// (the placeholder where there is no cover); the bottom bar's cells are
+/// left to the window (background alone), as is the right column's text.
 #[test]
 fn the_cells_are_painted_and_the_bar_left_to_the_window() {
     let mut canvas = Canvas::new(80, 24, font_px(1.0));
@@ -79,15 +78,17 @@ fn the_cells_are_painted_and_the_bar_left_to_the_window() {
         .count();
     assert_eq!(lit, 0, "the bar's cells are blank");
 
-    // Text has ink: the title row in the right column.
-    let info = m.info.unwrap();
-    let (ix, iy, iw, _) = pixel_rect(&canvas, Rect::new(info.x, info.y, info.width, 1));
-    let ink = (ix..ix + iw)
-        .flat_map(|px| (iy..iy + ch as u32).map(move |py| (px, py)))
+    // Cells have ink: the placeholder's box where there is no cover (the
+    // text under it is the window's).
+    let cover = m.cover.unwrap();
+    let (cx, cy, cw, _) = pixel_rect(&canvas, Rect::new(cover.x, cover.y, cover.width, 1));
+    let ink = (cx..cx + cw)
+        .flat_map(|px| (cy..cy + ch as u32).map(move |py| (px, py)))
         .filter(|&(px, py)| *image.get_pixel(px, py) != bg())
         .count();
     assert!(ink > 100, "{ink}");
-    assert!(canvas.text().contains("Morning Light"));
+    assert!(canvas.text().contains('\u{266a}'));
+    assert!(!canvas.text().contains("Morning Light"));
 }
 
 /// `words` (`0x00RRGGBB`, `width` × `height`) as an image.
@@ -358,7 +359,6 @@ fn draw_heard(canvas: &mut Canvas, state: &State, art: Option<&Art>) {
     let scene = Scene {
         state,
         grid: canvas.grid(),
-        pointer: None,
         heard: state.heard(),
     };
     canvas.draw(&scene, art);

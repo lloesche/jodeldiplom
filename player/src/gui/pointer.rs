@@ -3,8 +3,8 @@
 //! the cell renderer's mouse ([`crate::view::mouse`]): its cell on the
 //! canvas's grid, the button drawn in pixels under it (the stage's START
 //! pill: [`crate::view::mouse::action_at`]'s `over`), the button held,
-//! the links under it, and it going out of the window; and the wheel, for
-//! the canvas and the widgets alike, by whole steps ([`Wheel`]).
+//! and it going out of the window; and the wheel, for the canvas and the
+//! widgets alike, by whole steps ([`Wheel`]).
 //!
 //! The widgets only say what the pointer does over them; this is the one
 //! owner of what is held, a grab or the canvas's button, never both. A
@@ -20,7 +20,7 @@ use crate::core::desk::Channel;
 use crate::core::keymap::Op;
 use crate::core::{Action, State};
 use crate::view::layout::Grid;
-use crate::view::mouse::{self, MouseButton, MouseInput, MouseKind, Target};
+use crate::view::mouse::{self, MouseButton, MouseInput, MouseKind};
 
 /// What a widget's press holds until its button is let go of: the
 /// pointer's moves anywhere in the window go to it, and its release lands
@@ -150,8 +150,8 @@ pub struct PointerState {
     /// Its column, with the share of the cell (a Karaoke slider follows it
     /// to the pixel).
     x: f64,
-    /// Its cell while it is over the canvas (links underline under it).
-    inside: Option<(u16, u16)>,
+    /// It is over the canvas (leaving it is Karaoke mode's pointer going).
+    over: bool,
     /// What the button drawn in pixels under it does.
     on: Option<Op>,
     held: Option<MouseButton>,
@@ -196,11 +196,6 @@ impl PointerState {
         true
     }
 
-    /// The pointer's cell, while it is over the canvas.
-    pub fn inside(&self) -> Option<(u16, u16)> {
-        self.inside
-    }
-
     /// The pointer moved, or went down over the canvas laid out on `grid`
     /// (`shift` held: the shifted action); whether the frame is to be
     /// drawn again.
@@ -212,12 +207,9 @@ impl PointerState {
             PointerKind::Moved => {
                 let moved = x != self.x;
                 self.x = x;
-                let inside = pointer.over.then_some(cell);
-                let out = inside.is_none() && self.inside.is_some();
-                let mut dirty = inside != self.inside && self.hover(app, grid, inside);
-                if out {
-                    dirty |= self.mouse(app, grid, MouseKind::Out, shift);
-                }
+                let out = !pointer.over && self.over;
+                self.over = pointer.over;
+                let mut dirty = out && self.mouse(app, grid, MouseKind::Out, shift);
                 // A Karaoke slider held follows the pointer within a cell.
                 let sliding =
                     self.held == Some(MouseButton::Left) && app.state.karaoke.dragging.is_some();
@@ -315,20 +307,6 @@ impl PointerState {
         };
         dispatch(app, action);
         true
-    }
-
-    /// Moves the pointer to `inside` (none: off the canvas); whether it
-    /// entered or left a link.
-    fn hover(&mut self, app: &App, grid: Grid, inside: Option<(u16, u16)>) -> bool {
-        let link = |at: Option<(u16, u16)>| {
-            at.and_then(|(col, row)| match mouse::hit(&app.state, grid, col, row) {
-                Some(Target::Link(op)) => Some(op),
-                _ => None,
-            })
-        };
-        let before = link(self.inside);
-        self.inside = inside;
-        link(self.inside) != before
     }
 }
 

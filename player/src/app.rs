@@ -1293,10 +1293,10 @@ impl App {
             .and_then(crate::cover::CoverWorker::current)
     }
 
-    /// Sets the cover directly (tests and screenshots).
-    pub fn set_art(&mut self, image: RgbImage) {
+    /// Sets the cover directly, or none (tests and screenshots).
+    pub fn set_art(&mut self, image: Option<RgbImage>) {
         self.next_art += 1;
-        self.art = Some(Art {
+        self.art = image.map(|image| Art {
             id: self.next_art,
             image: Arc::new(image),
         });

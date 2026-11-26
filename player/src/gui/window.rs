@@ -229,6 +229,15 @@ impl Gui {
         }
     }
 
+    /// The cover shown replaced, or none (a shot without art): the next
+    /// tick draws it whole.
+    pub fn set_art(&mut self, image: Option<image::RgbImage>) {
+        if let Phase::Running(app) = &mut self.phase {
+            app.set_art(image);
+            self.paint.dirty = true;
+        }
+    }
+
     /// The player's state, while there is a player (for the tests).
     pub fn state(&self) -> Option<&State> {
         self.app().map(|app| &app.state)
@@ -511,7 +520,6 @@ impl Gui {
                 (self.size.height * self.scale).round() as u32,
             ),
             scale: self.scale,
-            pointer: self.pointer.inside(),
         }
     }
 

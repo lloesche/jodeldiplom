@@ -255,7 +255,6 @@ fn main() {
             let scene = Scene {
                 state: &state,
                 grid,
-                pointer: None,
                 heard,
             };
             canvas.draw(&scene, Some(&art));

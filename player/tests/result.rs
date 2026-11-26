@@ -165,7 +165,6 @@ fn drawn(state: &mut State) -> (Canvas, Option<StageFrame>) {
     let scene = jodeldiplom::view::Scene {
         state,
         grid,
-        pointer: None,
         heard: 0.0,
     };
     canvas.draw(&scene, None);
