@@ -231,6 +231,17 @@ pub struct Timebase {
     pub heard: u64,
 }
 
+impl Timebase {
+    /// Whether the mixer that told it waits for `device`, the
+    /// [`crate::SimClock::Manual`] device it plays on: it has told all the
+    /// device played and is the device's ring ahead of it, so it mixes no
+    /// more until the device's time passes. A test that lets the time pass
+    /// only then has the mixer's frames where it read them.
+    pub fn waits_for(&self, device: &crate::SimTime) -> bool {
+        self.heard == device.position() && self.frame >= self.heard + device.capacity()
+    }
+}
+
 impl Packed for Timebase {
     const WORDS: usize = 4;
 

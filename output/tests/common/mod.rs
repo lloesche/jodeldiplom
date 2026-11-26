@@ -11,23 +11,27 @@ use jodel_output::mixer::{InputTarget, Mixer, MixerOptions};
 use jodel_output::pack::unpack;
 use jodel_output::{
     Capabilities, Clock, Error, FileOutput, Input, MemorySink, OpenRequest, Output, OutputTarget,
-    SampleFormat, SimClock, StreamFormat, VoiceBlock,
+    SampleFormat, SimClock, SimTime, StreamFormat, VoiceBlock,
 };
 
 pub const RATE: u32 = 48_000;
 pub const FORMAT: SampleFormat = SampleFormat::S32;
 
 /// A device that keeps what it played: every stream opened, with its
-/// clock. In real time, or (`instant`) taking what it is given at once; as
-/// a shared device does, at one rate ([`RATE`], or `rate` when given), in
+/// clock. In real time, or (`instant`) taking what it is given at once, or
+/// (`manual`) in real time on the test's time ([`Device::tick`]); as a
+/// shared device does, at one rate ([`RATE`], or `rate` when given), in
 /// [`FORMAT`], or `sample` when given; stereo, or `channels` when given.
 #[derive(Clone, Default)]
 pub struct Device {
     pub streams: Arc<Mutex<Vec<(MemorySink, Clock)>>>,
     pub instant: bool,
+    pub manual: bool,
     pub rate: Option<u32>,
     pub sample: Option<SampleFormat>,
     pub channels: Option<u16>,
+    /// A manual device's streams' time.
+    pub times: Arc<Mutex<Vec<SimTime>>>,
 }
 
 impl OutputTarget for Device {
@@ -47,14 +51,22 @@ impl OutputTarget for Device {
         let caps = self.capabilities()?;
         let clock = if self.instant {
             SimClock::Instant
+        } else if self.manual {
+            SimClock::Manual
         } else {
             SimClock::Realtime
         };
         let out = FileOutput::open(sink.clone(), &caps, request, clock)?;
         self.streams.lock().unwrap().push((sink, out.clock()));
+        if let Some(time) = out.time() {
+            self.times.lock().unwrap().push(time);
+        }
         Ok(Box::new(out))
     }
 }
+
+/// The device frames of a mixer's period (its default, 10 ms).
+pub const PERIOD: u64 = RATE as u64 / 100;
 
 impl Device {
     /// Its sample format.
@@ -80,6 +92,55 @@ impl Device {
         let streams = self.streams.lock().unwrap();
         streams.iter().map(|(_, c)| c.stats().underruns).sum()
     }
+
+    /// A manual device ([`manual_mixer`]): a period of its time passes,
+    /// and `mixer` fills its ring again. Between one tick and the next it
+    /// waits for the device, nothing mixed: what plays is what the test did
+    /// before each, on the frames the timebase told it, however busy the
+    /// machine.
+    pub fn tick(&self, mixer: &Mixer) {
+        wait_until("the device opened", || {
+            !self.times.lock().unwrap().is_empty()
+        });
+        let time = self.times.lock().unwrap().last().unwrap().clone();
+        let filled = || mixer.timebase().waits_for(&time);
+        wait_until("the mixer fills the device", filled);
+        time.advance(PERIOD).unwrap();
+        wait_until("the mixer fills the device", filled);
+    }
+
+    /// Ticks until `done`.
+    pub fn tick_until(&self, mixer: &Mixer, what: &str, mut done: impl FnMut() -> bool) {
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while !done() {
+            assert!(Instant::now() < deadline, "timed out: {what}");
+            self.tick(mixer);
+        }
+    }
+
+    /// `n` ticks: `n` periods of the device's time.
+    pub fn ticks(&self, mixer: &Mixer, n: u64) {
+        for _ in 0..n {
+            self.tick(mixer);
+        }
+    }
+
+    /// Drains `out` (an output on `mixer`) as [`Output::drain`] does,
+    /// ticking until the device has played what was written to it.
+    pub fn drain(&self, mixer: &Mixer, out: &mut dyn Output) {
+        let written = out.written();
+        out.drain(Some(Duration::ZERO)).unwrap();
+        self.tick_until(mixer, "drained", || out.position().unwrap() >= written);
+    }
+}
+
+/// A mixer on a device that plays in real time on the test's time: a
+/// period at each [`Device::tick`].
+pub fn manual_mixer() -> (Mixer, Device) {
+    mixer_on(Device {
+        manual: true,
+        ..Device::default()
+    })
 }
 
 pub fn mixer() -> (Mixer, Device) {

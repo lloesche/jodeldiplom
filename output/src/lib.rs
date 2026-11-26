@@ -111,7 +111,7 @@ pub use device::{
 };
 pub use dither::Requantizer;
 pub use error::Error;
-pub use file::{FileOutput, MemorySink, NullOutput, SimClock};
+pub use file::{FileOutput, MemorySink, NullOutput, SimClock, SimTime};
 pub use format::{SampleFormat, StreamFormat};
 pub use input::{
     default_input, find_input, input_devices, open_input, open_input_with, EchoRecording, Input,

@@ -607,17 +607,19 @@ fn a_guest_made_lead_takes_the_microphone() {
     let mut ob = open_with(&mut b, Duration::from_secs(3));
     ob.write(&frames(0, 48_000, |_| 0), None).unwrap();
     wait_until("the guest plays", || ob.position().unwrap() > 4_800);
+    // The voice told since (the cleaner, on its thread, comes when it is
+    // let), in the lead's frames.
     singer.voice();
-    std::thread::sleep(Duration::from_millis(100));
-    let lead_frames = singer.voice().iter().map(|v| v.stream_frame).max();
+    let told = singer.voice_until("the voice told", |v| !v.is_empty());
+    let lead_frames = told.iter().map(|v| v.stream_frame).max();
     assert!(lead_frames > Some(24_000), "{lead_frames:?}");
     // Made Lead: the tap is on its output (the newest Lead's), told in its
     // frames; it is offered the same one format.
     fb.set_role(Role::Lead).unwrap();
     assert_eq!(b.capabilities().unwrap().iter().count(), 1);
     singer.voice();
-    std::thread::sleep(Duration::from_millis(200));
-    let told = singer.voice().iter().map(|v| v.stream_frame).max().unwrap();
+    let told = singer.voice_until("the voice told", |v| !v.is_empty());
+    let told = told.iter().map(|v| v.stream_frame).max().unwrap();
     let (played, guest) = (oa.position().unwrap(), ob.position().unwrap());
     // In the new lead's frames (at most where it has played to, plus a
     // period or two in flight), well behind the old lead's however slowly

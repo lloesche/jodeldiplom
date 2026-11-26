@@ -26,6 +26,7 @@ use jodel_playback::{
 
 use crate::art::{self, Art};
 use crate::browser::{self, DetailsWorker, Notify};
+pub use crate::clock::AppClock;
 use crate::config::Config;
 use crate::core::{self, Action, DeviceChoice, Effect, State};
 use crate::desk_wiring::Engine;
@@ -123,6 +124,9 @@ pub struct AppOptions {
     /// The covers' models, as setup found them ([`crate::setup::Found`]);
     /// `None`: covers are not taken apart.
     pub covers: Option<crate::cover::CoverModels>,
+    /// What the app times by ([`AppClock`]): the wall clock but in tests
+    /// that step it.
+    pub clock: AppClock,
 }
 
 impl AppOptions {
@@ -152,6 +156,7 @@ impl AppOptions {
             mover: None,
             separator: gpu_separator,
             covers: None,
+            clock: AppClock::default(),
         }
     }
 }
@@ -296,7 +301,10 @@ pub struct App {
     /// the song playing's layers: none without a data folder or the
     /// covers' models.
     covers: Option<crate::cover::CoverWorker>,
+    /// When the app started, on its clock ([`AppClock`]): every time it
+    /// keeps but the trace's is on that clock.
     started: Instant,
+    clock: AppClock,
     /// Where the session is kept, what was last saved there, and since
     /// when it has been out of date.
     session: Option<PathBuf>,
@@ -522,7 +530,7 @@ impl App {
             mic_tx,
             mic_rx,
             grids,
-            position_at: Instant::now(),
+            position_at: options.clock.now(),
             separator: options.separator,
             last_drawn: None,
             mic_noted: None,
@@ -546,7 +554,8 @@ impl App {
             art_rx,
             next_art: 0,
             covers,
-            started: Instant::now(),
+            started: options.clock.now(),
+            clock: options.clock.clone(),
             session: options.session.clone(),
             session_saved: restored.clone(),
             session_stale: None,
@@ -733,7 +742,7 @@ impl App {
             | Event::State(_),
         ) = &action
         {
-            self.position_at = Instant::now();
+            self.position_at = self.clock.now();
         }
         self.note_pair();
         let started = Instant::now();
@@ -1002,7 +1011,7 @@ impl App {
     pub fn pump(&mut self) -> bool {
         if self
             .session_stale
-            .is_some_and(|since| since.elapsed() >= SESSION_SAVE_AFTER)
+            .is_some_and(|since| self.clock.since(since) >= SESSION_SAVE_AFTER)
         {
             self.save_session();
         }
@@ -1069,7 +1078,7 @@ impl App {
                 });
             }
         }
-        let now = self.started.elapsed().as_millis() as u64;
+        let now = self.now_ms();
         // A tick every 250 ms, and one as soon as something is due (which
         // then shows).
         let due = self.state.due().is_some_and(|due| due <= now);
@@ -1215,7 +1224,7 @@ impl App {
     pub fn heard_for_frame(&mut self) -> f64 {
         let reported = self.heard();
         let mut heard = reported;
-        let now = Instant::now();
+        let now = self.clock.now();
         // The position comes every 100 ms, a little early or late: drawn as it
         // is, what scrolls by (the Transition lanes, the Karaoke tab's words)
         // steps unevenly. While the track plays on, the frames keep a clock of
@@ -1301,7 +1310,7 @@ impl App {
     pub fn heard(&self) -> f64 {
         let playing = &self.state.playing;
         let since = if playing.state == PlayState::Playing {
-            self.position_at.elapsed().as_secs_f64().min(0.25)
+            self.clock.since(self.position_at).as_secs_f64().min(0.25)
         } else {
             0.0
         };
@@ -1310,7 +1319,7 @@ impl App {
 
     /// The milliseconds since the start (the core's clock).
     pub fn now_ms(&self) -> u64 {
-        self.started.elapsed().as_millis() as u64
+        self.clock.since(self.started).as_millis() as u64
     }
 
     /// The cover of the track heard, once decoded.
@@ -1424,7 +1433,7 @@ impl App {
     /// The spectrum of what is heard now: computed only where the screen
     /// shows one, at most [`SPECTRUM_EVERY`] apart (the last otherwise).
     pub fn spectrum(&mut self) -> SpectrumFrame {
-        let now = Instant::now();
+        let now = self.clock.now();
         let shown = self.state.fit.spectrum;
         let recent = self
             .analyzed
@@ -1837,7 +1846,7 @@ impl App {
                 && saved.selected.as_ref() == self.session_selected()
         });
         if !same {
-            self.session_stale = Some(Instant::now());
+            self.session_stale = Some(self.clock.now());
         }
     }
 

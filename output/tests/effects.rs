@@ -208,11 +208,12 @@ fn loud(device: &Device) -> usize {
 /// A sound sent on the desk's frames as the song ends (its last phrase
 /// rated, the next track held back, nothing running) is heard to its end,
 /// and one sounding as the song pauses is not frozen: the effects keep the
-/// device playing until they are done.
+/// device playing until they are done. (On a device in real time on the
+/// test's time: a sound sent on the frame the mixer mixes next is never
+/// late, however busy the machine.)
 #[test]
 fn the_last_sound_is_heard_after_the_song_stops() {
-    let _guard = real_time();
-    let (mixer, device) = mixer();
+    let (mixer, device) = manual_mixer();
     let player = mixer.strip("Player");
     let strip = mixer.strip("Effects");
     let effects = mixer.effects(&strip);
@@ -221,13 +222,13 @@ fn the_last_sound_is_heard_after_the_song_stops() {
     let (mut lead, _fader) = mixer.input(&player, Role::Lead, 1.0);
     let mut out = open(&mut lead, RATE);
     out.write(&frames(0, 9_600, |_| 0), None).unwrap();
-    out.drain(None).unwrap();
+    device.drain(&mixer, &mut *out);
     // Paused, the song over: a sound now, heard whole.
     out.pause().unwrap();
     let now = || mixer.timebase().frame + 480;
     assert!(effects.commands(None).send(tone(patch, now(), 1.0)));
-    wait_until("heard", || loud(&device) > 4_000);
-    wait_until("at rest", || mixer.passthrough());
+    device.tick_until(&mixer, "heard", || loud(&device) > 4_000);
+    device.tick_until(&mixer, "at rest", || mixer.passthrough());
     let one = loud(&device);
     assert!(one > 4_000, "{one}");
     // A sound, then the song paused at once.
@@ -236,8 +237,8 @@ fn the_last_sound_is_heard_after_the_song_stops() {
     assert!(effects.commands(None).send(tone(patch, now(), 1.0)));
     out.pause().unwrap();
     // The device plays on (it stays open, in real time): both heard whole.
-    wait_until("both heard", || loud(&device) > one + 4_000);
-    wait_until("at rest", || mixer.passthrough());
+    device.tick_until(&mixer, "both heard", || loud(&device) > one + 4_000);
+    device.tick_until(&mixer, "at rest", || mixer.passthrough());
     let two = loud(&device);
     assert!(two.abs_diff(2 * one) < one / 20, "{one} then {two}");
     assert_eq!(effects.view().missed, 0);
@@ -246,11 +247,10 @@ fn the_last_sound_is_heard_after_the_song_stops() {
 /// The device is open before anything plays and stays open: the song over
 /// and its output closed, sounds sent then (a moment apart, on the desk's
 /// frames) are heard whole on the same opening of it, and it is still open
-/// after them.
+/// after them. (On the test's time, as above.)
 #[test]
 fn sounds_after_the_song_play_on_the_device_kept_open() {
-    let _guard = real_time();
-    let (mixer, device) = mixer();
+    let (mixer, device) = manual_mixer();
     let player = mixer.strip("Player");
     let strip = mixer.strip("Effects");
     let effects = mixer.effects(&strip);
@@ -261,22 +261,23 @@ fn sounds_after_the_song_play_on_the_device_kept_open() {
     let (mut lead, _fader) = mixer.input(&player, Role::Lead, 1.0);
     let mut out = open(&mut lead, RATE);
     out.write(&frames(0, 9_600, |_| 0), None).unwrap();
-    out.drain(None).unwrap();
+    device.drain(&mixer, &mut *out);
     out.close().unwrap();
     let mut heard = Vec::new();
     for n in 1..=2 {
-        std::thread::sleep(Duration::from_millis(300));
+        // A moment apart: 300 ms of the device's.
+        device.ticks(&mixer, 30);
         let at = mixer.timebase().frame + 480;
         assert!(effects.commands(None).send(tone(patch, at, 1.0)));
         let before = heard.last().copied().unwrap_or(0);
-        wait_until("heard", || loud(&device) > before + 4_000);
-        wait_until("at rest", || mixer.passthrough());
+        device.tick_until(&mixer, "heard", || loud(&device) > before + 4_000);
+        device.tick_until(&mixer, "at rest", || mixer.passthrough());
         assert_eq!(effects.view().commands, n);
         heard.push(loud(&device));
     }
     assert!(heard[0] > 4_000, "{heard:?}");
     assert!(heard[1].abs_diff(2 * heard[0]) < heard[0] / 20, "{heard:?}");
-    std::thread::sleep(Duration::from_millis(300));
+    device.ticks(&mixer, 30);
     assert!(open_now(), "still open");
     assert_eq!(device.streams.lock().unwrap().len(), 1, "opened once");
     assert_eq!(effects.view().missed, 0);

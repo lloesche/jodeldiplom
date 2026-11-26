@@ -22,9 +22,14 @@ pub enum SimClock {
     /// padded. For capturing exactly what an engine writes.
     #[default]
     Instant,
-    /// Frames are played only when the test calls
-    /// [`FileOutput::advance`]: a full ring blocks the writer, an empty one
-    /// pads with silence and counts an underrun, exactly as a device would.
+    /// Frames are played only as the test lets the device's time pass
+    /// ([`FileOutput::advance`], or [`SimTime::advance`] from any thread
+    /// while another owns the output): a full ring blocks the writer, an
+    /// empty one pads with silence and counts an underrun, exactly as a
+    /// device would. It plays in real time, the test's
+    /// ([`StreamInfo::realtime`] is true: a mixer on it mixes on, silence
+    /// where nothing sounds), so a test of a whole player can play it
+    /// period by period, however busy the machine.
     Manual,
     /// A thread plays one period (the request's `period`) every period of
     /// wall-clock time, like a device. Woken late (its host ran it late),
@@ -364,7 +369,7 @@ impl FileOutput {
             backend: "file",
             device_buffer_frames: period,
             ring_frames: shared.ring.capacity(),
-            realtime: clock == SimClock::Realtime,
+            realtime: matches!(clock, SimClock::Realtime | SimClock::Manual),
         };
         let mut core = Core::new(shared, Box::new(driver), info, request);
         if matches!(clock, SimClock::Instant | SimClock::Paced) {
@@ -377,23 +382,56 @@ impl FileOutput {
         }
     }
 
-    /// [`SimClock::Manual`] only: lets `frames` device frames of time pass.
-    /// A running device plays them (padding with silence when the ring runs
-    /// dry); a stopped or paused one plays nothing. Returns the stream
-    /// frames played.
+    /// [`SimClock::Manual`] only: lets `frames` device frames of time pass
+    /// ([`SimTime::advance`]).
     pub fn advance(&mut self, frames: u64) -> Result<u64, Error> {
-        if self.clock != SimClock::Manual {
-            return Err(Error::InvalidArgument(
-                "advance needs SimClock::Manual".into(),
-            ));
-        }
-        self.core.shared.check()?;
-        if !self.device.running.load(Ordering::SeqCst) {
+        self.time()
+            .ok_or_else(|| Error::InvalidArgument("advance needs SimClock::Manual".into()))?
+            .advance(frames)
+    }
+
+    /// The device's time, on a [`SimClock::Manual`] device (none on the
+    /// others: their time passes by itself).
+    pub fn time(&self) -> Option<SimTime> {
+        (self.clock == SimClock::Manual).then(|| SimTime(self.device.clone()))
+    }
+}
+
+/// The time of a [`SimClock::Manual`] device, for whoever holds it: it
+/// lets the device's time pass from any thread while another owns the
+/// output (a mixer that opened it), and tells how full its ring is.
+#[derive(Clone)]
+pub struct SimTime(Arc<SimDevice>);
+
+impl SimTime {
+    /// Lets `frames` device frames of time pass. A running device plays
+    /// them (padding with silence when the ring runs dry); a stopped or
+    /// paused one plays nothing. Returns the stream frames played.
+    pub fn advance(&self, frames: u64) -> Result<u64, Error> {
+        let device = &self.0;
+        device.shared.check()?;
+        if !device.running.load(Ordering::SeqCst) {
             return Ok(0);
         }
-        let played = self.device.play(frames, false);
-        self.core.shared.check()?;
+        let played = device.play(frames, false);
+        device.shared.check()?;
         Ok(played)
+    }
+
+    /// The frames queued for the device now.
+    pub fn queued(&self) -> u64 {
+        self.0.shared.ring.len()
+    }
+
+    /// The stream frames the device has played.
+    pub fn position(&self) -> u64 {
+        self.0.shared.position()
+    }
+
+    /// The most frames its ring holds: a writer that keeps it full is
+    /// that far ahead of what is played.
+    pub fn capacity(&self) -> u64 {
+        self.0.shared.ring.capacity()
     }
 }
 

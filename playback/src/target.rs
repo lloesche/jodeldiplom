@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 pub use jodel_output::OutputTarget;
 use jodel_output::{
     Capabilities, Error, FileOutput, MemorySink, NullOutput, OpenRequest, Output, SampleFormat,
-    SimClock, StreamFormat,
+    SimClock, SimTime, StreamFormat,
 };
 
 /// A real output device, opened shared through `jodel-output`.
@@ -105,6 +105,8 @@ pub struct Capture {
     pub format: StreamFormat,
     /// The bytes, in the format's layout.
     pub sink: MemorySink,
+    /// The device's time, on [`SimClock::Manual`]: the test lets it pass.
+    pub time: Option<SimTime>,
 }
 
 /// A target that records every output stream in memory ([`FileOutput`]),
@@ -179,6 +181,7 @@ impl OutputTarget for MemoryTarget {
             .push(Capture {
                 format: output.format(),
                 sink,
+                time: output.time(),
             });
         Ok(Box::new(output))
     }

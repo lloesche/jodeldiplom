@@ -292,21 +292,29 @@ fn a_running_device_takes_a_new_tap_without_a_lock() {
     let caps: Capabilities = [format].into_iter().collect();
     let mut out = FileOutput::open(std::io::sink(), &caps, &request, SimClock::Realtime).unwrap();
     out.write(&vec![0; 2 * 4_800], None).unwrap();
+    // The device thread runs when it is let: what it must do is waited for
+    // (a guard, however busy the machine).
+    let until = |what: &str, done: &dyn Fn() -> bool| {
+        let guard = std::time::Instant::now() + Duration::from_secs(10);
+        while !done() {
+            assert!(std::time::Instant::now() < guard, "{what}");
+            std::thread::yield_now();
+        }
+    };
     let (a, a_calls, a_dropped) = probe();
     out.set_tap(Some(a)).unwrap();
-    std::thread::sleep(Duration::from_millis(50));
-    assert!(
-        a_calls.load(Ordering::Relaxed) > 0,
-        "the device runs the tap"
-    );
+    until("the device runs the tap", &|| {
+        a_calls.load(Ordering::Relaxed) > 0
+    });
     let (b, b_calls, b_dropped) = probe();
     out.set_tap(Some(b)).unwrap();
     // The device took the new one; the old one was dropped here, on return.
     assert!(a_dropped.load(Ordering::SeqCst));
     let a_after = a_calls.load(Ordering::Relaxed);
-    std::thread::sleep(Duration::from_millis(50));
+    until("the device runs the new tap", &|| {
+        b_calls.load(Ordering::Relaxed) > 0
+    });
     assert_eq!(a_calls.load(Ordering::Relaxed), a_after);
-    assert!(b_calls.load(Ordering::Relaxed) > 0);
     // Paused, the swap happens on this thread.
     out.pause().unwrap();
     out.set_tap(None).unwrap();

@@ -232,17 +232,27 @@ mod tests {
     /// into their file, and for nothing else.
     #[test]
     fn stems_being_separated_are_waited_for() {
+        use std::time::Duration;
+        // A guard: what must return does within it, however busy the
+        // machine.
+        const GUARD: Duration = Duration::from_secs(10);
         let (song, other) = (Path::new("waited.flac"), Path::new("other.flac"));
+        let waiter = |path: &'static Path| {
+            let (tx, rx) = std::sync::mpsc::channel();
+            std::thread::spawn(move || {
+                wait_kept(path);
+                let _ = tx.send(());
+            });
+            rx
+        };
         let separating = Separating::new(song);
-        let started = std::time::Instant::now();
-        wait_kept(other);
-        assert!(started.elapsed() < std::time::Duration::from_millis(50));
-        let done = std::thread::spawn(move || {
-            std::thread::sleep(std::time::Duration::from_millis(80));
-            drop(separating);
-        });
-        wait_kept(song);
-        assert!(started.elapsed() >= std::time::Duration::from_millis(60));
-        done.join().unwrap();
+        // Another track's: not waited for, the song still separated.
+        assert!(waiter(other).recv_timeout(GUARD).is_ok(), "not waited");
+        // The song's: waited for while it is separated (a while, here),
+        // and no longer once it is done.
+        let waited = waiter(song);
+        assert!(waited.recv_timeout(Duration::from_millis(100)).is_err());
+        drop(separating);
+        assert!(waited.recv_timeout(GUARD).is_ok(), "done");
     }
 }

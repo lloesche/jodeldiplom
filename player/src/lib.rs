@@ -13,7 +13,9 @@
 //!   a mixer that owns the device, the background workers, the spectrum
 //!   and the cover; [`preview`]: the players of a preview, on the mixer
 //!   too; [`sfx`]: the karaoke game's sound effects, made in code, played
-//!   through the mixer's effects input on the frames of their moments.
+//!   through the mixer's effects input on the frames of their moments;
+//!   [`clock`]: what the app times by (the wall clock, or one a test
+//!   steps).
 //! - [`browser`]: folder listing, lazy file details, recursive search.
 //! - [`config`], [`cli`]: the settings file and the command line.
 //! - [`cache`]: what is kept on disk between runs, and its schemas;
@@ -33,6 +35,7 @@ pub mod browser;
 pub mod cache;
 pub mod calendar;
 pub mod cli;
+pub mod clock;
 pub mod config;
 pub mod core;
 pub mod cover;

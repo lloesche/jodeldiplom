@@ -246,29 +246,35 @@ fn playing_live_allocates_nothing_on_the_mixer_thread() {
 #[test]
 fn idle_in_real_time_allocates_nothing() {
     let _one = ONE.lock().unwrap_or_else(|e| e.into_inner());
-    let _guard = real_time();
     let options = MixerOptions {
         buffer: Duration::from_millis(200),
         ..MixerOptions::default()
     };
-    let mixer = Mixer::open(Box::new(QuietDevice(Device::default())), options);
+    // In real time on the test's time: a sound sent on the frame mixed
+    // next is never late, however busy the machine.
+    let device = Device {
+        manual: true,
+        ..Device::default()
+    };
+    let mixer = Mixer::open(Box::new(QuietDevice(device.clone())), options);
     let strip = mixer.strip("Effects");
     let effects = mixer.effects(&strip);
     let (synth, patch) = tone_synth(RATE, 0.02);
     effects.live(synth);
     wait_until("open", || mixer.timebase().rate == RATE);
+    device.tick(&mixer);
     // A first sound: what it reserves is reserved.
     let soon = || mixer.timebase().frame + 480;
     assert!(effects.commands(None).send(tone(patch, soon(), 0.0)));
-    wait_until("heard", || effects.view().commands == 1);
+    device.tick_until(&mixer, "heard", || effects.view().commands == 1);
     MIXER_ALLOCATIONS.store(0, Ordering::Relaxed);
     COUNTING.store(true, Ordering::Relaxed);
     let from = mixer.timebase().frame;
     for _ in 0..5 {
         assert!(effects.commands(None).send(tone(patch, soon(), 0.0)));
-        std::thread::sleep(Duration::from_millis(60));
+        device.ticks(&mixer, 6);
     }
-    wait_until("idle a while, every sound heard", || {
+    device.tick_until(&mixer, "idle a while, every sound heard", || {
         mixer.timebase().frame > from + u64::from(RATE) / 2 && effects.view().commands == 6
     });
     COUNTING.store(false, Ordering::Relaxed);

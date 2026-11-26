@@ -13,11 +13,13 @@ mod common;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use jodel_output::mixer::{Effects, Fader, Mixer, MixerOptions, Role, Start};
-use jodel_output::{Capabilities, OpenRequest, OutputTarget, SampleFormat, SimClock, StreamFormat};
+use jodel_output::mixer::{Effects, Fader, Mixer, MixerOptions, Role, Start, Timebase};
+use jodel_output::{
+    Capabilities, OpenRequest, OutputTarget, SampleFormat, SimClock, SimTime, StreamFormat,
+};
 use jodel_playback::{Captures, MemoryTarget, PlayState};
 use jodel_synth::Synth;
-use jodeldiplom::app::{App, AppOptions, MemoryOutput, Output};
+use jodeldiplom::app::{App, AppClock, AppOptions, MemoryOutput, Output};
 use jodeldiplom::core::keymap::Op;
 use jodeldiplom::core::shine::Shone;
 use jodeldiplom::core::singing::Beat;
@@ -27,64 +29,179 @@ use jodeldiplom::sfx::conductor::{Clock, Conductor, Diploma, Event, Sheet};
 use jodeldiplom::sfx::{Desk, Sfx};
 use jodeldiplom::tiers::Tier;
 
-/// Runs `app` as the window does (its events taken, a frame drawn every
-/// 1/60 s, the game's sounds cued with each) until `done`, for `timeout`
-/// at most; whether it came.
-fn frames(app: &mut App, timeout: Duration, mut done: impl FnMut(&App) -> bool) -> bool {
-    let end = Instant::now() + timeout;
-    while Instant::now() < end {
-        if done(app) {
-            return true;
+/// The longest a step of a test on the test's time waits for the player's
+/// threads (a guard: it fails the test only where they hang).
+const GUARD: Duration = Duration::from_secs(60);
+
+/// Returns once the mixer whose clock `timebase` reads waits for `device`
+/// ([`Timebase::waits_for`]): nothing more is mixed until its time passes.
+fn mixer_waits(device: &SimTime, timebase: impl Fn() -> Timebase) {
+    let guard = Instant::now() + GUARD;
+    loop {
+        let t = timebase();
+        if t.waits_for(device) {
+            return;
         }
-        app.pump_wait(Duration::from_millis(16));
-        app.heard_for_frame();
+        let queued = (device.position(), device.queued(), device.capacity());
+        assert!(
+            Instant::now() < guard,
+            "the mixer fills the device: {t:?}, (played, queued, of) {queued:?}"
+        );
+        std::thread::yield_now();
     }
-    done(app)
+}
+
+/// The time of the device `captures` opened first (on the mixer's thread,
+/// as the mixer opens).
+fn device_time(captures: &Captures) -> SimTime {
+    let guard = Instant::now() + GUARD;
+    loop {
+        if let Some(c) = captures.list().first() {
+            return c.time.clone().expect("a device on the test's time");
+        }
+        assert!(Instant::now() < guard, "the device opened");
+        std::thread::yield_now();
+    }
+}
+
+/// A device on the test's time, a mixer on it, ticked a period at a time.
+struct Ticks<'a> {
+    mixer: &'a Mixer,
+    time: SimTime,
+}
+
+impl Ticks<'_> {
+    /// A period of the device's time passes; the mixer fills it again.
+    fn tick(&self) {
+        mixer_waits(&self.time, || self.mixer.timebase());
+        self.time.advance(u64::from(RATE) / 100).unwrap();
+        mixer_waits(&self.time, || self.mixer.timebase());
+    }
+
+    /// Writes `samples` to `out` and drains it, ticking as the ring of
+    /// `out` (on the mixer) has room.
+    fn play(&self, out: &mut dyn jodel_output::Output, samples: &[i32]) {
+        let mut done = 0;
+        while done < samples.len() {
+            done += 2 * out.write(&samples[done..], Some(Duration::ZERO)).unwrap();
+            self.tick();
+        }
+        let written = out.written();
+        out.drain(Some(Duration::ZERO)).unwrap();
+        let guard = Instant::now() + GUARD;
+        while out.position().unwrap() < written {
+            assert!(Instant::now() < guard, "drained");
+            self.tick();
+        }
+    }
+}
+
+/// The window's frames on the test's time: each one 1/60 s of the app's
+/// clock and as much played by the device ([`SimClock::Manual`]), the
+/// mixer let fill it again before the frame is drawn. However busy the
+/// machine, what the device plays is what the frames cued, where they
+/// cued it.
+struct Window {
+    clock: AppClock,
+    time: SimTime,
+}
+
+impl Window {
+    /// The device frames of a window's frame (1/60 s).
+    const FRAME: u64 = RATE as u64 / 60;
+
+    /// A frame: its time passes (the device plays it), the mixer fills
+    /// the device again, the app takes what came and draws (cues the
+    /// game's sounds); the desk's frame they were cued on.
+    fn frame(&mut self, app: &mut App) -> usize {
+        let timebase = |a: &App| a.desk().unwrap().master.timebase;
+        mixer_waits(&self.time, || timebase(app));
+        self.clock.step(Duration::from_nanos(
+            Self::FRAME * 1_000_000_000 / u64::from(RATE),
+        ));
+        self.time.advance(Self::FRAME).unwrap();
+        mixer_waits(&self.time, || timebase(app));
+        app.pump();
+        let cued = timebase(app).frame as usize;
+        app.heard_for_frame();
+        cued
+    }
+
+    /// Frames until `done`; whether it came (within [`GUARD`]).
+    fn frames_until(&mut self, app: &mut App, mut done: impl FnMut(&App) -> bool) -> bool {
+        let guard = Instant::now() + GUARD;
+        while !done(app) {
+            if Instant::now() >= guard {
+                return false;
+            }
+            self.frame(app);
+        }
+        true
+    }
 }
 
 /// `sound` of the sheet alone, as the desk's synth makes it (on a
-/// conductor of its own, offline, cued on its first frame): its left side.
-fn made(sound: Sheet) -> Vec<f32> {
+/// conductor of its own, offline), its first `span` frames: its left side.
+/// It is cued `phase` frames into a block of the synth's
+/// ([`jodel_synth::BLOCK`]): the synth takes its modulation once a block,
+/// so a sound sounds a little otherwise from each place in one.
+fn made(sound: Sheet, phase: usize, span: usize) -> Vec<f32> {
     let (mut c, mut synth) = Conductor::new(RATE);
     let sheet = Diploma::Sheet {
         sound,
         gain: 1.0,
         pan: 0.0,
     };
-    c.event(&mut synth, 0, Event::Diploma(sheet));
-    let mut out = vec![0.0f32; 2 * 3 * RATE as usize];
+    synth.render_to(&mut vec![0.0f32; 2 * phase]);
+    c.event(&mut synth, phase as u64, Event::Diploma(sheet));
+    let mut out = vec![0.0f32; 2 * span];
     synth.render_to(&mut out);
     out.into_iter().step_by(2).collect()
+}
+
+/// How well `made` lines up with `left` from `from` (normalized
+/// correlation, 1: the same up to a gain).
+fn fit_at(left: &[f32], from: usize, made: &[f32]) -> f64 {
+    let got = &left[from..from + made.len()];
+    let dot: f64 = got
+        .iter()
+        .zip(made)
+        .map(|(&g, &m)| f64::from(g) * f64::from(m))
+        .sum();
+    let energy = |x: &[f32]| x.iter().map(|&v| f64::from(v) * f64::from(v)).sum::<f64>();
+    dot / (energy(made) * energy(got)).sqrt().max(1e-12)
 }
 
 /// Where `sound` (its left side) is heard in `left` (the device's left
 /// channel, full scale 1) near the device frames `near` (from the first
 /// to the last, within 60 ms): the frame its first `span` frames line up
-/// best from, and how well (normalized correlation, 1: alone and whole),
-/// against how well at its best 200 ms after (where it is not).
+/// best from, and how well (normalized correlation, 1: alone and whole,
+/// against the sound as the synth makes it from the same place in its
+/// block), against how well at its best 200 ms after (where it is not).
 fn heard_near(left: &[f32], sound: Sheet, near: (usize, usize), span: usize) -> (usize, f64, f64) {
-    let made = made(sound);
-    let made = &made[..span];
-    let made_energy: f64 = made.iter().map(|&v| f64::from(v) * f64::from(v)).sum();
-    let at = |from: usize| {
-        let got = &left[from..from + span];
-        let dot: f64 = got
-            .iter()
-            .zip(made)
-            .map(|(&g, &m)| f64::from(g) * f64::from(m))
-            .sum();
-        let energy: f64 = got.iter().map(|&v| f64::from(v) * f64::from(v)).sum();
-        dot / (made_energy * energy).sqrt().max(1e-12)
-    };
     let reach = RATE as usize * 6 / 100;
-    let best = |(first, last): (usize, usize)| {
+    let best = |(first, last): (usize, usize), made: &[f32]| {
         (first.saturating_sub(reach)..last + reach)
-            .map(|f| (f, at(f)))
+            .map(|f| (f, fit_at(left, f, made)))
             .fold((0, f64::MIN), |b, x| if x.1 > b.1 { x } else { b })
     };
-    let (frame, fit) = best(near);
+    // Found with the sound from a block's start, then made from where in
+    // a block it was heard to start.
+    let (found, _) = best(near, &made(sound, 0, span));
+    let (frame, fit, made) = (0..jodel_synth::BLOCK)
+        .map(|phase| {
+            let m = made(sound, phase, span);
+            let (f, fit) = (found.saturating_sub(1)..=found + 1)
+                .map(|f| (f, fit_at(left, f, &m)))
+                .fold((0, f64::MIN), |b, x| if x.1 > b.1 { x } else { b });
+            (f, fit, m)
+        })
+        .fold(
+            (0, f64::MIN, Vec::new()),
+            |b, x| if x.1 > b.1 { x } else { b },
+        );
     let after = near.1 + RATE as usize / 5;
-    let (_, away) = best((after, after));
+    let (_, away) = best((after, after), &made);
     (frame, fit, away)
 }
 
@@ -133,10 +250,12 @@ fn conductor() -> (Conductor, Synth) {
     (c, synth)
 }
 
-/// A desk on a memory device playing in real time: the player's strip with
-/// a Lead input, the effects input playing `synth`; what the device plays.
+/// A desk on a memory device playing in real time (on `clock`: the wall
+/// clock's, or the test's): the player's strip with a Lead input, the
+/// effects input playing `synth`; what the device plays.
 fn live_desk(
     synth: Synth,
+    clock: SimClock,
 ) -> (
     Mixer,
     Fader,
@@ -146,7 +265,7 @@ fn live_desk(
 ) {
     let mut caps = Capabilities::new();
     caps.insert(StreamFormat::new(RATE, 2, FORMAT));
-    let target = MemoryTarget::new(caps.clone(), SimClock::Realtime);
+    let target = MemoryTarget::new(caps.clone(), clock);
     let captures = target.captures();
     let options = MixerOptions {
         capabilities: Some(caps),
@@ -197,19 +316,23 @@ fn found(got: &[f32], near: usize, want: &[f32], from: usize, span: usize) -> (u
 }
 
 /// The game as the conductor plays it live through the desk, on a memory
-/// device in real time: words popping up the ladder to the first rung
-/// (the last reaching it, its stinger landing on the next beat), a
-/// phrase of the top tier (its chime on the beat) and its jackpot (on the
-/// downbeat after). The same events played offline on a twin conductor
-/// are what each must sound like: each moment is heard on the device
-/// where it landed, on the device's frame for the stream frame it was
-/// planned on (and the synth's look-ahead after it), to the frame.
+/// device in real time on the test's time ([`Ticks`]): words popping up
+/// the ladder to the first rung (the last reaching it, its stinger
+/// landing on the next beat), a phrase of the top tier (its chime on the
+/// beat) and its jackpot (on the downbeat after). The same events played
+/// offline on a twin conductor are what each must sound like: each moment
+/// is heard on the device where it landed, on the device's frame for the
+/// stream frame it was planned on (and the synth's look-ahead after it),
+/// to the frame.
 #[test]
 fn the_game_is_heard_where_it_lands() {
-    let _guard = common::real_time();
     let (mut live, synth) = conductor();
     let latency = synth.latency();
-    let (mixer, fader, mut lead, effects, captures) = live_desk(synth);
+    let (mixer, fader, mut lead, effects, captures) = live_desk(synth, SimClock::Manual);
+    let ticks = Ticks {
+        mixer: &mixer,
+        time: device_time(&captures),
+    };
     let (mut twin, mut offline) = conductor();
     // The words a sixteenth apart, the rung's on frame 66 000.
     let n = Tier::ALL[0].spec().streak;
@@ -252,8 +375,7 @@ fn the_game_is_heard_where_it_lands() {
     assert_eq!(landed[n], 5 * BEAT);
     assert_eq!(landed[n + 1], 8 * BEAT);
     let total = 13 * BEAT;
-    out.write(&counting(0, total), None).unwrap();
-    out.drain(None).unwrap();
+    ticks.play(&mut *out, &counting(0, total));
     // Where stream frame 0 was mixed: the device's frame for it.
     let Start::At { time, .. } = fader.at_stream(0) else {
         panic!("the song was mixed");
@@ -297,7 +419,10 @@ fn the_game_is_heard_where_it_lands() {
 fn a_seek_calls_off_what_the_game_planned() {
     let _guard = common::real_time();
     let (mut c, synth) = conductor();
-    let (_mixer, fader, mut lead, effects, captures) = live_desk(synth);
+    // In real time on the wall clock's: the seek's flush gives the device
+    // what is mixed first, which a device on the test's time would take
+    // only as the test let its time pass.
+    let (_mixer, fader, mut lead, effects, captures) = live_desk(synth, SimClock::Realtime);
     let request = OpenRequest::new(RATE, 2)
         .formats(&[FORMAT])
         .prefill(Duration::ZERO);
@@ -340,26 +465,24 @@ fn a_seek_calls_off_what_the_game_planned() {
     assert!(right.iter().any(|v| v.abs() > 1e-3), "the word after");
 }
 
-/// A frame of the device's stream (stereo, 24 bits in 32).
-const FRAME_BYTES: usize = 8;
-
 /// A song sung to its end in Karaoke mode, the game on, through the whole
-/// player on a memory device playing in real time: the device is opened
-/// once, as the player starts, and stays open; the song over and its
-/// output closed, the result's reveal is heard on it, its paper's rustle
-/// from its first beat and the examiner's pen from its last, each where
-/// it was cued.
+/// player on a memory device playing in real time, on the test's time
+/// ([`Window`]): the device is opened once, as the player starts, and
+/// stays open; the song over and its output closed, the result's reveal
+/// is heard on it, its paper's rustle from its first beat and the
+/// examiner's pen from its last, each where it was cued.
 #[test]
 fn the_result_is_heard_after_the_song() {
-    let _guard = common::real_time();
     let dir = common::temp_dir("reveal-heard");
     let song = dir.join("a.wav");
     common::write_wav(&song, RATE, 3.0);
     durable::write_atomic(&dir.join("a.lrc"), b"la la la\nla la\n").unwrap();
     let mut caps = Capabilities::new();
     caps.insert(StreamFormat::new(RATE, 2, SampleFormat::S24In32Low));
-    let memory = MemoryOutput::new(caps, SimClock::Realtime);
+    let memory = MemoryOutput::new(caps, SimClock::Manual);
     let mut options = AppOptions::new(dir.clone());
+    let clock = AppClock::stepped();
+    options.clock = clock.clone();
     options.output = Output::Memory(memory.clone());
     options.devices = Arc::new(|| Ok(Vec::new()));
     options.mic = Arc::new(|_| Ok(jodel_output::input::Input::feed(48_000, 240).0));
@@ -374,45 +497,45 @@ fn the_result_is_heard_after_the_song() {
     options.config.stems = false;
     options.autoplay = Some(song.clone());
     let mut app = common::fitted_app(options, 120, 36);
-    let wait = Duration::from_secs(30);
+    // The device, opened as the player starts.
+    let engine = memory.captures().last().expect("an engine").clone();
+    let mut window = Window {
+        clock,
+        time: device_time(&engine),
+    };
     let playing = |a: &App| a.state.playing.state == PlayState::Playing;
-    assert!(frames(&mut app, wait, playing));
+    assert!(window.frames_until(&mut app, playing));
     // Its frames drawn as it plays, the song analysed before it is sung.
     app.dispatch(Action::ShowSide(Side::Karaoke));
-    assert!(frames(&mut app, wait, |a| karaoke::not_singable(
-        &a.state, 0
-    )
-    .is_none()
-        && matches!(a.state.rhythm.get(&song), Some(Rhythm::Ready(_)))));
-    frames(&mut app, Duration::from_millis(1_500), |_| false);
+    assert!(
+        window.frames_until(&mut app, |a| karaoke::not_singable(&a.state, 0).is_none()
+            && matches!(a.state.rhythm.get(&song), Some(Rhythm::Ready(_))))
+    );
+    // Played out before it is sung: START then plays it from its start,
+    // not by a seek. (A seek's flush gives the device what the mixer
+    // holds first, waiting for room in its ring; this device makes room
+    // only as the frames go by, and this thread is in the app then.)
+    let stopped = |a: &App| a.state.playing.state == PlayState::Stopped;
+    assert!(window.frames_until(&mut app, stopped), "played out");
     app.dispatch(Action::Op(Op::KaraokeEnter));
     app.dispatch(Action::Op(Op::KaraokeStart));
     let started = |a: &App| a.state.karaoke.countdown.is_none() && playing(a);
-    assert!(frames(&mut app, wait, started), "START");
+    assert!(window.frames_until(&mut app, started), "START");
     // To its end, and the reveal after it drawn frame by frame, where the
-    // mixer is noted as its first beat and its last are cued: from just
-    // before the frame's sounds are cued to just after (the frames the
-    // mixer went through meanwhile, however long this thread was held up).
-    // A frame of the mixer's is a frame of what the device played once the
-    // silence the device filled underruns with so far is added (played,
-    // but none of the mixer's frames).
-    let played = memory.captures().last().expect("a device").list()[0]
-        .sink
-        .clone();
-    let mixing = |a: &App| {
-        let clock = a.desk().unwrap().master.timebase;
-        let device = (played.len() / FRAME_BYTES) as u64;
-        (clock.frame + device.saturating_sub(clock.heard)) as usize
-    };
+    // mixer is as its first beat and its last are cued (the mixer waits
+    // for the device, which waits for the next frame: nothing is mixed
+    // meanwhile, so before and after the frame's sounds are cued are the
+    // same frame).
+    let mixing = |a: &App| a.desk().unwrap().master.timebase.frame as usize;
     // The signature's beat is reached on the frame whose reveal time
     // passes its end from the frame before's, as the sounds read it.
     let (mut paper, mut signed, mut until, mut before) = (None, None, None, None);
-    let deadline = Instant::now() + wait;
-    while until.is_none_or(|u| Instant::now() < u) {
-        assert!(Instant::now() < deadline, "the song ends");
-        app.pump_wait(Duration::from_millis(16));
-        let cueing = mixing(&app);
-        app.heard_for_frame();
+    let mut frame = 0;
+    let guard = Instant::now() + GUARD;
+    while until.is_none_or(|u| frame < u) {
+        assert!(Instant::now() < guard, "the song ends");
+        frame += 1;
+        let cueing = window.frame(&mut app);
         let Some((shown, after)) = karaoke::result_now(&app.state) else {
             continue;
         };
@@ -423,7 +546,7 @@ fn the_result_is_heard_after_the_song() {
         );
         if paper.is_none() {
             paper = Some(cued);
-            until = Some(Instant::now() + Duration::from_secs_f64(settled + 1.0));
+            until = Some(frame + ((settled + 1.0) * 60.0) as u64);
         }
         if signed.is_none() && after >= end && before.is_some_and(|t| t < end) {
             signed = Some(cued);
@@ -431,6 +554,7 @@ fn the_result_is_heard_after_the_song() {
         before = Some(after);
     }
     let (paper, signed) = (paper.unwrap(), signed.expect("signed"));
+    assert_eq!(paper.0, paper.1, "nothing mixed as the paper was cued");
     let desk = app.desk().unwrap();
     assert_eq!(desk.master.timebase.epoch, 1, "never opened again");
     app.shutdown();
@@ -449,8 +573,10 @@ fn the_result_is_heard_after_the_song() {
     // and the pen's scratch (its first 0.3 s, a lullaby over it): each
     // heard where it was cued, and not elsewhere.
     let rustle = heard_near(&left, Sheet::Unroll, paper, 4_000);
+    println!("the paper cued {paper:?}: {rustle:?}");
     assert!(rustle.1 > 0.8 && rustle.2 < 0.3, "the paper: {rustle:?}");
     let pen = heard_near(&left, Sheet::Signature, signed, 14_400);
+    println!("the signature cued {signed:?}: {pen:?}");
     assert!(
         pen.1 > 0.12 && pen.1 > 8.0 * pen.2,
         "the signature: {pen:?}"

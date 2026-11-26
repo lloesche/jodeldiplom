@@ -81,12 +81,15 @@ Refactors, roughly in the order they unblock each other.
   thread.
 - **A shared numeric base:** the tensors crate plus one DSP leaf (the
   FFTs, windows, WAV) instead of copies.
-- **Deterministic tests** on a simulated clock, real-device tests opt in,
-  a nightly GPU run (`shader_check`, `frame_cost` budgets) on the owner's
-  machine. First among them `tests/sfx.rs`'s
-  `the_result_is_heard_after_the_song`: it renders in real time and its
-  paper rustle reads 0.79 against a bar of 0.8 when the machine is busy
-  (failed three times under parallel builds, passes alone).
+- **A nightly GPU run** (`shader_check`, `frame_cost` budgets) on the
+  owner's machine.
+- **The rest of the tests on the wall clock** onto the test's time
+  (`SimClock::Manual`, `AppClock::stepped`): the sync's measured delay
+  (`player/tests/sync.rs`, a microphone in real time too), the transition
+  and stem mutes through the whole player (`app.rs`, `desk.rs`), the
+  mixer's own tests in real time (`output/tests/mixer.rs`, `lanes.rs`,
+  `link.rs`). A seek's flush first: it waits for the device to take what
+  is mixed, which a device on the test's time does only as the test moves.
 - **Docs:** an ARCHITECTURE.md with a glossary, the tier, effects and
   sound plans moved into `docs/`, macOS window behaviour written down.
 

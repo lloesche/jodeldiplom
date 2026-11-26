@@ -176,17 +176,19 @@ fn a_late_note_starts_at_once_or_is_dropped_and_a_seek_calls_off_what_waits() {
 /// (a little after the frame mixed now) is heard on the device kept open.
 #[test]
 fn a_note_on_the_desks_frames_sounds_after_the_song() {
-    let _guard = real_time();
-    let (mixer, device) = mixer();
+    // In real time on the test's time: the note is sent ahead of the frame
+    // mixed next, however busy the machine.
+    let (mixer, device) = manual_mixer();
     let strip = mixer.strip("Effects");
     let effects = mixer.effects(&strip);
     let (synth, patch) = tone_synth(RATE, 0.05);
     let latency = synth.latency() as u64;
     effects.live(synth);
     wait_until("open", || mixer.desk().master.stream.is_some());
+    device.tick(&mixer);
     let at = mixer.timebase().frame + 9_600;
     assert!(effects.commands(None).send(tone(patch, at, 1.0)));
-    wait_until("heard", || {
+    device.tick_until(&mixer, "heard", || {
         let right: Vec<i32> = both(&device, 0).iter().map(|f| f.1).collect();
         right
             .iter()

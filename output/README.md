@@ -44,7 +44,10 @@ is the system's.
   `close`.
 - `FileOutput` (the exact device bytes to a file, memory or any writer) and
   `NullOutput`, with a simulated clock (`SimClock::Instant`, `Manual`,
-  `Realtime`), for tests.
+  `Realtime`, `Paced`), for tests. A `Manual` device's time passes only as
+  the test lets it (`SimTime::advance`, from any thread, while a mixer
+  owns the output): a whole player plays on it period by period, however
+  busy the machine.
 - `Output::set_tap(Option<Box<dyn Tap>>)`: code the device thread shows
   every buffer it hands the device, after the ring's frames are copied out:
   the buffer unpacked to 24-bit values in a scratch of its own, with the
@@ -115,7 +118,7 @@ its `StreamInfo` carries the device's backend.
 - **One mix path**, a device period (10 ms) at a time, as fast as the
   device takes frames. A device that plays in real time
   (`StreamInfo::realtime`, set by each backend, and by `FileOutput` for
-  `SimClock::Realtime`) takes the next period as soon as it has room, all
+  `SimClock::Realtime` and `Manual`) takes the next period as soon as it has room, all
   along: silence where nothing plays (it is never paused), and an output
   short of frames is silence for the rest of it (its underrun).
   The mixer does not wait for a late output: its own ring (the player's
