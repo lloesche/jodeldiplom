@@ -436,6 +436,18 @@ fn main() {
                 sung_words(&mut k);
                 k
             }),
+            ("karaoke-game-off", {
+                // The same with the game and the notes off, the singing
+                // kept, the Delay row at hand.
+                let mut k = common::transition_state(120, 36);
+                k.side = Side::Karaoke;
+                sung_words(&mut k);
+                k.config.karaoke_game = false;
+                k.config.karaoke_notes = false;
+                k.config.karaoke_keep = true;
+                k.karaoke.focus = jodeldiplom::core::sliders::Slider::Delay;
+                k
+            }),
             ("karaoke-sync", {
                 // A sync under way: five clicks played, four answered.
                 use jodeldiplom::core::sync::Session;
@@ -527,6 +539,13 @@ fn main() {
             let size = Size::new(800.0, 560.0);
             shots.shot("transition-narrow", tab, size, 1.0);
             shots.shot("transition-narrow-hidpi", tab, size, 2.0);
+        }
+    }
+    // The Karaoke tab in a window half as wide, its lyrics ready.
+    if let Some((_, lane)) = screens.iter().find(|(name, _)| *name == "karaoke-lane") {
+        if wanted("karaoke-narrow") {
+            shots.shot("karaoke-narrow", lane, Size::new(640.0, 800.0), 1.0);
+            shots.shot("karaoke-narrow-hidpi", lane, Size::new(756.0, 982.0), 2.0);
         }
     }
     // The Mixer tab in the narrowest usual window, 80 columns, and in a

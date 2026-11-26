@@ -1,21 +1,25 @@
-//! The sync on the Karaoke tab ([`crate::core::sync`]): its row (the
-//! button, and where the delay in force comes from), and its panel while
-//! one shows: what to do, the clicks as dots lighting up as they play (in
-//! the accent colour once answered), how many were heard, and at the end
-//! the delay measured, with its buttons.
+//! The sync on the Karaoke tab ([`crate::core::sync`]) as the window
+//! shows it: where the delay in force comes from ([`source_text`], said on
+//! the tab's sync row), the keys while a sync shows ([`keys`]), and its
+//! panel over the tab ([`Panel`]): what to do, the clicks as dots lighting
+//! up as they play (in the accent once answered), how many were heard,
+//! and at the end the delay measured (or why there is none), with its
+//! buttons.
 
-use ratatui::buffer::Buffer;
-use ratatui::layout::Rect;
-use ratatui::style::{Modifier, Style};
-use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Clear, Paragraph, Widget};
+use std::fmt;
 
-use super::colors::*;
-use super::keep_start;
+use crate::core::keymap::Op;
 use crate::core::sync::{Outcome, CLICKS};
 use crate::core::text::signed_ms;
 use crate::core::State;
-use crate::view::layout::{KaraokeTabLayout, SLIDER_LABEL};
+use crate::view::karaoke::Hint;
+
+/// The panel's title.
+pub const TITLE: &str = "Sync: how late your voice comes";
+/// What to do.
+pub const SAY: &str = "Say “ta” (or clap) with each click.";
+/// Why.
+pub const HEARS: &str = "The microphone hears you: this is the delay the scoring sees.";
 
 /// Where the delay in force comes from as the tab says it, with the
 /// singing's correction and the nudge on it where there are: `from your
@@ -35,143 +39,150 @@ pub fn source_text(state: &State) -> String {
     format!("{}{corrected}{nudged}", lag.source.name())
 }
 
-/// The keys while a sync shows, for the pane's bottom border: keep only
-/// once there is a delay to keep, again once it has ended.
-pub fn footer(state: &State) -> &'static str {
+/// The keys while a sync shows, for the pane's foot: keep only once there
+/// is a delay to keep, again once it has ended.
+pub fn keys(state: &State) -> Vec<Hint> {
     match state.karaoke.sync.as_ref().and_then(|s| s.outcome.as_ref()) {
-        None => "say “ta” with each click · esc cancel",
-        Some(Outcome::Measured(_)) => "enter keep · r again · esc cancel",
-        Some(_) => "r again · esc cancel",
+        None => vec![
+            Hint::new("", "say “ta” with each click"),
+            Hint::new("esc", "cancel"),
+        ],
+        Some(Outcome::Measured(_)) => vec![
+            Hint::new("enter", "keep"),
+            Hint::new("r", "again"),
+            Hint::new("esc", "cancel"),
+        ],
+        Some(_) => vec![Hint::new("r", "again"), Hint::new("esc", "cancel")],
     }
 }
 
-/// The sync's row: its name and key, its button, where the delay comes
-/// from.
-pub fn row(buf: &mut Buffer, state: &State, layout: &KaraokeTabLayout) {
-    let r = layout.sync;
-    if r.width == 0 {
-        return;
-    }
-    buf.set_string(r.x, r.y, "Sync  (s)", Style::new().fg(TEXT));
-    let button = r.x + SLIDER_LABEL;
-    let lit = Style::new().fg(BG).bg(ACCENT).add_modifier(Modifier::BOLD);
-    buf.set_string(
-        button,
-        r.y,
-        keep_start(" sync ", usize::from(r.right().saturating_sub(button))),
-        lit,
-    );
-    let at = r.right() + 2;
-    let room = usize::from(layout.title.right().saturating_sub(at));
-    if room > 4 {
-        buf.set_string(
-            at,
-            r.y,
-            keep_start(&source_text(state), room),
-            Style::new().fg(DIM),
-        );
+/// A click, as its dot shows it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Dot {
+    /// Still to play.
+    Coming,
+    /// Played, no answer heard.
+    Played,
+    /// Played and answered.
+    Answered,
+}
+
+/// How a sync ended, as the panel says it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Said {
+    /// The delay measured, in ms.
+    Measured(i32),
+    /// Too few answers agreed: again?
+    TooFew(String),
+    /// The clicks stopped.
+    Failed(String),
+}
+
+/// A button of the panel.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PanelButton {
+    /// What it says.
+    pub label: &'static str,
+    /// Its key.
+    pub key: &'static str,
+    /// What it does.
+    pub op: Op,
+    /// The one to take (keep).
+    pub primary: bool,
+}
+
+impl PanelButton {
+    /// The id it is found by in the window.
+    pub fn id(&self) -> &'static str {
+        match self.op {
+            Op::SyncKeep => "sync-keep",
+            Op::SyncAgain => "sync-again",
+            _ => "sync-cancel",
+        }
     }
 }
 
-/// The sync's panel in `area`, over the tab, and its `buttons`.
-pub fn panel(
-    buf: &mut Buffer,
-    state: &State,
-    area: Rect,
-    buttons: &[(Rect, crate::core::keymap::Op)],
-) {
-    let Some(session) = &state.karaoke.sync else {
-        return;
-    };
-    if area.width < 20 || area.height < 5 {
-        return;
-    }
-    Clear.render(area, buf);
-    let block = Block::bordered()
-        .border_type(BorderType::Rounded)
-        .border_style(Style::new().fg(ACCENT))
-        .style(Style::new().bg(BG))
-        .title(Span::styled(
-            " Sync: how late your voice comes ",
-            Style::new().fg(ACCENT).add_modifier(Modifier::BOLD),
-        ));
-    let inner = block.inner(area);
-    block.render(area, buf);
-    let text = Style::new().fg(TEXT);
-    let dim = Style::new().fg(DIM);
-    let mut lines = vec![
-        Line::default(),
-        Line::from(Span::styled(
-            " Say “ta” (or clap) with each click.",
-            text.add_modifier(Modifier::BOLD),
-        )),
-        Line::from(Span::styled(
-            " The microphone hears you: this is the delay the scoring sees.",
-            dim,
-        )),
-        Line::default(),
-    ];
-    // The clicks: played, answered.
-    let mut dots = vec![Span::raw("  ")];
-    for k in 0..CLICKS {
-        let (symbol, style) = if k >= session.played {
-            ("○", dim)
-        } else if session.answers.get(k).copied().flatten().is_some() {
-            ("●", Style::new().fg(ACCENT).add_modifier(Modifier::BOLD))
-        } else {
-            ("●", text)
-        };
-        dots.push(Span::styled(format!("{symbol}  "), style));
-    }
-    dots.push(Span::styled(
-        format!("  {} of {} heard", session.heard(), session.played),
-        dim,
-    ));
-    lines.push(Line::from(dots));
-    lines.push(Line::default());
-    lines.push(match &session.outcome {
-        None => Line::default(),
-        Some(Outcome::Measured(d)) => Line::from(vec![
-            Span::styled(" Your delay: ", text),
-            Span::styled(
-                format!("{} ms", (d * 1000.0).round() as i32),
-                Style::new().fg(ACCENT).add_modifier(Modifier::BOLD),
-            ),
-        ]),
-        Some(Outcome::TooFew(n)) => Line::from(Span::styled(
-            format!(" Didn't hear enough ({n} of {CLICKS} together): again?"),
-            Style::new().fg(WARN),
-        )),
-        Some(Outcome::Failed(why)) => Line::from(Span::styled(
-            format!(" The clicks stopped: {why}"),
-            Style::new().fg(FAIL),
-        )),
-    });
-    let w = usize::from(inner.width);
-    let lines: Vec<Line> = lines
-        .into_iter()
-        .map(|l| {
-            if l.width() > w {
-                let s: String = l.spans.iter().map(|s| s.content.as_ref()).collect();
-                Line::from(Span::styled(keep_start(&s, w), l.spans[0].style))
-            } else {
-                l
-            }
-        })
-        .collect();
-    Paragraph::new(lines).render(inner, buf);
-    // The buttons: keep lit, the others plain.
-    for &(rect, op) in buttons {
-        let label = session
+/// The sync's panel as it is now.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Panel {
+    /// The clicks.
+    pub dots: Vec<Dot>,
+    /// How many were answered, of those played: `2 of 3 heard`.
+    pub heard: String,
+    /// How it ended, once it has.
+    pub said: Option<Said>,
+    /// Its buttons: keep, again, cancel, as the sync stands.
+    pub buttons: Vec<PanelButton>,
+}
+
+impl Panel {
+    /// The panel, while a sync shows.
+    pub fn of(state: &State) -> Option<Panel> {
+        let session = state.karaoke.sync.as_ref()?;
+        let dots = (0..CLICKS)
+            .map(|k| {
+                if k >= session.played {
+                    Dot::Coming
+                } else if session.answers.get(k).copied().flatten().is_some() {
+                    Dot::Answered
+                } else {
+                    Dot::Played
+                }
+            })
+            .collect();
+        let said = session.outcome.as_ref().map(|o| match o {
+            Outcome::Measured(d) => Said::Measured((d * 1000.0).round() as i32),
+            Outcome::TooFew(n) => Said::TooFew(format!(
+                "Didn't hear enough ({n} of {CLICKS} together): again?"
+            )),
+            Outcome::Failed(why) => Said::Failed(format!("The clicks stopped: {why}")),
+        });
+        let buttons = session
             .buttons()
             .into_iter()
-            .find(|b| b.1 == op)
-            .map_or("", |b| b.0);
-        let style = if op == crate::core::keymap::Op::SyncKeep {
-            Style::new().fg(BG).bg(ACCENT).add_modifier(Modifier::BOLD)
-        } else {
-            Style::new().fg(TEXT).bg(BUTTON)
-        };
-        buf.set_string(rect.x, rect.y, format!(" {label} "), style);
+            .map(|(label, key, op)| PanelButton {
+                label,
+                key,
+                op,
+                primary: op == Op::SyncKeep,
+            })
+            .collect();
+        Some(Panel {
+            dots,
+            heard: format!("{} of {} heard", session.heard(), session.played),
+            said,
+            buttons,
+        })
+    }
+}
+
+/// An outline of the panel, one line a piece with its tone in brackets:
+/// for the snapshots.
+impl fmt::Display for Panel {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        writeln!(f, "[panel] {TITLE}")?;
+        writeln!(f, "[bold] {SAY}")?;
+        writeln!(f, "[dim] {HEARS}")?;
+        let dots: String = self
+            .dots
+            .iter()
+            .map(|d| match d {
+                Dot::Coming => '○',
+                Dot::Played => '●',
+                Dot::Answered => '◉',
+            })
+            .collect();
+        writeln!(f, "[dots] {dots}  [dim] {}", self.heard)?;
+        match &self.said {
+            None => {}
+            Some(Said::Measured(ms)) => writeln!(f, "[accent] Your delay: {ms} ms")?,
+            Some(Said::TooFew(text)) => writeln!(f, "[warn] {text}")?,
+            Some(Said::Failed(text)) => writeln!(f, "[fail] {text}")?,
+        }
+        for b in &self.buttons {
+            let kind = if b.primary { "primary" } else { "button" };
+            writeln!(f, "[{kind}] {} ({})", b.label, b.key)?;
+        }
+        Ok(())
     }
 }

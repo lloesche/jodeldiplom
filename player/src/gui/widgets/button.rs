@@ -190,14 +190,16 @@ impl<'a, Message> Button<'a, Message> {
     }
 }
 
-/// The key's cap after a label: small, in the button's own tone.
-fn keycap<'a, Message: 'a>(key: &'a str, kind: Kind) -> Element<'a, Message> {
-    let (fill, ink) = match kind {
-        Kind::Primary => (
+/// The key's cap after a label: small, in the button's own tone (on the
+/// accent's fill, or lit in a tone, in its ink).
+fn keycap<'a, Message: 'a>(key: &'a str, kind: Kind, lit: bool) -> Element<'a, Message> {
+    let (fill, ink) = if lit || kind == Kind::Primary {
+        (
             look::alpha(look::ACCENT_INK, 0.12),
             look::alpha(look::ACCENT_INK, 0.75),
-        ),
-        _ => (look::alpha(look::BG, 0.7), look::TEXT_DIM),
+        )
+    } else {
+        (look::alpha(look::BG, 0.7), look::TEXT_DIM)
     };
     super::panel::keycap(key, fill, ink)
 }
@@ -244,7 +246,7 @@ impl<'a, Message: Clone + 'a> From<Button<'a, Message>> for Element<'a, Message>
             });
         }
         if let Some(key) = key {
-            parts = parts.push(keycap(key, kind));
+            parts = parts.push(keycap(key, kind, lit.is_some()));
         }
         let (width, padding) = match kind {
             Kind::Icon | Kind::Round => (Length::Fixed(height::CONTROL), 0.0),

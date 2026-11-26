@@ -5,12 +5,13 @@
 //! mode's picture) go through [`Pictures`]: the window leaves their cells
 //! empty and paints pixels there after the frame is drawn.
 //!
-//! Each part of the screen has its widgets: the box of a tab of its own
-//! (Karaoke, the Mixer's place). They are laid out on a grid of cells
+//! Each part of the screen has its widgets: the box of the Mixer's place,
+//! the Karaoke tab's pictures. They are laid out on a grid of cells
 //! ([`layout`]), with text measured in cells ([`cells`]), and take the
 //! mouse there ([`mouse`]). The window draws the rest from their models,
 //! over the cells left to it: the list pane with its tabs ([`list`]), the
-//! Transition tab ([`transition`]), the right column's text under the
+//! Transition tab ([`transition`]), the Karaoke tab beside its pictures
+//! ([`karaoke`], its sync's panel [`sync`]), the right column's text under the
 //! cover or the summary under the list ([`info`]), the command palette
 //! over everything ([`command_palette`]) and the bottom bar ([`bottom`],
 //! the spectrum's [`plot`]); and whole screens: Now playing
@@ -63,9 +64,6 @@ mod colors {
     pub const DIM: Color = cell(palette::DIM);
     pub const TEXT: Color = cell(palette::TEXT);
     pub const BORDER: Color = cell(palette::BORDER);
-    pub const BUTTON: Color = cell(palette::BUTTON);
-    pub const WARN: Color = cell(palette::WARN);
-    pub const FAIL: Color = cell(palette::FAIL);
     pub const TRACK: Color = cell(palette::TRACK);
 }
 
@@ -141,17 +139,24 @@ pub fn draw(frame: &mut Frame, scene: &Scene, pictures: &mut dyn Pictures) {
 /// The Mixer tab's bottom border: its keys.
 const DESK_FOOTER: &str = "← → strip · ↑ ↓ fader · home 0 dB · m mute · s solo · e echo";
 
-/// A tab of its own (Karaoke, the Mixer) in its box (the window draws the
-/// tabs over its top border, and the Mixer's desk inside it), its keys in
-/// its bottom border; nothing for the browser, the queue and the
-/// Transition tab, which the window draws whole.
+/// The Mixer tab's box (the window draws the tabs over its top border,
+/// and its desk inside it), its keys in its bottom border; the Karaoke
+/// tab's pictures alone (the window draws the rest of it); nothing for the
+/// browser, the queue and the Transition tab, which the window draws
+/// whole.
 fn draw_tab(frame: &mut Frame, scene: &Scene, m: &layout::MainLayout, pictures: &mut dyn Pictures) {
     use crate::core::Side;
     let state = scene.state;
     let footer: String = match state.side {
-        Side::Karaoke if state.karaoke.sync.is_some() => sync::footer(state).into(),
-        Side::Karaoke => "enter Karaoke mode · ↑ ↓ row · ← → its value · s sync".into(),
         Side::Mixer => DESK_FOOTER.into(),
+        // The window draws the Karaoke tab in its own widgets, beside its
+        // pictures.
+        Side::Karaoke => {
+            if let Some(layout) = &m.karaoke {
+                karaoke::tab_pictures(frame, scene, layout, pictures);
+            }
+            return;
+        }
         // The window draws the browser, the queue and the Transition tab
         // whole.
         Side::Browser | Side::Queue | Side::Transition => return,
@@ -160,17 +165,9 @@ fn draw_tab(frame: &mut Frame, scene: &Scene, m: &layout::MainLayout, pictures: 
         format!(" {footer} "),
         Style::new().fg(DIM),
     )));
+    // The window draws the desk in iced's widgets over its rows
+    // ([`crate::gui::mixer`]).
     frame.render_widget(block, m.list);
-    match state.side {
-        Side::Karaoke => {
-            if let Some(layout) = &m.karaoke {
-                karaoke::draw_tab(frame, scene, layout, pictures);
-            }
-        }
-        // The window draws the desk in iced's widgets over its rows
-        // ([`crate::gui::mixer`]).
-        Side::Mixer | Side::Browser | Side::Queue | Side::Transition => {}
-    }
 }
 
 fn bordered(title: Line<'static>) -> Block<'static> {
@@ -198,16 +195,6 @@ fn keep_start(text: &str, max: usize) -> String {
     }
     out.push('…');
     out
-}
-
-/// A level as `n` blocks, `share` of them lit (▮) in `on`, the rest
-/// unlit (▯): the microphone's meter, a ring's fill, the device's volume.
-pub(crate) fn blocks(share: f64, n: usize, on: ratatui::style::Color) -> [Span<'static>; 2] {
-    let lit = ((share.clamp(0.0, 1.0) * n as f64).round() as usize).min(n);
-    [
-        Span::styled("▮".repeat(lit), Style::new().fg(on)),
-        Span::styled("▯".repeat(n - lit), Style::new().fg(TRACK)),
-    ]
 }
 
 /// The pictures' cells as the window leaves them, without painting them:

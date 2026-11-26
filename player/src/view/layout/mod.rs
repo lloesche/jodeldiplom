@@ -32,7 +32,7 @@ mod track;
 
 pub use karaoke::{
     controls_bar, controls_share, KaraokeControls, KaraokeLayout, KaraokeTabLayout, SliderLayout,
-    CONTROLS_ROWS, KARAOKE_ENTER, SLIDER_LABEL, SWITCH, SYNC_BUTTON,
+    CONTROLS_ROWS,
 };
 pub use track::Track;
 
@@ -287,10 +287,7 @@ fn main_wide(state: &State, area: Rect) -> MainLayout {
         cover: None,
         info: None,
         mini: None,
-        karaoke: karaoke.then(|| KaraokeTabLayout {
-            voice,
-            ..karaoke::tab(inner, state.karaoke.sync.as_ref())
-        }),
+        karaoke: karaoke.then(|| karaoke::tab(inner, voice)),
         bottom,
     }
 }
@@ -372,18 +369,6 @@ fn main_list(grid: Grid) -> MainLayout {
     }
 }
 
-/// The largest square (in cells of twice the height of their width)
-/// centred in `area`.
-fn square_in(area: Rect) -> Rect {
-    let width = area.width.min(area.height.saturating_mul(2));
-    let height = area.height.min(width.div_ceil(2));
-    Rect::new(
-        area.x + (area.width - width) / 2,
-        area.y + (area.height - height) / 2,
-        width,
-        height,
-    )
-}
 #[cfg(test)]
 mod tests {
     use super::*;

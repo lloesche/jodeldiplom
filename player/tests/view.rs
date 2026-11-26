@@ -3,9 +3,9 @@
 //! outlines of what the window draws from its models after them: the
 //! list pane's (its tabs, the browser's or the queue's rows) and the right
 //! column's text (or the summary under the list) on the main screen, the
-//! Transition tab's while it shows, the command palette's while it is
-//! open, and the bottom bar's where the screen has one; compared with the
-//! snapshots in
+//! Transition tab's and the Karaoke tab's while they show, the command
+//! palette's while it is open, and the bottom bar's where the screen has
+//! one; compared with the snapshots in
 //! `tests/snapshots/` (set `UPDATE_SNAPSHOTS=1` to rewrite them after an
 //! intended change). The spectrum's model in points: its labels and where
 //! a tone peaks.
@@ -96,6 +96,9 @@ fn draw_heard(state: &State, grid: Grid, heard: f64) -> String {
         }
         if state.side == Side::Transition {
             text.push_str(&view::transition::Tab::of(state, heard).to_string());
+        }
+        if m.karaoke.is_some() {
+            text.push_str(&view::karaoke::Tab::of(state).to_string());
         }
     }
     if let Some(palette) = Palette::of(state, 8) {
@@ -678,7 +681,7 @@ fn the_sync_panel_shows_the_clicks_and_the_delay_measured() {
     let text = draw(&state, Grid::new(120, 40));
     has(
         &text,
-        &["Delay", "150 ms", "Sync  (s)", " sync ", "default"],
+        &["Delay", "150 ms", "Sync", "Measure (s)", "default"],
     );
     // Three clicks played, the first and third answered.
     let mut session = Session::new(("out".into(), "headset".into()));
@@ -693,11 +696,11 @@ fn the_sync_panel_shows_the_clicks_and_the_delay_measured() {
             "Sync: how late your voice comes",
             "Say “ta” (or clap) with each click.",
             "2 of 3 heard",
-            " cancel (esc) ",
+            "[button] Cancel (esc)",
             "say “ta” with each click · esc cancel",
         ],
     );
-    assert!(!text.contains("keep"), "nothing to keep yet");
+    assert!(!text.contains("Keep (enter)"), "nothing to keep yet");
     snapshot("karaoke_sync", &text);
     // Every click answered: the delay measured.
     let session = state.karaoke.sync.as_mut().unwrap();
@@ -710,8 +713,8 @@ fn the_sync_panel_shows_the_clicks_and_the_delay_measured() {
         &[
             "8 of 8 heard",
             "Your delay: 152 ms",
-            " keep (enter) ",
-            " again (r) ",
+            "[primary] Keep (enter)",
+            "[button] Again (r)",
             "enter keep · r again · esc cancel",
         ],
     );

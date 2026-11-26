@@ -57,6 +57,9 @@ pub enum Message {
     Pointer(Pointer),
     /// A widget's action for the core.
     Act(Action),
+    /// A widget's command for the core, and the one it is with shift held
+    /// (Enter Karaoke Mode: in where the song is).
+    OpShifted(keymap::Op, keymap::Op),
     /// A widget's press at a point holds the pointer until its button is
     /// let go of (the seek bar's, a queue row's).
     Grab(Grab, Point),
@@ -66,7 +69,8 @@ pub enum Message {
     /// list, the bottom bar).
     Wheel(ScrollDelta),
     /// The wheel over `on`: each whole step up does the first action, each
-    /// down the second (the Transition tab's lanes zoom in or out).
+    /// down the second (the Transition tab's lanes zoom in or out, a Karaoke
+    /// slider steps).
     Steps(WheelOn, ScrollDelta, Box<(Action, Action)>),
     /// The window's last frame, for `--save-frame`.
     Shot(window::Screenshot),
@@ -299,6 +303,11 @@ impl Gui {
                 self.act(action);
                 Task::none()
             }
+            Message::OpShifted(plain, shifted) => {
+                let shift = self.modifiers.shift();
+                self.act(Action::Op(if shift { shifted } else { plain }));
+                Task::none()
+            }
             Message::Grab(grab, at) => {
                 if let Phase::Running(app) = &mut self.phase {
                     self.paint.dirty |= self.pointer.grab(app, grab, at);
@@ -361,7 +370,6 @@ impl Gui {
     }
 
     fn pointer(&mut self, pointer: Pointer) -> Task<Message> {
-        let shift = self.modifiers.shift();
         match &mut self.phase {
             Phase::Running(app) => {
                 let grid = self.embed.grid();
@@ -369,9 +377,9 @@ impl Gui {
                     PointerKind::Wheel(delta) => {
                         let line = self.embed.cell().1;
                         let steps = self.wheel.turn(WheelOn::Canvas, delta, line);
-                        steps != 0 && self.pointer.scroll(app, grid, pointer, steps, shift)
+                        steps != 0 && self.pointer.scroll(app, grid, pointer, steps)
                     }
-                    _ => self.pointer.take(app, grid, pointer, shift),
+                    _ => self.pointer.take(app, grid, pointer),
                 };
                 self.paint.dirty |= dirty;
             }
@@ -432,10 +440,9 @@ impl Gui {
                 if let Some(action) = desk {
                     self.act(Action::Desk(action));
                 }
-                let shift = self.modifiers.shift();
                 if let Phase::Running(app) = &mut self.phase {
                     let grid = self.embed.grid();
-                    self.paint.dirty |= self.pointer.up(app, grid, button, shift);
+                    self.paint.dirty |= self.pointer.up(app, grid, button);
                 }
             }
             iced::Event::Keyboard(keyboard::Event::ModifiersChanged(modifiers)) => {

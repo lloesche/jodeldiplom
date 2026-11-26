@@ -19,6 +19,7 @@ use crate::app::App;
 use crate::core::desk::Channel;
 use crate::core::keymap::Op;
 use crate::core::lanes::{self, Block};
+use crate::core::sliders::Slider;
 use crate::core::transition::viewport;
 use crate::core::{Action, State};
 use crate::view::layout::Grid;
@@ -63,13 +64,19 @@ pub enum Grab {
         /// Over the whole track.
         overview: bool,
     },
+    /// A slider of the Karaoke tab, its track: set to the share across it
+    /// under the pointer, as pressed and as it moves (landing on its
+    /// finest step, [`crate::core::sliders::Slider::unit`]).
+    Slider(Slider, Rectangle),
 }
 
 impl Grab {
     /// The button that holds it.
     fn button(self) -> MouseButton {
         match self {
-            Grab::Seek(_) | Grab::QueueRow { .. } | Grab::Lanes { .. } => MouseButton::Left,
+            Grab::Seek(_) | Grab::QueueRow { .. } | Grab::Lanes { .. } | Grab::Slider(..) => {
+                MouseButton::Left
+            }
             Grab::Pan { .. } => MouseButton::Right,
         }
     }
@@ -78,7 +85,7 @@ impl Grab {
     /// row itself).
     fn pressed(self, at: Point, state: &State) -> Option<Action> {
         match self {
-            Grab::Seek(_) => self.moved(at, state),
+            Grab::Seek(_) | Grab::Slider(..) => self.moved(at, state),
             Grab::QueueRow { .. } => None,
             Grab::Lanes { block, bounds } => Some(Action::TransitionPoint {
                 block,
@@ -122,6 +129,10 @@ impl Grab {
                 })
             }
             Grab::Pan { .. } => Some(Action::TransitionPan(at.x)),
+            Grab::Slider(slider, track) => Some(Action::KaraokeSlide {
+                slider,
+                share: share_across(track, at),
+            }),
         }
     }
 
@@ -132,6 +143,7 @@ impl Grab {
             Grab::QueueRow { .. } => Some(Action::QueueDragEnd),
             Grab::Lanes { .. } => None,
             Grab::Pan { .. } => Some(Action::TransitionPanEnd),
+            Grab::Slider(..) => Some(Action::KaraokeSlideEnd),
         }
     }
 
@@ -143,6 +155,7 @@ impl Grab {
             Grab::QueueRow { .. } => state.queue.dragging,
             Grab::Lanes { block, .. } => lanes::rhythmed(state, block).is_some(),
             Grab::Pan { .. } => state.transition.pan.is_some(),
+            Grab::Slider(..) => state.karaoke.dragging.is_some(),
         }
     }
 }
@@ -261,10 +274,9 @@ impl PointerState {
         true
     }
 
-    /// The pointer moved, or went down over the canvas laid out on `grid`
-    /// (`shift` held: the shifted action); whether the frame is to be
-    /// drawn again.
-    pub fn take(&mut self, app: &mut App, grid: Grid, pointer: Pointer, shift: bool) -> bool {
+    /// The pointer moved, or went down over the canvas laid out on `grid`;
+    /// whether the frame is to be drawn again.
+    pub fn take(&mut self, app: &mut App, grid: Grid, pointer: Pointer) -> bool {
         let cell = pointer.cell(grid);
         let x = pointer.x.min(f64::from(grid.cols));
         self.on = pointer.on;
@@ -274,29 +286,29 @@ impl PointerState {
                 self.x = x;
                 let out = !pointer.over && self.over;
                 self.over = pointer.over;
-                let mut dirty = out && self.mouse(app, grid, MouseKind::Out, shift);
+                let mut dirty = out && self.mouse(app, grid, MouseKind::Out);
                 // A Karaoke slider held follows the pointer within a cell.
                 let sliding =
                     self.held == Some(MouseButton::Left) && app.state.karaoke.dragging.is_some();
                 let karaoke = pointer.over && crate::core::karaoke::in_mode(&app.state);
                 if cell == self.cell {
                     if moved && sliding {
-                        dirty |= self.mouse(app, grid, MouseKind::Drag(MouseButton::Left), shift);
+                        dirty |= self.mouse(app, grid, MouseKind::Drag(MouseButton::Left));
                     } else if karaoke && self.held.is_none() {
                         // Karaoke mode's pointer shows again for a move
                         // within a cell too; nothing on the canvas changes.
-                        self.mouse(app, grid, MouseKind::Moved, shift);
+                        self.mouse(app, grid, MouseKind::Moved);
                     }
                     return dirty;
                 }
                 self.cell = cell;
                 if let Some(button) = self.held {
                     // A held button drags wherever the pointer is.
-                    dirty |= self.mouse(app, grid, MouseKind::Drag(button), shift);
+                    dirty |= self.mouse(app, grid, MouseKind::Drag(button));
                 } else if karaoke {
                     // Karaoke mode shows its pointer, and its controls near
                     // the bottom, while it moves.
-                    dirty |= self.mouse(app, grid, MouseKind::Moved, shift);
+                    dirty |= self.mouse(app, grid, MouseKind::Moved);
                 }
                 dirty
             }
@@ -305,7 +317,7 @@ impl PointerState {
             PointerKind::Down(button) => {
                 (self.cell, self.x) = (cell, x);
                 self.held = Some(button);
-                self.mouse(app, grid, MouseKind::Down(button), shift)
+                self.mouse(app, grid, MouseKind::Down(button))
             }
             // The window turns the wheel into steps ([`PointerState::scroll`]).
             PointerKind::Wheel(_) => false,
@@ -315,7 +327,7 @@ impl PointerState {
     /// A button let go of, wherever the pointer is: the grab's lands
     /// where the pointer was last seen; the canvas's goes to it; any other
     /// is dropped.
-    pub fn up(&mut self, app: &mut App, grid: Grid, button: MouseButton, shift: bool) -> bool {
+    pub fn up(&mut self, app: &mut App, grid: Grid, button: MouseButton) -> bool {
         match self.grab {
             Some((grab, at)) if grab.button() == button => {
                 self.grab = None;
@@ -325,7 +337,7 @@ impl PointerState {
                 true
             }
             Some(_) => false,
-            None => self.release(button) && self.mouse(app, grid, MouseKind::Up(button), shift),
+            None => self.release(button) && self.mouse(app, grid, MouseKind::Up(button)),
         }
     }
 
@@ -339,14 +351,7 @@ impl PointerState {
     }
 
     /// The wheel `steps` whole lines up (negative: down) at `pointer`.
-    pub fn scroll(
-        &mut self,
-        app: &mut App,
-        grid: Grid,
-        pointer: Pointer,
-        steps: i32,
-        shift: bool,
-    ) -> bool {
+    pub fn scroll(&mut self, app: &mut App, grid: Grid, pointer: Pointer, steps: i32) -> bool {
         (self.cell, self.x) = (pointer.cell(grid), pointer.x);
         self.on = pointer.on;
         let kind = if steps > 0 {
@@ -354,21 +359,18 @@ impl PointerState {
         } else {
             MouseKind::ScrollDown
         };
-        (0..steps.unsigned_abs()).fold(false, |dirty, _| self.mouse(app, grid, kind, shift) | dirty)
+        (0..steps.unsigned_abs()).fold(false, |dirty, _| self.mouse(app, grid, kind) | dirty)
     }
 
     /// What `kind` at the pointer does, carried out (the clock first);
     /// whether it did anything.
-    fn mouse(&self, app: &mut App, grid: Grid, kind: MouseKind, shift: bool) -> bool {
+    fn mouse(&self, app: &mut App, grid: Grid, kind: MouseKind) -> bool {
         let input = MouseInput {
             kind,
             col: self.cell.0,
             row: self.cell.1,
         };
-        let mut action = mouse::action_at(&app.state, grid, input, self.x, self.on);
-        if shift {
-            action = action.map(mouse::shifted);
-        }
+        let action = mouse::action_at(&app.state, grid, input, self.x, self.on);
         let Some(action) = action else {
             return false;
         };
@@ -394,6 +396,8 @@ pub enum WheelOn {
     /// A Transition block's lanes, or its whole track (`true`): zoomed or
     /// scrolled, a step a line.
     Lanes(Block, bool),
+    /// A slider of the Karaoke tab: a step of its own a line.
+    Slider(Slider),
 }
 
 /// The wheel's turn not yet a whole step, for what it turns (a touchpad's

@@ -3,8 +3,8 @@
 //! [`Action`]s. The window reports the pointer in cells (and within its
 //! cell, [`action_at`]). The bottom bar, the list pane with its tabs, the
 //! right column's text under the cover (or the summary under the list),
-//! the Transition tab and the command palette are the window's own: their
-//! cells take no clicks here.
+//! the Transition and Karaoke tabs and the command palette are the
+//! window's own: their cells take no clicks here.
 
 use ratatui::layout::{Position, Rect};
 
@@ -64,7 +64,7 @@ pub enum Target {
     Bar,
     /// A button.
     Button(Op),
-    /// A Karaoke slider's row.
+    /// A slider's row of Karaoke mode's controls.
     KaraokeSlider(Slider),
 }
 
@@ -84,19 +84,6 @@ pub fn regions(state: &State, grid: Grid) -> Vec<(Rect, Target)> {
         Layout::Main(m) => {
             if let Some(cover) = m.cover {
                 out.push((cover, Target::Cover));
-            }
-            if let (Some(k), None) = (&m.karaoke, &state.palette) {
-                for &(rect, op) in &k.panel_buttons {
-                    out.push((rect, Target::Button(op)));
-                }
-                out.push((k.enter, Target::Button(Op::KaraokeEnter)));
-                for s in &k.sliders {
-                    out.push((s.row, Target::KaraokeSlider(s.slider)));
-                }
-                out.push((k.game, Target::Button(Op::KaraokeGame)));
-                out.push((k.show_notes, Target::Button(Op::KaraokeNotes)));
-                out.push((k.keep, Target::Button(Op::KaraokeKeep)));
-                out.push((k.sync, Target::Button(Op::KaraokeSync)));
             }
         }
         // The window's own widgets take the pointer there.
@@ -135,15 +122,15 @@ fn bar_fraction(state: &State, grid: Grid, col: u16) -> Option<f64> {
     Some(f64::from(x) / f64::from(bar.width - 1))
 }
 
-/// The share of `slider`'s range with the pointer at `x` cells from the
-/// left edge. The middle of the track's first cell is 0 and of its last
-/// cell 1, where the knob is drawn for those shares.
+/// The share of `slider`'s range in Karaoke mode's controls with the
+/// pointer at `x` cells from the left edge. The middle of the track's
+/// first cell is 0 and of its last cell 1, where the knob is drawn for
+/// those shares.
 fn slider_share(state: &State, grid: Grid, slider: Slider, x: f64) -> Option<f64> {
-    let sliders = match layout::compute(state, grid) {
-        Layout::Main(m) => m.karaoke?.sliders,
-        Layout::Karaoke(k) => k.controls?.sliders,
-        _ => return None,
+    let Layout::Karaoke(k) = layout::compute(state, grid) else {
+        return None;
     };
+    let sliders = k.controls?.sliders;
     let track = sliders.into_iter().find(|s| s.slider == slider)?.track;
     layout::Track::columns(track).share_at(x)
 }
@@ -191,15 +178,6 @@ pub fn action_at(
             _ => None,
         };
     }
-    // While a sync shows, only its panel's buttons take a click.
-    if state.karaoke.sync.is_some() {
-        return match (input.kind, hit(state, grid, input.col, input.row)) {
-            (Down(Left), Some(Target::Button(op @ (Op::SyncKeep | Op::SyncAgain | Op::Back)))) => {
-                Some(Action::Op(op))
-            }
-            _ => None,
-        };
-    }
     // Moving over Karaoke mode (a button held or not) shows the pointer,
     // and over its bottom its controls; off the window they go.
     if karaoke::in_mode(state) {
@@ -241,15 +219,6 @@ pub fn scrolled(state: &State, up: bool) -> Option<Action> {
         Screen::Help => Some(Action::HelpScroll(step)),
         Screen::Main if state.palette.is_none() => Some(Action::Scroll(step)),
         _ => None,
-    }
-}
-
-/// What a click does with shift held: a few buttons have a second meaning
-/// (Enter Karaoke Mode: enter where the song is); the rest are the same.
-pub fn shifted(action: Action) -> Action {
-    match action {
-        Action::Op(Op::KaraokeEnter) => Action::Op(Op::KaraokeEnterHere),
-        action => action,
     }
 }
 

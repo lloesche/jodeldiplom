@@ -24,8 +24,9 @@ use jodel_output::SimClock;
 use jodeldiplom::app::{App, AppOptions, Output};
 use jodeldiplom::core::keymap::Op;
 use jodeldiplom::core::lanes::Block;
-use jodeldiplom::core::{update, Action, Effect, Gpu, Screen, Side, State};
-use jodeldiplom::gui::pointer::{Grab, PointerKind};
+use jodeldiplom::core::sliders::Slider;
+use jodeldiplom::core::{lag, update, Action, Effect, Gpu, Screen, Side, State};
+use jodeldiplom::gui::pointer::{Grab, PointerKind, WheelOn};
 use jodeldiplom::gui::window::{Gui, Message};
 use jodeldiplom::view::setup::Choice;
 use setup_web::{start, when, Made, Web};
@@ -1207,4 +1208,212 @@ fn lanes_analysis(state: &State, block: Block) -> jodel_rhythm::Analysis {
         .unwrap()
         .analysis)
         .clone()
+}
+
+/// Where `slider`'s track is on the Karaoke tab.
+fn track(gui: &Gui, slider: Slider) -> iced::Rectangle {
+    let id = jodeldiplom::view::karaoke::track_id(slider);
+    simulator(gui).find(Id::new(id)).unwrap().bounds()
+}
+
+/// `messages` taken by the window.
+fn send(gui: &mut Gui, messages: Vec<Message>) {
+    for message in messages {
+        let _ = gui.update(message);
+    }
+}
+
+/// A Karaoke slider's track takes a press (the slider there, held); the
+/// pointer then moves it from anywhere in the window, and the release
+/// lets go of it. The wheel over its row steps it. The button into the
+/// mode is enter (with shift held, in where the song is); the switches
+/// and the sync's button are their keys.
+#[test]
+fn the_sliders_and_buttons_take_clicks() {
+    let _gpu = gpu();
+    let mut gui = window(common::karaoke_tab());
+    let voice = track(&gui, Slider::Voice);
+    // Pressed at the track's right end: the most, held.
+    let at = Point::new(voice.x + voice.width - 0.5, voice.center_y());
+    let pressed = press_at(&mut gui, at, mouse::Button::Left);
+    assert!(
+        matches!(pressed[..], [Message::Grab(Grab::Slider(Slider::Voice, b), _)] if b == voice),
+        "{pressed:?}"
+    );
+    assert_eq!(shown(&gui).config.karaoke_voice, 100);
+    assert_eq!(shown(&gui).karaoke.dragging, Some(Slider::Voice));
+    // Moved far left of the track, over another row: the least.
+    moved_to(&mut gui, Point::new(4.0, 300.0));
+    assert_eq!(shown(&gui).config.karaoke_voice, 0);
+    let_go(&mut gui, mouse::Button::Left);
+    assert_eq!(shown(&gui).karaoke.dragging, None);
+    assert_eq!(shown(&gui).karaoke.focus, Slider::Voice);
+
+    // The wheel over the delay's row, off its track: a step a notch (its
+    // nudge's, 10 ms), no drag; the arrow keys move it next.
+    let delay = track(&gui, Slider::Delay);
+    let mut sim = simulator(&gui);
+    sim.point_at(Point::new(delay.x - 20.0, delay.center_y()));
+    sim.scroll(ScrollDelta::Lines { x: 0.0, y: 1.0 });
+    let wheeled: Vec<Message> = sim.into_messages().collect();
+    assert!(
+        matches!(
+            wheeled[..],
+            [Message::Steps(WheelOn::Slider(Slider::Delay), _, _)]
+        ),
+        "{wheeled:?}"
+    );
+    send(&mut gui, wheeled);
+    assert_eq!(Slider::Delay.value(shown(&gui)), 160);
+    assert_eq!(shown(&gui).karaoke.focus, Slider::Delay);
+    assert_eq!(shown(&gui).karaoke.dragging, None);
+
+    // The button into the mode: enter, or with shift in where the song is.
+    let enter = click(&gui, "Enter Karaoke Mode").unwrap();
+    assert!(
+        matches!(
+            enter[..],
+            [Message::OpShifted(Op::KaraokeEnter, Op::KaraokeEnterHere)]
+        ),
+        "{enter:?}"
+    );
+    let mut shifted = window(common::karaoke_tab());
+    hear(
+        &mut shifted,
+        iced::Event::Keyboard(iced::keyboard::Event::ModifiersChanged(
+            iced::keyboard::Modifiers::SHIFT,
+        )),
+    );
+    send(&mut shifted, enter.clone());
+    assert_eq!(shown(&shifted).screen, Screen::Karaoke);
+    assert_eq!(shown(&shifted).karaoke.held, None, "in where the song is");
+    send(&mut gui, enter);
+    assert!(shown(&gui).karaoke.held.is_some(), "in at the song's start");
+
+    // The switches and the sync's button.
+    let gui = window(common::karaoke_tab());
+    for (label, wanted) in [
+        ("Game", Op::KaraokeGame),
+        ("Notes", Op::KaraokeNotes),
+        ("Keep", Op::KaraokeKeep),
+        ("Measure", Op::KaraokeSync),
+    ] {
+        let done = acts(&click(&gui, label).unwrap());
+        assert!(
+            matches!(done[..], [Action::Op(o)] if o == wanted),
+            "{label}: {done:?}"
+        );
+    }
+}
+
+/// K4: a press or a drag on a Karaoke slider lands on a whole percent of
+/// its travel (the delay on its steps of 10 ms), whatever the pixel:
+/// across the delay's track pixel by pixel every value comes by, from 0
+/// to the most its nudge reaches; across the voice's, every whole percent.
+#[test]
+fn a_slider_under_the_pointer_lands_on_whole_percents() {
+    let _gpu = gpu();
+    let mut gui = window(common::karaoke_tab());
+    for (slider, most, step) in [(Slider::Delay, 550, 10), (Slider::Voice, 100, 1)] {
+        let t = track(&gui, slider);
+        let mut seen = std::collections::BTreeSet::new();
+        let at = |x: f32| Point::new(x, t.center_y());
+        send(
+            &mut gui,
+            vec![Message::Grab(Grab::Slider(slider, t), at(t.x))],
+        );
+        for px in 0..=(t.width as i32) {
+            moved_to(&mut gui, at(t.x + px as f32));
+            seen.insert(slider.value(shown(&gui)));
+        }
+        let_go(&mut gui, mouse::Button::Left);
+        assert_eq!(seen.first(), Some(&0), "{slider:?}");
+        assert_eq!(seen.last(), Some(&most), "{slider:?}");
+        assert!(seen.iter().all(|v| v % step == 0), "{slider:?}: {seen:?}");
+        if slider == Slider::Voice {
+            assert_eq!(seen, (0..=100).collect(), "every whole percent");
+        }
+        // A quarter of the way: a quarter of its range, on a step.
+        send(
+            &mut gui,
+            vec![Message::Grab(
+                Grab::Slider(slider, t),
+                at(t.x + t.width / 4.0),
+            )],
+        );
+        let_go(&mut gui, mouse::Button::Left);
+        let span = slider.most() - slider.least();
+        let quarter = slider.least() + (span / 4 / slider.unit()) * slider.unit();
+        assert!(
+            (slider.value(shown(&gui)) - quarter).abs() <= slider.unit(),
+            "{slider:?}"
+        );
+    }
+    // A quarter of the delay's range, 150 ms here, is no nudge.
+    assert_eq!(Slider::Delay.value(shown(&gui)), 150);
+    let t = track(&gui, Slider::Delay);
+    send(
+        &mut gui,
+        vec![Message::Grab(
+            Grab::Slider(Slider::Delay, t),
+            Point::new(t.x + t.width / 4.0, t.center_y()),
+        )],
+    );
+    let_go(&mut gui, mouse::Button::Left);
+    assert_eq!(Slider::Delay.value(shown(&gui)), 150);
+    assert_eq!(lag::nudge_ms(shown(&gui)), 0);
+}
+
+/// K18: while a sync shows, only its panel's buttons take a press:
+/// cancel at once, keep and again once it has a result. Nothing under it
+/// does, the tab's switches, its tabs and the bottom bar too.
+#[test]
+fn the_panels_buttons_take_clicks_and_nothing_else_does() {
+    use jodeldiplom::core::sync::{outcome, Session, CLICKS};
+    let _gpu = gpu();
+    let mut state = common::karaoke_tab();
+    state.karaoke.mic.name = Some("Headset".into());
+    lag::set_pair(&mut state, "out", "headset");
+    state.karaoke.sync = Some(Session::new(("out".into(), "headset".into())));
+    let gui = window(state.clone());
+    let has = |gui: &Gui, id: &'static str| simulator(gui).find(Id::new(id)).is_ok();
+    assert!(has(&gui, "sync-cancel"));
+    assert!(!has(&gui, "sync-keep") && !has(&gui, "sync-again"));
+    let done = acts(&click(&gui, Id::new("sync-cancel")).unwrap());
+    assert!(matches!(done[..], [Action::Op(Op::Back)]), "{done:?}");
+    // The Keep switch under the panel's shade takes none.
+    assert!(click(&gui, "Keep").unwrap().is_empty());
+    // Elsewhere: a slider's track, the tabs, the bar's buttons.
+    for at in [
+        Point::new(700.0, 200.0),
+        Point::new(40.0, 8.0),
+        Point::new(SIZE.width - 60.0, SIZE.height - 20.0),
+        Point::new(SIZE.width / 2.0, SIZE.height - 20.0),
+    ] {
+        let mut sim = simulator(&gui);
+        sim.point_at(at);
+        sim.simulate(iced_test::simulator::click());
+        let pressed: Vec<Message> = sim.into_messages().collect();
+        assert!(pressed.is_empty(), "a press at {at:?}: {pressed:?}");
+    }
+
+    // Every click answered: the delay measured, kept by a press.
+    let mut session = Session::new(("out".into(), "headset".into()));
+    session.played = CLICKS;
+    session.answers = vec![Some(0.14); CLICKS];
+    session.outcome = Some(outcome(&session.answers));
+    state.karaoke.sync = Some(session);
+    let mut gui = window(state);
+    for id in ["sync-keep", "sync-again", "sync-cancel"] {
+        assert!(has(&gui, id), "{id}");
+    }
+    let keep = click(&gui, Id::new("sync-keep")).unwrap();
+    assert!(
+        matches!(acts(&keep)[..], [Action::Op(Op::SyncKeep)]),
+        "{keep:?}"
+    );
+    assert!(shown(&gui).karaoke.sync.is_some());
+    send(&mut gui, keep);
+    // Kept (for the pair the sync measured: `sync.rs`), the panel gone.
+    assert!(shown(&gui).karaoke.sync.is_none());
 }

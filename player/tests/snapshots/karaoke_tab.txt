@@ -1,30 +1,30 @@
-╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│                                                                                                                      │
-│ ╭─────────────────────────────────────╮   Morning Light                                                              │
-│ │                                     │   The Ramps                                                                  │
-│ │                                     │                                                                              │
-│ │                                     │   ╭───────────────────────╮                                                  │
-│ │                                     │   │ ▶  Enter Karaoke Mode │                                                  │
-│ │                                     │   ╰───────────────────────╯                                                  │
-│ │                                     │                                                                              │
-│ │                                     │   Voice       ●───────────────────────────────────────   −∞ dB               │
-│ │                                     │   Delay       ━━━━━━━━━━●─────────────────────────────  150 ms               │
-│ │                                     │   Sync  (s)    sync   default                                                │
-│ │                  ♪                  │   Key         ━━━━━━━━━━━━━━━━━━━━●───────────────────       0               │
-│ │                                     │   Game  (g)    on    your singing scored line by line against the original   │
-│ │                                     │   Notes (p)    on    the song's notes run by in the mode, for you to sing on │
-│ │                                     │   Keep         off   your singing is not saved                               │
-│ │                                     │                                                                              │
-│ │                                     │   Lyrics  Morning Light: found, words timed (ctc:test)                       │
-│ │                                     │     next  Undertow: found, words timed (ctc:test)                            │
-│ │                                     │     next  Glass Rooms:                                                       │
-│ │                                     │                                                                              │
-│ ╰─────────────────────────────────────╯   Mic     ⠋ opening…                                                         │
-│                                           Words   not timed: the speech model is not in this build (make puts it the │
-│                                                                                                                      │
-│                                           Here and in the mode the voice plays at its level, the rest as it is.      │
-│                                           Each song waits for START, then counts in 3, 2, 1, a second each; again af │
-╰ enter Karaoke mode · ↑ ↓ row · ← → its value · s sync ───────────────────────────────────────────────────────────────╯
+
+  ╭──────────────╮
+  │              │
+  │              │
+  │              │
+  │       ♪      │
+  │              │
+  │              │
+  │              │
+  ╰──────────────╯
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -40,6 +40,27 @@
 
 [tabs] Browser │ Queue (5) │ Transition │ Karaoke │ Mixer
 [shown] Karaoke
+[title] Morning Light
+[dim] The Ramps
+[primary] Enter Karaoke Mode (enter)
+[slider focused] Voice 0 % −∞ dB
+[slider] Delay 25 % 150 ms
+[row] Sync  [button] Measure (s)  [dim] default
+[slider] Key 50 % 0
+[switch on] Game (g): your singing scored line by line against the original
+[switch on] Notes (p): the song's notes run by in the mode, for you to sing on
+[switch off] Keep: your singing is not saved
+[lyrics playing] Morning Light: found, words timed (ctc:test)
+[lyrics] Undertow: found, words timed (ctc:test)
+[lyrics] Glass Rooms
+[mic] opening…
+[words] not timed: the speech model is not in this build (make puts it there)
+[note] Here and in the mode the voice plays at its level, the rest as it is.
+[note] Each song waits for START, then counts in 3, 2, 1, a second each; again after a break of 8 s.
+[note] The microphone only listens: it is never played; the music stays as it is.
+[note] The music's echo is taken out of what it hears; your voice never is.
+[note] esc in the mode comes back here.
+[keys] enter Karaoke mode · ↑ ↓ row · ← → its value · s sync
 [time] 1:23
 [seek] 34 %
 [time] 4:05

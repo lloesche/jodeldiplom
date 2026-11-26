@@ -4,8 +4,8 @@
 //! browser's or the queue's side a panel under them: where the browser
 //! is (or which track of the queue plays), the rows in view, a note where
 //! there is nothing to list, and the filter line at its foot. On a tab of
-//! its own (Transition, Karaoke, the Mixer) only the tabs: the box under
-//! them is the old canvas's.
+//! its own (Transition, Karaoke, the Mixer) only the tabs: what is under
+//! them is the old canvas's, or the Karaoke tab's ([`super::karaoke`]).
 //!
 //! The rows are the core's page: only those in view are made, at a
 //! fixed height, from the first in view; how many fit is what the window
@@ -135,8 +135,8 @@ pub fn view<'a>(state: &State, place: Room) -> Element<'a, Message> {
 }
 
 /// The panel under the tabs, its edges through the middle of the border
-/// cells.
-fn ground<'a>(place: Room) -> Element<'a, Message> {
+/// cells (the Karaoke tab's too).
+pub(super) fn ground<'a>(place: Room) -> Element<'a, Message> {
     let (cw, ch) = place.cell;
     container(
         container(Space::new().width(Fill).height(Fill))
@@ -183,7 +183,7 @@ fn line<'a>(
 }
 
 /// The spinner's turn now, from the clock the frame is drawn at.
-fn turn(state: &State) -> f32 {
+pub(super) fn turn(state: &State) -> f32 {
     let ms = state.drawn_ms.unwrap_or(state.now_ms);
     (ms % 1000) as f32 / 1000.0
 }

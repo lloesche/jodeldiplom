@@ -107,7 +107,7 @@ pub fn draw_mode(
     draw_seek(frame, &Seek::of(state), (c.elapsed, c.seek, c.total));
     let buf = frame.buffer_mut();
     for s in &c.sliders {
-        slider(buf, state, s, true);
+        slider(buf, state, s);
     }
     let hint = "esc leaves  ·  ↑ ↓ slider  ·  ← → level  ·  enter / space START  ·  N next song  ·  hold p demo";
     let max = usize::from(c.hint.width);

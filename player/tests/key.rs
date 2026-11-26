@@ -8,15 +8,15 @@ mod common;
 
 use std::sync::Arc;
 
+use iced::{Point, Rectangle, Size};
 use jodel_playback::{Command, Event};
 use jodeldiplom::core::desk::{Channel, StripKind};
 use jodeldiplom::core::keymap::{self, Key, KeyCode, Meaning, Op};
 use jodeldiplom::core::sliders::Slider;
 use jodeldiplom::core::{update, Action, Effect, Side, State};
 use jodeldiplom::gui::mixer::said;
-use jodeldiplom::view::layout::{self, Grid, Layout};
-use jodeldiplom::view::mouse::{self, MouseButton, MouseInput, MouseKind};
-use jodeldiplom::view::{self, CellPictures, Scene};
+use jodeldiplom::gui::pointer::Grab;
+use jodeldiplom::view::karaoke::{Control, Tab};
 
 fn op(state: &mut State, op: Op) -> Vec<Effect> {
     update(state, Action::Op(op))
@@ -40,23 +40,6 @@ fn meant(state: &State, c: char) -> Option<Op> {
     }
 }
 
-/// The window of [`common::transition_state`]`(120, 40)`.
-const GRID: Grid = Grid::new(120, 40);
-
-fn draw(state: &State) -> String {
-    let backend = ratatui::backend::TestBackend::new(GRID.cols, GRID.rows);
-    let mut terminal = ratatui::Terminal::new(backend).unwrap();
-    let scene = Scene {
-        state,
-        grid: GRID,
-        heard: 0.0,
-    };
-    terminal
-        .draw(|frame| view::draw(frame, &scene, &mut CellPictures))
-        .unwrap();
-    view::buffer_text(terminal.backend().buffer())
-}
-
 /// On the Karaoke tab `-` `+` `0` move the key a semitone or put the
 /// song's own back, within ±6: shown on the tab's Key slider at once and
 /// sent; the engine's word is what stays.
@@ -74,7 +57,11 @@ fn the_keys_change_the_key_on_the_karaoke_tab_and_show_it() {
     assert_eq!(keys_sent(&fx), [2]);
     assert_eq!(state.playing.key, 2);
     assert_eq!(Slider::Key.text(&state).trim(), "+2");
-    assert!(draw(&state).contains("Key"), "the Key slider shows");
+    let shown = Tab::of(&state).to_string();
+    assert!(
+        shown.contains("[slider] Key 67 % +2"),
+        "the Key slider shows: {shown}"
+    );
     // Never past ±6: up there it says so and sends nothing.
     for _ in 0..6 {
         op(&mut state, Op::KeyUp);
@@ -107,24 +94,28 @@ fn the_key_slider_is_a_row_of_the_tab() {
     assert_eq!(keys_sent(&fx), [0]);
     op(&mut state, Op::Up);
     assert_eq!(state.karaoke.focus, Slider::Delay);
-    let Layout::Main(main) = layout::compute(&state, GRID) else {
-        panic!("the main screen");
-    };
-    let tab = main.karaoke.expect("the Karaoke tab's layout");
-    let rows: Vec<(Slider, u16)> = tab.sliders.iter().map(|s| (s.slider, s.row.y)).collect();
-    assert_eq!(rows.len(), 3);
-    let (voice, key) = (rows[0].1, rows[2].1);
-    assert_eq!((rows[2].0, key), (Slider::Key, voice + 3), "{rows:?}");
+    // Its row: the last, after the voice, the delay and the sync's.
+    let rows: Vec<Option<Slider>> = Tab::of(&state)
+        .controls
+        .iter()
+        .map(|c| match c {
+            Control::Slider(s) => Some(s.slider),
+            Control::Sync(_) => None,
+        })
+        .collect();
+    assert_eq!(
+        rows,
+        [
+            Some(Slider::Voice),
+            Some(Slider::Delay),
+            None,
+            Some(Slider::Key)
+        ]
+    );
     // A press at its track's right end: +6.
-    let key = tab.sliders[2];
-    let press = MouseInput {
-        kind: MouseKind::Down(MouseButton::Left),
-        col: key.track.x,
-        row: key.track.y,
-    };
-    let right = f64::from(key.track.x + key.track.width);
-    let action = mouse::action_at(&state, GRID, press, right, None);
-    let fx = update(&mut state, action.expect("an action"));
+    let track = Rectangle::new(Point::new(400.0, 200.0), Size::new(300.0, 16.0));
+    let press = Grab::Slider(Slider::Key, track).moved(Point::new(700.0, 208.0), &state);
+    let fx = update(&mut state, press.expect("an action"));
     assert_eq!(keys_sent(&fx), [6]);
     update(&mut state, Action::KaraokeSlideEnd);
 }

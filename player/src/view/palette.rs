@@ -15,8 +15,6 @@ pub const TEXT: [u8; 3] = [222, 222, 228];
 pub const BORDER: [u8; 3] = [64, 64, 74];
 /// The selected row.
 pub const SELECTED: [u8; 3] = [46, 46, 58];
-/// Buttons.
-pub const BUTTON: [u8; 3] = [38, 38, 47];
 /// Good news (done, chosen).
 pub const GREEN: [u8; 3] = [46, 204, 113];
 /// Warnings.

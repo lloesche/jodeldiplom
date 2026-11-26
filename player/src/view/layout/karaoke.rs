@@ -1,15 +1,12 @@
-//! The Karaoke tab's layout in cells (its cover, title, button into the
-//! mode, sliders, switches and the sync's panel) and Karaoke mode's (the
-//! whole screen, and its controls' bar while they show).
+//! The Karaoke tab's layout in cells (where its cover and the voice's
+//! lane go) and Karaoke mode's (the whole screen, and its controls' bar
+//! while they show).
 
 use ratatui::layout::Rect;
 
-use super::square_in;
 use crate::core::karaoke;
-use crate::core::keymap::Op;
 use crate::core::sliders::Slider;
 use crate::core::State;
-use crate::view::cells::width;
 
 /// A Karaoke slider's cells.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -24,33 +21,13 @@ pub struct SliderLayout {
     pub value: Rect,
 }
 
-/// The Karaoke tab.
+/// The Karaoke tab: where its pictures go (the window draws the rest of
+/// it in its own widgets over the pane, beside the cover).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct KaraokeTabLayout {
-    /// The playing track's cover.
+    /// The playing track's cover, at the pane's left: drawn at its top
+    /// left, half a cell down.
     pub cover: Rect,
-    /// The title and artist, right of it.
-    pub title: Rect,
-    /// The button into Karaoke mode.
-    pub enter: Rect,
-    /// The sliders.
-    pub sliders: Vec<SliderLayout>,
-    /// The game on or off: its row, a click turns it.
-    pub game: Rect,
-    /// The notes shown or hidden: its row.
-    pub show_notes: Rect,
-    /// The singing kept or not: its row.
-    pub keep: Rect,
-    /// The sync's row: its button (a click starts one), then the delay in
-    /// force.
-    pub sync: Rect,
-    /// The sync's panel over the tab, while one shows.
-    pub panel: Option<Rect>,
-    /// Its buttons (keep, again, cancel, as the sync stands), and what
-    /// each does.
-    pub panel_buttons: Vec<(Rect, Op)>,
-    /// What karaoke will do, below.
-    pub notes: Rect,
     /// The voice's lane with the words on it, under the pane (where the
     /// other tabs have the spectrum).
     pub voice: Option<Rect>,
@@ -99,19 +76,10 @@ pub fn controls_share(screen: Rect) -> f32 {
     f32::from(controls_bar(screen).height) / f32::from(screen.height.max(1))
 }
 
-/// The label of the button into Karaoke mode.
-pub const KARAOKE_ENTER: &str = "▶  Enter Karaoke Mode";
 /// A slider's label column, in cells.
-pub const SLIDER_LABEL: u16 = 12;
-/// How wide a switch on the Karaoke tab is (" on " or " off ").
-pub const SWITCH: u16 = 5;
+const SLIDER_LABEL: u16 = 12;
 /// A slider's value column (`100 %`, `−200 ms`), in cells.
 const SLIDER_VALUE: u16 = 7;
-/// How wide the sync's button is (` sync `).
-pub const SYNC_BUTTON: u16 = 6;
-/// The sync's panel's height: over the button into the mode and every
-/// row of settings.
-const PANEL: u16 = 12;
 /// The longest a slider's track gets, in cells.
 const SLIDER_MOST: u16 = 40;
 
@@ -130,78 +98,30 @@ fn slider_at(slider: Slider, x: u16, y: u16, width: u16) -> SliderLayout {
     }
 }
 
-/// The Karaoke tab inside the list pane's border: the cover at the left,
-/// the title, the button into the mode, the sliders and the sync's row
-/// right of it, notes below; while a sync shows (`session`), its panel
-/// over the button and the rows.
-pub(super) fn tab(inner: Rect, session: Option<&crate::core::sync::Session>) -> KaraokeTabLayout {
-    // The cover as tall as the pane allows, a third of its width at most.
-    let side = Rect::new(
-        inner.x + 1,
-        inner.y + 1,
-        (inner.width / 3).min(inner.height.saturating_sub(2).saturating_mul(2)),
-        inner.height.saturating_sub(2),
-    );
-    let cover = square_in(side);
-    let cover = Rect { y: side.y, ..cover };
-    let x = if cover.width > 0 {
-        cover.right() + 3
+/// The fewest columns the tab's text takes beside a large cover: in a
+/// narrower pane the cover is small, the text under it.
+const BESIDE: u16 = 80;
+/// A small cover's width, in cells.
+const SMALL: u16 = 16;
+
+/// The Karaoke tab inside the list pane's border (`inner`), the voice's
+/// lane under the pane in `voice`: the cover at the left, a third of the
+/// pane wide at most, as tall as the pane allows with a row left at its
+/// foot; in a pane too narrow for the text beside that, a small one.
+pub(super) fn tab(inner: Rect, voice: Option<Rect>) -> KaraokeTabLayout {
+    let tall = inner.height.saturating_sub(2);
+    let large = (inner.width / 3).min(tall.saturating_mul(2));
+    let (width, height) = if inner.width.saturating_sub(large + 4) >= BESIDE {
+        (large, tall)
     } else {
-        inner.x + 2
+        let width = SMALL.min(large);
+        (width, (width / 2 + 1).min(tall))
     };
-    let room = inner.right().saturating_sub(x + 1);
-    let row = |k: u16| (inner.y + 1 + k).min(inner.bottom().saturating_sub(1));
-    let title = Rect::new(x, row(0), room, 2.min(inner.height));
-    let enter_w = (width(KARAOKE_ENTER) as u16 + 4).min(room);
-    let enter = Rect::new(x, row(3), enter_w, 3.min(inner.height.saturating_sub(4)));
-    // A row each from the seventh, the sync's row right after the delay's.
-    let (mut at, mut sync_row, mut sliders) = (7, 0, Vec::new());
-    for &s in &Slider::ALL {
-        sliders.push(slider_at(s, x, row(at), room));
-        at += 1;
-        if s == Slider::Delay {
-            (sync_row, at) = (at, at + 1);
-        }
-    }
-    let sync = Rect::new(x, row(sync_row), (SLIDER_LABEL + SYNC_BUTTON).min(room), 1);
-    // Over the button into the mode and the rows below it.
-    let panel =
-        session.map(|_| Rect::new(x, row(3), room, PANEL.min(inner.height.saturating_sub(4))));
-    // The panel's buttons, side by side on its eighth row inside.
-    let mut panel_buttons = Vec::new();
-    if let (Some(p), Some(session)) = (panel, session) {
-        let mut at = p.x + 2;
-        for (label, op) in session.buttons() {
-            let w = width(label) as u16 + 2;
-            let r = Rect::new(at, p.y + 8, w, 1);
-            if r.right() < p.right() && r.y < p.bottom().saturating_sub(1) {
-                panel_buttons.push((r, op));
-            }
-            at += w + 2;
-        }
-    }
-    // The game's settings, a switch a row.
-    let game = Rect::new(x, row(11), (SLIDER_LABEL + SWITCH).min(room), 1);
-    let show_notes = Rect::new(x, row(12), (SLIDER_LABEL + SWITCH).min(room), 1);
-    let keep = Rect::new(x, row(13), (SLIDER_LABEL + SWITCH).min(room), 1);
-    let notes_y = row(15);
-    let notes = Rect::new(x, notes_y, room, inner.bottom().saturating_sub(notes_y));
     KaraokeTabLayout {
-        cover,
-        title,
-        enter,
-        sliders,
-        game,
-        show_notes,
-        keep,
-        sync,
-        panel,
-        panel_buttons,
-        notes,
-        voice: None,
+        cover: Rect::new(inner.x + 1, inner.y, width, height),
+        voice,
     }
 }
-
 /// Karaoke mode: the whole screen, and the controls' bar over its bottom
 /// while they show (the sliders, the seek bar and the keys; START is the
 /// stage's pill, above the bar). The game's settings are not here but on

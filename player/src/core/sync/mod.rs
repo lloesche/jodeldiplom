@@ -89,17 +89,18 @@ impl Session {
         self.answers.iter().flatten().count()
     }
 
-    /// The panel's buttons now: keep once a delay is measured, again once
-    /// it has ended, cancel always.
-    pub fn buttons(&self) -> Vec<(&'static str, Op)> {
+    /// The panel's buttons now, each its label, its key and what it does:
+    /// keep once a delay is measured, again once it has ended, cancel
+    /// always.
+    pub fn buttons(&self) -> Vec<(&'static str, &'static str, Op)> {
         let mut out = Vec::new();
         if matches!(self.outcome, Some(Outcome::Measured(_))) {
-            out.push(("keep (enter)", Op::SyncKeep));
+            out.push(("Keep", "enter", Op::SyncKeep));
         }
         if self.outcome.is_some() {
-            out.push(("again (r)", Op::SyncAgain));
+            out.push(("Again", "r", Op::SyncAgain));
         }
-        out.push(("cancel (esc)", Op::Back));
+        out.push(("Cancel", "esc", Op::Back));
         out
     }
 }

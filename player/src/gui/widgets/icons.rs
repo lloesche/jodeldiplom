@@ -68,13 +68,15 @@ pub enum Icon {
     Lyrics,
     /// A track's cover.
     Cover,
+    /// The microphone.
+    Mic,
     /// Work under way: an arc that turns ([`Glyph::turn`]).
     Busy,
 }
 
 impl Icon {
     /// Every icon, for the look sheet.
-    pub const ALL: [Icon; 26] = [
+    pub const ALL: [Icon; 27] = [
         Icon::Check,
         Icon::Cross,
         Icon::Retry,
@@ -100,6 +102,7 @@ impl Icon {
         Icon::Tempo,
         Icon::Lyrics,
         Icon::Cover,
+        Icon::Mic,
         Icon::Busy,
     ];
 
@@ -131,6 +134,7 @@ impl Icon {
             Icon::Tempo => "tempo",
             Icon::Lyrics => "lyrics",
             Icon::Cover => "cover",
+            Icon::Mic => "mic",
             Icon::Busy => "busy",
         }
     }
@@ -452,6 +456,23 @@ fn paint(frame: &mut Frame, icon: Icon, size: f32, color: Color, turn: f32) {
                 ]),
                 stroke,
             );
+        }
+        Icon::Mic => {
+            // A capsule on a stand, a cradle round its lower half.
+            frame.stroke(&bar(9.0, 3.0, 6.0, 11.5, 3.0), stroke);
+            frame.stroke(
+                &Path::new(|b| {
+                    b.arc(path::Arc {
+                        center: p(12.0, 11.0),
+                        radius: 6.0 * k,
+                        start_angle: iced::Radians(0.0),
+                        end_angle: iced::Radians(std::f32::consts::PI),
+                    });
+                }),
+                stroke,
+            );
+            frame.stroke(&lines(&[(12.0, 17.0), (12.0, 20.5)]), stroke);
+            frame.stroke(&lines(&[(8.5, 20.5), (15.5, 20.5)]), stroke);
         }
         Icon::Busy => {
             let start = turn * std::f32::consts::TAU - std::f32::consts::FRAC_PI_2;

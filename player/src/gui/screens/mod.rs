@@ -3,23 +3,24 @@
 //! ([`setup`]), Now playing ([`now`]), and the settings ([`settings`])
 //! and the keys ([`help`]) over the bottom bar ([`native`]), the command
 //! palette over them. Every other screen is the old canvas filling the
-//! window ([`super::embed`]), the covers over it where it left their
-//! cells ([`super::widgets::cover`], not taking the pointer), the
-//! Transition tab ([`transition`]) or nothing, the lanes over all of it
+//! window ([`super::embed`]), the Karaoke tab over it ([`karaoke`]) or
+//! nothing, the covers over those where the canvas left their cells
+//! ([`super::widgets::cover`], not taking the pointer), the Transition
+//! tab ([`transition`]) or nothing, the lanes over all of it
 //! ([`super::lanes`], not taking the pointer), and slots over them: the
-//! Mixer tab
-//! ([`super::mixer`]) or nothing, the bottom bar ([`bottom`]) or nothing,
-//! the list pane with its tabs ([`list`]) or nothing, the right column's
-//! text under the cover or the summary under the list ([`right`]) or
-//! nothing, and the command palette over all of it, the lanes too
-//! ([`palette`]) or nothing; the same shape, so each widget keeps its
+//! Mixer tab ([`super::mixer`]) or nothing, the bottom bar ([`bottom`])
+//! or nothing, the list pane with its tabs ([`list`]) or nothing, the
+//! right column's text under the cover or the summary under the list
+//! ([`right`]) or nothing, the Karaoke tab's sync panel or nothing, and
+//! the command palette over all of it, the lanes too ([`palette`]) or
+//! nothing; the same shape, so each widget keeps its
 //! place in iced's tree (the tabs' pill slides from one side to the
 //! next). The pointer over the canvas hides where the core says
 //! ([`crate::core::karaoke::pointer::hidden`]); the view is built again
 //! after every message, so it shows again as soon as it moves or the mode
 //! ends.
 
-use iced::widget::{column, container, opaque, pin, space, stack};
+use iced::widget::{column, container, opaque, pin, space, stack, Stack};
 use iced::{Element, Fill, Point, Rectangle, Size, Widget as _};
 
 use super::embed::Embed;
@@ -30,10 +31,12 @@ use super::widgets::cover::Covers;
 use super::window::Message;
 use crate::core::{Screen, Side, State};
 use crate::spectrum::SpectrumFrame;
+use crate::view::karaoke::Tab;
 use crate::view::layout::{self, Layout, BAR_ROWS};
 
 pub mod bottom;
 pub mod help;
+pub mod karaoke;
 pub mod list;
 pub mod now;
 pub mod palette;
@@ -73,10 +76,14 @@ pub(super) fn view<'a>(
     let bar = state.and_then(|state| bar(state, embed, heard));
     let list = state.and_then(|state| list(state, embed));
     let right = state.and_then(|state| right(state, embed, covers));
+    let (karaoke, sync) = state
+        .and_then(|state| karaoke(state, embed))
+        .unwrap_or_default();
     let palette = state.and_then(palette::view);
     let transition = state.and_then(|state| transition(state, embed));
     stack![
         embed.view(hide_pointer),
+        karaoke.unwrap_or_else(|| space().boxed()),
         covers.view(),
         transition.unwrap_or_else(|| space().boxed()),
         lanes.view(),
@@ -84,9 +91,65 @@ pub(super) fn view<'a>(
         bar.unwrap_or_else(|| space().boxed()),
         list.unwrap_or_else(|| space().boxed()),
         right.unwrap_or_else(|| space().boxed()),
+        sync.unwrap_or_else(|| space().boxed()),
         palette.unwrap_or_else(|| space().boxed())
     ]
     .boxed()
+}
+
+/// The Karaoke tab's two slots: the tab, and the sync's panel.
+type KaraokeSlots<'a> = (Option<Element<'a, Message>>, Option<Element<'a, Message>>);
+
+/// On the Karaoke tab's side of the main screen: the tab over its place
+/// on the old canvas (the list pane; the covers and the lanes over it),
+/// with what the voice's lane says under the pane while it shows nothing;
+/// and the sync's panel over the window while one shows.
+fn karaoke<'a>(state: &State, embed: &Embed) -> Option<KaraokeSlots<'a>> {
+    if state.side != Side::Karaoke {
+        return None;
+    }
+    let Layout::Main(m) = layout::compute(state, embed.grid()) else {
+        return None;
+    };
+    let place = m.karaoke.as_ref()?;
+    let (cw, ch) = embed.cell();
+    let points = |r: ratatui::layout::Rect| {
+        Rectangle::new(
+            Point::new(f32::from(r.x) * cw, f32::from(r.y) * ch),
+            Size::new(f32::from(r.width) * cw, f32::from(r.height) * ch),
+        )
+    };
+    let pane = points(m.list);
+    // The cover at its place's top left, half a cell down, as square as
+    // the place allows.
+    let at = points(place.cover);
+    let side = at.width.min(at.height - ch / 2.0).max(0.0);
+    let cover = Rectangle::new(
+        Point::new(at.x - pane.x, at.y - pane.y + ch / 2.0),
+        Size::new(side, side),
+    );
+    let tab = Tab::of(state);
+    let room = karaoke::Room {
+        width: pane.width,
+        height: pane.height,
+        cell: (cw, ch),
+        cover,
+    };
+    let mut layers = vec![pin(opaque(karaoke::view(&tab, list::turn(state), room)))
+        .x(pane.x)
+        .y(pane.y)
+        .boxed()];
+    if let (Some(note), Some(voice)) = (tab.voice, place.voice) {
+        let voice = points(voice);
+        layers.push(
+            pin(karaoke::voice(note, voice.width, voice.height))
+                .x(voice.x)
+                .y(voice.y)
+                .boxed(),
+        );
+    }
+    let sync = tab.sync.as_ref().map(karaoke::sync);
+    Some((Some(Stack::with_children(layers).boxed()), sync))
 }
 
 /// The right column's text under the cover, its edges in line with the

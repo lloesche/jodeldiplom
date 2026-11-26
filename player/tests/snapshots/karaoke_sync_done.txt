@@ -1,30 +1,30 @@
-╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│                                                                                                                      │
-│ ╭─────────────────────────────────────╮   Morning Light                                                              │
-│ │                                     │   The Ramps                                                                  │
-│ │                                     │                                                                              │
-│ │                                     │   ╭ Sync: how late your voice comes ───────────────────────────────────────╮ │
-│ │                                     │   │                                                                        │ │
-│ │                                     │   │ Say “ta” (or clap) with each click.                                    │ │
-│ │                                     │   │ The microphone hears you: this is the delay the scoring sees.          │ │
-│ │                                     │   │                                                                        │ │
-│ │                                     │   │  ●  ●  ●  ●  ●  ●  ●  ●    8 of 8 heard                                │ │
-│ │                                     │   │                                                                        │ │
-│ │                  ♪                  │   │ Your delay: 152 ms                                                     │ │
-│ │                                     │   │  keep (enter)    again (r)    cancel (esc)                             │ │
-│ │                                     │   │                                                                        │ │
-│ │                                     │   │                                                                        │ │
-│ │                                     │   ╰────────────────────────────────────────────────────────────────────────╯ │
-│ │                                     │   Lyrics  Morning Light:                                                     │
-│ │                                     │     next  Undertow:                                                          │
-│ │                                     │     next  Glass Rooms:                                                       │
-│ │                                     │                                                                              │
-│ ╰─────────────────────────────────────╯   Mic     ▯▯▯▯▯▯▯▯▯▯▯▯  Headset  (i: the next one)                           │
-│                                           Echo    on, once music plays                                               │
-│                                           Words   not timed: the speech model is not in this build (make puts it the │
-│                                                                                                                      │
-│                                           Here and in the mode the voice plays at its level, the rest as it is.      │
-╰ enter keep · r again · esc cancel ───────────────────────────────────────────────────────────────────────────────────╯
+
+  ╭──────────────╮
+  │              │
+  │              │
+  │              │
+  │       ♪      │
+  │              │
+  │              │
+  │              │
+  ╰──────────────╯
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -40,6 +40,37 @@
 
 [tabs] Browser │ Queue (5) │ Transition │ Karaoke │ Mixer
 [shown] Karaoke
+[title] Morning Light
+[dim] The Ramps
+[greyed] Enter Karaoke Mode (enter)  [dim] still looking for its lyrics
+[slider focused] Voice 0 % −∞ dB
+[slider] Delay 25 % 150 ms
+[row] Sync  [button] Measure (s)  [dim] default
+[slider] Key 50 % 0
+[switch on] Game (g): your singing scored line by line against the original
+[switch on] Notes (p): the song's notes run by in the mode, for you to sing on
+[switch off] Keep: your singing is not saved
+[lyrics playing] Morning Light
+[lyrics] Undertow
+[lyrics] Glass Rooms
+[mic] Headset 0 %
+[key] i the next one
+[echo] on, once music plays
+[words] not timed: the speech model is not in this build (make puts it there)
+[note] Here and in the mode the voice plays at its level, the rest as it is.
+[note] Each song waits for START, then counts in 3, 2, 1, a second each; again after a break of 8 s.
+[note] The microphone only listens: it is never played; the music stays as it is.
+[note] The music's echo is taken out of what it hears; your voice never is.
+[note] esc in the mode comes back here.
+[keys] enter keep · r again · esc cancel
+[panel] Sync: how late your voice comes
+[bold] Say “ta” (or clap) with each click.
+[dim] The microphone hears you: this is the delay the scoring sees.
+[dots] ◉◉◉◉◉◉◉◉  [dim] 8 of 8 heard
+[accent] Your delay: 152 ms
+[primary] Keep (enter)
+[button] Again (r)
+[button] Cancel (esc)
 [time] 1:23
 [seek] 34 %
 [time] 4:05

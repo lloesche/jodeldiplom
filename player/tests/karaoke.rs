@@ -10,8 +10,9 @@ use jodeldiplom::core::desk::{taper, DeskChange, StripKind};
 use jodeldiplom::core::keymap::Op;
 use jodeldiplom::core::sliders::{self, Slider};
 use jodeldiplom::core::{karaoke, update, Action, Effect, Rhythm, Rhythmed, Screen, Side, State};
+use jodeldiplom::view::karaoke::Tab;
 use jodeldiplom::view::layout::{self, Grid, Layout};
-use jodeldiplom::view::mouse::{self, MouseButton, MouseInput, MouseKind, Target};
+use jodeldiplom::view::mouse::{self, MouseButton, MouseInput, MouseKind};
 
 /// The window of [`tab`] and [`common::transition_state`]`(120, 40)`.
 const GRID: Grid = Grid::new(120, 40);
@@ -450,10 +451,12 @@ fn shift_enter_goes_into_the_mode_where_the_song_is() {
         lookup(&state, Key::shift(KeyCode::Enter)),
         Some(Meaning::Op(Op::KaraokeEnterHere))
     );
-    assert!(matches!(
-        mouse::shifted(Action::Op(Op::KaraokeEnter)),
-        Action::Op(Op::KaraokeEnterHere)
-    ));
+    // The button's press with shift held is the same.
+    let enter = Tab::of(&state).enter;
+    assert_eq!(
+        (enter.op, enter.shifted),
+        (Op::KaraokeEnter, Op::KaraokeEnterHere)
+    );
     let fx = op(&mut state, Op::KaraokeEnterHere);
     assert_eq!(state.screen, Screen::Karaoke);
     assert!(!engine(&fx).iter().any(|c| matches!(
@@ -729,109 +732,6 @@ fn the_speech_model_is_found_where_the_build_put_it() {
     );
 }
 
-/// What `input` does with the pointer at `x` cells, done.
-#[track_caller]
-fn point(state: &mut State, input: MouseInput, x: f64) {
-    let action = mouse::action_at(state, GRID, input, x, None).expect("an action");
-    update(state, action);
-}
-
-#[test]
-fn a_slider_under_the_pointer_lands_on_whole_percents() {
-    let mut state = tab();
-    let Layout::Main(m) = layout::compute(&state, GRID) else {
-        panic!()
-    };
-    let sliders = m.karaoke.expect("the tab's layout").sliders;
-    // The delay in force (150 ms, the default), from 0 to 600 ms in steps
-    // of 10, the wheel a step a notch: what moves is its nudge (−200 to
-    // +400 ms), so it reaches from 0 to 550 here.
-    let delay = sliders[1];
-    assert_eq!(delay.slider, Slider::Delay);
-    let at = |kind, col| MouseInput {
-        kind,
-        col,
-        row: delay.track.y,
-    };
-    let mut seen = std::collections::BTreeSet::new();
-    for px in 0..=delay.track.width * 8 {
-        let x = f64::from(delay.track.x) + f64::from(px) / 8.0;
-        point(
-            &mut state,
-            at(MouseKind::Down(MouseButton::Left), delay.track.x),
-            x,
-        );
-        seen.insert(delay.slider.value(&state));
-        update(&mut state, Action::KaraokeSlideEnd);
-    }
-    assert_eq!(seen.first(), Some(&0));
-    assert_eq!(seen.last(), Some(&550));
-    assert!(seen.iter().all(|v| v % 10 == 0), "{seen:?}");
-    let zero = f64::from(delay.track.x) + 0.5 + f64::from(delay.track.width - 1) / 4.0;
-    point(
-        &mut state,
-        at(MouseKind::Down(MouseButton::Left), delay.track.x),
-        zero,
-    );
-    update(&mut state, Action::KaraokeSlideEnd);
-    assert_eq!(delay.slider.value(&state), 150);
-    assert_eq!(jodeldiplom::core::lag::nudge_ms(&state), 0);
-    point(&mut state, at(MouseKind::ScrollUp, delay.track.x), 0.0);
-    assert_eq!(delay.slider.value(&state), 160);
-    assert_eq!(delay.slider.text(&state).trim(), "160 ms");
-    assert_eq!(jodeldiplom::core::lag::nudge_ms(&state), 10);
-    for s in sliders.into_iter().filter(|s| s.slider == Slider::Voice) {
-        let most = s.slider.most();
-        let input = |kind, col| MouseInput {
-            kind,
-            col,
-            row: s.track.y,
-        };
-        let press = input(MouseKind::Down(MouseButton::Left), s.track.x);
-        let drag = input(MouseKind::Drag(MouseButton::Left), 0);
-        // A press on the track, then a drag along it a pixel at a time
-        // (the GUI, 8 pixels a cell): every whole percent comes by.
-        point(&mut state, press, f64::from(s.track.x));
-        let mut seen = std::collections::BTreeSet::new();
-        for px in 0..=s.track.width * 8 {
-            point(&mut state, drag, f64::from(s.track.x) + f64::from(px) / 8.0);
-            seen.insert(s.slider.value(&state));
-        }
-        assert_eq!(seen, (0..=most).collect(), "{:?}", s.slider);
-        // 25 % where the knob is drawn for it.
-        let quarter = f64::from(s.track.x) + 0.5 + 0.25 * f64::from(s.track.width - 1);
-        point(&mut state, drag, quarter);
-        assert_eq!(s.slider.value(&state), most / 4, "{:?}", s.slider);
-        update(&mut state, Action::KaraokeSlideEnd);
-        // Known only to the cell (`mouse::action`): the nearest whole
-        // percent to the cell's middle.
-        for i in 0..s.track.width {
-            let click = input(MouseKind::Down(MouseButton::Left), s.track.x + i);
-            let action = mouse::action(&state, GRID, click).expect("a slide");
-            update(&mut state, action);
-            let share = f64::from(i) / f64::from(s.track.width - 1);
-            let nearest = (share * f64::from(most)).round() as i32;
-            assert_eq!(s.slider.value(&state), nearest, "{:?}", s.slider);
-            update(&mut state, Action::KaraokeSlideEnd);
-        }
-        // The wheel: a dB a notch, from a level the pointer set (25 %:
-        // −30 dB). It starts no drag: the next notch steps again, and the
-        // pointer moving after it leaves the level where it is.
-        point(&mut state, press, quarter);
-        update(&mut state, Action::KaraokeSlideEnd);
-        assert_eq!(s.slider.text(&state).trim(), "−30 dB");
-        let wheel = input(MouseKind::ScrollUp, s.track.x);
-        point(&mut state, wheel, 0.0);
-        point(&mut state, wheel, 0.0);
-        assert_eq!(s.slider.text(&state).trim(), "−28 dB");
-        let wheeled = s.slider.value(&state);
-        assert_eq!(state.karaoke.dragging, None);
-        let moved = input(MouseKind::Moved, s.track.x);
-        assert!(mouse::action(&state, GRID, moved).is_none());
-        assert_eq!(s.slider.value(&state), wheeled, "{:?}", s.slider);
-    }
-}
-
 #[test]
 fn the_speech_recogniser_is_found_beside_the_speech_model() {
     use jodeldiplom::lyrics::models::{asr_model_in, ASR_FILE, MODEL_DIR};
@@ -848,46 +748,12 @@ fn the_speech_recogniser_is_found_beside_the_speech_model() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// In the mode, START is the stage's pill and nothing of the cells; the
+/// game is set on the tab (the window's switches there:
+/// `the_sliders_and_buttons_take_clicks`), not in the mode.
 #[test]
-fn the_sliders_and_buttons_take_clicks() {
+fn start_is_the_stages_pill_and_the_game_is_set_on_the_tab() {
     let mut state = tab();
-    let Layout::Main(m) = layout::compute(&state, GRID) else {
-        panic!()
-    };
-    let k = m.karaoke.expect("the tab's layout");
-    let voice = k.sliders[0];
-    assert_eq!(voice.slider, Slider::Voice);
-    // A click at the track's end: the most.
-    let at = MouseInput {
-        kind: MouseKind::Down(MouseButton::Left),
-        col: voice.track.right() - 1,
-        row: voice.track.y,
-    };
-    let action = mouse::action(&state, GRID, at).expect("a slide");
-    update(&mut state, action);
-    assert_eq!(state.config.karaoke_voice, 100);
-    // Dragged to its start, wherever the pointer goes.
-    let drag = MouseInput {
-        kind: MouseKind::Drag(MouseButton::Left),
-        col: 0,
-        row: 0,
-    };
-    let action = mouse::action(&state, GRID, drag).expect("a drag");
-    update(&mut state, action);
-    assert_eq!(state.config.karaoke_voice, 0);
-    let up = MouseInput {
-        kind: MouseKind::Up(MouseButton::Left),
-        col: 0,
-        row: 0,
-    };
-    let action = mouse::action(&state, GRID, up).expect("the end");
-    update(&mut state, action);
-    assert_eq!(state.karaoke.dragging, None);
-    // The button into the mode.
-    assert_eq!(
-        mouse::hit(&state, GRID, k.enter.x + 2, k.enter.y + 1),
-        Some(Target::Button(Op::KaraokeEnter))
-    );
     // In the mode, waiting: START is the stage's pill, from the moment the
     // mode opens, never a cell of the controls (which wait for the
     // pointer near the bottom). A press on the pill is START.
@@ -927,20 +793,10 @@ fn the_sliders_and_buttons_take_clicks() {
         op(&mut state, o);
     }
     assert_eq!(state.config, before);
-    // On the tab: the game and the notes take clicks.
+    // On the tab: the game and the notes are its switches.
     op(&mut state, Op::Back);
-    let Layout::Main(m) = layout::compute(&state, GRID) else {
-        panic!()
-    };
-    let k = m.karaoke.expect("the tab");
-    assert_eq!(
-        mouse::hit(&state, GRID, k.game.x + 13, k.game.y),
-        Some(Target::Button(Op::KaraokeGame))
-    );
-    assert_eq!(
-        mouse::hit(&state, GRID, k.show_notes.x + 13, k.show_notes.y),
-        Some(Target::Button(Op::KaraokeNotes))
-    );
+    let ops: Vec<Op> = Tab::of(&state).switches.iter().map(|s| s.op).collect();
+    assert_eq!(ops, [Op::KaraokeGame, Op::KaraokeNotes, Op::KaraokeKeep]);
 }
 
 /// A song cannot be sung until its lyrics are ready: while they are looked

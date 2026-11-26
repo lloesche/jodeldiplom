@@ -152,6 +152,16 @@ more (1 % before). `examples/view_cost.rs`, Transition: 0.043 / 0.091 ms
 (median / worst) before, 0.167 / 0.330 after (the tab's widgets, built
 every frame), within the 1.0 / 2.0 budget.
 
+## The Karaoke tab native (the iced port's S9, November 2026)
+
+The tab's text, buttons, sliders, switches and the sync's panel are the
+window's own widgets (`gui::screens::karaoke`); the canvas draws only its
+pictures' places there. `examples/view_cost.rs` (1512 × 982 at scale 2,
+headless wgpu, median / worst ms, the RTX 5080 machine shared with other
+agents' builds): the Karaoke tab 0.041 / 0.088 before, 0.098 / 0.234
+after (some 40 widgets more a frame), within CK-C's 1.0 / 2.0; the other
+screens unchanged within the machine's noise.
+
 
 ## The stems as parts of the output (November 2026)
 

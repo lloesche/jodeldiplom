@@ -18,8 +18,6 @@ use jodeldiplom::core::keymap::{lookup, Key, KeyCode, Meaning, Op};
 use jodeldiplom::core::lag::{self, Delay, Source, DEFAULT_LATE, SLEW};
 use jodeldiplom::core::sync::{self, Outcome, SyncCommand, SyncEvent, CLICKS};
 use jodeldiplom::core::{update, Action, Effect, Screen, Side, State};
-use jodeldiplom::view::layout::{self, Grid, Layout};
-use jodeldiplom::view::mouse::{self, MouseButton, MouseInput, MouseKind};
 
 fn op(state: &mut State, op: Op) -> Vec<Effect> {
     update(state, Action::Op(op))
@@ -38,9 +36,6 @@ fn pair(mic: &str) -> (String, String) {
 
 /// The Karaoke tab shown, a track playing, on an output with a microphone
 /// open (`mic`: its id; empty: none).
-/// The window of [`tab`].
-const GRID: Grid = Grid::new(120, 40);
-
 fn tab(mic: &str) -> State {
     let mut state = common::transition_state(120, 40);
     state.side = Side::Karaoke;
@@ -209,46 +204,6 @@ fn too_few_answers_ask_for_another_go_and_leaving_the_tab_calls_it_off() {
     let fx = op(&mut state, Op::KaraokeSync);
     assert_eq!((state.screen, state.side), (Screen::Main, Side::Karaoke));
     assert!(fx.contains(&Effect::Sync(SyncCommand::Start)));
-}
-
-/// While a sync shows only its panel's buttons take a click: cancel at
-/// once, keep and again once it has a result.
-#[test]
-fn the_panels_buttons_take_clicks_and_nothing_else_does() {
-    let mut state = tab("headset");
-    key(&mut state, Key::ch('s'));
-    let buttons = |state: &State| {
-        let Layout::Main(m) = layout::compute(state, GRID) else {
-            panic!()
-        };
-        m.karaoke.unwrap().panel_buttons
-    };
-    let click = |state: &State, col: u16, row: u16| {
-        mouse::action(
-            state,
-            GRID,
-            MouseInput {
-                kind: MouseKind::Down(MouseButton::Left),
-                col,
-                row,
-            },
-        )
-    };
-    let now = buttons(&state);
-    assert_eq!(now.iter().map(|b| b.1).collect::<Vec<_>>(), [Op::Back]);
-    assert!(click(&state, 2, 2).is_none(), "a click elsewhere");
-    answered(&mut state, &[Some(0.14); CLICKS]);
-    let now = buttons(&state);
-    assert_eq!(
-        now.iter().map(|b| b.1).collect::<Vec<_>>(),
-        [Op::SyncKeep, Op::SyncAgain, Op::Back]
-    );
-    let keep = now[0].0;
-    let Some(action) = click(&state, keep.x + 1, keep.y) else {
-        panic!("keep takes the click")
-    };
-    update(&mut state, action);
-    assert_eq!(lag::measured(&state), Some(0.14));
 }
 
 #[test]
