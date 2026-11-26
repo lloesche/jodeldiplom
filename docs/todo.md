@@ -13,6 +13,11 @@ Work agreed on but not started, roughly in the order it was raised.
   covers without a person; text left in the background or filled by a
   real inpainting model (LaMa) instead of the cheap fill. A bake-off on
   the owner's covers decides (kept outside the repository).
+- **Next, in this order:** the look shaders finished (the rest of the
+  passes, hundreds of presets, every one dancing to the song, the
+  guards), then the story generator's first version in the player, as
+  the prototype's v1: one picture per scene, taken apart by its depth
+  map into layers (cut-outs) and moved in parallax, faces held flat.
 - **Story scenes instead of the cover** (prototyped, kept outside the
   repository; worth porting as an optional story mode). The language
   model (Gemma 4 E4B at 4 bits, greedy so the same song gives the same
