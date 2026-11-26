@@ -26,7 +26,9 @@ Work agreed on but not started, roughly in the order it was raised.
   redrawing small faces; the negative prompt forbids any text, writing
   or lettering. Each scene moves by a slow camera push and either a depth
   warp from its depth map (no edge to tear, so stronger than the
-  prototype's 1.5 %) or, where its depth splits cleanly (a subject well
+  prototype's 1.5 %; the depth held flat under each face and its hair,
+  so a head moves as one piece and never bends into an "alien" face)
+  or, where its depth splits cleanly (a subject well
   in front of its background), two or three depth layers in parallax
   with their edges feathered and lit into the scene (v1 and v2 of "Into
   the Great Wide Open" show it working, painted styles most of all);
