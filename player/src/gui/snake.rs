@@ -94,6 +94,27 @@ impl Snake {
         self
     }
 
+    /// It from `left` across on, what is before cut off: its round end
+    /// there (at its right end's at most).
+    pub fn cut(&self, left: f32) -> Snake {
+        let (Some(first), Some(last)) = (self.points.first(), self.points.last()) else {
+            return self.clone();
+        };
+        let from = (left + self.radius).min(last.0);
+        if from <= first.0 {
+            return self.clone();
+        }
+        let mut points = vec![(from, self.y_at(from))];
+        points.extend(self.points.iter().filter(|p| p.0 > from));
+        if points.len() == 1 {
+            points.push(points[0]);
+        }
+        Snake {
+            points,
+            radius: self.radius,
+        }
+    }
+
     /// How far down its middle line is at `x` (its ends' height past them).
     pub fn y_at(&self, x: f32) -> f32 {
         let p = &self.points;
@@ -370,6 +391,25 @@ mod tests {
         assert!((s.y_at(x) - s.y_at(x + 60.0)).abs() < 0.5);
         // On one pitch, in the middle.
         assert_eq!(flat.flattest(60.0, (110.0, 290.0)), 170.0);
+    }
+
+    /// Cut from a place on: its round end there, the rest as it was; cut
+    /// before its left, whole; past its right, a round end at its right.
+    #[test]
+    fn a_tube_cut_starts_where_it_is_cut() {
+        let s = Snake::through(
+            &[(0.0, 100.0, 80.0), (100.0, 200.0, 40.0)],
+            (0.0, 200.0),
+            10.0,
+        );
+        let cut = s.cut(50.0);
+        assert_eq!(cut.points[0], (60.0, s.y_at(60.0)));
+        let kept = |p: &(f32, f32)| s.points.contains(p) && p.0 > 60.0;
+        assert!(cut.points[1..].iter().all(kept));
+        assert_eq!(cut.points.last(), s.points.last());
+        assert_eq!(s.cut(-5.0), s);
+        let end = s.cut(500.0);
+        assert_eq!(end.points, vec![*s.points.last().unwrap(); 2]);
     }
 
     /// The nearest point: its distance, where along, which side; past the

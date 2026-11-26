@@ -367,12 +367,16 @@ fn fill(
     })
 }
 
+/// How far in from each edge of the window nothing shows, a share of its
+/// width ([`edge_fade`]).
+const EDGE: f32 = 0.012;
+
 /// How much shows at `x` across the window `(x0, w)`: fading out at its
 /// edges.
 fn edge_fade(x: f32, (x0, w): (f32, f32)) -> f32 {
     let fade = w * 0.05;
-    let left = ((x - (x0 + w * 0.012)) / fade).clamp(0.0, 1.0);
-    let right = ((x0 + w * 0.988 - x) / fade).clamp(0.0, 1.0);
+    let left = ((x - (x0 + w * EDGE)) / fade).clamp(0.0, 1.0);
+    let right = ((x0 + w * (1.0 - EDGE) - x) / fade).clamp(0.0, 1.0);
     left.min(right)
 }
 

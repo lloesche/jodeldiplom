@@ -17,7 +17,8 @@
 //! the synth's as it hands them over.
 //!
 //! - At once: a word's pop on the pitch ladder (the song's pentatonic, a
-//!   step higher for each word in a row, the tonic on each rung), its
+//!   step higher for each word in a row, the tonic on each rung; louder,
+//!   with a body an octave under it, for a word held full long), its
 //!   clink at the rungs that have them (round-robin, a little different
 //!   each time, softer when they come thick, none while a stinger rings),
 //!   the rescue shot's zap, the wind-down of a streak lost.
@@ -125,13 +126,16 @@ pub enum Diploma {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Event {
     /// A word's bubble popped: the words in a row with it (0: none, no
-    /// pop; reaching a rung higher than the last: its stinger too) and
-    /// where across (-1 to 1).
+    /// pop; reaching a rung higher than the last: its stinger too), where
+    /// across (-1 to 1) and how big (0 as any to 1: held full the longest,
+    /// [`crate::core::singing::Burst::size`]).
     Word {
         /// Words in a row.
         streak: u32,
         /// Its pan.
         pan: f32,
+        /// How big.
+        size: f32,
     },
     /// The rescue shot fired, from where across.
     Zap {
@@ -290,7 +294,7 @@ impl Conductor {
     /// hit lands on.
     pub fn event(&mut self, out: &mut impl Commands, at: u64, event: Event) -> u64 {
         match event {
-            Event::Word { streak, pan } => self.word(out, at, streak, pan),
+            Event::Word { streak, pan, size } => self.word(out, at, streak, (pan, size)),
             Event::Zap { pan } => {
                 sounds::zap(&mut self.score(out), at, pan);
                 at
@@ -346,9 +350,15 @@ impl Conductor {
         self.riser = false;
     }
 
-    /// A word's bubble popped on `at`, `streak` in a row with it; the
-    /// frame its pop (or the rung it reached) lands on.
-    fn word(&mut self, out: &mut impl Commands, at: u64, streak: u32, pan: f32) -> u64 {
+    /// A word's bubble popped on `at`, `streak` in a row with it, at `pan`
+    /// and `size` big; the frame its pop (or the rung it reached) lands on.
+    fn word(
+        &mut self,
+        out: &mut impl Commands,
+        at: u64,
+        streak: u32,
+        (pan, size): (f32, f32),
+    ) -> u64 {
         if streak == 0 {
             return at;
         }
@@ -358,7 +368,7 @@ impl Conductor {
         let step = ladder::step(streak, &self.rungs);
         let share = rung_share(step.rung);
         let glint = rung_has(step.rung, Streak::Glint);
-        sounds::pop(&mut self.score(out), at, step, share, glint, pan);
+        sounds::pop(&mut self.score(out), at, step, share, glint, pan, size);
         let second = f64::from(self.rate);
         if rung_has(step.rung, Streak::Clinks) && at >= self.quiet_until {
             let thick = self

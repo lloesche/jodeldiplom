@@ -939,13 +939,18 @@ start to a level: how much of it you hit. The liquid's front ripples and
 sloshes, and a light shimmers through it. The moment a word counts all
 its bubbles fill, the part already sung and the part to come: a quick
 sweep to full (0.2 s). In the last stretch the bubble strains, bulging a
-little and wobbling; full, the whole of it bursts (0.5 s): it overfills,
+little and wobbling; full, the whole of it bursts (0.5 s) once its word
+is over, its end past the playhead: it overfills,
 bulging to about 1.3 times in 80 ms, then tears, its liquid splashing
 out in drops that arc out and fall, torn bits of its skin and a few
 sparkles flying with them, and it is gone: a faint wet sheen fades where
-it was, then the spot is empty (the word keeps its sung colour). A
+it was, then the spot is empty (the word keeps its sung colour). A word
+you hold on after it counts (a long note) keeps its bubble full to its
+end: it pumps, slowly growing a little thicker and breathing, glowing
+more, then bursts the bigger the longer you held it (up to twice the
+drops, flying further, and a louder pop). A
 bubble only partly filled never bursts: it keeps its liquid at the level
-you sang. Each bubble bursts as it fills, by your singing's own time
+you sang. Each bubble bursts by your singing's own time
 (the song's less the delay, so you see the whole sweep and burst; a paused song holds them); sought back before what
 filled it, it shows again as it is. In the window the GPU draws the
 liquid and the bursts (a record a bubble, its surface, wobble, drops and

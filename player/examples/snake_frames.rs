@@ -1,8 +1,9 @@
 //! Frames of Karaoke mode's stage on the GPU, to look at its word bubbles
 //! and its rescues: a made-up song of words on one pitch and words
 //! snaking over several (a melisma), a word missed alone then rescued by
-//! the next one's shot (on the lane, and once long gone off it), and a
-//! line in Japanese; sung as the notes go (the words missed sung well
+//! the next one's shot (on the lane, and once long gone off it), a line
+//! in Japanese, and a word held three seconds (its bubble pumping, then
+//! bursting big as it ends); sung as the notes go (the words missed sung well
 //! off), in Karaoke mode's own fonts (as the player embeds them), the
 //! stage drawn offscreen at 60 a second and the frames asked for saved as
 //! PNGs (`OUT` with the frame's time before `.png`).
@@ -33,7 +34,7 @@ include!(concat!(env!("OUT_DIR"), "/fonts.rs"));
 type Word = (&'static str, (f64, f64), &'static [u16], bool);
 
 /// The song's lines.
-const LINES: [&[Word]; 5] = [
+const LINES: [&[Word]; 6] = [
     &[
         ("Sun", (2.0, 2.6), &[6000], false),
         ("beautiful", (2.7, 4.5), &[6400, 6900, 6700, 6200], false),
@@ -57,11 +58,16 @@ const LINES: [&[Word]; 5] = [
         ("こんにちは", (17.5, 18.5), &[6400, 6700], false),
         ("世界", (18.6, 19.5), &[6200], false),
     ],
+    &[
+        ("Af", (20.0, 20.5), &[6400], false),
+        ("ri", (20.6, 21.0), &[6200], false),
+        ("caaa", (21.1, 24.1), &[6000], false),
+    ],
 ];
 
 /// The song's lyrics and melody.
 fn song() -> (Arc<jodel_lyrics::Lyrics>, jodel_rhythm::waveform::Melody) {
-    let n = 21 * 100;
+    let n = 26 * 100;
     let mut m = jodel_rhythm::waveform::Melody {
         cents: vec![0; n],
         sure: vec![0; n],
@@ -109,11 +115,12 @@ fn missed(t: f64) -> bool {
 }
 
 /// The frames looked at when none are asked for: a word on one pitch, a
-/// melisma's tube sweeping full and bursting, a shot onto a word missed
-/// on the lane, one off its edge, a shout, the Japanese line.
-const LOOKS: [f64; 17] = [
-    2.15, 2.85, 2.95, 3.05, 3.12, 3.2, 7.95, 8.05, 8.15, 8.3, 8.42, 10.3, 15.3, 15.38, 15.46, 15.6,
-    18.0,
+/// melisma's tube sweeping full, held full and bursting as it ends, a shot
+/// onto a word missed on the lane, one off its edge, a shout, the
+/// Japanese line, a word held three seconds pumping and bursting big.
+const LOOKS: [f64; 23] = [
+    2.15, 2.85, 2.95, 3.6, 4.5, 4.55, 4.62, 7.95, 8.05, 8.15, 8.3, 8.42, 10.3, 15.3, 15.72, 15.8,
+    18.0, 21.3, 22.5, 23.6, 24.1, 24.15, 24.25,
 ];
 
 fn main() {
@@ -188,7 +195,7 @@ fn main() {
         }
         told = singing.moments().len();
         let picture = picture_at(&sung, now, &singing);
-        let song = Song::new(&singing, sung.clone(), Some(21.0));
+        let song = Song::new(&singing, sung.clone(), Some(26.0));
         let frame = stage.frame(
             &song,
             &picture,

@@ -13,13 +13,20 @@
 //!   sure; a word the scoring counts that never got there, full as it
 //!   ends;
 //! - once its fill covers [`FULL`] of it;
-//! - rescued: a single word missed, the next to burst shoots it full as
-//!   its shot lands ([`super::singing::Rescue`], [`Singing::rescue_of`]).
+//! - rescued: a single word missed, the next word (once swept full) shoots
+//!   it full as its shot lands ([`super::singing::Rescue`],
+//!   [`Singing::rescue_of`]).
 //!
 //! A bubble full is a word the scoring counts hit: one full by its fill
 //! has been hit more than the scoring asks (pinned by the tuning: a
 //! compile-time check beside [`FULL`]), so a bubble never bursts, rescues
 //! the word before it, and is then scored missed.
+//!
+//! Full, a bubble sweeps to full ([`SWEEP`]: its word won,
+//! [`Bubble::swept_at`]) and bursts once its word is over too
+//! ([`Bubble::bursts_at`]): a word still sung is held full until its end
+//! passes the playhead, and the longer it was held the bigger it bursts
+//! ([`burst_size`]).
 //!
 //! Each time is fixed by the frames up to it, so a bubble is full once.
 
@@ -59,6 +66,25 @@ pub struct Bubble {
 }
 
 impl Bubble {
+    /// When it is swept full (seconds into the song), once full: its word
+    /// won.
+    pub fn swept_at(&self) -> Option<f64> {
+        self.full_at.map(|f| f + SWEEP)
+    }
+
+    /// When it bursts (seconds into the song), once full: swept full and
+    /// its word over.
+    pub fn bursts_at(&self) -> Option<f64> {
+        self.swept_at().map(|s| s.max(self.time.1))
+    }
+
+    /// How long it is held full before it bursts, in seconds: from its
+    /// sweep to full to its word's end (0: not full, or its word over by
+    /// then).
+    pub fn held(&self) -> f64 {
+        self.swept_at().map_or(0.0, |s| (self.time.1 - s).max(0.0))
+    }
+
     /// How much of `from` to `to` (seconds into the song) its fill covers,
     /// in seconds.
     pub fn covered(&self, (from, to): (f64, f64)) -> f64 {
@@ -175,7 +201,7 @@ pub fn line(singing: &Singing, l: usize, upto: f64) -> Bubbles {
         if heard_to >= end && counts(expected[w], hits[w]) {
             b.full_at.get_or_insert(end);
         }
-        // Missed, then shot full by the next to burst.
+        // Missed, then shot full by the next word swept full.
         if let (None, Some(r)) = (b.full_at, singing.rescue_of(l, b.word)) {
             b.full_at = Some(r.lands());
         }
@@ -200,6 +226,17 @@ pub const SWEEP: f64 = 0.2;
 /// How long of its burst a bubble overfills (bulging) before it tears and
 /// its liquid splashes out, in seconds.
 pub const SWELL: f64 = 0.08;
+
+/// A bubble held full up to this long (seconds) bursts as any.
+pub const HELD_SHORT: f64 = 0.3;
+/// One held full this long or longer bursts the biggest.
+pub const HELD_LONG: f64 = 2.0;
+
+/// How big a bubble held full for `held` seconds bursts, 0 to 1: 0 up to
+/// [`HELD_SHORT`] (as any), growing evenly to 1 at [`HELD_LONG`].
+pub fn burst_size(held: f64) -> f64 {
+    ((held - HELD_SHORT) / (HELD_LONG - HELD_SHORT)).clamp(0.0, 1.0)
+}
 
 /// How long a rescuing shot flies from the bubble that fires it to the
 /// one it rescues, in seconds.

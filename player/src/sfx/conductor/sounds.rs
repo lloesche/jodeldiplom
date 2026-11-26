@@ -236,13 +236,29 @@ fn unit(seed: u32) -> f32 {
 }
 
 /// A word's bubble at `at`, on the ladder's `step`, `share` of the rungs
-/// reached (a glint over it where `glinted`), at `pan`.
-pub(super) fn pop(s: &mut Score, at: u64, step: Step, share: f32, glinted: bool, pan: f32) {
+/// reached (a glint over it where `glinted`), at `pan`, `size` big (0 as
+/// any to 1, held full the longest): the bigger, the louder, with a body
+/// an octave under it.
+pub(super) fn pop(
+    s: &mut Score,
+    at: u64,
+    step: Step,
+    share: f32,
+    glinted: bool,
+    pan: f32,
+    size: f32,
+) {
     let glint = 0.3 + 0.5 * share;
+    let big = size.clamp(0.0, 1.0);
     match s.deg(step.degree, POP_HOME) {
         Some(note) => {
-            s.play(Note::new(at, Atom::Pop, note).vel(0.8).pan(pan));
-            s.play(Note::new(at, Atom::PopBody, note).vel(0.7).pan(pan));
+            s.play(Note::new(at, Atom::Pop, note).vel(0.8 + 0.2 * big).pan(pan));
+            let body = Note::new(at, Atom::PopBody, note);
+            s.play(body.vel(0.7 + 0.3 * big).pan(pan));
+            if big > 0.0 {
+                let under = Note::new(at, Atom::PopBody, note - 12.0);
+                s.play(under.vel(0.6 * big).pan(pan));
+            }
             if glinted {
                 let over = Note::new(at, Atom::Glint, note + 12.0);
                 s.play(over.vel(glint).pan(pan));
@@ -250,7 +266,7 @@ pub(super) fn pop(s: &mut Score, at: u64, step: Step, share: f32, glinted: bool,
         }
         None => {
             // Brighter, not higher.
-            let bright = 0.45 + 0.1 * step.degree as f32;
+            let bright = (0.45 + 0.1 * step.degree as f32) * (1.0 + 0.3 * big);
             s.play(Note::new(at, Atom::Pop, HIGH_NOTES[0]).vel(bright).pan(pan));
             let over = Note::new(at, Atom::Glint, HIGH_NOTES[1]);
             s.play(over.vel(glint * bright).pan(pan));

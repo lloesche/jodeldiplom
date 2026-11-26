@@ -491,10 +491,24 @@ stem keys are their mutes.
   will have had hit, one more to be sure; one the scoring counts that
   never got there, as it ends), all its bubbles fill, the part already
   sung and the part to come: a sweep across the word to full (0.2 s),
-  then they burst (0.5 s). A bubble is also full once its fill
-  covers 85 % of it, then sweeps to full and bursts. In the
+  and the word is won (its scoring, the streak and a rescue shot go by
+  that, as ever). A bubble is also full once its fill
+  covers 85 % of it, then sweeps to full. In the
   last stretch (above 85 %) its skin strains: a slight bulge (up to
-  about 1.1 times) and a wobble. Full, the whole bubble bursts at once,
+  about 1.1 times) and a wobble. Full, it bursts (0.5 s) once its word is
+  over too, as the word's end passes the playhead, never before: a word
+  won while still sung is held full till then and pumps, growing slowly
+  up to 1.12 times as thick (most of the way in a second) with a slow
+  breath (3 %, 1.5 a second), its strain calming to 30 % and its glow
+  rising, straining fully again in its last 0.2 s. The longer it was held
+  (from 0.3 s, the most at 2 s) the bigger it bursts: from as large as it
+  grew, up to twice the drops and bits, flying up to 1.6 times as far
+  and as large, its overfilling glowing further, its pop louder with a
+  body an octave under it. A word held a moment bursts as any. On the
+  stage a word sung longer than the lane behind the playhead is cut where
+  the lane ends on the left (its text fading there), so its bubble is
+  seen to its end. Bursting,
+  the whole bubble goes at once,
   on the stage and in the picture, and is gone: it overfills,
   bulging to 1.3 times in
   80 ms, then tears; its liquid splashes out in 12 drops of a few sizes
@@ -522,7 +536,21 @@ stem keys are their mutes.
   the score before kept: no burst comes twice, no word scored bursts
   again; a bubble no longer full shows again as it is and bursts again
   only when it fills again. When each bubble bursts is plain data for
-  whatever follows it (the sounds: `core::bubbles::pops`).
+  whatever follows it (the sounds: `core::bubbles::pops`), decided a
+  sweep ahead for one held full: its pop sounds as it bursts, climbing
+  the ladder in the order the bubbles burst (a word rescued bursting
+  before its shooter, held on, one step under it), and a rung's stinger
+  goes with the pop that reaches it.
+  - `a_long_word_won_early_bursts_only_at_its_end` (`core::singing`)
+  - `a_bubble_held_full_pumps_then_bursts_the_bigger_the_longer`
+    (`view::bubbles`)
+  - `a_tube_held_full_long_pumps_and_bursts_bigger` (`gui::pop`)
+  - `a_word_longer_than_the_lane_behind_is_seen_to_its_end`
+    (`gui::stage::words`), `a_tube_cut_starts_where_it_is_cut`
+    (`gui::snake`)
+  - `a_word_held_full_pops_as_it_ends_and_bigger`,
+    `a_rescue_across_a_rung_never_takes_the_ladder_back` (`sfx::moments`),
+    `a_word_held_full_long_pops_bigger` (`sfx::conductor`)
   - `a_word_counted_fills_all_its_bubbles_at_once` (`core::bubbles`)
   - `a_word_is_full_exactly_when_the_scoring_counts_it` (`core::bubbles`)
   - `each_bubble_is_full_once_its_time_fixed_by_the_frames_up_to_it`
@@ -728,7 +756,7 @@ stem keys are their mutes.
   - `short_seeks_back_in_a_row_are_as_heard_straight` (`core::singing`:
     the moments, the phrases' shine among them, as heard straight),
     `a_streak_multiplies_the_points_and_two_misses_end_it`,
-    `a_single_word_missed_is_rescued_by_the_next_to_burst`
+    `a_single_word_missed_is_rescued_by_the_next_word_won`
     (`core::singing`: the rungs and their points)
   - `shine_files_are_pinned` (schemas)
   - `the_game_is_heard_where_it_lands`,

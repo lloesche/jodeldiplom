@@ -4,7 +4,8 @@
 //! rescuing a word missed, the streak up a multiplier or lost, each
 //! phrase's tier decided; in the order they were decided, each at the
 //! time of the singing it happens
-//! ([`Moment::at`]: a bubble bursts a sweep after it is full) and the frame
+//! ([`Moment::at`]: a bubble bursts a sweep after it is full, or as its
+//! word ends if that is later) and the frame
 //! that decided it ([`Moment::decided`]). Sought back, those decided from
 //! there on are taken back (and decided again as the frames come again);
 //! the singing started over, all go. A reader follows the stream with a
@@ -26,12 +27,13 @@ pub enum Cue {
         /// The streak after it.
         streak: u32,
     },
-    /// A word's bubble bursts (full, swept to full): its line and word,
-    /// how high its notes are (-1 to 1, their mean over their time) and
-    /// where along its line it is (0 its start, 1 its end), the bubbles
-    /// bursting with it (full on the same frame): its place among them, in
-    /// their order on the lines, and how many there are. One a shot
-    /// rescued has that shot before it ([`Cue::Shot`] to it).
+    /// A word's bubble bursts (full, swept to full, its word over: held
+    /// full until then, [`Burst::held`]): its line and word, how high its
+    /// notes are (-1 to 1, their mean over their time) and where along its
+    /// line it is (0 its start, 1 its end), the bubbles bursting with it
+    /// (at the same time): its place among them, in their order on the
+    /// lines, and how many there are. One a shot rescued has that shot
+    /// before it ([`Cue::Shot`] to it).
     Pop(Burst),
     /// Its liquid splashing out as it tears, a bulge after it bursts
     /// ([`crate::core::bubbles::SWELL`]); as [`Cue::Pop`].
@@ -71,10 +73,21 @@ pub struct Burst {
     pub across: f32,
     /// Its place among the bubbles bursting together, and their count.
     pub burst: (usize, usize),
-    /// The words hit in a row with it as it bursts: the streak as scored,
-    /// and the words burst and not scored yet, it among them (what a pop
-    /// climbs a ladder by).
+    /// The words hit in a row with it as it bursts, in the order they
+    /// burst: the streak as scored, and the words won and not scored yet,
+    /// those bursting by then (it among them), less the words rescued
+    /// bursting after it (what a pop climbs a ladder by).
     pub run: u32,
+    /// How long it was held full before it burst, in seconds (0: its word
+    /// over as it was swept full).
+    pub held: f64,
+}
+
+impl Burst {
+    /// How big it bursts, 0 (as any) to 1 ([`crate::core::bubbles::burst_size`]).
+    pub fn size(&self) -> f64 {
+        crate::core::bubbles::burst_size(self.held)
+    }
 }
 
 /// A moment: when it happens (the singing's time, seconds), the frame

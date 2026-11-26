@@ -3,8 +3,9 @@
 //! each is sung on, as high as it goes against the line's middle; those
 //! sung already in the notes' colour, those to come darker; the singer's
 //! pitch along them as a line, sparkles shed behind it and a dot where
-//! they are now. Each word's bubble's liquid, its strain and its
-//! overfilling are drawn by the GPU over its notes' bars, as the stage's
+//! they are now. Each word's bubble's liquid, its strain (held full,
+//! pumping thicker) and its overfilling are drawn by the GPU over its
+//! notes' bars, as the stage's
 //! bubbles are ([`Over`], [`super::stage_gpu::Instance::liquid`]), its
 //! burst too ([`super::particles`]); a word's bars whose bubble bursts are
 //! no longer painted from the moment it starts to (the picture changes
@@ -140,6 +141,9 @@ impl Over {
             let Some(&(_, (_, thick))) = bars.first() else {
                 continue;
             };
+            // Held full, it pumps (thicker as it grows) and bursts the
+            // bigger for it.
+            let pump = b.pump() as f32;
             if b.bursting().is_some() {
                 // All of it at once, from round its bars.
                 let top = bars.iter().map(|(_, y)| y.0).fold(f32::MAX, f32::min);
@@ -148,10 +152,10 @@ impl Over {
                 let tint = tint(HIT, thick);
                 self.sprays.push(Spray {
                     at: ((left + right) / 2.0, (top + bottom) / 2.0),
-                    half: ((right - left) / 2.0, (bottom - top) / 2.0),
+                    half: ((right - left) / 2.0, pump * (bottom - top) / 2.0),
                     start: b.pops_at.unwrap_or_default() as f32,
                     drift: 0.0,
-                    size: px,
+                    size: px * (1.0 + super::pop::BIGGER * b.size() as f32),
                     seed: b.seed,
                     rgb: [tint.top[0], tint.top[1], tint.top[2]],
                     kind: Kind::Burst,
@@ -165,7 +169,7 @@ impl Over {
             for (p, &((x0, x1), (y, thick))) in b.parts.iter().zip(&bars) {
                 let (c, half) = (
                     ((x0 + x1) / 2.0, y + thick / 2.0),
-                    ((x1 - x0) / 2.0, thick / 2.0),
+                    ((x1 - x0) / 2.0, pump * thick / 2.0),
                 );
                 let pour = Pour {
                     span: (x0, x0 + (x1 - x0) * p.level as f32),

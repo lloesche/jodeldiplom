@@ -133,7 +133,14 @@ fn script() -> Vec<(u64, Event)> {
                 streak = 0;
             } else {
                 streak += 1;
-                events.push((f, Event::Word { streak, pan }));
+                events.push((
+                    f,
+                    Event::Word {
+                        streak,
+                        pan,
+                        size: 0.0,
+                    },
+                ));
             }
             word += 1;
         }
@@ -363,7 +370,11 @@ fn sounds(dir: &Path, key: &jodel_rhythm::key::Key, a: &Analysis) {
         let (out, _) = play(&events, key, seconds, &|now| clock_at(a, now, false));
         save(dir, name, &out);
     };
-    let word = |streak, pan| Event::Word { streak, pan };
+    let word = |streak, pan| Event::Word {
+        streak,
+        pan,
+        size: 0.0,
+    };
     // Two thirds into a beat: the pickup at once, the hit on the next.
     let at = frame(2.0 / 3.0);
     let mut ladder: Vec<(u64, Event)> = (1..=60u32)

@@ -422,7 +422,7 @@ impl Singing {
 
     /// The words over by `t`, scored: each a moment, the streak's rung up
     /// or lost with it. A word missed alone waits, rescued at once if the
-    /// next word burst already ([`bursts`]).
+    /// next word was won (swept full) already ([`bursts`]).
     fn score_words(&mut self, t: f64) {
         while let Some(&(l, w, end)) = self.notes.words().get(self.tally.next_word) {
             if end + SCORED_AFTER > t {

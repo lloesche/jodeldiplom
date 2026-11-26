@@ -284,11 +284,11 @@ fn a_streak_multiplies_the_points_and_two_misses_end_it() {
         .any(|m| matches!(m.cue, Cue::Shot { .. })));
 }
 
-/// A single word missed, the next burst: it fires a shot at the word
-/// missed, which is rescued (scored as if sung, the streak going on) and
-/// bursts as the shot lands.
+/// A single word missed, the next won (swept full): it fires a shot at
+/// the word missed, which is rescued (scored as if sung, the streak going
+/// on) and bursts as the shot lands.
 #[test]
-fn a_single_word_missed_is_rescued_by_the_next_to_burst() {
+fn a_single_word_missed_is_rescued_by_the_next_word_won() {
     let s = fourteen(&[12]);
     // Each word at its streak's multiplier (the 13th rescued).
     let sung: u32 = (1..=14).map(|k| 100 * multiplier(k)).sum();
@@ -313,12 +313,14 @@ fn a_single_word_missed_is_rescued_by_the_next_to_burst() {
         })
     };
     assert_eq!((from, to), ((0, 13), (0, 12)));
-    // As it bursts, or as the word missed is scored, whichever is later.
+    // As it is swept full (held full on, it bursts as it ends), or as the
+    // word missed is scored, whichever is later.
     let burst = popped(13).expect("the 14th bursts");
-    assert!(
-        fired >= burst - 1e-9 && fired < burst + 0.05,
-        "{fired} {burst}"
-    );
+    let won = crate::core::bubbles::line(&s, 0, f64::INFINITY).words[13]
+        .swept_at()
+        .unwrap();
+    assert!(won < 14.0 && (burst - 14.0).abs() < 1e-9, "{won} {burst}");
+    assert!(fired >= won - 1e-9 && fired < won + 0.05, "{fired} {won}");
     let rescue = s.rescue_of(0, 12).expect("rescued");
     assert_eq!((rescue.from, rescue.fired), ((0, 13), fired));
     let lands = fired + crate::core::bubbles::FLIGHT;
@@ -365,6 +367,69 @@ pub(crate) fn fourteen(missed: &[usize]) -> Singing {
         s.hear(t, (!out).then_some(6000.0));
     }
     s
+}
+
+/// "la", "laaa" held three seconds, "la", on C4, with its melody: ready
+/// to be sung.
+pub(crate) fn a_long_word() -> Singing {
+    let m = melody(500, &[(0, 50, 6000), (60, 360, 6000), (370, 420, 6000)]);
+    let l = line(vec![
+        word("la", 0.0, 0.5),
+        word("laaa", 0.6, 3.6),
+        word("la", 3.7, 4.2),
+    ]);
+    let lyrics = Arc::new(jodel_lyrics::Lyrics {
+        lines: vec![l],
+        source: jodel_lyrics::Source::Unknown,
+        timing: jodel_lyrics::Timing::default(),
+    });
+    let mut s = Singing::default();
+    s.prepare(Path::new("a"), &lyrics, &crate::core::singing::melodic(&m));
+    s
+}
+
+/// A long word won early (a tenth of it sung) is held full on: it bursts
+/// only as it ends, decided a sweep before, the longer held the bigger
+/// (a short word's as any); the words are scored as ever (as they end,
+/// each at its streak's multiplier), and the pops climb by one a word.
+#[test]
+fn a_long_word_won_early_bursts_only_at_its_end() {
+    let mut s = a_long_word();
+    for i in 0..500 {
+        let t = f64::from(i) / 100.0;
+        let c = s.word_at(t).map(|(_, c)| c as f32);
+        s.hear(t, c);
+    }
+    let won = crate::core::bubbles::line(&s, 0, f64::INFINITY).words[1]
+        .swept_at()
+        .unwrap();
+    assert!(won < 1.2, "won early: {won}");
+    let pops: Vec<(f64, f64, Burst)> = (s.moments().iter())
+        .filter_map(|m| match m.cue {
+            Cue::Pop(b) => Some((m.at, m.decided, b)),
+            _ => None,
+        })
+        .collect();
+    let [(_, _, short), (at, decided, long), _] = pops[..] else {
+        panic!("three pops: {pops:?}");
+    };
+    assert_eq!((long.word, at), (1, 3.6));
+    assert!((3.6 - crate::core::bubbles::SWEEP - 1e-9..3.6).contains(&decided));
+    assert!((long.held - (3.6 - won)).abs() < 1e-9, "{long:?}");
+    assert_eq!((short.size(), long.size()), (0.0, 1.0));
+    let runs: Vec<u32> = pops.iter().map(|p| p.2.run).collect();
+    assert_eq!(runs, [1, 2, 3]);
+    // Scored as ever: each word as it ends, the streak on.
+    let scored: Vec<(f64, f64)> = (s.moments().iter())
+        .filter_map(|m| match m.cue {
+            Cue::Word { end, hit: true, .. } => Some((end, m.at)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(scored.len(), 3);
+    assert!(scored.iter().all(|&(end, at)| at >= end + SCORED_AFTER));
+    let sung: u32 = (1..=3).map(|k| 100 * multiplier(k)).sum();
+    assert_eq!((s.tally.score, s.tally.streak), (sung, 3));
 }
 
 /// A song of 14 words, a second each on C4, and its melody.

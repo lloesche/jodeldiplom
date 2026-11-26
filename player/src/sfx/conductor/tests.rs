@@ -129,7 +129,11 @@ fn playing() -> (Conductor, Synth) {
 }
 
 fn word(streak: u32) -> Event {
-    Event::Word { streak, pan: 0.0 }
+    Event::Word {
+        streak,
+        pan: 0.0,
+        size: 0.0,
+    }
 }
 
 fn line(a: u64, b: u64) -> Option<(u64, u64)> {
@@ -633,4 +637,29 @@ fn the_bus_level_follows_the_song_s_loudness() {
         peak = out.iter().fold(peak, |m, x| m.max(x.abs()));
     }
     assert!(peak > 0.3 && peak <= ceiling + 1e-3, "{peak}");
+}
+
+/// A word held full long pops bigger: louder, a body an octave under it
+/// too, still under the limiter's ceiling.
+#[test]
+fn a_word_held_full_long_pops_bigger() {
+    let pop = |size| Event::Word {
+        streak: 3,
+        pan: 0.0,
+        size,
+    };
+    let (plain, held) = (peak_db(&[pop(0.0)]), peak_db(&[pop(1.0)]));
+    assert!(
+        held > plain + 1.0 && held <= -1.0 + 1e-3,
+        "{plain:.1} then {held:.1} dBFS"
+    );
+    let (mut c, mut out) = conductor();
+    c.event(&mut out, 1, pop(1.0));
+    let body = c.palette[Atom::PopBody];
+    let bodies: Vec<f32> = (out.notes().iter())
+        .filter(|n| n.1 == body)
+        .map(|n| n.2)
+        .collect();
+    assert_eq!(bodies.len(), 2);
+    assert_eq!(bodies[1], bodies[0] - 12.0);
 }

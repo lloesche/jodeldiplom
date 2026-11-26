@@ -4,12 +4,12 @@
 //! moments ([`super::Singing::shone`]).
 //!
 //! A single word missed does not end the streak at once: it waits
-//! ([`Run::Waiting`]) for the very next word to burst, which rescues it
-//! ([`Tally::rescue`]: scored as if sung, the streak going on). A second
-//! word missed in a row ends the streak ([`Run::Broken`]), as the first
-//! then does; a word missed after those waits for no rescue. A word passed
-//! unheard (sought past) ends the wait without a rescue: a seek is not a
-//! word sung wrong, so nothing is lost either.
+//! ([`Run::Waiting`]) for the very next word to be won (swept full), which
+//! rescues it ([`Tally::rescue`]: scored as if sung, the streak going on).
+//! A second word missed in a row ends the streak ([`Run::Broken`]), as the
+//! first then does; a word missed after those waits for no rescue. A word
+//! passed unheard (sought past) ends the wait without a rescue: a seek is
+//! not a word sung wrong, so nothing is lost either.
 
 use super::{multiplier, Scored, WORD_POINTS};
 
@@ -20,7 +20,8 @@ pub enum Run {
     #[default]
     On,
     /// A single word missed (its place among the song's words, by when
-    /// they end), waiting for the next to burst to rescue it.
+    /// they end), waiting for the next to be won (swept full) to rescue
+    /// it.
     Waiting(usize),
     /// Two words missed in a row: the streak lost.
     Broken,

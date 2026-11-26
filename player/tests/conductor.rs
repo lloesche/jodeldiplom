@@ -79,7 +79,15 @@ fn conducting_allocates_nothing() {
         }
         if block % 20 == 0 {
             streak += 1;
-            c.event(&mut synth, now, Event::Word { streak, pan: 0.3 });
+            c.event(
+                &mut synth,
+                now,
+                Event::Word {
+                    streak,
+                    pan: 0.3,
+                    size: 0.0,
+                },
+            );
             if streak == 60 {
                 c.event(&mut synth, now, Event::Lost(Tier::TOP));
                 streak = 0;

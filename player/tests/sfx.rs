@@ -207,7 +207,11 @@ fn the_game_is_heard_where_it_lands() {
             let pan = -0.5 + 0.25 * k as f32;
             (
                 42_000 + 6_000 * u64::from(k),
-                Event::Word { streak: k + 1, pan },
+                Event::Word {
+                    streak: k + 1,
+                    pan,
+                    size: 0.0,
+                },
             )
         })
         .collect();
@@ -315,6 +319,7 @@ fn a_seek_calls_off_what_the_game_planned() {
         Event::Word {
             streak: 1,
             pan: 0.0,
+            size: 0.0,
         },
     );
     out.write(&counting(6 * BEAT, BEAT), None).unwrap();

@@ -13,7 +13,9 @@ use super::super::big_text::Face;
 use super::super::pop::{self, Laid};
 use super::super::snake::Snake;
 use super::super::stage_gpu::{Instance, Skin, Tint};
-use super::{edge_fade, rgba, Lane, Song, Stage, ACTIVE, GOLD, GOLD_DEEP, GOLD_TOP, SMOKE, WHITE};
+use super::{
+    edge_fade, rgba, Lane, Song, Stage, ACTIVE, EDGE, GOLD, GOLD_DEEP, GOLD_TOP, SMOKE, WHITE,
+};
 use crate::core::singing::Heard;
 use crate::view::bubbles::Liquid;
 
@@ -204,8 +206,11 @@ impl Stage {
     /// Draws the `words` showing in the window `(x, w)` across at `now`
     /// (the song's time; `clock` the singing's) into `out` (their points
     /// into `paths`): each tube, its bubble (the game on) with its liquid,
-    /// straining, bursting as it fills and gone after, its bursts into
-    /// `sprays`. Their texts, to draw over the trail.
+    /// straining, held full to its word's end, bursting and gone after,
+    /// its bursts into `sprays`. A word shows until its right end leaves
+    /// the window on the left: one sung longer than the lane behind the
+    /// playhead is cut where the window ends, so it is seen to its end.
+    /// Their texts, to draw over the trail.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn draw_words(
         &mut self,
@@ -224,7 +229,7 @@ impl Stage {
             if x1 < x - p || x0 > x + w + p {
                 continue;
             }
-            let fade = edge_fade(x0, (x, w)).min(edge_fade(x1, (x, w)));
+            let fade = edge_fade(x1, (x, w));
             if fade <= 0.0 {
                 continue;
             }
@@ -235,9 +240,24 @@ impl Stage {
                 ends: word.x,
                 across: &across,
             };
+            let left = x + w * EDGE;
+            let cut;
+            let shown = if x0 < left {
+                cut = word.snake.cut(left);
+                Laid {
+                    snake: &cut,
+                    ends: (left, x1),
+                    across: &across,
+                }
+            } else {
+                at
+            };
             let liquid = tubes.liquid(song.game, word.line, word.word);
             if let Some(b) = &liquid {
-                sprays.extend(pop::sprays(b, &at, p, (clock, lane.pps)));
+                // From where it was as it burst, as far as the window
+                // showed it.
+                let burst = pop::sprays(b, &at, p, (clock, lane.pps));
+                sprays.extend(burst.into_iter().filter(|s| s.at.0 >= left));
             }
             // Dark inside, so their words read over any cover; outlined in
             // gold with a soft halo behind, brightest while sung.
@@ -261,20 +281,23 @@ impl Stage {
                 bottom: rgba(GOLD_DEEP, 0.8 * fade),
                 glow: p * 0.35,
             };
-            pop::draw(liquid.as_ref(), (out, paths), &at, (&skin, &tint), p);
+            pop::draw(liquid.as_ref(), (out, paths), &shown, (&skin, &tint), p);
             let filled = liquid.as_ref().map_or(0.0, Liquid::filled);
             let text = word_text(song, word.line, word.word);
-            // Burst, its words go with it.
+            // Burst, its words go with it; they fade out at the window's
+            // edges themselves.
+            let text_x = x0 + word.text_at;
+            let text_fade = edge_fade(text_x, (x, w)).min(edge_fade(text_x + word.width, (x, w)));
             if !text.is_empty() && !liquid.as_ref().is_some_and(Liquid::torn) {
                 labels.push(Label {
                     text: text.to_owned(),
                     word: k,
                     end,
                     hit: filled > 0.5 * (end - start),
-                    fade,
+                    fade: fade.min(text_fade),
                     poured: liquid
                         .as_ref()
-                        .map_or(f32::NEG_INFINITY, |b| pop::front(b, &at)),
+                        .map_or(f32::NEG_INFINITY, |b| pop::front(b, &shown)),
                 });
             }
         }
@@ -466,5 +489,67 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// A word sung seven seconds, longer than the lane behind the
+    /// playhead: its tube is seen to its end, cut where the window ends
+    /// on the left (its left long gone past it), until its right end too
+    /// has gone off the window.
+    #[test]
+    fn a_word_longer_than_the_lane_behind_is_seen_to_its_end() {
+        let line = jodel_lyrics::Line {
+            words: vec![jodel_lyrics::Word {
+                start: Some(1.0),
+                end: Some(8.0),
+                confidence: 0.9,
+                ..jodel_lyrics::Word::new("caaa")
+            }],
+            ..jodel_lyrics::Line::default()
+        };
+        let lyrics = std::sync::Arc::new(jodel_lyrics::Lyrics {
+            lines: vec![line],
+            source: jodel_lyrics::Source::Unknown,
+            timing: jodel_lyrics::Timing::default(),
+        });
+        let mut melody = jodel_rhythm::waveform::Melody {
+            cents: vec![0; 1000],
+            sure: vec![0; 1000],
+        };
+        // Two notes (a line has two at least).
+        for i in 100..800 {
+            melody.cents[i] = if i < 450 { 6000 } else { 6200 };
+            melody.sure[i] = 255;
+        }
+        let mut singing = Singing::default();
+        let notes = crate::core::singing::melodic(&melody);
+        singing.prepare(std::path::Path::new("a"), &lyrics, &notes);
+        let song = Song::new(&singing, lyrics.lines.iter().collect(), Some(10.0));
+        let area = Rect::new(0, 0, 100, 24);
+        let picture = KaraokePicture {
+            area,
+            bar: crate::core::karaoke::controls::bar(area),
+            lines: Vec::new(),
+            count: None,
+            cue: None,
+            controls: None,
+            start: None,
+            before: Vec::new(),
+            moved: 1.0,
+            score: None,
+            result: None,
+        };
+        let tubes = |now: f64| {
+            let area = (0.0, 0.0, 1600.0, 900.0);
+            let frame = Stage::default().frame(&song, &picture, area, now, 1.0 / 60.0);
+            (frame.instances.iter())
+                .filter(|i| i.params[0] == kind::TUBE)
+                .map(|t| frame.paths[t.shape[3] as usize][0] - t.shape[2])
+                .collect::<Vec<f32>>()
+        };
+        let [left] = tubes(7.9)[..] else {
+            panic!("its tube near its end: {:?}", tubes(7.9));
+        };
+        assert!((0.0..40.0).contains(&left), "cut at its left: {left}");
+        assert!(tubes(20.0).is_empty(), "gone once its end is");
     }
 }

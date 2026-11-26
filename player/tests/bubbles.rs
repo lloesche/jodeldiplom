@@ -1,6 +1,6 @@
 //! The word bubbles of Karaoke mode as the window draws them: each filling
-//! with liquid as it is sung, a word counted swept full,
-//! straining, then bursting whole (it overfills, tears, its liquid
+//! with liquid as it is sung, a word counted swept full, held full to
+//! its end, straining, then bursting whole (it overfills, tears, its liquid
 //! splashing out, and is gone), in the picture painted on the processor
 //! (its liquid and its burst drawn by the GPU over it, the bubble gone from
 //! it once it bursts), and on the GPU's stage; the voice heard as it comes
@@ -20,13 +20,14 @@ use jodeldiplom::gui::particles::{Kind, Spray};
 use jodeldiplom::gui::raster::Target;
 use jodeldiplom::gui::stage::{Song, Stage};
 use jodeldiplom::gui::stage_gpu::{kind, Instance, StageFrame};
-use jodeldiplom::view::bubbles::{BURST, SWEEP, SWELL};
+use jodeldiplom::view::bubbles::{BURST, SWELL};
 use jodeldiplom::view::karaoke::KaraokePicture;
 use ratatui::layout::Rect;
 
-/// When "la" of [`common::bubble_song`] counts: its 11th frame hit (a
-/// tenth of the 100 it has, and one more).
-const COUNTED: f64 = 0.10;
+/// When "la" of [`common::bubble_song`] bursts: as it ends (it counts at
+/// 0.10 s, its 11th frame hit, a tenth of the 100 it has and one more;
+/// swept full then, it is held full to its end).
+const POPPED: f64 = 1.0;
 
 /// How long "la" is sung for it to fill partly and never count (under the
 /// tenth it asks).
@@ -173,7 +174,7 @@ fn a_bubble_bursts_over_the_picture_and_is_gone_from_it() {
         layer.over.gpu = gpu;
         let (mut heard, mut next, mut part_way, mut k) = (0.0, 0.0, false, 0);
         let (mut seen, mut after, mut liquid) = (None, None, 0);
-        while heard < 0.95 + LATE {
+        while heard < POPPED + BURST + 0.15 + LATE {
             heard += 0.015;
             next = hear_to(&mut singing, next, heard, LATE);
             let picture = common::bubble_picture(&singing, &lyrics, (heard, LATE), area);
@@ -222,7 +223,7 @@ fn a_bubble_bursts_over_the_picture_and_is_gone_from_it() {
                     assert_eq!(over.sprays.len(), 1);
                     assert_eq!(over.sprays[0].kind, Kind::Burst);
                     let start = f64::from(over.sprays[0].start);
-                    assert!((start - (COUNTED + SWEEP)).abs() < 0.011, "{start}");
+                    assert!((start - POPPED).abs() < 0.011, "{start}");
                 }
                 Some(b) if b.bursting().is_none() && after.is_none() => {
                     assert!(over.sprays.is_empty() && over.bubbles.is_empty(), "over");
@@ -280,13 +281,12 @@ fn the_gpu_draws_the_bubbles_over_the_picture() {
     };
     let (w, h) = (800usize, 450usize);
     let lum = |p: u32| ((p >> 16) & 255) + ((p >> 8) & 255) + (p & 255);
-    let popped = COUNTED + SWEEP;
     for (name, until, at) in [
         ("partial", PARTLY, 0.8),
-        ("pressure", 0.15, popped - 0.012),
-        ("bulge", 0.15, popped + SWELL * 0.6),
-        ("splash", 0.15, popped + 0.29),
-        ("after", 0.15, popped + BURST + 0.1),
+        ("pressure", 0.15, POPPED - 0.012),
+        ("bulge", 0.15, POPPED + SWELL * 0.6),
+        ("splash", 0.15, POPPED + 0.29),
+        ("after", 0.15, POPPED + BURST + 0.1),
     ] {
         let (pixels, over) = picture_at(until, at, (w, h));
         let bursting = matches!(name, "bulge" | "splash");
@@ -465,7 +465,7 @@ fn the_stage_bursts_a_word_counted() {
         let lit = lit.filter(|(a, b)| lum(**a) > lum(**b) + 60).count();
         (shown, word_pills(&frame), bubbles, lit, fills)
     };
-    let popped = LATE + COUNTED + SWEEP;
+    let popped = LATE + POPPED;
     let (partial, pills, sprays, _, fronts) = frame_at(PARTLY, LATE + 0.8);
     assert_eq!(
         (pills.0, pills.1, pills.2, sprays),
@@ -562,7 +562,10 @@ fn a_bubble_partly_filled_never_pops() {
 #[test]
 fn a_bubble_unpopped_by_a_seek_back_shows_again() {
     let (mut singing, lyrics) = common::bubble_song();
-    let now = 0.9;
+    // Just torn (it bursts as it ends), its last frame heard under a
+    // second after its 10th (a seek back from there to then is taken back,
+    // not started over).
+    let now = POPPED + SWELL + 0.005;
     // How "la" shows at `now`: its liquid's level, whether the picture
     // paints its bar (and its bursts for the GPU), the stage's word pills
     // and bursts of bubbles, and when its burst started.
@@ -590,14 +593,15 @@ fn a_bubble_unpopped_by_a_seek_back_shows_again() {
     assert_eq!(popped.0, Some(100), "full");
     assert!(!popped.1, "its bar gone");
     assert_eq!(popped.3, 1, "its pill gone");
-    // Back to 0.05 s, before it counted, and silent on.
-    hear_until(&mut singing, (0.05, now), 0.0);
+    // Back to 0.09 s, before it counted (9 frames hit, under the tenth
+    // it asks), and silent on.
+    hear_until(&mut singing, (0.09, now), 0.0);
     let back = shows(&singing);
-    assert_eq!(back.0, Some(5), "its liquid as sung, 5 % of it");
+    assert_eq!(back.0, Some(9), "its liquid as sung, 9 % of it");
     assert!(back.1, "its bar again");
     assert_eq!((back.2, back.3, back.4.len(), back.5), (0, 2, 0, None));
     // Back again and sung as before: it bursts again, as it did.
-    hear_until(&mut singing, (0.05, now), 0.15);
+    hear_until(&mut singing, (0.09, now), 0.15);
     assert_eq!(shows(&singing), popped);
 }
 

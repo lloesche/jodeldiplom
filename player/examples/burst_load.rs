@@ -114,6 +114,8 @@ fn picture(w: usize, h: usize, bursting: bool) -> ((f64, f64), Option<(f64, f64)
                         level,
                         pops_at: bursting.then_some(f as f64 / 60.0 - f64::from(age) * 0.5),
                         age: bursting.then_some(f64::from(age) * 0.5),
+                        held: 0.0,
+                        pumped: None,
                         seed: k as u32,
                     }
                 })

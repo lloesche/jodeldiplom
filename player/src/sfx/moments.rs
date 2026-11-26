@@ -9,8 +9,12 @@
 //!
 //! A pop is told the words in a row with it ([`Event::Word`]), as the
 //! singing counts them as it bursts ([`crate::core::singing::Burst::run`]:
-//! a bubble bursts as its word fills, mostly before the word is over and
-//! scored). Bubbles bursting together pop one after another, a ripple up the line
+//! a bubble bursts as its word ends, once won, mostly before the word is
+//! scored), and how big it bursts (held full long, bigger:
+//! [`crate::core::singing::Burst::size`]). A rung's stinger goes with the
+//! pop that reaches it ([`super::conductor`]), so a word held full long
+//! pumps on to its end and bursts with its rung. Bubbles bursting together
+//! pop one after another, a ripple up the line
 //! ([`RIPPLE`]); one seen long after it happened ([`STALE`]: the first
 //! frames after a stall) stays silent, and so does a bubble's splash (the
 //! pop's glint is it). The stream going back (a seek, the song sung again)
@@ -120,7 +124,9 @@ fn cue(m: &Moment, clock: f64, out: &mut Vec<Cued>) {
                 }
                 at += RIPPLE * j as f64;
                 let pan = pan(b.across);
-                push(Event::Word { streak: b.run, pan }, at);
+                let size = b.size() as f32;
+                let streak = b.run;
+                push(Event::Word { streak, pan, size }, at);
             }
             Cue::Shot { across, .. } => push(Event::Zap { pan: pan(across) }, at),
             Cue::StreakLost(from) => push(Event::Lost(from), at),
@@ -153,6 +159,7 @@ mod tests {
             across: 0.25,
             burst,
             run: word as u32 + 1,
+            held: 0.0,
         };
         [
             Moment {
@@ -245,11 +252,49 @@ mod tests {
             c.iter().any(|c| matches!(c.event, Event::Zap { .. })),
             "a rescue"
         );
-        // Up a step a word, the rescued one too, through the first rung.
+        // Up a step a word, the rescued one too, through the first rung, in
+        // the order they are heard (each word held full to its end, the
+        // one rescued bursting as its shot lands, before its shooter).
         assert_eq!(runs, (1..=14).collect::<Vec<u32>>());
+        let mut heard: Vec<(f64, u32)> = (c.iter())
+            .filter_map(|c| match c.event {
+                Event::Word { streak, .. } => Some((c.at.unwrap(), streak)),
+                _ => None,
+            })
+            .collect();
+        heard.sort_by(|a, b| a.0.total_cmp(&b.0));
+        assert!(heard.windows(2).all(|w| w[1].1 == w[0].1 + 1), "{heard:?}");
         let first = Tier::ALL[0].spec().streak;
         assert!(runs.iter().filter(|&&r| r == first).count() == 1);
         assert!(!c.iter().any(|c| matches!(c.event, Event::Lost(_))));
+    }
+
+    /// Sung live, a long word won early pops as it ends (its sound cued a
+    /// sweep ahead, as any), the bigger for being held full so long; the
+    /// short words before and after it pop as any, the ladder climbing a
+    /// step a word.
+    #[test]
+    fn a_word_held_full_pops_as_it_ends_and_bigger() {
+        let mut s = crate::core::singing::tests::a_long_word();
+        let mut moments = Moments::default();
+        let mut words = Vec::new();
+        for i in 0..500 {
+            let t = f64::from(i) / 100.0;
+            let c = s.word_at(t).map(|(_, c)| c as f32);
+            s.hear(t, c);
+            for cue in moments.frame(&s, t).cues {
+                if let Event::Word { streak, size, .. } = cue.event {
+                    words.push((t, cue.at, streak, size));
+                }
+            }
+        }
+        let [first, (told, at, streak, size), last] = words[..] else {
+            panic!("three pops: {words:?}");
+        };
+        assert_eq!((at, streak, size), (Some(3.6), 2, 1.0));
+        assert!((3.6 - crate::core::bubbles::SWEEP - 0.01..3.6).contains(&told));
+        assert_eq!((first.1, first.2, first.3), (Some(0.5), 1, 0.0));
+        assert_eq!((last.1, last.2, last.3), (Some(4.2), 3, 0.0));
     }
 
     #[test]
