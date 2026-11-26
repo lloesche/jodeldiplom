@@ -82,7 +82,10 @@ Refactors, roughly in the order they unblock each other.
   FFTs, windows, WAV) instead of copies.
 - **Deterministic tests** on a simulated clock, real-device tests opt in,
   a nightly GPU run (`shader_check`, `frame_cost` budgets) on the owner's
-  machine.
+  machine. First among them `tests/sfx.rs`'s
+  `the_result_is_heard_after_the_song`: it renders in real time and its
+  paper rustle reads 0.79 against a bar of 0.8 when the machine is busy
+  (failed three times under parallel builds, passes alone).
 - **Docs:** an ARCHITECTURE.md with a glossary, the tier, effects and
   sound plans moved into `docs/`, macOS window behaviour written down.
 
