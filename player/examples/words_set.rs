@@ -168,7 +168,7 @@ fn main() {
             parts: parts.clone(),
             ..Transcript::default()
         };
-        let (lyrics, fit) = jodeldiplom::lyrics::prepare_text(&text, &heard, &Vec::new);
+        let (lyrics, fit) = jodel_lyrics::prepare::text(&text, &heard, &Vec::new);
         let Some(emissions) = model.emissions(&voice) else {
             println!("{name}: no emissions");
             continue;

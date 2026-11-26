@@ -39,7 +39,8 @@ fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let started = Instant::now();
     let mut cpu = Qwen3Asr::open(Path::new(&args[0])).unwrap();
-    let gpu = GpuAsr::new(&PackedModel::from_model(&cpu, |_| 4, None)).unwrap();
+    let packed = PackedModel::from_checkpoint(Path::new(&args[0]), |_| 4, None, |_, _| {});
+    let gpu = GpuAsr::new(&packed.unwrap()).unwrap();
     println!("{}: loaded in {:.2?}", gpu.name(), started.elapsed());
     cpu.round_weights(4, 32, false);
     for dir in &args[1..] {

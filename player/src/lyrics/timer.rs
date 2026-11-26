@@ -6,12 +6,13 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use jodel_lyrics::aligner::{Acoustic, CtcAligner};
+use jodel_lyrics::lines::transcript_lyrics;
+use jodel_lyrics::prepare::{self, Others};
 use jodel_lyrics::{Lyrics, Maker};
 
 use super::models::Models;
-use super::{
-    prepare_text, relined, transcript_lyrics, Others, WordTimer, HEARD_LEAST, TOO_LITTLE_HEARD,
-};
+use super::{relined, WordTimer, TOO_LITTLE_HEARD};
 
 /// The word timing of the speech model: the voice separated on the GPU,
 /// wav2vec2 on the GPU or half the processor's threads (the rest left to
@@ -20,7 +21,7 @@ use super::{
 /// fit the recording: [`jodel_lyrics::scaffold`]). Any text is first
 /// checked against what the speech recogniser hears in the voice (on the
 /// GPU, where it and the recogniser are there), one from LRCLIB swapped for
-/// one of LRCLIB's others when it does not fit ([`fitting`]); what it
+/// one of LRCLIB's others when it does not fit ([`prepare`]); what it
 /// heard, in the transcript's parts and in glimpses
 /// ([`jodel_lyrics::glimpses`]), pins the words to where it was sung.
 pub struct SpeechTimer {
@@ -40,7 +41,7 @@ enum Speech {
 }
 
 impl Speech {
-    fn acoustic(&self) -> Arc<dyn jodel_lyrics::aligner::Acoustic + Send + Sync> {
+    fn acoustic(&self) -> Arc<dyn Acoustic + Send + Sync> {
         match self {
             Speech::Gpu(gpu) => Arc::clone(gpu) as _,
             Speech::Cpu(cpu) => Arc::clone(cpu) as _,
@@ -92,7 +93,6 @@ impl WordTimer for SpeechTimer {
     }
 
     fn time(&self, path: &Path, lyrics: &Lyrics, others: &Others) -> Result<Lyrics, String> {
-        use jodel_lyrics::aligner::CtcAligner;
         let model = self.acoustic()?;
         let mut steps = Steps::default();
         let voice = steps.voice(self.stems.as_deref(), path)?;
@@ -103,7 +103,7 @@ impl WordTimer for SpeechTimer {
         let (lyrics, fit, parts, glimpses) = match self.recogniser() {
             Some(asr) => match steps.hear(&asr, || asr.transcribe(&voice), |s| &mut s.heard) {
                 Ok(heard) => {
-                    let (lyrics, fit) = prepare_text(lyrics, &heard, others);
+                    let (lyrics, fit) = prepare::text(lyrics, &heard, others);
                     let glimpses = steps.hear(&asr, || asr.glimpses(&voice), |s| &mut s.glimpsed);
                     (lyrics, fit, heard.parts, glimpses.unwrap_or_default())
                 }
@@ -112,7 +112,7 @@ impl WordTimer for SpeechTimer {
             None => (lyrics.clone(), None, Vec::new(), Vec::new()),
         };
         let started = Instant::now();
-        let mut timed = CtcAligner::new(model).align_heard_in(&voice, &lyrics, &parts, &glimpses);
+        let mut timed = CtcAligner::new(model).align(&voice, &lyrics, &parts, &glimpses);
         steps.aligned = started.elapsed();
         timed.timing.fit = fit;
         steps.note(path);
@@ -120,13 +120,12 @@ impl WordTimer for SpeechTimer {
     }
 
     fn transcribe(&self, path: &Path) -> Result<(Lyrics, Lyrics), String> {
-        use jodel_lyrics::aligner::CtcAligner;
         let asr = self.recogniser().ok_or("no speech recogniser here")?;
         let model = self.acoustic()?;
         let mut steps = Steps::default();
         let voice = steps.voice(self.stems.as_deref(), path)?;
         let heard = steps.hear(&asr, || asr.transcribe(&voice), |s| &mut s.heard)?;
-        if jodel_lyrics::words::words(&heard.text).len() < HEARD_LEAST {
+        if !prepare::enough_heard(&heard.text) {
             return Err(TOO_LITTLE_HEARD.into());
         }
         let text = transcript_lyrics(&heard, asr_maker());
@@ -134,7 +133,7 @@ impl WordTimer for SpeechTimer {
             .hear(&asr, || asr.glimpses(&voice), |s| &mut s.glimpsed)
             .unwrap_or_default();
         let started = Instant::now();
-        let timed = CtcAligner::new(model).align_heard_in(&voice, &text, &heard.parts, &glimpses);
+        let timed = CtcAligner::new(model).align(&voice, &text, &heard.parts, &glimpses);
         steps.aligned = started.elapsed();
         steps.note(path);
         // The lines made again where the words' timing says they break.
@@ -147,7 +146,7 @@ impl SpeechTimer {
     /// its GPU was lost): on the GPU where there is one (25 times as fast,
     /// and the processor left to playback), else on half the processor's
     /// threads.
-    fn acoustic(&self) -> Result<Arc<dyn jodel_lyrics::aligner::Acoustic + Send + Sync>, String> {
+    fn acoustic(&self) -> Result<Arc<dyn Acoustic + Send + Sync>, String> {
         if !self.models.speech_now().is_file() {
             return Err("the speech model is not here".into());
         }

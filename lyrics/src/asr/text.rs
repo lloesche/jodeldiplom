@@ -3,6 +3,8 @@
 //! its added tokens (`tokenizer_config.json`), for reading what the model
 //! writes. Only decoding: the prompts are fixed token ids.
 
+use std::path::Path;
+
 use crate::json::Json;
 
 /// `<|endoftext|>`.
@@ -79,6 +81,14 @@ pub struct Vocab {
 }
 
 impl Vocab {
+    /// From the files `vocab.json` and `tokenizer_config.json` in `dir`.
+    pub fn open(dir: &Path) -> Result<Vocab, String> {
+        let read = |name: &str| {
+            std::fs::read_to_string(dir.join(name)).map_err(|e| format!("{name}: {e}"))
+        };
+        Vocab::parse(&read("vocab.json")?, &read("tokenizer_config.json")?)
+    }
+
     /// From `vocab.json` and `tokenizer_config.json`'s text.
     pub fn parse(vocab_json: &str, config_json: &str) -> Result<Vocab, String> {
         let table = byte_of_char();

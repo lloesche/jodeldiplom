@@ -384,15 +384,13 @@ impl Work for Real {
         progress: &mut dyn FnMut(u64, u64),
     ) -> Result<(), String> {
         use jodel_lyrics::asr::packed::PackedModel;
-        let model = jodel_lyrics::asr::Qwen3Asr::open(parts)?;
         let statistics = jodel_lyrics::asr::quant::Statistics::built_in();
-        let packed = PackedModel::from_model_with(
-            &model,
+        let packed = PackedModel::from_checkpoint(
+            parts,
             |_| 4,
             Some(&statistics),
             |done, all| progress(done as u64, all as u64),
-        );
-        drop(model);
+        )?;
         durable::write_atomic(to, &packed.to_bytes()).map_err(|e| format!("{}: {e}", to.display()))
     }
 

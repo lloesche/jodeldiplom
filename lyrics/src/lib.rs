@@ -21,10 +21,13 @@
 //!   timed, checked against the song aligned without them, and, where they
 //!   fit, the lines' words held near them.
 //! - [`aligner`]: it put together, on a speech model's emissions
-//!   ([`aligner::Acoustic`]): the [`Aligner`] the player uses.
-//! - [`spread`]: timing without a model: line times split across words by
-//!   syllables, plain text spread over where the voice is heard, and the
-//!   filling-in of words whose times were not trusted.
+//!   ([`aligner::Acoustic`]): the [`aligner::CtcAligner`] the player uses.
+//! - [`prepare`]: the text to time: the one found when it fits the
+//!   recording, else another that does, with the repeats the recogniser
+//!   heard put in.
+//! - [`spread`]: timing without a model: a synced text's line times split
+//!   across its words by syllables, plain text spread over where the voice
+//!   is heard; and the filling-in of words whose times were not trusted.
 //! - [`sources`]: the text from a file's tags or a `.lrc` file beside it;
 //!   [`lrclib`]: the LRCLIB web service's addresses and answers (the
 //!   request itself is the caller's).
@@ -45,18 +48,16 @@
 //!   tokens. [`asr::quant`] is its 4-bit weights' format, which the GPU's
 //!   version (`jodel_gpu::GpuAsr`) runs on, 20 times as fast.
 //!
-//! The two interfaces, [`LyricsSource`] (text for a track) and
-//! [`Aligner`] (word times for a text against the voice), leave room for a
-//! transcribing source and other aligners later. Every result says which
-//! source and which aligner, at which version, made it, so a better one
-//! can time a song again.
+//! [`LyricsSource`] (text for a track) leaves room for other sources.
+//! Every result says which source and which aligner, at which version,
+//! made it, so a better one can time a song again.
 //!
-//! No dependencies.
+//! It depends only on `durable` (its file writes) and `jodel-tensors` (the
+//! models' checkpoints).
 
 #![warn(missing_docs)]
 
 use std::path::PathBuf;
-use std::sync::Arc;
 
 pub mod aligner;
 pub mod anchors;
@@ -69,6 +70,7 @@ pub mod lines;
 pub mod lrc;
 pub mod lrclib;
 mod nn;
+pub mod prepare;
 pub mod repeats;
 pub mod scaffold;
 pub mod sources;
@@ -171,7 +173,8 @@ pub struct Line {
     /// When the line is sung as the text's source synced it (LRCLIB's
     /// synced lyrics, an LRC file): kept with a found text as a scaffold
     /// for the aligner, which holds the line's words near it only where it
-    /// fits the recording ([`scaffold`]). Never shown, never a line's time.
+    /// fits the recording ([`scaffold`]). Never shown, and a line's time
+    /// only when there is no model to time it ([`spread::fallback`]).
     pub synced: Option<Synced>,
     /// Whether the whole line is in parentheses.
     pub backing: bool,
@@ -473,9 +476,6 @@ pub struct Track {
     pub duration: Option<f64>,
     /// Its tags as (key, value), as the decoder gives them.
     pub tags: Vec<(String, String)>,
-    /// The voice at [`VOCALS_RATE`], mono, when it has been separated
-    /// (for a source that transcribes).
-    pub vocals: Option<Arc<[f32]>>,
 }
 
 /// What a source found for a track.
@@ -498,16 +498,6 @@ pub trait LyricsSource {
     /// What it has for `track`; `Err` when it could not tell (it may on
     /// another try).
     fn find(&self, track: &Track) -> Result<Found, String>;
-}
-
-/// Something that times the words of a text against the voice.
-pub trait Aligner {
-    /// Its name and version, recorded in its results.
-    fn maker(&self) -> Maker;
-
-    /// `lyrics` with word times, from the voice at [`VOCALS_RATE`] (mono).
-    /// The result's [`Timing::by`] names this aligner.
-    fn align(&self, vocals_16k: &[f32], lyrics: &Lyrics) -> Lyrics;
 }
 
 #[cfg(test)]

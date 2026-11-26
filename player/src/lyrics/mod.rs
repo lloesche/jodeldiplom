@@ -40,10 +40,10 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use jodel_lyrics::fit::fits;
 use jodel_lyrics::lrclib::{self, Record};
+use jodel_lyrics::prepare::Others;
 use jodel_lyrics::sources::{SidecarSource, TagSource};
-use jodel_lyrics::{Fit, Found, Lyrics, LyricsSource, Maker, Source, Track};
+use jodel_lyrics::{Found, Lyrics, LyricsSource, Maker, Source, Track};
 
 pub mod models;
 pub mod store;
@@ -204,7 +204,6 @@ pub fn track_of(path: &Path) -> Option<Track> {
         album: info.tags.album.clone(),
         duration: info.duration().map(|d| d.as_secs_f64()),
         tags: info.tags.all.clone(),
-        vocals: None,
     })
 }
 
@@ -494,9 +493,6 @@ impl Drop for LyricsWorker {
     }
 }
 
-/// LRCLIB's other texts of a song, asked for only when needed.
-pub type Others<'a> = dyn Fn() -> Vec<Lyrics> + 'a;
-
 /// Times the words of lyrics against a track's voice.
 pub trait WordTimer: Send + Sync {
     /// Whether it can run now (its model is there, or can be fetched).
@@ -507,15 +503,16 @@ pub trait WordTimer: Send + Sync {
     fn maker(&self) -> Maker;
 
     /// `lyrics` with each word timed against the voice of `path`; when
-    /// they do not fit what is sung, the best fitting of `others` instead
-    /// ([`fitting`]), timed.
+    /// they do not fit what is sung, the best fitting of `others` (LRCLIB's
+    /// other texts of the song) instead ([`jodel_lyrics::prepare`]), timed.
     fn time(&self, path: &Path, lyrics: &Lyrics, others: &Others) -> Result<Lyrics, String>;
 
     /// The words sung in the voice of `path`, heard by a speech recogniser
     /// (for a track no source has lyrics for): the text, its lines cut
     /// where the recogniser's punctuation (or a line's length) says
-    /// ([`transcript_lyrics`]), and the text timed. Its source is
-    /// [`Source::Transcribed`]: no trusted source, so it may be wrong.
+    /// ([`jodel_lyrics::lines::transcript_lyrics`]), and the text timed.
+    /// Its source is [`Source::Transcribed`]: no trusted source, so it may
+    /// be wrong.
     fn transcribe(&self, _path: &Path) -> Result<(Lyrics, Lyrics), String> {
         Err("no speech recogniser".into())
     }
@@ -535,99 +532,10 @@ pub fn relined(timed: &Lyrics) -> (Lyrics, Lyrics) {
     (text, timed)
 }
 
-/// The most words a line of a transcript gets (a longer sentence is cut
-/// into even pieces).
-const HEARD_LINE_MOST: usize = 9;
-
-/// Lyrics from what a speech recogniser heard, by `maker`, as first cut
-/// before their words are timed (then [`relined`] by the timing): each part's
-/// words cut into lines at the ends of sentences (`.`, `!`, `?`, `;`), at
-/// commas where a sentence is long, and into even pieces of at most
-/// [`HEARD_LINE_MOST`] words; untimed.
-pub fn transcript_lyrics(transcript: &jodel_lyrics::asr::Transcript, maker: Maker) -> Lyrics {
-    let mut lines = Vec::new();
-    for part in &transcript.parts {
-        let mut sentence: Vec<&str> = Vec::new();
-        let words: Vec<&str> = part.text.split_whitespace().collect();
-        for (k, word) in words.iter().enumerate() {
-            sentence.push(word);
-            let ends = word.ends_with(['.', '!', '?', ';', '…', '。', '！', '？'])
-                || (word.ends_with([',', '，']) && sentence.len() >= 5)
-                || k + 1 == words.len();
-            if ends {
-                let pieces = sentence.len().div_ceil(HEARD_LINE_MOST);
-                let each = sentence.len().div_ceil(pieces);
-                for piece in sentence.chunks(each) {
-                    lines.push(jodel_lyrics::Line::from_text(&piece.join(" ")));
-                }
-                sentence.clear();
-            }
-        }
-    }
-    Lyrics {
-        lines,
-        source: Source::Transcribed(maker),
-        timing: jodel_lyrics::Timing::default(),
-    }
-}
-
-/// Of `lyrics` and `others`, the text to time against a voice in which the
-/// recogniser `heard` this: `lyrics` when they fit ([`fits`]) or too
-/// little was heard to judge (under [`HEARD_LEAST`] words), else the best
-/// fitting of `others` when it fits, else `lyrics` still. And its fit, when
-/// judged.
-pub fn fitting(lyrics: &Lyrics, heard: &str, others: &Others) -> (Lyrics, Option<Fit>) {
-    use jodel_lyrics::fit::lyrics_fit;
-    use jodel_lyrics::words::words;
-    if words(heard).len() < HEARD_LEAST {
-        return (lyrics.clone(), None);
-    }
-    let fit = lyrics_fit(lyrics, heard);
-    if fits(fit) {
-        return (lyrics.clone(), Some(Fit::new(fit, false)));
-    }
-    let best = others()
-        .into_iter()
-        .map(|o| {
-            let f = lyrics_fit(&o, heard);
-            (o, f)
-        })
-        .max_by(|a, b| a.1.total_cmp(&b.1));
-    match best {
-        Some((other, f)) if fits(f) && f > fit => (other, Some(Fit::new(f, true))),
-        _ => (lyrics.clone(), Some(Fit::new(fit, false))),
-    }
-}
-
-/// The text to time against a voice in which the recogniser `heard` this:
-/// `lyrics`, or the best fitting of `others` when they do not fit
-/// ([`fitting`]); with the repeats it heard and the text leaves out put in
-/// when the text fits ([`jodel_lyrics::repeats`]). And its fit, when
-/// judged.
-pub fn prepare_text(
-    lyrics: &Lyrics,
-    heard: &jodel_lyrics::asr::Transcript,
-    others: &Others,
-) -> (Lyrics, Option<Fit>) {
-    let (lyrics, fit) = fitting(lyrics, &heard.text, others);
-    if fit.is_some_and(|f| f.fits()) {
-        (
-            jodel_lyrics::repeats::with_repeats(&lyrics, &heard.parts),
-            fit,
-        )
-    } else {
-        (lyrics, fit)
-    }
-}
-
-/// The least words heard for a fit to be judged (fewer: a voice too quiet
-/// or too short to tell).
-pub const HEARD_LEAST: usize = 20;
-
 /// The timing thread: takes the lyrics found without our times, in order,
 /// times them (a text from LRCLIB that does not fit the song swapped for
-/// one of its others that does: [`fitting`]), keeps them in the cache and
-/// sends them on (for a track still wanted).
+/// one of its others that does: [`jodel_lyrics::prepare::fitting`]), keeps
+/// them in the cache and sends them on (for a track still wanted).
 fn time_words<D: FnMut(PathBuf, Answer)>(
     shared: &(Mutex<Wanted>, Condvar),
     timer: &dyn WordTimer,
@@ -722,9 +630,11 @@ fn time_words<D: FnMut(PathBuf, Answer)>(
                 continue;
             }
         };
-        // Another text chosen: it is the song's from now on.
-        let swapped =
-            jodel_lyrics::words::lyrics_words(&timed) != jodel_lyrics::words::lyrics_words(&lyrics);
+        // Another text chosen, as its fit says: it is the song's from now
+        // on. Not a text that fits and was timed with the repeats heard put
+        // in ([`jodel_lyrics::prepare::text`]): it stays as found, and the
+        // repeats are put in again, as heard then, whenever it is timed.
+        let swapped = timed.timing.fit.is_some_and(|f| f.swapped);
         let lyrics = if swapped {
             let mut text = timed.clone();
             text.drop_times();

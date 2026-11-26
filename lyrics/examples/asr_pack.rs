@@ -12,12 +12,10 @@ use std::path::Path;
 use std::time::Instant;
 
 use jodel_lyrics::asr::packed::PackedModel;
-use jodel_lyrics::asr::Qwen3Asr;
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let started = Instant::now();
-    let model = Qwen3Asr::open(Path::new(&args[0])).unwrap();
     let spec = std::env::var("JODEL_ASR_BITS").unwrap_or_else(|_| "4".into());
     let stats = match std::env::var_os("JODEL_ASR_STATS") {
         Some(p) => {
@@ -25,11 +23,13 @@ fn main() {
         }
         None => jodel_lyrics::asr::quant::Statistics::built_in(),
     };
-    let packed = PackedModel::from_model(
-        &model,
+    let packed = PackedModel::from_checkpoint(
+        Path::new(&args[0]),
         jodel_lyrics::asr::quant::bits_by(&spec),
         Some(&stats),
-    );
+        |_, _| {},
+    )
+    .unwrap();
     packed.write(Path::new(&args[1])).unwrap();
     let size = std::fs::metadata(&args[1]).map_or(0, |m| m.len());
     println!(

@@ -8,19 +8,25 @@
 //!   With room to spare, the words go at no slower than
 //!   [`SLOWEST`] a syllable from their line's start; with only one
 //!   neighbour, at [`TYPICAL`].
-//! - [`split_lines`]: line times only (LRC), split across the words.
+//! - [`split_lines`]: line times only, split across the words.
 //! - [`spread_over`]: no times at all: the words in syllable proportion
 //!   over the stretches where the voice is heard ([`vocal_stretches`]).
-//! - [`fallback`] picks between the two; [`SyllableAligner`] is it as an
-//!   [`Aligner`], for when there is no model.
+//! - [`fallback`], the timing when there is no model, picks between the
+//!   two: a synced text's line times ([`crate::Line::synced`]) split, else
+//!   the words spread over the voice.
 
 use crate::ctc::FrameClock;
-use crate::{Aligner, Detail, Line, Lyrics, Maker, Timing, Word, CONFIDENT, VERSION, VOCALS_RATE};
+use crate::{Detail, Line, Lyrics, Maker, Timing, Word, CONFIDENT, VERSION, VOCALS_RATE};
 
 /// The slowest pace words are filled in at, in seconds a syllable.
 pub const SLOWEST: f64 = 1.0;
 /// The pace words are filled in at with a neighbour on one side only.
 pub const TYPICAL: f64 = 0.3;
+
+/// What the timing without a model records in its results.
+pub fn maker() -> Maker {
+    Maker::new("syllables", VERSION)
+}
 
 /// The syllables in `word`, estimated: the groups of vowels (`y` counted
 /// as one), less a silent final `e`; at least one for a word with a
@@ -160,7 +166,7 @@ pub fn split_lines(lyrics: &Lyrics) -> Lyrics {
     interpolate(&mut out.lines, CONFIDENT);
     out.timing = Timing {
         detail: Lyrics::detail_of_lines(&out.lines),
-        by: Some(SyllableAligner.maker()),
+        by: Some(maker()),
         fit: None,
     };
     out
@@ -213,7 +219,7 @@ pub fn spread_over(lyrics: &Lyrics, stretches: &[(f64, f64)]) -> Lyrics {
     }
     out.timing = Timing {
         detail: Detail::Words,
-        by: Some(SyllableAligner.maker()),
+        by: Some(maker()),
         fit: None,
     };
     out
@@ -267,29 +273,19 @@ pub fn pauses(stretches: &[(f64, f64)], clock: FrameClock) -> Vec<bool> {
     out
 }
 
-/// Times for `lyrics` without a model: the line times split by syllables
-/// when there are any, else the words spread over where the voice is
-/// heard; already word-timed lyrics are kept as they are.
+/// Times for `lyrics` without a model ([`maker`]): when its source synced
+/// its lines ([`Line::synced`]), each line from its synced start, its words
+/// split by syllables ([`split_lines`]); else the words spread over where
+/// the voice in `vocals_16k` is heard ([`spread_over`]).
 pub fn fallback(vocals_16k: &[f32], lyrics: &Lyrics) -> Lyrics {
-    match lyrics.timing.detail {
-        Detail::Words => lyrics.clone(),
-        Detail::Lines => split_lines(lyrics),
-        Detail::None => spread_over(lyrics, &vocal_stretches(vocals_16k)),
+    if lyrics.lines.iter().all(|l| l.synced.is_none()) {
+        return spread_over(lyrics, &vocal_stretches(vocals_16k));
     }
-}
-
-/// The timing without a model, as an aligner.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct SyllableAligner;
-
-impl Aligner for SyllableAligner {
-    fn maker(&self) -> Maker {
-        Maker::new("syllables", VERSION)
+    let mut synced = lyrics.clone();
+    for line in &mut synced.lines {
+        line.time = line.synced.map(|s| s.start);
     }
-
-    fn align(&self, vocals_16k: &[f32], lyrics: &Lyrics) -> Lyrics {
-        fallback(vocals_16k, lyrics)
-    }
+    split_lines(&synced)
 }
 
 #[cfg(test)]
@@ -391,6 +387,24 @@ mod tests {
     }
 
     #[test]
+    fn without_a_model_a_synced_text_is_timed_from_its_synced_lines() {
+        // Its source's line times are only its scaffold, yet without a
+        // model they time its words as an LRC file's line times would.
+        let lrc = "[00:10.00]hello there my darling\n[00:13.00]go\n";
+        let text = Lyrics::parse_text(lrc, Source::Lrclib);
+        assert!(text.lines.iter().all(|l| l.time.is_none()));
+        let out = fallback(&[], &text);
+        let lines = split_lines(&Lyrics::parse(lrc, Source::Lrclib));
+        assert_eq!(out.lines.len(), 2);
+        for (a, b) in out.lines.iter().zip(&lines.lines) {
+            near(&word_times(a), &word_times(b));
+        }
+        assert_eq!(out.lines[0].words[0].start, Some(10.0));
+        assert_eq!(out.timing.detail, Detail::Words);
+        assert_eq!(out.timing.by, Some(maker()));
+    }
+
+    #[test]
     fn untrusted_words_are_filled_in_between_trusted_ones() {
         let mut l = lines(&[("one two three four", Some(0.0))]);
         let words = &mut l.lines[0].words;
@@ -482,8 +496,9 @@ mod tests {
             source: Source::Unknown,
             timing: Timing::default(),
         };
-        let out = SyllableAligner.align(&v, &plain);
+        let out = fallback(&v, &plain);
         assert_eq!(out.lines[0].words[0].start, Some(found[0].0));
+        assert_eq!(out.timing.by, Some(maker()));
         // The pauses are the frames outside them; the short drop is none.
         let clock = FrameClock {
             frame_seconds: 0.02,

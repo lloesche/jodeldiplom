@@ -1,8 +1,8 @@
 //! The recogniser as one file of our own: its large matrices already at 4
 //! bits ([`super::quant`]), the rest as f32, and the vocabulary; about
 //! 0.5 GB against the checkpoint's 1.9 GB, read in a moment. The GPU's
-//! version runs from it ([`PackedModel`]); [`PackedModel::from_model`]
-//! makes it from the CPU's.
+//! version runs from it ([`PackedModel`]); [`PackedModel::from_checkpoint`]
+//! makes it from the checkpoint, a tensor at a time.
 //!
 //! The file: `JDLASR` and a version byte and a reserved one, then the
 //! entries, each its name (u16 length, UTF-8), its kind (u8: 0 values, 1 a
@@ -13,7 +13,9 @@
 
 use std::path::Path;
 
-use super::{quant, text, Qwen3Asr};
+use jodel_tensors::SafeTensors;
+
+use super::{quant, text, weights};
 
 const MAGIC: &[u8; 6] = b"JDLASR";
 /// The file's version: 2 since the player weights the 4-bit rounding by the
@@ -56,12 +58,12 @@ pub enum Tensor {
     },
 }
 
-/// The recogniser's tensors, named as [`Qwen3Asr::visit`] names them, and
-/// its vocabulary. Without a `head`, the head is the embeddings (the
-/// checkpoint ties them).
+/// The recogniser's tensors, named and in the order
+/// [`PackedModel::from_checkpoint`] gives them, and its vocabulary. Without
+/// a `head`, the head is the embeddings (the checkpoint ties them).
 #[derive(Clone, Debug)]
 pub struct PackedModel {
-    /// The tensors in [`Qwen3Asr::visit`]'s order.
+    /// The tensors, in order.
     pub tensors: Vec<(String, Tensor)>,
     /// The vocabulary.
     pub vocab: text::Vocab,
@@ -85,57 +87,68 @@ fn fnv(data: &[u8]) -> u64 {
     h
 }
 
-impl PackedModel {
-    /// The CPU model's tensors, its matrices quantised to the bits `bits`
-    /// gives each by name (4, 8 or 16; the first convolution stays f32), the
-    /// 4-bit ones weighted by `statistics` where it has them
-    /// ([`quant::quantize_weighted`]).
-    pub fn from_model(
-        model: &Qwen3Asr,
-        bits: impl Fn(&str) -> u32,
-        statistics: Option<&quant::Statistics>,
-    ) -> PackedModel {
-        PackedModel::from_model_with(model, bits, statistics, |_, _| {})
+/// The tensor `name` of the packed model, from its `values` and its shape
+/// when it is a matrix: a matrix quantised to the bits `bits` gives it (4,
+/// 8 or 16; the first convolution stays f32), at 4 bits weighted by
+/// `statistics` where it has them.
+fn packed(
+    name: &str,
+    values: &[f32],
+    shape: Option<(usize, usize)>,
+    bits: &impl Fn(&str) -> u32,
+    statistics: Option<&quant::Statistics>,
+) -> Tensor {
+    match shape {
+        Some((rows, cols)) if name != "conv1.w" => match bits(name) {
+            16 => Tensor::F16 {
+                rows,
+                cols,
+                data: quant::to_halves(values, rows, cols),
+            },
+            8 => Tensor::Q8 {
+                rows,
+                cols,
+                data: quant::quantize8(values, rows, cols),
+            },
+            _ => Tensor::Q4 {
+                rows,
+                cols,
+                data: match statistics.and_then(|s| importance(s, name, cols)) {
+                    Some(imp) => quant::quantize_weighted(values, rows, cols, &imp),
+                    None => quant::quantize(values, rows, cols, false),
+                },
+            },
+        },
+        _ => Tensor::Values(values.to_vec()),
     }
+}
 
-    /// [`PackedModel::from_model`], telling `progress` the tensors packed so
-    /// far and in all after each.
-    pub fn from_model_with(
-        model: &Qwen3Asr,
+impl PackedModel {
+    /// The recogniser in the folder `dir` (`model.safetensors`,
+    /// `vocab.json`, `tokenizer_config.json`), read from its checkpoint a
+    /// tensor at a time: its matrices quantised to the bits `bits` gives
+    /// each by name (4, 8 or 16; the first convolution stays f32), the
+    /// 4-bit ones weighted by `statistics` where it has them
+    /// ([`quant::quantize_weighted`]). It tells `progress` the tensors
+    /// packed so far and in all after each.
+    pub fn from_checkpoint(
+        dir: &Path,
         bits: impl Fn(&str) -> u32,
         statistics: Option<&quant::Statistics>,
         mut progress: impl FnMut(usize, usize),
-    ) -> PackedModel {
-        let mut all = 0;
-        model.visit(&mut |_, _, _| all += 1);
-        let mut tensors = Vec::new();
-        model.visit(&mut |name, values, shape| {
-            let t = match shape {
-                Some((rows, cols)) if name != "conv1.w" => match bits(name) {
-                    16 => Tensor::F16 {
-                        rows,
-                        cols,
-                        data: quant::to_halves(values, rows, cols),
-                    },
-                    8 => Tensor::Q8 {
-                        rows,
-                        cols,
-                        data: quant::quantize8(values, rows, cols),
-                    },
-                    _ => Tensor::Q4 {
-                        rows,
-                        cols,
-                        data: match statistics.and_then(|s| importance(s, name, cols)) {
-                            Some(imp) => quant::quantize_weighted(values, rows, cols, &imp),
-                            None => quant::quantize(values, rows, cols, false),
-                        },
-                    },
-                },
-                _ => Tensor::Values(values.to_vec()),
-            };
-            tensors.push((name.to_owned(), t));
-            progress(tensors.len(), all);
-        });
+    ) -> Result<PackedModel, String> {
+        let t = SafeTensors::open(&dir.join("model.safetensors"))?;
+        let vocab = text::Vocab::open(dir)?;
+        let all = weights::checkpoint_tensors();
+        let mut tensors = Vec::with_capacity(all.len());
+        for (name, read) in &all {
+            let (values, shape) = read.from(&t)?;
+            tensors.push((
+                name.clone(),
+                packed(name, &values, shape, &bits, statistics),
+            ));
+            progress(tensors.len(), all.len());
+        }
         // The checkpoint ties the head to the embeddings: one copy, while
         // they round alike (weighted, only the head has statistics: two).
         let find = |n: &str| tensors.iter().position(|(name, _)| name == n);
@@ -144,10 +157,7 @@ impl PackedModel {
                 tensors.remove(h);
             }
         }
-        PackedModel {
-            tensors,
-            vocab: model.vocab().clone(),
-        }
+        Ok(PackedModel { tensors, vocab })
     }
 
     /// The file's bytes.

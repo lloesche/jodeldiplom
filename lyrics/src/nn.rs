@@ -142,7 +142,7 @@ pub(crate) fn rms_norm(x: &mut [f32], weight: &[f32]) {
 }
 
 /// Steps `n` values of a convolution with stride 2 and padding 1 give.
-pub(crate) fn halved(n: usize) -> usize {
+pub(crate) const fn halved(n: usize) -> usize {
     n.div_ceil(2)
 }
 
@@ -156,6 +156,21 @@ pub(crate) struct Conv {
     pub(crate) bias: Vec<f32>,
 }
 
+/// A 3×3 convolution's weight as a checkpoint has it
+/// (`[outputs][inputs][3][3]`) in rows, an output each, its inputs
+/// tap-major: `[outputs][tap·inputs + input]`.
+pub(crate) fn tap_major(raw: &[f32], inputs: usize, outputs: usize) -> Vec<f32> {
+    let mut rows = vec![0.0f32; raw.len()];
+    for o in 0..outputs {
+        for i in 0..inputs {
+            for tap in 0..9 {
+                rows[(o * 9 + tap) * inputs + i] = raw[(o * inputs + i) * 9 + tap];
+            }
+        }
+    }
+    rows
+}
+
 impl Conv {
     /// `{name}.weight` (`[outputs][inputs][3][3]`) and `{name}.bias` of `t`.
     pub(crate) fn load(
@@ -165,18 +180,10 @@ impl Conv {
         outputs: usize,
     ) -> Result<Conv, String> {
         let raw = t.get(&format!("{name}.weight"), &[outputs, inputs, 3, 3])?;
-        let mut weight = vec![0.0f32; raw.len()];
-        for o in 0..outputs {
-            for i in 0..inputs {
-                for tap in 0..9 {
-                    weight[(tap * inputs + i) * outputs + o] = raw[(o * inputs + i) * 9 + tap];
-                }
-            }
-        }
         Ok(Conv {
             inputs,
             outputs,
-            weight,
+            weight: transposed(&tap_major(&raw, inputs, outputs), outputs, 9 * inputs),
             bias: t.get(&format!("{name}.bias"), &[outputs])?,
         })
     }
@@ -441,6 +448,23 @@ pub(crate) fn gelu(values: &mut [f32]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_convolution_s_rows_are_tap_major() {
+        // 2 outputs of 3 inputs, each weight numbered as the checkpoint
+        // lays them out: [output][input][tap].
+        let (inputs, outputs) = (3, 2);
+        let raw: Vec<f32> = (0..outputs * inputs * 9).map(|v| v as f32).collect();
+        let rows = tap_major(&raw, inputs, outputs);
+        for o in 0..outputs {
+            for i in 0..inputs {
+                for tap in 0..9 {
+                    let at = o * 9 * inputs + tap * inputs + i;
+                    assert_eq!(rows[at], raw[(o * inputs + i) * 9 + tap]);
+                }
+            }
+        }
+    }
 
     #[test]
     fn matmul_matches_the_plain_sum() {

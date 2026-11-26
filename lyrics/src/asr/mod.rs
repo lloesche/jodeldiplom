@@ -77,8 +77,26 @@ pub const VOCAB: usize = 151_936;
 /// The base of the decoder's rotary positions.
 pub const ROPE_BASE: f64 = 1e6;
 
+/// The bands of the encoder's steps, after the convolutions.
+const BANDS: usize = piece_steps(mel::MELS);
+
+/// The projection of the encoder's flattened steps as the checkpoint has it
+/// (`[896][channel·16 + band]`), its inputs band-major instead, as the
+/// steps are flattened: `[896][band·480 + channel]`.
+fn band_major(raw: &[f32]) -> Vec<f32> {
+    let mut rows = vec![0.0f32; raw.len()];
+    for o in 0..ENC_DIM {
+        for c in 0..CONV {
+            for b in 0..BANDS {
+                rows[o * CONV * BANDS + b * CONV + c] = raw[o * CONV * BANDS + c * BANDS + b];
+            }
+        }
+    }
+    rows
+}
+
 /// The encoder's steps for a piece of `frames` frames.
-pub fn piece_steps(frames: usize) -> usize {
+pub const fn piece_steps(frames: usize) -> usize {
     halved(halved(halved(frames)))
 }
 
@@ -111,10 +129,6 @@ struct DecoderLayer {
     up: Linear,
     down: Linear,
 }
-
-/// What [`Qwen3Asr::visit`] hands each tensor to: its name, its values, and
-/// its shape when it is a matrix.
-pub type Visitor<'a> = dyn FnMut(&str, &[f32], Option<(usize, usize)>) + 'a;
 
 /// Qwen3-ASR-0.6B on the CPU.
 pub struct Qwen3Asr {
@@ -176,27 +190,18 @@ impl Qwen3Asr {
     /// `tokenizer_config.json`.
     pub fn open(dir: &Path) -> Result<Qwen3Asr, String> {
         let t = SafeTensors::open(&dir.join("model.safetensors"))?;
-        let read = |name: &str| {
-            std::fs::read_to_string(dir.join(name)).map_err(|e| format!("{name}: {e}"))
-        };
-        let vocab = text::Vocab::parse(&read("vocab.json")?, &read("tokenizer_config.json")?)?;
-        Qwen3Asr::load(&t, vocab)
+        Qwen3Asr::load(&t, text::Vocab::open(dir)?)
     }
 
     /// The model from its tensors and vocabulary.
     pub fn load(t: &SafeTensors, vocab: text::Vocab) -> Result<Qwen3Asr, String> {
         let a = "thinker.audio_tower";
-        let bands = piece_steps(mel::MELS);
-        let raw = t.get(&format!("{a}.conv_out.weight"), &[ENC_DIM, CONV * bands])?;
-        // From [896][channel·16 + band] to [band·480 + channel][896].
-        let mut conv_out = vec![0.0f32; raw.len()];
-        for o in 0..ENC_DIM {
-            for c in 0..CONV {
-                for b in 0..bands {
-                    conv_out[(b * CONV + c) * ENC_DIM + o] = raw[o * CONV * bands + c * bands + b];
-                }
-            }
-        }
+        let conv_out = Linear::from_rows(
+            &band_major(&t.get(&format!("{a}.conv_out.weight"), &[ENC_DIM, CONV * BANDS])?),
+            ENC_DIM,
+            CONV * BANDS,
+            None,
+        );
         let mut encoder = Vec::new();
         for l in 0..ENC_LAYERS {
             let n = format!("{a}.layers.{l}");
@@ -240,12 +245,7 @@ impl Qwen3Asr {
             conv1: Conv::load(t, &format!("{a}.conv2d1"), 1, CONV)?,
             conv2: Conv::load(t, &format!("{a}.conv2d2"), CONV, CONV)?,
             conv3: Conv::load(t, &format!("{a}.conv2d3"), CONV, CONV)?,
-            conv_out: Linear {
-                inputs: CONV * bands,
-                outputs: ENC_DIM,
-                weight: conv_out,
-                bias: None,
-            },
+            conv_out,
             positions: sinusoids(MAX_POSITIONS, ENC_DIM),
             encoder,
             post_norm: LayerNorm::load(t, &format!("{a}.ln_post"), ENC_DIM)?,

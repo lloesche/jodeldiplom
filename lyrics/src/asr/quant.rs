@@ -272,11 +272,12 @@ pub fn dequantize_row(q: &[u32], cols: usize, row: usize, out: &mut [f32]) {
     }
 }
 
-/// Calibration statistics: for each matrix (by [`super::Qwen3Asr::visit`]'s
-/// name), how many input rows it was seen with and each input column's sum
-/// of squares over them. The columns with the most energy are the ones
-/// whose weights' rounding matters most ([`quantize_weighted`]). Sums of
-/// any number of runs add up ([`Statistics::add`]).
+/// Calibration statistics: for each matrix (by its name in a
+/// [`super::packed::PackedModel`]), how many input rows it was seen with
+/// and each input column's sum of squares over them. The columns with the
+/// most energy are the ones whose weights' rounding matters most
+/// ([`quantize_weighted`]). Sums of any number of runs add up
+/// ([`Statistics::add`]).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Statistics {
     /// Each matrix: its name, its rows, its columns' sums of squares.

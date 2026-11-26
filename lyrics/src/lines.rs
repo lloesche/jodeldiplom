@@ -1,6 +1,7 @@
 //! Where a stream of timed words breaks into lines: for lyrics that came
 //! without lines of their own (heard from the voice by a speech
-//! recogniser).
+//! recogniser). [`transcript_lyrics`] gives such lyrics a first cut, to
+//! be timed; [`relined`] makes their lines again from the timing.
 //!
 //! The most likely breaks over the whole song, by dynamic programming:
 //! each break scored by how its pause and the word before it (how much
@@ -18,7 +19,8 @@
 //! 9 words: 0.60 and 0.71). Rhymes, and lines kept to the bars, were tried:
 //! the bars help rap with lines a bar long, but nothing overall.
 
-use crate::{Line, Lyrics};
+use crate::asr::Transcript;
+use crate::{Line, Lyrics, Maker, Source, Timing};
 
 /// The upper edges of the pause bins, in seconds (the last is open).
 const GAP_EDGES: [f64; 11] = [0.02, 0.05, 0.1, 0.15, 0.2, 0.3, 0.45, 0.7, 1.0, 1.5, 2.5];
@@ -49,6 +51,9 @@ const COMMA: f64 = 3.0;
 /// The most words a line gets (more are hard to read as it is sung; a cap
 /// of 12 costs the benchmark nothing, real lines rarely having over 10).
 const MOST_WORDS: usize = 12;
+/// The most words a line of a transcript's first cut gets (a longer
+/// sentence is cut into even pieces).
+const HEARD_LINE_MOST: usize = 9;
 
 fn bin(edges: &[f64], x: f64) -> usize {
     edges.iter().position(|&e| x <= e).unwrap_or(edges.len())
@@ -148,6 +153,40 @@ impl Stop {
     }
 }
 
+/// Lyrics from what a speech recogniser heard, by `maker`, as first cut
+/// before their words are timed (then [`relined`] by the timing): each
+/// part's words cut into lines at the ends of sentences as the recogniser
+/// writes them (`.`, `!`, `?`, `;`, `…`, `。`, `！`, `？` ending a word, no
+/// quotes looked through), at commas where a sentence is long, and into
+/// even pieces of at most [`HEARD_LINE_MOST`] words; untimed. Their source
+/// is [`Source::Transcribed`].
+pub fn transcript_lyrics(transcript: &Transcript, maker: Maker) -> Lyrics {
+    let mut lines = Vec::new();
+    for part in &transcript.parts {
+        let mut sentence: Vec<&str> = Vec::new();
+        let words: Vec<&str> = part.text.split_whitespace().collect();
+        for (k, word) in words.iter().enumerate() {
+            sentence.push(word);
+            let ends = word.ends_with(['.', '!', '?', ';', '…', '。', '！', '？'])
+                || (word.ends_with([',', '，']) && sentence.len() >= 5)
+                || k + 1 == words.len();
+            if ends {
+                let pieces = sentence.len().div_ceil(HEARD_LINE_MOST);
+                let each = sentence.len().div_ceil(pieces);
+                for piece in sentence.chunks(each) {
+                    lines.push(Line::from_text(&piece.join(" ")));
+                }
+                sentence.clear();
+            }
+        }
+    }
+    Lyrics {
+        lines,
+        source: Source::Transcribed(maker),
+        timing: Timing::default(),
+    }
+}
+
 /// `lyrics` (every word timed) with their lines made again where the words'
 /// timing says they break ([`breaks`]); each line's time its first word's.
 /// Breaks in the singing are left out. Unchanged when a word is untimed.
@@ -223,6 +262,42 @@ mod tests {
             lengths.len() > 1 && lengths.iter().all(|&l| (3..=MOST_WORDS).contains(&l)),
             "{lengths:?}"
         );
+    }
+
+    #[test]
+    fn a_transcript_is_cut_into_lines_at_its_sentences() {
+        let part = |start: f64, text: &str| crate::asr::Part {
+            start,
+            end: start + 20.0,
+            text: text.into(),
+        };
+        let heard = Transcript {
+            parts: vec![
+                part(
+                    0.0,
+                    "Short one! Then a sentence that goes on, and on and on and on and on and on for ever",
+                ),
+                part(20.0, "no stops at all here"),
+            ],
+            ..Default::default()
+        };
+        let lyrics = transcript_lyrics(&heard, Maker::new("heard", 1));
+        let texts: Vec<String> = lyrics.lines.iter().map(Line::text).collect();
+        assert_eq!(
+            texts,
+            [
+                "Short one!",
+                "Then a sentence that goes on,",
+                "and on and on and on",
+                "and on and on for ever",
+                "no stops at all here"
+            ]
+        );
+        assert!(lyrics
+            .lines
+            .iter()
+            .all(|l| l.words.len() <= HEARD_LINE_MOST));
+        assert_eq!(lyrics.source, Source::Transcribed(Maker::new("heard", 1)));
     }
 
     #[test]

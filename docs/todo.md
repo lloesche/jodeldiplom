@@ -68,8 +68,6 @@ Refactors, roughly in the order they unblock each other.
   covers keyed by all their bytes, folder listing out of `app.rs`.
 - **One atomic writer** for downloads, the mover and setup; the mover's
   "still to move" figure.
-- **The lyrics crate:** one word model, one cost model; the lyrics
-  policy (fitting, preparing the text) moved into the crate.
 - **One GPU engine** for every network; a lost GPU retried, the CPU
   fallback said.
 - **Output structure:** the mixer's run split, inputs publishing their

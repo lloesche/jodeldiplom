@@ -31,7 +31,6 @@ use std::time::Instant;
 use jodel_gpu::GpuAsr;
 use jodel_lyrics::asr::packed::PackedModel;
 use jodel_lyrics::asr::quant::{bits_by, Statistics};
-use jodel_lyrics::asr::Qwen3Asr;
 
 fn flag<'a>(args: &'a [String], name: &str) -> Option<&'a str> {
     args.iter()
@@ -237,11 +236,10 @@ fn main() {
     let most = flag(&args, "--most").map(|s| s.parse::<f64>().unwrap());
     let started = Instant::now();
     let packed = if model.is_dir() {
-        let cpu = Qwen3Asr::open(model).unwrap();
         let spec = std::env::var("JODEL_ASR_BITS").unwrap_or_else(|_| "4".into());
         let weights = std::env::var_os("JODEL_ASR_STATS")
             .map(|p| Statistics::from_bytes(&std::fs::read(p).unwrap()).unwrap());
-        PackedModel::from_model(&cpu, bits_by(&spec), weights.as_ref())
+        PackedModel::from_checkpoint(model, bits_by(&spec), weights.as_ref(), |_, _| {}).unwrap()
     } else {
         PackedModel::open(model).unwrap()
     };

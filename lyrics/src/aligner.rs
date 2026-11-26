@@ -6,7 +6,7 @@
 use crate::asr::Part;
 use crate::ctc::{voice_pauses, CtcSettings, Emissions, Hints};
 use crate::tokens::{Vocab, WAV2VEC2_960H};
-use crate::{spread, Aligner, Lyrics, Maker, VERSION};
+use crate::{spread, Lyrics, Maker, VERSION};
 
 /// A speech model giving CTC emissions for the voice.
 pub trait Acoustic {
@@ -64,11 +64,17 @@ impl<A: Acoustic> CtcAligner<A> {
         }
     }
 
-    /// [`Aligner::align`], with what a recogniser heard in the voice (its
-    /// transcript's `parts` and its `glimpses`, none when it was not heard)
-    /// pinning the words to where it heard them ([`crate::anchors`],
-    /// [`crate::glimpses`]).
-    pub fn align_heard_in(
+    /// The name and version it records in its results ([`aligner_maker`]).
+    pub fn maker(&self) -> Maker {
+        aligner_maker(&self.model.maker())
+    }
+
+    /// `lyrics` with word times, from the voice at [`crate::VOCALS_RATE`]
+    /// (mono), with what a recogniser heard in it (its transcript's `parts`
+    /// and its `glimpses`, none when it was not heard) pinning the words to
+    /// where it heard them ([`crate::anchors`], [`crate::glimpses`]). The
+    /// result's [`crate::Timing::by`] names this aligner.
+    pub fn align(
         &self,
         vocals_16k: &[f32],
         lyrics: &Lyrics,
@@ -93,16 +99,6 @@ impl<A: Acoustic> CtcAligner<A> {
     }
 }
 
-impl<A: Acoustic> Aligner for CtcAligner<A> {
-    fn maker(&self) -> Maker {
-        aligner_maker(&self.model.maker())
-    }
-
-    fn align(&self, vocals_16k: &[f32], lyrics: &Lyrics) -> Lyrics {
-        self.align_heard_in(vocals_16k, lyrics, &[], &[])
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -124,7 +120,7 @@ mod tests {
         let mut on = vec![WAV2VEC2_960H.blank; 200];
         plant(&mut on, "hi", 20, 2);
         let aligner = CtcAligner::new(Planted(emissions_of(&on, 0.9)));
-        let out = aligner.align(&[], &lyrics(&["hi"]));
+        let out = aligner.align(&[], &lyrics(&["hi"]), &[], &[]);
         assert_eq!(out.timing.by, Some(Maker::new("ctc:planted@7", VERSION)));
         assert_eq!(out.lines[0].words[0].start, Some(20.0 * FS));
     }

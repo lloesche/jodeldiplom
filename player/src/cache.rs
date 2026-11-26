@@ -100,7 +100,7 @@ pub const LYRICS_NONE: Schema = Schema {
 /// Lyrics timed word by word by us: Enhanced LRC. Version 1 was held to
 /// the line times the text came with; version 2 kept no letters' times
 /// (`[#:letters ...]`); version 3's text was not checked against what is sung
-/// (`crate::lyrics::fitting`), and version 4 kept no fit (`[fit:...]`).
+/// (`jodel_lyrics::prepare::fitting`), and version 4 kept no fit (`[fit:...]`).
 pub const LYRICS_TIMED: Schema = Schema {
     name: "lyrics-timed",
     version: 5,

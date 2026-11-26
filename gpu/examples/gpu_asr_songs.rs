@@ -19,7 +19,6 @@ use std::time::Instant;
 
 use jodel_gpu::GpuAsr;
 use jodel_lyrics::asr::packed::PackedModel;
-use jodel_lyrics::asr::Qwen3Asr;
 
 fn read_wav(path: &Path) -> Vec<f32> {
     let bytes = std::fs::read(path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
@@ -38,16 +37,17 @@ fn main() {
     let started = Instant::now();
     let model = Path::new(&args[0]);
     let packed = if model.is_dir() {
-        let cpu = Qwen3Asr::open(model).unwrap();
         let spec = std::env::var("JODEL_ASR_BITS").unwrap_or_else(|_| "4".into());
         let stats = std::env::var_os("JODEL_ASR_STATS").map(|p| {
             jodel_lyrics::asr::quant::Statistics::from_bytes(&std::fs::read(p).unwrap()).unwrap()
         });
-        PackedModel::from_model(
-            &cpu,
+        PackedModel::from_checkpoint(
+            model,
             jodel_lyrics::asr::quant::bits_by(&spec),
             stats.as_ref(),
+            |_, _| {},
         )
+        .unwrap()
     } else {
         PackedModel::open(model).unwrap()
     };

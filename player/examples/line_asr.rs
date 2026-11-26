@@ -121,9 +121,9 @@ fn main() {
             }
         };
         let text =
-            jodeldiplom::lyrics::transcript_lyrics(&heard, jodeldiplom::lyrics::timer::asr_maker());
+            jodel_lyrics::lines::transcript_lyrics(&heard, jodeldiplom::lyrics::timer::asr_maker());
         let glimpses = asr.glimpses(&voice).unwrap_or_default();
-        let timed = jodel_lyrics::aligner::CtcAligner::new(Arc::clone(&speech)).align_heard_in(
+        let timed = jodel_lyrics::aligner::CtcAligner::new(Arc::clone(&speech)).align(
             &voice,
             &text,
             &heard.parts,

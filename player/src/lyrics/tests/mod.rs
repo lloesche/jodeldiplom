@@ -1,6 +1,8 @@
 use super::timer::asr_maker;
 use super::web::{retry_after, Response, BUSY_WAIT, LONGEST_WAIT, SPACING, USER_AGENT};
 use super::*;
+use jodel_lyrics::lines::transcript_lyrics;
+use jodel_lyrics::prepare::fitting;
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpListener;
@@ -129,42 +131,6 @@ fn a_track_with_no_lyrics_found_is_heard_instead() {
 }
 
 #[test]
-fn a_transcript_is_cut_into_lines_at_its_sentences() {
-    let heard = jodel_lyrics::asr::Transcript {
-        parts: vec![
-            jodel_lyrics::asr::Part {
-                start: 0.0,
-                end: 20.0,
-                text: "Short one! Then a sentence that goes on, and on and on and on and on and on for ever"
-                    .into(),
-            },
-            jodel_lyrics::asr::Part {
-                start: 20.0,
-                end: 40.0,
-                text: "no stops at all here".into(),
-            },
-        ],
-        ..Default::default()
-    };
-    let lyrics = transcript_lyrics(&heard, asr_maker());
-    let texts: Vec<String> = lyrics.lines.iter().map(|l| l.text()).collect();
-    assert_eq!(
-        texts,
-        [
-            "Short one!",
-            "Then a sentence that goes on,",
-            "and on and on and on",
-            "and on and on for ever",
-            "no stops at all here"
-        ]
-    );
-    assert!(lyrics
-        .lines
-        .iter()
-        .all(|l| l.words.len() <= HEARD_LINE_MOST));
-}
-
-#[test]
 fn lyrics_found_come_again_with_their_words_timed_and_kept() {
     let dir = std::env::temp_dir().join(format!("jodel-lyrics-timer-{}", std::process::id()));
     let _ = fs::remove_dir_all(&dir);
@@ -253,39 +219,6 @@ impl WordTimer for Hearer {
 }
 
 #[test]
-fn a_text_that_fits_is_kept_and_one_that_does_not_is_swapped() {
-    let text = |t: &str| Lyrics::parse_text(t, Source::Lrclib);
-    let right = text(
-        "You search through the years\nAnd you wipe away the tears\n\
-         You find a woman, not a girl\nBut a feeling like the beginning of the world",
-    );
-    let wrong = text("Hello there\nGeneral Kenobi\nYou are a bold one");
-    let asked = std::cell::Cell::new(0);
-    let others = || {
-        asked.set(asked.get() + 1);
-        vec![wrong.clone(), right.clone()]
-    };
-    // Fits: kept, and the others never asked for.
-    let (kept, fit) = fitting(&right, HEARD, &others);
-    assert_eq!(kept, right);
-    assert!(fit.unwrap().percent > 90 && !fit.unwrap().swapped);
-    assert_eq!(asked.get(), 0);
-    // Does not fit: the other that does.
-    let (swapped, fit) = fitting(&wrong, HEARD, &others);
-    assert_eq!(swapped, right);
-    assert!(fit.unwrap().fits() && fit.unwrap().swapped);
-    // None fits: kept as it is, its fit said.
-    let (kept, fit) = fitting(&wrong, HEARD, &|| vec![wrong.clone()]);
-    assert_eq!(kept, wrong);
-    assert!(!fit.unwrap().fits() && !fit.unwrap().swapped);
-    // Too little heard to judge: kept, not judged.
-    assert_eq!(
-        fitting(&wrong, "oh oh yeah", &others),
-        (wrong.clone(), None)
-    );
-}
-
-#[test]
 fn a_fetched_text_that_does_not_fit_is_swapped_for_one_that_does() {
     let dir = std::env::temp_dir().join(format!("jodel-lyrics-fit-{}", std::process::id()));
     let _ = fs::remove_dir_all(&dir);
@@ -357,6 +290,93 @@ fn a_fetched_text_that_does_not_fit_is_swapped_for_one_that_does() {
         panic!("not kept");
     };
     assert_eq!(kept.lines[0].text(), "You search through the years");
+    drop(worker);
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// A timer that finds the text fits and times it with its last line put
+/// in again, as a repeat heard and left out of the text.
+struct Repeater;
+
+impl WordTimer for Repeater {
+    fn ready(&self) -> bool {
+        true
+    }
+
+    fn maker(&self) -> Maker {
+        Maker::new("repeater", 1)
+    }
+
+    fn time(&self, _: &Path, lyrics: &Lyrics, _: &Others) -> Result<Lyrics, String> {
+        let mut text = lyrics.clone();
+        let last = text.lines.last().cloned().unwrap();
+        text.lines.push(jodel_lyrics::Line {
+            synced: None,
+            ..last
+        });
+        let mut timed = timed_by(&text, "repeater");
+        timed.timing.fit = Some(jodel_lyrics::Fit::new(0.8, false));
+        Ok(timed)
+    }
+}
+
+#[test]
+fn a_fitting_text_timed_with_repeats_put_in_is_kept_as_found() {
+    let dir = std::env::temp_dir().join(format!("jodel-lyrics-repeats-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    let song = dir.join("song.flac");
+    fs::write(&song, b"not audio").unwrap();
+    let record = r#"{"id":1,"trackName":"Song","artistName":"Band","albumName":"LP",
+        "duration":200,"instrumental":false,"plainLyrics":"First line\nThe chorus"}"#;
+    let web = Stub::new(move |_, _| ok(record));
+    let probe = |path: &Path| {
+        Some(Track {
+            path: path.to_owned(),
+            title: Some("Song".into()),
+            artist: Some("Band".into()),
+            album: Some("LP".into()),
+            duration: Some(200.0),
+            ..Track::default()
+        })
+    };
+    let options = Options {
+        cache: Some(dir.join("cache")),
+        online: true,
+        http: web.clone(),
+        base: "http://lrclib.test".into(),
+        probe: Arc::new(probe),
+        timer: Some(Arc::new(Repeater)),
+        working: None,
+        done: None,
+    };
+    let (tx, rx) = mpsc::channel();
+    let worker = LyricsWorker::new(options, move |path, answer| {
+        let _ = tx.send((path, answer));
+    });
+    worker.want(vec![song.clone()]);
+    let wait = Duration::from_secs(10);
+    let texts = |l: &Lyrics| l.lines.iter().map(|l| l.text()).collect::<Vec<_>>();
+    let _found = rx.recv_timeout(wait).unwrap();
+    let (_, answer) = rx.recv_timeout(wait).unwrap();
+    let Answer::Found {
+        lyrics,
+        timed: Some(timed),
+    } = &answer
+    else {
+        panic!("{answer:?}");
+    };
+    // Shown with the repeat; the text stays as found, not taken for
+    // another one, in the answer and in the cache.
+    assert_eq!(texts(timed), ["First line", "The chorus", "The chorus"]);
+    assert_eq!(texts(lyrics), ["First line", "The chorus"]);
+    let cache = Cache::new(dir.join("cache"));
+    let key = cache_key(&song).unwrap();
+    let Kept::Current(kept) = cache.text(&key) else {
+        panic!("not kept");
+    };
+    assert_eq!(texts(&kept), ["First line", "The chorus"]);
+    assert_eq!(cache.timed(&key).unwrap().lines.len(), 3);
     drop(worker);
     let _ = fs::remove_dir_all(&dir);
 }

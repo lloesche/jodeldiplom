@@ -651,7 +651,7 @@ minute). Before that a text from LRCLIB is checked against what the
 speech recogniser hears in the voice (on the GPU, about 4 s a song; in
 parts of 30 s): when under 35 % of its words were heard, in order, LRCLIB's
 other texts of the song are compared too, and the best that fits is the
-one timed and kept instead (`lyrics::fitting`, `jodel_lyrics::fit`). A text
+one timed and kept instead (`jodel_lyrics::prepare`, `jodel_lyrics::fit`). A text
 none of whose fellows fits is kept as it is: the recogniser also misses
 some texts that fit (German heard as English, heavily processed voices).
 The file's own texts (tags, `.lrc`) are heard the same way, for their fit
