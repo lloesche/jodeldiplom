@@ -204,11 +204,12 @@ fn plan(at: &Named, samples: usize) -> Vec<Op> {
     }
     let f = frames[6];
     let norm = |ops: &mut Vec<Op>, buf: Buf, dim: usize, name: &str| {
+        // 32 invocations a row.
         each(
             ops,
             Kernel::LayerNorm,
             [Buf::Stats, Buf::Weights, buf],
-            f,
+            32 * f,
             &[f, dim, w(&format!("{name}.w")), w(&format!("{name}.b"))],
         );
     };

@@ -1,15 +1,22 @@
 // The separator's kernels, compiled after `bindings.wgsl` (the bindings)
-// and `common.wgsl` (the tiles, GELU); the beat network, the speech model
-// and the recogniser use some of them too.
+// and `common.wgsl` (GELU); the beat network, the speech model and the
+// recogniser use some of them too.
 
 // ---- dst[c_off + r*ldc + c] (+)= Σk src[a_off + r*lda + k] · aux[w_off + k*n + c] (+ aux[bias_off + c])
 // f0 m, f1 n, f2 k, f3 a_off, f4 lda, f5 w_off, f6 c_off, f7 ldc, f8 bias_off,
-// f9 flags (1: add the bias, 2: add to dst). Tiles of 64 × 64 through k in
-// steps of 16; each invocation keeps 4 rows × 4 columns in four vectors.
-// The tiles hold vectors: a step of k reads one of A (its four rows) and
-// one of B (its four columns) for 16 multiply-adds, and the 16 steps are
-// written out (no loop for the compiler to unroll, which Apple's does not
-// always do with the loops wgpu writes for Metal): `common.wgsl`'s tiles.
+// f9 flags (1: add the bias, 2: add to dst, 512: the columns are gates and
+// ups in pairs (gate j at 2j, its up at 2j + 1), each pair out as
+// gelu(gate) · up at column j). Tiles of 128 × 64 through k in steps of
+// 16, the next step's values loaded into registers while one is multiplied
+// from workgroup memory; each invocation keeps 8 rows × 4 columns, each
+// output's products added in the order of k. The tiles hold vectors: a
+// step of k reads two of A (eight rows) and one of B (four columns) for
+// 32 multiply-adds, each kept in a variable of its own (no array indexed
+// in a loop: Apple's compiler may keep one in memory). A is stored [k][row
+// / 4], B [k][col / 4].
+var<workgroup> mm_a: array<vec4<f32>, 512>;
+var<workgroup> mm_b: array<vec4<f32>, 256>;
+
 // A's value at row r, column ka (0 outside the matrix).
 fn a_at(r: u32, ka: u32) -> f32 {
     if (r < p.f0 && ka < p.f2) {
@@ -18,61 +25,108 @@ fn a_at(r: u32, ka: u32) -> f32 {
     return 0.0;
 }
 
-@compute @workgroup_size(16, 16)
-fn matmul(@builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgroup_id) wid: vec3<u32>) {
+// A's four rows from r at ka.
+fn mm_rows4(r: u32, ka: u32) -> vec4<f32> {
+    return vec4<f32>(a_at(r, ka), a_at(r + 1u, ka), a_at(r + 2u, ka), a_at(r + 3u, ka));
+}
+
+// B's four columns from c at row kb (0 outside the matrix).
+fn mm_cols4(kb: u32, c: u32) -> vec4<f32> {
     let n = p.f1;
-    let k = p.f2;
-    let row0 = wid.y * 64u;
-    let col0 = wid.x * 64u;
-    let t = lid.y * 16u + lid.x;
-    var acc = Acc(vec4<f32>(0.0), vec4<f32>(0.0), vec4<f32>(0.0), vec4<f32>(0.0));
-    // This invocation's loads: A rows 4·(t/16).. at k t%16 (neighbours read
-    // neighbouring k of a row); B k t/16, columns (t%16)*4..
-    let ar = row0 + (t / 16u) * 4u;
-    let aq = t % 16u;
-    let bk = t / 16u;
-    let bc = col0 + (t % 16u) * 4u;
-    for (var k0 = 0u; k0 < k; k0 += 16u) {
-        let ka = k0 + aq;
-        // Stored [k][row / 4], four rows in a vector.
-        tile_a[aq * 16u + t / 16u] = vec4<f32>(
-            a_at(ar, ka),
-            a_at(ar + 1u, ka),
-            a_at(ar + 2u, ka),
-            a_at(ar + 3u, ka),
-        );
-        let kb = k0 + bk;
-        var b = vec4<f32>(0.0);
-        if (kb < k) {
-            let at = p.f5 + kb * n + bc;
-            if (bc + 3u < n) {
-                b = vec4<f32>(aux[at], aux[at + 1u], aux[at + 2u], aux[at + 3u]);
-            } else {
-                for (var j = 0u; j < 4u; j++) {
-                    if (bc + j < n) {
-                        b[j] = aux[at + j];
-                    }
+    var b = vec4<f32>(0.0);
+    if (kb < p.f2) {
+        let at = p.f5 + kb * n + c;
+        if (c + 3u < n) {
+            b = vec4<f32>(aux[at], aux[at + 1u], aux[at + 2u], aux[at + 3u]);
+        } else {
+            for (var j = 0u; j < 4u; j++) {
+                if (c + j < n) {
+                    b[j] = aux[at + j];
                 }
             }
         }
-        tile_b[t] = b;
-        workgroupBarrier();
-        let lx = lid.x;
-        let ly = lid.y;
-        acc = mm_tile(acc, lx, ly);
-        workgroupBarrier();
     }
-    let r0 = row0 + lid.y * 4u;
-    let c0 = col0 + lid.x * 4u;
-    store_row(r0, c0, acc.r0);
-    store_row(r0 + 1u, c0, acc.r1);
-    store_row(r0 + 2u, c0, acc.r2);
-    store_row(r0 + 3u, c0, acc.r3);
+    return b;
 }
 
-// Writes four outputs of row r from column c0 on (those inside the matrix).
+// An invocation's share of a step's tiles: A's rows 4·q.. and 4·(q + 16)..
+// at its k, and B's four columns at its row.
+struct MmLoads {
+    a0: vec4<f32>,
+    a1: vec4<f32>,
+    b: vec4<f32>,
+}
+
+fn mm_loads(k0: u32, row0: u32, col0: u32, t: u32) -> MmLoads {
+    let ka = k0 + t % 16u;
+    let r = row0 + 4u * (t / 16u);
+    return MmLoads(mm_rows4(r, ka), mm_rows4(r + 64u, ka), mm_cols4(k0 + t / 16u, col0 + 4u * (t % 16u)));
+}
+
+@compute @workgroup_size(16, 16)
+fn matmul(@builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgroup_id) wid: vec3<u32>) {
+    let k = p.f2;
+    let row0 = wid.y * 128u;
+    let col0 = wid.x * 64u;
+    let t = lid.y * 16u + lid.x;
+    var r0 = vec4<f32>(0.0);
+    var r1 = vec4<f32>(0.0);
+    var r2 = vec4<f32>(0.0);
+    var r3 = vec4<f32>(0.0);
+    var r4 = vec4<f32>(0.0);
+    var r5 = vec4<f32>(0.0);
+    var r6 = vec4<f32>(0.0);
+    var r7 = vec4<f32>(0.0);
+    var next = mm_loads(0u, row0, col0, t);
+    for (var k0 = 0u; k0 < k; k0 += 16u) {
+        mm_a[(t % 16u) * 32u + t / 16u] = next.a0;
+        mm_a[(t % 16u) * 32u + t / 16u + 16u] = next.a1;
+        mm_b[t] = next.b;
+        workgroupBarrier();
+        if (k0 + 16u < k) {
+            next = mm_loads(k0 + 16u, row0, col0, t);
+        }
+        for (var kk = 0u; kk < 16u; kk++) {
+            let a = mm_a[kk * 32u + 2u * lid.y];
+            let a2 = mm_a[kk * 32u + 2u * lid.y + 1u];
+            let b = mm_b[kk * 16u + lid.x];
+            r0 = fma(vec4<f32>(a.x), b, r0);
+            r1 = fma(vec4<f32>(a.y), b, r1);
+            r2 = fma(vec4<f32>(a.z), b, r2);
+            r3 = fma(vec4<f32>(a.w), b, r3);
+            r4 = fma(vec4<f32>(a2.x), b, r4);
+            r5 = fma(vec4<f32>(a2.y), b, r5);
+            r6 = fma(vec4<f32>(a2.z), b, r6);
+            r7 = fma(vec4<f32>(a2.w), b, r7);
+        }
+        workgroupBarrier();
+    }
+    let rr = row0 + lid.y * 8u;
+    let cc = col0 + lid.x * 4u;
+    store_row(rr, cc, r0);
+    store_row(rr + 1u, cc, r1);
+    store_row(rr + 2u, cc, r2);
+    store_row(rr + 3u, cc, r3);
+    store_row(rr + 4u, cc, r4);
+    store_row(rr + 5u, cc, r5);
+    store_row(rr + 6u, cc, r6);
+    store_row(rr + 7u, cc, r7);
+}
+
+// Writes four outputs of row r from column c0 on (those inside the
+// matrix), or their two pairs' gated products.
 fn store_row(r: u32, c0: u32, v: vec4<f32>) {
     if (r >= p.f0) {
+        return;
+    }
+    if ((p.f9 & 512u) != 0u) {
+        let at = p.f6 + r * p.f7 + c0 / 2u;
+        if (c0 + 1u < p.f1) {
+            dst[at] = gelu(v.x) * v.y;
+        }
+        if (c0 + 3u < p.f1) {
+            dst[at + 1u] = gelu(v.z) * v.w;
+        }
         return;
     }
     for (var j = 0u; j < 4u; j++) {
@@ -92,29 +146,57 @@ fn store_row(r: u32, c0: u32, v: vec4<f32>) {
     }
 }
 
+// A row's sum over its 32 invocations (`t`'s row: the invocations of the
+// workgroup's eight rows of 32 lanes, a row's neighbours), each giving
+// `v`: in a tree (16 apart, then 8, ..., 1). Every invocation of the
+// workgroup takes part (in uniform control flow).
+var<workgroup> lane_sums: array<f32, 256>;
+
+fn lane_sum(t: u32, v: f32) -> f32 {
+    lane_sums[t] = v;
+    workgroupBarrier();
+    for (var half = 16u; half > 0u; half /= 2u) {
+        if (t % 32u < half) {
+            lane_sums[t] += lane_sums[t + half];
+        }
+        workgroupBarrier();
+    }
+    let total = lane_sums[t - t % 32u];
+    workgroupBarrier();
+    return total;
+}
+
 // ---- RMSNorm: dst[y_off + r*ldy + d] = x / sqrt(mean(x²) + 1e-6) · aux[w_off + d]
 // with x = src[x_off + r*ldx + d]; with f7 = 1 instead x · √dim / max(|x|, 1e-12)
 // · aux[w_off + d] (the beat network's). f0 rows, f1 dim, f2 x_off, f3 ldx,
-// f4 w_off, f5 y_off, f6 ldy, f7 mode. One row per invocation.
+// f4 w_off, f5 y_off, f6 ldy, f7 mode. A row is 32 invocations (32 a
+// workgroup's invocations from linear_id: 32 · rows of them), each lane
+// the values lane, lane + 32, ... (neighbouring lanes reading neighbouring
+// values).
 @compute @workgroup_size(256)
-fn rmsnorm(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) groups: vec3<u32>) {
-    let r = linear_id(gid, groups);
-    if (r >= p.f0) {
-        return;
-    }
+fn rmsnorm(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>, @builtin(num_workgroups) groups: vec3<u32>) {
+    let r = linear_id(gid, groups) / 32u;
+    let lane = lid.x % 32u;
+    let live = r < p.f0;
     let dim = p.f1;
     let x = p.f2 + r * p.f3;
     var sum = 0.0;
-    for (var d = 0u; d < dim; d++) {
-        let v = src[x + d];
-        sum += v * v;
+    if (live) {
+        for (var d = lane; d < dim; d += 32u) {
+            let v = src[x + d];
+            sum += v * v;
+        }
     }
-    var k = inverseSqrt(sum / f32(dim) + 1e-6);
+    let total = lane_sum(lid.x, sum);
+    if (!live) {
+        return;
+    }
+    var k = inverseSqrt(total / f32(dim) + 1e-6);
     if (p.f7 == 1u) {
-        k = sqrt(f32(dim)) / max(sqrt(sum), 1e-12);
+        k = sqrt(f32(dim)) / max(sqrt(total), 1e-12);
     }
     let y = p.f5 + r * p.f6;
-    for (var d = 0u; d < dim; d++) {
+    for (var d = lane; d < dim; d += 32u) {
         dst[y + d] = src[x + d] * k * aux[p.f4 + d];
     }
 }
@@ -178,6 +260,66 @@ fn store4(i: u32, v: vec4<f32>) {
     dst[i + 3u] = v.w;
 }
 
+// A query of a head of 32 (scaled), as eight vectors.
+struct Q32 {
+    q0: vec4<f32>, q1: vec4<f32>, q2: vec4<f32>, q3: vec4<f32>,
+    q4: vec4<f32>, q5: vec4<f32>, q6: vec4<f32>, q7: vec4<f32>,
+}
+
+// A query's online softmax so far: the largest score, the sum of
+// exp(score - largest), and the values so weighted, eight vectors.
+struct Soft32 {
+    best: f32,
+    total: f32,
+    a0: vec4<f32>, a1: vec4<f32>, a2: vec4<f32>, a3: vec4<f32>,
+    a4: vec4<f32>, a5: vec4<f32>, a6: vec4<f32>, a7: vec4<f32>,
+}
+
+// The query's score against the tile's key at kb, in the order the loop
+// over the vectors had.
+fn att_score(q: Q32, kb: u32) -> f32 {
+    var s = dot(q.q0, keys[kb]);
+    s += dot(q.q1, keys[kb + 1u]);
+    s += dot(q.q2, keys[kb + 2u]);
+    s += dot(q.q3, keys[kb + 3u]);
+    s += dot(q.q4, keys[kb + 4u]);
+    s += dot(q.q5, keys[kb + 5u]);
+    s += dot(q.q6, keys[kb + 6u]);
+    s += dot(q.q7, keys[kb + 7u]);
+    return s;
+}
+
+// The softmax with the score s of the tile's key at kb taken in.
+fn att_take(st: Soft32, s: f32, kb: u32) -> Soft32 {
+    var o = st;
+    if (s > st.best) {
+        // A new maximum: rescale what was summed so far.
+        let fade = exp(st.best - s);
+        o.total = st.total * fade + 1.0;
+        o.a0 = st.a0 * fade + vals[kb];
+        o.a1 = st.a1 * fade + vals[kb + 1u];
+        o.a2 = st.a2 * fade + vals[kb + 2u];
+        o.a3 = st.a3 * fade + vals[kb + 3u];
+        o.a4 = st.a4 * fade + vals[kb + 4u];
+        o.a5 = st.a5 * fade + vals[kb + 5u];
+        o.a6 = st.a6 * fade + vals[kb + 6u];
+        o.a7 = st.a7 * fade + vals[kb + 7u];
+        o.best = s;
+    } else {
+        let e = vec4<f32>(exp(s - st.best));
+        o.total = st.total + e.x;
+        o.a0 = fma(e, vals[kb], st.a0);
+        o.a1 = fma(e, vals[kb + 1u], st.a1);
+        o.a2 = fma(e, vals[kb + 2u], st.a2);
+        o.a3 = fma(e, vals[kb + 3u], st.a3);
+        o.a4 = fma(e, vals[kb + 4u], st.a4);
+        o.a5 = fma(e, vals[kb + 5u], st.a5);
+        o.a6 = fma(e, vals[kb + 6u], st.a6);
+        o.a7 = fma(e, vals[kb + 7u], st.a7);
+    }
+    return o;
+}
+
 @compute @workgroup_size(64)
 fn attention(@builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgroup_id) wid: vec3<u32>) {
     let len = p.f0;
@@ -187,35 +329,14 @@ fn attention(@builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgroup_id
     let qp = wid.x * 64u + lid.x;
     let valid = qp < len;
     let scale = inverseSqrt(32.0);
-    var q0 = vec4<f32>(0.0);
-    var q1 = vec4<f32>(0.0);
-    var q2 = vec4<f32>(0.0);
-    var q3 = vec4<f32>(0.0);
-    var q4 = vec4<f32>(0.0);
-    var q5 = vec4<f32>(0.0);
-    var q6 = vec4<f32>(0.0);
-    var q7 = vec4<f32>(0.0);
-    var a0 = vec4<f32>(0.0);
-    var a1 = vec4<f32>(0.0);
-    var a2 = vec4<f32>(0.0);
-    var a3 = vec4<f32>(0.0);
-    var a4 = vec4<f32>(0.0);
-    var a5 = vec4<f32>(0.0);
-    var a6 = vec4<f32>(0.0);
-    var a7 = vec4<f32>(0.0);
+    let z = vec4<f32>(0.0);
+    var q = Q32(z, z, z, z, z, z, z, z);
     if (valid) {
         let at = (seq * len + qp) * 256u + h * 32u;
-        q0 = src4(at) * scale;
-        q1 = src4(at + 4u) * scale;
-        q2 = src4(at + 8u) * scale;
-        q3 = src4(at + 12u) * scale;
-        q4 = src4(at + 16u) * scale;
-        q5 = src4(at + 20u) * scale;
-        q6 = src4(at + 24u) * scale;
-        q7 = src4(at + 28u) * scale;
+        q = Q32(src4(at) * scale, src4(at + 4u) * scale, src4(at + 8u) * scale, src4(at + 12u) * scale,
+                src4(at + 16u) * scale, src4(at + 20u) * scale, src4(at + 24u) * scale, src4(at + 28u) * scale);
     }
-    var best = -1e30;
-    var total = 0.0;
+    var st = Soft32(-1e30, 0.0, z, z, z, z, z, z, z, z);
     for (var k0 = 0u; k0 < len; k0 += 64u) {
         let kp = k0 + lid.x;
         if (kp < len) {
@@ -230,67 +351,37 @@ fn attention(@builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgroup_id
         workgroupBarrier();
         let count = min(64u, len - k0);
         if (valid) {
-            for (var j = 0u; j < count; j++) {
+            // Four keys' scores at a time (four sums under way together),
+            // then taken in in their order.
+            var j = 0u;
+            for (; j + 4u <= count; j += 4u) {
                 let kb = j * 8u;
-                // In the order the loop over the vectors had.
-                var s = dot(q0, keys[kb]);
-                s += dot(q1, keys[kb + 1u]);
-                s += dot(q2, keys[kb + 2u]);
-                s += dot(q3, keys[kb + 3u]);
-                s += dot(q4, keys[kb + 4u]);
-                s += dot(q5, keys[kb + 5u]);
-                s += dot(q6, keys[kb + 6u]);
-                s += dot(q7, keys[kb + 7u]);
-                if (s > best) {
-                    // A new maximum: rescale what was summed so far.
-                    let fade = exp(best - s);
-                    total = total * fade + 1.0;
-                    a0 = a0 * fade + vals[kb];
-                    a1 = a1 * fade + vals[kb + 1u];
-                    a2 = a2 * fade + vals[kb + 2u];
-                    a3 = a3 * fade + vals[kb + 3u];
-                    a4 = a4 * fade + vals[kb + 4u];
-                    a5 = a5 * fade + vals[kb + 5u];
-                    a6 = a6 * fade + vals[kb + 6u];
-                    a7 = a7 * fade + vals[kb + 7u];
-                    best = s;
-                } else {
-                    let e = vec4<f32>(exp(s - best));
-                    total += e.x;
-                    a0 = fma(e, vals[kb], a0);
-                    a1 = fma(e, vals[kb + 1u], a1);
-                    a2 = fma(e, vals[kb + 2u], a2);
-                    a3 = fma(e, vals[kb + 3u], a3);
-                    a4 = fma(e, vals[kb + 4u], a4);
-                    a5 = fma(e, vals[kb + 5u], a5);
-                    a6 = fma(e, vals[kb + 6u], a6);
-                    a7 = fma(e, vals[kb + 7u], a7);
-                }
+                let s0 = att_score(q, kb);
+                let s1 = att_score(q, kb + 8u);
+                let s2 = att_score(q, kb + 16u);
+                let s3 = att_score(q, kb + 24u);
+                st = att_take(st, s0, kb);
+                st = att_take(st, s1, kb + 8u);
+                st = att_take(st, s2, kb + 16u);
+                st = att_take(st, s3, kb + 24u);
+            }
+            for (; j < count; j++) {
+                st = att_take(st, att_score(q, j * 8u), j * 8u);
             }
         }
         workgroupBarrier();
     }
     if (valid) {
         let at = (seq * len + qp) * 256u + h * 32u;
-        store4(at, a0 / total);
-        store4(at + 4u, a1 / total);
-        store4(at + 8u, a2 / total);
-        store4(at + 12u, a3 / total);
-        store4(at + 16u, a4 / total);
-        store4(at + 20u, a5 / total);
-        store4(at + 24u, a6 / total);
-        store4(at + 28u, a7 / total);
+        store4(at, st.a0 / st.total);
+        store4(at + 4u, st.a1 / st.total);
+        store4(at + 8u, st.a2 / st.total);
+        store4(at + 12u, st.a3 / st.total);
+        store4(at + 16u, st.a4 / st.total);
+        store4(at + 20u, st.a5 / st.total);
+        store4(at + 24u, st.a6 / st.total);
+        store4(at + 28u, st.a7 / st.total);
     }
-}
-
-// ---- Gated GELU, in place: dst[i] = gelu(dst[i]) · src[i]. f0 count.
-@compute @workgroup_size(256)
-fn geglu(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) groups: vec3<u32>) {
-    let i = linear_id(gid, groups);
-    if (i >= p.f0) {
-        return;
-    }
-    dst[i] = gelu(dst[i]) * src[i];
 }
 
 // ---- dst = src as tokens of 256 in [cols][rows] from [rows][cols].

@@ -68,3 +68,83 @@ fn gelu(x: f32) -> f32 {
     let erf = sign(x) * (1.0 - poly * exp(-z * z));
     return 0.5 * x * (1.0 + erf);
 }
+
+// A head of 64 values as sixteen vectors, each a variable of its own: the
+// attention kernels hold a query and its weighted values so (an array
+// indexed in a loop may be kept in memory rather than registers on Apple's
+// GPUs, from the loops wgpu writes for Metal), each written out in the
+// order a loop over the vectors had.
+struct H64 {
+    v0: vec4<f32>, v1: vec4<f32>, v2: vec4<f32>, v3: vec4<f32>, v4: vec4<f32>, v5: vec4<f32>, v6: vec4<f32>, v7: vec4<f32>, v8: vec4<f32>, v9: vec4<f32>, v10: vec4<f32>, v11: vec4<f32>, v12: vec4<f32>, v13: vec4<f32>, v14: vec4<f32>, v15: vec4<f32>,
+}
+
+fn h64_zero() -> H64 {
+    let z = vec4<f32>(0.0);
+    return H64(z, z, z, z, z, z, z, z, z, z, z, z, z, z, z, z);
+}
+
+// The two heads' dot product, the vectors' in their order.
+fn h64_dot(a: H64, b: H64) -> f32 {
+    var s = 0.0;
+    s += dot(a.v0, b.v0);
+    s += dot(a.v1, b.v1);
+    s += dot(a.v2, b.v2);
+    s += dot(a.v3, b.v3);
+    s += dot(a.v4, b.v4);
+    s += dot(a.v5, b.v5);
+    s += dot(a.v6, b.v6);
+    s += dot(a.v7, b.v7);
+    s += dot(a.v8, b.v8);
+    s += dot(a.v9, b.v9);
+    s += dot(a.v10, b.v10);
+    s += dot(a.v11, b.v11);
+    s += dot(a.v12, b.v12);
+    s += dot(a.v13, b.v13);
+    s += dot(a.v14, b.v14);
+    s += dot(a.v15, b.v15);
+    return s;
+}
+
+// a · k.
+fn h64_scale(a: H64, k: f32) -> H64 {
+    return H64(a.v0 * k, a.v1 * k, a.v2 * k, a.v3 * k, a.v4 * k, a.v5 * k, a.v6 * k, a.v7 * k, a.v8 * k, a.v9 * k, a.v10 * k, a.v11 * k, a.v12 * k, a.v13 * k, a.v14 * k, a.v15 * k);
+}
+
+// a / k.
+fn h64_div(a: H64, k: f32) -> H64 {
+    return H64(a.v0 / k, a.v1 / k, a.v2 / k, a.v3 / k, a.v4 / k, a.v5 / k, a.v6 / k, a.v7 / k, a.v8 / k, a.v9 / k, a.v10 / k, a.v11 / k, a.v12 / k, a.v13 / k, a.v14 / k, a.v15 / k);
+}
+
+// a · fade + b (the online softmax's new largest score).
+fn h64_fade(a: H64, fade: f32, b: H64) -> H64 {
+    return H64(a.v0 * fade + b.v0, a.v1 * fade + b.v1, a.v2 * fade + b.v2, a.v3 * fade + b.v3, a.v4 * fade + b.v4, a.v5 * fade + b.v5, a.v6 * fade + b.v6, a.v7 * fade + b.v7, a.v8 * fade + b.v8, a.v9 * fade + b.v9, a.v10 * fade + b.v10, a.v11 * fade + b.v11, a.v12 * fade + b.v12, a.v13 * fade + b.v13, a.v14 * fade + b.v14, a.v15 * fade + b.v15);
+}
+
+// A query's online softmax over heads of 64 so far: the largest score,
+// the sum of exp(score - largest), and the values so weighted.
+struct Soft64 {
+    best: f32,
+    total: f32,
+    acc: H64,
+}
+
+fn soft64() -> Soft64 {
+    return Soft64(-1e30, 0.0, h64_zero());
+}
+
+// The softmax with a key's score s and its values v taken in.
+fn soft64_take(st: Soft64, s: f32, v: H64) -> Soft64 {
+    if (s > st.best) {
+        // A new maximum: rescale what was summed so far.
+        let fade = exp(st.best - s);
+        return Soft64(s, st.total * fade + 1.0, h64_fade(st.acc, fade, v));
+    }
+    let e = exp(s - st.best);
+    return Soft64(st.best, st.total + e, h64_add(st.acc, e, v));
+}
+
+// a + e · b, fused (the online softmax's other scores).
+fn h64_add(a: H64, e: f32, b: H64) -> H64 {
+    let k = vec4<f32>(e);
+    return H64(fma(k, b.v0, a.v0), fma(k, b.v1, a.v1), fma(k, b.v2, a.v2), fma(k, b.v3, a.v3), fma(k, b.v4, a.v4), fma(k, b.v5, a.v5), fma(k, b.v6, a.v6), fma(k, b.v7, a.v7), fma(k, b.v8, a.v8), fma(k, b.v9, a.v9), fma(k, b.v10, a.v10), fma(k, b.v11, a.v11), fma(k, b.v12, a.v12), fma(k, b.v13, a.v13), fma(k, b.v14, a.v14), fma(k, b.v15, a.v15));
+}

@@ -10,6 +10,7 @@ use std::time::{Duration, Instant};
 
 use super::{Access, Dispatch, Kernels, Op, PARAM_STRIDE};
 use crate::pace::{self, Pieces};
+use crate::profile::Stamps;
 
 /// A device and a program of kernels on it: the module, the bind group
 /// layout and each kernel's pipeline, with what makes buffers, parameters
@@ -20,6 +21,8 @@ pub(crate) struct Program<K> {
     label: &'static str,
     /// Set when the device is lost (its callback).
     lost: Arc<AtomicBool>,
+    /// Whether the last run was left running ([`pace::dispatch`]).
+    pub(crate) left: AtomicBool,
     layout: wgpu::BindGroupLayout,
     pipelines: HashMap<K, wgpu::ComputePipeline>,
     /// The most a buffer may be bound with.
@@ -110,6 +113,7 @@ impl<K: Kernels> Program<K> {
             queue,
             label,
             lost,
+            left: AtomicBool::new(false),
             layout,
             pipelines,
             most: limits
@@ -293,16 +297,32 @@ impl<K: Kernels> Program<K> {
         read: Option<(&wgpu::Buffer, usize, usize)>,
         staging: &wgpu::Buffer,
     ) -> Result<Vec<f32>, String> {
-        pace::dispatch(self, pieces, groups, dispatches, prelude, |encoder| {
-            if let Some((from, first, count)) = read {
-                let size = (count * 4) as u64;
-                encoder.copy_buffer_to_buffer(from, (first * 4) as u64, staging, 0, size);
-            }
-        })?;
+        self.submit(pieces, (groups, dispatches), prelude, read, staging, false)?;
         match read {
             Some((_, _, count)) => crate::device::read_back(&self.device, staging, count),
             None => Ok(Vec::new()),
         }
+    }
+
+    /// [`Program::run`]'s dispatches and copy to `staging`, made; where it
+    /// `leaves` them, the last submission may still run when it returns
+    /// (its index, for [`pace::finish`]), else they are done.
+    pub(crate) fn submit(
+        &self,
+        pieces: &mut Pieces,
+        (groups, dispatches): (&[wgpu::BindGroup], &[Dispatch<K>]),
+        prelude: impl FnOnce(&mut wgpu::CommandEncoder),
+        read: Option<(&wgpu::Buffer, usize, usize)>,
+        staging: &wgpu::Buffer,
+        leaves: bool,
+    ) -> Result<Option<wgpu::SubmissionIndex>, String> {
+        let copy = |encoder: &mut wgpu::CommandEncoder| {
+            if let Some((from, first, count)) = read {
+                let size = (count * 4) as u64;
+                encoder.copy_buffer_to_buffer(from, (first * 4) as u64, staging, 0, size);
+            }
+        };
+        pace::dispatch(self, pieces, groups, dispatches, (prelude, copy), leaves)
     }
 
     /// The dispatches of `recorded` that `keep` picks (by index) as one
@@ -321,25 +341,62 @@ impl<K: Kernels> Program<K> {
                 .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                     label: Some(self.label),
                 });
-            {
-                let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                    label: Some(self.label),
-                    timestamp_writes: None,
-                });
-                for (i, d) in recorded.dispatches.iter().enumerate() {
-                    if keep(i) {
-                        let [x, y, z] = d.groups;
-                        pass.set_pipeline(self.pipeline(d.kernel));
-                        pass.set_bind_group(0, &recorded.groups[d.group], &[d.offset as u32]);
-                        pass.dispatch_workgroups(x, y, z);
-                    }
-                }
-            }
+            let kept: Vec<Dispatch<K>> = recorded
+                .dispatches
+                .iter()
+                .enumerate()
+                .filter(|&(i, _)| keep(i))
+                .map(|(_, &d)| d)
+                .collect();
+            self.encode(&mut encoder, &recorded.groups, &kept, None);
             self.queue.submit([encoder.finish()]);
             self.wait()?;
             best = best.min(started.elapsed());
         }
         Ok(best)
+    }
+
+    /// `dispatches` (on the bind groups `groups`) into `encoder`: in one
+    /// compute pass, or each in a pass of its own that `stamps` times
+    /// ([`crate::profile`]).
+    pub(crate) fn encode(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        groups: &[wgpu::BindGroup],
+        dispatches: &[Dispatch<K>],
+        stamps: Option<&Stamps>,
+    ) {
+        let put = |pass: &mut wgpu::ComputePass<'_>, d: &Dispatch<K>| {
+            let [x, y, z] = d.groups;
+            pass.set_pipeline(self.pipeline(d.kernel));
+            pass.set_bind_group(0, &groups[d.group], &[d.offset as u32]);
+            pass.dispatch_workgroups(x, y, z);
+        };
+        match stamps.filter(|s| !s.whole()) {
+            None => {
+                let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    label: Some(self.label),
+                    timestamp_writes: stamps.map(|s| s.writes(0)),
+                });
+                for d in dispatches {
+                    put(&mut pass, d);
+                }
+                drop(pass);
+                if let Some(stamps) = stamps {
+                    stamps.resolve(encoder);
+                }
+            }
+            Some(stamps) => {
+                for (i, d) in dispatches.iter().enumerate() {
+                    let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                        label: Some(self.label),
+                        timestamp_writes: Some(stamps.writes(i)),
+                    });
+                    put(&mut pass, d);
+                }
+                stamps.resolve(encoder);
+            }
+        }
     }
 
     /// Waits for everything sent to the GPU so far.

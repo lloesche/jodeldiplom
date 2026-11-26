@@ -31,7 +31,7 @@ pub(super) struct Shape {
     pub(super) rows: usize,
     /// The positions each piece's cache holds: its prompt, room for
     /// [`MAX_NEW`] tokens alone ([`NEW_AT_ONCE`] together), and a read of
-    /// steps more.
+    /// steps ([`STEPS_A_READ`]) more.
     pub(super) positions: usize,
 }
 
@@ -53,7 +53,7 @@ impl Shape {
             width: frames.min(PIECE),
             steps,
             rows,
-            positions: rows + new + read(pieces),
+            positions: rows + new + STEPS_A_READ,
         }
     }
 
@@ -94,17 +94,6 @@ impl Shape {
     /// A piece's keys and values, in f32s.
     pub(super) fn cache(&self) -> usize {
         LAYERS * self.positions * KV
-    }
-}
-
-/// The steps decoded between reads for `pieces` heard together: half as
-/// many for more than one (the steps past the last one's end are each a
-/// step for all).
-pub(super) fn read(pieces: usize) -> usize {
-    if pieces == 1 {
-        STEPS_A_READ
-    } else {
-        STEPS_A_READ / 2
     }
 }
 

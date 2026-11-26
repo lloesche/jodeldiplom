@@ -124,35 +124,14 @@ fn net_attention(@builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgrou
     let qp = wid.x * 64u + lid.x;
     let valid = qp < len;
     let scale = inverseSqrt(32.0);
-    var q0 = vec4<f32>(0.0);
-    var q1 = vec4<f32>(0.0);
-    var q2 = vec4<f32>(0.0);
-    var q3 = vec4<f32>(0.0);
-    var q4 = vec4<f32>(0.0);
-    var q5 = vec4<f32>(0.0);
-    var q6 = vec4<f32>(0.0);
-    var q7 = vec4<f32>(0.0);
-    var a0 = vec4<f32>(0.0);
-    var a1 = vec4<f32>(0.0);
-    var a2 = vec4<f32>(0.0);
-    var a3 = vec4<f32>(0.0);
-    var a4 = vec4<f32>(0.0);
-    var a5 = vec4<f32>(0.0);
-    var a6 = vec4<f32>(0.0);
-    var a7 = vec4<f32>(0.0);
+    let z = vec4<f32>(0.0);
+    var q = Q32(z, z, z, z, z, z, z, z);
     if (valid) {
         let at = (seq * len + qp) * width + h * 32u;
-        q0 = src4(at) * scale;
-        q1 = src4(at + 4u) * scale;
-        q2 = src4(at + 8u) * scale;
-        q3 = src4(at + 12u) * scale;
-        q4 = src4(at + 16u) * scale;
-        q5 = src4(at + 20u) * scale;
-        q6 = src4(at + 24u) * scale;
-        q7 = src4(at + 28u) * scale;
+        q = Q32(src4(at) * scale, src4(at + 4u) * scale, src4(at + 8u) * scale, src4(at + 12u) * scale,
+                src4(at + 16u) * scale, src4(at + 20u) * scale, src4(at + 24u) * scale, src4(at + 28u) * scale);
     }
-    var best = -1e30;
-    var total = 0.0;
+    var st = Soft32(-1e30, 0.0, z, z, z, z, z, z, z, z);
     for (var k0 = 0u; k0 < len; k0 += 64u) {
         let kp = k0 + lid.x;
         if (kp < len) {
@@ -165,40 +144,22 @@ fn net_attention(@builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgrou
         workgroupBarrier();
         let count = min(64u, len - k0);
         if (valid) {
-            for (var j = 0u; j < count; j++) {
+            // Four keys' scores at a time, then taken in in their order (as
+            // attention's).
+            var j = 0u;
+            for (; j + 4u <= count; j += 4u) {
                 let kb = j * 8u;
-                var s = dot(q0, keys[kb]);
-                s += dot(q1, keys[kb + 1u]);
-                s += dot(q2, keys[kb + 2u]);
-                s += dot(q3, keys[kb + 3u]);
-                s += dot(q4, keys[kb + 4u]);
-                s += dot(q5, keys[kb + 5u]);
-                s += dot(q6, keys[kb + 6u]);
-                s += dot(q7, keys[kb + 7u]);
-                if (s > best) {
-                    let fade = exp(best - s);
-                    total = total * fade + 1.0;
-                    a0 = a0 * fade + vals[kb];
-                    a1 = a1 * fade + vals[kb + 1u];
-                    a2 = a2 * fade + vals[kb + 2u];
-                    a3 = a3 * fade + vals[kb + 3u];
-                    a4 = a4 * fade + vals[kb + 4u];
-                    a5 = a5 * fade + vals[kb + 5u];
-                    a6 = a6 * fade + vals[kb + 6u];
-                    a7 = a7 * fade + vals[kb + 7u];
-                    best = s;
-                } else {
-                    let e = vec4<f32>(exp(s - best));
-                    total += e.x;
-                    a0 = fma(e, vals[kb], a0);
-                    a1 = fma(e, vals[kb + 1u], a1);
-                    a2 = fma(e, vals[kb + 2u], a2);
-                    a3 = fma(e, vals[kb + 3u], a3);
-                    a4 = fma(e, vals[kb + 4u], a4);
-                    a5 = fma(e, vals[kb + 5u], a5);
-                    a6 = fma(e, vals[kb + 6u], a6);
-                    a7 = fma(e, vals[kb + 7u], a7);
-                }
+                let s0 = att_score(q, kb);
+                let s1 = att_score(q, kb + 8u);
+                let s2 = att_score(q, kb + 16u);
+                let s3 = att_score(q, kb + 24u);
+                st = att_take(st, s0, kb);
+                st = att_take(st, s1, kb + 8u);
+                st = att_take(st, s2, kb + 16u);
+                st = att_take(st, s3, kb + 24u);
+            }
+            for (; j < count; j++) {
+                st = att_take(st, att_score(q, j * 8u), j * 8u);
             }
         }
         workgroupBarrier();
@@ -206,15 +167,15 @@ fn net_attention(@builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgrou
     if (valid) {
         let token = seq * len + qp;
         let gate = 1.0 / (1.0 + exp(-aux[token * heads + h]));
-        let k = gate / total;
+        let k = gate / st.total;
         let at = token * dim + h * 32u;
-        store4(at, a0 * k);
-        store4(at + 4u, a1 * k);
-        store4(at + 8u, a2 * k);
-        store4(at + 12u, a3 * k);
-        store4(at + 16u, a4 * k);
-        store4(at + 20u, a5 * k);
-        store4(at + 24u, a6 * k);
-        store4(at + 28u, a7 * k);
+        store4(at, st.a0 * k);
+        store4(at + 4u, st.a1 * k);
+        store4(at + 8u, st.a2 * k);
+        store4(at + 12u, st.a3 * k);
+        store4(at + 16u, st.a4 * k);
+        store4(at + 20u, st.a5 * k);
+        store4(at + 24u, st.a6 * k);
+        store4(at + 28u, st.a7 * k);
     }
 }

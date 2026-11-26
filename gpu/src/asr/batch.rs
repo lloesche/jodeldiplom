@@ -4,14 +4,23 @@
 //! sums are what they would be alone, so each piece gets the tokens it
 //! gets on its own; one that has not ended when the room the pieces
 //! together have is full is heard again on its own ([`super::NEW_AT_ONCE`]).
+//!
+//! The steps go a few at a time ([`STEPS_A_READ`]): the prompts' first
+//! tokens are read while the first steps run (the next token and its
+//! embedding are chosen on the GPU), and a piece heard alone (a part of a
+//! transcript, its tokens many) has each read of its tokens made while the
+//! next steps run, so the GPU does not wait for the reads, the steps
+//! running one read past its end. Pieces heard together (glimpses, their
+//! tokens few) wait for each read instead: a read more of steps for all of
+//! them would cost more than the waits.
 
+use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
 use jodel_lyrics::asr::{loop_start, text, DIM};
 
-use super::ops::each;
-use super::shape::read;
-use super::{Buf, Inner, Kernel, Runs, Shape, MAX_NEW};
+use super::ops::{each, Op};
+use super::{Buf, Inner, Kernel, Runs, Shape, MAX_NEW, STEPS_A_READ};
 
 /// What the recogniser did so far ([`super::GpuAsr::hearing`]), for
 /// traces: the difference of two ([`Hearing::since`]) is what it did
@@ -141,31 +150,53 @@ impl Inner {
         let shape = Shape::with_room(features.len(), frames, self.new_at_once);
         let (b, cap, r) = (shape.pieces, shape.positions, shape.rows);
         let (t0, prompts) = (Instant::now(), self.prompt_pieces.tally());
-        let got = self.prompted(features, &shape)?;
-        let (t1, steps_before) = (Instant::now(), self.step_pieces.tally());
-        let mut written: Vec<Written> = (0..b).map(|k| Written::new(got[k * cap + r])).collect();
+        let steps_before = self.step_pieces.tally();
+        let ops = self.prompt_run(features, &shape);
+        let read_all = Some((Buf::Tokens, 0, b * cap));
+        // The runs made and not read yet (each its first token's place and
+        // its tokens a piece), in their order, each into its own staging
+        // buffer: two at most (the prompts and the first steps; a piece
+        // alone's steps), else one.
+        let mut flying = VecDeque::from([(self.submit(&ops, read_all, Runs::Prompt, 0)?, r, 1)]);
+        let mut t1 = None;
+        // None until the prompts' first tokens are read.
+        let mut written: Option<Vec<Written>> = None;
         // Every piece has written as many as the others still writing.
-        let a_read = read(b);
-        let mut decoded = 1;
-        let mut steps = 0;
+        let a_read = STEPS_A_READ;
+        let (mut made, mut steps, mut runs) = (1, 0, 1);
         loop {
-            if written.iter().all(|w| w.done) || r + decoded + a_read >= cap {
+            let done = written.as_ref().is_some_and(|w| w.iter().all(|w| w.done));
+            let ahead = if b == 1 || written.is_none() { 2 } else { 1 };
+            if flying.len() < ahead && !done && r + made + a_read < cap {
+                let mut ops = Vec::new();
+                let pos = r + made - 1;
+                for k in 0..a_read {
+                    self.step_ops(&mut ops, &shape, pos + k);
+                }
+                let running = self.submit(&ops, read_all, Runs::Steps, runs % 2)?;
+                flying.push_back((running, pos + 1, a_read));
+                (made, steps, runs) = (made + a_read, steps + a_read, runs + 1);
+                continue;
+            }
+            let Some((running, at, count)) = flying.pop_front() else {
                 break;
-            }
-            let mut ops = Vec::new();
-            let pos = r + decoded - 1;
-            for k in 0..a_read {
-                self.step_ops(&mut ops, &shape, pos + k);
-            }
-            let got = self.run(&ops, Some((Buf::Tokens, 0, b * cap)), Runs::Steps)?;
-            steps += a_read;
-            for (k, w) in written.iter_mut().enumerate() {
-                if !w.done {
-                    w.take(&got[k * cap + pos + 1..][..a_read]);
+            };
+            let first = written.is_none();
+            let got = self.read(running, if first { Runs::Prompt } else { Runs::Steps })?;
+            let w = written.get_or_insert_with(|| {
+                t1 = Some(Instant::now());
+                (0..b).map(|k| Written::new(got[k * cap + r])).collect()
+            });
+            if !first {
+                for (k, w) in w.iter_mut().enumerate() {
+                    if !w.done {
+                        w.take(&got[k * cap + at..][..count]);
+                    }
                 }
             }
-            decoded += a_read;
         }
+        let written = written.unwrap_or_default();
+        let t1 = t1.unwrap_or(t0);
         self.hearing.add(&Hearing {
             runs: 1,
             pieces: b,
@@ -188,11 +219,20 @@ impl Inner {
     /// The encoder and the prompts of `shape`'s pieces (`features`, as
     /// [`Inner::hear`]'s): each piece's tokens so far (`shape.positions`
     /// a piece), its first written after its prompt.
+    #[cfg(test)]
     pub(super) fn prompted(
         &mut self,
         features: &[&[f32]],
         shape: &Shape,
     ) -> Result<Vec<f32>, String> {
+        let ops = self.prompt_run(features, shape);
+        let read = Some((Buf::Tokens, 0, shape.pieces * shape.positions));
+        self.run(&ops, read, Runs::Prompt)
+    }
+
+    /// The dispatches of [`Inner::prompted`], `features` uploaded and the
+    /// prompts' tokens written first.
+    fn prompt_run(&mut self, features: &[&[f32]], shape: &Shape) -> Vec<Op> {
         let (b, cap, r) = (shape.pieces, shape.positions, shape.rows);
         self.upload(features, shape);
         let prompt = text::prompt(shape.steps);
@@ -245,7 +285,7 @@ impl Inner {
             ],
         );
         self.prompt_ops(&mut ops, shape);
-        self.run(&ops, Some((Buf::Tokens, 0, b * cap)), Runs::Prompt)
+        ops
     }
 }
 

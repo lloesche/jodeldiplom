@@ -3,9 +3,10 @@
 //! the CPU model holds them ([`CpuSeparator::visit`]), giving the same
 //! masks to within rounding. A chunk runs entirely on the GPU: its STFT
 //! goes up, the band split, the 16 transformers and the mask layers run as
-//! one list of dispatches of six kernels (`kernels.wgsl`: a tiled matrix
-//! multiply, RMSNorm, the rotary positions, attention with an online
-//! softmax, the gated GELU and a transpose), and the masks come back.
+//! one list of dispatches of five kernels (`kernels.wgsl`: a tiled matrix
+//! multiply, which also takes the feed-forward's gated GELU, RMSNorm, the
+//! rotary positions, attention with an online softmax and a transpose),
+//! and the masks come back.
 //!
 //! The process keeps two ([`GpuSeparator::shared`] and
 //! [`GpuSeparator::background`]), each set up when first needed and again
@@ -38,7 +39,6 @@ pub(crate) enum Kernel {
     Norm,
     Rope,
     Attention,
-    Geglu,
     Transpose,
 }
 
@@ -48,7 +48,6 @@ impl Kernels for Kernel {
         Kernel::Norm,
         Kernel::Rope,
         Kernel::Attention,
-        Kernel::Geglu,
         Kernel::Transpose,
     ];
     const PARAM_BYTES: u64 = 48;
@@ -60,7 +59,6 @@ impl Kernels for Kernel {
             Kernel::Norm => "rmsnorm",
             Kernel::Rope => "rope",
             Kernel::Attention => "attention",
-            Kernel::Geglu => "geglu",
             Kernel::Transpose => "transpose",
         }
     }
@@ -80,16 +78,40 @@ pub(crate) enum Buf {
     KeysValues,
     Attended,
     Gate,
-    Up,
     Final,
     Masks,
 }
 
 /// The weights as one buffer's contents, by name, as the CPU separator
-/// holds them.
+/// holds them; but each feed-forward's gate and up (`NAME.gate.w`,
+/// `NAME.up.w`, each `[DIM][HIDDEN]`) as one matrix of their columns in
+/// pairs (`NAME.gate_up.w`, `[DIM][2 · HIDDEN]`: gate `j` at `2j`, its up
+/// next to it), for the matrix multiply that takes their gated GELU.
 fn pack() -> Result<Named, String> {
     let cpu = CpuSeparator::built_in()?;
-    Ok(Named::visited(|f| cpu.visit(f)))
+    let mut gates: Vec<(String, Vec<f32>)> = Vec::new();
+    let mut named = Named::default();
+    cpu.visit(&mut |name, values| {
+        if let Some(layer) = name.strip_suffix(".gate.w") {
+            gates.push((layer.to_owned(), values.to_vec()));
+        } else if let Some(layer) = name.strip_suffix(".up.w") {
+            let at = gates.iter().position(|(l, _)| l == layer);
+            let (_, gate) = gates.swap_remove(at.expect("a gate before its up"));
+            let paired: Vec<f32> = gate
+                .chunks(HIDDEN)
+                .zip(values.chunks(HIDDEN))
+                .flat_map(|(g, u)| g.iter().zip(u).flat_map(|(&g, &u)| [g, u]))
+                .collect();
+            named.put(&format!("{layer}.gate_up.w"), &paired);
+        } else {
+            named.put(name, values);
+        }
+    });
+    if gates.is_empty() {
+        Ok(named)
+    } else {
+        Err("a feed-forward gate without its up".into())
+    }
 }
 
 /// One dispatch.
@@ -115,7 +137,8 @@ pub(crate) fn plan(w: &Named, frames: usize) -> Vec<Op> {
             kernel: Kernel::Norm,
             buffers: [x, Buf::Weights, y],
             params: params(&[rows, dim, x_off, ldx, weight, 0, ldy]),
-            groups: spread(rows),
+            // 32 invocations a row.
+            groups: spread(32 * rows),
         });
     };
     let transpose = |ops: &mut Vec<Op>, from: Buf, to: Buf, rows: usize, cols: usize| {
@@ -180,24 +203,17 @@ pub(crate) fn plan(w: &Named, frames: usize) -> Vec<Op> {
         );
         matmul(
             ops,
-            dense(
-                Buf::Normed,
-                Buf::Gate,
-                (HIDDEN, DIM),
-                "gate.w",
-                After::Store,
-            ),
+            Mul {
+                to: (Buf::Gate, 0, HIDDEN),
+                ..dense(
+                    Buf::Normed,
+                    Buf::Gate,
+                    (2 * HIDDEN, DIM),
+                    "gate_up.w",
+                    After::GeGlu,
+                )
+            },
         );
-        matmul(
-            ops,
-            dense(Buf::Normed, Buf::Up, (HIDDEN, DIM), "up.w", After::Store),
-        );
-        ops.push(Op {
-            kernel: Kernel::Geglu,
-            buffers: [Buf::Up, Buf::Weights, Buf::Gate],
-            params: params(&[tokens * HIDDEN]),
-            groups: spread(tokens * HIDDEN),
-        });
         matmul(
             ops,
             dense(Buf::Gate, x, (DIM, HIDDEN), "down.w", After::Add),
@@ -398,7 +414,6 @@ impl Inner {
             (Buf::KeysValues, tokens * DIM),
             (Buf::Attended, tokens * DIM),
             (Buf::Gate, tokens * HIDDEN),
-            (Buf::Up, tokens * HIDDEN),
             (Buf::Final, MAX_FRAMES * DIM),
             (Buf::Masks, STEMS * MAX_FRAMES * FRAME),
         ];

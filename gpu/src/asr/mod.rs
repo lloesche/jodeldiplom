@@ -47,7 +47,7 @@ pub const MAX_SECONDS: usize = jodel_lyrics::asr::PART_SECONDS as usize;
 /// The most tokens written for one part.
 pub const MAX_NEW: usize = 384;
 /// Steps decoded between reads of the tokens.
-const STEPS_A_READ: usize = 8;
+const STEPS_A_READ: usize = 4;
 /// Pieces of a second through the convolutions at once.
 const CONV_BATCH: usize = 4;
 /// The most dispatches in one run.
@@ -96,6 +96,7 @@ enum Kernel {
     Embed,
     ArgmaxEmbed,
     ColSq,
+    SplitSum,
 }
 
 impl Kernels for Kernel {
@@ -117,6 +118,7 @@ impl Kernels for Kernel {
         Kernel::Embed,
         Kernel::ArgmaxEmbed,
         Kernel::ColSq,
+        Kernel::SplitSum,
     ];
     const PARAM_BYTES: u64 = 48;
     /// After the parameters: the weights (read), a second dst.
@@ -141,6 +143,7 @@ impl Kernels for Kernel {
             Kernel::Embed => "qa_embed",
             Kernel::ArgmaxEmbed => "qa_argmax_embed",
             Kernel::ColSq => "qa_colsq",
+            Kernel::SplitSum => "qa_split_sum",
         }
     }
 }
@@ -204,7 +207,9 @@ struct Inner {
     buffers: HashMap<Buf, wgpu::Buffer>,
     room: Room,
     params: wgpu::Buffer,
-    staging: wgpu::Buffer,
+    /// What is read back: two, so that one run's tokens are read while the
+    /// next runs ([`Inner::hear`]).
+    staging: [wgpu::Buffer; 2],
     /// Where the model's tensors are.
     tensors: Layout,
     stats: Stats,
@@ -383,7 +388,7 @@ impl Inner {
         write(Buf::Weights, &bytes(&packed.weights));
         write(Buf::Small, &bytes(&packed.small));
         let params = program.params_buffer(MAX_OPS);
-        let staging = program.staging(room.staging);
+        let staging = [program.staging(room.staging), program.staging(room.staging)];
         Ok(Inner {
             program,
             buffers,
@@ -424,6 +429,47 @@ impl Inner {
         read: Option<(Buf, usize, usize)>,
         runs: Runs,
     ) -> Result<Vec<f32>, String> {
+        let running = self.submit(ops, read, runs, 0)?;
+        self.read(running, runs)
+    }
+
+    /// What [`Inner::run`] reads back of `running` ([`Inner::submit`]'s),
+    /// once it is done.
+    fn read(&mut self, running: Running, runs: Runs) -> Result<Vec<f32>, String> {
+        if let Some(index) = running.index {
+            let device = self.program.device.clone();
+            crate::pace::finish(self.pieces(runs), &device, index)?;
+        }
+        if running.count == 0 {
+            return Ok(Vec::new());
+        }
+        crate::device::read_back(
+            &self.program.device,
+            &self.staging[running.staging],
+            running.count,
+        )
+    }
+
+    /// The pacing of `runs`.
+    fn pieces(&mut self, runs: Runs) -> &mut crate::pace::Pieces {
+        match runs {
+            Runs::Prompt => &mut self.prompt_pieces,
+            Runs::Steps => &mut self.step_pieces,
+        }
+    }
+
+    /// [`Inner::run`]'s `ops` made, what it reads copied to the staging
+    /// buffer `staging`, but not waited for: it may still run when this
+    /// returns ([`Inner::read`] waits for it and reads it). The next run's
+    /// parameters are written in the queue's order, after this one's
+    /// dispatches.
+    fn submit(
+        &mut self,
+        ops: &[Op],
+        read: Option<(Buf, usize, usize)>,
+        runs: Runs,
+        staging: usize,
+    ) -> Result<Running, String> {
         let counted;
         let ops = if self.stats.on {
             counted = self.stats.counted(ops);
@@ -450,12 +496,27 @@ impl Inner {
             Runs::Steps => &mut self.step_pieces,
         };
         let buffers = &self.buffers;
-        self.program.run(
+        let index = self.program.submit(
             pieces,
             (&self.bind_groups, &dispatches),
             |_| {},
             read.map(|(buf, from, count)| (&buffers[&buf], from, count)),
-            &self.staging,
-        )
+            &self.staging[staging],
+            true,
+        )?;
+        Ok(Running {
+            index,
+            staging,
+            count: read.map_or(0, |r| r.2),
+        })
     }
+}
+
+/// A run made and maybe still running ([`Inner::submit`]): its last
+/// submission (`None`: done), the staging buffer it reads into and how
+/// many f32s.
+struct Running {
+    index: Option<wgpu::SubmissionIndex>,
+    staging: usize,
+    count: usize,
 }

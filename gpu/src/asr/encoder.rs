@@ -6,7 +6,7 @@ use jodel_lyrics::asr::{
     mel, piece_steps, CONV, DIM, ENC_DIM, ENC_FF, ENC_HEADS, PIECE, WINDOW_PIECES,
 };
 
-use super::ops::{each, matmul, per_row, After, Mul, Op};
+use super::ops::{each, matmul, matmul_cut, per_row, After, Mul, Op};
 use super::{Buf, Inner, Kernel, Shape, BANDS, CONV_BATCH, PATCH, QKV_ENC};
 use crate::engine::params;
 
@@ -104,7 +104,8 @@ impl Inner {
                 n * s3 * BANDS * CONV,
                 &[n, s3],
             );
-            matmul(
+            // Cut in parts (its sums in `Conv1`, read before).
+            matmul_cut(
                 &mut ops,
                 &Mul::dense(
                     Buf::Flat,
@@ -115,6 +116,7 @@ impl Inner {
                     After::Store,
                 ),
                 steps,
+                Buf::Conv1,
             );
             each(
                 &mut ops,
@@ -185,8 +187,9 @@ impl Inner {
                 ),
                 steps,
             );
+            // Cut in parts (their sums in `Qkv`, read before).
             let (w, bias) = layer.down;
-            matmul(
+            matmul_cut(
                 &mut ops,
                 &Mul::dense(
                     Buf::Up,
@@ -197,6 +200,7 @@ impl Inner {
                     After::Add,
                 ),
                 steps,
+                Buf::Qkv,
             );
         }
         per_row(

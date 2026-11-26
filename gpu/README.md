@@ -45,17 +45,23 @@ built-in CPU separator, packed from it as it holds them
 (`CpuSeparator::visit`: the layers input × output) with its sizes
 (`jodel_rhythm::stems::{DIM, HIDDEN, HEADS, …}`): the weights go up once
 (72 MB), and a chunk runs entirely on the GPU, as
-one list of dispatches of six kernels (`src/kernels.wgsl`):
+one list of dispatches of five kernels (`src/kernels.wgsl`):
 
-- `matmul`: tiles of 64 × 64 through 16 inputs at a time, each
-  invocation keeping 4 × 4 outputs in four vectors, with a bias and
-  adding to its output where asked; the tiles hold vectors, so a step
-  reads one of each for 16 multiply-adds;
-- `rmsnorm`, `rope` (rotary positions over split halves, from a table),
-  `geglu` (the gated GELU) and `transpose` (between the frame-major and
-  band-major grids);
+- `matmul`: tiles of 128 rows × 64 columns through 16 inputs at a time,
+  the next 16 loaded while these are multiplied, each invocation keeping
+  8 × 4 outputs in eight vectors, with a bias and adding to its output
+  where asked; the tiles hold vectors, so a step reads three for 32
+  multiply-adds. Each output's products are added in the order of its
+  inputs, as the 64 × 64 tiles before it did, so it gives the same
+  numbers. The feed-forward's gate and up are one matrix, their columns
+  in pairs, and the multiply writes each pair's gated GELU (the beat
+  network and the speech model use it too);
+- `rmsnorm` (a row 32 invocations, neighbours reading neighbouring
+  values), `rope` (rotary positions over split halves, from a table) and
+  `transpose` (between the frame-major and band-major grids);
 - `attention`: 8 query heads on 4 key/value heads of 32, an online
-  softmax over tiles of 64 keys, so the scores are never stored.
+  softmax over tiles of 64 keys, so the scores are never stored; four
+  keys' scores at a time, then taken in in their order.
 
 The loops over a head's vectors and a tile's steps are written out, and
 no array is indexed in a loop: the loops wgpu writes for Metal are not
@@ -65,8 +71,10 @@ M4 Max as on an RTX 5080 that way, where three times is the difference
 in compute).
 
 The chunk's STFT goes up and its masks come back; the transforms stay
-on the CPU. On an RTX 5080 a 6-second chunk takes 0.12 s, a four-minute
-track about 5 s of GPU time.
+on the CPU. On an RTX 5080 a four-minute track takes about 3.7 s of GPU
+time (4.4 s from its samples to its stems; 6 s before the tiles of 128
+× 64, the gated multiply and the norms of 32 invocations a row,
+November 2026).
 
 ## Sharing the GPU with the window
 
@@ -94,8 +102,18 @@ work on the GPU background work waits before each submission (a second
 at most at a time), so one network is on the GPU at once.
 `pace::report()` says how it went (frames late, rests, time waited);
 `GpuSeparator::tally()`, `GpuNetwork::tally()` and `GpuAsr::hearing()`
-what each network's GPU work cost (submissions, waits for the GPU, rests,
-time held back), for the trace to tell each job's.
+what each network's GPU work cost (submissions and the processor's time
+recording them, waits for the GPU and their time, rests, time held back),
+for the trace to tell each job's.
+
+`jodel_gpu::profile` times the GPU's work for profiles (timestamp queries,
+where the adapter has them): each kernel's dispatches, or each submission
+as a whole; `examples/gpu_profile.rs` runs every network on a song so and
+prints the wall time, the tally and each kernel's GPU time. A dispatch is
+timed from where its pass starts to where the next one starts (some
+drivers stamp a pass's end as soon as its work has started), and the
+typical time leaves out dispatches that waited for other work on the
+GPU (the median of a kernel's dispatches of the same size).
 `pace::background()` marks a thread as one doing background work, and
 `GpuSeparator::for_this_thread()` picks the background separator there
 (the shared one elsewhere).
@@ -135,7 +153,15 @@ processor.
   128 × 64; four pieces of a second at a time), the steps placed with their
   positions, and 18 layers with attention inside windows of 8 s.
 - The decoder runs the prompt in one pass, filling a cache of keys and
-  values.
+  values; its attention takes a query in two invocations, each with half
+  of the head in registers.
+- A matrix of many inputs (the convolutions' output, the feed-forwards'
+  down, the decoder's output matrix) is cut in parts of at most 1280
+  inputs that workgroups take side by side, their sums added up in their
+  order after (`qa_split_sum`): a matrix of few rows has few tiles, and a
+  tile through all of its inputs kept a workgroup long. The parts follow
+  from the inputs alone, so a row's sums do not depend on the rows with
+  it.
 - Then it writes a token a step, in five dispatches a layer
   (`fused.wgsl`): the row normed through its queries, key and value
   (`qa_rows`, a few rows through a 4-bit matrix); those normed, turned,
@@ -146,8 +172,16 @@ processor.
   the head (each workgroup's largest logit with it), and the next token
   with its embedding (`qa_argmax_embed`): 143 dispatches a step, where a
   kernel for each step of the arithmetic took 340. Each kernel sums in the
-  order those did, so the tokens are theirs. Steps go eight at a time
-  between reads (four for pieces heard together).
+  order those did, so the tokens are theirs. Steps go four at a time
+  between reads. The prompt's first tokens are read while the first steps
+  run, and a part of a transcript (a piece alone, its tokens many) has each
+  read made while the next four steps run: the GPU does not wait for the
+  processor to read the tokens and send more, and the steps run one read
+  past the end. Pieces heard together (glimpses, a few tokens each) wait
+  for each read: four more steps for all of them would cost more.
+- The cache keeps each key's values the positions' side by side, so that
+  a step's attention reads neighbouring positions in neighbouring
+  invocations; the values a position's side by side.
 - Pieces of the same length are heard together (`GpuAsr::tokens_of`): a
   voice's 3 s glimpses 16 at a time, the encoder and prompt over all of
   them, then the decoder a row each until every one has ended. A row's
@@ -163,8 +197,13 @@ The voice is heard in parts of at most 30 s, each cut at the quietest moment fro
 Each group's scale and offset are fitted by least squares over a spread of scales around its range, as llama.cpp's k-quants do. That halves the words changed against full precision on test clips (52 % to 24 %, most of it the loops of non-English clips). JODEL_ASR_8BIT=enc,conv,proj,embed,head,dec (any of them) holds those matrices at 8 bits instead (9 u32s a group). All at 8 bits changes 2.5 % of the words, as the CPU's 8-bit rounding does.
 
 On an RTX 5080:
-- **Speed:** a 30 s part takes 0.12 s for the encoder and prompt, then
-  3.5 ms a token (7.5 ms with a kernel for each step of the arithmetic). A
+- **Speed:** a part of about 24 s takes 82 ms for the encoder and prompt
+  (111 ms before the long matrices were cut in parts and the prompt's
+  attention held its head in registers), then 1.75 ms a step (2.3 ms
+  before the cache's keys were laid out by position, the reads made while
+  the next steps run and two rounds of columns taken together; 7.5 ms
+  with a kernel for each step of the arithmetic): a four-minute song's
+  transcript in 1.8 s (2.4 s before). A
   glimpse takes 20 ms, heard 16 at a time (150 ms one at a time; 25 ms 8
   at a time): 1.9 to 4.8 s of glimpses for a song of 2.5 to 9 minutes,
   where they took 15 to 36 s. With the separator running beside it, 39 ms

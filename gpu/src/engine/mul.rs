@@ -8,16 +8,18 @@
 use super::{params, Op};
 
 /// The kernels' flags: the bias added, the products added to what is
-/// there, GELU taken, the gated product, the head's largest.
+/// there, GELU taken, the gated products, the head's largest.
 const BIAS: usize = 1;
 const ADD: usize = 2;
 const GELU: usize = 4;
 pub(crate) const SWIGLU: usize = 64;
 pub(crate) const ARGMAX: usize = 128;
+const GEGLU: usize = 512;
 
 /// What becomes of the products (after the bias). The tiled kernel writes
-/// or adds them; the recogniser's also take GELU, and its `qa_rows` the
-/// gated product and the head's largest.
+/// or adds them, or takes the GELU-gated products; the recogniser's also
+/// take GELU, and its `qa_rows` the SiLU-gated products and the head's
+/// largest.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum After {
     /// Written.
@@ -29,6 +31,9 @@ pub(crate) enum After {
     /// The columns are gates and ups (the first half and the rest): each
     /// pair written as silu(gate) · up.
     SwiGlu,
+    /// The columns are gates and ups in pairs (gate `j` at `2j`, its up
+    /// next to it): each pair written as gelu(gate) · up at column `j`.
+    GeGlu,
     /// Written, and each row's largest of a workgroup's with its column,
     /// `stride` apart a row.
     Argmax { stride: usize },
@@ -41,6 +46,7 @@ impl After {
             After::Add => ADD,
             After::Gelu => GELU,
             After::SwiGlu => SWIGLU,
+            After::GeGlu => GEGLU,
             After::Argmax { .. } => ARGMAX,
         }
     }
@@ -129,18 +135,19 @@ impl<B: Copy, W: Matrix> Mul<B, W> {
         ]
     }
 
-    /// The tiled matrix multiply (`matmul` of `kernels.wgsl`, tiles of 64 ×
-    /// 64) as `kernel`, the weights in `weights`; it writes or adds.
+    /// The tiled matrix multiply (`matmul` of `kernels.wgsl`, tiles of 128
+    /// rows × 64 columns) as `kernel`, the weights in `weights`; it writes,
+    /// adds or takes the GELU-gated products.
     pub(crate) fn tiled<K>(&self, kernel: K, weights: B) -> Op<K, [B; 3], 12> {
         assert!(
-            matches!(self.after, After::Store | After::Add),
-            "the tiled matrix multiply writes or adds"
+            matches!(self.after, After::Store | After::Add | After::GeGlu),
+            "the tiled matrix multiply writes, adds or gates"
         );
         Op {
             kernel,
             buffers: [self.from.0, weights, self.to.0],
             params: params(&self.numbers()),
-            groups: [self.n.div_ceil(64) as u32, self.m.div_ceil(64) as u32, 1],
+            groups: [self.n.div_ceil(64) as u32, self.m.div_ceil(128) as u32, 1],
         }
     }
 }

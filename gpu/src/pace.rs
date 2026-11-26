@@ -36,6 +36,7 @@ use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 use crate::engine::{Dispatch, Kernels, Program};
+use crate::profile::Stamps;
 
 thread_local! {
     static BACKGROUND: Cell<bool> = const { Cell::new(false) };
@@ -75,8 +76,12 @@ pub const LONGEST_WAIT: Duration = Duration::from_secs(1);
 pub struct Tally {
     /// Submissions made ([`dispatch`]).
     pub submissions: u64,
-    /// Times it waited for the GPU to finish work: its round trips.
+    /// Times it waited for the GPU to finish work: its round trips; and
+    /// how long they took.
     pub waits: u64,
+    pub waited: Duration,
+    /// The processor's time recording the submissions and making them.
+    pub recorded: Duration,
     /// Rests taken to give way to the window, and their total.
     pub rests: u64,
     pub rested: Duration,
@@ -91,6 +96,8 @@ impl Tally {
         Tally {
             submissions: self.submissions.saturating_sub(earlier.submissions),
             waits: self.waits.saturating_sub(earlier.waits),
+            waited: self.waited.saturating_sub(earlier.waited),
+            recorded: self.recorded.saturating_sub(earlier.recorded),
             rests: self.rests.saturating_sub(earlier.rests),
             rested: self.rested.saturating_sub(earlier.rested),
             held: self.held.saturating_sub(earlier.held),
@@ -102,6 +109,8 @@ impl Tally {
         Tally {
             submissions: self.submissions + other.submissions,
             waits: self.waits + other.waits,
+            waited: self.waited + other.waited,
+            recorded: self.recorded + other.recorded,
             rests: self.rests + other.rests,
             rested: self.rested + other.rested,
             held: self.held + other.held,
@@ -113,9 +122,11 @@ impl std::fmt::Display for Tally {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "{} submissions, {} waits for the GPU, {} rests ({:.1} s), {:.1} s behind the track playing",
+            "{} submissions ({:.3} s recording them), {} waits for the GPU ({:.3} s), {} rests ({:.1} s), {:.1} s behind the track playing",
             self.submissions,
+            self.recorded.as_secs_f64(),
             self.waits,
+            self.waited.as_secs_f64(),
             self.rests,
             self.rested.as_secs_f64(),
             self.held.as_secs_f64()
@@ -126,7 +137,7 @@ impl std::fmt::Display for Tally {
 /// A network's [`Tally`] as it grows: shared with whoever asks for it
 /// ([`Counts::tally`] never waits for the network's work), its times in µs.
 #[derive(Clone, Debug, Default)]
-pub(crate) struct Counts(Arc<[AtomicU64; 5]>);
+pub(crate) struct Counts(Arc<[AtomicU64; 7]>);
 
 impl Counts {
     const SUBMISSIONS: usize = 0;
@@ -134,6 +145,8 @@ impl Counts {
     const RESTS: usize = 2;
     const RESTED: usize = 3;
     const HELD: usize = 4;
+    const WAITED: usize = 5;
+    const RECORDED: usize = 6;
 
     fn add(&self, which: usize, n: u64) {
         self.0[which].fetch_add(n, Ordering::Relaxed);
@@ -149,6 +162,8 @@ impl Counts {
         Tally {
             submissions: n(Counts::SUBMISSIONS),
             waits: n(Counts::WAITS),
+            waited: Duration::from_micros(n(Counts::WAITED)),
+            recorded: Duration::from_micros(n(Counts::RECORDED)),
             rests: n(Counts::RESTS),
             rested: Duration::from_micros(n(Counts::RESTED)),
             held: Duration::from_micros(n(Counts::HELD)),
@@ -368,6 +383,31 @@ fn owe(pieces: &mut Pieces, took: Duration, duty: f32) {
     }
 }
 
+/// Waits until the GPU has done the submission `index` that [`dispatch`]
+/// left running, counted in `pieces`' tally; how long it took since it
+/// was made (the GPU's time, if the caller asks soon enough) sizes the
+/// next submissions.
+pub(crate) fn finish(
+    pieces: &mut Pieces,
+    device: &wgpu::Device,
+    index: wgpu::SubmissionIndex,
+) -> Result<(), String> {
+    wait(&pieces.counts, device, index)?;
+    if let Some((n, all, made)) = pieces.left.take() {
+        learn(pieces, n, all, made.elapsed());
+    }
+    Ok(())
+}
+
+/// Towards [`PIECE`] a submission, smoothly, from `n` dispatches (of a
+/// run of `all`) that took `took` (at least one, none where there are
+/// none).
+fn learn(pieces: &mut Pieces, n: usize, all: usize, took: Duration) {
+    let ideal = n as f64 * PIECE.as_secs_f64() / took.as_secs_f64().max(1e-5);
+    let next = (pieces.per as f64 * 0.5 + ideal * 0.5).round() as usize;
+    pieces.per = next.clamp(1, all.max(1));
+}
+
 /// Waits until the GPU has done the submission `index`, counted in
 /// `counts`.
 fn wait(
@@ -376,13 +416,16 @@ fn wait(
     index: wgpu::SubmissionIndex,
 ) -> Result<(), String> {
     counts.add(Counts::WAITS, 1);
-    device
+    let started = Instant::now();
+    let done = device
         .poll(wgpu::PollType::Wait {
             submission_index: Some(index),
             timeout: None,
         })
         .map(|_| ())
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string());
+    counts.add_time(Counts::WAITED, started.elapsed());
+    done
 }
 
 /// How many dispatches a submission takes, learned per run: about
@@ -393,6 +436,10 @@ fn wait(
 pub(crate) struct Pieces {
     /// Unknown yet (0): an eighth of a run's dispatches at first.
     per: usize,
+    /// The dispatches of a run's last submissions left running
+    /// ([`dispatch`] `leaves`), the run's, and when they were made: what
+    /// [`finish`] learns from.
+    left: Option<(usize, usize, Instant)>,
     rests: bool,
     owed: Duration,
     counts: Counts,
@@ -404,6 +451,7 @@ impl Pieces {
     pub(crate) fn foreground() -> Pieces {
         Pieces {
             per: 0,
+            left: None,
             rests: false,
             owed: Duration::ZERO,
             counts: Counts::default(),
@@ -430,22 +478,28 @@ impl Pieces {
     }
 }
 
-/// Runs `program`'s `ops` (on the bind groups `groups`) in submissions of about [`PIECE`] each, `prelude` before the
-/// first and `finish` after the last (one submission of the two where
-/// `ops` is empty), and waits until they are done (the caller then reads
-/// their result: [`crate::device::read_back`]). Each submission is made
-/// while the one before runs, which is waited for then; but while
-/// background work (`pieces.rests`) gives way to the window ([`duty`]
-/// below 1), each is waited for at once, and the rest it owes is taken
-/// before the next ([`give_way`]).
+/// Runs `program`'s `ops` (on the bind groups `groups`) in submissions of
+/// about [`PIECE`] each, `prelude` before the first and `finish` after the
+/// last (one submission of the two where `ops` is empty), and waits until
+/// they are done (the caller then reads their result:
+/// [`crate::device::read_back`]); or, where it `leaves` them, returns
+/// while the last may still run, with its index (for [`finish`]: the
+/// caller does more meanwhile). Each submission is made while the one
+/// before runs, which is waited for then; but while background work
+/// (`pieces.rests`) gives way to the window ([`duty`] below 1), each is
+/// waited for at once, and the rest it owes is taken before the next
+/// ([`give_way`]).
 pub(crate) fn dispatch<K: Kernels>(
     program: &Program<K>,
     pieces: &mut Pieces,
     groups: &[wgpu::BindGroup],
     ops: &[Dispatch<K>],
-    prelude: impl FnOnce(&mut wgpu::CommandEncoder),
-    finish: impl FnOnce(&mut wgpu::CommandEncoder),
-) -> Result<(), String> {
+    (prelude, finish): (
+        impl FnOnce(&mut wgpu::CommandEncoder),
+        impl FnOnce(&mut wgpu::CommandEncoder),
+    ),
+    leaves: bool,
+) -> Result<Option<wgpu::SubmissionIndex>, String> {
     let (device, queue, label) = (&program.device, &program.queue, program.label());
     if pieces.per == 0 {
         pieces.per = ops.len().div_ceil(8).max(1);
@@ -457,46 +511,60 @@ pub(crate) fn dispatch<K: Kernels>(
     // was made), and when the one before it was done.
     let mut running: Option<(wgpu::SubmissionIndex, usize, Instant)> = None;
     let mut done_at: Option<Instant> = None;
+    // Work left running before ([`dispatch`] `leaves`) may still be on the
+    // GPU: the first wait waits for it too, and does not say how long
+    // this work takes.
+    let mut after_left = program.left.swap(false, Ordering::AcqRel);
     loop {
         let end = (start + pieces.per).min(ops.len());
         let last = end == ops.len();
+        let recording = Instant::now();
         let mut encoder =
             device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some(label) });
         if let Some(prelude) = prelude.take() {
             prelude(&mut encoder);
         }
-        {
-            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some(label),
-                timestamp_writes: None,
-            });
-            for d in &ops[start..end] {
-                let [x, y, z] = d.groups;
-                pass.set_pipeline(program.pipeline(d.kernel));
-                pass.set_bind_group(0, &groups[d.group], &[d.offset as u32]);
-                pass.dispatch_workgroups(x, y, z);
-            }
-        }
+        let stamps = Stamps::new(
+            device,
+            label,
+            ops[start..end].iter().map(|d| (d.kernel.entry(), d.groups)),
+        );
+        program.encode(&mut encoder, groups, &ops[start..end], stamps.as_ref());
         if last {
             if let Some(finish) = finish.take() {
                 finish(&mut encoder);
             }
         }
+        let commands = encoder.finish();
+        let recorded = recording.elapsed();
         if pieces.rests {
             give_way(pieces);
         }
         pieces.counts.add(Counts::SUBMISSIONS, 1);
         let made = Instant::now();
-        let index = queue.submit([encoder.finish()]);
+        let index = queue.submit([commands]);
+        pieces
+            .counts
+            .add_time(Counts::RECORDED, recorded + made.elapsed());
         let n = end - start;
         let duty = if pieces.rests {
             pieces.pace.duty()
         } else {
             1.0
         };
-        // The last, or giving way: this one waited for now (the one before
-        // with it); else the one before, this one running meanwhile.
-        let waited = if last || duty < 1.0 {
+        if last && leaves && duty >= 1.0 && stamps.is_none() {
+            // Left running, the one before with it.
+            program.left.store(true, Ordering::Release);
+            pieces.left = Some(match running {
+                Some((_, before, at)) => (before + n, ops.len(), at),
+                None => (n, ops.len(), made),
+            });
+            return Ok(Some(index));
+        }
+        // The last, giving way or profiled: this one waited for now (the
+        // one before with it); else the one before, this one running
+        // meanwhile.
+        let waited = if last || duty < 1.0 || stamps.is_some() {
             Some(match running.take() {
                 Some((_, before, at)) => (index, before + n, at),
                 None => (index, n, made),
@@ -506,6 +574,9 @@ pub(crate) fn dispatch<K: Kernels>(
         };
         if let Some((index, n, at)) = waited {
             wait(&pieces.counts, device, index)?;
+            if let Some(stamps) = stamps {
+                stamps.add(device, queue)?;
+            }
             let now = Instant::now();
             // Their GPU time: from when they were made, or when the one
             // before them was done, if later.
@@ -513,16 +584,16 @@ pub(crate) fn dispatch<K: Kernels>(
             done_at = Some(now);
             // Towards PIECE a submission, smoothly (at least one, none
             // where there are none).
-            let ideal = n as f64 * PIECE.as_secs_f64() / took.as_secs_f64().max(1e-5);
-            let next = (pieces.per as f64 * 0.5 + ideal * 0.5).round() as usize;
-            pieces.per = next.clamp(1, ops.len().max(1));
+            if !std::mem::take(&mut after_left) {
+                learn(pieces, n, ops.len(), took);
+            }
             if pieces.rests {
                 pieces.pace.worked();
                 owe(pieces, took, duty);
             }
         }
         if last {
-            return Ok(());
+            return Ok(None);
         }
         start = end;
     }
@@ -659,8 +730,13 @@ mod tests {
                 &mut pieces,
                 &[],
                 &[],
-                |encoder| encoder.clear_buffer(&values, 0, None),
-                |encoder| encoder.copy_buffer_to_buffer(&values, 0, &staging, 0, 16),
+                (
+                    |encoder: &mut wgpu::CommandEncoder| encoder.clear_buffer(&values, 0, None),
+                    |encoder: &mut wgpu::CommandEncoder| {
+                        encoder.copy_buffer_to_buffer(&values, 0, &staging, 0, 16)
+                    },
+                ),
+                false,
             )
             .unwrap();
             let read = crate::device::read_back(&program.device, &staging, 4).unwrap();

@@ -50,6 +50,7 @@ mod engine;
 mod net;
 pub mod pace;
 mod packer;
+pub mod profile;
 mod separator;
 mod speech;
 pub mod vision;

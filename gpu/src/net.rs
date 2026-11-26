@@ -118,7 +118,8 @@ fn norm(ops: &mut Vec<Op>, x: Buf, y: Buf, rows: usize, dim: usize, w: usize) {
         kernel: Kernel::Norm,
         buffers: [x, Buf::Weights, y],
         params: params(&[rows, dim, 0, dim, w, 0, dim, 1]),
-        groups: spread(rows),
+        // 32 invocations a row.
+        groups: spread(32 * rows),
     });
 }
 

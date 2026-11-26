@@ -174,6 +174,8 @@ pub(crate) fn open<T>(
     let limits = adapter.limits();
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         label: Some(label),
+        // Stamps for profiles, where the adapter has them.
+        required_features: adapter.features() & wgpu::Features::TIMESTAMP_QUERY,
         required_limits: limits.clone(),
         ..Default::default()
     }))

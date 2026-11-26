@@ -24,16 +24,18 @@ struct X8 {
     x4: vec4<f32>, x5: vec4<f32>, x6: vec4<f32>, x7: vec4<f32>,
 }
 
+// A word's nibbles 0..3 and 4..7, and its bytes, as values (qa_small's
+// way: exactly the conversions').
 fn st_lo(w: u32) -> vec4<f32> {
-    return vec4<f32>(f32(w & 15u), f32((w >> 4u) & 15u), f32((w >> 8u) & 15u), f32((w >> 12u) & 15u));
+    return qa_small(vec4<u32>(w, w >> 4u, w >> 8u, w >> 12u) & vec4<u32>(15u));
 }
 
 fn st_hi(w: u32) -> vec4<f32> {
-    return vec4<f32>(f32((w >> 16u) & 15u), f32((w >> 20u) & 15u), f32((w >> 24u) & 15u), f32(w >> 28u));
+    return qa_small(vec4<u32>(w >> 16u, w >> 20u, w >> 24u, w >> 28u) & vec4<u32>(15u));
 }
 
 fn st_bytes(w: u32) -> vec4<f32> {
-    return vec4<f32>(f32(w & 255u), f32((w >> 8u) & 255u), f32((w >> 16u) & 255u), f32(w >> 24u));
+    return qa_small(vec4<u32>(w, w >> 8u, w >> 16u, w >> 24u) & vec4<u32>(255u));
 }
 
 fn st_halves(a: u32, b: u32) -> vec4<f32> {
@@ -299,51 +301,65 @@ fn qa_rows(@builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgroup_id) 
         workgroupBarrier();
         j += 32u;
     }
-    // The last chunk's columns, round by round.
-    for (var round = 0u; round < rounds; round++) {
-        let c = st_column(round, slot, rounds, wid.y);
-        var sc = select(vec4<f32>(0.0), s, round == 0u);
-        if (c < p.f1 && j + lane < groups) {
-            sc = st_group(fmt, sc, rows, c, groups, j + lane, lane);
+    // The last chunk's columns, two rounds at a time: both rounds' groups
+    // taken before either is added up, so that their weights' loads are
+    // under way together.
+    for (var pair = 0u; pair < rounds; pair += 2u) {
+        let c0 = st_column(pair, slot, rounds, wid.y);
+        var s0 = select(vec4<f32>(0.0), s, pair == 0u);
+        if (c0 < p.f1 && j + lane < groups) {
+            s0 = st_group(fmt, s0, rows, c0, groups, j + lane, lane);
         }
-        // Each column's lanes in their tree (16 apart, then 8, ...,
-        // 1), the four rows at once, a few levels at a time.
-        st_r[slot * 33u + lane] = sc;
-        workgroupBarrier();
-        if (lane < 8u) {
-            let b = slot * 33u + lane;
-            st_r[264u + slot * 8u + lane] = (st_r[b] + st_r[b + 16u]) + (st_r[b + 8u] + st_r[b + 24u]);
+        let c1 = st_column(pair + 1u, slot, rounds, wid.y);
+        var s1 = vec4<f32>(0.0);
+        if (pair + 1u < rounds && c1 < p.f1 && j + lane < groups) {
+            s1 = st_group(fmt, s1, rows, c1, groups, j + lane, lane);
         }
-        workgroupBarrier();
-        if (swiglu) {
-            if (t < 16u) {
-                let jj = t / 4u;
-                let r = t % 4u;
-                let col = (wid.y * rounds + round) * 4u + jj;
-                if (r < rows && col < p.f1 / 2u) {
-                    let g = st_eight(264u + jj * 8u, 1u)[r];
-                    dst[p.f6 + (r0 + r) * p.f7 + col] = g / (1.0 + exp(-g)) * st_eight(264u + (4u + jj) * 8u, 1u)[r];
-                }
+        for (var half = 0u; half < 2u; half++) {
+            let round = pair + half;
+            if (round >= rounds) {
+                break;
             }
-        } else if (t < 32u) {
-            let r = t % 4u;
-            let col = (wid.y * rounds + round) * 8u + t / 4u;
-            if (r < rows && col < p.f1) {
-                var x = st_eight(264u + (t / 4u) * 8u, 1u)[r];
-                if ((p.f9 & 1u) != 0u) {
-                    x += aux[p.f8 + col];
+            let sc = select(s0, s1, half == 1u);
+            // Each column's lanes in their tree (16 apart, then 8, ...,
+            // 1), the four rows at once, a few levels at a time.
+            st_r[slot * 33u + lane] = sc;
+            workgroupBarrier();
+            if (lane < 8u) {
+                let b = slot * 33u + lane;
+                st_r[264u + slot * 8u + lane] = (st_r[b] + st_r[b + 16u]) + (st_r[b + 8u] + st_r[b + 24u]);
+            }
+            workgroupBarrier();
+            if (swiglu) {
+                if (t < 16u) {
+                    let jj = t / 4u;
+                    let r = t % 4u;
+                    let col = (wid.y * rounds + round) * 4u + jj;
+                    if (r < rows && col < p.f1 / 2u) {
+                        let g = st_eight(264u + jj * 8u, 1u)[r];
+                        dst[p.f6 + (r0 + r) * p.f7 + col] = g / (1.0 + exp(-g)) * st_eight(264u + (4u + jj) * 8u, 1u)[r];
+                    }
                 }
-                if ((p.f9 & 4u) != 0u) {
-                    x = gelu(x);
+            } else if (t < 32u) {
+                let r = t % 4u;
+                let col = (wid.y * rounds + round) * 8u + t / 4u;
+                if (r < rows && col < p.f1) {
+                    var x = st_eight(264u + (t / 4u) * 8u, 1u)[r];
+                    if ((p.f9 & 1u) != 0u) {
+                        x += aux[p.f8 + col];
+                    }
+                    if ((p.f9 & 4u) != 0u) {
+                        x = gelu(x);
+                    }
+                    let o = p.f6 + (r0 + r) * p.f7 + col;
+                    if ((p.f9 & 2u) != 0u) {
+                        dst[o] += x;
+                    } else {
+                        dst[o] = x;
+                    }
+                    // (A matrix whose largest is asked for is written as it is.)
+                    st_out[round * 32u + t] = x;
                 }
-                let o = p.f6 + (r0 + r) * p.f7 + col;
-                if ((p.f9 & 2u) != 0u) {
-                    dst[o] += x;
-                } else {
-                    dst[o] = x;
-                }
-                // (A matrix whose largest is asked for is written as it is.)
-                st_out[round * 32u + t] = x;
             }
         }
     }
@@ -391,12 +407,14 @@ fn qa_rows(@builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgroup_id) 
 // qa_head_norm_rope), the key and value into the cache (by the chunk with
 // pos), and the chunk's part of each query head's attention (qa_rows puts
 // the chunks together). src the rows' queries, keys and values
-// [row][4096]; dst the caches, a row's `seq` apart,
-// [layer][position][2048] (keys, then values), and the chunks at part_off,
-// [row][head][8][130] (the chunk's largest score, its sum of exp(score -
-// largest) and its values so weighted). f0 pos, f1 cache_off (the
-// layer's), f2 seq, f6 q_norm_off, f7 k_norm_off, f8 rope_off, f9
-// part_off.
+// [row][4096]; dst the caches, a row's `seq` apart, each layer's of
+// `positions` (qa_dec_attention's layout: keys [1024][position], each of a
+// key's values the positions' side by side, so that neighbouring
+// invocations read neighbouring positions; then values
+// [position][1024]), and the chunks at part_off, [row][head][8][130] (the
+// chunk's largest score, its sum of exp(score - largest) and its values
+// so weighted). f0 pos, f1 cache_off (the layer's), f2 seq, f3 positions,
+// f6 q_norm_off, f7 k_norm_off, f8 rope_off, f9 part_off.
 var<workgroup> sd_v: array<f32, 512>;
 var<workgroup> sd_red: array<f32, 512>;
 var<workgroup> sd_k: array<f32, 4>;
@@ -405,22 +423,25 @@ fn sd_v4(i: u32) -> vec4<f32> {
     return vec4<f32>(sd_v[i], sd_v[i + 1u], sd_v[i + 2u], sd_v[i + 3u]);
 }
 
-fn sd_dst4(i: u32) -> vec4<f32> {
-    return vec4<f32>(dst[i], dst[i + 1u], dst[i + 2u], dst[i + 3u]);
+// Values d.. d + 3 of the key at position j, the head's keys at `keys`.
+fn sd_key4(keys: u32, j: u32, d: u32) -> vec4<f32> {
+    let at = keys + d * p.f3 + j;
+    return vec4<f32>(dst[at], dst[at + p.f3], dst[at + 2u * p.f3], dst[at + 3u * p.f3]);
 }
 
-// Value i of position jj from the cache at `cache`, the step's own (`own`)
-// at pos. The cache's slot at pos is read anyway, so the loads do not wait
-// on the choice: this dispatch writes that slot (for the steps after), so
-// what is read there is whatever the write left, and `select` discards it.
-fn sd_value(cache: u32, jj: u32, pos: u32, own: f32, i: u32) -> f32 {
-    return select(dst[cache + jj * 2048u + 1024u + i], own, jj == pos);
+// Value i of position jj from the head's values at `vals`, the step's own
+// (`own`) at pos. The cache's slot at pos is read anyway, so the loads do
+// not wait on the choice: this dispatch writes that slot (for the steps
+// after), so what is read there is whatever the write left, and `select`
+// discards it.
+fn sd_value(vals: u32, jj: u32, pos: u32, own: f32, i: u32) -> f32 {
+    return select(dst[vals + jj * 1024u + i], own, jj == pos);
 }
 
 // sd_value of the four positions from jj.
-fn sd_values(cache: u32, jj: u32, pos: u32, own: f32, i: u32) -> vec4<f32> {
-    return vec4<f32>(sd_value(cache, jj, pos, own, i), sd_value(cache, jj + 1u, pos, own, i),
-                     sd_value(cache, jj + 2u, pos, own, i), sd_value(cache, jj + 3u, pos, own, i));
+fn sd_values(vals: u32, jj: u32, pos: u32, own: f32, i: u32) -> vec4<f32> {
+    return vec4<f32>(sd_value(vals, jj, pos, own, i), sd_value(vals, jj + 1u, pos, own, i),
+                     sd_value(vals, jj + 2u, pos, own, i), sd_value(vals, jj + 3u, pos, own, i));
 }
 
 @compute @workgroup_size(256)
@@ -464,12 +485,14 @@ fn qa_dec_attend(@builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgrou
         sd_v[at + d + 64u] = b * c + a * s;
     }
     workgroupBarrier();
-    let cache = p.f1 + row * p.f2 + kv * 128u;
+    let layer = p.f1 + row * p.f2;
+    let keys = layer + kv * 128u * p.f3;
+    let vals = layer + p.f3 * 1024u + kv * 128u;
     if (chunk == pos / 128u) {
         if (t < 128u) {
-            dst[cache + pos * 2048u + t] = sd_v[256u + t];
+            dst[keys + t * p.f3 + pos] = sd_v[256u + t];
         } else {
-            dst[cache + pos * 2048u + 1024u + t - 128u] = sd_v[384u + t - 128u];
+            dst[vals + pos * 1024u + t - 128u] = sd_v[384u + t - 128u];
         }
     }
     // A query head a half of the workgroup: a position, then a value, an
@@ -489,16 +512,15 @@ fn qa_dec_attend(@builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgrou
         } else {
             // The key's values read eight vectors at a time, all loads
             // under way together, then added in their order.
-            let at = cache + j * 2048u;
             for (var d = 0u; d < 128u; d += 32u) {
-                let k0 = sd_dst4(at + d);
-                let k1 = sd_dst4(at + d + 4u);
-                let k2 = sd_dst4(at + d + 8u);
-                let k3 = sd_dst4(at + d + 12u);
-                let k4 = sd_dst4(at + d + 16u);
-                let k5 = sd_dst4(at + d + 20u);
-                let k6 = sd_dst4(at + d + 24u);
-                let k7 = sd_dst4(at + d + 28u);
+                let k0 = sd_key4(keys, j, d);
+                let k1 = sd_key4(keys, j, d + 4u);
+                let k2 = sd_key4(keys, j, d + 8u);
+                let k3 = sd_key4(keys, j, d + 12u);
+                let k4 = sd_key4(keys, j, d + 16u);
+                let k5 = sd_key4(keys, j, d + 20u);
+                let k6 = sd_key4(keys, j, d + 24u);
+                let k7 = sd_key4(keys, j, d + 28u);
                 dots += dot(sd_v4(base + d), k0);
                 dots += dot(sd_v4(base + d + 4u), k1);
                 dots += dot(sd_v4(base + d + 8u), k2);
@@ -544,10 +566,10 @@ fn qa_dec_attend(@builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgrou
     var q = 0u;
     for (; q + 16u <= count; q += 16u) {
         let at = first + q;
-        let v0 = sd_values(cache, at, pos, own, i);
-        let v1 = sd_values(cache, at + 4u, pos, own, i);
-        let v2 = sd_values(cache, at + 8u, pos, own, i);
-        let v3 = sd_values(cache, at + 12u, pos, own, i);
+        let v0 = sd_values(vals, at, pos, own, i);
+        let v1 = sd_values(vals, at + 4u, pos, own, i);
+        let v2 = sd_values(vals, at + 8u, pos, own, i);
+        let v3 = sd_values(vals, at + 12u, pos, own, i);
         let w = 256u + base + q;
         acc += sd_red[w] * v0.x;
         acc += sd_red[w + 1u] * v0.y;
@@ -567,7 +589,7 @@ fn qa_dec_attend(@builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgrou
         acc += sd_red[w + 15u] * v3.w;
     }
     for (; q < count; q++) {
-        acc += sd_red[256u + base + q] * sd_value(cache, first + q, pos, own, i);
+        acc += sd_red[256u + base + q] * sd_value(vals, first + q, pos, own, i);
     }
     let out = p.f9 + ((row * 16u + 2u * kv + hb) * 8u + chunk) * 130u;
     if (i == 0u) {

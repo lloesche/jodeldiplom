@@ -18,7 +18,7 @@
 
 use jodel_lyrics::asr::{DIM, FF, HEAD, HEADS, KV_HEADS, VOCAB};
 
-use super::ops::{each, matmul, per_row, rows, After, Before, Mul, Op, BLOCKS};
+use super::ops::{each, matmul, matmul_cut, per_row, rows, After, Before, Mul, Op, BLOCKS};
 use super::{Buf, Inner, Kernel, Shape, KV, PARTS, QKV_DEC};
 use crate::engine::params;
 
@@ -70,7 +70,7 @@ impl Inner {
                     pos,
                     l * shape.positions * KV,
                     seq,
-                    0,
+                    shape.positions,
                     0,
                     0,
                     layer.q_norm,
@@ -170,19 +170,39 @@ impl Inner {
                     n,
                 ],
             );
-            let cache = l * shape.positions * KV;
+            // The keys as qa_dec_attention keeps them (each of a key's
+            // values the positions' side by side), then the values.
+            let (cache, positions) = (l * shape.positions * KV, shape.positions);
+            let width = KV / 2;
             each(
                 ops,
                 Kernel::Copy,
                 [Buf::QkvD, Buf::Small, Buf::Cache],
-                rows * KV,
+                rows * width,
                 &[
                     rows,
-                    KV,
+                    width,
                     HEADS * HEAD,
                     QKV_DEC,
-                    cache + start * KV,
-                    KV,
+                    cache + start,
+                    1,
+                    n,
+                    seq,
+                    positions,
+                ],
+            );
+            each(
+                ops,
+                Kernel::Copy,
+                [Buf::QkvD, Buf::Small, Buf::Cache],
+                rows * width,
+                &[
+                    rows,
+                    width,
+                    HEADS * HEAD + width,
+                    QKV_DEC,
+                    cache + positions * width + start * width,
+                    width,
                     n,
                     seq,
                 ],
@@ -190,10 +210,12 @@ impl Inner {
             ops.push(Op {
                 kernel: Kernel::DecAttention,
                 buffers: [Buf::QkvD, Buf::Cache, Buf::AttnD, Buf::Spare],
-                params: params(&[n, start, cache, seq]),
+                params: params(&[n, start, cache, seq, positions]),
                 groups: [n.div_ceil(64) as u32, HEADS as u32, b as u32],
             });
-            matmul(
+            // Long matrices cut in parts (their sums in `Gu`, unused
+            // here).
+            matmul_cut(
                 ops,
                 &Mul::dense(
                     Buf::AttnD,
@@ -204,6 +226,7 @@ impl Inner {
                     After::Add,
                 ),
                 n,
+                Buf::Gu,
             );
             per_row(
                 ops,
@@ -231,7 +254,7 @@ impl Inner {
                 rows * FF,
                 &[rows],
             );
-            matmul(
+            matmul_cut(
                 ops,
                 &Mul::dense(
                     Buf::Act,
@@ -242,6 +265,7 @@ impl Inner {
                     After::Add,
                 ),
                 n,
+                Buf::Gu,
             );
         }
     }

@@ -218,7 +218,7 @@ mod tests {
             super::check_source(
                 &super::kernels_source(more),
                 naga::valid::Capabilities::empty(),
-                &["matmul", "rmsnorm", "attention", "geglu"],
+                &["matmul", "rmsnorm", "attention", "transpose"],
             );
         }
     }

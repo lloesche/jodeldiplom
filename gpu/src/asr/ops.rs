@@ -54,10 +54,29 @@ impl engine::Matrix for Matrix {
     }
 }
 
+/// The most inputs `qa_matmul` takes in one part (with more, they are cut
+/// in parts: [`matmul_cut`]).
+const PART: usize = 1280;
+
 /// `mul` as planned: through `qa_rows` when each piece has one row of it
 /// (`per_piece`, as one row of one piece always goes, so a piece's sums do
 /// not depend on the pieces with it), else the tiled `qa_matmul`.
 pub(super) fn matmul(ops: &mut Vec<Op>, mul: &Mul, per_piece: usize) {
+    tiled(ops, mul, per_piece, None);
+}
+
+/// [`matmul`], a long `k` (past [`PART`]) cut in parts that workgroups
+/// take side by side (a matrix with few rows has few tiles, and a tile
+/// through all of k keeps a workgroup long), their sums written to
+/// `parts` (room for as many rows of `n` as there are parts, the
+/// matrix's rows each) and added up in their order by `qa_split_sum`. The
+/// parts follow from `k` alone, so a row's sums do not depend on the rows
+/// with it.
+pub(super) fn matmul_cut(ops: &mut Vec<Op>, mul: &Mul, per_piece: usize, parts: Buf) {
+    tiled(ops, mul, per_piece, Some(parts));
+}
+
+fn tiled(ops: &mut Vec<Op>, mul: &Mul, per_piece: usize, parts: Option<Buf>) {
     if per_piece == 1 {
         rows(ops, mul, Before::Plain);
         return;
@@ -66,11 +85,36 @@ pub(super) fn matmul(ops: &mut Vec<Op>, mul: &Mul, per_piece: usize) {
         mul.flags() & (SWIGLU | ARGMAX) == 0,
         "qa_matmul only writes, adds or takes GELU"
     );
+    let groups = mul.k / 32;
+    let cut = parts.filter(|_| mul.k > PART).map(|buf| {
+        let count = mul.k.div_ceil(PART);
+        (buf, groups.div_ceil(count), count)
+    });
+    let mut numbers = mul.numbers().to_vec();
+    let tiles = [mul.n.div_ceil(64) as u32, mul.m.div_ceil(128) as u32];
+    let Some((buf, per, count)) = cut else {
+        ops.push(Op {
+            kernel: Kernel::Matmul,
+            buffers: [mul.from.0, Buf::Small, mul.to.0, Buf::Spare],
+            params: params(&numbers),
+            groups: [tiles[0], tiles[1], 1],
+        });
+        return;
+    };
+    // The parts as many as the groups make (the last may be shorter).
+    let count = groups.div_ceil(per).min(count);
+    numbers.extend([per, count]);
     ops.push(Op {
         kernel: Kernel::Matmul,
-        buffers: [mul.from.0, Buf::Small, mul.to.0, Buf::Spare],
-        params: params(&mul.numbers()),
-        groups: [mul.n.div_ceil(64) as u32, mul.m.div_ceil(128) as u32, 1],
+        buffers: [mul.from.0, Buf::Small, mul.to.0, buf],
+        params: params(&numbers),
+        groups: [tiles[0], tiles[1], count as u32],
+    });
+    ops.push(Op {
+        kernel: Kernel::SplitSum,
+        buffers: [buf, Buf::Small, mul.to.0, Buf::Spare],
+        params: params(&numbers),
+        groups: spread(mul.m * mul.n / 4),
     });
 }
 
