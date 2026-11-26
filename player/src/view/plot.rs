@@ -16,9 +16,36 @@ use ratatui::layout::Rect;
 use ratatui::style::{Color, Style};
 
 use crate::core::text::width;
+use crate::core::State;
 use crate::spectrum::{SpectrumFrame, LOW_HZ, RANGE_DB};
-use crate::view::colors::{BG, DIM};
-use crate::view::Zone;
+use crate::view::colors::DIM;
+use crate::view::palette::{BG, SOURCE};
+
+/// A spectrum zone: frequencies up to `up_to_hz` belong to a stage.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Zone {
+    /// The zone's top frequency.
+    pub up_to_hz: f64,
+    /// Its colour.
+    pub color: [u8; 3],
+}
+
+/// The spectrum's zones for the track heard: one, the whole range.
+pub fn zones(_state: &State) -> Vec<Zone> {
+    vec![Zone {
+        up_to_hz: f64::MAX,
+        color: SOURCE,
+    }]
+}
+
+/// The colour of a frequency.
+pub fn zone_color(zones: &[Zone], hz: f64) -> [u8; 3] {
+    zones
+        .iter()
+        .find(|z| hz <= z.up_to_hz)
+        .or(zones.last())
+        .map_or(SOURCE, |z| z.color)
+}
 
 /// The width of the level labels (`-120`, `0 dB`).
 pub const DB_LABEL_W: u16 = 4;
@@ -73,7 +100,7 @@ pub struct Plot {
     /// The frequencies of the vertical grid lines (the labelled ticks).
     pub hz_lines: Vec<f64>,
     /// The zone boundaries inside the plot, with their zone's colour.
-    pub edges: Vec<(f64, Color)>,
+    pub edges: Vec<(f64, [u8; 3])>,
     /// The level labels, left of the plot.
     pub db_labels: Vec<AxisLabel>,
     /// The frequency labels, under it.
@@ -203,7 +230,7 @@ impl Plot {
             .iter()
             .map(|z| {
                 let hz = z.up_to_hz.min(nyquist);
-                (hz, edge_label(hz), z.color, 0, false)
+                (hz, edge_label(hz), Color::from(z.color), 0, false)
             })
             .collect();
         for (hz, text, decade) in HZ_TICKS {
@@ -263,14 +290,9 @@ impl Plot {
 }
 
 /// `color` faded towards the background: a zone boundary's colour.
-pub fn faint(color: Color) -> Color {
-    match (color, BG) {
-        (Color::Rgb(r, g, b), Color::Rgb(br, bg, bb)) => {
-            let m = |c: u8, d: u8| ((u16::from(c) + u16::from(d)) / 2) as u8;
-            Color::Rgb(m(r, br), m(g, bg), m(b, bb))
-        }
-        _ => color,
-    }
+pub fn faint(color: [u8; 3]) -> [u8; 3] {
+    let m = |c: u8, d: u8| ((u16::from(c) + u16::from(d)) / 2) as u8;
+    [0, 1, 2].map(|i| m(color[i], BG[i]))
 }
 
 #[cfg(test)]

@@ -859,7 +859,7 @@ fn the_queue_is_got_ready_ahead_and_its_icons_light_up_in_turn() {
     // Grey until the track has each thing, lit once it has, left of its
     // format.
     use jodeldiplom::core::{Facts, LyricsFacts, RhythmFacts};
-    use jodeldiplom::view::colors::{ACCENT, DIM};
+    use jodeldiplom::view::palette::{ACCENT, DIM};
     let icons = |state: &State| -> Vec<(String, Color)> {
         let (cols, rows) = state.size;
         let mut terminal = Terminal::new(TestBackend::new(cols, rows)).unwrap();
@@ -897,8 +897,15 @@ fn the_queue_is_got_ready_ahead_and_its_icons_light_up_in_turn() {
             })
             .collect()
     };
-    let colors =
-        |state: &State| -> Vec<Color> { icons(state).into_iter().map(|(_, c)| c).collect() };
+    let colors = |state: &State| -> Vec<[u8; 3]> {
+        icons(state)
+            .into_iter()
+            .map(|(icon, c)| match c {
+                Color::Rgb(r, g, b) => [r, g, b],
+                other => panic!("{icon} in {other:?}"),
+            })
+            .collect()
+    };
     assert_eq!(colors(&state), [DIM, DIM, DIM, DIM]);
     // One after the other as the analysis goes: the key once decoded, the
     // stems once separated, the tempo with the whole analysis.

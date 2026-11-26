@@ -20,7 +20,7 @@ use std::path::Path;
 use jodeldiplom::core::singing::Singing;
 use jodeldiplom::gui::big_text::Faces;
 use jodeldiplom::gui::karaoke::{paint, Backdrop, Layer};
-use jodeldiplom::gui::raster::Target;
+use jodeldiplom::gui::pixels::Target;
 use jodeldiplom::view::karaoke::{sung_on, timed_lines, KaraokePicture, LineKind, Score};
 use ratatui::layout::Rect;
 

@@ -36,8 +36,8 @@ use jodeldiplom::gui::backdrop::{BackdropFrame, Cue, Visualiser};
 use jodeldiplom::gui::big_text::Faces;
 use jodeldiplom::gui::fx::{By, Effects, Fx, Layer, Music, Use};
 use jodeldiplom::gui::karaoke::{paint, Backdrop, Layer as Pixmap};
+use jodeldiplom::gui::pixels::Target;
 use jodeldiplom::gui::present::Offscreen;
-use jodeldiplom::gui::raster::Target;
 use jodeldiplom::gui::stage::{without_lyrics, Song, Stage, Tint};
 use jodeldiplom::gui::stage_gpu::StageFrame;
 

@@ -14,9 +14,9 @@
 //! their level (a paler gold where close), and a bubble burst is simply
 //! gone.
 
-use super::karaoke::{rgb, NOTES_BOTTOM, NOTES_TOP, NOTE_THICK};
+use super::karaoke::{NOTES_BOTTOM, NOTES_TOP, NOTE_THICK};
 use super::particles::{Kind, Spray};
-use super::raster::{mix, over, PixelRect, Target};
+use super::pixels::{mix, over, PixelRect, Target};
 use super::sparks::{noise, sparkle};
 use super::stage_gpu::{Instance, Pour, Tint};
 use crate::view::karaoke::{LineKind, LyricLine, HIT, NOTE_AHEAD, SINGER};
@@ -120,12 +120,12 @@ impl Over {
         mut x_of: impl FnMut(f32) -> f32,
     ) {
         // Its colour at its top, a little deeper at its bottom.
-        let tint = |c: ratatui::style::Color, thick: f32| {
+        let tint = |c: [u8; 3], thick: f32| {
             let opaque =
                 |c: [u8; 3]| [0, 1, 2, 3].map(|i| c.get(i).map_or(1.0, |&v| f32::from(v) / 255.0));
             Tint {
-                top: opaque(rgb(c)),
-                bottom: opaque(mix(rgb(c), [0, 0, 0], 0.2)),
+                top: opaque(c),
+                bottom: opaque(mix(c, [0, 0, 0], 0.2)),
                 glow: thick,
             }
         };
@@ -226,7 +226,7 @@ pub(super) fn draw(
     let thick = bar(px, at.1, 0.0).1;
     // A note's top at `height`.
     let y_of = |height: f32| bar(px, at.1, height).0;
-    let (sung_c, ahead, hit) = (rgb(crate::view::lanes::NOTE), rgb(NOTE_AHEAD), rgb(HIT));
+    let (sung_c, ahead, hit) = (crate::view::lanes::NOTE, NOTE_AHEAD, HIT);
     let mut put = |px: usize, py: usize, color: [u8; 3], a: f32| {
         if px < cx || px >= x1c || py < cy || py >= y1c {
             return;
@@ -257,7 +257,7 @@ pub(super) fn draw(
 
     // The singer's pitch: a thin line along their frames (apart where they
     // were not singing), then a dot where they are now.
-    let singer = rgb(SINGER);
+    let singer = SINGER;
     let line = (thick * 0.45).max(2.0);
     for pair in sung.trail.windows(2) {
         let ((xa, ha), (xb, hb)) = (pair[0], pair[1]);

@@ -193,7 +193,7 @@ impl Embed {
         let bytes = pixels
             .iter()
             .flat_map(|&word| {
-                let [r, g, b] = super::raster::unpack(word);
+                let [r, g, b] = super::pixels::unpack(word);
                 [r, g, b, 255]
             })
             .collect();

@@ -26,6 +26,7 @@ mod pacer;
 mod paint;
 pub mod paper;
 pub mod particles;
+pub mod pixels;
 mod pointer;
 pub mod pop;
 pub mod present;
@@ -50,7 +51,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::cli::Args;
 
-pub use canvas::{font_px, Canvas, FONT};
+pub use canvas::{font_px, Canvas};
 pub use keys::key;
 
 /// The Dock icon: macOS has no window icons, and a bare executable (not

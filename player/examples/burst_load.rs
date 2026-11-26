@@ -15,7 +15,7 @@ use std::time::Instant;
 use jodeldiplom::core::singing::{Note, Singing};
 use jodeldiplom::gui::big_text::Faces;
 use jodeldiplom::gui::karaoke::{paint, Backdrop, Layer};
-use jodeldiplom::gui::raster::Target;
+use jodeldiplom::gui::pixels::Target;
 use jodeldiplom::gui::stage::{Song, Stage};
 use jodeldiplom::view::bubbles::{Liquid, Part};
 use jodeldiplom::view::karaoke::{KaraokePicture, LineKind, LyricLine};

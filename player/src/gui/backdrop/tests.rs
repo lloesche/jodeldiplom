@@ -349,7 +349,7 @@ fn round_the_subject_is_blurred_and_it_grows_on_the_beat() {
     };
     let (w, h) = (1024u32, 1024u32);
     let a = striped_layers(256);
-    let see = vec![crate::gui::raster::SEE_THROUGH; (w * h) as usize];
+    let see = vec![crate::gui::pixels::SEE_THROUGH; (w * h) as usize];
     let mut shown = |beats: Option<f64>| {
         let mut v = Visualiser::default();
         let music = beats.map_or(crate::gui::fx::Music::NEUTRAL, |b| {
@@ -462,7 +462,7 @@ fn the_backdrop_draws_on_the_gpu_and_drops_its_textures() {
     };
     let (w, h) = (256u32, 256u32);
     let a = disc_layers(128, [220, 40, 40], (0.5, 0.5));
-    let see = vec![crate::gui::raster::SEE_THROUGH; (w * h) as usize];
+    let see = vec![crate::gui::pixels::SEE_THROUGH; (w * h) as usize];
     let frame_of = |layers: Option<&Layers>, levels: Levels| {
         let mut v = Visualiser::default();
         let cue = Cue {
@@ -551,7 +551,7 @@ fn the_card_at_rest_is_the_cover_itself() {
     };
     let (w, h) = (256u32, 256u32);
     let (picture, a) = disc_cover(128, [220, 40, 40], (0.6, 0.4), true);
-    let see = vec![crate::gui::raster::SEE_THROUGH; (w * h) as usize];
+    let see = vec![crate::gui::pixels::SEE_THROUGH; (w * h) as usize];
     let mut bright = |art: Option<RgbImage>| {
         let mut v = Visualiser::default();
         let cue = Cue {

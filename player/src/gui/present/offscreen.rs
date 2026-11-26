@@ -150,7 +150,7 @@ impl Offscreen {
     }
 
     /// Draws a frame of `pixels` (`width` × `height` pixmap words row by
-    /// row, premultiplied over the backdrop: [`crate::gui::raster::SEE_THROUGH`])
+    /// row, premultiplied over the backdrop: [`crate::gui::pixels::SEE_THROUGH`])
     /// with the backdrop and the stage set, and reads it back.
     pub fn show_pixels(
         &mut self,

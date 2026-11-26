@@ -17,7 +17,7 @@ use jodeldiplom::gui::big_text::Faces;
 use jodeldiplom::gui::karaoke::{paint, Backdrop, Layer};
 use jodeldiplom::gui::notes::Over;
 use jodeldiplom::gui::particles::{Kind, Spray};
-use jodeldiplom::gui::raster::Target;
+use jodeldiplom::gui::pixels::Target;
 use jodeldiplom::gui::stage::{Song, Stage};
 use jodeldiplom::gui::stage_gpu::{kind, Instance, StageFrame};
 use jodeldiplom::view::bubbles::{BURST, SWELL};

@@ -9,10 +9,9 @@
 use image::imageops::{self, FilterType};
 use image::RgbImage;
 
-use super::rgb;
 use crate::art::Art;
-use crate::gui::raster::{between, pack, PixelRect, Target, SEE_THROUGH};
-use crate::view::colors;
+use crate::gui::pixels::{between, pack, PixelRect, Target, SEE_THROUGH};
+use crate::view::palette;
 
 /// How dark the layer over the blurred cover is (0 clear, 1 black).
 const SHADE: f32 = 0.55;
@@ -140,7 +139,7 @@ fn blurred(image: &RgbImage, w: u32, h: u32) -> Vec<u32> {
 /// A plain backdrop without a cover: the window's background, a little
 /// lighter towards the middle.
 fn gradient(w: u32, h: u32) -> Vec<u32> {
-    let base = rgb(colors::BG);
+    let base = palette::BG;
     let mut out = Vec::with_capacity((w * h) as usize);
     for y in 0..h {
         let t = 1.0 - (2.0 * f64::from(y) / f64::from(h.max(1)) - 1.0).abs();
@@ -190,7 +189,7 @@ fn shade(c: [u8; 3], dark: f32) -> [u8; 3] {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::gui::raster::unpack;
+    use crate::gui::pixels::unpack;
     use std::sync::Arc;
 
     #[test]

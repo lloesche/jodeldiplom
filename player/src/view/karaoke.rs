@@ -8,7 +8,7 @@
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::{HorizontalAlignment, Rect};
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Paragraph, Widget};
 use ratatui::Frame;
@@ -487,11 +487,11 @@ fn slider(buf: &mut Buffer, state: &State, s: &SliderLayout, show_focus: bool) {
 /// The notes' colour: those sung ([`NOTE`]) and those to come.
 ///
 /// [`NOTE`]: crate::view::lanes::NOTE
-pub const NOTE_AHEAD: Color = Color::Rgb(78, 120, 146);
+pub const NOTE_AHEAD: [u8; 3] = [78, 120, 146];
 /// A note where the singer hit it: gold.
-pub const HIT: Color = Color::Rgb(255, 190, 60);
+pub const HIT: [u8; 3] = [255, 190, 60];
 /// The singer's own pitch: coral.
-pub const SINGER: Color = Color::Rgb(240, 110, 80);
+pub const SINGER: [u8; 3] = [240, 110, 80];
 
 /// What the tab says of the echo canceller.
 fn echo_text(state: &State) -> String {

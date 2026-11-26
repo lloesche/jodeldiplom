@@ -8,7 +8,7 @@ use std::time::Instant;
 use super::Canvas;
 use crate::art::Art;
 use crate::gui::karaoke::{self, Backdrop};
-use crate::gui::raster::{PixelRect, Target};
+use crate::gui::pixels::{PixelRect, Target};
 use crate::gui::{notes, stage, stage_gpu};
 use crate::view::karaoke::KaraokePicture;
 

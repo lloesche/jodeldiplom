@@ -19,7 +19,7 @@
 
 use super::TextOp;
 use crate::gui::big_text::BigText;
-use crate::gui::raster::{mix, PixelRect};
+use crate::gui::pixels::{mix, PixelRect};
 
 /// How long points added take to roll in, in seconds: a word's.
 const ROLL: f32 = 0.35;
@@ -314,7 +314,7 @@ mod tests {
     use super::super::{paint, Backdrop, Layer};
     use super::*;
     use crate::gui::big_text::{Face, Faces};
-    use crate::gui::raster::Target;
+    use crate::gui::pixels::Target;
     use crate::view::karaoke::{KaraokePicture, Score};
     use std::time::{Duration, Instant};
 
@@ -547,7 +547,7 @@ mod tests {
             width: w,
             height: h,
         };
-        let hit = super::super::rgb(crate::view::karaoke::HIT);
+        let hit = crate::view::karaoke::HIT;
         text.draw(
             &mut target,
             &points,

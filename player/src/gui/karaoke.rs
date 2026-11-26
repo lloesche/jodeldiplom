@@ -9,18 +9,11 @@ pub mod odometer;
 
 use super::big_text::{BigText, Face, Faces};
 use super::notes::SungOp;
-use super::raster::{dim, mix, union, PixelRect, Target};
-use crate::view::colors;
+use super::pixels::{dim, mix, union, PixelRect, Target};
 use crate::view::karaoke::{line_color, KaraokePicture, LineKind, LyricLine, HIT};
+use crate::view::palette;
 
 pub use ground::Backdrop;
-
-pub(super) fn rgb(color: ratatui::style::Color) -> [u8; 3] {
-    match color {
-        ratatui::style::Color::Rgb(r, g, b) => [r, g, b],
-        _ => [200, 200, 200],
-    }
-}
 
 /// The size glyphs of `px` are made at: their own up to 200 px (lines of
 /// lyrics, a few sizes each), else the next of steps a quarter apart
@@ -395,7 +388,7 @@ fn text_ops(
     let gpu = layer.over.gpu;
     let (ax, ay, aw, ah) = area;
     let big = big_of(ah);
-    let accent = rgb(colors::ACCENT);
+    let accent = palette::ACCENT;
     let (mut ops, mut over) = (Vec::new(), super::notes::Over::new(gpu));
     let mut line_op =
         |text: &mut BigText, line: &LyricLine, base: f32, slot: Slot, rest: [u8; 3], alpha: f32| {
@@ -450,7 +443,7 @@ fn text_ops(
     let m = picture.moved.clamp(0.0, 1.0) as f32;
     for (k, line) in picture.lines.iter().enumerate() {
         let slot = now[k];
-        let rest = rgb(line_color(line.kind));
+        let rest = line_color(line.kind);
         let was = moving
             .then(|| {
                 picture
@@ -477,7 +470,7 @@ fn text_ops(
                     y: lerp(old.y, slot.y, m),
                 };
                 let kind = picture.before[j].kind;
-                let color = mix(rgb(line_color(kind)), rest, m);
+                let color = mix(line_color(kind), rest, m);
                 let alpha = lerp(faded(kind), faded(line.kind), m);
                 line_op(
                     faces.get(Face::LINE),
@@ -515,7 +508,7 @@ fn text_ops(
                     y: old.y - m * gap(old.px) * 0.5,
                     ..old
                 };
-                let rest = rgb(line_color(gone.kind));
+                let rest = line_color(gone.kind);
                 line_op(
                     faces.get(Face::LINE),
                     gone,
@@ -582,7 +575,7 @@ fn text_ops(
                     ay as f32 + margin * 0.6 + px * 1.25,
                 ),
                 fill_x: f32::MAX,
-                colors: (rgb(colors::DIM), rgb(colors::DIM)),
+                colors: (palette::DIM, palette::DIM),
                 alpha: 1.0,
                 sung: None,
                 clip: None,
@@ -593,7 +586,7 @@ fn text_ops(
             &layer.odometer.reading(),
             (ax as f32 + aw as f32 - margin, ay as f32 + margin * 0.6),
             px,
-            rgb(HIT),
+            HIT,
             &mut ops,
         );
     }
@@ -601,7 +594,7 @@ fn text_ops(
 }
 #[cfg(test)]
 mod tests {
-    use super::super::raster::{pack, unpack};
+    use super::super::pixels::{pack, unpack};
     use super::*;
     use crate::art::Art;
     use std::sync::Arc;
@@ -612,7 +605,7 @@ mod tests {
     /// (a line faded, the line sung, the count-in, the controls' bar).
     #[test]
     fn a_frame_over_the_see_through_ground_is_the_frame_over_the_ground() {
-        use super::super::raster::SEE_THROUGH;
+        use super::super::pixels::SEE_THROUGH;
         let (w, h) = (320, 180);
         let ground = [40u8, 70, 110];
         let solid = Backdrop {

@@ -13,6 +13,7 @@ use ratatui::Frame;
 
 use super::colors::{ACCENT, DIM, TEXT};
 use super::lanes::{lane_color, WavePlot, OFF};
+use super::palette;
 use super::{Pictures, Scene};
 use crate::core::lanes::{self, Block, WordLines};
 use crate::core::layout::{Lane, TransitionBlockLayout, TransitionLayout};
@@ -312,7 +313,7 @@ fn draw_block(
                 Style::new().fg(if is_off(state, *lane) {
                     DIM
                 } else {
-                    lane_color(*lane)
+                    Color::from(lane_color(*lane))
                 }),
             )),
             *label,
@@ -345,7 +346,7 @@ fn draw_block(
             lane: Lane::Song,
             start: 0.0,
             end: duration,
-            color: DIM,
+            color: palette::DIM,
             downbeats: Vec::new(),
             unclear: Vec::new(),
             selection,
@@ -424,7 +425,7 @@ fn draw_block(
             frame.render_widget(
                 Paragraph::new(Span::styled(
                     lane.label(),
-                    Style::new().fg(BG_TEXT).bg(lane_color(*lane)),
+                    Style::new().fg(BG_TEXT).bg(Color::from(lane_color(*lane))),
                 )),
                 *label,
             );

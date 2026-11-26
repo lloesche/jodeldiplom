@@ -10,7 +10,7 @@
 //! moves only the layer sends over nothing but its place. Karaoke mode's
 //! backdrop ([`super::backdrop`]) is under the pixmap: its words are
 //! premultiplied over it, their top byte how much of it shows through
-//! ([`super::raster::SEE_THROUGH`]); its stage and its bursts are drawn
+//! ([`super::pixels::SEE_THROUGH`]); its stage and its bursts are drawn
 //! over it all, the light that blooms over them, the effects' screen
 //! passes over that ([`super::fx`]), and the shapes over everything last.
 
@@ -21,7 +21,7 @@ pub use offscreen::Offscreen;
 use super::backdrop::BackdropFrame;
 use super::canvas::{Canvas, Changes, LayerFrame, MOST_SLOTS};
 use super::fx::Music;
-use super::raster::PixelRect;
+use super::pixels::PixelRect;
 use super::stage_gpu::StageFrame;
 
 const SHADER: &str = r"

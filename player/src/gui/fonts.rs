@@ -27,7 +27,10 @@ use std::sync::{Mutex, OnceLock};
 
 use ab_glyph::{Font, FontRef};
 
-use super::FONT;
+/// The embedded font: Cascadia Mono, SIL Open Font License 1.1
+/// (`assets/CascadiaMono-OFL.txt`); the main font when the player ships
+/// without Sarasa Fixed.
+pub static FONT: &[u8] = include_bytes!("../../assets/CascadiaMono-Regular.ttf");
 
 /// The fonts the binary was built with (each where it has it).
 #[derive(Clone, Copy, Debug, Default)]

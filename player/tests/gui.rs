@@ -14,19 +14,11 @@ use jodeldiplom::core::{update, Screen, State};
 use jodeldiplom::gui::{self, font_px, Canvas};
 use jodeldiplom::icon::Style;
 use jodeldiplom::spectrum::{sine, tap_frames_for, Analyzer, SpectrumFrame};
-use jodeldiplom::view::{self, colors, Plot, Scene};
+use jodeldiplom::view::{self, palette, Plot, Scene};
 use ratatui::layout::Rect;
-use ratatui::style::Color;
-
-fn rgb(color: Color) -> [u8; 3] {
-    match color {
-        Color::Rgb(r, g, b) => [r, g, b],
-        _ => unreachable!(),
-    }
-}
 
 fn bg() -> Rgb<u8> {
-    Rgb(rgb(colors::BG))
+    Rgb(palette::BG)
 }
 
 fn spectrum(rate: u32, hz: f64) -> SpectrumFrame {
@@ -120,14 +112,14 @@ fn the_cover_and_the_spectrum_are_painted_in_their_cells() {
         m.bottom.spectrum.unwrap(),
         m.bottom.labels,
         &spectrum,
-        view::zones(&state),
+        view::plot::zones(&state),
     );
     let (sx, sy, sw, sh) = pixel_rect(&canvas, plot.area);
     assert!(
         plot.area.x > m.bottom.spectrum.unwrap().x,
         "room for the dB labels"
     );
-    let curve = rgb(colors::SOURCE);
+    let curve = palette::SOURCE;
     let near = |p: Rgb<u8>, c: [u8; 3]| p.0.iter().zip(c).all(|(a, b)| a.abs_diff(b) <= 40);
     let on_curve = |col: u32, rows: std::ops::Range<u32>| {
         rows.filter(|&r| near(*image.get_pixel(sx + col, sy + r), curve))
@@ -146,7 +138,7 @@ fn the_cover_and_the_spectrum_are_painted_in_their_cells() {
     assert!(all > sw / 4 && all < sw * sh / 10, "{all} of {}", sw * sh);
     // No sound at the far right: nothing drawn there but grid.
     assert_eq!(on_curve(sw - 2, 0..sh), 0);
-    let grid = rgb(colors::GRID);
+    let grid = palette::GRID;
     let grid_pixels = (0..sw)
         .flat_map(|x| (0..sh).map(move |y| (x, y)))
         .filter(|&(x, y)| image.get_pixel(sx + x, sy + y).0 == grid)

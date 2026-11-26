@@ -15,68 +15,59 @@ use std::sync::Arc;
 
 use jodel_rhythm::waveform::{self, Waveform};
 use ratatui::layout::Rect;
-use ratatui::style::Color;
 
 use crate::core::lanes::{self, WordLines};
 use crate::core::layout::Lane;
 
 /// The selection, behind the waveform.
-pub const SELECT_BG: Color = Color::Rgb(58, 58, 86);
+pub const SELECT_BG: [u8; 3] = [58, 58, 86];
 /// The span the lanes show, in the overview.
-pub const SHOWN_BG: Color = Color::Rgb(46, 46, 58);
+pub const SHOWN_BG: [u8; 3] = [46, 46, 58];
 /// The rest of the track, in the overview: shaded, so the span shown
 /// stands out.
-pub const OUTSIDE_BG: Color = Color::Rgb(8, 8, 10);
+pub const OUTSIDE_BG: [u8; 3] = [8, 8, 10];
 /// How bright the waveform is outside the span shown, in the overview.
 pub const OUTSIDE_GAIN: f32 = 0.35;
 /// The next track's cue bar.
-pub const CUE: Color = Color::Rgb(60, 200, 140);
+pub const CUE: [u8; 3] = [60, 200, 140];
 /// A transition's window, behind the waveform.
-pub const TRANSITION_BG: Color = Color::Rgb(34, 46, 58);
+pub const TRANSITION_BG: [u8; 3] = [34, 46, 58];
 /// A transition's fade curve.
-pub const CURVE: Color = Color::Rgb(250, 250, 255);
+pub const CURVE: [u8; 3] = [250, 250, 255];
 /// The voice's notes on the Karaoke tab's lane: Okabe–Ito's sky blue,
 /// lighter, apart from the voice's own colour and the words'.
-pub const NOTE: Color = Color::Rgb(128, 200, 240);
+pub const NOTE: [u8; 3] = [128, 200, 240];
 
 /// `color` at `gain` of its brightness over the background (a stem faded
 /// down by a transition looks dimmer).
-pub fn faded(color: Color, gain: f32) -> Color {
+pub fn faded(color: [u8; 3], gain: f32) -> [u8; 3] {
     let g = gain.clamp(0.0, 1.0);
-    match color {
-        Color::Rgb(r, gr, b) => {
-            let mix = |c: u8, bg: u8| {
-                (f32::from(bg) + (f32::from(c) - f32::from(bg)) * (0.25 + 0.75 * g)) as u8
-            };
-            Color::Rgb(mix(r, 17), mix(gr, 17), mix(b, 21))
-        }
-        other => other,
-    }
+    let mix =
+        |c: u8, bg: u8| (f32::from(bg) + (f32::from(c) - f32::from(bg)) * (0.25 + 0.75 * g)) as u8;
+    let [r, gr, b] = color;
+    [mix(r, 17), mix(gr, 17), mix(b, 21)]
 }
 
 /// A stem turned off (not heard), whatever its colour.
-pub const OFF: Color = Color::Rgb(78, 78, 86);
+pub const OFF: [u8; 3] = [78, 78, 86];
 
 /// A lane's colour.
-pub fn lane_color(lane: Lane) -> Color {
+pub fn lane_color(lane: Lane) -> [u8; 3] {
     match lane {
         // The stems in the Okabe–Ito hues (orange, sky blue, bluish green,
         // reddish purple): told apart with every common colour-vision
         // deficiency; the whole song a neutral grey.
-        Lane::Song => Color::Rgb(169, 171, 181),
-        Lane::Drums => Color::Rgb(230, 159, 0),
-        Lane::Bass => Color::Rgb(86, 180, 233),
-        Lane::Other => Color::Rgb(0, 158, 115),
-        Lane::Vocals => Color::Rgb(204, 121, 167),
+        Lane::Song => [169, 171, 181],
+        Lane::Drums => [230, 159, 0],
+        Lane::Bass => [86, 180, 233],
+        Lane::Other => [0, 158, 115],
+        Lane::Vocals => [204, 121, 167],
     }
 }
 
 /// A colour a share of the way to the background (for unclear beats).
-pub fn dimmed(color: Color) -> Color {
-    match color {
-        Color::Rgb(r, g, b) => Color::Rgb(r / 2 + 8, g / 2 + 8, b / 2 + 10),
-        other => other,
-    }
+pub fn dimmed([r, g, b]: [u8; 3]) -> [u8; 3] {
+    [r / 2 + 8, g / 2 + 8, b / 2 + 10]
 }
 
 /// One lane's waveform over `start..end` seconds, with the marks over it.
@@ -93,7 +84,7 @@ pub struct WavePlot {
     /// Up to.
     pub end: f64,
     /// The waveform's colour.
-    pub color: Color,
+    pub color: [u8; 3],
     /// The bars' first beats, in seconds.
     pub downbeats: Vec<f64>,
     /// Stretches where the beat is unclear.

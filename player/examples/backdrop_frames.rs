@@ -46,8 +46,8 @@ use jodeldiplom::gui::backdrop::{Cue, Mode, Visualiser};
 use jodeldiplom::gui::big_text::Faces;
 use jodeldiplom::gui::fx::Music;
 use jodeldiplom::gui::karaoke::{paint, Backdrop, Layer};
+use jodeldiplom::gui::pixels::Target;
 use jodeldiplom::gui::present::Offscreen;
-use jodeldiplom::gui::raster::Target;
 use jodeldiplom::gui::stage::{without_lyrics, Song, Stage};
 use jodeldiplom::view::karaoke::{timed_lines, KaraokePicture, Score};
 use ratatui::layout::Rect;
@@ -437,7 +437,7 @@ fn time(
     size: (usize, usize),
 ) {
     let (w, h) = (size.0 as u32, size.1 as u32);
-    let pixels = vec![jodeldiplom::gui::raster::SEE_THROUGH; size.0 * size.1];
+    let pixels = vec![jodeldiplom::gui::pixels::SEE_THROUGH; size.0 * size.1];
     let mut later = frame.clone();
     let mut run = |gpu: &mut Offscreen, n: usize| {
         let start = Instant::now();

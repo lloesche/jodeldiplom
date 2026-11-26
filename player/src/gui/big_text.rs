@@ -14,7 +14,7 @@ use std::sync::Arc;
 use ab_glyph::{Font, FontRef, PxScale, ScaleFont, VariableFont};
 
 use super::fonts;
-use super::raster::{over, union, PixelRect, Target};
+use super::pixels::{over, union, PixelRect, Target};
 
 /// The pixels round text made for the atlas ([`BigText::coverage`]).
 pub const COVER_PAD: usize = 2;

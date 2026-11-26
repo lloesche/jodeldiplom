@@ -7,31 +7,23 @@ use iced::font::{Family, Weight};
 use iced::widget::{button, container};
 use iced::{border, gradient, Background, Border, Color, Font, Radians, Shadow, Vector};
 
-use crate::view::colors;
+use crate::view::palette;
 
-/// A cell colour as iced's.
-pub const fn rgb(c: ratatui::style::Color) -> Color {
-    match c {
-        ratatui::style::Color::Rgb(r, g, b) => Color {
-            r: r as f32 / 255.0,
-            g: g as f32 / 255.0,
-            b: b as f32 / 255.0,
-            a: 1.0,
-        },
-        _ => Color::WHITE,
-    }
+/// A colour of the palette as iced's.
+const fn rgb([r, g, b]: [u8; 3]) -> Color {
+    Color::from_rgb8(r, g, b)
 }
 
-pub const BG: Color = rgb(colors::BG);
-pub const ACCENT: Color = rgb(colors::ACCENT);
-pub const DIM: Color = rgb(colors::DIM);
-pub const TEXT: Color = rgb(colors::TEXT);
-pub const BORDER: Color = rgb(colors::BORDER);
-pub const BUTTON: Color = rgb(colors::BUTTON);
-pub const GREEN: Color = rgb(colors::GREEN);
-pub const WARN: Color = rgb(colors::WARN);
-pub const FAIL: Color = rgb(colors::FAIL);
-pub const SOURCE: Color = rgb(colors::SOURCE);
+pub const BG: Color = rgb(palette::BG);
+pub const ACCENT: Color = rgb(palette::ACCENT);
+pub const DIM: Color = rgb(palette::DIM);
+pub const TEXT: Color = rgb(palette::TEXT);
+pub const BORDER: Color = rgb(palette::BORDER);
+pub const BUTTON: Color = rgb(palette::BUTTON);
+pub const GREEN: Color = rgb(palette::GREEN);
+pub const WARN: Color = rgb(palette::WARN);
+pub const FAIL: Color = rgb(palette::FAIL);
+pub const SOURCE: Color = rgb(palette::SOURCE);
 
 /// Text on a lit scribble strip or button.
 pub const ON_LIT: Color = Color::from_rgb(0.08, 0.08, 0.09);

@@ -7,11 +7,11 @@
 //! the stage's pill ([`KaraokePicture::start`]).
 
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Style};
+use ratatui::style::Style;
 use ratatui::Frame;
 
 use super::super::colors::*;
-use super::super::{keep_start, Pictures, Scene};
+use super::super::{keep_start, palette, Pictures, Scene};
 use super::{plain_lines, result_now, slider, ResultShown};
 use crate::core::karaoke;
 use crate::core::layout::KaraokeLayout;
@@ -101,7 +101,7 @@ pub fn draw_mode(
     let Some(c) = &layout.controls else {
         return;
     };
-    super::super::draw_progress(frame, state, c.elapsed, c.seek, c.total);
+    super::super::bottom::draw_progress(frame, state, c.elapsed, c.seek, c.total);
     let buf = frame.buffer_mut();
     for s in &c.sliders {
         slider(buf, state, s, true);
@@ -701,12 +701,12 @@ pub fn points_text(points: u32) -> String {
 }
 
 /// The colour of a line's unsung text in the window.
-pub fn line_color(kind: LineKind) -> Color {
+pub fn line_color(kind: LineKind) -> [u8; 3] {
     match kind {
-        LineKind::Current => TEXT,
-        LineKind::Next => Color::Rgb(190, 190, 198),
-        LineKind::Previous | LineKind::Info => DIM,
-        LineKind::Warning => WARN,
+        LineKind::Current => palette::TEXT,
+        LineKind::Next => [190, 190, 198],
+        LineKind::Previous | LineKind::Info => palette::DIM,
+        LineKind::Warning => palette::WARN,
     }
 }
 

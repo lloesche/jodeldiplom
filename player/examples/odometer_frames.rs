@@ -16,7 +16,7 @@ use std::time::{Duration, Instant};
 use jodeldiplom::art::{sample_cover, Art};
 use jodeldiplom::gui::big_text::Faces;
 use jodeldiplom::gui::karaoke::{paint, Backdrop, Layer};
-use jodeldiplom::gui::raster::{unpack, Target};
+use jodeldiplom::gui::pixels::{unpack, Target};
 use jodeldiplom::view::karaoke::{KaraokePicture, Score};
 use ratatui::layout::Rect;
 

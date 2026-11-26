@@ -1,5 +1,6 @@
 //! A ratatui backend that draws cells into a pixmap (`0x00RRGGBB` words,
-//! the window buffer's own layout) with a TrueType font, for the window.
+//! the window buffer's own layout, [`super::pixels`]) with a TrueType
+//! font, for the window.
 //!
 //! Glyphs come from the font through ab_glyph, with the baseline at the
 //! font's ascent so every row lines up. Box-drawing and block characters
@@ -13,6 +14,10 @@
 //! Like a terminal, it redraws only the cells ratatui reports as changed,
 //! and keeps which ones it redrew ([`PixelBackend::damage`]) so pictures
 //! over unchanged cells need not be painted again.
+//!
+//! The cells' glyphs ([`CellFont`]) also draw text placed between the
+//! cells, into any target ([`CellFont::text_at`]): a ruler's numbers, a
+//! lane's words.
 
 use std::collections::HashMap;
 use std::convert::Infallible;
@@ -25,6 +30,7 @@ use ratatui::layout::{Position, Rect, Size};
 use ratatui::style::{Color, Modifier};
 
 use super::fonts;
+use super::pixels::{pack, Target};
 
 /// One rasterised glyph: coverage relative to the cell's top-left corner.
 struct Glyph {
@@ -33,80 +39,6 @@ struct Glyph {
     width: usize,
     height: usize,
     coverage: Vec<u8>,
-}
-
-/// A pixmap word is premultiplied over what the GPU draws under the
-/// pixmap (Karaoke mode's backdrop, [`super::backdrop`]): its colour is
-/// the pixmap's own share, its top byte how much of what is under still
-/// shows (255: all of it, the colour then black). A colour packed
-/// ([`pack`]) covers what is under; drawing over a word goes through
-/// [`over`] and [`dim`], which keep the two together. This is a word
-/// that is all see-through.
-pub const SEE_THROUGH: u32 = 0xff00_0000;
-
-/// `word` with `colour` over it by `a` (0 to 1): the colour mixed into its
-/// own as [`mix`] does, and what shows through it less by as much.
-pub fn over(word: u32, colour: [u8; 3], a: f32) -> u32 {
-    let a = a.clamp(0.0, 1.0);
-    let through = ((word >> 24) as f32 * (1.0 - a)).round() as u32;
-    pack(mix(unpack(word), colour, a)) | through << 24
-}
-
-/// `word` darkened to `keep` (0 to 1) of itself: its own colour and what
-/// shows through it alike.
-pub fn dim(word: u32, keep: f32) -> u32 {
-    let keep = keep.clamp(0.0, 1.0);
-    let scale = |v: u32| (v as f32 * keep).round() as u32;
-    let [r, g, b] = unpack(word).map(|v| scale(u32::from(v)) as u8);
-    pack([r, g, b]) | scale(word >> 24) << 24
-}
-
-/// Word `a` towards word `b` by `t` (0 to 1): their colours and what shows
-/// through them alike (so `b` drawn over the ground faded in by `t`).
-pub fn between(a: u32, b: u32, t: f32) -> u32 {
-    let through = |w: u32| [(w >> 24) as u8; 3];
-    pack(mix(unpack(a), unpack(b), t)) | u32::from(mix(through(a), through(b), t)[0]) << 24
-}
-
-/// A colour as a pixmap word, `0x00RRGGBB`.
-pub fn pack([r, g, b]: [u8; 3]) -> u32 {
-    u32::from(r) << 16 | u32::from(g) << 8 | u32::from(b)
-}
-
-/// A pixmap word's colour.
-pub fn unpack(word: u32) -> [u8; 3] {
-    [(word >> 16) as u8, (word >> 8) as u8, word as u8]
-}
-
-/// `a` towards `b` by `t` (0 to 1).
-pub fn mix(a: [u8; 3], b: [u8; 3], t: f32) -> [u8; 3] {
-    let t = t.clamp(0.0, 1.0);
-    [0, 1, 2].map(|i| (f32::from(a[i]) * (1.0 - t) + f32::from(b[i]) * t).round() as u8)
-}
-
-/// Where to draw into: the pixmap, its width and height.
-pub struct Target<'a> {
-    /// `0x00RRGGBB` words, row by row.
-    pub pixels: &'a mut [u32],
-    /// Its width.
-    pub width: usize,
-    /// Its height.
-    pub height: usize,
-}
-
-/// A rect of pixels: x, y, width, height.
-pub type PixelRect = (usize, usize, usize, usize);
-
-/// The rect around `a` (if any) and `b`.
-pub fn union(a: Option<PixelRect>, b: PixelRect) -> PixelRect {
-    match a {
-        None => b,
-        Some((x, y, w, h)) => {
-            let (x0, y0) = (x.min(b.0), y.min(b.1));
-            let (x1, y1) = ((x + w).max(b.0 + b.2), (y + h).max(b.1 + b.3));
-            (x0, y0, x1 - x0, y1 - y0)
-        }
-    }
 }
 
 /// The cells redrawn since [`PixelBackend::reset_damage`].
@@ -129,9 +61,9 @@ impl Damage {
     }
 }
 
-/// The pixels and the cell grid.
-pub struct PixelBackend {
-    buffer: Buffer,
+/// The cells' font at the cells' size: the cell it makes, and its glyphs,
+/// each rasterised once.
+pub struct CellFont {
     font: FontRef<'static>,
     em: f32,
     scale: PxScale,
@@ -139,6 +71,12 @@ pub struct PixelBackend {
     cell_w: usize,
     cell_h: usize,
     glyphs: HashMap<(char, bool), Option<Arc<Glyph>>>,
+}
+
+/// The pixels and the cell grid.
+pub struct PixelBackend {
+    buffer: Buffer,
+    font: CellFont,
     cursor: Position,
     /// `0x00RRGGBB` words ([`pack`]), row by row.
     pub pixmap: Vec<u32>,
@@ -274,47 +212,26 @@ fn block(c: char) -> Option<((u8, u8, u8, u8), u8)> {
     })
 }
 
-impl PixelBackend {
-    /// A grid of `cols` × `rows` cells with `font` at an em size of
-    /// `em_px` pixels.
-    pub fn new(cols: u16, rows: u16, font: &'static [u8], em_px: f32) -> PixelBackend {
-        let font = FontRef::try_from_slice(font).expect("the embedded font parses");
-        let mut backend = PixelBackend {
-            buffer: Buffer::empty(Rect::new(0, 0, cols.max(1), rows.max(1))),
-            font,
+impl CellFont {
+    /// `font`, sized by [`CellFont::set_em`].
+    fn new(font: &'static [u8]) -> CellFont {
+        CellFont {
+            font: FontRef::try_from_slice(font).expect("the embedded font parses"),
             em: 0.0,
             scale: PxScale::from(1.0),
             ascent: 0.0,
             cell_w: 1,
             cell_h: 1,
             glyphs: HashMap::new(),
-            cursor: Position::new(0, 0),
-            pixmap: Vec::new(),
-            damage: Damage::default(),
-            width: 0,
-            height: 0,
-            default_fg: [220, 220, 225],
-            default_bg: [17, 17, 21],
-        };
-        backend.set_em(em_px);
-        backend
+        }
     }
 
-    /// The cell size in pixels.
-    pub fn cell(&self) -> (usize, usize) {
-        (self.cell_w, self.cell_h)
-    }
-
-    /// The cells as last drawn.
-    pub fn buffer(&self) -> &Buffer {
-        &self.buffer
-    }
-
-    /// Changes the font size (an em of `em_px` pixels) and redraws.
-    pub fn set_em(&mut self, em_px: f32) {
+    /// The font at an em of `em_px` pixels (its glyphs made afresh);
+    /// whether that changed its size.
+    fn set_em(&mut self, em_px: f32) -> bool {
         let em_px = em_px.max(4.0);
         if (em_px - self.em).abs() < f32::EPSILON {
-            return;
+            return false;
         }
         self.em = em_px;
         let units = self.font.units_per_em().unwrap_or(1000.0);
@@ -327,39 +244,12 @@ impl PixelBackend {
             .max(1.0) as usize;
         self.cell_w = scaled.h_advance(self.font.glyph_id('M')).round().max(1.0) as usize;
         self.glyphs.clear();
-        self.alloc();
+        true
     }
 
-    /// Changes the grid and redraws.
-    pub fn resize(&mut self, cols: u16, rows: u16) {
-        self.buffer
-            .resize(Rect::new(0, 0, cols.max(1), rows.max(1)));
-        self.alloc();
-    }
-
-    fn alloc(&mut self) {
-        let area = self.buffer.area;
-        self.width = usize::from(area.width) * self.cell_w;
-        self.height = usize::from(area.height) * self.cell_h;
-        self.pixmap = vec![0; self.width * self.height];
-        self.redraw();
-    }
-
-    /// Draws every cell again.
-    pub fn redraw(&mut self) {
-        let area = self.buffer.area;
-        for y in 0..area.height {
-            for x in 0..area.width {
-                self.draw_cell(x, y);
-            }
-        }
-        self.damage.all = true;
-    }
-
-    /// Starts counting the cells redrawn afresh.
-    pub fn reset_damage(&mut self) {
-        self.damage.all = false;
-        self.damage.cells.clear();
+    /// The cell size in pixels.
+    pub fn cell(&self) -> (usize, usize) {
+        (self.cell_w, self.cell_h)
     }
 
     fn glyph(&mut self, c: char, bold: bool) -> Option<Arc<Glyph>> {
@@ -413,23 +303,141 @@ impl PixelBackend {
         }
     }
 
-    /// `color` over the pixel at (`x`, `y`) by `alpha` ([`over`]).
-    fn put_over(&mut self, x: usize, y: usize, color: [u8; 3], alpha: u8) {
-        if x < self.width && y < self.height {
-            let i = y * self.width + x;
-            self.pixmap[i] = over(self.pixmap[i], color, f32::from(alpha) / 255.0);
+    /// `text` with its first cell's left edge at pixel `x` of the row of
+    /// cells starting at pixel `y` of `target`, one cell a character, over
+    /// the pixels there and only within pixels `x_from..x_to` (text placed
+    /// between the cells, as a ruler's numbers at their bars).
+    pub fn text_at(
+        &mut self,
+        target: &mut Target,
+        x: f64,
+        y: usize,
+        text: &str,
+        fg: [u8; 3],
+        (x_from, x_to): (usize, usize),
+    ) {
+        let (w, h) = (self.cell_w, self.cell_h);
+        for (i, c) in text.chars().enumerate() {
+            let Some(glyph) = self.glyph(c, false) else {
+                continue;
+            };
+            let ox = x + (i * w) as f64;
+            for gy in 0..glyph.height {
+                let py = glyph.top + gy as i32;
+                if py < 0 || py as usize >= h {
+                    continue;
+                }
+                for gx in 0..glyph.width {
+                    let a = glyph.coverage[gy * glyph.width + gx];
+                    let px = (ox + f64::from(glyph.left) + gx as f64).round();
+                    if a == 0 || px < x_from as f64 || px >= x_to.min(target.width) as f64 {
+                        continue;
+                    }
+                    let (tx, ty) = (px as usize, y + py as usize);
+                    target.put_over(tx, ty, fg, a);
+                }
+            }
+        }
+    }
+}
+
+impl PixelBackend {
+    /// A grid of `cols` × `rows` cells with `font` at an em size of
+    /// `em_px` pixels.
+    pub fn new(cols: u16, rows: u16, font: &'static [u8], em_px: f32) -> PixelBackend {
+        let mut backend = PixelBackend {
+            buffer: Buffer::empty(Rect::new(0, 0, cols.max(1), rows.max(1))),
+            font: CellFont::new(font),
+            cursor: Position::new(0, 0),
+            pixmap: Vec::new(),
+            damage: Damage::default(),
+            width: 0,
+            height: 0,
+            default_fg: [220, 220, 225],
+            default_bg: [17, 17, 21],
+        };
+        backend.set_em(em_px);
+        backend
+    }
+
+    /// The cell size in pixels.
+    pub fn cell(&self) -> (usize, usize) {
+        self.font.cell()
+    }
+
+    /// The cells as last drawn.
+    pub fn buffer(&self) -> &Buffer {
+        &self.buffer
+    }
+
+    /// The cells' font, to draw text between the cells into another
+    /// target.
+    pub fn font(&mut self) -> &mut CellFont {
+        &mut self.font
+    }
+
+    /// The pixmap as a target to paint into, and the cells' font to draw
+    /// text there with.
+    pub fn split(&mut self) -> (Target<'_>, &mut CellFont) {
+        let target = Target {
+            pixels: &mut self.pixmap,
+            width: self.width,
+            height: self.height,
+        };
+        (target, &mut self.font)
+    }
+
+    /// The pixmap as a target to paint into.
+    pub fn target(&mut self) -> Target<'_> {
+        self.split().0
+    }
+
+    /// Changes the font size (an em of `em_px` pixels) and redraws.
+    pub fn set_em(&mut self, em_px: f32) {
+        if self.font.set_em(em_px) {
+            self.alloc();
         }
     }
 
-    pub(crate) fn fill(&mut self, x0: usize, y0: usize, x1: usize, y1: usize, color: [u8; 3]) {
-        let (x1, word) = (x1.min(self.width), pack(color));
-        if x0 >= x1 {
-            return;
+    /// Changes the grid and redraws.
+    pub fn resize(&mut self, cols: u16, rows: u16) {
+        self.buffer
+            .resize(Rect::new(0, 0, cols.max(1), rows.max(1)));
+        self.alloc();
+    }
+
+    fn alloc(&mut self) {
+        let area = self.buffer.area;
+        let (cell_w, cell_h) = self.cell();
+        self.width = usize::from(area.width) * cell_w;
+        self.height = usize::from(area.height) * cell_h;
+        self.pixmap = vec![0; self.width * self.height];
+        self.redraw();
+    }
+
+    /// Draws every cell again.
+    pub fn redraw(&mut self) {
+        let area = self.buffer.area;
+        for y in 0..area.height {
+            for x in 0..area.width {
+                self.draw_cell(x, y);
+            }
         }
-        for y in y0..y1.min(self.height) {
-            let row = y * self.width;
-            self.pixmap[row + x0..row + x1].fill(word);
-        }
+        self.damage.all = true;
+    }
+
+    /// Starts counting the cells redrawn afresh.
+    pub fn reset_damage(&mut self) {
+        self.damage.all = false;
+        self.damage.cells.clear();
+    }
+
+    fn put_over(&mut self, x: usize, y: usize, color: [u8; 3], alpha: u8) {
+        self.target().put_over(x, y, color, alpha);
+    }
+
+    fn fill(&mut self, x0: usize, y0: usize, x1: usize, y1: usize, color: [u8; 3]) {
+        self.target().fill(x0, y0, x1, y1, color);
     }
 
     fn colors(&self, cell: &Cell) -> ([u8; 3], [u8; 3]) {
@@ -449,18 +457,18 @@ impl PixelBackend {
     }
 
     fn draw_box(&mut self, ox: usize, oy: usize, lines: [u8; 4], rounded: bool, fg: [u8; 3]) {
-        let (w, h) = (self.cell_w, self.cell_h);
+        let (w, h) = self.cell();
         let (cx, cy) = (w / 2, h / 2);
         let [left, right, up, down] = lines;
         let span = |center: usize, weight: u8, this: &Self| {
-            let t = this.thickness(weight);
+            let t = this.font.thickness(weight);
             let start = center.saturating_sub(t / 2);
             (start, start + t)
         };
         if rounded {
             // A quarter circle joining the two lines, then the straight
             // rest of each line to the cell's edges.
-            let t = self.thickness(1) as f32;
+            let t = self.font.thickness(1) as f32;
             let r = (w.min(h) as f32 / 2.0).floor().max(1.0);
             let (dir_x, dir_y): (f32, f32) = (
                 if right > 0 { 1.0 } else { -1.0 },
@@ -513,42 +521,6 @@ impl PixelBackend {
         }
     }
 
-    /// `text` with its first cell's left edge at pixel `x` of the row of
-    /// cells starting at pixel `y`, one cell a character, over the pixels
-    /// there and only within pixels `x_from..x_to` (text placed between
-    /// the cells, as a ruler's numbers at their bars).
-    pub fn text_at(
-        &mut self,
-        x: f64,
-        y: usize,
-        text: &str,
-        fg: [u8; 3],
-        (x_from, x_to): (usize, usize),
-    ) {
-        let (w, h) = (self.cell_w, self.cell_h);
-        for (i, c) in text.chars().enumerate() {
-            let Some(glyph) = self.glyph(c, false) else {
-                continue;
-            };
-            let ox = x + (i * w) as f64;
-            for gy in 0..glyph.height {
-                let py = glyph.top + gy as i32;
-                if py < 0 || py as usize >= h {
-                    continue;
-                }
-                for gx in 0..glyph.width {
-                    let a = glyph.coverage[gy * glyph.width + gx];
-                    let px = (ox + f64::from(glyph.left) + gx as f64).round();
-                    if a == 0 || px < x_from as f64 || px >= x_to.min(self.width) as f64 {
-                        continue;
-                    }
-                    let (tx, ty) = (px as usize, y + py as usize);
-                    self.put_over(tx, ty, fg, a);
-                }
-            }
-        }
-    }
-
     /// Draws the text of the cells in `area` again over the pixels there,
     /// without their background (text over a picture).
     pub fn overlay(&mut self, area: Rect) {
@@ -568,7 +540,7 @@ impl PixelBackend {
         let cell = self.buffer[(x, y)].clone();
         let symbol = cell.symbol();
         let (fg, bg) = self.colors(&cell);
-        let (w, h) = (self.cell_w, self.cell_h);
+        let (w, h) = self.cell();
         let (ox, oy) = (usize::from(x) * w, usize::from(y) * h);
         // The second half of a wide character, drawn with the first (ratatui
         // leaves it empty or a space).
@@ -591,7 +563,7 @@ impl PixelBackend {
             self.fill(ox + px(x0), oy + py(y0), ox + px(x1), oy + py(y1), color);
         } else if c != ' ' {
             let bold = cell.modifier.contains(Modifier::BOLD);
-            match self.glyph(c, bold) {
+            match self.font.glyph(c, bold) {
                 Some(glyph) => {
                     for gy in 0..glyph.height {
                         let py = glyph.top + gy as i32;
@@ -622,9 +594,9 @@ impl PixelBackend {
                 }
             }
         }
-        let t = self.thickness(1);
+        let t = self.font.thickness(1);
         if cell.modifier.contains(Modifier::UNDERLINED) {
-            let uy = (oy + self.ascent as usize + t + 1).min(oy + h - t);
+            let uy = (oy + self.font.ascent as usize + t + 1).min(oy + h - t);
             self.fill(ox, uy, ox + w * wide, uy + t, fg);
         }
         if cell.modifier.contains(Modifier::CROSSED_OUT) {
@@ -720,10 +692,12 @@ impl Backend for PixelBackend {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::gui::fonts::FONT;
+    use crate::gui::pixels::unpack;
     use ratatui::style::Style;
 
     fn backend() -> PixelBackend {
-        PixelBackend::new(10, 3, crate::gui::FONT, 15.0)
+        PixelBackend::new(10, 3, FONT, 15.0)
     }
 
     #[test]
@@ -732,7 +706,7 @@ mod tests {
         let (w, h) = b.cell();
         assert!((8..=10).contains(&w) && (16..=20).contains(&h), "{w}x{h}");
         assert_eq!((b.width, b.height), (10 * w, 3 * h));
-        let big = PixelBackend::new(10, 3, crate::gui::FONT, 30.0);
+        let big = PixelBackend::new(10, 3, FONT, 30.0);
         assert!(big.cell().1 >= 2 * h - 1);
     }
 
@@ -814,7 +788,7 @@ mod tests {
                 .map(|(i, c)| ((i % 10) as u16, (i / 10) as u16, c)),
         )
         .unwrap();
-        let glyph = b.glyph('ア', false).expect("a glyph");
+        let glyph = b.font.glyph('ア', false).expect("a glyph");
         let (w, _) = b.cell();
         assert!(glyph.width > w, "spans two cells: {} > {w}", glyph.width);
         assert!(glyph.left >= 0 && glyph.left as usize + glyph.width <= 2 * w + 1);

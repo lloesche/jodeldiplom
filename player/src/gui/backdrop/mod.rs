@@ -36,7 +36,7 @@
 //! ([`BackdropFrame`]). [`gpu`] draws it at the window's size, the
 //! textures sent over once a cover and dropped once it no longer shows.
 //! The window's pass ([`super::present`]) adds it under the pixmap as far
-//! as the pixmap's words let it through ([`super::raster::SEE_THROUGH`]).
+//! as the pixmap's words let it through ([`super::pixels::SEE_THROUGH`]).
 //! Without a GPU the pixmap has the blurred cover itself.
 
 pub mod gpu;
