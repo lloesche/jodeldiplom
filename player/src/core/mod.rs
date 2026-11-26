@@ -744,14 +744,15 @@ pub struct State {
 impl State {
     /// When the soonest thing is due ([`State::now_ms`] clock): changed
     /// settings to send, a paused song's count-in, a preview to start
-    /// (Ctrl held long enough), Karaoke mode's controls to fade out.
+    /// (Ctrl held long enough), Karaoke mode's controls to fade out, its
+    /// pointer to hide.
     pub fn due(&self) -> Option<u64> {
-        let controls = karaoke::controls::due(self);
         [
             self.settings_due,
             self.karaoke.resume_at,
             self.preview.due,
-            controls,
+            karaoke::controls::due(self),
+            karaoke::pointer::due(self),
         ]
         .into_iter()
         .flatten()

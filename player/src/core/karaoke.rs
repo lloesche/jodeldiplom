@@ -43,6 +43,7 @@ use crate::core::transition::Status;
 use crate::core::{Effect, Gpu, Screen, Side, State};
 
 pub mod controls;
+pub mod pointer;
 mod result;
 pub use result::{clock_ms, result_motion, result_now, result_shown};
 pub(crate) use result::{ended, track_started};
@@ -368,6 +369,9 @@ pub struct KaraokeState {
     pub resume_at: Option<u64>,
     /// Where the mode's controls are by the pointer ([`controls`]).
     pub controls: controls::Controls,
+    /// When the pointer last moved over the mode, or the mode came
+    /// ([`clock_ms`]): it hides a while after ([`pointer`]).
+    pub pointer_moved: u64,
     /// Where the song playing has been heard from without a jump (the mode
     /// entered where it was, a seek, another song, a pause ended): a
     /// count-in shows only if it fits whole after it. The track, seconds.
@@ -641,6 +645,8 @@ pub(crate) fn enter(state: &mut State, fx: &mut Vec<Effect>, here: bool) {
     // The voice is the mode's only slider.
     state.karaoke.focus = Slider::Voice;
     state.karaoke.controls = controls::Controls::Hidden;
+    // The pointer shows as the mode comes, and hides as if it moved now.
+    state.karaoke.pointer_moved = clock_ms(state);
     state.karaoke.countdown = None;
     state.karaoke.resume_at = None;
     if state.transition.draft.status == Status::Armed {

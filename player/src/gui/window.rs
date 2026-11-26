@@ -13,7 +13,10 @@
 //! - What shows: always the old canvas filling the window
 //!   ([`super::embed`]) with a slot over it, the Mixer tab
 //!   ([`super::mixer`]) or nothing: the same shape, so the canvas's widget
-//!   keeps its place in iced's tree.
+//!   keeps its place in iced's tree. The pointer over the canvas hides
+//!   where the core says ([`crate::core::karaoke::pointer::hidden`]);
+//!   the view is built again after every message, so it shows again as soon
+//!   as it moves or the mode ends.
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -569,8 +572,14 @@ impl Gui {
     }
 
     pub(super) fn view(&self) -> Element<'_, Message> {
-        let desk = self.app().and_then(|app| self.desk(app));
-        stack![self.embed.view(), desk.unwrap_or_else(|| space().boxed())].boxed()
+        let app = self.app();
+        let hide_pointer = app.is_some_and(|app| crate::core::karaoke::pointer::hidden(&app.state));
+        let desk = app.and_then(|app| self.desk(app));
+        stack![
+            self.embed.view(hide_pointer),
+            desk.unwrap_or_else(|| space().boxed())
+        ]
+        .boxed()
     }
 
     /// The Mixer tab, over its place on the old canvas, while it shows.

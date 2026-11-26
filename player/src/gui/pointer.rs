@@ -96,9 +96,14 @@ impl PointerState {
                 // A Karaoke slider held follows the pointer within a cell.
                 let sliding =
                     self.held == Some(MouseButton::Left) && app.state.karaoke.dragging.is_some();
+                let karaoke = pointer.over && crate::core::karaoke::in_mode(&app.state);
                 if cell == self.cell {
                     if moved && sliding {
                         dirty |= self.mouse(app, MouseKind::Drag(MouseButton::Left), shift);
+                    } else if karaoke && self.held.is_none() {
+                        // Karaoke mode's pointer shows again for a move
+                        // within a cell too; nothing on the canvas changes.
+                        self.mouse(app, MouseKind::Moved, shift);
                     }
                     return dirty;
                 }
@@ -106,12 +111,10 @@ impl PointerState {
                 if let Some(button) = self.held {
                     // A held button drags wherever the pointer is.
                     dirty |= self.mouse(app, MouseKind::Drag(button), shift);
-                } else if pointer.over
-                    && (crate::core::karaoke::in_mode(&app.state)
-                        || crate::core::preview::held(&app.state))
-                {
-                    // Karaoke mode shows its controls while it moves; a
-                    // preview selects the row under it.
+                } else if karaoke || (pointer.over && crate::core::preview::held(&app.state)) {
+                    // Karaoke mode shows its pointer, and its controls near
+                    // the bottom, while it moves; a preview selects the row
+                    // under it.
                     dirty |= self.mouse(app, MouseKind::Moved, shift);
                 }
                 dirty

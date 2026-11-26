@@ -236,9 +236,17 @@ stem keys are their mutes.
   take clicks exactly while they show at all. The stage's progress (its
   bar, marks and ring) and the bar never show at once: the progress sinks
   and fades in the fade's first half, the bar comes in its second (and
-  the other way round as they go).
+  the other way round as they go). The pointer has its own rule, as in a
+  video player: while the mode shows it hides over the window once it has
+  been still for 2.5 s (since its last move, or since the mode came),
+  whether the controls show or not; any move anywhere on the screen shows
+  it at once (a button held too, within a cell too), and leaving the mode
+  shows it, whenever. Keys and clicks do what they did, the pointer hidden
+  or not, and leave it as it is.
   - `the_controls_come_up_near_the_bottom_over_the_lines_with_a_seek_bar`
   - `the_controls_fade_in_stay_linger_and_fade_out` (unit)
+  - `the_pointer_hides_after_it_was_still_in_the_mode_only` (unit)
+  - `the_pointer_hides_when_still_and_shows_when_moved_or_out` (unit)
   - `the_progress_goes_before_the_bar_comes` (unit)
   - `the_progress_gives_way_to_the_controls_bar` (unit)
   - `space_never_plays_a_song_without_its_count_in`

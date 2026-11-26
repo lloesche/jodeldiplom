@@ -1020,7 +1020,11 @@ than the bar and two rows) and while a slider or the seek bar is held
 after the pointer leaves the bottom (or the window). The song's progress
 along the bottom gives way to them: it sinks and fades in the first half
 of their fade, and they come in the second (their seek bar and times
-stand for it), so the two never show at once. The seek bar does nothing
+stand for it), so the two never show at once. The pointer hides as in a
+video player: after 2.5 s without a move, the controls up or not; any
+move shows it at once, and leaving the mode does too. It hides only over
+the window, on Windows, macOS and Linux alike (iced's hidden pointer).
+The seek bar does nothing
 while a song is held for START or counting in. `esc` is the only way
 out: back to the tab, fullscreen ends, the voice still at its level,
 playback where it is (a count-in under way is called off).

@@ -242,8 +242,8 @@ pub enum Action {
     Sync(crate::core::sync::SyncEvent),
     /// The mouse on the Mixer tab's desk.
     Desk(crate::core::desk::DeskAction),
-    /// The pointer moved to this row (Karaoke mode shows its controls while
-    /// it is near the bottom).
+    /// The pointer moved to this row (Karaoke mode shows its pointer, and
+    /// its controls while it is near the bottom).
     PointerMoved {
         /// The pointer's row.
         row: u16,

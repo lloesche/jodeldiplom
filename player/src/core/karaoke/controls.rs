@@ -117,14 +117,16 @@ pub fn due(state: &State) -> Option<u64> {
     }
 }
 
-/// The pointer moved over the mode to `row`. Near the bottom the controls
-/// come up (fading in from where a fade out had got to) and stay; anywhere
-/// else those up go after [`LINGER_MS`].
+/// The pointer moved over the mode to `row` (anywhere, a cell or less):
+/// the time is kept, for the pointer to show ([`super::pointer`]). Near the
+/// bottom the controls come up (fading in from where a fade out had got
+/// to) and stay; anywhere else those up go after [`LINGER_MS`].
 pub(crate) fn pointer_moved(state: &mut State, row: u16) {
     if !in_mode(state) {
         return;
     }
     let t = clock_ms(state);
+    state.karaoke.pointer_moved = t;
     let controls = state.karaoke.controls;
     state.karaoke.controls = match (in_reach(state, row), controls) {
         (true, Controls::Up { .. }) | (false, Controls::Hidden | Controls::Going { .. }) => {

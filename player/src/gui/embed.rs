@@ -15,7 +15,9 @@
 //! to the pixel), and the target drawn in pixels under it (Karaoke mode's
 //! START pill, which the stage draws in pixels, not cells:
 //! [`Canvas::target_at`]; the hand shows over a button there); the window
-//! keeps what is held ([`super::pointer`]).
+//! keeps what is held ([`super::pointer`]). Over it the pointer hides
+//! where the window says (Karaoke mode, still a while:
+//! [`crate::core::karaoke::pointer`]).
 //!
 //! With the CPU renderer the whole pixmap goes over as a new image each
 //! time a pixel changed: iced's images cannot be updated in part.
@@ -185,13 +187,15 @@ impl Embed {
         (cw as f32 / shared.scale, ch as f32 / shared.scale)
     }
 
-    /// The widget showing it, filling the window.
-    pub fn view(&self) -> Element<'static, Message> {
+    /// The widget showing it, filling the window; the pointer hidden over
+    /// it if `hide_pointer`.
+    pub fn view(&self, hide_pointer: bool) -> Element<'static, Message> {
         Embedded {
             shader: iced::widget::shader(Input(self.clone()))
                 .width(Fill)
                 .height(Fill),
             embed: self.clone(),
+            hide_pointer,
         }
         .boxed()
     }
@@ -247,6 +251,8 @@ fn merge_stage(old: Option<StageFrame>, new: Option<StageFrame>) -> Option<Stage
 struct Embedded {
     shader: Shader<Message, Input>,
     embed: Embed,
+    /// The pointer hidden over it (over a button too).
+    hide_pointer: bool,
 }
 
 impl widget::Meta for Embedded {}
@@ -368,6 +374,11 @@ impl Widget<Message, Theme, iced::Renderer> for Embedded {
         viewport: &Rectangle,
         renderer: &iced::Renderer,
     ) -> mouse::Interaction {
+        // Only over it: iced shows the pointer again wherever else it is,
+        // and as soon as it is not to be hidden.
+        if self.hide_pointer && cursor.is_over(layout.bounds()) {
+            return mouse::Interaction::Hidden;
+        }
         self.inner()
             .mouse_interaction(tree, layout, cursor, viewport, renderer)
     }

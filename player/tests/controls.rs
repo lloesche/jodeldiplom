@@ -7,6 +7,7 @@ mod common;
 use common::karaoke_tab as tab;
 use jodel_playback::{Command, PlayState};
 use jodeldiplom::core::karaoke::controls::{self, FADE_MS, LINGER_MS, ROWS};
+use jodeldiplom::core::karaoke::pointer;
 use jodeldiplom::core::keymap::Op;
 use jodeldiplom::core::layout::{self, Layout};
 use jodeldiplom::core::mouse::{self, MouseButton, MouseInput, MouseKind, Target};
@@ -126,7 +127,9 @@ fn the_controls_come_up_near_the_bottom_over_the_lines_with_a_seek_bar() {
     assert!(controls::fading(&state));
     assert_eq!(pictured(&state).0.controls, Some(0.5));
     update(&mut state, Action::Tick(left + LINGER_MS + FADE_MS));
-    assert!(!controls::shown(&state) && state.due().is_none());
+    // Only the pointer is still to hide, by its own rule.
+    assert!(!controls::shown(&state) && controls::due(&state).is_none());
+    assert_eq!(state.due(), Some(left + pointer::IDLE_MS));
     assert_eq!(mouse::hit(&state, mid, c.seek.y), None);
     // Off the window from near the bottom: the same.
     point(&mut state, moved(rows - 1));

@@ -406,11 +406,11 @@ pub fn action_at(state: &State, input: MouseInput, x: f64, over: Option<Target>)
             _ => None,
         };
     }
-    // Moving over Karaoke mode's bottom shows its controls; off the
-    // window they go.
+    // Moving over Karaoke mode (a button held or not) shows the pointer,
+    // and over its bottom its controls; off the window they go.
     if karaoke::in_mode(state) {
         match input.kind {
-            Moved => return Some(Action::PointerMoved { row: input.row }),
+            Moved | Drag(_) => return Some(Action::PointerMoved { row: input.row }),
             Out => return Some(Action::PointerLeft),
             _ => {}
         }
