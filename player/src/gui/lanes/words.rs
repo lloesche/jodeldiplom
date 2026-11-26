@@ -1,21 +1,20 @@
 //! The words along the voice's lane: laid out on the lane's grid of
-//! columns, the first line centred on the lane and those under it after
-//! it, each word painted whole with a dark edge so it reads over a loud
-//! voice; the letters a cell each in the cells' glyphs, or larger in the
-//! lyrics' face, a held sound a line between them.
+//! columns, a letter a slot (the cells' width, times the words' size), the
+//! first line centred on the lane and those under it after it; each word
+//! drawn in the lyrics' face from its first slot, with a dark edge so it
+//! reads over a loud voice, a held sound a line between its letters.
 
-use super::super::Pen;
-use super::{Columns, WaveShape};
+use super::paint::{Columns, Rows};
+use super::Pen;
 use crate::gui::big_text::{BigText, Face};
 use crate::gui::pixels::{PixelRect, Target};
-use crate::gui::raster::CellFont;
 use crate::view::lanes::{self, WavePlot};
 use crate::view::palette;
 
-/// A word drawn on a Transition lane: its first column on the grid (absolute,
+/// A word drawn on a lane: its first column on the grid (absolute,
 /// [`Columns::n0`] on), its characters, whether in the accent colour.
 #[derive(Clone, Debug, PartialEq)]
-pub(super) struct WaveLabel {
+struct WaveLabel {
     col: i64,
     text: String,
     heard: bool,
@@ -27,41 +26,45 @@ pub(super) struct WaveLabel {
 /// size (none: a held sound's line).
 type Piece = (f64, f64, Option<(String, f32)>);
 
-/// A lane's words as laid out this frame.
+/// A lane's words as laid out.
 pub(super) struct Words {
     /// The words that show.
-    pub(super) labels: Vec<WaveLabel>,
+    labels: Vec<WaveLabel>,
     /// The first line's top in the lane's rect, where the words show.
     row: Option<usize>,
-    /// A character's size in cells, a cell's width and height at it, and
-    /// the lines.
+    /// A character's size in cells, a slot's width and a line's height at
+    /// it, and the lines.
     text: usize,
     cw: usize,
     tch: usize,
     lines: usize,
     /// A stroke's width at the window's scale.
     step: usize,
-    /// The grid's first column, and the rect's width.
+    /// The grid's first column.
     n0: i64,
-    w: usize,
 }
 
 impl Words {
-    /// `plot`'s words on the grid `cols` of the lane `shape`: on the grid's
-    /// columns (absolute: `n0` on), a character `text` cells wide and as
-    /// many high (one, but on the Karaoke tab), centred on the lane, where
-    /// that shows.
-    pub(super) fn lay_out(plot: &WavePlot, cols: Columns, shape: &WaveShape, pen: &Pen) -> Words {
-        let (_, _, w, h) = shape.pixels;
-        let (cell_w, ch) = pen.cell();
-        let (above, full) = (shape.above, shape.full);
-        let text = shape.text;
+    /// `plot`'s words on the grid `cols` of a lane `(w, h)` pixels showing
+    /// `rows` of it: on the grid's columns (absolute: `n0` on), a character
+    /// [`WavePlot::text_scale`] cells wide and as many high, centred on the
+    /// lane, where that shows.
+    pub(super) fn lay_out(
+        plot: &WavePlot,
+        cols: Columns,
+        (w, h): (usize, usize),
+        rows: Rows,
+        pen: &Pen,
+    ) -> Words {
+        let (cell_w, ch) = pen.metrics.cell;
+        let (above, full) = (rows.above, rows.full);
+        let text = usize::from(plot.text_scale.max(1));
         let cw = cell_w * text;
         let tch = ch * text;
-        let step = pen.scale().round().max(1.0) as usize;
+        let step = pen.metrics.line();
         // The first line centred on the lane, those under it after it (all
         // of them moved up as far as they need to fit).
-        let lines = shape.rows;
+        let lines = plot.lines.rows.max(1);
         let middle = (full / 2)
             .saturating_sub(tch / 2)
             .min(full.saturating_sub(tch * lines));
@@ -103,38 +106,24 @@ impl Words {
             lines,
             step,
             n0: cols.n0,
-            w,
         }
     }
 
-    /// The columns a label's pixels may touch (its outline and a glyph
-    /// past its cell included), on this frame's grid.
-    pub(super) fn span(&self, l: &WaveLabel) -> (i64, i64) {
-        let margin = (self.step * self.text) as i64 + 1;
-        let a = l.col - self.n0 - margin;
-        let b = l.col - self.n0 + (l.text.chars().count() * self.cw) as i64 + margin;
-        (a.clamp(0, self.w as i64), b.clamp(0, self.w as i64))
-    }
-
-    /// The words whose columns `mask` paints, into the lane's pixels
-    /// `(x0, y0, w, h)` of `target`: each a dark edge first, then its
-    /// letters and held sounds' lines.
-    pub(super) fn paint(
-        &self,
-        target: &mut Target,
-        pen: &mut Pen,
-        mask: &[bool],
-        (x0, y0, w, h): PixelRect,
-    ) {
+    /// The words into the lane's pixels `(x0, y0, w, h)` of `target`: each
+    /// a dark edge first, then its letters and held sounds' lines.
+    pub(super) fn paint(&self, target: &mut Target, pen: &mut Pen, (x0, y0, w, h): PixelRect) {
         let Some(row) = self.row else {
             return;
         };
         let (text, cw, tch, lines, step) = (self.text, self.cw, self.tch, self.lines, self.step);
         let big = pen.faces.get(Face::Lyrics);
-        let font = &mut *pen.font;
-        let text_px = pen.font_px * text as f32;
+        // A cell high, the letters fill their line, as the cells' glyphs
+        // did; larger, at the font's size the cells count in.
+        let text_px = match text {
+            1 => tch as f32,
+            _ => pen.metrics.font_px * text as f32,
+        };
         let y = y0 + row;
-        let clip = (x0, x0 + w);
         let edge = palette::BG;
         // The outline as wide as a stroke at the size drawn.
         let outline = step * text.div_ceil(2);
@@ -143,16 +132,10 @@ impl Words {
         let below = row + tch * lines + outline <= h;
         let up = row >= outline;
         // A held sound's line: as thick as a stroke, through the
-        // middle of the cell.
+        // middle of the line.
         let thick = step.max(2) * text.div_ceil(2);
         let line_y = y + tch / 2 - thick / 2;
-        // Letters in the cells' own glyphs, a cell each (one cell high);
-        // larger, a run in the lyrics font.
-        let put =
-            |font: &mut CellFont, target: &mut Target, x: f64, y: usize, run: &str, fg: [u8; 3]| {
-                font.text_at(target, x, y, run, fg, clip);
-            };
-        let clip_rect = (x0, y0, w, h);
+        let clip = (x0, y0, w, h);
         let draw_run = |big: &mut BigText,
                         target: &mut Target,
                         (x, y): (f64, usize),
@@ -168,14 +151,10 @@ impl Words {
                 f32::MAX,
                 (fg, fg),
                 1.0,
-                clip_rect,
+                clip,
             );
         };
         for l in &self.labels {
-            let (a, b) = self.span(l);
-            if a >= b || !mask[a as usize] {
-                continue;
-            }
             let fg = if l.heard {
                 palette::ACCENT
             } else {
@@ -200,37 +179,25 @@ impl Words {
                     _ => runs.push((i, i + 1, held)),
                 }
             }
-            // Each run where it goes: letters from their first cell, a
-            // held sound's line between. In the cells' own glyphs, one
-            // a cell; larger, in the lyrics font with its own spacing
-            // (narrowed where a run would not fit its cells), the line
-            // from just after the letters before it.
+            // Each run where it goes: letters from their first slot, in
+            // the lyrics' face with its own spacing (narrowed where a run
+            // would not fit its slots), a held sound's line from just
+            // after the letters before it.
             let mut pieces: Vec<Piece> = Vec::new();
             let mut after: Option<f64> = None;
             for (n, &(i, j, held)) in runs.iter().enumerate() {
                 let (slot0, slot1) = (x + (i * cw) as f64, x + (j * cw) as f64);
                 if held {
-                    let from = match (text, after) {
-                        (1, _) | (_, None) => slot0,
-                        (_, Some(end)) => end + s,
-                    };
-                    let to = if text > 1 && n + 1 < runs.len() {
-                        slot1 - s
-                    } else {
-                        slot1
-                    };
+                    let from = after.map_or(slot0, |end| end + s);
+                    let to = if n + 1 < runs.len() { slot1 - s } else { slot1 };
                     pieces.push((from, to.max(from), None));
                     continue;
                 }
                 let run: String = chars[i..j].iter().collect();
-                if text == 1 {
-                    pieces.push((slot0, slot1, Some((run, 0.0))));
-                    continue;
-                }
                 let natural = f64::from(big.measure(&run, text_px));
                 // Up to the next letters (into a held sound's line
                 // between, which then starts later), else to the end of
-                // the word's cells.
+                // the word's slots.
                 let next = runs[n + 1..]
                     .iter()
                     .find(|r| !r.2)
@@ -260,17 +227,12 @@ impl Words {
                         continue;
                     }
                     let row = (y as f64 + dy).max(0.0) as usize;
-                    if text == 1 {
-                        put(font, target, from + dx, row, run, edge);
-                    } else {
-                        draw_run(big, target, (from + dx, row), run, *size, edge);
-                    }
+                    draw_run(big, target, (from + dx, row), run, *size, edge);
                 }
             }
             for (from, to, letters) in &pieces {
                 match letters {
                     None => target.fill(px(*from), line_y, px(*to), line_y + thick, fg),
-                    Some((run, _)) if text == 1 => put(font, target, *from, y, run, fg),
                     Some((run, size)) => draw_run(big, target, (*from, y), run, *size, fg),
                 }
             }

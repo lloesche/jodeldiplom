@@ -24,6 +24,7 @@ use iced::window;
 use iced::{event, keyboard, mouse, Element, Point, Size, Subscription, Task};
 
 use super::embed::Embed;
+use super::lanes::Lanes;
 use super::mixer;
 use super::pacer::Pacer;
 use super::paint::{Pace, Paint, Place, Seen, REST};
@@ -117,6 +118,8 @@ pub struct Gui {
     caps: mixer::Caps,
     /// The covers over the old canvas, their art fitted to them.
     covers: Covers,
+    /// The lanes over the old canvas.
+    lanes: Lanes,
     wake: Wake,
     window: Option<window::Id>,
     /// The window's size in logical pixels, and its scale factor.
@@ -201,6 +204,7 @@ impl Gui {
             wheel: Wheel::default(),
             caps: mixer::Caps::default(),
             covers: Covers::default(),
+            lanes: Lanes::default(),
             wake,
             window: None,
             size: Size::ZERO,
@@ -503,7 +507,7 @@ impl Gui {
     fn seen(&self) -> Seen {
         Seen {
             visible: self.visible(),
-            layer: self.embed.gpu() && self.embed.has_layer(),
+            following: self.lanes.following(),
             gliding: self.caps.moving(),
             stage: self.embed.gpu(),
             pictures_moving: self.embed.moving(),
@@ -552,7 +556,8 @@ impl Gui {
                     self.occluded = true;
                     plan.draw = super::paint::Draw::Nothing;
                 }
-                self.paint.draw(plan, &self.embed, app, place, (heard, at));
+                let canvas = (&self.embed, &mut self.lanes);
+                self.paint.draw(plan, canvas, app, place, (heard, at));
                 self.covers
                     .show(app.art(), &self.embed.covers(), self.scale);
                 // Karaoke mode is fullscreen; leaving it, the window comes
@@ -681,6 +686,7 @@ impl Gui {
             &self.embed,
             &self.caps,
             &self.covers,
+            &self.lanes,
             &self.paint.spectrum,
         ))
     }

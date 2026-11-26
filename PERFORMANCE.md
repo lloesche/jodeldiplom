@@ -39,9 +39,8 @@ the code:
    moved (a seek, a jump, a new track).
 
 Kept as they are, cheap enough or needed live: the transition warp and
-its gains, the output resampler and dither, the Transition lanes' shift
-(pixels moved in memory; a lane texture as a ring would save its upload,
-later), the Transition tab's per-frame transition preview.
+its gains, the output resampler and dither, the Transition tab's
+per-frame transition preview.
 
 ## Status
 
@@ -64,9 +63,47 @@ All five steps are in (each with its tests):
 5. The heard position holds rather than stepping back by less than
    0.25 s while the track plays.
 
-Not done yet, smaller: the Transition lanes' shift still uploads the whole lane
-rect each frame (a lane texture used as a ring would upload only the new
-columns), and the Transition tab's transition preview is rebuilt each frame.
+Not done yet, smaller: the Transition tab's transition preview is rebuilt
+each frame. (The lanes no longer go through the pixmap: every lane is
+painted once in tiles and scrolled from them, below.)
+
+## The lanes as a widget (the iced port's P2, November 2026)
+
+Every lane (the Transition tab's waveforms, overviews and bar numbers, the
+Karaoke tab's voice lane) is painted in tiles of 512 columns, each once,
+and shown by the window's own widget over the cells the old canvas leaves
+blank (`gui::lanes`): on the GPU one pipeline for all of them, a primitive
+a lane, each lane's tiles in a texture array of its own (let go of when
+the lanes go), the shader the same for every pixel (two columns read,
+mixed by the share of one, the playhead and the card's rounded corners
+by arithmetic, no branch on what a lane shows); without a GPU each lane an
+image made from its kept tiles, on whole columns, made again only when
+it moved or a tile in it was painted, the playhead a quad over it. A
+frame where only the lanes move (one follows the playhead) draws nothing
+of the canvas. Before, only the playing track's block went into the GPU's
+layer; the other lanes (the next track's, the overviews, a view held)
+were painted into the pixmap and sent over with it.
+
+Measured on the RTX 5080 machine, shared with other agents' builds
+(release; `examples/frames.rs` at 3024 × 1890 at scale 2, ms a frame,
+widgets + pictures + lanes + the copy of what changed):
+
+| Screen | before, GPU | after, GPU | before, no GPU | after, no GPU |
+|---|---|---|---|---|
+| Transition, following | 1.31–1.46 (pictures 0.10, layer 0.02, copy 1.04–1.17, 57 % of frames changing the pixmap) | 0.33–0.44 (lanes 0.13–0.16, 1 %) | 4.0–4.5 (pictures 2.1, copy 1.8–2.2) | 2.7–3.1 (lanes 2.5–2.8) |
+| Transition, held | 2.05–2.09 | 0.22–0.35 | 2.06–2.38 | 0.24–0.33 |
+
+`examples/view_cost.rs` (1512 × 982 at scale 2, headless wgpu, median /
+worst ms): Transition 0.037 / 0.060 before, 0.038 / 0.106 after (13 lane
+primitives); the Karaoke tab 0.038 / 0.186 before, 0.037 / 0.312 after;
+Main and the Mixer unchanged within the machine's noise. `frame_cost`
+(Karaoke mode, which shows no lanes; its pixmap pass lost the layer's
+branch), at 3024 × 1964, the two builds run one after the other: the
+pixmap step's median 0.12–0.14 ms before, 0.10–0.15 after; the GPU's
+total median 1.12–1.75 ms before, 0.96–1.73 after (the diploma's 1.43 and
+1.35, its worst 2.31 and 1.73); the one frame over the budget in both, the
+normal scene's first frame timed (3.3 ms in its pixmap step), as before.
+
 
 ## The stems as parts of the output (November 2026)
 

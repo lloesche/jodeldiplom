@@ -62,8 +62,6 @@ Refactors, roughly in the order they unblock each other.
 - **The keymap as a table**, and "which song Karaoke means" computed
   once (today four ways; Held, esc, Enter can re-hold the song just
   sung).
-- **The frame plumbing:** a layer-only frame must keep the stage and the
-  backdrop (`Update<T> { Keep, Set }` for `embed.rs`'s `Drawn`).
 - **Settings as one table** (parse, print and merge from it), embedded
   covers keyed by all their bytes, folder listing out of `app.rs`.
 - **One atomic writer** for downloads, the mover and setup; the mover's

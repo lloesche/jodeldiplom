@@ -85,7 +85,8 @@ pub struct WavePlot {
     pub end: f64,
     /// The waveform's colour.
     pub color: [u8; 3],
-    /// The bars' first beats, in seconds.
+    /// The bars' first beats, in seconds: the whole track's, so a view
+    /// moved is the same lane moved.
     pub downbeats: Vec<f64>,
     /// Stretches where the beat is unclear.
     pub unclear: Vec<(f64, f64)>,
@@ -120,8 +121,7 @@ pub struct WavePlot {
     pub lines: WordLines,
     /// The lane follows the playhead, which stays this share of the way in
     /// (its start `playhead − share × span`, not before the track's): a
-    /// frontend may scroll it by itself between frames. Its marks (the
-    /// bars) are then the whole track's.
+    /// frontend may scroll it by itself between frames.
     pub follow: Option<f64>,
     /// Words are read over it (the Karaoke tab's voice lane): where it
     /// is drawn in pixels, its body deep and its peaks bright, and the

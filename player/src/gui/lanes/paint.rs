@@ -1,33 +1,20 @@
-//! A Transition lane in pixels (and the Karaoke tab's voice lane): the
-//! marks behind (the selection, the span the lanes show, the cursor and the
-//! cue), the RMS filled and the peak outline over it, mirrored about the
-//! middle, the bars as lines, the playhead over all; on the voice's lane
-//! the notes sung and the words across its middle ([`words`]), a held
-//! sound a line.
-//!
-//! The lane's pixels stay from the last frame: a view that scrolled is
-//! shifted by whole columns, and only the columns new to it or whose marks
-//! changed are painted ([`mask`]), with the words over them; all of them
-//! where the lane is new, moved, or a cell under it was redrawn. The words
-//! stand on the columns' grid, so a word kept moves with the pixels; one
-//! that changed (the word heard now, one coming in) is painted afresh with
-//! the columns under it.
-
-mod mask;
-mod words;
+//! A lane in pixels (a Transition lane, the Karaoke tab's voice lane): the
+//! marks behind (the selection, the span the lanes show, the cue and the
+//! cursor), the RMS filled and the peak outline over it, mirrored about the
+//! middle, the bars as lines; on the voice's lane the notes sung and the
+//! words across its middle ([`super::words`]), a held sound a line. The
+//! playhead is not painted: it is drawn over the lane as it shows.
 
 use std::sync::Arc;
 
 use jodel_rhythm::waveform::{self, Melody, Waveform};
-use ratatui::layout::Rect;
 
-use super::{Canvas, Pen};
-use crate::core::lanes::Lane;
+use super::keys::{self, Back, ColumnKey, MARK_CUE, MARK_CURSOR, MARK_EDIT};
+use super::words::Words;
+use super::Pen;
 use crate::gui::pixels::{mix, pack, PixelRect, Pixels, Target};
 use crate::view::lanes::{self, WavePlot};
 use crate::view::palette;
-use mask::{Back, ColumnKey, MARK_CUE, MARK_CURSOR, MARK_EDIT, MARK_PLAYHEAD};
-use words::{WaveLabel, Words};
 
 /// How a picture's pixel columns map to time: column `x` is `n0 + x` on a
 /// grid of `px` seconds from the start of the track. The grid is the same
@@ -55,7 +42,7 @@ impl Columns {
     }
 
     /// The seconds at the left edge of column `x`.
-    fn time(&self, x: f64) -> f64 {
+    pub(super) fn time(&self, x: f64) -> f64 {
         (self.n0 as f64 + x) * self.px
     }
 
@@ -65,39 +52,14 @@ impl Columns {
     }
 }
 
-/// What a lane's kept pixels were painted for, besides the columns.
-#[derive(Clone, Copy, Debug, PartialEq)]
-struct WaveShape {
-    area: Rect,
-    pixels: PixelRect,
-    lane: Lane,
-    color: [u8; 3],
-    line: usize,
-    above: usize,
-    full: usize,
-    px: f64,
-    /// The words' size, in cells, and their lines.
-    text: usize,
-    rows: usize,
-    /// The key the notes' lines stand on.
-    key: Option<jodel_rhythm::key::Key>,
-}
-
-/// A Transition lane as the pixmap holds it.
-pub(super) struct KeptWave {
-    shape: WaveShape,
-    waveform: Arc<Waveform>,
-    n0: i64,
-    keys: Vec<ColumnKey>,
-    /// The words drawn over it.
-    labels: Vec<WaveLabel>,
-}
-
-impl KeptWave {
-    /// The cells it was painted in.
-    pub(super) fn area(&self) -> Rect {
-        self.shape.area
-    }
+/// A lane's height: the rows of pixels a lane `full` high shows from
+/// `above` down (all of them but while its block slides).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Rows {
+    /// The pixels of the lane above what shows.
+    pub above: usize,
+    /// The whole lane's height.
+    pub full: usize,
 }
 
 /// The melodies the lanes last drew, worked out once for their waveform
@@ -157,70 +119,24 @@ impl Melodies {
     }
 }
 
-impl Canvas {
-    /// `plot`'s lane in its cells ([`paint`]), on its own grid of columns,
-    /// the playhead drawn; `kept`: the lane as the pixmap holds it, kept
-    /// where the cells under it were not redrawn. Returns the pixels that
-    /// changed, if any.
-    pub(super) fn paint_wave(
-        &mut self,
-        plot: &WavePlot,
-        kept: Option<KeptWave>,
-    ) -> (Option<PixelRect>, Option<KeptWave>) {
-        let rect = self.pixel_rect(plot.area);
-        let cols = Columns::new(plot.start, plot.end, rect.2);
-        let damaged = self.terminal.backend().damage.touches(plot.area);
-        let kept = kept.filter(|_| !damaged);
-        let (mut target, mut pen) = self.pixmap_and_pen();
-        paint(&mut target, &mut pen, plot, cols, rect, kept, true)
-    }
-}
-
-/// The waveform's levels on `plot`'s lane, where it has them.
-fn levels(plot: &WavePlot) -> Option<&waveform::Lane> {
-    match plot.lane.stem_index() {
-        None => Some(&plot.waveform.mix),
-        Some(i) => plot.waveform.stems.as_ref().map(|s| &s[i]),
-    }
-}
-
-/// `plot`'s lane into the pixels `rect` of `target`, on the grid `cols`:
-/// only the columns that changed since `kept` (the lane as the target
-/// holds it, if it does); `head`: the playhead drawn (not where something
-/// else draws it over). Returns the pixels that changed, if any, and the
-/// lane as the target holds it now.
+/// `plot`'s lane into the pixels `(x0, y0, w, h)` of `target`, on the grid
+/// `cols`: the columns, then the words over them; `rows`: the part of the
+/// lane they show. Nothing where the waveform has no levels for the lane.
 pub(super) fn paint(
     target: &mut Target,
     pen: &mut Pen,
     plot: &WavePlot,
     cols: Columns,
     (x0, y0, w, h): PixelRect,
-    kept: Option<KeptWave>,
-    head: bool,
-) -> (Option<PixelRect>, Option<KeptWave>) {
-    if w == 0 || h == 0 || levels(plot).is_none() {
-        return (None, None);
+    rows: Rows,
+) {
+    if w == 0 || h == 0 || plot.levels().is_none() {
+        return;
     }
-    let line = pen.scale().round().max(1.0) as usize;
-    // The whole lane's height, of which the rect shows the pixels from
-    // `above` on (while its block slides).
-    let ch = pen.cell().1;
-    let above = usize::from(plot.rows.0) * ch;
-    let full = (usize::from(plot.rows.1) * ch).max(h + above);
-    let keys = mask::keys(plot, cols, w, h, line, above, full, head);
-    let shape = WaveShape {
-        area: plot.area,
-        pixels: (x0, y0, w, h),
-        lane: plot.lane,
-        color: plot.color,
-        line,
-        above,
-        full,
-        px: cols.px,
-        text: usize::from(plot.text_scale.max(1)),
-        rows: plot.lines.rows.max(1),
-        key: plot.key,
-    };
+    let line = pen.metrics.line();
+    let full = rows.full.max(h + rows.above);
+    let rows = Rows { full, ..rows };
+    let keys = keys::keys(plot, cols, (w, h), line, (rows.above, full));
     // The voice's notes, on the lane that is read: each on its row of
     // the song's range (a semitone more each side), the scale's rows
     // lined across.
@@ -236,56 +152,37 @@ pub(super) fn paint(
             .map(|(lo, hi)| NoteRows::new(m, lo, hi, full, line, plot.key)),
         None => None,
     };
-    let words = Words::lay_out(plot, cols, &shape, pen);
+    let words = Words::lay_out(plot, cols, (w, h), rows, pen);
     let mut px = target.sub((x0, y0, w, h));
-    let (mask, shifted) = mask::to_paint(&mut px, kept.as_ref(), &shape, plot, cols, &keys, &words);
-    let dirty: Vec<usize> = (0..w).filter(|&x| mask[x]).collect();
-    let changed = match (shifted, dirty.first(), dirty.last()) {
-        (true, _, _) => Some((x0, y0, w, h)),
-        (false, Some(&a), Some(&b)) => Some((x0 + a, y0, b + 1 - a, h)),
-        _ => None,
-    };
-    paint_columns(&mut px, &dirty, &keys, plot, cols, notes.as_ref(), &shape);
-    // The words over the columns just painted (each is painted whole or
-    // not at all).
-    words.paint(target, pen, &mask, (x0, y0, w, h));
-    let kept = KeptWave {
-        shape,
-        waveform: Arc::clone(&plot.waveform),
-        n0: cols.n0,
-        keys,
-        labels: words.labels,
-    };
-    (changed, Some(kept))
+    paint_columns(&mut px, &keys, plot, cols, notes.as_ref(), (line, h, rows));
+    words.paint(target, pen, (x0, y0, w, h));
 }
 
-/// The columns `dirty` of a lane: the background its key gives, the RMS
-/// filled and the peak outlined, the notes, the lines over them.
+/// The columns of a lane: the background its key gives, the RMS filled
+/// and the peak outlined, the notes, the lines over them.
 fn paint_columns(
     px: &mut Pixels,
-    dirty: &[usize],
     keys: &[ColumnKey],
     plot: &WavePlot,
     cols: Columns,
     notes: Option<&NoteRows>,
-    shape: &WaveShape,
+    (line, h, rows): (usize, usize, Rows),
 ) {
-    let Some(levels) = levels(plot) else {
+    let Some(levels) = plot.levels() else {
         return;
     };
-    let (line, above, full, h) = (shape.line, shape.above, shape.full, shape.pixels.3);
-    let bg = palette::BG;
+    let (above, full) = (rows.above, rows.full);
+    let ground = super::GROUND;
     let mid = full as f64 / 2.0;
     let curve = lanes::CURVE;
-    for &x in dirty {
-        let key = keys[x];
+    for (x, &key) in keys.iter().enumerate() {
         let (t0, t1) = (cols.time(x as f64), cols.time(x as f64 + 1.0));
         let back = match key.back {
             Back::Selected => lanes::SELECT_BG,
             Back::Shown => lanes::SHOWN_BG,
             Back::Outside => lanes::OUTSIDE_BG,
             Back::Transition => lanes::TRANSITION_BG,
-            Back::None => bg,
+            Back::None => ground,
         };
         let color = if key.unclear {
             lanes::dimmed(plot.color)
@@ -344,7 +241,7 @@ fn paint_columns(
             }
         }
         // The lines over it, in their order: the bars, the cue, the
-        // cursor, the bar being edited, the playhead.
+        // cursor, the bar being edited.
         let mut over = |c: [u8; 3], share: f32| {
             for y in 0..h {
                 px.blend(x, y, c, share);
@@ -357,7 +254,6 @@ fn paint_columns(
             (MARK_CUE, lanes::CUE, 0.9),
             (MARK_CURSOR, palette::ACCENT, 0.55),
             (MARK_EDIT, lanes::CURVE, 0.8),
-            (MARK_PLAYHEAD, palette::ACCENT, 1.0),
         ] {
             if key.marks & bit != 0 {
                 over(c, share);

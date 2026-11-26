@@ -1,13 +1,7 @@
-//! Which of a lane's columns to paint: each column's key (everything it
-//! shows besides the waveform at its place), the kept pixels shifted to
-//! this frame's grid, and the columns whose key or words changed, grown to
-//! whole words.
+//! What each of a lane's pixel columns shows besides the waveform at its
+//! place: its background, its fade, the bars and the marks through it.
 
-use std::sync::Arc;
-
-use super::words::Words;
-use super::{Columns, KeptWave, WaveShape};
-use crate::gui::pixels::Pixels;
+use super::paint::Columns;
 use crate::view::lanes::WavePlot;
 
 /// A Transition lane column's background.
@@ -25,7 +19,6 @@ pub(super) enum Back {
 pub(super) const MARK_CUE: u8 = 1;
 pub(super) const MARK_CURSOR: u8 = 2;
 pub(super) const MARK_EDIT: u8 = 4;
-pub(super) const MARK_PLAYHEAD: u8 = 8;
 
 /// Everything a Transition lane's pixel column shows besides the waveform at
 /// its place on the grid: two columns with the same key at the same place are
@@ -44,17 +37,15 @@ pub(super) struct ColumnKey {
     pub(super) curve: Option<(usize, usize)>,
 }
 
-/// The key of each of a lane's `w` pixel columns.
-#[allow(clippy::too_many_arguments)]
+/// The key of each of a lane's `w` pixel columns, `h` pixels of a lane
+/// `full` high from `above` down, its lines `line` wide. The playhead is
+/// not among the marks: it is drawn over the lane as it shows.
 pub(super) fn keys(
     plot: &WavePlot,
     cols: Columns,
-    w: usize,
-    h: usize,
+    (w, h): (usize, usize),
     line: usize,
-    above: usize,
-    full: usize,
-    head: bool,
+    (above, full): (usize, usize),
 ) -> Vec<ColumnKey> {
     let mut keys = vec![ColumnKey::default(); w];
     // The stretches where the beat is unclear are in order: walked along.
@@ -98,7 +89,6 @@ pub(super) fn keys(
         (plot.cue, 2 * line, MARK_CUE),
         (plot.cursor, line, MARK_CURSOR),
         (plot.edit, 2 * line, MARK_EDIT),
-        (plot.playhead.filter(|_| head), 2 * line, MARK_PLAYHEAD),
     ] {
         if let Some(t) = t {
             for x in span(t, width) {
@@ -133,80 +123,6 @@ pub(super) fn keys(
     keys
 }
 
-/// The columns of the lane in `px` to paint (by column), and whether its
-/// pixels all changed: `old`'s pixels shifted to this frame's grid where
-/// they are the same lane's (`shape`, `plot`'s waveform, `cols`), then the
-/// columns whose `keys` differ from `old`'s and those under a word gone or
-/// new; all of them where there is nothing to keep. A word with a column
-/// under it painted is painted whole (its glyphs blended once over clean
-/// pixels), its columns with it.
-pub(super) fn to_paint(
-    px: &mut Pixels,
-    old: Option<&KeptWave>,
-    shape: &WaveShape,
-    plot: &WavePlot,
-    cols: Columns,
-    keys: &[ColumnKey],
-    words: &Words,
-) -> (Vec<bool>, bool) {
-    let w = keys.len();
-    // The columns to paint, after the kept pixels are shifted (which
-    // changes them all).
-    let mut shifted = true;
-    let mut mask: Vec<bool> = match old {
-        Some(old)
-            if old.shape == *shape
-                && Arc::ptr_eq(&old.waveform, &plot.waveform)
-                && (cols.n0 - old.n0).unsigned_abs() < w as u64 =>
-        {
-            let k = cols.n0 - old.n0;
-            if k != 0 {
-                px.shift(k);
-            } else {
-                shifted = false;
-            }
-            let mut mask: Vec<bool> = (0..w)
-                .map(|x| {
-                    let from = x as i64 + k;
-                    from < 0 || from >= w as i64 || old.keys[from as usize] != keys[x]
-                })
-                .collect();
-            // A word gone or changed: its old pixels go; a word new or
-            // changed: painted. A word kept stays where the shift put
-            // it.
-            let mut mark = |(a, b): (i64, i64)| {
-                for x in a..b {
-                    mask[x as usize] = true;
-                }
-            };
-            for l in old.labels.iter().filter(|l| !words.labels.contains(l)) {
-                mark(words.span(l));
-            }
-            for l in words.labels.iter().filter(|l| !old.labels.contains(l)) {
-                mark(words.span(l));
-            }
-            mask
-        }
-        _ => vec![true; w],
-    };
-    loop {
-        let mut grew = false;
-        for l in &words.labels {
-            let (a, b) = words.span(l);
-            let range = a as usize..b.max(a) as usize;
-            let any = mask[range.clone()].iter().any(|&d| d);
-            if any && !mask[range.clone()].iter().all(|&d| d) {
-                mask[range].iter_mut().for_each(|d| *d = true);
-                grew = true;
-            }
-        }
-        if !grew {
-            break;
-        }
-    }
-    (mask, shifted)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -214,7 +130,7 @@ mod tests {
     use crate::core::lanes::WordLines;
     use crate::view::palette;
     use jodel_rhythm::waveform::{self, Waveform};
-    use ratatui::layout::Rect;
+    use std::sync::Arc;
 
     /// The overview shades the track outside the span the lanes show; with
     /// the whole track shown, nothing.
@@ -227,7 +143,7 @@ mod tests {
             rms: vec![150; frames],
         };
         let plot = WavePlot {
-            area: Rect::new(0, 0, 100, 1),
+            area: ratatui::layout::Rect::new(0, 0, 100, 1),
             waveform: Arc::new(Waveform {
                 mix: lane,
                 stems: None,
@@ -257,7 +173,7 @@ mod tests {
         };
         let keys = |plot: &WavePlot| {
             let cols = Columns::new(plot.start, plot.end, 100);
-            keys(plot, cols, 100, 4, 1, 0, 4, false)
+            keys(plot, cols, (100, 4), 1, (0, 4))
         };
         let shaded = keys(&plot);
         assert_eq!(shaded[50].back, Back::Shown);

@@ -5,6 +5,8 @@
 //! rasterised with the pictures into a pixmap, [`canvas`]) shown in one
 //! widget under them ([`embed`]), on iced's GPU through its shader
 //! widget, or as an image with iced's CPU renderer where there is no GPU.
+//! The covers and the lanes ([`lanes`]) are drawn over the cells it leaves
+//! for them.
 
 pub mod backdrop;
 pub mod big_text;
@@ -20,6 +22,7 @@ pub mod fx;
 pub mod glory;
 pub mod karaoke;
 pub mod keys;
+pub mod lanes;
 pub mod liquid;
 pub mod look;
 pub mod mixer;

@@ -62,6 +62,12 @@ pub fn tint(tone: Color, ground: Color, share: f32) -> Color {
     crate::gui::style::mix(ground, tone, share)
 }
 
+/// `color` as the bytes the pixel painters take (the lanes' tiles).
+pub fn bytes(color: Color) -> [u8; 3] {
+    let [r, g, b, _] = color.into_rgba8();
+    [r, g, b]
+}
+
 /// The spacing scale, in points: between and around everything.
 pub mod space {
     /// Within a group: an icon and its label, a title and its line.

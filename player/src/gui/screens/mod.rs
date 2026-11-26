@@ -1,14 +1,15 @@
 //! What the window shows, screen by screen. A screen drawn by iced's own
 //! widgets gets an arm here as it is ported: the setup screen
 //! ([`setup`]). Every other screen is the old canvas filling the window
-//! ([`super::embed`]), the covers over it where it left their cells
-//! ([`super::widgets::cover`], not taking the pointer), and slots over
-//! them: the Mixer tab ([`super::mixer`]) or nothing, the bottom bar
-//! ([`bottom`]) or nothing, the list pane with its tabs ([`list`]) or
-//! nothing, and the command palette over all of it ([`palette`]) or
-//! nothing; the same shape, so each widget keeps its place in iced's tree
-//! (the tabs' pill slides from one side to the next). The pointer over
-//! the canvas hides where the core says
+//! ([`super::embed`]), the covers and the lanes over it where it left
+//! their cells ([`super::widgets::cover`], [`super::lanes`], neither
+//! taking the pointer), and slots over them: the Mixer tab
+//! ([`super::mixer`]) or nothing, the bottom bar ([`bottom`]) or nothing,
+//! the list pane with its tabs ([`list`]) or nothing, and the command
+//! palette over all of it, the lanes too ([`palette`]) or nothing; the
+//! same shape, so each widget keeps its place in iced's tree (the tabs'
+//! pill slides from one side to the next). The pointer over the canvas
+//! hides where the core says
 //! ([`crate::core::karaoke::pointer::hidden`]); the view is built again
 //! after every message, so it shows again as soon as it moves or the mode
 //! ends.
@@ -17,6 +18,7 @@ use iced::widget::{opaque, pin, space, stack};
 use iced::{Element, Size, Widget as _};
 
 use super::embed::Embed;
+use super::lanes::Lanes;
 use super::mixer;
 use super::widgets::cover::Covers;
 use super::window::Message;
@@ -44,6 +46,7 @@ pub(super) fn view<'a>(
     embed: &Embed,
     caps: &'a mixer::Caps,
     covers: &'a Covers,
+    lanes: &'a Lanes,
     heard: &SpectrumFrame,
 ) -> Element<'a, Message> {
     let state = match shown {
@@ -58,6 +61,7 @@ pub(super) fn view<'a>(
     stack![
         embed.view(hide_pointer),
         covers.view(),
+        lanes.view(),
         desk.unwrap_or_else(|| space().boxed()),
         bar.unwrap_or_else(|| space().boxed()),
         list.unwrap_or_else(|| space().boxed()),

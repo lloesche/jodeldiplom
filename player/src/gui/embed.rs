@@ -4,10 +4,10 @@
 //! widget shows it under everything iced draws itself.
 //!
 //! On the GPU the pixmap goes through iced's shader widget
-//! ([`super::embed_gpu`]): only the pixels that changed are sent over, the
-//! lanes that follow the playhead scroll on the GPU, Karaoke mode's stage
-//! is drawn over it. With iced's CPU renderer (no GPU) the pixmap is an
-//! image, the lanes painted into it and no stage.
+//! ([`super::embed_gpu`]): only the pixels that changed are sent over,
+//! Karaoke mode's stage is drawn over it. With iced's CPU renderer (no
+//! GPU) the pixmap is an image, and no stage. The lanes are the window's
+//! own widget over it ([`super::lanes`]).
 //!
 //! The widget fills the window from its top left corner (the GPU's pass
 //! draws in window pixels). The pointer over it goes to the window as it
@@ -34,7 +34,7 @@ use iced::widget::shader::{self, Shader};
 use iced::{Element, Event, Fill, Rectangle, Size, Theme, Widget as _};
 
 use super::backdrop::BackdropFrame;
-use super::canvas::{Canvas, Changes, LayerFrame};
+use super::canvas::{Canvas, Changes};
 use super::embed_gpu::Frame;
 use super::pointer::{Pointer, PointerKind};
 use super::stage_gpu::StageFrame;
@@ -47,8 +47,6 @@ use crate::view::mouse::MouseButton;
 /// What a frame of the old canvas hands the GPU beside its pixels.
 #[derive(Default)]
 pub struct Drawn {
-    /// The lane that follows the playhead, where one shows.
-    pub layer: Option<LayerFrame>,
     /// Karaoke mode's stage, where it shows.
     pub stage: Option<StageFrame>,
     /// Karaoke mode's backdrop, where it shows.
@@ -60,8 +58,7 @@ pub(super) struct Shared {
     pub(super) canvas: Canvas,
     /// The pixels changed since the GPU last took them.
     pub(super) changes: Changes,
-    /// The layer and the stage as they are now; their uploads not sent yet.
-    pub(super) layer: Option<LayerFrame>,
+    /// The stage as it is now; its uploads not sent yet.
     pub(super) stage: Option<StageFrame>,
     /// The backdrop as it is now (its textures sent over as it first shows).
     pub(super) backdrop: Option<BackdropFrame>,
@@ -99,7 +96,6 @@ impl Default for Embed {
         Embed(Arc::new(Mutex::new(Shared {
             canvas: Canvas::new(80, 24, super::font_px(1.0)),
             changes: Changes::default(),
-            layer: None,
             stage: None,
             backdrop: None,
             gpu: None,
@@ -117,16 +113,15 @@ impl Embed {
     }
 
     /// Draws a frame with `draw` (on the canvas, at `scale`; whether the
-    /// GPU shows it): the pixels it changed, and its layer and stage, wait
-    /// for the next frame on screen.
+    /// GPU shows it): the pixels it changed, and its stage, wait for the
+    /// next frame on screen.
     pub fn draw(&self, scale: f32, draw: impl FnOnce(&mut Canvas, bool) -> Drawn) {
         let mut shared = self.lock();
         let shared = &mut *shared;
         shared.scale = scale;
         shared.canvas.set_font_px(super::font_px(f64::from(scale)));
-        // What the GPU draws itself (the lanes it scrolls, Karaoke mode's
-        // ground and stage), where it shows the canvas (and until iced says
-        // which renderer it has).
+        // What the GPU draws itself (Karaoke mode's ground and stage), where
+        // it shows the canvas (and until iced says which renderer it has).
         let gpu = shared.gpu.unwrap_or(true);
         shared.canvas.set_gpu(gpu);
         let drawn = draw(&mut shared.canvas, gpu);
@@ -135,7 +130,6 @@ impl Embed {
             shared.image = None;
         }
         shared.changes.merge(changes);
-        shared.layer = merge_layer(shared.layer.take(), drawn.layer);
         shared.stage = merge_stage(shared.stage.take(), drawn.stage);
         shared.backdrop = drawn.backdrop;
     }
@@ -143,11 +137,6 @@ impl Embed {
     /// Whether iced draws on the GPU (until it has drawn: as if it did).
     pub fn gpu(&self) -> bool {
         self.lock().gpu.unwrap_or(true)
-    }
-
-    /// Whether a lane that follows the playhead shows now.
-    pub fn has_layer(&self) -> bool {
-        self.lock().canvas.has_layer()
     }
 
     /// Whether the canvas's pictures move by themselves
@@ -212,22 +201,6 @@ impl Embed {
             })
             .collect();
         (bytes, w as u32, h as u32)
-    }
-}
-
-/// `new` layer's frame after `old`'s, not yet on the GPU: `old`'s tiles
-/// still to be sent over first, where the tiles are the same size.
-fn merge_layer(old: Option<LayerFrame>, new: Option<LayerFrame>) -> Option<LayerFrame> {
-    match (old, new) {
-        (Some(old), Some(mut new))
-            if (old.tile, old.rect.3, old.slots) == (new.tile, new.rect.3, new.slots) =>
-        {
-            let mut uploads = old.uploads;
-            uploads.append(&mut new.uploads);
-            new.uploads = uploads;
-            Some(new)
-        }
-        (_, new) => new,
     }
 }
 

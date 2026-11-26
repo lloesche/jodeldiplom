@@ -1413,9 +1413,8 @@ impl App {
 
     /// Whether a lane that follows the playhead goes by (a song playing:
     /// the Karaoke tab's voice lane, the Transition tab's playing track): it
-    /// needs a frame every refresh too, but where the window scrolls it by
-    /// itself ([`crate::gui::canvas::Canvas::layer_frame`]) only the lane
-    /// moves in most of them.
+    /// needs a frame every refresh too, but only the lanes move in most of
+    /// them ([`crate::gui::lanes::Lanes::frame`]).
     pub fn layer_moves(&self) -> bool {
         let state = &self.state;
         let playing = state.playing.state == PlayState::Playing;

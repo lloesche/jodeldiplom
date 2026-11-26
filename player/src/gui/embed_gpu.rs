@@ -1,6 +1,6 @@
 //! The old canvas on iced's GPU ([`super::embed`]): a primitive of iced's
-//! shader widget that hands each frame's changed pixels, the layer and
-//! Karaoke mode's stage and backdrop to the [`Painter`], and draws it
+//! shader widget that hands each frame's changed pixels and Karaoke mode's
+//! stage and backdrop to the [`Painter`], and draws it
 //! into iced's render pass, under what iced draws over it. The pass draws
 //! in window pixels, so the widget is at the window's top left corner.
 
@@ -69,17 +69,12 @@ impl shader::Primitive for Frame {
         // through the GPU by now, kept from it by other work.
         shared.behind = pipeline.done.load(Ordering::Acquire) < pipeline.handed;
         let changes = std::mem::take(&mut shared.changes);
-        // The layer and the stage stay as they are until the next frame
-        // drawn; what they had to send is sent once.
-        let layer = shared.layer.clone();
-        if let Some(layer) = &mut shared.layer {
-            layer.uploads.clear();
-        }
+        // The stage stays as it is until the next frame drawn; what it had
+        // to send is sent once.
         pipeline.painter.prepare(
             &shared.canvas,
             &changes,
             ((size.width, size.height), viewport.scale_factor()),
-            layer,
             shared.stage.as_ref(),
             shared.backdrop.as_ref(),
         );

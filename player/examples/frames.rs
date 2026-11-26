@@ -1,11 +1,12 @@
 //! Times the window's frames headless, as the window draws them while a track
 //! plays (a fixture through the null output, the
 //! Transition tab's playhead going on): per frame the widgets with their
-//! cells, the pictures, and the copy into the window's buffer (for the frames
-//! that changed a pixel: the window shows only those), what that would cost at
-//! 30 frames a second, and how many frames changed. "transition held" is the
-//! Transition tab with its view held (the cursor moved), the playhead going
-//! across it.
+//! cells, the pictures, the lanes ([`Lanes`]: their tiles painted and their
+//! frame, for the GPU or, without one ("cpu"), as the processor's images),
+//! and the copy into the window's buffer (for the frames that changed a
+//! pixel: the window shows only those), what that would cost at 30 frames a
+//! second, and how many frames changed. "transition held" is the Transition
+//! tab with its view held (the cursor moved), the playhead going across it.
 //!
 //! ```text
 //! cargo run --release -p jodeldiplom --example frames -- [WIDTH HEIGHT SCALE] [FRAMES]
@@ -23,6 +24,7 @@ use jodel_output::SimClock;
 use jodeldiplom::app::{AppOptions, Output};
 use jodeldiplom::core::keymap::Op;
 use jodeldiplom::core::{Action, Screen, State};
+use jodeldiplom::gui::lanes::Lanes;
 use jodeldiplom::gui::{font_px, Canvas};
 use jodeldiplom::view::Scene;
 
@@ -48,7 +50,7 @@ fn main() {
     });
     assert!(listed, "the folder was not listed");
     app.dispatch(Action::SelectRow(2));
-    app.dispatch(Action::Op(Op::Open));
+    app.dispatch(Action::Op(Op::OpenReplace));
     let playing = common::wait_for(&mut app, Duration::from_secs(10), |app| {
         app.state.playing.track.is_some() && app.state.playing.position >= 0.05
     });
@@ -57,8 +59,18 @@ fn main() {
     println!(
         "{width} × {height} pixels at scale {scale}, {frames} frames per screen (ms per frame; a core's share at 30 fps, the rate while a track plays)"
     );
-    for screen in ["main", "nowplaying", "transition", "transition held"] {
+    let screens = [
+        ("main", true),
+        ("nowplaying", true),
+        ("transition", true),
+        ("transition held", true),
+        ("transition", false),
+        ("transition held", false),
+    ];
+    for (screen, gpu) in screens {
         let mut canvas = Canvas::new(80, 24, font_px(scale));
+        canvas.set_gpu(gpu);
+        let mut lanes = Lanes::default();
         let grid = canvas.fit(width as u32, height as u32);
         let mut buffer = vec![0u32; width * height];
         let mut tab = common::transition_state(grid.cols, grid.rows);
@@ -68,8 +80,12 @@ fn main() {
             tab.transition.now.path = Some(tab.queue.paths[1].clone());
             tab.transition.now.start = Some(tab.playing.position - 5.0);
         }
-        let (mut widgets, mut pictures, mut copy) =
-            (Duration::ZERO, Duration::ZERO, Duration::ZERO);
+        let (mut widgets, mut pictures, mut framed, mut copy) = (
+            Duration::ZERO,
+            Duration::ZERO,
+            Duration::ZERO,
+            Duration::ZERO,
+        );
         let mut shown = 0;
         for frame in 0..frames {
             app.pump();
@@ -96,6 +112,10 @@ fn main() {
             };
             canvas.draw(&scene, app.art());
             let started = Instant::now();
+            lanes.show(canvas.take_lanes(), scale as f32, gpu);
+            lanes.frame(state.heard());
+            let lanes_took = started.elapsed();
+            let started = Instant::now();
             // As the window: a frame that changed no pixel is not shown.
             if canvas.changed {
                 canvas.write_xrgb(&mut buffer, width, height);
@@ -104,6 +124,7 @@ fn main() {
             if frame >= 10 {
                 widgets += canvas.last_draw.widgets;
                 pictures += canvas.last_draw.pictures;
+                framed += lanes_took;
                 copy += started.elapsed();
                 shown += usize::from(canvas.changed);
             }
@@ -112,11 +133,13 @@ fn main() {
         }
         let n = (frames.saturating_sub(10)).max(1) as f64;
         let ms = |d: Duration| d.as_secs_f64() * 1e3 / n;
-        let total = ms(widgets) + ms(pictures) + ms(copy);
+        let total = ms(widgets) + ms(pictures) + ms(framed) + ms(copy);
+        let on = if gpu { "gpu" } else { "cpu" };
         println!(
-            "  {screen:10}  widgets {:6.2}  pictures {:6.2}  copy {:6.2}  = {total:6.2} ms  ({:.0} % of a core), {:.0} % of frames shown",
+            "  {screen:15} {on}  widgets {:6.2}  pictures {:6.2}  lanes {:6.2}  copy {:6.2}  = {total:6.2} ms  ({:.0} % of a core), {:.0} % of frames shown",
             ms(widgets),
             ms(pictures),
+            ms(framed),
             ms(copy),
             total * 30.0 / 10.0,
             100.0 * shown as f64 / n

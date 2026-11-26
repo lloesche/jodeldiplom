@@ -5,7 +5,7 @@ use jodel_gpu::Turned;
 
 use super::{open, Painter, TEXTURE_FORMAT};
 use crate::gui::backdrop::BackdropFrame;
-use crate::gui::canvas::{Canvas, Changes, LayerFrame};
+use crate::gui::canvas::{Canvas, Changes};
 
 /// The window's frames drawn into a texture off screen and read back:
 /// for the tests, the same uploads and pass as the window's.
@@ -169,100 +169,139 @@ impl Offscreen {
         }
         let (w, h) = (width as usize, height as usize);
         self.painter.write(pixels, w, (0, 0, w, h));
-        self.painter.set_layer(None);
         self.read_back(width, height)
     }
 
-    /// Sends over `changes` and `layer` as the window does, draws a frame
-    /// of `width` × `height` and reads it back, as `0x00RRGGBB` words row
-    /// by row.
+    /// Sends over `changes` as the window does, draws a frame of `width` ×
+    /// `height` and reads it back, as `0x00RRGGBB` words row by row.
     pub fn show(
         &mut self,
         canvas: &Canvas,
         changes: &Changes,
         width: u32,
         height: u32,
-        layer: Option<LayerFrame>,
     ) -> Result<Vec<u32>, String> {
         self.painter.upload(canvas, changes, width, height);
-        self.painter.set_layer(layer);
         self.read_back(width, height)
     }
 
     /// The frame drawn from what was sent over, read back.
     fn read_back(&mut self, width: u32, height: u32) -> Result<Vec<u32>, String> {
-        let device = self.painter.device.clone();
-        let frame = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("jodeldiplom offscreen"),
-            size: wgpu::Extent3d {
-                width,
-                height,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: self.format,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
-            view_formats: &[],
-        });
-        // Rows padded to the copy's alignment.
-        let row = (width * 4).div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT)
-            * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
-        let buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("jodeldiplom offscreen"),
-            size: u64::from(row) * u64::from(height),
-            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-            mapped_at_creation: false,
-        });
-        let painted = self.painter.paint(&frame, |encoder| {
-            encoder.copy_texture_to_buffer(
-                wgpu::TexelCopyTextureInfo {
-                    texture: &frame,
-                    mip_level: 0,
-                    origin: wgpu::Origin3d::ZERO,
-                    aspect: wgpu::TextureAspect::All,
-                },
-                wgpu::TexelCopyBufferInfo {
-                    buffer: &buffer,
-                    layout: wgpu::TexelCopyBufferLayout {
-                        offset: 0,
-                        bytes_per_row: Some(row),
-                        rows_per_image: Some(height),
-                    },
-                },
-                wgpu::Extent3d {
-                    width,
-                    height,
-                    depth_or_array_layers: 1,
-                },
-            );
-        });
-        if !painted {
+        let painter = &mut *self.painter;
+        if painter.bind().is_none() {
             return Err("nothing to draw".into());
         }
-        let slice = buffer.slice(..);
-        let (tx, rx) = std::sync::mpsc::channel();
-        slice.map_async(wgpu::MapMode::Read, move |r| {
-            let _ = tx.send(r);
-        });
-        device
-            .poll(wgpu::PollType::wait_indefinitely())
-            .map_err(|e| e.to_string())?;
-        rx.recv()
-            .map_err(|e| e.to_string())?
-            .map_err(|e| e.to_string())?;
-        let mapped = slice.get_mapped_range().map_err(|e| e.to_string())?;
-        let mut words = Vec::with_capacity(width as usize * height as usize);
-        for line in mapped.chunks_exact(row as usize) {
-            words.extend(
-                line[..width as usize * 4]
-                    .as_chunks::<4>()
-                    .0
-                    .iter()
-                    .map(|b| u32::from_le_bytes([b[0], b[1], b[2], 0])),
-            );
-        }
-        Ok(words)
+        let gpu = (&painter.device, &painter.queue);
+        read_back(
+            gpu,
+            self.format,
+            (width, height),
+            wgpu::Color::BLACK,
+            |pass| {
+                painter.draw(pass);
+            },
+        )
     }
+}
+
+/// A frame of `width` × `height` in `format`, cleared to `clear`, drawn by
+/// `draw` and read back, as `0x00RRGGBB` words row by row: for the tests.
+pub(crate) fn read_back(
+    (device, queue): (&wgpu::Device, &wgpu::Queue),
+    format: wgpu::TextureFormat,
+    (width, height): (u32, u32),
+    clear: wgpu::Color,
+    draw: impl FnOnce(&mut wgpu::RenderPass<'_>),
+) -> Result<Vec<u32>, String> {
+    let frame = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("jodeldiplom offscreen"),
+        size: wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+        view_formats: &[],
+    });
+    // Rows padded to the copy's alignment.
+    let row = (width * 4).div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT)
+        * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+    let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("jodeldiplom offscreen"),
+        size: u64::from(row) * u64::from(height),
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
+    let view = frame.create_view(&wgpu::TextureViewDescriptor::default());
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        label: Some("jodeldiplom offscreen"),
+    });
+    {
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("jodeldiplom offscreen"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &view,
+                depth_slice: None,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(clear),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        });
+        draw(&mut pass);
+    }
+    encoder.copy_texture_to_buffer(
+        wgpu::TexelCopyTextureInfo {
+            texture: &frame,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        wgpu::TexelCopyBufferInfo {
+            buffer: &buffer,
+            layout: wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(row),
+                rows_per_image: Some(height),
+            },
+        },
+        wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+    );
+    queue.submit([encoder.finish()]);
+    let slice = buffer.slice(..);
+    let (tx, rx) = std::sync::mpsc::channel();
+    slice.map_async(wgpu::MapMode::Read, move |r| {
+        let _ = tx.send(r);
+    });
+    device
+        .poll(wgpu::PollType::wait_indefinitely())
+        .map_err(|e| e.to_string())?;
+    rx.recv()
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())?;
+    let mapped = slice.get_mapped_range().map_err(|e| e.to_string())?;
+    let mut words = Vec::with_capacity(width as usize * height as usize);
+    for line in mapped.chunks_exact(row as usize) {
+        words.extend(
+            line[..width as usize * 4]
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .map(|b| u32::from_le_bytes([b[0], b[1], b[2], 0])),
+        );
+    }
+    Ok(words)
 }

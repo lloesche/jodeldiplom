@@ -14,10 +14,6 @@
 //! Like a terminal, it redraws only the cells ratatui reports as changed,
 //! and keeps which ones it redrew ([`PixelBackend::damage`]) so pictures
 //! over unchanged cells need not be painted again.
-//!
-//! The cells' glyphs ([`CellFont`]) also draw text placed between the
-//! cells, into any target ([`CellFont::text_at`]): a ruler's numbers, a
-//! lane's words.
 
 use std::collections::HashMap;
 use std::convert::Infallible;
@@ -302,43 +298,6 @@ impl CellFont {
             light
         }
     }
-
-    /// `text` with its first cell's left edge at pixel `x` of the row of
-    /// cells starting at pixel `y` of `target`, one cell a character, over
-    /// the pixels there and only within pixels `x_from..x_to` (text placed
-    /// between the cells, as a ruler's numbers at their bars).
-    pub fn text_at(
-        &mut self,
-        target: &mut Target,
-        x: f64,
-        y: usize,
-        text: &str,
-        fg: [u8; 3],
-        (x_from, x_to): (usize, usize),
-    ) {
-        let (w, h) = (self.cell_w, self.cell_h);
-        for (i, c) in text.chars().enumerate() {
-            let Some(glyph) = self.glyph(c, false) else {
-                continue;
-            };
-            let ox = x + (i * w) as f64;
-            for gy in 0..glyph.height {
-                let py = glyph.top + gy as i32;
-                if py < 0 || py as usize >= h {
-                    continue;
-                }
-                for gx in 0..glyph.width {
-                    let a = glyph.coverage[gy * glyph.width + gx];
-                    let px = (ox + f64::from(glyph.left) + gx as f64).round();
-                    if a == 0 || px < x_from as f64 || px >= x_to.min(target.width) as f64 {
-                        continue;
-                    }
-                    let (tx, ty) = (px as usize, y + py as usize);
-                    target.put_over(tx, ty, fg, a);
-                }
-            }
-        }
-    }
 }
 
 impl PixelBackend {
@@ -370,26 +329,13 @@ impl PixelBackend {
         &self.buffer
     }
 
-    /// The cells' font, to draw text between the cells into another
-    /// target.
-    pub fn font(&mut self) -> &mut CellFont {
-        &mut self.font
-    }
-
-    /// The pixmap as a target to paint into, and the cells' font to draw
-    /// text there with.
-    pub fn split(&mut self) -> (Target<'_>, &mut CellFont) {
-        let target = Target {
+    /// The pixmap as a target to paint into.
+    pub fn target(&mut self) -> Target<'_> {
+        Target {
             pixels: &mut self.pixmap,
             width: self.width,
             height: self.height,
-        };
-        (target, &mut self.font)
-    }
-
-    /// The pixmap as a target to paint into.
-    pub fn target(&mut self) -> Target<'_> {
-        self.split().0
+        }
     }
 
     /// Changes the font size (an em of `em_px` pixels) and redraws.

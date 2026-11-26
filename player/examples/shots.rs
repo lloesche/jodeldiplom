@@ -278,6 +278,16 @@ fn main() {
                 sung_words(&mut m);
                 m
             }),
+            ("transition-palette", {
+                // The command palette over the Transition tab's lanes.
+                let mut m = common::transition_state(120, 36);
+                sung_words(&mut m);
+                jodeldiplom::core::update(&mut m, Action::Op(Op::Palette));
+                for c in "tra".chars() {
+                    jodeldiplom::core::update(&mut m, Action::Type(c));
+                }
+                m
+            }),
             ("transition-set-up", {
                 // A transition set up from the bar heard, drums first.
                 let mut m = common::transition_state(120, 36);
@@ -300,6 +310,14 @@ fn main() {
                 let mut k = state.clone();
                 k.side = Side::Karaoke;
                 k.config.karaoke_voice = 44;
+                k
+            }),
+            ("karaoke-lane", {
+                // The tab on a generated song with its stems in: the
+                // voice's lane, its words timed, going by.
+                let mut k = common::transition_state(120, 36);
+                k.side = Side::Karaoke;
+                sung_words(&mut k);
                 k
             }),
             ("karaoke-sync", {

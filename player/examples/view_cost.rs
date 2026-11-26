@@ -10,8 +10,9 @@
 //! The main screen (its list pane native: the tabs and the browser's rows;
 //! its bottom bar native: the spectrum, the seek bar and the buttons), the
 //! same on a folder of 2,000 files (the cost must not grow with the
-//! folder), the queue, and the Mixer tab; the rest of each screen is the
-//! old canvas, one widget, until it is ported.
+//! folder), the queue, the Mixer tab, and the Transition and Karaoke tabs
+//! (their lanes native) on generated tracks with stems; the rest of each
+//! screen is the old canvas, one widget, until it is ported.
 //!
 //! ```text
 //! cargo run --release -p jodeldiplom --example view_cost -- [FRAMES] [--budget MEDIAN_MS WORST_MS]
@@ -122,6 +123,15 @@ fn main() {
             d.desk.selected = jodeldiplom::core::desk::Channel::Mic;
             common::fill_desk(&mut d, 96_000);
             d
+        }),
+        // The Transition tab on generated tracks with stems and waveforms
+        // (its lanes the window's widget), and the Karaoke tab on it (the
+        // voice's lane).
+        ("transition", common::transition_state(120, 36)),
+        ("karaoke tab", {
+            let mut k = common::transition_state(120, 36);
+            k.side = Side::Karaoke;
+            k
         }),
     ];
     let mut gui = Gui::headless(app);

@@ -32,12 +32,11 @@ fn is_off(state: &State, lane: Lane) -> bool {
     }
 }
 
-/// The seconds of the bars' first beats of `a` within `start..end`.
-fn downbeats_within(a: &jodel_rhythm::Analysis, start: f64, end: f64) -> Vec<f64> {
+/// The seconds of the bars' first beats of `a`.
+fn downbeats(a: &jodel_rhythm::Analysis) -> Vec<f64> {
     a.downbeats
         .iter()
         .filter_map(|&d| a.beats.get(d).copied())
-        .filter(|&t| t >= start && t < end)
         .collect()
 }
 
@@ -277,14 +276,16 @@ pub struct RulerPlot {
     pub start: f64,
     /// Up to.
     pub end: f64,
-    /// Each bar's first beat in the span, and its number.
+    /// Each bar's first beat and its number: the whole track's, the
+    /// numbers laid out from the first so they stand where they are as the
+    /// view moves.
     pub bars: Vec<(f64, usize)>,
     /// The cursor's beat.
     pub cursor: Option<f64>,
     /// The next track's cue bar.
     pub cue: Option<f64>,
     /// It follows the playhead with the lanes under it
-    /// ([`WavePlot::follow`]); its bars are then the whole track's.
+    /// ([`WavePlot::follow`]).
     pub follow: Option<f64>,
 }
 
@@ -370,8 +371,9 @@ fn draw_block(
         },
     );
     // The playing track's block following the playhead (not while blocks
-    // slide): a frontend may scroll its ruler and lanes by itself, so they
-    // carry the whole track's bars.
+    // slide): a frontend may scroll its ruler and lanes by itself. Every
+    // lane carries the whole track's bars, so a view moved is the same
+    // lane moved.
     let follow = (b.block == Block::Now
         && block.start.is_none()
         && viewport::slide(state).is_none()
@@ -382,7 +384,6 @@ fn draw_block(
         .iter()
         .enumerate()
         .filter_map(|(k, &d)| a.beats.get(d).map(|&t| (t, k + 1)))
-        .filter(|&(t, _)| follow.is_some() || (t >= start && t < end))
         .collect();
     pictures.ruler(
         frame,
@@ -396,11 +397,7 @@ fn draw_block(
             follow,
         },
     );
-    let downbeats = if follow.is_some() {
-        downbeats_within(a, f64::NEG_INFINITY, f64::INFINITY)
-    } else {
-        downbeats_within(a, start, end)
-    };
+    let downbeats = downbeats(a);
     let unclear = unclear(a);
     let lyrics = state
         .config

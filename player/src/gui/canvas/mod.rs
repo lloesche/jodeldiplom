@@ -1,38 +1,30 @@
 //! The window's drawing surface without the window: the shared ratatui
 //! widgets rasterised into an RGB pixmap ([`PixelBackend`]), and the
-//! pictures painted into it at their cell rects ([`pictures`]): the
-//! Transition lanes ([`lane`]) and their bar numbers ([`ruler`]), and
-//! Karaoke mode's picture ([`karaoke`]). Lanes that follow the playhead go
-//! into a layer of tiles the window scrolls by itself ([`strip`]). The
-//! covers are the window's own widgets over the cells left for them
-//! ([`Canvas::covers`]). Used by the window and, headless, by the tests
+//! pictures painted into it at their cell rects ([`pictures`]): Karaoke
+//! mode's picture ([`karaoke`]). The covers and the lanes (the Transition
+//! tab's waveforms and bar numbers, the Karaoke tab's voice lane) are the
+//! window's own widgets over the cells left for them ([`Canvas::covers`],
+//! [`Canvas::take_lanes`]). Used by the window and, headless, by the tests
 //! and the screenshots.
 
 mod karaoke;
-mod lane;
 mod pictures;
-mod ruler;
-mod strip;
-
-pub use strip::{LayerFrame, MOST_SLOTS};
 
 use image::RgbImage;
 use ratatui::layout::Rect;
 use ratatui::Terminal;
 
 use super::big_text::Faces;
-use super::pixels::{pack, unpack, PixelRect, Target};
-use super::raster::{CellFont, PixelBackend};
+use super::lanes::{LaneSpot, LaneSpots, Metrics, Part, Rows};
+use super::pixels::{pack, unpack, PixelRect};
+use super::raster::PixelBackend;
 use super::widgets::cover::{Align, Caption, Spot};
 use crate::art::Art;
 use crate::core::State;
 use crate::view::karaoke::KaraokePicture;
 use crate::view::layout::Grid;
 use crate::view::{self, palette, Scene};
-use lane::{KeptWave, Melodies};
 use pictures::{Paint, PixelPictures};
-use ruler::KeptRuler;
-use strip::{Part, Strip};
 
 /// The font size at a scale factor of 1, in pixels.
 pub const BASE_FONT_PX: f64 = 15.0;
@@ -48,7 +40,7 @@ pub fn font_px(scale: f64) -> f32 {
 pub struct DrawTimes {
     /// The widgets drawn and the changed cells rasterised.
     pub widgets: std::time::Duration,
-    /// The Transition lanes painted, the covers placed.
+    /// The pictures painted, the covers and the lanes placed.
     pub pictures: std::time::Duration,
 }
 
@@ -60,10 +52,9 @@ pub struct Canvas {
     /// The covers as last drawn, for the window to draw over the cells
     /// left for them.
     covers: Vec<Spot>,
-    /// The Transition lanes in the pixmap now.
-    waves: Vec<KeptWave>,
-    /// The Transition blocks' bar numbers in the pixmap now.
-    rulers: Vec<KeptRuler>,
+    /// The lanes as last drawn, for the window to draw over the cells
+    /// left for them.
+    lanes: Vec<LaneSpot>,
     /// Karaoke mode's backdrop, the text drawn large (by face), the picture now.
     backdrop: Option<super::karaoke::Backdrop>,
     faces: Faces,
@@ -83,15 +74,10 @@ pub struct Canvas {
     pub changed: bool,
     /// The pixels changed since [`Canvas::take_changes`].
     changes: Changes,
-    /// The window shows the pixmap on the GPU ([`Canvas::set_gpu`]): lanes
-    /// that follow the playhead go into a layer it scrolls itself, and
+    /// The window shows the pixmap on the GPU ([`Canvas::set_gpu`]):
     /// Karaoke mode's stage, its bubbles' liquid and its ground are its,
     /// rather than in the pixmap.
     gpu: bool,
-    /// That layer, while such a lane shows.
-    strip: Option<Strip>,
-    /// The melodies the lanes last drew.
-    melodies: Melodies,
     /// The right column's width held on the grid ([`Grid::held`]).
     held: usize,
 }
@@ -142,29 +128,6 @@ impl Changes {
     }
 }
 
-/// What the lanes and the bar numbers are painted with besides their
-/// target: the cells' font (the numbers, and words a cell high), the faces
-/// drawn large (larger words), the melodies the lanes last drew, and the
-/// font size the window's scale gives.
-struct Pen<'a> {
-    font: &'a mut CellFont,
-    faces: &'a mut Faces,
-    melodies: &'a mut Melodies,
-    font_px: f32,
-}
-
-impl Pen<'_> {
-    /// The pixels per point of the window's scale factor.
-    fn scale(&self) -> f64 {
-        f64::from(self.font_px) / BASE_FONT_PX
-    }
-
-    /// The cell size in pixels.
-    fn cell(&self) -> (usize, usize) {
-        self.font.cell()
-    }
-}
-
 impl Canvas {
     /// A canvas of `cols` × `rows` cells at `font_px`.
     pub fn new(cols: u16, rows: u16, font_px: f32) -> Canvas {
@@ -178,8 +141,7 @@ impl Canvas {
             font_px,
             painted: Vec::new(),
             covers: Vec::new(),
-            waves: Vec::new(),
-            rulers: Vec::new(),
+            lanes: Vec::new(),
             backdrop: None,
             faces: Faces::default(),
             karaoke: None,
@@ -187,8 +149,6 @@ impl Canvas {
             stage: super::stage::Stage::default(),
             staged: None,
             gpu: false,
-            strip: None,
-            melodies: Melodies::default(),
             held: 0,
             last_draw: DrawTimes::default(),
             changed: true,
@@ -248,21 +208,14 @@ impl Canvas {
         grid
     }
 
-    /// Whether the window shows the pixmap on the GPU: lanes that follow the
-    /// playhead then go into a layer it scrolls ([`Canvas::layer_frame`]),
-    /// Karaoke mode's stage and ground are drawn there; otherwise all of it
-    /// is painted into the pixmap each frame.
+    /// Whether the window shows the pixmap on the GPU: Karaoke mode's
+    /// stage and ground are drawn there; otherwise all of it is painted
+    /// into the pixmap each frame.
     pub fn set_gpu(&mut self, on: bool) {
         if on != self.gpu {
             self.gpu = on;
-            self.strip = None;
             self.changes.all = true;
         }
-    }
-
-    /// Whether a layer shows now.
-    pub fn has_layer(&self) -> bool {
-        self.strip.is_some()
     }
 
     /// Whether the pixmap's pictures move by themselves, so frames must
@@ -303,8 +256,9 @@ impl Canvas {
     }
 
     /// Draws a frame: the widgets, then the pictures, and where the covers
-    /// go ([`Canvas::covers`]). The text over a cover is made again only
-    /// when it moved or a cell of it was redrawn.
+    /// and the lanes go ([`Canvas::covers`], [`Canvas::take_lanes`]). The
+    /// text over a cover is made again only when it moved or a cell of it
+    /// was redrawn.
     pub fn draw(&mut self, scene: &Scene, art: Option<&Art>) {
         let started = std::time::Instant::now();
         self.terminal.backend_mut().reset_damage();
@@ -327,10 +281,8 @@ impl Canvas {
         let mut frame = Changes::default();
         self.cells_changed(&mut frame);
         let before = std::mem::take(&mut self.covers);
-        let mut waves = std::mem::take(&mut self.waves);
-        let mut rulers = std::mem::take(&mut self.rulers);
+        self.lanes.clear();
         let karaoke = self.karaoke.take();
-        let mut following: Vec<(Part, PixelRect)> = Vec::new();
         for paint in &pictures.paints {
             match paint {
                 Paint::Cover(rect, below_line) => {
@@ -343,24 +295,21 @@ impl Canvas {
                         spot.caption = Some(caption);
                     }
                 }
-                Paint::Wave(plot) if self.gpu && plot.follow.is_some() => {
-                    let r = self.pixel_rect(plot.area);
-                    following.push((Part::Wave(plot.clone(), 0, 0), r));
-                }
-                Paint::Ruler(plot) if self.gpu && plot.follow.is_some() => {
-                    let r = self.pixel_rect(plot.area);
-                    following.push((Part::Ruler(plot.clone(), 0, 0), r));
-                }
                 Paint::Wave(plot) => {
-                    let kept = waves
-                        .iter()
-                        .position(|k| k.area() == plot.area)
-                        .map(|i| waves.swap_remove(i));
-                    let (painted, kept) = self.paint_wave(plot, kept);
-                    if let Some(rect) = painted {
-                        frame.add(rect);
-                    }
-                    self.waves.extend(kept);
+                    let rect = self.pixel_rect(plot.area);
+                    let ch = self.cell().1;
+                    let above = usize::from(plot.rows.0) * ch;
+                    let rows = Rows {
+                        above,
+                        full: (usize::from(plot.rows.1) * ch).max(rect.3 + above),
+                    };
+                    let part = Part::Wave(plot.clone(), rows);
+                    self.lanes.push(LaneSpot { rect, part });
+                }
+                Paint::Ruler(plot) => {
+                    let rect = self.pixel_rect(plot.area);
+                    let part = Part::Ruler(plot.clone());
+                    self.lanes.push(LaneSpot { rect, part });
                 }
                 Paint::Karaoke(picture) => {
                     let wanted = super::stage::wanted(scene.state);
@@ -369,21 +318,8 @@ impl Canvas {
                         frame.add(rect);
                     }
                 }
-                Paint::Ruler(plot) => {
-                    let kept = rulers
-                        .iter()
-                        .position(|k| k.area == plot.area)
-                        .map(|i| rulers.swap_remove(i));
-                    let (painted, kept) = self.paint_ruler(plot, kept);
-                    if painted {
-                        frame.add(self.pixel_rect(plot.area));
-                    }
-                    self.rulers.extend(kept);
-                }
             }
         }
-        following.sort_by_key(|(_, r)| r.1);
-        self.take_strip(following);
         self.changed = !frame.is_empty();
         self.changes.merge(frame);
         self.last_draw = DrawTimes {
@@ -450,33 +386,17 @@ impl Canvas {
         }
     }
 
-    /// The pixels per point of the window's scale factor.
-    fn scale(&self) -> f64 {
-        f64::from(self.font_px) / BASE_FONT_PX
-    }
-
-    /// What the lanes and bar numbers are painted with, for a target of
-    /// their own (a tile).
-    fn pen(&mut self) -> Pen<'_> {
-        Pen {
-            font: self.terminal.backend_mut().font(),
-            faces: &mut self.faces,
-            melodies: &mut self.melodies,
-            font_px: self.font_px,
+    /// The lanes as last drawn, in the pixmap's pixels, for the window
+    /// to draw over the cells left blank for them; taken (each frame
+    /// draws them again).
+    pub fn take_lanes(&mut self) -> LaneSpots {
+        LaneSpots {
+            metrics: Metrics {
+                cell: self.cell(),
+                font_px: self.font_px,
+            },
+            spots: std::mem::take(&mut self.lanes),
         }
-    }
-
-    /// The pixmap to paint the lanes and bar numbers into, and what they
-    /// are painted with.
-    fn pixmap_and_pen(&mut self) -> (Target<'_>, Pen<'_>) {
-        let (target, font) = self.terminal.backend_mut().split();
-        let pen = Pen {
-            font,
-            faces: &mut self.faces,
-            melodies: &mut self.melodies,
-            font_px: self.font_px,
-        };
-        (target, pen)
     }
 
     /// The pixmap: `0x00RRGGBB` words, width, height.

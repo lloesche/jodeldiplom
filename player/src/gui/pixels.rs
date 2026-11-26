@@ -161,23 +161,6 @@ impl Pixels<'_> {
         }
     }
 
-    /// The rect's pixels moved `k` columns left (right where negative); the
-    /// columns that leaves behind keep what they had.
-    pub fn shift(&mut self, k: i64) {
-        let n = k.unsigned_abs() as usize;
-        for (at, w) in self.rows() {
-            if n >= w {
-                continue;
-            }
-            let row = &mut self.data[at..at + w];
-            if k > 0 {
-                row.copy_within(n.., 0);
-            } else {
-                row.copy_within(..w - n, n);
-            }
-        }
-    }
-
     /// Column `x`, each pixel the colour `color_at` gives for its row.
     pub fn column(&mut self, x: usize, mut color_at: impl FnMut(usize) -> u32) {
         if x >= self.w || self.x0 + x >= self.stride {

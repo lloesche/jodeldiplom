@@ -1,15 +1,16 @@
 //! The frames: one decision a tick ([`Paint::plan`]) of how often the
-//! ticks come and what the old canvas ([`super::embed`]) draws now: all of
-//! it, only the lane that follows the playhead (the GPU scrolls it), or
-//! nothing; Karaoke mode's stage with the picture's shine over it; the
-//! spectrum heard, for the bottom bar; and the frames' line in the
-//! trace.
+//! ticks come and what is drawn now: the old canvas ([`super::embed`]) and
+//! the lanes over it ([`super::lanes`]), only the lanes (where one follows
+//! the playhead: no new tiles in most frames), or nothing; Karaoke mode's
+//! stage with the picture's shine over it; the spectrum heard, for the
+//! bottom bar; and the frames' line in the trace.
 
 use std::time::{Duration, Instant};
 
 use super::backdrop::music::Song;
 use super::backdrop::Visualiser;
 use super::embed::{Drawn, Embed};
+use super::lanes::Lanes;
 use super::stage::Tint;
 use super::stage_gpu::{self, StageFrame};
 use super::streak;
@@ -43,13 +44,14 @@ pub enum Pace {
     Every(Duration),
 }
 
-/// What the old canvas draws on a tick.
+/// What is drawn on a tick.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Draw {
     /// Nothing: the window shows what it has.
     Nothing,
-    /// Only the lane that follows the playhead moves, on the GPU.
-    LayerOnly,
+    /// Only the lanes move (one follows the playhead): the canvas is not
+    /// drawn, the lanes stand where the playhead is now.
+    LanesOnly,
     /// The whole frame.
     Whole,
 }
@@ -66,8 +68,8 @@ pub struct Plan {
 pub struct Seen {
     /// It can be seen (not minimised, its frames coming).
     pub visible: bool,
-    /// The GPU scrolls a lane by itself now.
-    pub layer: bool,
+    /// A lane that follows the playhead shows.
+    pub following: bool,
     /// A fader's cap on the Mixer tab is gliding.
     pub gliding: bool,
     /// Karaoke mode's stage is drawn (iced draws on the GPU).
@@ -196,10 +198,10 @@ impl Paint {
             // Input, what moves smoothly, news while nothing else moves;
             // otherwise what moves at the calm rate (news with it).
             Draw::Whole
-        } else if layer && seen.layer {
-            Draw::LayerOnly
+        } else if layer && seen.following {
+            Draw::LanesOnly
         } else if layer {
-            // Without the GPU's layer the lane is in the pixmap.
+            // The lanes as drawn last do not follow the playhead yet.
             Draw::Whole
         } else {
             Draw::Nothing
@@ -223,7 +225,7 @@ impl Paint {
     pub fn draw(
         &mut self,
         plan: Plan,
-        embed: &Embed,
+        (embed, lanes): (&Embed, &mut Lanes),
         app: &mut App,
         place: Place,
         (heard, at): (f64, Instant),
@@ -243,15 +245,12 @@ impl Paint {
         if paced {
             self.last_paced = Some(at);
         }
-        let what = if draw == Draw::LayerOnly {
-            embed.draw(place.scale, |canvas, _| Drawn {
-                layer: canvas.layer_frame(heard),
-                ..Drawn::default()
-            });
-            "the layer alone".to_owned()
+        let what = if draw == Draw::LanesOnly {
+            lanes.frame(heard);
+            "the lanes alone".to_owned()
         } else {
             self.last_whole = Some(at);
-            self.whole(embed, app, place, heard);
+            self.whole((embed, lanes), app, place, heard);
             if crate::core::karaoke::in_mode(&app.state) {
                 "Karaoke mode".to_owned()
             } else {
@@ -266,9 +265,15 @@ impl Paint {
             .frame(gap, late, started.elapsed(), handed, &what);
     }
 
-    /// The whole frame: the widgets, the pictures, the layer, the stage and
+    /// The whole frame: the widgets, the pictures, the lanes, the stage and
     /// the backdrop under it; and the spectrum heard now.
-    fn whole(&mut self, embed: &Embed, app: &mut App, place: Place, heard: f64) {
+    fn whole(
+        &mut self,
+        (embed, lanes): (&Embed, &mut Lanes),
+        app: &mut App,
+        place: Place,
+        heard: f64,
+    ) {
         let drawing = Instant::now();
         let shine = &mut self.shine;
         let since = |last: Option<Instant>| last.map_or(0.0, |at| (drawing - at).as_secs_f32());
@@ -302,18 +307,16 @@ impl Paint {
                 heard,
             };
             canvas.draw(&scene, app.art());
-            let layer = canvas.layer_frame(heard);
+            // The lanes over the cells left for them.
+            lanes.show(canvas.take_lanes(), place.scale, gpu);
+            lanes.frame(heard);
             let stage = gpu
                 .then(|| stage(canvas, (app, song), shine, heard, dt))
                 .flatten();
             staged = stage.is_some();
             let backdrop = visualiser.frame((app, song), gpu, heard, place.size, backdrop_dt);
             drawn = backdrop.is_some();
-            Drawn {
-                layer,
-                stage,
-                backdrop,
-            }
+            Drawn { stage, backdrop }
         });
         crate::trace::took("frame: drawn", drawing, false);
         self.last_stage = staged.then_some(drawing);
@@ -370,7 +373,7 @@ mod tests {
         paint.last_whole = Some(t0);
         let seen = |pictures_moving| Seen {
             visible: true,
-            layer: false,
+            following: false,
             gliding: false,
             stage: true,
             pictures_moving,

@@ -4,53 +4,30 @@
 //! ([`Changes`]), and a triangle over the whole window copies the texture
 //! onto it, pixel for pixel; a few rows a frame, not the whole window.
 //!
-//! A lane that follows the playhead comes as a layer ([`LayerFrame`]): its
-//! tiles kept in a texture array, drawn over the pixmap at the column (and
-//! share of one) the frame says, with the playhead over it. A frame that
-//! moves only the layer sends over nothing but its place. Karaoke mode's
-//! backdrop ([`super::backdrop`]) is under the pixmap: its words are
-//! premultiplied over it, their top byte how much of it shows through
-//! ([`super::pixels::SEE_THROUGH`]); its stage and its bursts are drawn
-//! over it all, the light that blooms over them, the effects' screen
-//! passes over that ([`super::fx`]), and the shapes over everything last.
+//! The lanes are not in it: the window draws them over it
+//! ([`super::lanes`]). Karaoke mode's backdrop ([`super::backdrop`]) is
+//! under the pixmap: its words are premultiplied over it, their top byte
+//! how much of it shows through ([`super::pixels::SEE_THROUGH`]); its
+//! stage and its bursts are drawn over it all, the light that blooms over
+//! them, the effects' screen passes over that ([`super::fx`]), and the
+//! shapes over everything last.
 
 mod offscreen;
 
+pub(crate) use offscreen::read_back;
 pub use offscreen::Offscreen;
 
 use super::backdrop::BackdropFrame;
-use super::canvas::{Canvas, Changes, LayerFrame, MOST_SLOTS};
+use super::canvas::{Canvas, Changes};
 use super::fx::Music;
 use super::pixels::PixelRect;
 use super::stage_gpu::StageFrame;
 
 const SHADER: &str = r"
-struct Layer {
-    // Where it goes in the window: x, y, width, height.
-    rect: vec4<f32>,
-    // The playhead's colour.
-    head: vec4<f32>,
-    // The column at its left edge, the tiles' width, the slots, on (1).
-    offset: i32,
-    tile: i32,
-    slots: i32,
-    on: i32,
-    // The share of the next column, the playhead's left edge across it,
-    // its width, and the row it starts at.
-    frac: f32,
-    head_x: f32,
-    head_w: f32,
-    head_top: f32,
-    // The tile each slot holds (-1: none), four a vector.
-    resident: array<vec4<i32>, 4>,
-};
-
 @group(0) @binding(0) var pixels: texture_2d<f32>;
-@group(0) @binding(1) var tiles: texture_2d_array<f32>;
-@group(0) @binding(2) var<uniform> layer: Layer;
 // The backdrop under the pixmap ([`super::backdrop`]).
-@group(0) @binding(3) var backdrop: texture_2d<f32>;
-@group(0) @binding(4) var soft: sampler;
+@group(0) @binding(1) var backdrop: texture_2d<f32>;
+@group(0) @binding(2) var soft: sampler;
 
 // One triangle that covers the window.
 @vertex
@@ -58,18 +35,6 @@ fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4<f32> {
     let x = f32((i << 1u) & 2u) * 2.0 - 1.0;
     let y = f32(i & 2u) * 2.0 - 1.0;
     return vec4<f32>(x, y, 0.0, 1.0);
-}
-
-// Column `col` of the layer, row `y`: from the slot holding its tile;
-// `under` where none does yet.
-fn column(col: i32, y: i32, under: vec4<f32>) -> vec4<f32> {
-    let t = col / layer.tile;
-    let slot = t % layer.slots;
-    let held = layer.resident[slot / 4];
-    if col < 0 || held[slot % 4] != t {
-        return under;
-    }
-    return textureLoad(tiles, vec2<i32>(col - t * layer.tile, y), slot, 0);
 }
 
 // An sRGB-encoded value as linear light, and back.
@@ -99,35 +64,12 @@ fn pixel(p: vec2<i32>, at: vec2<f32>) -> vec3<f32> {
     return own.rgb + own.a * under;
 }
 
-// Each window pixel is the pixmap's there over the backdrop; in the
-// layer's rect, the layer's, between two columns by the share of one it
-// is moved, and the playhead over it.
+// Each window pixel is the pixmap's there over the backdrop.
 @fragment
 fn fs(@builtin(position) at: vec4<f32>) -> @location(0) vec4<f32> {
-    let p = vec2<i32>(at.xy);
-    let c = vec4<f32>(pixel(p, at.xy), 1.0);
-    if layer.on == 0 {
-        return vec4<f32>(c.rgb, 1.0);
-    }
-    let x = f32(p.x) - layer.rect.x;
-    let y = f32(p.y) - layer.rect.y;
-    if x < 0.0 || y < 0.0 || x >= layer.rect.z || y >= layer.rect.w {
-        return vec4<f32>(c.rgb, 1.0);
-    }
-    let col = layer.offset + i32(x);
-    let a = column(col, i32(y), c);
-    let b = column(col + 1, i32(y), c);
-    var out = mix(a.rgb, b.rgb, layer.frac);
-    let head = floor(layer.head_x);
-    if layer.head_w > 0.0 && x >= head && x < head + layer.head_w && y >= layer.head_top {
-        out = layer.head.rgb;
-    }
-    return vec4<f32>(out, 1.0);
+    return vec4<f32>(pixel(vec2<i32>(at.xy), at.xy), 1.0);
 }
 ";
-
-/// The layer's uniforms' size in bytes.
-const LAYER_BYTES: u64 = 128;
 
 /// The pixmap's words (`0x00RRGGBB`) as they lie in memory, B G R x.
 const TEXTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Bgra8Unorm;
@@ -152,12 +94,6 @@ pub(super) struct Painter {
     /// is, so the colours come out as they went in.
     view_format: wgpu::TextureFormat,
     kept: Option<Kept>,
-    /// The layer's tiles (none yet: one slot of one pixel), their size
-    /// (width, height, slots), and its uniforms.
-    tiles: wgpu::Texture,
-    tiles_view: wgpu::TextureView,
-    tiles_size: (u32, u32, u32),
-    uniforms: wgpu::Buffer,
     /// What the pass reads: made again when a texture is.
     bind: Option<wgpu::BindGroup>,
     /// Karaoke mode's stage, drawn over it all, and its bursts over that.
@@ -227,26 +163,6 @@ impl Painter {
                     binding: 1,
                     visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
-                        view_dimension: wgpu::TextureViewDimension::D2Array,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: wgpu::BufferSize::new(LAYER_BYTES),
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 3,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
                         sample_type: wgpu::TextureSampleType::Float { filterable: true },
                         view_dimension: wgpu::TextureViewDimension::D2,
                         multisampled: false,
@@ -254,7 +170,7 @@ impl Painter {
                     count: None,
                 },
                 wgpu::BindGroupLayoutEntry {
-                    binding: 4,
+                    binding: 2,
                     visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                     count: None,
@@ -305,13 +221,6 @@ impl Painter {
         } else {
             TEXTURE_FORMAT
         };
-        let uniforms = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("jodeldiplom layer"),
-            size: LAYER_BYTES,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        let (tiles, tiles_view) = tiles_texture(&device, view_format, (1, 1, 1));
         let stage =
             super::stage_gpu::StagePass::new(&device, format, super::stage_gpu::Blend::Over);
         let particles =
@@ -331,10 +240,6 @@ impl Painter {
             layout,
             view_format,
             kept: None,
-            tiles,
-            tiles_view,
-            tiles_size: (1, 1, 1),
-            uniforms,
             bind: None,
             stage,
             particles,
@@ -398,21 +303,19 @@ impl Painter {
 
     /// The next frame, of `size` pixels (`density` to a point): the pixels
     /// in `changes` sent over (all of them where the size or the pixmap's
-    /// changed), Karaoke mode's `backdrop` drawn under it, `layer` and
-    /// `stage` over it.
+    /// changed), Karaoke mode's `backdrop` drawn under it and `stage` over
+    /// it.
     pub(super) fn prepare(
         &mut self,
         canvas: &Canvas,
         changes: &Changes,
         (size, density): ((u32, u32), f32),
-        layer: Option<LayerFrame>,
         stage: Option<&StageFrame>,
         backdrop: Option<&BackdropFrame>,
     ) {
         let size = (size.0.max(1), size.1.max(1));
         self.density = density;
         self.upload(canvas, changes, size.0, size.1);
-        self.set_layer(layer);
         self.set_backdrop(backdrop, size);
         self.set_stage(stage, size);
         self.bind();
@@ -454,78 +357,6 @@ impl Painter {
         &self.queue
     }
 
-    /// The layer for the next frame (`None`: none): its new tiles sent
-    /// over, and where it stands.
-    fn set_layer(&mut self, frame: Option<LayerFrame>) {
-        let mut bytes = [0u8; LAYER_BYTES as usize];
-        if let Some(frame) = frame {
-            let size = (frame.tile as u32, frame.rect.3 as u32, frame.slots as u32);
-            if size != self.tiles_size {
-                (self.tiles, self.tiles_view) = tiles_texture(&self.device, self.view_format, size);
-                self.tiles_size = size;
-                self.bind = None;
-            }
-            for (slot, pixels) in &frame.uploads {
-                self.queue.write_texture(
-                    wgpu::TexelCopyTextureInfo {
-                        texture: &self.tiles,
-                        mip_level: 0,
-                        origin: wgpu::Origin3d {
-                            x: 0,
-                            y: 0,
-                            z: *slot as u32,
-                        },
-                        aspect: wgpu::TextureAspect::All,
-                    },
-                    bytemuck::cast_slice(pixels),
-                    wgpu::TexelCopyBufferLayout {
-                        offset: 0,
-                        bytes_per_row: Some(size.0 * 4),
-                        rows_per_image: Some(size.1),
-                    },
-                    wgpu::Extent3d {
-                        width: size.0,
-                        height: size.1,
-                        depth_or_array_layers: 1,
-                    },
-                );
-            }
-            let mut put = |at: usize, word: [u8; 4]| bytes[at..at + 4].copy_from_slice(&word);
-            let (x, y, w, h) = frame.rect;
-            for (i, v) in [x, y, w, h].into_iter().enumerate() {
-                put(4 * i, (v as f32).to_le_bytes());
-            }
-            // The playhead's colour as the frame's texels come out: linear
-            // where they are read through an sRGB view.
-            let srgb = self.view_format.is_srgb();
-            for (i, v) in frame.head.into_iter().enumerate() {
-                let c = f32::from(v) / 255.0;
-                let c = if srgb { srgb_to_linear(c) } else { c };
-                put(16 + 4 * i, c.to_le_bytes());
-            }
-            put(28, 1f32.to_le_bytes());
-            put(32, (frame.offset as i32).to_le_bytes());
-            put(36, (frame.tile as i32).to_le_bytes());
-            put(40, (frame.slots as i32).to_le_bytes());
-            put(44, 1i32.to_le_bytes());
-            put(48, frame.frac.to_le_bytes());
-            let (head_x, head_w) = frame.playhead.map_or((0.0, 0.0), |(x, w)| (x, w as f32));
-            put(52, head_x.to_le_bytes());
-            put(56, head_w.to_le_bytes());
-            put(60, (frame.head_top as f32).to_le_bytes());
-            for slot in 0..MOST_SLOTS {
-                let tile = frame
-                    .resident
-                    .get(slot)
-                    .copied()
-                    .flatten()
-                    .map_or(-1, |t| t as i32);
-                put(64 + 4 * slot, tile.to_le_bytes());
-            }
-        }
-        self.queue.write_buffer(&self.uniforms, 0, &bytes);
-    }
-
     /// What the pass reads, made where a texture is new.
     fn bind(&mut self) -> Option<&wgpu::BindGroup> {
         let kept = self.kept.as_ref()?;
@@ -540,18 +371,10 @@ impl Painter {
                     },
                     wgpu::BindGroupEntry {
                         binding: 1,
-                        resource: wgpu::BindingResource::TextureView(&self.tiles_view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 2,
-                        resource: self.uniforms.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 3,
                         resource: wgpu::BindingResource::TextureView(self.backdrop.under()),
                     },
                     wgpu::BindGroupEntry {
-                        binding: 4,
+                        binding: 2,
                         resource: wgpu::BindingResource::Sampler(&self.soft),
                     },
                 ],
@@ -725,47 +548,6 @@ fn begin<'e>(
         occlusion_query_set: None,
         multiview_mask: None,
     })
-}
-
-/// The tiles' texture array of `(width, height, slots)`, and its view.
-fn tiles_texture(
-    device: &wgpu::Device,
-    view_format: wgpu::TextureFormat,
-    (width, height, slots): (u32, u32, u32),
-) -> (wgpu::Texture, wgpu::TextureView) {
-    let texture = device.create_texture(&wgpu::TextureDescriptor {
-        label: Some("jodeldiplom layer"),
-        size: wgpu::Extent3d {
-            width: width.max(1),
-            height: height.max(1),
-            depth_or_array_layers: slots.max(1),
-        },
-        mip_level_count: 1,
-        sample_count: 1,
-        dimension: wgpu::TextureDimension::D2,
-        format: TEXTURE_FORMAT,
-        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-        view_formats: if view_format == TEXTURE_FORMAT {
-            &[]
-        } else {
-            &[wgpu::TextureFormat::Bgra8UnormSrgb]
-        },
-    });
-    let view = texture.create_view(&wgpu::TextureViewDescriptor {
-        format: Some(view_format),
-        dimension: Some(wgpu::TextureViewDimension::D2Array),
-        ..Default::default()
-    });
-    (texture, view)
-}
-
-/// An sRGB-encoded value (0 to 1) as linear light.
-fn srgb_to_linear(c: f32) -> f32 {
-    if c <= 0.04045 {
-        c / 12.92
-    } else {
-        ((c + 0.055) / 1.055).powf(2.4)
-    }
 }
 
 /// The least share of the window's width and height the backdrop is drawn

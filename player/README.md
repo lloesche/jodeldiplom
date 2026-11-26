@@ -406,10 +406,12 @@ on (`M`). The stem lanes need stems (a GPU and the Stems setting); without
 them there is the song lane alone. The lanes measure the peak and RMS of
 each 10 ms, on a scale from −60 dBFS to full scale.
 
-While the playing track's view follows the playhead, the window (with the
-GPU showing it) paints its bar numbers and lanes once, in tiles, and
-scrolls them at every refresh of the display by itself; a mark that moves
-(the cursor going along, a cue, the fades) paints only the tiles it is in.
+The window paints every lane and bar numbers once, in tiles, and shows
+them from there (on the GPU, or by the processor without one): while the
+playing track's view follows the playhead it scrolls them at every refresh
+of the display by itself, a view moved by hand shows the tiles it already
+has, and a mark that moves (the cursor going along, a cue, the fades)
+paints only the tiles it is in.
 On the developer's machine the Transition tab goes by at about 130 frames a
 second on 12 % of a core.
 
