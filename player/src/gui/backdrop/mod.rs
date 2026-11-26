@@ -149,6 +149,9 @@ pub struct Look {
     /// focus), the level blurred the most ([`look::defocus_level`]),
     /// unused, and 1 where it is (a subject cut out).
     pub defocus: [f32; 4],
+    /// The theme's grade ([`crate::theme::Theme::grade`]): the tint its
+    /// colours take once desaturated, how much (0: none).
+    pub grade: [f32; 4],
 }
 
 // SAFETY: plain f32s in a `repr(C)` struct, no padding: any bytes are one.
@@ -230,9 +233,18 @@ pub struct Visualiser {
     heard: Option<f64>,
     /// When the last phrase seen ended (none: none yet).
     phrase: Option<f64>,
+    /// The theme's grade ([`Visualiser::grade`]).
+    grade: [f32; 4],
 }
 
 impl Visualiser {
+    /// The covers graded from now on as a theme grades them
+    /// ([`crate::theme::Theme::grade`]; all 0, the default: not at all).
+    /// [`Visualiser::frame`] grades them as the settings' theme does.
+    pub fn grade(&mut self, grade: [f32; 4]) {
+        self.grade = grade;
+    }
+
     /// How many covers it holds (showing or fading).
     pub fn holds(&self) -> usize {
         self.slots.len()
@@ -302,6 +314,7 @@ impl Visualiser {
                 music,
             },
         };
+        self.grade = state.config.karaoke_theme.grade;
         Some(self.step(&cue, window, dt))
     }
 
@@ -351,7 +364,7 @@ impl Visualiser {
                 SlotFrame {
                     layers: Arc::clone(&s.layers),
                     art: s.art.clone(),
-                    look: self.look(s, &felt, window, alpha),
+                    look: self.look(s, (&felt, self.grade), window, alpha),
                 }
             })
             .collect();
@@ -406,9 +419,16 @@ impl Visualiser {
         self.slots.push(slot);
     }
 
-    /// `slot`'s numbers for the shader, with the music `felt`, in a
-    /// `window` of pixels, drawn over what is under it by `alpha`.
-    fn look(&self, slot: &Slot, felt: &Felt, window: (u32, u32), alpha: f32) -> Look {
+    /// `slot`'s numbers for the shader, with the music `felt` and the
+    /// theme's `grade`, in a `window` of pixels, drawn over what is under
+    /// it by `alpha`.
+    fn look(
+        &self,
+        slot: &Slot,
+        (felt, grade): (&Felt, [f32; 4]),
+        window: (u32, u32),
+        alpha: f32,
+    ) -> Look {
         let (w, h) = (window.0.max(1) as f32, window.1.max(1) as f32);
         let (cw, ch) = slot.layers.layers.size();
         let cover = (cw as f32, ch as f32);
@@ -457,6 +477,7 @@ impl Visualiser {
             ground,
             pulse: [pulse.grow, pulse.rim, pulse.swell, pulse.flare],
             defocus: [sub.near, most, 0.0, cut],
+            grade,
         }
     }
 }

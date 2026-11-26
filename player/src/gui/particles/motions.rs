@@ -111,6 +111,12 @@ pub const LOOKS: &[Drawing] = &[
         draw: "draw_puff",
         wgsl: slam::DRAW_PUFF,
     },
+    Drawing {
+        look: Look::Ghost,
+        reach: "half * 1.4 + vec2<f32>(3.0)",
+        draw: "draw_ghost",
+        wgsl: angels::DRAW_GHOST,
+    },
 ];
 
 /// A probe: a burst of `kind` from `at` (`half` its size), `size` large,
@@ -277,5 +283,19 @@ pub const MOTIONS: &[Motion] = &[
             probe(Kind::SlamDust, (1512.0, 800.0), (420.0, 0.0), 32.0, 5),
             probe(Kind::SlamDust, (700.0, 400.0), (150.0, 0.0), 12.0, 77),
         ],
+    },
+    Motion {
+        kind: Kind::Ghosts,
+        life: angels::ANGELS_LIFE,
+        quad: angels::ghost,
+        call: "ghost(at, rgb, size, seed, q, age)",
+        wgsl: Some(angels::ghost_wgsl),
+        probes: &[probe(
+            Kind::Ghosts,
+            (800.0, -90.0),
+            (720.0, 675.0),
+            90.0,
+            4243,
+        )],
     },
 ];

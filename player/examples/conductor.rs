@@ -20,8 +20,11 @@
 //! nothing scored, and one the demo key sang. Prints each file's length
 //! and levels, and what the game cost.
 //!
+//! `--theme NAME`: its sounds in that theme's patches
+//! ([`jodeldiplom::theme`]; classic by default).
+//!
 //! ```text
-//! cargo run --release -p jodeldiplom --example conductor -- OUT_DIR
+//! cargo run --release -p jodeldiplom --example conductor -- OUT_DIR [--theme NAME]
 //! ```
 
 use std::path::{Path, PathBuf};
@@ -35,6 +38,7 @@ use jodeldiplom::core::shine::Shone;
 use jodeldiplom::core::singing::{rung, Medal, Shown, SongResult};
 use jodeldiplom::sfx::conductor::{Clock, Conductor, Diploma, Event, Sheet};
 use jodeldiplom::sfx::reveal::RevealSounds;
+use jodeldiplom::theme::Theme;
 use jodeldiplom::tiers::Tier;
 
 const RATE: u32 = 48_000;
@@ -203,7 +207,7 @@ fn play(
     seconds: f64,
     clock_of: &dyn Fn(u64) -> Clock,
 ) -> (Vec<f32>, Cost) {
-    let (mut c, mut synth) = Conductor::new(RATE);
+    let (mut c, mut synth) = Conductor::new(RATE, theme());
     c.set_key(Some(key), 0);
     let frames = (seconds * f64::from(RATE)) as usize / PERIOD * PERIOD;
     let mut out = vec![0.0f32; 2 * frames];
@@ -522,11 +526,29 @@ fn diploma(dir: &Path, key: &jodel_rhythm::key::Key) {
     }
 }
 
+/// The theme the sounds are in (`--theme`).
+static THEME: std::sync::OnceLock<&'static Theme> = std::sync::OnceLock::new();
+
+/// The theme the sounds are in.
+fn theme() -> &'static Theme {
+    THEME.get().copied().unwrap_or_default()
+}
+
 fn main() {
-    let Some(root) = std::env::args().nth(1).map(PathBuf::from) else {
-        eprintln!("usage: conductor OUT_DIR");
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let usage = || -> ! {
+        eprintln!("usage: conductor OUT_DIR [--theme NAME]");
         std::process::exit(2);
     };
+    let (root, theme) = match args.as_slice() {
+        [root] => (PathBuf::from(root), None),
+        [root, flag, name] if flag == "--theme" => (PathBuf::from(root), Some(name)),
+        _ => usage(),
+    };
+    if let Some(name) = theme {
+        let Some(t) = Theme::named(name) else { usage() };
+        THEME.set(t).ok();
+    }
     // E minor, as the analysis would find it.
     let key = jodel_rhythm::key::Key::on(4, true);
     let a = analysis(SECONDS + 10.0);

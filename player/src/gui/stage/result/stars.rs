@@ -14,6 +14,7 @@ use super::{burst, fade, land, sparkle, sticker, Drawn, Pen, ResultShown, Room, 
 use crate::core::shine::Tier;
 use crate::core::singing::Beat;
 use crate::gui::particles::Kind;
+use crate::theme::Theme;
 
 /// How far down the sheet the stickers' rows are centred, how much of
 /// its width and height they may take.
@@ -81,13 +82,13 @@ impl Places {
     }
 }
 
-/// A tier's sticker colour at `t` (a prismatic one's running through the
-/// rainbow a little, `i` its phase).
-fn star_color(tier: Option<Tier>, t: f64, i: usize) -> Rgb {
+/// A tier's sticker colour in `theme` at `t` (a prismatic one's running
+/// through the rainbow a little, `i` its phase).
+fn star_color(theme: &Theme, tier: Option<Tier>, t: f64, i: usize) -> Rgb {
     let Some(tier) = tier else {
         return PLAIN;
     };
-    let base = tier_color(Some(tier));
+    let base = tier_color(theme, Some(tier));
     if tier.spec().sticker.prismatic {
         let h = hue(t as f32 * 0.25 + i as f32 * 0.13);
         return [0, 1, 2].map(|k| base[k] + (h[k] - base[k]) * 0.35);
@@ -132,7 +133,7 @@ impl Stage {
                 Some(_) => (1.0, size),
             };
             let turn = (noise(i as u32 * 7 + 3) - 0.5) * 0.6;
-            let col = star_color(p.tier, t, i);
+            let col = star_color(self.theme, p.tier, t, i);
             let glow = (s * 0.7, rgba(col, halo * shows));
             let ink = rgba(col, plain * shows);
             d.out.push(sticker(c, (s * scale, turn), ink, glow, glint));
@@ -190,7 +191,7 @@ impl Stage {
             let cy = cy + row as f32 * px * 1.6;
             let mut left = room.at(0.5, 0.0).0 - total / 2.0;
             for (tier, text) in &words.tally[items] {
-                let col = star_color(Some(*tier), t, 0);
+                let col = star_color(self.theme, Some(*tier), t, 0);
                 let none = (0.0, [0.0; 4]);
                 let chip_at = (left + chip, cy);
                 d.out

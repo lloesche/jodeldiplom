@@ -38,6 +38,11 @@
 //! sheet has unrolled, its paper baked (the paper alone is its bake read).
 //! First, how long the device and the window's pipelines take to make.
 //!
+//! `--theme NAME`: the game in that theme ([`jodeldiplom::theme`]: its
+//! colours, its effects' looks, what it holds throughout and its grade
+//! over the backdrop; classic by default). The `all` scene's effects
+//! beyond Diva's row are in their own looks either way.
+//!
 //! `--budget MS`: exits with 1 (after printing it all) where any scene's
 //! worst frame took the GPU longer than that in all, or any step did;
 //! `--step-budget MS`: where any step's worst did. The diploma's frames
@@ -48,7 +53,7 @@
 //! ```text
 //! cargo run --release -p jodeldiplom --example frame_cost --
 //!     COVER.layers [--size WxH ...] [--density D] [--png OUT_DIR]
-//!     [--budget MS] [--step-budget MS]
+//!     [--budget MS] [--step-budget MS] [--theme NAME]
 //! ```
 
 use std::path::Path;
@@ -65,6 +70,7 @@ use jodeldiplom::gui::fx::{By, Effects, Fx, Music, Treat, Use};
 use jodeldiplom::gui::present::Offscreen;
 use jodeldiplom::gui::stage::{Song, Stage, Tint};
 use jodeldiplom::gui::stage_gpu::{kind, Instance, StageFrame};
+use jodeldiplom::theme::Theme;
 use jodeldiplom::view::karaoke::{KaraokePicture, ResultShown};
 
 #[path = "../tests/common/sung.rs"]
@@ -132,12 +138,13 @@ fn scenes() -> Vec<Scene> {
         .collect()
 }
 
-/// The effects Diva's row does not list, each at full strength, held and
-/// fired by a phrase: with Diva's own, every registered effect at once.
-fn the_rest() -> Effects {
+/// The effects Diva's row does not list nor `theme` holds, each at full
+/// strength, held and fired by a phrase: with Diva's own and the theme's,
+/// every registered effect at once.
+fn the_rest(theme: &Theme) -> Effects {
     let diva = &Tier::TOP.spec().fx;
     let rest: Vec<Use> = (Fx::ALL.into_iter())
-        .filter(|&fx| !diva.lists_fx(fx))
+        .filter(|&fx| !diva.lists_fx(fx) && !theme.holds(fx))
         .map(|fx| Use::of(fx, 1.0))
         .collect();
     let rest: &'static [Use] = Vec::leak(rest);
@@ -348,6 +355,8 @@ struct Rig<'a> {
     size: (u32, u32),
     /// Whether the stage draws the song's lane.
     lane: bool,
+    /// The game's theme.
+    theme: &'static Theme,
     /// Frames made so far.
     made: usize,
     /// When the last phrase seen ended.
@@ -382,12 +391,16 @@ impl Rig<'_> {
                 music: steady(now),
             },
         };
+        self.visualiser.grade(self.theme.grade);
         let backdrop = self.visualiser.step(&cue, (w, h), (1.0 / FPS) as f32);
         let picture = KaraokePicture {
             result,
             ..picture_at(self.sung, now, singing)
         };
-        let song = Song::new(singing, self.sung.to_vec(), Some(LENGTH));
+        let song = Song {
+            theme: self.theme,
+            ..Song::new(singing, self.sung.to_vec(), Some(LENGTH))
+        };
         let area = (0.0, 0.0, w as f32, h as f32);
         // As the window has it: the result screen while one shows, else
         // the lane (or the lyrics set in the middle) and the score.
@@ -629,6 +642,9 @@ fn main() {
     let density: f32 = after("--density").map_or(2.0, |d| d.parse().expect("D"));
     let ms = |flag: &str| after(flag).map(|m| m.parse::<f64>().expect("milliseconds"));
     let budgets = (ms("--budget"), ms("--step-budget"));
+    let theme = after("--theme").map_or(&jodeldiplom::theme::CLASSIC, |name| {
+        Theme::named(name).unwrap_or_else(|| panic!("no theme named {name:?}"))
+    });
     let bytes = std::fs::read(cover).expect("the layers");
     let layers = jodeldiplom::cover::from_bytes(&bytes)
         .expect("layers")
@@ -650,9 +666,12 @@ fn main() {
     let mut gpu = Offscreen::timed().expect("a GPU that times");
     let made = started.elapsed().as_secs_f64() * 1000.0;
     gpu.set_density(density);
-    println!("{}, {density} pixels to a point", gpu.name);
+    println!(
+        "{}, {density} pixels to a point, the {} theme",
+        gpu.name, theme.name
+    );
     println!("the device and the window's pipelines made in {made:.1} ms");
-    let rest = the_rest();
+    let rest = the_rest(theme);
     let mut worsts = Vec::new();
     for &(w, h) in &sizes {
         for scene in &scenes() {
@@ -673,6 +692,7 @@ fn main() {
                 sung: &sung,
                 size: (w, h),
                 lane: scene.lane,
+                theme,
                 made: 0,
                 phrase: None,
             };

@@ -1,6 +1,7 @@
 use super::*;
 use crate::core::shine::Shone;
 use crate::gui::fx::{Mod, Signal};
+use crate::theme::{CLASSIC, SPOOKY};
 use crate::tiers::Tier;
 
 fn step(tier: Option<Tier>, glow: Glow) -> Step {
@@ -27,19 +28,24 @@ fn a_held_strength_is_its_row_s_at_the_row_and_eases_between() {
     let mut board = Board::default();
     for fx in Fx::ALL {
         for (t, row) in Tier::ALL.into_iter().zip(&TIERS) {
-            let f = board.frame(&step(Some(t), held_at(row.glow)), &Music::NEUTRAL, 1.0);
+            let f = board.frame(
+                &CLASSIC,
+                &step(Some(t), held_at(row.glow)),
+                &Music::NEUTRAL,
+                1.0,
+            );
             let want = strength(row.fx.held, fx);
             let live = f.live(fx);
             assert_eq!(live.strength.to_bits(), want.to_bits(), "{fx:?} {t:?}");
             assert_eq!(live.aim.to_bits(), want.to_bits(), "{fx:?} {t:?}");
             assert_eq!(live.listed.to_bits(), want.to_bits(), "{fx:?} {t:?}");
         }
-        let none = board.frame(&step(None, held_at(0.0)), &Music::NEUTRAL, 1.0);
+        let none = board.frame(&CLASSIC, &step(None, held_at(0.0)), &Music::NEUTRAL, 1.0);
         assert_eq!(none.live(fx).strength, 0.0, "{fx:?}");
     }
     for (a, b) in TIERS.iter().zip(&TIERS[1..]) {
         let mid = (a.glow + b.glow) / 2.0;
-        let f = board.frame(&step(None, held_at(mid)), &Music::NEUTRAL, 1.0);
+        let f = board.frame(&CLASSIC, &step(None, held_at(mid)), &Music::NEUTRAL, 1.0);
         for fx in Fx::ALL {
             let want = (strength(a.fx.held, fx) + strength(b.fx.held, fx)) / 2.0;
             assert!(
@@ -75,7 +81,7 @@ fn the_lane_glow_ramps_between_the_rows_that_list_it() {
     let mut board = Board::default();
     for i in 0..=2000 {
         let k = i as f32 / 1600.0;
-        let f = board.frame(&step(None, held_at(k)), &Music::NEUTRAL, 1.0);
+        let f = board.frame(&CLASSIC, &step(None, held_at(k)), &Music::NEUTRAL, 1.0);
         let glow = before(k, from("Great"));
         assert_eq!(f.live(Fx::Glow).strength.to_bits(), glow.to_bits(), "{k}");
         for fx in [Fx::Flames, Fx::EdgeFire] {
@@ -99,7 +105,7 @@ fn the_fire_comes_with_the_rung_and_is_held_while_at_it() {
                 at_rung: rung,
                 ..step(None, held_at(k))
             };
-            let f = board.frame(&at, &Music::NEUTRAL, (3 * r + i) as f64);
+            let f = board.frame(&CLASSIC, &at, &Music::NEUTRAL, (3 * r + i) as f64);
             assert_eq!(f.live(Fx::Flames).strength, want(flames), "{rung:?} {k}");
             assert_eq!(f.live(Fx::EdgeFire).strength, want(edges), "{rung:?} {k}");
         }
@@ -123,7 +129,7 @@ fn the_rainbow_is_as_strong_as_the_row_its_glow_eases_by() {
         since: 1.0,
     };
     for (g, clock) in [(rising, 1.05), (lost, 1.4)] {
-        let f = board.frame(&step(None, g), &Music::NEUTRAL, clock);
+        let f = board.frame(&CLASSIC, &step(None, g), &Music::NEUTRAL, clock);
         let live = f.live(Fx::Rainbow);
         assert!(live.strength < 1.0, "{live:?}");
         assert_eq!(live.listed, 1.0);
@@ -148,17 +154,27 @@ fn a_phrase_fires_its_row_s_effects_once() {
         ups: 4,
         ..step(Some(Tier::TOP), held_at(1.0))
     };
-    let f = board.frame(&diva, &Music::NEUTRAL, 2.0);
+    let f = board.frame(&CLASSIC, &diva, &Music::NEUTRAL, 2.0);
     for fx in [Fx::Jackpot, Fx::StepUp] {
         let live = f.live(fx);
         assert!(live.fired && live.strength == 1.0, "{fx:?} {live:?}");
     }
     assert_eq!(f.live(Fx::StepUp).rose, 4);
     assert!(!f.live(Fx::Angels).fired);
-    let next = board.frame(&step(Some(Tier::TOP), held_at(1.0)), &Music::NEUTRAL, 2.02);
+    let next = board.frame(
+        &CLASSIC,
+        &step(Some(Tier::TOP), held_at(1.0)),
+        &Music::NEUTRAL,
+        2.02,
+    );
     assert!(Fx::ALL.iter().all(|&fx| !next.live(fx).fired));
     assert_eq!(next.live(Fx::StepUp).rose, 0);
-    let sought = board.frame(&step(Some(Tier::TOP), held_at(1.0)), &Music::NEUTRAL, 1.0);
+    let sought = board.frame(
+        &CLASSIC,
+        &step(Some(Tier::TOP), held_at(1.0)),
+        &Music::NEUTRAL,
+        1.0,
+    );
     assert!(Fx::ALL.iter().all(|&fx| !sought.live(fx).fired));
 }
 
@@ -263,4 +279,22 @@ fn the_music_moves_what_a_row_lists() {
     assert!((live.strength - 1.2).abs() < 1e-6, "{live:?}");
     let look = moved.looks().0[Fx::Bulbs.index()];
     assert!((look[1] - (Fx::Bulbs.spec().params[1] + 0.5)).abs() < 1e-6);
+}
+
+/// A theme's looks are the frame's, and what it holds throughout is held
+/// whatever the singing (at no tier too); the classic theme holds nothing.
+#[test]
+fn a_theme_holds_its_own_throughout() {
+    let mut board = Board::default();
+    let none = step(None, held_at(0.0));
+    let f = board.frame(&SPOOKY, &none, &Music::NEUTRAL, 1.0);
+    assert_eq!(f.looks(), SPOOKY.looks());
+    assert!(!SPOOKY.always.is_empty());
+    for u in SPOOKY.always {
+        let live = f.live(u.fx);
+        assert_eq!((live.strength, live.aim), (u.strength, u.strength));
+    }
+    let f = board.frame(&CLASSIC, &none, &Music::NEUTRAL, 1.1);
+    assert_eq!(f.looks(), Looks::SPECS);
+    assert!(Fx::ALL.iter().all(|&fx| f.live(fx).strength == 0.0));
 }

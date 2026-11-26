@@ -979,6 +979,24 @@ at its rung; a row can have an effect move with the music (its beat and
 bars, the stems' levels, the pitches). The line sung frosted is made too
 and no row lists it: the jackpot only heats up.
 Where the song's beat grid is unsure they run freely, off the beat.
+
+The game comes in a **theme** (`karaoke_theme` in the settings file:
+`"classic"`, the default, or `"spooky"`; `theme.rs`). A theme overrides
+by key what the tiers and their effects look like and what the sounds
+are made of, and may hold effects throughout and grade the backdrop:
+the tiers' colours (their badge, verdict, marks and stickers), the
+count-in's colour, an effect's look, the synth's patch for one of the
+sounds' atoms. Classic is the game as made. **Spooky** is its
+Halloween: the tiers in slime green, pumpkin, witch's purple, a ghostly
+mint and moonlight; the fire green (the screen's edges, the lane's
+flames, the line sung); the marquee's bulbs jack-o'-lanterns grinning,
+their candles lit as the chase runs; the coins candy, each shower a
+sweet's colour; ghosts drifting down where the angels would; the
+backdrop graded cold, and fog creeping in at the edges, where now and
+then a pair of eyes opens and blinks. The pops bubble like a cauldron
+over a skeleton's xylophone, the clinks are sweets in a jar, the chimes
+toll as bells, the choir wails a ghost's "ooh", and a streak lost slides
+down like a theremin.
 The light blooms (the GPU draws it
 apart, at high range, blurs it and tone maps it over the frame). Along the bottom the song's progress shows
 each phrase sung in its tier's colour, a mark a phrase popping as its

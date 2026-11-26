@@ -283,10 +283,11 @@ Diva, the diploma) to 0.28 / 0.34 / 1.85 ms. The effects library
 treatment, each with only that effect's code (and the helpers the
 effects share, `fx_heat` and the rest, once in it). The window makes the
 pipelines of the groups the tiers' rows use as it opens (`Group::used`:
-14 of the 15, the stage's own 6, the baked paper's among them, the
+15 of the 16, the stage's own 6, the baked paper's among them, the
 shapes of the rainbow, the lane's glow, its flames, the edges on fire,
-the bulbs and the word slam, and the treatments of the rainbow and the
-lyrics on fire; and the one baking the paper, below), another effect's
+the bulbs and the word slam, the fog a theme holds, and the treatments
+of the rainbow and the lyrics on fire; and the one baking the paper,
+below), another effect's
 the first time it draws (only the lyrics frosted, which no row lists);
 the light (what blooms) only the groups light can be (the plain shapes,
 the lane's glow, its flames and the slammed word): 4. Made the first
@@ -368,6 +369,25 @@ them, which draws no fire) are single frames in one run and not the
 other, in steps that draw no fire as often as in those that do (Great's
 bloom 5.6 ms in one run, 0.8 in the other; the light 6.7 and 0.9 with
 every effect): the machine's, as the diploma's spike above.
+
+**Themes.** A theme (`theme.rs`) costs the GPU nothing of its own but
+what it holds and grades. Its looks are the effects' look numbers the
+shaders read anyway (the pumpkins, the green fire and the ghosts are
+the same pipelines, mixed by a look); the backdrop's grade is a few
+operations a pixel in the backdrop's own shader, nothing at all in the
+classic theme (its amount 0: classic's `frame_cost` pictures are byte
+for byte as before, and so are its sounds). The fog Spooky holds is a
+screen pass in four strips along the edges (0.36 of the screen at
+3024 × 1964 with no music, deeper as it breathes), two octaves of noise
+and a lattice cell for its eyes a pixel, nothing past its reach. On the
+RTX 5080 (`frame_cost`, 3024 × 1964, classic then Spooky one after the
+other, the machine shared with other agents' builds) the `fx` step's
+median went from 0.085 to 0.115 ms in the normal scene (the fog alone)
+and stayed within the machine's noise at the tiers (Diva 0.294 classic,
+0.280 Spooky); the GPU total's medians were 1.0–3.5 ms in both. Both
+runs had single frames over the budgets, in steps that draw no fog
+(the lyrics scene's bursts and composite, a tier's bloom), as often in
+classic as in Spooky: the machine's.
 
 **The diploma's paper, baked.** `frame_cost` on the M4 Max (Metal,
 3024 × 1964, two runs) had every scene within its budget but the

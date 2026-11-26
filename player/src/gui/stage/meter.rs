@@ -28,6 +28,7 @@ use crate::gui::particles::Spray;
 use crate::gui::rainbow::Glow;
 use crate::gui::stage_gpu::{kind, Instance};
 use crate::gui::streak::Step;
+use crate::theme::Theme;
 
 /// How long a tier's name shows under the meter, in seconds.
 const VERDICT: f32 = 1.8;
@@ -39,10 +40,10 @@ const NONE: [f32; 3] = [0.55, 0.6, 0.7];
 /// How large the mark of a phrase with no tier is, in the bar's heights.
 const NONE_MARK: f32 = 1.8;
 
-/// A tier's colour (sRGB; [`crate::tiers::TierSpec::color`]); none's a
-/// cool grey.
-pub fn tier_color(tier: Option<Tier>) -> [f32; 3] {
-    tier.map_or(NONE, |t| t.spec().color)
+/// A tier's colour in `theme` (sRGB; [`crate::theme::Theme::color`]);
+/// none's a cool grey.
+pub fn tier_color(theme: &Theme, tier: Option<Tier>) -> [f32; 3] {
+    tier.map_or(NONE, |t| theme.color(t))
 }
 
 /// The meter between frames: where its fill springs from and to, and
@@ -309,7 +310,7 @@ impl Stage {
         let tw = self.measure(Face::SHOUT, &label, px);
         // Over the meter, its middle on the meter's.
         let ty = my - self.cap_middle(Face::SHOUT, px) + super::COVER_PAD as f32;
-        let c = tier_color(Some(tier));
+        let c = tier_color(effects.theme, Some(tier));
         // On a badge of its own over the meter, ringed in the tier's colour,
         // over the light (its bloom would wash it out); both popping round
         // the meter's middle and fading as the shader times them
@@ -422,7 +423,7 @@ impl Stage {
                 continue;
             };
             let (xa, xb) = (bx(first.start), bx(last.end));
-            let c = tier_color(p.tier);
+            let c = tier_color(effects.theme, p.tier);
             d.out.push(bar(
                 ((xa + xb) / 2.0, by),
                 (((xb - xa) / 2.0).max(bh), bh * 1.15),

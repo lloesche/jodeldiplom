@@ -19,7 +19,8 @@
 //!
 //! They surge with the music ([`surge`]): taller and hotter on a bar's
 //! first beat, a pulse on each beat, as sure as the beat grid is; its look
-//! (`x`, [`Spec::params`]) how much (1 as made, 0 not at all).
+//! ([`Spec::params`]): `x` how much (1 as made, 0 not at all), `z` 0
+//! classic orange to 1 a ghostly green.
 //!
 //! [`flames_at`] is the shader's reference ([`wgsl`]), held to it on the
 //! GPU ([`REFERENCE`]).
@@ -160,14 +161,14 @@ pub fn surge(m: &Music, p: [f32; 4]) -> (f32, f32) {
 /// as the marquee shows, from round its bulbs (dying away on the lane's
 /// side of their row) and taller between them, as tall and as hot as they
 /// surge, fading out before the line they may reach and at the span's
-/// ends.
+/// ends; `ghost` of the way to a ghostly green (their look's `z`).
 pub fn flames_at(
     p: (f32, f32),
     shape: [f32; 4],
     params: [f32; 4],
     color: [f32; 4],
     color2: [f32; 4],
-    time: f32,
+    (time, ghost): (f32, f32),
 ) -> [f32; 3] {
     let [x0, root, x1, outward] = shape;
     let [_, high, k, limit] = params;
@@ -191,7 +192,7 @@ pub fn flames_at(
     let keep = (1.0 - smoothstep(FADE.0 * room, FADE.1 * room, out))
         * smoothstep(-GONE_BEHIND * h, 0.0, out);
     let heat = fire(p.0 / h, d / (h * grow * tall), time) * (1.0 + hot) * HEAT;
-    fire_light(heat, 0.0).map(|c| c * k * along * keep)
+    fire_light(heat, ghost).map(|c| c * k * along * keep)
 }
 
 /// [`flames_at`] in WGSL and its shapes (`flames_shape`), for the stage's
@@ -204,7 +205,7 @@ pub fn wgsl() -> String {
 }
 
 const SHADER: &str = r"
-fn flames_at(p: vec2<f32>, shape: vec4<f32>, params: vec4<f32>, color: vec4<f32>, color2: vec4<f32>, time: f32) -> vec3<f32> {
+fn flames_at(p: vec2<f32>, shape: vec4<f32>, params: vec4<f32>, color: vec4<f32>, color2: vec4<f32>, time: f32, ghost: f32) -> vec3<f32> {
     let h = max(params.y, 1.0);
     let out = (p.y - shape.y) * shape.w;
     let room = (params.w - shape.y) * shape.w;
@@ -223,11 +224,11 @@ fn flames_at(p: vec2<f32>, shape: vec4<f32>, params: vec4<f32>, color: vec4<f32>
     let keep = (1.0 - smoothstep(FLAMES_FADE.x * room, FLAMES_FADE.y * room, out))
         * smoothstep(-FLAMES_GONE_BEHIND * h, 0.0, out);
     let heat = fx_fire(p.x / h, d / (h * color.x * tall), time) * (1.0 + color.y) * FLAMES_HEAT;
-    return fx_fire_light(heat, 0.0) * (params.z * along * keep);
+    return fx_fire_light(heat, ghost) * (params.z * along * keep);
 }
 
 fn flames_shape(o: Out, p: vec2<f32>, k: u32) -> vec4<f32> {
-    let l = flames_at(p, o.shape, o.params, o.color, o.color2, screen.time);
+    let l = flames_at(p, o.shape, o.params, o.color, o.color2, screen.time, looks[FX_FLAMES].z);
     return vec4<f32>(out_rgb(l), 0.0);
 }
 ";
@@ -250,7 +251,7 @@ pub const REFERENCE: Reference = Reference {
                     100.0 + fr(0.19) * 1000.0,
                     root + outward * (fr(0.31) * 1.8 - 0.4) * high,
                     3.0 + fr(0.37) * 4.0,
-                    0.0,
+                    [0.0, 1.0, 0.5, 0.0][k % 4],
                 ];
                 let grow = 1.0 + fr(0.71) * FLARE;
                 [
@@ -267,9 +268,9 @@ pub const REFERENCE: Reference = Reference {
     outs: 1,
     body: "
     let s = ins[i * 5u];
-    outs[i] = vec4<f32>(flames_at(s.xy, ins[i * 5u + 1u], ins[i * 5u + 2u], ins[i * 5u + 3u], ins[i * 5u + 4u], s.z), 0.0);",
+    outs[i] = vec4<f32>(flames_at(s.xy, ins[i * 5u + 1u], ins[i * 5u + 2u], ins[i * 5u + 3u], ins[i * 5u + 4u], s.z, s.w), 0.0);",
     cpu: |s| {
-        let [r, g, b] = flames_at((s[0][0], s[0][1]), s[1], s[2], s[3], s[4], s[0][2]);
+        let [r, g, b] = flames_at((s[0][0], s[0][1]), s[1], s[2], s[3], s[4], (s[0][2], s[0][3]));
         vec![[r, g, b, 0.0]]
     },
     near: (3e-3, 3e-3),
@@ -291,7 +292,7 @@ mod tests {
             [BLAZE, 60.0, 1.0, 160.0],
             [grow, hot, marquee, 12.0],
             [96.0, 44.0, 290.0, 23.0],
-            time,
+            (time, 0.0),
         )
     }
 

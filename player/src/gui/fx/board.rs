@@ -8,11 +8,16 @@
 //! holds its `at_rung` (eased in and out as the glow is). The music moves
 //! what a row holds by its [`super::Mod`]s ([`Music::get`]): its strength
 //! and its look ([`Looks`], which the shaders read every frame).
+//!
+//! All of it in a theme ([`Theme`]): the looks start from the theme's,
+//! and what the theme holds throughout is held at its strength whatever
+//! the singing.
 
 use super::music::Music;
 use super::{strength, At, By, Effects, Fx, Looks, Out, Param, Slot, Use};
 use crate::gui::rainbow::Glow;
 use crate::gui::streak::Step;
+use crate::theme::Theme;
 use crate::tiers::{held_through, Tier, TIERS};
 
 /// Every effect's strength in a frame, and what goes with it: the
@@ -20,7 +25,7 @@ use crate::tiers::{held_through, Tier, TIERS};
 /// fired), the strength it is going to (its aim), the strength its rows
 /// list where the glow comes from or goes to, the more (what it is eased
 /// within), what fired this frame (and how many tiers the phrase rose),
-/// the looks, and the music.
+/// the looks, the music, and the theme.
 #[derive(Clone, Copy, Debug)]
 pub struct Frame {
     /// The singing's clock.
@@ -36,13 +41,15 @@ pub struct Frame {
     looks: Looks,
     /// The music.
     pub music: Music,
+    /// The theme.
+    pub theme: &'static Theme,
 }
 
 /// An effect in a frame, as it draws: the singing's clock, its strength
 /// now (as it fired, if it did), the strength it is going to, the strength
 /// its rows list for the glow's change, whether it fired this frame (and
-/// what fired it), the tiers the phrase rose, the singing's glow, the music
-/// and its look.
+/// what fired it), the tiers the phrase rose, the singing's glow, the music,
+/// its look and the theme.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Live {
     /// The singing's clock.
@@ -67,6 +74,8 @@ pub struct Live {
     pub music: Music,
     /// Its look, as the music moved it.
     pub look: [f32; 4],
+    /// The theme.
+    pub theme: &'static Theme,
 }
 
 impl Frame {
@@ -84,6 +93,7 @@ impl Frame {
             glow: self.glow,
             music: self.music,
             look: self.looks.0[i],
+            theme: self.theme,
         }
     }
 
@@ -103,23 +113,33 @@ impl Frame {
 }
 
 /// What the effects keep between frames: each its own [`Slot`], the
-/// strength each is held at by the rung (eased), and the rung.
+/// strength each is held at by the rung (eased), the rung, and the theme
+/// they are in.
 #[derive(Clone, Debug, Default)]
 pub struct Board {
     slots: [Slot; Fx::COUNT],
     rungs: [Glow; Fx::COUNT],
     rung: Option<Tier>,
+    theme: &'static Theme,
 }
 
 impl Board {
-    /// The frame of the singing's `step` by the tiers' rows, the `music`
-    /// at `clock` (the singing's time).
-    pub fn frame(&mut self, step: &Step, music: &Music, clock: f64) -> Frame {
+    /// The frame of the singing's `step` by the tiers' rows in `theme`, the
+    /// `music` at `clock` (the singing's time).
+    pub fn frame(
+        &mut self,
+        theme: &'static Theme,
+        step: &Step,
+        music: &Music,
+        clock: f64,
+    ) -> Frame {
+        self.theme = theme;
         self.frame_of(TIERS.iter().map(|t| (t.glow, &t.fx)), step, music, clock)
     }
 
     /// The frame of `step` by `rows` (each a glow and its effects, Good
-    /// first), the `music` at `clock`. Sought back before what an effect
+    /// first) in the theme last given ([`Board::frame`]; classic to begin
+    /// with), the `music` at `clock`. Sought back before what an effect
     /// keeps, it is as long ago as can be; the rung changed, its effects
     /// ease to the new rung's (a rung reached or lost) or snap there (no
     /// moment with it: a seek).
@@ -170,8 +190,9 @@ impl Board {
             fired: [false; Fx::COUNT],
             by: [None; Fx::COUNT],
             rose: 0,
-            looks: Looks::SPECS,
+            looks: self.theme.looks(),
             music: *music,
+            theme: self.theme,
         };
         let peak = step.glow.level.max(step.glow.from);
         for fx in Fx::ALL {
@@ -183,6 +204,12 @@ impl Board {
             frame.now[i] = held(k).max(rung.at(t).0);
             frame.aim[i] = held(step.glow.level).max(rung.level);
             frame.listed[i] = held(peak).max(rung.level.max(rung.from));
+        }
+        for u in self.theme.always {
+            let i = u.fx.index();
+            frame.now[i] = frame.now[i].max(u.strength);
+            frame.aim[i] = frame.aim[i].max(u.strength);
+            frame.listed[i] = frame.listed[i].max(u.strength);
         }
         let mut fired: Vec<(&Use, By)> = Vec::new();
         if let Some(t) = step.phrase.and_then(|p| p.tier) {
@@ -203,7 +230,8 @@ impl Board {
             frame.now[i] = frame.now[i].max(u.strength);
         }
         let held = row(step.tier).map(|r| r.held).into_iter();
-        for u in held.chain(row(self.rung).map(|r| r.at_rung)).flatten() {
+        let at_rung = row(self.rung).map(|r| r.at_rung);
+        for u in (held.chain(at_rung).flatten()).chain(self.theme.always) {
             modulate(&mut frame, u, false);
         }
         for (u, _) in fired {

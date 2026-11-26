@@ -61,7 +61,7 @@ fn conducting_allocates_nothing() {
         beats,
         ..Analysis::default()
     };
-    let (mut c, mut synth) = Conductor::new(RATE);
+    let (mut c, mut synth) = Conductor::new(RATE, &jodeldiplom::theme::CLASSIC);
     let mut out = vec![0.0f32; 2 * 480];
     COUNTING.with(|on| on.set(true));
     // The count counts.

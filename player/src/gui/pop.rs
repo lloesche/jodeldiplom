@@ -254,8 +254,8 @@ pub fn scored((x, y): (f32, f32), px: f32, clock: f64, pps: f32, end: f64) -> Sp
 
 impl<'a> super::stage::Song<'a> {
     /// The song of `singing` (its `sung` lines, `length` long) with the
-    /// game on and the voice taken as it comes (no delay): for a stage
-    /// made outside the player.
+    /// game on, the voice taken as it comes (no delay) and the classic
+    /// theme: for a stage made outside the player.
     pub fn new(
         singing: &'a Singing,
         sung: Vec<&'a jodel_lyrics::Line>,
@@ -269,6 +269,7 @@ impl<'a> super::stage::Song<'a> {
             late: 0.0,
             demo: false,
             heard: None,
+            theme: &crate::theme::CLASSIC,
         }
     }
 }

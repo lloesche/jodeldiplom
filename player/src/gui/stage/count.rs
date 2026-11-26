@@ -11,7 +11,6 @@ use super::super::stage_gpu::Instance;
 use super::score::rgba8;
 use super::{Lane, Stage};
 use crate::view::karaoke::KaraokePicture;
-use crate::view::palette;
 
 /// How large the count-in's number is at most, a share of the screen's
 /// height; the cue's.
@@ -83,7 +82,7 @@ impl Stage {
         let Some(c) = placed(shout, picture, area, area.3, |_, most| most.round()) else {
             return;
         };
-        let accent = rgba8(palette::ACCENT, c.alpha);
+        let accent = rgba8(self.theme.accent(), c.alpha);
         let number = (Face::SHOUT, c.text.as_str());
         let split = f32::INFINITY;
         self.set_text(out, number, (c.base, c.px), c.at, split, (accent, accent));

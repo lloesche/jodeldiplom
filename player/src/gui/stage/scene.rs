@@ -30,6 +30,7 @@ impl Stage {
         tint: &Tint,
     ) -> Option<StageFrame> {
         self.targets.clear();
+        self.theme = song.theme;
         // What lies under the lane (as the pixmap did): the lines set in
         // the middle, the count-in, the score; over it, the bubbles of
         // the lines set in the middle.

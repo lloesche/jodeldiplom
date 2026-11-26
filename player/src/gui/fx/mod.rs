@@ -16,7 +16,7 @@
 //! - **Screen passes,** shapes over the finished frame (in the window
 //!   pass's "fx" step), given the lyric band to keep mostly clear and the
 //!   score's corner, the multiplier's badge and the meter to keep clear
-//!   ([`Clear`]): the edges on fire, the marquee bulbs.
+//!   ([`Clear`]): the edges on fire, the marquee bulbs, the fog.
 //! - **Lyric treatments,** a function of a lyric's colour and coverage at
 //!   a pixel of its text (`lyric_<ident>`), each its own pipeline
 //!   ([`super::stage_gpu::Group::Lyric`]), on the shouts (the multiplier,
@@ -45,6 +45,7 @@ pub mod bulbs;
 pub mod coins;
 pub mod edge_fire;
 pub mod flames;
+pub mod fog;
 pub mod glow;
 mod helpers;
 pub mod jackpot;
@@ -88,7 +89,7 @@ macro_rules! registry {
 }
 
 // The order within a slot: the lane's glow before its flames keeps the
-// light's order.
+// light's order; the fog under the fire and the bulbs.
 registry! {
     Rainbow => rainbow::SPEC,
     StepUp => step_up::SPEC,
@@ -96,6 +97,7 @@ registry! {
     Glow => glow::SPEC,
     Flames => flames::SPEC,
     Angels => angels::SPEC,
+    Fog => fog::SPEC,
     EdgeFire => edge_fire::SPEC,
     Bulbs => bulbs::SPEC,
     LyricFire => lyric_fire::SPEC,
@@ -630,7 +632,7 @@ pub struct Reference {
     pub least: usize,
 }
 
-/// An effect: its name (as frame_cost and a theme call it), its WGSL
+/// An effect: its name (as frame_cost calls it), its WGSL
 /// prefix (`<ident>_shape`, `lyric_<ident>`, `FX_<IDENT>`), the slots it
 /// draws in and how ([`Spec::draw`]: with its strength and look this frame,
 /// its own keeping, into the slot's shapes or bursts), its shapes' kinds'

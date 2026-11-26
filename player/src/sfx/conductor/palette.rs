@@ -24,19 +24,20 @@ use jodel_synth::patch::{Adsr, Glide, Lfo, LfoRate, Spread};
 use jodel_synth::{Bank, Patch, PatchId};
 
 use crate::core::singing::{STAMP_DOWN, UNROLL};
+use crate::theme::Theme;
 
 /// The atoms, and all of them in their order.
 macro_rules! atoms {
     ($($name:ident,)*) => {
         /// What a sound is made of: one patch each ([`patch`]).
         #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-        pub(super) enum Atom {
-            $($name,)*
+        pub enum Atom {
+            $(#[doc = concat!("`", stringify!($name), "`: its patch says what it is ([`patch`]).")] $name,)*
         }
 
         impl Atom {
             /// Every atom, in its order.
-            pub(super) const ALL: [Atom; [$(Atom::$name),*].len()] = [$(Atom::$name),*];
+            pub const ALL: [Atom; [$(Atom::$name),*].len()] = [$(Atom::$name),*];
         }
     };
 }
@@ -207,8 +208,8 @@ const fn struck(decay: f32, release: f32) -> Adsr {
     }
 }
 
-/// An atom's patch.
-pub(super) const fn patch(a: Atom) -> Patch {
+/// An atom's patch, as made (a theme may swap it: [`crate::theme::Theme::patch`]).
+pub const fn patch(a: Atom) -> Patch {
     match a {
         // The bubble's pop: a sine flicking up into its note, gone in a
         // tenth of a second.
@@ -621,10 +622,10 @@ pub(super) const fn patch(a: Atom) -> Patch {
 pub(super) struct Palette([PatchId; Atom::ALL.len()]);
 
 impl Palette {
-    /// The bank of every atom's patch, and where each is in it.
-    pub(super) fn bank() -> (Bank, Palette) {
+    /// The bank of every atom's patch in `theme`, and where each is in it.
+    pub(super) fn bank(theme: &Theme) -> (Bank, Palette) {
         let mut bank = Bank::new();
-        let ids = Atom::ALL.map(|a| bank.add(patch(a)));
+        let ids = Atom::ALL.map(|a| bank.add(theme.patch(a)));
         (bank, Palette(ids))
     }
 }

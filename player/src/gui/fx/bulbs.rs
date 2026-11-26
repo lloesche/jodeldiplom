@@ -16,7 +16,8 @@
 //! GPU ([`REFERENCE`]). The colours are the stage's (sRGB, as the frame
 //! takes them through `out_rgb`), premultiplied, for drawing over. Its
 //! look ([`Spec::params`], `p`): `x` its palette (0 classic gold to 1
-//! spooky orange), `y` the chase's speed (1 as made), `z` how much it
+//! spooky: each bulb a jack-o'-lantern, [`jack`], its stalk on top, in a
+//! purple socket), `y` the chase's speed (1 as made), `z` how much it
 //! keeps to the beat (1 as made, 0 not at all). It is drawn only in strips
 //! along the row ([`strips`]).
 //!
@@ -156,6 +157,14 @@ const SPOOKY: Palette = Palette {
     rim: [0.5, 0.22, 0.6],
 };
 
+/// A jack-o'-lantern's skin, its candle lit and out, unlit and lit, and
+/// its stalk.
+const SKIN_DARK: [f32; 3] = [0.36, 0.13, 0.02];
+const SKIN: [f32; 3] = [1.0, 0.5, 0.06];
+const EMBERS: [f32; 3] = [0.12, 0.04, 0.0];
+const CANDLE: [f32; 3] = [1.0, 0.92, 0.5];
+const STALK: [f32; 3] = [0.28, 0.42, 0.12];
+
 /// The highest any bulb round `lane` (left, top, right, bottom) in a
 /// screen of `size` lights: its top row's middle less its glow's reach
 /// (the lane's top where it has no bulbs). What is over the lane keeps
@@ -274,10 +283,44 @@ pub fn lit_at(k: i32, time: f32, flash: f32, p: [f32; 4], m: &Music) -> f32 {
     free + (on - free) * lock
 }
 
+/// A jack-o'-lantern of radius `r` at `q` from its middle, its candle
+/// `lit` (0 to 1): its skin ribbed and darker to its rim, its face carved
+/// (two eyes and a nose, triangles pointing up, and a grin) glowing as its
+/// candle burns.
+pub fn jack(q: (f32, f32), r: f32, lit: f32) -> [f32; 3] {
+    let u = (q.0 / r, q.1 / r);
+    let rib = 0.5 + 0.5 * (u.0 * 5.5).cos();
+    let shade = (0.72 + 0.28 * rib) * (1.0 - 0.35 * smoothstep(0.3, 1.0, u.0.hypot(u.1)));
+    let skin = mix3(SKIN_DARK, SKIN, 0.35 + 0.65 * lit).map(|c| c * shade);
+    let tri = |cx: f32, cy: f32, k: f32| {
+        let (x, y) = (u.0 - cx, u.1 - cy);
+        y.max(0.866 * x.abs() - 0.5 * y) - k
+    };
+    let grin = ((u.0.hypot(u.1 + 0.55) - 0.85).abs() - 0.12).max(u.0.abs() - 0.6);
+    let face = (tri(-0.36, -0.18, 0.1).min(tri(0.36, -0.18, 0.1)))
+        .min(tri(0.0, 0.08, 0.055))
+        .min(grin);
+    let carved = (0.5 - face * r).clamp(0.0, 1.0);
+    mix3(skin, mix3(EMBERS, CANDLE, lit), carved)
+}
+
+/// How much of a jack-o'-lantern's stalk (radius `r`) covers `q` from its
+/// middle: a short stub leaning out of its top.
+fn stalk(q: (f32, f32), r: f32) -> f32 {
+    let d = crate::gui::rainbow::round_box((q.0 / r - 0.06, q.1 / r + 1.18), (0.1, 0.17), 0.05);
+    (0.5 - d * r).clamp(0.0, 1.0)
+}
+
 /// A bulb of radius `r`, `glowing` (lit, its glow overdriven past 1), at
-/// `q` from its middle: what it puts over the frame (premultiplied) and
-/// its glow added.
-fn bulb(q: (f32, f32), r: f32, glowing: f32, pal: &Palette) -> ([f32; 4], [f32; 3]) {
+/// `q` from its middle, `pumpkin` of the way to a jack-o'-lantern
+/// ([`jack`], its stalk on top): what it puts over the frame
+/// (premultiplied) and its glow added.
+fn bulb(
+    q: (f32, f32),
+    r: f32,
+    (glowing, pumpkin): (f32, f32),
+    pal: &Palette,
+) -> ([f32; 4], [f32; 3]) {
     let lit = glowing.min(1.0);
     let dd = q.0.hypot(q.1);
     let sock = (r * 1.22 - dd + 0.5).clamp(0.0, 1.0);
@@ -289,12 +332,20 @@ fn bulb(q: (f32, f32), r: f32, glowing: f32, pal: &Palette) -> ([f32; 4], [f32; 
     let (hx, hy) = (q.0 + 0.35 * r, q.1 + 0.4 * r);
     let spec = (-(hx * hx + hy * hy) / (r * r * 0.03)).exp() * 0.55;
     let col = mix3(pal.off, on, lit).map(|c| c + spec);
+    let col = mix3(col, jack(q, r, lit).map(|c| c + spec * 0.6), pumpkin);
     let under = mix3(pal.socket, pal.rim, rim);
     let over = [
         col[0] * glass + under[0] * sock * (1.0 - glass),
         col[1] * glass + under[1] * sock * (1.0 - glass),
         col[2] * glass + under[2] * sock * (1.0 - glass),
         glass + sock * (1.0 - glass),
+    ];
+    let st = stalk(q, r) * pumpkin;
+    let over = [
+        STALK[0] * st + over[0] * (1.0 - st),
+        STALK[1] * st + over[1] * (1.0 - st),
+        STALK[2] * st + over[2] * (1.0 - st),
+        st + over[3] * (1.0 - st),
     ];
     let x = (dd - r * 0.5).max(0.0) / (r * 1.3);
     let fade = (1.0 - dd / (r * REACH)).clamp(0.0, 1.0);
@@ -381,7 +432,7 @@ pub fn bulbs(
         let (o, g) = bulb(
             (px.0 - at.0, px.1 - at.1),
             r,
-            lit_at(k, time, flash, p, m),
+            (lit_at(k, time, flash, p, m), t),
             &pal,
         );
         for i in 0..4 {
@@ -427,9 +478,13 @@ const BULBS_DIP: f32 = {DIP:?};
 const BULBS_OVERDRIVE: f32 = {OVERDRIVE:?};
 const BULBS_CLASSIC = array<vec3<f32>, 5>({});
 const BULBS_SPOOKY = array<vec3<f32>, 5>({});
+const BULBS_JACK = array<vec3<f32>, 5>({});
 {SHADER}",
         pal(&CLASSIC),
-        pal(&SPOOKY)
+        pal(&SPOOKY),
+        [SKIN_DARK, SKIN, EMBERS, CANDLE, STALK]
+            .map(|c| format!("vec3<f32>({:?}, {:?}, {:?})", c[0], c[1], c[2]))
+            .join(", ")
     )
 }
 
@@ -487,7 +542,31 @@ struct BulbsLight {
     glow: vec3<f32>,
 };
 
-fn bulbs_one(q: vec2<f32>, r: f32, glowing: f32, pal: array<vec3<f32>, 5>) -> BulbsLight {
+fn bulbs_tri(u: vec2<f32>, c: vec2<f32>, k: f32) -> f32 {
+    let v = u - c;
+    return max(v.y, 0.866 * abs(v.x) - 0.5 * v.y) - k;
+}
+
+fn bulbs_jack(q: vec2<f32>, r: f32, lit: f32) -> vec3<f32> {
+    let u = q / r;
+    let rib = 0.5 + 0.5 * cos(u.x * 5.5);
+    let shade = (0.72 + 0.28 * rib) * (1.0 - 0.35 * smoothstep(0.3, 1.0, length(u)));
+    let skin = mix(BULBS_JACK[0], BULBS_JACK[1], 0.35 + 0.65 * lit) * shade;
+    let grin = max(abs(length(vec2<f32>(u.x, u.y + 0.55)) - 0.85) - 0.12, abs(u.x) - 0.6);
+    let face = min(
+        min(min(bulbs_tri(u, vec2<f32>(-0.36, -0.18), 0.1), bulbs_tri(u, vec2<f32>(0.36, -0.18), 0.1)), bulbs_tri(u, vec2<f32>(0.0, 0.08), 0.055)),
+        grin,
+    );
+    let carved = clamp(0.5 - face * r, 0.0, 1.0);
+    return mix(skin, mix(BULBS_JACK[2], BULBS_JACK[3], lit), carved);
+}
+
+fn bulbs_stalk(q: vec2<f32>, r: f32) -> f32 {
+    let d = round_box(q / r - vec2<f32>(0.06, -1.18), vec2<f32>(0.1, 0.17), 0.05);
+    return clamp(0.5 - d * r, 0.0, 1.0);
+}
+
+fn bulbs_one(q: vec2<f32>, r: f32, glowing: f32, pumpkin: f32, pal: array<vec3<f32>, 5>) -> BulbsLight {
     var o: BulbsLight;
     let lit = min(glowing, 1.0);
     let dd = length(q);
@@ -499,9 +578,12 @@ fn bulbs_one(q: vec2<f32>, r: f32, glowing: f32, pal: array<vec3<f32>, 5>) -> Bu
     let on = mix(deep, vec3<f32>(1.0), core * 0.9 * lit);
     let hl = q + vec2<f32>(0.35 * r, 0.4 * r);
     let spec = exp(-dot(hl, hl) / (r * r * 0.03)) * 0.55;
-    let col = mix(pal[2], on, lit) + vec3<f32>(spec);
+    let classic = mix(pal[2], on, lit) + vec3<f32>(spec);
+    let col = mix(classic, bulbs_jack(q, r, lit) + vec3<f32>(spec * 0.6), pumpkin);
     let under = mix(pal[3], pal[4], rim);
-    o.over = vec4<f32>(col * glass + under * sock * (1.0 - glass), glass + sock * (1.0 - glass));
+    let over = vec4<f32>(col * glass + under * sock * (1.0 - glass), glass + sock * (1.0 - glass));
+    let st = bulbs_stalk(q, r) * pumpkin;
+    o.over = vec4<f32>(BULBS_JACK[4] * st + over.rgb * (1.0 - st), st + over.a * (1.0 - st));
     let x = max(dd - r * 0.5, 0.0) / (r * 1.3);
     let fade = clamp(1.0 - dd / (r * BULBS_REACH), 0.0, 1.0);
     o.glow = pal[1] * (glowing * BULBS_GLOW * exp(-x * x) * fade * fade);
@@ -566,7 +648,7 @@ fn fx_bulbs(px: vec2<f32>, size: vec2<f32>, time: f32, strength: f32, lane: vec4
     var glow = vec3<f32>(0.0);
     for (var j = -1; j <= 1; j++) {
         let k = ((k0 + j) % n + n) % n;
-        let b = bulbs_one(px - bulbs_at(k, nw, nh, ring), r, bulbs_lit_at(k, time, flash, p, mu), pal);
+        let b = bulbs_one(px - bulbs_at(k, nw, nh, ring), r, bulbs_lit_at(k, time, flash, p, mu), t, pal);
         over += b.over;
         glow += b.glow;
     }

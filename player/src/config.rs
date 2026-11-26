@@ -11,6 +11,7 @@
 //! beat_methods = "flux, network"
 //! skip_mix = "mix"
 //! karaoke_effects = "off"
+//! karaoke_theme = "spooky"
 //! data_folder = "D:\\Music data"
 //! ```
 //!
@@ -109,6 +110,7 @@ settings! {
     "karaoke_keep" => karaoke_keep as FLAG;
     "karaoke_effects" => karaoke_effects.db as LEVEL;
     "karaoke_effects_mute" => karaoke_effects.mute as FLAG;
+    "karaoke_theme" => karaoke_theme as THEME;
     "transition_lyrics" => transition_lyrics as FLAG;
     "data_folder" => data_folder as FOLDER, absent "the folder the data folder is made in; absent: the system's place";
 }
@@ -212,6 +214,15 @@ const SKIP_PRESET: Kind<Option<Preset>> = Kind {
         }),
     },
     write: |by| Some(quote(by.map_or("transition-tab", Preset::id))),
+};
+
+/// A theme, by its name ([`crate::theme::THEMES`]).
+const THEME: Kind<&'static crate::theme::Theme> = Kind {
+    read: |text| {
+        crate::theme::Theme::named(&word(text))
+            .ok_or_else(|| one_of(crate::theme::THEMES.map(|t| t.name)))
+    },
+    write: |theme| Some(quote(theme.name)),
 };
 
 /// A percentage, 0 to 100.
@@ -330,6 +341,9 @@ pub struct Config {
     /// strip's fader (to a tenth of a dB, −∞ off) and mute (its solo is
     /// not kept).
     pub karaoke_effects: crate::core::desk::StripSetting,
+    /// Karaoke: the game's theme, how its tiers, effects and sounds look
+    /// and sound ([`crate::theme`]).
+    pub karaoke_theme: &'static crate::theme::Theme,
     /// The folder the data folder ([`crate::dirs::DATA`]) is in; `None`:
     /// the system's place for it ([`crate::dirs::default_data_parent`]).
     pub data_folder: Option<PathBuf>,
@@ -362,6 +376,7 @@ impl Default for Config {
             karaoke_notes: true,
             karaoke_keep: false,
             karaoke_effects: crate::core::desk::StripSetting::default(),
+            karaoke_theme: &crate::theme::CLASSIC,
             transition_lyrics: true,
             data_folder: None,
         }
@@ -563,6 +578,7 @@ mod tests {
                 mute: true,
                 solo: false,
             },
+            karaoke_theme: &crate::theme::SPOOKY,
             transition_lyrics: false,
             data_folder: Some(if cfg!(windows) {
                 r"D:\Music data".into()

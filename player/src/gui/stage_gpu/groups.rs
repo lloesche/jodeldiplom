@@ -57,13 +57,17 @@ impl Group {
         .collect()
     }
 
-    /// The groups the tiers' rows use: the stage's own, and those of
-    /// every effect a row lists ([`crate::tiers::TierSpec::fx`]). Their
-    /// pipelines are made as the window opens; another effect's the first
-    /// time it draws.
+    /// The groups the tiers' rows and the themes use: the stage's own,
+    /// and those of every effect a row lists
+    /// ([`crate::tiers::TierSpec::fx`]) or a theme holds throughout
+    /// ([`crate::theme::Theme::always`]). Their pipelines are made as the
+    /// window opens; another effect's the first time it draws.
     pub fn used() -> Vec<Group> {
         let listed = |g: &Group| match g.effect() {
-            Some(fx) => crate::tiers::TIERS.iter().any(|t| t.fx.lists_fx(fx)),
+            Some(fx) => {
+                crate::tiers::TIERS.iter().any(|t| t.fx.lists_fx(fx))
+                    || crate::theme::THEMES.iter().any(|t| t.holds(fx))
+            }
             None => true,
         };
         Group::all().into_iter().filter(listed).collect()

@@ -443,7 +443,7 @@ fn the_ink_is_lit_and_outlined() {
 #[test]
 fn a_pale_row_shouts_in_the_rainbow() {
     for (row, t) in TIERS.iter().enumerate() {
-        let (.., bow) = colours(By::Phrase(row));
+        let (.., bow) = colours(By::Phrase(row), &crate::theme::CLASSIC);
         let c = t.color;
         let pale = c.iter().all(|&v| v > 0.9);
         assert_eq!(bow, if pale { 1.0 } else { 0.0 }, "{}: {bow}", t.name);

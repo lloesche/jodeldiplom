@@ -152,6 +152,8 @@ pub struct Stage {
     /// The bursts a step up throws from the bar under the word sung,
     /// while the lyrics are set without the lane ([`lyrics`]).
     ups: Vec<super::particles::Spray>,
+    /// The theme it was last drawn in ([`Stage::scene`]: the song's).
+    theme: &'static crate::theme::Theme,
 }
 
 /// What the stage is made from, besides the picture.
@@ -170,6 +172,8 @@ pub struct Song<'a> {
     pub demo: bool,
     /// The song as it is heard, once analysed (the effects' music).
     pub heard: Option<&'a super::backdrop::music::Song>,
+    /// The game's theme ([`crate::theme`]).
+    pub theme: &'static crate::theme::Theme,
 }
 
 impl<'a> Song<'a> {
@@ -199,6 +203,7 @@ impl<'a> Song<'a> {
             late: state.karaoke.lag.late,
             demo: state.karaoke.demo.held(),
             heard,
+            theme: state.config.karaoke_theme,
         }
     }
 }
@@ -613,7 +618,7 @@ impl Stage {
             clock,
             length: song.length,
         });
-        let effects = self.board.frame(&step, &music, clock);
+        let effects = self.board.frame(song.theme, &step, &music, clock);
         self.shake = [0.0; 2];
         // Over everything, lettered before any other text of the frame: the
         // effects' big words and their light.

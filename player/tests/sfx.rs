@@ -146,7 +146,7 @@ impl Window {
 /// ([`jodel_synth::BLOCK`]): the synth takes its modulation once a block,
 /// so a sound sounds a little otherwise from each place in one.
 fn made(sound: Sheet, phase: usize, span: usize) -> Vec<f32> {
-    let (mut c, mut synth) = Conductor::new(RATE);
+    let (mut c, mut synth) = Conductor::new(RATE, &jodeldiplom::theme::CLASSIC);
     let sheet = Diploma::Sheet {
         sound,
         gain: 1.0,
@@ -243,7 +243,7 @@ fn steady() -> jodel_rhythm::Analysis {
 /// A conductor on that grid (from stream frame 0) in A minor, and its
 /// synth.
 fn conductor() -> (Conductor, Synth) {
-    let (mut c, mut synth) = Conductor::new(RATE);
+    let (mut c, mut synth) = Conductor::new(RATE, &jodeldiplom::theme::CLASSIC);
     let clock = Clock::from_analysis(&steady(), 0.0, 0, f64::from(RATE), [None; Clock::LINES]);
     c.set_clock(&mut synth, clock);
     c.set_key(Some(&jodel_rhythm::key::Key::on(9, true)), 0);

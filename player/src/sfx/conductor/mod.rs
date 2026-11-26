@@ -73,9 +73,11 @@ use jodel_synth::{Command, Commands, Synth, GENTLE};
 
 pub use clock::Clock;
 pub use layers::{Chime, Layers, Streak};
+pub use palette::{patch, Atom};
 pub use sheet::{Entry, Sheet};
 pub(crate) use sounds::JACKPOT_BEATS;
 
+use crate::theme::Theme;
 use crate::tiers::Tier;
 use key::Pentatonic;
 use layers::{rung_has, rung_of, rung_share, tier_share};
@@ -197,15 +199,16 @@ pub struct Conductor {
 impl Conductor {
     /// A conductor planning at `rate` Hz for the tiers' rows (at the free
     /// tempo, no key known, the song as at the reference loudness), and the
-    /// synth its notes are for, its bus set (lifted by [`LEVEL`]: the
-    /// effects path adds no gain of its own; to be moved to where it
-    /// renders: a synth on the effects path, at the device's rate).
+    /// synth its notes are for, its patches `theme`'s, its bus set (lifted
+    /// by [`LEVEL`]: the effects path adds no gain of its own; to be moved
+    /// to where it renders: a synth on the effects path, at the device's
+    /// rate).
     ///
     /// # Panics
     ///
     /// If the synth takes no such rate (32 to 192 kHz).
-    pub fn new(rate: u32) -> (Conductor, Synth) {
-        let (bank, palette) = Palette::bank();
+    pub fn new(rate: u32, theme: &Theme) -> (Conductor, Synth) {
+        let (bank, palette) = Palette::bank(theme);
         let mut synth = Synth::with_cues(rate, bank, VOICES, CUES);
         synth.set_reverb(HallSettings {
             size: 0.5,

@@ -383,7 +383,7 @@ mod tests {
     /// does not know fails here until it is added).
     #[test]
     fn the_screen_passes_keep_the_hud_clear() {
-        use crate::gui::fx::{bulbs, edge_fire};
+        use crate::gui::fx::{bulbs, edge_fire, fog};
         let music = Music {
             stems: [1.0; 4],
             ..Music::steady(8.0, 120.0, 4, 1.0, 0.0)
@@ -426,6 +426,15 @@ mod tests {
                                 bulbs::bulbs(px, (w, h), time, s, i.shape, look, &music)
                             }
                             k if k == edge_fire::EDGE_FIRE => edge_fire::edge_fire(
+                                px,
+                                (w, h),
+                                time,
+                                (s, (i.shape[0], i.shape[1])),
+                                &clear,
+                                look,
+                                &music,
+                            ),
+                            k if k == fog::FOG => fog::fog(
                                 px,
                                 (w, h),
                                 time,
@@ -501,7 +510,7 @@ mod tests {
         use crate::gui::fx::{flames, glow};
         match i.params[0] {
             k if k == flames::BLAZE => {
-                let c = flames::flames_at(p, i.shape, i.params, i.color, i.color2, time);
+                let c = flames::flames_at(p, i.shape, i.params, i.color, i.color2, (time, 0.0));
                 c[0] + c[1] + c[2]
             }
             k if k == glow::GLOW => {

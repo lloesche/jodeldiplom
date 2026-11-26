@@ -49,6 +49,9 @@ struct Look {
     // The subject's nearness (in focus), the level blurred the most;
     // unused; 1 where what is round the subject is blurred.
     defocus: vec4<f32>,
+    // The theme's grade: the tint its colours take once desaturated, how
+    // much (0: none).
+    grade: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> look: Look;
@@ -87,6 +90,9 @@ const RIM_LIGHT: f32 = 0.7;
 // How much more of the plate's blur than the cover's is read for each
 // share of the subject's colours the cover's blur would carry.
 const BLEED: f32 = 3.0;
+
+// How much of its colour a graded colour keeps.
+const GRADE_KEPT: f32 = 0.4;
 
 fn luma(c: vec3<f32>) -> f32 {
     return dot(c, vec3<f32>(0.2126, 0.7152, 0.0722));
@@ -249,6 +255,11 @@ fn fs(o: Out) -> @location(0) vec4<f32> {
     }
 
     col = col * (1.0 + look.moments.w);
-    let c = tone(col, LINEAR) + vec3<f32>((hash(o.pos.xy) - 0.5) / 255.0);
+    // The theme's grade, as shown (its brightest light tinted too): the
+    // colours mostly taken out, tinted.
+    var seen = tone(col, LINEAR);
+    let graded = mix(vec3<f32>(luma(seen)), seen, GRADE_KEPT) * look.grade.rgb;
+    seen = mix(seen, graded, look.grade.w);
+    let c = seen + vec3<f32>((hash(o.pos.xy) - 0.5) / 255.0);
     return vec4<f32>(c, look.cam.w);
 }

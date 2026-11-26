@@ -24,9 +24,9 @@ Work agreed on but not started, roughly in the order it was raised.
   multiplier over the playhead crowd each other below a certain width.
 - **The HUD a little smaller** (about 7 %), and maybe the lane lower,
   for more room between the marquee and the top of the window.
-- **Themes** (stage 6 of the tiers plan): the theme hook, and a
-  "Spooky" demo theme to prove it (green fire, candy coins, a cold
-  grade, fog at the edges).
+- **The theme in the window**: Spooky is chosen in the settings file
+  only (`karaoke_theme`); a switch for it on the Karaoke tab (after its
+  native controls), and the rest of the window's accent following it.
 - **A sung announcer**: the slam's words ("DIVA!", the rung's
   multiplier) also called out, sung in the song's key.
 - **The rays on the ladder?** The backdrop's spotlight rays follow how

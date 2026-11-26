@@ -86,8 +86,10 @@ struct Told {
 #[derive(Default)]
 pub struct Sfx {
     moments: Moments,
-    /// The conductor at the device's rate, its synth on the desk.
+    /// The conductor at the device's rate, its synth on the desk, and the
+    /// theme its patches are in.
     conductor: Option<Conductor>,
+    theme: &'static crate::theme::Theme,
     /// Whether it planned on a song's frames since it was last called off,
     /// and what it was told of the song.
     on_song: bool,
@@ -107,23 +109,24 @@ impl Sfx {
     /// new moments played on `desk`, then the result's reveal's (after what
     /// the moments call off, so it never calls them off).
     pub fn frame(&mut self, state: &State, desk: Desk<'_>) {
-        self.conductor_at(&desk);
+        self.conductor_at(&desk, state.config.karaoke_theme);
         self.loudness(state, &desk);
         self.moments(state, &desk);
         self.reveal(state, &desk);
     }
 
-    /// The conductor at the device's rate, its synth sent to the desk, made
-    /// again when the device opens at another (none at a rate the synth
-    /// takes not: silent there).
-    fn conductor_at(&mut self, desk: &Desk<'_>) {
+    /// The conductor at the device's rate in `theme`, its synth sent to the
+    /// desk, made again when the device opens at another or the theme
+    /// changes (none at a rate the synth takes not: silent there).
+    fn conductor_at(&mut self, desk: &Desk<'_>, theme: &'static crate::theme::Theme) {
         let rate = desk.timebase.rate;
         let at = self.conductor.as_ref().map(Conductor::rate);
         let takes = (jodel_synth::dsp::Rate::MIN..=jodel_synth::dsp::Rate::MAX).contains(&rate);
-        if rate == 0 || at == Some(rate) || !takes {
+        if rate == 0 || (at == Some(rate) && self.theme == theme) || !takes {
             return;
         }
-        let (conductor, synth) = Conductor::new(rate);
+        let (conductor, synth) = Conductor::new(rate, theme);
+        self.theme = theme;
         desk.effects.live(synth);
         self.conductor = Some(conductor);
         self.on_song = false;

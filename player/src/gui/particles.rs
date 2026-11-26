@@ -73,6 +73,9 @@ pub enum Kind {
     /// The dust and sparkles a word slammed down throws up
     /// ([`super::fx::slam::dust`]).
     SlamDust,
+    /// A flight of ghosts descending, the angels in a spooky theme
+    /// ([`super::fx::angels::ghost`]).
+    Ghosts,
 }
 
 impl Kind {
@@ -193,6 +196,8 @@ pub enum Look {
     Gold,
     /// A soft puff of dust: over.
     Puff,
+    /// A little sheet ghost, its hem waving: light.
+    Ghost,
 }
 
 impl Look {

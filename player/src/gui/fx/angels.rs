@@ -6,6 +6,10 @@
 //! at the top (its glow's aim, not yet its eased strength), then one every
 //! [`ANGELS_EVERY`]; sought back before the last, the next comes at once.
 //!
+//! Its look's `x` ([`Spec::params`]): 0 angels, 1 ghosts instead
+//! ([`Kind::Ghosts`]: the same flight, each a little sheet ghost wailing
+//! "ooh", its hem waving: [`DRAW_GHOST`]).
+//!
 //! [`angel`] is the shader's maths on the processor ([`wgsl`]), held to it
 //! on the GPU (`crate::gui::shader_check`).
 
@@ -38,13 +42,9 @@ fn draw(at: &At, live: &Live, slot: &mut Slot, out: &mut Out) {
     if live.aim > 0.0 && clock - slot.last >= ANGELS_EVERY {
         slot.last = clock;
         let seed = (live.clock * 1000.0) as u32 ^ 0x5EED;
-        out.sprays.push(flight(
-            w,
-            h * 0.75,
-            h * 0.12 * live.listed,
-            live.clock,
-            seed,
-        ));
+        let s = flight(w, h * 0.75, h * 0.12 * live.listed, live.clock, seed);
+        out.sprays
+            .push(if live.look[0] >= 0.5 { haunted(s) } else { s });
     }
 }
 
@@ -62,6 +62,45 @@ pub fn flight(width: f32, height: f32, size: f32, clock: f64, seed: u32) -> Spra
         kind: Kind::Angels,
     }
 }
+
+/// The ghosts' pale mint glow (sRGB).
+pub const GHOST: [f32; 3] = [0.78, 1.0, 0.88];
+
+/// A flight `s` of ghosts instead, in their glow.
+pub fn haunted(s: Spray) -> Spray {
+    Spray {
+        kind: Kind::Ghosts,
+        rgb: GHOST,
+        ..s
+    }
+}
+
+/// Quad `q` of a flight of ghosts `s`, `age` seconds on: as an angel's
+/// ([`angel`]), each a ghost.
+pub fn ghost(s: &Spray, q: u32, age: f32) -> Option<Sprite> {
+    angel(s, q, age).map(|sp| match sp.look {
+        Look::Angel => Sprite {
+            look: Look::Ghost,
+            ..sp
+        },
+        _ => sp,
+    })
+}
+
+/// [`ghost`] in WGSL (with [`angel`]'s, [`wgsl`]).
+pub fn ghost_wgsl() -> String {
+    GHOST_MOTION.to_owned()
+}
+
+const GHOST_MOTION: &str = r"
+fn ghost(at: vec4<f32>, rgb: vec3<f32>, size: f32, seed: u32, q: u32, age: f32) -> Sp {
+    var o = angel(at, rgb, size, seed, q, age);
+    if o.look == LOOK_ANGEL {
+        o.look = LOOK_GHOST;
+    }
+    return o;
+}
+";
 
 /// Quad `q` of a flight of angels `s`, `age` seconds on: the first
 /// [`ANGELS`] each an angel (coming in at its own time, drifting down and
@@ -206,6 +245,31 @@ fn draw_angel(p: vec2<f32>, c: vec2<f32>, half: vec2<f32>, turn: f32, look: vec4
 }
 ";
 
+/// How a ghost is drawn, in WGSL (its look's line,
+/// [`crate::gui::particles::LOOKS`]).
+pub const DRAW_GHOST: &str = r"
+// A little sheet ghost: a round head over a skirt whose hem waves (`turn`
+// its phase), two dark eyes and a mouth wailing 'ooh' cut out of it,
+// fading towards its hem, glowing; light.
+fn draw_ghost(p: vec2<f32>, c: vec2<f32>, half: vec2<f32>, turn: f32, look: vec4<f32>) -> vec4<f32> {
+    let s = max(half.x, 1.0);
+    let l = (p - c) / s;
+    let head = length(l - vec2<f32>(0.0, -0.15)) - 0.45;
+    let hem = 0.55 + 0.08 * sin(l.x * 14.0 + turn * 0.6);
+    let skirt = max(abs(l.x) - 0.45, max(-0.15 - l.y, l.y - hem));
+    let body = min(head, skirt);
+    let eye = min(
+        length((l - vec2<f32>(-0.17, -0.18)) / vec2<f32>(0.08, 0.12)) - 1.0,
+        length((l - vec2<f32>(0.17, -0.18)) / vec2<f32>(0.08, 0.12)) - 1.0,
+    ) * 0.08;
+    let mouth = (length((l - vec2<f32>(0.0, 0.07)) / vec2<f32>(0.07, 0.1)) - 1.0) * 0.07;
+    let holes = clamp(0.5 - min(eye, mouth) * s, 0.0, 1.0);
+    let fill = clamp(0.5 - body * s, 0.0, 1.0) * (1.0 - holes) * (1.0 - 0.5 * smoothstep(0.1, 0.6, l.y));
+    let glow = exp(-max(body, 0.0) * 6.0) * 0.22;
+    return vec4<f32>(out_rgb(look.rgb * (fill * 0.85 + glow)) * look.a, 0.0);
+}
+";
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -238,7 +302,7 @@ mod tests {
             ..Step::default()
         };
         let mut flights = |step: &Step, clock: f64| {
-            let frame = board.frame(step, &Music::NEUTRAL, clock);
+            let frame = board.frame(&crate::theme::CLASSIC, step, &Music::NEUTRAL, clock);
             let mut sprays = Vec::new();
             let sky = At::Sky {
                 area: (0.0, 0.0, 1600.0, 900.0),

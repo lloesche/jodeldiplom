@@ -111,7 +111,7 @@ fn a_minor() -> jodel_rhythm::key::Key {
 
 /// A conductor on the grid in A minor, and where its notes go.
 fn conductor() -> (Conductor, Sent) {
-    let (mut c, _) = Conductor::new(RATE);
+    let (mut c, _) = Conductor::new(RATE, &crate::theme::CLASSIC);
     let mut out = Sent::default();
     c.set_clock(&mut out, grid(NONE));
     c.set_key(Some(&a_minor()), 0);
@@ -121,7 +121,7 @@ fn conductor() -> (Conductor, Sent) {
 
 /// The same, playing on its synth.
 fn playing() -> (Conductor, Synth) {
-    let (mut c, mut s) = Conductor::new(RATE);
+    let (mut c, mut s) = Conductor::new(RATE, &crate::theme::CLASSIC);
     c.set_clock(&mut s, grid(NONE));
     c.set_key(Some(&a_minor()), 0);
     (c, s)
@@ -475,7 +475,7 @@ fn clinks_come_on_high_rungs_softer_when_thick_and_never_over_a_stinger() {
 
 #[test]
 fn with_no_key_nothing_pitched_low_plays_and_the_pops_sit_high() {
-    let (mut c, _) = Conductor::new(RATE);
+    let (mut c, _) = Conductor::new(RATE, &crate::theme::CLASSIC);
     let mut out = Sent::default();
     c.set_clock(&mut out, grid(NONE));
     let top = rung(Tier::COUNT);
@@ -538,7 +538,7 @@ fn a_seek_calls_everything_off_and_lets_go() {
 
 #[test]
 fn the_tempo_goes_to_the_synth_with_the_clock() {
-    let (mut c, _) = Conductor::new(RATE);
+    let (mut c, _) = Conductor::new(RATE, &crate::theme::CLASSIC);
     let mut out = Sent::default();
     let mut fast = song(0.9);
     fast.local_bpm = vec![150.0; fast.beats.len()];

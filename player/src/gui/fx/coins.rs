@@ -20,6 +20,9 @@
 //! likewise, the flick held (a coin off each word hit while it is). Each
 //! draws from the playhead's slot, over the stage ([`super::Layer::Playhead`]).
 //!
+//! Their look's `x` (each effect's, [`Spec::params`]): 0 gold, 1 candy
+//! (each spray of coins a sweet's colour of its own: [`candied`]).
+//!
 //! [`fountain`], [`rain`] and [`flick`] are the shader's maths on the
 //! processor, held to it on the GPU (`crate::gui::shader_check`, from their
 //! motions' probes: [`crate::gui::particles::MOTIONS`]).
@@ -62,11 +65,32 @@ fn seed(clock: f64, salt: u32) -> u32 {
     (clock * 1000.0) as u32 ^ salt
 }
 
+/// The sweets' colours candied coins come in (sRGB): strawberry, mint,
+/// lime, grape, orange, blue raspberry.
+pub const CANDY: [[f32; 3]; 6] = [
+    [1.0, 0.42, 0.72],
+    [0.4, 1.0, 0.7],
+    [0.7, 1.0, 0.25],
+    [0.72, 0.45, 1.0],
+    [1.0, 0.55, 0.15],
+    [0.35, 0.85, 1.0],
+];
+
+/// `s` as a look `p` has it: gold (`x` under a half), or a sweet's colour
+/// by its seed ([`CANDY`]).
+pub fn candied(s: Spray, p: [f32; 4]) -> Spray {
+    if p[0] < 0.5 {
+        return s;
+    }
+    let rgb = CANDY[(s.seed % CANDY.len() as u32) as usize];
+    Spray { rgb, ..s }
+}
+
 fn draw_fountain(at: &At, live: &Live, _: &mut Slot, out: &mut Out) {
     if let (&At::Playhead { tip, pill, .. }, true) = (at, live.fired) {
         let size = pill * 0.3 * live.strength;
         let s = coin_fountain(tip, size, live.clock, seed(live.clock, 0xF0_4417));
-        out.sprays.push(s);
+        out.sprays.push(candied(s, live.look));
     }
 }
 
@@ -91,15 +115,17 @@ fn draw_rain(at: &At, live: &Live, slot: &mut Slot, out: &mut Out) {
         let size = pill * 0.4 * live.strength;
         if !m.is_sure() {
             let seed = seed(live.clock, 0x4A_1700);
-            out.sprays.extend(coin_rain(w, h, size, live.clock, seed));
+            let rain = coin_rain(w, h, size, live.clock, seed);
+            out.sprays
+                .extend(rain.into_iter().map(|s| candied(s, live.look)));
             slot.playing = None;
             return;
         }
         let mut left = RAIN_BEATS;
         if m.land(live.clock, When::Beat) <= live.clock {
             let seed = seed(live.clock, 0x4A_1700);
-            out.sprays
-                .push(coin_burst(w, h, size, live.clock as f32, seed));
+            let burst = coin_burst(w, h, size, live.clock as f32, seed);
+            out.sprays.push(candied(burst, live.look));
             left -= 1;
         }
         slot.playing = Some(Playing {
@@ -120,7 +146,8 @@ fn draw_rain(at: &At, live: &Live, slot: &mut Slot, out: &mut Out) {
             let seed = seed(live.clock, 0x4A_1700 + p.left);
             let start = live.clock as f32 - late * beat;
             let size = pill * 0.4 * p.strength;
-            out.sprays.push(coin_burst(w, h, size, start, seed));
+            out.sprays
+                .push(candied(coin_burst(w, h, size, start, seed), live.look));
         }
         p.next += 1.0;
         p.left -= 1;
@@ -132,7 +159,8 @@ fn draw_flick(at: &At, live: &Live, _: &mut Slot, out: &mut Out) {
     if let (&At::Playhead { word, pill, .. }, true) = (at, live.strength > 0.0) {
         let size = pill * 0.25 * live.listed;
         let flick = |w| coin_flick(w, size, live.clock, seed(live.clock, 0xF1_1C00));
-        out.sprays.extend(word.map(flick));
+        out.sprays
+            .extend(word.map(|w| candied(flick(w), live.look)));
     }
 }
 

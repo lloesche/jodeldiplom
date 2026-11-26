@@ -394,7 +394,8 @@ fn the_gpu_draws_the_bubbles_over_the_picture() {
                     | Look::Bit
                     | Look::Angel
                     | Look::Coin
-                    | Look::Gold => &mut sparkles,
+                    | Look::Gold
+                    | Look::Ghost => &mut sparkles,
                     Look::Shard => &mut bits,
                     Look::Drop => &mut drops,
                     Look::Sheen | Look::Puff => continue,

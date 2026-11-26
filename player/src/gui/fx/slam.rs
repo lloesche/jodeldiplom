@@ -42,6 +42,7 @@ use crate::gui::particles::{Kind, Look, Spray, Sprite};
 use crate::gui::rainbow::hue;
 use crate::gui::sparks::{mix, rand, TAU, WHITE};
 use crate::gui::stage_gpu::Instance;
+use crate::theme::Theme;
 use crate::tiers::{Tier, TIERS};
 
 /// The word: its quad (`quad`), its box (`shape`: left, top, right,
@@ -165,7 +166,7 @@ fn draw(at: &At, live: &Live, slot: &mut Slot, out: &mut Out) {
     if widest <= 0.0 {
         return;
     }
-    let (fill, deep, glow, bow) = colours(p.by);
+    let (fill, deep, glow, bow) = colours(p.by, live.theme);
     let seed = (p.next * 1000.0) as u32 ^ 0x51_A700;
     let k = p.strength.clamp(0.3, 1.0);
     out.letters.push(Letters {
@@ -213,13 +214,13 @@ pub fn word(by: By) -> Option<String> {
     }
 }
 
-/// Its colours, fired `by` a row: its face the row's tier's warmed a
-/// little with gold, its outline that darkened, its glow leaning to gold;
-/// and how much its face is the rainbow instead: all of it for a pale
-/// row's (the top's, near white), none for a strong colour's.
-fn colours(by: By) -> ([f32; 3], [f32; 3], [f32; 3], f32) {
+/// Its colours in `theme`, fired `by` a row: its face the row's tier's
+/// warmed a little with gold, its outline that darkened, its glow leaning
+/// to gold; and how much its face is the rainbow instead: all of it for a
+/// pale row's (the top's, near white), none for a strong colour's.
+fn colours(by: By, theme: &Theme) -> ([f32; 3], [f32; 3], [f32; 3], f32) {
     let (By::Phrase(row) | By::Rung(row)) = by;
-    let c = TIERS.get(row).map_or(GOLD, |t| t.color);
+    let c = Tier::ALL.get(row).map_or(GOLD, |&t| theme.color(t));
     let face = mix3(c, GOLD, 0.25);
     let most = c[0].max(c[1]).max(c[2]).max(1e-4);
     let pale = 1.0 - smoothstep(0.15, 0.45, (most - c[0].min(c[1]).min(c[2])) / most);

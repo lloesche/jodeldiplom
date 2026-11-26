@@ -267,7 +267,7 @@ impl Stage {
             0.0,
             0.0,
         ));
-        let ink = rgba(tier.spec().color, alpha);
+        let ink = rgba(effects.theme.color(tier), alpha);
         let ny = cy - self.cap_middle(Face::SHOUT, named) + COVER_PAD as f32;
         let at = (x, ny);
         self.text(
