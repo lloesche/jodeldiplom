@@ -1,14 +1,14 @@
 //! `jodeldiplom`: a file-browser music player for PCM and lossy files, in a
-//! window: a UI core, an iced window around it, and, for the screens not
-//! ported to iced yet, ratatui widgets that draw the core into cells, which
-//! the window rasterises with the pictures in pixels.
+//! window: a UI core, and an iced window around it that draws every screen
+//! from the core's presentation models.
 //!
 //! # Layers
 //!
 //! - [`core`]: the state, the actions, `update`, the layout, the keymap
 //!   and the mouse regions. Pure: no IO, no drawing.
-//! - [`view`]: the ratatui widgets that draw the state into cells; covers,
-//!   spectra and the other pictures go through [`view::Pictures`].
+//! - [`view`]: the presentation models, what each screen says; and what is
+//!   left of the old cell renderer (no screen is drawn into cells any
+//!   more).
 //! - [`app`]: the running player: the engine ([`jodel_playback::Player`]) on
 //!   a mixer that owns the device, the background workers, the spectrum
 //!   and the cover; [`preview`]: the players of a preview, on the mixer

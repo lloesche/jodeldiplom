@@ -292,9 +292,9 @@ fn main() {
     options.separator = || None;
     options.autoplay = Some(path.clone());
     let mut app = App::new(options);
-    // As the window reports a grid of 120 × 36 cells.
-    let grid = jodeldiplom::view::layout::Grid::new(120, 36);
-    app.state.fit = jodeldiplom::view::layout::fit(&app.state, grid);
+    // As a window of 960 × 684 points (the old 120 × 36 cells) reports.
+    let size = iced::Size::new(960.0, 684.0);
+    app.state.fit = jodeldiplom::gui::metrics::fit(size, &app.state, 8.0);
     let wait = Duration::from_secs(60);
     let playing = |a: &App| a.state.playing.state == PlayState::Playing;
     assert!(frames(&mut app, wait, |a| playing(a)

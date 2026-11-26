@@ -120,9 +120,9 @@ fn a_fader_held_while_the_strips_change_is_let_go_of_on_any_release() {
         input.parts = None;
     }
     assert!(!state.desk.has_stems());
-    let narrower = jodeldiplom::view::layout::Grid::new(80, 24);
-    let fit = jodeldiplom::view::layout::fit(&state, narrower);
-    update(&mut state, Action::Fit(fit));
+    let mut narrower = state.clone();
+    common::fit(&mut narrower, 80, 24);
+    update(&mut state, Action::Fit(narrower.fit));
     let release = let_go(&state).expect("a release");
     desk(&mut state, release);
     assert!(state.desk.dragging.is_none());

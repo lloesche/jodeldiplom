@@ -186,6 +186,25 @@ machine's. `view_cost` (1512 × 982 at scale 2, median / worst ms in all):
 Karaoke mode 0.001 / 0.008 (one widget), its controls shown 0.021 /
 0.151.
 
+## Main laid out by iced (the iced port's S10, November 2026)
+
+The main screen is laid out by iced from the measures in `gui::metrics`,
+and the old canvas is no longer drawn (Karaoke mode has had its own
+widget since K3): on every screen but Karaoke mode
+a frame does only what the window's size does to the keys
+(`metrics::fit`, pure arithmetic) and the lanes. `examples/frames.rs`
+(3024 × 1890 at scale 2, ms a frame, the RTX 5080 machine shared with
+other agents' builds) before: the main screen and Now playing 0.09–0.11
+(the canvas's widgets), the Transition tab 0.26 following and 0.13 held
+on the GPU, 2.97 and 0.19 without; after: the main screen and Now playing
+0.00, the Transition tab 0.18 and 0.05 on the GPU, 2.59 and 0.06 without
+(the lanes alone), the Karaoke tab's voice lane 0.18 (1.36 without a
+GPU). `examples/view_cost.rs` (1512 × 982 at scale 2, median / worst):
+Main 0.229 / 0.670 before, 0.219 / 0.547 after; the queue 0.270 / 0.718
+and 0.249 / 0.599; the Mixer 0.156 / 0.396 and 0.155 / 0.387; Transition
+0.155 / 0.277 and 0.092 / 0.203; the Karaoke tab 0.103 / 0.428 and
+0.093 / 0.333; all within CK-C's 1.0 / 2.0 but single worst frames of
+"Main, 50 entries" (3.9 before, 3.2 after: the machine's).
 
 ## The stems as parts of the output (November 2026)
 

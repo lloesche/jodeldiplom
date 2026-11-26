@@ -6,11 +6,11 @@ use crate::config::Config;
 use crate::core::{update, Action};
 use jodel_output::mixer::Timebase;
 
-/// `config`'s state on the Mixer tab of a 120 × 36 window.
+/// `config`'s state on the Mixer tab of a 960 × 684 window (the old
+/// 120 × 36 cells).
 fn tab_with(config: Config) -> State {
-    use crate::view::layout::{fit, Grid};
     let mut s = State::new("/m".into(), config);
-    s.fit = fit(&s, Grid::new(120, 36));
+    s.fit = crate::gui::metrics::fit(iced::Size::new(960.0, 684.0), &s, 8.0);
     s.side = Side::Mixer;
     s
 }

@@ -143,7 +143,6 @@ mod tests {
             rms: vec![150; frames],
         };
         let plot = WavePlot {
-            area: ratatui::layout::Rect::new(0, 0, 100, 1),
             waveform: Arc::new(Waveform {
                 mix: lane,
                 stems: None,
@@ -163,7 +162,6 @@ mod tests {
             transition: None,
             gain: Vec::new(),
             edit: None,
-            rows: (0, 1),
             lyrics: None,
             text_scale: 1,
             lines: WordLines::ONE,

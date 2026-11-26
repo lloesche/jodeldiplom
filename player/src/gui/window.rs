@@ -2,8 +2,9 @@
 //! messages, what they do, what it shows and what it listens to.
 //!
 //! - Keys go through [`crate::core::keymap`] ([`super::keys`]); the
-//!   pointer over the old canvas through [`crate::view::mouse`]
-//!   ([`super::pointer`]); the widgets iced draws send the core's actions
+//!   pointer over the old canvas (Karaoke mode) through
+//!   [`crate::view::mouse`] ([`super::pointer`]); the widgets iced draws
+//!   send the core's actions
 //!   ([`Message::Act`]), and a press that holds the pointer
 //!   ([`Message::Grab`]): its moves come here from anywhere while it is
 //!   held. Every button's release comes here, whichever widget it was
@@ -126,9 +127,9 @@ pub struct Gui {
     pointer: PointerState,
     wheel: Wheel,
     caps: mixer::Caps,
-    /// The covers over the old canvas, their art fitted to them.
+    /// The covers the screen shows, their art fitted to their places.
     covers: Covers,
-    /// The lanes over the old canvas.
+    /// The lanes the screen shows.
     lanes: Lanes,
     wake: Wake,
     window: Option<window::Id>,
@@ -262,12 +263,6 @@ impl Gui {
             .map(super::screens::settings::reveal)
     }
 
-    /// The text of the old canvas's cells as last drawn (the pictures'
-    /// cells blank).
-    pub fn text(&self) -> String {
-        self.embed.text()
-    }
-
     pub(super) fn title(&self) -> String {
         "jodeldiplom".to_owned()
     }
@@ -368,9 +363,9 @@ impl Gui {
         }
     }
 
-    /// A wheel line in pixels: a cell's height.
+    /// A wheel line in points.
     fn line_px(&self) -> f32 {
-        self.embed.cell().1
+        super::metrics::LINE
     }
 
     fn pointer(&mut self, pointer: Pointer) -> Task<Message> {
@@ -379,7 +374,7 @@ impl Gui {
                 let grid = self.embed.grid();
                 let dirty = match pointer.kind {
                     PointerKind::Wheel(delta) => {
-                        let line = self.embed.cell().1;
+                        let line = super::metrics::LINE;
                         let steps = self.wheel.turn(WheelOn::Canvas, delta, line);
                         steps != 0 && self.pointer.scroll(app, grid, pointer, steps)
                     }
@@ -534,7 +529,7 @@ impl Gui {
         self.size.width > 0.0 && self.size.height > 0.0 && !self.occluded
     }
 
-    /// Where the old canvas draws now.
+    /// Where a frame is drawn now.
     fn place(&self) -> Place {
         Place {
             size: (
@@ -542,6 +537,7 @@ impl Gui {
                 (self.size.height * self.scale).round() as u32,
             ),
             scale: self.scale,
+            points: self.size,
         }
     }
 
@@ -600,11 +596,8 @@ impl Gui {
                 }
                 let canvas = (&self.embed, &self.stage, &mut self.lanes);
                 self.paint.draw(plan, canvas, app, place, (heard, at));
-                // Now playing makes room for its cover itself; elsewhere
-                // the covers go where the canvas left them.
-                let spots = super::screens::now::spot(&app.state, self.size, self.scale)
-                    .map_or_else(|| self.embed.covers(), |spot| vec![spot]);
-                self.covers.show(app.art(), &spots, self.scale);
+                let places = super::screens::covers(&app.state, self.size, self.scale);
+                self.covers.show(app.art(), &places, self.scale);
                 // Karaoke mode is fullscreen; leaving it, the window comes
                 // back.
                 let fullscreen = crate::core::karaoke::in_mode(&app.state);
@@ -726,15 +719,16 @@ impl Gui {
             Phase::Leaving(Last::Setup(status)) => Shown::Setup(status.clone()),
             _ => Shown::Player(self.app().map(|app| &app.state)),
         };
-        self.pacer.view(super::screens::view(
-            shown,
-            &self.embed,
-            &self.stage,
-            &self.caps,
-            &self.covers,
-            &self.lanes,
-            &self.paint.spectrum,
-        ))
+        let parts = super::screens::Parts {
+            stage: &self.stage,
+            caps: &self.caps,
+            covers: &self.covers,
+            lanes: &self.lanes,
+            heard: &self.paint.spectrum,
+            size: self.size,
+            scale: self.scale,
+        };
+        self.pacer.view(super::screens::view(shown, &parts))
     }
 }
 

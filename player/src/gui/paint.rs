@@ -1,10 +1,11 @@
 //! The frames (the frame scheduler): one decision a tick
-//! ([`Paint::plan`]) of how often the
-//! ticks come and what is drawn now: the old canvas ([`super::embed`]) and
-//! the lanes over it ([`super::lanes`]), only the lanes (where one follows
-//! the playhead: no new tiles in most frames), or nothing; in Karaoke mode
-//! its stage over its backdrop instead ([`super::stage_view`]); the
-//! spectrum heard, for the bottom bar; and the frames' line in the trace.
+//! ([`Paint::plan`]) of how often the ticks come and what is drawn now:
+//! the whole frame (what the window's size does to the keys,
+//! [`super::metrics::fit`]; the lanes, [`super::lanes`]), only the lanes
+//! (where one follows the playhead: no new tiles in most frames), or
+//! nothing; in Karaoke mode its stage over its backdrop
+//! ([`super::stage_view`]); the spectrum heard, for the bottom bar; and
+//! the frames' line in the trace.
 
 use std::time::{Duration, Instant};
 
@@ -16,9 +17,8 @@ use super::stage::Tint;
 use super::stage_view::StageView;
 use crate::app::App;
 use crate::core::singing::Motion;
-use crate::core::{Action, Fit};
+use crate::core::Action;
 use crate::spectrum::SpectrumFrame;
-use crate::view::Scene;
 
 /// A frame of what moves smoothly where the display's refresh is not
 /// what paces it: 60 a second.
@@ -94,12 +94,13 @@ struct Moves {
     due_soon: bool,
 }
 
-/// Where a frame is drawn: the window's size in pixels and its scale
-/// factor.
+/// Where a frame is drawn: the window's size in pixels, its scale
+/// factor, and its size in points.
 #[derive(Clone, Copy, Debug)]
 pub struct Place {
     pub size: (u32, u32),
     pub scale: f32,
+    pub points: iced::Size,
 }
 
 /// The frames' state.
@@ -261,9 +262,9 @@ impl Paint {
             .frame(gap, late, started.elapsed(), handed, &what);
     }
 
-    /// The whole frame: what the core keeps of the window's size; in
-    /// Karaoke mode its stage stepped over its backdrop, else the widgets,
-    /// the pictures and the lanes; and the spectrum heard now.
+    /// The whole frame: what the core keeps of the window's size, the
+    /// lanes; in Karaoke mode its stage stepped over its backdrop; and the
+    /// spectrum heard now.
     fn whole(
         &mut self,
         (embed, stage, lanes): (&Embed, &StageView, &mut Lanes),
@@ -278,21 +279,12 @@ impl Paint {
         Song::follow(&mut self.heard, crate::core::karaoke::rhythm_of(&app.state));
         let song = self.heard.as_deref();
         // The list's page, the help's, the desk and the Transition tab's
-        // lanes as the window draws them, at its cells' size; how far up
-        // Karaoke mode's controls reach, in its points.
-        let (grid, (cw, ch)) = embed.fit(place.size, place.scale);
-        let cell = (cw as f32 / place.scale, ch as f32 / place.scale);
-        let height = place.size.1 as f32 / place.scale;
-        let fit = Fit {
-            desk_width: crate::view::layout::desk_width(grid, cell.0),
-            help_rows: crate::view::layout::help_rows(&app.state, grid, cell.1),
-            lane_letters: crate::view::transition::lane_letters(
-                f32::from(grid.cols) * cell.0,
-                cell.0,
-            ),
-            controls_reach: super::screens::karaoke::mode::reach(height),
-            ..super::screens::list::fit(&app.state, grid, cell)
-        };
+        // lanes as the window lays them out (the lanes' letters a cell of
+        // theirs wide); how far up Karaoke mode's controls reach.
+        let metrics = embed.metrics(place.scale);
+        let letter = metrics.cell.0 as f32 / place.scale;
+        let height = place.points.height;
+        let fit = super::metrics::fit(place.points, &app.state, letter);
         if fit != app.state.fit {
             app.dispatch(Action::Fit(fit));
         }
@@ -302,6 +294,11 @@ impl Paint {
             .backdrop
             .frame((app, song), gpu, heard, place.size, backdrop_dt);
         self.last_backdrop = backdrop.is_some().then_some(drawing);
+        let spots =
+            super::screens::lane_spots(&app.state, place.points, place.scale, metrics, heard);
+        let lanes_gpu = lanes.gpu();
+        lanes.show(spots, place.scale, lanes_gpu);
+        lanes.frame(heard);
         if crate::core::karaoke::in_mode(&app.state) {
             let bar = super::screens::karaoke::mode::bar_share(height);
             let picture = crate::view::karaoke::picture(&app.state, bar, heard);
@@ -322,20 +319,6 @@ impl Paint {
         } else {
             stage.left();
             self.last_stage = None;
-            embed.draw(place.scale, |canvas, gpu| {
-                let scene = Scene {
-                    state: &app.state,
-                    grid,
-                    heard,
-                };
-                canvas.draw(&scene, app.art());
-                // The lanes over the cells left for them, and the
-                // Transition tab's where it leaves room.
-                let spots =
-                    super::screens::transition::lanes(canvas, &app.state, place.scale, heard);
-                lanes.show(spots, place.scale, gpu);
-                lanes.frame(heard);
-            });
         }
         crate::trace::took("frame: drawn", drawing, false);
         self.dirty = false;

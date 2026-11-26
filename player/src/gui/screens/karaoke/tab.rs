@@ -1,8 +1,7 @@
-//! The Karaoke tab ([`crate::view::karaoke::Tab`]) in iced's widgets, over
-//! the pane the cell layout leaves for it (the tabs on its top edge are
-//! the list pane's, [`super::super::list`]), on the list pane's panel: beside the
-//! cover (the window's own widget over the cell layout's place,
-//! [`crate::gui::widgets::cover`]; a card in its place without art), the
+//! The Karaoke tab ([`crate::view::karaoke::Tab`]) in iced's widgets, in
+//! the main screen's side pane, on the list pane's panel: beside the
+//! cover (at its place's top left, [`cover`]; a card in its place without
+//! art), the
 //! song with the button into the mode, then the controls (the sliders,
 //! the sync's row under the delay; the game's switches) and what is known
 //! (the lyrics of the song and the next two, the microphone and its
@@ -24,8 +23,8 @@ use iced::widget::{
     Space,
 };
 use iced::{
-    Alignment, Background, Border, Color, Element, Fill, Length, Padding, Rectangle, Shadow,
-    Vector, Widget as _,
+    Alignment, Background, Border, Color, Element, Fill, Length, Padding, Point, Rectangle, Shadow,
+    Size, Vector, Widget as _,
 };
 
 use crate::core::karaoke::HEARD_WARNING;
@@ -59,31 +58,41 @@ const PANEL: f32 = 480.0;
 /// A click's dot on the sync's panel.
 const DOT: f32 = 14.0;
 
-/// Where the tab is: the pane's size, a cell's, and where the cover is in
-/// the pane (its tabs take the top row of cells, its panel's edges run
-/// through the middle of the border cells, as the list's).
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Room {
-    /// The pane's width.
-    pub width: f32,
-    /// The pane's height.
-    pub height: f32,
-    /// A cell's width and height.
-    pub cell: (f32, f32),
-    /// The cover's square, from the pane's top left.
-    pub cover: Rectangle,
+/// The tab's content in from its panel's edges.
+const PAD: f32 = space::L;
+/// The fewest points the tab's text takes beside a large cover: in a
+/// narrower pane the cover is small, the text under it.
+const BESIDE: f32 = 640.0;
+/// A small cover's side.
+const SMALL: f32 = 128.0;
+
+/// Where the cover goes in a pane of `size`, from its top left: at the
+/// left, a third of the pane wide at most, as tall as the pane allows;
+/// in a pane too narrow for the text beside that, a small square.
+pub fn cover(size: Size) -> Rectangle {
+    let tall = (size.height - 2.0 * PAD - space::L).max(0.0);
+    let large = (size.width / 3.0).min(tall).floor();
+    let (width, height) = if size.width - large - 2.0 * PAD - space::XL >= BESIDE {
+        (large, tall)
+    } else {
+        let side = SMALL.min(large);
+        (side, side)
+    };
+    Rectangle::new(Point::new(PAD, PAD), Size::new(width, height))
 }
 
-/// The tab at `room`, its spinners at `turn` of a turn.
-pub fn view<'a>(tab: &Tab, turn: f32, room: Room) -> Element<'a, Message> {
-    let (cw, ch) = room.cell;
-    let ground = super::super::list::ground(super::super::list::Room {
-        width: room.width,
-        height: room.height,
-        cell: room.cell,
-    });
-    let cover = room.cover;
-    let (pad, top) = (cw / 2.0 + space::L, cover.y.max(ch + space::S));
+/// The tab in a pane of `size`, its spinners at `turn` of a turn, the
+/// cover's art (`None`: a card in its place).
+pub fn view<'a>(
+    tab: &Tab,
+    turn: f32,
+    size: Size,
+    art: Option<Element<'a, Message>>,
+) -> Element<'a, Message> {
+    let ground = super::super::list::ground();
+    let cover = self::cover(size);
+    let room = size;
+    let (pad, top) = (PAD, PAD);
     // Beside a large cover, the text right of it, level with its top; under
     // a small one (a narrow pane), the song beside it and the rest under
     // them, the pane's whole width.
@@ -121,7 +130,7 @@ pub fn view<'a>(tab: &Tab, turn: f32, room: Room) -> Element<'a, Message> {
         .padding(Padding {
             top,
             right: pad,
-            bottom: ch / 2.0 + KEYS + space::S,
+            bottom: PAD + KEYS,
             left,
         })
         .width(Fill)
@@ -129,8 +138,8 @@ pub fn view<'a>(tab: &Tab, turn: f32, room: Room) -> Element<'a, Message> {
         .clip(true);
     let foot = container(hints(&tab.keys))
         .padding(Padding {
-            left: cw / 2.0 + space::L,
-            bottom: ch / 2.0 + space::XS,
+            left: PAD,
+            bottom: space::S,
             ..Padding::ZERO
         })
         .width(Fill)
@@ -138,12 +147,8 @@ pub fn view<'a>(tab: &Tab, turn: f32, room: Room) -> Element<'a, Message> {
         .align_y(Alignment::End);
     let mut layers = vec![ground];
     if cover.width > 0.0 {
-        layers.push(
-            pin(placeholder(cover.width, cover.height))
-                .x(cover.x)
-                .y(cover.y)
-                .boxed(),
-        );
+        let shown = art.unwrap_or_else(|| placeholder(cover.width, cover.height));
+        layers.push(pin(shown).x(cover.x).y(cover.y).boxed());
     }
     layers.push(content.boxed());
     layers.push(foot.boxed());
@@ -155,7 +160,7 @@ pub fn view<'a>(tab: &Tab, turn: f32, room: Room) -> Element<'a, Message> {
 
 /// What stands in the cover's place without art (the cover drawn over it
 /// otherwise): a card with a note on it.
-fn placeholder<'a>(width: f32, height: f32) -> Element<'a, Message> {
+pub(in crate::gui::screens) fn placeholder<'a>(width: f32, height: f32) -> Element<'a, Message> {
     container(
         widgets::icon(Icon::Note)
             .size((width.min(height) / 5.0).clamp(16.0, 64.0))
@@ -546,9 +551,9 @@ fn mic<'a>(m: &Mic, turn: f32) -> Element<'a, Message> {
     out.boxed()
 }
 
-/// What the voice's lane says while it has nothing to show, over its
-/// place (`width` × `height` points): on a card, as the lane's.
-pub fn voice<'a>(note: &'static str, width: f32, height: f32) -> Element<'a, Message> {
+/// What the voice's lane says while it has nothing to show, filling its
+/// place: on a card, as the lane's.
+pub fn voice<'a>(note: &'static str) -> Element<'a, Message> {
     container(
         row![
             widgets::icon(Icon::Mic).size(16.0).color(look::TEXT_FAINT),
@@ -560,8 +565,8 @@ pub fn voice<'a>(note: &'static str, width: f32, height: f32) -> Element<'a, Mes
         .spacing(space::S)
         .align_y(Alignment::Center),
     )
-    .center_x(width)
-    .center_y(height)
+    .center_x(Fill)
+    .center_y(Fill)
     .style(|_| container::Style {
         background: Some(Background::Color(look::SURFACE)),
         border: Border {

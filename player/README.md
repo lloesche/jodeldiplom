@@ -1270,7 +1270,7 @@ The capitals keep their commands here (`M` the beat pulse, `S` stop);
 | Module | |
 |---|---|
 | `core` | state, `Action`, `update(state, action) -> effects`, keymap; no geometry: what the window's size does to the keys and the pointer comes in as `core::Fit`; the Transition tab (`core::transition::tab`, the lanes it shares with Karaoke in `core::lanes`), the grid fixes (`core::grid`), the transitions' presets and plans (`core::transition`), the Karaoke tab and mode (`core::karaoke`, its sliders in `core::sliders`), the key the song plays in (`core::key`), the Mixer tab's desk (`core::desk`: its strips, settings, the fader's taper, the meters' ballistics, the actions its widgets send) and the stems on it (`core::stems`: the stem keys as strip mutes on a bar of the head on air, when the engine makes stems, the Karaoke voice's lanes on both heads). Pure. |
-| `view` | the ratatui widgets, drawing the state into cells, with the cell renderer's own layout and its collapse rules (`view::layout`, which also reports the `Fit`), mouse regions (`view::mouse`) and text measured in cells (`view::cells`); the cover, the Transition tab's lanes (`view::transition`, with `view::lanes`, which the Karaoke tab shares) go through `view::Pictures`, which the window places (the cover as an iced image); Karaoke mode's picture (`view::karaoke`) is a model the window draws itself (on the GPU's stage, `gui::stage`, or without a GPU as text). The Mixer tab's rows and the bottom bar's are left empty: the window draws the desk and the bar there (the bar from its model, `view::bottom`, with the spectrum's, `view::plot`) |
+| `view` | the presentation models the window draws (the list, the info, the bottom bar with the spectrum's plot, the Transition tab with `view::lanes`, which the Karaoke tab shares, the Karaoke tab and Karaoke mode's picture, the settings, the help, Now playing); and what is left of the old cell renderer, drawn nowhere any more (`view::layout`'s grid, `view::mouse`, `view::cells`) |
 | `app` | the running player: the engine and its desk, background workers, the spectrum (the mixer's monitor), cover; carries out the effects |
 | `desk_wiring` | the desk the engine plays on: a mixer that holds the device (`jodel_output::mixer`), the player's strip with its stems' strips inside it, the preview's, the engine on two lane inputs of them (its two heads: a transition's next track plays on the other); the Mixer tab's settings made on it, its look for a frame |
 | `preview` | the preview's players, guests on the mixer (one per file, two at most): only the latest file loaded, crossfades on the mixer's clock, the song ducked and back |
@@ -1282,7 +1282,7 @@ The capitals keep their commands here (`M` the beat pulse, `S` stop);
 | `cache` | the schemas of what is kept on disk between runs, and their versions |
 | `stems_cache` | the tracks' stems kept (`stems/`): their files' names, the store the engine reads them from, pruning to 30 GB |
 | `loudness` | each song's loudness as the karaoke plays it (ITU-R BS.1770, `jodel_rhythm::loudness`), measured once on a thread of its own and kept (`loudness/`), for the game's sounds to follow (`sfx::conductor::calibration`) |
-| `gui` | the window, an iced application (`gui::window`); the Mixer tab and the bottom bar in iced's widgets (`gui::mixer`, `gui::screens::bottom`); every other screen the old canvas in one widget under them (`gui::embed`, on the GPU through `gui::embed_gpu` and `gui::present::pixmap`): `gui::raster::PixelBackend` draws the cells into pixels with the embedded font, `gui::Canvas` paints the Transition lanes at their cell rects and says where the covers go, which the window draws over it (`gui::widgets::cover`); Karaoke mode in the window's own widgets (`gui::screens::karaoke::mode`), its stage a widget of its own on the GPU (`gui::stage_view`, `gui::present`, `gui::stage`, `gui::stage_gpu`, a pipeline a group of shapes; what keeps it fast, held by tests, in PERFORMANCE.md) and its effects (`gui::fx`: an effect a module, registered by one line, its strength eased from the singing and moved by the music on a board, drawing at its points of the stage, its shaders held to its maths) |
+| `gui` | the window, an iced application (`gui::window`); every screen but Karaoke mode in iced's widgets (`gui::screens`, the main screen laid out from the measures in `gui::metrics`; the Mixer tab `gui::mixer`; the covers `gui::widgets::cover`, the lanes `gui::lanes`); Karaoke mode in the window's own widgets too (`gui::screens::karaoke::mode`), its stage a widget of its own on the GPU (`gui::stage_view`, `gui::present`, `gui::stage`, `gui::stage_gpu`, a pipeline a group of shapes; what keeps it fast, held by tests, in PERFORMANCE.md) and its effects (`gui::fx`: an effect a module, registered by one line, its strength eased from the singing and moved by the music on a board, drawing at its points of the stage, its shaders held to its maths) |
 | `tiers` | the phrase tiers, one table: a row a tier, all it takes and shows (its bars, colours, glow, sounds, sticker and the effects it lists) |
 
 The window's font is Sarasa Fixed J (Iosevka's Latin with Source Han Sans
@@ -1314,54 +1314,45 @@ clock move, four a second at rest; the player's threads wake it. Without
 a GPU (or with `JODELDIPLOM_SOFTWARE=1` set) iced draws on the processor.
 Karaoke mode makes it fullscreen.
 
-The screens are moving to iced's own widgets one at a time. Ported: the
-Mixer tab (`gui::mixer`: the strips where the core lays them out, the
-faders, scales and meters as canvases, the caps gliding to their levels),
-and the bottom bar (`gui::screens::bottom` from the model in
-`view::bottom`, the spectrum a canvas from `view::plot`, its seek bar a
-grab of the pointer: `gui::pointer`).
-Every other screen is the old canvas, drawn as before and shown in one
-widget filling the window under the ported ones (`gui::embed`; what shows
-is chosen in `gui::screens`, and `gui::pacer` around it all ticks at the
-display's refresh from inside each redraw); the
-pointer over it goes to `view::mouse` in cells. On the GPU that widget is
-iced's shader widget (`gui::embed_gpu`); on the processor it is an image.
-Karaoke mode is the window's own (`gui::screens::karaoke::mode`): a widget of
-its own fills the window (`gui::stage_view`, iced's shader widget: the
-backdrop as the ground and the stage over it, `gui::stage`: the lane,
-the lyrics, the count-in, the score, START, the result; START's pill
-takes the press), the controls' bar in iced's widgets over it; on the
+Every screen but Karaoke mode is drawn in iced's own widgets
+(`gui::screens`, what shows chosen there; `gui::pacer` around it all ticks
+at the display's refresh from inside each redraw). The main screen is laid
+out by iced in rows and columns from a few named measures in points
+(`gui::metrics`): the tabs' header, the side pane (the browser or the
+queue, the Transition, Karaoke or Mixer tab) with the right column beside
+it (or the track's summary under it in a narrow window), the Karaoke tab's
+voice lane, and the bottom bar; what the window's size does to the keys
+(the list's page, the help's, the desk's strips, the lanes' letters) is
+reported to the core from the same measures (`core::Fit`). The covers are
+iced's own images in the places the screens make for them
+(`gui::widgets::cover`: the art is scaled to the pixels it shows at once
+for each art and size); the lanes are a widget in their part of the screen
+(`gui::lanes`).
+
+Karaoke mode is the window's own too (`gui::screens::karaoke::mode`): a
+widget of its own fills the window (`gui::stage_view`, iced's shader
+widget: the backdrop as the ground and the stage over it, `gui::stage`:
+the lane, the lyrics, the count-in, the score, START, the result; START's
+pill takes the press), the controls' bar in iced's widgets over it; on the
 processor the lines as text over the cover's blur.
 
-The old canvas draws on the processor, so it draws only what it must.
-Only the cells that changed are rasterised. The covers are iced's own
-images over the cells left blank for them (`gui::widgets::cover`): the
-art is scaled to the pixels it shows at once for each art and size, and
-the caption's text over a cover is made again only when a cell of it was
-redrawn. The Transition lanes stay
-in the pixmap too: their columns sit on a grid of whole pixels from the
-track's start (the view's start snapped to it, within a pixel), so a view
-that scrolled is shifted by whole columns, and only the columns new to it
-or whose marks changed (the playhead, the cursor, a selection, a fade's
-curve) are painted, each in one pass; the bar numbers are painted again
-only when they moved. On the GPU (`gui/present/pixmap.rs`) the pixmap is kept in
-a texture the size of the window, each frame sends over only the rects of
-pixels that changed (`Canvas::take_changes`), and one triangle copies the
-texture onto the window pixel for pixel; a lane that follows the playhead
-scrolls on the GPU, so most frames of a playing Karaoke tab send nothing
-but where it stands. `cargo run --release -p jodeldiplom --example frames
--- [WIDTH HEIGHT SCALE] [FRAMES]` times the canvas's frames headless, per
-screen: the widgets, the pictures, the copy into a window's buffer, and
-how many frames changed (default 3024 × 1890 at scale 2, a 16-inch
-MacBook Pro's window maximised; on a desktop processor the browser takes
-about 2.7 ms a frame, the Transition tab 3.9 ms while its view follows the
-playhead and 2.2 ms while held). The tests check that frames drawn one
-after another give the pixels each would have drawn afresh, on the
+The lanes draw on the processor only what they must: their columns sit on
+a grid of whole pixels from the track's start (the view's start snapped to
+it, within a pixel), so a view that scrolled is shifted by whole columns,
+and only the columns new to it or whose marks changed (the playhead, the
+cursor, a selection, a fade's curve) are painted, each in one pass; the
+bar numbers are painted again only when they moved. A lane that follows
+the playhead scrolls on the GPU, so most frames of a playing Karaoke tab
+send nothing but where it stands. `cargo run --release -p jodeldiplom
+--example frames -- [WIDTH HEIGHT SCALE] [FRAMES]` times what the window's
+frames do beside iced's view headless, per screen: what the window's size
+does to the keys and the lanes (default 3024 × 1890 at scale 2, a 16-inch
+MacBook Pro's window maximised). The tests check that lanes framed one
+after another give the pixels each would have painted afresh, on the
 Transition tab through scrolling, seeking, a held view, a selection, a
-transition's curves and a zoom, and, on a GPU, that the frames drawn
-through the window's path off screen and read back are the canvas pixel
-for pixel (into a plain and an sRGB frame, through a resize and a skipped
-frame).
+transition's curves and a zoom, and, on a GPU, that the lanes and Karaoke
+mode's frames drawn through the window's path off screen and read back are
+those painted on the processor.
 
 The icon (a dotted spectrum rolling off from one colour to another) is drawn by `src/icon.rs`: the window sets it at run time (on
 macOS the Dock icon), on Windows `build.rs` builds `assets/jodeldiplom.ico`
@@ -1431,7 +1422,7 @@ With `JODELDIPLOM_TRACE=FILE` set, the player writes a timing trace to
 `FILE`: the window's start (iced's, the app's), and every update or frame
 that took longer than 30 ms, with what it was. Slow work belongs on a
 thread of its own; the trace says which. Every 5 s it also writes a line
-on the old canvas's frames: how many, how many came late (the frame before
+on the window's frames: how many, how many came late (the frame before
 the last was not through the GPU by the next one), the longest gap, how
 long drawing and handing the changes to the GPU took, and how
 background GPU work gave way (frames late while it ran, its rests, the
@@ -1465,10 +1456,10 @@ separating the track again live.
 
 `cargo run --release -p jodeldiplom --example shots -- OUT_DIR` renders every
 screen to `gui-*.png` as the window draws it (`Gui::view` through iced's
-headless renderer: the old canvas, iced's widgets over it and what the GPU
-draws itself), at 1280 × 800 at scale 1 and as `gui-*-hidpi.png` at
-1512 × 982 at scale 2, and the text of its cells to `gui-*.txt`, with a
-fixture track playing into the null output.
+headless renderer: iced's widgets, and in Karaoke mode the stage
+the GPU draws), at 1280 × 800 at scale 1 and as
+`gui-*-hidpi.png` at 1512 × 982 at scale 2, and the outline of its models
+to `gui-*.txt`, with a fixture track playing into the null output.
 
 `cargo run --release -p jodeldiplom --example view_cost -- [FRAMES] [--budget MEDIAN_MS WORST_MS]`
 times what building the window's view costs a frame (`Gui::view`, laid out

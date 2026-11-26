@@ -1,12 +1,14 @@
-//! Times the window's frames headless, as the window draws them while a track
-//! plays (a fixture through the null output, the
-//! Transition tab's playhead going on): per frame the widgets with their
-//! cells, the pictures, the lanes ([`Lanes`]: their tiles painted and their
-//! frame, for the GPU or, without one ("cpu"), as the processor's images),
-//! and the copy into the window's buffer (for the frames that changed a
-//! pixel: the window shows only those), what that would cost at 30 frames a
-//! second, and how many frames changed. "transition held" is the Transition
-//! tab with its view held (the cursor moved), the playhead going across it.
+//! Times the window's frames headless, as the window draws them while a
+//! track plays (a fixture through the null output, the Transition tab's
+//! playhead going on): per frame what the window's frame does beside
+//! iced's view (whose cost is `view_cost`'s): what its size does to the
+//! keys ([`metrics::fit`]) and the lanes ([`Lanes`]: their tiles painted
+//! and their frame, for the GPU or, without one ("cpu"), as the
+//! processor's images), and what that would cost at 30 frames a second.
+//! The old canvas is no longer drawn; Karaoke mode is `frame_cost`'s.
+//! "transition held" is the Transition tab with its view held (the cursor
+//! moved), the playhead going across it; "karaoke tab" has the voice's
+//! lane going by.
 //!
 //! ```text
 //! cargo run --release -p jodeldiplom --example frames -- [WIDTH HEIGHT SCALE] [FRAMES]
@@ -20,13 +22,13 @@ mod common;
 
 use std::time::{Duration, Instant};
 
+use iced::Size;
 use jodel_output::SimClock;
 use jodeldiplom::app::{AppOptions, Output};
 use jodeldiplom::core::keymap::Op;
-use jodeldiplom::core::{Action, Screen, State};
+use jodeldiplom::core::{Action, Screen, Side, State};
 use jodeldiplom::gui::lanes::Lanes;
-use jodeldiplom::gui::{font_px, transition, Canvas};
-use jodeldiplom::view::Scene;
+use jodeldiplom::gui::{font_px, lane_spots, metrics, Canvas};
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -34,17 +36,21 @@ fn main() {
         args.get(i).and_then(|a| a.parse().ok()).unwrap_or(default)
     };
     let (width, height, scale) = (
-        number(0, 3024.0) as usize,
-        number(1, 1890.0) as usize,
-        number(2, 2.0),
+        number(0, 3024.0) as f32,
+        number(1, 1890.0) as f32,
+        number(2, 2.0) as f32,
     );
     let frames = number(3, 240.0) as usize;
+    let size = Size::new(width / scale, height / scale);
+    let lane_metrics = Canvas::new(80, 24, font_px(f64::from(scale))).metrics();
+    let letter = lane_metrics.cell.0 as f32 / scale;
+    let cells = ((size.width / 8.0) as u16, (size.height / 19.0) as u16);
 
     let tree = common::music_tree("frames");
     let mut options = AppOptions::new(tree.album.clone());
     options.output = Output::Null(SimClock::Realtime);
     options.saved = options.config.clone();
-    let mut app = common::fitted_app(options, 120, 40);
+    let mut app = common::fitted_app(options, cells.0, cells.1);
     let listed = common::wait_for(&mut app, Duration::from_secs(10), |app| {
         !app.state.browser.loading && !app.state.details.is_empty()
     });
@@ -64,84 +70,65 @@ fn main() {
         ("nowplaying", true),
         ("transition", true),
         ("transition held", true),
+        ("karaoke tab", true),
         ("transition", false),
         ("transition held", false),
+        ("karaoke tab", false),
     ];
     for (screen, gpu) in screens {
-        let mut canvas = Canvas::new(80, 24, font_px(scale));
         let mut lanes = Lanes::default();
-        let grid = canvas.fit(width as u32, height as u32);
-        let mut buffer = vec![0u32; width * height];
-        let mut tab = common::transition_state(grid.cols, grid.rows);
+        let mut tab = common::transition_state(cells.0, cells.1);
         if screen == "transition held" {
             // The view stays where it is (its cursor moved); the playhead
             // goes across it.
             tab.transition.now.path = Some(tab.queue.paths[1].clone());
             tab.transition.now.start = Some(tab.playing.position - 5.0);
         }
-        let (mut widgets, mut pictures, mut framed, mut copy) = (
-            Duration::ZERO,
-            Duration::ZERO,
-            Duration::ZERO,
-            Duration::ZERO,
-        );
-        let mut shown = 0;
+        if screen == "karaoke tab" {
+            tab.side = Side::Karaoke;
+            common::sung_every(&mut tab, 0.5);
+        }
+        let (mut fitted, mut framed) = (Duration::ZERO, Duration::ZERO);
         for frame in 0..frames {
             app.pump();
             let state: State = match screen {
-                "transition" | "transition held" => {
+                "transition" | "transition held" | "karaoke tab" => {
                     tab.playing.position += 1.0 / 60.0;
                     tab.drawn_heard = Some(tab.playing.position);
                     tab.clone()
                 }
                 _ => {
                     let mut s = app.state.clone();
-                    s.fit = jodeldiplom::view::layout::fit(&s, grid);
                     if screen == "nowplaying" {
                         s.screen = Screen::NowPlaying;
                     }
                     s
                 }
             };
-            let scene = Scene {
-                state: &state,
-                grid,
-                heard: state.heard(),
-            };
-            canvas.draw(&scene, app.art());
             let started = Instant::now();
-            let spots = transition::lanes(&mut canvas, &state, scale as f32, state.heard());
-            lanes.show(spots, scale as f32, gpu);
+            std::hint::black_box(metrics::fit(size, &state, letter));
+            let fit_took = started.elapsed();
+            let started = Instant::now();
+            let spots = lane_spots(&state, size, scale, lane_metrics, state.heard());
+            lanes.show(spots, scale, gpu);
             lanes.frame(state.heard());
             let lanes_took = started.elapsed();
-            let started = Instant::now();
-            // As the window: a frame that changed no pixel is not shown.
-            if canvas.changed {
-                canvas.write_xrgb(&mut buffer, width, height);
-            }
-            // The first frames draw everything; the rest only what changes.
+            // The first frames paint everything; the rest only what changes.
             if frame >= 10 {
-                widgets += canvas.last_draw.widgets;
-                pictures += canvas.last_draw.pictures;
+                fitted += fit_took;
                 framed += lanes_took;
-                copy += started.elapsed();
-                shown += usize::from(canvas.changed);
             }
-            std::hint::black_box(&buffer);
             std::thread::sleep(Duration::from_millis(2));
         }
         let n = (frames.saturating_sub(10)).max(1) as f64;
         let ms = |d: Duration| d.as_secs_f64() * 1e3 / n;
-        let total = ms(widgets) + ms(pictures) + ms(framed) + ms(copy);
+        let total = ms(fitted) + ms(framed);
         let on = if gpu { "gpu" } else { "cpu" };
         println!(
-            "  {screen:15} {on}  widgets {:6.2}  pictures {:6.2}  lanes {:6.2}  copy {:6.2}  = {total:6.2} ms  ({:.0} % of a core), {:.0} % of frames shown",
-            ms(widgets),
-            ms(pictures),
+            "  {screen:15} {on}  fit {:6.3}  lanes {:6.2}  = {total:6.2} ms  ({:.0} % of a core)",
+            ms(fitted),
             ms(framed),
-            ms(copy),
             total * 30.0 / 10.0,
-            100.0 * shown as f64 / n
         );
     }
     app.shutdown();

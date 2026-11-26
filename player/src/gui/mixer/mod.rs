@@ -26,6 +26,21 @@ use crate::core::{Action, State};
 use crate::gui::look;
 use crate::gui::window::Message;
 
+/// The Mixer tab's keys, under its desk, from the keymap: each key (or
+/// pair) and what it does.
+pub fn keys() -> [(String, &'static str); 6] {
+    use crate::core::keymap::{self, Context, Op};
+    let key = |ops: &[Op]| keymap::keys(Context::Desk, ops);
+    [
+        (key(&[Op::DeskPrevStrip, Op::DeskNextStrip]), "strip"),
+        (key(&[Op::Up, Op::Down]), "fader"),
+        (key(&[Op::Top]), "0 dB"),
+        (key(&[Op::DeskMute]), "mute"),
+        (key(&[Op::DeskSolo]), "solo"),
+        (key(&[Op::DeskEcho]), "echo"),
+    ]
+}
+
 /// The room each side of a strip's card inside its place on the desk, in
 /// points: the stems' cards, side by side, stand this twice apart.
 const INSET: f32 = 1.0;
@@ -91,7 +106,7 @@ pub fn view<'a>(state: &'a State, caps: &'a Caps, size: Size) -> Element<'a, Mes
 
 /// The Mixer tab in `size` points as an outline: the strips shown with
 /// where they are and how wide, the stems' bracket, then each strip as it
-/// reads ([`said::Said`]), its tones in brackets.
+/// reads ([`said::Said`]), its tones in brackets; last its keys.
 pub fn outline(state: &State, size: Size) -> String {
     let desk = layout::compute(size, state.desk.has_stems());
     let mut out = String::new();
@@ -110,6 +125,11 @@ pub fn outline(state: &State, size: Size) -> String {
         let _ = writeln!(out, "[strip] at {}, {} wide", s.frame.x, s.frame.width);
         let _ = write!(out, "{said}");
     }
+    let keys: Vec<String> = keys()
+        .iter()
+        .map(|(k, what)| format!("{k} {what}"))
+        .collect();
+    let _ = writeln!(out, "[keys] {}", keys.join(" · "));
     out
 }
 

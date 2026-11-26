@@ -1,6 +1,6 @@
-//! The window's drawing path without a window: the shared widgets
-//! rasterised into pixels, the pictures painted at their cell rects, the
-//! covers drawn where the canvas leaves their cells.
+//! The window's drawing path without a window: the old canvas (Karaoke
+//! mode alone), the covers in the places the screens make for them, the
+//! lanes where the screens lay them out.
 
 mod common;
 #[path = "../examples/headless/mod.rs"]
@@ -11,29 +11,31 @@ use std::time::Instant;
 
 use headless::Headless;
 use iced::advanced::image::{Handle, Id as ImageId};
+use iced::Size;
 use image::{Rgb, RgbaImage};
+use jodel_output::SimClock;
+use jodeldiplom::app::{App, AppOptions, Output};
 use jodeldiplom::art::{sample_cover, Art};
-use jodeldiplom::core::{Screen, State};
+use jodeldiplom::core::{Screen, Side, State};
 use jodeldiplom::gui::lanes::{Lanes, Offscreen as LaneOffscreen};
-use jodeldiplom::gui::pixels::PixelRect;
-use jodeldiplom::gui::widgets::cover::{Align, Covers, Spot};
-use jodeldiplom::gui::{font_px, transition, Canvas};
+use jodeldiplom::gui::widgets::cover::Covers;
+use jodeldiplom::gui::window::{Gui, Message};
+use jodeldiplom::gui::{font_px, lane_spots, metrics, transition, Canvas};
 use jodeldiplom::icon::Style;
-use jodeldiplom::view::layout::{self, Grid, Layout};
+
 use jodeldiplom::view::{palette, Scene};
-use ratatui::layout::Rect;
 
 fn bg() -> Rgb<u8> {
     Rgb(palette::BG)
 }
 
-fn draw(canvas: &mut Canvas, state: &State, art: Option<&Art>) {
+fn draw(canvas: &mut Canvas, state: &State) {
     let scene = Scene {
         state,
         grid: canvas.grid(),
         heard: 0.0,
     };
-    canvas.draw(&scene, art);
+    canvas.draw(&scene);
 }
 
 fn sized(canvas: &mut Canvas, w: u32, h: u32) -> State {
@@ -41,54 +43,35 @@ fn sized(canvas: &mut Canvas, w: u32, h: u32) -> State {
     common::playing_state(grid.cols, grid.rows)
 }
 
-fn pixel_rect(canvas: &Canvas, rect: Rect) -> (u32, u32, u32, u32) {
-    let (cw, ch) = canvas.cell();
-    (
-        u32::from(rect.x) * cw as u32,
-        u32::from(rect.y) * ch as u32,
-        u32::from(rect.width) * cw as u32,
-        u32::from(rect.height) * ch as u32,
-    )
-}
-
-/// The cells are rasterised to the grid's size, with ink where they draw
-/// (the placeholder where there is no cover); the bottom bar's cells are
-/// left to the window (background alone), as is the right column's text.
+/// The canvas draws no screen any more: on the main screen (every side),
+/// the screens the window lays out whole and Karaoke mode it leaves every
+/// pixel to the window's own widgets.
 #[test]
-fn the_cells_are_painted_and_the_bar_left_to_the_window() {
+fn the_canvas_draws_no_screen() {
     let mut canvas = Canvas::new(80, 24, font_px(1.0));
-    let state = sized(&mut canvas, 1280, 800);
-    draw(&mut canvas, &state, None);
-    let image = canvas.image();
-    let (cw, ch) = canvas.cell();
-    assert_eq!(image.width() as usize, usize::from(canvas.grid().cols) * cw);
-    assert_eq!(
-        image.height() as usize,
-        usize::from(canvas.grid().rows) * ch
-    );
-    let Layout::Main(m) = layout::compute(&state, canvas.grid()) else {
-        panic!("not the main screen")
-    };
-
-    // The bottom bar's cells: background alone.
-    let (bx, by, bw, bh) = pixel_rect(&canvas, m.bottom.area);
-    let lit = (by..by + bh)
-        .flat_map(|py| (bx..bx + bw).map(move |px| (px, py)))
-        .filter(|&(px, py)| *image.get_pixel(px, py) != bg())
-        .count();
-    assert_eq!(lit, 0, "the bar's cells are blank");
-
-    // Cells have ink: the placeholder's box where there is no cover (the
-    // text under it is the window's).
-    let cover = m.cover.unwrap();
-    let (cx, cy, cw, _) = pixel_rect(&canvas, Rect::new(cover.x, cover.y, cover.width, 1));
-    let ink = (cx..cx + cw)
-        .flat_map(|px| (cy..cy + ch as u32).map(move |py| (px, py)))
-        .filter(|&(px, py)| *image.get_pixel(px, py) != bg())
-        .count();
-    assert!(ink > 100, "{ink}");
-    assert!(canvas.text().contains('\u{266a}'));
-    assert!(!canvas.text().contains("Morning Light"));
+    let main = sized(&mut canvas, 1280, 800);
+    for side in [
+        Side::Browser,
+        Side::Queue,
+        Side::Transition,
+        Side::Karaoke,
+        Side::Mixer,
+    ] {
+        for screen in [
+            Screen::Main,
+            Screen::NowPlaying,
+            Screen::Settings,
+            Screen::Help,
+            Screen::Karaoke,
+        ] {
+            let mut state = main.clone();
+            (state.side, state.screen) = (side, screen);
+            draw(&mut canvas, &state);
+            let image = canvas.image();
+            assert!(image.pixels().all(|p| *p == bg()), "{side:?}, {screen:?}");
+            assert!(canvas.text().trim().is_empty(), "{side:?}, {screen:?}");
+        }
+    }
 }
 
 /// `words` (`0x00RRGGBB`, `width` × `height`) as an image.
@@ -100,92 +83,113 @@ fn rgb_image(words: &[u32], width: u32, height: u32) -> image::RgbImage {
     image::RgbImage::from_raw(width, height, bytes).expect("the picture's size")
 }
 
-/// `rect` in pixels as the covers' places have it.
-fn place(canvas: &Canvas, rect: Rect) -> PixelRect {
-    let (x, y, w, h) = pixel_rect(canvas, rect);
-    (x as usize, y as usize, w as usize, h as usize)
-}
-
-/// `covers` drawn by iced's headless renderer in a window of `size`
-/// pixels at `scale`, with nothing under them.
-fn drawn(headless: &mut Headless, covers: &Covers, size: (u32, u32), scale: f32) -> RgbaImage {
-    let window = iced::Size::new(size.0 as f32 / scale, size.1 as f32 / scale);
-    headless.draw(covers.view(), window, Instant::now());
-    headless.screenshot(scale)
-}
-
 /// Whether two colours are within `by` of each other in every channel.
 fn near(a: &[u8], b: &[u8], by: u8) -> bool {
     a.iter().zip(b).all(|(p, q)| p.abs_diff(*q) <= by)
 }
 
-/// The canvas leaves a cover's cells blank and says where it goes, for
-/// the window to draw it over them: on the main screen in its square from
-/// under the list pane's top line (half a cell down) at the left. Without
-/// art, or on a screen without one, there is none; Now playing is the
-/// window's own screen, nothing on the cells.
-#[test]
-fn the_covers_go_where_the_canvas_leaves_their_cells() {
-    let mut canvas = Canvas::new(80, 24, font_px(1.0));
-    let mut state = sized(&mut canvas, 1280, 800);
-    let art = Art {
-        id: 1,
-        image: Arc::new(sample_cover(128)),
-    };
-    draw(&mut canvas, &state, Some(&art));
-    let Layout::Main(m) = layout::compute(&state, canvas.grid()) else {
-        panic!()
-    };
-    let ch = canvas.cell().1;
-    let (x, y, w, h) = place(&canvas, m.cover.unwrap());
-    let [spot] = canvas.covers() else {
-        panic!("{:?}", canvas.covers())
-    };
-    assert_eq!(spot.place, (x, y + ch / 2, w, h - ch / 2));
-    assert_eq!(spot.align, Align::TopLeft);
-    let blank = canvas.image();
-    assert_eq!(
-        *blank.get_pixel((x + w / 2) as u32, (y + h / 2) as u32),
-        bg()
-    );
-
-    state.screen = Screen::Settings;
-    draw(&mut canvas, &state, Some(&art));
-    assert!(canvas.covers().is_empty());
-
-    state.screen = Screen::NowPlaying;
-    draw(&mut canvas, &state, Some(&art));
-    assert!(canvas.covers().is_empty());
-    assert!(canvas.text().trim().is_empty(), "{}", canvas.text());
-
-    state.screen = Screen::Main;
-    draw(&mut canvas, &state, None);
-    assert!(canvas.covers().is_empty());
+/// A player with no output, no devices and no microphone.
+fn player() -> App {
+    let dir = common::temp_dir("gui-window");
+    let mut options = AppOptions::new(dir);
+    options.output = Output::Null(SimClock::Realtime);
+    options.devices = Arc::new(|| Ok(Vec::new()));
+    options.mic = Arc::new(|_| Err("no microphone".into()));
+    options.mics = Arc::new(|| Ok(Vec::new()));
+    App::new(options)
 }
 
-/// A cover drawn where the canvas left it, at scale 1 and 2, in the first
-/// frame it shows (a large image too, which iced would otherwise send to
-/// the GPU in the background): the art fitted into its place at the
-/// pixels it shows at, its corners rounded.
+/// A window of `size` at scale 1 showing `state` with `art` as the cover,
+/// a frame drawn.
+fn window(state: State, art: Option<image::RgbImage>, size: Size) -> Gui {
+    let mut gui = Gui::headless(player());
+    let event = |e| Message::Event(iced::Event::Window(e), iced::window::Id::unique());
+    let _ = gui.update(event(iced::window::Event::Resized(size)));
+    let _ = gui.update(event(iced::window::Event::Rescaled(1.0)));
+    gui.show(state);
+    gui.set_art(art);
+    let _ = gui.update(Message::Frame(Instant::now()));
+    gui
+}
+
+/// The covers go where the screens make room for them: on the main
+/// screen at the top left of the right column's place for it, a card with
+/// a note on it there without art; on Now playing in the middle of the
+/// window; none on the settings.
+#[test]
+fn the_covers_go_where_the_screens_make_room_for_them() {
+    let size = Size::new(1280.0, 800.0);
+    let mut headless = Headless::new();
+    let state = common::playing_state(160, 42);
+    let place = metrics::main(size, Side::Browser).cover.expect("a cover");
+    let side = place.width.min(place.height);
+    let cover = sample_cover(side as u32);
+    let middle = cover.get_pixel(side as u32 / 2, side as u32 / 2).0;
+    let shot = |gui: &Gui, headless: &mut Headless| {
+        headless.frame(gui, size);
+        headless.settled(gui, size);
+        headless.screenshot(1.0)
+    };
+    let at = |image: &RgbaImage, x: f32, y: f32| {
+        let p = image.get_pixel(x as u32, y as u32).0;
+        [p[0], p[1], p[2]]
+    };
+    let gui = window(state.clone(), Some(sample_cover(512)), size);
+    let image = shot(&gui, &mut headless);
+    let (cx, cy) = (place.x + side / 2.0, place.y + side / 2.0);
+    assert!(
+        near(&at(&image, cx, cy), &middle, 24),
+        "the right column's cover"
+    );
+    // Without art: the card, a note in its middle.
+    let gui = window(state.clone(), None, size);
+    let image = shot(&gui, &mut headless);
+    let card = jodeldiplom::gui::look::bytes(jodeldiplom::gui::look::RAISED);
+    assert!(near(&at(&image, place.x + 8.0, place.y + 8.0), &card, 2));
+    // Now playing: in the middle of the window.
+    let mut now = state.clone();
+    now.screen = Screen::NowPlaying;
+    let gui = window(now, Some(sample_cover(512)), size);
+    let image = shot(&gui, &mut headless);
+    let big = sample_cover(800 - 2 * 24);
+    let mid = big.get_pixel(big.width() / 2, big.height() / 2).0;
+    assert!(
+        near(&at(&image, 640.0, 400.0), &mid, 24),
+        "Now playing's cover"
+    );
+    // The settings: none.
+    let mut settings = state;
+    settings.screen = Screen::Settings;
+    let gui = window(settings, Some(sample_cover(512)), size);
+    let image = shot(&gui, &mut headless);
+    assert!(
+        !near(&at(&image, cx, cy), &middle, 24),
+        "no cover on the settings"
+    );
+}
+
+/// A cover drawn in its place, at scale 1 and 2, in the first frame it
+/// shows (a large image too, which iced would otherwise send to the GPU in
+/// the background): the art fitted into its place at the pixels it shows
+/// at, its corners rounded.
 #[test]
 fn a_cover_is_drawn_fitted_with_its_corners_rounded() {
     let mut headless = Headless::new();
     for scale in [1.0, 2.0] {
         let size = ((1280.0 * scale) as u32, (800.0 * scale) as u32);
-        let mut canvas = Canvas::new(80, 24, font_px(f64::from(scale)));
-        let state = sized(&mut canvas, size.0, size.1);
         let art = Art {
             id: 7,
             image: Arc::new(sample_cover(256)),
         };
-        draw(&mut canvas, &state, Some(&art));
+        let place = ((600.0 * scale) as u32, (500.0 * scale) as u32);
         let mut covers = Covers::default();
-        covers.show(Some(&art), canvas.covers(), scale);
-        let shot = drawn(&mut headless, &covers, size, scale);
-        let (x, y, w, h) = canvas.covers()[0].place;
-        let side = w.min(h);
+        covers.show(Some(&art), &[place], scale);
+        let window = Size::new(size.0 as f32 / scale, size.1 as f32 / scale);
+        headless.draw(covers.art(0).expect("art"), window, Instant::now());
+        let shot = headless.screenshot(scale);
+        let side = place.0.min(place.1) as usize;
         let cover = sample_cover(side as u32);
-        let at = |dx: usize, dy: usize| shot.get_pixel((x + dx) as u32, (y + dy) as u32).0;
+        let at = |dx: usize, dy: usize| shot.get_pixel(dx as u32, dy as u32).0;
         let want = |dx: usize, dy: usize| cover.get_pixel(dx as u32, dy as u32).0;
         let (mid, r) = (side / 2, (10.0 * scale) as usize);
         assert!(near(&at(mid, mid), &want(mid, mid), 24), "scale {scale}");
@@ -197,104 +201,34 @@ fn a_cover_is_drawn_fitted_with_its_corners_rounded() {
 }
 
 /// A cover's art is scaled once for its art and size: the same art at
-/// the same size keeps its image (wherever it goes), another art or size
-/// is fitted anew, and no art shows nothing.
+/// the same size keeps its image, another art or size is fitted anew, and
+/// no art shows nothing.
 #[test]
 fn a_covers_art_is_kept_by_art_id_and_size() {
     let art = Art {
         id: 5,
         image: Arc::new(sample_cover(64)),
     };
-    /// The image `art` shows with in a cover at `place`.
-    fn image(covers: &mut Covers, art: Option<&Art>, place: PixelRect) -> Option<ImageId> {
-        let spot = Spot {
-            place,
-            align: Align::Center,
-        };
-        covers.show(art, &[spot], 1.0);
+    /// The image `art` shows with in a cover in a place of `place`.
+    fn image(covers: &mut Covers, art: Option<&Art>, place: (u32, u32)) -> Option<ImageId> {
+        covers.show(art, &[place], 1.0);
         covers.images().next().map(Handle::id)
     }
     let mut covers = Covers::default();
-    let first = image(&mut covers, Some(&art), (10, 10, 200, 200));
+    let first = image(&mut covers, Some(&art), (200, 200));
     assert!(first.is_some());
-    assert_eq!(image(&mut covers, Some(&art), (10, 10, 200, 200)), first);
-    assert_eq!(image(&mut covers, Some(&art), (300, 40, 200, 200)), first);
+    assert_eq!(image(&mut covers, Some(&art), (200, 200)), first);
     let other = Art {
         id: 6,
         image: art.image.clone(),
     };
-    let anew = image(&mut covers, Some(&other), (300, 40, 200, 200));
+    let anew = image(&mut covers, Some(&other), (200, 200));
     assert!(anew.is_some() && anew != first);
-    let bigger = image(&mut covers, Some(&other), (300, 40, 240, 240));
+    let bigger = image(&mut covers, Some(&other), (240, 240));
     assert!(bigger.is_some() && bigger != anew);
-    assert_eq!(image(&mut covers, None, (300, 40, 240, 240)), None);
+    assert_eq!(image(&mut covers, None, (240, 240)), None);
     covers.show(Some(&art), &[], 1.0);
     assert_eq!(covers.images().count(), 0);
-}
-
-/// Frames drawn one after another (pictures kept where nothing under them
-/// changed, cells redrawn only where they did) end in the same pixels as
-/// the last frame drawn afresh: through covers that stay, change and go
-/// (their cells left blank for the window), Now playing and the
-/// Transition tab.
-#[test]
-fn frames_in_a_row_end_as_the_last_drawn_afresh() {
-    let first = Art {
-        id: 1,
-        image: Arc::new(sample_cover(128)),
-    };
-    let second = Art {
-        id: 2,
-        image: Arc::new(image::RgbImage::from_pixel(64, 64, Rgb([235, 225, 210]))),
-    };
-    let mut canvas = Canvas::new(80, 24, font_px(1.0));
-    let main = sized(&mut canvas, 1280, 800);
-    let screen = |s: Screen| {
-        let mut state = main.clone();
-        state.screen = s;
-        state
-    };
-    let mut later = main.clone();
-    later.playing.position += 7.0;
-    let mut tab = common::transition_state(canvas.grid().cols, canvas.grid().rows);
-    tab.drawn_heard = Some(tab.playing.position);
-    let mut tab_later = tab.clone();
-    tab_later.playing.position += 0.5;
-    tab_later.drawn_heard = Some(tab_later.playing.position);
-    let steps: Vec<(&str, State, Option<&Art>)> = vec![
-        ("main", main.clone(), Some(&first)),
-        ("main, later", later, Some(&first)),
-        ("now playing", screen(Screen::NowPlaying), Some(&first)),
-        (
-            "now playing, again",
-            screen(Screen::NowPlaying),
-            Some(&first),
-        ),
-        (
-            "now playing, another cover",
-            screen(Screen::NowPlaying),
-            Some(&second),
-        ),
-        ("now playing, no cover", screen(Screen::NowPlaying), None),
-        ("settings", screen(Screen::Settings), Some(&first)),
-        ("main again", main.clone(), Some(&first)),
-        ("transition", tab, Some(&first)),
-        ("transition, later", tab_later, Some(&first)),
-        ("main after transition", main.clone(), Some(&first)),
-    ];
-    for (name, state, art) in &steps {
-        draw(&mut canvas, state, *art);
-        let mut fresh = Canvas::new(80, 24, font_px(1.0));
-        fresh.fit(1280, 800);
-        draw(&mut fresh, state, *art);
-        let (got, want) = (canvas.image(), fresh.image());
-        let differ = got
-            .pixels()
-            .zip(want.pixels())
-            .filter(|(a, b)| a != b)
-            .count();
-        assert_eq!(differ, 0, "{name}: {differ} pixels differ");
-    }
 }
 
 /// The Transition tab's lanes kept in tiles from frame to frame, painted
@@ -302,30 +236,22 @@ fn frames_in_a_row_end_as_the_last_drawn_afresh() {
 /// following the playhead by fractions of a pixel and by several, back
 /// after a seek, held with the playhead going across it, the cursor and a
 /// selection moving, a transition's curves shown, a zoom) shows at each
-/// frame the lanes of that frame painted afresh, at scale 2; the canvas
-/// under them changes no pixel in a frame where nothing moved.
+/// frame the lanes of that frame painted afresh, at scale 2.
 #[test]
 fn transition_frames_in_a_row_are_as_drawn_afresh() {
     let (width, height, scale) = (2400, 1500, 2.0f32);
-    let mut canvas = Canvas::new(80, 24, font_px(f64::from(scale)));
-    let grid = canvas.fit(width, height);
     let mut lanes = Lanes::default();
-    let steps = transition_steps(grid);
+    let steps = transition_steps(Size::new(1200.0, 750.0));
     let picture = |state: &State| {
-        let mut c = Canvas::new(80, 24, font_px(f64::from(scale)));
-        c.fit(width, height);
         let mut l = Lanes::default();
-        lanes_picture(&mut c, &mut l, state, (width, height, scale))
+        lanes_picture(&mut l, state, (width, height, scale))
     };
     for (name, state) in &steps {
-        let got = lanes_picture(&mut canvas, &mut lanes, state, (width, height, scale));
+        let got = lanes_picture(&mut lanes, state, (width, height, scale));
         let want = picture(state);
         let differ = got.iter().zip(&want).filter(|(a, b)| a != b).count();
         assert_eq!(differ, 0, "{name}: {differ} pixels differ");
     }
-    let (name, last) = steps.last().unwrap();
-    draw_heard(&mut canvas, last, None);
-    assert!(!canvas.changed, "{name}, again: a pixel changed");
     // The words were there to be drawn: without them the lanes differ.
     let (_, first) = &steps[0];
     let mut bare = first.clone();
@@ -338,34 +264,47 @@ fn transition_frames_in_a_row_are_as_drawn_afresh() {
     assert!(differ > 500, "the words: {differ} pixels");
 }
 
-/// A frame of `state` at what it says is heard drawn on `canvas`, and its
-/// lanes framed by `lanes` as the processor shows them (no GPU) in a
-/// window of `(width, height, scale)`: their picture over the window's
-/// ground.
-fn lanes_picture(
-    canvas: &mut Canvas,
+/// The sizes the lanes are painted at in a window of `scale`: the
+/// canvas's cells'.
+fn lane_metrics(scale: f32) -> jodeldiplom::gui::lanes::Metrics {
+    Canvas::new(80, 24, font_px(f64::from(scale))).metrics()
+}
+
+/// The lanes `state` shows at what it says is heard, framed by `lanes` on
+/// the GPU (`gpu`) or the processor, in a window of
+/// `(width, height, scale)` pixels.
+fn frame_lanes(
     lanes: &mut Lanes,
     state: &State,
     (width, height, scale): (u32, u32, f32),
-) -> Vec<u32> {
-    draw_heard(canvas, state, None);
+    gpu: bool,
+) {
+    let size = Size::new(width as f32 / scale, height as f32 / scale);
+    let heard = state.heard();
     lanes.show(
-        transition::lanes(canvas, state, scale, state.heard()),
+        lane_spots(state, size, scale, lane_metrics(scale), heard),
         scale,
-        false,
+        gpu,
     );
-    lanes.frame(state.heard());
-    lanes.picture(width as usize, height as usize)
+    lanes.frame(heard);
+}
+
+/// The lanes of `state` at what it says is heard framed by `lanes` as the
+/// processor shows them (no GPU) in a window of `(width, height, scale)`:
+/// their picture over the window's ground.
+fn lanes_picture(lanes: &mut Lanes, state: &State, window: (u32, u32, f32)) -> Vec<u32> {
+    frame_lanes(lanes, state, window, false);
+    lanes.picture(window.0 as usize, window.1 as usize)
 }
 
 /// A frame of `state` at what it says is heard.
-fn draw_heard(canvas: &mut Canvas, state: &State, art: Option<&Art>) {
+fn draw_heard(canvas: &mut Canvas, state: &State) {
     let scene = Scene {
         state,
         grid: canvas.grid(),
         heard: state.heard(),
     };
-    canvas.draw(&scene, art);
+    canvas.draw(&scene);
 }
 
 /// The window's frames through the GPU, off screen: the pixels that
@@ -393,10 +332,6 @@ fn gpu_frames(srgb: bool) {
     };
     gpu.name += if srgb { ", sRGB" } else { "" };
     let scale = 2.0;
-    let art = Art {
-        id: 3,
-        image: Arc::new(sample_cover(128)),
-    };
     let mut canvas = Canvas::new(80, 24, font_px(scale));
     // Not a whole number of cells: the background shows beyond them.
     let (mut width, mut height) = (2411, 1507);
@@ -410,14 +345,14 @@ fn gpu_frames(srgb: bool) {
     let mut now_playing = main.clone();
     now_playing.screen = Screen::NowPlaying;
     steps.push(("now playing".into(), now_playing));
-    steps.extend(transition_steps(grid));
+    steps.extend(transition_steps(common::window(grid.cols, grid.rows)));
     steps.push(("main after transition".into(), main.clone()));
     for (i, (name, state)) in steps.iter().enumerate() {
         if i == 5 {
             // The window a little wider: the grid stays, the margin grows.
             width += 7;
         }
-        draw_heard(&mut canvas, state, Some(&art));
+        draw_heard(&mut canvas, state);
         // One take skipped: what it held must come with the next.
         if i == 8 {
             continue;
@@ -433,8 +368,8 @@ fn gpu_frames(srgb: bool) {
     (width, height) = (1900, 1200);
     let grid = canvas.fit(width, height);
     let mut small = main.clone();
-    small.fit = layout::fit(&small, grid);
-    draw_heard(&mut canvas, &small, Some(&art));
+    common::fit(&mut small, grid.cols, grid.rows);
+    draw_heard(&mut canvas, &small);
     let changes = canvas.take_changes();
     let got = gpu.show(&canvas, &changes, width, height).unwrap();
     let mut want = vec![0u32; (width * height) as usize];
@@ -454,9 +389,9 @@ fn the_karaoke_lane_scrolled_by_the_gpu_is_the_lane_painted() {
         let Some(mut gpu) = lanes_gpu(srgb) else {
             return;
         };
-        let (mut canvas, grid) = lanes_canvas();
         let mut lanes = Lanes::default();
-        let mut state = common::transition_state(grid.cols, grid.rows);
+        let (cols, rows) = LANES_CELLS;
+        let mut state = common::transition_state(cols, rows);
         state.side = jodeldiplom::core::Side::Karaoke;
         common::sung_every(&mut state, 0.5);
         // In C major: the scale's lines across the lane, the notes on them.
@@ -474,7 +409,7 @@ fn the_karaoke_lane_scrolled_by_the_gpu_is_the_lane_painted() {
             .enumerate()
         {
             let name = format!("frame {i}");
-            same_through_gpu(&mut gpu, (&mut canvas, &mut lanes), &mut state, time, &name);
+            same_through_gpu(&mut gpu, &mut lanes, &mut state, time, &name);
         }
     }
 }
@@ -494,12 +429,12 @@ fn the_transition_lanes_scrolled_by_the_gpu_are_the_lanes_painted() {
         let Some(mut gpu) = lanes_gpu(srgb) else {
             return;
         };
-        let (mut canvas, grid) = lanes_canvas();
         let mut lanes = Lanes::default();
-        let mut state = common::transition_state(grid.cols, grid.rows);
+        let (cols, rows) = LANES_CELLS;
+        let mut state = common::transition_state(cols, rows);
         sung(&mut state);
         let mut step = |state: &mut State, time: f64, name: &str| {
-            same_through_gpu(&mut gpu, (&mut canvas, &mut lanes), state, time, name);
+            same_through_gpu(&mut gpu, &mut lanes, state, time, name);
         };
         for (i, &time) in [30.0, 30.2, 31.1, 33.9, 34.0, 41.5].iter().enumerate() {
             step(&mut state, time, &format!("following, {i}"));
@@ -513,14 +448,8 @@ fn the_transition_lanes_scrolled_by_the_gpu_are_the_lanes_painted() {
         assert!(gpu.held() >= 10, "{} lanes held", gpu.held());
         // The browser: no lanes, and none held once a frame went by.
         state.side = jodeldiplom::core::Side::Browser;
-        draw_heard(&mut canvas, &state, None);
-        lanes.show(
-            transition::lanes(&mut canvas, &state, 2.0, state.heard()),
-            2.0,
-            true,
-        );
-        lanes.frame(state.heard());
         let (width, height) = LANES_SIZE;
+        frame_lanes(&mut lanes, &state, (width, height, 2.0), true);
         gpu.show(&lanes, width, height).unwrap();
         assert_eq!(gpu.held(), 0, "the lanes' tiles let go of");
     }
@@ -536,14 +465,11 @@ fn lanes_gpu(srgb: bool) -> Option<LaneOffscreen> {
     }
 }
 
+/// The lanes' window, in pixels at scale 2.
 const LANES_SIZE: (u32, u32) = (2411, 1507);
 
-/// A canvas for a window of [`LANES_SIZE`] at scale 2.
-fn lanes_canvas() -> (Canvas, Grid) {
-    let mut canvas = Canvas::new(80, 24, font_px(2.0));
-    let grid = canvas.fit(LANES_SIZE.0, LANES_SIZE.1);
-    (canvas, grid)
-}
+/// The old cells that window's state is fitted to (8 × 19 points each).
+const LANES_CELLS: (u16, u16) = (150, 39);
 
 /// `state` near `time` shown by `lanes` on the GPU, and by lanes made
 /// afresh on the processor: the same pixels but at the cards' rounded
@@ -553,7 +479,7 @@ fn lanes_canvas() -> (Canvas, Grid) {
 /// window's do.
 fn same_through_gpu(
     gpu: &mut LaneOffscreen,
-    (canvas, lanes): (&mut Canvas, &mut Lanes),
+    lanes: &mut Lanes,
     state: &mut State,
     time: f64,
     name: &str,
@@ -565,12 +491,8 @@ fn same_through_gpu(
     };
     let mut heard = time;
     at(state, heard);
-    draw_heard(canvas, state, None);
-    lanes.show(
-        transition::lanes(canvas, state, 2.0, state.heard()),
-        2.0,
-        true,
-    );
+    let window = (width, height, 2.0);
+    frame_lanes(lanes, state, window, true);
     for _ in 0..3 {
         lanes.frame(heard);
         gpu.show(lanes, width, height).unwrap();
@@ -579,26 +501,14 @@ fn same_through_gpu(
         heard -= following.map_or(0.0, |&(_, frac, px)| f64::from(frac) * px);
     }
     at(state, heard);
-    draw_heard(canvas, state, None);
-    lanes.show(
-        transition::lanes(canvas, state, 2.0, state.heard()),
-        2.0,
-        true,
-    );
-    lanes.frame(heard);
+    frame_lanes(lanes, state, window, true);
     assert!(
         lanes.stands().iter().all(|s| s.1 == 0.0),
         "{name}: not on a whole column: {:?}",
         lanes.stands()
     );
     let got = gpu.show(lanes, width, height).unwrap();
-    let mut fresh_canvas = lanes_canvas().0;
-    let want = lanes_picture(
-        &mut fresh_canvas,
-        &mut Lanes::default(),
-        state,
-        (width, height, 2.0),
-    );
+    let want = lanes_picture(&mut Lanes::default(), state, window);
     let radius = (2.0 * jodeldiplom::gui::look::radius::PANEL).ceil() as usize;
     let corner = |x: usize, y: usize| {
         lanes.places().iter().any(|&(x0, y0, w, h)| {
@@ -629,10 +539,11 @@ fn same_through_gpu(
 /// fractions of a pixel and by several, back after a seek, held with the
 /// playhead going across it, the cursor and a selection moving, a
 /// transition's curves shown, a zoom.
-fn transition_steps(grid: Grid) -> Vec<(String, State)> {
+fn transition_steps(size: Size) -> Vec<(String, State)> {
     use jodeldiplom::core::keymap::Op;
     use jodeldiplom::core::{update, Action};
-    let mut state = common::transition_state(grid.cols, grid.rows);
+    let cells = |points: f32, cell: f32| (points / cell) as u16;
+    let mut state = common::transition_state(cells(size.width, 8.0), cells(size.height, 19.0));
     sung(&mut state);
     let at = |state: &mut State, seconds: f64| {
         state.playing.position = seconds;
@@ -742,10 +653,6 @@ fn hidpi_doubles_the_cells() {
         g1.cols.abs_diff(g2.cols) <= 2 && g1.rows.abs_diff(g2.rows) <= 2,
         "{g1:?} {g2:?}"
     );
-    // Without a cover the placeholder is drawn in cells.
-    let state = common::playing_state(g1.cols, g1.rows);
-    draw(&mut c1, &state, None);
-    assert!(c1.text().contains('♪'));
 }
 
 /// The icon file built into the window player is the one the code draws
@@ -813,12 +720,10 @@ fn the_macos_icon_file_matches_the_drawing() {
     assert!(below > 0 && below < 128, "{below}");
 }
 
-/// The Transition tab as the window lays it out over `canvas`'s grid, at
-/// a scale of 1 (its points the pixels).
-fn transition_plan(canvas: &Canvas, state: &State) -> transition::Plan {
-    let (cw, ch) = canvas.cell();
-    let cell = (cw as f32, ch as f32);
-    let room = transition::Room::of(state, canvas.grid(), cell, 1.0).expect("the Transition tab");
+/// The Transition tab as the window lays it out in a window of `size`
+/// at a scale of 1 (its points the pixels).
+fn transition_plan(state: &State, size: Size) -> transition::Plan {
+    let room = transition::Room::of(state, size, 1.0).expect("the Transition tab");
     transition::plan(state, &room)
 }
 
@@ -828,27 +733,24 @@ fn pixels_of(rect: iced::Rectangle) -> (u32, u32, u32, u32) {
     (px(rect.x), px(rect.y), px(rect.width), px(rect.height))
 }
 
+/// A window of 1600 × 1000 at scale 1, and the Transition tab's state
+/// fitted to it.
+fn transition_window() -> (Size, State) {
+    let size = Size::new(1600.0, 1000.0);
+    (size, common::transition_state(200, 52))
+}
+
 /// The Transition tab's lanes are the window's, where the tab leaves room
 /// for them: each painted there.
 #[test]
 fn the_transition_lanes_are_painted_in_pixels() {
-    let mut canvas = Canvas::new(80, 24, font_px(1.0));
-    let grid = canvas.fit(1600, 1000);
-    let mut state = common::transition_state(grid.cols, grid.rows);
+    let (size, mut state) = transition_window();
     state.drawn_heard = Some(0.0);
-    let picture = lanes_picture(
-        &mut canvas,
-        &mut Lanes::default(),
-        &state,
-        (1600, 1000, 1.0),
-    );
+    let picture = lanes_picture(&mut Lanes::default(), &state, (1600, 1000, 1.0));
     let image = rgb_image(&picture, 1600, 1000);
-    let Layout::Main(m) = layout::compute(&state, canvas.grid()) else {
-        panic!("the main screen");
-    };
-    let tab = transition_plan(&canvas, &state);
+    let tab = transition_plan(&state, size);
     assert_eq!(tab.blocks.len(), 2);
-    assert_eq!(m.bottom.spectrum, 0);
+    assert_eq!(metrics::main(size, Side::Transition).spectrum, 0.0);
     // The vocals of the playing track come in at 60 s: before, nothing is
     // painted in their lane but its card; the drums lane is busy.
     let card = Rgb(jodeldiplom::gui::look::bytes(
@@ -879,28 +781,21 @@ fn the_transition_lanes_are_painted_in_pixels() {
 fn the_bar_numbers_start_at_their_bars_to_the_pixel() {
     use jodeldiplom::core::lanes::{self, Block};
     use jodeldiplom::core::transition::viewport;
-    let mut canvas = Canvas::new(80, 24, font_px(1.0));
-    let grid = canvas.fit(1600, 1000);
-    let mut state = common::transition_state(grid.cols, grid.rows);
+    let (size, mut state) = transition_window();
     // A view that starts between cells.
     state.transition.now.path = lanes::path(&state, Block::Now).cloned();
     state.transition.now.start = Some(10.123);
     state.drawn_heard = Some(0.0);
-    let picture = lanes_picture(
-        &mut canvas,
-        &mut Lanes::default(),
-        &state,
-        (1600, 1000, 1.0),
-    );
+    let picture = lanes_picture(&mut Lanes::default(), &state, (1600, 1000, 1.0));
     let image = rgb_image(&picture, 1600, 1000);
-    let ruler = transition_plan(&canvas, &state).blocks[0].ruler.unwrap();
+    let ruler = transition_plan(&state, size).blocks[0].ruler.unwrap();
     let (x0, y0, w, h) = pixels_of(ruler);
     let (start, end) = viewport::window(&state, Block::Now, state.heard());
     let a = lanes::rhythmed(&state, Block::Now)
         .unwrap()
         .analysis
         .clone();
-    let cw = canvas.cell().0 as u32;
+    let cw = lane_metrics(1.0).cell.0 as u32;
     // On the panel's ground.
     let ground = Rgb(jodeldiplom::gui::look::bytes(
         jodeldiplom::gui::look::SURFACE,
@@ -927,10 +822,7 @@ fn the_bar_numbers_start_at_their_bars_to_the_pixel() {
 #[test]
 fn after_a_track_change_the_next_block_is_blank_until_its_analysis_is_in() {
     use jodeldiplom::core::{update, Action};
-    let mut canvas = Canvas::new(80, 24, font_px(1.0));
-    let grid = canvas.fit(1600, 1000);
-    let mut state = common::transition_state(grid.cols, grid.rows);
-    draw(&mut canvas, &state, None);
+    let (size, mut state) = transition_window();
     // The next track starts; the one after it is not analysed yet.
     let track = state.playing.track.clone().unwrap();
     update(
@@ -949,14 +841,9 @@ fn after_a_track_change_the_next_block_is_blank_until_its_analysis_is_in() {
         ))),
     );
     state.drawn_heard = Some(0.0);
-    let picture = lanes_picture(
-        &mut canvas,
-        &mut Lanes::default(),
-        &state,
-        (1600, 1000, 1.0),
-    );
+    let picture = lanes_picture(&mut Lanes::default(), &state, (1600, 1000, 1.0));
     let image = rgb_image(&picture, 1600, 1000);
-    let tab = transition_plan(&canvas, &state);
+    let tab = transition_plan(&state, size);
     assert_eq!(tab.blocks.len(), 2);
     for lane in &tab.blocks[1].lanes {
         let (x, y, w, h) = pixels_of(lane.rect);
@@ -1055,29 +942,4 @@ fn the_stage_draws_the_lane_over_its_ground() {
     assert!(r > 180 && g > 100 && b < 120, "the hit: {r} {g} {b}");
     // Nothing far above the lane.
     assert_eq!(at(w as f32 / 2.0, 2.0), 0);
-}
-
-/// The Mixer tab's rows are left to the window's own widgets
-/// ([`jodeldiplom::gui::mixer`]): the canvas paints its box and its keys,
-/// and nothing inside.
-#[test]
-fn the_canvas_leaves_the_mixer_tab_to_the_window() {
-    let mut canvas = Canvas::new(80, 24, font_px(1.0));
-    let grid = canvas.fit(1280, 800);
-    let state = common::desk_state(grid.cols, grid.rows);
-    draw(&mut canvas, &state, None);
-    let Layout::Main(m) = layout::compute(&state, canvas.grid()) else {
-        panic!("the main screen");
-    };
-    let image = canvas.image();
-    let (x, y, w, h) = pixel_rect(&canvas, m.rows);
-    let lit = (y..y + h)
-        .flat_map(|yy| (x..x + w).map(move |xx| (xx, yy)))
-        .filter(|&(xx, yy)| *image.get_pixel(xx, yy) != bg())
-        .count();
-    assert_eq!(lit, 0, "the desk's rows are the window's");
-    assert!(
-        canvas.text().contains("m mute"),
-        "the keys in the box's border"
-    );
 }

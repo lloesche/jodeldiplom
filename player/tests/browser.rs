@@ -124,11 +124,8 @@ fn details_are_read_for_the_rows_on_screen() {
         .unwrap();
     }
     let mut app = start(big.clone(), (100, 16));
-    use jodeldiplom::view::layout::{compute, Grid, Layout};
-    let Layout::Main(m) = compute(&app.state, Grid::new(100, 16)) else {
-        panic!("the main screen")
-    };
-    let height = usize::from(m.rows.height);
+    // The rows the list shows in that window.
+    let height = usize::from(app.state.fit.list_rows);
     assert!(common::wait_for(&mut app, WAIT, |a| {
         !a.state.browser.loading && a.state.pending.is_empty() && !a.state.details.is_empty()
     }));

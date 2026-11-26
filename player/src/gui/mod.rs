@@ -1,13 +1,11 @@
-//! The window: an iced application ([`window`]) around the player. The
-//! screens ported to iced draw in its own widgets (the setup screen, the
-//! Mixer tab, [`mixer`]), in the native look ([`look`], [`widgets`]);
-//! every other one is the old canvas (ratatui widgets in cells,
-//! rasterised with the pictures into a pixmap, [`canvas`]) shown in one
-//! widget under them ([`embed`]), on iced's GPU through its shader
-//! widget, or as an image with iced's CPU renderer where there is no GPU.
-//! The covers and the lanes ([`lanes`]) are drawn over the cells it leaves
-//! for them. Karaoke mode is the window's own: its stage a widget of its
-//! own ([`stage_view`]), its controls iced's widgets over it.
+//! The window: an iced application ([`window`]) around the player. Every
+//! screen draws in iced's own widgets, in the native look ([`look`],
+//! [`widgets`]): the main screen laid out from the window's measures
+//! ([`metrics`]), the Mixer tab ([`mixer`]), the lanes ([`lanes`]) and the
+//! covers in their places; Karaoke mode's stage a widget of its own
+//! ([`stage_view`]), its controls iced's widgets over it. The old canvas
+//! (ratatui widgets in cells rasterised into a pixmap, [`canvas`], shown
+//! by [`embed`]) is drawn no more.
 
 pub mod backdrop;
 pub mod big_text;
@@ -25,6 +23,7 @@ pub mod keys;
 pub mod lanes;
 pub mod liquid;
 pub mod look;
+pub mod metrics;
 pub mod mixer;
 mod pacer;
 mod paint;
@@ -59,7 +58,7 @@ use crate::cli::Args;
 
 pub use canvas::{font_px, Canvas};
 pub use keys::key;
-pub use screens::transition;
+pub use screens::{lane_spots, transition};
 
 /// The Dock icon: macOS has no window icons, and a bare executable (not
 /// in the app bundle, whose `Info.plist` names the icon) would show a

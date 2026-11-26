@@ -1,25 +1,17 @@
-//! The window's drawing surface without the window: the shared ratatui
-//! widgets rasterised into an RGB pixmap ([`PixelBackend`]), and the
-//! pictures placed at their cell rects ([`pictures`]). The covers and the
-//! Karaoke tab's voice lane are the
-//! window's own widgets over the cells left for them ([`Canvas::covers`],
-//! [`Canvas::take_lanes`]). Used by the window and, headless, by the tests
-//! and the screenshots.
-
-mod pictures;
+//! The window's old drawing surface without the window: the shared
+//! ratatui widgets rasterised into an RGB pixmap ([`PixelBackend`]). No
+//! screen draws into it any more; its cells' size is the lanes' letters'
+//! ([`Canvas::metrics`]). Used by the window and, headless, by the tests.
 
 use image::RgbImage;
 use ratatui::layout::Rect;
 use ratatui::Terminal;
 
-use super::lanes::{LaneSpot, LaneSpots, Metrics, Part, Rows};
+use super::lanes::Metrics;
 use super::pixels::{pack, unpack, PixelRect};
 use super::raster::PixelBackend;
-use super::widgets::cover::{Align, Spot};
-use crate::art::Art;
 use crate::view::layout::Grid;
 use crate::view::{self, palette, Scene};
-use pictures::{Paint, PixelPictures};
 
 /// The font size at a scale factor of 1, in pixels.
 pub const BASE_FONT_PX: f64 = 15.0;
@@ -29,29 +21,10 @@ pub fn font_px(scale: f64) -> f32 {
     (BASE_FONT_PX * scale).round().clamp(8.0, 96.0) as f32
 }
 
-/// How long the last [`Canvas::draw`] took: the widgets with their cells
-/// into pixels, then the pictures painted over them.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct DrawTimes {
-    /// The widgets drawn and the changed cells rasterised.
-    pub widgets: std::time::Duration,
-    /// The pictures painted, the covers and the lanes placed.
-    pub pictures: std::time::Duration,
-}
-
 /// The window's pixels.
 pub struct Canvas {
     terminal: Terminal<PixelBackend>,
     font_px: f32,
-    painted: Vec<Rect>,
-    /// The covers as last drawn, for the window to draw over the cells
-    /// left for them.
-    covers: Vec<Spot>,
-    /// The lanes as last drawn, for the window to draw over the cells
-    /// left for them.
-    lanes: Vec<LaneSpot>,
-    /// How long the last frame took.
-    pub last_draw: DrawTimes,
     /// Whether the last [`Canvas::draw`] changed a pixel: a window that
     /// shows the pixmap already needs no new frame where it did not.
     pub changed: bool,
@@ -116,10 +89,6 @@ impl Canvas {
         Canvas {
             terminal,
             font_px,
-            painted: Vec::new(),
-            covers: Vec::new(),
-            lanes: Vec::new(),
-            last_draw: DrawTimes::default(),
             changed: true,
             changes: Changes {
                 all: true,
@@ -194,56 +163,15 @@ impl Canvas {
         }
     }
 
-    /// Draws a frame: the widgets, then the pictures, and where the covers
-    /// and the lanes go ([`Canvas::covers`], [`Canvas::take_lanes`]). The
-    /// text over a cover is made again only when it moved or a cell of it
-    /// was redrawn.
-    pub fn draw(&mut self, scene: &Scene, art: Option<&Art>) {
-        let started = std::time::Instant::now();
+    /// Draws a frame of the widgets ([`view::draw`]): only the cells that
+    /// changed are rasterised.
+    pub fn draw(&mut self, scene: &Scene) {
         self.terminal.backend_mut().reset_damage();
-        let mut pictures = PixelPictures {
-            has_art: art.is_some(),
-            paints: Vec::new(),
-        };
-        let Ok(_) = self
-            .terminal
-            .draw(|frame| view::draw(frame, scene, &mut pictures));
-        // Only the cells that changed are redrawn; where a picture was and
-        // is no more, the cells did not change, so repaint them all.
-        let rects: Vec<Rect> = pictures.paints.iter().map(Paint::rect).collect();
-        if rects != self.painted {
-            self.terminal.backend_mut().redraw();
-            self.painted = rects;
-        }
-        let widgets = started.elapsed();
+        let Ok(_) = self.terminal.draw(|frame| view::draw(frame, scene));
         let mut frame = Changes::default();
         self.cells_changed(&mut frame);
-        self.covers.clear();
-        self.lanes.clear();
-        for paint in pictures.paints {
-            match paint {
-                Paint::Cover(rect, below_line) => {
-                    self.covers.push(self.cover_spot(rect, below_line))
-                }
-                Paint::Wave(plot) => {
-                    let rect = self.pixel_rect(plot.area);
-                    let ch = self.cell().1;
-                    let above = usize::from(plot.rows.0) * ch;
-                    let rows = Rows {
-                        above,
-                        full: (usize::from(plot.rows.1) * ch).max(rect.3 + above),
-                    };
-                    let part = Part::Wave(plot, rows);
-                    self.lanes.push(LaneSpot { rect, part });
-                }
-            }
-        }
         self.changed = !frame.is_empty();
         self.changes.merge(frame);
-        self.last_draw = DrawTimes {
-            widgets,
-            pictures: started.elapsed() - widgets,
-        };
     }
 
     fn pixel_rect(&self, rect: Rect) -> PixelRect {
@@ -256,38 +184,12 @@ impl Canvas {
         )
     }
 
-    /// Where the covers go as last drawn, in the pixmap's pixels: the
-    /// window draws them over the cells left blank for them.
-    pub fn covers(&self) -> &[Spot] {
-        &self.covers
-    }
-
-    /// The cover in `rect`: with `below_line` from half a cell down
-    /// (under the border line through its first row) and at the left,
-    /// otherwise in the middle.
-    fn cover_spot(&self, rect: Rect, below_line: bool) -> Spot {
-        let (x, y, w, h) = self.pixel_rect(rect);
-        let inset = if below_line { self.cell().1 / 2 } else { 0 };
-        Spot {
-            place: (x, y + inset, w, h.saturating_sub(inset)),
-            align: if below_line {
-                Align::TopLeft
-            } else {
-                Align::Center
-            },
-        }
-    }
-
-    /// The lanes as last drawn, in the pixmap's pixels, for the window
-    /// to draw over the cells left blank for them; taken (each frame
-    /// draws them again).
-    pub fn take_lanes(&mut self) -> LaneSpots {
-        LaneSpots {
-            metrics: Metrics {
-                cell: self.cell(),
-                font_px: self.font_px,
-            },
-            spots: std::mem::take(&mut self.lanes),
+    /// The sizes the lanes are painted at: the cells' and the font's
+    /// ([`super::lanes`]: the words' letters take a cell's width each).
+    pub fn metrics(&self) -> Metrics {
+        Metrics {
+            cell: self.cell(),
+            font_px: self.font_px,
         }
     }
 

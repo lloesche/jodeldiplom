@@ -195,12 +195,17 @@ pub fn fitted_app(options: jodeldiplom::app::AppOptions, cols: u16, rows: u16) -
     app
 }
 
-/// `state` as the window reports a grid of `cols` × `rows` cells to it
+/// `state` as a window of `cols` × `rows` of the old cells (8 × 19
+/// points each, as [`window`] has it) reports to it
 /// ([`jodeldiplom::core::Fit`]), as it would be told before the first
 /// frame is drawn.
 pub fn fit(state: &mut State, cols: u16, rows: u16) {
-    use jodeldiplom::view::layout::{fit, Grid};
-    state.fit = fit(state, Grid::new(cols, rows));
+    state.fit = jodeldiplom::gui::metrics::fit(window(cols, rows), state, 8.0);
+}
+
+/// A window of `cols` × `rows` of the old cells, in points.
+pub fn window(cols: u16, rows: u16) -> iced::Size {
+    iced::Size::new(f32::from(cols) * 8.0, f32::from(rows) * 19.0)
 }
 
 /// A state with a browser listing, a queue and a track playing at 1:23,

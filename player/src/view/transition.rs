@@ -25,22 +25,20 @@ pub const LABELS: f32 = 64.0;
 /// The tab's content in from its panel's edge, in points.
 pub const PAD: f32 = 12.0;
 
-/// The width of the lanes, in points, in the tab's pane `pane` points
-/// wide, a cell `cell` points wide (the panel's edges run through the
-/// middle of the pane's border cells): the pane less its border, its
-/// padding and the labels' column.
-pub fn lane_width(pane: f32, cell: f32) -> f32 {
-    (pane - cell - 2.0 * PAD - LABELS).max(0.0)
+/// The width of the lanes, in points, in the tab's pane (its panel)
+/// `pane` points wide: the pane less its padding and the labels' column.
+pub fn lane_width(pane: f32) -> f32 {
+    (pane - 2.0 * PAD - LABELS).max(0.0)
 }
 
-/// The width of the lanes in letters of the words along them, a letter a
-/// cell (`cell` points) wide, in a pane `pane` points wide: what fits the
+/// The width of the lanes in letters of the words along them, a letter
+/// `letter` points wide, in a pane `pane` points wide: what fits the
 /// lyrics' words ([`crate::core::Fit::lane_letters`]).
-pub fn lane_letters(pane: f32, cell: f32) -> u16 {
-    if cell <= 0.0 {
+pub fn lane_letters(pane: f32, letter: f32) -> u16 {
+    if letter <= 0.0 {
         return 0;
     }
-    (lane_width(pane, cell) / cell)
+    (lane_width(pane) / letter)
         .floor()
         .clamp(0.0, f32::from(u16::MAX)) as u16
 }
@@ -485,9 +483,7 @@ pub fn plots(state: &State, which: Block, heard: f64, follow: bool) -> Option<Pl
     let duration = waveform.duration().max(a.duration).max(1e-3);
     let shown = shown(state, which);
     let transition = shown.as_ref().map(|s| s.window);
-    // The plots carry no cells: the window places them in points.
     let plot = |lane: Lane| WavePlot {
-        area: ratatui::layout::Rect::default(),
         waveform: Arc::clone(&waveform),
         lane,
         start,
@@ -503,7 +499,6 @@ pub fn plots(state: &State, which: Block, heard: f64, follow: bool) -> Option<Pl
         transition,
         gain: Vec::new(),
         edit: None,
-        rows: (0, 0),
         lyrics: None,
         text_scale: 1,
         lines: WordLines::ONE,

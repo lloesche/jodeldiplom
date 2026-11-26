@@ -26,6 +26,7 @@ use jodeldiplom::core::keymap::Op;
 use jodeldiplom::core::lanes::Block;
 use jodeldiplom::core::sliders::Slider;
 use jodeldiplom::core::{lag, update, Action, Effect, Gpu, Screen, Side, State};
+use jodeldiplom::gui::metrics;
 use jodeldiplom::gui::pointer::{Grab, PointerKind, WheelOn};
 use jodeldiplom::gui::window::{Gui, Message};
 use jodeldiplom::view::setup::Choice;
@@ -567,6 +568,55 @@ fn the_list_shows_the_page_the_keys_turn() {
     assert_eq!(s.browser.cursor, 200);
     assert_eq!(s.browser.scroll, 201 - rows);
     assert!(shown(&gui, 199) && shown(&gui, 200 - rows) && !shown(&gui, 199 - rows));
+}
+
+/// The main screen as iced lays it out is where the window's measures
+/// say ([`metrics::main`]): the side pane, the right column beside it, the
+/// voice's lane under it, at the old 120- and 80-column windows, narrower
+/// and on the wide tabs; so what the core is told of the window (the
+/// list's page, the desk's width) is what shows.
+#[test]
+fn the_main_screen_is_laid_out_where_the_measures_say() {
+    let _gpu = gpu();
+    let near = |a: iced::Rectangle, b: iced::Rectangle| {
+        let d = [a.x - b.x, a.y - b.y, a.width - b.width, a.height - b.height];
+        d.iter().all(|v| v.abs() < 0.01)
+    };
+    for (size, side) in [
+        (Size::new(960.0, 684.0), Side::Browser),
+        (Size::new(640.0, 456.0), Side::Queue),
+        (Size::new(512.0, 418.0), Side::Browser),
+        (SIZE, Side::Karaoke),
+        (SIZE, Side::Mixer),
+        (SIZE, Side::Transition),
+    ] {
+        let mut state = common::playing_state(160, 42);
+        state.side = side;
+        let gui = window_sized(player(), state, size);
+        let m = metrics::main(size, side);
+        let mut sim = Simulator::with_size(jodeldiplom::gui::iced_settings(), size, gui.view());
+        let mut found = |id: &'static str| sim.find(Id::new(id)).ok().map(|t| t.bounds());
+        let pane = found("pane").expect("the pane");
+        assert!(
+            near(pane, m.pane),
+            "{side:?} in {size:?}: {pane:?} against {:?}",
+            m.pane
+        );
+        match (found("right"), m.right) {
+            (Some(got), Some(want)) => assert!(near(got, want), "{got:?} against {want:?}"),
+            (None, None) => {}
+            other => panic!("{side:?} in {size:?}: the right column {other:?}"),
+        }
+        match (found("voice"), m.voice) {
+            (Some(got), Some(want)) => assert!(near(got, want), "{got:?} against {want:?}"),
+            (None, None) => {}
+            other => panic!("{side:?} in {size:?}: the voice's lane {other:?}"),
+        }
+        let fit = gui.state().unwrap().fit;
+        if side == Side::Mixer {
+            assert_eq!(fit.desk_width, pane.width);
+        }
+    }
 }
 
 /// The command palette over everything: a click on a command runs it; a

@@ -1,37 +1,39 @@
-//! What the window shows, screen by screen. A screen drawn by iced's own
-//! widgets gets an arm here as it is ported: the setup screen
-//! ([`setup`]), Now playing ([`now`]), and the settings ([`settings`])
-//! and the keys ([`help`]) over the bottom bar ([`native`]), the command
-//! palette over them. Every other screen is the old canvas filling the
-//! window ([`super::embed`]), the Karaoke tab over it ([`karaoke::tab`]) or
-//! nothing, the covers over those where the canvas left their cells
-//! ([`super::widgets::cover`], not taking the pointer), the Transition
-//! tab ([`transition`]) or nothing, the lanes over all of it
-//! ([`super::lanes`], not taking the pointer), and slots over them: the
-//! Mixer tab ([`super::mixer`]) or nothing, the bottom bar ([`bottom`])
-//! or nothing, the list pane with its tabs ([`list`]) or nothing, the
-//! right column's text under the cover or the summary under the list
-//! ([`right`]) or nothing, the Karaoke tab's sync panel or nothing, and
-//! the command palette over all of it, the lanes too ([`palette`]) or
-//! nothing; the same shape, so each widget keeps its
-//! place in iced's tree (the tabs' pill slides from one side to the
-//! next). Karaoke mode is its own over the whole window
-//! ([`karaoke::mode`]).
+//! What the window shows, screen by screen, in iced's widgets: the setup
+//! screen ([`setup`]), Now playing ([`now`]), the settings
+//! ([`settings`]) and the keys ([`help`]) over the bottom bar
+//! ([`bottom`]), and the main screen laid out in rows and columns from
+//! the window's measures ([`crate::gui::metrics`]): the tabs' header
+//! along the top ([`list::tabs`]), under it the side pane (the browser
+//! or the queue, [`list`]; the Transition tab, [`transition`]; the
+//! Karaoke tab, [`karaoke`]; the Mixer tab, [`super::mixer`]) with the
+//! right column beside it (the cover and the text under it, [`right`]) or
+//! the track's summary under it, the Karaoke tab's voice lane under it,
+//! and the bottom bar along the foot. The lanes are drawn in their part
+//! of the screen ([`super::lanes`], taking no pointer), the covers in
+//! their places ([`super::widgets::cover`]); the command palette goes
+//! over everything ([`palette`]), the Karaoke tab's sync's panel over the
+//! main screen. Karaoke mode is its own over the whole window
+//! ([`karaoke::mode`], on its stage, [`super::stage_view`]).
+//!
+//! The tabs' header is the main screen's first part on every side, so
+//! the tabs keep their place in iced's tree (the pill slides from one
+//! side to the next).
 
-use iced::widget::{column, container, opaque, pin, space, stack, Stack};
-use iced::{Element, Fill, Point, Rectangle, Size, Widget as _};
+use iced::widget::{column, container, mouse_area, opaque, row, space, stack, Space};
+use iced::{mouse, Alignment, Background, Element, Fill, Point, Size, Widget as _};
 
-use super::embed::Embed;
-use super::lanes::Lanes;
+use super::lanes::{LaneSpot, LaneSpots, Metrics, Part, Rows};
 use super::look;
+use super::metrics::{self, Main};
 use super::mixer;
 use super::stage_view::StageView;
-use super::widgets::cover::Covers;
+use super::widgets;
+use super::widgets::cover::{self, Covers};
 use super::window::Message;
-use crate::core::{Screen, Side, State};
+use crate::core::keymap::Op;
+use crate::core::{Action, Screen, Side, State};
 use crate::spectrum::SpectrumFrame;
 use crate::view::karaoke::Tab;
-use crate::view::layout::{self, Layout, BAR_ROWS};
 
 pub mod bottom;
 pub mod help;
@@ -52,274 +54,292 @@ pub(super) enum Shown<'a> {
     Player(Option<&'a State>),
 }
 
-/// The window's content for what is `shown`, the spectrum `heard` in its
-/// bottom bar; Karaoke mode ([`karaoke`]) on its `stage`.
-pub(super) fn view<'a>(
-    shown: Shown<'a>,
-    embed: &Embed,
-    stage: &StageView,
-    caps: &'a mixer::Caps,
-    covers: &'a Covers,
-    lanes: &'a Lanes,
-    heard: &SpectrumFrame,
-) -> Element<'a, Message> {
+/// What the window's screens draw with beside the player's state.
+pub(super) struct Parts<'a> {
+    /// Karaoke mode's stage.
+    pub stage: &'a StageView,
+    /// The Mixer tab's faders' caps.
+    pub caps: &'a mixer::Caps,
+    /// The covers, fitted to their places ([`covers`]).
+    pub covers: &'a Covers,
+    /// The lanes, framed where they go ([`lane_spots`]).
+    pub lanes: &'a super::lanes::Lanes,
+    /// The spectrum heard, for the bottom bar.
+    pub heard: &'a SpectrumFrame,
+    /// The window's size, in points, and its pixels a point.
+    pub size: Size,
+    pub scale: f32,
+}
+
+/// The window's content for what is `shown`.
+pub(super) fn view<'a>(shown: Shown<'a>, parts: &Parts<'a>) -> Element<'a, Message> {
     let state = match shown {
         Shown::Setup(status) => return setup::view(&status),
-        Shown::Player(state) => state,
+        Shown::Player(Some(state)) => state,
+        Shown::Player(None) => return ground(space().boxed()),
     };
-    if let Some(state) = state.filter(|s| s.screen == Screen::Karaoke) {
-        let palette = palette::view(state);
-        return stack![
-            karaoke::mode::view(state, stage),
-            palette.unwrap_or_else(|| space().boxed())
-        ]
-        .boxed();
-    }
-    if let Some(screen) = state.and_then(|state| native(state, embed, covers, heard)) {
-        let palette = state.and_then(palette::view);
-        return stack![screen, palette.unwrap_or_else(|| space().boxed())].boxed();
-    }
-    let desk = state.and_then(|state| desk(state, embed, caps));
-    let bar = state.and_then(|state| bar(state, embed, heard));
-    let list = state.and_then(|state| list(state, embed));
-    let right = state.and_then(|state| right(state, embed, covers));
-    let (karaoke, sync) = state
-        .and_then(|state| karaoke(state, embed))
-        .unwrap_or_default();
-    let palette = state.and_then(palette::view);
-    let transition = state.and_then(|state| transition(state, embed));
-    stack![
-        embed.view(),
-        karaoke.unwrap_or_else(|| space().boxed()),
-        covers.view(),
-        transition.unwrap_or_else(|| space().boxed()),
-        lanes.view(),
-        desk.unwrap_or_else(|| space().boxed()),
-        bar.unwrap_or_else(|| space().boxed()),
-        list.unwrap_or_else(|| space().boxed()),
-        right.unwrap_or_else(|| space().boxed()),
-        sync.unwrap_or_else(|| space().boxed()),
-        palette.unwrap_or_else(|| space().boxed())
+    let screen = match state.screen {
+        Screen::NowPlaying => now::view(state, parts.covers),
+        Screen::Settings => page(state, settings::view(state), parts),
+        Screen::Help => page(state, help::view(state), parts),
+        Screen::Main => main(state, parts),
+        Screen::Karaoke => karaoke::mode::view(state, parts.stage),
+    };
+    let palette = palette::view(state).unwrap_or_else(|| space().boxed());
+    stack![screen, palette].boxed()
+}
+
+/// `content` on the window's ground.
+fn ground(content: Element<'_, Message>) -> Element<'_, Message> {
+    container(content)
+        .width(Fill)
+        .height(Fill)
+        .style(|_| container::Style {
+            background: Some(Background::Color(look::BG)),
+            ..container::Style::default()
+        })
+        .boxed()
+}
+
+/// A screen the window lays out whole (the settings, the keys), over the
+/// bottom bar as the main screen has it, without the spectrum.
+fn page<'a>(state: &State, page: Element<'a, Message>, parts: &Parts<'a>) -> Element<'a, Message> {
+    let bar = bottom::view(state, parts.heard, parts.size.width, 0.0);
+    column![
+        container(page).width(Fill).height(Fill),
+        container(opaque(bar))
+            .width(Fill)
+            .height(metrics::EDGE + metrics::BAND)
     ]
     .boxed()
 }
 
-/// The Karaoke tab's two slots: the tab, and the sync's panel.
-type KaraokeSlots<'a> = (Option<Element<'a, Message>>, Option<Element<'a, Message>>);
-
-/// On the Karaoke tab's side of the main screen: the tab over its place
-/// on the old canvas (the list pane; the covers and the lanes over it),
-/// with what the voice's lane says under the pane while it shows nothing;
-/// and the sync's panel over the window while one shows.
-fn karaoke<'a>(state: &State, embed: &Embed) -> Option<KaraokeSlots<'a>> {
-    if state.side != Side::Karaoke {
-        return None;
-    }
-    let Layout::Main(m) = layout::compute(state, embed.grid()) else {
-        return None;
-    };
-    let place = m.karaoke.as_ref()?;
-    let (cw, ch) = embed.cell();
-    let points = |r: ratatui::layout::Rect| {
-        Rectangle::new(
-            Point::new(f32::from(r.x) * cw, f32::from(r.y) * ch),
-            Size::new(f32::from(r.width) * cw, f32::from(r.height) * ch),
-        )
-    };
-    let pane = points(m.list);
-    // The cover at its place's top left, half a cell down, as square as
-    // the place allows.
-    let at = points(place.cover);
-    let side = at.width.min(at.height - ch / 2.0).max(0.0);
-    let cover = Rectangle::new(
-        Point::new(at.x - pane.x, at.y - pane.y + ch / 2.0),
-        Size::new(side, side),
-    );
-    let tab = Tab::of(state);
-    let room = karaoke::tab::Room {
-        width: pane.width,
-        height: pane.height,
-        cell: (cw, ch),
-        cover,
-    };
-    let mut layers = vec![
-        pin(opaque(karaoke::tab::view(&tab, list::turn(state), room)))
-            .x(pane.x)
-            .y(pane.y)
-            .boxed(),
-    ];
-    if let (Some(note), Some(voice)) = (tab.voice, place.voice) {
-        let voice = points(voice);
-        layers.push(
-            pin(karaoke::tab::voice(note, voice.width, voice.height))
-                .x(voice.x)
-                .y(voice.y)
+/// The main screen: the tabs' header, the side pane with the right column
+/// beside it or the summary under it, the Karaoke tab's voice lane, the
+/// bottom bar; the sync's panel over it while one shows.
+fn main<'a>(state: &'a State, parts: &Parts<'a>) -> Element<'a, Message> {
+    let m = metrics::main(parts.size, state.side);
+    let header = container(list::tabs(state, m.pane.width))
+        .padding(iced::Padding::from([0.0, metrics::MARGIN]))
+        .width(Fill)
+        .height(metrics::HEADER)
+        .align_y(Alignment::Center);
+    let tab = (state.side == Side::Karaoke).then(|| Tab::of(state));
+    let pane = container(pane(state, &m, tab.as_ref(), parts))
+        .width(Fill)
+        .height(Fill)
+        .id("pane");
+    let mut body = row![pane.boxed()].spacing(metrics::GAP);
+    if let Some(r) = m.right {
+        body = body.push(
+            container(right_column(state, &m, parts.covers))
+                .width(r.width)
+                .height(Fill)
+                .id("right")
                 .boxed(),
         );
     }
-    let sync = tab.sync.as_ref().map(karaoke::tab::sync);
-    Some((Some(Stack::with_children(layers).boxed()), sync))
-}
-
-/// The right column's text under the cover, its edges in line with the
-/// cover's (with no art, the placeholder's; with art much narrower than
-/// the column, two thirds of it), from a gap under it to the column's
-/// foot; or the summary over its place under the list where the
-/// window is too narrow for the column. On the main screen's browser and
-/// queue sides.
-fn right<'a>(state: &State, embed: &Embed, covers: &Covers) -> Option<Element<'a, Message>> {
-    let Layout::Main(m) = layout::compute(state, embed.grid()) else {
-        return None;
-    };
-    let (cw, ch) = embed.cell();
-    let cells = |x: u16, y: u16, w: u16, h: u16| {
-        Rectangle::new(
-            Point::new(f32::from(x) * cw, f32::from(y) * ch),
-            Size::new(f32::from(w) * cw, f32::from(h) * ch),
-        )
-    };
-    let pinned = |content: Element<'a, Message>, at: Rectangle| {
-        pin(opaque(
-            container(content)
-                .width(at.width)
-                .height(at.height)
-                .clip(true),
-        ))
-        .x(at.x)
-        .y(at.y)
-        .boxed()
-    };
-    if let Some(mini) = m.mini {
-        let at = cells(mini.x, mini.y, mini.width, mini.height);
-        return Some(pinned(right::summary(state), at));
-    }
-    let (column, info) = (m.right?, m.info?);
-    let column = cells(column.x, column.y, column.width, column.height);
-    // The placeholder's edge runs through the middle of its border cells.
-    let placeholder = Rectangle {
-        x: column.x + cw / 2.0,
-        width: column.width - cw,
-        ..column
-    };
-    // The text starts a gap under the art as drawn (fitted, it can end
-    // above its cells), or under the placeholder's bottom edge.
-    let (x, width, top) = match (m.cover, covers.first()) {
-        (Some(_), Some(art)) => (
-            art.x,
-            art.width.max(placeholder.width * 2.0 / 3.0),
-            art.y + art.height + look::space::L,
-        ),
-        (Some(c), None) => (
-            placeholder.x,
-            placeholder.width,
-            (f32::from(c.y + c.height) - 0.5) * ch + look::space::L,
-        ),
-        (None, _) => (
-            placeholder.x,
-            placeholder.width,
-            f32::from(info.y) * ch + ch / 2.0,
-        ),
-    };
-    // The place goes on to the column's right edge, so the wheel scrolls
-    // the list beside the text too.
-    let at = Rectangle::new(
-        Point::new(x, top),
-        Size::new(
-            column.x + column.width - x,
-            (column.y + column.height - top).max(0.0),
-        ),
-    );
-    Some(pinned(right::view(state, width), at))
-}
-
-/// The list pane over its place on the old canvas, on the main screen:
-/// whole on the browser's and the queue's side, its tabs alone over a tab
-/// of its own's top border.
-fn list<'a>(state: &State, embed: &Embed) -> Option<Element<'a, Message>> {
-    let Layout::Main(m) = layout::compute(state, embed.grid()) else {
-        return None;
-    };
-    let (cw, ch) = embed.cell();
-    let rows = if state.side.wide() { 1 } else { m.list.height };
-    let room = list::Room {
-        width: f32::from(m.list.width) * cw,
-        height: f32::from(rows) * ch,
-        cell: (cw, ch),
-    };
-    Some(
-        pin(opaque(
-            iced::widget::container(list::view(state, room))
-                .width(room.width)
-                .height(room.height),
-        ))
-        .x(f32::from(m.list.x) * cw)
-        .y(f32::from(m.list.y) * ch)
-        .boxed(),
-    )
-}
-
-/// The screen shown where it is one iced lays out whole: Now playing; the
-/// settings and the keys, each over the bottom bar where the main screen
-/// has it (its last rows of cells), the same bar.
-fn native<'a>(
-    state: &'a State,
-    embed: &Embed,
-    covers: &'a Covers,
-    heard: &SpectrumFrame,
-) -> Option<Element<'a, Message>> {
-    let page = match state.screen {
-        Screen::NowPlaying => return Some(now::view(state, covers)),
-        Screen::Settings => settings::view(state),
-        Screen::Help => help::view(state),
-        Screen::Main | Screen::Karaoke => return None,
-    };
-    let grid = embed.grid();
-    let (cw, ch) = embed.cell();
-    let top = f32::from(grid.rows.saturating_sub(BAR_ROWS)) * ch;
-    let bar = bottom::view(state, heard, f32::from(grid.cols) * cw, 0.0);
-    Some(column![container(page).width(Fill).height(top), opaque(bar)].boxed())
-}
-
-/// The Transition tab over the list pane's place on the old canvas, while
-/// it shows: under the lanes, which it leaves room for (they take no
-/// pointer: it takes it over them).
-fn transition<'a>(state: &State, embed: &Embed) -> Option<Element<'a, Message>> {
-    let room = transition::Room::of(state, embed.grid(), embed.cell(), embed.scale())?;
-    Some(transition::view(state, &room))
-}
-
-/// The bottom bar, over its place on the old canvas (to the window's
-/// right and bottom edges), on the screens that have one.
-fn bar<'a>(state: &State, embed: &Embed, heard: &SpectrumFrame) -> Option<Element<'a, Message>> {
-    let grid = embed.grid();
-    let place = *layout::compute(state, grid).bottom()?;
-    let (cw, ch) = embed.cell();
-    let width = f32::from(grid.cols) * cw;
-    let spectrum = f32::from(place.spectrum) * ch;
-    let view = bottom::view(state, heard, width, spectrum);
-    Some(pin(opaque(view)).y(f32::from(place.area.y) * ch).boxed())
-}
-
-/// The Mixer tab, pinned over its place on the old canvas (the list
-/// pane's inside) while it shows.
-fn desk<'a>(
-    state: &'a State,
-    embed: &Embed,
-    caps: &'a mixer::Caps,
-) -> Option<Element<'a, Message>> {
-    if state.side != Side::Mixer || state.palette.is_some() {
-        return None;
-    }
-    let Layout::Main(m) = layout::compute(state, embed.grid()) else {
-        return None;
-    };
-    let (cw, ch) = embed.cell();
-    let r = m.rows;
-    let size = Size::new(f32::from(r.width) * cw, f32::from(r.height) * ch);
-    Some(
-        pin(opaque(mixer::view(state, caps, size)))
-            .x(f32::from(r.x) * cw)
-            .y(f32::from(r.y) * ch)
+    let gap = || Space::new().height(metrics::MARGIN).boxed();
+    let mut screen = column![
+        header.boxed(),
+        container(body)
+            .padding(iced::Padding::from([0.0, metrics::MARGIN]))
+            .height(Fill)
             .boxed(),
-    )
+        gap()
+    ];
+    if let Some(s) = m.summary {
+        screen = screen.push(
+            container(right::summary(state))
+                .padding(iced::Padding::from([0.0, metrics::MARGIN]))
+                .width(Fill)
+                .height(s.height)
+                .boxed(),
+        );
+        screen = screen.push(gap());
+    }
+    if let Some(v) = m.voice {
+        let lane = voice(tab.as_ref(), parts.lanes, v.position());
+        screen = screen.push(
+            container(container(lane).width(Fill).height(Fill).id("voice"))
+                .padding(iced::Padding::from([0.0, metrics::MARGIN]))
+                .width(Fill)
+                .height(v.height)
+                .boxed(),
+        );
+        screen = screen.push(gap());
+    }
+    let bar = bottom::view(state, parts.heard, m.bar.width, m.spectrum);
+    screen = screen.push(
+        container(opaque(bar))
+            .width(Fill)
+            .height(m.bar.height)
+            .boxed(),
+    );
+    let sync = tab
+        .as_ref()
+        .and_then(|t| t.sync.as_ref().map(karaoke::tab::sync))
+        .unwrap_or_else(|| space().boxed());
+    // Where no lanes show, their widget still lets go of what the GPU
+    // holds of them.
+    let shown = match state.side {
+        Side::Transition => true,
+        Side::Karaoke => m.voice.is_some() && tab.as_ref().is_some_and(|t| t.voice.is_none()),
+        Side::Browser | Side::Queue | Side::Mixer => false,
+    };
+    let lanes = if shown {
+        space().boxed()
+    } else {
+        parts.lanes.view(Point::ORIGIN)
+    };
+    stack![ground(screen.boxed()), lanes, sync].boxed()
+}
+
+/// The side pane for `state` as `m` lays it out.
+fn pane<'a>(
+    state: &'a State,
+    m: &Main,
+    tab: Option<&Tab>,
+    parts: &Parts<'a>,
+) -> Element<'a, Message> {
+    let size = m.pane.size();
+    match (state.side, tab) {
+        (Side::Transition, _) => {
+            let room = transition::Room {
+                pane: m.pane,
+                scale: parts.scale,
+            };
+            stack![
+                transition::view(state, &room),
+                parts.lanes.view(m.pane.position())
+            ]
+            .boxed()
+        }
+        (Side::Karaoke, Some(tab)) => {
+            karaoke::tab::view(tab, list::turn(state), size, parts.covers.art(0))
+        }
+        (Side::Mixer, _) => desk(state, parts.caps, size),
+        _ => list::view(state, size.width),
+    }
+}
+
+/// The line of the Mixer tab's keys.
+const DESK_FOOT: f32 = 28.0;
+
+/// The Mixer tab in a pane of `size`: the desk, its keys under it.
+fn desk<'a>(state: &'a State, caps: &'a mixer::Caps, size: Size) -> Element<'a, Message> {
+    let desk = Size::new(size.width, (size.height - DESK_FOOT).max(0.0));
+    column![
+        mixer::view(state, caps, desk),
+        container(widgets::hints(&mixer::keys()))
+            .padding(iced::Padding::from([0.0, look::space::S]))
+            .height(DESK_FOOT)
+            .align_y(Alignment::Center)
+    ]
+    .boxed()
+}
+
+/// The right column: the cover at its top (its click opens Now playing;
+/// a card in its place without art), the track's text under it. The
+/// wheel over it scrolls the list.
+fn right_column<'a>(state: &State, m: &Main, covers: &'a Covers) -> Element<'a, Message> {
+    let width = m.right.map_or(0.0, |r| r.width);
+    let mut parts = iced::widget::Column::<Element<'a, Message>>::new();
+    if let Some(place) = m.cover {
+        let side = place.width.min(place.height);
+        let shown = covers
+            .art(0)
+            .unwrap_or_else(|| karaoke::tab::placeholder(side, side));
+        let cover = mouse_area(shown)
+            .on_press(Message::Act(Action::Op(Op::NowPlaying)))
+            .interaction(mouse::Interaction::Pointer);
+        parts = parts
+            .push(
+                container(cover)
+                    .width(place.width)
+                    .height(place.height)
+                    .boxed(),
+            )
+            .push(Space::new().height(metrics::UNDER_COVER).boxed());
+    }
+    parts = parts.push(right::view(state, width));
+    mouse_area(container(parts).width(Fill).height(Fill).clip(true))
+        .on_scroll(Message::Wheel)
+        .boxed()
+}
+
+/// The Karaoke tab's voice lane, its top left at `origin` in the window:
+/// the lane, or what it says while it has nothing to show.
+fn voice<'a>(
+    tab: Option<&Tab>,
+    lanes: &'a super::lanes::Lanes,
+    origin: Point,
+) -> Element<'a, Message> {
+    match tab.and_then(|t| t.voice) {
+        Some(note) => karaoke::tab::voice(note),
+        None => lanes.view(origin),
+    }
+}
+
+/// The places of the covers `state`'s screen shows in a window of `size`,
+/// in pixels at `scale` pixels a point, in the order the screen takes
+/// them ([`Covers::art`]).
+pub(super) fn covers(state: &State, size: Size, scale: f32) -> Vec<(u32, u32)> {
+    let place = match state.screen {
+        Screen::NowPlaying => Some(now::place(size)),
+        Screen::Main => {
+            let m = metrics::main(size, state.side);
+            match state.side {
+                Side::Karaoke => Some(karaoke::tab::cover(m.pane.size()).size()),
+                Side::Browser | Side::Queue => m.cover.map(|c| c.size()),
+                Side::Transition | Side::Mixer => None,
+            }
+        }
+        Screen::Settings | Screen::Help | Screen::Karaoke => None,
+    };
+    place
+        .filter(|p| p.width > 0.0 && p.height > 0.0)
+        .map(|p| cover::pixels(p, scale))
+        .into_iter()
+        .collect()
+}
+
+/// The lanes `state`'s screen shows in a window of `size` at `scale`
+/// pixels a point, painted at `metrics`, `heard` seconds into the playing
+/// track: the Transition tab's, the Karaoke tab's voice lane.
+pub fn lane_spots(
+    state: &State,
+    size: Size,
+    scale: f32,
+    metrics: Metrics,
+    heard: f64,
+) -> LaneSpots {
+    let mut spots = Vec::new();
+    if let Some(room) = transition::Room::of(state, size, scale) {
+        spots = transition::spots(state, &room, heard);
+    }
+    let m = metrics::main(size, state.side);
+    if let (Screen::Main, Some(v)) = (state.screen, m.voice) {
+        let px = |points: f32| (points * scale).round().max(0.0) as usize;
+        let rect = (
+            px(v.x),
+            px(v.y),
+            px(v.x + v.width) - px(v.x),
+            px(v.y + v.height) - px(v.y),
+        );
+        let (cw, ch) = (metrics.cell.0.max(1), metrics.cell.1.max(1));
+        let letters = (rect.2 / cw).min(usize::from(u16::MAX)) as u16;
+        let rows = (rect.3 / ch).min(usize::from(u16::MAX)) as u16;
+        if let Some(plot) = crate::view::karaoke::voice_plot(state, letters, rows, heard) {
+            let rows = Rows {
+                above: 0,
+                full: rect.3,
+            };
+            spots.push(LaneSpot {
+                rect,
+                part: Part::Wave(Box::new(plot), rows),
+            });
+        }
+    }
+    LaneSpots { metrics, spots }
 }

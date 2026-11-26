@@ -990,7 +990,6 @@ stem keys are their mutes.
   - `the_faders_are_set_on_the_mixer_and_again_on_a_new_one`
   - `a_meter_rises_at_once_and_falls_at_its_rate`
   - `strips_are_found_by_id_and_a_stale_look_takes_no_peaks`
-  - `the_canvas_leaves_the_mixer_tab_to_the_window`
 - **M7.** A transition's next track plays on a second input of the player
   (its second head), on the same strips: the player's fader, its stems'
   strips, the Karaoke voice (both heads' vocals lanes) and the preview's

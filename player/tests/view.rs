@@ -1,11 +1,10 @@
-//! The screens drawn into a ratatui test buffer, the pictures' cells blank
-//! as the window leaves them for its pixels ([`CellPictures`]), with the
-//! outlines of what the window draws from its models after them: the
-//! list pane's (its tabs, the browser's or the queue's rows) and the right
-//! column's text (or the summary under the list) on the main screen, the
-//! Transition tab's and the Karaoke tab's while they show, the command
-//! palette's while it is open, and the bottom bar's where the screen has
-//! one; compared with the snapshots in
+//! The screens as the outlines of what the window draws from their
+//! models: the list pane's (its tabs, the browser's or the queue's rows)
+//! and the right column's text (or the summary under the list) on the
+//! main screen, the Transition tab's and the Karaoke tab's while they
+//! show, the command palette's while it is open, and the bottom bar's
+//! where the screen has one (nothing is drawn into the old cells any more,
+//! [`no_cells`]); compared with the snapshots in
 //! `tests/snapshots/` (set `UPDATE_SNAPSHOTS=1` to rewrite them after an
 //! intended change). The spectrum's model in points: its labels and where
 //! a tone peaks.
@@ -19,6 +18,7 @@ use std::path::PathBuf;
 use jodeldiplom::core::desk::{Channel, StripKind};
 use jodeldiplom::core::keymap::Op;
 use jodeldiplom::core::{update, Action, DeviceChoice, Screen, Side, State};
+use jodeldiplom::gui::metrics;
 use jodeldiplom::gui::mixer::{self, said};
 use jodeldiplom::spectrum::{sine, tap_frames_for, Analyzer, SpectrumFrame};
 use jodeldiplom::view::bottom::Bar;
@@ -26,15 +26,14 @@ use jodeldiplom::view::command_palette::Palette;
 use jodeldiplom::view::help::Page as HelpPage;
 use jodeldiplom::view::info::Info;
 use jodeldiplom::view::lanes::WavePlot;
-use jodeldiplom::view::layout::{self, Bottom, Grid, Layout};
+use jodeldiplom::view::layout::Grid;
 use jodeldiplom::view::list::Pane;
 use jodeldiplom::view::now::NowPlaying;
 use jodeldiplom::view::plot::{LabelTone, Plot};
 use jodeldiplom::view::settings::Settings;
-use jodeldiplom::view::{self, CellPictures, Pictures, Scene};
+use jodeldiplom::view::{self, Scene};
 use ratatui::backend::TestBackend;
-use ratatui::layout::Rect;
-use ratatui::{Frame, Terminal};
+use ratatui::Terminal;
 
 fn spectrum() -> SpectrumFrame {
     let mut analyzer = Analyzer::new();
@@ -61,14 +60,13 @@ fn cell() -> (f32, f32) {
     (8.0, 19.0)
 }
 
-/// The bottom bar's outline as the window draws it over `place` on
-/// `grid`: its spectrum's labels where it has one, then the bar's model.
-fn bar_outline(state: &State, grid: Grid, place: Bottom) -> String {
-    let (cw, ch) = cell();
-    let width = f32::from(grid.cols) * cw;
+/// The bottom bar's outline as the window draws it `width` points wide,
+/// its top `heard` points the spectrum: its spectrum's labels where it
+/// has one, then the bar's model.
+fn bar_outline(state: &State, width: f32, heard: f32) -> String {
     let mut out = String::new();
-    if place.spectrum > 0 {
-        let size = iced::Size::new(width, f32::from(place.spectrum) * ch);
+    if heard > 0.0 {
+        let size = iced::Size::new(width, heard);
         let plot = jodeldiplom::gui::widgets::spectrum::plot(size, &spectrum());
         out.push_str(&format!("{plot}\n"));
     }
@@ -76,36 +74,33 @@ fn bar_outline(state: &State, grid: Grid, place: Bottom) -> String {
     out
 }
 
-/// [`draw`] with `heard` seconds of the playing track heard.
+/// [`draw`] with `heard` seconds of the playing track heard: in a window
+/// of `grid`'s old cells ([`common::window`]) as the window lays it out
+/// ([`metrics::main`]).
 fn draw_heard(state: &State, grid: Grid, heard: f64) -> String {
-    let mut terminal = Terminal::new(TestBackend::new(grid.cols, grid.rows)).unwrap();
-    let scene = Scene { state, grid, heard };
-    terminal
-        .draw(|frame| view::draw(frame, &scene, &mut CellPictures))
-        .unwrap();
-    let mut text = view::buffer_text(terminal.backend().buffer());
-    let shown = layout::compute(state, grid);
-    if let Layout::Main(m) = &shown {
-        let (cw, _) = cell();
-        text.push_str(&Pane::of(state, f32::from(m.list.width) * cw).to_string());
-        if m.info.is_some() {
+    let mut text = String::new();
+    let size = common::window(grid.cols, grid.rows);
+    let main = (state.screen == Screen::Main).then(|| metrics::main(size, state.side));
+    if let Some(m) = &main {
+        text.push_str(&Pane::of(state, m.pane.width).to_string());
+        if m.right.is_some() {
             text.push_str(&Info::of(state).to_string());
         }
-        if m.mini.is_some() {
+        if m.summary.is_some() {
             text.push_str(&Info::of(state).summary());
         }
         if state.side == Side::Transition {
             text.push_str(&view::transition::Tab::of(state, heard).to_string());
         }
-        if m.karaoke.is_some() {
+        if state.side == Side::Karaoke {
             text.push_str(&view::karaoke::Tab::of(state).to_string());
         }
     }
     if let Some(palette) = Palette::of(state, 8) {
         text.push_str(&palette.to_string());
     }
-    if let Some(&place) = shown.bottom() {
-        text.push_str(&bar_outline(state, grid, place));
+    if let Some(m) = &main {
+        text.push_str(&bar_outline(state, size.width, m.spectrum));
     }
     text
 }
@@ -187,10 +182,18 @@ fn queue_side() {
     snapshot("queue", &text);
 }
 
-/// The text of a screen the window draws whole in iced's widgets: none on
-/// the cells.
+/// A screen the window draws whole in iced's widgets: nothing on the
+/// cells.
 fn no_cells(state: &State) {
-    let text = draw(state, Grid::new(120, 36));
+    let grid = Grid::new(120, 36);
+    let mut terminal = Terminal::new(TestBackend::new(grid.cols, grid.rows)).unwrap();
+    let scene = Scene {
+        state,
+        grid,
+        heard: 0.0,
+    };
+    terminal.draw(|frame| view::draw(frame, &scene)).unwrap();
+    let text = view::buffer_text(terminal.backend().buffer());
     assert!(
         text.trim().is_empty(),
         "{:?} on the cells:\n{text}",
@@ -430,11 +433,6 @@ fn narrow_and_tiny_screens() {
         "icons alone when narrow:\n{text}"
     );
     snapshot("narrow", &text);
-    let state = common::playing_state(30, 10);
-    has(
-        &draw(&state, Grid::new(30, 10)),
-        &["Make the window larger"],
-    );
 }
 
 /// The spectrum's model at `width` × `height` points, a 1 kHz tone (and a
@@ -534,14 +532,11 @@ fn an_empty_spectrum_draws_nothing() {
 #[test]
 fn the_right_column_keeps_its_width_between_tracks() {
     use jodel_playback::{Event, PlayState};
-    let grid = Grid::new(160, 40);
-    let column = |state: &State| match layout::compute(state, grid) {
-        Layout::Main(m) => m.right.map(|r| r.width),
-        _ => None,
-    };
+    let size = common::window(160, 40);
+    let column = |state: &State| metrics::main(size, state.side).right.map(|r| r.width);
     let mut state = common::playing_state(160, 40);
     let playing = column(&state);
-    assert_eq!(playing, Some(layout::right_width(160)));
+    assert_eq!(playing, Some(metrics::right_width(1280.0)));
     // A device name as long as they come: the column stays, its text
     // wraps.
     let mut long = state.clone();
@@ -573,26 +568,6 @@ fn the_beat_pulse_lights_on_each_beat() {
 }
 
 #[test]
-fn a_frame_of_another_size_than_the_state_is_drawn_blank() {
-    // The window was resized and the state has not heard of it yet: the
-    // layout (for 120 x 36) would not fit, so nothing is drawn until it has.
-    let state = common::playing_state(120, 36);
-    for (cols, rows) in [(118, 35), (60, 20), (160, 50)] {
-        let mut terminal = Terminal::new(TestBackend::new(cols, rows)).unwrap();
-        let scene = Scene {
-            state: &state,
-            grid: Grid::new(120, 36),
-            heard: 0.0,
-        };
-        terminal
-            .draw(|frame| view::draw(frame, &scene, &mut CellPictures))
-            .unwrap();
-        let text = view::buffer_text(terminal.backend().buffer());
-        assert!(text.trim().is_empty(), "at {cols}x{rows}:\n{text}");
-    }
-}
-
-#[test]
 fn transition_tab() {
     let state = common::transition_state(120, 40);
     let text = draw(&state, Grid::new(120, 40));
@@ -611,12 +586,14 @@ fn the_karaoke_tab_shows_the_voice_with_every_word() {
     let mut state = common::transition_state(120, 40);
     state.side = Side::Karaoke;
     common::sung_every(&mut state, 0.5);
-    let Layout::Main(m) = layout::compute(&state, Grid::new(120, 40)) else {
-        panic!()
-    };
-    let voice = m.karaoke.as_ref().unwrap().voice.expect("the voice's lane");
-    assert_eq!(m.bottom.spectrum, 0, "no spectrum on the tab");
-    assert_eq!(voice.bottom(), m.bottom.area.y, "over the bar");
+    let m = metrics::main(common::window(120, 40), Side::Karaoke);
+    let voice = m.voice.expect("the voice's lane");
+    assert_eq!(m.spectrum, 0.0, "no spectrum on the tab");
+    assert_eq!(
+        voice.y + voice.height + metrics::MARGIN,
+        m.bar.y,
+        "over the bar"
+    );
     let lyrics = lanes::lyrics(&state, Block::Now).unwrap();
     let words = lanes::timed_words(&lyrics);
     let per = lanes::lyrics_per_second(&words, 1).unwrap();
@@ -626,19 +603,16 @@ fn the_karaoke_tab_shows_the_voice_with_every_word() {
         "a wider view leaves some out"
     );
     let heard = 30.0;
-    let plots = lanes_heard(&state, Grid::new(120, 40), heard);
-    let plot = plots
-        .iter()
-        .find(|p| p.area == voice)
-        .expect("the voice's lane handed to the window");
+    let plot = voice_lane(&state, Grid::new(120, 40), heard).expect("the voice's lane");
+    let letters = (voice.width / cell().0) as u16;
     let scale = plot.text_scale;
-    let (start, end) = view::karaoke::voice_window(&state, voice.width, heard, scale);
+    let (start, end) = view::karaoke::voice_window(&state, letters, heard, scale);
     assert_eq!((plot.start, plot.end), (start, end));
-    assert!(((end - start) - f64::from(voice.width) / (per * f64::from(scale))).abs() < 1e-9);
+    assert!(((end - start) - f64::from(letters) / (per * f64::from(scale))).abs() < 1e-9);
     let text = draw_heard(&state, Grid::new(120, 40), heard);
     // The lane's first line: every word sung in view (but the last, which
     // may run past its edge) is there, in order.
-    let row: String = lane_words(plot, voice.width)
+    let row: String = lane_words(&plot, letters)
         .iter()
         .filter(|l| l.row == 0)
         .map(|l| format!("{} ", l.text))
@@ -847,46 +821,30 @@ fn the_transition_header_shows_the_pairing_and_the_glide() {
     );
 }
 
-/// The pictures as the window gets them to paint, the lanes' waveforms
-/// kept; their cells as [`CellPictures`] leaves them.
-#[derive(Default)]
-struct Lanes(Vec<WavePlot>);
-
-impl Pictures for Lanes {
-    fn cover(&mut self, frame: &mut Frame, area: Rect, below_line: bool) {
-        CellPictures.cover(frame, area, below_line);
-    }
-
-    fn wave(&mut self, frame: &mut Frame, plot: &WavePlot) {
-        self.0.push(plot.clone());
-        CellPictures.wave(frame, plot);
-    }
+/// The Karaoke tab's voice lane in a window of `grid`'s old cells, with
+/// `heard` seconds of the playing track heard, as the window lays it out:
+/// its letters and its lines a cell each.
+fn voice_lane(state: &State, grid: Grid, heard: f64) -> Option<WavePlot> {
+    let voice = metrics::main(common::window(grid.cols, grid.rows), state.side).voice?;
+    let (cw, ch) = cell();
+    let (letters, rows) = ((voice.width / cw) as u16, (voice.height / ch) as u16);
+    view::karaoke::voice_plot(state, letters, rows, heard)
 }
 
 /// The lanes' waveforms a frame of `state` on `grid` hands the window:
-/// the canvas's (the Karaoke tab's voice lane), and the Transition tab's
-/// blocks', the playing track's and the next one's.
+/// the Karaoke tab's voice lane, and the Transition tab's blocks', the
+/// playing track's and the next one's.
 fn lanes(state: &State, grid: Grid) -> Vec<WavePlot> {
-    lanes_heard(state, grid, 0.0)
-}
-
-/// [`lanes`] with `heard` seconds of the playing track heard.
-fn lanes_heard(state: &State, grid: Grid, heard: f64) -> Vec<WavePlot> {
-    let mut terminal = Terminal::new(TestBackend::new(grid.cols, grid.rows)).unwrap();
-    let scene = Scene { state, grid, heard };
-    let mut lanes = Lanes::default();
-    terminal
-        .draw(|frame| view::draw(frame, &scene, &mut lanes))
-        .unwrap();
+    let mut lanes: Vec<WavePlot> = voice_lane(state, grid, 0.0).into_iter().collect();
     if state.side == Side::Transition {
         use jodeldiplom::core::lanes::Block;
         for block in [Block::Now, Block::Next] {
-            if let Some(plots) = view::transition::plots(state, block, heard, true) {
-                lanes.0.extend(plots.lanes);
+            if let Some(plots) = view::transition::plots(state, block, 0.0, true) {
+                lanes.extend(plots.lanes);
             }
         }
     }
-    lanes.0
+    lanes
 }
 
 /// The words the window lays along `plot` (its lyrics, as it places them,
@@ -1092,19 +1050,20 @@ fn the_queue_is_got_ready_ahead_and_its_icons_light_up_in_turn() {
     assert_eq!(colors(&state)[3], DIM);
 }
 
-/// The Mixer tab: the canvas draws its box and its keys and leaves the
-/// rows to the window's desk, which lays itself out in points with the
-/// core's rule (the keys go through the same strips): every strip at the
-/// old 120-column width, the microphone gone at the old 80. The snapshots
-/// are the desk's outline: the strips shown, where, and what each says
-/// ([`said`]).
+/// The Mixer tab: the window's desk, which lays itself out in points with
+/// the core's rule (the keys go through the same strips), its keys under
+/// it: every strip at the old 120-column width, the microphone gone at
+/// the old 80. The snapshots are the desk's outline: the strips shown,
+/// where, and what each says ([`said`]), and its keys.
 #[test]
 fn the_mixer_tab_is_a_desk() {
     use iced::Size;
     let state = common::desk_state(120, 36);
     let text = draw(&state, Grid::new(120, 36));
-    has(&text, &["[shown] Mixer", "← → strip", "m mute"]);
-    let wide = layout::desk_width(Grid::new(120, 36), layout::CELL_WIDTH);
+    has(&text, &["[shown] Mixer"]);
+    let wide = metrics::main(common::window(120, 36), Side::Mixer)
+        .pane
+        .width;
     assert_eq!(wide, 944.0);
     assert_eq!(state.fit.desk_width, wide);
     let outline = mixer::outline(&state, Size::new(wide, 560.0));
@@ -1115,6 +1074,7 @@ fn the_mixer_tab_is_a_desk() {
             "[bracket] ● STEMS heard",
             "[name selected] MIC",
             "[button fail] M",
+            "[keys] ← → strip · ↑ ↓ fader · home 0 dB · m mute · s solo · e echo",
         ],
     );
     let said = |channel| said::text(&state, channel).join(" | ");
@@ -1151,7 +1111,9 @@ fn the_mixer_tab_is_a_desk() {
     assert_eq!(shown(wide), Channel::ALL, "every strip at 120 columns");
     assert_eq!(walked(&state), Channel::ALL);
     // An 80-column window: the microphone goes first.
-    let narrow = layout::desk_width(Grid::new(80, 24), layout::CELL_WIDTH);
+    let narrow = metrics::main(common::window(80, 24), Side::Mixer)
+        .pane
+        .width;
     let state = common::desk_state(80, 24);
     snapshot(
         "mixer_small",

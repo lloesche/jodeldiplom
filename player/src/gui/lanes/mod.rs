@@ -1,7 +1,9 @@
 //! The lanes: the Transition tab's waveforms and bar numbers, the Karaoke
 //! tab's voice lane with its notes and words, drawn by the window where the
-//! Transition tab leaves room for them ([`crate::gui::transition`]) or over
-//! the cells the old canvas leaves ([`LaneSpots`]).
+//! Transition tab leaves room for them ([`crate::gui::transition`]) and
+//! where the main screen has the voice's lane ([`crate::gui::metrics`]),
+//! as their places in the window say ([`LaneSpots`]); their widget sits in
+//! that part of the screen's layout ([`Lanes::view`]).
 //!
 //! Each lane is painted in tiles once ([`tiles`]: [`paint`] for a
 //! waveform, [`words`] for the words along the voice's, [`ruler`] for the
@@ -10,12 +12,12 @@
 //! of its own kept by its place in the list and let go of when the lanes
 //! go ([`gpu`]), the lane scrolled by the share of a column and the
 //! playhead drawn over it each frame; with iced's CPU renderer (no GPU), an
-//! image of each lane made from its tiles each frame.
+//! image of each lane made from its tiles each frame. Which renderer draws
+//! is what the widget last saw ([`Lanes::gpu`]).
 //!
 //! The waveforms' lanes are cards (raised), their corners rounded; the
 //! bar numbers stand on the Transition tab's panel. Neither takes the
-//! pointer: what is under them does (the Transition tab's places for it,
-//! the canvas).
+//! pointer: what is under them does (the Transition tab's places for it).
 
 mod gpu;
 mod keys;
@@ -78,17 +80,16 @@ impl Metrics {
     }
 }
 
-/// A lane the canvas left its cells for: where it goes in the window's
-/// pixels, and what it shows.
+/// A lane: where it goes in the window's pixels, and what it shows.
 #[derive(Clone, Debug)]
 pub struct LaneSpot {
-    /// Its cells, in pixels.
+    /// Its place, in pixels.
     pub rect: PixelRect,
     /// What it shows.
     pub part: Part,
 }
 
-/// The lanes of a frame of the canvas, top to bottom, at its sizes.
+/// The lanes of a frame, top to bottom, at their sizes.
 #[derive(Clone, Debug)]
 pub struct LaneSpots {
     /// The sizes they are painted at.
@@ -111,6 +112,9 @@ pub(super) struct Shared {
     lanes: Vec<LaneFrame>,
     /// The GPU holds lanes' tiles (to let go of once none shows).
     held: bool,
+    /// Whether iced draws on the GPU, as the widget last saw (`None`
+    /// before it was drawn).
+    gpu: Option<bool>,
 }
 
 /// The lanes that show, their tiles, and how they reach the screen.
@@ -158,6 +162,7 @@ impl Default for Lanes {
             shared: Arc::new(Mutex::new(Shared {
                 lanes: Vec::new(),
                 held: false,
+                gpu: None,
             })),
             images: Vec::new(),
             places: Vec::new(),
@@ -174,10 +179,15 @@ impl Lanes {
         self.shared.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    /// The lanes a frame of the canvas left room for (`spots`), in a
-    /// window of `scale` pixels a point, shown on the GPU (`gpu`) or by
-    /// the processor: each kept where only its marks changed, made afresh
-    /// where it did.
+    /// Whether iced draws the lanes on the GPU, as their widget last saw
+    /// (until it was drawn: as if it did).
+    pub fn gpu(&self) -> bool {
+        self.shared().gpu.unwrap_or(true)
+    }
+
+    /// The lanes a frame shows (`spots`), in a window of `scale` pixels a
+    /// point, shown on the GPU (`gpu`) or by the processor: each kept
+    /// where only its marks changed, made afresh where it did.
     pub fn show(&mut self, spots: LaneSpots, scale: f32, gpu: bool) {
         if spots.metrics != self.pen.metrics || gpu != self.gpu {
             self.strips.clear();
@@ -311,12 +321,14 @@ impl Lanes {
         out
     }
 
-    /// The lanes' widget, over the whole window.
-    pub fn view<'a, M: 'a>(&'a self) -> Element<'a, M> {
+    /// The lanes' widget, filling the part of the screen's layout whose
+    /// top left is at `origin` in the window (points): each lane where
+    /// its place is in it.
+    pub fn view<'a, M: 'a>(&'a self, origin: iced::Point) -> Element<'a, M> {
         let s = self.scale;
         let points = |&(x, y, w, h): &PixelRect| {
             Rectangle::new(
-                iced::Point::new(x as f32 / s, y as f32 / s),
+                iced::Point::new(x as f32 / s - origin.x, y as f32 / s - origin.y),
                 Size::new(w as f32 / s, h as f32 / s),
             )
         };
@@ -417,8 +429,9 @@ fn corner_cover(x: usize, y: usize, (w, h): (usize, usize), radius: f32) -> f32 
     (0.5 - d).clamp(0.0, 1.0)
 }
 
-/// The lanes over the window: on the GPU a shader a lane (one pipeline,
-/// a primitive each), else each lane's image. It takes no events.
+/// The lanes in their part of the screen: on the GPU a shader a lane (one
+/// pipeline, a primitive each), else each lane's image. It takes no
+/// events.
 struct LaneView<'a, M> {
     lanes: &'a Lanes,
     /// Each lane's shader and where it goes in the widget, in points.
@@ -461,7 +474,9 @@ impl<M> Widget<M, Theme, iced::Renderer> for LaneView<'_, M> {
         cursor: mouse::Cursor,
         viewport: &Rectangle,
     ) {
-        if matches!(renderer, iced::Renderer::Primary(_)) {
+        let gpu = matches!(renderer, iced::Renderer::Primary(_));
+        self.lanes.shared().gpu = Some(gpu);
+        if gpu {
             for (shader, (layout, tree)) in self.shaders.iter().zip(layout.iter(&tree.children)) {
                 shader.draw(tree, renderer, theme, style, layout, cursor, viewport);
             }

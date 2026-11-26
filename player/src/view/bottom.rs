@@ -1,8 +1,8 @@
 //! The bottom bar's model ([`Bar`]): the time heard, the seek bar's share
 //! and the length; the buttons (the transport, the stems' switches with a
 //! GPU, the settings and the help); and the message. The window draws it
-//! ([`crate::gui`]'s bottom bar) over the place the cell layout leaves for
-//! it, under the spectrum ([`super::plot`]).
+//! ([`crate::gui`]'s bottom bar) along the window's foot, under the
+//! spectrum ([`super::plot`]).
 //!
 //! What fits is decided here, on the bar's width in points and the
 //! measures the window draws it with ([`measure`]): the stems by name,

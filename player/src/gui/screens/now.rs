@@ -15,9 +15,9 @@ use iced::{Alignment, Background, Border, Element, Fill, Padding, Size, Widget a
 
 use crate::core::keymap::Op;
 use crate::core::text::{Seg, Tone};
-use crate::core::{Action, Screen, State};
+use crate::core::{Action, State};
 use crate::gui::look::{self, radius, size, space};
-use crate::gui::widgets::cover::{shade, Align, Covers, Spot};
+use crate::gui::widgets::cover::{shade, Covers};
 use crate::gui::window::Message;
 use crate::view::now::{NowPlaying, Pulse};
 
@@ -31,29 +31,19 @@ const LEAD: f32 = 96.0;
 /// cover it goes under it).
 const CAPTION: f32 = 150.0;
 
-/// Where Now playing's cover goes in a window of `size` (points) at
-/// `scale` pixels a point, while it shows: the window but for a margin,
-/// the cover in the middle of it.
-pub fn spot(state: &State, size: Size, scale: f32) -> Option<Spot> {
-    if state.screen != Screen::NowPlaying {
-        return None;
-    }
-    let px = |points: f32| (points * scale).max(0.0).round() as usize;
-    Some(Spot {
-        place: (
-            px(MARGIN),
-            px(MARGIN),
-            px(size.width - 2.0 * MARGIN),
-            px(size.height - 2.0 * MARGIN),
-        ),
-        align: Align::Center,
-    })
+/// The place of Now playing's cover in a window of `size` (points): the
+/// window but for a margin, the cover in the middle of it.
+pub fn place(size: Size) -> Size {
+    Size::new(
+        (size.width - 2.0 * MARGIN).max(0.0),
+        (size.height - 2.0 * MARGIN).max(0.0),
+    )
 }
 
 /// Now playing for `state`, the cover from `covers`.
 pub fn view<'a>(state: &'a State, covers: &'a Covers) -> Element<'a, Message> {
     let caption = NowPlaying::of(state, state.heard());
-    let body: Element<'a, Message> = match covers.art() {
+    let body: Element<'a, Message> = match covers.art(0) {
         Some(art) => {
             let over = column![
                 Space::new().height(Fill),

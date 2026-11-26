@@ -6,8 +6,8 @@
 //! canceller and the word timing, a few notes on the mode, what the
 //! voice's lane says while it has nothing to show, and the keys for the
 //! pane's foot; while a sync shows, its panel ([`crate::view::sync`]).
-//! The window draws it ([`crate::gui`]'s Karaoke tab) over the pane the
-//! cell layout leaves for it.
+//! The window draws it ([`crate::gui`]'s Karaoke tab) in the main
+//! screen's side pane.
 
 use std::fmt;
 

@@ -1,5 +1,5 @@
-//! The Transition tab in iced's widgets, over the place the cell layout
-//! leaves for the list pane ([`Room`]): a panel under the tabs, on it a
+//! The Transition tab in iced's widgets, in the main screen's side pane
+//! ([`Room`]): a panel, on it a
 //! block for the playing track and one for the next where there is room
 //! (and the one left, sliding up out of view after a hand-over), each a
 //! header of facts ([`header`]), the whole track in one row, the bar
@@ -25,12 +25,11 @@ use iced::{Background, Border, Element, Point, Rectangle, Size, Widget as _};
 use crate::core::lanes::{Block, Lane};
 use crate::core::transition::viewport;
 use crate::core::{Screen, Side, State};
-use crate::gui::canvas::Canvas;
-use crate::gui::lanes::{LaneSpot, LaneSpots, Part, Rows};
+use crate::gui::lanes::{LaneSpot, Part, Rows};
 use crate::gui::look::{self, radius, space};
+use crate::gui::metrics;
 use crate::gui::pixels::PixelRect;
 use crate::gui::window::Message;
-use crate::view::layout::{self, Grid, Layout};
 use crate::view::transition::{block_lanes, lane_width, plots, LABELS, PAD};
 
 /// A block's header row, in points.
@@ -54,36 +53,25 @@ const FOOTER: f32 = 30.0;
 /// The least a lane shows of itself for its label to show beside it.
 const LABEL: f32 = 20.0;
 
-/// Where the tab goes: the list pane's place on the cell grid, in points,
-/// a cell's size, and the window's pixels a point.
+/// Where the tab goes: the side pane in the window, in points, and the
+/// window's pixels a point.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Room {
-    /// The pane, its tabs on its top row.
+    /// The pane.
     pub pane: Rectangle,
-    /// A cell's width and height, in points.
-    pub cell: (f32, f32),
     /// Pixels a point.
     pub scale: f32,
 }
 
 impl Room {
-    /// The tab's room while it shows on the main screen on `grid`, a cell
-    /// `cell` points, `scale` pixels a point.
-    pub fn of(state: &State, grid: Grid, cell: (f32, f32), scale: f32) -> Option<Room> {
+    /// The tab's room while it shows on the main screen in a window of
+    /// `size`, `scale` pixels a point ([`metrics::main`]).
+    pub fn of(state: &State, size: Size, scale: f32) -> Option<Room> {
         if state.screen != Screen::Main || state.side != Side::Transition {
             return None;
         }
-        let Layout::Main(m) = layout::compute(state, grid) else {
-            return None;
-        };
-        let (cw, ch) = cell;
-        let r = m.list;
         Some(Room {
-            pane: Rectangle::new(
-                Point::new(f32::from(r.x) * cw, f32::from(r.y) * ch),
-                Size::new(f32::from(r.width) * cw, f32::from(r.height) * ch),
-            ),
-            cell,
+            pane: metrics::main(size, Side::Transition).pane,
             scale: scale.max(0.1),
         })
     }
@@ -186,21 +174,17 @@ pub struct Plan {
 /// the one left above them, sliding up out of view. All in the window's
 /// points, on its pixels.
 pub fn plan(state: &State, room: &Room) -> Plan {
-    let (cw, ch) = room.cell;
     let p = room.pane;
-    let panel = room.snapped(Rectangle::new(
-        Point::new(p.x + cw / 2.0, p.y + ch / 2.0),
-        Size::new(p.width - cw, p.height - ch),
-    ));
-    let left = p.x + cw / 2.0 + PAD;
-    let width = (p.width - cw - 2.0 * PAD).max(0.0);
+    let panel = room.snapped(p);
+    let left = p.x + PAD;
+    let width = (p.width - 2.0 * PAD).max(0.0);
     let lanes_x = left + LABELS;
-    let lanes_w = lane_width(p.width, cw);
+    let lanes_w = lane_width(p.width);
     let footer = room.snapped(Rectangle::new(
         Point::new(left, panel.y + panel.height - space::S - FOOTER),
         Size::new(width, FOOTER),
     ));
-    let (top, bottom) = (p.y + ch + space::S, footer.y - space::S);
+    let (top, bottom) = (p.y + PAD, footer.y - space::S);
     let fixed = HEADER + UNDER_HEADER + OVERVIEW + UNDER_OVERVIEW + RULER + UNDER_RULER;
     let need = |n: usize, h: f32| fixed + n as f32 * h + n.saturating_sub(1) as f32 * LANE_GAP;
     let counts = [
@@ -297,7 +281,8 @@ pub fn plan(state: &State, room: &Room) -> Plan {
 
 /// What the lanes of the tab in `room` draw, `heard` seconds into the
 /// playing track, and where, in the window's pixels.
-fn spots(state: &State, room: &Room, plan: &Plan, heard: f64) -> Vec<LaneSpot> {
+pub fn spots(state: &State, room: &Room, heard: f64) -> Vec<LaneSpot> {
+    let plan = plan(state, room);
     let mut out = Vec::new();
     for placed in &plan.blocks {
         let Some(plots) = plots(state, placed.block, heard, !placed.cut()) else {
@@ -340,24 +325,9 @@ fn spots(state: &State, room: &Room, plan: &Plan, heard: f64) -> Vec<LaneSpot> {
     out
 }
 
-/// The lanes of a frame of `canvas` drawn for `state`: those it left
-/// cells for (the Karaoke tab's voice lane), and the Transition tab's
-/// where it shows, laid out in points in a window of `scale` pixels a
-/// point, `heard` seconds into the playing track.
-pub fn lanes(canvas: &mut Canvas, state: &State, scale: f32, heard: f64) -> LaneSpots {
-    let mut lanes = canvas.take_lanes();
-    let (cw, ch) = canvas.cell();
-    let cell = (cw as f32 / scale, ch as f32 / scale);
-    if let Some(room) = Room::of(state, canvas.grid(), cell, scale) {
-        let plan = plan(state, &room);
-        lanes.spots.extend(spots(state, &room, &plan, heard));
-    }
-    lanes
-}
-
-/// The tab for `state` in `room`, over the pane's place: its panel, the
+/// The tab for `state` in `room`, filling the pane: its panel, the
 /// blocks' headers, labels and the places that take the pointer, and the
-/// footer; the lanes go over it ([`lanes`]).
+/// footer; the lanes go over it ([`spots`]).
 pub fn view<'a>(state: &State, room: &Room) -> Element<'a, Message> {
     let plan = plan(state, room);
     let heard = state.heard();
@@ -373,14 +343,12 @@ pub fn view<'a>(state: &State, room: &Room) -> Element<'a, Message> {
         block::view(state, placed, heard, &mut |e, r| layers.push(at(e, r)));
     }
     layers.push(at(header::footer(state, plan.footer.width), plan.footer));
-    pin(opaque(
+    opaque(
         stack(layers)
             .width(room.pane.width)
             .height(room.pane.height),
     )
-    .capture_scroll(true))
-    .x(origin.x)
-    .y(origin.y)
+    .capture_scroll(true)
     .boxed()
 }
 
@@ -406,11 +374,10 @@ mod tests {
     use super::*;
     use crate::config::Config;
 
-    /// A room of `w` × `h` points at scale `scale`, cells 8 × 19.
+    /// A room of `w` × `h` points at scale `scale`.
     fn room(w: f32, h: f32, scale: f32) -> Room {
         Room {
             pane: Rectangle::new(Point::ORIGIN, Size::new(w, h)),
-            cell: (8.0, 19.0),
             scale,
         }
     }
@@ -450,7 +417,7 @@ mod tests {
         assert!(last <= p.footer.y);
         assert_eq!(
             p.blocks[0].lanes[0].rect.width,
-            lane_width(1280.0, 8.0),
+            lane_width(1280.0),
             "the fit's width"
         );
     }

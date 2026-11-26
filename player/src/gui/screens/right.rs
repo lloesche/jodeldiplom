@@ -1,14 +1,14 @@
-//! The main screen's right column under the cover ([`crate::view::info`])
-//! in iced's widgets, over the place the cell layout leaves for it, its
-//! edges in line with the cover's: the title, the artist and the album,
-//! each on a line (ending in `…` where it is longer) and a link to where
-//! it is in the browser (underlined under the pointer); then what the
-//! file is as a tag beside the tempo and key, a metronome before them lit
-//! on each beat (the beat pulse, in the accent on a bar's first); then the
-//! way to the device as tags joined by arrows, the device's brighter and
-//! lit under the pointer: its click opens the device's setting. Where the window is too narrow for the column, the summary
-//! under the list: the play state, the title and the artist, then what
-//! the file is and its way, on two lines; a click on it opens Now
+//! The main screen's right column's text ([`crate::view::info`]) in
+//! iced's widgets, under the cover at the column's left: the title, the
+//! artist and the album, each on a line (ending in `…` where it is longer)
+//! and a link to where it is in the browser (underlined under the
+//! pointer); then what the file is as a tag beside the tempo and key, a
+//! metronome before them lit on each beat (the beat pulse, in the accent
+//! on a bar's first); then the way to the device as tags joined by arrows,
+//! the device's brighter and lit under the pointer: its click opens the
+//! device's setting. Where the window is too narrow for the column, the
+//! summary under the list: the play state, the title and the artist, then
+//! what the file is and its way, on two lines; a click on it opens Now
 //! playing.
 //!
 //! The wheel over either scrolls the list ([`Message::Wheel`]), as over

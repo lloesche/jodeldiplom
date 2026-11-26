@@ -186,15 +186,15 @@ effects.
 The cell renderer from the terminal days still does a few things, and goes
 with the last steps of the port ([todo.md](todo.md)):
 
-- the cell layout (`view::layout`) still places the main screen's native
-  pieces (its rects turned into points), and the `Fit` is measured from
-  it;
-- the old canvas (`gui::canvas`, shown by `gui::embed` and
-  `gui::embed_gpu`) still draws the Mixer tab's frame, the Karaoke tab's
-  and the right column's places for their pictures, and Karaoke mode's
-  controls' bar as a strip of the pixmap over the backdrop; without a GPU
-  it is all of Karaoke mode;
-- the pointer over it goes to the cell mouse regions (`view::mouse`).
+- no screen is drawn into cells any more: the main screen is laid out by
+  iced from the measures in `gui::metrics` (which the `Fit` comes from
+  too), Karaoke mode has its own widgets;
+- the old canvas (`gui::canvas`, `gui::raster`, `gui::embed`,
+  `gui::embed_gpu`, `gui::present::pixmap`) is still built, but shown
+  nowhere: only its cells' size is read, as the lanes' letters' width;
+- the grid of cells (`view::layout::Grid`), the cell mouse
+  (`view::mouse`) and the pointer's cell path (`gui::pointer`) are left
+  with it.
 
 `ratatui` leaves the player with it.
 

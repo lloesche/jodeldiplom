@@ -1,15 +1,13 @@
-//! The list pane ([`crate::view::list`]) in iced's widgets, over the
-//! place the cell layout leaves for it: the tabs on its top edge (a
-//! segmented control whose pill slides to the side shown), and on the
-//! browser's or the queue's side a panel under them: where the browser
-//! is (or which track of the queue plays), the rows in view, a note where
-//! there is nothing to list, and the filter line at its foot. On a tab of
-//! its own (Transition, Karaoke, the Mixer) only the tabs: what is under
-//! them is the old canvas's, or the Karaoke tab's ([`super::karaoke`]).
+//! The list pane ([`crate::view::list`]) in iced's widgets: the tabs in
+//! the main screen's header (a segmented control whose pill slides to the
+//! side shown, [`tabs`]), and on the browser's or the queue's side a
+//! panel ([`view`]): where the browser is (or which track of the queue
+//! plays), the rows in view, a note where there is nothing to list, and
+//! the filter line at its foot.
 //!
 //! The rows are the core's page: only those in view are made, at a
 //! fixed height, from the first in view; how many fit is what the window
-//! tells the core ([`fit`]), so the keys page by what shows. A row's
+//! tells the core ([`rows_in`]), so the keys page by what shows. A row's
 //! press is the core's click ([`Action::ClickRow`]: two make a double
 //! click), its right press queues it; a queue row's press holds the
 //! pointer too ([`Grab::QueueRow`]): the track follows it to the row it
@@ -25,19 +23,21 @@ use iced::{
 };
 use jodel_playback::PlayState;
 
-use crate::core::{Action, Fit, Readiness, Side, State};
+use crate::core::{Action, Readiness, State};
 use crate::gui::look::{self, height, radius, size, space};
+use crate::gui::metrics;
 use crate::gui::pointer::Grab;
 use crate::gui::widgets::{self, list_row, Icon, Tab};
 use crate::gui::window::Message;
-use crate::view::layout::{self, Grid};
 use crate::view::list::{
     Body, Browser, BrowserRow, Fact, FilterLine, Kind, Known, Note, Pane, Place, Queue, QueueRow,
     QUEUE_EMPTY, QUEUE_HINT,
 };
 
-/// The line under the tabs saying where the browser is, in points.
+/// The line at the panel's top saying where the browser is, in points.
 const PLACE: f32 = 30.0;
+/// Over the place line, inside the panel's top.
+const HEAD: f32 = space::XS;
 /// Under the last row, inside the panel's foot.
 const FOOT: f32 = 6.0;
 /// A row's content in from the panel's sides.
@@ -52,48 +52,17 @@ const ICON: f32 = 16.0;
 /// The icons of what is known of a queued track.
 const FACT: f32 = 14.0;
 
-/// Where the pane is: its size in points and a cell's (the tabs take the
-/// top row of cells; the panel's edges run through the middle of the
-/// border cells, where a tab's box of its own has its border).
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Room {
-    /// The pane's width.
-    pub width: f32,
-    /// The pane's height.
-    pub height: f32,
-    /// A cell's width and height.
-    pub cell: (f32, f32),
-}
-
-/// The list's rows that fit a pane `height` points high, its tabs' row
-/// `head` high: the core's page (the filter line takes the last while
-/// the browser is filtered).
-pub fn rows_in(height: f32, head: f32) -> u16 {
-    let room = height - head / 2.0 - FOOT - top(head);
+/// The list's rows that fit a pane `height` points high: the core's page
+/// (the filter line takes the last while the browser is filtered).
+pub fn rows_in(height: f32) -> u16 {
+    let room = height - HEAD - PLACE - FOOT;
     (room / height::ROW).floor().clamp(0.0, f32::from(u16::MAX)) as u16
 }
 
-/// Where the first row starts, from the pane's top.
-fn top(head: f32) -> f32 {
-    head + space::XS / 2.0 + PLACE
-}
-
-/// What `grid` does to the keys and the pointer, a cell `cell` points:
-/// the cell layout's ([`layout::fit`]), the list's page the rows this
-/// pane shows.
-pub fn fit(state: &State, grid: Grid, cell: (f32, f32)) -> Fit {
-    let mut fit = layout::fit(state, grid);
-    if fit.list_rows > 0 {
-        let pane = layout::list_pane(grid);
-        fit.list_rows = rows_in(f32::from(pane.height) * cell.1, cell.1);
-    }
-    fit
-}
-
-/// The pane for `state` at `place`.
-pub fn view<'a>(state: &State, place: Room) -> Element<'a, Message> {
-    let pane = Pane::of(state, place.width);
-    let (cw, ch) = place.cell;
+/// The tabs for the main screen's header, `width` points wide: one a
+/// side, the pill on the side shown, the queue's carrying its length.
+pub fn tabs<'a>(state: &State, width: f32) -> Element<'a, Message> {
+    let pane = Pane::of(state, width);
     let shown = pane.tabs.iter().position(|t| t.shown).unwrap_or(0);
     let tabs: Vec<Tab<Message>> = pane
         .tabs
@@ -104,58 +73,48 @@ pub fn view<'a>(state: &State, place: Room) -> Element<'a, Message> {
             on_press: Message::Act(Action::ShowSide(t.side)),
         })
         .collect();
-    let header = container(widgets::tabs(tabs, shown, ch))
-        .padding(Padding::from([0.0, cw / 2.0 + space::S]))
-        .height(ch);
-    let (ground, body): (Element<'a, Message>, Element<'a, Message>) = match &pane.body {
-        Body::Tab => (Space::new().boxed(), Space::new().boxed()),
-        Body::Browser(b) => (ground(place), browser(state, b, place.width - place.cell.0)),
-        Body::Queue(q) => (ground(place), queue(state, q)),
+    widgets::tabs(tabs, shown, metrics::TABS)
+}
+
+/// The browser's or the queue's pane for `state`, `width` points wide, on
+/// its panel; nothing on a tab of its own's side.
+pub fn view<'a>(state: &State, width: f32) -> Element<'a, Message> {
+    let pane = Pane::of(state, width);
+    let body: Element<'a, Message> = match &pane.body {
+        Body::Tab => return Space::new().boxed(),
+        Body::Browser(b) => browser(state, b, width - 2.0 * INSET),
+        Body::Queue(q) => queue(state, q),
     };
     let body = container(body)
         .padding(Padding {
-            top: space::XS / 2.0,
-            right: cw / 2.0 + INSET,
-            bottom: ch / 2.0 + FOOT,
-            left: cw / 2.0 + INSET,
+            top: HEAD,
+            right: INSET,
+            bottom: FOOT,
+            left: INSET,
         })
         .width(Fill)
         .height(Fill);
-    let pane = mouse_area(
-        stack![ground, column![header, body]]
-            .width(Fill)
-            .height(Fill),
-    );
-    // The wheel scrolls the browser or the queue; over a tab of its own's
-    // tabs it does nothing.
-    match state.side {
-        Side::Browser | Side::Queue => pane.on_scroll(Message::Wheel).boxed(),
-        Side::Transition | Side::Karaoke | Side::Mixer => pane.boxed(),
-    }
+    // The wheel scrolls the browser or the queue.
+    mouse_area(stack![ground(), body].width(Fill).height(Fill))
+        .on_scroll(Message::Wheel)
+        .boxed()
 }
 
-/// The panel under the tabs, its edges through the middle of the border
-/// cells (the Karaoke tab's too).
-pub(super) fn ground<'a>(place: Room) -> Element<'a, Message> {
-    let (cw, ch) = place.cell;
-    container(
-        container(Space::new().width(Fill).height(Fill))
-            .width(Fill)
-            .height(Fill)
-            .style(|_| container::Style {
-                background: Some(Background::Color(look::SURFACE)),
-                border: Border {
-                    color: look::EDGE,
-                    width: look::line::EDGE,
-                    radius: radius::PANEL.into(),
-                },
-                ..container::Style::default()
-            }),
-    )
-    .padding(Padding::from([ch / 2.0, cw / 2.0]))
-    .width(Fill)
-    .height(Fill)
-    .boxed()
+/// The panel under a pane (the Karaoke tab's too).
+pub(super) fn ground<'a>() -> Element<'a, Message> {
+    container(Space::new().width(Fill).height(Fill))
+        .width(Fill)
+        .height(Fill)
+        .style(|_| container::Style {
+            background: Some(Background::Color(look::SURFACE)),
+            border: Border {
+                color: look::EDGE,
+                width: look::line::EDGE,
+                radius: radius::PANEL.into(),
+            },
+            ..container::Style::default()
+        })
+        .boxed()
 }
 
 /// A line of the pane's own: an icon, then `content`, `trailing` at the
@@ -666,14 +625,13 @@ mod tests {
         assert_eq!(fitted(&crumbs, 10.0), ["…", "Album"]);
     }
 
-    /// The page is the whole rows that fit under the tabs and the path
-    /// line, above the panel's foot.
+    /// The page is the whole rows that fit under the path line, above
+    /// the panel's foot.
     #[test]
     fn the_page_is_the_rows_that_fit() {
-        let head = 19.0;
-        let over = top(head) + head / 2.0 + FOOT;
-        assert_eq!(rows_in(over + 10.0 * height::ROW, head), 10);
-        assert_eq!(rows_in(over + 10.0 * height::ROW - 1.0, head), 9);
-        assert_eq!(rows_in(10.0, head), 0);
+        let over = HEAD + PLACE + FOOT;
+        assert_eq!(rows_in(over + 10.0 * height::ROW), 10);
+        assert_eq!(rows_in(over + 10.0 * height::ROW - 1.0), 9);
+        assert_eq!(rows_in(10.0), 0);
     }
 }

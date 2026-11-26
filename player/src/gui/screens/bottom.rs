@@ -1,5 +1,5 @@
-//! The bottom bar ([`crate::view::bottom`]) in iced's widgets, over the
-//! place the cell layout leaves for it: the spectrum heard at its top
+//! The bottom bar ([`crate::view::bottom`]) in iced's widgets, along the
+//! window's foot ([`crate::gui::metrics`]): the spectrum heard at its top
 //! where it has one, then a band of its own: the time heard, the seek bar
 //! and the length on a line; under it the transport (play or pause in
 //! the accent), the stems' switches, the message in the middle, and the

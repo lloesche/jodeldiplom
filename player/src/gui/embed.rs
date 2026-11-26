@@ -1,13 +1,12 @@
-//! The screens not ported to iced yet, inside its window: the old canvas
-//! (the ratatui widgets rasterised into a pixmap, the pictures painted in
-//! pixels) draws the player's whole screen at the window's size, and one
-//! widget shows it under everything iced draws itself.
+//! The old canvas (the ratatui widgets rasterised into a pixmap) and the
+//! one widget that would show it in the window. No screen shows it any
+//! more: every one is iced's widgets, Karaoke mode a widget of its own
+//! ([`super::stage_view`]); its cells' size is still the lanes' letters'
+//! ([`Embed::metrics`]).
 //!
 //! On the GPU the pixmap goes through iced's shader widget
 //! ([`super::embed_gpu`]): only the pixels that changed are sent over.
-//! With iced's CPU renderer (no GPU) the pixmap is an image. The lanes are
-//! the window's own widget over it ([`super::lanes`]). Karaoke mode is not
-//! drawn here: it has a widget of its own ([`super::stage_view`]).
+//! With iced's CPU renderer (no GPU) the pixmap is an image.
 //!
 //! The widget fills the window from its top left corner (the GPU's pass
 //! draws in window pixels). The pointer over it goes to the window as it
@@ -30,8 +29,8 @@ use iced::{Element, Event, Fill, Rectangle, Size, Theme, Widget as _};
 
 use super::canvas::{Canvas, Changes};
 use super::embed_gpu::Frame;
+use super::lanes::Metrics;
 use super::pointer::{Pointer, PointerKind};
-use super::widgets::cover::Spot;
 use super::window::Message;
 use crate::view::layout::Grid;
 use crate::view::mouse::MouseButton;
@@ -107,16 +106,6 @@ impl Embed {
         shared.changes.merge(changes);
     }
 
-    /// Fits the canvas to a window of `size` pixels at `scale` without
-    /// drawing it: its grid of cells there, and a cell's size in pixels.
-    pub fn fit(&self, size: (u32, u32), scale: f32) -> (Grid, (usize, usize)) {
-        let mut shared = self.lock();
-        shared.scale = scale;
-        shared.canvas.set_font_px(super::font_px(f64::from(scale)));
-        let grid = shared.canvas.fit(size.0, size.1);
-        (grid, shared.canvas.cell())
-    }
-
     /// Whether iced draws on the GPU (until it has drawn: as if it did).
     pub fn gpu(&self) -> bool {
         self.lock().gpu.unwrap_or(true)
@@ -129,33 +118,17 @@ impl Embed {
         (shared.behind, shared.handed)
     }
 
-    /// The text of the canvas's cells as last drawn (the pictures' cells
-    /// blank).
-    pub fn text(&self) -> String {
-        self.lock().canvas.text()
-    }
-
-    /// Where the covers go as last drawn, for the window to draw over the
-    /// canvas ([`Canvas::covers`]).
-    pub fn covers(&self) -> Vec<Spot> {
-        self.lock().canvas.covers().to_vec()
+    /// The sizes the lanes are painted at in a window of `scale` pixels a
+    /// point: the canvas's cells' at that scale ([`Canvas::metrics`]).
+    pub fn metrics(&self, scale: f32) -> Metrics {
+        let mut shared = self.lock();
+        shared.canvas.set_font_px(super::font_px(f64::from(scale)));
+        shared.canvas.metrics()
     }
 
     /// The canvas's grid of cells.
     pub fn grid(&self) -> Grid {
         self.lock().canvas.grid()
-    }
-
-    /// The window's pixels a point, as the canvas was last drawn at.
-    pub fn scale(&self) -> f32 {
-        self.lock().scale
-    }
-
-    /// A cell's size in logical pixels.
-    pub fn cell(&self) -> (f32, f32) {
-        let shared = self.lock();
-        let (cw, ch) = shared.canvas.cell();
-        (cw as f32 / shared.scale, ch as f32 / shared.scale)
     }
 
     /// The widget showing it, filling the window.

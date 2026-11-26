@@ -219,17 +219,16 @@ mod tests {
     use crate::config::Config;
     use crate::core::keymap::{self, Key, KeyCode, Meaning};
     use crate::core::update;
-    use crate::view::layout::{self, Grid};
     use jodel_playback::{Command, PlayState};
 
-    /// The window the tests have.
-    const GRID: Grid = Grid::new(120, 40);
+    /// The window the tests have (the old 120 × 40 cells).
+    const WINDOW: iced::Size = iced::Size::new(960.0, 760.0);
 
     /// The browser on a folder (row 2) among files, a song playing from
     /// the queue.
     fn state() -> State {
         let mut s = State::new("/m".into(), Config::default());
-        s.fit = layout::fit(&s, GRID);
+        s.fit = crate::gui::metrics::fit(WINDOW, &s, 8.0);
         s.browser.loading = false;
         s.browser.entries = (0..10)
             .map(|i| Entry {

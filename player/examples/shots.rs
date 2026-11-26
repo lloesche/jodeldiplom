@@ -1,11 +1,9 @@
 //! Renders the player's screens to files, with a fixture track playing
 //! through the null output (no device) and a generated cover: `gui-*.png`
 //! as the window draws them ([`Gui::view`], with iced's headless renderer:
-//! the old canvas, the widgets iced draws over it, and what the GPU draws
-//! itself, Karaoke mode's stage among it), and for each a `gui-*.txt` with
-//! the text of its cells (the pictures' cells blank), or the outline of
-//! its model where the window draws it whole in iced's widgets (Now
-//! playing, the settings, the help). Each screen at
+//! the widgets iced draws, Karaoke mode's old canvas and what the GPU
+//! draws itself, its stage among it), and for each a `gui-*.txt` with the
+//! outline of its models (none for Karaoke mode). Each screen at
 //! 1280 × 800 at scale 1, and as `gui-*-hidpi` at 1512 × 982 at scale 2.
 //! The main screen also with tags and a device name too long for any
 //! column (`gui-main-long`), with tags in Japanese (`gui-main-cjk`),
@@ -39,7 +37,6 @@ use jodeldiplom::app::{AppOptions, Output};
 use jodeldiplom::core::keymap::Op;
 use jodeldiplom::core::{Action, DeviceChoice, Effect, Screen, Side, State};
 use jodeldiplom::gui::window::{Gui, Message};
-use jodeldiplom::gui::{font_px, Canvas};
 
 use headless::Headless;
 
@@ -96,7 +93,7 @@ impl Shots {
         write_png(&path, &self.headless.screenshot(scale));
         durable::write_atomic(
             &self.out.join(format!("gui-{name}.txt")),
-            self.text().as_bytes(),
+            self.text(size).as_bytes(),
         )
         .expect("write the text");
         println!(
@@ -107,9 +104,9 @@ impl Shots {
         );
     }
 
-    /// The text of what shows: a screen's outline where the window lays
-    /// it out in iced's widgets, the old canvas's cells otherwise.
-    fn text(&self) -> String {
+    /// The outline of what shows in a window of `size`: its screen's
+    /// models (none for Karaoke mode, a picture).
+    fn text(&self, size: Size) -> String {
         use jodeldiplom::view::{help, now, settings};
         match self.gui.state() {
             Some(s) if s.screen == Screen::NowPlaying => {
@@ -117,19 +114,41 @@ impl Shots {
             }
             Some(s) if s.screen == Screen::Settings => settings::Settings::of(s).to_string(),
             Some(s) if s.screen == Screen::Help => help::Page::of(s).to_string(),
-            _ => self.gui.text(),
+            Some(s) if s.screen == Screen::Main => main_outline(s, size),
+            _ => String::new(),
         }
     }
 
-    /// `state` in a window of exactly `cells`, at a scale of 1.
+    /// `state` in a window of `cells` of the old cells, at a scale of 1.
     fn cells_shot(&mut self, name: &str, state: &State, cells: (u16, u16)) {
-        let (cw, ch) = Canvas::new(cells.0, cells.1, font_px(1.0)).cell();
-        let size = Size::new(
-            (cw * usize::from(cells.0)) as f32,
-            (ch * usize::from(cells.1)) as f32,
-        );
-        self.shot(name, state, size, 1.0);
+        self.shot(name, state, common::window(cells.0, cells.1), 1.0);
     }
+}
+
+/// The main screen's models in a window of `size`: the list pane (its
+/// tabs, the browser's or the queue's rows), the right column's text (or
+/// the summary under the list), the side's tab, the command palette, the
+/// bottom bar.
+fn main_outline(state: &State, size: Size) -> String {
+    use jodeldiplom::view::{bottom, command_palette, info, karaoke, list, transition};
+    let m = jodeldiplom::gui::metrics::main(size, state.side);
+    let mut out = list::Pane::of(state, m.pane.width).to_string();
+    match state.side {
+        Side::Transition => out.push_str(&transition::Tab::of(state, state.heard()).to_string()),
+        Side::Karaoke => out.push_str(&karaoke::Tab::of(state).to_string()),
+        Side::Browser | Side::Queue | Side::Mixer => {}
+    }
+    if m.right.is_some() {
+        out.push_str(&info::Info::of(state).to_string());
+    }
+    if m.summary.is_some() {
+        out.push_str(&info::Info::of(state).summary());
+    }
+    if let Some(palette) = command_palette::Palette::of(state, 8) {
+        out.push_str(&palette.to_string());
+    }
+    out.push_str(&bottom::Bar::of(state, size.width).to_string());
+    out
 }
 
 /// `image` into the PNG file `path`.

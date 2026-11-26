@@ -4,19 +4,17 @@
 //! and laid out, and drawn by iced's headless renderer (its lists of what
 //! to draw; the GPU is not waited for), at 1512 × 982 at scale 2 (a
 //! 14-inch MacBook Pro's window). Each frame is ticked first, as in the
-//! window (the old canvas drawn: not timed). For each screen, each part's
+//! window (the lanes framed: not timed). For each screen, each part's
 //! median and worst, and the same of the frames' totals.
 //!
-//! The main screen (its list pane native: the tabs and the browser's rows;
-//! its bottom bar native: the spectrum, the seek bar and the buttons; the
-//! right column's text under the cover native: links, tags, the pulse), the
+//! The main screen, laid out by iced (the tabs' header, the browser's
+//! rows, the right column with the cover and its text: links, tags, the
+//! pulse; the bottom bar: the spectrum, the seek bar and the buttons), the
 //! same on a folder of 2,000 files (the cost must not grow with the
 //! folder), the queue, the Mixer tab, the Transition and Karaoke tabs
-//! (their lanes native) on generated tracks with stems, Karaoke mode on
-//! them (its stage and its controls' bar), and the screens drawn whole in
-//! iced's widgets: Now playing, the settings (the device
-//! list open) and the help; the rest of each screen is the old canvas, one
-//! widget, until it is ported.
+//! (their lanes) on generated tracks with stems, Karaoke mode on them (its
+//! stage and its controls' bar), and the screens drawn whole: Now playing,
+//! the settings (the device list open) and the help.
 //!
 //! ```text
 //! cargo run --release -p jodeldiplom --example view_cost -- [FRAMES] [--budget MEDIAN_MS WORST_MS]

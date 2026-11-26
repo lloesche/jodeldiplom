@@ -54,3 +54,4 @@ desk 944 × 560
   [dim] clips [text] 0 [dim] · [text] 12:04.3
   [text] VOLUME [accent] ▮▮▮▮▮▮ [text] 0.0 dB
   [faint] the player's volume
+[keys] ← → strip · ↑ ↓ fader · home 0 dB · m mute · s solo · e echo

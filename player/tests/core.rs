@@ -449,7 +449,7 @@ fn queueing_a_file_or_a_whole_folder() {
 #[test]
 fn only_files_on_screen_are_read() {
     let mut state = State::new("/big".into(), Config::default());
-    common::fit(&mut state, 100, 16);
+    common::fit(&mut state, 100, 22);
     let entries: Vec<Entry> = (0..100)
         .map(|i| entry(&format!("/big/{i:03}.flac"), EntryKind::File))
         .collect();
@@ -2600,7 +2600,7 @@ fn the_next_track_follows_its_playhead_in_and_slides_up_when_it_takes_over() {
     // As the window lays the tab out in a window of 1280 × 800 points.
     let blocks = |state: &State| -> Vec<(Block, bool, bool)> {
         use jodeldiplom::gui::transition::{plan, Room};
-        let room = Room::of(state, Grid::new(160, 42), (8.0, 19.0), 1.0).unwrap();
+        let room = Room::of(state, iced::Size::new(1280.0, 800.0), 1.0).unwrap();
         plan(state, &room)
             .blocks
             .iter()

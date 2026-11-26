@@ -1,21 +1,16 @@
 //! The Karaoke tab and Karaoke mode ([`crate::core::karaoke`]).
 //!
 //! The tab is [`tab`]'s model, which the window draws in its own widgets;
-//! here are only its pictures: the cover, and the voice's lane under the
-//! pane ([`tab_pictures`]). The mode is [`mode`]'s: one picture over the
-//! whole screen ([`KaraokePicture`]: the lyrics, the count-in, the score)
-//! that the window draws over the cover's ground, its controls over it;
-//! a song's result is [`result`]'s.
+//! here is only the voice's lane under the pane ([`voice_plot`]). The mode
+//! is [`mode`]'s: one picture over the whole screen ([`KaraokePicture`]:
+//! the lyrics, the count-in, the score) that the window draws over the
+//! cover's ground, its controls over it; a song's result is [`result`]'s.
 
 use std::sync::Arc;
 
-use ratatui::layout::Rect;
-use ratatui::Frame;
-
-use super::{Pictures, Scene};
 use crate::core::lanes::{self, Block, WordLines};
 use crate::core::{Gpu, Rhythmed, State};
-use crate::view::layout::KaraokeTabLayout;
+use crate::view::lanes::WavePlot;
 
 mod mode;
 mod result;
@@ -31,24 +26,6 @@ pub use tab::{
     keys_line, track_id, Control, Enter, Hint, LyricsRow, Mic, SliderRow, Switch, Tab, ENTER,
     MEASURE,
 };
-
-/// The tab's pictures: the playing track's cover, and the voice's lane
-/// with its words, under the pane (where the other tabs have the
-/// spectrum), while it has stems to show.
-pub fn tab_pictures(
-    frame: &mut Frame,
-    scene: &Scene,
-    layout: &KaraokeTabLayout,
-    pictures: &mut dyn Pictures,
-) {
-    if layout.cover.width > 0 && layout.cover.height > 0 {
-        // At its top left, half a cell down: level with the text beside it.
-        pictures.cover(frame, layout.cover, true);
-    }
-    if let (Some(area), Some((r, waveform))) = (layout.voice, voice_shown(scene.state)) {
-        voice_lane(frame, scene, area, r, waveform, pictures);
-    }
-}
 
 /// The playing song's analysis and its waveform with stems, where the
 /// voice's lane has them to show.
@@ -94,25 +71,19 @@ pub fn voice_window(state: &State, width: u16, heard: f64, scale: u16) -> (f64, 
 /// The share of the voice lane before the playhead.
 pub const VOICE_LEAD: f64 = 1.0 / 3.0;
 
-/// The voice's lane of the song playing in `area`, its words on it as
-/// they are sung.
-fn voice_lane(
-    frame: &mut Frame,
-    scene: &Scene,
-    area: Rect,
-    r: &Rhythmed,
-    waveform: Arc<jodel_rhythm::waveform::Waveform>,
-    pictures: &mut dyn Pictures,
-) {
+/// The voice's lane of the song playing, `width` letters wide and `rows`
+/// letters' lines high, its words on it as they are sung, `heard` seconds
+/// into it; none while it has no stems to show (the tab says why,
+/// [`voice_note`]).
+pub fn voice_plot(state: &State, width: u16, rows: u16, heard: f64) -> Option<WavePlot> {
     use crate::core::lanes::Lane;
-    use crate::view::lanes::{lane_color, WavePlot};
+    use crate::view::lanes::lane_color;
     use jodel_playback::Stem;
-    let state = scene.state;
-    let heard = scene.heard;
+    let (r, waveform) = voice_shown(state)?;
     // Larger words where the lane is tall enough for both their lines.
     let lines = WordLines::KARAOKE;
-    let scale = VOICE_TEXT.min(area.height / lines.rows as u16).max(1);
-    let (start, end) = voice_window(state, area.width, heard, scale);
+    let scale = VOICE_TEXT.min(rows / lines.rows as u16).max(1);
+    let (start, end) = voice_window(state, width, heard, scale);
     // The whole track's bars: the lane may be scrolled between frames.
     let a = &r.analysis;
     let downbeats = a
@@ -120,34 +91,29 @@ fn voice_lane(
         .iter()
         .filter_map(|&d| a.beats.get(d).copied())
         .collect();
-    pictures.wave(
-        frame,
-        &WavePlot {
-            area,
-            waveform,
-            lane: Lane::Stem(Stem::Vocals),
-            start,
-            end,
-            color: lane_color(Lane::Stem(Stem::Vocals)),
-            downbeats,
-            unclear: Vec::new(),
-            selection: None,
-            shown: None,
-            playhead: state.playing.track.as_ref().map(|_| heard),
-            cursor: None,
-            cue: None,
-            transition: None,
-            gain: Vec::new(),
-            edit: None,
-            rows: (0, area.height),
-            lyrics: lanes::lyrics(state, Block::Now),
-            text_scale: scale,
-            lines,
-            follow: Some(VOICE_LEAD),
-            deep: true,
-            key: a.key,
-        },
-    );
+    Some(WavePlot {
+        waveform,
+        lane: Lane::Stem(Stem::Vocals),
+        start,
+        end,
+        color: lane_color(Lane::Stem(Stem::Vocals)),
+        downbeats,
+        unclear: Vec::new(),
+        selection: None,
+        shown: None,
+        playhead: state.playing.track.as_ref().map(|_| heard),
+        cursor: None,
+        cue: None,
+        transition: None,
+        gain: Vec::new(),
+        edit: None,
+        lyrics: lanes::lyrics(state, Block::Now),
+        text_scale: scale,
+        lines,
+        follow: Some(VOICE_LEAD),
+        deep: true,
+        key: a.key,
+    })
 }
 
 /// The notes' colour: those sung ([`NOTE`]) and those to come.

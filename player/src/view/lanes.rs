@@ -2,8 +2,8 @@
 //! tabs and the window: the colours, a lane's waveform ([`WavePlot`]), and
 //! the lyrics' words along the voice's lane ([`lane_labels`]).
 //!
-//! The waveforms are painted by the window in pixels, through the
-//! [`super::Pictures`]. Bars start at a line, the selection is tinted, the
+//! The waveforms are painted by the window in pixels
+//! ([`crate::gui::lanes`]). Bars start at a line, the selection is tinted, the
 //! playhead is the accent colour, and stretches where the beat is unclear
 //! are dimmer. The voice's lane carries the lyrics, once timed, along its
 //! bottom row: each word where it is sung, each letter in the cell where the aligner heard it, a
@@ -15,7 +15,6 @@ use std::sync::Arc;
 
 use jodel_playback::Stem;
 use jodel_rhythm::waveform::{self, Waveform};
-use ratatui::layout::Rect;
 
 use crate::core::lanes::{self, Lane, WordLines};
 
@@ -73,9 +72,6 @@ pub fn dimmed([r, g, b]: [u8; 3]) -> [u8; 3] {
 /// One lane's waveform over `start..end` seconds, with the marks over it.
 #[derive(Clone, Debug)]
 pub struct WavePlot {
-    /// Its cells on the canvas's grid (the Karaoke tab's voice lane; the
-    /// Transition tab's lanes are placed in points, with none).
-    pub area: Rect,
     /// The track's waveform.
     pub waveform: Arc<Waveform>,
     /// Which lane of it.
@@ -108,9 +104,6 @@ pub struct WavePlot {
     pub gain: Vec<(f64, f32)>,
     /// The bar being edited.
     pub edit: Option<f64>,
-    /// The rows of the lane above `area` and all its rows, on the grid
-    /// (the Transition tab's lanes carry theirs apart, in pixels).
-    pub rows: (u16, u16),
     /// The song's lyrics, whose timed words go along the lane (the voice's
     /// lane only): shared, never copied, frame to frame.
     pub lyrics: Option<Arc<jodel_lyrics::Lyrics>>,
