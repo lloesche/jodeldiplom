@@ -4,6 +4,8 @@
 //! rewrite them after an intended change).
 
 mod common;
+#[path = "common/setup.rs"]
+mod setup_web;
 
 use std::path::PathBuf;
 
@@ -1002,4 +1004,52 @@ fn the_mixer_tab_is_a_desk() {
     assert!(strips.contains(&Channel::Strip(StripKind::Preview)));
     assert!(strips.contains(&Channel::Strip(StripKind::Vocals)));
     assert!(!strips.contains(&Channel::Mic));
+}
+
+/// The setup screen as it reads ([`view::setup::Screen`]): under way, the
+/// step's share, why and what it has done under its line; stopped, what
+/// went wrong, what to do, Try again and Quit.
+#[test]
+fn setup_screen() {
+    use jodeldiplom::view::setup::Screen;
+    use setup_web::{start, when, Web};
+    let dir = common::temp_dir("setup-screen");
+    let stalls = Web::Stalls {
+        share: 0.43,
+        after: std::time::Duration::ZERO,
+    };
+    let (setup, _) = start(stalls, &dir.join("stalls"));
+    let status = when(&setup, |s| s.current == Some(1) && s.done > 0);
+    let text = Screen::of(&status).to_string();
+    has(
+        &text,
+        &[
+            "[title] Getting the player ready",
+            "[done] Downloading the word-timing model",
+            "[working] Downloading the speech recogniser's weights",
+            "  [bar accent] 43 %",
+            "  [dim] 806 MB of 1.88 GB",
+            "[to do] Packing the speech recogniser",
+            "[label] All of it: ",
+            "[button] Quit (Q)",
+        ],
+    );
+    assert!(!text.contains("Try again"));
+    snapshot("setup", &text);
+    let (setup, _) = start(Web::Offline, &dir.join("offline"));
+    let status = when(&setup, |s| s.failure.is_some());
+    let text = Screen::of(&status).to_string();
+    has(
+        &text,
+        &[
+            "[failed] Downloading the speech recogniser's weights",
+            "[fail] Downloading the speech recogniser's weights failed: the connection timed out",
+            "[text] Check that this computer is online",
+            "[primary] Try again (Enter)",
+            "[button] Quit (Q)",
+        ],
+    );
+    assert!(!text.contains("[bar accent]"), "no step under way:\n{text}");
+    snapshot("setup_failed", &text);
+    let _ = std::fs::remove_dir_all(&dir);
 }

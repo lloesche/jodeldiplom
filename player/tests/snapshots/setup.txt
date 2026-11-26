@@ -1,0 +1,17 @@
+[title] Getting the player ready
+[dim] This happens once. The player needs these files and checks each against a checksum built into it. Once they are here it never needs the network for them again.
+[done] Downloading the word-timing model (wav2vec2 by Meta, 378 MB)
+[working] Downloading the speech recogniser's weights (Qwen3-ASR 0.6B by Alibaba's Qwen team, 1.9 GB)
+  [dim] It listens to the singing to check that lyrics found online belong to the song.
+  [bar accent] 43 %
+  [dim] 806 MB of 1.88 GB
+[to do] Downloading its vocabulary (3 MB)
+[to do] Downloading its tokenizer's settings (13 KB)
+[to do] Packing the speech recogniser at 4 bits, then checking it
+[to do] Removing the download (1.9 GB)
+[to do] Downloading the depth model (Depth Anything 3 Small by ByteDance Seed, 138 MB)
+[to do] Downloading the cover's cut-out model (BEN2 by Prama, 381 MB)
+[label] All of it: 28 %
+[bar good] 28 %
+[faint] Quitting keeps what is downloaded whole for the next start.
+[button] Quit (Q)

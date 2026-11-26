@@ -1,12 +1,12 @@
 //! What the window shows, screen by screen. A screen drawn by iced's own
-//! widgets gets an arm here as it is ported; none has one yet. Every
-//! screen is the old canvas filling the window ([`super::embed`]) with a
-//! slot over it, the Mixer tab ([`super::mixer`]) or nothing: the same
-//! shape, so the canvas's widget keeps its place in iced's tree. The
-//! pointer over the canvas hides where the core says
-//! ([`crate::core::karaoke::pointer::hidden`]); the view is built again
-//! after every message, so it shows again as soon as it moves or the mode
-//! ends.
+//! widgets gets an arm here as it is ported: the setup screen
+//! ([`setup`]). Every other screen is the old canvas filling the window
+//! ([`super::embed`]) with a slot over it, the Mixer tab
+//! ([`super::mixer`]) or nothing: the same shape, so the canvas's
+//! widget keeps its place in iced's tree. The pointer over the canvas
+//! hides where the core says ([`crate::core::karaoke::pointer::hidden`]);
+//! the view is built again after every message, so it shows again as soon
+//! as it moves or the mode ends.
 
 use iced::widget::{opaque, pin, space, stack};
 use iced::{Element, Widget as _};
@@ -17,13 +17,26 @@ use super::window::Message;
 use crate::core::layout::{self, Layout};
 use crate::core::State;
 
-/// The window's content for the player's `state` (`None`: no player yet,
-/// or no longer).
+pub mod setup;
+
+/// What the window has to show.
+pub(super) enum Shown<'a> {
+    /// The setup screen, where setup stands.
+    Setup(crate::setup::Status),
+    /// The player's state (`None`: no player yet, or no longer).
+    Player(Option<&'a State>),
+}
+
+/// The window's content for what is `shown`.
 pub(super) fn view<'a>(
-    state: Option<&'a State>,
+    shown: Shown<'a>,
     embed: &Embed,
     caps: &'a mixer::Caps,
 ) -> Element<'a, Message> {
+    let state = match shown {
+        Shown::Setup(status) => return setup::view(&status),
+        Shown::Player(state) => state,
+    };
     let hide_pointer = state.is_some_and(crate::core::karaoke::pointer::hidden);
     let desk = state.and_then(|state| desk(state, embed, caps));
     stack![

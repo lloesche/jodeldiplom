@@ -1,8 +1,9 @@
 //! The window: an iced application ([`window`]) around the player. The
-//! screens ported to iced draw in its own widgets (the Mixer tab,
-//! [`mixer`]); every other one is the old canvas (ratatui widgets in
-//! cells, rasterised with the pictures into a pixmap, [`canvas`]) shown in
-//! one widget under them ([`embed`]), on iced's GPU through its shader
+//! screens ported to iced draw in its own widgets (the setup screen, the
+//! Mixer tab, [`mixer`]), in the native look ([`look`], [`widgets`]);
+//! every other one is the old canvas (ratatui widgets in cells,
+//! rasterised with the pictures into a pixmap, [`canvas`]) shown in one
+//! widget under them ([`embed`]), on iced's GPU through its shader
 //! widget, or as an image with iced's CPU renderer where there is no GPU.
 
 pub mod backdrop;
@@ -20,6 +21,7 @@ pub mod glory;
 pub mod karaoke;
 pub mod keys;
 pub mod liquid;
+pub mod look;
 pub mod mixer;
 pub mod notes;
 mod pacer;
@@ -45,6 +47,7 @@ mod stamps;
 pub mod streak;
 pub(crate) mod style;
 mod wake;
+pub mod widgets;
 pub mod window;
 
 use std::sync::{Arc, Mutex};
@@ -89,12 +92,14 @@ fn window_icon(size: u32) -> Option<iced::window::Icon> {
 }
 
 /// What iced runs with: the fonts its widgets draw with (the player's
-/// own), and the one they draw in unless they say.
+/// own: Nunito for the native look's text, [`look::font`]), and the one
+/// they draw in unless they say.
 pub fn iced_settings() -> iced::Settings {
     let fonts = [
         Some(fonts::main_font()),
         fonts::emoji_font(),
         fonts::lyrics_font(),
+        fonts::words_font(),
     ];
     iced::Settings {
         fonts: fonts.into_iter().flatten().map(Into::into).collect(),

@@ -335,9 +335,11 @@ stem keys are their mutes.
   recogniser's checkpoint downloaded and checked, packed at 4 bits, the
   packed file checked, the checkpoint removed); with both there and
   checked, the player starts at once and never goes online for them. The
-  screen cannot be skipped: a failure offers only Try again and Quit.
+  screen cannot be skipped: a failure offers only Try again and Quit, each a
+  button and a key (Enter or r, q or Esc); while setup goes on, Quit.
   - `everything_is_got_checked_and_stamped_then_nothing_more`
   - `offline_it_waits_for_try_again_and_goes_on_from_there`
+  - `the_setup_screen_offers_try_again_and_quit_by_click_and_key`
   A text from LRCLIB that does not fit what
   the recogniser hears is swapped for one of LRCLIB's others that does
   (`a_fetched_text_that_does_not_fit_is_swapped_for_one_that_does`). The words of lyrics

@@ -288,19 +288,6 @@ impl Canvas {
         }
     }
 
-    /// Draws a frame of widgets alone (the setup screen, before the player
-    /// has started): `draw`'s result back.
-    pub fn draw_widgets<R>(&mut self, draw: impl FnOnce(&mut ratatui::Frame) -> R) -> R {
-        self.terminal.backend_mut().reset_damage();
-        let mut out = None;
-        let Ok(_) = self.terminal.draw(|frame| out = Some(draw(frame)));
-        let mut frame = Changes::default();
-        self.cells_changed(&mut frame);
-        self.changed = !frame.is_empty();
-        self.changes.merge(frame);
-        out.expect("the frame was drawn")
-    }
-
     /// Draws a frame: the widgets, then the cover and the spectrum. A
     /// cover (and the caption over it) is painted again only when it is
     /// new or moved, or a cell under it was redrawn: it stays in the

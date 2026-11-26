@@ -9,6 +9,7 @@
 use std::time::{Duration, Instant};
 
 use iced::theme::Base as _;
+use iced::Element;
 use iced_test::core::renderer::{self, Headless as _};
 use iced_test::core::{mouse, shell, window, Event, Size};
 use iced_test::runtime::user_interface::{Cache, UserInterface};
@@ -73,9 +74,14 @@ impl Headless {
     /// One frame of `gui`'s view in a window of `size` (logical pixels),
     /// as the window draws it.
     pub fn frame(&mut self, gui: &Gui, size: Size) -> Took {
-        self.size = size;
         let started = Instant::now();
         let view = gui.view();
+        self.draw(view, size, started)
+    }
+
+    /// One frame of `view` (built from `started`) in a window of `size`.
+    pub fn draw(&mut self, view: Element<'_, Message>, size: Size, started: Instant) -> Took {
+        self.size = size;
         let viewed = Instant::now();
         let cache = std::mem::take(&mut self.cache);
         let mut ui = UserInterface::build(view, size, cache, &mut self.renderer);

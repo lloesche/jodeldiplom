@@ -12,7 +12,6 @@ use super::embed::{Drawn, Embed};
 use super::stage::Tint;
 use super::stage_gpu::{self, StageFrame};
 use super::streak;
-use super::window::SetupRun;
 use crate::app::App;
 use crate::core::singing::Motion;
 use crate::core::Action;
@@ -208,17 +207,6 @@ impl Paint {
     fn calm_due(&self, at: Instant) -> bool {
         self.last_whole
             .is_none_or(|w| at.saturating_duration_since(w) + SLACK >= CALM)
-    }
-
-    /// The setup screen's frame.
-    pub fn setup(&mut self, embed: &Embed, run: &mut SetupRun, place: Place) {
-        let status = run.setup.status();
-        embed.draw(place.scale, |canvas, _| {
-            canvas.fit(place.size.0, place.size.1);
-            run.buttons = canvas.draw_widgets(|frame| crate::view::setup::draw(frame, &status));
-            Drawn::default()
-        });
-        self.dirty = false;
     }
 
     /// Draws what `plan` says, for the tick at `at`, `heard` seconds into

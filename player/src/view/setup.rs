@@ -1,44 +1,30 @@
-//! The setup screen ([`crate::setup`]): what the player gets before it can
-//! be used, step by step, with a bar for the step under way and one for
-//! the whole; on a failure, what went wrong, what to do, and two buttons:
-//! Try again and Quit (there is no skipping: without its files the player
-//! is not what it should be).
+//! The setup screen ([`crate::setup`]) as it reads: what the player gets
+//! before it can be used, step by step, how far the step under way is and
+//! how far the whole; on a failure, what went wrong, what to do, and two
+//! choices: Try again and Quit (there is no skipping: without its files
+//! the player is not what it should be). The window draws it
+//! (`gui::screens::setup`).
 
-use ratatui::layout::Rect;
-use ratatui::style::{Color, Modifier, Style};
-use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Clear, Paragraph, Widget, Wrap};
-use ratatui::Frame;
+use std::fmt;
 
-use super::colors::*;
 use crate::setup::{Status, StepState, Unit};
 
-/// Where the buttons were drawn, for the mouse.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct Buttons {
-    /// Try again (after a failure).
-    pub retry: Option<Rect>,
-    /// Quit.
-    pub quit: Option<Rect>,
-}
+/// The screen's title.
+pub const TITLE: &str = "Getting the player ready";
 
-impl Buttons {
-    /// The button at `(col, row)`.
-    pub fn at(&self, col: u16, row: u16) -> Option<Choice> {
-        let inside = |r: Option<Rect>| {
-            r.is_some_and(|r| {
-                col >= r.x && col < r.x + r.width && row >= r.y && row < r.y + r.height
-            })
-        };
-        if inside(self.retry) {
-            Some(Choice::Retry)
-        } else if inside(self.quit) {
-            Some(Choice::Quit)
-        } else {
-            None
-        }
-    }
-}
+/// What setup is, under the title.
+pub const INTRO: &str = "This happens once. The player needs these files and checks each \
+                         against a checksum built into it. Once they are here it never needs \
+                         the network for them again.";
+
+/// What shows before the steps are known.
+pub const LOOKING: &str = "Looking for the files…";
+
+/// The whole's label.
+pub const WHOLE: &str = "All of it";
+
+/// What quitting keeps, while setup is under way.
+pub const KEPT: &str = "Quitting keeps what is downloaded whole for the next start.";
 
 /// What the person chose on the setup screen.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -60,22 +46,193 @@ pub fn choice(key: &str, failed: bool) -> Option<Choice> {
     }
 }
 
+/// A choice as a button shows it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Offer {
+    /// What it does.
+    pub choice: Choice,
+    /// What it says.
+    pub label: &'static str,
+    /// The key that does the same.
+    pub key: &'static str,
+    /// The one to take: it stands out.
+    pub primary: bool,
+}
+
+/// Where a step stands, as its mark shows it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Mark {
+    /// Done.
+    Done,
+    /// Under way.
+    Working,
+    /// Under way when setup stopped.
+    Failed,
+    /// Still to come.
+    ToDo,
+}
+
+/// A step's line.
+#[derive(Clone, Debug, PartialEq)]
+pub struct StepLine {
+    /// What it does: "Downloading the word-timing model (wav2vec2 by Meta,
+    /// 378 MB)".
+    pub title: String,
+    /// Where it stands.
+    pub mark: Mark,
+}
+
+/// The step under way: why it is needed, how far it is.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Current {
+    /// Its place among the steps.
+    pub index: usize,
+    /// Why the player needs it.
+    pub why: String,
+    /// Its share done (0 to 1).
+    pub share: f64,
+    /// What it has done: "812 MB of 1.88 GB · 48 MB/s · about 23 s left".
+    pub detail: String,
+}
+
+/// Why setup stopped, and what to do.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Stopped {
+    /// What went wrong.
+    pub what: String,
+    /// What to do about it.
+    pub advice: String,
+}
+
+/// What the setup screen says now.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Screen {
+    /// The steps, in order (none yet: [`LOOKING`] shows).
+    pub steps: Vec<StepLine>,
+    /// The step under way, while setup goes on.
+    pub current: Option<Current>,
+    /// The whole's share done (0 to 1).
+    pub whole: f64,
+    /// Why it stopped, waiting for Try again.
+    pub stopped: Option<Stopped>,
+}
+
+impl Screen {
+    /// The screen for `status`.
+    pub fn of(status: &Status) -> Screen {
+        let failed = status.failure.is_some();
+        let steps = status
+            .steps
+            .iter()
+            .enumerate()
+            .map(|(i, step)| StepLine {
+                title: step.title.clone(),
+                mark: match step.state {
+                    StepState::Done => Mark::Done,
+                    StepState::Working if failed && status.current == Some(i) => Mark::Failed,
+                    StepState::Working => Mark::Working,
+                    StepState::ToDo => Mark::ToDo,
+                },
+            })
+            .collect();
+        let current = status
+            .current
+            .filter(|_| !failed)
+            .and_then(|i| Some((i, status.steps.get(i)?)))
+            .map(|(index, step)| Current {
+                index,
+                why: step.why.clone(),
+                share: status.step_share(),
+                detail: detail(status),
+            });
+        Screen {
+            steps,
+            current,
+            whole: status.overall(),
+            stopped: status.failure.as_ref().map(|f| Stopped {
+                what: f.what.clone(),
+                advice: f.advice.clone(),
+            }),
+        }
+    }
+
+    /// Whether the steps are still being looked for.
+    pub fn looking(&self) -> bool {
+        self.steps.is_empty() && self.stopped.is_none()
+    }
+
+    /// The choices offered: Try again and Quit after a failure, Quit
+    /// while setup goes on.
+    pub fn offers(&self) -> Vec<Offer> {
+        let quit = Offer {
+            choice: Choice::Quit,
+            label: "Quit",
+            key: "Q",
+            primary: false,
+        };
+        if self.stopped.is_some() {
+            let retry = Offer {
+                choice: Choice::Retry,
+                label: "Try again",
+                key: "Enter",
+                primary: true,
+            };
+            vec![quit, retry]
+        } else {
+            vec![quit]
+        }
+    }
+}
+
+/// A share as whole percent: "43 %".
+pub fn percent(share: f64) -> String {
+    format!("{:.0} %", share.clamp(0.0, 1.0) * 100.0)
+}
+
+/// The outline: one line per thing shown, its tone in brackets.
+impl fmt::Display for Screen {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        writeln!(f, "[title] {TITLE}")?;
+        writeln!(f, "[dim] {INTRO}")?;
+        if self.looking() {
+            writeln!(f, "[dim] {LOOKING}")?;
+        }
+        for (i, step) in self.steps.iter().enumerate() {
+            let mark = match step.mark {
+                Mark::Done => "done",
+                Mark::Working => "working",
+                Mark::Failed => "failed",
+                Mark::ToDo => "to do",
+            };
+            writeln!(f, "[{mark}] {}", step.title)?;
+            if let Some(c) = self.current.as_ref().filter(|c| c.index == i) {
+                writeln!(f, "  [dim] {}", c.why)?;
+                writeln!(f, "  [bar accent] {}", percent(c.share))?;
+                writeln!(f, "  [dim] {}", c.detail)?;
+            }
+        }
+        writeln!(f, "[label] {WHOLE}: {}", percent(self.whole))?;
+        writeln!(f, "[bar good] {}", percent(self.whole))?;
+        if let Some(stopped) = &self.stopped {
+            writeln!(f, "[fail] {}", stopped.what)?;
+            writeln!(f, "[text] {}", stopped.advice)?;
+        } else {
+            writeln!(f, "[faint] {KEPT}")?;
+        }
+        for offer in self.offers() {
+            let tone = if offer.primary { "primary" } else { "button" };
+            writeln!(f, "[{tone}] {} ({})", offer.label, offer.key)?;
+        }
+        Ok(())
+    }
+}
+
 fn size(bytes: u64) -> String {
     if bytes >= 1_000_000_000 {
         format!("{:.2} GB", bytes as f64 / 1e9)
     } else {
         format!("{} MB", bytes / 1_000_000)
     }
-}
-
-/// A bar `width` cells wide, `share` of it filled.
-fn bar(share: f64, width: u16, fill: Color) -> Line<'static> {
-    let width = usize::from(width);
-    let filled = ((share.clamp(0.0, 1.0) * width as f64).round() as usize).min(width);
-    Line::from(vec![
-        Span::styled("█".repeat(filled), Style::new().fg(fill)),
-        Span::styled("█".repeat(width - filled), Style::new().fg(TRACK)),
-    ])
 }
 
 /// What the step under way has done: "812 MB of 1.88 GB · 48 MB/s · about
@@ -104,140 +261,4 @@ fn detail(status: &Status) -> String {
         Some(Unit::Tensors) => "reading the download…".to_owned(),
         _ => String::new(),
     }
-}
-
-/// Draws the setup screen over the whole frame; where its buttons are.
-pub fn draw(frame: &mut Frame, status: &Status) -> Buttons {
-    let area = frame.area();
-    frame.render_widget(Clear, area);
-    frame.render_widget(Block::new().style(Style::new().bg(BG)), area);
-    let width = area.width.saturating_sub(4).clamp(20, 84);
-    let inner = width.saturating_sub(4);
-    let text = |s: String| Line::from(Span::styled(s, Style::new().fg(TEXT)));
-    let dim = |s: String| Line::from(Span::styled(s, Style::new().fg(DIM)));
-    let mut lines: Vec<Line> = vec![
-        Line::from(Span::styled(
-            "Getting the player ready",
-            Style::new().fg(ACCENT).add_modifier(Modifier::BOLD),
-        )),
-        Line::default(),
-        dim(
-            "This happens once. The player needs these files and checks each against a \
-             checksum built into it. Once they are here it never needs the network for them \
-             again."
-                .to_owned(),
-        ),
-        Line::default(),
-    ];
-    for (i, step) in status.steps.iter().enumerate() {
-        let failed_here = status.failure.is_some() && status.current == Some(i);
-        let (mark, color) = match step.state {
-            StepState::Done => ("✓", GREEN),
-            StepState::Working if failed_here => ("✗", FAIL),
-            StepState::Working => ("▶", ACCENT),
-            StepState::ToDo => ("·", DIM),
-        };
-        let style = match step.state {
-            StepState::ToDo => Style::new().fg(DIM),
-            _ => Style::new().fg(TEXT),
-        };
-        lines.push(Line::from(vec![
-            Span::styled(format!("{mark} "), Style::new().fg(color)),
-            Span::styled(step.title.clone(), style),
-        ]));
-    }
-    if status.steps.is_empty() && status.finished.is_none() && status.failure.is_none() {
-        lines.push(dim("Looking for the files…".to_owned()));
-    }
-    lines.push(Line::default());
-    if let Some(step) = status.current.and_then(|i| status.steps.get(i)) {
-        if status.failure.is_none() {
-            lines.push(text(step.title.clone()));
-            lines.push(dim(step.why.clone()));
-            lines.push(bar(status.step_share(), inner, ACCENT));
-            lines.push(dim(detail(status)));
-            lines.push(Line::default());
-        }
-    }
-    lines.push(dim(format!("All of it: {:.0} %", status.overall() * 100.0)));
-    lines.push(bar(status.overall(), inner, GREEN));
-    let mut buttons = Buttons::default();
-    let button_row;
-    if let Some(failure) = &status.failure {
-        lines.push(Line::default());
-        lines.push(Line::from(Span::styled(
-            failure.what.clone(),
-            Style::new().fg(FAIL),
-        )));
-        lines.push(text(failure.advice.clone()));
-        lines.push(Line::default());
-        button_row = Some(lines.len());
-        lines.push(Line::default());
-    } else {
-        lines.push(Line::default());
-        lines.push(dim(
-            "q quits (what is downloaded whole is kept for the next start)".to_owned(),
-        ));
-        button_row = None;
-    }
-    // The height the text takes wrapped, then the box centred.
-    let wrapped: u16 = lines
-        .iter()
-        .map(|l| {
-            let w = l.width() as u16;
-            w.div_ceil(inner.max(1)).max(1)
-        })
-        .sum();
-    let height = (wrapped + 4).min(area.height);
-    let rect = Rect::new(
-        area.x + (area.width.saturating_sub(width + 4)) / 2 + 2,
-        area.y + area.height.saturating_sub(height) / 2,
-        width,
-        height,
-    );
-    let block = Block::bordered()
-        .border_type(BorderType::Rounded)
-        .border_style(Style::new().fg(BORDER))
-        .title(Span::styled(" Jodeldiplom ", Style::new().fg(DIM)))
-        .style(Style::new().bg(BG));
-    let body = block.inner(rect);
-    let body = Rect::new(
-        body.x + 1,
-        body.y + 1,
-        body.width.saturating_sub(2),
-        body.height.saturating_sub(1),
-    );
-    frame.render_widget(block, rect);
-    Paragraph::new(lines.clone())
-        .wrap(Wrap { trim: false })
-        .render(body, frame.buffer_mut());
-    if let Some(row) = button_row {
-        // The wrapped rows before the buttons' row.
-        let before: u16 = lines[..row]
-            .iter()
-            .map(|l| (l.width() as u16).div_ceil(inner.max(1)).max(1))
-            .sum();
-        let y = body.y + before;
-        if y < body.y + body.height {
-            let draw = |frame: &mut Frame, x: u16, label: &str, primary: bool| {
-                let w = label.chars().count() as u16 + 4;
-                let r = Rect::new(x, y, w.min(body.x + body.width - x), 1);
-                let style = if primary {
-                    Style::new().fg(BG).bg(ACCENT).add_modifier(Modifier::BOLD)
-                } else {
-                    Style::new().fg(TEXT).bg(BUTTON)
-                };
-                Paragraph::new(Span::styled(format!("  {label}  "), style))
-                    .render(r, frame.buffer_mut());
-                r
-            };
-            let retry = draw(frame, body.x, "Try again (Enter)", true);
-            let quit = draw(frame, retry.x + retry.width + 2, "Quit (Q)", false);
-            buttons = Buttons {
-                retry: Some(retry),
-                quit: Some(quit),
-            };
-        }
-    }
-    buttons
 }

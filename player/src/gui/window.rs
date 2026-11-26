@@ -26,6 +26,7 @@ use super::mixer;
 use super::pacer::Pacer;
 use super::paint::{Pace, Paint, Place, Seen, REST};
 use super::pointer::{Pointer, PointerKind, PointerState, Wheel, WheelOn};
+use super::screens::Shown;
 use super::wake::{Wake, Wakes};
 use crate::app::{App, AppOptions};
 use crate::core::desk::{Channel, DeskAction};
@@ -33,6 +34,8 @@ use crate::core::keymap;
 use crate::core::mouse::MouseButton;
 use crate::core::preview::Ctrl;
 use crate::core::{Action, State};
+use crate::setup::{Setup, Status};
+use crate::view::setup::Choice;
 
 /// What the window takes.
 #[derive(Clone, Debug)]
@@ -54,12 +57,8 @@ pub enum Message {
     DeskWheel(Channel, ScrollDelta),
     /// The window's last frame, for `--save-frame`.
     Shot(window::Screenshot),
-}
-
-/// The setup screen under way ([`crate::setup`]), before the app starts.
-pub(super) struct SetupRun {
-    pub(super) setup: crate::setup::Setup,
-    pub(super) buttons: crate::view::setup::Buttons,
+    /// A choice on the setup screen.
+    Setup(Choice),
 }
 
 /// How the window was asked to run.
@@ -75,13 +74,27 @@ pub(super) struct Start {
 
 /// Where the window stands.
 enum Phase {
-    /// Setup gets the player's files; the app starts with these options.
-    Setup { run: SetupRun, options: AppOptions },
+    /// Setup gets the player's files ([`crate::setup`]); the app starts
+    /// with these options.
+    Setup { setup: Setup, options: AppOptions },
     /// The player runs.
     Running(App),
-    /// The window closes; the app (while there is one) shows as it was
-    /// until the last frame is taken.
-    Leaving(Option<App>),
+    /// The window closes; what showed shows as it was until the last frame
+    /// is taken.
+    Leaving(Last),
+}
+
+/// What shows while the window closes.
+#[expect(
+    clippy::large_enum_variant,
+    reason = "one, in the phase that holds the app anyway"
+)]
+enum Last {
+    /// The app.
+    App(App),
+    /// The setup screen, where setup stood.
+    Setup(Status),
+    Nothing,
 }
 
 /// The window's state: the player, and what iced needs beside it.
@@ -132,17 +145,13 @@ impl Gui {
             }
             Err((manifest, places)) => {
                 // The files are not all here: the setup screen first.
-                let setup = crate::setup::Setup::start(
+                let setup = Setup::start(
                     manifest,
                     places,
                     Arc::new(crate::setup::Real),
                     options.notify.clone(),
                 );
-                let run = SetupRun {
-                    setup,
-                    buttons: Default::default(),
-                };
-                Phase::Setup { run, options }
+                Phase::Setup { setup, options }
             }
         };
         crate::trace::took("window: the app started", started, true);
@@ -159,6 +168,14 @@ impl Gui {
     pub fn headless(app: App) -> Gui {
         let (wake, _) = Wake::new();
         Gui::around(Phase::Running(app), wake, Instant::now())
+    }
+
+    /// The window's state on the setup screen with no window, `setup`
+    /// under way (the app to start with `options` once it is done): for
+    /// the shots and the screen's tests.
+    pub fn headless_setup(setup: Setup, options: AppOptions) -> Gui {
+        let (wake, _) = Wake::new();
+        Gui::around(Phase::Setup { setup, options }, wake, Instant::now())
     }
 
     /// The window's state in `phase`, started at `started`, before it
@@ -209,7 +226,7 @@ impl Gui {
     /// The app, while there is one to show.
     fn app(&self) -> Option<&App> {
         match &self.phase {
-            Phase::Running(app) | Phase::Leaving(Some(app)) => Some(app),
+            Phase::Running(app) | Phase::Leaving(Last::App(app)) => Some(app),
             _ => None,
         }
     }
@@ -251,6 +268,7 @@ impl Gui {
                 Task::none()
             }
             Message::Shot(_) => Task::none(),
+            Message::Setup(choice) => self.setup_choice(choice),
         };
         if matches!(&self.phase, Phase::Running(app) if app.state.quit) {
             return self.leave();
@@ -275,13 +293,6 @@ impl Gui {
     fn pointer(&mut self, pointer: Pointer) -> Task<Message> {
         let shift = self.modifiers.shift();
         match &mut self.phase {
-            Phase::Setup { run, .. } => {
-                if let PointerKind::Down(MouseButton::Left) = pointer.kind {
-                    if let Some(choice) = run.buttons.at(pointer.x as u16, pointer.y as u16) {
-                        return self.setup_choice(choice);
-                    }
-                }
-            }
             Phase::Running(app) => {
                 let dirty = match pointer.kind {
                     PointerKind::Wheel(delta) => {
@@ -293,7 +304,7 @@ impl Gui {
                 };
                 self.paint.dirty |= dirty;
             }
-            Phase::Leaving(_) => {}
+            Phase::Setup { .. } | Phase::Leaving(_) => {}
         }
         Task::none()
     }
@@ -376,8 +387,8 @@ impl Gui {
                 modifiers,
                 ..
             }) => match &mut self.phase {
-                Phase::Setup { run, .. } => {
-                    let failed = run.setup.status().failure.is_some();
+                Phase::Setup { setup, .. } => {
+                    let failed = setup.status().failure.is_some();
                     let name = super::keys::setup_name(&modified_key);
                     if let Some(choice) = crate::view::setup::choice(&name, failed) {
                         return self.setup_choice(choice);
@@ -401,14 +412,15 @@ impl Gui {
         Task::none()
     }
 
-    /// The person's choice on the setup screen.
-    fn setup_choice(&mut self, choice: crate::view::setup::Choice) -> Task<Message> {
+    /// The person's choice on the setup screen (while it shows).
+    fn setup_choice(&mut self, choice: Choice) -> Task<Message> {
+        let Phase::Setup { setup, .. } = &self.phase else {
+            return Task::none();
+        };
         match choice {
-            crate::view::setup::Choice::Quit => self.leave(),
-            crate::view::setup::Choice::Retry => {
-                if let Phase::Setup { run, .. } = &self.phase {
-                    run.setup.retry();
-                }
+            Choice::Quit => self.leave(),
+            Choice::Retry => {
+                setup.retry();
                 Task::none()
             }
         }
@@ -417,7 +429,7 @@ impl Gui {
     /// Setup finished: the app starts with the files it found.
     fn setup_done(&mut self, paths: &[PathBuf]) {
         if let Phase::Setup { mut options, .. } =
-            std::mem::replace(&mut self.phase, Phase::Leaving(None))
+            std::mem::replace(&mut self.phase, Phase::Leaving(Last::Nothing))
         {
             crate::cli::set_models(&mut options, paths);
             options.size = self.embed.lock().canvas.grid();
@@ -471,12 +483,11 @@ impl Gui {
         }
         let (place, seen) = (self.place(), self.seen());
         match &mut self.phase {
-            Phase::Setup { run, .. } => {
-                // Setup tells the loop as it goes: a frame for each tick.
-                if let Some(paths) = run.setup.status().finished {
+            Phase::Setup { setup, .. } => {
+                // Setup tells the window as it goes (the view is built
+                // again each time); that it is done is seen at a tick.
+                if let Some(paths) = setup.status().finished {
                     self.setup_done(&paths);
-                } else if seen.visible {
-                    self.paint.setup(&self.embed, run, place);
                 }
                 Task::none()
             }
@@ -531,11 +542,12 @@ impl Gui {
     /// (what shows stays as it is until then: the screenshot is of the
     /// frame drawn last, with the widgets that drew it).
     fn leave(&mut self) -> Task<Message> {
-        let app = match std::mem::replace(&mut self.phase, Phase::Leaving(None)) {
-            Phase::Running(app) => Some(app),
-            _ => None,
+        let last = match std::mem::replace(&mut self.phase, Phase::Leaving(Last::Nothing)) {
+            Phase::Running(app) => Last::App(app),
+            Phase::Setup { setup, .. } => Last::Setup(setup.status()),
+            Phase::Leaving(_) => Last::Nothing,
         };
-        self.phase = Phase::Leaving(app);
+        self.phase = Phase::Leaving(last);
         match (&self.save_frame, self.window) {
             (Some(_), Some(id)) => window::screenshot(id).map(Message::Shot),
             (Some(path), None) => {
@@ -549,7 +561,7 @@ impl Gui {
     /// The app stops (the session and the singing kept saved, the engine
     /// stopped), the window closes.
     fn quit(&mut self) -> Task<Message> {
-        self.phase = Phase::Leaving(None);
+        self.phase = Phase::Leaving(Last::Nothing);
         iced::exit()
     }
 
@@ -587,7 +599,6 @@ impl Gui {
             Phase::Running(app) if self.size.width > 0.0 && self.size.height > 0.0 => {
                 self.paint.plan(app, self.seen(), Instant::now()).pace
             }
-            Phase::Setup { .. } if self.paint.dirty => Pace::Refresh,
             _ => Pace::Every(REST),
         };
         // At the refresh the pacer ticks, from inside each redraw.
@@ -603,9 +614,13 @@ impl Gui {
     /// What the window shows ([`super::screens`]), ticked at the refresh
     /// ([`super::pacer`]).
     pub fn view(&self) -> Element<'_, Message> {
-        let state = self.app().map(|app| &app.state);
+        let shown = match &self.phase {
+            Phase::Setup { setup, .. } => Shown::Setup(setup.status()),
+            Phase::Leaving(Last::Setup(status)) => Shown::Setup(status.clone()),
+            _ => Shown::Player(self.app().map(|app| &app.state)),
+        };
         self.pacer
-            .view(super::screens::view(state, &self.embed, &self.caps))
+            .view(super::screens::view(shown, &self.embed, &self.caps))
     }
 }
 

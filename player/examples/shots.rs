@@ -5,6 +5,9 @@
 //! itself, Karaoke mode's stage among it), and for each a `gui-*.txt` with
 //! the text of its cells (the pictures' cells blank). Each screen at
 //! 1280 × 800 at scale 1, and as `gui-*-hidpi` at 1512 × 982 at scale 2.
+//! The setup screen comes first, on a made-up web: under way
+//! (`gui-setup`) and stopped by a failure (`gui-setup-failed`), each with
+//! its outline as the text. The fonts are the player's own, as built in.
 //!
 //! ```text
 //! cargo run --release -p jodeldiplom --example shots -- OUT_DIR [--real-devices]
@@ -16,8 +19,10 @@
 #[path = "../tests/common/mod.rs"]
 mod common;
 mod headless;
+#[path = "../tests/common/setup.rs"]
+mod setup_web;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -30,6 +35,16 @@ use jodeldiplom::gui::window::{Gui, Message};
 use jodeldiplom::gui::{font_px, Canvas};
 
 use headless::Headless;
+
+// The fonts build.rs found: `EMBEDDED_FONTS`.
+include!(concat!(env!("OUT_DIR"), "/fonts.rs"));
+
+/// The sizes every screen is shot at: a name's suffix, the window's size
+/// in logical pixels, its scale.
+const SIZES: [(&str, Size, f32); 2] = [
+    ("", Size::new(1280.0, 800.0), 1.0),
+    ("-hidpi", Size::new(1512.0, 982.0), 2.0),
+];
 
 fn fake_devices() -> Result<Vec<DeviceChoice>, String> {
     Ok(vec![
@@ -67,12 +82,7 @@ impl Shots {
         let _ = self.gui.update(Message::Frame(Instant::now()));
         self.headless.frame(&self.gui, size);
         let path = self.out.join(format!("gui-{name}.png"));
-        let mut png = durable::AtomicFile::create(&path).expect("write the PNG");
-        self.headless
-            .screenshot(scale)
-            .write_to(&mut png, image::ImageFormat::Png)
-            .expect("a PNG");
-        png.commit().expect("write the PNG");
+        write_png(&path, &self.headless.screenshot(scale));
         durable::write_atomic(
             &self.out.join(format!("gui-{name}.txt")),
             self.gui.text().as_bytes(),
@@ -94,6 +104,52 @@ impl Shots {
             (ch * usize::from(cells.1)) as f32,
         );
         self.shot(name, state, size, 1.0);
+    }
+}
+
+/// `image` into the PNG file `path`.
+fn write_png(path: &Path, image: &image::RgbaImage) {
+    let mut png = durable::AtomicFile::create(path).expect("write the PNG");
+    image
+        .write_to(&mut png, image::ImageFormat::Png)
+        .expect("a PNG");
+    png.commit().expect("write the PNG");
+}
+
+/// The setup screen under way (a download stalled part-way, its speed
+/// known) and stopped (offline), as `gui-setup*.png` with the screen's
+/// outline as `gui-setup*.txt`.
+fn setup_shots(headless: &mut Headless, out: &Path, scratch: &Path) {
+    use jodeldiplom::view::setup::Screen;
+    use setup_web::{start, when, Web};
+    let id = window::Id::unique();
+    let stalls = Web::Stalls {
+        share: 0.43,
+        after: Duration::from_secs(4),
+    };
+    for (name, web) in [("setup", stalls), ("setup-failed", Web::Offline)] {
+        let (setup, _made) = start(web, &scratch.join(name));
+        let status = when(&setup, |s| s.rate.is_some() || s.failure.is_some());
+        let mut gui = Gui::headless_setup(setup, AppOptions::new(scratch.to_path_buf()));
+        for (suffix, size, scale) in SIZES {
+            let event = |e| Message::Event(iced::Event::Window(e), id);
+            let _ = gui.update(event(window::Event::Resized(size)));
+            let _ = gui.update(event(window::Event::Rescaled(scale)));
+            headless.frame(&gui, size);
+            let path = out.join(format!("gui-{name}{suffix}.png"));
+            write_png(&path, &headless.screenshot(scale));
+            durable::write_atomic(
+                &out.join(format!("gui-{name}{suffix}.txt")),
+                Screen::of(&status).to_string().as_bytes(),
+            )
+            .expect("write the text");
+            println!(
+                "{} ({} × {} at {scale})",
+                path.display(),
+                size.width,
+                size.height
+            );
+        }
     }
 }
 
@@ -133,6 +189,11 @@ fn main() {
     let out = PathBuf::from(args.next().expect("give an output folder"));
     let real = args.any(|a| a == "--real-devices");
     std::fs::create_dir_all(&out).unwrap();
+    jodeldiplom::gui::fonts::use_fonts(EMBEDDED_FONTS);
+    let mut headless = Headless::new();
+    println!("drawn by {}", headless.name());
+    let scratch = common::temp_dir("shots-setup");
+    setup_shots(&mut headless, &out, &scratch);
 
     let tree = common::music_tree("shots");
     let mut options = AppOptions::new(tree.album.clone());
@@ -294,17 +355,17 @@ fn main() {
     };
     let mut shots = Shots {
         gui: Gui::headless(app),
-        headless: Headless::new(),
+        headless,
         id: window::Id::unique(),
         out,
     };
-    println!("drawn by {}", shots.headless.name());
     // Which renderer draws is known to the canvas once a frame was drawn:
     // the first shot paints what the GPU does not draw.
     shots.headless.frame(&shots.gui, Size::new(1280.0, 800.0));
     for (name, s) in &screens {
-        shots.shot(name, s, Size::new(1280.0, 800.0), 1.0);
-        shots.shot(&format!("{name}-hidpi"), s, Size::new(1512.0, 982.0), 2.0);
+        for (suffix, size, scale) in SIZES {
+            shots.shot(&format!("{name}{suffix}"), s, size, scale);
+        }
     }
     shots.cells_shot("main-narrow", &screens[0].1, (64, 22));
     // The Mixer tab in the narrowest usual window, 80 columns.
@@ -314,4 +375,5 @@ fn main() {
     // The player stops with the window's state.
     drop(shots);
     let _ = std::fs::remove_dir_all(&tree.root);
+    let _ = std::fs::remove_dir_all(&scratch);
 }
