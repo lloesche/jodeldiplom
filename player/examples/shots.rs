@@ -1,7 +1,10 @@
 //! Renders the player's screens to files, with a fixture track playing
-//! through the null output (no device) and a generated cover:
-//! `gui-*.png` from the window's drawing path, and for each a `gui-*.txt`
-//! with the text of its cells (the pictures' cells blank).
+//! through the null output (no device) and a generated cover: `gui-*.png`
+//! as the window draws them ([`Gui::view`], with iced's headless renderer:
+//! the old canvas, the widgets iced draws over it, and what the GPU draws
+//! itself, Karaoke mode's stage among it), and for each a `gui-*.txt` with
+//! the text of its cells (the pictures' cells blank). Each screen at
+//! 1280 × 800 at scale 1, and as `gui-*-hidpi` at 1512 × 982 at scale 2.
 //!
 //! ```text
 //! cargo run --release -p jodeldiplom --example shots -- OUT_DIR [--real-devices]
@@ -12,18 +15,21 @@
 
 #[path = "../tests/common/mod.rs"]
 mod common;
+mod headless;
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
+use iced::{window, Size};
 use jodel_output::SimClock;
 use jodeldiplom::app::{App, AppOptions, Output};
 use jodeldiplom::core::keymap::Op;
 use jodeldiplom::core::{Action, DeviceChoice, Effect, Screen, Side, State};
+use jodeldiplom::gui::window::{Gui, Message};
 use jodeldiplom::gui::{font_px, Canvas};
-use jodeldiplom::spectrum::SpectrumFrame;
-use jodeldiplom::view::Scene;
+
+use headless::Headless;
 
 fn fake_devices() -> Result<Vec<DeviceChoice>, String> {
     Ok(vec![
@@ -40,70 +46,55 @@ fn fake_devices() -> Result<Vec<DeviceChoice>, String> {
     ])
 }
 
-/// A window of 1280 × 800 at `scale`.
-fn gui_shot(
-    out: &Path,
-    name: &str,
-    state: &State,
-    spectrum: &SpectrumFrame,
-    app: &App,
-    scale: f64,
-) {
-    let (w, h) = ((1280.0 * scale) as u32, (800.0 * scale) as u32);
-    let mut canvas = Canvas::new(80, 24, font_px(scale));
-    let grid = canvas.fit(w, h);
-    shot(out, name, state, spectrum, app, canvas, grid);
+/// The window the shots are taken in, and where they go.
+struct Shots {
+    gui: Gui,
+    headless: Headless,
+    id: window::Id,
+    out: PathBuf,
 }
 
-/// A window of exactly `size` cells, at a scale of 1.
-fn cells_shot(
-    out: &Path,
-    name: &str,
-    state: &State,
-    spectrum: &SpectrumFrame,
-    app: &App,
-    size: (u16, u16),
-) {
-    let mut canvas = Canvas::new(size.0, size.1, font_px(1.0));
-    let (cw, ch) = canvas.cell();
-    let grid = canvas.fit(
-        (cw * usize::from(size.0)) as u32,
-        (ch * usize::from(size.1)) as u32,
-    );
-    shot(out, name, state, spectrum, app, canvas, grid);
-}
+impl Shots {
+    /// `state` in a window of `size` (logical pixels) at `scale`, as
+    /// `gui-{name}.png` and `.txt`: told the window's size and scale as a
+    /// window would, ticked once (the frame drawn whole), then the view
+    /// drawn and rendered.
+    fn shot(&mut self, name: &str, state: &State, size: Size, scale: f32) {
+        let event = |e| Message::Event(iced::Event::Window(e), self.id);
+        self.gui.show(state.clone());
+        let _ = self.gui.update(event(window::Event::Resized(size)));
+        let _ = self.gui.update(event(window::Event::Rescaled(scale)));
+        let _ = self.gui.update(Message::Frame(Instant::now()));
+        self.headless.frame(&self.gui, size);
+        let path = self.out.join(format!("gui-{name}.png"));
+        let mut png = durable::AtomicFile::create(&path).expect("write the PNG");
+        self.headless
+            .screenshot(scale)
+            .write_to(&mut png, image::ImageFormat::Png)
+            .expect("a PNG");
+        png.commit().expect("write the PNG");
+        durable::write_atomic(
+            &self.out.join(format!("gui-{name}.txt")),
+            self.gui.text().as_bytes(),
+        )
+        .expect("write the text");
+        println!(
+            "{} ({} × {} at {scale})",
+            path.display(),
+            size.width,
+            size.height
+        );
+    }
 
-fn shot(
-    out: &Path,
-    name: &str,
-    state: &State,
-    spectrum: &SpectrumFrame,
-    app: &App,
-    mut canvas: Canvas,
-    grid: (u16, u16),
-) {
-    let mut state = state.clone();
-    state.size = grid;
-    let scene = Scene {
-        state: &state,
-        spectrum,
-        pointer: None,
-        heard: state.playing.position,
-    };
-    canvas.draw(&scene, app.art());
-    let path = out.join(format!("gui-{name}.png"));
-    let mut png = durable::AtomicFile::create(&path).expect("write the PNG");
-    canvas
-        .image()
-        .write_to(&mut png, image::ImageFormat::Png)
-        .expect("a PNG");
-    png.commit().expect("write the PNG");
-    durable::write_atomic(
-        &out.join(format!("gui-{name}.txt")),
-        canvas.text().as_bytes(),
-    )
-    .expect("write the text");
-    println!("{} ({grid:?} cells)", path.display());
+    /// `state` in a window of exactly `cells`, at a scale of 1.
+    fn cells_shot(&mut self, name: &str, state: &State, cells: (u16, u16)) {
+        let (cw, ch) = Canvas::new(cells.0, cells.1, font_px(1.0)).cell();
+        let size = Size::new(
+            (cw * usize::from(cells.0)) as f32,
+            (ch * usize::from(cells.1)) as f32,
+        );
+        self.shot(name, state, size, 1.0);
+    }
 }
 
 /// The playing track's words timed over the Transition tab's span: a line sung
@@ -153,6 +144,10 @@ fn main() {
     } else {
         Arc::new(fake_devices)
     };
+    // The app runs under the shots: no microphone of this machine opened
+    // on the Karaoke and Mixer tabs.
+    options.mic = Arc::new(|_| Err("no microphone".into()));
+    options.mics = Arc::new(|| Ok(Vec::new()));
     let mut app = App::new(options);
     let ok = common::wait_for(&mut app, Duration::from_secs(10), |app| {
         !app.state.browser.loading && app.state.pending.is_empty() && !app.state.details.is_empty()
@@ -173,7 +168,6 @@ fn main() {
             && app.art().is_some()
     });
     assert!(playing, "the track did not start");
-    let spectrum = app.spectrum();
     let mut state = app.state.clone();
     state.message = None;
     let screens: Vec<(&str, State)> = {
@@ -298,22 +292,26 @@ fn main() {
             }),
         ]
     };
+    let mut shots = Shots {
+        gui: Gui::headless(app),
+        headless: Headless::new(),
+        id: window::Id::unique(),
+        out,
+    };
+    println!("drawn by {}", shots.headless.name());
+    // Which renderer draws is known to the canvas once a frame was drawn:
+    // the first shot paints what the GPU does not draw.
+    shots.headless.frame(&shots.gui, Size::new(1280.0, 800.0));
     for (name, s) in &screens {
-        gui_shot(&out, name, s, &spectrum, &app, 1.0);
+        shots.shot(name, s, Size::new(1280.0, 800.0), 1.0);
+        shots.shot(&format!("{name}-hidpi"), s, Size::new(1512.0, 982.0), 2.0);
     }
-    gui_shot(&out, "main-hidpi", &screens[0].1, &spectrum, &app, 2.0);
-    cells_shot(
-        &out,
-        "main-narrow",
-        &screens[0].1,
-        &spectrum,
-        &app,
-        (64, 22),
-    );
+    shots.cells_shot("main-narrow", &screens[0].1, (64, 22));
     // The Mixer tab in the narrowest usual window, 80 columns.
     if let Some((_, mixer)) = screens.iter().find(|(name, _)| *name == "mixer") {
-        cells_shot(&out, "mixer-80", mixer, &spectrum, &app, (80, 24));
+        shots.cells_shot("mixer-80", mixer, (80, 24));
     }
-    app.shutdown();
+    // The player stops with the window's state.
+    drop(shots);
     let _ = std::fs::remove_dir_all(&tree.root);
 }

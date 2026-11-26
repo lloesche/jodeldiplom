@@ -377,9 +377,6 @@ stem keys are their mutes.
   - `a_laptop_in_a_living_room`, `a_wireless_speaker` (output, `aec`)
   - `a_singer_through_a_laptop`, `a_held_note_never_spoils_the_filter`,
     `the_volume_turned_up_is_learnt_again` (output, `aec`)
-  - `a_voice_heard_back_is_taken_out`, `the_howl_guard_holds_feedback_down`,
-    `a_held_note_is_not_a_howl` (output, `aec`)
-  - `the_tab_says_when_feedback_is_held_down` (view)
   - `r_records_the_echo_canceller`
 - **K13.** The Transition tab asks for its tracks' lyrics; once timed,
   their words go across the middle of the `vocals` lane, each where it
@@ -551,14 +548,14 @@ stem keys are their mutes.
   - `a_word_held_full_pops_as_it_ends_and_bigger`,
     `a_rescue_across_a_rung_never_takes_the_ladder_back` (`sfx::moments`),
     `a_word_held_full_long_pops_bigger` (`sfx::conductor`)
-  - `a_word_counted_fills_all_its_bubbles_at_once` (`core::bubbles`)
+  - `a_word_counted_is_full_at_once_over_all_its_notes` (`core::bubbles`)
   - `a_word_is_full_exactly_when_the_scoring_counts_it` (`core::bubbles`)
   - `each_bubble_is_full_once_its_time_fixed_by_the_frames_up_to_it`
     (`core::bubbles`)
   - `a_seek_back_takes_back_what_was_heard_from_there` (`core::bubbles`)
   - `short_seeks_back_in_a_row_are_as_heard_straight`,
     `a_delay_nudged_mid_song_is_as_heard_straight` (`core::singing::undo`)
-  - `a_bubble_fills_to_its_level_sweeps_full_then_bursts` (`view::bubbles`)
+  - `a_word_fills_part_by_part_sweeps_full_then_bursts` (`view::bubbles`)
   - `a_bubble_under_pressure_bulges_and_wobbles`,
     `the_front_ripples_and_sloshes_after_a_jump` (`gui::liquid`)
   - `a_bubble_leaves_a_fading_sheen`,
@@ -568,8 +565,8 @@ stem keys are their mutes.
     (`gui::particles`)
   - `the_particles_shader_draws_what_sprite_says`,
     `the_stage_shader_s_liquid_is_its_reference` (`gui::shader_check`)
-  - `each_bubble_of_a_word_bursts_once_however_late_the_voice`,
-    `a_pill_partly_filled_never_pops` (`gui::pop`)
+  - `a_word_s_bubble_bursts_once_however_late_the_voice`,
+    `a_bubble_partly_filled_never_pops` (`gui::pop`)
   - `the_arrow_shows_while_singing_however_late_the_voice` (bubbles)
   - `a_seek_back_brings_no_ghost_bursts_on_the_stage` (bubbles)
   - `a_bubble_bursts_over_the_picture_and_is_gone_from_it` (bubbles)
@@ -657,13 +654,14 @@ stem keys are their mutes.
     `a_flight_comes_every_while_at_the_top_and_at_once_after_a_seek`
     (`gui::fx::angels`)
   - `a_held_strength_is_its_row_s_at_the_row_and_eases_between`,
-    `the_lane_glow_and_flames_ramp_between_the_rows_that_list_them`,
+    `the_lane_glow_ramps_between_the_rows_that_list_it`,
+    `the_fire_comes_with_the_rung_and_is_held_while_at_it`,
     `the_rainbow_is_as_strong_as_the_row_its_glow_eases_by`,
     `a_phrase_fires_its_row_s_effects_once`, `no_row_moves_what_it_fires`,
     `rung_effects_are_held_and_fired_by_rung`,
     `the_music_moves_what_a_row_lists` (`gui::fx::board`)
   - `the_beat_and_the_bar_run_between_the_grid_s_beats`,
-    `off_the_grid_the_beat_runs_freely`,
+    `off_the_grid_the_beat_runs_on`,
     `the_pulses_fall_away_and_fade_where_the_grid_is_unsure`,
     `the_levels_the_melody_and_the_sections_come_from_the_waveform`,
     `the_song_heard_is_made_once_an_analysis` (`gui::fx::music`),
@@ -673,7 +671,7 @@ stem keys are their mutes.
     `the_line_sung_takes_the_strongest_treatment` (`gui::fx`),
     `nothing_of_the_library_shows_at_no_tier` (`gui::stage::meter`),
     `the_screen_passes_get_the_lyric_band` (`gui::stage`),
-    `the_score_s_corner_is_kept_mostly_clear`
+    `the_score_s_corner_is_kept_clear`
     (`gui::fx::edge_fire`), `the_score_lies_in_its_corner`
     (`gui::karaoke`),
     `runs_split_by_group_and_treatment` (`gui::stage_gpu::groups`)
@@ -765,7 +763,7 @@ stem keys are their mutes.
     played live by the desk's synth, on the song's grid, in its key),
     `a_note_is_heard_from_the_stream_frame_it_was_sent_on`,
     `a_late_note_starts_at_once_or_is_dropped_and_a_seek_calls_off_what_waits`
-    (output's `live`), `the_pops_climb_the_game_s_streak` (`sfx::moments`)
+    (output's `live`), `bubbles_bursting_together_ripple_up_the_ladder` (`sfx::moments`)
   - `a_jump_rolls_up_to_the_score_and_never_past_it`,
     `a_word_turns_only_the_figures_that_change`,
     `its_lag_is_bounded_while_points_keep_coming`,
@@ -898,7 +896,9 @@ stem keys are their mutes.
   and linear in the gain below −45 dB down to −∞ at the bottom. The keys
   step 1 dB (the page keys 6 dB), from −∞ up to −45 dB, and at −45 dB or
   below down to −∞.
-  - `a_fader_follows_the_pointer_by_eighths_of_a_cell`
+  - `a_held_fader_follows_the_pointer_to_unity_exactly`,
+    `the_cap_is_where_the_pointer_puts_it_with_a_detent_at_unity`
+  - `a_fader_held_while_the_strips_change_is_let_go_of_on_any_release`
   - `a_press_on_the_track_brings_the_cap_and_a_double_click_is_unity`
   - `the_wheel_moves_a_fader_by_a_db_and_the_buttons_toggle`
   - `a_fader_flicked_and_taken_again_soon_is_no_double_click`
@@ -909,7 +909,7 @@ stem keys are their mutes.
   strips narrow, then the microphone's strip goes first, then the
   preview's, then the stems'; at 80 columns all but the microphone's.
   - `the_arrows_go_through_the_stems_only_while_the_player_has_them`
-  - `a_stems_strip_takes_the_pointer_and_its_buttons`
+  - `a_stems_strip_takes_its_fader_and_its_buttons`
   - `the_stems_sit_beside_the_player_under_their_bracket`
   - `the_mixer_tab_is_a_desk` (view)
 - **M5.** The meters are read once a drawn frame, by the app alone, and
@@ -919,7 +919,7 @@ stem keys are their mutes.
   - `the_faders_are_set_on_the_mixer_and_again_on_a_new_one`
   - `a_meter_rises_at_once_and_falls_at_its_rate`
   - `strips_are_found_by_id_and_a_stale_look_takes_no_peaks`
-  - `the_mixer_tab_is_painted_from_its_cells`
+  - `the_canvas_leaves_the_mixer_tab_to_the_window`
 - **M7.** A transition's next track plays on a second input of the player
   (its second head), on the same strips: the player's fader, its stems'
   strips, the Karaoke voice (both heads' vocals lanes) and the preview's

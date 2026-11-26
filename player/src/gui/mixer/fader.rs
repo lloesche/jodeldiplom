@@ -19,6 +19,7 @@ use iced::{Color, Element, Fill, Point, Rectangle, Renderer, Size, Theme, Widget
 
 use crate::core::desk::meter::{Meter, ZONES};
 use crate::core::desk::{taper, Channel, DeskAction};
+use crate::core::Action;
 use crate::gui::style::{self, ACCENT, DIM, FAIL, GREEN, TEXT};
 use crate::gui::window::Message;
 
@@ -429,10 +430,10 @@ impl Program<Message> for Fader {
                 held.drag = Some(offset);
                 let position = self.position_at(&g, at.y + offset);
                 Some(
-                    canvas::Action::publish(Message::Desk(DeskAction::Grab {
+                    canvas::Action::publish(Message::Act(Action::Desk(DeskAction::Grab {
                         strip: kind,
                         position,
-                    }))
+                    })))
                     .and_capture(),
                 )
             }
@@ -440,9 +441,9 @@ impl Program<Message> for Fader {
                 let offset = held.drag?;
                 let at = at?;
                 Some(
-                    canvas::Action::publish(Message::Desk(DeskAction::Slide(
+                    canvas::Action::publish(Message::Act(Action::Desk(DeskAction::Slide(
                         self.position_at(&g, at.y + offset),
-                    )))
+                    ))))
                     .and_capture(),
                 )
             }

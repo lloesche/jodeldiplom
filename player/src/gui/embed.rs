@@ -23,7 +23,7 @@
 //! time a pixel changed: iced's images cannot be updated in part.
 
 use std::sync::{Arc, Mutex, MutexGuard};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use iced::advanced::image::{self as image, Renderer as _};
 use iced::advanced::layout::{self, Layout};
@@ -40,10 +40,6 @@ use super::pointer::{Pointer, PointerKind};
 use super::stage_gpu::StageFrame;
 use super::window::Message;
 use crate::core::mouse::{MouseButton, Target};
-
-/// The shortest time between two ticks at the refresh: 250 a second, past
-/// any display's refresh worth following.
-const FASTEST: Duration = Duration::from_millis(4);
 
 /// What a frame of the old canvas hands the GPU beside its pixels.
 #[derive(Default)]
@@ -79,10 +75,6 @@ pub(super) struct Shared {
     pub(super) behind: bool,
     /// How long the last frame took to hand over to the GPU.
     pub(super) handed: Duration,
-    /// Whether a tick comes with every redraw ([`Embed::tick_every_redraw`]),
-    /// and the redraw that sent the last one.
-    every_redraw: bool,
-    ticked: Option<Instant>,
 }
 
 impl std::fmt::Debug for Shared {
@@ -112,8 +104,6 @@ impl Default for Embed {
             image: None,
             behind: false,
             handed: Duration::ZERO,
-            every_redraw: false,
-            ticked: None,
         })))
     }
 }
@@ -147,16 +137,6 @@ impl Embed {
         shared.backdrop = drawn.backdrop;
     }
 
-    /// Ticks at the display's refresh (`on`) or not: the widget sends one
-    /// ([`Message::Frame`]) from inside each redraw, before that redraw is
-    /// drawn, and asks for the next. So the frame shown is the one ticked
-    /// for it, once a refresh; a tick sent on from the redraw (as iced's
-    /// frame subscription does) lands after it, and on a 60 Hz display
-    /// missed every other refresh.
-    pub fn tick_every_redraw(&self, on: bool) {
-        self.lock().every_redraw = on;
-    }
-
     /// Whether iced draws on the GPU (until it has drawn: as if it did).
     pub fn gpu(&self) -> bool {
         self.lock().gpu.unwrap_or(true)
@@ -178,6 +158,12 @@ impl Embed {
     pub fn late(&self) -> (bool, Duration) {
         let shared = self.lock();
         (shared.behind, shared.handed)
+    }
+
+    /// The text of the canvas's cells as last drawn (the pictures' cells
+    /// blank).
+    pub fn text(&self) -> String {
+        self.lock().canvas.text()
     }
 
     /// A cell's size in logical pixels.
@@ -294,27 +280,6 @@ impl Widget<Message, Theme, iced::Renderer> for Embedded {
         shell: &mut Shell<'_, Message>,
         viewport: &Rectangle,
     ) {
-        if let Event::Window(iced::window::Event::RedrawRequested(at)) = event {
-            let mut shared = self.embed.lock();
-            if shared.every_redraw {
-                match shared.ticked {
-                    // Once a redraw: iced hands the redraw to the widgets
-                    // again after the tick's update rebuilt them.
-                    Some(last) if last == *at => shell.request_redraw(),
-                    // Redraws that do not wait for the display (a window
-                    // going in or out of fullscreen came thousands a
-                    // second): at most one tick every FASTEST.
-                    Some(last) if at.saturating_duration_since(last) < FASTEST => {
-                        shell.request_redraw_at(last + FASTEST);
-                    }
-                    _ => {
-                        shared.ticked = Some(*at);
-                        shell.publish(Message::Frame(*at));
-                        shell.request_redraw();
-                    }
-                }
-            }
-        }
         self.inner_mut()
             .update(tree, event, layout, cursor, renderer, shell, viewport);
     }

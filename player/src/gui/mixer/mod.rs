@@ -22,7 +22,7 @@ use ratatui::layout::Rect;
 
 use crate::core::desk::{taper, DeskAction, StripKind};
 use crate::core::layout::desk::DeskLayout;
-use crate::core::State;
+use crate::core::{Action, State};
 use crate::gui::style;
 use crate::gui::window::Message;
 
@@ -80,7 +80,7 @@ pub fn view<'a>(
         // A click anywhere on a strip selects it; the wheel over it moves
         // its fader (the master's: the device's volume).
         let strip = mouse_area(strips::strip(state, caps, channel, w - 2.0 * GAP, lines))
-            .on_press(Message::Desk(DeskAction::Select(channel)))
+            .on_press(Message::Act(Action::Desk(DeskAction::Select(channel))))
             .on_scroll(move |delta| Message::DeskWheel(channel, delta));
         layers.push(
             pin(container(strip).height(h - 2.0 * GAP).clip(true))

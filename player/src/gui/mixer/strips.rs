@@ -9,7 +9,7 @@ use iced::{Alignment, Color, Element, Fill, Length, Widget as _};
 use super::fader::{self, Fader, MeterLook, Scale};
 use super::said::{self, Line, Piece};
 use crate::core::desk::{self, taper, Channel, DeskAction, DeskButton, Pair, StripKind};
-use crate::core::State;
+use crate::core::{Action, State};
 use crate::gui::style::{self, ACCENT, DIM, FAIL, GREEN, TEXT, WARN};
 use crate::gui::window::Message;
 
@@ -121,7 +121,7 @@ fn scribble(label: &str, channel: Channel, selected: bool) -> Element<'static, M
     .padding([3, 4])
     .width(Fill)
     .style(move |_, status| style::scribble(selected, status))
-    .on_press(Message::Desk(DeskAction::Select(channel)))
+    .on_press(Message::Act(Action::Desk(DeskAction::Select(channel))))
     .boxed()
 }
 
@@ -130,7 +130,7 @@ fn push(label: &'static str, on: bool, color: Color, b: DeskButton) -> Element<'
         .width(Fill)
         .padding([3, 0])
         .style(move |_, status| style::push(on, color, status))
-        .on_press(Message::Desk(DeskAction::Press(b)))
+        .on_press(Message::Act(Action::Desk(DeskAction::Press(b))))
         .boxed()
 }
 
@@ -268,7 +268,9 @@ fn mic_strip(state: &State, selected: bool, lines: usize) -> Element<'_, Message
                         let on = state.config.karaoke_echo;
                         move |_, status| style::push(on, GREEN, status)
                     })
-                    .on_press(Message::Desk(DeskAction::Press(DeskButton::Echo))),
+                    .on_press(Message::Act(Action::Desk(DeskAction::Press(
+                        DeskButton::Echo
+                    )))),
                 space().width(Fill),
             ]
             .boxed(),

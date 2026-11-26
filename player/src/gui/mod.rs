@@ -22,6 +22,7 @@ pub mod keys;
 pub mod liquid;
 pub mod mixer;
 pub mod notes;
+mod pacer;
 mod paint;
 pub mod paper;
 pub mod particles;
@@ -30,6 +31,7 @@ pub mod pop;
 pub mod present;
 pub mod rainbow;
 pub mod raster;
+mod screens;
 pub mod seal;
 #[cfg(test)]
 mod shader_check;
@@ -85,6 +87,21 @@ fn window_icon(size: u32) -> Option<iced::window::Icon> {
     .ok()
 }
 
+/// What iced runs with: the fonts its widgets draw with (the player's
+/// own), and the one they draw in unless they say.
+pub fn iced_settings() -> iced::Settings {
+    let fonts = [
+        Some(fonts::main_font()),
+        fonts::emoji_font(),
+        fonts::lyrics_font(),
+    ];
+    iced::Settings {
+        fonts: fonts.into_iter().flatten().map(Into::into).collect(),
+        font: style::ui(),
+        ..iced::Settings::default()
+    }
+}
+
 /// Runs the player in a window until it is closed. `JODELDIPLOM_SOFTWARE`
 /// set: iced's CPU renderer, as where there is no GPU.
 pub fn run(args: &Args) -> Result<(), String> {
@@ -112,19 +129,12 @@ pub fn run(args: &Args) -> Result<(), String> {
         exit_on_close_request: false,
         ..Default::default()
     };
-    // The fonts the iced widgets draw with: the player's own.
-    let fonts = [
-        Some(fonts::main_font()),
-        fonts::emoji_font(),
-        fonts::lyrics_font(),
-    ];
     let mut application = iced::application(boot, window::Gui::update, window::Gui::view)
         .title(window::Gui::title)
         .subscription(window::Gui::subscription)
         .theme(|_: &window::Gui| iced::Theme::Dark)
-        .window(settings)
-        .fonts(fonts.into_iter().flatten())
-        .font(style::ui());
+        .settings(iced_settings())
+        .window(settings);
     if std::env::var_os("JODELDIPLOM_SOFTWARE").is_some() {
         application = application.backend(iced::Backend::Software);
     }

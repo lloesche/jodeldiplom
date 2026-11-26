@@ -3,42 +3,36 @@
 //!
 //! - Keys go through [`crate::core::keymap`] ([`super::keys`]); the
 //!   pointer over the old canvas through [`crate::core::mouse`]
-//!   ([`super::pointer`]); the Mixer tab's own widgets send the desk's
-//!   actions. Every button's release comes here, whichever widget it was
-//!   over, so nothing stays held.
+//!   ([`super::pointer`]); the widgets iced draws send the core's actions
+//!   ([`Message::Act`]). Every button's release comes here, whichever
+//!   widget it was over, so nothing stays held.
 //! - Ticks: one decision each ([`super::paint`]): every refresh of the
-//!   display while something moves smoothly, 30 a second while only the
-//!   spectrum and the clock do; the rest's tick ([`REST`]) always; the
-//!   player's threads wake it ([`super::wake`]).
-//! - What shows: always the old canvas filling the window
-//!   ([`super::embed`]) with a slot over it, the Mixer tab
-//!   ([`super::mixer`]) or nothing: the same shape, so the canvas's widget
-//!   keeps its place in iced's tree. The pointer over the canvas hides
-//!   where the core says ([`crate::core::karaoke::pointer::hidden`]);
-//!   the view is built again after every message, so it shows again as soon
-//!   as it moves or the mode ends.
+//!   display while something moves smoothly (from inside each redraw,
+//!   [`super::pacer`]), 30 a second while only the spectrum and the clock
+//!   do; the rest's tick ([`REST`]) always; the player's threads wake it
+//!   ([`super::wake`]).
+//! - What shows: [`super::screens`].
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use iced::mouse::ScrollDelta;
-use iced::widget::{opaque, pin, space, stack};
 use iced::window;
-use iced::{event, keyboard, mouse, Element, Size, Subscription, Task, Widget as _};
+use iced::{event, keyboard, mouse, Element, Size, Subscription, Task};
 
 use super::embed::Embed;
 use super::mixer;
+use super::pacer::Pacer;
 use super::paint::{Pace, Paint, Place, Seen, REST};
 use super::pointer::{Pointer, PointerKind, PointerState, Wheel, WheelOn};
 use super::wake::{Wake, Wakes};
 use crate::app::{App, AppOptions};
 use crate::core::desk::{Channel, DeskAction};
 use crate::core::keymap;
-use crate::core::layout::{self, Layout};
 use crate::core::mouse::MouseButton;
 use crate::core::preview::Ctrl;
-use crate::core::Action;
+use crate::core::{Action, State};
 
 /// What the window takes.
 #[derive(Clone, Debug)]
@@ -54,8 +48,8 @@ pub enum Message {
     Event(iced::Event, window::Id),
     /// The pointer over the old canvas.
     Pointer(Pointer),
-    /// The Mixer tab's widgets.
-    Desk(DeskAction),
+    /// A widget's action for the core (the Mixer tab's).
+    Act(Action),
     /// The wheel over a strip of the Mixer tab.
     DeskWheel(Channel, ScrollDelta),
     /// The window's last frame, for `--save-frame`.
@@ -91,10 +85,11 @@ enum Phase {
 }
 
 /// The window's state: the player, and what iced needs beside it.
-pub(super) struct Gui {
+pub struct Gui {
     phase: Phase,
     embed: Embed,
     paint: Paint,
+    pacer: Pacer,
     pointer: PointerState,
     wheel: Wheel,
     caps: mixer::Caps,
@@ -151,10 +146,29 @@ impl Gui {
             }
         };
         crate::trace::took("window: the app started", started, true);
-        let gui = Gui {
+        let mut gui = Gui::around(phase, wake, started);
+        gui.exit_after = exit_after;
+        gui.save_frame = save_frame;
+        gui.error = error;
+        (gui, wakes.task())
+    }
+
+    /// The window's state around `app` with no window, for drawing it all
+    /// the same (the shots, the view's cost): its size and scale come as
+    /// a window's events would tell them.
+    pub fn headless(app: App) -> Gui {
+        let (wake, _) = Wake::new();
+        Gui::around(Phase::Running(app), wake, Instant::now())
+    }
+
+    /// The window's state in `phase`, started at `started`, before it
+    /// hears from its window.
+    fn around(phase: Phase, wake: Wake, started: Instant) -> Gui {
+        Gui {
             phase,
             embed: Embed::default(),
             paint: Paint::new(),
+            pacer: Pacer::default(),
             pointer: PointerState::default(),
             wheel: Wheel::default(),
             caps: mixer::Caps::default(),
@@ -167,11 +181,25 @@ impl Gui {
             last_refresh: None,
             occluded: false,
             started,
-            exit_after,
-            save_frame,
-            error,
-        };
-        (gui, wakes.task())
+            exit_after: None,
+            save_frame: None,
+            error: Arc::default(),
+        }
+    }
+
+    /// The player's state replaced by `state` (a screen as a shot sets it
+    /// up): the next tick draws it whole.
+    pub fn show(&mut self, state: State) {
+        if let Phase::Running(app) = &mut self.phase {
+            app.state = state;
+            self.paint.dirty = true;
+        }
+    }
+
+    /// The text of the old canvas's cells as last drawn (the pictures'
+    /// cells blank).
+    pub fn text(&self) -> String {
+        self.embed.text()
     }
 
     pub(super) fn title(&self) -> String {
@@ -186,7 +214,8 @@ impl Gui {
         }
     }
 
-    pub(super) fn update(&mut self, message: Message) -> Task<Message> {
+    /// What `message` does to the player and the window.
+    pub fn update(&mut self, message: Message) -> Task<Message> {
         if let Phase::Leaving(_) = self.phase {
             return match message {
                 Message::Shot(shot) => self.save(&shot),
@@ -208,8 +237,8 @@ impl Gui {
             }
             Message::Event(event, id) => self.event(event, id),
             Message::Pointer(pointer) => self.pointer(pointer),
-            Message::Desk(action) => {
-                self.act(Action::Desk(action));
+            Message::Act(action) => {
+                self.act(action);
                 Task::none()
             }
             Message::DeskWheel(channel, delta) => {
@@ -561,8 +590,8 @@ impl Gui {
             Phase::Setup { .. } if self.paint.dirty => Pace::Refresh,
             _ => Pace::Every(REST),
         };
-        // At the refresh the canvas's widget ticks, from inside each redraw.
-        self.embed.tick_every_redraw(pace == Pace::Refresh);
+        // At the refresh the pacer ticks, from inside each redraw.
+        self.pacer.tick_every_redraw(pace == Pace::Refresh);
         let frames = match pace {
             Pace::Refresh => Subscription::none(),
             Pace::Every(every) if every != REST => iced::time::every(every).map(Message::Frame),
@@ -571,35 +600,12 @@ impl Gui {
         Subscription::batch([events, rest, frames])
     }
 
-    pub(super) fn view(&self) -> Element<'_, Message> {
-        let app = self.app();
-        let hide_pointer = app.is_some_and(|app| crate::core::karaoke::pointer::hidden(&app.state));
-        let desk = app.and_then(|app| self.desk(app));
-        stack![
-            self.embed.view(hide_pointer),
-            desk.unwrap_or_else(|| space().boxed())
-        ]
-        .boxed()
-    }
-
-    /// The Mixer tab, over its place on the old canvas, while it shows.
-    fn desk<'a>(&'a self, app: &'a App) -> Option<Element<'a, Message>> {
-        let state = &app.state;
-        let Layout::Main(m) = layout::compute(state) else {
-            return None;
-        };
-        let (Some(desk), None) = (&m.desk, &state.palette) else {
-            return None;
-        };
-        let (cw, ch) = self.embed.cell();
-        let r = m.rows;
-        let view = mixer::view(state, &self.caps, desk, r, (cw, ch));
-        Some(
-            pin(opaque(view))
-                .x(f32::from(r.x) * cw)
-                .y(f32::from(r.y) * ch)
-                .boxed(),
-        )
+    /// What the window shows ([`super::screens`]), ticked at the refresh
+    /// ([`super::pacer`]).
+    pub fn view(&self) -> Element<'_, Message> {
+        let state = self.app().map(|app| &app.state);
+        self.pacer
+            .view(super::screens::view(state, &self.embed, &self.caps))
     }
 }
 

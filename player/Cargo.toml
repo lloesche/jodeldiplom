@@ -53,3 +53,9 @@ libc = "0.2"
 objc2 = "0.6.5"
 objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSData", "NSGeometry"] }
 objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSApplication", "NSImage", "NSResponder", "NSScreen", "NSView", "NSWindow"] }
+
+[dev-dependencies]
+# The window's widgets run without a window (the shots, the view's cost):
+# iced's headless runtime and renderers, from its repository at the same
+# revision as iced.
+iced_test = { git = "https://github.com/iced-rs/iced.git", rev = "98bd48fe011efc0ec5819fee0fa7673a7169ff11" }

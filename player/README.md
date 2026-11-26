@@ -1251,7 +1251,9 @@ The screens are moving to iced's own widgets one at a time. Ported: the
 Mixer tab (`gui::mixer`: the strips where the core lays them out, the
 faders, scales and meters as canvases, the caps gliding to their levels).
 Every other screen is the old canvas, drawn as before and shown in one
-widget filling the window under the ported ones (`gui::embed`); the
+widget filling the window under the ported ones (`gui::embed`; what shows
+is chosen in `gui::screens`, and `gui::pacer` around it all ticks at the
+display's refresh from inside each redraw); the
 pointer over it goes to `core::mouse` in cells. On the GPU that widget is
 iced's shader widget (`gui::embed_gpu`), with Karaoke mode's stage drawn
 over it in the same pass; on the processor, an image.
@@ -1381,8 +1383,16 @@ time, the file's size, how fast it reads back, and how far it is from
 separating the track again live.
 
 `cargo run --release -p jodeldiplom --example shots -- OUT_DIR` renders every
-screen to `gui-*.png` (the window's path) and the text of its cells to
-`gui-*.txt`, with a fixture track playing into the null output.
+screen to `gui-*.png` as the window draws it (`Gui::view` through iced's
+headless renderer: the old canvas, iced's widgets over it and what the GPU
+draws itself), at 1280 × 800 at scale 1 and as `gui-*-hidpi.png` at
+1512 × 982 at scale 2, and the text of its cells to `gui-*.txt`, with a
+fixture track playing into the null output.
+
+`cargo run --release -p jodeldiplom --example view_cost -- [FRAMES] [--budget MEDIAN_MS WORST_MS]`
+times what building the window's view costs a frame (`Gui::view`, laid out
+and drawn headless at 1512 × 982 at scale 2), for the screens drawn by
+iced's widgets (the Mixer tab so far).
 
 `cargo run --release -p jodeldiplom --example beats -- [--methods flux,network] [--beats] [--levels] [--presence] [--clicks OUT.wav] FILE...`
 analyses files as the player does (with the methods given, default both).
