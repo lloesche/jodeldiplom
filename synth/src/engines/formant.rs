@@ -88,6 +88,10 @@ pub struct Params {
     /// The glottal pulse, 0 (pressed and bright: open half a period, a
     /// 5 kHz tilt) to 1 (soft and dark: open 80 %, 0.9 kHz).
     pub soft: f32,
+    /// How wide the formants are, times [`BANDWIDTH`] (1: as spoken; wider
+    /// for a voice sung high, whose few harmonics then come through every
+    /// vowel alike instead of one ringing where it meets a formant).
+    pub width: f32,
 }
 
 impl Default for Params {
@@ -102,6 +106,7 @@ const SUNG: Params = Params {
     breath: 0.0,
     size: 0.0,
     soft: 0.3,
+    width: 1.0,
 };
 
 /// A woman's soft, breathy "o": glided from "a" (and given a vibrato) by
@@ -111,6 +116,7 @@ pub const AWW: Params = Params {
     breath: 0.25,
     size: 1.0,
     soft: 0.6,
+    width: 1.0,
 };
 
 /// A choir's "ooh".
@@ -119,6 +125,7 @@ pub const OOH: Params = Params {
     breath: 0.2,
     size: 0.6,
     soft: 0.7,
+    width: 1.0,
 };
 
 /// A low, breathy whisper.
@@ -127,6 +134,7 @@ pub const WHISPER: Params = Params {
     breath: 0.92,
     size: 0.0,
     soft: 0.8,
+    width: 1.0,
 };
 
 /// What the host's shape moves: the vowel, by up to half its range.
@@ -219,7 +227,8 @@ impl Engine for Formant {
         let gate = 0.8 * voicing;
 
         let f = formants(p.vowel + 0.5 * m.shape, p.size);
-        let k: [[f32; 3]; 4] = std::array::from_fn(|i| self.resonator(f[i], BANDWIDTH[i]));
+        let width = p.width.clamp(0.25, 8.0);
+        let k: [[f32; 3]; 4] = std::array::from_fn(|i| self.resonator(f[i], BANDWIDTH[i] * width));
 
         for o in out[..n].iter_mut() {
             let phase = v.phase as f32 * (1.0 / 4_294_967_296.0);

@@ -10,7 +10,9 @@
 //! fading to silence, before the new note takes its place. A mono patch's
 //! note retriggers its own sounding voice on its frame: the voice plays up
 //! to that sample as it was, then its engine starts the note on it (keeping
-//! what it keeps) and its envelope rises again from where it is.
+//! what it keeps), its envelope rises again from where it is, and its pitch
+//! and its note's shape slide to the new note's over the patch's
+//! [`Patch::slide`].
 //!
 //! Each block a voice's envelope, glides and LFO are worked out once; the
 //! engine renders it at unity level, and the host ramps its amplitude from
@@ -240,6 +242,11 @@ struct Sounding {
     env: Envelope,
     note: f32,
     detune: f32,
+    /// Its note's own shape.
+    shape: f32,
+    /// How far its pitch (semitones) and its shape started from where they
+    /// are, sliding there over its patch's slide (a mono retrigger's).
+    slide: [f32; 2],
     gain: f32,
     /// Its gains left and right.
     pan: [f32; 2],
@@ -692,7 +699,13 @@ impl Synth {
             play.until(v, offset, bus);
             play.engines.note_on(&patch.engine, &mut v.voice, &cue.note);
             v.env = Envelope::start(v.env.level());
+            // Sliding from where it was (on its way from the note before,
+            // if it still slid) to the new note.
+            let [pitch, shape] = sliding(v, patch.slide);
+            let to = cue.note.note + cue.detune;
+            v.slide = [pitch - to, shape - cue.note.shape];
             v.note = cue.note.note;
+            v.shape = cue.note.shape;
             v.detune = cue.detune;
             v.gain = cue.gain;
             v.pan = pan;
@@ -715,6 +728,8 @@ impl Synth {
             env: Envelope::start(0.0),
             note: cue.note.note,
             detune: cue.detune,
+            shape: cue.note.shape,
+            slide: [0.0; 2],
             gain: cue.gain,
             pan,
             t: 0.0,
@@ -726,6 +741,21 @@ impl Synth {
             start: offset,
         });
     }
+}
+
+/// Where `v`'s pitch (semitones, its detune in it) and its note's shape sit
+/// now, sliding over `slide` seconds from where its last retrigger found
+/// them (before its glides and its LFO).
+fn sliding(v: &Sounding, slide: f32) -> [f32; 2] {
+    let left = if slide > 0.0 {
+        (1.0 - v.t / slide).max(0.0)
+    } else {
+        0.0
+    };
+    [
+        v.note + v.detune + v.slide[0] * left,
+        v.shape + v.slide[1] * left,
+    ]
 }
 
 /// A free voice, else the oldest let go, else the oldest.
@@ -785,12 +815,13 @@ impl Play<'_> {
         let ending = v.env.done() || self.engines.done(&v.voice);
         let tremolo = 1.0 - lfo.amp * depth * (0.5 - 0.5 * raw);
         let amp1 = if ending { 0.0 } else { amp * v.gain * tremolo };
-        let pitch = v.note + v.detune + patch.pitch.at(v.t) + wave * lfo.pitch;
+        let [sits, shape] = sliding(v, patch.slide);
+        let pitch = sits + patch.pitch.at(v.t) + wave * lfo.pitch;
         let m = VoiceMod {
             phase_inc: self.rate.inc(pitch),
             pitch,
             bright: patch.filter_env * adsr + wave * lfo.bright,
-            shape: wave * lfo.shape + patch.shape.at(v.t),
+            shape: shape + wave * lfo.shape + patch.shape.at(v.t),
         };
         let mut mono = [0.0; BLOCK];
         self.engines

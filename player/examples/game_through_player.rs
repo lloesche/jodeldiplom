@@ -167,6 +167,7 @@ fn song() -> Vec<f32> {
             velocity,
             seed,
             pan: 0.0,
+            shape: 0.0,
         };
         assert!(s.note(at, p, n, length));
     };

@@ -33,6 +33,9 @@ pub enum Streak {
     Glitter,
     /// Its payout on a downbeat after its stinger.
     Payout,
+    /// Its multiplier called out, sung ("times thir-ty-two!"), from its
+    /// stinger's hit on (where its slam lands: [`super::call`]).
+    Call,
 }
 
 /// A layer of a phrase's chime reaching a tier (and of the diploma's
@@ -47,6 +50,11 @@ pub enum Chime {
     TaDaa,
     /// A choir's chord, the low tonic and glitter.
     Choir,
+    /// The tier's name called out, sung ("di-va!"), from the first beat
+    /// of a bar with room for it before a sung line on (where a phrase's
+    /// slam lands, with the jackpot: [`super::call`]); a phrase's only,
+    /// not the diploma's points' (no slam there).
+    Call,
 }
 
 /// A brass chord of a chime's layer ([`Chime::brass`]): where it starts
@@ -96,7 +104,7 @@ impl Chime {
         match self {
             Chime::BrassHit => &BRASS_HIT,
             Chime::TaDaa => &TA_DAA,
-            Chime::Plucks | Chime::Choir => &[],
+            Chime::Plucks | Chime::Choir | Chime::Call => &[],
         }
     }
 }

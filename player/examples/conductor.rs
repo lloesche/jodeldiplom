@@ -299,6 +299,7 @@ fn backing(seconds: f64) -> Vec<f32> {
             velocity,
             seed,
             pan: 0.0,
+            shape: 0.0,
         };
         notes.push((at, p, n, length));
     };

@@ -78,6 +78,10 @@ pub struct NoteOn {
     pub seed: u32,
     /// Where it sits, -1 left to 1 right.
     pub pan: f32,
+    /// Its own shape, -1 to 1 (0: the patch's), added to the shape's
+    /// glide and LFO: what the engine's `SHAPE` says it moves (a formant
+    /// voice's vowel), note by note.
+    pub shape: f32,
 }
 
 /// A sound engine: its parameters, the state of one of its voices, and

@@ -399,6 +399,7 @@ mod tests {
             velocity: 1.0,
             seed: 1,
             pan: 0.0,
+            shape: 0.0,
         };
         let mut voices: Vec<Voice> = (0..LINES + 3).map(|_| Voice::default()).collect();
         for v in &mut voices {

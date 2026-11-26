@@ -55,6 +55,7 @@ const VOICE: formant::Params = formant::Params {
     breath: 0.0,
     size: 0.0,
     soft: 0.3,
+    width: 1.0,
 };
 
 #[test]
@@ -140,6 +141,7 @@ fn modal_rings_out_and_says_so() {
             velocity: 1.0,
             seed: 3,
             pan: 0.0,
+            shape: 0.0,
         },
     );
     let m = held(72.0, 0.0);
@@ -167,6 +169,7 @@ fn strikes(p: &modal::Params, note: f32, per_second: f32, seconds: f32) -> Vec<f
                 velocity: 1.0,
                 seed: b as u32,
                 pan: 0.0,
+                shape: 0.0,
             };
             e.note_on(p, &mut v, &n);
         }
@@ -381,7 +384,7 @@ fn sung_vowels_peak_near_their_formants() {
 #[test]
 fn whispers_and_extremes_stay_bounded() {
     let e = Formant::new(rate());
-    for corner in 0..8u32 {
+    for corner in 0..16u32 {
         let pick = |bit: u32| ((corner >> bit) & 1) as f32;
         for vowel in [0.0, 0.6, 1.0] {
             let p = formant::Params {
@@ -389,6 +392,7 @@ fn whispers_and_extremes_stay_bounded() {
                 breath: pick(0),
                 size: pick(2),
                 soft: pick(1),
+                width: 0.25 + 7.75 * pick(3),
             };
             for (note, cutoff) in [(24.0, -4.0), (96.0, 4.0), (57.0, 0.0)] {
                 let x = play(&e, &p, note, cutoff, 13, 0.2);

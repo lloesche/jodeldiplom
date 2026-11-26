@@ -83,8 +83,8 @@ const HIGH_NOTES: [f32; 4] = [96.0, 103.0, 108.0, 115.0];
 /// The degrees of the key the six clinks ring on, in turn.
 const CLINK_DEGREES: [i32; 6] = [0, 2, 4, 1, 3, 5];
 
-/// A note to send: its frame, atom, pitch (MIDI), velocity, pan, length
-/// (none: the patch's gate) and tag.
+/// A note to send: its frame, atom, pitch (MIDI), velocity, pan, shape
+/// (its own: a sung vowel), length (none: the patch's gate) and tag.
 #[derive(Clone, Copy, Debug)]
 pub(super) struct Note {
     at: u64,
@@ -92,6 +92,7 @@ pub(super) struct Note {
     pitch: f32,
     velocity: f32,
     pan: f32,
+    shape: f32,
     length: Option<u64>,
     tag: Tag,
 }
@@ -106,6 +107,7 @@ impl Note {
             pitch,
             velocity: 1.0,
             pan: 0.0,
+            shape: 0.0,
             length: None,
             tag: Tag::NONE,
         }
@@ -117,6 +119,10 @@ impl Note {
 
     pub(super) fn pan(self, pan: f32) -> Note {
         Note { pan, ..self }
+    }
+
+    pub(super) fn shape(self, shape: f32) -> Note {
+        Note { shape, ..self }
     }
 
     pub(super) fn hold(self, frames: u64) -> Note {
@@ -165,6 +171,7 @@ impl Score<'_> {
                 velocity: n.velocity.clamp(0.0, 1.0),
                 seed,
                 pan: n.pan.clamp(-1.0, 1.0),
+                shape: n.shape.clamp(-1.0, 1.0),
             },
             length: n.length,
             tag: n.tag,

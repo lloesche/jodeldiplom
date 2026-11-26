@@ -412,6 +412,7 @@ pub fn tone(patch: jodel_synth::PatchId, frame: u64, pan: f32) -> jodel_synth::C
             velocity: 0.8,
             seed: 1,
             pan,
+            shape: 0.0,
         },
         length: None,
         tag: jodel_synth::Tag::NONE,

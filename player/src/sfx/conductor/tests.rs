@@ -7,8 +7,10 @@
 //! streak, held sounds ending by themselves when their release is lost, no
 //! key meaning no pitched layer, the most commands an event sends, the
 //! bus never clipping, the sounds' levels (over a song at the reference
-//! loudness, under its ceiling) and the bus's level following the song's
-//! loudness.
+//! loudness, under its ceiling), the bus's level following the song's
+//! loudness, and the announcer's call (landing with the slam, in key,
+//! under the stinger, ducked under a sung line, only at the rows that
+//! slam).
 
 use jodel_rhythm::grid::When;
 use jodel_rhythm::{Analysis, Region};
@@ -506,6 +508,9 @@ fn with_no_key_nothing_pitched_low_plays_and_the_pops_sit_high() {
         Atom::Pip,
         Atom::Wah,
         Atom::PopBody,
+        Atom::Singer,
+        Atom::Burst,
+        Atom::Hiss,
     ]
     .map(|a| c.palette[a]);
     assert!(out.notes().iter().all(|n| !pitched.contains(&n.1)));
@@ -789,4 +794,160 @@ fn a_stamp_lands_on_the_sheet_when_drawn() {
         .unwrap();
     let at = loudest as f64 * 0.01;
     assert!((STAMP_DOWN..STAMP_DOWN + 0.04).contains(&at), "{at}");
+}
+
+/// The notes on the announcer's voice: frame, pitch, velocity.
+fn sung(c: &Conductor, out: &Sent) -> Vec<(u64, f32, f32)> {
+    let singer = c.palette[Atom::Singer];
+    out.0
+        .iter()
+        .filter_map(|cmd| match *cmd {
+            Command::Note {
+                frame, patch, note, ..
+            } if patch == singer => Some((frame, note.note, note.velocity)),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Whether `pitch` is a tone of A minor's pentatonic (A C D E G).
+fn in_a_minor(pitch: f32) -> bool {
+    let class = (pitch.round() as i32).rem_euclid(12);
+    [9, 0, 2, 4, 7].contains(&class) && pitch.fract() == 0.0
+}
+
+/// The call lands where the slam does: the top rung's multiplier from its
+/// stinger's hit on the next beat, the top phrase's tier's name on the
+/// jackpot's downbeat in the gap between the lines; its syllables on the
+/// eighths after it, nothing before the moment it was called on; every
+/// note it sings a tone of the key's pentatonic, at the call's own height.
+#[test]
+fn the_call_lands_on_the_slam_s_beat_in_key() {
+    let (mut c, mut out) = conductor();
+    let hit = c.event(&mut out, 15_000, word(rung(Tier::COUNT)));
+    assert_eq!(hit, BEAT);
+    let notes = sung(&c, &out);
+    assert_eq!(notes[0].0, hit, "the first vowel on the stinger's hit");
+    let mut eighths = 0;
+    for syllable in call::times(Tier::TOP.multiplier()).unwrap() {
+        let on = hit + u64::from(eighths) * BEAT / 2;
+        assert!(
+            notes.iter().any(|n| n.0 == on),
+            "a vowel on eighth {eighths}"
+        );
+        eighths += syllable.eighths;
+    }
+    for n in &notes {
+        assert!(in_a_minor(n.1), "{n:?} in key");
+        assert!((48.0..=80.0).contains(&n.1), "{n:?} where a voice sings");
+    }
+    let (burst, hiss) = (c.palette[Atom::Burst], c.palette[Atom::Hiss]);
+    let noises = out
+        .notes()
+        .into_iter()
+        .filter(|n| n.1 == burst || n.1 == hiss);
+    assert!(noises.map(|n| n.0).all(|f| f >= 15_000), "none before now");
+    // A phrase reaching the top: on the downbeat with room before the
+    // next line, where the jackpot's slam lands.
+    let (mut c, mut out) = conductor();
+    c.set_clock(&mut out, grid([line(0, 7), line(14, 30), None, None]));
+    c.event(&mut out, BEAT / 2, Event::Phrase(Tier::TOP));
+    let notes = sung(&c, &out);
+    let mut jackpot = Sent::default();
+    let d = c.event(&mut jackpot, BEAT / 2, Event::Jackpot);
+    assert_eq!((notes[0].0, d), (8 * BEAT, 8 * BEAT));
+    assert!(notes.iter().all(|n| in_a_minor(n.1)), "{notes:?}");
+    // Unsure: at once, its first consonant from the moment it was called.
+    let (mut c, mut out) = conductor();
+    c.set_clock(&mut out, unsure(NONE));
+    c.event(&mut out, 15_000, word(rung(Tier::COUNT)));
+    assert_eq!(sung(&c, &out)[0].0, 15_000);
+    assert!(out.notes().iter().all(|n| n.0 >= 15_000));
+}
+
+/// Only the rows that slam call out (the call goes with the slam), and
+/// every row has its words to be called with.
+#[test]
+fn the_call_goes_with_the_slam() {
+    use crate::gui::fx::{strength, Fx};
+    for t in Tier::ALL {
+        let fx = &t.spec().fx;
+        let slams = |list| strength(list, Fx::Slam) > 0.0;
+        let chimes = layers::chime_has(Some(t), Chime::Call);
+        assert_eq!(chimes, slams(fx.on_phrase), "{}", t.name());
+        let rungs = rung_has(rung_of(t), Streak::Call);
+        assert_eq!(rungs, slams(fx.on_rung), "{}", t.name());
+        assert!(call::name(t).is_some() && call::times(t.multiplier()).is_some());
+        let (mut c, mut out) = conductor();
+        c.event(&mut out, 15_000, word(t.spec().streak));
+        assert_eq!(!sung(&c, &out).is_empty(), rungs, "{}", t.name());
+        let (mut c, mut out) = conductor();
+        c.event(&mut out, 15_000, Event::Phrase(t));
+        assert_eq!(!sung(&c, &out).is_empty(), chimes, "{}", t.name());
+    }
+}
+
+/// The left side of what `called` sounds through a fresh synth from frame
+/// 1 000 (its first vowel there), as the clock has the lines `lines`.
+fn called(called: Called, lines: [Option<(u64, u64)>; Clock::LINES]) -> Vec<f32> {
+    let (mut c, mut s) = playing();
+    c.set_clock(&mut s, grid(lines));
+    c.announce(&mut s, 1_000, 1_000, called);
+    let mut out = vec![0.0; 2 * RATE as usize * 3];
+    s.render_to(&mut out);
+    out.iter().step_by(2).copied().collect()
+}
+
+/// The loudest 0.4 s of `x` (its mean square's root), and its peak, dB.
+fn levels(x: &[f32]) -> (f64, f64) {
+    let w = (0.4 * SECOND) as usize;
+    let squares: Vec<f64> = x.iter().map(|&v| f64::from(v * v)).collect();
+    let mut sum: f64 = squares[..w].iter().sum();
+    let mut most = sum;
+    for k in w..squares.len() {
+        sum += squares[k] - squares[k - w];
+        most = most.max(sum);
+    }
+    let peak = x.iter().fold(0.0f32, |m, v| m.max(v.abs()));
+    let db = |v: f64| 20.0 * v.max(1e-12).log10();
+    (db((most / w as f64).sqrt()), db(f64::from(peak)))
+}
+
+/// The call sits under the stinger it comes with (the top rung's, as the
+/// diploma plays it: no call), its loudest 0.4 s 2 dB down at least and
+/// its peak 3, yet heard; sung over a line it is softer still.
+#[test]
+fn the_call_stays_under_the_stinger_and_ducks_under_singing() {
+    let (mut c, mut s) = playing();
+    c.event(&mut s, 1_000, Event::Diploma(Diploma::Rung(Tier::TOP)));
+    let mut out = vec![0.0; 2 * RATE as usize * 3];
+    s.render_to(&mut out);
+    let stinger: Vec<f32> = out.iter().step_by(2).copied().collect();
+    let (sting, sting_peak) = levels(&stinger);
+    for word in [Called::Times(Tier::TOP), Called::Name(Tier::TOP)] {
+        let (loud, peak) = levels(&called(word, NONE));
+        println!("{word:?}: {loud:.1} dB, peak {peak:.1}; the stinger {sting:.1}, {sting_peak:.1}");
+        assert!(loud < sting - 2.0 && loud > sting - 12.0, "{word:?}");
+        assert!(peak < sting_peak - 3.0, "{word:?}");
+        let (ducked, _) = levels(&called(word, [line(0, 8), None, None, None]));
+        assert!(ducked < loud - 6.0, "{word:?} {ducked:.1} {loud:.1}");
+    }
+}
+
+/// A theme gives the announcer its own voice (Spooky's ghost) and nothing
+/// else: the same notes on the same frames, on a patch of its own.
+#[test]
+fn a_theme_s_announcer_calls_the_same_in_its_own_voice() {
+    let calls = |theme: &crate::theme::Theme| {
+        let (mut c, _) = Conductor::new(RATE, theme);
+        let mut out = Sent::default();
+        c.set_clock(&mut out, grid(NONE));
+        c.set_key(Some(&a_minor()), 0);
+        c.announce(&mut out, 15_000, BEAT, Called::Times(Tier::TOP));
+        c.announce(&mut out, 15_000, 4 * BEAT, Called::Name(Tier::TOP));
+        sung(&c, &out)
+    };
+    let spooky = &crate::theme::SPOOKY;
+    assert_eq!(calls(spooky), calls(&crate::theme::CLASSIC));
+    assert_ne!(spooky.patch(Atom::Singer), palette::patch(Atom::Singer));
 }

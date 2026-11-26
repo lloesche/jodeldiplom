@@ -1,6 +1,8 @@
 //! The host: notes start on their frame to the sample; voices are taken
 //! oldest-released first, fading out without a click, even two in one
-//! block; a mono retrigger does not click either; a release ends a voice;
+//! block; a mono retrigger does not click either, and slides to its note
+//! where its patch slides; a note's own shape moves its sound; a release
+//! ends a voice;
 //! the queue drops what it cannot hold; the spreads come from the seed; the
 //! glides, the filter envelope, the tremolo and an LFO in beats move what
 //! they should; a note's own length overrides the gate; the pool takes 128
@@ -9,7 +11,7 @@
 
 mod common;
 
-use common::measure::{biggest_jump, centroid, cents, pitch, rms};
+use common::measure::{biggest_jump, centroid, cents, magnitude, pitch, rms};
 use common::{left, on, render, RATE};
 use jodel_synth::engines::analog;
 use jodel_synth::patch::{Adsr, Glide, Lfo, LfoRate, Spread};
@@ -321,6 +323,73 @@ fn a_mono_patch_keeps_one_voice() {
     render(&mut s, 6_000);
     let notes: Vec<f32> = s.voices().map(|v| v.note).collect();
     assert_eq!(notes, [64.0]);
+}
+
+/// A mono patch with a slide: a retrigger glides from the note before to
+/// its own over the slide (halfway there half the slide in), then holds
+/// it; without one it jumps.
+#[test]
+fn a_mono_retrigger_slides_to_its_note() {
+    let legato = |slide: f32| Patch {
+        mono: true,
+        slide,
+        ..sine(10.0, 0.05)
+    };
+    let play = |slide: f32| {
+        let (mut s, ids) = synth(&[legato(slide)], 4);
+        s.note(0, ids[0], on(57.0, 1), None);
+        s.note(9_600, ids[0], on(69.0, 2), None);
+        let out = left(&render(&mut s, 24_000));
+        let at = |from: usize| pitch(&out[from..from + 1_440], 48_000.0);
+        (at(4_800), at(9_600 + 2_400 - 720), at(19_200))
+    };
+    let (before, half, after) = play(0.1);
+    assert!(cents(before, 220.0).abs() < 5.0, "{before}");
+    // 0.05 s into a 0.1 s slide over an octave: about half an octave up.
+    assert!(cents(half, 220.0 * 2f32.sqrt()).abs() < 300.0, "{half}");
+    assert!(cents(after, 440.0).abs() < 5.0, "{after}");
+    let (_, jumped, _) = play(0.0);
+    assert!(cents(jumped, 440.0).abs() < 5.0, "{jumped}");
+}
+
+/// A note's own shape moves what its engine's shape moves, as the patch's
+/// glide of it does: a vowel of its own on a formant voice ("i" with its
+/// second formant up at 2.3 kHz where "u" has none, "a" with its first at
+/// 0.8 kHz where the others have none).
+#[test]
+fn a_note_s_own_shape_moves_its_vowel() {
+    use jodel_synth::engines::formant;
+    let voice = Patch::new(
+        formant::Params {
+            vowel: formant::A,
+            ..formant::Params::default()
+        }
+        .into(),
+    );
+    let sung = |shape: f32| {
+        let (mut s, ids) = synth(&[Patch { gate: 1.0, ..voice }], 4);
+        s.note(
+            0,
+            ids[0],
+            NoteOn {
+                shape,
+                ..on(57.0, 1)
+            },
+            None,
+        );
+        let out = left(&render(&mut s, 24_000));
+        let x = &out[12_000..14_048];
+        (
+            magnitude(x, 2_200.0, 48_000.0),
+            magnitude(x, 880.0, 48_000.0),
+        )
+    };
+    let (i, a, u) = (sung(-1.0), sung(0.0), sung(1.0));
+    assert!(i.0 > 4.0 * u.0, "i {i:?} u {u:?}");
+    assert!(
+        a.1 > 4.0 * u.1 && a.1 > 4.0 * i.1,
+        "i {i:?} a {a:?} u {u:?}"
+    );
 }
 
 #[test]

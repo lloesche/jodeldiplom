@@ -6,7 +6,8 @@
 //! in at the edges with eyes blinking in it ([`Fx::Fog`]). The pops
 //! bubble like a cauldron over a skeleton's xylophone, the coins clink
 //! as candy in a jar, the chimes toll as bells, the choir sings a ghost's
-//! "ooh", and the streak lost wails down like a theremin.
+//! "ooh", the streak lost wails down like a theremin, and the
+//! announcer is a ghost, moaning its calls out of the fog.
 
 use jodel_synth::engines::{analog, fm, formant, modal, AnyParams};
 use jodel_synth::patch::{Adsr, Glide, Lfo, LfoRate, Spread};
@@ -52,6 +53,7 @@ pub static SPOOKY: Theme = Theme {
         (Atom::Chime, TOLL),
         (Atom::Ching, CHURCH),
         (Atom::Choir, GHOSTS),
+        (Atom::Singer, GHOST),
     ],
     always: &[Use::of(Fx::Fog, 0.8)],
     grade: [0.5, 0.66, 0.95, 0.8],
@@ -179,4 +181,38 @@ const GHOSTS: Patch = Patch {
         size: 1.0,
         ..formant::OOH
     }))
+};
+
+/// The announcer as a ghost: hollow and breathy, sinking into each
+/// syllable from above and gliding slowly from one to the next, a wide,
+/// slow wobble on the long ones, echoing round a crypt. It calls on the
+/// same beats and notes as ever (the conductor's): only its voice is the
+/// theme's.
+const GHOST: Patch = Patch {
+    pitch: Glide {
+        from: 2.0,
+        time: 0.12,
+        curve: 1.5,
+    },
+    lfo: Lfo {
+        rate: LfoRate::Hz(4.0),
+        pitch: 0.55,
+        bright: 0.2,
+        delay: 0.1,
+        fade: 0.25,
+        ..Lfo::NONE
+    },
+    reverb: 0.5,
+    delay: 0.3,
+    chorus: 0.5,
+    slide: 0.09,
+    level: -1.0,
+    engine: AnyParams::Formant(formant::Params {
+        vowel: formant::A,
+        breath: 0.5,
+        size: 0.35,
+        soft: 0.75,
+        width: 3.0,
+    }),
+    ..crate::sfx::conductor::patch(Atom::Singer)
 };

@@ -168,6 +168,7 @@ fn stress() -> Vec<f32> {
                 velocity: 1.0,
                 seed: k as u32,
                 pan: 0.0,
+                shape: 0.0,
             },
         );
         let m = VoiceMod {

@@ -27,6 +27,10 @@
 //!   chime, the diploma's points and its best streak's rung.
 //! - On a downbeat with room before the next sung line: the top rung's
 //!   payout, the top tier's jackpot.
+//! - Where the slam lands, at the rows whose layers call
+//!   ([`Streak::Call`], [`Chime::Call`]): its word sung by the announcer
+//!   ([`call`]), a rung's multiplier from its stinger's hit, a phrase's
+//!   tier's name from the jackpot's downbeat; softer over a sung line.
 //! - Held: a riser into a rung from the word before it, a shimmer pad
 //!   while the streak is at a rung that holds one, glitter after each word
 //!   at one that has it; a streak lost lets them go (and calls off a payout
@@ -53,6 +57,7 @@
 //! allocates nothing.
 
 pub mod calibration;
+mod call;
 mod clock;
 mod key;
 mod ladder;
@@ -81,7 +86,7 @@ pub(crate) use sounds::JACKPOT_BEATS;
 use crate::theme::Theme;
 use crate::tiers::Tier;
 use key::Pentatonic;
-use layers::{rung_has, rung_of, rung_share, tier_share};
+use layers::{chime_has, rung_has, rung_of, rung_share, tier_share};
 use palette::Palette;
 use sounds::{Score, PAYOUT, PAYOUT_LEAD, STREAK};
 
@@ -138,6 +143,15 @@ pub enum Diploma {
         /// Its pan.
         pan: f32,
     },
+}
+
+/// What the announcer calls out ([`Conductor::announce`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Called {
+    /// A tier's name ("di-va!").
+    Name(Tier),
+    /// A tier's rung's multiplier ("times thir-ty-two!").
+    Times(Tier),
 }
 
 /// A game event.
@@ -324,7 +338,15 @@ impl Conductor {
                 sounds::wind_down(&mut self.score(out), at, reels);
                 at
             }
-            Event::Phrase(tier) => self.chime(out, at, Some(tier)),
+            Event::Phrase(tier) => {
+                let hit = self.chime(out, at, Some(tier));
+                if chime_has(Some(tier), Chime::Call) {
+                    let length = JACKPOT_BEATS * self.clock.beat_len();
+                    let d = self.clock.land(at, When::Downbeat { length });
+                    self.announce(out, at, d, Called::Name(tier));
+                }
+                hit
+            }
             Event::Jackpot => {
                 let length = JACKPOT_BEATS * self.clock.beat_len();
                 let d = self.clock.land(at, When::Downbeat { length });
@@ -447,6 +469,9 @@ impl Conductor {
         let layers = layers::at_rung(r);
         let end = sounds::stinger(&mut self.score(out), at, hit, rung_share(r), layers);
         self.quiet_until = self.quiet_until.max(end);
+        if layers.contains(&Streak::Call) {
+            self.announce(out, at, hit, Called::Times(Tier::ALL[r as usize - 1]));
+        }
         if layers.contains(&Streak::Payout) {
             let bar = self.clock.bar();
             let beat = self.clock.beat_len();
@@ -457,6 +482,27 @@ impl Conductor {
             sounds::payout(&mut self.score(out), end, d, bar, room);
         }
         hit
+    }
+
+    /// The announcer calling `called` out from `now`, its first vowel on
+    /// `at`: as the game does where the slam lands (a phrase's [`Event::Phrase`]
+    /// and a rung's [`Event::Word`] at the rows that call), softer where it
+    /// would be sung over a line; a word it has none for, nothing.
+    pub fn announce(&mut self, out: &mut impl Commands, now: u64, at: u64, called: Called) {
+        let word = match called {
+            Called::Name(tier) => call::name(tier),
+            Called::Times(tier) => call::times(tier.multiplier()),
+        };
+        let Some(word) = word else {
+            return;
+        };
+        let span = call::span(word, self.clock.beat_len(), f64::from(self.rate));
+        let gain = if self.clock.clear(at, span) {
+            1.0
+        } else {
+            call::DUCK
+        };
+        call::sing(&mut self.score(out), now, at, word, gain);
     }
 
     /// The score the sounds are written into, sending to `out`.

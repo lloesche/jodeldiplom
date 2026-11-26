@@ -1,8 +1,9 @@
 //! A patch: what a note on it sounds like. An engine and its parameters,
 //! an ADSR (and how far it brightens the sound), glides of the pitch and the
 //! shape, an LFO, its level, how long a note holds, its sends to the
-//! shared reverb, delay and chorus, and the random spreads each note draws from
-//! its seed.
+//! shared reverb, delay and chorus, the random spreads each note draws from
+//! its seed, and whether it plays one voice at a time (sliding from note to
+//! note).
 //!
 //! A patch is plain data, built with struct update syntax from
 //! [`Patch::new`]:
@@ -230,6 +231,11 @@ pub struct Patch {
     /// frame, keeping what its engine keeps (see each engine's
     /// `note_on`).
     pub mono: bool,
+    /// A mono patch's portamento: seconds a retrigger takes to slide its
+    /// pitch and its note's shape from where they were to the new note's,
+    /// in a straight line (0: at once). So a voice sings legato: one
+    /// syllable's pitch and vowel gliding into the next's.
+    pub slide: f32,
 }
 
 impl Patch {
@@ -250,6 +256,7 @@ impl Patch {
             chorus: 0.0,
             spread: Spread::NONE,
             mono: false,
+            slide: 0.0,
         }
     }
 }

@@ -137,6 +137,7 @@ fn rendering_allocates_nothing() {
             velocity: 0.9,
             seed: k,
             pan: 0.0,
+            shape: 0.0,
         };
         let length = (k % 3 == 0).then_some(u64::from(k % 7) * 500);
         synth.note(u64::from(k) * 300, id, note, length);

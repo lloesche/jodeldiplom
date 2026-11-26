@@ -27,8 +27,6 @@ Work agreed on but not started, roughly in the order it was raised.
 - **The theme in the window**: Spooky is chosen in the settings file
   only (`karaoke_theme`); a switch for it on the Karaoke tab (after its
   native controls), and the rest of the window's accent following it.
-- **A sung announcer**: the slam's words ("DIVA!", the rung's
-  multiplier) also called out, sung in the song's key.
 - **The rays on the ladder?** The backdrop's spotlight rays follow how
   well the singing shines (the phrase's tier), everything else that
   builds up follows the multiplier. If they should come in order with

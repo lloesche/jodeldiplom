@@ -31,6 +31,7 @@ fn hit(p: &drum::Params, note: f32, seconds: f32, seed: u32, bright: f32) -> (Ve
             velocity: 1.0,
             seed,
             pan: 0.0,
+            shape: 0.0,
         },
     );
     let m = VoiceMod {
@@ -176,6 +177,7 @@ fn through_the_host_a_drum_ends_its_own_voice() {
             velocity: 1.0,
             seed: k as u32,
             pan: 0.0,
+            shape: 0.0,
         };
         assert!(s.note(0, id, n, None));
     }

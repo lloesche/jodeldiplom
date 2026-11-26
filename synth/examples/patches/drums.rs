@@ -42,6 +42,7 @@ fn play(patches: &[Patch], hits: &[Hit], seconds: f32, setup: fn(&mut Synth)) ->
             velocity,
             seed: 1 + k as u32,
             pan,
+            shape: 0.0,
         };
         assert!(synth.note(frame, ids[p], n, None));
     }

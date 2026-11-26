@@ -6,11 +6,12 @@
 //! the clinks, the zap, ticks and pips, a whirr and a muted horn for the
 //! wind-down, a pluck, a bar chime, brass, a choir's "aah", a shimmer pad,
 //! glitter, a riser and a whoosh, the register's clack, thud, bell and
-//! drawer, a low tonic, the slam's drums, and the diploma's sheet's own
-//! ([`super::sheet`]): its bells, glass, plucks and hum, its thumps and
-//! knocks, the paper's rustle and the air under it, snaps and cracks of
-//! paper, the air a stamp pushes down, a roll under a fanfare, and the
-//! pen's nib.
+//! drawer, a low tonic, the slam's drums, the announcer's voice and its
+//! consonants (a stop's burst, a hiss: [`super::call`]), and the
+//! diploma's sheet's own ([`super::sheet`]): its bells, glass, plucks and
+//! hum, its thumps and knocks, the paper's rustle and the air under it,
+//! snaps and cracks of paper, the air a stamp pushes down, a roll under a
+//! fanfare, and the pen's nib.
 //!
 //! Levels set the sounds against each other: the pops soft, the clinks
 //! quieter still, the big ones bigger; the synth's bus lifts them all
@@ -73,6 +74,9 @@ atoms! {
     SlamKick,
     SlamClap,
     SlamCrash,
+    Singer,
+    Burst,
+    Hiss,
     Ping,
     Bell,
     Glass,
@@ -460,6 +464,54 @@ pub const fn patch(a: Atom) -> Patch {
         Atom::SlamKick => slam(drum::SLAM[0].1),
         Atom::SlamClap => slam(drum::SLAM[1].1),
         Atom::SlamCrash => slam(drum::SLAM[2].1),
+        // The announcer: a bright, clear voice between a woman's and a
+        // child's, one at a time, gliding from syllable to syllable (each
+        // note's shape its vowel, "i" to "u" round "a"), a vibrato
+        // coming in on a long one, a little echo and room round it.
+        Atom::Singer => Patch {
+            lfo: Lfo {
+                rate: LfoRate::Hz(5.6),
+                pitch: 0.3,
+                delay: 0.18,
+                fade: 0.15,
+                ..Lfo::NONE
+            },
+            reverb: 0.22,
+            delay: 0.1,
+            chorus: 0.2,
+            mono: true,
+            slide: 0.045,
+            ..voice(
+                AnyParams::Formant(formant::Params {
+                    vowel: formant::A,
+                    breath: 0.1,
+                    size: 0.7,
+                    soft: 0.35,
+                    width: 3.0,
+                }),
+                Adsr {
+                    attack: 0.015,
+                    decay: 0.0,
+                    sustain: 1.0,
+                    release: 0.06,
+                },
+                -3.0,
+            )
+        },
+        // A stop's burst ("t", "k", "d", "g"): a click of noise in a band
+        // on the note.
+        Atom::Burst => voice(AnyParams::Noise(band(0.3, 0.0)), Adsr::hit(0.035), -12.0),
+        // A fricative's hiss ("s", "f", "th"), held as long as its note.
+        Atom::Hiss => voice(
+            AnyParams::Noise(band(0.15, 0.0)),
+            Adsr {
+                attack: 0.015,
+                decay: 0.0,
+                sustain: 1.0,
+                release: 0.025,
+            },
+            -16.0,
+        ),
         // The sheet's bells: a chime's partials, a ping dying soon, a bell
         // ringing on; each note as long as its sound holds it.
         Atom::Ping => Patch {

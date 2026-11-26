@@ -306,8 +306,9 @@ pub static TIERS: [TierSpec; 5] = [
                 Streak::Shimmer,
                 Streak::Glitter,
                 Streak::Payout,
+                Streak::Call,
             ],
-            chime: &[Chime::Plucks, Chime::TaDaa, Chime::Choir],
+            chime: &[Chime::Plucks, Chime::TaDaa, Chime::Choir, Chime::Call],
         },
     },
 ];

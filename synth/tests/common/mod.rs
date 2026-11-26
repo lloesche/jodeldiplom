@@ -29,6 +29,7 @@ pub fn on(note: f32, seed: u32) -> NoteOn {
         velocity: 1.0,
         seed,
         pan: 0.0,
+        shape: 0.0,
     }
 }
 

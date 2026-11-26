@@ -637,7 +637,14 @@ stem keys are their mutes.
   phrase reaching it fires a jackpot of coins and stars from the meter
   and slams "DIVA!" down; reaching its rung (×32) fires the fountain, a
   rain of coins and a slam of "×32"; while it holds, the flicks and the
-  bulbs at 1 (every other bulb flashing). Each of these is an effect its
+  bulbs at 1 (every other bulb flashing). Where the word slams down, an
+  announcer sings it ("di-VA!", "times thir-ty-TWO!"): one voice of the
+  game's synth, in the song's key on its grid, its first vowel on the
+  beat the word lands on (the jackpot's downbeat, the stinger's hit), its
+  syllables on the eighths after, the last falling a step as it ends;
+  under the stinger, softer still over a line being sung, not at all
+  with no key known; in a theme's voice where it has one (Spooky's a
+  ghost), on the same notes. Each of these is an effect its
   tier's row lists (held while the singing is at it, eased between the
   rows as its glow eases; fired by a phrase reaching it; fired by
   reaching its rung; or held while at its rung, eased in and out), drawn
@@ -660,6 +667,11 @@ stem keys are their mutes.
   music (the beat and the bar, the levels, the pitches); the shaders move
   it all, their maths held to the processor's on the GPU. The software
   window draws none of it.
+  - `the_call_lands_on_the_slam_s_beat_in_key`, `the_call_goes_with_the_slam`,
+    `the_call_stays_under_the_stinger_and_ducks_under_singing`,
+    `a_theme_s_announcer_calls_the_same_in_its_own_voice`
+    (`sfx::conductor`), `a_mono_retrigger_slides_to_its_note`,
+    `a_note_s_own_shape_moves_its_vowel` (synth)
   - `every_row_is_in_order` (`tiers`: a row a tier, each looking and
     sounding other than the one before, its sounds' layers all the row
     before's and more, its mark on the meter, its rung above the one

@@ -1,14 +1,15 @@
 //! The sound conductor and its synth allocate nothing once they are made:
-//! every kind of event, the clock (from an analysis) and the key told,
-//! held sounds started and let go, a seek, and rendering through the
-//! synth's bus, counted by a global allocator that counts on this thread.
+//! every kind of event, the announcer's calls, the clock (from an
+//! analysis) and the key told, held sounds started and let go, a seek, and
+//! rendering through the synth's bus, counted by a global allocator that
+//! counts on this thread.
 
 use std::alloc::{GlobalAlloc, Layout as AllocLayout, System};
 use std::cell::Cell;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use jodel_rhythm::Analysis;
-use jodeldiplom::sfx::conductor::{Clock, Conductor, Diploma, Event};
+use jodeldiplom::sfx::conductor::{Called, Clock, Conductor, Diploma, Event};
 use jodeldiplom::tiers::Tier;
 
 struct Counting;
@@ -103,6 +104,21 @@ fn conducting_allocates_nothing() {
             }
             200 => {
                 c.event(&mut synth, now, Event::Zap { pan: -0.4 });
+            }
+            220 => {
+                // The top rung reached: its stinger, payout and call; and
+                // the announcer calling the rest out.
+                let top = Tier::TOP.spec().streak;
+                let word = Event::Word {
+                    streak: top,
+                    pan: 0.0,
+                    size: 0.0,
+                };
+                c.event(&mut synth, now, word);
+                for t in Tier::ALL {
+                    c.announce(&mut synth, now, now + 4_800, Called::Name(t));
+                    c.announce(&mut synth, now, now + 9_600, Called::Times(t));
+                }
             }
             250..=273 => {
                 let k = (block % 400 - 250) as u32;

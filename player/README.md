@@ -961,7 +961,9 @@ tier keeping what the one below has:
   (on a bar's first beat, with a squash, a shake of the screen and a
   ring of dust). Reaching its rung (×32) slams "×32" down, rains coins
   over the screen in bursts on the beats with the fountain, and every
-  other bulb flashes, the two halves in turn.
+  other bulb flashes, the two halves in turn. Each slammed word is sung
+  too, by an announcer on the game's synth, in the song's key and landing
+  with it: "di-VA!", "times thir-ty-TWO!" (softer while a line is sung).
 
 The lyrics and the score stay readable through all of it: the edges'
 fire shrinks back from the lyric band and the score's corner and shows

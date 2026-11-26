@@ -226,6 +226,7 @@ fn rings_for<E: Engine>(e: &E, p: &E::Params, note: f32, limit: f32) -> f32 {
             velocity: 1.0,
             seed: 1,
             pan: 0.0,
+            shape: 0.0,
         },
     );
     let m = VoiceMod {
@@ -263,6 +264,7 @@ fn fm_retriggers_without_a_click() {
             velocity: 1.0,
             seed: 1,
             pan: 0.0,
+            shape: 0.0,
         };
         e.note_on(&p, &mut v, &n);
         let m = VoiceMod {
