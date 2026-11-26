@@ -30,7 +30,17 @@
 │                                                                                                                      │
 │ Browser and queue                                                                                                    │
 │   ↑                     up                                                                                           │
-│   ↓                     down                                                                                         │
 ╰ ↑↓ scroll   / search   esc back ─────────────────────────────────────────────────────────────────────────────────────╯
-     1:23 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━●───────────────────────────────────────────────────────────────── 4:05
-  ◀◀   ▮▮   ▶▶   ■                                      playing                                    ≡ settings   ? help
+
+
+
+[time] 1:23
+[seek] 34 %
+[time] 4:05
+[icon] previous
+[icon] pause
+[icon] next
+[icon] stop
+[dim] playing
+[button] Settings
+[button] Help

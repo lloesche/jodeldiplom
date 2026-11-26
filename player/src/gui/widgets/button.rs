@@ -1,8 +1,10 @@
 //! Buttons: [`primary`] (the accent's fill: the one to take), [`secondary`]
-//! (raised), [`ghost`] (text alone, raised under the pointer) and [`icon`]
-//! (a square ghost round an icon). A label can have an icon before it
-//! ([`Button::leading`]) and the key that does the same after it
-//! ([`Button::key`]).
+//! (raised), [`ghost`] (text alone, raised under the pointer), [`icon`]
+//! (a square ghost round an icon), [`round`] (a disc in the accent round
+//! an icon: the one of its group to take) and [`chip`] (a small pill: a
+//! switch, struck through while it is off, [`Button::struck`]). A label
+//! can have an icon before it ([`Button::leading`]) and the key that does
+//! the same after it ([`Button::key`]).
 //!
 //! Each has its states: under the pointer (eased in over
 //! [`look::motion::HOVER`]), pressed, focused (a ring in the accent round
@@ -15,7 +17,7 @@ use iced::advanced::renderer::{self, Quad};
 use iced::advanced::widget::{tree, Operation, Tree, Widget};
 use iced::advanced::{mouse, overlay, Renderer as _, Shell};
 use iced::animation::Easing;
-use iced::widget::{container, text, Row};
+use iced::widget::{container, rich_text, span, text, Id, Row};
 use iced::{
     window, Alignment, Animation, Background, Border, Color, Element, Event, Length, Padding,
     Rectangle, Renderer, Shadow, Size, Theme, Vector, Widget as _,
@@ -36,6 +38,10 @@ pub enum Kind {
     Ghost,
     /// A square ghost round an icon.
     Icon,
+    /// A disc in the accent round an icon.
+    Round,
+    /// A small pill: a switch.
+    Chip,
 }
 
 /// A button's state as it is drawn: how far the pointer's hover has eased
@@ -72,6 +78,16 @@ pub fn icon<'a, Message>(icon: Icon) -> Button<'a, Message> {
     Button::new(Kind::Icon, None, Some(icon))
 }
 
+/// A round button in the accent showing `icon`.
+pub fn round<'a, Message>(icon: Icon) -> Button<'a, Message> {
+    Button::new(Kind::Round, None, Some(icon))
+}
+
+/// A chip saying `label`.
+pub fn chip<'a, Message>(label: impl Into<String>) -> Button<'a, Message> {
+    Button::new(Kind::Chip, Some(label.into()), None)
+}
+
 /// A button, as it is put together; it becomes a widget as an
 /// [`Element`].
 pub struct Button<'a, Message> {
@@ -81,8 +97,10 @@ pub struct Button<'a, Message> {
     key: Option<&'a str>,
     on_press: Option<Message>,
     focused: bool,
+    struck: bool,
     shown: Option<Look>,
     width: Length,
+    id: Option<Id>,
 }
 
 impl<'a, Message> Button<'a, Message> {
@@ -94,9 +112,23 @@ impl<'a, Message> Button<'a, Message> {
             key: None,
             on_press: None,
             focused: false,
+            struck: false,
             shown: None,
             width: Length::Shrink,
+            id: None,
         }
+    }
+
+    /// Its label struck through and faint: what it switches is off.
+    pub fn struck(mut self, struck: bool) -> Self {
+        self.struck = struck;
+        self
+    }
+
+    /// Found by `id` (the tests find an icon's button so).
+    pub fn id(mut self, id: impl Into<Id>) -> Self {
+        self.id = Some(id.into());
+        self
     }
 
     /// `icon` before the label.
@@ -173,27 +205,40 @@ impl<'a, Message: Clone + 'a> From<Button<'a, Message>> for Element<'a, Message>
             key,
             on_press,
             focused,
+            struck,
             shown,
             width,
+            id,
         } = button;
         let mut parts = Row::new().spacing(space::S).align_y(Alignment::Center);
         if let Some(icon) = icon {
             parts = parts.push(icons::icon(icon).boxed());
         }
         if let Some(label) = label {
-            parts = parts.push(
-                text(label)
-                    .size(size::BODY)
+            let size = match kind {
+                Kind::Chip => size::LABEL,
+                _ => size::BODY,
+            };
+            parts = parts.push(if struck {
+                rich_text![span::<()>(label).strikethrough(true)]
+                    .size(size)
                     .font(look::font::label())
                     .wrapping(text::Wrapping::None)
-                    .boxed(),
-            );
+                    .boxed()
+            } else {
+                text(label)
+                    .size(size)
+                    .font(look::font::label())
+                    .wrapping(text::Wrapping::None)
+                    .boxed()
+            });
         }
         if let Some(key) = key {
             parts = parts.push(keycap(key, kind));
         }
         let (width, padding) = match kind {
-            Kind::Icon => (Length::Fixed(height::CONTROL), 0.0),
+            Kind::Icon | Kind::Round => (Length::Fixed(height::CONTROL), 0.0),
+            Kind::Chip => (width, space::M),
             _ => (width, space::L),
         };
         let content = container(parts)
@@ -209,9 +254,11 @@ impl<'a, Message: Clone + 'a> From<Button<'a, Message>> for Element<'a, Message>
             content: content.boxed(),
             on_press,
             focused,
+            muted: struck,
             shown,
             width,
             padding,
+            id,
         }
         .boxed()
     }
@@ -225,12 +272,40 @@ struct Paint {
     glow: Color,
 }
 
-/// What `kind` looks like in `look`.
-fn paint(kind: Kind, look: Look) -> Paint {
+/// What `kind` looks like in `look` (`muted`: what it switches is off).
+fn paint(kind: Kind, look: Look, muted: bool) -> Paint {
     let clear = Color::TRANSPARENT;
     // At rest, and with the pointer over it.
     let (rest, over) = match kind {
-        Kind::Primary => (
+        Kind::Chip if muted => (
+            Paint {
+                fill: look::alpha(look::RAISED, 0.0),
+                ink: look::TEXT_FAINT,
+                edge: look::EDGE,
+                glow: clear,
+            },
+            Paint {
+                fill: look::RAISED,
+                ink: look::TEXT_DIM,
+                edge: look::EDGE,
+                glow: clear,
+            },
+        ),
+        Kind::Chip => (
+            Paint {
+                fill: look::RAISED,
+                ink: look::TEXT,
+                edge: look::EDGE,
+                glow: clear,
+            },
+            Paint {
+                fill: look::SELECTED,
+                ink: look::TEXT,
+                edge: mix(look::EDGE, look::TEXT_FAINT, 0.4),
+                glow: clear,
+            },
+        ),
+        Kind::Primary | Kind::Round => (
             Paint {
                 fill: look::ACCENT,
                 ink: look::ACCENT_INK,
@@ -276,7 +351,7 @@ fn paint(kind: Kind, look: Look) -> Paint {
     if look.disabled {
         return Paint {
             fill: match kind {
-                Kind::Primary | Kind::Secondary => look::RAISED,
+                Kind::Primary | Kind::Secondary | Kind::Round | Kind::Chip => look::RAISED,
                 Kind::Ghost | Kind::Icon => clear,
             },
             ink: look::TEXT_FAINT,
@@ -293,7 +368,7 @@ fn paint(kind: Kind, look: Look) -> Paint {
     };
     if look.pressed {
         paint.fill = match kind {
-            Kind::Primary => mix(look::ACCENT, Color::BLACK, 0.12),
+            Kind::Primary | Kind::Round => mix(look::ACCENT, Color::BLACK, 0.12),
             _ => mix(look::RAISED, look::BG, 0.5),
         };
         paint.glow = clear;
@@ -307,9 +382,29 @@ struct Pressable<'a, Message> {
     content: Element<'a, Message>,
     on_press: Option<Message>,
     focused: bool,
+    muted: bool,
     shown: Option<Look>,
     width: Length,
     padding: f32,
+    id: Option<Id>,
+}
+
+impl<Message> Pressable<'_, Message> {
+    /// Its height.
+    fn height(&self) -> f32 {
+        match self.kind {
+            Kind::Chip => height::CHIP,
+            _ => height::CONTROL,
+        }
+    }
+
+    /// Its corners' radius.
+    fn radius(&self) -> f32 {
+        match self.kind {
+            Kind::Round | Kind::Chip => radius::PILL,
+            _ => radius::CONTROL,
+        }
+    }
 }
 
 /// What a button keeps between frames.
@@ -359,16 +454,17 @@ impl<'a, Message: Clone + 'a> Widget<Message, Theme, Renderer> for Pressable<'a,
     }
 
     fn size(&self) -> Size<Length> {
-        Size::new(self.width, Length::Fixed(height::CONTROL))
+        Size::new(self.width, Length::Fixed(self.height()))
     }
 
     fn layout(&mut self, tree: &mut Tree, renderer: &Renderer, limits: &layout::Limits) {
         let padding = Padding::from([0.0, self.padding]);
+        let height = Length::Fixed(self.height());
         layout::padded(
             tree,
             limits,
             self.width,
-            Length::Fixed(height::CONTROL),
+            height,
             padding,
             |content, limits| {
                 self.content.layout(content, renderer, limits);
@@ -385,7 +481,7 @@ impl<'a, Message: Clone + 'a> Widget<Message, Theme, Renderer> for Pressable<'a,
         renderer: &Renderer,
         operation: &mut dyn Operation,
     ) {
-        operation.container(None, layout.bounds(), viewport);
+        operation.container(self.id.as_ref(), layout.bounds(), viewport);
         operation.traverse(&mut |operation| {
             let (layout, tree) = layout
                 .iter_mut(&mut tree.children)
@@ -469,7 +565,8 @@ impl<'a, Message: Clone + 'a> Widget<Message, Theme, Renderer> for Pressable<'a,
         let bounds = layout.bounds();
         let state = tree.state.downcast_ref::<State>();
         let look = self.look(state);
-        let paint = paint(self.kind, look);
+        let paint = paint(self.kind, look, self.muted);
+        let corner = self.radius();
         if look.focused {
             let gap = look::line::FOCUS;
             let ring = bounds.expand(gap + look::line::FOCUS);
@@ -479,7 +576,7 @@ impl<'a, Message: Clone + 'a> Widget<Message, Theme, Renderer> for Pressable<'a,
                     border: Border {
                         color: look::ACCENT,
                         width: look::line::FOCUS,
-                        radius: (radius::CONTROL + gap + look::line::FOCUS).into(),
+                        radius: (corner + gap + look::line::FOCUS).into(),
                     },
                     ..Quad::default()
                 },
@@ -496,7 +593,7 @@ impl<'a, Message: Clone + 'a> Widget<Message, Theme, Renderer> for Pressable<'a,
                     } else {
                         0.0
                     },
-                    radius: radius::CONTROL.into(),
+                    radius: corner.into(),
                 },
                 shadow: Shadow {
                     color: paint.glow,

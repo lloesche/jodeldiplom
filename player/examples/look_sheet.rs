@@ -1,7 +1,7 @@
 //! The native look on one sheet ([`jodeldiplom::gui::look`] and
 //! [`jodeldiplom::gui::widgets`]): every colour, the type scale, the
 //! spacing and the corners, every button in every state, the surfaces, the
-//! progress bars and the icons. Drawn as the window draws (iced's headless
+//! progress bars, the seek bar's track and the icons. Drawn as the window draws (iced's headless
 //! renderer, the player's own fonts) into `look-sheet.png` at scale 1 and
 //! `look-sheet-hidpi.png` at scale 2.
 //!
@@ -27,7 +27,7 @@ use headless::Headless;
 include!(concat!(env!("OUT_DIR"), "/fonts.rs"));
 
 /// The sheet's size in logical pixels.
-const SHEET: Size = Size::new(1280.0, 1180.0);
+const SHEET: Size = Size::new(1280.0, 1440.0);
 
 fn hex(c: Color) -> String {
     let [r, g, b, _] = c.into_rgba8();
@@ -246,7 +246,15 @@ fn buttons() -> Element<'static, Message> {
         head = head.push(cell(caption(name.to_owned()), 190.0));
     }
     let mut rows = Column::new().spacing(space::L).push(head.boxed());
-    for kind in [Kind::Primary, Kind::Secondary, Kind::Ghost, Kind::Icon] {
+    let kinds = [
+        Kind::Primary,
+        Kind::Secondary,
+        Kind::Ghost,
+        Kind::Icon,
+        Kind::Round,
+        Kind::Chip,
+    ];
+    for kind in kinds {
         let mut line = Row::new()
             .align_y(Alignment::Center)
             .push(cell(caption(format!("{kind:?}").to_lowercase()), 90.0));
@@ -258,6 +266,8 @@ fn buttons() -> Element<'static, Message> {
                 Kind::Secondary => widgets::secondary("Quit").key("Q"),
                 Kind::Ghost => widgets::ghost("Quit"),
                 Kind::Icon => button::icon(Icon::Retry),
+                Kind::Round => button::round(Icon::Play),
+                Kind::Chip => widgets::chip("vocals"),
             };
             let made = if shown.disabled {
                 made
@@ -336,32 +346,65 @@ fn surfaces() -> Element<'static, Message> {
     ]
     .spacing(space::S)
     .width(320);
-    let mut icons = Row::new().spacing(space::XL);
-    for icon in Icon::ALL {
-        icons = icons.push(
-            column![
-                row![
-                    widgets::icon(icon).color(look::TEXT),
-                    widgets::icon(icon).size(24.0).color(look::TEXT),
-                    widgets::icon(icon).size(32.0).color(look::ACCENT),
+    let mut icons = Column::new().spacing(space::L);
+    for line in Icon::ALL.chunks(6) {
+        let mut shown = Row::new().spacing(space::XL);
+        for &icon in line {
+            shown = shown.push(
+                column![
+                    row![
+                        widgets::icon(icon).color(look::TEXT),
+                        widgets::icon(icon).size(24.0).color(look::TEXT),
+                        widgets::icon(icon).size(32.0).color(look::ACCENT),
+                    ]
+                    .spacing(space::M)
+                    .align_y(Alignment::End),
+                    caption(icon.name().to_owned()),
                 ]
-                .spacing(space::M)
-                .align_y(Alignment::End),
-                caption(icon.name().to_owned()),
-            ]
-            .spacing(space::XS)
-            .boxed(),
-        );
+                .spacing(space::XS)
+                .boxed(),
+            );
+        }
+        icons = icons.push(shown);
     }
     row![
         section("Surfaces", panel(on_panel).width(420).boxed()),
         column![
             section("Progress", bars.boxed()),
+            section("Seek bar and switches", seek()),
             section("Icons", icons.boxed()),
         ]
         .spacing(space::XL),
     ]
     .spacing(space::XXL)
+    .boxed()
+}
+
+/// The seek bar's track at rest and held (its thumb out), with its times;
+/// a switch on and off.
+fn seek() -> Element<'static, Message> {
+    let line = |held: bool| {
+        row![
+            caption("1:23".to_owned()),
+            widgets::track(0.43)
+                .held(held)
+                .on_press(|_, _| Message::Wake),
+            caption("4:05".to_owned()),
+        ]
+        .spacing(space::M)
+        .align_y(Alignment::Center)
+    };
+    column![
+        line(false),
+        line(true),
+        row![
+            Element::from(widgets::chip("drums").on_press(Message::Wake)),
+            Element::from(widgets::chip("vocals").struck(true).on_press(Message::Wake)),
+        ]
+        .spacing(space::XS),
+    ]
+    .spacing(space::S)
+    .width(320)
     .boxed()
 }
 

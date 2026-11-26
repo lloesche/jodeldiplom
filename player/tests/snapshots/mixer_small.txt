@@ -18,7 +18,17 @@
 │                                                                              │
 │                                                                              │
 │                                                                              │
-│                                                                              │
 ╰ ← → strip · ↑ ↓ fader · home 0 dB · m mute · s solo · e echo ────────────────╯
-     1:23 ━━━━━━━━━━━━━━━━━━━━●─────────────────────────────────────── 4:05
-  ◀◀   ▮▮   ▶▶   ■   playing  ·  : commands  / filter  ?…  ≡ settings   ? help
+
+
+
+[time] 1:23
+[seek] 34 %
+[time] 4:05
+[icon] previous
+[icon] pause
+[icon] next
+[icon] stop
+[dim] playing  ·  : commands  / filter  ? keys
+[button] Settings
+[button] Help

@@ -1,5 +1,5 @@
 //! The window's drawing path without a window: the shared widgets
-//! rasterised into pixels, the spectrum painted at its cell rect, the
+//! rasterised into pixels, the pictures painted at their cell rects, the
 //! covers drawn where the canvas leaves their cells.
 
 mod common;
@@ -19,38 +19,18 @@ use jodeldiplom::gui::pixels::PixelRect;
 use jodeldiplom::gui::widgets::cover::{Align, Caption, Covers, Spot};
 use jodeldiplom::gui::{self, font_px, Canvas};
 use jodeldiplom::icon::Style;
-use jodeldiplom::spectrum::{sine, tap_frames_for, Analyzer, SpectrumFrame};
 use jodeldiplom::view::layout::{self, Grid, Layout};
-use jodeldiplom::view::{self, palette, Plot, Scene};
+use jodeldiplom::view::{palette, Scene};
 use ratatui::layout::Rect;
 
 fn bg() -> Rgb<u8> {
     Rgb(palette::BG)
 }
 
-fn spectrum(rate: u32, hz: f64) -> SpectrumFrame {
-    // The tone over a low noise floor, so the curve runs across the plot.
-    let mut seed = 7u32;
-    let frames: Vec<_> = sine(rate, hz, 0.7, tap_frames_for(rate))
-        .into_iter()
-        .map(|[l, r]| {
-            seed ^= seed << 13;
-            seed ^= seed >> 17;
-            seed ^= seed << 5;
-            let noise = (seed as i32) >> 20;
-            [l + noise, r + noise]
-        })
-        .collect();
-    let mut analyzer = Analyzer::new();
-    analyzer.analyse(rate, &frames, 0.0);
-    analyzer.frame()
-}
-
-fn draw(canvas: &mut Canvas, state: &State, spectrum: &SpectrumFrame, art: Option<&Art>) {
+fn draw(canvas: &mut Canvas, state: &State, art: Option<&Art>) {
     let scene = Scene {
         state,
         grid: canvas.grid(),
-        spectrum,
         pointer: None,
         heard: 0.0,
     };
@@ -72,12 +52,14 @@ fn pixel_rect(canvas: &Canvas, rect: Rect) -> (u32, u32, u32, u32) {
     )
 }
 
+/// The cells are rasterised to the grid's size, text with ink; the
+/// bottom bar's cells are left to the window (background alone), as are
+/// the cover's.
 #[test]
-fn the_spectrum_is_painted_in_its_cells() {
+fn the_cells_are_painted_and_the_bar_left_to_the_window() {
     let mut canvas = Canvas::new(80, 24, font_px(1.0));
     let state = sized(&mut canvas, 1280, 800);
-    let spectrum = spectrum(176_400, 1_000.0);
-    draw(&mut canvas, &state, &spectrum, None);
+    draw(&mut canvas, &state, None);
     let image = canvas.image();
     let (cw, ch) = canvas.cell();
     assert_eq!(image.width() as usize, usize::from(canvas.grid().cols) * cw);
@@ -89,51 +71,13 @@ fn the_spectrum_is_painted_in_its_cells() {
         panic!("not the main screen")
     };
 
-    // The spectrum is a dotted curve in the zone's colour, not a filled
-    // area: near the tone it reaches the top quarter, under the curve
-    // there is only background and grid, and the curve covers a small part
-    // of the plot.
-    let plot = Plot::new(
-        m.bottom.spectrum.unwrap(),
-        m.bottom.labels,
-        &spectrum,
-        view::plot::zones(&state),
-    );
-    let (sx, sy, sw, sh) = pixel_rect(&canvas, plot.area);
-    assert!(
-        plot.area.x > m.bottom.spectrum.unwrap().x,
-        "room for the dB labels"
-    );
-    let curve = palette::SOURCE;
-    let near = |p: Rgb<u8>, c: [u8; 3]| p.0.iter().zip(c).all(|(a, b)| a.abs_diff(b) <= 40);
-    let on_curve = |col: u32, rows: std::ops::Range<u32>| {
-        rows.filter(|&r| near(*image.get_pixel(sx + col, sy + r), curve))
-            .count() as u32
-    };
-    let tone = spectrum.x_of(1_000.0, sw as usize).round() as u32;
-    let peak: u32 = (tone.saturating_sub(4)..tone + 4)
-        .map(|col| on_curve(col, 0..sh / 4))
-        .sum();
-    assert!(peak > 0, "the tone's peak is drawn");
-    let under: u32 = (tone.saturating_sub(4)..tone + 4)
-        .map(|col| on_curve(col, sh * 3 / 4..sh))
-        .sum();
-    assert_eq!(under, 0, "nothing is filled under the curve");
-    let all: u32 = (0..sw).map(|col| on_curve(col, 0..sh)).sum();
-    assert!(all > sw / 4 && all < sw * sh / 10, "{all} of {}", sw * sh);
-    // No sound at the far right: nothing drawn there but grid.
-    assert_eq!(on_curve(sw - 2, 0..sh), 0);
-    let grid = palette::GRID;
-    let grid_pixels = (0..sw)
-        .flat_map(|x| (0..sh).map(move |y| (x, y)))
-        .filter(|&(x, y)| image.get_pixel(sx + x, sy + y).0 == grid)
+    // The bottom bar's cells: background alone.
+    let (bx, by, bw, bh) = pixel_rect(&canvas, m.bottom.area);
+    let lit = (by..by + bh)
+        .flat_map(|py| (bx..bx + bw).map(move |px| (px, py)))
+        .filter(|&(px, py)| *image.get_pixel(px, py) != bg())
         .count();
-    assert!(grid_pixels > 100, "{grid_pixels}");
-    // The axes are labelled.
-    let text = canvas.text();
-    for label in ["0 dB", "-40", "-120", "20 Hz", "1k", "10k", "20k", "88k"] {
-        assert!(text.contains(label), "missing {label:?}");
-    }
+    assert_eq!(lit, 0, "the bar's cells are blank");
 
     // Text has ink: the title row in the right column.
     let info = m.info.unwrap();
@@ -178,8 +122,7 @@ fn the_covers_go_where_the_canvas_leaves_their_cells() {
         id: 1,
         image: Arc::new(sample_cover(128)),
     };
-    let spectrum = spectrum(96_000, 3_000.0);
-    draw(&mut canvas, &state, &spectrum, Some(&art));
+    draw(&mut canvas, &state, Some(&art));
     let Layout::Main(m) = layout::compute(&state, canvas.grid()) else {
         panic!()
     };
@@ -198,11 +141,11 @@ fn the_covers_go_where_the_canvas_leaves_their_cells() {
     );
 
     state.screen = Screen::Settings;
-    draw(&mut canvas, &state, &spectrum, Some(&art));
+    draw(&mut canvas, &state, Some(&art));
     assert!(canvas.covers().is_empty());
 
     state.screen = Screen::NowPlaying;
-    draw(&mut canvas, &state, &spectrum, Some(&art));
+    draw(&mut canvas, &state, Some(&art));
     let Layout::NowPlaying(n) = layout::compute(&state, canvas.grid()) else {
         panic!()
     };
@@ -216,7 +159,7 @@ fn the_covers_go_where_the_canvas_leaves_their_cells() {
     assert_eq!(caption.rect, place(&canvas, n.caption));
     assert_eq!(caption.lead, 4 * ch);
 
-    draw(&mut canvas, &state, &spectrum, None);
+    draw(&mut canvas, &state, None);
     assert!(canvas.covers().is_empty());
 }
 
@@ -235,7 +178,7 @@ fn a_cover_is_drawn_fitted_with_its_corners_rounded() {
             id: 7,
             image: Arc::new(sample_cover(256)),
         };
-        draw(&mut canvas, &state, &spectrum(96_000, 1_000.0), Some(&art));
+        draw(&mut canvas, &state, Some(&art));
         let mut covers = Covers::default();
         covers.show(Some(&art), canvas.covers(), scale);
         let shot = drawn(&mut headless, &covers, size, scale);
@@ -266,8 +209,7 @@ fn now_playing_is_the_cover_with_the_caption_over_it() {
         id: 3,
         image: Arc::new(light),
     };
-    let spectrum = spectrum(176_400, 1_000.0);
-    draw(&mut canvas, &state, &spectrum, Some(&art));
+    draw(&mut canvas, &state, Some(&art));
     // The place fills the screen's height.
     let [spot] = canvas.covers() else {
         panic!("{:?}", canvas.covers())
@@ -322,7 +264,7 @@ fn now_playing_is_the_cover_with_the_caption_over_it() {
     assert!(ink > 200, "{ink}");
 
     // Without a cover: a placeholder and the caption under it.
-    draw(&mut canvas, &state, &spectrum, None);
+    draw(&mut canvas, &state, None);
     let text = canvas.text();
     assert!(text.contains('\u{266a}') && text.contains("Morning Light"));
 }
@@ -367,8 +309,8 @@ fn a_covers_art_is_kept_by_art_id_and_size() {
 /// Frames drawn one after another (pictures kept where nothing under them
 /// changed, cells redrawn only where they did) end in the same pixels as
 /// the last frame drawn afresh: through covers that stay, change and go
-/// (their cells left blank for the window), a caption over one, a moving
-/// spectrum and the Transition tab.
+/// (their cells left blank for the window), a caption over one and the
+/// Transition tab.
 #[test]
 fn frames_in_a_row_end_as_the_last_drawn_afresh() {
     let first = Art {
@@ -393,36 +335,32 @@ fn frames_in_a_row_end_as_the_last_drawn_afresh() {
     let mut tab_later = tab.clone();
     tab_later.playing.position += 0.5;
     tab_later.drawn_heard = Some(tab_later.playing.position);
-    let tones = [spectrum(96_000, 1_000.0), spectrum(96_000, 5_000.0)];
-    let steps: Vec<(&str, State, Option<&Art>, usize)> = vec![
-        ("main", main.clone(), Some(&first), 0),
-        ("main, the spectrum moved", main.clone(), Some(&first), 1),
-        ("main, later", later, Some(&first), 0),
-        ("now playing", screen(Screen::NowPlaying), Some(&first), 1),
+    let steps: Vec<(&str, State, Option<&Art>)> = vec![
+        ("main", main.clone(), Some(&first)),
+        ("main, later", later, Some(&first)),
+        ("now playing", screen(Screen::NowPlaying), Some(&first)),
         (
             "now playing, again",
             screen(Screen::NowPlaying),
             Some(&first),
-            0,
         ),
         (
             "now playing, another cover",
             screen(Screen::NowPlaying),
             Some(&second),
-            0,
         ),
-        ("now playing, no cover", screen(Screen::NowPlaying), None, 1),
-        ("settings", screen(Screen::Settings), Some(&first), 0),
-        ("main again", main.clone(), Some(&first), 1),
-        ("transition", tab, Some(&first), 0),
-        ("transition, later", tab_later, Some(&first), 1),
-        ("main after transition", main.clone(), Some(&first), 0),
+        ("now playing, no cover", screen(Screen::NowPlaying), None),
+        ("settings", screen(Screen::Settings), Some(&first)),
+        ("main again", main.clone(), Some(&first)),
+        ("transition", tab, Some(&first)),
+        ("transition, later", tab_later, Some(&first)),
+        ("main after transition", main.clone(), Some(&first)),
     ];
-    for (name, state, art, tone) in &steps {
-        draw(&mut canvas, state, &tones[*tone], *art);
+    for (name, state, art) in &steps {
+        draw(&mut canvas, state, *art);
         let mut fresh = Canvas::new(80, 24, font_px(1.0));
         fresh.fit(1280, 800);
-        draw(&mut fresh, state, &tones[*tone], *art);
+        draw(&mut fresh, state, *art);
         let (got, want) = (canvas.image(), fresh.image());
         let differ = got
             .pixels()
@@ -445,13 +383,12 @@ fn transition_frames_in_a_row_are_as_drawn_afresh() {
     let (width, height, scale) = (2400, 1500, 2.0);
     let mut canvas = Canvas::new(80, 24, font_px(scale));
     let grid = canvas.fit(width, height);
-    let tone = spectrum(96_000, 1_000.0);
     let steps = transition_steps(grid);
     for (name, state) in &steps {
-        draw_heard(&mut canvas, state, &tone, None);
+        draw_heard(&mut canvas, state, None);
         let mut fresh = Canvas::new(80, 24, font_px(scale));
         fresh.fit(width, height);
-        draw_heard(&mut fresh, state, &tone, None);
+        draw_heard(&mut fresh, state, None);
         let (got, want) = (canvas.image(), fresh.image());
         let differ = got
             .pixels()
@@ -461,7 +398,7 @@ fn transition_frames_in_a_row_are_as_drawn_afresh() {
         assert_eq!(differ, 0, "{name}: {differ} pixels differ");
     }
     let (name, last) = steps.last().unwrap();
-    draw_heard(&mut canvas, last, &tone, None);
+    draw_heard(&mut canvas, last, None);
     assert!(!canvas.changed, "{name}, again: a pixel changed");
     // The words were there to be drawn: without them the frame differs.
     let (_, first) = &steps[0];
@@ -470,7 +407,7 @@ fn transition_frames_in_a_row_are_as_drawn_afresh() {
     let picture = |state: &State| {
         let mut c = Canvas::new(80, 24, font_px(scale));
         c.fit(width, height);
-        draw_heard(&mut c, state, &tone, None);
+        draw_heard(&mut c, state, None);
         c.image()
     };
     let differ = picture(first)
@@ -482,11 +419,10 @@ fn transition_frames_in_a_row_are_as_drawn_afresh() {
 }
 
 /// A frame of `state` at what it says is heard.
-fn draw_heard(canvas: &mut Canvas, state: &State, tone: &SpectrumFrame, art: Option<&Art>) {
+fn draw_heard(canvas: &mut Canvas, state: &State, art: Option<&Art>) {
     let scene = Scene {
         state,
         grid: canvas.grid(),
-        spectrum: tone,
         pointer: None,
         heard: state.heard(),
     };
@@ -497,7 +433,7 @@ fn draw_heard(canvas: &mut Canvas, state: &State, tone: &SpectrumFrame, art: Opt
 /// changed go over frame by frame (as [`Canvas::take_changes`] says), and
 /// each frame read back is the canvas, with the background beyond it,
 /// through the Transition tab's steps, the browser with a cover and a moving
-/// spectrum, Now playing, a window resized, and a skipped take; into a
+/// frame drawn again, Now playing, a window resized, and a skipped take; into a
 /// frame that takes the bytes as they are and into one that encodes them
 /// as sRGB. Skipped (with a note) without a GPU.
 #[test]
@@ -522,28 +458,27 @@ fn gpu_frames(srgb: bool) {
         id: 3,
         image: Arc::new(sample_cover(128)),
     };
-    let tones = [spectrum(96_000, 1_000.0), spectrum(96_000, 5_000.0)];
     let mut canvas = Canvas::new(80, 24, font_px(scale));
     // Not a whole number of cells: the background shows beyond them.
     let (mut width, mut height) = (2411, 1507);
     let grid = canvas.fit(width, height);
     let main = common::playing_state(grid.cols, grid.rows);
-    let mut steps: Vec<(String, State, usize)> = vec![
-        ("main".into(), main.clone(), 0),
-        ("main, the spectrum moved".into(), main.clone(), 1),
-        ("main, still".into(), main.clone(), 1),
+    let mut steps: Vec<(String, State)> = vec![
+        ("main".into(), main.clone()),
+        ("main, again".into(), main.clone()),
+        ("main, still".into(), main.clone()),
     ];
     let mut now_playing = main.clone();
     now_playing.screen = Screen::NowPlaying;
-    steps.push(("now playing".into(), now_playing, 0));
-    steps.extend(transition_steps(grid).into_iter().map(|(n, s)| (n, s, 0)));
-    steps.push(("main after transition".into(), main.clone(), 1));
-    for (i, (name, state, tone)) in steps.iter().enumerate() {
+    steps.push(("now playing".into(), now_playing));
+    steps.extend(transition_steps(grid));
+    steps.push(("main after transition".into(), main.clone()));
+    for (i, (name, state)) in steps.iter().enumerate() {
         if i == 5 {
             // The window a little wider: the grid stays, the margin grows.
             width += 7;
         }
-        draw_heard(&mut canvas, state, &tones[*tone], Some(&art));
+        draw_heard(&mut canvas, state, Some(&art));
         // One take skipped: what it held must come with the next.
         if i == 8 {
             continue;
@@ -560,7 +495,7 @@ fn gpu_frames(srgb: bool) {
     let grid = canvas.fit(width, height);
     let mut small = main.clone();
     small.fit = layout::fit(&small, grid);
-    draw_heard(&mut canvas, &small, &tones[0], Some(&art));
+    draw_heard(&mut canvas, &small, Some(&art));
     let changes = canvas.take_changes();
     let got = gpu.show(&canvas, &changes, width, height, None).unwrap();
     let mut want = vec![0u32; (width * height) as usize];
@@ -683,14 +618,13 @@ fn same_through_layer(
     name: &str,
 ) {
     let (width, height) = LAYER_SIZE;
-    let tone = spectrum(96_000, 1_000.0);
     let at = |state: &mut State, seconds: f64| {
         state.playing.position = seconds;
         state.drawn_heard = Some(seconds);
     };
     let mut heard = time;
     at(state, heard);
-    draw_heard(layered, state, &tone, None);
+    draw_heard(layered, state, None);
     for _ in 0..3 {
         let layer = layered.layer_frame(heard).expect("a layer");
         let step = f64::from(layer.frac) * layer.px;
@@ -700,8 +634,8 @@ fn same_through_layer(
         heard -= step;
     }
     at(state, heard);
-    draw_heard(flat, state, &tone, None);
-    draw_heard(layered, state, &tone, None);
+    draw_heard(flat, state, None);
+    draw_heard(layered, state, None);
     let layer = layered.layer_frame(heard).expect("a layer");
     let (x0, y0, w, h) = layer.rect;
     let top = y0 + layer.head_top;
@@ -851,8 +785,7 @@ fn hidpi_doubles_the_cells() {
     );
     // Without a cover the placeholder is drawn in cells.
     let state = common::playing_state(g1.cols, g1.rows);
-    let empty = SpectrumFrame::default();
-    draw(&mut c1, &state, &empty, None);
+    draw(&mut c1, &state, None);
     assert!(c1.text().contains('♪'));
 }
 
@@ -926,15 +859,14 @@ fn the_transition_lanes_are_painted_in_pixels() {
     let mut canvas = Canvas::new(80, 24, font_px(1.0));
     let grid = canvas.fit(1600, 1000);
     let state = common::transition_state(grid.cols, grid.rows);
-    let spectrum = spectrum(176_400, 1_000.0);
-    draw(&mut canvas, &state, &spectrum, None);
+    draw(&mut canvas, &state, None);
     let image = canvas.image();
     let Layout::Main(m) = layout::compute(&state, canvas.grid()) else {
         panic!("the main screen");
     };
     let tab = m.transition.expect("the Transition tab");
     assert_eq!(tab.blocks.len(), 2);
-    assert!(m.bottom.spectrum.is_none());
+    assert_eq!(m.bottom.spectrum, 0);
     // The vocals of the playing track come in at 60 s: before, nothing is
     // painted in their lane but its background; the drums lane is busy.
     let lane_pixels = |i: usize| {
@@ -969,8 +901,7 @@ fn the_bar_numbers_start_at_their_bars_to_the_pixel() {
     // A view that starts between cells.
     state.transition.now.path = lanes::path(&state, Block::Now).cloned();
     state.transition.now.start = Some(10.123);
-    let spectrum = spectrum(176_400, 1_000.0);
-    draw(&mut canvas, &state, &spectrum, None);
+    draw(&mut canvas, &state, None);
     let image = canvas.image();
     let Layout::Main(m) = layout::compute(&state, canvas.grid()) else {
         panic!("the main screen");
@@ -1008,8 +939,7 @@ fn after_a_track_change_the_next_block_is_blank_until_its_analysis_is_in() {
     let mut canvas = Canvas::new(80, 24, font_px(1.0));
     let grid = canvas.fit(1600, 1000);
     let mut state = common::transition_state(grid.cols, grid.rows);
-    let spectrum = spectrum(176_400, 1_000.0);
-    draw(&mut canvas, &state, &spectrum, None);
+    draw(&mut canvas, &state, None);
     // The next track starts; the one after it is not analysed yet.
     let track = state.playing.track.clone().unwrap();
     update(
@@ -1028,7 +958,7 @@ fn after_a_track_change_the_next_block_is_blank_until_its_analysis_is_in() {
         ))),
     );
     state.drawn_heard = Some(0.0);
-    draw(&mut canvas, &state, &spectrum, None);
+    draw(&mut canvas, &state, None);
     let image = canvas.image();
     let Layout::Main(m) = layout::compute(&state, canvas.grid()) else {
         panic!("the main screen");
@@ -1066,8 +996,7 @@ fn the_window_searches_the_help() {
     }
     assert_eq!(state.screen, Screen::Help);
     assert!(!state.quit);
-    let spectrum = spectrum(176_400, 1_000.0);
-    draw(&mut canvas, &state, &spectrum, None);
+    draw(&mut canvas, &state, None);
     let text = canvas.text();
     for part in [
         "/ Volume",
@@ -1082,7 +1011,7 @@ fn the_window_searches_the_help() {
         assert!(!text.contains(gone), "{gone:?} in\n{text}");
     }
     press(&mut state, IcedKey::Named(Named::Escape));
-    draw(&mut canvas, &state, &spectrum, None);
+    draw(&mut canvas, &state, None);
     assert!(canvas.text().contains("play / pause"));
     assert_eq!(state.screen, Screen::Help);
     press(&mut state, IcedKey::Named(Named::Escape));
@@ -1188,7 +1117,7 @@ fn the_canvas_leaves_the_mixer_tab_to_the_window() {
     let mut canvas = Canvas::new(80, 24, font_px(1.0));
     let grid = canvas.fit(1280, 800);
     let state = common::desk_state(grid.cols, grid.rows);
-    draw(&mut canvas, &state, &spectrum(176_400, 1_000.0), None);
+    draw(&mut canvas, &state, None);
     let Layout::Main(m) = layout::compute(&state, canvas.grid()) else {
         panic!("the main screen");
     };

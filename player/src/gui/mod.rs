@@ -29,7 +29,7 @@ mod paint;
 pub mod paper;
 pub mod particles;
 pub mod pixels;
-mod pointer;
+pub mod pointer;
 pub mod pop;
 pub mod present;
 pub mod rainbow;

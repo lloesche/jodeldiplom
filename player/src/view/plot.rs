@@ -1,58 +1,25 @@
-//! The spectrum plot: a curve of the level per column, coloured by zone,
+//! The spectrum plot's model: a curve of the level across the frequencies
 //! over a faint grid, with the level (dB) on the left and the frequency
-//! under it.
+//! under it, the Nyquist frequency in the curve's colour.
 //!
-//! [`Plot::new`] lays it out in cells: where the curve goes, which grid
-//! lines there are and the axis labels. The labels are text in cells; the
-//! curve and the grid are painted by the window in pixels.
+//! [`Plot::new`] lays it out in points for a size: where the curve goes,
+//! which grid lines there are, and where each axis label is. The window
+//! draws it ([`crate::gui::widgets::spectrum`]).
 //!
-//! Vertically, a level is at `depth × n` of `n` units from the top
-//! ([`depth`]), the floor of [`RANGE_DB`] at `n`, just below the plot, so
-//! silence draws nothing. The window's units are pixel rows and the
-//! labels' cell rows, so a grid line lands in the row of its label.
+//! Vertically, a level is at `depth × h` of the curve's height `h` from
+//! its top ([`depth`]), the floor of [`RANGE_DB`] at `h`, its bottom
+//! edge, so silence draws nothing.
 
-use ratatui::buffer::Buffer;
-use ratatui::layout::Rect;
-use ratatui::style::{Color, Style};
+use std::fmt;
 
-use crate::core::State;
 use crate::spectrum::{SpectrumFrame, LOW_HZ, RANGE_DB};
-use crate::view::cells::width;
-use crate::view::colors::DIM;
-use crate::view::palette::{BG, SOURCE};
 
-/// A spectrum zone: frequencies up to `up_to_hz` belong to a stage.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Zone {
-    /// The zone's top frequency.
-    pub up_to_hz: f64,
-    /// Its colour.
-    pub color: [u8; 3],
-}
-
-/// The spectrum's zones for the track heard: one, the whole range.
-pub fn zones(_state: &State) -> Vec<Zone> {
-    vec![Zone {
-        up_to_hz: f64::MAX,
-        color: SOURCE,
-    }]
-}
-
-/// The colour of a frequency.
-pub fn zone_color(zones: &[Zone], hz: f64) -> [u8; 3] {
-    zones
-        .iter()
-        .find(|z| hz <= z.up_to_hz)
-        .or(zones.last())
-        .map_or(SOURCE, |z| z.color)
-}
-
-/// The width of the level labels (`-120`, `0 dB`).
-pub const DB_LABEL_W: u16 = 4;
-/// The narrowest spectrum that gets level labels.
-pub const DB_AXIS_MIN_W: u16 = 40;
-/// The narrowest spectrum that gets frequency labels.
-pub const HZ_AXIS_MIN_W: u16 = 20;
+/// The narrowest spectrum that gets level labels, in points.
+pub const DB_AXIS_MIN_W: f32 = 320.0;
+/// The narrowest spectrum that gets frequency labels, in points.
+pub const HZ_AXIS_MIN_W: f32 = 160.0;
+/// The width of the level labels (`-120`, `0 dB`), in figures.
+const DB_LABEL_FIGURES: f32 = 4.0;
 
 /// The frequency ticks: hertz, label and whether it is a decade (a
 /// decade wins over the others when labels would overlap).
@@ -73,35 +40,74 @@ const HZ_TICKS: [(f64, &str, bool); 14] = [
     (500_000.0, "500k", false),
 ];
 
-/// A label in cells.
+/// The labels' type as the window sets it, in points: the width of a
+/// figure (the faces' figures are all one width, and the labels are
+/// mostly figures) and a line's height.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Type {
+    /// A figure's width.
+    pub figure: f32,
+    /// A line's height.
+    pub line: f32,
+}
+
+impl Type {
+    /// `text`'s width in this type.
+    fn width(self, text: &str) -> f32 {
+        text.chars().count() as f32 * self.figure
+    }
+}
+
+/// What colour a label is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LabelTone {
+    /// An axis's tick.
+    Dim,
+    /// The Nyquist frequency, in the curve's colour.
+    Source,
+}
+
+/// An axis label.
 #[derive(Clone, Debug, PartialEq)]
 pub struct AxisLabel {
-    /// Its first cell.
-    pub x: u16,
-    /// Its row.
-    pub y: u16,
+    /// Its left edge, from the plot's left.
+    pub x: f32,
+    /// The middle of its line, from the plot's top.
+    pub y: f32,
+    /// Its width.
+    pub width: f32,
     /// The text.
     pub text: String,
     /// Its colour.
-    pub color: Color,
+    pub tone: LabelTone,
+}
+
+/// A rectangle in points, from the plot's top left.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Area {
+    /// Its left edge.
+    pub x: f32,
+    /// Its top edge.
+    pub y: f32,
+    /// Its width.
+    pub width: f32,
+    /// Its height.
+    pub height: f32,
 }
 
 /// A spectrum laid out for drawing.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Plot {
-    /// Where the curve and the grid go (right of the level labels).
-    pub area: Rect,
+    /// Where the curve and the grid go (right of the level labels, above
+    /// the frequency labels).
+    pub area: Area,
     /// The spectrum.
     pub spectrum: SpectrumFrame,
-    /// The zones colouring its frequency ranges.
-    pub zones: Vec<Zone>,
     /// The levels of the horizontal grid lines, in dB.
     pub db_lines: Vec<f32>,
     /// The frequencies of the vertical grid lines (the labelled ticks).
     pub hz_lines: Vec<f64>,
-    /// The zone boundaries inside the plot, with their zone's colour.
-    pub edges: Vec<(f64, [u8; 3])>,
-    /// The level labels, left of the plot.
+    /// The level labels, left of the curve.
     pub db_labels: Vec<AxisLabel>,
     /// The frequency labels, under it.
     pub hz_labels: Vec<AxisLabel>,
@@ -113,20 +119,14 @@ pub fn depth(db: f32) -> f64 {
     f64::from(((hi - db) / (hi - lo)).clamp(0.0, 1.0))
 }
 
-/// The unit a level falls in, of `n` from the top: `n` (below the plot)
-/// at the floor.
-pub fn unit_of(db: f32, n: usize) -> usize {
-    ((depth(db) * n as f64).floor() as usize).min(n)
-}
-
-/// The level ticks for a plot of `rows` rows: every 20, 40, 80 or 160 dB
-/// from 0 dB down (the smallest step that leaves two rows between
-/// labels), not the floor.
-pub fn db_ticks(rows: u16) -> Vec<f32> {
+/// The level ticks for a curve `lines` label lines high: every 20, 40,
+/// 80 or 160 dB from 0 dB down (the smallest step that leaves two lines
+/// between labels), not the floor.
+pub fn db_ticks(lines: f32) -> Vec<f32> {
     let range = RANGE_DB.1 - RANGE_DB.0;
     let step = [20.0, 40.0, 80.0]
         .into_iter()
-        .find(|step| f32::from(rows) * step / range >= 2.0)
+        .find(|step| lines * step / range >= 2.0)
         .unwrap_or(range);
     let mut out = Vec::new();
     let mut db = RANGE_DB.1;
@@ -145,125 +145,105 @@ fn db_label(db: f32) -> String {
     }
 }
 
-/// A zone edge's label: whole kilohertz, as `22k`.
-fn edge_label(hz: f64) -> String {
+/// The Nyquist frequency's label: whole kilohertz, as `22k`.
+fn nyquist_label(hz: f64) -> String {
     format!("{}k", (hz / 1000.0).floor())
 }
 
-/// The cell column a frequency falls in, of a plot `n` cells wide.
-fn column_of(spectrum: &SpectrumFrame, hz: f64, n: u16) -> u16 {
-    let x = spectrum.x_of(hz, usize::from(n)).floor();
-    x.clamp(0.0, f64::from(n.saturating_sub(1))) as u16
-}
-
 impl Plot {
-    /// Lays out `spectrum` in `area`, with the frequency labels in
-    /// `labels` (the row under it) when there is one. An empty spectrum
-    /// has no grid and no labels.
-    pub fn new(
-        area: Rect,
-        labels: Option<Rect>,
-        spectrum: &SpectrumFrame,
-        zones: Vec<Zone>,
-    ) -> Plot {
-        let has_db_axis = area.width >= DB_AXIS_MIN_W && area.height > 0;
-        let plot = if has_db_axis {
-            Rect {
-                x: area.x + DB_LABEL_W + 1,
-                width: area.width - DB_LABEL_W - 1,
-                ..area
+    /// Lays out `spectrum` in `width` × `height` points, its labels in
+    /// `ty`: the level labels at the left where it is wide enough, the
+    /// frequency labels along the bottom where it is wide and tall
+    /// enough (three lines). An empty spectrum has no grid and no labels.
+    pub fn new(width: f32, height: f32, spectrum: &SpectrumFrame, ty: Type) -> Plot {
+        let has_hz_axis = width >= HZ_AXIS_MIN_W && height >= 3.0 * ty.line;
+        let has_db_axis = width >= DB_AXIS_MIN_W && height > 0.0;
+        let db_w = DB_LABEL_FIGURES * ty.figure;
+        let x = if has_db_axis { db_w + ty.figure } else { 0.0 };
+        let area = Area {
+            x,
+            y: 0.0,
+            width: (width - x).max(0.0),
+            height: if has_hz_axis {
+                height - ty.line
+            } else {
+                height
             }
-        } else {
-            area
+            .max(0.0),
         };
         let mut out = Plot {
-            area: plot,
+            area,
             spectrum: spectrum.clone(),
-            zones,
             db_lines: Vec::new(),
             hz_lines: Vec::new(),
-            edges: Vec::new(),
             db_labels: Vec::new(),
             hz_labels: Vec::new(),
         };
-        if spectrum.is_empty() || plot.width == 0 || plot.height == 0 {
+        if spectrum.is_empty() || area.width <= 0.0 || area.height <= 0.0 {
             return out;
         }
-        let nyquist = spectrum.nyquist();
-        out.edges = out
-            .zones
-            .iter()
-            .filter(|z| z.up_to_hz < nyquist)
-            .map(|z| (z.up_to_hz, z.color))
-            .collect();
-        out.db_lines = db_ticks(plot.height);
+        out.db_lines = db_ticks(area.height / ty.line);
         if has_db_axis {
-            let rows = usize::from(plot.height);
+            let half = ty.line / 2.0;
             out.db_labels = out
                 .db_lines
                 .iter()
                 .map(|&db| {
                     let text = db_label(db);
+                    let w = ty.width(&text);
+                    let y = depth(db) as f32 * area.height;
                     AxisLabel {
-                        x: area.x + DB_LABEL_W - width(&text) as u16,
-                        y: plot.y + unit_of(db, rows).min(rows - 1) as u16,
+                        x: db_w - w,
+                        y: y.clamp(half, (area.height - half).max(half)),
+                        width: w,
                         text,
-                        color: DIM,
+                        tone: LabelTone::Dim,
                     }
                 })
                 .collect();
         }
-        if let Some(row) = labels.filter(|r| r.width >= HZ_AXIS_MIN_W && r.height > 0) {
-            out.lay_out_hz_labels(row);
+        if has_hz_axis {
+            out.lay_out_hz_labels(width, height - ty.line / 2.0, ty);
         }
         out
     }
 
-    /// The frequency labels: the zone edges first (from the top, so the
-    /// Nyquist frequency always shows), then the decades, then the rest,
-    /// each where it does not touch one already placed.
-    fn lay_out_hz_labels(&mut self, row: Rect) {
+    /// The frequency labels, their lines' middle at `y`: the Nyquist
+    /// frequency first (so it always shows), then the decades, then the
+    /// rest, each where it does not touch one already placed (a figure
+    /// apart), within `width`.
+    fn lay_out_hz_labels(&mut self, width: f32, y: f32, ty: Type) {
         let nyquist = self.spectrum.nyquist();
-        // (hz, text, colour, rank, is a tick)
-        let mut wanted: Vec<(f64, String, Color, u8, bool)> = self
-            .zones
-            .iter()
-            .map(|z| {
-                let hz = z.up_to_hz.min(nyquist);
-                (hz, edge_label(hz), Color::from(z.color), 0, false)
-            })
-            .collect();
+        // (hz, text, tone, rank, is a tick)
+        let mut wanted: Vec<(f64, String, LabelTone, u8, bool)> =
+            vec![(nyquist, nyquist_label(nyquist), LabelTone::Source, 0, false)];
         for (hz, text, decade) in HZ_TICKS {
-            if hz < LOW_HZ || hz >= nyquist {
-                continue;
+            if (LOW_HZ..nyquist).contains(&hz) {
+                wanted.push((
+                    hz,
+                    text.to_owned(),
+                    LabelTone::Dim,
+                    if decade { 1 } else { 2 },
+                    true,
+                ));
             }
-            if wanted.iter().any(|w| w.3 == 0 && (w.0 - hz).abs() < 1.0) {
-                continue;
-            }
-            wanted.push((hz, text.to_owned(), DIM, if decade { 1 } else { 2 }, true));
         }
-        wanted.sort_by(|a, b| {
-            let by_hz = if a.3 == 0 {
-                b.0.total_cmp(&a.0)
-            } else {
-                a.0.total_cmp(&b.0)
-            };
-            a.3.cmp(&b.3).then(by_hz)
-        });
-        let mut taken: Vec<(u16, u16)> = Vec::new();
-        for (hz, text, color, _, tick) in wanted {
-            let w = width(&text) as u16;
-            if w > row.width {
+        wanted.sort_by(|a, b| a.3.cmp(&b.3).then(a.0.total_cmp(&b.0)));
+        let mut taken: Vec<(f32, f32)> = Vec::new();
+        for (hz, text, tone, _, tick) in wanted {
+            let w = ty.width(&text);
+            if w > width {
                 continue;
             }
-            // The number is centred on its column (`20 Hz` starts there).
-            let number = text.split(' ').next().map_or(w, |n| width(n) as u16);
-            let column = self.area.x + column_of(&self.spectrum, hz, self.area.width);
-            let start = column
-                .saturating_sub(number.saturating_sub(1) / 2)
-                .clamp(row.x, row.right() - w);
+            // The number is centred on its frequency (`20 Hz` starts there).
+            let number = text.split(' ').next().map_or(w, |n| ty.width(n));
+            let at = self.x_of(hz);
+            let start = (at - number / 2.0).clamp(0.0, width - w);
             let end = start + w;
-            if taken.iter().any(|&(a, b)| start < b + 1 && a < end + 1) {
+            if taken
+                .iter()
+                .any(|&(a, b)| start < b + ty.figure && a < end + ty.figure)
+            {
                 continue;
             }
             taken.push((start, end));
@@ -272,27 +252,66 @@ impl Plot {
             }
             self.hz_labels.push(AxisLabel {
                 x: start,
-                y: row.y,
+                y,
+                width: w,
                 text,
-                color,
+                tone,
             });
         }
-        self.hz_labels.sort_by_key(|l| l.x);
+        self.hz_labels.sort_by(|a, b| a.x.total_cmp(&b.x));
         self.hz_lines.sort_by(f64::total_cmp);
     }
 
-    /// Writes the axis labels into `buf`.
-    pub fn draw_labels(&self, buf: &mut Buffer) {
-        for label in self.db_labels.iter().chain(&self.hz_labels) {
-            buf.set_string(label.x, label.y, &label.text, Style::new().fg(label.color));
+    /// Where `hz` is across the plot, from its left.
+    pub fn x_of(&self, hz: f64) -> f32 {
+        let w = f64::from(self.area.width);
+        self.area.x + (self.spectrum.x_of(hz, 1) * w) as f32
+    }
+
+    /// Where the level `db` is down the plot, from its top.
+    pub fn y_of(&self, db: f32) -> f32 {
+        self.area.y + depth(db) as f32 * self.area.height
+    }
+
+    /// The curve: a point every `step` points across the curve's area (at
+    /// the middle of each step), at its level. Silence is at the area's
+    /// bottom edge.
+    pub fn curve(&self, step: f32) -> Vec<(f32, f32)> {
+        if self.spectrum.is_empty() || self.area.width <= 0.0 {
+            return Vec::new();
         }
+        let n = (self.area.width / step.max(0.5)).round().max(2.0) as usize;
+        let w = self.area.width / n as f32;
+        self.spectrum
+            .levels(n)
+            .iter()
+            .enumerate()
+            .map(|(i, &db)| (self.area.x + (i as f32 + 0.5) * w, self.y_of(db)))
+            .collect()
     }
 }
 
-/// `color` faded towards the background: a zone boundary's colour.
-pub fn faint(color: [u8; 3]) -> [u8; 3] {
-    let m = |c: u8, d: u8| ((u16::from(c) + u16::from(d)) / 2) as u8;
-    [0, 1, 2].map(|i| m(color[i], BG[i]))
+/// The labels, as a line: the levels, then the frequencies, the Nyquist
+/// frequency's tone marked.
+impl fmt::Display for Plot {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let texts = |labels: &[AxisLabel]| {
+            labels
+                .iter()
+                .map(|l| match l.tone {
+                    LabelTone::Dim => l.text.clone(),
+                    LabelTone::Source => format!("[source] {}", l.text),
+                })
+                .collect::<Vec<_>>()
+                .join(" · ")
+        };
+        write!(
+            f,
+            "[spectrum] {} | {}",
+            texts(&self.db_labels),
+            texts(&self.hz_labels)
+        )
+    }
 }
 
 #[cfg(test)]
@@ -301,20 +320,20 @@ mod tests {
 
     #[test]
     fn ticks_fit_the_height() {
-        assert_eq!(db_ticks(9), vec![0.0, -40.0, -80.0, -120.0]);
-        assert_eq!(db_ticks(6), vec![0.0, -80.0]);
-        assert_eq!(db_ticks(17).len(), 8);
-        assert_eq!(db_ticks(3), vec![0.0]);
+        assert_eq!(db_ticks(9.0), vec![0.0, -40.0, -80.0, -120.0]);
+        assert_eq!(db_ticks(6.0), vec![0.0, -80.0]);
+        assert_eq!(db_ticks(17.0).len(), 8);
+        assert_eq!(db_ticks(3.0), vec![0.0]);
         assert_eq!(db_label(0.0), "0 dB");
         assert_eq!(db_label(-120.0), "-120");
     }
 
     #[test]
-    fn the_floor_is_below_the_plot() {
-        assert_eq!(unit_of(RANGE_DB.0, 36), 36);
-        assert_eq!(unit_of(-200.0, 36), 36);
-        assert_eq!(unit_of(0.0, 36), 0);
-        assert_eq!(unit_of(6.0, 36), 0);
-        assert_eq!(unit_of(-80.0, 36), 18);
+    fn the_floor_is_the_bottom_edge() {
+        assert_eq!(depth(RANGE_DB.0), 1.0);
+        assert_eq!(depth(-200.0), 1.0);
+        assert_eq!(depth(0.0), 0.0);
+        assert_eq!(depth(6.0), 0.0);
+        assert_eq!(depth(-80.0), 0.5);
     }
 }

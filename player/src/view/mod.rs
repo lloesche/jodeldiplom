@@ -1,19 +1,19 @@
 //! The ratatui widgets that draw the [`State`] into cells, which the window
 //! rasterises, in the player's colours ([`palette`]).
 //!
-//! Pictures (the cover, the spectrum, the lanes' waveforms, the bar
-//! numbers, Karaoke mode's picture) go through [`Pictures`]: the window
-//! leaves their cells empty and paints pixels there after the frame is
-//! drawn. The spectrum's axis labels are cells ([`plot`]).
+//! Pictures (the cover, the lanes' waveforms, the bar numbers, Karaoke
+//! mode's picture) go through [`Pictures`]: the window leaves their cells
+//! empty and paints pixels there after the frame is drawn.
 //!
 //! Each part of the screen has its widgets: the list pane ([`list`]), the
 //! command palette over it ([`command_palette`]), what is playing ([`now`]:
-//! the right column and Now playing), the settings ([`settings`]), the
-//! keys ([`help`]) and the bottom bar ([`bottom`]). They are laid out on a
-//! grid of cells ([`layout`]), with text measured in cells ([`cells`]),
-//! and take the mouse there ([`mouse`]).
+//! the right column and Now playing), the settings ([`settings`]) and the
+//! keys ([`help`]). They are laid out on a grid of cells ([`layout`]),
+//! with text measured in cells ([`cells`]), and take the mouse there
+//! ([`mouse`]). The bottom bar's cells are left to the window, which draws
+//! it from its model ([`bottom`], the spectrum's [`plot`]).
 
-mod bottom;
+pub mod bottom;
 pub mod bubbles;
 pub mod cells;
 mod command_palette;
@@ -31,8 +31,6 @@ pub mod setup;
 pub mod sync;
 pub mod transition;
 
-pub use plot::Plot;
-
 use ratatui::buffer::Buffer;
 use ratatui::layout::{HorizontalAlignment, Rect};
 use ratatui::style::{Modifier, Style};
@@ -41,7 +39,6 @@ use ratatui::widgets::{Block, BorderType, Paragraph, Widget};
 use ratatui::Frame;
 
 use crate::core::State;
-use crate::spectrum::SpectrumFrame;
 use crate::view::cells::width;
 use crate::view::layout::{Grid, Layout};
 
@@ -81,9 +78,6 @@ pub trait Pictures {
     /// pane's top): the cover starts under that line, half a cell down,
     /// at the left; otherwise it is centred.
     fn cover(&mut self, frame: &mut Frame, area: Rect, below_line: bool);
-    /// The spectrum's curve and grid into `plot.area` (its labels are
-    /// drawn as cells by the caller).
-    fn spectrum(&mut self, frame: &mut Frame, plot: &Plot);
     /// Whether text can go over the cover just drawn (over a cover, not
     /// over the placeholder).
     fn text_over_cover(&self) -> bool {
@@ -108,8 +102,6 @@ pub struct Scene<'a> {
     pub state: &'a State,
     /// The grid it is laid out on.
     pub grid: Grid,
-    /// The spectrum heard now.
-    pub spectrum: &'a SpectrumFrame,
     /// The pointer's cell, if it is in the window: the title, artist and
     /// album links are underlined while it is over them.
     pub pointer: Option<(u16, u16)>,
@@ -153,9 +145,6 @@ pub fn draw(frame: &mut Frame, scene: &Scene, pictures: &mut dyn Pictures) {
         Layout::Settings(s) => settings::draw(frame, scene.state, s),
         Layout::Help(h) => help::draw(frame, scene.state, h),
         Layout::Karaoke(k) => karaoke::draw_mode(frame, scene, k, pictures),
-    }
-    if let Some(bottom) = layout.bottom() {
-        bottom::draw(frame, scene, bottom, pictures);
     }
 }
 
@@ -259,10 +248,6 @@ pub fn blank(frame: &mut Frame, area: Rect) {
 impl Pictures for CellPictures {
     fn cover(&mut self, frame: &mut Frame, area: Rect, _below_line: bool) {
         placeholder(frame, area);
-    }
-
-    fn spectrum(&mut self, frame: &mut Frame, plot: &Plot) {
-        blank(frame, plot.area);
     }
 
     fn wave(&mut self, frame: &mut Frame, plot: &lanes::WavePlot) {

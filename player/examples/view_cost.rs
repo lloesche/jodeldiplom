@@ -7,8 +7,9 @@
 //! window (the old canvas drawn: not timed). For each screen, each part's
 //! median and worst, and the same of the frames' totals.
 //!
-//! Only the Mixer tab for now: the other screens are the old canvas, one
-//! widget, until they are ported.
+//! The main screen (the browser, its bottom bar native: the spectrum, the
+//! seek bar and the buttons) and the Mixer tab; the rest of each screen is
+//! the old canvas, one widget, until it is ported.
 //!
 //! ```text
 //! cargo run --release -p jodeldiplom --example view_cost -- [FRAMES] [--budget MEDIAN_MS WORST_MS]
@@ -28,7 +29,7 @@ use std::time::{Duration, Instant};
 
 use iced::{window, Size};
 use jodel_output::SimClock;
-use jodeldiplom::app::{App, AppOptions, Output};
+use jodeldiplom::app::{AppOptions, Output};
 use jodeldiplom::core::keymap::Op;
 use jodeldiplom::core::{Action, Side, State};
 use jodeldiplom::gui::window::{Gui, Message};
@@ -72,7 +73,8 @@ fn main() {
     // No microphone of this machine opened on the Mixer tab.
     options.mic = Arc::new(|_| Err("no microphone".into()));
     options.mics = Arc::new(|| Ok(Vec::new()));
-    let mut app = App::new(options);
+    // Fitted as the window would tell it, so the rows shown get their details.
+    let mut app = common::fitted_app(options, 120, 36);
     let listed = common::wait_for(&mut app, Duration::from_secs(10), |app| {
         !app.state.browser.loading && !app.state.details.is_empty()
     });
@@ -84,15 +86,18 @@ fn main() {
     });
     assert!(playing, "the track did not start");
 
-    let screens: Vec<(&str, State)> = vec![("mixer", {
-        // The player at 96 kHz, a preview crossfading over it, the
-        // microphone's strip selected and hearing (as the shots).
-        let mut d = app.state.clone();
-        d.side = Side::Mixer;
-        d.desk.selected = jodeldiplom::core::desk::Channel::Mic;
-        common::fill_desk(&mut d, 96_000);
-        d
-    })];
+    let screens: Vec<(&str, State)> = vec![
+        ("main", app.state.clone()),
+        ("mixer", {
+            // The player at 96 kHz, a preview crossfading over it, the
+            // microphone's strip selected and hearing (as the shots).
+            let mut d = app.state.clone();
+            d.side = Side::Mixer;
+            d.desk.selected = jodeldiplom::core::desk::Channel::Mic;
+            common::fill_desk(&mut d, 96_000);
+            d
+        }),
+    ];
     let mut gui = Gui::headless(app);
     let mut headless = Headless::new();
     let id = window::Id::unique();

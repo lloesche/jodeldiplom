@@ -110,6 +110,8 @@ pub mod height {
     pub const DENSE_ROW: f32 = 28.0;
     /// A button.
     pub const CONTROL: f32 = 34.0;
+    /// A chip.
+    pub const CHIP: f32 = 26.0;
     /// A progress bar.
     pub const BAR: f32 = 6.0;
     /// A slider's or the seek bar's track.

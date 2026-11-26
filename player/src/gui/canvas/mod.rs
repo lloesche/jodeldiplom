@@ -1,18 +1,17 @@
 //! The window's drawing surface without the window: the shared ratatui
 //! widgets rasterised into an RGB pixmap ([`PixelBackend`]), and the
 //! pictures painted into it at their cell rects ([`pictures`]): the
-//! spectrum ([`spectrum`]), the Transition lanes ([`lane`]) and their bar
-//! numbers ([`ruler`]), and Karaoke mode's picture ([`karaoke`]). Lanes
-//! that follow the playhead go into a layer of tiles the window scrolls by
-//! itself ([`strip`]). The covers are the window's own widgets over the
-//! cells left for them ([`Canvas::covers`]). Used by the window and,
-//! headless, by the tests and the screenshots.
+//! Transition lanes ([`lane`]) and their bar numbers ([`ruler`]), and
+//! Karaoke mode's picture ([`karaoke`]). Lanes that follow the playhead go
+//! into a layer of tiles the window scrolls by itself ([`strip`]). The
+//! covers are the window's own widgets over the cells left for them
+//! ([`Canvas::covers`]). Used by the window and, headless, by the tests
+//! and the screenshots.
 
 mod karaoke;
 mod lane;
 mod pictures;
 mod ruler;
-mod spectrum;
 mod strip;
 
 pub use strip::{LayerFrame, MOST_SLOTS};
@@ -29,7 +28,7 @@ use crate::art::Art;
 use crate::core::State;
 use crate::view::karaoke::KaraokePicture;
 use crate::view::layout::Grid;
-use crate::view::{self, palette, Plot, Scene};
+use crate::view::{self, palette, Scene};
 use lane::{KeptWave, Melodies};
 use pictures::{Paint, PixelPictures};
 use ruler::KeptRuler;
@@ -49,7 +48,7 @@ pub fn font_px(scale: f64) -> f32 {
 pub struct DrawTimes {
     /// The widgets drawn and the changed cells rasterised.
     pub widgets: std::time::Duration,
-    /// The spectrum and the Transition lanes painted, the covers placed.
+    /// The Transition lanes painted, the covers placed.
     pub pictures: std::time::Duration,
 }
 
@@ -65,8 +64,6 @@ pub struct Canvas {
     waves: Vec<KeptWave>,
     /// The Transition blocks' bar numbers in the pixmap now.
     rulers: Vec<KeptRuler>,
-    /// The spectrum in the pixmap now.
-    spectrum: Option<Plot>,
     /// Karaoke mode's backdrop, the text drawn large (by face), the picture now.
     backdrop: Option<super::karaoke::Backdrop>,
     faces: Faces,
@@ -183,7 +180,6 @@ impl Canvas {
             covers: Vec::new(),
             waves: Vec::new(),
             rulers: Vec::new(),
-            spectrum: None,
             backdrop: None,
             faces: Faces::default(),
             karaoke: None,
@@ -333,29 +329,12 @@ impl Canvas {
         let before = std::mem::take(&mut self.covers);
         let mut waves = std::mem::take(&mut self.waves);
         let mut rulers = std::mem::take(&mut self.rulers);
-        let spectrum = self.spectrum.take();
         let karaoke = self.karaoke.take();
         let mut following: Vec<(Part, PixelRect)> = Vec::new();
         for paint in &pictures.paints {
             match paint {
                 Paint::Cover(rect, below_line) => {
                     self.covers.push(self.cover_spot(*rect, *below_line))
-                }
-                Paint::Spectrum(plot) => {
-                    let kept = spectrum.as_ref() == Some(plot)
-                        && !self.terminal.backend().damage.touches(plot.area);
-                    if !kept {
-                        let rect = self.pixel_rect(plot.area);
-                        let scale = self.scale();
-                        spectrum::paint(
-                            &mut self.terminal.backend_mut().target(),
-                            rect,
-                            scale,
-                            plot,
-                        );
-                        frame.add(rect);
-                    }
-                    self.spectrum = Some(plot.clone());
                 }
                 Paint::Caption(cover, caption) => {
                     let caption = self.caption(*caption, &before);

@@ -1985,18 +1985,10 @@ fn stems_switch_from_keys_and_buttons_with_a_gpu() {
     );
     assert!(state.message.as_ref().unwrap().text.contains("no GPU"));
     op(&mut state, Op::ToggleDrums);
-    let stem_buttons = |state: &State, grid: Grid| {
-        let Layout::Main(m) = layout::compute(state, grid) else {
-            panic!()
-        };
-        m.bottom
-            .buttons
-            .iter()
-            .filter(|b| b.op.stem().is_some())
-            .cloned()
-            .collect::<Vec<_>>()
-    };
-    assert!(stem_buttons(&state, LISTED).is_empty());
+    // The bottom bar's switches, at a width in points.
+    let stem_buttons =
+        |state: &State, width: f32| jodeldiplom::view::bottom::Bar::of(state, width).stems;
+    assert!(stem_buttons(&state, 1120.0).is_empty());
 
     state.gpu = Gpu::Present("a GPU".into());
     // The vocals off: their strip muted at once, nothing sent to the engine
@@ -2014,33 +2006,20 @@ fn stems_switch_from_keys_and_buttons_with_a_gpu() {
         .unwrap()
         .text
         .contains("the stems are heard, not the file"));
-    // Four buttons in the order people name them, by initial at 87
-    // columns; a click switches one.
-    let grid = Grid::new(87, 30);
-    let fit = layout::fit(&state, grid);
-    update(&mut state, Action::Fit(fit));
-    let buttons = stem_buttons(&state, grid);
-    let labels: Vec<&str> = buttons.iter().map(|b| b.label.trim()).collect();
+    // Four buttons in the order people name them, by initial in a bar 700
+    // points wide; one switches its stem (the bar's clicks are the
+    // window's: `the_bars_buttons_are_hit`), and shows it off.
+    let buttons = stem_buttons(&state, 700.0);
+    let labels: Vec<&str> = buttons.iter().map(|b| b.label.as_str()).collect();
     assert_eq!(labels, ["D", "B", "V", "O"]);
-    let drums = &buttons[0];
-    let click = jodeldiplom::view::mouse::MouseInput {
-        kind: jodeldiplom::view::mouse::MouseKind::Down(
-            jodeldiplom::view::mouse::MouseButton::Left,
-        ),
-        col: drums.rect.x + 1,
-        row: drums.rect.y,
-    };
-    let action = jodeldiplom::view::mouse::action(&state, grid, click).unwrap();
-    assert!(matches!(action, Action::Op(Op::ToggleDrums)));
-    update(&mut state, action);
+    assert_eq!(buttons[0].op, Op::ToggleDrums);
+    op(&mut state, buttons[0].op);
     assert!(jodeldiplom::core::stems::is_off(&state, Stem::Drums));
+    assert!(stem_buttons(&state, 700.0)[0].off);
     // By name where there is room.
-    let grid = Grid::new(140, 30);
-    let fit = layout::fit(&state, grid);
-    update(&mut state, Action::Fit(fit));
-    let named: Vec<String> = stem_buttons(&state, grid)
+    let named: Vec<String> = stem_buttons(&state, 1120.0)
         .iter()
-        .map(|b| b.label.trim().to_owned())
+        .map(|b| b.label.clone())
         .collect();
     assert_eq!(named, ["drums", "bass", "vocals", "other"]);
     // All on: every stem's strip as it starts (a fader moved too), the file

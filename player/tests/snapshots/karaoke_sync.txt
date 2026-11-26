@@ -24,7 +24,6 @@
 │                                           Words   not timed: the speech model is not in this build (make puts it the │
 │                                                                                                                      │
 │                                           Here and in the mode the voice plays at its level, the rest as it is.      │
-│                                           Each song waits for START, then counts in 3, 2, 1, a second each; again af │
 ╰ say “ta” with each click · esc cancel ───────────────────────────────────────────────────────────────────────────────╯
 
 
@@ -36,5 +35,20 @@
 
 
 
-     1:23 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━●───────────────────────────────────────────────────────────────── 4:05
-  ◀◀   ▮▮   ▶▶   ■   drums   bass   vocals   other     playing  ·  : commands  / filter  ? keys    ≡ settings   ? help
+
+
+
+[time] 1:23
+[seek] 34 %
+[time] 4:05
+[icon] previous
+[icon] pause
+[icon] next
+[icon] stop
+[chip] drums
+[chip] bass
+[chip] vocals
+[chip] other
+[dim] playing  ·  : commands  / filter  ? keys
+[button] Settings
+[button] Help

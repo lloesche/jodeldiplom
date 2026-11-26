@@ -162,11 +162,9 @@ fn drawn(state: &mut State) -> (Canvas, Option<StageFrame>) {
     canvas.set_gpu(true);
     let grid = canvas.fit(1600, 900);
     state.fit = jodeldiplom::view::layout::fit(state, grid);
-    let spectrum = jodeldiplom::spectrum::SpectrumFrame::default();
     let scene = jodeldiplom::view::Scene {
         state,
         grid,
-        spectrum: &spectrum,
         pointer: None,
         heard: 0.0,
     };

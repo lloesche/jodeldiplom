@@ -8,7 +8,7 @@ use ratatui::Frame;
 use crate::view::karaoke::KaraokePicture;
 use crate::view::lanes::WavePlot;
 use crate::view::transition::RulerPlot;
-use crate::view::{self, Pictures, Plot};
+use crate::view::{self, Pictures};
 
 /// A picture to paint after the frame, or to place for the window.
 #[derive(Clone)]
@@ -16,7 +16,6 @@ pub(super) enum Paint {
     /// A cover (the window draws it), and whether it starts under a line
     /// through its first row.
     Cover(Rect, bool),
-    Spectrum(Plot),
     /// Text over a cover: the cover's rect and the text's.
     Caption(Rect, Rect),
     /// A lane of the Transition tab.
@@ -32,7 +31,6 @@ impl Paint {
     pub(super) fn rect(&self) -> Rect {
         match self {
             Paint::Cover(r, _) | Paint::Caption(_, r) => *r,
-            Paint::Spectrum(plot) => plot.area,
             Paint::Wave(plot) => plot.area,
             Paint::Ruler(plot) => plot.area,
             Paint::Karaoke(picture) => picture.area,
@@ -56,11 +54,6 @@ impl Pictures for PixelPictures {
         } else {
             view::placeholder(frame, area);
         }
-    }
-
-    fn spectrum(&mut self, frame: &mut Frame, plot: &Plot) {
-        view::blank(frame, plot.area);
-        self.paints.push(Paint::Spectrum(plot.clone()));
     }
 
     fn wave(&mut self, frame: &mut Frame, plot: &WavePlot) {

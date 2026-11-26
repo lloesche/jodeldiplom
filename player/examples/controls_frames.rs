@@ -29,7 +29,6 @@ use jodeldiplom::gui::present::Offscreen;
 use jodeldiplom::gui::stage::Tint;
 use jodeldiplom::gui::{font_px, Canvas};
 use jodeldiplom::lyrics::Answer;
-use jodeldiplom::spectrum::SpectrumFrame;
 use jodeldiplom::view::layout::{self, Grid};
 use jodeldiplom::view::{mouse, Scene};
 
@@ -253,11 +252,9 @@ fn main() {
             let grid = canvas.fit(w, h);
             let mut state = make(grid);
             controls(&mut state, grid, quarters);
-            let spectrum = SpectrumFrame::default();
             let scene = Scene {
                 state: &state,
                 grid,
-                spectrum: &spectrum,
                 pointer: None,
                 heard,
             };

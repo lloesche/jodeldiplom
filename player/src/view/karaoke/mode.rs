@@ -6,8 +6,10 @@
 //! and the keys, fading in and out over their bar. START is no cell but
 //! the stage's pill ([`KaraokePicture::start`]).
 
-use ratatui::layout::Rect;
+use ratatui::layout::{HorizontalAlignment, Rect};
 use ratatui::style::Style;
+use ratatui::text::Span;
+use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 
 use super::super::colors::*;
@@ -17,6 +19,7 @@ use crate::core::karaoke;
 use crate::core::singing::{notes_of, LineNotes, Note, Singing};
 use crate::core::text;
 use crate::core::State;
+use crate::view::bottom::Seek;
 use crate::view::layout::KaraokeLayout;
 
 /// START's pill on the stage, while the mode waits for it.
@@ -101,7 +104,7 @@ pub fn draw_mode(
     let Some(c) = &layout.controls else {
         return;
     };
-    super::super::bottom::draw_progress(frame, state, c.elapsed, c.seek, c.total);
+    draw_seek(frame, &Seek::of(state), (c.elapsed, c.seek, c.total));
     let buf = frame.buffer_mut();
     for s in &c.sliders {
         slider(buf, state, s, true);
@@ -114,6 +117,37 @@ pub fn draw_mode(
         keep_start(hint, max),
         Style::new().fg(DIM),
     );
+}
+
+/// The time heard (right-aligned in `elapsed`), the seek bar filling in
+/// the accent with its head, and the length, in cells.
+fn draw_seek(frame: &mut Frame, seek: &Seek, (elapsed, bar, total): (Rect, Rect, Rect)) {
+    let time_style = Style::new().fg(if seek.track { TEXT } else { BORDER });
+    frame.render_widget(
+        Paragraph::new(Span::styled(seek.elapsed.clone(), time_style))
+            .alignment(HorizontalAlignment::Right),
+        elapsed,
+    );
+    frame.render_widget(
+        Paragraph::new(Span::styled(seek.total.clone(), time_style)),
+        total,
+    );
+    let filled = (seek.share * f64::from(bar.width)).round() as u16;
+    let buf = frame.buffer_mut();
+    for i in 0..bar.width {
+        let (symbol, style) = if i < filled {
+            ("━", Style::new().fg(ACCENT))
+        } else {
+            ("─", Style::new().fg(TRACK))
+        };
+        buf[(bar.x + i, bar.y)].set_symbol(symbol).set_style(style);
+    }
+    if seek.track && bar.width > 0 {
+        let head = filled.min(bar.width - 1);
+        buf[(bar.x + head, bar.y)]
+            .set_symbol("●")
+            .set_style(Style::new().fg(ACCENT));
+    }
 }
 
 /// What a lyric line is to the one being sung.

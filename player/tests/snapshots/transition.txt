@@ -34,7 +34,21 @@
 │                                                                                                                      │
 │                                                                                                                      │
 │                                                                                                                      │
-│                                                                                                                      │
 ╰ 16 bars · ←→ bars · 1-9 jump · enter cue · p preset · r pairing · g go · e edit · ? keys ───────────── z fit lyrics ─╯
-     1:23 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━●───────────────────────────────────────────────────────────────── 4:05
-  ◀◀   ▮▮   ▶▶   ■   drums   bass   vocals   other     playing  ·  : commands  / filter  ? keys    ≡ settings   ? help
+
+
+
+[time] 1:23
+[seek] 34 %
+[time] 4:05
+[icon] previous
+[icon] pause
+[icon] next
+[icon] stop
+[chip] drums
+[chip] bass
+[chip] vocals
+[chip] other
+[dim] playing  ·  : commands  / filter  ? keys
+[button] Settings
+[button] Help

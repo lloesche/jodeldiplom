@@ -1,7 +1,10 @@
 //! The screens drawn into a ratatui test buffer, the pictures' cells blank
-//! as the window leaves them for its pixels ([`CellPictures`]), compared
-//! with the snapshots in `tests/snapshots/` (set `UPDATE_SNAPSHOTS=1` to
-//! rewrite them after an intended change).
+//! as the window leaves them for its pixels ([`CellPictures`]), with the
+//! bottom bar's outline after them where the screen has one (the window
+//! draws the bar from its model), compared with the snapshots in
+//! `tests/snapshots/` (set `UPDATE_SNAPSHOTS=1` to rewrite them after an
+//! intended change). The spectrum's model in points: its labels and where
+//! a tone peaks.
 
 mod common;
 #[path = "common/setup.rs"]
@@ -14,8 +17,10 @@ use jodeldiplom::core::keymap::Op;
 use jodeldiplom::core::{update, Action, DeviceChoice, Screen, Side, State};
 use jodeldiplom::gui::mixer::said;
 use jodeldiplom::spectrum::{sine, tap_frames_for, Analyzer, SpectrumFrame};
+use jodeldiplom::view::bottom::Bar;
 use jodeldiplom::view::lanes::WavePlot;
-use jodeldiplom::view::layout::{self, Grid, Layout};
+use jodeldiplom::view::layout::{self, Bottom, Grid, Layout};
+use jodeldiplom::view::plot::{LabelTone, Plot};
 use jodeldiplom::view::{self, CellPictures, Pictures, Scene};
 use ratatui::backend::TestBackend;
 use ratatui::layout::Rect;
@@ -41,21 +46,44 @@ fn draw(state: &State, grid: Grid) -> String {
     draw_heard(state, grid, 0.0)
 }
 
+/// A cell's size in points, as the window has it with its own font (the
+/// tests' fallback font measures otherwise).
+fn cell() -> (f32, f32) {
+    (8.0, 19.0)
+}
+
+/// The bottom bar's outline as the window draws it over `place` on
+/// `grid`: its spectrum's labels where it has one, then the bar's model.
+fn bar_outline(state: &State, grid: Grid, place: Bottom) -> String {
+    let (cw, ch) = cell();
+    let width = f32::from(grid.cols) * cw;
+    let mut out = String::new();
+    if place.spectrum > 0 {
+        let size = iced::Size::new(width, f32::from(place.spectrum) * ch);
+        let plot = jodeldiplom::gui::widgets::spectrum::plot(size, &spectrum());
+        out.push_str(&format!("{plot}\n"));
+    }
+    out.push_str(&Bar::of(state, width).to_string());
+    out
+}
+
 /// [`draw`] with `heard` seconds of the playing track heard.
 fn draw_heard(state: &State, grid: Grid, heard: f64) -> String {
     let mut terminal = Terminal::new(TestBackend::new(grid.cols, grid.rows)).unwrap();
-    let spectrum = spectrum();
     let scene = Scene {
         state,
         grid,
-        spectrum: &spectrum,
         pointer: None,
         heard,
     };
     terminal
         .draw(|frame| view::draw(frame, &scene, &mut CellPictures))
         .unwrap();
-    view::buffer_text(terminal.backend().buffer())
+    let mut text = view::buffer_text(terminal.backend().buffer());
+    if let Some(&place) = layout::compute(state, grid).bottom() {
+        text.push_str(&bar_outline(state, grid, place));
+    }
+    text
 }
 
 fn snapshot(name: &str, text: &str) {
@@ -111,8 +139,9 @@ fn main_screen() {
             "♩ 128 BPM",
             "1:23",
             "4:05",
-            "≡ settings",
-            "? help",
+            "[icon] pause",
+            "[button] Settings",
+            "[button] Help",
             "1k",
         ],
     );
@@ -299,7 +328,10 @@ fn narrow_and_tiny_screens() {
     let state = common::playing_state(64, 22);
     let text = draw(&state, Grid::new(64, 22));
     has(&text, &["▶ Morning Light — The Ramps", "○ PCM"]);
-    assert!(!text.contains("≡ settings"), "short buttons when narrow");
+    assert!(
+        text.contains("[icon] Settings") && !text.contains("[button] Settings"),
+        "icons alone when narrow:\n{text}"
+    );
     snapshot("narrow", &text);
     let state = common::playing_state(30, 10);
     has(
@@ -308,85 +340,98 @@ fn narrow_and_tiny_screens() {
     );
 }
 
-/// The spectrum's rows on the main screen (the plot and the frequency
-/// labels, above the progress bar and the transport).
-fn spectrum_rows(text: &str, plot_rows: usize) -> Vec<String> {
-    let lines: Vec<&str> = text.lines().collect();
-    let end = lines.len() - 2;
-    lines[end - plot_rows - 1..end]
-        .iter()
-        .map(|l| (*l).to_owned())
-        .collect()
+/// The spectrum's model at `width` × `height` points, a 1 kHz tone (and a
+/// faint 60 kHz one) heard at 176.4 kHz, labelled as the window does.
+fn plot(width: f32, height: f32) -> Plot {
+    jodeldiplom::gui::widgets::spectrum::plot(iced::Size::new(width, height), &spectrum())
 }
 
+/// The spectrum is labelled round its curve: levels on the left every 40
+/// dB on a plot of nine lines, the unit on top; frequencies under it with
+/// units, the Nyquist frequency in the curve's colour; and a 1 kHz tone
+/// peaks at the "1k" label.
 #[test]
-fn the_spectrum_has_labelled_axes_around_the_plot_the_window_paints() {
-    let state = common::playing_state(120, 36);
-    let text = draw(&state, Grid::new(120, 36));
-    let rows = spectrum_rows(&text, 9);
-    // Levels on the left, every 40 dB on nine rows, the unit on top (the
-    // plot's cells after them blank).
-    assert_eq!(rows[0], " 0 dB");
-    assert_eq!(rows[2], "  -40");
-    assert_eq!(rows[4], "  -80");
-    assert_eq!(rows[6], " -120");
-    // Frequencies under it, with units.
-    let labels = &rows[9];
-    let words: Vec<&str> = labels.split_whitespace().collect();
+fn the_spectrum_is_labelled_and_a_tone_peaks_at_its_label() {
+    let (cw, ch) = cell();
+    let p = plot(120.0 * cw, 10.0 * ch);
+    let texts = |labels: &[jodeldiplom::view::plot::AxisLabel]| -> Vec<String> {
+        labels.iter().map(|l| l.text.clone()).collect()
+    };
+    assert_eq!(texts(&p.db_labels), ["0 dB", "-40", "-80", "-120"]);
     assert_eq!(
-        words,
-        ["20", "Hz", "50", "100", "200", "500", "1k", "2k", "5k", "10k", "20k", "50k", "88k"],
-        "{labels}"
+        texts(&p.hz_labels),
+        ["20 Hz", "50", "100", "200", "500", "1k", "2k", "5k", "10k", "20k", "50k", "88k"]
     );
-    // The plot's cells are left blank for the window's pixels.
-    for row in &rows[..9] {
-        let plot: String = row.chars().skip(6).collect();
-        assert!(plot.trim().is_empty(), "{row}");
+    let nyquist = p.hz_labels.last().unwrap();
+    assert_eq!(nyquist.tone, LabelTone::Source);
+    // The labels are under the curve, the levels left of it.
+    for l in &p.hz_labels {
+        assert!(l.y > p.area.y + p.area.height, "{l:?}");
     }
+    for l in &p.db_labels {
+        assert!(l.x + l.width <= p.area.x, "{l:?}");
+    }
+    // The tone's peak, the curve's highest point, is over its label.
+    let curve = p.curve(3.0);
+    let peak = curve
+        .iter()
+        .min_by(|a, b| a.1.total_cmp(&b.1))
+        .copied()
+        .unwrap();
+    let k = p.hz_labels.iter().find(|l| l.text == "1k").unwrap();
+    assert!(
+        (k.x..k.x + k.width).contains(&peak.0),
+        "the peak at {peak:?}, 1k at {k:?}"
+    );
+    assert!(peak.1 < p.area.y + p.area.height / 2.0, "{peak:?}");
 }
 
+/// However wide, the labels fit and never touch: the Nyquist frequency
+/// and the decades always there, the levels only where there is room.
 #[test]
 fn the_axis_labels_fit_and_never_overlap() {
+    let (cw, ch) = cell();
     for cols in [40u16, 52, 64, 80, 100, 160, 240] {
-        let state = common::playing_state(cols, 36);
-        let text = draw(&state, Grid::new(cols, 36));
-        let rows = spectrum_rows(&text, 9);
-        let labels = &rows[9];
-        assert!(labels.contains("20 Hz"), "{cols}: {labels}");
-        let words: Vec<&str> = labels.split_whitespace().collect();
-        for word in &words[2..] {
+        let width = f32::from(cols) * cw;
+        let p = plot(width, 10.0 * ch);
+        let words: Vec<&str> = p.hz_labels.iter().map(|l| l.text.as_str()).collect();
+        assert_eq!(words[0], "20 Hz", "{cols}: {words:?}");
+        for word in &words[1..] {
             assert!(
                 word.ends_with('k') || word.parse::<u32>().is_ok(),
-                "{cols}: {word:?} in {labels}"
+                "{cols}: {word:?}"
             );
         }
-        assert!(words.contains(&"88k"), "{cols}: the Nyquist edge wins");
+        assert!(words.contains(&"88k"), "{cols}: the Nyquist frequency wins");
         assert!(words.contains(&"1k"), "{cols}: decades win");
+        for pair in p.hz_labels.windows(2) {
+            assert!(pair[0].x + pair[0].width < pair[1].x, "{cols}: {pair:?}");
+        }
+        for l in &p.hz_labels {
+            assert!(l.x >= 0.0 && l.x + l.width <= width, "{cols}: {l:?}");
+        }
         // Level labels only where there is room.
-        assert_eq!(rows[0].contains("0 dB"), cols >= 42, "{cols}: {}", rows[0]);
+        assert_eq!(
+            !p.db_labels.is_empty(),
+            width >= jodeldiplom::view::plot::DB_AXIS_MIN_W + 24.0,
+            "{cols}"
+        );
     }
 }
 
+/// Before anything is heard there is nothing to draw: no curve, no grid,
+/// no labels.
 #[test]
 fn an_empty_spectrum_draws_nothing() {
-    let state = common::playing_state(120, 36);
-    let grid = Grid::new(120, 36);
-    let mut terminal = Terminal::new(TestBackend::new(grid.cols, grid.rows)).unwrap();
-    let spectrum = SpectrumFrame::default();
-    let scene = Scene {
-        state: &state,
-        grid,
-        spectrum: &spectrum,
-        pointer: None,
-        heard: 0.0,
-    };
-    terminal
-        .draw(|frame| view::draw(frame, &scene, &mut CellPictures))
-        .unwrap();
-    let text = view::buffer_text(terminal.backend().buffer());
-    for row in spectrum_rows(&text, 9) {
-        assert!(row.trim().is_empty(), "{row:?}");
-    }
+    let p = Plot::new(
+        960.0,
+        190.0,
+        &SpectrumFrame::default(),
+        jodeldiplom::gui::widgets::spectrum::TYPE,
+    );
+    assert!(p.curve(3.0).is_empty());
+    assert!(p.db_lines.is_empty() && p.hz_lines.is_empty());
+    assert!(p.db_labels.is_empty() && p.hz_labels.is_empty());
 }
 
 #[test]
@@ -416,7 +461,6 @@ fn the_right_column_keeps_its_width_between_tracks() {
 fn a_frame_of_another_size_than_the_state_is_drawn_blank() {
     // The window was resized and the state has not heard of it yet: the
     // layout (for 120 x 36) would not fit, so nothing is drawn until it has.
-    let spectrum = spectrum();
     for screen in [Screen::Main, Screen::NowPlaying, Screen::Settings] {
         let mut state = common::playing_state(120, 36);
         state.screen = screen;
@@ -425,7 +469,6 @@ fn a_frame_of_another_size_than_the_state_is_drawn_blank() {
             let scene = Scene {
                 state: &state,
                 grid: Grid::new(120, 36),
-                spectrum: &spectrum,
                 pointer: None,
                 heard: 0.0,
             };
@@ -464,8 +507,8 @@ fn the_karaoke_tab_shows_the_voice_with_every_word() {
         panic!()
     };
     let voice = m.karaoke.as_ref().unwrap().voice.expect("the voice's lane");
-    assert!(m.bottom.spectrum.is_none(), "no spectrum on the tab");
-    assert_eq!(voice.bottom(), m.bottom.elapsed.y, "over the progress bar");
+    assert_eq!(m.bottom.spectrum, 0, "no spectrum on the tab");
+    assert_eq!(voice.bottom(), m.bottom.area.y, "over the bar");
     let lyrics = lanes::lyrics(&state, Block::Now).unwrap();
     let words = lanes::timed_words(&lyrics);
     let per = lanes::lyrics_per_second(&words, 1).unwrap();
@@ -705,10 +748,6 @@ impl Pictures for Lanes {
         CellPictures.cover(frame, area, below_line);
     }
 
-    fn spectrum(&mut self, frame: &mut Frame, plot: &view::Plot) {
-        CellPictures.spectrum(frame, plot);
-    }
-
     fn wave(&mut self, frame: &mut Frame, plot: &WavePlot) {
         self.0.push(plot.clone());
         CellPictures.wave(frame, plot);
@@ -731,11 +770,9 @@ fn lanes(state: &State, grid: Grid) -> Vec<WavePlot> {
 /// [`lanes`] with `heard` seconds of the playing track heard.
 fn lanes_heard(state: &State, grid: Grid, heard: f64) -> Vec<WavePlot> {
     let mut terminal = Terminal::new(TestBackend::new(grid.cols, grid.rows)).unwrap();
-    let spectrum = spectrum();
     let scene = Scene {
         state,
         grid,
-        spectrum: &spectrum,
         pointer: None,
         heard,
     };
@@ -887,11 +924,9 @@ fn the_queue_is_got_ready_ahead_and_its_icons_light_up_in_turn() {
     let icons = |state: &State| -> Vec<(String, Color)> {
         let grid = Grid::new(120, 40);
         let mut terminal = Terminal::new(TestBackend::new(grid.cols, grid.rows)).unwrap();
-        let spectrum = spectrum();
         let scene = Scene {
             state,
             grid,
-            spectrum: &spectrum,
             pointer: None,
             heard: 0.0,
         };

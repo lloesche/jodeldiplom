@@ -4,8 +4,10 @@
 //! - Keys go through [`crate::core::keymap`] ([`super::keys`]); the
 //!   pointer over the old canvas through [`crate::view::mouse`]
 //!   ([`super::pointer`]); the widgets iced draws send the core's actions
-//!   ([`Message::Act`]). Every button's release comes here, whichever
-//!   widget it was over, so nothing stays held.
+//!   ([`Message::Act`]), and a press that holds the pointer
+//!   ([`Message::Grab`]): its moves come here from anywhere while it is
+//!   held. Every button's release comes here, whichever widget it was
+//!   over, so nothing stays held.
 //! - Ticks: one decision each ([`super::paint`]): every refresh of the
 //!   display while something moves smoothly (from inside each redraw,
 //!   [`super::pacer`]), 30 a second while only the spectrum and the clock
@@ -19,13 +21,13 @@ use std::time::Instant;
 
 use iced::mouse::ScrollDelta;
 use iced::window;
-use iced::{event, keyboard, mouse, Element, Size, Subscription, Task};
+use iced::{event, keyboard, mouse, Element, Point, Size, Subscription, Task};
 
 use super::embed::Embed;
 use super::mixer;
 use super::pacer::Pacer;
 use super::paint::{Pace, Paint, Place, Seen, REST};
-use super::pointer::{Pointer, PointerKind, PointerState, Wheel, WheelOn};
+use super::pointer::{Grab, Pointer, PointerKind, PointerState, Wheel, WheelOn};
 use super::screens::Shown;
 use super::wake::{Wake, Wakes};
 use super::widgets::cover::Covers;
@@ -52,10 +54,16 @@ pub enum Message {
     Event(iced::Event, window::Id),
     /// The pointer over the old canvas.
     Pointer(Pointer),
-    /// A widget's action for the core (the Mixer tab's).
+    /// A widget's action for the core.
     Act(Action),
+    /// A widget's press at a point holds the pointer until its button is
+    /// let go of (the seek bar's).
+    Grab(Grab, Point),
     /// The wheel over a strip of the Mixer tab.
     DeskWheel(Channel, ScrollDelta),
+    /// The wheel over a widget that scrolls what the screen scrolls (the
+    /// bottom bar).
+    Wheel(ScrollDelta),
     /// The window's last frame, for `--save-frame`.
     Shot(window::Screenshot),
     /// A choice on the setup screen.
@@ -217,6 +225,11 @@ impl Gui {
         }
     }
 
+    /// The player's state, while there is a player (for the tests).
+    pub fn state(&self) -> Option<&State> {
+        self.app().map(|app| &app.state)
+    }
+
     /// The text of the old canvas's cells as last drawn (the pictures'
     /// cells blank).
     pub fn text(&self) -> String {
@@ -260,6 +273,24 @@ impl Gui {
             Message::Pointer(pointer) => self.pointer(pointer),
             Message::Act(action) => {
                 self.act(action);
+                Task::none()
+            }
+            Message::Grab(grab, at) => {
+                if let Phase::Running(app) = &mut self.phase {
+                    self.paint.dirty |= self.pointer.grab(app, grab, at);
+                }
+                Task::none()
+            }
+            Message::Wheel(delta) => {
+                let steps = self.wheel.turn(WheelOn::Canvas, delta, self.line_px());
+                for _ in 0..steps.unsigned_abs() {
+                    let action = self
+                        .app()
+                        .and_then(|app| crate::view::mouse::scrolled(&app.state, steps > 0));
+                    if let Some(action) = action {
+                        self.act(action);
+                    }
+                }
                 Task::none()
             }
             Message::DeskWheel(channel, delta) => {
@@ -343,6 +374,11 @@ impl Gui {
                     _ => {}
                 }
                 self.paint.dirty = true;
+            }
+            iced::Event::Mouse(mouse::Event::CursorMoved { position }) => {
+                if let Phase::Running(app) = &mut self.phase {
+                    self.paint.dirty |= self.pointer.moved(app, position);
+                }
             }
             iced::Event::Mouse(mouse::Event::ButtonReleased(button)) => {
                 let button = match button {
@@ -601,6 +637,17 @@ impl Gui {
             ) => Some(Message::Event(event, id)),
             _ => None,
         });
+        // While a press holds the pointer, its moves anywhere.
+        let moves = if self.pointer.grabbed() {
+            event::listen_with(|event, _status, id| match event {
+                iced::Event::Mouse(mouse::Event::CursorMoved { .. }) => {
+                    Some(Message::Event(event, id))
+                }
+                _ => None,
+            })
+        } else {
+            Subscription::none()
+        };
         let rest = iced::time::every(REST).map(Message::Rest);
         let pace = match &self.phase {
             Phase::Running(app) if self.size.width > 0.0 && self.size.height > 0.0 => {
@@ -615,7 +662,7 @@ impl Gui {
             Pace::Every(every) if every != REST => iced::time::every(every).map(Message::Frame),
             Pace::Every(_) => Subscription::none(),
         };
-        Subscription::batch([events, rest, frames])
+        Subscription::batch([events, moves, rest, frames])
     }
 
     /// What the window shows ([`super::screens`]), ticked at the refresh
@@ -631,6 +678,7 @@ impl Gui {
             &self.embed,
             &self.caps,
             &self.covers,
+            &self.paint.spectrum,
         ))
     }
 }

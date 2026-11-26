@@ -11,10 +11,11 @@
 //! │ ♪ Song             FLAC 44.1   │ title, artist
 //! │ / filter                       │ ○ PCM
 //! ╰ C:\Music ──────────────────────╯ signal path
-//!  spectrum of what is heard
-//!  20   100   1k   10k   22k   44k
-//!  0:12 ━━━━━━━━━━━━━━━━━━──────────────── 4:01
-//!  ◀◀  ▶   ▶▶  ■   message   ≡ settings  ? help
+//! ┌ the bottom bar ([`Bottom`]), drawn by the window ┐
+//! │ the spectrum and its labels                      │
+//! │ 0:12 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━───────── 4:01  │
+//! │ ⏮ ⏸ ⏭ ⏹   message          settings  help      │
+//! └──────────────────────────────────────────────────┘
 //! ```
 //!
 //! Collapse rules (columns × rows):
@@ -42,9 +43,8 @@ pub use transition::{
 
 use ratatui::layout::Rect;
 
-use crate::core::keymap::Op;
 use crate::core::text;
-use crate::core::{Fit, Gpu, Screen, Side, State};
+use crate::core::{Fit, Screen, Side, State};
 use crate::view::cells::{self, width};
 
 /// The smallest size anything but a note is drawn at.
@@ -98,37 +98,19 @@ impl Grid {
     }
 }
 
-/// A clickable button.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Button {
-    /// Where it is.
-    pub rect: Rect,
-    /// What it does.
-    pub op: Op,
-    /// Its text.
-    pub label: String,
+/// The bottom bar's place: the window draws the bar over these cells
+/// (the spectrum's rows at its top, where it has them, then
+/// [`BAR_ROWS`] of the seek bar and the buttons).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Bottom {
+    /// The whole bar.
+    pub area: Rect,
+    /// The spectrum's rows at its top, its labels' among them (0: none).
+    pub spectrum: u16,
 }
 
-/// The bottom bar: spectrum, progress, transport.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Bottom {
-    /// The spectrum picture.
-    pub spectrum: Option<Rect>,
-    /// The frequency labels under it.
-    pub labels: Option<Rect>,
-    /// The time heard, left of the bar.
-    pub elapsed: Rect,
-    /// The progress bar (click or drag to seek).
-    pub bar: Rect,
-    /// The length, right of the bar.
-    pub total: Rect,
-    /// The transport row.
-    pub transport: Rect,
-    /// The buttons on it.
-    pub buttons: Vec<Button>,
-    /// The space between the buttons, for messages.
-    pub message: Rect,
-}
+/// The rows of the bar under the spectrum: the seek bar and the buttons.
+pub const BAR_ROWS: u16 = 3;
 
 /// The main screen.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -289,7 +271,7 @@ pub fn fit(state: &State, grid: Grid) -> Fit {
         controls_reach: f32::from(crate::core::karaoke::controls::ROWS + 2) / f32::from(grid.rows),
         spectrum: compute(state, grid)
             .bottom()
-            .is_some_and(|b| b.spectrum.is_some()),
+            .is_some_and(|b| b.spectrum > 0),
     }
 }
 
@@ -339,135 +321,21 @@ pub fn right_width(cols: u16) -> u16 {
     }
 }
 
-/// The cells the stem buttons leave for messages, at least.
-const STEMS_ROOM: u16 = 16;
-
-fn bottom(state: &State, area: Rect, spectrum: u16) -> (Rect, Bottom) {
-    let used = 2 + spectrum;
+/// `area` with the bottom bar at its bottom, `spectrum` rows of it the
+/// spectrum's (none under 3): the rest above it, and the bar.
+fn bottom(area: Rect, spectrum: u16) -> (Rect, Bottom) {
+    let spectrum = if spectrum >= 3 { spectrum } else { 0 };
+    let used = (BAR_ROWS + spectrum).min(area.height);
     let top = Rect {
-        height: area.height.saturating_sub(used),
+        height: area.height - used,
         ..area
     };
-    let y = area.y + top.height;
-    let (spectrum_rect, labels) = if spectrum >= 3 {
-        (
-            Some(Rect::new(
-                area.x + 1,
-                y,
-                area.width.saturating_sub(2),
-                spectrum - 1,
-            )),
-            Some(Rect::new(
-                area.x + 1,
-                y + spectrum - 1,
-                area.width.saturating_sub(2),
-                1,
-            )),
-        )
-    } else {
-        (None, None)
-    };
-    let progress_y = y + spectrum;
-    let transport_y = progress_y + 1;
-    let time_w = 8u16;
-    let elapsed = Rect::new(area.x + 1, progress_y, time_w, 1);
-    let total = Rect::new(
-        area.right().saturating_sub(time_w + 1),
-        progress_y,
-        time_w,
-        1,
-    );
-    let bar = Rect::new(
-        elapsed.right() + 1,
-        progress_y,
-        total.x.saturating_sub(elapsed.right() + 2),
-        1,
-    );
-    let transport = Rect::new(area.x, transport_y, area.width, 1);
-    let play = match state.playing.state {
-        jodel_playback::PlayState::Playing => " ▮▮ ",
-        _ => " ▶  ",
-    };
-    let wide = area.width >= 70;
-    let mut buttons = Vec::new();
-    let mut x = area.x + 1;
-    for (label, op) in [
-        (" ◀◀ ", Op::Previous),
-        (play, Op::PlayPause),
-        (" ▶▶ ", Op::Next),
-        (" ■ ", Op::Stop),
-    ] {
-        let w = width(label) as u16;
-        buttons.push(Button {
-            rect: Rect::new(x, transport_y, w, 1),
-            op,
-            label: label.into(),
-        });
-        x += w + 1;
-    }
-    let right: [(&str, Op); 2] = if wide {
-        [(" ≡ settings ", Op::Settings), (" ? help ", Op::Help)]
-    } else {
-        [(" ≡ ", Op::Settings), (" ? ", Op::Help)]
-    };
-    let right_w: u16 = right.iter().map(|(l, _)| width(l) as u16 + 1).sum();
-    // The stems, with a GPU, where they leave room for messages: by name,
-    // else by initial.
-    if matches!(state.gpu, Gpu::Present(_)) {
-        let room = area.right().saturating_sub(right_w).saturating_sub(x);
-        let fitting = [true, false].into_iter().map(|named| {
-            let stems: Vec<(String, Op)> = jodel_playback::stems::LANES
-                .iter()
-                .map(|&stem| (text::stem_button(stem, named), Op::for_stem(stem)))
-                .collect();
-            let stems_w: u16 = stems.iter().map(|(l, _)| width(l) as u16 + 1).sum();
-            (stems, stems_w)
-        });
-        let chosen = fitting
-            .filter(|(_, w)| w + STEMS_ROOM <= room)
-            .map(|(stems, _)| stems)
-            .next();
-        if let Some(stems) = chosen {
-            for (label, op) in stems {
-                let w = width(&label) as u16;
-                buttons.push(Button {
-                    rect: Rect::new(x, transport_y, w, 1),
-                    op,
-                    label,
-                });
-                x += w + 1;
-            }
-        }
-    }
-    let left_end = x;
-    let mut x = area.right().saturating_sub(right_w);
-    let right_start = x;
-    for (label, op) in right {
-        let w = width(label) as u16;
-        buttons.push(Button {
-            rect: Rect::new(x, transport_y, w, 1),
-            op,
-            label: label.into(),
-        });
-        x += w + 1;
-    }
-    let message = Rect::new(
-        left_end + 1,
-        transport_y,
-        right_start.saturating_sub(left_end + 2),
-        1,
-    );
+    let bar = Rect::new(area.x, area.y + top.height, area.width, used);
     (
         top,
         Bottom {
-            spectrum: spectrum_rect,
-            labels,
-            elapsed,
-            bar,
-            total,
-            transport,
-            buttons,
-            message,
+            area: bar,
+            spectrum,
         },
     )
 }
@@ -483,10 +351,14 @@ fn main_wide(state: &State, area: Rect) -> MainLayout {
     } else {
         0
     };
-    let (top, mut bottom) = bottom(state, area, strip);
-    let voice = bottom.spectrum.zip(bottom.labels).map(|(s, l)| s.union(l));
-    bottom.spectrum = None;
-    bottom.labels = None;
+    let (top, mut bottom) = bottom(area, strip);
+    let voice = (bottom.spectrum > 0).then(|| {
+        let b = bottom.area;
+        Rect::new(b.x + 1, b.y, b.width.saturating_sub(2), bottom.spectrum)
+    });
+    bottom.area.y += bottom.spectrum;
+    bottom.area.height -= bottom.spectrum;
+    bottom.spectrum = 0;
     let list = top;
     let inner = in_border(list);
     MainLayout {
@@ -538,7 +410,7 @@ fn main(state: &State, grid: Grid) -> MainLayout {
 /// track's summary under the list where there is none) and the spectrum.
 fn main_list(state: &State, grid: Grid) -> MainLayout {
     let area = grid.area();
-    let (top, bottom) = bottom(state, area, spectrum_rows(area.height));
+    let (top, bottom) = bottom(area, spectrum_rows(area.height));
     let rw = right_width_for(state, grid);
     let (left, right) = if rw > 0 {
         (
@@ -690,7 +562,7 @@ pub const SETTINGS_LABEL: u16 = 24;
 pub const SETTINGS_VALUE: u16 = 56;
 
 fn settings(state: &State, area: Rect) -> SettingsLayout {
-    let (top, bottom) = bottom(state, area, 0);
+    let (top, bottom) = bottom(area, 0);
     let pane = top;
     let inner = Rect::new(
         pane.x + 2,
@@ -750,7 +622,7 @@ fn settings(state: &State, area: Rect) -> SettingsLayout {
 }
 
 fn help(state: &State, area: Rect) -> HelpLayout {
-    let (top, bottom) = bottom(state, area, 0);
+    let (top, bottom) = bottom(area, 0);
     let inner = Rect::new(
         top.x + 2,
         top.y + 1,
@@ -816,19 +688,12 @@ mod tests {
         assert!(m.mini.is_none());
         // The cover is about square in pixels: twice as wide as tall.
         assert_eq!(cover.height, right.width / 2);
-        let b = &m.bottom;
-        assert_eq!(b.spectrum.unwrap().height, 9);
-        assert_eq!(b.transport.y, 47);
-        assert_eq!(b.bar.y, 46);
-        assert!(b.bar.width > 100);
-        assert_eq!(m.list.bottom(), b.spectrum.unwrap().y);
-        // Buttons do not overlap and sit on the transport row.
-        for (i, a) in b.buttons.iter().enumerate() {
-            assert_eq!(a.rect.y, 47);
-            for c in &b.buttons[i + 1..] {
-                assert!(!a.rect.intersects(c.rect), "{a:?} {c:?}");
-            }
-        }
+        // The bar under the list, the whole width: 10 rows of spectrum
+        // and its own.
+        let b = m.bottom;
+        assert_eq!(b.spectrum, 10);
+        assert_eq!(b.area, Rect::new(0, 48 - 10 - BAR_ROWS, 160, 10 + BAR_ROWS));
+        assert_eq!(m.list.bottom(), b.area.y);
         assert_eq!(m.toggle.len(), 5);
         assert_eq!(m.toggle[0].0.y, m.list.y);
     }
@@ -841,22 +706,20 @@ mod tests {
         };
         assert!(m.right.is_none() && m.cover.is_none());
         assert_eq!(m.mini.unwrap().height, 2);
-        assert_eq!(m.bottom.spectrum.unwrap().height, 3);
+        assert_eq!(m.bottom.spectrum, 4);
         let (s, grid) = state(60, 15);
         let Layout::Main(m) = compute(&s, grid) else {
             panic!()
         };
-        assert!(m.bottom.spectrum.is_none());
+        assert_eq!(m.bottom.spectrum, 0);
         // The list, the two-row summary and the bar fill the height.
-        assert_eq!(m.list.height + 2 + 2, 15);
+        assert_eq!(m.list.height + 2 + BAR_ROWS, 15);
         let at = |cols, rows| {
             let (s, grid) = state(cols, rows);
             compute(&s, grid)
         };
         assert!(matches!(at(39, 30), Layout::TooSmall(_)));
         assert!(matches!(at(80, 11), Layout::TooSmall(_)));
-        // Short buttons on narrow screens.
-        assert!(m.bottom.buttons.iter().all(|b| width(&b.label) <= 8));
     }
 
     #[test]
@@ -868,11 +731,11 @@ mod tests {
         assert_eq!(m.right.unwrap().width, 28);
         let cover = m.cover.unwrap();
         assert!(cover.height >= 4 && m.info.unwrap().height >= 7);
-        let (s, grid) = state(100, 18);
+        let (s, grid) = state(100, 19);
         let Layout::Main(m) = compute(&s, grid) else {
             panic!()
         };
-        // 18 rows: 4 of spectrum and 2 of bar leave 12; the cover gets 4,
+        // 19 rows: 4 of spectrum and 3 of bar leave 12; the cover gets 4,
         // then a free row and 7 of text.
         assert_eq!(m.cover.unwrap().height, 4);
         assert_eq!(m.info.unwrap().y, m.cover.unwrap().bottom() + 1);

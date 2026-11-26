@@ -1,7 +1,8 @@
 //! The cell renderer's mouse: the named rects of its layout ([`layout`])
 //! and what a click, drag or wheel on each does, as the core's
 //! [`Action`]s. The window reports the pointer in cells (and within its
-//! cell, [`action_at`]).
+//! cell, [`action_at`]). The bottom bar is the window's own: its cells
+//! take no clicks here.
 
 use ratatui::layout::{Position, Rect};
 
@@ -14,7 +15,7 @@ use crate::core::{
     SettingsRow, Side, State,
 };
 use crate::view::cells;
-use crate::view::layout::{self, Bottom, Grid, Layout};
+use crate::view::layout::{self, Grid, Layout};
 
 /// A mouse button.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -70,7 +71,7 @@ pub enum Target {
     Info,
     /// The device name in the signal path.
     Device,
-    /// The progress bar.
+    /// Karaoke mode's seek bar.
     Bar,
     /// A button.
     Button(Op),
@@ -133,13 +134,6 @@ pub fn link_rects(lines: &[Vec<text::Seg>], area: Rect) -> Vec<(Rect, Op)> {
                 .map(move |r| (r, op))
         })
         .collect()
-}
-
-fn bottom_regions(bottom: &Bottom, out: &mut Vec<(Rect, Target)>) {
-    for button in &bottom.buttons {
-        out.push((button.rect, Target::Button(button.op)));
-    }
-    out.push((bottom.bar, Target::Bar));
 }
 
 /// Every hit region of the screen shown on `grid`, most specific first.
@@ -223,7 +217,6 @@ pub fn regions(state: &State, grid: Grid) -> Vec<(Rect, Target)> {
                 }
             }
             out.push((m.rows, Target::ListArea));
-            bottom_regions(&m.bottom, &mut out);
         }
         Layout::NowPlaying(n) => {
             let lines = cells::caption_lines(state, usize::from(n.caption.width));
@@ -259,11 +252,9 @@ pub fn regions(state: &State, grid: Grid) -> Vec<(Rect, Target)> {
                 out.push((line.more, Target::SettingsMore(i)));
                 out.push((line.rect, Target::SettingsValue(i)));
             }
-            bottom_regions(&s.bottom, &mut out);
         }
         Layout::Help(h) => {
             out.push((h.text, Target::HelpText));
-            bottom_regions(&h.bottom, &mut out);
         }
         Layout::Karaoke(k) => {
             if let Some(c) = &k.controls {
@@ -286,11 +277,12 @@ pub fn hit(state: &State, grid: Grid, col: u16, row: u16) -> Option<Target> {
         .map(|(_, target)| target)
 }
 
+/// The share of Karaoke mode's seek bar at column `col`.
 fn bar_fraction(state: &State, grid: Grid, col: u16) -> Option<f64> {
-    let bar = match layout::compute(state, grid) {
-        Layout::Karaoke(k) => k.controls?.seek,
-        other => other.bottom()?.bar,
+    let Layout::Karaoke(k) = layout::compute(state, grid) else {
+        return None;
     };
+    let bar = k.controls?.seek;
     if bar.width < 2 {
         return None;
     }
@@ -389,7 +381,7 @@ pub fn action_at(
 ) -> Option<Action> {
     use MouseButton::{Left, Right};
     use MouseKind::*;
-    // A drag on the progress bar follows the pointer anywhere.
+    // A drag on Karaoke mode's seek bar follows the pointer anywhere.
     if state.seek_drag.is_some() {
         return match input.kind {
             Drag(Left) | Moved => bar_fraction(state, grid, input.col).map(Action::SeekDrag),
@@ -517,14 +509,7 @@ pub fn action_at(
             transition_time(state, grid, block, input.col, true)
                 .map(|time| Action::TransitionJump { block, time })
         }
-        (ScrollUp | ScrollDown, _) => {
-            let step = if input.kind == ScrollUp { -3 } else { 3 };
-            match state.screen {
-                Screen::Help => Some(Action::HelpScroll(step)),
-                Screen::Main if state.palette.is_none() => Some(Action::Scroll(step)),
-                _ => None,
-            }
-        }
+        (ScrollUp | ScrollDown, _) => scrolled(state, input.kind == ScrollUp),
         (Down(Left), Target::Bar) => bar_fraction(state, grid, input.col).map(Action::SeekDrag),
         (Down(Left), Target::Toggle(side)) => Some(Action::ShowSide(side)),
         (Down(Left), Target::Row(row)) => Some(Action::ClickRow(row)),
@@ -538,6 +523,18 @@ pub fn action_at(
         (Down(Left), Target::DeviceRow(i)) => Some(Action::ChooseDevice(i)),
         (Down(Left), Target::FolderRow(i)) => Some(Action::FolderRow(i)),
         (Down(Left), Target::PaletteRow(i)) => Some(Action::PaletteRun(i)),
+        _ => None,
+    }
+}
+
+/// What a step of the wheel `up` (or down) over the screen does where
+/// nothing under it takes it: the help's text or the list scroll by three
+/// lines.
+pub fn scrolled(state: &State, up: bool) -> Option<Action> {
+    let step = if up { -3 } else { 3 };
+    match state.screen {
+        Screen::Help => Some(Action::HelpScroll(step)),
+        Screen::Main if state.palette.is_none() => Some(Action::Scroll(step)),
         _ => None,
     }
 }
@@ -585,7 +582,7 @@ mod tests {
     }
 
     #[test]
-    fn rows_toggle_and_buttons_are_hit() {
+    fn rows_toggle_and_the_cover_are_hit() {
         let s = state();
         let Layout::Main(m) = layout::compute(&s, GRID) else {
             panic!()
@@ -600,16 +597,9 @@ mod tests {
             action(&s, GRID, down(queue_rect.x + 1, queue_rect.y)).map(|a| format!("{a:?}")),
             Some("ShowSide(Queue)".into())
         );
-        let play = m
-            .bottom
-            .buttons
-            .iter()
-            .find(|b| b.op == Op::PlayPause)
-            .unwrap();
-        assert!(matches!(
-            action(&s, GRID, down(play.rect.x, play.rect.y)),
-            Some(Action::Op(Op::PlayPause))
-        ));
+        // The bottom bar's cells are the window's.
+        let bar = m.bottom.area;
+        assert_eq!(hit(&s, GRID, bar.x + 2, bar.bottom() - 1), None);
         assert!(matches!(
             action(
                 &s,
@@ -667,33 +657,6 @@ mod tests {
         let a = action(&s, GRID, wheel).unwrap();
         update(&mut s, a);
         assert_eq!(s.browser.cursor, 7);
-    }
-
-    #[test]
-    fn dragging_the_bar_seeks_on_release() {
-        let mut s = state();
-        let Layout::Main(m) = layout::compute(&s, GRID) else {
-            panic!()
-        };
-        let bar = m.bottom.bar;
-        // Nothing playing: no drag starts.
-        let a = action(&s, GRID, down(bar.x + 5, bar.y)).unwrap();
-        update(&mut s, a);
-        assert_eq!(s.seek_drag, None);
-        // While dragging, the pointer may leave the bar.
-        s.seek_drag = Some(0.1);
-        let drag = MouseInput {
-            kind: MouseKind::Drag(MouseButton::Left),
-            col: bar.right() + 5,
-            row: 0,
-        };
-        assert!(matches!(action(&s, GRID, drag), Some(Action::SeekDrag(f)) if f == 1.0));
-        let up = MouseInput {
-            kind: MouseKind::Up(MouseButton::Left),
-            col: bar.x,
-            row: bar.y,
-        };
-        assert!(matches!(action(&s, GRID, up), Some(Action::SeekTo(f)) if f == 0.0));
     }
 
     #[test]

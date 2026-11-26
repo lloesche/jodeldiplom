@@ -46,11 +46,9 @@ const GRID: Grid = Grid::new(120, 40);
 fn draw(state: &State) -> String {
     let backend = ratatui::backend::TestBackend::new(GRID.cols, GRID.rows);
     let mut terminal = ratatui::Terminal::new(backend).unwrap();
-    let spectrum = jodeldiplom::spectrum::SpectrumFrame::default();
     let scene = Scene {
         state,
         grid: GRID,
-        spectrum: &spectrum,
         pointer: None,
         heard: 0.0,
     };

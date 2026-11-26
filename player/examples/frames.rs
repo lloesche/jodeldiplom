@@ -1,5 +1,5 @@
 //! Times the window's frames headless, as the window draws them while a track
-//! plays (a fixture through the null output, its spectrum moving, the
+//! plays (a fixture through the null output, the
 //! Transition tab's playhead going on): per frame the widgets with their
 //! cells, the pictures, and the copy into the window's buffer (for the frames
 //! that changed a pixel: the window shows only those), what that would cost at
@@ -73,7 +73,6 @@ fn main() {
         let mut shown = 0;
         for frame in 0..frames {
             app.pump();
-            let spectrum = app.spectrum();
             let state: State = match screen {
                 "transition" | "transition held" => {
                     tab.playing.position += 1.0 / 60.0;
@@ -92,7 +91,6 @@ fn main() {
             let scene = Scene {
                 state: &state,
                 grid,
-                spectrum: &spectrum,
                 pointer: None,
                 heard: state.heard(),
             };

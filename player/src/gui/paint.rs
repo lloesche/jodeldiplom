@@ -1,8 +1,9 @@
 //! The frames: one decision a tick ([`Paint::plan`]) of how often the
 //! ticks come and what the old canvas ([`super::embed`]) draws now: all of
 //! it, only the lane that follows the playhead (the GPU scrolls it), or
-//! nothing; Karaoke mode's stage with the picture's shine over it; and the
-//! frames' line in the trace.
+//! nothing; Karaoke mode's stage with the picture's shine over it; the
+//! spectrum heard, for the bottom bar; and the frames' line in the
+//! trace.
 
 use std::time::{Duration, Instant};
 
@@ -15,6 +16,7 @@ use super::streak;
 use crate::app::App;
 use crate::core::singing::Motion;
 use crate::core::Action;
+use crate::spectrum::SpectrumFrame;
 use crate::view::Scene;
 
 /// A frame of what moves smoothly where the display's refresh is not
@@ -121,6 +123,9 @@ pub struct Paint {
     heard: Option<std::sync::Arc<Song>>,
     last_backdrop: Option<Instant>,
     frames: crate::trace::Frames,
+    /// The spectrum heard, as the last whole frame took it (the bottom
+    /// bar draws it).
+    pub spectrum: SpectrumFrame,
 }
 
 impl Paint {
@@ -136,6 +141,7 @@ impl Paint {
             heard: None,
             last_backdrop: None,
             frames: crate::trace::Frames::default(),
+            spectrum: SpectrumFrame::default(),
         }
     }
 
@@ -261,7 +267,7 @@ impl Paint {
     }
 
     /// The whole frame: the widgets, the pictures, the layer, the stage and
-    /// the backdrop under it.
+    /// the backdrop under it; and the spectrum heard now.
     fn whole(&mut self, embed: &Embed, app: &mut App, place: Place, heard: f64) {
         let drawing = Instant::now();
         let shine = &mut self.shine;
@@ -272,6 +278,7 @@ impl Paint {
         Song::follow(&mut self.heard, crate::core::karaoke::rhythm_of(&app.state));
         let song = self.heard.as_deref();
         let (mut staged, mut drawn) = (false, false);
+        let spectrum = &mut self.spectrum;
         embed.draw(place.scale, |canvas, gpu| {
             canvas.fit(place.size.0, place.size.1);
             canvas.hold(&app.state);
@@ -280,11 +287,10 @@ impl Paint {
             if fit != app.state.fit {
                 app.dispatch(Action::Fit(fit));
             }
-            let spectrum = app.spectrum();
+            *spectrum = app.spectrum();
             let scene = Scene {
                 state: &app.state,
                 grid,
-                spectrum: &spectrum,
                 pointer: place.pointer,
                 heard,
             };

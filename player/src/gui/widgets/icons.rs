@@ -1,8 +1,9 @@
 //! The interface's icons, drawn as vector paths: one stroke weight (two
 //! units of a 24-unit square, scaled with the icon), round ends, sized
-//! from the type scale. Each draws in the colour of the text around it (a
-//! button's, as it eases between its states) unless it is given its own.
-//! No icon fonts and no emoji for the chrome.
+//! from the type scale; the transport's shapes are filled inside that
+//! stroke, so their corners are as round. Each draws in the colour of the
+//! text around it (a button's, as it eases between its states) unless it
+//! is given its own. No icon fonts and no emoji for the chrome.
 
 use iced::advanced::graphics::geometry::Renderer as _;
 use iced::advanced::layout::{self, Layout};
@@ -27,16 +28,37 @@ pub enum Icon {
     Download,
     /// Something needs attention.
     Alert,
+    /// Play.
+    Play,
+    /// Pause.
+    Pause,
+    /// The track before.
+    Previous,
+    /// The next track.
+    Next,
+    /// Stop.
+    Stop,
+    /// The settings.
+    Settings,
+    /// The keys and what they do.
+    Help,
 }
 
 impl Icon {
     /// Every icon, for the look sheet.
-    pub const ALL: [Icon; 5] = [
+    pub const ALL: [Icon; 12] = [
         Icon::Check,
         Icon::Cross,
         Icon::Retry,
         Icon::Download,
         Icon::Alert,
+        Icon::Play,
+        Icon::Pause,
+        Icon::Previous,
+        Icon::Next,
+        Icon::Stop,
+        Icon::Settings,
+        Icon::Help,
     ];
 
     /// Its name.
@@ -47,6 +69,13 @@ impl Icon {
             Icon::Retry => "retry",
             Icon::Download => "download",
             Icon::Alert => "alert",
+            Icon::Play => "play",
+            Icon::Pause => "pause",
+            Icon::Previous => "previous",
+            Icon::Next => "next",
+            Icon::Stop => "stop",
+            Icon::Settings => "settings",
+            Icon::Help => "help",
         }
     }
 }
@@ -144,6 +173,26 @@ fn paint(frame: &mut Frame, icon: Icon, size: f32, color: Color) {
             }
         })
     };
+    // A shape filled, its outline in the stroke (round corners).
+    let solid = |frame: &mut Frame, shape: &Path| {
+        frame.fill(shape, color);
+        frame.stroke(shape, stroke);
+    };
+    let polygon = |points: &[(f32, f32)]| {
+        Path::new(|b| {
+            for (i, &(x, y)) in points.iter().enumerate() {
+                if i == 0 {
+                    b.move_to(p(x, y));
+                } else {
+                    b.line_to(p(x, y));
+                }
+            }
+            b.close();
+        })
+    };
+    let bar = |x: f32, y: f32, w: f32, h: f32, r: f32| {
+        Path::rounded_rectangle(p(x, y), Size::new(w * k, h * k), (r * k).into())
+    };
     match icon {
         Icon::Check => frame.stroke(&lines(&[(5.0, 12.5), (10.0, 17.5), (19.0, 7.0)]), stroke),
         Icon::Cross => {
@@ -195,6 +244,60 @@ fn paint(frame: &mut Frame, icon: Icon, size: f32, color: Color) {
                 stroke,
             );
             frame.stroke(&lines(&[(12.0, 9.5), (12.0, 13.5)]), stroke);
+            frame.fill(&Path::circle(p(12.0, 16.9), 1.25 * k), color);
+        }
+        Icon::Play => solid(frame, &polygon(&[(8.0, 5.5), (18.5, 12.0), (8.0, 18.5)])),
+        Icon::Pause => {
+            frame.fill(&bar(6.5, 5.0, 4.0, 14.0, 1.2), color);
+            frame.fill(&bar(13.5, 5.0, 4.0, 14.0, 1.2), color);
+        }
+        Icon::Stop => frame.fill(&bar(6.0, 6.0, 12.0, 12.0, 2.0), color),
+        Icon::Next => {
+            solid(frame, &polygon(&[(6.0, 6.5), (14.5, 12.0), (6.0, 17.5)]));
+            frame.stroke(&lines(&[(18.0, 6.0), (18.0, 18.0)]), stroke);
+        }
+        Icon::Previous => {
+            solid(frame, &polygon(&[(18.0, 6.5), (9.5, 12.0), (18.0, 17.5)]));
+            frame.stroke(&lines(&[(6.0, 6.0), (6.0, 18.0)]), stroke);
+        }
+        Icon::Settings => {
+            // A cog: eight teeth round a ring, a hole in the middle.
+            let (cx, cy) = (12.0, 12.0);
+            let teeth = 8;
+            let mut points = Vec::with_capacity(teeth * 4);
+            for i in 0..teeth {
+                let at = i as f32 / teeth as f32 * std::f32::consts::TAU;
+                let half = std::f32::consts::TAU / teeth as f32 / 2.0;
+                for (turn, r) in [
+                    (-half, 6.6),
+                    (-half * 0.45, 9.2),
+                    (half * 0.45, 9.2),
+                    (half, 6.6),
+                ] {
+                    let a = at + turn;
+                    points.push((cx + r * a.cos(), cy + r * a.sin()));
+                }
+            }
+            frame.stroke(&polygon(&points), stroke);
+            frame.stroke(&Path::circle(p(cx, cy), 2.8 * k), stroke);
+        }
+        Icon::Help => {
+            frame.stroke(&Path::circle(p(12.0, 12.0), 9.0 * k), stroke);
+            // The hook over the top, down to the stem.
+            let (cx, cy, r) = (12.0, 9.8, 2.6);
+            let end = 0.95f32;
+            frame.stroke(
+                &Path::new(|b| {
+                    b.arc(path::Arc {
+                        center: p(cx, cy),
+                        radius: r * k,
+                        start_angle: iced::Radians(std::f32::consts::PI),
+                        end_angle: iced::Radians(std::f32::consts::TAU + end),
+                    });
+                    b.line_to(p(12.0, 13.6));
+                }),
+                stroke,
+            );
             frame.fill(&Path::circle(p(12.0, 16.9), 1.25 * k), color);
         }
     }

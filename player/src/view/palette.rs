@@ -27,7 +27,5 @@ pub const FAIL: [u8; 3] = [235, 80, 80];
 pub const SOURCE: [u8; 3] = [150, 160, 200];
 /// Folders.
 pub const FOLDER: [u8; 3] = [130, 180, 255];
-/// The unplayed part of the progress bar.
+/// The unlit part of a level and a slider in cells.
 pub const TRACK: [u8; 3] = [60, 60, 70];
-/// The spectrum's grid.
-pub const GRID: [u8; 3] = [78, 78, 92];

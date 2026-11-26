@@ -1,23 +1,77 @@
-//! The pointer over the old canvas ([`super::embed`]) as the cell
-//! renderer's mouse ([`crate::view::mouse`]): its cell on the canvas's
-//! grid, the button drawn in pixels under it (the stage's START pill:
-//! [`crate::view::mouse::action_at`]'s `over`), the button held, the links
-//! under it, and it going out of the window; and the wheel, for the canvas
-//! and the Mixer tab's strips alike, by whole steps ([`Wheel`]).
+//! The pointer: what a widget's press holds ([`Grab`]), followed wherever
+//! the pointer goes; the pointer over the old canvas ([`super::embed`]) as
+//! the cell renderer's mouse ([`crate::view::mouse`]): its cell on the
+//! canvas's grid, the button drawn in pixels under it (the stage's START
+//! pill: [`crate::view::mouse::action_at`]'s `over`), the button held,
+//! the links under it, and it going out of the window; and the wheel, for
+//! the canvas and the widgets alike, by whole steps ([`Wheel`]).
 //!
-//! The canvas's widget only forwards what the pointer does over it; this is
-//! the one owner of what is held. A button is let go of wherever the
-//! pointer is (the window hears every release, whichever widget it was
-//! over), and a release with nothing held is dropped.
+//! The widgets only say what the pointer does over them; this is the one
+//! owner of what is held, a grab or the canvas's button, never both. A
+//! button is let go of wherever the pointer is (the window hears every
+//! release, whichever widget it was over), and a release with nothing held
+//! is dropped.
 
 use iced::mouse::ScrollDelta;
+use iced::{Point, Rectangle};
 
 use crate::app::App;
 use crate::core::desk::Channel;
 use crate::core::keymap::Op;
-use crate::core::Action;
+use crate::core::{Action, State};
 use crate::view::layout::Grid;
 use crate::view::mouse::{self, MouseButton, MouseInput, MouseKind, Target};
+
+/// What a widget's press holds until its button is let go of: the
+/// pointer's moves anywhere in the window go to it, and its release lands
+/// it, each turned into the core's actions by what it holds. Its bounds
+/// are in the window's points, as the widget was laid out when pressed.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Grab {
+    /// The seek bar's track: the share across it under the pointer is
+    /// where a drag would go, sought on release.
+    Seek(Rectangle),
+}
+
+impl Grab {
+    /// The button that holds it.
+    fn button(self) -> MouseButton {
+        match self {
+            Grab::Seek(_) => MouseButton::Left,
+        }
+    }
+
+    /// What the pointer at `at` does while it holds: as it goes down and
+    /// as it moves.
+    fn moved(self, at: Point) -> Action {
+        match self {
+            Grab::Seek(track) => Action::SeekDrag(share_across(track, at)),
+        }
+    }
+
+    /// What letting go at `at` does.
+    fn released(self, at: Point) -> Action {
+        match self {
+            Grab::Seek(track) => Action::SeekTo(share_across(track, at)),
+        }
+    }
+
+    /// Whether the core took the press (with nothing to seek, no drag
+    /// starts): it holds on only then.
+    fn taken(self, state: &State) -> bool {
+        match self {
+            Grab::Seek(_) => state.seek_drag.is_some(),
+        }
+    }
+}
+
+/// The share of `bounds`'s width left of `at` (0 to 1).
+fn share_across(bounds: Rectangle, at: Point) -> f64 {
+    if bounds.width <= 0.0 {
+        return 0.0;
+    }
+    f64::from(((at.x - bounds.x) / bounds.width).clamp(0.0, 1.0))
+}
 
 /// What the pointer did over the old canvas.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -61,6 +115,9 @@ impl Pointer {
 /// Where the pointer was, and what it holds.
 #[derive(Debug, Default)]
 pub struct PointerState {
+    /// What a widget's press holds, and where the pointer was last seen
+    /// while it does (in the window's points).
+    grab: Option<(Grab, Point)>,
     /// Its cell.
     cell: (u16, u16),
     /// Its column, with the share of the cell (a Karaoke slider follows it
@@ -74,6 +131,39 @@ pub struct PointerState {
 }
 
 impl PointerState {
+    /// Whether a widget's press holds the pointer.
+    pub fn grabbed(&self) -> bool {
+        self.grab.is_some()
+    }
+
+    /// A widget's press at `at` holds `grab` (unless the canvas holds a
+    /// button already): what it does there carried out, and held on to if
+    /// the core took it. Whether it did anything.
+    pub fn grab(&mut self, app: &mut App, grab: Grab, at: Point) -> bool {
+        if self.held.is_some() || self.grab.is_some() {
+            return false;
+        }
+        dispatch(app, grab.moved(at));
+        if grab.taken(&app.state) {
+            self.grab = Some((grab, at));
+        }
+        true
+    }
+
+    /// The pointer moved to `at` in the window: what the grab held does
+    /// there. Whether it did anything.
+    pub fn moved(&mut self, app: &mut App, at: Point) -> bool {
+        let Some((grab, last)) = &mut self.grab else {
+            return false;
+        };
+        if *last == at {
+            return false;
+        }
+        *last = at;
+        dispatch(app, grab.moved(at));
+        true
+    }
+
     /// The pointer's cell, while it is over the canvas.
     pub fn inside(&self) -> Option<(u16, u16)> {
         self.inside
@@ -122,6 +212,8 @@ impl PointerState {
                 }
                 dirty
             }
+            // A grab owns the pointer until it is let go of.
+            PointerKind::Down(_) if self.grab.is_some() => false,
             PointerKind::Down(button) => {
                 (self.cell, self.x) = (cell, x);
                 self.held = Some(button);
@@ -132,10 +224,19 @@ impl PointerState {
         }
     }
 
-    /// A button let go of, wherever the pointer is: dropped unless it is
-    /// the one held.
+    /// A button let go of, wherever the pointer is: the grab's lands
+    /// where the pointer was last seen; the canvas's goes to it; any other
+    /// is dropped.
     pub fn up(&mut self, app: &mut App, grid: Grid, button: MouseButton, shift: bool) -> bool {
-        self.release(button) && self.mouse(app, grid, MouseKind::Up(button), shift)
+        match self.grab {
+            Some((grab, at)) if grab.button() == button => {
+                self.grab = None;
+                dispatch(app, grab.released(at));
+                true
+            }
+            Some(_) => false,
+            None => self.release(button) && self.mouse(app, grid, MouseKind::Up(button), shift),
+        }
     }
 
     /// `button` let go of: whether it was the one held.
@@ -181,8 +282,7 @@ impl PointerState {
         let Some(action) = action else {
             return false;
         };
-        app.dispatch(Action::Tick(app.now_ms()));
-        app.dispatch(action);
+        dispatch(app, action);
         true
     }
 
@@ -201,10 +301,17 @@ impl PointerState {
     }
 }
 
+/// `action` carried out, the clock first.
+fn dispatch(app: &mut App, action: Action) {
+    app.dispatch(Action::Tick(app.now_ms()));
+    app.dispatch(action);
+}
+
 /// What the wheel turns.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WheelOn {
-    /// The old canvas, line by line.
+    /// The old canvas, line by line, and the widgets over it that scroll
+    /// what it shows (the bottom bar).
     Canvas,
     /// A strip of the Mixer tab: its fader, a step a line.
     Strip(Channel),
@@ -253,6 +360,23 @@ mod tests {
         assert!(pointer.release(MouseButton::Left));
         assert!(!pointer.release(MouseButton::Left));
         assert_eq!(pointer.held, None);
+    }
+
+    /// A seek grab reads the share across its track wherever the pointer
+    /// is: before the track 0, past it 1; the drag as it moves, the seek
+    /// as it is let go of.
+    #[test]
+    fn a_seek_grab_follows_the_pointer_anywhere() {
+        let grab = Grab::Seek(Rectangle::new(
+            Point::new(100.0, 500.0),
+            iced::Size::new(400.0, 16.0),
+        ));
+        let at = |x, y| Point::new(x, y);
+        assert!(matches!(grab.moved(at(300.0, 508.0)), Action::SeekDrag(f) if f == 0.5));
+        assert!(matches!(grab.moved(at(20.0, 0.0)), Action::SeekDrag(f) if f == 0.0));
+        assert!(matches!(grab.moved(at(900.0, 900.0)), Action::SeekDrag(f) if f == 1.0));
+        assert!(matches!(grab.released(at(200.0, 10.0)), Action::SeekTo(f) if f == 0.25));
+        assert_eq!(grab.button(), MouseButton::Left);
     }
 
     #[test]
