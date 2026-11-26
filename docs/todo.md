@@ -13,25 +13,28 @@ Work agreed on but not started, roughly in the order it was raised.
   covers without a person; text left in the background or filled by a
   real inpainting model (LaMa) instead of the cheap fill. A bake-off on
   the owner's covers decides (kept outside the repository).
-- **Story scenes instead of the cover.** The lyrics read for what they
-  tell (Gemma 4 E4B, Apache-2.0: text, image and audio in), the song cut
-  into scenes by its sections, each scene generated (SDXL-Lightning,
-  4 steps, on an 8 GB card, RGBA for sprites; characters from the
-  lyrics, not the artist; the cover only when it is striking art for
-  the song), taken apart into depth layers and played as parallax (or
-  3D) cut on the downbeats. Heavy to prepare, cheap to play. The song's
-  look (palette, style, motifs, the effects' flavours) chosen the same
-  way. The language model is Gemma 4 E4B at 4 bits (3.4 GB resident;
-  E2B wrote half the scenes and made things up), its audio input of no
-  use for music. The story comes from the lyrics alone; the look is a
-  separate question, from the file's tags, what the model knows of the
-  artist and album (and how sure it is), the genre, the era and the
-  mood. A Python prototype first (kept outside the repository), then our own
-  inference if it is worth it. Also to measure there: the image model at
-  fp16, Q8 and Q4; Gemma 4 E2B against E4B.
-- **The theme in the window**: Spooky is chosen in the settings file
-  only (`karaoke_theme`); a switch for it on the Karaoke tab (after its
-  native controls), and the rest of the window's accent following it.
+- **Story scenes instead of the cover** (prototyped, kept outside the
+  repository; worth porting as an optional story mode). The language
+  model (Gemma 4 E4B at 4 bits, greedy so the same song gives the same
+  plan) reads the lyrics alone for the story (characters, scenes by the
+  song's sections) and, separately, the look from the file's tags, what
+  it knows of the artist and album, genre, era and mood (style from a
+  wide list, palette, motifs). SDXL-Lightning (Q8 looks as fp16) draws
+  one whole picture per scene (characters from the lyrics, a portrait
+  each as a face reference; the cover as a style reference only when it
+  is striking, its lettering painted out first), a face detailer
+  redrawing small faces; the negative prompt forbids any text, writing
+  or lettering. No cut-outs: each scene moves by a slow camera push and
+  a depth warp from its depth map (stronger than the prototype's 1.5 %
+  now there is no edge to tear), cut on the downbeats, the look's
+  shaders over it. No second language-model pass to judge the pictures.
+  Dropped after trying: every layer drawn apart (a collage, bad faces),
+  an upscaling model, Gemma's audio input (useless for music).
+- **Song sprites on the multiplier ladder:** a few objects per song
+  (from the look's motifs, drawn once with transparency, glowing ones
+  on black and added as light) that the rungs bring in: drifting at
+  Great, bursts on downbeats at Awesome, a swirl at Amazing, a rain of
+  them at Diva in place of the coins.
 - **The rays on the ladder?** The backdrop's spotlight rays follow how
   well the singing shines (the phrase's tier), everything else that
   builds up follows the multiplier. If they should come in order with
