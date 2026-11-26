@@ -25,6 +25,48 @@ impl Emissions {
     pub fn at(&self, frame: usize, token: u32) -> f32 {
         self.logp[frame * self.tokens + token as usize]
     }
+
+    /// Its frames' clock.
+    pub fn clock(&self) -> FrameClock {
+        FrameClock {
+            frame_seconds: self.frame_seconds,
+            frames: self.frames(),
+        }
+    }
+}
+
+/// Frames of a stretch of voice, from 0 s: seconds turned into frames, each
+/// way of rounding named. A time before 0 is frame 0, and none is past the
+/// last.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct FrameClock {
+    /// Seconds a frame.
+    pub frame_seconds: f64,
+    /// How many frames there are.
+    pub frames: usize,
+}
+
+impl FrameClock {
+    /// How long the frames last, in seconds.
+    pub fn seconds(&self) -> f64 {
+        self.frames as f64 * self.frame_seconds
+    }
+
+    /// The frames from `a` to `b` seconds, rounded outward: every frame
+    /// with some of that time.
+    pub fn outward(&self, a: f64, b: f64) -> Range<usize> {
+        let from = ((a / self.frame_seconds).floor() as usize).min(self.frames);
+        let to = ((b / self.frame_seconds).ceil() as usize).min(self.frames);
+        from..to
+    }
+
+    /// The frames from `margin` after `a` to `margin` before `b` seconds,
+    /// rounded inward: only frames wholly within that time.
+    pub fn inward(&self, a: f64, b: f64, margin: f64) -> Range<usize> {
+        let from = (((a + margin) / self.frame_seconds).ceil() as usize).min(self.frames);
+        let to = (((b - margin) / self.frame_seconds).floor() as usize).min(self.frames);
+        from..to
+    }
 }
 
 /// Tokens the path may leave out, at a cost.
@@ -74,48 +116,60 @@ const STEP: u8 = 1;
 const JUMP: u8 = 2;
 const EXTRA: u8 = 3;
 
+/// One kind of cost a frame on a state pays, in log-probability (nothing
+/// past a slice's end).
+#[derive(Clone, Debug, PartialEq)]
+pub enum StayCost {
+    /// A frame on state `s` costs `by_state[s]` where `frames` marks it,
+    /// or on every frame when there is no mark.
+    Marked {
+        /// The cost on each state.
+        by_state: Vec<f32>,
+        /// The frames that cost.
+        frames: Option<Vec<bool>>,
+    },
+    /// A frame on state `s` outside the frames of the window `s` has
+    /// costs that window's penalty.
+    Outside(Vec<Option<(Range<usize>, f32)>>),
+}
+
+impl StayCost {
+    /// What it costs a frame `f` on state `s`.
+    fn at(&self, f: usize, s: usize) -> f32 {
+        match self {
+            StayCost::Marked { by_state, frames } => {
+                let marked = frames
+                    .as_ref()
+                    .is_none_or(|m| m.get(f).copied().unwrap_or(false));
+                if marked {
+                    by_state.get(s).copied().unwrap_or(0.0)
+                } else {
+                    0.0
+                }
+            }
+            StayCost::Outside(windows) => match windows.get(s) {
+                Some(Some((frames, penalty))) if !frames.contains(&f) => *penalty,
+                _ => 0.0,
+            },
+        }
+    }
+}
+
 /// What a path pays besides its log-probabilities, by state `s` and frame
 /// `f` (in log-probability; nothing past a slice's end).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Costs {
-    /// A frame on state `s` costs `charged[s]` where [`Costs::charging`]
-    /// says so.
-    pub charged: Vec<f32>,
-    /// The frames that charge.
-    pub charging: Vec<bool>,
-    /// A frame on state `s` costs `always[s]`.
-    pub always: Vec<f32>,
-    /// A frame on state `s` costs `spanned[s]` where [`Costs::unheard`]
-    /// says so.
-    pub spanned: Vec<f32>,
-    /// The frames where nothing with words was heard.
-    pub unheard: Vec<bool>,
+    /// What a frame costs, each kind added in turn, in this order.
+    pub stay: Vec<StayCost>,
     /// Entering state `s` outside the frames of each of `entry[s]` costs
     /// that one's penalty (each cost source adds its own).
     pub entry: Vec<Vec<(Range<usize>, f32)>>,
-    /// A frame on state `s` outside the frames of `outside[s]` costs its
-    /// penalty.
-    pub outside: Vec<Option<(Range<usize>, f32)>>,
 }
 
 impl Costs {
     /// What a frame `f` on state `s` costs.
     fn stay(&self, f: usize, s: usize) -> f32 {
-        let charged = if self.charging.get(f).copied().unwrap_or(false) {
-            self.charged.get(s).copied().unwrap_or(0.0)
-        } else {
-            0.0
-        };
-        let spanned = if self.unheard.get(f).copied().unwrap_or(false) {
-            self.spanned.get(s).copied().unwrap_or(0.0)
-        } else {
-            0.0
-        };
-        let outside = match self.outside.get(s) {
-            Some(Some((frames, penalty))) if !frames.contains(&f) => *penalty,
-            _ => 0.0,
-        };
-        charged + spanned + outside + self.always.get(s).copied().unwrap_or(0.0)
+        self.stay.iter().fold(0.0, |sum, cost| sum + cost.at(f, s))
     }
 
     /// What entering state `s` at frame `f` costs.

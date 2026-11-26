@@ -106,7 +106,7 @@ impl WordTimer for SpeechTimer {
         let mut steps = Steps::default();
         let voice = steps.voice(self.stems.as_deref(), path)?;
         let heard = steps.hear(&asr, || asr.transcribe(&voice), |s| &mut s.heard)?;
-        if jodel_lyrics::fit::words(&heard.text).len() < HEARD_LEAST {
+        if jodel_lyrics::words::words(&heard.text).len() < HEARD_LEAST {
             return Err(TOO_LITTLE_HEARD.into());
         }
         let text = transcript_lyrics(&heard, asr_maker());

@@ -577,7 +577,8 @@ pub fn transcript_lyrics(transcript: &jodel_lyrics::asr::Transcript, maker: Make
 /// fitting of `others` when it fits, else `lyrics` still. And its fit, when
 /// judged.
 pub fn fitting(lyrics: &Lyrics, heard: &str, others: &Others) -> (Lyrics, Option<Fit>) {
-    use jodel_lyrics::fit::{lyrics_fit, words};
+    use jodel_lyrics::fit::lyrics_fit;
+    use jodel_lyrics::words::words;
     if words(heard).len() < HEARD_LEAST {
         return (lyrics.clone(), None);
     }
@@ -723,7 +724,7 @@ fn time_words<D: FnMut(PathBuf, Answer)>(
         };
         // Another text chosen: it is the song's from now on.
         let swapped =
-            jodel_lyrics::fit::lyrics_words(&timed) != jodel_lyrics::fit::lyrics_words(&lyrics);
+            jodel_lyrics::words::lyrics_words(&timed) != jodel_lyrics::words::lyrics_words(&lyrics);
         let lyrics = if swapped {
             let mut text = timed.clone();
             text.drop_times();

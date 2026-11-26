@@ -8,6 +8,7 @@
 //! the texts that did not fit (wrong song, wrong version, another
 //! language's words); texts that fit had a median of about three quarters.
 
+use crate::words::{common, lyrics_words, words};
 use crate::Lyrics;
 
 /// A text fits when at least this share of its words were heard, in whole
@@ -26,79 +27,13 @@ pub fn fits(share: f32) -> bool {
     percent_of(share) >= FIT_LEAST_PERCENT
 }
 
-/// Whether `c` is written without spaces between words (Chinese,
-/// Japanese, Korean): such text is compared a character at a time.
-fn unspaced(c: char) -> bool {
-    matches!(c,
-        '\u{3040}'..='\u{30ff}' // Hiragana, Katakana
-        | '\u{3400}'..='\u{4dbf}' // CJK extension A
-        | '\u{4e00}'..='\u{9fff}' // CJK ideographs
-        | '\u{ac00}'..='\u{d7af}' // Hangul syllables
-        | '\u{f900}'..='\u{faff}') // CJK compatibility ideographs
-}
-
-/// The words of `text` for comparing: lower case, curly apostrophes made
-/// straight, letters, digits and apostrophes only (an apostrophe at a
-/// word's ends dropped), each unspaced character a word of its own.
-pub fn words(text: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    let mut word = String::new();
-    let flush = |word: &mut String, out: &mut Vec<String>| {
-        let w = word.trim_matches('\'');
-        if !w.is_empty() {
-            out.push(w.to_owned());
-        }
-        word.clear();
-    };
-    for c in text.chars() {
-        let c = if c == '\u{2019}' || c == '\u{2018}' {
-            '\''
-        } else {
-            c
-        };
-        if unspaced(c) {
-            flush(&mut word, &mut out);
-            out.push(c.to_string());
-        } else if c.is_alphanumeric() || c == '\'' {
-            word.extend(c.to_lowercase());
-        } else {
-            flush(&mut word, &mut out);
-        }
-    }
-    flush(&mut word, &mut out);
-    out
-}
-
-/// The words of `lyrics`, in order ([`words`]).
-pub fn lyrics_words(lyrics: &Lyrics) -> Vec<String> {
-    lyrics
-        .lines
-        .iter()
-        .flat_map(|l| l.words.iter())
-        .flat_map(|w| words(&w.text))
-        .collect()
-}
-
-/// The share of `text`'s words that were `heard`, in order (the longest
-/// run common to both, not necessarily together), 0 to 1; 0 for no words.
+/// The share of `text`'s words that were `heard`, in order (the most in
+/// [`common`], not necessarily together), 0 to 1; 0 for no words.
 pub fn fit(text: &[String], heard: &[String]) -> f32 {
     if text.is_empty() {
         return 0.0;
     }
-    // The longest common subsequence, a row at a time.
-    let mut prev = vec![0u32; heard.len() + 1];
-    let mut row = vec![0u32; heard.len() + 1];
-    for t in text {
-        for (j, h) in heard.iter().enumerate() {
-            row[j + 1] = if t == h {
-                prev[j] + 1
-            } else {
-                row[j].max(prev[j + 1])
-            };
-        }
-        std::mem::swap(&mut prev, &mut row);
-    }
-    prev[heard.len()] as f32 / text.len() as f32
+    common(text, heard).len() as f32 / text.len() as f32
 }
 
 /// How well `lyrics` fit what was `heard` (the recogniser's text).
@@ -110,19 +45,6 @@ pub fn lyrics_fit(lyrics: &Lyrics, heard: &str) -> f32 {
 mod tests {
     use super::*;
     use crate::Source;
-
-    #[test]
-    fn words_are_compared_loosely() {
-        assert_eq!(
-            words("Don’t walk AWAY, 'cause I-love you!"),
-            ["don't", "walk", "away", "cause", "i", "love", "you"]
-        );
-        assert_eq!(
-            words("どうして黙って"),
-            ["ど", "う", "し", "て", "黙", "っ", "て"]
-        );
-        assert_eq!(words("Ich hör' dich"), ["ich", "hör", "dich"]);
-    }
 
     #[test]
     fn a_text_fits_by_the_share_of_its_words_heard_in_order() {

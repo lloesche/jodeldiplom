@@ -14,6 +14,7 @@
 //! - [`fallback`] picks between the two; [`SyllableAligner`] is it as an
 //!   [`Aligner`], for when there is no model.
 
+use crate::ctc::FrameClock;
 use crate::{Aligner, Detail, Line, Lyrics, Maker, Timing, Word, CONFIDENT, VERSION, VOCALS_RATE};
 
 /// The slowest pace words are filled in at, in seconds a syllable.
@@ -255,14 +256,13 @@ pub fn vocal_stretches(vocals_16k: &[f32]) -> Vec<(f64, f64)> {
     stretches
 }
 
-/// For each of `frames` frames of `frame_seconds`, whether it lies outside
-/// every one of `stretches`: a pause in the voice.
-pub fn pauses(stretches: &[(f64, f64)], frames: usize, frame_seconds: f64) -> Vec<bool> {
-    let mut out = vec![true; frames];
+/// For each frame of `clock`, whether it lies outside every one of
+/// `stretches` (each rounded outward, [`FrameClock::outward`]): a pause in
+/// the voice.
+pub fn pauses(stretches: &[(f64, f64)], clock: FrameClock) -> Vec<bool> {
+    let mut out = vec![true; clock.frames];
     for &(s, e) in stretches {
-        let a = ((s / frame_seconds).floor() as usize).min(frames);
-        let b = ((e / frame_seconds).ceil() as usize).min(frames);
-        out[a..b].fill(false);
+        out[clock.outward(s, e)].fill(false);
     }
     out
 }
@@ -485,7 +485,11 @@ mod tests {
         let out = SyllableAligner.align(&v, &plain);
         assert_eq!(out.lines[0].words[0].start, Some(found[0].0));
         // The pauses are the frames outside them; the short drop is none.
-        let p = pauses(&found, 300, 0.02);
+        let clock = FrameClock {
+            frame_seconds: 0.02,
+            frames: 300,
+        };
+        let p = pauses(&found, clock);
         for (f, pause) in [
             (40, true),
             (60, false),

@@ -4,7 +4,7 @@
 //! [`SLACK`]. The aligner takes these windows as soft pins
 //! ([`crate::ctc::Hints::windows`]).
 //!
-//! The words are matched in order (the longest common subsequence, as
+//! The words are matched in order ([`crate::words::common`], as
 //! [`crate::fit`] counts them). Three things keep a window from being
 //! wrong:
 //!
@@ -15,17 +15,16 @@
 //!   heard with it) were also heard in another part (a chorus heard again,
 //!   perhaps a different number of times than the text has it) may be
 //!   matched to the wrong one, so it is not pinned.
-//! - A part where the recogniser fell into a loop ([`looped`]: one 26 s
-//!   part of a song had "cry me a river" sixty times) is not used.
+//! - A part where the recogniser fell into a loop
+//!   ([`crate::words::looped`]: one 26 s part of a song had "cry me a
+//!   river" sixty times) is not used.
 //!
 //! On 138 songs, 4 % of lines pinned this way had LRCLIB's time outside
 //! their window before the last two rules; with them, the pins (and the
 //! opening pull) broke 5 lines that were right and fixed 42.
 
-use std::collections::HashSet;
-
 use crate::asr::Part;
-use crate::fit::words;
+use crate::words::{common, looped, words, Compared};
 use crate::Lyrics;
 
 /// How many words matched in a row make a run that counts.
@@ -52,24 +51,11 @@ pub fn windows(lyrics: &Lyrics, parts: &[Part]) -> Vec<Option<(f64, f64)>> {
             part_of.push(k);
         }
     }
-    // The text's words, each with the lyrics' word it is of (a word may
-    // compare as two: "five-thirty"), and that word's line.
-    let mut text = Vec::new();
-    let mut word_of = Vec::new();
-    let mut line_of = Vec::new();
-    for (l, line) in lyrics.lines.iter().enumerate() {
-        for w in &line.words {
-            for c in words(&w.text) {
-                text.push(c);
-                word_of.push(line_of.len());
-            }
-            line_of.push(l);
-        }
-    }
-    let pairs = common(&text, &heard);
+    let text = Compared::of(lyrics);
+    let pairs = common(&text.words, &heard);
     // The text words in a run (matched in a row, heard in a row in one
     // part): the heard word each is matched to, and where its run ends.
-    let mut good: Vec<Option<(usize, usize)>> = vec![None; text.len()];
+    let mut good: Vec<Option<(usize, usize)>> = vec![None; text.words.len()];
     let mut k = 0;
     while k < pairs.len() {
         let mut e = k;
@@ -97,63 +83,21 @@ pub fn windows(lyrics: &Lyrics, parts: &[Part]) -> Vec<Option<(f64, f64)>> {
                 && heard[i..i + phrase.len()] == *phrase
         })
     };
-    let mut out = vec![None; line_of.len()];
+    let mut out = vec![None; lyrics.lines.iter().map(|l| l.words.len()).sum()];
     let mut done_line = None;
     for (i, g) in good.iter().enumerate() {
         let Some((j, end)) = *g else {
             continue;
         };
-        let w = word_of[i];
+        let w = text.word[i];
         // A word's start is that of its first compared part.
-        if done_line == Some(line_of[w]) || (i > 0 && word_of[i - 1] == w) {
+        if done_line == Some(text.line[i]) || (i > 0 && text.word[i - 1] == w) {
             continue;
         }
-        done_line = Some(line_of[w]);
+        done_line = Some(text.line[i]);
         if !elsewhere(j, end) {
             let p = &parts[part_of[j]];
             out[w] = Some((p.start - SLACK, p.end + SLACK));
-        }
-    }
-    out
-}
-
-/// Whether the recogniser fell into a loop in `part`: more words than are
-/// sung in its time (over 4 a second), most of them one phrase over again
-/// (under a third of its runs of three words different).
-pub fn looped(part: &Part) -> bool {
-    let w = words(&part.text);
-    let seconds = (part.end - part.start).max(1.0);
-    if (w.len() as f64) < 4.0 * seconds || w.len() < 3 {
-        return false;
-    }
-    let threes: HashSet<&[String]> = w.windows(3).collect();
-    (threes.len() as f64) < (w.len() - 2) as f64 / 3.0
-}
-
-/// The pairs `(i, j)` of a longest common subsequence of `a` and `b`.
-pub(crate) fn common<T: PartialEq>(a: &[T], b: &[T]) -> Vec<(usize, usize)> {
-    let (n, m) = (a.len(), b.len());
-    let mut t = vec![0u16; (n + 1) * (m + 1)];
-    let at = |i: usize, j: usize| i * (m + 1) + j;
-    for i in (0..n).rev() {
-        for j in (0..m).rev() {
-            t[at(i, j)] = if a[i] == b[j] {
-                t[at(i + 1, j + 1)].saturating_add(1)
-            } else {
-                t[at(i + 1, j)].max(t[at(i, j + 1)])
-            };
-        }
-    }
-    let (mut i, mut j, mut out) = (0, 0, Vec::new());
-    while i < n && j < m {
-        if a[i] == b[j] {
-            out.push((i, j));
-            i += 1;
-            j += 1;
-        } else if t[at(i + 1, j)] >= t[at(i, j + 1)] {
-            i += 1;
-        } else {
-            j += 1;
         }
     }
     out
@@ -219,14 +163,9 @@ mod tests {
     }
 
     #[test]
-    fn a_loop_is_not_heard() {
+    fn a_part_heard_in_a_loop_pins_nothing() {
         let looping = part(0.0, 10.0, &"cry me a river ".repeat(30));
         assert!(looped(&looping));
-        // A chorus sung four times in a part is no loop; nor are fast
-        // words that differ.
-        assert!(!looped(&part(0.0, 26.0, &"cry me a river ".repeat(4))));
-        let fast: String = (0..60).map(|i| format!("w{i} ")).collect();
-        assert!(!looped(&part(0.0, 10.0, &fast)));
         let text = lyrics(&["Cry me a river"]);
         assert_eq!(windows(&text, &[looping]), vec![None; 4]);
     }

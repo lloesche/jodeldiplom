@@ -20,7 +20,8 @@
 //! context, does not.
 
 use crate::asr::Part;
-use crate::fit::words;
+use crate::ctc::FrameClock;
+use crate::words::{words, Compared};
 use crate::Lyrics;
 
 /// A glimpse's length, in seconds.
@@ -109,19 +110,17 @@ pub fn hear_glimpses_at_once(
     Ok(out)
 }
 
-/// For each of `frames` frames of `frame_seconds`, whether no words were
-/// heard there: some glimpse has it well inside ([`INSIDE`]) and none of
-/// those heard a word. (Only between words heard, or only short
+/// For each frame of `clock`, whether no words were heard there: some
+/// glimpse has it well inside ([`INSIDE`], [`FrameClock::inward`]) and
+/// none of those heard a word. (Only between words heard, or only short
 /// stretches, did worse on 138 songs: an intro or a long break a line was
 /// taken into is as common as a verse the recogniser hears nothing of.)
-pub fn unheard(glimpses: &[Part], frames: usize, frame_seconds: f64) -> Vec<bool> {
-    let mut covered = vec![false; frames];
-    let mut heard = vec![false; frames];
+pub fn unheard(glimpses: &[Part], clock: FrameClock) -> Vec<bool> {
+    let mut covered = vec![false; clock.frames];
+    let mut heard = vec![false; clock.frames];
     for g in glimpses {
-        let from = (((g.start + INSIDE) / frame_seconds).ceil().max(0.0) as usize).min(frames);
-        let to = (((g.end - INSIDE) / frame_seconds).floor().max(0.0) as usize).min(frames);
         let any = !words(&g.text).is_empty();
-        for f in from..to {
+        for f in clock.inward(g.start, g.end, INSIDE) {
             covered[f] = true;
             heard[f] |= any;
         }
@@ -188,13 +187,12 @@ pub fn line_starts(
     first: &[Option<f64>],
 ) -> Vec<Option<Start>> {
     let heard: Vec<Vec<String>> = glimpses.iter().map(|g| words(&g.text)).collect();
-    lyrics
-        .lines
-        .iter()
+    let compared = Compared::of(lyrics);
+    (0..compared.lines())
         .zip(first)
         .map(|(line, at)| {
             let at = (*at)?;
-            let text: Vec<String> = line.words.iter().flat_map(|w| words(&w.text)).collect();
+            let text = compared.of_line(line);
             if text.len() < 2 {
                 return None;
             }
@@ -206,7 +204,7 @@ pub fn line_starts(
             let mut runs: Vec<Vec<&Part>> = Vec::new();
             for surely in [true, false] {
                 for (g, h) in glimpses.iter().zip(&heard) {
-                    if !(near(g) && starts(h, &text, surely)) {
+                    if !(near(g) && starts(h, text, surely)) {
                         continue;
                     }
                     match runs.last_mut() {
@@ -340,7 +338,11 @@ mod tests {
             glimpse(3.0, ""),
             glimpse(4.5, "Oh."),
         ];
-        let u = unheard(&g, 375, 0.02);
+        let clock = FrameClock {
+            frame_seconds: 0.02,
+            frames: 375,
+        };
+        let u = unheard(&g, clock);
         let at = |t: f64| u[(t / 0.02) as usize];
         // Heard by the first, or near its end; unheard where the two
         // empty ones alone have it; heard again in the last.

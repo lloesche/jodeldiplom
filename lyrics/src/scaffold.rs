@@ -40,9 +40,9 @@
 //! time; where the recogniser's glimpses could tell, the source was right
 //! about as often as we were, so it is no authority line by line.
 
-use crate::ctc::{align_heard, CtcSettings, Emissions, Hints};
-use crate::fit::words;
+use crate::ctc::{align_heard, CtcSettings, Emissions, FrameClock, Hints};
 use crate::tokens::Vocab;
+use crate::words::{common, words, Compared};
 use crate::{Line, Lyrics, Synced};
 
 /// The least share of a text's words, and of the synced text's, the two
@@ -80,45 +80,28 @@ pub fn attach(text: &mut Lyrics, synced: &Lyrics) -> usize {
     for line in &mut text.lines {
         line.synced = None;
     }
-    // The words of each, with their line and whether they start it.
-    let flat = |l: &Lyrics| {
-        let mut out: Vec<(String, usize, bool)> = Vec::new();
-        for (k, line) in l.lines.iter().enumerate() {
-            let mut first = true;
-            for w in line.words.iter().flat_map(|w| words(&w.text)) {
-                out.push((w, k, first));
-                first = false;
-            }
-        }
-        out
-    };
-    let ours = flat(text);
-    let theirs = flat(synced);
-    let a: Vec<&String> = ours.iter().map(|w| &w.0).collect();
-    let b: Vec<&String> = theirs.iter().map(|w| &w.0).collect();
-    let pairs = crate::anchors::common(&a, &b);
+    let ours = Compared::of(text);
+    let theirs = Compared::of(synced);
+    let pairs = common(&ours.words, &theirs.words);
     let enough = |n: usize| n > 0 && pairs.len() as f32 >= SAME_WORDS * n as f32;
-    if !enough(ours.len()) || !enough(theirs.len()) {
+    if !enough(ours.words.len()) || !enough(theirs.words.len()) {
         return 0;
     }
-    let mut pair_of = vec![None; ours.len()];
+    let mut pair_of = vec![None; ours.words.len()];
     for &(i, j) in &pairs {
         pair_of[i] = Some(j);
     }
     let mut given = 0;
     let mut i = 0;
-    while i < ours.len() {
-        let line = ours[i].1;
-        let mut next = i;
-        while next < ours.len() && ours[next].1 == line {
-            next += 1;
-        }
+    while i < ours.words.len() {
+        let line = ours.line[i];
+        let next = ours.first_of(line + 1);
         let start = pair_of[i]
-            .filter(|&j| theirs[j].2)
-            .and_then(|j| synced.lines[theirs[j].1].synced);
+            .filter(|&j| theirs.first_of(theirs.line[j]) == j)
+            .and_then(|j| synced.lines[theirs.line[j]].synced);
         let last = (i..next).rev().find_map(|k| pair_of[k]);
         if let (Some(start), Some(last)) = (start, last) {
-            let end = synced.lines[theirs[last].1]
+            let end = synced.lines[theirs.line[last]]
                 .synced
                 .map_or(start.end, |s| s.end);
             text.lines[line].synced = Some(Synced {
@@ -204,11 +187,12 @@ pub fn line_end(lines: &[Line], k: usize) -> Option<f64> {
 /// (it would squeeze the line into its edge).
 pub fn windows(lyrics: &Lyrics, verdict: &Verdict, seconds: f64) -> Vec<Option<(f64, f64)>> {
     let lines = &lyrics.lines;
+    let compared = Compared::of(lyrics);
     (0..lines.len())
         .map(|k| {
             let synced = lines[k].synced?;
             let end = line_end(lines, k);
-            let words: usize = lines[k].words.iter().map(|w| words(&w.text).len()).sum();
+            let words = compared.of_line(k).len();
             if end.is_some_and(|e| e - synced.start < words as f64 / FASTEST) {
                 return None;
             }
@@ -228,19 +212,19 @@ pub const FASTEST: f64 = 8.0;
 /// less those of the lines the voice says the source has wrong. A line
 /// `free` puts outside its window is left where it is when the voice is
 /// heard less where the source has it, over the line's length, than where
-/// it was put (by [`VOICE_MORE`] of it, by `hints`' pauses of
-/// `frame_seconds` frames), or when the recogniser's glimpses heard its
-/// first words ([`HEARD_WORDS`] of them) near where it was put and not
-/// near the source's time. The recording is `seconds` long.
+/// it was put (by [`VOICE_MORE`] of it, by `hints`' pauses of `clock`'s
+/// frames), or when the recogniser's glimpses heard its first words
+/// ([`HEARD_WORDS`] of them) near where it was put and not near the
+/// source's time. The recording is `clock`'s frames.
 pub fn held(
     free: &Lyrics,
     verdict: &Verdict,
     hints: &Hints,
-    frame_seconds: f64,
-    seconds: f64,
+    clock: FrameClock,
 ) -> Vec<Option<(f64, f64)>> {
-    let mut out = windows(free, verdict, seconds);
-    for (line, window) in free.lines.iter().zip(&mut out) {
+    let mut out = windows(free, verdict, clock.seconds());
+    let compared = Compared::of(free);
+    for (k, (line, window)) in free.lines.iter().zip(&mut out).enumerate() {
         let (Some((lo, hi)), Some(synced)) = (*window, line.synced) else {
             continue;
         };
@@ -255,14 +239,10 @@ pub fn held(
         }
         let theirs = synced.start + verdict.offset;
         let length = (end - ours).max(0.5);
-        let voiced = |at: f64| voiced(&hints.pauses, frame_seconds, at, at + length);
-        let first: Vec<String> = line
-            .words
-            .iter()
-            .flat_map(|w| words(&w.text))
-            .take(5)
-            .collect();
-        let heard = |at: f64| heard_near(&first, &hints.glimpses, at) >= HEARD_WORDS;
+        let voiced = |at: f64| voiced(&hints.pauses, clock, at, at + length);
+        let first = compared.of_line(k);
+        let first = &first[..first.len().min(5)];
+        let heard = |at: f64| heard_near(first, &hints.glimpses, at) >= HEARD_WORDS;
         let quieter = voiced(theirs) + VOICE_MORE < voiced(ours);
         let unheard = first.len() >= HEARD_WORDS && heard(ours) && !heard(theirs);
         if quieter || unheard {
@@ -281,18 +261,23 @@ pub const VOICE_MORE: f64 = 0.3;
 /// line to be heard there.
 pub const HEARD_WORDS: usize = 2;
 
-/// The share of the frames from `a` to `b` seconds where the voice is
-/// heard (not `pauses`); all of them when the pauses are not known.
-fn voiced(pauses: &[bool], frame_seconds: f64, a: f64, b: f64) -> f64 {
+/// The share of the frames of `clock` from `a` to `b` seconds (rounded
+/// outward, [`FrameClock::outward`], within those `pauses` covers) where
+/// the voice is heard (not `pauses`); all of them when the pauses are not
+/// known.
+fn voiced(pauses: &[bool], clock: FrameClock, a: f64, b: f64) -> f64 {
     if pauses.is_empty() {
         return 1.0;
     }
-    let from = ((a / frame_seconds).floor().max(0.0) as usize).min(pauses.len());
-    let to = ((b / frame_seconds).ceil().max(0.0) as usize).min(pauses.len());
-    if to <= from {
+    let frames = FrameClock {
+        frames: pauses.len(),
+        ..clock
+    }
+    .outward(a, b);
+    if frames.is_empty() {
         return 0.0;
     }
-    pauses[from..to].iter().filter(|p| !**p).count() as f64 / (to - from) as f64
+    pauses[frames.clone()].iter().filter(|p| !**p).count() as f64 / frames.len() as f64
 }
 
 /// The most of `first` (a line's first words) a glimpse starting near `at`
@@ -301,7 +286,7 @@ fn heard_near(first: &[String], glimpses: &[crate::asr::Part], at: f64) -> usize
     glimpses
         .iter()
         .filter(|g| g.start - 1.0 <= at && at <= g.start + 2.0)
-        .map(|g| crate::anchors::common(first, &words(&g.text)).len())
+        .map(|g| common(first, &words(&g.text)).len())
         .max()
         .unwrap_or(0)
 }
@@ -344,6 +329,10 @@ fn heard_less(free: &Lyrics, held: &Lyrics) -> Vec<usize> {
 /// aligned once more (as without them when that finds no path). With the
 /// check's verdict (none when no line has a source's time). `None` when no
 /// path fits.
+///
+/// When no line is held, the song is not aligned again: held nowhere,
+/// nothing costs more than without the source's times, so the path, and
+/// the lyrics, would be the same.
 pub fn align(
     emissions: &Emissions,
     lyrics: &Lyrics,
@@ -353,27 +342,25 @@ pub fn align(
 ) -> Option<(Lyrics, Option<Verdict>)> {
     let (free, _) = align_heard(emissions, lyrics, vocab, settings, hints, &[])?;
     let verdict = check(&free);
-    let kept = match verdict {
-        Some(v) if v.trusted() && settings.scaffold > 0.0 => {
-            let (fs, seconds) = (
-                emissions.frame_seconds,
-                emissions.frames() as f64 * emissions.frame_seconds,
-            );
-            let mut lines = held(&free, &v, hints, fs, seconds);
-            let first = align_heard(emissions, lyrics, vocab, settings, hints, &lines);
-            match first.map(|(l, _)| (heard_less(&free, &l), l)) {
-                Some((lost, _)) if !lost.is_empty() => {
-                    for k in lost {
-                        lines[k] = None;
-                    }
-                    align_heard(emissions, lyrics, vocab, settings, hints, &lines).map(|(l, _)| l)
-                }
-                first => first.map(|(_, l)| l),
-            }
-        }
-        _ => None,
+    let Some(v) = verdict.filter(|v| v.trusted() && settings.scaffold > 0.0) else {
+        return Some((free, verdict));
     };
-    Some((kept.unwrap_or(free), verdict))
+    let mut lines = held(&free, &v, hints, emissions.clock());
+    if lines.iter().all(Option::is_none) {
+        return Some((free, verdict));
+    }
+    let Some((first, _)) = align_heard(emissions, lyrics, vocab, settings, hints, &lines) else {
+        return Some((free, verdict));
+    };
+    let lost = heard_less(&free, &first);
+    if lost.is_empty() {
+        return Some((first, verdict));
+    }
+    for k in lost {
+        lines[k] = None;
+    }
+    let again = align_heard(emissions, lyrics, vocab, settings, hints, &lines);
+    Some((again.map_or(free, |(l, _)| l), verdict))
 }
 
 #[cfg(test)]
@@ -572,13 +559,17 @@ mod tests {
             glimpses: vec![glimpse(16.5, "Come home."), glimpse(25.5, "Oh.")],
             ..Hints::default()
         };
-        let all = windows(&free, &v, 40.0);
-        let kept = held(&free, &v, &hints, FS, 40.0);
+        let clock = FrameClock {
+            frame_seconds: FS,
+            frames: 2000,
+        };
+        let all = windows(&free, &v, clock.seconds());
+        let kept = held(&free, &v, &hints, clock);
         assert_eq!(kept[..8], all[..8]);
         assert!(all[8].is_some() && all[9].is_some());
         assert_eq!((kept[8], kept[9]), (None, None));
         // Nothing heard or measured against them: all kept.
-        assert_eq!(held(&free, &v, &Hints::default(), FS, 40.0), all);
+        assert_eq!(held(&free, &v, &Hints::default(), clock), all);
     }
 
     /// One-word lines sung surely every 2 s from 1 s; the last, "ten",
@@ -716,5 +707,46 @@ mod tests {
         let word = &kept.lines[0].words[0];
         assert_eq!((word.start, word.end), (Some(10.0 * FS), Some(201.0 * FS)));
         assert_eq!(kept, free);
+    }
+
+    #[test]
+    fn a_song_held_on_no_line_is_aligned_as_without_its_times() {
+        // Every cost there is: pauses, pins, glimpses.
+        let (e, lyrics) = ten_lines((0.5, 0.45));
+        let settings = CtcSettings::default();
+        let hints = Hints {
+            pauses: (0..e.frames()).map(|f| f % 97 < 5).collect(),
+            windows: vec![Some((0.0, 25.0)); 10],
+            glimpses: vec![crate::asr::Part {
+                start: 14.5,
+                end: 17.5,
+                text: "Seven, eight.".into(),
+            }],
+        };
+        // Held nowhere, the alignment align skips is the one without the
+        // source's times, to the bit.
+        let free = align_heard(&e, &lyrics, &WAV2VEC2_960H, &settings, &hints, &[]).unwrap();
+        let nowhere = vec![None; lyrics.lines.len()];
+        let again = align_heard(&e, &lyrics, &WAV2VEC2_960H, &settings, &hints, &nowhere).unwrap();
+        assert_eq!(again.0, free.0);
+        assert_eq!(again.1.to_bits(), free.1.to_bits());
+        // A source whose every line is synced too fast to be sung there
+        // fits, holds no line, and leaves the song as without it.
+        let mut squeezed = lyrics.clone();
+        for line in &mut squeezed.lines {
+            if line.is_break {
+                line.synced = None;
+            } else if let Some(s) = &mut line.synced {
+                s.end = Some(s.start + 0.01);
+            }
+        }
+        let (free, _) = align_heard(&e, &squeezed, &WAV2VEC2_960H, &settings, &hints, &[]).unwrap();
+        let v = check(&free).unwrap();
+        assert!(v.trusted(), "{v:?}");
+        assert!(held(&free, &v, &hints, e.clock())
+            .iter()
+            .all(Option::is_none));
+        let (out, verdict) = align(&e, &squeezed, &WAV2VEC2_960H, &settings, &hints).unwrap();
+        assert_eq!((out, verdict), (free, Some(v)));
     }
 }

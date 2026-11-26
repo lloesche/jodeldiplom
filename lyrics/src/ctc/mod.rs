@@ -59,7 +59,7 @@ use crate::{Detail, Lyrics, Timing, CONFIDENT};
 
 mod path;
 
-pub use path::{force_align, Costs, Emissions, Path, Skip};
+pub use path::{force_align, Costs, Emissions, FrameClock, Path, Skip, StayCost};
 
 /// How the CTC alignment goes.
 #[derive(Clone, Debug, PartialEq)]
@@ -227,13 +227,15 @@ pub fn align_heard(
 ) -> Option<(Lyrics, f32)> {
     let job = Job::new(emissions, lyrics, vocab, settings, hints);
     let mut costs = Costs {
+        stay: Vec::new(),
         entry: vec![Vec::new(); job.states()],
-        ..Costs::default()
     };
+    // A frame's costs are added up in the order they are put in, and a sum
+    // of floats depends on its order: keep this one.
     pause_costs(&job, &mut costs);
     pin_costs(&job, &mut costs);
-    scaffold_costs(&job, &mut costs, lines);
     unheard_costs(&job, &mut costs);
+    scaffold_costs(&job, &mut costs, lines);
     let skips = job.skips();
     let align = |costs: &Costs| force_align(emissions, &job.tokens.ids, vocab.blank, &skips, costs);
     let mut path = align(&costs)?;
@@ -301,17 +303,15 @@ impl<'a> Job<'a> {
         self.emissions.frame_seconds
     }
 
-    fn frames(&self) -> usize {
-        self.emissions.frames()
-    }
-
     fn states(&self) -> usize {
         2 * self.tokens.ids.len() + 1
     }
 
-    /// The frames from `a` to `b` seconds ([`frames_within`]).
+    /// The frames from `a` to `b` seconds, rounded outward
+    /// ([`FrameClock::outward`]), and a frame after.
     fn within(&self, a: f64, b: f64) -> Range<usize> {
-        frames_within(a, b, self.fs(), self.frames())
+        let frames = self.emissions.clock().outward(a, b);
+        frames.start..frames.end + 1
     }
 
     /// Where a recogniser heard word `w` start, if it did
@@ -322,6 +322,87 @@ impl<'a> Job<'a> {
             .get(self.flat_start[w.line] + w.word)
             .copied()
             .flatten()
+    }
+
+    /// Where nothing with words was heard, what a frame on each state
+    /// costs: `cost` on every state of a line ([`Job::lines`]) from its
+    /// first letter to its last, none on a line of nothing but "ooh"s,
+    /// which is sung where no words are.
+    fn spanned(&self, cost: f32) -> Vec<f32> {
+        let mut out = vec![0.0; self.states()];
+        for &(l, a, b) in &self.lines {
+            if self.lyrics.lines[l]
+                .words
+                .iter()
+                .all(|w| crate::glimpses::vocable(&w.text))
+            {
+                continue;
+            }
+            for c in &mut out[2 * a + 1..2 * b + 2] {
+                *c = cost;
+            }
+        }
+        out
+    }
+
+    /// Where `path` first hears the words surely: the first token of the
+    /// lyrics, and that of the first of [`CtcSettings::island_words`] words
+    /// in a row whose letters it hears at [`CtcSettings::island_heard`] or
+    /// more (their mean probability on the frames it has them) and none of
+    /// which starts outside the window a recogniser heard it in
+    /// ([`Job::heard_window`]). `None` when there is no such run.
+    fn first_island(&self, path: &Path) -> Option<(usize, usize)> {
+        let (emissions, settings) = (self.emissions, self.settings);
+        let ids = &self.tokens.ids;
+        let sep = self.vocab.separator;
+        let spans = path.token_frames(ids.len());
+        let fs = self.fs();
+        let heard = |range: &Range<usize>| {
+            let (mut sum, mut n) = (0.0f32, 0usize);
+            for k in range.clone().filter(|&k| ids[k] != sep) {
+                for f in spans[k].clone().unwrap_or_default() {
+                    sum += emissions.at(f, ids[k]).exp();
+                    n += 1;
+                }
+            }
+            if n == 0 {
+                0.0
+            } else {
+                sum / n as f32
+            }
+        };
+        let mut first = None;
+        let (mut run, mut island, mut last_end) = (0, 0, f64::NEG_INFINITY);
+        for w in &self.tokens.words {
+            let Some(range) = &w.tokens else {
+                continue;
+            };
+            first.get_or_insert(range.start);
+            let start = spans[range.start].as_ref().map(|r| r.start as f64 * fs);
+            let end = spans[range.end - 1].as_ref().map(|r| r.end as f64 * fs);
+            let placed = match (start, self.heard_window(w)) {
+                (None, _) => false,
+                (Some(t), Some((a, b))) => a <= t && t <= b,
+                (Some(_), None) => true,
+            };
+            if placed && heard(range) >= settings.island_heard {
+                // Sung together: a gap breaks the run.
+                if run > 0 && start.unwrap_or(0.0) - last_end > ISLAND_GAP {
+                    run = 0;
+                }
+                last_end = end.unwrap_or(f64::NEG_INFINITY);
+                if run == 0 {
+                    island = range.start;
+                }
+                run += 1;
+                if run >= settings.island_words {
+                    return Some((first?, island));
+                }
+            } else {
+                run = 0;
+            }
+        }
+        None
     }
 
     /// The backing words the path may leave out.
@@ -397,12 +478,16 @@ impl<'a> Job<'a> {
 }
 
 /// The blanks inside a word (state 2i between its letters i - 1 and i)
-/// cost where the voice pauses ([`CtcSettings::inside_word`]).
+/// cost where the voice pauses ([`CtcSettings::inside_word`]); nothing
+/// when the pauses are not known.
 fn pause_costs(job: &Job, costs: &mut Costs) {
+    if job.hints.pauses.is_empty() {
+        return;
+    }
     let ids = &job.tokens.ids;
     let sep = job.vocab.separator;
     let inside = job.settings.inside_word * job.fs() as f32;
-    costs.charged = (0..job.states())
+    let by_state = (0..job.states())
         .map(|s| {
             let i = s / 2;
             let between =
@@ -414,7 +499,10 @@ fn pause_costs(job: &Job, costs: &mut Costs) {
             }
         })
         .collect();
-    costs.charging = job.hints.pauses.clone();
+    costs.stay.push(StayCost::Marked {
+        by_state,
+        frames: Some(job.hints.pauses.clone()),
+    });
 }
 
 /// A word a recogniser heard costs to start outside where it heard it
@@ -445,14 +533,15 @@ fn scaffold_costs(job: &Job, costs: &mut Costs, windows: &[Option<(f64, f64)>]) 
         Some(job.within(from, to))
     };
     let per_frame = penalty * job.fs() as f32;
-    costs.outside = vec![None; job.states()];
+    let mut outside = vec![None; job.states()];
     for &(l, a, b) in &job.lines {
         if let Some(within) = line_window(l) {
-            for c in &mut costs.outside[2 * a + 1..2 * b + 2] {
+            for c in &mut outside[2 * a + 1..2 * b + 2] {
                 *c = Some((within.clone(), per_frame));
             }
         }
     }
+    costs.stay.push(StayCost::Outside(outside));
     for w in &job.tokens.words {
         if let (Some(range), Some(within)) = (&w.tokens, line_window(w.line)) {
             costs.entry[2 * range.start + 1].push((within, penalty));
@@ -467,8 +556,13 @@ fn unheard_costs(job: &Job, costs: &mut Costs) {
         return;
     }
     let cost = job.settings.unheard * job.fs() as f32;
-    costs.spanned = spanned(job.lyrics, &job.lines, job.states(), cost);
-    costs.unheard = crate::glimpses::unheard(&job.hints.glimpses, job.frames(), job.fs());
+    costs.stay.push(StayCost::Marked {
+        by_state: job.spanned(cost),
+        frames: Some(crate::glimpses::unheard(
+            &job.hints.glimpses,
+            job.emissions.clock(),
+        )),
+    });
 }
 
 /// Each line's first word costs to start outside where the glimpses near
@@ -511,21 +605,13 @@ fn opening_costs(job: &Job, costs: &mut Costs, path: &Path) -> bool {
     if job.settings.opening_pull <= 0.0 {
         return false;
     }
-    let ids = &job.tokens.ids;
-    let sep = job.vocab.separator;
-    let heard_window = |w: &TokenWord| job.heard_window(w);
-    let Some((first, island)) = first_island(
-        path,
-        job.emissions,
-        &job.tokens,
-        sep,
-        &heard_window,
-        job.settings,
-    ) else {
+    let Some((first, island)) = job.first_island(path) else {
         return false;
     };
+    let ids = &job.tokens.ids;
+    let sep = job.vocab.separator;
     let pull = job.settings.opening_pull * job.fs() as f32;
-    costs.always = (0..job.states())
+    let by_state = (0..job.states())
         .map(|s| {
             let inside = s > 2 * first + 1 && s < 2 * island + 1;
             if inside && !on_letter(ids, sep, s) {
@@ -535,6 +621,10 @@ fn opening_costs(job: &Job, costs: &mut Costs, path: &Path) -> bool {
             }
         })
         .collect();
+    costs.stay.push(StayCost::Marked {
+        by_state,
+        frames: None,
+    });
     true
 }
 
@@ -553,103 +643,10 @@ fn line_tokens(tokens: &Tokens) -> Vec<(usize, usize, usize)> {
     out
 }
 
-/// The frames from `a` to `b` seconds (a frame either side), of `frames`.
-fn frames_within(a: f64, b: f64, fs: f64, frames: usize) -> Range<usize> {
-    let from = (a / fs).floor().max(0.0) as usize;
-    let to = ((b / fs).ceil().max(0.0) as usize).min(frames) + 1;
-    from..to
-}
-
-/// Where nothing with words was heard, what a frame on each of `states`
-/// costs: `cost` on every state of a line (`lines`, [`line_tokens`]) from
-/// its first letter to its last, none on a line of nothing but "ooh"s,
-/// which is sung where no words are.
-fn spanned(lyrics: &Lyrics, lines: &[(usize, usize, usize)], states: usize, cost: f32) -> Vec<f32> {
-    let mut out = vec![0.0; states];
-    for &(l, a, b) in lines {
-        if lyrics.lines[l]
-            .words
-            .iter()
-            .all(|w| crate::glimpses::vocable(&w.text))
-        {
-            continue;
-        }
-        for c in &mut out[2 * a + 1..2 * b + 2] {
-            *c = cost;
-        }
-    }
-    out
-}
-
 /// Whether state `s` of `ids` is on a letter (not a blank, nor a word
 /// break).
 fn on_letter(ids: &[u32], sep: u32, s: usize) -> bool {
     s % 2 == 1 && ids[s / 2] != sep
-}
-
-/// Where `path` first hears the words surely: the first token of the
-/// lyrics, and that of the first of [`CtcSettings::island_words`] words in
-/// a row whose letters it hears at [`CtcSettings::island_heard`] or more
-/// (their mean probability on the frames it has them) and none of which
-/// starts outside the window a recogniser heard it in (`heard_window`).
-/// `None` when there is no such run.
-fn first_island(
-    path: &Path,
-    emissions: &Emissions,
-    tokens: &Tokens,
-    sep: u32,
-    heard_window: &dyn Fn(&TokenWord) -> Option<(f64, f64)>,
-    settings: &CtcSettings,
-) -> Option<(usize, usize)> {
-    let ids = &tokens.ids;
-    let spans = path.token_frames(ids.len());
-    let fs = emissions.frame_seconds;
-    let heard = |range: &Range<usize>| {
-        let (mut sum, mut n) = (0.0f32, 0usize);
-        for k in range.clone().filter(|&k| ids[k] != sep) {
-            for f in spans[k].clone().unwrap_or_default() {
-                sum += emissions.at(f, ids[k]).exp();
-                n += 1;
-            }
-        }
-        if n == 0 {
-            0.0
-        } else {
-            sum / n as f32
-        }
-    };
-    let mut first = None;
-    let (mut run, mut island, mut last_end) = (0, 0, f64::NEG_INFINITY);
-    for w in &tokens.words {
-        let Some(range) = &w.tokens else {
-            continue;
-        };
-        first.get_or_insert(range.start);
-        let start = spans[range.start].as_ref().map(|r| r.start as f64 * fs);
-        let end = spans[range.end - 1].as_ref().map(|r| r.end as f64 * fs);
-        let placed = match (start, heard_window(w)) {
-            (None, _) => false,
-            (Some(t), Some((a, b))) => a <= t && t <= b,
-            (Some(_), None) => true,
-        };
-        if placed && heard(range) >= settings.island_heard {
-            // Sung together: a gap breaks the run.
-            if run > 0 && start.unwrap_or(0.0) - last_end > ISLAND_GAP {
-                run = 0;
-            }
-            last_end = end.unwrap_or(f64::NEG_INFINITY);
-            if run == 0 {
-                island = range.start;
-            }
-            run += 1;
-            if run >= settings.island_words {
-                return Some((first?, island));
-            }
-        } else {
-            run = 0;
-        }
-    }
-    None
 }
 
 /// When each character of `text` is sung, in seconds after the word's first
@@ -693,11 +690,7 @@ fn letter_times(
 /// they were made from) pauses there: outside every
 /// [`spread::vocal_stretches`].
 pub fn voice_pauses(vocals_16k: &[f32], emissions: &Emissions) -> Vec<bool> {
-    spread::pauses(
-        &spread::vocal_stretches(vocals_16k),
-        emissions.frames(),
-        emissions.frame_seconds,
-    )
+    spread::pauses(&spread::vocal_stretches(vocals_16k), emissions.clock())
 }
 
 #[cfg(test)]

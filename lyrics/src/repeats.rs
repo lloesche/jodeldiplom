@@ -18,7 +18,7 @@
 //! text accounts for up by 1 to 30 points.
 
 use crate::asr::Part;
-use crate::fit::words;
+use crate::words::{common, looped, words, Compared};
 use crate::{Line, Lyrics};
 
 /// Heard words in a row the text has nothing for, at least.
@@ -42,25 +42,12 @@ pub const TIMES: usize = 4;
 pub fn with_repeats(lyrics: &Lyrics, parts: &[Part]) -> Lyrics {
     let heard: Vec<String> = parts
         .iter()
-        .filter(|p| !crate::anchors::looped(p))
+        .filter(|p| !looped(p))
         .flat_map(|p| words(&p.text))
         .collect();
-    let lines: Vec<Vec<String>> = lyrics
-        .lines
-        .iter()
-        .map(|l| l.words.iter().flat_map(|w| words(&w.text)).collect())
-        .collect();
-    let mut text = Vec::new();
-    let mut line_of = Vec::new();
-    let mut first_of = Vec::new();
-    for (k, l) in lines.iter().enumerate() {
-        first_of.push(text.len());
-        for w in l {
-            text.push(w.clone());
-            line_of.push(k);
-        }
-    }
-    let pairs = crate::anchors::common(&text, &heard);
+    let text = Compared::of(lyrics);
+    let count = text.words.len();
+    let pairs = common(&text.words, &heard);
     // The heard runs between matched words, each with the line before
     // which it was sung.
     let mut inserts = Vec::new();
@@ -81,20 +68,20 @@ pub fn with_repeats(lyrics: &Lyrics, parts: &[Part]) -> Lyrics {
         }
         // At the first boundary between lines after the last word matched
         // (the rest of its line perhaps not heard), before the next one.
-        let next = bounds[k + 1].0.unwrap_or(text.len());
+        let next = bounds[k + 1].0.unwrap_or(count);
         let mut t = ti.map_or(0, |t| t + 1);
-        if t < text.len() && first_of[line_of[t]] != t {
-            t = first_of.get(line_of[t] + 1).copied().unwrap_or(text.len());
+        if t < count && text.first_of(text.line[t]) != t {
+            t = text.first_of(text.line[t] + 1);
             if t > next {
                 continue;
             }
         }
-        let at = if t < text.len() {
-            line_of[t]
+        let at = if t < count {
+            text.line[t]
         } else {
-            lines.len()
+            text.lines()
         };
-        if let Some(block) = best_block(&lines, &lyrics.lines, &heard[a..hj]) {
+        if let Some(block) = best_block(&text, &lyrics.lines, &heard[a..hj]) {
             inserts.push((at, block));
         }
     }
@@ -119,20 +106,18 @@ pub fn with_repeats(lyrics: &Lyrics, parts: &[Part]) -> Lyrics {
 /// The run of whole lines (starting and ending on sung ones, at most
 /// [`MOST_LINES`]), sung up to [`TIMES`] times in a row, that best
 /// accounts for the heard words `gap`, when one does well enough: its
-/// first and last line and how many times.
-fn best_block(
-    lines: &[Vec<String>],
-    written: &[Line],
-    gap: &[String],
-) -> Option<(usize, usize, usize)> {
+/// first and last line and how many times. `text` is the words of the
+/// `written` lines.
+fn best_block(text: &Compared, written: &[Line], gap: &[String]) -> Option<(usize, usize, usize)> {
     let mut best: Option<(usize, (usize, usize, usize))> = None;
     let n = gap.len() as f32;
-    for l1 in 0..lines.len() {
-        if written[l1].is_break || lines[l1].is_empty() {
+    for (l1, line) in written.iter().enumerate() {
+        if line.is_break || text.of_line(l1).is_empty() {
             continue;
         }
         let mut block: Vec<String> = Vec::new();
-        for (l2, line) in lines.iter().enumerate().skip(l1).take(MOST_LINES) {
+        for l2 in (l1..text.lines()).take(MOST_LINES) {
+            let line = text.of_line(l2);
             block.extend(line.iter().cloned());
             if block.len() as f32 > 1.5 * n {
                 break;
@@ -148,8 +133,8 @@ fn best_block(
                 if len < 0.5 * n {
                     continue;
                 }
-                let words: Vec<String> = (0..times).flat_map(|_| block.iter().cloned()).collect();
-                let c = crate::anchors::common(&words, gap).len();
+                let sung: Vec<String> = (0..times).flat_map(|_| block.iter().cloned()).collect();
+                let c = common(&sung, gap).len();
                 let good = c >= LEAST && c as f32 >= OF_BLOCK * len && c as f32 >= OF_GAP * n;
                 if good && best.is_none_or(|b| c > b.0) {
                     best = Some((c, (l1, l2, times)));

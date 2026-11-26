@@ -29,6 +29,8 @@
 //!   [`lrclib`]: the LRCLIB web service's addresses and answers (the
 //!   request itself is the caller's).
 //! - [`json`]: a small JSON reader for those answers.
+//! - [`words`]: words as they are compared, the lyrics' and a
+//!   recogniser's, and the words two texts have in common, in order.
 //! - [`fit`]: whether a text fits a recording, its words against what the
 //!   recogniser ([`asr`]) heard.
 //! - [`speech`]: the speech model on the CPU, `wav2vec2-base-960h` from
@@ -73,6 +75,7 @@ pub mod sources;
 pub mod speech;
 pub mod spread;
 pub mod tokens;
+pub mod words;
 
 /// The version of the timing in this crate. A result made by an older one
 /// can be timed again. 2: the letters' times are kept ([`Word::letters`]).
