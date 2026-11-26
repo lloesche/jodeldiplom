@@ -7,7 +7,7 @@ use std::hash::Hash;
 use std::time::Duration;
 
 use super::{bytes, Kernels, Op, Program, Recorded};
-use crate::pace::{self, Pieces};
+use crate::pace::Pieces;
 
 /// The most plans a model keeps: one more, and the older all go first
 /// (inputs come in a few sizes: the last chunk or piece of a track is
@@ -83,17 +83,14 @@ impl<K: Kernels, B: Copy + Eq + Hash + Debug> Model<K, B> {
     ) -> Result<Vec<f32>, String> {
         self.plan(key, ops)?;
         let plan = &self.plans[&key];
-        let (buffers, staging) = (&self.buffers, &self.staging);
-        let size = (count * 4) as u64;
-        pace::dispatch(
-            &self.program,
+        let buffers = &self.buffers;
+        self.program.run(
             &mut self.pieces,
-            &plan.groups,
-            &plan.dispatches,
+            (&plan.groups, &plan.dispatches),
             |encoder| prelude(encoder, buffers),
-            |encoder| encoder.copy_buffer_to_buffer(&buffers[&from], 0, staging, 0, size),
-        )?;
-        crate::device::read_back(&self.program.device, staging, count)
+            Some((&buffers[&from], 0, count)),
+            &self.staging,
+        )
     }
 
     /// The dispatches of the plan `key` that `keep` picks, timed

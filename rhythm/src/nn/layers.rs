@@ -247,6 +247,15 @@ impl Linear {
         }
     }
 
+    /// Its weights for `f`, as it holds them: `NAME.w` (`[inputs][outputs]`)
+    /// and, where it has one, `NAME.b`.
+    pub fn visit(&self, name: &str, f: &mut dyn FnMut(&str, &[f32])) {
+        f(&format!("{name}.w"), &self.weight);
+        if let Some(b) = &self.bias {
+            f(&format!("{name}.b"), b);
+        }
+    }
+
     /// The layer applied to every row of `x` (rows of `inputs`).
     pub fn apply(&self, x: &[f32], threads: usize) -> Vec<f32> {
         let rows = x.len() / self.inputs;
@@ -280,6 +289,11 @@ impl RmsNorm {
         })
     }
 
+    /// Its `gamma` for `f`, as `NAME`.
+    pub fn visit(&self, name: &str, f: &mut dyn FnMut(&str, &[f32])) {
+        f(name, &self.gamma);
+    }
+
     pub fn apply(&self, x: &[f32]) -> Vec<f32> {
         let dim = self.gamma.len();
         let scale = (dim as f32).sqrt();
@@ -309,6 +323,12 @@ impl Affine {
         })
     }
 
+    /// Its values for `f`: `NAME.scale` and `NAME.shift`.
+    pub fn visit(&self, name: &str, f: &mut dyn FnMut(&str, &[f32])) {
+        f(&format!("{name}.scale"), &self.scale);
+        f(&format!("{name}.shift"), &self.shift);
+    }
+
     /// Applied to channel-last tokens.
     pub fn apply(&self, x: &mut [f32]) {
         let dim = self.scale.len();
@@ -327,7 +347,7 @@ pub(crate) struct Rotary {
 }
 
 /// The dimensions of an attention head.
-pub(crate) const HEAD: usize = 32;
+pub const HEAD: usize = 32;
 
 impl Rotary {
     pub fn new(positions: usize) -> Rotary {
@@ -390,6 +410,16 @@ impl Attention {
             out: Linear::load(w, &format!("{name}.to_out.0"), dim, dim, false)?,
             heads,
         })
+    }
+
+    /// Its weights for `f`: `NAME.norm`, `NAME.qkv.w` (`[dim][3 × dim]`),
+    /// `NAME.gates.w` (`[dim][heads]`) and `NAME.gates.b`, `NAME.out.w`
+    /// (`[dim][dim]`).
+    pub fn visit(&self, name: &str, f: &mut dyn FnMut(&str, &[f32])) {
+        self.norm.visit(&format!("{name}.norm"), f);
+        self.qkv.visit(&format!("{name}.qkv"), f);
+        self.gates.visit(&format!("{name}.gates"), f);
+        self.out.visit(&format!("{name}.out"), f);
     }
 
     /// Adds the attention's output to `x`: tokens of `dim`, in sequences
@@ -516,6 +546,14 @@ impl FeedForward {
         })
     }
 
+    /// Its weights for `f`: `NAME.norm`, `NAME.up.w` (`[dim][4 × dim]`) and
+    /// `NAME.up.b`, `NAME.down.w` (`[4 × dim][dim]`) and `NAME.down.b`.
+    pub fn visit(&self, name: &str, f: &mut dyn FnMut(&str, &[f32])) {
+        self.norm.visit(&format!("{name}.norm"), f);
+        self.up.visit(&format!("{name}.up"), f);
+        self.down.visit(&format!("{name}.down"), f);
+    }
+
     /// Adds the block's output to `x`.
     pub fn add_to(&self, x: &mut [f32], threads: usize) {
         let mut h = self.up.apply(&self.norm.apply(x), threads);
@@ -563,6 +601,13 @@ impl Conv {
             inputs,
             layer: Linear::new(weight, None, kf * 3 * inputs, outputs),
         })
+    }
+
+    /// Its weights for `f`: `NAME.w`, as a layer over its patches
+    /// (`[kf × 3 × inputs][outputs]`, a patch's bands, then its frames,
+    /// then its channels).
+    pub fn visit(&self, name: &str, f: &mut dyn FnMut(&str, &[f32])) {
+        self.layer.visit(name, f);
     }
 
     /// `x` is `[band][frame][channel]` with `bands` bands of `frames`

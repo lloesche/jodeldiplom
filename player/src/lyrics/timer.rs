@@ -27,9 +27,25 @@ pub struct SpeechTimer {
     models: Arc<Models>,
     /// The player's kept stems, where the voice is taken from when there.
     stems: Option<PathBuf>,
-    model: Mutex<Option<Arc<dyn jodel_lyrics::aligner::Acoustic + Send + Sync>>>,
+    model: Mutex<Option<Speech>>,
     /// The recogniser once read: `None` inside when it cannot run here.
+    /// One whose GPU was lost is read again.
     asr: Mutex<Option<Option<Arc<jodel_gpu::GpuAsr>>>>,
+}
+
+/// The speech model as read: on the GPU, or on the processor.
+enum Speech {
+    Gpu(Arc<jodel_gpu::GpuSpeech>),
+    Cpu(Arc<jodel_lyrics::speech::Wav2Vec2>),
+}
+
+impl Speech {
+    fn acoustic(&self) -> Arc<dyn jodel_lyrics::aligner::Acoustic + Send + Sync> {
+        match self {
+            Speech::Gpu(gpu) => Arc::clone(gpu) as _,
+            Speech::Cpu(cpu) => Arc::clone(cpu) as _,
+        }
+    }
 }
 
 impl SpeechTimer {
@@ -50,6 +66,10 @@ impl SpeechTimer {
             return None;
         }
         let mut kept = self.asr.lock().unwrap_or_else(|e| e.into_inner());
+        if matches!(&*kept, Some(Some(asr)) if asr.is_lost()) {
+            crate::trace::note("lyrics: the GPU was lost; the speech recogniser is read again");
+            *kept = None;
+        }
         if let Some(asr) = kept.as_ref() {
             return asr.clone();
         }
@@ -123,36 +143,41 @@ impl WordTimer for SpeechTimer {
 }
 
 impl SpeechTimer {
-    /// The speech model that times the words, read once: on the GPU where
-    /// there is one (25 times as fast, and the processor left to
-    /// playback), else on half the processor's threads.
+    /// The speech model that times the words, read once (and again where
+    /// its GPU was lost): on the GPU where there is one (25 times as fast,
+    /// and the processor left to playback), else on half the processor's
+    /// threads.
     fn acoustic(&self) -> Result<Arc<dyn jodel_lyrics::aligner::Acoustic + Send + Sync>, String> {
         if !self.models.speech_now().is_file() {
             return Err("the speech model is not here".into());
         }
         let mut kept = self.model.lock().unwrap_or_else(|e| e.into_inner());
+        if matches!(&*kept, Some(Speech::Gpu(gpu)) if gpu.is_lost()) {
+            crate::trace::note("lyrics: the GPU was lost; the speech model is read again");
+            *kept = None;
+        }
         if let Some(m) = kept.as_ref() {
-            return Ok(Arc::clone(m));
+            return Ok(m.acoustic());
         }
         let mut cpu = jodel_lyrics::speech::Wav2Vec2::open(&self.models.speech_now())?;
-        let m: Arc<dyn jodel_lyrics::aligner::Acoustic + Send + Sync> =
-            match jodel_gpu::GpuSpeech::new(&cpu) {
-                Ok(gpu) => {
-                    crate::trace::note("lyrics: the speech model runs on the GPU");
-                    Arc::new(gpu)
-                }
-                Err(why) => {
-                    let threads = thread::available_parallelism().map_or(2, |n| n.get());
-                    crate::trace::note(format_args!(
-                        "lyrics: the speech model runs on {} processor threads ({why})",
-                        (threads / 2).max(1)
-                    ));
-                    cpu.set_threads((threads / 2).max(1));
-                    Arc::new(cpu)
-                }
-            };
-        *kept = Some(Arc::clone(&m));
-        Ok(m)
+        let m = match jodel_gpu::GpuSpeech::new(&cpu) {
+            Ok(gpu) => {
+                crate::trace::note("lyrics: the speech model runs on the GPU");
+                Speech::Gpu(Arc::new(gpu))
+            }
+            Err(why) => {
+                let threads = thread::available_parallelism().map_or(2, |n| n.get());
+                crate::trace::note(format_args!(
+                    "lyrics: the speech model runs on {} processor threads ({why})",
+                    (threads / 2).max(1)
+                ));
+                cpu.set_threads((threads / 2).max(1));
+                Speech::Cpu(Arc::new(cpu))
+            }
+        };
+        let acoustic = m.acoustic();
+        *kept = Some(m);
+        Ok(acoustic)
     }
 }
 

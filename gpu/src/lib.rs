@@ -10,8 +10,19 @@
 //! - the cover's depth and cut-out ([`GpuDepth`], [`GpuMatte`], `vision/`).
 //!
 //! Each is a program of kernels on one bind group layout, its dispatches
-//! planned on the processor and run in short submissions that share the
-//! GPU with the window ([`pace`]); what they share is in `engine/`.
+//! planned on the processor (every matrix multiply as the engine's `Mul`)
+//! and run in short submissions that share the GPU with the window
+//! ([`pace`]); what they share is in `engine/`. The separator and the beat
+//! network pack their weights from the CPU models as those hold them.
+//!
+//! A device can be lost (a driver reset, a GPU unplugged or switched).
+//! The networks the process keeps ([`GpuSeparator::shared`] and
+//! [`GpuSeparator::background`], [`GpuNetwork::shared`], the vision
+//! networks' device) are set up again on their next use, and a setup that
+//! failed is tried again a while later; one the caller holds says so
+//! (`is_lost`: [`GpuSpeech::is_lost`], [`GpuAsr::is_lost`],
+//! [`GpuDepth::is_lost`], [`GpuMatte::is_lost`]), and the caller makes it
+//! again.
 //!
 //! The GPU is chosen once a process ([`chosen`], `device.rs`): one `wgpu`
 //! instance, the adapters on every backend listed once, the best one kept

@@ -9,8 +9,17 @@ model and the speech recogniser of [`jodel-lyrics`](../lyrics)
 `GpuMatte`). Each is a program of kernels on one bind group layout, its
 dispatches planned on the processor and run in short submissions
 (`src/engine/`: the program, its buffers, parameters and bind groups;
-the separator, the beat network and the speech model keep a plan per input
-size there).
+every matrix multiply as a `Mul`, what it reads and writes and what becomes
+of the products; the separator, the beat network and the speech model keep
+a plan per input size there).
+
+A device can be lost: a driver reset, a GPU unplugged or switched. The
+networks the process keeps (`GpuSeparator::shared()` and `background()`,
+`GpuNetwork::shared()`, the vision networks' device) are set up again on
+their next use, and a chunk or piece under way when it happened runs again
+on the new one; a setup that failed is tried again 30 s later. A network
+the caller holds (`GpuSpeech`, `GpuAsr`, `GpuDepth`, `GpuMatte`) says so
+(`is_lost()`), and the player makes it again.
 
 ## The stem separator
 
@@ -23,17 +32,19 @@ if let Some(gpu) = GpuSeparator::shared() {
 }
 ```
 
-`GpuSeparator::shared()` sets the separator up on the best adapter once
-(a high-performance one preferred, a software renderer refused) and is
-`None` without one, or when setting it up fails. `report()` says why, as
+`GpuSeparator::shared()` sets the separator up on the best adapter on
+first use (a high-performance one preferred, a software renderer refused)
+and is `None` without one, or while setting it up fails. `report()` says why, as
 lines for a diagnostic (the player's `--diag`): every adapter `wgpu` sees
 on every backend with the limits the separator needs, the one it would
 use, whether it sets up there (or the error), how long a 6 s chunk
 takes, and how that splits (its profile: five whole chunks
 in a row, the upload and the readback, and each kernel on its own with
 the matrix multiplies by layer, the best of three). It runs the same network on the same weights as the
-built-in CPU separator: the weights go up once (72 MB, the layers
-transposed to input × output), and a chunk runs entirely on the GPU, as
+built-in CPU separator, packed from it as it holds them
+(`CpuSeparator::visit`: the layers input × output) with its sizes
+(`jodel_rhythm::stems::{DIM, HIDDEN, HEADS, …}`): the weights go up once
+(72 MB), and a chunk runs entirely on the GPU, as
 one list of dispatches of six kernels (`src/kernels.wgsl`):
 
 - `matmul`: tiles of 64 × 64 through 16 inputs at a time, each
@@ -92,10 +103,12 @@ time held back), for the trace to tell each job's.
 ## The beat network
 
 `GpuNetwork` runs the Beat This! network of `jodel_rhythm::net` with the
-same built-in weights; it is a `jodel_rhythm::net::NetRunner`, so
+same built-in weights, packed from the CPU network as it holds them
+(`Network::visit`); it is a `jodel_rhythm::net::NetRunner`, so
 `Analyzer::run_network_on(GpuNetwork::shared()?)` has the analysis run
 each 30 s piece's layers here, and only the two logits per frame come
-back (a piece it fails on runs on the processor). A piece is one list of
+back (a piece it fails on runs on the processor, and the analysis says
+how many did and why: `Evidence::network_fell_back`). A piece is one list of
 dispatches: the spectrogram in, the stem's convolution as patches
 through `matmul`, the three front-end blocks (attention and feed-forward
 across the bands of each frame, then across the frames of each band, a
@@ -190,8 +203,8 @@ instance norm merged from chunks' means and spreads, resizing as PyTorch's
 interpolate, adaptive pooling, strided copies, Swin's windows, 2-D rotary
 positions, tables and activations.
 
-The two share one device (`vision::net::Gpu`, set up once when first
-needed). Each network keeps its weights on it, with a tail for its size's
+The two share one device (`vision::net::Gpu`, set up when first needed,
+and again once it is lost). Each network keeps its weights on it, with a tail for its size's
 constants, and makes its plan's buffers when it runs: another input size
 rewrites the tail and makes the plan again, nothing more; `release` lets the
 plan's buffers go (the player does after each cover, so one network's are

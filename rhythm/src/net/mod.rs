@@ -13,9 +13,10 @@
 //! pieces overlap the earlier one counts, as in the authors' inference.
 //!
 //! A [`NetRunner`] runs a piece's layers somewhere else (the GPU, see
-//! `jodel-gpu`); [`Network::predict_with`] takes one, and a piece it fails
-//! on runs here instead. Its layers and weights file are the crate's
-//! shared ones ([`crate::nn`]).
+//! `jodel-gpu`, which takes its weights from [`Network::visit`]);
+//! [`Network::predict_with`] takes one, and a piece it fails on runs here
+//! instead, the logits saying so ([`Logits::fell_back`]). Its layers and
+//! weights file are the crate's shared ones ([`crate::nn`]).
 
 pub mod mel;
 mod model;
@@ -25,6 +26,7 @@ use std::sync::OnceLock;
 use crate::nn::{threads, weights::Weights};
 pub use mel::{NetFrontend, NetMel};
 use model::{Model, MAX_FRAMES};
+pub use model::{BLOCKS, DIM, LAYERS, STEM};
 
 /// The weights, built in.
 static WEIGHTS: &[u8] = include_bytes!("../../models/beat_this_small.bin");
@@ -34,11 +36,6 @@ const BORDER: usize = 6;
 
 /// The most frames of a piece (30 s).
 pub const PIECE_FRAMES: usize = MAX_FRAMES;
-
-/// The built-in weights, parsed afresh (for a [`NetRunner`] to load).
-pub fn built_in_weights() -> Result<Weights, String> {
-    Weights::parse(WEIGHTS)
-}
 
 /// Runs the network's layers on a piece somewhere else than here (a
 /// GPU), with the built-in weights.
@@ -59,6 +56,20 @@ pub struct Logits {
     pub beat: Vec<f32>,
     /// Per frame: whether a downbeat is there.
     pub downbeat: Vec<f32>,
+    /// The pieces its runner failed on, run here instead, where it had one
+    /// that failed.
+    pub fell_back: Option<FellBack>,
+}
+
+/// The pieces a [`NetRunner`] failed on, each run here instead.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FellBack {
+    /// How many it failed on.
+    pub pieces: usize,
+    /// The track's pieces.
+    pub of: usize,
+    /// Why the first failed.
+    pub why: String,
 }
 
 /// The network, loaded once.
@@ -70,12 +81,38 @@ impl Network {
     /// The built-in network, loaded on first use.
     pub fn shared() -> &'static Network {
         static NETWORK: OnceLock<Network> = OnceLock::new();
-        NETWORK.get_or_init(|| {
-            let weights = Weights::parse(WEIGHTS).expect("the built-in weights");
-            Network {
-                model: Model::load(weights).expect("the built-in weights"),
-            }
+        NETWORK.get_or_init(|| Network::built_in().expect("the built-in weights"))
+    }
+
+    /// The built-in network, loaded now (one of its own, for a
+    /// [`NetRunner`] to take its weights from: [`Network::visit`]).
+    pub fn built_in() -> Result<Network, String> {
+        Ok(Network {
+            model: Model::load(Weights::parse(WEIGHTS)?)?,
         })
+    }
+
+    /// Every weight of the network for `f`, by name, as it holds them (a
+    /// layer's `[inputs][outputs]`; `c` a block's channels, 32 doubling,
+    /// [`BLOCKS`] of them):
+    ///
+    /// - `in.scale`, `in.shift` (`[BANDS]`); the stem's convolution
+    ///   `stem.w` (`[4 × 3][STEM]`), `stem.scale`, `stem.shift`;
+    /// - each block `b`: across the bands `{b}.attn_f.*` and `{b}.ff_f.*`,
+    ///   across the frames `{b}.attn_t.*` and `{b}.ff_t.*`, then its
+    ///   convolution `{b}.conv.w` (`[2 × 3 × c][2c]`), `{b}.conv.scale`,
+    ///   `{b}.conv.shift`;
+    /// - `project.w` (`[256 × 4][DIM]`: channels, then bands), `project.b`;
+    ///   each layer `l` of
+    ///   [`LAYERS`]: `layer{l}.attn.*`, `layer{l}.ff.*`;
+    /// - `norm` (`[DIM]`), `head.w` (`[DIM][2]`), `head.b`.
+    ///
+    /// An attention `A.*` is `A.norm`, `A.qkv.w` (`[c][3c]`), `A.gates.w`
+    /// (`[c][c / 32]`), `A.gates.b`, `A.out.w` (`[c][c]`); a feed-forward
+    /// step `F.*` is `F.norm`, `F.up.w` (`[c][4c]`), `F.up.b`, `F.down.w`
+    /// (`[4c][c]`), `F.down.b`.
+    pub fn visit(&self, f: &mut dyn FnMut(&str, &[f32])) {
+        self.model.visit(f);
     }
 
     /// The logits for a whole track's spectrogram.
@@ -84,12 +121,14 @@ impl Network {
     }
 
     /// The logits for a whole track's spectrogram, each piece through
-    /// `runner` where there is one (a piece it fails on runs here).
+    /// `runner` where there is one (a piece it fails on runs here, and the
+    /// logits say so: [`Logits::fell_back`]).
     pub fn predict_with(&self, mel: &NetMel, runner: Option<&dyn NetRunner>) -> Logits {
         let n = mel.frames;
         let mut out = Logits {
             beat: vec![-1000.0; n],
             downbeat: vec![-1000.0; n],
+            fell_back: None,
         };
         if n == 0 {
             return out;
@@ -114,10 +153,29 @@ impl Network {
             let mut spect = vec![0.0f32; frames * mel::BANDS];
             spect[left * mel::BANDS..][..(to - from) * mel::BANDS]
                 .copy_from_slice(&mel.data[from * mel::BANDS..to * mel::BANDS]);
-            let (beat, downbeat) = runner
-                .and_then(|r| r.forward(&spect, frames).ok())
-                .filter(|(b, d)| b.len() == frames && d.len() == frames)
-                .unwrap_or_else(|| self.model.forward(&spect, frames, threads));
+            let ran = runner.map(|r| {
+                r.forward(&spect, frames).and_then(|(b, d)| {
+                    if b.len() == frames && d.len() == frames {
+                        Ok((b, d))
+                    } else {
+                        Err(format!("{} logits for {frames} frames", b.len()))
+                    }
+                })
+            });
+            let (beat, downbeat) = match ran {
+                Some(Ok(logits)) => logits,
+                Some(Err(why)) => {
+                    out.fell_back
+                        .get_or_insert(FellBack {
+                            pieces: 0,
+                            of: starts.len(),
+                            why,
+                        })
+                        .pieces += 1;
+                    self.model.forward(&spect, frames, threads)
+                }
+                None => self.model.forward(&spect, frames, threads),
+            };
             for i in BORDER..frames.saturating_sub(BORDER) {
                 let at = start + i as isize;
                 if at >= 0 && (at as usize) < n {

@@ -16,7 +16,7 @@ use jodel_tensors::SafeTensors;
 use super::net::Net;
 use super::ops::{Img, Plan, Resize, ADD, GELU, RELU, RELU_IN};
 use super::prep::{self, Rgb};
-use super::{Loader, Packer};
+use super::{Named, Packer};
 
 const C: usize = 384;
 const HEADS: usize = 6;
@@ -37,7 +37,7 @@ pub struct Depth {
 /// The checkpoint's tensors this port uses, read and packed.
 #[derive(Clone)]
 struct Weights {
-    loader: Loader,
+    loader: Named,
     /// The class token, the camera token, and the 37 × 37 position table.
     cls: Vec<f32>,
     camera: Vec<f32>,
@@ -51,7 +51,7 @@ const HEAD: &str = "model.head.";
 impl Weights {
     fn read(t: &SafeTensors) -> Result<Weights, String> {
         let mut w = Weights {
-            loader: Loader::default(),
+            loader: Named::default(),
             cls: t.get(&format!("{BACKBONE}cls_token"), &[1, 1, C])?,
             camera: t.get(&format!("{BACKBONE}camera_token"), &[1, 2, C])?[..C].to_vec(),
             pos: t.get(&format!("{BACKBONE}pos_embed"), &[1, GRID * GRID + 1, C])?,
@@ -119,14 +119,14 @@ impl Weights {
 }
 
 impl std::ops::Deref for Weights {
-    type Target = Loader;
-    fn deref(&self) -> &Loader {
+    type Target = Named;
+    fn deref(&self) -> &Named {
         &self.loader
     }
 }
 
 impl std::ops::DerefMut for Weights {
-    fn deref_mut(&mut self) -> &mut Loader {
+    fn deref_mut(&mut self) -> &mut Named {
         &mut self.loader
     }
 }
@@ -588,6 +588,12 @@ impl GpuDepth {
         self.lock()
             .map(|p| p.net.gpu_name().to_owned())
             .unwrap_or_default()
+    }
+
+    /// Whether its device was lost (a driver reset, the GPU gone): it runs
+    /// nothing again, and a new one is made instead.
+    pub fn is_lost(&self) -> bool {
+        self.lock().map_or(true, |p| p.net.lost())
     }
 
     /// The bytes it keeps on the GPU now.

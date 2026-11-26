@@ -250,6 +250,12 @@ impl GpuAsr {
             .map_err(|_| "the GPU speech recogniser failed before".to_owned())
     }
 
+    /// Whether its device was lost (a driver reset, the GPU gone): it runs
+    /// nothing again, and a new one is made instead.
+    pub fn is_lost(&self) -> bool {
+        self.lock().map_or(true, |inner| inner.program.lost())
+    }
+
     /// What it did so far: its runs, the encoder's and the decoder's time,
     /// the tokens, and the GPU's submissions and waits
     /// ([`Hearing::since`] an earlier one says what it did between).
@@ -443,30 +449,13 @@ impl Inner {
             Runs::Prompt => &mut self.prompt_pieces,
             Runs::Steps => &mut self.step_pieces,
         };
-        let (buffers, staging) = (&self.buffers, &self.staging);
-        crate::pace::dispatch(
-            &self.program,
+        let buffers = &self.buffers;
+        self.program.run(
             pieces,
-            &self.bind_groups,
-            &dispatches,
+            (&self.bind_groups, &dispatches),
             |_| {},
-            |encoder| {
-                if let Some((buf, from, count)) = read {
-                    encoder.copy_buffer_to_buffer(
-                        &buffers[&buf],
-                        (from * 4) as u64,
-                        staging,
-                        0,
-                        (count * 4) as u64,
-                    );
-                }
-            },
-        )?;
-        match read {
-            Some((_, _, count)) => {
-                crate::device::read_back(&self.program.device, &self.staging, count)
-            }
-            None => Ok(Vec::new()),
-        }
+            read.map(|(buf, from, count)| (&buffers[&buf], from, count)),
+            &self.staging,
+        )
     }
 }

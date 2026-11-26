@@ -1,29 +1,35 @@
 //! The stem separator of [`jodel_rhythm::stems`] on the GPU
-//! ([`GpuSeparator`]): the same network as the built-in CPU separator, on
-//! the same weights, giving the same masks to within rounding. A chunk
-//! runs entirely on the GPU: its STFT goes up, the band split, the 16
-//! transformers and the mask layers run as one list of dispatches of six
-//! kernels (`kernels.wgsl`: a tiled matrix multiply, RMSNorm, the rotary
-//! positions, attention with an online softmax, the gated GELU and a
-//! transpose), and the masks come back.
+//! ([`GpuSeparator`]): the CPU separator's network, its weights packed as
+//! the CPU model holds them ([`CpuSeparator::visit`]), giving the same
+//! masks to within rounding. A chunk runs entirely on the GPU: its STFT
+//! goes up, the band split, the 16 transformers and the mask layers run as
+//! one list of dispatches of six kernels (`kernels.wgsl`: a tiled matrix
+//! multiply, RMSNorm, the rotary positions, attention with an online
+//! softmax, the gated GELU and a transpose), and the masks come back.
+//!
+//! The process keeps two ([`GpuSeparator::shared`] and
+//! [`GpuSeparator::background`]), each set up when first needed and again
+//! when its device is lost (`engine::Kept`).
 
-use std::sync::{Mutex, OnceLock};
+use std::sync::OnceLock;
 
-use jodel_rhythm::stems::{self, Separator, BAND_BINS, DIM, STEMS};
+use jodel_rhythm::nn::layers::HEAD;
+use jodel_rhythm::stems::{
+    self, CpuSeparator, Separator, BAND_BINS, DEPTH, DIM, FRAME, HEADS, HIDDEN, KV_HEADS,
+    REGISTERS, STEMS,
+};
 
 use crate::engine::{
-    self, guarded, kernels_source, params, rotary_table, spread, Access, Kernels, Model, Program,
+    self, guarded, kernels_source, params, rotary_table, spread, Access, After, Kept, Kernels,
+    Model, Mul, OnDevice, Program, SetUp,
 };
 use crate::pace::{self, Pieces};
-use crate::{packer, Turned};
+use crate::packer::Named;
 
 /// The most frames a chunk may have (6 s at 44.1 kHz, hop 512).
 pub(crate) const MAX_FRAMES: usize = stems::CHUNK / 512 + 1;
-/// Values per STFT frame: bins × channels × (real, imaginary).
-pub(crate) const FRAME: usize = 1025 * 4;
-const REGISTERS: usize = 4;
-pub(crate) const HIDDEN: usize = 768;
-const DEPTH: usize = 8;
+/// The keys' width, and the values'.
+pub(crate) const KV: usize = KV_HEADS * HEAD;
 
 /// The kernels.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -79,230 +85,36 @@ pub(crate) enum Buf {
     Masks,
 }
 
-/// One weight layer's place in the weights buffer.
-#[derive(Clone, Copy, Debug, Default)]
-struct Layer {
-    weight: u32,
-    bias: u32,
-}
-
-/// One transformer layer's weights.
-#[derive(Clone, Copy, Debug, Default)]
-struct BlockAt {
-    attention_norm: u32,
-    q: u32,
-    k: u32,
-    v: u32,
-    o: u32,
-    mlp_norm: u32,
-    gate: u32,
-    up: u32,
-    down: u32,
-}
-
-/// Where everything is in the weights buffer (in f32s).
-pub(crate) struct Offsets {
-    split_norm: Vec<u32>,
-    split: Vec<Layer>,
-    blocks: Vec<[BlockAt; 2]>,
-    registers: u32,
-    final_norm: u32,
-    masks: Vec<Vec<Layer>>,
-}
-
-/// The weights as one buffer's contents, the layers transposed to
-/// [input][output].
-fn pack_weights() -> Result<(Vec<f32>, Offsets), String> {
-    let mut w = stems::weights();
-    let mut data = packer::Packer::default();
-    let mut put = |values: Vec<f32>| -> u32 { data.push(&values) as u32 };
-    let linear = |w: &mut jodel_rhythm::nn::weights::Weights,
-                  put: &mut dyn FnMut(Vec<f32>) -> u32,
-                  name: &str,
-                  inputs: usize,
-                  outputs: usize,
-                  bias: bool|
-     -> Result<Layer, String> {
-        let raw = w.take(&format!("{name}.weight"), &[outputs, inputs])?;
-        let weight = put(packer::transposed(&raw, outputs, inputs));
-        let bias = if bias {
-            put(w.take(&format!("{name}.bias"), &[outputs])?)
-        } else {
-            0
-        };
-        Ok(Layer { weight, bias })
-    };
-    let mut split_norm = Vec::new();
-    let mut split = Vec::new();
-    for (b, &bins) in BAND_BINS.iter().enumerate() {
-        let name = format!("model.band_split.to_features.{b}");
-        split_norm.push(put(w.take(&format!("{name}.0.weight"), &[4 * bins])?));
-        split.push(linear(
-            &mut w,
-            &mut put,
-            &format!("{name}.1"),
-            4 * bins,
-            DIM,
-            true,
-        )?);
-    }
-    let mut blocks = Vec::new();
-    for l in 0..DEPTH {
-        let mut pair = [BlockAt::default(); 2];
-        for (which, at) in pair.iter_mut().enumerate() {
-            let name = format!("model.layers.{l}.{which}.layers.0");
-            let kv = 128;
-            *at = BlockAt {
-                attention_norm: put(w.take(&format!("{name}.input_layernorm.weight"), &[DIM])?),
-                q: linear(
-                    &mut w,
-                    &mut put,
-                    &format!("{name}.self_attn.q_proj"),
-                    DIM,
-                    DIM,
-                    false,
-                )?
-                .weight,
-                k: linear(
-                    &mut w,
-                    &mut put,
-                    &format!("{name}.self_attn.k_proj"),
-                    DIM,
-                    kv,
-                    false,
-                )?
-                .weight,
-                v: linear(
-                    &mut w,
-                    &mut put,
-                    &format!("{name}.self_attn.v_proj"),
-                    DIM,
-                    kv,
-                    false,
-                )?
-                .weight,
-                o: linear(
-                    &mut w,
-                    &mut put,
-                    &format!("{name}.self_attn.o_proj"),
-                    DIM,
-                    DIM,
-                    false,
-                )?
-                .weight,
-                mlp_norm: put(w.take(&format!("{name}.post_attention_layernorm.weight"), &[DIM])?),
-                gate: linear(
-                    &mut w,
-                    &mut put,
-                    &format!("{name}.mlp.gate_proj"),
-                    DIM,
-                    HIDDEN,
-                    false,
-                )?
-                .weight,
-                up: linear(
-                    &mut w,
-                    &mut put,
-                    &format!("{name}.mlp.up_proj"),
-                    DIM,
-                    HIDDEN,
-                    false,
-                )?
-                .weight,
-                down: linear(
-                    &mut w,
-                    &mut put,
-                    &format!("{name}.mlp.down_proj"),
-                    HIDDEN,
-                    DIM,
-                    false,
-                )?
-                .weight,
-            };
-        }
-        blocks.push(pair);
-    }
-    let registers = put(w.take("model.register_tokens", &[REGISTERS, REGISTERS, DIM])?);
-    let final_norm = put(w.take("model.final_norm.weight", &[DIM])?);
-    let mut masks = Vec::new();
-    for s in 0..STEMS {
-        let mut bands = Vec::new();
-        for (b, &bins) in BAND_BINS.iter().enumerate() {
-            let name = format!("mask_estimators.{s}.to_freq_mlps.{b}");
-            bands.push(linear(&mut w, &mut put, &name, DIM, 4 * bins, true)?);
-        }
-        masks.push(bands);
-    }
-    if !w.left().is_empty() {
-        return Err(format!("unused weights: {:?}", w.left()));
-    }
-    Ok((
-        data.data,
-        Offsets {
-            split_norm,
-            split,
-            blocks,
-            registers,
-            final_norm,
-            masks,
-        },
-    ))
+/// The weights as one buffer's contents, by name, as the CPU separator
+/// holds them.
+fn pack() -> Result<Named, String> {
+    let cpu = CpuSeparator::built_in()?;
+    Ok(Named::visited(|f| cpu.visit(f)))
 }
 
 /// One dispatch.
 pub(crate) type Op = engine::Op<Kernel, [Buf; 3], 12>;
 
-/// The dispatches of a chunk of `frames` frames.
-pub(crate) fn plan(o: &Offsets, frames: usize) -> Vec<Op> {
+/// The dispatches of a chunk of `frames` frames, the weights where `w`
+/// says.
+pub(crate) fn plan(w: &Named, frames: usize) -> Vec<Op> {
     let bands = BAND_BINS.len();
     let (rows, cols) = (frames + REGISTERS, bands + REGISTERS);
     let tokens = rows * cols;
     let mut ops = Vec::new();
-    let matmul = |ops: &mut Vec<Op>,
-                  a: Buf,
-                  c: Buf,
-                  m: usize,
-                  n: usize,
-                  k: usize,
-                  a_off: usize,
-                  lda: usize,
-                  w: u32,
-                  c_off: usize,
-                  ldc: usize,
-                  bias: Option<u32>,
-                  add: bool| {
-        let flags = usize::from(bias.is_some()) | (usize::from(add) << 1);
-        ops.push(Op {
-            kernel: Kernel::Matmul,
-            buffers: [a, Buf::Weights, c],
-            params: params(&[
-                m,
-                n,
-                k,
-                a_off,
-                lda,
-                w as usize,
-                c_off,
-                ldc,
-                bias.unwrap_or(0) as usize,
-                flags,
-            ]),
-            groups: [n.div_ceil(64) as u32, m.div_ceil(64) as u32, 1],
-        });
+    let matmul = |ops: &mut Vec<Op>, mul: Mul<Buf>| {
+        ops.push(mul.tiled(Kernel::Matmul, Buf::Weights));
     };
     let norm = |ops: &mut Vec<Op>,
-                x: Buf,
-                y: Buf,
+                (x, x_off, ldx): (Buf, usize, usize),
+                (y, ldy): (Buf, usize),
                 rows: usize,
                 dim: usize,
-                x_off: usize,
-                ldx: usize,
-                w: u32,
-                ldy: usize| {
+                weight: usize| {
         ops.push(Op {
             kernel: Kernel::Norm,
             buffers: [x, Buf::Weights, y],
-            params: params(&[rows, dim, x_off, ldx, w as usize, 0, ldy]),
+            params: params(&[rows, dim, x_off, ldx, weight, 0, ldy]),
             groups: spread(rows),
         });
     };
@@ -314,64 +126,36 @@ pub(crate) fn plan(o: &Offsets, frames: usize) -> Vec<Op> {
             groups: spread(rows * cols * DIM),
         });
     };
-    let block = |ops: &mut Vec<Op>, x: Buf, at: &BlockAt, len: usize, turned: usize| {
+    // A transformer layer (`name`) on `x`: sequences of `len` tokens, the
+    // first `turned` positions turned.
+    let block = |ops: &mut Vec<Op>, x: Buf, name: &str, len: usize, turned: usize| {
+        let at = |what: &str| w.at(&format!("{name}.{what}"));
+        let dense = |from, to, (n, k), what: &str, after| {
+            Mul::dense(from, to, (tokens, n, k), at(what), None, after)
+        };
         norm(
             ops,
-            x,
-            Buf::Normed,
+            (x, 0, DIM),
+            (Buf::Normed, DIM),
             tokens,
             DIM,
-            0,
-            DIM,
-            at.attention_norm,
-            DIM,
+            at("attention_norm"),
         );
         matmul(
             ops,
-            Buf::Normed,
-            Buf::Queries,
-            tokens,
-            DIM,
-            DIM,
-            0,
-            DIM,
-            at.q,
-            0,
-            DIM,
-            None,
-            false,
+            dense(Buf::Normed, Buf::Queries, (DIM, DIM), "q.w", After::Store),
         );
-        matmul(
-            ops,
-            Buf::Normed,
-            Buf::KeysValues,
-            tokens,
-            128,
-            DIM,
-            0,
-            DIM,
-            at.k,
-            0,
-            DIM,
-            None,
-            false,
-        );
-        matmul(
-            ops,
-            Buf::Normed,
-            Buf::KeysValues,
-            tokens,
-            128,
-            DIM,
-            0,
-            DIM,
-            at.v,
-            128,
-            DIM,
-            None,
-            false,
-        );
-        for (buf, heads) in [(Buf::Queries, 8), (Buf::KeysValues, 4)] {
+        // The keys and the values side by side, a token's in a row of DIM.
+        for (what, column) in [("k.w", 0), ("v.w", KV)] {
+            matmul(
+                ops,
+                Mul {
+                    to: (Buf::KeysValues, column, DIM),
+                    ..dense(Buf::Normed, Buf::KeysValues, (KV, DIM), what, After::Store)
+                },
+            );
+        }
+        for (buf, heads) in [(Buf::Queries, HEADS), (Buf::KeysValues, KV_HEADS)] {
             ops.push(Op {
                 kernel: Kernel::Rope,
                 buffers: [Buf::Table, Buf::Weights, buf],
@@ -383,53 +167,30 @@ pub(crate) fn plan(o: &Offsets, frames: usize) -> Vec<Op> {
             kernel: Kernel::Attention,
             buffers: [Buf::Queries, Buf::KeysValues, Buf::Attended],
             params: params(&[len]),
-            groups: [len.div_ceil(64) as u32, 8, (tokens / len) as u32],
+            groups: [len.div_ceil(64) as u32, HEADS as u32, (tokens / len) as u32],
         });
-        matmul(
+        matmul(ops, dense(Buf::Attended, x, (DIM, DIM), "o.w", After::Add));
+        norm(
             ops,
-            Buf::Attended,
-            x,
+            (x, 0, DIM),
+            (Buf::Normed, DIM),
             tokens,
             DIM,
-            DIM,
-            0,
-            DIM,
-            at.o,
-            0,
-            DIM,
-            None,
-            true,
-        );
-        norm(ops, x, Buf::Normed, tokens, DIM, 0, DIM, at.mlp_norm, DIM);
-        matmul(
-            ops,
-            Buf::Normed,
-            Buf::Gate,
-            tokens,
-            HIDDEN,
-            DIM,
-            0,
-            DIM,
-            at.gate,
-            0,
-            HIDDEN,
-            None,
-            false,
+            at("mlp_norm"),
         );
         matmul(
             ops,
-            Buf::Normed,
-            Buf::Up,
-            tokens,
-            HIDDEN,
-            DIM,
-            0,
-            DIM,
-            at.up,
-            0,
-            HIDDEN,
-            None,
-            false,
+            dense(
+                Buf::Normed,
+                Buf::Gate,
+                (HIDDEN, DIM),
+                "gate.w",
+                After::Store,
+            ),
+        );
+        matmul(
+            ops,
+            dense(Buf::Normed, Buf::Up, (HIDDEN, DIM), "up.w", After::Store),
         );
         ops.push(Op {
             kernel: Kernel::Geglu,
@@ -439,18 +200,7 @@ pub(crate) fn plan(o: &Offsets, frames: usize) -> Vec<Op> {
         });
         matmul(
             ops,
-            Buf::Gate,
-            x,
-            tokens,
-            DIM,
-            HIDDEN,
-            0,
-            HIDDEN,
-            at.down,
-            0,
-            DIM,
-            None,
-            true,
+            dense(Buf::Gate, x, (DIM, HIDDEN), "down.w", After::Add),
         );
     };
     // The band split, into the grid (cleared, registers copied in before).
@@ -459,67 +209,58 @@ pub(crate) fn plan(o: &Offsets, frames: usize) -> Vec<Op> {
         let width = 4 * bins;
         norm(
             &mut ops,
-            Buf::Stft,
-            Buf::Band,
+            (Buf::Stft, 4 * start, FRAME),
+            (Buf::Band, width),
             frames,
             width,
-            4 * start,
-            FRAME,
-            o.split_norm[b],
-            width,
+            w.at(&format!("split.{b}.norm")),
         );
         matmul(
             &mut ops,
-            Buf::Band,
-            Buf::Grid,
-            frames,
-            DIM,
-            width,
-            0,
-            width,
-            o.split[b].weight,
-            b * DIM,
-            cols * DIM,
-            Some(o.split[b].bias),
-            false,
+            Mul {
+                to: (Buf::Grid, b * DIM, cols * DIM),
+                ..Mul::dense(
+                    Buf::Band,
+                    Buf::Grid,
+                    (frames, DIM, width),
+                    w.at(&format!("split.{b}.w")),
+                    Some(w.at(&format!("split.{b}.b"))),
+                    After::Store,
+                )
+            },
         );
         start += bins;
     }
-    for pair in &o.blocks {
+    for l in 0..DEPTH {
         transpose(&mut ops, Buf::Grid, Buf::ByBand, rows, cols);
-        block(&mut ops, Buf::ByBand, &pair[0], rows, frames);
+        block(&mut ops, Buf::ByBand, &format!("{l}.0"), rows, frames);
         transpose(&mut ops, Buf::ByBand, Buf::Grid, cols, rows);
-        block(&mut ops, Buf::Grid, &pair[1], cols, bands);
+        block(&mut ops, Buf::Grid, &format!("{l}.1"), cols, bands);
     }
     let mut start = 0;
     for (b, &bins) in BAND_BINS.iter().enumerate() {
         norm(
             &mut ops,
-            Buf::Grid,
-            Buf::Final,
+            (Buf::Grid, b * DIM, cols * DIM),
+            (Buf::Final, DIM),
             frames,
             DIM,
-            b * DIM,
-            cols * DIM,
-            o.final_norm,
-            DIM,
+            w.at("final_norm"),
         );
-        for (s, stem) in o.masks.iter().enumerate() {
-            let c_off = s * frames * FRAME + 4 * start;
+        for s in 0..STEMS {
             matmul(
                 &mut ops,
-                Buf::Final,
-                Buf::Masks,
-                frames,
-                4 * bins,
-                DIM,
-                0,
-                DIM,
-                stem[b].weight,
-                c_off,
-                FRAME,
-                Some(stem[b].bias),
-                false,
+                Mul {
+                    to: (Buf::Masks, s * frames * FRAME + 4 * start, FRAME),
+                    ..Mul::dense(
+                        Buf::Final,
+                        Buf::Masks,
+                        (frames, 4 * bins, DIM),
+                        w.at(&format!("mask.{s}.{b}.w")),
+                        Some(w.at(&format!("mask.{s}.{b}.b"))),
+                        After::Store,
+                    )
+                },
             );
         }
         start += bins;
@@ -538,32 +279,42 @@ pub(crate) fn check(frames: usize, stft: &[f32]) -> Result<(), String> {
 /// The separator on its device, and where its weights are there.
 pub(crate) struct Inner {
     pub(crate) model: Model<Kernel, Buf>,
-    offsets: Offsets,
+    weights: Named,
+}
+
+impl OnDevice for Inner {
+    fn lost(&self) -> bool {
+        self.model.program.lost()
+    }
 }
 
 /// The separator network on the GPU.
 pub struct GpuSeparator {
-    name: String,
-    inner: Turned<Mutex<Inner>>,
-    /// What its runs cost, read without waiting for one.
+    kept: Kept<Inner>,
+    /// What its runs cost, read without waiting for one (the same count
+    /// across setups).
     counts: pace::Counts,
 }
 
-/// A separator whose runs are paced as `pieces` say; `None` if setting
-/// it up failed in any way.
-fn set_up(pieces: Pieces) -> Option<GpuSeparator> {
-    std::panic::catch_unwind(|| GpuSeparator::with_pieces(pieces))
-        .ok()?
-        .ok()
+/// What sets the separator up on the best GPU, its runs paced as `pieces`
+/// say.
+fn set_up(pieces: Pieces) -> SetUp<Inner> {
+    Box::new(move || {
+        crate::device::open("jodel-gpu", |device, queue, limits| {
+            Inner::new(device, queue, limits, pieces.clone())
+        })
+    })
 }
 
 impl GpuSeparator {
-    /// The separator on the best GPU, set up on first use; `None` without
-    /// a usable one (a software renderer does not count), or if setting it
-    /// up failed in any way.
+    /// The separator on the best GPU, set up on first use (and again once
+    /// its device is lost); `None` without a usable one (a software
+    /// renderer does not count), or while setting it up fails (it is tried
+    /// again a while later).
     pub fn shared() -> Option<&'static GpuSeparator> {
-        static GPU: OnceLock<Option<GpuSeparator>> = OnceLock::new();
-        GPU.get_or_init(|| set_up(Pieces::foreground())).as_ref()
+        static GPU: OnceLock<GpuSeparator> = OnceLock::new();
+        let gpu = GPU.get_or_init(|| GpuSeparator::kept(Pieces::foreground()));
+        gpu.kept.usable().then_some(gpu)
     }
 
     /// A separator of its own for background work (analyses, getting
@@ -571,9 +322,11 @@ impl GpuSeparator {
     /// of the track playing ([`GpuSeparator::shared`]'s); that one where a
     /// second does not fit on the GPU.
     pub fn background() -> Option<&'static GpuSeparator> {
-        static GPU: OnceLock<Option<GpuSeparator>> = OnceLock::new();
-        GPU.get_or_init(|| set_up(Pieces::resting()))
-            .as_ref()
+        static GPU: OnceLock<GpuSeparator> = OnceLock::new();
+        let gpu = GPU.get_or_init(|| GpuSeparator::kept(Pieces::resting()));
+        gpu.kept
+            .usable()
+            .then_some(gpu)
             .or_else(GpuSeparator::shared)
     }
 
@@ -594,29 +347,31 @@ impl GpuSeparator {
         self.counts.tally()
     }
 
-    /// Sets up the separator on the best GPU, its work not resting (as
-    /// [`GpuSeparator::shared`]'s).
+    /// Sets up a separator of its own on the best GPU, its work not
+    /// resting (as [`GpuSeparator::shared`]'s).
     pub fn new() -> Result<GpuSeparator, String> {
-        GpuSeparator::with_pieces(Pieces::foreground())
-    }
-
-    /// Sets up the separator on the best GPU, its runs paced as `pieces`
-    /// say.
-    fn with_pieces(pieces: Pieces) -> Result<GpuSeparator, String> {
-        let (inner, name) = crate::device::open("jodel-gpu", |device, queue, limits| {
-            Inner::new(device, queue, limits, pieces)
-        })?;
+        let pieces = Pieces::foreground();
         Ok(GpuSeparator {
-            name,
-            counts: inner.model.pieces.counts(),
-            inner: Turned::new(Mutex::new(inner)),
+            counts: pieces.counts(),
+            kept: Kept::set_up_now(set_up(pieces))?,
         })
     }
 
-    pub(crate) fn lock(&self) -> Result<std::sync::MutexGuard<'_, Inner>, String> {
-        self.inner
-            .lock()
-            .map_err(|_| "the GPU separator failed before".to_owned())
+    /// A separator whose runs are paced as `pieces` say, set up when first
+    /// used.
+    fn kept(pieces: Pieces) -> GpuSeparator {
+        GpuSeparator {
+            counts: pieces.counts(),
+            kept: Kept::new(set_up(pieces)),
+        }
+    }
+
+    /// `work` on the separator on its device ([`Kept::run`]).
+    pub(crate) fn run<R>(
+        &self,
+        work: impl FnMut(&mut Inner) -> Result<R, String>,
+    ) -> Result<R, String> {
+        self.kept.run(work)
     }
 }
 
@@ -627,13 +382,15 @@ impl Inner {
         limits: &wgpu::Limits,
         pieces: Pieces,
     ) -> Result<Inner, String> {
-        let (weights, offsets) = pack_weights()?;
+        let mut weights = pack()?;
+        let values = weights.take_values();
         let tokens = (MAX_FRAMES + REGISTERS) * (BAND_BINS.len() + REGISTERS);
+        let widest = BAND_BINS.iter().copied().max().unwrap_or(0);
         let sizes = [
-            (Buf::Weights, weights.len()),
+            (Buf::Weights, values.len()),
             (Buf::Table, (MAX_FRAMES + REGISTERS) * 32),
             (Buf::Stft, MAX_FRAMES * FRAME),
-            (Buf::Band, MAX_FRAMES * 4 * 129),
+            (Buf::Band, MAX_FRAMES * 4 * widest),
             (Buf::Grid, tokens * DIM),
             (Buf::ByBand, tokens * DIM),
             (Buf::Normed, tokens * DIM),
@@ -647,9 +404,9 @@ impl Inner {
         ];
         let program = Program::new(device, queue, limits, "jodel-gpu", &kernels_source(&[]));
         let model = Model::new(program, &sizes, STEMS * MAX_FRAMES * FRAME, pieces)?;
-        model.write(Buf::Weights, &weights);
+        model.write(Buf::Weights, &values);
         model.write(Buf::Table, &rotary_table(MAX_FRAMES + REGISTERS));
-        Ok(Inner { model, offsets })
+        Ok(Inner { model, weights })
     }
 
     /// The masks of a chunk of `frames` frames of `stft`.
@@ -662,7 +419,7 @@ impl Inner {
     /// The dispatches of a chunk of `frames` frames (as its plan records
     /// them).
     pub(crate) fn ops(&self, frames: usize) -> Vec<Op> {
-        plan(&self.offsets, frames)
+        plan(&self.weights, frames)
     }
 
     /// One chunk through its plan (recorded on first use), in short
@@ -671,10 +428,10 @@ impl Inner {
         self.model.write(Buf::Stft, stft);
         let rows = frames + REGISTERS;
         let cols = BAND_BINS.len() + REGISTERS;
-        let (offsets, registers) = (&self.offsets, self.offsets.registers as usize);
+        let (weights, registers) = (&self.weights, self.weights.at("registers"));
         self.model.run(
             frames,
-            || plan(offsets, frames),
+            || plan(weights, frames),
             |encoder, buffers| {
                 let grid = &buffers[&Buf::Grid];
                 encoder.clear_buffer(grid, 0, Some((rows * cols * DIM * 4) as u64));
@@ -697,10 +454,37 @@ impl Inner {
 
 impl Separator for GpuSeparator {
     fn name(&self) -> String {
-        self.name.clone()
+        self.kept.name()
     }
 
     fn masks(&self, frames: usize, stft: &[f32]) -> Result<Vec<f32>, String> {
-        self.lock()?.masks(frames, stft)
+        self.run(|inner| inner.masks(frames, stft))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A separator whose device is lost sets up again and separates as
+    /// before; skipped (with a note) where there is no usable GPU.
+    #[test]
+    fn a_separator_whose_device_is_lost_sets_up_again() {
+        let Ok(gpu) = GpuSeparator::new() else {
+            eprintln!("no usable GPU: skipped");
+            return;
+        };
+        let frames = 40;
+        let stft: Vec<f32> = (0..frames * FRAME)
+            .map(|i| ((i % 97) as f32 * 0.37).sin())
+            .collect();
+        let before = gpu.masks(frames, &stft).unwrap();
+        gpu.run(|inner| {
+            inner.model.program.device.destroy();
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(gpu.masks(frames, &stft).unwrap(), before);
+        assert!(gpu.tally().submissions >= 2);
     }
 }

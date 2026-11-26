@@ -97,7 +97,8 @@ impl GpuSplitter {
         }
     }
 
-    /// What the models find in `image`, setting them up first if need be.
+    /// What the models find in `image`, setting them up first if need be
+    /// (and for the next cover again where their GPU was lost).
     /// Each GPU model's working buffers go once it has run, so only one
     /// model's are held at a time (their weights stay); the lettering and
     /// the faces are found on the processor after them.
@@ -115,10 +116,22 @@ impl GpuSplitter {
         );
         let found = depth.depth(&rgb);
         depth.release();
-        let found = found?;
-        let cut = matte.matte(&rgb);
-        matte.release();
-        let cut = cut?;
+        let done = found.and_then(|found| {
+            let cut = matte.matte(&rgb);
+            matte.release();
+            Ok((found, cut?))
+        });
+        let (found, cut) = match done {
+            Ok(done) => done,
+            Err(why) => {
+                // Models whose GPU was lost are set up again for the next
+                // cover.
+                if depth.is_lost() || matte.is_lost() {
+                    *models = Models::NotYet;
+                }
+                return Err(why);
+            }
+        };
         drop(models);
         Ok(Parts {
             depth: found,

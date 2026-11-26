@@ -31,8 +31,6 @@ mod swin;
 #[cfg(test)]
 mod tests;
 
-use std::collections::HashMap;
-
 use jodel_tensors::SafeTensors;
 
 use crate::engine::{Access, Kernels};
@@ -41,7 +39,7 @@ pub use depth::{Depth, GpuDepth};
 pub use matte::{GpuMatte, Matte};
 pub(crate) use ops::Plan;
 
-pub(crate) use crate::packer::Packer;
+pub(crate) use crate::packer::{Named, Packer};
 
 /// The kernels.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -121,20 +119,9 @@ pub(crate) fn source() -> String {
     .join("\n")
 }
 
-/// A checkpoint's tensors packed ([`Packer`]) by name.
-#[derive(Clone, Default)]
-pub(crate) struct Loader {
-    pub(crate) packer: Packer,
-    names: HashMap<String, usize>,
-}
-
-impl Loader {
-    /// `values` packed under `name`.
-    pub(crate) fn put(&mut self, name: &str, values: &[f32]) {
-        let at = self.packer.push(values);
-        self.names.insert(name.to_owned(), at);
-    }
-
+/// A checkpoint's tensors read into the packer by name, laid out as the
+/// vision kernels read them.
+impl Named {
     pub(crate) fn vector(&mut self, t: &SafeTensors, name: &str, len: usize) -> Result<(), String> {
         let v = t.get(name, &[len])?;
         self.put(name, &v);
@@ -149,13 +136,13 @@ impl Loader {
         (ins, outs, k): (usize, usize, usize),
     ) {
         let at = self.packer.conv(w, outs, ins, k);
-        self.names.insert(name.to_owned(), at);
+        self.name(name, at);
     }
 
     /// A linear layer's weight (`[out][in]`) under `name`, as `[in][out]`.
     pub(crate) fn put_linear(&mut self, name: &str, w: &[f32], outs: usize, ins: usize) {
         let at = self.packer.linear(w, outs, ins);
-        self.names.insert(name.to_owned(), at);
+        self.name(name, at);
     }
 
     /// A linear layer (`name.weight`, `name.bias` if `bias`), scaled by a
@@ -201,7 +188,7 @@ impl Loader {
     ) -> Result<(), String> {
         let w = t.get(&format!("{name}.weight"), &[outs, ins, k, k])?;
         let at = self.packer.conv(&w, outs, ins, k);
-        self.names.insert(format!("{name}.weight"), at);
+        self.name(&format!("{name}.weight"), at);
         if bias {
             self.vector(t, &format!("{name}.bias"), outs)?;
         }
@@ -218,13 +205,8 @@ impl Loader {
     ) -> Result<(), String> {
         let w = t.get(&format!("{name}.weight"), &[ch, ch, s, s])?;
         let at = self.packer.deconv(&w, ch, ch, s);
-        self.names.insert(format!("{name}.weight"), at);
+        self.name(&format!("{name}.weight"), at);
         self.vector(t, &format!("{name}.bias"), ch)
-    }
-
-    /// Where `name` is.
-    pub(crate) fn at(&self, name: &str) -> usize {
-        *self.names.get(name).unwrap_or_else(|| panic!("no {name}"))
     }
 
     /// The convolution `name` (`cin`, `cout`, size), its stride and padding.

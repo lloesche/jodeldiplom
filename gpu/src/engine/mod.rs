@@ -12,13 +12,24 @@
 //!   (the separator, the beat network, the speech model) is a [`Model`]
 //!   (`model.rs`): its plans recorded when first run, each run one plan and
 //!   one read back.
+//! - Every matrix multiply is planned as a [`Mul`] (`mul.rs`): what it
+//!   reads and writes, the weights, what becomes of the products.
+//! - A network the process keeps for itself (the separator's, the beat
+//!   network's) is [`Kept`] (`kept.rs`): set up when first needed, and
+//!   again when its device is lost; a failed setup is tried again a while
+//!   later. A network the caller holds says when its device is lost
+//!   ([`Program::lost`]), and the caller makes it again.
 
+mod kept;
 mod model;
+mod mul;
 mod program;
 
 use std::hash::Hash;
 
+pub(crate) use kept::{Kept, OnDevice, SetUp};
 pub(crate) use model::Model;
+pub(crate) use mul::{After, Matrix, Mul, ARGMAX, SWIGLU};
 pub(crate) use program::{Program, Recorded};
 
 /// Bytes between the dispatches' parameters (the uniform offset

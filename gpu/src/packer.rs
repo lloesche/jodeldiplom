@@ -1,5 +1,8 @@
 //! A network's weights and constants as one buffer's contents ([`Packer`]),
-//! each tensor laid out as the kernels read it.
+//! each tensor laid out as the kernels read it, and looked up by name
+//! ([`Named`]).
+
+use std::collections::HashMap;
 
 /// A linear layer's weight (`[out][in]`, as PyTorch keeps it) as
 /// `[in][out]`, as the matrix multiplies read it.
@@ -80,6 +83,45 @@ impl Packer {
             }
         }
         self.push(&t)
+    }
+}
+
+/// A network's tensors packed ([`Packer`]) by name: each one's offset
+/// found by the name it was put under ([`Named::at`]).
+#[derive(Clone, Debug, Default)]
+pub(crate) struct Named {
+    pub(crate) packer: Packer,
+    names: HashMap<String, usize>,
+}
+
+impl Named {
+    /// A network's tensors as `visit` gives them (by name, each as the
+    /// kernels read it), packed in that order.
+    pub(crate) fn visited(visit: impl FnOnce(&mut dyn FnMut(&str, &[f32]))) -> Named {
+        let mut named = Named::default();
+        visit(&mut |name, values| named.put(name, values));
+        named
+    }
+
+    /// `values` packed under `name`.
+    pub(crate) fn put(&mut self, name: &str, values: &[f32]) {
+        let at = self.packer.push(values);
+        self.name(name, at);
+    }
+
+    /// `name` for what was packed at `at`.
+    pub(crate) fn name(&mut self, name: &str, at: usize) {
+        self.names.insert(name.to_owned(), at);
+    }
+
+    /// Where `name` is.
+    pub(crate) fn at(&self, name: &str) -> usize {
+        *self.names.get(name).unwrap_or_else(|| panic!("no {name}"))
+    }
+
+    /// The values packed, taken out (the names stay, to plan with).
+    pub(crate) fn take_values(&mut self) -> Vec<f32> {
+        std::mem::take(&mut self.packer.data)
     }
 }
 

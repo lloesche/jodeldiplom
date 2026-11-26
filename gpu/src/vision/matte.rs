@@ -25,7 +25,7 @@ use jodel_tensors::SafeTensors;
 use super::net::Net;
 use super::ops::{Act, Attend, Band, ConvW, Img, Plan, Resize, ADD, GELU, NORM_CHUNK, UP_IN};
 use super::prep::{self, Rgb};
-use super::{swin, Loader};
+use super::{swin, Named};
 
 const SIDE: usize = 1024;
 const D: usize = 128;
@@ -87,8 +87,8 @@ fn halved_kernel(w: &[f32], outs: usize, ins: usize) -> Vec<f32> {
 }
 
 /// The checkpoint's tensors this port uses.
-fn read(t: &SafeTensors) -> Result<Loader, String> {
-    let mut w = Loader::default();
+fn read(t: &SafeTensors) -> Result<Named, String> {
+    let mut w = Named::default();
     swin::read(&mut w, t)?;
     let shallow = t.get("shallow.0.weight", &[D, 3, 3, 3])?;
     let halved = halved_kernel(&shallow, D, 3);
@@ -101,7 +101,7 @@ fn read(t: &SafeTensors) -> Result<Loader, String> {
     for k in 1..=4 {
         w.conv(t, &format!("conv{k}.0"), (D, D, 3), true)?;
     }
-    let attention = |w: &mut Loader, name: &str| -> Result<(), String> {
+    let attention = |w: &mut Named, name: &str| -> Result<(), String> {
         let inw = t.get(&format!("{name}.in_proj_weight"), &[3 * D, D])?;
         let inb = t.get(&format!("{name}.in_proj_bias"), &[3 * D])?;
         w.put_linear(&format!("{name}.q.weight"), &inw[..D * D], D, D);
@@ -112,7 +112,7 @@ fn read(t: &SafeTensors) -> Result<Loader, String> {
         w.put(&format!("{name}.v.bias"), &inb[2 * D..]);
         w.linear(t, &format!("{name}.out_proj"), (D, D), true, None)
     };
-    let ffn = |w: &mut Loader, name: &str, pairs: &[(usize, usize)]| -> Result<(), String> {
+    let ffn = |w: &mut Named, name: &str, pairs: &[(usize, usize)]| -> Result<(), String> {
         for &(a, b) in pairs {
             w.linear(t, &format!("{name}.linear{a}"), (D, 2 * D), true, None)?;
             w.linear(t, &format!("{name}.linear{b}"), (2 * D, D), true, None)?;
@@ -167,7 +167,7 @@ struct Scratch {
 #[allow(clippy::too_many_arguments)]
 fn mha(
     p: &mut Plan,
-    w: &Loader,
+    w: &Named,
     s: &Scratch,
     name: &str,
     q_in: Img,
@@ -219,7 +219,7 @@ fn mha(
 }
 
 /// x = norm2(norm1(x) + ffn(norm1(x))) in place (the blocks' tail).
-fn tail(p: &mut Plan, w: &Loader, s: &Scratch, name: &str, x: Img, (a, b): (usize, usize)) {
+fn tail(p: &mut Plan, w: &Named, s: &Scratch, name: &str, x: Img, (a, b): (usize, usize)) {
     let at = |x: &str| w.at(&format!("{name}.{x}"));
     p.layernorm(x, x, at("norm1.weight"), at("norm1.bias"), 1e-5);
     let u = Img::rows(s.up, x.pixels(), 2 * D);
@@ -242,7 +242,7 @@ fn tail(p: &mut Plan, w: &Loader, s: &Scratch, name: &str, x: Img, (a, b): (usiz
 
 /// A 3 × 3 convolution, an instance norm and GELU (`make_cbr`), `x` into
 /// `out`.
-fn cbr(p: &mut Plan, w: &Loader, name: &str, x: Img, out: Img, flags: u32) {
+fn cbr(p: &mut Plan, w: &Named, name: &str, x: Img, out: Img, flags: u32) {
     let (cin, cout) = (x.c, out.c);
     p.conv(x, &w.cw(name, (cin, cout, 3), 1, 1, true), out, flags);
     p.instance_norm(out, true);
@@ -250,7 +250,7 @@ fn cbr(p: &mut Plan, w: &Loader, name: &str, x: Img, out: Img, flags: u32) {
 
 /// MCLM on `e5` (five views of 16 × 16: four quarters, then the whole), in
 /// place.
-fn mclm(p: &mut Plan, w: &Loader, s: &Scratch, e5: Img) {
+fn mclm(p: &mut Plan, w: &Named, s: &Scratch, e5: Img) {
     let n = "multifieldcrossatt";
     let h = e5.h;
     let loc = e5.views(0, 4);
@@ -328,7 +328,7 @@ fn mclm(p: &mut Plan, w: &Loader, s: &Scratch, e5: Img) {
 }
 
 /// MCRM on `x` (five views of h × h), in place.
-fn mcrm(p: &mut Plan, w: &Loader, s: &Scratch, name: &str, x: Img) {
+fn mcrm(p: &mut Plan, w: &Named, s: &Scratch, name: &str, x: Img) {
     let h = x.h;
     let loc = x.views(0, 4);
     let glb = x.views(4, 1);
@@ -385,7 +385,7 @@ fn mcrm(p: &mut Plan, w: &Loader, s: &Scratch, name: &str, x: Img) {
 }
 
 /// The plan; the input's buffer (1024 × 1024 × 3) and the matte's.
-fn plan(w: &Loader) -> (Plan, usize, usize) {
+fn plan(w: &Named) -> (Plan, usize, usize) {
     let mut p = Plan::new();
     let input = p.buffer(SIDE * SIDE * 3);
     let ii = Img::new(input, 1, SIDE, SIDE, 3);
@@ -560,6 +560,12 @@ impl GpuMatte {
             .lock()
             .map(|n| n.gpu_name().to_owned())
             .unwrap_or_default()
+    }
+
+    /// Whether its device was lost (a driver reset, the GPU gone): it runs
+    /// nothing again, and a new one is made instead.
+    pub fn is_lost(&self) -> bool {
+        self.net.lock().map_or(true, |n| n.lost())
     }
 
     /// The bytes it keeps on the GPU now.

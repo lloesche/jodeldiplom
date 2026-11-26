@@ -7,7 +7,7 @@
 use jodel_tensors::SafeTensors;
 
 use super::ops::{Attend, Img, Plan, ADD, GELU};
-use super::Loader;
+use super::Named;
 
 pub(crate) const DEPTHS: [usize; 4] = [2, 2, 18, 2];
 const WINDOW: usize = 12;
@@ -22,7 +22,7 @@ fn heads(stage: usize) -> usize {
 }
 
 /// The backbone's tensors.
-pub(crate) fn read(w: &mut Loader, t: &SafeTensors) -> Result<(), String> {
+pub(crate) fn read(w: &mut Named, t: &SafeTensors) -> Result<(), String> {
     let b = |n: &str| format!("backbone.{n}");
     w.conv(t, &b("patch_embed.proj"), (3, EMBED, 4), true)?;
     w.vector(t, &b("patch_embed.norm.weight"), EMBED)?;
@@ -57,7 +57,7 @@ pub(crate) fn read(w: &mut Loader, t: &SafeTensors) -> Result<(), String> {
 
 /// The backbone over `views` (packed, `v × size × size × 3`): the patch
 /// embedding and each stage's output, normed (five images).
-pub(crate) fn plan(p: &mut Plan, w: &Loader, views: Img) -> [Img; 5] {
+pub(crate) fn plan(p: &mut Plan, w: &Named, views: Img) -> [Img; 5] {
     let b = |n: &str| format!("backbone.{n}");
     let v = views.views;
     let side = views.h / 4;

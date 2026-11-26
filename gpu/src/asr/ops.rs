@@ -1,11 +1,14 @@
 //! The recogniser's dispatches as they are planned: a kernel, its
 //! buffers, its numbers and its workgroups, and the helpers that plan the
-//! matrix multiplies ([`Mul`]: the tiled one for many rows, `qa_rows` for a
-//! few) and the kernels with a workgroup or an invocation a row.
+//! matrix multiplies (the engine's [`Mul`]: the tiled `qa_matmul` for many
+//! rows, `qa_rows` for a few, its rows normed or put together on the way
+//! as [`Before`] says) and the kernels with a workgroup or an invocation a
+//! row.
 
 use super::pack::Matrix;
 use super::{Buf, Kernel, VOCAB};
-use crate::engine::{self, params, spread};
+pub(super) use crate::engine::After;
+use crate::engine::{self, params, spread, ARGMAX, SWIGLU};
 
 /// Rounds of eight columns a workgroup of the head (`qa_rows`).
 const HEAD_ROUNDS: usize = 8;
@@ -22,16 +25,15 @@ const STAGED: usize = 1024;
 /// that writes two.
 pub(super) type Op = engine::Op<Kernel, [Buf; 4], 12>;
 
-/// The kernels' flags (`qa_matmul`'s and `qa_rows`'s).
-const BIAS: usize = 1;
-const ADD: usize = 2;
-const GELU: usize = 4;
+/// A matrix multiply of the recogniser's: its 4-bit, 8-bit or half
+/// matrices.
+pub(super) type Mul = engine::Mul<Buf, Matrix>;
+
+/// `qa_rows`'s flags for what [`Before`] does.
 const NORM: usize = 32;
-const SWIGLU: usize = 64;
-const ARGMAX: usize = 128;
 const JOIN: usize = 256;
 
-/// What the rows are before the matrix (`qa_rows` only but `Plain`).
+/// What the rows are before the matrix (`qa_rows`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Before {
     /// As they are.
@@ -42,101 +44,13 @@ pub(super) enum Before {
     Join { chunks: usize },
 }
 
-/// What becomes of the products (after the bias).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum After {
-    /// Written.
-    Store,
-    /// Added to what is there.
-    Add,
-    /// GELU, then written.
-    Gelu,
-    /// The columns are gates and ups (the first half and the rest): each
-    /// pair written as silu(gate) · up (`qa_rows` only).
-    SwiGlu,
-    /// Written, and each row's largest of a workgroup's with its column to
-    /// `Best`, `stride` apart a row (`qa_rows` only, the head).
-    Argmax { stride: usize },
-}
-
-/// A matrix multiply: `to`'s rows (`m × n`, from its offset, its stride
-/// apart) (+)= `from`'s rows (`k` values from its offset, its stride
-/// apart) times `w` (+ the bias at `bias`), as `before` and `after` say.
-pub(super) struct Mul {
-    pub(super) from: (Buf, usize, usize),
-    pub(super) to: (Buf, usize, usize),
-    pub(super) m: usize,
-    pub(super) n: usize,
-    pub(super) k: usize,
-    pub(super) w: Matrix,
-    pub(super) bias: Option<usize>,
-    pub(super) before: Before,
-    pub(super) after: After,
-}
-
-impl Mul {
-    /// `m` rows of `k` values from the start of `from` through `w` (`n`
-    /// columns) to the start of `to`, the rows as they are.
-    #[allow(clippy::too_many_arguments)]
-    pub(super) fn dense(
-        from: Buf,
-        to: Buf,
-        (m, n, k): (usize, usize, usize),
-        w: Matrix,
-        bias: Option<usize>,
-        after: After,
-    ) -> Mul {
-        Mul {
-            from: (from, 0, k),
-            to: (to, 0, n),
-            m,
-            n,
-            k,
-            w,
-            bias,
-            before: Before::Plain,
-            after,
-        }
+impl engine::Matrix for Matrix {
+    fn at(self) -> usize {
+        self.at
     }
 
-    /// The flags and the values for `before` and `after` (the norm's
-    /// weights, then the chunks or the stride).
-    fn flags(&self) -> (usize, usize, usize) {
-        let mut flags = self.w.format.flag();
-        if self.bias.is_some() {
-            flags |= BIAS;
-        }
-        let (norm, more) = match self.before {
-            Before::Plain => (0, 0),
-            Before::Norm(at) => {
-                flags |= NORM;
-                (at, 0)
-            }
-            Before::Join { chunks } => {
-                flags |= JOIN;
-                (0, chunks)
-            }
-        };
-        let more = match self.after {
-            After::Store => more,
-            After::Add => {
-                flags |= ADD;
-                more
-            }
-            After::Gelu => {
-                flags |= GELU;
-                more
-            }
-            After::SwiGlu => {
-                flags |= SWIGLU;
-                more
-            }
-            After::Argmax { stride } => {
-                flags |= ARGMAX;
-                stride
-            }
-        };
-        (flags, norm, more)
+    fn flag(self) -> usize {
+        self.format.flag()
     }
 }
 
@@ -145,47 +59,36 @@ impl Mul {
 /// not depend on the pieces with it), else the tiled `qa_matmul`.
 pub(super) fn matmul(ops: &mut Vec<Op>, mul: &Mul, per_piece: usize) {
     if per_piece == 1 {
-        rows(ops, mul);
+        rows(ops, mul, Before::Plain);
         return;
     }
-    assert_eq!(
-        mul.before,
-        Before::Plain,
-        "qa_matmul takes the rows as they are"
-    );
-    let (flags, _, _) = mul.flags();
     assert!(
-        flags & (SWIGLU | ARGMAX) == 0,
+        mul.flags() & (SWIGLU | ARGMAX) == 0,
         "qa_matmul only writes, adds or takes GELU"
     );
-    let (src, a_off, lda) = mul.from;
-    let (dst, c_off, ldc) = mul.to;
-    let values = [
-        mul.m,
-        mul.n,
-        mul.k,
-        a_off,
-        lda,
-        mul.w.at,
-        c_off,
-        ldc,
-        mul.bias.unwrap_or(0),
-        flags,
-    ];
     ops.push(Op {
         kernel: Kernel::Matmul,
-        buffers: [src, Buf::Small, dst, Buf::Spare],
-        params: params(&values),
+        buffers: [mul.from.0, Buf::Small, mul.to.0, Buf::Spare],
+        params: params(&mul.numbers()),
         groups: [mul.n.div_ceil(64) as u32, mul.m.div_ceil(128) as u32, 1],
     });
 }
 
-/// `mul` through `qa_rows`: four rows a workgroup, its columns eight at a
-/// time, in as many rounds a workgroup as still leave the GPU enough
-/// workgroups (the head's always [`HEAD_ROUNDS`]: its workgroups are
-/// [`BLOCKS`]).
-pub(super) fn rows(ops: &mut Vec<Op>, mul: &Mul) {
-    let (flags, norm, more) = mul.flags();
+/// `mul` through `qa_rows`, its rows as `before` says: four rows a
+/// workgroup, its columns eight at a time, in as many rounds a workgroup as
+/// still leave the GPU enough workgroups (the head's always
+/// [`HEAD_ROUNDS`]: its workgroups are [`BLOCKS`]).
+pub(super) fn rows(ops: &mut Vec<Op>, mul: &Mul, before: Before) {
+    let (before_flag, norm, chunks) = match before {
+        Before::Plain => (0, 0, 0),
+        Before::Norm(at) => (NORM, at, 0),
+        Before::Join { chunks } => (JOIN, 0, chunks),
+    };
+    let more = match mul.after {
+        After::Argmax { stride } => stride,
+        _ => chunks,
+    };
+    let flags = mul.flags() | before_flag;
     let (m, n, k) = (mul.m, mul.n, mul.k);
     // Eight columns a round, four outputs of gates and ups.
     let blocks = |rounds: usize| {
@@ -208,22 +111,9 @@ pub(super) fn rows(ops: &mut Vec<Op>, mul: &Mul) {
             .find(|&r| blocks(r) * row_blocks >= ENOUGH_WORKGROUPS)
             .unwrap_or(1)
     };
-    let (src, a_off, lda) = mul.from;
-    let (dst, c_off, ldc) = mul.to;
-    let values = [
-        m,
-        n,
-        k,
-        a_off,
-        lda,
-        mul.w.at,
-        c_off,
-        ldc,
-        mul.bias.unwrap_or(0),
-        flags | (rounds << 16),
-        norm,
-        more,
-    ];
+    let mut values = mul.numbers().to_vec();
+    values[9] = flags | (rounds << 16);
+    values.extend([norm, more]);
     let blocks = blocks(rounds);
     assert!(blocks <= 65_535, "{n} columns");
     let dst2 = if flags & ARGMAX != 0 {
@@ -233,7 +123,7 @@ pub(super) fn rows(ops: &mut Vec<Op>, mul: &Mul) {
     };
     ops.push(Op {
         kernel: Kernel::Rows,
-        buffers: [src, Buf::Small, dst, dst2],
+        buffers: [mul.from.0, Buf::Small, mul.to.0, dst2],
         params: params(&values),
         groups: [row_blocks as u32, blocks as u32, 1],
     });

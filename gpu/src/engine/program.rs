@@ -4,17 +4,22 @@
 use std::collections::HashMap;
 use std::hash::Hash;
 use std::num::NonZeroU64;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use super::{Access, Dispatch, Kernels, Op, PARAM_STRIDE};
+use crate::pace::{self, Pieces};
 
 /// A device and a program of kernels on it: the module, the bind group
 /// layout and each kernel's pipeline, with what makes buffers, parameters
-/// and bind groups for it.
+/// and bind groups for it; and whether the device was lost.
 pub(crate) struct Program<K> {
     pub(crate) device: wgpu::Device,
     pub(crate) queue: wgpu::Queue,
     label: &'static str,
+    /// Set when the device is lost (its callback).
+    lost: Arc<AtomicBool>,
     layout: wgpu::BindGroupLayout,
     pipelines: HashMap<K, wgpu::ComputePipeline>,
     /// The most a buffer may be bound with.
@@ -32,7 +37,7 @@ pub(crate) struct Recorded<K> {
 
 impl<K: Kernels> Program<K> {
     /// `source`'s kernels (every one of `K::ALL`) on the device, labelled
-    /// `label`, on the layout `K` says.
+    /// `label`, on the layout `K` says; the device watched for its loss.
     pub(crate) fn new(
         device: wgpu::Device,
         queue: wgpu::Queue,
@@ -40,6 +45,9 @@ impl<K: Kernels> Program<K> {
         label: &'static str,
         source: &str,
     ) -> Program<K> {
+        let lost = Arc::new(AtomicBool::new(false));
+        let flag = Arc::clone(&lost);
+        device.set_device_lost_callback(move |_, _| flag.store(true, Ordering::Release));
         let storage = |binding, read_only| wgpu::BindGroupLayoutEntry {
             binding,
             visibility: wgpu::ShaderStages::COMPUTE,
@@ -101,6 +109,7 @@ impl<K: Kernels> Program<K> {
             device,
             queue,
             label,
+            lost,
             layout,
             pipelines,
             most: limits
@@ -112,6 +121,14 @@ impl<K: Kernels> Program<K> {
     /// Its label.
     pub(crate) fn label(&self) -> &'static str {
         self.label
+    }
+
+    /// Whether its device was lost (a driver reset, the GPU gone): nothing
+    /// runs on it again. The device is polled first, so a loss it found is
+    /// told.
+    pub(crate) fn lost(&self) -> bool {
+        let _ = self.device.poll(wgpu::PollType::Poll);
+        self.lost.load(Ordering::Acquire)
     }
 
     /// The pipeline of `kernel`.
@@ -262,6 +279,30 @@ impl<K: Kernels> Program<K> {
             groups,
             _params: params,
         })
+    }
+
+    /// `dispatches` (on the bind groups `groups`) in short submissions
+    /// ([`pace::dispatch`]), `prelude` before them; then `read`'s f32s (a
+    /// buffer, the first one's index, how many) copied to `staging` and
+    /// read back (none without `read`).
+    pub(crate) fn run(
+        &self,
+        pieces: &mut Pieces,
+        (groups, dispatches): (&[wgpu::BindGroup], &[Dispatch<K>]),
+        prelude: impl FnOnce(&mut wgpu::CommandEncoder),
+        read: Option<(&wgpu::Buffer, usize, usize)>,
+        staging: &wgpu::Buffer,
+    ) -> Result<Vec<f32>, String> {
+        pace::dispatch(self, pieces, groups, dispatches, prelude, |encoder| {
+            if let Some((from, first, count)) = read {
+                let size = (count * 4) as u64;
+                encoder.copy_buffer_to_buffer(from, (first * 4) as u64, staging, 0, size);
+            }
+        })?;
+        match read {
+            Some((_, _, count)) => crate::device::read_back(&self.device, staging, count),
+            None => Ok(Vec::new()),
+        }
     }
 
     /// The dispatches of `recorded` that `keep` picks (by index) as one

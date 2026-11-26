@@ -27,8 +27,8 @@ use crate::nn::weights::Weights;
 use crate::parts::Parts;
 use crate::presence::Levels;
 use crate::waveform::LaneBuilder;
-use model::{Model, FRAME};
-pub use model::{BAND_BINS, DIM};
+use model::Model;
+pub use model::{BAND_BINS, DEPTH, DIM, FRAME, HEADS, HIDDEN, KV_HEADS, REGISTERS};
 use stft::{Stft, BINS};
 
 /// The sample rate the separator takes, in hertz.
@@ -94,15 +94,33 @@ impl CpuSeparator {
     /// The built-in network, loaded on first use.
     pub fn shared() -> &'static CpuSeparator {
         static SEPARATOR: OnceLock<CpuSeparator> = OnceLock::new();
-        SEPARATOR.get_or_init(|| CpuSeparator {
-            model: Model::load(weights()).expect("the built-in separator weights"),
+        SEPARATOR.get_or_init(|| CpuSeparator::built_in().expect("the built-in separator weights"))
+    }
+
+    /// The built-in network, loaded now (one of its own, for another
+    /// separator to take its weights from: [`CpuSeparator::visit`]).
+    pub fn built_in() -> Result<CpuSeparator, String> {
+        Ok(CpuSeparator {
+            model: Model::load(Weights::parse(WEIGHTS)?)?,
         })
     }
-}
 
-/// The built-in weights, parsed (for other separators to load).
-pub fn weights() -> Weights {
-    Weights::parse(WEIGHTS).expect("the built-in separator weights")
+    /// Every weight for `f`, by name, as the network holds it (a layer's
+    /// `[inputs][outputs]`):
+    ///
+    /// - each band `b` of [`BAND_BINS`]: `split.{b}.norm` (`[4 × bins]`),
+    ///   `split.{b}.w` (`[4 × bins][DIM]`), `split.{b}.b`;
+    /// - each layer `l` of [`DEPTH`], along the frames (`t` 0) and along the
+    ///   bands (1): `{l}.{t}.attention_norm`, `{l}.{t}.q.w` and `.o.w`
+    ///   (`[DIM][DIM]`), `.k.w` and `.v.w` (`[DIM][KV_HEADS × 32]`),
+    ///   `.mlp_norm`, `.gate.w` and `.up.w` (`[DIM][HIDDEN]`), `.down.w`
+    ///   (`[HIDDEN][DIM]`);
+    /// - `registers` (`[REGISTERS][REGISTERS][DIM]`), `final_norm`;
+    /// - each stem `s` and band `b`: `mask.{s}.{b}.w` (`[DIM][4 × bins]`),
+    ///   `mask.{s}.{b}.b`.
+    pub fn visit(&self, f: &mut dyn FnMut(&str, &[f32])) {
+        self.model.visit(f);
+    }
 }
 
 impl Separator for CpuSeparator {

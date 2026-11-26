@@ -28,16 +28,17 @@ pub const BAND_BINS: [usize; 62] = [
 /// Features per token.
 pub const DIM: usize = 256;
 /// The feed-forward step's width.
-const HIDDEN: usize = 768;
-/// Query heads, and the key/value heads they share.
-const HEADS: usize = 8;
-const KV_HEADS: usize = 4;
+pub const HIDDEN: usize = 768;
+/// Query heads.
+pub const HEADS: usize = 8;
+/// The key/value heads the query heads share.
+pub const KV_HEADS: usize = 4;
 /// Layers (each a time and a band transformer).
-const DEPTH: usize = 8;
+pub const DEPTH: usize = 8;
 /// Register frames and bands added to the grid.
-const REGISTERS: usize = 4;
+pub const REGISTERS: usize = 4;
 /// Values per frame: bins × channels × (real, imaginary).
-pub(crate) const FRAME: usize = BINS * 2 * 2;
+pub const FRAME: usize = BINS * 2 * 2;
 /// RMSNorm's epsilon.
 const EPS: f32 = 1e-6;
 
@@ -52,6 +53,10 @@ impl Norm {
         Ok(Norm {
             weight: w.take(&format!("{name}.weight"), &[dim])?,
         })
+    }
+
+    fn visit(&self, name: &str, f: &mut dyn FnMut(&str, &[f32])) {
+        f(name, &self.weight);
     }
 
     fn apply(&self, x: &[f32]) -> Vec<f32> {
@@ -97,6 +102,20 @@ impl Block {
             up: linear(w, "mlp.up_proj", DIM, HIDDEN)?,
             down: linear(w, "mlp.down_proj", HIDDEN, DIM)?,
         })
+    }
+
+    /// Its weights for `f`, each under `NAME.` (see [`Model::visit`]).
+    fn visit(&self, name: &str, f: &mut dyn FnMut(&str, &[f32])) {
+        self.attention_norm
+            .visit(&format!("{name}.attention_norm"), f);
+        self.q.visit(&format!("{name}.q"), f);
+        self.k.visit(&format!("{name}.k"), f);
+        self.v.visit(&format!("{name}.v"), f);
+        self.o.visit(&format!("{name}.o"), f);
+        self.mlp_norm.visit(&format!("{name}.mlp_norm"), f);
+        self.gate.visit(&format!("{name}.gate"), f);
+        self.up.visit(&format!("{name}.up"), f);
+        self.down.visit(&format!("{name}.down"), f);
     }
 
     /// The layer on `x`: sequences of `len` consecutive tokens, whose
@@ -309,6 +328,26 @@ impl Model {
             final_norm,
             masks,
         })
+    }
+
+    /// Every weight for `f`, by name ([`super::CpuSeparator::visit`]).
+    pub fn visit(&self, f: &mut dyn FnMut(&str, &[f32])) {
+        for (b, (norm, layer)) in self.split.iter().enumerate() {
+            norm.visit(&format!("split.{b}.norm"), f);
+            layer.visit(&format!("split.{b}"), f);
+        }
+        for (l, pair) in self.layers.iter().enumerate() {
+            for (t, block) in pair.iter().enumerate() {
+                block.visit(&format!("{l}.{t}"), f);
+            }
+        }
+        f("registers", &self.registers);
+        self.final_norm.visit("final_norm", f);
+        for (s, stem) in self.masks.iter().enumerate() {
+            for (b, layer) in stem.iter().enumerate() {
+                layer.visit(&format!("mask.{s}.{b}"), f);
+            }
+        }
     }
 
     /// The masks of a chunk of `frames` frames of the mixture's STFT, each

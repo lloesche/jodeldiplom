@@ -111,7 +111,9 @@ A `stems::Separator` runs the network on a chunk's STFT. The built-in
 `CpuSeparator` is the reference: within 0.005 % of the authors' PyTorch
 code on each stem's magnitude per frame and per band
 (`tests/fixtures/stems.txt`), and slow (about 3 minutes for a track).
-The GPU crate [`jodel-gpu`](../gpu) gives another, a few seconds per track.
+The GPU crate [`jodel-gpu`](../gpu) gives another, a few seconds per track,
+its weights taken from the CPU model as it holds them
+(`CpuSeparator::built_in`, `visit`).
 The weights are built in from [models/mini_bs_roformer.bin](models)
 (`model.safetensors` of the model's page, SHA-256
 `61b54904c702c3a4ff52f761bab8ad364554179f493df468439b4fc3a3930d6e`,
@@ -189,7 +191,10 @@ licence ([models/LICENSE-beat-this](models/LICENSE-beat-this)).
    A `net::NetRunner` runs the pieces elsewhere (`jodel-gpu`'s `GpuNetwork`,
    the player's analysis wherever there is a GPU):
    `Analyzer::run_network_on` hands it each piece's spectrogram and takes
-   its logits, and a piece it fails on runs here instead.
+   its logits, and a piece it fails on runs here instead
+   (`Evidence::network_fell_back` says how many and why). The GPU's takes
+   its weights from the CPU network as it holds them (`Network::built_in`,
+   `visit`).
 3. The beat probability goes through `Hmm`, `Plp` and `Peaks` (its own
    peaks above one half): three candidates, each with a larger say in the
    vote than the flux ones, since the network knows tempo levels the flux

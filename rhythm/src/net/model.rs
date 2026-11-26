@@ -44,9 +44,14 @@ pub(crate) struct Model {
     rotary: Rotary,
 }
 
-const STEM: usize = 32;
-const DIM: usize = 128;
-const LAYERS: usize = 6;
+/// The front end's channels after the stem.
+pub const STEM: usize = 32;
+/// The front end's blocks (each halving the bands, doubling the channels).
+pub const BLOCKS: usize = 3;
+/// The transformer's width.
+pub const DIM: usize = 128;
+/// The transformer's layers.
+pub const LAYERS: usize = 6;
 
 impl Model {
     /// The model from a weights file's tensors; every tensor must be used.
@@ -54,7 +59,7 @@ impl Model {
         let w = &mut w;
         let mut blocks = Vec::new();
         let mut c = STEM;
-        for b in 0..3 {
+        for b in 0..BLOCKS {
             let n = format!("frontend.blocks.{b}");
             blocks.push(Block {
                 attn_f: Attention::load(w, &format!("{n}.partial.attnF"), c)?,
@@ -91,6 +96,28 @@ impl Model {
             return Err(format!("unused tensors: {left:?}"));
         }
         Ok(model)
+    }
+
+    /// Every weight for `f`, by name ([`super::Network::visit`]).
+    pub fn visit(&self, f: &mut dyn FnMut(&str, &[f32])) {
+        self.bands_in.visit("in", f);
+        self.stem.visit("stem", f);
+        self.stem_norm.visit("stem", f);
+        for (b, block) in self.blocks.iter().enumerate() {
+            block.attn_f.visit(&format!("{b}.attn_f"), f);
+            block.ff_f.visit(&format!("{b}.ff_f"), f);
+            block.attn_t.visit(&format!("{b}.attn_t"), f);
+            block.ff_t.visit(&format!("{b}.ff_t"), f);
+            block.conv.visit(&format!("{b}.conv"), f);
+            block.norm.visit(&format!("{b}.conv"), f);
+        }
+        self.project.visit("project", f);
+        for (l, (attn, ff)) in self.layers.iter().enumerate() {
+            attn.visit(&format!("layer{l}.attn"), f);
+            ff.visit(&format!("layer{l}.ff"), f);
+        }
+        self.norm.visit("norm", f);
+        self.head.visit("head", f);
     }
 
     /// The beat and downbeat logits of `frames` spectrogram frames

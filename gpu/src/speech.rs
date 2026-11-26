@@ -14,10 +14,10 @@ use jodel_lyrics::speech::{
 use jodel_lyrics::{Maker, VOCALS_RATE};
 
 use crate::engine::{
-    self, guarded, kernels_source, params, spread, Access, Kernels, Model, Program,
+    self, guarded, kernels_source, params, spread, Access, After, Kernels, Model, Mul, Program,
 };
 use crate::pace::Pieces;
-use crate::packer::Packer;
+use crate::packer::Named;
 use crate::Turned;
 
 const CHANNELS: usize = 512;
@@ -104,10 +104,10 @@ fn conv_frames(samples: usize) -> [usize; 7] {
     out
 }
 
-/// The weights as one buffer's contents, and where each is (in f32s).
-fn pack(model: &Wav2Vec2) -> (Vec<f32>, HashMap<String, u32>) {
-    let mut data = Packer::default();
-    let mut at = HashMap::new();
+/// The weights as one buffer's contents, by name (each layer's queries,
+/// keys and values side by side, `{l}.qkv.w` and `{l}.qkv.b`).
+fn pack(model: &Wav2Vec2) -> Named {
+    let mut named = Named::default();
     let mut parts: HashMap<String, Vec<f32>> = HashMap::new();
     model.visit(&mut |name, values| {
         // Each layer's queries, keys and values go side by side (below).
@@ -115,7 +115,7 @@ fn pack(model: &Wav2Vec2) -> (Vec<f32>, HashMap<String, u32>) {
         if fused {
             parts.insert(name.to_owned(), values.to_vec());
         } else {
-            at.insert(name.to_owned(), data.push(values) as u32);
+            named.put(name, values);
         }
     });
     for l in 0..LAYERS {
@@ -127,48 +127,19 @@ fn pack(model: &Wav2Vec2) -> (Vec<f32>, HashMap<String, u32>) {
                 qkv.extend_from_slice(&w[i * DIM..(i + 1) * DIM]);
             }
         }
-        at.insert(format!("{l}.qkv.w"), data.push(&qkv) as u32);
+        named.put(&format!("{l}.qkv.w"), &qkv);
         let b: Vec<f32> = ["q.b", "k.b", "v.b"].iter().flat_map(|b| take(b)).collect();
-        at.insert(format!("{l}.qkv.b"), data.push(&b) as u32);
+        named.put(&format!("{l}.qkv.b"), &b);
     }
-    (data.data, at)
+    named
 }
 
 /// One dispatch.
 type Op = engine::Op<Kernel, [Buf; 3], 12>;
 
-/// `dst` (`m × n` at `c_off`, rows `ldc` apart) (+)= `src` rows (`k` values
-/// from `a_off`, `lda` apart) times the weight at `w` (+ the bias at `bias`).
-#[allow(clippy::too_many_arguments)]
-fn matmul(
-    ops: &mut Vec<Op>,
-    src: Buf,
-    dst: Buf,
-    (m, n, k): (usize, usize, usize),
-    lda: usize,
-    w: u32,
-    (c_off, ldc): (usize, usize),
-    bias: Option<u32>,
-    add: bool,
-) {
-    let flags = usize::from(bias.is_some()) | (usize::from(add) << 1);
-    ops.push(Op {
-        kernel: Kernel::Matmul,
-        buffers: [src, Buf::Weights, dst],
-        params: params(&[
-            m,
-            n,
-            k,
-            0,
-            lda,
-            w as usize,
-            c_off,
-            ldc,
-            bias.unwrap_or(0) as usize,
-            flags,
-        ]),
-        groups: [n.div_ceil(64) as u32, m.div_ceil(64) as u32, 1],
-    });
+/// `mul` through the tiled matrix multiply.
+fn matmul(ops: &mut Vec<Op>, mul: Mul<Buf>) {
+    ops.push(mul.tiled(Kernel::Matmul, Buf::Weights));
 }
 
 /// An elementwise or per-row kernel over `count` invocations.
@@ -181,10 +152,10 @@ fn each(ops: &mut Vec<Op>, kernel: Kernel, buffers: [Buf; 3], count: usize, valu
     });
 }
 
-/// The dispatches of a piece of `samples` samples.
-fn plan(at: &HashMap<String, u32>, samples: usize) -> Vec<Op> {
-    let w = |name: &str| at[name] as usize;
-    let wu = |name: &str| at[name];
+/// The dispatches of a piece of `samples` samples, the weights where `at`
+/// says.
+fn plan(at: &Named, samples: usize) -> Vec<Op> {
+    let w = |name: &str| at.at(name);
     let frames = conv_frames(samples);
     let mut ops = Vec::new();
     let t0 = frames[0];
@@ -207,16 +178,20 @@ fn plan(at: &HashMap<String, u32>, samples: usize) -> Vec<Op> {
     let (mut from, mut to) = (Buf::ConvA, Buf::ConvB);
     for (l, &(k, s)) in CONV.iter().enumerate().skip(1) {
         let m = frames[l];
+        // Each frame's patch of `k` frames, `s` frames on from the last.
         matmul(
             &mut ops,
-            from,
-            to,
-            (m, CHANNELS, k * CHANNELS),
-            s * CHANNELS,
-            wu(&format!("conv{l}")),
-            (0, CHANNELS),
-            None,
-            false,
+            Mul {
+                from: (from, 0, s * CHANNELS),
+                ..Mul::dense(
+                    from,
+                    to,
+                    (m, CHANNELS, k * CHANNELS),
+                    w(&format!("conv{l}")),
+                    None,
+                    After::Store,
+                )
+            },
         );
         each(
             &mut ops,
@@ -237,17 +212,21 @@ fn plan(at: &HashMap<String, u32>, samples: usize) -> Vec<Op> {
             &[f, dim, w(&format!("{name}.w")), w(&format!("{name}.b"))],
         );
     };
+    // A layer `name` of `f` rows, its bias with it.
+    let layer = |from, to, (n, k), name: &str, after| {
+        Mul::dense(
+            from,
+            to,
+            (f, n, k),
+            w(&format!("{name}.w")),
+            Some(w(&format!("{name}.b"))),
+            after,
+        )
+    };
     norm(&mut ops, from, CHANNELS, "fp.ln");
     matmul(
         &mut ops,
-        from,
-        Buf::Hidden,
-        (f, DIM, CHANNELS),
-        CHANNELS,
-        wu("proj.w"),
-        (0, DIM),
-        Some(wu("proj.b")),
-        false,
+        layer(from, Buf::Hidden, (DIM, CHANNELS), "proj", After::Store),
     );
     for g in 0..16 {
         each(
@@ -257,16 +236,20 @@ fn plan(at: &HashMap<String, u32>, samples: usize) -> Vec<Op> {
             f * POS,
             &[f, g],
         );
+        // Each group's 48 channels, into its columns of the width.
         matmul(
             &mut ops,
-            Buf::Patches,
-            Buf::Pos,
-            (f, 48, POS),
-            POS,
-            wu(&format!("pos{g}")),
-            (g * 48, DIM),
-            None,
-            false,
+            Mul {
+                to: (Buf::Pos, g * 48, DIM),
+                ..Mul::dense(
+                    Buf::Patches,
+                    Buf::Pos,
+                    (f, 48, POS),
+                    w(&format!("pos{g}")),
+                    None,
+                    After::Store,
+                )
+            },
         );
     }
     each(
@@ -278,17 +261,10 @@ fn plan(at: &HashMap<String, u32>, samples: usize) -> Vec<Op> {
     );
     norm(&mut ops, Buf::Hidden, DIM, "enc.ln");
     for l in 0..LAYERS {
-        let n = |what: &str| wu(&format!("{l}.{what}"));
+        let n = |what: &str| format!("{l}.{what}");
         matmul(
             &mut ops,
-            Buf::Hidden,
-            Buf::Qkv,
-            (f, QKV, DIM),
-            DIM,
-            n("qkv.w"),
-            (0, QKV),
-            Some(n("qkv.b")),
-            false,
+            layer(Buf::Hidden, Buf::Qkv, (QKV, DIM), &n("qkv"), After::Store),
         );
         ops.push(Op {
             kernel: Kernel::Attention,
@@ -298,26 +274,12 @@ fn plan(at: &HashMap<String, u32>, samples: usize) -> Vec<Op> {
         });
         matmul(
             &mut ops,
-            Buf::Attended,
-            Buf::Hidden,
-            (f, DIM, DIM),
-            DIM,
-            n("o.w"),
-            (0, DIM),
-            Some(n("o.b")),
-            true,
+            layer(Buf::Attended, Buf::Hidden, (DIM, DIM), &n("o"), After::Add),
         );
-        norm(&mut ops, Buf::Hidden, DIM, &format!("{l}.ln"));
+        norm(&mut ops, Buf::Hidden, DIM, &n("ln"));
         matmul(
             &mut ops,
-            Buf::Hidden,
-            Buf::Up,
-            (f, FF, DIM),
-            DIM,
-            n("up.w"),
-            (0, FF),
-            Some(n("up.b")),
-            false,
+            layer(Buf::Hidden, Buf::Up, (FF, DIM), &n("up"), After::Store),
         );
         each(
             &mut ops,
@@ -328,27 +290,19 @@ fn plan(at: &HashMap<String, u32>, samples: usize) -> Vec<Op> {
         );
         matmul(
             &mut ops,
-            Buf::Up,
-            Buf::Hidden,
-            (f, DIM, FF),
-            FF,
-            n("down.w"),
-            (0, DIM),
-            Some(n("down.b")),
-            true,
+            layer(Buf::Up, Buf::Hidden, (DIM, FF), &n("down"), After::Add),
         );
-        norm(&mut ops, Buf::Hidden, DIM, &format!("{l}.fln"));
+        norm(&mut ops, Buf::Hidden, DIM, &n("fln"));
     }
     matmul(
         &mut ops,
-        Buf::Hidden,
-        Buf::Logits,
-        (f, TOKENS, DIM),
-        DIM,
-        wu("head.w"),
-        (0, TOKENS),
-        Some(wu("head.b")),
-        false,
+        layer(
+            Buf::Hidden,
+            Buf::Logits,
+            (TOKENS, DIM),
+            "head",
+            After::Store,
+        ),
     );
     ops
 }
@@ -356,7 +310,7 @@ fn plan(at: &HashMap<String, u32>, samples: usize) -> Vec<Op> {
 /// The model on its device, and where its weights are there.
 struct Inner {
     model: Model<Kernel, Buf>,
-    at: HashMap<String, u32>,
+    weights: Named,
 }
 
 /// wav2vec2-base-960h on the GPU.
@@ -389,6 +343,14 @@ impl GpuSpeech {
     /// The GPU's name.
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    /// Whether its device was lost (a driver reset, the GPU gone): it runs
+    /// nothing again, and a new one is made instead.
+    pub fn is_lost(&self) -> bool {
+        self.inner
+            .lock()
+            .map_or(true, |inner| inner.model.program.lost())
     }
 
     /// The logits (`frames × 32`) of a voice at 16 kHz heard on its own, in
@@ -435,12 +397,13 @@ impl Inner {
         limits: &wgpu::Limits,
         model: &Wav2Vec2,
     ) -> Result<Inner, String> {
-        let (weights, at) = pack(model);
+        let mut weights = pack(model);
+        let values = weights.take_values();
         let samples = longest_piece();
         let frames = conv_frames(samples);
         let f = frames[6];
         let sizes = [
-            (Buf::Weights, weights.len()),
+            (Buf::Weights, values.len()),
             (Buf::Audio, samples),
             (Buf::ConvA, frames[0] * CHANNELS),
             (Buf::ConvB, frames[1] * CHANNELS),
@@ -461,8 +424,8 @@ impl Inner {
             &kernels_source(&[include_str!("speech.wgsl")]),
         );
         let model = Model::new(program, &sizes, f * TOKENS, Pieces::resting())?;
-        model.write(Buf::Weights, &weights);
-        Ok(Inner { model, at })
+        model.write(Buf::Weights, &values);
+        Ok(Inner { model, weights })
     }
 
     /// One piece through its plan (recorded on first use), its first
@@ -472,10 +435,10 @@ impl Inner {
         self.model.write(Buf::Audio, x);
         self.model.write(Buf::Stats, channels);
         let frames = conv_frames(x.len())[6];
-        let at = &self.at;
+        let weights = &self.weights;
         self.model.run(
             x.len(),
-            || plan(at, x.len()),
+            || plan(weights, x.len()),
             |_, _| {},
             (Buf::Logits, frames * TOKENS),
         )

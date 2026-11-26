@@ -295,6 +295,9 @@ pub struct Evidence {
     pub candidates: Vec<vote::Candidate>,
     /// The network's downbeat probability, when it ran.
     pub downbeat: Option<Curve>,
+    /// The network's pieces that its runner (a GPU) failed on, run on the
+    /// processor instead.
+    pub network_fell_back: Option<net::FellBack>,
 }
 
 /// How far a beat may move onto the onset under it, in seconds.
@@ -482,6 +485,7 @@ impl Analyzer {
             });
         let mut candidates = Vec::new();
         let mut downbeat = None;
+        let mut network_fell_back = None;
         if let Some(logits) = logits {
             candidates.extend(candidates_of(
                 Method::Network,
@@ -489,6 +493,7 @@ impl Analyzer {
                 &probabilities(&logits.beat),
             ));
             downbeat = Some(probabilities(&logits.downbeat));
+            network_fell_back = logits.fell_back;
         }
         candidates.extend(flux_candidates);
         candidates.extend(stem_candidates);
@@ -500,6 +505,7 @@ impl Analyzer {
             cues,
             candidates,
             downbeat,
+            network_fell_back,
         }
     }
 

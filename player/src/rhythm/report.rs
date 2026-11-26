@@ -74,7 +74,7 @@ fn seconds(d: Duration) -> String {
 /// An analysis as [`remember`] keeps it: when (seconds since 1970), the
 /// file's name (not its folders), how it was heard, what was found, how
 /// long each part took and what the GPU work cost (the stems', the beat
-/// network's).
+/// network's), and the beat network's pieces the GPU failed on.
 pub fn describe(
     at: u64,
     path: &Path,
@@ -155,6 +155,13 @@ pub fn describe(
     .collect();
     if !gpu.is_empty() {
         let _ = write!(s, "\nGPU: {}", gpu.join("; "));
+    }
+    if let Some(f) = &listened.evidence.network_fell_back {
+        let _ = write!(
+            s,
+            "\nthe beat network ran on the processor for {} of {} pieces: the GPU failed ({})",
+            f.pieces, f.of, f.why
+        );
     }
     s
 }

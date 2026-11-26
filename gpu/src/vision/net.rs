@@ -1,6 +1,6 @@
 //! The vision networks on the device: one GPU for both ([`Gpu`]: the
-//! device and the program of their kernels, set up once per process when
-//! first needed and kept), and each network's own part ([`Net`]: its
+//! device and the program of their kernels, set up when first needed and
+//! kept until its device is lost), and each network's own part ([`Net`]: its
 //! weights uploaded once, and the buffers, bind groups and dispatches of
 //! its plan for one input size, made when it runs and let go when asked).
 //!
@@ -24,15 +24,17 @@ pub(crate) struct Gpu {
 }
 
 /// The GPU while set up (never torn down once set up: it holds no
-/// network's memory).
+/// network's memory), until its device is lost.
 static GPU: Mutex<Option<Arc<Turned<Gpu>>>> = Mutex::new(None);
 
 impl Gpu {
-    /// The vision networks' GPU, set up when first asked for; why not where
-    /// it cannot be (asked again, it tries again).
+    /// The vision networks' GPU, set up when first asked for (and again
+    /// once its device is lost: the networks on the lost one say so,
+    /// [`Net::lost`]); why not where it cannot be (asked again, it tries
+    /// again).
     pub(crate) fn shared() -> Result<Arc<Turned<Gpu>>, String> {
         let mut slot = GPU.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(gpu) = &*slot {
+        if let Some(gpu) = slot.as_ref().filter(|gpu| !gpu.program.lost()) {
             return Ok(Arc::clone(gpu));
         }
         let gpu = std::panic::catch_unwind(|| {
@@ -115,6 +117,11 @@ impl Net {
         &self.gpu.name
     }
 
+    /// Whether its device was lost: it runs nothing again.
+    pub(crate) fn lost(&self) -> bool {
+        self.gpu.program.lost()
+    }
+
     /// Where the tail starts (constants are packed from there).
     pub(crate) fn tail_origin(&self) -> usize {
         self.base
@@ -194,23 +201,13 @@ impl Net {
             program
                 .queue
                 .write_buffer(&p.buffers[into], 0, &bytes(input));
-            crate::pace::dispatch(
-                program,
+            program.run(
                 pieces,
-                &p.recorded.groups,
-                &p.recorded.dispatches,
+                (&p.recorded.groups, &p.recorded.dispatches),
                 |_| {},
-                |encoder| {
-                    encoder.copy_buffer_to_buffer(
-                        &p.buffers[from],
-                        (offset * 4) as u64,
-                        &p.staging,
-                        0,
-                        (count * 4) as u64,
-                    );
-                },
-            )?;
-            crate::device::read_back(&program.device, &p.staging, count)
+                Some((&p.buffers[from], offset, count)),
+                &p.staging,
+            )
         })
     }
 

@@ -81,12 +81,7 @@ pub fn analyze_file(path: &Path, recipe: &RhythmRecipe) -> Result<Analysis, Stri
 /// and there is one; on a background thread its own, apart from the stems
 /// of the track playing.
 fn separator(recipe: &RhythmRecipe) -> Option<&'static GpuSeparator> {
-    let pick = if jodel_gpu::pace::is_background() {
-        GpuSeparator::background
-    } else {
-        GpuSeparator::shared
-    };
-    recipe.stems.then(pick).flatten()
+    recipe.stems.then(GpuSeparator::for_this_thread).flatten()
 }
 
 /// The key the tags name, where one does (`INITIALKEY`, ID3's `TKEY`, or

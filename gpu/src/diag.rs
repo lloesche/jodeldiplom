@@ -4,10 +4,10 @@
 
 use std::time::{Duration, Instant};
 
-use jodel_rhythm::stems::{Separator, DIM, STEMS};
+use jodel_rhythm::stems::{Separator, DIM, FRAME, HIDDEN, STEMS};
 
 use crate::engine::{bytes, guarded, Kernels};
-use crate::separator::{self, Buf, Inner, Kernel, FRAME, HIDDEN, MAX_FRAMES};
+use crate::separator::{self, Buf, Inner, Kernel, KV, MAX_FRAMES};
 use crate::{device, net, setting_up, GpuSeparator};
 
 /// What the GPU side finds on this machine, as lines for a diagnostic
@@ -121,10 +121,11 @@ impl GpuSeparator {
     /// Times the parts of a chunk of `frames` frames of `stft` (see
     /// [`Profile`]): for finding what is slow on a GPU.
     pub(crate) fn profile(&self, frames: usize, stft: &[f32]) -> Result<Profile, String> {
-        let mut inner = self.lock()?;
         separator::check(frames, stft)?;
-        let device = inner.model.program.device.clone();
-        guarded(&device, || profile(&mut inner, frames, stft))
+        self.run(|inner| {
+            let device = inner.model.program.device.clone();
+            guarded(&device, || profile(inner, frames, stft))
+        })
     }
 }
 
@@ -133,7 +134,7 @@ fn matmul_part(params: &[usize; 12]) -> &'static str {
     let (n, k) = (params[1], params[2]);
     match (n, k) {
         (DIM, DIM) => "  matmul q, o (attention)",
-        (128, DIM) => "  matmul k, v (attention)",
+        (KV, DIM) => "  matmul k, v (attention)",
         (HIDDEN, DIM) => "  matmul gate, up (feed-forward)",
         (DIM, HIDDEN) => "  matmul down (feed-forward)",
         (DIM, _) => "  matmul band split",

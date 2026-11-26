@@ -53,17 +53,15 @@ impl Inner {
         for (l, layer) in self.tensors.dec.iter().enumerate() {
             rows(
                 ops,
-                &Mul {
-                    before: Before::Norm(layer.norm),
-                    ..Mul::dense(
-                        Buf::X,
-                        Buf::QkvD,
-                        (b, QKV_DEC, DIM),
-                        layer.qkv,
-                        None,
-                        After::Store,
-                    )
-                },
+                &Mul::dense(
+                    Buf::X,
+                    Buf::QkvD,
+                    (b, QKV_DEC, DIM),
+                    layer.qkv,
+                    None,
+                    After::Store,
+                ),
+                Before::Norm(layer.norm),
             );
             ops.push(Op {
                 kernel: Kernel::DecAttend,
@@ -86,7 +84,6 @@ impl Inner {
                 ops,
                 &Mul {
                     from: (Buf::Cache, parts, PARTS),
-                    before: Before::Join { chunks },
                     ..Mul::dense(
                         Buf::Cache,
                         Buf::X,
@@ -96,12 +93,12 @@ impl Inner {
                         After::Add,
                     )
                 },
+                Before::Join { chunks },
             );
             rows(
                 ops,
                 &Mul {
                     to: (Buf::Act, 0, FF),
-                    before: Before::Norm(layer.post_norm),
                     ..Mul::dense(
                         Buf::X,
                         Buf::Act,
@@ -111,10 +108,12 @@ impl Inner {
                         After::SwiGlu,
                     )
                 },
+                Before::Norm(layer.post_norm),
             );
             rows(
                 ops,
                 &Mul::dense(Buf::Act, Buf::X, (b, DIM, FF), layer.down, None, After::Add),
+                Before::Plain,
             );
         }
     }
@@ -276,6 +275,7 @@ impl Inner {
                 None,
                 After::Argmax { stride: 2 * BLOCKS },
             ),
+            Before::Plain,
         );
         ops.push(Op {
             kernel: Kernel::ArgmaxEmbed,
