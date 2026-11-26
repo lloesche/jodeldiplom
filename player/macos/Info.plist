@@ -31,6 +31,6 @@
     <true/>
     <!-- Without it macOS never asks, and the microphone gives only silence. -->
     <key>NSMicrophoneUsageDescription</key>
-    <string>Karaoke mode mixes your microphone into the song as it plays.</string>
+    <string>Karaoke mode listens to your microphone to score your singing. It is never played or mixed into the song; your singing is kept only when you turn on keeping takes.</string>
 </dict>
 </plist>

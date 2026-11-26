@@ -1,4 +1,5 @@
-//! What is stuck on and pressed into the result diploma, on the GPU in the
+//! The results screen's sticker and wax seal (what is stuck on and pressed
+//! into the result diploma), on the GPU in the
 //! stage's shader: a star sticker (a five-pointed foil star, each point's
 //! two facets lit from the top left, a glint sweeping over it), a wax seal
 //! (a blob of wax, its edge uneven and its lip domed, a die pressed into

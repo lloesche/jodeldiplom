@@ -1,4 +1,5 @@
-//! The Mixer tab ([`crate::core::Side::Mixer`]): the mixer as a desk. A channel
+//! The Mixer tab ([`crate::core::Side::Mixer`]): the mixer as a desk (a
+//! mixing console). A channel
 //! strip for the player, a group with a strip for each of its stems inside
 //! it (drums, bass, vocals, other), one for the preview and one for the
 //! karaoke game's sound effects, each with a fader, mute and solo; the

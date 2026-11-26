@@ -1,4 +1,5 @@
-//! What sparkles: a number that looks random, the same for the same seed
+//! What sparkles: a number that looks random (a seeded hash), the same
+//! for the same seed
 //! (and a particle's own, [`rand`]), a colour mixed, and a four-pointed
 //! sparkle drawn in pixels.
 

@@ -1,4 +1,5 @@
-//! What the window's size does to the keys and the pointer, as the window
+//! What the window's size does to the keys and the pointer (the layout
+//! metrics), as the window
 //! reports it ([`crate::core::Action::Fit`]): how many rows a page is, which
 //! of the desk's strips are shown, how wide a lane is. The core keeps no
 //! geometry of its own; the window measures, the rules read the numbers.

@@ -1,4 +1,5 @@
-//! The phrase tiers, the only place one is defined: a row each, Good
+//! The phrase tiers (rating grades), the only place one is defined: a row
+//! each, Good
 //! first, the top (Diva) last ([`TIERS`]), and a tier named by its place
 //! there ([`Tier`]). A phrase reaches the highest row whose bars its shine
 //! clears ([`Tier::of`], with the scoring in [`crate::core::shine`]);

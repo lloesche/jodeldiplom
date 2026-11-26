@@ -1,4 +1,5 @@
-//! The singing's glow followed frame by frame ([`super::rainbow`]): the
+//! The singing's glow (the combo's visual state) followed frame by frame
+//! ([`super::rainbow`]): the
 //! tier the last phrase reached and its glow (0 off, up to the top's 1:
 //! [`crate::tiers::TierSpec::glow`]), when it last changed and how strong
 //! it showed then ([`Glow`]); read from the singing's moments

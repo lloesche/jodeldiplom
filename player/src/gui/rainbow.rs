@@ -1,4 +1,5 @@
-//! A streak's shine as a clock the looks share: while the singing shines
+//! A streak's shine (the combo glow's envelope) as a clock the looks
+//! share: while the singing shines
 //! (a [`Glow`] level above 0: the glow of the tier the last phrase
 //! reached, 0 to 1, [`crate::tiers::TierSpec::glow`]) it eases in over
 //! [`RISE`] from how strong it showed; lost, it collapses over

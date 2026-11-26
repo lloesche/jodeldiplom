@@ -47,7 +47,11 @@ What it does:
   echo-cancelled and scored, never played.
 
 The player's own documentation, keys and settings are in
-[player/README.md](player/README.md).
+[player/README.md](player/README.md). How the code is put together (the
+crates, the data flow, the threads, where state lives, how to add a tier,
+an effect, a sound, a setting or a screen, and a glossary of the
+project's own words) is in [ARCHITECTURE.md](ARCHITECTURE.md), with the
+designs of the window, the look and the game's rewards in [docs](docs).
 
 ## Building
 

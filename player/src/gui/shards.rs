@@ -1,4 +1,5 @@
-//! A bubble bursting on the GPU ([`super::particles`]), all of it at once,
+//! A bubble bursting on the GPU, a particle effect
+//! ([`super::particles`]), all of it at once,
 //! once it has overfilled (its overfilling is the bubble's own, drawn with
 //! it: [`super::liquid`]): it tears, its liquid splashing out as [`DROPS`]
 //! drops of a few sizes in its colour that arc out and fall, stretched

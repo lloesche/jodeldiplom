@@ -1,4 +1,5 @@
-//! The word slam: a big word slamming down onto the stage, in the lane
+//! The word slam (an impact title): a big word slamming down onto the
+//! stage, in the lane
 //! behind the playhead (what has been sung: [`super::At::Over`]'s room;
 //! never over what is coming to be sung, the lyric band, nor the HUD over
 //! the lane). Fired by a phrase

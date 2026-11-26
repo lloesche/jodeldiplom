@@ -1,4 +1,5 @@
-//! Heads: what the engine keeps of one output ([`HeadState`]), and a
+//! Heads (decks): what the engine keeps of one output ([`HeadState`]),
+//! and a
 //! player's second output on the desk its first is on, where a
 //! transition's next track plays ([`super::transition`]).
 //!

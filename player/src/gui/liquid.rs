@@ -1,4 +1,5 @@
-//! The liquid a word's bubble fills with as it is sung, on the GPU: its
+//! The liquid a word's bubble fills with as it is sung (its fill
+//! shader), on the GPU: its
 //! front (where the singing fills it) a living surface, a meniscus and a
 //! few waves moving along it, sloshing a moment when the fill jumps (the
 //! sweep to full); a shimmer moving through it; and the bubble under

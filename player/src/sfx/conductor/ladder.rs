@@ -1,4 +1,5 @@
-//! The per-word pitch ladder: each word hit in a row pops a step higher
+//! The per-word pitch ladder (the combo's rising pitch): each word hit in
+//! a row pops a step higher
 //! up the song's pentatonic, and the word that reaches a rung lands on
 //! the tonic an octave over where the climb began, the resolution the
 //! rung is (Peggle's rising peg hits, a scale in key, as described in its

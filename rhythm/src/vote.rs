@@ -1,4 +1,5 @@
-//! The vote: the grid the candidates agree on, and how sure they are.
+//! The vote (a beat-tracker ensemble): the grid the candidates agree on,
+//! and how sure they are.
 //!
 //! Every candidate (an activation tracked by a tracker) is compared with
 //! every other by their [`agreement`]: the F-measure beyond chance at the

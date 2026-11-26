@@ -1,4 +1,5 @@
-//! The desk the app plays on, and the engine on it: a mixer that owns the
+//! The desk the app plays on (its mixer's graph), and the engine on it: a
+//! mixer that owns the
 //! output device ([`jodel_output::mixer`]), the player's strip as a group
 //! with a strip for each of its stems inside it (drums, bass, vocals,
 //! other), the preview's strip, and the engine on two heads, each a lane

@@ -1,4 +1,5 @@
-//! One player at a time. Two players would play over each other on the
+//! One player at a time (a single-instance lock). Two players would play
+//! over each other on the
 //! audio device and fight over the settings file, so a
 //! player holds a lock on a file in the settings folder for as long as it
 //! runs (released by the system when it ends, however it ends), and a

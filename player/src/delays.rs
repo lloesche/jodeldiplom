@@ -1,4 +1,5 @@
-//! The singer's delays kept: `delays.txt` beside the settings file
+//! The singer's delays kept (latency calibrations): `delays.txt` beside
+//! the settings file
 //! ([`crate::cache::DELAYS`]), an output device and a microphone each (see
 //! [`crate::core::lag`]). The singer's own record, not a cache: every
 //! version of the file is read.

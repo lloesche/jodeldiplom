@@ -1,4 +1,5 @@
-//! The cleaner, off the device thread: the echo canceller with what played
+//! The cleaner (the microphone's processing chain), off the device
+//! thread: the echo canceller with what played
 //! as its sidechain, the leftover of the echo suppressed after it, then the
 //! singer isolated for the meter; the voice it gives (suppressed: as the
 //! game hears it) is queued block by block for [`super::Input::take_voice`].

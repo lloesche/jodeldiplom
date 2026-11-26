@@ -1,4 +1,5 @@
-//! A desk link: an input that follows another ([`super::Fader::follow`]).
+//! A desk link (sample-accurate sync): an input that follows another
+//! ([`super::Fader::follow`]).
 //! The follower's stream frame 0 lands on the leader's stream frame
 //! `origin`, and from there the follower moves with the leader's stream,
 //! never with the device's frames:

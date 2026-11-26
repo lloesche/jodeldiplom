@@ -1,4 +1,5 @@
-//! The shine: each phrase (a sung line) of the singing measured
+//! The shine (a vocal similarity score): each phrase (a sung line) of
+//! the singing measured
 //! ([`measure`]) and held against the original singer's same phrase (the
 //! song's vocals measured the same way, its [`Yardstick`]: [`reference`]),
 //! scored as a share of it when the phrase ends, and the tier it reaches

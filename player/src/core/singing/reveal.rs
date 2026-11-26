@@ -1,4 +1,5 @@
-//! A song's result revealed ([`Reveal`]): a timeline of beats, each landing
+//! A song's result revealed ([`Reveal`], the results screen's animation):
+//! a timeline of beats, each landing
 //! at its time after the result is first shown. The sheet unrolling and
 //! the two stars by its heading popping on; the title; the points
 //! counting up, tick by tick, faster and faster; the words hit; the best

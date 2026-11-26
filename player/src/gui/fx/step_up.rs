@@ -1,4 +1,5 @@
-//! A step up: each tier a phrase takes the singing up, a burst from the
+//! A step up (the tier-up burst): each tier a phrase takes the singing
+//! up, a burst from the
 //! playhead of stars, notes and rainbow bits that spin, arc down and fade
 //! (one record a burst, [`Kind::StepUp`], worked out in the particles'
 //! vertex shader); the bar under the word sung of the lyrics the stage

@@ -1,4 +1,5 @@
-//! What a listener hears in the beat, as curves.
+//! What a listener hears in the beat, as curves (onset detection
+//! functions).
 //!
 //! From the [`Parts`] of the music, frame by frame and each in `0..=1`:
 //! the kick drum, the snare (and claps), the hi-hats, bass notes, and

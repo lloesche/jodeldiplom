@@ -1,4 +1,5 @@
-//! A song's singing kept, for tuning the game on real singing: the voice
+//! A song's singing kept (a take: a recording of a session), for tuning
+//! the game on real singing: the voice
 //! as the echo canceller cleaned it (as the game heard it), where in the
 //! song each part of it was sung, and the song's lyrics and melody as the
 //! game held it against them. Kept while Karaoke mode sings a song with

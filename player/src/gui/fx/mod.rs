@@ -1,7 +1,7 @@
 //! The karaoke game's effects, one module each, as data: a [`Spec`] an
 //! effect, registered by one line ([`Fx`]), walked by the stage and the
 //! shaders alike. A tier's row lists what it shows ([`Use`]:
-//! [`crate::tiers::TierSpec::effects`], `on_phrase`, `on_rung`, `at_rung`);
+//! [`crate::tiers::TierSpec::fx`]: `held`, `on_phrase`, `on_rung`, `at_rung`);
 //! the [`Board`] eases each effect's strength from the singing frame by
 //! frame (and moves it with the music, [`Mod`]); the stage asks the
 //! effects to draw at fixed points of its draw order ([`At`], its

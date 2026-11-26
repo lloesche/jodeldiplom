@@ -1,4 +1,5 @@
-//! A word's bubble on the stage as a tube ([`Snake`]): one smooth tube of
+//! A word's bubble on the stage as a tube ([`Snake`], a capsule along a
+//! polyline): one smooth tube of
 //! constant radius with round ends, its middle line running through its
 //! notes, each note's stretch at its own pitch and a smooth S from one
 //! pitch to the next; a word on one pitch a plain capsule. Its middle line

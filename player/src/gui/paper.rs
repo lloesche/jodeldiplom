@@ -1,4 +1,5 @@
-//! The result diploma's paper on the GPU, in the stage's shader: the sheet
+//! The results screen's background sheet (the result diploma's paper) on
+//! the GPU, in the stage's shader: the sheet
 //! (cream, its fibres and its aged edges, an ornate border of interlaced
 //! waves between ruled lines with a rosette in each corner, in two inks),
 //! unrolling from its top, the rest of it a roll lying across under its

@@ -1,4 +1,5 @@
-//! What a recogniser hears in short glimpses of the voice: [`GLIMPSE`]
+//! What a recogniser hears in short glimpses of the voice (a sliding
+//! window): [`GLIMPSE`]
 //! seconds every [`HOP`] seconds, so every moment is heard twice, each
 //! glimpse on its own. A transcript's parts ([`crate::asr::Part`], 20 to
 //! 30 s) say in which half minute a line was sung; the glimpses say it to a

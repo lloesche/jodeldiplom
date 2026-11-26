@@ -1,4 +1,4 @@
-//! Sharing the GPU with the window.
+//! Sharing the GPU with the window: the networks' work time-sliced.
 //!
 //! A network run as one submission keeps the GPU to itself until it is
 //! done: a 6 s chunk of stems, a 30 s piece of speech, a tenth of a second

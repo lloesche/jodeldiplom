@@ -1,4 +1,5 @@
-//! How late the singer's voice comes, one value for everything that holds
+//! How late the singer's voice comes (the input latency), one value for
+//! everything that holds
 //! the voice against the song (the scoring, what Keep records): the time
 //! from a frame of the music going to the device to the microphone hearing
 //! the singer sing it (the output's buffers, the ear, the microphone's).

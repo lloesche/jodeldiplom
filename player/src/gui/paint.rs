@@ -1,4 +1,5 @@
-//! The frames: one decision a tick ([`Paint::plan`]) of how often the
+//! The frames (the frame scheduler): one decision a tick
+//! ([`Paint::plan`]) of how often the
 //! ticks come and what is drawn now: the old canvas ([`super::embed`]) and
 //! the lanes over it ([`super::lanes`]), only the lanes (where one follows
 //! the playhead: no new tiles in most frames), or nothing; Karaoke mode's

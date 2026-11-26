@@ -1,4 +1,5 @@
-//! The demo key ([`Demo`]): while it is held in Karaoke mode, the game
+//! The demo key, an autoplay ([`Demo`]): while it is held in Karaoke
+//! mode, the game
 //! hears a perfect singer in place of the microphone, to show it off
 //! without singing. Each of its frames (a [`HOP`] apart, as the pitch
 //! tracker's) is the note the bubbles are made of at its time, a few cents

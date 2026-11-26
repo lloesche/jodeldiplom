@@ -1,5 +1,6 @@
-//! The music as the effects move with it, one clock for them all
-//! ([`Music`], worked out once a frame by [`Clock::music`]): where it is
+//! The music as the effects move with it (audio-reactive signals), one
+//! clock for them all
+//! ([`Music`], worked out once a frame by [`read`]): where it is
 //! in the beat and the bar, a pulse on each beat and each bar's first
 //! (falling away after it), the tempo, how loud the music is and each of
 //! its stems, the melody's pitch and the singer's, how far the song has

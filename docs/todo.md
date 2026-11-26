@@ -86,8 +86,6 @@ Refactors, roughly in the order they unblock each other.
   mixer's own tests in real time (`output/tests/mixer.rs`, `lanes.rs`,
   `link.rs`). A seek's flush first: it waits for the device to take what
   is mixed, which a device on the test's time does only as the test moves.
-- **Docs:** an ARCHITECTURE.md with a glossary, the tier, effects and
-  sound plans moved into `docs/`, macOS window behaviour written down.
 
 ## The player
 

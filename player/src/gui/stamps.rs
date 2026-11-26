@@ -1,4 +1,5 @@
-//! The GPU's time between the steps of a frame, to measure what each pass
+//! The GPU's time between the steps of a frame (timestamp queries), to
+//! measure what each pass
 //! costs ([`super::present::Offscreen::timed`]): once the GPU has done the
 //! step (waited for: Apple's GPUs start a pass that needs nothing before
 //! it early, alongside what is still being drawn), a timestamp written at

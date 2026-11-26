@@ -1,4 +1,5 @@
-//! The original singer's phrases ([`crate::core::shine::reference`]) for
+//! The original singer's phrases (the reference vocal, measured:
+//! [`crate::core::shine::reference`]) for
 //! the song in Karaoke mode, worked out on a thread of their own (never
 //! the audio's, never holding up play) and kept in `shine` beside the
 //! analyses ([`crate::cache::SHINE`]), a file a song's notes: named by a

@@ -1,4 +1,5 @@
-//! How strong each effect is, frame by frame: one clock for every held
+//! How strong each effect is, frame by frame (the effects' envelopes):
+//! one clock for every held
 //! effect, the singing's glow as it eases ([`crate::gui::rainbow::Glow`]):
 //! an effect a row holds while at its tier is held at that row's strength
 //! at the row's glow, the straight line between rows as the glow eases

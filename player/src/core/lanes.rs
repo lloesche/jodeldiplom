@@ -1,4 +1,5 @@
-//! The lanes a track is drawn in, as the Transition and Karaoke tabs show
+//! The lanes a track is drawn in (its waveform tracks), as the Transition
+//! and Karaoke tabs show
 //! them: which track a block of lanes shows, the lanes in it, its analysis
 //! and its lyrics, and how the lyrics' words are laid out along a lane.
 

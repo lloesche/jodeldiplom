@@ -1,4 +1,5 @@
-//! The word bubbles of Karaoke mode (one under each word sung, through
+//! The word bubbles of Karaoke mode, its note targets (one under each
+//! word sung, through
 //! its notes): how the singing fills them, and when one is full. Pure,
 //! from what [`Singing`] heard; the window sweeps a bubble full to full
 //! and bursts it ([`crate::view::bubbles`]).

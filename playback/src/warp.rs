@@ -1,4 +1,5 @@
-//! Beat lock: one track's time laid onto another's, and audio read along it.
+//! Beat lock (beatmatching): one track's time laid onto another's, and
+//! audio read along it.
 //!
 //! [`TimeMap`] maps the playing track's time to the incoming track's, from
 //! the beats the two are to share: beat `i` of one at beat `i` of the

@@ -1,4 +1,5 @@
-//! The shine's looks on the GPU, in the stage's shader: the meter (a
+//! The score meter's shader, with the shine's other looks on the GPU,
+//! in the stage's shader: the meter (a
 //! glass capsule its fill springs to, coloured by the tier it reaches,
 //! the tiers' marks along it lighting up as it passes them), the ring of
 //! the time left round the countdown (draining as the song goes, in the

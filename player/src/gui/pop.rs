@@ -1,4 +1,5 @@
-//! The word bubbles on the GPU's stage ([`super::stage`]): a word's bubble
+//! The word bubbles (the note targets) on the GPU's stage
+//! ([`super::stage`]): a word's bubble
 //! is one tube through its notes ([`Snake`]), its liquid poured along it
 //! note by note ([`Liquid`], as every frontend has it), its front a living
 //! surface and the liquid shimmering, straining in the last stretch to

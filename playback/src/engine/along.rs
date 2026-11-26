@@ -1,4 +1,5 @@
-//! A head read along a time map (a transition's tracks; `Command::Along`
+//! A head read along a time map, time-warped (a transition's tracks;
+//! `Command::Along`
 //! in tests): its stems are read along the map as its parts
 //! ([`super::lanes`]), and its main is their sum, so the two stay on the
 //! same frames for a mixer's switch between them.

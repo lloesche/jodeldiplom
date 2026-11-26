@@ -1,4 +1,5 @@
-//! The sound conductor: the karaoke game's sounds, planned live in the
+//! The sound conductor (an adaptive sound-effect scheduler): the karaoke
+//! game's sounds, planned live in the
 //! song's tempo and key, as timed notes for our own synthesizer
 //! ([`jodel_synth::Synth`], made with the conductor: [`Conductor::new`]).
 //!

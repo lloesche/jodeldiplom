@@ -1,4 +1,5 @@
-//! The player's threads waking the window: the engine, the workers and
+//! The player's threads waking the window (an event-loop wake-up): the
+//! engine, the workers and
 //! setup call [`Wake::notify`]; the window takes one message for each
 //! burst of them ([`super::window::Message::Wake`]), not one a call.
 

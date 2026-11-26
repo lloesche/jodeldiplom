@@ -1,4 +1,5 @@
-//! The conductor's instruments, as data: the atoms its sounds are made of
+//! The conductor's instruments (its patch bank), as data: the atoms its
+//! sounds are made of
 //! ([`Atom`], every one in [`Atom::ALL`]), each one patch of our own synth
 //! ([`jodel_synth`], [`patch`]), and the bank they are made into
 //! ([`Palette`]): the bubble's pop, its body and glint, three coins for

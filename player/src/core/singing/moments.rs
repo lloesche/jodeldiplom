@@ -1,4 +1,5 @@
-//! The singing's moments: one stream of what happened, as plain data for
+//! The singing's moments (the game's event stream): one stream of what
+//! happened, as plain data for
 //! whatever follows the game (the sounds, the stage, the result). Each
 //! word scored, a bubble bursting and its liquid splashing out, a shot
 //! rescuing a word missed, the streak up a multiplier or lost, each

@@ -1,4 +1,5 @@
-//! The ticks at the display's refresh: a widget around everything the
+//! Frame pacing, the ticks at the display's refresh: a widget around
+//! everything the
 //! window shows ([`Pacer::view`]) sends one ([`Message::Frame`]) from
 //! inside each redraw, before that redraw is drawn, and asks for the next.
 //! So the frame shown is the one ticked for it, once a refresh; a tick

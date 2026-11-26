@@ -1,4 +1,5 @@
-//! Syncing: measuring how late the singer's voice comes, as rhythm games
+//! Syncing (latency calibration): measuring how late the singer's voice
+//! comes, as rhythm games
 //! do. Started from the Karaoke tab (`s`) with a microphone open, it stops
 //! the song, plays [`CLICKS`] clicks at [`BPM`] after [`LEAD_IN`] of
 //! silence through the output, and listens: the singer says "ta" (or

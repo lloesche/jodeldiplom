@@ -1,4 +1,5 @@
-//! The diploma's sheet's own sounds ([`Sheet`]), each a score of the
+//! The diploma's sheet's own sounds (the results screen's foley,
+//! [`Sheet`]), each a score of the
 //! palette's atoms written into the synth at once, timed inside to what
 //! the stage draws from its beat (the reveal's times and motions, shared
 //! with the stage: [`crate::core::singing::Reveal`]'s, [`unrolled`] and

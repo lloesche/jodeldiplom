@@ -1,4 +1,5 @@
-//! Lanes: one stream carrying a player's outputs side by side, so they share
+//! Lanes (a multi-stem stream): one stream carrying a player's outputs
+//! side by side, so they share
 //! one ring, one write head and one timeline (a seek, a flush, a jump taken
 //! back act on all of them at once).
 //!

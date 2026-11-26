@@ -1,4 +1,5 @@
-//! The singer isolated: what the echo canceller leaves of the band, and the
+//! The singer isolated (noise suppression by a small network): what the
+//! echo canceller leaves of the band, and the
 //! room's own sounds (a fire, a fan, people talking far off), taken out of
 //! the microphone so that only the voice is left.
 //!

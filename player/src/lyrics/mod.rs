@@ -16,7 +16,8 @@
 //! nothing about the user; a `429` (or `503`) answer is waited out for as
 //! long as its `Retry-After` says, within reason, and asked again.
 //!
-//! The cache is `lyrics/` beside `config.toml`, a few files a track named
+//! The cache is `lyrics/` in the data folder ([`crate::dirs::Data::lyrics`]),
+//! a few files a track named
 //! by a hash of its path, size and modification time (as the beat
 //! analysis's cache is):
 //!
