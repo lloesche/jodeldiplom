@@ -260,7 +260,7 @@ fn the_setup_screen_offers_try_again_and_quit_by_click_and_key() {
     };
     let (setup, _made) = start(stalls, &dir.join("stalls"));
     when(&setup, |s| s.current == Some(1) && s.done > 0);
-    let gui = Gui::headless_setup(setup, AppOptions::new(dir.clone()));
+    let gui = Gui::headless_setup(setup);
     assert!(click(&gui, "Try again").is_err());
     assert_eq!(chosen(&click(&gui, "Quit").unwrap()), Some(Choice::Quit));
 
@@ -268,7 +268,7 @@ fn the_setup_screen_offers_try_again_and_quit_by_click_and_key() {
     // where setup stopped (the download that failed asked for again).
     let (setup, made) = start(Web::Offline, &dir.join("offline"));
     when(&setup, |s| s.failure.is_some());
-    let mut gui = Gui::headless_setup(setup, AppOptions::new(dir.clone()));
+    let mut gui = Gui::headless_setup(setup);
     assert_eq!(made.downloads.load(Ordering::SeqCst), 2);
     let retry = click(&gui, "Try again").unwrap();
     assert_eq!(chosen(&retry), Some(Choice::Retry));
@@ -294,12 +294,56 @@ fn the_setup_screen_offers_try_again_and_quit_by_click_and_key() {
     for key in [Key::Character("q".into()), Key::Named(Named::Escape)] {
         let (setup, made) = start(Web::Offline, &dir.join("offline-keys"));
         when(&setup, |s| s.failure.is_some());
-        let mut gui = Gui::headless_setup(setup, AppOptions::new(dir.clone()));
+        let mut gui = Gui::headless_setup(setup);
         press(&mut gui, key.clone());
         press(&mut gui, Key::Named(Named::Enter));
         assert!(!downloads_come_to(&made, 3), "tried again after {key:?}");
         let _ = std::fs::remove_dir_all(dir.join("offline-keys"));
     }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// K8: the window's first view is the setup screen, at once, saying what
+/// is being done: what is slow at the start (the graphics card chosen and
+/// the files looked for, here a manifest that waits until it is let go;
+/// then the player's own start) goes on in the background, its steps on
+/// that screen, and the player shows once it has started.
+#[test]
+fn the_first_view_comes_before_the_slow_start() {
+    use jodeldiplom::app::Starting;
+    use jodeldiplom::view::setup::LOOKING;
+    let _gpu = gpu();
+    let dir = common::temp_dir("slow-start");
+    let mut options = AppOptions::new(dir.clone());
+    options.output = Output::Null(SimClock::Realtime);
+    options.devices = Arc::new(|| Ok(Vec::new()));
+    options.mic = Arc::new(|_| Err("no microphone".into()));
+    options.mics = Arc::new(|| Ok(Vec::new()));
+    options.data = Some(jodeldiplom::dirs::Data::in_parent(&dir));
+    let (go, slow) = std::sync::mpsc::channel::<()>();
+    let manifest = move || {
+        let _ = slow.recv();
+        Vec::new()
+    };
+    let mut gui = Gui::headless_starting(options, manifest, Arc::new(jodeldiplom::setup::Real));
+    // The setup screen at once, the slow work not done: the files looked
+    // for, the player's own steps to come, no player yet.
+    assert!(gui.app().is_none());
+    for shown in [LOOKING, Starting::Session.title(), Starting::Device.title()] {
+        assert!(simulator(&gui).find(shown).is_ok(), "{shown} not shown");
+    }
+    // Let go of: the player starts, and shows.
+    go.send(()).unwrap();
+    let started = Instant::now();
+    while gui.app().is_none() {
+        assert!(
+            started.elapsed() < Duration::from_secs(30),
+            "the player never showed"
+        );
+        let _ = gui.update(Message::Wake);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(simulator(&gui).find(LOOKING).is_err());
     let _ = std::fs::remove_dir_all(&dir);
 }
 

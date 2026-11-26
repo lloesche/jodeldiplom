@@ -15,8 +15,8 @@
 //! - What shows: [`super::screens`].
 
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use std::sync::{mpsc, Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use iced::mouse::ScrollDelta;
 use iced::window;
@@ -88,9 +88,12 @@ pub(super) struct Start {
 
 /// Where the window stands.
 enum Phase {
-    /// Setup gets the player's files ([`crate::setup`]); the app starts
-    /// with these options.
-    Setup { setup: Setup, options: AppOptions },
+    /// Setup gets the player's files and starts the player
+    /// ([`crate::cli::start_setup`]); it comes in `player`.
+    Setup {
+        setup: Setup,
+        player: Arc<Mutex<Option<App>>>,
+    },
     /// The player runs.
     Running(App),
     /// The window closes; what showed shows as it was until the last frame
@@ -138,10 +141,17 @@ pub struct Gui {
     last_refresh: Option<Instant>,
     occluded: bool,
     started: Instant,
+    /// Told once the window has opened (setup waits for it to choose the
+    /// graphics card).
+    opened: Option<mpsc::Sender<()>>,
     exit_after: Option<f64>,
     save_frame: Option<PathBuf>,
     error: Arc<Mutex<Option<String>>>,
 }
+
+/// The longest setup waits for the window to open before it chooses the
+/// graphics card all the same.
+const OPEN_WAIT: Duration = Duration::from_secs(10);
 
 impl Gui {
     pub(super) fn new(start: Start) -> (Gui, Task<Message>) {
@@ -153,28 +163,18 @@ impl Gui {
             save_frame,
             error,
         } = start;
-        let started = Instant::now();
         // The moves written down (a data folder chosen anew) go on in the
         // background from now.
         crate::cli::start_mover(&mut options);
-        let phase = match crate::cli::models_ready(&options) {
-            Ok(paths) => {
-                crate::cli::set_models(&mut options, &paths);
-                Phase::Running(App::new(options))
-            }
-            Err((manifest, places)) => {
-                // The files are not all here: the setup screen first.
-                let setup = Setup::start(
-                    manifest,
-                    places,
-                    Arc::new(crate::setup::Real),
-                    options.notify.clone(),
-                );
-                Phase::Setup { setup, options }
-            }
+        // The graphics card is chosen once the window has opened: set up
+        // at the same time as the window's own, the window waited for it.
+        let (opened, open) = mpsc::channel::<()>();
+        let manifest = move || {
+            let _ = open.recv_timeout(OPEN_WAIT);
+            crate::setup::manifest()
         };
-        crate::trace::took("window: the app started", started, true);
-        let mut gui = Gui::around(phase, wake, started);
+        let mut gui = Gui::starting(options, manifest, Arc::new(crate::setup::Real), wake);
+        gui.opened = Some(opened);
         gui.exit_after = exit_after;
         gui.save_frame = save_frame;
         gui.error = error;
@@ -189,12 +189,40 @@ impl Gui {
         Gui::around(Phase::Running(app), wake, Instant::now())
     }
 
-    /// The window's state on the setup screen with no window, `setup`
-    /// under way (the app to start with `options` once it is done): for
-    /// the shots and the screen's tests.
-    pub fn headless_setup(setup: Setup, options: AppOptions) -> Gui {
+    /// The window's state as the player starts: the setup screen, at
+    /// once, while setup finds what `manifest` names (or gets it through
+    /// `work`) and starts the player with `options`, all in the background
+    /// ([`crate::cli::start_setup`]), telling `options.notify` as it goes;
+    /// the player shows once it has started.
+    fn starting(
+        options: AppOptions,
+        manifest: impl FnOnce() -> Vec<crate::setup::Need> + Send + 'static,
+        work: Arc<dyn crate::setup::Work>,
+        wake: Wake,
+    ) -> Gui {
+        let player = Arc::new(Mutex::new(None));
+        let setup = crate::cli::start_setup(options, manifest, work, player.clone());
+        crate::trace::note("window: setup started");
+        Gui::around(Phase::Setup { setup, player }, wake, Instant::now())
+    }
+
+    /// [`Gui::starting`] with no window: for the tests of the start.
+    pub fn headless_starting(
+        options: AppOptions,
+        manifest: impl FnOnce() -> Vec<crate::setup::Need> + Send + 'static,
+        work: Arc<dyn crate::setup::Work>,
+    ) -> Gui {
         let (wake, _) = Wake::new();
-        Gui::around(Phase::Setup { setup, options }, wake, Instant::now())
+        Gui::starting(options, manifest, work, wake)
+    }
+
+    /// The window's state on the setup screen with no window, `setup`
+    /// under way (no player to start after it): for the shots and the
+    /// screen's tests.
+    pub fn headless_setup(setup: Setup) -> Gui {
+        let (wake, _) = Wake::new();
+        let player = Arc::default();
+        Gui::around(Phase::Setup { setup, player }, wake, Instant::now())
     }
 
     /// The window's state in `phase`, started at `started`, before it
@@ -219,6 +247,7 @@ impl Gui {
             last_refresh: None,
             occluded: false,
             started,
+            opened: None,
             exit_after: None,
             save_frame: None,
             error: Arc::default(),
@@ -240,6 +269,14 @@ impl Gui {
         if let Phase::Running(app) = &mut self.phase {
             app.set_art(image);
             self.paint.dirty = true;
+        }
+    }
+
+    /// Where setup stands, while its screen shows (for the shots).
+    pub fn setup_status(&self) -> Option<Status> {
+        match &self.phase {
+            Phase::Setup { setup, .. } => Some(setup.status()),
+            _ => None,
         }
     }
 
@@ -291,8 +328,10 @@ impl Gui {
             Message::Rest(at) => self.tick(at, false),
             Message::Wake => {
                 self.wake.taken();
-                if let Phase::Running(app) = &mut self.phase {
-                    self.paint.news |= app.pump();
+                match &mut self.phase {
+                    Phase::Running(app) => self.paint.news |= app.pump(),
+                    Phase::Setup { .. } => self.setup_done(),
+                    Phase::Leaving(_) => {}
                 }
                 Task::none()
             }
@@ -389,6 +428,10 @@ impl Gui {
                     window::Event::Opened {
                         size, scale_factor, ..
                     } => {
+                        crate::trace::note("window: opened");
+                        if let Some(opened) = self.opened.take() {
+                            let _ = opened.send(());
+                        }
                         #[cfg(target_os = "macos")]
                         super::set_dock_icon();
                         self.size = size;
@@ -517,15 +560,20 @@ impl Gui {
         }
     }
 
-    /// Setup finished: the app starts with the files it found.
-    fn setup_done(&mut self, paths: &[PathBuf]) {
-        if let Phase::Setup { mut options, .. } =
-            std::mem::replace(&mut self.phase, Phase::Leaving(Last::Nothing))
-        {
-            crate::cli::set_models(&mut options, paths);
-            self.phase = Phase::Running(App::new(options));
+    /// Once setup has started the player, it shows.
+    fn setup_done(&mut self) {
+        let Phase::Setup { setup, player } = &self.phase else {
+            return;
+        };
+        if setup.status().finished.is_none() {
+            return;
         }
-        self.paint.dirty = true;
+        let app = player.lock().unwrap_or_else(|e| e.into_inner()).take();
+        if let Some(app) = app {
+            crate::trace::took("window: the player shows", self.started, true);
+            self.phase = Phase::Running(app);
+            self.paint.dirty = true;
+        }
     }
 
     /// Whether the window can be seen: not minimised, its frames coming.
@@ -561,9 +609,14 @@ impl Gui {
     /// fullscreen or not, what is heard now looked at, and what the plan
     /// says drawn.
     fn tick(&mut self, at: Instant, refresh: bool) -> Task<Message> {
-        if self
-            .exit_after
-            .is_some_and(|s| self.started.elapsed().as_secs_f64() >= s)
+        // Time up is not while the player starts: it is left where it
+        // shows, as before its start went into the background.
+        let starting =
+            matches!(&self.phase, Phase::Setup { setup, .. } if setup.status().starting());
+        if !starting
+            && self
+                .exit_after
+                .is_some_and(|s| self.started.elapsed().as_secs_f64() >= s)
         {
             return self.leave();
         }
@@ -573,12 +626,11 @@ impl Gui {
         }
         let (place, seen) = (self.place(), self.seen());
         match &mut self.phase {
-            Phase::Setup { setup, .. } => {
+            Phase::Setup { .. } => {
                 // Setup tells the window as it goes (the view is built
-                // again each time); that it is done is seen at a tick.
-                if let Some(paths) = setup.status().finished {
-                    self.setup_done(&paths);
-                }
+                // again each time, and the player shows once it has
+                // started); a tick looks again.
+                self.setup_done();
                 Task::none()
             }
             Phase::Running(app) => {

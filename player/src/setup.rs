@@ -9,21 +9,23 @@
 //! ([`crate::cover::DEPTH_FILE`], [`crate::cover::MATTE_FILE`]). Their
 //! names, lengths and SHA-256s are built in ([`manifest`]).
 //!
-//! At every start [`ready`] looks for them in `models` beside the
-//! executable, in a macOS app's `Resources/models`, and in `models` beside
-//! the settings ([`Places`]). A file is taken once it has matched its
-//! checksum: the first time it is hashed, and a stamp (its length and when
-//! it was written) spares later starts the hashing. When every file is
-//! there and stamped, the player starts at once and never goes online for
-//! them.
+//! At every start [`Setup`], on a thread of its own, chooses the graphics
+//! card (the manifest depends on it) and looks for them ([`look`]) in
+//! `models` beside the executable, in a macOS app's `Resources/models`,
+//! and in `models` beside the settings ([`Places`]). A file is taken once
+//! it has matched its checksum: the first time it is hashed, and a stamp
+//! (its length and when it was written) spares later starts the hashing.
+//! When every file is there and stamped, nothing is got and the player
+//! never goes online for them.
 //!
-//! Otherwise [`Setup`] gets them, on a thread of its own, while the
-//! window shows a screen that cannot be skipped ([`crate::view::setup`]):
-//! each step said with what it does and why, a bar for the step and one for
-//! the whole. A failure (no network, a download not what it should be, too
-//! little disk space or memory) is said with what to do, and the player
-//! can only try again or quit: without the files, the player is not what
-//! it should be.
+//! Otherwise setup gets them. Then the player's own start ([`Then`]): its
+//! steps follow the files' on the same screen. The window shows it from
+//! its first frame ([`crate::view::setup`]), and it cannot be skipped:
+//! each step said with what it does and why, a bar for a file's step and
+//! one for the whole. A failure (no network, a download not what it should
+//! be, too little disk space or memory) is said with what to do, and the
+//! player can only try again or quit: without the files, the player is
+//! not what it should be.
 
 use std::fs;
 use std::io::Read;
@@ -326,18 +328,6 @@ pub fn look(need: &Need, places: &Places) -> Lookup {
         .map_or(Lookup::Missing, Lookup::Unchecked)
 }
 
-/// Every needed file's path, when all are there and checked: the player
-/// can start without setup.
-pub fn ready(manifest: &[Need], places: &Places) -> Option<Vec<PathBuf>> {
-    manifest
-        .iter()
-        .map(|need| match look(need, places) {
-            Lookup::Checked(p) => Some(p),
-            _ => None,
-        })
-        .collect()
-}
-
 /// What setup needs of the system: downloads, packing, the disk and the
 /// memory. The player's is [`Real`]; tests make their own.
 pub trait Work: Send + Sync {
@@ -433,9 +423,28 @@ pub struct Step {
     pub why: String,
     /// Where it stands.
     pub state: StepState,
+    /// One of the player's own start ([`Then`]), not one that gets a file.
+    pub start: bool,
     /// Its share of the whole, as a rough time.
     weight: f64,
 }
+
+/// A step of the player's own start weighs as much as hashing this many
+/// bytes: next to a download it is nothing, alone the steps share the bar.
+const START_WEIGHT: f64 = 1e6;
+
+/// The player's own start, once its files are here ([`Setup::start`]):
+/// its steps, in order, and what does them, given every needed file's
+/// path and told as each step after the first begins.
+pub struct Then {
+    /// Each step's title and why.
+    pub steps: Vec<(String, String)>,
+    /// Does the steps.
+    pub run: Starts,
+}
+
+/// What does the player's own start's steps ([`Then::run`]).
+pub type Starts = Box<dyn FnOnce(Vec<PathBuf>, &mut dyn FnMut()) + Send>;
 
 /// Why setup stopped, and what to do.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -449,7 +458,11 @@ pub struct Failure {
 /// Where setup stands, for the screen.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Status {
-    /// Its steps, in order.
+    /// The graphics card is chosen and the files looked for: the steps
+    /// that get them are not known yet.
+    pub looking: bool,
+    /// Its steps, in order: those that get the files, then the player's
+    /// own start's.
     pub steps: Vec<Step>,
     /// The step under way.
     pub current: Option<usize>,
@@ -469,6 +482,22 @@ pub struct Status {
 }
 
 impl Status {
+    /// Whether any step gets a file (a download, a check of one found).
+    pub fn files(&self) -> bool {
+        self.steps.iter().any(|s| !s.start)
+    }
+
+    /// Whether only the player's own start is still to come: nothing waits
+    /// for the network or the person (the files looked for counts).
+    pub fn starting(&self) -> bool {
+        self.failure.is_none()
+            && self.finished.is_none()
+            && self
+                .steps
+                .iter()
+                .all(|s| s.start || s.state == StepState::Done)
+    }
+
     /// The share of the current step done (0 to 1).
     pub fn step_share(&self) -> f64 {
         if self.total == 0 {
@@ -613,6 +642,7 @@ fn step_of(task: &Task, manifest: &[Need]) -> Step {
         title: capital(&title),
         why,
         state: StepState::ToDo,
+        start: false,
         weight,
     }
 }
@@ -670,19 +700,37 @@ pub struct Setup {
 }
 
 impl Setup {
-    /// Starts getting what `manifest` needs into `places`, through `work`,
-    /// telling `notify` as it goes.
+    /// Starts getting what `manifest` says is needed (it may take a while:
+    /// the player's chooses the graphics card) into `places`, through
+    /// `work`, then the player's own start (`then`), telling `notify` as it
+    /// goes. All of it on a thread of its own: it returns at once.
     pub fn start(
-        manifest: Vec<Need>,
+        manifest: impl FnOnce() -> Vec<Need> + Send + 'static,
         places: Places,
         work: Arc<dyn Work>,
         notify: Notify,
+        then: Option<Then>,
     ) -> Setup {
-        let job = Job::new(Status::default(), notify);
+        let (steps, then) = then.map_or((Vec::new(), None), |t| (t.steps, Some(t.run)));
+        let status = Status {
+            looking: true,
+            steps: steps
+                .into_iter()
+                .map(|(title, why)| Step {
+                    title,
+                    why,
+                    state: StepState::ToDo,
+                    start: true,
+                    weight: START_WEIGHT,
+                })
+                .collect(),
+            ..Status::default()
+        };
+        let job = Job::new(status, notify);
         let worker = Arc::clone(&job);
         std::thread::Builder::new()
             .name("setup".into())
-            .spawn(move || run(&manifest, &places, &*work, &worker))
+            .spawn(move || run(manifest, &places, &*work, &worker, then))
             .expect("a thread for setup");
         Setup { job }
     }
@@ -698,25 +746,66 @@ impl Setup {
     }
 }
 
-fn run(manifest: &[Need], places: &Places, work: &dyn Work, job: &Job<Status>) {
-    loop {
-        // Tells the screen, at most every 30 ms between steps' ends.
-        let mut teller = job.teller(Duration::from_millis(30));
-        match attempt(manifest, places, work, &mut teller) {
-            Ok(paths) => {
-                teller.set(true, |s| {
-                    s.current = None;
-                    s.finished = Some(paths);
-                });
-                return;
-            }
+fn run(
+    manifest: impl FnOnce() -> Vec<Need>,
+    places: &Places,
+    work: &dyn Work,
+    job: &Job<Status>,
+    then: Option<Starts>,
+) {
+    // Tells the screen, at most every 30 ms between steps' ends.
+    let mut teller = job.teller(Duration::from_millis(30));
+    let started = Instant::now();
+    let manifest = manifest();
+    crate::trace::took("setup: the files known", started, true);
+    let paths = loop {
+        match attempt(&manifest, places, work, &mut teller) {
+            Ok(paths) => break paths,
             Err(failure) => {
                 teller.set(true, |s| s.failure = Some(failure));
                 job.wait_for_retry();
                 teller.set(true, |s| s.failure = None);
             }
         }
+    };
+    teller.set(true, |s| s.current = None);
+    if let Some(then) = then {
+        start_player(then, paths.clone(), &mut teller);
     }
+    teller.set(true, |s| {
+        s.current = None;
+        s.finished = Some(paths);
+    });
+}
+
+/// The player's own start, its steps (after the files') told as they go.
+fn start_player(then: Starts, paths: Vec<PathBuf>, teller: &mut Teller<'_, Status>) {
+    let mut begun = Instant::now();
+    // The step under way done, the next one begun.
+    let mut next = || {
+        teller.set(true, |s| {
+            let k = match s.current {
+                Some(k) => {
+                    s.steps[k].state = StepState::Done;
+                    crate::trace::took(format_args!("setup: {}", s.steps[k].title), begun, true);
+                    k + 1
+                }
+                None => s
+                    .steps
+                    .iter()
+                    .position(|st| st.start)
+                    .unwrap_or(s.steps.len()),
+            };
+            s.current = (k < s.steps.len()).then_some(k);
+            if let Some(step) = s.steps.get_mut(k) {
+                step.state = StepState::Working;
+            }
+        });
+        begun = Instant::now();
+    };
+    next();
+    then(paths, &mut next);
+    next();
 }
 
 fn failure(what: impl Into<String>, advice: impl Into<String>) -> Failure {
@@ -746,11 +835,17 @@ fn attempt(
             Lookup::Missing => tasks.extend(obtain(i, need)),
         }
     }
+    // The files' steps, before the player's own start's.
     teller.set(true, |s| {
-        *s = Status {
-            steps: tasks.iter().map(|t| step_of(t, manifest)).collect(),
-            ..Status::default()
-        }
+        s.steps.retain(|step| step.start);
+        s.steps
+            .splice(0..0, tasks.iter().map(|t| step_of(t, manifest)));
+        s.looking = false;
+        s.current = None;
+        s.done = 0;
+        s.total = 0;
+        s.unit = None;
+        s.rate = None;
     });
     let mut k = 0;
     while k < tasks.len() {
@@ -960,93 +1055,7 @@ fn fetch(
     .map_err(|e| failure(format!("Downloading {} failed: {e}", part.title), NETWORK))
 }
 
-/// The disk's free space and the memory, from the system.
-mod system {
-    use std::path::Path;
-
-    /// The bytes free on the disk `dir` is on (or the nearest folder
-    /// above it that exists).
-    pub fn free_space(dir: &Path) -> Option<u64> {
-        let mut at = dir;
-        while !at.exists() {
-            at = at.parent()?;
-        }
-        free_at(at)
-    }
-
-    #[cfg(windows)]
-    fn free_at(dir: &Path) -> Option<u64> {
-        use std::os::windows::ffi::OsStrExt;
-        use windows::core::PCWSTR;
-        use windows::Win32::Storage::FileSystem::GetDiskFreeSpaceExW;
-        let wide: Vec<u16> = dir.as_os_str().encode_wide().chain([0]).collect();
-        let mut free = 0u64;
-        // SAFETY: a NUL-terminated path and a u64 to write into.
-        unsafe { GetDiskFreeSpaceExW(PCWSTR(wide.as_ptr()), Some(&mut free), None, None) }.ok()?;
-        Some(free)
-    }
-
-    #[cfg(unix)]
-    fn free_at(dir: &Path) -> Option<u64> {
-        use std::os::unix::ffi::OsStrExt;
-        let path = std::ffi::CString::new(dir.as_os_str().as_bytes()).ok()?;
-        // SAFETY: a NUL-terminated path and a statvfs to write into.
-        let mut stat: libc::statvfs = unsafe { std::mem::zeroed() };
-        (unsafe { libc::statvfs(path.as_ptr(), &mut stat) } == 0)
-            .then(|| stat.f_bavail as u64 * stat.f_frsize as u64)
-    }
-
-    #[cfg(not(any(windows, unix)))]
-    fn free_at(_dir: &Path) -> Option<u64> {
-        None
-    }
-
-    /// The computer's memory in bytes.
-    #[cfg(windows)]
-    pub fn memory() -> Option<u64> {
-        use windows::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
-        let mut status = MEMORYSTATUSEX {
-            dwLength: std::mem::size_of::<MEMORYSTATUSEX>() as u32,
-            ..Default::default()
-        };
-        // SAFETY: a MEMORYSTATUSEX with its length set.
-        unsafe { GlobalMemoryStatusEx(&mut status) }.ok()?;
-        Some(status.ullTotalPhys)
-    }
-
-    /// The computer's memory in bytes.
-    #[cfg(target_os = "macos")]
-    pub fn memory() -> Option<u64> {
-        let mut bytes = 0u64;
-        let mut len = std::mem::size_of::<u64>();
-        // SAFETY: a NUL-terminated name and a u64 of its length.
-        let ok = unsafe {
-            libc::sysctlbyname(
-                c"hw.memsize".as_ptr(),
-                (&mut bytes as *mut u64).cast(),
-                &mut len,
-                std::ptr::null_mut(),
-                0,
-            )
-        } == 0;
-        ok.then_some(bytes)
-    }
-
-    /// The computer's memory in bytes.
-    #[cfg(all(unix, not(target_os = "macos")))]
-    pub fn memory() -> Option<u64> {
-        let text = std::fs::read_to_string("/proc/meminfo").ok()?;
-        let line = text.lines().find(|l| l.starts_with("MemTotal:"))?;
-        let kb: u64 = line.split_whitespace().nth(1)?.parse().ok()?;
-        Some(kb * 1024)
-    }
-
-    /// The computer's memory in bytes.
-    #[cfg(not(any(windows, unix)))]
-    pub fn memory() -> Option<u64> {
-        None
-    }
-}
+mod system;
 
 #[cfg(test)]
 #[expect(
@@ -1055,6 +1064,17 @@ mod system {
 )]
 mod tests {
     use super::*;
+
+    /// Every needed file's path, when all are there and checked.
+    fn ready(manifest: &[Need], places: &Places) -> Option<Vec<PathBuf>> {
+        manifest
+            .iter()
+            .map(|need| match look(need, places) {
+                Lookup::Checked(p) => Some(p),
+                _ => None,
+            })
+            .collect()
+    }
     use crate::told::Told;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -1191,7 +1211,7 @@ mod tests {
     /// Setup started, and what it tells.
     fn start(manifest: Vec<Need>, places: Places, work: Arc<dyn Work>) -> (Setup, Arc<Told>) {
         let told = Told::new();
-        let setup = Setup::start(manifest, places, work, told.notify());
+        let setup = Setup::start(move || manifest, places, work, told.notify(), None);
         (setup, told)
     }
 

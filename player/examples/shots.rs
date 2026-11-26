@@ -166,8 +166,9 @@ fn write_png(path: &Path, image: &image::RgbaImage) {
 }
 
 /// The setup screen under way (a download stalled part-way, its speed
-/// known) and stopped (offline), as `gui-setup*.png` with the screen's
-/// outline as `gui-setup*.txt`.
+/// known), stopped (offline), and as every start shows it first (the
+/// files looked for, the player's own start to come), as `gui-setup*.png`
+/// with the screen's outline as `gui-setup*.txt`.
 fn setup_shots(headless: &mut Headless, out: &Path, scratch: &Path) {
     use jodeldiplom::view::setup::Screen;
     use setup_web::{start, when, Web};
@@ -176,10 +177,28 @@ fn setup_shots(headless: &mut Headless, out: &Path, scratch: &Path) {
         share: 0.43,
         after: Duration::from_secs(4),
     };
+    let mut screens = Vec::new();
     for (name, web) in [("setup", stalls), ("setup-failed", Web::Offline)] {
         let (setup, _made) = start(web, &scratch.join(name));
-        let status = when(&setup, |s| s.rate.is_some() || s.failure.is_some());
-        let mut gui = Gui::headless_setup(setup, AppOptions::new(scratch.to_path_buf()));
+        when(&setup, |s| s.rate.is_some() || s.failure.is_some());
+        screens.push((name, Gui::headless_setup(setup)));
+    }
+    // The start: the files still looked for while it is taken (the
+    // manifest waits until these shots are done).
+    let (_found, finding) = std::sync::mpsc::channel::<()>();
+    let mut options = AppOptions::new(scratch.to_path_buf());
+    options.output = Output::Null(SimClock::Realtime);
+    let manifest = move || {
+        let _ = finding.recv();
+        Vec::new()
+    };
+    let work = Arc::new(jodeldiplom::setup::Real);
+    screens.push((
+        "setup-start",
+        Gui::headless_starting(options, manifest, work),
+    ));
+    for (name, mut gui) in screens {
+        let status = gui.setup_status().expect("the setup screen");
         for (suffix, size, scale) in SIZES {
             let event = |e| Message::Event(iced::Event::Window(e), id);
             let _ = gui.update(event(window::Event::Resized(size)));

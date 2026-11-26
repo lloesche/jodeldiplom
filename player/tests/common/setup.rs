@@ -82,7 +82,13 @@ pub fn start(web: Web, dir: &Path) -> (Setup, Arc<Made>) {
         web,
         downloads: AtomicUsize::new(0),
     });
-    let setup = Setup::start(manifest_for(true), places, made.clone(), Arc::new(|| {}));
+    let setup = Setup::start(
+        || manifest_for(true),
+        places,
+        made.clone(),
+        Arc::new(|| {}),
+        None,
+    );
     (setup, made)
 }
 

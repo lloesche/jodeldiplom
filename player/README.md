@@ -115,10 +115,13 @@ every start the player looks for them in `models` beside its executable
 (or a macOS app's `Contents/Resources/models`), then in the data folder's
 `models`; a file is taken once it matched its checksum (hashed the first
 time, a stamp of its length and date in `checked.txt` sparing later starts
-the hashing). With both there, it starts at once and never goes online for
-them.
+the hashing). With both there, it never goes online for them.
 
-Otherwise a setup screen comes first, and cannot be skipped: each step says what it does and why
+The window comes up at once on the setup screen, at every start: while the
+graphics card is chosen and the files looked for, then the session read and
+the sound device opened, it says so, step by step; the player shows once it
+has started. When files are missing, getting them comes first on that
+screen, and cannot be skipped: each step says what it does and why
 (downloading the word-timing model; downloading the recogniser's 1.9 GB
 checkpoint, its vocabulary and tokenizer; packing it at 4 bits with the
 calibration built in, then checking the packed file against its checksum:

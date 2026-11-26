@@ -199,9 +199,50 @@ pub struct App {
     moving: MoveView,
 }
 
+/// The steps of the player's start ([`App::start`]), in order, as the
+/// setup screen tells them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Starting {
+    /// The workers started, the session and what is kept read.
+    Session,
+    /// The output device opened, the queue loaded on it.
+    Device,
+}
+
+impl Starting {
+    /// Every step, in order.
+    pub const ALL: [Starting; 2] = [Starting::Session, Starting::Device];
+
+    /// What it does, as the setup screen says it.
+    pub fn title(self) -> &'static str {
+        match self {
+            Starting::Session => "Loading the session",
+            Starting::Device => "Opening the sound device",
+        }
+    }
+
+    /// Why, as the setup screen says it.
+    pub fn why(self) -> &'static str {
+        match self {
+            Starting::Session => "The queue and the browser come back as you left them.",
+            Starting::Device => {
+                "It is opened once, shared with the system's other sounds, and stays open \
+                 until the player quits."
+            }
+        }
+    }
+}
+
 impl App {
     /// Starts the engine and the workers, and lists the start folder.
     pub fn new(options: AppOptions) -> App {
+        App::start(options, &mut |_| {})
+    }
+
+    /// [`App::new`], telling `begins` as each step of it after the first
+    /// ([`Starting`]) begins.
+    pub fn start(options: AppOptions, begins: &mut dyn FnMut(Starting)) -> App {
+        let began = Instant::now();
         let (tx, rx) = mpsc::channel();
         let outbox = Outbox::new(tx, options.notify.clone());
         let details = DetailsWorker::new(16, outbox.clone());
@@ -332,6 +373,8 @@ impl App {
             // The Synth tab's patches kept, over the built-in ones.
             app.state.synth.patches = crate::patches::load_all(&data.patches());
         }
+        crate::trace::took("app: the session read", began, true);
+        begins(Starting::Device);
         let output = app.output.clone();
         let started = Instant::now();
         app.start_engine(&output);

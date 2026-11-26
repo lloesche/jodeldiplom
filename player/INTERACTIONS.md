@@ -381,9 +381,14 @@ stem keys are their mutes.
   checked, the player starts at once and never goes online for them. The
   screen cannot be skipped: a failure offers only Try again and Quit, each a
   button and a key (Enter or r, q or Esc); while setup goes on, Quit.
+  The window comes up at once, on this screen, at every start: the
+  graphics card chosen and the files looked for, then the player's own
+  start (the session read, the sound device opened) are its steps, done
+  in the background, and the player shows once it has started.
   - `everything_is_got_checked_and_stamped_then_nothing_more`
   - `offline_it_waits_for_try_again_and_goes_on_from_there`
   - `the_setup_screen_offers_try_again_and_quit_by_click_and_key`
+  - `the_first_view_comes_before_the_slow_start`
   A text from LRCLIB that does not fit what
   the recogniser hears is swapped for one of LRCLIB's others that does
   (`a_fetched_text_that_does_not_fit_is_swapped_for_one_that_does`). The words of lyrics
@@ -993,6 +998,7 @@ stem keys are their mutes.
   application on macOS) fails as lost, and the next song is routed to its
   new rate, the engine asking the desk what it takes for each route.
   - `the_device_opens_once_for_songs_at_any_rate`
+  - `a_preview_right_after_start_reaches_the_mixer`
   - `a_device_not_there_at_the_start_is_opened_once_it_is` (output)
   - `a_device_that_fails_is_opened_again_by_the_next_output` (output)
   - `a_device_back_at_another_rate_routes_the_next_track_there` (engine)

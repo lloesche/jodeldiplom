@@ -596,3 +596,44 @@ fn a_preview_ducks_both_heads_of_the_song() {
     drop(mixer);
     let _ = std::fs::remove_dir_all(dir);
 }
+
+/// Right after the player starts, nothing played yet: Ctrl held over a
+/// file previews it, its player a guest heard on the mixer's Preview
+/// strip.
+#[test]
+fn a_preview_right_after_start_reaches_the_mixer() {
+    use jodeldiplom::app::{App, AppOptions, Output};
+    use jodeldiplom::core::preview::{Ctrl, HOLD_MS};
+    use jodeldiplom::core::Action;
+    let _guard = jodel_testkit::real_time();
+    let tree = common::music_tree("preview-at-start");
+    let mut options = AppOptions::new(tree.album.clone());
+    options.output = Output::Null(SimClock::Realtime);
+    options.devices = Arc::new(|| Ok(Vec::new()));
+    let mut app: App = common::fitted_app(options, 120, 36);
+    let wait = Duration::from_secs(30);
+    assert!(common::wait_for(&mut app, wait, |a| !a
+        .state
+        .browser
+        .loading));
+    app.dispatch(Action::SelectRow(1));
+    let now = app.now_ms();
+    app.dispatch(Action::Tick(now));
+    app.dispatch(Action::Ctrl(Ctrl::Pressed));
+    app.dispatch(Action::Tick(now + HOLD_MS));
+    assert!(jodeldiplom::core::preview::active(&app.state), "no preview");
+    let heard = |a: &App| {
+        a.desk().is_some_and(|d| {
+            d.strips
+                .iter()
+                .any(|s| s.name == "Preview" && s.inputs.iter().any(|i| i.heard))
+        })
+    };
+    assert!(
+        common::wait_for(&mut app, wait, heard),
+        "the preview never reached the mixer: {:?}",
+        app.desk()
+    );
+    app.shutdown();
+    let _ = std::fs::remove_dir_all(&tree.root);
+}

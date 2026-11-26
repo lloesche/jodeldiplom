@@ -1,13 +1,14 @@
 //! The command line: `jodeldiplom [options] [path]`.
 
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 
 use jodel_output::SimClock;
 use jodel_playback::Headroom;
 
-use crate::app::{AppOptions, Output};
+use crate::app::{App, AppOptions, Output, Starting};
 use crate::config::{self, Config};
+use crate::setup::{Need, Places, Setup, Then, Work};
 
 /// The usage text (`{bin}` is replaced by the binary's name).
 pub const USAGE: &str = "\
@@ -273,18 +274,36 @@ pub fn start_mover(options: &mut AppOptions) {
     }
 }
 
-/// The checked models' paths when every one is there (the player starts at
-/// once); else what setup is to get, and where.
-pub fn models_ready(
-    options: &AppOptions,
-) -> Result<Vec<PathBuf>, (Vec<crate::setup::Need>, crate::setup::Places)> {
-    let manifest = crate::setup::manifest();
+/// Starts setup for the player with `options`, on a thread of its own (it
+/// returns at once): what `manifest` names (the player's is
+/// [`crate::setup::manifest`], which chooses the graphics card) found, or
+/// got through `work`, then the player itself started ([`App::start`]),
+/// each step told on the setup screen; the player, once started, put in
+/// `player`.
+pub fn start_setup(
+    mut options: AppOptions,
+    manifest: impl FnOnce() -> Vec<Need> + Send + 'static,
+    work: Arc<dyn Work>,
+    player: Arc<Mutex<Option<App>>>,
+) -> Setup {
     let data = options
         .data
         .clone()
         .unwrap_or_else(|| crate::dirs::Data::in_parent(Path::new(".")));
-    let places = crate::setup::Places::player(&data);
-    crate::setup::ready(&manifest, &places).ok_or((manifest, places))
+    let places = Places::player(&data);
+    let notify = options.notify.clone();
+    let then = Then {
+        steps: Starting::ALL
+            .iter()
+            .map(|s| (s.title().to_owned(), s.why().to_owned()))
+            .collect(),
+        run: Box::new(move |paths, next| {
+            set_models(&mut options, &paths);
+            let app = App::start(options, &mut |_| next());
+            *player.lock().unwrap_or_else(PoisonError::into_inner) = Some(app);
+        }),
+    };
+    Setup::start(manifest, places, work, notify, Some(then))
 }
 
 /// Gives the app the models setup found (each known by its file:

@@ -12,7 +12,7 @@ use crate::gui::widgets::{self, badge, card, note, panel, progress, Icon};
 use crate::gui::window::Message;
 use crate::setup::Status;
 use crate::view::setup::{
-    percent, Choice, Current, Mark, Screen, StepLine, Stopped, INTRO, KEPT, LOOKING, TITLE, WHOLE,
+    percent, Choice, Current, Mark, Screen, StepLine, Stopped, KEPT, LOOKING, TITLE, WHOLE,
 };
 
 /// The panel's widest, in points.
@@ -33,7 +33,7 @@ fn page(screen: &Screen, window: Size) -> Element<'static, Message> {
     let width = WIDTH.min(window.width - 2.0 * space::XL).max(0.0);
     let mut body = Column::new()
         .spacing(space::XL)
-        .push(header())
+        .push(header(screen))
         .push(steps(screen))
         .push(whole(screen.whole));
     if let Some(stopped) = &screen.stopped {
@@ -53,8 +53,13 @@ fn page(screen: &Screen, window: Size) -> Element<'static, Message> {
 }
 
 /// The player's name, the title and what setup is.
-fn header() -> Element<'static, Message> {
-    let mark = container(widgets::icon(Icon::Download).size(22.0).color(look::ACCENT))
+fn header(screen: &Screen) -> Element<'static, Message> {
+    let icon = if screen.files {
+        Icon::Download
+    } else {
+        Icon::Note
+    };
+    let mark = container(widgets::icon(icon).size(22.0).color(look::ACCENT))
         .center_x(44.0)
         .center_y(44.0)
         .style(|_| container::Style {
@@ -84,7 +89,7 @@ fn header() -> Element<'static, Message> {
         row![mark, titles]
             .spacing(space::L)
             .align_y(Alignment::Center),
-        text(INTRO)
+        text(screen.intro())
             .size(size::BODY)
             .font(look::font::body())
             .color(look::TEXT_DIM),
@@ -93,16 +98,22 @@ fn header() -> Element<'static, Message> {
     .boxed()
 }
 
-/// The steps, the one under way opened up.
+/// The steps, the one under way opened up; above them, while the files
+/// are looked for, that they are.
 fn steps(screen: &Screen) -> Element<'static, Message> {
-    if screen.looking() {
-        return text(LOOKING)
-            .size(size::BODY)
-            .font(look::font::body())
-            .color(look::TEXT_DIM)
-            .boxed();
+    let mut list = Column::<Element<'static, Message>>::new().spacing(space::XS);
+    if screen.looking {
+        list = list.push(
+            container(
+                text(LOOKING)
+                    .size(size::BODY)
+                    .font(look::font::body())
+                    .color(look::TEXT_DIM),
+            )
+            .padding([space::XS, space::M])
+            .boxed(),
+        );
     }
-    let mut list = Column::new().spacing(space::XS);
     for (i, step) in screen.steps.iter().enumerate() {
         list = list.push(match screen.current.as_ref().filter(|c| c.index == i) {
             Some(current) => working(i, step, current),
@@ -169,32 +180,37 @@ fn line(i: usize, step: &StepLine) -> Element<'static, Message> {
     .boxed()
 }
 
-/// The step under way, on a card: its title, why it is needed, its bar,
-/// what it has done and its share.
+/// The step under way, on a card: its title, why it is needed, and where
+/// it is measured its bar, what it has done and its share.
 fn working(i: usize, step: &StepLine, current: &Current) -> Element<'static, Message> {
-    let figures = row![
-        text(current.detail.clone())
-            .size(size::CAPTION)
-            .font(look::font::numbers())
-            .color(look::TEXT_DIM)
-            .width(Fill),
-        text(percent(current.share))
-            .size(size::CAPTION)
-            .font(look::font::numbers())
-            .color(look::ACCENT),
-    ]
-    .align_y(Alignment::Center);
-    let body = column![
-        title(step),
-        text(current.why.clone())
-            .size(size::LABEL)
-            .font(look::font::body())
-            .color(look::TEXT_DIM),
-        Space::new().height(space::XS),
-        progress(current.share, look::ACCENT),
-        figures,
-    ]
-    .spacing(space::S);
+    let mut body = Column::<Element<'static, Message>>::new()
+        .spacing(space::S)
+        .push(title(step))
+        .push(
+            text(current.why.clone())
+                .size(size::LABEL)
+                .font(look::font::body())
+                .color(look::TEXT_DIM)
+                .boxed(),
+        );
+    if let Some(share) = current.share {
+        let figures = row![
+            text(current.detail.clone())
+                .size(size::CAPTION)
+                .font(look::font::numbers())
+                .color(look::TEXT_DIM)
+                .width(Fill),
+            text(percent(share))
+                .size(size::CAPTION)
+                .font(look::font::numbers())
+                .color(look::ACCENT),
+        ]
+        .align_y(Alignment::Center);
+        body = body
+            .push(Space::new().height(space::XS).boxed())
+            .push(progress(share, look::ACCENT).boxed())
+            .push(figures.boxed());
+    }
     card(
         row![mark(i, step.mark), body]
             .spacing(space::M)
@@ -254,7 +270,7 @@ fn failure(stopped: &Stopped) -> Element<'static, Message> {
 /// quitting keeps beside them.
 fn actions(screen: &Screen) -> Element<'static, Message> {
     let mut bar = Row::new().spacing(space::S).align_y(Alignment::Center);
-    bar = bar.push(if screen.stopped.is_none() {
+    bar = bar.push(if screen.stopped.is_none() && screen.files {
         text(KEPT)
             .size(size::CAPTION)
             .font(look::font::body())

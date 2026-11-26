@@ -104,7 +104,11 @@ Background GPU work gives way while the window draws at the refresh
 `gui::screens::view` builds the window's content from the state on every
 message:
 
-- **The setup screen** while setup gets the player's files.
+- **The setup screen** from the first frame of every start, while setup
+  chooses the graphics card, finds (or gets) the player's files and starts
+  the player in the background (`cli::start_setup`); the player shows once
+  it has started. The graphics card is chosen once the window has opened:
+  set up at the same time, the window's own waited for it.
 - **Whole screens** in iced's widgets: Now Playing, Settings and Help (the
   last two over the bottom bar), with the command palette over them.
 - **The main screen:** the list pane with its tabs (the browser, the

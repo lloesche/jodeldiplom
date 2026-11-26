@@ -1,9 +1,11 @@
-//! The setup screen ([`crate::setup`]) as it reads: what the player gets
-//! before it can be used, step by step, how far the step under way is and
-//! how far the whole; on a failure, what went wrong, what to do, and two
-//! choices: Try again and Quit (there is no skipping: without its files
-//! the player is not what it should be). The window draws it
-//! (`gui::screens::setup`).
+//! The setup screen ([`crate::setup`]) as it reads: what the player does
+//! before it can be used, step by step (the files it gets, then its own
+//! start), how far the step under way is and how far the whole; on a
+//! failure, what went wrong, what to do, and two choices: Try again and
+//! Quit (there is no skipping: without its files the player is not what
+//! it should be). It is the first thing the window shows at every start;
+//! with the files there, only the player's own start's steps show. The
+//! window draws it (`gui::screens::setup`).
 
 use std::fmt;
 
@@ -12,18 +14,21 @@ use crate::setup::{Status, StepState, Unit};
 /// The screen's title.
 pub const TITLE: &str = "Getting the player ready";
 
-/// What setup is, under the title.
+/// What setup is, under the title, when it gets files.
 pub const INTRO: &str = "This happens once. The player needs these files and checks each \
                          against a checksum built into it. Once they are here it never needs \
                          the network for them again.";
 
-/// What shows before the steps are known.
-pub const LOOKING: &str = "Looking for the files…";
+/// What shows under the title when only the player's own start is to come.
+pub const STARTING: &str = "A moment while the player starts.";
+
+/// What shows while the files are looked for.
+pub const LOOKING: &str = "Looking for the graphics card and the files…";
 
 /// The whole's label.
 pub const WHOLE: &str = "All of it";
 
-/// What quitting keeps, while setup is under way.
+/// What quitting keeps, while files are got.
 pub const KEPT: &str = "Quitting keeps what is downloaded whole for the next start.";
 
 /// What the person chose on the setup screen.
@@ -89,8 +94,9 @@ pub struct Current {
     pub index: usize,
     /// Why the player needs it.
     pub why: String,
-    /// Its share done (0 to 1).
-    pub share: f64,
+    /// Its share done (0 to 1); `None` for a step of the player's own
+    /// start, which is not measured.
+    pub share: Option<f64>,
     /// What it has done: "812 MB of 1.88 GB · 48 MB/s · about 23 s left".
     pub detail: String,
 }
@@ -107,7 +113,12 @@ pub struct Stopped {
 /// What the setup screen says now.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Screen {
-    /// The steps, in order (none yet: [`LOOKING`] shows).
+    /// The files are looked for ([`LOOKING`] shows above the steps).
+    pub looking: bool,
+    /// Some step gets a file: [`INTRO`] shows, and [`KEPT`] (else
+    /// [`STARTING`]).
+    pub files: bool,
+    /// The steps, in order.
     pub steps: Vec<StepLine>,
     /// The step under way, while setup goes on.
     pub current: Option<Current>,
@@ -142,10 +153,12 @@ impl Screen {
             .map(|(index, step)| Current {
                 index,
                 why: step.why.clone(),
-                share: status.step_share(),
+                share: (!step.start).then(|| status.step_share()),
                 detail: detail(status),
             });
         Screen {
+            looking: status.looking && !failed,
+            files: status.files(),
             steps,
             current,
             whole: status.overall(),
@@ -156,9 +169,13 @@ impl Screen {
         }
     }
 
-    /// Whether the steps are still being looked for.
-    pub fn looking(&self) -> bool {
-        self.steps.is_empty() && self.stopped.is_none()
+    /// What shows under the title.
+    pub fn intro(&self) -> &'static str {
+        if self.files {
+            INTRO
+        } else {
+            STARTING
+        }
     }
 
     /// The choices offered: Try again and Quit after a failure, Quit
@@ -193,8 +210,8 @@ pub fn percent(share: f64) -> String {
 impl fmt::Display for Screen {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         writeln!(f, "[title] {TITLE}")?;
-        writeln!(f, "[dim] {INTRO}")?;
-        if self.looking() {
+        writeln!(f, "[dim] {}", self.intro())?;
+        if self.looking {
             writeln!(f, "[dim] {LOOKING}")?;
         }
         for (i, step) in self.steps.iter().enumerate() {
@@ -207,8 +224,10 @@ impl fmt::Display for Screen {
             writeln!(f, "[{mark}] {}", step.title)?;
             if let Some(c) = self.current.as_ref().filter(|c| c.index == i) {
                 writeln!(f, "  [dim] {}", c.why)?;
-                writeln!(f, "  [bar accent] {}", percent(c.share))?;
-                writeln!(f, "  [dim] {}", c.detail)?;
+                if let Some(share) = c.share {
+                    writeln!(f, "  [bar accent] {}", percent(share))?;
+                    writeln!(f, "  [dim] {}", c.detail)?;
+                }
             }
         }
         writeln!(f, "[label] {WHOLE}: {}", percent(self.whole))?;
@@ -216,7 +235,7 @@ impl fmt::Display for Screen {
         if let Some(stopped) = &self.stopped {
             writeln!(f, "[fail] {}", stopped.what)?;
             writeln!(f, "[text] {}", stopped.advice)?;
-        } else {
+        } else if self.files {
             writeln!(f, "[faint] {KEPT}")?;
         }
         for offer in self.offers() {

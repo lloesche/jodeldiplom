@@ -26,7 +26,7 @@ fn main() {
         store: data.models(),
     };
     let started = Instant::now();
-    let setup = Setup::start(manifest(), places, Arc::new(Real), Arc::new(|| {}));
+    let setup = Setup::start(manifest, places, Arc::new(Real), Arc::new(|| {}), None);
     let mut shown = (usize::MAX, u64::MAX);
     loop {
         let s = setup.status();
