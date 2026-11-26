@@ -33,11 +33,16 @@ Work agreed on but not started, roughly in the order it was raised.
   cut on the downbeats, the look's shaders over it. No second language-model pass to judge the pictures.
   Dropped after trying: every layer drawn apart (a collage, bad faces),
   an upscaling model, Gemma's audio input (useless for music).
-- **Song sprites on the multiplier ladder:** a few objects per song
-  (from the look's motifs, drawn once with transparency, glowing ones
-  on black and added as light) that the rungs bring in: drifting at
-  Great, bursts on downbeats at Awesome, a swirl at Amazing, a rain of
-  them at Diva in place of the coins.
+- **The song's objects in the game, not in the story:** a few objects
+  per song (from the look's motifs) replacing the game's generic
+  graphics where it already puts things: the coin out of a word hit,
+  the rungs' fountain and Diva's rain, the marquee's bulbs, the
+  diploma's border and seal, a burst at a scene's cut. Never drifting
+  over the picture (tried: it looks pasted on). Never a square or boxy
+  object that looks cut out of something: drawn as one isolated object
+  (no background, card, frame or label), glowing ones on black and added
+  as light, and refused when its outline is box-like (straight runs
+  along its edge, its box mostly filled).
 - **The rays on the ladder?** The backdrop's spotlight rays follow how
   well the singing shines (the phrase's tier), everything else that
   builds up follows the multiplier. If they should come in order with
