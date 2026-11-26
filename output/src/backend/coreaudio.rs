@@ -38,7 +38,7 @@ use super::coreaudio_hal::{
 use crate::device::Device;
 use crate::error::Error;
 use crate::format::{SampleFormat, StreamFormat};
-use crate::output::{Core, Driver, OpenRequest, StreamInfo};
+use crate::output::{self, Driver, OpenRequest, StreamInfo};
 use crate::shared::Shared;
 use objc2_core_audio::{
     kAudioDevicePropertyBufferFrameSize, kAudioDevicePropertyDeviceIsAlive,
@@ -474,7 +474,7 @@ impl Drop for HalDriver {
 }
 
 /// Opens the device with UID `uid` shared.
-pub(crate) fn open(uid: &str, request: &OpenRequest) -> Result<Core, Error> {
+pub(crate) fn open(uid: &str, request: &OpenRequest) -> Result<output::Stream, Error> {
     request.validate()?;
     let (ctx, info) = configure(uid, request)?;
     let (device, stream) = (ctx.device, ctx.stream);
@@ -512,7 +512,7 @@ pub(crate) fn open(uid: &str, request: &OpenRequest) -> Result<Core, Error> {
         running: false,
         closed: false,
     };
-    Ok(Core::new(shared, Box::new(driver), info, request))
+    Ok(output::Stream::new(shared, Box::new(driver), info, request))
 }
 
 #[cfg(test)]

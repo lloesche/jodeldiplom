@@ -200,7 +200,7 @@ impl OutputTarget for Sink {
         let caps = self.capabilities()?;
         let mut out = FileOutput::open(std::io::sink(), &caps, request, SimClock::Realtime)?;
         out.set_tap(Some(Box::new(Marks(self.0.clone()))))?;
-        Ok(Box::new(out))
+        Ok(Box::new(out.into_stream()))
     }
 }
 

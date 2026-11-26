@@ -371,13 +371,23 @@ pub(crate) trait Driver: Send {
     fn pulls(&self) -> bool {
         true
     }
+    /// Whether its consumer runs taps ([`Output::set_tap`]): a device's
+    /// does; a mixer's input has none of its own (the device's tap is the
+    /// microphone's port).
+    fn runs_taps(&self) -> bool {
+        true
+    }
 }
 
-/// The handle logic shared by every output: packing, backpressure, start
-/// threshold, pause state, drain and close. Frames are written and packed
-/// in the ring's format (`shared.format`): the device's, or a lane
-/// stream's ([`crate::lanes`]).
-pub(crate) struct Core {
+/// An open output, the one [`Output`] there is: a device's
+/// ([`crate::open`]), one on a mixer's input
+/// ([`crate::mixer::InputTarget`]), or a simulated one
+/// ([`crate::FileOutput`]). It does the handle's part for each of them
+/// (packing, backpressure, the start threshold, pause, drain and close);
+/// what its device does is its driver's. Frames are written and packed in
+/// the ring's format: the device's, or a lane stream's
+/// ([`crate::lanes`]).
+pub struct Stream {
     pub(crate) shared: Arc<Shared>,
     driver: Box<dyn Driver>,
     info: StreamInfo,
@@ -390,13 +400,13 @@ pub(crate) struct Core {
     started: bool,
 }
 
-impl Core {
+impl Stream {
     pub(crate) fn new(
         shared: Arc<Shared>,
         driver: Box<dyn Driver>,
         info: StreamInfo,
         request: &OpenRequest,
-    ) -> Core {
+    ) -> Stream {
         let prefill = info
             .format
             .duration_to_frames(request.prefill)
@@ -407,7 +417,7 @@ impl Core {
         let lanes = request.lanes;
         debug_assert_eq!(shared.format, lane_format(info.format, lanes));
         shared.set_period(info.device_buffer_frames);
-        Core {
+        Stream {
             shared,
             driver,
             info,
@@ -471,7 +481,7 @@ impl Core {
     }
 }
 
-impl Output for Core {
+impl Output for Stream {
     fn info(&self) -> &StreamInfo {
         &self.info
     }
@@ -628,6 +638,10 @@ impl Output for Core {
     }
 
     fn set_tap(&mut self, tap: Option<Box<dyn Tap>>) -> Result<(), Error> {
+        if !self.driver.runs_taps() {
+            drop(tap);
+            return Err(Error::Unsupported("this output runs no taps".into()));
+        }
         self.usable()?;
         self.shared.set_tap(tap);
         Ok(())
@@ -653,78 +667,8 @@ impl Output for Core {
     }
 }
 
-impl Drop for Core {
+impl Drop for Stream {
     fn drop(&mut self) {
         let _ = self.close();
     }
 }
-
-/// Implements [`Output`] for a wrapper by forwarding to its field `$field`.
-macro_rules! delegate_output {
-    ($ty:ty, $field:ident) => {
-        impl $crate::output::Output for $ty {
-            $crate::output::forward_output!($field);
-            fn set_tap(&mut self, tap: Option<Box<dyn $crate::Tap>>) -> Result<(), $crate::Error> {
-                $crate::output::Output::set_tap(&mut self.$field, tap)
-            }
-        }
-    };
-}
-pub(crate) use delegate_output;
-
-/// The methods of [`Output`] but [`Output::set_tap`], forwarding to the
-/// field `$field`, for an `impl Output` that does its own taps.
-macro_rules! forward_output {
-    ($field:ident) => {
-        fn info(&self) -> &$crate::output::StreamInfo {
-            $crate::output::Output::info(&self.$field)
-        }
-        fn lanes(&self) -> u16 {
-            $crate::output::Output::lanes(&self.$field)
-        }
-        fn write(
-            &mut self,
-            samples: &[i32],
-            timeout: Option<std::time::Duration>,
-        ) -> Result<usize, $crate::Error> {
-            $crate::output::Output::write(&mut self.$field, samples, timeout)
-        }
-        fn drain(&mut self, timeout: Option<std::time::Duration>) -> Result<bool, $crate::Error> {
-            $crate::output::Output::drain(&mut self.$field, timeout)
-        }
-        fn position(&self) -> Result<u64, $crate::Error> {
-            $crate::output::Output::position(&self.$field)
-        }
-        fn written(&self) -> u64 {
-            $crate::output::Output::written(&self.$field)
-        }
-        fn latency(&self) -> std::time::Duration {
-            $crate::output::Output::latency(&self.$field)
-        }
-        fn pause(&mut self) -> Result<(), $crate::Error> {
-            $crate::output::Output::pause(&mut self.$field)
-        }
-        fn resume(&mut self) -> Result<(), $crate::Error> {
-            $crate::output::Output::resume(&mut self.$field)
-        }
-        fn is_paused(&self) -> bool {
-            $crate::output::Output::is_paused(&self.$field)
-        }
-        fn flush(&mut self) -> Result<(), $crate::Error> {
-            $crate::output::Output::flush(&mut self.$field)
-        }
-        fn retract(&mut self, frames: u64) -> Result<u64, $crate::Error> {
-            $crate::output::Output::retract(&mut self.$field, frames)
-        }
-        fn stats(&self) -> $crate::output::Stats {
-            $crate::output::Output::stats(&self.$field)
-        }
-        fn clock(&self) -> $crate::output::Clock {
-            $crate::output::Output::clock(&self.$field)
-        }
-        fn close(&mut self) -> Result<(), $crate::Error> {
-            $crate::output::Output::close(&mut self.$field)
-        }
-    };
-}
-pub(crate) use forward_output;

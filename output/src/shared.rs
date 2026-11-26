@@ -10,11 +10,17 @@
 //! On the device thread's way nothing locks, allocates or waits, but for
 //! two things: a failure (kept behind a lock, its message made as the
 //! device fails) and waking a writer that waits for room (a condition
-//! variable's notify, a system call with no lock). The timeline has one
-//! writer at a time: the consumer, inside its render ([`Shared::consume`]),
-//! or the handle, which keeps the consumer out meanwhile and takes a lock
-//! of its own against other handle-side writers ([`Shared::keep_out`]).
-//! Readers take what it publishes ([`Published`]).
+//! variable's notify, a system call with no lock). The consumer is inside
+//! the ring only while the handle does not keep it out
+//! ([`Shared::keep_out`], which takes a lock of its own against other
+//! handle-side callers).
+//!
+//! The position comes from one of two clocks ([`Played`]). A device's is
+//! its timeline, which has one writer at a time: the consumer, inside its
+//! render ([`Shared::consume`]), or the handle while it keeps the consumer
+//! out; readers take what it publishes ([`Published`]). A mixer input's
+//! consumer is the mixer thread, which knows what of the frames it took
+//! the device has played, and says so ([`Shared::set_played`]).
 
 use crate::error::Error;
 use crate::format::StreamFormat;
@@ -31,22 +37,70 @@ use std::time::{Duration, Instant};
 /// while it renders, before putting it in place itself.
 const TAP_WAIT: Duration = Duration::from_secs(1);
 
-/// The timeline: reached only through [`Shared::consume`] and
-/// [`Shared::keep_out`], one writer at a time.
-struct Owned(UnsafeCell<Timeline>);
+/// A device's timeline, and what it publishes: the position, for any
+/// thread.
+struct Timed {
+    /// Reached only by [`Timed::change`], one writer at a time.
+    timeline: UnsafeCell<Timeline>,
+    published: Published,
+}
 
-// SAFETY: one side at a time reaches the timeline, as above; readers go
-// through what it publishes.
-unsafe impl Sync for Owned {}
+// SAFETY: one side at a time changes the timeline ([`Timed::change`]);
+// readers go through what it publishes.
+unsafe impl Sync for Timed {}
+
+impl Timed {
+    /// Changes the timeline with `f` and publishes it.
+    ///
+    /// # Safety
+    ///
+    /// The caller is its one writer now: the consumer inside the ring
+    /// ([`Shared::consume`]), or the handle keeping it out
+    /// ([`Shared::keep_out`]).
+    unsafe fn change<R>(&self, f: impl FnOnce(&mut Timeline) -> R) -> R {
+        // SAFETY: as the caller promises.
+        let t = unsafe { &mut *self.timeline.get() };
+        let r = f(t);
+        t.publish(&self.published);
+        r
+    }
+}
+
+/// Where an output's position comes from.
+enum Played {
+    /// A device's: its timeline (boxed: a mixer input has none).
+    Device(Box<Timed>),
+    /// A mixer input's, as the mixer thread works it out (never back),
+    /// and how many times its frames restarted (by a flush): what the
+    /// mixer took before a restart is not the stream's to count.
+    Mixed {
+        position: AtomicU64,
+        restarts: AtomicU64,
+    },
+}
+
+/// The consumer kept out of the ring by the handle ([`Shared::keep_out`]):
+/// while it lives, the handle is the timeline's one writer.
+struct KeptOut<'a>(&'a Played);
+
+impl KeptOut<'_> {
+    /// Changes a device's timeline with `f` and publishes it (a mixer's
+    /// input has none).
+    fn timeline(&self, f: impl FnOnce(&mut Timeline)) {
+        if let Played::Device(timed) = self.0 {
+            // SAFETY: the consumer is out of the ring, and the handle's
+            // lock keeps every other handle-side writer out.
+            unsafe { timed.change(f) };
+        }
+    }
+}
 
 pub(crate) struct Shared {
     pub(crate) format: StreamFormat,
     pub(crate) ring: Ring,
-    timeline: Owned,
-    /// What the timeline publishes: the position, for any thread.
-    clock: Published,
-    /// Held by a handle-side writer of the timeline ([`Self::keep_out`]);
-    /// the consumer never takes it.
+    played: Played,
+    /// Held by a handle-side caller of [`Self::keep_out`]; the consumer
+    /// never takes it.
     handle: Mutex<()>,
     /// An empty ring is expected (after a drain, before the next write), so
     /// padding is not an underrun.
@@ -59,8 +113,9 @@ pub(crate) struct Shared {
     suspend: AtomicU32,
     /// Set while the consumer is inside the ring.
     in_render: AtomicBool,
-    /// Device frames the consumer filled with silence while kept out: the
-    /// timeline is told of them at the next render that goes through.
+    /// Device frames the consumer filled with silence while kept out: a
+    /// device's timeline is told of them at the next render that goes
+    /// through.
     skipped: AtomicU64,
     /// Buffers the consumer was asked for.
     renders: AtomicU64,
@@ -74,7 +129,7 @@ pub(crate) struct Shared {
     clipped: AtomicU64,
     truncated: AtomicU64,
     /// Late frames a mixer's input dropped to keep up with the one it
-    /// follows ([`Self::skip_input`]).
+    /// follows ([`Self::skip`]).
     dropped: AtomicU64,
     written: AtomicU64,
     /// The handle closed the output.
@@ -96,12 +151,29 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
 }
 
 impl Shared {
+    /// A device's stream in `format`, its ring of `ring_frames`.
     pub(crate) fn new(format: StreamFormat, ring_frames: usize) -> Shared {
+        let timed = Timed {
+            timeline: UnsafeCell::new(Timeline::new()),
+            published: Published::new(format.rate),
+        };
+        Shared::with(format, ring_frames, Played::Device(Box::new(timed)))
+    }
+
+    /// A mixer input's stream: its position is the mixer's to tell.
+    pub(crate) fn mixed(format: StreamFormat, ring_frames: usize) -> Shared {
+        let played = Played::Mixed {
+            position: AtomicU64::new(0),
+            restarts: AtomicU64::new(0),
+        };
+        Shared::with(format, ring_frames, played)
+    }
+
+    fn with(format: StreamFormat, ring_frames: usize, played: Played) -> Shared {
         Shared {
             format,
             ring: Ring::new(ring_frames, format.frame_bytes()),
-            timeline: Owned(UnsafeCell::new(Timeline::new())),
-            clock: Published::new(format.rate),
+            played,
             handle: Mutex::new(()),
             expect_empty: AtomicBool::new(true),
             in_underrun: AtomicBool::new(false),
@@ -136,42 +208,60 @@ impl Shared {
     /// has suspended the consumer: then `out` is all silence, which the
     /// timeline counts at the next render that goes through.
     pub(crate) fn render_or_skip(&self, out: &mut [u8]) -> Option<u64> {
-        self.render_with(out, |t, got, missing| t.submit(got, missing))
-            .map(|(_, got, ())| got)
+        let frames = (out.len() / self.format.frame_bytes()) as u64;
+        self.renders.fetch_add(1, Ordering::Release);
+        let got = self.consume(|t| {
+            let (_, got, missing) = self.copy_out(out);
+            // What played while the consumer was kept out came first.
+            let skipped = self.skipped.swap(0, Ordering::Relaxed);
+            if skipped > 0 {
+                t.submit(0, skipped);
+            }
+            t.submit(got, missing);
+            got
+        });
+        match got {
+            Some(got) => self.copied(got),
+            None => {
+                out.fill(0);
+                self.skipped.fetch_add(frames, Ordering::Relaxed);
+            }
+        }
+        got
     }
 
-    /// [`Self::render_or_skip`] for a mixer's input ([`crate::mixer`]): the
-    /// frames count as played at once and as gone downstream, until the
-    /// mixer says the device has played them ([`Self::set_downstream`]).
-    /// Returns the first stream frame copied, how many, and the timeline's
-    /// epoch they belong to.
-    pub(crate) fn render_input(&self, out: &mut [u8]) -> Option<(u64, u64, u64)> {
-        self.render_with(out, |t, got, missing| {
-            t.submit(got, missing);
-            t.report_delay(0, Instant::now(), false);
-            t.add_downstream(got);
-            t.epoch()
-        })
+    /// For a mixer's input, its consumer the mixer thread: fills `out`
+    /// (whole frames) from the ring and pads the rest with silence.
+    /// Returns the first stream frame copied, how many, and the restarts
+    /// they come after ([`Self::set_played`]); `None` (`out` all silence)
+    /// while the handle keeps the consumer out.
+    pub(crate) fn take(&self, out: &mut [u8]) -> Option<(u64, u64, u64)> {
+        let taken = self.inside(|| {
+            let (first, got, _) = self.copy_out(out);
+            (first, got, self.restarts())
+        });
+        match taken {
+            Some((_, got, _)) => self.copied(got),
+            None => out.fill(0),
+        }
+        taken
     }
 
     /// For a mixer's input that follows another: drops up to `frames` of
-    /// the oldest frames queued (late ones), counted as played at once in
-    /// no device frames, and as gone downstream (as the frames of
-    /// [`Self::render_input`]). Returns how many, and the timeline's epoch
-    /// they belong to; `None` while the handle keeps the consumer out.
-    pub(crate) fn skip_input(&self, frames: u64) -> Option<(u64, u64)> {
-        let (dropped, epoch) = self.consume(|t| {
+    /// the oldest frames queued (late ones), counted as taken. Returns how
+    /// many, and the restarts they come after; `None` while the handle
+    /// keeps the consumer out.
+    pub(crate) fn skip(&self, frames: u64) -> Option<(u64, u64)> {
+        let skipped = self.inside(|| {
             let n = self.ring.skip(frames);
             self.rendered.fetch_add(n, Ordering::Relaxed);
             self.dropped.fetch_add(n, Ordering::Relaxed);
-            t.skip(n);
-            t.add_downstream(n);
-            (n, t.epoch())
-        })?;
-        if dropped > 0 && self.writer_waiting.load(Ordering::SeqCst) {
-            self.space.notify_all();
+            (n, self.restarts())
+        });
+        if let Some((n, _)) = skipped {
+            self.copied(n);
         }
-        Some((dropped, epoch))
+        skipped
     }
 
     /// The consumer: the stream frame it takes next (frames discarded and
@@ -180,76 +270,62 @@ impl Shared {
         self.rendered.load(Ordering::Relaxed)
     }
 
-    /// Of what went downstream since the timeline's restart `epoch`, only
-    /// `frames` are not played yet (nothing, while the handle keeps the
-    /// consumer out: it is restarting the timeline).
-    pub(crate) fn set_downstream(&self, epoch: u64, frames: u64) {
-        self.consume(|t| t.set_downstream(epoch, frames));
+    /// A mixer's input: the device has played `frames` of its stream
+    /// frames (or they were passed over). The position is the highest it
+    /// has been told: a count the mixer made before a restart it has not
+    /// seen yet is no higher than what the restart counts as played.
+    pub(crate) fn set_played(&self, frames: u64) {
+        if let Played::Mixed { position, .. } = &self.played {
+            position.fetch_max(frames, Ordering::AcqRel);
+        }
     }
 
-    /// The consumer changes the timeline with `f`, inside the ring, and
-    /// publishes it (`None`, without running `f`, while the handle keeps
-    /// the consumer out). With [`Self::keep_out`], the timeline's only
-    /// writer.
-    fn consume<R>(&self, f: impl FnOnce(&mut Timeline) -> R) -> Option<R> {
+    /// The restarts of a mixer input's frames.
+    fn restarts(&self) -> u64 {
+        match &self.played {
+            Played::Mixed { restarts, .. } => restarts.load(Ordering::Relaxed),
+            Played::Device(_) => 0,
+        }
+    }
+
+    /// Runs `f` as the consumer, inside the ring (`None`, without running
+    /// it, while the handle keeps the consumer out).
+    fn inside<R>(&self, f: impl FnOnce() -> R) -> Option<R> {
         if self.suspend.load(Ordering::SeqCst) != 0 {
             return None;
         }
         self.in_render.store(true, Ordering::SeqCst);
-        let r = (self.suspend.load(Ordering::SeqCst) == 0).then(|| {
-            // SAFETY: the consumer is inside the ring and the handle keeps
-            // out of the timeline until it has left (`suspend`).
-            let t = unsafe { &mut *self.timeline.0.get() };
-            let r = f(t);
-            t.publish(&self.clock);
-            r
-        });
+        let r = (self.suspend.load(Ordering::SeqCst) == 0).then(f);
         self.in_render.store(false, Ordering::SeqCst);
         r
     }
 
-    /// The handle changes the timeline with `f` and publishes it, the
-    /// consumer kept out and other handle-side writers waiting.
-    fn keep_out<R>(&self, f: impl FnOnce(&mut Timeline) -> R) -> R {
+    /// The consumer changes a device's timeline with `f`, inside the ring,
+    /// and publishes it (`None`, without running `f`, while the handle
+    /// keeps the consumer out, or on a mixer's input, which has none).
+    fn consume<R>(&self, f: impl FnOnce(&mut Timeline) -> R) -> Option<R> {
+        let Played::Device(timed) = &self.played else {
+            return None;
+        };
+        // SAFETY: the consumer is inside the ring, and the handle keeps
+        // out of the timeline until it has left (`suspend`).
+        self.inside(|| unsafe { timed.change(f) })
+    }
+
+    /// The handle runs `f` with the consumer kept out of the ring, and
+    /// other handle-side callers waiting.
+    fn keep_out<R>(&self, f: impl FnOnce(&KeptOut<'_>) -> R) -> R {
         let _writer = lock(&self.handle);
         self.suspend();
-        // SAFETY: the consumer is out of the ring until `unsuspend`, and
-        // the lock keeps every other handle-side writer out.
-        let t = unsafe { &mut *self.timeline.0.get() };
-        let r = f(t);
-        t.publish(&self.clock);
+        let r = f(&KeptOut(&self.played));
         self.unsuspend();
         r
     }
 
-    /// The render: `note` records it in the timeline (after the silence
-    /// of the buffers skipped since the last one). Returns the first
-    /// stream frame copied, how many, and what `note` gave.
-    fn render_with<R>(
-        &self,
-        out: &mut [u8],
-        note: impl FnOnce(&mut Timeline, u64, u64) -> R,
-    ) -> Option<(u64, u64, R)> {
-        let frames = (out.len() / self.format.frame_bytes()) as u64;
-        self.renders.fetch_add(1, Ordering::Release);
-        let Some(rendered) = self.consume(|t| self.copy_out(t, out, note)) else {
-            out.fill(0);
-            self.skipped.fetch_add(frames, Ordering::Relaxed);
-            return None;
-        };
-        if rendered.1 > 0 && self.writer_waiting.load(Ordering::SeqCst) {
-            self.space.notify_all();
-        }
-        Some(rendered)
-    }
-
-    /// [`Self::render_with`] inside the ring.
-    fn copy_out<R>(
-        &self,
-        t: &mut Timeline,
-        out: &mut [u8],
-        note: impl FnOnce(&mut Timeline, u64, u64) -> R,
-    ) -> (u64, u64, R) {
+    /// Copies queued frames into `out` (whole frames), padding the rest
+    /// with silence, shows them to the tap and counts an underrun. Returns
+    /// the first stream frame copied, how many, and the frames missing.
+    fn copy_out(&self, out: &mut [u8]) -> (u64, u64, u64) {
         let fb = self.format.frame_bytes();
         let want = (out.len() / fb) as u64;
         let got = self.ring.pop_into(out);
@@ -271,24 +347,26 @@ impl Shared {
         } else {
             self.in_underrun.store(false, Ordering::Relaxed);
         }
-        // What played while the consumer was kept out came first.
-        let skipped = self.skipped.swap(0, Ordering::Relaxed);
-        if skipped > 0 {
-            t.submit(0, skipped);
+        (first, got, missing)
+    }
+
+    /// `frames` left the ring: a writer waiting for room is woken.
+    fn copied(&self, frames: u64) {
+        if frames > 0 && self.writer_waiting.load(Ordering::SeqCst) {
+            self.space.notify_all();
         }
-        (first, got, note(t, got, missing))
     }
 
     /// [`Self::render_or_skip`] for device buffers that must be filled
     /// either way.
-    #[cfg_attr(target_os = "macos", allow(dead_code))]
+    #[cfg(not(target_os = "macos"))]
     pub(crate) fn render(&self, out: &mut [u8]) -> u64 {
         self.render_or_skip(out).unwrap_or(0)
     }
 
     /// The device reports `device` device frames played at `at` (not
     /// counted while the handle keeps the consumer out).
-    #[cfg_attr(target_os = "linux", allow(dead_code))]
+    #[cfg(not(target_os = "linux"))]
     pub(crate) fn report(&self, device: u64, at: Instant, extrapolate: bool) {
         self.consume(|t| t.report(device, at, extrapolate));
     }
@@ -301,11 +379,11 @@ impl Shared {
 
     /// The device has stopped: the position holds until the next report.
     pub(crate) fn freeze(&self) {
-        self.keep_out(Timeline::freeze);
+        self.keep_out(|out| out.timeline(Timeline::freeze));
     }
 
     /// The device itself ran dry (an xrun the driver reported).
-    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    #[cfg(target_os = "linux")]
     pub(crate) fn note_device_underrun(&self) {
         self.device_underruns.fetch_add(1, Ordering::Relaxed);
     }
@@ -343,14 +421,21 @@ impl Shared {
         self.suspend.fetch_add(1, Ordering::SeqCst);
     }
 
-    /// Discards everything queued and restarts the device timeline with
-    /// every written frame counted as played. Call with the device stopped
+    /// Discards everything queued and restarts the stream with every
+    /// written frame counted as played (a device's timeline restarts; a
+    /// mixer input's frames start again). Call with the device stopped
     /// (or the consumer suspended) and before the device's own reset.
     pub(crate) fn discard_all(&self) {
-        self.keep_out(|t| {
+        self.keep_out(|out| {
             self.ring.clear();
             let written = self.written();
-            t.restart(written);
+            match &self.played {
+                Played::Device(_) => out.timeline(|t| t.restart(written)),
+                Played::Mixed { position, restarts } => {
+                    restarts.fetch_add(1, Ordering::Relaxed);
+                    position.fetch_max(written, Ordering::AcqRel);
+                }
+            }
             self.skipped.store(0, Ordering::Relaxed);
             self.rendered.store(written, Ordering::Relaxed);
             self.in_underrun.store(false, Ordering::Relaxed);
@@ -361,10 +446,10 @@ impl Shared {
     /// The device dropped what it had queued but the ring keeps its frames
     /// (a stop that cannot resume in place): the dropped frames count as
     /// played and the device timeline restarts at zero.
-    #[cfg_attr(windows, allow(dead_code))]
+    #[cfg(not(windows))]
     pub(crate) fn skip_device_queue(&self) {
-        self.keep_out(|t| {
-            t.restart(t.stream_submitted_total());
+        self.keep_out(|out| {
+            out.timeline(|t| t.restart(t.stream_submitted_total()));
             self.skipped.store(0, Ordering::Relaxed);
         });
     }
@@ -526,7 +611,10 @@ impl Shared {
     }
 
     pub(crate) fn position(&self) -> u64 {
-        self.clock.position(Instant::now())
+        match &self.played {
+            Played::Device(timed) => timed.published.position(Instant::now()),
+            Played::Mixed { position, .. } => position.load(Ordering::Acquire),
+        }
     }
 
     pub(crate) fn stats(&self) -> Stats {

@@ -1,5 +1,10 @@
 //! The mixer's thread: it holds the device, carries out what the handles
 //! ask, and mixes a period at a time as the device takes frames.
+//!
+//! What it runs is in three parts besides the strips: the [`Inputs`]
+//! (their slots, and the ramps that start in the chunk mixed), the
+//! [`Device`] (one opening of it, see `device.rs`), and the [`Ports`]
+//! (the microphone's, the effects input, the monitor).
 
 use std::collections::BTreeMap;
 use std::sync::atomic::Ordering;
@@ -10,13 +15,12 @@ use std::time::Duration;
 use super::aside::{Aside, Gone};
 use super::chunk::Slot;
 use super::desk::pack_format;
+use super::device::Device;
 use super::effects_run::{EffectsRun, RESERVED_CHANNELS};
-use super::input::{Opened, Stream};
+use super::input::{Feed, Opened};
 use super::mic::Port;
-use super::mix::Mix;
 use super::parts::LaneRun;
 use super::ramp::{GainId, Waiting, When};
-use super::strip::channel_peaks;
 use super::strips::Strips;
 use super::{
     desk_format, Curve, MixShared, MixerOptions, Monitor, Msg, Ramp, Role, Start, Timebase,
@@ -26,25 +30,133 @@ use crate::caps::Capabilities;
 use crate::error::Error;
 use crate::format::StreamFormat;
 use crate::lanes::lane_format;
-use crate::output::{OpenRequest, Output, OutputTarget, StreamInfo};
-use crate::shared::Shared;
+use crate::output::{OpenRequest, OutputTarget};
 
-/// How long the device may take to play out what it holds before it is
-/// flushed.
-const DRAIN_WAIT: Duration = Duration::from_millis(500);
 /// How long the thread waits for its inputs, with outputs running on a
 /// device that plays only what it is given.
 const INPUT_WAIT: Duration = Duration::from_millis(1);
 
-pub(super) struct Device {
-    pub(super) output: Box<dyn Output>,
-    pub(super) format: StreamFormat,
-    pub(super) info: StreamInfo,
-    /// Its stream, as the microphone's port taps it.
-    taps: Arc<Shared>,
-    /// Paused by the mixer (nothing to play).
-    paused: bool,
-    pub(super) mix: Mix,
+/// The inputs, as the mixer thread runs them.
+#[derive(Default)]
+pub(super) struct Inputs {
+    pub(super) slots: BTreeMap<u64, Slot>,
+    /// The faders' gains whose waiting ramps start in this chunk, and at
+    /// what frame.
+    pub(super) starts: Vec<(GainId, u64)>,
+    /// The id of the newest output opened (0: none): a strip's change for
+    /// the first audio waits for one newer.
+    newest_output: u64,
+}
+
+impl Inputs {
+    /// The outputs open on the inputs.
+    pub(super) fn feeds(&self) -> impl Iterator<Item = &Feed> + '_ {
+        self.slots.values().filter_map(|s| s.feed.as_ref())
+    }
+
+    /// The outputs running, but for followers held by their leaders.
+    fn running(&self) -> impl Iterator<Item = &Feed> + '_ {
+        self.feeds().filter(|s| s.live())
+    }
+
+    /// The newest Lead output open.
+    fn lead(&self) -> Option<u64> {
+        self.slots
+            .values()
+            .filter(|s| s.state.role() == Role::Lead)
+            .filter_map(|s| s.feed.as_ref().map(|st| st.link.id))
+            .max()
+    }
+
+    /// The lane of fader `id`.
+    fn lane(&mut self, id: GainId) -> Option<&mut LaneRun> {
+        let slot = self.slots.get_mut(&id.slot)?;
+        slot.lanes.get_mut(usize::from(id.lane))
+    }
+
+    /// A ramp set on each of `gains` has been taken (whether it comes or
+    /// not).
+    fn taken(&mut self, gains: &[GainId]) {
+        for &id in gains {
+            if let Some(lane) = self.lane(id) {
+                lane.ramps += 1;
+            }
+        }
+    }
+
+    /// Fader `gain` waits for `ramp` (`None`: for nothing), in place of
+    /// the ramp it waited for: the gains that were to start with that one
+    /// keep theirs.
+    fn wait_for(&mut self, gain: GainId, ramp: Option<Waiting>) {
+        let Some(lane) = self.lane(gain) else {
+            return;
+        };
+        let had = lane.gain.next().is_some();
+        match ramp {
+            Some(r) => lane.gain.set(r),
+            None => lane.gain.drop_next(),
+        }
+        if had {
+            let lanes = self.slots.values_mut().flat_map(|s| s.lanes.iter_mut());
+            for other in lanes.filter(|l| l.gain.next() == Some(When::With(gain))) {
+                other.gain.drop_next();
+            }
+        }
+    }
+
+    /// The device opened again: the ramps waiting for a frame never come
+    /// (it was the last epoch's), those under way end at once (they were
+    /// on the last epoch's frames), and, nothing being mixed on it yet,
+    /// one due now (set while the device was closed or opening) is in
+    /// force at once, but for one a crossfade's other side waits to start
+    /// with.
+    fn new_epoch(&mut self) {
+        let ids: Vec<GainId> = self
+            .slots
+            .iter()
+            .flat_map(|(&id, s)| {
+                let lanes = s.lanes.iter().enumerate();
+                lanes
+                    .filter(|(_, l)| matches!(l.gain.next(), Some(When::Frame(_))))
+                    .map(move |(k, _)| GainId::new(id, k as u16))
+            })
+            .collect();
+        for id in ids {
+            self.wait_for(id, None);
+        }
+        for slot in self.slots.values_mut() {
+            for lane in &mut slot.lanes {
+                lane.gain.new_epoch();
+            }
+            if let Some(switch) = &mut slot.switch {
+                switch.new_epoch();
+            }
+        }
+        let led: Vec<GainId> = self
+            .slots
+            .values()
+            .flat_map(|s| s.lanes.iter())
+            .filter_map(|l| match l.gain.next() {
+                Some(When::With(lead)) => Some(lead),
+                _ => None,
+            })
+            .collect();
+        let lanes = self.slots.values_mut().flat_map(|s| s.lanes.iter_mut());
+        for lane in lanes.filter(|l| l.gain.next() == Some(When::Now)) {
+            if !led.contains(&lane.id) {
+                lane.gain.settle();
+            }
+        }
+    }
+}
+
+/// What the desk has besides its strips, inputs and device.
+pub(super) struct Ports {
+    /// The microphone's port.
+    pub(super) mic: Port,
+    /// The effects input.
+    pub(super) effects: Option<EffectsRun>,
+    monitor: Option<Box<dyn Monitor>>,
 }
 
 pub(super) struct Run {
@@ -54,33 +166,14 @@ pub(super) struct Run {
     /// on an input plays at (`None`: the device has none to offer).
     format: Option<StreamFormat>,
     shared: Arc<MixShared>,
-    pub(super) strips: Strips,
-    pub(super) slots: BTreeMap<u64, Slot>,
-    pub(super) device: Option<Device>,
-    /// The microphone's port.
-    pub(super) port: Port,
-    /// The effects input.
-    pub(super) effects: Option<EffectsRun>,
-    monitor: Option<Box<dyn Monitor>>,
+    strips: Strips,
+    inputs: Inputs,
+    device: Option<Device>,
+    ports: Ports,
     /// The device's openings.
-    pub(super) epoch: u64,
+    epoch: u64,
     /// Samples clipped on the openings of the device before this one.
     clipped: u64,
-    /// The next frame to mix, and the frames given the device (written or
-    /// in `out`), from the epoch's first.
-    pub(super) frame: u64,
-    given: u64,
-    /// Frames for the device, and how many of their samples it has taken.
-    pub(super) out: Vec<i32>,
-    pub(super) sent: usize,
-    /// The last frames went out as an input wrote them, or as silence.
-    pub(super) untouched: bool,
-    /// The faders' gains whose waiting ramps start in this chunk, and at
-    /// what frame.
-    pub(super) starts: Vec<(GainId, u64)>,
-    /// The id of the newest output opened (0: none): a strip's change for
-    /// the first audio waits for one newer.
-    newest_output: u64,
     /// The helper thread, last: dropped (joined) once the rest is.
     aside: Aside,
 }
@@ -98,23 +191,18 @@ impl Run {
             target,
             format,
             options,
-            port: Port::new(),
+            ports: Ports {
+                mic: Port::new(),
+                effects: None,
+                monitor: None,
+            },
             aside: Aside::new(shared.clone()),
             shared,
             strips: Strips::default(),
-            slots: BTreeMap::new(),
+            inputs: Inputs::default(),
             device: None,
-            effects: None,
-            monitor: None,
             epoch: 0,
             clipped: 0,
-            frame: 0,
-            given: 0,
-            out: Vec::new(),
-            sent: 0,
-            untouched: true,
-            starts: Vec::new(),
-            newest_output: 0,
         }
     }
 
@@ -156,10 +244,10 @@ impl Run {
             busy = self.turn();
             self.report();
         }
-        self.close_streams(Error::Closed);
+        self.close_feeds(Error::Closed);
         self.close_device();
         // The microphone goes too; the helper is joined as the run ends.
-        self.port.set(&mut self.aside, None);
+        self.ports.mic.set(&mut self.aside, None);
     }
 
     /// The desk's format: as decided, or (none yet: the device was not
@@ -188,7 +276,7 @@ impl Run {
                 start,
                 set,
             } => {
-                let when = self.when(start, self.newest_output);
+                let when = self.when(start, self.inputs.newest_output);
                 self.strips.set(id, change, when, set);
             }
             Msg::StripSolo { id, on } => self.strips.solo(id, on),
@@ -199,11 +287,13 @@ impl Run {
                 gain,
                 state,
             } => {
-                self.slots.insert(id, Slot::new(id, state, &lanes, gain));
+                let slot = Slot::new(id, state, &lanes, gain);
+                self.inputs.slots.insert(id, slot);
             }
             Msg::Forget(id) => self.forget(id),
             Msg::Withdraw { gain, done } => {
                 let silent = self
+                    .inputs
                     .lane(gain)
                     .is_some_and(|l| l.gain.next().is_some() && l.gain.unheard());
                 if silent {
@@ -214,28 +304,28 @@ impl Run {
             Msg::Capabilities { slot, done } => {
                 let _ = done.send(self.capabilities(slot));
             }
-            Msg::Open { slot, stream, done } => {
-                let _ = done.send(self.open(slot, stream));
+            Msg::Open { slot, feed, done } => {
+                let _ = done.send(self.open(slot, feed));
             }
-            Msg::Closed(stream) => self.closed(stream),
-            Msg::Flush { stream, done } => {
-                let _ = done.send(self.flush(stream));
+            Msg::Closed(feed) => self.closed(feed),
+            Msg::Flush { feed, done } => {
+                let _ = done.send(self.flush(feed));
             }
             Msg::Follow { slot, leader, done } => {
-                let followed = self.follow(slot, leader);
+                let followed = self.inputs.follow(slot, leader);
                 if let Some(done) = done {
                     let _ = done.send(followed);
                 }
             }
             Msg::Ramp { gain, ramp } => {
-                self.taken(&[gain]);
+                self.inputs.taken(&[gain]);
                 if let Some(waiting) = self.waiting(gain, ramp) {
-                    self.wait_for(gain, Some(waiting));
+                    self.inputs.wait_for(gain, Some(waiting));
                 }
             }
             Msg::Automate { slot, automation } => {
                 // The set replaced is freed here, as messages are.
-                if let Some(slot) = self.slots.get_mut(&slot) {
+                if let Some(slot) = self.inputs.slots.get_mut(&slot) {
                     slot.automation.set(automation);
                 }
             }
@@ -248,10 +338,10 @@ impl Run {
                 out,
                 over,
             } => {
-                self.taken(&out);
-                self.taken(&[into]);
+                self.inputs.taken(&out);
+                self.inputs.taken(&[into]);
                 if let Some(rise) = self.waiting(into, Ramp::fade(1.0, over, start)) {
-                    self.wait_for(into, Some(rise));
+                    self.inputs.wait_for(into, Some(rise));
                     let fall = Waiting {
                         when: When::With(into),
                         to: 0.0,
@@ -259,19 +349,19 @@ impl Run {
                         curve: Curve::EqualPower,
                     };
                     for gain in out {
-                        self.wait_for(gain, Some(fall));
+                        self.inputs.wait_for(gain, Some(fall));
                     }
                 }
             }
             Msg::Mic(input) => {
-                self.port.set(&mut self.aside, input);
+                self.ports.mic.set(&mut self.aside, input);
                 self.fit_mic();
             }
             Msg::Effects(strip, counts, live) => {
                 // One made before goes with this message (its synth goes
                 // aside).
                 let run = EffectsRun::new(strip, counts, live);
-                if let Some(mut old) = self.effects.replace(run) {
+                if let Some(mut old) = self.ports.effects.replace(run) {
                     if let Some(synth) = old.take_live() {
                         self.aside.drop_later(Gone::Synth(synth));
                     }
@@ -279,15 +369,15 @@ impl Run {
                 self.fit_effects();
             }
             Msg::EffectsGone { counts, done } => {
-                let ours = self
-                    .effects
+                let effects = &mut self.ports.effects;
+                let ours = effects
                     .as_ref()
                     .is_some_and(|fx| Arc::ptr_eq(&fx.counts, &counts));
-                let run = if ours { self.effects.take() } else { None };
+                let run = if ours { effects.take() } else { None };
                 let _ = done.send(run.map(Box::new));
             }
             Msg::EffectsLive(synth) => {
-                let old = match &mut self.effects {
+                let old = match &mut self.ports.effects {
                     Some(fx) => fx.set_live(Some(synth)),
                     None => Some(synth),
                 };
@@ -297,14 +387,15 @@ impl Run {
                 self.fit_effects();
             }
             Msg::Monitor(monitor) => {
-                if let Some(old) = &mut self.monitor {
+                let ports = &mut self.ports;
+                if let Some(old) = &mut ports.monitor {
                     if self.device.is_some() {
                         old.closed();
                     }
                 }
-                self.monitor = monitor;
-                if let (Some(m), Some(d)) = (&mut self.monitor, &self.device) {
-                    m.opened(&d.info, d.output.clock());
+                ports.monitor = monitor;
+                if let (Some(m), Some(d)) = (&mut ports.monitor, &self.device) {
+                    m.opened(&d.info, d.clock());
                 }
             }
             Msg::Wake => {}
@@ -319,7 +410,7 @@ impl Run {
     /// device's rate or their synth's (the higher), of up to
     /// [`RESERVED_CHANNELS`] channels.
     fn fit_effects(&mut self) {
-        let Some(fx) = &mut self.effects else {
+        let Some(fx) = &mut self.ports.effects else {
             return;
         };
         let device = self.device.as_ref().map_or(0, |d| d.format.rate);
@@ -329,9 +420,7 @@ impl Run {
         self.strips
             .reserve_meter(fx.strip, frames * RESERVED_CHANNELS);
         if let Some(d) = &mut self.device {
-            d.mix.reserve(frames);
-            let out = 2 * frames * usize::from(d.format.channels);
-            self.out.reserve(out.saturating_sub(self.out.len()));
+            d.reserve(frames);
         }
     }
 
@@ -339,49 +428,31 @@ impl Run {
     /// time, always (it is never paused: silence where nothing sounds);
     /// on one that plays only what it is given, while an output runs.
     fn playing(&self) -> bool {
-        self.device.as_ref().is_some_and(|d| d.info.realtime) || self.running().next().is_some()
+        self.device.as_ref().is_some_and(|d| d.info.realtime)
+            || self.inputs.running().next().is_some()
     }
 
     /// Forgets input `id`: its waiting ramps never come (nor those to start
     /// with them), its output is closed.
     fn forget(&mut self, id: u64) {
-        let lanes = self.slots.get(&id).map_or(0, |s| s.lanes.len());
+        let lanes = self.inputs.slots.get(&id).map_or(0, |s| s.lanes.len());
         for k in 0..lanes {
-            self.wait_for(GainId::new(id, k as u16), None);
+            self.inputs.wait_for(GainId::new(id, k as u16), None);
         }
-        if let Some(stream) = self.slots.remove(&id).and_then(|s| s.stream) {
-            self.retire(stream, Error::Closed);
+        if let Some(feed) = self.inputs.slots.remove(&id).and_then(|s| s.feed) {
+            self.retire(feed, Error::Closed);
         }
     }
 
     /// The microphone's tap on the device, for the newest Lead output (or
-    /// taken off, with none); called after every change of the streams or
+    /// taken off, with none); called after every change of the outputs or
     /// the device, it does nothing when none matters to it.
     fn fit_mic(&mut self) {
-        let lead = self
-            .slots
-            .values()
-            .filter(|s| s.state.role() == Role::Lead)
-            .filter_map(|s| s.stream.as_ref().map(|st| st.link.id))
-            .max();
         let device = self.device.as_ref().map(|d| &d.taps);
-        self.port.fit(&mut self.aside, device, self.epoch, lead);
-    }
-
-    /// A ramp set on each of `gains` has been taken (whether it comes or
-    /// not).
-    fn taken(&mut self, gains: &[GainId]) {
-        for &id in gains {
-            if let Some(lane) = self.lane(id) {
-                lane.ramps += 1;
-            }
-        }
-    }
-
-    /// The lane of fader `id`.
-    fn lane(&mut self, id: GainId) -> Option<&mut LaneRun> {
-        let slot = self.slots.get_mut(&id.slot)?;
-        slot.lanes.get_mut(usize::from(id.lane))
+        let lead = self.inputs.lead();
+        self.ports
+            .mic
+            .fit(&mut self.aside, device, self.epoch, lead);
     }
 
     /// `start` as it is waited for, `after` the output a first audio must
@@ -402,7 +473,7 @@ impl Run {
 
     /// `ramp` for fader `gain`, as it waits: `None` when it never comes.
     fn waiting(&self, gain: GainId, ramp: Ramp) -> Option<Waiting> {
-        let opened = self.slots.get(&gain.slot).map_or(0, |s| s.opened);
+        let opened = self.inputs.slots.get(&gain.slot).map_or(0, |s| s.opened);
         Some(Waiting {
             when: self.when(ramp.start, opened)?,
             to: ramp.to,
@@ -411,50 +482,22 @@ impl Run {
         })
     }
 
-    /// Fader `gain` waits for `ramp` (`None`: for nothing), in place of
-    /// the ramp it waited for: the gains that were to start with that one
-    /// keep theirs.
-    fn wait_for(&mut self, gain: GainId, ramp: Option<Waiting>) {
-        let Some(lane) = self.lane(gain) else {
-            return;
-        };
-        let had = lane.gain.next().is_some();
-        match ramp {
-            Some(r) => lane.gain.set(r),
-            None => lane.gain.drop_next(),
-        }
-        if had {
-            let lanes = self.slots.values_mut().flat_map(|s| s.lanes.iter_mut());
-            for other in lanes.filter(|l| l.gain.next() == Some(When::With(gain))) {
-                other.gain.drop_next();
-            }
-        }
-    }
-
-    pub(super) fn streams(&self) -> impl Iterator<Item = &Stream> + '_ {
-        self.slots.values().filter_map(|s| s.stream.as_ref())
-    }
-
-    /// The outputs running, but for followers held by their leaders.
-    fn running(&self) -> impl Iterator<Item = &Stream> + '_ {
-        self.streams().filter(|s| s.live())
-    }
-
     /// Input `id` is made a `role`: the microphone fitted again; refused
     /// for a Lead with an output open when no other Lead has one.
     fn set_role(&mut self, id: u64, role: Role) -> Result<(), Error> {
-        let slot = self.slots.get(&id).ok_or(Error::Closed)?;
+        let slots = &mut self.inputs.slots;
+        let slot = slots.get(&id).ok_or(Error::Closed)?;
         if slot.state.role() == role {
             return Ok(());
         }
-        let lead = |s: &Slot| s.state.role() == Role::Lead && s.stream.is_some();
-        let others = self.slots.iter().any(|(&k, s)| k != id && lead(s));
+        let lead = |s: &Slot| s.state.role() == Role::Lead && s.feed.is_some();
+        let others = slots.iter().any(|(&k, s)| k != id && lead(s));
         if lead(slot) && !others {
             return Err(Error::InvalidArgument(
                 "the only Lead output open cannot be a guest".into(),
             ));
         }
-        let slot = self.slots.get_mut(&id).expect("checked");
+        let slot = slots.get_mut(&id).expect("checked");
         slot.state.set_role(role);
         self.fit_mic();
         Ok(())
@@ -463,50 +506,55 @@ impl Run {
     /// What an input's outputs may open at: the desk's one format,
     /// whatever the input.
     fn capabilities(&mut self, slot: u64) -> Result<Capabilities, Error> {
-        if !self.slots.contains_key(&slot) {
+        if !self.inputs.slots.contains_key(&slot) {
             return Err(Error::Closed);
         }
         let format = self.desk()?;
         Ok([format].into_iter().collect())
     }
 
-    /// Takes in `stream`, an output its opener made for input `slot_id`
+    /// Takes in `feed`, an output its opener made for input `slot_id`
     /// ([`super::input::open`]), in place of the one the input plays (one
     /// at a time), once it can play: its input is there, it is in the
     /// desk's format, and the device is open at it (or, not there or
     /// failed, opened now). Otherwise the output on the input plays on.
-    fn open(&mut self, slot_id: u64, stream: Stream) -> Result<Opened, Error> {
-        let admitted = self.admit(slot_id, &stream);
+    fn open(&mut self, slot_id: u64, feed: Feed) -> Result<Opened, Error> {
+        let admitted = self.admit(slot_id, &feed);
         if !matches!(admitted, Ok(Opened::Yes { .. })) {
-            self.retire(stream, Error::Closed);
+            self.retire(feed, Error::Closed);
             return admitted;
         }
-        if let Some(old) = self.slots.get_mut(&slot_id).and_then(Slot::drop_stream) {
+        let old = self
+            .inputs
+            .slots
+            .get_mut(&slot_id)
+            .and_then(Slot::drop_feed);
+        if let Some(old) = old {
             self.retire(old, Error::Closed);
         }
         // What was set while it had none is in force from its first frame.
         self.settle_idle();
-        let id = stream.link.id;
-        self.newest_output = id;
+        let id = feed.link.id;
+        self.inputs.newest_output = id;
         let format = self.device.as_ref().expect("admitted").format;
-        let slot = self.slots.get_mut(&slot_id).expect("admitted");
+        let slot = self.inputs.slots.get_mut(&slot_id).expect("admitted");
         slot.opened = id;
         let s = &slot.state;
         s.format.store(pack_format(Some(format)), Ordering::Relaxed);
         s.capacity
-            .store(stream.link.shared.ring.capacity(), Ordering::Relaxed);
-        slot.stream = Some(stream);
+            .store(feed.link.shared.ring.capacity(), Ordering::Relaxed);
+        slot.feed = Some(feed);
         self.fit_mic();
         admitted
     }
 
-    /// Whether `stream` can play on input `slot_id` (see [`Self::open`]).
-    fn admit(&mut self, slot_id: u64, stream: &Stream) -> Result<Opened, Error> {
-        if !self.slots.contains_key(&slot_id) {
+    /// Whether `feed` can play on input `slot_id` (see [`Self::open`]).
+    fn admit(&mut self, slot_id: u64, feed: &Feed) -> Result<Opened, Error> {
+        if !self.inputs.slots.contains_key(&slot_id) {
             return Err(Error::Closed);
         }
         let format = self.desk()?;
-        if stream.link.shared.format != lane_format(format, stream.lanes) {
+        if feed.link.shared.format != lane_format(format, feed.lanes) {
             return Ok(Opened::Desk(format));
         }
         if self.device.is_none() {
@@ -519,7 +567,8 @@ impl Run {
         })
     }
 
-    /// Opens the device at the desk's format.
+    /// Opens the device at the desk's format: a new epoch, its clock from
+    /// 0, and times of the last one never come.
     fn open_desk(&mut self) -> Result<(), Error> {
         let format = self.desk()?;
         let request = OpenRequest::new(format.rate, format.channels)
@@ -527,162 +576,47 @@ impl Run {
             .period(self.options.period)
             .buffer(self.options.buffer)
             .prefill(self.options.buffer / 2);
-        let output = self.target.open(&request)?;
-        let info = output.info().clone();
-        let taps = output.clock().shared();
-        if let Some(m) = &mut self.monitor {
-            m.opened(&info, output.clock());
+        let device = Device::new(self.target.open(&request)?);
+        if let Some(m) = &mut self.ports.monitor {
+            m.opened(&device.info, device.clock());
         }
-        // A new epoch: its clock starts at 0, and times of the last one
-        // never come.
         self.epoch += 1;
         self.shared.epoch.store(self.epoch, Ordering::Release);
-        self.frame = 0;
-        self.given = 0;
-        self.out.clear();
-        self.sent = 0;
-        let ids: Vec<GainId> = self
-            .slots
-            .iter()
-            .flat_map(|(&id, s)| {
-                let lanes = s.lanes.iter().enumerate();
-                lanes
-                    .filter(|(_, l)| matches!(l.gain.next(), Some(When::Frame(_))))
-                    .map(move |(k, _)| GainId::new(id, k as u16))
-            })
-            .collect();
-        for id in ids {
-            self.wait_for(id, None);
-        }
-        // Ramps under way were on the last epoch's frames.
-        for slot in self.slots.values_mut() {
-            for lane in &mut slot.lanes {
-                lane.gain.new_epoch();
-            }
-            if let Some(switch) = &mut slot.switch {
-                switch.new_epoch();
-            }
-        }
-        // Nothing is mixed on it yet: a fader's ramp due now (set while the
-        // device was closed or opening) is in force at once, but for one a
-        // crossfade's other side waits to start with.
-        let led: Vec<GainId> = self
-            .slots
-            .values()
-            .flat_map(|s| s.lanes.iter())
-            .filter_map(|l| match l.gain.next() {
-                Some(When::With(lead)) => Some(lead),
-                _ => None,
-            })
-            .collect();
-        let lanes = self.slots.values_mut().flat_map(|s| s.lanes.iter_mut());
-        for lane in lanes.filter(|l| l.gain.next() == Some(When::Now)) {
-            if !led.contains(&lane.id) {
-                lane.gain.settle();
-            }
-        }
+        self.inputs.new_epoch();
         self.strips.new_epoch();
-        *self.shared.device() = Some(info.clone());
-        self.device = Some(Device {
-            format: info.format,
-            mix: Mix::new(info.format),
-            info,
-            output,
-            taps,
-            paused: false,
-        });
+        *self.shared.device() = Some(device.info.clone());
+        self.device = Some(device);
         // The desk's frames start over: what its synth waits to play on
         // them is called off.
-        if let Some(fx) = &mut self.effects {
+        if let Some(fx) = &mut self.ports.effects {
             fx.opened();
         }
         self.fit_effects();
         Ok(())
     }
 
-    /// Gives out what the limiter holds back, into `self.out` (all of
-    /// it written).
-    fn give_held(&mut self) {
-        let Some(device) = &mut self.device else {
-            return;
-        };
-        let ch = usize::from(device.format.channels);
-        self.out.clear();
-        self.sent = 0;
-        device.mix.end(true, &mut self.out);
-        self.gave(ch);
-    }
-
-    /// What `self.out` holds goes to the device: the monitor sees it, the
-    /// master's meters and limiter flag take it in.
-    pub(super) fn gave(&mut self, ch: usize) {
-        if let Some(m) = &mut self.monitor {
-            m.mixed(&self.out, ch, self.given);
-        }
-        let peaks = channel_peaks(&self.out, ch, |s| f64::from(s.unsigned_abs()));
-        self.shared.peaks.raise(&peaks);
-        if self.device.as_mut().is_some_and(|d| d.mix.take_limited()) {
-            self.shared.limited.store(true, Ordering::Relaxed);
-        }
-        self.given += (self.out.len() / ch) as u64;
-    }
-
-    /// Writes what is mixed and the limiter holds back, waiting as long as
-    /// it takes (a drain, a flush).
-    fn write_all(&mut self) -> Result<(), Error> {
-        let Some(device) = &mut self.device else {
-            return Ok(());
-        };
-        if device.paused {
-            device.output.resume()?;
-            device.paused = false;
-        }
-        loop {
-            let Some(device) = &mut self.device else {
-                return Ok(());
-            };
-            if self.sent == self.out.len() {
-                if device.mix.held() == 0 {
-                    return Ok(());
-                }
-                self.give_held();
-                continue;
-            }
-            let ch = usize::from(device.format.channels);
-            let n = device
-                .output
-                .write(&self.out[self.sent..], Some(DRAIN_WAIT))?;
-            if n == 0 {
-                return Err(Error::Timeout("the device took nothing"));
-            }
-            self.sent += n * ch;
-        }
-    }
-
     /// Closes the device.
     fn close_device(&mut self) {
-        let Some(mut device) = self.device.take() else {
+        let Some(device) = self.device.take() else {
             return;
         };
-        self.out.clear();
-        self.sent = 0;
-        let _ = device.output.close();
-        self.clipped += device.mix.clipped();
+        self.clipped += device.close();
         *self.shared.device() = None;
         self.fit_mic();
-        if let Some(m) = &mut self.monitor {
+        if let Some(m) = &mut self.ports.monitor {
             m.closed();
         }
     }
 
     /// Closes every input's output with `error`.
-    fn close_streams(&mut self, error: Error) {
-        let mut next = self.slots.keys().next().copied();
+    fn close_feeds(&mut self, error: Error) {
+        let mut next = self.inputs.slots.keys().next().copied();
         while let Some(id) = next {
-            next = self.slots.range(id + 1..).next().map(|(&k, _)| k);
-            let slot = self.slots.get_mut(&id).expect("listed");
-            if let Some(stream) = slot.drop_stream() {
-                self.retire(stream, error.clone());
+            let slots = &mut self.inputs.slots;
+            next = slots.range(id + 1..).next().map(|(&k, _)| k);
+            let slot = slots.get_mut(&id).expect("listed");
+            if let Some(feed) = slot.drop_feed() {
+                self.retire(feed, error.clone());
             }
         }
         self.fit_mic();
@@ -690,22 +624,22 @@ impl Run {
 
     /// Output `id` closed (or was let go of). The device stays open.
     fn closed(&mut self, id: u64) {
-        let playing = |s: &&mut Slot| s.stream.as_ref().is_some_and(|st| st.link.id == id);
-        let stream = self.slots.values_mut().find(playing);
-        if let Some(stream) = stream.and_then(Slot::drop_stream) {
-            self.retire(stream, Error::Closed);
+        let playing = |s: &&mut Slot| s.feed.as_ref().is_some_and(|st| st.link.id == id);
+        let slot = self.inputs.slots.values_mut().find(playing);
+        if let Some(feed) = slot.and_then(Slot::drop_feed) {
+            self.retire(feed, Error::Closed);
         }
     }
 
-    /// Output `stream` goes: it fails with `error` (its handle hears it),
+    /// Output `feed` goes: it fails with `error` (its handle hears it),
     /// the outputs following it follow no one, the microphone is fitted
     /// again, and it is let go of on the helper thread.
-    fn retire(&mut self, stream: Stream, error: Error) {
-        let id = stream.link.id;
-        stream.link.running.store(false, Ordering::SeqCst);
-        stream.link.shared.fail(error);
-        self.aside.drop_later(Gone::Stream(stream));
-        self.unlink(id);
+    fn retire(&mut self, feed: Feed, error: Error) {
+        let id = feed.link.id;
+        feed.link.running.store(false, Ordering::SeqCst);
+        feed.link.shared.fail(error);
+        self.aside.drop_later(Gone::Feed(feed));
+        self.inputs.unlink(id);
         self.fit_mic();
     }
 
@@ -714,27 +648,24 @@ impl Run {
     /// what it holds too, as it would without a mixer. What is mixed goes
     /// to it first, so its frames keep their places.
     fn flush(&mut self, id: u64) -> Result<(), Error> {
-        self.unlink(id);
-        if let Some(fx) = &mut self.effects {
+        self.inputs.unlink(id);
+        if let Some(fx) = &mut self.ports.effects {
             fx.flushed(id);
         }
         // Its frames restart: there is no stream frame to time a change on
         // until they are mixed again.
-        let flushed = self.slots.values_mut();
-        let mut flushed = flushed.filter(|s| s.stream.as_ref().is_some_and(|st| st.link.id == id));
-        if let Some(slot) = flushed.next() {
+        let slots = &mut self.inputs.slots;
+        let flushed = |s: &&mut Slot| s.feed.as_ref().is_some_and(|st| st.link.id == id);
+        if let Some(slot) = slots.values_mut().find(flushed) {
             slot.unmap();
         }
-        let others = self
-            .slots
+        let others = slots
             .values()
-            .any(|s| s.heard && s.stream.as_ref().is_some_and(|st| st.link.id != id));
-        if others || self.device.is_none() {
+            .any(|s| s.heard && s.feed.as_ref().is_some_and(|st| st.link.id != id));
+        let Some(device) = self.device.as_mut().filter(|_| !others) else {
             return Ok(());
-        }
-        let flushed = self
-            .write_all()
-            .and_then(|()| self.device.as_mut().expect("checked").output.flush());
+        };
+        let flushed = device.flush(&mut self.ports.monitor, &self.shared);
         if let Err(e) = &flushed {
             self.device_failed(e.clone());
         }
@@ -745,7 +676,7 @@ impl Run {
     /// opened asks the device again what it takes, and opens it again
     /// (another epoch).
     fn device_failed(&mut self, error: Error) {
-        self.close_streams(error);
+        self.close_feeds(error);
         self.close_device();
         self.set_format(None);
     }
@@ -763,27 +694,18 @@ impl Run {
         let Some(device) = &mut self.device else {
             return false;
         };
-        if device.paused == playing {
-            let toggled = if playing {
-                device.output.resume()
-            } else {
-                device.output.pause()
-            };
-            device.paused = !playing;
-            if let Err(e) = toggled {
-                self.device_failed(e);
-                return false;
-            }
+        if let Err(e) = device.set_paused(!playing) {
+            self.device_failed(e);
+            return false;
         }
         if !playing {
             return false;
         }
-        let realtime = device.info.realtime;
-        let held = device.mix.held();
-        let period = device.format.duration_to_frames(self.options.period).max(1);
-        if self.sent == self.out.len() {
+        if device.written() {
+            let realtime = device.info.realtime;
+            let period = device.format.duration_to_frames(self.options.period).max(1);
             let (mut full, mut lacking, mut most) = (true, false, 0);
-            for s in self.running() {
+            for s in self.inputs.running() {
                 let queued = s.link.shared.ring.len();
                 most = most.max(queued);
                 if queued < period {
@@ -797,15 +719,15 @@ impl Run {
                 return false;
             } else if most > 0 {
                 most.min(period)
-            } else if held > 0 {
+            } else if device.held() > 0 {
                 // Every output is drained: what the limiter holds back
                 // goes too.
-                self.give_held();
+                device.give_held(&mut self.ports.monitor, &self.shared);
                 return self.write();
             } else {
                 return false;
             };
-            if !realtime && self.offline_room().is_some_and(|room| n > room) {
+            if !realtime && self.inputs.offline_room().is_some_and(|room| n > room) {
                 return false;
             }
             if !self.mix_chunk(n as usize) {
@@ -820,15 +742,8 @@ impl Run {
         let Some(device) = &mut self.device else {
             return false;
         };
-        let ch = usize::from(device.format.channels);
-        match device
-            .output
-            .write(&self.out[self.sent..], Some(self.options.period))
-        {
-            Ok(n) => {
-                self.sent += n * ch;
-                true
-            }
+        match device.write(self.options.period) {
+            Ok(()) => true,
             Err(e) => {
                 self.device_failed(e);
                 false
@@ -836,11 +751,51 @@ impl Run {
         }
     }
 
+    /// Mixes the next `n` frames for the device; returns whether it did
+    /// (see [`Inputs::take`] for when it does not).
+    fn mix_chunk(&mut self, n: usize) -> bool {
+        let Run {
+            inputs,
+            device,
+            ports,
+            strips,
+            shared,
+            epoch,
+            ..
+        } = self;
+        let device = device.as_mut().expect("the device is open");
+        let (ch, rate) = (device.channels(), device.format.rate);
+        let chunk = (*epoch, device.frame, n);
+        if !inputs.take(chunk, ch, device.info.realtime, &ports.mic) {
+            return false;
+        }
+        inputs.fill(chunk, rate, strips);
+        // The effects: the commands come go to the synth, which is summed,
+        // at their strip's path.
+        if let Some(fx) = &mut ports.effects {
+            fx.chunk(chunk, ch, rate, &inputs.slots);
+            fx.take_gains(strips);
+        }
+        let effects = ports.effects.as_ref().and_then(EffectsRun::lane);
+        // Each strip's meter: its subtree's heard lanes at those gains.
+        let fx_meter = effects.map(|l| (l.strip, l.samples, l.gains, true));
+        let lanes = inputs.slots.values().flat_map(Slot::metered_lanes);
+        strips.meter(ch, lanes.chain(fx_meter));
+        // Every lane heard: the inputs', the effects'.
+        let slots = &inputs.slots;
+        device.mix(n, || {
+            slots.values().flat_map(Slot::heard_lanes).chain(effects)
+        });
+        device.gave(&mut ports.monitor, shared);
+        true
+    }
+
     /// Nothing of an idle input will be heard for now: its ramps end, and
     /// so do those of a strip with only idle inputs (what is set before an
     /// output's first audio is in force from its first frame).
     fn settle_idle(&mut self) {
-        for slot in self.slots.values_mut().filter(|s| s.idle()) {
+        let slots = &mut self.inputs.slots;
+        for slot in slots.values_mut().filter(|s| s.idle()) {
             for lane in &mut slot.lanes {
                 lane.gain.settle();
             }
@@ -848,9 +803,9 @@ impl Run {
                 switch.settle();
             }
         }
-        let busy = self.slots.values().filter(|s| !s.idle());
+        let busy = slots.values().filter(|s| !s.idle());
         let busy = busy.flat_map(|s| s.lanes.iter().map(|l| l.strip));
-        let effects = self.effects.as_ref().filter(|fx| fx.busy());
+        let effects = self.ports.effects.as_ref().filter(|fx| fx.busy());
         self.strips
             .settle_idle(busy.chain(effects.map(|fx| fx.strip)));
     }
@@ -859,38 +814,39 @@ impl Run {
     /// each input's state; settles the ramps of inputs and strips with
     /// nothing to mix.
     fn report(&mut self) {
-        let mut failed = None;
         let mut heard = 0;
         if let Some(device) = &self.device {
-            match device.output.position() {
+            match device.position() {
                 Ok(played) => {
                     heard = played;
-                    for stream in self.slots.values_mut().filter_map(|s| s.stream.as_mut()) {
-                        stream.played(played);
+                    for slot in self.inputs.slots.values_mut() {
+                        if let Some(feed) = &mut slot.feed {
+                            feed.played(played);
+                        }
                     }
                 }
-                Err(e) => failed = Some(e),
+                Err(e) => self.device_failed(e),
             }
         }
-        if let Some(e) = failed {
-            self.device_failed(e);
-        }
         self.settle_idle();
-        for slot in self.slots.values_mut() {
+        for slot in self.inputs.slots.values() {
             slot.publish();
         }
+        let device = self.device.as_ref();
         self.shared.set_timebase(Timebase {
             epoch: self.epoch,
-            rate: self.device.as_ref().map_or(0, |d| d.format.rate),
-            frame: self.frame,
+            rate: device.map_or(0, |d| d.format.rate),
+            frame: device.map_or(0, |d| d.frame),
             heard,
         });
         // What its helper had no room for yet goes now.
         self.aside.flush();
-        self.shared
-            .passthrough
-            .store(self.untouched, Ordering::Relaxed);
-        let clipped = self.clipped + self.device.as_ref().map_or(0, |d| d.mix.clipped());
+        if let Some(d) = device {
+            self.shared
+                .passthrough
+                .store(d.untouched, Ordering::Relaxed);
+        }
+        let clipped = self.clipped + device.map_or(0, Device::clipped);
         self.shared.clipped.store(clipped, Ordering::Relaxed);
     }
 }

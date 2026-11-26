@@ -1,12 +1,12 @@
 //! Outputs without a device, for tests: [`FileOutput`] writes the packed
-//! device bytes to a sink, [`NullOutput`] discards them. Both have the same
-//! API as a device output, with a simulated clock.
+//! device bytes to a sink (to [`std::io::sink`]: discards them). It is a
+//! [`Stream`] as a device's is, with a simulated clock.
 
 use crate::caps::Capabilities;
 use crate::error::Error;
 use crate::format::StreamFormat;
 use crate::lanes::lane_format;
-use crate::output::{delegate_output, Core, Driver, OpenRequest, StreamInfo};
+use crate::output::{Driver, OpenRequest, Stream, StreamInfo};
 use crate::shared::Shared;
 use std::io::{self, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -277,7 +277,7 @@ impl Driver for SimDriver {
 /// ([`Output::format`](crate::Output::format)), with no header; a lane
 /// stream's are its ring's ([`FileOutput::open_lanes`]).
 pub struct FileOutput {
-    core: Core,
+    stream: Stream,
     device: Arc<SimDevice>,
     clock: SimClock,
 }
@@ -371,12 +371,12 @@ impl FileOutput {
             ring_frames: shared.ring.capacity(),
             realtime: matches!(clock, SimClock::Realtime | SimClock::Manual),
         };
-        let mut core = Core::new(shared, Box::new(driver), info, request);
+        let mut stream = Stream::new(shared, Box::new(driver), info, request);
         if matches!(clock, SimClock::Instant | SimClock::Paced) {
-            core.set_prefill(1);
+            stream.set_prefill(1);
         }
         FileOutput {
-            core,
+            stream,
             device,
             clock,
         }
@@ -394,6 +394,13 @@ impl FileOutput {
     /// others: their time passes by itself).
     pub fn time(&self) -> Option<SimTime> {
         (self.clock == SimClock::Manual).then(|| SimTime(self.device.clone()))
+    }
+
+    /// Its stream, for whoever holds the output from now on (a mixer, as
+    /// a `Box<dyn Output>`); its time is [`FileOutput::time`]'s, taken
+    /// before.
+    pub fn into_stream(self) -> Stream {
+        self.stream
     }
 }
 
@@ -435,26 +442,17 @@ impl SimTime {
     }
 }
 
-delegate_output!(FileOutput, core);
+/// Its stream: what it is, as an [`crate::Output`].
+impl std::ops::Deref for FileOutput {
+    type Target = Stream;
 
-/// An output that discards what it plays: a [`FileOutput`] over
-/// [`std::io::sink`].
-pub struct NullOutput {
-    inner: FileOutput,
-}
-
-impl NullOutput {
-    /// A null output in `format`.
-    pub fn new(format: StreamFormat, clock: SimClock) -> NullOutput {
-        NullOutput {
-            inner: FileOutput::new(io::sink(), format, clock),
-        }
-    }
-
-    /// See [`FileOutput::advance`].
-    pub fn advance(&mut self, frames: u64) -> Result<u64, Error> {
-        self.inner.advance(frames)
+    fn deref(&self) -> &Stream {
+        &self.stream
     }
 }
 
-delegate_output!(NullOutput, inner);
+impl std::ops::DerefMut for FileOutput {
+    fn deref_mut(&mut self) -> &mut Stream {
+        &mut self.stream
+    }
+}

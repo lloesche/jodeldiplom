@@ -20,23 +20,20 @@ use std::sync::Arc;
 
 use super::envelope::Envelope;
 use super::mix::Gains;
-use super::ramp::{Audio, Gain, Waiting, When};
+use super::ramp::{Aimed, Audio, When};
 use super::strip::{channel_peaks, Change, StripState, STRIP_RAMP};
-use super::Curve;
 
-/// One of a strip's gains: on the clock, what the settings aim it at, and
-/// this chunk's gains.
+/// One of a strip's gains: on the clock, aimed where the settings say,
+/// and this chunk's gains.
 struct Factor {
-    gain: Gain,
-    target: f64,
+    aimed: Aimed,
     env: Envelope,
 }
 
 impl Factor {
     fn new(at: f64) -> Factor {
         Factor {
-            gain: Gain::new(at),
-            target: at,
+            aimed: Aimed::new(at),
             env: Envelope::new(at),
         }
     }
@@ -44,23 +41,24 @@ impl Factor {
     /// Ramps to `to` over [`STRIP_RAMP`], from the next frame filled;
     /// returns whether that is a change.
     fn aim(&mut self, to: f64) -> bool {
-        let changed = to != self.target;
-        if changed {
-            self.target = to;
-            self.gain.set(Waiting {
-                when: When::Now,
-                to,
-                over: STRIP_RAMP,
-                curve: Curve::Linear,
-            });
-        }
-        changed
+        self.aimed.aim(to, STRIP_RAMP)
     }
 
     /// The gains of frames `first..first + n` at `rate`.
     fn fill(&mut self, first: u64, n: usize, rate: u32) {
-        let start = (self.gain.next() == Some(When::Now)).then_some(first);
-        self.env.fill(&mut self.gain, first, n, start, rate);
+        let gain = &mut self.aimed.gain;
+        let start = (gain.next() == Some(When::Now)).then_some(first);
+        self.env.fill(gain, first, n, start, rate);
+    }
+
+    /// A ramp under way, or due now, ends at once ([`super::ramp::Gain::settle`]).
+    fn settle(&mut self) {
+        self.aimed.gain.settle();
+    }
+
+    /// Whether it is changing, or a ramp waits.
+    fn moving(&self) -> bool {
+        self.aimed.gain.moving()
     }
 }
 
@@ -188,8 +186,8 @@ impl StripRun {
     /// Both gains for device frames `from..to` of the chunk from `first`.
     fn fill_part(&mut self, first: u64, from: u64, to: u64, rate: u32) {
         let (from, to) = ((from - first) as usize, (to - first) as usize);
-        for Factor { gain, env, .. } in [&mut self.heard, &mut self.vca, &mut self.lead] {
-            env.fill_part(gain, first, from, to, rate);
+        for Factor { aimed, env } in [&mut self.heard, &mut self.vca, &mut self.lead] {
+            env.fill_part(&mut aimed.gain, first, from, to, rate);
         }
     }
 }
@@ -390,9 +388,9 @@ impl Strips {
     /// frame of the last epoch never come.
     pub(super) fn new_epoch(&mut self) {
         for s in self.0.values_mut() {
-            s.heard.gain.settle();
-            s.vca.gain.settle();
-            s.lead.gain.settle();
+            s.heard.settle();
+            s.vca.settle();
+            s.lead.settle();
             if matches!(s.next_level, Some((When::Frame(_), _))) {
                 s.next_level = None;
                 s.publish_level();
@@ -453,7 +451,7 @@ impl Strips {
             gate: s.gate,
             lead_gate: s.lead_gate,
             changed: s.changed,
-            moving: s.heard.gain.moving() || s.vca.gain.moving() || s.lead.gain.moving(),
+            moving: s.heard.moving() || s.vca.moving() || s.lead.moving(),
         }
     }
 
@@ -530,9 +528,9 @@ impl Strips {
             self.each_up(id, |s| s.busy = true);
         }
         for s in self.0.values_mut().filter(|s| !s.busy) {
-            s.heard.gain.settle();
-            s.vca.gain.settle();
-            s.lead.gain.settle();
+            s.heard.settle();
+            s.vca.settle();
+            s.lead.settle();
         }
     }
 }
@@ -594,7 +592,7 @@ mod tests {
         // A strip made while another is soloed starts silent.
         d.solo(4, true);
         d.add(6, Arc::new(StripState::new("late", None)));
-        assert_eq!(d.0[&6].heard.target, 0.0);
+        assert_eq!(d.0[&6].heard.aimed.to(), 0.0);
         // A soloed strip gone: the others back.
         d.remove(4);
         assert_eq!(settled(&mut d), [0.0, 0.0, 0.0, 0.0, 1.0]);

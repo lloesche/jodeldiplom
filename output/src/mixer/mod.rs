@@ -139,6 +139,7 @@ mod aside;
 mod automation;
 mod chunk;
 mod desk;
+mod device;
 mod effects;
 mod effects_run;
 mod envelope;
@@ -324,12 +325,12 @@ pub(crate) enum Msg {
     /// An output on input `slot`, made by its opener ([`input::open`]).
     Open {
         slot: u64,
-        stream: input::Stream,
+        feed: input::Feed,
         done: SyncSender<Result<input::Opened, Error>>,
     },
     Closed(u64),
     Flush {
-        stream: u64,
+        feed: u64,
         done: SyncSender<Result<(), Error>>,
     },
     /// The output on input `slot` follows the one on input `leader.0` from
@@ -569,7 +570,7 @@ mod tests {
         fn open(&mut self, request: &OpenRequest) -> Result<Box<dyn Output>, Error> {
             let caps = self.capabilities()?;
             let out = FileOutput::open(std::io::sink(), &caps, request, SimClock::Realtime)?;
-            Ok(Box::new(out))
+            Ok(Box::new(out.into_stream()))
         }
     }
 

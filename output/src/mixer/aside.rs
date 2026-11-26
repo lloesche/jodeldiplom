@@ -19,7 +19,7 @@ use std::sync::Arc;
 use std::thread::JoinHandle;
 
 use super::desk::MicView;
-use super::input::Stream;
+use super::input::Feed;
 use super::mic::Fit;
 use super::MixShared;
 use crate::input::Input;
@@ -32,7 +32,7 @@ const PENDING: usize = 64;
 /// What the mixer thread lets go of.
 pub(super) enum Gone {
     Input(Input),
-    Stream(Stream),
+    Feed(Feed),
     /// A device's stream, once tapped.
     Device(Arc<Shared>),
     /// The effects input's live synth, replaced.
@@ -157,7 +157,7 @@ fn run(jobs: Receiver<Job>, shared: &MixShared) {
             // for its cleaner; a stream's frees its ring.
             Job::DropLater(gone) => match gone {
                 Gone::Input(input) => drop(input),
-                Gone::Stream(stream) => drop(stream),
+                Gone::Feed(stream) => drop(stream),
                 Gone::Device(device) => drop(device),
                 Gone::Synth(synth) => drop(synth),
                 #[cfg(test)]

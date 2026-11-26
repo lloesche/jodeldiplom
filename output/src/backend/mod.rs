@@ -45,7 +45,7 @@ mod none {
     use crate::error::Error;
     use crate::format::StreamFormat;
     use crate::input::{Input, Mono};
-    use crate::output::{Core, OpenRequest};
+    use crate::output::{self, OpenRequest};
 
     pub(crate) const BACKEND: &str = "none";
     pub(crate) const INPUT_BACKEND: &str = "none";
@@ -62,7 +62,7 @@ mod none {
         Err(unsupported())
     }
 
-    pub(crate) fn open(_id: &str, _request: &OpenRequest) -> Result<Core, Error> {
+    pub(crate) fn open(_id: &str, _request: &OpenRequest) -> Result<output::Stream, Error> {
         Err(unsupported())
     }
 

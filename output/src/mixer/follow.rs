@@ -40,8 +40,9 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 use super::chunk::Slot;
-use super::input::{Given, Link, Span, Stream};
-use super::run::Run;
+use super::input::{Feed, Given, Link, Span};
+use super::mic::Port;
+use super::run::Inputs;
 use crate::error::Error;
 
 /// A follower's link, on its stream.
@@ -66,7 +67,7 @@ impl Link {
     }
 }
 
-impl Stream {
+impl Feed {
     /// It runs, and is not held by a leader that does not.
     pub(crate) fn live(&self) -> bool {
         self.link.running.load(Ordering::SeqCst)
@@ -116,7 +117,7 @@ impl Slot {
     /// own frames' from before it was linked, or none) unless it gave
     /// frames since.
     fn unfollow(&mut self) {
-        let Some(f) = self.stream.as_mut().and_then(|s| s.follow.take()) else {
+        let Some(f) = self.feed.as_mut().and_then(|s| s.follow.take()) else {
             return;
         };
         match (f.gave, f.own) {
@@ -129,7 +130,7 @@ impl Slot {
     /// Its leader ended: it plays on by itself, its map kept (its own
     /// frames', `own`, when it gave some in that chunk).
     fn release(&mut self, own: Option<u64>, epoch: u64) {
-        if let Some(stream) = self.stream.as_mut() {
+        if let Some(stream) = self.feed.as_mut() {
             stream.follow = None;
         }
         if let Some(offset) = own {
@@ -145,7 +146,7 @@ impl Slot {
     }
 }
 
-impl Run {
+impl Inputs {
     /// The output open on input `id` follows the one open on input
     /// `leader`'s from its frame `origin` (`None`: it follows no one).
     pub(super) fn follow(&mut self, id: u64, to: Option<(u64, u64)>) -> Result<(), Error> {
@@ -162,15 +163,15 @@ impl Run {
         let (Some(slot), Some(lead)) = (self.slots.get(&id), self.slots.get(&leader)) else {
             return Err(Error::Closed);
         };
-        let (Some(own), Some(theirs)) = (&slot.stream, &lead.stream) else {
+        let (Some(own), Some(theirs)) = (&slot.feed, &lead.feed) else {
             return invalid("a link needs an output open on both inputs");
         };
         if theirs.follow.is_some() {
             return invalid("the leader follows another input");
         }
         let output = own.link.id;
-        let leads = |s: &Stream| s.follow.as_ref().is_some_and(|f| f.leader.id == output);
-        if self.streams().any(leads) {
+        let leads = |s: &Feed| s.follow.as_ref().is_some_and(|f| f.leader.id == output);
+        if self.feeds().any(leads) {
             return invalid("the input leads another");
         }
         let follow = Follow {
@@ -182,7 +183,7 @@ impl Run {
         };
         let mapped = lead.mapped();
         let slot = self.slots.get_mut(&id).expect("checked");
-        if let Some(stream) = slot.stream.as_mut() {
+        if let Some(stream) = slot.feed.as_mut() {
             stream.follow = Some(follow);
         }
         slot.map_after(mapped, origin);
@@ -193,7 +194,7 @@ impl Run {
     /// the outputs that follow it.
     pub(super) fn unlink(&mut self, id: u64) {
         for slot in self.slots.values_mut() {
-            let linked = slot.stream.as_ref().is_some_and(|s| {
+            let linked = slot.feed.as_ref().is_some_and(|s| {
                 s.follow
                     .as_ref()
                     .is_some_and(|f| s.link.id == id || f.leader.id == id)
@@ -209,7 +210,7 @@ impl Run {
     /// limit). A period that would go past it waits whole, so the periods
     /// are the same as with the follower running from the start.
     pub(super) fn offline_room(&self) -> Option<u64> {
-        self.streams()
+        self.feeds()
             .filter(|s| !s.link.running.load(Ordering::SeqCst))
             .filter_map(|s| s.follow.as_ref())
             .filter(|f| !f.gave)
@@ -218,13 +219,14 @@ impl Run {
     }
 
     /// Takes each follower's frames of the chunk of `n` frames from device
-    /// frame `first`, in lockstep with what its leader gave there (the
-    /// leaders are taken first), and lets go of those whose leader ended.
-    pub(super) fn take_followers(&mut self, n: usize, first: u64) {
+    /// frame `first` of the device's opening `epoch`, in lockstep with what
+    /// its leader gave there (the leaders are taken first; `port` notes
+    /// where a tapped one's went), and lets go of those whose leader ended.
+    pub(super) fn take_followers(&mut self, n: usize, first: u64, port: &Port, epoch: u64) {
         let mut next = self.slots.keys().next().copied();
         while let Some(id) = next {
             next = self.slots.range(id + 1..).next().map(|(&k, _)| k);
-            let stream = self.slots[&id].stream.as_ref();
+            let stream = self.slots[&id].feed.as_ref();
             let Some(f) = stream.and_then(|s| s.follow.as_ref()) else {
                 continue;
             };
@@ -232,23 +234,20 @@ impl Run {
             let ended = f.leader.ended();
             let lead = self.slots.get(&f.slot);
             let mapped = lead.and_then(Slot::mapped);
-            let theirs = lead.and_then(|s| s.stream.as_ref());
+            let theirs = lead.and_then(|s| s.feed.as_ref());
             debug_assert!(
                 theirs.is_some_and(|s| Arc::ptr_eq(&s.link, &f.leader)),
                 "a link ends with its leader's output"
             );
-            let given = theirs.and_then(Stream::given);
-            let Run {
-                slots, port, epoch, ..
-            } = self;
-            let slot = slots.get_mut(&id).expect("listed");
+            let given = theirs.and_then(Feed::given);
+            let slot = self.slots.get_mut(&id).expect("listed");
             let own = slot.take(n, first, span(origin, given, n, ended), port);
             if ended {
-                slot.release(own, *epoch);
+                slot.release(own, epoch);
                 continue;
             }
             slot.map_after(mapped, origin);
-            if let Some(f) = slot.stream.as_mut().and_then(|s| s.follow.as_mut()) {
+            if let Some(f) = slot.feed.as_mut().and_then(|s| s.follow.as_mut()) {
                 f.gave |= own.is_some();
             }
         }

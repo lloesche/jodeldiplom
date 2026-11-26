@@ -9,8 +9,8 @@ use std::sync::{Arc, Mutex};
 
 pub use jodel_output::OutputTarget;
 use jodel_output::{
-    Capabilities, Error, FileOutput, MemorySink, NullOutput, OpenRequest, Output, SampleFormat,
-    SimClock, SimTime, StreamFormat,
+    Capabilities, Error, FileOutput, MemorySink, OpenRequest, Output, SampleFormat, SimClock,
+    SimTime, StreamFormat,
 };
 
 /// A real output device, opened shared through `jodel-output`.
@@ -93,7 +93,8 @@ impl OutputTarget for NullTarget {
                 rate: request.rate,
                 channels: request.channels,
             })?;
-        Ok(Box::new(NullOutput::new(format, self.clock)))
+        let out = FileOutput::new(std::io::sink(), format, self.clock);
+        Ok(Box::new(out.into_stream()))
     }
 }
 
@@ -183,6 +184,6 @@ impl OutputTarget for MemoryTarget {
                 sink,
                 time: output.time(),
             });
-        Ok(Box::new(output))
+        Ok(Box::new(output.into_stream()))
     }
 }

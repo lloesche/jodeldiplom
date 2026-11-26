@@ -355,7 +355,7 @@ impl LiveRun {
     fn bind(&mut self, slot: u64, slots: &BTreeMap<u64, Slot>) {
         let Some(output) = slots
             .get(&slot)
-            .and_then(|s| s.stream.as_ref())
+            .and_then(|s| s.feed.as_ref())
             .map(|st| st.link.id)
         else {
             return;
@@ -425,7 +425,7 @@ fn place(command: Command, on: On, chunk: Chunk, slots: &BTreeMap<u64, Slot>) ->
         On::Desk(epoch) if epoch != chunk.epoch => return Place::Drop,
         On::Desk(_) => (0, chunk.first),
         On::Input(slot) => {
-            let Some(stream) = slots.get(&slot).and_then(|s| s.stream.as_ref()) else {
+            let Some(stream) = slots.get(&slot).and_then(|s| s.feed.as_ref()) else {
                 return Place::Drop;
             };
             let Some(g) = stream.given() else {

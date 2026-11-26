@@ -1,25 +1,27 @@
 //! Mixing a chunk: each input as the mixer thread runs it (its lanes, and
 //! the switch of one with parts), what each output gives (a follower's in
-//! lockstep with its leader's, see `follow.rs`) split into its lanes,
-//! every lane's gains (its automation's on top, see `automation.rs`), the
-//! meters, and then the device's frames: a lone exact lane at exactly 1 as
-//! written, else the heard lanes summed.
+//! lockstep with its leader's, see `follow.rs`) split into its lanes, and
+//! every lane's gains (its automation's on top, see `automation.rs`), for
+//! the meters and the device's frames (`run.rs`).
 
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 use super::automation::AutomationRun;
-use super::effects_run::EffectsRun;
 use super::fader::Mapped;
-use super::input::{Span, Stream};
+use super::input::{Feed, Span};
 use super::mic::Port;
-use super::mix::{Gains, Made};
+use super::mix::Gains;
 use super::parts::{split, touch, LaneRun, Switch};
 use super::ramp::{resolve_starts, start_of, Audio, GainId};
-use super::run::Run;
+use super::run::Inputs;
 use super::strips::Strips;
 use super::SlotState;
 use crate::lanes::Parts;
+
+/// A chunk mixed: the device's opening (its epoch), its first frame there,
+/// and how many.
+pub(super) type Chunk = (u64, u64, usize);
 
 /// A lane heard in a chunk: its strip, its samples, the gains it is heard
 /// at, and whether it may go to the device as written (an exact lane, at
@@ -30,6 +32,20 @@ pub(crate) struct HeardLane<'a> {
     pub(super) samples: &'a [i32],
     pub(super) gains: Gains<'a>,
     pub(super) exact: bool,
+}
+
+/// What an input's output gives, as its lanes are mixed: the one answer
+/// to whether its frames carry parts ([`Slot::shape`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Shape {
+    /// A plain input: main, its one lane.
+    Plain,
+    /// An input with parts, its output a lane stream (or none: a gap in
+    /// one): main and the parts, with a control word a frame.
+    Lanes,
+    /// An input with parts, a plain output on it: main alone, with no
+    /// parts on any frame.
+    Main,
 }
 
 /// An input as the mixer thread runs it.
@@ -47,7 +63,7 @@ pub(super) struct Slot {
     pub(super) opened: u64,
     /// A lane of it was heard in the last chunk.
     pub(super) heard: bool,
-    pub(super) stream: Option<Stream>,
+    pub(super) feed: Option<Feed>,
     /// The epoch and the device frame less the stream frame of the last
     /// frames it gave, as published for [`super::Fader::at_stream`].
     mapped: (u64, u64),
@@ -72,7 +88,7 @@ impl Slot {
             automation: AutomationRun::new(lanes.len() - 1),
             opened: 0,
             heard: false,
-            stream: None,
+            feed: None,
             mapped: (0, 0),
         }
     }
@@ -81,36 +97,55 @@ impl Slot {
     /// following a leader paused (one held back for a flush or a prefill
     /// comes back).
     pub(super) fn idle(&self) -> bool {
-        self.stream.as_ref().is_none_or(Stream::paused)
+        self.feed.as_ref().is_none_or(Feed::paused)
     }
 
     /// Its output is gone (if it had one), and so are its format on the
     /// desk, the map of its frames and the automation given for it (one
     /// given with no output open waits for the next).
-    pub(super) fn drop_stream(&mut self) -> Option<Stream> {
+    pub(super) fn drop_feed(&mut self) -> Option<Feed> {
         self.unmap();
         self.state.format.store(0, Ordering::Relaxed);
         self.state.capacity.store(0, Ordering::Relaxed);
         self.state.queued.store(0, Ordering::Relaxed);
         self.state.dropped.store(0, Ordering::Relaxed);
         self.state.next.store(0, Ordering::Relaxed);
-        let stream = self.stream.take();
-        if stream.is_some() {
+        let feed = self.feed.take();
+        if feed.is_some() {
             self.automation.reset();
         }
-        stream
+        feed
     }
 
-    /// Lane `k`'s samples this chunk.
+    /// What its output gives (see [`Shape`]).
+    pub(super) fn shape(&self) -> Shape {
+        match (&self.switch, &self.feed) {
+            (None, _) => Shape::Plain,
+            (Some(_), Some(feed)) if feed.lanes == 1 => Shape::Main,
+            (Some(_), _) => Shape::Lanes,
+        }
+    }
+
+    /// The lanes its output supplied this chunk: main, or every one.
+    fn supplied(&self) -> usize {
+        match self.feed.as_ref().filter(|f| f.got > 0) {
+            None => 0,
+            Some(_) if self.shape() == Shape::Lanes => self.lanes.len(),
+            Some(_) => 1,
+        }
+    }
+
+    /// Lane `k`'s samples this chunk: a lane stream's split into its lanes,
+    /// a plain stream's as given.
     fn samples(&self, k: usize) -> &[i32] {
-        match &self.stream {
-            Some(s) if s.lanes == 1 => &s.samples,
+        match &self.feed {
+            Some(feed) if self.shape() != Shape::Lanes => &feed.samples,
             _ => &self.lanes[k].samples,
         }
     }
 
     /// Its heard lanes: strip, samples, the gains they are heard at.
-    fn heard_lanes(&self) -> impl Iterator<Item = HeardLane<'_>> + '_ {
+    pub(super) fn heard_lanes(&self) -> impl Iterator<Item = HeardLane<'_>> + '_ {
         self.lanes
             .iter()
             .enumerate()
@@ -127,7 +162,9 @@ impl Slot {
     /// into their strips' subtrees; a part present but not heard at what
     /// it would be heard at switched in, into its own strip only (its
     /// group meters main, heard in its place).
-    fn metered_lanes(&self) -> impl Iterator<Item = (u64, &[i32], Gains<'_>, bool)> + '_ {
+    pub(super) fn metered_lanes(
+        &self,
+    ) -> impl Iterator<Item = (u64, &[i32], Gains<'_>, bool)> + '_ {
         self.lanes
             .iter()
             .enumerate()
@@ -162,18 +199,18 @@ impl Slot {
     }
 
     /// Takes its output's frames of `span` in the chunk of `n` frames from
-    /// device frame `first` (see [`Stream::take`]), and notes where they
+    /// device frame `first` (see [`Feed::take`]), and notes where they
     /// went in the microphone's map, when `port` taps the device for that
     /// output. Returns how many device frames on from their stream frames
     /// they went, when it gave any (its own map, for the caller to keep:
     /// a follower's is its leader's).
     pub(super) fn take(&mut self, n: usize, first: u64, span: Span, port: &Port) -> Option<u64> {
-        let stream = self.stream.as_mut()?;
-        if !stream.take(n, first, span) {
+        let feed = self.feed.as_mut()?;
+        if !feed.take(n, first, span) {
             return None;
         }
-        let (device, frame, got) = (first + stream.at as u64, stream.frame, stream.got);
-        if let Some(map) = port.map_for(stream.link.id) {
+        let (device, frame, got) = (first + feed.at as u64, feed.frame, feed.got);
+        if let Some(map) = port.map_for(feed.link.id) {
             map.push(device, frame, got);
         }
         (got > 0).then(|| device.wrapping_sub(frame))
@@ -183,7 +220,7 @@ impl Slot {
     /// faders' ramps that start in them): each fader's, the switch's,
     /// their strips' paths, its automation's; and which lanes are heard.
     fn fill(&mut self, first: u64, n: usize, rate: u32, strips: &Strips, starts: &[(GainId, u64)]) {
-        let given = self.stream.as_ref().and_then(Stream::given);
+        let given = self.feed.as_ref().and_then(Feed::given);
         self.automation.fill(first, n, rate, given);
         let auto = &self.automation;
         // Each fader times its lane's curve (main's fader the input's own,
@@ -195,41 +232,21 @@ impl Slot {
             gains.times(auto.lane(k));
         }
         let supplied = given.is_some();
-        // A lane stream (or none: a gap in one) has words for its frames; a
-        // plain stream on an input with parts has no parts at all.
-        let lanes = self.stream.as_ref().is_none_or(|s| s.lanes > 1);
-        let wide = supplied && lanes;
-        // How the parts stand, their faders' ramps started.
-        let touched = self
-            .switch
-            .is_some()
-            .then(|| touch(&self.lanes, strips, starts).merge(auto.touch()));
-        let (main, parts) = self.lanes.split_at_mut(1);
-        let main = &mut main[0];
-        if let (Some(switch), Some(touched)) = (&mut self.switch, touched) {
-            switch.fill(first, n, rate, lanes, touched);
-            let present = wide && switch.control != Parts::None;
-            // The parts first: each takes the input's fader (main's).
-            for part in parts.iter_mut() {
-                let path = strips.path(part.strip);
-                part.gains.times(&main.gains);
-                part.metering = present;
-                if present {
-                    part.meter.assign(&part.gains).times(path);
-                }
-                part.gains.times(&switch.share).times(path);
-                part.heard = wide && part.gains.flat() != Some(0.0);
-                part.last = part.gains.last(n);
-            }
-            main.gains.times(&switch.rest);
+        let shape = self.shape();
+        if let Some(switch) = &mut self.switch {
+            // How the parts stand, their faders' ramps started.
+            let touched = touch(&self.lanes, strips, starts).merge(auto.touch());
+            switch.fill(first, n, rate, shape == Shape::Lanes, touched);
+            let wide = supplied && shape == Shape::Lanes;
+            fill_parts(&mut self.lanes, switch, strips, n, wide);
         }
+        let main = &mut self.lanes[0];
         main.gains.times(auto.main());
         // A lane input's main is gated as its parts stand: a part soloed
         // keeps it while it is heard in their place.
-        let path = if self.switch.is_some() {
-            strips.lead_path(main.strip)
-        } else {
-            strips.path(main.strip)
+        let path = match shape {
+            Shape::Plain => strips.path(main.strip),
+            Shape::Lanes | Shape::Main => strips.lead_path(main.strip),
         };
         main.gains.times(path);
         main.heard = supplied && main.gains.flat() != Some(0.0);
@@ -268,7 +285,7 @@ impl Slot {
             }
             auto.settled.store(settled, Ordering::Relaxed);
         }
-        if let Some(st) = &self.stream {
+        if let Some(st) = &self.feed {
             s.queued.store(st.link.shared.ring.len(), Ordering::Relaxed);
             s.dropped.store(st.link.shared.dropped(), Ordering::Relaxed);
             s.next.store(st.link.shared.head(), Ordering::Relaxed);
@@ -276,35 +293,63 @@ impl Slot {
     }
 }
 
-impl Run {
-    /// Mixes the next `n` frames into `self.out`; returns whether it did
-    /// (see below for when it does not).
-    pub(super) fn mix_chunk(&mut self, n: usize) -> bool {
-        let format = self.device.as_ref().expect("the device is open").format;
-        let ch = usize::from(format.channels);
-        let first = self.frame;
+/// The parts' gains of an input with parts (`lanes`, main first) for a
+/// chunk of `n` frames, through its `switch`: each part's fader times the
+/// input's (main's), the switch's share and the part's strip's path, heard
+/// where its output supplied the parts (`wide`) and that is not 0; main's
+/// fader times the switch's rest.
+fn fill_parts(lanes: &mut [LaneRun], switch: &Switch, strips: &Strips, n: usize, wide: bool) {
+    let (main, parts) = lanes.split_at_mut(1);
+    let main = &mut main[0];
+    let present = wide && switch.control != Parts::None;
+    for part in parts.iter_mut() {
+        let path = strips.path(part.strip);
+        part.gains.times(&main.gains);
+        part.metering = present;
+        if present {
+            part.meter.assign(&part.gains).times(path);
+        }
+        part.gains.times(&switch.share).times(path);
+        part.heard = wide && part.gains.flat() != Some(0.0);
+        part.last = part.gains.last(n);
+    }
+    main.gains.times(&switch.rest);
+}
+
+impl Inputs {
+    /// Takes what each output gives of the chunk of `n` frames from device
+    /// frame `first` of epoch `epoch` (`ch` channels a frame), in its lanes:
+    /// the leaders' and the plain ones' first, then the followers' in
+    /// lockstep with them; and resolves where the faders' waiting ramps
+    /// start in it. Returns whether the chunk is to be mixed: on a device
+    /// that plays only what it is given (not `realtime`), not when no
+    /// output gave a frame to it. The outputs it was sized for have stopped
+    /// since then (closed, paused or flushed between the look at their
+    /// rings and the take), and mixing it would add a period of silence
+    /// the device then plays as if written.
+    pub(super) fn take(&mut self, chunk: Chunk, ch: usize, realtime: bool, port: &Port) -> bool {
+        let (epoch, first, n) = chunk;
         let end = first + n as u64;
-        // What each output gives, in its lanes: the leaders' and the plain
-        // ones' first, then the followers' in lockstep with them.
-        let leads = |s: &&mut Slot| s.stream.as_ref().is_some_and(|st| st.follow.is_none());
+        let leads = |s: &&mut Slot| s.feed.as_ref().is_some_and(|st| st.follow.is_none());
         for slot in self.slots.values_mut().filter(leads) {
-            if let Some(offset) = slot.take(n, first, Span::whole(n), &self.port) {
-                slot.map_offset(self.epoch, offset);
+            if let Some(offset) = slot.take(n, first, Span::whole(n), port) {
+                slot.map_offset(epoch, offset);
             }
         }
-        self.take_followers(n, first);
+        self.take_followers(n, first, port, epoch);
         // The lanes of each lane stream, and the words of the frames it
         // gave (none when it gave none: a gap).
         for slot in self.slots.values_mut() {
+            let lanes = slot.shape() == Shape::Lanes;
             let Some(switch) = slot.switch.as_mut() else {
                 continue;
             };
             switch.words.clear();
             switch.from = 0;
-            if let Some(stream) = slot.stream.as_ref().filter(|s| s.taken && s.lanes > 1) {
-                let (at, got) = (stream.at, stream.got as usize);
+            if let Some(feed) = slot.feed.as_ref().filter(|s| s.taken && lanes) {
+                let (at, got) = (feed.at, feed.got as usize);
                 split(
-                    &stream.samples,
+                    &feed.samples,
                     ch,
                     at,
                     got,
@@ -314,21 +359,15 @@ impl Run {
                 switch.from = at;
             }
         }
-        // On a device that plays only what it is given, a chunk no output
-        // gave a frame to is not mixed: the outputs it was sized for have
-        // stopped since (closed, paused or flushed between the look at
-        // their rings and the take), and mixing it would add a period of
-        // silence the device then plays as if written.
-        let device = self.device.as_mut().expect("the device is open");
-        let gave = |s: &Slot| s.stream.as_ref().is_some_and(|st| st.got > 0);
-        if !device.info.realtime && !self.slots.values().any(gave) {
+        let gave = |s: &Slot| s.feed.as_ref().is_some_and(|st| st.got > 0);
+        if !realtime && !self.slots.values().any(gave) {
             return false;
         }
         // Where the faders' waiting ramps start (one for the first audio on
         // the frame that audio starts at).
         let waiting = self.slots.values().flat_map(|slot| {
             let audio = slot
-                .stream
+                .feed
                 .as_ref()
                 .filter(|s| s.got > 0)
                 .map(|s| s.audio(first));
@@ -338,79 +377,28 @@ impl Run {
             })
         });
         resolve_starts(first, end, waiting, &mut self.starts);
-        // The strips' gains along their paths; each lane's through its
-        // strip's (what it is heard at), and who is heard.
+        true
+    }
+
+    /// The strips' gains along their paths for the chunk taken at `rate`;
+    /// each lane's through its strip's (what it is heard at), and who is
+    /// heard.
+    pub(super) fn fill(&mut self, chunk: Chunk, rate: u32, strips: &mut Strips) {
+        let (_, first, n) = chunk;
         let audio = self.slots.values().flat_map(|s| {
-            let stream = s.stream.as_ref().filter(|st| st.got > 0);
-            let supplied = stream.map_or(0, |st| usize::from(st.lanes).min(s.lanes.len()));
-            let audio = stream.map(|st| st.audio(first));
-            let lanes = s.lanes[..supplied].iter();
+            let audio = s.feed.as_ref().map(|st| st.audio(first));
+            let lanes = s.lanes[..s.supplied()].iter();
             lanes.filter_map(move |l| Some((l.strip, audio?)))
         });
-        self.strips.fill(first, n, format.rate, audio);
+        strips.fill(first, n, rate, audio);
         for slot in self.slots.values_mut() {
-            slot.fill(first, n, format.rate, &self.strips, &self.starts);
+            slot.fill(first, n, rate, strips, &self.starts);
         }
-        self.strips.chunk_done();
-        // The effects: the commands come go to the synth, which is summed,
-        // at their strip's path.
-        if let Some(fx) = &mut self.effects {
-            fx.chunk((self.epoch, first, n), ch, format.rate, &self.slots);
-            fx.take_gains(&self.strips);
-        }
-        let effects = self.effects.as_ref().and_then(EffectsRun::lane);
-        // Every lane heard: the inputs', the effects'.
-        let heard = || {
-            self.slots
-                .values()
-                .flat_map(Slot::heard_lanes)
-                .chain(effects)
-        };
-        // Each strip's meter: its subtree's heard lanes at those gains.
-        let fx_meter = effects.map(|l| (l.strip, l.samples, l.gains, true));
-        let lanes = self.slots.values().flat_map(Slot::metered_lanes);
-        self.strips.meter(ch, lanes.chain(fx_meter));
-        // One exact lane heard at 1 (or none): as written; else summed.
-        let (count, alone) = heard().fold((0, None), |(k, _), l| (k + 1, Some(l)));
-        let untouched = match (count, alone) {
-            (0, _) => true,
-            (1, Some(l)) => l.exact && l.gains.flat() == Some(1.0),
-            _ => false,
-        };
-        self.out.clear();
-        self.sent = 0;
-        if untouched && !device.mix.at_rest() {
-            // What the limiter held back goes first, so these frames can
-            // go as they are.
-            device.mix.end(true, &mut self.out);
-        }
-        let made = if untouched && device.mix.at_rest() {
-            match alone {
-                Some(l) if count == 1 => {
-                    self.out.extend_from_slice(l.samples);
-                    Made::Passthrough
-                }
-                _ => {
-                    self.out.resize(self.out.len() + n * ch, 0);
-                    Made::Silence
-                }
-            }
-        } else {
-            device.mix.begin(n * ch);
-            for l in heard() {
-                device.mix.add(l.samples, l.gains);
-            }
-            device.mix.end(untouched, &mut self.out);
-            Made::Mixed
-        };
-        self.untouched = made != Made::Mixed;
-        self.gave(ch);
-        self.frame = end;
-        true
+        strips.chunk_done();
     }
 }
 
-impl Stream {
+impl Feed {
     /// Its audio in the chunk from device frame `first` taken last.
     fn audio(&self, first: u64) -> Audio {
         Audio {

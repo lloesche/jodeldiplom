@@ -8,6 +8,7 @@
 //! default (10 ms). Every event drains the packets queued into the
 //! microphone ring.
 
+use super::thread::spawn_opened;
 use super::wasapi::{
     activate, endpoints, enumerator, find, friendly_name, map_error, Com, Event, Mmcss,
 };
@@ -15,9 +16,8 @@ use crate::device::Device;
 use crate::error::Error;
 use crate::input::{Input, InputInfo, MicClock, Mono, Opened, Producer, Wire, CAPTURE_PERIOD};
 use std::ptr;
-use std::sync::mpsc;
+use std::sync::Arc;
 use std::thread::JoinHandle;
-use std::time::Duration;
 use windows::core::Interface;
 use windows::Win32::Foundation::{WAIT_OBJECT_0, WAIT_TIMEOUT};
 use windows::Win32::Media::Audio::{
@@ -138,31 +138,23 @@ fn open_capture(id: &str) -> Result<(Capture, String), Error> {
         };
         let event = Event::new()?;
         // SAFETY: COM calls on the initialised client.
-        let services = unsafe {
+        let capture = unsafe {
             client
-                .SetEventHandle(event.0)
-                .map_err(|e| map_error("SetEventHandle", e))
-                .and_then(|_| {
-                    client
-                        .GetService::<IAudioCaptureClient>()
-                        .map_err(|e| map_error("GetService(capture)", e))
-                })
+                .SetEventHandle(event.handle())
+                .map_err(|e| map_error("SetEventHandle", e))?;
+            client
+                .GetService::<IAudioCaptureClient>()
+                .map_err(|e| map_error("GetService(capture)", e))?
         };
-        match services {
-            Ok(capture) => Ok(Capture {
-                client,
-                capture,
-                event,
-                wire,
-                rate,
-                channels,
-                period,
-            }),
-            Err(e) => {
-                event.close();
-                Err(e)
-            }
-        }
+        Ok(Capture {
+            client,
+            capture,
+            event,
+            wire,
+            rate,
+            channels,
+            period,
+        })
     })();
     // SAFETY: frees the mix format once, after its last use.
     unsafe { CoTaskMemFree(Some(mix as *const _)) };
@@ -170,7 +162,7 @@ fn open_capture(id: &str) -> Result<(Capture, String), Error> {
 }
 
 /// The capture thread: drains every packet on each event until `stop`.
-fn run(cap: Capture, mut producer: Producer, stop: Event) {
+fn run(cap: Capture, mut producer: Producer, stop: &Event) {
     let _mmcss = Mmcss::enter();
     let shared = producer.shared().clone();
     let channels = usize::from(cap.channels);
@@ -182,7 +174,7 @@ fn run(cap: Capture, mut producer: Producer, stop: Event) {
             cap.client
                 .Start()
                 .map_err(|e| map_error("IAudioClient::Start", e))?;
-            let handles = [cap.event.0, stop.0];
+            let handles = [cap.event.handle(), stop.handle()];
             loop {
                 let woke = WaitForMultipleObjects(&handles, false, 2000);
                 if woke.0 == WAIT_OBJECT_0.0 + 1 {
@@ -229,12 +221,11 @@ fn run(cap: Capture, mut producer: Producer, stop: Event) {
     }
     // SAFETY: as above.
     let _ = unsafe { cap.client.Stop() };
-    cap.event.close();
 }
 
 /// The running capture: stopping it is dropping it.
 struct Running {
-    stop: Event,
+    stop: Arc<Event>,
     thread: Option<JoinHandle<()>>,
 }
 
@@ -244,60 +235,40 @@ impl Drop for Running {
         if let Some(t) = self.thread.take() {
             let _ = t.join();
         }
-        self.stop.close();
     }
 }
 
 pub(crate) fn open_input(id: &str, mono: Mono) -> Result<Input, Error> {
-    let stop = Event::new()?;
-    let (ready_tx, ready_rx) = mpsc::sync_channel(1);
-    let id_owned = id.to_owned();
-    let spawned = std::thread::Builder::new()
-        .name("jodel-input-wasapi".into())
-        .spawn(move || {
-            let _com = match Com::init() {
-                Ok(c) => c,
-                Err(e) => {
-                    let _ = ready_tx.send(Err(e));
-                    return;
-                }
+    let stop = Arc::new(Event::new()?);
+    let stopped = stop.clone();
+    let id = id.to_owned();
+    let ((info, opened), thread) = spawn_opened(
+        "jodel-input-wasapi",
+        "opening the input",
+        move || {
+            let com = Com::init()?;
+            let (cap, name) = open_capture(&id)?;
+            let (producer, opened) = Opened::new(cap.rate, cap.period, mono, MicClock::system());
+            let info = InputInfo {
+                id,
+                name,
+                backend: INPUT_BACKEND,
+                rate: cap.rate,
+                channels: cap.channels,
+                period_frames: cap.period,
+                mono,
             };
-            match open_capture(&id_owned) {
-                Ok((cap, name)) => {
-                    let (producer, opened) =
-                        Opened::new(cap.rate, cap.period, mono, MicClock::system());
-                    let info = InputInfo {
-                        id: id_owned.clone(),
-                        name,
-                        backend: INPUT_BACKEND,
-                        rate: cap.rate,
-                        channels: cap.channels,
-                        period_frames: cap.period,
-                        mono,
-                    };
-                    let _ = ready_tx.send(Ok((info, opened)));
-                    run(cap, producer, stop);
-                }
-                Err(e) => {
-                    let _ = ready_tx.send(Err(e));
-                }
-            }
-        });
-    let thread = match spawned {
-        Ok(t) => t,
-        Err(e) => {
-            stop.close();
-            return Err(e.into());
-        }
-    };
+            Ok(((info, opened), (com, cap, producer)))
+        },
+        move |(com, cap, producer)| {
+            run(cap, producer, &stopped);
+            // COM goes last, after the stream.
+            drop(com);
+        },
+    )?;
     let running = Running {
         stop,
         thread: Some(thread),
     };
-    let opened = ready_rx
-        .recv_timeout(Duration::from_secs(10))
-        .unwrap_or(Err(Error::Timeout("opening the input")));
-    // On an error `running` is dropped here, which joins the thread.
-    let (info, opened) = opened?;
     Ok(Input::new(info, opened, Box::new(running)))
 }

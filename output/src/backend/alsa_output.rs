@@ -22,13 +22,13 @@ use super::thread::{Command, Request, ThreadDriver};
 use crate::device::Device;
 use crate::error::Error;
 use crate::format::{SampleFormat, StreamFormat};
-use crate::output::{Core, OpenRequest, StreamInfo};
+use crate::output::{self, OpenRequest, StreamInfo};
 use crate::shared::Shared;
 use alsa::pcm::{Access, Format, Frames, HwParams, State, PCM};
 use alsa::{Direction, ValueOr};
-use std::sync::mpsc::{self, Receiver, TryRecvError};
+use std::sync::mpsc::{Receiver, TryRecvError};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 pub(crate) const BACKEND: &str = "ALSA default (shared)";
 
@@ -329,60 +329,33 @@ fn run(mut stream: Stream, shared: Arc<Shared>, commands: Receiver<Request>) {
 }
 
 /// Opens the PCM `id`; the stream runs on its own thread.
-pub(crate) fn open(id: &str, request: &OpenRequest) -> Result<Core, Error> {
+pub(crate) fn open(id: &str, request: &OpenRequest) -> Result<output::Stream, Error> {
     request.validate()?;
-    let (ready_tx, ready_rx) = mpsc::sync_channel(1);
-    let id_owned = id.to_owned();
-    let request_owned = request.clone();
-    let mut driver = ThreadDriver::spawn("jodel-output-alsa", Box::new(|| {}), move |commands| {
-        let opened = open_pcm(&id_owned, Direction::Playback)
-            .and_then(|pcm| configure(&pcm, &request_owned).map(|c| (pcm, c)));
-        match opened {
-            Ok((pcm, config)) => {
-                let shared = Arc::new(Shared::new(
-                    config.format,
-                    request_owned.ring_frames(&config.format, config.buffer),
-                ));
-                let info = StreamInfo {
-                    format: config.format,
-                    backend: BACKEND,
-                    device_buffer_frames: config.period,
-                    ring_frames: shared.ring.capacity(),
-                    realtime: true,
-                };
-                let scratch = vec![0; config.period as usize * config.format.frame_bytes()];
-                let _ = ready_tx.send(Ok((info, shared.clone())));
-                run(
-                    Stream {
-                        pcm,
-                        config,
-                        scratch,
-                    },
-                    shared,
-                    commands,
-                );
-            }
-            Err(e) => {
-                let _ = ready_tx.send(Err(e));
-                while let Ok(r) = commands.recv() {
-                    let done = r.command == Command::Close;
-                    r.reply(Ok(()));
-                    if done {
-                        break;
-                    }
-                }
-            }
-        }
-    })?;
-    let opened = ready_rx
-        .recv_timeout(Duration::from_secs(10))
-        .unwrap_or(Err(Error::Timeout("opening the device")));
-    match opened {
-        Ok((info, shared)) => Ok(Core::new(shared, Box::new(driver), info, request)),
-        Err(e) => {
-            use crate::output::Driver;
-            let _ = driver.close();
-            Err(e)
-        }
-    }
+    let (id, owned) = (id.to_owned(), request.clone());
+    let ((info, shared), driver) = ThreadDriver::open(
+        "jodel-output-alsa",
+        Box::new(|| {}),
+        move || {
+            let pcm = open_pcm(&id, Direction::Playback)?;
+            let config = configure(&pcm, &owned)?;
+            let ring = owned.ring_frames(&config.format, config.buffer);
+            let shared = Arc::new(Shared::new(config.format, ring));
+            let info = StreamInfo {
+                format: config.format,
+                backend: BACKEND,
+                device_buffer_frames: config.period,
+                ring_frames: shared.ring.capacity(),
+                realtime: true,
+            };
+            let scratch = vec![0; config.period as usize * config.format.frame_bytes()];
+            let stream = Stream {
+                pcm,
+                config,
+                scratch,
+            };
+            Ok(((info, shared.clone()), (stream, shared)))
+        },
+        |(stream, shared), commands| run(stream, shared, commands),
+    )?;
+    Ok(output::Stream::new(shared, Box::new(driver), info, request))
 }

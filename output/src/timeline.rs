@@ -7,10 +7,9 @@
 //! ([`Timeline::report`], or [`Timeline::report_delay`] for APIs that report
 //! the frames still queued). The position is stream frames played: device
 //! frames played, minus the silence among them, plus the frames that were
-//! played or discarded before the device timeline last restarted (or
-//! passed over: [`Timeline::skip`]), minus the frames still on their way
-//! through a device further down (a mixer's input:
-//! [`Timeline::set_downstream`]).
+//! played or discarded before the device timeline last restarted. It is a
+//! device's alone: a mixer's input has the mixer's word for its position
+//! (see `shared.rs`).
 //!
 //! The [`Timeline`] has one writer at a time (see `shared.rs`): the
 //! consumer (the device thread), or the handle while it keeps the consumer
@@ -99,8 +98,7 @@ impl Pads {
 
 #[derive(Debug)]
 pub(crate) struct Timeline {
-    /// Stream frames played or discarded before this device timeline, and
-    /// those passed over.
+    /// Stream frames played or discarded before this device timeline.
     base: u64,
     /// Device frames handed to the device.
     submitted: u64,
@@ -111,11 +109,6 @@ pub(crate) struct Timeline {
     /// Silence frames in ranges already pruned from `pads`.
     pruned_silence: u64,
     anchor: Option<Anchor>,
-    /// Stream frames counted as played above that a device further down
-    /// (the mixer's) has not played yet.
-    downstream: u64,
-    /// How many times the timeline has restarted.
-    epoch: u64,
 }
 
 impl Timeline {
@@ -127,8 +120,6 @@ impl Timeline {
             pads: Pads::new(),
             pruned_silence: 0,
             anchor: None,
-            downstream: 0,
-            epoch: 0,
         }
     }
 
@@ -142,13 +133,6 @@ impl Timeline {
             self.pads.push(start, start + silence);
             self.submitted += silence;
         }
-    }
-
-    /// `frames` stream frames are passed over, in no device frames: they
-    /// count as played at once (a mixer's input, whose device is the mixer,
-    /// holds them back as downstream until the device is there).
-    pub(crate) fn skip(&mut self, frames: u64) {
-        self.base += frames;
     }
 
     /// `device` device frames had reached the DAC at `at`. With
@@ -183,8 +167,7 @@ impl Timeline {
     }
 
     /// Restarts the device timeline at zero with `base` stream frames
-    /// already played or discarded (after a device reset); nothing is
-    /// downstream any more.
+    /// already played or discarded (after a device reset).
     pub(crate) fn restart(&mut self, base: u64) {
         self.base = base;
         self.submitted = 0;
@@ -192,33 +175,11 @@ impl Timeline {
         self.pads.clear();
         self.pruned_silence = 0;
         self.anchor = None;
-        self.downstream = 0;
-        self.epoch += 1;
-    }
-
-    /// How many times the timeline has restarted.
-    pub(crate) fn epoch(&self) -> u64 {
-        self.epoch
-    }
-
-    /// `frames` more stream frames went downstream (counted as played
-    /// here, not heard yet).
-    pub(crate) fn add_downstream(&mut self, frames: u64) {
-        self.downstream += frames;
-    }
-
-    /// Only `frames` of what went downstream since restart `epoch` are not
-    /// played yet (nothing changes after a later restart; the count never
-    /// grows here, so the position never goes back).
-    pub(crate) fn set_downstream(&mut self, epoch: u64, frames: u64) {
-        if epoch == self.epoch {
-            self.downstream = self.downstream.min(frames);
-        }
     }
 
     /// Stream frames handed to the device, including those before the
     /// last restart: the position once the device has played everything.
-    #[cfg_attr(windows, allow(dead_code))]
+    #[cfg(any(test, not(windows)))]
     pub(crate) fn stream_submitted_total(&self) -> u64 {
         self.base + self.stream_submitted
     }
@@ -261,7 +222,6 @@ impl Timeline {
         let stream = device.saturating_sub(silence);
         to.snapshot.store(&Snapshot {
             played: self.base + stream.min(self.stream_submitted),
-            downstream: self.downstream,
             at: at.map_or(0, |at| to.since_origin(at)),
             extrapolate: extrapolate && at.is_some(),
             runs,
@@ -274,8 +234,6 @@ impl Timeline {
 pub(crate) struct Snapshot {
     /// Stream frames played as of the last report, the base counted in.
     played: u64,
-    /// Of them, those still downstream.
-    downstream: u64,
     /// The report's time, in nanoseconds from [`Published::origin`]
     /// (before it, below 0).
     at: i64,
@@ -286,14 +244,13 @@ pub(crate) struct Snapshot {
 }
 
 impl Packed for Snapshot {
-    const WORDS: usize = 4 + 2 * RUNS;
+    const WORDS: usize = 3 + 2 * RUNS;
 
     fn pack(&self, words: &mut [u64]) {
         words[0] = self.played;
-        words[1] = self.downstream;
-        words[2] = self.at as u64;
-        words[3] = u64::from(self.extrapolate);
-        for (pair, &(silence, run)) in words[4..].chunks_exact_mut(2).zip(&self.runs) {
+        words[1] = self.at as u64;
+        words[2] = u64::from(self.extrapolate);
+        for (pair, &(silence, run)) in words[3..].chunks_exact_mut(2).zip(&self.runs) {
             pair[0] = silence;
             pair[1] = run;
         }
@@ -301,14 +258,13 @@ impl Packed for Snapshot {
 
     fn unpack(words: &[u64]) -> Snapshot {
         let mut runs = [(0, 0); RUNS];
-        for (r, pair) in runs.iter_mut().zip(words[4..].chunks_exact(2)) {
+        for (r, pair) in runs.iter_mut().zip(words[3..].chunks_exact(2)) {
             *r = (pair[0], pair[1]);
         }
         Snapshot {
             played: words[0],
-            downstream: words[1],
-            at: words[2] as i64,
-            extrapolate: words[3] != 0,
+            at: words[1] as i64,
+            extrapolate: words[2] != 0,
             runs,
         }
     }
@@ -359,10 +315,7 @@ impl Published {
                 ahead -= played;
             }
         }
-        let position = stream.saturating_sub(s.downstream);
-        self.floor
-            .fetch_max(position, Ordering::AcqRel)
-            .max(position)
+        self.floor.fetch_max(stream, Ordering::AcqRel).max(stream)
     }
 }
 
@@ -534,54 +487,6 @@ mod tests {
         });
         assert_eq!(s.position(t0), 105);
         assert_eq!(s.t.stream_submitted_total(), 120);
-    }
-
-    #[test]
-    fn frames_passed_over_count_as_played() {
-        let mut s = Seen::new(1000);
-        let t0 = Instant::now();
-        s.change(|t| {
-            t.submit(100, 0);
-            t.report(60, t0, false);
-            t.skip(40);
-        });
-        assert_eq!(s.position(t0), 100);
-        s.change(|t| {
-            t.submit(50, 0);
-            t.report(150, t0, false);
-        });
-        assert_eq!(s.position(t0), 190);
-        assert_eq!(s.t.stream_submitted_total(), 190);
-    }
-
-    #[test]
-    fn frames_downstream_are_not_played_yet() {
-        let mut s = Seen::new(1000);
-        let t0 = Instant::now();
-        s.change(|t| {
-            t.submit(100, 0);
-            t.report_delay(0, t0, false);
-            t.add_downstream(100);
-        });
-        assert_eq!(s.position(t0), 0);
-        s.change(|t| t.set_downstream(0, 30));
-        assert_eq!(s.position(t0), 70);
-        // It never grows back, and a restart clears it.
-        s.change(|t| t.set_downstream(0, 50));
-        assert_eq!(s.position(t0), 70);
-        s.change(|t| t.restart(100));
-        assert_eq!(s.t.epoch(), 1);
-        assert_eq!(s.position(t0), 100);
-        s.change(|t| {
-            t.set_downstream(0, 0);
-            t.submit(10, 0);
-            t.report_delay(0, t0, false);
-            t.add_downstream(10);
-            t.set_downstream(0, 0);
-        });
-        assert_eq!(s.position(t0), 100);
-        s.change(|t| t.set_downstream(1, 4));
-        assert_eq!(s.position(t0), 106);
     }
 
     #[test]

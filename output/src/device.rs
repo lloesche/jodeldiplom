@@ -3,7 +3,7 @@
 use crate::backend;
 use crate::error::Error;
 use crate::format::StreamFormat;
-use crate::output::{delegate_output, Core, OpenRequest};
+use crate::output::{OpenRequest, Stream};
 
 /// The backend this build uses: `"WASAPI (shared)"`, `"Core Audio
 /// (shared)"`, `"ALSA default (shared)"`, or `"none"`.
@@ -79,19 +79,10 @@ pub fn mix_format(id: &str) -> Result<StreamFormat, Error> {
 /// does not list its sample format, is [`Error::FormatNotAccepted`]. The
 /// device does not start until the prefill is written. A device takes
 /// plain streams only: more than one lane is [`Error::InvalidArgument`].
-pub fn open(id: &str, request: &OpenRequest) -> Result<DeviceOutput, Error> {
+pub fn open(id: &str, request: &OpenRequest) -> Result<Stream, Error> {
     request.check_lanes(1)?;
-    Ok(DeviceOutput {
-        core: backend::open(id, request)?,
-    })
+    backend::open(id, request)
 }
-
-/// A shared device stream (see [`crate::Output`]).
-pub struct DeviceOutput {
-    core: Core,
-}
-
-delegate_output!(DeviceOutput, core);
 
 #[cfg(test)]
 mod tests {

@@ -42,8 +42,8 @@ is the system's.
   once with no gap; `written` goes back by as much), `stats` (underruns,
   clipped samples), `clock()` (a `Send + Sync` view for other threads),
   `close`.
-- `FileOutput` (the exact device bytes to a file, memory or any writer) and
-  `NullOutput`, with a simulated clock (`SimClock::Instant`, `Manual`,
+- `FileOutput` (the exact device bytes to a file, memory or any writer, or
+  to `std::io::sink` for none), with a simulated clock (`SimClock::Instant`, `Manual`,
   `Realtime`, `Paced`), for tests. A `Manual` device's time passes only as
   the test lets it (`SimTime::advance`, from any thread, while a mixer
   owns the output): a whole player plays on it period by period, however
@@ -72,7 +72,7 @@ is the system's.
   2): whether the parts are valid on that frame. The ring holds lane
   streams in `LANE_SAMPLE` (S24-in-32) whatever the device's format, so main
   reaches the device exactly as from a stream of its own; `Output::format`
-  stays the device's (what main is written for), and `Core` strides and
+  stays the device's (what main is written for), and `Stream` strides and
   packs by the ring's format (`PackMode::Exact` checks main against the
   device's format too: it may reach the device as written). Every target
   checks the lanes it is asked for (`OpenRequest::check_lanes(offered)`):
@@ -301,7 +301,7 @@ its `StreamInfo` carries the device's backend.
   (40 ms); the outputs keep the long rings the engine rides out decoding
   hiccups with, so a gain change is heard within 40 ms. An output's
   `position` leaves out what the device has not played yet (the mixer
-  tells each output what of it is still downstream), so positions, cues
+  tells each output how far the device has played it), so positions, cues
   and karaoke stay on what is heard. A `flush` (a seek) drops what the
   device holds as well unless another input is heard.
 - **One format:** no resampling in the mixer. Every input, Lead or

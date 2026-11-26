@@ -22,7 +22,7 @@
 //!    without playing anything.
 //! 2. [`open`] opens one with an [`OpenRequest`] at that format: its rate,
 //!    channels and a format preference list that holds its sample format.
-//! 3. The [`Output`] handle takes the engine's samples with
+//! 3. The [`Output`] handle (a [`Stream`]) takes the engine's samples with
 //!    [`Output::write`]: `i32` words holding 24-bit values (see [`pack`]
 //!    for the exact contract and what happens to values that do not fit).
 //!    A backend thread drains the ring into the device.
@@ -72,7 +72,7 @@
 //!
 //! [`FileOutput`] has the same API and writes exactly the bytes a device
 //! would receive to a file, memory or any writer, on a simulated clock
-//! ([`SimClock`]). [`NullOutput`] discards them.
+//! ([`SimClock`]); over [`std::io::sink`] it discards them.
 //!
 //! # Examples
 //!
@@ -106,17 +106,15 @@ mod tap;
 mod timeline;
 
 pub use caps::{candidates, choose_format, Capabilities};
-pub use device::{
-    default_device, devices, find_device, mix_format, open, Device, DeviceOutput, BACKEND,
-};
+pub use device::{default_device, devices, find_device, mix_format, open, Device, BACKEND};
 pub use dither::Requantizer;
 pub use error::Error;
-pub use file::{FileOutput, MemorySink, NullOutput, SimClock, SimTime};
+pub use file::{FileOutput, MemorySink, SimClock, SimTime};
 pub use format::{SampleFormat, StreamFormat};
 pub use input::{
     default_input, find_input, input_devices, open_input, open_input_with, EchoRecording, Input,
     InputInfo, MicFeed, MicStatus, MicTap, Mono, VoiceBlock,
 };
-pub use output::{Clock, OpenRequest, Output, OutputTarget, Stats, StreamInfo};
+pub use output::{Clock, OpenRequest, Output, OutputTarget, Stats, Stream, StreamInfo};
 pub use pack::{PackError, PackMode, PackReport};
 pub use tap::{Tap, TAP_CHUNK};

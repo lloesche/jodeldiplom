@@ -33,12 +33,9 @@
 //! [`super::strips::Look`]: a frame noted at or before the chunk's first
 //! means from its start.
 
-use std::time::Duration;
-
 use super::envelope::Envelope;
-use super::ramp::{start_of, Gain, GainId, Waiting, When};
+use super::ramp::{start_of, Aimed, Gain, GainId};
 use super::strips::Strips;
-use super::Curve;
 use crate::lanes::{Parts, SWITCH_FADE};
 
 /// A lane of an input.
@@ -176,8 +173,7 @@ pub(super) fn touch(lanes: &[LaneRun], strips: &Strips, starts: &[(GainId, u64)]
 
 /// The switch of an input with parts between main and them.
 pub(super) struct Switch {
-    gain: Gain,
-    target: f64,
+    aimed: Aimed,
     /// This chunk: the parts' share `s`, and main's, `1 − s`.
     pub(super) share: Envelope,
     pub(super) rest: Envelope,
@@ -200,8 +196,7 @@ pub(super) struct Switch {
 impl Switch {
     pub(super) fn new() -> Switch {
         Switch {
-            gain: Gain::new(0.0),
-            target: 0.0,
+            aimed: Aimed::new(0.0),
             share: Envelope::new(0.0),
             rest: Envelope::new(1.0),
             words: Vec::new(),
@@ -251,7 +246,8 @@ impl Switch {
             if !self.absent && control == self.control && !flips {
                 continue;
             }
-            self.share.fill_part(&mut self.gain, first, from, k, rate);
+            self.share
+                .fill_part(&mut self.aimed.gain, first, from, k, rate);
             from = k;
             self.control = control;
             if flips {
@@ -265,7 +261,8 @@ impl Switch {
                 self.aim(false);
             }
         }
-        self.share.fill_part(&mut self.gain, first, from, n, rate);
+        self.share
+            .fill_part(&mut self.aimed.gain, first, from, n, rate);
         self.share.join();
         self.rest.assign_complement(&self.share);
         self.settled = touch.settled;
@@ -273,7 +270,7 @@ impl Switch {
     }
 
     /// The parts' share that the control word and the touch give.
-    fn aimed(&self) -> f64 {
+    fn wanted(&self) -> f64 {
         if self.control == Parts::Present && self.touched {
             1.0
         } else {
@@ -283,13 +280,7 @@ impl Switch {
 
     /// `s` at its aim at once.
     fn jump(&mut self) {
-        self.target = self.aimed();
-        self.gain.set(Waiting {
-            when: When::Now,
-            to: self.target,
-            over: Duration::ZERO,
-            curve: Curve::Linear,
-        });
+        self.aimed.jump(self.wanted());
     }
 
     /// `s` aims at what the control word and the parts give now
@@ -305,25 +296,17 @@ impl Switch {
     }
 
     fn ramp(&mut self, to: f64) {
-        if to != self.target {
-            self.target = to;
-            self.gain.set(Waiting {
-                when: When::Now,
-                to,
-                over: SWITCH_FADE,
-                curve: Curve::Linear,
-            });
-        }
+        self.aimed.aim(to, SWITCH_FADE);
     }
 
     /// Nothing of the input is mixed: the switch's ramp ends at once.
     pub(super) fn settle(&mut self) {
-        self.gain.settle();
+        self.aimed.gain.settle();
     }
 
     /// The device opened again: a ramp under way ends at once.
     pub(super) fn new_epoch(&mut self) {
-        self.gain.new_epoch();
+        self.aimed.gain.new_epoch();
     }
 }
 

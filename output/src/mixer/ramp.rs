@@ -368,6 +368,55 @@ impl Gain {
     }
 }
 
+/// A [`Gain`] that follows what it is aimed at: each new aim a linear
+/// ramp from the next frame filled, from wherever the gain is.
+#[derive(Clone, Debug)]
+pub(crate) struct Aimed {
+    pub(crate) gain: Gain,
+    /// What it was last aimed at (a ramp still waiting counts).
+    to: f64,
+}
+
+impl Aimed {
+    pub(crate) fn new(at: f64) -> Aimed {
+        Aimed {
+            gain: Gain::new(at),
+            to: at,
+        }
+    }
+
+    /// What it was last aimed at.
+    #[cfg(test)]
+    pub(crate) fn to(&self) -> f64 {
+        self.to
+    }
+
+    /// Ramps to `to` over `over` from the next frame filled, unless it is
+    /// aimed there already; returns whether that is a change.
+    pub(crate) fn aim(&mut self, to: f64, over: Duration) -> bool {
+        let changed = to != self.to;
+        if changed {
+            self.set(to, over);
+        }
+        changed
+    }
+
+    /// At `to` at once, whatever it was aimed at (a ramp under way ends).
+    pub(crate) fn jump(&mut self, to: f64) {
+        self.set(to, Duration::ZERO);
+    }
+
+    fn set(&mut self, to: f64, over: Duration) {
+        self.to = to;
+        self.gain.set(Waiting {
+            when: When::Now,
+            to,
+            over,
+            curve: Curve::Linear,
+        });
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

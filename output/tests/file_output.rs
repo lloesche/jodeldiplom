@@ -1,11 +1,11 @@
-//! FileOutput and NullOutput: the handle logic every backend shares
+//! FileOutput: the handle logic every backend shares
 //! (packing, ring, start threshold, underrun, pause, flush, drain, close),
 //! on a simulated device.
 
 use jodel_output::pack::{pack, unpack};
 use jodel_output::{
-    Capabilities, Clock, DeviceOutput, Error, FileOutput, NullOutput, OpenRequest, Output,
-    PackError, PackMode, SampleFormat, SimClock, StreamFormat,
+    Capabilities, Clock, Error, FileOutput, OpenRequest, Output, PackError, PackMode, SampleFormat,
+    SimClock, Stream, StreamFormat,
 };
 use std::time::{Duration, Instant};
 
@@ -321,7 +321,8 @@ fn paced_clock_plays_only_what_is_written_no_faster_than_real_time() {
 
 #[test]
 fn closed_outputs_refuse_further_use() {
-    let mut out = NullOutput::new(
+    let mut out = FileOutput::new(
+        std::io::sink(),
         StreamFormat::new(48_000, 2, SampleFormat::S32),
         SimClock::Instant,
     );
@@ -336,7 +337,8 @@ fn closed_outputs_refuse_further_use() {
 
 #[test]
 fn partial_frames_are_rejected() {
-    let mut out = NullOutput::new(
+    let mut out = FileOutput::new(
+        std::io::sink(),
         StreamFormat::new(48_000, 2, SampleFormat::S32),
         SimClock::Instant,
     );
@@ -349,7 +351,8 @@ fn partial_frames_are_rejected() {
 
 #[test]
 fn advance_needs_the_manual_clock() {
-    let mut out = NullOutput::new(
+    let mut out = FileOutput::new(
+        std::io::sink(),
         StreamFormat::new(48_000, 2, SampleFormat::S32),
         SimClock::Instant,
     );
@@ -360,14 +363,16 @@ fn advance_needs_the_manual_clock() {
 fn outputs_can_move_to_the_engine_thread() {
     fn send<T: Send>() {}
     fn send_sync<T: Send + Sync>() {}
-    send::<DeviceOutput>();
+    send::<Stream>();
     send::<FileOutput>();
     send::<Box<dyn Output>>();
     send_sync::<Clock>();
-    let mut out: Box<dyn Output> = Box::new(NullOutput::new(
+    let out = FileOutput::new(
+        std::io::sink(),
         StreamFormat::new(44_100, 2, SampleFormat::S16),
         SimClock::Instant,
-    ));
+    );
+    let mut out: Box<dyn Output> = Box::new(out.into_stream());
     std::thread::spawn(move || {
         out.write(&[0; 20], None).unwrap();
         out.written()

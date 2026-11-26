@@ -1,6 +1,7 @@
-//! A device thread that owns the OS stream and takes commands from the
-//! handle, for the backends whose API is driven from a thread of ours
-//! (WASAPI, ALSA).
+//! A device thread that owns the OS stream, for the backends whose API is
+//! driven from a thread of ours (WASAPI, ALSA): opened there
+//! ([`spawn_opened`]), and for an output taking commands from the handle
+//! ([`ThreadDriver`]).
 
 use crate::error::Error;
 use crate::output::Driver;
@@ -31,6 +32,49 @@ impl Request {
 /// How long the handle waits for the device thread to carry out a command.
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// How long an opener waits for its device thread to open the device.
+const OPEN_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Spawns a device thread named `name`, which opens the device there with
+/// `open` (as some APIs want: the stream lives on the thread that made
+/// it) and then runs it with `run`. Waits up to [`OPEN_TIMEOUT`] for the
+/// open, and returns what `open` gave the opener and the thread; or its
+/// error (the thread joined), or [`Error::Timeout`] for `opening`. A
+/// thread that opens the device after its opener stopped waiting lets it
+/// go, and ends.
+pub(crate) fn spawn_opened<I, T>(
+    name: &str,
+    opening: &'static str,
+    open: impl FnOnce() -> Result<(I, T), Error> + Send + 'static,
+    run: impl FnOnce(T) + Send + 'static,
+) -> Result<(I, JoinHandle<()>), Error>
+where
+    I: Send + 'static,
+{
+    let (ready, opened) = mpsc::sync_channel(1);
+    let thread = std::thread::Builder::new()
+        .name(name.into())
+        .spawn(move || match open() {
+            Ok((info, device)) => {
+                if ready.send(Ok(info)).is_ok() {
+                    run(device);
+                }
+            }
+            Err(e) => {
+                let _ = ready.send(Err(e));
+            }
+        })
+        .map_err(Error::from)?;
+    match opened.recv_timeout(OPEN_TIMEOUT) {
+        Ok(Ok(info)) => Ok((info, thread)),
+        Ok(Err(e)) => {
+            let _ = thread.join();
+            Err(e)
+        }
+        Err(_) => Err(Error::Timeout(opening)),
+    }
+}
+
 /// The handle side: sends commands and waits for their result.
 pub(crate) struct ThreadDriver {
     tx: Sender<Request>,
@@ -39,24 +83,29 @@ pub(crate) struct ThreadDriver {
 }
 
 impl ThreadDriver {
-    /// Spawns `body` on a thread named `name`; it gets the command
+    /// Opens an output device on a thread named `name` ([`spawn_opened`])
+    /// and drives it there: `run` gets the device and the command
     /// receiver. `wake` is called after each command is sent (to signal an
     /// OS event the thread waits on).
-    pub(crate) fn spawn(
+    pub(crate) fn open<I, T>(
         name: &str,
         wake: Box<dyn Fn() + Send>,
-        body: impl FnOnce(Receiver<Request>) + Send + 'static,
-    ) -> Result<ThreadDriver, Error> {
+        open: impl FnOnce() -> Result<(I, T), Error> + Send + 'static,
+        run: impl FnOnce(T, Receiver<Request>) + Send + 'static,
+    ) -> Result<(I, ThreadDriver), Error>
+    where
+        I: Send + 'static,
+    {
         let (tx, rx) = mpsc::channel();
-        let thread = std::thread::Builder::new()
-            .name(name.into())
-            .spawn(move || body(rx))
-            .map_err(Error::from)?;
-        Ok(ThreadDriver {
+        let (info, thread) = spawn_opened(name, "opening the device", open, move |device| {
+            run(device, rx)
+        })?;
+        let driver = ThreadDriver {
             tx,
             wake,
             thread: Some(thread),
-        })
+        };
+        Ok((info, driver))
     }
 
     fn request(&mut self, command: Command) -> Result<(), Error> {

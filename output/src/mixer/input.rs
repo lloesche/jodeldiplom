@@ -17,7 +17,7 @@ use super::{MixShared, Msg};
 use crate::error::Error;
 use crate::format::StreamFormat;
 use crate::lanes::lane_format;
-use crate::output::{forward_output, Core, Driver, OpenRequest, Output, StreamInfo};
+use crate::output::{Driver, OpenRequest, Output, StreamInfo};
 use crate::pack::unpack_sample;
 use crate::shared::Shared;
 use crate::tap::Tap;
@@ -34,7 +34,7 @@ pub(crate) struct Link {
 }
 
 /// An output open on an input, as the mixer thread drains it.
-pub(crate) struct Stream {
+pub(crate) struct Feed {
     pub(crate) link: Arc<Link>,
     /// The lanes of each frame (1: a plain stream; see [`crate::lanes`]).
     pub(crate) lanes: u16,
@@ -52,10 +52,11 @@ pub(crate) struct Stream {
     /// frames start at, the stream frames dropped just before it (played
     /// once the device is there), and how many of its frames follow. Room
     /// for what the device's ring holds is made at the start ([`open`]);
-    /// past it the two oldest become one ([`Stream::note_sent`]).
+    /// past it the two oldest become one ([`Feed::note_sent`]).
     sent: VecDeque<(u64, u64, u64)>,
-    /// The timeline epoch (restarts by flush) of what was taken last.
-    epoch: u64,
+    /// The restarts (by a flush) of the stream that what was taken last
+    /// came after.
+    restarts: u64,
 }
 
 /// What a stream gave in a chunk: from the chunk's frame `at`, its stream
@@ -95,12 +96,12 @@ impl Span {
     };
 }
 
-impl Stream {
+impl Feed {
     /// The stream of `link`, of `lanes` lanes, with room for chunks of up
     /// to `chunk` frames, `sent` of them on the device not played yet.
-    pub(crate) fn new(link: Arc<Link>, lanes: u16, chunk: usize, sent: usize) -> Stream {
+    pub(crate) fn new(link: Arc<Link>, lanes: u16, chunk: usize, sent: usize) -> Feed {
         let format = link.shared.format;
-        Stream {
+        Feed {
             link,
             lanes,
             follow: None,
@@ -111,7 +112,7 @@ impl Stream {
             bytes: Vec::with_capacity(chunk * format.frame_bytes()),
             samples: Vec::with_capacity(chunk * usize::from(format.channels)),
             sent: VecDeque::with_capacity(sent),
-            epoch: 0,
+            restarts: 0,
         }
     }
 
@@ -134,15 +135,13 @@ impl Stream {
         self.bytes[..from * fb].fill(0);
         self.bytes[to * fb..].fill(0);
         let rendered = if from < to {
-            self.link
-                .shared
-                .render_input(&mut self.bytes[from * fb..to * fb])
+            self.link.shared.take(&mut self.bytes[from * fb..to * fb])
         } else {
             None
         };
         self.at = from;
-        if let Some((frame, got, epoch)) = rendered {
-            self.restarted(epoch);
+        if let Some((frame, got, restarts)) = rendered {
+            self.restarted(restarts);
             self.frame = frame;
             self.got = got;
         }
@@ -197,8 +196,8 @@ impl Stream {
         let mut head = shared.head();
         let mut dropped = 0;
         if head < due {
-            if let Some((n, epoch)) = shared.skip_input(due - head) {
-                self.restarted(epoch);
+            if let Some((n, restarts)) = shared.skip(due - head) {
+                self.restarted(restarts);
                 dropped = n;
                 head += n;
             }
@@ -211,17 +210,18 @@ impl Stream {
         (from as usize, span.to, dropped)
     }
 
-    /// The output's timeline is at restart `epoch`: what was sent before
+    /// The output's stream is at restart `restarts`: what was sent before
     /// a restart is not its to count.
-    fn restarted(&mut self, epoch: u64) {
-        if epoch != self.epoch {
+    fn restarted(&mut self, restarts: u64) {
+        if restarts != self.restarts {
             self.sent.clear();
-            self.epoch = epoch;
+            self.restarts = restarts;
         }
     }
 
     /// The device has played up to device frame `played`: the output is
-    /// told what of it is still downstream.
+    /// told how far its own stream is played, all it took but what is
+    /// still on the device.
     pub(crate) fn played(&mut self, played: u64) {
         while self.sent.front().is_some_and(|&(d, _, n)| d + n <= played) {
             self.sent.pop_front();
@@ -234,7 +234,8 @@ impl Stream {
                 before + n - played.saturating_sub(d).min(n)
             })
             .sum();
-        self.link.shared.set_downstream(self.epoch, unplayed);
+        let shared = &self.link.shared;
+        shared.set_played(shared.head().saturating_sub(unplayed));
     }
 }
 
@@ -298,7 +299,7 @@ pub(crate) fn open(
         }
         let chunk = format.duration_to_frames(shared.period).max(1);
         let ring = lane_format(format, request.lanes);
-        let ring = Arc::new(Shared::new(ring, request.ring_frames(&format, chunk)));
+        let ring = Arc::new(Shared::mixed(ring, request.ring_frames(&format, chunk)));
         let link = Arc::new(Link {
             id: shared.ids.fetch_add(1, Ordering::Relaxed),
             shared: ring.clone(),
@@ -308,8 +309,8 @@ pub(crate) fn open(
         // What the device's ring holds of it, and the device's own buffer.
         let sent = shared.buffer.as_secs_f64() / shared.period.as_secs_f64().max(1e-3);
         let sent = sent.ceil() as usize + 2;
-        let stream = Stream::new(link.clone(), request.lanes, chunk as usize, sent);
-        match ask(tx, |done| Msg::Open { slot, stream, done })?? {
+        let feed = Feed::new(link.clone(), request.lanes, chunk as usize, sent);
+        match ask(tx, |done| Msg::Open { slot, feed, done })?? {
             Opened::Yes { backend, realtime } => {
                 let info = StreamInfo {
                     format,
@@ -322,8 +323,8 @@ pub(crate) fn open(
                     link,
                     tx: tx.clone(),
                 };
-                let core = Core::new(ring, Box::new(driver), info, request);
-                return Ok(Box::new(InputOutput { core }));
+                let stream = crate::Stream::new(ring, Box::new(driver), info, request);
+                return Ok(Box::new(stream));
             }
             Opened::Desk(desk) => format = desk,
         }
@@ -360,7 +361,7 @@ impl Driver for InputDriver {
         // What the device holds of it goes too, unless another input is
         // heard there.
         let id = self.link.id;
-        ask(&self.tx, |done| Msg::Flush { stream: id, done })?
+        ask(&self.tx, |done| Msg::Flush { feed: id, done })?
     }
 
     fn close(&mut self) -> Result<(), Error> {
@@ -369,17 +370,12 @@ impl Driver for InputDriver {
         let _ = self.tx.send(Msg::Closed(self.link.id));
         Ok(())
     }
-}
 
-/// A stream of a mixer input, as the engine writing it sees it: an
-/// [`Output`] in the device's format. It runs no taps: the device's tap is
-/// the microphone's port ([`super::Mixer::set_mic`]).
-pub(crate) struct InputOutput {
-    pub(crate) core: Core,
-}
-
-impl crate::output::Output for InputOutput {
-    forward_output!(core);
+    /// The device's tap is the microphone's port
+    /// ([`super::Mixer::set_mic`]).
+    fn runs_taps(&self) -> bool {
+        false
+    }
 }
 
 /// How many chunks a [`FrameMap`] remembers (seconds of them).

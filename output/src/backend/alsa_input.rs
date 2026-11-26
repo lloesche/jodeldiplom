@@ -8,15 +8,15 @@
 //! reads it period by period into the microphone ring.
 
 use super::alsa_output::{map_error, open_pcm, DEFAULT, SERVER_RATE};
+use super::thread::spawn_opened;
 use crate::device::Device;
 use crate::error::Error;
 use crate::input::{Input, InputInfo, MicClock, Mono, Opened, Producer, Wire, CAPTURE_PERIOD};
 use alsa::pcm::{Access, Format, Frames, HwParams, PCM};
 use alsa::{Direction, ValueOr};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{mpsc, Arc};
+use std::sync::Arc;
 use std::thread::JoinHandle;
-use std::time::Duration;
 
 pub(crate) const INPUT_BACKEND: &str = "ALSA default (shared)";
 
@@ -131,43 +131,33 @@ impl Drop for Running {
 
 pub(crate) fn open_input(id: &str, mono: Mono) -> Result<Input, Error> {
     let stop = Arc::new(AtomicBool::new(false));
-    let (ready_tx, ready_rx) = mpsc::sync_channel(1);
-    let id_owned = id.to_owned();
-    let stop_thread = stop.clone();
-    let thread = std::thread::Builder::new()
-        .name("jodel-input-alsa".into())
-        .spawn(move || {
-            let opened = open_pcm(&id_owned, Direction::Capture)
-                .and_then(|pcm| configure(&pcm).map(|c| (pcm, c)));
-            match opened {
-                Ok((pcm, config)) => {
-                    let (producer, opened) =
-                        Opened::new(config.rate, config.period as u32, mono, MicClock::system());
-                    let info = InputInfo {
-                        id: id_owned.clone(),
-                        name: id_owned.clone(),
-                        backend: INPUT_BACKEND,
-                        rate: config.rate,
-                        channels: config.channels,
-                        period_frames: config.period as u32,
-                        mono,
-                    };
-                    let _ = ready_tx.send(Ok((info, opened)));
-                    run(pcm, config, producer, stop_thread);
-                }
-                Err(e) => {
-                    let _ = ready_tx.send(Err(e));
-                }
-            }
-        })?;
+    let stopped = stop.clone();
+    let id = id.to_owned();
+    let ((mut info, opened), thread) = spawn_opened(
+        "jodel-input-alsa",
+        "opening the input",
+        move || {
+            let pcm = open_pcm(&id, Direction::Capture)?;
+            let config = configure(&pcm)?;
+            let period = config.period as u32;
+            let (producer, opened) = Opened::new(config.rate, period, mono, MicClock::system());
+            let info = InputInfo {
+                name: id.clone(),
+                id,
+                backend: INPUT_BACKEND,
+                rate: config.rate,
+                channels: config.channels,
+                period_frames: period,
+                mono,
+            };
+            Ok(((info, opened), (pcm, config, producer)))
+        },
+        move |(pcm, config, producer)| run(pcm, config, producer, stopped),
+    )?;
     let running = Running {
         stop,
         thread: Some(thread),
     };
-    let opened = ready_rx
-        .recv_timeout(Duration::from_secs(10))
-        .unwrap_or(Err(Error::Timeout("opening the input")));
-    let (mut info, opened) = opened?;
     if let Some(d) = input_devices()
         .ok()
         .and_then(|all| all.into_iter().find(|d| d.id == info.id))

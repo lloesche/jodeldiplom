@@ -61,7 +61,7 @@ impl OutputTarget for Device {
         if let Some(time) = out.time() {
             self.times.lock().unwrap().push(time);
         }
-        Ok(Box::new(out))
+        Ok(Box::new(out.into_stream()))
     }
 }
 

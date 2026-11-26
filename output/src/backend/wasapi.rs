@@ -25,10 +25,10 @@ use super::thread::{Command, Request, ThreadDriver};
 use crate::device::Device;
 use crate::error::Error;
 use crate::format::{SampleFormat, StreamFormat};
-use crate::output::{Core, OpenRequest, StreamInfo};
+use crate::output::{self, OpenRequest, StreamInfo};
 use crate::shared::Shared;
 use std::ptr;
-use std::sync::mpsc::{self, Receiver};
+use std::sync::mpsc::Receiver;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use windows::core::{HRESULT, HSTRING, PWSTR};
@@ -84,10 +84,10 @@ impl Drop for Com {
     }
 }
 
-/// A kernel event handle that the handle thread signals and the device
-/// thread waits on.
-#[derive(Clone, Copy)]
-pub(super) struct Event(pub(super) HANDLE);
+/// A kernel event that one thread signals and another waits on: an auto-
+/// reset event, closed when it is dropped (shared as an `Arc<Event>`
+/// where both sides hold it).
+pub(super) struct Event(HANDLE);
 // SAFETY: event handles are process-wide kernel objects, usable from any thread.
 unsafe impl Send for Event {}
 unsafe impl Sync for Event {}
@@ -100,13 +100,20 @@ impl Event {
             .map_err(|e| map_error("CreateEventW", e))
     }
 
-    pub(super) fn set(self) {
-        // SAFETY: the handle is open until `close`.
-        let _ = unsafe { SetEvent(self.0) };
+    /// Its handle, open while it lives.
+    pub(super) fn handle(&self) -> HANDLE {
+        self.0
     }
 
-    pub(super) fn close(self) {
-        // SAFETY: called once, when nothing waits on the handle any more.
+    pub(super) fn set(&self) {
+        // SAFETY: the handle is open while `self` lives.
+        let _ = unsafe { SetEvent(self.0) };
+    }
+}
+
+impl Drop for Event {
+    fn drop(&mut self) {
+        // SAFETY: the one owner lets go of it: nothing waits on it any more.
         let _ = unsafe { CloseHandle(self.0) };
     }
 }
@@ -332,7 +339,7 @@ fn open_stream(id: &str, request: &OpenRequest) -> Result<(Stream, u64), Error> 
     let w = descriptor(format);
     let event = Event::new()?;
     // SAFETY: COM calls on the client owned here; `w` outlives them.
-    let setup = unsafe {
+    unsafe {
         (|| -> Result<(Stream, u64), Error> {
             let mut period = 0i64;
             client
@@ -351,7 +358,7 @@ fn open_stream(id: &str, request: &OpenRequest) -> Result<(Stream, u64), Error> 
                 )
                 .map_err(|e| map_error("IAudioClient::Initialize", e))?;
             client
-                .SetEventHandle(event.0)
+                .SetEventHandle(event.handle())
                 .map_err(|e| map_error("SetEventHandle", e))?;
             let frames = client
                 .GetBufferSize()
@@ -379,11 +386,7 @@ fn open_stream(id: &str, request: &OpenRequest) -> Result<(Stream, u64), Error> 
                 period,
             ))
         })()
-    };
-    if setup.is_err() {
-        event.close();
     }
-    setup
 }
 
 impl Stream {
@@ -450,9 +453,9 @@ impl Drop for Mmcss {
 }
 
 /// The device thread: owns the stream until `Close`.
-fn run(stream: Stream, shared: Arc<Shared>, commands: Receiver<Request>, wake: Event) {
+fn run(stream: Stream, shared: Arc<Shared>, commands: Receiver<Request>, wake: &Event) {
     let _mmcss = Mmcss::enter();
-    let handles = [stream.event.0, wake.0];
+    let handles = [stream.event.handle(), wake.handle()];
     let mut running = false;
     // The engine buffer holds a prefill that has not been reset.
     let mut primed = false;
@@ -546,7 +549,6 @@ fn run(stream: Stream, shared: Arc<Shared>, commands: Receiver<Request>, wake: E
             };
             request.reply(result);
             if command == Command::Close {
-                stream.event.close();
                 return;
             }
         }
@@ -554,106 +556,35 @@ fn run(stream: Stream, shared: Arc<Shared>, commands: Receiver<Request>, wake: E
 }
 
 /// Opens `id` shared; the stream runs on its own thread.
-pub(crate) fn open(id: &str, request: &OpenRequest) -> Result<Core, Error> {
+pub(crate) fn open(id: &str, request: &OpenRequest) -> Result<output::Stream, Error> {
     request.validate()?;
-    let wake = Event::new()?;
-    let (ready_tx, ready_rx) = mpsc::sync_channel(1);
-    let id_owned = id.to_owned();
-    let request_owned = request.clone();
-    let driver = ThreadDriver::spawn(
+    let wake = Arc::new(Event::new()?);
+    let waker = wake.clone();
+    let (id, owned) = (id.to_owned(), request.clone());
+    let ((info, shared), driver) = ThreadDriver::open(
         "jodel-output-wasapi",
-        Box::new(move || wake.set()),
-        move |commands| {
-            let com = match Com::init() {
-                Ok(c) => c,
-                Err(e) => {
-                    let _ = ready_tx.send(Err(e));
-                    return;
-                }
+        Box::new(move || waker.set()),
+        move || {
+            let com = Com::init()?;
+            let (stream, period) = open_stream(&id, &owned)?;
+            let ring = owned.ring_frames(&stream.format, u64::from(stream.frames));
+            let shared = Arc::new(Shared::new(stream.format, ring));
+            let info = StreamInfo {
+                format: stream.format,
+                backend: BACKEND,
+                device_buffer_frames: period,
+                ring_frames: shared.ring.capacity(),
+                realtime: true,
             };
-            match open_stream(&id_owned, &request_owned) {
-                Ok((stream, period)) => {
-                    let shared = Arc::new(Shared::new(
-                        stream.format,
-                        request_owned.ring_frames(&stream.format, u64::from(stream.frames)),
-                    ));
-                    let info = StreamInfo {
-                        format: stream.format,
-                        backend: BACKEND,
-                        device_buffer_frames: period,
-                        ring_frames: shared.ring.capacity(),
-                        realtime: true,
-                    };
-                    let _ = ready_tx.send(Ok((info, shared.clone())));
-                    run(stream, shared, commands, wake);
-                }
-                Err(e) => {
-                    let _ = ready_tx.send(Err(e));
-                    // Answer the handle's close.
-                    while let Ok(r) = commands.recv() {
-                        let done = r.command == Command::Close;
-                        r.reply(Ok(()));
-                        if done {
-                            break;
-                        }
-                    }
-                }
-            }
+            Ok(((info, shared.clone()), (com, stream, shared)))
+        },
+        move |(com, stream, shared), commands| {
+            run(stream, shared, commands, &wake);
+            // COM goes last, after the stream.
             drop(com);
         },
-    );
-    let mut driver = match driver {
-        Ok(d) => d,
-        Err(e) => {
-            wake.close();
-            return Err(e);
-        }
-    };
-    let opened = ready_rx
-        .recv_timeout(Duration::from_secs(10))
-        .unwrap_or(Err(Error::Timeout("opening the device")));
-    match opened {
-        Ok((info, shared)) => Ok(Core::new(
-            shared,
-            Box::new(WasapiDriver {
-                inner: driver,
-                wake,
-            }),
-            info,
-            request,
-        )),
-        Err(e) => {
-            use crate::output::Driver;
-            let _ = driver.close();
-            wake.close();
-            Err(e)
-        }
-    }
-}
-
-/// The thread driver plus the wake event it owns.
-struct WasapiDriver {
-    inner: ThreadDriver,
-    wake: Event,
-}
-
-impl crate::output::Driver for WasapiDriver {
-    fn start(&mut self) -> Result<(), Error> {
-        self.inner.start()
-    }
-    fn pause(&mut self) -> Result<(), Error> {
-        self.inner.pause()
-    }
-    fn flush(&mut self) -> Result<(), Error> {
-        self.inner.flush()
-    }
-    fn close(&mut self) -> Result<(), Error> {
-        let r = self.inner.close();
-        if r.is_ok() {
-            self.wake.close();
-        }
-        r
-    }
+    )?;
+    Ok(output::Stream::new(shared, Box::new(driver), info, request))
 }
 
 #[cfg(test)]
