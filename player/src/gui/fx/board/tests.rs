@@ -226,7 +226,7 @@ fn rung_effects_are_held_and_fired_by_rung() {
     let lost = frame(&at(None, Some((second, None))), 4.0);
     assert!(!lost.live(Fx::Rain).fired, "nothing fires going down");
     assert_eq!(lost.live(Fx::EdgeFire).aim, 0.0);
-    let collapse = f64::from(crate::gui::rainbow::COLLAPSE);
+    let collapse = f64::from(crate::gui::shine::COLLAPSE);
     let half = frame(&at(None, None), 4.0 + collapse / 2.0);
     assert!((half.live(Fx::EdgeFire).strength - 0.3).abs() < 1e-6);
     let sought = frame(&at(second, None), 9.0);

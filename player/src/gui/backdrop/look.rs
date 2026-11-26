@@ -1,7 +1,8 @@
 //! The backdrop's look as numbers: the pieces of its shader that are maths
 //! alone, each here twice, for the processor and in WGSL ([`wgsl`]), held
 //! to each other in `super::super::shader_check`: the card's rounded edge
-//! ([`rounded_box`], [`card_edge`]) and the light and shadow falling off
+//! ([`card_edge`], round its distance from the box:
+//! [`crate::gui::wgsl_math::round_box`]) and the light and shadow falling off
 //! round it ([`falloff`]), the smooth cubic sampling's taps ([`bspline`]),
 //! how a layer moves with its depth ([`shift`]), the corners' shade
 //! ([`vignette`]), the light sweeping across the plate ([`sweep`]), the
@@ -13,6 +14,8 @@
 //! the card is read for its size ([`softness`]) and the levels the cover is
 //! read blurred at ([`blurs`], [`defocus_level`]), which only the processor
 //! works out.
+
+use crate::gui::wgsl_math::smoothstep;
 
 /// The card's side at most, a share of the window's height (and, for a
 /// tall window, of its width).
@@ -52,22 +55,6 @@ pub const DEFOCUS_BASE: f32 = 0.5;
 /// How much farther back than the subject (the depth's nearness) the plate
 /// is blurred the most.
 pub const DEFOCUS_SPAN: f32 = 0.3;
-
-/// `x` from 0 below `a` to 1 above `b`, smoothly (as WGSL's `smoothstep`).
-pub fn smoothstep(a: f32, b: f32, x: f32) -> f32 {
-    let t = ((x - a) / (b - a)).clamp(0.0, 1.0);
-    t * t * (3.0 - 2.0 * t)
-}
-
-/// How far (`dx`, `dy`) from a rounded box's middle is outside it (less
-/// than 0 inside), the box `hx` × `hy` from its middle to its sides, its
-/// corners rounded by `r`.
-pub fn rounded_box(dx: f32, dy: f32, hx: f32, hy: f32, r: f32) -> f32 {
-    let qx = dx.abs() - hx + r;
-    let qy = dy.abs() - hy + r;
-    let out = (qx.max(0.0).powi(2) + qy.max(0.0).powi(2)).sqrt();
-    out + qx.max(qy).min(0.0) - r
-}
 
 /// How much of the card shows `d` from its edge (less than 0 inside), its
 /// shorter side `side` long: all of it inside, fading over [`EDGE`] to
@@ -316,6 +303,7 @@ fn defocus(near: f32, focus: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::gui::wgsl_math::round_box;
 
     #[test]
     fn the_card_is_the_whole_cover_as_large_as_it_looks_good() {
@@ -390,11 +378,11 @@ mod tests {
     #[test]
     fn the_card_s_edge_is_rounded_and_fades_into_the_blur() {
         // Inside, on the edge, outside.
-        assert!(rounded_box(0.0, 0.0, 10.0, 5.0, 1.0) < -4.9);
-        assert!(rounded_box(10.0, 0.0, 10.0, 5.0, 1.0).abs() < 1e-5);
-        assert!((rounded_box(13.0, 0.0, 10.0, 5.0, 1.0) - 3.0).abs() < 1e-5);
+        assert!(round_box((0.0, 0.0), (10.0, 5.0), 1.0) < -4.9);
+        assert!(round_box((10.0, 0.0), (10.0, 5.0), 1.0).abs() < 1e-5);
+        assert!((round_box((13.0, 0.0), (10.0, 5.0), 1.0) - 3.0).abs() < 1e-5);
         // The corner rounded: its tip is outside.
-        assert!(rounded_box(10.0, 5.0, 10.0, 5.0, 1.0) > 0.4);
+        assert!(round_box((10.0, 5.0), (10.0, 5.0), 1.0) > 0.4);
         assert_eq!(card_edge(-100.0, 1000.0), 1.0);
         assert_eq!(card_edge(0.0, 1000.0), 0.0);
         let half = card_edge(-EDGE * 500.0, 1000.0);

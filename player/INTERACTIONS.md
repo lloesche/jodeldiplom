@@ -697,7 +697,7 @@ stem keys are their mutes.
     (`gui::stage::badge`)
   - `a_new_level_rises_and_a_lost_one_collapses`,
     `a_drop_of_a_level_eases_down_and_shines_on`, `the_rainbow_goes_round`
-    (`gui::rainbow`)
+    (`gui::shine`)
   - `the_bands_grow_with_the_level`, `a_lost_streak_collapses_into_the_playhead`,
     `a_drop_of_a_level_still_shines`,
     `the_shine_an_instance_was_made_with_is_read_back` (`gui::fx::rainbow`),

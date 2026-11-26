@@ -28,7 +28,7 @@ use jodel_rhythm::{Analysis, Region};
 
 use crate::core::singing::Singing;
 use crate::gui::backdrop::music::Song;
-use crate::gui::rainbow::smoothstep;
+use crate::gui::wgsl_math::smoothstep;
 
 /// How fast a beat's pulse falls away: to about a third in this many
 /// seconds.

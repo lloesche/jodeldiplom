@@ -549,7 +549,7 @@ pub enum Text {
 }
 
 /// A lyric treatment: the text it goes on, and how strong it is, as the
-/// shader eases it (level, from, since: [`super::rainbow::shine_at`];
+/// shader eases it (level, from, since: [`super::shine::shine_at`];
 /// `(s, s, 0)` is `s` throughout), none where it shows nothing.
 #[derive(Clone, Copy, Debug)]
 pub struct Lyric {
@@ -700,7 +700,7 @@ impl Spec {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::gui::stage_gpu::{kind, Group};
+    use crate::gui::stage_gpu::{Group, Shape};
     use std::collections::HashSet;
 
     /// Every effect named apart, its WGSL prefix apart, its kinds within
@@ -719,7 +719,7 @@ mod tests {
             for (n, name) in s.kinds.iter().enumerate() {
                 let k = fx.kind(n as u32);
                 assert_eq!(Fx::of_kind(k), Some((fx, n)), "{fx:?} {n}");
-                assert_eq!(kind::name(k), *name);
+                assert_eq!(Shape::name_of(k), *name);
                 let i = Instance {
                     params: [k, 0.0, 0.0, 0.0],
                     ..Instance::default()
@@ -730,7 +730,7 @@ mod tests {
             if s.lyric.is_some() {
                 assert_eq!(Fx::of_treatment(fx.treatment_code()), Some(fx));
                 let text = Instance {
-                    params: [kind::TEXT, 0.0, 0.0, fx.treatment_code()],
+                    params: [Shape::Text.code(), 0.0, 0.0, fx.treatment_code()],
                     ..Instance::default()
                 };
                 assert_eq!(Group::of(&text), Group::Lyric(fx));
@@ -741,9 +741,9 @@ mod tests {
                 assert!(!s.kinds.is_empty(), "{fx:?}");
             }
         }
-        assert_eq!(Fx::of_kind(kind::PILL), None);
+        assert_eq!(Fx::of_kind(Shape::Pill.code()), None);
         assert_eq!(Fx::of_kind(FX_KINDS as f32 + 3.0), None, "a kind none has");
-        assert!(FX_KINDS > kind::SIGNATURE as u32);
+        assert!(Shape::COUNT <= FX_KINDS as usize);
     }
 
     /// No two effects' WGSL define the same function or constant: they
@@ -780,7 +780,7 @@ mod tests {
     /// rainbow while it shines, as its glow eases; none shining, none.
     #[test]
     fn the_line_sung_takes_the_strongest_treatment() {
-        use crate::gui::rainbow::Glow;
+        use crate::gui::shine::Glow;
         use crate::gui::streak::Step;
         let row = Effects {
             held: &TREATED,

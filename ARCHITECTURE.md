@@ -200,7 +200,7 @@ sounds follow).
                         mixer thread ─► the device, on the frame of the moment
 ```
 
-When a song ends its result is revealed (`core::singing::Reveal`): one
+When a song ends its result is revealed (`core::karaoke::result::Reveal`): one
 timeline of beats that the stage draws (the diploma) and the conductor
 sounds, by the same clock.
 
@@ -366,14 +366,14 @@ name means in the standard words, and where it is.
 | delay (the singer's) | input latency: from a frame leaving for the device to the microphone hearing it sung | `player/src/core/lag` |
 | demo key | autoplay: a perfect singer while `p` is held | `player/src/core/singing/demo.rs` |
 | desk | the mixing console: the mixer as the user sees it | `output/src/mixer`, `player/src/core/desk` |
-| diploma | the results screen, drawn as a certificate titled "Jodeldiplom" | `player/src/gui/stage/result.rs`, `player/src/core/singing/result.rs` |
+| diploma | the results screen, drawn as a certificate titled "Jodeldiplom" | `player/src/gui/stage/result.rs`, `player/src/core/karaoke/result/verdict.rs` |
 | Effects strip | the sound-effects bus | `player/src/desk_wiring.rs` |
 | epoch | one opening of the device; a time of another never comes | `output/src/mixer/mod.rs` |
 | fit (lyrics) | whether a lyrics text matches a recording, by speech recognition | `lyrics/src/fit.rs` |
 | `Fit` (core) | layout metrics the window reports to the core: page sizes, which strips show | `player/src/core/fit.rs` |
 | glimpses | sliding-window speech recognition over the voice | `lyrics/src/glimpses.rs` |
 | glory | the score meter's shader, with the countdown ring and the progress marks | `player/src/gui/glory.rs` |
-| glow | the combo glow's level, 0 to 1, from the tier the singing is at | `player/src/gui/rainbow.rs`, `player/src/tiers.rs` |
+| glow | the combo glow's level, 0 to 1, from the tier the singing is at | `player/src/gui/shine.rs`, `player/src/tiers.rs` |
 | grab | pointer capture: a press that holds the pointer until release | `player/src/gui/pointer.rs` |
 | guest | a secondary mixer input (a preview), against the Lead | `output/src/mixer/mod.rs` |
 | head | a deck: one of the engine's two outputs on the desk; the head on air and the parked one | `playback/src/engine/heads.rs` |
@@ -393,7 +393,7 @@ name means in the standard words, and where it is.
 | par | the score the original singer's everyday hearings reach on a phrase, the bars' scale | `player/src/core/shine/reference.rs` |
 | part | a stem carried beside main in a lane stream | `output/src/lanes.rs`, `playback/src/engine/lanes` |
 | pop | a bubble bursting, and its sound; `gui::pop` draws the bubbles on the stage | `player/src/gui/pop.rs`, `player/src/sfx/conductor/sounds.rs` |
-| reveal | the results screen's animation timeline | `player/src/core/singing/reveal.rs` |
+| reveal | the results screen's animation timeline | `player/src/core/karaoke/result/reveal.rs` |
 | rescue shot | forgiveness for one missed word: the next word hit shoots it and keeps the combo | `player/src/core/singing/bursts.rs` |
 | rung | a combo multiplier level (×2 to ×32), reached at so many words in a row, named after a tier | `player/src/core/singing/mod.rs` (`rung`), `player/src/tiers.rs` |
 | scaffold | the line times of synced lyrics used as soft anchors for the word alignment | `lyrics/src/scaffold.rs` |
@@ -411,7 +411,7 @@ name means in the standard words, and where it is.
 | tap | a read-only hook on each buffer the device takes | `output/src/tap.rs` |
 | theme | a skin: tier colours, effect looks and sound patches overridden by key (Classic, Spooky) | `player/src/theme.rs` |
 | tier | a phrase's rating grade (Good, Great, Awesome, Amazing, Diva) | `player/src/tiers.rs` |
-| verdict | the song's medal or the words in its place | `player/src/core/singing/result.rs` |
+| verdict | the song's medal or the words in its place | `player/src/core/karaoke/result/verdict.rs` |
 | vote | beat-tracker ensemble: the grid the candidates agree on, and the agreement as confidence | `rhythm/src/vote.rs` |
 | wake | an event-loop wake-up from another thread | `player/src/gui/wake.rs` |
 | yardstick | the original singer's phrase measured, the reference a take is held to | `player/src/core/shine/measure.rs` |

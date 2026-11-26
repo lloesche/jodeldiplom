@@ -12,7 +12,7 @@
 //! The strengths are look parameters, the constants here.
 
 use crate::gui::fx::Music;
-use crate::gui::rainbow::smoothstep;
+use crate::gui::wgsl_math::smoothstep;
 
 /// How far the subject grows on each beat, a share of its size.
 pub const BEAT: f32 = 0.009;

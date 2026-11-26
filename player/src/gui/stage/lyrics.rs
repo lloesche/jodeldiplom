@@ -24,7 +24,7 @@ use super::super::fx::step_up::burst;
 use super::super::particles::{Kind, Spray};
 use super::super::pixels::mix;
 use super::super::sparks::noise;
-use super::super::stage_gpu::{Instance, Pour, Tint, ATLAS};
+use super::super::stage_gpu::{Instance, Pour, Shape, Tint, ATLAS};
 use super::score::rgba8;
 use super::{disc, pill, segment, Song, Stage};
 use crate::view::karaoke::{
@@ -469,13 +469,9 @@ impl Stage {
             let twinkle = 0.55 + 0.45 * (age * 28.0 + r(4) * std::f32::consts::TAU).sin();
             let a = (1.0 - age).powf(1.4) * twinkle * alpha;
             let m = size + 1.0;
-            out.push(Instance {
-                quad: [sx - m, sy - m, sx + m, sy + m],
-                shape: [sx, sy, size, 0.0],
-                color: rgba8(glint, a),
-                params: [super::kind::SPARK, 0.0, 0.0, 0.0],
-                ..Instance::default()
-            });
+            let quad = [sx - m, sy - m, sx + m, sy + m];
+            let spark = Instance::of(Shape::Spark, quad, [sx, sy, size, 0.0]);
+            out.push(spark.colors(rgba8(glint, a), [0.0; 4]));
         }
         let at_now = (at.0 + s.x_of(face, c), y_of(height) + thick / 2.0);
         let core = rgba8(SINGER, alpha);
@@ -573,7 +569,6 @@ impl Stage {
 mod tests {
     use super::*;
     use crate::gui::big_text::COVER_PAD;
-    use crate::gui::stage_gpu::kind;
 
     fn lyric(text: &str, fill: f64, kind: LineKind, id: Option<usize>) -> LyricLine {
         LyricLine {
@@ -633,7 +628,7 @@ mod tests {
         assert_eq!(stage.lyrics(into, &p, (area, Which::All)), None);
         assert_eq!(out.len(), 3, "{out:?}");
         for i in &out {
-            assert_eq!(i.params[0], kind::TEXT);
+            assert!(i.is(Shape::Text));
             assert_eq!((i.quad[0].fract(), i.quad[1].fract()), (0.0, 0.0));
             assert!((i.quad[2] - i.quad[0] - (i.uv[2] - i.uv[0])).abs() < 1e-3);
         }

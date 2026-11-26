@@ -22,8 +22,3 @@ pub fn noise(i: u32) -> f32 {
 pub fn rand(seed: u32, q: u32, j: u32) -> f32 {
     noise((seed & 0xFF_FFFF).wrapping_mul(31).wrapping_add(q * 7 + j))
 }
-
-/// `a` towards `b` by `t`.
-pub fn mix(a: [f32; 3], b: [f32; 3], t: f32) -> [f32; 3] {
-    [0, 1, 2].map(|i| a[i] + (b[i] - a[i]) * t)
-}

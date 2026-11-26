@@ -15,7 +15,7 @@ mod common;
 use jodeldiplom::core::singing::Singing;
 use jodeldiplom::gui::particles::{Kind, Spray};
 use jodeldiplom::gui::stage::{Song, Stage};
-use jodeldiplom::gui::stage_gpu::{kind, Instance, StageFrame};
+use jodeldiplom::gui::stage_gpu::{Instance, Shape, StageFrame};
 use jodeldiplom::view::bubbles::{BURST, SWELL};
 use jodeldiplom::view::karaoke::KaraokePicture;
 
@@ -86,7 +86,7 @@ fn staged(picture: &KaraokePicture, (w, h): (usize, usize), heard: f64) -> Stage
         .scene((&song, false), picture, area, (heard, 0.0), tint)
         .expect("the lyrics");
     let bubbles = (frame.instances.iter())
-        .filter(|i| i.params[0] == kind::LIQUID)
+        .filter(|i| i.is(Shape::Liquid))
         .copied()
         .collect();
     let sprays = frame.sprays.clone();
@@ -113,7 +113,7 @@ fn without(picture: &KaraokePicture, notes: bool) -> KaraokePicture {
 /// The bars the stage draws under the line sung in `s`.
 fn bars(s: &Staged) -> usize {
     (s.frame.instances.iter())
-        .filter(|i| i.params[0] == kind::PILL)
+        .filter(|i| i.is(Shape::Pill))
         .count()
 }
 
@@ -141,7 +141,7 @@ fn word_pills(frame: &StageFrame) -> (usize, usize, f32) {
     let bubbles: Vec<_> = frame
         .instances
         .iter()
-        .filter(|i| i.params[0] == kind::TUBE)
+        .filter(|i| i.is(Shape::Tube))
         .map(|i| i.strained())
         .collect();
     let swelling = bubbles.iter().filter(|s| s.popping.is_some()).count();
@@ -298,9 +298,7 @@ fn the_gpu_draws_the_bubbles_over_the_picture() {
         // liquid and their bursts.
         let show = |gpu: &mut Offscreen, liquid: bool, sprays: &[Spray]| {
             let mut frame = over.frame.clone();
-            frame
-                .instances
-                .retain(|i| liquid || i.params[0] != kind::LIQUID);
+            frame.instances.retain(|i| liquid || !i.is(Shape::Liquid));
             frame.sprays = sprays.to_vec();
             gpu.set_stage(Some(&frame), w as u32, h as u32);
             gpu.show_frame(w as u32, h as u32).expect("a frame")
@@ -535,10 +533,7 @@ fn a_bubble_partly_filled_never_pops() {
         let frame = stage_at(&singing, &lyrics, heard, 0.0);
         assert_eq!(word_pills(&frame), (2, 0, 0.0), "{heard}");
         assert!(bubble_sprays(&frame).is_empty(), "{heard}");
-        let liquids = frame
-            .instances
-            .iter()
-            .filter(|i| i.params[0] == kind::TUBE_LIQUID);
+        let liquids = frame.instances.iter().filter(|i| i.is(Shape::TubeLiquid));
         assert!(liquids.count() >= 1, "{heard}");
     }
 }
@@ -607,7 +602,7 @@ fn the_arrow_shows_while_singing_however_late_the_voice() {
         let mut song = Song::new(&singing, lyrics.lines.iter().collect(), Some(3.0));
         song.late = LATE;
         let frame = stage.frame(&song, &picture, area, t, 1.0 / 60.0);
-        let arrow = frame.instances.iter().any(|i| i.params[0] == kind::ARROW);
+        let arrow = frame.instances.iter().any(|i| i.is(Shape::Arrow));
         shown.push((t, arrow));
         t += 1.0 / 60.0;
     }

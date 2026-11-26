@@ -6,6 +6,7 @@
 use std::collections::VecDeque;
 
 use super::{disc, rgba, Instance, Lane, Rgb, WHITE};
+use crate::gui::wgsl_math::mix3;
 
 /// How long a tail the comet has: the arrow's places this far back.
 const LONG: f64 = 0.4;
@@ -50,7 +51,7 @@ impl Comet {
                 continue;
             }
             let r = p * 0.1 * left.powf(0.7);
-            let core = mix(WHITE, color, 1.0 - left);
+            let core = mix3(WHITE, color, 1.0 - left);
             out.push(disc(
                 (lane.x(t), y),
                 r,
@@ -60,10 +61,6 @@ impl Comet {
             ));
         }
     }
-}
-
-fn mix(a: Rgb, b: Rgb, t: f32) -> Rgb {
-    [0, 1, 2].map(|i| a[i] + (b[i] - a[i]) * t)
 }
 
 #[cfg(test)]

@@ -10,7 +10,7 @@ use jodeldiplom::core::singing::Singing;
 use jodeldiplom::gui::fx::{Effects, Fx, Mod, Param, Signal, Use};
 use jodeldiplom::gui::present::Offscreen;
 use jodeldiplom::gui::stage::{Song, Stage};
-use jodeldiplom::gui::stage_gpu::{kind, StageFrame};
+use jodeldiplom::gui::stage_gpu::{Shape, StageFrame};
 
 #[path = "common/sung.rs"]
 mod sung;
@@ -71,7 +71,7 @@ fn a_look_moved_by_the_music_reaches_the_lyric_treatment() {
         "the same shapes: only the looks differ"
     );
     let on_fire: Vec<[f32; 4]> = (a.instances.iter())
-        .filter(|i| i.params[0] == kind::TEXT && i.params[3] == Fx::LyricFire.treatment_code())
+        .filter(|i| i.is(Shape::Text) && i.params[3] == Fx::LyricFire.treatment_code())
         .map(|i| i.quad)
         .collect();
     assert!(!on_fire.is_empty(), "the line sung on fire");

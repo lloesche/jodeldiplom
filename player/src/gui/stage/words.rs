@@ -389,7 +389,7 @@ fn word_text<'a>(song: &Song<'a>, l: usize, w: usize) -> &'a str {
 mod tests {
     use crate::core::singing::Singing;
     use crate::gui::stage::{Song, Stage};
-    use crate::gui::stage_gpu::{kind, StageFrame};
+    use crate::gui::stage_gpu::{Shape, StageFrame};
     use crate::view::karaoke::KaraokePicture;
 
     /// A song of one short word, "my", gliding up from one note to
@@ -427,7 +427,7 @@ mod tests {
     /// left (across) and down.
     fn text_in_tube(frame: &StageFrame) -> Vec<(f32, f32)> {
         let tubes: Vec<_> = (frame.instances.iter())
-            .filter(|i| i.params[0] == kind::TUBE)
+            .filter(|i| i.is(Shape::Tube))
             .collect();
         let [tube] = tubes[..] else {
             panic!("one tube: {}", tubes.len());
@@ -435,7 +435,7 @@ mod tests {
         let left = frame.paths[tube.shape[3] as usize][0];
         let q = tube.quad;
         (frame.instances.iter())
-            .filter(|i| i.params[0] == kind::TEXT)
+            .filter(|i| i.is(Shape::Text))
             .filter(|i| {
                 let (x, y) = ((i.quad[0] + i.quad[2]) / 2.0, (i.quad[1] + i.quad[3]) / 2.0);
                 x > q[0] && x < q[2] && y > q[1] && y < q[3]
@@ -537,7 +537,7 @@ mod tests {
             let area = (0.0, 0.0, 1600.0, 900.0);
             let frame = Stage::default().frame(&song, &picture, area, now, 1.0 / 60.0);
             (frame.instances.iter())
-                .filter(|i| i.params[0] == kind::TUBE)
+                .filter(|i| i.is(Shape::Tube))
                 .map(|t| frame.paths[t.shape[3] as usize][0] - t.shape[2])
                 .collect::<Vec<f32>>()
         };

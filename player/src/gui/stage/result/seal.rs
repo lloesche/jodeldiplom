@@ -11,13 +11,13 @@
 //! with a "Zzz" rubber stamp, where nothing was scored). Until then the
 //! seal's place is marked, faintly.
 
-use super::super::super::stage_gpu::kind;
+use super::super::super::stage_gpu::{Shape, StageFrame};
 use super::super::{disc, pill, rgba, segment, Face, Rgb, Stage, GOLD, GOLD_TOP, WHITE};
 use super::{
-    burst, clamp01, fade, land, shape, sparkle, sticker, Drawn, Pen, ResultShown, Room, Tint,
-    Written, PRINT,
+    burst, clamp01, fade, land, shape, sparkle, sticker, Pen, ResultShown, Room, Tint, Written,
+    PRINT,
 };
-use crate::core::singing::{ease_out, verdict_words, Medal, Verdict, DROP, GRADE_WRITE};
+use crate::core::karaoke::result::{ease_out, verdict_words, Medal, Verdict, DROP, GRADE_WRITE};
 use crate::gui::particles::Kind;
 use crate::view::karaoke::DIPLOMA;
 
@@ -127,7 +127,7 @@ pub(super) fn shake(look: &Look, hit: Option<f32>, s: f32) -> (f32, f32) {
 
 /// The rays turning out from behind the sheet once a medal is stamped
 /// (`hit` seconds after its beat), `t` the reveal's time: light.
-pub(super) fn rays(d: &mut Drawn, room: &Room, hit: Option<f32>, t: f64) {
+pub(super) fn rays(d: &mut StageFrame, room: &Room, hit: Option<f32>, t: f64) {
     let look = &room.look;
     let Some(hit) = hit.filter(|&h| h >= 0.0 && look.rays > 0.0) else {
         return;
@@ -135,10 +135,10 @@ pub(super) fn rays(d: &mut Drawn, room: &Room, hit: Option<f32>, t: f64) {
     let (_, _, sw, sh) = room.sheet;
     let c = room.at(0.5, 0.5);
     let reach = sw.max(sh) * 0.62;
-    let mut rays = shape(kind::RAYS, c, reach * 1.6, [c.0, c.1, reach, 16.0]);
+    let mut rays = shape(Shape::Rays, c, reach * 1.6, [c.0, c.1, reach, 16.0]);
     rays.params[1] = t as f32 * 0.3;
     rays.color = rgba(look.light, look.rays * fade(Some(f64::from(hit)), 0.6));
-    d.out.push(rays);
+    d.instances.push(rays);
 }
 
 impl Stage {
@@ -148,7 +148,7 @@ impl Stage {
     /// rubber stamp slapped on, if it has one).
     pub(super) fn verdict(
         &mut self,
-        d: &mut Drawn,
+        d: &mut StageFrame,
         room: &Room,
         shown: &ResultShown,
         tint: &Tint,
@@ -180,7 +180,7 @@ impl Stage {
     /// `shows` of it.
     fn slot(
         &mut self,
-        d: &mut Drawn,
+        d: &mut StageFrame,
         room: &Room,
         (c, radius): ((f32, f32), f32),
         t: f64,
@@ -192,16 +192,16 @@ impl Stage {
         }
         let ink = rgba(room.inks.ink, shows);
         let ring = radius * 0.8;
-        d.out
+        d.instances
             .push(pill(c, (ring, ring), [0.0; 4], ink, 0.0, 1.2, 0.0));
         let px = (2.6 * room.s).round().max(9.0);
         let ls = (PRINT, DIPLOMA.seal);
-        self.written(&mut d.out, ls, (px, 1.0), (c, 0.5), ink, Pen::FLAT);
+        self.written(&mut d.instances, ls, (px, 1.0), (c, 0.5), ink, Pen::FLAT);
     }
 
     /// The grade written in from its beat (`hit` seconds ago) in its ink,
     /// the pen's nib at its front, its remark fading in under it.
-    fn grade(&mut self, d: &mut Drawn, room: &Room, shown: &ResultShown, hit: f32) {
+    fn grade(&mut self, d: &mut StageFrame, room: &Room, shown: &ResultShown, hit: f32) {
         let r = &shown.shown.result;
         let (s, look) = (room.s, room.look);
         let (_, remark) = verdict_words(r);
@@ -213,7 +213,7 @@ impl Stage {
         let pen = rgba(look.ink.unwrap_or(room.inks.pen), 0.95);
         let text = (Face::NUMBER, &*grade);
         let w = self.written(
-            &mut d.out,
+            &mut d.instances,
             text,
             (px, 1.0),
             (c, 0.5),
@@ -222,7 +222,7 @@ impl Stage {
         );
         if (0.0..1.0).contains(&share) {
             let nib = (c.0 - w / 2.0 + w * share, c.1 + 0.3 * px);
-            d.out.push(disc(nib, 0.32 * s, pen, [0.0; 4], 0.0));
+            d.instances.push(disc(nib, 0.32 * s, pen, [0.0; 4], 0.0));
         }
         if look.medal == Some(Medal::Gold) {
             let lit = rgba(GOLD, 0.25 * fade(Some(f64::from(hit)), 0.4));
@@ -233,7 +233,14 @@ impl Stage {
         let soft = rgba(room.inks.ink, 0.8 * fade(Some(f64::from(hit) - 0.45), 0.4));
         let at = room.at(0.5, REMARK_Y);
         let text = (PRINT, &*remark);
-        self.written(&mut d.out, text, (rp, 1.0), (at, 0.5), soft, Pen::FLAT);
+        self.written(
+            &mut d.instances,
+            text,
+            (rp, 1.0),
+            (at, 0.5),
+            soft,
+            Pen::FLAT,
+        );
     }
 
     /// Medal `m`'s seal at `c` (`radius` its size), `hit` seconds after its
@@ -242,7 +249,7 @@ impl Stage {
     /// lands and twinkling round its rim.
     fn seal(
         &mut self,
-        d: &mut Drawn,
+        d: &mut StageFrame,
         room: &Room,
         shown: &ResultShown,
         tint: &Tint,
@@ -268,18 +275,18 @@ impl Stage {
             (false, false) => 9.0,
         };
         let reach = r_now * 1.15 + radius * 0.2 + 2.0;
-        let mut wax = shape(kind::SEAL, c, reach, [c.0, c.1, r_now, 0.0]);
+        let mut wax = shape(Shape::Seal, c, reach, [c.0, c.1, r_now, 0.0]);
         wax.color = rgba(light, shows);
         wax.color2 = rgba(deep, shows);
-        wax.params = [kind::SEAL, radius * 0.15, sheen, 0.45 * shows];
-        d.out.push(wax);
+        wax = wax.params([radius * 0.15, sheen, 0.45 * shows]);
+        d.instances.push(wax);
         // Its name on a banner across it (fitted at its size, drawn at its
         // scale).
         let band = (c.0, c.1 + 0.62 * r_now);
         let half = (0.82 * r_now, 0.2 * r_now);
         let cloth = tint.ribbon.0.map(|k| k * 0.8);
         let edge = rgba(tint.ribbon.0.map(|k| (k * 1.2).min(1.0)), shows);
-        d.out.push(pill(
+        d.instances.push(pill(
             band,
             half,
             rgba(cloth, shows),
@@ -297,7 +304,7 @@ impl Stage {
             ..Pen::FLAT
         };
         let text = (Face::SHOUT, &*name);
-        self.written(&mut d.out, text, (px, scale), (band, 0.5), white, pen);
+        self.written(&mut d.instances, text, (px, scale), (band, 0.5), white, pen);
         let stamp = t - f64::from(hit);
         d.sprays
             .push(burst(c, stamp, radius * 0.7, (301, light), Kind::Scored));
@@ -310,7 +317,7 @@ impl Stage {
 /// seal) popping on `hit` seconds after its beat, sparkles as it lands
 /// and twinkling round it.
 fn star(
-    d: &mut Drawn,
+    d: &mut StageFrame,
     room: &Room,
     (c, radius): ((f32, f32), f32),
     light: Rgb,
@@ -324,7 +331,7 @@ fn star(
         (false, false) => 9.0,
     };
     let halo = (size * 0.5, rgba(light, 0.3 * shows));
-    d.out.push(sticker(
+    d.instances.push(sticker(
         c,
         (size * scale, -0.12),
         rgba(light, shows),
@@ -339,7 +346,7 @@ fn star(
 
 /// A few sparkles twinkling round `c` (`r` out), light, from `hit`
 /// seconds after the verdict, while the screen twinkles.
-fn twinkle(d: &mut Drawn, room: &Room, (c, r): ((f32, f32), f32), (t, hit): (f64, f32)) {
+fn twinkle(d: &mut StageFrame, room: &Room, (c, r): ((f32, f32), f32), (t, hit): (f64, f32)) {
     let after = fade(Some(f64::from(hit)), 0.3);
     for k in 0..3 {
         let turn = k as f32 * 2.1 + 0.6;
@@ -352,16 +359,17 @@ fn twinkle(d: &mut Drawn, room: &Room, (c, r): ((f32, f32), f32), (t, hit): (f64
 
 /// The seal's ribbons at `c` (it `r` across): two tails hanging from
 /// behind it, in the tint's two colours, a stripe down each.
-fn ribbons(d: &mut Drawn, (c, r): ((f32, f32), f32), tint: &Tint, shows: f32) {
+fn ribbons(d: &mut StageFrame, (c, r): ((f32, f32), f32), tint: &Tint, shows: f32) {
     for (side, col) in [(-1.0f32, tint.ribbon.0), (1.0, tint.ribbon.1)] {
         let from = (c.0 + side * 0.12 * r, c.1 + 0.2 * r);
         let to = (c.0 + side * 0.62 * r, c.1 + 1.45 * r);
         let edge = rgba(col.map(|k| k * 0.6), shows);
-        d.out.push(segment(from, to, 0.24 * r, edge, [0.0; 4], 0.0));
-        d.out
+        d.instances
+            .push(segment(from, to, 0.24 * r, edge, [0.0; 4], 0.0));
+        d.instances
             .push(segment(from, to, 0.19 * r, rgba(col, shows), [0.0; 4], 0.0));
         let stripe = rgba(WHITE, 0.35 * shows);
-        d.out
+        d.instances
             .push(segment(from, to, 0.03 * r, stripe, [0.0; 4], 0.0));
     }
 }
@@ -370,7 +378,7 @@ fn ribbons(d: &mut Drawn, (c, r): ((f32, f32), f32), tint: &Tint, shows: f32) {
 /// its beat), `hit` seconds ago: a ring of dust going out over the sheet;
 /// coins for Gold, stars and notes for Gold and Silver.
 fn stamped(
-    d: &mut Drawn,
+    d: &mut StageFrame,
     room: &Room,
     (c, radius): ((f32, f32), f32),
     m: Medal,
@@ -381,7 +389,7 @@ fn stamped(
         let ring = radius * (1.05 + 1.0 * ease_out(f64::from(k)) as f32);
         let line = rgba(room.inks.ink, 0.4 * (1.0 - k) * (1.0 - k));
         let width = radius * 0.05 * (1.0 - k) + 1.0;
-        d.out
+        d.instances
             .push(pill(c, (ring, ring), [0.0; 4], line, 0.0, width, 0.0));
     }
     if m == Medal::Gold {
@@ -405,7 +413,7 @@ fn stamped(
 mod tests {
     use super::super::tests::{frame_at, result};
     use super::*;
-    use crate::core::singing::Beat;
+    use crate::core::karaoke::result::Beat;
 
     const GOLD_BEAT: Beat = Beat::Verdict(Verdict::Medal(Medal::Gold));
 
@@ -414,13 +422,13 @@ mod tests {
     #[test]
     fn the_seal_is_stamped_down_on_its_beat() {
         let r = result(Some(Medal::Gold), true, None);
-        let reveal = crate::core::singing::Reveal::of(&r);
+        let reveal = crate::core::karaoke::result::Reveal::of(&r);
         let at = reveal.when(GOLD_BEAT).unwrap();
         let radius = |t: f64| {
             let f = frame_at(&r, t);
             f.instances
                 .iter()
-                .find(|i| i.params[0] == kind::SEAL)
+                .find(|i| i.is(Shape::Seal))
                 .map(|i| i.shape[2])
         };
         assert_eq!(radius(at - DROP - 0.05), None);

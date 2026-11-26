@@ -61,15 +61,16 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use jodeldiplom::art::Art;
+use jodeldiplom::core::karaoke::result::{Reveal, Shown, SongResult, UNROLL};
 use jodeldiplom::core::shine::{Reference, Shone, Tier};
-use jodeldiplom::core::singing::{Reveal, Shown, Singing, SongResult, UNROLL};
+use jodeldiplom::core::singing::Singing;
 use jodeldiplom::cover::{Apart, Layers};
 use jodeldiplom::gui::backdrop::music::Hearing;
 use jodeldiplom::gui::backdrop::{BackdropFrame, Cue, Visualiser};
 use jodeldiplom::gui::fx::{By, Effects, Fx, Music, Treat, Use};
 use jodeldiplom::gui::present::Offscreen;
 use jodeldiplom::gui::stage::{Song, Stage, Tint};
-use jodeldiplom::gui::stage_gpu::{kind, Instance, StageFrame};
+use jodeldiplom::gui::stage_gpu::{Instance, Shape, StageFrame};
 use jodeldiplom::theme::Theme;
 use jodeldiplom::view::karaoke::{KaraokePicture, ResultShown};
 
@@ -183,7 +184,7 @@ fn every_effect(
         .filter(|fx| fx.spec().lyric.is_some())
         .map(Fx::treatment_code)
         .collect();
-    let lyric = |i: &Instance| i.params[0] == kind::TEXT && i.params[1].is_finite();
+    let lyric = |i: &Instance| i.is(Shape::Text) && i.params[1].is_finite();
     let mut tops: Vec<u32> = (f.instances.iter())
         .filter(|i| lyric(i))
         .map(|i| i.quad[1].to_bits())
@@ -287,14 +288,14 @@ fn time(
         lights: frame.lights.iter().filter(|i| keep(i)).copied().collect(),
         ..frame.clone()
     };
-    let mut names: Vec<&'static str> = all.iter().map(|i| kind::name(i.params[0])).collect();
+    let mut names: Vec<&'static str> = all.iter().map(|i| Shape::name_of(i.params[0])).collect();
     names.sort_unstable();
     names.dedup();
     let mut fxs: Vec<Fx> = all.iter().filter_map(effect_of).collect();
     fxs.sort_unstable();
     fxs.dedup();
     for &name in &names {
-        let f = only(&|i| kind::name(i.params[0]) == name);
+        let f = only(&|i| Shape::name_of(i.params[0]) == name);
         gpu.time_frame(Some(backdrop), Some(&f), w, h)
             .expect("timed");
     }
@@ -328,7 +329,7 @@ fn time(
         count(
             kinds,
             name,
-            &|i| kind::name(i.params[0]) == name,
+            &|i| Shape::name_of(i.params[0]) == name,
             &KIND_STEPS,
         );
     }

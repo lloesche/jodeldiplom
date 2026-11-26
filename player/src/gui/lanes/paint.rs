@@ -13,6 +13,7 @@ use super::keys::{self, Back, ColumnKey, MARK_CUE, MARK_CURSOR, MARK_EDIT};
 use super::words::Words;
 use super::Pen;
 use crate::gui::pixels::{mix, pack, PixelRect, Pixels, Target};
+use crate::gui::wgsl_math::{linear_to_srgb, srgb_to_linear};
 use crate::view::lanes::{self, WavePlot};
 use crate::view::palette;
 
@@ -352,22 +353,7 @@ impl<'a> NoteRows<'a> {
 /// `c` at an eighth of its light (in linear light): a deep shade of it,
 /// near-white text on it reading at about 9 : 1.
 fn deep(c: [u8; 3]) -> [u8; 3] {
-    let lin = |v: u8| {
-        let v = f32::from(v) / 255.0;
-        if v <= 0.04045 {
-            v / 12.92
-        } else {
-            ((v + 0.055) / 1.055).powf(2.4)
-        }
-    };
-    let enc = |v: f32| {
-        let v = v.clamp(0.0, 1.0);
-        let s = if v <= 0.003_130_8 {
-            12.92 * v
-        } else {
-            1.055 * v.powf(1.0 / 2.4) - 0.055
-        };
-        (s * 255.0).round() as u8
-    };
+    let lin = |v: u8| srgb_to_linear(f32::from(v) / 255.0);
+    let enc = |v: f32| (linear_to_srgb(v.clamp(0.0, 1.0)) * 255.0).round() as u8;
     c.map(|v| enc(lin(v) * 0.12))
 }

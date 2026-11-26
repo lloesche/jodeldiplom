@@ -220,8 +220,8 @@ mod tests {
         (0..2000).map(|k| {
             let f = k as f32;
             (
-                BOX[0] + crate::gui::rainbow::fract(f * 0.613) * (BOX[2] - BOX[0]),
-                BOX[1] + crate::gui::rainbow::fract(f * 0.377) * (BOX[3] - BOX[1]),
+                BOX[0] + crate::gui::wgsl_math::fract(f * 0.613) * (BOX[2] - BOX[0]),
+                BOX[1] + crate::gui::wgsl_math::fract(f * 0.377) * (BOX[3] - BOX[1]),
             )
         })
     }

@@ -20,7 +20,7 @@
 //! still: its time stops there, so nothing is drawn again until something
 //! else changes.
 
-use super::result::{SongResult, Verdict};
+use super::verdict::{SongResult, Verdict};
 use crate::core::shine::Tier;
 
 /// How long the sheet takes to unroll from its beat (the first), in
@@ -340,9 +340,9 @@ impl Shown {
 
 #[cfg(test)]
 mod tests {
+    use super::super::Medal;
     use super::*;
     use crate::core::shine::Shone;
-    use crate::core::singing::Medal;
 
     fn phrase(tier: Option<Tier>) -> Shone {
         Shone {

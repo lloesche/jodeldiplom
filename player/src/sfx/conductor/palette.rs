@@ -25,7 +25,7 @@ use jodel_synth::engines::{analog, drum, fm, formant, modal, noise, phase, super
 use jodel_synth::patch::{Adsr, Glide, Lfo, LfoRate, Spread};
 use jodel_synth::{Bank, Patch, PatchId};
 
-use crate::core::singing::{STAMP_DOWN, UNROLL};
+use crate::core::karaoke::result::{STAMP_DOWN, UNROLL};
 
 /// The atoms, and all of them in their order.
 macro_rules! atoms {

@@ -253,15 +253,6 @@ fn a_word_not_to_be_sung_gets_no_bubble_and_no_score() {
 }
 
 #[test]
-fn medals_go_by_the_words() {
-    assert_eq!(Medal::of(4, 4), Some(Medal::Gold));
-    assert_eq!(Medal::of(3, 4), Some(Medal::Silver));
-    assert_eq!(Medal::of(2, 4), Some(Medal::Bronze));
-    assert_eq!(Medal::of(1, 4), None);
-    assert_eq!(Medal::of(0, 0), None);
-}
-
-#[test]
 fn a_streak_multiplies_the_points_and_two_misses_end_it() {
     // A rung a tier's row, at its streak, ×2 the first's, doubling a rung;
     // none under the first, the top's beyond the top.

@@ -14,6 +14,7 @@
 //! reference ([`stage_wgsl`]), held to them on the GPU
 //! (`super::shader_check`).
 
+use super::wgsl_math::{fract, smoothstep};
 use crate::core::shine::Tier;
 use crate::tiers::TIERS;
 
@@ -59,36 +60,6 @@ impl Glow {
     }
 }
 
-pub(crate) fn fract(x: f32) -> f32 {
-    x - x.floor()
-}
-
-/// `x` held to 0 to 1.
-pub(crate) fn clamp01(x: f32) -> f32 {
-    x.clamp(0.0, 1.0)
-}
-
-fn smooth(t: f32) -> f32 {
-    let t = t.clamp(0.0, 1.0);
-    t * t * (3.0 - 2.0 * t)
-}
-
-/// WGSL's `smoothstep`.
-pub(crate) fn smoothstep(e0: f32, e1: f32, x: f32) -> f32 {
-    smooth((x - e0) / (e1 - e0))
-}
-
-pub(crate) fn mix3(a: [f32; 3], b: [f32; 3], t: f32) -> [f32; 3] {
-    [0, 1, 2].map(|i| a[i] + (b[i] - a[i]) * t)
-}
-
-/// How far `p` is outside a box `half` its size round the origin, its
-/// corners `r` round (negative inside): the shaders' `round_box`.
-pub fn round_box(p: (f32, f32), half: (f32, f32), r: f32) -> f32 {
-    let (qx, qy) = (p.0.abs() - half.0 + r, p.1.abs() - half.1 + r);
-    (qx.max(0.0).hypot(qy.max(0.0))) + qx.max(qy).min(0.0) - r
-}
-
 /// A colour of the rainbow, `h` round it (a whole turn every 1).
 pub fn hue(h: f32) -> [f32; 3] {
     let h = fract(h) * 6.0;
@@ -108,7 +79,10 @@ pub fn shine_at(s: &Glow, time: f32) -> (f32, f32) {
         let c = (t / COLLAPSE).clamp(0.0, 1.0);
         (s.from * (1.0 - c), c)
     } else {
-        (s.from + (s.level - s.from) * smooth(t / RISE), 0.0)
+        (
+            s.from + (s.level - s.from) * smoothstep(0.0, 1.0, t / RISE),
+            0.0,
+        )
     }
 }
 

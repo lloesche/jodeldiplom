@@ -106,7 +106,7 @@ impl Mode {
 
 /// A cover's numbers as its shader reads them (`backdrop.wgsl`'s `Look`).
 #[repr(C)]
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct Look {
     /// The window's width and height in pixels, the drift's time, unused.
     pub size: [f32; 4],
@@ -154,11 +154,6 @@ pub struct Look {
     /// colours take once desaturated, how much (0: none).
     pub grade: [f32; 4],
 }
-
-// SAFETY: plain f32s in a `repr(C)` struct, no padding: any bytes are one.
-unsafe impl bytemuck::Zeroable for Look {}
-// SAFETY: as above.
-unsafe impl bytemuck::Pod for Look {}
 
 /// The ground under the covers: the blurred cover (the gradient without
 /// one) as small as it is made, for a window, and which it is of.
@@ -347,7 +342,7 @@ impl Visualiser {
         let shares: Vec<f32> = self
             .slots
             .iter()
-            .map(|s| look::smoothstep(0.0, 1.0, s.shown))
+            .map(|s| crate::gui::wgsl_math::smoothstep(0.0, 1.0, s.shown))
             .collect();
         let total: f32 = shares.iter().sum();
         let scale = if total > 1.0 { 1.0 / total } else { 1.0 };

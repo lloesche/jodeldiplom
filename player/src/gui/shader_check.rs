@@ -17,7 +17,7 @@
 
 use super::fx::Fx;
 use super::particles::{self, sprite, Spray, MOTIONS, QUADS};
-use super::rainbow::Glow;
+use super::shine::Glow;
 use super::sparks::TAU;
 use super::stage_gpu::{Blend, Group, StagePass};
 use super::{glory, liquid, paper, seal};
@@ -820,10 +820,10 @@ fn the_stage_shader_s_tube_is_its_reference() {
 }
 
 /// The backdrop's maths at points across the window and through time: the
-/// shader's [`look::rounded_box`], [`look::card_edge`], [`look::falloff`],
-/// [`look::bspline`], [`look::shift`], [`look::vignette`],
-/// [`look::sweep`], [`look::drift`], [`look::ray_fan`], [`look::defocus`]
-/// and [`look::kicked`] as the
+/// shader's `rounded_box` ([`super::wgsl_math::round_box`]),
+/// [`look::card_edge`], [`look::falloff`], [`look::bspline`],
+/// [`look::shift`], [`look::vignette`], [`look::sweep`], [`look::drift`],
+/// [`look::ray_fan`], [`look::defocus`] and [`look::kicked`] as the
 /// processor's.
 #[test]
 fn the_backdrop_shader_s_maths_is_its_reference() {
@@ -861,11 +861,9 @@ fn the_backdrop_shader_s_maths_is_its_reference() {
         let g = &outs[k * 5..k * 5 + 5];
         let what = format!("sample {k}: {s:?}");
         let sh = look::shift([s[0], s[1]], s[2], [0.01, -0.006], 0.008, [0.45, 0.4]);
-        let d = look::rounded_box(
-            (s[0] - 0.5) * 400.0,
-            (s[1] - 0.5) * 300.0,
-            120.0,
-            100.0,
+        let d = super::wgsl_math::round_box(
+            ((s[0] - 0.5) * 400.0, (s[1] - 0.5) * 300.0),
+            (120.0, 100.0),
             9.0,
         );
         let edge = look::card_edge(d, 2000.0);

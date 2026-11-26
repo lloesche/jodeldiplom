@@ -6,7 +6,7 @@
 //! sung ([`rim`]); the shouts (the multiplier, the verdict) in rainbow
 //! ([`text_tint`], its lyric treatment). Lost, the bands collapse into the
 //! playhead and the colour drains, as the shine's clock says
-//! ([`crate::gui::rainbow::shine_at`]). It eases by that clock itself, as
+//! ([`crate::gui::shine::shine_at`]). It eases by that clock itself, as
 //! strong as its rows list it where the glow comes from or goes to
 //! ([`super::Live::listed`]): its light, and its text's tint, by as much.
 //!
@@ -14,10 +14,11 @@
 //! the GPU ([`REFERENCE`]).
 
 use super::{At, Fx, Layer, Live, Lyric, Out, Reference, Slot, Spec, Text, Treat};
-use crate::gui::rainbow::{hue, mix3, round_box, shine_at, smoothstep, Glow, SHOWS, WHOLE};
+use crate::gui::shine::{hue, shine_at, Glow, SHOWS, WHOLE};
 use crate::gui::sparks::TAU;
 use crate::gui::stage::LaneBox;
-use crate::gui::stage_gpu::{kind, Instance};
+use crate::gui::stage_gpu::{Instance, Shape};
+use crate::gui::wgsl_math::{mix3, round_box, smoothstep};
 use crate::tiers::{held, wgsl_array, TIERS};
 
 /// A streak's rainbow bands fanning out from (`shape[0]`, `shape[1]`)
@@ -64,7 +65,7 @@ fn draw(at: &At, live: &Live, _: &mut Slot, out: &mut Out) {
 
 /// The shouts in the rainbow while the singing shines, eased as its glow,
 /// as strong as listed (the glow's level and where it came from scaled by
-/// it: [`crate::gui::rainbow::shine_at`] goes with them).
+/// it: [`crate::gui::shine::shine_at`] goes with them).
 fn strain(live: &Live) -> Option<[f32; 3]> {
     let [level, from, since] = live.glow.triple();
     let s = live.listed;
@@ -248,7 +249,7 @@ pub fn shine_of(i: &Instance) -> Option<Glow> {
         let [_, level, from, since] = i.params;
         return Some(Glow { level, from, since });
     }
-    let (fx, [level, from, since]) = Treat::of(i).filter(|_| k == kind::TEXT)?;
+    let (fx, [level, from, since]) = Treat::of(i).filter(|_| i.is(Shape::Text))?;
     (fx == Fx::Rainbow).then_some(Glow { level, from, since })
 }
 
@@ -534,10 +535,7 @@ mod tests {
         };
         assert!(share(0.3) < share(0.05), "pulled in");
         assert!(at(near, 0.45) < at(near, 0.05) && at(far, 0.45) < at(far, 0.05));
-        assert!(
-            at(near, crate::gui::rainbow::COLLAPSE + 0.01) == 0.0,
-            "gone"
-        );
+        assert!(at(near, crate::gui::shine::COLLAPSE + 0.01) == 0.0, "gone");
         // Drained: the colour greyer as it goes.
         let spread = |c: [f32; 3]| {
             let (lo, hi) = (c[0].min(c[1]).min(c[2]), c[0].max(c[1]).max(c[2]));
@@ -557,7 +555,7 @@ mod tests {
                 .fold([0.0; 3], |m, c| [m[0] + c[0], m[1] + c[1], m[2] + c[2]])
         };
         assert!(spread(colour(0.4)) < spread(colour(0.02)));
-        let gone = 10.0 + crate::gui::rainbow::COLLAPSE;
+        let gone = 10.0 + crate::gui::shine::COLLAPSE;
         assert_eq!(swirl(near, origin, 30.0, &lost, gone), [0.0; 3]);
         assert_eq!(rim(0.0, 10.0, 3.0, &lost, gone), [0.0; 3]);
     }
@@ -594,7 +592,7 @@ mod tests {
     fn the_shine_an_instance_was_made_with_is_read_back() {
         let g = shine(0.5, 0.25);
         let mut text = Instance {
-            params: [kind::TEXT, 0.0, 0.0, 0.0],
+            params: [Shape::Text.code(), 0.0, 0.0, 0.0],
             ..Instance::default()
         };
         assert_eq!(shine_of(&text), None);

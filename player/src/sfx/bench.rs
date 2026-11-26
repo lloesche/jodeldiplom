@@ -13,7 +13,7 @@ use std::sync::LazyLock;
 use jodel_synth::{Command, Commands};
 
 use super::conductor::{Atom, Called, Clock, Conductor, Diploma, Event, Sheet};
-use crate::core::singing::Side;
+use crate::core::karaoke::result::Side;
 use crate::tiers::Tier;
 
 /// A moment of the game, as the tab groups its sounds.

@@ -14,6 +14,7 @@ use iced::Rectangle;
 
 use super::tiles::{LaneFrame, TILE};
 use super::Shared;
+use crate::gui::wgsl_math::srgb_to_linear;
 use crate::view::palette;
 
 const SHADER: &str = r"
@@ -372,15 +373,6 @@ impl shader::Primitive for Lane {
     fn draw(&self, pipeline: &Pipeline, pass: &mut wgpu::RenderPass<'_>) -> bool {
         pipeline.draw(self.id, pass);
         true
-    }
-}
-
-/// An sRGB-encoded value (0 to 1) as linear light.
-fn srgb_to_linear(c: f32) -> f32 {
-    if c <= 0.04045 {
-        c / 12.92
-    } else {
-        ((c + 0.055) / 1.055).powf(2.4)
     }
 }
 

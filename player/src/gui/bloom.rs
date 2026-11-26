@@ -117,6 +117,17 @@ fn composite(o: Out) -> @location(0) vec4<f32> {
 }
 ";
 
+/// A pass's numbers as its shader reads them (`Pass`): the texel's size in
+/// the texture it reads, how strongly it adds, and whether the frame takes
+/// linear light (1) or not (0).
+#[repr(C)]
+#[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+struct Pass {
+    texel: [f32; 2],
+    strength: f32,
+    linear: f32,
+}
+
 /// A texture of the chain and its view.
 struct Level {
     _texture: wgpu::Texture,
@@ -170,7 +181,7 @@ impl Bloom {
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
-                        min_binding_size: wgpu::BufferSize::new(16),
+                        min_binding_size: wgpu::BufferSize::new(std::mem::size_of::<Pass>() as u64),
                     },
                     count: None,
                 },
@@ -307,18 +318,18 @@ impl Bloom {
         let mut passes = Vec::new();
         let mut pass = |src: usize, strength: f32| {
             let (w, h) = self.levels[src].size;
-            let mut bytes = [0u8; 16];
-            bytes[0..4].copy_from_slice(&(1.0 / w as f32).to_le_bytes());
-            bytes[4..8].copy_from_slice(&(1.0 / h as f32).to_le_bytes());
-            bytes[8..12].copy_from_slice(&strength.to_le_bytes());
-            bytes[12..16].copy_from_slice(&(if self.linear { 1f32 } else { 0.0 }).to_le_bytes());
+            let numbers = Pass {
+                texel: [1.0 / w as f32, 1.0 / h as f32],
+                strength,
+                linear: if self.linear { 1.0 } else { 0.0 },
+            };
             let buffer = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("jodeldiplom bloom"),
-                size: 16,
+                size: std::mem::size_of::<Pass>() as u64,
                 usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
-            queue.write_buffer(&buffer, 0, &bytes);
+            queue.write_buffer(&buffer, 0, bytemuck::bytes_of(&numbers));
             let bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("jodeldiplom bloom"),
                 layout: &self.layout,

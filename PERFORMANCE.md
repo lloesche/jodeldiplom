@@ -466,7 +466,7 @@ frame's paper has been the same three frames in a row (a window being
 resized is not baked frame by frame), it is drawn into a texture of its
 own (in four strips, below; its quad's pixels, half floats, premultiplied, linear where the
 frame takes linear light), and from then on read from there, a texel a
-pixel, by a shape of its own (`kind::BAKED`, its own pipeline,
+pixel, by a shape of its own (`Shape::Baked`, its own pipeline,
 `Group::Baked`) while it stays that paper; while it unrolls (0.55 s) it
 is drawn as before. The sheet shaken as the seal is stamped down
 (0.45 s) shakes by whole pixels (`seal::shake`), everything on it with

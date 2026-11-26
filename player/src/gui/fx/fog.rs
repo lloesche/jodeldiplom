@@ -330,7 +330,7 @@ pub const REFERENCE: Reference = Reference {
         (0..3000)
             .flat_map(|k| {
                 let f = k as f32;
-                let fr = |m: f32| crate::gui::rainbow::fract(f * m);
+                let fr = |m: f32| crate::gui::wgsl_math::fract(f * m);
                 // Most within a fifth of an edge, many near the bottom
                 // (where the eyes are).
                 let (x, y) = match k % 5 {

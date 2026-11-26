@@ -3,7 +3,7 @@
 //! border: [`crate::gui::paper::paper_at`]), yet it does not change once it
 //! has unrolled. So once a frame's paper has been the same a few frames in
 //! a row ([`STILL`]), it is drawn into a texture of its own, and from
-//! then on read back from it, pixel for pixel ([`kind::BAKED`]), while it
+//! then on read back from it, pixel for pixel ([`Shape::Baked`]), while it
 //! stays that paper (moved by whole pixels too: the sheet shaken); while it
 //! changes (unrolling, the window resized) it is drawn as it is. Nothing of
 //! it goes with time (the paper's shader has no clock), and what moves on
@@ -25,7 +25,7 @@
 //! and a frame's paper is decided apart from the GPU ([`Planner`]).
 
 use super::pass::{make, Reads};
-use super::{kind, Blend, Group, Instance, Screen, SCREEN_BYTES};
+use super::{Blend, Group, Instance, Screen, Shape, SCREEN_BYTES};
 
 /// What a bake holds: half floats, as the shader gave them (premultiplied,
 /// linear where the frame takes linear light), read back pixel for pixel.
@@ -125,7 +125,7 @@ fn rows(height: u32, strip: u32) -> (u32, u32) {
 }
 
 /// What draws `paper` as `plan` says, where it is read from its bake: the
-/// shape that reads it ([`kind::BAKED`]: the bake's pixels, where its
+/// shape that reads it ([`Shape::Baked`]: the bake's pixels, where its
 /// corner is now; while it is baked, only the strips in), and the rest of
 /// the paper drawn as it is, the rows below them (none once all are in).
 fn read(plan: Paper, paper: &Instance) -> Option<(Instance, Option<Instance>)> {
@@ -138,12 +138,7 @@ fn read(plan: Paper, paper: &Instance) -> Option<(Instance, Option<Instance>)> {
         }
     };
     let (w, h) = (w as f32, h as f32);
-    let shape = Instance {
-        quad: [x, y, x + w, y + h],
-        shape: [x, y, 0.0, 0.0],
-        params: [kind::BAKED, 0.0, 0.0, 0.0],
-        ..Instance::default()
-    };
+    let shape = Instance::of(Shape::Baked, [x, y, x + w, y + h], [x, y, 0.0, 0.0]);
     let [left, top, right, bottom] = paper.quad;
     let rest = (matches!(plan, Paper::Bake { .. }) && y + h < bottom).then(|| Instance {
         quad: [left, top.max(y + h), right, bottom],
@@ -319,7 +314,7 @@ impl Bake {
         (instances, screen, size): (&[Instance], &Screen, (u32, u32)),
         reads: &Reads,
     ) -> Option<Baked> {
-        let at = instances.iter().position(|i| i.params[0] == kind::PAPER);
+        let at = instances.iter().position(|i| i.is(Shape::Paper));
         let paper = at.map(|at| &instances[at]);
         let plan = self.planner.frame(paper, size);
         self.texture_as(gpu, plan.texture);
@@ -451,13 +446,14 @@ mod tests {
     /// A sheet at `(x, y)` (its quad's corner), `w` wide, unrolled to
     /// `front`.
     fn sheet((x, y): (f32, f32), w: f32, front: f32) -> Instance {
-        Instance {
-            quad: [x, y, x + w, y + 1220.0],
-            shape: [x + w / 2.0, y + 610.0, w / 2.0 - 40.0, 570.0],
-            color: [0.99, 0.96, 0.87, 1.0],
-            params: [kind::PAPER, front, 12.0, 0.0],
-            ..Instance::default()
-        }
+        let quad = [x, y, x + w, y + 1220.0];
+        Instance::of(
+            Shape::Paper,
+            quad,
+            [x + w / 2.0, y + 610.0, w / 2.0 - 40.0, 570.0],
+        )
+        .colors([0.99, 0.96, 0.87, 1.0], [0.0; 4])
+        .params([front, 12.0, 0.0])
     }
 
     const AT: (f32, f32) = (100.25, 80.5);
@@ -653,7 +649,7 @@ mod tests {
         assert_eq!(read(Paper::Draw, &open), None);
         for strip in 0..STRIPS {
             let (shape, rest) = read(Paper::Bake { strip }, &open).unwrap();
-            assert_eq!(shape.params[0], kind::BAKED);
+            assert!(shape.is(Shape::Baked));
             assert_eq!(shape.shape[..2], [100.0, 80.0]);
             let done = 80.0 + rows(1221, strip).1 as f32;
             assert_eq!(shape.quad, [100.0, 80.0, 1901.0, done]);

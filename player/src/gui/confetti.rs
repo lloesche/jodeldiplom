@@ -10,8 +10,9 @@
 //! (`super::shader_check`).
 
 use super::particles::{Kind, Look, Spray, Sprite};
-use super::rainbow::hue;
-use super::sparks::{mix, rand, TAU};
+use super::shine::hue;
+use super::sparks::{rand, TAU};
+use super::wgsl_math::mix3;
 
 /// How long a shower lasts, in seconds.
 pub const CONFETTI_LIFE: f32 = 4.0;
@@ -60,7 +61,7 @@ pub fn piece(s: &Spray, q: u32, age: f32) -> Option<Sprite> {
         ),
         half: (long, long * (0.08 + 0.5 * flip)),
         alpha: ((life - t) * 2.0).min(1.0) * (0.75 + 0.25 * flip),
-        rgb: mix(hue(r(11)), s.rgb, 0.3),
+        rgb: mix3(hue(r(11)), s.rgb, 0.3),
         look: Look::Bit,
         turn: r(12) * TAU + (r(13) - 0.5) * 4.0 * t,
     })

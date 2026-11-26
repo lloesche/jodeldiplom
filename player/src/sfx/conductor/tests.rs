@@ -18,7 +18,7 @@ use jodel_synth::{Command, Commands, PatchId, Synth, Tag};
 
 use super::palette::{Atom, BRASS, COINS, PADS};
 use super::*;
-use crate::core::singing::{Medal, SIGNING, STAMP_DOWN, UNROLL};
+use crate::core::karaoke::result::{Medal, SIGNING, STAMP_DOWN, UNROLL};
 use crate::tiers::Tier;
 
 const RATE: u32 = 48_000;
@@ -752,7 +752,7 @@ fn every_sheet_sound_is_heard_and_ends() {
 
 /// The sheet's rustle follows its front: loudest as it starts to unroll,
 /// quieter as it slows, the front's way
-/// ([`crate::core::singing::unrolled`]).
+/// ([`crate::core::karaoke::result::unrolled`]).
 #[test]
 fn the_rustle_follows_the_sheet() {
     let x = sheet_alone(Sheet::Unroll, 1.0);

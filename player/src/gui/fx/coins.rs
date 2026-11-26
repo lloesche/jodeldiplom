@@ -29,7 +29,8 @@
 
 use super::{At, Layer, Live, Out, Playing, Slot, Spec};
 use crate::gui::particles::{Kind, Look, Spray, Sprite};
-use crate::gui::sparks::{mix, rand, TAU, WHITE};
+use crate::gui::sparks::{rand, TAU, WHITE};
+use crate::gui::wgsl_math::mix3;
 use jodel_rhythm::grid::When;
 
 /// A fountain of coins out of the playhead.
@@ -280,7 +281,7 @@ pub fn fountain(s: &Spray, q: u32, age: f32) -> Option<Sprite> {
             ),
             half: (ray, ray),
             alpha: (1.0 - u) * (1.0 - u),
-            rgb: mix(s.rgb, WHITE, 0.7),
+            rgb: mix3(s.rgb, WHITE, 0.7),
             look: Look::Sparkle,
             turn: r(3) * TAU,
         });
@@ -301,7 +302,7 @@ pub fn fountain(s: &Spray, q: u32, age: f32) -> Option<Sprite> {
         at: (s.at.0 + vx * t, s.at.1 + vy * t + 0.5 * g * t * t),
         half: (radius, radius),
         alpha: ((life - t) / (0.3 * life)).min(1.0),
-        rgb: mix(s.rgb, WHITE, 0.2 * r(4)),
+        rgb: mix3(s.rgb, WHITE, 0.2 * r(4)),
         look: Look::Gold,
         turn: r(5) * TAU + (7.0 + 9.0 * r(6)) * t,
     })
@@ -358,7 +359,7 @@ fn falls(s: &Spray, q: u32, age: f32, spread: f32) -> Option<Sprite> {
         at: (x, y),
         half: (radius, radius),
         alpha,
-        rgb: mix(s.rgb, WHITE, 0.2 * r(6)),
+        rgb: mix3(s.rgb, WHITE, 0.2 * r(6)),
         look: Look::Gold,
         turn: r(7) * TAU + (5.0 + 8.0 * r(8)) * t,
     })
@@ -383,7 +384,7 @@ pub fn flick(s: &Spray, q: u32, age: f32) -> Option<Sprite> {
             ),
             half: (ray, ray),
             alpha: 1.0 - u,
-            rgb: mix(s.rgb, WHITE, 0.7),
+            rgb: mix3(s.rgb, WHITE, 0.7),
             look: Look::Sparkle,
             turn: r(3) * TAU,
         });

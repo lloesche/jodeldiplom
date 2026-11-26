@@ -4,7 +4,10 @@
 //! best score raised where it was beaten. Every song played out has one,
 //! however little of it was sung. The first START during the reveal
 //! completes it at once; the next goes on, as ever. How a song's scoring
-//! comes to a result is [`SongResult`]'s.
+//! comes to a result is [`SongResult`]'s: its medal and verdict and their
+//! words (`verdict`); its reveal on the diploma, a timeline the stage
+//! draws and the sounds play alike (`reveal`); the examiner's signature
+//! on it ([`signature`]).
 //!
 //! The reveal goes by one clock, for what is drawn and what is heard
 //! alike ([`clock_ms`]): the frame's.
@@ -12,8 +15,17 @@
 use std::sync::Arc;
 
 use super::in_mode;
-use crate::core::singing::{Motion, Shown, SongResult};
 use crate::core::State;
+
+mod reveal;
+pub mod signature;
+mod verdict;
+
+pub use reveal::{
+    ease_out, signed, unrolled, Beat, Motion, Reveal, Shown, Side, DATE_FROM, DATING, DROP,
+    GRADE_WRITE, SIGNING, STAMP_DOWN, STREAK_WRITE, UNROLL, WORDS_FILL,
+};
+pub use verdict::{verdict_words, Medal, SongResult, Verdict};
 
 /// The reveal's clock: the time of the frame drawn last, or the tick's
 /// where that is older (the core's clock moves only a tick at a time, a
@@ -65,7 +77,7 @@ pub(super) fn track_started(state: &mut State) {
 /// kept to show, and its best score raised where it was beaten; the next
 /// track heard puts it away ([`track_started`]). Its singing is what
 /// was scored of it: nothing where its notes were never made or sung
-/// ([`crate::core::singing::Verdict::Silent`]).
+/// ([`crate::core::karaoke::result::Verdict::Silent`]).
 pub(crate) fn ended(state: &mut State, index: usize) {
     if !in_mode(state) || !state.config.karaoke_game {
         return;

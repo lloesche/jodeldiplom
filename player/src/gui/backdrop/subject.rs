@@ -6,6 +6,7 @@
 use image::RgbImage;
 
 use crate::cover::{CoverLayers, Swatch};
+use crate::gui::wgsl_math::srgb_to_linear;
 
 /// Where a cover's subject is, in the cover's units (0 to 1 across and
 /// down): where the cut is centred (its upper part, where a face is), its
@@ -111,14 +112,7 @@ pub fn is_of(art: &RgbImage, layers: &CoverLayers) -> bool {
 /// A colour (sRGB bytes) as linear light, as bright as it can be: its
 /// largest channel at 1 (a light's colour, not its strength).
 fn light_of(rgb: [u8; 3]) -> [f32; 3] {
-    let lin = rgb.map(|v| {
-        let c = f32::from(v) / 255.0;
-        if c <= 0.04045 {
-            c / 12.92
-        } else {
-            ((c + 0.055) / 1.055).powf(2.4)
-        }
-    });
+    let lin = rgb.map(|v| srgb_to_linear(f32::from(v) / 255.0));
     let most = lin[0].max(lin[1]).max(lin[2]).max(1e-3);
     lin.map(|c| c / most)
 }

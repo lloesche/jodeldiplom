@@ -8,7 +8,7 @@ use std::sync::Arc;
 use super::mode::line;
 use super::{points_text, LineKind, LyricLine};
 use crate::core::karaoke;
-use crate::core::singing::{verdict_words, Shown, SongResult};
+use crate::core::karaoke::result::{verdict_words, Shown, SongResult};
 use crate::core::State;
 
 /// A song's result as the mode shows it: what was shown, its reveal's time
@@ -64,7 +64,7 @@ pub fn result_now(state: &State) -> Option<ResultShown> {
 /// very quietly), its entries' names, what the seal's place, the
 /// signature and the date are marked with, and the rubber stamp a silent
 /// song gets. Nobody's name: it certifies the song sung. (The grades are
-/// the core's, [`Verdict::grade`](crate::core::singing::Verdict::grade).)
+/// the core's, [`Verdict::grade`](crate::core::karaoke::result::Verdict::grade).)
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct DiplomaWords {
     /// Its heading.
@@ -161,7 +161,7 @@ pub fn plain_lines(r: &SongResult, next: &str) -> Vec<LyricLine> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::singing::Medal;
+    use crate::core::karaoke::result::Medal;
 
     fn result(medal: Option<Medal>, whole: bool, best: Option<u32>) -> SongResult {
         SongResult {

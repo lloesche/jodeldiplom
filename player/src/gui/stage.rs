@@ -4,16 +4,16 @@
 //! song ahead of it), their text riding in them, filled where the singer
 //! hit them ([`words`]); the shots rescuing a word missed ([`shots`]); the
 //! singer as an arrow at the playhead, gliding to their pitch, its trail
-//! behind it and sparks flying off it; the streak's multiplier over the
-//! playhead; the line sung and the next at the bottom; and the song's
-//! progress, its breaks apart, along the bottom edge; "AUTO" in a corner
-//! while the demo sings ([`tag`]). The tiers' effects draw at their
-//! points of it ([`super::fx`]: the rainbow behind the tubes, the bursts
-//! from the playhead, the light round the lane, the screen passes over
-//! it all, a word slammed down over everything, the screen shaken with
-//! it), as strong as the board eases them from the singing and the music.
-//! Its text is in
-//! Karaoke mode's own faces ([`Face`]). Where it draws no lane (the notes
+//! behind it and sparks flying off it ([`sparks`]); the streak's
+//! multiplier over the playhead; the line sung and the next at the bottom;
+//! and the song's progress, its breaks apart, along the bottom edge;
+//! "AUTO" in a corner while the demo sings ([`tag`]). The tiers' effects
+//! draw at their points of it ([`super::fx`]: the rainbow behind the
+//! tubes, the bursts from the playhead, the light round the lane, the
+//! screen passes over it all, a word slammed down over everything, the
+//! screen shaken with it), as strong as the board eases them from the
+//! singing and the music. Its text is in Karaoke mode's own faces
+//! ([`Face`]), its colours its own ([`palette`]). Where it draws no lane (the notes
 //! off, a song without notes), the lyrics are set in the middle instead
 //! ([`lyrics`]); with the lane, only the lines that are no lyric (the
 //! song's title as it starts, a note in a pause). Under it all the
@@ -40,19 +40,21 @@ mod effects;
 mod lines;
 pub mod lyrics;
 mod meter;
+pub mod palette;
 mod result;
 mod scene;
 pub mod score;
 mod shade;
 mod shots;
+mod sparks;
 mod start;
 mod tag;
 mod words;
 use self::arrow::Arrow;
 use self::atlas::Atlas;
+use self::palette::{rgba, Rgb, ACTIVE, CORAL, GOLD, GOLD_DEEP, GOLD_TOP, SMOKE, WHITE};
 use self::shade::Shade;
-use super::sparks::noise;
-use super::stage_gpu::{kind, Instance, StageFrame};
+use super::stage_gpu::{Instance, Shape, StageFrame};
 pub use result::Tint;
 
 use crate::core::State;
@@ -76,39 +78,6 @@ const PROGRESS: f32 = 0.935;
 const BREAK: f64 = 4.0;
 /// How soon after its last pitch the arrow fades, in seconds.
 const ARROW_HOLD: f64 = 0.25;
-/// The most sparks at once.
-const MOST_SPARKS: usize = 700;
-
-/// sRGB colours, 0 to 1.
-type Rgb = [f32; 3];
-const WHITE: Rgb = [1.0, 1.0, 1.0];
-/// The lane's glass, dark and a little cool.
-const SMOKE: Rgb = [0.02, 0.025, 0.05];
-const GOLD_TOP: Rgb = [1.0, 0.93, 0.6];
-const GOLD: Rgb = [1.0, 0.72, 0.2];
-const GOLD_DEEP: Rgb = [0.98, 0.55, 0.12];
-const CORAL: Rgb = [0.95, 0.43, 0.31];
-const ACTIVE: Rgb = [1.0, 0.86, 0.5];
-
-fn rgba(c: Rgb, a: f32) -> [f32; 4] {
-    [c[0], c[1], c[2], a]
-}
-
-/// A spark flying off the arrow.
-#[derive(Clone, Copy, Debug, PartialEq)]
-struct Spark {
-    x: f32,
-    y: f32,
-    vx: f32,
-    vy: f32,
-    age: f32,
-    life: f32,
-    size: f32,
-    turn: f32,
-    spin: f32,
-    color: Rgb,
-    phase: f32,
-}
 
 /// Karaoke mode's stage between frames.
 #[derive(Default)]
@@ -116,14 +85,11 @@ pub struct Stage {
     /// Its text, by face.
     faces: Faces,
     atlas: Atlas,
-    sparks: std::collections::VecDeque<Spark>,
     arrow: Arrow,
-    /// The arrow's comet tail, and the stardust owed to it.
+    /// The arrow's comet tail.
     comet: comet::Comet,
-    dust: f32,
-    seed: u32,
-    /// Sparks owed to the next frame (a share of one).
-    owed: f32,
+    /// The sparks off the arrow ([`sparks`]).
+    sparks: sparks::Sparks,
     /// The streak: its shine, the words scored ([`super::streak`]).
     streak: super::streak::Streak,
     /// Where it is in the singing's moments.
@@ -208,6 +174,26 @@ impl<'a> Song<'a> {
             theme: state.config.karaoke_theme,
         }
     }
+
+    /// The song of `singing` (its `sung` lines, `length` long) with the
+    /// game on, the voice taken as it comes (no delay) and the classic
+    /// theme: for a stage made outside the player.
+    pub fn new(
+        singing: &'a crate::core::singing::Singing,
+        sung: Vec<&'a jodel_lyrics::Line>,
+        length: Option<f64>,
+    ) -> Song<'a> {
+        Song {
+            singing,
+            sung,
+            game: true,
+            length,
+            late: 0.0,
+            demo: false,
+            heard: None,
+            theme: &crate::theme::CLASSIC,
+        }
+    }
 }
 
 /// Whether the stage draws the song's lane for `state`: Karaoke mode, its
@@ -248,7 +234,7 @@ fn clip(out: &mut Vec<Instance>, from: usize, [l, t, r, b]: [f32; 4]) {
             out.remove(k);
             continue;
         }
-        if i.params[0] == kind::TEXT {
+        if i.is(Shape::Text) {
             let along = |v: f32, (a, b): (f32, f32), (ua, ub): (f32, f32)| {
                 ua + (v - a) / (b - a).max(1e-6) * (ub - ua)
             };
@@ -366,20 +352,15 @@ fn pill(
     radius: f32,
 ) -> Instance {
     let m = glow + 1.0;
-    Instance {
-        quad: [
-            c.0 - half.0 - m,
-            c.1 - half.1 - m,
-            c.0 + half.0 + m,
-            c.1 + half.1 + m,
-        ],
-        shape: [c.0, c.1, half.0, half.1],
-        color: body,
-        color2: edge,
-        params: [kind::PILL, glow, outline, radius],
-        uv: [0.0; 4],
-        strain: [0.0; 4],
-    }
+    let quad = [
+        c.0 - half.0 - m,
+        c.1 - half.1 - m,
+        c.0 + half.0 + m,
+        c.1 + half.1 + m,
+    ];
+    Instance::of(Shape::Pill, quad, [c.0, c.1, half.0, half.1])
+        .colors(body, edge)
+        .params([glow, outline, radius])
 }
 
 /// The part of the pill at `c`, `half` between `span` (pixels across),
@@ -399,15 +380,13 @@ fn fill(
         return None;
     }
     let m = glow + 1.0;
-    Some(Instance {
-        quad: [x0 - m, c.1 - half.1 - m, x1 + m, c.1 + half.1 + m],
-        shape: [c.0, c.1, half.0, half.1],
-        color: top,
-        color2: bottom,
-        params: [kind::FILL, glow, 0.0, 0.0],
-        uv: [x0, x1, 0.0, 0.0],
-        strain: [0.0; 4],
-    })
+    let quad = [x0 - m, c.1 - half.1 - m, x1 + m, c.1 + half.1 + m];
+    let fill = Instance::of(Shape::Fill, quad, [c.0, c.1, half.0, half.1]);
+    Some(
+        fill.colors(top, bottom)
+            .params([glow, 0.0, 0.0])
+            .uv([x0, x1, 0.0, 0.0]),
+    )
 }
 
 /// How far in from each edge of the window nothing shows, a share of its
@@ -432,33 +411,21 @@ fn segment(
     glow: f32,
 ) -> Instance {
     let m = thick + glow + 1.0;
-    Instance {
-        quad: [
-            a.0.min(b.0) - m,
-            a.1.min(b.1) - m,
-            a.0.max(b.0) + m,
-            a.1.max(b.1) + m,
-        ],
-        shape: [a.0, a.1, b.0, b.1],
-        color: core,
-        color2: glow_color,
-        params: [kind::SEGMENT, thick, glow, 0.0],
-        uv: [0.0; 4],
-        strain: [0.0; 4],
-    }
+    let quad = [
+        a.0.min(b.0) - m,
+        a.1.min(b.1) - m,
+        a.0.max(b.0) + m,
+        a.1.max(b.1) + m,
+    ];
+    Instance::of(Shape::Segment, quad, [a.0, a.1, b.0, b.1])
+        .colors(core, glow_color)
+        .params([thick, glow, 0.0])
 }
 
 fn disc(c: (f32, f32), r: f32, core: [f32; 4], glow_color: [f32; 4], glow: f32) -> Instance {
     let m = r + glow + 1.0;
-    Instance {
-        quad: [c.0 - m, c.1 - m, c.0 + m, c.1 + m],
-        shape: [c.0, c.1, r, glow],
-        color: core,
-        color2: glow_color,
-        params: [kind::DISC, 0.0, 0.0, 0.0],
-        uv: [0.0; 4],
-        strain: [0.0; 4],
-    }
+    let quad = [c.0 - m, c.1 - m, c.0 + m, c.1 + m];
+    Instance::of(Shape::Disc, quad, [c.0, c.1, r, glow]).colors(core, glow_color)
 }
 
 impl Stage {
@@ -489,15 +456,10 @@ impl Stage {
         let scale = scale / placed.made;
         let pad = COVER_PAD as f32 * scale;
         let (x0, y0) = (at.0 - pad, at.1 - pad);
-        out.push(Instance {
-            quad: [x0, y0, x0 + w as f32 * scale, y0 + h as f32 * scale],
-            shape: [0.0; 4],
-            color: rest,
-            color2: filled,
-            params: [kind::TEXT, split, 0.0, 0.0],
-            uv: [u as f32, v as f32, (u + w) as f32, (v + h) as f32],
-            strain: [0.0; 4],
-        });
+        let quad = [x0, y0, x0 + w as f32 * scale, y0 + h as f32 * scale];
+        let texels = [u as f32, v as f32, (u + w) as f32, (v + h) as f32];
+        let run = Instance::of(Shape::Text, quad, [0.0; 4]).colors(rest, filled);
+        out.push(run.params([split, 0.0, 0.0]).uv(texels));
         out.last_mut()
     }
 
@@ -519,51 +481,6 @@ impl Stage {
         };
         self.caps.insert(key, m);
         m
-    }
-
-    fn rand(&mut self) -> f32 {
-        self.seed = self.seed.wrapping_add(1);
-        noise(self.seed)
-    }
-
-    /// `n` sparks off (`x`, `y`): `color`, `size` across, `spread` how
-    /// far they fly from there, `reach` pixels a second at 1.
-    fn emit(
-        &mut self,
-        n: usize,
-        (x, y): (f32, f32),
-        color: Rgb,
-        size: f32,
-        spread: f32,
-        reach: f32,
-    ) {
-        for _ in 0..n {
-            if self.sparks.len() >= MOST_SPARKS {
-                self.sparks.pop_front();
-            }
-            let (a, b, c, d, e) = (
-                self.rand(),
-                self.rand(),
-                self.rand(),
-                self.rand(),
-                self.rand(),
-            );
-            let white = self.rand() < 0.3;
-            let (f, g, i, j) = (self.rand(), self.rand(), self.rand(), self.rand());
-            self.sparks.push_back(Spark {
-                x: x + (a - 0.5) * size * 0.6,
-                y: y + (b - 0.5) * size * 0.6,
-                vx: (c - 0.65) * reach * 4.0 * spread,
-                vy: (d - 0.5) * reach * 4.0 * spread,
-                age: 0.0,
-                life: 0.4 + 0.7 * e,
-                size: size * (0.35 + 0.65 * f),
-                turn: g * std::f32::consts::TAU,
-                spin: (i - 0.5) * 6.0,
-                color: if white { [1.0, 0.97, 0.88] } else { color },
-                phase: j * std::f32::consts::TAU,
-            });
-        }
     }
 
     /// The stage for `picture` (all its lines, as the view made it) in the
@@ -677,19 +594,8 @@ impl Stage {
 
         // Stardust along the tail, and sparks off the arrow on the note: owed
         // by the time gone by.
-        if self.arrow.shown > 0.5 {
-            let at = (lane.head, self.arrow.y);
-            self.dust += comet::DUST * song_dt;
-            let n = self.dust.floor() as usize;
-            self.dust -= n as f32;
-            self.emit(n, at, arrow_color, p * 0.26, 0.12, p);
-            self.owed += if hitting { 40.0 } else { 0.0 } * song_dt;
-            let n = self.owed.floor() as usize;
-            self.owed -= n as f32;
-            self.emit(n, at, arrow_color, p * 0.5, 1.0, p);
-        } else {
-            (self.owed, self.dust) = (0.0, 0.0);
-        }
+        let off = (self.arrow.shown > 0.5).then_some((lane.head, self.arrow.y));
+        self.sparks.fly(off, arrow_color, p, hitting, song_dt);
         // A word scored (once): a burst where it hit; then the effects'
         // bursts from the playhead (each tier the streak went up, a rainbow
         // burst), the multiplier popping.
@@ -706,32 +612,8 @@ impl Stage {
         let mut bursts = std::mem::take(&mut self.sprays);
         self.effects_at(&playhead, &effects, (&mut Vec::new(), &mut bursts));
         self.sprays = bursts;
-        for s in &mut self.sparks {
-            s.age += song_dt;
-            // Their own way, and by with the lane.
-            s.x += (s.vx - lane.pps) * song_dt;
-            s.y += s.vy * song_dt;
-            let drag = (-2.4 * song_dt).exp();
-            s.vx *= drag;
-            s.vy *= drag;
-            s.turn += s.spin * song_dt;
-        }
-        self.sparks.retain(|s| s.age < s.life);
-        for s in &self.sparks {
-            let left = 1.0 - s.age / s.life;
-            let twinkle = 0.6 + 0.4 * (s.age * 26.0 + s.phase).sin();
-            let size = s.size * (0.45 + 0.55 * left);
-            let m = size + 1.0;
-            out.push(Instance {
-                quad: [s.x - m, s.y - m, s.x + m, s.y + m],
-                shape: [s.x, s.y, size, s.turn],
-                color: rgba(s.color, left.powf(1.2) * twinkle),
-                color2: [0.0; 4],
-                params: [kind::SPARK, 0.0, 0.0, 0.0],
-                uv: [0.0; 4],
-                strain: [0.0; 4],
-            });
-        }
+        self.sparks.step(song_dt, lane.pps);
+        self.sparks.draw(&mut out);
         if self.arrow.shown > 0.0 {
             let a = self.arrow.shown;
             out.push(disc(
@@ -748,20 +630,15 @@ impl Stage {
                 1.0
             };
             let len = p * 0.9 * beat;
-            out.push(Instance {
-                quad: [
-                    tip.0 - len * 1.6,
-                    tip.1 - len * 1.2,
-                    tip.0 + len * 0.6,
-                    tip.1 + len * 1.2,
-                ],
-                shape: [tip.0, tip.1, len, 0.0],
-                color: rgba(arrow_color, a),
-                color2: rgba(arrow_color, 0.6 * a),
-                params: [kind::ARROW, p * 0.35, 0.0, 0.0],
-                uv: [0.0; 4],
-                strain: [0.0; 4],
-            });
+            let quad = [
+                tip.0 - len * 1.6,
+                tip.1 - len * 1.2,
+                tip.0 + len * 0.6,
+                tip.1 + len * 1.2,
+            ];
+            let arrow = Instance::of(Shape::Arrow, quad, [tip.0, tip.1, len, 0.0]);
+            let arrow = arrow.colors(rgba(arrow_color, a), rgba(arrow_color, 0.6 * a));
+            out.push(arrow.params([p * 0.35, 0.0, 0.0]));
             let arrow = At::Arrow {
                 at: (lane.head, self.arrow.y),
                 radius: p * 0.9,
@@ -787,10 +664,11 @@ impl Stage {
         self.lines(&mut out, picture, area, &effects);
 
         // The shine: the meter, the tiers' looks, the song's progress.
-        let mut drawn = meter::Drawn {
-            out,
+        let mut frame = StageFrame {
+            instances: out,
             top,
-            ..Default::default()
+            clock: clock as f32,
+            ..StageFrame::default()
         };
         let at = meter::Where {
             area,
@@ -802,40 +680,34 @@ impl Stage {
             }),
         };
         self.shine(
-            &mut drawn,
+            &mut frame,
             (singing, game, song.length),
             &at,
             (&step, &effects),
         );
-        let (out, mut top, mut lights, mut light_sprays) =
-            (drawn.out, drawn.top, drawn.lights, drawn.light_sprays);
-        top.extend(over);
-        top.append(&mut multiplier);
-        lights.extend(over_light);
+        frame.top.extend(over);
+        frame.top.append(&mut multiplier);
+        frame.lights.extend(over_light);
         // The screen passes over it all, clear of the lyric band and what
         // the singer reads.
-        let mut screen = Vec::new();
         let at = self.screen_at(area, &lane);
-        self.effects_at(&at, &effects, (&mut screen, &mut Vec::new()));
-        lights.append(&mut shots.lights);
+        self.effects_at(&at, &effects, (&mut frame.screen, &mut Vec::new()));
+        frame.lights.append(&mut shots.lights);
+        // The bursts that are light, kept until they are over.
         self.lights.retain(|s| s.alive(clock));
-        self.lights.append(&mut light_sprays);
+        self.lights.append(&mut frame.light_sprays);
 
         self.sprays.retain(|s| s.alive(clock));
         sprays.extend_from_slice(&self.sprays);
         StageFrame {
-            instances: out,
-            top,
             uploads: std::mem::take(&mut self.atlas.uploads),
             paths,
             sprays,
-            clock: clock as f32,
-            lights,
             light_sprays: self.lights.clone(),
-            screen,
             music,
             looks: effects.looks(),
             shake: self.shake,
+            ..frame
         }
     }
 }
@@ -853,20 +725,6 @@ mod tests {
         // Higher up the higher, the middle in the band's.
         assert!(lane.y(1.0) < lane.y(0.0) && lane.y(0.0) < lane.y(-1.0));
         assert_eq!(lane.y(0.0), (lane.band.0 + lane.band.1) / 2.0);
-    }
-
-    #[test]
-    fn sparks_fly_and_go() {
-        let mut stage = Stage::default();
-        stage.emit(10, (100.0, 100.0), GOLD, 20.0, 1.0, 40.0);
-        assert_eq!(stage.sparks.len(), 10);
-        // Most fly back, and all go by with the lane.
-        assert!(stage.sparks.iter().filter(|s| s.vx < 0.0).count() >= 5);
-        for s in &mut stage.sparks {
-            s.age = s.life;
-        }
-        stage.sparks.retain(|s| s.age < s.life);
-        assert!(stage.sparks.is_empty());
     }
 
     #[test]

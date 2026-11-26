@@ -14,7 +14,7 @@
 //! (held to it on the GPU, `super::shader_check`).
 
 use super::liquid::{amplitude, GROW};
-use super::stage_gpu::{kind, Instance, Pour, Skin, Strain};
+use super::stage_gpu::{Instance, Pour, Shape, Skin, Strain};
 
 /// How much of a bubble's bulge its middle line takes (it grows along and
 /// up and down by this share of it; its thickness by all of it).
@@ -209,7 +209,7 @@ impl Snake {
             color: skin.body,
             color2: skin.edge,
             params: [
-                kind::TUBE,
+                Shape::Tube.code(),
                 skin.glow,
                 skin.outline,
                 self.points.len() as f32,
@@ -237,7 +237,7 @@ impl Snake {
             color: pour.tint.top,
             color2: pour.tint.bottom,
             params: [
-                kind::TUBE_LIQUID,
+                Shape::TubeLiquid.code(),
                 pour.tint.glow,
                 0.0,
                 self.points.len() as f32,

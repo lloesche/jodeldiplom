@@ -15,8 +15,9 @@
 //! come from the tier table ([`crate::tiers::TIERS`]), the shader's
 //! written from the same arrays ([`MARKS`], [`FILLS`]).
 
-use super::rainbow::{clamp01, hue, mix3, shine_at, smoothstep, Glow, WHOLE};
+use super::shine::{hue, shine_at, Glow, WHOLE};
 use super::sparks::noise;
+use super::wgsl_math::{clamp01, mix3, smoothstep};
 use crate::core::shine::Tier;
 use crate::tiers::{wgsl_array, Paint, TIERS};
 

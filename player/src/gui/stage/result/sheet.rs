@@ -7,14 +7,13 @@
 //! under the signature's and the date's lines what they are; at the end
 //! the examiner signs it in one stroke and writes the day.
 
-use super::super::super::stage_gpu::{kind, Instance};
+use super::super::super::stage_gpu::{Instance, Shape, StageFrame};
 use super::super::{disc, rgba, segment, Face, Rgb, Stage, GOLD, GOLD_TOP};
-use super::{
-    burst, clamp01, fade, land, sticker, Drawn, Pen, ResultShown, Room, Tint, Written, PRINT,
-};
-use crate::core::singing::signature::signature_point;
-use crate::core::singing::{signed, unrolled, Beat, Side, DATE_FROM, DATING};
+use super::{burst, clamp01, fade, land, sticker, Pen, ResultShown, Room, Tint, Written, PRINT};
+use crate::core::karaoke::result::signature::signature_point;
+use crate::core::karaoke::result::{signed, unrolled, Beat, Side, DATE_FROM, DATING};
 use crate::gui::particles::Kind;
+use crate::gui::wgsl_math::mix3;
 use crate::view::karaoke::DIPLOMA;
 /// Where the entries' lines are down the sheet, and where they run across
 /// (their names right of the first).
@@ -42,23 +41,19 @@ pub(super) struct Inks {
     pub(super) border: (Rgb, Rgb),
 }
 
-fn mix(a: Rgb, b: Rgb, t: f32) -> Rgb {
-    [0, 1, 2].map(|i| a[i] + (b[i] - a[i]) * t)
-}
-
 impl Inks {
     /// The inks in `tint`.
     pub(super) fn of(tint: &Tint) -> Inks {
         let deep = |c: Rgb, k: f32| c.map(|v| v * k);
         Inks {
-            paper: mix([0.99, 0.96, 0.87], tint.glow, 0.05),
+            paper: mix3([0.99, 0.96, 0.87], tint.glow, 0.05),
             ink: tint.ink,
-            heading: mix(deep(tint.ribbon.0, 0.7), tint.ink, 0.3),
-            pen: mix(deep(tint.ribbon.1, 0.45), [0.08, 0.12, 0.42], 0.55),
+            heading: mix3(deep(tint.ribbon.0, 0.7), tint.ink, 0.3),
+            pen: mix3(deep(tint.ribbon.1, 0.45), [0.08, 0.12, 0.42], 0.55),
             gold: [0.74, 0.44, 0.04],
             border: (
-                mix(deep(tint.ribbon.0, 0.75), tint.ink, 0.25),
-                mix(deep(tint.ribbon.1, 0.75), tint.ink, 0.25),
+                mix3(deep(tint.ribbon.0, 0.75), tint.ink, 0.25),
+                mix3(deep(tint.ribbon.1, 0.75), tint.ink, 0.25),
             ),
         }
     }
@@ -76,7 +71,7 @@ impl Stage {
     /// The sheet unrolling (its first [`UNROLL`] seconds) and what is
     /// printed on it, each line once the front has passed it; the title
     /// landing on its beat.
-    pub(super) fn sheet(&mut self, d: &mut Drawn, room: &Room, shown: &ResultShown) {
+    pub(super) fn sheet(&mut self, d: &mut StageFrame, room: &Room, shown: &ResultShown) {
         let t = shown.t;
         let (_, _, sw, sh) = room.sheet;
         let s = room.s;
@@ -86,7 +81,7 @@ impl Stage {
         let half = (sw / 2.0, sh / 2.0);
         let front = -half.1 + sh * open;
         let reach = 4.0 * s;
-        d.out.push(Instance {
+        d.instances.push(Instance {
             quad: [
                 c.0 - half.0 - reach,
                 c.1 - half.1 - reach,
@@ -96,7 +91,7 @@ impl Stage {
             shape: [c.0, c.1, half.0, half.1],
             color: rgba(inks.paper, 1.0),
             color2: rgba(inks.border.0, 0.85),
-            params: [kind::PAPER, front, s, 0.0],
+            params: [Shape::Paper.code(), front, s, 0.0],
             uv: [inks.border.1[0], inks.border.1[1], inks.border.1[2], 0.7],
             strain: [0.0; 4],
         });
@@ -109,7 +104,14 @@ impl Stage {
         let at = room.at(0.5, 0.135);
         let head = rgba(inks.heading, printed(0.135));
         let text = (Face::SHOUT, DIPLOMA.heading);
-        let hw = self.written(&mut d.out, text, (hp, 1.0), (at, 0.5), head, Pen::FLAT);
+        let hw = self.written(
+            &mut d.instances,
+            text,
+            (hp, 1.0),
+            (at, 0.5),
+            head,
+            Pen::FLAT,
+        );
         for star in [Side::Left, Side::Right] {
             let side = match star {
                 Side::Left => -1.0f32,
@@ -121,7 +123,7 @@ impl Stage {
             let size = (hp * 0.36 * scale, side * 0.25);
             let halo = (0.0, [0.0; 4]);
             let glint = -1.6 + fade(age, 0.7) * 3.4;
-            d.out
+            d.instances
                 .push(sticker(star_at, size, rgba(GOLD, shows), halo, glint));
         }
         // The lines round the title (the one under it as the verdict has
@@ -133,7 +135,7 @@ impl Stage {
             let a = 0.78 * printed(fy);
             let text = (PRINT, &*text);
             let at = (room.at(0.5, fy), 0.5);
-            self.written(&mut d.out, text, (px, 1.0), at, ink(a), Pen::FLAT);
+            self.written(&mut d.instances, text, (px, 1.0), at, ink(a), Pen::FLAT);
         }
         self.title(d, room, shown);
         // The entries' names and lines.
@@ -143,7 +145,7 @@ impl Stage {
             let a = printed(fy);
             let at = (room.at(LINE_FROM - 0.025, fy), 1.0);
             self.written(
-                &mut d.out,
+                &mut d.instances,
                 (PRINT, name),
                 (lp, 1.0),
                 at,
@@ -152,7 +154,7 @@ impl Stage {
             );
             let base = fy + 2.0 * s / sh;
             let (from, to) = (room.at(LINE_FROM, base), room.at(LINE_TO, base));
-            d.out
+            d.instances
                 .push(segment(from, to, thin, ink(0.42 * a), [0.0; 4], 0.0));
         }
         // Under the signature's line and the date's, what they are.
@@ -164,18 +166,25 @@ impl Stage {
             let a = printed(SIGNED_Y + 0.05);
             let base = SIGNED_Y + 0.03;
             let (from, to) = (room.at(fx - wide, base), room.at(fx + wide, base));
-            d.out
+            d.instances
                 .push(segment(from, to, thin, ink(0.5 * a), [0.0; 4], 0.0));
             let (text, cp) = self.fitted(PRINT, text, cp, room.across(wide * 2.0));
             let at = (room.at(fx, base + 2.4 * s / sh), 0.5);
             let text = (PRINT, &*text);
-            self.written(&mut d.out, text, (cp, 1.0), at, ink(0.7 * a), Pen::FLAT);
+            self.written(
+                &mut d.instances,
+                text,
+                (cp, 1.0),
+                at,
+                ink(0.7 * a),
+                Pen::FLAT,
+            );
         }
     }
 
     /// The song's title, landing on its beat (growing past its size and
     /// back), a sparkle off each end as it lands.
-    fn title(&mut self, d: &mut Drawn, room: &Room, shown: &ResultShown) {
+    fn title(&mut self, d: &mut StageFrame, room: &Room, shown: &ResultShown) {
         let (t, r) = (shown.t, &shown.shown.result);
         let Some(at) = shown.shown.reveal.when(Beat::Title).filter(|&at| t >= at) else {
             return;
@@ -187,7 +196,14 @@ impl Stage {
         let c = room.at(0.5, 0.293);
         let ink = rgba(room.inks.ink, shows);
         let text = (Face::LINE, &*title);
-        let tw = self.written(&mut d.out, text, (px, scale), (c, 0.5), ink, Pen::FLAT);
+        let tw = self.written(
+            &mut d.instances,
+            text,
+            (px, scale),
+            (c, 0.5),
+            ink,
+            Pen::FLAT,
+        );
         for (k, side) in [-1.0f32, 1.0].into_iter().enumerate() {
             let end = (c.0 + side * (tw / 2.0 + px * 0.4), c.1);
             let seed = (11 + k as u32, GOLD_TOP);
@@ -201,7 +217,7 @@ impl Stage {
     /// date; none where the system has none).
     pub(super) fn signed(
         &mut self,
-        d: &mut Drawn,
+        d: &mut StageFrame,
         room: &Room,
         shown: &ResultShown,
         words: &Written,
@@ -216,7 +232,7 @@ impl Stage {
         let size = (12.0 * s).min(room.across(0.13));
         let c = room.at(SIGNATURE_X, SIGNED_Y - 0.004);
         let reach = size * 1.3;
-        d.out.push(Instance {
+        d.instances.push(Instance {
             quad: [
                 c.0 - reach,
                 c.1 - size * 0.7,
@@ -225,14 +241,14 @@ impl Stage {
             ],
             shape: [c.0, c.1, size, 0.0],
             color: pen,
-            params: [kind::SIGNATURE, drawn, (0.2 * s).max(0.8), 0.0],
+            params: [Shape::Signature.code(), drawn, (0.2 * s).max(0.8), 0.0],
             ..Instance::default()
         });
         if drawn < 1.0 {
             // The pen's nib, where it is.
             let (nx, ny) = signature_point(drawn);
             let nib = (c.0 + nx * size, c.1 + ny * size);
-            d.out.push(disc(nib, 0.35 * s, pen, [0.0; 4], 0.0));
+            d.instances.push(disc(nib, 0.35 * s, pen, [0.0; 4], 0.0));
         }
         let Some(date) = &words.date else {
             return;
@@ -242,6 +258,13 @@ impl Stage {
         let share = clamp01((a - DATE_FROM as f32) / DATING as f32);
         let at = (room.at(DATE_X, SIGNED_Y), 0.5);
         let text = (Face::NUMBER, &*date);
-        self.written(&mut d.out, text, (px, 1.0), at, pen, Pen::writing(share));
+        self.written(
+            &mut d.instances,
+            text,
+            (px, 1.0),
+            at,
+            pen,
+            Pen::writing(share),
+        );
     }
 }

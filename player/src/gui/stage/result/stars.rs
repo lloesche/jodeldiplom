@@ -6,13 +6,14 @@
 //! reached each tier under them, in a row (two, should one not fit across
 //! the sheet).
 
-use super::super::super::rainbow::hue;
+use super::super::super::shine::hue;
 use super::super::super::sparks::noise;
+use super::super::super::stage_gpu::StageFrame;
 use super::super::meter::tier_color;
 use super::super::{disc, rgba, Rgb, Stage, WHITE};
-use super::{burst, fade, land, sparkle, sticker, Drawn, Pen, ResultShown, Room, Written, PRINT};
+use super::{burst, fade, land, sparkle, sticker, Pen, ResultShown, Room, Written, PRINT};
+use crate::core::karaoke::result::Beat;
 use crate::core::shine::Tier;
-use crate::core::singing::Beat;
 use crate::gui::particles::Kind;
 use crate::theme::Theme;
 
@@ -104,7 +105,7 @@ impl Stage {
     /// tier under them (`words`' tally).
     pub(super) fn stars(
         &mut self,
-        d: &mut Drawn,
+        d: &mut StageFrame,
         room: &Room,
         shown: &ResultShown,
         words: &Written,
@@ -136,7 +137,8 @@ impl Stage {
             let col = star_color(self.theme, p.tier, t, i);
             let glow = (s * 0.7, rgba(col, halo * shows));
             let ink = rgba(col, plain * shows);
-            d.out.push(sticker(c, (s * scale, turn), ink, glow, glint));
+            d.instances
+                .push(sticker(c, (s * scale, turn), ink, glow, glint));
             if halo > 0.0 {
                 let light = rgba(col, 0.12 * shows);
                 d.lights.push(disc(c, 0.0, [0.0; 4], light, s * 1.6));
@@ -163,7 +165,7 @@ impl Stage {
     /// would not fit ([`tally_rows`]).
     fn tally(
         &mut self,
-        d: &mut Drawn,
+        d: &mut StageFrame,
         room: &Room,
         shown: &ResultShown,
         (words, below): (&Written, f32),
@@ -194,10 +196,17 @@ impl Stage {
                 let col = star_color(self.theme, Some(*tier), t, 0);
                 let none = (0.0, [0.0; 4]);
                 let chip_at = (left + chip, cy);
-                d.out
+                d.instances
                     .push(sticker(chip_at, (chip, 0.0), rgba(col, shows), none, 9.0));
                 let at = ((left + chip * 2.6, cy), 0.0);
-                let tw = self.written(&mut d.out, (PRINT, text), (px, 1.0), at, ink, Pen::FLAT);
+                let tw = self.written(
+                    &mut d.instances,
+                    (PRINT, text),
+                    (px, 1.0),
+                    at,
+                    ink,
+                    Pen::FLAT,
+                );
                 left += tw + each;
             }
         }
@@ -220,7 +229,7 @@ mod tests {
 
     fn room(w: f32, h: f32) -> Room {
         let tint = &super::super::Tint::STAGE;
-        let look = super::super::seal::look(crate::core::singing::Verdict::Cheer, tint);
+        let look = super::super::seal::look(crate::core::karaoke::result::Verdict::Cheer, tint);
         let area = (0.0, 0.0, w, h);
         Room::new(area, super::super::Line::above(area, h * 0.9), tint, look)
     }

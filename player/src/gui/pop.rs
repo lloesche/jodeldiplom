@@ -18,13 +18,12 @@ use std::collections::HashMap;
 
 use super::particles::{Kind, Spray};
 use super::snake::Snake;
+use super::stage::palette::GOLD;
 use super::stage_gpu::{Instance, Pour, Skin, Strain, Tint};
 use crate::core::bubbles::{self, Bubbles};
 use crate::core::singing::Singing;
 use crate::view::bubbles::Liquid;
 
-/// Gold, as the stage's.
-const GOLD: [f32; 3] = [1.0, 0.72, 0.2];
 /// The least length of a stretch of a tube that bursts as one spray, in
 /// its radii.
 const STRETCH: f32 = 5.0;
@@ -250,28 +249,6 @@ pub fn scored((x, y): (f32, f32), px: f32, clock: f64, pps: f32, end: f64) -> Sp
         seed: (end * 1000.0) as u32,
         rgb: GOLD,
         kind: Kind::Scored,
-    }
-}
-
-impl<'a> super::stage::Song<'a> {
-    /// The song of `singing` (its `sung` lines, `length` long) with the
-    /// game on, the voice taken as it comes (no delay) and the classic
-    /// theme: for a stage made outside the player.
-    pub fn new(
-        singing: &'a Singing,
-        sung: Vec<&'a jodel_lyrics::Line>,
-        length: Option<f64>,
-    ) -> Self {
-        super::stage::Song {
-            singing,
-            sung,
-            game: true,
-            length,
-            late: 0.0,
-            demo: false,
-            heard: None,
-            theme: &crate::theme::CLASSIC,
-        }
     }
 }
 

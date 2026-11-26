@@ -8,11 +8,11 @@
 //! value where there is room for it, else by the heading's right corner.
 
 use super::super::super::confetti::shower;
-use super::super::super::stage_gpu::{kind, Instance};
+use super::super::super::stage_gpu::{Instance, Shape, StageFrame};
 use super::super::{disc, rgba, Face, Rgb, Stage, GOLD, WHITE};
 use super::sheet::{ENTRIES, LINE_FROM, LINE_TO};
-use super::{bump, burst, clamp01, fade, Drawn, Pen, ResultShown, Room, Written, PRINT};
-use crate::core::singing::{Beat, STAMP_DOWN, STREAK_WRITE, WORDS_FILL};
+use super::{bump, burst, clamp01, fade, Pen, ResultShown, Room, Written, PRINT};
+use crate::core::karaoke::result::{Beat, STAMP_DOWN, STREAK_WRITE, WORDS_FILL};
 use crate::gui::particles::Kind;
 use crate::view::karaoke::points_text;
 
@@ -55,7 +55,7 @@ impl Stage {
     /// line, popping as they land with a burst of sparks.
     pub(super) fn points(
         &mut self,
-        d: &mut Drawn,
+        d: &mut StageFrame,
         room: &Room,
         shown: &ResultShown,
         words: &Written,
@@ -88,7 +88,7 @@ impl Stage {
         let px = room.points_px(words.points.chars().count());
         let at = room.entry(0, px);
         let color = rgba(room.inks.gold, shows);
-        let w = self.digits(&mut d.out, value, (px, scale), at, color);
+        let w = self.digits(&mut d.instances, value, (px, scale), at, color);
         let middle = (at.0 + w / 2.0, at.1);
         // A glow round them as they land.
         let glow = landed.map_or(0.0, |a| (-(a as f32) * 2.5).exp());
@@ -124,7 +124,7 @@ impl Stage {
     /// it writes; where it ends.
     fn entry_written(
         &mut self,
-        d: &mut Drawn,
+        d: &mut StageFrame,
         room: &Room,
         (i, text): (usize, &str),
         (age, over): (f32, f32),
@@ -135,7 +135,7 @@ impl Stage {
         let pen = rgba(room.inks.pen, 0.95);
         let text = (Face::NUMBER, text);
         let w = self.written(
-            &mut d.out,
+            &mut d.instances,
             text,
             (px, 1.0),
             (at, 0.0),
@@ -144,7 +144,8 @@ impl Stage {
         );
         if share < 1.0 {
             let nib = (at.0 + w * share, at.1 + 0.3 * px);
-            d.out.push(disc(nib, 0.3 * room.s, pen, [0.0; 4], 0.0));
+            d.instances
+                .push(disc(nib, 0.3 * room.s, pen, [0.0; 4], 0.0));
         }
         (at.0 + w, at.1)
     }
@@ -152,7 +153,7 @@ impl Stage {
     /// The words hit, written in as their beat comes, sparks as they are.
     pub(super) fn hits(
         &mut self,
-        d: &mut Drawn,
+        d: &mut StageFrame,
         room: &Room,
         shown: &ResultShown,
         words: &Written,
@@ -174,7 +175,7 @@ impl Stage {
     /// stars and notes.
     pub(super) fn streak(
         &mut self,
-        d: &mut Drawn,
+        d: &mut StageFrame,
         room: &Room,
         shown: &ResultShown,
         words: &Written,
@@ -196,7 +197,7 @@ impl Stage {
     /// before, calmly, there.
     pub(super) fn best(
         &mut self,
-        d: &mut Drawn,
+        d: &mut StageFrame,
         room: &Room,
         shown: &ResultShown,
         words: &Written,
@@ -234,7 +235,7 @@ impl Stage {
     /// under its end; in `face` and `color`, put down with `pen`.
     fn best_line(
         &mut self,
-        d: &mut Drawn,
+        d: &mut StageFrame,
         room: &Room,
         words: &Written,
         (face, color): (Face, [f32; 4]),
@@ -254,7 +255,14 @@ impl Stage {
             line + 0.9 * px
         };
         let text = (face, words.best.as_str());
-        self.written(&mut d.out, text, (px, 1.0), ((end, y), 1.0), color, pen);
+        self.written(
+            &mut d.instances,
+            text,
+            (px, 1.0),
+            ((end, y), 1.0),
+            color,
+            pen,
+        );
     }
 
     /// A rubber stamp of `text` in `ink` slapped on `age` seconds before
@@ -265,7 +273,7 @@ impl Stage {
     /// right corner.
     pub(super) fn rubber_stamp(
         &mut self,
-        d: &mut Drawn,
+        d: &mut StageFrame,
         room: &Room,
         words: &Written,
         (text, ink): (&str, Rgb),
@@ -306,7 +314,7 @@ impl Stage {
             shape: [c.0, c.1, half.0, half.1],
             color,
             color2: rgba(room.inks.paper, 0.8 * shows),
-            params: [kind::STAMP, STAMP_TURN, s * k, 0.0],
+            params: [Shape::Stamp.code(), STAMP_TURN, s * k, 0.0],
             ..Instance::default()
         });
         let start = t - f64::from(age);
@@ -359,7 +367,7 @@ mod tests {
     use super::super::tests::{result, stage};
     use super::super::Tint;
     use super::*;
-    use crate::core::singing::{Medal, Shown, Verdict};
+    use crate::core::karaoke::result::{Medal, Shown, Verdict};
 
     /// A new best's stamp keeps off the entries' values, however long, on
     /// a wide sheet and an upright one: right of the longest where there

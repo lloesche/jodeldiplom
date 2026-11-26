@@ -8,8 +8,8 @@ mod common;
 
 use common::karaoke_tab as tab;
 use jodel_playback::{Command, Event};
+use jodeldiplom::core::karaoke::result::Motion;
 use jodeldiplom::core::keymap::Op;
-use jodeldiplom::core::singing::Motion;
 use jodeldiplom::core::{karaoke, update, Action, Effect, State};
 use jodeldiplom::gui::stage::{Song, Stage, Tint};
 use jodeldiplom::gui::stage_gpu::{Instance, StageFrame};
@@ -73,7 +73,7 @@ fn sing_four(state: &mut State, hit: f64) {
 
 #[test]
 fn a_song_sung_to_its_end_shows_its_medal_and_keeps_its_best() {
-    use jodeldiplom::core::singing::Medal;
+    use jodeldiplom::core::karaoke::result::Medal;
     let mut state = tab();
     op(&mut state, Op::KaraokeEnter);
     // Three of the four words sung.
@@ -453,7 +453,7 @@ fn stays_until_start(state: &mut State, next: usize) {
 /// past its second line, the song was not sung whole: no medal, no best.
 #[test]
 fn a_song_sought_on_and_played_out_shows_its_result() {
-    use jodeldiplom::core::singing::Verdict;
+    use jodeldiplom::core::karaoke::result::Verdict;
     for (index, seek) in [(0, true), (1, true), (0, false), (1, false)] {
         let mut state = started(index);
         hear(&mut state, 0.0, 4.5, 3.0);
@@ -499,8 +499,8 @@ fn a_song_sought_on_and_played_out_shows_its_result() {
 /// none of it, and runs to its end as ever.
 #[test]
 fn a_song_played_out_with_nothing_scored_shows_its_result() {
-    use jodeldiplom::core::singing::verdict_words;
-    use jodeldiplom::core::singing::{Beat, Verdict};
+    use jodeldiplom::core::karaoke::result::verdict_words;
+    use jodeldiplom::core::karaoke::result::{Beat, Verdict};
     use jodeldiplom::sfx::conductor::{Diploma, Entry, Sheet};
     use jodeldiplom::sfx::reveal::sounds_of;
     for (notes, best) in [(true, None), (true, Some(1_200)), (false, None)] {
@@ -661,7 +661,7 @@ fn demo_key(state: &mut State) {
 /// the best's line saying why.
 #[test]
 fn a_song_the_demo_sang_shows_its_result_and_sets_no_best() {
-    use jodeldiplom::core::singing::Medal;
+    use jodeldiplom::core::karaoke::result::Medal;
     for before in [None, Some(100)] {
         let mut state = tab();
         op(&mut state, Op::KaraokeEnter);

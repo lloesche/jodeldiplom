@@ -16,8 +16,8 @@
 use std::sync::Arc;
 
 use jodeldiplom::art::Art;
+use jodeldiplom::core::karaoke::result::{Medal, Shown, SongResult};
 use jodeldiplom::core::shine::{Shone, Tier};
-use jodeldiplom::core::singing::{Medal, Shown, SongResult};
 use jodeldiplom::cover::Swatch;
 use jodeldiplom::gui::backdrop::{Cue, Visualiser};
 use jodeldiplom::gui::present::Offscreen;

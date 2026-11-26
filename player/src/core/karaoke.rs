@@ -43,7 +43,7 @@ pub mod controls;
 mod countdown;
 mod lyrics;
 pub mod pointer;
-mod result;
+pub mod result;
 pub use countdown::{
     countdown_for, counts_from, first_sung, resume_count, title_shown, Countdown, COUNT,
     COUNT_STEP, TITLE_FADE, TITLE_HOLD,
@@ -144,7 +144,7 @@ pub struct KaraokeState {
     pub sync: Option<super::sync::Session>,
     /// How the last song was sung, its reveal and when it was shown, until
     /// the next is started ([`result_shown`]).
-    pub result: Option<Arc<super::singing::Shown>>,
+    pub result: Option<Arc<result::Shown>>,
     /// How many results were shown (the last one's id).
     pub results: u64,
     /// The songs' loudness as the karaoke plays them, LUFS, as measured

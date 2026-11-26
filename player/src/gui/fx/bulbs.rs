@@ -307,7 +307,7 @@ pub fn jack(q: (f32, f32), r: f32, lit: f32) -> [f32; 3] {
 /// How much of a jack-o'-lantern's stalk (radius `r`) covers `q` from its
 /// middle: a short stub leaning out of its top.
 fn stalk(q: (f32, f32), r: f32) -> f32 {
-    let d = crate::gui::rainbow::round_box((q.0 / r - 0.06, q.1 / r + 1.18), (0.1, 0.17), 0.05);
+    let d = crate::gui::wgsl_math::round_box((q.0 / r - 0.06, q.1 / r + 1.18), (0.1, 0.17), 0.05);
     (0.5 - d * r).clamp(0.0, 1.0)
 }
 

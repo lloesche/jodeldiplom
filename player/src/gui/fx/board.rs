@@ -1,6 +1,6 @@
 //! How strong each effect is, frame by frame (the effects' envelopes):
 //! one clock for every held
-//! effect, the singing's glow as it eases ([`crate::gui::rainbow::Glow`]):
+//! effect, the singing's glow as it eases ([`crate::gui::shine::Glow`]):
 //! an effect a row holds while at its tier is held at that row's strength
 //! at the row's glow, the straight line between rows as the glow eases
 //! ([`crate::tiers::held_through`]), none below the first row that has it.
@@ -16,7 +16,7 @@
 
 use super::music::Music;
 use super::{strength, At, By, Effects, Fx, Looks, Out, Param, Slot, Use};
-use crate::gui::rainbow::Glow;
+use crate::gui::shine::Glow;
 use crate::gui::streak::Step;
 use crate::theme::Theme;
 use crate::tiers::{held_through, Tier, TIERS};

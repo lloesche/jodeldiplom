@@ -20,9 +20,9 @@ use jodel_output::{
 use jodel_playback::{Captures, MemoryTarget, PlayState};
 use jodel_synth::Synth;
 use jodeldiplom::app::{App, AppClock, AppOptions, MemoryOutput, Output};
+use jodeldiplom::core::karaoke::result::Beat;
 use jodeldiplom::core::keymap::Op;
 use jodeldiplom::core::shine::Shone;
-use jodeldiplom::core::singing::Beat;
 use jodeldiplom::core::{karaoke, Action, Rhythm, Screen, Side, State};
 use jodeldiplom::core::{Anchor, HeadFrame, Playing};
 use jodeldiplom::sfx::conductor::{Clock, Conductor, Diploma, Event, Sheet};

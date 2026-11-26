@@ -45,9 +45,6 @@ mod demo;
 pub mod judge;
 mod moments;
 mod notes;
-mod result;
-mod reveal;
-pub mod signature;
 mod tally;
 mod undo;
 
@@ -56,11 +53,6 @@ pub use demo::Demo;
 pub use judge::{KeyStep, SungKey, KEY_FRAMES, SHARE, TOLERANCE};
 pub use moments::{Burst, Cue, Cursor, Moment, Since};
 pub use notes::{notes_of, LineNotes, Note, Notes};
-pub use result::{verdict_words, Medal, SongResult, Verdict};
-pub use reveal::{
-    ease_out, signed, unrolled, Beat, Motion, Reveal, Shown, Side, DATE_FROM, DATING, DROP,
-    GRADE_WRITE, SIGNING, STAMP_DOWN, STREAK_WRITE, UNROLL, WORDS_FILL,
-};
 pub use tally::{Run, Tally};
 
 /// What a word hit scores.
@@ -384,12 +376,17 @@ impl Singing {
                     self.glide = None;
                     0.0
                 } else {
-                    let mut sorted: Vec<f64> = self.recent.iter().copied().collect();
-                    sorted.sort_by(f64::total_cmp);
                     // The median takes out a frame heard wrong; half way on
                     // from the last drawn softens a wobble, and still
-                    // follows a slide within a few frames.
-                    let median = sorted[sorted.len() / 2];
+                    // follows a slide within a few frames. On the stack:
+                    // this runs for every frame heard.
+                    let mut held = [0.0; SMOOTH_FRAMES];
+                    let n = self.recent.len();
+                    for (h, r) in held.iter_mut().zip(&self.recent) {
+                        *h = *r;
+                    }
+                    let (_, &mut median, _) =
+                        held[..n].select_nth_unstable_by(n / 2, f64::total_cmp);
                     let drawn = self.glide.map_or(median, |g| g + GLIDE * (median - g));
                     self.glide = Some(drawn);
                     drawn

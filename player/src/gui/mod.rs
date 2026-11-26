@@ -28,12 +28,12 @@ pub mod pixels;
 pub mod pointer;
 pub mod pop;
 pub mod present;
-pub mod rainbow;
 mod screens;
 pub mod seal;
 #[cfg(test)]
 mod shader_check;
 pub mod shards;
+pub mod shine;
 pub mod snake;
 pub mod sparks;
 pub mod stage;
@@ -43,6 +43,7 @@ mod stamps;
 pub mod streak;
 pub(crate) mod style;
 mod wake;
+pub mod wgsl_math;
 pub mod widgets;
 pub mod window;
 

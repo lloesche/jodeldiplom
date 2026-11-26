@@ -40,8 +40,8 @@ use super::helpers::{mix3, smoothstep};
 use super::{At, By, Fx, Layer, Letters, Live, Out, Playing, Reference, Slot, Spec};
 use crate::gui::big_text::{Face, COVER_PAD, LINE};
 use crate::gui::particles::{Kind, Look, Spray, Sprite};
-use crate::gui::rainbow::hue;
-use crate::gui::sparks::{mix, rand, TAU, WHITE};
+use crate::gui::shine::hue;
+use crate::gui::sparks::{rand, TAU, WHITE};
 use crate::gui::stage_gpu::Instance;
 use crate::theme::Theme;
 use crate::tiers::{Tier, TIERS};
@@ -358,7 +358,7 @@ pub fn dust(s: &Spray, q: u32, age: f32) -> Option<Sprite> {
             ),
             half: (half, half),
             alpha: 0.5 * w * w,
-            rgb: mix(s.rgb, WHITE, 0.65),
+            rgb: mix3(s.rgb, WHITE, 0.65),
             look: Look::Puff,
             turn: 0.0,
         });
@@ -382,7 +382,7 @@ pub fn dust(s: &Spray, q: u32, age: f32) -> Option<Sprite> {
         ),
         half: (ray, ray),
         alpha: (1.0 - v) * (0.7 + 0.3 * (age * 30.0 + r(5) * TAU).sin()),
-        rgb: mix(s.rgb, WHITE, 0.5),
+        rgb: mix3(s.rgb, WHITE, 0.5),
         look: Look::Sparkle,
         turn: r(6) * TAU + 4.0 * age,
     })
@@ -592,7 +592,7 @@ pub const REFERENCE: Reference = Reference {
         (0..3000)
             .flat_map(|k| {
                 let f = k as f32;
-                let fr = |m: f32| crate::gui::rainbow::fract(f * m);
+                let fr = |m: f32| crate::gui::wgsl_math::fract(f * m);
                 let cover = [0.0, 1.0, fr(0.613)][k % 3];
                 let rim = [cover, 1.0, fr(0.377).max(cover)][(k / 3) % 3];
                 [

@@ -14,20 +14,13 @@
 
 use std::f32::consts::{FRAC_1_SQRT_2, PI, TAU};
 
+use super::wgsl_math::{clamp01, smoothstep};
+
 /// The angle between two of a star's points.
 const POINT: f32 = TAU / 5.0;
 /// Where the light comes from: the top left (an angle from straight up,
 /// clockwise).
 const LIGHT: f32 = -PI / 4.0;
-
-pub(super) fn clamp01(x: f32) -> f32 {
-    x.clamp(0.0, 1.0)
-}
-
-pub(super) fn smoothstep(e0: f32, e1: f32, x: f32) -> f32 {
-    let t = clamp01((x - e0) / (e1 - e0));
-    t * t * (3.0 - 2.0 * t)
-}
 
 /// A line's ink or light `d` off it, `w` wide.
 pub(super) fn line(d: f32, w: f32) -> f32 {

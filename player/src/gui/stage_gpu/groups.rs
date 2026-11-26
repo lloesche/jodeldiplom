@@ -4,7 +4,7 @@
 //! pixel; a frame's shapes are drawn in runs of a group, in their order
 //! ([`runs`]). The shader itself is composed here ([`shader`]).
 
-use super::{kind, Instance};
+use super::{Instance, Shape};
 use crate::gui::fx::{self, Fx};
 
 /// A group of shapes drawn by one pipeline.
@@ -20,7 +20,7 @@ pub enum Group {
     Seal,
     /// The diploma's paper, stamps and signature.
     Paper,
-    /// The diploma's paper read from its bake ([`kind::BAKED`]).
+    /// The diploma's paper read from its bake ([`Shape::Baked`]).
     Baked,
     /// An effect's shapes ([`fx::Spec::kinds`]).
     Shapes(Fx),
@@ -106,21 +106,14 @@ impl Group {
     /// The group that draws `i`: text in a treatment its treatment's, an
     /// effect's shape its effect's, the stage's own by their kind.
     pub fn of(i: &Instance) -> Group {
-        let k = i.params[0];
-        if k == kind::TEXT {
+        if i.is(Shape::Text) {
             return Fx::of_treatment(i.params[3]).map_or(Group::Plain, Group::Lyric);
         }
+        let k = i.params[0];
         if let Some((fx, _)) = Fx::of_kind(k) {
             return Group::Shapes(fx);
         }
-        match k {
-            kind::TUBE | kind::TUBE_LIQUID | kind::LIQUID => Group::Bubble,
-            kind::METER | kind::RING | kind::MARK => Group::Glory,
-            kind::RAYS | kind::STAR | kind::SEAL => Group::Seal,
-            kind::PAPER | kind::STAMP | kind::SIGNATURE => Group::Paper,
-            kind::BAKED => Group::Baked,
-            _ => Group::Plain,
-        }
+        Shape::of(k).map_or(Group::Plain, Shape::group)
     }
 
     /// As the shader takes it (`GROUP`, and its `G_` constants): the
@@ -165,10 +158,7 @@ pub fn wgsl_name(name: &str) -> String {
 /// The kinds as the shader takes them: the stage's own and every
 /// effect's (`K_` and its name).
 fn kinds_wgsl() -> String {
-    let own = kind::NAMES
-        .iter()
-        .enumerate()
-        .map(|(k, n)| (wgsl_name(n), k as u32));
+    let own = (Shape::ALL.into_iter()).map(|k| (wgsl_name(k.name()), k.code() as u32));
     let effects = Fx::ALL.into_iter().flat_map(|fx| {
         (fx.spec().kinds.iter().enumerate())
             .map(move |(n, name)| (wgsl_name(name), fx.kind(n as u32) as u32))
@@ -193,7 +183,7 @@ fn groups_wgsl() -> String {
 /// The stage's shader drawing `group`: `stage.wgsl`, its kinds
 /// ([`kind`]), the liquid's maths ([`crate::gui::liquid::wgsl`]), a tube's
 /// nearest point ([`crate::gui::snake::wgsl`]), the shine's clock
-/// ([`crate::gui::rainbow::stage_wgsl`]), the glory
+/// ([`crate::gui::shine::stage_wgsl`]), the glory
 /// ([`crate::gui::glory::wgsl`]), the diploma's shapes
 /// ([`crate::gui::seal::wgsl`], [`crate::gui::paper::wgsl`]), the effects
 /// (only the group's own effect's code: [`fx::wgsl::wgsl`]) and the music
@@ -222,7 +212,7 @@ fn compose(group: Group, effects: &[Fx]) -> String {
         include_str!("../stage.wgsl"),
         crate::gui::liquid::wgsl(),
         crate::gui::snake::wgsl(),
-        crate::gui::rainbow::stage_wgsl(),
+        crate::gui::shine::stage_wgsl(),
         crate::gui::glory::wgsl(),
         crate::gui::seal::wgsl(),
         crate::gui::paper::wgsl(),
@@ -310,18 +300,18 @@ mod tests {
         assert_eq!(codes.len(), all.len());
         assert!(codes.iter().all(|&c| (c as usize) < Group::CODES));
         let named = [
-            (kind::PILL, "pill"),
-            (kind::TEXT, "text"),
-            (kind::LIQUID, "liquid"),
-            (kind::METER, "meter"),
-            (kind::BADGE, "badge"),
-            (kind::TUBE_LIQUID, "tube liquid"),
-            (kind::SIGNATURE, "signature"),
+            (Shape::Pill.code(), "pill"),
+            (Shape::Text.code(), "text"),
+            (Shape::Liquid.code(), "liquid"),
+            (Shape::Meter.code(), "meter"),
+            (Shape::Badge.code(), "badge"),
+            (Shape::TubeLiquid.code(), "tube liquid"),
+            (Shape::Signature.code(), "signature"),
         ];
         for (k, n) in named {
-            assert_eq!(kind::name(k), n);
+            assert_eq!(Shape::name_of(k), n);
         }
-        assert_eq!(kind::name(99.0), "?");
+        assert_eq!(Shape::name_of(99.0), "?");
         let light = Group::light();
         for g in [
             Group::Plain,
@@ -409,7 +399,7 @@ mod tests {
             };
             let mut board = fx::Board::default();
             let step = crate::gui::streak::Step {
-                glow: crate::gui::rainbow::Glow {
+                glow: crate::gui::shine::Glow {
                     level: 1.0,
                     from: 1.0,
                     since: -10.0,
@@ -453,11 +443,11 @@ mod tests {
         };
         let rainbow = Fx::Rainbow.treatment_code();
         let frame = [
-            shape(kind::PILL, 0.0),
-            shape(kind::TEXT, 0.0),
-            shape(kind::TEXT, rainbow),
-            shape(kind::TEXT, rainbow),
-            shape(kind::DISC, 0.0),
+            shape(Shape::Pill.code(), 0.0),
+            shape(Shape::Text.code(), 0.0),
+            shape(Shape::Text.code(), rainbow),
+            shape(Shape::Text.code(), rainbow),
+            shape(Shape::Disc.code(), 0.0),
             shape(BANDS, 0.0),
             shape(SWIRL, 0.0),
         ];

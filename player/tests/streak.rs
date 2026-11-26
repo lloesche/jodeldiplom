@@ -15,7 +15,7 @@ use jodeldiplom::gui::fx::rainbow::{shine_of, BANDS, RIM, SWIRL};
 use jodeldiplom::gui::particles::Kind;
 use jodeldiplom::gui::present::Offscreen;
 use jodeldiplom::gui::stage::{Song, Stage};
-use jodeldiplom::gui::stage_gpu::{kind, StageFrame};
+use jodeldiplom::gui::stage_gpu::{Shape, StageFrame};
 
 /// `pixels` (`0x00RRGGBB`, `w` wide) as a PNG at `name` in the folder
 /// `JODEL_FRAMES` names, where it is set.
@@ -131,7 +131,7 @@ fn the_bands_shine_by_the_tier() {
         assert_eq!(swirls.count(), usize::from(shines), "round the arrow");
         // The multiplier is over everything.
         let rainbow = (frame.instances.iter().chain(&frame.top))
-            .filter(|i| i.params[0] == kind::TEXT && shine_of(i).is_some());
+            .filter(|i| i.is(Shape::Text) && shine_of(i).is_some());
         assert_eq!(
             rainbow.count(),
             usize::from(shines),
@@ -194,7 +194,7 @@ fn a_step_up_bursts_once_a_tier() {
 
 /// A phrase reaching no tier: the bands collapse into the playhead and
 /// drain, less light each moment, none after
-/// [`jodeldiplom::gui::rainbow::COLLAPSE`].
+/// [`jodeldiplom::gui::shine::COLLAPSE`].
 #[test]
 fn a_phrase_without_a_tier_collapses_the_shine() {
     let amazing = Some(Tier::named("Amazing"));

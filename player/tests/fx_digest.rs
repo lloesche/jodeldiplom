@@ -27,7 +27,7 @@ use jodeldiplom::core::singing::Singing;
 use jodeldiplom::gui::fx::rainbow::shine_of;
 use jodeldiplom::gui::particles::Spray;
 use jodeldiplom::gui::stage::{Song, Stage, Tint};
-use jodeldiplom::gui::stage_gpu::{kind, Instance, StageFrame};
+use jodeldiplom::gui::stage_gpu::{Instance, Shape, StageFrame};
 
 #[path = "common/sung.rs"]
 mod sung;
@@ -79,8 +79,8 @@ impl Digest {
     /// A shape: its kind by name, text by the rainbow it shows in.
     fn instance(&mut self, i: &Instance, clock: f32) {
         let mut i = *i;
-        self.text(kind::name(i.params[0]));
-        if i.params[0] == kind::TEXT {
+        self.text(Shape::name_of(i.params[0]));
+        if i.is(Shape::Text) {
             let shown = shine_of(&i).filter(|g| g.shows(clock));
             match shown {
                 Some(g) => self.floats(&[1.0, g.level, g.from, g.since]),
@@ -190,7 +190,7 @@ fn digest(lane: bool) -> (u64, std::collections::BTreeMap<String, usize>) {
             .chain(&frame.screen)
         {
             *counts
-                .entry(kind::name(i.params[0]).to_owned())
+                .entry(Shape::name_of(i.params[0]).to_owned())
                 .or_insert(0) += 1;
         }
         for s in frame.sprays.iter().chain(&frame.light_sprays) {

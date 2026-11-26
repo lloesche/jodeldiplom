@@ -11,7 +11,8 @@
 
 use super::liquid::GROW;
 use super::particles::{Look, Spray, Sprite, BUBBLE_SPARKS};
-use super::sparks::{mix, rand, TAU, WHITE};
+use super::sparks::{rand, TAU, WHITE};
+use super::wgsl_math::mix3;
 use crate::view::bubbles::{BURST, SWELL};
 
 /// How long the wet sheen a bubble leaves where it was fades once it
@@ -39,7 +40,7 @@ pub fn sheen(s: &Spray, age: f32) -> Option<Sprite> {
         at: (s.at.0 + s.drift * age, s.at.1),
         half: (s.half.0 * big, s.half.1 * big),
         alpha: 0.3 * (1.0 - g) * (1.0 - g),
-        rgb: mix(s.rgb, WHITE, 0.4),
+        rgb: mix3(s.rgb, WHITE, 0.4),
         look: Look::Sheen,
         turn: 0.0,
     })
@@ -69,7 +70,7 @@ pub fn shard(s: &Spray, q: u32, age: f32) -> Option<Sprite> {
         at: (x + dx * (hw * big + fly), y + dy * (hh * big + fly)),
         half: (len / 2.0, thick),
         alpha: 0.85 * (1.0 - t).powf(1.4),
-        rgb: mix(s.rgb, WHITE, 0.75),
+        rgb: mix3(s.rgb, WHITE, 0.75),
         look: Look::Shard,
         turn: theta + TAU / 4.0 + (r(2) - 0.5) * 3.0 * t,
     })
@@ -109,7 +110,7 @@ pub fn drop(s: &Spray, q: u32, age: f32) -> Option<Sprite> {
         at: (sx + vx * ta, sy + vy * ta + 0.5 * g * ta * ta),
         half: (rad * stretch, rad),
         alpha: (1.0 - t).powf(0.9),
-        rgb: mix(s.rgb, WHITE, 0.25 * (1.0 - t)),
+        rgb: mix3(s.rgb, WHITE, 0.25 * (1.0 - t)),
         look: Look::Drop,
         turn: wy.atan2(wx),
     })

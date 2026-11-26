@@ -15,8 +15,9 @@
 
 use super::{At, Layer, Live, Out, Slot, Spec};
 use crate::gui::particles::{Kind, Look, Spray, Sprite};
-use crate::gui::rainbow::hue;
-use crate::gui::sparks::{mix, rand, TAU};
+use crate::gui::shine::hue;
+use crate::gui::sparks::{rand, TAU};
+use crate::gui::wgsl_math::mix3;
 
 /// How long a flight of angels takes to come down, in seconds.
 pub const ANGELS_LIFE: f32 = 6.0;
@@ -149,7 +150,7 @@ pub fn angel(s: &Spray, q: u32, age: f32) -> Option<Sprite> {
         at: (bx + (r(3) - 0.5) * s.size * 0.8, by + s.size * 0.5 * d),
         half: (ray, ray),
         alpha: (1.0 - u) * (0.6 + 0.4 * (d * 20.0 + r(4) * TAU).sin()) * fade.max(0.3),
-        rgb: mix(s.rgb, hue(r(5)), 0.25),
+        rgb: mix3(s.rgb, hue(r(5)), 0.25),
         look: Look::Sparkle,
         turn: r(6) * TAU,
     })
@@ -274,7 +275,7 @@ fn draw_ghost(p: vec2<f32>, c: vec2<f32>, half: vec2<f32>, turn: f32, look: vec4
 mod tests {
     use super::*;
     use crate::gui::fx::{Board, Fx, Music};
-    use crate::gui::rainbow::Glow;
+    use crate::gui::shine::Glow;
     use crate::gui::streak::Step;
     use crate::tiers::Tier;
 

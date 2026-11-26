@@ -8,7 +8,7 @@
 //! from the singing's rescues, by the singing's clock.
 
 use super::super::particles::{Kind, Spray};
-use super::super::stage_gpu::{kind, Instance};
+use super::super::stage_gpu::{Instance, Shape};
 use super::words::Words;
 use super::{disc, rgba, segment, Lane, Song, GOLD, GOLD_TOP};
 use crate::core::bubbles::FLIGHT;
@@ -132,15 +132,10 @@ fn flying(out: &mut Shots, ends: ((f32, f32), (f32, f32)), f: f32, (p, time): (f
         p * 0.6,
     ));
     let size = p * 0.85;
-    out.lights.push(Instance {
-        quad: [head.0 - size, head.1 - size, head.0 + size, head.1 + size],
-        shape: [head.0, head.1, size, time * 9.0],
-        color: rgba([1.0, 0.97, 0.85], 0.9),
-        color2: [0.0; 4],
-        params: [kind::SPARK, 0.0, 0.0, 0.0],
-        uv: [0.0; 4],
-        strain: [0.0; 4],
-    });
+    let quad = [head.0 - size, head.1 - size, head.0 + size, head.1 + size];
+    let spark = Instance::of(Shape::Spark, quad, [head.0, head.1, size, time * 9.0]);
+    out.lights
+        .push(spark.colors(rgba([1.0, 0.97, 0.85], 0.9), [0.0; 4]));
 }
 
 /// A shot landed at `at`, `g` (0 to 1) through its flash, the tubes `p`

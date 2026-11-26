@@ -13,7 +13,8 @@
 
 use super::{At, Layer, Live, Out, Slot, Spec};
 use crate::gui::particles::{Kind, Look, Spray, Sprite};
-use crate::gui::sparks::{mix, rand, TAU};
+use crate::gui::sparks::{rand, TAU};
+use crate::gui::wgsl_math::mix3;
 
 /// How long a jackpot lasts, in seconds.
 pub const JACKPOT_LIFE: f32 = 2.4;
@@ -86,7 +87,7 @@ pub fn coin(s: &Spray, q: u32, age: f32) -> Option<Sprite> {
         half: (size, size),
         alpha: ((1.0 - u) * 4.0).min(1.0),
         rgb: if star {
-            mix(s.rgb, [1.0; 3], 0.6)
+            mix3(s.rgb, [1.0; 3], 0.6)
         } else {
             s.rgb
         },

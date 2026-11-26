@@ -25,8 +25,9 @@ pub use motions::{Drawing, Motion, LOOKS, MOTIONS};
 
 use super::fx::Music;
 use super::shards::{self, DROPS, FIRST_DROP, FIRST_SHARD};
-use super::sparks::{mix, rand, TAU, WHITE};
+use super::sparks::{rand, TAU, WHITE};
 use super::stage_gpu::{Screen, SCREEN_BYTES};
+use super::wgsl_math::mix3;
 use crate::view::bubbles::BURST;
 
 /// The sparkles a bubble throws.
@@ -115,17 +116,12 @@ pub struct Spray {
 
 /// A [`Spray`] as the GPU takes it.
 #[repr(C)]
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct Packed {
     at: [f32; 4],
     motion: [f32; 4],
     color: [f32; 4],
 }
-
-// SAFETY: plain f32s in a `repr(C)` struct, no padding: any bytes are one.
-unsafe impl bytemuck::Zeroable for Packed {}
-// SAFETY: as above.
-unsafe impl bytemuck::Pod for Packed {}
 
 impl Spray {
     /// As the GPU takes it.
@@ -277,7 +273,7 @@ fn sparkle(s: &Spray, q: u32, age: f32) -> Option<Sprite> {
         at: (sx + vx * reach * fly + s.drift * age, y + vy * reach * fly),
         half: (ray, ray),
         alpha: (1.0 - t).powf(1.3) * (0.7 + 0.3 * (t * 22.0 + r(5) * TAU).sin()),
-        rgb: mix(WHITE, s.rgb, 0.4),
+        rgb: mix3(WHITE, s.rgb, 0.4),
         look: Look::Sparkle,
         turn: r(6) * TAU,
     })
@@ -376,7 +372,7 @@ fn draw_of(look: u32, p: vec2<f32>, c: vec2<f32>, half: vec2<f32>, turn: f32, co
 {motions}{drawings}",
         super::stage_gpu::SCREEN_WGSL,
         super::fx::music::wgsl(),
-        super::rainbow::HUE,
+        super::shine::HUE,
     )
 }
 

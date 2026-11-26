@@ -6,7 +6,7 @@
 //! front, the sheet casting a soft shadow; a red rubber stamp's frame
 //! (two rounded rules, the ink worn in places, specks where it did not
 //! take over the words inside it); and a signature written in one stroke
-//! (the core's: [`crate::core::singing::signature`]), as far as it is
+//! (the core's: [`crate::core::karaoke::result::signature`]), as far as it is
 //! written. Text turned round its middle (a stamp's words) is drawn with
 //! [`turn_about`].
 //!
@@ -17,9 +17,9 @@
 use std::f32::consts::{PI, TAU};
 
 use super::glory::vnoise;
-use super::rainbow::round_box;
-use super::seal::{clamp01, line, smoothstep};
-use crate::core::singing::signature::{pen_point, PEN};
+use super::seal::line;
+use super::wgsl_math::{clamp01, round_box, smoothstep};
+use crate::core::karaoke::result::signature::{pen_point, PEN};
 
 /// The roll's radius at its start, in `s`.
 const ROLL: f32 = 3.2;
@@ -132,7 +132,7 @@ pub fn stamp_at(x: f32, y: f32, half: (f32, f32), s: f32) -> [f32; 2] {
 
 /// How far `(x, y)` is from the signature written as far as `drawn` along
 /// it (0 to 1), in its own units
-/// ([`crate::core::singing::signature::signature_point`]): through its points
+/// ([`crate::core::karaoke::result::signature::signature_point`]): through its points
 /// ([`pen_point`]) up to `drawn` of the way, the last step part of the
 /// way; far without it.
 pub fn signature_at(x: f32, y: f32, drawn: f32) -> f32 {
@@ -335,7 +335,7 @@ fn paper_shape(o: Out, p: vec2<f32>, k: u32) -> vec4<f32> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::singing::signature::signature_point;
+    use crate::core::karaoke::result::signature::signature_point;
 
     /// The sheet shows down to its front, a roll under it while it
     /// unrolls, gone once it is open; its border inked near its edges, not

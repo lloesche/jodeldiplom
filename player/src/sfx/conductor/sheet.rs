@@ -2,7 +2,7 @@
 //! [`Sheet`]), each a score of the
 //! palette's atoms written into the synth at once, timed inside to what
 //! the stage draws from its beat (the reveal's times and motions, shared
-//! with the stage: [`crate::core::singing::Reveal`]'s, [`unrolled`] and
+//! with the stage: [`crate::core::karaoke::result::Reveal`]'s, [`unrolled`] and
 //! [`signed`]). They are on fixed notes (the C major pentatonic on C5:
 //! [`penta`]), whatever the song's key, and each sounds the same every
 //! time: its notes' seeds start from its own ([`Sheet::seed`]).
@@ -52,7 +52,7 @@
 use super::palette::Atom;
 use super::pen::{fastest, handwriting, scratch, signature_speed, tap, DATE_SAMPLE};
 use super::sounds::{Note, Score};
-use crate::core::singing::{
+use crate::core::karaoke::result::{
     unrolled, Medal, Side, Verdict, DATE_FROM, DATING, GRADE_WRITE, SIGNING, STAMP_DOWN,
     STREAK_WRITE, UNROLL, WORDS_FILL,
 };

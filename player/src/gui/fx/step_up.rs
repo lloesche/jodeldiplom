@@ -10,7 +10,7 @@
 
 use super::{At, Layer, Live, Out, Slot, Spec};
 use crate::gui::particles::{Kind, Look, Spray, Sprite};
-use crate::gui::rainbow::hue;
+use crate::gui::shine::hue;
 use crate::gui::sparks::{rand, TAU};
 
 /// How long a step up's burst lasts, at most, in seconds.

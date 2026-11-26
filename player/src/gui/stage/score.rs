@@ -463,7 +463,7 @@ impl Stage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::gui::stage_gpu::kind;
+    use crate::gui::stage_gpu::Shape;
 
     const FRAME: f32 = 1.0 / 60.0;
 
@@ -709,7 +709,7 @@ mod tests {
         let left = (640.0 - margin - tw).floor() - pad;
         assert!((rest[0].quad[0] - left).abs() <= 1.0, "{:?}", rest[0].quad);
         for i in &rest {
-            assert_eq!(i.params[0], kind::TEXT);
+            assert!(i.is(Shape::Text));
             assert_eq!(i.quad[0], i.quad[0].round(), "on whole pixels");
             let (w, h) = (i.quad[2] - i.quad[0], i.quad[3] - i.quad[1]);
             assert!(

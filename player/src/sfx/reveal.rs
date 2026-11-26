@@ -20,8 +20,8 @@
 
 use super::conductor::{Diploma, Entry, Sheet};
 use super::moments::STALE;
+use crate::core::karaoke::result::{Beat, Shown, Side, Verdict};
 use crate::core::shine::Tier;
-use crate::core::singing::{Beat, Shown, Side, Verdict};
 
 /// The closest two gems' plinks come.
 pub const PLINK_EVERY: f64 = 0.035;
@@ -171,8 +171,8 @@ impl RevealSounds {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::karaoke::result::{Medal, SongResult};
     use crate::core::shine::Shone;
-    use crate::core::singing::{Medal, SongResult};
 
     fn result(tiers: &[Option<Tier>]) -> SongResult {
         let phrase = |&tier: &Option<Tier>| Shone {

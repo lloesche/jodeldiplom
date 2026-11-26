@@ -4,8 +4,8 @@
 //! is told what medals take), as the result is shown and written in on its
 //! diploma ([`verdict_words`], [`Verdict::grade`]).
 
-use super::Tally;
 use crate::core::shine::{Shone, Tier};
+use crate::core::singing::Tally;
 
 /// A medal for a song sung: by the words hit (not by the points, which
 /// the streaks multiply).
@@ -120,7 +120,7 @@ pub struct SongResult {
     /// Whether the song was sung whole (from its start): only then a medal
     /// and a best.
     pub whole: bool,
-    /// Whether the demo key sang some of it ([`super::Demo`]): shown all
+    /// Whether the demo key sang some of it ([`crate::core::singing::Demo`]): shown all
     /// the same, never a best.
     pub demo: bool,
 }
@@ -184,5 +184,19 @@ impl SongResult {
             out[t.index()] += 1;
         }
         out
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn medals_go_by_the_words() {
+        assert_eq!(Medal::of(4, 4), Some(Medal::Gold));
+        assert_eq!(Medal::of(3, 4), Some(Medal::Silver));
+        assert_eq!(Medal::of(2, 4), Some(Medal::Bronze));
+        assert_eq!(Medal::of(1, 4), None);
+        assert_eq!(Medal::of(0, 0), None);
     }
 }

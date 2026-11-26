@@ -15,7 +15,7 @@ use super::lanes::{Lanes, Metrics};
 use super::stage::Tint;
 use super::stage_view::StageView;
 use crate::app::App;
-use crate::core::singing::Motion;
+use crate::core::karaoke::result::Motion;
 use crate::core::Action;
 use crate::spectrum::SpectrumFrame;
 

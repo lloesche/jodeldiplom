@@ -24,9 +24,8 @@ use crate::core::shine::{Shone, Tier};
 use crate::core::singing::{Cue, Singing};
 use crate::gui::fx::{self, At, Frame, Text};
 use crate::gui::glory::{meter_fill, position, MARKS};
-use crate::gui::particles::Spray;
-use crate::gui::rainbow::Glow;
-use crate::gui::stage_gpu::{kind, Instance};
+use crate::gui::shine::Glow;
+use crate::gui::stage_gpu::{Instance, Shape, StageFrame};
 use crate::gui::streak::Step;
 use crate::theme::Theme;
 
@@ -142,27 +141,11 @@ pub struct Where {
     pub gone: f32,
 }
 
-/// What the shine draws: over the stage, over everything (the light
-/// too), as light, and its bursts.
-#[derive(Default)]
-pub struct Drawn {
-    pub out: Vec<Instance>,
-    pub top: Vec<Instance>,
-    pub lights: Vec<Instance>,
-    pub light_sprays: Vec<Spray>,
-}
-
 /// A shape of `k` over `quad` with its numbers.
-fn shape(k: f32, quad: [f32; 4], shape: [f32; 4], color: [f32; 4], params: [f32; 3]) -> Instance {
-    Instance {
-        quad,
-        shape,
-        color,
-        color2: [0.0; 4],
-        params: [k, params[0], params[1], params[2]],
-        uv: [0.0; 4],
-        strain: [0.0; 4],
-    }
+fn shape(k: Shape, quad: [f32; 4], shape: [f32; 4], color: [f32; 4], params: [f32; 3]) -> Instance {
+    Instance::of(k, quad, shape)
+        .colors(color, [0.0; 4])
+        .params(params)
 }
 
 impl Stage {
@@ -227,7 +210,7 @@ impl Stage {
     /// `d`; the song `length` seconds long.
     pub(super) fn shine(
         &mut self,
-        d: &mut Drawn,
+        d: &mut StageFrame,
         (singing, game, length): (&Singing, bool, Option<f64>),
         at: &Where,
         (step, effects): (&Step, &Frame),
@@ -247,7 +230,7 @@ impl Stage {
     /// decided (the effects' bursts from it: a jackpot at the top tier).
     fn meter_and_verdict(
         &mut self,
-        d: &mut Drawn,
+        d: &mut StageFrame,
         singing: &Singing,
         at: &Where,
         (step, effects): (&Step, &Frame),
@@ -284,7 +267,7 @@ impl Stage {
         // so it always reads.
         let m = &self.meter;
         d.top.push(shape(
-            kind::METER,
+            Shape::Meter,
             [
                 mx - half.0 - pad,
                 my - half.1 - pad,
@@ -317,15 +300,10 @@ impl Stage {
         // ([`crate::gui::glory::label_pop`]).
         let half = verdict_half(tw, px);
         let m = half.0.max(half.1) * 2.0;
-        d.top.push(Instance {
-            quad: [mx - m, my - m, mx + m, my + m],
-            shape: [mx, my, half.0, half.1],
-            color: [0.04, 0.03, 0.09, 0.82],
-            color2: rgba(c, 0.9),
-            params: [kind::BADGE, t, VERDICT, (px * 0.06).max(1.5)],
-            uv: [0.0; 4],
-            strain: [0.0; 4],
-        });
+        let quad = [mx - m, my - m, mx + m, my + m];
+        let badge = Instance::of(Shape::Badge, quad, [mx, my, half.0, half.1]);
+        let badge = badge.colors([0.04, 0.03, 0.09, 0.82], rgba(c, 0.9));
+        d.top.push(badge.params([t, VERDICT, (px * 0.06).max(1.5)]));
         let text = self.text(
             &mut d.top,
             Face::SHOUT,
@@ -350,7 +328,7 @@ impl Stage {
     /// the moment it is decided (a little jackpot at the top).
     fn progress(
         &mut self,
-        d: &mut Drawn,
+        d: &mut StageFrame,
         (singing, length): (&Singing, Option<f64>),
         at: &Where,
         (shine, fresh): (&Glow, Option<Shone>),
@@ -371,11 +349,11 @@ impl Stage {
             (x + w * 0.88).min(ring_x - radius - w * 0.025),
         );
         let by = y + h * (PROGRESS + SINK * at.gone);
-        let first = d.out.len();
+        let first = d.instances.len();
         let bh = (h * 0.0045).max(2.5);
         let bx = |t: f64| bx0 + (bx1 - bx0) * (t / length).clamp(0.0, 1.0) as f32;
         let bar = |c, half, color| super::pill(c, half, color, [0.0; 4], 0.0, 0.0, 0.0);
-        d.out.push(bar(
+        d.instances.push(bar(
             ((bx0 + bx1) / 2.0, by),
             ((bx1 - bx0) / 2.0, bh * 0.6),
             rgba(WHITE, 0.12),
@@ -390,7 +368,7 @@ impl Stage {
         stretches.sort_by(|a, b| a.0.total_cmp(&b.0));
         for (a, b) in &stretches {
             let (xa, xb) = (bx(*a), bx(*b));
-            d.out.push(bar(
+            d.instances.push(bar(
                 ((xa + xb) / 2.0, by),
                 (((xb - xa) / 2.0).max(bh), bh),
                 rgba(WHITE, 0.3),
@@ -399,7 +377,7 @@ impl Stage {
         // The part sung: gold up to now, each phrase that shone in its
         // tier's colour over it.
         let at_now = bx(now);
-        d.out.extend(super::fill(
+        d.instances.extend(super::fill(
             ((bx0 + bx1) / 2.0, by),
             ((bx1 - bx0) / 2.0, bh),
             (bx0, at_now),
@@ -424,15 +402,15 @@ impl Stage {
             };
             let (xa, xb) = (bx(first.start), bx(last.end));
             let c = tier_color(effects.theme, p.tier);
-            d.out.push(bar(
+            d.instances.push(bar(
                 ((xa + xb) / 2.0, by),
                 (((xb - xa) / 2.0).max(bh), bh * 1.15),
                 rgba(c, 0.95),
             ));
             let r = bh * p.tier.map_or(NONE_MARK, |t| t.spec().mark);
             let m = r * 6.0;
-            d.out.push(shape(
-                kind::MARK,
+            d.instances.push(shape(
+                Shape::Mark,
                 [xb - m, by - m, xb + m, by + m],
                 [xb, by, r, 0.0],
                 rgba(c, 1.0),
@@ -450,7 +428,7 @@ impl Stage {
             self.effects_at(&mark, effects, (&mut Vec::new(), &mut d.light_sprays));
         }
         // The playhead's point on it.
-        d.out.push(super::disc(
+        d.instances.push(super::disc(
             (at_now, by),
             bh * 1.7,
             rgba([1.0, 0.98, 0.9], 1.0),
@@ -463,7 +441,7 @@ impl Stage {
         let label = format!("{}:{:02}", secs / 60, secs % 60);
         let rc = (ring_x, by);
         let mut ring = shape(
-            kind::RING,
+            Shape::Ring,
             [
                 rc.0 - radius - thick * 3.0,
                 rc.1 - radius - thick * 3.0,
@@ -475,11 +453,11 @@ impl Stage {
             [(left / length).clamp(0.0, 1.0) as f32, 0.0, 0.0],
         );
         ring.strain = [shine.level, shine.from, shine.since, 0.0];
-        d.out.push(ring);
+        d.instances.push(ring);
         let tw = self.measure(Face::NUMBER, &label, px);
         let ty = rc.1 - self.cap_middle(Face::NUMBER, px) + super::COVER_PAD as f32;
         self.text(
-            &mut d.out,
+            &mut d.instances,
             Face::NUMBER,
             &label,
             (px, 1.0),
@@ -488,7 +466,7 @@ impl Stage {
             (rgba(WHITE, 0.9), rgba(WHITE, 0.9)),
         );
         let shows = 1.0 - at.gone;
-        for i in &mut d.out[first..] {
+        for i in &mut d.instances[first..] {
             i.color[3] *= shows;
             i.color2[3] *= shows;
         }
@@ -572,7 +550,7 @@ mod tests {
         let mut all = f.instances.iter().chain(&f.top).chain(&f.lights);
         assert!(all.all(|i| Fx::of_kind(i.params[0]).is_none() && Treat::of(i).is_none()));
         assert!(f.screen.is_empty() && f.light_sprays.is_empty());
-        assert!(f.instances.iter().any(|i| i.params[0] == kind::TEXT));
+        assert!(f.instances.iter().any(|i| i.is(Shape::Text)));
     }
 
     /// The song's progress along the stage's bottom and the controls' bar
@@ -650,11 +628,11 @@ mod tests {
                 clock: 1.2,
                 gone: 0.0,
             };
-            let mut d = Drawn::default();
+            let mut d = StageFrame::default();
             stage.meter_and_verdict(&mut d, &singing, &at, (&step, &frame));
-            let verdict = d.top.iter().any(|i| i.params[0] == kind::BADGE);
+            let verdict = d.top.iter().any(|i| i.is(Shape::Badge));
             assert_eq!(verdict, shown);
-            assert!(d.top.iter().any(|i| i.params[0] == kind::METER));
+            assert!(d.top.iter().any(|i| i.is(Shape::Meter)));
         }
     }
 
@@ -666,10 +644,7 @@ mod tests {
         let song = Song::new(&singing, lyrics.lines.iter().collect(), Some(60.0));
         let (w, h) = (900.0, 1400.0);
         let f = frame(&song, (w, h), None);
-        let ring = f
-            .iter()
-            .find(|i| i.params[0] == kind::RING)
-            .expect("the ring");
+        let ring = f.iter().find(|i| i.is(Shape::Ring)).expect("the ring");
         let [cx, _, radius, thick] = ring.shape;
         assert!(cx + radius + thick <= w, "{cx} {radius} {thick}");
         // The bar's track: what starts at its left, low down.

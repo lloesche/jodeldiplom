@@ -14,7 +14,7 @@
 //! its change and a record a step up go to the GPU.
 
 use super::particles::Spray;
-use super::rainbow::Glow;
+use super::shine::Glow;
 use crate::core::shine::{Shone, Tier};
 use crate::core::singing::{Cue, Since, Singing};
 

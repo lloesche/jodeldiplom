@@ -1,6 +1,6 @@
 //! The result screen, one more scene of the stage: a diploma (headed
 //! "Jodeldiplom") handed out for the song before, filled in beat by beat
-//! ([`crate::core::singing::Reveal`]) over the backdrop (the cover's
+//! ([`crate::core::karaoke::result::Reveal`]) over the backdrop (the cover's
 //! layers, lit by the music), in Karaoke mode's faces, with the stage's
 //! light and bursts. The sheet unrolls, its border tinted, its heading and
 //! the song's title (landing on its beat) certified as yodelled
@@ -23,17 +23,18 @@
 //! The diploma is tinted with the cover's palette where its layers have
 //! one ([`Tint::of`]), else the stage's own colours. Once settled it
 //! twinkles a while, the twinkle calming down as the reveal's time comes
-//! to its still point, where it stops ([`crate::core::singing::Motion`]).
+//! to its still point, where it stops ([`crate::core::karaoke::result::Motion`]).
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use super::super::particles::{Kind, Spray};
-use super::super::stage_gpu::{kind, Instance, StageFrame};
+use super::super::stage_gpu::{Instance, Shape, StageFrame};
 use super::start::{self, Line};
 use super::{disc, pill, rgba, Face, Rgb, Stage, COVER_PAD};
+use crate::core::karaoke::result::{Beat, Shown};
 use crate::core::shine::Tier;
-use crate::core::singing::{Beat, Shown};
+use crate::gui::wgsl_math::clamp01;
 use crate::view::karaoke::{
     best_words, date_words, points_text, KaraokePicture, ResultShown, Start,
 };
@@ -50,17 +51,6 @@ pub use tint::Tint;
 
 /// The diploma's printed words: Nunito, lighter than the lyrics'.
 const PRINT: Face = Face::Words(650);
-
-/// What the scene draws: over the backdrop, over everything, light (to
-/// bloom), and bursts (and those that are light).
-#[derive(Default)]
-struct Drawn {
-    out: Vec<Instance>,
-    top: Vec<Instance>,
-    lights: Vec<Instance>,
-    sprays: Vec<Spray>,
-    light_sprays: Vec<Spray>,
-}
 
 /// What the result screen keeps between frames: the words of the result
 /// shown, made once a result (its date read then, so it never turns over
@@ -184,10 +174,6 @@ impl Room {
     fn across(&self, share: f32) -> f32 {
         self.sheet.2 * share
     }
-}
-
-fn clamp01(x: f32) -> f32 {
-    x.clamp(0.0, 1.0)
 }
 
 /// Eased out, past its end a little and back (`x` 0 to 1).
@@ -339,10 +325,13 @@ impl Stage {
         room.shake = seal::shake(&look, verdict, room.s);
         room.calm = clamp01((reveal.still() - t) as f32 / 2.0);
         let words = self.words_of(&shown.shown);
-        let mut d = Drawn::default();
+        let mut d = StageFrame {
+            clock: t as f32,
+            ..StageFrame::default()
+        };
         // Over the backdrop: a little darker, a light behind the sheet, and
         // the rays a medal sends out behind it.
-        d.out.push(pill(
+        d.instances.push(pill(
             (x + w / 2.0, y + h / 2.0),
             (w / 2.0 + 2.0, h / 2.0 + 2.0),
             [0.0, 0.0, 0.02, 0.35],
@@ -353,7 +342,7 @@ impl Stage {
         ));
         let lit = fade(Some(t - 0.2), 1.0);
         let (_, _, sw, sh) = room.sheet;
-        d.out.push(disc(
+        d.instances.push(disc(
             room.at(0.5, 0.5),
             0.0,
             [0.0; 4],
@@ -371,17 +360,8 @@ impl Stage {
         self.signed(&mut d, &room, shown, &words);
         self.next(&mut d, &room, (shown, picture.start), tint);
         self.kept.written = Some(words);
-        Some(StageFrame {
-            instances: d.out,
-            top: d.top,
-            uploads: std::mem::take(&mut self.atlas.uploads),
-            paths: Vec::new(),
-            sprays: d.sprays,
-            clock: t as f32,
-            lights: d.lights,
-            light_sprays: d.light_sprays,
-            ..StageFrame::default()
-        })
+        d.uploads = std::mem::take(&mut self.atlas.uploads);
+        Some(d)
     }
 
     /// `text` in `face` at `px` fitted to `width`: as it is where it fits,
@@ -433,7 +413,7 @@ impl Stage {
     /// can be sung), START pulsing once the reveal is over.
     fn next(
         &mut self,
-        d: &mut Drawn,
+        d: &mut StageFrame,
         room: &Room,
         (shown, start): (&ResultShown, Option<Start>),
         tint: &Tint,
@@ -452,26 +432,19 @@ impl Stage {
         };
         let words = shown.next_words();
         let soft = rgba(tint.soft, 0.85 * shows);
-        self.start_pill(&mut d.out, &room.start, Some((&words, soft)), look);
+        self.start_pill(&mut d.instances, &room.start, Some((&words, soft)), look);
     }
 }
 
 /// An instance of `k` round `c`, reaching `reach` each way.
-fn shape(k: f32, c: (f32, f32), reach: f32, shape: [f32; 4]) -> Instance {
-    Instance {
-        quad: [c.0 - reach, c.1 - reach, c.0 + reach, c.1 + reach],
-        shape,
-        params: [k, 0.0, 0.0, 0.0],
-        ..Instance::default()
-    }
+fn shape(k: Shape, c: (f32, f32), reach: f32, shape: [f32; 4]) -> Instance {
+    let quad = [c.0 - reach, c.1 - reach, c.0 + reach, c.1 + reach];
+    Instance::of(k, quad, shape)
 }
 
 /// A sparkle (light) at `c`, its rays `size` long, turned `turn`.
 fn sparkle(c: (f32, f32), size: f32, turn: f32, color: [f32; 4]) -> Instance {
-    Instance {
-        color,
-        ..shape(kind::SPARK, c, size + 1.0, [c.0, c.1, size, turn])
-    }
+    shape(Shape::Spark, c, size + 1.0, [c.0, c.1, size, turn]).colors(color, [0.0; 4])
 }
 
 /// A star sticker at `c`, `size` out to its points, turned `turn`, in
@@ -484,19 +457,16 @@ fn sticker(
     glint: f32,
 ) -> Instance {
     let reach = size * 1.15 + glow + 1.0;
-    Instance {
-        color,
-        color2: halo,
-        params: [kind::STAR, glow, glint, 0.35 * color[3]],
-        ..shape(kind::STAR, c, reach, [c.0, c.1, size, turn])
-    }
+    shape(Shape::Star, c, reach, [c.0, c.1, size, turn])
+        .colors(color, halo)
+        .params([glow, glint, 0.35 * color[3]])
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::karaoke::result::{Medal, SongResult};
     use crate::core::shine::Shone;
-    use crate::core::singing::{Medal, SongResult};
 
     pub(super) fn result(medal: Option<Medal>, whole: bool, best: Option<u32>) -> SongResult {
         let phrase = |tier| Shone {
@@ -567,12 +537,8 @@ mod tests {
         frame_in(r, t, (1600.0, 900.0))
     }
 
-    pub(super) fn count(f: &StageFrame, k: f32) -> usize {
-        f.instances
-            .iter()
-            .chain(&f.top)
-            .filter(|i| i.params[0] == k)
-            .count()
+    pub(super) fn count(f: &StageFrame, k: Shape) -> usize {
+        f.instances.iter().chain(&f.top).filter(|i| i.is(k)).count()
     }
 
     /// Everything of a frame inside a window `size`, and finite.
@@ -610,7 +576,7 @@ mod tests {
     #[test]
     fn the_diploma_fills_in_and_stays_in_the_window() {
         let r = result(Some(Medal::Gold), true, Some(9_000));
-        let reveal = crate::core::singing::Reveal::of(&r);
+        let reveal = crate::core::karaoke::result::Reveal::of(&r);
         for size in [(1600.0, 900.0), (600.0, 1000.0), (1024.0, 768.0)] {
             let counts: Vec<usize> = [0.0, 1.0, 3.0, reveal.end() + 2.0]
                 .iter()
@@ -625,12 +591,12 @@ mod tests {
                 "{size:?}: {counts:?}"
             );
             let last = frame_in(&r, reveal.end() + 2.0, size);
-            assert_eq!(count(&last, kind::PAPER), 1);
-            assert_eq!(count(&last, kind::SEAL), 1);
-            assert_eq!(count(&last, kind::STAMP), 1);
-            assert_eq!(count(&last, kind::SIGNATURE), 1);
+            assert_eq!(count(&last, Shape::Paper), 1);
+            assert_eq!(count(&last, Shape::Seal), 1);
+            assert_eq!(count(&last, Shape::Stamp), 1);
+            assert_eq!(count(&last, Shape::Signature), 1);
             // A sticker a phrase, the tally's three and the heading's two.
-            assert_eq!(count(&last, kind::STAR), 4 + 3 + 2);
+            assert_eq!(count(&last, Shape::Star), 4 + 3 + 2);
             assert!(last.sprays.iter().any(|s| s.kind == Kind::Confetti));
         }
     }
@@ -649,7 +615,7 @@ mod tests {
         ] {
             let f = frame_in(&r, 3.0, size);
             let all = || f.instances.iter().chain(&f.top);
-            let paper = all().find(|i| i.params[0] == kind::PAPER).unwrap();
+            let paper = all().find(|i| i.is(Shape::Paper)).unwrap();
             let [cx, cy, hx, hy] = paper.shape;
             // The room the frame was drawn in, and the heading's size there.
             let area = (0.0, 0.0, size.0, size.1);
@@ -669,7 +635,7 @@ mod tests {
             );
             let row = cy - hy + 0.135 * 2.0 * hy;
             let stars: Vec<[f32; 4]> = all()
-                .filter(|i| i.params[0] == kind::STAR && (i.shape[1] - row).abs() < 1.0)
+                .filter(|i| i.is(Shape::Star) && (i.shape[1] - row).abs() < 1.0)
                 .map(|i| i.shape)
                 .collect();
             assert_eq!(stars.len(), 2, "{size:?}");
@@ -689,11 +655,11 @@ mod tests {
     #[test]
     fn no_medal_and_not_whole_draw_a_star() {
         for r in [result(None, true, Some(50_000)), result(None, false, None)] {
-            let reveal = crate::core::singing::Reveal::of(&r);
+            let reveal = crate::core::karaoke::result::Reveal::of(&r);
             let f = frame_at(&r, reveal.end() + 2.0);
-            assert_eq!(count(&f, kind::SEAL), 0);
-            assert_eq!(count(&f, kind::STAMP), 0);
-            assert_eq!(count(&f, kind::STAR), 4 + 3 + 2 + 1);
+            assert_eq!(count(&f, Shape::Seal), 0);
+            assert_eq!(count(&f, Shape::Stamp), 0);
+            assert_eq!(count(&f, Shape::Star), 4 + 3 + 2 + 1);
             assert!(!f.sprays.iter().any(|s| s.kind == Kind::Confetti));
         }
     }
@@ -711,14 +677,14 @@ mod tests {
             phrases: Vec::new(),
             ..result(None, false, None)
         };
-        let reveal = crate::core::singing::Reveal::of(&r);
+        let reveal = crate::core::karaoke::result::Reveal::of(&r);
         for t in [0.0, 0.6, 1.0, 2.0, reveal.end() + 2.0] {
             inside(&frame_at(&r, t), (1600.0, 900.0), &format!("{t}"));
         }
         let f = frame_at(&r, reveal.end() + 2.0);
         // The heading's two stars and the sleepy one.
-        assert_eq!((count(&f, kind::STAR), count(&f, kind::SEAL)), (2 + 1, 0));
-        assert_eq!(count(&f, kind::STAMP), 1);
+        assert_eq!((count(&f, Shape::Star), count(&f, Shape::Seal)), (2 + 1, 0));
+        assert_eq!(count(&f, Shape::Stamp), 1);
         assert!(!f.sprays.iter().any(|s| s.kind == Kind::Confetti));
     }
 

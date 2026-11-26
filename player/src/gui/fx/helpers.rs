@@ -8,7 +8,7 @@
 //! carries any effect's code ([`crate::gui::stage_gpu::shader`]).
 
 pub(super) use crate::gui::glory::{lattice, vnoise};
-pub(super) use crate::gui::rainbow::{clamp01, mix3, smoothstep};
+pub(super) use crate::gui::wgsl_math::{clamp01, mix3, smoothstep};
 
 /// Fire's colour at `heat` (0 to 1): deep red, red, orange, yellow, white
 /// hot; `ghost` (0 to 1) of the way to a ghostly green, the same heat in

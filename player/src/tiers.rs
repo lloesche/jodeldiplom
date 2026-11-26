@@ -73,7 +73,7 @@ pub struct TierSpec {
     pub fill: Paint,
     /// How strongly the singing glows while at it, 0 to 1 (the top's 1):
     /// the streak's rainbow, the ring of the time left and the text in
-    /// rainbow ([`crate::gui::rainbow::Glow`]), and where its held looks
+    /// rainbow ([`crate::gui::shine::Glow`]), and where its held looks
     /// are its own ([`held`]).
     pub glow: f32,
     /// How many bands the rainbow fans out from the playhead (a whole
@@ -336,7 +336,7 @@ pub fn held_through(k: f32, points: impl IntoIterator<Item = (f32, f32)>) -> f32
 }
 
 /// A value a row, Good first, as a WGSL `array<f32, TIERS>` (the shaders
-/// have `TIERS`, how many there are: [`crate::gui::rainbow::stage_wgsl`]).
+/// have `TIERS`, how many there are: [`crate::gui::shine::stage_wgsl`]).
 pub fn wgsl_array(values: impl IntoIterator<Item = f32>) -> String {
     let values: Vec<String> = values.into_iter().map(|v| format!("{v:?}")).collect();
     format!("array<f32, TIERS>({})", values.join(", "))

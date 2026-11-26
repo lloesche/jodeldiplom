@@ -297,7 +297,7 @@ mod tests {
         };
         let step = crate::gui::streak::Step {
             tier: Some(crate::tiers::Tier::ALL[0]),
-            glow: crate::gui::rainbow::Glow {
+            glow: crate::gui::shine::Glow {
                 level: 1.0,
                 from: 1.0,
                 since: 0.0,
@@ -414,7 +414,7 @@ mod tests {
                 };
                 let step = crate::gui::streak::Step {
                     tier: Some(crate::tiers::Tier::TOP),
-                    glow: crate::gui::rainbow::Glow {
+                    glow: crate::gui::shine::Glow {
                         level: 1.0,
                         from: 1.0,
                         since: -10.0,
@@ -488,7 +488,7 @@ mod tests {
         };
         let step = crate::gui::streak::Step {
             tier: Some(crate::tiers::Tier::TOP),
-            glow: crate::gui::rainbow::Glow {
+            glow: crate::gui::shine::Glow {
                 level: 1.0,
                 from: 1.0,
                 since: -10.0,
@@ -523,7 +523,7 @@ mod tests {
                 c[0] + c[1] + c[2]
             }
             k if k == glow::GLOW => {
-                let d = crate::gui::rainbow::round_box(
+                let d = crate::gui::wgsl_math::round_box(
                     (p.0 - i.shape[0], p.1 - i.shape[1]),
                     (i.shape[2], i.shape[3]),
                     i.shape[3],

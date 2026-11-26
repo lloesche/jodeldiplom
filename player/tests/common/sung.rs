@@ -15,9 +15,9 @@ use jodeldiplom::cover::CoverLayers;
 use jodeldiplom::gui::backdrop::music::Levels;
 use jodeldiplom::gui::fx::{self, At, Board, By, Effects, Music, Out, Text};
 use jodeldiplom::gui::particles::Spray;
-use jodeldiplom::gui::rainbow::Glow;
+use jodeldiplom::gui::shine::Glow;
 use jodeldiplom::gui::stage::{Lane, Stage};
-use jodeldiplom::gui::stage_gpu::{kind, Instance, StageFrame};
+use jodeldiplom::gui::stage_gpu::{Instance, Shape, StageFrame};
 use jodeldiplom::gui::streak::Step;
 use jodeldiplom::tiers::TIERS;
 use jodeldiplom::view::karaoke::{timed_lines, KaraokePicture, Score};
@@ -254,7 +254,7 @@ pub fn with_effects(
         let sung = f
             .instances
             .iter_mut()
-            .filter(|i| i.params[0] == kind::TEXT && i.params[1].is_finite() && i.quad[3] > band.0);
+            .filter(|i| i.is(Shape::Text) && i.params[1].is_finite() && i.quad[3] > band.0);
         sung.for_each(|i| t.apply(i));
     }
     let y = glass.middle.1;

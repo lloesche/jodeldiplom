@@ -173,7 +173,7 @@ pub(super) fn samples() -> Vec<[f32; 4]> {
     (0..3000)
         .flat_map(|k| {
             let f = k as f32;
-            let fr = |m: f32| crate::gui::rainbow::fract(f * m);
+            let fr = |m: f32| crate::gui::wgsl_math::fract(f * m);
             let x = bx[0] - 10.0 + fr(0.613) * (bx[2] - bx[0] + 20.0);
             let y = bx[1] + fr(0.377) * (bx[3] - bx[1]);
             let strength = [0.0, 0.3, 0.6, 1.0][k % 4];
@@ -231,8 +231,8 @@ mod tests {
         (0..2000).map(|k| {
             let f = k as f32;
             (
-                BOX[0] + crate::gui::rainbow::fract(f * 0.613) * (BOX[2] - BOX[0]),
-                BOX[1] + crate::gui::rainbow::fract(f * 0.377) * (BOX[3] - BOX[1]),
+                BOX[0] + crate::gui::wgsl_math::fract(f * 0.613) * (BOX[2] - BOX[0]),
+                BOX[1] + crate::gui::wgsl_math::fract(f * 0.377) * (BOX[3] - BOX[1]),
             )
         })
     }

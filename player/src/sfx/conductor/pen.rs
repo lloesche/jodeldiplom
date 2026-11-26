@@ -16,8 +16,8 @@ use std::f64::consts::TAU;
 
 use super::palette::Atom;
 use super::sheet::{midi, Paper};
-use crate::core::singing::signature::signature_point;
-use crate::core::singing::{signed, SIGNING};
+use crate::core::karaoke::result::signature::signature_point;
+use crate::core::karaoke::result::{signed, SIGNING};
 
 /// A grain of the pen's scratch, seconds: a note on the nib each
 /// ([`Atom::Nib`]).
