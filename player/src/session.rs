@@ -28,16 +28,6 @@ const CURRENT: &str = "#JODELDIPLOM-CURRENT:";
 const BROWSER: &str = "#JODELDIPLOM-BROWSER:";
 const SELECTED: &str = "#JODELDIPLOM-SELECTED:";
 
-/// Where the session is kept.
-pub fn path() -> Option<PathBuf> {
-    crate::dirs::settings_dir().map(|d| d.join("session.m3u8"))
-}
-
-/// Where queues are saved to.
-pub fn queues_dir() -> Option<PathBuf> {
-    crate::dirs::settings_dir().map(|d| d.join("queues"))
-}
-
 impl Session {
     /// Writes it to `path` (whole or not at all).
     pub fn save(&self, path: &Path) -> io::Result<()> {

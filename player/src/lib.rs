@@ -109,20 +109,22 @@ pub fn main() -> ExitCode {
         };
     }
     if args.clean_cache || args.clean_diag {
-        let data = cli::settings(&args)
-            .ok()
-            .and_then(|s| dirs::Data::chosen(s.effective.data_folder.as_deref()));
-        let Some(data) = data else {
-            eprintln!("{BIN}: no data folder (no home folder?)");
-            return ExitCode::FAILURE;
+        let folders = match cli::settings(&args).and_then(|s| cli::folders(&s)) {
+            Ok(folders) => folders,
+            Err(error) => {
+                eprintln!("{BIN}: {error}");
+                return ExitCode::FAILURE;
+            }
         };
         if args.clean_cache {
-            for line in dirs::forget_cache(&data) {
+            for line in dirs::forget_cache(&folders) {
                 println!("{line}");
             }
         }
         if args.clean_diag {
-            println!("{}", dirs::forget_diag(&data));
+            for line in dirs::forget_diag(&folders) {
+                println!("{line}");
+            }
         }
         return ExitCode::SUCCESS;
     }

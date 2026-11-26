@@ -181,3 +181,43 @@ fn a_result_made_otherwise_is_made_again() {
     bytes[4] += 1;
     assert_eq!(from_bytes(&bytes), None);
 }
+
+/// While the data folder moves and after, a cover taken apart is written
+/// into the new place (by a store made with the old one's name, as the
+/// player that chose the move holds it), and one taken apart before is
+/// found where it is: nothing is taken apart again, nothing is left behind.
+#[test]
+fn covers_go_into_the_new_place_while_and_after_the_data_folder_moves() {
+    let dir = std::env::temp_dir().join(format!("jodel-covers-moved-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let (old, new) = (dir.join("old"), dir.join("new"));
+    let (before, during, after) = (
+        CoverStore::new(old.join("covers")),
+        CoverStore::new(old.join("covers")),
+        CoverStore::new(old.join("covers")),
+    );
+    let c = Counting::default();
+    before
+        .layers(&song("before", "A", Some(sample_cover(64))), &c)
+        .unwrap();
+    let settings = dir.join("settings");
+    crate::mover::begin(&settings, &[(old.clone(), new.clone())]).unwrap();
+    let other = image::imageops::rotate90(&sample_cover(64));
+    during
+        .layers(&song("during", "B", Some(other)), &c)
+        .unwrap();
+    assert!(new.join("covers/songs").read_dir().unwrap().count() == 1);
+    // Found by the new place's name too (a player started meanwhile).
+    let started = CoverStore::new(new.join("covers"));
+    assert!(started.ready("before") && started.ready("during"));
+    crate::mover::finish(&settings);
+    assert!(!old.exists(), "nothing left behind");
+    after.layers(&song("after", "C", None), &c).unwrap();
+    assert!(new.join("covers/songs/after.txt").is_file());
+    assert!(!old.exists(), "nothing written into the old place");
+    for song in ["before", "during", "after"] {
+        assert!(started.ready(song), "{song}");
+    }
+    assert_eq!(c.calls.load(Ordering::SeqCst), 2);
+    let _ = std::fs::remove_dir_all(&dir);
+}

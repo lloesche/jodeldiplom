@@ -129,7 +129,9 @@ impl BankStore {
     /// each of [`Sound::all`] found by its name, in that order (a sound
     /// missing, or two of one name: none).
     pub fn load(&self, rate: u32) -> Option<SoundBank> {
-        let bytes = std::fs::read(self.file(rate)).ok()?;
+        // Where it is now: while the data folder moves, not yet moved is
+        // where it was.
+        let bytes = std::fs::read(crate::mover::locate(&self.file(rate))).ok()?;
         let mut kept = from_bytes(&bytes, SOUNDS_KEY, rate)?;
         let mut bank = SoundBank::new(rate);
         for sound in Sound::all() {
@@ -148,7 +150,8 @@ impl BankStore {
     /// place), in place of the one at its rate (whole or not at all).
     pub fn save(&self, bank: &SoundBank) -> Result<(), String> {
         let fail = |p: &Path, e: std::io::Error| format!("{}: {e}", p.display());
-        let file = self.file(bank.rate());
+        // Where it goes now: while the data folder moves, into the new one.
+        let file = crate::mover::current(&self.file(bank.rate()));
         let sounds: Vec<(String, &[f32])> = Sound::all()
             .into_iter()
             .filter_map(|s| Some((s.name(), bank.sound(s.index())?)))

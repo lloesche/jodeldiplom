@@ -50,7 +50,7 @@ pub mod store;
 pub mod timer;
 pub mod web;
 
-use store::{cache_dir, cache_key, now, Cache, Kept};
+use store::{cache_key, now, Cache, Kept};
 use web::{Http, Lrclib, Web};
 
 /// How long a track whose look-up failed (the network, the service) is
@@ -214,7 +214,8 @@ pub type Probe = dyn Fn(&Path) -> Option<Track> + Send + Sync;
 /// How a [`LyricsWorker`] works.
 #[derive(Clone)]
 pub struct Options {
-    /// The cache folder ([`store::cache_dir`]), if any.
+    /// The cache folder (`lyrics` in the data folder:
+    /// [`crate::dirs::Data::lyrics`]), if any.
     pub cache: Option<PathBuf>,
     /// Whether LRCLIB is asked (`karaoke_online` in the settings).
     pub online: bool,
@@ -243,11 +244,11 @@ pub type Done = dyn Fn(&Path, crate::core::LyricsFacts) + Send + Sync;
 pub type Working = dyn Fn(&Path, bool) + Send + Sync;
 
 impl Options {
-    /// The player's own: the cache in the data folder, the web through
-    /// [`Web`], LRCLIB at [`lrclib::BASE`].
+    /// The player's own, without a cache (the player gives its own):
+    /// the web through [`Web`], LRCLIB at [`lrclib::BASE`].
     pub fn new(online: bool) -> Options {
         Options {
-            cache: cache_dir(),
+            cache: None,
             online,
             http: Arc::new(Web::new()),
             base: lrclib::BASE.into(),

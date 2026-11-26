@@ -43,7 +43,7 @@ fn main() {
         data.join("models")
             .join(jodeldiplom::lyrics::models::ASR_FILE),
     );
-    let timer = SpeechTimer::new(models);
+    let timer = SpeechTimer::new(models, Some(data.join("stems")));
     let timed = timer.time(song, &lyrics, &|| Vec::new()).unwrap();
     println!(
         "{} lines (text {}), fit {:?}",

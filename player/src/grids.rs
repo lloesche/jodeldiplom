@@ -20,12 +20,6 @@ use crate::core::grid::Grid;
 use crate::core::Action;
 use crate::rhythm::{beats_text, parse_beats};
 
-/// Where the grids are kept: `grids` in the settings folder (fixed by hand,
-/// they are not data the player could make again).
-pub fn dir() -> Option<PathBuf> {
-    crate::dirs::settings_dir().map(|d| d.join("grids"))
-}
-
 /// What finds a track's grid: its path and size.
 fn key(path: &Path) -> Option<String> {
     let size = fs::metadata(path).ok()?.len();

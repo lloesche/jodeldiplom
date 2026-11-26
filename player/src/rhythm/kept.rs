@@ -14,13 +14,6 @@ use jodel_rhythm::{Analysis, CandidateReport, Method, Region, VERSION};
 use crate::cache;
 use crate::core::RhythmRecipe;
 
-/// Where analyses are kept: `analyses` in the data folder of the usual
-/// settings ([`crate::dirs::Data::current`]; the player itself is told its
-/// own).
-pub fn cache_dir() -> Option<PathBuf> {
-    crate::dirs::Data::current().map(|d| d.analyses())
-}
-
 /// What identifies a file's analysis, `IDENTITY vVERSION METHODS`: the
 /// file ([`cache::identity`]), the analysis version, the methods (and
 /// `+stems` where the cues listened to stems).
@@ -217,11 +210,12 @@ pub(super) fn load_analysis(dir: &Path, path: &Path, recipe: &RhythmRecipe) -> O
 /// are both for the file as it is now.
 pub fn load(dir: &Path, path: &Path, recipe: &RhythmRecipe) -> Option<(Analysis, Waveform)> {
     let key = cache_key(path, &recipe.methods, recipe.stems)?;
-    // Where it is now: while the data folder moves, not yet moved is where
-    // it was.
-    let file = crate::mover::locate(&cache_file(dir, &key));
-    let analysis = from_text(&key, &fs::read_to_string(&file).ok()?)?;
-    let waveform = Waveform::from_bytes(&fs::read(file.with_extension("wave")).ok()?)?;
+    // Where each is now: while the data folder moves, not yet moved is
+    // where it was (the two files move on their own).
+    let file = cache_file(dir, &key);
+    let analysis = from_text(&key, &fs::read_to_string(crate::mover::locate(&file)).ok()?)?;
+    let wave = crate::mover::locate(&file.with_extension("wave"));
+    let waveform = Waveform::from_bytes(&fs::read(wave).ok()?)?;
     Some((analysis, waveform))
 }
 
@@ -245,11 +239,13 @@ pub fn store(
 
 /// Whether the analysis of `path` by `recipe` is in the cache in `dir`
 /// (without reading it), and with stems, the stems themselves beside it
-/// ([`crate::stems_cache::beside`]).
+/// ([`crate::stems_cache::beside`]); while the data folder moves, in
+/// either place ([`crate::mover::locate`]).
 pub fn is_stored(dir: &Path, path: &Path, recipe: &RhythmRecipe) -> bool {
     let analysed = cache_key(path, &recipe.methods, recipe.stems).is_some_and(|key| {
         let file = cache_file(dir, &key);
-        file.is_file() && file.with_extension("wave").is_file()
+        crate::mover::locate(&file).is_file()
+            && crate::mover::locate(&file.with_extension("wave")).is_file()
     });
     analysed
         && (!recipe.stems || crate::stems_cache::is_kept(&crate::stems_cache::beside(dir), path))
@@ -344,6 +340,56 @@ mod tests {
         // Another size: analysed afresh.
         fs::write(&file, b"longer").unwrap();
         assert!(load(&cache, &file, &recipe(&[Method::Network])).is_none());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// A track analysed (with its stems kept) before the data folder moves
+    /// is analysed still while it moves and after: by the old place's name
+    /// (the player that chose the move) and by the new one's (a player
+    /// started meanwhile). Nothing is analysed again.
+    #[test]
+    fn an_analysis_is_found_while_and_after_the_data_folder_moves() {
+        let dir = std::env::temp_dir().join(format!("jodel-rhythm-moved-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let track = dir.join("track.wav");
+        fs::write(&track, b"one").unwrap();
+        let (old, new) = (
+            crate::dirs::Data(dir.join("old")),
+            crate::dirs::Data(dir.join("new")),
+        );
+        let recipe = RhythmRecipe {
+            methods: vec![Method::Flux],
+            stems: true,
+        };
+        let a = Analysis {
+            beats: vec![0.5, 1.0, 1.5],
+            methods: vec![Method::Flux],
+            stems: true,
+            ..Analysis::default()
+        };
+        let wave = Waveform {
+            mix: Lane {
+                peak: vec![1, 2],
+                rms: vec![0, 1],
+            },
+            stems: None,
+            melody: None,
+        };
+        store(&old.analyses(), &track, &a, &wave).unwrap();
+        let stems = crate::stems_cache::file_for(&old.stems(), &track).unwrap();
+        fs::create_dir_all(stems.parent().unwrap()).unwrap();
+        fs::write(&stems, b"stems").unwrap();
+        let settings = dir.join("settings");
+        crate::mover::begin(&settings, &[(old.0.clone(), new.0.clone())]).unwrap();
+        let found = |data: &crate::dirs::Data| {
+            is_stored(&data.analyses(), &track, &recipe)
+                && load(&data.analyses(), &track, &recipe).is_some_and(|(b, _)| b.beats == a.beats)
+        };
+        assert!(found(&old) && found(&new), "while it moves");
+        crate::mover::finish(&settings);
+        assert!(!old.0.exists());
+        assert!(found(&old) && found(&new), "once it moved");
         let _ = fs::remove_dir_all(&dir);
     }
 

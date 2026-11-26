@@ -19,11 +19,6 @@ use jodel_playback::stem_file::{self, StemFile, StemStore};
 /// about 60 to 120 MB).
 pub const BUDGET: u64 = 30 * 1024 * 1024 * 1024;
 
-/// The folder: `stems` beside the analyses.
-pub fn dir() -> Option<PathBuf> {
-    crate::rhythm::cache_dir().map(|d| beside(&d))
-}
-
 /// The stems folder beside the analyses' folder `analyses`.
 pub fn beside(analyses: &Path) -> PathBuf {
     analyses.parent().unwrap_or(analyses).join("stems")

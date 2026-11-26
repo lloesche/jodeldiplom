@@ -38,7 +38,7 @@ pub use report::{describe, recent, remember, Timings, RECENT_KEPT};
 mod kept;
 use kept::load_analysis;
 pub(crate) use kept::{beats_text, parse_beats};
-pub use kept::{cache_dir, cache_key, from_text, is_stored, key_parts, load, store, to_text};
+pub use kept::{cache_key, from_text, is_stored, key_parts, load, store, to_text};
 
 /// Full scale of the decoder's 24-bit units.
 const FULL_SCALE: f64 = 8_388_608.0;
@@ -760,11 +760,15 @@ fn work(
         notify();
     }
 }
+
+/// Both threads told to stop: each ends once it waits again (the analysing
+/// one after the file it is at). Not joined: an analysis under way would
+/// hold up the player's end.
 impl Drop for RhythmWorker {
     fn drop(&mut self) {
         let (lock, ready) = &*self.shared;
         lock.lock().unwrap_or_else(|e| e.into_inner()).stop = true;
-        ready.notify_one();
+        ready.notify_all();
     }
 }
 
@@ -914,5 +918,29 @@ mod tests {
         assert!(ready.contains(&a) && ready.contains(&b), "{ready:?}");
         drop(worker);
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Dropped while both its threads wait, the worker ends them both:
+    /// what they share goes once neither holds it.
+    #[test]
+    fn dropping_the_worker_ends_both_threads() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let worker = RhythmWorker::new(tx, Arc::new(|| {}), None, None);
+        // The analysing thread has told the GPU's name: it waits for work.
+        assert!(matches!(
+            rx.recv_timeout(Duration::from_secs(60)),
+            Ok(Action::Gpu(_))
+        ));
+        let shared = Arc::downgrade(&worker.shared);
+        drop(worker);
+        let started = Instant::now();
+        while shared.strong_count() > 0 {
+            assert!(
+                started.elapsed() < Duration::from_secs(10),
+                "a thread still waits"
+            );
+            thread::sleep(Duration::from_millis(5));
+        }
+        drop(rx);
     }
 }

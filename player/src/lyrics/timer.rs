@@ -1,7 +1,7 @@
 //! The speech model's word timing, and the voice it times the words
 //! against.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -25,16 +25,20 @@ use super::{
 /// ([`jodel_lyrics::glimpses`]), pins the words to where it was sung.
 pub struct SpeechTimer {
     models: Arc<Models>,
+    /// The player's kept stems, where the voice is taken from when there.
+    stems: Option<PathBuf>,
     model: Mutex<Option<Arc<dyn jodel_lyrics::aligner::Acoustic + Send + Sync>>>,
     /// The recogniser once read: `None` inside when it cannot run here.
     asr: Mutex<Option<Option<Arc<jodel_gpu::GpuAsr>>>>,
 }
 
 impl SpeechTimer {
-    /// The timer for `models` (each read when first needed).
-    pub fn new(models: Arc<Models>) -> SpeechTimer {
+    /// The timer for `models` (each read when first needed), the voice
+    /// taken from the stems kept in `stems` where they are there.
+    pub fn new(models: Arc<Models>, stems: Option<PathBuf>) -> SpeechTimer {
         SpeechTimer {
             models,
+            stems,
             model: Mutex::new(None),
             asr: Mutex::new(None),
         }
@@ -71,7 +75,7 @@ impl WordTimer for SpeechTimer {
         use jodel_lyrics::aligner::CtcAligner;
         let model = self.acoustic()?;
         let mut steps = Steps::default();
-        let voice = steps.voice(path)?;
+        let voice = steps.voice(self.stems.as_deref(), path)?;
         // Any text checked against what is sung (one from LRCLIB swapped
         // for one of its others when it does not fit: `others` has none
         // for the file's own); what was heard, in the transcript's parts
@@ -100,7 +104,7 @@ impl WordTimer for SpeechTimer {
         let asr = self.recogniser().ok_or("no speech recogniser here")?;
         let model = self.acoustic()?;
         let mut steps = Steps::default();
-        let voice = steps.voice(path)?;
+        let voice = steps.voice(self.stems.as_deref(), path)?;
         let heard = steps.hear(&asr, || asr.transcribe(&voice), |s| &mut s.heard)?;
         if jodel_lyrics::fit::words(&heard.text).len() < HEARD_LEAST {
             return Err(TOO_LITTLE_HEARD.into());
@@ -175,14 +179,14 @@ struct Step {
 }
 
 impl Steps {
-    /// The voice of `path` ([`track_voice`]), its time, and where it came
-    /// from.
-    fn voice(&mut self, path: &Path) -> Result<Vec<f32>, String> {
+    /// The voice of `path` ([`track_voice`], from the stems kept in
+    /// `stems`), its time, and where it came from.
+    fn voice(&mut self, stems: Option<&Path>, path: &Path) -> Result<Vec<f32>, String> {
         let separator = jodel_gpu::GpuSeparator::for_this_thread()
             .filter(|_| crate::trace::on())
             .map(|g| (g, g.tally()));
         let started = Instant::now();
-        let (voice, separated) = track_voice(path)?;
+        let (voice, separated) = track_voice(stems, path)?;
         self.voiced = started.elapsed();
         self.separated = separated;
         self.separator = separator
@@ -256,12 +260,12 @@ pub fn asr_maker() -> Maker {
     )
 }
 
-/// The voice of `path`, mono at 16 kHz: from the track's kept stems (once
-/// its analysis has them in their file, if it is separating them now:
-/// [`crate::stems_cache::open_waiting`]), else separated now (true).
-fn track_voice(path: &Path) -> Result<(Vec<f32>, bool), String> {
-    let kept =
-        crate::stems_cache::dir().and_then(|dir| crate::stems_cache::open_waiting(&dir, path));
+/// The voice of `path`, mono at 16 kHz: from the track's stems kept in
+/// `stems` (once its analysis has them in their file, if it is separating
+/// them now: [`crate::stems_cache::open_waiting`]), else separated now
+/// (true).
+fn track_voice(stems: Option<&Path>, path: &Path) -> Result<(Vec<f32>, bool), String> {
+    let kept = stems.and_then(|dir| crate::stems_cache::open_waiting(dir, path));
     match kept {
         Some(file) => Ok((voice_16k(file)?, false)),
         None => Ok((separate_16k(path, false)?.0, true)),

@@ -160,8 +160,9 @@ fn main() {
     };
     let out = PathBuf::from(out);
     std::fs::create_dir_all(&out).unwrap();
-    let models = jodeldiplom::dirs::Data::current()
+    let models = jodeldiplom::cli::usual_folders()
         .expect("a data folder")
+        .data
         .models();
     let splitter = GpuSplitter::new(cover::CoverModels {
         depth: models.join(cover::DEPTH_FILE),

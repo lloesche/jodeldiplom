@@ -1,7 +1,6 @@
 //! The lyrics kept on disk: the text as found, "nothing found", and our
 //! word times.
 
-use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -13,12 +12,6 @@ use crate::cache;
 
 /// How long "nothing found" is believed before LRCLIB is asked again.
 pub const ASK_AGAIN: Duration = Duration::from_secs(30 * 24 * 60 * 60);
-
-/// Where lyrics are kept: `lyrics` in the data folder of the usual settings
-/// ([`crate::dirs::Data::current`]; the player itself is told its own).
-pub fn cache_dir() -> Option<PathBuf> {
-    crate::dirs::Data::current().map(|d| d.lyrics())
-}
 
 /// The cache's name for `path`'s lyrics ([`key_of`]; a file retagged is
 /// looked up afresh).
@@ -80,17 +73,17 @@ impl Cache {
 
     /// The text of the file under `key` with `extension` (where it is now:
     /// while the data folder moves, not yet moved is where it was).
-    fn read(&self, key: &str, extension: &str) -> Option<(PathBuf, String)> {
-        let file = crate::mover::locate(&self.file(key, extension));
-        let text = read_text(&fs::read(&file).ok()?);
-        Some((file, text))
+    fn read(&self, key: &str, extension: &str) -> Option<String> {
+        Some(read_text(
+            &crate::mover::read(&self.file(key, extension)).ok()?,
+        ))
     }
 
     /// The fetched text kept under `key`: its words, and when its source
     /// synced its lines. One kept in another version is
     /// [`Kept::Outdated`], and left where it is.
     pub fn text(&self, key: &str) -> Kept {
-        let Some((_, text)) = self.read(key, "lrc") else {
+        let Some(text) = self.read(key, "lrc") else {
             return Kept::Missing;
         };
         let Some(body) = cache::LYRICS_TEXT.body(&text) else {
@@ -113,7 +106,7 @@ impl Cache {
             &self.file(key, "lrc"),
             &cache::LYRICS_TEXT.wrap(&words.to_lrc()),
         )?;
-        let _ = fs::remove_file(self.file(key, "none"));
+        let _ = crate::mover::remove(&self.file(key, "none"));
         Ok(())
     }
 
@@ -121,7 +114,7 @@ impl Cache {
     /// [`Found::Instrumental`]), if it is younger than [`ASK_AGAIN`] at
     /// `now` (seconds since 1970).
     pub fn none(&self, key: &str, now: u64) -> Option<Found> {
-        let text = fs::read_to_string(self.file(key, "none")).ok()?;
+        let text = self.read(key, "none")?;
         let mut lines = cache::LYRICS_NONE.body(&text)?.lines();
         if lines.next()? != NONE_HEADER {
             return None;
@@ -150,16 +143,16 @@ impl Cache {
             &self.file(key, "none"),
             &cache::LYRICS_NONE.wrap(&format!("{NONE_HEADER}\n{kind} {now}\n")),
         )?;
-        let _ = fs::remove_file(crate::mover::locate(&self.file(key, "lrc")));
+        let _ = crate::mover::remove(&self.file(key, "lrc"));
         Ok(())
     }
 
     /// Our word times kept under `key`, when kept in this player's version;
     /// one of another version is deleted (it is timed again).
     pub fn timed(&self, key: &str) -> Option<Lyrics> {
-        let (file, text) = self.read(key, "timed.lrc")?;
+        let text = self.read(key, "timed.lrc")?;
         let Some(body) = cache::LYRICS_TIMED.body(&text) else {
-            let _ = fs::remove_file(&file);
+            let _ = crate::mover::remove(&self.file(key, "timed.lrc"));
             return None;
         };
         let lyrics = Lyrics::parse(body, Source::Unknown);

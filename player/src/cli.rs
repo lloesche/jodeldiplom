@@ -197,48 +197,50 @@ pub fn start(path: Option<&Path>) -> Result<(PathBuf, Option<PathBuf>), String> 
     }
 }
 
+/// Where the player keeps things by its settings ([`settings`]): the
+/// settings file's folder, and the data folder those settings choose.
+pub fn folders(settings: &Settings) -> Result<crate::dirs::Folders, String> {
+    settings
+        .file
+        .as_deref()
+        .and_then(|file| crate::dirs::Folders::new(file, settings.effective.data_folder.as_deref()))
+        .ok_or_else(|| "no folder for the player's settings or data (no home folder?)".into())
+}
+
+/// [`folders`] of the usual settings, for a program started without the
+/// player's command line (the examples).
+pub fn usual_folders() -> Result<crate::dirs::Folders, String> {
+    folders(&settings(&Args::default())?)
+}
+
 /// The app options for a command line (the window fills in the size and
 /// the wake-up).
 pub fn app_options(args: &Args) -> Result<AppOptions, String> {
     let settings = settings(args)?;
     let (dir, autoplay) = start(args.path.as_deref())?;
     let mut options = AppOptions::new(dir);
-    // The data folder: the analyses, stems, lyrics and models. A move of it
-    // written down and not finished goes on in the background
-    // ([`start_mover`]): until it has, what is not moved yet is read where
-    // it is.
-    let data = crate::dirs::Data::chosen(settings.effective.data_folder.as_deref())
-        .ok_or("no folder for the player's data (no home folder?)")?;
-    // Only with the usual settings: another settings file (--config) is a
-    // player of its own.
-    if args.config.is_none() {
-        if let Some(dir) = crate::dirs::settings_dir() {
-            crate::mover::resume(&dir);
-        }
-    }
+    // Where this player keeps things, decided here once: one with a
+    // settings file of its own (--config) has its own of everything.
+    let folders = folders(&settings)?;
+    // A move of the data folder written down and not finished goes on in
+    // the background ([`start_mover`]): until it has, what is not moved yet
+    // is read where it is.
+    crate::mover::resume(&folders.settings);
     // What a crash left half written (never under a file's name, so never
     // read) goes, in the background, once a day old.
-    let swept = data.clone();
+    let mut swept = folders.data.swept();
+    swept.push(folders.settings.clone());
     std::thread::spawn(move || {
-        let mut dirs = vec![
-            swept.analyses(),
-            swept.stems(),
-            swept.lyrics(),
-            swept.loudness(),
-            swept.models(),
-            swept.sounds(),
-        ];
-        dirs.extend(crate::cover::CoverStore::dirs_in(&swept.covers()));
-        dirs.extend(crate::dirs::settings_dir());
-        for dir in dirs {
+        for dir in swept {
             durable::sweep(&dir, durable::STALE);
         }
     });
+    let data = folders.data.clone();
     options.rhythm_cache = Some(data.analyses());
-    options.grids = crate::grids::dir();
-    options.session = crate::session::path();
+    options.grids = Some(folders.grids());
+    options.session = Some(folders.session());
     options.restore_browser = args.path.is_none();
-    options.queues = crate::session::queues_dir();
+    options.queues = Some(folders.queues());
     // Lyrics: cached in the data folder, LRCLIB asked unless turned off. The
     // speech models come once setup has found them ([`set_models`]).
     let mut lyrics = crate::lyrics::Options::new(true);
@@ -259,18 +261,14 @@ pub fn app_options(args: &Args) -> Result<AppOptions, String> {
     Ok(options)
 }
 
-/// Starts the moves the journal holds (a data folder chosen anew), telling `options.notify` as they go: before
-/// setup, which reads what has not moved yet where it is.
+/// Starts the moves the journal holds (a data folder chosen anew), telling
+/// `options.notify` as they go: before setup, which reads what has not
+/// moved yet where it is.
 pub fn start_mover(options: &mut AppOptions) {
     // The journal beside the settings file in use.
-    let dir = options
-        .config_file
-        .as_deref()
-        .and_then(Path::parent)
-        .map(Path::to_path_buf)
-        .or_else(crate::dirs::settings_dir);
-    if let Some(dir) = dir {
-        options.mover = crate::mover::Mover::start(dir, options.notify.clone()).map(Arc::new);
+    if let Some(dir) = options.config_file.as_deref().and_then(Path::parent) {
+        options.mover =
+            crate::mover::Mover::start(dir.to_path_buf(), options.notify.clone()).map(Arc::new);
     }
 }
 
@@ -283,15 +281,15 @@ pub fn models_ready(
     let data = options
         .data
         .clone()
-        .or_else(crate::dirs::Data::current)
         .unwrap_or_else(|| crate::dirs::Data::in_parent(Path::new(".")));
     let places = crate::setup::Places::player(&data);
     crate::setup::ready(&manifest, &places).ok_or((manifest, places))
 }
 
 /// Gives the app the models setup found (each known by its file:
-/// [`crate::setup::Found`]): the speech models to the lyrics, the covers'
-/// models to the covers' step.
+/// [`crate::setup::Found`]): the speech models to the lyrics (the voice
+/// from the stems kept in the data folder), the covers' models to the
+/// covers' step.
 pub fn set_models(options: &mut AppOptions, paths: &[PathBuf]) {
     let Some(found) = crate::setup::Found::of(paths) else {
         return;
@@ -300,9 +298,12 @@ pub fn set_models(options: &mut AppOptions, paths: &[PathBuf]) {
     let (speech, asr) = (found.speech, found.asr);
     let models = crate::lyrics::models::Models::new(speech.clone(), asr);
     options.model = Some(speech);
+    let stems = options.data.as_ref().map(crate::dirs::Data::stems);
     if let Some(lyrics) = &mut options.lyrics {
-        lyrics.timer = Some(Arc::new(crate::lyrics::timer::SpeechTimer::new(models))
-            as Arc<dyn crate::lyrics::WordTimer>);
+        lyrics.timer = Some(
+            Arc::new(crate::lyrics::timer::SpeechTimer::new(models, stems))
+                as Arc<dyn crate::lyrics::WordTimer>,
+        );
     }
 }
 
@@ -350,6 +351,46 @@ mod tests {
 
     fn args(list: &[&str]) -> Result<Args, String> {
         parse(list.iter().map(|s| s.to_string()))
+    }
+
+    /// A player with a settings file of its own (`--config`) keeps all of
+    /// its own: the session, the queues and the grids beside that file, the
+    /// caches in the data folder it names; none of the usual player's.
+    #[test]
+    fn a_config_player_keeps_its_own_folders() {
+        let dir = std::env::temp_dir().join(format!("jodel-own-config-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let (settings, music) = (dir.join("settings"), dir.join("music"));
+        durable::create_dir_all(&settings).unwrap();
+        durable::create_dir_all(&music).unwrap();
+        let file = settings.join("mine.toml");
+        Config {
+            data_folder: Some(dir.join("parent")),
+            ..Config::default()
+        }
+        .save(&file)
+        .unwrap();
+        let path = |p: &Path| p.to_string_lossy().into_owned();
+        let a = args(&["--config", &path(&file), &path(&music)]).unwrap();
+        let options = app_options(&a).unwrap();
+        let data = dir.join("parent").join(crate::dirs::DATA);
+        assert_eq!(options.session, Some(settings.join("session.m3u8")));
+        assert_eq!(options.queues, Some(settings.join("queues")));
+        assert_eq!(options.grids, Some(settings.join("grids")));
+        assert_eq!(options.data, Some(crate::dirs::Data(data.clone())));
+        assert_eq!(options.rhythm_cache, Some(data.join("analyses")));
+        assert_eq!(
+            options.lyrics.as_ref().and_then(|l| l.cache.clone()),
+            Some(data.join("lyrics"))
+        );
+        // Everything under its own folder, nothing in the usual settings.
+        let usual = crate::dirs::settings_dir();
+        for p in [&options.session, &options.queues, &options.grids] {
+            let p = p.as_deref().unwrap();
+            assert!(p.starts_with(&dir), "{}", p.display());
+            assert!(usual.as_deref().is_none_or(|u| !p.starts_with(u)));
+        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// What setup's `ready` gives (every needed file's path, in the

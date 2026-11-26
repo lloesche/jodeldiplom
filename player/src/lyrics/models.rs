@@ -17,13 +17,16 @@ pub const MODEL_SHA256: &str = "8aa76ab2243c81747a1f832954586bc566090c83a0ac167d
 /// The speech model where it is (not checked: [`crate::setup`] checks it):
 /// `models/` beside the executable, or in the app bundle's
 /// `Contents/Resources/models/` (where one sent along with the player
-/// sits); else `models/` in the data folder, where setup puts it. `None`
-/// when it is in none of them.
-pub fn model_path() -> Option<PathBuf> {
-    let exe = std::env::current_exe().ok();
-    let beside = exe.as_deref().and_then(Path::parent).map(Path::to_path_buf);
-    let data = crate::dirs::Data::current().map(|d| d.0);
-    model_in(beside.as_deref(), data.as_deref())
+/// sits); else `models/` in the data folder `data`, where setup puts it.
+/// `None` when it is in none of them.
+pub fn model_path(data: &Path) -> Option<PathBuf> {
+    model_in(exe_dir().as_deref(), Some(data))
+}
+
+/// The executable's folder.
+fn exe_dir() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    exe.parent().map(Path::to_path_buf)
 }
 
 /// [`model_path`] for an executable in `exe_dir` and the data folder
@@ -44,7 +47,7 @@ fn file_in(name: &str, exe_dir: Option<&Path>, data_dir: Option<&Path>) -> Optio
     }
     places
         .into_iter()
-        .map(|d| d.join(name))
+        .map(|d| crate::mover::locate(&d.join(name)))
         .find(|p| p.is_file())
 }
 
@@ -83,11 +86,8 @@ pub(crate) const ASR_PARTS: [(&str, u64, &str); 3] = [
 
 /// The speech recogniser's file, where the build put it (as
 /// [`model_path`]).
-pub fn asr_model_path() -> Option<PathBuf> {
-    let exe = std::env::current_exe().ok();
-    let beside = exe.as_deref().and_then(Path::parent).map(Path::to_path_buf);
-    let data = crate::dirs::Data::current().map(|d| d.0);
-    asr_model_in(beside.as_deref(), data.as_deref())
+pub fn asr_model_path(data: &Path) -> Option<PathBuf> {
+    asr_model_in(exe_dir().as_deref(), Some(data))
 }
 
 /// [`asr_model_path`] for an executable in `exe_dir` and the data folder

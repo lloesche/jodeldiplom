@@ -85,7 +85,8 @@ pub fn same_picture(a: &RgbImage, b: &RgbImage) -> bool {
             <= 4.0
 }
 
-/// The covers taken apart, in a folder.
+/// The covers taken apart, in a folder: while the data folder moves, each
+/// file read where it is and written where it goes ([`crate::mover`]).
 pub struct CoverStore {
     dir: PathBuf,
 }
@@ -142,7 +143,7 @@ impl CoverStore {
     /// The song's entry: `Some(Some(pixels))` for its cover's result,
     /// `Some(None)` for a song without a cover, `None` without an entry.
     pub fn linked(&self, song: &str) -> Option<Option<String>> {
-        let text = std::fs::read_to_string(self.song_file(song)).ok()?;
+        let text = std::fs::read_to_string(crate::mover::locate(&self.song_file(song))).ok()?;
         let body = cache::COVER_SONG.body(&text)?;
         let line = body.lines().find_map(|l| l.strip_prefix("cover "))?;
         Some((line != "none").then(|| line.to_owned()))
@@ -161,7 +162,7 @@ impl CoverStore {
     /// Whether the cover's result is there, of this layout, and made as
     /// this player makes them (its header only).
     fn current(&self, hash: &str) -> bool {
-        let Ok(mut f) = std::fs::File::open(self.result_file(hash)) else {
+        let Ok(mut f) = std::fs::File::open(crate::mover::locate(&self.result_file(hash))) else {
             return false;
         };
         let mut head = vec![0u8; 9];
@@ -178,7 +179,7 @@ impl CoverStore {
     /// The cover result `hash`, when there and made as this player makes
     /// them.
     pub fn load(&self, hash: &str) -> Option<Kept> {
-        let kept = from_bytes(&std::fs::read(self.result_file(hash)).ok()?)?;
+        let kept = from_bytes(&std::fs::read(crate::mover::locate(&self.result_file(hash))).ok()?)?;
         (kept.made == VERSION).then_some(kept)
     }
 
@@ -236,6 +237,7 @@ impl CoverStore {
     }
 
     fn write(&self, path: &Path, bytes: &[u8]) -> Result<(), String> {
+        let path = &crate::mover::current(path);
         durable::write_atomic(path, bytes).map_err(|e| format!("{}: {e}", path.display()))
     }
 
@@ -250,7 +252,8 @@ impl CoverStore {
 
     /// The album's covers: each result's pixels and perceptual hash.
     pub fn album(&self, album: &str) -> Vec<(String, Perceptual)> {
-        let Ok(text) = std::fs::read_to_string(self.album_file(album)) else {
+        let Ok(text) = std::fs::read_to_string(crate::mover::locate(&self.album_file(album)))
+        else {
             return Vec::new();
         };
         let Some(body) = cache::COVER_ALBUM.body(&text) else {

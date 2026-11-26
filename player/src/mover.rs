@@ -21,7 +21,18 @@
 //!
 //! While a move is under way the player writes where things go
 //! ([`current`]) and reads from there, or from where a file still is if it
-//! has not come over yet ([`locate`]): nothing is made again.
+//! has not come over yet ([`locate`]): nothing is made again. That a file
+//! written where it goes is the newer (step 1) holds because of two rules:
+//!
+//! - A file kept for something (an analysis, a song's lyrics, a cover) is
+//!   written from what made it, never from the old copy: the new one is
+//!   the old one made again, or better.
+//! - A file the player adds to (the best scores, the record of the last
+//!   analyses) is written only from what was read through the mover
+//!   ([`read`], [`locate`]): the new one holds everything the old one did.
+//!
+//! A file removed goes from both places ([`remove`]): left where it was, it
+//! would come over again.
 
 use std::fs;
 use std::io::{self, Read, Write};
@@ -67,15 +78,56 @@ pub fn locate(path: &Path) -> PathBuf {
     if now.exists() {
         return now;
     }
-    for (from, to) in moves() {
-        if let Ok(rest) = now.strip_prefix(&to) {
-            let old = from.join(rest);
-            if old.exists() {
-                return old;
-            }
+    old_places(path)
+        .into_iter()
+        .find(|old| old.exists())
+        .unwrap_or(now)
+}
+
+/// Where `path` was before the moves: each place a copy not yet moved may
+/// still be.
+fn old_places(path: &Path) -> Vec<PathBuf> {
+    let now = current(path);
+    moves()
+        .into_iter()
+        .filter_map(|(from, to)| Some(from.join(now.strip_prefix(&to).ok()?)))
+        .collect()
+}
+
+/// The bytes of the file `path` names, wherever it is now: where it goes,
+/// else where it was. One moved between the two looks is found where it
+/// went (a file is in one place or the other at every moment: the old copy
+/// goes only once the new one is whole), so a file there is never taken for
+/// none, as [`locate`] then a read could.
+pub fn read(path: &Path) -> io::Result<Vec<u8>> {
+    let now = current(path);
+    let found =
+        |r: &io::Result<Vec<u8>>| !matches!(r, Err(e) if e.kind() == io::ErrorKind::NotFound);
+    let first = fs::read(&now);
+    if found(&first) {
+        return first;
+    }
+    for old in old_places(path) {
+        let there = fs::read(old);
+        if found(&there) {
+            return there;
         }
     }
-    now
+    fs::read(&now)
+}
+
+/// Removes the file `path` names where it goes and where it was: a copy
+/// left in the old place would come over later as if it were kept. Not
+/// there at all is no error.
+pub fn remove(path: &Path) -> io::Result<()> {
+    let mut result = Ok(());
+    for file in std::iter::once(current(path)).chain(old_places(path)) {
+        match fs::remove_file(&file) {
+            Err(e) if e.kind() != io::ErrorKind::NotFound => result = Err(e),
+            _ => {}
+        }
+    }
+    result
 }
 
 /// The moves the journal in `settings` holds.
@@ -276,6 +328,18 @@ fn prune(dir: &Path) {
 /// it: `Path::exists` would say no then.
 fn gone(path: &Path) -> bool {
     matches!(fs::symlink_metadata(path), Err(e) if e.kind() == io::ErrorKind::NotFound)
+}
+
+/// Tests: the moves in the journal in `settings` made to the end.
+#[cfg(test)]
+pub(crate) fn finish(settings: &Path) {
+    let told = crate::told::Told::new();
+    let mover = Mover::start(settings.to_owned(), told.notify()).expect("a move written down");
+    let s = told.until("the move settles", || {
+        let s = mover.status();
+        (s.finished || s.failure.is_some()).then_some(s)
+    });
+    assert!(s.finished && s.failure.is_none(), "{s:?}");
 }
 
 /// Tests copy, as between two disks, where renaming would do.
@@ -687,6 +751,34 @@ mod tests {
         assert_eq!(fs::read(to.join("held")).unwrap(), b"held");
         assert!(gone(&from));
         assert!(journal(&settings).is_empty());
+    }
+
+    /// While a move is under way a file is read in either place, and one
+    /// removed goes from both: it does not come over afterwards.
+    #[test]
+    fn a_file_is_read_in_either_place_and_removed_from_both() {
+        let dir = temp("either");
+        let settings = dir.join("settings");
+        let (from, to) = (dir.join("old"), dir.join("new"));
+        fs::create_dir_all(&from).unwrap();
+        fs::create_dir_all(&to).unwrap();
+        fs::write(from.join("old.txt"), b"not moved yet").unwrap();
+        fs::write(from.join("gone.txt"), b"stale").unwrap();
+        fs::write(to.join("gone.txt"), b"newer").unwrap();
+        begin(&settings, &[(from.clone(), to.clone())]).unwrap();
+        // By the new place's name and by the old one's.
+        assert_eq!(read(&to.join("old.txt")).unwrap(), b"not moved yet");
+        assert_eq!(read(&from.join("old.txt")).unwrap(), b"not moved yet");
+        assert_eq!(read(&to.join("gone.txt")).unwrap(), b"newer");
+        assert_eq!(
+            read(&to.join("none.txt")).unwrap_err().kind(),
+            io::ErrorKind::NotFound
+        );
+        remove(&to.join("gone.txt")).unwrap();
+        remove(&to.join("none.txt")).unwrap();
+        finish(&settings);
+        assert_eq!(fs::read(to.join("old.txt")).unwrap(), b"not moved yet");
+        assert!(!to.join("gone.txt").exists(), "the stale copy stayed away");
     }
 
     #[test]

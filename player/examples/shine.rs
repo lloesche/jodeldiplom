@@ -86,7 +86,10 @@ fn counted_rank(n: &Notes, y: &[Option<Yardstick>], l: usize, w: usize) -> Optio
 }
 
 fn data() -> PathBuf {
-    jodeldiplom::dirs::Data::current().expect("a data folder").0
+    jodeldiplom::cli::usual_folders()
+        .expect("a data folder")
+        .data
+        .0
 }
 
 /// The analyses' waveforms by song path: the newest analysis version (of

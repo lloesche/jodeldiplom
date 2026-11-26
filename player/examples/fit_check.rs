@@ -7,7 +7,8 @@
 //! ```
 //!
 //! Uses the speech recogniser where the player finds it
-//! (`lyrics::models::asr_model_path`), and the GPU.
+//! (`lyrics::models::asr_model_path`, in the usual settings' data folder),
+//! and the GPU.
 
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -25,7 +26,8 @@ fn first(l: &Lyrics) -> String {
 
 fn main() {
     let asr = {
-        let path = asr_model_path().expect("no speech recogniser found");
+        let data = jodeldiplom::cli::usual_folders().unwrap().data;
+        let path = asr_model_path(&data.0).expect("no speech recogniser found");
         let packed = jodel_lyrics::asr::packed::PackedModel::open(&path).unwrap();
         jodel_gpu::GpuAsr::new(&packed).unwrap()
     };

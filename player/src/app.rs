@@ -91,19 +91,19 @@ pub struct AppOptions {
     pub devices: DeviceLister,
     /// Messages to show at the start (config warnings).
     pub notes: Vec<String>,
-    /// Where beat analyses are kept ([`crate::rhythm::cache_dir`]); `None`: not
+    /// Where beat analyses are kept ([`crate::dirs::Data::analyses`]); `None`: not
     /// kept.
     pub rhythm_cache: Option<PathBuf>,
-    /// Where beat grids fixed by hand are kept ([`crate::grids::dir`]);
+    /// Where beat grids fixed by hand are kept ([`crate::dirs::Folders::grids`]);
     /// `None`: not kept.
     pub grids: Option<PathBuf>,
-    /// Where the session is kept ([`crate::session::path`]): the queue and
+    /// Where the session is kept ([`crate::dirs::Folders::session`]): the queue and
     /// the browser's place come back from it and are saved to it; `None`:
     /// not kept.
     pub session: Option<PathBuf>,
     /// The browser starts where the session left it (no folder was given).
     pub restore_browser: bool,
-    /// Where queues are saved as playlists ([`crate::session::queues_dir`]).
+    /// Where queues are saved as playlists ([`crate::dirs::Folders::queues`]).
     pub queues: Option<PathBuf>,
     /// How lyrics are looked up ([`crate::lyrics::Options`]); `None`: in
     /// the files' tags and `.lrc` files only, nothing cached or fetched.
@@ -406,11 +406,10 @@ impl App {
         );
         let lyrics = {
             let (tx, notify) = (tx.clone(), options.notify.clone());
-            let mut lyrics_options = options.lyrics.clone().unwrap_or_else(|| {
-                let mut offline = crate::lyrics::Options::new(false);
-                offline.cache = None;
-                offline
-            });
+            let mut lyrics_options = options
+                .lyrics
+                .clone()
+                .unwrap_or_else(|| crate::lyrics::Options::new(false));
             lyrics_options.online &= options.config.karaoke_online;
             let (working_tx, working_notify) = (tx.clone(), notify.clone());
             lyrics_options.working = Some(Arc::new(move |path: &Path, on: bool| {
@@ -561,7 +560,8 @@ impl App {
         app.state.data_dir = options.data.as_ref().map(|d| d.0.clone());
         // The delays kept, from beside the settings.
         app.state.karaoke.lag.kept = crate::delays::load_beside(options.config_file.as_deref());
-        // The best scores sung, from the data folder.
+        // The best scores sung, from the data folder (while it moves, from
+        // where the file is: [`crate::scores::load`]).
         if let Some(data) = &options.data {
             app.state.karaoke.bests = crate::scores::load(&data.scores());
         }
@@ -595,13 +595,13 @@ impl App {
             return;
         };
         let to = crate::dirs::Data::in_parent(&parent).0;
+        // The journal beside the settings file in use ([`crate::dirs::Folders`]).
         let settings = self
             .state
             .config_file
             .as_deref()
             .and_then(Path::parent)
-            .map(Path::to_path_buf)
-            .or_else(crate::dirs::settings_dir);
+            .map(Path::to_path_buf);
         let Some(settings) = settings else {
             return self.dispatch(Action::Failed(
                 "No settings folder to note the move in".into(),

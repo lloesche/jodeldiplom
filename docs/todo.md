@@ -59,17 +59,8 @@ Work agreed on but not started, roughly in the order it was raised.
 
 ## From the whole-codebase review
 
-The bug first; the rest are refactors, roughly in the order they unblock
-each other.
+Refactors, roughly in the order they unblock each other.
 
-- **A data-folder move loses best scores and repeats work** (the one
-  high-severity bug left). During a move bests load from the new place
-  only, and the next best written there deletes the old scores; covers
-  keep going to the old folder; every queued track is analysed again
-  after a move. Fix: one place per player built once (`Places { settings,
-  data }`), the global path lookups deleted; with it a `--config` player
-  stops sharing the default player's session, queues and grids, and the
-  rhythm worker's drop wakes both its waiting threads.
 - **One synthesizer:** the game plays jodel-synth through the conductor;
   delete the old `sfx/synth.rs`, the sound banks and `build.rs`'s sound
   key.

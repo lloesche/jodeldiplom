@@ -27,8 +27,13 @@ pub fn run(args: &Args) -> Result<(), String> {
     section("Build", build());
     section("System", system());
     let settings = cli::settings(args)?;
+    let folders = cli::folders(&settings)?;
+    // While the data folder moves, what has not moved yet is found where
+    // it is.
+    crate::mover::resume(&folders.settings);
+    let data = &folders.data;
     section("Settings", settings_lines(&settings));
-    section("Caches", caches());
+    section("Caches", caches(&folders));
     let (main, emoji) = crate::gui::fonts::built_in_fonts();
     section(
         "Window fonts",
@@ -43,7 +48,7 @@ pub fn run(args: &Args) -> Result<(), String> {
     );
     section(
         "Speech model (karaoke's word timing)",
-        vec![match crate::lyrics::models::model_path() {
+        vec![match crate::lyrics::models::model_path(&data.0) {
             Some(path) => format!("found: {}", path.display()),
             None => format!(
                 "not found (looked beside the binary, in the app's Resources, and in the data folder) for {}",
@@ -53,7 +58,7 @@ pub fn run(args: &Args) -> Result<(), String> {
     );
     section(
         "Speech recogniser (whether fetched lyrics fit the song)",
-        vec![match crate::lyrics::models::asr_model_path() {
+        vec![match crate::lyrics::models::asr_model_path(&data.0) {
             Some(path) => format!("found: {}", path.display()),
             None => format!(
                 "not found (looked beside the binary, in the app's Resources, and in the data folder) for {}",
@@ -62,13 +67,11 @@ pub fn run(args: &Args) -> Result<(), String> {
         }],
     );
     section("GPU (wgpu)", gpu(&settings.effective));
-    section("Covers taken apart (karaoke's background)", covers());
+    section("Covers taken apart (karaoke's background)", covers(data));
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_secs());
-    let recent = crate::rhythm::cache_dir()
-        .map(|dir| crate::rhythm::recent(&dir))
-        .unwrap_or_default();
+    let recent = crate::rhythm::recent(&data.analyses());
     section(
         &format!(
             "Last analyses (newest first, up to {})",
@@ -103,12 +106,10 @@ pub fn recent_lines(entries: &[String], now: u64) -> Vec<String> {
 /// Whether covers are taken apart on this machine: the two models'
 /// weights, whether they set up on the GPU, how long a cover of 1024 × 1024
 /// takes (the models, then the taking apart), the GPU memory they hold.
-fn covers() -> Vec<String> {
+fn covers(data: &crate::dirs::Data) -> Vec<String> {
     use crate::cover::{self, GpuSplitter};
     use crate::setup::Lookup;
-    let data = crate::dirs::Data::current()
-        .unwrap_or_else(|| crate::dirs::Data::in_parent(std::path::Path::new(".")));
-    let places = crate::setup::Places::player(&data);
+    let places = crate::setup::Places::player(data);
     let found: Vec<std::path::PathBuf> = crate::setup::manifest()
         .iter()
         .filter_map(|need| match crate::setup::look(need, &places) {
@@ -262,13 +263,10 @@ fn settings_lines(settings: &cli::Settings) -> Vec<String> {
     lines
 }
 
-fn caches() -> Vec<String> {
-    let show = |dir: Option<std::path::PathBuf>| {
-        dir.map_or_else(|| "none".into(), |d| d.display().to_string())
-    };
+fn caches(folders: &crate::dirs::Folders) -> Vec<String> {
     vec![
-        format!("beat analyses: {}", show(crate::rhythm::cache_dir())),
-        format!("beat grids fixed by hand: {}", show(crate::grids::dir())),
+        format!("beat analyses: {}", folders.data.analyses().display()),
+        format!("beat grids fixed by hand: {}", folders.grids().display()),
     ]
 }
 

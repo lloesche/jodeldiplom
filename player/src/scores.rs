@@ -70,21 +70,109 @@ pub fn from_text(text: &str) -> Bests {
     out
 }
 
-/// The best scores in the file at `path` (none when there is none).
+/// The best scores in the file at `path`, wherever it is while the data
+/// folder moves ([`crate::mover::read`]); none when there is none.
 pub fn load(path: &Path) -> Bests {
-    std::fs::read_to_string(path)
-        .map(|t| from_text(&t))
-        .unwrap_or_default()
+    read(path).unwrap_or_default()
 }
 
-/// Writes `bests` to `path`, durably.
+/// The file at `path` read ([`load`]): none when there is none, an
+/// error when one there cannot be read.
+fn read(path: &Path) -> std::io::Result<Bests> {
+    match crate::mover::read(path) {
+        Ok(bytes) => Ok(from_text(&String::from_utf8_lossy(&bytes))),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Bests::new()),
+        Err(e) => Err(e),
+    }
+}
+
+/// Merges `other` into `bests`: a song's higher score wins.
+fn merge(bests: &mut Bests, other: Bests) {
+    for (song, best) in other {
+        match bests.get(&song) {
+            Some(was) if was.points >= best.points => {}
+            _ => {
+                bests.insert(song, best);
+            }
+        }
+    }
+}
+
+/// Writes `bests` to `path` (where it goes while the data folder moves:
+/// [`crate::mover::current`]), durably, with every best the file held
+/// already: one the player did not read (the file was still in the old
+/// place, or could not be read at its start) is never written over. A file
+/// there that cannot be read is left as it is (the error).
 pub fn save(path: &Path, bests: &Bests) -> std::io::Result<()> {
-    durable::write_atomic(path, to_text(bests).as_bytes())
+    let mut all = read(path)?;
+    merge(&mut all, bests.clone());
+    durable::write_atomic(&crate::mover::current(path), to_text(&all).as_bytes())
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "tests: a data folder's scores as an earlier run left them"
+)]
 mod tests {
     use super::*;
+
+    fn best(points: u32) -> Best {
+        Best {
+            points,
+            hit: points / 100,
+            words: 40,
+        }
+    }
+
+    /// A data folder moving from `old` to `new` (its journal in
+    /// `settings`), the bests of A and B in the old one.
+    fn moving(tag: &str) -> (std::path::PathBuf, crate::dirs::Data, crate::dirs::Data) {
+        let dir = std::env::temp_dir().join(format!("jodel-scores-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let (old, new) = (
+            crate::dirs::Data(dir.join("old")),
+            crate::dirs::Data(dir.join("new")),
+        );
+        std::fs::create_dir_all(&old.0).unwrap();
+        let earlier: Bests = [("A".to_owned(), best(3000)), ("B".to_owned(), best(1200))].into();
+        std::fs::write(old.scores(), to_text(&earlier)).unwrap();
+        let settings = dir.join("settings");
+        crate::mover::begin(&settings, &[(old.0.clone(), new.0.clone())]).unwrap();
+        (settings, old, new)
+    }
+
+    /// Started again while the data folder moves (the player knows only the
+    /// new place), the bests still in the old one load.
+    #[test]
+    fn bests_load_while_the_data_folder_moves() {
+        let (_, old, new) = moving("load");
+        let bests = load(&new.scores());
+        assert_eq!(bests.len(), 2);
+        assert_eq!(bests["A"].points, 3000);
+        assert_eq!(load(&old.scores()), bests);
+    }
+
+    /// A best sung while the data folder moves is kept with every earlier
+    /// one, through the move's end: even written from bests that never
+    /// read the old file, nothing of it is written over.
+    #[test]
+    fn a_best_sung_during_a_move_survives_it_with_the_older_ones() {
+        let (settings, old, new) = moving("sung");
+        // C sung, and B beaten (A not), as the player holds them.
+        let sung: Bests = [("C".to_owned(), best(900)), ("B".to_owned(), best(2500))].into();
+        save(&new.scores(), &sung).unwrap();
+        assert!(new.scores().is_file(), "written where it goes");
+        crate::mover::finish(&settings);
+        assert!(!old.0.exists(), "the old folder is gone");
+        let after = load(&new.scores());
+        let points = |s: &str| after[s].points;
+        assert_eq!(after.len(), 3, "{after:?}");
+        assert_eq!((points("A"), points("B"), points("C")), (3000, 2500, 900));
+        // A lower score saved later beats nothing.
+        save(&new.scores(), &[("A".to_owned(), best(10))].into()).unwrap();
+        assert_eq!(load(&new.scores())["A"].points, 3000);
+    }
 
     #[test]
     fn scores_go_to_text_and_back() {
