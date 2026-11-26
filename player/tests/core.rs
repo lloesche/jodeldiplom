@@ -10,12 +10,13 @@ use jodel_rhythm::Method;
 use jodeldiplom::browser::{Details, Entry, EntryKind};
 use jodeldiplom::config::Config;
 use jodeldiplom::core::keymap::{self, Context, Key, KeyCode, Meaning, Op, KEYMAP};
-use jodeldiplom::core::layout::{self, Layout};
-use jodeldiplom::core::text::{self, width, Seg, Tone};
+use jodeldiplom::core::text::{self, Seg, Tone};
 use jodeldiplom::core::{
     browser_rows, update, Action, DeviceChoice, Effect, Gpu, Placing, Rhythm, RhythmRecipe, Row,
     Screen, SettingsRow, Side, State, WalkPurpose,
 };
+use jodeldiplom::view::cells::{self, width};
+use jodeldiplom::view::layout::{self, Grid, Layout};
 
 fn entry(path: &str, kind: EntryKind) -> Entry {
     let path = PathBuf::from(path);
@@ -31,9 +32,16 @@ fn entry(path: &str, kind: EntryKind) -> Entry {
     }
 }
 
-/// `/m/Album` listed: a parent row, a folder, three files.
+/// The window of [`listed`].
+const LISTED: Grid = Grid::new(100, 30);
+/// The window of [`common::transition_state`]`(120, 40)`.
+const TRANSITION: Grid = Grid::new(120, 40);
+
+/// `/m/Album` listed in a window of 100 × 30 cells: a parent row, a folder,
+/// three files.
 fn listed() -> State {
-    let mut state = State::new("/m/Album".into(), Config::default(), (100, 30));
+    let mut state = State::new("/m/Album".into(), Config::default());
+    common::fit(&mut state, LISTED.cols, LISTED.rows);
     let fx = update(
         &mut state,
         Action::Listed {
@@ -443,7 +451,8 @@ fn queueing_a_file_or_a_whole_folder() {
 
 #[test]
 fn only_files_on_screen_are_read() {
-    let mut state = State::new("/big".into(), Config::default(), (100, 16));
+    let mut state = State::new("/big".into(), Config::default());
+    common::fit(&mut state, 100, 16);
     let entries: Vec<Entry> = (0..100)
         .map(|i| entry(&format!("/big/{i:03}.flac"), EntryKind::File))
         .collect();
@@ -1097,7 +1106,7 @@ fn the_help_searched_scrolls_within_the_matches() {
     press(&mut state, Key::ch('?'));
     press(&mut state, Key::ch('/'));
     press(&mut state, Key::ch('d'));
-    let Layout::Help(h) = layout::compute(&state) else {
+    let Layout::Help(h) = layout::compute(&state, LISTED) else {
         panic!("not the help")
     };
     let visible = usize::from(h.text.height);
@@ -1125,7 +1134,7 @@ fn the_help_searched_scrolls_within_the_matches() {
     press(&mut state, Key::ch('?'));
     assert_eq!(state.screen, Screen::Help);
     assert_eq!(state.help_search, None);
-    let Layout::Help(h) = layout::compute(&state) else {
+    let Layout::Help(h) = layout::compute(&state, LISTED) else {
         panic!("not the help")
     };
     assert!(h.search.is_none());
@@ -1178,15 +1187,15 @@ fn the_right_column_fits_the_signal_path() {
         for cols in [72u16, 96, 120, 160, 200, 240] {
             let mut state = common::playing_state(cols, 36);
             state.playing.track.as_mut().unwrap().device = name.into();
-            let Layout::Main(m) = layout::compute(&state) else {
+            let Layout::Main(m) = layout::compute(&state, Grid::new(cols, 36)) else {
                 panic!("not the main screen at {cols}")
             };
             let right = m.right.unwrap().width;
-            let need = text::info_width(&state) as u16 + 1;
+            let need = cells::info_width(&state) as u16 + 1;
             assert!(right >= layout::right_width(cols), "{cols}");
             assert!(right <= (cols / 2).max(layout::right_width(cols)), "{cols}");
             let info = m.info.unwrap();
-            let lines = text::info_lines(&state, usize::from(info.width));
+            let lines = cells::info_lines(&state, usize::from(info.width));
             let path = &lines[lines
                 .iter()
                 .position(|l| line_text(l).starts_with("file"))
@@ -1231,7 +1240,7 @@ fn the_signal_path_wraps_between_steps() {
             .collect()
     };
     for max in [30, 36, 45, 56, 60, 70, 80, width(&whole)] {
-        let lines = text::wrap_path(&resampled, max);
+        let lines = cells::wrap_path(&resampled, max);
         check_path_lines(&lines, max, device);
         let joined: String = lines
             .iter()
@@ -1241,7 +1250,7 @@ fn the_signal_path_wraps_between_steps() {
         assert_eq!(words(&joined), words(&whole), "nothing lost at {max}");
     }
     let texts = |max| -> Vec<String> {
-        text::wrap_path(&resampled, max)
+        cells::wrap_path(&resampled, max)
             .iter()
             .map(|l| line_text(l))
             .collect()
@@ -1281,13 +1290,16 @@ fn the_signal_path_wraps_between_steps() {
 }
 
 fn texts_of(path: &[Seg], max: usize) -> Vec<String> {
-    text::wrap_path(path, max)
+    cells::wrap_path(path, max)
         .iter()
         .map(|l| line_text(l))
         .collect()
 }
 
 /// A state playing `path`, on another screen and the queue side.
+/// The window of [`playing_at`].
+const PLAYING_AT: Grid = Grid::new(120, 36);
+
 fn playing_at(path: &str) -> State {
     let mut state = common::playing_state(120, 36);
     let track = state.playing.track.as_mut().unwrap();
@@ -1359,25 +1371,25 @@ fn title_artist_and_album_go_to_the_playing_track() {
 
 #[test]
 fn clicking_the_title_artist_or_album_jumps() {
-    use jodeldiplom::core::mouse::{self, MouseButton, MouseInput, MouseKind, Target};
+    use jodeldiplom::view::mouse::{self, MouseButton, MouseInput, MouseKind, Target};
     let track = "/music/Artist/Album/02 Song.flac";
     let mut state = playing_at(track);
     state.screen = Screen::Main;
-    let Layout::Main(m) = layout::compute(&state) else {
+    let Layout::Main(m) = layout::compute(&state, PLAYING_AT) else {
         panic!()
     };
     let info = m.info.unwrap();
     // Title, artist, album: the first three lines of the panel.
     for (row, op) in [(0, Op::GoTrack), (1, Op::GoArtist), (2, Op::GoAlbum)] {
         assert_eq!(
-            mouse::hit(&state, info.x + 1, info.y + row),
+            mouse::hit(&state, PLAYING_AT, info.x + 1, info.y + row),
             Some(Target::Link(op)),
             "row {row}"
         );
     }
     // Past the end of the title there is no link.
     assert_eq!(
-        mouse::hit(&state, info.x + info.width - 1, info.y),
+        mouse::hit(&state, PLAYING_AT, info.x + info.width - 1, info.y),
         Some(Target::Info)
     );
     let click = MouseInput {
@@ -1385,31 +1397,34 @@ fn clicking_the_title_artist_or_album_jumps() {
         col: info.x + 2,
         row: info.y + 1,
     };
-    let action = mouse::action(&state, click).unwrap();
+    let action = mouse::action(&state, PLAYING_AT, click).unwrap();
     let fx = update(&mut state, action);
     jumped(&state, &fx, "/music/Artist", "/music/Artist/Album");
 
     // On Now playing: the caption's links, the rest of the screen returns.
     let state = playing_at(track);
-    let Layout::NowPlaying(n) = layout::compute(&state) else {
+    let Layout::NowPlaying(n) = layout::compute(&state, PLAYING_AT) else {
         panic!()
     };
     let c = n.caption;
     assert_eq!(
-        mouse::hit(&state, c.x, c.y),
+        mouse::hit(&state, PLAYING_AT, c.x, c.y),
         Some(Target::Link(Op::GoTrack))
     );
     assert_eq!(
-        mouse::hit(&state, c.x, c.y + 1),
+        mouse::hit(&state, PLAYING_AT, c.x, c.y + 1),
         Some(Target::Link(Op::GoArtist))
     );
     let album_x = c.x + "The Ramps · ".chars().count() as u16;
     assert_eq!(
-        mouse::hit(&state, album_x, c.y + 1),
+        mouse::hit(&state, PLAYING_AT, album_x, c.y + 1),
         Some(Target::Link(Op::GoAlbum))
     );
-    assert_eq!(mouse::hit(&state, c.x, c.y + 2), Some(Target::Cover));
-    assert_eq!(mouse::hit(&state, 0, 0), Some(Target::Cover));
+    assert_eq!(
+        mouse::hit(&state, PLAYING_AT, c.x, c.y + 2),
+        Some(Target::Cover)
+    );
+    assert_eq!(mouse::hit(&state, PLAYING_AT, 0, 0), Some(Target::Cover));
 }
 
 /// Steps through settings reach the engine once, 400 ms after the last
@@ -1801,7 +1816,7 @@ fn the_transition_preset_and_tempo_are_remembered() {
         transition_tempo: TempoMode::Stretch,
         ..Config::default()
     };
-    let state = State::new(std::env::temp_dir(), config, (120, 40));
+    let state = State::new(std::env::temp_dir(), config);
     assert_eq!(state.transition.draft.preset, Preset::BassSwap);
     assert_eq!(state.transition.draft.tempo, TempoMode::Stretch);
     let mut state = common::transition_state(120, 40);
@@ -1970,8 +1985,8 @@ fn stems_switch_from_keys_and_buttons_with_a_gpu() {
     );
     assert!(state.message.as_ref().unwrap().text.contains("no GPU"));
     op(&mut state, Op::ToggleDrums);
-    let stem_buttons = |state: &State| {
-        let Layout::Main(m) = layout::compute(state) else {
+    let stem_buttons = |state: &State, grid: Grid| {
+        let Layout::Main(m) = layout::compute(state, grid) else {
             panic!()
         };
         m.bottom
@@ -1981,7 +1996,7 @@ fn stems_switch_from_keys_and_buttons_with_a_gpu() {
             .cloned()
             .collect::<Vec<_>>()
     };
-    assert!(stem_buttons(&state).is_empty());
+    assert!(stem_buttons(&state, LISTED).is_empty());
 
     state.gpu = Gpu::Present("a GPU".into());
     // The vocals off: their strip muted at once, nothing sent to the engine
@@ -2001,25 +2016,29 @@ fn stems_switch_from_keys_and_buttons_with_a_gpu() {
         .contains("the stems are heard, not the file"));
     // Four buttons in the order people name them, by initial at 87
     // columns; a click switches one.
-    update(&mut state, Action::Resize(87, 30));
-    let buttons = stem_buttons(&state);
+    let grid = Grid::new(87, 30);
+    let fit = layout::fit(&state, grid);
+    update(&mut state, Action::Fit(fit));
+    let buttons = stem_buttons(&state, grid);
     let labels: Vec<&str> = buttons.iter().map(|b| b.label.trim()).collect();
     assert_eq!(labels, ["D", "B", "V", "O"]);
     let drums = &buttons[0];
-    let click = jodeldiplom::core::mouse::MouseInput {
-        kind: jodeldiplom::core::mouse::MouseKind::Down(
-            jodeldiplom::core::mouse::MouseButton::Left,
+    let click = jodeldiplom::view::mouse::MouseInput {
+        kind: jodeldiplom::view::mouse::MouseKind::Down(
+            jodeldiplom::view::mouse::MouseButton::Left,
         ),
         col: drums.rect.x + 1,
         row: drums.rect.y,
     };
-    let action = jodeldiplom::core::mouse::action(&state, click).unwrap();
+    let action = jodeldiplom::view::mouse::action(&state, grid, click).unwrap();
     assert!(matches!(action, Action::Op(Op::ToggleDrums)));
     update(&mut state, action);
     assert!(jodeldiplom::core::stems::is_off(&state, Stem::Drums));
     // By name where there is room.
-    update(&mut state, Action::Resize(140, 30));
-    let named: Vec<String> = stem_buttons(&state)
+    let grid = Grid::new(140, 30);
+    let fit = layout::fit(&state, grid);
+    update(&mut state, Action::Fit(fit));
+    let named: Vec<String> = stem_buttons(&state, grid)
         .iter()
         .map(|b| b.label.trim().to_owned())
         .collect();
@@ -2368,11 +2387,11 @@ fn grid_fixes_change_the_bars_and_are_kept() {
 #[test]
 fn a_click_on_a_lane_puts_the_cursor_and_a_double_click_cues_there() {
     use jodeldiplom::core::lanes::Block;
-    use jodeldiplom::core::layout::{self, Layout};
-    use jodeldiplom::core::mouse::{self, MouseButton, MouseInput, MouseKind};
     use jodeldiplom::core::transition::{tab, viewport};
+    use jodeldiplom::view::layout::{self, Layout};
+    use jodeldiplom::view::mouse::{self, MouseButton, MouseInput, MouseKind};
     let mut state = common::transition_state(120, 40);
-    let Layout::Main(m) = layout::compute(&state) else {
+    let Layout::Main(m) = layout::compute(&state, TRANSITION) else {
         panic!("the main screen");
     };
     let now = &m.transition.unwrap().blocks[0];
@@ -2382,7 +2401,7 @@ fn a_click_on_a_lane_puts_the_cursor_and_a_double_click_cues_there() {
         col: lane.x + lane.width / 2,
         row: lane.y,
     };
-    let action = mouse::action(&state, press).unwrap();
+    let action = mouse::action(&state, TRANSITION, press).unwrap();
     let Action::TransitionPoint {
         block,
         time,
@@ -2410,7 +2429,7 @@ fn a_click_on_a_lane_puts_the_cursor_and_a_double_click_cues_there() {
         kind: MouseKind::ScrollUp,
         ..press
     };
-    let action = mouse::action(&state, wheel).unwrap();
+    let action = mouse::action(&state, TRANSITION, wheel).unwrap();
     update(&mut state, action);
     assert_eq!(viewport::zoom_of(&state, Block::Now), zoom - 1);
     assert_eq!(state.transition.zoom, zoom);
@@ -2850,7 +2869,7 @@ fn the_next_track_follows_its_playhead_in_and_slides_up_when_it_takes_over() {
     );
     assert_eq!(viewport::window(&state, Block::Prev, at).0, left_start);
     let blocks = |state: &State| -> Vec<(Block, u16, bool)> {
-        let Layout::Main(m) = layout::compute(state) else {
+        let Layout::Main(m) = layout::compute(state, TRANSITION) else {
             panic!()
         };
         m.transition
@@ -2964,10 +2983,10 @@ fn n_mixes_into_the_next_track_by_the_transition_tabs_preset() {
 #[test]
 fn the_secondary_button_drags_a_transition_view() {
     use jodeldiplom::core::lanes::{self, Block};
-    use jodeldiplom::core::mouse::{action, MouseButton, MouseInput, MouseKind};
     use jodeldiplom::core::transition::viewport;
+    use jodeldiplom::view::mouse::{action, MouseButton, MouseInput, MouseKind};
     let mut state = common::transition_state(120, 40);
-    let Layout::Main(m) = layout::compute(&state) else {
+    let Layout::Main(m) = layout::compute(&state, TRANSITION) else {
         panic!()
     };
     let now = m.transition.unwrap().blocks[0].clone();
@@ -2977,7 +2996,7 @@ fn the_secondary_button_drags_a_transition_view() {
     let per = (end - start) / f64::from(lane.width);
     let at = |kind, col, row| MouseInput { kind, col, row };
     let press = |state: &mut State, input| {
-        let a = action(state, input).expect("an action");
+        let a = action(state, TRANSITION, input).expect("an action");
         update(state, a);
     };
     press(
@@ -3735,7 +3754,8 @@ fn an_engine_restart_leaves_no_transition_behind() {
 
 #[test]
 fn a_remembered_folder_that_cannot_be_listed_gives_way_to_the_start_one() {
-    let mut state = State::new("/gone/folder".into(), Config::default(), (120, 40));
+    let mut state = State::new("/gone/folder".into(), Config::default());
+    common::fit(&mut state, 120, 40);
     state.browser.fallback = Some("/music".into());
     let fx = update(
         &mut state,
@@ -3834,7 +3854,7 @@ fn z_zooms_the_selected_track_to_fit_its_lyrics() {
         "the playing track keeps its zoom"
     );
     let z = viewport::zoom_of(&state, Block::Next);
-    let Layout::Main(m) = layout::compute(&state) else {
+    let Layout::Main(m) = layout::compute(&state, TRANSITION) else {
         panic!()
     };
     let width = m.transition.unwrap().blocks[0].lanes[0].2.width;

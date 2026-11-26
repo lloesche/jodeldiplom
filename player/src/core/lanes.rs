@@ -1,9 +1,11 @@
 //! The lanes a track is drawn in, as the Transition and Karaoke tabs show
-//! them: which track a block of lanes shows, its analysis and its lyrics,
-//! and how the lyrics' words are laid out along a lane.
+//! them: which track a block of lanes shows, the lanes in it, its analysis
+//! and its lyrics, and how the lyrics' words are laid out along a lane.
 
 use std::path::PathBuf;
 use std::sync::Arc;
+
+use jodel_playback::Stem;
 
 use super::{Rhythm, Rhythmed, State};
 
@@ -25,6 +27,43 @@ pub enum Block {
 impl Block {
     /// The two the keys act on, top first.
     pub const BOTH: [Block; 2] = [Block::Now, Block::Next];
+}
+
+/// A lane of a block: the whole song or one stem.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Lane {
+    /// The whole song.
+    Song,
+    /// One stem.
+    Stem(Stem),
+}
+
+impl Lane {
+    /// The lanes with stems, top first.
+    pub const ALL: [Lane; 5] = [
+        Lane::Song,
+        Lane::Stem(Stem::Drums),
+        Lane::Stem(Stem::Bass),
+        Lane::Stem(Stem::Other),
+        Lane::Stem(Stem::Vocals),
+    ];
+
+    /// Its label.
+    pub fn label(self) -> &'static str {
+        match self {
+            Lane::Song => "song",
+            Lane::Stem(stem) => stem.id(),
+        }
+    }
+
+    /// Its place among a waveform's stems ([`Stem::ALL`]'s order: bass,
+    /// drums, other, vocals); `None` for the whole song.
+    pub fn stem_index(self) -> Option<usize> {
+        match self {
+            Lane::Song => None,
+            Lane::Stem(stem) => Stem::ALL.iter().position(|&s| s == stem),
+        }
+    }
 }
 
 /// The track a block shows: the one playing, the one after it, or the one

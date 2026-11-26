@@ -13,9 +13,10 @@ use super::colors::*;
 use super::{bordered, command_palette, karaoke, row_line, search_line, sync, transition};
 use super::{keep_start, Pictures, Scene};
 use crate::browser::EntryKind;
-use crate::core::layout::MainLayout;
-use crate::core::text::{self, clock, width};
+use crate::core::text::{self, clock};
 use crate::core::{browser_rows, list_cursor, row_entry, Row, Side, State};
+use crate::view::cells::width;
+use crate::view::layout::MainLayout;
 
 /// The Mixer tab's bottom border: its keys.
 const DESK_FOOTER: &str = "← → strip · ↑ ↓ fader · home 0 dB · m mute · s solo · e echo";
@@ -95,7 +96,7 @@ pub(super) fn draw_pane(
                         frame.buffer_mut().set_string(
                             fit.x,
                             fit.y,
-                            crate::core::layout::FIT_LYRICS,
+                            crate::view::layout::FIT_LYRICS,
                             Style::new().fg(TEXT).bg(BORDER),
                         );
                     }

@@ -20,7 +20,6 @@ const WAIT: Duration = Duration::from_secs(30);
 fn options(tree: &common::Tree) -> AppOptions {
     let mut options = AppOptions::new(tree.album.clone());
     options.output = Output::Null(SimClock::Realtime);
-    options.size = (120, 36);
     options.devices = Arc::new(|| Ok(Vec::new()));
     options
 }
@@ -55,7 +54,7 @@ fn path_text(app: &App) -> String {
 fn alt_enter_plays_the_folder_through_the_null_output() {
     let _guard = common::real_time();
     let tree = common::music_tree("play");
-    let mut app = App::new(options(&tree));
+    let mut app = common::fitted_app(options(&tree), 120, 36);
     assert!(common::wait_for(&mut app, WAIT, |a| !a
         .state
         .browser
@@ -135,7 +134,7 @@ fn alt_enter_plays_the_folder_through_the_null_output() {
 fn paused_the_window_has_nothing_to_redraw() {
     let _guard = common::real_time();
     let tree = common::music_tree("pause");
-    let mut app = App::new(options(&tree));
+    let mut app = common::fitted_app(options(&tree), 120, 36);
     assert!(common::wait_for(&mut app, WAIT, |a| !a
         .state
         .browser
@@ -181,12 +180,11 @@ fn a_song_picked_while_paused_plays() {
     }
     let mut options = AppOptions::new(dir.clone());
     options.output = Output::Null(SimClock::Realtime);
-    options.size = (120, 36);
     options.devices = Arc::new(|| Ok(Vec::new()));
     options.mic = Arc::new(|_| Ok(jodel_output::input::Input::feed(48_000, 240).0));
     options.mics = Arc::new(|| Ok(Vec::new()));
     options.separator = || None;
-    let mut app = App::new(options);
+    let mut app = common::fitted_app(options, 120, 36);
     assert!(common::wait_for(&mut app, WAIT, |a| !a
         .state
         .browser
@@ -280,7 +278,6 @@ fn the_demo_sings_with_no_microphone() {
     durable::write_atomic(&dir.join("a.lrc"), b"la la la la\n").unwrap();
     let mut options = AppOptions::new(dir.clone());
     options.output = Output::Null(SimClock::Realtime);
-    options.size = (120, 36);
     // The beats by the flux alone, and of the mix: the networks' inference
     // (the beat network's, and the separator's where there is a GPU, as on
     // the macOS runners), unoptimised, takes longer than the wait on a slow
@@ -292,7 +289,7 @@ fn the_demo_sings_with_no_microphone() {
     options.mic = Arc::new(|_| Err("no microphone".into()));
     options.mics = Arc::new(|| Ok(Vec::new()));
     options.separator = || None;
-    let mut app = App::new(options);
+    let mut app = common::fitted_app(options, 120, 36);
     assert!(common::wait_for(&mut app, WAIT, |a| !a
         .state
         .browser
@@ -399,7 +396,7 @@ fn a_file_argument_plays_at_once_and_settings_are_saved() {
         headroom: Headroom(10),
         ..options.saved.clone()
     };
-    let mut app = App::new(options);
+    let mut app = common::fitted_app(options, 120, 40);
     assert!(common::wait_for(&mut app, WAIT, |a| a
         .state
         .playing
@@ -477,7 +474,7 @@ fn the_session_and_saved_queues_come_back() {
         o.restore_browser = restore;
         o
     };
-    let mut app = App::new(with_session(true));
+    let mut app = common::fitted_app(with_session(true), 120, 40);
     assert!(common::wait_for(&mut app, WAIT, |a| !a
         .state
         .browser
@@ -506,7 +503,7 @@ fn the_session_and_saved_queues_come_back() {
     drop(app);
     assert!(session.is_file());
     // Back as it was, nothing playing.
-    let mut app = App::new(with_session(true));
+    let mut app = common::fitted_app(with_session(true), 120, 40);
     assert!(common::wait_for(&mut app, WAIT, |a| !a
         .state
         .browser
@@ -587,7 +584,7 @@ fn armed_transition(
     options.output = Output::Memory(MemoryOutput::new(caps, SimClock::Paced));
     options.devices = Arc::new(|| Ok(Vec::new()));
     options.separator = separator;
-    let mut app = App::new(options);
+    let mut app = common::fitted_app(options, 120, 40);
     if separator().is_some() {
         assert!(common::wait_for(&mut app, WAIT, |a| a.state.gpu
             != jodeldiplom::core::Gpu::Looking));

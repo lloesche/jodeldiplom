@@ -9,11 +9,11 @@ mod common;
 use common::karaoke_tab as tab;
 use jodel_playback::{Command, Event};
 use jodeldiplom::core::keymap::Op;
-use jodeldiplom::core::mouse::{self, MouseButton, MouseInput, MouseKind, Target};
 use jodeldiplom::core::singing::Motion;
 use jodeldiplom::core::{karaoke, update, Action, Effect, State};
 use jodeldiplom::gui::stage_gpu::{Instance, StageFrame};
 use jodeldiplom::gui::{font_px, Canvas};
+use jodeldiplom::view::mouse::{self, MouseButton, MouseInput, MouseKind};
 
 fn op(state: &mut State, op: Op) -> Vec<Effect> {
     update(state, Action::Op(op))
@@ -160,10 +160,12 @@ fn start_during_the_reveal_completes_it_and_the_next_starts_the_song() {
 fn drawn(state: &mut State) -> (Canvas, Option<StageFrame>) {
     let mut canvas = Canvas::new(80, 24, font_px(1.0));
     canvas.set_gpu(true);
-    state.size = canvas.fit(1600, 900);
+    let grid = canvas.fit(1600, 900);
+    state.fit = jodeldiplom::view::layout::fit(state, grid);
     let spectrum = jodeldiplom::spectrum::SpectrumFrame::default();
     let scene = jodeldiplom::view::Scene {
         state,
+        grid,
         spectrum: &spectrum,
         pointer: None,
         heard: 0.0,
@@ -184,12 +186,12 @@ fn press_at(canvas: &Canvas, state: &State, (x, y): (f32, f32)) -> Option<Action
         row: (y / ch as f32) as u16,
     };
     let over = canvas.target_at(x, y);
-    mouse::action_at(state, input, f64::from(x) / cw as f64, over)
+    mouse::action_at(state, canvas.grid(), input, f64::from(x) / cw as f64, over)
 }
 
 /// Where the stage drew START's pill in `canvas` (window pixels).
 fn start_box(canvas: &Canvas) -> [f32; 4] {
-    let start = Target::Button(Op::KaraokeStart);
+    let start = Op::KaraokeStart;
     let mut found = None;
     for y in (0..900).step_by(2) {
         for x in (0..1600).step_by(2) {
@@ -252,8 +254,9 @@ fn the_start_pill_is_start_by_click_during_and_after_the_reveal() {
         assert!(press_at(&canvas, &state, outside).is_none(), "{outside:?}");
     }
     // The controls up: START stays where it was.
-    let rows = state.size.1;
-    update(&mut state, Action::PointerMoved { row: rows - 1 });
+    let rows = canvas.grid().rows;
+    let from_bottom = mouse::from_bottom(rows, rows - 1);
+    update(&mut state, Action::PointerMoved { from_bottom });
     let now = state.now_ms + karaoke::controls::FADE_MS;
     update(&mut state, Action::Tick(now));
     assert!(karaoke::controls::shown(&state));

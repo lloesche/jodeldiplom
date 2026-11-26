@@ -10,9 +10,7 @@ use crate::core::desk;
 use crate::core::karaoke;
 use crate::core::keymap::{self, Op};
 use crate::core::lanes;
-use crate::core::layout;
 use crate::core::preview;
-use crate::core::text;
 use crate::core::transition::Preset;
 use crate::core::transition::{draft, jump, tab, viewport};
 use crate::core::{
@@ -118,9 +116,20 @@ fn set_cursor(state: &mut State, cursor: usize) {
     fix_scroll(state);
 }
 
-/// How many list rows the main screen shows.
+/// How many list rows the main screen shows: the window's
+/// ([`crate::core::Fit::list_rows`]), but for the filter line's while the
+/// browser is filtered.
 pub fn list_height(state: &State) -> usize {
-    layout::main_for(state).map_or(0, |m| usize::from(m.rows.height))
+    let filter = state.side == Side::Browser && state.browser.filter.is_some();
+    usize::from(state.fit.list_rows).saturating_sub(usize::from(filter))
+}
+
+/// How many lines of the help's text show: the window's
+/// ([`crate::core::Fit::help_rows`]), but for the search line's while the
+/// help is searched.
+fn help_height(state: &State) -> usize {
+    let search = state.help_search.is_some();
+    usize::from(state.fit.help_rows).saturating_sub(usize::from(search))
 }
 
 fn fix_scroll(state: &mut State) {
@@ -406,11 +415,11 @@ pub fn update(state: &mut State, action: Action) -> Vec<Effect> {
         }
         Action::TransitionPanStart {
             block,
-            column,
+            at,
             width,
             overview,
-        } => viewport::pan_start(state, block, column, width, overview),
-        Action::TransitionPan(column) => viewport::pan_to(state, column),
+        } => viewport::pan_start(state, block, at, width, overview),
+        Action::TransitionPan(at) => viewport::pan_to(state, at),
         Action::TransitionPanEnd => viewport::pan_end(state),
         Action::KaraokeSlide { slider, share } => {
             state.karaoke.dragging = Some(slider);
@@ -420,7 +429,9 @@ pub fn update(state: &mut State, action: Action) -> Vec<Effect> {
         Action::KaraokeStep { slider, by } => karaoke::step(state, slider, by, &mut fx),
         Action::Sync(event) => super::sync::event(state, event),
         Action::Desk(what) => desk::act(state, what, &mut fx),
-        Action::PointerMoved { row } => karaoke::controls::pointer_moved(state, row),
+        Action::PointerMoved { from_bottom } => {
+            karaoke::controls::pointer_moved(state, from_bottom);
+        }
         Action::PointerLeft => karaoke::controls::pointer_left(state),
         Action::SelectRow(row) => {
             state.screen = Screen::Main;
@@ -534,11 +545,8 @@ pub fn update(state: &mut State, action: Action) -> Vec<Effect> {
             run_palette(state, &mut fx);
         }
         Action::HelpScroll(delta) => scroll_help(state, delta),
-        Action::Resize(cols, rows) => {
-            if state.size != (cols, rows) {
-                state.info_width_held = 0;
-            }
-            state.size = (cols, rows);
+        Action::Fit(fit) => {
+            state.fit = fit;
             fix_scroll(state);
         }
         Action::Tick(now) => {
@@ -724,7 +732,6 @@ pub fn update(state: &mut State, action: Action) -> Vec<Effect> {
     super::sync::follow(state, &mut fx);
     desk::settle(state, &mut fx);
     prepare(state, &mut fx);
-    state.info_width_held = state.info_width_held.max(text::info_width(state));
     if check_details {
         // Everything on screen still unknown, including what is already
         // asked for: the worker replaces its queue with this.
@@ -754,10 +761,7 @@ fn offset(value: usize, delta: i32) -> usize {
 }
 
 fn scroll_help(state: &mut State, delta: i32) {
-    let visible = match layout::compute(state) {
-        layout::Layout::Help(h) => usize::from(h.text.height),
-        _ => 1,
-    };
+    let visible = help_height(state).max(1);
     let max = help_line_count(state).saturating_sub(visible);
     state.help_scroll = offset(state.help_scroll, delta).min(max);
 }
@@ -1678,7 +1682,8 @@ fn move_by(state: &mut State, delta: i32, fx: &mut Vec<Effect>) {
 
 fn page(state: &State) -> i32 {
     match state.screen {
-        Screen::Help => i32::from(state.size.1.saturating_sub(6)).max(1),
+        // Two lines of the last page stay in view.
+        Screen::Help => i32::from(state.fit.help_rows.saturating_sub(2)).max(1),
         _ => (list_height(state) as i32 - 1).max(1),
     }
 }

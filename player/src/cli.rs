@@ -213,8 +213,7 @@ pub fn usual_folders() -> Result<crate::dirs::Folders, String> {
     folders(&settings(&Args::default())?)
 }
 
-/// The app options for a command line (the window fills in the size and
-/// the wake-up).
+/// The app options for a command line (the window fills in the wake-up).
 pub fn app_options(args: &Args) -> Result<AppOptions, String> {
     let settings = settings(args)?;
     let (dir, autoplay) = start(args.path.as_deref())?;

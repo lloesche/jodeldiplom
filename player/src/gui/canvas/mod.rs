@@ -25,7 +25,9 @@ use super::big_text::Faces;
 use super::pixels::{pack, unpack, PixelRect, Target};
 use super::raster::{CellFont, PixelBackend};
 use crate::art::Art;
+use crate::core::State;
 use crate::view::karaoke::KaraokePicture;
+use crate::view::layout::Grid;
 use crate::view::{self, palette, Plot, Scene};
 use cover::FittedCover;
 use lane::{KeptWave, Melodies};
@@ -93,6 +95,8 @@ pub struct Canvas {
     strip: Option<Strip>,
     /// The melodies the lanes last drew.
     melodies: Melodies,
+    /// The right column's width held on the grid ([`Grid::held`]).
+    held: usize,
 }
 
 /// The pixels of the pixmap that changed, for a window that keeps a copy
@@ -190,6 +194,7 @@ impl Canvas {
             gpu: false,
             strip: None,
             melodies: Melodies::default(),
+            held: 0,
             last_draw: DrawTimes::default(),
             changed: true,
             changes: Changes {
@@ -204,10 +209,21 @@ impl Canvas {
         self.terminal.backend().cell()
     }
 
-    /// The grid in cells.
-    pub fn grid(&self) -> (u16, u16) {
+    /// The grid of cells.
+    pub fn grid(&self) -> Grid {
         let area = self.terminal.backend().buffer().area;
-        (area.width, area.height)
+        Grid {
+            held: self.held,
+            ..Grid::new(area.width, area.height)
+        }
+    }
+
+    /// Holds the right column's width on the grid for what `state` shows
+    /// ([`Grid::hold`]).
+    pub fn hold(&mut self, state: &State) {
+        let mut grid = self.grid();
+        grid.hold(state);
+        self.held = grid.held;
     }
 
     /// Changes the font size (a new scale factor).
@@ -220,18 +236,21 @@ impl Canvas {
         }
     }
 
-    /// Fits the grid to a window of `width` × `height` pixels; returns the
-    /// grid.
-    pub fn fit(&mut self, width: u32, height: u32) -> (u16, u16) {
+    /// Fits the grid to a window of `width` × `height` pixels (a new size
+    /// holds nothing yet); returns the grid.
+    pub fn fit(&mut self, width: u32, height: u32) -> Grid {
         let (cw, ch) = self.cell();
         let cols = (width as usize / cw).clamp(1, 1000) as u16;
         let rows = (height as usize / ch).clamp(1, 1000) as u16;
-        if (cols, rows) != self.grid() {
+        let mut grid = self.grid();
+        if (cols, rows) != (grid.cols, grid.rows) {
             self.terminal.backend_mut().resize(cols, rows);
             let Ok(()) = self.terminal.resize(Rect::new(0, 0, cols, rows));
             self.changes.all = true;
         }
-        (cols, rows)
+        grid.resize(cols, rows);
+        self.held = grid.held;
+        grid
     }
 
     /// Whether the window shows the pixmap on the GPU: lanes that follow the
@@ -273,7 +292,7 @@ impl Canvas {
             frame.all = true;
             return;
         }
-        let (cols, rows) = self.grid();
+        let Grid { cols, rows, .. } = self.grid();
         let mut spans: Vec<Option<(u16, u16)>> = vec![None; usize::from(rows)];
         for &(x, y) in &damage.cells {
             if let Some(span) = spans.get_mut(usize::from(y)) {

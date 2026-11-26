@@ -229,15 +229,16 @@ stem keys are their mutes.
   - `a_song_played_out_with_nothing_scored_shows_its_result`
 - **K3b.** The mode's lines never move for its controls: those come up
   over the picture's bottom (the voice slider, the seek bar, the keys)
-  only while the pointer is near the bottom (the bottom 15 % of the rows,
-  never fewer than the bar's and two more) and while a slider or the seek
-  bar is held; no key brings them up. They fade in and out over 0.2 s,
-  and out 1.5 s after the pointer leaves the bottom (or the window); they
-  take clicks exactly while they show at all. The stage's progress (its
-  bar, marks and ring) and the bar never show at once: the progress sinks
-  and fades in the fade's first half, the bar comes in its second (and
-  the other way round as they go). The pointer has its own rule, as in a
-  video player: while the mode shows it hides over the window once it has
+  only while the pointer is near the bottom (the bottom 15 % of the
+  window's height, never less than the bar and two lines) and while a
+  slider or the seek bar is held; no key brings them up. They fade in and
+  out over 0.2 s, and out 1.5 s after the pointer leaves the bottom (or
+  the window); they take clicks exactly while they show at all. The
+  stage's progress (its bar, marks and ring) and the bar never show at
+  once: the progress sinks and fades in the fade's first half, the bar
+  comes in its second (and the other way round as they go). The pointer
+  has its own rule, as in a video player: while the mode shows it hides
+  over the window once it has
   been still for 2.5 s (since its last move, or since the mode came),
   whether the controls show or not; any move anywhere on the screen shows
   it at once (a button held too, within a cell too), and leaving the mode

@@ -7,7 +7,7 @@
 use super::super::stage_gpu::StageFrame;
 use super::start::{Line, Look};
 use super::{Song, Stage, Tint};
-use crate::core::mouse::Target;
+use crate::core::keymap::Op;
 use crate::view::karaoke::KaraokePicture;
 
 impl Stage {
@@ -46,8 +46,9 @@ impl Stage {
     }
 
     /// What takes clicks on the stage as drawn last, where (left, top,
-    /// right, bottom in the window's pixels): START's pill while it shows.
-    pub fn targets(&self) -> &[([f32; 4], Target)] {
+    /// right, bottom in the window's pixels), and what a click does there:
+    /// START's pill while it shows.
+    pub fn targets(&self) -> &[([f32; 4], Op)] {
         &self.targets
     }
 }
@@ -55,7 +56,6 @@ impl Stage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::keymap::Op;
     use crate::core::singing::Singing;
     use crate::view::karaoke::Start;
     use ratatui::layout::Rect;
@@ -91,10 +91,10 @@ mod tests {
             let picture = waiting(50, ready);
             let frame = stage.scene((&song, false), &picture, area, (0.0, 0.0), &Tint::STAGE);
             let frame = frame.expect("START");
-            let &[(at, target)] = stage.targets() else {
+            let &[(at, op)] = stage.targets() else {
                 panic!("{:?}", stage.targets())
             };
-            assert_eq!(target, Target::Button(Op::KaraokeStart));
+            assert_eq!(op, Op::KaraokeStart);
             let [x0, y0, x1, y1] = at;
             assert!(((x0 + x1) / 2.0 - 800.0).abs() < 1.0, "{x0} {x1}");
             // The bar's 5 rows of 50 begin at 810 px.

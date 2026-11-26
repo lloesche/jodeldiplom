@@ -10,9 +10,9 @@ use ratatui::Frame;
 use super::colors::*;
 use super::plot::{self, Plot};
 use super::{keep_start, Pictures, Scene};
-use crate::core::layout::Bottom;
 use crate::core::text::clock;
 use crate::core::{Level, Screen, State};
+use crate::view::layout::Bottom;
 
 /// The time heard (right-aligned in `elapsed`), the seek bar filling in the
 /// signal path's colour with its head, and the length; a drag shows where

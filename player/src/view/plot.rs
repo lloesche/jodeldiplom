@@ -15,9 +15,9 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Style};
 
-use crate::core::text::width;
 use crate::core::State;
 use crate::spectrum::{SpectrumFrame, LOW_HZ, RANGE_DB};
+use crate::view::cells::width;
 use crate::view::colors::DIM;
 use crate::view::palette::{BG, SOURCE};
 

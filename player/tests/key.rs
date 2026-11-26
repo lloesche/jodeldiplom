@@ -11,11 +11,11 @@ use std::sync::Arc;
 use jodel_playback::{Command, Event};
 use jodeldiplom::core::desk::{Channel, StripKind};
 use jodeldiplom::core::keymap::{self, Key, KeyCode, Meaning, Op};
-use jodeldiplom::core::layout::{self, Layout};
-use jodeldiplom::core::mouse::{self, MouseButton, MouseInput, MouseKind};
 use jodeldiplom::core::sliders::Slider;
 use jodeldiplom::core::{update, Action, Effect, Side, State};
 use jodeldiplom::gui::mixer::said;
+use jodeldiplom::view::layout::{self, Grid, Layout};
+use jodeldiplom::view::mouse::{self, MouseButton, MouseInput, MouseKind};
 use jodeldiplom::view::{self, CellPictures, Scene};
 
 fn op(state: &mut State, op: Op) -> Vec<Effect> {
@@ -40,13 +40,16 @@ fn meant(state: &State, c: char) -> Option<Op> {
     }
 }
 
+/// The window of [`common::transition_state`]`(120, 40)`.
+const GRID: Grid = Grid::new(120, 40);
+
 fn draw(state: &State) -> String {
-    let (cols, rows) = state.size;
-    let backend = ratatui::backend::TestBackend::new(cols, rows);
+    let backend = ratatui::backend::TestBackend::new(GRID.cols, GRID.rows);
     let mut terminal = ratatui::Terminal::new(backend).unwrap();
     let spectrum = jodeldiplom::spectrum::SpectrumFrame::default();
     let scene = Scene {
         state,
+        grid: GRID,
         spectrum: &spectrum,
         pointer: None,
         heard: 0.0,
@@ -107,7 +110,7 @@ fn the_key_slider_is_a_row_of_the_tab() {
     assert_eq!(keys_sent(&fx), [0]);
     op(&mut state, Op::Up);
     assert_eq!(state.karaoke.focus, Slider::Delay);
-    let Layout::Main(main) = layout::compute(&state) else {
+    let Layout::Main(main) = layout::compute(&state, GRID) else {
         panic!("the main screen");
     };
     let tab = main.karaoke.expect("the Karaoke tab's layout");
@@ -123,7 +126,7 @@ fn the_key_slider_is_a_row_of_the_tab() {
         row: key.track.y,
     };
     let right = f64::from(key.track.x + key.track.width);
-    let action = mouse::action_at(&state, press, right, None);
+    let action = mouse::action_at(&state, GRID, press, right, None);
     let fx = update(&mut state, action.expect("an action"));
     assert_eq!(keys_sent(&fx), [6]);
     update(&mut state, Action::KaraokeSlideEnd);

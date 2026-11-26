@@ -137,7 +137,7 @@ pub struct Stage {
     /// What the result screen keeps between frames ([`result::Kept`]).
     kept: result::Kept,
     /// What takes clicks as drawn last ([`Stage::targets`]).
-    targets: Vec<([f32; 4], crate::core::mouse::Target)>,
+    targets: Vec<([f32; 4], crate::core::keymap::Op)>,
 }
 
 /// What the stage is made from, besides the picture.

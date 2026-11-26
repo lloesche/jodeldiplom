@@ -210,8 +210,8 @@ pub(super) fn to_paint(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::lanes::Lane;
     use crate::core::lanes::WordLines;
-    use crate::core::layout::Lane;
     use crate::view::palette;
     use jodel_rhythm::waveform::{self, Waveform};
     use ratatui::layout::Rect;

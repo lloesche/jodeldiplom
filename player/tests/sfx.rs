@@ -361,7 +361,6 @@ fn the_result_is_heard_after_the_song() {
     let memory = MemoryOutput::new(caps, SimClock::Realtime);
     let mut options = AppOptions::new(dir.clone());
     options.output = Output::Memory(memory.clone());
-    options.size = (120, 36);
     options.devices = Arc::new(|| Ok(Vec::new()));
     options.mic = Arc::new(|_| Ok(jodel_output::input::Input::feed(48_000, 240).0));
     options.mics = Arc::new(|| Ok(Vec::new()));
@@ -374,7 +373,7 @@ fn the_result_is_heard_after_the_song() {
     options.config.beat_method = jodel_rhythm::Method::Flux;
     options.config.stems = false;
     options.autoplay = Some(song.clone());
-    let mut app = App::new(options);
+    let mut app = common::fitted_app(options, 120, 36);
     let wait = Duration::from_secs(30);
     let playing = |a: &App| a.state.playing.state == PlayState::Playing;
     assert!(frames(&mut app, wait, playing));

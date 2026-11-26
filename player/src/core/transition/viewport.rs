@@ -303,9 +303,10 @@ fn set_zoom(state: &mut State, z: usize, heard: f64) {
 /// goes on following it; one moved by hand keeps its middle.
 pub(super) fn fit_lyrics(state: &mut State, heard: f64) {
     let which = state.transition.focus;
-    let Some(width) = lane_width(state) else {
+    let width = state.fit.lane_letters;
+    if width == 0 {
         return;
-    };
+    }
     let lyrics = lanes::lyrics(state, which);
     let words = lyrics
         .as_deref()
@@ -345,16 +346,6 @@ pub(super) fn fit_lyrics(state: &mut State, heard: f64) {
         format!("Zoomed {track} in all the way ({shown}); some words still do not fit")
     };
     say_info(state, said);
-}
-
-/// The width of the Transition tab's lanes, in cells.
-fn lane_width(state: &State) -> Option<u16> {
-    let crate::core::layout::Layout::Main(m) = crate::core::layout::compute(state) else {
-        return None;
-    };
-    let b = m.transition?.blocks.into_iter().next()?;
-    let width = b.lanes.first().map_or(b.overview.width, |l| l.2.width);
-    (width > 0).then_some(width)
 }
 
 /// Zooms one block (the wheel over it), keeping `at` (seconds into its
@@ -449,15 +440,15 @@ pub(crate) fn scroll(state: &mut State, which: Block, share: f64) {
 }
 
 /// The secondary button went down over a block (`overview`: over its
-/// whole track) at column `column`, of an area `width` columns wide: a
-/// drag of its view starts.
-pub(crate) fn pan_start(state: &mut State, which: Block, column: u16, width: u16, overview: bool) {
-    if whole(state, which) || width == 0 || which == Block::Prev {
+/// whole track) at `at` across, of an area `width` wide (in the window's
+/// units): a drag of its view starts.
+pub(crate) fn pan_start(state: &mut State, which: Block, at: f32, width: f32, overview: bool) {
+    if whole(state, which) || width <= 0.0 || which == Block::Prev {
         return;
     }
     let heard = state.heard();
     let (start, end) = window(state, which, heard);
-    let per_column = if overview {
+    let per_unit = if overview {
         -duration(state, which) / f64::from(width)
     } else {
         (end - start) / f64::from(width)
@@ -465,21 +456,21 @@ pub(crate) fn pan_start(state: &mut State, which: Block, column: u16, width: u16
     state.transition.focus = which;
     state.transition.pan = Some(Pan {
         block: which,
-        per_column,
-        column,
+        per_unit,
+        at,
         start,
     });
 }
 
-/// The pointer is at `column` with a drag of a view under way: the view
-/// moves with it (dragged right, the waveform goes right, to earlier
+/// The pointer is at `at` across with a drag of a view under way: the
+/// view moves with it (dragged right, the waveform goes right, to earlier
 /// times; on the whole track, the span shown follows the pointer).
-pub(crate) fn pan_to(state: &mut State, column: u16) {
+pub(crate) fn pan_to(state: &mut State, at: f32) {
     let Some(pan) = state.transition.pan else {
         return;
     };
-    let moved = f64::from(column) - f64::from(pan.column);
-    let start = (pan.start - moved * pan.per_column).max(0.0);
+    let moved = f64::from(at) - f64::from(pan.at);
+    let start = (pan.start - moved * pan.per_unit).max(0.0);
     block_mut(state, pan.block).start = Some(start);
 }
 

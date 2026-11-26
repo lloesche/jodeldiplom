@@ -1,6 +1,6 @@
 //! The Mixer tab in iced's own widgets, over its place on the old canvas:
 //! a console with the strips side by side where the core lays them out
-//! ([`crate::core::layout::desk`], so the keys go round the strips shown),
+//! ([`crate::view::layout::desk`], so the keys go round the strips shown),
 //! the player's stems beside it under their bracket, the preview, the
 //! microphone and the master. The faders, scales and meters are a canvas
 //! each ([`fader`]); what each strip says is [`said`], its widgets
@@ -21,10 +21,10 @@ use iced::{Element, Fill, Widget as _};
 use ratatui::layout::Rect;
 
 use crate::core::desk::{taper, DeskAction, StripKind};
-use crate::core::layout::desk::DeskLayout;
 use crate::core::{Action, State};
 use crate::gui::style;
 use crate::gui::window::Message;
+use crate::view::layout::desk::DeskLayout;
 
 /// The room between two strips, and around the console's edge, in pixels.
 const GAP: f32 = 3.0;

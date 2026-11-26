@@ -218,15 +218,19 @@ mod tests {
     use crate::browser::Entry;
     use crate::config::Config;
     use crate::core::keymap::{self, Key, KeyCode, Meaning};
-    use crate::core::layout::{self, Layout};
-    use crate::core::mouse::{self, MouseInput, MouseKind};
     use crate::core::update;
+    use crate::view::layout::{self, Grid, Layout};
+    use crate::view::mouse::{self, MouseInput, MouseKind};
     use jodel_playback::{Command, PlayState};
+
+    /// The window the tests have.
+    const GRID: Grid = Grid::new(120, 40);
 
     /// The browser on a folder (row 2) among files, a song playing from
     /// the queue.
     fn state() -> State {
-        let mut s = State::new("/m".into(), Config::default(), (120, 40));
+        let mut s = State::new("/m".into(), Config::default());
+        s.fit = layout::fit(&s, GRID);
         s.browser.loading = false;
         s.browser.entries = (0..10)
             .map(|i| Entry {
@@ -342,7 +346,7 @@ mod tests {
         let fx = update(&mut s, Action::Scroll(3));
         assert_eq!(previews(&fx), [play(9)]);
         // So does the pointer over a row.
-        let Layout::Main(m) = layout::compute(&s) else {
+        let Layout::Main(m) = layout::compute(&s, GRID) else {
             panic!()
         };
         let over = MouseInput {
@@ -350,7 +354,7 @@ mod tests {
             col: m.rows.x + 1,
             row: m.rows.y + 5,
         };
-        let a = mouse::action(&s, over).unwrap();
+        let a = mouse::action(&s, GRID, over).unwrap();
         assert!(matches!(a, Action::SelectRow(5)));
         let fx = update(&mut s, a);
         assert_eq!(previews(&fx), [play(5)]);

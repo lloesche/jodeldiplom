@@ -28,7 +28,7 @@ use std::time::{Duration, Instant};
 
 use iced::{window, Size};
 use jodel_output::SimClock;
-use jodeldiplom::app::{App, AppOptions, Output};
+use jodeldiplom::app::{AppOptions, Output};
 use jodeldiplom::core::keymap::Op;
 use jodeldiplom::core::{Action, DeviceChoice, Effect, Screen, Side, State};
 use jodeldiplom::gui::window::{Gui, Message};
@@ -199,7 +199,6 @@ fn main() {
     let mut options = AppOptions::new(tree.album.clone());
     options.output = Output::Null(SimClock::Realtime);
     options.saved = options.config.clone();
-    options.size = (120, 36);
     options.devices = if real {
         Arc::new(jodeldiplom::app::list_devices)
     } else {
@@ -209,7 +208,7 @@ fn main() {
     // on the Karaoke and Mixer tabs.
     options.mic = Arc::new(|_| Err("no microphone".into()));
     options.mics = Arc::new(|| Ok(Vec::new()));
-    let mut app = App::new(options);
+    let mut app = common::fitted_app(options, 120, 36);
     let ok = common::wait_for(&mut app, Duration::from_secs(10), |app| {
         !app.state.browser.loading && app.state.pending.is_empty() && !app.state.details.is_empty()
     });
@@ -262,13 +261,13 @@ fn main() {
             // The Transition tab, on generated tracks with stems and waveforms,
             // the playing one's words timed.
             ("transition", {
-                let mut m = common::transition_state(state.size.0, state.size.1);
+                let mut m = common::transition_state(120, 36);
                 sung_words(&mut m);
                 m
             }),
             ("transition-set-up", {
                 // A transition set up from the bar heard, drums first.
-                let mut m = common::transition_state(state.size.0, state.size.1);
+                let mut m = common::transition_state(120, 36);
                 m.drawn_heard = Some(m.playing.position);
                 jodeldiplom::core::update(&mut m, Action::Op(Op::TransitionPreset));
                 jodeldiplom::core::update(&mut m, Action::Op(Op::TransitionZoomOut));

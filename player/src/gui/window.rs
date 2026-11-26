@@ -2,7 +2,7 @@
 //! messages, what they do, what it shows and what it listens to.
 //!
 //! - Keys go through [`crate::core::keymap`] ([`super::keys`]); the
-//!   pointer over the old canvas through [`crate::core::mouse`]
+//!   pointer over the old canvas through [`crate::view::mouse`]
 //!   ([`super::pointer`]); the widgets iced draws send the core's actions
 //!   ([`Message::Act`]). Every button's release comes here, whichever
 //!   widget it was over, so nothing stays held.
@@ -31,10 +31,10 @@ use super::wake::{Wake, Wakes};
 use crate::app::{App, AppOptions};
 use crate::core::desk::{Channel, DeskAction};
 use crate::core::keymap;
-use crate::core::mouse::MouseButton;
 use crate::core::preview::Ctrl;
 use crate::core::{Action, State};
 use crate::setup::{Setup, Status};
+use crate::view::mouse::MouseButton;
 use crate::view::setup::Choice;
 
 /// What the window takes.
@@ -294,13 +294,14 @@ impl Gui {
         let shift = self.modifiers.shift();
         match &mut self.phase {
             Phase::Running(app) => {
+                let grid = self.embed.grid();
                 let dirty = match pointer.kind {
                     PointerKind::Wheel(delta) => {
                         let line = self.embed.cell().1;
                         let steps = self.wheel.turn(WheelOn::Canvas, delta, line);
-                        steps != 0 && self.pointer.scroll(app, pointer, steps, shift)
+                        steps != 0 && self.pointer.scroll(app, grid, pointer, steps, shift)
                     }
-                    _ => self.pointer.take(app, pointer, shift),
+                    _ => self.pointer.take(app, grid, pointer, shift),
                 };
                 self.paint.dirty |= dirty;
             }
@@ -358,7 +359,8 @@ impl Gui {
                 }
                 let shift = self.modifiers.shift();
                 if let Phase::Running(app) = &mut self.phase {
-                    self.paint.dirty |= self.pointer.up(app, button, shift);
+                    let grid = self.embed.grid();
+                    self.paint.dirty |= self.pointer.up(app, grid, button, shift);
                 }
             }
             iced::Event::Keyboard(keyboard::Event::ModifiersChanged(modifiers)) => {
@@ -432,7 +434,6 @@ impl Gui {
             std::mem::replace(&mut self.phase, Phase::Leaving(Last::Nothing))
         {
             crate::cli::set_models(&mut options, paths);
-            options.size = self.embed.lock().canvas.grid();
             self.phase = Phase::Running(App::new(options));
         }
         self.paint.dirty = true;

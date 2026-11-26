@@ -20,7 +20,7 @@ mod common;
 use std::time::{Duration, Instant};
 
 use jodel_output::SimClock;
-use jodeldiplom::app::{App, AppOptions, Output};
+use jodeldiplom::app::{AppOptions, Output};
 use jodeldiplom::core::keymap::Op;
 use jodeldiplom::core::{Action, Screen, State};
 use jodeldiplom::gui::{font_px, Canvas};
@@ -42,7 +42,7 @@ fn main() {
     let mut options = AppOptions::new(tree.album.clone());
     options.output = Output::Null(SimClock::Realtime);
     options.saved = options.config.clone();
-    let mut app = App::new(options);
+    let mut app = common::fitted_app(options, 120, 40);
     let listed = common::wait_for(&mut app, Duration::from_secs(10), |app| {
         !app.state.browser.loading && !app.state.details.is_empty()
     });
@@ -61,7 +61,7 @@ fn main() {
         let mut canvas = Canvas::new(80, 24, font_px(scale));
         let grid = canvas.fit(width as u32, height as u32);
         let mut buffer = vec![0u32; width * height];
-        let mut tab = common::transition_state(grid.0, grid.1);
+        let mut tab = common::transition_state(grid.cols, grid.rows);
         if screen == "transition held" {
             // The view stays where it is (its cursor moved); the playhead
             // goes across it.
@@ -82,7 +82,7 @@ fn main() {
                 }
                 _ => {
                     let mut s = app.state.clone();
-                    s.size = grid;
+                    s.fit = jodeldiplom::view::layout::fit(&s, grid);
                     if screen == "nowplaying" {
                         s.screen = Screen::NowPlaying;
                     }
@@ -91,6 +91,7 @@ fn main() {
             };
             let scene = Scene {
                 state: &state,
+                grid,
                 spectrum: &spectrum,
                 pointer: None,
                 heard: state.heard(),

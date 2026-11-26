@@ -1,5 +1,6 @@
-//! The layout, in cell units: which panes each screen has at a size and
-//! how they collapse when it gets small.
+//! The cell renderer's layout: which panes each screen has on a grid of
+//! cells ([`Grid`]) and how they collapse when it gets small; and what the
+//! window reports of it to the core ([`fit`]).
 //!
 //! Main screen, wide:
 //!
@@ -25,20 +26,77 @@
 //! - below 40 × 12 only a "too small" note is shown.
 
 pub mod desk;
+mod karaoke;
 mod track;
+mod transition;
 
+pub use karaoke::{
+    KaraokeControls, KaraokeLayout, KaraokeTabLayout, SliderLayout, KARAOKE_ENTER, SLIDER_LABEL,
+    SWITCH, SYNC_BUTTON,
+};
 pub use track::Track;
+pub use transition::{
+    TransitionBlockLayout, TransitionLayout, FIT_LYRICS, TRANSITION_LANE_LABELS,
+    TRANSITION_LANE_ROWS,
+};
 
 use ratatui::layout::Rect;
 
-use crate::core::karaoke;
 use crate::core::keymap::Op;
-use crate::core::sliders::Slider;
-use crate::core::text::{self, width};
-use crate::core::{Gpu, Screen, Side, State};
+use crate::core::text;
+use crate::core::{Fit, Gpu, Screen, Side, State};
+use crate::view::cells::{self, width};
 
 /// The smallest size anything but a note is drawn at.
 pub const MIN_SIZE: (u16, u16) = (40, 12);
+
+/// The window as the cell renderer has it: its size in cells, and the
+/// right column's width held while one track gives way to the next.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Grid {
+    /// Columns.
+    pub cols: u16,
+    /// Rows.
+    pub rows: u16,
+    /// The widest right-column text seen since the size changed, in cells
+    /// ([`Grid::hold`]): the column keeps this width, so it does not narrow
+    /// and widen again between tracks.
+    pub held: usize,
+}
+
+impl Grid {
+    /// A grid of `cols` × `rows` cells, nothing held yet.
+    pub const fn new(cols: u16, rows: u16) -> Grid {
+        Grid {
+            cols,
+            rows,
+            held: 0,
+        }
+    }
+
+    /// The whole grid.
+    pub fn area(self) -> Rect {
+        Rect::new(0, 0, self.cols, self.rows)
+    }
+
+    /// The grid at `cols` × `rows`: what was held goes when the size
+    /// changes.
+    pub fn resize(&mut self, cols: u16, rows: u16) {
+        if (cols, rows) != (self.cols, self.rows) {
+            *self = Grid::new(cols, rows);
+        }
+    }
+
+    /// Holds the right column's width for what `state` shows now.
+    pub fn hold(&mut self, state: &State) {
+        self.held = self.held.max(cells::info_width(state));
+    }
+
+    /// Too small to draw anything but a note.
+    fn too_small(self) -> bool {
+        self.cols < MIN_SIZE.0 || self.rows < MIN_SIZE.1
+    }
+}
 
 /// A clickable button.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -100,166 +158,6 @@ pub struct MainLayout {
     pub desk: Option<desk::DeskLayout>,
     /// The bottom bar.
     pub bottom: Bottom,
-}
-
-/// A Karaoke slider's cells.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct SliderLayout {
-    /// Which.
-    pub slider: Slider,
-    /// Its row: the label, the track and the value.
-    pub row: Rect,
-    /// The track its knob moves along (a click or drag sets it).
-    pub track: Rect,
-    /// The value, right of the track.
-    pub value: Rect,
-}
-
-/// The Karaoke tab.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct KaraokeTabLayout {
-    /// The playing track's cover.
-    pub cover: Rect,
-    /// The title and artist, right of it.
-    pub title: Rect,
-    /// The button into Karaoke mode.
-    pub enter: Rect,
-    /// The sliders.
-    pub sliders: Vec<SliderLayout>,
-    /// The game on or off: its row, a click turns it.
-    pub game: Rect,
-    /// The notes shown or hidden: its row.
-    pub show_notes: Rect,
-    /// The singing kept or not: its row.
-    pub keep: Rect,
-    /// The sync's row: its button (a click starts one), then the delay in
-    /// force.
-    pub sync: Rect,
-    /// The sync's panel over the tab, while one shows.
-    pub panel: Option<Rect>,
-    /// Its buttons (keep, again, cancel, as the sync stands), and what
-    /// each does.
-    pub panel_buttons: Vec<(Rect, Op)>,
-    /// What karaoke will do, below.
-    pub notes: Rect,
-    /// The voice's lane with the words on it, under the pane (where the
-    /// other tabs have the spectrum).
-    pub voice: Option<Rect>,
-}
-
-/// Karaoke mode: the whole screen is its picture, and its controls (while
-/// they show) a bar over its bottom (the picture stays where it is).
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct KaraokeLayout {
-    /// The whole screen.
-    pub screen: Rect,
-    /// The controls, while they show.
-    pub controls: Option<KaraokeControls>,
-}
-
-/// Karaoke mode's controls.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct KaraokeControls {
-    /// The bar they are in ([`karaoke::controls::bar`]).
-    pub bar: Rect,
-    /// The sliders.
-    pub sliders: Vec<SliderLayout>,
-    /// The time heard, the seek bar and the length, under the sliders.
-    pub elapsed: Rect,
-    /// The seek bar.
-    pub seek: Rect,
-    /// The length.
-    pub total: Rect,
-    /// The keys, in a line.
-    pub hint: Rect,
-}
-
-/// A lane of a block: the whole song or one stem.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum Lane {
-    /// The whole song.
-    Song,
-    /// The drum stem.
-    Drums,
-    /// The bass stem.
-    Bass,
-    /// The other instruments.
-    Other,
-    /// The vocals.
-    Vocals,
-}
-
-impl Lane {
-    /// The lanes with stems, top first.
-    pub const ALL: [Lane; 5] = [
-        Lane::Song,
-        Lane::Drums,
-        Lane::Bass,
-        Lane::Other,
-        Lane::Vocals,
-    ];
-
-    /// Its label.
-    pub fn label(self) -> &'static str {
-        match self {
-            Lane::Song => "song",
-            Lane::Drums => "drums",
-            Lane::Bass => "bass",
-            Lane::Other => "other",
-            Lane::Vocals => "vocals",
-        }
-    }
-
-    /// Its place among a waveform's stems (bass, drums, other, vocals);
-    /// `None` for the whole song.
-    pub fn stem(self) -> Option<usize> {
-        match self {
-            Lane::Song => None,
-            Lane::Bass => Some(0),
-            Lane::Drums => Some(1),
-            Lane::Other => Some(2),
-            Lane::Vocals => Some(3),
-        }
-    }
-}
-
-/// Cells left of a block's lanes for their labels.
-pub const TRANSITION_LANE_LABELS: u16 = 7;
-/// The most rows a lane of the Transition tab takes.
-pub const TRANSITION_LANE_ROWS: u16 = 4;
-
-/// One block of the Transition tab: a header line, the whole track in one row,
-/// the bar numbers, and the lanes (all from [`TRANSITION_LANE_LABELS`] in, so their
-/// columns are the same times).
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct TransitionBlockLayout {
-    /// The track it shows.
-    pub block: crate::core::lanes::Block,
-    /// Title, tempo and bar.
-    pub header: Rect,
-    /// The whole track.
-    pub overview: Rect,
-    /// Bar numbers and the cursor.
-    pub ruler: Rect,
-    /// The lanes, top first, each with its label's cell (empty where that
-    /// row is out of view) and the part of it in view.
-    pub lanes: Vec<(Lane, Rect, Rect)>,
-    /// The rows a lane takes, in view or not.
-    pub lane_rows: u16,
-    /// The rows of the first lane listed that are above the view (while
-    /// the block slides out of it).
-    pub top_cut: u16,
-}
-
-/// The Transition tab: the playing track's block, then the next one's when
-/// there is room.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct TransitionLayout {
-    /// The blocks, top first.
-    pub blocks: Vec<TransitionBlockLayout>,
-    /// The button that zooms to fit the lyrics ([`FIT_LYRICS`]), in the
-    /// pane's bottom border.
-    pub fit: Option<Rect>,
 }
 
 /// The Now playing screen: the cover filling the screen and a caption
@@ -354,30 +252,55 @@ impl Layout {
     }
 }
 
-/// The layout for `state` at its size.
-pub fn compute(state: &State) -> Layout {
-    let (cols, rows) = state.size;
-    let area = Rect::new(0, 0, cols, rows);
-    if cols < MIN_SIZE.0 || rows < MIN_SIZE.1 {
+/// The layout for `state` on `grid`.
+pub fn compute(state: &State, grid: Grid) -> Layout {
+    let area = grid.area();
+    if grid.too_small() {
         return Layout::TooSmall(area);
     }
     match state.screen {
-        Screen::Main => Layout::Main(Box::new(main(state, area))),
+        Screen::Main => Layout::Main(Box::new(main(state, grid))),
         Screen::NowPlaying => Layout::NowPlaying(now_playing(state, area)),
         Screen::Settings => Layout::Settings(settings(state, area)),
         Screen::Help => Layout::Help(help(state, area)),
-        Screen::Karaoke => Layout::Karaoke(karaoke_mode(state, area)),
+        Screen::Karaoke => Layout::Karaoke(karaoke::mode(state, area)),
     }
 }
 
-/// The main screen's layout whatever screen is shown (the list keeps its
-/// cursor and scroll behind the other screens), unless too small.
-pub fn main_for(state: &State) -> Option<MainLayout> {
-    let (cols, rows) = state.size;
-    if cols < MIN_SIZE.0 || rows < MIN_SIZE.1 {
-        return None;
+/// What `grid` does to the keys and the pointer, for the core
+/// ([`crate::core::Action::Fit`]): measured on the layouts the screens
+/// have on it, whichever screen and tab show (the list keeps its rows
+/// behind the other screens, the keys go round the desk's strips from any
+/// tab). Nothing on a grid too small to draw on.
+pub fn fit(state: &State, grid: Grid) -> Fit {
+    if grid.too_small() {
+        return Fit::default();
     }
-    Some(main(state, Rect::new(0, 0, cols, rows)))
+    let area = grid.area();
+    let list = main_list(state, grid);
+    let help = help(state, area);
+    // The wide tabs' pane, inside its border.
+    let wide = in_border(area);
+    Fit {
+        list_rows: list.rows.height + u16::from(list.filter.is_some()),
+        help_rows: help.text.height + u16::from(help.search.is_some()),
+        desk_letters: desk::room(wide),
+        lane_letters: transition::lane_width(wide),
+        controls_reach: f32::from(crate::core::karaoke::controls::ROWS + 2) / f32::from(grid.rows),
+        spectrum: compute(state, grid)
+            .bottom()
+            .is_some_and(|b| b.spectrum.is_some()),
+    }
+}
+
+/// `rect` inside its border.
+fn in_border(rect: Rect) -> Rect {
+    Rect::new(
+        rect.x + 1,
+        rect.y + 1,
+        rect.width.saturating_sub(2),
+        rect.height.saturating_sub(2),
+    )
 }
 
 /// Spectrum rows on the main screen for a height.
@@ -390,18 +313,18 @@ pub fn spectrum_rows(rows: u16) -> u16 {
     }
 }
 
-/// The right column's width for a width and the track shown: as wide as
-/// its widest line needs (so the signal path does not wrap), or the widest
-/// seen since the last resize ([`State::info_width_held`]), from
-/// [`right_width`] up to half the screen; 0 (none) where [`right_width`]
-/// has none.
-pub fn right_width_for(state: &State, cols: u16) -> u16 {
+/// The right column's width on `grid` for the track shown: as wide as its
+/// widest line needs (so the signal path does not wrap), or the widest the
+/// grid holds ([`Grid::held`]), from [`right_width`] up to half the
+/// screen; 0 (none) where [`right_width`] has none.
+pub fn right_width_for(state: &State, grid: Grid) -> u16 {
+    let cols = grid.cols;
     let base = right_width(cols);
     if base == 0 {
         return 0;
     }
     // The text is one cell in from the column's edge.
-    let widest = text::info_width(state).max(state.info_width_held);
+    let widest = cells::info_width(state).max(grid.held);
     let need = (widest + 1).min(usize::from(cols)) as u16;
     need.clamp(base, base.max(cols / 2))
 }
@@ -549,113 +472,6 @@ fn bottom(state: &State, area: Rect, spectrum: u16) -> (Rect, Bottom) {
     )
 }
 
-/// The lanes a Transition block shows: every stem's where its track has them
-/// (or, before its analysis is in, where stems are asked for), else the whole
-/// song's.
-fn block_lanes(state: &State, block: crate::core::lanes::Block) -> &'static [Lane] {
-    let stems = match crate::core::lanes::rhythmed(state, block) {
-        Some(r) => r.waveform.as_ref().is_some_and(|w| w.stems.is_some()),
-        None => state.rhythm_recipe.stems,
-    };
-    if stems {
-        &Lane::ALL
-    } else {
-        &Lane::ALL[..1]
-    }
-}
-
-/// The Transition tab's blocks in `inner`: each a header, an overview and a
-/// ruler row and its lanes, as many rows a lane (up to [`TRANSITION_LANE_ROWS`]) as both
-/// blocks fit with; the next track's block only where it fits.
-fn transition(state: &State, inner: Rect, list: Rect) -> TransitionLayout {
-    use crate::core::lanes::Block;
-    let lanes = [
-        block_lanes(state, Block::Now),
-        block_lanes(state, Block::Next),
-    ];
-    let need = |which: usize, h: u16| 3 + lanes[which].len() as u16 * h;
-    let rows = inner.height;
-    // The tallest lanes (up to four rows) both blocks fit with.
-    let both = (1..=TRANSITION_LANE_ROWS)
-        .rev()
-        .find(|&h| need(0, h) + 1 + need(1, h) <= rows);
-    let plan: Vec<(usize, u16)> = match both {
-        Some(h) => vec![(0, h), (1, h)],
-        None if need(0, 1) <= rows => vec![(0, 1)],
-        None => Vec::new(),
-    };
-    let mut order: Vec<(Block, &'static [Lane], u16)> = plan
-        .into_iter()
-        .map(|(which, h)| ([Block::Now, Block::Next][which], lanes[which], h))
-        .collect();
-    let (top, bottom) = (i32::from(inner.y), i32::from(inner.bottom()));
-    let mut y = top;
-    // After a hand-over, the track left slides up out of view and the
-    // playing one up into its place, the next one in under it.
-    if let (Some(done), Some(h)) = (crate::core::transition::viewport::slide(state), both) {
-        let prev = block_lanes(state, Block::Prev);
-        let pitch = 3 + prev.len() as i32 * i32::from(h) + 1;
-        y -= (done * f64::from(pitch)).round() as i32;
-        order.insert(0, (Block::Prev, prev, h));
-    }
-    let x = inner.x + TRANSITION_LANE_LABELS.min(inner.width);
-    let w = inner.width.saturating_sub(TRANSITION_LANE_LABELS);
-    let shown = |y: i32| y >= top && y < bottom;
-    let row = |y: i32, x: u16, w: u16| {
-        if shown(y) {
-            Rect::new(x, y as u16, w, 1)
-        } else {
-            Rect::default()
-        }
-    };
-    let mut blocks = Vec::new();
-    for (block, block_lanes, h) in order {
-        let header = row(y, inner.x, inner.width);
-        let overview = row(y + 1, x, w);
-        let ruler = row(y + 2, x, w);
-        let first = y;
-        y += 3;
-        let mut placed = Vec::new();
-        let mut top_cut = 0;
-        for &lane in block_lanes {
-            let (from, to) = (y.max(top), (y + i32::from(h)).min(bottom));
-            if to > from {
-                if placed.is_empty() {
-                    top_cut = (from - y) as u16;
-                }
-                placed.push((
-                    lane,
-                    row(y, inner.x, TRANSITION_LANE_LABELS.min(inner.width)),
-                    Rect::new(x, from as u16, w, (to - from) as u16),
-                ));
-            }
-            y += i32::from(h);
-        }
-        y += 1;
-        if first >= bottom || y <= top {
-            continue;
-        }
-        blocks.push(TransitionBlockLayout {
-            block,
-            header,
-            overview,
-            ruler,
-            lanes: placed,
-            lane_rows: h,
-            top_cut,
-        });
-    }
-    // The zoom that fits the lyrics, at the right of the pane's bottom
-    // border.
-    let w = width(FIT_LYRICS) as u16;
-    let fit = (list.width >= w + 24 && list.height >= 2)
-        .then(|| Rect::new(list.right().saturating_sub(w + 2), list.bottom() - 1, w, 1));
-    TransitionLayout { blocks, fit }
-}
-
-/// The button that zooms the Transition tab to fit the lyrics.
-pub const FIT_LYRICS: &str = " z fit lyrics ";
-
 /// The main screen with a wide tab (Transition, Karaoke or Mixer): the list pane's
 /// border over the whole width, no right column, no spectrum (the Karaoke
 /// tab has its voice's lane there).
@@ -672,12 +488,7 @@ fn main_wide(state: &State, area: Rect) -> MainLayout {
     bottom.spectrum = None;
     bottom.labels = None;
     let list = top;
-    let inner = Rect::new(
-        list.x + 1,
-        list.y + 1,
-        list.width.saturating_sub(2),
-        list.height.saturating_sub(2),
-    );
+    let inner = in_border(list);
     MainLayout {
         list,
         toggle: toggle_rects(state, list),
@@ -687,10 +498,11 @@ fn main_wide(state: &State, area: Rect) -> MainLayout {
         cover: None,
         info: None,
         mini: None,
-        transition: (state.side == Side::Transition).then(|| transition(state, inner, list)),
+        transition: (state.side == Side::Transition)
+            .then(|| transition::compute(state, inner, list)),
         karaoke: karaoke.then(|| KaraokeTabLayout {
             voice,
-            ..karaoke_tab(inner, state.karaoke.sync.as_ref())
+            ..karaoke::tab(inner, state.karaoke.sync.as_ref())
         }),
         desk: (state.side == Side::Mixer).then(|| desk::compute(inner, state.desk.has_stems())),
         bottom,
@@ -711,12 +523,23 @@ fn toggle_rects(state: &State, list: Rect) -> Vec<(Rect, Side)> {
     toggle
 }
 
-fn main(state: &State, area: Rect) -> MainLayout {
+/// The main screen on `grid`: a wide tab's, or the browser's or the
+/// queue's.
+fn main(state: &State, grid: Grid) -> MainLayout {
     if state.side.wide() {
-        return main_wide(state, area);
+        main_wide(state, grid.area())
+    } else {
+        main_list(state, grid)
     }
+}
+
+/// The main screen with the browser or the queue (laid out so whatever
+/// the side, for [`fit`]): the list pane, the right column (or the
+/// track's summary under the list where there is none) and the spectrum.
+fn main_list(state: &State, grid: Grid) -> MainLayout {
+    let area = grid.area();
     let (top, bottom) = bottom(state, area, spectrum_rows(area.height));
-    let rw = right_width_for(state, area.width);
+    let rw = right_width_for(state, grid);
     let (left, right) = if rw > 0 {
         (
             Rect {
@@ -745,12 +568,7 @@ fn main(state: &State, area: Rect) -> MainLayout {
     } else {
         (left, None)
     };
-    let inner = Rect::new(
-        list.x + 1,
-        list.y + 1,
-        list.width.saturating_sub(2),
-        list.height.saturating_sub(2),
-    );
+    let inner = in_border(list);
     let (rows, filter) = if state.browser.filter.is_some() && state.side == Side::Browser {
         (
             Rect {
@@ -771,7 +589,7 @@ fn main(state: &State, area: Rect) -> MainLayout {
     let (cover, info) = match right {
         Some(r) => {
             // The cover, a free row, then the text (at least 7 rows).
-            let text_rows = text::info_lines(state, usize::from(r.width.saturating_sub(1)))
+            let text_rows = cells::info_lines(state, usize::from(r.width.saturating_sub(1)))
                 .len()
                 .max(7) as u16;
             let cover_h = (r.width / 2).min(r.height.saturating_sub(text_rows + 1));
@@ -830,7 +648,7 @@ fn now_playing(state: &State, area: Rect) -> NowLayout {
     let cover = square_in(area);
     // The caption's rows and a free row each side of it come off the
     // cover above it; wrapping to that cover's width may take more rows.
-    let mut rows = text::caption_lines(state, usize::from(area.width.saturating_sub(4))).len();
+    let mut rows = cells::caption_lines(state, usize::from(area.width.saturating_sub(4))).len();
     let (mut cover_above, mut lines);
     loop {
         let above = Rect {
@@ -839,7 +657,7 @@ fn now_playing(state: &State, area: Rect) -> NowLayout {
         };
         cover_above = square_in(above);
         let x = cover_above.x.max(area.x + 2);
-        lines = text::caption_lines(state, caption_wrap(cover_above, x, area));
+        lines = cells::caption_lines(state, caption_wrap(cover_above, x, area));
         if lines.len() <= rows || cover_above.height == 0 {
             break;
         }
@@ -963,161 +781,17 @@ fn help(state: &State, area: Rect) -> HelpLayout {
     }
 }
 
-/// The label of the button into Karaoke mode.
-pub const KARAOKE_ENTER: &str = "▶  Enter Karaoke Mode";
-/// A slider's label column, in cells.
-pub const SLIDER_LABEL: u16 = 12;
-/// How wide a switch on the Karaoke tab is (" on " or " off ").
-pub const SWITCH: u16 = 5;
-/// A slider's value column (`100 %`, `−200 ms`), in cells.
-const SLIDER_VALUE: u16 = 7;
-/// How wide the sync's button is (` sync `).
-pub const SYNC_BUTTON: u16 = 6;
-/// The sync's panel's height: over the button into the mode and every
-/// row of settings.
-const PANEL: u16 = 12;
-/// The longest a slider's track gets, in cells.
-const SLIDER_MOST: u16 = 40;
-
-/// A slider in the row at `x`, `y`, `width` cells wide: its label, the
-/// track (up to [`SLIDER_MOST`]) and the value after it.
-fn slider_at(slider: Slider, x: u16, y: u16, width: u16) -> SliderLayout {
-    let track = width
-        .saturating_sub(SLIDER_LABEL + SLIDER_VALUE + 1)
-        .min(SLIDER_MOST);
-    let row = Rect::new(x, y, SLIDER_LABEL + track + 1 + SLIDER_VALUE, 1);
-    SliderLayout {
-        slider,
-        row,
-        track: Rect::new(x + SLIDER_LABEL, y, track, 1),
-        value: Rect::new(x + SLIDER_LABEL + track + 1, y, SLIDER_VALUE, 1),
-    }
-}
-
-/// The Karaoke tab inside the list pane's border: the cover at the left,
-/// the title, the button into the mode, the sliders and the sync's row
-/// right of it, notes below; while a sync shows (`session`), its panel
-/// over the button and the rows.
-fn karaoke_tab(inner: Rect, session: Option<&crate::core::sync::Session>) -> KaraokeTabLayout {
-    // The cover as tall as the pane allows, a third of its width at most.
-    let side = Rect::new(
-        inner.x + 1,
-        inner.y + 1,
-        (inner.width / 3).min(inner.height.saturating_sub(2).saturating_mul(2)),
-        inner.height.saturating_sub(2),
-    );
-    let cover = square_in(side);
-    let cover = Rect { y: side.y, ..cover };
-    let x = if cover.width > 0 {
-        cover.right() + 3
-    } else {
-        inner.x + 2
-    };
-    let room = inner.right().saturating_sub(x + 1);
-    let row = |k: u16| (inner.y + 1 + k).min(inner.bottom().saturating_sub(1));
-    let title = Rect::new(x, row(0), room, 2.min(inner.height));
-    let enter_w = (width(KARAOKE_ENTER) as u16 + 4).min(room);
-    let enter = Rect::new(x, row(3), enter_w, 3.min(inner.height.saturating_sub(4)));
-    // A row each from the seventh, the sync's row right after the delay's.
-    let (mut at, mut sync_row, mut sliders) = (7, 0, Vec::new());
-    for &s in &Slider::ALL {
-        sliders.push(slider_at(s, x, row(at), room));
-        at += 1;
-        if s == Slider::Delay {
-            (sync_row, at) = (at, at + 1);
-        }
-    }
-    let sync = Rect::new(x, row(sync_row), (SLIDER_LABEL + SYNC_BUTTON).min(room), 1);
-    // Over the button into the mode and the rows below it.
-    let panel =
-        session.map(|_| Rect::new(x, row(3), room, PANEL.min(inner.height.saturating_sub(4))));
-    // The panel's buttons, side by side on its eighth row inside.
-    let mut panel_buttons = Vec::new();
-    if let (Some(p), Some(session)) = (panel, session) {
-        let mut at = p.x + 2;
-        for (label, op) in session.buttons() {
-            let w = width(label) as u16 + 2;
-            let r = Rect::new(at, p.y + 8, w, 1);
-            if r.right() < p.right() && r.y < p.bottom().saturating_sub(1) {
-                panel_buttons.push((r, op));
-            }
-            at += w + 2;
-        }
-    }
-    // The game's settings, a switch a row.
-    let game = Rect::new(x, row(11), (SLIDER_LABEL + SWITCH).min(room), 1);
-    let show_notes = Rect::new(x, row(12), (SLIDER_LABEL + SWITCH).min(room), 1);
-    let keep = Rect::new(x, row(13), (SLIDER_LABEL + SWITCH).min(room), 1);
-    let notes_y = row(15);
-    let notes = Rect::new(x, notes_y, room, inner.bottom().saturating_sub(notes_y));
-    KaraokeTabLayout {
-        cover,
-        title,
-        enter,
-        sliders,
-        game,
-        show_notes,
-        keep,
-        sync,
-        panel,
-        panel_buttons,
-        notes,
-        voice: None,
-    }
-}
-
-/// Karaoke mode: the whole screen, and the controls' bar over its bottom
-/// while they show (the sliders, the seek bar and the keys; START is the
-/// stage's pill, above the bar). The game's settings are not here but on
-/// the tab: they stay as they are from a song's start to its end.
-fn karaoke_mode(state: &State, area: Rect) -> KaraokeLayout {
-    let controls = karaoke::controls::shown(state).then(|| {
-        let bar = karaoke::controls::bar(area);
-        let room = bar.width.saturating_sub(4);
-        let sliders = Slider::MODE
-            .iter()
-            .enumerate()
-            .map(|(k, &s)| slider_at(s, bar.x + 2, bar.y + 1 + k as u16, room))
-            .collect();
-        // The seek bar as on the other screens: the time, the bar, the
-        // length.
-        let seek_y = bar.y + 1 + Slider::MODE.len() as u16;
-        let time_w = 8u16;
-        let elapsed = Rect::new(bar.x + 1, seek_y, time_w.min(room), 1);
-        let total = Rect::new(
-            (bar.x + 2 + room).saturating_sub(time_w),
-            seek_y,
-            time_w.min(room),
-            1,
-        );
-        let seek = Rect::new(
-            elapsed.right() + 1,
-            seek_y,
-            total.x.saturating_sub(elapsed.right() + 2),
-            1,
-        );
-        KaraokeControls {
-            bar,
-            sliders,
-            elapsed,
-            seek,
-            total,
-            hint: Rect::new(bar.x + 2, seek_y + 1, room, 1),
-        }
-    });
-    KaraokeLayout {
-        screen: area,
-        controls,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::config::Config;
 
-    fn state(cols: u16, rows: u16) -> State {
-        State::new("/music".into(), Config::default(), (cols, rows))
+    /// A state, and the grid it is laid out on.
+    fn state(cols: u16, rows: u16) -> (State, Grid) {
+        (
+            State::new("/music".into(), Config::default()),
+            Grid::new(cols, rows),
+        )
     }
 
     fn inside(inner: Rect, outer: Rect) -> bool {
@@ -1129,8 +803,8 @@ mod tests {
 
     #[test]
     fn wide_main_screen_has_every_pane_inside_the_area() {
-        let s = state(160, 48);
-        let Layout::Main(m) = compute(&s) else {
+        let (s, grid) = state(160, 48);
+        let Layout::Main(m) = compute(&s, grid) else {
             panic!()
         };
         let area = Rect::new(0, 0, 160, 48);
@@ -1161,37 +835,41 @@ mod tests {
 
     #[test]
     fn narrow_screens_drop_the_right_column_and_spectrum() {
-        let s = state(60, 20);
-        let Layout::Main(m) = compute(&s) else {
+        let (s, grid) = state(60, 20);
+        let Layout::Main(m) = compute(&s, grid) else {
             panic!()
         };
         assert!(m.right.is_none() && m.cover.is_none());
         assert_eq!(m.mini.unwrap().height, 2);
         assert_eq!(m.bottom.spectrum.unwrap().height, 3);
-        let s = state(60, 15);
-        let Layout::Main(m) = compute(&s) else {
+        let (s, grid) = state(60, 15);
+        let Layout::Main(m) = compute(&s, grid) else {
             panic!()
         };
         assert!(m.bottom.spectrum.is_none());
         // The list, the two-row summary and the bar fill the height.
         assert_eq!(m.list.height + 2 + 2, 15);
-        assert!(matches!(compute(&state(39, 30)), Layout::TooSmall(_)));
-        assert!(matches!(compute(&state(80, 11)), Layout::TooSmall(_)));
+        let at = |cols, rows| {
+            let (s, grid) = state(cols, rows);
+            compute(&s, grid)
+        };
+        assert!(matches!(at(39, 30), Layout::TooSmall(_)));
+        assert!(matches!(at(80, 11), Layout::TooSmall(_)));
         // Short buttons on narrow screens.
         assert!(m.bottom.buttons.iter().all(|b| width(&b.label) <= 8));
     }
 
     #[test]
     fn medium_sizes_keep_a_cover_when_there_is_room() {
-        let s = state(80, 24);
-        let Layout::Main(m) = compute(&s) else {
+        let (s, grid) = state(80, 24);
+        let Layout::Main(m) = compute(&s, grid) else {
             panic!()
         };
         assert_eq!(m.right.unwrap().width, 28);
         let cover = m.cover.unwrap();
         assert!(cover.height >= 4 && m.info.unwrap().height >= 7);
-        let s = state(100, 18);
-        let Layout::Main(m) = compute(&s) else {
+        let (s, grid) = state(100, 18);
+        let Layout::Main(m) = compute(&s, grid) else {
             panic!()
         };
         // 18 rows: 4 of spectrum and 2 of bar leave 12; the cover gets 4,
@@ -1202,9 +880,9 @@ mod tests {
 
     #[test]
     fn now_playing_is_the_cover_with_a_caption() {
-        let mut s = state(160, 48);
+        let (mut s, grid) = state(160, 48);
         s.screen = Screen::NowPlaying;
-        let Layout::NowPlaying(n) = compute(&s) else {
+        let Layout::NowPlaying(n) = compute(&s, grid) else {
             panic!()
         };
         let screen = Rect::new(0, 0, 160, 48);
@@ -1218,10 +896,10 @@ mod tests {
         assert_eq!(n.caption.x, n.cover_above.x);
         assert!(n.caption.height >= 1 && inside(n.caption, n.cover));
         // No bottom bar.
-        assert!(compute(&s).bottom().is_none());
+        assert!(compute(&s, grid).bottom().is_none());
         // Tall and narrow: the cover takes the width.
-        s.size = (70, 40);
-        let Layout::NowPlaying(n) = compute(&s) else {
+        let grid = Grid::new(70, 40);
+        let Layout::NowPlaying(n) = compute(&s, grid) else {
             panic!()
         };
         assert_eq!(n.cover.width, 70);
@@ -1232,10 +910,10 @@ mod tests {
 
     #[test]
     fn settings_rows_and_device_list() {
-        let mut s = state(100, 30);
+        let (mut s, grid) = state(100, 30);
         s.screen = Screen::Settings;
         s.settings.picking = true;
-        let Layout::Settings(l) = compute(&s) else {
+        let Layout::Settings(l) = compute(&s, grid) else {
             panic!()
         };
         let rows = crate::core::SettingsRow::ALL.len();
@@ -1247,9 +925,9 @@ mod tests {
         }
         // Tall enough: a blank line between rows; short: none, all inside.
         for (height, step) in [(40, 2), (24, 1)] {
-            let mut s = state(100, height);
+            let (mut s, grid) = state(100, height);
             s.screen = Screen::Settings;
-            let Layout::Settings(l) = compute(&s) else {
+            let Layout::Settings(l) = compute(&s, grid) else {
                 panic!()
             };
             assert_eq!(l.lines[1].rect.y - l.lines[0].rect.y, step, "{height} rows");

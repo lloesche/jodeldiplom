@@ -9,15 +9,20 @@
 //! Each part of the screen has its widgets: the list pane ([`list`]), the
 //! command palette over it ([`command_palette`]), what is playing ([`now`]:
 //! the right column and Now playing), the settings ([`settings`]), the
-//! keys ([`help`]) and the bottom bar ([`bottom`]).
+//! keys ([`help`]) and the bottom bar ([`bottom`]). They are laid out on a
+//! grid of cells ([`layout`]), with text measured in cells ([`cells`]),
+//! and take the mouse there ([`mouse`]).
 
 mod bottom;
 pub mod bubbles;
+pub mod cells;
 mod command_palette;
 mod help;
 pub mod karaoke;
 pub mod lanes;
+pub mod layout;
 mod list;
+pub mod mouse;
 mod now;
 pub mod palette;
 pub mod plot;
@@ -35,10 +40,10 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Paragraph, Widget};
 use ratatui::Frame;
 
-use crate::core::layout::{self, Layout};
-use crate::core::text::width;
 use crate::core::State;
 use crate::spectrum::SpectrumFrame;
+use crate::view::cells::width;
+use crate::view::layout::{Grid, Layout};
 
 /// The palette's colours as the cells' colours, for the widgets.
 mod colors {
@@ -101,6 +106,8 @@ pub trait Pictures {
 pub struct Scene<'a> {
     /// The UI state.
     pub state: &'a State,
+    /// The grid it is laid out on.
+    pub grid: Grid,
     /// The spectrum heard now.
     pub spectrum: &'a SpectrumFrame,
     /// The pointer's cell, if it is in the window: the title, artist and
@@ -116,13 +123,13 @@ pub fn draw(frame: &mut Frame, scene: &Scene, pictures: &mut dyn Pictures) {
     let area = frame.area();
     let bg = Style::new().bg(BG).fg(TEXT);
     Block::new().style(bg).render(area, frame.buffer_mut());
-    // The layout is in the state's size; a frame of another size (the
-    // window resized since the state last heard of it) stays blank until
-    // the state catches up, as nothing laid out for it would fit.
-    if (area.width, area.height) != scene.state.size {
+    // The layout is on the scene's grid; a frame of another size (the
+    // window resized since the grid was fitted) stays blank until the grid
+    // catches up, as nothing laid out for it would fit.
+    if (area.width, area.height) != (scene.grid.cols, scene.grid.rows) {
         return;
     }
-    let layout = layout::compute(scene.state);
+    let layout = layout::compute(scene.state, scene.grid);
     match &layout {
         Layout::TooSmall(area) => {
             let text = format!(
@@ -160,7 +167,7 @@ fn bordered(title: Line<'static>) -> Block<'static> {
 }
 
 /// Shortens `text` to `max` cells, keeping its start (unlike
-/// [`crate::core::text::shorten`], a space before the `…` stays).
+/// [`cells::shorten`], a space before the `…` stays).
 fn keep_start(text: &str, max: usize) -> String {
     if width(text) <= max {
         return text.to_owned();

@@ -11,9 +11,10 @@ use ratatui::Frame;
 
 use super::colors::*;
 use super::{keep_start, Pictures, Scene};
-use crate::core::layout::{MainLayout, NowLayout};
 use crate::core::text::{self, Seg, Tone};
 use crate::core::{Rhythm, State};
+use crate::view::cells;
+use crate::view::layout::{MainLayout, NowLayout};
 
 /// How long the pulse stays bright after a beat, in seconds.
 const PULSE_SECONDS: f64 = 0.12;
@@ -21,7 +22,7 @@ const PULSE_SECONDS: f64 = 0.12;
 /// Underlines the links in `lines` drawn in `area` that should look like
 /// links now.
 fn underline_links(buf: &mut Buffer, scene: &Scene, lines: &[Vec<Seg>], area: Rect) {
-    for (rect, _) in crate::core::mouse::link_rects(lines, area) {
+    for (rect, _) in crate::view::mouse::link_rects(lines, area) {
         let shown = scene
             .pointer
             .is_some_and(|(x, y)| rect.contains(ratatui::layout::Position::new(x, y)));
@@ -113,7 +114,7 @@ pub(super) fn draw_column(
         pictures.cover(frame, cover, true);
     }
     if let Some(info) = m.info {
-        let segs = text::info_lines(state, usize::from(info.width));
+        let segs = cells::info_lines(state, usize::from(info.width));
         let lines: Vec<Line> = segs.iter().map(|l| line_at(l, scene)).collect();
         frame.render_widget(Paragraph::new(lines), info);
         underline_links(frame.buffer_mut(), scene, &segs, info);
@@ -147,7 +148,7 @@ fn draw_mini(frame: &mut Frame, state: &State, area: Rect) {
         tone,
     }];
     second.extend(text::signal_path(state).unwrap_or_default());
-    let second = text::wrap(&second, max)
+    let second = cells::wrap(&second, max)
         .into_iter()
         .next()
         .unwrap_or_default();
@@ -184,7 +185,7 @@ pub(super) fn draw_now(
     if over {
         pictures.caption(cover, caption);
     }
-    let segs = text::caption_lines(scene.state, usize::from(caption.width));
+    let segs = cells::caption_lines(scene.state, usize::from(caption.width));
     let lines: Vec<Line> = segs.iter().map(|l| line_at(l, scene)).collect();
     frame.render_widget(Paragraph::new(lines), caption);
     underline_links(frame.buffer_mut(), scene, &segs, caption);

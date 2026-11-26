@@ -15,6 +15,7 @@
 //! desk shows comes in once a drawn frame ([`feed`]).
 
 pub mod meter;
+pub mod shown;
 pub mod strips;
 pub mod taper;
 
@@ -29,6 +30,7 @@ use crate::core::HeadFrame;
 use crate::core::{Effect, Screen, Side, State, DOUBLE_CLICK_MS};
 
 pub use meter::{Meter, Pair};
+pub use shown::strips_shown;
 pub use strips::{Channel, DeskButton, StripKind};
 
 /// What the user set on a strip.
@@ -480,20 +482,10 @@ fn no_fader(state: &mut State) {
     );
 }
 
-/// The strips the arrow keys go through: those drawn (the stems' only
+/// The strips the arrow keys go through: those shown (the stems' only
 /// while the player has them, none the narrowing left out).
 fn channels(state: &State) -> Vec<Channel> {
-    use crate::core::layout::{self, Layout};
-    if let Layout::Main(m) = layout::compute(state) {
-        if let Some(desk) = m.desk {
-            return desk.channels.iter().map(|c| c.channel).collect();
-        }
-    }
-    let stems = state.desk.has_stems();
-    Channel::ALL
-        .into_iter()
-        .filter(|c| stems || !c.is_part())
-        .collect()
+    strips_shown(state.fit.desk_letters, state.desk.has_stems()).strips
 }
 
 fn select_by(state: &mut State, by: isize) {
@@ -647,10 +639,17 @@ mod tests {
     use crate::core::{update, Action};
     use jodel_output::mixer::Timebase;
 
-    fn tab() -> State {
-        let mut s = State::new("/m".into(), Config::default(), (120, 36));
+    /// `config`'s state on the Mixer tab of a 120 × 36 window.
+    fn tab_with(config: Config) -> State {
+        use crate::view::layout::{fit, Grid};
+        let mut s = State::new("/m".into(), config);
+        s.fit = fit(&s, Grid::new(120, 36));
         s.side = Side::Mixer;
         s
+    }
+
+    fn tab() -> State {
+        tab_with(Config::default())
     }
 
     fn desk_fx(fx: &[Effect]) -> Vec<DeskChange> {
@@ -809,8 +808,7 @@ mod tests {
             },
             ..Config::default()
         };
-        let mut s = State::new("/m".into(), config, (120, 36));
-        s.side = Side::Mixer;
+        let mut s = tab_with(config);
         let set = s.desk.setting(StripKind::Effects);
         assert_eq!((set.db, set.mute), (-6.0, true));
         assert!(changes(&s).contains(&DeskChange::Mute(StripKind::Effects, true)));

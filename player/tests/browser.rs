@@ -21,12 +21,11 @@ use jodeldiplom::core::{browser_rows, row_entry, Action, Side};
 
 const WAIT: Duration = Duration::from_secs(30);
 
-fn start(dir: PathBuf, size: (u16, u16)) -> App {
+fn start(dir: PathBuf, (cols, rows): (u16, u16)) -> App {
     let mut options = AppOptions::new(dir);
     options.output = Output::Null(SimClock::Realtime);
-    options.size = size;
     options.devices = std::sync::Arc::new(|| Ok(Vec::new()));
-    App::new(options)
+    common::fitted_app(options, cols, rows)
 }
 
 fn names(app: &App) -> Vec<String> {
@@ -125,10 +124,11 @@ fn details_are_read_for_the_rows_on_screen() {
         .unwrap();
     }
     let mut app = start(big.clone(), (100, 16));
-    let height = jodeldiplom::core::layout::main_for(&app.state)
-        .unwrap()
-        .rows
-        .height as usize;
+    use jodeldiplom::view::layout::{compute, Grid, Layout};
+    let Layout::Main(m) = compute(&app.state, Grid::new(100, 16)) else {
+        panic!("the main screen")
+    };
+    let height = usize::from(m.rows.height);
     assert!(common::wait_for(&mut app, WAIT, |a| {
         !a.state.browser.loading && a.state.pending.is_empty() && !a.state.details.is_empty()
     }));

@@ -1,9 +1,9 @@
-//! The pointer over the old canvas ([`super::embed`]) as the core's mouse
-//! ([`crate::core::mouse`]): its cell, what is drawn in pixels under it
-//! (the stage's START pill: [`crate::core::mouse::action_at`]'s `over`),
-//! the button held, the links under it, and it going out of the window;
-//! and the wheel, for the canvas and the Mixer tab's strips alike, by whole
-//! steps ([`Wheel`]).
+//! The pointer over the old canvas ([`super::embed`]) as the cell
+//! renderer's mouse ([`crate::view::mouse`]): its cell on the canvas's
+//! grid, the button drawn in pixels under it (the stage's START pill:
+//! [`crate::view::mouse::action_at`]'s `over`), the button held, the links
+//! under it, and it going out of the window; and the wheel, for the canvas
+//! and the Mixer tab's strips alike, by whole steps ([`Wheel`]).
 //!
 //! The canvas's widget only forwards what the pointer does over it; this is
 //! the one owner of what is held. A button is let go of wherever the
@@ -14,8 +14,10 @@ use iced::mouse::ScrollDelta;
 
 use crate::app::App;
 use crate::core::desk::Channel;
-use crate::core::mouse::{self, MouseButton, MouseInput, MouseKind, Target};
+use crate::core::keymap::Op;
 use crate::core::Action;
+use crate::view::layout::Grid;
+use crate::view::mouse::{self, MouseButton, MouseInput, MouseKind, Target};
 
 /// What the pointer did over the old canvas.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -41,14 +43,14 @@ pub struct Pointer {
     pub y: f64,
     /// Over the canvas (not off it, nor under the window's own widgets).
     pub over: bool,
-    /// The target drawn in pixels under it (Karaoke mode's START pill), as
-    /// the stage drew it last.
-    pub on: Option<Target>,
+    /// What the button drawn in pixels under it does (Karaoke mode's START
+    /// pill), as the stage drew it last.
+    pub on: Option<Op>,
 }
 
 impl Pointer {
-    /// Its cell, within `size` cells.
-    fn cell(&self, (cols, rows): (u16, u16)) -> (u16, u16) {
+    /// Its cell on `grid`.
+    fn cell(&self, Grid { cols, rows, .. }: Grid) -> (u16, u16) {
         (
             (self.x.max(0.0) as u16).min(cols.saturating_sub(1)),
             (self.y.max(0.0) as u16).min(rows.saturating_sub(1)),
@@ -66,8 +68,8 @@ pub struct PointerState {
     x: f64,
     /// Its cell while it is over the canvas (links underline under it).
     inside: Option<(u16, u16)>,
-    /// The target drawn in pixels under it.
-    on: Option<Target>,
+    /// What the button drawn in pixels under it does.
+    on: Option<Op>,
     held: Option<MouseButton>,
 }
 
@@ -77,11 +79,12 @@ impl PointerState {
         self.inside
     }
 
-    /// The pointer moved, or went down over the canvas (`shift` held: the
-    /// shifted action); whether the frame is to be drawn again.
-    pub fn take(&mut self, app: &mut App, pointer: Pointer, shift: bool) -> bool {
-        let cell = pointer.cell(app.state.size);
-        let x = pointer.x.min(f64::from(app.state.size.0));
+    /// The pointer moved, or went down over the canvas laid out on `grid`
+    /// (`shift` held: the shifted action); whether the frame is to be
+    /// drawn again.
+    pub fn take(&mut self, app: &mut App, grid: Grid, pointer: Pointer, shift: bool) -> bool {
+        let cell = pointer.cell(grid);
+        let x = pointer.x.min(f64::from(grid.cols));
         self.on = pointer.on;
         match pointer.kind {
             PointerKind::Moved => {
@@ -89,9 +92,9 @@ impl PointerState {
                 self.x = x;
                 let inside = pointer.over.then_some(cell);
                 let out = inside.is_none() && self.inside.is_some();
-                let mut dirty = inside != self.inside && self.hover(app, inside);
+                let mut dirty = inside != self.inside && self.hover(app, grid, inside);
                 if out {
-                    dirty |= self.mouse(app, MouseKind::Out, shift);
+                    dirty |= self.mouse(app, grid, MouseKind::Out, shift);
                 }
                 // A Karaoke slider held follows the pointer within a cell.
                 let sliding =
@@ -99,30 +102,30 @@ impl PointerState {
                 let karaoke = pointer.over && crate::core::karaoke::in_mode(&app.state);
                 if cell == self.cell {
                     if moved && sliding {
-                        dirty |= self.mouse(app, MouseKind::Drag(MouseButton::Left), shift);
+                        dirty |= self.mouse(app, grid, MouseKind::Drag(MouseButton::Left), shift);
                     } else if karaoke && self.held.is_none() {
                         // Karaoke mode's pointer shows again for a move
                         // within a cell too; nothing on the canvas changes.
-                        self.mouse(app, MouseKind::Moved, shift);
+                        self.mouse(app, grid, MouseKind::Moved, shift);
                     }
                     return dirty;
                 }
                 self.cell = cell;
                 if let Some(button) = self.held {
                     // A held button drags wherever the pointer is.
-                    dirty |= self.mouse(app, MouseKind::Drag(button), shift);
+                    dirty |= self.mouse(app, grid, MouseKind::Drag(button), shift);
                 } else if karaoke || (pointer.over && crate::core::preview::held(&app.state)) {
                     // Karaoke mode shows its pointer, and its controls near
                     // the bottom, while it moves; a preview selects the row
                     // under it.
-                    dirty |= self.mouse(app, MouseKind::Moved, shift);
+                    dirty |= self.mouse(app, grid, MouseKind::Moved, shift);
                 }
                 dirty
             }
             PointerKind::Down(button) => {
                 (self.cell, self.x) = (cell, x);
                 self.held = Some(button);
-                self.mouse(app, MouseKind::Down(button), shift)
+                self.mouse(app, grid, MouseKind::Down(button), shift)
             }
             // The window turns the wheel into steps ([`PointerState::scroll`]).
             PointerKind::Wheel(_) => false,
@@ -131,8 +134,8 @@ impl PointerState {
 
     /// A button let go of, wherever the pointer is: dropped unless it is
     /// the one held.
-    pub fn up(&mut self, app: &mut App, button: MouseButton, shift: bool) -> bool {
-        self.release(button) && self.mouse(app, MouseKind::Up(button), shift)
+    pub fn up(&mut self, app: &mut App, grid: Grid, button: MouseButton, shift: bool) -> bool {
+        self.release(button) && self.mouse(app, grid, MouseKind::Up(button), shift)
     }
 
     /// `button` let go of: whether it was the one held.
@@ -145,26 +148,33 @@ impl PointerState {
     }
 
     /// The wheel `steps` whole lines up (negative: down) at `pointer`.
-    pub fn scroll(&mut self, app: &mut App, pointer: Pointer, steps: i32, shift: bool) -> bool {
-        (self.cell, self.x) = (pointer.cell(app.state.size), pointer.x);
+    pub fn scroll(
+        &mut self,
+        app: &mut App,
+        grid: Grid,
+        pointer: Pointer,
+        steps: i32,
+        shift: bool,
+    ) -> bool {
+        (self.cell, self.x) = (pointer.cell(grid), pointer.x);
         self.on = pointer.on;
         let kind = if steps > 0 {
             MouseKind::ScrollUp
         } else {
             MouseKind::ScrollDown
         };
-        (0..steps.unsigned_abs()).fold(false, |dirty, _| self.mouse(app, kind, shift) | dirty)
+        (0..steps.unsigned_abs()).fold(false, |dirty, _| self.mouse(app, grid, kind, shift) | dirty)
     }
 
     /// What `kind` at the pointer does, carried out (the clock first);
     /// whether it did anything.
-    fn mouse(&self, app: &mut App, kind: MouseKind, shift: bool) -> bool {
+    fn mouse(&self, app: &mut App, grid: Grid, kind: MouseKind, shift: bool) -> bool {
         let input = MouseInput {
             kind,
             col: self.cell.0,
             row: self.cell.1,
         };
-        let mut action = mouse::action_at(&app.state, input, self.x, self.on);
+        let mut action = mouse::action_at(&app.state, grid, input, self.x, self.on);
         if shift {
             action = action.map(mouse::shifted);
         }
@@ -178,10 +188,10 @@ impl PointerState {
 
     /// Moves the pointer to `inside` (none: off the canvas); whether it
     /// entered or left a link.
-    fn hover(&mut self, app: &App, inside: Option<(u16, u16)>) -> bool {
+    fn hover(&mut self, app: &App, grid: Grid, inside: Option<(u16, u16)>) -> bool {
         let link = |at: Option<(u16, u16)>| {
-            at.and_then(|(col, row)| match mouse::hit(&app.state, col, row) {
-                Some(mouse::Target::Link(op)) => Some(op),
+            at.and_then(|(col, row)| match mouse::hit(&app.state, grid, col, row) {
+                Some(Target::Link(op)) => Some(op),
                 _ => None,
             })
         };

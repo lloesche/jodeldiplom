@@ -9,11 +9,11 @@ use std::sync::Arc;
 use iced::keyboard::{key::Named, Key as IcedKey, Modifiers};
 use image::Rgb;
 use jodeldiplom::art::{sample_cover, Art};
-use jodeldiplom::core::layout::{self, Layout};
 use jodeldiplom::core::{update, Screen, State};
 use jodeldiplom::gui::{self, font_px, Canvas};
 use jodeldiplom::icon::Style;
 use jodeldiplom::spectrum::{sine, tap_frames_for, Analyzer, SpectrumFrame};
+use jodeldiplom::view::layout::{self, Grid, Layout};
 use jodeldiplom::view::{self, palette, Plot, Scene};
 use ratatui::layout::Rect;
 
@@ -42,6 +42,7 @@ fn spectrum(rate: u32, hz: f64) -> SpectrumFrame {
 fn draw(canvas: &mut Canvas, state: &State, spectrum: &SpectrumFrame, art: Option<&Art>) {
     let scene = Scene {
         state,
+        grid: canvas.grid(),
         spectrum,
         pointer: None,
         heard: 0.0,
@@ -51,9 +52,7 @@ fn draw(canvas: &mut Canvas, state: &State, spectrum: &SpectrumFrame, art: Optio
 
 fn sized(canvas: &mut Canvas, w: u32, h: u32) -> State {
     let grid = canvas.fit(w, h);
-    let mut state = common::playing_state(grid.0, grid.1);
-    state.size = grid;
-    state
+    common::playing_state(grid.cols, grid.rows)
 }
 
 fn pixel_rect(canvas: &Canvas, rect: Rect) -> (u32, u32, u32, u32) {
@@ -78,9 +77,12 @@ fn the_cover_and_the_spectrum_are_painted_in_their_cells() {
     draw(&mut canvas, &state, &spectrum, Some(&art));
     let image = canvas.image();
     let (cw, ch) = canvas.cell();
-    assert_eq!(image.width() as usize, usize::from(state.size.0) * cw);
-    assert_eq!(image.height() as usize, usize::from(state.size.1) * ch);
-    let Layout::Main(m) = layout::compute(&state) else {
+    assert_eq!(image.width() as usize, usize::from(canvas.grid().cols) * cw);
+    assert_eq!(
+        image.height() as usize,
+        usize::from(canvas.grid().rows) * ch
+    );
+    let Layout::Main(m) = layout::compute(&state, canvas.grid()) else {
         panic!("not the main screen")
     };
 
@@ -171,7 +173,7 @@ fn leaving_a_screen_removes_its_pictures() {
     };
     let spectrum = spectrum(96_000, 3_000.0);
     draw(&mut canvas, &state, &spectrum, Some(&art));
-    let Layout::Main(m) = layout::compute(&state) else {
+    let Layout::Main(m) = layout::compute(&state, canvas.grid()) else {
         panic!()
     };
     let (x, y, w, h) = pixel_rect(&canvas, m.cover.unwrap());
@@ -188,7 +190,7 @@ fn leaving_a_screen_removes_its_pictures() {
     // Now playing paints the cover bigger.
     state.screen = Screen::NowPlaying;
     draw(&mut canvas, &state, &spectrum, Some(&art));
-    let Layout::NowPlaying(n) = layout::compute(&state) else {
+    let Layout::NowPlaying(n) = layout::compute(&state, canvas.grid()) else {
         panic!()
     };
     let big = n.cover;
@@ -210,13 +212,16 @@ fn now_playing_is_the_cover_with_the_caption_over_it() {
     };
     let spectrum = spectrum(176_400, 1_000.0);
     draw(&mut canvas, &state, &spectrum, Some(&art));
-    let Layout::NowPlaying(n) = layout::compute(&state) else {
+    let Layout::NowPlaying(n) = layout::compute(&state, canvas.grid()) else {
         panic!()
     };
     let image = canvas.image();
     let (x, y, w, h) = pixel_rect(&canvas, n.cover);
     // The cover fills the screen's height at full resolution, centred.
-    assert_eq!(h as usize, usize::from(state.size.1) * canvas.cell().1);
+    assert_eq!(
+        h as usize,
+        usize::from(canvas.grid().rows) * canvas.cell().1
+    );
     assert_eq!(image.get_pixel(x + w / 2, y + h / 4).0, [235, 225, 210]);
     assert_eq!(*image.get_pixel(x / 2, y + h / 2), bg());
     // The caption: title, artist and album, the status light; nothing else.
@@ -264,7 +269,7 @@ fn frames_in_a_row_end_as_the_last_drawn_afresh() {
     };
     let mut later = main.clone();
     later.playing.position += 7.0;
-    let mut tab = common::transition_state(main.size.0, main.size.1);
+    let mut tab = common::transition_state(canvas.grid().cols, canvas.grid().rows);
     tab.drawn_heard = Some(tab.playing.position);
     let mut tab_later = tab.clone();
     tab_later.playing.position += 0.5;
@@ -361,6 +366,7 @@ fn transition_frames_in_a_row_are_as_drawn_afresh() {
 fn draw_heard(canvas: &mut Canvas, state: &State, tone: &SpectrumFrame, art: Option<&Art>) {
     let scene = Scene {
         state,
+        grid: canvas.grid(),
         spectrum: tone,
         pointer: None,
         heard: state.heard(),
@@ -402,11 +408,7 @@ fn gpu_frames(srgb: bool) {
     // Not a whole number of cells: the background shows beyond them.
     let (mut width, mut height) = (2411, 1507);
     let grid = canvas.fit(width, height);
-    let main = {
-        let mut s = common::playing_state(grid.0, grid.1);
-        s.size = grid;
-        s
-    };
+    let main = common::playing_state(grid.cols, grid.rows);
     let mut steps: Vec<(String, State, usize)> = vec![
         ("main".into(), main.clone(), 0),
         ("main, the spectrum moved".into(), main.clone(), 1),
@@ -438,7 +440,7 @@ fn gpu_frames(srgb: bool) {
     (width, height) = (1900, 1200);
     let grid = canvas.fit(width, height);
     let mut small = main.clone();
-    small.size = grid;
+    small.fit = layout::fit(&small, grid);
     draw_heard(&mut canvas, &small, &tones[0], Some(&art));
     let changes = canvas.take_changes();
     let got = gpu.show(&canvas, &changes, width, height, None).unwrap();
@@ -466,9 +468,8 @@ fn layer_frames(srgb: bool) {
         return;
     };
     let (mut flat, mut layered, grid) = layer_canvases();
-    let mut state = common::transition_state(grid.0, grid.1);
+    let mut state = common::transition_state(grid.cols, grid.rows);
     state.side = jodeldiplom::core::Side::Karaoke;
-    state.size = grid;
     common::sung_every(&mut state, 0.5);
     // In C major: the scale's lines across the lane, the notes on them.
     for r in state.rhythm.values_mut() {
@@ -510,8 +511,7 @@ fn the_transition_lanes_scrolled_by_the_gpu_are_the_lanes_painted() {
             return;
         };
         let (mut flat, mut layered, grid) = layer_canvases();
-        let mut state = common::transition_state(grid.0, grid.1);
-        state.size = grid;
+        let mut state = common::transition_state(grid.cols, grid.rows);
         sung(&mut state);
         let mut step = |state: &mut State, time: f64, name: &str| {
             same_through_layer(&mut gpu, &mut flat, &mut layered, state, time, name);
@@ -541,7 +541,7 @@ fn layer_gpu(srgb: bool) -> Option<jodeldiplom::gui::present::Offscreen> {
 const LAYER_SIZE: (u32, u32) = (2411, 1507);
 
 /// Two canvases for one window: the lanes in the pixmap, and in a layer.
-fn layer_canvases() -> (Canvas, Canvas, (u16, u16)) {
+fn layer_canvases() -> (Canvas, Canvas, Grid) {
     let mut flat = Canvas::new(80, 24, font_px(2.0));
     let mut layered = Canvas::new(80, 24, font_px(2.0));
     layered.set_gpu(true);
@@ -617,10 +617,10 @@ fn same_through_layer(
 /// fractions of a pixel and by several, back after a seek, held with the
 /// playhead going across it, the cursor and a selection moving, a
 /// transition's curves shown, a zoom.
-fn transition_steps(grid: (u16, u16)) -> Vec<(String, State)> {
+fn transition_steps(grid: Grid) -> Vec<(String, State)> {
     use jodeldiplom::core::keymap::Op;
     use jodeldiplom::core::{update, Action};
-    let mut state = common::transition_state(grid.0, grid.1);
+    let mut state = common::transition_state(grid.cols, grid.rows);
     sung(&mut state);
     let at = |state: &mut State, seconds: f64| {
         state.playing.position = seconds;
@@ -727,12 +727,11 @@ fn hidpi_doubles_the_cells() {
     let g1 = c1.fit(1280, 800);
     let g2 = c2.fit(2560, 1600);
     assert!(
-        g1.0.abs_diff(g2.0) <= 2 && g1.1.abs_diff(g2.1) <= 2,
+        g1.cols.abs_diff(g2.cols) <= 2 && g1.rows.abs_diff(g2.rows) <= 2,
         "{g1:?} {g2:?}"
     );
     // Without a cover the placeholder is drawn in cells.
-    let mut state = common::playing_state(g1.0, g1.1);
-    state.size = g1;
+    let state = common::playing_state(g1.cols, g1.rows);
     let empty = SpectrumFrame::default();
     draw(&mut c1, &state, &empty, None);
     assert!(c1.text().contains('♪'));
@@ -807,12 +806,11 @@ fn the_macos_icon_file_matches_the_drawing() {
 fn the_transition_lanes_are_painted_in_pixels() {
     let mut canvas = Canvas::new(80, 24, font_px(1.0));
     let grid = canvas.fit(1600, 1000);
-    let mut state = common::transition_state(grid.0, grid.1);
-    state.size = grid;
+    let state = common::transition_state(grid.cols, grid.rows);
     let spectrum = spectrum(176_400, 1_000.0);
     draw(&mut canvas, &state, &spectrum, None);
     let image = canvas.image();
-    let Layout::Main(m) = layout::compute(&state) else {
+    let Layout::Main(m) = layout::compute(&state, canvas.grid()) else {
         panic!("the main screen");
     };
     let tab = m.transition.expect("the Transition tab");
@@ -848,15 +846,14 @@ fn the_bar_numbers_start_at_their_bars_to_the_pixel() {
     use jodeldiplom::core::transition::viewport;
     let mut canvas = Canvas::new(80, 24, font_px(1.0));
     let grid = canvas.fit(1600, 1000);
-    let mut state = common::transition_state(grid.0, grid.1);
-    state.size = grid;
+    let mut state = common::transition_state(grid.cols, grid.rows);
     // A view that starts between cells.
     state.transition.now.path = lanes::path(&state, Block::Now).cloned();
     state.transition.now.start = Some(10.123);
     let spectrum = spectrum(176_400, 1_000.0);
     draw(&mut canvas, &state, &spectrum, None);
     let image = canvas.image();
-    let Layout::Main(m) = layout::compute(&state) else {
+    let Layout::Main(m) = layout::compute(&state, canvas.grid()) else {
         panic!("the main screen");
     };
     let ruler = m.transition.unwrap().blocks[0].ruler;
@@ -891,8 +888,7 @@ fn after_a_track_change_the_next_block_is_blank_until_its_analysis_is_in() {
     use jodeldiplom::core::{update, Action};
     let mut canvas = Canvas::new(80, 24, font_px(1.0));
     let grid = canvas.fit(1600, 1000);
-    let mut state = common::transition_state(grid.0, grid.1);
-    state.size = grid;
+    let mut state = common::transition_state(grid.cols, grid.rows);
     let spectrum = spectrum(176_400, 1_000.0);
     draw(&mut canvas, &state, &spectrum, None);
     // The next track starts; the one after it is not analysed yet.
@@ -915,7 +911,7 @@ fn after_a_track_change_the_next_block_is_blank_until_its_analysis_is_in() {
     state.drawn_heard = Some(0.0);
     draw(&mut canvas, &state, &spectrum, None);
     let image = canvas.image();
-    let Layout::Main(m) = layout::compute(&state) else {
+    let Layout::Main(m) = layout::compute(&state, canvas.grid()) else {
         panic!("the main screen");
     };
     let tab = m.transition.unwrap();
@@ -1072,10 +1068,9 @@ fn the_stage_draws_the_lane_over_the_pixmap() {
 fn the_canvas_leaves_the_mixer_tab_to_the_window() {
     let mut canvas = Canvas::new(80, 24, font_px(1.0));
     let grid = canvas.fit(1280, 800);
-    let mut state = common::desk_state(grid.0, grid.1);
-    state.size = grid;
+    let state = common::desk_state(grid.cols, grid.rows);
     draw(&mut canvas, &state, &spectrum(176_400, 1_000.0), None);
-    let Layout::Main(m) = layout::compute(&state) else {
+    let Layout::Main(m) = layout::compute(&state, canvas.grid()) else {
         panic!("the main screen");
     };
     assert!(m.desk.is_some(), "the desk is laid out");

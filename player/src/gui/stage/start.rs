@@ -12,7 +12,6 @@ use super::super::stage_gpu::Instance;
 use super::result::Pen;
 use super::{pill, rgba, Face, Stage, GOLD_DEEP, GOLD_TOP, WHITE};
 use crate::core::keymap::Op;
-use crate::core::mouse::Target;
 use crate::view::karaoke::KaraokePicture;
 
 /// The middle of START's line: a share of the height, unless the controls'
@@ -122,7 +121,7 @@ impl Stage {
         self.written(out, start, (px, scale), (c, 0.5), white, Pen::SHADED);
         if shows > 0.0 {
             let at = [c.0 - half.0, c.1 - half.1, c.0 + half.0, c.1 + half.1];
-            self.targets.push((at, Target::Button(Op::KaraokeStart)));
+            self.targets.push((at, Op::KaraokeStart));
         }
     }
 }

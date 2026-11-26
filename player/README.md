@@ -1202,8 +1202,8 @@ The capitals keep their commands here (`M` the beat pulse, `S` stop);
 
 | Module | |
 |---|---|
-| `core` | state, `Action`, `update(state, action) -> effects`, layout in cells with its collapse rules, keymap, mouse regions; the Transition tab (`core::transition::tab`, the lanes it shares with Karaoke in `core::lanes`), the grid fixes (`core::grid`), the transitions' presets and plans (`core::transition`), the Karaoke tab and mode (`core::karaoke`, its sliders in `core::sliders`), the key the song plays in (`core::key`), the Mixer tab's desk (`core::desk`: its strips, settings, the fader's taper, the meters' ballistics, the actions its widgets send) and the stems on it (`core::stems`: the stem keys as strip mutes on a bar of the head on air, when the engine makes stems, the Karaoke voice's lanes on both heads). Pure. |
-| `view` | the ratatui widgets, drawing the state into cells; the cover, the spectrum, the Transition tab's lanes (`view::transition`, with `view::lanes`, which the Karaoke tab shares) and Karaoke mode's picture (`view::karaoke`) go through `view::Pictures`, which the window paints in pixels (Karaoke mode's picture in `gui::karaoke`). The Mixer tab's rows are left empty: the window draws the desk there |
+| `core` | state, `Action`, `update(state, action) -> effects`, keymap; no geometry: what the window's size does to the keys and the pointer comes in as `core::Fit`; the Transition tab (`core::transition::tab`, the lanes it shares with Karaoke in `core::lanes`), the grid fixes (`core::grid`), the transitions' presets and plans (`core::transition`), the Karaoke tab and mode (`core::karaoke`, its sliders in `core::sliders`), the key the song plays in (`core::key`), the Mixer tab's desk (`core::desk`: its strips, settings, the fader's taper, the meters' ballistics, the actions its widgets send) and the stems on it (`core::stems`: the stem keys as strip mutes on a bar of the head on air, when the engine makes stems, the Karaoke voice's lanes on both heads). Pure. |
+| `view` | the ratatui widgets, drawing the state into cells, with the cell renderer's own layout and its collapse rules (`view::layout`, which also reports the `Fit`), mouse regions (`view::mouse`) and text measured in cells (`view::cells`); the cover, the spectrum, the Transition tab's lanes (`view::transition`, with `view::lanes`, which the Karaoke tab shares) and Karaoke mode's picture (`view::karaoke`) go through `view::Pictures`, which the window paints in pixels (Karaoke mode's picture in `gui::karaoke`). The Mixer tab's rows are left empty: the window draws the desk there |
 | `app` | the running player: the engine and its desk, background workers, the spectrum (the mixer's monitor), cover; carries out the effects |
 | `desk_wiring` | the desk the engine plays on: a mixer that holds the device (`jodel_output::mixer`), the player's strip with its stems' strips inside it, the preview's, the engine on two lane inputs of them (its two heads: a transition's next track plays on the other); the Mixer tab's settings made on it, its look for a frame |
 | `preview` | the preview's players, guests on the mixer (one per file, two at most): only the latest file loaded, crossfades on the mixer's clock, the song ducked and back |
@@ -1254,7 +1254,7 @@ Every other screen is the old canvas, drawn as before and shown in one
 widget filling the window under the ported ones (`gui::embed`; what shows
 is chosen in `gui::screens`, and `gui::pacer` around it all ticks at the
 display's refresh from inside each redraw); the
-pointer over it goes to `core::mouse` in cells. On the GPU that widget is
+pointer over it goes to `view::mouse` in cells. On the GPU that widget is
 iced's shader widget (`gui::embed_gpu`), with Karaoke mode's stage drawn
 over it in the same pass; on the processor, an image.
 

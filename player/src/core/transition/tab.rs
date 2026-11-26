@@ -33,11 +33,12 @@ pub const NUDGE: f64 = 0.005;
 pub struct Pan {
     /// The block.
     pub block: Block,
-    /// Seconds a cell column is worth (negative: the view follows the
-    /// pointer, as on the whole track; positive: the waveform does).
-    pub per_column: f64,
-    /// The column it started at.
-    pub column: u16,
+    /// Seconds a unit across is worth, in the window's units (negative:
+    /// the view follows the pointer, as on the whole track; positive: the
+    /// waveform does).
+    pub per_unit: f64,
+    /// Where across it started.
+    pub at: f32,
     /// The view's start then.
     pub start: f64,
 }

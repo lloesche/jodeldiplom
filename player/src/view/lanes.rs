@@ -13,11 +13,11 @@
 
 use std::sync::Arc;
 
+use jodel_playback::Stem;
 use jodel_rhythm::waveform::{self, Waveform};
 use ratatui::layout::Rect;
 
-use crate::core::lanes::{self, WordLines};
-use crate::core::layout::Lane;
+use crate::core::lanes::{self, Lane, WordLines};
 
 /// The selection, behind the waveform.
 pub const SELECT_BG: [u8; 3] = [58, 58, 86];
@@ -58,10 +58,10 @@ pub fn lane_color(lane: Lane) -> [u8; 3] {
         // reddish purple): told apart with every common colour-vision
         // deficiency; the whole song a neutral grey.
         Lane::Song => [169, 171, 181],
-        Lane::Drums => [230, 159, 0],
-        Lane::Bass => [86, 180, 233],
-        Lane::Other => [0, 158, 115],
-        Lane::Vocals => [204, 121, 167],
+        Lane::Stem(Stem::Drums) => [230, 159, 0],
+        Lane::Stem(Stem::Bass) => [86, 180, 233],
+        Lane::Stem(Stem::Other) => [0, 158, 115],
+        Lane::Stem(Stem::Vocals) => [204, 121, 167],
     }
 }
 
@@ -341,7 +341,7 @@ impl WavePlot {
 
     /// The lane's levels.
     pub fn levels(&self) -> Option<&waveform::Lane> {
-        match self.lane.stem() {
+        match self.lane.stem_index() {
             None => Some(&self.waveform.mix),
             Some(i) => self.waveform.stems.as_ref().map(|s| &s[i]),
         }

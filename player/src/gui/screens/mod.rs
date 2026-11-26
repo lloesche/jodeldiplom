@@ -14,8 +14,8 @@ use iced::{Element, Widget as _};
 use super::embed::Embed;
 use super::mixer;
 use super::window::Message;
-use crate::core::layout::{self, Layout};
 use crate::core::State;
+use crate::view::layout::{self, Layout};
 
 pub mod setup;
 
@@ -52,7 +52,7 @@ fn desk<'a>(
     embed: &Embed,
     caps: &'a mixer::Caps,
 ) -> Option<Element<'a, Message>> {
-    let Layout::Main(m) = layout::compute(state) else {
+    let Layout::Main(m) = layout::compute(state, embed.grid()) else {
         return None;
     };
     let (Some(desk), None) = (&m.desk, &state.palette) else {

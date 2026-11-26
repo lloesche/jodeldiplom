@@ -2,16 +2,16 @@
 //! draws.
 //!
 //! - [`State`]: what the player shows and knows.
-//! - [`Action`]: every input, from keys and the mouse (through [`keymap`]
-//!   and [`mouse`]) and from the engine and the background workers.
+//! - [`Action`]: every input, from keys (through [`keymap`]) and the
+//!   pointer, and from the engine and the background workers.
 //! - [`update`]: `(state, action) -> effects`, pure. The [`Effect`]s are
 //!   carried out by [`crate::app::App`].
-//! - [`layout`]: the panes in cell units, how they collapse on small
-//!   sizes, and the rects the mouse can hit.
+//! - [`Fit`]: what the window's size does to the keys and the pointer, as
+//!   the window reports it; the core keeps no geometry of its own.
 //! - [`keymap`]: the one table of key bindings, from which the help screen
 //!   and the command palette are generated.
-//! - [`text`]: the strings the widgets draw and the mouse needs to
-//!   locate (the signal path, the list toggle, rows, chips).
+//! - [`text`]: the strings the screens show (the signal path, the list
+//!   toggle, the status light).
 //!
 //! The window translates its input into [`Action`]s and draws [`State`]
 //! with the [`crate::view`] widgets.
@@ -19,15 +19,14 @@
 pub mod action;
 pub mod bubbles;
 pub mod desk;
+mod fit;
 pub mod grid;
 pub mod karaoke;
 pub mod key;
 pub mod keymap;
 pub mod lag;
 pub mod lanes;
-pub mod layout;
 pub mod mic;
-pub mod mouse;
 pub mod preview;
 pub mod shine;
 pub mod singing;
@@ -49,6 +48,7 @@ use jodel_playback::{PlayState, Route, Settings, TrackInfo};
 pub use action::{
     Action, Effect, Facts, Heard, Job, LyricsFacts, Placing, RhythmFacts, WalkPurpose,
 };
+pub use fit::Fit;
 pub use update::{
     browser_rows, device_window, folder_window, help_line_count, help_shown, list_cursor, list_len,
     palette_window, readiness, row_entry, shown_title, update, visible_missing, Readiness, Row,
@@ -640,12 +640,9 @@ pub struct Click {
 /// Everything the UI shows and knows.
 #[derive(Clone, Debug)]
 pub struct State {
-    /// The window size in cells: columns, rows.
-    pub size: (u16, u16),
-    /// The widest right-column text seen since the last resize, in cells.
-    /// The column keeps this width, so it does not narrow and widen again
-    /// while one track gives way to the next.
-    pub info_width_held: usize,
+    /// What the window's size does to the keys and the pointer, as last
+    /// reported ([`Action::Fit`]).
+    pub fit: Fit,
     /// Milliseconds since the start, from [`Action::Tick`].
     pub now_ms: u64,
     /// The screen shown.
@@ -759,14 +756,14 @@ impl State {
         .min()
     }
 
-    /// A state with the browser in `dir`, the given settings and size.
-    pub fn new(dir: PathBuf, config: Config, size: (u16, u16)) -> State {
+    /// A state with the browser in `dir` and the given settings, before the
+    /// window has reported its size ([`State::fit`]).
+    pub fn new(dir: PathBuf, config: Config) -> State {
         let desk = desk::DeskState::new(&config);
         let transition =
             transition::tab::TransitionTab::with(config.transition_preset, config.transition_tempo);
         State {
-            size,
-            info_width_held: 0,
+            fit: Fit::default(),
             now_ms: 0,
             screen: Screen::Main,
             side: Side::Browser,

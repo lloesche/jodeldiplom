@@ -38,8 +38,9 @@ mod tests {
     use super::*;
     use crate::config::Config;
     use crate::core::karaoke::controls::pointer_moved;
-    use crate::core::mouse::{action, MouseButton, MouseInput, MouseKind};
     use crate::core::{Action, Screen};
+    use crate::view::layout::{fit, Grid};
+    use crate::view::mouse::{action, from_bottom, MouseButton, MouseInput, MouseKind};
 
     /// The rule alone: out of the mode never; in it, from [`IDLE_MS`]
     /// still.
@@ -59,12 +60,15 @@ mod tests {
     /// counts as a move.
     #[test]
     fn the_pointer_hides_when_still_and_shows_when_moved_or_out() {
-        let mut state = State::new("/m".into(), Config::default(), (100, 40));
+        let grid = Grid::new(100, 40);
+        let mut state = State::new("/m".into(), Config::default());
+        state.fit = fit(&state, grid);
         state.screen = Screen::Karaoke;
         state.now_ms = 10_000;
-        let rows = state.size.1;
+        let rows = grid.rows;
+        let row = |row| from_bottom(rows, row);
         // Still since a move in the middle.
-        pointer_moved(&mut state, rows / 2);
+        pointer_moved(&mut state, row(rows / 2));
         assert_eq!(due(&state), Some(12_500));
         state.now_ms = 12_499;
         assert!(!hidden(&state));
@@ -72,7 +76,7 @@ mod tests {
         assert!(hidden(&state) && due(&state).is_none());
         // A move shows it at once; at the bottom, the controls up, it
         // still hides on time.
-        pointer_moved(&mut state, rows - 1);
+        pointer_moved(&mut state, row(rows - 1));
         assert!(!hidden(&state));
         state.now_ms = 15_000;
         assert!(hidden(&state) && super::super::controls::shown(&state));
@@ -83,8 +87,8 @@ mod tests {
             row: 4,
         };
         assert!(matches!(
-            action(&state, drag),
-            Some(Action::PointerMoved { row: 4 })
+            action(&state, grid, drag),
+            Some(Action::PointerMoved { from_bottom }) if from_bottom == row(4)
         ));
         // Out of the mode it shows, however long it was still.
         crate::core::karaoke::leave(&mut state, &mut Vec::new());

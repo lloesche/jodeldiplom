@@ -17,11 +17,12 @@ use super::colors::*;
 use super::{keep_start, Pictures, Scene};
 use crate::core::karaoke;
 use crate::core::lanes::{self, WordLines};
-use crate::core::layout::SWITCH;
-use crate::core::layout::{KaraokeTabLayout, SliderLayout, KARAOKE_ENTER};
 use crate::core::sliders::Slider;
-use crate::core::text::{self, width};
+use crate::core::text;
 use crate::core::{Gpu, State};
+use crate::view::cells::width;
+use crate::view::layout::SWITCH;
+use crate::view::layout::{KaraokeTabLayout, SliderLayout, KARAOKE_ENTER};
 
 mod mode;
 mod result;
@@ -258,9 +259,9 @@ pub const VOICE_LEAD: f64 = 1.0 / 3.0;
 
 /// The voice's lane of the song playing, its words on it as they are sung.
 fn draw_voice(frame: &mut Frame, scene: &Scene, area: Rect, pictures: &mut dyn Pictures) {
-    use crate::core::lanes::{rhythmed, Block};
-    use crate::core::layout::Lane;
+    use crate::core::lanes::{rhythmed, Block, Lane};
     use crate::view::lanes::{lane_color, WavePlot};
+    use jodel_playback::Stem;
     let state = scene.state;
     let r = rhythmed(state, Block::Now);
     let waveform = r
@@ -297,10 +298,10 @@ fn draw_voice(frame: &mut Frame, scene: &Scene, area: Rect, pictures: &mut dyn P
         &WavePlot {
             area,
             waveform,
-            lane: Lane::Vocals,
+            lane: Lane::Stem(Stem::Vocals),
             start,
             end,
-            color: lane_color(Lane::Vocals),
+            color: lane_color(Lane::Stem(Stem::Vocals)),
             downbeats,
             unclear: Vec::new(),
             selection: None,
@@ -459,7 +460,7 @@ fn slider(buf: &mut Buffer, state: &State, s: &SliderLayout, show_focus: bool) {
     let n = usize::from(s.track.width);
     if n >= 2 {
         let knob = usize::from(
-            crate::core::layout::Track::columns(s.track).cell(s.slider.share(state)) - s.track.x,
+            crate::view::layout::Track::columns(s.track).cell(s.slider.share(state)) - s.track.x,
         );
         let on = Style::new().fg(ACCENT);
         let off = Style::new().fg(TRACK);
@@ -517,7 +518,7 @@ mod tests {
     /// learning, or how much of the echo it takes out.
     #[test]
     fn the_tab_says_what_the_canceller_does() {
-        let mut state = State::new("/m".into(), crate::config::Config::default(), (120, 40));
+        let mut state = State::new("/m".into(), crate::config::Config::default());
         state.config.karaoke_echo = true;
         assert_eq!(echo_text(&state), "on, once music plays");
         let mut mic = crate::core::mic::MicReading {

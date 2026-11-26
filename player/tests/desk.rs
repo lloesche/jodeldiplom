@@ -120,7 +120,9 @@ fn a_fader_held_while_the_strips_change_is_let_go_of_on_any_release() {
         input.parts = None;
     }
     assert!(!state.desk.has_stems());
-    update(&mut state, Action::Resize(80, 24));
+    let narrower = jodeldiplom::view::layout::Grid::new(80, 24);
+    let fit = jodeldiplom::view::layout::fit(&state, narrower);
+    update(&mut state, Action::Fit(fit));
     let release = let_go(&state).expect("a release");
     desk(&mut state, release);
     assert!(state.desk.dragging.is_none());
@@ -212,7 +214,7 @@ fn the_faders_are_set_on_the_mixer_and_again_on_a_new_one() {
     options.output = Output::Null(SimClock::Realtime);
     options.devices = Arc::new(|| Ok(Vec::new()));
     options.mic = Arc::new(|_| Ok(Input::feed(48_000, 240).0));
-    let mut app = App::new(options);
+    let mut app = common::fitted_app(options, 120, 40);
     let level = |app: &App, kind: StripKind| {
         let desk = app.desk().expect("an engine");
         let s = desk.strips.iter().find(|s| s.name == kind.name()).unwrap();
@@ -364,7 +366,7 @@ fn a_stem_muted_on_its_frame_is_heard_and_unmuted_the_file_is_again() {
     options.devices = Arc::new(|| Ok(Vec::new()));
     options.separator = quarter;
     options.autoplay = Some(file);
-    let mut app = App::new(options);
+    let mut app = common::fitted_app(options, 120, 40);
     // Held while the GPU is looked for: the stems are made once it is told,
     // and the song would play on meanwhile, however long the looking takes
     // on a loaded machine.
@@ -555,7 +557,7 @@ fn the_device_opens_once_for_songs_at_any_rate() {
     options.devices = Arc::new(|| Ok(Vec::new()));
     options.separator = || None;
     options.autoplay = Some(dir.join("0.wav"));
-    let mut app = App::new(options);
+    let mut app = common::fitted_app(options, 120, 40);
     // Each song's route as it plays, until the last has ended.
     let mut routes = vec![None; rates.len()];
     let deadline = std::time::Instant::now() + Duration::from_secs(30);

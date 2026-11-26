@@ -209,16 +209,16 @@ pub enum Action {
     TransitionPanStart {
         /// The block.
         block: super::lanes::Block,
-        /// The pointer's column.
-        column: u16,
-        /// The width of the block's waveforms in columns.
-        width: u16,
+        /// Where the pointer is across, in the window's units.
+        at: f32,
+        /// The width of the block's waveforms, in the same units.
+        width: f32,
         /// Over the whole track (else the lanes).
         overview: bool,
     },
-    /// The pointer moved to this column while dragging a Transition block's
-    /// view.
-    TransitionPan(u16),
+    /// The pointer moved to here across (in the units of the drag's start)
+    /// while dragging a Transition block's view.
+    TransitionPan(f32),
     /// The drag of a Transition block's view ended.
     TransitionPanEnd,
     /// A Karaoke slider was pressed or dragged to a share of its range.
@@ -242,17 +242,19 @@ pub enum Action {
     Sync(crate::core::sync::SyncEvent),
     /// The mouse on the Mixer tab's desk.
     Desk(crate::core::desk::DeskAction),
-    /// The pointer moved to this row (Karaoke mode shows its pointer, and
-    /// its controls while it is near the bottom).
+    /// The pointer moved (Karaoke mode shows its pointer, and its controls
+    /// while it is near the bottom).
     PointerMoved {
-        /// The pointer's row.
-        row: u16,
+        /// The share of the window's height below the pointer: 0 at the
+        /// bottom, 1 at the top.
+        from_bottom: f32,
     },
     /// The pointer left the window (Karaoke mode's controls go in a while).
     PointerLeft,
 
-    /// The window size in cells.
-    Resize(u16, u16),
+    /// What the window's size does to the keys and the pointer, measured
+    /// again (the window reports it whenever it changes).
+    Fit(super::Fit),
     /// The clock: milliseconds since the start.
     Tick(u64),
 

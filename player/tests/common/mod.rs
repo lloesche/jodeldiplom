@@ -187,10 +187,27 @@ pub fn now_track(rate: u32, settings: Settings, index: usize) -> NowTrack {
     }
 }
 
-/// A state with a browser listing, a queue and a track playing at 1:23.
+/// The app of `options`, fitted to a window of `cols` × `rows` cells
+/// ([`fit`]).
+pub fn fitted_app(options: jodeldiplom::app::AppOptions, cols: u16, rows: u16) -> App {
+    let mut app = App::new(options);
+    fit(&mut app.state, cols, rows);
+    app
+}
+
+/// `state` as the window reports a grid of `cols` × `rows` cells to it
+/// ([`jodeldiplom::core::Fit`]), as it would be told before the first
+/// frame is drawn.
+pub fn fit(state: &mut State, cols: u16, rows: u16) {
+    use jodeldiplom::view::layout::{fit, Grid};
+    state.fit = fit(state, Grid::new(cols, rows));
+}
+
+/// A state with a browser listing, a queue and a track playing at 1:23,
+/// fitted to a window of `cols` × `rows` cells ([`fit`]).
 pub fn playing_state(cols: u16, rows: u16) -> State {
     use jodeldiplom::browser::{Details, Entry, EntryKind};
-    let mut state = State::new("/music/Album".into(), Config::default(), (cols, rows));
+    let mut state = State::new("/music/Album".into(), Config::default());
     // No GPU here: the cues listen to the mix.
     state.gpu = jodeldiplom::core::Gpu::Absent;
     state.browser.loading = false;
@@ -281,6 +298,7 @@ pub fn playing_state(cols: u16, rows: u16) -> State {
             analysis, None,
         ))),
     );
+    fit(&mut state, cols, rows);
     state
 }
 

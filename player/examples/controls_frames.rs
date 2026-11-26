@@ -30,7 +30,8 @@ use jodeldiplom::gui::stage::Tint;
 use jodeldiplom::gui::{font_px, Canvas};
 use jodeldiplom::lyrics::Answer;
 use jodeldiplom::spectrum::SpectrumFrame;
-use jodeldiplom::view::Scene;
+use jodeldiplom::view::layout::{self, Grid};
+use jodeldiplom::view::{mouse, Scene};
 
 // The fonts build.rs found: `EMBEDDED_FONTS`.
 include!(concat!(env!("OUT_DIR"), "/fonts.rs"));
@@ -140,10 +141,11 @@ fn cover() -> Art {
     }
 }
 
-/// Karaoke mode at `size` cells, two songs queued, the first held for
-/// START (just entered), its lyrics and its notes ready.
-fn entered(size: (u16, u16)) -> State {
-    let mut state = State::new("/music".into(), Config::default(), size);
+/// Karaoke mode on `grid`, two songs queued, the first held for START
+/// (just entered), its lyrics and its notes ready.
+fn entered(grid: Grid) -> State {
+    let mut state = State::new("/music".into(), Config::default());
+    state.fit = layout::fit(&state, grid);
     state.browser.loading = false;
     state.queue.paths = ["Take On Me.flac", "The Sun Always Shines on TV.flac"]
         .map(|f| PathBuf::from("/music").join(f))
@@ -173,8 +175,8 @@ fn entered(size: (u16, u16)) -> State {
 }
 
 /// The first song sung at [`HEARD`] seconds, its singer on the notes.
-fn singing(size: (u16, u16)) -> State {
-    let mut state = entered(size);
+fn singing(grid: Grid) -> State {
+    let mut state = entered(grid);
     let path = state.queue.paths[0].clone();
     state.playing.track = Some(now_track(&state, path, 0));
     state.playing.state = PlayState::Playing;
@@ -190,8 +192,8 @@ fn singing(size: (u16, u16)) -> State {
 
 /// The first song played to its end (sung as [`singing`]), the next held:
 /// its result, its reveal settled (a minute on).
-fn result(size: (u16, u16)) -> State {
-    let mut state = singing(size);
+fn result(grid: Grid) -> State {
+    let mut state = singing(grid);
     let ended = Event::TrackEnded {
         index: 0,
         finished: true,
@@ -206,18 +208,18 @@ fn result(size: (u16, u16)) -> State {
 
 /// The controls in `state` faded in `quarters` quarters of the way (none:
 /// not brought up), the pointer having come near the bottom.
-fn controls(state: &mut State, quarters: Option<u64>) {
+fn controls(state: &mut State, grid: Grid, quarters: Option<u64>) {
     let Some(quarters) = quarters else {
         return;
     };
-    let row = state.size.1 - 1;
-    update(state, Action::PointerMoved { row });
+    let from_bottom = mouse::from_bottom(grid.rows, grid.rows - 1);
+    update(state, Action::PointerMoved { from_bottom });
     let at = state.now_ms + FADE_MS * quarters / 4;
     update(state, Action::Tick(at));
 }
 
-/// A scene's state, made for a size in cells.
-type Make = fn((u16, u16)) -> State;
+/// A scene's state, made for a grid of cells.
+type Make = fn(Grid) -> State;
 
 fn main() {
     jodeldiplom::gui::fonts::use_fonts(EMBEDDED_FONTS);
@@ -250,10 +252,11 @@ fn main() {
             canvas.set_gpu(true);
             let grid = canvas.fit(w, h);
             let mut state = make(grid);
-            controls(&mut state, quarters);
+            controls(&mut state, grid, quarters);
             let spectrum = SpectrumFrame::default();
             let scene = Scene {
                 state: &state,
+                grid,
                 spectrum: &spectrum,
                 pointer: None,
                 heard,

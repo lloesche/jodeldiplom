@@ -83,8 +83,6 @@ pub struct AppOptions {
     pub config_file: Option<PathBuf>,
     /// Where the engine plays.
     pub output: Output,
-    /// The size in cells.
-    pub size: (u16, u16),
     /// Called after a background result arrives (wakes a waiting loop).
     pub notify: Notify,
     /// Lists the devices for the settings.
@@ -138,7 +136,6 @@ impl AppOptions {
             saved: Config::default(),
             config_file: None,
             output: Output::Device(None),
-            size: (120, 40),
             notify: Arc::new(|| {}),
             devices: Arc::new(list_devices),
             notes: Vec::new(),
@@ -454,7 +451,7 @@ impl App {
             .and_then(|s| s.browser.clone())
             .filter(|d| *d != options.dir);
         let dir = remembered.clone().unwrap_or_else(|| options.dir.clone());
-        let mut state = State::new(dir.clone(), options.config.clone(), options.size);
+        let mut state = State::new(dir.clone(), options.config.clone());
         state.browser.fallback = remembered.map(|_| options.dir.clone());
         if let Some(selected) = restored.as_ref().and_then(|s| s.selected.clone()) {
             state.browser.last_child.insert(dir.clone(), selected);
@@ -1421,9 +1418,7 @@ impl App {
     /// shows one, at most [`SPECTRUM_EVERY`] apart (the last otherwise).
     pub fn spectrum(&mut self) -> SpectrumFrame {
         let now = Instant::now();
-        let shown = core::layout::compute(&self.state)
-            .bottom()
-            .is_some_and(|b| b.spectrum.is_some());
+        let shown = self.state.fit.spectrum;
         let recent = self
             .analyzed
             .is_some_and(|then| now - then < SPECTRUM_EVERY);

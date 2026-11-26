@@ -12,10 +12,10 @@ use ratatui::widgets::{Block, BorderType, Clear, Paragraph, Widget};
 
 use super::colors::*;
 use super::keep_start;
-use crate::core::layout::{KaraokeTabLayout, SLIDER_LABEL};
 use crate::core::sync::{Outcome, CLICKS};
 use crate::core::text::signed_ms;
 use crate::core::State;
+use crate::view::layout::{KaraokeTabLayout, SLIDER_LABEL};
 
 /// Where the delay in force comes from as the tab says it, with the
 /// singing's correction and the nudge on it where there are: `from your

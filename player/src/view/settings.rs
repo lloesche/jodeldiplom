@@ -11,8 +11,8 @@ use jodel_playback::Headroom;
 
 use super::colors::*;
 use super::{bordered, keep_start, row_line};
-use crate::core::layout::{SettingsLayout, SETTINGS_LABEL};
 use crate::core::{device_window, Gpu, SettingsRow, State};
+use crate::view::layout::{SettingsLayout, SETTINGS_LABEL};
 
 /// The settings screen as laid out in `s`.
 pub(super) fn draw(frame: &mut Frame, state: &State, s: &SettingsLayout) {

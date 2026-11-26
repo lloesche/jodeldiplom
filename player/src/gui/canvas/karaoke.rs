@@ -34,15 +34,13 @@ impl Canvas {
         self.stage.scene(song, picture, area, (heard, dt), tint)
     }
 
-    /// The target the stage drew in the frame shown at (`x`, `y`) (window
-    /// pixels), if any: START's pill.
-    pub fn target_at(&self, x: f32, y: f32) -> Option<crate::core::mouse::Target> {
+    /// What the button the stage drew in the frame shown at (`x`, `y`)
+    /// (window pixels) does, if there is one: START's pill.
+    pub fn target_at(&self, x: f32, y: f32) -> Option<crate::core::keymap::Op> {
         self.staged.as_ref()?;
         let inside = |[x0, y0, x1, y1]: [f32; 4]| (x0..=x1).contains(&x) && (y0..=y1).contains(&y);
         let mut targets = self.stage.targets().iter();
-        targets
-            .find(|(at, _)| inside(*at))
-            .map(|&(_, target)| target)
+        targets.find(|(at, _)| inside(*at)).map(|&(_, op)| op)
     }
 
     /// What the GPU draws over Karaoke mode's picture as last painted (none

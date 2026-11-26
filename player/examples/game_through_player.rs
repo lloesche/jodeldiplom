@@ -283,7 +283,6 @@ fn main() {
     let memory = MemoryOutput::new(caps, SimClock::Realtime);
     let mut options = AppOptions::new(work.clone());
     options.output = Output::Memory(memory.clone());
-    options.size = (120, 36);
     options.config.beat_voting = false;
     options.config.beat_method = jodel_rhythm::Method::Flux;
     options.devices = Arc::new(|| Ok(Vec::new()));
@@ -292,6 +291,9 @@ fn main() {
     options.separator = || None;
     options.autoplay = Some(path.clone());
     let mut app = App::new(options);
+    // As the window reports a grid of 120 × 36 cells.
+    let grid = jodeldiplom::view::layout::Grid::new(120, 36);
+    app.state.fit = jodeldiplom::view::layout::fit(&app.state, grid);
     let wait = Duration::from_secs(60);
     let playing = |a: &App| a.state.playing.state == PlayState::Playing;
     assert!(frames(&mut app, wait, |a| playing(a)

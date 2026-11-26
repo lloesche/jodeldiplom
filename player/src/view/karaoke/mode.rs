@@ -14,10 +14,10 @@ use super::super::colors::*;
 use super::super::{keep_start, palette, Pictures, Scene};
 use super::{plain_lines, result_now, slider, ResultShown};
 use crate::core::karaoke;
-use crate::core::layout::KaraokeLayout;
 use crate::core::singing::{notes_of, LineNotes, Note, Singing};
 use crate::core::text;
 use crate::core::State;
+use crate::view::layout::KaraokeLayout;
 
 /// START's pill on the stage, while the mode waits for it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

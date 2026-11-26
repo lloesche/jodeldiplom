@@ -16,10 +16,10 @@ use jodeldiplom::app::{App, AppOptions, Output};
 use jodeldiplom::core::desk::StripKind;
 use jodeldiplom::core::keymap::{lookup, Key, KeyCode, Meaning, Op};
 use jodeldiplom::core::lag::{self, Delay, Source, DEFAULT_LATE, SLEW};
-use jodeldiplom::core::layout::{self, Layout};
-use jodeldiplom::core::mouse::{self, MouseButton, MouseInput, MouseKind};
 use jodeldiplom::core::sync::{self, Outcome, SyncCommand, SyncEvent, CLICKS};
 use jodeldiplom::core::{update, Action, Effect, Screen, Side, State};
+use jodeldiplom::view::layout::{self, Grid, Layout};
+use jodeldiplom::view::mouse::{self, MouseButton, MouseInput, MouseKind};
 
 fn op(state: &mut State, op: Op) -> Vec<Effect> {
     update(state, Action::Op(op))
@@ -38,6 +38,9 @@ fn pair(mic: &str) -> (String, String) {
 
 /// The Karaoke tab shown, a track playing, on an output with a microphone
 /// open (`mic`: its id; empty: none).
+/// The window of [`tab`].
+const GRID: Grid = Grid::new(120, 40);
+
 fn tab(mic: &str) -> State {
     let mut state = common::transition_state(120, 40);
     state.side = Side::Karaoke;
@@ -215,7 +218,7 @@ fn the_panels_buttons_take_clicks_and_nothing_else_does() {
     let mut state = tab("headset");
     key(&mut state, Key::ch('s'));
     let buttons = |state: &State| {
-        let Layout::Main(m) = layout::compute(state) else {
+        let Layout::Main(m) = layout::compute(state, GRID) else {
             panic!()
         };
         m.karaoke.unwrap().panel_buttons
@@ -223,6 +226,7 @@ fn the_panels_buttons_take_clicks_and_nothing_else_does() {
     let click = |state: &State, col: u16, row: u16| {
         mouse::action(
             state,
+            GRID,
             MouseInput {
                 kind: MouseKind::Down(MouseButton::Left),
                 col,
@@ -586,7 +590,7 @@ fn app_with(tree: &common::Tree, singer: &Singer) -> App {
     let input = singer.input.clone();
     options.mic = Arc::new(move |_| Ok(input.clone()));
     options.mics = Arc::new(|| Ok(vec![("feed".into(), "Feed".into())]));
-    let mut app = App::new(options);
+    let mut app = common::fitted_app(options, 120, 40);
     assert!(common::wait_for(&mut app, Duration::from_secs(10), |a| {
         !a.state.browser.loading
     }));

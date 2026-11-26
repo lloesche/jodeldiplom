@@ -18,14 +18,16 @@
 //! Each strip takes the pane's height (a stem's a row less, under the
 //! bracket); strips grow from their least widths up to their widest, the
 //! desk centred. What is inside a strip is the window's to lay out
-//! ([crate::gui::mixer]). The stems' strips are
-//! there while the player has stems on the desk (its input has lanes).
-//! Where it is too narrow, the microphone goes first, then the karaoke
-//! game's effects' strip, then the preview, then the stems.
+//! ([crate::gui::mixer]). Which strips show is the core's rule
+//! ([`strips_shown`]): the stems' while the player has stems on the desk
+//! (its input has lanes); where it is too narrow, the microphone goes
+//! first, then the karaoke game's effects' strip, then the preview, then
+//! the stems.
 
 use ratatui::layout::Rect;
 
-use crate::core::desk::{Channel, StripKind};
+use crate::core::desk::shown::{gap, gaps, strips_shown, widths, Shown, Widths};
+use crate::core::desk::Channel;
 
 /// A strip of the desk.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -52,95 +54,39 @@ impl DeskLayout {
     }
 }
 
-/// A strip's widths: on a narrow desk, the least it grows from, and the
-/// widest.
-fn widths(channel: Channel) -> (u16, u16, u16) {
-    match channel {
-        Channel::Strip(
-            StripKind::Drums | StripKind::Bass | StripKind::Vocals | StripKind::Other,
-        ) => (7, 7, 10),
-        // The preview and the effects without a scale of their own where it
-        // is narrow.
-        Channel::Strip(StripKind::Preview | StripKind::Effects) => (9, 12, 16),
-        Channel::Strip(StripKind::Player) => (12, 12, 16),
-        Channel::Mic => (18, 18, 22),
-        // The master's lines whole: its backend, format and volume.
-        Channel::Main => (24, 26, 36),
-    }
-}
-
-/// The gap between strips, and before the master (one at the narrow
-/// widths); the stems' strips stand side by side under their bracket.
-const GAP: u16 = 1;
-const MASTER_GAP: u16 = 3;
-
-/// The gap before `next`, after `prev`.
-fn gap(prev: Channel, next: Channel, tight: bool) -> u16 {
-    match (prev, next) {
-        (_, Channel::Main) if tight => GAP,
-        (_, Channel::Main) => MASTER_GAP,
-        (a, b) if a.is_part() && b.is_part() => 0,
-        _ => GAP,
-    }
-}
-
-fn gaps(set: &[Channel], tight: bool) -> u16 {
-    set.windows(2).map(|w| gap(w[0], w[1], tight)).sum()
+/// The desk's room inside the list pane's border `inner`: a cell less
+/// each side.
+pub fn room(inner: Rect) -> u16 {
+    inner.width.saturating_sub(2)
 }
 
 /// The desk inside the list pane's border; `stems`: the player has its
-/// stems on the desk.
+/// stems on the desk. The strips shown in its room ([`strips_shown`]),
+/// from their least widths growing into it, or at their narrow ones.
 pub fn compute(inner: Rect, stems: bool) -> DeskLayout {
-    let room = inner.width.saturating_sub(2);
-    let player = Channel::Strip(StripKind::Player);
-    let preview = Channel::Strip(StripKind::Preview);
-    let effects = Channel::Strip(StripKind::Effects);
-    let parts: Vec<Channel> = if stems {
-        StripKind::PARTS.map(Channel::Strip).to_vec()
-    } else {
-        Vec::new()
-    };
-    let with = |rest: &[Channel]| -> Vec<Channel> {
-        std::iter::once(player)
-            .chain(parts.iter().copied())
-            .chain(rest.iter().copied())
-            .collect()
-    };
-    let mut sets: Vec<Vec<Channel>> = vec![
-        with(&[preview, effects, Channel::Mic, Channel::Main]),
-        with(&[preview, effects, Channel::Main]),
-        with(&[preview, Channel::Main]),
-    ];
-    if stems {
-        sets.push(with(&[Channel::Main]));
-    }
-    sets.push(vec![player, Channel::Main]);
-    // The first set that fits: at its widths growing into the room, or at
-    // the narrow ones.
-    let mut chosen: Option<(Vec<Channel>, Vec<u16>, bool)> = None;
-    for set in &sets {
-        let least: u16 = set.iter().map(|&c| widths(c).1).sum::<u16>() + gaps(set, false);
-        let most: u16 = set.iter().map(|&c| widths(c).2).sum::<u16>() + gaps(set, false);
-        if room >= least {
+    let room = room(inner);
+    let Shown {
+        strips: set,
+        widths: at,
+    } = strips_shown(room, stems);
+    let tight = at.tight();
+    let w: Vec<u16> = match at {
+        Widths::Least => {
+            let sum = |which: fn((u16, u16, u16)) -> u16| -> u16 {
+                set.iter().map(|&c| which(widths(c))).sum::<u16>() + gaps(&set, false)
+            };
+            let (least, most) = (sum(|w| w.1), sum(|w| w.2));
             let share = (f64::from(room - least) / f64::from((most - least).max(1))).min(1.0);
-            let w = set
-                .iter()
+            set.iter()
                 .map(|&c| {
                     let (_, lo, hi) = widths(c);
                     lo + (f64::from(hi - lo) * share).floor() as u16
                 })
-                .collect();
-            chosen = Some((set.clone(), w, false));
-            break;
+                .collect()
         }
-        let tight: u16 = set.iter().map(|&c| widths(c).0).sum::<u16>() + gaps(set, true);
-        if room >= tight {
-            let w = set.iter().map(|&c| widths(c).0).collect();
-            chosen = Some((set.clone(), w, true));
-            break;
-        }
-    }
-    let (set, w, tight) = chosen.unwrap_or_else(|| (vec![Channel::Main], vec![room], true));
+        Widths::Narrow => set.iter().map(|&c| widths(c).0).collect(),
+        Widths::Room => vec![room],
+    };
     let total: u16 = w.iter().sum::<u16>() + gaps(&set, tight);
     let mut x = inner.x + 1 + room.saturating_sub(total) / 2;
     let channels: Vec<ChannelLayout> = set
@@ -186,6 +132,7 @@ pub fn compute(inner: Rect, stems: bool) -> DeskLayout {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::desk::StripKind;
 
     fn inside(inner: Rect, outer: Rect) -> bool {
         inner.x >= outer.x

@@ -5,6 +5,7 @@
 
 use std::sync::Arc;
 
+use jodel_playback::Stem;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -15,18 +16,20 @@ use super::colors::{ACCENT, DIM, TEXT};
 use super::lanes::{lane_color, WavePlot, OFF};
 use super::palette;
 use super::{Pictures, Scene};
-use crate::core::lanes::{self, Block, WordLines};
-use crate::core::layout::{Lane, TransitionBlockLayout, TransitionLayout};
+use crate::core::lanes::{self, Block, Lane, WordLines};
 use crate::core::transition::{self, draft, tab, viewport, Pairing};
 use crate::core::{text, Rhythm, State};
+use crate::view::layout::{TransitionBlockLayout, TransitionLayout};
 
 /// Text on a coloured label.
 const BG_TEXT: Color = Color::Rgb(20, 20, 24);
 
 /// Whether a lane is a stem turned off (its strip on the desk muted).
 fn is_off(state: &State, lane: Lane) -> bool {
-    lane.stem()
-        .is_some_and(|i| crate::core::stems::is_off(state, jodel_playback::stems::Stem::ALL[i]))
+    match lane {
+        Lane::Song => false,
+        Lane::Stem(stem) => crate::core::stems::is_off(state, stem),
+    }
 }
 
 /// The seconds of the bars' first beats of `a` within `start..end`.
@@ -231,7 +234,7 @@ fn shown(state: &State, which: Block) -> Option<Shown> {
                     let share = f64::from(k) / f64::from(steps);
                     let t = start + (end - start) * share;
                     let g = gains(share);
-                    let gain = match lane.stem() {
+                    let gain = match lane.stem_index() {
                         Some(i) => g[i],
                         None => g.iter().sum::<f64>() / g.len() as f64,
                     };
@@ -250,7 +253,7 @@ fn shown(state: &State, which: Block) -> Option<Shown> {
         let lane = Lane::ALL
             .iter()
             .copied()
-            .find(|l| l.stem() == Some(e.lane % STEMS))?;
+            .find(|l| l.stem_index() == Some(e.lane % STEMS))?;
         mine.then(|| {
             (
                 lane,
@@ -450,7 +453,7 @@ fn draw_block(
                 gain,
                 edit,
                 rows: (skip, b.lane_rows.max(area.height)),
-                lyrics: if *lane == Lane::Vocals {
+                lyrics: if *lane == Lane::Stem(Stem::Vocals) {
                     lyrics.clone()
                 } else {
                     None

@@ -1,16 +1,20 @@
-//! Mouse input: the named rects of the layout and what a click, drag or
-//! wheel on each does. The window reports the pointer in cells (and
-//! within its cell, [`action_at`]).
+//! The cell renderer's mouse: the named rects of its layout ([`layout`])
+//! and what a click, drag or wheel on each does, as the core's
+//! [`Action`]s. The window reports the pointer in cells (and within its
+//! cell, [`action_at`]).
 
 use ratatui::layout::{Position, Rect};
 
 use crate::core::karaoke;
 use crate::core::keymap::Op;
-use crate::core::layout::{self, Bottom, Layout};
 use crate::core::sliders::Slider;
 use crate::core::text::{self, Tone};
-use crate::core::update::{device_window, folder_window, list_cursor, list_len, palette_window};
-use crate::core::{Action, Screen, SettingsRow, Side, State};
+use crate::core::{
+    device_window, folder_window, list_cursor, list_len, palette_window, Action, Screen,
+    SettingsRow, Side, State,
+};
+use crate::view::cells;
+use crate::view::layout::{self, Bottom, Grid, Layout};
 
 /// A mouse button.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -96,8 +100,16 @@ pub enum Target {
     KaraokeSlider(Slider),
 }
 
+/// The share of the window's height below the pointer in `row` of
+/// `rows`, as the core hears where the pointer is
+/// ([`Action::PointerMoved`]): under the row's bottom edge, so a row is in
+/// a share from the bottom where any of it is.
+pub fn from_bottom(rows: u16, row: u16) -> f32 {
+    f32::from(rows.saturating_sub(row + 1)) / f32::from(rows.max(1))
+}
+
 fn tone_rects(lines: &[Vec<text::Seg>], tone: Tone, area: Rect) -> Vec<Rect> {
-    text::locate(lines, tone)
+    cells::locate(lines, tone)
         .into_iter()
         .filter(|(row, _, _)| *row < usize::from(area.height))
         .map(|(row, x, w)| Rect::new(area.x + x as u16, area.y + row as u16, w as u16, 1))
@@ -106,7 +118,7 @@ fn tone_rects(lines: &[Vec<text::Seg>], tone: Tone, area: Rect) -> Vec<Rect> {
 }
 
 fn info_device_rects(state: &State, info: Rect) -> Vec<Rect> {
-    let lines = text::info_lines(state, usize::from(info.width));
+    let lines = cells::info_lines(state, usize::from(info.width));
     tone_rects(&lines, Tone::Device, info)
 }
 
@@ -130,10 +142,10 @@ fn bottom_regions(bottom: &Bottom, out: &mut Vec<(Rect, Target)>) {
     out.push((bottom.bar, Target::Bar));
 }
 
-/// Every hit region of the screen shown, most specific first.
-pub fn regions(state: &State) -> Vec<(Rect, Target)> {
+/// Every hit region of the screen shown on `grid`, most specific first.
+pub fn regions(state: &State, grid: Grid) -> Vec<(Rect, Target)> {
     let mut out = Vec::new();
-    match layout::compute(state) {
+    match layout::compute(state, grid) {
         Layout::TooSmall(_) => {}
         Layout::Main(m) => {
             for (rect, side) in &m.toggle {
@@ -143,7 +155,7 @@ pub fn regions(state: &State) -> Vec<(Rect, Target)> {
                 for rect in info_device_rects(state, info) {
                     out.push((rect, Target::Device));
                 }
-                let lines = text::info_lines(state, usize::from(info.width));
+                let lines = cells::info_lines(state, usize::from(info.width));
                 for (rect, op) in link_rects(&lines, info) {
                     out.push((rect, Target::Link(op)));
                 }
@@ -214,7 +226,7 @@ pub fn regions(state: &State) -> Vec<(Rect, Target)> {
             bottom_regions(&m.bottom, &mut out);
         }
         Layout::NowPlaying(n) => {
-            let lines = text::caption_lines(state, usize::from(n.caption.width));
+            let lines = cells::caption_lines(state, usize::from(n.caption.width));
             for (rect, op) in link_rects(&lines, n.caption) {
                 out.push((rect, Target::Link(op)));
             }
@@ -265,17 +277,17 @@ pub fn regions(state: &State) -> Vec<(Rect, Target)> {
     out
 }
 
-/// The target under a cell.
-pub fn hit(state: &State, col: u16, row: u16) -> Option<Target> {
+/// The target under a cell of `grid`.
+pub fn hit(state: &State, grid: Grid, col: u16, row: u16) -> Option<Target> {
     let at = Position::new(col, row);
-    regions(state)
+    regions(state, grid)
         .into_iter()
         .find(|(rect, _)| rect.contains(at))
         .map(|(_, target)| target)
 }
 
-fn bar_fraction(state: &State, col: u16) -> Option<f64> {
-    let bar = match layout::compute(state) {
+fn bar_fraction(state: &State, grid: Grid, col: u16) -> Option<f64> {
+    let bar = match layout::compute(state, grid) {
         Layout::Karaoke(k) => k.controls?.seek,
         other => other.bottom()?.bar,
     };
@@ -290,13 +302,14 @@ fn bar_fraction(state: &State, col: u16) -> Option<f64> {
 /// lanes show, or of the whole track for its overview.
 fn transition_time(
     state: &State,
+    grid: Grid,
     block: crate::core::lanes::Block,
     col: u16,
     overview: bool,
 ) -> Option<f64> {
     use crate::core::lanes;
     use crate::core::transition::viewport;
-    let Layout::Main(m) = layout::compute(state) else {
+    let Layout::Main(m) = layout::compute(state, grid) else {
         return None;
     };
     let b = m
@@ -327,8 +340,8 @@ fn transition_time(
 }
 
 /// The width of a Transition block's waveforms, in columns.
-fn transition_width(state: &State, block: crate::core::lanes::Block) -> Option<u16> {
-    let Layout::Main(m) = layout::compute(state) else {
+fn transition_width(state: &State, grid: Grid, block: crate::core::lanes::Block) -> Option<u16> {
+    let Layout::Main(m) = layout::compute(state, grid) else {
         return None;
     };
     let b = m
@@ -343,8 +356,8 @@ fn transition_width(state: &State, block: crate::core::lanes::Block) -> Option<u
 /// The share of `slider`'s range with the pointer at `x` cells from the
 /// left edge. The middle of the track's first cell is 0 and of its last
 /// cell 1, where the knob is drawn for those shares.
-fn slider_share(state: &State, slider: Slider, x: f64) -> Option<f64> {
-    let sliders = match layout::compute(state) {
+fn slider_share(state: &State, grid: Grid, slider: Slider, x: f64) -> Option<f64> {
+    let sliders = match layout::compute(state, grid) {
         Layout::Main(m) => m.karaoke?.sliders,
         Layout::Karaoke(k) => k.controls?.sliders,
         _ => return None,
@@ -353,34 +366,41 @@ fn slider_share(state: &State, slider: Slider, x: f64) -> Option<f64> {
     layout::Track::columns(track).share_at(x)
 }
 
-/// What a mouse event does, if anything. The pointer is taken to be in
-/// the middle of its cell, over the cells alone.
-pub fn action(state: &State, input: MouseInput) -> Option<Action> {
-    action_at(state, input, f64::from(input.col) + 0.5, None)
+/// What a mouse event on `grid` does, if anything. The pointer is taken
+/// to be in the middle of its cell, over the cells alone.
+pub fn action(state: &State, grid: Grid, input: MouseInput) -> Option<Action> {
+    action_at(state, grid, input, f64::from(input.col) + 0.5, None)
 }
 
 /// [`action`] with the pointer known within its cell and over what the
 /// window draws in pixels: `x` is in cells from the left edge (the GUI
-/// knows it to the pixel), and `over` the target drawn in pixels under the
-/// pointer, if any (Karaoke mode's START pill, on the stage), which is hit
-/// before the cells under it. Only a Karaoke slider uses `x`: cell by cell,
-/// a 40-cell track moves 2.6 % a step (5.1 % for the microphone's 200 %);
-/// pixel by pixel, every whole percent is in reach.
-pub fn action_at(state: &State, input: MouseInput, x: f64, over: Option<Target>) -> Option<Action> {
+/// knows it to the pixel), and `over` what the button drawn in pixels
+/// under the pointer does, if there is one (Karaoke mode's START pill, on
+/// the stage), which is hit before the cells under it. Only a Karaoke
+/// slider uses `x`: cell by cell, a 40-cell track moves 2.6 % a step
+/// (5.1 % for the microphone's 200 %); pixel by pixel, every whole percent
+/// is in reach.
+pub fn action_at(
+    state: &State,
+    grid: Grid,
+    input: MouseInput,
+    x: f64,
+    over: Option<Op>,
+) -> Option<Action> {
     use MouseButton::{Left, Right};
     use MouseKind::*;
     // A drag on the progress bar follows the pointer anywhere.
     if state.seek_drag.is_some() {
         return match input.kind {
-            Drag(Left) | Moved => bar_fraction(state, input.col).map(Action::SeekDrag),
-            Up(Left) => bar_fraction(state, input.col).map(Action::SeekTo),
+            Drag(Left) | Moved => bar_fraction(state, grid, input.col).map(Action::SeekDrag),
+            Up(Left) => bar_fraction(state, grid, input.col).map(Action::SeekTo),
             _ => None,
         };
     }
     // So does a drag of a Transition block's view.
     if state.transition.pan.is_some() {
         return match input.kind {
-            Drag(Right) | Moved => Some(Action::TransitionPan(input.col)),
+            Drag(Right) | Moved => Some(Action::TransitionPan(f32::from(input.col))),
             Up(Right) => Some(Action::TransitionPanEnd),
             _ => None,
         };
@@ -391,7 +411,7 @@ pub fn action_at(state: &State, input: MouseInput, x: f64, over: Option<Target>)
             Drag(Left) | Moved => state
                 .karaoke
                 .dragging
-                .and_then(|s| slider_share(state, s, x).map(|share| (s, share)))
+                .and_then(|s| slider_share(state, grid, s, x).map(|share| (s, share)))
                 .map(|(slider, share)| Action::KaraokeSlide { slider, share }),
             Up(Left) => Some(Action::KaraokeSlideEnd),
             _ => None,
@@ -399,7 +419,7 @@ pub fn action_at(state: &State, input: MouseInput, x: f64, over: Option<Target>)
     }
     // While a sync shows, only its panel's buttons take a click.
     if state.karaoke.sync.is_some() {
-        return match (input.kind, hit(state, input.col, input.row)) {
+        return match (input.kind, hit(state, grid, input.col, input.row)) {
             (Down(Left), Some(Target::Button(op @ (Op::SyncKeep | Op::SyncAgain | Op::Back)))) => {
                 Some(Action::Op(op))
             }
@@ -410,7 +430,11 @@ pub fn action_at(state: &State, input: MouseInput, x: f64, over: Option<Target>)
     // and over its bottom its controls; off the window they go.
     if karaoke::in_mode(state) {
         match input.kind {
-            Moved | Drag(_) => return Some(Action::PointerMoved { row: input.row }),
+            Moved | Drag(_) => {
+                return Some(Action::PointerMoved {
+                    from_bottom: from_bottom(grid.rows, input.row),
+                })
+            }
             Out => return Some(Action::PointerLeft),
             _ => {}
         }
@@ -420,7 +444,7 @@ pub fn action_at(state: &State, input: MouseInput, x: f64, over: Option<Target>)
         match input.kind {
             Up(Left) => return Some(Action::QueueDragEnd),
             Drag(Left) => {
-                return match hit(state, input.col, input.row) {
+                return match hit(state, grid, input.col, input.row) {
                     Some(Target::Row(row)) => Some(Action::QueueDrag(row)),
                     _ => None,
                 };
@@ -431,18 +455,20 @@ pub fn action_at(state: &State, input: MouseInput, x: f64, over: Option<Target>)
     // Ctrl held for a preview: the pointer over a browser row selects it
     // (and the preview follows).
     if input.kind == Moved && crate::core::preview::held(state) {
-        return match hit(state, input.col, input.row) {
+        return match hit(state, grid, input.col, input.row) {
             Some(Target::Row(row)) if row != state.browser.cursor => Some(Action::SelectRow(row)),
             _ => None,
         };
     }
-    let target = over.or_else(|| hit(state, input.col, input.row))?;
+    let target = over
+        .map(Target::Button)
+        .or_else(|| hit(state, grid, input.col, input.row))?;
     match (input.kind, target) {
         (Down(Right), Target::TransitionLane(block) | Target::TransitionOverview(block)) => {
             Some(Action::TransitionPanStart {
                 block,
-                column: input.col,
-                width: transition_width(state, block)?,
+                at: f32::from(input.col),
+                width: f32::from(transition_width(state, grid, block)?),
                 overview: matches!(target, Target::TransitionOverview(_)),
             })
         }
@@ -458,33 +484,37 @@ pub fn action_at(state: &State, input: MouseInput, x: f64, over: Option<Target>)
                 // lanes it zooms that block, around the pointer.
                 scroll: overview,
                 at: (!overview)
-                    .then(|| transition_time(state, block, input.col, false))
+                    .then(|| transition_time(state, grid, block, input.col, false))
                     .flatten(),
             })
         }
         (Down(Left), Target::TransitionLane(block)) => {
-            transition_time(state, block, input.col, false).map(|time| Action::TransitionPoint {
-                block,
-                time,
-                extend: false,
+            transition_time(state, grid, block, input.col, false).map(|time| {
+                Action::TransitionPoint {
+                    block,
+                    time,
+                    extend: false,
+                }
             })
         }
         (Drag(Left), Target::TransitionLane(block)) => {
-            transition_time(state, block, input.col, false).map(|time| Action::TransitionPoint {
-                block,
-                time,
-                extend: true,
+            transition_time(state, grid, block, input.col, false).map(|time| {
+                Action::TransitionPoint {
+                    block,
+                    time,
+                    extend: true,
+                }
             })
         }
         (Down(Left), Target::KaraokeSlider(slider)) => {
-            slider_share(state, slider, x).map(|share| Action::KaraokeSlide { slider, share })
+            slider_share(state, grid, slider, x).map(|share| Action::KaraokeSlide { slider, share })
         }
         (ScrollUp | ScrollDown, Target::KaraokeSlider(slider)) => Some(Action::KaraokeStep {
             slider,
             by: if input.kind == ScrollUp { 1 } else { -1 },
         }),
         (Down(Left), Target::TransitionOverview(block)) => {
-            transition_time(state, block, input.col, true)
+            transition_time(state, grid, block, input.col, true)
                 .map(|time| Action::TransitionJump { block, time })
         }
         (ScrollUp | ScrollDown, _) => {
@@ -495,7 +525,7 @@ pub fn action_at(state: &State, input: MouseInput, x: f64, over: Option<Target>)
                 _ => None,
             }
         }
-        (Down(Left), Target::Bar) => bar_fraction(state, input.col).map(Action::SeekDrag),
+        (Down(Left), Target::Bar) => bar_fraction(state, grid, input.col).map(Action::SeekDrag),
         (Down(Left), Target::Toggle(side)) => Some(Action::ShowSide(side)),
         (Down(Left), Target::Row(row)) => Some(Action::ClickRow(row)),
         (Down(Right), Target::Row(row)) => Some(Action::EnqueueRow(row)),
@@ -528,8 +558,12 @@ mod tests {
     use crate::config::Config;
     use crate::core::update;
 
+    /// The window the tests have.
+    const GRID: Grid = Grid::new(120, 40);
+
     fn state() -> State {
-        let mut s = State::new("/m".into(), Config::default(), (120, 40));
+        let mut s = State::new("/m".into(), Config::default());
+        s.fit = layout::fit(&s, GRID);
         s.browser.loading = false;
         s.browser.entries = (0..50)
             .map(|i| Entry {
@@ -553,14 +587,17 @@ mod tests {
     #[test]
     fn rows_toggle_and_buttons_are_hit() {
         let s = state();
-        let Layout::Main(m) = layout::compute(&s) else {
+        let Layout::Main(m) = layout::compute(&s, GRID) else {
             panic!()
         };
-        assert_eq!(hit(&s, m.rows.x + 2, m.rows.y), Some(Target::Row(0)));
-        assert_eq!(hit(&s, m.rows.x + 2, m.rows.y + 3), Some(Target::Row(3)));
+        assert_eq!(hit(&s, GRID, m.rows.x + 2, m.rows.y), Some(Target::Row(0)));
+        assert_eq!(
+            hit(&s, GRID, m.rows.x + 2, m.rows.y + 3),
+            Some(Target::Row(3))
+        );
         let (queue_rect, _) = m.toggle[1];
         assert_eq!(
-            action(&s, down(queue_rect.x + 1, queue_rect.y)).map(|a| format!("{a:?}")),
+            action(&s, GRID, down(queue_rect.x + 1, queue_rect.y)).map(|a| format!("{a:?}")),
             Some("ShowSide(Queue)".into())
         );
         let play = m
@@ -570,11 +607,15 @@ mod tests {
             .find(|b| b.op == Op::PlayPause)
             .unwrap();
         assert!(matches!(
-            action(&s, down(play.rect.x, play.rect.y)),
+            action(&s, GRID, down(play.rect.x, play.rect.y)),
             Some(Action::Op(Op::PlayPause))
         ));
         assert!(matches!(
-            action(&s, down(m.cover.unwrap().x + 3, m.cover.unwrap().y + 1)),
+            action(
+                &s,
+                GRID,
+                down(m.cover.unwrap().x + 3, m.cover.unwrap().y + 1)
+            ),
             Some(Action::Op(Op::NowPlaying))
         ));
     }
@@ -582,15 +623,15 @@ mod tests {
     #[test]
     fn a_double_click_is_enter_and_the_wheel_scrolls() {
         let mut s = state();
-        let Layout::Main(m) = layout::compute(&s) else {
+        let Layout::Main(m) = layout::compute(&s, GRID) else {
             panic!()
         };
         let at = down(m.rows.x + 1, m.rows.y + 2);
-        let a = action(&s, at).unwrap();
+        let a = action(&s, GRID, at).unwrap();
         assert!(update(&mut s, a).is_empty() || s.browser.cursor == 2);
         assert_eq!(s.browser.cursor, 2);
         update(&mut s, Action::Tick(100));
-        let a = action(&s, at).unwrap();
+        let a = action(&s, GRID, at).unwrap();
         let fx = update(&mut s, a);
         // What enter does on it: queued, nothing played.
         let mut enter = state();
@@ -611,10 +652,10 @@ mod tests {
         ));
         // Clicks far apart only select.
         update(&mut s, Action::Tick(5_000));
-        let a = action(&s, down(m.rows.x + 1, m.rows.y + 4)).unwrap();
+        let a = action(&s, GRID, down(m.rows.x + 1, m.rows.y + 4)).unwrap();
         update(&mut s, a);
         update(&mut s, Action::Tick(6_000));
-        let a = action(&s, down(m.rows.x + 1, m.rows.y + 4)).unwrap();
+        let a = action(&s, GRID, down(m.rows.x + 1, m.rows.y + 4)).unwrap();
         assert!(update(&mut s, a)
             .iter()
             .all(|e| !matches!(e, crate::core::Effect::Engine(_))));
@@ -623,7 +664,7 @@ mod tests {
             col: m.rows.x + 1,
             row: m.rows.y + 1,
         };
-        let a = action(&s, wheel).unwrap();
+        let a = action(&s, GRID, wheel).unwrap();
         update(&mut s, a);
         assert_eq!(s.browser.cursor, 7);
     }
@@ -631,12 +672,12 @@ mod tests {
     #[test]
     fn dragging_the_bar_seeks_on_release() {
         let mut s = state();
-        let Layout::Main(m) = layout::compute(&s) else {
+        let Layout::Main(m) = layout::compute(&s, GRID) else {
             panic!()
         };
         let bar = m.bottom.bar;
         // Nothing playing: no drag starts.
-        let a = action(&s, down(bar.x + 5, bar.y)).unwrap();
+        let a = action(&s, GRID, down(bar.x + 5, bar.y)).unwrap();
         update(&mut s, a);
         assert_eq!(s.seek_drag, None);
         // While dragging, the pointer may leave the bar.
@@ -646,25 +687,25 @@ mod tests {
             col: bar.right() + 5,
             row: 0,
         };
-        assert!(matches!(action(&s, drag), Some(Action::SeekDrag(f)) if f == 1.0));
+        assert!(matches!(action(&s, GRID, drag), Some(Action::SeekDrag(f)) if f == 1.0));
         let up = MouseInput {
             kind: MouseKind::Up(MouseButton::Left),
             col: bar.x,
             row: bar.y,
         };
-        assert!(matches!(action(&s, up), Some(Action::SeekTo(f)) if f == 0.0));
+        assert!(matches!(action(&s, GRID, up), Some(Action::SeekTo(f)) if f == 0.0));
     }
 
     #[test]
     fn settings_rows_step_values() {
         let mut s = state();
         s.screen = Screen::Settings;
-        let Layout::Settings(l) = layout::compute(&s) else {
+        let Layout::Settings(l) = layout::compute(&s, GRID) else {
             panic!()
         };
         // The second row: the headroom.
         let more = l.lines[1].more;
-        let a = action(&s, down(more.x, more.y)).unwrap();
+        let a = action(&s, GRID, down(more.x, more.y)).unwrap();
         let fx = update(&mut s, a);
         assert_ne!(s.config.headroom, jodel_playback::Headroom::NONE);
         assert!(fx.contains(&crate::core::Effect::SaveConfig));

@@ -39,7 +39,9 @@ use super::embed_gpu::Frame;
 use super::pointer::{Pointer, PointerKind};
 use super::stage_gpu::StageFrame;
 use super::window::Message;
-use crate::core::mouse::{MouseButton, Target};
+use crate::core::keymap::Op;
+use crate::view::layout::Grid;
+use crate::view::mouse::MouseButton;
 
 /// What a frame of the old canvas hands the GPU beside its pixels.
 #[derive(Default)]
@@ -164,6 +166,11 @@ impl Embed {
     /// blank).
     pub fn text(&self) -> String {
         self.lock().canvas.text()
+    }
+
+    /// The canvas's grid of cells.
+    pub fn grid(&self) -> Grid {
+        self.lock().canvas.grid()
     }
 
     /// A cell's size in logical pixels.
@@ -365,9 +372,9 @@ impl Input {
         )
     }
 
-    /// The target drawn in pixels at `at` (in the widget) in the frame
-    /// shown.
-    fn target(&self, at: iced::Point) -> Option<Target> {
+    /// What the button drawn in pixels at `at` (in the widget) in the
+    /// frame shown does, if there is one.
+    fn target(&self, at: iced::Point) -> Option<Op> {
         let shared = self.0.lock();
         let s = shared.scale;
         shared.canvas.target_at(at.x * s, at.y * s)
@@ -437,9 +444,14 @@ impl shader::Program<Message> for Input {
         bounds: Rectangle,
         cursor: mouse::Cursor,
     ) -> mouse::Interaction {
-        match cursor.position_in(bounds).and_then(|at| self.target(at)) {
-            Some(Target::Button(_)) => mouse::Interaction::Pointer,
-            _ => mouse::Interaction::default(),
+        if cursor
+            .position_in(bounds)
+            .and_then(|at| self.target(at))
+            .is_some()
+        {
+            mouse::Interaction::Pointer
+        } else {
+            mouse::Interaction::default()
         }
     }
 }

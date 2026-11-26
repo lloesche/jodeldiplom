@@ -22,7 +22,7 @@ use jodel_rhythm::waveform::{self, Melody, Waveform};
 use ratatui::layout::Rect;
 
 use super::{Canvas, Pen};
-use crate::core::layout::Lane;
+use crate::core::lanes::Lane;
 use crate::gui::pixels::{mix, pack, PixelRect, Pixels, Target};
 use crate::view::lanes::{self, WavePlot};
 use crate::view::palette;
@@ -178,7 +178,7 @@ impl Canvas {
 
 /// The waveform's levels on `plot`'s lane, where it has them.
 fn levels(plot: &WavePlot) -> Option<&waveform::Lane> {
-    match plot.lane.stem() {
+    match plot.lane.stem_index() {
         None => Some(&plot.waveform.mix),
         Some(i) => plot.waveform.stems.as_ref().map(|s| &s[i]),
     }

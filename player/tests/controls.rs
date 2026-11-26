@@ -9,9 +9,12 @@ use jodel_playback::{Command, PlayState};
 use jodeldiplom::core::karaoke::controls::{self, FADE_MS, LINGER_MS, ROWS};
 use jodeldiplom::core::karaoke::pointer;
 use jodeldiplom::core::keymap::Op;
-use jodeldiplom::core::layout::{self, Layout};
-use jodeldiplom::core::mouse::{self, MouseButton, MouseInput, MouseKind, Target};
 use jodeldiplom::core::{update, Action, Effect, State};
+use jodeldiplom::view::layout::{self, Grid, Layout};
+use jodeldiplom::view::mouse::{self, MouseButton, MouseInput, MouseKind, Target};
+
+/// The window of [`tab`].
+const GRID: Grid = Grid::new(120, 40);
 
 fn op(state: &mut State, op: Op) -> Vec<Effect> {
     update(state, Action::Op(op))
@@ -45,21 +48,21 @@ fn the_controls_come_up_near_the_bottom_over_the_lines_with_a_seek_bar() {
     let later = state.now_ms + 10_000;
     update(&mut state, Action::Tick(later));
     assert!(!controls::shown(&state));
-    let rows = state.size.1;
+    let rows = GRID.rows;
     let moved = |row: u16| MouseInput {
         kind: MouseKind::Moved,
         col: 10,
         row,
     };
     let point = |state: &mut State, input: MouseInput| {
-        if let Some(a) = mouse::action(state, input) {
+        if let Some(a) = mouse::action(state, GRID, input) {
             update(state, a)
         } else {
             Vec::new()
         }
     };
     let pictured = |state: &State| -> (KaraokePicture, Option<u16>) {
-        let Layout::Karaoke(k) = layout::compute(state) else {
+        let Layout::Karaoke(k) = layout::compute(state, GRID) else {
             panic!("the mode")
         };
         (picture(state, &k, 30.0), k.controls.map(|c| c.bar.y))
@@ -91,13 +94,13 @@ fn the_controls_come_up_near_the_bottom_over_the_lines_with_a_seek_bar() {
     // whole screen, the controls never move them.
     assert_eq!((hidden.area, &hidden.lines), (shown.area, &shown.lines));
     // The seek bar under the slider: a click and release seeks there.
-    let Layout::Karaoke(k) = layout::compute(&state) else {
+    let Layout::Karaoke(k) = layout::compute(&state, GRID) else {
         panic!()
     };
     let c = k.controls.unwrap();
     assert!(c.seek.y > c.sliders[0].row.y && c.seek.width > 10, "{c:?}");
     let mid = c.seek.x + c.seek.width / 2;
-    assert_eq!(mouse::hit(&state, mid, c.seek.y), Some(Target::Bar));
+    assert_eq!(mouse::hit(&state, GRID, mid, c.seek.y), Some(Target::Bar));
     let click = |kind| MouseInput {
         kind,
         col: mid,
@@ -130,7 +133,7 @@ fn the_controls_come_up_near_the_bottom_over_the_lines_with_a_seek_bar() {
     // Only the pointer is still to hide, by its own rule.
     assert!(!controls::shown(&state) && controls::due(&state).is_none());
     assert_eq!(state.due(), Some(left + pointer::IDLE_MS));
-    assert_eq!(mouse::hit(&state, mid, c.seek.y), None);
+    assert_eq!(mouse::hit(&state, GRID, mid, c.seek.y), None);
     // Off the window from near the bottom: the same.
     point(&mut state, moved(rows - 1));
     let at = state.now_ms + FADE_MS;
@@ -142,7 +145,7 @@ fn the_controls_come_up_near_the_bottom_over_the_lines_with_a_seek_bar() {
         row: rows - 1,
     };
     assert!(matches!(
-        mouse::action(&state, out),
+        mouse::action(&state, GRID, out),
         Some(Action::PointerLeft)
     ));
     point(&mut state, out);

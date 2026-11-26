@@ -7,8 +7,8 @@ use ratatui::Frame;
 
 use super::colors::*;
 use super::{bordered, search_line};
-use crate::core::layout::HelpLayout;
 use crate::core::{help_shown, State};
+use crate::view::layout::HelpLayout;
 
 /// The help screen's lines, as its search leaves them (the same count as
 /// [`crate::core::help_line_count`]).

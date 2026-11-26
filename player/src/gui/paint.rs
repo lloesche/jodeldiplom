@@ -273,13 +273,17 @@ impl Paint {
         let song = self.heard.as_deref();
         let (mut staged, mut drawn) = (false, false);
         embed.draw(place.scale, |canvas, gpu| {
-            let grid = canvas.fit(place.size.0, place.size.1);
-            if grid != app.state.size {
-                app.dispatch(Action::Resize(grid.0, grid.1));
+            canvas.fit(place.size.0, place.size.1);
+            canvas.hold(&app.state);
+            let grid = canvas.grid();
+            let fit = crate::view::layout::fit(&app.state, grid);
+            if fit != app.state.fit {
+                app.dispatch(Action::Fit(fit));
             }
             let spectrum = app.spectrum();
             let scene = Scene {
                 state: &app.state,
+                grid,
                 spectrum: &spectrum,
                 pointer: place.pointer,
                 heard,
