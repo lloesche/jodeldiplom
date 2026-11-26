@@ -455,24 +455,17 @@ mod tests {
     }
 
     /// The light round the lane at full strength (its glow, its flames
-    /// setting the marquee's bulbs on fire), surging on a bar's first beat
-    /// with the bass loud, lights nothing over the HUD's band's bottom nor
-    /// in the lyric band, at every size: every shape it draws is within
-    /// them, and the flames fade out before the HUD's band.
-    #[test]
-    fn the_lane_s_light_keeps_off_the_hud_and_the_lyrics() {
-        use crate::gui::fx::flames;
-        let music = Music {
-            stems: [1.0; 4],
-            ..Music::steady(8.0, 120.0, 4, 1.0, 0.0)
-        };
-        static LANE: [Use; 3] = [
+    /// setting the marquee's bulbs on fire, the bulbs `bulbs` strong), to
+    /// `music`, on a stage the window's `size`: its shapes, the HUD's
+    /// band's bottom and the lyric band.
+    fn lane_light(bulbs: f32, music: &Music, size: (f32, f32)) -> (Vec<Instance>, f32, (f32, f32)) {
+        let uses: &'static [Use] = Box::leak(Box::new([
             Use::of(Fx::Glow, 1.0),
             Use::of(Fx::Flames, 1.0),
-            Use::of(Fx::Bulbs, 1.0),
-        ];
+            Use::of(Fx::Bulbs, bulbs),
+        ]));
         let row = Effects {
-            held: &LANE,
+            held: uses,
             ..Effects::NONE
         };
         let step = crate::gui::streak::Step {
@@ -485,31 +478,92 @@ mod tests {
             ..Default::default()
         };
         let mut stage = Stage::default();
-        for (w, h) in SIZES {
-            let area = (0.0, 0.0, w, h);
-            let lane = Lane::new(area, 0.0);
-            let (_, hud) = lane.hud(area);
-            let band = lines::band(area);
-            stage.board = fx::Board::default();
-            let frame = (stage.board).frame_of([(1.0, &row)].into_iter(), &step, &music, 10.0);
-            let at = Stage::lane_at(area, &lane, &frame);
-            let mut shapes = Vec::new();
-            stage.effects_at(&at, &frame, (&mut shapes, &mut Vec::new()));
-            assert_eq!(shapes.len(), 3, "{w}x{h}: the glow and two edges' flames");
+        let area = (0.0, 0.0, size.0, size.1);
+        let lane = Lane::new(area, 0.0);
+        let frame = (stage.board).frame_of([(1.0, &row)].into_iter(), &step, music, 10.0);
+        let at = Stage::lane_at(area, &lane, &frame);
+        let mut shapes = Vec::new();
+        stage.effects_at(&at, &frame, (&mut shapes, &mut Vec::new()));
+        (shapes, lane.hud(area).1, lines::band(area))
+    }
+
+    /// The music surging: a bar's first beat, the grid sure, the bass loud.
+    fn surging() -> Music {
+        Music {
+            stems: [1.0; 4],
+            ..Music::steady(8.0, 120.0, 4, 1.0, 0.0)
+        }
+    }
+
+    /// The light of a shape round the lane (its glow or its flames) at
+    /// `p`, `time` seconds on, as its shader works it out.
+    fn lit(i: &Instance, p: (f32, f32), time: f32) -> f32 {
+        use crate::gui::fx::{flames, glow};
+        match i.params[0] {
+            k if k == flames::BLAZE => {
+                let c = flames::flames_at(p, i.shape, i.params, i.color, i.color2, time);
+                c[0] + c[1] + c[2]
+            }
+            k if k == glow::GLOW => {
+                let d = crate::gui::rainbow::round_box(
+                    (p.0 - i.shape[0], p.1 - i.shape[1]),
+                    (i.shape[2], i.shape[3]),
+                    i.shape[3],
+                );
+                let [sure, kick, _, _] = i.color2;
+                glow::glow_at(d, i.params[1], time, i.params[2], (sure, kick))
+            }
+            k => panic!("a shape round the lane ({k}) this does not know"),
+        }
+    }
+
+    /// The light round the lane at full strength, surging on a bar's
+    /// first beat with the bass loud, lights nothing over the HUD's band's
+    /// bottom nor in the lyric band, at every size: every shape it draws is
+    /// within them.
+    #[test]
+    fn the_lane_s_light_keeps_off_the_hud_and_the_lyrics() {
+        for size in SIZES {
+            let (shapes, hud, band) = lane_light(1.0, &surging(), size);
+            assert_eq!(shapes.len(), 3, "{size:?}: the glow and two edges' flames");
             for i in &shapes {
                 assert!(
                     i.quad[1] >= hud && i.quad[3] <= band.0,
-                    "{w}x{h}: {:?} between {hud} and {}",
+                    "{size:?}: {:?} between {hud} and {}",
                     i.quad,
                     band.0
                 );
-                if i.params[0] == flames::BLAZE {
-                    for x in 0..=64 {
-                        let x = i.quad[0] + (i.quad[2] - i.quad[0]) * x as f32 / 64.0;
-                        let y = i.params[3];
-                        let c =
-                            flames::flames_at((x, y), i.shape, i.params, i.color, i.color2, 2.3);
-                        assert_eq!(c, [0.0; 3], "{w}x{h}: flames at their end {x} {y}");
+            }
+        }
+    }
+
+    /// Nothing of the light round the lane is cut off: at every size,
+    /// with the bulbs off, coming in and full, still and surging, every
+    /// shape's light is gone (none at all) at each edge of its quad, so no
+    /// straight edge of it ever shows.
+    #[test]
+    fn the_lane_s_light_is_gone_at_its_quads_edges() {
+        let musics = [
+            Music::NEUTRAL,
+            surging(),
+            Music::steady(8.5, 120.0, 4, 1.0, 0.0),
+        ];
+        for size in SIZES {
+            for bulbs in [0.0, 0.2, 0.6, 1.0] {
+                for music in &musics {
+                    let (shapes, _, _) = lane_light(bulbs, music, size);
+                    for i in &shapes {
+                        let [l, t, r, b] = i.quad;
+                        for n in 0..=96 {
+                            let (x, y) =
+                                (l + (r - l) * n as f32 / 96.0, t + (b - t) * n as f32 / 96.0);
+                            for p in [(x, t), (x, b), (l, y), (r, y)] {
+                                for time in [0.3, 1.7, 4.1] {
+                                    let v = lit(i, p, time);
+                                    assert_eq!(v, 0.0, "{size:?} {bulbs}: {:?} at {p:?}", i.quad);
+                                }
+                            }
+                        }
                     }
                 }
             }

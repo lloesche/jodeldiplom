@@ -202,8 +202,9 @@ pub fn edge_fire(
         * (1.0 + hot);
     let light = fire_light(k, p[0]);
     let flame_a = smoothstep(0.35, 1.0, k) * 0.85;
-    // A warm light behind them, close to the edge.
-    let glow_a = (-u * 3.0).exp() * 0.2;
+    // A warm light behind them, close to the edge, gone by the fire's
+    // depth (nothing of it cut off there).
+    let glow_a = (-u * 3.0).exp() * 0.2 * (1.0 - smoothstep(0.8, OUT, u));
     let glow = heat(0.45, p[0]);
     let mut a = flame_a + glow_a * (1.0 - flame_a);
     let mut rgb = [0, 1, 2].map(|i| (light[i] + glow[i] * glow_a * (1.0 - flame_a)).min(1.0));
@@ -314,7 +315,7 @@ fn fx_edge_fire(px: vec2<f32>, size: vec2<f32>, time: f32, sb: vec3<f32>, clear:
     ) * (1.0 + swell.y);
     let light = fx_fire_light(k, p.x);
     let flame_a = smoothstep(0.35, 1.0, k) * 0.85;
-    let glow_a = exp(-u * 3.0) * 0.2;
+    let glow_a = exp(-u * 3.0) * 0.2 * (1.0 - smoothstep(0.8, EDGE_FIRE_OUT, u));
     let glow = fx_heat(0.45, p.x);
     var a = flame_a + glow_a * (1.0 - flame_a);
     var rgb = min(light + glow * glow_a * (1.0 - flame_a), vec3<f32>(1.0));

@@ -12,8 +12,10 @@
 //!
 //! They never reach what is round the lane: over it, no higher than the
 //! bulbs light ([`super::bulbs::lit_top`], the HUD's band over it); under
-//! it, not into the lyric band. Each flame fits its room, its tips fading
-//! out before its end.
+//! it, not into the lyric band. Each flame fits its room and fades out
+//! smoothly over the outer part of it, to nothing before its end; behind
+//! its root line it fades out too, and at its span's ends: nothing of it
+//! is left at its quad's edges, so no edge of it shows.
 //!
 //! They surge with the music ([`surge`]): taller and hotter on a bar's
 //! first beat, a pulse on each beat, as sure as the beat grid is; its look
@@ -51,13 +53,16 @@ pub const SPEC: Spec = Spec {
 /// How high the flames are at most, in pills.
 const HIGH: f32 = 1.5;
 /// How much of their room their height is at most: the tallest tongues
-/// reach past it into the fade at their end ([`FADE`]).
-const FIT: f32 = 0.72;
-/// How far before the end of their room the flames fade out, in their
-/// heights.
-const FADE: f32 = 0.45;
-/// How far behind their root line the flames' quad reaches, in heights.
+/// reach into the fade at its end ([`FADE`]).
+const FIT: f32 = 0.7;
+/// Where in their room (out from their root line) the flames begin to
+/// fade, and where they are gone: shares of it, gone a little before its
+/// end (the quad's edge there).
+const FADE: (f32, f32) = (0.35, 0.95);
+/// How far behind their root line the flames' quad reaches, in heights;
+/// they are gone a little before it.
 const BEHIND: f32 = 0.4;
+const GONE_BEHIND: f32 = 0.85 * BEHIND;
 /// How far round a bulb's middle the flames rise from it, in its radii
 /// (just outside its socket).
 const HUG: f32 = 1.3;
@@ -169,7 +174,9 @@ pub fn flames_at(
     let [grow, hot, marquee, r] = color;
     let [first, gap, line, gaps] = color2;
     let h = high.max(1.0);
-    let mut d = (p.1 - root) * outward;
+    let out = (p.1 - root) * outward;
+    let room = (limit - root) * outward;
+    let mut d = out;
     let mut tall = 1.0;
     if marquee > 0.0 && gap > 0.0 {
         let u = (p.0 - first) / gap;
@@ -181,7 +188,8 @@ pub fn flames_at(
         tall += BETWEEN * marquee * smoothstep(0.15, 0.5, (u - near).abs());
     }
     let along = smoothstep(x0, x0 + h, p.0) * (1.0 - smoothstep(x1 - h, x1, p.0));
-    let keep = 1.0 - smoothstep(-FADE * h, 0.0, (p.1 - limit) * outward);
+    let keep = (1.0 - smoothstep(FADE.0 * room, FADE.1 * room, out))
+        * smoothstep(-GONE_BEHIND * h, 0.0, out);
     let heat = fire(p.0 / h, d / (h * grow * tall), time) * (1.0 + hot) * HEAT;
     fire_light(heat, 0.0).map(|c| c * k * along * keep)
 }
@@ -190,14 +198,17 @@ pub fn flames_at(
 /// shader (which gives them the one fire, `fx_fire`).
 pub fn wgsl() -> String {
     format!(
-        "const FLAMES_FADE: f32 = {FADE:?};\nconst FLAMES_HUG: f32 = {HUG:?};\nconst FLAMES_BETWEEN: f32 = {BETWEEN:?};\nconst FLAMES_INWARD: f32 = {INWARD:?};\nconst FLAMES_HEAT: f32 = {HEAT:?};\n{SHADER}"
+        "const FLAMES_FADE: vec2<f32> = vec2<f32>({:?}, {:?});\nconst FLAMES_GONE_BEHIND: f32 = {GONE_BEHIND:?};\nconst FLAMES_HUG: f32 = {HUG:?};\nconst FLAMES_BETWEEN: f32 = {BETWEEN:?};\nconst FLAMES_INWARD: f32 = {INWARD:?};\nconst FLAMES_HEAT: f32 = {HEAT:?};\n{SHADER}",
+        FADE.0, FADE.1
     )
 }
 
 const SHADER: &str = r"
 fn flames_at(p: vec2<f32>, shape: vec4<f32>, params: vec4<f32>, color: vec4<f32>, color2: vec4<f32>, time: f32) -> vec3<f32> {
     let h = max(params.y, 1.0);
-    var d = (p.y - shape.y) * shape.w;
+    let out = (p.y - shape.y) * shape.w;
+    let room = (params.w - shape.y) * shape.w;
+    var d = out;
     var tall = 1.0;
     if color.z > 0.0 && color2.y > 0.0 {
         let u = (p.x - color2.x) / color2.y;
@@ -209,7 +220,8 @@ fn flames_at(p: vec2<f32>, shape: vec4<f32>, params: vec4<f32>, color: vec4<f32>
         tall += FLAMES_BETWEEN * color.z * smoothstep(0.15, 0.5, abs(u - near));
     }
     let along = smoothstep(shape.x, shape.x + h, p.x) * (1.0 - smoothstep(shape.z - h, shape.z, p.x));
-    let keep = 1.0 - smoothstep(-FLAMES_FADE * h, 0.0, (p.y - params.w) * shape.w);
+    let keep = (1.0 - smoothstep(FLAMES_FADE.x * room, FLAMES_FADE.y * room, out))
+        * smoothstep(-FLAMES_GONE_BEHIND * h, 0.0, out);
     let heat = fx_fire(p.x / h, d / (h * color.x * tall), time) * (1.0 + color.y) * FLAMES_HEAT;
     return fx_fire_light(heat, 0.0) * (params.z * along * keep);
 }

@@ -11,6 +11,7 @@
 //! [`glow_at`] is the shader's reference ([`wgsl`]), held to it on the GPU
 //! ([`REFERENCE`]).
 
+use super::helpers::smoothstep;
 use super::{At, Fx, Layer, Live, Music, Out, Reference, Slot, Spec};
 use crate::gui::stage_gpu::Instance;
 
@@ -26,6 +27,9 @@ const REST: f32 = 0.55;
 /// bar's first beat.
 const BEAT: f32 = 0.9;
 const ONE: f32 = 1.5;
+/// Where out to its reach the glow begins to fade out, and where it is
+/// gone (shares of its reach).
+const GONE: (f32, f32) = (0.4, 0.95);
 
 /// The glow round the lane.
 pub const SPEC: Spec = Spec {
@@ -58,16 +62,20 @@ fn draw(at: &At, live: &Live, _: &mut Slot, out: &mut Out) {
         return;
     }
     let ((cx, cy), (hx, hy)) = (lane.middle, lane.half);
-    let reach = pill * 1.6;
     // Never over the HUD's band (no higher than the bulbs light) nor into
-    // the lyric band.
+    // the lyric band: it reaches no further than either, and is gone
+    // before it ([`glow_at`]), its quad holding all of it.
     let hud = super::bulbs::lit_top(lane.rect(), super::far_corner(area));
+    let reach = (pill * 1.6)
+        .min(cy - hy - hud)
+        .min(band.0 - cy - hy)
+        .max(1.0);
     out.shapes.push(Instance {
         quad: [
             cx - hx - reach,
-            (cy - hy - reach).max(hud),
+            cy - hy - reach,
             cx + hx + reach,
-            (cy + hy + reach).min(band.0),
+            cy + hy + reach,
         ],
         shape: [cx, cy, hx, hy],
         color: WARM,
@@ -87,19 +95,24 @@ pub fn pulse(m: &Music, p: [f32; 4]) -> [f32; 4] {
 /// How bright the glow round the lane is `d` pixels outside it (negative
 /// inside), `wide` its reach, at `time`, `k` its strength, with the beat's
 /// `sure` and `kick` ([`pulse`]): soft, breathing on the clock as the grid
-/// is unsure, as sure dim between the beats and flashing up on them.
+/// is unsure, as sure dim between the beats and flashing up on them; gone
+/// a little before its reach ([`GONE`]), so nothing of it is cut off.
 pub fn glow_at(d: f32, wide: f32, time: f32, k: f32, (sure, kick): (f32, f32)) -> f32 {
     let t = d.max(0.0) / wide.max(1.0);
     let inside = (d.min(0.0) / (wide * 0.5).max(1.0)).exp();
     let breath = 0.78 + 0.22 * (time * 2.6).sin();
     let bright = breath + (REST - breath) * sure + kick;
-    (-t * t * 2.5).exp() * inside * bright * k
+    let fade = 1.0 - smoothstep(GONE.0, GONE.1, t);
+    (-t * t * 2.5).exp() * fade * inside * bright * k
 }
 
 /// [`glow_at`] in WGSL and its shapes (`glow_shape`), for the stage's
 /// shader.
 pub fn wgsl() -> String {
-    format!("const GLOW_REST: f32 = {REST:?};\n{SHADER}")
+    format!(
+        "const GLOW_REST: f32 = {REST:?};\nconst GLOW_GONE: vec2<f32> = vec2<f32>({:?}, {:?});\n{SHADER}",
+        GONE.0, GONE.1
+    )
 }
 
 const SHADER: &str = r"
@@ -108,7 +121,8 @@ fn glow_at(d: f32, wide: f32, time: f32, k: f32, beat: vec2<f32>) -> f32 {
     let inside = exp(min(d, 0.0) / max(wide * 0.5, 1.0));
     let breath = 0.78 + 0.22 * sin(time * 2.6);
     let bright = breath + (GLOW_REST - breath) * beat.x + beat.y;
-    return exp(-t * t * 2.5) * inside * bright * k;
+    let fade = 1.0 - smoothstep(GLOW_GONE.x, GLOW_GONE.y, t);
+    return exp(-t * t * 2.5) * fade * inside * bright * k;
 }
 
 fn glow_shape(o: Out, p: vec2<f32>, k: u32) -> vec4<f32> {

@@ -750,6 +750,40 @@ mod tests {
         assert!(on(1.01) >= 6 && on(1.01 + 1.0 / FLASH_RATE) >= 6);
     }
 
+    /// Nothing of the bulbs is cut off at their strips: flashing on a
+    /// bar's first beat (their glow overdriven), their halos are gone (none
+    /// at all) at every outer edge of the strips (an edge not shared with
+    /// the next strip), so no straight edge of them ever shows.
+    #[test]
+    fn the_halos_are_gone_at_the_strips_edges() {
+        let one = on_beat(8.0, 1.0);
+        for lane in [LANE, [5.0, 5.0, 795.0, 300.0], [100.0, 300.0, 900.0, 303.0]] {
+            let strips = strips(lane, SIZE);
+            let on_another = |p: (f32, f32), n: usize| {
+                (strips.iter().enumerate()).any(|(m, q)| {
+                    m != n && p.0 >= q[0] && p.0 <= q[2] && p.1 >= q[1] && p.1 <= q[3]
+                })
+            };
+            for (n, &[l, t, r, b]) in strips.iter().enumerate() {
+                for k in 0..=400 {
+                    let (x, y) = (
+                        l + (r - l) * k as f32 / 400.0,
+                        t + (b - t) * k as f32 / 400.0,
+                    );
+                    for p in [(x, t), (x, b), (l, y), (r, y)] {
+                        if on_another(p, n) {
+                            continue;
+                        }
+                        for time in [0.0, 1.3] {
+                            let c = bulbs(p, SIZE, time, 1.0, lane, CLASSIC_P, &one);
+                            assert_eq!(c, [0.0; 4], "{lane:?} {p:?}");
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     /// The strips the bulbs are drawn in hold every pixel they light, and
     /// never lie over each other; a lane too low for four, one box.
     #[test]
