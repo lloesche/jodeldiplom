@@ -4,26 +4,24 @@ Work agreed on but not started, roughly in the order it was raised.
 
 ## Karaoke
 
-- **The cover's subject, what is left.** A text and a face detector now
-  clean the cut (on 302 covers from the library, judged by eye: text in
-  the subject 72 to 46, subjects missed 37 to 25, no straight edges
-  bitten out of people). Left: lettering touching a face stays with it
-  (Evanescence's title); logos the text detector misses (Coldplay,
-  Bowie); a person turned away with lettering round her has no subject
-  (Lily Allen); busy collages pass as one subject (LSD, Les Babacools);
-  illustrations and text printed on objects are mostly missed.
-- **A lyrics editor.** The words still often miss the voice. An editor
-  over the vocal stem's waveform where a word can be moved and made
-  longer or shorter by hand; the pitch of the new span is read again by
-  the aligner, so the bubbles follow it. The text can be edited too.
-- **Words not to sing.** In the same editor, mark words (backing
-  vocals, ad-libs) as not sung: no bubbles for them, and the vocal stem
-  turned up over them so they are heard. More generally, the vocal
-  stem's level can be set across the words of the song.
-- **The badge in narrow and upright windows.** The rung's pill and the
-  multiplier over the playhead crowd each other below a certain width.
-- **The HUD a little smaller** (about 7 %), and maybe the lane lower,
-  for more room between the marquee and the top of the window.
+- **The cover's subject: a different model.** Tuning around BEN v2
+  never satisfied (half a face cut off on Amy Macdonald's "This Is the
+  Life", the title torn out of the background as blurred blocks). A
+  "most eye-catching thing" model guesses; the plan is to say what the
+  subject is: faces and a person detector give the boxes, SAM 2.1
+  (Apache-2.0) cuts what they point at, a "stands out" model only for
+  covers without a person; text left in the background or filled by a
+  real inpainting model (LaMa) instead of the cheap fill. A bake-off on
+  the owner's covers decides (F:\MQA\research\matte3\).
+- **Story scenes instead of the cover.** The lyrics read for what they
+  tell (Gemma 4 E4B, Apache-2.0: text, image and audio in), the song cut
+  into scenes by its sections, each scene generated (SDXL-Lightning,
+  4 steps, on an 8 GB card; the cover and an artist photo as references
+  for style and likeness), taken apart into depth layers and played as
+  parallax (or 3D) cut on the downbeats. Heavy to prepare, cheap to play.
+  A Python prototype first (F:\MQA\research\story\), then our own
+  inference if it is worth it. Also to measure there: the image model at
+  fp16, Q8 and Q4; Gemma 4 E2B against E4B.
 - **The theme in the window**: Spooky is chosen in the settings file
   only (`karaoke_theme`); a switch for it on the Karaoke tab (after its
   native controls), and the rest of the window's accent following it.
@@ -31,13 +29,49 @@ Work agreed on but not started, roughly in the order it was raised.
   well the singing shines (the phrase's tier), everything else that
   builds up follows the multiplier. If they should come in order with
   the rest for every singer, they move to the rungs too.
-
 - **The Synth tab's layers:** the layers a tier or rung switches on are
   shown over the sound, not edited there (they are the tier table's
   rows); if they should be tried out on the tab too, a row's layers
   become user data the way the patches are.
+
+## The player
+
+- **Start-up (being done):** the window took about 20 s to show. It
+  opens at once on the setup screen, which shows what is loading, and
+  goes to the player when it is ready.
+- **Ctrl to preview (being done):** right after start nothing played
+  until a song had been started and stopped in the queue.
 - **AAC/M4A:** refused only because the decoder's `aac` feature is off;
   turn it on once checked (gapless, seeks, HE-AAC refused).
+
+## Faster inference (jodel-gpu)
+
+All our networks run on our own WGSL kernels, so one engine's speed-ups
+help the speech model, the stems, the beats, the word timing and the
+cover's vision alike. Measure first (per-kernel GPU time, submissions
+and waits per network, bandwidth- or compute-bound), then in order of
+what it buys:
+
+- **Q4 matmuls on int8 dot products:** two nibbles a word into int8
+  lanes (`w & 0x0F0F0F0F`, `(w >> 4) & 0x0F0F0F0F`), the inputs rounded
+  to int8 per block of 32 in the same even/odd order with a per-block
+  sum for the zero point (as llama.cpp's q8_1), four multiply-adds an
+  instruction with `dot4I8Packed` (DP4a on NVIDIA, AMD, Intel; Metal
+  emulates it, so the path is picked per adapter).
+- **f16** for the activations where accuracy allows (twice the rate on
+  Apple and AMD).
+- **Matmul tiling:** workgroup-memory tiles, several outputs a thread,
+  vec4 loads, subgroup reductions; a GEMV kernel for one token at a time
+  and a GEMM one for batches.
+- **Fusion:** bias, activation, residual and norm in the matmul's tail;
+  flash attention (online softmax) for the long sequences.
+- **Fewer round trips:** the decoder's loop on the GPU (argmax there,
+  the tokens read back in batches), more dispatches a submission, no
+  per-run buffers or staging, bind groups kept.
+- **Workgroup sizes** per vendor, tuned once and kept; background work
+  flat out while the window rests.
+
+Being measured and done; the Mac's numbers to follow.
 
 ## Checks on the Mac (the owner)
 
@@ -50,15 +84,10 @@ Work agreed on but not started, roughly in the order it was raised.
 
 Refactors, roughly in the order they unblock each other.
 
-- **The keymap as a table**, and "which song Karaoke means" computed
-  once (today four ways; Held, esc, Enter can re-hold the song just
-  sung).
 - **Settings as one table** (parse, print and merge from it), embedded
   covers keyed by all their bytes, folder listing out of `app.rs`.
 - **One atomic writer** for downloads, the mover and setup; the mover's
   "still to move" figure.
-- **One GPU engine** for every network; a lost GPU retried, the CPU
-  fallback said.
 - **Output structure:** the mixer's run split, inputs publishing their
   own clock, one backend bootstrap.
 - **Targets offer a format, not a set**, then float audio end to end
@@ -66,8 +95,8 @@ Refactors, roughly in the order they unblock each other.
 - **The player crate split**, starting with a pure `jodel-karaoke`
   (singing, shine, bubbles, the tier data); pitch tracking off the UI
   thread.
-- **A shared numeric base:** the tensors crate plus one DSP leaf (the
-  FFTs, windows, WAV) instead of copies.
+- **Layout, view and the iced port's last items (W-L):** `Pane`, the
+  view's module split, module grouping; after the Karaoke clean-up.
 - **A nightly GPU run** (`shader_check`, `frame_cost` budgets) on the
   owner's machine.
 - **The rest of the tests on the wall clock** onto the test's time
