@@ -17,8 +17,8 @@
 use std::path::PathBuf;
 
 use crate::browser::EntryKind;
+use crate::core::browse::{selected_entry, shown_title};
 use crate::core::keymap::Op;
-use crate::core::update::{browser_rows, row_entry, shown_title};
 use crate::core::{Action, Effect, Screen, Side, State};
 
 /// Ctrl held alone this long starts a preview, in milliseconds: a key
@@ -93,9 +93,7 @@ pub fn active(state: &State) -> bool {
 
 /// The file selected in the browser, if a file is.
 fn selected_file(state: &State) -> Option<PathBuf> {
-    let rows = browser_rows(state);
-    rows.get(state.browser.cursor)
-        .and_then(|&row| row_entry(state, row))
+    selected_entry(state)
         .filter(|e| e.kind == EntryKind::File)
         .map(|e| e.path.clone())
 }

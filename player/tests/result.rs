@@ -393,7 +393,7 @@ fn started(index: usize) -> State {
     assert!(engine(&fx)
         .iter()
         .any(|c| matches!(c, Command::PlayIn { index: i, .. } if *i == index)));
-    state.playing.track = Some(common::now_track(44_100, state.engine_settings(), index));
+    state.playing.track = Some(common::now_track(44_100, state.config.settings(), index));
     update(&mut state, Action::Engine(Event::State(PlayState::Playing)));
     state.playing.position = 0.0;
     let now = state.now_ms + 1_000;
@@ -559,7 +559,7 @@ fn a_song_played_out_with_nothing_scored_shows_its_result() {
 /// The engine's word that track `index` started (from its start), on the
 /// output `now_track` has.
 fn track_started(state: &mut State, index: usize) {
-    let track = common::now_track(44_100, state.engine_settings(), index);
+    let track = common::now_track(44_100, state.config.settings(), index);
     let start = jodel_playback::TrackStart {
         index,
         head: 0,

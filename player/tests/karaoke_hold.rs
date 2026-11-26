@@ -65,7 +65,7 @@ fn a_song_played_after_the_mode_is_the_one_held_next() {
     let mut state = common::karaoke_tab();
     held_after_the_song(&mut state);
     op(&mut state, Op::Back);
-    let track = common::now_track(44_100, state.engine_settings(), 0);
+    let track = common::now_track(44_100, state.config.settings(), 0);
     update(
         &mut state,
         Action::Engine(Event::TrackStarted(Box::new(TrackStart {
@@ -95,7 +95,7 @@ fn next_twice_goes_on_from_the_song_held() {
     let mut state = common::karaoke_tab();
     op(&mut state, Op::KaraokeEnter);
     update(&mut state, Action::Engine(Event::State(PlayState::Stopped)));
-    let heard = common::now_track(44_100, state.engine_settings(), 0);
+    let heard = common::now_track(44_100, state.config.settings(), 0);
     state.playing.track = Some(heard);
     state.playing.state = PlayState::Playing;
     state.karaoke.held = None;

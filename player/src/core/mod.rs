@@ -17,10 +17,12 @@
 //! with the [`crate::view`] widgets.
 
 pub mod action;
+mod browse;
 pub mod bubbles;
 pub mod desk;
 mod fit;
 pub mod grid;
+mod help;
 pub mod karaoke;
 pub mod key;
 pub mod keymap;
@@ -29,6 +31,8 @@ pub mod lanes;
 pub mod lyric_edit;
 pub mod mic;
 pub mod preview;
+mod queue;
+mod settings;
 pub mod shine;
 pub mod singing;
 pub mod sliders;
@@ -40,23 +44,24 @@ pub mod transition;
 mod update;
 pub mod voice_curve;
 pub mod voice_time;
+mod work;
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use jodel_output::StreamInfo;
-use jodel_playback::{PlayState, Route, Settings, TrackInfo};
+use jodel_playback::{PlayState, Route, TrackInfo};
 
 pub use action::{
     Action, Effect, Facts, Heard, Job, LyricsFacts, Placing, RhythmFacts, WalkPurpose,
 };
+pub use browse::{browser_rows, list_cursor, list_height, list_len, row_entry, shown_title, Row};
 pub use fit::Fit;
-pub use update::{
-    browser_rows, device_window, folder_window, help_line_count, help_shown, job_done, list_cursor,
-    list_height, list_len, palette_window, readiness, row_entry, shown_title, update,
-    visible_missing, Readiness, Row,
-};
+pub use help::{help_line_count, help_shown, palette_window};
+pub use settings::{device_window, folder_window};
+pub use update::update;
+pub use work::{job_done, readiness, visible_missing, Readiness};
 
 use crate::browser::{Details, Entry};
 use crate::config::Config;
@@ -150,7 +155,8 @@ pub const MESSAGE_MS: u64 = 6_000;
 pub const DOUBLE_CLICK_MS: u64 = 450;
 /// Settings changed with keys or clicks reach the engine this many
 /// milliseconds after the last change ([`State::settings_due`]), so
-/// stepping through values does not reopen the output at each step.
+/// stepping through values moves the track to its new route once, not at
+/// each step (the output stays open).
 pub const SETTINGS_DELAY_MS: u64 = 400;
 
 /// Which screen fills the window.
@@ -833,11 +839,6 @@ impl State {
     /// else as reported.
     pub fn heard(&self) -> f64 {
         self.drawn_heard.unwrap_or(self.playing.position)
-    }
-
-    /// The settings the engine plays with.
-    pub fn engine_settings(&self) -> Settings {
-        self.config.settings()
     }
 
     /// The selected settings row.

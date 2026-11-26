@@ -283,7 +283,9 @@ needs it. Where that is so, it is said; the tests named check the table.
 **A key.** One row in `core::keymap::table::KEYMAP`: where it applies, its
 keys, its `Op`, its words in the help. The help screen, the command
 palette and every hint a screen shows are written from the table. What the
-`Op` does goes in `core::update`.
+`Op` does goes in `core::update`'s `apply_op`, or in the module of its
+concern that it calls (`core::browse`, `queue`, `settings`, `help`, a
+tab's own).
 
 **A setting.** A field of `config::Config` (its doc says what it means) and
 one row in the `settings!` table in `config.rs`: its key and the kind of

@@ -292,7 +292,7 @@ fn the_count_in_ends_as_the_first_word_is_sung() {
     assert_eq!(countdown.at(29.5).map(|(n, _)| n), Some(1));
     assert_eq!(countdown.at(30.0), None);
     // In the intro: space pauses (it is the song, not the silence before).
-    let start = common::now_track(44_100, state.engine_settings(), 2);
+    let start = common::now_track(44_100, state.config.settings(), 2);
     state.playing.track = Some(start);
     state.playing.state = PlayState::Playing;
     state.playing.position = 5.0;
@@ -367,7 +367,7 @@ fn the_title_and_artist_show_while_the_song_waits_and_stay_as_it_starts() {
     op(&mut state, Op::KaraokeStart);
     let lead = state.karaoke.countdown.unwrap().lead();
     assert!(lead > 3.0);
-    state.playing.track = Some(common::now_track(44_100, state.engine_settings(), 2));
+    state.playing.track = Some(common::now_track(44_100, state.config.settings(), 2));
     state.playing.state = PlayState::Playing;
     assert_eq!(
         lines_now(&state, -lead + 0.2)
@@ -409,7 +409,7 @@ fn the_title_shows_once_and_not_again_after_the_count_in() {
     stopped(&mut state);
     op(&mut state, Op::KaraokeStart);
     let lead = state.karaoke.countdown.unwrap().lead();
-    state.playing.track = Some(common::now_track(44_100, state.engine_settings(), 2));
+    state.playing.track = Some(common::now_track(44_100, state.config.settings(), 2));
     state.playing.state = PlayState::Playing;
     // Heard from the lead's start to 10 s in, a tick every quarter second.
     let mut titled_after_count = Vec::new();
@@ -501,7 +501,7 @@ fn esc_during_a_count_in_calls_the_start_off() {
     stopped(&mut state);
     op(&mut state, Op::KaraokeStart);
     // The count-in is heard: the track started, a second before its start.
-    let start = common::now_track(44_100, state.engine_settings(), 2);
+    let start = common::now_track(44_100, state.config.settings(), 2);
     state.playing.track = Some(start);
     state.playing.state = PlayState::Playing;
     state.playing.position = -1.0;

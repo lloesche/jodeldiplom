@@ -635,7 +635,7 @@ impl App {
         let capabilities = target.capabilities().ok();
         let generation = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
         let options = PlayerOptions {
-            settings: self.state.engine_settings(),
+            settings: self.state.config.settings(),
             position_interval: Duration::from_millis(100),
             separator: Some(self.separator),
             stem_store: self.stem_store.clone(),
@@ -1676,7 +1676,7 @@ impl App {
         match (what, &mut engine.previews) {
             (Preview::Play { path }, previews) => previews
                 .get_or_insert_with(|| {
-                    crate::preview::Previews::new(song, strip, self.state.engine_settings())
+                    crate::preview::Previews::new(song, strip, self.state.config.settings())
                 })
                 .play(&engine.mixer, path),
             (Preview::Silent, Some(p)) => p.silent(),

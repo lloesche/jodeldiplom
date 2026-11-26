@@ -734,7 +734,7 @@ fn settings_change_the_engine_and_the_file() {
     let due = state.settings_due.unwrap();
     assert_eq!(
         engine(&update(&mut state, Action::Tick(due))),
-        vec![Command::SetSettings(state.engine_settings())]
+        vec![Command::SetSettings(state.config.settings())]
     );
     // The device list.
     update(
@@ -1263,10 +1263,10 @@ fn settings_reach_the_engine_after_a_pause() {
     let fx = update(&mut state, Action::Tick(1_600));
     assert_eq!(
         engine(&fx),
-        vec![Command::SetSettings(state.engine_settings())]
+        vec![Command::SetSettings(state.config.settings())]
     );
     assert_eq!(
-        state.engine_settings().headroom,
+        state.config.settings().headroom,
         jodel_playback::Headroom(20)
     );
     assert_eq!(state.settings_due, None);
@@ -1278,7 +1278,7 @@ fn settings_reach_the_engine_after_a_pause() {
     assert_eq!(
         fx,
         vec![
-            Effect::Engine(Command::SetSettings(state.engine_settings())),
+            Effect::Engine(Command::SetSettings(state.config.settings())),
             Effect::Quit
         ]
     );
@@ -1334,9 +1334,9 @@ fn the_headroom_setting_steps_and_reaches_the_engine() {
     let fx = update(&mut state, Action::Tick(due));
     assert_eq!(
         engine(&fx),
-        vec![Command::SetSettings(state.engine_settings())]
+        vec![Command::SetSettings(state.config.settings())]
     );
-    assert_eq!(state.engine_settings().headroom, Headroom(30));
+    assert_eq!(state.config.settings().headroom, Headroom(30));
 }
 
 fn rhythm_asked(fx: &[Effect]) -> Option<Vec<PathBuf>> {
@@ -3287,6 +3287,34 @@ fn queue_tracks_are_removed_and_moved() {
         look(&state, key(KeyCode::Backspace)),
         Some(Meaning::Op(Op::Parent))
     );
+}
+
+/// The queue's moves run from the palette while the browser shows do
+/// nothing: the hidden queue's selected track stays where it is, as it
+/// does for a remove.
+#[test]
+fn queue_moves_from_the_palette_do_nothing_while_the_browser_shows() {
+    use jodeldiplom::core::Side;
+    let mut state = common::playing_state(120, 40);
+    state.side = Side::Queue;
+    update(&mut state, Action::SelectRow(2));
+    state.side = Side::Browser;
+    let paths = state.queue.paths.clone();
+    for (name, moves) in [
+        ("move the track up", Op::QueueMoveUp),
+        ("move the track down", Op::QueueMoveDown),
+    ] {
+        let first = keymap::palette_matches(name).first().map(|e| e.op);
+        assert_eq!(first, Some(moves), "{name}");
+        op(&mut state, Op::Palette);
+        press_text(&mut state, name);
+        let fx = op(&mut state, Op::Accept);
+        assert!(state.palette.is_none(), "{name}: the palette ran");
+        assert!(engine(&fx).is_empty(), "{name}: {fx:?}");
+        assert_eq!(state.queue.paths, paths, "{name}");
+        assert_eq!(state.queue.cursor, 2, "{name}");
+        assert_eq!(state.queue.pending, 0, "{name}");
+    }
 }
 
 // The rules of how the controls meet a transition (INTERACTIONS.md).

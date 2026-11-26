@@ -122,8 +122,6 @@ pub enum Action {
     DemoLetGo,
     /// Select a list row (mouse).
     SelectRow(usize),
-    /// Do on a list row what `enter` does (a double click).
-    OpenRow(usize),
     /// A click on a list row: selects it, and a second click soon after
     /// on the same row does what `enter` does on it.
     ClickRow(usize),

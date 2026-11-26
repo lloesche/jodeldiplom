@@ -415,7 +415,7 @@ pub(crate) fn skip(state: &mut State, fx: &mut Vec<Effect>) {
                 match skip_plan(state, state.config.skip_preset) {
                     Ok(sent) => {
                         let at = sent.plan.start - state.heard();
-                        let name = crate::core::update::skip_preset_name(state);
+                        let name = crate::core::settings::skip_preset_name(state);
                         say_info(
                             state,
                             format!(

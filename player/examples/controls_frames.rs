@@ -112,7 +112,7 @@ fn now_track(state: &State, path: PathBuf, index: usize) -> NowTrack {
         },
         cover: None,
     };
-    let settings = state.engine_settings();
+    let settings = state.config.settings();
     let format = StreamFormat::new(info.rate, 2, SampleFormat::S24In32);
     let route = choose_route(&FileFacts::from(&info), format, &settings).unwrap();
     let output = StreamInfo {

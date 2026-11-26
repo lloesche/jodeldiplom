@@ -50,7 +50,6 @@ Work agreed on but not started, roughly in the order it was raised.
 
 Refactors, roughly in the order they unblock each other.
 
-- **`update.rs` split by concern** (browse, queue, settings, work).
 - **The keymap as a table**, and "which song Karaoke means" computed
   once (today four ways; Held, esc, Enter can re-hold the song just
   sung).

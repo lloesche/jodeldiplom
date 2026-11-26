@@ -1807,7 +1807,7 @@ fn the_controls_come_up_near_the_bottom_over_the_lines_with_a_seek_bar() {
     // A song playing (nothing waits for START), the controls gone.
     state.karaoke.held = None;
     state.karaoke.countdown = None;
-    state.playing.track = Some(common::now_track(44_100, state.engine_settings(), 2));
+    state.playing.track = Some(common::now_track(44_100, state.config.settings(), 2));
     state.playing.state = PlayState::Playing;
     state.playing.position = 30.0;
     let later = state.now_ms + 10_000;

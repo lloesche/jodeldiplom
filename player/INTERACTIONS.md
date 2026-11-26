@@ -172,9 +172,11 @@ stem keys are their mutes.
 - **Q1.** Removing or moving tracks never interrupts what plays. The one
   playing, removed, gives way to the next. A transition goes on while its
   next track is still the one after the playing one, and is called off
-  when it is not.
+  when it is not. Removing and moving act on the queue only while it
+  shows: run from the palette over the browser, they do nothing.
   - the queue tests
   - `a_transition_follows_its_tracks_through_the_queue`
+  - `queue_moves_from_the_palette_do_nothing_while_the_browser_shows`
 - **Q2.** Saving the session or a queue never changes playback.
 - **Q3.** A track in the queue shows a spinner while it is worked on, a
   dot while work for it is still to come, and nothing once all of it is
