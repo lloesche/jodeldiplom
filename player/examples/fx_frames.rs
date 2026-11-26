@@ -1,7 +1,9 @@
-//! The effects no tier's row uses yet ([`jodeldiplom::gui::fx`]: the
-//! screen's edges on fire, the marquee bulbs round the lane, the line sung
-//! on fire and frosted, the coins' fountain, rain and flick, a word
-//! slammed down) seen and timed over a frame of Karaoke mode as the window
+//! The effects ([`jodeldiplom::gui::fx`]: the screen's edges on fire, the
+//! marquee bulbs round the lane, the line sung on fire and frosted, the
+//! coins' fountain, rain and flick, a word slammed down, and the marquee
+//! on fire: the lane's glow and flames, the bulbs and the edges on fire
+//! at once, as Diva's row has them) seen and timed over a frame of
+//! Karaoke mode as the window
 //! draws it: a made-up song sung on its notes up to ten seconds in, over a
 //! cover taken apart (its `.layers` file), in a window of 3024 × 1964 (a
 //! 16-inch MacBook Pro's screen) by default. Each effect is put into the
@@ -10,8 +12,9 @@
 //! at a few strengths and moments: with no music, and moving with a
 //! steady beat (120 a minute, bars of four, the grid sure) at a few places
 //! in the beat and the bar (the bulbs' chase and flash, the fire's flare
-//! and breath, the rain's bursts, the slam landing on a bar's first beat,
-//! shouting the top tier's name or the multiplier). Its GPU time is what
+//! and breath, the marquee on fire on a bar's first beat and off the beat,
+//! the rain's bursts, the slam landing on a bar's first beat, shouting the
+//! top tier's name or the multiplier). Its GPU time is what
 //! it adds to the window pass's step it draws in (`fx`, `stage`, `bursts`
 //! or `top`), the median over a few frames. `--png OUT_DIR`: each frame
 //! whole as a PNG (`<effect>-<what>.png`).
@@ -144,6 +147,7 @@ fn frame_at(
 /// the frame).
 struct Shot {
     name: String,
+    label: &'static str,
     fx: Fx,
     row: Effects,
     ago: f64,
@@ -156,6 +160,7 @@ impl Shot {
         let uses: &'static [Use] = Vec::leak(vec![Use::of(fx, strength)]);
         Shot {
             name: format!("{}-{strength}-{ago}", fx.spec().ident),
+            label: fx.spec().ident,
             fx,
             row: Effects {
                 held: uses,
@@ -169,11 +174,34 @@ impl Shot {
         }
     }
 
+    /// The marquee on fire: the lane's glow and flames, the bulbs and the
+    /// edges on fire, each at full strength (timed by the bulbs' step).
+    fn marquee() -> Shot {
+        static ROW: [Use; 4] = [
+            Use::of(Fx::Glow, 1.0),
+            Use::of(Fx::Flames, 1.0),
+            Use::of(Fx::EdgeFire, 1.0),
+            Use::of(Fx::Bulbs, 1.0),
+        ];
+        Shot {
+            name: "marquee".to_owned(),
+            label: "marquee",
+            fx: Fx::Bulbs,
+            row: Effects {
+                held: &ROW,
+                ..Effects::NONE
+            },
+            ago: 0.0,
+            by: By::Phrase(0),
+            beats: None,
+        }
+    }
+
     /// `self` moving with a steady beat, `beats` beats in at the frame,
     /// named for it.
     fn on_beat(self, beats: f64, what: &str) -> Shot {
         Shot {
-            name: format!("{}-beat-{what}", self.fx.spec().ident),
+            name: format!("{}-beat-{what}", self.label),
             beats: Some(beats),
             ..self
         }
@@ -305,6 +333,11 @@ fn shots() -> Vec<Shot> {
         (9.0, "two"),
     ] {
         shots.push(Shot::new(Fx::EdgeFire, 1.0, 0.0).on_beat(beats, what));
+    }
+    // The marquee on fire: still, on the one, off the beat.
+    shots.push(Shot::marquee());
+    for (beats, what) in [(8.0, "one"), (8.5, "off"), (9.0, "two")] {
+        shots.push(Shot::marquee().on_beat(beats, what));
     }
     // The rain: fired just before a beat, its bursts on the beats after.
     for ago in [0.3, 0.8, 1.3, 2.0] {

@@ -1,5 +1,6 @@
 //! The tiers' effects at the stage's points ([`super::super::fx`]): where
-//! they draw as screen passes and over everything ([`Stage::screen_at`],
+//! they draw their light round the lane, as screen passes and over
+//! everything ([`Stage::lane_at`], [`Stage::screen_at`],
 //! [`Stage::over_at`]) and what they keep clear there ([`Stage::clear`]:
 //! from the placements of what they keep clear, so they never drift
 //! apart), each slot drawn with the screen's shake they make added
@@ -35,6 +36,20 @@ impl Stage {
             band: lines::band(area),
             clear: self.clear(area, lane),
             lane: lane.glass(area),
+        }
+    }
+
+    /// Where the effects draw their light round the lane on a stage in the
+    /// window's `area` round `lane` with `effects`: the lane's glass, a
+    /// pill's height, the area, the lyric band, and how strongly the
+    /// marquee's bulbs show round it (the flames set them on fire).
+    pub fn lane_at(area: (f32, f32, f32, f32), lane: &Lane, effects: &fx::Frame) -> At {
+        At::Lane {
+            lane: lane.glass(area),
+            pill: lane.pill,
+            area,
+            band: lines::band(area),
+            bulbs: effects.live(fx::Fx::Bulbs).strength,
         }
     }
 
@@ -433,6 +448,68 @@ mod tests {
                                 }
                             }
                         }
+                    }
+                }
+            }
+        }
+    }
+
+    /// The light round the lane at full strength (its glow, its flames
+    /// setting the marquee's bulbs on fire), surging on a bar's first beat
+    /// with the bass loud, lights nothing over the HUD's band's bottom nor
+    /// in the lyric band, at every size: every shape it draws is within
+    /// them, and the flames fade out before the HUD's band.
+    #[test]
+    fn the_lane_s_light_keeps_off_the_hud_and_the_lyrics() {
+        use crate::gui::fx::flames;
+        let music = Music {
+            stems: [1.0; 4],
+            ..Music::steady(8.0, 120.0, 4, 1.0, 0.0)
+        };
+        static LANE: [Use; 3] = [
+            Use::of(Fx::Glow, 1.0),
+            Use::of(Fx::Flames, 1.0),
+            Use::of(Fx::Bulbs, 1.0),
+        ];
+        let row = Effects {
+            held: &LANE,
+            ..Effects::NONE
+        };
+        let step = crate::gui::streak::Step {
+            tier: Some(crate::tiers::Tier::TOP),
+            glow: crate::gui::rainbow::Glow {
+                level: 1.0,
+                from: 1.0,
+                since: -10.0,
+            },
+            ..Default::default()
+        };
+        let mut stage = Stage::default();
+        for (w, h) in SIZES {
+            let area = (0.0, 0.0, w, h);
+            let lane = Lane::new(area, 0.0);
+            let (_, hud) = lane.hud(area);
+            let band = lines::band(area);
+            stage.board = fx::Board::default();
+            let frame = (stage.board).frame_of([(1.0, &row)].into_iter(), &step, &music, 10.0);
+            let at = Stage::lane_at(area, &lane, &frame);
+            let mut shapes = Vec::new();
+            stage.effects_at(&at, &frame, (&mut shapes, &mut Vec::new()));
+            assert_eq!(shapes.len(), 3, "{w}x{h}: the glow and two edges' flames");
+            for i in &shapes {
+                assert!(
+                    i.quad[1] >= hud && i.quad[3] <= band.0,
+                    "{w}x{h}: {:?} between {hud} and {}",
+                    i.quad,
+                    band.0
+                );
+                if i.params[0] == flames::BLAZE {
+                    for x in 0..=64 {
+                        let x = i.quad[0] + (i.quad[2] - i.quad[0]) * x as f32 / 64.0;
+                        let y = i.params[3];
+                        let c =
+                            flames::flames_at((x, y), i.shape, i.params, i.color, i.color2, 2.3);
+                        assert_eq!(c, [0.0; 3], "{w}x{h}: flames at their end {x} {y}");
                     }
                 }
             }

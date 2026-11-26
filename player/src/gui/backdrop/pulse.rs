@@ -6,7 +6,8 @@
 //! tier makes it all stronger (its row's [`crate::tiers::TierSpec::backdrop_beat`],
 //! held through the rows), and a phrase landing flares it for a moment
 //! ([`Pulse::of`]). The beat fades only where the grid is really unsure
-//! ([`SURE`]): a little unsure, it still beats.
+//! (as [`Music::sure`] has it, as every effect's): a little unsure, it
+//! still beats.
 //!
 //! The strengths are look parameters, the constants here.
 
@@ -34,10 +35,6 @@ pub const ATTACK: f32 = 0.02;
 /// How fast a beat's push falls back, then a bar's: to about a third in
 /// this many seconds.
 pub const FALL: (f32, f32) = (0.11, 0.28);
-/// How sure the grid must be (its [`Music::sure`], 0 to 1) for the beat to
-/// show not at all, and wholly: it fades only where the grid is really
-/// unsure.
-pub const SURE: (f32, f32) = (0.0, 0.35);
 
 /// The beat's pushes now, each 0 to 1: a beat's and a bar's first's, as
 /// sure as the grid lets them be.
@@ -52,9 +49,9 @@ pub struct Beat {
 impl Beat {
     /// The pushes in `music`: each a cone's push ([`cone`]) from the beat
     /// (and the bar's first) just passed, faded where the grid is unsure
-    /// ([`SURE`]).
+    /// ([`Music::sure`]).
     pub fn of(music: &Music) -> Beat {
-        let sure = smoothstep(SURE.0, SURE.1, music.sure);
+        let sure = music.sure;
         let len = music.beat_length();
         let since_beat = music.beat_phase * len;
         let since_bar = music.bar_phase * music.bar_beats.max(1.0) * len;
@@ -161,7 +158,7 @@ mod tests {
         let sure = at(8.03, 0.9).beat;
         let middling = at(8.03, 0.5).beat;
         assert!(middling > 0.95 * sure, "{middling} {sure}");
-        assert!(at(8.03, 0.2).beat < 0.01);
+        assert!(at(8.03, 0.1).beat < 0.01);
         assert_eq!(Beat::of(&Music::NEUTRAL), Beat::default());
         assert!(!Beat::default().moving() && at(8.03, 0.9).moving());
     }

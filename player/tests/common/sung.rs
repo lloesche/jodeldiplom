@@ -180,7 +180,7 @@ static NONE: Effects = Effects::NONE;
 /// `base` (a frame of `stage` over `area`, at its clock) with `effects`
 /// in it, as the board draws them from the row `fired` names listing
 /// them, the singing at its glow, fired as it says: their screen passes,
-/// the line sung in the strongest of their treatments, their bursts from
+/// their light round the lane, the line sung in the strongest of their treatments, their bursts from
 /// the playhead, what they draw over everything as it is at the frame's
 /// clock (a word slammed down, lettered by `stage`, the screen shaken),
 /// their looks and the music.
@@ -243,6 +243,12 @@ pub fn with_effects(
         &mut board,
         (&screen, &drawn),
         &mut f.screen,
+        &mut Vec::new(),
+    );
+    draw(
+        &mut board,
+        (&Stage::lane_at(area, &lane, &drawn), &drawn),
+        &mut f.lights,
         &mut Vec::new(),
     );
     if let (Some(t), At::Screen { band, .. }) = (fx::treatment(Text::Sung, &drawn), screen) {

@@ -21,10 +21,17 @@
 //! along the row ([`strips`]).
 //!
 //! On the beat ([`lit_at`], the shader reading the music's uniform): the
-//! chase steps a bulb a beat, every bulb glows up a little on each beat,
-//! the flashing halves turn a beat each, and every bulb flashes on a bar's
-//! first beat. As sure as the beat grid is: where it is unsure, the chase
-//! runs by the clock as it does with no music.
+//! chase steps a bulb a beat, every bulb blinks up hard on each beat and
+//! the chase dims between them, the flashing halves turn a beat each, and
+//! every bulb flashes on a bar's first beat, all together and brighter
+//! than lit (their glow overdriven). As sure as the beat grid is: where it
+//! is really unsure, the chase runs by the clock as it does with no music.
+//! Its look's `w` is how hard it blinks (1 as made, 0 not at all).
+//!
+//! Where the lane's flames burn too, they set the bulbs on fire
+//! ([`super::flames`], reading the row: [`row`]): the flames burn behind
+//! the row, round each bulb and up between them, and the bulbs, drawn over
+//! the light, stay crisp on top.
 
 use super::helpers::{clamp01, mix3, smoothstep};
 use super::{At, Fx, Layer, Live, Music, Out, Reference, Slot, Spec};
@@ -43,7 +50,7 @@ pub const SPEC: Spec = Spec {
     draw,
     kinds: &["bulbs"],
     wgsl: Some(wgsl),
-    params: [0.0, 1.0, 1.0, 0.0],
+    params: [0.0, 1.0, 1.0, 1.0],
     reference: Some(REFERENCE),
     ..Spec::NONE
 };
@@ -70,11 +77,10 @@ fn draw(at: &At, live: &Live, _: &mut Slot, out: &mut Out) {
 /// along the top and the bottom, down the sides between them; one box
 /// where the row is too low for that.
 pub fn strips(lane: [f32; 4], size: (f32, f32)) -> Vec<[f32; 4]> {
-    let r = (lane[3] - lane[1]) * DIAMETER * 0.5;
-    if r <= 0.0 {
+    let Some(Row { ring, r, .. }) = row(lane, size) else {
         return Vec::new();
-    }
-    let [x0, y0, x1, y1] = ring(lane, size, r);
+    };
+    let [x0, y0, x1, y1] = ring;
     let reach = r * REACH + 2.0;
     let (top, bottom) = (y0 + reach, y1 - reach);
     if bottom <= top {
@@ -113,9 +119,14 @@ const FLASH_FROM: f32 = 0.8;
 const FLASH_RATE: f32 = 5.0;
 /// How strong the glow is.
 const GLOW: f32 = 1.3;
-/// How much every bulb glows up on a beat (its pulse at its height), a
-/// share of the way to fully lit.
-const BEAT_GLOW: f32 = 0.35;
+/// How much every bulb blinks up on a beat (its pulse at its height), a
+/// share of the way to fully lit, its look's `w` at 1.
+const BLINK: f32 = 0.85;
+/// How much the chase dims between the beats (the beat's pulse gone).
+const DIP: f32 = 0.55;
+/// How much brighter than lit every bulb's glow flashes on a bar's first
+/// beat.
+const OVERDRIVE: f32 = 0.7;
 
 /// A palette: a bulb lit, its glow, a bulb unlit, its socket, the
 /// socket's rim.
@@ -150,11 +161,44 @@ const SPOOKY: Palette = Palette {
 /// (the lane's top where it has no bulbs). What is over the lane keeps
 /// above it ([`crate::gui::stage::Lane::hud`]).
 pub fn lit_top(lane: [f32; 4], size: (f32, f32)) -> f32 {
+    row(lane, size).map_or(lane[1], |row| row.ring[1] - row.r * REACH)
+}
+
+/// The bulbs' row round a lane ([`row`]).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Row {
+    /// The corners of the bulbs' middles: left, top, right, bottom.
+    pub ring: [f32; 4],
+    /// A bulb's radius.
+    pub r: f32,
+    /// The gaps between bulbs across the row and down it.
+    pub gaps: (i32, i32),
+}
+
+/// The bulbs' row round `lane` (left, top, right, bottom) in a screen of
+/// `size`, whether they show or not; none where the lane is too low for
+/// any or the row has no room.
+pub fn row(lane: [f32; 4], size: (f32, f32)) -> Option<Row> {
     let r = (lane[3] - lane[1]) * DIAMETER * 0.5;
     if r <= 0.0 {
-        return lane[1];
+        return None;
     }
-    ring(lane, size, r)[1] - r * REACH
+    let ring = ring(lane, size, r);
+    let (w, h) = (ring[2] - ring[0], ring[3] - ring[1]);
+    if w <= 0.0 || h <= 0.0 {
+        return None;
+    }
+    let gap = r * 2.0 * SPACING;
+    let gaps = (
+        ((w / gap + 0.5).floor() as i32).max(1),
+        ((h / gap + 0.5).floor() as i32).max(1),
+    );
+    Some(Row { ring, r, gaps })
+}
+
+/// How much the bulbs show at `strength` (wholly from a little in).
+pub fn shown(strength: f32) -> f32 {
+    clamp01(strength / 0.35)
 }
 
 /// The row's corners (left, top, right, bottom) round `lane` in a screen
@@ -185,11 +229,12 @@ fn bulb_at(k: i32, (nw, nh): (i32, i32), ring: [f32; 4]) -> (f32, f32) {
     }
 }
 
-/// How lit bulb `k` is (0 to 1) at chase step `step`, its flashing
-/// `flash` strong, on flashing beat `beat`.
-fn lit(k: i32, step: i32, flash: f32, beat: i32) -> f32 {
+/// How lit bulb `k` is (0 to 1) at chase step `step`, the chase `dim`
+/// as lit as it might be, its flashing `flash` strong, on flashing beat
+/// `beat`.
+fn lit(k: i32, step: i32, dim: f32, flash: f32, beat: i32) -> f32 {
     let u = ((step - k) % PERIOD + PERIOD) % PERIOD;
-    let chase = BASE + (1.0 - BASE) * (-(u as f32) / TAIL).exp();
+    let chase = (BASE + (1.0 - BASE) * (-(u as f32) / TAIL).exp()) * dim;
     let on = if ((k + beat) % 2 + 2) % 2 == 0 {
         1.0
     } else {
@@ -198,18 +243,21 @@ fn lit(k: i32, step: i32, flash: f32, beat: i32) -> f32 {
     chase.max(flash * on)
 }
 
-/// How lit bulb `k` is at `time`, its flashing `flash` strong, with the
-/// music `m` (the beats counted, the bar's and the beat's pulses, how sure
-/// the grid is) and its look `p` (`y` the chase's speed, `z` how much it
-/// keeps to the beat): by the clock (the chase [`RATE`] steps a second,
-/// the halves flashing [`FLASH_RATE`] times a second), and on the beat (a
-/// step a beat, the halves turning a beat each, every bulb glowing up a
-/// little on each beat and lit on a bar's first), the one going to the
-/// other as sure as the grid is.
+/// How lit bulb `k` is at `time` (its glow overdriven past 1), its
+/// flashing `flash` strong, with the music `m` (the beats counted, the
+/// bar's and the beat's pulses, how sure the grid is) and its look `p`
+/// (`y` the chase's speed, `z` how much it keeps to the beat, `w` how hard
+/// it blinks): by the clock (the chase [`RATE`] steps a second, the halves
+/// flashing [`FLASH_RATE`] times a second), and on the beat (a step a
+/// beat, the chase dimmed between the beats, every bulb blinking up on
+/// each beat, the halves turning a beat each, every bulb lit and
+/// overdriven on a bar's first), the one going to the other as sure as
+/// the grid is.
 pub fn lit_at(k: i32, time: f32, flash: f32, p: [f32; 4], m: &Music) -> f32 {
     let free = lit(
         k,
         (time * RATE * p[1]).floor() as i32,
+        1.0,
         flash,
         (time * FLASH_RATE).floor() as i32,
     );
@@ -218,14 +266,19 @@ pub fn lit_at(k: i32, time: f32, flash: f32, p: [f32; 4], m: &Music) -> f32 {
         return free;
     }
     let beat = m.beats.floor() as i32;
-    let on = lit(k, beat, flash, beat).max(m.downbeat);
-    let on = on + (1.0 - on) * BEAT_GLOW * m.beat;
+    let hard = p[3].max(0.0);
+    let dim = 1.0 - clamp01(DIP * hard * (1.0 - m.beat));
+    let on = lit(k, beat, dim, flash, beat).max(clamp01(m.downbeat * hard));
+    let on = on + (1.0 - on) * clamp01(BLINK * hard * m.beat);
+    let on = on + OVERDRIVE * hard * smoothstep(0.5, 1.0, m.downbeat);
     free + (on - free) * lock
 }
 
-/// A bulb of radius `r`, `lit`, at `q` from its middle: what it puts
-/// over the frame (premultiplied) and its glow added.
-fn bulb(q: (f32, f32), r: f32, lit: f32, pal: &Palette) -> ([f32; 4], [f32; 3]) {
+/// A bulb of radius `r`, `glowing` (lit, its glow overdriven past 1), at
+/// `q` from its middle: what it puts over the frame (premultiplied) and
+/// its glow added.
+fn bulb(q: (f32, f32), r: f32, glowing: f32, pal: &Palette) -> ([f32; 4], [f32; 3]) {
+    let lit = glowing.min(1.0);
     let dd = q.0.hypot(q.1);
     let sock = (r * 1.22 - dd + 0.5).clamp(0.0, 1.0);
     let rim = (1.0 - (dd - r * 1.14).abs() / (r * 0.08)).clamp(0.0, 1.0) * sock;
@@ -245,7 +298,7 @@ fn bulb(q: (f32, f32), r: f32, lit: f32, pal: &Palette) -> ([f32; 4], [f32; 3]) 
     ];
     let x = (dd - r * 0.5).max(0.0) / (r * 1.3);
     let fade = (1.0 - dd / (r * REACH)).clamp(0.0, 1.0);
-    let g = lit * GLOW * (-x * x).exp() * fade * fade;
+    let g = glowing * GLOW * (-x * x).exp() * fade * fade;
     (over, pal.glow.map(|c| c * g))
 }
 
@@ -267,12 +320,15 @@ pub fn bulbs(
     if strength <= 0.0 {
         return [0.0; 4];
     }
-    let r = (lane[3] - lane[1]) * DIAMETER * 0.5;
-    let ring = ring(lane, size, r);
-    let (w, h) = (ring[2] - ring[0], ring[3] - ring[1]);
-    if r <= 0.0 || w <= 0.0 || h <= 0.0 {
+    let Some(Row {
+        ring,
+        r,
+        gaps: (nw, nh),
+    }) = row(lane, size)
+    else {
         return [0.0; 4];
-    }
+    };
+    let (w, h) = (ring[2] - ring[0], ring[3] - ring[1]);
     let c = (px.0.clamp(ring[0], ring[2]), px.1.clamp(ring[1], ring[3]));
     let outside = (px.0 - c.0).hypot(px.1 - c.1);
     let inside = (px.0 - ring[0])
@@ -282,9 +338,6 @@ pub fn bulbs(
     if outside.max(inside) > r * REACH {
         return [0.0; 4];
     }
-    let gap = r * 2.0 * SPACING;
-    let nw = ((w / gap + 0.5).floor() as i32).max(1);
-    let nh = ((h / gap + 0.5).floor() as i32).max(1);
     let n = 2 * (nw + nh);
     // The side nearest, and how far along the row that is, in bulbs.
     let sides = [
@@ -338,7 +391,7 @@ pub fn bulbs(
             glow[i] += g[i];
         }
     }
-    let shown = (strength / 0.35).min(1.0);
+    let shown = shown(strength);
     let bright = 0.55 + 0.45 * strength.min(1.0);
     [
         (over[0] + glow[0] * bright) * shown,
@@ -369,7 +422,9 @@ const BULBS_BASE: f32 = {BASE:?};
 const BULBS_FLASH_FROM: f32 = {FLASH_FROM:?};
 const BULBS_FLASH_RATE: f32 = {FLASH_RATE:?};
 const BULBS_GLOW: f32 = {GLOW:?};
-const BULBS_BEAT_GLOW: f32 = {BEAT_GLOW:?};
+const BULBS_BLINK: f32 = {BLINK:?};
+const BULBS_DIP: f32 = {DIP:?};
+const BULBS_OVERDRIVE: f32 = {OVERDRIVE:?};
 const BULBS_CLASSIC = array<vec3<f32>, 5>({});
 const BULBS_SPOOKY = array<vec3<f32>, 5>({});
 {SHADER}",
@@ -401,9 +456,9 @@ fn bulbs_at(k: i32, nw: i32, nh: i32, ring: vec4<f32>) -> vec2<f32> {
     return vec2<f32>(ring.x, ring.w - f32(k - 2 * nw - nh) * h / fh);
 }
 
-fn bulbs_lit(k: i32, step: i32, flash: f32, beat: i32) -> f32 {
+fn bulbs_lit(k: i32, step: i32, dim: f32, flash: f32, beat: i32) -> f32 {
     let u = ((step - k) % BULBS_PERIOD + BULBS_PERIOD) % BULBS_PERIOD;
-    let chase = BULBS_BASE + (1.0 - BULBS_BASE) * exp(-f32(u) / BULBS_TAIL);
+    let chase = (BULBS_BASE + (1.0 - BULBS_BASE) * exp(-f32(u) / BULBS_TAIL)) * dim;
     var on = 0.0;
     if ((k + beat) % 2 + 2) % 2 == 0 {
         on = 1.0;
@@ -412,14 +467,17 @@ fn bulbs_lit(k: i32, step: i32, flash: f32, beat: i32) -> f32 {
 }
 
 fn bulbs_lit_at(k: i32, time: f32, flash: f32, p: vec4<f32>, m: Music) -> f32 {
-    let free = bulbs_lit(k, i32(floor(time * BULBS_RATE * p.y)), flash, i32(floor(time * BULBS_FLASH_RATE)));
+    let free = bulbs_lit(k, i32(floor(time * BULBS_RATE * p.y)), 1.0, flash, i32(floor(time * BULBS_FLASH_RATE)));
     let lock = clamp(m.tempo.y * p.z, 0.0, 1.0);
     if lock <= 0.0 {
         return free;
     }
     let beat = i32(floor(m.count.x));
-    var on = max(bulbs_lit(k, beat, flash, beat), m.beat.w);
-    on = on + (1.0 - on) * BULBS_BEAT_GLOW * m.beat.z;
+    let hard = max(p.w, 0.0);
+    let dim = 1.0 - clamp(BULBS_DIP * hard * (1.0 - m.beat.z), 0.0, 1.0);
+    var on = max(bulbs_lit(k, beat, dim, flash, beat), clamp(m.beat.w * hard, 0.0, 1.0));
+    on = on + (1.0 - on) * clamp(BULBS_BLINK * hard * m.beat.z, 0.0, 1.0);
+    on = on + BULBS_OVERDRIVE * hard * smoothstep(0.5, 1.0, m.beat.w);
     return free + (on - free) * lock;
 }
 
@@ -429,8 +487,9 @@ struct BulbsLight {
     glow: vec3<f32>,
 };
 
-fn bulbs_one(q: vec2<f32>, r: f32, lit: f32, pal: array<vec3<f32>, 5>) -> BulbsLight {
+fn bulbs_one(q: vec2<f32>, r: f32, glowing: f32, pal: array<vec3<f32>, 5>) -> BulbsLight {
     var o: BulbsLight;
+    let lit = min(glowing, 1.0);
     let dd = length(q);
     let sock = clamp(r * 1.22 - dd + 0.5, 0.0, 1.0);
     let rim = clamp(1.0 - abs(dd - r * 1.14) / (r * 0.08), 0.0, 1.0) * sock;
@@ -445,7 +504,7 @@ fn bulbs_one(q: vec2<f32>, r: f32, lit: f32, pal: array<vec3<f32>, 5>) -> BulbsL
     o.over = vec4<f32>(col * glass + under * sock * (1.0 - glass), glass + sock * (1.0 - glass));
     let x = max(dd - r * 0.5, 0.0) / (r * 1.3);
     let fade = clamp(1.0 - dd / (r * BULBS_REACH), 0.0, 1.0);
-    o.glow = pal[1] * (lit * BULBS_GLOW * exp(-x * x) * fade * fade);
+    o.glow = pal[1] * (glowing * BULBS_GLOW * exp(-x * x) * fade * fade);
     return o;
 }
 
@@ -608,7 +667,9 @@ mod tests {
 
     const SIZE: (f32, f32) = (1600.0, 1000.0);
     const LANE: [f32; 4] = [80.0, 150.0, 1520.0, 600.0];
-    const CLASSIC_P: [f32; 4] = [0.0, 1.0, 1.0, 0.0];
+    /// Their look as made: classic, the chase as fast, on the beat,
+    /// blinking with it.
+    const CLASSIC_P: [f32; 4] = SPEC.params;
     /// No music.
     const STILL: &Music = &Music::NEUTRAL;
 
@@ -777,15 +838,18 @@ mod tests {
         assert_ne!(x, y);
     }
 
-    /// Where the grid is unsure the bulbs run by the clock as they do with
-    /// no music; half sure, half way between; the look's lock off, by the
-    /// clock however sure.
+    /// Where the grid is really unsure the bulbs run by the clock as they
+    /// do with no music; half sure (the grid's regions agreeing a quarter),
+    /// half way between; moderately sure (agreeing half), wholly on the
+    /// beat; the look's lock off, by the clock however sure.
     #[test]
     fn unsure_the_bulbs_run_freely() {
         let free = row(1.03, 0.0, STILL);
         assert_eq!(row(1.03, 0.0, &on_beat(9.3, 0.0)), free);
+        assert_eq!(row(1.03, 0.0, &on_beat(9.3, 0.1)), free);
         let sure = row(1.03, 0.0, &on_beat(9.3, 1.0));
-        let half = row(1.03, 0.0, &on_beat(9.3, 0.5));
+        assert_eq!(row(1.03, 0.0, &on_beat(9.3, 0.5)), sure);
+        let half = row(1.03, 0.0, &on_beat(9.3, 0.25));
         assert_ne!(sure, free);
         for k in 0..12 {
             assert!((half[k] - (free[k] + sure[k]) / 2.0).abs() < 1e-5, "{k}");

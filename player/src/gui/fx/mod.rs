@@ -327,12 +327,20 @@ pub enum At {
         /// Its height.
         size: f32,
     },
-    /// The lane, and a pill's height.
+    /// The lane, a pill's height, the stage's area, the lyric band (its
+    /// top and bottom) and how strongly the marquee's bulbs show round the
+    /// lane (its effect's strength: the flames set them on fire).
     Lane {
         /// The lane.
         lane: LaneBox,
         /// A pill's height.
         pill: f32,
+        /// The area: left, top, width, height.
+        area: (f32, f32, f32, f32),
+        /// The lyric band's top and bottom.
+        band: (f32, f32),
+        /// The bulbs' strength.
+        bulbs: f32,
     },
     /// The stage's area: left, top, width, height.
     Sky {

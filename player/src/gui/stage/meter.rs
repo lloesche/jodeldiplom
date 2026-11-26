@@ -129,14 +129,13 @@ fn sung_so_far(singing: &Singing, clock: f64) -> Option<f32> {
     Some(hit as f32 / words as f32)
 }
 
-/// What the shine needs of the stage: the area, the lane and its box, the
+/// What the shine needs of the stage: the area, the lane, the
 /// pills' height, the song's time and the singing's clock, and how much
 /// the progress has gone for the controls' bar (0 to 1,
 /// [`crate::core::karaoke::controls::handover`]).
 pub struct Where {
     pub area: (f32, f32, f32, f32),
     pub lane: Lane,
-    pub lane_box: super::LaneBox,
     pub now: f64,
     pub clock: f64,
     pub gone: f32,
@@ -237,10 +236,7 @@ impl Stage {
         }
         // The effects' light round the lane (the rows' glow and flames),
         // then over the screen (the angels).
-        let lane = At::Lane {
-            lane: at.lane_box,
-            pill: at.lane.pill,
-        };
+        let lane = Stage::lane_at(at.area, &at.lane, effects);
         self.effects_at(&lane, effects, (&mut d.lights, &mut Vec::new()));
         let sky = At::Sky { area: at.area };
         self.effects_at(&sky, effects, (&mut Vec::new(), &mut d.light_sprays));
@@ -652,7 +648,6 @@ mod tests {
             let at = Where {
                 area,
                 lane,
-                lane_box: lane.glass(area),
                 now: 1.2,
                 clock: 1.2,
                 gone: 0.0,

@@ -252,6 +252,28 @@ the scenes 0.18–0.25 ms before, 0.19–0.44 after at 3024 × 1964, and
 noise; the worst frames (to 9–20 ms in either build) fell where every
 step spiked at once.
 
+**One fire.** The edges on fire and the lane's flames (which set the
+marquee's bulbs on fire where both show) draw the same fire, a helper
+the effects share (`fx_fire`, `fx_fire_light`, with `fx_heat` and the
+rest, once in each effect's pipeline): its noise taken at most four
+times a pixel, three octaves and a sway, from up to four edges at the
+screen's corners (the edges on fire), once along the lane. On the
+RTX 5080 (`fx_frames`, 3024 × 1964, the machine shared with another
+agent's GPU work, so the medians moved between runs) the edges on fire
+add 0.05–0.09 ms to the `fx` step, 0.11–0.17 ms surging on the beat
+(their strips grow with the surge), the marquee on fire (the lane's glow
+and flames, the bulbs and the edges on fire at once) 0.14–0.23 ms; with
+the rows listing them (`frame_cost`, two runs) the `fx` step's median
+was 0.18–0.23 ms at Awesome, 0.20–0.28 at Amazing, 0.22–0.34 at Diva
+and 0.29–0.30 with every effect, at 3024 × 1964 and 3840 × 2160, its
+worst under 1 ms; at 3024 × 1964 no frame went over 4 ms (the build
+before, in the same session, had four scenes' worst over it). The
+frames over 4 ms at 3840 × 2160 (one to three a scene, Great's among
+them, which draws no fire) are single frames in one run and not the
+other, in steps that draw no fire as often as in those that do (Great's
+bloom 5.6 ms in one run, 0.8 in the other; the light 6.7 and 0.9 with
+every effect): the machine's, as the diploma's spike above.
+
 **The diploma's paper, baked.** `frame_cost` on the M4 Max (Metal,
 3024 × 1964, two runs) had every scene within its budget but the
 diploma: 1016 frames, the GPU's total median 4.0 ms, mean 4.0, worst

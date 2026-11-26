@@ -1,8 +1,11 @@
 //! The screen's edges on fire: a pass over the whole finished frame.
 //! Tongues of flame lick in from the edges, tallest at the bottom, shorter
-//! up the sides, short along the top. They are white-yellow at their
-//! roots and orange to red at their tips, rising and flickering, with a
-//! warm glow behind them and embers drifting up out of them. The lyric band
+//! up the sides (drifting up as they lick in), short along the top: the
+//! one fire the lane's flames burn too ([`super::helpers::fire`]), its
+//! light over the frame, white-hot at their roots and orange to red at
+//! their tips, the tips letting the frame show through, rising and
+//! flickering, with a warm glow behind them and embers drifting up out of
+//! them. The lyric band
 //! is kept clear: the flames shrink back as they come to it, and anything
 //! of the fire inside it shows at [`IN_BAND`] at most. What the singer
 //! reads ([`Clear`]: the score's corner, the multiplier's badge, the meter
@@ -16,18 +19,19 @@
 //! once.
 //!
 //! It moves with the music ([`swell`], the shader reading the music's
-//! uniform): it flares up on each bar's first beat, reaching further and
-//! burning hotter (as sure as the beat grid is: where it is unsure, not at
-//! all), and breathes with the bass, reaching further as it is louder.
+//! uniform): it surges on each bar's first beat, reaching much further and
+//! burning hotter, and pulses on each beat (as sure as the beat grid is:
+//! where it is really unsure, not at all), and breathes with the bass,
+//! reaching further as it is louder.
 //!
 //! Its look ([`Spec::params`], `p`): `x` 0 classic orange to 1 a ghostly
-//! green, `y` how fast it flickers (1 as made), `z` how much it flares on
-//! a bar's first beat and `w` how much it breathes with the bass (1 as
+//! green, `y` how fast it flickers (1 as made), `z` how much it surges and
+//! pulses with the beat and `w` how much it breathes with the bass (1 as
 //! made, 0 not at all).
 
 use jodel_rhythm::stems::Stem;
 
-use super::helpers::{clamp01, heat, lattice, mix3, smoothstep, speed, vnoise};
+use super::helpers::{fire, fire_light, heat, lattice, mix3, smoothstep, speed, TALLEST_FLAME};
 use super::{At, Clear, Fx, Layer, Live, Music, Out, Reference, Slot, Spec};
 use crate::gui::stage_gpu::Instance;
 
@@ -78,7 +82,7 @@ fn draw(at: &At, live: &Live, _: &mut Slot, out: &mut Out) {
 /// none over another: along the bottom and the top the whole width, up the
 /// sides between them.
 pub fn strips((x, y, w, h): (f32, f32, f32, f32), strength: f32, grow: f32) -> Vec<[f32; 4]> {
-    let reach = h * REACH * (0.3 + 0.7 * strength.min(1.0)) * grow * OUT + 2.0;
+    let reach = h * HIGH * (0.3 + 0.7 * strength.min(1.0)) * grow * OUT + 2.0;
     let bottom = reach.min(h);
     let top = (reach * TOP).min(h - bottom);
     let side = (reach * SIDE).min(w / 2.0);
@@ -94,59 +98,60 @@ pub fn strips((x, y, w, h): (f32, f32, f32, f32), strength: f32, grow: f32) -> V
     strips
 }
 
-/// How far the flames reach at the bottom at full strength, a share of
-/// the frame's height: their tongues' tips, on average (the tallest go
-/// half as far again).
-const REACH: f32 = 0.14;
-/// How far they reach up the sides and along the top, a share of how far
+/// How high the flames are at the bottom at full strength, a share of the
+/// frame's height (the one fire's height, [`fire`]: their tongues' tips
+/// about half as high on average, the tallest half as high again).
+const HIGH: f32 = 0.2;
+/// How high they are up the sides and along the top, a share of how high
 /// at the bottom.
 const SIDE: f32 = 0.6;
 const TOP: f32 = 0.25;
-/// How deep (in reaches) anything of the fire goes: its embers.
-const OUT: f32 = 2.4;
+/// How deep (in heights) anything of the fire goes: past the tallest
+/// flames, its embers.
+const OUT: f32 = 1.6;
 /// How much of the fire shows inside the lyric band and the score's
 /// corner at most.
 pub const IN_BAND: f32 = 0.12;
 /// How far round the lyric band and the score's corner the flames
 /// shrink back from them, a share of the frame's height.
 const FEATHER: f32 = 0.06;
-/// The width of a tongue of flame, a share of the frame's height.
-const TONGUE: f32 = 0.05;
 /// The embers' cells, a share of the frame's height: one in a few has an
 /// ember.
 const EMBER: f32 = 0.028;
-/// How much further the flames reach at a bar's first beat (its pulse at
-/// its height, the grid sure), a share of their reach.
-const FLARE: f32 = 0.45;
+/// How much higher the flames reach at a bar's first beat (its pulse at
+/// its height, the grid sure), and on each beat, a share of their height.
+const FLARE: f32 = 0.5;
+const PULSE: f32 = 0.2;
 /// How much hotter they burn then: their heat raised by as much.
-const FLARE_HEAT: f32 = 0.3;
-/// How much further they reach with the bass at its loudest.
+const FLARE_HEAT: f32 = 0.25;
+const PULSE_HEAT: f32 = 0.12;
+/// How much higher they reach with the bass at its loudest.
 const BREATH: f32 = 0.25;
 
-/// How the music `m` swells the fire (its bar's pulse as sure as the grid
-/// is, the bass's level), `p` its look (`z` how much it flares, `w` how
-/// much it breathes): how many times as far it reaches (1 with no music),
-/// and how much hotter it burns.
+/// How the music `m` swells the fire (its bar's pulse and the beat's, as
+/// sure as the grid is; the bass's level), `p` its look (`z` how much it
+/// surges with the beat, `w` how much it breathes): how many times as
+/// high it reaches (1 with no music), and how much hotter it burns.
 pub fn swell(m: &Music, p: [f32; 4]) -> (f32, f32) {
-    let flare = m.downbeat * m.sure * p[2];
     let bass = m.stems[Stem::Bass as usize];
     (
-        1.0 + FLARE * flare + BREATH * bass * p[3],
-        FLARE_HEAT * flare,
+        1.0 + p[2] * m.kick(PULSE, FLARE) + BREATH * bass * p[3],
+        p[2] * m.kick(PULSE_HEAT, FLARE_HEAT),
     )
 }
 
 /// The fire at pixel `px` of a frame `size` (pixels) at `time` (seconds),
-/// `strength` 0 (none) to 1 (the flames reaching about a sixth of the way
-/// in at the bottom), `band` the lyric band's top and bottom (pixels; none
+/// `strength` 0 (none) to 1 (the flames a fifth of the frame high at the
+/// bottom), `band` the lyric band's top and bottom (pixels; none
 /// where the bottom is not below the top), what it keeps `clear` (each
 /// box none where it is not wider than nothing), `p` its look: `x` 0
 /// classic
 /// orange to 1 a ghostly green, `y` how fast it flickers (1 as made; 0
-/// taken as 1), `z` and `w` how much it flares and breathes with the music
+/// taken as 1), `z` and `w` how much it surges and breathes with the music
 /// `m` ([`swell`]). Premultiplied colour and coverage, in the stage's
 /// colours (the frame's bytes; an sRGB frame takes them through its
-/// `out_rgb`).
+/// `out_rgb`): the flames' light added over the frame, which shows
+/// through their tips and less through their roots.
 pub fn edge_fire(
     px: (f32, f32),
     size: (f32, f32),
@@ -173,34 +178,35 @@ pub fn edge_fire(
     let in_band = across(band.0, band.1, px.1) * f32::from(u8::from(band.1 > band.0));
     let kept = clear.boxes().into_iter().map(in_box).fold(0.0, f32::max);
     let inside = in_band.max(kept);
-    let reach = h * REACH * (0.3 + 0.7 * s) * grow * (1.0 - 0.6 * inside);
-    // How deep in, in reaches, from the nearest edge.
-    let u = ((size.1 - px.1) / reach)
-        .min(px.0 / (reach * SIDE))
-        .min((size.0 - px.0) / (reach * SIDE))
-        .min(px.1 / (reach * TOP));
+    let high = h * HIGH * (0.3 + 0.7 * s) * grow * (1.0 - 0.6 * inside);
+    let (bottom, top) = (size.1 - px.1, px.1);
+    let (left, right) = (px.0, size.0 - px.0);
+    // How deep in, in heights, from the nearest edge.
+    let u = (bottom / high)
+        .min(left / (high * SIDE))
+        .min(right / (high * SIDE))
+        .min(top / (high * TOP));
     if u > OUT {
         return [0.0; 4];
     }
     let t = time * speed(p);
-    // The tongues: noise stretched upward, rising, swaying on a slower
-    // noise; each reaches as far as the noise is high, white hot at its
-    // root, red at its tip.
-    let l = h * TONGUE;
-    let (x, y) = (px.0 / l, px.1 / (l * 1.7));
-    let sway = vnoise(x * 0.5 + 3.3, y * 0.5 + t * 1.2) - 0.5;
-    let n = 0.65 * vnoise(x + sway * 1.5, y + t * 1.9)
-        + 0.35 * vnoise(x * 2.3 + 5.2, y * 2.3 + t * 3.7);
-    let tall = smoothstep(0.2, 0.8, n);
-    let tip = 0.2 + 1.25 * tall * tall;
-    let k = clamp01(1.0 - u / tip);
-    let flame_a = smoothstep(0.0, 0.45, k) * 0.95;
-    let flame = heat(0.22 + 0.78 * k * k + hot * k, p[0]);
+    // The flames from each edge near (the one fire, its tongues as wide as
+    // the flames at full strength are high, those up the sides drifting up
+    // as they lick in): the hottest of them.
+    let l = h * HIGH;
+    let side = |from: f32, d: f32| burn(px.1 / (l * SIDE) + t * 0.7 + from, d, high * SIDE, t);
+    let k = burn(px.0 / l, bottom, high, t)
+        .max(burn(px.0 / (l * TOP) + 31.0, top, high * TOP, t))
+        .max(side(57.0, left))
+        .max(side(83.0, right))
+        * (1.0 + hot);
+    let light = fire_light(k, p[0]);
+    let flame_a = smoothstep(0.35, 1.0, k) * 0.85;
     // A warm light behind them, close to the edge.
-    let glow_a = (-u * 2.2).exp() * 0.22;
+    let glow_a = (-u * 3.0).exp() * 0.2;
     let glow = heat(0.45, p[0]);
     let mut a = flame_a + glow_a * (1.0 - flame_a);
-    let mut rgb = [0, 1, 2].map(|i| flame[i] * flame_a + glow[i] * glow_a * (1.0 - flame_a));
+    let mut rgb = [0, 1, 2].map(|i| (light[i] + glow[i] * glow_a * (1.0 - flame_a)).min(1.0));
     // The embers: one in a few cells of a grid rising (each column at its
     // own speed), swaying, twinkling, fading as they rise.
     let c = h * EMBER;
@@ -215,7 +221,7 @@ pub fn edge_fire(
         let d2 = (px.0 - ex).powi(2) + (px.1 - ey).powi(2);
         let big = c * (0.06 + 0.08 * lattice(column, row + 17.0));
         let twinkle = 0.65 + 0.35 * (t * 9.0 + r * 70.0).sin();
-        let e = (-d2 / (big * big)).exp() * twinkle * (1.0 - smoothstep(0.9, OUT, u));
+        let e = (-d2 / (big * big)).exp() * twinkle * (1.0 - smoothstep(0.6, OUT, u));
         let ember = mix3(heat(0.7, p[0]), [1.0; 3], (-d2 / (big * big * 0.15)).exp());
         rgb = [0, 1, 2].map(|i| ember[i] * e + rgb[i] * (1.0 - e));
         a = e + a * (1.0 - e);
@@ -225,12 +231,22 @@ pub fn edge_fire(
     [rgb[0] * keep, rgb[1] * keep, rgb[2] * keep, a * keep]
 }
 
+/// The one fire's heat at `along` its edge (in heights at full strength)
+/// `d` pixels in from it, its flames `high`, at `t`: none past their
+/// tallest.
+fn burn(along: f32, d: f32, high: f32, t: f32) -> f32 {
+    if d >= TALLEST_FLAME * high {
+        return 0.0;
+    }
+    fire(along, d / high, t)
+}
+
 /// [`edge_fire`] in WGSL: `fx_edge_fire` and its helpers (each named
 /// `edge_fire_...`), and its strips drawn with it (`edge_fire_shape`: its
 /// colours the stage's, as the frame takes them through `out_rgb`).
 pub fn wgsl() -> String {
     format!(
-        "const EDGE_FIRE_REACH: f32 = {REACH:?};\nconst EDGE_FIRE_SIDE: f32 = {SIDE:?};\nconst EDGE_FIRE_TOP: f32 = {TOP:?};\nconst EDGE_FIRE_OUT: f32 = {OUT:?};\nconst EDGE_FIRE_IN_BAND: f32 = {IN_BAND:?};\nconst EDGE_FIRE_FEATHER: f32 = {FEATHER:?};\nconst EDGE_FIRE_TONGUE: f32 = {TONGUE:?};\nconst EDGE_FIRE_EMBER: f32 = {EMBER:?};\nconst EDGE_FIRE_FLARE: f32 = {FLARE:?};\nconst EDGE_FIRE_FLARE_HEAT: f32 = {FLARE_HEAT:?};\nconst EDGE_FIRE_BREATH: f32 = {BREATH:?};\n{SHADER}"
+        "const EDGE_FIRE_HIGH: f32 = {HIGH:?};\nconst EDGE_FIRE_SIDE: f32 = {SIDE:?};\nconst EDGE_FIRE_TOP: f32 = {TOP:?};\nconst EDGE_FIRE_OUT: f32 = {OUT:?};\nconst EDGE_FIRE_IN_BAND: f32 = {IN_BAND:?};\nconst EDGE_FIRE_FEATHER: f32 = {FEATHER:?};\nconst EDGE_FIRE_EMBER: f32 = {EMBER:?};\nconst EDGE_FIRE_FLARE: f32 = {FLARE:?};\nconst EDGE_FIRE_PULSE: f32 = {PULSE:?};\nconst EDGE_FIRE_FLARE_HEAT: f32 = {FLARE_HEAT:?};\nconst EDGE_FIRE_PULSE_HEAT: f32 = {PULSE_HEAT:?};\nconst EDGE_FIRE_BREATH: f32 = {BREATH:?};\n{SHADER}"
     )
 }
 
@@ -241,8 +257,16 @@ fn edge_fire_shape(o: Out, p: vec2<f32>, k: u32) -> vec4<f32> {
 }
 
 fn edge_fire_swell(m: Music, p: vec4<f32>) -> vec2<f32> {
-    let flare = m.beat.w * m.tempo.y * p.z;
-    return vec2<f32>(1.0 + EDGE_FIRE_FLARE * flare + EDGE_FIRE_BREATH * m.stems[STEM_BASS] * p.w, EDGE_FIRE_FLARE_HEAT * flare);
+    let reach = m.tempo.y * (EDGE_FIRE_PULSE * m.beat.z + EDGE_FIRE_FLARE * m.beat.w);
+    let hot = m.tempo.y * (EDGE_FIRE_PULSE_HEAT * m.beat.z + EDGE_FIRE_FLARE_HEAT * m.beat.w);
+    return vec2<f32>(1.0 + p.z * reach + EDGE_FIRE_BREATH * m.stems[STEM_BASS] * p.w, p.z * hot);
+}
+
+fn edge_fire_burn(along: f32, d: f32, high: f32, t: f32) -> f32 {
+    if d >= FX_TALLEST_FLAME * high {
+        return 0.0;
+    }
+    return fx_fire(along, d / high, t);
 }
 
 fn edge_fire_across(a: f32, b: f32, v: f32, f: f32) -> f32 {
@@ -266,30 +290,34 @@ fn fx_edge_fire(px: vec2<f32>, size: vec2<f32>, time: f32, sb: vec3<f32>, clear:
     let in_band = edge_fire_across(band.x, band.y, px.y, f) * select(0.0, 1.0, band.y > band.x);
     let kept = max(max(edge_fire_in_box(clear[0], px, f), edge_fire_in_box(clear[1], px, f)), edge_fire_in_box(clear[2], px, f));
     let inside = max(in_band, kept);
-    let reach = h * EDGE_FIRE_REACH * (0.3 + 0.7 * s) * swell.x * (1.0 - 0.6 * inside);
+    let high = h * EDGE_FIRE_HIGH * (0.3 + 0.7 * s) * swell.x * (1.0 - 0.6 * inside);
+    let bottom = size.y - px.y;
+    let right = size.x - px.x;
     let u = min(
-        min((size.y - px.y) / reach, px.x / (reach * EDGE_FIRE_SIDE)),
-        min((size.x - px.x) / (reach * EDGE_FIRE_SIDE), px.y / (reach * EDGE_FIRE_TOP)),
+        min(bottom / high, px.x / (high * EDGE_FIRE_SIDE)),
+        min(right / (high * EDGE_FIRE_SIDE), px.y / (high * EDGE_FIRE_TOP)),
     );
     if u > EDGE_FIRE_OUT {
         return vec4<f32>(0.0);
     }
     let t = time * fx_speed(p);
-    let l = h * EDGE_FIRE_TONGUE;
-    let x = px.x / l;
-    let y = px.y / (l * 1.7);
-    let sway = vnoise(x * 0.5 + 3.3, y * 0.5 + t * 1.2) - 0.5;
-    let n = 0.65 * vnoise(x + sway * 1.5, y + t * 1.9)
-        + 0.35 * vnoise(x * 2.3 + 5.2, y * 2.3 + t * 3.7);
-    let tall = smoothstep(0.2, 0.8, n);
-    let tip = 0.2 + 1.25 * tall * tall;
-    let k = clamp(1.0 - u / tip, 0.0, 1.0);
-    let flame_a = smoothstep(0.0, 0.45, k) * 0.95;
-    let flame = fx_heat(0.22 + 0.78 * k * k + swell.y * k, p.x);
-    let glow_a = exp(-u * 2.2) * 0.22;
+    let l = h * EDGE_FIRE_HIGH;
+    let k = max(
+        max(
+            edge_fire_burn(px.x / l, bottom, high, t),
+            edge_fire_burn(px.x / (l * EDGE_FIRE_TOP) + 31.0, px.y, high * EDGE_FIRE_TOP, t),
+        ),
+        max(
+            edge_fire_burn(px.y / (l * EDGE_FIRE_SIDE) + t * 0.7 + 57.0, px.x, high * EDGE_FIRE_SIDE, t),
+            edge_fire_burn(px.y / (l * EDGE_FIRE_SIDE) + t * 0.7 + 83.0, right, high * EDGE_FIRE_SIDE, t),
+        ),
+    ) * (1.0 + swell.y);
+    let light = fx_fire_light(k, p.x);
+    let flame_a = smoothstep(0.35, 1.0, k) * 0.85;
+    let glow_a = exp(-u * 3.0) * 0.2;
     let glow = fx_heat(0.45, p.x);
     var a = flame_a + glow_a * (1.0 - flame_a);
-    var rgb = flame * flame_a + glow * glow_a * (1.0 - flame_a);
+    var rgb = min(light + glow * glow_a * (1.0 - flame_a), vec3<f32>(1.0));
     let c = h * EDGE_FIRE_EMBER;
     let column = floor(px.x / c);
     let rise = c * (2.0 + 2.5 * lattice(column, 7.0)) * t;
@@ -302,7 +330,7 @@ fn fx_edge_fire(px: vec2<f32>, size: vec2<f32>, time: f32, sb: vec3<f32>, clear:
         let d2 = (px.x - ex) * (px.x - ex) + (px.y - ey) * (px.y - ey);
         let big = c * (0.06 + 0.08 * lattice(column, row + 17.0));
         let twinkle = 0.65 + 0.35 * sin(t * 9.0 + r * 70.0);
-        let e = exp(-d2 / (big * big)) * twinkle * (1.0 - smoothstep(0.9, EDGE_FIRE_OUT, u));
+        let e = exp(-d2 / (big * big)) * twinkle * (1.0 - smoothstep(0.6, EDGE_FIRE_OUT, u));
         let ember = mix(fx_heat(0.7, p.x), vec3<f32>(1.0), exp(-d2 / (big * big * 0.15)));
         rgb = ember * e + rgb * (1.0 - e);
         a = e + a * (1.0 - e);
@@ -513,8 +541,12 @@ mod tests {
         }
     }
 
+    /// Light over the frame, every number within 0 to 1: the flames' tips
+    /// brighter than they cover (the frame shows through them), their
+    /// roots covering most of it.
     #[test]
-    fn it_is_premultiplied_and_bounded() {
+    fn it_is_light_over_the_frame_and_bounded() {
+        let (mut tips, mut roots) = (0, 0);
         for (k, px) in grid(13).enumerate() {
             let s = [0.3, 0.6, 1.0, 1.7][k % 4];
             let c = fire(
@@ -525,18 +557,20 @@ mod tests {
                 BAND,
                 [(k % 2) as f32, 1.0, 0.0, 0.0],
             );
-            assert!((0.0..=1.0).contains(&c[3]), "{px:?}: {c:?}");
-            for v in &c[..3] {
-                assert!(*v >= 0.0 && *v <= c[3] + 1e-5, "{px:?}: {c:?}");
+            for v in c {
+                assert!((0.0..=1.0).contains(&v), "{px:?}: {c:?}");
             }
+            tips += usize::from(c[0] > 0.05 && c[3] < 0.5 * c[0]);
+            roots += usize::from(c[3] > 0.8);
         }
+        assert!(tips > 50 && roots > 50, "{tips} {roots}");
     }
 
     #[test]
     fn it_burns_at_the_edges_and_leaves_the_middle_alone() {
         let mid = fire((1512.0, 900.0), SIZE, 1.0, 1.0, BAND, [0.0; 4]);
         assert_eq!(mid, [0.0; 4]);
-        // Along the bottom, most of its pixels covered at full strength.
+        // Along the bottom, most of its pixels burning bright at full strength.
         let lit = (0..300)
             .filter(|i| {
                 fire(
@@ -546,7 +580,7 @@ mod tests {
                     1.0,
                     (0.0, 0.0),
                     [0.0; 4],
-                )[3] > 0.5
+                )[0] > 0.4
             })
             .count();
         assert!(lit > 250, "{lit}");

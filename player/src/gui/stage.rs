@@ -748,7 +748,6 @@ impl Stage {
         let at = meter::Where {
             area,
             lane,
-            lane_box,
             now,
             clock,
             gone: picture.controls.map_or(0.0, |fade| {

@@ -37,8 +37,10 @@ const BAR_DECAY: f64 = 0.25;
 /// How fast a section's swell falls away.
 const SECTION_DECAY: f64 = 1.5;
 /// How sure a region of the grid is for its beats to show not at all, and
-/// wholly.
-const SURE: (f32, f32) = (0.35, 0.65);
+/// wholly: the effects keep to the beat wholly from a moderate agreement
+/// on (the beat is clear from 0.5, [`jodel_rhythm::CLEAR`]) and let it go
+/// only where the grid is really unsure.
+const SURE: (f32, f32) = (0.15, 0.35);
 /// The tempo where there is no grid, beats a minute.
 const FREE_TEMPO: f64 = jodel_rhythm::grid::FREE_TEMPO;
 /// Beats in a bar where the grid has no bars there.
@@ -214,6 +216,13 @@ impl Music {
         self.beats = (i as f64 + (now - from) / len) as f32;
         self.bar_beats = grid.bar() as f32;
         self.grid = Some(grid.on(now, clock, 1.0));
+    }
+
+    /// A kick for an effect to move by on the beat: `on_beat` of each
+    /// beat's pulse and `on_one` of each bar's first's, as sure as the grid
+    /// is (none where it is unsure).
+    pub fn kick(&self, on_beat: f32, on_one: f32) -> f32 {
+        self.sure * (on_beat * self.beat + on_one * self.downbeat)
     }
 
     /// How long one beat is, in seconds, at the tempo.

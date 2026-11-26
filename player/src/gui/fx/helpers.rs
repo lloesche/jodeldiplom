@@ -1,9 +1,11 @@
 //! What the effects' maths share: the noise their looks move by (the
-//! stage's own [`lattice`] and [`vnoise`], which the flames and the paper
-//! read too), fire's colours, where a line's letters sit in their quad,
-//! how fast a look moves; on the processor here, and in WGSL ([`WGSL`]:
-//! `fx_heat`, `fx_letter_up`, `fx_speed`) once in a shader that carries
-//! any effect's code ([`crate::gui::stage_gpu::shader`]).
+//! stage's own [`lattice`] and [`vnoise`], which the paper reads too),
+//! fire's colours, the one fire every burning effect draws ([`fire`]: the
+//! lane's flames, the marquee's bulbs on fire, the screen's edges), where
+//! a line's letters sit in their quad, how fast a look moves; on the
+//! processor here, and in WGSL ([`wgsl`]: `fx_heat`, `fx_fire`,
+//! `fx_fire_light`, `fx_letter_up`, `fx_speed`) once in a shader that
+//! carries any effect's code ([`crate::gui::stage_gpu::shader`]).
 
 pub(super) use crate::gui::glory::{lattice, vnoise};
 pub(super) use crate::gui::rainbow::{clamp01, mix3, smoothstep};
@@ -22,6 +24,42 @@ pub(super) fn heat(k: f32, ghost: f32) -> [f32; 3] {
     let c = mix3(c, [1.0, 0.98, 0.85], smoothstep(0.8, 1.0, k));
     let green = [c[2] * 0.8 + c[1] * 0.25, c[0], c[1] * 0.45 + c[2] * 0.5];
     mix3(c, green, clamp01(ghost))
+}
+
+/// Fire's heat at `a` along the line it burns from and `d` out from it
+/// (both in its flames' heights; `d` negative behind the line) at `t`
+/// seconds: tongues of flame licking out from the line, rising and
+/// flickering, swaying more towards their tips, ragged at their edges;
+/// about 1 at their roots (more in the hottest), falling to none at their
+/// tips, the tallest some 1.45 heights out; behind the line a little of
+/// it, gone a few tenths of a height back. Its light: [`fire_light`]. An
+/// effect chooses only where its line is, how high its flames are (taller
+/// on a beat: the height `d` is in grown, `a`'s kept, so the tongues stay
+/// where they are) and how strong.
+pub(super) fn fire(a: f32, d: f32, t: f32) -> f32 {
+    let rise = t * 2.4;
+    let sway = (vnoise(a * 1.1 + 3.3, d * 0.7 - t * 0.9) - 0.5) * (0.2 + d.max(0.0)) * 0.9;
+    let x = a + sway;
+    let n = 0.55 * vnoise(x * 4.0, d * 1.4 - rise)
+        + 0.3 * vnoise(x * 8.5 + 7.0, d * 2.8 - rise * 1.6)
+        + 0.15 * vnoise(x * 17.0 + 3.0, d * 5.6 - rise * 2.5);
+    let reach = 0.08 + 1.4 * n * n;
+    let flame = if d >= 0.0 {
+        (1.0 - d / reach).clamp(0.0, 1.0).powf(1.3)
+    } else {
+        0.5 * (d / 0.06).exp()
+    };
+    flame * (0.45 + 0.85 * n)
+}
+
+/// How far out [`fire`] reaches at most, in its flames' heights.
+pub(super) const TALLEST_FLAME: f32 = 1.48;
+
+/// Fire's light at heat `k` ([`fire`]): its colour ([`heat`], `ghost` of
+/// the way to a ghostly green) as bright as it is hot, the white-hot roots
+/// brightest, the red tips dim.
+pub(super) fn fire_light(k: f32, ghost: f32) -> [f32; 3] {
+    heat(k, ghost).map(|c| c * k * 1.1)
 }
 
 /// Where a line's letters sit in its text's quad, as the stage lays text
@@ -51,12 +89,14 @@ pub(super) fn speed(p: [f32; 4]) -> f32 {
     }
 }
 
-/// [`heat`], [`letter_up`] and [`speed`] in WGSL.
+/// [`heat`], [`fire`], [`fire_light`], [`letter_up`] and [`speed`] in
+/// WGSL.
 pub fn wgsl() -> String {
     format!(
         "
 const FX_CAPS: f32 = {CAPS:?};
 const FX_FEET: f32 = {FEET:?};
+const FX_TALLEST_FLAME: f32 = {TALLEST_FLAME:?};
 {HELPERS}"
     )
 }
@@ -69,6 +109,25 @@ fn fx_heat(k: f32, ghost: f32) -> vec3<f32> {
     c = mix(c, vec3<f32>(1.0, 0.98, 0.85), smoothstep(0.8, 1.0, k));
     let green = vec3<f32>(c.z * 0.8 + c.y * 0.25, c.x, c.y * 0.45 + c.z * 0.5);
     return mix(c, green, clamp(ghost, 0.0, 1.0));
+}
+
+fn fx_fire(a: f32, d: f32, t: f32) -> f32 {
+    let rise = t * 2.4;
+    let sway = (vnoise(a * 1.1 + 3.3, d * 0.7 - t * 0.9) - 0.5) * (0.2 + max(d, 0.0)) * 0.9;
+    let x = a + sway;
+    let n = 0.55 * vnoise(x * 4.0, d * 1.4 - rise)
+        + 0.3 * vnoise(x * 8.5 + 7.0, d * 2.8 - rise * 1.6)
+        + 0.15 * vnoise(x * 17.0 + 3.0, d * 5.6 - rise * 2.5);
+    let reach = 0.08 + 1.4 * n * n;
+    var flame = 0.5 * exp(min(d, 0.0) / 0.06);
+    if d >= 0.0 {
+        flame = pow(clamp(1.0 - d / reach, 0.0, 1.0), 1.3);
+    }
+    return flame * (0.45 + 0.85 * n);
+}
+
+fn fx_fire_light(k: f32, ghost: f32) -> vec3<f32> {
+    return fx_heat(k, ghost) * (k * 1.1);
 }
 
 fn fx_letter_up(y: f32, box: vec4<f32>) -> f32 {

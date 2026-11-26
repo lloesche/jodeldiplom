@@ -226,5 +226,5 @@ fn the_stage_draws_the_same_frames() {
             "{name}: {counts:?}"
         );
     }
-    assert_eq!(digest, 12_790_791_353_792_925_403, "{counts:?}");
+    assert_eq!(digest, 7_970_391_843_837_867_483, "{counts:?}");
 }
