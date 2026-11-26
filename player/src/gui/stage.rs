@@ -63,11 +63,13 @@ pub const HEAD: f32 = 0.28;
 /// The seconds of song shown ahead of the playhead.
 pub const AHEAD: f64 = 4.0;
 /// The lane's band: its top and bottom, shares of the height.
-const BAND: (f32, f32) = (0.17, 0.55);
+const BAND: (f32, f32) = (0.18, 0.56);
 /// A pill's height, a share of the window's height.
 const PILL: f32 = 0.052;
 /// The air round the HUD's band ([`Lane::hud`]), a share of the height.
 const AIR: f32 = 0.008;
+/// The HUD's band at its tallest ([`Lane::hud`]), a share of the height.
+const HUD: f32 = 0.0495;
 /// The progress bar: its middle, a share of the height.
 const PROGRESS: f32 = 0.935;
 /// A gap between notes this long or longer is a break on the progress bar.
@@ -311,16 +313,18 @@ impl Lane {
     }
 
     /// The band over the lane the HUD keeps to in the window's `area` (the
-    /// multiplier's badge, the meter and its verdict), its top and bottom:
-    /// from a little under the stage's top to a little over the highest
-    /// the marquee bulbs round the glass light
-    /// ([`super::fx::bulbs::lit_top`]), whether they show or not, so
-    /// nothing moves as they come and go. What is in it is made smaller
-    /// where it is lower than they would be.
+    /// multiplier's badge, the meter and its verdict, the score's corner),
+    /// its top and bottom: from a little under the stage's top, [`HUD`] of
+    /// the height down, never past a little over the highest the marquee
+    /// bulbs round the glass light ([`super::fx::bulbs::lit_top`]), whether
+    /// they show or not, so nothing moves as they come and go (the air
+    /// left between it and their light is the marquee's). What is in it is
+    /// made smaller where it is lower than that.
     pub fn hud(&self, area: (f32, f32, f32, f32)) -> (f32, f32) {
         let air = area.3 * AIR;
+        let top = area.1 + air;
         let bulbs = super::fx::bulbs::lit_top(self.glass(area).rect(), super::fx::far_corner(area));
-        (area.1 + air, (bulbs - air).max(area.1 + air))
+        (top, (bulbs - air).min(top + area.3 * HUD).max(top))
     }
 
     /// The lane's glass in the window's `area` (round the band, a little

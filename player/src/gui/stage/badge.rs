@@ -3,15 +3,17 @@
 //! band is lower than it): its × (popping as it goes up a rung, in the
 //! shouts' treatment, the rainbow while the singing shines), and before it
 //! on a dark pill of their own (to read over the flames) the rung's name
-//! in its tier's colour and the streak: "Amazing 82 in a row ×16". Right
-//! of it is the meter ([`Stage::meter_spot`]): the pill keeps left of the
-//! ×, made smaller where the screen's edge is near, never past it. It is
-//! laid out by the widest it can be (the top rung's ×, the longest name,
-//! [`WIDEST`]), so nothing moves or changes size as the rung or the streak
-//! does, and the box that holds it at its widest ([`Stage::badge_box`])
-//! is clear of the effects round it (over the bulbs' light, the edges on
-//! fire keeping it clear, the word slammed down landing in the lane). It
-//! is drawn over everything, the bursts too, so it always reads.
+//! in its tier's colour over the streak ("Amazing" over "82 in a row",
+//! then "×16"): narrow, so it reads in a narrow or upright window too.
+//! Right of it is the meter ([`Stage::meter_spot`]): the pill keeps left
+//! of the ×, made smaller where the screen's edge is near, never past it.
+//! It is laid out by the widest it can be (the top rung's ×, the longest
+//! name, [`WIDEST`]), so nothing moves or changes size as the rung or the
+//! streak does, and the box that holds it at its widest
+//! ([`Stage::badge_box`]) is clear of the effects round it (over the
+//! bulbs' light, the edges on fire keeping it clear, the word slammed down
+//! landing in the lane under it). It is drawn over everything, the bursts
+//! too, so it always reads.
 
 use super::{disc, pill, rgba, Lane, Stage, GOLD, GOLD_TOP, WHITE};
 use crate::core::singing::{multiplier, Singing};
@@ -24,6 +26,8 @@ use crate::tiers::Tier;
 const WIDEST: &str = "888 in a row";
 /// How long the badge takes to come in or go, about (seconds).
 const EASE: f32 = 0.12;
+/// How tall a capital is, a share of its text's size.
+const CAP: f32 = 0.72;
 
 /// The multiplier's badge as shown: the rung (the last reached, kept
 /// while it fades), how much it shows, how long since it went up, and
@@ -72,7 +76,8 @@ impl Badge {
 
 /// What the badge is laid out by at a unit `p`, measured once a size:
 /// the widest × (the top rung's) and the widest the pill's text can be
-/// (the longest name, the gap, [`WIDEST`]), at their sizes in full.
+/// (the longest name or [`WIDEST`], the one over the other), at their
+/// sizes in full.
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Widths {
     p: f32,
@@ -87,6 +92,17 @@ struct Place {
     named: f32,
     small: f32,
     right: f32,
+}
+
+impl Place {
+    /// How far the name's and the streak's middles are from the pill's,
+    /// down, the one over the other, and half the pill's height (its
+    /// padding round them).
+    fn lines(&self) -> (f32, f32, f32) {
+        let (name, streak) = (self.named * CAP, self.small * CAP);
+        let (half, pad) = ((name + self.small * 0.4 + streak) / 2.0, self.small * 0.45);
+        (name / 2.0 - half, half - streak / 2.0, half + pad)
+    }
 }
 
 /// Where the badge stands over a lane: the ×'s size and its middle's
@@ -130,7 +146,7 @@ fn spot(lane: &Lane, area: (f32, f32, f32, f32), w: &Widths) -> Spot {
     let (named, small) = sizes(w.p);
     let wide = w.pill * (place.named / named).max(place.small / small);
     let pad = place.small * 0.45;
-    let half = (px * 0.62).max(place.named * 0.62);
+    let half = (px * 0.62).max(place.lines().2);
     Spot {
         px,
         cy,
@@ -146,7 +162,7 @@ fn spot(lane: &Lane, area: (f32, f32, f32, f32), w: &Widths) -> Spot {
 
 /// The full sizes of the name and the streak, at a unit `p`.
 fn sizes(p: f32) -> (f32, f32) {
-    (p * 0.5, p * 0.36)
+    (p * 0.575, p * 0.414)
 }
 
 /// The pill's text placed before the × at `head` (laid out by `w`), the
@@ -183,7 +199,7 @@ impl Stage {
         let name = (Tier::ALL.into_iter())
             .map(|t| self.measure(Face::SHOUT, t.name(), named))
             .fold(0.0, f32::max);
-        let pill = name + small * 0.6 + self.measure(Face::NUMBER, WIDEST, small);
+        let pill = name.max(self.measure(Face::NUMBER, WIDEST, small));
         let w = Widths { p, label, pill };
         self.badge.widths = Some(w);
         w
@@ -216,17 +232,7 @@ impl Stage {
         let left = area.0;
         let p = unit(lane, area);
         let widths = self.badge_widths(p);
-        let Spot {
-            px,
-            cy,
-            place:
-                Place {
-                    named,
-                    small,
-                    right,
-                },
-            ..
-        } = spot(lane, area, &widths);
+        let Spot { px, cy, place, .. } = spot(lane, area, &widths);
         let label = format!("×{}", tier.multiplier());
         let tw = self.measure(Face::SHOUT, &label, px) * pop;
         // Its glow, stronger up the rungs.
@@ -252,15 +258,21 @@ impl Stage {
         if let (Some(n), Some(t)) = (number, fx::treatment(Text::Shout, effects)) {
             t.apply(n);
         }
+        // The name over the streak, each in the middle of the pill (the
+        // name alone in its middle without a streak, the pill as tall).
+        let (named, small) = (place.named, place.small);
         let streak = (game && singing.tally.streak > 0)
             .then(|| format!("{} in a row", singing.tally.streak));
-        let (gap, pad) = (small * 0.6, small * 0.45);
+        let pad = small * 0.45;
         let nw = self.measure(Face::SHOUT, tier.name(), named);
-        let sw = (streak.as_ref()).map_or(0.0, |s| gap + self.measure(Face::NUMBER, s, small));
-        let x = text_left(right, nw + sw, pad, left);
+        let sw = (streak.as_ref()).map_or(0.0, |s| self.measure(Face::NUMBER, s, small));
+        let (name_dy, streak_dy, half) = place.lines();
+        let name_dy = if streak.is_some() { name_dy } else { 0.0 };
+        let wide = nw.max(sw);
+        let mid = text_left(place.right, wide, pad, left) + wide / 2.0;
         out.push(pill(
-            (x + (nw + sw) / 2.0, cy),
-            ((nw + sw) / 2.0 + pad, named * 0.62),
+            (mid, cy),
+            (wide / 2.0 + pad, half),
             [0.04, 0.03, 0.09, 0.6 * alpha],
             [0.0; 4],
             0.0,
@@ -268,27 +280,25 @@ impl Stage {
             0.0,
         ));
         let ink = rgba(effects.theme.color(tier), alpha);
-        let ny = cy - self.cap_middle(Face::SHOUT, named) + COVER_PAD as f32;
-        let at = (x, ny);
+        let ny = cy + name_dy - self.cap_middle(Face::SHOUT, named) + COVER_PAD as f32;
         self.text(
             out,
             Face::SHOUT,
             tier.name(),
             (named, 1.0),
-            at,
+            (mid - nw / 2.0, ny),
             f32::NEG_INFINITY,
             (ink, ink),
         );
         if let Some(streak) = streak {
             let white = rgba(WHITE, 0.8 * alpha);
-            let ty = cy - self.cap_middle(Face::NUMBER, small) + COVER_PAD as f32;
-            let at = (x + nw + gap, ty);
+            let ty = cy + streak_dy - self.cap_middle(Face::NUMBER, small) + COVER_PAD as f32;
             self.text(
                 out,
                 Face::NUMBER,
                 &streak,
                 (small, 1.0),
-                at,
+                (mid - sw / 2.0, ty),
                 f32::NEG_INFINITY,
                 (white, white),
             );
@@ -326,24 +336,31 @@ mod tests {
     }
 
     /// Laid out in full where there is room, the pill's text ending before
-    /// the widest ×; smaller where the edge is near; never past it.
+    /// the widest ×, the name over the streak, no taller than the × and
+    /// its lines apart; smaller where the edge is near; never past it.
     #[test]
     fn the_pill_fits_before_the_times_and_inside_the_stage() {
         let w = Widths {
             p: 50.0,
             label: 80.0,
-            pill: 250.0,
+            pill: 140.0,
         };
         let wide = place(450.0, 0.0, &w);
-        assert_eq!((wide.named, wide.small), (25.0, 18.0));
+        assert_eq!((wide.named, wide.small), (29.0, 21.0));
         assert!(wide.right < 450.0 - 40.0);
-        let narrow = place(250.0, 0.0, &w);
+        let (name, streak, half) = wide.lines();
+        assert!(half <= times_px(w.p) * 0.62, "{half}");
+        assert!(
+            streak - name >= (wide.named + wide.small) * CAP / 2.0,
+            "{name} {streak}"
+        );
+        let narrow = place(160.0, 0.0, &w);
         assert!(narrow.named < wide.named && narrow.small < wide.small);
-        assert_eq!(narrow.right, wide.right - 200.0);
+        assert_eq!(narrow.right, wide.right - 290.0);
         // As wide as it may be, it ends before the × and starts in the
         // stage.
-        let x = text_left(narrow.right, 150.0, 4.0, 0.0);
-        assert!(x >= 8.0 && x + 150.0 <= narrow.right);
+        let x = text_left(narrow.right, 60.0, 4.0, 0.0);
+        assert!(x >= 8.0 && x + 60.0 <= narrow.right);
         // Wider than the room left: kept inside the stage.
         assert_eq!(text_left(100.0, 300.0, 4.0, 10.0), 18.0);
     }

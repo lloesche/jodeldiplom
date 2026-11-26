@@ -613,9 +613,10 @@ stem keys are their mutes.
   and shines on; a swirl turns round the singer's arrow; the
   multiplier's × shows in rainbow over the playhead, popping as it goes
   up a rung, and left of it, on a dark pill, the rung's name in its
-  tier's colour and the streak ("Amazing 42 in a row ×16"; laid out by
-  the widest it can be, smaller where the screen's edge is near, never
-  past it). Each phrase decided throws a
+  tier's colour over the streak ("Amazing" over "42 in a row", then
+  "×16": narrow, for narrow and upright windows too; laid out by the
+  widest it can be, smaller where the screen's edge is near, never past
+  it). Each phrase decided throws a
   burst from the playhead for each tier the shine went up (once a
   phrase; sought back under a second, not again; begun again, again):
   stars, notes and rainbow bits shot out, mostly up, spinning, arcing

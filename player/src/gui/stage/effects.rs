@@ -340,7 +340,8 @@ mod tests {
     /// another, all on the stage in the HUD's band, over the highest the
     /// bulbs light (lit or not); the badge and the meter as large as
     /// before where the band holds them (a wide window), smaller where
-    /// not, never under a readable size.
+    /// not, never under a readable size; the room the word slammed down
+    /// lands in under it all.
     #[test]
     fn the_hud_sits_over_the_bulbs_and_apart() {
         let mut stage = Stage::default();
@@ -371,6 +372,14 @@ mod tests {
             assert!(
                 apart(badge, meter) && apart(meter, score) && apart(badge, score),
                 "{w}x{h}: {all:?}"
+            );
+            // The word slammed down lands under it all.
+            let At::Over { room, .. } = stage.over_at(area, &lane) else {
+                unreachable!()
+            };
+            assert!(
+                [badge, meter, score].iter().all(|b| b[3] <= room[1]),
+                "{w}x{h}: the slam's room {room:?}, {all:?}"
             );
         }
     }
