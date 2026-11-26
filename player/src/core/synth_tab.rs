@@ -20,7 +20,7 @@ use jodel_synth::params::Knobs;
 use jodel_synth::Patch;
 
 use super::keymap::Op;
-use super::{Effect, Screen, Side, State};
+use super::{Effect, Side, State};
 use crate::sfx::bench::{Moment, Sound, What, SOUNDS};
 use crate::sfx::conductor::Atom;
 use crate::theme::{Theme, THEMES};
@@ -152,21 +152,11 @@ pub enum SynthAction {
     LetGo,
 }
 
-/// Whether the tab shows.
-pub fn shown(state: &State) -> bool {
-    state.screen == Screen::Main && state.side == Side::Synth
-}
-
-/// Whether it is what the keys act on.
-pub fn on_tab(state: &State) -> bool {
-    shown(state) && state.palette.is_none()
-}
-
 /// The theme the effects play in: the tab's while it shows, else the
 /// settings'.
 pub fn theme(state: &State) -> &'static Theme {
     match state.synth.theme {
-        Some(t) if shown(state) => t,
+        Some(t) if state.showing(Side::Synth) => t,
         _ => state.config.karaoke_theme,
     }
 }
@@ -384,10 +374,10 @@ fn keep(state: &mut State, fx: &mut Vec<Effect>) {
     let Some(e) =
         (state.synth.patches.iter_mut()).find(|e| e.theme == theme.name && e.atom == atom)
     else {
-        return super::update::say_info(state, "Nothing to keep: it is as built");
+        return state.info("Nothing to keep: it is as built");
     };
     if e.kept == Some(e.patch) {
-        return super::update::say_info(state, "Kept already");
+        return state.info("Kept already");
     }
     e.kept = Some(e.patch);
     fx.push(Effect::KeepPatch {
@@ -395,7 +385,7 @@ fn keep(state: &mut State, fx: &mut Vec<Effect>) {
         atom,
         patch: Some(e.patch),
     });
-    super::update::say_info(state, format!("{} kept", atom.name()));
+    state.info(format!("{} kept", atom.name()));
 }
 
 /// The atom's patch back to its built-in one, what was kept of it
@@ -414,14 +404,11 @@ fn revert(state: &mut State, fx: &mut Vec<Effect>) {
             patch: None,
         });
     }
-    super::update::say_info(state, format!("{} as built", atom.name()));
+    state.info(format!("{} as built", atom.name()));
 }
 
 /// What a key does on the tab; whether it was the tab's.
 pub(crate) fn apply(state: &mut State, op: Op, fx: &mut Vec<Effect>) -> bool {
-    if !on_tab(state) {
-        return false;
-    }
     let n = SOUNDS.len();
     let at = state.synth.sound;
     match op {
@@ -464,7 +451,8 @@ pub(crate) fn apply(state: &mut State, op: Op, fx: &mut Vec<Effect>) -> bool {
 /// tab is left; the notes, once another atom shows.
 pub(crate) fn settle(state: &mut State, fx: &mut Vec<Effect>) {
     let t = &state.synth;
-    let left = !shown(state) && (!t.held.is_empty() || t.mouse.is_some() || t.dragging.is_some());
+    let left = !state.showing(Side::Synth)
+        && (!t.held.is_empty() || t.mouse.is_some() || t.dragging.is_some());
     if left || t.on.is_some_and(|a| a != atom(state)) {
         let_go(state, fx);
     }

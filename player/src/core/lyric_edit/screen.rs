@@ -27,7 +27,7 @@ use jodel_playback::{Command, PlayState};
 
 use super::{act as edit_act, kept, Edit, LyricEditor, LyricsEdit, WordAt};
 use crate::core::keymap::Op;
-use crate::core::{sliders, voice_curve, Effect, Screen, State, DOUBLE_CLICK_MS};
+use crate::core::{sliders, voice_curve, DoubleClick, Effect, Screen, State};
 
 /// How far the keys move a word's start or end, or the whole word, in
 /// seconds.
@@ -117,9 +117,8 @@ pub struct EditorScreen {
     pub pan: Option<Pan>,
     /// The text being written.
     pub draft: Option<Draft>,
-    /// The last click on a word, and when ([`State::now_ms`]): a second one
-    /// soon after writes it.
-    pub clicked: Option<(WordAt, u64)>,
+    /// The last click on a word: a second one soon after writes it.
+    pub clicked: DoubleClick<WordAt>,
     /// Whether every edit is to be forgotten is asked.
     pub asking: bool,
 }
@@ -135,7 +134,7 @@ impl EditorScreen {
             held: None,
             pan: None,
             draft: None,
-            clicked: None,
+            clicked: DoubleClick::default(),
             asking: false,
         }
     }
@@ -519,15 +518,8 @@ pub(super) fn act(state: &mut State, what: Input, fx: &mut Vec<Effect>) {
             let Some(word) = editor.selected else {
                 return;
             };
-            let again = editor
-                .screen
-                .clicked
-                .is_some_and(|(w, at)| w == word && now.saturating_sub(at) <= DOUBLE_CLICK_MS);
-            if again {
-                editor.screen.clicked = None;
+            if editor.screen.clicked.press(word, now) {
                 act(state, Input::Write { line: false }, fx);
-            } else {
-                editor.screen.clicked = Some((word, now));
             }
         }
         Input::Zoom { steps, at } => {

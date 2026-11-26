@@ -60,7 +60,7 @@ pub(crate) fn set(state: &mut State, semitones: i32, fx: &mut Vec<Effect>) {
         } else {
             "as far as it goes"
         };
-        return super::update::say_info(state, format!("Key {}: {edge}", text(key)));
+        return state.info(format!("Key {}: {edge}", text(key)));
     }
     state.playing.key = key;
     fx.push(Effect::Engine(Command::Key { semitones: key }));
@@ -69,7 +69,7 @@ pub(crate) fn set(state: &mut State, semitones: i32, fx: &mut Vec<Effect>) {
     } else {
         format!("Key {}: the tempo kept, the drums as they are", text(key))
     };
-    super::update::say_info(state, said);
+    state.info(said);
 }
 
 /// A new engine is started (another output, the engine started again):

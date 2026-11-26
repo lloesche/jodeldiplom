@@ -292,7 +292,7 @@ impl Gui {
         let state = self.state()?;
         if state.screen == crate::core::Screen::Settings {
             Some(super::screens::settings::reveal(state))
-        } else if crate::core::synth_tab::on_tab(state) {
+        } else if state.keys_on(crate::core::Side::Synth) {
             Some(super::screens::synth::reveal(state))
         } else {
             None

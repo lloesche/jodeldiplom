@@ -15,6 +15,7 @@ use jodel_playback::PlayState;
 
 use crate::browser::{self, EntryKind};
 use crate::core::karaoke::SongLyrics;
+use crate::core::keymap::{self, Context, Op};
 use crate::core::text::{self, clock};
 use crate::core::{
     browser_rows, list_cursor, list_height, readiness, row_entry, Job, LyricsFacts, QueueFacts,
@@ -23,9 +24,16 @@ use crate::core::{
 
 /// What the empty queue says, and how to fill it.
 pub const QUEUE_EMPTY: &str = "The queue is empty.";
-/// How to fill the queue.
-pub const QUEUE_HINT: &str =
-    "enter queues a file or playlist, shift+enter plays it too; alt+enter plays a file with its whole folder.";
+/// How to fill the queue, with the browser's keys from the keymap.
+pub fn queue_hint() -> String {
+    let key = |op| keymap::hint(Context::List, op);
+    format!(
+        "{} queues a file or playlist, {} plays it too; {} plays a file with its whole folder.",
+        key(Op::Open),
+        key(Op::QueuePlay),
+        key(Op::OpenReplace)
+    )
+}
 
 /// The narrowest pane, in points, whose queue rows show the icons of what
 /// is known of each track.
@@ -331,8 +339,8 @@ fn known(state: &State, path: &Path) -> Known {
 impl Browser {
     fn of(state: &State) -> Browser {
         let b = &state.browser;
-        let (cursor, scroll) = list_cursor(state);
-        let window = browser_window(state, scroll, list_height(state));
+        let (cursor, scroll) = list_cursor(state, Side::Browser);
+        let window = browser_window(state, scroll, list_height(state, Side::Browser));
         let playing = state.playing.track.as_ref().map(|t| t.info.path.as_path());
         let rows: Vec<BrowserRow> = window
             .into_iter()
@@ -522,13 +530,13 @@ impl Queue {
             Some(i) => format!("playing {} of {}", i + 1, q.paths.len()),
             None => format!("{} in the queue", q.paths.len()),
         };
-        let (cursor, scroll) = list_cursor(state);
+        let (cursor, scroll) = list_cursor(state, Side::Queue);
         let rows = q
             .paths
             .iter()
             .enumerate()
             .skip(scroll)
-            .take(list_height(state))
+            .take(list_height(state, Side::Queue))
             .map(|(i, path)| QueueRow {
                 index: i,
                 title: state
@@ -656,7 +664,7 @@ impl fmt::Display for Queue {
         writeln!(f, "[summary] {}", self.summary)?;
         if self.rows.is_empty() {
             writeln!(f, "[dim] {QUEUE_EMPTY}")?;
-            writeln!(f, "[dim] {QUEUE_HINT}")?;
+            writeln!(f, "[dim] {}", queue_hint())?;
         }
         for row in &self.rows {
             let selected = if row.selected { " selected" } else { "" };

@@ -70,7 +70,7 @@ const MORE: &[(&str, &[(&str, &str)])] = &[
     (
         "Mouse",
         &[
-            ("click", "select a row; a tab (Browser, Queue, Transition, Karaoke, Mixer) shows it"),
+            ("click", "select a row; a tab (Browser, Queue, Transition, Karaoke, Mixer, Synth) shows it"),
             ("double click", "as enter: open folder; queue file or playlist (queue: play the track)"),
             ("right click", "queue file or folder"),
             ("wheel", "scroll the list"),

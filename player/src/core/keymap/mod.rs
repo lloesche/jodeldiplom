@@ -7,7 +7,8 @@
 //! written from the same [`KEYMAP`] table, so they always match.
 //!
 //! - [`table`]: the table, a row a binding;
-//! - [`op`]: the operations ([`Op`]), and their names in the palette;
+//! - [`op`]: the operations ([`Op`]), their names in the palette, where
+//!   each is done and what it is;
 //! - [`help`]: the help, the palette and the hints, from the table.
 
 use crate::core::{Screen, Side, State, TYPE_AHEAD_MS};
@@ -20,7 +21,7 @@ pub use help::{
     help_matching, help_sections, hint, keys, keys_label, palette_entries, palette_matches,
     HelpSection, PaletteEntry,
 };
-pub use op::Op;
+pub use op::{Kind, Op};
 pub use table::KEYMAP;
 
 /// A key, as the window reports it.

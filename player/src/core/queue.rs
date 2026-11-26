@@ -8,7 +8,7 @@ use jodel_playback::Command;
 
 use crate::browser::{self, EntryKind};
 use crate::core::browse::{self, browser_rows, row_entry, Row};
-use crate::core::update::{say_error, say_info};
+use crate::core::keymap::{self, Context, Op};
 use crate::core::{Effect, Placing, Screen, Side, State, WalkPurpose};
 
 fn tracks(n: usize) -> &'static str {
@@ -62,7 +62,8 @@ pub(crate) fn play_stopped(state: &mut State, fx: &mut Vec<Effect>) {
     } else if browse::selected_entry(state).is_some_and(|e| e.kind == EntryKind::File) {
         play_browser_from(state, state.browser.cursor, fx);
     } else {
-        say_info(state, "Nothing to play: pick a file and press enter");
+        let enter = keymap::hint(Context::List, Op::Open);
+        state.info(format!("Nothing to play: pick a file and press {enter}"));
     }
 }
 
@@ -81,22 +82,22 @@ fn place(
     match how {
         Placing::Append => {
             fx.push(Effect::Engine(Command::Enqueue(paths)));
-            say_info(state, format!("Queued {name} ({n} {})", tracks(n)));
+            state.info(format!("Queued {name} ({n} {})", tracks(n)));
         }
         Placing::AppendPlay => {
             let at = state.queue.paths.len();
             fx.push(Effect::Engine(Command::Enqueue(paths)));
             fx.push(Effect::Engine(Command::Play(at)));
-            say_info(state, format!("Queued and playing {name}"));
+            state.info(format!("Queued and playing {name}"));
         }
         Placing::Replace => {
             fx.push(Effect::Engine(Command::Load(paths)));
             fx.push(Effect::Engine(Command::Play(start)));
             state.queue.cursor = start;
-            say_info(
-                state,
-                format!("Playing {name} ({n} {}, in place of the queue)", tracks(n)),
-            );
+            state.info(format!(
+                "Playing {name} ({n} {}, in place of the queue)",
+                tracks(n)
+            ));
         }
     }
 }
@@ -118,7 +119,7 @@ pub(crate) fn remove(state: &mut State, fx: &mut Vec<Effect>) {
         }
     }
     fx.push(Effect::Engine(Command::Remove(index)));
-    browse::set_cursor(state, index);
+    browse::set_cursor(state, Side::Queue, index);
 }
 
 /// Moves queue row `from` to `to`, here at once and in the engine; the
@@ -148,7 +149,7 @@ fn move_row(state: &mut State, from: usize, to: usize, fx: &mut Vec<Effect>) {
         track.index = moved(track.index);
     }
     fx.push(Effect::Engine(Command::Move { from, to }));
-    browse::set_cursor(state, to);
+    browse::set_cursor(state, Side::Queue, to);
 }
 
 /// The selected queue row `by` rows up (`-1`) or down (`1`), while the
@@ -184,10 +185,7 @@ pub(crate) fn engine_changed(state: &mut State, queue: Vec<PathBuf>, current: Op
     state.queue.paths = queue;
     state.queue.current = current;
     let cursor = state.queue.cursor;
-    let side = state.side;
-    state.side = Side::Queue;
-    browse::set_cursor(state, cursor);
-    state.side = side;
+    browse::set_cursor(state, Side::Queue, cursor);
 }
 
 /// `enter` (`how`: [`Placing::Append`]), `shift+enter`
@@ -223,13 +221,10 @@ pub(crate) fn activate(state: &mut State, how: Placing, fx: &mut Vec<Effect>) {
                 (EntryKind::Dir, Placing::Append) => browse::enter_dir(state, entry.path, fx),
                 (EntryKind::File, Placing::Replace) => {
                     play_browser_from(state, state.browser.cursor, fx);
-                    say_info(
-                        state,
-                        format!(
-                            "Playing {} with its folder, in place of the queue",
-                            entry.name
-                        ),
-                    );
+                    state.info(format!(
+                        "Playing {} with its folder, in place of the queue",
+                        entry.name
+                    ));
                 }
                 _ => queue_entry(state, entry, how, fx),
             }
@@ -237,8 +232,9 @@ pub(crate) fn activate(state: &mut State, how: Placing, fx: &mut Vec<Effect>) {
     }
 }
 
-/// Right click (and the palette): the file, or the folder with everything
-/// below it, or the playlist's tracks, after the queue.
+/// A right click on a browser row ([`crate::core::Action::EnqueueRow`]):
+/// the file, or the folder with everything below it, or the playlist's
+/// tracks, after the queue.
 pub(crate) fn enqueue(state: &mut State, fx: &mut Vec<Effect>) {
     if state.side != Side::Browser {
         return;
@@ -254,10 +250,10 @@ fn queue_entry(state: &mut State, entry: browser::Entry, how: Placing, fx: &mut 
     match entry.kind {
         EntryKind::File => place(state, vec![entry.path], 0, how, &entry.name, fx),
         EntryKind::Dir => {
-            say_info(state, format!("Collecting {}…", entry.name));
+            state.info(format!("Collecting {}…", entry.name));
             fx.push(Effect::Walk {
                 root: entry.path,
-                purpose: WalkPurpose::Enqueue {
+                purpose: WalkPurpose {
                     name: entry.name,
                     how,
                 },
@@ -279,14 +275,11 @@ pub(crate) fn walked(
     paths: Vec<PathBuf>,
     fx: &mut Vec<Effect>,
 ) {
-    match purpose {
-        WalkPurpose::Enqueue { name, how } => {
-            if paths.is_empty() {
-                say_info(state, format!("Nothing to play in {name}"));
-            } else {
-                place(state, paths, 0, how, &name, fx);
-            }
-        }
+    let WalkPurpose { name, how } = purpose;
+    if paths.is_empty() {
+        state.info(format!("Nothing to play in {name}"));
+    } else {
+        place(state, paths, 0, how, &name, fx);
     }
 }
 
@@ -301,9 +294,9 @@ pub(crate) fn playlist_read(
 ) {
     let name = file_stem(path);
     match tracks {
-        Err(why) => say_error(state, format!("{name}: {why}")),
+        Err(why) => state.error(format!("{name}: {why}")),
         Ok(tracks) if tracks.is_empty() => {
-            say_info(state, format!("Nothing to play in {name}"));
+            state.info(format!("Nothing to play in {name}"));
         }
         Ok(tracks) => place(state, tracks, 0, how, &name, fx),
     }
@@ -317,10 +310,10 @@ fn file_stem(path: &std::path::Path) -> String {
 /// `ctrl+s`: the queue saved as a playlist among the saved queues.
 pub(crate) fn save(state: &mut State, fx: &mut Vec<Effect>) {
     if state.queue.paths.is_empty() {
-        return say_info(state, "The queue is empty: nothing to save");
+        return state.info("The queue is empty: nothing to save");
     }
     if state.queues_dir.is_none() {
-        return say_info(state, "No folder to save queues in");
+        return state.info("No folder to save queues in");
     }
     fx.push(Effect::SaveQueue(state.queue.paths.clone()));
 }
@@ -331,19 +324,19 @@ pub(crate) fn saved(state: &mut State, result: Result<PathBuf, String>) {
     match result {
         Ok(path) => {
             let name = file_stem(&path);
-            say_info(
-                state,
-                format!("Queue saved as {name} (ctrl+l shows the saved queues)"),
-            );
+            let open = keymap::hint(Context::Global, Op::QueueOpenSaved);
+            state.info(format!(
+                "Queue saved as {name} ({open} shows the saved queues)"
+            ));
         }
-        Err(why) => say_error(state, format!("The queue was not saved: {why}")),
+        Err(why) => state.error(format!("The queue was not saved: {why}")),
     }
 }
 
 /// `ctrl+l`: the saved queues, in the browser.
 pub(crate) fn open_saved(state: &mut State, fx: &mut Vec<Effect>) {
     let Some(dir) = state.queues_dir.clone() else {
-        return say_info(state, "No folder of saved queues");
+        return state.info("No folder of saved queues");
     };
     state.screen = Screen::Main;
     state.side = Side::Browser;

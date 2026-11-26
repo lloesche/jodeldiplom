@@ -6,7 +6,7 @@ use jodel_lyrics::Source;
 use super::*;
 use crate::config::Config;
 use crate::core::karaoke::SongLyrics;
-use crate::core::{update, Action, Side};
+use crate::core::{update, Action, Side, DOUBLE_CLICK_MS};
 
 /// A queue of one song, "one two three / four five" on it, each word a
 /// second from 10 s, half a second long; the Karaoke tab shown.

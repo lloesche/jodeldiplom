@@ -1,7 +1,10 @@
 //! The operations ([`Op`]): what keys, buttons and palette entries do,
-//! and how the palette names them.
+//! how the palette names them, and where each is done and what it is
+//! ([`Op::home`], [`Op::kind`]).
 
 use jodel_playback::Stem;
+
+use super::Context;
 
 /// A named operation: what keys, buttons and palette entries do.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -51,8 +54,6 @@ pub enum Op {
     Open,
     /// The folder above.
     Parent,
-    /// Queue the selected file, or the selected folder recursively.
-    Enqueue,
     /// Queue the selected file and play it (the queue kept).
     QueuePlay,
     /// Play the selected file with its folder in place of the queue.
@@ -67,8 +68,6 @@ pub enum Op {
     QueueSave,
     /// Show the saved queues in the browser.
     QueueOpenSaved,
-    /// Search below the current folder for the filter text.
-    SearchBelow,
     /// Accept the filter or run the palette's selection.
     Accept,
     /// Delete the last typed character.
@@ -306,7 +305,6 @@ impl Op {
             Op::Bottom => "Last row",
             Op::Open => "Open / play",
             Op::Parent => "Parent folder",
-            Op::Enqueue => "Queue file or folder",
             Op::QueuePlay => "Queue and play",
             Op::OpenReplace => "Play with its folder, in place of the queue",
             Op::QueueRemove => "Queue: remove the track",
@@ -314,7 +312,6 @@ impl Op {
             Op::QueueMoveDown => "Queue: move the track down",
             Op::QueueSave => "Queue: save as a playlist",
             Op::QueueOpenSaved => "Queue: the saved queues",
-            Op::SearchBelow => "Search subfolders",
             Op::Accept => "Accept",
             Op::Erase => "Delete a character",
             Op::Paste => "Paste",
@@ -442,71 +439,152 @@ impl Op {
         }
     }
 
-    /// Whether the palette lists it (commands, not movements or typing).
-    pub fn in_palette(self) -> bool {
-        !matches!(
-            self,
-            Op::Up
-                | Op::Down
-                | Op::PageUp
-                | Op::PageDown
-                | Op::Top
-                | Op::Bottom
-                | Op::Accept
-                | Op::Erase
-                | Op::Paste
-                | Op::ValueDown
-                | Op::ValueUp
-                | Op::Back
-                | Op::Palette
-                | Op::Open
-                | Op::TransitionBarBack
-                | Op::TransitionBarForward
-                | Op::TransitionBeatBack
-                | Op::TransitionBeatForward
-                | Op::TransitionSelectBack
-                | Op::TransitionSelectForward
-                | Op::EditBack
-                | Op::EditForward
-                | Op::EditRaise
-                | Op::EditLower
-                | Op::EditOff
-                | Op::EditFull
-                | Op::EditCut
-                | Op::JumpBar(_)
-                | Op::JumpBarAtEnd(_)
-                | Op::SliderDown
-                | Op::SliderUp
-                | Op::SliderFineDown
-                | Op::SliderFineUp
-                | Op::DeskPrevStrip
-                | Op::DeskNextStrip
-                | Op::SyncKeep
-                | Op::SyncAgain
-                | Op::KaraokeDemo
-                | Op::LyricsPrevious
-                | Op::LyricsNext
-                | Op::LyricsStartEarlier
-                | Op::LyricsStartLater
-                | Op::LyricsEndEarlier
-                | Op::LyricsEndLater
-                | Op::LyricsMoveEarlier
-                | Op::LyricsMoveLater
-                | Op::LyricsPlay
-                | Op::LyricsNotSung
-                | Op::LyricsLouder
-                | Op::LyricsQuieter
-                | Op::LyricsLevelReset
-                | Op::LyricsWrite
-                | Op::LyricsWriteLine
-                | Op::LyricsDelete
-                | Op::LyricsUndo
-                | Op::LyricsRedo
-                | Op::SynthAtom(_)
-                | Op::SynthNote(_)
-                | Op::SynthOctave(_)
-                | Op::SynthKey(_)
-                | Op::SynthTempo(_)
-        )
+    /// Where the operation is done ([`Op::home`]) and what it is
+    /// ([`Op::kind`]): the one table of both, every operation named.
+    fn meta(self) -> (Context, Kind) {
+        use Context::*;
+        use Kind::*;
+        match self {
+            Op::Up | Op::Down | Op::PageUp | Op::PageDown | Op::Top | Op::Bottom => (Global, Move),
+            Op::ValueDown | Op::ValueUp => (Global, Move),
+            Op::Accept | Op::Erase | Op::Paste | Op::Back | Op::Palette | Op::Open => (Global, Key),
+            Op::JumpBar(_) | Op::JumpBarAtEnd(_) => (Global, Key),
+            Op::PlayPause
+            | Op::SeekBack
+            | Op::SeekForward
+            | Op::Next
+            | Op::Previous
+            | Op::Stop
+            | Op::SkipMix
+            | Op::ToggleSide
+            | Op::NowPlaying
+            | Op::Settings
+            | Op::Help
+            | Op::Filter
+            | Op::Quit
+            | Op::Parent
+            | Op::QueuePlay
+            | Op::OpenReplace
+            | Op::QueueRemove
+            | Op::QueueMoveUp
+            | Op::QueueMoveDown
+            | Op::QueueSave
+            | Op::QueueOpenSaved
+            | Op::GoTrack
+            | Op::GoAlbum
+            | Op::GoArtist
+            | Op::ToggleBpm
+            | Op::ToggleDrums
+            | Op::ToggleBass
+            | Op::ToggleVocals
+            | Op::ToggleOther
+            | Op::AllStems
+            | Op::VolumeUp
+            | Op::VolumeDown
+            | Op::KaraokeEnter
+            | Op::KaraokeEnterHere
+            | Op::KaraokeSync
+            | Op::LyricsEditor
+            | Op::MicNext
+            | Op::DeskEcho
+            | Op::KeyDown
+            | Op::KeyUp
+            | Op::KeyReset => (Global, Command),
+            Op::TransitionBarBack
+            | Op::TransitionBarForward
+            | Op::TransitionBeatBack
+            | Op::TransitionBeatForward
+            | Op::TransitionSelectBack
+            | Op::TransitionSelectForward => (Transition, Move),
+            Op::TransitionZoomIn
+            | Op::TransitionZoomOut
+            | Op::TransitionFitLyrics
+            | Op::TransitionFollow
+            | Op::TransitionLyrics
+            | Op::GridEarlier
+            | Op::GridLater
+            | Op::GridNudgeBack
+            | Op::GridNudgeForward
+            | Op::GridHalf
+            | Op::GridDouble
+            | Op::GridOne
+            | Op::GridReset
+            | Op::TransitionGo
+            | Op::TransitionPreset
+            | Op::TransitionTempo
+            | Op::TransitionPairing
+            | Op::TransitionEdit => (Transition, Command),
+            Op::EditBack | Op::EditForward => (Fades, Move),
+            Op::EditRaise | Op::EditLower | Op::EditOff | Op::EditFull | Op::EditCut => {
+                (Fades, Key)
+            }
+            Op::SliderDown | Op::SliderUp | Op::SliderFineDown | Op::SliderFineUp => {
+                (Karaoke, Move)
+            }
+            Op::KaraokeRecordEcho | Op::KaraokeGame | Op::KaraokeNotes | Op::KaraokeKeep => {
+                (Karaoke, Command)
+            }
+            Op::KaraokeStart => (KaraokeMode, Command),
+            Op::KaraokeDemo => (KaraokeMode, Key),
+            Op::SyncKeep | Op::SyncAgain => (Sync, Key),
+            Op::DeskPrevStrip | Op::DeskNextStrip => (Desk, Move),
+            Op::DeskMute | Op::DeskSolo => (Desk, Command),
+            Op::LyricsPrevious
+            | Op::LyricsNext
+            | Op::LyricsStartEarlier
+            | Op::LyricsStartLater
+            | Op::LyricsEndEarlier
+            | Op::LyricsEndLater
+            | Op::LyricsMoveEarlier
+            | Op::LyricsMoveLater => (LyricsEditor, Move),
+            Op::LyricsPlay
+            | Op::LyricsNotSung
+            | Op::LyricsLouder
+            | Op::LyricsQuieter
+            | Op::LyricsLevelReset
+            | Op::LyricsWrite
+            | Op::LyricsWriteLine
+            | Op::LyricsDelete
+            | Op::LyricsUndo
+            | Op::LyricsRedo => (LyricsEditor, Key),
+            Op::SynthAtom(_) | Op::SynthOctave(_) | Op::SynthKey(_) | Op::SynthTempo(_) => {
+                (Synth, Move)
+            }
+            Op::SynthNote(_) => (Synth, Key),
+            Op::SynthTheme | Op::SynthKeep | Op::SynthRevert => (Synth, Command),
+        }
     }
+
+    /// The tab or screen whose own operation it is: done only where that
+    /// shows, and from anywhere else answered with where it is done.
+    /// [`Context::Global`]: done anywhere, or by whatever shows (the moves,
+    /// `enter`, `esc`).
+    pub fn home(self) -> Context {
+        self.meta().0
+    }
+
+    /// What it is: a move, a key of the place it is pressed in, or a
+    /// command.
+    pub fn kind(self) -> Kind {
+        self.meta().1
+    }
+
+    /// Whether the palette lists it: the commands.
+    pub fn in_palette(self) -> bool {
+        self.kind() == Kind::Command
+    }
+}
+
+/// What an operation is ([`Op::kind`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Kind {
+    /// A cursor, a selection or a value a step on or back: a preview
+    /// follows it.
+    Move,
+    /// A key of the place it is pressed in, done to what is there: `enter`,
+    /// `esc` and the typing keys, a key held, a bar counted from the one
+    /// heard, a fade's point, the lyrics editor's word, the sync's answer.
+    Key,
+    /// A command, the palette's.
+    Command,
 }

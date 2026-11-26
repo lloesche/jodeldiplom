@@ -34,7 +34,7 @@ use std::sync::Arc;
 
 use jodel_playback::{Command, PlayState};
 
-use crate::core::keymap::Op;
+use crate::core::keymap::{self, Context, Op};
 use crate::core::sliders::Slider;
 use crate::core::transition::Status;
 use crate::core::{Effect, Gpu, Screen, Side, State};
@@ -93,9 +93,7 @@ pub struct MicShown {
 /// Whether the microphone is wanted: while the tab or the mode shows, and
 /// while the Mixer tab has its strip selected.
 pub fn mic_wanted(state: &State) -> bool {
-    (state.screen == Screen::Main && state.side == Side::Karaoke)
-        || in_mode(state)
-        || super::desk::listens(state)
+    state.showing(Side::Karaoke) || in_mode(state) || super::desk::listens(state)
 }
 
 /// The Karaoke tab's and mode's state.
@@ -162,7 +160,7 @@ pub struct KaraokeState {
 
 /// Whether the Karaoke tab is what keys act on.
 pub fn on_tab(state: &State) -> bool {
-    state.screen == Screen::Main && state.side == Side::Karaoke && state.palette.is_none()
+    state.keys_on(Side::Karaoke)
 }
 
 /// Whether Karaoke mode is on.
@@ -173,7 +171,7 @@ pub fn in_mode(state: &State) -> bool {
 /// Whether the Karaoke tab or the mode shows (a palette over the tab
 /// included): the voice then plays at its level.
 pub fn shown(state: &State) -> bool {
-    (state.screen == Screen::Main && state.side == Side::Karaoke) || in_mode(state)
+    state.showing(Side::Karaoke) || in_mode(state)
 }
 
 /// Whether nothing plays in the mode, so START shows.
@@ -192,15 +190,9 @@ pub fn seek_refused(state: &State) -> bool {
         && (state.karaoke.held.is_some() || state.karaoke.resume_at.is_some() || in_lead(state))
 }
 
-/// Carries out `op` on the Karaoke tab or in the mode; `false` when it is
-/// not theirs (or neither is shown).
+/// Carries out `op` on the Karaoke tab (or the sync over it); `false` when
+/// it is not the tab's.
 pub(crate) fn apply(state: &mut State, op: Op, fx: &mut Vec<Effect>) -> bool {
-    if in_mode(state) && state.palette.is_none() {
-        return apply_mode(state, op, fx);
-    }
-    if !on_tab(state) {
-        return false;
-    }
     if super::sync::apply(state, op, fx) {
         return true;
     }
@@ -263,13 +255,14 @@ fn game_setting(state: &mut State, op: Op, fx: &mut Vec<Effect>) {
         }
     };
     fx.push(Effect::SaveConfig);
-    super::update::say_info(state, said);
+    state.info(said);
 }
 
-/// [`apply`] in the mode: START, play and pause, the sliders, the next or
-/// previous song (held at its start), and `esc`; quitting and the device
-/// volume as anywhere; nothing else (no tabs, screens or seeking).
-fn apply_mode(state: &mut State, op: Op, fx: &mut Vec<Effect>) -> bool {
+/// Carries out `op` in the mode: START, play and pause, the sliders, the
+/// next or previous song (held at its start), and `esc`; quitting and the
+/// device volume as anywhere (`false`); nothing else (no tabs, screens or
+/// seeking).
+pub(crate) fn apply_mode(state: &mut State, op: Op, fx: &mut Vec<Effect>) -> bool {
     match op {
         Op::Back => leave(state, fx),
         Op::KaraokeStart | Op::Accept | Op::Open => start(state, fx),
@@ -333,11 +326,12 @@ fn refused(state: &mut State, index: Option<usize>) -> bool {
     };
     let title = super::shown_title(state, &state.queue.paths[index]);
     let next = if in_mode(state) {
-        "; N for the next song"
+        let key = keymap::hint(Context::KaraokeMode, Op::Next);
+        format!("; {key} for the next song")
     } else {
-        ""
+        String::new()
     };
-    super::update::say_info(state, format!("No karaoke for {title}: {why}{next}"));
+    state.info(format!("No karaoke for {title}: {why}{next}"));
     true
 }
 
@@ -383,13 +377,9 @@ pub(crate) fn enter(state: &mut State, fx: &mut Vec<Effect>, here: bool) {
     fx.push(Effect::Engine(Command::HoldAtEnd(true)));
     match state.gpu {
         Gpu::Present(_) => {}
-        Gpu::Looking => {
-            super::update::say_info(state, "Still looking for a GPU: the voice stays in for now")
-        }
-        Gpu::Absent => super::update::say_info(
-            state,
-            "No GPU for the stems: the voice is turned down only where its stems are kept",
-        ),
+        Gpu::Looking => state.info("Still looking for a GPU: the voice stays in for now"),
+        Gpu::Absent => state
+            .info("No GPU for the stems: the voice is turned down only where its stems are kept"),
     }
 }
 
@@ -441,7 +431,7 @@ fn start(state: &mut State, fx: &mut Vec<Effect>) {
         }
         _ => {
             let Some(index) = song else {
-                super::update::say_info(state, "Nothing to sing: queue some songs first");
+                state.info("Nothing to sing: queue some songs first");
                 return;
             };
             if refused(state, Some(index)) {

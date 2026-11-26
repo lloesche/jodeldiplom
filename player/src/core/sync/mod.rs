@@ -32,7 +32,7 @@ use jodel_playback::{Command, PlayState};
 use crate::core::desk::StripKind;
 use crate::core::keymap::Op;
 use crate::core::lag::{self, Pair};
-use crate::core::{Effect, Screen, Side, State};
+use crate::core::{Effect, Side, State};
 
 /// What the app tells of the sync under way.
 #[derive(Clone, Debug, PartialEq)]
@@ -141,13 +141,12 @@ pub(crate) fn begin(state: &mut State, fx: &mut Vec<Effect>) {
     let pair = state.karaoke.lag.pair.clone();
     if state.karaoke.mic.name.is_none() || pair.1.is_empty() {
         let why = "A sync needs a microphone to hear you, and none is open (i: choose one)";
-        return super::update::say_info(state, why);
+        return state.info(why);
     }
     if let Some(why) = unheard(state) {
-        return super::update::say_info(
-            state,
-            format!("No sync: the clicks play on the player's strip, and {why}"),
-        );
+        return state.info(format!(
+            "No sync: the clicks play on the player's strip, and {why}"
+        ));
     }
     if state.playing.state != PlayState::Stopped {
         fx.push(Effect::Engine(Command::Stop));
@@ -200,7 +199,7 @@ fn keep(state: &mut State) {
     } else {
         "for the output and microphone it was measured with"
     };
-    super::update::say_info(state, format!("Delay kept: {ms} ms {what}"));
+    state.info(format!("Delay kept: {ms} ms {what}"));
 }
 
 /// What the app tells of the sync under way.
@@ -228,8 +227,7 @@ pub(crate) fn event(state: &mut State, event: SyncEvent) {
 
 /// After any action: a sync is called off once the Karaoke tab is left.
 pub(crate) fn follow(state: &mut State, fx: &mut Vec<Effect>) {
-    let on_tab = state.screen == Screen::Main && state.side == Side::Karaoke;
-    if state.karaoke.sync.is_some() && !on_tab {
+    if state.karaoke.sync.is_some() && !state.showing(Side::Karaoke) {
         stop(state, fx);
     }
 }

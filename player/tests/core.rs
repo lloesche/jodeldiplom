@@ -344,7 +344,9 @@ fn the_filter_narrows_and_the_search_goes_below() {
         },
     );
     assert_eq!(browser_rows(&state).len(), 4);
-    let fx = op(&mut state, Op::SearchBelow);
+    // Its last row searches below.
+    update(&mut state, Action::SelectRow(3));
+    let fx = op(&mut state, Op::Open);
     let id = match &fx[..] {
         [Effect::Search { id, root, query }, ..] => {
             assert_eq!((root.to_str().unwrap(), query.as_str()), ("/m/Album", "B"));
@@ -388,16 +390,12 @@ fn the_filter_narrows_and_the_search_goes_below() {
     op(&mut state, Op::Back);
     assert!(state.browser.filter.is_none());
     assert_eq!(browser_rows(&state).len(), 5);
-    // Searching with no filter text says what to do instead.
-    let fx = op(&mut state, Op::SearchBelow);
-    assert!(fx.is_empty() && state.message.is_some());
 }
 
 #[test]
 fn queueing_a_file_or_a_whole_folder() {
     let mut state = listed();
-    update(&mut state, Action::SelectRow(2));
-    let fx = op(&mut state, Op::Enqueue);
+    let fx = update(&mut state, Action::EnqueueRow(2));
     assert_eq!(
         engine(&fx),
         vec![Command::Enqueue(vec!["/m/Album/01 a.flac".into()])]
@@ -407,7 +405,7 @@ fn queueing_a_file_or_a_whole_folder() {
         fx,
         vec![Effect::Walk {
             root: "/m/Album/Bonus".into(),
-            purpose: WalkPurpose::Enqueue {
+            purpose: WalkPurpose {
                 name: "Bonus".into(),
                 how: Placing::Append,
             }
@@ -416,7 +414,7 @@ fn queueing_a_file_or_a_whole_folder() {
     let fx = update(
         &mut state,
         Action::Walked {
-            purpose: WalkPurpose::Enqueue {
+            purpose: WalkPurpose {
                 name: "Bonus".into(),
                 how: Placing::Append,
             },
@@ -3314,6 +3312,27 @@ fn queue_moves_from_the_palette_do_nothing_while_the_browser_shows() {
         assert_eq!(state.queue.paths, paths, "{name}");
         assert_eq!(state.queue.cursor, 2, "{name}");
         assert_eq!(state.queue.pending, 0, "{name}");
+    }
+}
+
+/// From the browser, an operation of a tab or screen of its own
+/// ([`Op::home`]) changes nothing and says where it is done; one done
+/// anywhere never says so.
+#[test]
+fn an_op_of_another_tab_says_where_it_is_done() {
+    for binding in KEYMAP {
+        let op = binding.op;
+        let mut state = listed();
+        let fx = update(&mut state, Action::Op(op));
+        let said = state.message.as_ref().map_or("", |m| m.text.as_str());
+        let elsewhere = format!("That is for: {}", op.home().title());
+        if op.home() == Context::Global {
+            assert!(!said.starts_with("That is for"), "{op:?}: {said}");
+        } else {
+            assert_eq!(said, elsewhere, "{op:?}");
+            assert!(engine(&fx).is_empty(), "{op:?}: {fx:?}");
+            assert_eq!(state.side, Side::Browser, "{op:?}");
+        }
     }
 }
 

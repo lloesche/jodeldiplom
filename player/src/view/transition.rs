@@ -179,7 +179,8 @@ impl Header {
         };
         let mut facts = Vec::new();
         if !state.config.bpm {
-            facts.push(Fact::new("tempo is off (M)", Tone::Hint, 9));
+            let key = keymap::hint(Context::Global, Op::ToggleBpm);
+            facts.push(Fact::new(format!("tempo is off ({key})"), Tone::Hint, 9));
         } else {
             match state.rhythm.get(path) {
                 None | Some(Rhythm::Pending) => facts.push(Fact::new("analysing…", Tone::Hint, 9)),

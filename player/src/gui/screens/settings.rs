@@ -165,7 +165,7 @@ fn card<'a>(section: &Section) -> Element<'a, Message> {
 /// choice of more than two under them), its list under it.
 fn setting<'a>(r: &Row) -> Element<'a, Message> {
     let mut words = Column::new().spacing(2.0).width(Fill).push(
-        text(r.label)
+        text(r.label.clone())
             .size(size::BODY)
             .font(look::font::label())
             .color(look::TEXT),

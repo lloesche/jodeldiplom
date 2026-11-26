@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use jodel_playback::{Command, Headroom};
 
 use crate::core::transition::Preset;
-use crate::core::update::{offset, say_error, say_info};
+use crate::core::update::offset;
 use crate::core::{
     DeviceChoice, Effect, FolderPick, FolderRow, Gpu, Screen, SettingsRow, State, SETTINGS_DELAY_MS,
 };
@@ -158,7 +158,7 @@ pub(crate) fn step_row(state: &mut State, step: i32, fx: &mut Vec<Effect>) {
             } else if config.beat_methods.len() > 1 {
                 config.beat_methods.retain(|m| *m != method);
             } else {
-                say_info(state, "One beat method stays on");
+                state.info("One beat method stays on");
                 return;
             }
             fx.push(Effect::SaveConfig);
@@ -191,8 +191,8 @@ pub(crate) fn step_row(state: &mut State, step: i32, fx: &mut Vec<Effect>) {
                     state.config.stems = !state.config.stems;
                     fx.push(Effect::SaveConfig);
                 }
-                Gpu::Absent => say_info(state, "Stems need a GPU"),
-                Gpu::Looking => say_info(state, "Still looking for a GPU"),
+                Gpu::Absent => state.info("Stems need a GPU"),
+                Gpu::Looking => state.info("Still looking for a GPU"),
             }
             return;
         }
@@ -221,7 +221,7 @@ pub(crate) fn send(state: &mut State, fx: &mut Vec<Effect>) {
 pub(crate) fn toggle_bpm(state: &mut State, fx: &mut Vec<Effect>) {
     state.config.bpm = !state.config.bpm;
     let what = if state.config.bpm { "on" } else { "off" };
-    say_info(state, format!("Tempo and beat pulse {what}"));
+    state.info(format!("Tempo and beat pulse {what}"));
     fx.push(Effect::SaveConfig);
 }
 
@@ -235,7 +235,7 @@ pub(crate) fn cycle_skip_mix(state: &mut State, fx: &mut Vec<Effect>) {
     } else {
         "cuts to it".to_owned()
     };
-    say_info(state, format!("Next track {what}"));
+    state.info(format!("Next track {what}"));
     fx.push(Effect::SaveConfig);
 }
 
@@ -271,7 +271,7 @@ pub(crate) fn devices(state: &mut State, result: Result<Vec<DeviceChoice>, Strin
         }
         Err(error) => {
             state.settings.devices = Some(Vec::new());
-            say_error(state, format!("Listing devices failed: {error}"));
+            state.error(format!("Listing devices failed: {error}"));
         }
     }
 }
@@ -298,15 +298,12 @@ fn choose_device(state: &mut State, fx: &mut Vec<Effect>) {
     state.config.device = choice.id.clone();
     fx.push(Effect::SaveConfig);
     if state.null_output {
-        say_info(
-            state,
-            format!(
-                "Saved {}; this run keeps playing into the null output",
-                choice.name
-            ),
-        );
+        state.info(format!(
+            "Saved {}; this run keeps playing into the null output",
+            choice.name
+        ));
     } else {
-        say_info(state, format!("Playing on {}", choice.name));
+        state.info(format!("Playing on {}", choice.name));
         fx.push(Effect::SwitchDevice(choice.id));
     }
 }
@@ -317,12 +314,9 @@ fn open_folders(state: &mut State, fx: &mut Vec<Effect>) {
     if let Some(m) = state.data_move.as_ref().filter(|m| !m.finished) {
         if m.failure.is_some() {
             fx.push(Effect::RetryMove);
-            say_info(state, "Moving the data folder again");
+            state.info("Moving the data folder again");
         } else {
-            say_info(
-                state,
-                "The data folder is moving: choose another once it is there",
-            );
+            state.info("The data folder is moving: choose another once it is there");
         }
         return;
     }
@@ -403,13 +397,10 @@ fn choose_data_folder(state: &mut State, dir: PathBuf, fx: &mut Vec<Effect>) {
     let to = parent.join(crate::dirs::DATA);
     if let Some(from) = &state.data_dir {
         if &to == from {
-            return say_info(state, "The data folder is there already");
+            return state.info("The data folder is there already");
         }
         if to.starts_with(from) {
-            return say_info(
-                state,
-                "Not inside the data folder itself: choose a folder outside it",
-            );
+            return state.info("Not inside the data folder itself: choose a folder outside it");
         }
     }
     fx.push(Effect::MoveData(parent));

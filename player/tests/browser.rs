@@ -158,9 +158,9 @@ fn filter_then_search_below_then_queue_a_folder() {
         app.dispatch(Action::Type(c));
     }
     // Nothing in this folder is named like that ("hidden" folders are
-    // not listed), so only the search row remains.
+    // not listed), so only the search row remains, and it searches.
     assert!(names(&app).is_empty());
-    app.dispatch(Action::Op(Op::SearchBelow));
+    app.dispatch(Action::Op(Op::Open));
     assert!(common::wait_for(&mut app, WAIT, |a| a
         .state
         .browser
@@ -175,8 +175,7 @@ fn filter_then_search_below_then_queue_a_folder() {
         .iter()
         .position(|n| n == "Synthetic Ramps")
         .unwrap();
-    app.dispatch(Action::SelectRow(row + 1));
-    app.dispatch(Action::Op(Op::Enqueue));
+    app.dispatch(Action::EnqueueRow(row + 1));
     assert!(common::wait_for(&mut app, WAIT, |a| a
         .state
         .queue

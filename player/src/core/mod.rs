@@ -497,9 +497,9 @@ impl SettingsRow {
         SettingsRow::DataFolder,
     ];
 
-    /// The row's label.
-    pub fn label(self) -> &'static str {
-        match self {
+    /// The row's label (the next-track key's from the keymap).
+    pub fn label(self) -> String {
+        let label = match self {
             SettingsRow::Device => "Output device",
             SettingsRow::Headroom => "Headroom",
             SettingsRow::Tempo => "Tempo and beats",
@@ -508,10 +508,16 @@ impl SettingsRow {
             SettingsRow::Method(jodel_rhythm::Method::Network) => "Beat This! network",
             SettingsRow::Stems => "Stems",
             SettingsRow::StemSwitch => "Stem switching",
-            SettingsRow::SkipMix => "Next track (N)",
+            SettingsRow::SkipMix => {
+                return format!(
+                    "Next track ({})",
+                    keymap::hint(keymap::Context::Global, keymap::Op::Next)
+                )
+            }
             SettingsRow::SkipPreset => "Its transition",
             SettingsRow::DataFolder => "Data folder",
-        }
+        };
+        label.to_owned()
     }
 
     /// Whether it belongs to the row above it (shown set in under it).
@@ -528,6 +534,16 @@ pub struct RhythmRecipe {
     pub methods: Vec<jodel_rhythm::Method>,
     /// Stems for the cues.
     pub stems: bool,
+}
+
+/// What the files of the queue were last asked to be got ready by
+/// ([`Effect::Prepare`]).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Prepared {
+    /// The files, from the one playing on, round the queue.
+    pub order: Vec<PathBuf>,
+    /// The analysis's recipe; `None`: no analysis (the tempo is off).
+    pub recipe: Option<RhythmRecipe>,
 }
 
 /// The GPU for stems.
@@ -646,15 +662,32 @@ pub struct Message {
     pub until_ms: u64,
 }
 
-/// Where the last click landed, for double clicks.
+/// What the last press landed on and when ([`State::now_ms`]), to tell a
+/// second press on the same within [`DOUBLE_CLICK_MS`]: a double click.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Click {
-    /// The list side and row.
-    pub side: Side,
-    /// The row.
-    pub row: usize,
-    /// When ([`State::now_ms`]).
-    pub at_ms: u64,
+pub struct DoubleClick<T>(Option<(T, u64)>);
+
+impl<T> Default for DoubleClick<T> {
+    fn default() -> Self {
+        DoubleClick(None)
+    }
+}
+
+impl<T: PartialEq + Copy> DoubleClick<T> {
+    /// A press on `what` at `now`: whether it is the second of a double
+    /// click (the press after it is a first again).
+    pub fn press(&mut self, what: T, now: u64) -> bool {
+        let double = self
+            .0
+            .is_some_and(|(was, at)| was == what && now.saturating_sub(at) <= DOUBLE_CLICK_MS);
+        self.0 = (!double).then_some((what, now));
+        double
+    }
+
+    /// The last press forgotten: the next is a first.
+    pub fn forget(&mut self) {
+        self.0 = None;
+    }
 }
 
 /// Everything the UI shows and knows.
@@ -703,8 +736,8 @@ pub struct State {
     pub message: Option<Message>,
     /// The seek bar is being dragged: the fraction under the pointer.
     pub seek_drag: Option<f64>,
-    /// The last click on a list row.
-    pub last_click: Option<Click>,
+    /// The last click on a list row: its side and row.
+    pub last_click: DoubleClick<(Side, usize)>,
     /// A file to play as soon as its folder is listed (the `path` argument).
     pub autoplay: Option<PathBuf>,
     /// This run plays into the null output whatever the device setting.
@@ -721,7 +754,7 @@ pub struct State {
     /// The recipe they were asked for with.
     pub rhythm_recipe: RhythmRecipe,
     /// The files last asked to be got ready ahead, and the recipe.
-    pub prepared: (Vec<PathBuf>, Option<RhythmRecipe>),
+    pub prepared: Prepared,
     /// The files a worker is busy with, and with what.
     pub working: HashMap<PathBuf, Vec<Job>>,
     /// The work done for each file, its results in the caches
@@ -809,14 +842,14 @@ impl State {
             palette: None,
             message: None,
             seek_drag: None,
-            last_click: None,
+            last_click: DoubleClick::default(),
             autoplay: None,
             null_output: false,
             settings_due: None,
             quit: false,
             rhythm: HashMap::new(),
             rhythm_wanted: Vec::new(),
-            prepared: (Vec::new(), None),
+            prepared: Prepared::default(),
             working: HashMap::new(),
             ready: HashMap::new(),
             facts: HashMap::new(),
@@ -833,6 +866,34 @@ impl State {
             drawn_ms: None,
             preview: preview::PreviewState::default(),
         }
+    }
+
+    /// Whether the main screen shows `side` (a palette over it included).
+    pub fn showing(&self, side: Side) -> bool {
+        self.screen == Screen::Main && self.side == side
+    }
+
+    /// Whether the keys act on `side`: it shows, and no palette is over it.
+    pub fn keys_on(&self, side: Side) -> bool {
+        self.showing(side) && self.palette.is_none()
+    }
+
+    /// A message for the status line, as information.
+    pub(crate) fn info(&mut self, text: impl Into<String>) {
+        self.say(Level::Info, text);
+    }
+
+    /// A message for the status line, as a failure.
+    pub(crate) fn error(&mut self, text: impl Into<String>) {
+        self.say(Level::Error, text);
+    }
+
+    fn say(&mut self, level: Level, text: impl Into<String>) {
+        self.message = Some(Message {
+            text: text.into(),
+            level,
+            until_ms: self.now_ms + MESSAGE_MS,
+        });
     }
 
     /// Seconds into the playing track as last drawn ([`State::drawn_heard`]),

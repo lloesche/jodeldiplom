@@ -26,9 +26,8 @@ use jodel_output::mixer::{
 };
 
 use crate::core::keymap::Op;
-use crate::core::update::say_info;
 use crate::core::HeadFrame;
-use crate::core::{Effect, Screen, Side, State, DOUBLE_CLICK_MS};
+use crate::core::{DoubleClick, Effect, Side, State};
 
 pub use meter::{Meter, Pair};
 pub use shown::strips_shown;
@@ -208,9 +207,8 @@ pub struct DeskState {
     pub volume: f64,
     /// The fader held with the mouse.
     pub dragging: Option<Drag>,
-    /// The last press on a fader and when ([`State::now_ms`]), for a
-    /// double click.
-    pub last_press: Option<(StripKind, u64)>,
+    /// The last press on a fader, for a double click.
+    pub last_press: DoubleClick<StripKind>,
     /// The master as last looked at (none before the first look, or with
     /// no engine).
     pub master: Option<MasterView>,
@@ -328,18 +326,18 @@ impl DeskState {
 
 /// Whether the Mixer tab shows (a palette over it included).
 pub fn shown(state: &State) -> bool {
-    state.screen == Screen::Main && state.side == Side::Mixer
+    state.showing(Side::Mixer)
 }
 
 /// Whether the Mixer tab is what keys act on.
 pub fn on_tab(state: &State) -> bool {
-    shown(state) && state.palette.is_none()
+    state.keys_on(Side::Mixer)
 }
 
 /// Whether the Mixer tab listens to the microphone: while it shows with the
 /// microphone's strip selected.
 pub fn listens(state: &State) -> bool {
-    shown(state) && state.desk.selected == Channel::Mic
+    state.showing(Side::Mixer) && state.desk.selected == Channel::Mic
 }
 
 /// Whether the Mixer tab shows something that moves by itself at `now_ms`:
@@ -376,7 +374,7 @@ pub fn let_go(state: &State) -> Option<DeskAction> {
 
 /// After any action: a fader held is let go of once the tab is left.
 pub(crate) fn settle(state: &mut State, fx: &mut Vec<Effect>) {
-    if !shown(state) {
+    if !state.showing(Side::Mixer) {
         if let Some(drag) = state.desk.dragging.take() {
             keep(state, drag.strip, fx);
         }
@@ -445,12 +443,8 @@ pub fn feed(state: &mut State, look: Look, now_ms: u64) {
     desk.looked_at = now_ms;
 }
 
-/// Carries out `op` on the Mixer tab; `false` when it is not the tab's (or
-/// the tab is not shown).
+/// Carries out `op` on the Mixer tab; `false` when it is not the tab's.
 pub(crate) fn apply(state: &mut State, op: Op, fx: &mut Vec<Effect>) -> bool {
-    if !on_tab(state) {
-        return false;
-    }
     let channel = state.desk.selected;
     match op {
         Op::DeskPrevStrip => select_by(state, -1),
@@ -468,7 +462,7 @@ pub(crate) fn apply(state: &mut State, op: Op, fx: &mut Vec<Effect>) -> bool {
                 press(state, button, fx);
             }
             Channel::Mic => no_fader(state),
-            Channel::Main => say_info(state, MAIN_SAID),
+            Channel::Main => state.info(MAIN_SAID),
         },
         // Esc does nothing here: only tab and the tab buttons leave.
         Op::Back => {}
@@ -501,10 +495,7 @@ fn keep(state: &mut State, strip: StripKind, fx: &mut Vec<Effect>) {
 const MAIN_SAID: &str = "The master has no mute or solo: ↑ ↓ move the player's volume";
 
 fn no_fader(state: &mut State) {
-    say_info(
-        state,
-        "The microphone is only listened to: it has no fader and is never played",
-    );
+    state.info("The microphone is only listened to: it has no fader and is never played");
 }
 
 /// The strips the arrow keys go through: those shown (the stems' only
@@ -589,31 +580,24 @@ pub(crate) fn toggle_echo(state: &mut State, fx: &mut Vec<Effect>) {
     } else {
         "Echo canceller off: the microphone as it hears"
     };
-    say_info(state, said);
+    state.info(said);
 }
 
 /// Carries out a mouse action on the desk.
 pub(crate) fn act(state: &mut State, action: DeskAction, fx: &mut Vec<Effect>) {
-    if !shown(state) {
+    if !state.showing(Side::Mixer) {
         return;
     }
     match action {
         DeskAction::Select(channel) => state.desk.selected = channel,
         DeskAction::Grab { strip, position } => {
             state.desk.selected = Channel::Strip(strip);
-            let now = state.now_ms;
-            let double = state
-                .desk
-                .last_press
-                .is_some_and(|(s, at)| s == strip && now.saturating_sub(at) <= DOUBLE_CLICK_MS);
-            if double {
+            if state.desk.last_press.press(strip, state.now_ms) {
                 // A double click: back to 0 dB, nothing held.
-                state.desk.last_press = None;
                 state.desk.dragging = None;
                 set_level(state, strip, 0.0, fx);
                 return;
             }
-            state.desk.last_press = Some((strip, now));
             state.desk.dragging = Some(Drag { strip });
             set_level(state, strip, taper::snap(taper::db_at(position)), fx);
         }
@@ -622,7 +606,7 @@ pub(crate) fn act(state: &mut State, action: DeskAction, fx: &mut Vec<Effect>) {
                 let db = taper::snap(taper::db_at(position));
                 // A fader moved is no first click of a double click.
                 if set_level(state, drag.strip, db, fx) {
-                    state.desk.last_press = None;
+                    state.desk.last_press.forget();
                 }
             }
         }
@@ -650,11 +634,6 @@ pub(crate) fn act(state: &mut State, action: DeskAction, fx: &mut Vec<Effect>) {
             press(state, button, fx);
         }
     }
-}
-
-/// What a desk op does away from the tab (from the palette elsewhere).
-pub(crate) fn elsewhere(state: &mut State) {
-    say_info(state, "That is for the Mixer tab (tab)");
 }
 
 #[cfg(test)]

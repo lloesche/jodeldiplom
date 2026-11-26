@@ -32,8 +32,8 @@ use crate::gui::pointer::Grab;
 use crate::gui::widgets::{self, list_row, Icon, Tab};
 use crate::gui::window::Message;
 use crate::view::list::{
-    Body, Browser, BrowserRow, Fact, FilterLine, Kind, Known, Note, Pane, Place, Queue, QueueRow,
-    QUEUE_EMPTY, QUEUE_HINT,
+    queue_hint, Body, Browser, BrowserRow, Fact, FilterLine, Kind, Known, Note, Pane, Place, Queue,
+    QueueRow, QUEUE_EMPTY,
 };
 
 /// The line at the panel's top saying where the browser is, in points.
@@ -514,7 +514,7 @@ fn queue<'a>(state: &State, q: &Queue) -> Element<'a, Message> {
                 .size(size::TITLE)
                 .font(look::font::title())
                 .color(look::TEXT_DIM),
-            text(QUEUE_HINT)
+            text(queue_hint())
                 .size(size::LABEL)
                 .font(look::font::body())
                 .color(look::TEXT_FAINT)

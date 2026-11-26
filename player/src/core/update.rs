@@ -19,27 +19,9 @@ use crate::core::lanes;
 use crate::core::preview;
 use crate::core::transition::{draft, jump, tab, viewport};
 use crate::core::{
-    help, queue, settings, work, Action, Effect, Gpu, Level, Message, NowTrack, Placing, Screen,
-    Side, State, MESSAGE_MS, SEEK_STEP,
+    help, queue, settings, work, Action, Effect, Gpu, NowTrack, Placing, Screen, Side, State,
+    SEEK_STEP,
 };
-
-/// A message for the status line, as information.
-pub(crate) fn say_info(state: &mut State, text: impl Into<String>) {
-    say(state, Level::Info, text);
-}
-
-/// [`say`] at [`Level::Error`], for the other core modules.
-pub(crate) fn say_error(state: &mut State, text: impl Into<String>) {
-    say(state, Level::Error, text);
-}
-
-fn say(state: &mut State, level: Level, text: impl Into<String>) {
-    state.message = Some(Message {
-        text: text.into(),
-        level,
-        until_ms: state.now_ms + MESSAGE_MS,
-    });
-}
 
 /// Applies `action` to `state` and returns the work to carry out.
 pub fn update(state: &mut State, action: Action) -> Vec<Effect> {
@@ -115,26 +97,23 @@ pub fn update(state: &mut State, action: Action) -> Vec<Effect> {
         Action::PointerLeft => karaoke::controls::pointer_left(state),
         Action::SelectRow(row) => {
             state.screen = Screen::Main;
-            set_cursor(state, row);
+            select(state, row);
         }
         Action::ClickRow(row) => browse::click_row(state, row, &mut fx),
         Action::EnqueueRow(row) => {
-            set_cursor(state, row);
+            select(state, row);
             queue::enqueue(state, &mut fx);
         }
         Action::QueueDrag(row) => queue::drag(state, row, &mut fx),
         Action::QueueDragEnd => state.queue.dragging = false,
         Action::Scroll(delta) => match state.screen {
             Screen::Help => help::scroll(state, delta),
-            _ => {
-                let (cursor, _) = list_cursor(state);
-                set_cursor(state, offset(cursor, delta));
-            }
+            _ => select_by(state, delta),
         },
         Action::ShowSide(side) => {
             state.side = side;
             state.screen = Screen::Main;
-            fix_scroll(state);
+            fix_scroll(state, side);
         }
         Action::SeekTo(fraction) => {
             state.seek_drag = None;
@@ -160,7 +139,7 @@ pub fn update(state: &mut State, action: Action) -> Vec<Effect> {
         Action::HelpScroll(delta) => help::scroll(state, delta),
         Action::Fit(fit) => {
             state.fit = fit;
-            fix_scroll(state);
+            fix_scroll(state, state.side);
         }
         Action::Tick(now) => {
             state.now_ms = now;
@@ -210,17 +189,13 @@ pub fn update(state: &mut State, action: Action) -> Vec<Effect> {
         Action::Working { path, job, on } => work::working(state, path, job, on),
         Action::Heard { path, part } => work::heard(state, path, part),
         Action::Ready { path, job, facts } => work::ready(state, path, job, facts),
-        Action::Failed(text) => say(state, Level::Error, text),
-        Action::Info(text) => say(state, Level::Info, text),
+        Action::Failed(text) => state.error(text),
+        Action::Info(text) => state.info(text),
         Action::QueueSaved(result) => queue::saved(state, result),
         Action::PlaylistRead { path, tracks, how } => {
             queue::playlist_read(state, &path, tracks, how, &mut fx);
         }
-        Action::EngineGone(_) => say(
-            state,
-            Level::Error,
-            "The playback engine failed and was started again",
-        ),
+        Action::EngineGone(_) => state.error("The playback engine failed and was started again"),
     }
     // While Ctrl is held, the preview follows the selection as it is
     // moved (not as a folder's listing lands).
@@ -241,41 +216,72 @@ pub fn update(state: &mut State, action: Action) -> Vec<Effect> {
 }
 
 /// Whether `action` is the user's own key, click or scroll (not the
-/// clock or a background result).
+/// clock or a background result). Every action is named, so a new one is
+/// put on one side or the other.
 fn is_input(action: &Action) -> bool {
-    matches!(
-        action,
+    match action {
         Action::Op(_)
-            | Action::Type(_)
-            | Action::Paste(_)
-            | Action::SelectRow(_)
-            | Action::ClickRow(_)
-            | Action::EnqueueRow(_)
-            | Action::QueueDrag(_)
-            | Action::QueueDragEnd
-            | Action::Scroll(_)
-            | Action::ShowSide(_)
-            | Action::TransitionPoint { .. }
-            | Action::TransitionJump { .. }
-            | Action::TransitionWheel { .. }
-            | Action::TransitionPanStart { .. }
-            | Action::TransitionPan(_)
-            | Action::TransitionPanEnd
-            | Action::KaraokeSlide { .. }
-            | Action::KaraokeSlideEnd
-            | Action::KaraokeStep { .. }
-            | Action::Desk(_)
-            | Action::Synth(_)
-            | Action::LyricsEdit(_)
-            | Action::SeekTo(_)
-            | Action::SeekDrag(_)
-            | Action::OpenSettings(_)
-            | Action::SettingsClick(..)
-            | Action::ChooseDevice(_)
-            | Action::FolderRow(_)
-            | Action::PaletteRun(_)
-            | Action::HelpScroll(_)
-    )
+        | Action::Type(_)
+        | Action::Paste(_)
+        | Action::SelectRow(_)
+        | Action::ClickRow(_)
+        | Action::EnqueueRow(_)
+        | Action::QueueDrag(_)
+        | Action::QueueDragEnd
+        | Action::Scroll(_)
+        | Action::ShowSide(_)
+        | Action::TransitionPoint { .. }
+        | Action::TransitionJump { .. }
+        | Action::TransitionWheel { .. }
+        | Action::TransitionPanStart { .. }
+        | Action::TransitionPan(_)
+        | Action::TransitionPanEnd
+        | Action::KaraokeSlide { .. }
+        | Action::KaraokeSlideEnd
+        | Action::KaraokeStep { .. }
+        | Action::Desk(_)
+        | Action::Synth(_)
+        | Action::LyricsEdit(_)
+        | Action::SeekTo(_)
+        | Action::SeekDrag(_)
+        | Action::OpenSettings(_)
+        | Action::SettingsClick(..)
+        | Action::ChooseDevice(_)
+        | Action::FolderRow(_)
+        | Action::PaletteRun(_)
+        | Action::HelpScroll(_) => true,
+        // Ctrl alone is the preview's own; a key let go of, the pointer
+        // moving and the sync's clicks heard press nothing.
+        Action::Ctrl(_)
+        | Action::DemoLetGo
+        | Action::PointerMoved { .. }
+        | Action::PointerLeft
+        | Action::Sync(_)
+        | Action::Fit(_)
+        | Action::Tick(_)
+        | Action::Listed { .. }
+        | Action::Details(..)
+        | Action::DetailsDropped(_)
+        | Action::SearchHits { .. }
+        | Action::SearchDone { .. }
+        | Action::Walked { .. }
+        | Action::JumpMissed { .. }
+        | Action::JumpTo { .. }
+        | Action::FoldersListed(..)
+        | Action::Devices(_)
+        | Action::Engine(_)
+        | Action::EngineGone(_)
+        | Action::Rhythm(..)
+        | Action::Gpu(_)
+        | Action::Lyrics(..)
+        | Action::Working { .. }
+        | Action::Ready { .. }
+        | Action::Heard { .. }
+        | Action::QueueSaved(_)
+        | Action::PlaylistRead { .. }
+        | Action::Failed(_)
+        | Action::Info(_) => false,
+    }
 }
 
 /// `value` moved `delta` on, stopping at 0.
@@ -287,6 +293,19 @@ pub(crate) fn offset(value: usize, delta: i32) -> usize {
     }
 }
 
+/// The shown side's cursor on `row` ([`set_cursor`]).
+fn select(state: &mut State, row: usize) {
+    let side = state.side;
+    set_cursor(state, side, row);
+}
+
+/// The shown side's cursor `delta` rows on.
+fn select_by(state: &mut State, delta: i32) {
+    let side = state.side;
+    let (cursor, _) = list_cursor(state, side);
+    set_cursor(state, side, offset(cursor, delta));
+}
+
 /// `↑` `↓` and the pages, `delta` rows: in the palette while it is open,
 /// else on the screen shown.
 fn move_by(state: &mut State, delta: i32) {
@@ -294,10 +313,7 @@ fn move_by(state: &mut State, delta: i32) {
         return;
     }
     match state.screen {
-        Screen::Main => {
-            let (cursor, _) = list_cursor(state);
-            set_cursor(state, offset(cursor, delta));
-        }
+        Screen::Main => select_by(state, delta),
         Screen::Settings => settings::move_by(state, delta),
         Screen::Help => help::scroll(state, delta),
         Screen::NowPlaying | Screen::Karaoke | Screen::Lyrics => {}
@@ -308,18 +324,39 @@ fn page(state: &State) -> i32 {
     match state.screen {
         // Two lines of the last page stay in view.
         Screen::Help => i32::from(state.fit.help_rows.saturating_sub(2)).max(1),
-        _ => (list_height(state) as i32 - 1).max(1),
+        _ => (list_height(state, state.side) as i32 - 1).max(1),
     }
 }
 
-/// Does what `op` means where it is pressed (or run from the palette).
+/// Gives `op` to the screen or tab the keys are on (none under a palette);
+/// whether it took it.
+fn shown_takes(state: &mut State, op: Op, fx: &mut Vec<Effect>) -> bool {
+    if state.palette.is_some() {
+        return false;
+    }
+    match state.screen {
+        // With nothing to edit, the editor gives way to the main screen.
+        Screen::Lyrics => {
+            super::lyric_edit::screen::apply(state, op, fx)
+                || (state.screen == Screen::Main && shown_takes(state, op, fx))
+        }
+        Screen::Karaoke => karaoke::apply_mode(state, op, fx),
+        Screen::Main => match state.side {
+            Side::Transition => tab::apply(state, op, fx),
+            Side::Karaoke => karaoke::apply(state, op, fx),
+            Side::Mixer => desk::apply(state, op, fx),
+            Side::Synth => super::synth_tab::apply(state, op, fx),
+            Side::Browser | Side::Queue => false,
+        },
+        Screen::NowPlaying | Screen::Settings | Screen::Help => false,
+    }
+}
+
+/// Does what `op` means where it is pressed (or run from the palette): the
+/// screen or tab shown first; an operation of another's ([`Op::home`])
+/// says where it is done; the rest as anywhere.
 pub(crate) fn apply_op(state: &mut State, op: Op, fx: &mut Vec<Effect>) {
-    if super::lyric_edit::screen::apply(state, op, fx)
-        || karaoke::apply(state, op, fx)
-        || tab::apply(state, op, fx)
-        || desk::apply(state, op, fx)
-        || super::synth_tab::apply(state, op, fx)
-    {
+    if shown_takes(state, op, fx) {
         return;
     }
     match op {
@@ -355,11 +392,11 @@ pub(crate) fn apply_op(state: &mut State, op: Op, fx: &mut Vec<Effect>) {
             let at = Side::ALL.iter().position(|&s| s == state.side).unwrap_or(0);
             state.side = Side::ALL[(at + 1) % Side::ALL.len()];
             state.screen = Screen::Main;
-            fix_scroll(state);
+            fix_scroll(state, state.side);
         }
         Op::GoTrack | Op::GoAlbum | Op::GoArtist => match browse::playing_jump(state, op) {
             Some((dir, select)) => browse::jump_to(state, dir, select, fx),
-            None => say(state, Level::Info, "Nothing playing"),
+            None => state.info("Nothing playing"),
         },
         Op::NowPlaying => {
             state.screen = if state.screen == Screen::NowPlaying {
@@ -399,7 +436,7 @@ pub(crate) fn apply_op(state: &mut State, op: Op, fx: &mut Vec<Effect>) {
             let db = super::desk::taper::step(state.desk.volume, by);
             super::desk::set_volume(state, db, fx);
             let volume = super::desk::taper::label(state.desk.volume);
-            say(state, Level::Info, format!("Volume {volume}"));
+            state.info(format!("Volume {volume}"));
         }
         Op::ToggleBpm => settings::toggle_bpm(state, fx),
         Op::Back => back(state, fx),
@@ -413,8 +450,8 @@ pub(crate) fn apply_op(state: &mut State, op: Op, fx: &mut Vec<Effect>) {
             let p = page(state);
             move_by(state, p);
         }
-        Op::Top => set_cursor(state, 0),
-        Op::Bottom => set_cursor(state, usize::MAX),
+        Op::Top => select(state, 0),
+        Op::Bottom => select(state, usize::MAX),
         Op::Open if state.screen == Screen::Settings => settings::enter(state, fx),
         Op::Open => queue::activate(state, Placing::Append, fx),
         Op::Parent if state.screen == Screen::Settings && state.settings.folders.is_some() => {
@@ -425,7 +462,6 @@ pub(crate) fn apply_op(state: &mut State, op: Op, fx: &mut Vec<Effect>) {
                 browse::go_parent(state, fx);
             }
         }
-        Op::Enqueue => queue::enqueue(state, fx),
         Op::QueuePlay => queue::activate(state, Placing::AppendPlay, fx),
         Op::OpenReplace => queue::activate(state, Placing::Replace, fx),
         Op::QueueRemove => queue::remove(state, fx),
@@ -433,7 +469,6 @@ pub(crate) fn apply_op(state: &mut State, op: Op, fx: &mut Vec<Effect>) {
         Op::QueueOpenSaved => queue::open_saved(state, fx),
         Op::QueueMoveUp => queue::move_selected(state, -1, fx),
         Op::QueueMoveDown => queue::move_selected(state, 1, fx),
-        Op::SearchBelow => browse::search_below(state, fx),
         Op::Accept => {
             if !help::accepted(state, fx) {
                 browse::accept_filter(state, fx);
@@ -449,37 +484,6 @@ pub(crate) fn apply_op(state: &mut State, op: Op, fx: &mut Vec<Effect>) {
                 fx.push(Effect::ReadClipboard);
             }
         }
-        Op::TransitionBarBack
-        | Op::TransitionBarForward
-        | Op::TransitionBeatBack
-        | Op::TransitionBeatForward
-        | Op::TransitionSelectBack
-        | Op::TransitionSelectForward
-        | Op::TransitionZoomIn
-        | Op::TransitionZoomOut
-        | Op::TransitionFitLyrics
-        | Op::TransitionFollow
-        | Op::TransitionLyrics
-        | Op::GridEarlier
-        | Op::GridLater
-        | Op::GridNudgeBack
-        | Op::GridNudgeForward
-        | Op::GridHalf
-        | Op::GridDouble
-        | Op::GridOne
-        | Op::GridReset
-        | Op::TransitionGo
-        | Op::TransitionPreset
-        | Op::TransitionTempo
-        | Op::TransitionPairing
-        | Op::TransitionEdit
-        | Op::EditBack
-        | Op::EditForward
-        | Op::EditRaise
-        | Op::EditLower
-        | Op::EditOff
-        | Op::EditFull
-        | Op::EditCut => say(state, Level::Info, "That is for the Transition tab (tab)"),
         Op::KaraokeEnter | Op::KaraokeEnterHere => {
             // From anywhere (the palette): the tab first, then the mode.
             state.palette = None;
@@ -494,31 +498,9 @@ pub(crate) fn apply_op(state: &mut State, op: Op, fx: &mut Vec<Effect>) {
             state.screen = Screen::Main;
             super::sync::begin(state, fx);
         }
-        // Only while a sync shows; only held in Karaoke mode.
-        Op::SyncKeep | Op::SyncAgain | Op::KaraokeDemo => {}
         Op::KeyDown | Op::KeyUp | Op::KeyReset => super::key::step(state, op, fx),
         Op::MicNext => fx.push(Effect::NextMic),
-        Op::KaraokeStart
-        | Op::KaraokeRecordEcho
-        | Op::KaraokeGame
-        | Op::KaraokeNotes
-        | Op::KaraokeKeep
-        | Op::SliderDown
-        | Op::SliderUp
-        | Op::SliderFineDown
-        | Op::SliderFineUp => say(state, Level::Info, "That is for the Karaoke tab (tab)"),
         Op::DeskEcho => desk::toggle_echo(state, fx),
-        Op::DeskPrevStrip | Op::DeskNextStrip | Op::DeskMute | Op::DeskSolo => {
-            desk::elsewhere(state)
-        }
-        Op::SynthAtom(_)
-        | Op::SynthNote(_)
-        | Op::SynthOctave(_)
-        | Op::SynthTheme
-        | Op::SynthKey(_)
-        | Op::SynthTempo(_)
-        | Op::SynthKeep
-        | Op::SynthRevert => say(state, Level::Info, "That is for the Synth tab (tab)"),
         Op::ValueDown => settings::step_row(state, -1, fx),
         Op::ValueUp => settings::step_row(state, 1, fx),
         Op::LyricsEditor => {
@@ -526,28 +508,8 @@ pub(crate) fn apply_op(state: &mut State, op: Op, fx: &mut Vec<Effect>) {
             state.palette = None;
             super::lyric_edit::act(state, super::lyric_edit::LyricsEdit::Open, fx);
         }
-        Op::LyricsPrevious
-        | Op::LyricsNext
-        | Op::LyricsStartEarlier
-        | Op::LyricsStartLater
-        | Op::LyricsEndEarlier
-        | Op::LyricsEndLater
-        | Op::LyricsMoveEarlier
-        | Op::LyricsMoveLater
-        | Op::LyricsPlay
-        | Op::LyricsNotSung
-        | Op::LyricsLouder
-        | Op::LyricsQuieter
-        | Op::LyricsLevelReset
-        | Op::LyricsWrite
-        | Op::LyricsWriteLine
-        | Op::LyricsDelete
-        | Op::LyricsUndo
-        | Op::LyricsRedo => say(
-            state,
-            Level::Info,
-            "That is for the lyrics editor (e on the Karaoke tab)",
-        ),
+        // Another tab's or screen's own, from elsewhere: where it is done.
+        _ => state.info(format!("That is for: {}", op.home().title())),
     }
 }
 
@@ -659,13 +621,13 @@ fn engine_event(state: &mut State, event: Event) {
                 .map(|n| format!("{}: ", n.to_string_lossy()))
                 .unwrap_or_default();
             let tail = if skipped { " (skipped)" } else { "" };
-            say(state, Level::Error, format!("{name}{error}{tail}"));
+            state.error(format!("{name}{error}{tail}"));
         }
-        Event::Notice { message, .. } => say(state, Level::Info, message),
+        Event::Notice { message, .. } => state.info(message),
         Event::Transition(t) => draft::transition_event(state, t),
         // The stems as parts of the output stopped: the file plays on.
         Event::PartsStopped { index, reason } => super::stems::stopped(state, index, &reason),
-        Event::QueueEnded => say(state, Level::Info, "End of the queue"),
+        Event::QueueEnded => state.info("End of the queue"),
         Event::Held { index } => karaoke::held(state, index),
         Event::Key { semitones } => super::key::told(state, semitones),
     }

@@ -15,11 +15,10 @@ use jodel_rhythm::Analysis;
 
 use super::{draft, viewport};
 use crate::core::grid::Grid;
-use crate::core::keymap::Op;
+use crate::core::keymap::{self, Context, Op};
 use crate::core::lanes::{path, rhythmed, Block};
 use crate::core::transition::{self as tr, Draft, Edit, Status};
-use crate::core::update::say_info;
-use crate::core::{Effect, Rhythm, Rhythmed, Screen, Side, State};
+use crate::core::{DoubleClick, Effect, Rhythm, Rhythmed, Side, State};
 use jodel_playback::stems::STEMS;
 use jodel_playback::TempoMode;
 
@@ -86,9 +85,9 @@ pub struct TransitionTab {
     pub next: BlockState,
     /// The index into [`viewport::ZOOMS`].
     pub zoom: usize,
-    /// The last press on the lanes: the block, the beat and when
-    /// ([`State::now_ms`]), to tell a double click.
-    pub last_press: Option<(Block, usize, u64)>,
+    /// The last press on the lanes, its block and beat, to tell a double
+    /// click.
+    pub last_press: DoubleClick<(Block, usize)>,
     /// The transition being set up.
     pub draft: Draft,
     /// The track before the playing one, as its block was when a
@@ -108,7 +107,7 @@ impl Default for TransitionTab {
             now: BlockState::default(),
             next: BlockState::default(),
             zoom: viewport::DEFAULT_ZOOM,
-            last_press: None,
+            last_press: DoubleClick::default(),
             draft: Draft::default(),
             prev: BlockState::default(),
             slide: None,
@@ -179,7 +178,7 @@ pub(super) fn block_mut(state: &mut State, which: Block) -> &mut BlockState {
 /// words go on the voice's lane): its blocks', unless that is turned off
 /// (`transition_lyrics`). `None` while it does not show.
 pub fn lyrics_wanted(state: &State) -> Option<Vec<PathBuf>> {
-    if !(state.screen == Screen::Main && state.side == Side::Transition) {
+    if !state.showing(Side::Transition) {
         return None;
     }
     if !state.config.transition_lyrics {
@@ -200,7 +199,7 @@ fn fix(state: &mut State, fx: &mut Vec<Effect>, heard: f64, how: impl Fn(&Grid, 
     let which = state.transition.focus;
     let (Some(path), Some(r)) = (path(state, which).cloned(), rhythmed(state, which).cloned())
     else {
-        say_info(state, "No beats to fix here yet");
+        state.info("No beats to fix here yet");
         return;
     };
     let Some(at) = viewport::cursor(state, which, heard) else {
@@ -219,12 +218,12 @@ fn reset(state: &mut State, fx: &mut Vec<Effect>) {
         return;
     };
     if !r.fixed() {
-        say_info(state, "The grid is as the analysis found it");
+        state.info("The grid is as the analysis found it");
         return;
     }
     regrid(state, which, &path, &r, Arc::clone(&r.found));
     fx.push(Effect::ResetGrid(path));
-    say_info(state, "The grid is back as the analysis found it");
+    state.info("The grid is back as the analysis found it");
 }
 
 /// A block's track (at `path`, analysed as `r`) takes `analysis` as its
@@ -260,17 +259,9 @@ fn nearest(beats: &[f64], time: f64) -> usize {
     }
 }
 
-/// Whether the Transition tab is what keys act on.
-pub fn active(state: &State) -> bool {
-    state.screen == Screen::Main && state.side == Side::Transition && state.palette.is_none()
-}
-
 /// Carries out `op` on the Transition tab; `false` when it is not one of the
-/// tab's (or the tab is not shown).
+/// tab's.
 pub(crate) fn apply(state: &mut State, op: Op, fx: &mut Vec<Effect>) -> bool {
-    if !active(state) {
-        return false;
-    }
     let heard = state.heard();
     if let Some(at) = state.transition.draft.edit.as_mut() {
         match op {
@@ -311,7 +302,7 @@ pub(crate) fn apply(state: &mut State, op: Op, fx: &mut Vec<Effect>) -> bool {
             } else {
                 "off"
             };
-            say_info(state, format!("Lyrics on the vocals lane: {now}"));
+            state.info(format!("Lyrics on the vocals lane: {now}"));
         }
         Op::TransitionFollow => {
             let b = block_mut(state, Block::Now);
@@ -334,13 +325,13 @@ pub(crate) fn apply(state: &mut State, op: Op, fx: &mut Vec<Effect>) -> bool {
                 match state.transition.draft.status {
                     Status::Armed => draft::call_off(state, fx),
                     Status::Mixing(_) => {
-                        say_info(state, "A transition is under way");
+                        state.info("A transition is under way");
                     }
                     Status::Draft => {
                         let b = block_mut(state, which);
                         if b.cue.take().is_some() {
                             state.transition.draft.edit = None;
-                            say_info(state, "Cue cleared");
+                            state.info("Cue cleared");
                         }
                     }
                 }
@@ -369,7 +360,7 @@ pub(crate) fn apply(state: &mut State, op: Op, fx: &mut Vec<Effect>) -> bool {
         | Op::EditCut
             if matches!(state.transition.draft.status, Status::Mixing(_)) =>
         {
-            say_info(state, "A transition is under way: it plays as it is");
+            state.info("A transition is under way: it plays as it is");
         }
         Op::TransitionPreset => {
             let d = &mut state.transition.draft;
@@ -379,7 +370,7 @@ pub(crate) fn apply(state: &mut State, op: Op, fx: &mut Vec<Effect>) -> bool {
             // Remembered: the next run starts from it.
             state.config.transition_preset = state.transition.draft.preset;
             fx.push(Effect::SaveConfig);
-            say_info(state, format!("Transition: {name}"));
+            state.info(format!("Transition: {name}"));
             draft::rearm(state, fx, true);
         }
         Op::TransitionTempo => {
@@ -391,7 +382,7 @@ pub(crate) fn apply(state: &mut State, op: Op, fx: &mut Vec<Effect>) -> bool {
             let what = tr::tempo_name(d.tempo);
             state.config.transition_tempo = state.transition.draft.tempo;
             fx.push(Effect::SaveConfig);
-            say_info(state, format!("Transition: {what}"));
+            state.info(format!("Transition: {what}"));
             draft::rearm(state, fx, false);
         }
         Op::TransitionPairing => {
@@ -407,13 +398,14 @@ pub(crate) fn apply(state: &mut State, op: Op, fx: &mut Vec<Effect>) -> bool {
                 None => format!("{label} (by the tempi)"),
                 Some(_) => label.to_owned(),
             };
-            say_info(state, format!("Transition: beats paired {what}"));
+            state.info(format!("Transition: beats paired {what}"));
             draft::repair(state, fx);
         }
         Op::TransitionEdit => {
             let cued = Block::BOTH.iter().any(|&b| block(state, b).cue.is_some());
             if !cued && state.transition.draft.status == Status::Draft {
-                say_info(state, "Set a cue first: enter on the bars to mix over");
+                let enter = keymap::hint(Context::Transition, Op::Accept);
+                state.info(format!("Set a cue first: {enter} on the bars to mix over"));
                 return true;
             }
             let bars = draft::draft_bars(state);

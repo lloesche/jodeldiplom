@@ -6,10 +6,8 @@ use std::path::{Path, PathBuf};
 
 use crate::browser::{self, EntryKind};
 use crate::core::keymap::Op;
-use crate::core::update::{say_error, say_info};
 use crate::core::{
-    preview, queue, Click, Effect, Filter, Placing, Screen, Search, Side, State, DOUBLE_CLICK_MS,
-    TYPE_AHEAD_MS,
+    preview, queue, Effect, Filter, Placing, Screen, Search, Side, State, TYPE_AHEAD_MS,
 };
 
 /// One row of the browser side of the list.
@@ -77,66 +75,68 @@ fn selected_path(state: &State) -> Option<PathBuf> {
 /// stays on `path` where it is still shown, else goes to the first row.
 fn reselect(state: &mut State, path: Option<PathBuf>) {
     let row = path.and_then(|path| row_of(state, &path)).unwrap_or(0);
-    let side = state.side;
-    state.side = Side::Browser;
-    set_cursor(state, row);
-    state.side = side;
+    set_cursor(state, Side::Browser, row);
 }
 
-/// How many rows the shown side has.
-pub fn list_len(state: &State) -> usize {
-    match state.side {
+/// The cursor and the first row shown of `side`, where it is a list (the
+/// browser or the queue), to be changed.
+fn view_mut(state: &mut State, side: Side) -> Option<(&mut usize, &mut usize)> {
+    match side {
+        Side::Browser => Some((&mut state.browser.cursor, &mut state.browser.scroll)),
+        Side::Queue => Some((&mut state.queue.cursor, &mut state.queue.scroll)),
+        Side::Transition | Side::Karaoke | Side::Mixer | Side::Synth => None,
+    }
+}
+
+/// How many rows `side` has (none, for a tab that is no list).
+pub fn list_len(state: &State, side: Side) -> usize {
+    match side {
         Side::Browser => browser_rows(state).len(),
         Side::Queue => state.queue.paths.len(),
         Side::Transition | Side::Karaoke | Side::Mixer | Side::Synth => 0,
     }
 }
 
-/// The selected row and the first row shown, of the shown side.
-pub fn list_cursor(state: &State) -> (usize, usize) {
-    match state.side {
+/// The selected row and the first row shown of `side` (0 and 0, for a tab
+/// that is no list).
+pub fn list_cursor(state: &State, side: Side) -> (usize, usize) {
+    match side {
         Side::Browser => (state.browser.cursor, state.browser.scroll),
         Side::Queue => (state.queue.cursor, state.queue.scroll),
         Side::Transition | Side::Karaoke | Side::Mixer | Side::Synth => (0, 0),
     }
 }
 
-/// Puts the shown side's cursor on `cursor` (on its last row, past the
-/// end), with that row in view.
-pub(crate) fn set_cursor(state: &mut State, cursor: usize) {
-    let len = list_len(state);
-    let cursor = cursor.min(len.saturating_sub(1));
-    match state.side {
-        Side::Browser => state.browser.cursor = cursor,
-        Side::Queue => state.queue.cursor = cursor,
-        Side::Transition | Side::Karaoke | Side::Mixer | Side::Synth => {}
+/// Puts `side`'s cursor on `cursor` (on its last row, past the end), with
+/// that row in view, whether `side` shows or not.
+pub(crate) fn set_cursor(state: &mut State, side: Side, cursor: usize) {
+    let last = list_len(state, side).saturating_sub(1);
+    if let Some((at, _)) = view_mut(state, side) {
+        *at = cursor.min(last);
     }
-    fix_scroll(state);
+    fix_scroll(state, side);
 }
 
-/// How many list rows the main screen shows: the window's
-/// ([`crate::core::Fit::list_rows`]), but for the filter line's while the
-/// browser is filtered.
-pub fn list_height(state: &State) -> usize {
-    let filter = state.side == Side::Browser && state.browser.filter.is_some();
+/// How many rows `side` shows on the main screen: the window's
+/// ([`crate::core::Fit::list_rows`]), but for the filter line's in the
+/// browser while it is filtered.
+pub fn list_height(state: &State, side: Side) -> usize {
+    let filter = side == Side::Browser && state.browser.filter.is_some();
     usize::from(state.fit.list_rows).saturating_sub(usize::from(filter))
 }
 
-/// Scrolls the shown side so that its cursor's row is in view.
-pub(crate) fn fix_scroll(state: &mut State) {
-    let height = list_height(state).max(1);
-    let len = list_len(state);
-    let (cursor, scroll) = list_cursor(state);
-    let mut scroll = scroll.min(len.saturating_sub(height));
-    if cursor < scroll {
-        scroll = cursor;
-    } else if cursor >= scroll + height {
-        scroll = cursor + 1 - height;
-    }
-    match state.side {
-        Side::Browser => state.browser.scroll = scroll,
-        Side::Queue => state.queue.scroll = scroll,
-        Side::Transition | Side::Karaoke | Side::Mixer | Side::Synth => {}
+/// Scrolls `side` so that its cursor's row is in view.
+pub(crate) fn fix_scroll(state: &mut State, side: Side) {
+    let height = list_height(state, side).max(1);
+    let len = list_len(state, side);
+    let Some((&mut cursor, scroll)) = view_mut(state, side) else {
+        return;
+    };
+    *scroll = (*scroll).min(len.saturating_sub(height));
+    if cursor < *scroll {
+        *scroll = cursor;
+    } else if cursor >= *scroll + height {
+        *scroll = cursor + 1 - height;
     }
 }
 
@@ -178,14 +178,11 @@ pub(crate) fn listed(
         .clone()
         .or_else(|| state.browser.last_child.get(&state.browser.dir).cloned());
     let row = select.and_then(|path| row_of(state, &path)).unwrap_or(0);
-    let was = state.side;
-    state.side = Side::Browser;
-    set_cursor(state, row);
-    state.side = was;
+    set_cursor(state, Side::Browser, row);
     if let Some(path) = state.autoplay.take() {
         match row_of(state, &path) {
             Some(row) => queue::play_browser_from(state, row, fx),
-            None => say_error(state, format!("Cannot play {}", path.display())),
+            None => state.error(format!("Cannot play {}", path.display())),
         }
     }
 }
@@ -267,7 +264,7 @@ pub(crate) fn go_parent(state: &mut State, fx: &mut Vec<Effect>) {
     if state.browser.search.is_some() {
         state.browser.search = None;
         fx.push(Effect::CancelSearch);
-        set_cursor(state, 0);
+        set_cursor(state, Side::Browser, 0);
         return;
     }
     if let Some(parent) = browser::parent_of(&state.browser.dir) {
@@ -306,7 +303,8 @@ fn type_ahead(state: &mut State, c: char) {
     let cycling = typed.chars().all(|t| t == first);
     let prefix = if cycling { first.to_string() } else { typed };
     // The names as the list shows them (the title tag once it is read).
-    let names: Vec<Option<String>> = match state.side {
+    let side = state.side;
+    let names: Vec<Option<String>> = match side {
         Side::Browser => browser_rows(state)
             .iter()
             .map(|&row| {
@@ -326,20 +324,14 @@ fn type_ahead(state: &mut State, c: char) {
     if names.is_empty() {
         return;
     }
-    let cursor = match state.side {
-        Side::Browser => state.browser.cursor,
-        Side::Queue | Side::Transition | Side::Karaoke | Side::Mixer | Side::Synth => {
-            state.queue.cursor
-        }
-    }
-    .min(names.len() - 1);
+    let cursor = list_cursor(state, side).0.min(names.len() - 1);
     // Cycling starts after the current row; a longer prefix may stay on it.
     let start = if cycling { cursor + 1 } else { cursor };
     let hit = (0..names.len())
         .map(|i| (start + i) % names.len())
         .find(|&i| names[i].as_deref().is_some_and(|n| n.starts_with(&prefix)));
     if let Some(row) = hit {
-        set_cursor(state, row);
+        set_cursor(state, side, row);
     }
 }
 
@@ -371,7 +363,8 @@ pub fn shown_title(state: &State, path: &Path) -> String {
 }
 
 /// Searches the folder's subfolders for the filter's text, its results in
-/// place of the folder's rows.
+/// place of the folder's rows (the "search subfolders" row under a filter,
+/// and a filter that names no path).
 pub(crate) fn search_below(state: &mut State, fx: &mut Vec<Effect>) {
     let query = state
         .browser
@@ -380,7 +373,6 @@ pub(crate) fn search_below(state: &mut State, fx: &mut Vec<Effect>) {
         .map(|f| f.text.clone())
         .unwrap_or_default();
     if query.is_empty() {
-        say_info(state, "Type a filter first (/), then search below it");
         return;
     }
     let b = &mut state.browser;
@@ -397,7 +389,7 @@ pub(crate) fn search_below(state: &mut State, fx: &mut Vec<Effect>) {
     }
     let root = b.dir.clone();
     state.side = Side::Browser;
-    set_cursor(state, 0);
+    set_cursor(state, Side::Browser, 0);
     fx.push(Effect::Search { id, root, query });
 }
 
@@ -468,7 +460,7 @@ pub(crate) fn accept_filter(state: &mut State, fx: &mut Vec<Effect>) {
     if filter.text.is_empty() {
         state.browser.filter = None;
     }
-    fix_scroll(state);
+    fix_scroll(state, state.side);
 }
 
 /// `backspace` on the filter: its last character goes, and with none left
@@ -520,30 +512,21 @@ pub(crate) fn back(state: &mut State, fx: &mut Vec<Effect>) {
         go_parent(state, fx);
         return;
     }
-    fix_scroll(state);
+    fix_scroll(state, state.side);
 }
 
 /// [`crate::core::Action::ClickRow`]: the row selected; a second click on it soon after
 /// does what `enter` does on it.
 pub(crate) fn click_row(state: &mut State, row: usize, fx: &mut Vec<Effect>) {
     state.screen = Screen::Main;
-    let now = state.now_ms;
-    let double = state.last_click.is_some_and(|c| {
-        c.side == state.side && c.row == row && now.saturating_sub(c.at_ms) <= DOUBLE_CLICK_MS
-    });
-    set_cursor(state, row);
+    let side = state.side;
+    let double = state.last_click.press((side, row), state.now_ms);
+    set_cursor(state, side, row);
     // A queue row held can be dragged to another place.
-    state.queue.dragging = state.side == Side::Queue;
+    state.queue.dragging = side == Side::Queue;
     if double {
         // As `enter`, which ends a preview too.
-        state.last_click = None;
         preview::end(state, fx);
         queue::activate(state, Placing::Append, fx);
-    } else {
-        state.last_click = Some(Click {
-            side: state.side,
-            row,
-            at_ms: now,
-        });
     }
 }

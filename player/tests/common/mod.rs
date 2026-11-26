@@ -22,7 +22,7 @@ use jodel_playback::{
 use jodel_testkit::fixture;
 use jodeldiplom::app::App;
 use jodeldiplom::config::Config;
-use jodeldiplom::core::{NowTrack, State};
+use jodeldiplom::core::{NowTrack, Prepared, State};
 
 /// The 44.1 kHz, 16-bit ramp (8,193 frames).
 pub const F44: &str = "ramp-44100-16bit.flac";
@@ -276,7 +276,10 @@ pub fn playing_state(cols: u16, rows: u16) -> State {
     // The queue already asked to be got ready, from the playing track.
     let p = &state.queue.paths;
     let order = p[1..].iter().chain(&p[..1]).cloned().collect();
-    state.prepared = (order, Some(state.rhythm_recipe.clone()));
+    state.prepared = Prepared {
+        order,
+        recipe: Some(state.rhythm_recipe.clone()),
+    };
     state.rhythm.insert(
         path,
         jodeldiplom::core::Rhythm::Ready(std::sync::Arc::new(jodeldiplom::core::Rhythmed::new(
@@ -350,7 +353,7 @@ pub fn transition_state(cols: u16, rows: u16) -> State {
     state.gpu = jodeldiplom::core::Gpu::Present("Test GPU".into());
     state.config.stems = true;
     state.rhythm_recipe.stems = true;
-    state.prepared.1 = Some(state.rhythm_recipe.clone());
+    state.prepared.recipe = Some(state.rhythm_recipe.clone());
     let now = state.queue.paths[1].clone();
     let Some(Rhythm::Ready(r)) = state.rhythm.get(&now).cloned() else {
         panic!("the playing track is analysed");

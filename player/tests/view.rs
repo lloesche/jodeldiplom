@@ -16,7 +16,7 @@ use std::path::PathBuf;
 
 use jodeldiplom::core::desk::{Channel, StripKind};
 use jodeldiplom::core::keymap::Op;
-use jodeldiplom::core::{update, Action, DeviceChoice, Screen, Side, State};
+use jodeldiplom::core::{update, Action, DeviceChoice, Prepared, Screen, Side, State};
 use jodeldiplom::gui::metrics;
 use jodeldiplom::gui::mixer::{self, said};
 use jodeldiplom::spectrum::{sine, tap_frames_for, Analyzer, SpectrumFrame};
@@ -907,7 +907,7 @@ fn the_queue_is_got_ready_ahead_and_its_icons_light_up_in_turn() {
     state.preparing.push(Job::Lyrics);
     let paths = state.queue.paths.clone();
     let current = state.playing.track.as_ref().unwrap().index;
-    state.prepared = (Vec::new(), None);
+    state.prepared = Prepared::default();
     let fx = update(&mut state, Action::Tick(1));
     let order: Vec<PathBuf> = paths[current..]
         .iter()
@@ -1039,9 +1039,9 @@ fn a_queue_rows_icons_are_all_lit_only_when_nothing_is_left_for_it() {
     base.side = Side::Queue;
     base.karaoke.model = ModelState::Ready;
     // Got ready with the tempo on, as the app.
-    base.prepared = (Vec::new(), None);
+    base.prepared = Prepared::default();
     update(&mut base, Action::Tick(1));
-    assert!(base.prepared.1.is_some());
+    assert!(base.prepared.recipe.is_some());
     let current = base.playing.track.as_ref().unwrap().index;
     let path = base.queue.paths[current + 1].clone();
     let ready = |job| match job {

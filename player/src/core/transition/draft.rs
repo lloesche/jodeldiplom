@@ -9,9 +9,9 @@ use jodel_rhythm::Analysis;
 
 use super::tab::{block, block_mut, BlockState, Cue};
 use super::viewport::{bar_of, cursor, frame_ms, window};
+use crate::core::keymap::{self, Context, Op};
 use crate::core::lanes::{self, rhythmed, Block};
 use crate::core::transition::{self as tr, Draft, Status};
-use crate::core::update::say_info;
 use crate::core::{Effect, State};
 
 /// The least time before a cue's first bar that `g` arms a transition at
@@ -116,10 +116,10 @@ pub(super) fn set_cue(state: &mut State, fx: &mut Vec<Effect>, heard: f64) {
         return;
     }
     if matches!(state.transition.draft.status, Status::Mixing(_)) {
-        return say_info(state, "A transition is under way: it plays as it is");
+        return state.info("A transition is under way: it plays as it is");
     }
     let Some(cue) = cue_here(state, which, heard) else {
-        return say_info(state, "No bars here yet");
+        return state.info("No bars here yet");
     };
     let bar = rhythmed(state, which).map_or(0, |r| bar_of(&r.analysis, cue.beat));
     let b = block_mut(state, which);
@@ -151,12 +151,12 @@ pub(super) fn set_cue(state: &mut State, fx: &mut Vec<Effect>, heard: f64) {
     } else {
         String::new()
     };
-    say_info(state, format!("Cue on {track}: {what}{then}"));
+    state.info(format!("Cue on {track}: {what}{then}"));
     if state.transition.draft.status == Status::Armed {
         // The transition armed moves to the new cue (if it can).
         match cued_plan(state) {
             Ok(sent) => send(state, fx, sent),
-            Err(why) => say_info(state, format!("The armed one stays: {why}")),
+            Err(why) => state.info(format!("The armed one stays: {why}")),
         }
     }
 }
@@ -289,7 +289,12 @@ pub fn draft_plan(state: &State, soon: Option<f64>) -> Result<(TransitionPlan, u
 fn cued_plan(state: &State) -> Result<tr::Sent, String> {
     let missing = |b: Block| block(state, b).cue.is_none();
     match (missing(Block::Now), missing(Block::Next)) {
-        (true, true) => return Err("set a cue in both tracks first (enter on their bars)".into()),
+        (true, true) => {
+            let enter = keymap::hint(Context::Transition, Op::Accept);
+            return Err(format!(
+                "set a cue in both tracks first ({enter} on their bars)"
+            ));
+        }
         (true, false) => return Err("set a cue in the playing track first".into()),
         (false, true) => return Err("set a cue in the next track first".into()),
         (false, false) => {}
@@ -311,15 +316,15 @@ pub(super) fn go(state: &mut State, fx: &mut Vec<Effect>) {
     match state.transition.draft.status {
         // Calling it off does not cut a mix under way off (moving playback
         // does).
-        Status::Mixing(_) => say_info(state, "A transition is under way"),
+        Status::Mixing(_) => state.info("A transition is under way"),
         Status::Armed => call_off(state, fx),
         Status::Draft => match cued_plan(state) {
             Ok(sent) => {
                 let at = sent.plan.start - state.heard();
                 send(state, fx, sent);
-                say_info(state, format!("Transition armed: it starts in {at:.0} s"));
+                state.info(format!("Transition armed: it starts in {at:.0} s"));
             }
-            Err(why) => say_info(state, format!("No transition: {why}")),
+            Err(why) => state.info(format!("No transition: {why}")),
         },
     }
 }
@@ -329,7 +334,7 @@ pub(super) fn call_off(state: &mut State, fx: &mut Vec<Effect>) {
     fx.push(Effect::Engine(Command::CancelTransition));
     state.transition.draft.status = Status::Draft;
     state.transition.draft.sent = None;
-    say_info(state, "Transition called off");
+    state.info("Transition called off");
 }
 
 /// Sends `sent` to the engine, and keeps it.
@@ -407,7 +412,7 @@ fn resend(state: &mut State, fx: &mut Vec<Effect>, sent: tr::Sent, per: tr::Pair
 pub(crate) fn skip(state: &mut State, fx: &mut Vec<Effect>) {
     match state.transition.draft.status {
         Status::Mixing(_) if transition_into(state).is_some() => {
-            say_info(state, "Cut into the next track where it is");
+            state.info("Cut into the next track where it is");
         }
         Status::Armed => {}
         _ => {
@@ -416,16 +421,14 @@ pub(crate) fn skip(state: &mut State, fx: &mut Vec<Effect>) {
                     Ok(sent) => {
                         let at = sent.plan.start - state.heard();
                         let name = crate::core::settings::skip_preset_name(state);
-                        say_info(
-                            state,
-                            format!(
-                                "Mixing into the next track in {at:.0} s ({name}); N again cuts"
-                            ),
-                        );
+                        let next = keymap::hint(Context::Global, Op::Next);
+                        state.info(format!(
+                            "Mixing into the next track in {at:.0} s ({name}); {next} again cuts"
+                        ));
                         return send(state, fx, sent);
                     }
                     Err(why) => {
-                        say_info(state, format!("Cut to the next track: {why}"));
+                        state.info(format!("Cut to the next track: {why}"));
                     }
                 }
             }
@@ -482,14 +485,14 @@ pub(crate) fn transition_event(state: &mut State, event: TransitionState) {
                 tempo: d.tempo,
                 ..Draft::default()
             };
-            say_info(state, "Transition done");
+            state.info("Transition done");
         }
         TransitionState::Cancelled { reason } => {
             d.status = Status::Draft;
             d.sent = None;
             // Playback moved on by the user's own key or click: no news.
             if reason != "playback moved elsewhere" {
-                say_info(state, format!("Transition called off: {reason}"));
+                state.info(format!("Transition called off: {reason}"));
             }
         }
     }

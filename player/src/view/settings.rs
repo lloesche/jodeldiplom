@@ -135,7 +135,7 @@ pub struct Row {
     /// Its place among [`SettingsRow::ALL`].
     pub index: usize,
     /// Its label.
-    pub label: &'static str,
+    pub label: String,
     /// It belongs to the row above it (set in under it).
     pub under: bool,
     /// The keys are on it.

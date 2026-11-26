@@ -40,7 +40,6 @@ use jodel_playback::{Command, MakeStems};
 use super::desk::{taper, DeskChange, StripKind};
 use super::lanes::{self, Block};
 use super::transition::Status;
-use super::update::say_info;
 use super::{karaoke, Effect, Gpu, HeadFrame, Rhythm, Screen, Side, State};
 
 /// Seconds ahead of what is heard that a stem's strip can be muted on a bar
@@ -302,7 +301,7 @@ fn told(state: &mut State, bar: Option<Bar>) {
         Gpu::Looking => what.push_str("; still looking for a GPU: kept stems only"),
         Gpu::Absent => what.push_str("; no GPU: kept stems only"),
     }
-    say_info(state, what);
+    state.info(what);
 }
 
 /// After any action: the mixer's lanes, the voice's curve over the song's
@@ -340,8 +339,7 @@ pub(crate) fn stopped(state: &mut State, index: usize, reason: &str) {
     if !state.desk.parts_failed.contains(&index) {
         state.desk.parts_failed.push(index);
     }
-    super::update::say_error(
-        state,
-        format!("The stems stopped ({reason}); playing the whole mix"),
-    );
+    state.error(format!(
+        "The stems stopped ({reason}); playing the whole mix"
+    ));
 }

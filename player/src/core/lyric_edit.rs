@@ -509,7 +509,7 @@ pub(crate) fn act(state: &mut State, what: LyricsEdit, fx: &mut Vec<Effect>) {
         LyricsEdit::Open => {
             let Some(path) = karaoke::song_index(state).and_then(|i| state.queue.paths.get(i))
             else {
-                return super::update::say_info(state, "No song to edit the lyrics of");
+                return state.info("No song to edit the lyrics of");
             };
             match state.karaoke.lyrics.get(path) {
                 Some(SongLyrics::Found { shown, .. }) => {
@@ -518,7 +518,7 @@ pub(crate) fn act(state: &mut State, what: LyricsEdit, fx: &mut Vec<Effect>) {
                 }
                 _ => {
                     let title = super::shown_title(state, path);
-                    super::update::say_info(state, format!("No lyrics of {title} to edit yet"));
+                    state.info(format!("No lyrics of {title} to edit yet"));
                 }
             }
         }
@@ -532,10 +532,7 @@ pub(crate) fn act(state: &mut State, what: LyricsEdit, fx: &mut Vec<Effect>) {
             if let Some(editor) = state.karaoke.editor.take() {
                 fx.push(Effect::SaveLyricEdits(editor.path, None));
                 close(state);
-                super::update::say_info(
-                    state,
-                    "Every edit forgotten: the lyrics as found, timed again",
-                );
+                state.info("Every edit forgotten: the lyrics as found, timed again");
             }
         }
         LyricsEdit::Edit(edit) => {

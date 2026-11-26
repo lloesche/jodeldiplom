@@ -17,7 +17,6 @@ use super::draft::{pairing, transition_into};
 use super::tab::{block, block_mut, Pan};
 use crate::core::lanes::{self, rhythmed, Block};
 use crate::core::transition::Status;
-use crate::core::update::say_info;
 use crate::core::{Effect, State};
 
 /// The spans the view shows, in bars of the playing track; 0 is the whole
@@ -313,7 +312,7 @@ pub(super) fn fit_lyrics(state: &mut State, heard: f64) {
         .map(lanes::fitted_words)
         .unwrap_or_default();
     if words.is_empty() {
-        say_info(state, "No timed lyrics to fit the zoom to");
+        state.info("No timed lyrics to fit the zoom to");
         return;
     }
     let least = lanes::words_left_out(&words, lanes::LYRICS_MOST_PER, 1);
@@ -345,7 +344,7 @@ pub(super) fn fit_lyrics(state: &mut State, heard: f64) {
     } else {
         format!("Zoomed {track} in all the way ({shown}); some words still do not fit")
     };
-    say_info(state, said);
+    state.info(said);
 }
 
 /// Zooms one block (the wheel over it), keeping `at` (seconds into its
@@ -387,12 +386,14 @@ pub(crate) fn point(state: &mut State, which: Block, time: f64, extend: bool) ->
         return false;
     }
     let beat = a.beat_at(time).unwrap_or(0);
-    let now = state.now_ms;
-    let double = !extend
-        && state.transition.last_press.is_some_and(|(b, at, ms)| {
-            b == which && at == beat && now.saturating_sub(ms) <= crate::core::DOUBLE_CLICK_MS
-        });
-    state.transition.last_press = (!extend && !double).then_some((which, beat, now));
+    // A drag is no press: the one after it is a first.
+    let presses = &mut state.transition.last_press;
+    let double = if extend {
+        presses.forget();
+        false
+    } else {
+        presses.press((which, beat), state.now_ms)
+    };
     if extend {
         let b = block_mut(state, which);
         if b.anchor.is_none() {

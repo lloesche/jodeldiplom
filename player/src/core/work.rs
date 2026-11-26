@@ -7,17 +7,15 @@ use std::path::{Path, PathBuf};
 use crate::browser::EntryKind;
 use crate::core::browse::{browser_rows, list_cursor, list_height, row_entry};
 use crate::core::{
-    karaoke, Effect, Facts, Gpu, Heard, Job, Rhythm, RhythmRecipe, Rhythmed, Screen, Side, State,
-    RHYTHM_AHEAD,
+    karaoke, Effect, Facts, Gpu, Heard, Job, Prepared, Rhythm, RhythmRecipe, Rhythmed, Screen,
+    Side, State, RHYTHM_AHEAD,
 };
 
 /// The files on screen whose details are not known yet.
 pub fn visible_missing(state: &State) -> Vec<PathBuf> {
     // Karaoke (the tab or the mode): the song it shows and the next two,
     // their titles and artists shown before they play.
-    if state.screen == Screen::Karaoke
-        || (state.screen == Screen::Main && state.side == Side::Karaoke)
-    {
+    if state.screen == Screen::Karaoke || state.showing(Side::Karaoke) {
         let Some(index) = karaoke::song_index(state) else {
             return Vec::new();
         };
@@ -34,8 +32,8 @@ pub fn visible_missing(state: &State) -> Vec<PathBuf> {
     if state.screen != Screen::Main {
         return Vec::new();
     }
-    let height = list_height(state);
-    let (_, scroll) = list_cursor(state);
+    let height = list_height(state, state.side);
+    let (_, scroll) = list_cursor(state, state.side);
     let paths: Vec<PathBuf> = match state.side {
         Side::Browser => browser_rows(state)
             .into_iter()
@@ -181,13 +179,13 @@ pub(crate) fn prepare(state: &mut State, fx: &mut Vec<Effect>) {
         .unwrap_or(0)
         .min(paths.len());
     let order = || paths[from..].iter().chain(&paths[..from]);
-    let (old, old_recipe) = &state.prepared;
-    if *old_recipe == recipe && old.len() == paths.len() && old.iter().eq(order()) {
+    let old = &state.prepared;
+    if old.recipe == recipe && old.order.len() == paths.len() && old.order.iter().eq(order()) {
         return;
     }
     let order: Vec<PathBuf> = order().cloned().collect();
     // Another recipe: the analyses made by the last are not this one's.
-    if *old_recipe != recipe {
+    if state.prepared.recipe != recipe {
         for jobs in state.ready.values_mut() {
             jobs.retain(|j| *j != Job::Rhythm);
         }
@@ -195,7 +193,10 @@ pub(crate) fn prepare(state: &mut State, fx: &mut Vec<Effect>) {
             (facts.key, facts.stems, facts.tempo) = (None, None, None);
         }
     }
-    state.prepared = (order.clone(), recipe.clone());
+    state.prepared = Prepared {
+        order: order.clone(),
+        recipe: recipe.clone(),
+    };
     fx.push(Effect::Prepare(order, recipe));
 }
 
@@ -282,7 +283,7 @@ pub fn job_done(state: &State, path: &Path, job: Job) -> bool {
         .is_some_and(|jobs| jobs.contains(&job));
     match job {
         Job::Rhythm => {
-            state.prepared.1.is_none()
+            state.prepared.recipe.is_none()
                 || told
                 || matches!(
                     state.rhythm.get(path),

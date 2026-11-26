@@ -7,8 +7,8 @@ use std::sync::Arc;
 
 use jodel_lyrics::{Detail, Lyrics, Source};
 
-use super::{in_mode, on_tab, song_index};
-use crate::core::{Effect, State};
+use super::{in_mode, song_index};
+use crate::core::{Effect, Side, State};
 use crate::lyrics::Answer;
 
 /// The warning shown with lyrics a speech recogniser heard ([`SongLyrics::heard`]).
@@ -111,7 +111,7 @@ pub fn lyrics_wanted(state: &State) -> Vec<PathBuf> {
         .as_ref()
         .filter(|_| state.screen == crate::core::Screen::Lyrics)
         .map(|e| e.path.clone());
-    if !(on_tab(state) || in_mode(state) || editing.is_some()) {
+    if !(state.keys_on(Side::Karaoke) || in_mode(state) || editing.is_some()) {
         return Vec::new();
     }
     let mut out: Vec<PathBuf> = editing.into_iter().collect();

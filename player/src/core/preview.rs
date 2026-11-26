@@ -18,7 +18,7 @@ use std::path::PathBuf;
 
 use crate::browser::EntryKind;
 use crate::core::browse::{selected_entry, shown_title};
-use crate::core::keymap::Op;
+use crate::core::keymap::Kind;
 use crate::core::{Action, Effect, Screen, Side, State};
 
 /// Ctrl held alone this long starts a preview, in milliseconds: a key
@@ -181,13 +181,11 @@ pub(crate) fn end(state: &mut State, fx: &mut Vec<Effect>) {
 /// Before an input: any but a move of the selection ends a preview first,
 /// and Ctrl held alone starts none (a key pressed with it, as `ctrl+s`).
 pub(crate) fn before_input(state: &mut State, action: &Action, fx: &mut Vec<Effect>) {
-    let moves = matches!(
-        action,
-        Action::Op(Op::Up | Op::Down | Op::PageUp | Op::PageDown | Op::Top | Op::Bottom)
-            | Action::SelectRow(_)
-            | Action::ClickRow(_)
-            | Action::Scroll(_)
-    );
+    let moves = match action {
+        Action::Op(op) => op.kind() == Kind::Move,
+        Action::SelectRow(_) | Action::ClickRow(_) | Action::Scroll(_) => true,
+        _ => false,
+    };
     if !moves {
         end(state, fx);
     }
@@ -215,7 +213,7 @@ mod tests {
     use super::*;
     use crate::browser::Entry;
     use crate::config::Config;
-    use crate::core::keymap::{self, Key, KeyCode, Meaning};
+    use crate::core::keymap::{self, Key, KeyCode, Meaning, Op};
     use crate::core::update;
     use jodel_playback::{Command, PlayState};
 

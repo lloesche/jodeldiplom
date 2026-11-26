@@ -357,16 +357,13 @@ pub enum Action {
     EngineGone(u64),
 }
 
-/// What a folder walk is for.
+/// What a folder walk is for: its files put in the queue.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum WalkPurpose {
-    /// Put the files in the queue.
-    Enqueue {
-        /// The folder's name, for the message.
-        name: String,
-        /// Where they go.
-        how: Placing,
-    },
+pub struct WalkPurpose {
+    /// The folder's name, for the message.
+    pub name: String,
+    /// Where they go.
+    pub how: Placing,
 }
 
 /// Where tracks chosen in the browser go (`enter`, `shift+enter`,

@@ -8,7 +8,6 @@ use jodel_rhythm::Analysis;
 
 use crate::core::lanes::{rhythmed, Block};
 use crate::core::transition::Status;
-use crate::core::update::say_info;
 use crate::core::{Effect, State};
 
 /// The start of the bar `offset` bars from the one heard (0: its own
@@ -48,13 +47,13 @@ pub(crate) fn jump_bar(state: &mut State, offset: isize, at_end: bool, fx: &mut 
         return;
     };
     if state.transition.draft.status != Status::Draft {
-        return say_info(state, "No bar jumps while a transition is set up");
+        return state.info("No bar jumps while a transition is set up");
     }
     let Some(r) = rhythmed(state, Block::Now).cloned() else {
-        return say_info(state, "No bars yet: the track is being analysed");
+        return state.info("No bars yet: the track is being analysed");
     };
     let Some((to, end)) = bar_jump(&r.analysis, state.heard(), offset) else {
-        return say_info(state, "No bar there");
+        return state.info("No bar there");
     };
     let at = if at_end {
         jodel_playback::JumpAt::At(end)
