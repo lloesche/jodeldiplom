@@ -12,14 +12,16 @@ Work agreed on but not started, roughly in the order it was raised.
   (Apache-2.0) cuts what they point at, a "stands out" model only for
   covers without a person; text left in the background or filled by a
   real inpainting model (LaMa) instead of the cheap fill. A bake-off on
-  the owner's covers decides (F:\MQA\research\matte3\).
+  the owner's covers decides (kept outside the repository).
 - **Story scenes instead of the cover.** The lyrics read for what they
   tell (Gemma 4 E4B, Apache-2.0: text, image and audio in), the song cut
   into scenes by its sections, each scene generated (SDXL-Lightning,
-  4 steps, on an 8 GB card; the cover and an artist photo as references
-  for style and likeness), taken apart into depth layers and played as
-  parallax (or 3D) cut on the downbeats. Heavy to prepare, cheap to play.
-  A Python prototype first (F:\MQA\research\story\), then our own
+  4 steps, on an 8 GB card, RGBA for sprites; characters from the
+  lyrics, not the artist; the cover only when it is striking art for
+  the song), taken apart into depth layers and played as parallax (or
+  3D) cut on the downbeats. Heavy to prepare, cheap to play. The song's
+  look (palette, style, motifs, the effects' flavours) chosen the same
+  way. A Python prototype first (kept outside the repository), then our own
   inference if it is worth it. Also to measure there: the image model at
   fp16, Q8 and Q4; Gemma 4 E2B against E4B.
 - **The theme in the window**: Spooky is chosen in the settings file
