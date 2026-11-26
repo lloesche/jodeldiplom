@@ -1,95 +1,116 @@
-//! The Mixer tab in iced's own widgets, over its place on the old canvas:
-//! a console with the strips side by side where the core lays them out
-//! ([`crate::view::layout::desk`], so the keys go round the strips shown),
-//! the player's stems beside it under their bracket, the preview, the
-//! microphone and the master. The faders, scales and meters are a canvas
-//! each ([`fader`]); what each strip says is [`said`], its widgets
-//! [`strips`]; the look is [`crate::gui::style`]. Everything sends the
-//! core's [`DeskAction`]s; the wheel over a strip goes to the window, which
-//! turns it into steps.
+//! The Mixer tab in iced's own widgets, laid out in points ([`layout`]):
+//! the strips side by side on the window's ground, each a card, the
+//! player's stems beside it under their bracket, the preview, the
+//! microphone and the master; the strips shown are the core's rule, so
+//! the keys go round the same ones. The faders, scales and meters are a
+//! canvas each ([`fader`]); what each strip says is [`said`], its widgets
+//! [`strips`]; the look is [`crate::gui::look`]'s. Everything sends the
+//! core's [`DeskAction`]s; the wheel over a strip goes to the window,
+//! which turns it into steps.
 //!
 //! [`DeskAction`]: crate::core::desk::DeskAction
 
 mod fader;
+pub mod layout;
 pub mod said;
 mod strips;
 
+use std::fmt::Write as _;
 use std::time::Instant;
 
 use iced::widget::{container, mouse_area, pin, space, stack};
-use iced::{Element, Fill, Widget as _};
-use ratatui::layout::Rect;
+use iced::{Element, Size, Widget as _};
 
 use crate::core::desk::{taper, DeskAction, StripKind};
 use crate::core::{Action, State};
-use crate::gui::style;
+use crate::gui::look;
 use crate::gui::window::Message;
-use crate::view::layout::desk::DeskLayout;
 
-/// The room between two strips, and around the console's edge, in pixels.
-const GAP: f32 = 3.0;
+/// The room each side of a strip's card inside its place on the desk, in
+/// points: the stems' cards, side by side, stand this twice apart.
+const INSET: f32 = 1.0;
 
-/// The Mixer tab in `area` (its cells on the old canvas, `cell` a cell's
-/// size in pixels), its strips where `desk` has them. The layers are the
-/// same whatever shows (the console, the stems' bracket or nothing, the
-/// strips), so iced keeps each widget's state in its place.
-pub fn view<'a>(
-    state: &'a State,
-    caps: &'a Caps,
-    desk: &DeskLayout,
-    area: Rect,
-    cell: (f32, f32),
-) -> Element<'a, Message> {
-    let (cw, ch) = cell;
-    let (w, h) = (f32::from(area.width) * cw, f32::from(area.height) * ch);
-    // A cell rect of the desk in pixels inside the console.
-    let place = |r: Rect| {
-        (
-            f32::from(r.x.saturating_sub(area.x)) * cw,
-            f32::from(r.y.saturating_sub(area.y)) * ch,
-            f32::from(r.width) * cw,
-            f32::from(r.height) * ch,
-        )
-    };
-    let console = container(space())
-        .width(Fill)
-        .height(Fill)
-        .style(|_| style::console());
+/// The Mixer tab, `size` points, its strips where [`layout`] has them.
+/// The layers are the same whatever shows (the ground, the stems' bracket
+/// or nothing, the strips), so iced keeps each widget's state in its
+/// place.
+pub fn view<'a>(state: &'a State, caps: &'a Caps, size: Size) -> Element<'a, Message> {
+    let desk = layout::compute(size, state.desk.has_stems());
+    let ground = container(space())
+        .width(size.width)
+        .height(size.height)
+        .style(|_| container::Style {
+            background: Some(look::BG.into()),
+            ..container::Style::default()
+        });
     let bracket = match desk.stems {
-        Some(row) => {
-            let (x, y, w, h) = place(row);
-            pin(container(strips::bracket(state, w)).height(h))
-                .x(x)
-                .y(y)
-                .boxed()
-        }
+        Some(r) => pin(strips::bracket(state, r.width)).x(r.x).y(r.y).boxed(),
         None => space().boxed(),
     };
-    let mut layers: Vec<Element<'a, Message>> = vec![console.boxed(), bracket];
-    // The strips' lines as many as the shortest has room for, so their
-    // tall sections line up.
-    let shortest = desk
-        .channels
+    let mut layers: Vec<Element<'a, Message>> = vec![ground.boxed(), bracket];
+    // The strips' lines as many as the tallest has room for, a stem's as
+    // much less as it stands lower, so their tall sections line up.
+    let tallest = desk
+        .strips
         .iter()
-        .map(|c| place(c.frame).3)
-        .fold(h, f32::min);
-    let lines = strips::lines_for(shortest - 2.0 * GAP);
-    for c in &desk.channels {
-        let (x, y, w, h) = place(c.frame);
-        let channel = c.channel;
+        .map(|s| s.frame.height)
+        .fold(0.0, f32::max);
+    let top = desk
+        .strips
+        .iter()
+        .map(|s| s.frame.y)
+        .fold(size.height, f32::min);
+    let info = strips::info_height(tallest);
+    for s in &desk.strips {
+        let r = s.frame;
+        let channel = s.channel;
+        let lines = (info - (r.y - top)).max(0.0);
         // A click anywhere on a strip selects it; the wheel over it moves
-        // its fader (the master's: the device's volume).
-        let strip = mouse_area(strips::strip(state, caps, channel, w - 2.0 * GAP, lines))
-            .on_press(Message::Act(Action::Desk(DeskAction::Select(channel))))
-            .on_scroll(move |delta| Message::DeskWheel(channel, delta));
+        // its fader (the master's: the player's volume).
+        let strip = mouse_area(strips::strip(
+            state,
+            caps,
+            channel,
+            r.width - 2.0 * INSET,
+            lines,
+        ))
+        .on_press(Message::Act(Action::Desk(DeskAction::Select(channel))))
+        .on_scroll(move |delta| Message::DeskWheel(channel, delta));
         layers.push(
-            pin(container(strip).height(h - 2.0 * GAP).clip(true))
-                .x(x + GAP)
-                .y(y + GAP)
+            pin(container(strip).height(r.height).clip(true))
+                .x(r.x + INSET)
+                .y(r.y)
                 .boxed(),
         );
     }
-    container(stack(layers)).width(w).height(h).boxed()
+    container(stack(layers))
+        .width(size.width)
+        .height(size.height)
+        .boxed()
+}
+
+/// The Mixer tab in `size` points as an outline: the strips shown with
+/// where they are and how wide, the stems' bracket, then each strip as it
+/// reads ([`said::Said`]), its tones in brackets.
+pub fn outline(state: &State, size: Size) -> String {
+    let desk = layout::compute(size, state.desk.has_stems());
+    let mut out = String::new();
+    let _ = writeln!(out, "desk {} × {}", size.width, size.height);
+    if let Some(r) = desk.stems {
+        let _ = writeln!(
+            out,
+            "[bracket] {} at {}, {} wide",
+            said::stems(state),
+            r.x,
+            r.width
+        );
+    }
+    for s in &desk.strips {
+        let said = said::said(state, s.channel);
+        let _ = writeln!(out, "[strip] at {}, {} wide", s.frame.x, s.frame.width);
+        let _ = write!(out, "{said}");
+    }
+    out
 }
 
 /// Each fader's cap as drawn: it glides to where the core has it (a held

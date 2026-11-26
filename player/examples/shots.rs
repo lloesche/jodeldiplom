@@ -10,11 +10,12 @@
 //! its outline as the text. The fonts are the player's own, as built in.
 //!
 //! ```text
-//! cargo run --release -p jodeldiplom --example shots -- OUT_DIR [--real-devices]
+//! cargo run --release -p jodeldiplom --example shots -- OUT_DIR [--real-devices] [--only NAME]
 //! ```
 //!
 //! `--real-devices` lists this machine's output devices in the settings
 //! shot (nothing is opened or played); otherwise a made-up list is shown.
+//! `--only NAME`: only the shots whose names start with `NAME`.
 
 #[path = "../tests/common/mod.rs"]
 mod common;
@@ -187,13 +188,21 @@ fn sung_words(state: &mut State) {
 fn main() {
     let mut args = std::env::args().skip(1);
     let out = PathBuf::from(args.next().expect("give an output folder"));
-    let real = args.any(|a| a == "--real-devices");
+    let rest: Vec<String> = args.collect();
+    let real = rest.iter().any(|a| a == "--real-devices");
+    let only = rest
+        .iter()
+        .position(|a| a == "--only")
+        .map(|i| rest.get(i + 1).cloned().expect("--only NAME"));
+    let wanted = |name: &str| only.as_ref().is_none_or(|o| name.starts_with(o.as_str()));
     std::fs::create_dir_all(&out).unwrap();
     jodeldiplom::gui::fonts::use_fonts(EMBEDDED_FONTS);
     let mut headless = Headless::new();
     println!("drawn by {}", headless.name());
     let scratch = common::temp_dir("shots-setup");
-    setup_shots(&mut headless, &out, &scratch);
+    if wanted("setup") {
+        setup_shots(&mut headless, &out, &scratch);
+    }
 
     let tree = common::music_tree("shots");
     let mut options = AppOptions::new(tree.album.clone());
@@ -361,15 +370,23 @@ fn main() {
     // Which renderer draws is known to the canvas once a frame was drawn:
     // the first shot paints what the GPU does not draw.
     shots.headless.frame(&shots.gui, Size::new(1280.0, 800.0));
-    for (name, s) in &screens {
+    for (name, s) in screens.iter().filter(|(name, _)| wanted(name)) {
         for (suffix, size, scale) in SIZES {
             shots.shot(&format!("{name}{suffix}"), s, size, scale);
         }
     }
-    shots.cells_shot("main-narrow", &screens[0].1, (64, 22));
-    // The Mixer tab in the narrowest usual window, 80 columns.
+    if wanted("main-narrow") {
+        shots.cells_shot("main-narrow", &screens[0].1, (64, 22));
+    }
+    // The Mixer tab in the narrowest usual window, 80 columns, and in a
+    // window 800 wide.
     if let Some((_, mixer)) = screens.iter().find(|(name, _)| *name == "mixer") {
-        shots.cells_shot("mixer-80", mixer, (80, 24));
+        if wanted("mixer-80") {
+            shots.cells_shot("mixer-80", mixer, (80, 24));
+        }
+        if wanted("mixer-800") {
+            shots.shot("mixer-800", mixer, Size::new(800.0, 600.0), 1.0);
+        }
     }
     // The player stops with the window's state.
     drop(shots);

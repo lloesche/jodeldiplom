@@ -15,7 +15,7 @@ use super::stage_gpu::{self, StageFrame};
 use super::streak;
 use crate::app::App;
 use crate::core::singing::Motion;
-use crate::core::Action;
+use crate::core::{Action, Fit};
 use crate::spectrum::SpectrumFrame;
 use crate::view::Scene;
 
@@ -283,7 +283,12 @@ impl Paint {
             canvas.fit(place.size.0, place.size.1);
             canvas.hold(&app.state);
             let grid = canvas.grid();
-            let fit = crate::view::layout::fit(&app.state, grid);
+            // The desk as wide as the window draws it, at its cells' size.
+            let cell = canvas.cell().0 as f32 / place.scale;
+            let fit = Fit {
+                desk_width: crate::view::layout::desk_width(grid, cell),
+                ..crate::view::layout::fit(&app.state, grid)
+            };
             if fit != app.state.fit {
                 app.dispatch(Action::Fit(fit));
             }

@@ -1121,7 +1121,6 @@ fn the_canvas_leaves_the_mixer_tab_to_the_window() {
     let Layout::Main(m) = layout::compute(&state, canvas.grid()) else {
         panic!("the main screen");
     };
-    assert!(m.desk.is_some(), "the desk is laid out");
     let image = canvas.image();
     let (x, y, w, h) = pixel_rect(&canvas, m.rows);
     let lit = (y..y + h)

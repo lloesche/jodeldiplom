@@ -1,34 +1,41 @@
-╭ Browser │ Queue (5) │ Transition │ Karaoke │ Mixer ──────────────────────────╮
-│                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-╰ ← → strip · ↑ ↓ fader · home 0 dB · m mute · s solo · e echo ────────────────╯
-
-
-
-[time] 1:23
-[seek] 34 %
-[time] 4:05
-[icon] previous
-[icon] pause
-[icon] next
-[icon] stop
-[dim] playing  ·  : commands  / filter  ? keys
-[button] Settings
-[button] Help
+desk 624 × 360
+[bracket] ● STEMS heard at 112, 224 wide
+[strip] at 8, 96 wide
+[name] PLAYER
+  [source] 96k 24b
+  [good] ● [text] LEAD
+  [dim] ring [source] ▮▮▮▮▯▯
+  [level text] 0.0 dB
+  [button off] M [button off] S
+[strip] at 112, 56 wide
+[name] DRUMS
+  [level text] 0.0 dB
+  [button off] M [button off] S
+[strip] at 168, 56 wide
+[name] BASS
+  [level text] 0.0 dB
+  [button off] M [button off] S
+[strip] at 224, 56 wide
+[name] VOX
+  [fail] muted
+  [level text] 0.0 dB
+  [button fail] M [button off] S
+[strip] at 280, 56 wide
+[name] OTHER
+  [level text] 0.0 dB
+  [button off] M [button off] S
+[strip] at 344, 72 wide
+[name] PREVIEW
+  [source] 96k 24b
+  [dim] A [good] ● [text] −9.1
+  [dim] B [good] ● [text] −3.7
+  [level text] 0.0 dB
+  [button off] M [button off] S
+[strip] at 424, 192 wide
+[name] MAIN · USB Audio DAC
+  [text] WASAPI
+  [source] 96 kHz · 24 bit · 2 ch
+  [off] ○ [text] LIMIT
+  [dim] clips [text] 0 [dim] · [text] 12:04.3
+  [text] VOLUME [accent] ▮▮▮▮▮▮ [text] 0.0 dB
+  [faint] the player's volume

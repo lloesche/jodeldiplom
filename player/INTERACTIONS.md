@@ -900,8 +900,8 @@ stem keys are their mutes.
   (they are its players' own faders, times the strip's).
   - `mute_and_solo_silence_strips_without_a_click` (output)
 - **M4.** A fader held follows the pointer anywhere until it is let go
-  of, to less than a cell in the window; within 0.4 rows of 0 dB it is at
-  exactly 0 dB (the detent), and a key step across 0 dB stops there; a
+  of, to the point; within 5 points of 0 dB it is at exactly 0 dB (the
+  detent), and a key step across 0 dB stops there; a
   double click is 0 dB (a fader moved since its press is no first click
   of one); the wheel is 1 dB a step. The taper is weighted to what is
   heard: +6 dB at the top, 0 dB at 0.80 of the travel, −6 at 0.65, −12 at
@@ -918,9 +918,11 @@ stem keys are their mutes.
   - `keys_step_through_the_scale_to_off_and_back_and_stop_at_unity`
 - **M6.** The player's stems have strips of their own beside it while its
   input has lanes; the keys and the mouse act on them as on any strip (the
-  arrows through the strips drawn), and where the window is narrow the
-  strips narrow, then the microphone's strip goes first, then the
-  preview's, then the stems'; at 80 columns all but the microphone's.
+  arrows through the strips drawn, the one rule deciding both), and where
+  the desk is narrow the strips narrow, then the microphone's strip goes
+  first, then the preview's, then the stems': every strip on a desk 944
+  points wide (a window 960 wide, the old 120 columns), all but the
+  microphone's on one 624 wide (640, the old 80).
   - `the_arrows_go_through_the_stems_only_while_the_player_has_them`
   - `a_stems_strip_takes_its_fader_and_its_buttons`
   - `the_stems_sit_beside_the_player_under_their_bracket`

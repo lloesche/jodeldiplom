@@ -14,9 +14,9 @@ pub struct Fit {
     /// The rows the help's text shows, the search line's row included (it
     /// takes the last while the help is searched).
     pub help_rows: u16,
-    /// The Mixer tab's desk's room, in letters of the fixed face: which of
-    /// its strips are shown ([`crate::core::desk::strips_shown`]).
-    pub desk_letters: u16,
+    /// The Mixer tab's desk's width, in points: which of its strips are
+    /// shown ([`crate::core::desk::strips_shown`]).
+    pub desk_width: f32,
     /// The width of the Transition tab's lanes, in letters of the fixed
     /// face (0: none shown): what fits the lyrics' words.
     pub lane_letters: u16,

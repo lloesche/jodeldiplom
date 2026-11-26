@@ -1079,10 +1079,10 @@ one for the karaoke game's sound effects (EFFECTS, where the window is
 wide enough to take it without narrowing the others), the microphone's
 strip, and the master at the right. The tall sections
 line up as on a desk. Where the window is narrow the strips narrow (the
-stems' to seven columns, VOCALS as VOX; the preview's without a scale of
-its own), then the microphone's strip goes first, then the preview's,
-then the stems'; at 80 columns all but the microphone's show. The arrow
-keys go through the strips drawn.
+stems' to 56 points, VOCALS as VOX; the preview's without a scale of its
+own), then the microphone's strip goes first, then the preview's, then
+the stems'; in a window 640 points wide all but the microphone's show.
+The arrow keys go through the strips drawn.
 
 - **EFFECTS**: the karaoke game's sounds (a bubble's pop climbing a
   ladder in the song's key, the streak up a rung or lost, the rescue

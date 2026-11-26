@@ -11,13 +11,13 @@
 //! ends.
 
 use iced::widget::{opaque, pin, space, stack};
-use iced::{Element, Widget as _};
+use iced::{Element, Size, Widget as _};
 
 use super::embed::Embed;
 use super::mixer;
 use super::widgets::cover::Covers;
 use super::window::Message;
-use crate::core::State;
+use crate::core::{Side, State};
 use crate::spectrum::SpectrumFrame;
 use crate::view::layout::{self, Layout};
 
@@ -69,23 +69,24 @@ fn bar<'a>(state: &State, embed: &Embed, heard: &SpectrumFrame) -> Option<Elemen
     Some(pin(opaque(view)).y(f32::from(place.area.y) * ch).boxed())
 }
 
-/// The Mixer tab, over its place on the old canvas, while it shows.
+/// The Mixer tab, pinned over its place on the old canvas (the list
+/// pane's inside) while it shows.
 fn desk<'a>(
     state: &'a State,
     embed: &Embed,
     caps: &'a mixer::Caps,
 ) -> Option<Element<'a, Message>> {
-    let Layout::Main(m) = layout::compute(state, embed.grid()) else {
+    if state.side != Side::Mixer || state.palette.is_some() {
         return None;
-    };
-    let (Some(desk), None) = (&m.desk, &state.palette) else {
+    }
+    let Layout::Main(m) = layout::compute(state, embed.grid()) else {
         return None;
     };
     let (cw, ch) = embed.cell();
     let r = m.rows;
-    let view = mixer::view(state, caps, desk, r, (cw, ch));
+    let size = Size::new(f32::from(r.width) * cw, f32::from(r.height) * ch);
     Some(
-        pin(opaque(view))
+        pin(opaque(mixer::view(state, caps, size)))
             .x(f32::from(r.x) * cw)
             .y(f32::from(r.y) * ch)
             .boxed(),

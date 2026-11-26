@@ -15,7 +15,7 @@ use std::path::PathBuf;
 use jodeldiplom::core::desk::{Channel, StripKind};
 use jodeldiplom::core::keymap::Op;
 use jodeldiplom::core::{update, Action, DeviceChoice, Screen, Side, State};
-use jodeldiplom::gui::mixer::said;
+use jodeldiplom::gui::mixer::{self, said};
 use jodeldiplom::spectrum::{sine, tap_frames_for, Analyzer, SpectrumFrame};
 use jodeldiplom::view::bottom::Bar;
 use jodeldiplom::view::lanes::WavePlot;
@@ -1021,14 +1021,30 @@ fn the_queue_is_got_ready_ahead_and_its_icons_light_up_in_turn() {
 }
 
 /// The Mixer tab: the canvas draws its box and its keys and leaves the
-/// rows to the window's desk ([`said`] is what its strips say); the core
-/// lays out which strips show.
+/// rows to the window's desk, which lays itself out in points with the
+/// core's rule (the keys go through the same strips): every strip at the
+/// old 120-column width, the microphone gone at the old 80. The snapshots
+/// are the desk's outline: the strips shown, where, and what each says
+/// ([`said`]).
 #[test]
 fn the_mixer_tab_is_a_desk() {
+    use iced::Size;
     let state = common::desk_state(120, 36);
     let text = draw(&state, Grid::new(120, 36));
-    snapshot("mixer", &text);
     has(&text, &[" Mixer ", "← → strip", "m mute"]);
+    let wide = layout::desk_width(Grid::new(120, 36), layout::CELL_WIDTH);
+    assert_eq!(wide, 944.0);
+    assert_eq!(state.fit.desk_width, wide);
+    let outline = mixer::outline(&state, Size::new(wide, 560.0));
+    snapshot("mixer", &outline);
+    has(
+        &outline,
+        &[
+            "[bracket] ● STEMS heard",
+            "[name selected] MIC",
+            "[button fail] M",
+        ],
+    );
     let said = |channel| said::text(&state, channel).join(" | ");
     assert_eq!(said::stems(&state), "● STEMS heard");
     let player = said(Channel::Strip(StripKind::Player));
@@ -1047,25 +1063,33 @@ fn the_mixer_tab_is_a_desk() {
             "VOLUME ▮▮▮▮▮▮ 0.0 dB",
         ],
     );
-    let shown = |state: &State, grid: Grid| {
-        let Layout::Main(m) = layout::compute(state, grid) else {
-            panic!("the main screen");
-        };
-        let desk = m.desk.expect("the desk");
-        desk.channels.iter().map(|c| c.channel).collect::<Vec<_>>()
+    let shown = |w| mixer::layout::compute(Size::new(w, 560.0), true).channels();
+    // The strips the arrow keys go through, from the first.
+    let walked = |state: &State| {
+        let mut s = state.clone();
+        s.desk.selected = Channel::Strip(StripKind::Player);
+        let mut seen = vec![s.desk.selected];
+        for _ in 0..Channel::ALL.len() {
+            update(&mut s, Action::Op(Op::DeskNextStrip));
+            seen.push(s.desk.selected);
+        }
+        seen.dedup();
+        seen
     };
-    assert_eq!(
-        shown(&state, Grid::new(120, 36)),
-        Channel::ALL,
-        "every strip at 120 columns"
-    );
+    assert_eq!(shown(wide), Channel::ALL, "every strip at 120 columns");
+    assert_eq!(walked(&state), Channel::ALL);
     // An 80-column window: the microphone goes first.
+    let narrow = layout::desk_width(Grid::new(80, 24), layout::CELL_WIDTH);
     let state = common::desk_state(80, 24);
-    snapshot("mixer_small", &draw(&state, Grid::new(80, 24)));
-    let strips = shown(&state, Grid::new(80, 24));
+    snapshot(
+        "mixer_small",
+        &mixer::outline(&state, Size::new(narrow, 360.0)),
+    );
+    let strips = shown(narrow);
     assert!(strips.contains(&Channel::Strip(StripKind::Preview)));
     assert!(strips.contains(&Channel::Strip(StripKind::Vocals)));
     assert!(!strips.contains(&Channel::Mic));
+    assert_eq!(walked(&state), strips);
 }
 
 /// The setup screen as it reads ([`view::setup::Screen`]): under way, the

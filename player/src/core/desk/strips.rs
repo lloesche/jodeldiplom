@@ -70,7 +70,7 @@ impl StripKind {
         }
     }
 
-    /// Its name on a narrow scribble strip (five cells at most).
+    /// Its name on a narrow scribble strip (five letters at most).
     pub fn short_label(self) -> &'static str {
         match self {
             StripKind::Player => "PLAY",

@@ -4,7 +4,9 @@
 //! an icon: the one of its group to take) and [`chip`] (a small pill: a
 //! switch, struck through while it is off, [`Button::struck`]). A label
 //! can have an icon before it ([`Button::leading`]) and the key that does
-//! the same after it ([`Button::key`]).
+//! the same after it ([`Button::key`]). A toggle is lit in a tone while
+//! it is on ([`Button::lit`]); a dense panel takes small ones
+//! ([`Button::small`]).
 //!
 //! Each has its states: under the pointer (eased in over
 //! [`look::motion::HOVER`]), pressed, focused (a ring in the accent round
@@ -17,6 +19,7 @@ use iced::advanced::renderer::{self, Quad};
 use iced::advanced::widget::{tree, Operation, Tree, Widget};
 use iced::advanced::{mouse, overlay, Renderer as _, Shell};
 use iced::animation::Easing;
+use iced::widget::text::Ellipsis;
 use iced::widget::{container, rich_text, span, text, Id, Row};
 use iced::{
     window, Alignment, Animation, Background, Border, Color, Element, Event, Length, Padding,
@@ -101,6 +104,8 @@ pub struct Button<'a, Message> {
     shown: Option<Look>,
     width: Length,
     id: Option<Id>,
+    lit: Option<Color>,
+    small: bool,
 }
 
 impl<'a, Message> Button<'a, Message> {
@@ -116,12 +121,28 @@ impl<'a, Message> Button<'a, Message> {
             shown: None,
             width: Length::Shrink,
             id: None,
+            lit: None,
+            small: false,
         }
     }
 
     /// Its label struck through and faint: what it switches is off.
     pub fn struck(mut self, struck: bool) -> Self {
         self.struck = struck;
+        self
+    }
+
+    /// Lit in `tone` (a status colour or the accent), with text on it in
+    /// the accent's ink: a toggle that is on. `None`: as its kind is.
+    pub fn lit(mut self, tone: Option<Color>) -> Self {
+        self.lit = tone;
+        self
+    }
+
+    /// Small: [`height::SMALL_CONTROL`] high, its label in the label's
+    /// size, a little room either side (a mixer strip's buttons).
+    pub fn small(mut self) -> Self {
+        self.small = true;
         self
     }
 
@@ -209,6 +230,8 @@ impl<'a, Message: Clone + 'a> From<Button<'a, Message>> for Element<'a, Message>
             shown,
             width,
             id,
+            lit,
+            small,
         } = button;
         let mut parts = Row::new().spacing(space::S).align_y(Alignment::Center);
         if let Some(icon) = icon {
@@ -217,6 +240,7 @@ impl<'a, Message: Clone + 'a> From<Button<'a, Message>> for Element<'a, Message>
         if let Some(label) = label {
             let size = match kind {
                 Kind::Chip => size::LABEL,
+                _ if small => size::LABEL,
                 _ => size::BODY,
             };
             parts = parts.push(if struck {
@@ -230,6 +254,7 @@ impl<'a, Message: Clone + 'a> From<Button<'a, Message>> for Element<'a, Message>
                     .size(size)
                     .font(look::font::label())
                     .wrapping(text::Wrapping::None)
+                    .ellipsis(Ellipsis::End)
                     .boxed()
             });
         }
@@ -239,6 +264,7 @@ impl<'a, Message: Clone + 'a> From<Button<'a, Message>> for Element<'a, Message>
         let (width, padding) = match kind {
             Kind::Icon | Kind::Round => (Length::Fixed(height::CONTROL), 0.0),
             Kind::Chip => (width, space::M),
+            _ if small => (width, space::XS),
             _ => (width, space::L),
         };
         let content = container(parts)
@@ -257,8 +283,10 @@ impl<'a, Message: Clone + 'a> From<Button<'a, Message>> for Element<'a, Message>
             muted: struck,
             shown,
             width,
+            small,
             padding,
             id,
+            lit,
         }
         .boxed()
     }
@@ -272,12 +300,27 @@ struct Paint {
     glow: Color,
 }
 
-/// What `kind` looks like in `look` (`muted`: what it switches is off).
-fn paint(kind: Kind, look: Look, muted: bool) -> Paint {
+/// What `kind` looks like in `look` (`muted`: what it switches is off),
+/// lit in a tone or not.
+fn paint(kind: Kind, look: Look, muted: bool, lit: Option<Color>) -> Paint {
     let clear = Color::TRANSPARENT;
     // At rest, and with the pointer over it.
-    let (rest, over) = match kind {
-        Kind::Chip if muted => (
+    let (rest, over) = match (kind, lit) {
+        (_, Some(tone)) => (
+            Paint {
+                fill: tone,
+                ink: look::ACCENT_INK,
+                edge: clear,
+                glow: look::alpha(tone, 0.18),
+            },
+            Paint {
+                fill: mix(tone, Color::WHITE, 0.14),
+                ink: look::ACCENT_INK,
+                edge: clear,
+                glow: look::alpha(tone, 0.32),
+            },
+        ),
+        (Kind::Chip, None) if muted => (
             Paint {
                 fill: look::alpha(look::RAISED, 0.0),
                 ink: look::TEXT_FAINT,
@@ -291,7 +334,7 @@ fn paint(kind: Kind, look: Look, muted: bool) -> Paint {
                 glow: clear,
             },
         ),
-        Kind::Chip => (
+        (Kind::Chip, None) => (
             Paint {
                 fill: look::RAISED,
                 ink: look::TEXT,
@@ -305,7 +348,7 @@ fn paint(kind: Kind, look: Look, muted: bool) -> Paint {
                 glow: clear,
             },
         ),
-        Kind::Primary | Kind::Round => (
+        (Kind::Primary | Kind::Round, None) => (
             Paint {
                 fill: look::ACCENT,
                 ink: look::ACCENT_INK,
@@ -319,7 +362,7 @@ fn paint(kind: Kind, look: Look, muted: bool) -> Paint {
                 glow: look::alpha(look::ACCENT, 0.28),
             },
         ),
-        Kind::Secondary => (
+        (Kind::Secondary, None) => (
             Paint {
                 fill: look::RAISED,
                 ink: look::TEXT,
@@ -333,7 +376,7 @@ fn paint(kind: Kind, look: Look, muted: bool) -> Paint {
                 glow: clear,
             },
         ),
-        Kind::Ghost | Kind::Icon => (
+        (Kind::Ghost | Kind::Icon, None) => (
             Paint {
                 fill: look::alpha(look::RAISED, 0.0),
                 ink: look::TEXT_DIM,
@@ -367,8 +410,9 @@ fn paint(kind: Kind, look: Look, muted: bool) -> Paint {
         glow: mix(rest.glow, over.glow, t),
     };
     if look.pressed {
-        paint.fill = match kind {
-            Kind::Primary | Kind::Round => mix(look::ACCENT, Color::BLACK, 0.12),
+        paint.fill = match (kind, lit) {
+            (_, Some(tone)) => mix(tone, Color::BLACK, 0.12),
+            (Kind::Primary | Kind::Round, None) => mix(look::ACCENT, Color::BLACK, 0.12),
             _ => mix(look::RAISED, look::BG, 0.5),
         };
         paint.glow = clear;
@@ -387,6 +431,8 @@ struct Pressable<'a, Message> {
     width: Length,
     padding: f32,
     id: Option<Id>,
+    small: bool,
+    lit: Option<Color>,
 }
 
 impl<Message> Pressable<'_, Message> {
@@ -394,6 +440,7 @@ impl<Message> Pressable<'_, Message> {
     fn height(&self) -> f32 {
         match self.kind {
             Kind::Chip => height::CHIP,
+            _ if self.small => height::SMALL_CONTROL,
             _ => height::CONTROL,
         }
     }
@@ -565,7 +612,7 @@ impl<'a, Message: Clone + 'a> Widget<Message, Theme, Renderer> for Pressable<'a,
         let bounds = layout.bounds();
         let state = tree.state.downcast_ref::<State>();
         let look = self.look(state);
-        let paint = paint(self.kind, look, self.muted);
+        let paint = paint(self.kind, look, self.muted, self.lit);
         let corner = self.radius();
         if look.focused {
             let gap = look::line::FOCUS;

@@ -112,6 +112,8 @@ pub mod height {
     pub const CONTROL: f32 = 34.0;
     /// A chip.
     pub const CHIP: f32 = 26.0;
+    /// A small button, in a dense panel (a mixer strip's).
+    pub const SMALL_CONTROL: f32 = 24.0;
     /// A progress bar.
     pub const BAR: f32 = 6.0;
     /// A slider's or the seek bar's track.

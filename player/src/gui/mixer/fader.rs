@@ -1,8 +1,11 @@
 //! A strip's tall section as a canvas: the scale, the fader's slot and its
-//! cap, and the meters with their peak-hold ticks and clip lamps. What
-//! stands still (the scale, the slot, the meters' unlit faces) is drawn
-//! once into a cache, again only when the size changes; the cap and the
-//! lit bars every frame, a few rectangles.
+//! cap, and the meters with their peak-hold ticks and clip lamps, in the
+//! look's tones ([`crate::gui::look`]): the meters in the status colours
+//! (the accent their middle zone), the selected fader's slot lit in the
+//! accent up to its cap. Edges fall on whole points, so it stays crisp.
+//! What stands still (the scale, the slot, the meters' unlit faces) is
+//! drawn once into a cache, again only when the size changes; the cap and
+//! the lit bars every frame, a few rectangles.
 //!
 //! The mouse: a press on the cap takes it where it is, elsewhere on the
 //! slot brings it to the pointer; held, it follows the pointer anywhere
@@ -13,14 +16,15 @@
 
 use iced::alignment::Vertical;
 use iced::mouse::{self, Cursor, Interaction};
-use iced::widget::canvas::{self, Cache, Event, Frame, Geometry, Path, Program, Stroke, Text};
+use iced::widget::canvas::{self, Cache, Event, Frame, Geometry, Path, Program, Text};
 use iced::widget::text::Alignment;
 use iced::{Color, Element, Fill, Point, Rectangle, Renderer, Size, Theme, Widget as _};
 
 use crate::core::desk::meter::{Meter, ZONES};
 use crate::core::desk::{taper, Channel, DeskAction};
 use crate::core::Action;
-use crate::gui::style::{self, ACCENT, DIM, FAIL, GREEN, TEXT};
+use crate::gui::look::{self, size};
+use crate::gui::style::mix;
 use crate::gui::window::Message;
 
 /// A meter as shown: its level and its peak held (dBFS), its clip lamp.
@@ -64,20 +68,28 @@ pub fn view(f: Fader) -> Element<'static, Message> {
 #[derive(Default)]
 pub struct Held {
     cache: Cache,
-    /// How far the cap's middle is below the pointer, in pixels, while held.
+    /// How far the cap's middle is below the pointer, in points, while held.
     drag: Option<f32>,
 }
 
-/// Half the cap's height; the travel ends this far in.
-const CAP_H: f32 = 22.0;
-const CAP_W: f32 = 34.0;
+/// The cap's size, in points; the travel ends a little past its half.
+const CAP_H: f32 = 20.0;
+const CAP_W: f32 = 30.0;
 const END: f32 = CAP_H / 2.0 + 4.0;
-/// Within this many pixels of 0 dB a held cap is at 0 dB exactly.
-const DETENT_PX: f32 = 5.0;
-const SCALE_W: f32 = 24.0;
-const METER_W: f32 = 6.0;
+/// Within this many points of 0 dB a held cap is at 0 dB exactly.
+const DETENT: f32 = 5.0;
+/// The scale's numbers' column, and a meter's width, in points.
+const SCALE_W: f32 = 26.0;
+const METER_W: f32 = 5.0;
+/// The slot's width.
+const SLOT: f32 = 4.0;
+/// A wide meter's room for its clip lamp above it and its name below.
+const LAMP_ROOM: f32 = 16.0;
 
-const METER_BG: Color = Color::from_rgb(0.07, 0.07, 0.085);
+/// The meters' and the slot's ground: darker than the strip.
+const WELL: Color = Color::from_rgb8(0x0b, 0x0b, 0x0e);
+/// A lamp not lit.
+const UNLIT: Color = look::EDGE;
 
 /// Where things are across and down.
 struct Geo {
@@ -95,28 +107,30 @@ struct Geo {
 impl Fader {
     fn geo(&self, size: Size) -> Geo {
         let (top, bottom) = if self.wide {
-            (END + 14.0, size.height - END - 14.0)
+            (END + LAMP_ROOM, size.height - END - LAMP_ROOM)
         } else {
             (END, size.height - END)
         };
         let scale_w = if self.labels { SCALE_W } else { 0.0 };
         let (meter_w, apart) = if self.wide {
             (
-                ((size.width - scale_w - 40.0) / 2.0).clamp(10.0, 26.0),
-                14.0,
+                ((size.width - scale_w - 40.0) / 2.0)
+                    .clamp(10.0, 24.0)
+                    .floor(),
+                12.0,
             )
         } else {
-            (METER_W, 3.0)
+            (METER_W, 2.0)
         };
-        let slot_w = if self.cap.is_some() { CAP_W + 8.0 } else { 6.0 };
+        let slot_w = if self.cap.is_some() { CAP_W + 6.0 } else { 8.0 };
         let group = scale_w + slot_w + meter_w * 2.0 + apart;
-        let x0 = ((size.width - group) / 2.0).max(0.0);
+        let x0 = ((size.width - group) / 2.0).max(0.0).floor();
         let scale_x = x0 + scale_w;
         let slot_x = scale_x + slot_w / 2.0;
         let m0 = scale_x + slot_w;
         Geo {
-            top,
-            bottom,
+            top: top.round(),
+            bottom: bottom.round(),
             scale_x,
             slot_x,
             meters: [m0, m0 + meter_w + apart],
@@ -166,141 +180,128 @@ impl Fader {
 
     fn position_at(&self, g: &Geo, y: f32) -> f64 {
         let unity = Self::y(g, taper::UNITY as f32);
-        if (y - unity).abs() < DETENT_PX {
+        if (y - unity).abs() < DETENT {
             return taper::UNITY;
         }
         f64::from(((g.bottom - y) / (g.bottom - g.top)).clamp(0.0, 1.0))
     }
 
-    /// The colour of a meter at `db` dBFS.
+    /// The colour of a meter at `db` dBFS: good, the accent near the top,
+    /// fail at the top.
     fn zone(db: f32) -> Color {
         if db < ZONES.0 {
-            GREEN
+            look::GOOD
         } else if db < ZONES.1 {
-            ACCENT
+            look::ACCENT
         } else {
-            FAIL
+            look::FAIL
+        }
+    }
+
+    /// The meters' zones: from, to (shares of the height), and colour.
+    fn zones(&self) -> [(f32, f32, Color); 3] {
+        let (a, b) = (self.share(ZONES.0), self.share(ZONES.1));
+        [
+            (0.0, a, look::GOOD),
+            (a, b, look::ACCENT),
+            (b, 1.0, look::FAIL),
+        ]
+    }
+
+    /// The span from share `lo` to `hi` of the meter at `x`, on whole
+    /// points.
+    fn span(frame: &mut Frame, g: &Geo, x: f32, (lo, hi): (f32, f32), color: Color) {
+        let (y0, y1) = (Self::y(g, hi).round(), Self::y(g, lo).round());
+        if y1 > y0 {
+            frame.fill_rectangle(Point::new(x, y0), Size::new(g.meter_w, y1 - y0), color);
         }
     }
 
     fn draw_static(&self, frame: &mut Frame, g: &Geo) {
-        let size = frame.size();
-        // The ticks and the numbers.
-        for (share, label, unity) in self.marks() {
-            let y = Self::y(g, share);
-            let color = if unity { TEXT } else { DIM };
-            let from = if self.labels {
-                g.scale_x + 1.0
+        // The ticks, and the numbers where they do not crowd each other
+        // (0 dB's first).
+        let mut marks = self.marks();
+        marks.sort_by_key(|&(_, _, unity)| !unity);
+        let mut numbered: Vec<f32> = Vec::new();
+        for (share, label, unity) in marks {
+            let y = Self::y(g, share).round();
+            let (from, to) = if self.cap.is_some() {
+                (g.slot_x - CAP_W / 2.0 + 3.0, g.slot_x + CAP_W / 2.0 - 3.0)
             } else {
-                g.slot_x - CAP_W / 2.0
-            };
-            let to = if self.cap.is_some() {
-                g.slot_x + CAP_W / 2.0
-            } else {
-                g.slot_x + 3.0
+                (g.slot_x - 3.0, g.slot_x + 3.0)
             };
             frame.fill_rectangle(
-                Point::new(from, y - 0.5),
-                Size::new(to - from, 1.0),
-                style::with_alpha(color, if unity { 0.7 } else { 0.35 }),
+                Point::new(from.round(), y - 0.5),
+                Size::new((to - from).round(), 1.0),
+                if unity { look::TEXT_FAINT } else { look::EDGE },
             );
-            if self.labels {
+            if self.labels && numbered.iter().all(|&at| (at - y).abs() > size::CAPTION) {
+                numbered.push(y);
                 frame.fill_text(Text {
                     content: label,
-                    position: Point::new(g.scale_x - 3.0, y),
-                    color,
-                    size: 10.5.into(),
-                    font: style::digits(),
+                    position: Point::new(g.scale_x - 2.0, y),
+                    color: if unity {
+                        look::TEXT_DIM
+                    } else {
+                        look::TEXT_FAINT
+                    },
+                    size: size::CAPTION.into(),
+                    font: look::font::numbers(),
                     align_x: Alignment::Right,
                     align_y: Vertical::Center,
                     ..Text::default()
                 });
             }
         }
-        // The slot: a groove in the panel.
+        // The slot: a thin groove, darker than the strip.
         if self.cap.is_some() {
             let slot = Path::rounded_rectangle(
-                Point::new(g.slot_x - 3.0, g.top - 4.0),
-                Size::new(6.0, g.bottom - g.top + 8.0),
-                3.0.into(),
+                Point::new((g.slot_x - SLOT / 2.0).round(), g.top),
+                Size::new(SLOT, g.bottom - g.top),
+                (SLOT / 2.0).into(),
             );
-            frame.fill(&slot, Color::from_rgb8(6, 6, 8));
-            frame.stroke(
-                &slot,
-                Stroke::default()
-                    .with_width(1.0)
-                    .with_color(Color::from_rgba8(255, 255, 255, 0.06)),
-            );
+            frame.fill(&slot, WELL);
         }
-        // The meters' faces, their zones unlit.
-        let (a, b) = (self.share(ZONES.0), self.share(ZONES.1));
+        // The meters' wells, their zones faint.
         for &x in &g.meters {
-            let face = Path::rounded_rectangle(
+            let well = Path::rounded_rectangle(
                 Point::new(x - 1.0, g.top - 1.0),
                 Size::new(g.meter_w + 2.0, g.bottom - g.top + 2.0),
                 2.0.into(),
             );
-            frame.fill(&face, METER_BG);
-            for (lo, hi, color) in [(0.0, a, GREEN), (a, b, ACCENT), (b, 1.0, FAIL)] {
-                let (y0, y1) = (Self::y(g, hi), Self::y(g, lo));
-                frame.fill_rectangle(
-                    Point::new(x, y0),
-                    Size::new(g.meter_w, y1 - y0),
-                    style::with_alpha(color, 0.09),
-                );
-            }
-            // Segments, as LEDs: a dark line every 3 pixels.
-            let mut y = g.top + 2.0;
-            while y < g.bottom {
-                frame.fill_rectangle(
-                    Point::new(x, y),
-                    Size::new(g.meter_w, 1.0),
-                    Color::from_rgba(0.0, 0.0, 0.0, 0.35),
-                );
-                y += 3.0;
+            frame.fill(&well, WELL);
+            for (lo, hi, color) in self.zones() {
+                Self::span(frame, g, x, (lo, hi), look::tint(color, WELL, 0.12));
             }
         }
         if self.wide {
             for (x, name) in g.meters.iter().zip(["L", "R"]) {
                 frame.fill_text(Text {
                     content: name.into(),
-                    position: Point::new(x + g.meter_w / 2.0, g.bottom + 12.0),
-                    color: DIM,
-                    size: 11.0.into(),
-                    font: style::ui(),
+                    position: Point::new(x + g.meter_w / 2.0, g.bottom + LAMP_ROOM / 2.0 + 2.0),
+                    color: look::TEXT_FAINT,
+                    size: size::CAPTION.into(),
+                    font: look::font::label(),
                     align_x: Alignment::Center,
                     align_y: Vertical::Center,
                     ..Text::default()
                 });
             }
         }
-        let _ = size;
     }
 
     fn draw_moving(&self, frame: &mut Frame, g: &Geo, hover: bool) {
-        // The lit bars, by zone, brighter at their tops; the ticks above.
-        let (a, b) = (self.share(ZONES.0), self.share(ZONES.1));
+        // The lit bars, by zone; the peaks held above them.
         for (m, &x) in self.meters.iter().zip(&g.meters) {
             let lit = self.share(m.db);
-            for (lo, hi, color) in [(0.0, a, GREEN), (a, b, ACCENT), (b, 1.0, FAIL)] {
+            for (lo, hi, color) in self.zones() {
                 let top = lit.min(hi);
-                if top <= lo {
-                    continue;
+                if top > lo {
+                    Self::span(frame, g, x, (lo, top), color);
                 }
-                let (y0, y1) = (Self::y(g, top), Self::y(g, lo));
-                frame.fill_rectangle(Point::new(x, y0), Size::new(g.meter_w, y1 - y0), color);
-            }
-            if lit > 0.0 {
-                // A glow at the bar's top.
-                let y = Self::y(g, lit);
-                frame.fill_rectangle(
-                    Point::new(x - 1.0, y - 1.0),
-                    Size::new(g.meter_w + 2.0, 2.0),
-                    style::with_alpha(Color::WHITE, 0.35),
-                );
             }
             if m.peak_db > m.db && m.peak_db != f32::NEG_INFINITY {
-                let y = Self::y(g, self.share(m.peak_db));
+                let y = Self::y(g, self.share(m.peak_db)).round();
                 frame.fill_rectangle(
                     Point::new(x, y - 1.0),
                     Size::new(g.meter_w, 2.0),
@@ -309,78 +310,62 @@ impl Fader {
             }
             if self.wide {
                 // The clip lamp over it.
-                let c = Point::new(x + g.meter_w / 2.0, g.top - 12.0);
+                let c = Point::new(x + g.meter_w / 2.0, g.top - LAMP_ROOM / 2.0 - 2.0);
                 if m.clipped {
-                    frame.fill(&Path::circle(c, 8.0), style::with_alpha(FAIL, 0.25));
+                    frame.fill(&Path::circle(c, 7.0), look::alpha(look::FAIL, 0.25));
                 }
                 frame.fill(
                     &Path::circle(c, 4.0),
-                    if m.clipped {
-                        FAIL
-                    } else {
-                        Color::from_rgb8(46, 46, 54)
-                    },
+                    if m.clipped { look::FAIL } else { UNLIT },
                 );
             }
         }
-        // The cap, with its shadow and its line.
+        // The cap, the slot under it lit up to it while selected.
         if let Some(p) = self.cap {
-            let y = Self::y(g, p);
-            let x = g.slot_x - CAP_W / 2.0;
-            let shadow = Path::rounded_rectangle(
-                Point::new(x + 1.0, y - CAP_H / 2.0 + 4.0),
-                Size::new(CAP_W, CAP_H),
-                4.0.into(),
-            );
-            frame.fill(&shadow, Color::from_rgba(0.0, 0.0, 0.0, 0.45));
-            let body = Path::rounded_rectangle(
-                Point::new(x, y - CAP_H / 2.0),
-                Size::new(CAP_W, CAP_H),
-                4.0.into(),
-            );
-            let lift = if hover { 0.08 } else { 0.0 };
-            let gradient = canvas::gradient::Linear::new(
-                Point::new(0.0, y - CAP_H / 2.0),
-                Point::new(0.0, y + CAP_H / 2.0),
-            )
-            .add_stop(
-                0.0,
-                style::mix(Color::from_rgb8(214, 214, 222), Color::WHITE, lift),
-            )
-            .add_stop(
-                0.45,
-                style::mix(Color::from_rgb8(150, 150, 160), Color::WHITE, lift),
-            )
-            .add_stop(
-                0.55,
-                style::mix(Color::from_rgb8(120, 120, 130), Color::WHITE, lift),
-            )
-            .add_stop(
-                1.0,
-                style::mix(Color::from_rgb8(78, 78, 88), Color::WHITE, lift),
-            );
-            frame.fill(&body, gradient);
-            frame.stroke(
-                &body,
-                Stroke::default()
-                    .with_width(1.0)
-                    .with_color(Color::from_rgb8(20, 20, 24)),
-            );
-            // The grip's ridges, and the line it is read by.
-            for dy in [-6.0, -3.0, 3.0, 6.0] {
-                frame.fill_rectangle(
-                    Point::new(x + 5.0, y + dy - 0.5),
-                    Size::new(CAP_W - 10.0, 1.0),
-                    Color::from_rgba(0.0, 0.0, 0.0, 0.25),
+            let y = Self::y(g, p).round();
+            let slot_x = (g.slot_x - SLOT / 2.0).round();
+            if self.selected && y < g.bottom {
+                frame.fill(
+                    &Path::rounded_rectangle(
+                        Point::new(slot_x, y),
+                        Size::new(SLOT, g.bottom - y),
+                        (SLOT / 2.0).into(),
+                    ),
+                    look::ACCENT,
                 );
             }
+            let x = (g.slot_x - CAP_W / 2.0).round();
+            let top = y - CAP_H / 2.0;
+            frame.fill(
+                &Path::rounded_rectangle(
+                    Point::new(x, top + 2.0),
+                    Size::new(CAP_W, CAP_H),
+                    look::radius::CONTROL.into(),
+                ),
+                Color::from_rgba(0.0, 0.0, 0.0, 0.4),
+            );
+            let body = mix(look::SELECTED, look::TEXT, if hover { 0.4 } else { 0.28 });
+            frame.fill(
+                &Path::rounded_rectangle(
+                    Point::new(x, top),
+                    Size::new(CAP_W, CAP_H),
+                    look::radius::CONTROL.into(),
+                ),
+                body,
+            );
+            // A lighter top edge, and the line it is read by.
             frame.fill_rectangle(
-                Point::new(x + 2.0, y - 1.0),
-                Size::new(CAP_W - 4.0, 2.0),
+                Point::new(x + 4.0, top),
+                Size::new(CAP_W - 8.0, 1.0),
+                mix(body, look::TEXT, 0.35),
+            );
+            frame.fill_rectangle(
+                Point::new(x + 4.0, y - 1.0),
+                Size::new(CAP_W - 8.0, 2.0),
                 if self.selected {
-                    ACCENT
+                    look::ACCENT
                 } else {
-                    Color::from_rgb8(16, 16, 20)
+                    look::TEXT
                 },
             );
         }
@@ -514,9 +499,9 @@ mod tests {
         }
     }
 
-    /// The cap goes where the pointer puts it, to the pixel, the ends
-    /// beyond the travel; within [`DETENT_PX`] of 0 dB it is at 0 dB
-    /// exactly, the detent unity gain depends on landing in.
+    /// The cap goes where the pointer puts it, to the point, the ends
+    /// beyond the travel; within [`DETENT`] of 0 dB it is at 0 dB exactly,
+    /// the detent unity gain depends on landing in.
     #[test]
     fn the_cap_is_where_the_pointer_puts_it_with_a_detent_at_unity() {
         let f = fader();

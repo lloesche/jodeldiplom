@@ -485,7 +485,7 @@ fn no_fader(state: &mut State) {
 /// The strips the arrow keys go through: those shown (the stems' only
 /// while the player has them, none the narrowing left out).
 fn channels(state: &State) -> Vec<Channel> {
-    strips_shown(state.fit.desk_letters, state.desk.has_stems()).strips
+    strips_shown(state.fit.desk_width, state.desk.has_stems()).strips
 }
 
 fn select_by(state: &mut State, by: isize) {

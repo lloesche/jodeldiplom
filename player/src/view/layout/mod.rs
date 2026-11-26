@@ -26,7 +26,6 @@
 //! - the cover needs 4 rows; on a short screen it goes before the text,
 //! - below 40 × 12 only a "too small" note is shown.
 
-pub mod desk;
 mod karaoke;
 mod track;
 mod transition;
@@ -136,8 +135,6 @@ pub struct MainLayout {
     pub transition: Option<TransitionLayout>,
     /// The Karaoke tab, when it is the side shown (the whole width too).
     pub karaoke: Option<KaraokeTabLayout>,
-    /// The Mixer tab's desk, when it is the side shown (the whole width too).
-    pub desk: Option<desk::DeskLayout>,
     /// The bottom bar.
     pub bottom: Bottom,
 }
@@ -253,7 +250,9 @@ pub fn compute(state: &State, grid: Grid) -> Layout {
 /// ([`crate::core::Action::Fit`]): measured on the layouts the screens
 /// have on it, whichever screen and tab show (the list keeps its rows
 /// behind the other screens, the keys go round the desk's strips from any
-/// tab). Nothing on a grid too small to draw on.
+/// tab), the desk's width at a scale of 1 ([`CELL_WIDTH`]; the window,
+/// which knows its cells, gives the one drawn, [`desk_width`]). Nothing on
+/// a grid too small to draw on.
 pub fn fit(state: &State, grid: Grid) -> Fit {
     if grid.too_small() {
         return Fit::default();
@@ -266,13 +265,25 @@ pub fn fit(state: &State, grid: Grid) -> Fit {
     Fit {
         list_rows: list.rows.height + u16::from(list.filter.is_some()),
         help_rows: help.text.height + u16::from(help.search.is_some()),
-        desk_letters: desk::room(wide),
+        desk_width: desk_width(grid, CELL_WIDTH),
         lane_letters: transition::lane_width(wide),
         controls_reach: f32::from(crate::core::karaoke::controls::ROWS + 2) / f32::from(grid.rows),
         spectrum: compute(state, grid)
             .bottom()
             .is_some_and(|b| b.spectrum > 0),
     }
+}
+
+/// A cell's width in points at a scale of 1: the built-in Sarasa Fixed's
+/// at [`crate::gui::font_px`]'s size there (Cascadia Mono's, without it,
+/// is 9; the window gives the desk's width at its own cells).
+pub const CELL_WIDTH: f32 = 8.0;
+
+/// The Mixer tab's desk's width in points on `grid`, a cell `cell` points
+/// wide: the list pane's inside, the whole width (the window draws the
+/// desk there, `gui::mixer`).
+pub fn desk_width(grid: Grid, cell: f32) -> f32 {
+    f32::from(in_border(grid.area()).width) * cell
 }
 
 /// `rect` inside its border.
@@ -376,7 +387,6 @@ fn main_wide(state: &State, area: Rect) -> MainLayout {
             voice,
             ..karaoke::tab(inner, state.karaoke.sync.as_ref())
         }),
-        desk: (state.side == Side::Mixer).then(|| desk::compute(inner, state.desk.has_stems())),
         bottom,
     }
 }
@@ -492,7 +502,6 @@ fn main_list(state: &State, grid: Grid) -> MainLayout {
         mini,
         transition: None,
         karaoke: None,
-        desk: None,
         bottom,
     }
 }
